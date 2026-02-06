@@ -35,9 +35,9 @@ export class MultiTenantMetadataManager {
   createTenant(tenantId: string, copyFrom: string = "public"): void {
     try {
       this.store.copyLayer(copyFrom, tenantId);
-      console.log(`✅ Tenant "${tenantId}" created from "${copyFrom}"`);
+      console.log(`Tenant "${tenantId}" created from "${copyFrom}"`);
     } catch (error) {
-      console.error(`❌ Failed to create tenant "${tenantId}":`, error);
+      console.error(`Failed to create tenant "${tenantId}":`, error);
       throw error;
     }
   }
@@ -49,7 +49,7 @@ export class MultiTenantMetadataManager {
     const key = this.entityScanner.createUniqueKey();
     this.entityScanner.set(key, entityMetadata);
     console.log(
-      `📝 Entity registered in context "${this.currentTenant}": ${entityMetadata.name}`,
+      `Entity registered in context "${this.currentTenant}": ${entityMetadata.name}`,
     );
   }
 

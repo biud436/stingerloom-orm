@@ -72,4 +72,25 @@ export abstract class BaseEntityManager {
    * Repository를 통하는 Data Mapper Pattern을 이용해야 합니다.
    */
   abstract getRepository<T>(entity: ClazzType<T>): BaseRepository<T>;
+
+  /**
+   * 특정 테넌트 컨텍스트 내에서 작업을 실행합니다.
+   * AsyncLocalStorage를 사용하여 콜백 내부의 모든 메타데이터 조회가
+   * 해당 테넌트의 레이어에서 수행됩니다.
+   *
+   * @param tenantId 테넌트 식별자
+   * @param callback 테넌트 컨텍스트 내에서 실행할 비동기 작업
+   * @returns 콜백의 반환값
+   *
+   * @example
+   * ```ts
+   * const result = await entityManager.withTenant("tenant_1", async (em) => {
+   *   return em.find(User, { where: { id: 1 } });
+   * });
+   * ```
+   */
+  abstract withTenant<R>(
+    tenantId: string,
+    callback: (em: this) => Promise<R>,
+  ): Promise<R>;
 }

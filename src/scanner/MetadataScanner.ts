@@ -1,12 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { MetadataLayer } from "../metadata/MetadataLayer";
+import { MetadataContext } from "../metadata/MetadataContext";
 
 /**
  * 전역 LayeredMetadataStore 레지스트리
  *
  * 모든 MetadataScanner 인스턴스가 공유하는 중앙 레이어 관리자입니다.
  * 기본적으로 "public" 레이어에 기록되며, 컨텍스트 전환으로 멀티테넌트를 지원합니다.
+ *
+ * AsyncLocalStorage 기반 MetadataContext가 활성화되어 있으면,
+ * 요청 스코프의 tenantId가 우선 적용됩니다.
  */
 export class MetadataLayerRegistry {
   private static instance: MetadataLayerRegistry;
@@ -35,7 +39,18 @@ export class MetadataLayerRegistry {
 
   // ── 컨텍스트 ──────────────────────────────────────────────
 
+  /**
+   * 현재 컨텍스트를 반환합니다.
+   *
+   * 우선순위:
+   * 1. AsyncLocalStorage(MetadataContext)가 활성화되어 있으면 해당 tenantId
+   * 2. 수동으로 setContext()로 설정한 값
+   * 3. 기본값 "public"
+   */
   getContext(): string {
+    if (MetadataContext.isActive()) {
+      return MetadataContext.getCurrentTenant();
+    }
     return this.currentContext;
   }
 
@@ -54,10 +69,11 @@ export class MetadataLayerRegistry {
   }
 
   getCurrentLayer(): MetadataLayer {
-    let layer = this.layers.get(this.currentContext);
+    const ctx = this.getContext();
+    let layer = this.layers.get(ctx);
     if (!layer) {
-      layer = new MetadataLayer(this.currentContext, false);
-      this.layers.set(this.currentContext, layer);
+      layer = new MetadataLayer(ctx, false);
+      this.layers.set(ctx, layer);
     }
     return layer;
   }
@@ -102,14 +118,15 @@ export class MetadataLayerRegistry {
    * 현재 컨텍스트 레이어 → public 순서로 검색 (OverlayFS)
    */
   resolveValue<T>(key: string): T | undefined {
+    const ctx = this.getContext();
     // 1. 현재 컨텍스트 레이어
-    const contextLayer = this.layers.get(this.currentContext);
+    const contextLayer = this.layers.get(ctx);
     if (contextLayer) {
       const v = contextLayer.get<T>(key);
       if (v !== undefined) return v;
     }
     // 2. public fallback (현재 컨텍스트가 public이 아닌 경우)
-    if (this.currentContext !== "public") {
+    if (ctx !== "public") {
       const publicLayer = this.layers.get("public");
       if (publicLayer) {
         const v = publicLayer.get<T>(key);
@@ -123,6 +140,7 @@ export class MetadataLayerRegistry {
    * 병합된 뷰의 모든 엔트리를 반환 (lower → upper 순서로 덮어쓰기)
    */
   resolveAll<T>(): Map<string, T> {
+    const ctx = this.getContext();
     const result = new Map<string, T>();
 
     // 1. public 레이어 (lower)
@@ -134,8 +152,8 @@ export class MetadataLayerRegistry {
     }
 
     // 2. 현재 컨텍스트 레이어 (upper) — 덮어쓰기
-    if (this.currentContext !== "public") {
-      const contextLayer = this.layers.get(this.currentContext);
+    if (ctx !== "public") {
+      const contextLayer = this.layers.get(ctx);
       if (contextLayer) {
         for (const [k, v] of contextLayer.entries<T>()) {
           result.set(k, v);

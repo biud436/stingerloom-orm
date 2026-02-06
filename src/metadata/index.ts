@@ -6,6 +6,7 @@
 
 export * from "./MetadataLayer";
 export * from "./MetadataPath";
+export * from "./MetadataContext";
 export * from "./LayeredMetadataStore";
 export * from "./LayeredMetadataScanner";
 export * from "./MultiTenantMetadataManager";
