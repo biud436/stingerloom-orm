@@ -20,7 +20,7 @@ import { CatsModule } from "./cats/cats.module";
       username: process.env.DB_USER || "root",
       password: process.env.DB_PASSWORD || "password",
       database: process.env.DB_NAME || "cats_db",
-      entities: [__dirname + "/entity/*.ts", __dirname + "/entity/map/*.ts"],
+      entities: [__dirname + "/**/*.entity{.ts,.js}"],
       synchronize: true, // Auto-create tables (development only!)
       logging: true,
     }),
