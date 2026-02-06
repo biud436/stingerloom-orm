@@ -153,6 +153,104 @@ import { CatsModule } from "./cats/cats.module";
 export class AppModule {}
 ```
 
+### Using forFeature() in Feature Modules
+
+```typescript
+// cats.module.ts
+import { Module } from "@nestjs/common";
+import { StinglerloomOrmModule } from "../stingerloom-orm/stingerloom-orm.module";
+import { CatsService } from "./cats.service";
+import { CatsController } from "./cats.controller";
+import { Cat } from "./cat.entity";
+
+@Module({
+  imports: [StinglerloomOrmModule.forFeature([Cat])],
+  controllers: [CatsController],
+  providers: [CatsService],
+})
+export class CatsModule {}
+```
+
+### Injecting Repository in Service
+
+```typescript
+// cats.service.ts
+import { Injectable } from "@nestjs/common";
+import { BaseRepository } from "stingerloom-orm";
+import { InjectRepository } from "../stingerloom-orm/inject-repository.decorator";
+import { Cat } from "./cat.entity";
+import { CreateCatDto } from "./dto/create-cat.dto";
+
+@Injectable()
+export class CatsService {
+  constructor(
+    @InjectRepository(Cat) private readonly catRepository: BaseRepository<Cat>,
+  ) {}
+
+  async create(createCatDto: CreateCatDto): Promise<Cat> {
+    const cat = new Cat();
+    cat.name = createCatDto.name;
+    cat.age = createCatDto.age;
+    cat.breed = createCatDto.breed;
+    cat.createdAt = new Date();
+
+    const result = await this.catRepository.save(cat);
+    if (!result) {
+      throw new Error("Failed to create cat");
+    }
+    return Array.isArray(result) ? result[0] : result;
+  }
+
+  async findAll(): Promise<Cat[]> {
+    return await this.catRepository.find({});
+  }
+
+  async findOne(id: number): Promise<Cat | null> {
+    return await this.catRepository.findOne({
+      where: { id } as any,
+    });
+  }
+
+  async update(id: number, updateCatDto: Partial<CreateCatDto>): Promise<Cat> {
+    const cat = await this.findOne(id);
+    if (!cat) {
+      throw new Error(`Cat with ID ${id} not found`);
+    }
+
+    Object.assign(cat, updateCatDto);
+    const result = await this.catRepository.save(cat);
+    return Array.isArray(result) ? result[0] : result;
+  }
+
+  async remove(id: number): Promise<void> {
+    await this.catRepository.delete({ id } as any);
+  }
+}
+```
+
+### Custom InjectRepository Decorator
+
+```typescript
+// stingerloom-orm/inject-repository.decorator.ts
+import { Inject } from "@nestjs/common";
+import { makeInjectRepositoryToken } from "./stingerloom-orm.module";
+import { ClazzType } from "stingerloom-orm";
+
+export const InjectRepository = (
+  entity: ClazzType<unknown>,
+): ParameterDecorator => {
+  return Inject(makeInjectRepositoryToken(entity));
+};
+```
+
+### Key Features
+
+- ✅ **@InjectRepository decorator** - Inject repository directly into services
+- ✅ **forFeature() pattern** - Register entities per module for better modularity
+- ✅ **Type-safe operations** - Full TypeScript support with BaseRepository<T>
+- ✅ **Automatic transaction handling** - Built-in transaction support
+- ✅ **NestJS lifecycle integration** - Proper startup and shutdown hooks
+
 ## Testing
 
 ```bash
