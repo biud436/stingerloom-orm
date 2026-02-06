@@ -1,4 +1,10 @@
 export * from "./mysql";
+export { PostgresConnector } from "./postgres/PostgresConnector";
+export { PostgresDriver } from "./postgres/PostgresDriver";
+export { PostgresDataSource } from "./postgres/PostgresDataSource";
+export { PostgresConnectionError } from "./postgres/PostgresConnectionError";
+export { ConnectionNotFound as PostgresConnectionNotFound } from "./postgres/ConnectionNotFound";
+export { PoolNotFound as PostgresPoolNotFound } from "./postgres/PoolNotFound";
 export * from "./FindOption";
 export * from "./IDataSource";
 export * from "./IOrderBy";

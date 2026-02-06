@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Sql } from "sql-template-tag";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
-import { Connection } from "./Connection";
 import { TRANSACTION_ISOLATION_LEVEL } from "../dialects/IsolationLevel";
 
 /**
@@ -32,7 +31,7 @@ export abstract class IConnector {
    * @param connection - Optional connection to use for the query.
    * @returns A promise that resolves with the query result.
    */
-  abstract query(sql: string, connection?: Connection): Promise<any>;
+  abstract query(sql: string, connection?: any): Promise<any>;
 
   /**
    * Executes a SQL query with a specified return type.
@@ -40,13 +39,13 @@ export abstract class IConnector {
    * @param connection - Optional connection to use for the query.
    * @returns A promise that resolves with the query result of type T.
    */
-  abstract query<T = any>(sql: Sql, connection?: Connection): Promise<T>;
+  abstract query<T = any>(sql: Sql, connection?: any): Promise<T>;
 
   /**
    * Gets a database connection.
    * @returns A promise that resolves with the database connection.
    */
-  abstract getConnection(): Promise<Connection>;
+  abstract getConnection(): Promise<any>;
 
   /**
    * Sets the transaction isolation level for a connection.
@@ -55,7 +54,7 @@ export abstract class IConnector {
    * @returns A promise that resolves when the isolation level is set.
    */
   abstract setTransactionIsolationLevel(
-    connection: Connection,
+    connection: any,
     level: TRANSACTION_ISOLATION_LEVEL,
   ): Promise<void>;
 
@@ -66,7 +65,7 @@ export abstract class IConnector {
    * @returns A promise that resolves when the transaction is started.
    */
   abstract startTransaction(
-    connection: Connection,
+    connection: any,
     level?: TRANSACTION_ISOLATION_LEVEL,
   ): Promise<void>;
 
@@ -75,12 +74,12 @@ export abstract class IConnector {
    * @param connection - The connection to roll back the transaction on.
    * @returns A promise that resolves when the transaction is rolled back.
    */
-  abstract rollback(connection: Connection): Promise<void>;
+  abstract rollback(connection: any): Promise<void>;
 
   /**
    * Commits a transaction on the given connection.
    * @param connection - The connection to commit the transaction on.
    * @returns A promise that resolves when the transaction is committed.
    */
-  abstract commit(connection: Connection): Promise<void>;
+  abstract commit(connection: any): Promise<void>;
 }

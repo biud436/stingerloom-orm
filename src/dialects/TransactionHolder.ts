@@ -3,6 +3,7 @@ import { Sql } from "sql-template-tag";
 import { DatabaseClient } from "../DatabaseClient";
 import { IConnector } from "../core/IConnector";
 import { MySqlDataSource } from "./mysql/MySqlDataSource";
+import { PostgresDataSource } from "./postgres/PostgresDataSource";
 import { IDataSource } from "./IDataSource";
 import { Logger } from "../utils";
 import { DatabaseConnectionFailedError } from "../errors/DatabaseConnectionFailedError";
@@ -35,7 +36,14 @@ export class TransactionHolder extends IQueryEngine {
   public async connect() {
     try {
       this.connection = await DatabaseClient.getInstance().getConnection();
-      this.dataSource = new MySqlDataSource(this.connection);
+
+      const dbType = DatabaseClient.getInstance().type;
+      if (dbType === "postgres") {
+        this.dataSource = new PostgresDataSource(this.connection);
+      } else {
+        this.dataSource = new MySqlDataSource(this.connection);
+      }
+
       await this.dataSource.createConnection();
     } catch (error: unknown) {
       throw new DatabaseConnectionFailedError();
@@ -55,7 +63,7 @@ export class TransactionHolder extends IQueryEngine {
     if (!this.connection) {
       throw new DatabaseNotConnectedError();
     }
-    const queryResult = await this.dataSource?.query(sql as string);
+    const queryResult = await this.dataSource?.query(sql as any);
 
     return queryResult;
   }

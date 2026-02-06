@@ -9,6 +9,7 @@ import {
 import Container from "typedi";
 import { DatabaseClient } from "../DatabaseClient";
 import { MySqlDriver } from "../dialects/mysql/MySqlDriver";
+import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
@@ -16,6 +17,7 @@ import { TransactionHolder } from "../dialects/TransactionHolder";
 import { FindOption } from "../dialects/FindOption";
 import { IDataSource } from "../dialects/IDataSource";
 import { MySqlDataSource } from "../dialects/mysql/MySqlDataSource";
+import { PostgresDataSource } from "../dialects/postgres/PostgresDataSource";
 import sql, { Sql, join, raw } from "sql-template-tag";
 import {
   ENTITY_TOKEN,
@@ -63,6 +65,14 @@ export class EntityManager implements BaseEntityManager {
       case "mysql":
         this.driver = new MySqlDriver(connector, client.type);
         this.dataSource = new MySqlDataSource(connector);
+        break;
+      case "postgres":
+        this.driver = new PostgresDriver(
+          connector,
+          client.type,
+          databaseClientOptions.schema,
+        );
+        this.dataSource = new PostgresDataSource(connector);
         break;
       default:
         throw new Error("Unsupported database type.");
@@ -145,6 +155,16 @@ export class EntityManager implements BaseEntityManager {
     let entity: IteratorResult<EntityScannerMetadata>;
 
     const { synchronize } = this.client.getOptions();
+
+    // PostgreSQL: 스키마가 존재하지 않으면 자동으로 생성합니다.
+    if (synchronize && this.isPostgres() && this.driver) {
+      const pgDriver = this.driver as PostgresDriver;
+      const hasSchema = await pgDriver.hasSchema();
+      if (!hasSchema || hasSchema.length === 0) {
+        await pgDriver.createSchema();
+        await pgDriver.setSearchPath();
+      }
+    }
 
     while ((entity = entities.next())) {
       if (entity.done) {
@@ -308,7 +328,12 @@ export class EntityManager implements BaseEntityManager {
       // 트랜잭션을 시작합니다.
       await transactionHolder.connect();
       await transactionHolder.startTransaction();
-      await transactionHolder.query("SET autocommit = 0");
+
+      // MySQL/MariaDB 전용: autocommit 비활성화
+      // PostgreSQL은 BEGIN으로 트랜잭션을 시작하면 자동으로 autocommit이 꺼집니다.
+      if (this.isMySqlFamily()) {
+        await transactionHolder.query("SET autocommit = 0");
+      }
 
       // 메타데이터를 가져옵니다 (레이어 시스템 경유).
       const metadata = this.resolveEntityMetadata(entity);
@@ -327,26 +352,28 @@ export class EntityManager implements BaseEntityManager {
         [];
 
       if (!select) {
-        selectMap.push(...metadata.columns.map((column) => column.name!));
+        selectMap.push(
+          ...metadata.columns.map((column) => this.wrap(column.name!)),
+        );
       }
 
       for (const key in where) {
         const value = where[key];
         if (value) {
-          whereMap.push(Conditions.equals(key, value));
+          whereMap.push(Conditions.equals(this.wrap(key), value));
         }
       }
 
       for (const key in orderBy) {
         const value = orderBy[key];
         if (value) {
-          orderByMap.push({ column: key, direction: value });
+          orderByMap.push({ column: this.wrap(key), direction: value });
         }
       }
 
       // Query를 구성합니다.
       qb.select(selectMap)
-        .from(metadata.name!)
+        .from(this.wrap(metadata.name!))
         .where(whereMap)
         .orderBy(orderByMap);
 
@@ -421,14 +448,22 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
-   * 백틱으로 감싸지 않은 컬럼 이름을 백틱으로 감싸서 반환합니다.
+   * 식별자를 DB 타입에 맞게 감싸서 반환합니다.
+   * MySQL/MariaDB: 백틱(`) / PostgreSQL: 큰따옴표(")
    */
   wrap(columnName: string) {
+    if (this.isPostgres()) {
+      return `"${columnName}"`;
+    }
     return `\`${columnName}\``;
   }
 
   private isMySqlFamily() {
     return ["mysql", "mariadb"].includes(this.client.type as IDatabaseType);
+  }
+
+  private isPostgres() {
+    return this.client.type === "postgres";
   }
 
   /**
@@ -452,13 +487,31 @@ export class EntityManager implements BaseEntityManager {
       await transactionHolder.connect();
       await transactionHolder.startTransaction();
 
-      await transactionHolder.query("SET autocommit = 0");
+      // MySQL/MariaDB 전용: autocommit 비활성화
+      if (this.isMySqlFamily()) {
+        await transactionHolder.query("SET autocommit = 0");
+      }
 
-      const columns = metadata.columns.map((column) => {
-        return raw(column.name!);
+      // PostgreSQL의 SERIAL 컬럼은 INSERT 시 생략해야 자동 생성됩니다.
+      // MySQL은 null을 넣으면 AUTO_INCREMENT가 동작하지만, PostgreSQL은 NOT NULL 위반이 됩니다.
+      // 따라서 auto-increment 컬럼의 값이 없을 때는 INSERT 대상에서 제외합니다.
+      const insertableColumns = metadata.columns.filter(
+        (column: ColumnMetadata) => {
+          const isAutoIncrement = column.options?.autoIncrement;
+          const value = (item as any)[column.name!];
+          // auto-increment 컬럼이면서 값이 없으면 제외
+          if (isAutoIncrement && (value === null || value === undefined)) {
+            return false;
+          }
+          return true;
+        },
+      );
+
+      const columns = insertableColumns.map((column) => {
+        return raw(this.wrap(column.name!));
       });
 
-      const values = metadata.columns.map((column: ColumnMetadata) => {
+      const values = insertableColumns.map((column: ColumnMetadata) => {
         return (item as any)[column.name!];
       });
 
@@ -470,13 +523,19 @@ export class EntityManager implements BaseEntityManager {
 
       // If the primary key (PK) does not exist, create a new entity.
       if (!primaryKeyValue) {
+        // PostgreSQL: INSERT ... RETURNING "id" 로 생성된 PK를 바로 반환받습니다.
+        const isPostgres = this.isPostgres();
+        const returningSql = isPostgres
+          ? raw(` RETURNING ${this.wrap(pk.name!)}`)
+          : raw("");
+
         const queryResult = (await transactionHolder.query<T>(
           sql`
                         INSERT INTO ${raw(this.wrap(metadata.name!))}
                         (${join(columns, ", ")})
-                        VALUES (${join(values, ", ")})
+                        VALUES (${join(values, ", ")})${returningSql}
                     `,
-        )) as { results: ResultSetHeader; fields: any };
+        )) as { results: any; fields: any };
 
         await transactionHolder.commit();
 
@@ -488,19 +547,29 @@ export class EntityManager implements BaseEntityManager {
           return result as T;
         }
 
+        // PostgreSQL: RETURNING 절로 받은 PK 값으로 조회
+        if (isPostgres && queryResult?.results?.length > 0) {
+          const insertedId = queryResult.results[0][pk.name!];
+          const result = await this.findOne(entity, {
+            where: { [pk.name!]: insertedId },
+          } as any);
+
+          return result as T;
+        }
+
         return queryResult as T;
       }
 
       // If the primary key (PK) exists, execute the update query.
       const updateMap = metadata.columns.map((column: ColumnMetadata) => {
-        return sql`${raw(column.name!)} = ${(item as any)[column.name!]}`;
+        return sql`${raw(this.wrap(column.name!))} = ${(item as any)[column.name!]}`;
       });
 
       await transactionHolder.query<T>(
         sql`
                     UPDATE ${raw(this.wrap(metadata.name!))}
                     SET ${join(updateMap, ", ")}
-                    WHERE ${raw(pk.name!)} = ${primaryKeyValue}
+                    WHERE ${raw(this.wrap(pk.name!))} = ${primaryKeyValue}
                 `,
       );
 

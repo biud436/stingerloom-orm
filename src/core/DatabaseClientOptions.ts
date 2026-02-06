@@ -42,4 +42,11 @@ export interface DatabaseClientOptions {
 
   /** MySQL Only: The charset for the connection */
   charset?: string;
+
+  /**
+   * PostgreSQL Only: The schema to use.
+   * PostgreSQL은 database → schema → table 3계층 구조를 가집니다.
+   * 지정하지 않으면 기본값 'public'을 사용합니다.
+   */
+  schema?: string;
 }

@@ -3,6 +3,7 @@
 
 import { DatabaseNotConnectedError } from "./errors/DatabaseNotConnectedError";
 import { MySqlConnector } from "./dialects/mysql/MySqlConnector";
+import { PostgresConnector } from "./dialects/postgres/PostgresConnector";
 import { DatabaseClientOptions } from "./core/DatabaseClientOptions";
 import { IConnector } from "./core/IConnector";
 import { NotSupportedDatabaseTypeError } from "./errors/NotSupportedDatabaseTypeError";
@@ -42,6 +43,10 @@ export class DatabaseClient {
       case "mariadb":
       case "mysql":
         this.connector = new MySqlConnector();
+        await this.connector.connect(options);
+        break;
+      case "postgres":
+        this.connector = new PostgresConnector();
         await this.connector.connect(options);
         break;
       default:
