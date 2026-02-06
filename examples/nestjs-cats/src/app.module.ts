@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
-import { DatabaseModule } from "./database/database.module";
+import { StinglerloomOrmModule } from "./stingerloom-orm/stingerloom-orm.module";
 import { CatsModule } from "./cats/cats.module";
 
 @Module({
@@ -13,7 +13,7 @@ import { CatsModule } from "./cats/cats.module";
     }),
     CatsModule,
     // Initialize database with forRoot pattern
-    DatabaseModule.forRoot({
+    StinglerloomOrmModule.forRoot({
       type: "mysql",
       host: process.env.DB_HOST || "localhost",
       port: parseInt(process.env.DB_PORT || "3306"),

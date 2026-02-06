@@ -1,16 +1,16 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { CreateCatDto } from "./dto/create-cat.dto";
 import { UpdateCatDto } from "./dto/update-cat.dto";
-import { DatabaseService } from "../database/database.service";
 import { Cat } from "./cat.entity";
+
+import { BaseRepository } from "stingerloom-orm";
+import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
 
 @Injectable()
 export class CatsService {
-  constructor(private readonly databaseService: DatabaseService) {}
-
-  private getRepository() {
-    return this.databaseService.getRepository(Cat);
-  }
+  constructor(
+    @InjectRepository(Cat) private readonly catRepository: BaseRepository<Cat>,
+  ) {}
 
   async create(createCatDto: CreateCatDto): Promise<Cat> {
     const cat = new Cat();
@@ -19,7 +19,7 @@ export class CatsService {
     cat.breed = createCatDto.breed;
     cat.createdAt = new Date();
 
-    const result = await this.getRepository().save(cat);
+    const result = await this.catRepository.save(cat);
     if (!result) {
       throw new Error("Failed to create cat");
     }
@@ -27,7 +27,7 @@ export class CatsService {
   }
 
   async findAll(): Promise<Cat[]> {
-    const result = await this.getRepository().find({});
+    const result = await this.catRepository.find({});
     if (typeof result === "object" && !Array.isArray(result)) {
       return [result];
     }
@@ -36,7 +36,7 @@ export class CatsService {
   }
 
   async findOne(id: number): Promise<Cat> {
-    const result = await this.getRepository().findOne({
+    const result = await this.catRepository.findOne({
       where: { id } as any,
     });
 
@@ -64,7 +64,7 @@ export class CatsService {
       cat.breed = updateCatDto.breed;
     }
 
-    const result = await this.getRepository().save(cat);
+    const result = await this.catRepository.save(cat);
     if (!result) {
       throw new Error("Failed to update cat");
     }

@@ -1,32 +1,44 @@
 import "reflect-metadata";
-import { Injectable, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
+import {
+  Injectable,
+  OnApplicationBootstrap,
+  OnApplicationShutdown,
+} from "@nestjs/common";
 import { EntityManager, ClazzType, Logger } from "stingerloom-orm";
 import Container from "typedi";
 import {
-  DATABASE_OPTION_TOKEN,
-  DatabaseModule,
+  STINGERLOOM_ORM_OPTION_TOKEN,
+  StinglerloomOrmModule,
   DatabaseClientOptions,
-} from "./database.module";
+} from "./stingerloom-orm.module";
 
-export const DATABASE_SERVICE_TOKEN = Symbol.for("DATABASE_SERVICE_TOKEN");
+export const STINGERLOOM_ORM_SERVICE_TOKEN = Symbol.for(
+  "STINGERLOOM_ORM_SERVICE_TOKEN",
+);
 
 @Injectable()
-export class DatabaseService implements OnModuleInit, OnModuleDestroy {
-  private entityManager!: EntityManager;
-  private readonly logger = new Logger(DatabaseService.name);
+export class StinglerloomOrmService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
+  private readonly logger = new Logger(StinglerloomOrmService.name);
 
-  public static captured = {} as Record<typeof DATABASE_SERVICE_TOKEN, boolean>;
+  public static captured = {} as Record<
+    typeof STINGERLOOM_ORM_SERVICE_TOKEN,
+    boolean
+  >;
 
-  constructor() {
-    this.logger.info("DatabaseService initialized");
+  constructor(private readonly entityManager: EntityManager) {
+    this.logger.info("StinglerloomOrmService initialized");
   }
 
-  async onModuleInit(): Promise<void> {
-    this.logger.info("DatabaseService onModuleInit");
+  async onApplicationBootstrap(): Promise<void> {
+    this.logger.info("StinglerloomOrmService OnApplicationBootstrap");
 
     // Check if this module was captured via forRoot()
-    if (!DatabaseService.captured[DATABASE_SERVICE_TOKEN]) {
-      this.logger.warn("DatabaseModule.forRoot() was not called");
+    if (
+      !StinglerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN]
+    ) {
+      this.logger.warn("StinglerloomOrmModule.forRoot() was not called");
       return;
     }
 
@@ -34,19 +46,16 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     await this.registerEntities();
   }
 
-  async onModuleDestroy(): Promise<void> {
+  async onApplicationShutdown(): Promise<void> {
     await this.propagateShutdown();
-    console.log("Database disconnected");
+    console.log("🔌 Stingerloom ORM disconnected");
   }
 
   /**
    * Initialize EntityManager and register it in Container
    */
   private async initEntityManager(): Promise<void> {
-    this.entityManager = new EntityManager();
-
     // Register EntityManager in typedi Container for dependency injection
-    // Note: In NestJS we don't use InstanceScanner, but we can still store it in Container
     if (!Container.has(EntityManager)) {
       Container.set(EntityManager, this.entityManager);
     }
@@ -56,15 +65,15 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
    * Register entities with the database using metadata configuration
    */
   private async registerEntities(): Promise<void> {
-    // Retrieve configuration from metadata (stored by DatabaseModule.forRoot())
+    // Retrieve configuration from metadata (stored by StinglerloomOrmModule.forRoot())
     const options = Reflect.getMetadata(
-      DATABASE_OPTION_TOKEN,
-      DatabaseModule,
+      STINGERLOOM_ORM_OPTION_TOKEN,
+      StinglerloomOrmModule,
     ) as DatabaseClientOptions;
 
     if (!options) {
       throw new Error(
-        "Database configuration is required. Did you call DatabaseModule.forRoot()?",
+        "Database configuration is required. Did you call StinglerloomOrmModule.forRoot()?",
       );
     }
 
