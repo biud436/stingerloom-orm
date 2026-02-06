@@ -18,6 +18,9 @@ export * from "./dialects";
 // Type definitions
 export * from "./types";
 
+// Metadata management (Layered/Multi-tenant support)
+export * from "./metadata";
+
 // Utilities (excluding scanner-specific exports to avoid conflicts)
 export { ClazzType, Type } from "./utils/types";
 export { Logger } from "./utils/Logger";

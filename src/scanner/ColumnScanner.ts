@@ -23,6 +23,10 @@ export type ColumnMetadata = {
 
 @Service()
 export class ColumnScanner extends MetadataScanner {
+  constructor() {
+    super("columns");
+  }
+
   public *makeColumns(): IterableIterator<ColumnMetadata> {
     for (const [_, value] of this.mapper) {
       yield value;

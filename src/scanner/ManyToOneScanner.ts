@@ -6,6 +6,10 @@ import { ClazzType } from "../utils";
 
 @Service()
 export class ManyToOneScanner extends MetadataScanner {
+  constructor() {
+    super("relations");
+  }
+
   public *makeManyTones(): IterableIterator<ManyToOneMetadata<unknown>> {
     for (const [_, value] of this.mapper) {
       yield value;

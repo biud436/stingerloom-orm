@@ -13,6 +13,10 @@ export type EntityScannerMetadata = {
 
 @Service()
 export class EntityScanner extends MetadataScanner {
+  constructor() {
+    super("entities");
+  }
+
   public *makeEntities(): IterableIterator<EntityScannerMetadata> {
     for (const [_, value] of this.mapper) {
       yield value;
