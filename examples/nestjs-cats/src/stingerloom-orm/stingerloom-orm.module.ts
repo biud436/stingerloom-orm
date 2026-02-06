@@ -17,11 +17,15 @@ export const STINGERLOOM_ORM_OPTION_TOKEN = Symbol.for(
 );
 export const INJECT_REPOSITORIES_TOKEN = "INJECT_REPOSITORIES_TOKEN";
 
+export function makeInjectRepositoryToken(entity: ClazzType<unknown>): string {
+  return `${INJECT_REPOSITORIES_TOKEN}_${entity.name}`;
+}
+
 @Module({})
 export class StinglerloomOrmModule {
   static forFeature(entities: ClazzType<unknown>[]): DynamicModule {
     const providers = entities.map((entity) => ({
-      provide: INJECT_REPOSITORIES_TOKEN + entity.name,
+      provide: makeInjectRepositoryToken(entity),
       useFactory: (entityManager: EntityManager) => {
         return entityManager.getRepository(entity);
       },
