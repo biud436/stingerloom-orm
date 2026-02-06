@@ -1,0 +1,249 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { ClassConstructor } from "class-transformer";
+import type { QueryResult } from "../types/QueryResult";
+import { BaseResultTransformer } from "./BaseResultTransformer";
+import { deserializeEntity } from "./DeserializeEntity";
+import {
+  ENTITY_TOKEN,
+  MANY_TO_ONE_TOKEN,
+  ManyToOneMetadata,
+} from "../decorators";
+import { ClazzType } from "../utils";
+
+export type ForeignObject<T = any> = { [key: string]: T };
+
+export class ResultTransformer implements BaseResultTransformer {
+  private static PropertySeparator = "_";
+
+  /**
+   * 쿼리 결과가 없는 경우를 확인합니다.
+   *
+   * @param queryResult
+   * @returns
+   */
+  private hasNoResults(queryResult: QueryResult<any> | undefined): boolean {
+    return !queryResult?.results || queryResult.results.length === 0;
+  }
+
+  /**
+   * 엔티티에서 외래키 필드가 아닌 속성을 모두 추출합니다.
+   *
+   * @param entityClass
+   * @param row
+   * @param baseEntity
+   */
+  private extractBaseEntity<T>(
+    entityClass: ClassConstructor<T>,
+    row: any,
+    baseEntity: any,
+  ) {
+    const enties = Object.entries(row);
+
+    for (const [key, value] of enties) {
+      const isUnderScored = key.includes(ResultTransformer.PropertySeparator);
+      if (!isUnderScored) {
+        baseEntity[key] = value;
+      }
+    }
+  }
+
+  /**
+   * 빈 엔티티를 생성합니다.
+   */
+  private buildNullEntity() {
+    return undefined;
+  }
+
+  /**
+   * 빈 엔티티 컬렉션을 생성합니다.
+   */
+  private buildEmptyEntities<T>(): T[] {
+    return [] as T[];
+  }
+
+  /**
+   * 외래키 오브젝트를 생성합니다.
+   */
+  private createForeignObject<T = any>(): ForeignObject<T> {
+    return {};
+  }
+
+  /**
+   * SQL 측 컬럼명을 만듭니다.
+   */
+  private addSeparatorToColumnName(columnName: string): string {
+    return `${columnName}${ResultTransformer.PropertySeparator}`;
+  }
+
+  /**
+   * SQL 결과를 단일 엔티티로 변환합니다.
+   */
+  public toEntity<T>(
+    entityClass: ClassConstructor<T>,
+    result: QueryResult<any> | undefined,
+  ): T | undefined {
+    if (this.hasNoResults(result)) {
+      return this.buildNullEntity();
+    }
+
+    const r = result!;
+
+    return deserializeEntity(entityClass, r.results[0]);
+  }
+
+  /**
+   * SQL 결과를 엔티티 배열로 변환합니다.
+   */
+  public toEntities<T>(
+    entityClass: ClassConstructor<T>,
+    result: QueryResult<any> | undefined,
+  ): T[] {
+    if (this.hasNoResults(result)) {
+      return this.buildEmptyEntities<T>();
+    }
+
+    const r = result!;
+
+    return r.results.map((item) => deserializeEntity(entityClass, item));
+  }
+
+  /**
+   * Transform SQL result to entity or entity array.
+   *
+   * @param entityClass
+   * @param result
+   * @returns
+   */
+  public transform<T>(
+    entityClass: ClassConstructor<T>,
+    result: QueryResult<any> | undefined,
+  ): T | T[] | undefined {
+    if (this.hasNoResults(result)) {
+      return this.buildNullEntity();
+    }
+
+    const r = result!;
+
+    const isSingleEntity = r.results.length === 1;
+    if (isSingleEntity) {
+      return deserializeEntity(entityClass, r.results[0]);
+    }
+
+    return r.results.map((item) => deserializeEntity(entityClass, item));
+  }
+
+  /**
+   * 객체를 [키, 값] 쌍의 배열로 변환합니다.
+   * Ruby의 Hash#to_a 메소드와 유사한 기능입니다.
+   *
+   * @example
+   * getObjectEntries({ name: "John", age: 30 })
+   * // 결과: [["name", "John"], ["age", 30]]
+   */
+  private getObjectEntries<T = any, R = [string, unknown]>(obj: any): R[] {
+    return Object.entries(obj) as R[];
+  }
+
+  /**
+   * 외래키 오브젝트에 내용을 채워넣습니다.
+   *
+   * @param entityClass 엔티티 클래스
+   * @param baseEntity 기본 엔티티
+   * @param resultSet SQL 결과
+   */
+  private fillPropertiesToForeignObject<T>(
+    entityClass: ClassConstructor<T>,
+    baseEntity: ForeignObject<any>,
+    resultSet: any,
+  ) {
+    // 외래키 메타데이터를 가져옵니다.
+    const manyToOneMappingMetadata = Reflect.getMetadata(
+      MANY_TO_ONE_TOKEN,
+      entityClass,
+    ) as ManyToOneMetadata<T>[];
+
+    const foreignKeys = manyToOneMappingMetadata?.map((e) => e.columnName);
+
+    if (foreignKeys) {
+      for (const foreignKey of foreignKeys) {
+        if (!baseEntity[foreignKey]) {
+          baseEntity[foreignKey] = this.createForeignObject();
+        }
+      }
+
+      // ManyToOne 관계의 외래키 데이터를 별도 객체로 분리하여 구성
+      for (const { getMappingEntity, columnName } of manyToOneMappingMetadata) {
+        const ForeignClass = getMappingEntity() as ClazzType<T>;
+
+        const rows = this.getObjectEntries(resultSet);
+        const foreignObject = this.createForeignObject();
+
+        // JOIN 결과에서 해당 외래키 컬럼들만 필터링하여 객체 구성
+        for (const [key, value] of rows) {
+          const prefix = this.addSeparatorToColumnName(columnName);
+
+          const isContainsPrefix = key.startsWith(prefix);
+          if (isContainsPrefix) {
+            const keyWithoutPrefix = key.replace(prefix, "");
+            foreignObject[keyWithoutPrefix] = value;
+          }
+        }
+
+        // 중첩된 외래키 관계가 있는 경우 재귀적으로 처리
+        const relatedManyToOneMappings = Reflect.getMetadata(
+          MANY_TO_ONE_TOKEN,
+          ForeignClass,
+        ) as ManyToOneMetadata<any>[];
+
+        if (relatedManyToOneMappings) {
+          this.fillPropertiesToForeignObject(
+            ForeignClass,
+            foreignObject,
+            resultSet,
+          );
+        }
+
+        // ! 4. 코어 엔티티에 외래키 오브젝트를 추가한다.
+        baseEntity[columnName] = deserializeEntity(ForeignClass, foreignObject);
+      }
+    }
+
+    const finalEntity = deserializeEntity(entityClass, { ...baseEntity });
+
+    return finalEntity;
+  }
+
+  /**
+   * SQL 결과를 엔티티 또는 엔티티 배열로 변환합니다.
+   */
+  public transformNested<T>(
+    entityClass: ClassConstructor<T>,
+    queryResult: QueryResult<any> | undefined,
+    relations?: { [key: string]: ClassConstructor<any> },
+  ): T | T[] | undefined {
+    if (this.hasNoResults(queryResult)) {
+      return this.buildNullEntity();
+    }
+
+    const r = queryResult!;
+
+    const transformedResults = r.results.map<any>((row) => {
+      const baseEntity: { [key: string]: any } = {};
+
+      this.extractBaseEntity(entityClass, row, baseEntity);
+
+      const finalEntity = this.fillPropertiesToForeignObject(
+        entityClass,
+        baseEntity,
+        row,
+      );
+
+      return finalEntity;
+    });
+
+    const isSingleResult = transformedResults.length === 1;
+
+    return isSingleResult ? transformedResults[0] : transformedResults;
+  }
+}

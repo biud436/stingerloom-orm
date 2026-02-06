@@ -1,0 +1,43 @@
+{
+  "name": "stingerloom-orm",
+  "version": "0.1.0",
+  "description": "A standalone, framework-agnostic TypeScript ORM that can be used with any Node.js framework",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "author": "biud436 <biud436@gmail.com>",
+  "license": "MIT",
+  "keywords": [
+    "orm",
+    "typescript",
+    "mysql",
+    "database",
+    "stingerloom"
+  ],
+  "scripts": {
+    "build": "rimraf dist && tsc",
+    "prepublishOnly": "npm run build",
+    "test": "jest"
+  },
+  "dependencies": {
+    "class-transformer": "^0.5.1",
+    "mysql2": "^3.9.3",
+    "reflect-metadata": "^0.2.2",
+    "sql-template-tag": "^4.0.0",
+    "typedi": "^0.10.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.4",
+    "@types/node": "^20.4.8",
+    "jest": "^29.6.4",
+    "rimraf": "^6.1.2",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.6.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/biud436/stingerloom-orm"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
