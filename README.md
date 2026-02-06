@@ -243,14 +243,6 @@ export const InjectRepository = (
 };
 ```
 
-### Key Features
-
-- ✅ **@InjectRepository decorator** - Inject repository directly into services
-- ✅ **forFeature() pattern** - Register entities per module for better modularity
-- ✅ **Type-safe operations** - Full TypeScript support with BaseRepository<T>
-- ✅ **Automatic transaction handling** - Built-in transaction support
-- ✅ **NestJS lifecycle integration** - Proper startup and shutdown hooks
-
 ## Testing
 
 ```bash
