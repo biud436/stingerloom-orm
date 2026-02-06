@@ -78,6 +78,52 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * 엔티티 메타데이터를 레이어 시스템을 통해 조회합니다.
+   *
+   * 조회 우선순위:
+   * 1. EntityScanner.scan() — MetadataLayerRegistry 경유 (멀티테넌트 레이어 지원)
+   * 2. Reflect.getMetadata() — 데코레이터가 클래스에 직접 부착한 정적 메타데이터 (fallback)
+   *
+   * 이를 통해 withTenant() 등으로 컨텍스트를 전환했을 때,
+   * 해당 테넌트 레이어의 메타데이터가 올바르게 반환됩니다.
+   */
+  private resolveEntityMetadata<T>(
+    entity: ClazzType<T>,
+  ): EntityScannerMetadata | null {
+    const context = MetadataContext.isActive()
+      ? MetadataContext.getCurrentTenant()
+      : "public";
+
+    // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
+    const entityScanner = Container.get(EntityScanner);
+    const layeredMetadata = entityScanner.scan(entity);
+    if (layeredMetadata) {
+      this.logger.debug(
+        `[resolveEntityMetadata] "${entity.name}" resolved via LayeredMetadataStore (context: "${context}")`,
+      );
+      return layeredMetadata;
+    }
+
+    // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
+    const reflectMetadata = Reflect.getMetadata(ENTITY_TOKEN, entity) as
+      | EntityScannerMetadata
+      | undefined;
+
+    if (reflectMetadata) {
+      this.logger.warn(
+        `[resolveEntityMetadata] "${entity.name}" resolved via Reflect.getMetadata fallback (context: "${context}"). ` +
+          `This entity was not found in the layered store.`,
+      );
+    } else {
+      this.logger.error(
+        `[resolveEntityMetadata] "${entity.name}" not found in any metadata source (context: "${context}")`,
+      );
+    }
+
+    return reflectMetadata ?? null;
+  }
+
+  /**
    * 변경 감지를 위한 프록시 객체를 생성합니다.
    */
   private createProxy<T>(entity: T): T {
@@ -264,11 +310,8 @@ export class EntityManager implements BaseEntityManager {
       await transactionHolder.startTransaction();
       await transactionHolder.query("SET autocommit = 0");
 
-      // 메타데이터를 가져옵니다.
-      const metadata = Reflect.getMetadata(
-        ENTITY_TOKEN,
-        entity,
-      ) as EntityScannerMetadata;
+      // 메타데이터를 가져옵니다 (레이어 시스템 경유).
+      const metadata = this.resolveEntityMetadata(entity);
 
       if (!metadata) {
         throw new Error("Entity metadata does not exist.");
@@ -397,10 +440,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     item: Partial<T>,
   ): Promise<InstanceType<ClazzType<T>>> {
-    const metadata = Reflect.getMetadata(
-      ENTITY_TOKEN,
-      entity,
-    ) as EntityScannerMetadata;
+    const metadata = this.resolveEntityMetadata(entity);
 
     if (!metadata) {
       throw new Error("Entity metadata does not exist.");
