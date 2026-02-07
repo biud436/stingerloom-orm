@@ -38,7 +38,7 @@ export class BaseRepository<T> {
    * @param findOption The options to find entities.
    * @returns A promise that resolves to the result of the find operation.
    */
-  async find(findOption: FindOption<T>): Promise<EntityResult<T>> {
+  async find(findOption?: FindOption<T>): Promise<EntityResult<T>> {
     return await this.em.find<T>(this.entity, findOption);
   }
 

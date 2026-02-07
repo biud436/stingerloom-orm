@@ -316,7 +316,7 @@ export class EntityManager implements BaseEntityManager {
    */
   async find<T>(
     entity: ClazzType<T>,
-    findOption: FindOption<T>,
+    findOption: FindOption<T> = {},
   ): Promise<EntityResult<T>> {
     const { select, orderBy, where, take } = findOption;
     const { limit } = findOption;

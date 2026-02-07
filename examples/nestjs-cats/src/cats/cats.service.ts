@@ -27,7 +27,7 @@ export class CatsService {
   }
 
   async findAll(): Promise<Cat[]> {
-    const result = await this.catRepository.find({});
+    const result = await this.catRepository.find();
     if (typeof result === "object" && !Array.isArray(result)) {
       return [result];
     }
