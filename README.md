@@ -58,16 +58,20 @@ export class Cat {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column({ type: "varchar", length: 255, nullable: false })
+  @Column()
   name!: string;
 
-  @Column({ type: "int", length: 11, nullable: false })
+  @Column()
   age!: number;
 
-  @Column({ type: "varchar", length: 255, nullable: false })
+  @Column()
   breed!: string;
 
-  @Column({ type: "datetime", name: "created_at", nullable: false })
+  @Column({
+    type: "datetime",
+    nullable: false,
+    length: 6,
+  })
   createdAt!: Date;
 }
 ```
