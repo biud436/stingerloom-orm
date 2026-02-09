@@ -26,10 +26,10 @@ git clone https://github.com/biud436/stingerloom-orm.git
 cd stingerloom-orm
 
 # Install dependencies
-npm install
+pnpm install
 
 # Build
-npm run build
+pnpm build
 ```
 
 ### Required Dependencies
