@@ -239,9 +239,14 @@ export class MySqlDriver implements ISqlDriver {
    */
   createTable(tableName: string, columns: SchemaOptions[]) {
     const columnsMap = columns.map((column) => {
-      const option = column.options as ColumnOption;
+      // column.options가 없을 경우 기본값 제공
+      const option = (column.options ?? {
+        type: "varchar",
+        length: 255,
+        nullable: false,
+      }) as ColumnOption;
 
-      let type = this.castType(option.type);
+      let type = this.castType(option.type ?? "varchar");
 
       // BOOLEAN 타입의 길이를 설정합니다.
       // 길이가 설정되어 있지 않다면 기본값은 1입니다.
@@ -265,8 +270,15 @@ export class MySqlDriver implements ISqlDriver {
         type = type.replace("$scale", option.scale?.toString() || "2");
       }
 
+      // 타입에 이미 괄호가 포함되어 있거나 (TINYINT(1), DECIMAL(10,2) 등)
+      // length가 없거나 0인 경우에는 길이를 추가하지 않습니다.
+      const alreadyHasParens = type.includes("(");
+      const nullable = option.nullable ?? false;
+      const typeWithLength =
+        alreadyHasParens || !option.length ? type : `${type}(${option.length})`;
+
       return raw(
-        `\`${column.name}\` ${type}(${option.length}) ${option.nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""} ${option.autoIncrement ? "AUTO_INCREMENT" : ""}`,
+        `\`${column.name}\` ${typeWithLength} ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""} ${option.autoIncrement ? "AUTO_INCREMENT" : ""}`,
       );
     });
 

@@ -5,26 +5,13 @@ export class Cat {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column({
-    length: 255,
-    nullable: false,
-    type: "varchar",
-  })
+  @Column()
   name!: string;
 
-  @Column({
-    type: "int",
-    nullable: false,
-
-    length: 11,
-  })
+  @Column()
   age!: number;
 
-  @Column({
-    length: 255,
-    nullable: false,
-    type: "varchar",
-  })
+  @Column()
   breed!: string;
 
   @Column({

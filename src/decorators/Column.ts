@@ -28,13 +28,14 @@ export type ColumnType =
 
 export interface ColumnOption {
   name?: string;
-  length: number;
-  nullable: boolean;
+  length?: number;
+  nullable?: boolean;
 
   /**
    * ColumnType에 속하면 ColumnType을 사용하고, 아니면 string을 사용합니다.
+   * 생략 시 TypeScript의 design:type 메타데이터로부터 자동 추론됩니다.
    */
-  type: ColumnType;
+  type?: ColumnType;
   primary?: boolean;
   autoIncrement?: boolean;
 
@@ -45,6 +46,46 @@ export interface ColumnOption {
 
   precision?: number;
   scale?: number;
+}
+
+/**
+ * 해석이 완료된 ColumnOption으로, type/length/nullable이 항상 존재합니다.
+ * Column 데코레이터 내부에서 기본값이 적용된 후의 타입입니다.
+ */
+export type ResolvedColumnOption = Required<
+  Pick<ColumnOption, "type" | "length" | "nullable">
+> &
+  Omit<ColumnOption, "type" | "length" | "nullable">;
+
+/**
+ * TypeScript의 design:type 메타데이터로부터 컬럼의 기본 설정을 추론합니다.
+ *
+ * | TS 타입   | DB 타입    | 기본 길이 |
+ * |-----------|------------|----------|
+ * | String    | varchar    | 255      |
+ * | Number    | int        | 11       |
+ * | Boolean   | boolean    | 1        |
+ * | Date      | datetime   | 0        |
+ * | Buffer    | blob       | 0        |
+ * | (기타)    | text       | 0        |
+ */
+export function inferColumnDefaults(
+  designType: any,
+): Pick<ResolvedColumnOption, "type" | "length" | "nullable"> {
+  switch (designType) {
+    case String:
+      return { type: "varchar", length: 255, nullable: false };
+    case Number:
+      return { type: "int", length: 11, nullable: false };
+    case Boolean:
+      return { type: "boolean", length: 1, nullable: false };
+    case Date:
+      return { type: "datetime", length: 0, nullable: false };
+    case Buffer:
+      return { type: "blob", length: 0, nullable: true };
+    default:
+      return { type: "text", length: 0, nullable: true };
+  }
 }
 
 export const COLUMN_TOKEN = Symbol.for("STG_COLUMN");
@@ -63,13 +104,20 @@ export function Column(option?: ColumnOption): PropertyDecorator {
   return (target, propertyKey) => {
     const injectParam = ReflectManager.getType<any>(target, propertyKey);
 
-    const name = option?.name || propertyKey.toString();
+    // design:type으로부터 기본값을 추론한 뒤, 사용자 옵션으로 덮어씁니다.
+    const defaults = inferColumnDefaults(injectParam);
+    const resolvedOption: ResolvedColumnOption = {
+      ...defaults,
+      ...option,
+    };
+
+    const name = resolvedOption.name || propertyKey.toString();
     const metadata = <ColumnMetadata>{
       target,
       name,
-      options: option,
+      options: resolvedOption,
       type: injectParam,
-      transform: option?.transform,
+      transform: resolvedOption.transform,
     };
 
     const columns = Reflect.getMetadata(COLUMN_TOKEN, target);

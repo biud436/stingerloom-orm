@@ -342,9 +342,14 @@ export class PostgresDriver implements ISqlDriver {
    */
   createTable(tableName: string, columns: SchemaOptions[]) {
     const columnsMap = columns.map((column) => {
-      const option = column.options as ColumnOption;
+      // column.options가 없을 경우 기본값 제공
+      const option = (column.options ?? {
+        type: "varchar",
+        length: 255,
+        nullable: false,
+      }) as ColumnOption;
 
-      let type = this.castType(option.type);
+      let type = this.castType(option.type ?? "varchar");
 
       // BOOLEAN 타입은 PostgreSQL 네이티브 BOOLEAN 사용
       if (option.type === "boolean") {
@@ -364,10 +369,12 @@ export class PostgresDriver implements ISqlDriver {
         type = type.replace("$scale", option.scale?.toString() || "2");
       }
 
+      const nullable = option.nullable ?? false;
+
       // auto_increment → SERIAL (PRIMARY KEY와 함께)
       if (option.autoIncrement) {
         return raw(
-          `"${column.name}" SERIAL ${option.nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""}`,
+          `"${column.name}" SERIAL ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""}`,
         );
       }
 
@@ -380,7 +387,7 @@ export class PostgresDriver implements ISqlDriver {
         needsLength && option.length ? `${type}(${option.length})` : type;
 
       return raw(
-        `"${column.name}" ${typeWithLength} ${option.nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""}`,
+        `"${column.name}" ${typeWithLength} ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""}`,
       );
     });
 
