@@ -17,8 +17,17 @@ export const STINGERLOOM_ORM_OPTION_TOKEN = Symbol.for(
 );
 export const INJECT_REPOSITORIES_TOKEN = "INJECT_REPOSITORIES_TOKEN";
 
-export function makeInjectRepositoryToken(entity: ClazzType<unknown>): string {
-  return `${INJECT_REPOSITORIES_TOKEN}_${entity.name}`;
+const repositoryTokenCache = new WeakMap<ClazzType<unknown>, symbol>();
+
+export function makeInjectRepositoryToken(entity: ClazzType<unknown>): symbol {
+  let token = repositoryTokenCache.get(entity);
+
+  if (!token) {
+    token = Symbol(`${INJECT_REPOSITORIES_TOKEN}_${entity.name}`);
+    repositoryTokenCache.set(entity, token);
+  }
+
+  return token;
 }
 
 @Module({})
