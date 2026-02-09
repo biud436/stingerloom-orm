@@ -319,17 +319,64 @@ export class MySqlDriver implements ISqlDriver {
 
   /**
    * ColumnType을 데이터베이스 컬럼 타입으로 변환합니다.
+   *
+   * ## MySQL/MariaDB 타입 매핑
+   * | ColumnType | MySQL Type                      |
+   * |------------|--------------------------------|
+   * | varchar    | VARCHAR                        |
+   * | int        | INT                            |
+   * | number     | INT                            |
+   * | boolean    | TINYINT(1)                     |
+   * | datetime   | DATETIME                       |
+   * | date       | DATE                           |
+   * | timestamp  | TIMESTAMP                      |
+   * | float      | FLOAT                          |
+   * | double     | DECIMAL(precision, scale)      |
+   * | blob       | BLOB                           |
+   * | text       | TEXT                           |
+   * | longtext   | LONGTEXT                       |
+   * | bigint     | BIGINT                         |
+   * | json       | JSON                           |
    */
   castType(type: ColumnType): string {
     switch (type) {
+      case "varchar":
+        return "VARCHAR";
+      case "int":
+      case "number":
+        return "INT";
       case "boolean":
         return "TINYINT($n)";
+      case "datetime":
+        return "DATETIME";
+      case "date":
+        return "DATE";
+      case "timestamp":
+        return "TIMESTAMP";
       case "float":
         return "FLOAT";
       case "double":
         return "DECIMAL($precision, $scale)";
+      case "blob":
+        return "BLOB";
+      case "text":
+        return "TEXT";
+      case "longtext":
+        return "LONGTEXT";
+      case "bigint":
+        return "BIGINT";
+      case "json":
+        return "JSON";
+      case "char":
+        return "CHAR";
+      case "enum":
+        return "ENUM";
+      case "array":
+        return "JSON"; // MySQL에서 array는 JSON으로 처리
+      case "jsonb": // MySQL에서 jsonb는 json과 동일
+        return "JSON";
       default:
-        return type;
+        return type as string;
     }
   }
 

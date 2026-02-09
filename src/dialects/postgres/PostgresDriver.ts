@@ -428,34 +428,65 @@ export class PostgresDriver implements ISqlDriver {
 
   /**
    * ColumnType을 데이터베이스 컬럼 타입으로 변환합니다.
+   *
+   * ## PostgreSQL 타입 매핑
+   * | ColumnType | PostgreSQL Type                |
+   * |------------|--------------------------------|
+   * | varchar    | VARCHAR                        |
+   * | int        | INTEGER                        |
+   * | number     | INTEGER                        |
+   * | boolean    | BOOLEAN (네이티브)              |
+   * | datetime   | TIMESTAMP                      |
+   * | date       | DATE                           |
+   * | timestamp  | TIMESTAMP                      |
+   * | float      | REAL                           |
+   * | double     | NUMERIC(precision, scale)      |
+   * | blob       | BYTEA                          |
+   * | text       | TEXT                           |
+   * | longtext   | TEXT                           |
+   * | bigint     | BIGINT                         |
+   * | json       | JSON                           |
+   * | jsonb      | JSONB                          |
+   * | array      | ARRAY                          |
    */
   castType(type: ColumnType): string {
     switch (type) {
-      case "boolean":
-        return "BOOLEAN";
-      case "float":
-        return "REAL";
-      case "double":
-        return "NUMERIC($precision, $scale)";
+      case "varchar":
+        return "VARCHAR";
       case "int":
       case "number":
         return "INTEGER";
-      case "bigint":
-        return "BIGINT";
+      case "boolean":
+        return "BOOLEAN";
       case "datetime":
         return "TIMESTAMP";
       case "date":
         return "DATE";
       case "timestamp":
         return "TIMESTAMP";
+      case "float":
+        return "REAL";
+      case "double":
+        return "NUMERIC($precision, $scale)";
       case "blob":
         return "BYTEA";
+      case "text":
+      case "longtext": // PostgreSQL에서는 TEXT로 통합
+        return "TEXT";
+      case "bigint":
+        return "BIGINT";
       case "json":
         return "JSON";
       case "jsonb":
         return "JSONB";
+      case "char":
+        return "CHAR";
+      case "enum":
+        return "TEXT"; // PostgreSQL은 ENUM 타입이 별도를 요구하므록c TEXT 사용
+      case "array":
+        return "ARRAY";
       default:
-        return type;
+        return type as string;
     }
   }
 

@@ -3,6 +3,18 @@ import { ReflectManager } from "../utils";
 import { ColumnMetadata, ColumnScanner } from "../scanner/ColumnScanner";
 import Container from "typedi";
 
+/**
+ * 데이터베이스 독립적인 추상 컬럼 타입입니다.
+ *
+ * 각 DB Driver의 `castType()` 메서드에서 실제 데이터베이스 타입으로 변환됩니다.
+ *
+ * 예시:
+ * - `"datetime"` → MySQL: `DATETIME`, PostgreSQL: `TIMESTAMP`
+ * - `"boolean"` → MySQL: `TINYINT(1)`, PostgreSQL: `BOOLEAN`
+ * - `"blob"` → MySQL: `BLOB`, PostgreSQL: `BYTEA`
+ *
+ * 이를 통해 동일한 엔티티 정의로 여러 데이터베이스를 지원할 수 있습니다.
+ */
 export type ColumnType =
   | "int"
   | "number"
@@ -60,14 +72,36 @@ export type ResolvedColumnOption = Required<
 /**
  * TypeScript의 design:type 메타데이터로부터 컬럼의 기본 설정을 추론합니다.
  *
- * | TS 타입   | DB 타입    | 기본 길이 |
- * |-----------|------------|----------|
- * | String    | varchar    | 255      |
- * | Number    | int        | 11       |
- * | Boolean   | boolean    | 1        |
- * | Date      | datetime   | 0        |
- * | Buffer    | blob       | 0        |
- * | (기타)    | text       | 0        |
+ * 반환되는 type은 **추상적인 ColumnType**이며, 각 DB Driver의 castType()에서
+ * 실제 데이터베이스 타입으로 변환됩니다.
+ *
+ * ## TypeScript → ColumnType 매핑
+ * | TS 타입   | ColumnType | 기본 길이 | nullable |
+ * |-----------|-----------|----------|----------|
+ * | String    | varchar   | 255      | false    |
+ * | Number    | int       | 11       | false    |
+ * | Boolean   | boolean   | 1        | false    |
+ * | Date      | datetime  | 0        | false    |
+ * | Buffer    | blob      | 0        | true     |
+ * | (기타)    | text      | 0        | true     |
+ *
+ * ## ColumnType → DB 실제 타입 변환 (Driver별)
+ *
+ * **MySQL/MariaDB:**
+ * - `varchar` → `VARCHAR(n)`
+ * - `int` → `INT(n)` (기본 타입, 변환 없음)
+ * - `boolean` → `TINYINT(1)`
+ * - `datetime` → `DATETIME`
+ * - `blob` → `BLOB`
+ * - `text` → `TEXT`
+ *
+ * **PostgreSQL:**
+ * - `varchar` → `VARCHAR(n)`
+ * - `int` / `number` → `INTEGER`
+ * - `boolean` → `BOOLEAN` (네이티브)
+ * - `datetime` → `TIMESTAMP`
+ * - `blob` → `BYTEA`
+ * - `text` → `TEXT`
  */
 export function inferColumnDefaults(
   designType: any,
