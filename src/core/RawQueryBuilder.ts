@@ -119,7 +119,10 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
       const [offset, count] = limit;
       if (this.dbType === "mysql") {
         this.sqlQuerySegments.push(sql`LIMIT ${offset}, ${count}`);
+      } else if (this.dbType === "postgresql") {
+        this.sqlQuerySegments.push(sql`LIMIT ${count} OFFSET ${offset}`);
       } else {
+        // Default to PostgreSQL syntax for other databases
         this.sqlQuerySegments.push(sql`LIMIT ${count} OFFSET ${offset}`);
       }
     } else {

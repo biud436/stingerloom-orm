@@ -16,10 +16,10 @@ import { TRANSACTION_ISOLATION_LEVEL } from "./IsolationLevel";
  * database transactions and connections. It provides methods to connect to the database,
  * execute queries, and handle transactions.
  */
-export class TransactionHolder extends IQueryEngine {
+export class TransactionSessionManager extends IQueryEngine {
   private connection?: IConnector;
   private dataSource?: IDataSource;
-  private readonly logger: Logger = new Logger(TransactionHolder.name);
+  private readonly logger: Logger = new Logger(TransactionSessionManager.name);
 
   /**
    * Constructs a new instance of the `TransactionHolder` class.

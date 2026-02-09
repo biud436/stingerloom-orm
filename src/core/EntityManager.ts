@@ -13,7 +13,7 @@ import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
-import { TransactionHolder } from "../dialects/TransactionHolder";
+import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
 import { FindOption } from "../dialects/FindOption";
 import { IDataSource } from "../dialects/IDataSource";
 import { MySqlDataSource } from "../dialects/mysql/MySqlDataSource";
@@ -321,7 +321,7 @@ export class EntityManager implements BaseEntityManager {
     const { select, orderBy, where, take } = findOption;
     const { limit } = findOption;
 
-    const transactionHolder = new TransactionHolder();
+    const transactionHolder = new TransactionSessionManager();
     const resultTransformer = ResultTransformerFactory.create();
 
     try {
@@ -481,7 +481,7 @@ export class EntityManager implements BaseEntityManager {
       throw new Error("Entity metadata does not exist.");
     }
 
-    const transactionHolder = new TransactionHolder();
+    const transactionHolder = new TransactionSessionManager();
 
     try {
       await transactionHolder.connect();

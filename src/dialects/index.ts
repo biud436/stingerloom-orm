@@ -13,5 +13,5 @@ export * from "./ISelectOption";
 export * from "./IsolationLevel";
 export * from "./ITxEngine";
 export * from "./SqlDriver";
-export * from "./TransactionHolder";
+export * from "./TransactionSessionManager";
 export * from "./EntityNotFound";
