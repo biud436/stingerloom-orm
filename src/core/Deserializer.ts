@@ -19,7 +19,8 @@ import { MyClassConstructor } from "./MyClassConstructor";
  *   },
  * };
  *
- * setDeserializer(deserializer);
+ * // DeserializerRegistry를 통해 전략 교체
+ * DeserializerRegistry.getInstance().setDeserializer(deserializer);
  * ```
  */
 export interface Deserializer {

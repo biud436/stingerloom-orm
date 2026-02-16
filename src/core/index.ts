@@ -9,6 +9,7 @@ export * from "./BaseInsertQueryBuilder";
 export * from "./DeserializeEntity";
 export * from "./DeserializeOptions";
 export * from "./Deserializer";
+export * from "./DeserializerRegistry";
 export * from "./ClassTransformerDeserializer";
 export * from "./MyClassConstructor";
 export * from "./DatabaseClientOptions";
