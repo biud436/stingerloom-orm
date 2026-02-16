@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { ClassConstructor } from "class-transformer";
+import { MyClassConstructor } from "./MyClassConstructor";
 import type { QueryResult } from "../types/QueryResult";
 
 export interface BaseResultTransformer {
@@ -7,14 +7,14 @@ export interface BaseResultTransformer {
    * SQL 결과를 단일 엔티티로 변환합니다.
    */
   toEntity<T>(
-    entityClass: ClassConstructor<T>,
+    entityClass: MyClassConstructor<T>,
     result: QueryResult<any> | undefined,
   ): T | undefined;
   /**
    * SQL 결과를 엔티티 배열로 변환합니다.
    */
   toEntities<T>(
-    entityClass: ClassConstructor<T>,
+    entityClass: MyClassConstructor<T>,
     result: QueryResult<any> | undefined,
   ): T[];
   /**
@@ -24,15 +24,15 @@ export interface BaseResultTransformer {
    * 결과가 여러 개면 엔티티 배열을 반환합니다.
    */
   transform<T>(
-    entityClass: ClassConstructor<T>,
+    entityClass: MyClassConstructor<T>,
     result: QueryResult<any> | undefined,
   ): T | T[] | undefined;
   /**
    * SQL 결과를 엔티티 또는 엔티티 배열로 변환합니다.
    */
   transformNested<T>(
-    entityClass: ClassConstructor<T>,
+    entityClass: MyClassConstructor<T>,
     result: QueryResult<any> | undefined,
-    relations: { [key: string]: ClassConstructor<any> },
+    relations: { [key: string]: MyClassConstructor<any> },
   ): T | T[] | undefined;
 }

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { ClassConstructor } from "class-transformer";
+import { MyClassConstructor } from "./MyClassConstructor";
 import type { QueryResult } from "../types/QueryResult";
 import { BaseResultTransformer } from "./BaseResultTransformer";
 import { deserializeEntity } from "./DeserializeEntity";
@@ -34,7 +34,7 @@ export class ResultTransformer implements BaseResultTransformer {
    * @param baseEntity
    */
   private extractBaseEntity<T>(
-    entityClass: ClassConstructor<T>,
+    entityClass: MyClassConstructor<T>,
     row: any,
     baseEntity: any,
   ) {
@@ -80,7 +80,7 @@ export class ResultTransformer implements BaseResultTransformer {
    * SQL 결과를 단일 엔티티로 변환합니다.
    */
   public toEntity<T>(
-    entityClass: ClassConstructor<T>,
+    entityClass: MyClassConstructor<T>,
     result: QueryResult<any> | undefined,
   ): T | undefined {
     if (this.hasNoResults(result)) {
@@ -96,7 +96,7 @@ export class ResultTransformer implements BaseResultTransformer {
    * SQL 결과를 엔티티 배열로 변환합니다.
    */
   public toEntities<T>(
-    entityClass: ClassConstructor<T>,
+    entityClass: MyClassConstructor<T>,
     result: QueryResult<any> | undefined,
   ): T[] {
     if (this.hasNoResults(result)) {
@@ -116,7 +116,7 @@ export class ResultTransformer implements BaseResultTransformer {
    * @returns
    */
   public transform<T>(
-    entityClass: ClassConstructor<T>,
+    entityClass: MyClassConstructor<T>,
     result: QueryResult<any> | undefined,
   ): T | T[] | undefined {
     if (this.hasNoResults(result)) {
@@ -153,7 +153,7 @@ export class ResultTransformer implements BaseResultTransformer {
    * @param resultSet SQL 결과
    */
   private fillPropertiesToForeignObject<T>(
-    entityClass: ClassConstructor<T>,
+    entityClass: MyClassConstructor<T>,
     baseEntity: ForeignObject<any>,
     resultSet: any,
   ) {
@@ -218,9 +218,9 @@ export class ResultTransformer implements BaseResultTransformer {
    * SQL 결과를 엔티티 또는 엔티티 배열로 변환합니다.
    */
   public transformNested<T>(
-    entityClass: ClassConstructor<T>,
+    entityClass: MyClassConstructor<T>,
     queryResult: QueryResult<any> | undefined,
-    relations?: { [key: string]: ClassConstructor<any> },
+    relations?: { [key: string]: MyClassConstructor<any> },
   ): T | T[] | undefined {
     if (this.hasNoResults(queryResult)) {
       return this.buildNullEntity();

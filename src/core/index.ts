@@ -7,5 +7,8 @@ export * from "./ResultTransformerFactory";
 export * from "./RawQueryBuilderFactory";
 export * from "./BaseInsertQueryBuilder";
 export * from "./DeserializeEntity";
+export * from "./DeserializeOptions";
+export * from "./Deserializer";
+export * from "./ClassTransformerDeserializer";
 export * from "./MyClassConstructor";
 export * from "./DatabaseClientOptions";
