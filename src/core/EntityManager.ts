@@ -481,15 +481,15 @@ export class EntityManager implements BaseEntityManager {
       throw new Error("Entity metadata does not exist.");
     }
 
-    const transactionHolder = new TransactionSessionManager();
+    const transactionManager = new TransactionSessionManager();
 
     try {
-      await transactionHolder.connect();
-      await transactionHolder.startTransaction();
+      await transactionManager.connect();
+      await transactionManager.startTransaction();
 
       // MySQL/MariaDB 전용: autocommit 비활성화
       if (this.isMySqlFamily()) {
-        await transactionHolder.query("SET autocommit = 0");
+        await transactionManager.query("SET autocommit = 0");
       }
 
       // PostgreSQL의 SERIAL 컬럼은 INSERT 시 생략해야 자동 생성됩니다.
@@ -529,7 +529,7 @@ export class EntityManager implements BaseEntityManager {
           ? raw(` RETURNING ${this.wrap(pk.name!)}`)
           : raw("");
 
-        const queryResult = (await transactionHolder.query<T>(
+        const queryResult = (await transactionManager.query<T>(
           sql`
                         INSERT INTO ${raw(this.wrap(metadata.name!))}
                         (${join(columns, ", ")})
@@ -537,7 +537,7 @@ export class EntityManager implements BaseEntityManager {
                     `,
         )) as { results: any; fields: any };
 
-        await transactionHolder.commit();
+        await transactionManager.commit();
 
         if (this.isMySqlFamily()) {
           const result = await this.findOne(entity, {
@@ -565,7 +565,7 @@ export class EntityManager implements BaseEntityManager {
         return sql`${raw(this.wrap(column.name!))} = ${(item as any)[column.name!]}`;
       });
 
-      await transactionHolder.query<T>(
+      await transactionManager.query<T>(
         sql`
                     UPDATE ${raw(this.wrap(metadata.name!))}
                     SET ${join(updateMap, ", ")}
@@ -573,7 +573,7 @@ export class EntityManager implements BaseEntityManager {
                 `,
       );
 
-      await transactionHolder.commit();
+      await transactionManager.commit();
 
       // Retrieve and return the updated entity.
       const result = await this.findOne(entity, {
@@ -583,14 +583,14 @@ export class EntityManager implements BaseEntityManager {
       return result as T;
     } catch (e: unknown) {
       try {
-        await transactionHolder.rollback();
+        await transactionManager.rollback();
       } catch (rollbackError) {
         this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
       }
       throw e;
     } finally {
       try {
-        await transactionHolder.close();
+        await transactionManager.close();
       } catch (closeError) {
         this.logger.error(`Failed to close transaction: ${closeError}`);
       }
