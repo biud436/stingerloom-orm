@@ -58,6 +58,22 @@ export interface ColumnOption {
 
   precision?: number;
   scale?: number;
+
+  /**
+   * PostgreSQL ENUM 타입에 포함될 값 목록입니다.
+   * `type: "enum"` 과 함께 사용합니다.
+   *
+   * @example
+   * @Column({ type: "enum", enumName: "user_role", enumValues: ["admin", "user", "guest"] })
+   * role: string;
+   */
+  enumValues?: string[];
+
+  /**
+   * PostgreSQL 사용자 정의 ENUM 타입 이름입니다.
+   * 생략 시 `${tableName}_${columnName}_enum` 형식으로 자동 생성됩니다.
+   */
+  enumName?: string;
 }
 
 /**

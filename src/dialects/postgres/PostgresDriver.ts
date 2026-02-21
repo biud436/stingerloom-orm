@@ -263,6 +263,131 @@ export class PostgresDriver implements ISqlDriver {
     return this.connector.query(`DROP INDEX IF EXISTS ${indexName}`);
   }
 
+  // ──────────────────────────────────────────────
+  // Enum 타입 관리 메서드 (PostgreSQL 전용)
+  // ──────────────────────────────────────────────
+
+  /**
+   * 사용자 정의 ENUM 타입이 존재하는지 확인합니다.
+   *
+   * @param enumName - 확인할 ENUM 타입 이름
+   */
+  hasEnumType(enumName: string): Promise<any> {
+    return this.connector.query(
+      `SELECT typname FROM pg_type WHERE typname = '${enumName}' AND typtype = 'e'`,
+    );
+  }
+
+  /**
+   * 새로운 사용자 정의 ENUM 타입을 생성합니다.
+   * 이미 존재하는 경우에는 생성을 건너뜁니다.
+   *
+   * @param enumName - 생성할 ENUM 타입 이름
+   * @param values   - ENUM에 포함될 값 목록
+   *
+   * @example
+   * await driver.createEnumType("user_role", ["admin", "user", "guest"]);
+   * // → CREATE TYPE "user_role" AS ENUM ('admin', 'user', 'guest')
+   */
+  async createEnumType(enumName: string, values: string[]): Promise<any> {
+    const rows: any[] = await this.hasEnumType(enumName);
+    if (rows && rows.length > 0) {
+      return;
+    }
+
+    const escapedValues = values
+      .map((v) => `'${v.replace(/'/g, "''")}'`)
+      .join(", ");
+
+    return this.connector.query(
+      `CREATE TYPE ${this.wrap(enumName)} AS ENUM (${escapedValues})`,
+    );
+  }
+
+  /**
+   * 사용자 정의 ENUM 타입을 삭제합니다.
+   *
+   * @param enumName - 삭제할 ENUM 타입 이름
+   * @param cascade  - true이면 해당 ENUM 타입을 참조하는 컬럼도 함께 삭제 (기본값: false)
+   */
+  dropEnumType(enumName: string, cascade: boolean = false): Promise<any> {
+    const suffix = cascade ? " CASCADE" : "";
+    return this.connector.query(
+      `DROP TYPE IF EXISTS ${this.wrap(enumName)}${suffix}`,
+    );
+  }
+
+  /**
+   * 기존 ENUM 타입에 새 값을 추가합니다.
+   * PostgreSQL 9.1 이상에서 지원됩니다.
+   *
+   * @param enumName  - 대상 ENUM 타입 이름
+   * @param value     - 추가할 값
+   * @param placement - 삽입 위치 옵션 (선택)
+   *
+   * @example
+   * // 마지막에 추가
+   * await driver.addEnumValue("user_role", "moderator");
+   *
+   * // 특정 값 앞에 삽입
+   * await driver.addEnumValue("user_role", "moderator", { before: "guest" });
+   *
+   * // 특정 값 뒤에 삽입
+   * await driver.addEnumValue("user_role", "moderator", { after: "user" });
+   */
+  addEnumValue(
+    enumName: string,
+    value: string,
+    placement?: { before?: string; after?: string },
+  ): Promise<any> {
+    const escaped = `'${value.replace(/'/g, "''")}'`;
+    let suffix = "";
+
+    if (placement?.before) {
+      suffix = ` BEFORE '${placement.before.replace(/'/g, "''")}'`;
+    } else if (placement?.after) {
+      suffix = ` AFTER '${placement.after.replace(/'/g, "''")}'`;
+    }
+
+    return this.connector.query(
+      `ALTER TYPE ${this.wrap(enumName)} ADD VALUE IF NOT EXISTS ${escaped}${suffix}`,
+    );
+  }
+
+  /**
+   * ENUM 타입의 기존 값을 다른 이름으로 변경합니다.
+   * PostgreSQL 10 이상에서 지원됩니다.
+   *
+   * @param enumName - 대상 ENUM 타입 이름
+   * @param oldValue - 변경할 현재 값
+   * @param newValue - 새로운 값
+   */
+  renameEnumValue(
+    enumName: string,
+    oldValue: string,
+    newValue: string,
+  ): Promise<any> {
+    return this.connector.query(
+      `ALTER TYPE ${this.wrap(enumName)} RENAME VALUE '${oldValue.replace(/'/g, "''")}' TO '${newValue.replace(/'/g, "''")}'`,
+    );
+  }
+
+  /**
+   * ENUM 타입에 속한 모든 값 목록을 반환합니다.
+   *
+   * @param enumName - 조회할 ENUM 타입 이름
+   * @returns `{ enumlabel: string }` 배열
+   */
+  listEnumValues(enumName: string): Promise<{ enumlabel: string }[]> {
+    return this.connector.query(
+      `SELECT e.enumlabel
+       FROM pg_enum e
+       JOIN pg_type t ON t.oid = e.enumtypid
+       WHERE t.typname = '${enumName}'
+       ORDER BY e.enumsortorder`,
+    );
+  }
+
   /**
    * 스키마를 가져옵니다 (information_schema 기반).
    * MySQL 호환 형식(MysqlSchemaInterface)으로 반환합니다.
@@ -354,6 +479,14 @@ export class PostgresDriver implements ISqlDriver {
       // BOOLEAN 타입은 PostgreSQL 네이티브 BOOLEAN 사용
       if (option.type === "boolean") {
         type = "BOOLEAN";
+      }
+
+      // ENUM 타입: enumName이 지정된 경우 해당 사용자 정의 타입을 사용,
+      // 없는 경우 자동으로 "${tableName}_${columnName}_enum" 형식으로 타입 이름을 생성합니다.
+      if (option.type === "enum") {
+        const resolvedEnumName =
+          option.enumName ?? `${tableName}_${column.name}_enum`;
+        type = `"${resolvedEnumName}"`;
       }
 
       // DECIMAL 타입의 경우, precision과 scale을 설정합니다.
@@ -448,6 +581,9 @@ export class PostgresDriver implements ISqlDriver {
    * | json       | JSON                           |
    * | jsonb      | JSONB                          |
    * | array      | ARRAY                          |
+   * | enum       | 사용자 정의 ENUM 타입           |
+   *              | (enumName 옵션 → `"enumName"`) |
+   *              | enumName 없을 때 폴백 → TEXT   |
    */
   castType(type: ColumnType): string {
     switch (type) {
@@ -482,7 +618,10 @@ export class PostgresDriver implements ISqlDriver {
       case "char":
         return "CHAR";
       case "enum":
-        return "TEXT"; // PostgreSQL은 ENUM 타입이 별도를 요구하므록c TEXT 사용
+        // PostgreSQL은 CREATE TYPE ... AS ENUM (...) 으로 사용자 정의 ENUM 타입을 생성해야 합니다.
+        // createTable()에서 enumName 옵션을 통해 실제 타입명으로 대체되므로,
+        // 여기서의 반환값("TEXT")은 enumName이 없을 때의 최종 폴백으로만 사용됩니다.
+        return "TEXT";
       case "array":
         return "ARRAY";
       default:

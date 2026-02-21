@@ -567,9 +567,9 @@ export class EntityManager implements BaseEntityManager {
 
       await transactionManager.query<T>(
         sql`
-                    UPDATE ${raw(this.wrap(metadata.name!))}
-                    SET ${join(updateMap, ", ")}
-                    WHERE ${raw(this.wrap(pk.name!))} = ${primaryKeyValue}
+          UPDATE ${raw(this.wrap(metadata.name!))}
+          SET ${join(updateMap, ", ")}
+          WHERE ${raw(this.wrap(pk.name!))} = ${primaryKeyValue}
                 `,
       );
 
