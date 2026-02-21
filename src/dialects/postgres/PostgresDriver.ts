@@ -46,7 +46,7 @@ export class PostgresDriver implements ISqlDriver {
   hasSchema(schemaName?: string): Promise<any> {
     const name = schemaName ?? this.schema;
     return this.connector.query(
-      `SELECT schema_name FROM information_schema.schemata WHERE schema_name = '${name}'`,
+      sql`SELECT schema_name FROM information_schema.schemata WHERE schema_name = ${name}`,
     );
   }
 
@@ -108,7 +108,7 @@ export class PostgresDriver implements ISqlDriver {
   listTables(schemaName?: string): Promise<any> {
     const name = schemaName ?? this.schema;
     return this.connector.query(
-      `SELECT tablename FROM pg_tables WHERE schemaname = '${name}' ORDER BY tablename`,
+      sql`SELECT tablename FROM pg_tables WHERE schemaname = ${name} ORDER BY tablename`,
     );
   }
 
@@ -120,7 +120,7 @@ export class PostgresDriver implements ISqlDriver {
    */
   moveTableToSchema(tableName: string, targetSchema: string): Promise<any> {
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} SET SCHEMA ${this.wrap(targetSchema)}`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} SET SCHEMA ${this.wrap(targetSchema)}`,
     );
   }
 
@@ -129,7 +129,7 @@ export class PostgresDriver implements ISqlDriver {
    */
   hasTable(name: string) {
     return this.connector.query(
-      `SELECT tablename FROM pg_tables WHERE schemaname = '${this.schema}' AND tablename = '${name}'`,
+      sql`SELECT tablename FROM pg_tables WHERE schemaname = ${this.schema} AND tablename = ${name}`,
     );
   }
 
@@ -138,7 +138,7 @@ export class PostgresDriver implements ISqlDriver {
    */
   addPrimaryKey(tableName: string, columnName: string) {
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} ADD PRIMARY KEY (${this.wrap(columnName)})`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} ADD PRIMARY KEY (${this.wrap(columnName)})`,
     );
   }
 
@@ -148,16 +148,37 @@ export class PostgresDriver implements ISqlDriver {
    */
   addAutoIncrement(tableName: string, columnName: string) {
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} ALTER COLUMN ${this.wrap(columnName)} ADD GENERATED ALWAYS AS IDENTITY`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} ALTER COLUMN ${this.wrap(columnName)} ADD GENERATED ALWAYS AS IDENTITY`,
     );
   }
 
   /**
    * 테이블의 기본키를 제거합니다.
+   *
+   * pg_constraint 카탈로그에서 실제 제약조건 이름을 조회한 뒤 제거합니다.
+   * 기본 명명규칙(table_pkey)에 의존하지 않으므로 마이그레이션·명명전략에 안전합니다.
    */
-  dropPrimaryKey(tableName: string) {
+  async dropPrimaryKey(tableName: string): Promise<any> {
+    const rows: Array<{ conname: string }> = await this.connector.query(
+      sql`SELECT c.conname
+          FROM pg_constraint c
+          JOIN pg_class t      ON c.conrelid      = t.oid
+          JOIN pg_namespace n  ON t.relnamespace  = n.oid
+          WHERE c.contype = 'p'
+            AND t.relname  = ${tableName}
+            AND n.nspname  = ${this.schema}`,
+    );
+
+    if (!rows || rows.length === 0) {
+      throw new Exception(
+        `테이블 "${tableName}"에서 PRIMARY KEY 제약조건을 찾을 수 없습니다.`,
+        404,
+      );
+    }
+
+    const constraintName = rows[0].conname;
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} DROP CONSTRAINT ${tableName}_pkey`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} DROP CONSTRAINT ${this.wrap(constraintName)}`,
     );
   }
 
@@ -166,17 +187,40 @@ export class PostgresDriver implements ISqlDriver {
    */
   addUniqueKey(tableName: string, columnName: string) {
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} ADD UNIQUE (${this.wrap(columnName)})`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} ADD UNIQUE (${this.wrap(columnName)})`,
     );
   }
 
   /**
    * 테이블의 유니크 키를 제거합니다.
+   *
+   * pg_constraint 카탈로그에서 해당 컬럼을 포함하는 UNIQUE 제약조건의 실제 이름을
+   * 조회한 뒤 제거합니다. 복합 UNIQUE·커스텀 명명전략에도 올바르게 동작합니다.
    */
-  dropUniqueKey(tableName: string, columnName: string) {
-    const constraintName = `${tableName}_${columnName}_key`;
+  async dropUniqueKey(tableName: string, columnName: string): Promise<any> {
+    const rows: Array<{ conname: string }> = await this.connector.query(
+      sql`SELECT c.conname
+          FROM pg_constraint c
+          JOIN pg_class t      ON c.conrelid      = t.oid
+          JOIN pg_namespace n  ON t.relnamespace  = n.oid
+          JOIN pg_attribute a  ON a.attrelid = t.oid
+                              AND a.attnum   = ANY(c.conkey)
+          WHERE c.contype = 'u'
+            AND t.relname  = ${tableName}
+            AND n.nspname  = ${this.schema}
+            AND a.attname  = ${columnName}`,
+    );
+
+    if (!rows || rows.length === 0) {
+      throw new Exception(
+        `테이블 "${tableName}"의 컬럼 "${columnName}"에 대한 UNIQUE 제약조건을 찾을 수 없습니다.`,
+        404,
+      );
+    }
+
+    const constraintName = rows[0].conname;
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} DROP CONSTRAINT ${constraintName}`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} DROP CONSTRAINT ${this.wrap(constraintName)}`,
     );
   }
 
@@ -185,7 +229,7 @@ export class PostgresDriver implements ISqlDriver {
    */
   addColumn(tableName: string, columnName: string, columnType: string) {
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} ADD COLUMN ${this.wrap(columnName)} ${columnType}`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} ADD COLUMN ${this.wrap(columnName)} ${columnType}`,
     );
   }
 
@@ -194,7 +238,7 @@ export class PostgresDriver implements ISqlDriver {
    */
   dropColumn(tableName: string, columnName: string) {
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} DROP COLUMN ${this.wrap(columnName)}`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} DROP COLUMN ${this.wrap(columnName)}`,
     );
   }
 
@@ -214,7 +258,7 @@ export class PostgresDriver implements ISqlDriver {
     );
 
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} ADD CONSTRAINT ${foreignKeyName} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${this.wrap(foreignTableName)}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} ADD CONSTRAINT ${foreignKeyName} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${this.wrapQualified(foreignTableName)}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
     );
   }
 
@@ -231,10 +275,34 @@ export class PostgresDriver implements ISqlDriver {
 
   /**
    * 외래키를 제거합니다.
+   *
+   * pg_constraint 카탈로그에서 해당 컬럼을 참조하는 FOREIGN KEY 제약조건의 실제 이름을
+   * 조회한 뒤 제거합니다. FK 제약조건 이름은 컬럼명이 아니므로 카탈로그 조회가 필수입니다.
    */
-  dropForeignKey(tableName: string, columnName: string) {
+  async dropForeignKey(tableName: string, columnName: string): Promise<any> {
+    const rows: Array<{ conname: string }> = await this.connector.query(
+      sql`SELECT c.conname
+          FROM pg_constraint c
+          JOIN pg_class t      ON c.conrelid      = t.oid
+          JOIN pg_namespace n  ON t.relnamespace  = n.oid
+          JOIN pg_attribute a  ON a.attrelid = t.oid
+                              AND a.attnum   = ANY(c.conkey)
+          WHERE c.contype = 'f'
+            AND t.relname  = ${tableName}
+            AND n.nspname  = ${this.schema}
+            AND a.attname  = ${columnName}`,
+    );
+
+    if (!rows || rows.length === 0) {
+      throw new Exception(
+        `테이블 "${tableName}"의 컬럼 "${columnName}"에 대한 FOREIGN KEY 제약조건을 찾을 수 없습니다.`,
+        404,
+      );
+    }
+
+    const constraintName = rows[0].conname;
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} DROP CONSTRAINT ${this.wrap(columnName)}`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} DROP CONSTRAINT ${this.wrap(constraintName)}`,
     );
   }
 
@@ -243,7 +311,7 @@ export class PostgresDriver implements ISqlDriver {
    */
   addIndex(tableName: string, columnName: string, indexName: string) {
     return this.connector.query(
-      `CREATE INDEX ${indexName} ON ${this.wrap(tableName)} (${this.wrap(columnName)})`,
+      `CREATE INDEX ${this.wrap(indexName)} ON ${this.wrapQualified(tableName)} (${this.wrap(columnName)})`,
     );
   }
 
@@ -252,7 +320,7 @@ export class PostgresDriver implements ISqlDriver {
    */
   hasIndex(tableName: string, indexName: string) {
     return this.connector.query(
-      `SELECT COUNT(*) as count FROM pg_indexes WHERE tablename = '${tableName}' AND indexname = '${indexName}'`,
+      sql`SELECT COUNT(*) as count FROM pg_indexes WHERE tablename = ${tableName} AND indexname = ${indexName}`,
     );
   }
 
@@ -260,7 +328,10 @@ export class PostgresDriver implements ISqlDriver {
    * 인덱스를 제거합니다.
    */
   dropIndex(tableName: string, indexName: string) {
-    return this.connector.query(`DROP INDEX IF EXISTS ${indexName}`);
+    // PostgreSQL 인덱스는 스키마에 속합니다. schema-qualified 형식으로 명시합니다.
+    return this.connector.query(
+      `DROP INDEX IF EXISTS ${this.wrapQualified(indexName)}`,
+    );
   }
 
   // ──────────────────────────────────────────────
@@ -273,8 +344,14 @@ export class PostgresDriver implements ISqlDriver {
    * @param enumName - 확인할 ENUM 타입 이름
    */
   hasEnumType(enumName: string): Promise<any> {
+    // pg_namespace join으로 현재 스키마 범위 내에서만 조회합니다.
     return this.connector.query(
-      `SELECT typname FROM pg_type WHERE typname = '${enumName}' AND typtype = 'e'`,
+      sql`SELECT pg_type.typname
+          FROM pg_type
+          JOIN pg_namespace ON pg_type.typnamespace = pg_namespace.oid
+          WHERE pg_type.typname = ${enumName}
+            AND pg_type.typtype = 'e'
+            AND pg_namespace.nspname = ${this.schema}`,
     );
   }
 
@@ -300,7 +377,7 @@ export class PostgresDriver implements ISqlDriver {
       .join(", ");
 
     return this.connector.query(
-      `CREATE TYPE ${this.wrap(enumName)} AS ENUM (${escapedValues})`,
+      `CREATE TYPE ${this.wrapQualified(enumName)} AS ENUM (${escapedValues})`,
     );
   }
 
@@ -313,7 +390,7 @@ export class PostgresDriver implements ISqlDriver {
   dropEnumType(enumName: string, cascade: boolean = false): Promise<any> {
     const suffix = cascade ? " CASCADE" : "";
     return this.connector.query(
-      `DROP TYPE IF EXISTS ${this.wrap(enumName)}${suffix}`,
+      `DROP TYPE IF EXISTS ${this.wrapQualified(enumName)}${suffix}`,
     );
   }
 
@@ -350,7 +427,7 @@ export class PostgresDriver implements ISqlDriver {
     }
 
     return this.connector.query(
-      `ALTER TYPE ${this.wrap(enumName)} ADD VALUE IF NOT EXISTS ${escaped}${suffix}`,
+      `ALTER TYPE ${this.wrapQualified(enumName)} ADD VALUE IF NOT EXISTS ${escaped}${suffix}`,
     );
   }
 
@@ -368,7 +445,7 @@ export class PostgresDriver implements ISqlDriver {
     newValue: string,
   ): Promise<any> {
     return this.connector.query(
-      `ALTER TYPE ${this.wrap(enumName)} RENAME VALUE '${oldValue.replace(/'/g, "''")}' TO '${newValue.replace(/'/g, "''")}'`,
+      `ALTER TYPE ${this.wrapQualified(enumName)} RENAME VALUE '${oldValue.replace(/'/g, "''")}' TO '${newValue.replace(/'/g, "''")}'`,
     );
   }
 
@@ -380,10 +457,10 @@ export class PostgresDriver implements ISqlDriver {
    */
   listEnumValues(enumName: string): Promise<{ enumlabel: string }[]> {
     return this.connector.query(
-      `SELECT e.enumlabel
+      sql`SELECT e.enumlabel
        FROM pg_enum e
        JOIN pg_type t ON t.oid = e.enumtypid
-       WHERE t.typname = '${enumName}'
+       WHERE t.typname = ${enumName}
        ORDER BY e.enumsortorder`,
     );
   }
@@ -394,7 +471,7 @@ export class PostgresDriver implements ISqlDriver {
    */
   getSchemas(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
-      `SELECT
+      sql`SELECT
         column_name AS "Field",
         data_type AS "Type",
         is_nullable AS "Null",
@@ -404,7 +481,7 @@ export class PostgresDriver implements ISqlDriver {
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
               ON tc.constraint_name = kcu.constraint_name
-            WHERE tc.table_name = '${tableName}' AND tc.constraint_type = 'PRIMARY KEY'
+            WHERE tc.table_name = ${tableName} AND tc.constraint_type = 'PRIMARY KEY'
           ) THEN 'PRI'
           ELSE ''
         END AS "Key",
@@ -414,7 +491,7 @@ export class PostgresDriver implements ISqlDriver {
           ELSE ''
         END AS "Extra"
       FROM information_schema.columns
-      WHERE table_schema = '${this.schema}' AND table_name = '${tableName}'
+      WHERE table_schema = ${this.schema} AND table_name = ${tableName}
       ORDER BY ordinal_position`,
     );
   }
@@ -424,8 +501,8 @@ export class PostgresDriver implements ISqlDriver {
    */
   getIndexes(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
-      `SELECT indexname AS "Field", indexdef AS "Type", '' AS "Null", 'MUL' AS "Key", NULL AS "Default", '' AS "Extra"
-       FROM pg_indexes WHERE tablename = '${tableName}'`,
+      sql`SELECT indexname AS "Field", indexdef AS "Type", '' AS "Null", 'MUL' AS "Key", NULL AS "Default", '' AS "Extra"
+       FROM pg_indexes WHERE schemaname = ${this.schema} AND tablename = ${tableName}`,
     );
   }
 
@@ -434,7 +511,7 @@ export class PostgresDriver implements ISqlDriver {
    */
   getForeignKeys(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
-      `SELECT
+      sql`SELECT
         kcu.column_name AS "COLUMN_NAME",
         ccu.table_name AS "REFERENCED_TABLE_NAME",
         ccu.column_name AS "REFERENCED_COLUMN_NAME"
@@ -444,7 +521,8 @@ export class PostgresDriver implements ISqlDriver {
       JOIN information_schema.constraint_column_usage ccu
         ON ccu.constraint_name = tc.constraint_name
       WHERE tc.constraint_type = 'FOREIGN KEY'
-        AND tc.table_name = '${tableName}'`,
+        AND tc.table_schema = ${this.schema}
+        AND tc.table_name = ${tableName}`,
     );
   }
 
@@ -453,12 +531,13 @@ export class PostgresDriver implements ISqlDriver {
    */
   getPrimaryKeys(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
-      `SELECT kcu.column_name AS "COLUMN_NAME"
+      sql`SELECT kcu.column_name AS "COLUMN_NAME"
        FROM information_schema.table_constraints tc
        JOIN information_schema.key_column_usage kcu
          ON tc.constraint_name = kcu.constraint_name
        WHERE tc.constraint_type = 'PRIMARY KEY'
-         AND tc.table_name = '${tableName}'`,
+         AND tc.table_schema = ${this.schema}
+         AND tc.table_name = ${tableName}`,
     );
   }
 
@@ -486,7 +565,8 @@ export class PostgresDriver implements ISqlDriver {
       if (option.type === "enum") {
         const resolvedEnumName =
           option.enumName ?? `${tableName}_${column.name}_enum`;
-        type = `"${resolvedEnumName}"`;
+        // ENUM 타입도 schema-qualified 형식으로 참조합니다.
+        type = this.wrapQualified(resolvedEnumName);
       }
 
       // DECIMAL 타입의 경우, precision과 scale을 설정합니다.
@@ -524,19 +604,29 @@ export class PostgresDriver implements ISqlDriver {
       );
     });
 
-    const result = sql`CREATE TABLE IF NOT EXISTS ${raw(this.wrap(tableName))} (${join(
+    const result = sql`CREATE TABLE IF NOT EXISTS ${raw(this.wrapQualified(tableName))} (${join(
       columnsMap,
       ",",
     )})`;
 
-    return this.connector.query(result.text);
+    return this.connector.query(result);
   }
 
   /**
    * 식별자를 큰따옴표로 감싸서 반환합니다 (PostgreSQL 표준).
+   * 내부에 포함된 `"` 문자는 PostgreSQL 표준인 `""` 으로 이스케이프합니다.
    */
-  wrap(columnName: string) {
-    return `"${columnName}"`;
+  wrap(name: string): string {
+    return `"${name.replace(/"/g, '""')}"`;
+  }
+
+  /**
+   * 식별자를 `"schema"."name"` 형식으로 반환합니다.
+   * search_path에 의존하지 않고 항상 스키마를 명시하므로
+   * 커넥션 풀 재사용·멀티테넌트 환경에서도 안전합니다.
+   */
+  wrapQualified(name: string): string {
+    return `${this.wrap(this.schema)}.${this.wrap(name)}`;
   }
 
   /**
