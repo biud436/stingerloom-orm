@@ -73,6 +73,50 @@
   - `notifySubscribers()`: `listenTo()`로 대상 엔티티 필터링
   - 22개 유닛 테스트
 
+- **EXPLAIN 쿼리 지원** (`58c8c37`)
+  - `EntityManager.explain<T>(entity, option?): Promise<ExplainResult>`
+  - `ExplainResult`: raw/rows/type/possibleKeys/key/cost 표준화 타입
+  - MySQL: `EXPLAIN SELECT ...`, PostgreSQL: `EXPLAIN (FORMAT JSON) SELECT ...`, SQLite: `EXPLAIN QUERY PLAN`
+  - `ISqlDriver.supportsExplain(): boolean`
+  - `BaseRepository.explain(option?)` 위임 메서드
+
+- **신기능 통합 테스트 추가** (`55d9422`)
+  - `integration/query-cache.test.ts`, `integration/entity-subscriber.test.ts`
+  - `integration/many-to-many.test.ts`, `integration/schema-generator.test.ts`
+
+- **OneToMany / ManyToOne 관계 통합 테스트** (미커밋 신규)
+  - `integration/helpers/create-relation-entity.ts`: 동적 엔티티 쌍 팩토리
+    - `createOneToManyTestEntities()`: 기본 관계 (cascade 없음)
+    - `createCascadeRelationEntities()`: cascade insert 관계
+    - MySQL FK 64자 제한 대응 짧은 테이블명 생성 (`shortTableName`)
+  - `integration/relations-one-to-many.test.ts`: 20개 통합 테스트
+    - Suite 1: 기본 ManyToOne/OneToMany — CRUD + eager 로딩 + relations 옵션 + FK 무결성
+    - Suite 2: Cascade Insert — OneToMany cascade: ["insert"] 자동 자식 저장
+
+- **커서 기반 페이지네이션** (`c608296`)
+  - `CursorPaginationOption<T>`: take, cursor, orderBy, direction, where
+  - `CursorPaginationResult<T>`: data, hasNextPage, nextCursor, count
+  - `encodeCursor()` / `decodeCursor()`: Base64 JSON 인코딩/디코딩
+  - `EntityManager.findWithCursor<T>(entity, option)`: `take+1` 조회로 hasNextPage 결정
+  - `@DeletedAt` 자동 필터, WHERE 조건 병합, orderBy 미지정 시 PK 기본값
+  - `BaseRepository.findWithCursor(option)` 위임 메서드
+  - 30개 유닛 테스트
+
+- **쿼리 타임아웃** (`3641c79`)
+  - `DatabaseClientOptions.queryTimeout?: number` — connection-level 기본 타임아웃
+  - `FindOption.timeout?: number` — per-query 타임아웃
+  - `ISqlDriver.setQueryTimeout(ms): string` — 드라이버별 SET 문 생성
+    - MySQL: `SET SESSION max_execution_time = N`
+    - PostgreSQL: `SET LOCAL statement_timeout = 'Nms'`
+    - SQLite: `PRAGMA busy_timeout = N`
+    - MSSQL: `SET LOCK_TIMEOUT N`
+  - `QueryTimeoutError` + `OrmErrorCode.QUERY_TIMEOUT`
+  - 25개 유닛 테스트
+
+- **한국어 문서화** (`aae2983`)
+  - `docs/` 폴더 신규 생성, 10개 파일
+  - getting-started, entities, relations, entity-manager, query-builder, transactions, migrations, advanced, multi-tenancy
+
 - **N+1 쿼리 감지 및 슬로우 쿼리 경고** (`935c1ee`)
   - `QueryTracker`: 쿼리 이력 추적 (엔티티명, SQL, 실행시간, 타임스탬프)
   - N+1 감지: 동일 엔티티 100ms 내 10회+ → `[N+1 WARNING]` 경고
@@ -126,7 +170,10 @@
 | 복합 PK + MSSQL + 쿼리 캐싱 + 타입 강화 | 813 |
 | EntitySubscriber | 906 |
 | N+1 감지 시스템 | 929 |
-| 통합 테스트 5개 파일 추가 | **1059** (unit: 1050 pass) |
+| 통합 테스트 5개 파일 추가 | **1059** |
+| 쿼리 타임아웃 + 커서 페이지네이션 + 한국어 문서 | 1163 |
+| EXPLAIN 쿼리 + 신기능 통합 테스트 추가 | **1163** (전부 통과) |
+| OneToMany/ManyToOne 관계 통합 테스트 추가 | 1163+ |
 
 ---
 

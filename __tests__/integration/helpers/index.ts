@@ -19,3 +19,9 @@ export {
   type DynamicEntityResult,
   type TestColumnDef,
 } from "./create-test-entity";
+
+export {
+  createOneToManyTestEntities,
+  createCascadeRelationEntities,
+  type RelatedEntitiesResult,
+} from "./create-relation-entity";

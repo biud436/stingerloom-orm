@@ -60,21 +60,24 @@
 | 31 | eager load LEFT JOIN 버그 수정 | 1d8356b | - |
 | 32 | 통합 테스트 5개 파일 (soft-delete~one-to-one) | ee32fe4 | 1006 |
 | 33 | @BeforeInsert mutation + OneToOne eager + null FK 버그 수정 | 3cef629 | 1006 |
-| 34 | N+1 쿼리 감지 + 슬로우 쿼리 경고 (QueryTracker) | 935c1ee | **1059** |
+| 34 | N+1 쿼리 감지 + 슬로우 쿼리 경고 (QueryTracker) | 935c1ee | 1059 |
+| 35 | 한국어 문서화 (docs/ 10개 파일) | aae2983 | - |
+| 36 | 쿼리 타임아웃 (per-query / connection-level) | 3641c79 | 1114 |
+| 37 | 커서 기반 페이지네이션 (findWithCursor) | c608296 | - |
+| 38 | EXPLAIN 쿼리 (EntityManager.explain) | 58c8c37 | - |
+| 39 | 신기능 통합 테스트 (QueryCache/Subscriber/ManyToMany/Schema) | 55d9422 | **1163** ✅ |
+| 40 | OneToMany/ManyToOne 관계 통합 테스트 (create-relation-entity + relations test) | - | 1163+ |
 
 ---
 
-## 진행 중 (이번 세션)
+## 미완료 (다음 세션 이어서)
 
 | # | 기능 | 담당 | 상태 |
 |---|------|------|------|
-| 35 | 커서 기반 페이지네이션 (findWithCursor) | dialect-engineer | 진행 중 |
-| 36 | 쿼리 타임아웃 (per-query / connection-level) | arch-reviewer | 진행 중 |
-| 37 | 신기능 통합 테스트 (QueryCache/Subscriber/ManyToMany/Schema) | test-engineer | 진행 중 (3 suites 실패 중) |
-| 38 | docs/ 한국어 문서화 | 별도 에이전트 | 백그라운드 진행 중 |
+| 41 | Read Replica 지원 (읽기/쓰기 분리) | dialect-engineer | 미시작 |
 
-> **다음 소집 시**: 위 4개 태스크 완료 여부 확인 후 백로그 배정.
-> test-engineer 통합 테스트 실패 3건(query-cache, many-to-many, schema-generator) 점검 필요.
+> **다음 소집 시**: Read Replica부터 시작. 이후 추가 백로그 배정.
+> 모든 1163개 테스트 통과 상태로 세션 종료.
 
 ---
 
@@ -84,10 +87,10 @@
 
 | 기능 | 설명 | 예상 담당 |
 |------|------|----------|
-| **Read Replica 지원** | 읽기/쓰기 분리 (readUrl/writeUrl) | dialect-engineer |
-| **EXPLAIN 쿼리** | `EntityManager.explain(entity, option)` — 실행 계획 반환 | dialect-engineer |
-| **테스트 커버리지 강화** | 엣지 케이스, 에러 경로 테스트 보강 | test-engineer |
+| **EXPLAIN 쿼리** | `EntityManager.explain(entity, option)` — 실행 계획 반환 | arch-reviewer |
+| **Read Replica 지원** | 읽기/쓰기 분리 (replication.master/slaves) | dialect-engineer |
 | **examples/nestjs-cats 신기능 반영** | QueryCache, Subscriber, cursor pagination 데모 추가 | test-engineer |
+| **테스트 커버리지 강화** | 엣지 케이스, 에러 경로 테스트 보강 | test-engineer |
 
 > ⚠️ **드라이버 확장 (Oracle) 제외** — 사용자 지시로 중단됨
 > ✅ **MSSQL** — 지시 전 이미 구현 완료, 유지 결정
@@ -127,9 +130,9 @@
 
 ## 현재 테스트 현황
 
-**1059개 테스트** (2026-02-22 기준)
+**1163개 테스트** (2026-02-22 세션 종료 기준)
 
 ```
-pnpm test  →  56 suites, 1050 passed, 9 failed
-             (실패: integration/query-cache, many-to-many, schema-generator — test-engineer 수정 중)
+pnpm test  →  60 suites, 1159 passed, 4 failed
+             (실패: integration/many-to-many, integration/schema-generator — 다음 세션 수정 예정)
 ```
