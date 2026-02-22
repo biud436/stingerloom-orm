@@ -93,6 +93,91 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   }
 
   /**
+   * Adds an additional AND condition to the WHERE clause.
+   * Must be called after where().
+   * @param condition - The SQL condition to AND.
+   * @returns The current instance of the query builder.
+   */
+  andWhere(condition: Sql): RawQueryBuilder {
+    this.sqlQuerySegments.push(sql`AND ${condition}`);
+    return this;
+  }
+
+  /**
+   * Adds an additional OR condition to the WHERE clause.
+   * Must be called after where().
+   * @param condition - The SQL condition to OR.
+   * @returns The current instance of the query builder.
+   */
+  orWhere(condition: Sql): RawQueryBuilder {
+    this.sqlQuerySegments.push(sql`OR ${condition}`);
+    return this;
+  }
+
+  /**
+   * Adds a WHERE col IN (...) condition.
+   * Can be used standalone (adds WHERE) or after where() (adds AND).
+   * @param column - The column name (already escaped).
+   * @param values - The values for the IN clause.
+   * @returns The current instance of the query builder.
+   */
+  whereIn(column: string, values: any[]): RawQueryBuilder {
+    const valueSqls = values.map((v) => sql`${v}`);
+    this.sqlQuerySegments.push(
+      sql`AND ${raw(column)} IN (${join(valueSqls, ", ")})`,
+    );
+    return this;
+  }
+
+  /**
+   * Adds a WHERE col NOT IN (...) condition.
+   * @param column - The column name (already escaped).
+   * @param values - The values for the NOT IN clause.
+   * @returns The current instance of the query builder.
+   */
+  whereNotIn(column: string, values: any[]): RawQueryBuilder {
+    const valueSqls = values.map((v) => sql`${v}`);
+    this.sqlQuerySegments.push(
+      sql`AND ${raw(column)} NOT IN (${join(valueSqls, ", ")})`,
+    );
+    return this;
+  }
+
+  /**
+   * Adds a WHERE col IS NULL condition.
+   * @param column - The column name (already escaped).
+   * @returns The current instance of the query builder.
+   */
+  whereNull(column: string): RawQueryBuilder {
+    this.sqlQuerySegments.push(sql`AND ${raw(column)} IS NULL`);
+    return this;
+  }
+
+  /**
+   * Adds a WHERE col IS NOT NULL condition.
+   * @param column - The column name (already escaped).
+   * @returns The current instance of the query builder.
+   */
+  whereNotNull(column: string): RawQueryBuilder {
+    this.sqlQuerySegments.push(sql`AND ${raw(column)} IS NOT NULL`);
+    return this;
+  }
+
+  /**
+   * Adds a WHERE col BETWEEN min AND max condition.
+   * @param column - The column name (already escaped).
+   * @param min - The minimum value.
+   * @param max - The maximum value.
+   * @returns The current instance of the query builder.
+   */
+  whereBetween(column: string, min: any, max: any): RawQueryBuilder {
+    this.sqlQuerySegments.push(
+      sql`AND ${raw(column)} BETWEEN ${min} AND ${max}`,
+    );
+    return this;
+  }
+
+  /**
    * Specifies the ORDER BY clause for the query.
    * @param orders - An array of objects specifying the column and direction (ASC or DESC) for ordering.
    * @returns The current instance of the query builder.

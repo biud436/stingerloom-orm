@@ -36,6 +36,43 @@ export interface BaseRawQueryBuilder {
   where(conditions: Sql[]): BaseRawQueryBuilder;
 
   /**
+   * Adds an additional AND condition to the WHERE clause.
+   * Must be called after where().
+   */
+  andWhere(condition: Sql): BaseRawQueryBuilder;
+
+  /**
+   * Adds an additional OR condition to the WHERE clause.
+   * Must be called after where().
+   */
+  orWhere(condition: Sql): BaseRawQueryBuilder;
+
+  /**
+   * Adds a WHERE col IN (...) condition.
+   */
+  whereIn(column: string, values: any[]): BaseRawQueryBuilder;
+
+  /**
+   * Adds a WHERE col NOT IN (...) condition.
+   */
+  whereNotIn(column: string, values: any[]): BaseRawQueryBuilder;
+
+  /**
+   * Adds a WHERE col IS NULL condition.
+   */
+  whereNull(column: string): BaseRawQueryBuilder;
+
+  /**
+   * Adds a WHERE col IS NOT NULL condition.
+   */
+  whereNotNull(column: string): BaseRawQueryBuilder;
+
+  /**
+   * Adds a WHERE col BETWEEN min AND max condition.
+   */
+  whereBetween(column: string, min: any, max: any): BaseRawQueryBuilder;
+
+  /**
    * Specifies the ORDER BY clause for the query.
    * @param orders - An array of objects specifying the column and direction (ASC or DESC) for ordering.
    * @returns The current instance of the query builder.
