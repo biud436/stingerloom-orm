@@ -28,5 +28,8 @@ export { ReflectManager } from "./utils/ReflectManager";
 export { createEntityKey } from "./utils/scanner";
 export { camelToSnakeCase } from "./utils/camelToSnakeCase";
 
+// Migration system
+export * from "./migration";
+
 // Error classes
 export * from "./errors";
