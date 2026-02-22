@@ -8,11 +8,11 @@ import { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { IConnector } from "../../core/IConnector";
 
 /**
- * SQLite 커넥터 구현체입니다.
- * better-sqlite3 패키지를 사용하여 동기식 SQLite 접근을 비동기 인터페이스로 래핑합니다.
+ * SQLite connector implementation.
+ * Wraps synchronous SQLite access via the better-sqlite3 package behind an async interface.
  *
- * SQLite는 파일 기반 데이터베이스이므로 host/port/username/password 대신
- * database 필드에 파일 경로를 지정합니다. ":memory:"를 사용하면 인메모리 DB를 생성합니다.
+ * Since SQLite is a file-based database, specify the file path in the database field
+ * instead of host/port/username/password. Use ":memory:" to create an in-memory database.
  */
 export class SqliteConnector extends IConnector {
   private db?: Database.Database;
@@ -26,17 +26,17 @@ export class SqliteConnector extends IConnector {
       this.db = new Database(database);
       this.isDebug = !!logging;
 
-      // WAL 모드 활성화 (성능 향상)
+      // Enable WAL mode for better performance
       this.db.pragma("journal_mode = WAL");
-      // 외래키 제약 활성화
+      // Enable foreign key constraints
       this.db.pragma("foreign_keys = ON");
     } catch (e: unknown) {
-      throw new Error(`SQLite 연결에 실패했습니다. ${e}`);
+      throw new Error(`Failed to connect to SQLite. ${e}`);
     }
   }
 
   /**
-   * SQLite는 커넥션 풀이 없으므로 DB 인스턴스 자체를 반환합니다.
+   * Since SQLite has no connection pool, returns the database instance itself.
    */
   async getConnection(): Promise<Database.Database> {
     if (!this.db) {
@@ -82,7 +82,7 @@ export class SqliteConnector extends IConnector {
   private executeRaw(db: Database.Database, sql: string, values?: any[]): any {
     const trimmed = sql.trimStart().toUpperCase();
 
-    // SELECT / PRAGMA / EXPLAIN / WITH (CTE) 등 결과를 반환하는 구문
+    // Statements that return rows: SELECT / PRAGMA / EXPLAIN / WITH (CTE)
     if (
       trimmed.startsWith("SELECT") ||
       trimmed.startsWith("PRAGMA") ||
@@ -93,7 +93,7 @@ export class SqliteConnector extends IConnector {
       return values && values.length > 0 ? stmt.all(...values) : stmt.all();
     }
 
-    // INSERT / UPDATE / DELETE / CREATE / ALTER / DROP 등
+    // Non-query statements: INSERT / UPDATE / DELETE / CREATE / ALTER / DROP
     const stmt = db.prepare(sql);
     const result =
       values && values.length > 0 ? stmt.run(...values) : stmt.run();
@@ -114,8 +114,8 @@ export class SqliteConnector extends IConnector {
     _connection: any,
     _level: TRANSACTION_ISOLATION_LEVEL,
   ): Promise<void> {
-    // SQLite는 트랜잭션 격리 수준 설정을 지원하지 않습니다.
-    // SQLite는 기본적으로 SERIALIZABLE 수준의 격리를 제공합니다.
+    // SQLite does not support setting transaction isolation levels.
+    // SQLite natively provides SERIALIZABLE isolation.
   }
 
   async startTransaction(
