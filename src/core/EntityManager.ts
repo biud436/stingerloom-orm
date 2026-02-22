@@ -48,6 +48,7 @@ import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { MetadataContext } from "../metadata/MetadataContext";
 import { injectLazyProxy } from "./LazyLoader";
 import { hasCascade } from "../types/CascadeType";
+import { EntityValidator } from "./EntityValidator";
 
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
@@ -993,6 +994,9 @@ export class EntityManager implements BaseEntityManager {
     if (!metadata) {
       throw new Error("Entity metadata does not exist.");
     }
+
+    // 유효성 검사 (@NotNull, @MinLength, @MaxLength, @Min, @Max)
+    EntityValidator.validate(entity, item);
 
     // Cascade: ManyToOne 관계의 부모 엔티티를 먼저 저장
     await this.cascadeSaveManyToOne(entity, item);
