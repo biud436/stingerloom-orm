@@ -10,7 +10,7 @@ export class ManyToOneScanner extends MetadataScanner {
     super("relations");
   }
 
-  public *makeManyTones(): IterableIterator<ManyToOneMetadata<unknown>> {
+  public *makeManyToOnes(): IterableIterator<ManyToOneMetadata<unknown>> {
     for (const [_, value] of this.mapper) {
       yield value;
     }

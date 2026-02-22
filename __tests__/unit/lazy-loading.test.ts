@@ -99,7 +99,7 @@ describe("@ManyToOne lazy option - metadata", () => {
     }
 
     const scanner = Container.get(ManyToOneScanner);
-    const allRelations = [...scanner.makeManyTones()];
+    const allRelations = [...scanner.makeManyToOnes()];
     const bookRelation = allRelations.find((r) => r.target === Book);
 
     expect(bookRelation).toBeDefined();
