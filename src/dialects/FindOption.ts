@@ -45,4 +45,10 @@ export type FindOption<T> = {
    * Specifies the relations to include in the query.
    */
   relations?: (keyof T)[];
+
+  /**
+   * If true, includes soft-deleted entities (@DeletedAt) in the results.
+   * By default, soft-deleted entities are excluded from find/findOne queries.
+   */
+  withDeleted?: boolean;
 };

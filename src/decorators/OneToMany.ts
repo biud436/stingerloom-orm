@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { ClazzType } from "../utils";
 import Container from "typedi";
 import { OneToManyScanner } from "../scanner";
-import { CascadeType } from "../types/CascadeType";
+import { CascadeOption, normalizeCascade } from "../types/CascadeType";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const ONE_TO_MANY_TOKEN = Symbol.for("STG_ONE_TO_MANY");
@@ -13,10 +13,11 @@ export type OneToManyOption = {
    */
   mappedBy: string;
   /**
-   * Cascade 작업 유형 배열입니다.
-   * 부모 엔티티 저장/삭제 시 자식 엔티티도 함께 처리합니다.
+   * Cascade 작업 유형입니다.
+   * true이면 모든 cascade(insert, update, delete) 적용.
+   * 배열이면 선택적 적용. 예: ["insert", "delete"]
    */
-  cascade?: CascadeType[];
+  cascade?: CascadeOption;
 };
 
 export type OneToManyMetadata<T> = {
@@ -34,9 +35,9 @@ export type OneToManyMetadata<T> = {
   mappedBy: string;
 
   /**
-   * Cascade 작업 유형
+   * 정규화된 Cascade 작업 유형 배열
    */
-  cascade?: CascadeType[];
+  cascade?: CascadeOption;
 };
 
 /**

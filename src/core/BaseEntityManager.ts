@@ -84,6 +84,32 @@ export abstract class BaseEntityManager {
    * 본 ORM은 Active Record Pattern은 지원하지 않기 떄문에,
    * Repository를 통하는 Data Mapper Pattern을 이용해야 합니다.
    */
+  /**
+   * @DeletedAt 컬럼이 있는 엔티티에 대해 soft delete를 수행합니다.
+   * deleted_at 컬럼을 현재 시각으로 UPDATE합니다.
+   *
+   * @param entity 엔티티 클래스
+   * @param criteria WHERE 조건
+   * @returns 영향받은 행 수를 포함하는 DeleteResult
+   */
+  abstract softDelete<T>(
+    entity: ClazzType<T>,
+    criteria: { [K in keyof T]?: T[K] },
+  ): Promise<DeleteResult>;
+
+  /**
+   * soft delete된 엔티티를 복원합니다.
+   * deleted_at 컬럼을 NULL로 UPDATE합니다.
+   *
+   * @param entity 엔티티 클래스
+   * @param criteria WHERE 조건
+   * @returns 영향받은 행 수를 포함하는 DeleteResult
+   */
+  abstract restore<T>(
+    entity: ClazzType<T>,
+    criteria: { [K in keyof T]?: T[K] },
+  ): Promise<DeleteResult>;
+
   abstract getRepository<T>(entity: ClazzType<T>): BaseRepository<T>;
 
   /**

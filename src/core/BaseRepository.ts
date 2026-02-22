@@ -85,6 +85,51 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Soft deletes entities matching the given criteria.
+   * Sets the @DeletedAt column to the current timestamp.
+   *
+   * @param criteria The conditions to match entities for soft deletion.
+   * @returns A promise that resolves to the number of affected rows.
+   */
+  async softDelete(criteria: { [K in keyof T]?: T[K] }): Promise<DeleteResult> {
+    return await this.em.softDelete<T>(this.entity, criteria);
+  }
+
+  /**
+   * Restores soft-deleted entities matching the given criteria.
+   * Sets the @DeletedAt column to NULL.
+   *
+   * @param criteria The conditions to match entities for restoration.
+   * @returns A promise that resolves to the number of affected rows.
+   */
+  async restore(criteria: { [K in keyof T]?: T[K] }): Promise<DeleteResult> {
+    return await this.em.restore<T>(this.entity, criteria);
+  }
+
+  /**
+   * Saves multiple entities in a single transaction.
+   * Each item is inserted (if no PK) or updated (if PK exists).
+   *
+   * @param items The partial entities to be saved.
+   * @returns A promise that resolves to an array of saved entities.
+   */
+  async saveMany(
+    items: Partial<T>[],
+  ): Promise<InstanceType<ClazzType<T>>[]> {
+    return await this.em.saveMany<T>(this.entity, items);
+  }
+
+  /**
+   * Inserts multiple entities using a single optimized INSERT query.
+   *
+   * @param items The partial entities to be inserted.
+   * @returns A promise that resolves to the number of affected rows.
+   */
+  async insertMany(items: Partial<T>[]): Promise<{ affected: number }> {
+    return await this.em.insertMany<T>(this.entity, items);
+  }
+
+  /**
    * Persists the entity.
    *
    * @param item The entity to be persisted.

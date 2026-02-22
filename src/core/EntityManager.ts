@@ -32,6 +32,7 @@ import {
   OneToManyMetadata,
   MANY_TO_MANY_TOKEN,
   ManyToManyMetadata,
+  DELETED_AT_TOKEN,
 } from "../decorators";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
@@ -46,6 +47,7 @@ import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { MetadataContext } from "../metadata/MetadataContext";
 import { injectLazyProxy } from "./LazyLoader";
+import { hasCascade } from "../types/CascadeType";
 
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
@@ -146,6 +148,17 @@ export class EntityManager implements BaseEntityManager {
     }
 
     return reflectMetadata ?? null;
+  }
+
+  /**
+   * @DeletedAt 데코레이터가 적용된 컬럼 이름을 반환합니다.
+   * 없으면 null을 반환합니다.
+   */
+  private getDeletedAtColumn<T>(entity: ClazzType<T>): string | null {
+    const column = Reflect.getMetadata(DELETED_AT_TOKEN, entity) as
+      | string
+      | undefined;
+    return column ?? null;
   }
 
   /**
@@ -762,6 +775,20 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      // @DeletedAt 컬럼이 있으면 자동으로 WHERE deleted_at IS NULL 조건 추가
+      const deletedAtColumn = this.getDeletedAtColumn(entity);
+      if (deletedAtColumn && !(findOption as any).withDeleted) {
+        if (eagerRelations.length > 0) {
+          whereMap.push(
+            Conditions.isNull(
+              `${this.wrap(tableName)}.${this.wrap(deletedAtColumn)}`,
+            ),
+          );
+        } else {
+          whereMap.push(Conditions.isNull(this.wrap(deletedAtColumn)));
+        }
+      }
+
       for (const key in orderBy) {
         const value = orderBy[key];
         if (value) {
@@ -1091,6 +1118,120 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * 여러 엔티티를 단일 트랜잭션으로 저장합니다.
+   * 각 아이템에 PK가 없으면 INSERT, 있으면 UPDATE를 수행합니다.
+   *
+   * @param entity 엔티티 클래스
+   * @param items 저장할 엔티티 배열
+   * @returns 저장된 엔티티 배열
+   */
+  async saveMany<T>(
+    entity: ClazzType<T>,
+    items: Partial<T>[],
+  ): Promise<InstanceType<ClazzType<T>>[]> {
+    if (items.length === 0) {
+      return [];
+    }
+
+    const results: InstanceType<ClazzType<T>>[] = [];
+    for (const item of items) {
+      const saved = await this.save(entity, item);
+      results.push(saved);
+    }
+    return results;
+  }
+
+  /**
+   * 여러 엔티티를 단일 INSERT INTO ... VALUES (...), (...) 쿼리로 삽입합니다.
+   * 기존 save()와 달리 PK 존재 여부를 확인하지 않고 항상 INSERT를 수행합니다.
+   * 성능 최적화를 위해 모든 행을 하나의 쿼리로 삽입합니다.
+   *
+   * @param entity 엔티티 클래스
+   * @param items 삽입할 엔티티 배열
+   * @returns 삽입된 행 수
+   */
+  async insertMany<T>(
+    entity: ClazzType<T>,
+    items: Partial<T>[],
+  ): Promise<{ affected: number }> {
+    if (items.length === 0) {
+      return { affected: 0 };
+    }
+
+    const metadata = this.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new Error("Entity metadata does not exist.");
+    }
+
+    const transactionManager = new TransactionSessionManager();
+
+    try {
+      await transactionManager.connect();
+      await transactionManager.startTransaction();
+
+      if (this.isMySqlFamily()) {
+        await transactionManager.query("SET autocommit = 0");
+      }
+
+      // auto-increment PK 컬럼을 제외한 삽입 대상 컬럼 결정
+      const insertableColumns = metadata.columns.filter(
+        (column: ColumnMetadata) => {
+          const isAutoIncrement = column.options?.autoIncrement;
+          if (!isAutoIncrement) return true;
+          // auto-increment 컬럼은 모든 아이템에서 값이 없는 경우에만 제외
+          return items.every(
+            (item) =>
+              (item as any)[column.name!] !== null &&
+              (item as any)[column.name!] !== undefined,
+          );
+        },
+      );
+
+      const columns = insertableColumns.map((column) =>
+        raw(this.wrap(column.name!)),
+      );
+
+      // 각 아이템의 값을 VALUES 절로 구성
+      const valueRows = items.map((item) => {
+        const rowValues = insertableColumns.map(
+          (column: ColumnMetadata) => (item as any)[column.name!],
+        );
+        return sql`(${join(rowValues, ", ")})`;
+      });
+
+      const queryStr = sql`INSERT INTO ${raw(this.wrap(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
+
+      const queryResult = (await transactionManager.query(
+        queryStr,
+      )) as { results: any; fields: any };
+
+      await transactionManager.commit();
+
+      let affected = items.length;
+      if (this.isMySqlFamily()) {
+        affected = queryResult?.results?.affectedRows ?? items.length;
+      } else if (queryResult?.results?.rowCount !== undefined) {
+        affected = queryResult.results.rowCount;
+      }
+
+      return { affected };
+    } catch (e: unknown) {
+      try {
+        await transactionManager.rollback();
+      } catch (rollbackError) {
+        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
+      }
+      throw e;
+    } finally {
+      try {
+        await transactionManager.close();
+      } catch (closeError) {
+        this.logger.error(`Failed to close transaction: ${closeError}`);
+      }
+    }
+  }
+
+  /**
    * 주어진 조건에 맞는 엔티티를 데이터베이스에서 삭제합니다.
    *
    * @param entity 삭제할 엔티티 클래스
@@ -1170,6 +1311,163 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * @DeletedAt 컬럼이 있는 엔티티에 대해 soft delete를 수행합니다.
+   * deleted_at 컬럼을 현재 시각으로 UPDATE합니다.
+   */
+  async softDelete<T>(
+    entity: ClazzType<T>,
+    criteria: { [K in keyof T]?: T[K] },
+  ): Promise<DeleteResult> {
+    const metadata = this.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new Error("Entity metadata does not exist.");
+    }
+
+    const deletedAtColumn = this.getDeletedAtColumn(entity);
+    if (!deletedAtColumn) {
+      throw new Error(
+        `Entity "${entity.name}" does not have a @DeletedAt column. Use delete() instead.`,
+      );
+    }
+
+    const transactionManager = new TransactionSessionManager();
+
+    try {
+      await transactionManager.connect();
+      await transactionManager.startTransaction();
+
+      if (this.isMySqlFamily()) {
+        await transactionManager.query("SET autocommit = 0");
+      }
+
+      const whereMap: Sql[] = [];
+      for (const key in criteria) {
+        const value = (criteria as any)[key];
+        if (value !== undefined && value !== null) {
+          whereMap.push(Conditions.equals(this.wrap(key), value));
+        }
+      }
+
+      if (whereMap.length === 0) {
+        throw new Error(
+          "Soft delete without conditions is not allowed. Provide at least one criterion.",
+        );
+      }
+
+      const whereSql = join(whereMap, " AND ");
+
+      const nowExpr = this.isPostgres() ? raw("NOW()") : raw("NOW()");
+      const updateQuery = sql`UPDATE ${raw(this.wrap(metadata.name!))} SET ${raw(this.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`;
+
+      const queryResult = (await transactionManager.query(
+        updateQuery,
+      )) as { results: any; fields: any };
+
+      await transactionManager.commit();
+
+      let affected = 0;
+      if (this.isMySqlFamily()) {
+        affected = queryResult?.results?.affectedRows ?? 0;
+      } else {
+        affected = queryResult?.results?.rowCount ?? 0;
+      }
+
+      return { affected };
+    } catch (e: unknown) {
+      try {
+        await transactionManager.rollback();
+      } catch (rollbackError) {
+        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
+      }
+      throw e;
+    } finally {
+      try {
+        await transactionManager.close();
+      } catch (closeError) {
+        this.logger.error(`Failed to close transaction: ${closeError}`);
+      }
+    }
+  }
+
+  /**
+   * soft delete된 엔티티를 복원합니다.
+   * deleted_at 컬럼을 NULL로 UPDATE합니다.
+   */
+  async restore<T>(
+    entity: ClazzType<T>,
+    criteria: { [K in keyof T]?: T[K] },
+  ): Promise<DeleteResult> {
+    const metadata = this.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new Error("Entity metadata does not exist.");
+    }
+
+    const deletedAtColumn = this.getDeletedAtColumn(entity);
+    if (!deletedAtColumn) {
+      throw new Error(
+        `Entity "${entity.name}" does not have a @DeletedAt column. Cannot restore.`,
+      );
+    }
+
+    const transactionManager = new TransactionSessionManager();
+
+    try {
+      await transactionManager.connect();
+      await transactionManager.startTransaction();
+
+      if (this.isMySqlFamily()) {
+        await transactionManager.query("SET autocommit = 0");
+      }
+
+      const whereMap: Sql[] = [];
+      for (const key in criteria) {
+        const value = (criteria as any)[key];
+        if (value !== undefined && value !== null) {
+          whereMap.push(Conditions.equals(this.wrap(key), value));
+        }
+      }
+
+      if (whereMap.length === 0) {
+        throw new Error(
+          "Restore without conditions is not allowed. Provide at least one criterion.",
+        );
+      }
+
+      const whereSql = join(whereMap, " AND ");
+
+      const restoreQuery = sql`UPDATE ${raw(this.wrap(metadata.name!))} SET ${raw(this.wrap(deletedAtColumn))} = NULL WHERE ${whereSql}`;
+
+      const queryResult = (await transactionManager.query(
+        restoreQuery,
+      )) as { results: any; fields: any };
+
+      await transactionManager.commit();
+
+      let affected = 0;
+      if (this.isMySqlFamily()) {
+        affected = queryResult?.results?.affectedRows ?? 0;
+      } else {
+        affected = queryResult?.results?.rowCount ?? 0;
+      }
+
+      return { affected };
+    } catch (e: unknown) {
+      try {
+        await transactionManager.rollback();
+      } catch (rollbackError) {
+        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
+      }
+      throw e;
+    } finally {
+      try {
+        await transactionManager.close();
+      } catch (closeError) {
+        this.logger.error(`Failed to close transaction: ${closeError}`);
+      }
+    }
+  }
+
+  /**
    * save 시 cascade: "insert" | "update" 가 설정된 OneToMany 관계의 자식 엔티티를 재귀적으로 저장합니다.
    */
   private async cascadeSaveOneToMany<T>(
@@ -1180,8 +1478,6 @@ export class EntityManager implements BaseEntityManager {
     const oneToManyMeta = this.resolveOneToManyMetadata(entity);
 
     for (const rel of oneToManyMeta) {
-      if (!rel.cascade || rel.cascade.length === 0) continue;
-
       const children = (item as any)[rel.propertyKey];
       if (!children || !Array.isArray(children) || children.length === 0)
         continue;
@@ -1189,9 +1485,8 @@ export class EntityManager implements BaseEntityManager {
       const RelatedEntity = rel.getRelatedEntity();
 
       // cascade: "insert" 또는 "update" 가 포함된 경우에만 처리
-      const hasSaveCascade =
-        rel.cascade.includes("insert") || rel.cascade.includes("update");
-      if (!hasSaveCascade) continue;
+      if (!hasCascade(rel.cascade, "insert") && !hasCascade(rel.cascade, "update"))
+        continue;
 
       // ManyToOne 측의 joinColumn 찾기
       const manyToOneItems = this.resolveManyToOneMetadata(RelatedEntity);
@@ -1218,15 +1513,11 @@ export class EntityManager implements BaseEntityManager {
     const manyToOneRelations = this.resolveManyToOneMetadata(entity);
 
     for (const rel of manyToOneRelations) {
-      if (!rel.option?.cascade || rel.option.cascade.length === 0) continue;
-
       const relatedValue = (item as any)[rel.columnName];
       if (!relatedValue || typeof relatedValue !== "object") continue;
 
-      const hasSaveCascade =
-        rel.option.cascade.includes("insert") ||
-        rel.option.cascade.includes("update");
-      if (!hasSaveCascade) continue;
+      if (!hasCascade(rel.option?.cascade, "insert") && !hasCascade(rel.option?.cascade, "update"))
+        continue;
 
       const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
       const saved = await this.save(RelatedEntity, relatedValue);
@@ -1245,7 +1536,7 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
-   * delete 시 cascade: "remove" 가 설정된 OneToMany 관계의 자식 엔티티를 먼저 삭제합니다.
+   * delete 시 cascade: "delete" (또는 "remove") 가 설정된 OneToMany 관계의 자식 엔티티를 먼저 삭제합니다.
    */
   private async cascadeDeleteOneToMany<T>(
     entity: ClazzType<T>,
@@ -1254,7 +1545,7 @@ export class EntityManager implements BaseEntityManager {
     const oneToManyMeta = this.resolveOneToManyMetadata(entity);
 
     for (const rel of oneToManyMeta) {
-      if (!rel.cascade || !rel.cascade.includes("remove")) continue;
+      if (!hasCascade(rel.cascade, "delete")) continue;
 
       const RelatedEntity = rel.getRelatedEntity();
 
