@@ -753,6 +753,17 @@ export class PostgresDriver implements ISqlDriver {
     return `INSERT INTO ${tableName} (${columnList}) VALUES (${valuePlaceholders}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
   }
 
+  addCompositeUniqueIndex(
+    tableName: string,
+    columns: string[],
+    indexName: string,
+  ) {
+    const columnList = columns.map((col) => this.wrap(col)).join(", ");
+    return this.connector.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS ${this.wrap(indexName)} ON ${this.wrapQualified(tableName)} (${columnList})`,
+    );
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    *

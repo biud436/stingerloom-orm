@@ -388,6 +388,17 @@ export class MssqlDriver implements ISqlDriver {
     );
   }
 
+  addCompositeUniqueIndex(
+    tableName: string,
+    columns: string[],
+    indexName: string,
+  ) {
+    const columnList = columns.map((col) => this.wrap(col)).join(", ");
+    return this.connector.query(
+      `CREATE UNIQUE INDEX ${this.wrap(indexName)} ON ${this.wrap(tableName)} (${columnList})`,
+    );
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    * MSSQL은 WITH (UPDLOCK, ROWLOCK) 힌트를 사용하지만,

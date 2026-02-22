@@ -262,4 +262,18 @@ export interface ISqlDriver<T = any> {
     conflictColumns: string[],
     updateColumns: string[],
   ): string;
+
+  /**
+   * Adds a composite unique index to the specified table.
+   *
+   * @param tableName - The name of the table to modify.
+   * @param columns - The column names to include in the unique index.
+   * @param indexName - The name of the unique index.
+   * @returns A promise that resolves when the operation is complete.
+   */
+  addCompositeUniqueIndex(
+    tableName: string,
+    columns: string[],
+    indexName: string,
+  ): Promise<T>;
 }

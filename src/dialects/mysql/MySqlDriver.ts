@@ -411,6 +411,17 @@ export class MySqlDriver implements ISqlDriver {
     return `INSERT INTO ${tableName} (${columnList}) VALUES (${valuePlaceholders}) ON DUPLICATE KEY UPDATE ${updateSet}`;
   }
 
+  addCompositeUniqueIndex(
+    tableName: string,
+    columns: string[],
+    indexName: string,
+  ) {
+    const columnList = columns.map((col) => this.wrap(col)).join(", ");
+    return this.connector.query(
+      `CREATE UNIQUE INDEX ${this.wrap(indexName)} ON ${this.wrap(tableName)} (${columnList})`,
+    );
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    *

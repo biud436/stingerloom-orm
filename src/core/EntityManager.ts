@@ -18,6 +18,10 @@ import { SqliteDriver } from "../dialects/sqlite/SqliteDriver";
 import { MssqlDriver } from "../dialects/mssql/MssqlDriver";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
+import {
+  UNIQUE_INDEX_TOKEN,
+  UniqueIndexMetadata,
+} from "../decorators/UniqueIndex";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
 import { FindOption } from "../dialects/FindOption";
@@ -448,6 +452,48 @@ export class EntityManager implements BaseEntityManager {
 
         // 인덱스를 생성합니다.
         await this.registerIndex(TargetEntity, tableName);
+
+        // 복합 유니크 인덱스를 생성합니다.
+        await this.registerUniqueIndexes(TargetEntity, tableName);
+      }
+    }
+  }
+
+  /**
+   * @UniqueIndex 데코레이터로 선언된 복합 유니크 인덱스를 등록합니다.
+   */
+  private async registerUniqueIndexes(
+    TargetEntity: ClazzType<any>,
+    tableName: string,
+  ) {
+    const uniqueIndexes = Reflect.getMetadata(
+      UNIQUE_INDEX_TOKEN,
+      TargetEntity,
+    ) as UniqueIndexMetadata[] | undefined;
+
+    if (!uniqueIndexes || uniqueIndexes.length === 0) return;
+
+    for (const uq of uniqueIndexes) {
+      const indexName =
+        uq.name ?? `uq_${tableName}_${uq.columns.join("_")}`;
+
+      // 이미 존재하는지 확인
+      const indexes = (await this.driver?.getIndexes(tableName)) as any[];
+      let isExist = false;
+      for (const idx of indexes || []) {
+        const existingIndexName = idx["Key_name"] ?? idx["Field"] ?? idx["name"];
+        if (existingIndexName === indexName) {
+          isExist = true;
+          break;
+        }
+      }
+
+      if (!isExist) {
+        await this.driver?.addCompositeUniqueIndex(
+          tableName,
+          uq.columns,
+          indexName,
+        );
       }
     }
   }

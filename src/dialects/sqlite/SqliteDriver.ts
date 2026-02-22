@@ -386,6 +386,17 @@ export class SqliteDriver implements ISqlDriver {
     return `INSERT INTO ${tableName} (${columnList}) VALUES (${valuePlaceholders}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
   }
 
+  addCompositeUniqueIndex(
+    tableName: string,
+    columns: string[],
+    indexName: string,
+  ) {
+    const columnList = columns.map((col) => this.wrap(col)).join(", ");
+    return this.connector.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS ${this.wrap(indexName)} ON ${this.wrap(tableName)} (${columnList})`,
+    );
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    * SQLite는 데이터베이스 수준 잠금을 사용하며 행 단위 잠금을 지원하지 않습니다.

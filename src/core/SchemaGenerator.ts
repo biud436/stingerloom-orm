@@ -5,6 +5,10 @@ import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../decorators/Column";
 import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
 import {
+  UNIQUE_INDEX_TOKEN,
+  UniqueIndexMetadata,
+} from "../decorators/UniqueIndex";
+import {
   MANY_TO_ONE_TOKEN,
   ManyToOneMetadata,
 } from "../decorators/ManyToOne";
@@ -103,6 +107,24 @@ export class SchemaGenerator {
   }
 
   /**
+   * 단일 엔티티에 대한 CREATE UNIQUE INDEX DDL 배열을 생성합니다.
+   */
+  generateUniqueIndexDDL<T>(entity: ClazzType<T>): string[] {
+    const tableName = this.getTableName(entity);
+    const uniqueIndexes = this.getUniqueIndexes(entity);
+    return uniqueIndexes.map((uq) => {
+      const indexName = uq.name ?? `uq_${tableName}_${uq.columns.join("_")}`;
+      const columnList = uq.columns
+        .map((col) => this.wrapId(col))
+        .join(", ");
+      if (this.dialect === "postgres") {
+        return `CREATE UNIQUE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
+      }
+      return `CREATE UNIQUE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
+    });
+  }
+
+  /**
    * DROP TABLE DDL을 생성합니다.
    */
   generateDropTableDDL<T>(entity: ClazzType<T>): string {
@@ -126,7 +148,12 @@ export class SchemaGenerator {
       ddls.push(...this.generateCreateIndexDDL(entity));
     }
 
-    // 3. ADD FOREIGN KEY (테이블 생성 후)
+    // 3. CREATE UNIQUE INDEX
+    for (const entity of entities) {
+      ddls.push(...this.generateUniqueIndexDDL(entity));
+    }
+
+    // 4. ADD FOREIGN KEY (테이블 생성 후)
     for (const entity of entities) {
       ddls.push(...this.generateForeignKeyDDL(entity));
     }
@@ -169,6 +196,14 @@ export class SchemaGenerator {
     return (
       (Reflect.getMetadata(INDEX_TOKEN, entity.prototype) as
         | IndexMetadata[]
+        | undefined) ?? []
+    );
+  }
+
+  private getUniqueIndexes<T>(entity: ClazzType<T>): UniqueIndexMetadata[] {
+    return (
+      (Reflect.getMetadata(UNIQUE_INDEX_TOKEN, entity) as
+        | UniqueIndexMetadata[]
         | undefined) ?? []
     );
   }
