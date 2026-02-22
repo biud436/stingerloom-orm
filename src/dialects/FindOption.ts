@@ -1,5 +1,6 @@
 import { ISelectOption } from "./ISelectOption";
 import { IOrderBy } from "./IOrderBy";
+import { Sql } from "sql-template-tag";
 
 /**
  * Represents the options that can be used to find entities in the ORM.
@@ -40,6 +41,12 @@ export type FindOption<T> = {
    * Specifies the fields to group the entities by.
    */
   groupBy?: (keyof T)[];
+
+  /**
+   * Specifies HAVING conditions for GROUP BY queries.
+   * Accepts an array of sql-template-tag Sql conditions joined with AND.
+   */
+  having?: Sql[];
 
   /**
    * Specifies the relations to include in the query.

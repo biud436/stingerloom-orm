@@ -28,6 +28,7 @@ export class QueryCache {
       take?: any;
       select?: any;
       groupBy?: any;
+      having?: any;
     },
   ): string {
     const parts: Record<string, any> = { entity: entityName };
@@ -38,6 +39,7 @@ export class QueryCache {
     if (options.take !== undefined) parts.take = options.take;
     if (options.select) parts.select = options.select;
     if (options.groupBy) parts.groupBy = options.groupBy;
+    if (options.having) parts.having = options.having;
 
     return JSON.stringify(parts);
   }
