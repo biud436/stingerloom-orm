@@ -95,6 +95,7 @@ export class EntityManager implements BaseEntityManager {
   private readonly queryCache = new QueryCache();
   private readonly subscribers: EntitySubscriber<any>[] = [];
   private queryTracker: QueryTracker | null = null;
+  private defaultQueryTimeout: number | undefined;
 
   public async register(databaseClientOptions: DatabaseClientOptions) {
     await this.connect(databaseClientOptions);
@@ -141,6 +142,11 @@ export class EntityManager implements BaseEntityManager {
 
     // QueryTracker 초기화 (logging 옵션 기반)
     this.initQueryTracker(databaseClientOptions);
+
+    // connection-level 쿼리 타임아웃 설정
+    if (databaseClientOptions.queryTimeout && databaseClientOptions.queryTimeout > 0) {
+      this.defaultQueryTimeout = databaseClientOptions.queryTimeout;
+    }
   }
 
   private initQueryTracker(options: DatabaseClientOptions): void {
@@ -991,6 +997,175 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * 커서 기반 페이지네이션으로 엔티티를 조회합니다.
+   *
+   * offset 방식 대신 정렬 컬럼의 마지막 값을 커서로 사용하여
+   * 대량 데이터셋에서도 일정한 성능을 보장합니다.
+   *
+   * @param entity 엔티티 클래스
+   * @param option 커서 페이지네이션 옵션
+   * @returns 페이지네이션 결과 (data, hasNextPage, nextCursor, count)
+   */
+  async findWithCursor<T>(
+    entity: ClazzType<T>,
+    option: CursorPaginationOption<T> = {},
+  ): Promise<CursorPaginationResult<T>> {
+    const metadata = this.resolveEntityMetadata(entity);
+
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    // PK 컬럼 확인
+    const pk = metadata.columns.find(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+
+    // 정렬 기준 컬럼 결정 (기본값: PK)
+    const orderByColumn = option.orderBy ?? (pk?.name as keyof T & string);
+    if (!orderByColumn) {
+      throw new InvalidQueryError(
+        "Cursor pagination requires an orderBy column or a primary key.",
+      );
+    }
+
+    const direction = option.direction ?? "ASC";
+    const pageSize = normalizePageSize(option.take);
+
+    // 커서 디코딩
+    let cursorValue: unknown = null;
+    if (option.cursor) {
+      cursorValue = decodeCursor(option.cursor);
+      if (cursorValue === null) {
+        throw new InvalidQueryError("Invalid cursor value.");
+      }
+    }
+
+    // find() 옵션 구성
+    const where: any = { ...(option.where ?? {}) };
+
+    // 커서 조건: WHERE col > cursor (ASC) 또는 WHERE col < cursor (DESC)
+    // find()는 단순 equality만 지원하므로 직접 쿼리를 구성합니다.
+    const transactionHolder = new TransactionSessionManager();
+    const resultTransformer = ResultTransformerFactory.create();
+
+    try {
+      await transactionHolder.connect();
+      await transactionHolder.startTransaction();
+
+      if (this.isMySqlFamily()) {
+        await transactionHolder.query("SET autocommit = 0");
+      }
+
+      const tableName = metadata.name!;
+      const qb = RawQueryBuilderFactory.create();
+
+      // SELECT 컬럼
+      const selectMap = metadata.columns.map(
+        (column) => this.wrap(column.name!),
+      );
+
+      // WHERE 조건
+      const whereMap: Sql[] = [];
+
+      for (const key in where) {
+        const value = where[key];
+        if (value !== undefined && value !== null) {
+          whereMap.push(
+            Conditions.equals(this.wrap(key), value),
+          );
+        }
+      }
+
+      // @DeletedAt 컬럼 자동 필터
+      const deletedAtColumn = this.getDeletedAtColumn(entity);
+      if (deletedAtColumn) {
+        whereMap.push(Conditions.isNull(this.wrap(deletedAtColumn)));
+      }
+
+      // 커서 조건 추가
+      if (cursorValue !== null) {
+        if (direction === "ASC") {
+          whereMap.push(
+            Conditions.gt(this.wrap(orderByColumn), cursorValue),
+          );
+        } else {
+          whereMap.push(
+            Conditions.lt(this.wrap(orderByColumn), cursorValue),
+          );
+        }
+      }
+
+      // Query 구성: SELECT → FROM → WHERE → ORDER BY → LIMIT
+      qb.select(selectMap)
+        .from(this.wrap(tableName))
+        .where(whereMap)
+        .orderBy([{ column: this.wrap(orderByColumn), direction }]);
+
+      // take + 1로 조회 (다음 페이지 존재 여부 확인)
+      qb.limit(pageSize + 1);
+
+      const resultQuery = qb.build();
+
+      const queryResult = (await transactionHolder.query<T>(
+        resultQuery,
+      )) as QueryResult;
+
+      await transactionHolder.commit();
+
+      const { results } = queryResult;
+      if (!results || results.length === 0) {
+        return {
+          data: [],
+          hasNextPage: false,
+          nextCursor: null,
+          count: 0,
+        };
+      }
+
+      // take + 1로 조회했으므로, 결과가 pageSize보다 많으면 다음 페이지 존재
+      const hasNextPage = results.length > pageSize;
+      const pageResults = hasNextPage
+        ? results.slice(0, pageSize)
+        : results;
+
+      // 엔티티 변환
+      const entities = resultTransformer.toEntities(
+        entity,
+        { results: pageResults, fields: queryResult.fields },
+      );
+
+      // 다음 커서: 마지막 항목의 정렬 컬럼 값
+      let nextCursor: string | null = null;
+      if (hasNextPage && pageResults.length > 0) {
+        const lastItem = pageResults[pageResults.length - 1];
+        const lastValue = lastItem[orderByColumn];
+        nextCursor = encodeCursor(lastValue);
+      }
+
+      return {
+        data: entities,
+        hasNextPage,
+        nextCursor,
+        count: entities.length,
+      };
+    } catch (e: unknown) {
+      try {
+        await transactionHolder.rollback();
+      } catch (rollbackError) {
+        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
+      }
+      throw e;
+    } finally {
+      try {
+        await transactionHolder.close();
+      } catch (closeError) {
+        this.logger.error(`Failed to close transaction: ${closeError}`);
+      }
+    }
+  }
+
+  /**
    * Find out entities from the database.
    *
    * @param entity
@@ -1259,6 +1434,13 @@ export class EntityManager implements BaseEntityManager {
 
       // 최종 SQL을 생성합니다.
       const resultQuery = qb.build();
+
+      // per-query 또는 connection-level 타임아웃 적용
+      const effectiveTimeout = findOption.timeout ?? this.defaultQueryTimeout;
+      if (effectiveTimeout && effectiveTimeout > 0 && this.driver) {
+        const timeoutSql = this.driver.setQueryTimeout(effectiveTimeout);
+        await transactionHolder.query(timeoutSql);
+      }
 
       const queryStartTime = Date.now();
       const queryResult = (await transactionHolder.query<T>(

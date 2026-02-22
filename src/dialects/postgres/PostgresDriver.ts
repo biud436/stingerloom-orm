@@ -723,6 +723,10 @@ export class PostgresDriver implements ISqlDriver {
     return false;
   }
 
+  setQueryTimeout(ms: number): string {
+    return `SET LOCAL statement_timeout = '${Math.max(0, Math.floor(ms))}ms'`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    *

@@ -384,6 +384,10 @@ export class MySqlDriver implements ISqlDriver {
     return ["mysql", "mariadb"].includes(this.clientType);
   }
 
+  setQueryTimeout(ms: number): string {
+    return `SET SESSION max_execution_time = ${Math.max(0, Math.floor(ms))}`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    *

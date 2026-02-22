@@ -351,6 +351,10 @@ export class MssqlDriver implements ISqlDriver {
     return false;
   }
 
+  setQueryTimeout(ms: number): string {
+    return `SET LOCK_TIMEOUT ${Math.max(0, Math.floor(ms))}`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    * MSSQL은 WITH (UPDLOCK, ROWLOCK) 힌트를 사용하지만,

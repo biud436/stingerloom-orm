@@ -11,3 +11,4 @@ export * from "./InvalidQueryError";
 export * from "./TransactionError";
 export * from "./PrimaryKeyNotFoundError";
 export * from "./DeleteWithoutConditionsError";
+export * from "./QueryTimeoutError";

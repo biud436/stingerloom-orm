@@ -59,4 +59,11 @@ export type FindOption<T> = {
    * - `false` or omitted: no caching
    */
   cache?: boolean | number;
+
+  /**
+   * Per-query timeout in milliseconds.
+   * Overrides the connection-level queryTimeout from DatabaseClientOptions.
+   * Uses driver-specific SET statements before executing the query.
+   */
+  timeout?: number;
 };

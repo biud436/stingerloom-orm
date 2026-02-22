@@ -358,6 +358,10 @@ export class SqliteDriver implements ISqlDriver {
     return false;
   }
 
+  setQueryTimeout(ms: number): string {
+    return `PRAGMA busy_timeout = ${Math.max(0, Math.floor(ms))}`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    * SQLite는 데이터베이스 수준 잠금을 사용하며 행 단위 잠금을 지원하지 않습니다.

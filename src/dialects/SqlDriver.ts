@@ -223,4 +223,12 @@ export interface ISqlDriver<T = any> {
    * @returns True if the driver is for a MySQL family database, otherwise false.
    */
   isMySqlFamily(): boolean;
+
+  /**
+   * Returns the SQL statement to set a query execution timeout.
+   *
+   * @param ms - Timeout in milliseconds.
+   * @returns The SQL SET statement for the specific dialect.
+   */
+  setQueryTimeout(ms: number): string;
 }

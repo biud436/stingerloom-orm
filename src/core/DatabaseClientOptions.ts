@@ -93,6 +93,14 @@ export interface DatabaseClientOptions {
   schema?: string;
 
   /**
+   * Default query timeout in milliseconds.
+   * Applied to all queries unless overridden per-query via FindOption.timeout.
+   * Uses driver-specific SET statements (e.g., max_execution_time for MySQL,
+   * statement_timeout for PostgreSQL).
+   */
+  queryTimeout?: number;
+
+  /**
    * Connection pool configuration.
    * MySQL과 PostgreSQL에서 적용됩니다.
    * SQLite는 파일 기반 단일 연결이므로 이 옵션이 무시됩니다.
