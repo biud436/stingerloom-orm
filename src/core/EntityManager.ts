@@ -69,6 +69,12 @@ import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { DeleteWithoutConditionsError } from "../errors/DeleteWithoutConditionsError";
 import { NotSupportedDatabaseTypeError } from "../errors/NotSupportedDatabaseTypeError";
 import { QueryCache } from "./QueryCache";
+import {
+  EntitySubscriber,
+  InsertEvent,
+  UpdateEvent,
+  DeleteEvent,
+} from "./EntitySubscriber";
 
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
@@ -78,6 +84,7 @@ export class EntityManager implements BaseEntityManager {
   private dirtyEntities: Set<InstanceType<ClazzType<any>>> = new Set();
   private readonly eventEmitter = new EntityEventEmitter();
   private readonly queryCache = new QueryCache();
+  private readonly subscribers: EntitySubscriber<any>[] = [];
 
   public async register(databaseClientOptions: DatabaseClientOptions) {
     await this.connect(databaseClientOptions);
@@ -142,6 +149,52 @@ export class EntityManager implements BaseEntityManager {
    */
   removeAllListeners(): void {
     this.eventEmitter.removeAllListeners();
+  }
+
+  /**
+   * EntitySubscriber를 등록합니다.
+   * listenTo()가 반환하는 엔티티 클래스에 해당하는 이벤트만 전달됩니다.
+   */
+  addSubscriber(subscriber: EntitySubscriber<any>): void {
+    this.subscribers.push(subscriber);
+  }
+
+  /**
+   * 등록된 EntitySubscriber를 제거합니다.
+   */
+  removeSubscriber(subscriber: EntitySubscriber<any>): void {
+    const idx = this.subscribers.indexOf(subscriber);
+    if (idx !== -1) {
+      this.subscribers.splice(idx, 1);
+    }
+  }
+
+  /**
+   * 엔티티 클래스에 매칭되는 subscriber의 특정 메서드를 호출합니다.
+   */
+  private async notifySubscribers<T>(
+    entityClass: new (...args: any[]) => T,
+    method: keyof EntitySubscriber<T>,
+    arg?: any,
+  ): Promise<void> {
+    for (const sub of this.subscribers) {
+      if (sub.listenTo() === entityClass && typeof sub[method] === "function") {
+        await (sub[method] as Function)(arg);
+      }
+    }
+  }
+
+  /**
+   * 트랜잭션 관련 subscriber 메서드를 호출합니다 (엔티티 필터 없음).
+   */
+  private async notifyTransactionSubscribers(
+    method: keyof EntitySubscriber<any>,
+  ): Promise<void> {
+    for (const sub of this.subscribers) {
+      if (typeof sub[method] === "function") {
+        await (sub[method] as Function)();
+      }
+    }
   }
 
   public async propagateShutdown() {
@@ -1418,6 +1471,7 @@ export class EntityManager implements BaseEntityManager {
         // @BeforeInsert 훅 실행
         await this.runHooks(entity, item, "beforeInsert");
         await this.eventEmitter.emit("beforeInsert", { entity, data: item });
+        await this.notifySubscribers(entity, "beforeInsert", { entity: item, manager: this } as InsertEvent<T>);
 
         // PostgreSQL: INSERT ... RETURNING PK 컬럼들
         const isPostgres = this.isPostgres();
@@ -1454,6 +1508,7 @@ export class EntityManager implements BaseEntityManager {
           // @AfterInsert 훅 실행
           await this.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
+          await this.notifySubscribers(entity, "afterInsert", { entity: item, manager: this } as InsertEvent<T>);
           return result as T;
         }
 
@@ -1470,12 +1525,14 @@ export class EntityManager implements BaseEntityManager {
           // @AfterInsert 훅 실행
           await this.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
+          await this.notifySubscribers(entity, "afterInsert", { entity: item, manager: this } as InsertEvent<T>);
           return result as T;
         }
 
         // @AfterInsert 훅 실행
         await this.runHooks(entity, item, "afterInsert");
         await this.eventEmitter.emit("afterInsert", { entity, data: item });
+        await this.notifySubscribers(entity, "afterInsert", { entity: item, manager: this } as InsertEvent<T>);
         return queryResult as T;
       }
 
@@ -1483,6 +1540,7 @@ export class EntityManager implements BaseEntityManager {
       // @BeforeUpdate 훅 실행
       await this.runHooks(entity, item, "beforeUpdate");
       await this.eventEmitter.emit("beforeUpdate", { entity, data: item });
+      await this.notifySubscribers(entity, "beforeUpdate", { entity: item, manager: this } as UpdateEvent<T>);
 
       const updateMap = metadata.columns.map((column: ColumnMetadata) => {
         return sql`${raw(this.wrap(column.name!))} = ${(item as any)[column.name!]}`;
@@ -1506,6 +1564,7 @@ export class EntityManager implements BaseEntityManager {
       // @AfterUpdate 훅 실행
       await this.runHooks(entity, item, "afterUpdate");
       await this.eventEmitter.emit("afterUpdate", { entity, data: item });
+      await this.notifySubscribers(entity, "afterUpdate", { entity: item, manager: this } as UpdateEvent<T>);
 
       // Retrieve and return the updated entity.
       const result = await this.findOne(entity, {
@@ -1750,6 +1809,7 @@ export class EntityManager implements BaseEntityManager {
       // @BeforeDelete 훅 실행
       await this.runHooks(entity, criteria, "beforeDelete");
       await this.eventEmitter.emit("beforeDelete", { entity, data: criteria });
+      await this.notifySubscribers(entity, "beforeDelete", { entityClass: entity, criteria, manager: this } as DeleteEvent<T>);
 
       // cascade remove: 자식 엔티티를 먼저 삭제합니다.
       await this.cascadeDeleteOneToMany(entity, criteria);
@@ -1788,6 +1848,7 @@ export class EntityManager implements BaseEntityManager {
       // @AfterDelete 훅 실행
       await this.runHooks(entity, criteria, "afterDelete");
       await this.eventEmitter.emit("afterDelete", { entity, data: criteria });
+      await this.notifySubscribers(entity, "afterDelete", { entityClass: entity, criteria, manager: this } as DeleteEvent<T>);
 
       return { affected };
     } catch (e: unknown) {

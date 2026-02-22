@@ -18,3 +18,4 @@ export * from "./EntityValidator";
 export * from "./EntityEventEmitter";
 export * from "./SchemaGenerator";
 export * from "./QueryCache";
+export * from "./EntitySubscriber";
