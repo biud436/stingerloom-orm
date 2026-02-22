@@ -19,6 +19,10 @@ export type ManyToOneOption = {
    */
   transform?: <T = any>(raw: unknown) => T;
   joinColumn?: string;
+  /**
+   * true일 경우, find/findOne 시 자동으로 LEFT JOIN을 수행하여 관계 엔티티를 함께 로드합니다.
+   */
+  eager?: boolean;
 };
 
 export type ManyToOneMetadata<T> = {

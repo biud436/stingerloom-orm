@@ -501,16 +501,61 @@ export class EntityManager implements BaseEntityManager {
       const orderByMap: Array<{ column: string; direction: "ASC" | "DESC" }> =
         [];
 
-      if (!select) {
-        selectMap.push(
-          ...metadata.columns.map((column) => this.wrap(column.name!)),
+      // Eager 로드할 ManyToOne 관계를 수집
+      const manyToOneRelations = this.resolveManyToOneMetadata(entity);
+      const eagerRelations = manyToOneRelations.filter((rel) => {
+        const isEager = rel.option?.eager === true;
+        const isInRelations = findOption.relations?.includes(
+          rel.columnName as keyof T,
         );
+        return isEager || isInRelations;
+      });
+
+      const tableName = metadata.name!;
+
+      if (!select) {
+        // 메인 테이블 컬럼에 테이블 별칭 prefix 추가 (JOIN 시 충돌 방지)
+        if (eagerRelations.length > 0) {
+          selectMap.push(
+            ...metadata.columns.map(
+              (column) =>
+                `${this.wrap(tableName)}.${this.wrap(column.name!)}`,
+            ),
+          );
+        } else {
+          selectMap.push(
+            ...metadata.columns.map((column) => this.wrap(column.name!)),
+          );
+        }
+      }
+
+      // Eager 관계 컬럼을 SELECT에 추가 (alias: propertyName_columnName)
+      for (const rel of eagerRelations) {
+        const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+        const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
+        if (!relatedMetadata) continue;
+
+        for (const col of relatedMetadata.columns) {
+          const alias = `${rel.columnName}_${col.name}`;
+          selectMap.push(
+            `${this.wrap(RelatedEntity.name)}.${this.wrap(col.name!)} AS ${this.wrap(alias)}`,
+          );
+        }
       }
 
       for (const key in where) {
         const value = where[key];
         if (value) {
-          whereMap.push(Conditions.equals(this.wrap(key), value));
+          if (eagerRelations.length > 0) {
+            whereMap.push(
+              Conditions.equals(
+                `${this.wrap(tableName)}.${this.wrap(key)}`,
+                value,
+              ),
+            );
+          } else {
+            whereMap.push(Conditions.equals(this.wrap(key), value));
+          }
         }
       }
 
@@ -523,9 +568,32 @@ export class EntityManager implements BaseEntityManager {
 
       // Query를 구성합니다.
       qb.select(selectMap)
-        .from(this.wrap(metadata.name!))
+        .from(this.wrap(tableName))
         .where(whereMap)
         .orderBy(orderByMap);
+
+      // Eager 관계에 대한 LEFT JOIN 추가
+      for (const rel of eagerRelations) {
+        const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+        const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
+        if (!relatedMetadata) continue;
+
+        const relatedTableName = RelatedEntity.name;
+        const joinColumn = rel.joinColumn ?? rel.columnName;
+
+        // 관련 엔티티의 PK 찾기
+        const relatedPk = relatedMetadata.columns.find(
+          (col: any) => col.options?.primary,
+        );
+        if (!relatedPk) continue;
+
+        const joinCondition = sql`${raw(this.wrap(tableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relatedTableName))}.${raw(this.wrap(relatedPk.name!))}`;
+        qb.leftJoin(
+          this.wrap(relatedTableName),
+          this.wrap(relatedTableName),
+          joinCondition,
+        );
+      }
 
       // LIMIT 쿼리가 튜플일 경우
       if (Array.isArray(limit)) {
@@ -575,7 +643,13 @@ export class EntityManager implements BaseEntityManager {
 
       const isEntityArray = results.length > 1;
       let entityResult: EntityResult<T>;
-      if (isEntityArray) {
+      if (eagerRelations.length > 0) {
+        // Eager 관계가 있을 경우 중첩된 결과를 변환
+        entityResult = resultTransformer.transformNested(
+          entity,
+          queryResult,
+        ) as EntityResult<T>;
+      } else if (isEntityArray) {
         entityResult = resultTransformer.toEntities(entity, queryResult);
       } else {
         entityResult = resultTransformer.toEntity(entity, queryResult);
