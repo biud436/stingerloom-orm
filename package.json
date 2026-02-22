@@ -19,6 +19,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "better-sqlite3": "^12.6.2",
     "class-transformer": "^0.5.1",
     "mysql2": "^3.9.3",
     "pg": "^8.18.0",
@@ -27,6 +28,7 @@
     "typedi": "^0.10.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/jest": "^29.5.4",
     "@types/node": "^20.4.8",
     "@types/pg": "^8.16.0",
@@ -41,5 +43,10 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }
