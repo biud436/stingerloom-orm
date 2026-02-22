@@ -6,3 +6,4 @@ export * from "./PrimaryGeneratedColumn";
 export * from "./Indexer";
 export * from "./Version";
 export * from "./ManyToOne";
+export * from "./OneToMany";
