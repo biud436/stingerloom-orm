@@ -5,6 +5,7 @@ import {
   ColumnMetadata,
   EntityScannerMetadata,
   EntityScanner,
+  ManyToOneScanner,
 } from "../scanner";
 import Container from "typedi";
 import { DatabaseClient } from "../DatabaseClient";
@@ -200,6 +201,45 @@ export class EntityManager implements BaseEntityManager {
     }
   }
 
+  /**
+   * ManyToOne 관계 메타데이터를 레이어 시스템을 통해 조회합니다.
+   *
+   * 조회 우선순위:
+   * 1. ManyToOneScanner — MetadataLayerRegistry 경유 (멀티테넌트 레이어 지원)
+   * 2. Reflect.getMetadata() — 데코레이터가 직접 부착한 정적 메타데이터 (fallback)
+   */
+  private resolveManyToOneMetadata<T>(
+    entity: ClazzType<T>,
+  ): ManyToOneMetadata<any>[] {
+    // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
+    const manyToOneScanner = Container.get(ManyToOneScanner);
+    const allRelations = manyToOneScanner
+      .allMetadata<ManyToOneMetadata<any>>()
+      .filter((rel) => rel.target === entity);
+
+    if (allRelations.length > 0) {
+      return allRelations;
+    }
+
+    // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
+    const reflectMetadata =
+      (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity) as
+        | ManyToOneMetadata<any>[]
+        | undefined) ??
+      (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity.prototype) as
+        | ManyToOneMetadata<any>[]
+        | undefined);
+
+    if (reflectMetadata && reflectMetadata.length > 0) {
+      this.logger.warn(
+        `[resolveManyToOneMetadata] "${entity.name}" ManyToOne resolved via Reflect.getMetadata fallback.`,
+      );
+      return reflectMetadata;
+    }
+
+    return [];
+  }
+
   private async registerForeignKeys(
     TargetEntity: ClazzType<any>,
     tableName: string,
@@ -207,11 +247,8 @@ export class EntityManager implements BaseEntityManager {
     // 엔티티 매니저를 가지고 옵니다.
     const entityScanner = Container.get(EntityScanner);
 
-    // ManyToOne 관계를 가져옵니다.
-    const manyToOneItems = Reflect.getMetadata(
-      MANY_TO_ONE_TOKEN,
-      TargetEntity.prototype,
-    ) as ManyToOneMetadata<any>[];
+    // ManyToOne 관계를 레이어 시스템을 통해 가져옵니다.
+    const manyToOneItems = this.resolveManyToOneMetadata(TargetEntity);
 
     const isValidManyToOne = manyToOneItems && manyToOneItems.length > 0;
 
@@ -264,8 +301,12 @@ export class EntityManager implements BaseEntityManager {
   /**
    * 인덱스를 생성합니다.
    *
-   * @param TargetEntity
-   * @param tableName
+   * @Index 데코레이터는 현재 Reflect.getMetadata에만 저장되므로
+   * Reflect에서 직접 조회합니다.
+   *
+   * 인덱스 존재 여부 확인은 드라이버에 독립적인 방식으로 수행합니다:
+   * - MySQL: idx["Key_name"]
+   * - PostgreSQL: idx["Field"] (indexname 별칭)
    */
   private async registerIndex(TargetEntity: ClazzType<any>, tableName: string) {
     const indexer = Reflect.getMetadata(
@@ -280,7 +321,9 @@ export class EntityManager implements BaseEntityManager {
 
         let isExist = false;
         for (const idx of indexes || []) {
-          if (idx["Key_name"] === indexName) {
+          // MySQL은 "Key_name", PostgreSQL은 "Field" (indexname 별칭)를 사용합니다.
+          const existingIndexName = idx["Key_name"] ?? idx["Field"];
+          if (existingIndexName === indexName) {
             isExist = true;
             break;
           }
@@ -452,10 +495,13 @@ export class EntityManager implements BaseEntityManager {
    * MySQL/MariaDB: 백틱(`) / PostgreSQL: 큰따옴표(")
    */
   wrap(columnName: string) {
-    if (this.isPostgres()) {
-      return `"${columnName}"`;
+    if (this.driver && "wrap" in this.driver) {
+      return (this.driver as any).wrap(columnName);
     }
-    return `\`${columnName}\``;
+    if (this.isPostgres()) {
+      return `"${columnName.replace(/"/g, '""')}"`;
+    }
+    return `\`${columnName.replace(/`/g, "``")}\``;
   }
 
   private isMySqlFamily() {
