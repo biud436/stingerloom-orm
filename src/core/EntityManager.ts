@@ -33,6 +33,9 @@ import {
   MANY_TO_MANY_TOKEN,
   ManyToManyMetadata,
   DELETED_AT_TOKEN,
+  HOOK_TOKEN,
+  HookEvent,
+  HookMetadata,
 } from "../decorators";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
@@ -160,6 +163,29 @@ export class EntityManager implements BaseEntityManager {
       | string
       | undefined;
     return column ?? null;
+  }
+
+  /**
+   * 엔티티 인스턴스에서 지정된 이벤트의 생명주기 훅을 실행합니다.
+   * @HOOK_TOKEN 메타데이터를 읽어 해당 이벤트의 메서드를 호출합니다.
+   */
+  private async runHooks<T>(
+    entity: ClazzType<T>,
+    item: Partial<T>,
+    event: HookEvent,
+  ): Promise<void> {
+    const hooks = Reflect.getMetadata(HOOK_TOKEN, entity) as
+      | HookMetadata[]
+      | undefined;
+    if (!hooks || hooks.length === 0) return;
+
+    for (const hook of hooks) {
+      if (hook.event !== event) continue;
+      const method = (item as any)[hook.methodName];
+      if (typeof method === "function") {
+        await method.call(item);
+      }
+    }
   }
 
   /**
@@ -1043,6 +1069,9 @@ export class EntityManager implements BaseEntityManager {
 
       // If the primary key (PK) does not exist, create a new entity.
       if (!primaryKeyValue) {
+        // @BeforeInsert 훅 실행
+        await this.runHooks(entity, item, "beforeInsert");
+
         // PostgreSQL: INSERT ... RETURNING "id" 로 생성된 PK를 바로 반환받습니다.
         const isPostgres = this.isPostgres();
         const returningSql = isPostgres
@@ -1065,6 +1094,8 @@ export class EntityManager implements BaseEntityManager {
           } as any);
 
           await this.cascadeSaveOneToMany(entity, item, queryResult?.results?.insertId);
+          // @AfterInsert 훅 실행
+          await this.runHooks(entity, item, "afterInsert");
           return result as T;
         }
 
@@ -1076,13 +1107,20 @@ export class EntityManager implements BaseEntityManager {
           } as any);
 
           await this.cascadeSaveOneToMany(entity, item, insertedId);
+          // @AfterInsert 훅 실행
+          await this.runHooks(entity, item, "afterInsert");
           return result as T;
         }
 
+        // @AfterInsert 훅 실행
+        await this.runHooks(entity, item, "afterInsert");
         return queryResult as T;
       }
 
       // If the primary key (PK) exists, execute the update query.
+      // @BeforeUpdate 훅 실행
+      await this.runHooks(entity, item, "beforeUpdate");
+
       const updateMap = metadata.columns.map((column: ColumnMetadata) => {
         return sql`${raw(this.wrap(column.name!))} = ${(item as any)[column.name!]}`;
       });
@@ -1098,6 +1136,9 @@ export class EntityManager implements BaseEntityManager {
       await transactionManager.commit();
 
       await this.cascadeSaveOneToMany(entity, item, primaryKeyValue);
+
+      // @AfterUpdate 훅 실행
+      await this.runHooks(entity, item, "afterUpdate");
 
       // Retrieve and return the updated entity.
       const result = await this.findOne(entity, {
@@ -1262,6 +1303,9 @@ export class EntityManager implements BaseEntityManager {
         await transactionManager.query("SET autocommit = 0");
       }
 
+      // @BeforeDelete 훅 실행
+      await this.runHooks(entity, criteria, "beforeDelete");
+
       // cascade remove: 자식 엔티티를 먼저 삭제합니다.
       await this.cascadeDeleteOneToMany(entity, criteria);
 
@@ -1296,6 +1340,9 @@ export class EntityManager implements BaseEntityManager {
         // PostgreSQL: rowCount is on the results object
         affected = queryResult?.results?.rowCount ?? 0;
       }
+
+      // @AfterDelete 훅 실행
+      await this.runHooks(entity, criteria, "afterDelete");
 
       return { affected };
     } catch (e: unknown) {
