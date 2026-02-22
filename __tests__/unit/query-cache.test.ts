@@ -165,8 +165,8 @@ describe("QueryCache", () => {
       jest.useFakeTimers();
       try {
         cache.set("key1", "data");
-        // default TTL is 60000ms
-        jest.advanceTimersByTime(59999);
+        // default TTL is 30000ms
+        jest.advanceTimersByTime(29999);
         expect(cache.get("key1")).toBe("data");
         jest.advanceTimersByTime(2);
         expect(cache.get("key1")).toBeUndefined();

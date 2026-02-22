@@ -196,7 +196,7 @@ describe("EntityManager.insertMany()", () => {
 
     await expect(
       em.insertMany(UnknownEntity, [{ name: "test" }]),
-    ).rejects.toThrow("Entity metadata does not exist.");
+    ).rejects.toThrow("Entity metadata for \"UnknownEntity\" does not exist.");
   });
 
   it("should execute a single INSERT query for multiple items", async () => {
@@ -372,7 +372,7 @@ describe("EntityManager.deleteMany()", () => {
 
     await expect(
       em.deleteMany(UnknownEntity, [1, 2]),
-    ).rejects.toThrow("Entity metadata does not exist.");
+    ).rejects.toThrow("Entity metadata for \"UnknownEntity\" does not exist.");
   });
 
   it("should throw when primary key column is not found", async () => {
@@ -390,7 +390,7 @@ describe("EntityManager.deleteMany()", () => {
 
     await expect(
       em.deleteMany(noPkMetadata.target, [1]),
-    ).rejects.toThrow("Primary key column not found.");
+    ).rejects.toThrow("Primary key column not found for entity \"NoPk\".");
   });
 
   it("should execute DELETE ... WHERE pk IN (...) for multiple ids", async () => {

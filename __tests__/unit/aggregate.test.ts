@@ -280,7 +280,7 @@ describe("Aggregate Queries", () => {
 
       await expect(
         em.count(class Unknown {} as any),
-      ).rejects.toThrow("Entity metadata does not exist.");
+      ).rejects.toThrow("Entity metadata for \"Unknown\" does not exist.");
     });
 
     it("쿼리 에러 시 rollback 후 에러를 재throw해야 한다", async () => {

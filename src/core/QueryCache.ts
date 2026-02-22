@@ -5,7 +5,7 @@ interface CacheEntry<T = any> {
   expiresAt: number;
 }
 
-const DEFAULT_TTL_MS = 60_000; // 60 seconds
+const DEFAULT_TTL_MS = 30_000; // 30 seconds
 
 /**
  * TTL-based in-memory query cache.

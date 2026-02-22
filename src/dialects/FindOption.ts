@@ -54,7 +54,7 @@ export type FindOption<T> = {
 
   /**
    * Enables query result caching.
-   * - `true`: cache with default TTL (60 seconds)
+   * - `true`: cache with default TTL (30 seconds)
    * - `number`: cache with specified TTL in milliseconds
    * - `false` or omitted: no caching
    */
