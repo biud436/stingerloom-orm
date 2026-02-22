@@ -1198,7 +1198,13 @@ export class EntityManager implements BaseEntityManager {
 
     const transactionHolder = new TransactionSessionManager();
     try {
-      await transactionHolder.connect();
+      // Replication: EXPLAIN은 읽기 전용이므로 slave로 라우팅
+      const readNode = this.getReadNode(findOption.useMaster);
+      if (readNode) {
+        await transactionHolder.connectToNode(readNode);
+      } else {
+        await transactionHolder.connect();
+      }
       await transactionHolder.startTransaction();
       if (this.isMySqlFamily()) {
         await transactionHolder.query("SET autocommit = 0");

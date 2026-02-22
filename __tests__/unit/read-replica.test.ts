@@ -316,6 +316,43 @@ describe("EntityManager read replica routing", () => {
     const em = createReplicatedEntityManager();
     expect(em.getReplicationRouter()).toBeInstanceOf(ReplicationRouter);
   });
+
+  it("should route explain() to slave when replication is enabled", async () => {
+    const em = createReplicatedEntityManager();
+    (em as any).driver.supportsExplain = () => true;
+    (em as any).driver.buildExplainSql = () => "EXPLAIN ";
+
+    mockQuery
+      .mockResolvedValueOnce(undefined) // SET autocommit
+      .mockResolvedValueOnce({
+        results: [{ id: 1, select_type: "SIMPLE", type: "ALL", rows: 10 }],
+        fields: [],
+      });
+
+    await em.explain(ItemEntity, { where: { id: 1 } as any });
+
+    expect(mockConnectToNode).toHaveBeenCalledTimes(1);
+    const calledNode = mockConnectToNode.mock.calls[0][0];
+    expect([slave1, slave2]).toContain(calledNode);
+  });
+
+  it("should route explain() to master when useMaster=true", async () => {
+    const em = createReplicatedEntityManager();
+    (em as any).driver.supportsExplain = () => true;
+    (em as any).driver.buildExplainSql = () => "EXPLAIN ";
+
+    mockQuery
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        results: [{ id: 1, select_type: "SIMPLE", type: "ALL", rows: 10 }],
+        fields: [],
+      });
+
+    await em.explain(ItemEntity, { where: { id: 1 } as any, useMaster: true });
+
+    expect(mockConnectToNode).toHaveBeenCalledTimes(1);
+    expect(mockConnectToNode.mock.calls[0][0]).toBe(masterNode);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
