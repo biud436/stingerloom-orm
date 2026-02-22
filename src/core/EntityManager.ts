@@ -15,6 +15,7 @@ import { DatabaseClient } from "../DatabaseClient";
 import { MySqlDriver } from "../dialects/mysql/MySqlDriver";
 import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../dialects/sqlite/SqliteDriver";
+import { MssqlDriver } from "../dialects/mssql/MssqlDriver";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
@@ -25,6 +26,7 @@ import { IDataSource } from "../dialects/IDataSource";
 import { MySqlDataSource } from "../dialects/mysql/MySqlDataSource";
 import { PostgresDataSource } from "../dialects/postgres/PostgresDataSource";
 import { SqliteDataSource } from "../dialects/sqlite/SqliteDataSource";
+import { MssqlDataSource } from "../dialects/mssql/MssqlDataSource";
 import sql, { Sql, join, raw } from "sql-template-tag";
 import {
   ENTITY_TOKEN,
@@ -104,6 +106,10 @@ export class EntityManager implements BaseEntityManager {
       case "sqlite":
         this.driver = new SqliteDriver(connector);
         this.dataSource = new SqliteDataSource(connector);
+        break;
+      case "mssql":
+        this.driver = new MssqlDriver(connector);
+        this.dataSource = new MssqlDataSource(connector);
         break;
       default:
         throw new Error("Unsupported database type.");
@@ -1333,22 +1339,59 @@ export class EntityManager implements BaseEntityManager {
         return (item as any)[column.name!];
       });
 
-      const pk = metadata.columns.find(
+      // PK 컬럼 수집 (복합 PK 지원)
+      const pkColumns = metadata.columns.filter(
         (column: ColumnMetadata) => column.options?.primary,
       );
+      const pk = pkColumns[0]; // 하위 호환: 단일 PK 참조
 
-      const primaryKeyValue = (item as any)[pk.name!];
+      // auto-increment PK가 있는지 확인
+      const hasAutoIncrementPk = pkColumns.some(
+        (col: ColumnMetadata) => col.options?.autoIncrement,
+      );
+      const primaryKeyValue = pk ? (item as any)[pk.name!] : undefined;
 
-      // If the primary key (PK) does not exist, create a new entity.
-      if (!primaryKeyValue) {
+      // INSERT vs UPDATE 판별:
+      // - auto-increment PK: PK 값이 없으면 INSERT, 있으면 UPDATE (기존 동작)
+      // - 수동 PK (복합 PK 포함): 항상 INSERT (수동 PK 엔티티의 UPDATE는
+      //   delete+insert 또는 직접 쿼리 빌더 사용)
+      const isInsert = hasAutoIncrementPk
+        ? !primaryKeyValue // 기존 동작: auto-increment PK 값이 없으면 INSERT
+        : true; // 수동 PK: 항상 INSERT
+
+      // PK WHERE 절 빌더 (복합 PK 지원)
+      const buildPkWhere = (pkValues?: Record<string, any>) => {
+        return pkColumns.map((col: ColumnMetadata) => {
+          const value = pkValues
+            ? pkValues[col.name!]
+            : (item as any)[col.name!];
+          return sql`${raw(this.wrap(col.name!))} = ${value}`;
+        });
+      };
+
+      // PK 기반 findOne WHERE 조건
+      const buildPkFindWhere = (pkValues?: Record<string, any>) => {
+        const where: any = {};
+        for (const col of pkColumns) {
+          where[col.name!] = pkValues
+            ? pkValues[col.name!]
+            : (item as any)[col.name!];
+        }
+        return where;
+      };
+
+      if (isInsert) {
         // @BeforeInsert 훅 실행
         await this.runHooks(entity, item, "beforeInsert");
         await this.eventEmitter.emit("beforeInsert", { entity, data: item });
 
-        // PostgreSQL: INSERT ... RETURNING "id" 로 생성된 PK를 바로 반환받습니다.
+        // PostgreSQL: INSERT ... RETURNING PK 컬럼들
         const isPostgres = this.isPostgres();
+        const returningCols = pkColumns
+          .map((col: ColumnMetadata) => this.wrap(col.name!))
+          .join(", ");
         const returningSql = isPostgres
-          ? raw(` RETURNING ${this.wrap(pk.name!)}`)
+          ? raw(` RETURNING ${returningCols}`)
           : raw("");
 
         const queryResult = (await transactionManager.query<T>(
@@ -1362,11 +1405,17 @@ export class EntityManager implements BaseEntityManager {
         await transactionManager.commit();
 
         if (this.isMySqlFamily()) {
+          const findWhere = hasAutoIncrementPk
+            ? { [pk.name!]: queryResult?.results?.insertId }
+            : buildPkFindWhere();
           const result = await this.findOne(entity, {
-            where: { [pk.name!]: queryResult?.results?.insertId },
+            where: findWhere,
           } as any);
 
-          await this.cascadeSaveOneToMany(entity, item, queryResult?.results?.insertId);
+          const cascadeId = hasAutoIncrementPk
+            ? queryResult?.results?.insertId
+            : primaryKeyValue;
+          await this.cascadeSaveOneToMany(entity, item, cascadeId);
           // @AfterInsert 훅 실행
           await this.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
@@ -1375,12 +1424,14 @@ export class EntityManager implements BaseEntityManager {
 
         // PostgreSQL: RETURNING 절로 받은 PK 값으로 조회
         if (isPostgres && queryResult?.results?.length > 0) {
-          const insertedId = queryResult.results[0][pk.name!];
+          const returnedRow = queryResult.results[0];
+          const findWhere = buildPkFindWhere(returnedRow);
           const result = await this.findOne(entity, {
-            where: { [pk.name!]: insertedId },
+            where: findWhere,
           } as any);
 
-          await this.cascadeSaveOneToMany(entity, item, insertedId);
+          const cascadeId = returnedRow[pk.name!];
+          await this.cascadeSaveOneToMany(entity, item, cascadeId);
           // @AfterInsert 훅 실행
           await this.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
@@ -1393,7 +1444,7 @@ export class EntityManager implements BaseEntityManager {
         return queryResult as T;
       }
 
-      // If the primary key (PK) exists, execute the update query.
+      // UPDATE path: 모든 PK 값이 존재하는 경우
       // @BeforeUpdate 훅 실행
       await this.runHooks(entity, item, "beforeUpdate");
       await this.eventEmitter.emit("beforeUpdate", { entity, data: item });
@@ -1402,11 +1453,13 @@ export class EntityManager implements BaseEntityManager {
         return sql`${raw(this.wrap(column.name!))} = ${(item as any)[column.name!]}`;
       });
 
+      const pkWhereClauses = buildPkWhere();
+
       await transactionManager.query<T>(
         sql`
           UPDATE ${raw(this.wrap(metadata.name!))}
           SET ${join(updateMap, ", ")}
-          WHERE ${raw(this.wrap(pk.name!))} = ${primaryKeyValue}
+          WHERE ${join(pkWhereClauses, " AND ")}
                 `,
       );
 
@@ -1420,7 +1473,7 @@ export class EntityManager implements BaseEntityManager {
 
       // Retrieve and return the updated entity.
       const result = await this.findOne(entity, {
-        where: { [pk.name!]: primaryKeyValue },
+        where: buildPkFindWhere(),
       } as any);
 
       return result as T;

@@ -51,7 +51,20 @@ export class SchemaGenerator {
   generateCreateTableDDL<T>(entity: ClazzType<T>): string {
     const tableName = this.getTableName(entity);
     const columns = this.getColumns(entity);
-    const columnDefs = columns.map((col) => this.renderColumnDef(col, tableName));
+
+    // 복합 PK 감지: primary 컬럼이 2개 이상이면 복합 PK
+    const pkColumns = columns.filter((col) => col.options.primary);
+    const isCompositePk = pkColumns.length > 1;
+
+    const columnDefs = columns.map((col) =>
+      this.renderColumnDef(col, tableName, isCompositePk),
+    );
+
+    // 복합 PK인 경우 PRIMARY KEY (col1, col2, ...) 제약 조건 추가
+    if (isCompositePk) {
+      const pkDef = `PRIMARY KEY (${pkColumns.map((col) => this.wrapId(col.name)).join(", ")})`;
+      columnDefs.push(pkDef);
+    }
 
     const ddl = `CREATE TABLE IF NOT EXISTS ${this.wrapTable(tableName)} (${columnDefs.join(", ")})`;
 
@@ -211,7 +224,21 @@ export class SchemaGenerator {
     return pk?.name ?? null;
   }
 
-  private renderColumnDef(col: ColumnDef, tableName: string): string {
+  /**
+   * 엔티티의 모든 PK 컬럼 이름을 반환합니다.
+   */
+  findPrimaryKeyColumns<T>(entity: ClazzType<T>): string[] {
+    const columns = this.getColumns(entity);
+    return columns
+      .filter((col) => col.options.primary)
+      .map((col) => col.name);
+  }
+
+  private renderColumnDef(
+    col: ColumnDef,
+    tableName: string,
+    isCompositePk = false,
+  ): string {
     const { name, options } = col;
     let type = this.castType(options.type ?? "varchar");
 
@@ -235,7 +262,7 @@ export class SchemaGenerator {
     // auto increment
     if (options.autoIncrement && this.dialect === "postgres") {
       const nullable = options.nullable ? "NULL" : "NOT NULL";
-      const pk = options.primary ? " PRIMARY KEY" : "";
+      const pk = options.primary && !isCompositePk ? " PRIMARY KEY" : "";
       return `${this.wrapId(name)} SERIAL ${nullable}${pk}`;
     }
 
@@ -246,7 +273,8 @@ export class SchemaGenerator {
     const typeWithLength = needsLength ? `${type}(${options.length})` : type;
 
     const nullable = options.nullable ? "NULL" : "NOT NULL";
-    const pk = options.primary ? " PRIMARY KEY" : "";
+    // 복합 PK일 때는 인라인 PRIMARY KEY를 생략 (테이블 레벨에서 추가)
+    const pk = options.primary && !isCompositePk ? " PRIMARY KEY" : "";
     const autoInc =
       options.autoIncrement && this.dialect === "mysql"
         ? " AUTO_INCREMENT"

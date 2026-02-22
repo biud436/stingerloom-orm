@@ -3,6 +3,7 @@ export * from "./Entity";
 export * from "./CustomColumn";
 export * from "./InjectEntityManager";
 export * from "./PrimaryGeneratedColumn";
+export * from "./PrimaryColumn";
 export * from "./Indexer";
 export * from "./Version";
 export * from "./ManyToOne";
