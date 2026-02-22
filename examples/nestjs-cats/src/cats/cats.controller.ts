@@ -6,6 +6,7 @@ import {
   Patch,
   Param,
   Delete,
+  Query,
   ParseIntPipe,
 } from "@nestjs/common";
 import { CatsService } from "./cats.service";
@@ -38,6 +39,18 @@ export class CatsController {
   @Get("all")
   findAllIncludeDeleted() {
     return this.catsService.findAllIncludeDeleted();
+  }
+
+  /** GET /cats/cursor — 커서 기반 페이지네이션 (findWithCursor 데모) */
+  @Get("cursor")
+  findWithCursor(
+    @Query("take") take?: string,
+    @Query("cursor") cursor?: string,
+  ) {
+    return this.catsService.findWithCursor(
+      take ? parseInt(take, 10) : undefined,
+      cursor || undefined,
+    );
   }
 
   /** GET /cats/stats — 집계 쿼리 (count/avg/min/max/sum 데모) */

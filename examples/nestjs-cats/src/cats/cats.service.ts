@@ -3,7 +3,11 @@ import { CreateCatDto } from "./dto/create-cat.dto";
 import { UpdateCatDto } from "./dto/update-cat.dto";
 import { Cat } from "./cat.entity";
 
-import { BaseRepository, Transactional } from "stingerloom-orm";
+import {
+  BaseRepository,
+  Transactional,
+  CursorPaginationResult,
+} from "stingerloom-orm";
 import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
 
 @Injectable()
@@ -47,9 +51,10 @@ export class CatsService {
 
   /**
    * soft-deleted 엔티티 제외한 목록 조회 (기본 동작 — deleted_at IS NULL 자동 필터).
+   * cache: 5000 — 5초 TTL로 쿼리 결과를 캐싱합니다.
    */
   async findAll(): Promise<Cat[]> {
-    const result = await this.catRepository.find();
+    const result = await this.catRepository.find({ cache: 5000 } as any);
     if (!result) return [];
     return Array.isArray(result) ? result : [result];
   }
@@ -145,5 +150,21 @@ export class CatsService {
    */
   async removeMany(ids: number[]): Promise<{ affected: number }> {
     return this.catRepository.deleteMany(ids);
+  }
+
+  /**
+   * 커서 기반 페이지네이션으로 고양이 목록을 조회합니다.
+   * offset 방식 대신 커서를 사용하여 대량 데이터에서도 일정한 성능을 보장합니다.
+   */
+  async findWithCursor(
+    take?: number,
+    cursor?: string,
+  ): Promise<CursorPaginationResult<Cat>> {
+    return this.catRepository.findWithCursor({
+      take: take ?? 10,
+      cursor,
+      orderBy: "id",
+      direction: "ASC",
+    });
   }
 }
