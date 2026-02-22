@@ -355,6 +355,14 @@ export class MssqlDriver implements ISqlDriver {
     return `SET LOCK_TIMEOUT ${Math.max(0, Math.floor(ms))}`;
   }
 
+  supportsExplain(): boolean {
+    return false;
+  }
+
+  buildExplainSql(_selectSql: string): string {
+    throw new Error("EXPLAIN is not supported for MSSQL.");
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    * MSSQL은 WITH (UPDLOCK, ROWLOCK) 힌트를 사용하지만,

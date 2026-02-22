@@ -727,6 +727,14 @@ export class PostgresDriver implements ISqlDriver {
     return `SET LOCAL statement_timeout = '${Math.max(0, Math.floor(ms))}ms'`;
   }
 
+  supportsExplain(): boolean {
+    return true;
+  }
+
+  buildExplainSql(selectSql: string): string {
+    return `EXPLAIN (FORMAT JSON) ${selectSql}`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    *

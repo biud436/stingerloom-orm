@@ -84,6 +84,11 @@ import {
   decodeCursor,
   normalizePageSize,
 } from "./CursorPagination";
+import { ExplainResult } from "./ExplainResult";
+import {
+  ReplicationRouter,
+  ReplicationNodeConfig,
+} from "../dialects/ReplicationRouter";
 
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
@@ -96,6 +101,7 @@ export class EntityManager implements BaseEntityManager {
   private readonly subscribers: EntitySubscriber<any>[] = [];
   private queryTracker: QueryTracker | null = null;
   private defaultQueryTimeout: number | undefined;
+  private replicationRouter: ReplicationRouter | null = null;
 
   public async register(databaseClientOptions: DatabaseClientOptions) {
     await this.connect(databaseClientOptions);
@@ -147,6 +153,13 @@ export class EntityManager implements BaseEntityManager {
     if (databaseClientOptions.queryTimeout && databaseClientOptions.queryTimeout > 0) {
       this.defaultQueryTimeout = databaseClientOptions.queryTimeout;
     }
+
+    // ReplicationRouter 초기화
+    if (databaseClientOptions.replication) {
+      this.replicationRouter = new ReplicationRouter(
+        databaseClientOptions.replication,
+      );
+    }
   }
 
   private initQueryTracker(options: DatabaseClientOptions): void {
@@ -173,6 +186,41 @@ export class EntityManager implements BaseEntityManager {
    */
   private trackQuery(entityName: string, sqlText: string, durationMs: number): void {
     this.queryTracker?.track(entityName, sqlText, durationMs);
+  }
+
+  /**
+   * 읽기 쿼리에 사용할 노드 설정을 반환합니다.
+   * replication이 설정되지 않았으면 null을 반환합니다.
+   *
+   * @param useMaster true이면 강제로 master 노드를 사용합니다.
+   */
+  getReadNode(useMaster?: boolean): ReplicationNodeConfig | null {
+    if (!this.replicationRouter) return null;
+    if (useMaster) return this.replicationRouter.getWriteNode();
+    return this.replicationRouter.getReadNode();
+  }
+
+  /**
+   * 쓰기 쿼리에 사용할 노드 설정을 반환합니다.
+   * replication이 설정되지 않았으면 null을 반환합니다.
+   */
+  getWriteNode(): ReplicationNodeConfig | null {
+    if (!this.replicationRouter) return null;
+    return this.replicationRouter.getWriteNode();
+  }
+
+  /**
+   * Replication이 활성화되어 있는지 확인합니다.
+   */
+  get isReplicationEnabled(): boolean {
+    return this.replicationRouter !== null;
+  }
+
+  /**
+   * Replication router에 접근합니다.
+   */
+  getReplicationRouter(): ReplicationRouter | null {
+    return this.replicationRouter;
   }
 
   /**
@@ -997,6 +1045,192 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * Executes EXPLAIN on the SELECT query that would be generated for the given
+   * entity and find options. Returns a standardized ExplainResult.
+   *
+   * @param entity The entity class to explain the query for.
+   * @param findOption The find options that would generate the SELECT query.
+   * @throws InvalidQueryError if the driver does not support EXPLAIN.
+   */
+  async explain<T>(
+    entity: ClazzType<T>,
+    findOption: FindOption<T> = {},
+  ): Promise<ExplainResult> {
+    if (!this.driver || !this.driver.supportsExplain()) {
+      throw new InvalidQueryError(
+        "EXPLAIN is not supported by the current database driver.",
+      );
+    }
+
+    const { select, orderBy, where, take } = findOption;
+    const { limit } = findOption;
+
+    const metadata = this.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    const qb = RawQueryBuilderFactory.create();
+    const selectMap: string[] = [];
+    const whereMap: Sql[] = [];
+    const orderByMap: Array<{ column: string; direction: "ASC" | "DESC" }> = [];
+
+    const manyToOneRelations = this.resolveManyToOneMetadata(entity);
+    const eagerRelations = manyToOneRelations.filter((rel) => {
+      const isEager = rel.option?.eager === true;
+      const isInRelations = findOption.relations?.includes(rel.columnName as keyof T);
+      return isEager || isInRelations;
+    });
+
+    const oneToOneRelations = this.resolveOneToOneMetadata(entity);
+    const eagerOneToOneRelations = oneToOneRelations.filter((rel) => {
+      if (!rel.joinColumn) return false;
+      const isEager = rel.option?.eager === true;
+      const isInRelations = findOption.relations?.includes(rel.propertyKey as keyof T);
+      return isEager || isInRelations;
+    });
+
+    const hasEagerJoins = eagerRelations.length > 0 || eagerOneToOneRelations.length > 0;
+    const tableName = metadata.name!;
+
+    if (select) {
+      const selectedColumns = this.resolveSelectColumns<T>(select);
+      if (hasEagerJoins) {
+        selectMap.push(...selectedColumns.map((col) => `${this.wrap(tableName)}.${this.wrap(col)}`));
+      } else {
+        selectMap.push(...selectedColumns.map((col) => this.wrap(col)));
+      }
+    } else {
+      if (hasEagerJoins) {
+        selectMap.push(...metadata.columns.map((column) => `${this.wrap(tableName)}.${this.wrap(column.name!)}`));
+      } else {
+        selectMap.push(...metadata.columns.map((column) => this.wrap(column.name!)));
+      }
+    }
+
+    for (const key in where) {
+      const value = where[key];
+      if (value) {
+        if (hasEagerJoins) {
+          whereMap.push(Conditions.equals(`${this.wrap(tableName)}.${this.wrap(key)}`, value));
+        } else {
+          whereMap.push(Conditions.equals(this.wrap(key), value));
+        }
+      }
+    }
+
+    const deletedAtColumn = this.getDeletedAtColumn(entity);
+    if (deletedAtColumn && !(findOption as any).withDeleted) {
+      if (hasEagerJoins) {
+        whereMap.push(Conditions.isNull(`${this.wrap(tableName)}.${this.wrap(deletedAtColumn)}`));
+      } else {
+        whereMap.push(Conditions.isNull(this.wrap(deletedAtColumn)));
+      }
+    }
+
+    for (const key in orderBy) {
+      const value = orderBy[key];
+      if (value) {
+        orderByMap.push({ column: this.wrap(key), direction: value });
+      }
+    }
+
+    qb.select(selectMap).from(this.wrap(tableName));
+    qb.where(whereMap).orderBy(orderByMap);
+
+    if (Array.isArray(limit)) {
+      let [offset, count] = limit;
+      if (offset < 0) offset = 0;
+      if (count < 0) count = 0;
+      if (count === 0) count = 1;
+      if (take && take > 0) count = take;
+      if (this.isMySqlFamily()) qb.setDatabaseType("mysql");
+      qb.limit([offset, count]);
+    } else if (limit) {
+      qb.limit(limit as number);
+    }
+
+    const selectQuery = qb.build();
+    // Build the EXPLAIN query as a Sql object to preserve parameterized values.
+    // The driver's buildExplainSql returns the prefix (e.g., "EXPLAIN", "EXPLAIN (FORMAT JSON)")
+    // which we prepend to the original parameterized SELECT query.
+    const explainPrefix = this.driver.buildExplainSql("");
+    const explainQuery = sql`${raw(explainPrefix)}${selectQuery}`;
+
+    const transactionHolder = new TransactionSessionManager();
+    try {
+      await transactionHolder.connect();
+      await transactionHolder.startTransaction();
+      if (this.isMySqlFamily()) {
+        await transactionHolder.query("SET autocommit = 0");
+      }
+      const result = await transactionHolder.query(explainQuery);
+      await transactionHolder.commit();
+      const rawRows: Record<string, unknown>[] = (result as any)?.results ?? [];
+      return this.parseExplainResult(rawRows);
+    } catch (e) {
+      try { await transactionHolder.rollback(); } catch { /* ignore */ }
+      throw e;
+    } finally {
+      try { await transactionHolder.close(); } catch { /* ignore */ }
+    }
+  }
+
+  private parseExplainResult(rawRows: Record<string, unknown>[]): ExplainResult {
+    if (!rawRows || rawRows.length === 0) {
+      return { raw: [], rows: null, type: null, possibleKeys: null, key: null, cost: null };
+    }
+    const firstRow = rawRows[0];
+    if (firstRow && "QUERY PLAN" in firstRow) {
+      return this.parsePostgresExplain(firstRow["QUERY PLAN"]);
+    }
+    if ("type" in firstRow || "select_type" in firstRow) {
+      return this.parseMysqlExplain(rawRows);
+    }
+    if ("detail" in firstRow || "notused" in firstRow) {
+      return this.parseSqliteExplain(rawRows);
+    }
+    return { raw: rawRows, rows: null, type: null, possibleKeys: null, key: null, cost: null };
+  }
+
+  private parseMysqlExplain(rawRows: Record<string, unknown>[]): ExplainResult {
+    const first = rawRows[0];
+    const rows = first.rows != null ? Number(first.rows) : null;
+    const type = first.type != null ? String(first.type) : null;
+    const possibleKeysRaw = first.possible_keys;
+    const possibleKeys = possibleKeysRaw != null
+      ? String(possibleKeysRaw).split(",").map((k) => k.trim()) : null;
+    const key = first.key != null ? String(first.key) : null;
+    const cost = first.filtered != null ? Number(first.filtered) : null;
+    return { raw: rawRows, rows, type, possibleKeys, key, cost };
+  }
+
+  private parsePostgresExplain(queryPlan: unknown): ExplainResult {
+    const rawArray = Array.isArray(queryPlan) ? queryPlan : [queryPlan];
+    const plan = rawArray[0]?.Plan ?? rawArray[0]?.["Plan"] ?? null;
+    if (!plan) {
+      return { raw: rawArray, rows: null, type: null, possibleKeys: null, key: null, cost: null };
+    }
+    const rows = plan["Plan Rows"] != null ? Number(plan["Plan Rows"]) : null;
+    const type = plan["Node Type"] != null ? String(plan["Node Type"]) : null;
+    const key = plan["Index Name"] != null ? String(plan["Index Name"]) : null;
+    const cost = plan["Total Cost"] != null ? Number(plan["Total Cost"]) : null;
+    return { raw: rawArray, rows, type, possibleKeys: null, key, cost };
+  }
+
+  private parseSqliteExplain(rawRows: Record<string, unknown>[]): ExplainResult {
+    const details = rawRows.map((r) => String(r.detail ?? ""));
+    const firstDetail = details[0] ?? "";
+    let type: string | null = null;
+    let key: string | null = null;
+    if (firstDetail.startsWith("SCAN")) type = "SCAN";
+    else if (firstDetail.startsWith("SEARCH")) type = "SEARCH";
+    const indexMatch = firstDetail.match(/USING (?:COVERING )?INDEX (\S+)/);
+    if (indexMatch) key = indexMatch[1];
+    return { raw: rawRows, rows: null, type, possibleKeys: null, key, cost: null };
+  }
+
+  /**
    * 커서 기반 페이지네이션으로 엔티티를 조회합니다.
    *
    * offset 방식 대신 정렬 컬럼의 마지막 값을 커서로 사용하여
@@ -1050,7 +1284,13 @@ export class EntityManager implements BaseEntityManager {
     const resultTransformer = ResultTransformerFactory.create();
 
     try {
-      await transactionHolder.connect();
+      // Replication: 읽기 쿼리는 slave로 라우팅 (useMaster가 아닌 경우)
+      const readNode = this.getReadNode(option.useMaster);
+      if (readNode) {
+        await transactionHolder.connectToNode(readNode);
+      } else {
+        await transactionHolder.connect();
+      }
       await transactionHolder.startTransaction();
 
       if (this.isMySqlFamily()) {
@@ -1202,8 +1442,13 @@ export class EntityManager implements BaseEntityManager {
     const resultTransformer = ResultTransformerFactory.create();
 
     try {
-      // 트랜잭션을 시작합니다.
-      await transactionHolder.connect();
+      // Replication: 읽기 쿼리는 slave로 라우팅 (useMaster가 아닌 경우)
+      const readNode = this.getReadNode(findOption.useMaster);
+      if (readNode) {
+        await transactionHolder.connectToNode(readNode);
+      } else {
+        await transactionHolder.connect();
+      }
       await transactionHolder.startTransaction();
 
       // MySQL/MariaDB 전용: autocommit 비활성화

@@ -26,3 +26,4 @@ export * from "./ITxEngine";
 export * from "./SqlDriver";
 export * from "./TransactionSessionManager";
 export * from "./EntityNotFound";
+export * from "./ReplicationRouter";

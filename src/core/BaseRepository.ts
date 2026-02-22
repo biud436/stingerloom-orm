@@ -8,6 +8,7 @@ import {
   CursorPaginationOption,
   CursorPaginationResult,
 } from "./CursorPagination";
+import { ExplainResult } from "./ExplainResult";
 
 /**
  * BaseRepository class provides basic CRUD operations for an entity.
@@ -200,6 +201,16 @@ export class BaseRepository<T> {
     where?: { [K in keyof T]?: T[K] },
   ): Promise<number> {
     return await this.em.max<T>(this.entity, field, where);
+  }
+
+  /**
+   * Executes EXPLAIN on the SELECT query for the given find options.
+   *
+   * @param findOption The find options that would generate the SELECT query.
+   * @returns A promise that resolves to the ExplainResult.
+   */
+  async explain(findOption?: FindOption<T>): Promise<ExplainResult> {
+    return await this.em.explain<T>(this.entity, findOption);
   }
 
   /**

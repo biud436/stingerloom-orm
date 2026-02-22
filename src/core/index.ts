@@ -21,3 +21,4 @@ export * from "./QueryCache";
 export * from "./EntitySubscriber";
 export * from "./QueryTracker";
 export * from "./CursorPagination";
+export * from "./ExplainResult";

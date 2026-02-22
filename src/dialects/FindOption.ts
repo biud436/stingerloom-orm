@@ -66,4 +66,10 @@ export type FindOption<T> = {
    * Uses driver-specific SET statements before executing the query.
    */
   timeout?: number;
+
+  /**
+   * Replication 환경에서 강제로 master 노드를 사용하여 읽기 쿼리를 실행합니다.
+   * 쓰기 직후 최신 데이터를 읽어야 하는 경우 등에 사용합니다.
+   */
+  useMaster?: boolean;
 };

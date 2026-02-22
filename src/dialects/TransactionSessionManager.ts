@@ -13,6 +13,10 @@ import { DatabaseNotConnectedError } from "../errors/DatabaseNotConnectedError";
 import { IQueryEngine } from "./IQueryEngine";
 import { TRANSACTION_ISOLATION_LEVEL } from "./IsolationLevel";
 import { Exception } from "../errors";
+import { ReplicationNodeConfig } from "./ReplicationRouter";
+import { MySqlConnector } from "./mysql/MySqlConnector";
+import { PostgresConnector } from "./postgres/PostgresConnector";
+import { MssqlConnector } from "./mssql/MssqlConnector";
 
 /**
  * The `TransactionHolder` class extends the `IQueryEngine` and is responsible for managing
@@ -46,6 +50,58 @@ export class TransactionSessionManager extends IQueryEngine {
       } else if (dbType === "sqlite") {
         this.dataSource = new SqliteDataSource(this.connection);
       } else if (dbType === "mysql") {
+        this.dataSource = new MySqlDataSource(this.connection);
+      } else if (dbType === "mssql") {
+        this.dataSource = new MssqlDataSource(this.connection);
+      } else {
+        throw new Error(`Unsupported database type: ${dbType}`);
+      }
+
+      await this.dataSource.createConnection();
+    } catch (error: unknown) {
+      throw new DatabaseConnectionFailedError();
+    }
+  }
+
+  /**
+   * 지정된 replication 노드에 대한 별도 연결을 생성합니다.
+   * Read Replica 지원을 위해 slave 노드에 직접 연결할 때 사용합니다.
+   *
+   * @param nodeConfig 연결할 노드의 설정
+   * @throws {DatabaseConnectionFailedError} 연결 실패 시
+   */
+  public async connectToNode(nodeConfig: ReplicationNodeConfig): Promise<void> {
+    try {
+      const dbType = DatabaseClient.getInstance().type;
+      const options = DatabaseClient.getInstance().getOptions();
+
+      let connector: IConnector;
+      if (dbType === "postgres") {
+        connector = new PostgresConnector();
+      } else if (dbType === "mssql") {
+        connector = new MssqlConnector();
+      } else {
+        // mysql, mariadb
+        connector = new MySqlConnector();
+      }
+
+      // 노드 설정으로 연결 (원본 옵션의 host/port/username/password/database를 오버라이드)
+      await connector.connect({
+        ...options,
+        host: nodeConfig.host,
+        port: nodeConfig.port,
+        username: nodeConfig.username,
+        password: nodeConfig.password,
+        database: nodeConfig.database,
+      });
+
+      this.connection = connector;
+
+      if (dbType === "postgres") {
+        this.dataSource = new PostgresDataSource(this.connection);
+      } else if (dbType === "sqlite") {
+        this.dataSource = new SqliteDataSource(this.connection);
+      } else if (dbType === "mysql" || dbType === "mariadb") {
         this.dataSource = new MySqlDataSource(this.connection);
       } else if (dbType === "mssql") {
         this.dataSource = new MssqlDataSource(this.connection);

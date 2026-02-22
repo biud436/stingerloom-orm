@@ -1,4 +1,5 @@
 import { IDatabaseType, AnyEntity } from "../dialects/mysql/MySqlConnector";
+import { ReplicationConfig } from "../dialects/ReplicationRouter";
 
 /**
  * Connection pool configuration options.
@@ -112,6 +113,13 @@ export interface DatabaseClientOptions {
    * 연결 실패 시 지수 백오프로 재시도합니다.
    */
   retry?: RetryOptions;
+
+  /**
+   * Read replica (읽기/쓰기 분리) 설정.
+   * 설정 시 읽기 쿼리는 slave로, 쓰기 쿼리는 master로 라우팅됩니다.
+   * slave 실패 시 master로 자동 fallback됩니다.
+   */
+  replication?: ReplicationConfig;
 }
 
 /**

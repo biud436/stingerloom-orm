@@ -36,6 +36,11 @@ export type CursorPaginationOption<T> = {
   where?: {
     [K in keyof T]?: T[K];
   };
+
+  /**
+   * Replication 환경에서 강제로 master 노드를 사용하여 읽기 쿼리를 실행합니다.
+   */
+  useMaster?: boolean;
 };
 
 /**

@@ -231,4 +231,19 @@ export interface ISqlDriver<T = any> {
    * @returns The SQL SET statement for the specific dialect.
    */
   setQueryTimeout(ms: number): string;
+
+  /**
+   * Checks if the driver supports EXPLAIN queries.
+   *
+   * @returns True if EXPLAIN is supported, otherwise false.
+   */
+  supportsExplain(): boolean;
+
+  /**
+   * Wraps a SELECT SQL string with the dialect-specific EXPLAIN prefix.
+   *
+   * @param selectSql - The SELECT SQL text to explain.
+   * @returns The EXPLAIN SQL string.
+   */
+  buildExplainSql(selectSql: string): string;
 }

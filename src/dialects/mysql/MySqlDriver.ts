@@ -388,6 +388,14 @@ export class MySqlDriver implements ISqlDriver {
     return `SET SESSION max_execution_time = ${Math.max(0, Math.floor(ms))}`;
   }
 
+  supportsExplain(): boolean {
+    return true;
+  }
+
+  buildExplainSql(selectSql: string): string {
+    return `EXPLAIN ${selectSql}`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    *
