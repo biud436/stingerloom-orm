@@ -3,6 +3,7 @@ import { ClazzType } from "../utils";
 import { FindOption } from "../dialects/FindOption";
 import { BaseRepository } from "./BaseRepository";
 import { EntityResult } from "../types/EntityResult";
+import { DeleteResult } from "../types/DeleteResult";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
 
 export abstract class BaseEntityManager {
@@ -65,6 +66,18 @@ export abstract class BaseEntityManager {
     entity: ClazzType<T>,
     item: Partial<T>,
   ): Promise<InstanceType<ClazzType<T>>>;
+
+  /**
+   * 주어진 조건에 맞는 엔티티를 데이터베이스에서 삭제합니다.
+   *
+   * @param entity 삭제할 엔티티 클래스
+   * @param criteria WHERE 조건 (FindOption의 where와 동일한 형태)
+   * @returns 삭제된 행 수를 포함하는 DeleteResult
+   */
+  abstract delete<T>(
+    entity: ClazzType<T>,
+    criteria: { [K in keyof T]?: T[K] },
+  ): Promise<DeleteResult>;
 
   /**
    * 주어진 Entity에 해당하는 Repository를 반환합니다.

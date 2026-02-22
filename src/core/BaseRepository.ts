@@ -3,6 +3,7 @@ import { ClazzType } from "../utils";
 import { FindOption } from "../dialects/FindOption";
 import { EntityManager } from "./EntityManager";
 import { EntityResult } from "../types/EntityResult";
+import { DeleteResult } from "../types/DeleteResult";
 
 /**
  * BaseRepository class provides basic CRUD operations for an entity.
@@ -61,6 +62,26 @@ export class BaseRepository<T> {
    */
   static of<T>(entity: ClazzType<T>, em: EntityManager): BaseRepository<T> {
     return new BaseRepository(entity, em);
+  }
+
+  /**
+   * Deletes entities matching the given criteria.
+   *
+   * @param criteria The conditions to match entities for deletion.
+   * @returns A promise that resolves to the number of affected rows.
+   */
+  async delete(criteria: { [K in keyof T]?: T[K] }): Promise<DeleteResult> {
+    return await this.em.delete<T>(this.entity, criteria);
+  }
+
+  /**
+   * Removes a specific entity instance from the database using its primary key.
+   *
+   * @param item The entity instance to be removed.
+   * @returns A promise that resolves to the number of affected rows.
+   */
+  async remove(item: T): Promise<DeleteResult> {
+    return await this.em.delete<T>(this.entity, item as any);
   }
 
   /**

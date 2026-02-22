@@ -31,6 +31,7 @@ import { ResultSetHeader } from "mysql2";
 import { EntityNotFound } from "../dialects/EntityNotFound";
 import { QueryResult } from "../types/QueryResult";
 import { EntityResult } from "../types/EntityResult";
+import { DeleteResult } from "../types/DeleteResult";
 import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { Conditions } from "./Conditions";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
@@ -627,6 +628,82 @@ export class EntityManager implements BaseEntityManager {
       } as any);
 
       return result as T;
+    } catch (e: unknown) {
+      try {
+        await transactionManager.rollback();
+      } catch (rollbackError) {
+        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
+      }
+      throw e;
+    } finally {
+      try {
+        await transactionManager.close();
+      } catch (closeError) {
+        this.logger.error(`Failed to close transaction: ${closeError}`);
+      }
+    }
+  }
+
+  /**
+   * 주어진 조건에 맞는 엔티티를 데이터베이스에서 삭제합니다.
+   *
+   * @param entity 삭제할 엔티티 클래스
+   * @param criteria WHERE 조건
+   * @returns 삭제된 행 수를 포함하는 DeleteResult
+   */
+  async delete<T>(
+    entity: ClazzType<T>,
+    criteria: { [K in keyof T]?: T[K] },
+  ): Promise<DeleteResult> {
+    const metadata = this.resolveEntityMetadata(entity);
+
+    if (!metadata) {
+      throw new Error("Entity metadata does not exist.");
+    }
+
+    const transactionManager = new TransactionSessionManager();
+
+    try {
+      await transactionManager.connect();
+      await transactionManager.startTransaction();
+
+      if (this.isMySqlFamily()) {
+        await transactionManager.query("SET autocommit = 0");
+      }
+
+      const whereMap: Sql[] = [];
+      for (const key in criteria) {
+        const value = (criteria as any)[key];
+        if (value !== undefined && value !== null) {
+          whereMap.push(Conditions.equals(this.wrap(key), value));
+        }
+      }
+
+      if (whereMap.length === 0) {
+        throw new Error(
+          "Delete without conditions is not allowed. Provide at least one criterion.",
+        );
+      }
+
+      const whereSql = join(whereMap, " AND ");
+
+      const deleteQuery = sql`DELETE FROM ${raw(this.wrap(metadata.name!))} WHERE ${whereSql}`;
+
+      const queryResult = (await transactionManager.query(
+        deleteQuery,
+      )) as { results: any; fields: any };
+
+      await transactionManager.commit();
+
+      let affected = 0;
+      if (this.isMySqlFamily()) {
+        affected = queryResult?.results?.affectedRows ?? 0;
+      } else {
+        // PostgreSQL: rowCount is on the results object
+        affected = queryResult?.results?.rowCount ?? 0;
+      }
+
+      return { affected };
     } catch (e: unknown) {
       try {
         await transactionManager.rollback();
