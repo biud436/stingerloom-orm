@@ -11,6 +11,7 @@ import { DatabaseConnectionFailedError } from "../errors/DatabaseConnectionFaile
 import { DatabaseNotConnectedError } from "../errors/DatabaseNotConnectedError";
 import { IQueryEngine } from "./IQueryEngine";
 import { TRANSACTION_ISOLATION_LEVEL } from "./IsolationLevel";
+import { Exception } from "../errors";
 
 /**
  * The `TransactionHolder` class extends the `IQueryEngine` and is responsible for managing
@@ -43,8 +44,10 @@ export class TransactionSessionManager extends IQueryEngine {
         this.dataSource = new PostgresDataSource(this.connection);
       } else if (dbType === "sqlite") {
         this.dataSource = new SqliteDataSource(this.connection);
-      } else {
+      } else if (dbType === "mysql") {
         this.dataSource = new MySqlDataSource(this.connection);
+      } else {
+        throw new Error(`Unsupported database type: ${dbType}`);
       }
 
       await this.dataSource.createConnection();
