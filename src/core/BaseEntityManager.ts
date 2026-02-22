@@ -80,6 +80,19 @@ export abstract class BaseEntityManager {
   ): Promise<DeleteResult>;
 
   /**
+   * 여러 엔티티를 PK 목록으로 일괄 삭제합니다.
+   * DELETE FROM table WHERE pk IN (?, ?, ...) 단일 쿼리로 수행합니다.
+   *
+   * @param entity 엔티티 클래스
+   * @param ids 삭제할 PK 값 배열
+   * @returns 삭제된 행 수를 포함하는 DeleteResult
+   */
+  abstract deleteMany<T>(
+    entity: ClazzType<T>,
+    ids: any[],
+  ): Promise<DeleteResult>;
+
+  /**
    * 주어진 Entity에 해당하는 Repository를 반환합니다.
    * 본 ORM은 Active Record Pattern은 지원하지 않기 떄문에,
    * Repository를 통하는 Data Mapper Pattern을 이용해야 합니다.

@@ -632,6 +632,89 @@ export class EntityManager implements BaseEntityManager {
     }
   }
 
+  /**
+   * OneToOne 관계를 별도 쿼리로 로드하여 부모 엔티티에 할당합니다.
+   * Eager JOIN으로 처리되지 않은 OneToOne 관계(inverseSide 등)를 relations 옵션으로 로드합니다.
+   */
+  private async loadOneToOneRelations<T>(
+    entity: ClazzType<T>,
+    parentResults: T | T[],
+    relations: (keyof T)[],
+  ): Promise<void> {
+    const oneToOneMeta = this.resolveOneToOneMetadata(entity);
+    if (oneToOneMeta.length === 0) return;
+
+    const parentMetadata = this.resolveEntityMetadata(entity);
+    if (!parentMetadata) return;
+
+    const pk = parentMetadata.columns.find(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+    if (!pk) return;
+
+    const parents = Array.isArray(parentResults)
+      ? parentResults
+      : [parentResults];
+
+    for (const rel of oneToOneMeta) {
+      if (!relations.includes(rel.propertyKey as keyof T)) continue;
+
+      // eager JOIN으로 이미 로드된 관계는 스킵 (소유측 + eager/relations에 포함된 경우)
+      if (rel.joinColumn && (rel.option?.eager === true || relations.includes(rel.propertyKey as keyof T))) {
+        // 소유측은 eager JOIN으로 처리되므로, 이미 transformNested에서 매핑됨
+        // 하지만 relations 옵션으로만 요청된 경우는 여기서 별도 쿼리로 로드
+        // (eagerOneToOneRelations 필터에서 이미 처리됨)
+      }
+
+      const RelatedEntity = rel.getRelatedEntity();
+      const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
+      if (!relatedMetadata) continue;
+
+      const relatedPk = relatedMetadata.columns.find(
+        (col: any) => col.options?.primary,
+      );
+      if (!relatedPk) continue;
+
+      for (const parent of parents) {
+        if (rel.joinColumn) {
+          // 소유측: FK 값으로 관련 엔티티를 조회
+          const fkValue = (parent as any)[rel.joinColumn];
+          if (fkValue === undefined || fkValue === null) {
+            (parent as any)[rel.propertyKey] = null;
+            continue;
+          }
+
+          const related = await this.findOne(RelatedEntity, {
+            where: { [relatedPk.name!]: fkValue } as any,
+          });
+          (parent as any)[rel.propertyKey] = related ?? null;
+        } else if (rel.inverseSide) {
+          // 역방향: 상대측의 joinColumn으로 부모 PK를 검색
+          const parentId = (parent as any)[pk.name!];
+          if (parentId === undefined || parentId === null) {
+            (parent as any)[rel.propertyKey] = null;
+            continue;
+          }
+
+          // 상대측(소유측)의 OneToOne 메타데이터에서 joinColumn을 찾음
+          const relatedOneToOne = this.resolveOneToOneMetadata(RelatedEntity);
+          const ownerRel = relatedOneToOne.find(
+            (r) => r.propertyKey === rel.inverseSide && r.joinColumn,
+          );
+
+          if (ownerRel?.joinColumn) {
+            const related = await this.findOne(RelatedEntity, {
+              where: { [ownerRel.joinColumn]: parentId } as any,
+            });
+            (parent as any)[rel.propertyKey] = related ?? null;
+          } else {
+            (parent as any)[rel.propertyKey] = null;
+          }
+        }
+      }
+    }
+  }
+
   private async registerForeignKeys(
     TargetEntity: ClazzType<any>,
     tableName: string,

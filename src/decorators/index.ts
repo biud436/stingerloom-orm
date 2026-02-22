@@ -12,3 +12,4 @@ export * from "./DeletedAt";
 export * from "./Hooks";
 export * from "./Validation";
 export * from "./Transactional";
+export * from "./OneToOne";
