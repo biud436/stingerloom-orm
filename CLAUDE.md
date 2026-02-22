@@ -129,18 +129,17 @@ pnpm start          # NestJS 서버 시작
 
 ## 테스트 구조
 
-### 유닛 테스트 (`__tests__/`)
-- `result-transformer.test.ts` - 엔티티 역직렬화
-- `layered-metadata.test.ts` - 멀티테넌시 메타데이터
-- `metadata-context.test.ts` - 컨텍스트 전환
-- `raw-query-builder.test.ts` - SQL 쿼리 생성
-- `conditions.test.ts` - WHERE 조건 빌드
-- 기타 컬럼 접근, select 유틸리티, 역직렬화 테스트
+### 유닛 테스트 (`__tests__/unit/`)
+50+ 파일, 1250개 이상 테스트 (모두 통과)
+주요 파일: layered-metadata, metadata-context, metadata-layer-registry, schema-generator, query-cache, entity-subscriber, read-replica, cursor-pagination, explain-query, coverage-edge-cases 등
 
-**총 134개 테스트 통과 중**
+### 통합 테스트 (`__tests__/integration/`)
+- `INTEGRATION_TEST=true` 환경변수 필요 (MySQL/PostgreSQL 실제 연결)
+- `multi-tenancy-postgres.test.ts` — PostgreSQL 스키마 기반 멀티테넌시 (22개)
+- `crud-basic`, `relations-one-to-many`, `soft-delete`, `aggregate`, `batch-operations`, `lifecycle-hooks`, `one-to-one`, `many-to-many`, `schema-generator`, `query-cache`, `entity-subscriber`
 
 ### e2e 테스트 (`examples/`)
-- `examples/nestjs-cats/` - NestJS 통합 e2e 예제
+- `examples/nestjs-cats/` - NestJS 통합 e2e 예제 (QueryCache, EntitySubscriber, cursor pagination 데모 포함)
 
 ---
 
@@ -159,25 +158,39 @@ pnpm start          # NestJS 서버 시작
 
 ## 현재 구현 상태
 
-### 완료
-- CRUD (Create, Read, Update) - Delete 부분 구현
-- @ManyToOne 관계 및 FK 제약 자동 생성
-- 멀티테넌시 레이어드 메타데이터
-- 트랜잭션 (격리 수준, Savepoint 포함)
-- MySQL / PostgreSQL 드라이버
-- PostgreSQL ENUM 타입 지원
-- PostgreSQL 스키마 한정 식별자 (schema.table)
-- DeserializerRegistry (플러거블 역직렬화)
-- NestJS 통합
+### 완료 (전체)
+- CRUD (Create, Read, Update, Delete)
+- 관계: @ManyToOne, @OneToMany, @ManyToMany, @OneToOne
+- Eager / Lazy 로딩
+- 트랜잭션 (@Transactional, 격리 수준, Savepoint)
+- MySQL / PostgreSQL / SQLite / MSSQL 드라이버
+- PostgreSQL ENUM 타입, 스키마 한정 식별자
+- DeserializerRegistry, NestJS 통합
+- 마이그레이션 시스템 + CLI
+- 연결 풀링 (PoolOptions)
+- Schema Generation (syncSchema/DDL)
+- Soft Delete (@DeletedAt), Cascade, Batch 연산
+- 유효성 검사 데코레이터, 생명주기 훅
+- Aggregate (count/sum/avg/min/max)
+- Query Builder DSL (JOIN/WHERE/GROUP BY 등)
+- 이벤트 시스템, EntitySubscriber 패턴
+- QueryCache (TTL 기반)
+- N+1 감지 + 슬로우 쿼리 경고 (QueryTracker)
+- 커서 기반 페이지네이션 (findWithCursor)
+- EXPLAIN 쿼리 (ExplainResult 타입)
+- 쿼리 타임아웃 (per-query / connection-level)
+- Read Replica (읽기/쓰기 분리)
+- 복합 PK (@PrimaryColumn)
+- Raw Query 제네릭 + Connection Retry
+- 멀티테넌시 레이어드 메타데이터 + PostgreSQL 통합 테스트
+- 한국어 문서 (docs/ 10개 파일)
 
 ### 미완성/개선 필요
-- Delete 연산 완전 구현
-- @OneToMany, @ManyToMany 관계
-- Eager/Lazy 로딩
-- 복잡한 쿼리 빌더 DSL
-- 마이그레이션 시스템
-- 연결 풀링 최적화
-- SQLite 드라이버
+- findAndCount() (find + count 원자적 실행)
+- Upsert (INSERT ON CONFLICT / ON DUPLICATE KEY)
+- Query Builder HAVING / GROUP BY
+- 복합 고유 인덱스 (@UniqueIndex)
+- Schema Diff 기반 Migration 자동 생성
 
 ---
 

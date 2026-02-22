@@ -84,6 +84,62 @@
   - `integration/query-cache.test.ts`, `integration/entity-subscriber.test.ts`
   - `integration/many-to-many.test.ts`, `integration/schema-generator.test.ts`
 
+- **멀티테넌시 테스트 커버리지** (`3b0f2ee`)
+  - `__tests__/unit/metadata-layer-registry.test.ts` — MetadataLayerRegistry 유닛 테스트 24개
+    - resolveAll() 병합 뷰, resolveValue() OverlayFS fallback, 레이어 관리, 다중 테넌트 격리
+    - EntityScanner/ColumnScanner prefix 격리, has()/size/switchContext()
+  - `__tests__/integration/multi-tenancy-postgres.test.ts` — PostgreSQL 통합 테스트 22개
+    - Suite 1: 스키마 자동 생성 및 라우팅 (pg_tables 검증)
+    - Suite 2: schema_a ↔ schema_b 데이터 격리
+    - Suite 3: BaseRepository 스키마 한정 동작
+    - Suite 4: withTenant() 컨텍스트 전파 및 10개 동시 격리
+    - Suite 5: MetadataLayerRegistry + withTenant() 통합
+
+- **findAndCount()** (`a1ea2ab`)
+  - `EntityManager.findAndCount<T>(entity, findOption?): Promise<[T[], number]>`
+  - `find()` + `count()` 병렬 실행 (Promise.all), FindOption 전체 지원
+  - `BaseRepository.findAndCount()` 위임 메서드
+  - 유닛 테스트 10개
+
+- **Upsert 지원** (`7145dff`)
+  - `ISqlDriver.buildUpsertSql(tableName, columns, conflictColumns)` 인터페이스
+  - MySQL: `INSERT ... ON DUPLICATE KEY UPDATE`
+  - PostgreSQL: `INSERT ... ON CONFLICT (cols) DO UPDATE SET`
+  - SQLite: `INSERT ... ON CONFLICT (cols) DO UPDATE SET`
+  - MSSQL: `MERGE INTO ... WHEN MATCHED THEN UPDATE ...`
+  - `EntityManager.upsert(entity, data, conflictColumns?)` — conflictColumns 미지정 시 PK 자동
+  - `BaseRepository.upsert()` 위임 메서드
+  - 유닛 테스트 16개
+
+- **Query Builder GROUP BY / HAVING** (`271de44`)
+  - `FindOption<T>.groupBy?: string[]`, `FindOption<T>.having?: Sql[]` 추가
+  - SQL 순서: WHERE → GROUP BY → HAVING → ORDER BY → LIMIT
+  - eager join 시 테이블명 prefix 자동 적용
+  - QueryCache 키에 groupBy/having 포함
+  - 유닛 테스트 12개
+
+- **@UniqueIndex 복합 고유 인덱스** (`79d03d1`)
+  - `@UniqueIndex(columns, name?)` 클래스 레벨 데코레이터
+  - `UNIQUE_INDEX_TOKEN` + `UniqueIndexMetadata` 타입
+  - `ISqlDriver.addCompositeUniqueIndex(tableName, columns, indexName)`
+  - MySQL/PostgreSQL/SQLite/MSSQL 각 DDL 구현
+  - `EntityManager.registerUniqueIndexes()` — synchronize 시 자동 생성
+  - `SchemaGenerator.generateUniqueIndexDDL()` 통합
+  - 유닛 테스트 13개
+
+- **Read Replica explain() slave 라우팅** (`ec61879`)
+  - `explain()` 메서드에 slave 연결 라우팅 추가 (누락되어 있던 읽기 메서드)
+  - `explain()` 관련 유닛 테스트 2개 추가 (slave 라우팅, useMaster=true)
+
+- **테스트 커버리지 강화** (`447ba17`)
+  - `__tests__/unit/coverage-edge-cases.test.ts` 신규 (61개 테스트)
+  - OrmError 서브클래스, QueryCache TTL, CursorPagination 디코딩, EntityEventEmitter, EntitySubscriber, Connection retry backoff, 생명주기 훅 예외 전파
+
+- **examples/nestjs-cats 신기능 반영** (`f6ece05`)
+  - `CatsService.findAll()` — `cache: 5000` (5초 TTL) 옵션 추가
+  - `CatSubscriber` — `afterInsert` 훅 로그 출력, `OnModuleInit`에서 등록
+  - `GET /cats/cursor` 엔드포인트 — 커서 기반 페이지네이션 데모
+
 - **OneToMany / ManyToOne 관계 통합 테스트** (미커밋 신규)
   - `integration/helpers/create-relation-entity.ts`: 동적 엔티티 쌍 팩토리
     - `createOneToManyTestEntities()`: 기본 관계 (cascade 없음)
@@ -174,6 +230,7 @@
 | 쿼리 타임아웃 + 커서 페이지네이션 + 한국어 문서 | 1163 |
 | EXPLAIN 쿼리 + 신기능 통합 테스트 추가 | **1163** (전부 통과) |
 | OneToMany/ManyToOne 관계 통합 테스트 추가 | 1163+ |
+| Read Replica explain() + 테스트 커버리지 강화 + NestJS 예제 | **1226** ✅ |
 
 ---
 

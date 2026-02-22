@@ -67,6 +67,10 @@
 | 38 | EXPLAIN 쿼리 (EntityManager.explain) | 58c8c37 | - |
 | 39 | 신기능 통합 테스트 (QueryCache/Subscriber/ManyToMany/Schema) | 55d9422 | **1163** ✅ |
 | 40 | OneToMany/ManyToOne 관계 통합 테스트 (create-relation-entity + relations test) | - | 1163+ |
+| 41 | Read Replica 지원 (읽기/쓰기 분리) + explain() slave 라우팅 | ec61879 | **1226** ✅ |
+| 42 | 테스트 커버리지 강화 (엣지 케이스/에러 경로) | 447ba17 | **1226** ✅ |
+| 43 | examples/nestjs-cats 신기능 반영 (QueryCache/Subscriber/cursor) | f6ece05 | **1226** ✅ |
+| 44 | 멀티테넌시 테스트 커버리지 — MetadataLayerRegistry 유닛 + PostgreSQL 통합 | 3b0f2ee | **1250** ✅ |
 
 ---
 
@@ -74,26 +78,35 @@
 
 | # | 기능 | 담당 | 상태 |
 |---|------|------|------|
-| 41 | Read Replica 지원 (읽기/쓰기 분리) | dialect-engineer | 미시작 |
+| 45 | findAndCount() — [T[], count] 원자적 반환 | a1ea2ab | **1260** ✅ |
+| 46 | Upsert (INSERT ON CONFLICT 등 4개 드라이버) | 7145dff | **1276** ✅ |
+| 47 | Query Builder GROUP BY / HAVING | 271de44 | **1288** ✅ |
+| 48 | @UniqueIndex 복합 고유 인덱스 | 79d03d1 | **1301** ✅ |
 
-> **다음 소집 시**: Read Replica부터 시작. 이후 추가 백로그 배정.
-> 모든 1163개 테스트 통과 상태로 세션 종료.
+## 미완료 (다음 세션 이어서)
+
+| # | 기능 | 담당 | 상태 |
+|---|------|------|------|
+| 49 | Schema Diff 기반 Migration 자동 생성 | arch-reviewer | 미시작 |
+
+> **세션 종료 (2026-02-22)**: 1301개 테스트 통과.
 
 ---
 
 ## 백로그 (예정 작업)
 
-### 내실 다지기 (품질 향상)
+### 신기능 (다음 세션)
 
 | 기능 | 설명 | 예상 담당 |
 |------|------|----------|
-| **EXPLAIN 쿼리** | `EntityManager.explain(entity, option)` — 실행 계획 반환 | arch-reviewer |
-| **Read Replica 지원** | 읽기/쓰기 분리 (replication.master/slaves) | dialect-engineer |
-| **examples/nestjs-cats 신기능 반영** | QueryCache, Subscriber, cursor pagination 데모 추가 | test-engineer |
-| **테스트 커버리지 강화** | 엣지 케이스, 에러 경로 테스트 보강 | test-engineer |
+| **findAndCount()** | `[T[], count]` 원자적 반환, 페이지네이션 메타데이터 | arch-reviewer |
+| **Upsert** | `em.upsert(entity, data, conflictColumns)` — MySQL/Postgres/SQLite/MSSQL 각 구문 | dialect-engineer |
+| **GROUP BY / HAVING** | QueryBuilder DSL 확장 `.groupBy().having()` | arch-reviewer |
+| **@UniqueIndex 복합** | `@UniqueIndex(['col1', 'col2'])` — DDL + 마이그레이션 반영 | dialect-engineer |
+| **Schema Diff 자동 Migration** | 엔티티 변경 감지 → `ALTER TABLE` Migration 파일 자동 생성 | arch-reviewer |
 
-> ⚠️ **드라이버 확장 (Oracle) 제외** — 사용자 지시로 중단됨
 > ✅ **MSSQL** — 지시 전 이미 구현 완료, 유지 결정
+> ⚠️ **드라이버 확장 (Oracle) 제외** — 사용자 지시로 중단됨
 
 ---
 
@@ -130,9 +143,8 @@
 
 ## 현재 테스트 현황
 
-**1163개 테스트** (2026-02-22 세션 종료 기준)
+**1301개 테스트** (2026-02-22 세션 종료)
 
 ```
-pnpm test  →  60 suites, 1159 passed, 4 failed
-             (실패: integration/many-to-many, integration/schema-generator — 다음 세션 수정 예정)
+pnpm test  →  1301 passed, 0 failed
 ```
