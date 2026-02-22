@@ -6,6 +6,7 @@ import {
   EntityScannerMetadata,
   EntityScanner,
   ManyToOneScanner,
+  OneToManyScanner,
 } from "../scanner";
 import Container from "typedi";
 import { DatabaseClient } from "../DatabaseClient";
@@ -24,6 +25,8 @@ import {
   ENTITY_TOKEN,
   MANY_TO_ONE_TOKEN,
   ManyToOneMetadata,
+  ONE_TO_MANY_TOKEN,
+  OneToManyMetadata,
 } from "../decorators";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
@@ -239,6 +242,109 @@ export class EntityManager implements BaseEntityManager {
     }
 
     return [];
+  }
+
+  /**
+   * OneToMany 관계 메타데이터를 레이어 시스템을 통해 조회합니다.
+   *
+   * 조회 우선순위:
+   * 1. OneToManyScanner — MetadataLayerRegistry 경유 (멀티테넌트 레이어 지원)
+   * 2. Reflect.getMetadata() — 데코레이터가 직접 부착한 정적 메타데이터 (fallback)
+   */
+  private resolveOneToManyMetadata<T>(
+    entity: ClazzType<T>,
+  ): OneToManyMetadata<any>[] {
+    // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
+    const oneToManyScanner = Container.get(OneToManyScanner);
+    const allRelations = oneToManyScanner
+      .allMetadata<OneToManyMetadata<any>>()
+      .filter((rel) => rel.target === entity);
+
+    if (allRelations.length > 0) {
+      return allRelations;
+    }
+
+    // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
+    const reflectMetadata =
+      (Reflect.getMetadata(ONE_TO_MANY_TOKEN, entity) as
+        | OneToManyMetadata<any>[]
+        | undefined) ??
+      (Reflect.getMetadata(ONE_TO_MANY_TOKEN, entity.prototype) as
+        | OneToManyMetadata<any>[]
+        | undefined);
+
+    if (reflectMetadata && reflectMetadata.length > 0) {
+      this.logger.warn(
+        `[resolveOneToManyMetadata] "${entity.name}" OneToMany resolved via Reflect.getMetadata fallback.`,
+      );
+      return reflectMetadata;
+    }
+
+    return [];
+  }
+
+  /**
+   * OneToMany 관계를 별도 쿼리로 로드하여 부모 엔티티에 할당합니다.
+   *
+   * @param entity 부모 엔티티 클래스
+   * @param parentResults 부모 쿼리 결과 (단일 또는 배열)
+   * @param relations 로드할 관계 필드명 배열
+   */
+  private async loadOneToManyRelations<T>(
+    entity: ClazzType<T>,
+    parentResults: T | T[],
+    relations: (keyof T)[],
+  ): Promise<void> {
+    const oneToManyMeta = this.resolveOneToManyMetadata(entity);
+    if (oneToManyMeta.length === 0) return;
+
+    const parentMetadata = this.resolveEntityMetadata(entity);
+    if (!parentMetadata) return;
+
+    const pk = parentMetadata.columns.find(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+    if (!pk) return;
+
+    const parents = Array.isArray(parentResults)
+      ? parentResults
+      : [parentResults];
+
+    for (const rel of oneToManyMeta) {
+      // relations 배열에 해당 propertyKey가 포함된 경우에만 로드
+      if (!relations.includes(rel.propertyKey as keyof T)) continue;
+
+      const RelatedEntity = rel.getRelatedEntity();
+      const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
+      if (!relatedMetadata) continue;
+
+      // mappedBy가 가리키는 ManyToOne 측의 joinColumn 찾기
+      const manyToOneItems = this.resolveManyToOneMetadata(RelatedEntity);
+      const matchingRelation = manyToOneItems.find(
+        (m) => m.columnName === rel.mappedBy,
+      );
+
+      // joinColumn이 있으면 그것을 FK 컬럼으로, 없으면 mappedBy 자체를 FK 컬럼으로 사용
+      const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
+
+      for (const parent of parents) {
+        const parentId = (parent as any)[pk.name!];
+        if (parentId === undefined || parentId === null) continue;
+
+        const children = await this.find(RelatedEntity, {
+          where: { [fkColumn]: parentId } as any,
+        });
+
+        // 결과를 배열로 정규화하여 할당
+        if (children === undefined) {
+          (parent as any)[rel.propertyKey] = [];
+        } else if (Array.isArray(children)) {
+          (parent as any)[rel.propertyKey] = children;
+        } else {
+          (parent as any)[rel.propertyKey] = [children];
+        }
+      }
+    }
   }
 
   private async registerForeignKeys(
@@ -468,11 +574,23 @@ export class EntityManager implements BaseEntityManager {
       }
 
       const isEntityArray = results.length > 1;
+      let entityResult: EntityResult<T>;
       if (isEntityArray) {
-        return resultTransformer.toEntities(entity, queryResult);
+        entityResult = resultTransformer.toEntities(entity, queryResult);
       } else {
-        return resultTransformer.toEntity(entity, queryResult);
+        entityResult = resultTransformer.toEntity(entity, queryResult);
       }
+
+      // OneToMany 관계 로드 (relations 옵션이 있는 경우)
+      if (findOption.relations && findOption.relations.length > 0 && entityResult) {
+        await this.loadOneToManyRelations(
+          entity,
+          entityResult as T | T[],
+          findOption.relations,
+        );
+      }
+
+      return entityResult;
     } catch (e: unknown) {
       // 트랜잭션 롤백
       try {
