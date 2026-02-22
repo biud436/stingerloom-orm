@@ -94,4 +94,28 @@ export interface DatabaseClientOptions {
    * SQLite는 파일 기반 단일 연결이므로 이 옵션이 무시됩니다.
    */
   pool?: PoolOptions;
+
+  /**
+   * Connection retry configuration with exponential backoff.
+   * 연결 실패 시 지수 백오프로 재시도합니다.
+   */
+  retry?: RetryOptions;
+}
+
+/**
+ * Connection retry configuration with exponential backoff.
+ */
+export interface RetryOptions {
+  /**
+   * Maximum number of retry attempts.
+   * @default 3
+   */
+  maxAttempts: number;
+
+  /**
+   * Base delay in milliseconds between retries.
+   * Actual delay = backoffMs * 2^(attempt-1)
+   * @default 1000
+   */
+  backoffMs: number;
 }

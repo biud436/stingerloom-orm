@@ -5,6 +5,7 @@ import { BaseRepository } from "./BaseRepository";
 import { EntityResult } from "../types/EntityResult";
 import { DeleteResult } from "../types/DeleteResult";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
+import { Sql } from "sql-template-tag";
 
 export abstract class BaseEntityManager {
   /**
@@ -122,6 +123,18 @@ export abstract class BaseEntityManager {
     entity: ClazzType<T>,
     criteria: { [K in keyof T]?: T[K] },
   ): Promise<DeleteResult>;
+
+  /**
+   * 임의의 SQL 쿼리를 실행하고 결과를 제네릭 타입 T[]로 반환합니다.
+   *
+   * @param sqlQuery 실행할 SQL 문자열 또는 sql-template-tag Sql 객체
+   * @param params SQL 문자열 사용 시 바인딩할 파라미터 배열
+   * @returns 쿼리 결과를 T[] 타입으로 반환
+   */
+  abstract query<T = Record<string, unknown>>(
+    sqlQuery: string | Sql,
+    params?: unknown[],
+  ): Promise<T[]>;
 
   abstract getRepository<T>(entity: ClazzType<T>): BaseRepository<T>;
 
