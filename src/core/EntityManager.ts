@@ -55,6 +55,11 @@ import { MetadataContext } from "../metadata/MetadataContext";
 import { injectLazyProxy } from "./LazyLoader";
 import { hasCascade } from "../types/CascadeType";
 import { EntityValidator } from "./EntityValidator";
+import {
+  EntityEventEmitter,
+  EntityEventType,
+  EntityEventListener,
+} from "./EntityEventEmitter";
 
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
@@ -62,6 +67,7 @@ export class EntityManager implements BaseEntityManager {
   private driver?: ISqlDriver;
   private dataSource?: IDataSource;
   private dirtyEntities: Set<InstanceType<ClazzType<any>>> = new Set();
+  private readonly eventEmitter = new EntityEventEmitter();
 
   public async register(databaseClientOptions: DatabaseClientOptions) {
     await this.connect(databaseClientOptions);
@@ -101,6 +107,27 @@ export class EntityManager implements BaseEntityManager {
       default:
         throw new Error("Unsupported database type.");
     }
+  }
+
+  /**
+   * 엔티티 이벤트 리스너를 등록합니다.
+   */
+  on(event: EntityEventType, listener: EntityEventListener): void {
+    this.eventEmitter.on(event, listener);
+  }
+
+  /**
+   * 엔티티 이벤트 리스너를 제거합니다.
+   */
+  off(event: EntityEventType, listener: EntityEventListener): void {
+    this.eventEmitter.off(event, listener);
+  }
+
+  /**
+   * 모든 이벤트 리스너를 제거합니다.
+   */
+  removeAllListeners(): void {
+    this.eventEmitter.removeAllListeners();
   }
 
   public async propagateShutdown() {
@@ -1283,6 +1310,7 @@ export class EntityManager implements BaseEntityManager {
       if (!primaryKeyValue) {
         // @BeforeInsert 훅 실행
         await this.runHooks(entity, item, "beforeInsert");
+        await this.eventEmitter.emit("beforeInsert", { entity, data: item });
 
         // PostgreSQL: INSERT ... RETURNING "id" 로 생성된 PK를 바로 반환받습니다.
         const isPostgres = this.isPostgres();
@@ -1308,6 +1336,7 @@ export class EntityManager implements BaseEntityManager {
           await this.cascadeSaveOneToMany(entity, item, queryResult?.results?.insertId);
           // @AfterInsert 훅 실행
           await this.runHooks(entity, item, "afterInsert");
+          await this.eventEmitter.emit("afterInsert", { entity, data: item });
           return result as T;
         }
 
@@ -1321,17 +1350,20 @@ export class EntityManager implements BaseEntityManager {
           await this.cascadeSaveOneToMany(entity, item, insertedId);
           // @AfterInsert 훅 실행
           await this.runHooks(entity, item, "afterInsert");
+          await this.eventEmitter.emit("afterInsert", { entity, data: item });
           return result as T;
         }
 
         // @AfterInsert 훅 실행
         await this.runHooks(entity, item, "afterInsert");
+        await this.eventEmitter.emit("afterInsert", { entity, data: item });
         return queryResult as T;
       }
 
       // If the primary key (PK) exists, execute the update query.
       // @BeforeUpdate 훅 실행
       await this.runHooks(entity, item, "beforeUpdate");
+      await this.eventEmitter.emit("beforeUpdate", { entity, data: item });
 
       const updateMap = metadata.columns.map((column: ColumnMetadata) => {
         return sql`${raw(this.wrap(column.name!))} = ${(item as any)[column.name!]}`;
@@ -1351,6 +1383,7 @@ export class EntityManager implements BaseEntityManager {
 
       // @AfterUpdate 훅 실행
       await this.runHooks(entity, item, "afterUpdate");
+      await this.eventEmitter.emit("afterUpdate", { entity, data: item });
 
       // Retrieve and return the updated entity.
       const result = await this.findOne(entity, {
@@ -1592,6 +1625,7 @@ export class EntityManager implements BaseEntityManager {
 
       // @BeforeDelete 훅 실행
       await this.runHooks(entity, criteria, "beforeDelete");
+      await this.eventEmitter.emit("beforeDelete", { entity, data: criteria });
 
       // cascade remove: 자식 엔티티를 먼저 삭제합니다.
       await this.cascadeDeleteOneToMany(entity, criteria);
@@ -1630,6 +1664,7 @@ export class EntityManager implements BaseEntityManager {
 
       // @AfterDelete 훅 실행
       await this.runHooks(entity, criteria, "afterDelete");
+      await this.eventEmitter.emit("afterDelete", { entity, data: criteria });
 
       return { affected };
     } catch (e: unknown) {
@@ -2049,6 +2084,79 @@ export class EntityManager implements BaseEntityManager {
     where?: { [K in keyof T]?: T[K] },
   ): Promise<number> {
     return this.aggregate(entity, "MAX", field, where);
+  }
+
+  /**
+   * 임의의 SQL 쿼리를 실행하고 결과를 제네릭 타입 T[]로 반환합니다.
+   *
+   * @param sqlQuery 실행할 SQL 문자열 또는 sql-template-tag Sql 객체
+   * @param params SQL 문자열 사용 시 바인딩할 파라미터 배열
+   * @returns 쿼리 결과를 T[] 타입으로 반환
+   *
+   * @example
+   * ```ts
+   * interface UserRow { id: number; name: string; }
+   * const users = await em.query<UserRow>(sql`SELECT * FROM "User" WHERE "id" = ${1}`);
+   * ```
+   */
+  async query<T = Record<string, unknown>>(
+    sqlQuery: string | Sql,
+    params?: unknown[],
+  ): Promise<T[]> {
+    const transactionHolder = new TransactionSessionManager();
+
+    try {
+      await transactionHolder.connect();
+      await transactionHolder.startTransaction();
+
+      if (this.isMySqlFamily()) {
+        await transactionHolder.query("SET autocommit = 0");
+      }
+
+      let queryResult: any;
+      if (typeof sqlQuery === "string") {
+        // string SQL with optional params: build a Sql object with parameter binding
+        if (params && params.length > 0) {
+          // Build parameterized query using sql-template-tag
+          const parameterizedSql = {
+            text: sqlQuery,
+            sql: sqlQuery,
+            values: params,
+            strings: [sqlQuery],
+          } as unknown as Sql;
+          queryResult = await transactionHolder.query(parameterizedSql);
+        } else {
+          queryResult = await transactionHolder.query(sqlQuery);
+        }
+      } else {
+        queryResult = await transactionHolder.query(sqlQuery);
+      }
+
+      await transactionHolder.commit();
+
+      // 드라이버별 결과 정규화
+      if (queryResult?.results) {
+        // QueryResult 형태 ({ results, fields })
+        return (queryResult.results as T[]) ?? [];
+      }
+      if (Array.isArray(queryResult)) {
+        return queryResult as T[];
+      }
+      return [];
+    } catch (e: unknown) {
+      try {
+        await transactionHolder.rollback();
+      } catch (rollbackError) {
+        this.logger.error(`Failed to rollback raw query transaction: ${rollbackError}`);
+      }
+      throw e;
+    } finally {
+      try {
+        await transactionHolder.close();
+      } catch (closeError) {
+        this.logger.error(`Failed to close raw query transaction: ${closeError}`);
+      }
+    }
   }
 
   getRepository<T>(entity: ClazzType<T>) {

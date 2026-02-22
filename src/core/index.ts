@@ -15,4 +15,5 @@ export * from "./MyClassConstructor";
 export * from "./DatabaseClientOptions";
 export * from "./LazyLoader";
 export * from "./EntityValidator";
+export * from "./EntityEventEmitter";
 export * from "./SchemaGenerator";
