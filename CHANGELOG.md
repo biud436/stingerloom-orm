@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`makeManyTones()` 오타 수정** (`d908034`)
+  - `ManyToOneScanner.makeManyTones` → `makeManyToOnes`
+  - `eager-loading.test.ts`, `lazy-loading.test.ts`, `cascade.test.ts` 3개 파일 일괄 수정
+
 ### Added
 - **Cascade 옵션** (`36496bb`, `e38fd17`)
   - `CascadeType`: `"insert" | "update" | "remove"` 타입 정의
@@ -78,7 +83,8 @@
 | 마이그레이션 시스템 후 | 415 |
 | 연결 풀링 후 | 415 |
 | @ManyToMany 후 | 427 |
-| Cascade + Lazy 로딩 후 | **496** |
+| Cascade + Lazy 로딩 후 | 496 |
+| 오타 수정 + cascade 테스트 개선 후 | **501** |
 
 ---
 
