@@ -13,20 +13,83 @@ import {
 import { OneToManyScanner } from "../../src/scanner/OneToManyScanner";
 import { ManyToOneScanner } from "../../src/scanner/ManyToOneScanner";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
-import { CascadeType } from "../../src/types/CascadeType";
+import {
+  CascadeType,
+  CascadeOption,
+  normalizeCascade,
+  hasCascade,
+} from "../../src/types/CascadeType";
 
 describe("Cascade 옵션", () => {
   describe("CascadeType 타입 정의", () => {
-    it("insert, update, remove 타입을 허용해야 한다", () => {
-      const types: CascadeType[] = ["insert", "update", "remove"];
-      expect(types).toHaveLength(3);
+    it("insert, update, delete, remove 타입을 허용해야 한다", () => {
+      const types: CascadeType[] = ["insert", "update", "delete", "remove"];
+      expect(types).toHaveLength(4);
     });
 
     it("cascade 배열은 부분 집합도 허용해야 한다", () => {
       const insertOnly: CascadeType[] = ["insert"];
-      const removeOnly: CascadeType[] = ["remove"];
+      const deleteOnly: CascadeType[] = ["delete"];
       expect(insertOnly).toEqual(["insert"]);
-      expect(removeOnly).toEqual(["remove"]);
+      expect(deleteOnly).toEqual(["delete"]);
+    });
+  });
+
+  describe("normalizeCascade", () => {
+    it("true를 ['insert', 'update', 'delete']로 정규화해야 한다", () => {
+      expect(normalizeCascade(true)).toEqual(["insert", "update", "delete"]);
+    });
+
+    it("false를 빈 배열로 정규화해야 한다", () => {
+      expect(normalizeCascade(false)).toEqual([]);
+    });
+
+    it("undefined를 빈 배열로 정규화해야 한다", () => {
+      expect(normalizeCascade(undefined)).toEqual([]);
+    });
+
+    it("배열을 그대로 반환해야 한다", () => {
+      expect(normalizeCascade(["insert", "delete"])).toEqual([
+        "insert",
+        "delete",
+      ]);
+    });
+
+    it('"remove"를 "delete"로 정규화해야 한다', () => {
+      expect(normalizeCascade(["insert", "remove"])).toEqual([
+        "insert",
+        "delete",
+      ]);
+    });
+
+    it("빈 배열을 그대로 반환해야 한다", () => {
+      expect(normalizeCascade([])).toEqual([]);
+    });
+  });
+
+  describe("hasCascade", () => {
+    it("배열에 포함된 타입을 감지해야 한다", () => {
+      expect(hasCascade(["insert", "update"], "insert")).toBe(true);
+      expect(hasCascade(["insert", "update"], "update")).toBe(true);
+      expect(hasCascade(["insert", "update"], "delete")).toBe(false);
+    });
+
+    it("true일 때 모든 타입을 포함해야 한다", () => {
+      expect(hasCascade(true, "insert")).toBe(true);
+      expect(hasCascade(true, "update")).toBe(true);
+      expect(hasCascade(true, "delete")).toBe(true);
+    });
+
+    it("false/undefined일 때 어떤 타입도 포함하지 않아야 한다", () => {
+      expect(hasCascade(false, "insert")).toBe(false);
+      expect(hasCascade(undefined, "insert")).toBe(false);
+      expect(hasCascade(undefined, "delete")).toBe(false);
+    });
+
+    it('"delete"와 "remove"를 동일하게 취급해야 한다', () => {
+      expect(hasCascade(["remove"], "delete")).toBe(true);
+      expect(hasCascade(["delete"], "remove")).toBe(true);
+      expect(hasCascade(["remove"], "remove")).toBe(true);
     });
   });
 
@@ -36,7 +99,7 @@ describe("Cascade 옵션", () => {
       Container.reset();
     });
 
-    it("cascade 옵션이 @OneToMany 데코레이터를 통해 메타데이터에 저장되어야 한다", () => {
+    it("cascade 배열이 메타데이터에 저장되어야 한다", () => {
       class Post {
         userId!: number;
       }
@@ -44,7 +107,7 @@ describe("Cascade 옵션", () => {
       class User {
         @OneToMany(() => Post, {
           mappedBy: "userId",
-          cascade: ["insert", "update", "remove"],
+          cascade: ["insert", "update", "delete"],
         })
         posts!: Post[];
       }
@@ -56,10 +119,31 @@ describe("Cascade 옵션", () => {
 
       expect(metadata).toBeDefined();
       expect(metadata).toHaveLength(1);
-      expect(metadata[0].cascade).toEqual(["insert", "update", "remove"]);
+      expect(metadata[0].cascade).toEqual(["insert", "update", "delete"]);
     });
 
-    it("cascade 옵션 없이 @OneToMany를 사용할 수 있어야 한다", () => {
+    it("cascade: true가 메타데이터에 저장되어야 한다", () => {
+      class Post {
+        userId!: number;
+      }
+
+      class User {
+        @OneToMany(() => Post, {
+          mappedBy: "userId",
+          cascade: true,
+        })
+        posts!: Post[];
+      }
+
+      const metadata: OneToManyMetadata<Post>[] = Reflect.getMetadata(
+        ONE_TO_MANY_TOKEN,
+        User,
+      );
+
+      expect(metadata[0].cascade).toBe(true);
+    });
+
+    it("cascade 옵션 없이 사용할 수 있어야 한다", () => {
       class Post {
         userId!: number;
       }
@@ -98,7 +182,28 @@ describe("Cascade 옵션", () => {
       expect(metadata[0].cascade).toEqual(["insert"]);
     });
 
-    it("cascade: ['remove'] 만 설정할 수 있어야 한다", () => {
+    it("cascade: ['delete'] 만 설정할 수 있어야 한다", () => {
+      class Item {
+        orderId!: number;
+      }
+
+      class Order {
+        @OneToMany(() => Item, {
+          mappedBy: "orderId",
+          cascade: ["delete"],
+        })
+        items!: Item[];
+      }
+
+      const metadata: OneToManyMetadata<Item>[] = Reflect.getMetadata(
+        ONE_TO_MANY_TOKEN,
+        Order,
+      );
+
+      expect(metadata[0].cascade).toEqual(["delete"]);
+    });
+
+    it("하위 호환: cascade: ['remove'] 도 허용해야 한다", () => {
       class Item {
         orderId!: number;
       }
@@ -117,6 +222,8 @@ describe("Cascade 옵션", () => {
       );
 
       expect(metadata[0].cascade).toEqual(["remove"]);
+      // hasCascade should treat "remove" same as "delete"
+      expect(hasCascade(metadata[0].cascade, "delete")).toBe(true);
     });
 
     it("여러 @OneToMany 관계에 각각 다른 cascade를 설정할 수 있어야 한다", () => {
@@ -136,7 +243,7 @@ describe("Cascade 옵션", () => {
 
         @OneToMany(() => Comment, {
           mappedBy: "authorId",
-          cascade: ["remove"],
+          cascade: ["delete"],
         })
         comments!: Comment[];
       }
@@ -152,7 +259,7 @@ describe("Cascade 옵션", () => {
       const commentsMeta = metadata.find((m) => m.propertyKey === "comments");
 
       expect(postsMeta!.cascade).toEqual(["insert", "update"]);
-      expect(commentsMeta!.cascade).toEqual(["remove"]);
+      expect(commentsMeta!.cascade).toEqual(["delete"]);
     });
   });
 
@@ -162,7 +269,7 @@ describe("Cascade 옵션", () => {
       Container.reset();
     });
 
-    it("cascade 옵션이 @ManyToOne 데코레이터를 통해 메타데이터에 저장되어야 한다", () => {
+    it("cascade 배열이 메타데이터에 저장되어야 한다", () => {
       class User {
         id!: number;
       }
@@ -186,7 +293,29 @@ describe("Cascade 옵션", () => {
       expect(metadata[0].option?.cascade).toEqual(["insert", "update"]);
     });
 
-    it("cascade 옵션 없이 @ManyToOne을 사용할 수 있어야 한다", () => {
+    it("cascade: true가 메타데이터에 저장되어야 한다", () => {
+      class User {
+        id!: number;
+      }
+
+      class Post {
+        @ManyToOne(
+          () => User,
+          (entity: any) => entity.user,
+          { joinColumn: "user_id", cascade: true },
+        )
+        user!: User;
+      }
+
+      const metadata: ManyToOneMetadata<any>[] = Reflect.getMetadata(
+        MANY_TO_ONE_TOKEN,
+        Post,
+      );
+
+      expect(metadata[0].option?.cascade).toBe(true);
+    });
+
+    it("cascade 옵션 없이 사용할 수 있어야 한다", () => {
       class User {
         id!: number;
       }
@@ -231,32 +360,6 @@ describe("Cascade 옵션", () => {
     });
   });
 
-  describe("Cascade 판별 로직", () => {
-    it("cascade insert/update 포함 여부를 배열로 확인할 수 있어야 한다", () => {
-      const hasSaveCascade = (cascade: CascadeType[] | undefined) => {
-        return cascade?.includes("insert") || cascade?.includes("update");
-      };
-
-      expect(hasSaveCascade(["insert"])).toBe(true);
-      expect(hasSaveCascade(["update"])).toBe(true);
-      expect(hasSaveCascade(["insert", "remove"])).toBe(true);
-      expect(hasSaveCascade(["remove"])).toBeFalsy();
-      expect(hasSaveCascade(undefined)).toBeFalsy();
-      expect(hasSaveCascade([])).toBeFalsy();
-    });
-
-    it("cascade remove 포함 여부를 배열로 확인할 수 있어야 한다", () => {
-      const hasRemoveCascade = (cascade: CascadeType[] | undefined) => {
-        return cascade?.includes("remove");
-      };
-
-      expect(hasRemoveCascade(["remove"])).toBe(true);
-      expect(hasRemoveCascade(["insert", "remove"])).toBe(true);
-      expect(hasRemoveCascade(["insert"])).toBeFalsy();
-      expect(hasRemoveCascade(undefined)).toBeFalsy();
-    });
-  });
-
   describe("Cascade metadata via layer system", () => {
     beforeEach(() => {
       MetadataLayerRegistry.reset();
@@ -271,7 +374,7 @@ describe("Cascade 옵션", () => {
       class User {
         @OneToMany(() => Post, {
           mappedBy: "userId",
-          cascade: ["insert", "remove"],
+          cascade: ["insert", "delete"],
         })
         posts!: Post[];
       }
@@ -280,7 +383,7 @@ describe("Cascade 옵션", () => {
       const results = scanner.scan(User);
 
       expect(results).toHaveLength(1);
-      expect(results[0].cascade).toEqual(["insert", "remove"]);
+      expect(results[0].cascade).toEqual(["insert", "delete"]);
     });
 
     it("cascade metadata가 allMetadata로 조회 가능해야 한다", () => {
@@ -291,7 +394,7 @@ describe("Cascade 옵션", () => {
       class User {
         @OneToMany(() => Post, {
           mappedBy: "userId",
-          cascade: ["insert", "update", "remove"],
+          cascade: true,
         })
         posts!: Post[];
       }
@@ -304,7 +407,10 @@ describe("Cascade 옵션", () => {
       );
 
       expect(userPosts).toBeDefined();
-      expect(userPosts!.cascade).toEqual(["insert", "update", "remove"]);
+      expect(userPosts!.cascade).toBe(true);
+      expect(hasCascade(userPosts!.cascade, "insert")).toBe(true);
+      expect(hasCascade(userPosts!.cascade, "update")).toBe(true);
+      expect(hasCascade(userPosts!.cascade, "delete")).toBe(true);
     });
 
     it("tenant 컨텍스트에서 cascade metadata를 격리해야 한다", () => {
@@ -335,7 +441,7 @@ describe("Cascade 옵션", () => {
         propertyKey: "items",
         getRelatedEntity: () => TenantChild,
         mappedBy: "ownerId",
-        cascade: ["insert", "remove"],
+        cascade: ["insert", "delete"],
       });
 
       // tenant_1 should see its own cascade metadata
@@ -344,7 +450,7 @@ describe("Cascade 옵션", () => {
         (m: any) => m.propertyKey === "items",
       );
       expect(tenantEntry).toBeDefined();
-      expect(tenantEntry!.cascade).toEqual(["insert", "remove"]);
+      expect(tenantEntry!.cascade).toEqual(["insert", "delete"]);
 
       // Switch to public context
       scanner.switchContext("public");
