@@ -187,3 +187,250 @@ describe("Entity 생명주기 훅 데코레이터", () => {
     });
   });
 });
+
+// ─── EntityManager integration tests ────────────────────────
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const mockQuery = jest.fn();
+const mockCommit = jest.fn();
+const mockRollback = jest.fn();
+const mockClose = jest.fn();
+const mockTxConnect = jest.fn();
+const mockStartTransaction = jest.fn();
+
+jest.mock("../../src/dialects/TransactionSessionManager", () => ({
+  TransactionSessionManager: jest.fn().mockImplementation(() => ({
+    connect: mockTxConnect,
+    startTransaction: mockStartTransaction,
+    query: mockQuery,
+    commit: mockCommit,
+    rollback: mockRollback,
+    close: mockClose,
+  })),
+}));
+
+jest.mock("../../src/DatabaseClient", () => ({
+  DatabaseClient: {
+    getInstance: () => ({
+      connect: jest.fn().mockResolvedValue({ query: jest.fn() }),
+      close: jest.fn(),
+      getConnection: jest.fn(),
+      getOptions: jest.fn().mockReturnValue({ synchronize: false }),
+      type: "postgres",
+    }),
+  },
+}));
+
+import { EntityManager } from "../../src/core/EntityManager";
+import { Entity } from "../../src/decorators/Entity";
+import { Column } from "../../src/decorators/Column";
+import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
+
+describe("EntityManager 훅 통합 테스트", () => {
+  let em: EntityManager;
+
+  const beforeInsertSpy = jest.fn();
+  const afterInsertSpy = jest.fn();
+  const beforeUpdateSpy = jest.fn();
+  const afterUpdateSpy = jest.fn();
+  const beforeDeleteSpy = jest.fn();
+  const afterDeleteSpy = jest.fn();
+
+  @Entity()
+  class TrackedItem {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column()
+    name!: string;
+
+    @BeforeInsert()
+    onBeforeInsert() {
+      beforeInsertSpy();
+    }
+
+    @AfterInsert()
+    onAfterInsert() {
+      afterInsertSpy();
+    }
+
+    @BeforeUpdate()
+    onBeforeUpdate() {
+      beforeUpdateSpy();
+    }
+
+    @AfterUpdate()
+    onAfterUpdate() {
+      afterUpdateSpy();
+    }
+
+    @BeforeDelete()
+    onBeforeDelete() {
+      beforeDeleteSpy();
+    }
+
+    @AfterDelete()
+    onAfterDelete() {
+      afterDeleteSpy();
+    }
+  }
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    em = new EntityManager();
+    await em.connect({
+      type: "postgres",
+      host: "localhost",
+      port: 5432,
+      username: "test",
+      password: "test",
+      database: "testdb",
+      entities: [],
+    });
+  });
+
+  it("INSERT 시 @BeforeInsert, @AfterInsert 훅을 호출해야 함", async () => {
+    mockQuery.mockResolvedValue({
+      results: [{ id: 1 }],
+      fields: [],
+    });
+
+    const item = new TrackedItem();
+    item.name = "test";
+
+    await em.save(TrackedItem, item as any);
+
+    expect(beforeInsertSpy).toHaveBeenCalledTimes(1);
+    expect(afterInsertSpy).toHaveBeenCalledTimes(1);
+    expect(beforeUpdateSpy).not.toHaveBeenCalled();
+    expect(afterUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it("UPDATE 시 @BeforeUpdate, @AfterUpdate 훅을 호출해야 함", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ results: { rowCount: 1 }, fields: [] })
+      .mockResolvedValue({ results: [{ id: 1, name: "updated" }], fields: [] });
+
+    const item = new TrackedItem();
+    item.id = 1;
+    item.name = "updated";
+
+    await em.save(TrackedItem, item as any);
+
+    expect(beforeUpdateSpy).toHaveBeenCalledTimes(1);
+    expect(afterUpdateSpy).toHaveBeenCalledTimes(1);
+    expect(beforeInsertSpy).not.toHaveBeenCalled();
+    expect(afterInsertSpy).not.toHaveBeenCalled();
+  });
+
+  it("DELETE 시 @BeforeDelete, @AfterDelete 훅을 호출해야 함", async () => {
+    mockQuery.mockResolvedValue({
+      results: { rowCount: 1 },
+      fields: [],
+    });
+
+    const item = new TrackedItem();
+    item.id = 1;
+    item.onBeforeDelete = beforeDeleteSpy;
+    item.onAfterDelete = afterDeleteSpy;
+
+    await em.delete(TrackedItem, item as any);
+
+    expect(beforeDeleteSpy).toHaveBeenCalledTimes(1);
+    expect(afterDeleteSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("@BeforeInsert는 INSERT 쿼리 전에 호출되어야 함", async () => {
+    const callOrder: string[] = [];
+
+    beforeInsertSpy.mockImplementation(() => {
+      callOrder.push("beforeInsert");
+    });
+
+    mockQuery.mockImplementation(() => {
+      callOrder.push("query");
+      return Promise.resolve({ results: [{ id: 1 }], fields: [] });
+    });
+
+    const item = new TrackedItem();
+    item.name = "ordered";
+
+    await em.save(TrackedItem, item as any);
+
+    const beforeIdx = callOrder.indexOf("beforeInsert");
+    const firstQueryIdx = callOrder.indexOf("query");
+    expect(beforeIdx).toBeGreaterThanOrEqual(0);
+    expect(firstQueryIdx).toBeGreaterThan(beforeIdx);
+  });
+
+  it("@BeforeInsert에서 item을 수정할 수 있어야 함", async () => {
+    @Entity()
+    class TimestampItem {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column()
+      name!: string;
+
+      @Column()
+      createdAt!: string;
+
+      @BeforeInsert()
+      setTimestamp() {
+        this.createdAt = "2026-01-01T00:00:00Z";
+      }
+    }
+
+    mockQuery.mockResolvedValue({
+      results: [{ id: 1 }],
+      fields: [],
+    });
+
+    const item = new TimestampItem();
+    item.name = "test";
+
+    await em.save(TimestampItem, item as any);
+
+    expect(item.createdAt).toBe("2026-01-01T00:00:00Z");
+  });
+
+  it("훅이 없는 엔티티의 save()는 에러 없이 동작해야 함", async () => {
+    @Entity()
+    class PlainItem {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column()
+      value!: string;
+    }
+
+    mockQuery.mockResolvedValue({
+      results: [{ id: 1 }],
+      fields: [],
+    });
+
+    await expect(
+      em.save(PlainItem, { value: "test" } as any),
+    ).resolves.toBeDefined();
+  });
+
+  it("훅이 없는 엔티티의 delete()는 에러 없이 동작해야 함", async () => {
+    @Entity()
+    class PlainItem2 {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column()
+      value!: string;
+    }
+
+    mockQuery.mockResolvedValue({
+      results: { rowCount: 1 },
+      fields: [],
+    });
+
+    await expect(
+      em.delete(PlainItem2, { id: 1 } as any),
+    ).resolves.toEqual({ affected: 1 });
+  });
+});

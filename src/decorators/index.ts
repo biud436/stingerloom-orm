@@ -11,3 +11,4 @@ export * from "./ManyToMany";
 export * from "./DeletedAt";
 export * from "./Hooks";
 export * from "./Validation";
+export * from "./Transactional";

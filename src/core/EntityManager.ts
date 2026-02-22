@@ -1635,6 +1635,135 @@ export class EntityManager implements BaseEntityManager {
     }
   }
 
+  /**
+   * 집계 함수를 실행하는 내부 헬퍼입니다.
+   */
+  private async aggregate<T>(
+    entity: ClazzType<T>,
+    fn: string,
+    field: string,
+    where?: { [K in keyof T]?: T[K] },
+  ): Promise<number> {
+    const metadata = this.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new Error("Entity metadata does not exist.");
+    }
+
+    const transactionManager = new TransactionSessionManager();
+
+    try {
+      await transactionManager.connect();
+      await transactionManager.startTransaction();
+
+      if (this.isMySqlFamily()) {
+        await transactionManager.query("SET autocommit = 0");
+      }
+
+      const tableName = metadata.name!;
+      const selectExpr = raw(
+        `${fn}(${field === "*" ? "*" : this.wrap(field)})`,
+      );
+
+      const whereMap: Sql[] = [];
+      if (where) {
+        for (const key in where) {
+          const value = (where as any)[key];
+          if (value !== undefined && value !== null) {
+            whereMap.push(Conditions.equals(this.wrap(key), value));
+          }
+        }
+      }
+
+      let queryStr: Sql;
+      if (whereMap.length > 0) {
+        const whereSql = join(whereMap, " AND ");
+        queryStr = sql`SELECT ${selectExpr} AS ${raw(this.wrap("result"))} FROM ${raw(this.wrap(tableName))} WHERE ${whereSql}`;
+      } else {
+        queryStr = sql`SELECT ${selectExpr} AS ${raw(this.wrap("result"))} FROM ${raw(this.wrap(tableName))}`;
+      }
+
+      const queryResult = (await transactionManager.query(
+        queryStr,
+      )) as QueryResult;
+
+      await transactionManager.commit();
+
+      const { results } = queryResult;
+      if (!results || results.length === 0) return 0;
+
+      const row = results[0];
+      const value = row.result ?? row["result"];
+      return value === null || value === undefined ? 0 : Number(value);
+    } catch (e: unknown) {
+      try {
+        await transactionManager.rollback();
+      } catch (rollbackError) {
+        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
+      }
+      throw e;
+    } finally {
+      try {
+        await transactionManager.close();
+      } catch (closeError) {
+        this.logger.error(`Failed to close transaction: ${closeError}`);
+      }
+    }
+  }
+
+  /**
+   * 조건에 맞는 엔티티 수를 반환합니다.
+   */
+  async count<T>(
+    entity: ClazzType<T>,
+    where?: { [K in keyof T]?: T[K] },
+  ): Promise<number> {
+    return this.aggregate(entity, "COUNT", "*", where);
+  }
+
+  /**
+   * 조건에 맞는 엔티티의 특정 필드 합계를 반환합니다.
+   */
+  async sum<T>(
+    entity: ClazzType<T>,
+    field: keyof T & string,
+    where?: { [K in keyof T]?: T[K] },
+  ): Promise<number> {
+    return this.aggregate(entity, "SUM", field, where);
+  }
+
+  /**
+   * 조건에 맞는 엔티티의 특정 필드 평균을 반환합니다.
+   */
+  async avg<T>(
+    entity: ClazzType<T>,
+    field: keyof T & string,
+    where?: { [K in keyof T]?: T[K] },
+  ): Promise<number> {
+    return this.aggregate(entity, "AVG", field, where);
+  }
+
+  /**
+   * 조건에 맞는 엔티티의 특정 필드 최솟값을 반환합니다.
+   */
+  async min<T>(
+    entity: ClazzType<T>,
+    field: keyof T & string,
+    where?: { [K in keyof T]?: T[K] },
+  ): Promise<number> {
+    return this.aggregate(entity, "MIN", field, where);
+  }
+
+  /**
+   * 조건에 맞는 엔티티의 특정 필드 최댓값을 반환합니다.
+   */
+  async max<T>(
+    entity: ClazzType<T>,
+    field: keyof T & string,
+    where?: { [K in keyof T]?: T[K] },
+  ): Promise<number> {
+    return this.aggregate(entity, "MAX", field, where);
+  }
+
   getRepository<T>(entity: ClazzType<T>) {
     return BaseRepository.of(entity, this);
   }
