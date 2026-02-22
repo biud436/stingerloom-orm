@@ -587,7 +587,7 @@ export class PostgresDriver implements ISqlDriver {
       // auto_increment → SERIAL (PRIMARY KEY와 함께)
       if (option.autoIncrement) {
         return raw(
-          `"${column.name}" SERIAL ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""}`,
+          `${this.wrap(column.name!)} SERIAL ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""}`,
         );
       }
 
@@ -600,7 +600,7 @@ export class PostgresDriver implements ISqlDriver {
         needsLength && option.length ? `${type}(${option.length})` : type;
 
       return raw(
-        `"${column.name}" ${typeWithLength} ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""}`,
+        `${this.wrap(column.name!)} ${typeWithLength} ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""}`,
       );
     });
 

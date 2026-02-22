@@ -194,11 +194,36 @@ export class Conditions {
     return sql`NOT EXISTS ${subquery}`;
   }
 
+  private static readonly ALLOWED_OPERATORS = [
+    "=",
+    "!=",
+    "<>",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "LIKE",
+    "IN",
+    "NOT IN",
+    "IS NULL",
+    "IS NOT NULL",
+  ];
+
+  private static validateOperator(operator: string): void {
+    const normalized = operator.trim().toUpperCase();
+    if (!Conditions.ALLOWED_OPERATORS.includes(normalized)) {
+      throw new Error(
+        `허용되지 않은 연산자입니다: "${operator}". 허용된 연산자: ${Conditions.ALLOWED_OPERATORS.join(", ")}`,
+      );
+    }
+  }
+
   /**
    * 비교 연산자와 서브쿼리를 조합합니다.
    */
   static compareSubquery(column: string, operator: string, subquery: Sql): Sql {
-    return sql`${raw(column)} ${raw(operator)} ${subquery}`;
+    Conditions.validateOperator(operator);
+    return sql`${raw(column)} ${raw(operator.trim().toUpperCase())} ${subquery}`;
   }
 
   /**
@@ -209,6 +234,7 @@ export class Conditions {
     operator: string,
     column2: string,
   ): Sql {
-    return sql`${raw(column1)} ${raw(operator)} ${raw(column2)}`;
+    Conditions.validateOperator(operator);
+    return sql`${raw(column1)} ${raw(operator.trim().toUpperCase())} ${raw(column2)}`;
   }
 }

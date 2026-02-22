@@ -278,7 +278,7 @@ export class MySqlDriver implements ISqlDriver {
         alreadyHasParens || !option.length ? type : `${type}(${option.length})`;
 
       return raw(
-        `\`${column.name}\` ${typeWithLength} ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""} ${option.autoIncrement ? "AUTO_INCREMENT" : ""}`,
+        `${this.wrap(column.name!)} ${typeWithLength} ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""} ${option.autoIncrement ? "AUTO_INCREMENT" : ""}`,
       );
     });
 
@@ -294,7 +294,7 @@ export class MySqlDriver implements ISqlDriver {
    * 백틱으로 감싸지 않은 컬럼 이름을 백틱으로 감싸서 반환합니다.
    */
   wrap(columnName: string) {
-    return `\`${columnName}\``;
+    return `\`${columnName.replace(/`/g, "``")}\``;
   }
 
   /**
