@@ -10,6 +10,14 @@
   - `eager-loading.test.ts`, `lazy-loading.test.ts`, `cascade.test.ts` 3개 파일 일괄 수정
 
 ### Added
+- **Soft Delete** (Task #17)
+  - `@DeletedAt()` 데코레이터: `datetime` 타입, nullable, `DELETED_AT_TOKEN` 심볼
+  - `EntityManager.softDelete(entity, criteria)` — `UPDATE ... SET deleted_at = NOW()`
+  - `EntityManager.restore(entity, criteria)` — `UPDATE ... SET deleted_at = NULL`
+  - `find()` / `findOne()` 자동 필터: `@DeletedAt` 컬럼이 있으면 `WHERE deleted_at IS NULL` 자동 추가
+  - `FindOption.withDeleted` — soft-deleted 엔티티를 포함하여 조회하는 옵션
+  - `BaseRepository.softDelete()` / `BaseRepository.restore()` 위임 메서드
+
 - **Cascade 옵션** (`36496bb`, `e38fd17`)
   - `CascadeType`: `"insert" | "update" | "remove"` 타입 정의
   - `@OneToMany`, `@ManyToOne` 데코레이터에 `cascade?: CascadeType[]` 옵션 추가
@@ -85,6 +93,7 @@
 | @ManyToMany 후 | 427 |
 | Cascade + Lazy 로딩 후 | 496 |
 | 오타 수정 + cascade 테스트 개선 후 | **501** |
+| Soft Delete 추가 후 | **540** |
 
 ---
 
