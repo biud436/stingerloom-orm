@@ -7,3 +7,4 @@ export * from "./Indexer";
 export * from "./Version";
 export * from "./ManyToOne";
 export * from "./OneToMany";
+export * from "./ManyToMany";
