@@ -7,11 +7,13 @@ import {
   EntityScanner,
   ManyToOneScanner,
   OneToManyScanner,
+  ManyToManyScanner,
 } from "../scanner";
 import Container from "typedi";
 import { DatabaseClient } from "../DatabaseClient";
 import { MySqlDriver } from "../dialects/mysql/MySqlDriver";
 import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
+import { SqliteDriver } from "../dialects/sqlite/SqliteDriver";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
@@ -20,6 +22,7 @@ import { FindOption } from "../dialects/FindOption";
 import { IDataSource } from "../dialects/IDataSource";
 import { MySqlDataSource } from "../dialects/mysql/MySqlDataSource";
 import { PostgresDataSource } from "../dialects/postgres/PostgresDataSource";
+import { SqliteDataSource } from "../dialects/sqlite/SqliteDataSource";
 import sql, { Sql, join, raw } from "sql-template-tag";
 import {
   ENTITY_TOKEN,
@@ -27,6 +30,8 @@ import {
   ManyToOneMetadata,
   ONE_TO_MANY_TOKEN,
   OneToManyMetadata,
+  MANY_TO_MANY_TOKEN,
+  ManyToManyMetadata,
 } from "../decorators";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
@@ -78,6 +83,10 @@ export class EntityManager implements BaseEntityManager {
           databaseClientOptions.schema,
         );
         this.dataSource = new PostgresDataSource(connector);
+        break;
+      case "sqlite":
+        this.driver = new SqliteDriver(connector);
+        this.dataSource = new SqliteDataSource(connector);
         break;
       default:
         throw new Error("Unsupported database type.");
@@ -342,6 +351,199 @@ export class EntityManager implements BaseEntityManager {
           (parent as any)[rel.propertyKey] = children;
         } else {
           (parent as any)[rel.propertyKey] = [children];
+        }
+      }
+    }
+  }
+
+  /**
+   * ManyToMany 관계 메타데이터를 레이어 시스템을 통해 조회합니다.
+   *
+   * 조회 우선순위:
+   * 1. ManyToManyScanner — MetadataLayerRegistry 경유 (멀티테넌트 레이어 지원)
+   * 2. Reflect.getMetadata() — 데코레이터가 직접 부착한 정적 메타데이터 (fallback)
+   */
+  private resolveManyToManyMetadata<T>(
+    entity: ClazzType<T>,
+  ): ManyToManyMetadata<any>[] {
+    // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
+    const manyToManyScanner = Container.get(ManyToManyScanner);
+    const allRelations = manyToManyScanner
+      .allMetadata<ManyToManyMetadata<any>>()
+      .filter((rel) => rel.target === entity);
+
+    if (allRelations.length > 0) {
+      return allRelations;
+    }
+
+    // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
+    const reflectMetadata =
+      (Reflect.getMetadata(MANY_TO_MANY_TOKEN, entity) as
+        | ManyToManyMetadata<any>[]
+        | undefined) ??
+      (Reflect.getMetadata(MANY_TO_MANY_TOKEN, entity.prototype) as
+        | ManyToManyMetadata<any>[]
+        | undefined);
+
+    if (reflectMetadata && reflectMetadata.length > 0) {
+      this.logger.warn(
+        `[resolveManyToManyMetadata] "${entity.name}" ManyToMany resolved via Reflect.getMetadata fallback.`,
+      );
+      return reflectMetadata;
+    }
+
+    return [];
+  }
+
+  /**
+   * ManyToMany 관계의 joinTable 정보를 확정합니다.
+   * 소유측(joinTable 있음)이면 그대로, 역방향(mappedBy)이면 상대측에서 joinTable을 가져옵니다.
+   */
+  private resolveManyToManyJoinTable<T>(
+    rel: ManyToManyMetadata<any>,
+  ): { joinTableName: string; joinColumn: string; inverseJoinColumn: string } | null {
+    if (rel.joinTable) {
+      return {
+        joinTableName: rel.joinTable.name,
+        joinColumn: rel.joinTable.joinColumn,
+        inverseJoinColumn: rel.joinTable.inverseJoinColumn,
+      };
+    }
+
+    // 역방향: mappedBy가 가리키는 소유측에서 joinTable을 가져온다
+    if (rel.mappedBy) {
+      const RelatedEntity = rel.getRelatedEntity();
+      const relatedManyToMany = this.resolveManyToManyMetadata(RelatedEntity);
+      const ownerRel = relatedManyToMany.find(
+        (r) => r.propertyKey === rel.mappedBy && r.joinTable,
+      );
+      if (ownerRel?.joinTable) {
+        // 역방향이므로 joinColumn과 inverseJoinColumn을 뒤집는다
+        return {
+          joinTableName: ownerRel.joinTable.name,
+          joinColumn: ownerRel.joinTable.inverseJoinColumn,
+          inverseJoinColumn: ownerRel.joinTable.joinColumn,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * ManyToMany 관계를 별도 쿼리로 로드하여 부모 엔티티에 할당합니다.
+   *
+   * 중간 테이블을 JOIN하여 대상 엔티티를 가져옵니다:
+   * SELECT target.* FROM target
+   * INNER JOIN join_table ON target.pk = join_table.inverseJoinColumn
+   * WHERE join_table.joinColumn = :parentId
+   */
+  private async loadManyToManyRelations<T>(
+    entity: ClazzType<T>,
+    parentResults: T | T[],
+    relations: (keyof T)[],
+  ): Promise<void> {
+    const manyToManyMeta = this.resolveManyToManyMetadata(entity);
+    if (manyToManyMeta.length === 0) return;
+
+    const parentMetadata = this.resolveEntityMetadata(entity);
+    if (!parentMetadata) return;
+
+    const pk = parentMetadata.columns.find(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+    if (!pk) return;
+
+    const parents = Array.isArray(parentResults)
+      ? parentResults
+      : [parentResults];
+
+    for (const rel of manyToManyMeta) {
+      if (!relations.includes(rel.propertyKey as keyof T)) continue;
+
+      const joinInfo = this.resolveManyToManyJoinTable(rel);
+      if (!joinInfo) continue;
+
+      const RelatedEntity = rel.getRelatedEntity();
+      const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
+      if (!relatedMetadata) continue;
+
+      const relatedPk = relatedMetadata.columns.find(
+        (col: any) => col.options?.primary,
+      );
+      if (!relatedPk) continue;
+
+      const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
+
+      for (const parent of parents) {
+        const parentId = (parent as any)[pk.name!];
+        if (parentId === undefined || parentId === null) continue;
+
+        // 중간 테이블 JOIN 쿼리를 직접 구성
+        const qb = RawQueryBuilderFactory.create();
+
+        const selectCols = relatedMetadata.columns.map(
+          (col: any) =>
+            `${this.wrap(relatedTableName)}.${this.wrap(col.name!)}`,
+        );
+
+        const joinCondition = sql`${raw(this.wrap(relatedTableName))}.${raw(this.wrap(relatedPk.name!))} = ${raw(this.wrap(joinInfo.joinTableName))}.${raw(this.wrap(joinInfo.inverseJoinColumn))}`;
+
+        const whereCondition = sql`${raw(this.wrap(joinInfo.joinTableName))}.${raw(this.wrap(joinInfo.joinColumn))} = ${parentId}`;
+
+        qb.select(selectCols)
+          .from(this.wrap(relatedTableName))
+          .innerJoin(
+            this.wrap(joinInfo.joinTableName),
+            this.wrap(joinInfo.joinTableName),
+            joinCondition,
+          )
+          .where([whereCondition]);
+
+        const transactionHolder = new TransactionSessionManager();
+        try {
+          await transactionHolder.connect();
+          await transactionHolder.startTransaction();
+
+          if (this.isMySqlFamily()) {
+            await transactionHolder.query("SET autocommit = 0");
+          }
+
+          const resultQuery = qb.build();
+          const queryResult = (await transactionHolder.query(
+            resultQuery,
+          )) as QueryResult;
+
+          await transactionHolder.commit();
+
+          const resultTransformer = ResultTransformerFactory.create();
+          const { results } = queryResult;
+
+          if (!results || results.length === 0) {
+            (parent as any)[rel.propertyKey] = [];
+          } else {
+            (parent as any)[rel.propertyKey] = resultTransformer.toEntities(
+              RelatedEntity,
+              queryResult,
+            );
+          }
+        } catch (e) {
+          try {
+            await transactionHolder.rollback();
+          } catch (rollbackError) {
+            this.logger.error(
+              `Failed to rollback ManyToMany transaction: ${rollbackError}`,
+            );
+          }
+          throw e;
+        } finally {
+          try {
+            await transactionHolder.close();
+          } catch (closeError) {
+            this.logger.error(
+              `Failed to close ManyToMany transaction: ${closeError}`,
+            );
+          }
         }
       }
     }
@@ -655,9 +857,14 @@ export class EntityManager implements BaseEntityManager {
         entityResult = resultTransformer.toEntity(entity, queryResult);
       }
 
-      // OneToMany 관계 로드 (relations 옵션이 있는 경우)
+      // OneToMany / ManyToMany 관계 로드 (relations 옵션이 있는 경우)
       if (findOption.relations && findOption.relations.length > 0 && entityResult) {
         await this.loadOneToManyRelations(
+          entity,
+          entityResult as T | T[],
+          findOption.relations,
+        );
+        await this.loadManyToManyRelations(
           entity,
           entityResult as T | T[],
           findOption.relations,

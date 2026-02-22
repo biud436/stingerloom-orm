@@ -16,9 +16,12 @@ export class PostgresConnector extends IConnector {
 
   async connect(options: DatabaseClientOptions): Promise<void> {
     try {
-      const { host, username, password, database, port, logging } = options;
+      const { host, username, password, database, port, logging, pool: poolOptions } = options;
 
       this.schema = options.schema ?? "public";
+
+      // pool.max > connectionLimit > 기본값(10) 우선순위로 적용
+      const maxConnections = poolOptions?.max ?? options.connectionLimit ?? 10;
 
       const pool = new Pool({
         host,
@@ -26,7 +29,10 @@ export class PostgresConnector extends IConnector {
         password,
         database,
         port,
-        max: options.connectionLimit ?? 10,
+        max: maxConnections,
+        min: poolOptions?.min ?? 0,
+        connectionTimeoutMillis: poolOptions?.acquireTimeoutMs ?? 30000,
+        idleTimeoutMillis: poolOptions?.idleTimeoutMs ?? 10000,
       });
 
       this.isDebug = !!logging;

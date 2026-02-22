@@ -4,6 +4,7 @@ import { DatabaseClient } from "../DatabaseClient";
 import { IConnector } from "../core/IConnector";
 import { MySqlDataSource } from "./mysql/MySqlDataSource";
 import { PostgresDataSource } from "./postgres/PostgresDataSource";
+import { SqliteDataSource } from "./sqlite/SqliteDataSource";
 import { IDataSource } from "./IDataSource";
 import { Logger } from "../utils";
 import { DatabaseConnectionFailedError } from "../errors/DatabaseConnectionFailedError";
@@ -40,6 +41,8 @@ export class TransactionSessionManager extends IQueryEngine {
       const dbType = DatabaseClient.getInstance().type;
       if (dbType === "postgres") {
         this.dataSource = new PostgresDataSource(this.connection);
+      } else if (dbType === "sqlite") {
+        this.dataSource = new SqliteDataSource(this.connection);
       } else {
         this.dataSource = new MySqlDataSource(this.connection);
       }

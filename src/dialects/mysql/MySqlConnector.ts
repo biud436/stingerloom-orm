@@ -28,7 +28,11 @@ export class MySqlConnector implements IConnector {
         connectionLimit,
         charset,
         logging,
+        pool: poolOptions,
       } = options;
+
+      // pool.max > connectionLimit > 기본값(10) 우선순위로 적용
+      const maxConnections = poolOptions?.max ?? connectionLimit ?? 10;
 
       const pool = mysql.createPool({
         host,
@@ -37,7 +41,7 @@ export class MySqlConnector implements IConnector {
         database,
         port,
         dateStrings: datesStrings,
-        connectionLimit: connectionLimit ?? 10,
+        connectionLimit: maxConnections,
         charset: charset ?? "utf8mb4",
       });
 
