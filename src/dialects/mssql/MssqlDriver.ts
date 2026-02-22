@@ -363,6 +363,31 @@ export class MssqlDriver implements ISqlDriver {
     throw new Error("EXPLAIN is not supported for MSSQL.");
   }
 
+  buildUpsertSql(
+    tableName: string,
+    columns: string[],
+    conflictColumns: string[],
+    updateColumns: string[],
+  ): string {
+    const joinCondition = conflictColumns
+      .map((col) => `target.${col} = source.${col}`)
+      .join(" AND ");
+    const updateSet = updateColumns
+      .map((col) => `target.${col} = source.${col}`)
+      .join(", ");
+    const insertCols = columns.join(", ");
+    const sourceCols = columns.map((col) => `source.${col}`).join(", ");
+    const valuePlaceholders = columns.map(() => "?").join(", ");
+
+    return (
+      `MERGE INTO ${tableName} AS target ` +
+      `USING (SELECT ${valuePlaceholders}) AS source (${insertCols}) ` +
+      `ON (${joinCondition}) ` +
+      `WHEN MATCHED THEN UPDATE SET ${updateSet} ` +
+      `WHEN NOT MATCHED THEN INSERT (${insertCols}) VALUES (${sourceCols});`
+    );
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    * MSSQL은 WITH (UPDLOCK, ROWLOCK) 힌트를 사용하지만,

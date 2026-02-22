@@ -735,6 +735,24 @@ export class PostgresDriver implements ISqlDriver {
     return `EXPLAIN (FORMAT JSON) ${selectSql}`;
   }
 
+  buildUpsertSql(
+    tableName: string,
+    columns: string[],
+    conflictColumns: string[],
+    updateColumns: string[],
+  ): string {
+    const columnList = columns.join(", ");
+    const valuePlaceholders = columns
+      .map((_, i) => `$${i + 1}`)
+      .join(", ");
+    const conflictList = conflictColumns.join(", ");
+    const updateSet = updateColumns
+      .map((col) => `${col} = EXCLUDED.${col}`)
+      .join(", ");
+
+    return `INSERT INTO ${tableName} (${columnList}) VALUES (${valuePlaceholders}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    *

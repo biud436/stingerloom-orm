@@ -246,4 +246,20 @@ export interface ISqlDriver<T = any> {
    * @returns The EXPLAIN SQL string.
    */
   buildExplainSql(selectSql: string): string;
+
+  /**
+   * Builds an upsert SQL string for the specific dialect.
+   *
+   * @param tableName - The escaped table name.
+   * @param columns - The escaped column names.
+   * @param conflictColumns - The escaped conflict/key column names.
+   * @param updateColumns - The escaped column names to update on conflict.
+   * @returns The dialect-specific upsert SQL template string.
+   */
+  buildUpsertSql(
+    tableName: string,
+    columns: string[],
+    conflictColumns: string[],
+    updateColumns: string[],
+  ): string;
 }

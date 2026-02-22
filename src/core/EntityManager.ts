@@ -1497,7 +1497,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<EntityResult<T>> {
-    const { select, orderBy, where, take, cache } = findOption;
+    const { select, orderBy, where, take, cache, groupBy, having } = findOption;
     const { limit } = findOption;
 
     // Cache lookup
@@ -1517,6 +1517,8 @@ export class EntityManager implements BaseEntityManager {
         limit,
         take,
         select: select as any,
+        groupBy: groupBy as any,
+        having: having as any,
       });
       const cached = this.queryCache.get<EntityResult<T>>(cacheKey);
       if (cached !== undefined) {
@@ -1679,7 +1681,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       // Query를 구성합니다.
-      // SQL 순서: SELECT → FROM → JOIN → WHERE → ORDER BY → LIMIT
+      // SQL 순서: SELECT → FROM → JOIN → WHERE → GROUP BY → HAVING → ORDER BY → LIMIT
       qb.select(selectMap).from(this.wrap(tableName));
 
       // Eager ManyToOne 관계에 대한 LEFT JOIN 추가 (FROM 뒤, WHERE 앞)
@@ -1727,8 +1729,25 @@ export class EntityManager implements BaseEntityManager {
         );
       }
 
-      // WHERE / ORDER BY (JOIN 뒤에 위치)
-      qb.where(whereMap).orderBy(orderByMap);
+      // WHERE (JOIN 뒤에 위치)
+      qb.where(whereMap);
+
+      // GROUP BY / HAVING (WHERE 뒤, ORDER BY 앞)
+      if (groupBy && groupBy.length > 0) {
+        const groupByColumns = (groupBy as string[]).map((col) =>
+          hasEagerJoins
+            ? `${this.wrap(tableName)}.${this.wrap(col)}`
+            : this.wrap(col),
+        );
+        qb.groupBy(groupByColumns);
+      }
+
+      if (having && having.length > 0) {
+        qb.having(having);
+      }
+
+      // ORDER BY
+      qb.orderBy(orderByMap);
 
       // LIMIT 쿼리가 튜플일 경우
       if (Array.isArray(limit)) {
@@ -2440,17 +2459,6 @@ export class EntityManager implements BaseEntityManager {
       return;
     }
 
-    const sqlTemplate = this.driver.buildUpsertSql(
-      tableName,
-      wrappedColumns,
-      wrappedConflict,
-      wrappedUpdate,
-    );
-
-    const values = insertableColumns.map(
-      (col: ColumnMetadata) => (data as any)[col.name!],
-    );
-
     const transactionManager = new TransactionSessionManager();
 
     try {
@@ -2461,17 +2469,14 @@ export class EntityManager implements BaseEntityManager {
         await transactionManager.query("SET autocommit = 0");
       }
 
-      // sql-template-tag를 사용하여 파라미터 바인딩
-      const parameterizedSql = sql`${raw(sqlTemplate)}`;
-      // 값을 직접 바인딩하기 위해 sql-template-tag 사용
-      const columnPlaceholders = insertableColumns.map(
+      const columnValues = insertableColumns.map(
         (col: ColumnMetadata) => (data as any)[col.name!],
       );
 
       const upsertSql = this.buildUpsertQuery(
         tableName,
-        insertableColumns.map((col: ColumnMetadata) => this.wrap(col.name!)),
-        columnPlaceholders,
+        wrappedColumns,
+        columnValues,
         wrappedConflict,
         wrappedUpdate,
       );

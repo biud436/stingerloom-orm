@@ -370,6 +370,22 @@ export class SqliteDriver implements ISqlDriver {
     return `EXPLAIN QUERY PLAN ${selectSql}`;
   }
 
+  buildUpsertSql(
+    tableName: string,
+    columns: string[],
+    conflictColumns: string[],
+    updateColumns: string[],
+  ): string {
+    const columnList = columns.join(", ");
+    const valuePlaceholders = columns.map(() => "?").join(", ");
+    const conflictList = conflictColumns.join(", ");
+    const updateSet = updateColumns
+      .map((col) => `${col} = excluded.${col}`)
+      .join(", ");
+
+    return `INSERT INTO ${tableName} (${columnList}) VALUES (${valuePlaceholders}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    * SQLite는 데이터베이스 수준 잠금을 사용하며 행 단위 잠금을 지원하지 않습니다.

@@ -396,6 +396,21 @@ export class MySqlDriver implements ISqlDriver {
     return `EXPLAIN ${selectSql}`;
   }
 
+  buildUpsertSql(
+    tableName: string,
+    columns: string[],
+    conflictColumns: string[],
+    updateColumns: string[],
+  ): string {
+    const columnList = columns.join(", ");
+    const valuePlaceholders = columns.map(() => "?").join(", ");
+    const updateSet = updateColumns
+      .map((col) => `${col} = VALUES(${col})`)
+      .join(", ");
+
+    return `INSERT INTO ${tableName} (${columnList}) VALUES (${valuePlaceholders}) ON DUPLICATE KEY UPDATE ${updateSet}`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    *
