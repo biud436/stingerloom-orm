@@ -1081,12 +1081,11 @@ export class EntityManager implements BaseEntityManager {
       }
 
       // Query를 구성합니다.
+      // SQL 순서: SELECT → FROM → JOIN → WHERE → ORDER BY → LIMIT
       qb.select(selectMap)
-        .from(this.wrap(tableName))
-        .where(whereMap)
-        .orderBy(orderByMap);
+        .from(this.wrap(tableName));
 
-      // Eager 관계에 대한 LEFT JOIN 추가
+      // Eager ManyToOne 관계에 대한 LEFT JOIN 추가 (FROM 뒤, WHERE 앞)
       for (const rel of eagerRelations) {
         const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
         const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
@@ -1109,7 +1108,7 @@ export class EntityManager implements BaseEntityManager {
         );
       }
 
-      // OneToOne Eager 관계에 대한 LEFT JOIN 추가
+      // OneToOne Eager 관계에 대한 LEFT JOIN 추가 (FROM 뒤, WHERE 앞)
       for (const rel of eagerOneToOneRelations) {
         const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
         const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
@@ -1130,6 +1129,10 @@ export class EntityManager implements BaseEntityManager {
           joinCondition,
         );
       }
+
+      // WHERE / ORDER BY (JOIN 뒤에 위치)
+      qb.where(whereMap)
+        .orderBy(orderByMap);
 
       // LIMIT 쿼리가 튜플일 경우
       if (Array.isArray(limit)) {
