@@ -75,6 +75,8 @@ import {
   UpdateEvent,
   DeleteEvent,
 } from "./EntitySubscriber";
+import { QueryTracker, QueryLogEntry } from "./QueryTracker";
+import { LoggingOptions } from "./DatabaseClientOptions";
 
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
@@ -85,6 +87,7 @@ export class EntityManager implements BaseEntityManager {
   private readonly eventEmitter = new EntityEventEmitter();
   private readonly queryCache = new QueryCache();
   private readonly subscribers: EntitySubscriber<any>[] = [];
+  private queryTracker: QueryTracker | null = null;
 
   public async register(databaseClientOptions: DatabaseClientOptions) {
     await this.connect(databaseClientOptions);
@@ -128,6 +131,35 @@ export class EntityManager implements BaseEntityManager {
       default:
         throw new NotSupportedDatabaseTypeError();
     }
+
+    // QueryTracker 초기화 (logging 옵션 기반)
+    this.initQueryTracker(databaseClientOptions);
+  }
+
+  private initQueryTracker(options: DatabaseClientOptions): void {
+    const logging = options.logging;
+    if (typeof logging === "object" && logging !== null) {
+      const loggingOpts = logging as LoggingOptions;
+      if (loggingOpts.nPlusOne || loggingOpts.slowQueryMs) {
+        this.queryTracker = new QueryTracker({
+          slowQueryMs: loggingOpts.slowQueryMs ?? null,
+        });
+      }
+    }
+  }
+
+  /**
+   * 현재 세션의 쿼리 실행 로그를 반환합니다.
+   */
+  getQueryLog(): ReadonlyArray<QueryLogEntry> {
+    return this.queryTracker?.getLog() ?? [];
+  }
+
+  /**
+   * 쿼리 실행을 추적합니다. QueryTracker가 활성화된 경우에만 동작합니다.
+   */
+  private trackQuery(entityName: string, sqlText: string, durationMs: number): void {
+    this.queryTracker?.track(entityName, sqlText, durationMs);
   }
 
   /**
@@ -753,11 +785,9 @@ export class EntityManager implements BaseEntityManager {
     for (const rel of oneToOneMeta) {
       if (!relations.includes(rel.propertyKey as keyof T)) continue;
 
-      // eager JOIN으로 이미 로드된 관계는 스킵 (소유측 + eager/relations에 포함된 경우)
-      if (rel.joinColumn && (rel.option?.eager === true || relations.includes(rel.propertyKey as keyof T))) {
-        // 소유측은 eager JOIN으로 처리되므로, 이미 transformNested에서 매핑됨
-        // 하지만 relations 옵션으로만 요청된 경우는 여기서 별도 쿼리로 로드
-        // (eagerOneToOneRelations 필터에서 이미 처리됨)
+      // 소유측은 eager JOIN + transformNested에서 이미 매핑됨 → 스킵
+      if (rel.joinColumn) {
+        continue;
       }
 
       const RelatedEntity = rel.getRelatedEntity();
@@ -1403,29 +1433,6 @@ export class EntityManager implements BaseEntityManager {
         await transactionManager.query("SET autocommit = 0");
       }
 
-      // PostgreSQL의 SERIAL 컬럼은 INSERT 시 생략해야 자동 생성됩니다.
-      // MySQL은 null을 넣으면 AUTO_INCREMENT가 동작하지만, PostgreSQL은 NOT NULL 위반이 됩니다.
-      // 따라서 auto-increment 컬럼의 값이 없을 때는 INSERT 대상에서 제외합니다.
-      const insertableColumns = metadata.columns.filter(
-        (column: ColumnMetadata) => {
-          const isAutoIncrement = column.options?.autoIncrement;
-          const value = (item as any)[column.name!];
-          // auto-increment 컬럼이면서 값이 없으면 제외
-          if (isAutoIncrement && (value === null || value === undefined)) {
-            return false;
-          }
-          return true;
-        },
-      );
-
-      const columns = insertableColumns.map((column) => {
-        return raw(this.wrap(column.name!));
-      });
-
-      const values = insertableColumns.map((column: ColumnMetadata) => {
-        return (item as any)[column.name!];
-      });
-
       // PK 컬럼 수집 (복합 PK 지원)
       const pkColumns = metadata.columns.filter(
         (column: ColumnMetadata) => column.options?.primary,
@@ -1468,10 +1475,31 @@ export class EntityManager implements BaseEntityManager {
       };
 
       if (isInsert) {
-        // @BeforeInsert 훅 실행
+        // @BeforeInsert 훅 실행 (columns/values 추출 전에 실행해야 훅의 변경사항이 반영됨)
         await this.runHooks(entity, item, "beforeInsert");
         await this.eventEmitter.emit("beforeInsert", { entity, data: item });
         await this.notifySubscribers(entity, "beforeInsert", { entity: item, manager: this } as InsertEvent<T>);
+
+        // 훅 실행 후 columns/values 추출 (훅에서 변경한 값이 INSERT SQL에 반영됨)
+        // PostgreSQL의 SERIAL 컬럼은 INSERT 시 생략해야 자동 생성됩니다.
+        const insertableColumns = metadata.columns.filter(
+          (column: ColumnMetadata) => {
+            const isAutoIncrement = column.options?.autoIncrement;
+            const value = (item as any)[column.name!];
+            if (isAutoIncrement && (value === null || value === undefined)) {
+              return false;
+            }
+            return true;
+          },
+        );
+
+        const columns = insertableColumns.map((column) => {
+          return raw(this.wrap(column.name!));
+        });
+
+        const values = insertableColumns.map((column: ColumnMetadata) => {
+          return (item as any)[column.name!];
+        });
 
         // PostgreSQL: INSERT ... RETURNING PK 컬럼들
         const isPostgres = this.isPostgres();

@@ -8,6 +8,8 @@ import {
   ENTITY_TOKEN,
   MANY_TO_ONE_TOKEN,
   ManyToOneMetadata,
+  ONE_TO_ONE_TOKEN,
+  OneToOneMetadata,
 } from "../decorators";
 import { ClazzType } from "../utils";
 
@@ -204,8 +206,47 @@ export class ResultTransformer implements BaseResultTransformer {
           );
         }
 
-        // ! 4. 코어 엔티티에 외래키 오브젝트를 추가한다.
-        baseEntity[columnName] = deserializeEntity(ForeignClass, foreignObject);
+        // LEFT JOIN으로 매칭되지 않은 경우 모든 값이 null → null 할당
+        const allNull = Object.keys(foreignObject).length === 0 ||
+          Object.values(foreignObject).every((v) => v === null || v === undefined);
+
+        baseEntity[columnName] = allNull
+          ? null
+          : deserializeEntity(ForeignClass, foreignObject);
+      }
+    }
+
+    // OneToOne 관계 처리 (ManyToOne과 동일한 alias 패턴: propertyKey_columnName)
+    const oneToOneMappingMetadata = Reflect.getMetadata(
+      ONE_TO_ONE_TOKEN,
+      entityClass,
+    ) as OneToOneMetadata<any>[] | undefined;
+
+    if (oneToOneMappingMetadata) {
+      for (const rel of oneToOneMappingMetadata) {
+        if (!rel.joinColumn) continue; // 소유측만 처리
+
+        const propertyKey = rel.propertyKey;
+        const RelatedClass = rel.getRelatedEntity() as ClazzType<any>;
+
+        const rows = this.getObjectEntries(resultSet);
+        const foreignObject = this.createForeignObject();
+
+        for (const [key, value] of rows) {
+          const prefix = this.addSeparatorToColumnName(propertyKey);
+          if (key.startsWith(prefix)) {
+            const keyWithoutPrefix = key.replace(prefix, "");
+            foreignObject[keyWithoutPrefix] = value;
+          }
+        }
+
+        // LEFT JOIN으로 매칭되지 않은 경우 null 할당
+        const allNull = Object.keys(foreignObject).length === 0 ||
+          Object.values(foreignObject).every((v) => v === null || v === undefined);
+
+        baseEntity[propertyKey] = allNull
+          ? null
+          : deserializeEntity(RelatedClass, foreignObject);
       }
     }
 
