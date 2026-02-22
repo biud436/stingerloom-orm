@@ -1,0 +1,333 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { MySqlDriver } from "../../src/dialects/mysql/MySqlDriver";
+import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
+import { Conditions } from "../../src/core/Conditions";
+
+/**
+ * SQL Injection 방지 테스트
+ *
+ * 드라이버의 wrap() 메서드가 식별자 내 특수 문자를 올바르게 이스케이프하는지,
+ * Conditions의 operator 화이트리스트가 악성 입력을 차단하는지 검증합니다.
+ */
+
+// 실제 DB 연결 없이 드라이버의 wrap() 메서드만 테스트하기 위한 mock connector
+const mockConnector: any = {
+  query: jest.fn().mockResolvedValue([]),
+};
+
+describe("MySqlDriver - wrap() SQL Injection 방지", () => {
+  let driver: MySqlDriver;
+
+  beforeEach(() => {
+    driver = new MySqlDriver(mockConnector);
+  });
+
+  it("should wrap normal column name with backticks", () => {
+    expect(driver.wrap("name")).toBe("`name`");
+  });
+
+  it("should wrap table name with backticks", () => {
+    expect(driver.wrap("users")).toBe("`users`");
+  });
+
+  it("should escape backticks inside identifier", () => {
+    expect(driver.wrap("name`injection")).toBe("`name``injection`");
+  });
+
+  it("should escape multiple backticks", () => {
+    expect(driver.wrap("col``umn")).toBe("`col````umn`");
+  });
+
+  it("should handle identifier that is only backticks", () => {
+    // 3 backticks → each doubled (3×2=6) + 2 delimiters = 8 backticks total
+    expect(driver.wrap("```")).toBe("````````");
+  });
+
+  it("should handle empty string", () => {
+    expect(driver.wrap("")).toBe("``");
+  });
+
+  it("should prevent SQL injection via backtick breakout", () => {
+    // Attacker tries: ` ; DROP TABLE users; --
+    const malicious = "` ; DROP TABLE users; --";
+    const wrapped = driver.wrap(malicious);
+
+    // Backtick should be doubled, preventing breakout
+    expect(wrapped).toBe("``` ; DROP TABLE users; --`");
+    // The result should NOT contain an unescaped backtick breakout
+    expect(wrapped.startsWith("`")).toBe(true);
+    expect(wrapped.endsWith("`")).toBe(true);
+  });
+
+  it("should handle identifier with single quotes (not affected by MySQL wrap)", () => {
+    const result = driver.wrap("col'name");
+    expect(result).toBe("`col'name`");
+  });
+
+  it("should handle identifier with double quotes", () => {
+    const result = driver.wrap('col"name');
+    expect(result).toBe('`col"name`');
+  });
+});
+
+describe("PostgresDriver - wrap() SQL Injection 방지", () => {
+  let driver: PostgresDriver;
+
+  beforeEach(() => {
+    driver = new PostgresDriver(mockConnector);
+  });
+
+  it("should wrap normal column name with double quotes", () => {
+    expect(driver.wrap("name")).toBe('"name"');
+  });
+
+  it("should wrap table name with double quotes", () => {
+    expect(driver.wrap("users")).toBe('"users"');
+  });
+
+  it("should escape double quotes inside identifier", () => {
+    expect(driver.wrap('name"injection')).toBe('"name""injection"');
+  });
+
+  it("should escape multiple double quotes", () => {
+    expect(driver.wrap('col""umn')).toBe('"col""""umn"');
+  });
+
+  it("should handle empty string", () => {
+    expect(driver.wrap("")).toBe('""');
+  });
+
+  it("should prevent SQL injection via double quote breakout", () => {
+    // Attacker tries: " ; DROP TABLE users; --
+    const malicious = '" ; DROP TABLE users; --';
+    const wrapped = driver.wrap(malicious);
+
+    // Double quote should be doubled, preventing breakout
+    expect(wrapped).toBe('""" ; DROP TABLE users; --"');
+    expect(wrapped.startsWith('"')).toBe(true);
+    expect(wrapped.endsWith('"')).toBe(true);
+  });
+
+  it("should handle identifier with backticks (not affected by PostgreSQL wrap)", () => {
+    const result = driver.wrap("col`name");
+    expect(result).toBe('"col`name"');
+  });
+
+  it("should handle identifier with single quotes", () => {
+    const result = driver.wrap("col'name");
+    expect(result).toBe('"col\'name"');
+  });
+});
+
+describe("PostgresDriver - wrapQualified()", () => {
+  it("should produce schema-qualified identifier with default schema", () => {
+    const driver = new PostgresDriver(mockConnector);
+    expect(driver.wrapQualified("users")).toBe('"public"."users"');
+  });
+
+  it("should produce schema-qualified identifier with custom schema", () => {
+    const driver = new PostgresDriver(mockConnector, "postgres", "tenant_1");
+    expect(driver.wrapQualified("orders")).toBe('"tenant_1"."orders"');
+  });
+
+  it("should escape quotes in schema name", () => {
+    const driver = new PostgresDriver(
+      mockConnector,
+      "postgres",
+      'my"schema',
+    );
+    expect(driver.wrapQualified("users")).toBe('"my""schema"."users"');
+  });
+
+  it("should escape quotes in table name within qualified identifier", () => {
+    const driver = new PostgresDriver(mockConnector);
+    expect(driver.wrapQualified('my"table')).toBe('"public"."my""table"');
+  });
+});
+
+describe("Conditions - operator 화이트리스트 검증", () => {
+  describe("compareColumns - 허용된 연산자", () => {
+    const allowedOperators = [
+      "=",
+      "!=",
+      "<>",
+      "<",
+      ">",
+      "<=",
+      ">=",
+      "LIKE",
+      "IN",
+      "NOT IN",
+      "IS NULL",
+      "IS NOT NULL",
+    ];
+
+    allowedOperators.forEach((op) => {
+      it(`should allow operator: ${op}`, () => {
+        expect(() => {
+          Conditions.compareColumns("col1", op, "col2");
+        }).not.toThrow();
+      });
+    });
+
+    it("should allow operators case-insensitively", () => {
+      expect(() => {
+        Conditions.compareColumns("col1", "like", "col2");
+      }).not.toThrow();
+
+      expect(() => {
+        Conditions.compareColumns("col1", "Like", "col2");
+      }).not.toThrow();
+    });
+
+    it("should allow operators with whitespace", () => {
+      expect(() => {
+        Conditions.compareColumns("col1", "  =  ", "col2");
+      }).not.toThrow();
+    });
+  });
+
+  describe("compareColumns - 차단된 연산자 (SQL Injection 방지)", () => {
+    it("should reject SQL injection via operator", () => {
+      expect(() => {
+        Conditions.compareColumns("col1", "= 1; DROP TABLE users; --", "col2");
+      }).toThrow(/허용되지 않은 연산자/);
+    });
+
+    it("should reject UNION-based injection via operator", () => {
+      expect(() => {
+        Conditions.compareColumns(
+          "col1",
+          "= 1 UNION SELECT * FROM passwords --",
+          "col2",
+        );
+      }).toThrow(/허용되지 않은 연산자/);
+    });
+
+    it("should reject OR-based injection via operator", () => {
+      expect(() => {
+        Conditions.compareColumns("col1", "= 1 OR 1=1 --", "col2");
+      }).toThrow(/허용되지 않은 연산자/);
+    });
+
+    it("should reject empty operator", () => {
+      expect(() => {
+        Conditions.compareColumns("col1", "", "col2");
+      }).toThrow(/허용되지 않은 연산자/);
+    });
+
+    it("should reject arbitrary string as operator", () => {
+      expect(() => {
+        Conditions.compareColumns("col1", "EXECUTE", "col2");
+      }).toThrow(/허용되지 않은 연산자/);
+    });
+  });
+
+  describe("compareSubquery - 동일한 화이트리스트 적용", () => {
+    it("should allow valid operator with subquery", () => {
+      const subquery = Conditions.raw("(SELECT 1)");
+      expect(() => {
+        Conditions.compareSubquery("col", "=", subquery);
+      }).not.toThrow();
+    });
+
+    it("should reject malicious operator with subquery", () => {
+      const subquery = Conditions.raw("(SELECT 1)");
+      expect(() => {
+        Conditions.compareSubquery(
+          "col",
+          "; DROP TABLE users --",
+          subquery,
+        );
+      }).toThrow(/허용되지 않은 연산자/);
+    });
+  });
+});
+
+describe("MySqlDriver - castType", () => {
+  let driver: MySqlDriver;
+
+  beforeEach(() => {
+    driver = new MySqlDriver(mockConnector);
+  });
+
+  it("should map varchar to VARCHAR", () => {
+    expect(driver.castType("varchar")).toBe("VARCHAR");
+  });
+
+  it("should map int to INT", () => {
+    expect(driver.castType("int")).toBe("INT");
+  });
+
+  it("should map number to INT", () => {
+    expect(driver.castType("number")).toBe("INT");
+  });
+
+  it("should map boolean to TINYINT($n)", () => {
+    expect(driver.castType("boolean")).toBe("TINYINT($n)");
+  });
+
+  it("should map json to JSON", () => {
+    expect(driver.castType("json")).toBe("JSON");
+  });
+
+  it("should map jsonb to JSON (MySQL)", () => {
+    expect(driver.castType("jsonb")).toBe("JSON");
+  });
+
+  it("should map array to JSON (MySQL)", () => {
+    expect(driver.castType("array")).toBe("JSON");
+  });
+
+  it("should map blob to BLOB", () => {
+    expect(driver.castType("blob")).toBe("BLOB");
+  });
+
+  it("should map bigint to BIGINT", () => {
+    expect(driver.castType("bigint")).toBe("BIGINT");
+  });
+});
+
+describe("PostgresDriver - castType", () => {
+  let driver: PostgresDriver;
+
+  beforeEach(() => {
+    driver = new PostgresDriver(mockConnector);
+  });
+
+  it("should map varchar to VARCHAR", () => {
+    expect(driver.castType("varchar")).toBe("VARCHAR");
+  });
+
+  it("should map int to INTEGER", () => {
+    expect(driver.castType("int")).toBe("INTEGER");
+  });
+
+  it("should map boolean to BOOLEAN (native)", () => {
+    expect(driver.castType("boolean")).toBe("BOOLEAN");
+  });
+
+  it("should map datetime to TIMESTAMP", () => {
+    expect(driver.castType("datetime")).toBe("TIMESTAMP");
+  });
+
+  it("should map blob to BYTEA", () => {
+    expect(driver.castType("blob")).toBe("BYTEA");
+  });
+
+  it("should map float to REAL", () => {
+    expect(driver.castType("float")).toBe("REAL");
+  });
+
+  it("should map jsonb to JSONB", () => {
+    expect(driver.castType("jsonb")).toBe("JSONB");
+  });
+
+  it("should map longtext to TEXT", () => {
+    expect(driver.castType("longtext")).toBe("TEXT");
+  });
+
+  it("should map enum to TEXT (fallback when no enumName)", () => {
+    expect(driver.castType("enum")).toBe("TEXT");
+  });
+});

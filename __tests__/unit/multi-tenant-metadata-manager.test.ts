@@ -1,8 +1,4 @@
-import {
-  MultiTenantMetadataManager,
-  getGlobalMetadataManager,
-  resetGlobalMetadataManager,
-} from "../../src/metadata/MultiTenantMetadataManager";
+import { MultiTenantMetadataManager } from "../../src/metadata/MultiTenantMetadataManager";
 
 describe("MultiTenantMetadataManager", () => {
   let manager: MultiTenantMetadataManager;
@@ -134,31 +130,5 @@ describe("MultiTenantMetadataManager", () => {
       expect(manager.getColumnScanner()).toBeDefined();
       expect(manager.getStore()).toBeDefined();
     });
-  });
-});
-
-describe("Global MetadataManager", () => {
-  beforeEach(() => {
-    resetGlobalMetadataManager();
-  });
-
-  it("should return a singleton instance", () => {
-    const instance1 = getGlobalMetadataManager();
-    const instance2 = getGlobalMetadataManager();
-
-    expect(instance1).toBe(instance2);
-  });
-
-  it("should return a fresh instance after reset", () => {
-    const instance1 = getGlobalMetadataManager();
-    resetGlobalMetadataManager();
-    const instance2 = getGlobalMetadataManager();
-
-    expect(instance1).not.toBe(instance2);
-  });
-
-  it("should start with public tenant after reset", () => {
-    const instance = getGlobalMetadataManager();
-    expect(instance.getCurrentTenant()).toBe("public");
   });
 });

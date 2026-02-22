@@ -129,37 +129,3 @@ export class MultiTenantMetadataManager {
     return this.store;
   }
 }
-
-// ──────────────────────────────────────────────────────────────
-// 전역 싱글톤 (deprecated)
-//
-// 레이어드 메타데이터 원칙에 따르면 전역 싱글톤이 아닌
-// 레이어 기반으로 격리되어야 합니다.
-// 새 코드에서는 MultiTenantMetadataManager를 직접 인스턴스화하거나,
-// MetadataContext + EntityManager.withTenant()를 사용하세요.
-// ──────────────────────────────────────────────────────────────
-
-let globalMetadataManager: MultiTenantMetadataManager | null = null;
-
-/**
- * 전역 메타데이터 매니저 가져오기
- *
- * @deprecated 전역 싱글톤 사용은 레이어드 메타데이터 원칙에 위배됩니다.
- * 대신 MultiTenantMetadataManager를 직접 생성하거나,
- * MetadataContext + EntityManager.withTenant()를 사용하세요.
- */
-export function getGlobalMetadataManager(): MultiTenantMetadataManager {
-  if (!globalMetadataManager) {
-    globalMetadataManager = new MultiTenantMetadataManager();
-  }
-  return globalMetadataManager;
-}
-
-/**
- * 전역 메타데이터 매니저 재설정 (테스트용)
- *
- * @deprecated getGlobalMetadataManager()와 함께 제거 예정
- */
-export function resetGlobalMetadataManager(): void {
-  globalMetadataManager = null;
-}
