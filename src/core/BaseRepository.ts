@@ -130,6 +130,53 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Returns the count of entities matching the given conditions.
+   */
+  async count(where?: { [K in keyof T]?: T[K] }): Promise<number> {
+    return await this.em.count<T>(this.entity, where);
+  }
+
+  /**
+   * Returns the sum of a numeric field for entities matching the given conditions.
+   */
+  async sum(
+    field: keyof T & string,
+    where?: { [K in keyof T]?: T[K] },
+  ): Promise<number> {
+    return await this.em.sum<T>(this.entity, field, where);
+  }
+
+  /**
+   * Returns the average of a numeric field for entities matching the given conditions.
+   */
+  async avg(
+    field: keyof T & string,
+    where?: { [K in keyof T]?: T[K] },
+  ): Promise<number> {
+    return await this.em.avg<T>(this.entity, field, where);
+  }
+
+  /**
+   * Returns the minimum value of a field for entities matching the given conditions.
+   */
+  async min(
+    field: keyof T & string,
+    where?: { [K in keyof T]?: T[K] },
+  ): Promise<number> {
+    return await this.em.min<T>(this.entity, field, where);
+  }
+
+  /**
+   * Returns the maximum value of a field for entities matching the given conditions.
+   */
+  async max(
+    field: keyof T & string,
+    where?: { [K in keyof T]?: T[K] },
+  ): Promise<number> {
+    return await this.em.max<T>(this.entity, field, where);
+  }
+
+  /**
    * Persists the entity.
    *
    * @param item The entity to be persisted.
