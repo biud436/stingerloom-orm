@@ -182,6 +182,69 @@ export class MigrationRunner {
   }
 
   /**
+   * 미실행 마이그레이션을 name 순서대로 실행합니다.
+   * runAll()의 별칭으로, 외부에서 마이그레이션 목록을 전달하여 실행할 수 있습니다.
+   *
+   * @param migrations 실행할 마이그레이션 목록. 생략 시 생성자에서 전달된 전체 목록 사용.
+   */
+  async run(migrations?: Migration[]): Promise<MigrationResult[]> {
+    if (migrations) {
+      const originalMigrations = this.migrations;
+      (this as any).migrations = migrations;
+      const results = await this.runAll();
+      (this as any).migrations = originalMigrations;
+      return results;
+    }
+    return this.runAll();
+  }
+
+  /**
+   * 최근 n개의 마이그레이션을 되돌립니다.
+   *
+   * @param n 되돌릴 마이그레이션 수. 기본값 1.
+   */
+  async rollback(n: number = 1): Promise<MigrationResult[]> {
+    await this.ensureMigrationTable();
+    const executed = await this.getExecutedMigrations();
+    const results: MigrationResult[] = [];
+
+    const toRevert = executed.slice(-n).reverse();
+
+    for (const name of toRevert) {
+      const migration = this.migrations.find((m) => m.name === name);
+      if (!migration) {
+        const error = `Migration "${name}" not found in registered migrations.`;
+        this.logger.error(error);
+        results.push({ name, direction: "down", success: false, error });
+        break;
+      }
+      const result = await this.runDown(migration);
+      results.push(result);
+      if (!result.success) {
+        break;
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * 마이그레이션 상태를 반환합니다.
+   * 실행됨/미실행 목록을 각각 반환합니다.
+   */
+  async status(): Promise<{
+    executed: string[];
+    pending: string[];
+  }> {
+    await this.ensureMigrationTable();
+    const executed = await this.getExecutedMigrations();
+    const pending = this.migrations
+      .filter((m) => !executed.includes(m.name))
+      .map((m) => m.name);
+    return { executed, pending };
+  }
+
+  /**
    * 미실행 마이그레이션 목록을 반환합니다.
    */
   async getPendingMigrations(): Promise<Migration[]> {
