@@ -150,7 +150,10 @@ export class EntityManager implements BaseEntityManager {
     this.initQueryTracker(databaseClientOptions);
 
     // connection-level 쿼리 타임아웃 설정
-    if (databaseClientOptions.queryTimeout && databaseClientOptions.queryTimeout > 0) {
+    if (
+      databaseClientOptions.queryTimeout &&
+      databaseClientOptions.queryTimeout > 0
+    ) {
       this.defaultQueryTimeout = databaseClientOptions.queryTimeout;
     }
 
@@ -184,7 +187,11 @@ export class EntityManager implements BaseEntityManager {
   /**
    * 쿼리 실행을 추적합니다. QueryTracker가 활성화된 경우에만 동작합니다.
    */
-  private trackQuery(entityName: string, sqlText: string, durationMs: number): void {
+  private trackQuery(
+    entityName: string,
+    sqlText: string,
+    durationMs: number,
+  ): void {
     this.queryTracker?.track(entityName, sqlText, durationMs);
   }
 
@@ -319,9 +326,9 @@ export class EntityManager implements BaseEntityManager {
     const entityScanner = Container.get(EntityScanner);
     const layeredMetadata = entityScanner.scan(entity);
     if (layeredMetadata) {
-      this.logger.debug(
-        `[resolveEntityMetadata] "${entity.name}" resolved via LayeredMetadataStore (context: "${context}")`,
-      );
+      // this.logger.debug(
+      //   `[resolveEntityMetadata] "${entity.name}" resolved via LayeredMetadataStore (context: "${context}")`,
+      // );
       return layeredMetadata;
     }
 
@@ -671,7 +678,11 @@ export class EntityManager implements BaseEntityManager {
    */
   private resolveManyToManyJoinTable<T>(
     rel: ManyToManyMetadata<any>,
-  ): { joinTableName: string; joinColumn: string; inverseJoinColumn: string } | null {
+  ): {
+    joinTableName: string;
+    joinColumn: string;
+    inverseJoinColumn: string;
+  } | null {
     if (rel.joinTable) {
       return {
         joinTableName: rel.joinTable.name,
@@ -784,7 +795,11 @@ export class EntityManager implements BaseEntityManager {
           const queryResult = (await transactionHolder.query(
             resultQuery,
           )) as QueryResult;
-          this.trackQuery(relatedTableName, resultQuery.text ?? String(resultQuery), Date.now() - subQueryStart);
+          this.trackQuery(
+            relatedTableName,
+            resultQuery.text ?? String(resultQuery),
+            Date.now() - subQueryStart,
+          );
 
           await transactionHolder.commit();
 
@@ -1078,7 +1093,9 @@ export class EntityManager implements BaseEntityManager {
     const manyToOneRelations = this.resolveManyToOneMetadata(entity);
     const eagerRelations = manyToOneRelations.filter((rel) => {
       const isEager = rel.option?.eager === true;
-      const isInRelations = findOption.relations?.includes(rel.columnName as keyof T);
+      const isInRelations = findOption.relations?.includes(
+        rel.columnName as keyof T,
+      );
       return isEager || isInRelations;
     });
 
@@ -1086,25 +1103,38 @@ export class EntityManager implements BaseEntityManager {
     const eagerOneToOneRelations = oneToOneRelations.filter((rel) => {
       if (!rel.joinColumn) return false;
       const isEager = rel.option?.eager === true;
-      const isInRelations = findOption.relations?.includes(rel.propertyKey as keyof T);
+      const isInRelations = findOption.relations?.includes(
+        rel.propertyKey as keyof T,
+      );
       return isEager || isInRelations;
     });
 
-    const hasEagerJoins = eagerRelations.length > 0 || eagerOneToOneRelations.length > 0;
+    const hasEagerJoins =
+      eagerRelations.length > 0 || eagerOneToOneRelations.length > 0;
     const tableName = metadata.name!;
 
     if (select) {
       const selectedColumns = this.resolveSelectColumns<T>(select);
       if (hasEagerJoins) {
-        selectMap.push(...selectedColumns.map((col) => `${this.wrap(tableName)}.${this.wrap(col)}`));
+        selectMap.push(
+          ...selectedColumns.map(
+            (col) => `${this.wrap(tableName)}.${this.wrap(col)}`,
+          ),
+        );
       } else {
         selectMap.push(...selectedColumns.map((col) => this.wrap(col)));
       }
     } else {
       if (hasEagerJoins) {
-        selectMap.push(...metadata.columns.map((column) => `${this.wrap(tableName)}.${this.wrap(column.name!)}`));
+        selectMap.push(
+          ...metadata.columns.map(
+            (column) => `${this.wrap(tableName)}.${this.wrap(column.name!)}`,
+          ),
+        );
       } else {
-        selectMap.push(...metadata.columns.map((column) => this.wrap(column.name!)));
+        selectMap.push(
+          ...metadata.columns.map((column) => this.wrap(column.name!)),
+        );
       }
     }
 
@@ -1112,7 +1142,12 @@ export class EntityManager implements BaseEntityManager {
       const value = where[key];
       if (value) {
         if (hasEagerJoins) {
-          whereMap.push(Conditions.equals(`${this.wrap(tableName)}.${this.wrap(key)}`, value));
+          whereMap.push(
+            Conditions.equals(
+              `${this.wrap(tableName)}.${this.wrap(key)}`,
+              value,
+            ),
+          );
         } else {
           whereMap.push(Conditions.equals(this.wrap(key), value));
         }
@@ -1122,7 +1157,11 @@ export class EntityManager implements BaseEntityManager {
     const deletedAtColumn = this.getDeletedAtColumn(entity);
     if (deletedAtColumn && !(findOption as any).withDeleted) {
       if (hasEagerJoins) {
-        whereMap.push(Conditions.isNull(`${this.wrap(tableName)}.${this.wrap(deletedAtColumn)}`));
+        whereMap.push(
+          Conditions.isNull(
+            `${this.wrap(tableName)}.${this.wrap(deletedAtColumn)}`,
+          ),
+        );
       } else {
         whereMap.push(Conditions.isNull(this.wrap(deletedAtColumn)));
       }
@@ -1169,16 +1208,33 @@ export class EntityManager implements BaseEntityManager {
       const rawRows: Record<string, unknown>[] = (result as any)?.results ?? [];
       return this.parseExplainResult(rawRows);
     } catch (e) {
-      try { await transactionHolder.rollback(); } catch { /* ignore */ }
+      try {
+        await transactionHolder.rollback();
+      } catch {
+        /* ignore */
+      }
       throw e;
     } finally {
-      try { await transactionHolder.close(); } catch { /* ignore */ }
+      try {
+        await transactionHolder.close();
+      } catch {
+        /* ignore */
+      }
     }
   }
 
-  private parseExplainResult(rawRows: Record<string, unknown>[]): ExplainResult {
+  private parseExplainResult(
+    rawRows: Record<string, unknown>[],
+  ): ExplainResult {
     if (!rawRows || rawRows.length === 0) {
-      return { raw: [], rows: null, type: null, possibleKeys: null, key: null, cost: null };
+      return {
+        raw: [],
+        rows: null,
+        type: null,
+        possibleKeys: null,
+        key: null,
+        cost: null,
+      };
     }
     const firstRow = rawRows[0];
     if (firstRow && "QUERY PLAN" in firstRow) {
@@ -1190,7 +1246,14 @@ export class EntityManager implements BaseEntityManager {
     if ("detail" in firstRow || "notused" in firstRow) {
       return this.parseSqliteExplain(rawRows);
     }
-    return { raw: rawRows, rows: null, type: null, possibleKeys: null, key: null, cost: null };
+    return {
+      raw: rawRows,
+      rows: null,
+      type: null,
+      possibleKeys: null,
+      key: null,
+      cost: null,
+    };
   }
 
   private parseMysqlExplain(rawRows: Record<string, unknown>[]): ExplainResult {
@@ -1198,8 +1261,12 @@ export class EntityManager implements BaseEntityManager {
     const rows = first.rows != null ? Number(first.rows) : null;
     const type = first.type != null ? String(first.type) : null;
     const possibleKeysRaw = first.possible_keys;
-    const possibleKeys = possibleKeysRaw != null
-      ? String(possibleKeysRaw).split(",").map((k) => k.trim()) : null;
+    const possibleKeys =
+      possibleKeysRaw != null
+        ? String(possibleKeysRaw)
+            .split(",")
+            .map((k) => k.trim())
+        : null;
     const key = first.key != null ? String(first.key) : null;
     const cost = first.filtered != null ? Number(first.filtered) : null;
     return { raw: rawRows, rows, type, possibleKeys, key, cost };
@@ -1209,7 +1276,14 @@ export class EntityManager implements BaseEntityManager {
     const rawArray = Array.isArray(queryPlan) ? queryPlan : [queryPlan];
     const plan = rawArray[0]?.Plan ?? rawArray[0]?.["Plan"] ?? null;
     if (!plan) {
-      return { raw: rawArray, rows: null, type: null, possibleKeys: null, key: null, cost: null };
+      return {
+        raw: rawArray,
+        rows: null,
+        type: null,
+        possibleKeys: null,
+        key: null,
+        cost: null,
+      };
     }
     const rows = plan["Plan Rows"] != null ? Number(plan["Plan Rows"]) : null;
     const type = plan["Node Type"] != null ? String(plan["Node Type"]) : null;
@@ -1218,7 +1292,9 @@ export class EntityManager implements BaseEntityManager {
     return { raw: rawArray, rows, type, possibleKeys: null, key, cost };
   }
 
-  private parseSqliteExplain(rawRows: Record<string, unknown>[]): ExplainResult {
+  private parseSqliteExplain(
+    rawRows: Record<string, unknown>[],
+  ): ExplainResult {
     const details = rawRows.map((r) => String(r.detail ?? ""));
     const firstDetail = details[0] ?? "";
     let type: string | null = null;
@@ -1227,7 +1303,14 @@ export class EntityManager implements BaseEntityManager {
     else if (firstDetail.startsWith("SEARCH")) type = "SEARCH";
     const indexMatch = firstDetail.match(/USING (?:COVERING )?INDEX (\S+)/);
     if (indexMatch) key = indexMatch[1];
-    return { raw: rawRows, rows: null, type, possibleKeys: null, key, cost: null };
+    return {
+      raw: rawRows,
+      rows: null,
+      type,
+      possibleKeys: null,
+      key,
+      cost: null,
+    };
   }
 
   /**
@@ -1301,8 +1384,8 @@ export class EntityManager implements BaseEntityManager {
       const qb = RawQueryBuilderFactory.create();
 
       // SELECT 컬럼
-      const selectMap = metadata.columns.map(
-        (column) => this.wrap(column.name!),
+      const selectMap = metadata.columns.map((column) =>
+        this.wrap(column.name!),
       );
 
       // WHERE 조건
@@ -1311,9 +1394,7 @@ export class EntityManager implements BaseEntityManager {
       for (const key in where) {
         const value = where[key];
         if (value !== undefined && value !== null) {
-          whereMap.push(
-            Conditions.equals(this.wrap(key), value),
-          );
+          whereMap.push(Conditions.equals(this.wrap(key), value));
         }
       }
 
@@ -1326,13 +1407,9 @@ export class EntityManager implements BaseEntityManager {
       // 커서 조건 추가
       if (cursorValue !== null) {
         if (direction === "ASC") {
-          whereMap.push(
-            Conditions.gt(this.wrap(orderByColumn), cursorValue),
-          );
+          whereMap.push(Conditions.gt(this.wrap(orderByColumn), cursorValue));
         } else {
-          whereMap.push(
-            Conditions.lt(this.wrap(orderByColumn), cursorValue),
-          );
+          whereMap.push(Conditions.lt(this.wrap(orderByColumn), cursorValue));
         }
       }
 
@@ -1365,15 +1442,13 @@ export class EntityManager implements BaseEntityManager {
 
       // take + 1로 조회했으므로, 결과가 pageSize보다 많으면 다음 페이지 존재
       const hasNextPage = results.length > pageSize;
-      const pageResults = hasNextPage
-        ? results.slice(0, pageSize)
-        : results;
+      const pageResults = hasNextPage ? results.slice(0, pageSize) : results;
 
       // 엔티티 변환
-      const entities = resultTransformer.toEntities(
-        entity,
-        { results: pageResults, fields: queryResult.fields },
-      );
+      const entities = resultTransformer.toEntities(entity, {
+        results: pageResults,
+        fields: queryResult.fields,
+      });
 
       // 다음 커서: 마지막 항목의 정렬 컬럼 값
       let nextCursor: string | null = null;
@@ -1420,7 +1495,12 @@ export class EntityManager implements BaseEntityManager {
     const { limit } = findOption;
 
     // Cache lookup
-    const cacheTtl = cache === true ? undefined : typeof cache === "number" ? cache : undefined;
+    const cacheTtl =
+      cache === true
+        ? undefined
+        : typeof cache === "number"
+          ? cache
+          : undefined;
     const useCache = cache === true || (typeof cache === "number" && cache > 0);
     let cacheKey: string | undefined;
 
@@ -1495,7 +1575,8 @@ export class EntityManager implements BaseEntityManager {
       });
 
       // ManyToOne과 OneToOne을 합산하여 JOIN 여부를 판단
-      const hasEagerJoins = eagerRelations.length > 0 || eagerOneToOneRelations.length > 0;
+      const hasEagerJoins =
+        eagerRelations.length > 0 || eagerOneToOneRelations.length > 0;
 
       const tableName = metadata.name!;
 
@@ -1516,8 +1597,7 @@ export class EntityManager implements BaseEntityManager {
         if (hasEagerJoins) {
           selectMap.push(
             ...metadata.columns.map(
-              (column) =>
-                `${this.wrap(tableName)}.${this.wrap(column.name!)}`,
+              (column) => `${this.wrap(tableName)}.${this.wrap(column.name!)}`,
             ),
           );
         } else {
@@ -1594,8 +1674,7 @@ export class EntityManager implements BaseEntityManager {
 
       // Query를 구성합니다.
       // SQL 순서: SELECT → FROM → JOIN → WHERE → ORDER BY → LIMIT
-      qb.select(selectMap)
-        .from(this.wrap(tableName));
+      qb.select(selectMap).from(this.wrap(tableName));
 
       // Eager ManyToOne 관계에 대한 LEFT JOIN 추가 (FROM 뒤, WHERE 앞)
       for (const rel of eagerRelations) {
@@ -1643,8 +1722,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       // WHERE / ORDER BY (JOIN 뒤에 위치)
-      qb.where(whereMap)
-        .orderBy(orderByMap);
+      qb.where(whereMap).orderBy(orderByMap);
 
       // LIMIT 쿼리가 튜플일 경우
       if (Array.isArray(limit)) {
@@ -1691,7 +1769,11 @@ export class EntityManager implements BaseEntityManager {
       const queryResult = (await transactionHolder.query<T>(
         resultQuery,
       )) as QueryResult;
-      this.trackQuery(entity.name, resultQuery.text ?? String(resultQuery), Date.now() - queryStartTime);
+      this.trackQuery(
+        entity.name,
+        resultQuery.text ?? String(resultQuery),
+        Date.now() - queryStartTime,
+      );
 
       // 트랜잭션을 커밋합니다.
       await transactionHolder.commit();
@@ -1716,7 +1798,11 @@ export class EntityManager implements BaseEntityManager {
       }
 
       // OneToMany / ManyToMany / OneToOne(inverse) 관계 로드 (relations 옵션이 있는 경우)
-      if (findOption.relations && findOption.relations.length > 0 && entityResult) {
+      if (
+        findOption.relations &&
+        findOption.relations.length > 0 &&
+        entityResult
+      ) {
         await this.loadOneToManyRelations(
           entity,
           entityResult as T | T[],
@@ -1916,7 +2002,10 @@ export class EntityManager implements BaseEntityManager {
         // @BeforeInsert 훅 실행 (columns/values 추출 전에 실행해야 훅의 변경사항이 반영됨)
         await this.runHooks(entity, item, "beforeInsert");
         await this.eventEmitter.emit("beforeInsert", { entity, data: item });
-        await this.notifySubscribers(entity, "beforeInsert", { entity: item, manager: this } as InsertEvent<T>);
+        await this.notifySubscribers(entity, "beforeInsert", {
+          entity: item,
+          manager: this,
+        } as InsertEvent<T>);
 
         // 훅 실행 후 columns/values 추출 (훅에서 변경한 값이 INSERT SQL에 반영됨)
         // PostgreSQL의 SERIAL 컬럼은 INSERT 시 생략해야 자동 생성됩니다.
@@ -1954,10 +2043,15 @@ export class EntityManager implements BaseEntityManager {
                         VALUES (${join(values, ", ")})${returningSql}
                     `;
         const saveQueryStart = Date.now();
-        const queryResult = (await transactionManager.query<T>(
-          insertSql,
-        )) as { results: any; fields: any };
-        this.trackQuery(entity.name, insertSql.text ?? String(insertSql), Date.now() - saveQueryStart);
+        const queryResult = (await transactionManager.query<T>(insertSql)) as {
+          results: any;
+          fields: any;
+        };
+        this.trackQuery(
+          entity.name,
+          insertSql.text ?? String(insertSql),
+          Date.now() - saveQueryStart,
+        );
 
         await transactionManager.commit();
         this.queryCache.invalidate(metadata.name!);
@@ -1977,7 +2071,10 @@ export class EntityManager implements BaseEntityManager {
           // @AfterInsert 훅 실행
           await this.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
-          await this.notifySubscribers(entity, "afterInsert", { entity: item, manager: this } as InsertEvent<T>);
+          await this.notifySubscribers(entity, "afterInsert", {
+            entity: item,
+            manager: this,
+          } as InsertEvent<T>);
           return result as T;
         }
 
@@ -1994,14 +2091,20 @@ export class EntityManager implements BaseEntityManager {
           // @AfterInsert 훅 실행
           await this.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
-          await this.notifySubscribers(entity, "afterInsert", { entity: item, manager: this } as InsertEvent<T>);
+          await this.notifySubscribers(entity, "afterInsert", {
+            entity: item,
+            manager: this,
+          } as InsertEvent<T>);
           return result as T;
         }
 
         // @AfterInsert 훅 실행
         await this.runHooks(entity, item, "afterInsert");
         await this.eventEmitter.emit("afterInsert", { entity, data: item });
-        await this.notifySubscribers(entity, "afterInsert", { entity: item, manager: this } as InsertEvent<T>);
+        await this.notifySubscribers(entity, "afterInsert", {
+          entity: item,
+          manager: this,
+        } as InsertEvent<T>);
         return queryResult as T;
       }
 
@@ -2009,7 +2112,10 @@ export class EntityManager implements BaseEntityManager {
       // @BeforeUpdate 훅 실행
       await this.runHooks(entity, item, "beforeUpdate");
       await this.eventEmitter.emit("beforeUpdate", { entity, data: item });
-      await this.notifySubscribers(entity, "beforeUpdate", { entity: item, manager: this } as UpdateEvent<T>);
+      await this.notifySubscribers(entity, "beforeUpdate", {
+        entity: item,
+        manager: this,
+      } as UpdateEvent<T>);
 
       const updateMap = metadata.columns.map((column: ColumnMetadata) => {
         return sql`${raw(this.wrap(column.name!))} = ${(item as any)[column.name!]}`;
@@ -2024,7 +2130,11 @@ export class EntityManager implements BaseEntityManager {
                 `;
       const updateStart = Date.now();
       await transactionManager.query<T>(updateSql);
-      this.trackQuery(entity.name, updateSql.text ?? String(updateSql), Date.now() - updateStart);
+      this.trackQuery(
+        entity.name,
+        updateSql.text ?? String(updateSql),
+        Date.now() - updateStart,
+      );
 
       await transactionManager.commit();
       this.queryCache.invalidate(metadata.name!);
@@ -2034,7 +2144,10 @@ export class EntityManager implements BaseEntityManager {
       // @AfterUpdate 훅 실행
       await this.runHooks(entity, item, "afterUpdate");
       await this.eventEmitter.emit("afterUpdate", { entity, data: item });
-      await this.notifySubscribers(entity, "afterUpdate", { entity: item, manager: this } as UpdateEvent<T>);
+      await this.notifySubscribers(entity, "afterUpdate", {
+        entity: item,
+        manager: this,
+      } as UpdateEvent<T>);
 
       // Retrieve and return the updated entity.
       const result = await this.findOne(entity, {
@@ -2066,10 +2179,7 @@ export class EntityManager implements BaseEntityManager {
    * @param ids 삭제할 PK 값 배열
    * @returns 삭제된 행 수를 포함하는 DeleteResult
    */
-  async deleteMany<T>(
-    entity: ClazzType<T>,
-    ids: any[],
-  ): Promise<DeleteResult> {
+  async deleteMany<T>(entity: ClazzType<T>, ids: any[]): Promise<DeleteResult> {
     if (ids.length === 0) {
       return { affected: 0 };
     }
@@ -2103,9 +2213,10 @@ export class EntityManager implements BaseEntityManager {
 
       const deleteQuery = sql`DELETE FROM ${raw(this.wrap(metadata.name!))} WHERE ${raw(this.wrap(pk.name!))} IN (${placeholders})`;
 
-      const queryResult = (await transactionManager.query(
-        deleteQuery,
-      )) as { results: any; fields: any };
+      const queryResult = (await transactionManager.query(deleteQuery)) as {
+        results: any;
+        fields: any;
+      };
 
       await transactionManager.commit();
       this.queryCache.invalidate(metadata.name!);
@@ -2218,9 +2329,10 @@ export class EntityManager implements BaseEntityManager {
 
       const queryStr = sql`INSERT INTO ${raw(this.wrap(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
 
-      const queryResult = (await transactionManager.query(
-        queryStr,
-      )) as { results: any; fields: any };
+      const queryResult = (await transactionManager.query(queryStr)) as {
+        results: any;
+        fields: any;
+      };
 
       await transactionManager.commit();
       this.queryCache.invalidate(metadata.name!);
@@ -2279,7 +2391,11 @@ export class EntityManager implements BaseEntityManager {
       // @BeforeDelete 훅 실행
       await this.runHooks(entity, criteria, "beforeDelete");
       await this.eventEmitter.emit("beforeDelete", { entity, data: criteria });
-      await this.notifySubscribers(entity, "beforeDelete", { entityClass: entity, criteria, manager: this } as DeleteEvent<T>);
+      await this.notifySubscribers(entity, "beforeDelete", {
+        entityClass: entity,
+        criteria,
+        manager: this,
+      } as DeleteEvent<T>);
 
       // cascade remove: 자식 엔티티를 먼저 삭제합니다.
       await this.cascadeDeleteOneToMany(entity, criteria);
@@ -2301,10 +2417,15 @@ export class EntityManager implements BaseEntityManager {
       const deleteQuery = sql`DELETE FROM ${raw(this.wrap(metadata.name!))} WHERE ${whereSql}`;
 
       const deleteStart = Date.now();
-      const queryResult = (await transactionManager.query(
-        deleteQuery,
-      )) as { results: any; fields: any };
-      this.trackQuery(entity.name, deleteQuery.text ?? String(deleteQuery), Date.now() - deleteStart);
+      const queryResult = (await transactionManager.query(deleteQuery)) as {
+        results: any;
+        fields: any;
+      };
+      this.trackQuery(
+        entity.name,
+        deleteQuery.text ?? String(deleteQuery),
+        Date.now() - deleteStart,
+      );
 
       await transactionManager.commit();
       this.queryCache.invalidate(metadata.name!);
@@ -2320,7 +2441,11 @@ export class EntityManager implements BaseEntityManager {
       // @AfterDelete 훅 실행
       await this.runHooks(entity, criteria, "afterDelete");
       await this.eventEmitter.emit("afterDelete", { entity, data: criteria });
-      await this.notifySubscribers(entity, "afterDelete", { entityClass: entity, criteria, manager: this } as DeleteEvent<T>);
+      await this.notifySubscribers(entity, "afterDelete", {
+        entityClass: entity,
+        criteria,
+        manager: this,
+      } as DeleteEvent<T>);
 
       return { affected };
     } catch (e: unknown) {
@@ -2386,9 +2511,10 @@ export class EntityManager implements BaseEntityManager {
       const nowExpr = this.isPostgres() ? raw("NOW()") : raw("NOW()");
       const updateQuery = sql`UPDATE ${raw(this.wrap(metadata.name!))} SET ${raw(this.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`;
 
-      const queryResult = (await transactionManager.query(
-        updateQuery,
-      )) as { results: any; fields: any };
+      const queryResult = (await transactionManager.query(updateQuery)) as {
+        results: any;
+        fields: any;
+      };
 
       await transactionManager.commit();
       this.queryCache.invalidate(metadata.name!);
@@ -2463,9 +2589,10 @@ export class EntityManager implements BaseEntityManager {
 
       const restoreQuery = sql`UPDATE ${raw(this.wrap(metadata.name!))} SET ${raw(this.wrap(deletedAtColumn))} = NULL WHERE ${whereSql}`;
 
-      const queryResult = (await transactionManager.query(
-        restoreQuery,
-      )) as { results: any; fields: any };
+      const queryResult = (await transactionManager.query(restoreQuery)) as {
+        results: any;
+        fields: any;
+      };
 
       await transactionManager.commit();
       this.queryCache.invalidate(metadata.name!);
@@ -2512,7 +2639,10 @@ export class EntityManager implements BaseEntityManager {
       const RelatedEntity = rel.getRelatedEntity();
 
       // cascade: "insert" 또는 "update" 가 포함된 경우에만 처리
-      if (!hasCascade(rel.cascade, "insert") && !hasCascade(rel.cascade, "update"))
+      if (
+        !hasCascade(rel.cascade, "insert") &&
+        !hasCascade(rel.cascade, "update")
+      )
         continue;
 
       // ManyToOne 측의 joinColumn 찾기
@@ -2543,7 +2673,10 @@ export class EntityManager implements BaseEntityManager {
       const relatedValue = (item as any)[rel.columnName];
       if (!relatedValue || typeof relatedValue !== "object") continue;
 
-      if (!hasCascade(rel.option?.cascade, "insert") && !hasCascade(rel.option?.cascade, "update"))
+      if (
+        !hasCascade(rel.option?.cascade, "insert") &&
+        !hasCascade(rel.option?.cascade, "update")
+      )
         continue;
 
       const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
@@ -2801,14 +2934,18 @@ export class EntityManager implements BaseEntityManager {
       try {
         await transactionHolder.rollback();
       } catch (rollbackError) {
-        this.logger.error(`Failed to rollback raw query transaction: ${rollbackError}`);
+        this.logger.error(
+          `Failed to rollback raw query transaction: ${rollbackError}`,
+        );
       }
       throw e;
     } finally {
       try {
         await transactionHolder.close();
       } catch (closeError) {
-        this.logger.error(`Failed to close raw query transaction: ${closeError}`);
+        this.logger.error(
+          `Failed to close raw query transaction: ${closeError}`,
+        );
       }
     }
   }
