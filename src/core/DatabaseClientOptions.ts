@@ -63,8 +63,12 @@ export interface DatabaseClientOptions {
    */
   synchronize?: boolean;
 
-  /** Enable/disable query logging */
-  logging?: boolean;
+  /**
+   * Enable/disable query logging and diagnostics.
+   * - `true`: 기본 쿼리 로깅만 활성화
+   * - `LoggingOptions`: 상세 옵션 (슬로우 쿼리, N+1 감지 등)
+   */
+  logging?: boolean | LoggingOptions;
 
   /** Array of entity classes that will be used by the connection */
   entities: AnyEntity[];
@@ -100,6 +104,20 @@ export interface DatabaseClientOptions {
    * 연결 실패 시 지수 백오프로 재시도합니다.
    */
   retry?: RetryOptions;
+}
+
+/**
+ * 쿼리 로깅 및 진단 상세 옵션.
+ */
+export interface LoggingOptions {
+  /** 쿼리 SQL 로깅 활성화 */
+  queries?: boolean;
+
+  /** 이 값(ms)을 초과하는 쿼리에 대해 슬로우 쿼리 경고를 출력합니다 */
+  slowQueryMs?: number;
+
+  /** N+1 쿼리 감지 경고를 활성화합니다 */
+  nPlusOne?: boolean;
 }
 
 /**

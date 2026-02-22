@@ -77,6 +77,13 @@ import {
 } from "./EntitySubscriber";
 import { QueryTracker, QueryLogEntry } from "./QueryTracker";
 import { LoggingOptions } from "./DatabaseClientOptions";
+import {
+  CursorPaginationOption,
+  CursorPaginationResult,
+  encodeCursor,
+  decodeCursor,
+  normalizePageSize,
+} from "./CursorPagination";
 
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
@@ -719,9 +726,11 @@ export class EntityManager implements BaseEntityManager {
           }
 
           const resultQuery = qb.build();
+          const subQueryStart = Date.now();
           const queryResult = (await transactionHolder.query(
             resultQuery,
           )) as QueryResult;
+          this.trackQuery(relatedTableName, resultQuery.text ?? String(resultQuery), Date.now() - subQueryStart);
 
           await transactionHolder.commit();
 
@@ -1251,9 +1260,11 @@ export class EntityManager implements BaseEntityManager {
       // 최종 SQL을 생성합니다.
       const resultQuery = qb.build();
 
+      const queryStartTime = Date.now();
       const queryResult = (await transactionHolder.query<T>(
         resultQuery,
       )) as QueryResult;
+      this.trackQuery(entity.name, resultQuery.text ?? String(resultQuery), Date.now() - queryStartTime);
 
       // 트랜잭션을 커밋합니다.
       await transactionHolder.commit();
@@ -1510,13 +1521,16 @@ export class EntityManager implements BaseEntityManager {
           ? raw(` RETURNING ${returningCols}`)
           : raw("");
 
-        const queryResult = (await transactionManager.query<T>(
-          sql`
+        const insertSql = sql`
                         INSERT INTO ${raw(this.wrap(metadata.name!))}
                         (${join(columns, ", ")})
                         VALUES (${join(values, ", ")})${returningSql}
-                    `,
+                    `;
+        const saveQueryStart = Date.now();
+        const queryResult = (await transactionManager.query<T>(
+          insertSql,
         )) as { results: any; fields: any };
+        this.trackQuery(entity.name, insertSql.text ?? String(insertSql), Date.now() - saveQueryStart);
 
         await transactionManager.commit();
         this.queryCache.invalidate(metadata.name!);
@@ -1576,13 +1590,14 @@ export class EntityManager implements BaseEntityManager {
 
       const pkWhereClauses = buildPkWhere();
 
-      await transactionManager.query<T>(
-        sql`
+      const updateSql = sql`
           UPDATE ${raw(this.wrap(metadata.name!))}
           SET ${join(updateMap, ", ")}
           WHERE ${join(pkWhereClauses, " AND ")}
-                `,
-      );
+                `;
+      const updateStart = Date.now();
+      await transactionManager.query<T>(updateSql);
+      this.trackQuery(entity.name, updateSql.text ?? String(updateSql), Date.now() - updateStart);
 
       await transactionManager.commit();
       this.queryCache.invalidate(metadata.name!);
@@ -1858,9 +1873,11 @@ export class EntityManager implements BaseEntityManager {
 
       const deleteQuery = sql`DELETE FROM ${raw(this.wrap(metadata.name!))} WHERE ${whereSql}`;
 
+      const deleteStart = Date.now();
       const queryResult = (await transactionManager.query(
         deleteQuery,
       )) as { results: any; fields: any };
+      this.trackQuery(entity.name, deleteQuery.text ?? String(deleteQuery), Date.now() - deleteStart);
 
       await transactionManager.commit();
       this.queryCache.invalidate(metadata.name!);
