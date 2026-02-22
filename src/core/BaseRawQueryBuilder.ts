@@ -67,6 +67,43 @@ export interface BaseRawQueryBuilder {
   ): BaseRawQueryBuilder;
 
   /**
+   * Adds a LEFT JOIN clause to the query.
+   * Convenience method for join("LEFT", ...).
+   */
+  leftJoin(
+    table: string,
+    alias: string,
+    condition: Sql,
+  ): BaseRawQueryBuilder;
+
+  /**
+   * Adds an INNER JOIN clause to the query.
+   * Convenience method for join("INNER", ...).
+   */
+  innerJoin(
+    table: string,
+    alias: string,
+    condition: Sql,
+  ): BaseRawQueryBuilder;
+
+  /**
+   * Adds a RIGHT JOIN clause to the query.
+   * Convenience method for join("RIGHT", ...).
+   */
+  rightJoin(
+    table: string,
+    alias: string,
+    condition: Sql,
+  ): BaseRawQueryBuilder;
+
+  /**
+   * Specifies the OFFSET clause for the query.
+   * @param offset - The number of rows to skip.
+   * @returns The current instance of the query builder.
+   */
+  offset(offset: number): BaseRawQueryBuilder;
+
+  /**
    * Specifies the GROUP BY clause for the query.
    * @param columns - An array of column names to group by.
    * @returns The current instance of the query builder.

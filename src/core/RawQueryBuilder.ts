@@ -195,6 +195,53 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   }
 
   /**
+   * Adds a LEFT JOIN clause to the query.
+   * Convenience method for join("LEFT", ...).
+   */
+  leftJoin(
+    table: string | Sql,
+    alias: string,
+    condition: Sql,
+  ): RawQueryBuilder {
+    return this.join("LEFT", table, alias, condition);
+  }
+
+  /**
+   * Adds an INNER JOIN clause to the query.
+   * Convenience method for join("INNER", ...).
+   */
+  innerJoin(
+    table: string | Sql,
+    alias: string,
+    condition: Sql,
+  ): RawQueryBuilder {
+    return this.join("INNER", table, alias, condition);
+  }
+
+  /**
+   * Adds a RIGHT JOIN clause to the query.
+   * Convenience method for join("RIGHT", ...).
+   */
+  rightJoin(
+    table: string | Sql,
+    alias: string,
+    condition: Sql,
+  ): RawQueryBuilder {
+    return this.join("RIGHT", table, alias, condition);
+  }
+
+  /**
+   * Specifies the OFFSET clause for the query.
+   * Can be used independently or alongside limit().
+   * @param offset - The number of rows to skip.
+   * @returns The current instance of the query builder.
+   */
+  offset(offset: number): RawQueryBuilder {
+    this.sqlQuerySegments.push(sql`OFFSET ${offset}`);
+    return this;
+  }
+
+  /**
    * Appends a raw SQL fragment to the query.
    * @param sqlFragment - The SQL fragment to append.
    * @returns The current instance of the query builder.
