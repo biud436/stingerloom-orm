@@ -130,6 +130,16 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Deletes multiple entities by their primary key values using a single query.
+   *
+   * @param ids The primary key values of entities to delete.
+   * @returns A promise that resolves to the number of affected rows.
+   */
+  async deleteMany(ids: any[]): Promise<DeleteResult> {
+    return await this.em.deleteMany<T>(this.entity, ids);
+  }
+
+  /**
    * Returns the count of entities matching the given conditions.
    */
   async count(where?: { [K in keyof T]?: T[K] }): Promise<number> {

@@ -348,6 +348,175 @@ describe("EntityManager.insertMany()", () => {
   });
 });
 
+describe("EntityManager.deleteMany()", () => {
+  let em: EntityManager;
+
+  beforeEach(() => {
+    MetadataLayerRegistry.reset();
+    Container.reset();
+    jest.clearAllMocks();
+    em = createTestEntityManager();
+  });
+
+  it("should return { affected: 0 } for empty ids array", async () => {
+    const result = await em.deleteMany(userMetadata.target, []);
+    expect(result).toEqual({ affected: 0 });
+  });
+
+  it("should throw when entity metadata does not exist", async () => {
+    class UnknownEntity {}
+
+    jest
+      .spyOn(em as any, "resolveEntityMetadata")
+      .mockReturnValue(null);
+
+    await expect(
+      em.deleteMany(UnknownEntity, [1, 2]),
+    ).rejects.toThrow("Entity metadata does not exist.");
+  });
+
+  it("should throw when primary key column is not found", async () => {
+    const noPkMetadata = {
+      name: "NoPk",
+      target: class NoPk {},
+      columns: [
+        { name: "name", options: {} },
+      ],
+    };
+
+    jest
+      .spyOn(em as any, "resolveEntityMetadata")
+      .mockReturnValue(noPkMetadata);
+
+    await expect(
+      em.deleteMany(noPkMetadata.target, [1]),
+    ).rejects.toThrow("Primary key column not found.");
+  });
+
+  it("should execute DELETE ... WHERE pk IN (...) for multiple ids", async () => {
+    const { __mockQuery } =
+      jest.requireMock("../../src/dialects/TransactionSessionManager");
+
+    jest
+      .spyOn(em as any, "resolveEntityMetadata")
+      .mockReturnValue(userMetadata);
+    jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
+
+    __mockQuery.mockResolvedValue({
+      results: { affectedRows: 3 },
+      fields: [],
+    });
+
+    const result = await em.deleteMany(userMetadata.target, [1, 2, 3]);
+
+    expect(result.affected).toBe(3);
+
+    // Find the DELETE call (not "SET autocommit")
+    const calls = __mockQuery.mock.calls;
+    const deleteCall = calls.find(
+      (call: any[]) => typeof call[0] !== "string",
+    );
+    expect(deleteCall).toBeDefined();
+
+    const sqlObj = deleteCall![0];
+    const sqlText = sqlObj.text || sqlObj.sql || String(sqlObj);
+    expect(sqlText).toContain("DELETE FROM");
+    expect(sqlText).toContain("`User`");
+    expect(sqlText).toContain("IN");
+  });
+
+  it("should handle a single id", async () => {
+    const { __mockQuery } =
+      jest.requireMock("../../src/dialects/TransactionSessionManager");
+
+    jest
+      .spyOn(em as any, "resolveEntityMetadata")
+      .mockReturnValue(userMetadata);
+    jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
+
+    __mockQuery.mockResolvedValue({
+      results: { affectedRows: 1 },
+      fields: [],
+    });
+
+    const result = await em.deleteMany(userMetadata.target, [42]);
+
+    expect(result.affected).toBe(1);
+  });
+
+  it("should use parameterized values to prevent SQL injection", async () => {
+    const { __mockQuery } =
+      jest.requireMock("../../src/dialects/TransactionSessionManager");
+
+    jest
+      .spyOn(em as any, "resolveEntityMetadata")
+      .mockReturnValue(userMetadata);
+    jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
+
+    __mockQuery.mockResolvedValue({
+      results: { affectedRows: 0 },
+      fields: [],
+    });
+
+    // Attempt SQL injection via id value
+    const maliciousId = "1; DROP TABLE User; --";
+    await em.deleteMany(userMetadata.target, [maliciousId]);
+
+    // The id should be passed as a parameter, not interpolated into SQL
+    const calls = __mockQuery.mock.calls;
+    const deleteCall = calls.find(
+      (call: any[]) => typeof call[0] !== "string",
+    );
+    const sqlObj = deleteCall![0];
+    const sqlText = sqlObj.text || sqlObj.sql || String(sqlObj);
+
+    // The SQL text should NOT contain the malicious string directly
+    expect(sqlText).not.toContain("DROP TABLE");
+    // The values array should contain the malicious string as a parameter
+    const sqlValues = sqlObj.values || [];
+    expect(sqlValues).toContain(maliciousId);
+  });
+
+  it("should handle PostgreSQL rowCount result", async () => {
+    const { __mockQuery } =
+      jest.requireMock("../../src/dialects/TransactionSessionManager");
+
+    jest
+      .spyOn(em as any, "resolveEntityMetadata")
+      .mockReturnValue(userMetadata);
+    jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(false);
+
+    __mockQuery.mockResolvedValue({
+      results: { rowCount: 2 },
+      fields: [],
+    });
+
+    const result = await em.deleteMany(userMetadata.target, [10, 20]);
+
+    expect(result.affected).toBe(2);
+  });
+
+  it("should rollback on query error", async () => {
+    const {
+      __mockQuery,
+      __mockRollback,
+    } = jest.requireMock("../../src/dialects/TransactionSessionManager");
+
+    jest
+      .spyOn(em as any, "resolveEntityMetadata")
+      .mockReturnValue(userMetadata);
+    jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
+
+    __mockQuery
+      .mockResolvedValueOnce(undefined) // SET autocommit
+      .mockRejectedValueOnce(new Error("Foreign key constraint"));
+
+    await expect(
+      em.deleteMany(userMetadata.target, [1, 2]),
+    ).rejects.toThrow("Foreign key constraint");
+  });
+});
+
 describe("BaseRepository batch methods", () => {
   it("should have saveMany method that delegates to EntityManager", async () => {
     const mockEm = {
@@ -383,5 +552,18 @@ describe("BaseRepository batch methods", () => {
 
     const insertResult = await repo.insertMany([]);
     expect(insertResult.affected).toBe(0);
+  });
+
+  it("should have deleteMany method that delegates to EntityManager", async () => {
+    const mockEm = {
+      deleteMany: jest.fn().mockResolvedValue({ affected: 3 }),
+    } as any;
+
+    const { BaseRepository } = require("../../src/core/BaseRepository");
+    const repo = new BaseRepository(userMetadata.target, mockEm);
+
+    const result = await repo.deleteMany([1, 2, 3]);
+    expect(mockEm.deleteMany).toHaveBeenCalledWith(userMetadata.target, [1, 2, 3]);
+    expect(result.affected).toBe(3);
   });
 });

@@ -8,6 +8,7 @@ import {
   ManyToOneScanner,
   OneToManyScanner,
   ManyToManyScanner,
+  OneToOneScanner,
 } from "../scanner";
 import Container from "typedi";
 import { DatabaseClient } from "../DatabaseClient";
@@ -36,6 +37,8 @@ import {
   HOOK_TOKEN,
   HookEvent,
   HookMetadata,
+  ONE_TO_ONE_TOKEN,
+  OneToOneMetadata,
 } from "../decorators";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
@@ -437,6 +440,45 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * OneToOne 관계 메타데이터를 레이어 시스템을 통해 조회합니다.
+   *
+   * 조회 우선순위:
+   * 1. OneToOneScanner — MetadataLayerRegistry 경유 (멀티테넌트 레이어 지원)
+   * 2. Reflect.getMetadata() — 데코레이터가 직접 부착한 정적 메타데이터 (fallback)
+   */
+  private resolveOneToOneMetadata<T>(
+    entity: ClazzType<T>,
+  ): OneToOneMetadata<any>[] {
+    // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
+    const oneToOneScanner = Container.get(OneToOneScanner);
+    const allRelations = oneToOneScanner
+      .allMetadata<OneToOneMetadata<any>>()
+      .filter((rel) => rel.target === entity);
+
+    if (allRelations.length > 0) {
+      return allRelations;
+    }
+
+    // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
+    const reflectMetadata =
+      (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) as
+        | OneToOneMetadata<any>[]
+        | undefined) ??
+      (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity.prototype) as
+        | OneToOneMetadata<any>[]
+        | undefined);
+
+    if (reflectMetadata && reflectMetadata.length > 0) {
+      this.logger.warn(
+        `[resolveOneToOneMetadata] "${entity.name}" OneToOne resolved via Reflect.getMetadata fallback.`,
+      );
+      return reflectMetadata;
+    }
+
+    return [];
+  }
+
+  /**
    * ManyToMany 관계의 joinTable 정보를 확정합니다.
    * 소유측(joinTable 있음)이면 그대로, 역방향(mappedBy)이면 상대측에서 joinTable을 가져옵니다.
    */
@@ -646,6 +688,38 @@ export class EntityManager implements BaseEntityManager {
         );
       }
     }
+
+    // OneToOne 관계의 소유측(joinColumn이 있는 쪽)에 대해 FK를 생성합니다.
+    const oneToOneItems = this.resolveOneToOneMetadata(TargetEntity);
+    for (const oneToOneItem of oneToOneItems) {
+      const { joinColumn } = oneToOneItem;
+      if (!joinColumn) continue; // 역방향(inverseSide)은 FK가 없음
+
+      const RelatedEntity = oneToOneItem.getRelatedEntity();
+      if (!RelatedEntity) {
+        throw new EntityNotFound(RelatedEntity);
+      }
+
+      const relatedMetadata = entityScanner.scan(RelatedEntity);
+      if (!relatedMetadata) {
+        throw new Error("Metadata for the related entity does not exist.");
+      }
+
+      const relatedPrimaryKey = relatedMetadata.columns.find(
+        (e: any) => e.options?.primary,
+      )?.name;
+
+      if (!relatedPrimaryKey) {
+        throw new Error("Primary key for the related entity does not exist.");
+      }
+
+      await this.driver?.addForeignKey(
+        tableName,
+        joinColumn,
+        RelatedEntity.name,
+        relatedPrimaryKey,
+      );
+    }
   }
 
   /**
@@ -754,11 +828,25 @@ export class EntityManager implements BaseEntityManager {
         return isEager || isInRelations;
       });
 
+      // Eager 로드할 OneToOne 관계를 수집 (소유측: joinColumn이 있는 쪽)
+      const oneToOneRelations = this.resolveOneToOneMetadata(entity);
+      const eagerOneToOneRelations = oneToOneRelations.filter((rel) => {
+        if (!rel.joinColumn) return false; // 소유측만 eager JOIN 가능
+        const isEager = rel.option?.eager === true;
+        const isInRelations = findOption.relations?.includes(
+          rel.propertyKey as keyof T,
+        );
+        return isEager || isInRelations;
+      });
+
+      // ManyToOne과 OneToOne을 합산하여 JOIN 여부를 판단
+      const hasEagerJoins = eagerRelations.length > 0 || eagerOneToOneRelations.length > 0;
+
       const tableName = metadata.name!;
 
       if (!select) {
         // 메인 테이블 컬럼에 테이블 별칭 prefix 추가 (JOIN 시 충돌 방지)
-        if (eagerRelations.length > 0) {
+        if (hasEagerJoins) {
           selectMap.push(
             ...metadata.columns.map(
               (column) =>
@@ -772,7 +860,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // Eager 관계 컬럼을 SELECT에 추가 (alias: propertyName_columnName)
+      // ManyToOne Eager 관계 컬럼을 SELECT에 추가 (alias: propertyName_columnName)
       for (const rel of eagerRelations) {
         const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
         const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
@@ -786,10 +874,24 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      // OneToOne Eager 관계 컬럼을 SELECT에 추가 (alias: propertyKey_columnName)
+      for (const rel of eagerOneToOneRelations) {
+        const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+        const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
+        if (!relatedMetadata) continue;
+
+        for (const col of relatedMetadata.columns) {
+          const alias = `${rel.propertyKey}_${col.name}`;
+          selectMap.push(
+            `${this.wrap(RelatedEntity.name)}.${this.wrap(col.name!)} AS ${this.wrap(alias)}`,
+          );
+        }
+      }
+
       for (const key in where) {
         const value = where[key];
         if (value) {
-          if (eagerRelations.length > 0) {
+          if (hasEagerJoins) {
             whereMap.push(
               Conditions.equals(
                 `${this.wrap(tableName)}.${this.wrap(key)}`,
@@ -805,7 +907,7 @@ export class EntityManager implements BaseEntityManager {
       // @DeletedAt 컬럼이 있으면 자동으로 WHERE deleted_at IS NULL 조건 추가
       const deletedAtColumn = this.getDeletedAtColumn(entity);
       if (deletedAtColumn && !(findOption as any).withDeleted) {
-        if (eagerRelations.length > 0) {
+        if (hasEagerJoins) {
           whereMap.push(
             Conditions.isNull(
               `${this.wrap(tableName)}.${this.wrap(deletedAtColumn)}`,
@@ -839,6 +941,28 @@ export class EntityManager implements BaseEntityManager {
         const joinColumn = rel.joinColumn ?? rel.columnName;
 
         // 관련 엔티티의 PK 찾기
+        const relatedPk = relatedMetadata.columns.find(
+          (col: any) => col.options?.primary,
+        );
+        if (!relatedPk) continue;
+
+        const joinCondition = sql`${raw(this.wrap(tableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relatedTableName))}.${raw(this.wrap(relatedPk.name!))}`;
+        qb.leftJoin(
+          this.wrap(relatedTableName),
+          this.wrap(relatedTableName),
+          joinCondition,
+        );
+      }
+
+      // OneToOne Eager 관계에 대한 LEFT JOIN 추가
+      for (const rel of eagerOneToOneRelations) {
+        const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+        const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
+        if (!relatedMetadata) continue;
+
+        const relatedTableName = RelatedEntity.name;
+        const joinColumn = rel.joinColumn!;
+
         const relatedPk = relatedMetadata.columns.find(
           (col: any) => col.options?.primary,
         );
@@ -900,7 +1024,7 @@ export class EntityManager implements BaseEntityManager {
 
       const isEntityArray = results.length > 1;
       let entityResult: EntityResult<T>;
-      if (eagerRelations.length > 0) {
+      if (hasEagerJoins) {
         // Eager 관계가 있을 경우 중첩된 결과를 변환
         entityResult = resultTransformer.transformNested(
           entity,
@@ -912,7 +1036,7 @@ export class EntityManager implements BaseEntityManager {
         entityResult = resultTransformer.toEntity(entity, queryResult);
       }
 
-      // OneToMany / ManyToMany 관계 로드 (relations 옵션이 있는 경우)
+      // OneToMany / ManyToMany / OneToOne(inverse) 관계 로드 (relations 옵션이 있는 경우)
       if (findOption.relations && findOption.relations.length > 0 && entityResult) {
         await this.loadOneToManyRelations(
           entity,
@@ -920,6 +1044,11 @@ export class EntityManager implements BaseEntityManager {
           findOption.relations,
         );
         await this.loadManyToManyRelations(
+          entity,
+          entityResult as T | T[],
+          findOption.relations,
+        );
+        await this.loadOneToOneRelations(
           entity,
           entityResult as T | T[],
           findOption.relations,
@@ -1146,6 +1275,81 @@ export class EntityManager implements BaseEntityManager {
       } as any);
 
       return result as T;
+    } catch (e: unknown) {
+      try {
+        await transactionManager.rollback();
+      } catch (rollbackError) {
+        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
+      }
+      throw e;
+    } finally {
+      try {
+        await transactionManager.close();
+      } catch (closeError) {
+        this.logger.error(`Failed to close transaction: ${closeError}`);
+      }
+    }
+  }
+
+  /**
+   * 여러 엔티티를 PK 목록으로 일괄 삭제합니다.
+   * DELETE FROM table WHERE pk IN (?, ?, ...) 단일 쿼리로 수행합니다.
+   *
+   * @param entity 엔티티 클래스
+   * @param ids 삭제할 PK 값 배열
+   * @returns 삭제된 행 수를 포함하는 DeleteResult
+   */
+  async deleteMany<T>(
+    entity: ClazzType<T>,
+    ids: any[],
+  ): Promise<DeleteResult> {
+    if (ids.length === 0) {
+      return { affected: 0 };
+    }
+
+    const metadata = this.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new Error("Entity metadata does not exist.");
+    }
+
+    const pk = metadata.columns.find(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+    if (!pk) {
+      throw new Error("Primary key column not found.");
+    }
+
+    const transactionManager = new TransactionSessionManager();
+
+    try {
+      await transactionManager.connect();
+      await transactionManager.startTransaction();
+
+      if (this.isMySqlFamily()) {
+        await transactionManager.query("SET autocommit = 0");
+      }
+
+      const placeholders = join(
+        ids.map((id) => sql`${id}`),
+        ", ",
+      );
+
+      const deleteQuery = sql`DELETE FROM ${raw(this.wrap(metadata.name!))} WHERE ${raw(this.wrap(pk.name!))} IN (${placeholders})`;
+
+      const queryResult = (await transactionManager.query(
+        deleteQuery,
+      )) as { results: any; fields: any };
+
+      await transactionManager.commit();
+
+      let affected = 0;
+      if (this.isMySqlFamily()) {
+        affected = queryResult?.results?.affectedRows ?? 0;
+      } else {
+        affected = queryResult?.results?.rowCount ?? 0;
+      }
+
+      return { affected };
     } catch (e: unknown) {
       try {
         await transactionManager.rollback();
