@@ -18,6 +18,7 @@
 
 - **test-engineer**: 이전 태스크 완료 보고를 반복하는 루프에 빠지는 경향이 있음.
   루프 감지 시 → shutdown_request 후 새 인스턴스 spawn으로 해결.
+- **dialect-engineer**: 취소된 태스크를 받기 전에 이미 완료하는 경우 있음 (타이밍 이슈). 결과물 검토 후 유지/revert 판단.
 - **모든 팀원**: `pnpm test` 통과 + `git push` 후 팀장에게 SendMessage로 보고.
 
 ---
@@ -42,90 +43,54 @@
 | 14 | Entity 생명주기 훅 (@BeforeInsert 등) | 28d92bc | 572 |
 | 15 | Aggregate 쿼리 (count/sum/avg/min/max) | 0db6cad | 630 |
 | 16 | @Transactional 데코레이터 | f40c48c | 630 |
-| 17 | Query Builder WHERE 개선 (andWhere/orWhere/whereIn 등) | 8fbe376 | 630 |
-| 18 | examples/nestjs-cats 전면 업데이트 | - | 630 |
+| 17 | Query Builder WHERE 개선 | 8fbe376 | 630 |
+| 18 | examples/nestjs-cats 전면 업데이트 | f17c4e6 | 630 |
+| 19 | Schema Generation (syncSchema/createTable DDL) | 1393498 | - |
+| 20 | @OneToOne 관계 데코레이터 | 27cc25b | - |
+| 21 | pnpm workspace + SqliteConnector 수정 | f6b0654, ceee592 | - |
+| 22 | MySQL TransactionSessionManager 지원 | 82a7508 | - |
+| 23 | CRUD 통합 테스트 인프라 | 3b0aaa6 | **691** |
+| 24 | 이벤트 시스템 (EntityManager on/off/emit) | bfc6159 | 721 |
+| 25 | Select 특정 컬럼 (FindOption.select) | 2258dd5 | 728 |
+| 26 | Raw Query 제네릭 + Connection Retry | 21008a3 | 758 |
+| 27 | 복합 PK 지원 (@PrimaryColumn) | a124fb0 | 774 |
+| 28 | MSSQL 드라이버 | 9b2c681 | 813 |
+| 29 | 쿼리 결과 캐싱 + TTL 수정 + 타입/OrmError 강화 | d856ab6, b88274b | 884 |
+| 30 | EntitySubscriber 패턴 | 91ddf9f | 906 |
+| 31 | eager load LEFT JOIN 버그 수정 | 1d8356b | - |
+| 32 | 통합 테스트 5개 파일 (soft-delete~one-to-one) | ee32fe4 | 1006 |
+| 33 | @BeforeInsert mutation + OneToOne eager + null FK 버그 수정 | 3cef629 | 1006 |
+| 34 | N+1 쿼리 감지 + 슬로우 쿼리 경고 (QueryTracker) | 935c1ee | **1059** |
 
 ---
 
-## 진행 중 (이번 세션 마지막 상태)
+## 진행 중 (이번 세션)
 
 | # | 기능 | 담당 | 상태 |
 |---|------|------|------|
-| 22 | 배치 연산 고도화 (insertMany/saveMany/deleteMany) | dialect-engineer | 진행 중 |
-| 23 | @OneToOne 관계 데코레이터 | test-engineer | 진행 중 |
-| 26 | Schema Generation (syncSchema/createTable DDL) | arch-reviewer | 진행 중 |
+| 35 | 커서 기반 페이지네이션 (findWithCursor) | dialect-engineer | 진행 중 |
+| 36 | 쿼리 타임아웃 (per-query / connection-level) | arch-reviewer | 진행 중 |
+| 37 | 신기능 통합 테스트 (QueryCache/Subscriber/ManyToMany/Schema) | test-engineer | 진행 중 (3 suites 실패 중) |
+| 38 | docs/ 한국어 문서화 | 별도 에이전트 | 백그라운드 진행 중 |
 
-> **다음 소집 시**: 위 3개 태스크 완료 여부 먼저 확인 후 백로그 배정.
-
----
-
-## 계획된 작업 (백로그)
-
-우선순위 순서로 정렬:
-
-### 높음 (핵심 ORM 기능)
-
-| 기능 | 설명 | 예상 담당 |
-|------|------|----------|
-| **이벤트 시스템** | EntityManager 이벤트 emitter (insert/update/delete 시 이벤트 발행) | arch-reviewer |
-| **Select 특정 컬럼** | `find(Entity, { select: ["id", "name"] })` | arch-reviewer |
-| **Raw Query 결과 타입** | `EntityManager.query<T>(sql)` 제네릭 타입 강화 | dialect-engineer |
-
-### 중간 (개발 경험 향상)
-
-| 기능 | 설명 | 예상 담당 |
-|------|------|----------|
-| **Connection Retry** | 연결 실패 시 지수 백오프 재시도 | dialect-engineer |
-| **복합 PK 지원** | `@PrimaryGeneratedColumn()` 다중 컬럼 | arch-reviewer |
-| **쿼리 결과 캐싱** | `find()` 결과 TTL 기반 인메모리 캐시 | arch-reviewer |
-
-### 낮음 (고급 기능)
-
-| 기능 | 설명 | 예상 담당 |
-|------|------|----------|
-| **Oracle 드라이버** | `ISqlDriver` 기반 Oracle DB 지원 | dialect-engineer |
-| **MSSQL 드라이버** | Microsoft SQL Server 지원 | dialect-engineer |
-| **Subscriber/Observer** | `EntitySubscriber` 인터페이스 (afterLoad, afterTransactionStart 등) | arch-reviewer |
+> **다음 소집 시**: 위 4개 태스크 완료 여부 확인 후 백로그 배정.
+> test-engineer 통합 테스트 실패 3건(query-cache, many-to-many, schema-generator) 점검 필요.
 
 ---
 
-## examples/nestjs-cats 데모 현황
+## 백로그 (예정 작업)
 
-`examples/nestjs-cats`는 지금까지 구현된 모든 핵심 기능을 시연합니다.
+### 내실 다지기 (품질 향상)
 
-### 엔티티 구조
+| 기능 | 설명 | 예상 담당 |
+|------|------|----------|
+| **Read Replica 지원** | 읽기/쓰기 분리 (readUrl/writeUrl) | dialect-engineer |
+| **EXPLAIN 쿼리** | `EntityManager.explain(entity, option)` — 실행 계획 반환 | dialect-engineer |
+| **테스트 커버리지 강화** | 엣지 케이스, 에러 경로 테스트 보강 | test-engineer |
+| **examples/nestjs-cats 신기능 반영** | QueryCache, Subscriber, cursor pagination 데모 추가 | test-engineer |
 
-```
-Owner (주인)           Cat (고양이)
-─────────────          ──────────────────────────
-@PrimaryGeneratedColumn  @PrimaryGeneratedColumn
-@Column name             @Column name / age / breed
-@Column email            @Column createdAt / updatedAt
-@Column createdAt        @Version (낙관적 잠금)
-@OneToMany cats          @DeletedAt (Soft Delete)
-@BeforeInsert            @ManyToOne owner (eager)
-                         @BeforeInsert / @BeforeUpdate / @AfterInsert
-```
-
-### API 엔드포인트 매핑
-
-| Method | Path | 데모하는 기능 |
-|--------|------|--------------|
-| POST | /cats | @Transactional, @BeforeInsert 훅 |
-| POST | /cats/bulk | insertMany (배치 INSERT) |
-| GET | /cats | Soft Delete 자동 필터 (deleted_at IS NULL) |
-| GET | /cats/all | withDeleted 옵션 |
-| GET | /cats/stats | count/avg/min/max/sum 집계 |
-| GET | /cats/:id | @ManyToOne eager 로딩 (owner 포함) |
-| PATCH | /cats/:id | @Transactional, @BeforeUpdate 훅 |
-| DELETE | /cats/:id | 영구 삭제 |
-| PATCH | /cats/:id/soft-delete | Soft Delete |
-| PATCH | /cats/:id/restore | Soft Delete 복원 |
-| DELETE | /cats/bulk | deleteMany (배치 삭제) |
-| POST | /owners | @Transactional, @BeforeInsert 훅 |
-| GET | /owners | @OneToMany 관계 데모 |
-| GET | /owners/count | count 집계 |
-| DELETE | /owners/:id | 영구 삭제 |
+> ⚠️ **드라이버 확장 (Oracle) 제외** — 사용자 지시로 중단됨
+> ✅ **MSSQL** — 지시 전 이미 구현 완료, 유지 결정
 
 ---
 
@@ -162,8 +127,9 @@ Owner (주인)           Cat (고양이)
 
 ## 현재 테스트 현황
 
-**630개 테스트 통과** (2026-02-22 기준)
+**1059개 테스트** (2026-02-22 기준)
 
 ```
-pnpm test  →  33 suites, 630 passed
+pnpm test  →  56 suites, 1050 passed, 9 failed
+             (실패: integration/query-cache, many-to-many, schema-generator — test-engineer 수정 중)
 ```

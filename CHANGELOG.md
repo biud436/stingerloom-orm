@@ -2,83 +2,112 @@
 
 모든 주목할 만한 변경 사항은 이 파일에 기록됩니다.
 
-## [Unreleased]
-
-### Fixed
-- **`makeManyTones()` 오타 수정** (`d908034`)
-  - `ManyToOneScanner.makeManyTones` → `makeManyToOnes`
-  - `eager-loading.test.ts`, `lazy-loading.test.ts`, `cascade.test.ts` 3개 파일 일괄 수정
+## [Unreleased] — 내실 다지기 세션 (2026-02-22)
 
 ### Added
-- **Soft Delete** (Task #17)
-  - `@DeletedAt()` 데코레이터: `datetime` 타입, nullable, `DELETED_AT_TOKEN` 심볼
-  - `EntityManager.softDelete(entity, criteria)` — `UPDATE ... SET deleted_at = NOW()`
-  - `EntityManager.restore(entity, criteria)` — `UPDATE ... SET deleted_at = NULL`
-  - `find()` / `findOne()` 자동 필터: `@DeletedAt` 컬럼이 있으면 `WHERE deleted_at IS NULL` 자동 추가
-  - `FindOption.withDeleted` — soft-deleted 엔티티를 포함하여 조회하는 옵션
-  - `BaseRepository.softDelete()` / `BaseRepository.restore()` 위임 메서드
 
-- **Cascade 옵션** (`36496bb`, `e38fd17`)
-  - `CascadeType`: `"insert" | "update" | "remove"` 타입 정의
-  - `@OneToMany`, `@ManyToOne` 데코레이터에 `cascade?: CascadeType[]` 옵션 추가
-  - `EntityManager.save()`: `cascadeSaveOneToMany` — 자식 배열 자동 저장
-  - `EntityManager.save()`: `cascadeSaveManyToOne` — 중첩 부모 엔티티 자동 저장
-  - `EntityManager.delete()`: `cascadeDeleteOneToMany` — 부모 삭제 전 자식 자동 삭제
+- **이벤트 시스템** (`bfc6159`)
+  - `EntityEventEmitter`: on/off/emit/removeAllListeners API
+  - `EntityManager.on(event, handler)` / `EntityManager.off(event, handler)`
+  - 이벤트: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`
+  - 22개 유닛 테스트
 
-- **Lazy 로딩** (`e38fd17`)
-  - `LazyLoader`: Proxy 기반 지연 로딩 유틸리티
-  - `createLazyProxy<T>()` — 프로퍼티 첫 접근 시 DB 쿼리 실행
-  - `injectLazyProxy()` — 엔티티 프로퍼티에 Proxy 주입
-  - `isLazyProxy()` — Lazy proxy 여부 감지
-  - `@ManyToOne` 옵션에 `lazy?: boolean` 추가
+- **Select 특정 컬럼** (`2258dd5`)
+  - `FindOption.select?: string[] | Record<string, boolean>` 옵션 추가
+  - `find(Entity, { select: ["id", "name"] })` → `SELECT "id", "name" FROM ...`
+  - `escapeIdentifier()`로 컬럼명 escape 보장
+  - 7개 유닛 테스트
 
-- **마이그레이션 CLI** (`27dd54b`)
-  - `MigrationCli`: `migrate:run`, `migrate:rollback`, `migrate:status` 명령어
-  - `DatabaseClientOptions` 기반 DB 연결 후 `MigrationRunner` 실행
+- **Raw Query 제네릭 타입** (`21008a3`)
+  - `EntityManager.query<T>(sql, params?): Promise<T[]>` 제네릭 메서드
+  - `string` SQL 및 `sql-template-tag` Sql 객체 모두 지원
+  - 자동 트랜잭션 관리 (commit/rollback)
+  - 12개 유닛 테스트
 
-- **마이그레이션 시스템** (`ab13a64`, `f05f657`)
-  - `Migration` 추상 클래스 (`up()` / `down()` / `name`)
-  - `MigrationRunner`:
-    - `__migrations` 테이블 자동 생성
-    - `run()` — 미실행 마이그레이션 순서대로 실행
-    - `rollback(n?)` — 최근 n개 롤백
-    - `status()` — 실행됨/미실행 목록 반환
+- **Connection Retry (지수 백오프)** (`21008a3`)
+  - `DatabaseClientOptions.retry?: RetryOptions`
+  - `RetryOptions { maxAttempts: number, backoffMs: number }`
+  - 실제 지연: `backoffMs * 2^(attempt-1)`
+  - 11개 유닛 테스트
 
-- **`@ManyToMany` 관계** (`674504f`)
-  - `@ManyToMany(() => Entity, options?)` 데코레이터
-  - `JoinTableOption`: `{ name, joinColumn, inverseJoinColumn }` 중간 테이블 설정
-  - `ManyToManyScanner`: LayeredMetadataStore 통합 스캐너
-  - `EntityManager.find()`: `relations` 옵션에 ManyToMany 필드 포함 시 INNER JOIN
+- **복합 PK 지원** (`a124fb0`)
+  - `@PrimaryColumn(options?)` 데코레이터 추가 (auto-increment 없는 수동 PK)
+  - 여러 `@PrimaryColumn` → `PRIMARY KEY (col1, col2)` DDL 생성
+  - `EntityManager.find/findOne/delete`에서 복합 PK WHERE 절 처리
+  - `SchemaGenerator` DDL 반영
+  - 16개 유닛 테스트
 
-- **연결 풀링 (PoolOptions)** (`53ffd2d`)
-  - `PoolOptions` 인터페이스: `max`, `min`, `acquireTimeoutMs`, `idleTimeoutMs`
-  - `DatabaseClientOptions.pool?: PoolOptions`
-  - `PostgresConnector`: 전체 pool 옵션 적용 (pg.Pool)
-  - `MySqlConnector`: `pool.max` → `connectionLimit` 적용
+- **MSSQL 드라이버** (`9b2c681`)
+  - `MssqlDriver` / `MssqlConnector` / `MssqlDataSource` 구현
+  - 식별자 래핑: `[column_name]` (대괄호)
+  - PK: `IDENTITY(1,1)`, 파라미터: `@param0` 형식
+  - 타입 매핑: varchar→NVARCHAR, boolean→BIT, datetime→DATETIME2
+  - `DatabaseClient`, `TransactionSessionManager`, `EntityManager`에 `"mssql"` 통합
+  - 69개 유닛 테스트
 
-- **SQLite 통합** (`53ffd2d`, `96c401c`)
-  - `SqliteDriver`, `SqliteConnector`, `SqliteDataSource` 구현
-  - `DatabaseClient`, `TransactionSessionManager`, `EntityManager.connect()`에 `"sqlite"` case 추가
-  - 단일 연결 (풀 없음) 방식으로 동작
+- **쿼리 결과 캐싱** (`d856ab6`, `b88274b`)
+  - `QueryCache`: Map 기반, TTL 자동 만료 (기본 30초)
+  - `FindOption.cache?: boolean | number` (`true` → 30초, `number` → 해당 ms)
+  - 캐시 키: 엔티티명 + where/orderBy/limit/take/select 조합 해시
+  - `EntityManager.clearCache(entity?)` 수동 무효화
+  - save/update/delete/deleteMany/insertMany/softDelete/restore 시 자동 무효화
+  - 32개 유닛 테스트
 
-- **Eager 로딩** (`8a11723`)
-  - `@ManyToOne` 옵션에 `eager?: boolean` 추가
-  - `EntityManager.find()`: eager 관계 자동 LEFT JOIN
-  - `findOption.relations` 배열로 명시적 eager 로딩
+- **타입 시스템 강화** (`b88274b`)
+  - `FindCondition<T>`: `$eq/$ne/$gt/$lt/$gte/$lte/$like/$in/$notIn/$isNull` 연산자 타입
+  - `DeepPartial<T>`: 재귀적 optional 타입 (save/update 인자용)
+  - `OrderByOption<T>`: SortDirection + 엔티티 필드 기반 타입 안전 정렬
+  - `FindOption<T>` 제네릭 교체
 
-- **쿼리 빌더 DSL 확장** (`620ba1f`)
-  - `leftJoin()`, `innerJoin()`, `rightJoin()` 편의 메서드
-  - 독립적인 `offset(n)` 메서드
+- **OrmError 체계화** (`b88274b`)
+  - `OrmError` (base) + `OrmErrorCode` enum (11개 코드)
+  - `EntityMetadataNotFoundError`, `EntityNotFoundError`, `PrimaryKeyNotFoundError`
+  - `InvalidQueryError`, `TransactionError`, `DeleteWithoutConditionsError`
+  - `EntityManager` 전체 throw 지점 구체적 에러 클래스로 교체
+  - 39개 유닛 테스트 (type-safety.test.ts)
 
-- **`@OneToMany` 관계** (`a45bd40`, `fa31498`)
-  - `@OneToMany(() => Entity, { mappedBy })` 데코레이터
-  - `OneToManyScanner`: 레이어드 메타데이터 스캐너
-  - `EntityManager.find()`: `relations` 옵션에 OneToMany 필드 포함 시 서브쿼리 로딩
+- **EntitySubscriber 패턴** (`91ddf9f`)
+  - `EntitySubscriber<T>` 인터페이스: `listenTo()` + 생명주기 훅 + 트랜잭션 훅
+  - `InsertEvent<T>`, `UpdateEvent<T>`, `DeleteEvent<T>` 이벤트 객체
+  - `EntityManager.addSubscriber()` / `removeSubscriber()`
+  - `notifySubscribers()`: `listenTo()`로 대상 엔티티 필터링
+  - 22개 유닛 테스트
 
-- **Delete 연산** (`2fb0e0f`)
-  - `EntityManager.delete(entity, criteria)` — WHERE 조건 필수, 빈 조건 차단
-  - `BaseRepository.delete(criteria)` — 리포지토리 패턴
-  - `DeleteResult { affected: number }` 반환
+- **N+1 쿼리 감지 및 슬로우 쿼리 경고** (`935c1ee`)
+  - `QueryTracker`: 쿼리 이력 추적 (엔티티명, SQL, 실행시간, 타임스탬프)
+  - N+1 감지: 동일 엔티티 100ms 내 10회+ → `[N+1 WARNING]` 경고
+  - 슬로우 쿼리: `slowQueryMs` 초과 시 `[SLOW QUERY] 245ms: ...` 경고
+  - `DatabaseClientOptions.logging`: `queries?`, `slowQueryMs?`, `nPlusOne?` 확장
+  - `EntityManager.getQueryLog()` 쿼리 로그 반환
+  - 23개 유닛 테스트
+
+- **통합 테스트 인프라 및 테스트 파일** (`3b0aaa6`, `ee32fe4`)
+  - `__tests__/integration/helpers/`: test-connection, create-test-entity, create-relation-entity
+  - `crud-basic.test.ts`, `relations-one-to-many.test.ts`
+  - `soft-delete.test.ts`, `aggregate.test.ts`, `batch-operations.test.ts`
+  - `lifecycle-hooks.test.ts`, `one-to-one.test.ts`
+  - INTEGRATION_TEST 환경변수 기반 skip 처리
+
+### Fixed
+
+- **`makeManyTones()` 오타 수정** (`d908034`)
+  - `ManyToOneScanner.makeManyTones` → `makeManyToOnes`
+
+- **Eager load LEFT JOIN 순서 버그** (`1d8356b`)
+  - `find()`에서 WHERE/ORDER BY 뒤에 LEFT JOIN이 붙던 문제 수정
+  - `SELECT ... FROM t LEFT JOIN ... WHERE ...` 올바른 순서로 변경
+  - MariaDB SQL syntax 에러 해결
+
+- **@BeforeInsert 뮤테이션 미반영** (`3cef629`)
+  - `save()`에서 columns/values가 훅 실행 전에 추출되던 문제 수정
+  - 훅 실행 후 엔티티 최신 값을 INSERT SQL에 반영
+
+- **@OneToOne eager load 결과 undefined** (`3cef629`)
+  - `ResultTransformer.transformNested()`가 `ONE_TO_ONE_TOKEN` 미처리 문제 수정
+  - OneToOne도 ManyToOne과 동일한 alias 패턴으로 처리
+
+- **null FK LEFT JOIN 결과 null 미처리** (`3cef629`)
+  - LEFT JOIN 미매칭 시 모든 컬럼 NULL인 객체를 `null`로 올바르게 처리
 
 ---
 
@@ -89,15 +118,36 @@
 | SQLite 드라이버 추가 후 | 363 |
 | Eager 로딩 추가 후 | 370 |
 | 마이그레이션 시스템 후 | 415 |
-| 연결 풀링 후 | 415 |
 | @ManyToMany 후 | 427 |
 | Cascade + Lazy 로딩 후 | 496 |
-| 오타 수정 + cascade 테스트 개선 후 | **501** |
-| Soft Delete 추가 후 | **540** |
+| Soft Delete 추가 후 | 540 |
+| 세션 시작 (2026-02-22) | **691** |
+| 이벤트 시스템 + Select 컬럼 + Raw Query 제네릭 | 721 |
+| 복합 PK + MSSQL + 쿼리 캐싱 + 타입 강화 | 813 |
+| EntitySubscriber | 906 |
+| N+1 감지 시스템 | 929 |
+| 통합 테스트 5개 파일 추가 | **1059** (unit: 1050 pass) |
 
 ---
 
 ## 이전 릴리스
+
+### 내실 다지기 이전 (주요 기능)
+
+- **Soft Delete** — `@DeletedAt`, softDelete/restore, withDeleted 옵션
+- **Cascade 옵션** — CascadeType, cascadeSaveOneToMany/ManyToOne/Delete
+- **Lazy 로딩** — Proxy 기반 LazyLoader, `@ManyToOne lazy: true`
+- **마이그레이션 시스템 + CLI** — Migration/MigrationRunner, migrate:run/rollback/status
+- **`@ManyToMany` 관계** — JoinTable, ManyToManyScanner
+- **연결 풀링 (PoolOptions)** — max/min/acquireTimeoutMs/idleTimeoutMs
+- **Schema Generation** — syncSchema/createTable DDL 자동 생성
+- **`@OneToOne` 관계** — 단방향/양방향, eager 지원
+- **배치 연산** — insertMany/saveMany/deleteMany
+- **유효성 검사 데코레이터** — @NotNull, @MinLength, @MaxLength, @Min, @Max
+- **Entity 생명주기 훅** — @BeforeInsert/Update/Delete, @AfterInsert/Update/Delete
+- **Aggregate 쿼리** — count/sum/avg/min/max
+- **@Transactional 데코레이터** — AsyncLocalStorage 기반
+- **Query Builder WHERE 개선** — andWhere/orWhere/whereIn/whereNotIn/whereNull/whereNotNull/whereBetween
 
 ### 멀티테넌시 & 코어
 
@@ -118,6 +168,3 @@
 
 - **`DeserializerRegistry`** (`6fa2c9f`)
   - 플러거블 역직렬화 전략 패턴
-
-- **`MultiTenantMetadataManager` deprecated** (`0bba268`)
-  - 전역 싱글톤 폐기 → 레이어 기반 접근 권장
