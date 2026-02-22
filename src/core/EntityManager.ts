@@ -2368,6 +2368,201 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * 엔티티를 삽입하거나, 충돌 시 업데이트합니다 (UPSERT).
+   *
+   * @param entity 엔티티 클래스
+   * @param data 삽입/업데이트할 데이터
+   * @param conflictColumns 충돌 감지 컬럼 (미지정 시 PK 컬럼 자동 사용)
+   */
+  async upsert<T>(
+    entity: ClazzType<T>,
+    data: Partial<T>,
+    conflictColumns?: string[],
+  ): Promise<void> {
+    const metadata = this.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    if (!this.driver) {
+      throw new Error("Driver is not initialized.");
+    }
+
+    // conflictColumns 미지정 시 PK 컬럼 자동 사용
+    const pkColumns = metadata.columns
+      .filter((col: ColumnMetadata) => col.options?.primary)
+      .map((col: ColumnMetadata) => col.name!);
+
+    const resolvedConflictColumns = conflictColumns ?? pkColumns;
+
+    if (resolvedConflictColumns.length === 0) {
+      throw new PrimaryKeyNotFoundError(entity.name);
+    }
+
+    // 삽입 가능한 컬럼 (값이 있는 것만)
+    const insertableColumns = metadata.columns.filter(
+      (col: ColumnMetadata) => {
+        const value = (data as any)[col.name!];
+        // auto-increment PK에 값이 없으면 제외
+        if (col.options?.autoIncrement && (value === null || value === undefined)) {
+          return false;
+        }
+        return value !== undefined;
+      },
+    );
+
+    if (insertableColumns.length === 0) {
+      return;
+    }
+
+    // 충돌 시 업데이트할 컬럼 (충돌 감지 컬럼 제외)
+    const conflictSet = new Set(resolvedConflictColumns);
+    const updateColumnNames = insertableColumns
+      .map((col: ColumnMetadata) => col.name!)
+      .filter((name) => !conflictSet.has(name));
+
+    const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
+      this.wrap(col.name!),
+    );
+    const wrappedConflict = resolvedConflictColumns.map((name) =>
+      this.wrap(name),
+    );
+    const wrappedUpdate = updateColumnNames.map((name) =>
+      this.wrap(name),
+    );
+
+    const tableName = this.wrap(metadata.name!);
+
+    // 업데이트 대상 컬럼이 없으면 (충돌 컬럼만 있는 경우) 단순 INSERT IGNORE 동작
+    // 대부분의 DB에서는 DO NOTHING/IGNORE 처리가 필요하지만,
+    // 업데이트할 컬럼이 없으면 빈 SET 절이 되므로 기존 행 유지를 위해 리턴
+    if (wrappedUpdate.length === 0) {
+      return;
+    }
+
+    const sqlTemplate = this.driver.buildUpsertSql(
+      tableName,
+      wrappedColumns,
+      wrappedConflict,
+      wrappedUpdate,
+    );
+
+    const values = insertableColumns.map(
+      (col: ColumnMetadata) => (data as any)[col.name!],
+    );
+
+    const transactionManager = new TransactionSessionManager();
+
+    try {
+      await transactionManager.connect();
+      await transactionManager.startTransaction();
+
+      if (this.isMySqlFamily()) {
+        await transactionManager.query("SET autocommit = 0");
+      }
+
+      // sql-template-tag를 사용하여 파라미터 바인딩
+      const parameterizedSql = sql`${raw(sqlTemplate)}`;
+      // 값을 직접 바인딩하기 위해 sql-template-tag 사용
+      const columnPlaceholders = insertableColumns.map(
+        (col: ColumnMetadata) => (data as any)[col.name!],
+      );
+
+      const upsertSql = this.buildUpsertQuery(
+        tableName,
+        insertableColumns.map((col: ColumnMetadata) => this.wrap(col.name!)),
+        columnPlaceholders,
+        wrappedConflict,
+        wrappedUpdate,
+      );
+
+      await transactionManager.query(upsertSql);
+      await transactionManager.commit();
+      this.queryCache.invalidate(metadata.name!);
+    } catch (e: unknown) {
+      try {
+        await transactionManager.rollback();
+      } catch (rollbackError) {
+        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
+      }
+      throw e;
+    } finally {
+      try {
+        await transactionManager.close();
+      } catch (closeError) {
+        this.logger.error(`Failed to close transaction: ${closeError}`);
+      }
+    }
+  }
+
+  /**
+   * 드라이버별 upsert SQL을 sql-template-tag로 빌드합니다.
+   */
+  private buildUpsertQuery(
+    tableName: string,
+    columns: string[],
+    values: any[],
+    conflictColumns: string[],
+    updateColumns: string[],
+  ): Sql {
+    const columnList = join(
+      columns.map((c) => raw(c)),
+      ", ",
+    );
+    const valueList = join(values, ", ");
+
+    if (this.isMySqlFamily()) {
+      const updateSet = join(
+        updateColumns.map((col) => raw(`${col} = VALUES(${col})`)),
+        ", ",
+      );
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON DUPLICATE KEY UPDATE ${updateSet}`;
+    }
+
+    const conflictList = join(
+      conflictColumns.map((c) => raw(c)),
+      ", ",
+    );
+
+    if (this.isPostgres()) {
+      const updateSet = join(
+        updateColumns.map((col) => raw(`${col} = EXCLUDED.${col}`)),
+        ", ",
+      );
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+    }
+
+    // SQLite
+    if (this.client.type === "sqlite") {
+      const updateSet = join(
+        updateColumns.map((col) => raw(`${col} = excluded.${col}`)),
+        ", ",
+      );
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+    }
+
+    // MSSQL: MERGE 문
+    const joinCondition = join(
+      conflictColumns.map(
+        (col) => raw(`target.${col} = source.${col}`),
+      ),
+      " AND ",
+    );
+    const updateSet = join(
+      updateColumns.map(
+        (col) => raw(`target.${col} = source.${col}`),
+      ),
+      ", ",
+    );
+    const sourceCols = join(
+      columns.map((col) => raw(`source.${col}`)),
+      ", ",
+    );
+
+    return sql`MERGE INTO ${raw(tableName)} AS target USING (SELECT ${valueList}) AS source (${columnList}) ON (${joinCondition}) WHEN MATCHED THEN UPDATE SET ${updateSet} WHEN NOT MATCHED THEN INSERT (${columnList}) VALUES (${sourceCols});`;
+  }
+
+  /**
    * 주어진 조건에 맞는 엔티티를 데이터베이스에서 삭제합니다.
    *
    * @param entity 삭제할 엔티티 클래스
@@ -2833,6 +3028,27 @@ export class EntityManager implements BaseEntityManager {
     where?: { [K in keyof T]?: T[K] },
   ): Promise<number> {
     return this.aggregate(entity, "COUNT", "*", where);
+  }
+
+  /**
+   * 엔티티 목록과 전체 개수를 동시에 반환합니다.
+   * find()와 count()를 호출하여 [entities, totalCount] 형태로 반환합니다.
+   * count는 take/limit을 무시한 전체 조건 매칭 수입니다.
+   *
+   * @param entity 엔티티 클래스
+   * @param findOption 검색 옵션 (where, orderBy, take, limit, select, relations 등)
+   * @returns [엔티티 배열, 전체 개수] 튜플
+   */
+  async findAndCount<T>(
+    entity: ClazzType<T>,
+    findOption: FindOption<T> = {},
+  ): Promise<[T[], number]> {
+    const [entities, totalCount] = await Promise.all([
+      this.find<T>(entity, findOption),
+      this.count<T>(entity, findOption.where),
+    ]);
+
+    return [entities as unknown as T[], totalCount];
   }
 
   /**

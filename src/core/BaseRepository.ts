@@ -71,6 +71,17 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Retrieves entities and total count matching the given find options.
+   * The count ignores take/limit and returns the total number of matching entities.
+   *
+   * @param findOption The options to find entities.
+   * @returns A promise that resolves to a tuple of [entities, totalCount].
+   */
+  async findAndCount(findOption?: FindOption<T>): Promise<[T[], number]> {
+    return await this.em.findAndCount<T>(this.entity, findOption);
+  }
+
+  /**
    * Creates a new instance of BaseRepository for the specified entity and entity manager.
    *
    * @param entity The class type of the entity.
@@ -211,6 +222,20 @@ export class BaseRepository<T> {
    */
   async explain(findOption?: FindOption<T>): Promise<ExplainResult> {
     return await this.em.explain<T>(this.entity, findOption);
+  }
+
+  /**
+   * Inserts or updates an entity based on conflict columns (UPSERT).
+   * If conflictColumns is not provided, primary key columns are used.
+   *
+   * @param data The partial entity data to upsert.
+   * @param conflictColumns The columns to detect conflicts on.
+   */
+  async upsert(
+    data: Partial<T>,
+    conflictColumns?: string[],
+  ): Promise<void> {
+    return await this.em.upsert<T>(this.entity, data, conflictColumns);
   }
 
   /**

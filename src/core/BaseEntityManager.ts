@@ -152,6 +152,19 @@ export abstract class BaseEntityManager {
     params?: unknown[],
   ): Promise<T[]>;
 
+  /**
+   * 엔티티 목록과 전체 개수를 동시에 반환합니다.
+   * [entities, totalCount] 형태로 반환하며, count는 take/limit을 무시한 전체 수입니다.
+   *
+   * @param entity 엔티티 클래스
+   * @param findOption 검색 옵션
+   * @returns [엔티티 배열, 전체 개수] 튜플
+   */
+  abstract findAndCount<T>(
+    entity: ClazzType<T>,
+    findOption?: FindOption<T>,
+  ): Promise<[T[], number]>;
+
   abstract getRepository<T>(entity: ClazzType<T>): BaseRepository<T>;
 
   /**
