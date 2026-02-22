@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { ClazzType, ReflectManager } from "../utils";
 import Container from "typedi";
 import { ManyToOneScanner } from "../scanner";
+import { CascadeType } from "../types/CascadeType";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const MANY_TO_ONE_TOKEN = Symbol.for("STG_MANY_TO_ONE");
@@ -23,6 +24,16 @@ export type ManyToOneOption = {
    * true일 경우, find/findOne 시 자동으로 LEFT JOIN을 수행하여 관계 엔티티를 함께 로드합니다.
    */
   eager?: boolean;
+  /**
+   * Cascade 작업 유형 배열입니다.
+   * 부모 엔티티 저장/삭제 시 연관 엔티티도 함께 처리합니다.
+   */
+  cascade?: CascadeType[];
+  /**
+   * true일 경우, 관계 엔티티에 처음 접근할 때 별도 쿼리로 로드합니다 (Proxy 기반 지연 로딩).
+   * eager와 동시에 사용할 수 없습니다. eager가 우선됩니다.
+   */
+  lazy?: boolean;
 };
 
 export type ManyToOneMetadata<T> = {

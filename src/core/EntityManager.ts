@@ -45,6 +45,7 @@ import { Conditions } from "./Conditions";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { MetadataContext } from "../metadata/MetadataContext";
+import { injectLazyProxy } from "./LazyLoader";
 
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
@@ -871,6 +872,45 @@ export class EntityManager implements BaseEntityManager {
         );
       }
 
+      // Lazy ManyToOne 관계에 대해 Proxy 주입
+      // eager가 아니면서 lazy: true인 관계를 찾아 injectLazyProxy를 적용
+      const lazyRelations = manyToOneRelations.filter((rel) => {
+        return rel.option?.lazy === true && rel.option?.eager !== true;
+      });
+
+      if (lazyRelations.length > 0 && entityResult) {
+        const entities = Array.isArray(entityResult)
+          ? entityResult
+          : [entityResult];
+
+        for (const rel of lazyRelations) {
+          const joinColumn = rel.joinColumn ?? rel.columnName;
+          const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+
+          for (const item of entities) {
+            const fkValue = (item as any)[joinColumn];
+            if (fkValue === undefined || fkValue === null) continue;
+
+            const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
+            if (!relatedMetadata) continue;
+
+            const relatedPk = relatedMetadata.columns.find(
+              (col: any) => col.options?.primary,
+            );
+            if (!relatedPk) continue;
+
+            // 참조를 유지하기 위해 EntityManager 인스턴스를 캡처
+            const em = this;
+            injectLazyProxy(item as any, rel.columnName, async () => {
+              const result = await em.findOne(RelatedEntity, {
+                where: { [relatedPk.name!]: fkValue } as any,
+              });
+              return result as any;
+            });
+          }
+        }
+      }
+
       return entityResult;
     } catch (e: unknown) {
       // 트랜잭션 롤백
@@ -926,6 +966,9 @@ export class EntityManager implements BaseEntityManager {
     if (!metadata) {
       throw new Error("Entity metadata does not exist.");
     }
+
+    // Cascade: ManyToOne 관계의 부모 엔티티를 먼저 저장
+    await this.cascadeSaveManyToOne(entity, item);
 
     const transactionManager = new TransactionSessionManager();
 
@@ -990,6 +1033,7 @@ export class EntityManager implements BaseEntityManager {
             where: { [pk.name!]: queryResult?.results?.insertId },
           } as any);
 
+          await this.cascadeSaveOneToMany(entity, item, queryResult?.results?.insertId);
           return result as T;
         }
 
@@ -1000,6 +1044,7 @@ export class EntityManager implements BaseEntityManager {
             where: { [pk.name!]: insertedId },
           } as any);
 
+          await this.cascadeSaveOneToMany(entity, item, insertedId);
           return result as T;
         }
 
@@ -1020,6 +1065,8 @@ export class EntityManager implements BaseEntityManager {
       );
 
       await transactionManager.commit();
+
+      await this.cascadeSaveOneToMany(entity, item, primaryKeyValue);
 
       // Retrieve and return the updated entity.
       const result = await this.findOne(entity, {
@@ -1070,6 +1117,9 @@ export class EntityManager implements BaseEntityManager {
         await transactionManager.query("SET autocommit = 0");
       }
 
+      // cascade remove: 자식 엔티티를 먼저 삭제합니다.
+      await this.cascadeDeleteOneToMany(entity, criteria);
+
       const whereMap: Sql[] = [];
       for (const key in criteria) {
         const value = (criteria as any)[key];
@@ -1115,6 +1165,130 @@ export class EntityManager implements BaseEntityManager {
         await transactionManager.close();
       } catch (closeError) {
         this.logger.error(`Failed to close transaction: ${closeError}`);
+      }
+    }
+  }
+
+  /**
+   * save 시 cascade: "insert" | "update" 가 설정된 OneToMany 관계의 자식 엔티티를 재귀적으로 저장합니다.
+   */
+  private async cascadeSaveOneToMany<T>(
+    entity: ClazzType<T>,
+    item: Partial<T>,
+    savedParentId: any,
+  ): Promise<void> {
+    const oneToManyMeta = this.resolveOneToManyMetadata(entity);
+
+    for (const rel of oneToManyMeta) {
+      if (!rel.cascade || rel.cascade.length === 0) continue;
+
+      const children = (item as any)[rel.propertyKey];
+      if (!children || !Array.isArray(children) || children.length === 0)
+        continue;
+
+      const RelatedEntity = rel.getRelatedEntity();
+
+      // cascade: "insert" 또는 "update" 가 포함된 경우에만 처리
+      const hasSaveCascade =
+        rel.cascade.includes("insert") || rel.cascade.includes("update");
+      if (!hasSaveCascade) continue;
+
+      // ManyToOne 측의 joinColumn 찾기
+      const manyToOneItems = this.resolveManyToOneMetadata(RelatedEntity);
+      const matchingRelation = manyToOneItems.find(
+        (m) => m.columnName === rel.mappedBy,
+      );
+      const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
+
+      for (const child of children) {
+        // FK를 부모의 PK로 설정
+        (child as any)[fkColumn] = savedParentId;
+        await this.save(RelatedEntity, child);
+      }
+    }
+  }
+
+  /**
+   * save 시 cascade: "insert" | "update" 가 설정된 ManyToOne 관계의 부모 엔티티를 먼저 저장합니다.
+   */
+  private async cascadeSaveManyToOne<T>(
+    entity: ClazzType<T>,
+    item: Partial<T>,
+  ): Promise<void> {
+    const manyToOneRelations = this.resolveManyToOneMetadata(entity);
+
+    for (const rel of manyToOneRelations) {
+      if (!rel.option?.cascade || rel.option.cascade.length === 0) continue;
+
+      const relatedValue = (item as any)[rel.columnName];
+      if (!relatedValue || typeof relatedValue !== "object") continue;
+
+      const hasSaveCascade =
+        rel.option.cascade.includes("insert") ||
+        rel.option.cascade.includes("update");
+      if (!hasSaveCascade) continue;
+
+      const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+      const saved = await this.save(RelatedEntity, relatedValue);
+
+      // 저장된 부모의 PK를 FK 컬럼에 설정
+      const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
+      if (relatedMetadata) {
+        const relatedPk = relatedMetadata.columns.find(
+          (col: any) => col.options?.primary,
+        );
+        if (relatedPk && rel.joinColumn) {
+          (item as any)[rel.joinColumn] = (saved as any)[relatedPk.name!];
+        }
+      }
+    }
+  }
+
+  /**
+   * delete 시 cascade: "remove" 가 설정된 OneToMany 관계의 자식 엔티티를 먼저 삭제합니다.
+   */
+  private async cascadeDeleteOneToMany<T>(
+    entity: ClazzType<T>,
+    criteria: { [K in keyof T]?: T[K] },
+  ): Promise<void> {
+    const oneToManyMeta = this.resolveOneToManyMetadata(entity);
+
+    for (const rel of oneToManyMeta) {
+      if (!rel.cascade || !rel.cascade.includes("remove")) continue;
+
+      const RelatedEntity = rel.getRelatedEntity();
+
+      // 삭제 대상 부모를 조회하여 PK를 획득
+      const parentMetadata = this.resolveEntityMetadata(entity);
+      if (!parentMetadata) continue;
+
+      const pk = parentMetadata.columns.find(
+        (col: any) => col.options?.primary,
+      );
+      if (!pk) continue;
+
+      const parents = await this.find(entity, {
+        where: criteria,
+      } as any);
+
+      if (!parents) continue;
+
+      const parentArray = Array.isArray(parents) ? parents : [parents];
+
+      // ManyToOne 측의 FK 컬럼 찾기
+      const manyToOneItems = this.resolveManyToOneMetadata(RelatedEntity);
+      const matchingRelation = manyToOneItems.find(
+        (m) => m.columnName === rel.mappedBy,
+      );
+      const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
+
+      for (const parent of parentArray) {
+        const parentId = (parent as any)[pk.name!];
+        if (parentId === undefined || parentId === null) continue;
+
+        await this.delete(RelatedEntity, {
+          [fkColumn]: parentId,
+        } as any);
       }
     }
   }
