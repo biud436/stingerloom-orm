@@ -20,6 +20,7 @@ import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
 import { FindOption } from "../dialects/FindOption";
+import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
 import { MySqlDataSource } from "../dialects/mysql/MySqlDataSource";
 import { PostgresDataSource } from "../dialects/postgres/PostgresDataSource";
@@ -954,7 +955,19 @@ export class EntityManager implements BaseEntityManager {
 
       const tableName = metadata.name!;
 
-      if (!select) {
+      if (select) {
+        // select 옵션이 지정된 경우 해당 컬럼만 SELECT
+        const selectedColumns = this.resolveSelectColumns<T>(select);
+        if (hasEagerJoins) {
+          selectMap.push(
+            ...selectedColumns.map(
+              (col) => `${this.wrap(tableName)}.${this.wrap(col)}`,
+            ),
+          );
+        } else {
+          selectMap.push(...selectedColumns.map((col) => this.wrap(col)));
+        }
+      } else {
         // 메인 테이블 컬럼에 테이블 별칭 prefix 추가 (JOIN 시 충돌 방지)
         if (hasEagerJoins) {
           selectMap.push(
@@ -1221,6 +1234,26 @@ export class EntityManager implements BaseEntityManager {
         this.logger.error(`Failed to close transaction: ${closeError}`);
       }
     }
+  }
+
+  /**
+   * select 옵션에서 컬럼 이름 배열을 추출합니다.
+   * select가 배열이면 그대로 문자열로 반환하고,
+   * 객체이면 값이 true인 키만 반환합니다.
+   */
+  private resolveSelectColumns<T>(select: ISelectOption<T>): string[] {
+    if (Array.isArray(select)) {
+      return select.map((col) => String(col));
+    }
+
+    // 객체 형태: { id: true, name: true }
+    const columns: string[] = [];
+    for (const key in select) {
+      if ((select as any)[key] === true) {
+        columns.push(key);
+      }
+    }
+    return columns;
   }
 
   /**
