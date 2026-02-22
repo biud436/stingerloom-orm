@@ -4,6 +4,10 @@ import { FindOption } from "../dialects/FindOption";
 import { EntityManager } from "./EntityManager";
 import { EntityResult } from "../types/EntityResult";
 import { DeleteResult } from "../types/DeleteResult";
+import {
+  CursorPaginationOption,
+  CursorPaginationResult,
+} from "./CursorPagination";
 
 /**
  * BaseRepository class provides basic CRUD operations for an entity.
@@ -51,6 +55,18 @@ export class BaseRepository<T> {
    */
   async findOne(findOption: FindOption<T>): Promise<EntityResult<T>> {
     return await this.em.findOne<T>(this.entity, findOption);
+  }
+
+  /**
+   * Retrieves entities using cursor-based pagination.
+   *
+   * @param option Cursor pagination options.
+   * @returns A promise that resolves to the paginated result.
+   */
+  async findWithCursor(
+    option?: CursorPaginationOption<T>,
+  ): Promise<CursorPaginationResult<T>> {
+    return await this.em.findWithCursor<T>(this.entity, option);
   }
 
   /**

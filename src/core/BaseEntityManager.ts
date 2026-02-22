@@ -6,6 +6,10 @@ import { EntityResult } from "../types/EntityResult";
 import { DeleteResult } from "../types/DeleteResult";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { Sql } from "sql-template-tag";
+import {
+  CursorPaginationOption,
+  CursorPaginationResult,
+} from "./CursorPagination";
 
 export abstract class BaseEntityManager {
   /**
@@ -50,6 +54,18 @@ export abstract class BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T>,
   ): Promise<EntityResult<T>>;
+
+  /**
+   * 커서 기반 페이지네이션으로 엔티티를 조회합니다.
+   *
+   * @param entity 엔티티 클래스
+   * @param option 커서 페이지네이션 옵션
+   * @returns 페이지네이션 결과 (data, hasNextPage, nextCursor, count)
+   */
+  abstract findWithCursor<T>(
+    entity: ClazzType<T>,
+    option?: CursorPaginationOption<T>,
+  ): Promise<CursorPaginationResult<T>>;
 
   /**
    * 데이터베이스에 데이터를 저장하거나 수정합니다.

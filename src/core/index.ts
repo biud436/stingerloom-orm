@@ -20,3 +20,4 @@ export * from "./SchemaGenerator";
 export * from "./QueryCache";
 export * from "./EntitySubscriber";
 export * from "./QueryTracker";
+export * from "./CursorPagination";
