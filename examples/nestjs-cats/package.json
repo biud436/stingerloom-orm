@@ -19,7 +19,7 @@
     "mysql2": "^3.9.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "stingerloom-orm": "file:../..",
+    "stingerloom-orm": "workspace:*",
     "typedi": "^0.10.0"
   },
   "devDependencies": {
