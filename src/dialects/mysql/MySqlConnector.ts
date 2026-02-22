@@ -9,7 +9,7 @@ import { PoolNotFound } from "./PoolNotFound";
 import { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { IConnector } from "../../core/IConnector";
 export type AnyEntity = any;
-export type IDatabaseType = "mysql" | "mariadb" | "postgres" | "sqlite";
+export type IDatabaseType = "mysql" | "mariadb" | "postgres" | "sqlite" | "mssql";
 
 export class MySqlConnector implements IConnector {
   pool?: Pool;

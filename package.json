@@ -19,8 +19,10 @@
     "test": "jest"
   },
   "dependencies": {
+    "@types/mssql": "^9.1.9",
     "better-sqlite3": "^12.6.2",
     "class-transformer": "^0.5.1",
+    "mssql": "^12.2.0",
     "mysql2": "^3.9.3",
     "pg": "^8.18.0",
     "reflect-metadata": "^0.2.2",

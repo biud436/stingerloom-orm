@@ -5,6 +5,7 @@ import { DatabaseNotConnectedError } from "./errors/DatabaseNotConnectedError";
 import { MySqlConnector } from "./dialects/mysql/MySqlConnector";
 import { PostgresConnector } from "./dialects/postgres/PostgresConnector";
 import { SqliteConnector } from "./dialects/sqlite/SqliteConnector";
+import { MssqlConnector } from "./dialects/mssql/MssqlConnector";
 import { DatabaseClientOptions } from "./core/DatabaseClientOptions";
 import { IConnector } from "./core/IConnector";
 import { NotSupportedDatabaseTypeError } from "./errors/NotSupportedDatabaseTypeError";
@@ -70,6 +71,8 @@ export class DatabaseClient {
         return new PostgresConnector();
       case "sqlite":
         return new SqliteConnector();
+      case "mssql":
+        return new MssqlConnector();
       default:
         throw new NotSupportedDatabaseTypeError();
     }

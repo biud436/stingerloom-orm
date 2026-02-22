@@ -5,6 +5,7 @@ import { IConnector } from "../core/IConnector";
 import { MySqlDataSource } from "./mysql/MySqlDataSource";
 import { PostgresDataSource } from "./postgres/PostgresDataSource";
 import { SqliteDataSource } from "./sqlite/SqliteDataSource";
+import { MssqlDataSource } from "./mssql/MssqlDataSource";
 import { IDataSource } from "./IDataSource";
 import { Logger } from "../utils";
 import { DatabaseConnectionFailedError } from "../errors/DatabaseConnectionFailedError";
@@ -46,6 +47,8 @@ export class TransactionSessionManager extends IQueryEngine {
         this.dataSource = new SqliteDataSource(this.connection);
       } else if (dbType === "mysql") {
         this.dataSource = new MySqlDataSource(this.connection);
+      } else if (dbType === "mssql") {
+        this.dataSource = new MssqlDataSource(this.connection);
       } else {
         throw new Error(`Unsupported database type: ${dbType}`);
       }
