@@ -63,6 +63,12 @@ import {
   EntityEventType,
   EntityEventListener,
 } from "./EntityEventEmitter";
+import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
+import { InvalidQueryError } from "../errors/InvalidQueryError";
+import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
+import { DeleteWithoutConditionsError } from "../errors/DeleteWithoutConditionsError";
+import { NotSupportedDatabaseTypeError } from "../errors/NotSupportedDatabaseTypeError";
+import { QueryCache } from "./QueryCache";
 
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
@@ -71,6 +77,7 @@ export class EntityManager implements BaseEntityManager {
   private dataSource?: IDataSource;
   private dirtyEntities: Set<InstanceType<ClazzType<any>>> = new Set();
   private readonly eventEmitter = new EntityEventEmitter();
+  private readonly queryCache = new QueryCache();
 
   public async register(databaseClientOptions: DatabaseClientOptions) {
     await this.connect(databaseClientOptions);
@@ -112,7 +119,7 @@ export class EntityManager implements BaseEntityManager {
         this.dataSource = new MssqlDataSource(connector);
         break;
       default:
-        throw new Error("Unsupported database type.");
+        throw new NotSupportedDatabaseTypeError();
     }
   }
 
@@ -272,7 +279,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       if (!ReflectManager.isEntity(TargetEntity)) {
-        throw new Error(`${tableName} is not an Entity.`);
+        throw new EntityMetadataNotFoundError(tableName ?? "Unknown");
       }
 
       // 동기화 옵션이 켜져있을 경우에만 동작합니다.
@@ -774,11 +781,11 @@ export class EntityManager implements BaseEntityManager {
         // Search for metadata.
         const mappingTableMetadata = entityScanner.scan(mappingEntity);
         if (!mappingTableMetadata) {
-          throw new Error("Metadata for the mapping entity does not exist.");
+          throw new EntityMetadataNotFoundError(mappingEntity.name);
         }
 
         if (!joinColumn) {
-          throw new Error("JoinColumn does not exist.");
+          throw new InvalidQueryError("JoinColumn does not exist.");
         }
 
         // Get the primary key of the mapping table.
@@ -788,7 +795,7 @@ export class EntityManager implements BaseEntityManager {
 
         // Throw an error if the primary key does not exist.
         if (!mappingTablePrimaryKey) {
-          throw new Error("Primary key for the mapping entity does not exist.");
+          throw new PrimaryKeyNotFoundError(mappingEntity.name);
         }
 
         const { name: mappingTableName } = mappingEntity;
@@ -819,7 +826,7 @@ export class EntityManager implements BaseEntityManager {
 
       const relatedMetadata = entityScanner.scan(RelatedEntity);
       if (!relatedMetadata) {
-        throw new Error("Metadata for the related entity does not exist.");
+        throw new EntityMetadataNotFoundError(RelatedEntity.name);
       }
 
       const relatedPrimaryKey = relatedMetadata.columns.find(
@@ -827,7 +834,7 @@ export class EntityManager implements BaseEntityManager {
       )?.name;
 
       if (!relatedPrimaryKey) {
-        throw new Error("Primary key for the related entity does not exist.");
+        throw new PrimaryKeyNotFoundError(RelatedEntity.name);
       }
 
       await this.driver?.addForeignKey(
@@ -902,8 +909,27 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<EntityResult<T>> {
-    const { select, orderBy, where, take } = findOption;
+    const { select, orderBy, where, take, cache } = findOption;
     const { limit } = findOption;
+
+    // Cache lookup
+    const cacheTtl = cache === true ? undefined : typeof cache === "number" ? cache : undefined;
+    const useCache = cache === true || (typeof cache === "number" && cache > 0);
+    let cacheKey: string | undefined;
+
+    if (useCache) {
+      cacheKey = QueryCache.buildKey(entity.name, {
+        where: where as any,
+        orderBy: orderBy as any,
+        limit,
+        take,
+        select: select as any,
+      });
+      const cached = this.queryCache.get<EntityResult<T>>(cacheKey);
+      if (cached !== undefined) {
+        return cached;
+      }
+    }
 
     const transactionHolder = new TransactionSessionManager();
     const resultTransformer = ResultTransformerFactory.create();
@@ -923,7 +949,7 @@ export class EntityManager implements BaseEntityManager {
       const metadata = this.resolveEntityMetadata(entity);
 
       if (!metadata) {
-        throw new Error("Entity metadata does not exist.");
+        throw new EntityMetadataNotFoundError(entity.name);
       }
 
       // factory class로부터 QueryBuilder를 생성합니다.
@@ -1223,6 +1249,11 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      // Store result in cache
+      if (useCache && cacheKey) {
+        this.queryCache.set(cacheKey, entityResult, cacheTtl);
+      }
+
       return entityResult;
     } catch (e: unknown) {
       // 트랜잭션 롤백
@@ -1296,7 +1327,7 @@ export class EntityManager implements BaseEntityManager {
     const metadata = this.resolveEntityMetadata(entity);
 
     if (!metadata) {
-      throw new Error("Entity metadata does not exist.");
+      throw new EntityMetadataNotFoundError(entity.name);
     }
 
     // 유효성 검사 (@NotNull, @MinLength, @MaxLength, @Min, @Max)
@@ -1403,6 +1434,7 @@ export class EntityManager implements BaseEntityManager {
         )) as { results: any; fields: any };
 
         await transactionManager.commit();
+        this.queryCache.invalidate(metadata.name!);
 
         if (this.isMySqlFamily()) {
           const findWhere = hasAutoIncrementPk
@@ -1464,6 +1496,7 @@ export class EntityManager implements BaseEntityManager {
       );
 
       await transactionManager.commit();
+      this.queryCache.invalidate(metadata.name!);
 
       await this.cascadeSaveOneToMany(entity, item, primaryKeyValue);
 
@@ -1511,14 +1544,14 @@ export class EntityManager implements BaseEntityManager {
 
     const metadata = this.resolveEntityMetadata(entity);
     if (!metadata) {
-      throw new Error("Entity metadata does not exist.");
+      throw new EntityMetadataNotFoundError(entity.name);
     }
 
     const pk = metadata.columns.find(
       (column: ColumnMetadata) => column.options?.primary,
     );
     if (!pk) {
-      throw new Error("Primary key column not found.");
+      throw new PrimaryKeyNotFoundError(entity.name);
     }
 
     const transactionManager = new TransactionSessionManager();
@@ -1543,6 +1576,7 @@ export class EntityManager implements BaseEntityManager {
       )) as { results: any; fields: any };
 
       await transactionManager.commit();
+      this.queryCache.invalidate(metadata.name!);
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -1611,7 +1645,7 @@ export class EntityManager implements BaseEntityManager {
 
     const metadata = this.resolveEntityMetadata(entity);
     if (!metadata) {
-      throw new Error("Entity metadata does not exist.");
+      throw new EntityMetadataNotFoundError(entity.name);
     }
 
     const transactionManager = new TransactionSessionManager();
@@ -1657,6 +1691,7 @@ export class EntityManager implements BaseEntityManager {
       )) as { results: any; fields: any };
 
       await transactionManager.commit();
+      this.queryCache.invalidate(metadata.name!);
 
       let affected = items.length;
       if (this.isMySqlFamily()) {
@@ -1696,7 +1731,7 @@ export class EntityManager implements BaseEntityManager {
     const metadata = this.resolveEntityMetadata(entity);
 
     if (!metadata) {
-      throw new Error("Entity metadata does not exist.");
+      throw new EntityMetadataNotFoundError(entity.name);
     }
 
     const transactionManager = new TransactionSessionManager();
@@ -1725,9 +1760,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       if (whereMap.length === 0) {
-        throw new Error(
-          "Delete without conditions is not allowed. Provide at least one criterion.",
-        );
+        throw new DeleteWithoutConditionsError("Delete");
       }
 
       const whereSql = join(whereMap, " AND ");
@@ -1739,6 +1772,7 @@ export class EntityManager implements BaseEntityManager {
       )) as { results: any; fields: any };
 
       await transactionManager.commit();
+      this.queryCache.invalidate(metadata.name!);
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -1779,12 +1813,12 @@ export class EntityManager implements BaseEntityManager {
   ): Promise<DeleteResult> {
     const metadata = this.resolveEntityMetadata(entity);
     if (!metadata) {
-      throw new Error("Entity metadata does not exist.");
+      throw new EntityMetadataNotFoundError(entity.name);
     }
 
     const deletedAtColumn = this.getDeletedAtColumn(entity);
     if (!deletedAtColumn) {
-      throw new Error(
+      throw new InvalidQueryError(
         `Entity "${entity.name}" does not have a @DeletedAt column. Use delete() instead.`,
       );
     }
@@ -1808,9 +1842,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       if (whereMap.length === 0) {
-        throw new Error(
-          "Soft delete without conditions is not allowed. Provide at least one criterion.",
-        );
+        throw new DeleteWithoutConditionsError("Soft delete");
       }
 
       const whereSql = join(whereMap, " AND ");
@@ -1823,6 +1855,7 @@ export class EntityManager implements BaseEntityManager {
       )) as { results: any; fields: any };
 
       await transactionManager.commit();
+      this.queryCache.invalidate(metadata.name!);
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -1858,12 +1891,12 @@ export class EntityManager implements BaseEntityManager {
   ): Promise<DeleteResult> {
     const metadata = this.resolveEntityMetadata(entity);
     if (!metadata) {
-      throw new Error("Entity metadata does not exist.");
+      throw new EntityMetadataNotFoundError(entity.name);
     }
 
     const deletedAtColumn = this.getDeletedAtColumn(entity);
     if (!deletedAtColumn) {
-      throw new Error(
+      throw new InvalidQueryError(
         `Entity "${entity.name}" does not have a @DeletedAt column. Cannot restore.`,
       );
     }
@@ -1887,9 +1920,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       if (whereMap.length === 0) {
-        throw new Error(
-          "Restore without conditions is not allowed. Provide at least one criterion.",
-        );
+        throw new DeleteWithoutConditionsError("Restore");
       }
 
       const whereSql = join(whereMap, " AND ");
@@ -1901,6 +1932,7 @@ export class EntityManager implements BaseEntityManager {
       )) as { results: any; fields: any };
 
       await transactionManager.commit();
+      this.queryCache.invalidate(metadata.name!);
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -2054,7 +2086,7 @@ export class EntityManager implements BaseEntityManager {
   ): Promise<number> {
     const metadata = this.resolveEntityMetadata(entity);
     if (!metadata) {
-      throw new Error("Entity metadata does not exist.");
+      throw new EntityMetadataNotFoundError(entity.name);
     }
 
     const transactionManager = new TransactionSessionManager();
@@ -2242,6 +2274,21 @@ export class EntityManager implements BaseEntityManager {
       } catch (closeError) {
         this.logger.error(`Failed to close raw query transaction: ${closeError}`);
       }
+    }
+  }
+
+  /**
+   * Clears the query result cache.
+   * If an entity class is provided, only cache entries for that entity are invalidated.
+   * Otherwise, the entire cache is cleared.
+   *
+   * @param entity Optional entity class to clear cache for
+   */
+  clearCache<T>(entity?: ClazzType<T>): void {
+    if (entity) {
+      this.queryCache.invalidate(entity.name);
+    } else {
+      this.queryCache.clear();
     }
   }
 

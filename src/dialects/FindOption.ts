@@ -51,4 +51,12 @@ export type FindOption<T> = {
    * By default, soft-deleted entities are excluded from find/findOne queries.
    */
   withDeleted?: boolean;
+
+  /**
+   * Enables query result caching.
+   * - `true`: cache with default TTL (60 seconds)
+   * - `number`: cache with specified TTL in milliseconds
+   * - `false` or omitted: no caching
+   */
+  cache?: boolean | number;
 };
