@@ -10,7 +10,7 @@
 | 역할 | 주 담당 영역 |
 |------|-------------|
 | **team-lead** (Claude 직접) | 태스크 분배, 코드 리뷰, 충돌 해결, 직접 구현 |
-| **arch-reviewer** | 아키텍처 설계, 데코레이터 시스템, 마이그레이션 |
+| **arch-reviewer** | 아키텍처 설계, 데코레이터 시스템, DDL 생성 |
 | **dialect-engineer** | DB 드라이버, 쿼리 최적화, 배치 연산 |
 | **test-engineer** | 테스트 작성, 관계 데코레이터, 유효성 검사 |
 
@@ -37,18 +37,25 @@
 | 9 | 마이그레이션 CLI | 27dd54b | 496 |
 | 10 | Cascade 옵션 + Lazy 로딩 | e38fd17, 36496bb | 501 |
 | 11 | Soft Delete (@DeletedAt) | eadfff0 | - |
-| 12 | 배치 연산 (saveMany/insertMany) | eadfff0 | 529 |
+| 12 | 배치 연산 (saveMany/insertMany/deleteMany) | eadfff0 | 529 |
 | 13 | 유효성 검사 데코레이터 | 625c6d3 | 560 |
-| 14 | Entity 생명주기 훅 | 28d92bc | 572 |
+| 14 | Entity 생명주기 훅 (@BeforeInsert 등) | 28d92bc | 572 |
+| 15 | Aggregate 쿼리 (count/sum/avg/min/max) | 0db6cad | 630 |
+| 16 | @Transactional 데코레이터 | f40c48c | 630 |
+| 17 | Query Builder WHERE 개선 (andWhere/orWhere/whereIn 등) | 8fbe376 | 630 |
+| 18 | examples/nestjs-cats 전면 업데이트 | - | 630 |
 
 ---
 
-## 현재 진행 중
+## 진행 중 (이번 세션 마지막 상태)
 
 | # | 기능 | 담당 | 상태 |
 |---|------|------|------|
-| 21 | Aggregate 쿼리 (count/sum/avg/min/max) | dialect-engineer | 진행 중 |
-| 22 | @Transactional 데코레이터 | test-engineer | 진행 중 |
+| 22 | 배치 연산 고도화 (insertMany/saveMany/deleteMany) | dialect-engineer | 진행 중 |
+| 23 | @OneToOne 관계 데코레이터 | test-engineer | 진행 중 |
+| 26 | Schema Generation (syncSchema/createTable DDL) | arch-reviewer | 진행 중 |
+
+> **다음 소집 시**: 위 3개 태스크 완료 여부 먼저 확인 후 백로그 배정.
 
 ---
 
@@ -60,19 +67,17 @@
 
 | 기능 | 설명 | 예상 담당 |
 |------|------|----------|
-| **Query Builder WHERE 개선** | `orWhere()`, `andWhere()`, 중첩 조건, 서브쿼리 | arch-reviewer |
-| **Schema Generation (DDL)** | `EntityManager.createTable()` — 엔티티 메타데이터에서 DDL 자동 생성 | arch-reviewer |
-| **@OneToOne 관계** | 일대일 관계 데코레이터 + EntityManager 통합 | test-engineer |
+| **이벤트 시스템** | EntityManager 이벤트 emitter (insert/update/delete 시 이벤트 발행) | arch-reviewer |
+| **Select 특정 컬럼** | `find(Entity, { select: ["id", "name"] })` | arch-reviewer |
+| **Raw Query 결과 타입** | `EntityManager.query<T>(sql)` 제네릭 타입 강화 | dialect-engineer |
 
 ### 중간 (개발 경험 향상)
 
 | 기능 | 설명 | 예상 담당 |
 |------|------|----------|
-| **이벤트 시스템** | EntityManager 이벤트 emitter (insert/update/delete 시 이벤트 발행) | arch-reviewer |
 | **Connection Retry** | 연결 실패 시 지수 백오프 재시도 | dialect-engineer |
-| **Raw Query 결과 타입** | `EntityManager.query<T>(sql)` 제네릭 타입 지원 강화 | dialect-engineer |
-| **Bulk Delete** | `deleteMany(entity, criteria[])` — 조건 배열 DELETE | test-engineer |
-| **Select 특정 컬럼** | `find(Entity, { select: ["id", "name"] })` | arch-reviewer |
+| **복합 PK 지원** | `@PrimaryGeneratedColumn()` 다중 컬럼 | arch-reviewer |
+| **쿼리 결과 캐싱** | `find()` 결과 TTL 기반 인메모리 캐시 | arch-reviewer |
 
 ### 낮음 (고급 기능)
 
@@ -81,8 +86,46 @@
 | **Oracle 드라이버** | `ISqlDriver` 기반 Oracle DB 지원 | dialect-engineer |
 | **MSSQL 드라이버** | Microsoft SQL Server 지원 | dialect-engineer |
 | **Subscriber/Observer** | `EntitySubscriber` 인터페이스 (afterLoad, afterTransactionStart 등) | arch-reviewer |
-| **쿼리 결과 캐싱** | `find()` 결과 TTL 기반 인메모리 캐시 | arch-reviewer |
-| **복합 PK 지원** | `@PrimaryGeneratedColumn()` 다중 컬럼 | arch-reviewer |
+
+---
+
+## examples/nestjs-cats 데모 현황
+
+`examples/nestjs-cats`는 지금까지 구현된 모든 핵심 기능을 시연합니다.
+
+### 엔티티 구조
+
+```
+Owner (주인)           Cat (고양이)
+─────────────          ──────────────────────────
+@PrimaryGeneratedColumn  @PrimaryGeneratedColumn
+@Column name             @Column name / age / breed
+@Column email            @Column createdAt / updatedAt
+@Column createdAt        @Version (낙관적 잠금)
+@OneToMany cats          @DeletedAt (Soft Delete)
+@BeforeInsert            @ManyToOne owner (eager)
+                         @BeforeInsert / @BeforeUpdate / @AfterInsert
+```
+
+### API 엔드포인트 매핑
+
+| Method | Path | 데모하는 기능 |
+|--------|------|--------------|
+| POST | /cats | @Transactional, @BeforeInsert 훅 |
+| POST | /cats/bulk | insertMany (배치 INSERT) |
+| GET | /cats | Soft Delete 자동 필터 (deleted_at IS NULL) |
+| GET | /cats/all | withDeleted 옵션 |
+| GET | /cats/stats | count/avg/min/max/sum 집계 |
+| GET | /cats/:id | @ManyToOne eager 로딩 (owner 포함) |
+| PATCH | /cats/:id | @Transactional, @BeforeUpdate 훅 |
+| DELETE | /cats/:id | 영구 삭제 |
+| PATCH | /cats/:id/soft-delete | Soft Delete |
+| PATCH | /cats/:id/restore | Soft Delete 복원 |
+| DELETE | /cats/bulk | deleteMany (배치 삭제) |
+| POST | /owners | @Transactional, @BeforeInsert 훅 |
+| GET | /owners | @OneToMany 관계 데모 |
+| GET | /owners/count | count 집계 |
+| DELETE | /owners/:id | 영구 삭제 |
 
 ---
 
@@ -100,9 +143,9 @@
 
 ```
 팀 구성:
-- arch-reviewer: general-purpose 에이전트, bypassPermissions 모드
-- dialect-engineer: general-purpose 에이전트, bypassPermissions 모드
-- test-engineer: general-purpose 에이전트, bypassPermissions 모드
+- arch-reviewer: general-purpose 에이전트
+- dialect-engineer: general-purpose 에이전트
+- test-engineer: general-purpose 에이전트
 
 각 에이전트에게 전달할 초기 컨텍스트:
 - 프로젝트 경로: /Users/u/stingerloom-orm
@@ -111,14 +154,16 @@
 - 커밋 후 push 필수
 - 완료 후 SendMessage로 팀장에게 보고
 - CLAUDE.md, CHANGELOG.md, TEAM_PLAN.md 참고
+
+진행 중 태스크 확인: TEAM_PLAN.md "진행 중" 섹션 참조
 ```
 
 ---
 
 ## 현재 테스트 현황
 
-**572개 테스트 통과** (2026-02-22 기준)
+**630개 테스트 통과** (2026-02-22 기준)
 
 ```
-pnpm test  →  30 suites, 572 passed
+pnpm test  →  33 suites, 630 passed
 ```

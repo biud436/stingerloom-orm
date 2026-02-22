@@ -4,15 +4,13 @@ import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
 import { StinglerloomOrmModule } from "./stingerloom-orm/stingerloom-orm.module";
 import { CatsModule } from "./cats/cats.module";
+import { OwnersModule } from "./owners/owners.module";
 
 @Module({
   imports: [
-    // Load environment variables
-    ConfigModule.forRoot({
-      isGlobal: true,
-    }),
+    ConfigModule.forRoot({ isGlobal: true }),
     CatsModule,
-    // Initialize database with forRoot pattern
+    OwnersModule,
     StinglerloomOrmModule.forRoot({
       type: "mysql",
       host: process.env.DB_HOST || "localhost",
@@ -21,7 +19,7 @@ import { CatsModule } from "./cats/cats.module";
       password: process.env.DB_PASSWORD || "password",
       database: process.env.DB_NAME || "cats_db",
       entities: [__dirname + "/**/*.entity{.ts,.js}"],
-      synchronize: true, // Auto-create tables (development only!)
+      synchronize: true,
       logging: true,
     }),
   ],

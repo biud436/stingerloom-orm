@@ -3,7 +3,7 @@ import { CreateCatDto } from "./dto/create-cat.dto";
 import { UpdateCatDto } from "./dto/update-cat.dto";
 import { Cat } from "./cat.entity";
 
-import { BaseRepository } from "stingerloom-orm";
+import { BaseRepository, Transactional } from "stingerloom-orm";
 import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
 
 @Injectable()
@@ -12,12 +12,17 @@ export class CatsService {
     @InjectRepository(Cat) private readonly catRepository: BaseRepository<Cat>,
   ) {}
 
+  /**
+   * @Transactional — 트랜잭션 범위 내에서 고양이를 생성합니다.
+   * 오류 시 자동 ROLLBACK.
+   */
+  @Transactional()
   async create(createCatDto: CreateCatDto): Promise<Cat> {
     const cat = new Cat();
     cat.name = createCatDto.name;
     cat.age = createCatDto.age;
     cat.breed = createCatDto.breed;
-    cat.createdAt = new Date();
+    // createdAt / updatedAt은 @BeforeInsert 훅에서 자동 설정됨
 
     const result = await this.catRepository.save(cat);
     if (!result) {
@@ -26,13 +31,36 @@ export class CatsService {
     return Array.isArray(result) ? result[0] : result;
   }
 
+  /**
+   * 여러 고양이를 한 번의 INSERT 쿼리로 일괄 생성합니다 (insertMany).
+   */
+  async bulkCreate(dtos: CreateCatDto[]): Promise<{ affected: number }> {
+    const cats = dtos.map((dto) => {
+      const cat = new Cat();
+      cat.name = dto.name;
+      cat.age = dto.age;
+      cat.breed = dto.breed;
+      return cat;
+    });
+    return this.catRepository.insertMany(cats);
+  }
+
+  /**
+   * soft-deleted 엔티티 제외한 목록 조회 (기본 동작 — deleted_at IS NULL 자동 필터).
+   */
   async findAll(): Promise<Cat[]> {
     const result = await this.catRepository.find();
-    if (typeof result === "object" && !Array.isArray(result)) {
-      return [result];
-    }
+    if (!result) return [];
+    return Array.isArray(result) ? result : [result];
+  }
 
-    return result;
+  /**
+   * withDeleted: true — soft-deleted 엔티티 포함 전체 조회.
+   */
+  async findAllIncludeDeleted(): Promise<Cat[]> {
+    const result = await this.catRepository.find({ withDeleted: true } as any);
+    if (!result) return [];
+    return Array.isArray(result) ? result : [result];
   }
 
   async findOne(id: number): Promise<Cat> {
@@ -51,18 +79,14 @@ export class CatsService {
     return cat;
   }
 
+  @Transactional()
   async update(id: number, updateCatDto: UpdateCatDto): Promise<Cat> {
     const cat = await this.findOne(id);
 
-    if (updateCatDto.name !== undefined) {
-      cat.name = updateCatDto.name;
-    }
-    if (updateCatDto.age !== undefined) {
-      cat.age = updateCatDto.age;
-    }
-    if (updateCatDto.breed !== undefined) {
-      cat.breed = updateCatDto.breed;
-    }
+    if (updateCatDto.name !== undefined) cat.name = updateCatDto.name;
+    if (updateCatDto.age !== undefined) cat.age = updateCatDto.age;
+    if (updateCatDto.breed !== undefined) cat.breed = updateCatDto.breed;
+    // updatedAt은 @BeforeUpdate 훅에서 자동 갱신됨
 
     const result = await this.catRepository.save(cat);
     if (!result) {
@@ -71,10 +95,55 @@ export class CatsService {
     return Array.isArray(result) ? result[0] : result;
   }
 
+  /**
+   * 실제 DELETE — 행을 영구 삭제합니다.
+   */
   async remove(id: number): Promise<void> {
     await this.findOne(id);
-    throw new NotFoundException(
-      "Delete operation is not fully implemented yet",
-    );
+    await this.catRepository.delete({ id } as any);
+  }
+
+  /**
+   * Soft Delete — deleted_at을 현재 시각으로 설정. 행은 유지.
+   * find/findOne에서 자동으로 제외됩니다.
+   */
+  async softRemove(id: number): Promise<void> {
+    await this.findOne(id);
+    await this.catRepository.softDelete({ id } as any);
+  }
+
+  /**
+   * Restore — soft-deleted 엔티티의 deleted_at을 NULL로 복원.
+   */
+  async restore(id: number): Promise<void> {
+    await this.catRepository.restore({ id } as any);
+  }
+
+  /**
+   * Aggregate Stats — count / avg / min / max를 한 번에 반환합니다.
+   */
+  async stats(): Promise<{
+    total: number;
+    avgAge: number;
+    minAge: number;
+    maxAge: number;
+    sumAge: number;
+  }> {
+    const [total, avgAge, minAge, maxAge, sumAge] = await Promise.all([
+      this.catRepository.count(),
+      this.catRepository.avg("age"),
+      this.catRepository.min("age"),
+      this.catRepository.max("age"),
+      this.catRepository.sum("age"),
+    ]);
+
+    return { total, avgAge, minAge, maxAge, sumAge };
+  }
+
+  /**
+   * deleteMany — ID 배열로 여러 고양이를 한 번의 쿼리로 삭제합니다.
+   */
+  async removeMany(ids: number[]): Promise<{ affected: number }> {
+    return this.catRepository.deleteMany(ids);
   }
 }
