@@ -13,3 +13,4 @@ export * from "./DeserializerRegistry";
 export * from "./ClassTransformerDeserializer";
 export * from "./MyClassConstructor";
 export * from "./DatabaseClientOptions";
+export * from "./LazyLoader";
