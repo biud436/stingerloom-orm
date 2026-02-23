@@ -83,13 +83,10 @@
 | 47 | Query Builder GROUP BY / HAVING | 271de44 | **1288** ✅ |
 | 48 | @UniqueIndex 복합 고유 인덱스 | 79d03d1 | **1301** ✅ |
 
-## 미완료 (다음 세션 이어서)
+| 49 | Schema Diff 기반 Migration 자동 생성 (SchemaDiff + SchemaDiffMigrationGenerator) | dialect-engineer | **1348** ✅ |
+| 50 | ManyToMany 중간 테이블 DDL 자동 생성 (Issue #1) | arch-reviewer | **1348** ✅ |
 
-| # | 기능 | 담당 | 상태 |
-|---|------|------|------|
-| 49 | Schema Diff 기반 Migration 자동 생성 | arch-reviewer | 미시작 |
-
-> **세션 종료 (2026-02-22)**: 1301개 테스트 통과.
+> **세션 종료 (2026-02-23)**: 1348개 테스트 통과.
 
 ---
 
