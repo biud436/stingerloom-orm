@@ -85,8 +85,9 @@
 
 | 49 | Schema Diff 기반 Migration 자동 생성 (SchemaDiff + SchemaDiffMigrationGenerator) | dialect-engineer | **1348** ✅ |
 | 50 | ManyToMany 중간 테이블 DDL 자동 생성 (Issue #1) | arch-reviewer | **1348** ✅ |
+| 51 | examples/nestjs-blog 신규 예제 (4 엔티티, findAndCount/upsert/explain/SchemaDiff/ManyToMany) | team-lead | **1348** ✅ |
 
-> **세션 종료 (2026-02-23)**: 1348개 테스트 통과.
+> **세션 종료 (2026-02-23)**: 1348개 테스트 통과, nestjs-blog 예제 추가.
 
 ---
 
