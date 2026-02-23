@@ -2,8 +2,10 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { CreatePostDto } from "./dto/create-post.dto";
 import { UpdatePostDto } from "./dto/update-post.dto";
 import { Post } from "./post.entity";
+import { Tag } from "../tags/tag.entity";
 import {
   BaseRepository,
+  EntityManager,
   Transactional,
   CursorPaginationResult,
   ExplainResult,
@@ -11,12 +13,15 @@ import {
   SchemaDiffMigrationGenerator,
 } from "stingerloom-orm";
 import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
+import { Inject } from "@nestjs/common";
 
 @Injectable()
 export class PostsService {
   constructor(
     @InjectRepository(Post)
     private readonly postRepository: BaseRepository<Post>,
+    @Inject(EntityManager)
+    private readonly em: EntityManager,
   ) {}
 
   @Transactional()
@@ -135,6 +140,47 @@ export class PostsService {
       "mysql",
     );
     return { content };
+  }
+
+  /**
+   * addTagToPost — 중간 테이블(post_tags)에 (postId, tagId) 행을 삽입합니다.
+   */
+  async addTagToPost(
+    postId: number,
+    tagId: number,
+  ): Promise<{ message: string }> {
+    await this.em.query(
+      "INSERT IGNORE INTO `post_tags` (`post_id`, `tag_id`) VALUES (?, ?)",
+      [postId, tagId],
+    );
+    return { message: `Tag ${tagId} added to Post ${postId}` };
+  }
+
+  /**
+   * removeTagFromPost — 중간 테이블에서 (postId, tagId) 행을 삭제합니다.
+   */
+  async removeTagFromPost(
+    postId: number,
+    tagId: number,
+  ): Promise<{ message: string }> {
+    await this.em.query(
+      "DELETE FROM `post_tags` WHERE `post_id` = ? AND `tag_id` = ?",
+      [postId, tagId],
+    );
+    return { message: `Tag ${tagId} removed from Post ${postId}` };
+  }
+
+  /**
+   * getPostTags — Post의 연결된 Tag 목록을 relations 로딩으로 반환합니다.
+   */
+  async getPostTags(postId: number): Promise<Tag[]> {
+    const result = await this.postRepository.findOne({
+      where: { id: postId } as any,
+      relations: ["tags"],
+    });
+    const post = Array.isArray(result) ? result[0] : result;
+    if (!post) throw new NotFoundException(`Post with ID ${postId} not found`);
+    return (post as any).tags ?? [];
   }
 
   async findWithCursor(

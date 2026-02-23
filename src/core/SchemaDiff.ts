@@ -20,6 +20,7 @@ export interface SchemaDiffResult {
   addColumns: ColumnChange[];
   dropColumns: ColumnChange[];
   alterColumns: ColumnChange[];
+  addTableEntityMap?: Record<string, ClazzType<any>>;
 }
 
 interface DbColumnInfo {
@@ -67,6 +68,8 @@ export class SchemaDiff {
       if (dbColumns.length === 0) {
         // Table does not exist in DB — needs to be created
         result.addTables.push(tableName);
+        if (!result.addTableEntityMap) result.addTableEntityMap = {};
+        result.addTableEntityMap[tableName] = entity;
         continue;
       }
 

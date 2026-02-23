@@ -654,4 +654,25 @@ describe("SchemaDiffMigrationGenerator", () => {
       expect(content).toContain('my""col');
     });
   });
+
+  describe("generate() — with entity class (full DDL)", () => {
+    it("should generate proper CREATE TABLE DDL when addTableEntityMap is provided", () => {
+      const diff: SchemaDiffResult = {
+        addTables: ["DiffUser"],
+        dropTables: [],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [],
+        addTableEntityMap: { DiffUser: DiffUser },
+      };
+
+      const content = generator.generate(diff, "mysql");
+
+      expect(content).toContain("CREATE TABLE");
+      expect(content).toContain("DiffUser");
+      expect(content).toContain("INT"); // id column from DiffUser entity
+      // down should still have DROP TABLE
+      expect(content).toContain("DROP TABLE IF EXISTS");
+    });
+  });
 });

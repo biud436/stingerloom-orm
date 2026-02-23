@@ -8,6 +8,8 @@ import {
   Delete,
   Query,
   ParseIntPipe,
+  HttpCode,
+  HttpStatus,
 } from "@nestjs/common";
 import { PostsService } from "./posts.service";
 import { CreatePostDto } from "./dto/create-post.dto";
@@ -106,5 +108,30 @@ export class PostsController {
   @Patch(":id/restore")
   restore(@Param("id", ParseIntPipe) id: number) {
     return this.postsService.restore(id);
+  }
+
+  /** GET /posts/:id/tags — Post에 연결된 Tag 목록 조회 */
+  @Get(":id/tags")
+  getPostTags(@Param("id", ParseIntPipe) id: number) {
+    return this.postsService.getPostTags(id);
+  }
+
+  /** POST /posts/:id/tags — Post에 Tag 추가 (body: { tagId }) */
+  @Post(":id/tags")
+  addTagToPost(
+    @Param("id", ParseIntPipe) id: number,
+    @Body("tagId", ParseIntPipe) tagId: number,
+  ) {
+    return this.postsService.addTagToPost(id, tagId);
+  }
+
+  /** DELETE /posts/:id/tags/:tagId — Post에서 Tag 제거 */
+  @Delete(":id/tags/:tagId")
+  @HttpCode(HttpStatus.OK)
+  removeTagFromPost(
+    @Param("id", ParseIntPipe) id: number,
+    @Param("tagId", ParseIntPipe) tagId: number,
+  ) {
+    return this.postsService.removeTagFromPost(id, tagId);
   }
 }

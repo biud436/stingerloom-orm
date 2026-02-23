@@ -1,7 +1,7 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { SchemaDiffResult, ColumnChange } from "./SchemaDiff";
-import { SchemaDialect } from "./SchemaGenerator";
+import { SchemaGenerator, SchemaDialect } from "./SchemaGenerator";
 
 /**
  * SchemaDiffResult를 받아 Migration TypeScript 파일을 생성합니다.
@@ -51,11 +51,21 @@ export class SchemaDiffMigrationGenerator {
   ): string[] {
     const stmts: string[] = [];
 
-    // New tables — add a comment, actual CREATE TABLE should be handled by syncSchema
+    // New tables — generate full DDL when entity class is available
     for (const table of diff.addTables) {
-      stmts.push(
-        `await query('CREATE TABLE ${this.escapeId(table, dialect)} ()'); // TODO: define columns`,
-      );
+      const entityClass = diff.addTableEntityMap?.[table];
+      if (entityClass) {
+        const sg = new SchemaGenerator({ dialect });
+        const ddl = sg.generateCreateTableDDL(entityClass);
+        // escape single quotes in DDL for embedding in string literal
+        const escaped = ddl.replace(/'/g, "\\'");
+        stmts.push(`await query('${escaped}');`);
+      } else {
+        // fallback: entity class not available, generate a comment stub
+        stmts.push(
+          `// TODO: CREATE TABLE ${this.escapeId(table, dialect)} (/* define columns */); -- entity class not available`,
+        );
+      }
     }
 
     // Add columns
