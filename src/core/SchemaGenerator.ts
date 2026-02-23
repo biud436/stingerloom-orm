@@ -16,6 +16,10 @@ import {
   ONE_TO_ONE_TOKEN,
   OneToOneMetadata,
 } from "../decorators/OneToOne";
+import {
+  MANY_TO_MANY_TOKEN,
+  ManyToManyMetadata,
+} from "../decorators/ManyToMany";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
 
 export type SchemaDialect = "mysql" | "postgres";
@@ -133,6 +137,115 @@ export class SchemaGenerator {
   }
 
   /**
+   * ManyToMany 관계의 중간 테이블 CREATE TABLE DDL을 생성합니다.
+   * 소유측(joinTable이 있는 측)만 처리하며, 중복 테이블 이름은 건너뜁니다.
+   */
+  generateManyToManyJoinTableDDL(entities: ClazzType<any>[]): string[] {
+    const ddls: string[] = [];
+    const processedTables = new Set<string>();
+
+    for (const entity of entities) {
+      const m2mMeta = (Reflect.getMetadata(MANY_TO_MANY_TOKEN, entity) ??
+        []) as ManyToManyMetadata<any>[];
+
+      for (const rel of m2mMeta) {
+        if (!rel.joinTable) continue;
+
+        const { name, joinColumn, inverseJoinColumn } = rel.joinTable;
+        if (processedTables.has(name)) continue;
+        processedTables.add(name);
+
+        const wrappedTable = this.wrapTable(name);
+        const wrappedJoinCol = this.wrapId(joinColumn);
+        const wrappedInverseCol = this.wrapId(inverseJoinColumn);
+
+        const columnDefs = [
+          `${wrappedJoinCol} INT NOT NULL`,
+          `${wrappedInverseCol} INT NOT NULL`,
+          `PRIMARY KEY (${wrappedJoinCol}, ${wrappedInverseCol})`,
+        ];
+
+        let ddl = `CREATE TABLE IF NOT EXISTS ${wrappedTable} (${columnDefs.join(", ")})`;
+        if (this.dialect === "mysql") {
+          ddl += " ENGINE=InnoDB";
+        }
+        ddls.push(ddl);
+      }
+    }
+
+    return ddls;
+  }
+
+  /**
+   * ManyToMany 관계의 중간 테이블에 대한 FOREIGN KEY DDL을 생성합니다.
+   */
+  generateManyToManyForeignKeyDDL(entities: ClazzType<any>[]): string[] {
+    const ddls: string[] = [];
+    const processedTables = new Set<string>();
+
+    for (const entity of entities) {
+      const m2mMeta = (Reflect.getMetadata(MANY_TO_MANY_TOKEN, entity) ??
+        []) as ManyToManyMetadata<any>[];
+
+      for (const rel of m2mMeta) {
+        if (!rel.joinTable) continue;
+
+        const { name, joinColumn, inverseJoinColumn } = rel.joinTable;
+        if (processedTables.has(name)) continue;
+        processedTables.add(name);
+
+        const ownerTable = this.getTableName(entity);
+        const relatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+        const relatedTable = this.getTableName(relatedEntity);
+
+        const ownerPk = this.findPrimaryKeyColumn(entity);
+        const relatedPk = this.findPrimaryKeyColumn(relatedEntity);
+
+        if (ownerPk) {
+          const fkName = `fk_${name}_${ownerTable}_${joinColumn}`;
+          ddls.push(
+            `ALTER TABLE ${this.wrapTable(name)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(joinColumn)}) REFERENCES ${this.wrapTable(ownerTable)}(${this.wrapId(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
+          );
+        }
+
+        if (relatedPk) {
+          const fkName = `fk_${name}_${relatedTable}_${inverseJoinColumn}`;
+          ddls.push(
+            `ALTER TABLE ${this.wrapTable(name)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(inverseJoinColumn)}) REFERENCES ${this.wrapTable(relatedTable)}(${this.wrapId(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
+          );
+        }
+      }
+    }
+
+    return ddls;
+  }
+
+  /**
+   * ManyToMany 관계의 중간 테이블 DROP TABLE DDL을 생성합니다.
+   */
+  generateManyToManyDropDDL(entities: ClazzType<any>[]): string[] {
+    const ddls: string[] = [];
+    const processedTables = new Set<string>();
+
+    for (const entity of entities) {
+      const m2mMeta = (Reflect.getMetadata(MANY_TO_MANY_TOKEN, entity) ??
+        []) as ManyToManyMetadata<any>[];
+
+      for (const rel of m2mMeta) {
+        if (!rel.joinTable) continue;
+
+        const { name } = rel.joinTable;
+        if (processedTables.has(name)) continue;
+        processedTables.add(name);
+
+        ddls.push(`DROP TABLE IF EXISTS ${this.wrapTable(name)}`);
+      }
+    }
+
+    return ddls;
+  }
+
+  /**
    * 여러 엔티티에 대한 CREATE TABLE + INDEX + FK DDL을 생성합니다.
    */
   generateSchemaDDL(entities: ClazzType<any>[]): string[] {
@@ -158,6 +271,12 @@ export class SchemaGenerator {
       ddls.push(...this.generateForeignKeyDDL(entity));
     }
 
+    // 5. ManyToMany 중간 테이블
+    ddls.push(...this.generateManyToManyJoinTableDDL(entities));
+
+    // 6. ManyToMany 중간 테이블 FK
+    ddls.push(...this.generateManyToManyForeignKeyDDL(entities));
+
     return ddls;
   }
 
@@ -165,7 +284,15 @@ export class SchemaGenerator {
    * 여러 엔티티에 대한 DROP TABLE DDL을 역순으로 생성합니다 (FK 의존성).
    */
   generateDropSchemaDDL(entities: ClazzType<any>[]): string[] {
-    return [...entities].reverse().map((e) => this.generateDropTableDDL(e));
+    const ddls: string[] = [];
+
+    // 중간 테이블을 먼저 DROP (FK 의존성)
+    ddls.push(...this.generateManyToManyDropDDL(entities));
+
+    // 엔티티 테이블을 역순으로 DROP
+    ddls.push(...[...entities].reverse().map((e) => this.generateDropTableDDL(e)));
+
+    return ddls;
   }
 
   // ─────────────────────────────────────────────────────

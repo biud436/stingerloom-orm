@@ -22,3 +22,5 @@ export * from "./EntitySubscriber";
 export * from "./QueryTracker";
 export * from "./CursorPagination";
 export * from "./ExplainResult";
+export * from "./SchemaDiff";
+export * from "./SchemaDiffMigrationGenerator";
