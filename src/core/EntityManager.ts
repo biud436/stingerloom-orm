@@ -422,13 +422,15 @@ export class EntityManager implements BaseEntityManager {
       }
     }
 
+    // 1패스: 모든 테이블을 먼저 생성합니다 (FK 생성 전에 참조 대상 테이블이 존재해야 함).
+    const entityList: Array<{ TargetEntity: ClazzType<any>; tableName: string; metadata: EntityScannerMetadata }> = [];
+
     while ((entity = entities.next())) {
       if (entity.done) {
         break;
       }
 
       const metadata = entity.value as EntityScannerMetadata;
-
       const TargetEntity = metadata.target as ClazzType<any>;
       let tableName = metadata.name;
       if (!tableName) {
@@ -439,14 +441,19 @@ export class EntityManager implements BaseEntityManager {
         throw new EntityMetadataNotFoundError(tableName ?? "Unknown");
       }
 
-      // 동기화 옵션이 켜져있을 경우에만 동작합니다.
       if (synchronize) {
-        // DB에 테이블이 존재하지 않으면 새로운 테이블을 생성합니다.
         const hasTable = await this.driver?.hasTable(tableName);
         if (!hasTable || hasTable.length === 0) {
           await this.driver?.createTable(tableName, metadata.columns);
         }
+      }
 
+      entityList.push({ TargetEntity, tableName, metadata });
+    }
+
+    // 2패스: 모든 테이블이 생성된 후 FK, 인덱스, 유니크 인덱스를 등록합니다.
+    if (synchronize) {
+      for (const { TargetEntity, tableName } of entityList) {
         // 외래키를 생성합니다.
         await this.registerForeignKeys(TargetEntity, tableName);
 
