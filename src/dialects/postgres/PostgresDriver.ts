@@ -753,6 +753,13 @@ export class PostgresDriver implements ISqlDriver {
     return `INSERT INTO ${tableName} (${columnList}) VALUES (${valuePlaceholders}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
   }
 
+  async hasColumn(tableName: string, columnName: string): Promise<boolean> {
+    const rows: any[] = await this.connector.query(
+      sql`SELECT column_name FROM information_schema.columns WHERE table_schema = ${this.schema} AND table_name = ${tableName} AND column_name = ${columnName}`,
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
   addCompositeUniqueIndex(
     tableName: string,
     columns: string[],

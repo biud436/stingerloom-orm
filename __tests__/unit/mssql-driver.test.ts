@@ -222,6 +222,28 @@ describe("MssqlDriver", () => {
     });
   });
 
+  describe("hasColumn()", () => {
+    it("should return true when column exists", async () => {
+      mockConnector.query.mockResolvedValueOnce([{ COLUMN_NAME: "author_id" }]);
+      const result = await driver.hasColumn("Post", "author_id");
+      expect(result).toBe(true);
+    });
+
+    it("should return false when column does not exist", async () => {
+      mockConnector.query.mockResolvedValueOnce([]);
+      const result = await driver.hasColumn("Post", "author_id");
+      expect(result).toBe(false);
+    });
+
+    it("should query INFORMATION_SCHEMA.COLUMNS", async () => {
+      mockConnector.query.mockResolvedValueOnce([]);
+      await driver.hasColumn("Post", "author_id");
+      const sqlObj = mockConnector.query.mock.calls[0][0];
+      const sqlText = sqlObj.text || sqlObj.sql || String(sqlObj);
+      expect(sqlText).toContain("INFORMATION_SCHEMA.COLUMNS");
+    });
+  });
+
   describe("addForeignKey()", () => {
     it("should generate correct ALTER TABLE ADD CONSTRAINT query", async () => {
       await driver.addForeignKey("Order", "customerId", "Customer", "id");

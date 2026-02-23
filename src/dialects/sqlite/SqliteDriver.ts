@@ -386,6 +386,16 @@ export class SqliteDriver implements ISqlDriver {
     return `INSERT INTO ${tableName} (${columnList}) VALUES (${valuePlaceholders}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
   }
 
+  async hasColumn(tableName: string, columnName: string): Promise<boolean> {
+    const rows: any[] = await this.connector.query(
+      `PRAGMA table_info(${this.wrap(tableName)})`,
+    );
+    if (!Array.isArray(rows)) return false;
+    return rows.some(
+      (r: any) => (r.name ?? "").toLowerCase() === columnName.toLowerCase(),
+    );
+  }
+
   addCompositeUniqueIndex(
     tableName: string,
     columns: string[],

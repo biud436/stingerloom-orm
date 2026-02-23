@@ -388,6 +388,13 @@ export class MssqlDriver implements ISqlDriver {
     );
   }
 
+  async hasColumn(tableName: string, columnName: string): Promise<boolean> {
+    const rows: any[] = await this.connector.query(
+      sql`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ${tableName} AND COLUMN_NAME = ${columnName}`,
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
   addCompositeUniqueIndex(
     tableName: string,
     columns: string[],

@@ -306,3 +306,45 @@ describe("SqliteDriver - DDL query generation", () => {
     expect(query).toContain('"active" INTEGER NOT NULL');
   });
 });
+
+describe("SqliteDriver - hasColumn()", () => {
+  it("should return true when column exists in PRAGMA table_info result", async () => {
+    const querySpy = jest.fn().mockResolvedValue([
+      { cid: 0, name: "id", type: "INTEGER", notnull: 1, dflt_value: null, pk: 1 },
+      { cid: 1, name: "author_id", type: "INTEGER", notnull: 0, dflt_value: null, pk: 0 },
+    ]);
+    const driver = new SqliteDriver({ query: querySpy } as any);
+
+    const result = await driver.hasColumn("posts", "author_id");
+    expect(result).toBe(true);
+    expect(querySpy).toHaveBeenCalledWith('PRAGMA table_info("posts")');
+  });
+
+  it("should return false when column does not exist", async () => {
+    const querySpy = jest.fn().mockResolvedValue([
+      { cid: 0, name: "id", type: "INTEGER", notnull: 1, dflt_value: null, pk: 1 },
+    ]);
+    const driver = new SqliteDriver({ query: querySpy } as any);
+
+    const result = await driver.hasColumn("posts", "author_id");
+    expect(result).toBe(false);
+  });
+
+  it("should return false when table has no columns (empty result)", async () => {
+    const querySpy = jest.fn().mockResolvedValue([]);
+    const driver = new SqliteDriver({ query: querySpy } as any);
+
+    const result = await driver.hasColumn("posts", "author_id");
+    expect(result).toBe(false);
+  });
+
+  it("should be case-insensitive", async () => {
+    const querySpy = jest.fn().mockResolvedValue([
+      { cid: 0, name: "Author_Id", type: "INTEGER", notnull: 0, dflt_value: null, pk: 0 },
+    ]);
+    const driver = new SqliteDriver({ query: querySpy } as any);
+
+    const result = await driver.hasColumn("posts", "author_id");
+    expect(result).toBe(true);
+  });
+});

@@ -276,4 +276,13 @@ export interface ISqlDriver<T = any> {
     columns: string[],
     indexName: string,
   ): Promise<T>;
+
+  /**
+   * Checks if the specified column exists in the table.
+   *
+   * @param tableName - The name of the table to check.
+   * @param columnName - The name of the column to check.
+   * @returns A promise that resolves to true if the column exists, false otherwise.
+   */
+  hasColumn(tableName: string, columnName: string): Promise<boolean>;
 }

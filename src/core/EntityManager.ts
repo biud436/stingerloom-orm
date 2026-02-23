@@ -1007,6 +1007,15 @@ export class EntityManager implements BaseEntityManager {
 
         const { name: mappingTableName } = mappingEntity;
 
+        // joinColumn 컬럼이 테이블에 없으면 먼저 추가합니다.
+        if (this.driver) {
+          const columnExists = await this.driver.hasColumn(tableName, joinColumn);
+          if (!columnExists) {
+            const fkColumnType = this.driver.castType("int") + " NULL";
+            await this.driver.addColumn(tableName, joinColumn, fkColumnType);
+          }
+        }
+
         await this.driver?.addForeignKey(
           // 현재 테이블 이름
           tableName,
@@ -1042,6 +1051,15 @@ export class EntityManager implements BaseEntityManager {
 
       if (!relatedPrimaryKey) {
         throw new PrimaryKeyNotFoundError(RelatedEntity.name);
+      }
+
+      // joinColumn 컬럼이 테이블에 없으면 먼저 추가합니다.
+      if (this.driver) {
+        const columnExists = await this.driver.hasColumn(tableName, joinColumn);
+        if (!columnExists) {
+          const fkColumnType = this.driver.castType("int") + " NULL";
+          await this.driver.addColumn(tableName, joinColumn, fkColumnType);
+        }
       }
 
       await this.driver?.addForeignKey(
