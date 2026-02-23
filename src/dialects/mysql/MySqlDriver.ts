@@ -413,7 +413,7 @@ export class MySqlDriver implements ISqlDriver {
 
   async hasColumn(tableName: string, columnName: string): Promise<boolean> {
     const rows: any[] = await this.connector.query(
-      sql`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ${tableName} AND COLUMN_NAME = ${columnName}`,
+      sql`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${tableName} AND COLUMN_NAME = ${columnName}`,
     );
     return Array.isArray(rows) && rows.length > 0;
   }
