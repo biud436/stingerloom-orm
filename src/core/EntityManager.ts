@@ -1023,6 +1023,13 @@ export class EntityManager implements BaseEntityManager {
           }
         }
 
+        // FK 제약이 이미 존재하면 중복 추가를 건너뜁니다.
+        if (this.driver) {
+          const fkName = this.driver.generateForeignKeyName(tableName, mappingTableName, joinColumn);
+          const fkExists = await this.driver.hasForeignKey(tableName, fkName);
+          if (fkExists) continue;
+        }
+
         await this.driver?.addForeignKey(
           // 현재 테이블 이름
           tableName,
@@ -1067,6 +1074,13 @@ export class EntityManager implements BaseEntityManager {
           const fkColumnType = this.driver.castType("int") + " NULL";
           await this.driver.addColumn(tableName, joinColumn, fkColumnType);
         }
+      }
+
+      // FK 제약이 이미 존재하면 중복 추가를 건너뜁니다.
+      if (this.driver) {
+        const fkName = this.driver.generateForeignKeyName(tableName, RelatedEntity.name, joinColumn);
+        const fkExists = await this.driver.hasForeignKey(tableName, fkName);
+        if (fkExists) continue;
       }
 
       await this.driver?.addForeignKey(

@@ -396,6 +396,12 @@ export class SqliteDriver implements ISqlDriver {
     );
   }
 
+  async hasForeignKey(tableName: string, constraintName: string): Promise<boolean> {
+    // SQLite does not support named FK constraints; always return false to allow idempotent re-creation attempts
+    // SQLite ignores duplicate FK declarations without error, so this is safe.
+    return false;
+  }
+
   addCompositeUniqueIndex(
     tableName: string,
     columns: string[],

@@ -395,6 +395,13 @@ export class MssqlDriver implements ISqlDriver {
     return Array.isArray(rows) && rows.length > 0;
   }
 
+  async hasForeignKey(tableName: string, constraintName: string): Promise<boolean> {
+    const rows: any[] = await this.connector.query(
+      sql`SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_NAME = ${tableName} AND CONSTRAINT_NAME = ${constraintName} AND CONSTRAINT_TYPE = 'FOREIGN KEY'`,
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
   addCompositeUniqueIndex(
     tableName: string,
     columns: string[],

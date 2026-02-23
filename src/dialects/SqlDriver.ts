@@ -96,6 +96,11 @@ export interface ISqlDriver<T = any> {
   ): Promise<T>;
 
   /**
+   * Checks whether a foreign key constraint already exists on a table.
+   */
+  hasForeignKey(tableName: string, constraintName: string): Promise<boolean>;
+
+  /**
    * Generates a name for a foreign key constraint based on the source and target tables and columns.
    *
    * @param sourceTable - The name of the source table.

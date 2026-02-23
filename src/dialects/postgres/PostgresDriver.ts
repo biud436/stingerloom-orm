@@ -760,6 +760,13 @@ export class PostgresDriver implements ISqlDriver {
     return Array.isArray(rows) && rows.length > 0;
   }
 
+  async hasForeignKey(tableName: string, constraintName: string): Promise<boolean> {
+    const rows: any[] = await this.connector.query(
+      sql`SELECT constraint_name FROM information_schema.table_constraints WHERE table_schema = ${this.schema} AND table_name = ${tableName} AND constraint_name = ${constraintName} AND constraint_type = 'FOREIGN KEY'`,
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
   addCompositeUniqueIndex(
     tableName: string,
     columns: string[],
