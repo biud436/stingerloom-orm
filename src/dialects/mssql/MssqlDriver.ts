@@ -25,6 +25,10 @@ export class MssqlDriver implements ISqlDriver {
     );
   }
 
+  executeRaw(sqlStr: string) {
+    return this.connector.query(sqlStr);
+  }
+
   /**
    * 테이블에 기본키를 추가합니다.
    */

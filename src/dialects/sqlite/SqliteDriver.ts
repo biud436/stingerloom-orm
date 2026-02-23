@@ -27,6 +27,10 @@ export class SqliteDriver implements ISqlDriver {
     );
   }
 
+  executeRaw(sqlStr: string) {
+    return this.connector.query(sqlStr);
+  }
+
   /**
    * 테이블에 기본키를 추가합니다.
    * SQLite에서는 ALTER TABLE로 기본키를 추가할 수 없습니다.

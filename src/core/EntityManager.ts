@@ -46,6 +46,7 @@ import {
   HookMetadata,
   ONE_TO_ONE_TOKEN,
   OneToOneMetadata,
+  COLUMN_TOKEN,
 } from "../decorators";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
@@ -463,6 +464,9 @@ export class EntityManager implements BaseEntityManager {
         // 복합 유니크 인덱스를 생성합니다.
         await this.registerUniqueIndexes(TargetEntity, tableName);
       }
+
+      // 3패스: ManyToMany 중간 테이블과 FK를 생성합니다.
+      await this.registerManyToManyJoinTables(entityList.map((e) => e.TargetEntity));
     }
   }
 
@@ -501,6 +505,87 @@ export class EntityManager implements BaseEntityManager {
           uq.columns,
           indexName,
         );
+      }
+    }
+  }
+
+  /**
+   * ManyToMany 중간 테이블과 FK 제약을 생성합니다.
+   * joinTable 소유측 엔티티만 처리하며, 중복은 Set으로 방지합니다.
+   */
+  private async registerManyToManyJoinTables(entities: ClazzType<any>[]) {
+    const processedTables = new Set<string>();
+
+    for (const entity of entities) {
+      const m2mMeta = (Reflect.getMetadata(MANY_TO_MANY_TOKEN, entity) ??
+        []) as ManyToManyMetadata<any>[];
+
+      for (const rel of m2mMeta) {
+        if (!rel.joinTable) continue;
+
+        const { name: joinTableName, joinColumn, inverseJoinColumn } =
+          rel.joinTable;
+        if (processedTables.has(joinTableName)) continue;
+        processedTables.add(joinTableName);
+
+        // 엔티티 테이블 이름 조회 (@Entity name 우선)
+        const ownerEntityMeta = Reflect.getMetadata(ENTITY_TOKEN, entity) as
+          | { name?: string }
+          | undefined;
+        const ownerTable = ownerEntityMeta?.name ?? entity.name;
+
+        const relatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+        const relatedEntityMeta = Reflect.getMetadata(
+          ENTITY_TOKEN,
+          relatedEntity,
+        ) as { name?: string } | undefined;
+        const relatedTable = relatedEntityMeta?.name ?? relatedEntity.name;
+
+        // 1. 중간 테이블 생성 (IF NOT EXISTS — 재시작 시 안전)
+        const hasTable = await this.driver?.hasTable(joinTableName);
+        if (!hasTable || (hasTable as any[]).length === 0) {
+          const wJoinTable = this.wrap(joinTableName);
+          const wJoinCol = this.wrap(joinColumn);
+          const wInvCol = this.wrap(inverseJoinColumn);
+          let ddl = `CREATE TABLE IF NOT EXISTS ${wJoinTable} (${wJoinCol} INT NOT NULL, ${wInvCol} INT NOT NULL, PRIMARY KEY (${wJoinCol}, ${wInvCol}))`;
+          if (this.isMySqlFamily()) ddl += " ENGINE=InnoDB";
+          await this.driver?.executeRaw(ddl);
+        }
+
+        // 2. 소유측 PK / 역측 PK 조회
+        const ownerColumns = (Reflect.getMetadata(
+          COLUMN_TOKEN,
+          entity.prototype,
+        ) ?? []) as ColumnMetadata[];
+        const ownerPk = ownerColumns.find((c) => c.options?.primary)?.name;
+
+        const relatedColumns = (Reflect.getMetadata(
+          COLUMN_TOKEN,
+          relatedEntity.prototype,
+        ) ?? []) as ColumnMetadata[];
+        const relatedPk = relatedColumns.find((c) => c.options?.primary)?.name;
+
+        // 3. 소유측 FK 추가
+        const ownerFkName = `fk_${joinTableName}_${ownerTable}_${joinColumn}`;
+        if (
+          ownerPk &&
+          this.driver &&
+          !(await this.driver.hasForeignKey(joinTableName, ownerFkName))
+        ) {
+          const ddl = `ALTER TABLE ${this.wrap(joinTableName)} ADD CONSTRAINT ${ownerFkName} FOREIGN KEY (${this.wrap(joinColumn)}) REFERENCES ${this.wrap(ownerTable)}(${this.wrap(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
+          await this.driver.executeRaw(ddl);
+        }
+
+        // 4. 역측 FK 추가
+        const relatedFkName = `fk_${joinTableName}_${relatedTable}_${inverseJoinColumn}`;
+        if (
+          relatedPk &&
+          this.driver &&
+          !(await this.driver.hasForeignKey(joinTableName, relatedFkName))
+        ) {
+          const ddl = `ALTER TABLE ${this.wrap(joinTableName)} ADD CONSTRAINT ${relatedFkName} FOREIGN KEY (${this.wrap(inverseJoinColumn)}) REFERENCES ${this.wrap(relatedTable)}(${this.wrap(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
+          await this.driver.executeRaw(ddl);
+        }
       }
     }
   }

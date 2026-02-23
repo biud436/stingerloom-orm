@@ -12,6 +12,8 @@ export interface ISqlDriver<T = any> {
    */
   hasTable(name: string): Promise<T>;
 
+  executeRaw(sql: string): Promise<any>;
+
   /**
    * Adds a primary key to the specified table.
    *
