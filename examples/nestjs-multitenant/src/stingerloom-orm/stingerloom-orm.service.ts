@@ -1,0 +1,97 @@
+import "reflect-metadata";
+import {
+  Injectable,
+  OnApplicationBootstrap,
+  OnApplicationShutdown,
+} from "@nestjs/common";
+import { EntityManager, ClazzType, Logger } from "stingerloom-orm";
+import Container from "typedi";
+import {
+  STINGERLOOM_ORM_OPTION_TOKEN,
+  StinglerloomOrmModule,
+  DatabaseClientOptions,
+} from "./stingerloom-orm.module";
+
+export const STINGERLOOM_ORM_SERVICE_TOKEN = Symbol.for(
+  "STINGERLOOM_ORM_SERVICE_TOKEN",
+);
+
+@Injectable()
+export class StinglerloomOrmService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
+  private readonly logger = new Logger(StinglerloomOrmService.name);
+
+  public static captured = {} as Record<
+    typeof STINGERLOOM_ORM_SERVICE_TOKEN,
+    boolean
+  >;
+
+  constructor(private readonly entityManager: EntityManager) {
+    this.logger.info("StinglerloomOrmService initialized");
+  }
+
+  async onApplicationBootstrap(): Promise<void> {
+    this.logger.info("StinglerloomOrmService OnApplicationBootstrap");
+
+    if (
+      !StinglerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN]
+    ) {
+      this.logger.warn("StinglerloomOrmModule.forRoot() was not called");
+      return;
+    }
+
+    await this.initEntityManager();
+    await this.registerEntities();
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    await this.propagateShutdown();
+    console.log("Stingerloom ORM disconnected");
+  }
+
+  private async initEntityManager(): Promise<void> {
+    if (!Container.has(EntityManager)) {
+      Container.set(EntityManager, this.entityManager);
+    }
+  }
+
+  private async registerEntities(): Promise<void> {
+    const options = Reflect.getMetadata(
+      STINGERLOOM_ORM_OPTION_TOKEN,
+      StinglerloomOrmModule,
+    ) as DatabaseClientOptions;
+
+    if (!options) {
+      throw new Error(
+        "Database configuration is required. Did you call StinglerloomOrmModule.forRoot()?",
+      );
+    }
+
+    await this.entityManager.register(options);
+  }
+
+  private async propagateShutdown(): Promise<void> {
+    if (this.entityManager) {
+      await this.entityManager.propagateShutdown();
+    }
+  }
+
+  getRepository<T>(entity: ClazzType<T>) {
+    if (!this.entityManager) {
+      throw new Error(
+        "EntityManager not initialized. Database connection may not be ready.",
+      );
+    }
+    return this.entityManager.getRepository(entity);
+  }
+
+  getEntityManager(): EntityManager {
+    if (!this.entityManager) {
+      throw new Error(
+        "EntityManager not initialized. Database connection may not be ready.",
+      );
+    }
+    return this.entityManager;
+  }
+}
