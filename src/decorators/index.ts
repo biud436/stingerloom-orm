@@ -15,3 +15,4 @@ export * from "./Validation";
 export * from "./Transactional";
 export * from "./OneToOne";
 export * from "./UniqueIndex";
+export * from "./InjectRepository";

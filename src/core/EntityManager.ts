@@ -17,6 +17,7 @@ import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../dialects/sqlite/SqliteDriver";
 import { MssqlDriver } from "../dialects/mssql/MssqlDriver";
 import { ISqlDriver } from "../dialects/SqlDriver";
+import { SchemaGenerator } from "./SchemaGenerator";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
 import {
   UNIQUE_INDEX_TOKEN,
@@ -108,8 +109,20 @@ export class EntityManager implements BaseEntityManager {
   private defaultQueryTimeout: number | undefined;
   private replicationRouter: ReplicationRouter | null = null;
 
-  public async register(databaseClientOptions: DatabaseClientOptions) {
-    await this.connect(databaseClientOptions);
+  /**
+   * 이 EntityManager가 사용할 연결 이름.
+   * 멀티 데이터베이스 환경에서 각 EntityManager 인스턴스는 서로 다른 connectionName을 가질 수 있습니다.
+   * 기본값은 'default'.
+   */
+  private connectionName = "default";
+
+  /**
+   * 연결된 DB 타입. connect() 시 캐싱됩니다. (isMySqlFamily/isPostgres 내부 분기용)
+   */
+  private dbType: IDatabaseType | undefined;
+
+  public async register(databaseClientOptions: DatabaseClientOptions, connectionName = "default") {
+    await this.connect(databaseClientOptions, connectionName);
     await this.registerEntities();
   }
 
@@ -118,23 +131,43 @@ export class EntityManager implements BaseEntityManager {
   }
 
   get connection() {
-    return this.client.getConnection();
+    // getConnection(name) 지원 여부에 따라 분기 (하위 호환)
+    const c = this.client as any;
+    if (typeof c.getConnection === "function") {
+      return c.getConnection(this.connectionName);
+    }
+    return c.getConnection();
   }
 
-  public async connect(databaseClientOptions: DatabaseClientOptions) {
-    const client = this.client;
-    const connector = await client.connect(databaseClientOptions);
+  /**
+   * 이 EntityManager가 사용하는 연결 이름을 반환합니다.
+   */
+  getConnectionName(): string {
+    return this.connectionName;
+  }
 
-    switch (client.type as IDatabaseType) {
+  public async connect(databaseClientOptions: DatabaseClientOptions, connectionName = "default") {
+    this.connectionName = connectionName;
+    const client = this.client as any;
+    const connector = await client.connect(databaseClientOptions, connectionName);
+    // getType()이 있으면 사용, 없으면 (레거시 mock) client.type 사용
+    const dbType = (
+      typeof client.getType === "function"
+        ? client.getType(connectionName)
+        : client.type
+    ) as IDatabaseType;
+    this.dbType = dbType;
+
+    switch (dbType) {
       case "mariadb":
       case "mysql":
-        this.driver = new MySqlDriver(connector, client.type);
+        this.driver = new MySqlDriver(connector, dbType);
         this.dataSource = new MySqlDataSource(connector);
         break;
       case "postgres":
         this.driver = new PostgresDriver(
           connector,
-          client.type,
+          dbType,
           databaseClientOptions.schema,
         );
         this.dataSource = new PostgresDataSource(connector);
@@ -566,7 +599,7 @@ export class EntityManager implements BaseEntityManager {
         const relatedPk = relatedColumns.find((c) => c.options?.primary)?.name;
 
         // 3. 소유측 FK 추가
-        const ownerFkName = `fk_${joinTableName}_${ownerTable}_${joinColumn}`;
+        const ownerFkName = SchemaGenerator.generateForeignKeyName(joinTableName, joinColumn, ownerTable);
         if (
           ownerPk &&
           this.driver &&
@@ -577,7 +610,7 @@ export class EntityManager implements BaseEntityManager {
         }
 
         // 4. 역측 FK 추가
-        const relatedFkName = `fk_${joinTableName}_${relatedTable}_${inverseJoinColumn}`;
+        const relatedFkName = SchemaGenerator.generateForeignKeyName(joinTableName, inverseJoinColumn, relatedTable);
         if (
           relatedPk &&
           this.driver &&
@@ -1225,8 +1258,15 @@ export class EntityManager implements BaseEntityManager {
   async findOne<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,
-  ): Promise<EntityResult<T>> {
-    return this.find<T>(entity, { ...findOption, limit: 1 });
+  ): Promise<T | null> {
+    const result = await this.find<T>(entity, { ...findOption, limit: 1 });
+    if (result === undefined || result === null) {
+      return null;
+    }
+    if (Array.isArray(result)) {
+      return (result[0] as T) ?? null;
+    }
+    return result as T;
   }
 
   /**
@@ -2113,11 +2153,13 @@ export class EntityManager implements BaseEntityManager {
   }
 
   private isMySqlFamily() {
-    return ["mysql", "mariadb"].includes(this.client.type as IDatabaseType);
+    const t = this.dbType ?? (this.client as any).type;
+    return ["mysql", "mariadb"].includes(t as IDatabaseType);
   }
 
   private isPostgres() {
-    return this.client.type === "postgres";
+    const t = this.dbType ?? (this.client as any).type;
+    return t === "postgres";
   }
 
   /**
@@ -2708,7 +2750,7 @@ export class EntityManager implements BaseEntityManager {
     }
 
     // SQLite
-    if (this.client.type === "sqlite") {
+    if (this.client.getType(this.connectionName) === "sqlite") {
       const updateSet = join(
         updateColumns.map((col) => raw(`${col} = excluded.${col}`)),
         ", ",

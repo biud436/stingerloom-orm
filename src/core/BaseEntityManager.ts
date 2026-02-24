@@ -43,7 +43,7 @@ export abstract class BaseEntityManager {
   abstract findOne<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,
-  ): Promise<EntityResult<T>>;
+  ): Promise<T | null>;
   /**
    * 데이터베이스 쿼리를 수행하여 결과를 여러 건 반환합니다.
    * 쿼리는 where, order by, limit 절을 포함할 수 있습니다.

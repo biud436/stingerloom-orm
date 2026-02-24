@@ -54,7 +54,7 @@ export class BaseRepository<T> {
    * @param findOption Specifies the conditions for the entity to be retrieved.
    * @returns A promise that resolves to the result of the findOne operation.
    */
-  async findOne(findOption: FindOption<T>): Promise<EntityResult<T>> {
+  async findOne(findOption: FindOption<T>): Promise<T | null> {
     return await this.em.findOne<T>(this.entity, findOption);
   }
 
