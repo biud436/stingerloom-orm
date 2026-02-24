@@ -352,7 +352,7 @@ describe("[Integration] OneToMany / ManyToOne 기본 관계", () => {
       if (Array.isArray(foundChild)) {
         expect(foundChild.length).toBe(0);
       } else {
-        expect(foundChild).toBeUndefined();
+        expect(foundChild).toBeNull();
       }
 
       // 부모는 유지

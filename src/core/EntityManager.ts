@@ -2750,7 +2750,7 @@ export class EntityManager implements BaseEntityManager {
     }
 
     // SQLite
-    if (this.client.getType(this.connectionName) === "sqlite") {
+    if ((this.dbType ?? (this.client as any).type) === "sqlite") {
       const updateSet = join(
         updateColumns.map((col) => raw(`${col} = excluded.${col}`)),
         ", ",

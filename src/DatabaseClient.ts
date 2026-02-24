@@ -14,9 +14,13 @@ import { Logger } from "./utils/Logger";
 
 export class DatabaseClient {
   private static instance: DatabaseClient;
-  private connector?: IConnector;
-  private options?: DatabaseClientOptions;
-  public type?: string;
+
+  /** Named connection registry */
+  private readonly connectors: Map<string, IConnector> = new Map();
+  private readonly connectionsOptions: Map<string, DatabaseClientOptions> =
+    new Map();
+  private readonly connectionsType: Map<string, string> = new Map();
+
   private readonly logger = new Logger(DatabaseClient.name);
 
   private constructor() {}
@@ -29,26 +33,29 @@ export class DatabaseClient {
     return DatabaseClient.instance;
   }
 
-  public getConnection(): IConnector {
-    if (!this.connector) {
-      throw new DatabaseNotConnectedError();
-    }
-
-    return this.connector;
+  /**
+   * 기본(default) 연결의 타입을 반환합니다. (하위 호환)
+   */
+  public get type(): string | undefined {
+    return this.connectionsType.get("default");
   }
 
   /**
    * 커넥터를 생성하고 데이터베이스에 연결합니다.
-   * retry 옵션이 설정되어 있으면 지수 백오프로 재시도합니다.
+   * @param options 연결 옵션
+   * @param name 연결 이름 (기본값: 'default')
    */
-  public async connect(options: DatabaseClientOptions): Promise<IConnector> {
+  public async connect(
+    options: DatabaseClientOptions,
+    name = "default",
+  ): Promise<IConnector> {
     const { type } = options;
 
-    this.type = type;
-    this.options = options;
+    this.connectionsType.set(name, type);
+    this.connectionsOptions.set(name, options);
 
     const connector = this.createConnector(type);
-    this.connector = connector;
+    this.connectors.set(name, connector);
 
     if (options.retry) {
       await this.connectWithRetry(connector, options);
@@ -56,7 +63,7 @@ export class DatabaseClient {
       await connector.connect(options);
     }
 
-    return this.connector;
+    return connector;
   }
 
   /**
@@ -105,9 +112,7 @@ export class DatabaseClient {
       }
     }
 
-    this.logger.error(
-      `All ${maxAttempts} connection attempts failed.`,
-    );
+    this.logger.error(`All ${maxAttempts} connection attempts failed.`);
     throw lastError;
   }
 
@@ -115,19 +120,84 @@ export class DatabaseClient {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  public async close(): Promise<void> {
-    if (!this.connector) {
+  /**
+   * 지정된 이름의 연결을 반환합니다.
+   * @param name 연결 이름 (기본값: 'default')
+   */
+  public getConnection(name = "default"): IConnector {
+    const connector = this.connectors.get(name);
+    if (!connector) {
+      if (name === "default") {
+        throw new DatabaseNotConnectedError();
+      }
+      throw new Exception(`연결 '${name}'을 찾을 수 없습니다.`, 500);
+    }
+
+    return connector;
+  }
+
+  /**
+   * 지정된 이름의 연결 옵션을 반환합니다.
+   * @param name 연결 이름 (기본값: 'default')
+   */
+  public getOptions(name = "default"): DatabaseClientOptions {
+    const options = this.connectionsOptions.get(name);
+    if (!options) {
+      throw new Exception(
+        name === "default"
+          ? "옵션이 존재하지 않습니다."
+          : `연결 '${name}'의 옵션을 찾을 수 없습니다.`,
+        500,
+      );
+    }
+
+    return options;
+  }
+
+  /**
+   * 지정된 이름의 연결 타입(DB 종류)을 반환합니다.
+   * @param name 연결 이름 (기본값: 'default')
+   */
+  public getType(name = "default"): string | undefined {
+    return this.connectionsType.get(name);
+  }
+
+  /**
+   * 등록된 모든 연결 이름 목록을 반환합니다.
+   */
+  public getRegisteredNames(): string[] {
+    return Array.from(this.connectors.keys());
+  }
+
+  /**
+   * 특정 연결이 등록되어 있는지 확인합니다.
+   */
+  public hasConnection(name = "default"): boolean {
+    return this.connectors.has(name);
+  }
+
+  /**
+   * 연결을 종료합니다.
+   * @param name 연결 이름. 미지정 시 모든 연결을 종료합니다.
+   */
+  public async close(name?: string): Promise<void> {
+    if (name) {
+      const connector = this.connectors.get(name);
+      if (connector) {
+        await connector.close();
+        this.connectors.delete(name);
+        this.connectionsOptions.delete(name);
+        this.connectionsType.delete(name);
+      }
       return;
     }
 
-    await this.connector.close();
-  }
-
-  public getOptions(): DatabaseClientOptions {
-    if (!this.options) {
-      throw new Exception("옵션이 존재하지 않습니다.", 500);
+    // Close all connections
+    for (const [connName, connector] of this.connectors) {
+      await connector.close();
+      this.connectors.delete(connName);
+      this.connectionsOptions.delete(connName);
+      this.connectionsType.delete(connName);
     }
-
-    return this.options;
   }
 }

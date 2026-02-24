@@ -162,7 +162,7 @@ describe("[Integration] 기본 CRUD 테스트", () => {
       if (Array.isArray(result)) {
         expect(result.length).toBe(0);
       } else {
-        expect(result).toBeUndefined();
+        expect(result).toBeNull();
       }
     });
   });
@@ -245,7 +245,7 @@ describe("[Integration] 기본 CRUD 테스트", () => {
       if (Array.isArray(found)) {
         expect(found.length).toBe(0);
       } else {
-        expect(found).toBeUndefined();
+        expect(found).toBeNull();
       }
     });
 
@@ -320,7 +320,7 @@ describe("[Integration] 기본 CRUD 테스트", () => {
       if (Array.isArray(found)) {
         expect(found.length).toBe(0);
       } else {
-        expect(found).toBeUndefined();
+        expect(found).toBeNull();
       }
     });
   });

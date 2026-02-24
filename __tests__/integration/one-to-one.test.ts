@@ -353,7 +353,7 @@ describe("[Integration] OneToOne 관계", () => {
       if (Array.isArray(foundUser)) {
         expect(foundUser.length).toBe(0);
       } else {
-        expect(foundUser).toBeUndefined();
+        expect(foundUser).toBeNull();
       }
 
       // 프로필은 유지

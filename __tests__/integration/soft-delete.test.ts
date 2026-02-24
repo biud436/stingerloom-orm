@@ -154,7 +154,7 @@ describe("[Integration] Soft Delete (@DeletedAt)", () => {
       if (Array.isArray(found)) {
         expect(found.length).toBe(0);
       } else {
-        expect(found).toBeUndefined();
+        expect(found).toBeNull();
       }
     });
 
@@ -234,7 +234,7 @@ describe("[Integration] Soft Delete (@DeletedAt)", () => {
       if (Array.isArray(afterDelete)) {
         expect(afterDelete.length).toBe(0);
       } else {
-        expect(afterDelete).toBeUndefined();
+        expect(afterDelete).toBeNull();
       }
 
       // 복원
@@ -286,7 +286,7 @@ describe("[Integration] Soft Delete (@DeletedAt)", () => {
       if (Array.isArray(afterSoftDelete)) {
         expect(afterSoftDelete.length).toBe(0);
       } else {
-        expect(afterSoftDelete).toBeUndefined();
+        expect(afterSoftDelete).toBeNull();
       }
 
       // 4. Restore
@@ -316,7 +316,7 @@ describe("[Integration] Soft Delete (@DeletedAt)", () => {
       if (Array.isArray(afterHardDelete)) {
         expect(afterHardDelete.length).toBe(0);
       } else {
-        expect(afterHardDelete).toBeUndefined();
+        expect(afterHardDelete).toBeNull();
       }
     });
   });
