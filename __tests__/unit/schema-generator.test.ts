@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
+import crypto from "crypto";
 import { SchemaGenerator } from "../../src/core/SchemaGenerator";
 import { Entity } from "../../src/decorators/Entity";
 import { Column } from "../../src/decorators/Column";
@@ -279,6 +280,63 @@ describe("SchemaGenerator", () => {
       const gen = new SchemaGenerator({ dialect: "mysql" });
       const ddls = gen.generateSchemaDDL([]);
       expect(ddls).toEqual([]);
+    });
+  });
+
+  describe("generateForeignKeyName() 해시 기반 네이밍", () => {
+    it("SHA1 해시 8자를 포함한 FK 이름을 생성해야 함", () => {
+      const name = SchemaGenerator.generateForeignKeyName("orders", "user_id", "users");
+      // fk_{tableName}_{hash8} 형태여야 함
+      expect(name).toMatch(/^fk_orders_[0-9a-f]{8}$/);
+    });
+
+    it("동일 입력에 대해 동일 결과를 반환해야 함 (결정적)", () => {
+      const name1 = SchemaGenerator.generateForeignKeyName("products", "category_id", "categories");
+      const name2 = SchemaGenerator.generateForeignKeyName("products", "category_id", "categories");
+      expect(name1).toBe(name2);
+    });
+
+    it("다른 입력에 대해 다른 이름을 생성해야 함", () => {
+      const name1 = SchemaGenerator.generateForeignKeyName("orders", "user_id", "users");
+      const name2 = SchemaGenerator.generateForeignKeyName("orders", "product_id", "products");
+      expect(name1).not.toBe(name2);
+    });
+
+    it("fk_ 접두사로 시작해야 함", () => {
+      const name = SchemaGenerator.generateForeignKeyName("t", "c", "r");
+      expect(name).toMatch(/^fk_/);
+    });
+
+    it("63자 이하여야 함 (MySQL/PG 제한)", () => {
+      const longTable = "a".repeat(100);
+      const longColumn = "b".repeat(100);
+      const longRef = "c".repeat(100);
+      const name = SchemaGenerator.generateForeignKeyName(longTable, longColumn, longRef);
+      expect(name.length).toBeLessThanOrEqual(63);
+    });
+
+    it("매우 긴 테이블 이름에서 fk_{hash} 형태로 fallback해야 함", () => {
+      const longTable = "a".repeat(60);
+      const name = SchemaGenerator.generateForeignKeyName(longTable, "col", "ref");
+      // fk_ + 60자 + _ + 8자 hash = 72자 > 63자이므로 fallback
+      expect(name).toMatch(/^fk_[0-9a-f]{8}$/);
+      expect(name.length).toBeLessThanOrEqual(63);
+    });
+
+    it("FK DDL에서 해시 기반 이름을 사용해야 함", () => {
+      const gen = new SchemaGenerator({ dialect: "mysql" });
+      const fks = gen.generateForeignKeyDDL(Product);
+      const catFk = fks.find((f) => f.includes("category_id"));
+      expect(catFk).toBeDefined();
+      // 해시 기반 이름이 포함되어야 함
+      const expectedName = SchemaGenerator.generateForeignKeyName("product", "category_id", "category");
+      expect(catFk).toContain(expectedName);
+    });
+
+    it("같은 테이블에서 다른 FK 컬럼이면 다른 이름이 생성되어야 함", () => {
+      const fk1 = SchemaGenerator.generateForeignKeyName("posts", "author_id", "users");
+      const fk2 = SchemaGenerator.generateForeignKeyName("posts", "reviewer_id", "users");
+      expect(fk1).not.toBe(fk2);
     });
   });
 });

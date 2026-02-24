@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
+import crypto from "crypto";
 import { ClazzType } from "../utils";
 import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../decorators/Column";
 import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
@@ -105,7 +106,7 @@ export class SchemaGenerator {
     const tableName = this.getTableName(entity);
     const fks = this.getForeignKeys(entity);
     return fks.map((fk) => {
-      const fkName = `fk_${tableName}_${fk.referencedTable}_${fk.column}`;
+      const fkName = SchemaGenerator.generateForeignKeyName(tableName, fk.column, fk.referencedTable);
       return `ALTER TABLE ${this.wrapTable(tableName)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(fk.column)}) REFERENCES ${this.wrapTable(fk.referencedTable)}(${this.wrapId(fk.referencedColumn)}) ON DELETE NO ACTION ON UPDATE NO ACTION`;
     });
   }
@@ -202,14 +203,14 @@ export class SchemaGenerator {
         const relatedPk = this.findPrimaryKeyColumn(relatedEntity);
 
         if (ownerPk) {
-          const fkName = `fk_${name}_${ownerTable}_${joinColumn}`;
+          const fkName = SchemaGenerator.generateForeignKeyName(name, joinColumn, ownerTable);
           ddls.push(
             `ALTER TABLE ${this.wrapTable(name)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(joinColumn)}) REFERENCES ${this.wrapTable(ownerTable)}(${this.wrapId(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
           );
         }
 
         if (relatedPk) {
-          const fkName = `fk_${name}_${relatedTable}_${inverseJoinColumn}`;
+          const fkName = SchemaGenerator.generateForeignKeyName(name, inverseJoinColumn, relatedTable);
           ddls.push(
             `ALTER TABLE ${this.wrapTable(name)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(inverseJoinColumn)}) REFERENCES ${this.wrapTable(relatedTable)}(${this.wrapId(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
           );
@@ -544,5 +545,23 @@ export class SchemaGenerator {
       return `"${this.pgSchema}"."${name.replace(/"/g, '""')}"`;
     }
     return `\`${name.replace(/`/g, "``")}\``;
+  }
+
+  /**
+   * FK 제약 조건 이름을 해시 기반으로 생성합니다.
+   * SHA1 해시의 앞 8자를 사용하여 고유성을 보장하며,
+   * MySQL 64자 / PostgreSQL 63자 제한을 준수합니다.
+   *
+   * @param tableName - 소스 테이블 이름
+   * @param column - FK 컬럼 이름
+   * @param refTable - 참조 대상 테이블 이름
+   * @returns 63자 이하의 고유 FK 이름
+   */
+  static generateForeignKeyName(tableName: string, column: string, refTable: string): string {
+    const raw = `${tableName}_${column}_${refTable}`;
+    const hash = crypto.createHash("sha1").update(raw).digest("hex").slice(0, 8);
+    const base = `fk_${tableName}_${hash}`;
+    // MySQL 최대 64자, PostgreSQL 최대 63자 → 63자로 통일
+    return base.length > 63 ? `fk_${hash}` : base;
   }
 }

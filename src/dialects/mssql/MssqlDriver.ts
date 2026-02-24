@@ -5,6 +5,7 @@ import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
 import { ISqlDriver } from "../SqlDriver";
 import { SchemaOptions } from "../../types/SchemaOption";
+import { SchemaGenerator } from "../../core/SchemaGenerator";
 
 /**
  * MSSQL (Microsoft SQL Server) 드라이버 구현체입니다.
@@ -122,13 +123,14 @@ export class MssqlDriver implements ISqlDriver {
 
   /**
    * 외래키 이름을 생성합니다.
+   * SHA1 해시 기반으로 고유한 이름을 생성하여 이름 충돌과 길이 제한을 방지합니다.
    */
   generateForeignKeyName(
     sourceTable: string,
     targetTable: string,
     sourceColumn: string,
   ): string {
-    return `fk_${sourceTable}_${targetTable}_${sourceColumn}`;
+    return SchemaGenerator.generateForeignKeyName(sourceTable, sourceColumn, targetTable);
   }
 
   /**

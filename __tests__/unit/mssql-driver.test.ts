@@ -148,10 +148,16 @@ describe("MssqlDriver", () => {
   });
 
   describe("generateForeignKeyName()", () => {
-    it("should generate fk_{source}_{target}_{column} format", () => {
-      expect(
-        driver.generateForeignKeyName("Order", "Customer", "customerId"),
-      ).toBe("fk_Order_Customer_customerId");
+    it("should generate hash-based FK name", () => {
+      const name = driver.generateForeignKeyName("Order", "Customer", "customerId");
+      // 해시 기반 fk_{tableName}_{hash8} 형태여야 함
+      expect(name).toMatch(/^fk_Order_[0-9a-f]{8}$/);
+    });
+
+    it("should be deterministic", () => {
+      const name1 = driver.generateForeignKeyName("Order", "Customer", "customerId");
+      const name2 = driver.generateForeignKeyName("Order", "Customer", "customerId");
+      expect(name1).toBe(name2);
     });
   });
 
@@ -252,7 +258,9 @@ describe("MssqlDriver", () => {
       const sqlText = mockConnector.query.mock.calls[0][0];
       expect(sqlText).toContain("ALTER TABLE [Order]");
       expect(sqlText).toContain("ADD CONSTRAINT");
-      expect(sqlText).toContain("fk_Order_Customer_customerId");
+      // 해시 기반 FK 이름
+      const expectedFkName = driver.generateForeignKeyName("Order", "Customer", "customerId");
+      expect(sqlText).toContain(expectedFkName);
       expect(sqlText).toContain("FOREIGN KEY ([customerId])");
       expect(sqlText).toContain("REFERENCES [Customer]([id])");
     });

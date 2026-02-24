@@ -202,11 +202,25 @@ describe("SqliteDriver - getForUpdateNoWait()", () => {
 });
 
 describe("SqliteDriver - generateForeignKeyName()", () => {
-  it("should generate fk_source_target_column format", () => {
+  it("should generate hash-based FK name", () => {
     const driver = new SqliteDriver(mockConnector);
-    expect(driver.generateForeignKeyName("orders", "users", "user_id")).toBe(
-      "fk_orders_users_user_id",
-    );
+    const name = driver.generateForeignKeyName("orders", "users", "user_id");
+    // 해시 기반 fk_{tableName}_{hash8} 형태여야 함
+    expect(name).toMatch(/^fk_orders_[0-9a-f]{8}$/);
+  });
+
+  it("should be deterministic", () => {
+    const driver = new SqliteDriver(mockConnector);
+    const name1 = driver.generateForeignKeyName("orders", "users", "user_id");
+    const name2 = driver.generateForeignKeyName("orders", "users", "user_id");
+    expect(name1).toBe(name2);
+  });
+
+  it("should produce different names for different FK columns", () => {
+    const driver = new SqliteDriver(mockConnector);
+    const name1 = driver.generateForeignKeyName("orders", "users", "user_id");
+    const name2 = driver.generateForeignKeyName("orders", "products", "product_id");
+    expect(name1).not.toBe(name2);
   });
 });
 
