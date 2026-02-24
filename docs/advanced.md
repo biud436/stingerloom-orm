@@ -478,3 +478,102 @@ class UsersService {
   }
 }
 ```
+
+---
+
+## 10. Read Replica (읽기/쓰기 분리)
+
+`replication` 옵션으로 master/slave 구조의 읽기/쓰기 분리를 설정합니다. 읽기 쿼리(`find`, `findOne`, `count` 등)는 slave로, 쓰기 쿼리(`save`, `delete` 등)는 master로 자동 라우팅됩니다. slave 장애 시 master로 자동 fallback됩니다.
+
+```typescript
+await em.register({
+  type: "mysql",
+  host: "master.example.com",
+  port: 3306,
+  username: "root",
+  password: "password",
+  database: "mydb",
+  entities: [User, Post],
+  synchronize: true,
+  replication: {
+    master: {
+      host: "master.example.com",
+      port: 3306,
+      username: "root",
+      password: "password",
+      database: "mydb",
+    },
+    slaves: [
+      {
+        host: "replica1.example.com",
+        port: 3306,
+        username: "readonly",
+        password: "password",
+        database: "mydb",
+      },
+      {
+        host: "replica2.example.com",
+        port: 3306,
+        username: "readonly",
+        password: "password",
+        database: "mydb",
+      },
+    ],
+  },
+});
+```
+
+**ReplicationConfig 타입**
+
+```typescript
+interface ReplicationConfig {
+  master: ReplicationNodeConfig;
+  slaves: ReplicationNodeConfig[];
+}
+
+interface ReplicationNodeConfig {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  database: string;
+}
+```
+
+slave가 여러 개인 경우 라운드 로빈 방식으로 분산됩니다. slave 전체 장애 시 master로 자동 fallback됩니다.
+
+---
+
+## 11. 쿼리 타임아웃 (Query Timeout)
+
+쿼리 실행 시간이 지정 임계값을 초과하면 DB 레벨에서 강제 종료합니다.
+
+**연결 레벨 타임아웃**
+
+```typescript
+await em.register({
+  type: "mysql",
+  // ...
+  queryTimeout: 5000,  // 모든 쿼리에 5초 타임아웃 적용
+});
+```
+
+**쿼리 단위 타임아웃** (연결 레벨보다 우선 적용)
+
+```typescript
+const users = await em.find(User, {
+  where: { isActive: true },
+  timeout: 2000,  // 이 쿼리에만 2초 타임아웃
+});
+```
+
+**DB별 내부 구현**
+
+| DB | 구현 방식 |
+|----|----------|
+| MySQL | `SET max_execution_time = N` |
+| PostgreSQL | `SET LOCAL statement_timeout = N` |
+| SQLite | 드라이버 레벨 타임아웃 |
+| MSSQL | `SET QUERY_GOVERNOR_COST_LIMIT N` |
+
+타임아웃 초과 시 `QueryTimeoutError`가 throw됩니다.

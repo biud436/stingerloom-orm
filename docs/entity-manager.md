@@ -10,11 +10,14 @@ const em = new EntityManager();
 
 ---
 
-## register(options)
+## register(options, connectionName?)
 
 DB 연결과 엔티티 등록을 한 번에 수행합니다. `synchronize: true`이면 테이블이 없을 경우 자동 생성됩니다.
 
+두 번째 인자로 연결 이름을 지정할 수 있습니다 (기본값: `'default'`). 멀티 DB 환경에서 여러 EntityManager 인스턴스를 독립적으로 운용할 때 사용합니다.
+
 ```typescript
+// 단일 DB (기본 사용)
 await em.register({
   type: "mysql",
   host: "localhost",
@@ -25,6 +28,26 @@ await em.register({
   entities: [User, Post, Comment],
   synchronize: true,
 });
+
+// 멀티 DB — named connection 지정
+const primaryEm = new EntityManager();
+await primaryEm.register({
+  type: "mysql",
+  // ...
+  entities: [User],
+  synchronize: true,
+}, "primary");
+
+const analyticsEm = new EntityManager();
+await analyticsEm.register({
+  type: "postgres",
+  // ...
+  entities: [Log],
+  synchronize: true,
+}, "analytics");
+
+console.log(primaryEm.getConnectionName());   // "primary"
+console.log(analyticsEm.getConnectionName()); // "analytics"
 ```
 
 **DatabaseClientOptions 전체 옵션**
@@ -117,26 +140,48 @@ const cached = await em.find(User, {
 | `withDeleted` | `boolean` | soft-deleted 엔티티 포함 여부 |
 | `cache` | `boolean \| number` | 캐시 활성화 (true: 기본 TTL, number: ms 단위 TTL) |
 | `groupBy` | `(keyof T)[]` | GROUP BY |
+| `having` | `Sql[]` | HAVING 절 (sql-template-tag Sql 배열) |
+| `timeout` | `number` | 쿼리 타임아웃 (ms). connection-level `queryTimeout` 보다 우선 |
 
 ---
 
 ## findOne(entity, option)
 
-조건에 맞는 단건 엔티티를 조회합니다. 내부적으로 `find()`에 `limit: 1`을 추가합니다.
+조건에 맞는 단건 엔티티를 조회합니다. 내부적으로 `find()`에 `limit: 1`을 추가합니다. 결과가 없으면 `null`을 반환합니다.
 
 ```typescript
-async findOne<T>(entity: ClazzType<T>, findOption: FindOption<T>): Promise<EntityResult<T>>
+async findOne<T>(entity: ClazzType<T>, findOption: FindOption<T>): Promise<T | null>
 ```
 
 **예제**
 
 ```typescript
 const user = await em.findOne(User, { where: { id: 1 } });
+if (user === null) {
+  throw new Error("User not found");
+}
 
 const post = await em.findOne(Post, {
   where: { slug: "hello-world" },
   relations: ["author", "tags"],
 });
+```
+
+---
+
+## getConnectionName()
+
+현재 EntityManager 인스턴스가 사용하는 named connection 이름을 반환합니다. 단일 DB 환경에서는 `"default"`를 반환합니다.
+
+```typescript
+getConnectionName(): string
+```
+
+```typescript
+const em = new EntityManager();
+await em.register({ type: "mysql", ... }, "primary");
+
+console.log(em.getConnectionName()); // "primary"
 ```
 
 ---
@@ -387,6 +432,99 @@ const posts = await em.query<{ id: number; title: string }>(
   [42]
 );
 ```
+
+---
+
+## findAndCount(entity, option?)
+
+`find()`와 `count()`를 동시에 실행하여 엔티티 배열과 전체 개수를 튜플로 반환합니다. `[entities, total]` 형태로 페이지네이션 구현에 유용합니다.
+
+```typescript
+async findAndCount<T>(entity: ClazzType<T>, findOption?: FindOption<T>): Promise<[T[], number]>
+```
+
+**예제**
+
+```typescript
+const [posts, total] = await em.findAndCount(Post, {
+  where: { isPublished: true },
+  orderBy: { createdAt: "DESC" },
+  take: 10,
+  limit: [0, 10],
+});
+
+console.log(posts.length); // 10
+console.log(total);        // 전체 게시글 수 (예: 235)
+```
+
+---
+
+## upsert(entity, data, conflictColumns?)
+
+엔티티를 삽입하거나, 충돌(CONFLICT) 시 업데이트합니다. PK나 유니크 컬럼 기준으로 충돌을 감지합니다.
+
+- MySQL/MariaDB: `INSERT ... ON DUPLICATE KEY UPDATE`
+- PostgreSQL: `INSERT ... ON CONFLICT (...) DO UPDATE SET`
+
+```typescript
+async upsert<T>(
+  entity: ClazzType<T>,
+  data: Partial<T>,
+  conflictColumns?: string[],
+): Promise<void>
+```
+
+`conflictColumns`를 생략하면 PK 컬럼을 자동으로 사용합니다.
+
+**예제**
+
+```typescript
+// PK 기준 upsert (id가 있으면 update, 없으면 insert)
+await em.upsert(User, {
+  id: 1,
+  name: "홍길동",
+  email: "hong@example.com",
+});
+
+// 유니크 컬럼 기준 upsert
+await em.upsert(User, {
+  email: "hong@example.com",
+  name: "홍길동",
+}, ["email"]);
+```
+
+---
+
+## explain(entity, option?)
+
+엔티티 조회 쿼리에 대해 `EXPLAIN`을 실행하고 표준화된 결과를 반환합니다. 쿼리 최적화 및 인덱스 사용 여부 확인에 활용합니다.
+
+```typescript
+async explain<T>(entity: ClazzType<T>, findOption?: FindOption<T>): Promise<ExplainResult>
+
+interface ExplainResult {
+  raw: Record<string, unknown>[];  // DB 원본 EXPLAIN 결과
+  rows: number | null;             // 예상 검사 행 수
+  type: string | null;             // 접근 방식 (ALL, index, ref / Seq Scan 등)
+  possibleKeys: string[] | null;   // 사용 가능한 인덱스 목록
+  key: string | null;              // 실제 선택된 인덱스
+  cost: number | null;             // 예상 비용 (MySQL: filtered %, PostgreSQL: total_cost)
+}
+```
+
+**예제**
+
+```typescript
+const result = await em.explain(User, {
+  where: { email: "hong@example.com" },
+});
+
+console.log(result.type);  // "ref" (인덱스 사용 중)
+console.log(result.key);   // "idx_user_email"
+console.log(result.rows);  // 1
+```
+
+> **주의:** SQLite / MSSQL은 EXPLAIN을 지원하지 않습니다. `InvalidQueryError`가 throw됩니다.
 
 ---
 

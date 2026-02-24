@@ -13,17 +13,26 @@ TypeScript 기반의 경량 ORM으로, MySQL, PostgreSQL, SQLite, MSSQL을 지�
 - **Cascade** — insert / update / delete 자동 전파
 - **Soft Delete** — `@DeletedAt`, `softDelete()`, `restore()`
 - **트랜잭션** — `@Transactional()` 데코레이터, 격리 수준, Savepoint
-- **마이그레이션** — `Migration` 추상 클래스, `MigrationRunner`, CLI
-- **쿼리 빌더 DSL** — `RawQueryBuilder` (select / join / where / orderBy / limit 등)
-- **집계 쿼리** — `count`, `sum`, `avg`, `min`, `max`
+- **마이그레이션** — `Migration` 추상 클래스, `MigrationRunner`, CLI, Schema Diff 자동 생성
+- **쿼리 빌더 DSL** — `RawQueryBuilder` (select / join / where / orderBy / groupBy / having / limit 등)
+- **집계 쿼리** — `count`, `sum`, `avg`, `min`, `max`, `findAndCount`
+- **Upsert** — `INSERT ... ON DUPLICATE KEY UPDATE` (MySQL) / `ON CONFLICT DO UPDATE` (PostgreSQL)
+- **EXPLAIN** — `explain()` 쿼리 실행 계획 조회 (`ExplainResult`)
 - **배치 연산** — `insertMany`, `saveMany`, `deleteMany`
 - **쿼리 캐싱** — TTL 기반 인메모리 캐시
 - **이벤트 시스템** — `on/off(event, handler)`, `EntitySubscriber`
 - **N+1 감지** — `logging.nPlusOne` 옵션
 - **커서 페이지네이션** — `findWithCursor`, Base64 커서
 - **연결 풀링** — `PoolOptions` (max / min / acquireTimeoutMs / idleTimeoutMs)
-- **멀티테넌시** — `LayeredMetadataStore`, `withTenant(tenantId, callback)`
+- **Read Replica** — master/slave 읽기/쓰기 분리, 라운드 로빈 + 자동 fallback
+- **쿼리 타임아웃** — connection-level / per-query 타임아웃 (`QueryTimeoutError`)
+- **멀티 DB** — named connection으로 복수 DB 독립 운용 (`getConnectionName()`)
+- **멀티테넌시** — `LayeredMetadataStore`, `MetadataContext.run(tenantId, callback)`
 - **유효성 검사** — `@NotNull`, `@MinLength`, `@MaxLength`, `@Min`, `@Max`
+- **복합 유니크 인덱스** — `@UniqueIndex(columns[])`
+- **FK 해시 네이밍** — 충돌 방지를 위한 `fk_{table}_{hash8}` 자동 생성
+- **NestJS 통합** — `InjectRepository`, `StinglerloomOrmModule`, 멀티테넌시 미들웨어
+- **`findOne()` 타입 안전성** — 결과 없을 시 `null` 반환 (`T | null`)
 
 ---
 

@@ -234,8 +234,7 @@ export class AppModule {}
 ```typescript
 // users.service.ts
 import { Injectable } from "@nestjs/common";
-import { BaseRepository } from "stingerloom-orm";
-import { InjectRepository } from "./stingerloom-orm/inject-repository.decorator";
+import { BaseRepository, InjectRepository } from "stingerloom-orm";
 import { User } from "./user.entity";
 
 @Injectable()
@@ -245,9 +244,62 @@ export class UsersService {
   ) {}
 
   async findAll(): Promise<User[]> {
-    const result = await this.userRepo.find();
-    if (!result) return [];
-    return Array.isArray(result) ? result : [result];
+    return (await this.userRepo.find()) as User[];
+  }
+
+  async findById(id: number): Promise<User | null> {
+    return this.userRepo.findOne({ where: { id } as any });
   }
 }
+```
+
+---
+
+## 7. 멀티 DB 연결
+
+복수의 데이터베이스를 독립적으로 운용할 수 있습니다. 각 `EntityManager` 인스턴스에 named connection을 부여합니다.
+
+```typescript
+import { EntityManager } from "stingerloom-orm";
+import { User } from "./user.entity";
+import { Log } from "./log.entity";
+
+// Primary DB (MySQL)
+const primaryEm = new EntityManager();
+await primaryEm.register(
+  {
+    type: "mysql",
+    host: "localhost",
+    port: 3306,
+    username: "root",
+    password: "password",
+    database: "primary_db",
+    entities: [User],
+    synchronize: true,
+  },
+  "primary",  // named connection
+);
+
+// Analytics DB (PostgreSQL)
+const analyticsEm = new EntityManager();
+await analyticsEm.register(
+  {
+    type: "postgres",
+    host: "analytics.example.com",
+    port: 5432,
+    username: "analytics",
+    password: "password",
+    database: "analytics_db",
+    entities: [Log],
+    synchronize: true,
+  },
+  "analytics",  // named connection
+);
+
+// 각 EntityManager를 독립적으로 사용
+const users = await primaryEm.find(User);
+const logs = await analyticsEm.find(Log);
+
+console.log(primaryEm.getConnectionName());   // "primary"
+console.log(analyticsEm.getConnectionName()); // "analytics"
 ```

@@ -214,6 +214,59 @@ export class User {
 
 ---
 
+## @UniqueIndex
+
+복합 유니크 인덱스를 클래스 레벨에 선언합니다. 여러 컬럼의 조합이 유일해야 하는 경우에 사용합니다.
+
+**시그니처**
+
+```typescript
+function UniqueIndex(columns: string[], options?: { name?: string }): ClassDecorator
+```
+
+**예제**
+
+```typescript
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  UniqueIndex,
+} from "stingerloom-orm";
+
+// email + tenantId 조합이 유일해야 함
+@UniqueIndex(["email", "tenantId"])
+@Entity()
+export class User {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  email!: string;
+
+  @Column()
+  tenantId!: string;
+}
+
+// 인덱스 이름 명시
+@UniqueIndex(["categoryId", "slug"], { name: "uq_post_category_slug" })
+@Entity()
+export class Post {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  categoryId!: number;
+
+  @Column()
+  slug!: string;
+}
+```
+
+`synchronize: true` 설정 시 `UNIQUE INDEX` DDL이 자동으로 생성됩니다.
+
+---
+
 ## @Version
 
 낙관적 잠금(Optimistic Locking)을 위한 버전 컬럼을 설정합니다. 동시 수정 시 충돌 감지에 사용합니다.

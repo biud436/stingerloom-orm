@@ -209,6 +209,50 @@ const all = store.getAll();
 
 ---
 
+## NestJS 통합 예제
+
+`examples/nestjs-multitenant/` 폴더에 완전한 NestJS 멀티테넌시 예제가 포함되어 있습니다.
+
+```
+examples/nestjs-multitenant/
+├── src/
+│   ├── app.module.ts           # TenantMiddleware 등록
+│   ├── tenant.middleware.ts    # X-Tenant-Id 헤더 기반 컨텍스트 설정
+│   ├── users/
+│   │   ├── user.entity.ts      # User 엔티티
+│   │   ├── users.module.ts
+│   │   ├── users.service.ts    # withTenant() 활용 CRUD
+│   │   └── users.controller.ts
+│   └── posts/
+│       ├── post.entity.ts
+│       ├── posts.module.ts
+│       ├── posts.service.ts
+│       └── posts.controller.ts
+└── package.json
+```
+
+**실행 방법**
+
+```bash
+cd examples/nestjs-multitenant
+pnpm install
+pnpm start
+```
+
+**API 호출 예시**
+
+```bash
+# tenant_1 컨텍스트에서 유저 조회
+curl -H "X-Tenant-Id: tenant_1" http://localhost:3000/users
+
+# tenant_2 컨텍스트에서 포스트 조회
+curl -H "X-Tenant-Id: tenant_2" http://localhost:3000/posts
+```
+
+`X-Tenant-Id` 헤더가 없으면 기본값 `"public"`으로 처리됩니다.
+
+---
+
 ## 주의 사항
 
 1. **전역 상태 사용 금지:** 새 기능 추가 시 전역 싱글톤 대신 레이어를 통한 메타데이터 접근을 사용하세요.

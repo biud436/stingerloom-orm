@@ -334,3 +334,115 @@ migrations/
 ├── 004_AddEmailIndex.ts
 └── 005_SeedRoles.ts
 ```
+
+---
+
+## Schema Diff 기반 Migration 자동 생성
+
+`SchemaDiff`와 `SchemaDiffMigrationGenerator`를 사용하면 현재 엔티티 정의와 실제 DB 스키마의 차이를 감지하여 Migration 파일을 자동으로 생성할 수 있습니다.
+
+### SchemaDiff.compare()
+
+```typescript
+import { SchemaDiff } from "stingerloom-orm";
+
+const diff = await SchemaDiff.compare(em, [User, Post, Comment]);
+
+console.log(diff.addedTables);    // 새로 추가된 테이블 이름 목록
+console.log(diff.droppedTables);  // 삭제된 테이블 이름 목록
+console.log(diff.modifiedTables); // 변경된 테이블 정보 (추가/삭제된 컬럼 포함)
+```
+
+**SchemaDiffResult 타입**
+
+```typescript
+interface SchemaDiffResult {
+  addedTables: string[];
+  droppedTables: string[];
+  modifiedTables: Array<{
+    tableName: string;
+    addedColumns: ColumnDiff[];
+    droppedColumns: string[];
+  }>;
+}
+```
+
+### SchemaDiffMigrationGenerator.generate()
+
+```typescript
+import { SchemaDiff, SchemaDiffMigrationGenerator } from "stingerloom-orm";
+
+// 1. 스키마 비교
+const diff = await SchemaDiff.compare(em, [User, Post]);
+
+// 2. Migration 클래스 생성
+const generator = new SchemaDiffMigrationGenerator();
+const migrations = generator.generate(diff);
+
+// 3. 생성된 Migration 실행
+const runner = new MigrationRunner(driver, queryRunner);
+for (const migration of migrations) {
+  await runner.runUp(migration);
+}
+```
+
+**생성되는 Migration 예시**
+
+엔티티에 `phone` 컬럼이 추가된 경우:
+```typescript
+// 자동 생성된 Migration
+class SchemaDiff_1708000000000 extends Migration {
+  async up(context: MigrationContext) {
+    await context.query(
+      `ALTER TABLE \`users\` ADD COLUMN \`phone\` VARCHAR(20) NULL`
+    );
+  }
+  async down(context: MigrationContext) {
+    await context.query(
+      `ALTER TABLE \`users\` DROP COLUMN \`phone\``
+    );
+  }
+}
+```
+
+### 전체 워크플로우 예시
+
+```typescript
+import {
+  EntityManager,
+  SchemaDiff,
+  SchemaDiffMigrationGenerator,
+  MigrationRunner,
+} from "stingerloom-orm";
+
+async function autoMigrate() {
+  const em = new EntityManager();
+  await em.register({
+    type: "mysql",
+    // ...
+    entities: [User, Post],
+    synchronize: false, // Schema Diff 사용 시 synchronize는 false 권장
+  });
+
+  // 엔티티 vs 실제 DB 차이 비교
+  const diff = await SchemaDiff.compare(em, [User, Post]);
+
+  if (
+    diff.addedTables.length === 0 &&
+    diff.droppedTables.length === 0 &&
+    diff.modifiedTables.length === 0
+  ) {
+    console.log("스키마 변경 없음");
+    return;
+  }
+
+  console.log("변경 감지:", diff);
+
+  // Migration 자동 생성 및 실행
+  const generator = new SchemaDiffMigrationGenerator();
+  const migrations = generator.generate(diff);
+  console.log(`${migrations.length}개 Migration 생성됨`);
+}
+```
+
+> **주의:** Schema Diff는 테이블 존재 여부와 컬럼 추가/삭제를 감지합니다. 컬럼 타입 변경은 현재 지원되지 않으므로, 복잡한 타입 변경은 수동 Migration으로 작성하는 것을 권장합니다.
