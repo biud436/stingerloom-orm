@@ -6,7 +6,6 @@ import {
   Patch,
   Param,
   Delete,
-  Headers,
   ParseIntPipe,
 } from "@nestjs/common";
 import { UsersService } from "./users.service";
@@ -18,40 +17,30 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  create(
-    @Headers("x-tenant-id") tenantId: string,
-    @Body() dto: CreateUserDto,
-  ) {
-    return this.usersService.create(tenantId || "public", dto);
+  create(@Body() dto: CreateUserDto) {
+    return this.usersService.create(dto);
   }
 
   @Get()
-  findAll(@Headers("x-tenant-id") tenantId: string) {
-    return this.usersService.findAll(tenantId || "public");
+  findAll() {
+    return this.usersService.findAll();
   }
 
   @Get(":id")
-  findOne(
-    @Headers("x-tenant-id") tenantId: string,
-    @Param("id", ParseIntPipe) id: number,
-  ) {
-    return this.usersService.findOne(tenantId || "public", id);
+  findOne(@Param("id", ParseIntPipe) id: number) {
+    return this.usersService.findOne(id);
   }
 
   @Patch(":id")
   update(
-    @Headers("x-tenant-id") tenantId: string,
     @Param("id", ParseIntPipe) id: number,
     @Body() dto: UpdateUserDto,
   ) {
-    return this.usersService.update(tenantId || "public", id, dto);
+    return this.usersService.update(id, dto);
   }
 
   @Delete(":id")
-  remove(
-    @Headers("x-tenant-id") tenantId: string,
-    @Param("id", ParseIntPipe) id: number,
-  ) {
-    return this.usersService.remove(tenantId || "public", id);
+  remove(@Param("id", ParseIntPipe) id: number) {
+    return this.usersService.remove(id);
   }
 }

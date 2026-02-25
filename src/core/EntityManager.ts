@@ -1130,7 +1130,8 @@ export class EntityManager implements BaseEntityManager {
           throw new PrimaryKeyNotFoundError(mappingEntity.name);
         }
 
-        const { name: mappingTableName } = mappingEntity;
+        const mappingTableName =
+          mappingTableMetadata.name || this.getNameStrategy(mappingEntity);
 
         // joinColumn 컬럼이 테이블에 없으면 먼저 추가합니다.
         if (this.driver) {
@@ -1194,9 +1195,12 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      const relatedTableName =
+        relatedMetadata.name || this.getNameStrategy(RelatedEntity);
+
       // FK 제약이 이미 존재하면 중복 추가를 건너뜁니다.
       if (this.driver) {
-        const fkName = this.driver.generateForeignKeyName(tableName, RelatedEntity.name, joinColumn);
+        const fkName = this.driver.generateForeignKeyName(tableName, relatedTableName, joinColumn);
         const fkExists = await this.driver.hasForeignKey(tableName, fkName);
         if (fkExists) continue;
       }
@@ -1204,7 +1208,7 @@ export class EntityManager implements BaseEntityManager {
       await this.driver?.addForeignKey(
         tableName,
         joinColumn,
-        RelatedEntity.name,
+        relatedTableName,
         relatedPrimaryKey,
       );
     }
@@ -1831,10 +1835,11 @@ export class EntityManager implements BaseEntityManager {
         const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
         if (!relatedMetadata) continue;
 
+        const relatedName = relatedMetadata.name || RelatedEntity.name;
         for (const col of relatedMetadata.columns) {
           const alias = `${rel.columnName}_${col.name}`;
           selectMap.push(
-            `${this.wrap(RelatedEntity.name)}.${this.wrap(col.name!)} AS ${this.wrap(alias)}`,
+            `${this.wrap(relatedName)}.${this.wrap(col.name!)} AS ${this.wrap(alias)}`,
           );
         }
       }
@@ -1845,10 +1850,11 @@ export class EntityManager implements BaseEntityManager {
         const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
         if (!relatedMetadata) continue;
 
+        const relatedName = relatedMetadata.name || RelatedEntity.name;
         for (const col of relatedMetadata.columns) {
           const alias = `${rel.propertyKey}_${col.name}`;
           selectMap.push(
-            `${this.wrap(RelatedEntity.name)}.${this.wrap(col.name!)} AS ${this.wrap(alias)}`,
+            `${this.wrap(relatedName)}.${this.wrap(col.name!)} AS ${this.wrap(alias)}`,
           );
         }
       }
@@ -1900,7 +1906,7 @@ export class EntityManager implements BaseEntityManager {
         const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
         if (!relatedMetadata) continue;
 
-        const relatedTableName = RelatedEntity.name;
+        const relatedTableName = relatedMetadata.name || RelatedEntity.name;
         const joinColumn = rel.joinColumn ?? rel.columnName;
 
         // 관련 엔티티의 PK 찾기
@@ -1923,7 +1929,7 @@ export class EntityManager implements BaseEntityManager {
         const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
         if (!relatedMetadata) continue;
 
-        const relatedTableName = RelatedEntity.name;
+        const relatedTableName = relatedMetadata.name || RelatedEntity.name;
         const joinColumn = rel.joinColumn!;
 
         const relatedPk = relatedMetadata.columns.find(

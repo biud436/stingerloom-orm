@@ -11,54 +11,44 @@ export class PostsService {
     private readonly em: EntityManager,
   ) {}
 
-  async create(tenantId: string, dto: CreatePostDto): Promise<Post> {
-    return this.em.withTenant(tenantId, async (em) => {
-      const post = new Post();
-      post.title = dto.title;
-      post.content = dto.content;
-      if (dto.published !== undefined) post.published = dto.published;
+  async create(dto: CreatePostDto): Promise<Post> {
+    const post = new Post();
+    post.title = dto.title;
+    post.content = dto.content;
+    if (dto.published !== undefined) post.published = dto.published;
 
-      const result = await em.save(Post, post);
-      return Array.isArray(result) ? result[0] : result;
-    });
+    const result = await this.em.save(Post, post);
+    return Array.isArray(result) ? result[0] : result;
   }
 
-  async findAll(tenantId: string): Promise<Post[]> {
-    return this.em.withTenant(tenantId, async (em) => {
-      const result = await em.find(Post, {});
-      if (!result) return [];
-      return Array.isArray(result) ? result : [result];
-    });
+  async findAll(): Promise<Post[]> {
+    const result = await this.em.find(Post, {});
+    if (!result) return [];
+    return Array.isArray(result) ? result : [result];
   }
 
-  async findOne(tenantId: string, id: number): Promise<Post> {
-    return this.em.withTenant(tenantId, async (em) => {
-      const result = await em.findOne(Post, { where: { id } as any });
-      if (!result) throw new NotFoundException(`Post with ID ${id} not found`);
-      return Array.isArray(result) ? result[0] : result;
-    });
+  async findOne(id: number): Promise<Post> {
+    const result = await this.em.findOne(Post, { where: { id } as any });
+    if (!result) throw new NotFoundException(`Post with ID ${id} not found`);
+    return Array.isArray(result) ? result[0] : result;
   }
 
-  async update(tenantId: string, id: number, dto: UpdatePostDto): Promise<Post> {
-    return this.em.withTenant(tenantId, async (em) => {
-      const result = await em.findOne(Post, { where: { id } as any });
-      if (!result) throw new NotFoundException(`Post with ID ${id} not found`);
-      const post = Array.isArray(result) ? result[0] : result;
+  async update(id: number, dto: UpdatePostDto): Promise<Post> {
+    const result = await this.em.findOne(Post, { where: { id } as any });
+    if (!result) throw new NotFoundException(`Post with ID ${id} not found`);
+    const post = Array.isArray(result) ? result[0] : result;
 
-      if (dto.title !== undefined) post.title = dto.title;
-      if (dto.content !== undefined) post.content = dto.content;
-      if (dto.published !== undefined) post.published = dto.published;
+    if (dto.title !== undefined) post.title = dto.title;
+    if (dto.content !== undefined) post.content = dto.content;
+    if (dto.published !== undefined) post.published = dto.published;
 
-      const saved = await em.save(Post, post);
-      return Array.isArray(saved) ? saved[0] : saved;
-    });
+    const saved = await this.em.save(Post, post);
+    return Array.isArray(saved) ? saved[0] : saved;
   }
 
-  async remove(tenantId: string, id: number): Promise<void> {
-    await this.em.withTenant(tenantId, async (em) => {
-      const result = await em.findOne(Post, { where: { id } as any });
-      if (!result) throw new NotFoundException(`Post with ID ${id} not found`);
-      await em.delete(Post, { id } as any);
-    });
+  async remove(id: number): Promise<void> {
+    const result = await this.em.findOne(Post, { where: { id } as any });
+    if (!result) throw new NotFoundException(`Post with ID ${id} not found`);
+    await this.em.delete(Post, { id } as any);
   }
 }
