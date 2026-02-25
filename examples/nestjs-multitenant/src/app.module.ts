@@ -23,7 +23,7 @@ import { PostsController } from "./posts/posts.controller";
       port: parseInt(process.env.DB_PORT || "5432"),
       username: process.env.DB_USER || "postgres",
       password: process.env.DB_PASSWORD || "postgres",
-      database: process.env.DB_NAME || "multi_tenancy_db",
+      database: process.env.DB_NAME || "multi_tenancy_db2",
       entities: [User, Post],
       synchronize: true,
       logging: true,

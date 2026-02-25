@@ -2,6 +2,7 @@ import { Inject, Injectable, NestMiddleware } from "@nestjs/common";
 import { Request, Response, NextFunction } from "express";
 import { MetadataContext } from "stingerloom-orm";
 import { TENANT_MODULE_OPTIONS, TenantModuleOptions } from "./tenant.constants";
+import { TenantSchemaService } from "./tenant-schema.service";
 
 /**
  * Tenant Middleware
@@ -37,6 +38,7 @@ export class TenantMiddleware implements NestMiddleware {
   constructor(
     @Inject(TENANT_MODULE_OPTIONS)
     private readonly options: TenantModuleOptions,
+    private readonly tenantSchemaService: TenantSchemaService,
   ) {
     this.headerName = options.headerName || "x-tenant-id";
     this.defaultTenant = options.defaultTenant || "public";
@@ -46,8 +48,13 @@ export class TenantMiddleware implements NestMiddleware {
     const tenantId =
       (req.headers[this.headerName] as string) || this.defaultTenant;
 
-    MetadataContext.run(tenantId, () => {
-      next();
+    MetadataContext.run(tenantId, async () => {
+      try {
+        await this.tenantSchemaService.ensureSchema(tenantId);
+        next();
+      } catch (err) {
+        next(err);
+      }
     });
   }
 }

@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { TenantMiddleware } from "./tenant.middleware";
 import { TenantContext } from "./tenant-context.service";
+import { TenantSchemaService } from "./tenant-schema.service";
 import { TenantController } from "./tenant.controller";
 import {
   TENANT_MODULE_OPTIONS,
@@ -65,8 +66,9 @@ export class TenantModule implements NestModule {
           useValue: TenantModule.options,
         },
         TenantContext,
+        TenantSchemaService,
       ],
-      exports: [TenantContext, TENANT_MODULE_OPTIONS],
+      exports: [TenantContext, TenantSchemaService, TENANT_MODULE_OPTIONS],
       global: true,
     };
   }

@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication } from "@nestjs/common";
 import * as request from "supertest";
+import { Pool } from "pg";
 import { AppModule } from "../src/app.module";
 
 /**
@@ -15,8 +16,8 @@ import { AppModule } from "../src/app.module";
  * 1. TenantMiddleware automatically sets tenant context via AsyncLocalStorage
  * 2. TenantContext injectable service returns correct tenant
  * 3. @Tenant() decorator extracts tenant from context
- * 4. Data isolation between tenants (tenant_a vs tenant_b vs public)
- * 5. CRUD operations work correctly within each tenant
+ * 4. Real PostgreSQL schema-based data isolation between tenants
+ * 5. CRUD operations work correctly within each tenant's schema
  */
 
 const skipReason = !process.env.INTEGRATION_TEST
@@ -30,6 +31,7 @@ const wait = (ms = 200) => new Promise((r) => setTimeout(r, ms));
 describeIf("[E2E] nestjs-multitenant API", () => {
   let app: INestApplication;
   let server: any;
+  let pool: Pool;
 
   const ts = Date.now();
 
@@ -40,6 +42,15 @@ describeIf("[E2E] nestjs-multitenant API", () => {
   let tenantAPostId: number;
 
   beforeAll(async () => {
+    // Direct pool for schema cleanup
+    pool = new Pool({
+      host: process.env.DB_HOST || "localhost",
+      port: parseInt(process.env.DB_PORT || "5432"),
+      user: process.env.DB_USER || "postgres",
+      password: process.env.DB_PASSWORD || "postgres",
+      database: process.env.DB_NAME || "multi_tenancy_db2",
+    });
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -54,29 +65,19 @@ describeIf("[E2E] nestjs-multitenant API", () => {
   }, 30000);
 
   afterAll(async () => {
-    // Cleanup: delete all test data
-    const cleanups = [
-      { id: tenantAPostId, path: "posts", tenant: "tenant_a" },
-      { id: tenantAUserId, path: "users", tenant: "tenant_a" },
-      { id: tenantBUserId, path: "users", tenant: "tenant_b" },
-      { id: publicUserId, path: "users", tenant: undefined },
-    ];
-
-    for (const { id, path, tenant } of cleanups) {
-      if (id) {
-        try {
-          const req = request(server).delete(`/${path}/${id}`);
-          if (tenant) req.set("x-tenant-id", tenant);
-          await req;
-          await wait(100);
-        } catch {
-          // ignore cleanup errors
-        }
-      }
+    // Drop tenant schemas to clean up
+    try {
+      await pool.query('DROP SCHEMA IF EXISTS "tenant_a" CASCADE');
+      await pool.query('DROP SCHEMA IF EXISTS "tenant_b" CASCADE');
+    } catch {
+      // ignore cleanup errors
     }
 
     if (app) {
       await app.close();
+    }
+    if (pool) {
+      await pool.end();
     }
   }, 30000);
 
@@ -207,42 +208,50 @@ describeIf("[E2E] nestjs-multitenant API", () => {
   });
 
   // ===========================
-  // Cross-Tenant Isolation
+  // Cross-Tenant Data Isolation
   // ===========================
-  describe("Cross-Tenant Isolation", () => {
-    it("tenant_b should NOT see tenant_a user by ID", async () => {
-      const res = await request(server)
-        .get(`/users/${tenantAUserId}`)
-        .set("x-tenant-id", "tenant_b");
-      // Should either 404 or return a different user (DB-level isolation)
-      // With metadata-layer isolation, both tenants share the same DB table
-      // so the user may be found. The key test is that list queries are isolated.
-      // This tests the findOne which queries by ID directly.
-      expect(res.status).toBeDefined();
-    });
-
+  describe("Cross-Tenant Data Isolation (Schema-Based)", () => {
     it("tenant_a list should NOT contain tenant_b username", async () => {
       const res = await request(server)
         .get("/users")
         .set("x-tenant-id", "tenant_a");
       expect(res.status).toBe(200);
-      // Both tenants share the same DB table with metadata-layer isolation.
-      // The list query returns all rows (same table), but the metadata
-      // (column mappings, etc.) comes from the correct tenant layer.
-      // Full row isolation requires schema-based or row-level tenancy.
-      expect(Array.isArray(res.body)).toBe(true);
+      const usernames = res.body.map((u: any) => u.username);
+      expect(usernames).toContain(`alice_${ts}`);
+      expect(usernames).not.toContain(`bob_${ts}`);
+      expect(usernames).not.toContain(`public_user_${ts}`);
     });
 
-    it("public tenant should NOT contain tenant-specific data when using separate contexts", async () => {
-      const resPublic = await request(server).get("/users");
-      const resTenantA = await request(server)
+    it("tenant_b list should NOT contain tenant_a username", async () => {
+      const res = await request(server)
         .get("/users")
-        .set("x-tenant-id", "tenant_a");
-      expect(resPublic.status).toBe(200);
-      expect(resTenantA.status).toBe(200);
-      // Both should return successfully under their respective contexts
-      expect(Array.isArray(resPublic.body)).toBe(true);
-      expect(Array.isArray(resTenantA.body)).toBe(true);
+        .set("x-tenant-id", "tenant_b");
+      expect(res.status).toBe(200);
+      const usernames = res.body.map((u: any) => u.username);
+      expect(usernames).toContain(`bob_${ts}`);
+      expect(usernames).not.toContain(`alice_${ts}`);
+      expect(usernames).not.toContain(`public_user_${ts}`);
+    });
+
+    it("public tenant should NOT contain tenant-specific data", async () => {
+      const res = await request(server).get("/users");
+      expect(res.status).toBe(200);
+      const usernames = res.body.map((u: any) => u.username);
+      expect(usernames).toContain(`public_user_${ts}`);
+      expect(usernames).not.toContain(`alice_${ts}`);
+      expect(usernames).not.toContain(`bob_${ts}`);
+    });
+
+    it("tenant_b should NOT find tenant_a user by ID", async () => {
+      const res = await request(server)
+        .get(`/users/${tenantAUserId}`)
+        .set("x-tenant-id", "tenant_b");
+      // Schema isolation: tenant_a's user ID doesn't exist in tenant_b schema
+      expect([200, 404]).toContain(res.status);
+      if (res.status === 200) {
+        // If found by ID, it must be a different user (independent sequences)
+        expect(res.body.username).not.toBe(`alice_${ts}`);
+      }
     });
   });
 
@@ -275,6 +284,15 @@ describeIf("[E2E] nestjs-multitenant API", () => {
       expect(titles).toContain(`Tenant A Post ${ts}`);
     });
 
+    it("GET /posts — tenant_b should NOT see tenant_a posts", async () => {
+      const res = await request(server)
+        .get("/posts")
+        .set("x-tenant-id", "tenant_b");
+      expect(res.status).toBe(200);
+      const titles = res.body.map((p: any) => p.title);
+      expect(titles).not.toContain(`Tenant A Post ${ts}`);
+    });
+
     it("GET /posts/:id — should find tenant_a post", async () => {
       const res = await request(server)
         .get(`/posts/${tenantAPostId}`)
@@ -296,7 +314,7 @@ describeIf("[E2E] nestjs-multitenant API", () => {
   });
 
   // ===========================
-  // Users — Update & Delete
+  // Users — Update
   // ===========================
   describe("Tenant A — User Update", () => {
     it("PATCH /users/:id — should update user in tenant_a", async () => {
@@ -316,8 +334,6 @@ describeIf("[E2E] nestjs-multitenant API", () => {
   // ===========================
   describe("Middleware Automatic Context", () => {
     it("should not require explicit withTenant() in service — middleware handles it", async () => {
-      // Create a user via tenant_a — the service no longer calls em.withTenant()
-      // The TenantMiddleware sets MetadataContext.run() and the ORM picks it up
       const res = await request(server)
         .post("/users")
         .set("x-tenant-id", "tenant_a")
@@ -360,6 +376,56 @@ describeIf("[E2E] nestjs-multitenant API", () => {
         .get("/posts/999999")
         .set("x-tenant-id", "tenant_a");
       expect(res.status).toBe(404);
+    });
+  });
+
+  // ===========================
+  // Schema Existence Verification
+  // ===========================
+  describe("Schema Existence Verification", () => {
+    it("tenant_a schema should exist in PostgreSQL", async () => {
+      const { rows } = await pool.query(
+        `SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'tenant_a'`,
+      );
+      expect(rows.length).toBe(1);
+      expect(rows[0].schema_name).toBe("tenant_a");
+    });
+
+    it("tenant_b schema should exist in PostgreSQL", async () => {
+      const { rows } = await pool.query(
+        `SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'tenant_b'`,
+      );
+      expect(rows.length).toBe(1);
+      expect(rows[0].schema_name).toBe("tenant_b");
+    });
+
+    it("tenant_a schema should have user and post tables", async () => {
+      const { rows } = await pool.query(
+        `SELECT tablename FROM pg_tables WHERE schemaname = 'tenant_a' ORDER BY tablename`,
+      );
+      const tables = rows.map((r: any) => r.tablename);
+      expect(tables).toContain("user");
+      expect(tables).toContain("post");
+    });
+
+    it("tenant_a.user should contain only tenant_a data", async () => {
+      const { rows } = await pool.query(
+        `SELECT username FROM "tenant_a"."user"`,
+      );
+      const usernames = rows.map((r: any) => r.username);
+      expect(usernames).toContain(`alice_${ts}`);
+      expect(usernames).not.toContain(`bob_${ts}`);
+      expect(usernames).not.toContain(`public_user_${ts}`);
+    });
+
+    it("public.user should contain only public data", async () => {
+      const { rows } = await pool.query(
+        `SELECT username FROM "public"."user"`,
+      );
+      const usernames = rows.map((r: any) => r.username);
+      expect(usernames).toContain(`public_user_${ts}`);
+      expect(usernames).not.toContain(`alice_${ts}`);
+      expect(usernames).not.toContain(`bob_${ts}`);
     });
   });
 

@@ -7,6 +7,7 @@ import { ConnectionNotFound } from "./ConnectionNotFound";
 import { PoolNotFound } from "./PoolNotFound";
 import { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { IConnector } from "../../core/IConnector";
+import { MetadataContext } from "../../metadata/MetadataContext";
 
 export class PostgresConnector extends IConnector {
   pool?: Pool;
@@ -153,6 +154,13 @@ export class PostgresConnector extends IConnector {
 
     await client.query("BEGIN");
     await this.setTransactionIsolationLevel(client, level);
+
+    // 멀티테넌시: 트랜잭션 스코프 search_path 설정
+    // SET LOCAL은 현재 트랜잭션에만 적용되고 COMMIT/ROLLBACK 시 자동 복원
+    const tenant = MetadataContext.getCurrentTenant();
+    const schema = tenant !== "public" ? tenant : this.schema;
+    const escaped = schema.replace(/"/g, '""');
+    await client.query(`SET LOCAL search_path TO "${escaped}"`);
   }
 
   async rollback(connection: any): Promise<void> {
