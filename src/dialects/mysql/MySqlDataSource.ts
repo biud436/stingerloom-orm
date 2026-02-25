@@ -23,7 +23,9 @@ export class MySqlDataSource implements IDataSource {
       return;
     }
 
-    await this.connection.release();
+    const conn = this.connection;
+    this.connection = undefined;
+    conn.release();
   }
 
   async startTransaction(level?: TRANSACTION_ISOLATION_LEVEL) {
@@ -40,6 +42,7 @@ export class MySqlDataSource implements IDataSource {
     }
 
     await this.connector.rollback(this.connection);
+    this.connection = undefined;
   }
 
   async commit() {
@@ -48,6 +51,7 @@ export class MySqlDataSource implements IDataSource {
     }
 
     await this.connector.commit(this.connection);
+    this.connection = undefined;
   }
 
   async query(sql: string) {
