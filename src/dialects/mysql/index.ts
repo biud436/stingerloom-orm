@@ -5,3 +5,4 @@ export * from "./MySqlDataSource";
 export * from "./MySqlConnectionError";
 export * from "./ConnectionNotFound";
 export * from "./PoolNotFound";
+export * from "./MySqlTenantMigrationRunner";

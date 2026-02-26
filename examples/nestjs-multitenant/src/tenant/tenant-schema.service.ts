@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import {
   EntityManager,
-  TenantMigrationRunner,
+  PostgresTenantMigrationRunner,
   PostgresDriver,
 } from "stingerloom-orm";
 import { Inject } from "@nestjs/common";
@@ -14,7 +14,7 @@ import { Inject } from "@nestjs/common";
  */
 @Injectable()
 export class TenantSchemaService {
-  private runner: TenantMigrationRunner | null = null;
+  private runner: PostgresTenantMigrationRunner | null = null;
 
   constructor(
     @Inject(EntityManager)
@@ -30,7 +30,7 @@ export class TenantSchemaService {
     return runner.ensureSchema(tenantId);
   }
 
-  private getRunner(): TenantMigrationRunner {
+  private getRunner(): PostgresTenantMigrationRunner {
     if (!this.runner) {
       const driver = this.em.getDriver() as PostgresDriver;
       if (!driver) {
@@ -38,7 +38,7 @@ export class TenantSchemaService {
           "EntityManager driver not initialized. Ensure connect() has been called.",
         );
       }
-      this.runner = new TenantMigrationRunner(driver);
+      this.runner = new PostgresTenantMigrationRunner(driver);
     }
     return this.runner;
   }

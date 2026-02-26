@@ -1,10 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
 import {
-  TenantMigrationRunner,
-  TenantSyncResult,
+  PostgresTenantMigrationRunner,
 } from "../../src/dialects/postgres/TenantMigrationRunner";
+import { TenantSyncResult } from "../../src/dialects/ITenantMigrationRunner";
 import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
+import { MySqlTenantMigrationRunner } from "../../src/dialects/mysql/MySqlTenantMigrationRunner";
+import { SqliteTenantMigrationRunner } from "../../src/dialects/sqlite/SqliteTenantMigrationRunner";
+import { MssqlTenantMigrationRunner } from "../../src/dialects/mssql/MssqlTenantMigrationRunner";
+import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 
 /**
  * PostgresDriver mock factory.
@@ -47,13 +51,13 @@ function createMockDriver(options?: {
   return driver;
 }
 
-describe("TenantMigrationRunner", () => {
+describe("PostgresTenantMigrationRunner", () => {
   describe("discoverSchemas()", () => {
     it("데이터베이스의 모든 사용자 스키마 목록을 반환해야 한다", async () => {
       const driver = createMockDriver({
         schemas: ["public", "tenant_a", "tenant_b"],
       });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       const schemas = await runner.discoverSchemas();
 
@@ -66,7 +70,7 @@ describe("TenantMigrationRunner", () => {
 
     it("사용자 스키마가 없으면 빈 배열을 반환해야 한다", async () => {
       const driver = createMockDriver({ schemas: [] });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       const schemas = await runner.discoverSchemas();
 
@@ -77,7 +81,7 @@ describe("TenantMigrationRunner", () => {
   describe("ensureSchema()", () => {
     it("새 테넌트 스키마를 생성하고 테이블을 복제해야 한다", async () => {
       const driver = createMockDriver({ tables: ["users", "posts"] });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.ensureSchema("tenant_a");
 
@@ -95,7 +99,7 @@ describe("TenantMigrationRunner", () => {
 
     it("source 스키마(public)에 대해서는 no-op이어야 한다", async () => {
       const driver = createMockDriver();
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.ensureSchema("public");
 
@@ -105,7 +109,7 @@ describe("TenantMigrationRunner", () => {
 
     it("이미 프로비저닝된 스키마는 다시 생성하지 않아야 한다", async () => {
       const driver = createMockDriver();
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.ensureSchema("tenant_a");
       await runner.ensureSchema("tenant_a");
@@ -115,7 +119,7 @@ describe("TenantMigrationRunner", () => {
 
     it("동시 호출 시 동일 스키마에 대한 중복 프로비저닝을 방지해야 한다", async () => {
       const driver = createMockDriver();
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       // 동시에 3개의 ensureSchema 호출
       await Promise.all([
@@ -129,7 +133,7 @@ describe("TenantMigrationRunner", () => {
 
     it("LIKE ... INCLUDING ALL 구문을 사용하여 테이블을 복제해야 한다", async () => {
       const driver = createMockDriver({ tables: ["orders"] });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.ensureSchema("tenant_x");
 
@@ -140,7 +144,7 @@ describe("TenantMigrationRunner", () => {
 
     it("커스텀 sourceSchema를 사용할 수 있어야 한다", async () => {
       const driver = createMockDriver({ tables: ["items"] });
-      const runner = new TenantMigrationRunner(driver, {
+      const runner = new PostgresTenantMigrationRunner(driver, {
         sourceSchema: "template",
       });
 
@@ -154,7 +158,7 @@ describe("TenantMigrationRunner", () => {
 
     it("sourceSchema와 동일한 tenantId는 건너뛰어야 한다", async () => {
       const driver = createMockDriver();
-      const runner = new TenantMigrationRunner(driver, {
+      const runner = new PostgresTenantMigrationRunner(driver, {
         sourceSchema: "base",
       });
 
@@ -170,7 +174,7 @@ describe("TenantMigrationRunner", () => {
         schemas: ["public", "tenant_a"],
         tables: ["users"],
       });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       const result: TenantSyncResult = await runner.syncTenantSchemas([
         "tenant_a",
@@ -191,7 +195,7 @@ describe("TenantMigrationRunner", () => {
       const driver = createMockDriver({
         schemas: ["public", "tenant_a", "tenant_b"],
       });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       const result = await runner.syncTenantSchemas([
         "tenant_a",
@@ -205,7 +209,7 @@ describe("TenantMigrationRunner", () => {
 
     it("빈 테넌트 목록에 대해 빈 결과를 반환해야 한다", async () => {
       const driver = createMockDriver();
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       const result = await runner.syncTenantSchemas([]);
 
@@ -215,7 +219,7 @@ describe("TenantMigrationRunner", () => {
 
     it("sourceSchema(public)는 건너뛰어야 한다", async () => {
       const driver = createMockDriver({ schemas: ["public"] });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       const result = await runner.syncTenantSchemas(["public", "tenant_new"]);
 
@@ -226,7 +230,7 @@ describe("TenantMigrationRunner", () => {
 
     it("sync 후 모든 테넌트가 provisioned 상태여야 한다", async () => {
       const driver = createMockDriver({ schemas: ["public"] });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.syncTenantSchemas(["tenant_a", "tenant_b"]);
 
@@ -238,7 +242,7 @@ describe("TenantMigrationRunner", () => {
       const driver = createMockDriver({
         schemas: ["public", "existing"],
       });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.syncTenantSchemas(["existing", "new_one"]);
 
@@ -251,7 +255,7 @@ describe("TenantMigrationRunner", () => {
   describe("getProvisionedSchemas()", () => {
     it("프로비저닝된 스키마 목록을 반환해야 한다", async () => {
       const driver = createMockDriver();
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.ensureSchema("tenant_a");
       await runner.ensureSchema("tenant_b");
@@ -265,7 +269,7 @@ describe("TenantMigrationRunner", () => {
 
     it("초기 상태에서는 빈 배열이어야 한다", () => {
       const driver = createMockDriver();
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       expect(runner.getProvisionedSchemas()).toEqual([]);
     });
@@ -274,7 +278,7 @@ describe("TenantMigrationRunner", () => {
   describe("reset()", () => {
     it("프로비저닝 상태를 초기화해야 한다", async () => {
       const driver = createMockDriver();
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.ensureSchema("tenant_a");
       expect(runner.isProvisioned("tenant_a")).toBe(true);
@@ -286,7 +290,7 @@ describe("TenantMigrationRunner", () => {
 
     it("reset 후 동일 스키마를 다시 프로비저닝할 수 있어야 한다", async () => {
       const driver = createMockDriver();
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.ensureSchema("tenant_a");
       runner.reset();
@@ -299,7 +303,7 @@ describe("TenantMigrationRunner", () => {
   describe("identifier escaping", () => {
     it("큰따옴표가 포함된 스키마 이름을 이중 이스케이프해야 한다", async () => {
       const driver = createMockDriver({ tables: ["data"] });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.ensureSchema('ten"ant');
 
@@ -310,7 +314,7 @@ describe("TenantMigrationRunner", () => {
 
     it("큰따옴표가 포함된 테이블 이름도 이중 이스케이프해야 한다", async () => {
       const driver = createMockDriver({ tables: ['my"table'] });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.ensureSchema("safe_tenant");
 
@@ -326,7 +330,7 @@ describe("TenantMigrationRunner", () => {
       driver.createSchema = jest
         .fn()
         .mockRejectedValue(new Error("permission denied"));
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await expect(runner.ensureSchema("forbidden")).rejects.toThrow(
         "permission denied",
@@ -338,7 +342,7 @@ describe("TenantMigrationRunner", () => {
       driver.executeRaw = jest
         .fn()
         .mockRejectedValue(new Error("table clone failed"));
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await expect(runner.ensureSchema("broken")).rejects.toThrow(
         "table clone failed",
@@ -358,7 +362,7 @@ describe("TenantMigrationRunner", () => {
         }
         return Promise.resolve([]);
       });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await expect(
         runner.syncTenantSchemas(["ok_tenant", "fail_tenant"]),
@@ -373,7 +377,7 @@ describe("TenantMigrationRunner", () => {
   describe("source schema with tables", () => {
     it("원본 스키마에 테이블이 없으면 빈 스키마만 생성해야 한다", async () => {
       const driver = createMockDriver({ tables: [] });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.ensureSchema("empty_tenant");
 
@@ -385,7 +389,7 @@ describe("TenantMigrationRunner", () => {
     it("많은 테이블이 있는 경우 모두 복제해야 한다", async () => {
       const tables = Array.from({ length: 20 }, (_, i) => `table_${i}`);
       const driver = createMockDriver({ tables });
-      const runner = new TenantMigrationRunner(driver);
+      const runner = new PostgresTenantMigrationRunner(driver);
 
       await runner.ensureSchema("big_tenant");
 
@@ -396,5 +400,34 @@ describe("TenantMigrationRunner", () => {
         );
       }
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 미지원 드라이버 테스트
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe.each([
+  ["MySqlTenantMigrationRunner", () => new MySqlTenantMigrationRunner()],
+  ["SqliteTenantMigrationRunner", () => new SqliteTenantMigrationRunner()],
+  ["MssqlTenantMigrationRunner", () => new MssqlTenantMigrationRunner()],
+])("%s", (_name, factory) => {
+  const methods = [
+    "discoverSchemas",
+    "ensureSchema",
+    "syncTenantSchemas",
+    "isProvisioned",
+    "getProvisionedSchemas",
+    "reset",
+  ] as const;
+
+  it.each(methods)("%s()는 OrmError(UNSUPPORTED_DATABASE)를 throw해야 한다", (method) => {
+    const runner = factory();
+    expect(() => (runner as any)[method]("test")).toThrow();
+    try {
+      (runner as any)[method]("test");
+    } catch (e: any) {
+      expect(e.code).toBe(OrmErrorCode.UNSUPPORTED_DATABASE);
+    }
   });
 });

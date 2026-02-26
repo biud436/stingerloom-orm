@@ -4,4 +4,4 @@ export * from "./PostgresDataSource";
 export * from "./PostgresConnectionError";
 export * from "./ConnectionNotFound";
 export * from "./PoolNotFound";
-export * from "./TenantMigrationRunner";
+export { PostgresTenantMigrationRunner, TenantMigrationRunner } from "./TenantMigrationRunner";
