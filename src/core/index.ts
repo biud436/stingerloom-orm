@@ -23,4 +23,3 @@ export * from "./CursorPagination";
 export * from "./ExplainResult";
 export * from "./SchemaDiff";
 export * from "./SchemaDiffMigrationGenerator";
-export * from "./TenantMigrationRunner";

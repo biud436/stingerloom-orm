@@ -3,7 +3,7 @@ import "reflect-metadata";
 import {
   TenantMigrationRunner,
   TenantSyncResult,
-} from "../../src/core/TenantMigrationRunner";
+} from "../../src/dialects/postgres/TenantMigrationRunner";
 import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
 
 /**

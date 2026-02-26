@@ -5,6 +5,7 @@ export { PostgresDataSource } from "./postgres/PostgresDataSource";
 export { PostgresConnectionError } from "./postgres/PostgresConnectionError";
 export { ConnectionNotFound as PostgresConnectionNotFound } from "./postgres/ConnectionNotFound";
 export { PoolNotFound as PostgresPoolNotFound } from "./postgres/PoolNotFound";
+export { TenantMigrationRunner, TenantMigrationRunnerOptions, TenantSyncResult } from "./postgres/TenantMigrationRunner";
 export { SqliteConnector } from "./sqlite/SqliteConnector";
 export { SqliteDriver } from "./sqlite/SqliteDriver";
 export { SqliteDataSource } from "./sqlite/SqliteDataSource";

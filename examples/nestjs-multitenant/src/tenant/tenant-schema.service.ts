@@ -2,8 +2,8 @@ import { Injectable } from "@nestjs/common";
 import {
   EntityManager,
   TenantMigrationRunner,
+  PostgresDriver,
 } from "stingerloom-orm";
-import { PostgresDriver } from "stingerloom-orm/dist/dialects/postgres/PostgresDriver";
 import { Inject } from "@nestjs/common";
 
 /**

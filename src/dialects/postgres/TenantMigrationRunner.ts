@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
-import { Logger } from "../utils";
+import { PostgresDriver } from "./PostgresDriver";
+import { Logger } from "../../utils";
 
 export interface TenantMigrationRunnerOptions {
   /**
