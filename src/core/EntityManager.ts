@@ -334,7 +334,11 @@ export class EntityManager implements BaseEntityManager {
   }
 
   public async propagateShutdown() {
-    // TODO: 나중에 추가
+    this.removeAllListeners();
+    this.subscribers.length = 0;
+    this.dirtyEntities.clear();
+    this.queryTracker = null;
+    this.replicationRouter = null;
   }
 
   getNameStrategy<T>(clazz: ClazzType<T>): string {
@@ -1352,7 +1356,7 @@ export class EntityManager implements BaseEntityManager {
 
     for (const key in where) {
       const value = where[key];
-      if (value) {
+      if (value !== undefined && value !== null) {
         if (hasEagerJoins) {
           whereMap.push(
             Conditions.equals(
@@ -1833,7 +1837,7 @@ export class EntityManager implements BaseEntityManager {
 
       for (const key in where) {
         const value = where[key];
-        if (value) {
+        if (value !== undefined && value !== null) {
           if (hasEagerJoins) {
             whereMap.push(
               Conditions.equals(
