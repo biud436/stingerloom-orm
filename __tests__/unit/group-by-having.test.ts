@@ -2,8 +2,6 @@ import "reflect-metadata";
 import sql from "sql-template-tag";
 import { RawQueryBuilderFactory } from "../../src/core/RawQueryBuilderFactory";
 import { Conditions } from "../../src/core/Conditions";
-import { QueryCache } from "../../src/core/QueryCache";
-
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 describe("GROUP BY / HAVING", () => {
@@ -179,29 +177,4 @@ describe("GROUP BY / HAVING", () => {
     });
   });
 
-  describe("FindOption.having + QueryCache", () => {
-    it("having이 캐시 키에 포함되어야 한다", () => {
-      const key1 = QueryCache.buildKey("User", {
-        groupBy: ["dept"],
-        having: [{ sql: "COUNT(*) > 5" }],
-      });
-      const key2 = QueryCache.buildKey("User", {
-        groupBy: ["dept"],
-      });
-      expect(key1).not.toEqual(key2);
-    });
-
-    it("동일 having 조건은 동일 캐시 키를 생성해야 한다", () => {
-      const havingCond = [{ sql: "COUNT(*) > 5" }];
-      const key1 = QueryCache.buildKey("User", {
-        groupBy: ["dept"],
-        having: havingCond,
-      });
-      const key2 = QueryCache.buildKey("User", {
-        groupBy: ["dept"],
-        having: havingCond,
-      });
-      expect(key1).toEqual(key2);
-    });
-  });
 });

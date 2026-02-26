@@ -51,10 +51,9 @@ export class CatsService {
 
   /**
    * soft-deleted 엔티티 제외한 목록 조회 (기본 동작 — deleted_at IS NULL 자동 필터).
-   * cache: 5000 — 5초 TTL로 쿼리 결과를 캐싱합니다.
    */
   async findAll(): Promise<Cat[]> {
-    const result = await this.catRepository.find({ cache: 5000 } as any);
+    const result = await this.catRepository.find({});
     if (!result) return [];
     return Array.isArray(result) ? result : [result];
   }

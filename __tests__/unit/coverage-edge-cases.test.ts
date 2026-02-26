@@ -9,7 +9,6 @@ import { DeleteWithoutConditionsError } from "../../src/errors/DeleteWithoutCond
 import { QueryTimeoutError } from "../../src/errors/QueryTimeoutError";
 import { TransactionError } from "../../src/errors/TransactionError";
 import { EntityNotFoundError } from "../../src/errors/EntityNotFoundError";
-import { QueryCache } from "../../src/core/QueryCache";
 import {
   encodeCursor,
   decodeCursor,
@@ -130,115 +129,7 @@ describe("OrmError subclass throw paths", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. QueryCache edge cases
-//
-//    TTL expiration boundary, custom TTL, multiple entities invalidation,
-//    size after expiration, and re-set behavior.
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("QueryCache edge cases", () => {
-  let cache: QueryCache;
-
-  beforeEach(() => {
-    cache = new QueryCache();
-  });
-
-  it("get() should delete expired entry from internal store on access", () => {
-    jest.useFakeTimers();
-    try {
-      cache.set("key", "value", 50);
-      jest.advanceTimersByTime(51);
-      // Access triggers delete
-      expect(cache.get("key")).toBeUndefined();
-      // Internal store should no longer contain the entry
-      expect(cache.size).toBe(0);
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
-  it("should handle TTL of exactly 0ms (immediately expired)", () => {
-    jest.useFakeTimers();
-    try {
-      cache.set("instant", "data", 0);
-      jest.advanceTimersByTime(1);
-      expect(cache.get("instant")).toBeUndefined();
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
-  it("should handle very large TTL values", () => {
-    jest.useFakeTimers();
-    try {
-      cache.set("long", "data", Number.MAX_SAFE_INTEGER);
-      jest.advanceTimersByTime(999_999_999);
-      expect(cache.get("long")).toBe("data");
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
-  it("re-setting with shorter TTL should shorten the lifespan", () => {
-    jest.useFakeTimers();
-    try {
-      cache.set("key", "v1", 10000);
-      cache.set("key", "v2", 100);
-      jest.advanceTimersByTime(101);
-      expect(cache.get("key")).toBeUndefined();
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
-  it("invalidate() should not affect entries for other entities even with partial name match", () => {
-    // "UserProfile" contains "User" as substring, but invalidate("User")
-    // checks for `"entity":"User"` pattern, not substring of entity name.
-    const userKey = QueryCache.buildKey("User", { where: { id: 1 } });
-    const profileKey = QueryCache.buildKey("UserProfile", { where: { id: 1 } });
-
-    cache.set(userKey, "user-data");
-    cache.set(profileKey, "profile-data");
-
-    cache.invalidate("User");
-
-    expect(cache.get(userKey)).toBeUndefined();
-    expect(cache.get(profileKey)).toBe("profile-data");
-  });
-
-  it("clear() should reset size to 0 regardless of how many entries existed", () => {
-    for (let i = 0; i < 100; i++) {
-      cache.set(`key-${i}`, i);
-    }
-    expect(cache.size).toBe(100);
-    cache.clear();
-    expect(cache.size).toBe(0);
-  });
-
-  it("invalidate() on empty cache should return 0", () => {
-    expect(cache.invalidate("Ghost")).toBe(0);
-  });
-
-  it("should cache complex objects including arrays and nested structures", () => {
-    const complex = {
-      users: [{ id: 1 }, { id: 2 }],
-      meta: { total: 2, page: 1 },
-    };
-    cache.set("complex", complex);
-    expect(cache.get("complex")).toEqual(complex);
-  });
-
-  it("buildKey should produce identical keys for same input regardless of call count", () => {
-    const opts = { where: { status: "active" }, orderBy: { name: "ASC" } };
-    const keys = Array.from({ length: 5 }, () =>
-      QueryCache.buildKey("Task", opts),
-    );
-    expect(new Set(keys).size).toBe(1);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. CursorPagination edge cases
+// 2. CursorPagination edge cases
 //
 //    Malformed cursors, empty-string cursor, boolean/object encoding,
 //    normalizePageSize with null-ish coercion.

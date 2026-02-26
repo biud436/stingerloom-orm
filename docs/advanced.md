@@ -2,50 +2,7 @@
 
 ---
 
-## 1. 쿼리 캐싱
-
-`find()` / `findOne()` 호출 시 `cache` 옵션을 사용하면 결과를 인메모리에 캐싱합니다. 동일한 조건으로 다시 조회하면 DB 쿼리 없이 캐시 결과를 반환합니다.
-
-**캐시 옵션**
-
-| 값 | 설명 |
-|----|------|
-| `true` | 기본 TTL(30초)로 캐시 |
-| `number` | 지정한 TTL(밀리초)로 캐시 |
-| `false` 또는 생략 | 캐시 비활성화 |
-
-```typescript
-// 기본 TTL(30초) 캐시
-const users = await em.find(User, {
-  where: { isActive: true },
-  cache: true,
-});
-
-// 60초 TTL 캐시
-const posts = await em.find(Post, {
-  orderBy: { createdAt: "DESC" },
-  take: 10,
-  cache: 60000,
-});
-```
-
-**캐시 무효화**
-
-`save()`, `delete()`, `softDelete()`, `insertMany()` 등의 쓰기 연산은 해당 엔티티의 캐시를 자동으로 무효화합니다.
-
-수동으로 캐시를 무효화할 수도 있습니다.
-
-```typescript
-// 특정 엔티티 캐시 무효화
-em.clearCache(User);
-
-// 전체 캐시 무효화 (인자 없음)
-em.clearCache();
-```
-
----
-
-## 2. 이벤트 시스템
+## 1. 이벤트 시스템
 
 엔티티 생명주기 이벤트를 구독하여 사이드 이펙트를 처리할 수 있습니다.
 
@@ -90,7 +47,7 @@ type EntityEventListener = (event: {
 
 ---
 
-## 3. EntitySubscriber
+## 2. EntitySubscriber
 
 `EntitySubscriber` 인터페이스를 구현하면 특정 엔티티 이벤트에만 반응하는 구독자를 만들 수 있습니다. `on()`과 달리 엔티티 클래스별로 필터링됩니다.
 
@@ -191,7 +148,7 @@ em.removeSubscriber(subscriber);
 
 ---
 
-## 4. N+1 감지 및 슬로우 쿼리 경고
+## 3. N+1 감지 및 슬로우 쿼리 경고
 
 **활성화 방법**
 
@@ -229,7 +186,7 @@ console.log(log);
 
 ---
 
-## 5. 커서 페이지네이션
+## 4. 커서 페이지네이션
 
 offset 방식(`LIMIT offset, count`) 대신 커서(마지막 항목의 컬럼 값) 기반으로 페이지네이션합니다. 대용량 데이터셋에서도 일정한 성능을 보장합니다.
 
@@ -312,7 +269,7 @@ async function getPosts(req: Request, res: Response) {
 
 ---
 
-## 6. 연결 풀링 (Connection Pooling)
+## 5. 연결 풀링 (Connection Pooling)
 
 **PoolOptions**
 
@@ -349,7 +306,7 @@ SQLite는 파일 기반 단일 연결이므로 풀 설정이 무시됩니다.
 
 ---
 
-## 7. 연결 재시도 (Connection Retry)
+## 6. 연결 재시도 (Connection Retry)
 
 지수 백오프 방식으로 DB 연결 실패 시 자동으로 재시도합니다.
 
@@ -379,7 +336,7 @@ await em.register({
 
 ---
 
-## 8. 유효성 검사 (Validation)
+## 7. 유효성 검사 (Validation)
 
 `save()` 호출 시 `@NotNull`, `@MinLength`, `@MaxLength`, `@Min`, `@Max` 데코레이터로 정의된 제약을 자동으로 검사합니다. 실패 시 `ValidationError`가 throw됩니다.
 
@@ -433,7 +390,7 @@ try {
 
 ---
 
-## 9. BaseRepository
+## 8. BaseRepository
 
 `BaseRepository`는 엔티티별 CRUD를 캡슐화하는 리포지토리 패턴을 지원합니다. `EntityManager`의 메서드를 엔티티 타입으로 위임합니다.
 
@@ -481,7 +438,7 @@ class UsersService {
 
 ---
 
-## 10. Read Replica (읽기/쓰기 분리)
+## 9. Read Replica (읽기/쓰기 분리)
 
 `replication` 옵션으로 master/slave 구조의 읽기/쓰기 분리를 설정합니다. 읽기 쿼리(`find`, `findOne`, `count` 등)는 slave로, 쓰기 쿼리(`save`, `delete` 등)는 master로 자동 라우팅됩니다. slave 장애 시 master로 자동 fallback됩니다.
 
@@ -544,7 +501,7 @@ slave가 여러 개인 경우 라운드 로빈 방식으로 분산됩니다. sla
 
 ---
 
-## 11. 쿼리 타임아웃 (Query Timeout)
+## 10. 쿼리 타임아웃 (Query Timeout)
 
 쿼리 실행 시간이 지정 임계값을 초과하면 DB 레벨에서 강제 종료합니다.
 

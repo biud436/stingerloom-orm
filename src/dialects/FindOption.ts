@@ -60,14 +60,6 @@ export type FindOption<T> = {
   withDeleted?: boolean;
 
   /**
-   * Enables query result caching.
-   * - `true`: cache with default TTL (30 seconds)
-   * - `number`: cache with specified TTL in milliseconds
-   * - `false` or omitted: no caching
-   */
-  cache?: boolean | number;
-
-  /**
    * Per-query timeout in milliseconds.
    * Overrides the connection-level queryTimeout from DatabaseClientOptions.
    * Uses driver-specific SET statements before executing the query.

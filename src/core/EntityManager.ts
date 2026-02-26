@@ -74,7 +74,6 @@ import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { DeleteWithoutConditionsError } from "../errors/DeleteWithoutConditionsError";
 import { NotSupportedDatabaseTypeError } from "../errors/NotSupportedDatabaseTypeError";
-import { QueryCache } from "./QueryCache";
 import {
   EntitySubscriber,
   InsertEvent,
@@ -103,7 +102,6 @@ export class EntityManager implements BaseEntityManager {
   private dataSource?: IDataSource;
   private dirtyEntities: Set<InstanceType<ClazzType<any>>> = new Set();
   private readonly eventEmitter = new EntityEventEmitter();
-  private readonly queryCache = new QueryCache();
   private readonly subscribers: EntitySubscriber<any>[] = [];
   private queryTracker: QueryTracker | null = null;
   private defaultQueryTimeout: number | undefined;
@@ -1711,34 +1709,8 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<EntityResult<T>> {
-    const { select, orderBy, where, take, cache, groupBy, having } = findOption;
+    const { select, orderBy, where, take, groupBy, having } = findOption;
     const { limit } = findOption;
-
-    // Cache lookup
-    const cacheTtl =
-      cache === true
-        ? undefined
-        : typeof cache === "number"
-          ? cache
-          : undefined;
-    const useCache = cache === true || (typeof cache === "number" && cache > 0);
-    let cacheKey: string | undefined;
-
-    if (useCache) {
-      cacheKey = QueryCache.buildKey(entity.name, {
-        where: where as any,
-        orderBy: orderBy as any,
-        limit,
-        take,
-        select: select as any,
-        groupBy: groupBy as any,
-        having: having as any,
-      });
-      const cached = this.queryCache.get<EntityResult<T>>(cacheKey);
-      if (cached !== undefined) {
-        return cached;
-      }
-    }
 
     const transactionHolder = new TransactionSessionManager();
     const resultTransformer = ResultTransformerFactory.create();
@@ -2100,11 +2072,6 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // Store result in cache
-      if (useCache && cacheKey) {
-        this.queryCache.set(cacheKey, entityResult, cacheTtl);
-      }
-
       return entityResult;
     } catch (e: unknown) {
       // 트랜잭션 롤백
@@ -2297,7 +2264,6 @@ export class EntityManager implements BaseEntityManager {
         );
 
         await transactionManager.commit();
-        this.queryCache.invalidate(metadata.name!);
 
         if (this.isMySqlFamily()) {
           const findWhere = hasAutoIncrementPk
@@ -2380,7 +2346,6 @@ export class EntityManager implements BaseEntityManager {
       );
 
       await transactionManager.commit();
-      this.queryCache.invalidate(metadata.name!);
 
       await this.cascadeSaveOneToMany(entity, item, primaryKeyValue);
 
@@ -2462,7 +2427,6 @@ export class EntityManager implements BaseEntityManager {
       };
 
       await transactionManager.commit();
-      this.queryCache.invalidate(metadata.name!);
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -2578,7 +2542,6 @@ export class EntityManager implements BaseEntityManager {
       };
 
       await transactionManager.commit();
-      this.queryCache.invalidate(metadata.name!);
 
       let affected = items.length;
       if (this.isMySqlFamily()) {
@@ -2701,7 +2664,6 @@ export class EntityManager implements BaseEntityManager {
 
       await transactionManager.query(upsertSql);
       await transactionManager.commit();
-      this.queryCache.invalidate(metadata.name!);
     } catch (e: unknown) {
       try {
         await transactionManager.rollback();
@@ -2852,7 +2814,6 @@ export class EntityManager implements BaseEntityManager {
       );
 
       await transactionManager.commit();
-      this.queryCache.invalidate(metadata.name!);
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -2941,7 +2902,6 @@ export class EntityManager implements BaseEntityManager {
       };
 
       await transactionManager.commit();
-      this.queryCache.invalidate(metadata.name!);
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -3019,7 +2979,6 @@ export class EntityManager implements BaseEntityManager {
       };
 
       await transactionManager.commit();
-      this.queryCache.invalidate(metadata.name!);
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -3395,21 +3354,6 @@ export class EntityManager implements BaseEntityManager {
     }
   }
 
-  /**
-   * Clears the query result cache.
-   * If an entity class is provided, only cache entries for that entity are invalidated.
-   * Otherwise, the entire cache is cleared.
-   *
-   * @param entity Optional entity class to clear cache for
-   */
-  clearCache<T>(entity?: ClazzType<T>): void {
-    if (entity) {
-      this.queryCache.invalidate(entity.name);
-    } else {
-      this.queryCache.clear();
-    }
-  }
-
   getRepository<T>(entity: ClazzType<T>) {
     return BaseRepository.of(entity, this);
   }
@@ -3435,5 +3379,15 @@ export class EntityManager implements BaseEntityManager {
     callback: (em: this) => Promise<R>,
   ): Promise<R> {
     return MetadataContext.run(tenantId, () => callback(this)) as Promise<R>;
+  }
+
+  /**
+   * 내부 드라이버 인스턴스를 반환합니다.
+   * TenantMigrationRunner 등 드라이버 접근이 필요한 경우에 사용합니다.
+   *
+   * @returns ISqlDriver 인스턴스 또는 connect() 전이면 undefined
+   */
+  getDriver(): ISqlDriver | undefined {
+    return this.driver;
   }
 }

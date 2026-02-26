@@ -36,7 +36,7 @@ export class PostsService {
   }
 
   async findAll(): Promise<Post[]> {
-    const result = await this.postRepository.find({ cache: 5000 } as any);
+    const result = await this.postRepository.find({});
     if (!result) return [];
     return Array.isArray(result) ? result : [result];
   }

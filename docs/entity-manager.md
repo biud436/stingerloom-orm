@@ -120,11 +120,6 @@ const all = await em.find(Post, {
   withDeleted: true,
 });
 
-// 캐시 사용
-const cached = await em.find(User, {
-  cache: true,        // 기본 TTL(30초) 캐시
-  // cache: 60000,   // 60초 TTL
-});
 ```
 
 **FindOption 전체 옵션**
@@ -138,7 +133,6 @@ const cached = await em.find(User, {
 | `take` | `number` | 가져올 행 수 |
 | `relations` | `(keyof T)[]` | 로드할 관계 프로퍼티명 배열 |
 | `withDeleted` | `boolean` | soft-deleted 엔티티 포함 여부 |
-| `cache` | `boolean \| number` | 캐시 활성화 (true: 기본 TTL, number: ms 단위 TTL) |
 | `groupBy` | `(keyof T)[]` | GROUP BY |
 | `having` | `Sql[]` | HAVING 절 (sql-template-tag Sql 배열) |
 | `timeout` | `number` | 쿼리 타임아웃 (ms). connection-level `queryTimeout` 보다 우선 |
@@ -575,20 +569,6 @@ const page2 = await em.findWithCursor(Post, {
   orderBy: "id",
   direction: "ASC",
 });
-```
-
----
-
-## clearCache(entity?)
-
-캐시를 무효화합니다.
-
-```typescript
-// 특정 엔티티 캐시 무효화
-em.clearCache(User);
-
-// 전체 캐시 무효화
-em.clearCache();
 ```
 
 ---

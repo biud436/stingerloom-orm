@@ -168,13 +168,6 @@ export abstract class BaseEntityManager {
   abstract getRepository<T>(entity: ClazzType<T>): BaseRepository<T>;
 
   /**
-   * Clears the query result cache.
-   * If an entity class is provided, only cache entries for that entity are invalidated.
-   * Otherwise, the entire cache is cleared.
-   */
-  abstract clearCache<T>(entity?: ClazzType<T>): void;
-
-  /**
    * 특정 테넌트 컨텍스트 내에서 작업을 실행합니다.
    * AsyncLocalStorage를 사용하여 콜백 내부의 모든 메타데이터 조회가
    * 해당 테넌트의 레이어에서 수행됩니다.

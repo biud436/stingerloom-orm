@@ -406,8 +406,7 @@ describeIf("[E2E] nestjs-blog API", () => {
     });
 
     it("GET /posts — soft-deleted post should not appear in normal list", async () => {
-      // findAll uses cache: 5000 — wait for cache to expire
-      await wait(5500);
+      await wait();
       const res = await request(server).get("/posts");
       expect(res.status).toBe(200);
       const ids = res.body.map((p: any) => p.id);
@@ -429,8 +428,7 @@ describeIf("[E2E] nestjs-blog API", () => {
     });
 
     it("GET /posts — restored post should appear again", async () => {
-      // findAll uses cache: 5000 — wait for cache to expire after restore
-      await wait(5500);
+      await wait();
       const res = await request(server).get("/posts");
       expect(res.status).toBe(200);
       const ids = res.body.map((p: any) => p.id);
