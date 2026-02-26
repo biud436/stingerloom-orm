@@ -117,8 +117,3 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
     );
   }
 }
-
-/**
- * @deprecated TenantMigrationRunner는 PostgresTenantMigrationRunner로 이름이 변경되었습니다.
- */
-export const TenantMigrationRunner = PostgresTenantMigrationRunner;

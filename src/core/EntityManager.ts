@@ -3383,7 +3383,7 @@ export class EntityManager implements BaseEntityManager {
 
   /**
    * 내부 드라이버 인스턴스를 반환합니다.
-   * TenantMigrationRunner 등 드라이버 접근이 필요한 경우에 사용합니다.
+   * PostgresTenantMigrationRunner 등 드라이버 접근이 필요한 경우에 사용합니다.
    *
    * @returns ISqlDriver 인스턴스 또는 connect() 전이면 undefined
    */

@@ -9,7 +9,7 @@ import { Inject } from "@nestjs/common";
 /**
  * TenantSchemaService
  *
- * ORM 코어의 TenantMigrationRunner에 위임하여
+ * ORM의 PostgresTenantMigrationRunner에 위임하여
  * 테넌트 스키마를 프로비저닝합니다.
  */
 @Injectable()

@@ -2,7 +2,7 @@
 import "reflect-metadata";
 import {
   PostgresTenantMigrationRunner,
-} from "../../src/dialects/postgres/TenantMigrationRunner";
+} from "../../src/dialects/postgres/PostgresTenantMigrationRunner";
 import { TenantSyncResult } from "../../src/dialects/ITenantMigrationRunner";
 import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
 import { MySqlTenantMigrationRunner } from "../../src/dialects/mysql/MySqlTenantMigrationRunner";
@@ -12,7 +12,7 @@ import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 
 /**
  * PostgresDriver mock factory.
- * 실제 DB 연결 없이 TenantMigrationRunner의 동작을 검증합니다.
+ * 실제 DB 연결 없이 PostgresTenantMigrationRunner의 동작을 검증합니다.
  */
 function createMockDriver(options?: {
   schemas?: string[];
