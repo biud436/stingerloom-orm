@@ -1,354 +1,256 @@
-# 쿼리 빌더 (RawQueryBuilder)
+# 쿼리 빌더 (Query Builder)
 
-`RawQueryBuilder`는 체이닝 방식으로 복잡한 SQL 쿼리를 안전하게 구성할 수 있는 DSL입니다. 내부적으로 `sql-template-tag`를 사용하여 파라미터 바인딩을 처리합니다.
+`find()`나 `findOne()`으로 대부분의 조회를 처리할 수 있지만, JOIN, GROUP BY, 서브쿼리 같은 복잡한 SQL이 필요할 때가 있습니다. 이럴 때 **RawQueryBuilder**를 사용합니다.
 
----
+## 언제 쿼리 빌더를 쓰나요?
+
+| 상황 | 추천 |
+|------|------|
+| 단순 CRUD, WHERE 조건 | `em.find()`, `em.save()` 사용 |
+| JOIN, GROUP BY, 서브쿼리 | 쿼리 빌더 사용 |
+| DB 전용 함수, 복잡한 집계 | 쿼리 빌더 또는 `em.query()` 사용 |
 
 ## 기본 사용법
 
-`RawQueryBuilderFactory.create()`로 인스턴스를 생성하고 메서드를 체이닝합니다. 최종적으로 `build()`를 호출하면 `Sql` 객체가 반환됩니다.
+`RawQueryBuilderFactory.create()`로 쿼리 빌더를 만들고, 메서드를 체이닝한 다음 `build()`로 완성합니다.
 
 ```typescript
 import { RawQueryBuilderFactory } from "stingerloom-orm";
-import sql, { raw } from "sql-template-tag";
+import sql from "sql-template-tag";
 
 const qb = RawQueryBuilderFactory.create();
 
 const query = qb
   .select(["id", "name", "email"])
-  .from("`users`")
-  .where([sql`\`is_active\` = ${true}`])
-  .orderBy([{ column: "`created_at`", direction: "DESC" }])
+  .from('"users"')
+  .where([sql`"is_active" = ${true}`])
+  .orderBy([{ column: '"created_at"', direction: "DESC" }])
   .limit(10)
   .build();
 
-// TransactionSessionManager로 실행
-const result = await transactionManager.query(query);
+// EntityManager로 실행
+const users = await em.query(query);
 ```
 
-> 식별자(테이블명, 컬럼명)는 반드시 드라이버에 맞게 escape해야 합니다.
-> MySQL: 백틱(\`), PostgreSQL: 큰따옴표(")
+> **Hint** 테이블명과 컬럼명은 DB에 맞게 따옴표로 감싸야 합니다. PostgreSQL은 큰따옴표(`"`), MySQL은 백틱(`` ` ``)을 사용합니다.
 
----
-
-## select(columns)
-
-SELECT 절을 설정합니다.
-
-```typescript
-select(columns: string[] | "*"): RawQueryBuilder
-```
+## SELECT
 
 ```typescript
 // 특정 컬럼
-qb.select(["`id`", "`name`", "`email`"]);
+qb.select(['"id"', '"name"', '"email"']);
 
 // 전체 컬럼
 qb.select("*");
 
-// 별칭(alias) 포함
-qb.select(["`u`.`id`", "`u`.`name` AS `userName`"]);
+// 별칭(alias)
+qb.select(['"u"."id"', '"u"."name" AS "userName"']);
 ```
 
----
-
-## from(table, alias?)
-
-FROM 절을 설정합니다.
+## FROM
 
 ```typescript
-from(table: string | Sql, alias?: string): RawQueryBuilder
+// 기본
+qb.from('"users"');
+
+// 별칭 지정
+qb.from('"users"', "u");
 ```
 
-```typescript
-// 테이블명
-qb.from("`users`");
+## WHERE 조건
 
-// 별칭 포함
-qb.from("`users`", "u");
-
-// 서브쿼리 사용
-const subQuery = RawQueryBuilder.subquery()
-  .select(["post_id", "COUNT(*) AS cnt"])
-  .from("`comments`")
-  .groupBy(["`post_id`"])
-  .as("comment_counts");
-
-qb.select(["`p`.`id`", "`p`.`title`", "`cc`.`cnt`"])
-  .from("`posts`", "p")
-  .leftJoin(subQuery, "cc", sql`\`p\`.\`id\` = \`cc\`.\`post_id\``);
-```
-
----
-
-## where(conditions) / andWhere(condition) / orWhere(condition)
-
-WHERE 절을 설정합니다.
-
-```typescript
-where(conditions: Sql[]): RawQueryBuilder
-andWhere(condition: Sql): RawQueryBuilder
-orWhere(condition: Sql): RawQueryBuilder
-```
+`where()`는 `sql-template-tag`의 템플릿 리터럴을 사용하여 안전하게 값을 바인딩합니다.
 
 ```typescript
 import sql from "sql-template-tag";
 
-// 기본 WHERE
+// 기본 WHERE (여러 조건은 AND로 연결)
 qb.where([
-  sql`\`is_active\` = ${true}`,
-  sql`\`age\` >= ${18}`,
+  sql`"is_active" = ${true}`,
+  sql`"age" >= ${18}`,
 ]);
-// WHERE `is_active` = ? AND `age` >= ?
+// WHERE "is_active" = $1 AND "age" >= $2
 
-// 빈 배열이면 WHERE 1=1
+// 빈 배열이면 WHERE 1=1 (이후 조건 추가 가능)
 qb.where([]);
 
-// AND 추가
-qb.where([sql`\`is_active\` = ${true}`])
-  .andWhere(sql`\`age\` < ${60}`);
-
-// OR 추가
-qb.where([sql`\`type\` = ${"admin"}`])
-  .orWhere(sql`\`type\` = ${"superadmin"}`);
+// AND / OR 추가
+qb.where([sql`"type" = ${"admin"}`])
+  .andWhere(sql`"age" < ${60}`)
+  .orWhere(sql`"type" = ${"superadmin"}`);
 ```
 
----
-
-## whereIn / whereNotIn
-
-IN / NOT IN 조건을 추가합니다. `where()` 이후에 AND로 연결됩니다.
-
-```typescript
-whereIn(column: string, values: any[]): RawQueryBuilder
-whereNotIn(column: string, values: any[]): RawQueryBuilder
-```
+### IN / NOT IN
 
 ```typescript
 qb.where([])
-  .whereIn("`status`", ["active", "pending"]);
-// WHERE 1=1 AND `status` IN (?, ?)
+  .whereIn('"status"', ["active", "pending"]);
+// WHERE 1=1 AND "status" IN ($1, $2)
 
 qb.where([])
-  .whereNotIn("`id`", [1, 2, 3]);
-// WHERE 1=1 AND `id` NOT IN (?, ?, ?)
+  .whereNotIn('"id"', [1, 2, 3]);
 ```
 
----
-
-## whereNull / whereNotNull
-
-IS NULL / IS NOT NULL 조건을 추가합니다.
-
-```typescript
-whereNull(column: string): RawQueryBuilder
-whereNotNull(column: string): RawQueryBuilder
-```
+### NULL 체크
 
 ```typescript
 qb.where([])
-  .whereNull("`deleted_at`");
-// WHERE 1=1 AND `deleted_at` IS NULL
+  .whereNull('"deleted_at"');
+// WHERE 1=1 AND "deleted_at" IS NULL
 
 qb.where([])
-  .whereNotNull("`email`");
-// WHERE 1=1 AND `email` IS NOT NULL
+  .whereNotNull('"email"');
 ```
 
----
-
-## whereBetween
-
-BETWEEN 조건을 추가합니다.
-
-```typescript
-whereBetween(column: string, min: any, max: any): RawQueryBuilder
-```
+### BETWEEN
 
 ```typescript
 qb.where([])
-  .whereBetween("`age`", 18, 65);
-// WHERE 1=1 AND `age` BETWEEN ? AND ?
+  .whereBetween('"age"', 18, 65);
+// WHERE 1=1 AND "age" BETWEEN $1 AND $2
 ```
 
----
+## JOIN
 
-## JOIN 메서드
-
-테이블 간 JOIN을 추가합니다.
-
-```typescript
-leftJoin(table: string | Sql, alias: string, condition: Sql): RawQueryBuilder
-innerJoin(table: string | Sql, alias: string, condition: Sql): RawQueryBuilder
-rightJoin(table: string | Sql, alias: string, condition: Sql): RawQueryBuilder
-join(type: "INNER" | "LEFT" | "RIGHT", table, alias, condition): RawQueryBuilder
-```
+테이블을 조인할 때 사용합니다.
 
 ```typescript
 import sql, { raw } from "sql-template-tag";
 
 // LEFT JOIN
-qb.select(["`p`.*", "`u`.`name` AS `authorName`"])
-  .from("`posts`", "p")
+qb.select(['"p".*', '"u"."name" AS "authorName"'])
+  .from('"posts"', "p")
   .leftJoin(
-    "`users`",
+    '"users"',
     "u",
-    sql`${raw("`p`")}.${raw("`author_id`")} = ${raw("`u`")}.${raw("`id`")}`
+    sql`${raw('"p"')}."author_id" = ${raw('"u"')}."id"`
   );
-// SELECT `p`.*, `u`.`name` AS `authorName`
-// FROM `posts` AS p
-// LEFT JOIN `users` AS u ON `p`.`author_id` = `u`.`id`
 
 // INNER JOIN
-qb.select(["`o`.*"])
-  .from("`orders`", "o")
+qb.select(['"o".*'])
+  .from('"orders"', "o")
   .innerJoin(
-    "`order_items`",
+    '"order_items"',
     "oi",
-    sql`${raw("`o`")}.${raw("`id`")} = ${raw("`oi`")}.${raw("`order_id`")}`
+    sql`${raw('"o"')}."id" = ${raw('"oi"')}."order_id"`
   );
 
-// RIGHT JOIN
-qb.from("`departments`", "d")
-  .rightJoin(
-    "`employees`",
-    "e",
-    sql`${raw("`d`")}.${raw("`id`")} = ${raw("`e`")}.${raw("`dept_id`")}`
-  );
+// RIGHT JOIN도 같은 방식
+qb.rightJoin('"employees"', "e", sql`...`);
 ```
 
----
-
-## orderBy(orders)
-
-ORDER BY 절을 설정합니다.
+## ORDER BY, LIMIT, OFFSET
 
 ```typescript
-orderBy(orders: Array<{ column: string; direction: "ASC" | "DESC" }>): RawQueryBuilder
-```
-
-```typescript
+// ORDER BY
 qb.orderBy([
-  { column: "`created_at`", direction: "DESC" },
-  { column: "`id`", direction: "ASC" },
+  { column: '"created_at"', direction: "DESC" },
+  { column: '"id"', direction: "ASC" },
 ]);
-// ORDER BY `created_at` DESC, `id` ASC
-```
 
----
-
-## limit(limit) / offset(offset)
-
-LIMIT, OFFSET 절을 설정합니다.
-
-```typescript
-limit(limit: number | [number, number]): RawQueryBuilder
-offset(offset: number): RawQueryBuilder
-```
-
-```typescript
-// 단순 LIMIT
+// LIMIT
 qb.limit(10);
-// LIMIT 10
 
-// [offset, count] 형태 (MySQL: LIMIT offset, count)
+// [offset, count] 형태
 qb.setDatabaseType("mysql").limit([20, 10]);
-// LIMIT 20, 10
+// MySQL: LIMIT 20, 10
 
-// [offset, count] 형태 (PostgreSQL: LIMIT count OFFSET offset)
 qb.setDatabaseType("postgresql").limit([20, 10]);
-// LIMIT 10 OFFSET 20
+// PostgreSQL: LIMIT 10 OFFSET 20
 
-// 독립적인 OFFSET (limit()과 함께 사용)
+// LIMIT + OFFSET
 qb.limit(10).offset(20);
-// LIMIT 10 OFFSET 20
 ```
 
----
+## GROUP BY, HAVING
 
-## groupBy(columns) / having(conditions)
-
-GROUP BY / HAVING 절을 설정합니다.
+집계 쿼리에 사용합니다.
 
 ```typescript
-groupBy(columns: string[]): RawQueryBuilder
-having(conditions: Sql[]): RawQueryBuilder
-```
-
-```typescript
-qb.select(["`category`", "COUNT(*) AS cnt"])
-  .from("`posts`")
-  .where([sql`\`is_active\` = ${true}`])
-  .groupBy(["`category`"])
+qb.select(['"category"', "COUNT(*) AS cnt"])
+  .from('"posts"')
+  .where([sql`"is_active" = ${true}`])
+  .groupBy(['"category"'])
   .having([sql`COUNT(*) >= ${5}`]);
-// SELECT `category`, COUNT(*) AS cnt
-// FROM `posts`
-// WHERE `is_active` = ?
-// GROUP BY `category`
-// HAVING COUNT(*) >= ?
+// SELECT "category", COUNT(*) AS cnt
+// FROM "posts"
+// WHERE "is_active" = $1
+// GROUP BY "category"
+// HAVING COUNT(*) >= $2
 ```
-
----
 
 ## 서브쿼리
 
+### IN 서브쿼리
+
 ```typescript
-// as(alias): IN 절에 사용할 서브쿼리
 const subQuery = RawQueryBuilderFactory.create()
-  .select(["`user_id`"])
-  .from("`premium_subscriptions`")
-  .where([sql`\`is_active\` = ${true}`])
+  .select(['"user_id"'])
+  .from('"premium_subscriptions"')
+  .where([sql`"is_active" = ${true}`])
   .asInQuery();
 
 qb.select(["*"])
-  .from("`users`")
+  .from('"users"')
   .where([])
-  .appendSql(sql`AND \`id\` IN ${subQuery}`);
-// SELECT * FROM `users` WHERE 1=1 AND `id` IN (SELECT `user_id` FROM ...)
+  .appendSql(sql`AND "id" IN ${subQuery}`);
+// SELECT * FROM "users" WHERE 1=1 AND "id" IN (SELECT "user_id" FROM ...)
+```
 
-// asExists(): EXISTS 서브쿼리
+### EXISTS 서브쿼리
+
+```typescript
 const exists = RawQueryBuilderFactory.create()
-  .select(["`1`"])
-  .from("`orders`")
-  .where([sql`\`user_id\` = \`u\`.\`id\``])
+  .select(['"1"'])
+  .from('"orders"')
+  .where([sql`"user_id" = "u"."id"`])
   .asExists();
 
 qb.select(["*"])
-  .from("`users`", "u")
+  .from('"users"', "u")
   .where([exists]);
-// SELECT * FROM `users` AS u WHERE EXISTS (SELECT `1` FROM `orders` WHERE ...)
+// SELECT * FROM "users" AS u WHERE EXISTS (SELECT "1" FROM "orders" WHERE ...)
 ```
 
----
+### FROM 서브쿼리
 
-## 복잡한 쿼리 예제
+```typescript
+const subQuery = RawQueryBuilderFactory.create()
+  .select(['"post_id"', "COUNT(*) AS cnt"])
+  .from('"comments"')
+  .groupBy(['"post_id"'])
+  .as("comment_counts");
+
+qb.select(['"p"."id"', '"p"."title"', '"cc"."cnt"'])
+  .from('"posts"', "p")
+  .leftJoin(subQuery, "cc", sql`"p"."id" = "cc"."post_id"`);
+```
+
+## 실전 예제
 
 ### 사용자별 주문 통계
 
 ```typescript
-const qb = RawQueryBuilderFactory.create();
-
-const result = qb
+const query = RawQueryBuilderFactory.create()
   .select([
-    "`u`.`id`",
-    "`u`.`name`",
-    "COUNT(`o`.`id`) AS `orderCount`",
-    "SUM(`o`.`total`) AS `totalAmount`",
+    '"u"."id"',
+    '"u"."name"',
+    'COUNT("o"."id") AS "orderCount"',
+    'SUM("o"."total") AS "totalAmount"',
   ])
-  .from("`users`", "u")
+  .from('"users"', "u")
   .leftJoin(
-    "`orders`",
-    "o",
-    sql`${raw("`u`")}.${raw("`id`")} = ${raw("`o`")}.${raw("`user_id`")}`
+    '"orders"', "o",
+    sql`${raw('"u"')}."id" = ${raw('"o"')}."user_id"`
   )
-  .where([sql`${raw("`u`")}.${raw("`is_active`")} = ${true}`])
-  .groupBy(["`u`.`id`", "`u`.`name`"])
-  .having([sql`COUNT(\`o\`.\`id\`) >= ${1}`])
-  .orderBy([{ column: "`totalAmount`", direction: "DESC" }])
+  .where([sql`${raw('"u"')}."is_active" = ${true}`])
+  .groupBy(['"u"."id"', '"u"."name"'])
+  .having([sql`COUNT("o"."id") >= ${1}`])
+  .orderBy([{ column: '"totalAmount"', direction: "DESC" }])
   .limit(20)
   .build();
 
-const rows = await em.query(result);
+const stats = await em.query(query);
 ```
 
 ### 날짜 범위 + 상태 필터 + 페이지네이션
@@ -357,15 +259,22 @@ const rows = await em.query(result);
 const startDate = new Date("2024-01-01");
 const endDate = new Date("2024-12-31");
 
-const qb = RawQueryBuilderFactory.create();
-const query = qb
+const query = RawQueryBuilderFactory.create()
   .select(["*"])
-  .from("`orders`")
-  .where([sql`\`created_at\` BETWEEN ${startDate} AND ${endDate}`])
-  .whereIn("`status`", ["pending", "processing"])
-  .whereNotNull("`customer_id`")
-  .orderBy([{ column: "`created_at`", direction: "DESC" }])
+  .from('"orders"')
+  .where([sql`"created_at" BETWEEN ${startDate} AND ${endDate}`])
+  .whereIn('"status"', ["pending", "processing"])
+  .whereNotNull('"customer_id"')
+  .orderBy([{ column: '"created_at"', direction: "DESC" }])
   .limit(10)
   .offset(20)
   .build();
+
+const orders = await em.query(query);
 ```
+
+## 다음 단계
+
+- [트랜잭션](./transactions.md) — 쿼리 여러 개를 하나의 작업 단위로 묶기
+- [EntityManager](./entity-manager.md) — find(), save() 등 기본 CRUD로 돌아가기
+- [API 레퍼런스](./api-reference.md) — 전체 메서드 시그니처 빠르게 확인

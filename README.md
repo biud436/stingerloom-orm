@@ -1,60 +1,10 @@
 # Stingerloom ORM
 
-A standalone, framework-agnostic TypeScript ORM extracted from the Stingerloom framework. Built with decorators, reflection, and dependency injection for clean, type-safe database operations.
-
-## Features
-
-- **Framework-agnostic** - Works with NestJS, Express, Fastify, or any Node.js framework
-- **TypeScript First** - Full type safety with decorators and reflection metadata
-- **Decorator-based Entities** - Clean entity definitions with `@Entity`, `@Column`, `@PrimaryGeneratedColumn`
-- **Repository Pattern** - Type-safe repository with find, save, delete operations
-- **Entity Relationships** - Support for `@ManyToOne` relationships
-- **Transaction Support** - Built-in transaction management
-- **MySQL/MariaDB Support** - Native MySQL and MariaDB support via mysql2
-- **Metadata-driven** - Configuration stored in metadata following Stingerloom framework pattern
-- **Well-tested** - 134 unit tests passing
-
-## Installation
-
-> **Note**: This package is not yet published to npm. Currently in development.
-
-### For Development
-
-```bash
-# Clone the repository
-git clone https://github.com/biud436/stingerloom-orm.git
-cd stingerloom-orm
-
-# Install dependencies
-pnpm install
-
-# Build
-pnpm build
-```
-
-### Required Dependencies
-
-- `reflect-metadata` - For decorator metadata reflection
-- `mysql2` - MySQL database driver
-- `typedi` - Dependency injection (scanners use `@Service()` for auto-initialization)
-
-### After npm Publication
-
-Once published, you will be able to install via:
-
-```bash
-npm install stingerloom-orm mysql2 reflect-metadata typedi
-```
-
-## Quick Start
-
-### 1. Define Entity
+TypeScript 데코레이터 기반의 경량 ORM입니다. 엔티티 클래스를 정의하면 테이블 생성부터 CRUD, 관계 매핑, 트랜잭션까지 자동으로 처리됩니다.
 
 ```typescript
-import { Entity, Column, PrimaryGeneratedColumn } from "stingerloom-orm";
-
 @Entity()
-export class Cat {
+export class User {
   @PrimaryGeneratedColumn()
   id!: number;
 
@@ -62,202 +12,113 @@ export class Cat {
   name!: string;
 
   @Column()
-  age!: number;
-
-  @Column()
-  breed!: string;
-
-  @Column({
-    type: "datetime",
-    nullable: false,
-    length: 6,
-  })
-  createdAt!: Date;
+  email!: string;
 }
+
+const em = new EntityManager();
+await em.register({ type: "postgres", /* ... */ entities: [User], synchronize: true });
+
+const user = await em.save(User, { name: "홍길동", email: "hong@example.com" });
+const users = await em.find(User, { where: { name: "홍길동" } });
 ```
 
-### 2. Initialize EntityManager
+## Features
+
+- **4개 DB 지원** — PostgreSQL, MySQL/MariaDB, SQLite, MSSQL
+- **데코레이터 기반** — `@Entity`, `@Column`, `@ManyToOne`, `@OneToMany`, `@ManyToMany`, `@OneToOne`
+- **TypeScript First** — 제네릭 타입, `FindOption<T>`, `DeepPartial<T>`
+- **관계 매핑** — Eager/Lazy 로딩, Cascade, 양방향 관계
+- **트랜잭션** — `@Transactional()` 데코레이터, 격리 수준, Savepoint
+- **마이그레이션** — MigrationRunner, CLI, Schema Diff 자동 생성
+- **멀티테넌시** — 레이어드 메타데이터, PostgreSQL 스키마 격리
+- **쿼리 빌더** — JOIN, GROUP BY, 서브쿼리, WHERE IN/BETWEEN
+- **고급 기능** — EntitySubscriber, N+1 감지, 커서 페이지네이션, Upsert, Read Replica, 쿼리 타임아웃
+- **NestJS 통합** — `@InjectRepository()`, `@InjectEntityManager()`, `StinglerloomOrmModule`
+
+## 문서
+
+**[docs/ 폴더](./docs/README.md)**에 한국어 문서가 준비되어 있습니다.
+
+| 순서 | 문서 | 배우는 것 |
+|------|------|----------|
+| 1 | [시작하기](./docs/getting-started.md) | 설치, 첫 엔티티, 첫 CRUD |
+| 2 | [엔티티 정의](./docs/entities.md) | 컬럼, 인덱스, Soft Delete, 생명주기 훅 |
+| 3 | [관계 설정](./docs/relations.md) | ManyToOne, OneToMany, ManyToMany |
+| 4 | [EntityManager](./docs/entity-manager.md) | find, save, delete, 집계, 페이지네이션 |
+
+더 깊은 내용:
+
+| 문서 | 언제 필요한가요? |
+|------|----------------|
+| [쿼리 빌더](./docs/query-builder.md) | JOIN, GROUP BY, 서브쿼리 등 복잡한 SQL |
+| [트랜잭션](./docs/transactions.md) | 여러 작업을 하나의 단위로 묶어야 할 때 |
+| [마이그레이션](./docs/migrations.md) | 프로덕션 스키마 변경 관리 |
+| [설정 가이드](./docs/configuration.md) | 풀링, 타임아웃, Read Replica |
+| [고급 기능](./docs/advanced.md) | 이벤트 구독, N+1 감지, 성능 최적화 |
+| [멀티테넌시](./docs/multi-tenancy.md) | 테넌트별 데이터 격리 |
+| [API 레퍼런스](./docs/api-reference.md) | 메서드 시그니처 빠르게 확인 |
+
+## Quick Start
+
+```bash
+pnpm add stingerloom-orm reflect-metadata
+```
 
 ```typescript
-import "reflect-metadata"; // Required at entry point
+import "reflect-metadata";
 import { EntityManager } from "stingerloom-orm";
-import { Cat } from "./entities/Cat";
 
-const entityManager = new EntityManager();
-
-await entityManager.register({
-  type: "mysql",
+const em = new EntityManager();
+await em.register({
+  type: "postgres",
   host: "localhost",
-  port: 3306,
-  username: "root",
+  port: 5432,
+  username: "postgres",
   password: "password",
   database: "mydb",
-  entities: [Cat],
-  synchronize: true, // Auto-create tables (dev only!)
-  logging: true,
+  entities: [User],
+  synchronize: true,
 });
-```
-
-### 3. Use Repository
-
-```typescript
-const catRepository = entityManager.getRepository(Cat);
 
 // Create
-await catRepository.save({
-  name: "Whiskers",
-  age: 3,
-  breed: "Persian",
-  createdAt: new Date(),
-});
+const user = await em.save(User, { name: "홍길동", email: "hong@example.com" });
 
-// Find
-const cats = await catRepository.find({});
-const cat = await catRepository.findOne({ where: { id: 1 } });
+// Read
+const found = await em.findOne(User, { where: { id: 1 } });
+
+// Update
+await em.save(User, { id: 1, name: "수정됨" });
+
+// Delete
+await em.delete(User, { id: 1 });
 ```
+
+> 자세한 내용은 [시작하기 문서](./docs/getting-started.md)를 참고하세요.
 
 ## Examples
 
-Complete working examples with detailed documentation:
+| 예제 | 설명 |
+|------|------|
+| [nestjs-cats](./examples/nestjs-cats/) | NestJS 기본 CRUD, EntitySubscriber, 커서 페이지네이션 |
+| [nestjs-blog](./examples/nestjs-blog/) | ManyToMany, Soft Delete, Upsert, 59개 e2e 테스트 |
+| [nestjs-multitenant](./examples/nestjs-multitenant/) | PostgreSQL 스키마 기반 멀티테넌시 |
 
-- **[NestJS Cats API](./examples/nestjs-cats/)** - Full CRUD REST API with DatabaseModule.forRoot() pattern
-- More examples in **[examples/](./examples/)** directory
+## Supported Databases
 
-```typescript
-import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
-import { AppController } from "./app.controller";
-import { AppService } from "./app.service";
-import { StinglerloomOrmModule } from "./stingerloom-orm/stingerloom-orm.module";
-import { CatsModule } from "./cats/cats.module";
+| DB | Status |
+|----|--------|
+| PostgreSQL | Full support (schema isolation, ENUM, RETURNING) |
+| MySQL / MariaDB | Full support |
+| SQLite | Supported (file-based, no pooling) |
+| MSSQL | Supported |
 
-@Module({
-  imports: [
-    // Load environment variables
-    ConfigModule.forRoot({
-      isGlobal: true,
-    }),
-    CatsModule,
-    // Initialize database with forRoot pattern
-    StinglerloomOrmModule.forRoot({
-      type: "mysql",
-      host: process.env.DB_HOST || "localhost",
-      port: parseInt(process.env.DB_PORT || "3306"),
-      username: process.env.DB_USER || "root",
-      password: process.env.DB_PASSWORD || "password",
-      database: process.env.DB_NAME || "cats_db",
-      entities: [__dirname + "/**/*.entity{.ts,.js}"],
-      synchronize: true, // Auto-create tables (development only!)
-      logging: true,
-    }),
-  ],
-  controllers: [AppController],
-  providers: [AppService],
-})
-export class AppModule {}
-```
-
-### Using forFeature() in Feature Modules
-
-```typescript
-// cats.module.ts
-import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "../stingerloom-orm/stingerloom-orm.module";
-import { CatsService } from "./cats.service";
-import { CatsController } from "./cats.controller";
-import { Cat } from "./cat.entity";
-
-@Module({
-  imports: [StinglerloomOrmModule.forFeature([Cat])],
-  controllers: [CatsController],
-  providers: [CatsService],
-})
-export class CatsModule {}
-```
-
-### Injecting Repository in Service
-
-```typescript
-// cats.service.ts
-import { Injectable } from "@nestjs/common";
-import { BaseRepository } from "stingerloom-orm";
-import { InjectRepository } from "../stingerloom-orm/inject-repository.decorator";
-import { Cat } from "./cat.entity";
-import { CreateCatDto } from "./dto/create-cat.dto";
-
-@Injectable()
-export class CatsService {
-  constructor(
-    @InjectRepository(Cat) private readonly catRepository: BaseRepository<Cat>,
-  ) {}
-
-  async create(createCatDto: CreateCatDto): Promise<Cat> {
-    const cat = new Cat();
-    cat.name = createCatDto.name;
-    cat.age = createCatDto.age;
-    cat.breed = createCatDto.breed;
-    cat.createdAt = new Date();
-
-    const result = await this.catRepository.save(cat);
-    if (!result) {
-      throw new Error("Failed to create cat");
-    }
-    return Array.isArray(result) ? result[0] : result;
-  }
-
-  async findAll(): Promise<Cat[]> {
-    return await this.catRepository.find({});
-  }
-
-  async findOne(id: number): Promise<Cat | null> {
-    return await this.catRepository.findOne({
-      where: { id } as any,
-    });
-  }
-
-  async update(id: number, updateCatDto: Partial<CreateCatDto>): Promise<Cat> {
-    const cat = await this.findOne(id);
-    if (!cat) {
-      throw new Error(`Cat with ID ${id} not found`);
-    }
-
-    Object.assign(cat, updateCatDto);
-    const result = await this.catRepository.save(cat);
-    return Array.isArray(result) ? result[0] : result;
-  }
-
-  async remove(id: number): Promise<void> {
-    await this.catRepository.delete({ id } as any);
-  }
-}
-```
-
-### Custom InjectRepository Decorator
-
-```typescript
-// stingerloom-orm/inject-repository.decorator.ts
-import { Inject } from "@nestjs/common";
-import { makeInjectRepositoryToken } from "./stingerloom-orm.module";
-import { ClazzType } from "stingerloom-orm";
-
-export const InjectRepository = (
-  entity: ClazzType<unknown>,
-): ParameterDecorator => {
-  return Inject(makeInjectRepositoryToken(entity));
-};
-```
-
-## Testing
+## Development
 
 ```bash
-npm test              # Run tests
-npm test -- --coverage  # With coverage
+pnpm install
+pnpm build        # dist/ 생성
+pnpm test         # 1,405 tests
 ```
-
-## Links
-
-- [Examples](./examples/)
-- [NestJS Example](./examples/nestjs-cats/)
 
 ## License
 

@@ -1,175 +1,150 @@
 # 엔티티 정의 (Entities)
 
-엔티티는 데이터베이스의 테이블과 매핑되는 클래스입니다. 데코레이터를 조합하여 컬럼, PK, 인덱스, 생명주기 훅, 유효성 검사 등을 선언적으로 정의합니다.
+**엔티티(Entity)**는 데이터베이스 테이블을 TypeScript 클래스로 표현한 것입니다. 하나의 엔티티 클래스가 하나의 테이블에 대응되며, 클래스의 프로퍼티가 테이블의 컬럼이 됩니다.
 
----
+이 문서에서는 가장 간단한 엔티티부터 시작하여, 실무에서 필요한 기능을 하나씩 추가해가며 엔티티 정의 방법을 안내합니다.
 
-## @Entity
+## 첫 번째 엔티티 만들기
 
-클래스를 ORM 엔티티로 등록합니다. 클래스명이 snake_case로 변환되어 테이블명으로 사용됩니다.
-
-**시그니처**
+데이터베이스에 사용자 정보를 저장한다고 가정해보겠습니다. 가장 간단한 엔티티는 이렇게 생겼습니다.
 
 ```typescript
-function Entity(options?: EntityOption): ClassDecorator
-
-interface EntityOption {
-  name?: string; // 테이블명 명시 (생략 시 클래스명 → snake_case 자동 변환)
-}
-```
-
-**예제**
-
-```typescript
-import { Entity } from "stingerloom-orm";
-
-// 테이블명: "user" (User → user)
-@Entity()
-export class User {}
-
-// 테이블명 명시
-@Entity({ name: "app_users" })
-export class User {}
-```
-
----
-
-## @Column
-
-일반 컬럼을 정의합니다. TypeScript의 `design:type` 메타데이터로부터 타입을 자동 추론합니다.
-
-**시그니처**
-
-```typescript
-function Column(option?: ColumnOption): PropertyDecorator
-
-interface ColumnOption {
-  name?: string;           // 컬럼명 (생략 시 프로퍼티명 사용)
-  type?: ColumnType;       // 컬럼 타입 (생략 시 design:type으로 자동 추론)
-  length?: number;         // 컬럼 길이
-  nullable?: boolean;      // NULL 허용 여부 (기본값: false)
-  primary?: boolean;       // PK 여부
-  autoIncrement?: boolean; // AUTO_INCREMENT 여부
-  transform?: (raw: unknown) => any; // 값 변환 함수
-  precision?: number;      // 소수점 정밀도
-  scale?: number;          // 소수점 스케일
-  enumValues?: string[];   // PostgreSQL ENUM 값 목록
-  enumName?: string;       // PostgreSQL ENUM 타입 이름
-}
-```
-
-**ColumnType 목록**
-
-| ColumnType | MySQL/MariaDB | PostgreSQL | SQLite |
-|-----------|--------------|-----------|--------|
-| `varchar` | VARCHAR(n) | VARCHAR(n) | TEXT |
-| `int` / `number` | INT | INTEGER | INTEGER |
-| `float` | FLOAT | REAL | REAL |
-| `double` | DOUBLE | DOUBLE PRECISION | REAL |
-| `bigint` | BIGINT | BIGINT | INTEGER |
-| `boolean` | TINYINT(1) | BOOLEAN | INTEGER |
-| `datetime` | DATETIME | TIMESTAMP | TEXT |
-| `timestamp` | TIMESTAMP | TIMESTAMP | TEXT |
-| `date` | DATE | DATE | TEXT |
-| `text` | TEXT | TEXT | TEXT |
-| `longtext` | LONGTEXT | TEXT | TEXT |
-| `blob` | BLOB | BYTEA | BLOB |
-| `json` | JSON | JSON | TEXT |
-| `jsonb` | JSON | JSONB | TEXT |
-| `enum` | ENUM | (사용자 정의 ENUM) | TEXT |
-
-**TypeScript 타입 자동 추론**
-
-| TypeScript 타입 | ColumnType | 기본 길이 | nullable |
-|----------------|-----------|----------|----------|
-| `String` | varchar | 255 | false |
-| `Number` | int | 11 | false |
-| `Boolean` | boolean | 1 | false |
-| `Date` | datetime | 0 | false |
-| `Buffer` | blob | 0 | true |
-| 기타 | text | 0 | true |
-
-**예제**
-
-```typescript
-import { Entity, Column, PrimaryGeneratedColumn } from "stingerloom-orm";
-
-@Entity()
-export class Product {
-  @PrimaryGeneratedColumn()
-  id!: number;
-
-  // 기본: VARCHAR(255), NOT NULL
-  @Column()
-  name!: string;
-
-  // 명시적 타입 및 길이
-  @Column({ type: "varchar", length: 100 })
-  sku!: string;
-
-  // nullable 컬럼
-  @Column({ nullable: true })
-  description!: string | null;
-
-  // 컬럼명 별칭
-  @Column({ name: "unit_price", type: "float" })
-  price!: number;
-
-  // JSON 컬럼
-  @Column({ type: "json", nullable: true })
-  metadata!: Record<string, unknown> | null;
-
-  // 값 변환
-  @Column({ transform: (raw) => raw === 1 })
-  isActive!: boolean;
-
-  // PostgreSQL ENUM
-  @Column({ type: "enum", enumValues: ["draft", "published", "archived"] })
-  status!: string;
-}
-```
-
----
-
-## @PrimaryGeneratedColumn
-
-자동 증가(AUTO_INCREMENT) 기본키를 정의합니다.
-
-**시그니처**
-
-```typescript
-function PrimaryGeneratedColumn(option?: ColumnOption): PropertyDecorator
-```
-
-내부적으로 `@Column({ primary: true, autoIncrement: true, type: "int", length: 11, nullable: false })`와 동일합니다.
-
-**예제**
-
-```typescript
-import { Entity, PrimaryGeneratedColumn } from "stingerloom-orm";
+// user.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column } from "stingerloom-orm";
 
 @Entity()
 export class User {
   @PrimaryGeneratedColumn()
   id!: number;
+
+  @Column()
+  name!: string;
 }
 ```
 
----
+이 코드만으로 Stingerloom은 `user` 테이블을 생성하고, `id`(자동 증가 기본키)와 `name`(VARCHAR(255)) 컬럼을 만들어줍니다.
 
-## @PrimaryColumn
+세 가지 데코레이터가 각각 하는 일을 살펴보겠습니다.
 
-수동으로 값을 지정하는 기본키 컬럼을 정의합니다.
-
-**시그니처**
+**`@Entity()`** 는 이 클래스가 ORM 엔티티임을 선언합니다. 클래스명 `User`는 자동으로 snake_case로 변환되어 테이블명 `user`가 됩니다. 테이블명을 직접 지정하고 싶다면 옵션을 전달합니다.
 
 ```typescript
-function PrimaryColumn(option?: ColumnOption): PropertyDecorator
+// user.entity.ts
+@Entity({ name: "app_users" })
+export class User { /* 테이블명: app_users */ }
 ```
 
-**예제**
+**`@PrimaryGeneratedColumn()`** 은 자동 증가(AUTO_INCREMENT) 기본키를 정의합니다. INSERT할 때 값을 넣지 않아도 DB가 자동으로 1, 2, 3... 순서대로 채워줍니다.
+
+**`@Column()`** 은 일반 컬럼을 정의합니다. TypeScript 타입을 읽어서 적절한 DB 타입을 자동 추론합니다 — `string`이면 `VARCHAR(255)`, `number`이면 `INT`가 됩니다.
+
+> **Hint** `!:` 문법(definite assignment assertion)은 TypeScript에게 "이 프로퍼티는 ORM이 관리하므로 초기화하지 않아도 괜찮다"고 알려주는 것입니다.
+
+## 다양한 컬럼 타입 사용하기
+
+실무에서는 문자열과 숫자 외에도 다양한 타입이 필요합니다. `@Column()`의 `type` 옵션으로 원하는 컬럼 타입을 명시할 수 있습니다.
 
 ```typescript
+// product.entity.ts
+@Entity()
+export class Product {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  name!: string;                    // VARCHAR(255) 자동 추론
+
+  @Column({ type: "text" })
+  description!: string;             // TEXT (긴 문자열)
+
+  @Column({ type: "float" })
+  price!: number;                   // FLOAT
+
+  @Column({ type: "boolean" })
+  isAvailable!: boolean;            // TINYINT(1) / BOOLEAN
+
+  @Column({ type: "datetime" })
+  releaseDate!: Date;               // DATETIME / TIMESTAMP
+}
+```
+
+`type`을 생략하면 TypeScript 타입에서 자동 추론됩니다. 하지만 같은 `string`이라도 짧은 이름(`varchar`)과 긴 본문(`text`)은 다르기 때문에, 용도에 맞게 명시하는 것이 좋습니다.
+
+> **Hint** Stingerloom의 컬럼 타입은 DB에 독립적입니다. 예를 들어 `"boolean"`은 MySQL에서 `TINYINT(1)`, PostgreSQL에서 `BOOLEAN`으로 자동 변환됩니다. 전체 매핑표는 이 문서 하단의 [ColumnType 레퍼런스](#columntype-레퍼런스)를 참고하세요.
+
+## 컬럼 옵션 설정하기
+
+`@Column()`에는 컬럼의 세부 동작을 제어하는 옵션을 전달할 수 있습니다.
+
+### 길이 지정
+
+문자열 컬럼의 최대 길이를 지정합니다. 생략하면 `varchar`의 기본 길이는 255입니다.
+
+```typescript
+@Column({ type: "varchar", length: 100 })
+sku!: string;
+```
+
+### NULL 허용
+
+기본적으로 모든 컬럼은 NOT NULL입니다. 값이 없을 수 있는 컬럼은 `nullable: true`로 설정합니다.
+
+```typescript
+@Column({ nullable: true })
+bio!: string | null;
+```
+
+TypeScript 타입도 `| null`을 추가해두면 코드에서 null 체크를 자연스럽게 할 수 있습니다.
+
+### 컬럼명 별칭
+
+프로퍼티명과 실제 DB 컬럼명을 다르게 하고 싶을 때 `name` 옵션을 사용합니다.
+
+```typescript
+@Column({ name: "unit_price", type: "float" })
+price!: number;
+// TypeScript: product.price / DB: unit_price
+```
+
+### JSON 컬럼
+
+구조화된 데이터를 하나의 컬럼에 저장할 때 JSON 타입을 사용합니다.
+
+```typescript
+@Column({ type: "json", nullable: true })
+settings!: Record<string, unknown> | null;
+```
+
+### 값 변환 (transform)
+
+DB에서 읽어온 값을 TypeScript 객체로 매핑할 때 변환 함수를 적용할 수 있습니다. MySQL의 `TINYINT(1)`처럼 boolean이 숫자로 저장되는 경우에 유용합니다.
+
+```typescript
+@Column({ transform: (raw) => raw === 1 })
+isActive!: boolean;
+```
+
+### PostgreSQL ENUM
+
+PostgreSQL에서 사용자 정의 ENUM 타입을 사용할 수 있습니다.
+
+```typescript
+@Column({
+  type: "enum",
+  enumValues: ["draft", "published", "archived"],
+  enumName: "post_status",
+})
+status!: string;
+```
+
+> **Hint** `enumName`을 생략하면 `{테이블명}_{컬럼명}_enum` 형식으로 자동 생성됩니다.
+
+## 수동 기본키 (@PrimaryColumn)
+
+자동 증가가 아니라 직접 값을 지정하는 기본키가 필요할 때가 있습니다. 예를 들어 설정 테이블처럼 키-값 구조인 경우입니다.
+
+```typescript
+// config.entity.ts
 import { Entity, PrimaryColumn, Column } from "stingerloom-orm";
 
 @Entity()
@@ -177,27 +152,20 @@ export class Config {
   @PrimaryColumn({ type: "varchar", length: 64 })
   key!: string;
 
-  @Column()
+  @Column({ type: "text" })
   value!: string;
 }
 ```
 
----
+`@PrimaryColumn()`은 AUTO_INCREMENT가 적용되지 않으므로, `save()` 할 때 반드시 키 값을 직접 넣어야 합니다.
 
-## @Index
+## 인덱스로 조회 성능 높이기
 
-컬럼에 데이터베이스 인덱스를 생성합니다.
-
-**시그니처**
+자주 검색하는 컬럼에는 **인덱스(Index)**를 추가하면 조회 속도가 크게 향상됩니다. 이메일로 사용자를 검색하는 경우를 생각해보겠습니다.
 
 ```typescript
-function Index(): PropertyDecorator
-```
-
-**예제**
-
-```typescript
-import { Entity, Column, PrimaryGeneratedColumn, Index } from "stingerloom-orm";
+// user.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column, Index } from "stingerloom-orm";
 
 @Entity()
 export class User {
@@ -210,46 +178,17 @@ export class User {
 }
 ```
 
-인덱스명은 `INDEX_{테이블명}_{컬럼명}` 형식으로 자동 생성됩니다.
+`@Index()`를 붙이면 `INDEX_user_email` 형식의 인덱스가 자동 생성됩니다. WHERE 조건에 `email`을 자주 사용한다면 꼭 추가하세요.
 
----
+### 복합 유니크 인덱스 (@UniqueIndex)
 
-## @UniqueIndex
-
-복합 유니크 인덱스를 클래스 레벨에 선언합니다. 여러 컬럼의 조합이 유일해야 하는 경우에 사용합니다.
-
-**시그니처**
+여러 컬럼의 **조합**이 고유해야 하는 경우가 있습니다. 예를 들어, 같은 카테고리 안에서 slug가 유일하면 되는 경우입니다.
 
 ```typescript
-function UniqueIndex(columns: string[], options?: { name?: string }): ClassDecorator
-```
+// post.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column, UniqueIndex } from "stingerloom-orm";
 
-**예제**
-
-```typescript
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  UniqueIndex,
-} from "stingerloom-orm";
-
-// email + tenantId 조합이 유일해야 함
-@UniqueIndex(["email", "tenantId"])
-@Entity()
-export class User {
-  @PrimaryGeneratedColumn()
-  id!: number;
-
-  @Column()
-  email!: string;
-
-  @Column()
-  tenantId!: string;
-}
-
-// 인덱스 이름 명시
-@UniqueIndex(["categoryId", "slug"], { name: "uq_post_category_slug" })
+@UniqueIndex(["categoryId", "slug"])
 @Entity()
 export class Post {
   @PrimaryGeneratedColumn()
@@ -263,24 +202,21 @@ export class Post {
 }
 ```
 
-`synchronize: true` 설정 시 `UNIQUE INDEX` DDL이 자동으로 생성됩니다.
-
----
-
-## @Version
-
-낙관적 잠금(Optimistic Locking)을 위한 버전 컬럼을 설정합니다. 동시 수정 시 충돌 감지에 사용합니다.
-
-**시그니처**
+이렇게 하면 `(categoryId, slug)` 조합에 대한 UNIQUE INDEX가 생성됩니다. 인덱스 이름을 직접 지정할 수도 있습니다.
 
 ```typescript
-function Version(): PropertyDecorator
+@UniqueIndex(["categoryId", "slug"], { name: "uq_post_category_slug" })
 ```
 
-**예제**
+> **Hint** `@UniqueIndex`는 **클래스 레벨** 데코레이터입니다. `@Index()`는 프로퍼티에, `@UniqueIndex()`는 클래스에 붙인다는 점을 기억하세요.
+
+## 낙관적 잠금 (@Version)
+
+여러 사용자가 동시에 같은 데이터를 수정하면 충돌이 발생할 수 있습니다. `@Version()` 데코레이터를 사용하면 UPDATE 시 `WHERE version = 현재버전`이 자동으로 추가되고, 동시에 `version = 현재버전 + 1`로 갱신됩니다. 다른 사용자가 먼저 수정했다면 버전이 달라져서 UPDATE가 실패합니다.
 
 ```typescript
-import { Entity, Column, PrimaryGeneratedColumn, Version } from "stingerloom-orm";
+// order.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column, Version } from "stingerloom-orm";
 
 @Entity()
 export class Order {
@@ -295,26 +231,15 @@ export class Order {
 }
 ```
 
----
+> **Hint** 낙관적 잠금은 충돌이 드물지만 데이터 무결성이 중요한 경우(주문 상태 변경, 재고 관리 등)에 적합합니다.
 
-## @DeletedAt
+## Soft Delete (@DeletedAt)
 
-Soft Delete를 위한 삭제 시각 컬럼을 설정합니다. 이 데코레이터가 붙은 엔티티는 `delete()` 대신 `softDelete()`를 사용하면 행을 실제로 삭제하지 않고 `deleted_at` 타임스탬프를 기록합니다.
-
-`find()` / `findOne()`은 자동으로 `WHERE deleted_at IS NULL` 조건을 추가합니다.
-
-**시그니처**
+데이터를 실제로 삭제하지 않고, "삭제됨" 표시만 남기고 싶을 때가 있습니다. 게시글을 휴지통에 넣는 것처럼요.
 
 ```typescript
-function DeletedAt(): PropertyDecorator
-```
-
-내부적으로 `@Column({ type: "datetime", nullable: true })`와 동일합니다.
-
-**예제**
-
-```typescript
-import { Entity, Column, PrimaryGeneratedColumn, DeletedAt } from "stingerloom-orm";
+// post.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column, DeletedAt } from "stingerloom-orm";
 
 @Entity()
 export class Post {
@@ -327,52 +252,32 @@ export class Post {
   @DeletedAt()
   deletedAt!: Date | null;
 }
-
-// 사용
-await em.softDelete(Post, { id: 1 });   // deleted_at = NOW()
-await em.restore(Post, { id: 1 });      // deleted_at = NULL
-await em.find(Post);                    // WHERE deleted_at IS NULL (자동)
-await em.find(Post, { withDeleted: true }); // soft-deleted 포함
 ```
 
----
+`@DeletedAt()` 데코레이터를 추가하면 세 가지가 달라집니다.
+
+첫째, `em.softDelete(Post, { id: 1 })`을 호출하면 행을 삭제하는 대신 `deleted_at`에 현재 시각을 기록합니다.
+
+둘째, `em.find(Post)`는 자동으로 `WHERE deleted_at IS NULL`을 추가하여 삭제된 데이터를 제외합니다.
+
+셋째, 삭제된 데이터를 포함하여 조회하려면 `{ withDeleted: true }` 옵션을 사용합니다.
+
+```typescript
+await em.softDelete(Post, { id: 1 });                      // soft delete
+const posts = await em.find(Post);                         // 삭제된 것 제외
+const all = await em.find(Post, { withDeleted: true });    // 삭제된 것 포함
+await em.restore(Post, { id: 1 });                         // 복원
+```
 
 ## 생명주기 훅 (Lifecycle Hooks)
 
-엔티티 저장/수정/삭제 전후에 자동으로 호출되는 메서드를 선언합니다.
-
-| 데코레이터 | 실행 시점 |
-|-----------|---------|
-| `@BeforeInsert` | INSERT 직전 (PK 없는 신규 저장 시) |
-| `@AfterInsert` | INSERT 완료 후 |
-| `@BeforeUpdate` | UPDATE 직전 (PK 있는 기존 저장 시) |
-| `@AfterUpdate` | UPDATE 완료 후 |
-| `@BeforeDelete` | DELETE 직전 |
-| `@AfterDelete` | DELETE 완료 후 |
-
-**시그니처**
+엔티티가 저장되거나 수정, 삭제될 때 **자동으로 실행되는 코드**를 정의할 수 있습니다. 가장 흔한 사용 사례는 `createdAt`과 `updatedAt`을 자동으로 설정하는 것입니다.
 
 ```typescript
-function BeforeInsert(): MethodDecorator
-function AfterInsert(): MethodDecorator
-function BeforeUpdate(): MethodDecorator
-function AfterUpdate(): MethodDecorator
-function BeforeDelete(): MethodDecorator
-function AfterDelete(): MethodDecorator
-```
-
-**예제**
-
-```typescript
+// article.entity.ts
 import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  BeforeInsert,
-  AfterInsert,
-  BeforeUpdate,
-  AfterUpdate,
-  BeforeDelete,
+  Entity, PrimaryGeneratedColumn, Column,
+  BeforeInsert, BeforeUpdate,
 } from "stingerloom-orm";
 
 @Entity()
@@ -390,91 +295,43 @@ export class Article {
   updatedAt!: Date;
 
   @BeforeInsert()
-  setCreatedAt() {
-    this.createdAt = new Date();
-    this.updatedAt = new Date();
+  setTimestamps() {
+    const now = new Date();
+    this.createdAt = now;
+    this.updatedAt = now;
   }
 
   @BeforeUpdate()
-  setUpdatedAt() {
+  updateTimestamp() {
     this.updatedAt = new Date();
-  }
-
-  @AfterInsert()
-  logInsert() {
-    console.log(`Article #${this.id} inserted`);
-  }
-
-  @AfterUpdate()
-  logUpdate() {
-    console.log(`Article #${this.id} updated`);
-  }
-
-  @BeforeDelete()
-  onBeforeDelete() {
-    console.log(`Article #${this.id} is about to be deleted`);
   }
 }
 ```
 
----
+`@BeforeInsert()`가 붙은 메서드는 INSERT 직전에, `@BeforeUpdate()`는 UPDATE 직전에 자동 호출됩니다.
 
-## 유효성 검사 데코레이터
+사용 가능한 생명주기 훅은 총 6가지입니다.
 
-`save()` 호출 시 자동으로 실행되는 필드 단위 유효성 검사를 선언합니다. 검사 실패 시 `ValidationError`가 throw됩니다.
+| 데코레이터 | 실행 시점 | 언제 쓰나요? |
+|-----------|---------|------------|
+| `@BeforeInsert()` | INSERT 직전 | 기본값 설정, 타임스탬프 |
+| `@AfterInsert()` | INSERT 완료 후 | 로깅, 알림 발송 |
+| `@BeforeUpdate()` | UPDATE 직전 | updatedAt 갱신 |
+| `@AfterUpdate()` | UPDATE 완료 후 | 변경 이력 기록 |
+| `@BeforeDelete()` | DELETE 직전 | 삭제 전 정리 작업 |
+| `@AfterDelete()` | DELETE 완료 후 | 연관 리소스 정리, 로깅 |
 
-### @NotNull
+> **Hint** "After" 훅에서는 이미 DB 작업이 완료된 상태이므로, 데이터를 변경해도 DB에 반영되지 않습니다. 로깅이나 외부 알림 같은 부수 효과에 사용하세요.
 
-해당 필드가 `null` 또는 `undefined`이면 오류를 발생시킵니다.
+## 유효성 검사 (Validation)
 
-```typescript
-function NotNull(): PropertyDecorator
-```
-
-### @MinLength(min: number)
-
-문자열 필드의 최소 길이를 검사합니다.
-
-```typescript
-function MinLength(min: number): PropertyDecorator
-```
-
-### @MaxLength(max: number)
-
-문자열 필드의 최대 길이를 검사합니다.
+`save()` 호출 시 데이터가 올바른지 자동으로 검증하고 싶을 때 유효성 검사 데코레이터를 사용합니다. 검사에 실패하면 `ValidationError`가 발생하여 잘못된 데이터가 DB에 들어가는 것을 방지합니다.
 
 ```typescript
-function MaxLength(max: number): PropertyDecorator
-```
-
-### @Min(min: number)
-
-숫자 필드의 최솟값을 검사합니다.
-
-```typescript
-function Min(min: number): PropertyDecorator
-```
-
-### @Max(max: number)
-
-숫자 필드의 최댓값을 검사합니다.
-
-```typescript
-function Max(max: number): PropertyDecorator
-```
-
-**예제**
-
-```typescript
+// member.entity.ts
 import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  NotNull,
-  MinLength,
-  MaxLength,
-  Min,
-  Max,
+  Entity, PrimaryGeneratedColumn, Column,
+  NotNull, MinLength, MaxLength, Min, Max,
 } from "stingerloom-orm";
 
 @Entity()
@@ -488,41 +345,36 @@ export class Member {
   @Column()
   name!: string;
 
-  @NotNull()
-  @MinLength(5)
-  @MaxLength(100)
-  @Column()
-  email!: string;
-
   @Min(0)
   @Max(150)
   @Column()
   age!: number;
 }
-
-// 유효하지 않은 데이터 저장 시 ValidationError 발생
-await em.save(Member, { name: "A", email: "x", age: -1 });
-// Error: name must be at least 2 characters long
 ```
 
----
+각 데코레이터의 역할은 이름 그대로입니다.
 
-## 완전한 엔티티 예제
+- **`@NotNull()`** — `null`이나 `undefined`이면 오류
+- **`@MinLength(n)` / `@MaxLength(n)`** — 문자열 길이 검증
+- **`@Min(n)` / `@Max(n)`** — 숫자 범위 검증
+
+유효하지 않은 데이터로 `save()`를 호출하면 DB 쿼리 실행 전에 오류가 발생합니다.
 
 ```typescript
+await em.save(Member, { name: "A", age: -1 });
+// ValidationError: name must be at least 2 characters long
+```
+
+## 완전한 실무 예제
+
+지금까지 배운 모든 기능을 조합한 블로그 사용자 엔티티입니다.
+
+```typescript
+// user.entity.ts
 import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  Index,
-  Version,
-  DeletedAt,
-  BeforeInsert,
-  BeforeUpdate,
-  AfterInsert,
-  NotNull,
-  MinLength,
-  MaxLength,
+  Entity, PrimaryGeneratedColumn, Column, Index, Version,
+  DeletedAt, BeforeInsert, BeforeUpdate, AfterInsert,
+  NotNull, MinLength, MaxLength,
 } from "stingerloom-orm";
 
 @Entity()
@@ -538,7 +390,7 @@ export class User {
 
   @NotNull()
   @Index()
-  @Column({ unique: true })
+  @Column({ type: "varchar", length: 255 })
   email!: string;
 
   @Column({ type: "varchar", length: 20, nullable: true })
@@ -568,7 +420,6 @@ export class User {
     this.createdAt = now;
     this.updatedAt = now;
     this.isActive = true;
-    this.version = 1;
   }
 
   @BeforeUpdate()
@@ -582,3 +433,65 @@ export class User {
   }
 }
 ```
+
+이 하나의 엔티티에 자동 증가 PK, 유효성 검사, 인덱스, JSON 컬럼, 낙관적 잠금, Soft Delete, 자동 타임스탬프, 로깅이 모두 포함되어 있습니다.
+
+## ColumnType 레퍼런스
+
+### TypeScript 타입 자동 추론
+
+`@Column()`에서 `type`을 생략하면 TypeScript 타입에서 자동 추론됩니다.
+
+| TypeScript 타입 | ColumnType | 기본 길이 | nullable |
+|----------------|-----------|----------|----------|
+| `String` | varchar | 255 | false |
+| `Number` | int | 11 | false |
+| `Boolean` | boolean | 1 | false |
+| `Date` | datetime | 0 | false |
+| `Buffer` | blob | 0 | true |
+| 기타 | text | 0 | true |
+
+### ColumnType별 DB 매핑
+
+| ColumnType | MySQL/MariaDB | PostgreSQL | SQLite |
+|-----------|--------------|-----------|--------|
+| `varchar` | VARCHAR(n) | VARCHAR(n) | TEXT |
+| `int` / `number` | INT | INTEGER | INTEGER |
+| `float` | FLOAT | REAL | REAL |
+| `double` | DOUBLE | DOUBLE PRECISION | REAL |
+| `bigint` | BIGINT | BIGINT | INTEGER |
+| `boolean` | TINYINT(1) | BOOLEAN | INTEGER |
+| `datetime` | DATETIME | TIMESTAMP | TEXT |
+| `timestamp` | TIMESTAMP | TIMESTAMP | TEXT |
+| `date` | DATE | DATE | TEXT |
+| `text` | TEXT | TEXT | TEXT |
+| `longtext` | LONGTEXT | TEXT | TEXT |
+| `blob` | BLOB | BYTEA | BLOB |
+| `json` | JSON | JSON | TEXT |
+| `jsonb` | JSON | JSONB | TEXT |
+| `enum` | ENUM | (사용자 정의 ENUM) | TEXT |
+
+### @Column 전체 옵션
+
+| 옵션 | 타입 | 설명 |
+|------|------|------|
+| `name` | `string` | DB 컬럼명 (생략 시 프로퍼티명) |
+| `type` | `ColumnType` | 컬럼 타입 (생략 시 자동 추론) |
+| `length` | `number` | 컬럼 길이 |
+| `nullable` | `boolean` | NULL 허용 (기본값: false) |
+| `primary` | `boolean` | 기본키 여부 |
+| `autoIncrement` | `boolean` | AUTO_INCREMENT 여부 |
+| `transform` | `(raw) => any` | DB 읽기 시 값 변환 함수 |
+| `precision` | `number` | 소수점 정밀도 |
+| `scale` | `number` | 소수점 스케일 |
+| `enumValues` | `string[]` | PostgreSQL ENUM 값 목록 |
+| `enumName` | `string` | PostgreSQL ENUM 타입 이름 |
+
+## 다음 단계
+
+엔티티를 정의했다면, 이제 엔티티 간의 관계를 설정할 차례입니다.
+
+- [관계 설정하기](./relations.md) — `@ManyToOne`, `@OneToMany` 등으로 테이블 간 관계 정의
+- [EntityManager 사용하기](./entity-manager.md) — 정의한 엔티티로 CRUD 수행하기
+- [트랜잭션](./transactions.md) — 여러 작업을 하나의 단위로 묶기
+- [마이그레이션](./migrations.md) — 스키마 변경을 안전하게 관리하기

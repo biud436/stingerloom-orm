@@ -1,85 +1,76 @@
-# Stingerloom ORM 문서
+# Stingerloom ORM
 
-TypeScript 기반의 경량 ORM으로, MySQL, PostgreSQL, SQLite, MSSQL을 지원하며 Docker OverlayFS 방식의 레이어드 메타데이터 시스템을 통해 멀티테넌시를 구현합니다.
+**Stingerloom ORM**은 TypeScript 데코레이터로 데이터베이스를 다루는 경량 ORM입니다. 엔티티 클래스를 정의하면 테이블 생성부터 CRUD, 관계 매핑, 트랜잭션까지 자동으로 처리됩니다.
 
----
+```typescript
+// user.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column } from "stingerloom-orm";
 
-## 주요 기능
+@Entity()
+export class User {
+  @PrimaryGeneratedColumn()
+  id!: number;
 
-- **다중 DB 지원** — MySQL / MariaDB / PostgreSQL / SQLite / MSSQL
-- **데코레이터 기반 엔티티 정의** — `@Entity`, `@Column`, `@PrimaryGeneratedColumn` 등
-- **관계 매핑** — `@ManyToOne`, `@OneToMany`, `@OneToOne`, `@ManyToMany`
-- **Eager / Lazy 로딩** — 자동 LEFT JOIN 또는 Proxy 기반 지연 로딩
-- **Cascade** — insert / update / delete 자동 전파
-- **Soft Delete** — `@DeletedAt`, `softDelete()`, `restore()`
-- **트랜잭션** — `@Transactional()` 데코레이터, 격리 수준, Savepoint
-- **마이그레이션** — `Migration` 추상 클래스, `MigrationRunner`, CLI, Schema Diff 자동 생성
-- **쿼리 빌더 DSL** — `RawQueryBuilder` (select / join / where / orderBy / groupBy / having / limit 등)
-- **집계 쿼리** — `count`, `sum`, `avg`, `min`, `max`, `findAndCount`
-- **Upsert** — `INSERT ... ON DUPLICATE KEY UPDATE` (MySQL) / `ON CONFLICT DO UPDATE` (PostgreSQL)
-- **EXPLAIN** — `explain()` 쿼리 실행 계획 조회 (`ExplainResult`)
-- **배치 연산** — `insertMany`, `saveMany`, `deleteMany`
-- **이벤트 시스템** — `on/off(event, handler)`, `EntitySubscriber`
-- **N+1 감지** — `logging.nPlusOne` 옵션
-- **커서 페이지네이션** — `findWithCursor`, Base64 커서
-- **연결 풀링** — `PoolOptions` (max / min / acquireTimeoutMs / idleTimeoutMs)
-- **Read Replica** — master/slave 읽기/쓰기 분리, 라운드 로빈 + 자동 fallback
-- **쿼리 타임아웃** — connection-level / per-query 타임아웃 (`QueryTimeoutError`)
-- **멀티 DB** — named connection으로 복수 DB 독립 운용 (`getConnectionName()`)
-- **멀티테넌시** — `LayeredMetadataStore`, `MetadataContext.run(tenantId, callback)`, `TenantMigrationRunner`
-- **유효성 검사** — `@NotNull`, `@MinLength`, `@MaxLength`, `@Min`, `@Max`
-- **복합 유니크 인덱스** — `@UniqueIndex(columns[])`
-- **FK 해시 네이밍** — 충돌 방지를 위한 `fk_{table}_{hash8}` 자동 생성
-- **NestJS 통합** — `InjectRepository`, `StinglerloomOrmModule`, 멀티테넌시 미들웨어
-- **`findOne()` 타입 안전성** — 결과 없을 시 `null` 반환 (`T | null`)
+  @Column()
+  name!: string;
 
----
+  @Column()
+  email!: string;
+}
+```
+
+```typescript
+// main.ts
+const em = new EntityManager();
+await em.register({ type: "postgres", /* ... */ entities: [User], synchronize: true });
+
+// 생성
+const user = await em.save(User, { name: "홍길동", email: "hong@example.com" });
+
+// 조회
+const users = await em.find(User, { where: { name: "홍길동" } });
+```
+
+이것이 Stingerloom ORM의 전부입니다. 클래스를 정의하고, 연결하고, 사용하세요.
+
+## 어디서 시작하나요?
+
+처음이라면 **시작하기** 문서부터 따라해보세요. 5분이면 첫 번째 CRUD를 완성할 수 있습니다.
+
+| 순서 | 문서 | 배우는 것 |
+|------|------|----------|
+| 1 | [시작하기](./getting-started.md) | 설치, 첫 엔티티, 첫 CRUD |
+| 2 | [엔티티 정의](./entities.md) | 컬럼, 인덱스, 생명주기 훅, 유효성 검사 |
+| 3 | [관계 설정](./relations.md) | ManyToOne, OneToMany, ManyToMany |
+| 4 | [EntityManager](./entity-manager.md) | find, save, delete, 집계, 페이지네이션 |
+
+## 더 깊이 들어가기
+
+기본을 익혔다면 필요한 주제를 골라 읽으세요.
+
+| 문서 | 언제 필요한가요? |
+|------|----------------|
+| [쿼리 빌더](./query-builder.md) | JOIN, GROUP BY, 서브쿼리 등 복잡한 SQL이 필요할 때 |
+| [트랜잭션](./transactions.md) | 여러 작업을 하나의 단위로 묶어야 할 때 |
+| [마이그레이션](./migrations.md) | 프로덕션에서 스키마를 안전하게 변경할 때 |
+| [설정 가이드](./configuration.md) | 풀링, 타임아웃, Read Replica 등을 설정할 때 |
+| [고급 기능](./advanced.md) | 성능 최적화, 이벤트 구독, N+1 감지가 필요할 때 |
+| [멀티테넌시](./multi-tenancy.md) | 하나의 앱에서 여러 고객 데이터를 격리할 때 |
+| [API 레퍼런스](./api-reference.md) | 메서드 시그니처를 빠르게 확인할 때 |
+
+## 지원 데이터베이스
+
+| DB | 상태 |
+|----|------|
+| PostgreSQL | 전체 지원 (스키마 격리, ENUM, RETURNING) |
+| MySQL / MariaDB | 전체 지원 |
+| SQLite | 지원 (파일 기반, 풀링 미지원) |
+| MSSQL | 지원 |
 
 ## 설치
 
 ```bash
-# pnpm
 pnpm add stingerloom-orm reflect-metadata
-
-# npm
-npm install stingerloom-orm reflect-metadata
-
-# yarn
-yarn add stingerloom-orm reflect-metadata
 ```
 
-`reflect-metadata`를 앱 진입점 최상단에서 반드시 임포트해야 합니다.
-
-```typescript
-import "reflect-metadata";
-```
-
----
-
-## 문서 목차
-
-| 파일 | 내용 |
-|------|------|
-| [getting-started.md](./getting-started.md) | 설치, tsconfig 설정, 최소 동작 예제 |
-| [entities.md](./entities.md) | 엔티티 데코레이터 전체 (`@Entity`, `@Column`, 훅, 유효성 검사 등) |
-| [relations.md](./relations.md) | 관계 데코레이터 (`@ManyToOne`, `@OneToMany`, `@OneToOne`, `@ManyToMany`) |
-| [entity-manager.md](./entity-manager.md) | EntityManager API 전체 (`find`, `save`, `delete`, 집계 등) |
-| [query-builder.md](./query-builder.md) | RawQueryBuilder DSL (where / join / orderBy / limit 등) |
-| [transactions.md](./transactions.md) | 트랜잭션 관리 (`@Transactional`, 격리 수준, Savepoint) |
-| [migrations.md](./migrations.md) | 마이그레이션 시스템 (Migration, MigrationRunner, CLI) |
-| [advanced.md](./advanced.md) | 고급 기능 (이벤트, Subscriber, N+1 감지, 커서 페이지네이션 등) |
-| [multi-tenancy.md](./multi-tenancy.md) | 멀티테넌시 (LayeredMetadataStore, withTenant, TenantMigrationRunner) |
-| [configuration.md](./configuration.md) | 연결 설정 (풀, 재시도, 타임아웃, Read Replica, 멀티 DB) |
-| [api-reference.md](./api-reference.md) | 전체 API 레퍼런스 (EntityManager, BaseRepository, 데코레이터, 타입) |
-
----
-
-## 지원 데이터베이스
-
-| DB | 식별자 래핑 | PK 생성 | 스키마 지원 |
-|----|------------|---------|------------|
-| MySQL | 백틱 (\`) | AUTO_INCREMENT | 미지원 |
-| MariaDB | 백틱 (\`) | AUTO_INCREMENT | 미지원 |
-| PostgreSQL | 큰따옴표 (") | SERIAL / RETURNING | 지원 |
-| SQLite | 큰따옴표 (") | AUTOINCREMENT | 미지원 |
-| MSSQL | 대괄호 ([]) | IDENTITY | 미지원 |
+> **Hint** `reflect-metadata`는 데코레이터 메타데이터에 필요합니다. 앱 진입점 최상단에서 `import "reflect-metadata"`를 추가하세요.

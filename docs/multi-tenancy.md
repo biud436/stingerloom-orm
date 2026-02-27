@@ -1,106 +1,54 @@
 # 멀티테넌시 (Multi-Tenancy)
 
-Stingerloom ORM은 Docker OverlayFS와 동일한 개념의 **레이어드 메타데이터 시스템**을 통해 멀티테넌시를 지원합니다.
+SaaS 서비스를 만들 때 고객(테넌트)마다 데이터를 완전히 격리해야 하는 경우가 있습니다. A 회사의 사용자 목록에 B 회사의 데이터가 섞이면 안 되겠죠.
 
----
+Stingerloom ORM은 **레이어드 메타데이터 시스템**으로 멀티테넌시를 지원합니다. Docker의 OverlayFS와 동일한 원리입니다.
 
-## 개념: Docker OverlayFS 비유
-
-Docker의 OverlayFS는 여러 파일시스템 레이어를 계층적으로 쌓아 올리는 방식입니다. Stingerloom ORM의 레이어드 메타데이터도 동일한 원리를 사용합니다.
+## 작동 원리
 
 ```
-┌─────────────────────────────────────┐
-│  Tenant Layer (Upper / Work Layer)  │  ← 테넌트별 수정 사항 (읽기/쓰기)
-│  예: "tenant_1" 전용 스키마 오버라이드  │
-├─────────────────────────────────────┤
-│  Public Layer (Lower Layer)         │  ← 기본 스키마 (읽기 전용)
-│  모든 엔티티 포함                     │
-└─────────────────────────────────────┘
+┌──────────────────────────────────┐
+│  Tenant Layer (읽기/쓰기)         │  ← 테넌트별 수정 사항
+│  예: "acme_corp" 전용 오버라이드    │
+├──────────────────────────────────┤
+│  Public Layer (읽기 전용)         │  ← 기본 스키마 (모든 엔티티)
+│  @Entity, @Column 등 기본 정의     │
+└──────────────────────────────────┘
 ```
 
-**읽기 순서:** 상위(Tenant) → 하위(Public) 순으로 조회
+**읽기:** 테넌트 레이어를 먼저 확인하고, 없으면 Public 레이어에서 읽습니다.
 
-- 테넌트 레이어에 키가 있으면 그 값을 반환
-- 없으면 Public 레이어에서 조회 (Fallback)
+**쓰기:** 현재 테넌트 레이어에만 기록합니다 (Copy-on-Write). Public 레이어는 변경되지 않습니다.
 
-**쓰기 방식:** Copy-on-Write
+핵심은 간단합니다. "지금 어떤 테넌트로 요청이 들어왔는지"를 설정하면, 나머지는 ORM이 알아서 처리합니다.
 
-- 항상 현재 컨텍스트의 최상위 쓰기 가능 레이어에만 기록
-- Public 레이어는 읽기 전용이므로 수정 불가
+## 기본 사용법
 
----
-
-## 핵심 컴포넌트
-
-### LayeredMetadataStore
-
-메타데이터를 레이어 기반으로 관리하는 핵심 클래스입니다.
-
-```typescript
-import { LayeredMetadataStore } from "stingerloom-orm";
-
-const store = new LayeredMetadataStore();
-
-// 기본 레이어 구조 (생성자에서 자동 생성)
-// - "public" 레이어 (읽기 전용, Lower Layer)
-
-// 테넌트 레이어 추가
-store.addLayer("tenant_1", false); // 두 번째 인자: isReadOnly
-
-// 컨텍스트 전환
-store.setContext("tenant_1");
-
-// 현재 컨텍스트에 메타데이터 저장 (Copy-on-Write)
-store.set("someKey", { tableName: "users_tenant_1" });
-
-// 조회 (상위 → 하위 Fallback)
-const value = store.get("someKey");
-```
-
-### MetadataContext
-
-`AsyncLocalStorage`를 사용하여 요청(또는 비동기 실행 단위)별로 독립적인 테넌트 컨텍스트를 유지합니다.
+`MetadataContext.run()`으로 특정 테넌트 컨텍스트 안에서 코드를 실행합니다.
 
 ```typescript
 import { MetadataContext } from "stingerloom-orm";
 
-// 현재 테넌트 ID 조회 (없으면 "public" 반환)
-const tenant = MetadataContext.getCurrentTenant();
-
-// 컨텍스트 활성화 여부 확인
-const isActive = MetadataContext.isActive();
-```
-
----
-
-## withTenant(tenantId, callback) API
-
-특정 테넌트 컨텍스트 내에서 콜백을 실행합니다. 콜백 내부의 모든 비동기 호출에서 동일한 `tenantId`가 유지됩니다.
-
-```typescript
-import { MetadataContext } from "stingerloom-orm";
-
-// 기본 사용법
+// tenant_1 컨텍스트에서 실행
 await MetadataContext.run("tenant_1", async () => {
-  // 이 블록 내의 모든 메타데이터 조회는 tenant_1 컨텍스트
   const users = await em.find(User);
-  // → tenant_1 레이어 → public 레이어 순서로 메타데이터 조회
+  // → tenant_1 레이어 → public 레이어 순서로 조회
 });
 
-// 중첩 컨텍스트
-await MetadataContext.run("tenant_1", async () => {
-  const users = await em.find(User); // tenant_1 컨텍스트
-
-  // 내부 콜백도 tenant_1 컨텍스트 유지
-  await someAsyncOperation();
-});
+// 콜백 밖에서는 자동으로 "public"으로 복귀
 ```
 
----
+`MetadataContext.run()`은 `AsyncLocalStorage`를 사용하므로, 콜백 내부에서 호출하는 모든 비동기 함수에서 동일한 테넌트 컨텍스트가 유지됩니다.
 
-## 멀티테넌시 시나리오 예제
+```typescript
+// 현재 테넌트 확인
+const tenant = MetadataContext.getCurrentTenant(); // "tenant_1" 또는 "public"
+const isActive = MetadataContext.isActive();       // true / false
+```
 
-### NestJS Middleware로 자동 컨텍스트 설정
+## NestJS 미들웨어로 자동 설정
+
+실제 서비스에서는 HTTP 요청마다 테넌트를 자동으로 설정합니다. 미들웨어를 사용하면 모든 컨트롤러와 서비스에서 별도 코드 없이 테넌트 격리가 적용됩니다.
 
 ```typescript
 // tenant.middleware.ts
@@ -111,7 +59,6 @@ import { MetadataContext } from "stingerloom-orm";
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction) {
-    // 요청 헤더에서 테넌트 ID 추출
     const tenantId = req.headers["x-tenant-id"] as string ?? "public";
 
     // 요청 전체를 테넌트 컨텍스트로 래핑
@@ -120,11 +67,11 @@ export class TenantMiddleware implements NestMiddleware {
     });
   }
 }
+```
 
+```typescript
 // app.module.ts
-@Module({
-  // ...
-})
+@Module({ /* ... */ })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(TenantMiddleware).forRoutes("*");
@@ -132,166 +79,24 @@ export class AppModule implements NestModule {
 }
 ```
 
-### 테넌트별 스키마 분리
-
-```typescript
-// Public 레이어: 기본 User 테이블
-@Entity()
-export class User {
-  @PrimaryGeneratedColumn()
-  id!: number;
-
-  @Column()
-  name!: string;
-
-  @Column()
-  tenantId!: string;
-}
-
-// 서비스에서 테넌트 컨텍스트 활용
-class UserService {
-  async findUsersForTenant(tenantId: string) {
-    return MetadataContext.run(tenantId, async () => {
-      // 현재 컨텍스트가 tenantId로 설정됨
-      return em.find(User, {
-        where: { tenantId },
-      });
-    });
-  }
-}
-```
-
-### 테넌트별 메타데이터 오버라이드
-
-```typescript
-import { LayeredMetadataStore } from "stingerloom-orm";
-
-const store = new LayeredMetadataStore();
-
-// Public 레이어에 기본 스키마 등록 (자동으로 ORM이 처리)
-
-// Tenant 레이어 생성 및 스키마 오버라이드
-store.addLayer("enterprise", false);
-store.setContext("enterprise");
-
-// 특정 테넌트에서만 다른 테이블 설정 사용
-store.set("User", {
-  tableName: "enterprise_users",  // 테넌트별 다른 테이블명
-  // ...
-});
-
-// 이후 enterprise 컨텍스트에서 User 조회 시 enterprise_users 테이블 사용
-```
-
----
-
-## MetadataLayer API
-
-```typescript
-// 레이어 추가
-const layer = store.addLayer("tenant_2", false);
-
-// 레이어 조회
-const publicLayer = store.getLayer("public");
-
-// 현재 컨텍스트 조회
-const context = store.getContext(); // "public" | "tenant_1" | ...
-
-// 메타데이터 쓰기 (Copy-on-Write)
-store.set("entityKey", metadata);
-
-// 메타데이터 읽기 (Fallback 포함)
-const metadata = store.get("entityKey");
-
-// 모든 메타데이터 목록 (현재 컨텍스트 기준)
-const all = store.getAll();
-```
-
----
-
-## NestJS 통합 예제
-
-`examples/nestjs-multitenant/` 폴더에 완전한 NestJS 멀티테넌시 예제가 포함되어 있습니다.
-
-```
-examples/nestjs-multitenant/
-├── src/
-│   ├── app.module.ts           # TenantMiddleware 등록
-│   ├── tenant.middleware.ts    # X-Tenant-Id 헤더 기반 컨텍스트 설정
-│   ├── users/
-│   │   ├── user.entity.ts      # User 엔티티
-│   │   ├── users.module.ts
-│   │   ├── users.service.ts    # withTenant() 활용 CRUD
-│   │   └── users.controller.ts
-│   └── posts/
-│       ├── post.entity.ts
-│       ├── posts.module.ts
-│       ├── posts.service.ts
-│       └── posts.controller.ts
-└── package.json
-```
-
-**실행 방법**
+이제 API를 호출할 때 `X-Tenant-Id` 헤더만 추가하면 됩니다.
 
 ```bash
-cd examples/nestjs-multitenant
-pnpm install
-pnpm start
+# acme_corp 테넌트의 사용자 조회
+curl -H "X-Tenant-Id: acme_corp" http://localhost:3000/users
+
+# globex 테넌트의 게시글 조회
+curl -H "X-Tenant-Id: globex" http://localhost:3000/posts
+
+# 헤더가 없으면 → "public" 컨텍스트
+curl http://localhost:3000/users
 ```
 
-**API 호출 예시**
+## PostgreSQL 스키마 기반 격리
 
-```bash
-# tenant_1 컨텍스트에서 유저 조회
-curl -H "X-Tenant-Id: tenant_1" http://localhost:3000/users
+PostgreSQL에서는 스키마를 사용하여 테넌트 데이터를 물리적으로 완전히 격리할 수 있습니다. `TenantMigrationRunner`가 테넌트별 스키마를 자동으로 생성해줍니다.
 
-# tenant_2 컨텍스트에서 포스트 조회
-curl -H "X-Tenant-Id: tenant_2" http://localhost:3000/posts
-```
-
-`X-Tenant-Id` 헤더가 없으면 기본값 `"public"`으로 처리됩니다.
-
----
-
-## 주의 사항
-
-1. **전역 상태 사용 금지:** 새 기능 추가 시 전역 싱글톤 대신 레이어를 통한 메타데이터 접근을 사용하세요.
-
-2. **Public 레이어는 읽기 전용:** `@Entity`, `@Column` 등 데코레이터 등록 시 Public 레이어에 저장됩니다. 테넌트별 오버라이드는 별도 레이어에 저장됩니다.
-
-3. **AsyncLocalStorage 범위:** `MetadataContext.run()` 블록 외부에서는 컨텍스트가 `"public"`으로 자동 복귀됩니다.
-
-4. **MultiTenantMetadataManager 사용 중단:** 이전 버전의 `MultiTenantMetadataManager`는 deprecated 처리되었습니다. `MetadataContext.run()` 또는 `LayeredMetadataStore`를 직접 사용하세요.
-
----
-
-## TenantMigrationRunner
-
-테넌트별 스키마를 자동으로 프로비저닝하는 `ITenantMigrationRunner` 인터페이스와 드라이버별 구현체를 제공합니다.
-
-### ITenantMigrationRunner 인터페이스
-
-```typescript
-import { ITenantMigrationRunner, TenantSyncResult } from "stingerloom-orm";
-
-interface ITenantMigrationRunner {
-  discoverSchemas(): Promise<string[]>;
-  ensureSchema(tenantId: string): Promise<void>;
-  syncTenantSchemas(tenantIds: string[]): Promise<TenantSyncResult>;
-  isProvisioned(tenantId: string): boolean;
-  getProvisionedSchemas(): string[];
-  reset(): void;
-}
-
-interface TenantSyncResult {
-  created: string[];  // 새로 생성된 테넌트
-  skipped: string[];  // 이미 존재하여 건너뛴 테넌트
-}
-```
-
-### PostgreSQL 구현 (PostgresTenantMigrationRunner)
-
-PostgreSQL은 스키마 기반 격리를 사용합니다. `CREATE SCHEMA` + `CREATE TABLE ... (LIKE ... INCLUDING ALL)`로 원본 스키마의 테이블 구조를 복제합니다.
+### 테넌트 스키마 프로비저닝
 
 ```typescript
 import { PostgresTenantMigrationRunner, EntityManager } from "stingerloom-orm";
@@ -310,42 +115,42 @@ await em.register({
 
 const driver = em.getDriver()!;
 const runner = new PostgresTenantMigrationRunner(driver, {
-  sourceSchema: "public", // 복제할 원본 스키마 (기본값)
+  sourceSchema: "public", // 이 스키마의 테이블 구조를 복제
 });
-
-// 기존 테넌트 스키마 탐색
-const schemas = await runner.discoverSchemas();
-console.log(schemas); // ["public", "tenant_1", "tenant_2"]
-
-// 단일 테넌트 프로비저닝
-await runner.ensureSchema("tenant_3");
-
-// 여러 테넌트 일괄 프로비저닝
-const result = await runner.syncTenantSchemas([
-  "tenant_1", "tenant_2", "tenant_3", "tenant_4"
-]);
-console.log(result.created);  // ["tenant_4"]
-console.log(result.skipped);  // ["tenant_1", "tenant_2", "tenant_3"]
-
-// 프로비저닝 상태 확인
-runner.isProvisioned("tenant_3"); // true
-runner.getProvisionedSchemas();   // ["tenant_1", "tenant_2", "tenant_3", "tenant_4"]
 ```
 
-### 드라이버별 지원 현황
+### 단일 테넌트 생성
 
-| 드라이버 | 구현 클래스 | 격리 방식 |
-|---------|-----------|---------|
-| PostgreSQL | `PostgresTenantMigrationRunner` | 스키마 기반 (`CREATE SCHEMA`) |
-| MySQL | `MySqlTenantMigrationRunner` | 미지원 (UnsupportedError) |
-| SQLite | `SqliteTenantMigrationRunner` | 미지원 (UnsupportedError) |
-| MSSQL | `MssqlTenantMigrationRunner` | 미지원 (UnsupportedError) |
+```typescript
+await runner.ensureSchema("acme_corp");
+// → CREATE SCHEMA "acme_corp"
+// → 각 테이블을 CREATE TABLE ... (LIKE "public"."users" INCLUDING ALL) 로 복제
+```
 
-> **참고:** 현재 스키마 기반 멀티테넌시는 PostgreSQL에서만 완전히 지원됩니다. MySQL/SQLite/MSSQL은 인터페이스 구현체는 존재하지만 `UnsupportedError`를 throw합니다.
+### 여러 테넌트 일괄 생성
 
-### NestJS 통합 예제
+```typescript
+const result = await runner.syncTenantSchemas([
+  "acme_corp", "globex", "initech", "umbrella"
+]);
 
-`examples/nestjs-multitenant/`에서 TenantMiddleware와 함께 사용하는 예제를 확인할 수 있습니다.
+console.log(result.created);  // ["initech", "umbrella"] — 새로 생성됨
+console.log(result.skipped);  // ["acme_corp", "globex"] — 이미 존재
+```
+
+### 기존 스키마 탐색
+
+```typescript
+const schemas = await runner.discoverSchemas();
+// ["public", "acme_corp", "globex"]
+
+runner.isProvisioned("acme_corp");   // true
+runner.getProvisionedSchemas();       // ["acme_corp", "globex", ...]
+```
+
+### NestJS에서 자동 프로비저닝
+
+앱이 시작될 때 모든 테넌트 스키마를 자동으로 생성하는 서비스를 만들 수 있습니다.
 
 ```typescript
 // tenant-provisioning.service.ts
@@ -362,10 +167,10 @@ export class TenantProvisioningService implements OnModuleInit {
     const driver = this.em.getDriver()!;
     this.runner = new PostgresTenantMigrationRunner(driver);
 
-    // 앱 시작 시 모든 테넌트 프로비저닝
+    // 앱 시작 시 테넌트 프로비저닝
     await this.runner.syncTenantSchemas([
-      "tenant_alpha",
-      "tenant_beta",
+      "acme_corp",
+      "globex",
     ]);
   }
 
@@ -374,3 +179,48 @@ export class TenantProvisioningService implements OnModuleInit {
   }
 }
 ```
+
+> **Hint** 현재 스키마 기반 멀티테넌시는 PostgreSQL에서만 지원됩니다. MySQL, SQLite, MSSQL은 `UnsupportedError`를 반환합니다.
+
+## 레이어드 메타데이터 직접 사용
+
+대부분의 경우 `MetadataContext.run()`만으로 충분하지만, 테넌트별로 메타데이터를 직접 오버라이드해야 할 때는 `LayeredMetadataStore`를 사용합니다.
+
+```typescript
+import { LayeredMetadataStore } from "stingerloom-orm";
+
+const store = new LayeredMetadataStore();
+
+// 테넌트 레이어 추가
+store.addLayer("enterprise", false);
+
+// 테넌트별 메타데이터 오버라이드
+store.setContext("enterprise");
+store.set("User", {
+  tableName: "enterprise_users", // 이 테넌트에서만 다른 테이블 사용
+});
+```
+
+## 주의 사항
+
+**전역 상태 사용 금지** — 전역 싱글톤 대신 레이어를 통해 메타데이터에 접근하세요.
+
+**Public 레이어는 읽기 전용** — `@Entity`, `@Column` 등 데코레이터로 등록된 메타데이터는 Public 레이어에 저장됩니다. 테넌트별 변경은 별도 레이어에서만 가능합니다.
+
+**컨텍스트 범위** — `MetadataContext.run()` 블록 바깥에서는 자동으로 `"public"` 컨텍스트로 복귀됩니다.
+
+## 예제 프로젝트
+
+`examples/nestjs-multitenant/`에 완전한 NestJS 멀티테넌시 예제가 있습니다.
+
+```bash
+cd examples/nestjs-multitenant
+pnpm install
+pnpm start
+```
+
+## 다음 단계
+
+- [설정 가이드](./configuration.md) — 풀링, Read Replica 등 운영 설정
+- [마이그레이션](./migrations.md) — 프로덕션 스키마 관리
+- [고급 기능](./advanced.md) — 이벤트 시스템, N+1 감지, 성능 최적화

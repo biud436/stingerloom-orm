@@ -1,6 +1,6 @@
-# EntityManager API
+# EntityManager
 
-`EntityManager`는 ORM의 핵심 진입점입니다. 모든 CRUD 연산, 집계, Raw Query, 이벤트 구독 등을 담당합니다.
+**EntityManager**는 Stingerloom ORM의 핵심 진입점입니다. 데이터를 생성, 조회, 수정, 삭제하는 모든 작업이 EntityManager를 통해 이루어집니다.
 
 ```typescript
 import { EntityManager } from "stingerloom-orm";
@@ -8,78 +8,63 @@ import { EntityManager } from "stingerloom-orm";
 const em = new EntityManager();
 ```
 
----
+이 문서에서는 개발할 때 가장 많이 사용하는 기능부터 순서대로 설명합니다.
 
-## register(options, connectionName?)
+## DB 연결하기 — register()
 
-DB 연결과 엔티티 등록을 한 번에 수행합니다. `synchronize: true`이면 테이블이 없을 경우 자동 생성됩니다.
-
-두 번째 인자로 연결 이름을 지정할 수 있습니다 (기본값: `'default'`). 멀티 DB 환경에서 여러 EntityManager 인스턴스를 독립적으로 운용할 때 사용합니다.
+EntityManager를 사용하려면 먼저 데이터베이스에 연결해야 합니다.
 
 ```typescript
-// 단일 DB (기본 사용)
+// main.ts
+import "reflect-metadata";
+import { EntityManager } from "stingerloom-orm";
+import { User } from "./user.entity";
+
+const em = new EntityManager();
+
 await em.register({
-  type: "mysql",
+  type: "postgres",
   host: "localhost",
-  port: 3306,
-  username: "root",
+  port: 5432,
+  username: "postgres",
   password: "password",
   database: "mydb",
-  entities: [User, Post, Comment],
-  synchronize: true,
-});
-
-// 멀티 DB — named connection 지정
-const primaryEm = new EntityManager();
-await primaryEm.register({
-  type: "mysql",
-  // ...
   entities: [User],
   synchronize: true,
-}, "primary");
-
-const analyticsEm = new EntityManager();
-await analyticsEm.register({
-  type: "postgres",
-  // ...
-  entities: [Log],
-  synchronize: true,
-}, "analytics");
-
-console.log(primaryEm.getConnectionName());   // "primary"
-console.log(analyticsEm.getConnectionName()); // "analytics"
+});
 ```
 
-**DatabaseClientOptions 전체 옵션**
+`register()`가 하는 일은 세 가지입니다: DB에 연결하고, 엔티티 메타데이터를 스캔하고, `synchronize: true`이면 테이블을 자동 생성합니다.
 
-| 옵션 | 타입 | 설명 |
-|------|------|------|
-| `type` | `"mysql" \| "mariadb" \| "postgres" \| "sqlite" \| "mssql"` | DB 종류 |
-| `host` | `string` | 호스트 주소 |
-| `port` | `number` | 포트 번호 |
-| `username` | `string` | DB 사용자명 |
-| `password` | `string` | DB 비밀번호 |
-| `database` | `string` | DB명 (SQLite: 파일 경로) |
-| `entities` | `AnyEntity[]` | 등록할 엔티티 클래스 배열 |
-| `synchronize` | `boolean` | 테이블 자동 생성 여부 |
-| `schema` | `string` | PostgreSQL 스키마명 (기본값: `"public"`) |
-| `charset` | `string` | MySQL 문자셋 |
-| `datesStrings` | `boolean` | MySQL 날짜를 문자열로 반환 |
-| `pool` | `PoolOptions` | 연결 풀 설정 |
-| `retry` | `RetryOptions` | 연결 재시도 설정 |
-| `logging` | `boolean \| LoggingOptions` | 쿼리 로깅 설정 |
+> **Warning** `synchronize: true`는 개발 환경에서만 사용하세요. 프로덕션에서는 [마이그레이션](./migrations.md)으로 스키마를 관리해야 합니다.
 
----
+연결 옵션에 대한 자세한 내용은 [설정 가이드](./configuration.md)를 참고하세요.
 
-## find(entity, option?)
+## 저장하기 — save()
 
-조건에 맞는 엔티티 목록을 조회합니다.
+데이터를 저장할 때는 `save()`를 사용합니다. PK가 없으면 INSERT, PK가 있으면 UPDATE를 자동으로 수행합니다.
 
 ```typescript
-async find<T>(entity: ClazzType<T>, findOption?: FindOption<T>): Promise<EntityResult<T>>
+// INSERT — PK(id)가 없으므로 새 행 삽입
+const user = await em.save(User, {
+  name: "홍길동",
+  email: "hong@example.com",
+});
+console.log(user.id); // 1 — 자동 생성된 PK
+
+// UPDATE — PK(id)가 있으므로 기존 행 수정
+const updated = await em.save(User, {
+  id: 1,
+  name: "홍길동(수정)",
+  email: "hong@example.com",
+});
 ```
 
-**예제**
+`save()`는 저장된 엔티티 객체를 반환하므로, INSERT 후에도 자동 생성된 `id`를 바로 사용할 수 있습니다.
+
+## 조회하기 — find(), findOne()
+
+### 목록 조회
 
 ```typescript
 // 전체 조회
@@ -95,385 +80,110 @@ const recent = await em.find(Post, {
   orderBy: { createdAt: "DESC" },
   take: 10,
 });
-
-// LIMIT + OFFSET (offset 방식 페이지네이션)
-const page2 = await em.find(Post, {
-  limit: [10, 10], // LIMIT 10, 10 (MySQL) / LIMIT 10 OFFSET 10 (PostgreSQL)
-});
-
-// 특정 컬럼만 SELECT
-const names = await em.find(User, {
-  select: ["id", "name"],
-});
-// 또는 객체 형태
-const names2 = await em.find(User, {
-  select: { id: true, name: true },
-});
-
-// 관계 엔티티 로드
-const owners = await em.find(Owner, {
-  relations: ["cats"],
-});
-
-// soft-deleted 포함 조회
-const all = await em.find(Post, {
-  withDeleted: true,
-});
-
 ```
 
-**FindOption 전체 옵션**
-
-| 옵션 | 타입 | 설명 |
-|------|------|------|
-| `where` | `Partial<T>` | WHERE 조건 |
-| `select` | `(keyof T)[] \| Partial<Record<keyof T, boolean>>` | SELECT 컬럼 |
-| `orderBy` | `Partial<Record<keyof T, "ASC" \| "DESC">>` | ORDER BY |
-| `limit` | `number \| [number, number]` | LIMIT (단일 숫자 또는 [offset, count]) |
-| `take` | `number` | 가져올 행 수 |
-| `relations` | `(keyof T)[]` | 로드할 관계 프로퍼티명 배열 |
-| `withDeleted` | `boolean` | soft-deleted 엔티티 포함 여부 |
-| `groupBy` | `(keyof T)[]` | GROUP BY |
-| `having` | `Sql[]` | HAVING 절 (sql-template-tag Sql 배열) |
-| `timeout` | `number` | 쿼리 타임아웃 (ms). connection-level `queryTimeout` 보다 우선 |
-
----
-
-## findOne(entity, option)
-
-조건에 맞는 단건 엔티티를 조회합니다. 내부적으로 `find()`에 `limit: 1`을 추가합니다. 결과가 없으면 `null`을 반환합니다.
-
-```typescript
-async findOne<T>(entity: ClazzType<T>, findOption: FindOption<T>): Promise<T | null>
-```
-
-**예제**
+### 단건 조회
 
 ```typescript
 const user = await em.findOne(User, { where: { id: 1 } });
+
 if (user === null) {
-  throw new Error("User not found");
-}
-
-const post = await em.findOne(Post, {
-  where: { slug: "hello-world" },
-  relations: ["author", "tags"],
-});
-```
-
----
-
-## getConnectionName()
-
-현재 EntityManager 인스턴스가 사용하는 named connection 이름을 반환합니다. 단일 DB 환경에서는 `"default"`를 반환합니다.
-
-```typescript
-getConnectionName(): string
-```
-
-```typescript
-const em = new EntityManager();
-await em.register({ type: "mysql", ... }, "primary");
-
-console.log(em.getConnectionName()); // "primary"
-```
-
----
-
-## save(entity, data)
-
-엔티티를 저장합니다. PK(auto-increment)가 없으면 INSERT, 있으면 UPDATE를 수행합니다. 저장된 엔티티를 반환합니다.
-
-```typescript
-async save<T>(entity: ClazzType<T>, item: Partial<T>): Promise<InstanceType<ClazzType<T>>>
-```
-
-**예제**
-
-```typescript
-// INSERT
-const user = await em.save(User, {
-  name: "홍길동",
-  email: "hong@example.com",
-});
-console.log(user.id); // 자동 생성된 PK
-
-// UPDATE
-const updated = await em.save(User, {
-  id: user.id,
-  name: "홍길동(수정)",
-  email: user.email,
-});
-```
-
----
-
-## delete(entity, criteria)
-
-조건에 맞는 엔티티를 영구 삭제합니다. 빈 조건은 차단됩니다.
-
-```typescript
-async delete<T>(entity: ClazzType<T>, criteria: Partial<T>): Promise<DeleteResult>
-
-interface DeleteResult {
-  affected: number; // 삭제된 행 수
+  throw new Error("사용자를 찾을 수 없습니다");
 }
 ```
 
-**예제**
+`findOne()`은 결과가 없으면 `null`을 반환합니다. 항상 null 체크를 해주세요.
+
+### 특정 컬럼만 SELECT
+
+필요한 컬럼만 가져오면 쿼리가 가벼워집니다.
+
+```typescript
+// 배열 방식
+const names = await em.find(User, {
+  select: ["id", "name"],
+});
+
+// 객체 방식
+const names2 = await em.find(User, {
+  select: { id: true, name: true },
+});
+```
+
+### 관계 엔티티 함께 로드
+
+```typescript
+const owner = await em.findOne(Owner, {
+  where: { id: 1 },
+  relations: ["cats"],
+});
+console.log(owner.cats); // Cat[]
+```
+
+### Soft Delete된 데이터 포함
+
+```typescript
+const allPosts = await em.find(Post, {
+  withDeleted: true, // deleted_at이 NULL이 아닌 행도 포함
+});
+```
+
+## 삭제하기 — delete(), softDelete()
+
+### 영구 삭제
 
 ```typescript
 const result = await em.delete(User, { id: 1 });
 console.log(result.affected); // 1
-
-// 조건 필수 — 빈 조건은 DeleteWithoutConditionsError 발생
-// await em.delete(User, {}); // 오류!
 ```
 
----
+빈 조건으로 삭제하면 `DeleteWithoutConditionsError`가 발생합니다. 실수로 전체 데이터를 삭제하는 것을 방지합니다.
 
-## softDelete(entity, criteria)
+### Soft Delete
 
-`@DeletedAt` 컬럼이 있는 엔티티에 대해 Soft Delete를 수행합니다. `deleted_at = NOW()`로 UPDATE합니다.
+`@DeletedAt` 컬럼이 있는 엔티티에 사용합니다. 실제로 삭제하지 않고 `deleted_at = NOW()`로 표시만 합니다.
 
 ```typescript
-async softDelete<T>(entity: ClazzType<T>, criteria: Partial<T>): Promise<DeleteResult>
+// soft delete
+await em.softDelete(Post, { id: 1 });
+
+// 이후 find()에서 자동 제외됨
+const posts = await em.find(Post); // deleted_at IS NULL인 것만 조회
+
+// 복원
+await em.restore(Post, { id: 1 });
 ```
 
-**예제**
+## 배치 연산 — insertMany(), saveMany(), deleteMany()
+
+여러 건의 데이터를 한 번에 처리해야 할 때 사용합니다.
 
 ```typescript
-const result = await em.softDelete(Post, { id: 1 });
-console.log(result.affected); // 1
-
-// 이후 find() 결과에서 자동 제외됨
-const posts = await em.find(Post); // deleted_at IS NULL 자동 추가
-```
-
----
-
-## restore(entity, criteria)
-
-soft-deleted 엔티티를 복원합니다. `deleted_at = NULL`로 UPDATE합니다.
-
-```typescript
-async restore<T>(entity: ClazzType<T>, criteria: Partial<T>): Promise<DeleteResult>
-```
-
-**예제**
-
-```typescript
-const result = await em.restore(Post, { id: 1 });
-console.log(result.affected); // 1
-```
-
----
-
-## insertMany(entity, items[])
-
-여러 엔티티를 단일 `INSERT INTO ... VALUES (...), (...)` 쿼리로 삽입합니다. 항상 INSERT를 수행합니다 (PK 확인 없음).
-
-```typescript
-async insertMany<T>(entity: ClazzType<T>, items: Partial<T>[]): Promise<{ affected: number }>
-```
-
-**예제**
-
-```typescript
-const result = await em.insertMany(User, [
+// 단일 INSERT 쿼리로 여러 건 삽입 (가장 빠름)
+await em.insertMany(User, [
   { name: "홍길동", email: "hong@example.com" },
   { name: "김철수", email: "kim@example.com" },
   { name: "이영희", email: "lee@example.com" },
 ]);
-console.log(result.affected); // 3
-```
 
----
-
-## saveMany(entity, items[])
-
-여러 엔티티를 순서대로 저장합니다. 각 아이템에 PK가 없으면 INSERT, 있으면 UPDATE를 수행합니다.
-
-```typescript
-async saveMany<T>(entity: ClazzType<T>, items: Partial<T>[]): Promise<InstanceType<ClazzType<T>>[]>
-```
-
-**예제**
-
-```typescript
+// 각 건마다 INSERT/UPDATE 판단 (PK 유무에 따라)
 const users = await em.saveMany(User, [
-  { name: "홍길동", email: "hong@example.com" },
-  { id: 2, name: "김철수(수정)", email: "kim@example.com" },
+  { name: "새사용자", email: "new@example.com" },       // INSERT
+  { id: 2, name: "수정", email: "updated@example.com" }, // UPDATE
 ]);
+
+// PK 배열로 한 번에 삭제
+await em.deleteMany(User, [1, 2, 3]);
 ```
 
----
+> **Hint** 대량 INSERT는 `insertMany()`가 가장 효율적입니다. 단일 `INSERT INTO ... VALUES (...), (...)` 쿼리로 실행되기 때문입니다.
 
-## deleteMany(entity, ids[])
+## Upsert — 있으면 수정, 없으면 삽입
 
-PK 배열로 여러 엔티티를 단일 `DELETE ... WHERE pk IN (...)` 쿼리로 삭제합니다.
-
-```typescript
-async deleteMany<T>(entity: ClazzType<T>, ids: any[]): Promise<DeleteResult>
-```
-
-**예제**
+`upsert()`는 PK나 유니크 컬럼 기준으로 충돌 여부를 확인합니다. 이미 있으면 UPDATE, 없으면 INSERT를 수행합니다.
 
 ```typescript
-const result = await em.deleteMany(User, [1, 2, 3]);
-console.log(result.affected); // 3
-```
-
----
-
-## count(entity, where?)
-
-조건에 맞는 엔티티 수를 반환합니다.
-
-```typescript
-async count<T>(entity: ClazzType<T>, where?: Partial<T>): Promise<number>
-```
-
-```typescript
-const total = await em.count(User);
-const active = await em.count(User, { isActive: true });
-```
-
----
-
-## sum(entity, field, where?)
-
-조건에 맞는 엔티티의 특정 필드 합계를 반환합니다.
-
-```typescript
-async sum<T>(entity: ClazzType<T>, field: keyof T & string, where?: Partial<T>): Promise<number>
-```
-
-```typescript
-const totalAge = await em.sum(User, "age");
-const activeAge = await em.sum(User, "age", { isActive: true });
-```
-
----
-
-## avg(entity, field, where?)
-
-조건에 맞는 엔티티의 특정 필드 평균을 반환합니다.
-
-```typescript
-async avg<T>(entity: ClazzType<T>, field: keyof T & string, where?: Partial<T>): Promise<number>
-```
-
-```typescript
-const avgAge = await em.avg(User, "age");
-```
-
----
-
-## min(entity, field, where?)
-
-조건에 맞는 엔티티의 특정 필드 최솟값을 반환합니다.
-
-```typescript
-async min<T>(entity: ClazzType<T>, field: keyof T & string, where?: Partial<T>): Promise<number>
-```
-
-```typescript
-const youngest = await em.min(User, "age");
-```
-
----
-
-## max(entity, field, where?)
-
-조건에 맞는 엔티티의 특정 필드 최댓값을 반환합니다.
-
-```typescript
-async max<T>(entity: ClazzType<T>, field: keyof T & string, where?: Partial<T>): Promise<number>
-```
-
-```typescript
-const oldest = await em.max(User, "age");
-```
-
----
-
-## query(sql, params?)
-
-임의의 Raw SQL 쿼리를 실행하고 결과를 반환합니다.
-
-```typescript
-async query<T = Record<string, unknown>>(
-  sqlQuery: string | Sql,
-  params?: unknown[],
-): Promise<T[]>
-```
-
-**예제**
-
-```typescript
-import sql from "sql-template-tag";
-
-// sql-template-tag 사용 (권장 — SQL Injection 방지)
-interface UserRow { id: number; name: string; }
-const users = await em.query<UserRow>(
-  sql`SELECT * FROM "User" WHERE "id" = ${1}`
-);
-
-// 문자열 + 파라미터 배열
-const posts = await em.query<{ id: number; title: string }>(
-  "SELECT id, title FROM post WHERE author_id = ?",
-  [42]
-);
-```
-
----
-
-## findAndCount(entity, option?)
-
-`find()`와 `count()`를 동시에 실행하여 엔티티 배열과 전체 개수를 튜플로 반환합니다. `[entities, total]` 형태로 페이지네이션 구현에 유용합니다.
-
-```typescript
-async findAndCount<T>(entity: ClazzType<T>, findOption?: FindOption<T>): Promise<[T[], number]>
-```
-
-**예제**
-
-```typescript
-const [posts, total] = await em.findAndCount(Post, {
-  where: { isPublished: true },
-  orderBy: { createdAt: "DESC" },
-  take: 10,
-  limit: [0, 10],
-});
-
-console.log(posts.length); // 10
-console.log(total);        // 전체 게시글 수 (예: 235)
-```
-
----
-
-## upsert(entity, data, conflictColumns?)
-
-엔티티를 삽입하거나, 충돌(CONFLICT) 시 업데이트합니다. PK나 유니크 컬럼 기준으로 충돌을 감지합니다.
-
-- MySQL/MariaDB: `INSERT ... ON DUPLICATE KEY UPDATE`
-- PostgreSQL: `INSERT ... ON CONFLICT (...) DO UPDATE SET`
-
-```typescript
-async upsert<T>(
-  entity: ClazzType<T>,
-  data: Partial<T>,
-  conflictColumns?: string[],
-): Promise<void>
-```
-
-`conflictColumns`를 생략하면 PK 컬럼을 자동으로 사용합니다.
-
-**예제**
-
-```typescript
-// PK 기준 upsert (id가 있으면 update, 없으면 insert)
+// PK 기준 upsert
 await em.upsert(User, {
   id: 1,
   name: "홍길동",
@@ -484,184 +194,148 @@ await em.upsert(User, {
 await em.upsert(User, {
   email: "hong@example.com",
   name: "홍길동",
-}, ["email"]);
+}, ["email"]); // email이 이미 있으면 UPDATE, 없으면 INSERT
 ```
 
----
+내부적으로 MySQL은 `INSERT ... ON DUPLICATE KEY UPDATE`, PostgreSQL은 `INSERT ... ON CONFLICT DO UPDATE`를 사용합니다.
 
-## explain(entity, option?)
+## 집계 함수 — count(), sum(), avg(), min(), max()
 
-엔티티 조회 쿼리에 대해 `EXPLAIN`을 실행하고 표준화된 결과를 반환합니다. 쿼리 최적화 및 인덱스 사용 여부 확인에 활용합니다.
+통계 데이터가 필요할 때 사용합니다.
 
 ```typescript
-async explain<T>(entity: ClazzType<T>, findOption?: FindOption<T>): Promise<ExplainResult>
+const total = await em.count(User);
+const active = await em.count(User, { isActive: true });
 
-interface ExplainResult {
-  raw: Record<string, unknown>[];  // DB 원본 EXPLAIN 결과
-  rows: number | null;             // 예상 검사 행 수
-  type: string | null;             // 접근 방식 (ALL, index, ref / Seq Scan 등)
-  possibleKeys: string[] | null;   // 사용 가능한 인덱스 목록
-  key: string | null;              // 실제 선택된 인덱스
-  cost: number | null;             // 예상 비용 (MySQL: filtered %, PostgreSQL: total_cost)
-}
+const avgAge = await em.avg(User, "age");
+const youngest = await em.min(User, "age");
+const oldest = await em.max(User, "age");
+const totalAge = await em.sum(User, "age");
 ```
 
-**예제**
+여러 집계를 동시에 조회하면 성능이 좋습니다.
 
 ```typescript
-const result = await em.explain(User, {
-  where: { email: "hong@example.com" },
+const [total, avgAge, minAge, maxAge] = await Promise.all([
+  em.count(User),
+  em.avg(User, "age"),
+  em.min(User, "age"),
+  em.max(User, "age"),
+]);
+```
+
+## 페이지네이션
+
+### Offset 방식
+
+전통적인 LIMIT/OFFSET 페이지네이션입니다. 소규모 데이터셋에 적합합니다.
+
+```typescript
+// 방법 1: take + limit
+const page2 = await em.find(Post, {
+  orderBy: { createdAt: "DESC" },
+  limit: [10, 10], // OFFSET 10, LIMIT 10
 });
 
-console.log(result.type);  // "ref" (인덱스 사용 중)
-console.log(result.key);   // "idx_user_email"
-console.log(result.rows);  // 1
+// 방법 2: findAndCount — 전체 개수도 함께 반환
+const [posts, total] = await em.findAndCount(Post, {
+  orderBy: { createdAt: "DESC" },
+  take: 10,
+  limit: [0, 10],
+});
+
+console.log(posts.length); // 10
+console.log(total);        // 전체 게시글 수 (예: 235)
 ```
 
-> **주의:** SQLite / MSSQL은 EXPLAIN을 지원하지 않습니다. `InvalidQueryError`가 throw됩니다.
+### 커서 방식
 
----
-
-## findWithCursor(entity, option)
-
-커서 기반 페이지네이션으로 엔티티를 조회합니다. offset 방식 대비 대용량 데이터셋에서 일정한 성능을 보장합니다.
-
-```typescript
-async findWithCursor<T>(
-  entity: ClazzType<T>,
-  option?: CursorPaginationOption<T>,
-): Promise<CursorPaginationResult<T>>
-
-interface CursorPaginationOption<T> {
-  take?: number;       // 페이지 크기 (기본값: 20)
-  cursor?: string;     // 이전 페이지 마지막 커서 (Base64 인코딩)
-  orderBy?: keyof T & string; // 정렬 컬럼 (기본값: PK)
-  direction?: "ASC" | "DESC"; // 정렬 방향 (기본값: "ASC")
-  where?: Partial<T>;  // 추가 WHERE 조건
-}
-
-interface CursorPaginationResult<T> {
-  data: T[];
-  hasNextPage: boolean;
-  nextCursor: string | null;
-  count: number;
-}
-```
-
-**예제**
+대용량 데이터에서는 커서 기반 페이지네이션이 성능이 일정합니다.
 
 ```typescript
 // 첫 페이지
 const page1 = await em.findWithCursor(Post, {
-  take: 10,
+  take: 20,
   orderBy: "id",
   direction: "ASC",
 });
 
-console.log(page1.data);        // Post[]
+console.log(page1.data);        // Post[] (최대 20건)
 console.log(page1.hasNextPage); // true
-console.log(page1.nextCursor);  // "eyJ2IjoxMH0=" (Base64)
+console.log(page1.nextCursor);  // "eyJ2IjoyMH0=" (Base64)
 
-// 두 번째 페이지
+// 두 번째 페이지 — 이전 커서를 전달
 const page2 = await em.findWithCursor(Post, {
-  take: 10,
+  take: 20,
   cursor: page1.nextCursor!,
   orderBy: "id",
   direction: "ASC",
 });
 ```
 
----
+> **Hint** 커서 방식은 "다음 페이지"/"이전 페이지" 네비게이션에 적합합니다. 특정 페이지로 점프해야 한다면 offset 방식을 사용하세요.
 
-## getQueryLog()
+## Raw SQL 실행 — query()
 
-현재 세션의 쿼리 실행 로그를 반환합니다. `logging.nPlusOne` 또는 `logging.slowQueryMs`가 설정된 경우에만 동작합니다.
+ORM이 제공하지 않는 복잡한 쿼리가 필요할 때 직접 SQL을 실행할 수 있습니다.
 
 ```typescript
-getQueryLog(): ReadonlyArray<QueryLogEntry>
+import sql from "sql-template-tag";
+
+// sql-template-tag 사용 (권장 — SQL Injection 방지)
+const users = await em.query<{ id: number; name: string }>(
+  sql`SELECT * FROM "user" WHERE "id" = ${1}`
+);
+
+// 문자열 + 파라미터 배열
+const posts = await em.query<{ id: number; title: string }>(
+  "SELECT id, title FROM post WHERE author_id = ?",
+  [42]
+);
 ```
 
+> **Warning** Raw SQL을 사용할 때는 반드시 파라미터 바인딩을 사용하세요. 문자열 연결로 값을 끼워넣으면 SQL Injection 위험이 있습니다.
+
+## EXPLAIN — 쿼리 분석
+
+쿼리가 인덱스를 제대로 사용하는지 확인할 때 유용합니다.
+
 ```typescript
-const em = new EntityManager();
-await em.register({
-  // ...
-  logging: { slowQueryMs: 100, nPlusOne: true },
+const result = await em.explain(User, {
+  where: { email: "hong@example.com" },
 });
 
-// 쿼리 실행 후
-const log = em.getQueryLog();
-console.log(log);
+console.log(result.type); // "ref" — 인덱스 사용 중
+console.log(result.key);  // "idx_user_email"
+console.log(result.rows); // 1 — 예상 검사 행 수
 ```
 
----
+> **Hint** `explain()`은 MySQL과 PostgreSQL에서 지원됩니다. SQLite/MSSQL에서는 `InvalidQueryError`가 발생합니다.
 
-## on(event, listener) / off(event, listener)
+## 이벤트 리스너
 
-엔티티 이벤트 리스너를 등록하거나 제거합니다.
-
-```typescript
-on(event: EntityEventType, listener: EntityEventListener): void
-off(event: EntityEventType, listener: EntityEventListener): void
-removeAllListeners(): void
-```
-
-**EntityEventType 목록**
-
-| 이벤트 | 설명 |
-|--------|------|
-| `"beforeInsert"` | INSERT 직전 |
-| `"afterInsert"` | INSERT 직후 |
-| `"beforeUpdate"` | UPDATE 직전 |
-| `"afterUpdate"` | UPDATE 직후 |
-| `"beforeDelete"` | DELETE 직전 |
-| `"afterDelete"` | DELETE 직후 |
+데이터가 생성/수정/삭제될 때 자동으로 실행되는 로직을 등록할 수 있습니다.
 
 ```typescript
+// 리스너 등록
 em.on("afterInsert", ({ entity, data }) => {
-  console.log(`${entity.name} inserted:`, data);
+  console.log(`${entity.name} 생성됨:`, data);
 });
+
+// 리스너 제거
+em.off("afterInsert", listener);
+
+// 전체 리스너 제거
+em.removeAllListeners();
 ```
 
----
+사용 가능한 이벤트: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`
 
-## addSubscriber(subscriber) / removeSubscriber(subscriber)
+특정 엔티티에만 반응하는 구독자가 필요하다면 [EntitySubscriber](./advanced.md)를 참고하세요.
 
-`EntitySubscriber` 인터페이스를 구현한 구독자를 등록하거나 제거합니다.
+## 리포지토리 패턴
 
-```typescript
-addSubscriber(subscriber: EntitySubscriber<any>): void
-removeSubscriber(subscriber: EntitySubscriber<any>): void
-```
-
-**예제**
-
-```typescript
-import { EntitySubscriber, InsertEvent } from "stingerloom-orm";
-
-class UserAuditSubscriber implements EntitySubscriber<User> {
-  listenTo() {
-    return User;
-  }
-
-  afterInsert(event: InsertEvent<User>) {
-    console.log("User created:", event.entity);
-  }
-}
-
-em.addSubscriber(new UserAuditSubscriber());
-```
-
-자세한 내용은 [advanced.md](./advanced.md#entitysubscriber)를 참조하세요.
-
----
-
-## getRepository(entity)
-
-엔티티에 대한 `BaseRepository` 인스턴스를 생성하여 반환합니다.
-
-```typescript
-getRepository<T>(entity: ClazzType<T>): BaseRepository<T>
-```
+엔티티별로 CRUD를 캡슐화하고 싶다면 `getRepository()`를 사용합니다.
 
 ```typescript
 const userRepo = em.getRepository(User);
@@ -671,49 +345,52 @@ const user = await userRepo.findOne({ where: { id: 1 } as any });
 await userRepo.save({ name: "홍길동" });
 ```
 
-자세한 내용은 [advanced.md](./advanced.md#8-baserepository)를 참조하세요.
-
----
-
-## getDriver()
-
-현재 `EntityManager`에 바인딩된 `ISqlDriver` 인스턴스를 반환합니다. `connect()` 전에는 `undefined`를 반환합니다.
+NestJS에서는 `@InjectRepository()`로 서비스에 주입할 수 있습니다.
 
 ```typescript
-getDriver(): ISqlDriver | undefined
+// users.service.ts
+@Injectable()
+export class UsersService {
+  constructor(
+    @InjectRepository(User) private readonly userRepo: BaseRepository<User>,
+  ) {}
+
+  async findAll() {
+    return this.userRepo.find();
+  }
+}
 ```
 
-```typescript
-const driver = em.getDriver();
-// TenantMigrationRunner 등 저수준 시나리오에서 사용
-```
+## 종료 — propagateShutdown()
 
----
-
-## propagateShutdown()
-
-이벤트 리스너, 구독자, dirty 엔티티, 쿼리 트래커, 복제 라우터를 모두 정리합니다. 애플리케이션 종료 시 호출합니다.
-
-```typescript
-async propagateShutdown(): Promise<void>
-```
+애플리케이션을 종료할 때 EntityManager의 내부 리소스를 정리합니다.
 
 ```typescript
 await em.propagateShutdown();
 ```
 
----
+NestJS에서는 `OnModuleDestroy` 훅에서 호출하세요.
 
-## 집계 함수 한 번에 조회 예제
+## FindOption 전체 옵션
 
-```typescript
-const [total, avgAge, minAge, maxAge, sumAge] = await Promise.all([
-  em.count(User),
-  em.avg(User, "age"),
-  em.min(User, "age"),
-  em.max(User, "age"),
-  em.sum(User, "age"),
-]);
+`find()`, `findOne()`, `explain()` 등에 전달할 수 있는 옵션 목록입니다.
 
-console.log({ total, avgAge, minAge, maxAge, sumAge });
-```
+| 옵션 | 타입 | 설명 |
+|------|------|------|
+| `where` | `Partial<T>` | WHERE 조건 |
+| `select` | `(keyof T)[]` 또는 `Record<keyof T, boolean>` | SELECT 컬럼 |
+| `orderBy` | `Record<keyof T, "ASC" \| "DESC">` | ORDER BY |
+| `limit` | `number` 또는 `[offset, count]` | LIMIT |
+| `take` | `number` | 가져올 행 수 |
+| `relations` | `(keyof T)[]` | 로드할 관계 프로퍼티 |
+| `withDeleted` | `boolean` | soft-deleted 포함 여부 |
+| `groupBy` | `(keyof T)[]` | GROUP BY |
+| `having` | `Sql[]` | HAVING 절 |
+| `timeout` | `number` | 쿼리 타임아웃 (ms) |
+| `useMaster` | `boolean` | Read Replica 환경에서 master 강제 |
+
+## 다음 단계
+
+- [쿼리 빌더](./query-builder.md) — JOIN, GROUP BY, 서브쿼리 등 복잡한 SQL이 필요할 때
+- [트랜잭션](./transactions.md) — 여러 작업을 하나의 단위로 묶어야 할 때
+- [설정 가이드](./configuration.md) — 풀링, 타임아웃, Read Replica 등 운영 설정
