@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { MetadataLayer } from "./MetadataLayer";
+import { MetadataContext } from "./MetadataContext";
 import { MetadataPath } from "./MetadataPath";
 
 /**
@@ -47,15 +48,32 @@ export class LayeredMetadataStore {
 
   /**
    * 현재 컨텍스트 설정 (예: "tenant_1"으로 전환)
+   *
+   * @deprecated 프로덕션 코드에서는 `MetadataContext.run(tenantId, callback)` 사용 권장.
+   * `setContext()`는 인스턴스 상태를 변경하므로 동시 요청 환경에서 안전하지 않습니다.
+   * 테스트 코드 전용으로만 사용하세요.
    */
   setContext(context: string): void {
     this.currentContext = context;
   }
 
   /**
-   * 현재 컨텍스트 가져오기
+   * 현재 활성 컨텍스트 가져오기.
+   * AsyncLocalStorage(MetadataContext)가 활성 상태이면 우선 사용하고,
+   * 비활성이면 인스턴스의 currentContext를 반환합니다 (테스트 호환).
    */
   getContext(): string {
+    return this.resolveContext();
+  }
+
+  /**
+   * 현재 컨텍스트를 안전하게 결정합니다.
+   * AsyncLocalStorage > 인스턴스 상태 순서로 조회합니다.
+   */
+  private resolveContext(): string {
+    if (MetadataContext.isActive()) {
+      return MetadataContext.getCurrentTenant();
+    }
     return this.currentContext;
   }
 
@@ -64,16 +82,17 @@ export class LayeredMetadataStore {
    * Copy-on-Write 방식
    */
   set<T>(key: string, value: T): void {
-    const fullPath = `${this.currentContext}/${key}`;
+    const context = this.resolveContext();
+    const fullPath = `${context}/${key}`;
 
     // 현재 컨텍스트에 해당하는 쓰기 가능한 레이어 찾기
     let workLayer = this.layers.find(
-      (l) => l.getName() === this.currentContext && !l.isReadOnlyLayer(),
+      (l) => l.getName() === context && !l.isReadOnlyLayer(),
     );
 
     // 쓰기 가능한 레이어가 없으면 생성
     if (!workLayer) {
-      workLayer = this.addLayer(this.currentContext, false);
+      workLayer = this.addLayer(context, false);
     }
 
     // 레이어에 저장
@@ -88,7 +107,8 @@ export class LayeredMetadataStore {
    * 상위 레이어 → 하위 레이어 순서로 검색
    */
   get<T>(key: string): T | undefined {
-    const fullPath = `${this.currentContext}/${key}`;
+    const context = this.resolveContext();
+    const fullPath = `${context}/${key}`;
 
     // Trie에서 먼저 확인
     const pathData = this.pathTrie.search(fullPath);
@@ -106,7 +126,7 @@ export class LayeredMetadataStore {
     }
 
     // 현재 컨텍스트에서 못 찾으면 public(lower)에서 찾기
-    if (this.currentContext !== "public") {
+    if (context !== "public") {
       const publicPath = `public/${key}`;
       const publicData = this.pathTrie.search(publicPath);
       if (publicData) {
@@ -134,7 +154,7 @@ export class LayeredMetadataStore {
    * OverlayFS 방식: public(lower) 레이어 + 대상 컨텍스트(upper) 레이어만 병합
    */
   getAllInContext<T>(context?: string): Map<string, T> {
-    const targetContext = context || this.currentContext;
+    const targetContext = context || this.resolveContext();
     const result = new Map<string, T>();
 
     // 1. public(lower) 레이어 데이터 수집 (base)
@@ -241,6 +261,6 @@ export class LayeredMetadataStore {
    * 특정 경로의 모든 하위 항목 검색
    */
   findByPrefix(prefix: string): Array<{ path: string; value: any }> {
-    return this.pathTrie.findByPrefix(`${this.currentContext}/${prefix}`);
+    return this.pathTrie.findByPrefix(`${this.resolveContext()}/${prefix}`);
   }
 }

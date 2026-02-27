@@ -5,6 +5,7 @@ import {
   LayeredEntityScanner,
   LayeredColumnScanner,
 } from "../../src/metadata";
+import { MetadataContext } from "../../src/metadata/MetadataContext";
 
 describe("MetadataLayer", () => {
   let layer: MetadataLayer;
@@ -372,5 +373,82 @@ describe("MultiTenant Integration Scenario", () => {
     store.setContext("public_work");
     const publicSchema = store.get<any>("entities/User");
     expect(publicSchema.columns).toHaveLength(2); // 원본 유지
+  });
+});
+
+describe("AsyncLocalStorage Concurrency Safety", () => {
+  let store: LayeredMetadataStore;
+
+  beforeEach(() => {
+    store = new LayeredMetadataStore();
+    MetadataContext.reset();
+  });
+
+  it("should prefer AsyncLocalStorage context over setContext()", () => {
+    // public 레이어에 base 데이터
+    const publicLayer = store.getLayer("public")!;
+    publicLayer["metadata"].set("entity", { name: "Public" });
+
+    // tenant_1 레이어
+    store.addLayer("tenant_1", false);
+    store.setContext("tenant_1");
+    store.set("entity", { name: "Tenant1" });
+
+    // tenant_2 레이어
+    store.addLayer("tenant_2", false);
+    store.setContext("tenant_2");
+    store.set("entity", { name: "Tenant2" });
+
+    // setContext는 tenant_2이지만 AsyncLocalStorage는 tenant_1
+    MetadataContext.run("tenant_1", () => {
+      // resolveContext()가 ALS의 tenant_1을 반환해야 함
+      expect(store.getContext()).toBe("tenant_1");
+      expect(store.get("entity")).toEqual({ name: "Tenant1" });
+    });
+  });
+
+  it("should handle concurrent tenant access without cross-contamination", async () => {
+    const publicLayer = store.getLayer("public")!;
+    publicLayer["metadata"].set("config", { theme: "default" });
+
+    store.addLayer("tenant_a", false);
+    store.addLayer("tenant_b", false);
+
+    // tenant_a 데이터 설정 (setContext로)
+    store.setContext("tenant_a");
+    store.set("config", { theme: "dark" });
+
+    store.setContext("tenant_b");
+    store.set("config", { theme: "light" });
+
+    // 동시 요청 시뮬레이션: ALS로 격리
+    const results: string[] = [];
+
+    await Promise.all([
+      MetadataContext.run("tenant_a", async () => {
+        await new Promise((r) => setTimeout(r, 10)); // 비동기 지연
+        const config = store.get<any>("config");
+        results.push(`a:${config.theme}`);
+      }),
+      MetadataContext.run("tenant_b", async () => {
+        await new Promise((r) => setTimeout(r, 5)); // 다른 타이밍
+        const config = store.get<any>("config");
+        results.push(`b:${config.theme}`);
+      }),
+    ]);
+
+    expect(results).toContain("a:dark");
+    expect(results).toContain("b:light");
+    expect(results).toHaveLength(2);
+  });
+
+  it("should fall back to setContext() when ALS is not active", () => {
+    store.addLayer("fallback_tenant", false);
+    store.setContext("fallback_tenant");
+    store.set("key", { value: "test" });
+
+    // ALS 비활성 → setContext의 fallback_tenant 사용
+    expect(store.getContext()).toBe("fallback_tenant");
+    expect(store.get("key")).toEqual({ value: "test" });
   });
 });
