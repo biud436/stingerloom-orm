@@ -46,9 +46,17 @@ class DiffPost {
 function createMockQueryRunner(
   responseMap: Record<string, any[]>,
 ): { query: jest.Mock } {
-  const mockQuery = jest.fn((sql: string) => {
+  const mockQuery = jest.fn((sqlInput: string | { text?: string; sql?: string; values?: any[] }) => {
+    // Extract the SQL text and values from either a string or a Sql template-tag object
+    const sqlText = typeof sqlInput === "string"
+      ? sqlInput
+      : (sqlInput.text ?? sqlInput.sql ?? "");
+    const values = typeof sqlInput === "object" && sqlInput !== null
+      ? (sqlInput.values ?? [])
+      : [];
     for (const [key, value] of Object.entries(responseMap)) {
-      if (sql.includes(key)) {
+      // Check both the SQL text and the parameter values for the key
+      if (sqlText.includes(key) || values.some((v: any) => String(v).includes(key))) {
         return Promise.resolve(value);
       }
     }

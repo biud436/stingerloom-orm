@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
+import sql from "sql-template-tag";
 import { ClazzType } from "../utils";
 import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../decorators/Column";
 import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
@@ -30,7 +31,7 @@ interface DbColumnInfo {
 }
 
 interface QueryRunner {
-  query: (sql: string) => Promise<any>;
+  query: (sql: string | import("sql-template-tag").Sql) => Promise<any>;
 }
 
 /**
@@ -163,12 +164,12 @@ export class SchemaDiff {
 
     if (dialect === "mysql") {
       rawResult = await queryRunner.query(
-        `SELECT COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${tableName.replace(/'/g, "''")}'`,
+        sql`SELECT COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${tableName}`,
       );
     } else {
       const pgSchema = schema ?? "public";
       rawResult = await queryRunner.query(
-        `SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = '${pgSchema.replace(/'/g, "''")}' AND table_name = '${tableName.replace(/'/g, "''")}'`,
+        sql`SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = ${pgSchema} AND table_name = ${tableName}`,
       );
     }
 

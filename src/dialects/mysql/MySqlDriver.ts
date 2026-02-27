@@ -175,13 +175,13 @@ export class MySqlDriver implements ISqlDriver {
    */
   addIndex(tableName: string, columnName: string, indexName: string) {
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} ADD INDEX ${indexName} (${this.wrap(columnName)})`,
+      `ALTER TABLE ${this.wrap(tableName)} ADD INDEX ${this.wrap(indexName)} (${this.wrap(columnName)})`,
     );
   }
 
   hasIndex(tableName: string, indexName: string) {
     return this.connector.query(
-      `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_NAME = ${this.wrap(tableName)} AND INDEX_NAME = ${indexName}`,
+      sql`SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${tableName} AND INDEX_NAME = ${indexName}`,
     );
   }
 
@@ -193,7 +193,7 @@ export class MySqlDriver implements ISqlDriver {
    */
   dropIndex(tableName: string, indexName: string) {
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} DROP INDEX ${indexName}`,
+      `ALTER TABLE ${this.wrap(tableName)} DROP INDEX ${this.wrap(indexName)}`,
     );
   }
 
@@ -222,7 +222,7 @@ export class MySqlDriver implements ISqlDriver {
    */
   getForeignKeys(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
-      `SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_NAME = ${this.wrap(tableName)}`,
+      sql`SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${tableName} AND REFERENCED_TABLE_NAME IS NOT NULL`,
     );
   }
 
@@ -233,7 +233,7 @@ export class MySqlDriver implements ISqlDriver {
    */
   getPrimaryKeys(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
-      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_NAME = ${this.wrap(tableName)} AND CONSTRAINT_NAME = 'PRIMARY'`,
+      sql`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${tableName} AND CONSTRAINT_NAME = 'PRIMARY'`,
     );
   }
 
