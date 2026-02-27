@@ -1,6 +1,6 @@
 # EntityManager API
 
-`EntityManager`는 ORM의 핵심 진입점입니다. 모든 CRUD 연산, 집계, Raw Query, 이벤트 구독, 캐시 관리 등을 담당합니다.
+`EntityManager`는 ORM의 핵심 진입점입니다. 모든 CRUD 연산, 집계, Raw Query, 이벤트 구독 등을 담당합니다.
 
 ```typescript
 import { EntityManager } from "stingerloom-orm";
@@ -652,6 +652,55 @@ em.addSubscriber(new UserAuditSubscriber());
 ```
 
 자세한 내용은 [advanced.md](./advanced.md#entitysubscriber)를 참조하세요.
+
+---
+
+## getRepository(entity)
+
+엔티티에 대한 `BaseRepository` 인스턴스를 생성하여 반환합니다.
+
+```typescript
+getRepository<T>(entity: ClazzType<T>): BaseRepository<T>
+```
+
+```typescript
+const userRepo = em.getRepository(User);
+
+const users = await userRepo.find();
+const user = await userRepo.findOne({ where: { id: 1 } as any });
+await userRepo.save({ name: "홍길동" });
+```
+
+자세한 내용은 [advanced.md](./advanced.md#8-baserepository)를 참조하세요.
+
+---
+
+## getDriver()
+
+현재 `EntityManager`에 바인딩된 `ISqlDriver` 인스턴스를 반환합니다. `connect()` 전에는 `undefined`를 반환합니다.
+
+```typescript
+getDriver(): ISqlDriver | undefined
+```
+
+```typescript
+const driver = em.getDriver();
+// TenantMigrationRunner 등 저수준 시나리오에서 사용
+```
+
+---
+
+## propagateShutdown()
+
+이벤트 리스너, 구독자, dirty 엔티티, 쿼리 트래커, 복제 라우터를 모두 정리합니다. 애플리케이션 종료 시 호출합니다.
+
+```typescript
+async propagateShutdown(): Promise<void>
+```
+
+```typescript
+await em.propagateShutdown();
+```
 
 ---
 

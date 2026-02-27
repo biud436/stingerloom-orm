@@ -19,7 +19,6 @@ TypeScript 기반의 경량 ORM으로, MySQL, PostgreSQL, SQLite, MSSQL을 지�
 - **Upsert** — `INSERT ... ON DUPLICATE KEY UPDATE` (MySQL) / `ON CONFLICT DO UPDATE` (PostgreSQL)
 - **EXPLAIN** — `explain()` 쿼리 실행 계획 조회 (`ExplainResult`)
 - **배치 연산** — `insertMany`, `saveMany`, `deleteMany`
-- **쿼리 캐싱** — TTL 기반 인메모리 캐시
 - **이벤트 시스템** — `on/off(event, handler)`, `EntitySubscriber`
 - **N+1 감지** — `logging.nPlusOne` 옵션
 - **커서 페이지네이션** — `findWithCursor`, Base64 커서
@@ -27,7 +26,7 @@ TypeScript 기반의 경량 ORM으로, MySQL, PostgreSQL, SQLite, MSSQL을 지�
 - **Read Replica** — master/slave 읽기/쓰기 분리, 라운드 로빈 + 자동 fallback
 - **쿼리 타임아웃** — connection-level / per-query 타임아웃 (`QueryTimeoutError`)
 - **멀티 DB** — named connection으로 복수 DB 독립 운용 (`getConnectionName()`)
-- **멀티테넌시** — `LayeredMetadataStore`, `MetadataContext.run(tenantId, callback)`
+- **멀티테넌시** — `LayeredMetadataStore`, `MetadataContext.run(tenantId, callback)`, `TenantMigrationRunner`
 - **유효성 검사** — `@NotNull`, `@MinLength`, `@MaxLength`, `@Min`, `@Max`
 - **복합 유니크 인덱스** — `@UniqueIndex(columns[])`
 - **FK 해시 네이밍** — 충돌 방지를 위한 `fk_{table}_{hash8}` 자동 생성
@@ -68,8 +67,10 @@ import "reflect-metadata";
 | [query-builder.md](./query-builder.md) | RawQueryBuilder DSL (where / join / orderBy / limit 등) |
 | [transactions.md](./transactions.md) | 트랜잭션 관리 (`@Transactional`, 격리 수준, Savepoint) |
 | [migrations.md](./migrations.md) | 마이그레이션 시스템 (Migration, MigrationRunner, CLI) |
-| [advanced.md](./advanced.md) | 고급 기능 (캐싱, 이벤트, Subscriber, N+1 감지, 커서 페이지네이션 등) |
-| [multi-tenancy.md](./multi-tenancy.md) | 멀티테넌시 (LayeredMetadataStore, withTenant) |
+| [advanced.md](./advanced.md) | 고급 기능 (이벤트, Subscriber, N+1 감지, 커서 페이지네이션 등) |
+| [multi-tenancy.md](./multi-tenancy.md) | 멀티테넌시 (LayeredMetadataStore, withTenant, TenantMigrationRunner) |
+| [configuration.md](./configuration.md) | 연결 설정 (풀, 재시도, 타임아웃, Read Replica, 멀티 DB) |
+| [api-reference.md](./api-reference.md) | 전체 API 레퍼런스 (EntityManager, BaseRepository, 데코레이터, 타입) |
 
 ---
 

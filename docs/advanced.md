@@ -399,7 +399,9 @@ try {
 | 메서드 | 설명 |
 |--------|------|
 | `find(option?)` | 목록 조회 |
-| `findOne(option)` | 단건 조회 |
+| `findOne(option)` | 단건 조회 (`T \| null`) |
+| `findWithCursor(option?)` | 커서 기반 페이지네이션 |
+| `findAndCount(option?)` | 목록 + 전체 개수 |
 | `save(item)` | 저장 (INSERT / UPDATE) |
 | `delete(criteria)` | 영구 삭제 |
 | `softDelete(criteria)` | Soft Delete |
@@ -412,6 +414,8 @@ try {
 | `avg(field, where?)` | 평균 |
 | `min(field, where?)` | 최솟값 |
 | `max(field, where?)` | 최댓값 |
+| `explain(option?)` | EXPLAIN 쿼리 분석 |
+| `upsert(data, conflictColumns?)` | INSERT ... ON CONFLICT DO UPDATE |
 
 ```typescript
 import { BaseRepository } from "stingerloom-orm";
@@ -534,3 +538,56 @@ const users = await em.find(User, {
 | MSSQL | `SET QUERY_GOVERNOR_COST_LIMIT N` |
 
 타임아웃 초과 시 `QueryTimeoutError`가 throw됩니다.
+
+---
+
+## 11. propagateShutdown() (정리)
+
+`EntityManager`의 내부 리소스를 정리합니다. 애플리케이션 종료 시 호출하면 이벤트 리스너, 구독자, dirty 엔티티, 쿼리 트래커, 복제 라우터를 초기화합니다.
+
+```typescript
+await em.propagateShutdown();
+```
+
+NestJS에서는 `OnModuleDestroy` 라이프사이클 훅에서 호출하는 것이 좋습니다.
+
+```typescript
+@Injectable()
+export class AppService implements OnModuleDestroy {
+  constructor(private readonly em: EntityManager) {}
+
+  async onModuleDestroy() {
+    await this.em.propagateShutdown();
+  }
+}
+```
+
+---
+
+## 12. getDriver()
+
+현재 `EntityManager`에 바인딩된 `ISqlDriver` 인스턴스를 반환합니다. `connect()` 전에는 `undefined`를 반환합니다.
+
+```typescript
+const driver = em.getDriver();
+if (driver) {
+  // 드라이버 레벨의 저수준 작업 수행
+  const escaped = driver.escapeIdentifier("column_name");
+}
+```
+
+`TenantMigrationRunner` 등 저수준 시나리오에서 드라이버에 직접 접근해야 할 때 사용합니다.
+
+---
+
+## 13. useMaster (Read Replica 환경)
+
+Read Replica 설정 시 읽기 쿼리는 기본적으로 slave로 라우팅됩니다. 쓰기 직후 최신 데이터를 읽어야 하는 경우 `useMaster` 옵션을 사용하여 master에서 직접 읽을 수 있습니다.
+
+```typescript
+// 쓰기 직후 최신 데이터를 master에서 조회
+const user = await em.findOne(User, {
+  where: { id: 1 },
+  useMaster: true,
+});
+```

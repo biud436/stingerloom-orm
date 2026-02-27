@@ -262,3 +262,115 @@ curl -H "X-Tenant-Id: tenant_2" http://localhost:3000/posts
 3. **AsyncLocalStorage 범위:** `MetadataContext.run()` 블록 외부에서는 컨텍스트가 `"public"`으로 자동 복귀됩니다.
 
 4. **MultiTenantMetadataManager 사용 중단:** 이전 버전의 `MultiTenantMetadataManager`는 deprecated 처리되었습니다. `MetadataContext.run()` 또는 `LayeredMetadataStore`를 직접 사용하세요.
+
+---
+
+## TenantMigrationRunner
+
+테넌트별 스키마를 자동으로 프로비저닝하는 `ITenantMigrationRunner` 인터페이스와 드라이버별 구현체를 제공합니다.
+
+### ITenantMigrationRunner 인터페이스
+
+```typescript
+import { ITenantMigrationRunner, TenantSyncResult } from "stingerloom-orm";
+
+interface ITenantMigrationRunner {
+  discoverSchemas(): Promise<string[]>;
+  ensureSchema(tenantId: string): Promise<void>;
+  syncTenantSchemas(tenantIds: string[]): Promise<TenantSyncResult>;
+  isProvisioned(tenantId: string): boolean;
+  getProvisionedSchemas(): string[];
+  reset(): void;
+}
+
+interface TenantSyncResult {
+  created: string[];  // 새로 생성된 테넌트
+  skipped: string[];  // 이미 존재하여 건너뛴 테넌트
+}
+```
+
+### PostgreSQL 구현 (PostgresTenantMigrationRunner)
+
+PostgreSQL은 스키마 기반 격리를 사용합니다. `CREATE SCHEMA` + `CREATE TABLE ... (LIKE ... INCLUDING ALL)`로 원본 스키마의 테이블 구조를 복제합니다.
+
+```typescript
+import { PostgresTenantMigrationRunner, EntityManager } from "stingerloom-orm";
+
+const em = new EntityManager();
+await em.register({
+  type: "postgres",
+  host: "localhost",
+  port: 5432,
+  username: "postgres",
+  password: "password",
+  database: "mydb",
+  entities: [User, Post],
+  synchronize: true,
+});
+
+const driver = em.getDriver()!;
+const runner = new PostgresTenantMigrationRunner(driver, {
+  sourceSchema: "public", // 복제할 원본 스키마 (기본값)
+});
+
+// 기존 테넌트 스키마 탐색
+const schemas = await runner.discoverSchemas();
+console.log(schemas); // ["public", "tenant_1", "tenant_2"]
+
+// 단일 테넌트 프로비저닝
+await runner.ensureSchema("tenant_3");
+
+// 여러 테넌트 일괄 프로비저닝
+const result = await runner.syncTenantSchemas([
+  "tenant_1", "tenant_2", "tenant_3", "tenant_4"
+]);
+console.log(result.created);  // ["tenant_4"]
+console.log(result.skipped);  // ["tenant_1", "tenant_2", "tenant_3"]
+
+// 프로비저닝 상태 확인
+runner.isProvisioned("tenant_3"); // true
+runner.getProvisionedSchemas();   // ["tenant_1", "tenant_2", "tenant_3", "tenant_4"]
+```
+
+### 드라이버별 지원 현황
+
+| 드라이버 | 구현 클래스 | 격리 방식 |
+|---------|-----------|---------|
+| PostgreSQL | `PostgresTenantMigrationRunner` | 스키마 기반 (`CREATE SCHEMA`) |
+| MySQL | `MySqlTenantMigrationRunner` | 미지원 (UnsupportedError) |
+| SQLite | `SqliteTenantMigrationRunner` | 미지원 (UnsupportedError) |
+| MSSQL | `MssqlTenantMigrationRunner` | 미지원 (UnsupportedError) |
+
+> **참고:** 현재 스키마 기반 멀티테넌시는 PostgreSQL에서만 완전히 지원됩니다. MySQL/SQLite/MSSQL은 인터페이스 구현체는 존재하지만 `UnsupportedError`를 throw합니다.
+
+### NestJS 통합 예제
+
+`examples/nestjs-multitenant/`에서 TenantMiddleware와 함께 사용하는 예제를 확인할 수 있습니다.
+
+```typescript
+// tenant-provisioning.service.ts
+import { Injectable, OnModuleInit } from "@nestjs/common";
+import { EntityManager, PostgresTenantMigrationRunner } from "stingerloom-orm";
+
+@Injectable()
+export class TenantProvisioningService implements OnModuleInit {
+  private runner: PostgresTenantMigrationRunner;
+
+  constructor(private readonly em: EntityManager) {}
+
+  async onModuleInit() {
+    const driver = this.em.getDriver()!;
+    this.runner = new PostgresTenantMigrationRunner(driver);
+
+    // 앱 시작 시 모든 테넌트 프로비저닝
+    await this.runner.syncTenantSchemas([
+      "tenant_alpha",
+      "tenant_beta",
+    ]);
+  }
+
+  async provisionTenant(tenantId: string) {
+    await this.runner.ensureSchema(tenantId);
+  }
+}
+```
