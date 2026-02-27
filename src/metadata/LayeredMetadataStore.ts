@@ -131,21 +131,29 @@ export class LayeredMetadataStore {
 
   /**
    * 특정 컨텍스트의 모든 메타데이터 가져오기 (병합된 뷰)
+   * OverlayFS 방식: public(lower) 레이어 + 대상 컨텍스트(upper) 레이어만 병합
    */
   getAllInContext<T>(context?: string): Map<string, T> {
     const targetContext = context || this.currentContext;
     const result = new Map<string, T>();
 
-    // 1. 모든 하위 레이어부터 순차적으로 데이터 수집 (lower → upper 순서)
-    for (const layer of this.layers) {
-      for (const [key, value] of layer.entries<T>()) {
+    // 1. public(lower) 레이어 데이터 수집 (base)
+    const publicLayer = this.getLayer("public");
+    if (publicLayer) {
+      for (const [key, value] of publicLayer.entries<T>()) {
         result.set(key, value);
       }
     }
 
-    // 2. 현재 컨텍스트 레이어의 데이터로 덮어쓰기 (Copy-on-Write)
-    // 이미 위에서 모든 레이어를 순회했으므로,
-    // 마지막 레이어(최신)의 데이터가 자동으로 덮어써짐
+    // 2. 대상 컨텍스트 레이어의 데이터로 덮어쓰기 (Copy-on-Write)
+    if (targetContext !== "public") {
+      const contextLayer = this.getLayer(targetContext);
+      if (contextLayer) {
+        for (const [key, value] of contextLayer.entries<T>()) {
+          result.set(key, value);
+        }
+      }
+    }
 
     return result;
   }

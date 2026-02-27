@@ -187,10 +187,12 @@ describe("LayeredMetadataStore", () => {
   });
 
   it("should get all metadata in context (merged view)", () => {
-    store.addLayer("public_work", false);
-    store.setContext("public_work");
-    store.set("entity1", { name: "Entity1" });
-    store.set("entity2", { name: "Entity2" });
+    // public(lower) 레이어에 직접 데이터 설정
+    const publicLayer = store.getLayer("public")!;
+    (publicLayer as any).store = (publicLayer as any).store || publicLayer;
+    // public은 read-only이므로 내부 Map에 직접 접근
+    publicLayer["metadata"].set("entity1", { name: "Entity1" });
+    publicLayer["metadata"].set("entity2", { name: "Entity2" });
 
     store.addLayer("tenant_1", false);
     store.setContext("tenant_1");
@@ -199,9 +201,44 @@ describe("LayeredMetadataStore", () => {
 
     const allData = store.getAllInContext();
     expect(allData.size).toBe(3);
-    expect(allData.get("entity1")).toEqual({ name: "Entity1" });
+    expect(allData.get("entity1")).toEqual({ name: "Entity1" }); // public fallback
     expect(allData.get("entity2")).toEqual({ name: "Entity2_Modified" }); // 상위 레이어 우선
     expect(allData.get("entity3")).toEqual({ name: "Entity3" });
+  });
+
+  it("should isolate tenant metadata — tenant_2 must NOT see tenant_1 data", () => {
+    // public(lower) 레이어에 공통 데이터
+    const publicLayer = store.getLayer("public")!;
+    publicLayer["metadata"].set("shared_entity", { name: "Shared" });
+
+    // tenant_1 데이터
+    store.addLayer("tenant_1", false);
+    store.setContext("tenant_1");
+    store.set("tenant1_only", { name: "T1_Only" });
+    store.set("shared_entity", { name: "Shared_Modified_T1" });
+
+    // tenant_2 데이터
+    store.addLayer("tenant_2", false);
+    store.setContext("tenant_2");
+    store.set("tenant2_only", { name: "T2_Only" });
+
+    // tenant_1 컨텍스트: public + tenant_1만 보여야 함
+    const t1Data = store.getAllInContext("tenant_1");
+    expect(t1Data.get("shared_entity")).toEqual({ name: "Shared_Modified_T1" });
+    expect(t1Data.get("tenant1_only")).toEqual({ name: "T1_Only" });
+    expect(t1Data.has("tenant2_only")).toBe(false); // tenant_2 데이터 격리
+
+    // tenant_2 컨텍스트: public + tenant_2만 보여야 함
+    const t2Data = store.getAllInContext("tenant_2");
+    expect(t2Data.get("shared_entity")).toEqual({ name: "Shared" }); // public 원본
+    expect(t2Data.get("tenant2_only")).toEqual({ name: "T2_Only" });
+    expect(t2Data.has("tenant1_only")).toBe(false); // tenant_1 데이터 격리
+
+    // public 컨텍스트: public만 보여야 함
+    const publicData = store.getAllInContext("public");
+    expect(publicData.get("shared_entity")).toEqual({ name: "Shared" });
+    expect(publicData.has("tenant1_only")).toBe(false);
+    expect(publicData.has("tenant2_only")).toBe(false);
   });
 });
 
