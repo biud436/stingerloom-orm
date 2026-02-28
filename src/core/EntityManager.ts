@@ -51,7 +51,6 @@ import {
 } from "../decorators";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
-import { ResultSetHeader } from "mysql2";
 import { EntityNotFound } from "../dialects/EntityNotFound";
 import { QueryResult } from "../types/QueryResult";
 import { EntityResult } from "../types/EntityResult";

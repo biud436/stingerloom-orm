@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import mssql from "mssql";
+import type * as MssqlTypes from "mssql";
 import { Sql } from "sql-template-tag";
 import { Logger } from "../../utils/Logger";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
@@ -8,12 +8,15 @@ import { PoolNotFound } from "./PoolNotFound";
 import { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { IConnector } from "../../core/IConnector";
 
+// Lazy-loaded mssql module (populated in connect())
+let mssql: typeof MssqlTypes;
+
 /**
  * MSSQL isolation level 문자열을 mssql 패키지의 IsolationLevel 상수로 변환합니다.
  */
 function toMssqlIsolationLevel(
   level: TRANSACTION_ISOLATION_LEVEL,
-): mssql.IIsolationLevel {
+): MssqlTypes.IIsolationLevel {
   switch (level) {
     case "READ UNCOMMITTED":
       return mssql.ISOLATION_LEVEL.READ_UNCOMMITTED;
@@ -36,12 +39,20 @@ function toMssqlIsolationLevel(
  * sql-template-tag의 $1, $2 형식을 @param0, @param1 형식으로 변환합니다.
  */
 export class MssqlConnector extends IConnector {
-  private pool?: mssql.ConnectionPool;
+  private pool?: MssqlTypes.ConnectionPool;
   private isDebug = false;
   private readonly logger = new Logger("MssqlConnector");
 
   async connect(options: DatabaseClientOptions): Promise<void> {
     try {
+      try {
+        mssql = require("mssql");
+      } catch {
+        throw new Error(
+          "mssql 패키지가 필요합니다. npm install mssql",
+        );
+      }
+
       const {
         host,
         username,
@@ -52,7 +63,7 @@ export class MssqlConnector extends IConnector {
         pool: poolOptions,
       } = options;
 
-      const config: mssql.config = {
+      const config: MssqlTypes.config = {
         server: host,
         user: username,
         password,
@@ -81,7 +92,7 @@ export class MssqlConnector extends IConnector {
   /**
    * 커넥션 풀에서 Request 객체를 생성하기 위해 풀 자체를 반환합니다.
    */
-  async getConnection(): Promise<mssql.ConnectionPool> {
+  async getConnection(): Promise<MssqlTypes.ConnectionPool> {
     if (!this.pool) {
       throw new PoolNotFound();
     }
@@ -111,7 +122,7 @@ export class MssqlConnector extends IConnector {
       }
 
       // string 쿼리는 Request를 통해 바로 실행
-      const request: mssql.Request =
+      const request: MssqlTypes.Request =
         pool instanceof mssql.Transaction
           ? new mssql.Request(pool)
           : pool.request();
@@ -137,7 +148,7 @@ export class MssqlConnector extends IConnector {
         return `@param${parseInt(num, 10) - 1}`;
       });
 
-      const request: mssql.Request =
+      const request: MssqlTypes.Request =
         pool instanceof mssql.Transaction
           ? new mssql.Request(pool)
           : pool.request();
@@ -180,7 +191,7 @@ export class MssqlConnector extends IConnector {
     connection: any,
     level: TRANSACTION_ISOLATION_LEVEL = "READ COMMITTED",
   ): Promise<void> {
-    const pool = connection as mssql.ConnectionPool;
+    const pool = connection as MssqlTypes.ConnectionPool;
     if (!pool) {
       throw new ConnectionNotFound();
     }
@@ -193,13 +204,13 @@ export class MssqlConnector extends IConnector {
   }
 
   async rollback(connection: any): Promise<void> {
-    const pool = connection as mssql.ConnectionPool;
+    const pool = connection as MssqlTypes.ConnectionPool;
     if (!pool) {
       throw new ConnectionNotFound();
     }
 
     const transaction = (pool as any).__activeTransaction as
-      | mssql.Transaction
+      | MssqlTypes.Transaction
       | undefined;
     if (transaction) {
       await transaction.rollback();
@@ -208,13 +219,13 @@ export class MssqlConnector extends IConnector {
   }
 
   async commit(connection: any): Promise<void> {
-    const pool = connection as mssql.ConnectionPool;
+    const pool = connection as MssqlTypes.ConnectionPool;
     if (!pool) {
       throw new ConnectionNotFound();
     }
 
     const transaction = (pool as any).__activeTransaction as
-      | mssql.Transaction
+      | MssqlTypes.Transaction
       | undefined;
     if (transaction) {
       try {

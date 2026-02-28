@@ -57,12 +57,18 @@ Advanced topics:
 ## Quick Start
 
 ```bash
-pnpm add stingerloom-orm reflect-metadata
+pnpm add @stingerloom/orm reflect-metadata
+
+# Install the driver for your database:
+pnpm add pg            # PostgreSQL
+pnpm add mysql2        # MySQL / MariaDB
+pnpm add better-sqlite3  # SQLite
+pnpm add mssql         # MSSQL
 ```
 
 ```typescript
 import "reflect-metadata";
-import { EntityManager } from "stingerloom-orm";
+import { EntityManager } from "@stingerloom/orm";
 
 const em = new EntityManager();
 await em.register({

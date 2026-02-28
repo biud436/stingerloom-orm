@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import mysql, { Pool, PoolConnection } from "mysql2";
+import type { Pool, PoolConnection } from "mysql2";
 import sql, { Sql } from "sql-template-tag";
 import { Logger } from "../../utils/Logger";
 import { Connection } from "../../core/Connection";
@@ -18,6 +18,15 @@ export class MySqlConnector implements IConnector {
 
   async connect(options: DatabaseClientOptions): Promise<void> {
     try {
+      let mysql: typeof import("mysql2");
+      try {
+        mysql = require("mysql2");
+      } catch {
+        throw new Error(
+          "mysql2 패키지가 필요합니다. npm install mysql2",
+        );
+      }
+
       const {
         host,
         username,

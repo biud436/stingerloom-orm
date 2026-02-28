@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { Sql } from "sql-template-tag";
 import { Logger } from "../../utils/Logger";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
@@ -21,9 +21,18 @@ export class SqliteConnector extends IConnector {
 
   async connect(options: DatabaseClientOptions): Promise<void> {
     try {
+      let DatabaseConstructor: typeof Database;
+      try {
+        DatabaseConstructor = require("better-sqlite3");
+      } catch {
+        throw new Error(
+          "better-sqlite3 패키지가 필요합니다. npm install better-sqlite3",
+        );
+      }
+
       const { database, logging } = options;
 
-      this.db = new Database(database);
+      this.db = new DatabaseConstructor(database);
       this.isDebug = !!logging;
 
       // Enable WAL mode for better performance

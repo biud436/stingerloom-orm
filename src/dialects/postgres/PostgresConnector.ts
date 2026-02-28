@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Pool, PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { Sql } from "sql-template-tag";
 import { Logger } from "../../utils/Logger";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
@@ -17,6 +17,15 @@ export class PostgresConnector extends IConnector {
 
   async connect(options: DatabaseClientOptions): Promise<void> {
     try {
+      let PgPool: typeof import("pg").Pool;
+      try {
+        PgPool = require("pg").Pool;
+      } catch {
+        throw new Error(
+          "pg 패키지가 필요합니다. npm install pg",
+        );
+      }
+
       const { host, username, password, database, port, logging, pool: poolOptions } = options;
 
       this.schema = options.schema ?? "public";
@@ -24,7 +33,7 @@ export class PostgresConnector extends IConnector {
       // pool.max > connectionLimit > 기본값(10) 우선순위로 적용
       const maxConnections = poolOptions?.max ?? options.connectionLimit ?? 10;
 
-      const pool = new Pool({
+      const pool = new PgPool({
         host,
         user: username,
         password,

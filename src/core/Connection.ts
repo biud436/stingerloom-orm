@@ -1,5 +1,5 @@
-import { QueryError } from "mysql2";
-import { Connection as MysqlConnection } from "mysql2";
+import type { QueryError } from "mysql2";
+import type { Connection as MysqlConnection } from "mysql2";
 
 /**
  * Represents a database connection that extends the functionality of a MySQL connection.
