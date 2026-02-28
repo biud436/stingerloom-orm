@@ -18,8 +18,9 @@ export class CatsService {
     private readonly ownersService: OwnersService,
   ) {}
 
-  @Transactional()
-  async onModuleInit() {
+  async onModuleInit() {}
+
+  private async test1() {
     const cat = await this.catRepository.findOne({
       where: {
         id: 1,
