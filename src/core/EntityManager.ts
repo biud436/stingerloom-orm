@@ -2396,6 +2396,12 @@ export class EntityManager implements BaseEntityManager {
           SET ${join(updateMap, ", ")}
           WHERE ${join(pkWhereClauses, " AND ")}
                 `;
+      console.log(
+        `[save UPDATE] SQL: ${updateSql.text ?? String(updateSql)}`,
+      );
+      console.log(
+        `[save UPDATE] values: ${JSON.stringify(updateSql.values)}`,
+      );
       const updateStart = Date.now();
       await transactionManager.query<T>(updateSql);
       this.trackQuery(

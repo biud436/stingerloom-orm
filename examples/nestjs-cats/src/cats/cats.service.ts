@@ -18,7 +18,9 @@ export class CatsService {
     private readonly ownersService: OwnersService,
   ) {}
 
-  async onModuleInit() {}
+  async onModuleInit() {
+    await this.associateCatWithOwner();
+  }
 
   @Transactional()
   private async associateCatWithOwner() {
@@ -45,6 +47,11 @@ export class CatsService {
     cat.owner = onwer;
     await this.catRepository.save(cat);
     console.log("Associated cat with owner:", cat);
+
+    cat.owner = null;
+
+    await this.catRepository.save(cat);
+    console.log("Removed owner association from cat:", cat);
   }
 
   /**
