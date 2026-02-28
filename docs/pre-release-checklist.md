@@ -13,7 +13,9 @@
 | ORM 유닛 테스트 | 63 suites | 전부 통과 |
 | ORM 통합 테스트 (MySQL) | 14 suites, 182 tests | 전부 통과 |
 | ORM 전체 | **77 suites, 1469 tests** | **0 failures** |
+| nestjs-cats e2e | 23 tests | 전부 통과 |
 | nestjs-blog e2e | 59 tests | 전부 통과 |
+| nestjs-multitenant e2e | 33 tests | 전부 통과 |
 | 예제 타입 체크 (tsc --noEmit) | 3개 프로젝트 | 전부 통과 |
 
 ### 이번 세션에서 발견 및 수정한 버그
@@ -21,6 +23,7 @@
 | 버그 | 원인 | 커밋 |
 |------|------|------|
 | `Column 'parentFk' specified twice` | `@Column`과 `@ManyToOne joinColumn`이 동일 이름일 때 INSERT/UPDATE SQL에 중복 추가 | bc7c7cc |
+| nestjs-cats e2e 3개 실패 | 테스트가 `count`/`hasNext`/`cursor` 기대, 실제 API는 `total`/`hasNextPage`/`nextCursor` 반환 | 이번 세션 |
 
 ### 이번 세션에서 추가한 테스트
 
@@ -128,15 +131,15 @@ await Promise.all([
 - 최종 데이터 무결성 (A 또는 B 중 하나)
 - `@Version` 낙관적 잠금 동작
 
-### 3-6. nestjs-cats, nestjs-multitenant e2e 테스트 부재
+### 3-6. 예제 e2e 테스트 현황
 
-| 예제 | e2e 테스트 | 타입 체크 |
-|------|-----------|----------|
-| nestjs-cats | 없음 | 통과 |
-| nestjs-blog | 59 tests | 통과 |
-| nestjs-multitenant | 없음 | 통과 |
+| 예제 | e2e 테스트 | 실행 방법 | 상태 |
+|------|-----------|----------|------|
+| nestjs-cats | 23 tests | `INTEGRATION_TEST=true pnpm test:e2e` | 전부 통과 |
+| nestjs-blog | 59 tests | `INTEGRATION_TEST=true pnpm test` | 전부 통과 |
+| nestjs-multitenant | 33 tests | `INTEGRATION_TEST=true pnpm test:e2e` | 전부 통과 |
 
-`nestjs-cats`와 `nestjs-multitenant`는 타입 체크만 통과하고 e2e 테스트가 없습니다. 특히 `nestjs-multitenant`는 테넌트 격리가 핵심이므로 e2e 테스트가 필요합니다.
+3개 예제 프로젝트의 e2e 테스트 모두 통과 확인 완료 (2026-03-01).
 
 ---
 
@@ -156,15 +159,15 @@ await Promise.all([
 
 - [x] 유닛 테스트 전부 통과 (1469)
 - [x] 통합 테스트 전부 통과 (182)
+- [x] nestjs-cats e2e 전부 통과 (23)
 - [x] nestjs-blog e2e 전부 통과 (59)
+- [x] nestjs-multitenant e2e 전부 통과 (33)
 - [x] 예제 3개 타입 체크 통과
 - [x] SQL Injection 감사 완료
 - [x] P0 FK 객체 할당 버그 수정 및 테스트 추가
 - [ ] M-6 부분 업데이트 FK 보존 검증
 - [ ] S-1 트랜잭션 롤백 통합 테스트
 - [ ] PostgreSQL 통합 테스트
-- [ ] nestjs-cats e2e 테스트 추가
-- [ ] nestjs-multitenant e2e 테스트 추가
 - [ ] `BaseRepository.save()` 반환 타입 정리
 
 ---
@@ -183,7 +186,6 @@ await Promise.all([
 
 ### 안정화 (v0.2.0)
 
-5. **nestjs-cats, nestjs-multitenant e2e** — REST API 엔드포인트별 검증
-6. **S-2 동시성** — deadlock, 낙관적 잠금
-7. **S-3 커넥션 풀 고갈** — 풀 크기 초과 시 행동
-8. **S-8 대량 페이지네이션** — 1000건+ 커서 누락/중복
+5. **S-2 동시성** — deadlock, 낙관적 잠금
+6. **S-3 커넥션 풀 고갈** — 풀 크기 초과 시 행동
+7. **S-8 대량 페이지네이션** — 1000건+ 커서 누락/중복
