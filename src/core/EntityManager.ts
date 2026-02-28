@@ -2241,6 +2241,29 @@ export class EntityManager implements BaseEntityManager {
           return (item as any)[column.name!];
         });
 
+        // ManyToOne FK 컬럼 값 추출 (joinColumn이 명시된 관계에서 관계 객체의 PK 추출)
+        const manyToOneRelations = this.resolveManyToOneMetadata(entity);
+        for (const rel of manyToOneRelations) {
+          if (!rel.joinColumn) continue;
+          const relatedValue = (item as any)[rel.columnName];
+          if (relatedValue && typeof relatedValue === "object") {
+            const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+            const relatedMeta = this.resolveEntityMetadata(RelatedEntity);
+            if (relatedMeta) {
+              const relatedPk = relatedMeta.columns.find(
+                (col: any) => col.options?.primary,
+              );
+              if (relatedPk) {
+                const fkValue = relatedValue[relatedPk.name!];
+                if (fkValue !== undefined && fkValue !== null) {
+                  columns.push(raw(this.wrap(rel.joinColumn)));
+                  values.push(fkValue);
+                }
+              }
+            }
+          }
+        }
+
         // PostgreSQL: INSERT ... RETURNING PK 컬럼들
         const isPostgres = this.isPostgres();
         const returningCols = pkColumns
@@ -2332,6 +2355,30 @@ export class EntityManager implements BaseEntityManager {
       const updateMap = metadata.columns.map((column: ColumnMetadata) => {
         return sql`${raw(this.wrap(column.name!))} = ${(item as any)[column.name!]}`;
       });
+
+      // ManyToOne FK 컬럼 값을 UPDATE SET에 추가 (관계 객체의 PK → FK 컬럼)
+      const updateManyToOneRelations = this.resolveManyToOneMetadata(entity);
+      for (const rel of updateManyToOneRelations) {
+        if (!rel.joinColumn) continue;
+        const relatedValue = (item as any)[rel.columnName];
+        if (relatedValue && typeof relatedValue === "object") {
+          const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+          const relatedMeta = this.resolveEntityMetadata(RelatedEntity);
+          if (relatedMeta) {
+            const relatedPk = relatedMeta.columns.find(
+              (col: any) => col.options?.primary,
+            );
+            if (relatedPk) {
+              const fkValue = relatedValue[relatedPk.name!];
+              if (fkValue !== undefined && fkValue !== null) {
+                updateMap.push(
+                  sql`${raw(this.wrap(rel.joinColumn))} = ${fkValue}`,
+                );
+              }
+            }
+          }
+        }
+      }
 
       const pkWhereClauses = buildPkWhere();
 
