@@ -20,7 +20,8 @@ export class CatsService {
 
   async onModuleInit() {}
 
-  private async test1() {
+  @Transactional()
+  private async associateCatWithOwner() {
     const cat = await this.catRepository.findOne({
       where: {
         id: 1,
