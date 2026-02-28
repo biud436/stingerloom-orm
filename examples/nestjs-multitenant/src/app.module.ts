@@ -15,8 +15,6 @@ import { PostsController } from "./posts/posts.controller";
       defaultTenant: "public",
       routes: [UsersController, PostsController],
     }),
-    UsersModule,
-    PostsModule,
     StinglerloomOrmModule.forRoot({
       type: "postgres",
       host: process.env.DB_HOST || "localhost",
@@ -28,6 +26,8 @@ import { PostsController } from "./posts/posts.controller";
       synchronize: true,
       logging: true,
     }),
+    UsersModule,
+    PostsModule,
   ],
 })
 export class AppModule {}

@@ -9,12 +9,41 @@ import {
   CursorPaginationResult,
 } from "@stingerloom/orm";
 import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
+import { OwnersService } from "src/owners/owners.service";
 
 @Injectable()
 export class CatsService {
   constructor(
     @InjectRepository(Cat) private readonly catRepository: BaseRepository<Cat>,
+    private readonly ownersService: OwnersService,
   ) {}
+
+  @Transactional()
+  async onModuleInit() {
+    const cat = await this.catRepository.findOne({
+      where: {
+        id: 1,
+      },
+      relations: ["owner"], // @ManyToOne eager 로딩 데모
+    });
+
+    if (!cat) {
+      return;
+    }
+
+    console.log("Cat with ID 1 already exists:", cat);
+
+    const onwer = await this.ownersService.findOne(7);
+
+    if (!onwer) {
+      console.log("Owner with ID 7 not found");
+      return;
+    }
+
+    cat.owner = onwer;
+    await this.catRepository.save(cat);
+    console.log("Associated cat with owner:", cat);
+  }
 
   /**
    * @Transactional — 트랜잭션 범위 내에서 고양이를 생성합니다.

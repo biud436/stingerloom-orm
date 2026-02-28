@@ -9,8 +9,6 @@ import { OwnersModule } from "./owners/owners.module";
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    CatsModule,
-    OwnersModule,
     StinglerloomOrmModule.forRoot({
       type: "mysql",
       host: process.env.DB_HOST || "localhost",
@@ -22,6 +20,8 @@ import { OwnersModule } from "./owners/owners.module";
       synchronize: true,
       logging: true,
     }),
+    CatsModule,
+    OwnersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

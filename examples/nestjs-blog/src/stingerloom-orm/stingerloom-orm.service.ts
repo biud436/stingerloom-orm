@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import {
   Injectable,
-  OnApplicationBootstrap,
+  OnModuleInit,
   OnApplicationShutdown,
 } from "@nestjs/common";
 import { EntityManager, ClazzType, Logger } from "@stingerloom/orm";
@@ -18,7 +18,7 @@ export const STINGERLOOM_ORM_SERVICE_TOKEN = Symbol.for(
 
 @Injectable()
 export class StinglerloomOrmService
-  implements OnApplicationBootstrap, OnApplicationShutdown
+  implements OnModuleInit, OnApplicationShutdown
 {
   private readonly logger = new Logger(StinglerloomOrmService.name);
 
@@ -31,8 +31,8 @@ export class StinglerloomOrmService
     this.logger.info("StinglerloomOrmService initialized");
   }
 
-  async onApplicationBootstrap(): Promise<void> {
-    this.logger.info("StinglerloomOrmService OnApplicationBootstrap");
+  async onModuleInit(): Promise<void> {
+    this.logger.info("StinglerloomOrmService OnModuleInit");
 
     if (
       !StinglerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN]

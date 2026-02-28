@@ -11,10 +11,6 @@ import { CategoriesModule } from "./categories/categories.module";
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    UsersModule,
-    PostsModule,
-    TagsModule,
-    CategoriesModule,
     StinglerloomOrmModule.forRoot({
       type: "mysql",
       host: process.env.DB_HOST || "localhost",
@@ -26,6 +22,10 @@ import { CategoriesModule } from "./categories/categories.module";
       synchronize: true,
       logging: true,
     }),
+    UsersModule,
+    PostsModule,
+    TagsModule,
+    CategoriesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

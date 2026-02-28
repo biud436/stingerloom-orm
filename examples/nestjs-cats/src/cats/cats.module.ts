@@ -5,9 +5,10 @@ import { StinglerloomOrmModule } from "src/stingerloom-orm/stingerloom-orm.modul
 import { StinglerloomOrmService } from "src/stingerloom-orm/stingerloom-orm.service";
 import { Cat } from "./cat.entity";
 import { CatSubscriber } from "./cat.subscriber";
+import { OwnersModule } from "src/owners/owners.module";
 
 @Module({
-  imports: [StinglerloomOrmModule.forFeature([Cat])],
+  imports: [StinglerloomOrmModule.forFeature([Cat]), OwnersModule],
   controllers: [CatsController],
   providers: [CatsService],
 })
