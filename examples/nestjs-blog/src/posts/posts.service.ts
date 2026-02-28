@@ -11,7 +11,7 @@ import {
   ExplainResult,
   SchemaDiff,
   SchemaDiffMigrationGenerator,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
 import { Inject } from "@nestjs/common";
 

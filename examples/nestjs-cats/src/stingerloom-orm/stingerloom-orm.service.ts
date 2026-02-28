@@ -4,7 +4,7 @@ import {
   OnApplicationBootstrap,
   OnApplicationShutdown,
 } from "@nestjs/common";
-import { EntityManager, ClazzType, Logger } from "stingerloom-orm";
+import { EntityManager, ClazzType, Logger } from "@stingerloom/orm";
 import Container from "typedi";
 import {
   STINGERLOOM_ORM_OPTION_TOKEN,

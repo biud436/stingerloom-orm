@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { MetadataContext } from "stingerloom-orm";
+import { MetadataContext } from "@stingerloom/orm";
 
 /**
  * Injectable NestJS service for accessing the current tenant context.

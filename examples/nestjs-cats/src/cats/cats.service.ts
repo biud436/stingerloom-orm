@@ -7,7 +7,7 @@ import {
   BaseRepository,
   Transactional,
   CursorPaginationResult,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
 
 @Injectable()

@@ -5,7 +5,7 @@ import {
   ManyToMany,
   UniqueIndex,
   BeforeInsert,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 import { Post } from "../posts/post.entity";
 
 @Entity()

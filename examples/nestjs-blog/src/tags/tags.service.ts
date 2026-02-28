@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { CreateTagDto } from "./dto/create-tag.dto";
 import { Tag } from "./tag.entity";
-import { BaseRepository, Transactional } from "stingerloom-orm";
+import { BaseRepository, Transactional } from "@stingerloom/orm";
 import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
 
 @Injectable()

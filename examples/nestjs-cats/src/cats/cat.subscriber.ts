@@ -1,4 +1,4 @@
-import { EntitySubscriber, InsertEvent } from "stingerloom-orm";
+import { EntitySubscriber, InsertEvent } from "@stingerloom/orm";
 import { Cat } from "./cat.entity";
 
 /**

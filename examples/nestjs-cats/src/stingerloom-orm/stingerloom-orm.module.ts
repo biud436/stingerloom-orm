@@ -7,10 +7,10 @@ import {
   EntityManager,
   type ClazzType,
   type DatabaseClientOptions,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 import { StingerloomOrmCoreModule } from "./stingerloom-orm.core.module";
 
-export type { DatabaseClientOptions } from "stingerloom-orm";
+export type { DatabaseClientOptions } from "@stingerloom/orm";
 
 export const STINGERLOOM_ORM_OPTION_TOKEN = Symbol.for(
   "STINGERLOOM_ORM_OPTION_TOKEN",

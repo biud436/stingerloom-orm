@@ -4,7 +4,7 @@ import {
   SchemaDiff,
   SchemaDiffMigrationGenerator,
   SchemaDiffResult,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 
 @Controller()
 export class AppController {

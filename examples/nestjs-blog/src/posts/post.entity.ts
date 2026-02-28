@@ -9,7 +9,7 @@ import {
   UniqueIndex,
   BeforeInsert,
   BeforeUpdate,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 import { User } from "../users/user.entity";
 import { Category } from "../categories/category.entity";
 import { Tag } from "../tags/tag.entity";

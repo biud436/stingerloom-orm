@@ -1,5 +1,5 @@
 import { createParamDecorator, ExecutionContext } from "@nestjs/common";
-import { MetadataContext } from "stingerloom-orm";
+import { MetadataContext } from "@stingerloom/orm";
 
 /**
  * Parameter decorator that extracts the current tenant ID from

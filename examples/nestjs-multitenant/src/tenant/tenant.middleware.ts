@@ -1,6 +1,6 @@
 import { Inject, Injectable, NestMiddleware } from "@nestjs/common";
 import { Request, Response, NextFunction } from "express";
-import { MetadataContext } from "stingerloom-orm";
+import { MetadataContext } from "@stingerloom/orm";
 import { TENANT_MODULE_OPTIONS, TenantModuleOptions } from "./tenant.constants";
 import { TenantSchemaService } from "./tenant-schema.service";
 

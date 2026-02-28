@@ -8,7 +8,7 @@ import {
   BeforeInsert,
   AfterInsert,
   BeforeUpdate,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 import { Owner } from "../owners/owner.entity";
 
 @Entity()

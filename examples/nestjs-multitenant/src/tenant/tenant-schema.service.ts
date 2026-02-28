@@ -3,7 +3,7 @@ import {
   EntityManager,
   PostgresTenantMigrationRunner,
   PostgresDriver,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 import { Inject } from "@nestjs/common";
 
 /**

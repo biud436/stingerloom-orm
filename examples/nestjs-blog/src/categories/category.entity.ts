@@ -3,7 +3,7 @@ import {
   Column,
   PrimaryGeneratedColumn,
   OneToMany,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 import { Post } from "../posts/post.entity";
 
 @Entity()

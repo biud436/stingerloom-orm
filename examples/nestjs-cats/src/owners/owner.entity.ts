@@ -4,7 +4,7 @@ import {
   PrimaryGeneratedColumn,
   OneToMany,
   BeforeInsert,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 import { Cat } from "../cats/cat.entity";
 
 @Entity()

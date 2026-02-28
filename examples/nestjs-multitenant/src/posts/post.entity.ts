@@ -5,7 +5,7 @@ import {
   ManyToOne,
   BeforeInsert,
   BeforeUpdate,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 import { User } from "../users/user.entity";
 
 @Entity()

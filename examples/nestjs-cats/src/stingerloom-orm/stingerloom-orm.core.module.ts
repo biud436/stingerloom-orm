@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { EntityManager } from "stingerloom-orm";
+import { EntityManager } from "@stingerloom/orm";
 
 @Module({})
 export class StingerloomOrmCoreModule {
