@@ -2242,14 +2242,25 @@ export class EntityManager implements BaseEntityManager {
         });
 
         // ManyToOne FK 컬럼 값 추출 (joinColumn이 명시된 관계에서 관계 객체의 PK 추출)
+        // @Column과 @ManyToOne joinColumn이 같은 이름일 수 있으므로 중복 방지
         const manyToOneRelations = this.resolveManyToOneMetadata(entity);
         for (const rel of manyToOneRelations) {
           if (!rel.joinColumn) continue;
           const relatedValue = (item as any)[rel.columnName];
+
+          // joinColumn이 이미 @Column으로 columns에 포함되어 있는지 확인
+          const existingIdx = insertableColumns.findIndex(
+            (col: ColumnMetadata) => col.name === rel.joinColumn,
+          );
+
           // null 할당 시 FK를 NULL로 INSERT
           if (relatedValue === null) {
-            columns.push(raw(this.wrap(rel.joinColumn)));
-            values.push(null);
+            if (existingIdx >= 0) {
+              values[existingIdx] = null;
+            } else {
+              columns.push(raw(this.wrap(rel.joinColumn)));
+              values.push(null);
+            }
           } else if (relatedValue && typeof relatedValue === "object") {
             const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
             const relatedMeta = this.resolveEntityMetadata(RelatedEntity);
@@ -2260,8 +2271,12 @@ export class EntityManager implements BaseEntityManager {
               if (relatedPk) {
                 const fkValue = relatedValue[relatedPk.name!];
                 if (fkValue !== undefined && fkValue !== null) {
-                  columns.push(raw(this.wrap(rel.joinColumn)));
-                  values.push(fkValue);
+                  if (existingIdx >= 0) {
+                    values[existingIdx] = fkValue;
+                  } else {
+                    columns.push(raw(this.wrap(rel.joinColumn)));
+                    values.push(fkValue);
+                  }
                 }
               }
             }
@@ -2361,15 +2376,26 @@ export class EntityManager implements BaseEntityManager {
       });
 
       // ManyToOne FK 컬럼 값을 UPDATE SET에 추가 (관계 객체의 PK → FK 컬럼)
+      // @Column과 @ManyToOne joinColumn이 같은 이름일 수 있으므로 중복 방지
       const updateManyToOneRelations = this.resolveManyToOneMetadata(entity);
       for (const rel of updateManyToOneRelations) {
         if (!rel.joinColumn) continue;
         const relatedValue = (item as any)[rel.columnName];
+
+        // joinColumn이 이미 @Column으로 updateMap에 포함되어 있는지 확인
+        const existingIdx = metadata.columns.findIndex(
+          (col: ColumnMetadata) => col.name === rel.joinColumn,
+        );
+
         // null 할당 시 FK를 NULL로 설정
         if (relatedValue === null) {
-          updateMap.push(
-            sql`${raw(this.wrap(rel.joinColumn))} = ${null}`,
-          );
+          if (existingIdx >= 0) {
+            updateMap[existingIdx] = sql`${raw(this.wrap(rel.joinColumn))} = ${null}`;
+          } else {
+            updateMap.push(
+              sql`${raw(this.wrap(rel.joinColumn))} = ${null}`,
+            );
+          }
         } else if (relatedValue && typeof relatedValue === "object") {
           const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
           const relatedMeta = this.resolveEntityMetadata(RelatedEntity);
@@ -2380,9 +2406,13 @@ export class EntityManager implements BaseEntityManager {
             if (relatedPk) {
               const fkValue = relatedValue[relatedPk.name!];
               if (fkValue !== undefined && fkValue !== null) {
-                updateMap.push(
-                  sql`${raw(this.wrap(rel.joinColumn))} = ${fkValue}`,
-                );
+                if (existingIdx >= 0) {
+                  updateMap[existingIdx] = sql`${raw(this.wrap(rel.joinColumn))} = ${fkValue}`;
+                } else {
+                  updateMap.push(
+                    sql`${raw(this.wrap(rel.joinColumn))} = ${fkValue}`,
+                  );
+                }
               }
             }
           }
