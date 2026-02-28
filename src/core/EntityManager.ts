@@ -2246,7 +2246,11 @@ export class EntityManager implements BaseEntityManager {
         for (const rel of manyToOneRelations) {
           if (!rel.joinColumn) continue;
           const relatedValue = (item as any)[rel.columnName];
-          if (relatedValue && typeof relatedValue === "object") {
+          // null 할당 시 FK를 NULL로 INSERT
+          if (relatedValue === null) {
+            columns.push(raw(this.wrap(rel.joinColumn)));
+            values.push(null);
+          } else if (relatedValue && typeof relatedValue === "object") {
             const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
             const relatedMeta = this.resolveEntityMetadata(RelatedEntity);
             if (relatedMeta) {
@@ -2361,7 +2365,12 @@ export class EntityManager implements BaseEntityManager {
       for (const rel of updateManyToOneRelations) {
         if (!rel.joinColumn) continue;
         const relatedValue = (item as any)[rel.columnName];
-        if (relatedValue && typeof relatedValue === "object") {
+        // null 할당 시 FK를 NULL로 설정
+        if (relatedValue === null) {
+          updateMap.push(
+            sql`${raw(this.wrap(rel.joinColumn))} = ${null}`,
+          );
+        } else if (relatedValue && typeof relatedValue === "object") {
           const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
           const relatedMeta = this.resolveEntityMetadata(RelatedEntity);
           if (relatedMeta) {

@@ -203,7 +203,7 @@ describe("save() ManyToOne FK column inclusion (regression)", () => {
     expect(insertCall![0].values).toContain(3);
   });
 
-  it("should NOT include FK column when relation object is null/undefined", async () => {
+  it("should NOT include FK column when relation is undefined (not touched)", async () => {
     const pet = new TestPet();
     pet.id = 2;
     pet.name = "Solo";
@@ -221,5 +221,26 @@ describe("save() ManyToOne FK column inclusion (regression)", () => {
     expect(updateCall).toBeDefined();
     const updateSql = getSqlText(updateCall!);
     expect(updateSql).not.toContain("`owner_id`");
+  });
+
+  it("should set FK column to NULL when relation is explicitly set to null", async () => {
+    const pet = new TestPet();
+    pet.id = 1;
+    pet.name = "Whiskers";
+    (pet as any).owner = null; // 명시적 null 할당 → FK를 NULL로 설정
+
+    mockQuery.mockResolvedValue({ results: [], fields: [] });
+
+    await em.save(TestPet, pet);
+
+    const updateCall = mockQuery.mock.calls.find((call: any[]) => {
+      const text = getSqlText(call);
+      return text.includes("UPDATE");
+    });
+
+    expect(updateCall).toBeDefined();
+    const updateSql = getSqlText(updateCall!);
+    expect(updateSql).toContain("`owner_id`");
+    expect(updateCall![0].values).toContain(null);
   });
 });
