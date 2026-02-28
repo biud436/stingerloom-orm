@@ -122,6 +122,64 @@ pnpm build
 pnpm test         # 1,405 tests
 ```
 
+## Publishing to npm
+
+### Prerequisites
+
+1. Create an npm account at [npmjs.com](https://www.npmjs.com/) if you don't have one.
+2. Create the `@stingerloom` organization on npm (Settings > Organizations > Add Organization).
+3. Log in to npm from your terminal:
+
+```bash
+npm login
+```
+
+### Publish
+
+```bash
+# 1. Run tests to make sure everything passes
+pnpm test
+
+# 2. Build (also runs automatically via prepublishOnly)
+pnpm build
+
+# 3. Preview what will be included in the package
+npm pack --dry-run
+
+# 4. Publish
+npm publish --access public
+```
+
+> `publishConfig.access` is already set to `"public"` in package.json, so `--access public` is optional after the first publish.
+
+### Version Bumps
+
+```bash
+# Patch release (0.1.0 → 0.1.1) — bug fixes
+npm version patch
+
+# Minor release (0.1.0 → 0.2.0) — new features, backward-compatible
+npm version minor
+
+# Major release (0.1.0 → 1.0.0) — breaking changes
+npm version major
+
+# Then publish
+npm publish
+```
+
+### What Gets Published
+
+Only the following files are included in the package (controlled by the `files` field in package.json):
+
+| Path | Contents |
+|------|----------|
+| `dist/` | Compiled JS + type declarations |
+| `LICENSE` | MIT license |
+| `README.md` | This file |
+
+Source code, tests, examples, docs, and config files are **excluded**.
+
 ## License
 
 MIT
