@@ -26,7 +26,19 @@ await em.find(User, { where: { name: "Alice" } });
 
 ## Features
 
-**CRUD** · **Relations** (ManyToOne, OneToMany, ManyToMany, OneToOne) · **Eager & Lazy Loading** · **Transactions** · **Migrations** · **Query Builder** · **Multi-tenancy** · **Soft Delete** · **Upsert** · **Cursor Pagination** · **N+1 Detection** · **EntitySubscriber** · **NestJS Integration**
+- CRUD
+- Relations (ManyToOne, OneToMany, ManyToMany, OneToOne)
+- Eager & Lazy Loading
+- Transactions
+- Migrations
+- Query Builder
+- Multi-tenancy
+- Soft Delete
+- Upsert
+- Cursor Pagination
+- N+1 Detection
+- EntitySubscriber
+- NestJS Integration
 
 ## Databases
 
