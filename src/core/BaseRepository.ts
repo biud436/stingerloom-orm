@@ -34,7 +34,7 @@ export class BaseRepository<T> {
    * @param item The partial entity to be saved.
    * @returns A promise that resolves to the result of the save operation.
    */
-  async save(item: Partial<T>): Promise<EntityResult<T>> {
+  async save(item: Partial<T>): Promise<InstanceType<ClazzType<T>>> {
     return await this.em.save<T>(this.entity, item);
   }
 
@@ -244,7 +244,7 @@ export class BaseRepository<T> {
    * @param item The entity to be persisted.
    * @returns A promise that resolves to the result of the persist operation.
    */
-  async persist(item: T): Promise<EntityResult<T>> {
+  async persist(item: T): Promise<InstanceType<ClazzType<T>>> {
     return await this.em.save<T>(this.entity, item);
   }
 }

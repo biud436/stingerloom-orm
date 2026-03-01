@@ -2371,9 +2371,21 @@ export class EntityManager implements BaseEntityManager {
         manager: this,
       } as UpdateEvent<T>);
 
-      const updateMap = metadata.columns.map((column: ColumnMetadata) => {
+      // 부분 업데이트 지원: undefined가 아닌 컬럼만 SET 절에 포함
+      // PK 컬럼은 WHERE 절에서 사용하므로 SET에서 제외
+      const pkColumnNames = new Set(pkColumns.map((col: ColumnMetadata) => col.name!));
+      const updatableColumns = metadata.columns.filter(
+        (column: ColumnMetadata) => {
+          if (pkColumnNames.has(column.name!)) return false;
+          return (item as any)[column.name!] !== undefined;
+        },
+      );
+      const updateMap = updatableColumns.map((column: ColumnMetadata) => {
         return sql`${raw(this.wrap(column.name!))} = ${(item as any)[column.name!]}`;
       });
+
+      // 이미 SET에 포함된 컬럼명을 추적 (중복 방지)
+      const updatedColumnNames = new Set(updatableColumns.map((col: ColumnMetadata) => col.name!));
 
       // ManyToOne FK 컬럼 값을 UPDATE SET에 추가 (관계 객체의 PK → FK 컬럼)
       // @Column과 @ManyToOne joinColumn이 같은 이름일 수 있으므로 중복 방지
@@ -2382,21 +2394,26 @@ export class EntityManager implements BaseEntityManager {
         if (!rel.joinColumn) continue;
         const relatedValue = (item as any)[rel.columnName];
 
-        // joinColumn이 이미 @Column으로 updateMap에 포함되어 있는지 확인
-        const existingIdx = metadata.columns.findIndex(
-          (col: ColumnMetadata) => col.name === rel.joinColumn,
-        );
+        // 관계 프로퍼티가 item에 없으면 (undefined) 스킵 — FK 보존
+        if (relatedValue === undefined) continue;
+
+        // joinColumn이 이미 updatableColumns에 포함되어 있는지 확인
+        const alreadyInSet = updatedColumnNames.has(rel.joinColumn);
 
         // null 할당 시 FK를 NULL로 설정
         if (relatedValue === null) {
-          if (existingIdx >= 0) {
+          if (alreadyInSet) {
+            const existingIdx = updatableColumns.findIndex(
+              (col: ColumnMetadata) => col.name === rel.joinColumn,
+            );
             updateMap[existingIdx] = sql`${raw(this.wrap(rel.joinColumn))} = ${null}`;
           } else {
             updateMap.push(
               sql`${raw(this.wrap(rel.joinColumn))} = ${null}`,
             );
+            updatedColumnNames.add(rel.joinColumn);
           }
-        } else if (relatedValue && typeof relatedValue === "object") {
+        } else if (typeof relatedValue === "object") {
           const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
           const relatedMeta = this.resolveEntityMetadata(RelatedEntity);
           if (relatedMeta) {
@@ -2406,12 +2423,16 @@ export class EntityManager implements BaseEntityManager {
             if (relatedPk) {
               const fkValue = relatedValue[relatedPk.name!];
               if (fkValue !== undefined && fkValue !== null) {
-                if (existingIdx >= 0) {
+                if (alreadyInSet) {
+                  const existingIdx = updatableColumns.findIndex(
+                    (col: ColumnMetadata) => col.name === rel.joinColumn,
+                  );
                   updateMap[existingIdx] = sql`${raw(this.wrap(rel.joinColumn))} = ${fkValue}`;
                 } else {
                   updateMap.push(
                     sql`${raw(this.wrap(rel.joinColumn))} = ${fkValue}`,
                   );
+                  updatedColumnNames.add(rel.joinColumn);
                 }
               }
             }
@@ -2421,18 +2442,21 @@ export class EntityManager implements BaseEntityManager {
 
       const pkWhereClauses = buildPkWhere();
 
-      const updateSql = sql`
-          UPDATE ${raw(this.wrap(metadata.name!))}
-          SET ${join(updateMap, ", ")}
-          WHERE ${join(pkWhereClauses, " AND ")}
-                `;
-      const updateStart = Date.now();
-      await transactionManager.query<T>(updateSql);
-      this.trackQuery(
-        entity.name,
-        updateSql.text ?? String(updateSql),
-        Date.now() - updateStart,
-      );
+      // updateMap이 비어있으면 (PK만 전달된 경우) UPDATE를 스킵
+      if (updateMap.length > 0) {
+        const updateSql = sql`
+            UPDATE ${raw(this.wrap(metadata.name!))}
+            SET ${join(updateMap, ", ")}
+            WHERE ${join(pkWhereClauses, " AND ")}
+                  `;
+        const updateStart = Date.now();
+        await transactionManager.query<T>(updateSql);
+        this.trackQuery(
+          entity.name,
+          updateSql.text ?? String(updateSql),
+          Date.now() - updateStart,
+        );
+      }
 
       await transactionManager.commit();
 
