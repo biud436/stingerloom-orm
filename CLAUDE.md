@@ -38,6 +38,7 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL을 지원하며 Docker OverlayF
 │   ├── nestjs-cats/        # NestJS 기본 예제 (CRUD, EntitySubscriber, cursor pagination)
 │   ├── nestjs-blog/        # NestJS 블로그 예제 (M2M, soft delete, upsert, 59 e2e tests)
 │   └── nestjs-multitenant/ # NestJS 멀티테넌시 예제 (PostgreSQL 스키마 격리)
+├── mcp/                    # MCP 서버 (MySQL, PostgreSQL 직접 접근)
 ├── docs/                   # 한국어 문서 (12개 파일)
 ├── .claude/agents/         # 에이전트 전문가 정의 (5개)
 ├── dist/                   # 빌드 결과물 (gitignored)

@@ -126,6 +126,13 @@
 | 65 | SQL Injection 취약점 6건 수정 | 225908b |
 | 66 | AsyncLocalStorage 동시성 안전 (resolveContext) | e6586e8 |
 
+### MCP 서버 (2026-03-02)
+
+| # | 기능 | 커밋 |
+|---|------|------|
+| 67 | MCP 서버 추가 (MySQL + PostgreSQL) | d00e6ad |
+| 68 | server.tool() → registerTool() 마이그레이션 | a614fd4 |
+
 ---
 
 ## 현재 테스트 현황

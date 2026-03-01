@@ -2,7 +2,19 @@
 
 모든 주목할 만한 변경 사항은 이 파일에 기록됩니다.
 
-## [Unreleased] — 내실 다지기 세션 (2026-02-22)
+## [Unreleased]
+
+### Added
+
+- **MCP 서버** (`d00e6ad`, `a614fd4`)
+  - `mcp/mysql-server.ts`: MySQL/MariaDB 직접 접근 (query, list_tables, describe_table, list_databases)
+  - `mcp/postgres-server.ts`: PostgreSQL 직접 접근 (query, list_tables, describe_table, list_schemas, list_databases)
+  - `@modelcontextprotocol/sdk` 기반, `registerTool()` API 사용
+  - pnpm workspace에 `mcp` 패키지 등록
+
+---
+
+## [0.1.0] — 내실 다지기 세션 (2026-02-22)
 
 ### Added
 

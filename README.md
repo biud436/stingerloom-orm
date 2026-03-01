@@ -105,6 +105,17 @@ await em.delete(User, { id: 1 });
 | [nestjs-blog](./examples/nestjs-blog/) | ManyToMany, Soft Delete, Upsert, 59 e2e tests |
 | [nestjs-multitenant](./examples/nestjs-multitenant/) | PostgreSQL schema-based multi-tenancy |
 
+## MCP Servers
+
+Claude Code에서 로컬 데이터베이스에 직접 접근하기 위한 [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) 서버를 제공합니다.
+
+| Server | DB | Tools |
+|--------|-----|-------|
+| `mcp/mysql-server.ts` | MySQL / MariaDB | `query`, `list_tables`, `describe_table`, `list_databases` |
+| `mcp/postgres-server.ts` | PostgreSQL | `query`, `list_tables`, `describe_table`, `list_schemas`, `list_databases` |
+
+See [mcp/README.md](./mcp/README.md) for configuration details.
+
 ## Supported Databases
 
 | DB | Status |
