@@ -158,17 +158,17 @@ await Promise.all([
 ## 5. 배포 전 필수 체크리스트
 
 - [x] 유닛 테스트 전부 통과 (1469)
-- [x] 통합 테스트 전부 통과 (182)
+- [x] 통합 테스트 전부 통과 (1507)
 - [x] nestjs-cats e2e 전부 통과 (23)
 - [x] nestjs-blog e2e 전부 통과 (59)
 - [x] nestjs-multitenant e2e 전부 통과 (33)
 - [x] 예제 3개 타입 체크 통과
 - [x] SQL Injection 감사 완료
 - [x] P0 FK 객체 할당 버그 수정 및 테스트 추가
-- [ ] M-6 부분 업데이트 FK 보존 검증
-- [ ] S-1 트랜잭션 롤백 통합 테스트
+- [x] M-6 부분 업데이트 FK 보존 검증 — 버그 수정 + 10개 통합 테스트 (4a242e2)
+- [x] S-1 트랜잭션 롤백 통합 테스트 — 8개 통합 테스트 (4a242e2)
 - [ ] PostgreSQL 통합 테스트
-- [ ] `BaseRepository.save()` 반환 타입 정리
+- [x] `BaseRepository.save()` 반환 타입 정리 — `EntityResult<T>` → `InstanceType<ClazzType<T>>` (4a242e2)
 
 ---
 
@@ -176,13 +176,13 @@ await Promise.all([
 
 ### 배포 차단 (v0.1.0 전 필수)
 
-1. **M-6 부분 업데이트 FK 보존** — save() UPDATE 경로에서 `undefined` 컬럼이 NULL로 SET되는지 확인. 버그라면 수정 필수.
+1. ~~**M-6 부분 업데이트 FK 보존**~~ — 수정 완료. UPDATE 경로에서 undefined 컬럼 skip, 10개 통합 테스트 추가.
 
 ### 배포 후 빠른 후속 (v0.1.1)
 
-2. **S-1 트랜잭션 롤백 통합 테스트** — @Transactional 에러 시 DB 상태 검증
+2. ~~**S-1 트랜잭션 롤백 통합 테스트**~~ — 완료. 8개 통합 테스트 (수동 롤백, savepoint, 격리 수준)
 3. **PostgreSQL 통합 테스트** — RETURNING, SERIAL, ON CONFLICT 동작 검증
-4. **`BaseRepository.save()` 반환 타입** — `EntityResult<T>` → `T` 단순화 검토
+4. ~~**`BaseRepository.save()` 반환 타입**~~ — 완료. `EntityResult<T>` → `InstanceType<ClazzType<T>>` 변경
 
 ### 안정화 (v0.2.0)
 
