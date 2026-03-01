@@ -46,7 +46,7 @@ PostgreSQL · MySQL · SQLite
 
 ## Docs
 
-**[docs/](./docs/README.md)**
+See **[docs/](./docs/README.md)** for full documentation.
 
 ## License
 
