@@ -17,7 +17,10 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-server.tool("query", "Execute a SQL query against the PostgreSQL database", { sql: z.string().describe("SQL query to execute") }, async ({ sql }) => {
+server.registerTool("query", {
+  description: "Execute a SQL query against the PostgreSQL database",
+  inputSchema: { sql: z.string().describe("SQL query to execute") },
+}, async ({ sql }) => {
   const client = await pool.connect();
   try {
     const result = await client.query(sql);
@@ -29,53 +32,51 @@ server.tool("query", "Execute a SQL query against the PostgreSQL database", { sq
   }
 });
 
-server.tool(
-  "list_tables",
-  "List all tables in a schema",
-  { schema: z.string().optional().default("public").describe("Schema name (default: public)") },
-  async ({ schema }) => {
-    const client = await pool.connect();
-    try {
-      const result = await client.query(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name",
-        [schema],
-      );
-      return { content: [{ type: "text", text: JSON.stringify(result.rows, null, 2) }] };
-    } catch (err: any) {
-      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
-    } finally {
-      client.release();
-    }
-  },
-);
+server.registerTool("list_tables", {
+  description: "List all tables in a schema",
+  inputSchema: { schema: z.string().optional().default("public").describe("Schema name (default: public)") },
+}, async ({ schema }) => {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name",
+      [schema],
+    );
+    return { content: [{ type: "text", text: JSON.stringify(result.rows, null, 2) }] };
+  } catch (err: any) {
+    return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+  } finally {
+    client.release();
+  }
+});
 
-server.tool(
-  "describe_table",
-  "Show column details for a table",
-  {
+server.registerTool("describe_table", {
+  description: "Show column details for a table",
+  inputSchema: {
     table: z.string().describe("Table name"),
     schema: z.string().optional().default("public").describe("Schema name (default: public)"),
   },
-  async ({ table, schema }) => {
-    const client = await pool.connect();
-    try {
-      const result = await client.query(
-        `SELECT column_name, data_type, is_nullable, column_default, character_maximum_length
-         FROM information_schema.columns
-         WHERE table_schema = $1 AND table_name = $2
-         ORDER BY ordinal_position`,
-        [schema, table],
-      );
-      return { content: [{ type: "text", text: JSON.stringify(result.rows, null, 2) }] };
-    } catch (err: any) {
-      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
-    } finally {
-      client.release();
-    }
-  },
-);
+}, async ({ table, schema }) => {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT column_name, data_type, is_nullable, column_default, character_maximum_length
+       FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = $2
+       ORDER BY ordinal_position`,
+      [schema, table],
+    );
+    return { content: [{ type: "text", text: JSON.stringify(result.rows, null, 2) }] };
+  } catch (err: any) {
+    return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+  } finally {
+    client.release();
+  }
+});
 
-server.tool("list_schemas", "List all user-defined schemas", {}, async () => {
+server.registerTool("list_schemas", {
+  description: "List all user-defined schemas",
+}, async () => {
   const client = await pool.connect();
   try {
     const result = await client.query(
@@ -89,7 +90,9 @@ server.tool("list_schemas", "List all user-defined schemas", {}, async () => {
   }
 });
 
-server.tool("list_databases", "List all databases on the server", {}, async () => {
+server.registerTool("list_databases", {
+  description: "List all databases on the server",
+}, async () => {
   const client = await pool.connect();
   try {
     const result = await client.query("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname");

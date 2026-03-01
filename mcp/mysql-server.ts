@@ -18,7 +18,10 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-server.tool("query", "Execute a SQL query against the MySQL database", { sql: z.string().describe("SQL query to execute") }, async ({ sql }) => {
+server.registerTool("query", {
+  description: "Execute a SQL query against the MySQL database",
+  inputSchema: { sql: z.string().describe("SQL query to execute") },
+}, async ({ sql }) => {
   try {
     const [rows] = await pool.query(sql);
     return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
@@ -27,7 +30,9 @@ server.tool("query", "Execute a SQL query against the MySQL database", { sql: z.
   }
 });
 
-server.tool("list_tables", "List all tables in the current database", {}, async () => {
+server.registerTool("list_tables", {
+  description: "List all tables in the current database",
+}, async () => {
   try {
     const [rows] = await pool.query("SHOW TABLES");
     return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
@@ -36,7 +41,10 @@ server.tool("list_tables", "List all tables in the current database", {}, async 
   }
 });
 
-server.tool("describe_table", "Show column details for a table", { table: z.string().describe("Table name") }, async ({ table }) => {
+server.registerTool("describe_table", {
+  description: "Show column details for a table",
+  inputSchema: { table: z.string().describe("Table name") },
+}, async ({ table }) => {
   try {
     const [rows] = await pool.query(`DESCRIBE \`${table.replace(/`/g, "``")}\``);
     return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
@@ -45,7 +53,9 @@ server.tool("describe_table", "Show column details for a table", { table: z.stri
   }
 });
 
-server.tool("list_databases", "List all databases on the server", {}, async () => {
+server.registerTool("list_databases", {
+  description: "List all databases on the server",
+}, async () => {
   try {
     const [rows] = await pool.query("SHOW DATABASES");
     return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
