@@ -167,7 +167,7 @@ await Promise.all([
 - [x] P0 FK 객체 할당 버그 수정 및 테스트 추가
 - [x] M-6 부분 업데이트 FK 보존 검증 — 버그 수정 + 10개 통합 테스트 (4a242e2)
 - [x] S-1 트랜잭션 롤백 통합 테스트 — 8개 통합 테스트 (4a242e2)
-- [ ] PostgreSQL 통합 테스트
+- [x] PostgreSQL 통합 테스트 — 35개 (CRUD/FK/M-6/Upsert/트랜잭션/스키마)
 - [x] `BaseRepository.save()` 반환 타입 정리 — `EntityResult<T>` → `InstanceType<ClazzType<T>>` (4a242e2)
 
 ---
@@ -181,7 +181,7 @@ await Promise.all([
 ### 배포 후 빠른 후속 (v0.1.1)
 
 2. ~~**S-1 트랜잭션 롤백 통합 테스트**~~ — 완료. 8개 통합 테스트 (수동 롤백, savepoint, 격리 수준)
-3. **PostgreSQL 통합 테스트** — RETURNING, SERIAL, ON CONFLICT 동작 검증
+3. ~~**PostgreSQL 통합 테스트**~~ — 완료. 35개 통합 테스트 (SERIAL/RETURNING, FK, M-6, ON CONFLICT, 트랜잭션, 스키마 한정)
 4. ~~**`BaseRepository.save()` 반환 타입**~~ — 완료. `EntityResult<T>` → `InstanceType<ClazzType<T>>` 변경
 
 ### 안정화 (v0.2.0)
