@@ -42,7 +42,7 @@ await em.find(User, { where: { name: "Alice" } });
 
 ## Databases
 
-PostgreSQL · MySQL · SQLite · MSSQL
+PostgreSQL · MySQL · SQLite
 
 ## Docs
 
