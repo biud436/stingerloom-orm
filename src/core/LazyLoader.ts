@@ -20,9 +20,7 @@ const LAZY_MARKER = Symbol.for("STG_LAZY_PROXY");
  * @param loadFn 관계 엔티티를 로드하는 비동기 함수
  * @returns 프로퍼티 접근 시 자동으로 로드되는 Proxy 객체
  */
-export function createLazyProxy<T extends object>(
-  loadFn: LazyLoadFn<T>,
-): T {
+export function createLazyProxy<T extends object>(loadFn: LazyLoadFn<T>): T {
   let loaded = false;
   let cachedValue: T | undefined;
   let loadPromise: Promise<T | undefined> | null = null;
