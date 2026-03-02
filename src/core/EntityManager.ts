@@ -118,7 +118,10 @@ export class EntityManager implements BaseEntityManager {
    */
   private dbType: IDatabaseType | undefined;
 
-  public async register(databaseClientOptions: DatabaseClientOptions, connectionName = "default") {
+  public async register(
+    databaseClientOptions: DatabaseClientOptions,
+    connectionName = "default",
+  ) {
     await this.connect(databaseClientOptions, connectionName);
     await this.registerEntities();
   }
@@ -143,16 +146,26 @@ export class EntityManager implements BaseEntityManager {
     return this.connectionName;
   }
 
-  public async connect(databaseClientOptions: DatabaseClientOptions, connectionName = "default") {
+  public async connect(
+    databaseClientOptions: DatabaseClientOptions,
+    connectionName = "default",
+  ) {
     this.connectionName = connectionName;
+
     const client = this.client as any;
-    const connector = await client.connect(databaseClientOptions, connectionName);
+    const connector = await client.connect(
+      databaseClientOptions,
+      connectionName,
+    );
+    const { schema, queryTimeout, replication } = databaseClientOptions;
+
     // getType()이 있으면 사용, 없으면 (레거시 mock) client.type 사용
     const dbType = (
       typeof client.getType === "function"
         ? client.getType(connectionName)
         : client.type
     ) as IDatabaseType;
+
     this.dbType = dbType;
 
     switch (dbType) {
@@ -162,11 +175,7 @@ export class EntityManager implements BaseEntityManager {
         this.dataSource = new MySqlDataSource(connector);
         break;
       case "postgres":
-        this.driver = new PostgresDriver(
-          connector,
-          dbType,
-          databaseClientOptions.schema,
-        );
+        this.driver = new PostgresDriver(connector, dbType, schema);
         this.dataSource = new PostgresDataSource(connector);
         break;
       case "sqlite":
@@ -185,18 +194,15 @@ export class EntityManager implements BaseEntityManager {
     this.initQueryTracker(databaseClientOptions);
 
     // connection-level 쿼리 타임아웃 설정
-    if (
-      databaseClientOptions.queryTimeout &&
-      databaseClientOptions.queryTimeout > 0
-    ) {
-      this.defaultQueryTimeout = databaseClientOptions.queryTimeout;
+    const isTimeoutSupported = queryTimeout && queryTimeout > 0;
+
+    if (isTimeoutSupported) {
+      this.defaultQueryTimeout = queryTimeout;
     }
 
     // ReplicationRouter 초기화
-    if (databaseClientOptions.replication) {
-      this.replicationRouter = new ReplicationRouter(
-        databaseClientOptions.replication,
-      );
+    if (replication) {
+      this.replicationRouter = new ReplicationRouter(replication);
     }
   }
 
@@ -458,7 +464,11 @@ export class EntityManager implements BaseEntityManager {
     }
 
     // 1패스: 모든 테이블을 먼저 생성합니다 (FK 생성 전에 참조 대상 테이블이 존재해야 함).
-    const entityList: Array<{ TargetEntity: ClazzType<any>; tableName: string; metadata: EntityScannerMetadata }> = [];
+    const entityList: Array<{
+      TargetEntity: ClazzType<any>;
+      tableName: string;
+      metadata: EntityScannerMetadata;
+    }> = [];
 
     while ((entity = entities.next())) {
       if (entity.done) {
@@ -500,7 +510,9 @@ export class EntityManager implements BaseEntityManager {
       }
 
       // 3패스: ManyToMany 중간 테이블과 FK를 생성합니다.
-      await this.registerManyToManyJoinTables(entityList.map((e) => e.TargetEntity));
+      await this.registerManyToManyJoinTables(
+        entityList.map((e) => e.TargetEntity),
+      );
     }
   }
 
@@ -519,14 +531,14 @@ export class EntityManager implements BaseEntityManager {
     if (!uniqueIndexes || uniqueIndexes.length === 0) return;
 
     for (const uq of uniqueIndexes) {
-      const indexName =
-        uq.name ?? `uq_${tableName}_${uq.columns.join("_")}`;
+      const indexName = uq.name ?? `uq_${tableName}_${uq.columns.join("_")}`;
 
       // 이미 존재하는지 확인
       const indexes = (await this.driver?.getIndexes(tableName)) as any[];
       let isExist = false;
       for (const idx of indexes || []) {
-        const existingIndexName = idx["Key_name"] ?? idx["Field"] ?? idx["name"];
+        const existingIndexName =
+          idx["Key_name"] ?? idx["Field"] ?? idx["name"];
         if (existingIndexName === indexName) {
           isExist = true;
           break;
@@ -557,8 +569,11 @@ export class EntityManager implements BaseEntityManager {
       for (const rel of m2mMeta) {
         if (!rel.joinTable) continue;
 
-        const { name: joinTableName, joinColumn, inverseJoinColumn } =
-          rel.joinTable;
+        const {
+          name: joinTableName,
+          joinColumn,
+          inverseJoinColumn,
+        } = rel.joinTable;
         if (processedTables.has(joinTableName)) continue;
         processedTables.add(joinTableName);
 
@@ -600,7 +615,11 @@ export class EntityManager implements BaseEntityManager {
         const relatedPk = relatedColumns.find((c) => c.options?.primary)?.name;
 
         // 3. 소유측 FK 추가
-        const ownerFkName = SchemaGenerator.generateForeignKeyName(joinTableName, joinColumn, ownerTable);
+        const ownerFkName = SchemaGenerator.generateForeignKeyName(
+          joinTableName,
+          joinColumn,
+          ownerTable,
+        );
         if (
           ownerPk &&
           this.driver &&
@@ -611,7 +630,11 @@ export class EntityManager implements BaseEntityManager {
         }
 
         // 4. 역측 FK 추가
-        const relatedFkName = SchemaGenerator.generateForeignKeyName(joinTableName, inverseJoinColumn, relatedTable);
+        const relatedFkName = SchemaGenerator.generateForeignKeyName(
+          joinTableName,
+          inverseJoinColumn,
+          relatedTable,
+        );
         if (
           relatedPk &&
           this.driver &&
@@ -848,9 +871,7 @@ export class EntityManager implements BaseEntityManager {
    * ManyToMany 관계의 joinTable 정보를 확정합니다.
    * 소유측(joinTable 있음)이면 그대로, 역방향(mappedBy)이면 상대측에서 joinTable을 가져옵니다.
    */
-  private resolveManyToManyJoinTable<T>(
-    rel: ManyToManyMetadata<any>,
-  ): {
+  private resolveManyToManyJoinTable<T>(rel: ManyToManyMetadata<any>): {
     joinTableName: string;
     joinColumn: string;
     inverseJoinColumn: string;
@@ -1136,7 +1157,10 @@ export class EntityManager implements BaseEntityManager {
 
         // joinColumn 컬럼이 테이블에 없으면 먼저 추가합니다.
         if (this.driver) {
-          const columnExists = await this.driver.hasColumn(tableName, joinColumn);
+          const columnExists = await this.driver.hasColumn(
+            tableName,
+            joinColumn,
+          );
           if (!columnExists) {
             const fkColumnType = this.driver.castType("int") + " NULL";
             await this.driver.addColumn(tableName, joinColumn, fkColumnType);
@@ -1145,7 +1169,11 @@ export class EntityManager implements BaseEntityManager {
 
         // FK 제약이 이미 존재하면 중복 추가를 건너뜁니다.
         if (this.driver) {
-          const fkName = this.driver.generateForeignKeyName(tableName, mappingTableName, joinColumn);
+          const fkName = this.driver.generateForeignKeyName(
+            tableName,
+            mappingTableName,
+            joinColumn,
+          );
           const fkExists = await this.driver.hasForeignKey(tableName, fkName);
           if (fkExists) continue;
         }
@@ -1201,7 +1229,11 @@ export class EntityManager implements BaseEntityManager {
 
       // FK 제약이 이미 존재하면 중복 추가를 건너뜁니다.
       if (this.driver) {
-        const fkName = this.driver.generateForeignKeyName(tableName, relatedTableName, joinColumn);
+        const fkName = this.driver.generateForeignKeyName(
+          tableName,
+          relatedTableName,
+          joinColumn,
+        );
         const fkExists = await this.driver.hasForeignKey(tableName, fkName);
         if (fkExists) continue;
       }
@@ -2373,7 +2405,9 @@ export class EntityManager implements BaseEntityManager {
 
       // 부분 업데이트 지원: undefined가 아닌 컬럼만 SET 절에 포함
       // PK 컬럼은 WHERE 절에서 사용하므로 SET에서 제외
-      const pkColumnNames = new Set(pkColumns.map((col: ColumnMetadata) => col.name!));
+      const pkColumnNames = new Set(
+        pkColumns.map((col: ColumnMetadata) => col.name!),
+      );
       const updatableColumns = metadata.columns.filter(
         (column: ColumnMetadata) => {
           if (pkColumnNames.has(column.name!)) return false;
@@ -2385,7 +2419,9 @@ export class EntityManager implements BaseEntityManager {
       });
 
       // 이미 SET에 포함된 컬럼명을 추적 (중복 방지)
-      const updatedColumnNames = new Set(updatableColumns.map((col: ColumnMetadata) => col.name!));
+      const updatedColumnNames = new Set(
+        updatableColumns.map((col: ColumnMetadata) => col.name!),
+      );
 
       // ManyToOne FK 컬럼 값을 UPDATE SET에 추가 (관계 객체의 PK → FK 컬럼)
       // @Column과 @ManyToOne joinColumn이 같은 이름일 수 있으므로 중복 방지
@@ -2406,11 +2442,10 @@ export class EntityManager implements BaseEntityManager {
             const existingIdx = updatableColumns.findIndex(
               (col: ColumnMetadata) => col.name === rel.joinColumn,
             );
-            updateMap[existingIdx] = sql`${raw(this.wrap(rel.joinColumn))} = ${null}`;
+            updateMap[existingIdx] =
+              sql`${raw(this.wrap(rel.joinColumn))} = ${null}`;
           } else {
-            updateMap.push(
-              sql`${raw(this.wrap(rel.joinColumn))} = ${null}`,
-            );
+            updateMap.push(sql`${raw(this.wrap(rel.joinColumn))} = ${null}`);
             updatedColumnNames.add(rel.joinColumn);
           }
         } else if (typeof relatedValue === "object") {
@@ -2427,7 +2462,8 @@ export class EntityManager implements BaseEntityManager {
                   const existingIdx = updatableColumns.findIndex(
                     (col: ColumnMetadata) => col.name === rel.joinColumn,
                   );
-                  updateMap[existingIdx] = sql`${raw(this.wrap(rel.joinColumn))} = ${fkValue}`;
+                  updateMap[existingIdx] =
+                    sql`${raw(this.wrap(rel.joinColumn))} = ${fkValue}`;
                 } else {
                   updateMap.push(
                     sql`${raw(this.wrap(rel.joinColumn))} = ${fkValue}`,
@@ -2713,16 +2749,17 @@ export class EntityManager implements BaseEntityManager {
     }
 
     // 삽입 가능한 컬럼 (값이 있는 것만)
-    const insertableColumns = metadata.columns.filter(
-      (col: ColumnMetadata) => {
-        const value = (data as any)[col.name!];
-        // auto-increment PK에 값이 없으면 제외
-        if (col.options?.autoIncrement && (value === null || value === undefined)) {
-          return false;
-        }
-        return value !== undefined;
-      },
-    );
+    const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
+      const value = (data as any)[col.name!];
+      // auto-increment PK에 값이 없으면 제외
+      if (
+        col.options?.autoIncrement &&
+        (value === null || value === undefined)
+      ) {
+        return false;
+      }
+      return value !== undefined;
+    });
 
     if (insertableColumns.length === 0) {
       return;
@@ -2740,9 +2777,7 @@ export class EntityManager implements BaseEntityManager {
     const wrappedConflict = resolvedConflictColumns.map((name) =>
       this.wrap(name),
     );
-    const wrappedUpdate = updateColumnNames.map((name) =>
-      this.wrap(name),
-    );
+    const wrappedUpdate = updateColumnNames.map((name) => this.wrap(name));
 
     const tableName = this.wrap(metadata.name!);
 
@@ -2841,15 +2876,11 @@ export class EntityManager implements BaseEntityManager {
 
     // MSSQL: MERGE 문
     const joinCondition = join(
-      conflictColumns.map(
-        (col) => raw(`target.${col} = source.${col}`),
-      ),
+      conflictColumns.map((col) => raw(`target.${col} = source.${col}`)),
       " AND ",
     );
     const updateSet = join(
-      updateColumns.map(
-        (col) => raw(`target.${col} = source.${col}`),
-      ),
+      updateColumns.map((col) => raw(`target.${col} = source.${col}`)),
       ", ",
     );
     const sourceCols = join(
