@@ -5,7 +5,7 @@ import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
 import { ISqlDriver } from "../SqlDriver";
 import { SchemaOptions } from "../../types/SchemaOption";
-import { SchemaGenerator } from "../../core/SchemaGenerator";
+import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 
 /**
  * SQLite용 SQL 드라이버 구현체입니다.

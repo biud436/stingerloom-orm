@@ -32,6 +32,7 @@ import {
   UpdateEvent,
   DeleteEvent,
 } from "../../src/core/EntitySubscriber";
+import { getTestDrivers, type TestDriverConfig } from "./helpers/driver-config";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 이벤트 추적용 유틸리티
@@ -52,7 +53,9 @@ function clearLogs() {
 // 테스트 스위트
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("[Integration] EntitySubscriber (addSubscriber/removeSubscriber)", () => {
+const drivers = getTestDrivers();
+
+describe.each(drivers)("[Integration] $label: EntitySubscriber (addSubscriber/removeSubscriber)", ({ type, options }) => {
   let conn: TestConnectionResult;
   let em: EntityManager;
   let entityA: DynamicEntityResult;
@@ -62,7 +65,7 @@ describe("[Integration] EntitySubscriber (addSubscriber/removeSubscriber)", () =
 
   beforeAll(async () => {
     conn = await createTestConnection(
-      { synchronize: true, logging: false },
+      { ...options, synchronize: true, logging: false },
       () => {
         entityA = createCrudTestEntity("sub_a");
         entityB = createCrudTestEntity("sub_b");

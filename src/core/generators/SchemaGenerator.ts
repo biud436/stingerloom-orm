@@ -1,27 +1,27 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
 import crypto from "crypto";
-import { ClazzType } from "../utils";
-import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../decorators/Column";
-import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
-import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
+import { ClazzType } from "../../utils";
+import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../../decorators/Column";
+import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
+import { INDEX_TOKEN, IndexMetadata } from "../../decorators/Indexer";
 import {
   UNIQUE_INDEX_TOKEN,
   UniqueIndexMetadata,
-} from "../decorators/UniqueIndex";
+} from "../../decorators/UniqueIndex";
 import {
   MANY_TO_ONE_TOKEN,
   ManyToOneMetadata,
-} from "../decorators/ManyToOne";
+} from "../../decorators/ManyToOne";
 import {
   ONE_TO_ONE_TOKEN,
   OneToOneMetadata,
-} from "../decorators/OneToOne";
+} from "../../decorators/OneToOne";
 import {
   MANY_TO_MANY_TOKEN,
   ManyToManyMetadata,
-} from "../decorators/ManyToMany";
-import { ColumnMetadata } from "../scanner/ColumnScanner";
+} from "../../decorators/ManyToMany";
+import { ColumnMetadata } from "../../scanner/ColumnScanner";
 
 export type SchemaDialect = "mysql" | "postgres";
 

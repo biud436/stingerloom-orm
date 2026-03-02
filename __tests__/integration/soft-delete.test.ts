@@ -38,6 +38,7 @@ import {
 } from "../../src";
 import Container from "typedi";
 import { ColumnScanner } from "../../src/scanner";
+import { getTestDrivers, type TestDriverConfig } from "./helpers/driver-config";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 동적 엔티티 팩토리: @DeletedAt 포함
@@ -90,7 +91,9 @@ function createSoftDeleteEntity(baseName = "sd_test"): SoftDeleteEntityResult {
 // 테스트 스위트
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("[Integration] Soft Delete (@DeletedAt)", () => {
+const drivers = getTestDrivers();
+
+describe.each(drivers)("[Integration] $label: Soft Delete (@DeletedAt)", ({ type, options }) => {
   let conn: TestConnectionResult;
   let em: EntityManager;
   let testEntity: SoftDeleteEntityResult;
@@ -98,7 +101,7 @@ describe("[Integration] Soft Delete (@DeletedAt)", () => {
 
   beforeAll(async () => {
     conn = await createTestConnection(
-      { synchronize: true, logging: false },
+      { ...options, synchronize: true, logging: false },
       () => {
         testEntity = createSoftDeleteEntity();
         return { entities: [testEntity.EntityClass] };

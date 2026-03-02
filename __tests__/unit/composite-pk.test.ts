@@ -4,7 +4,7 @@ import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedCol
 import { Column, COLUMN_TOKEN } from "../../src/decorators/Column";
 import { Entity } from "../../src/decorators/Entity";
 import { ColumnMetadata } from "../../src/scanner/ColumnScanner";
-import { SchemaGenerator } from "../../src/core/SchemaGenerator";
+import { SchemaGenerator } from "../../src/core/generators/SchemaGenerator";
 
 // ─── @PrimaryColumn 데코레이터 단위 테스트 ─────────────────
 

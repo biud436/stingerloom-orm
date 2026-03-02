@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import { SchemaGenerator } from "../../src/core/SchemaGenerator";
+import { SchemaGenerator } from "../../src/core/generators/SchemaGenerator";
 import { Entity } from "../../src/decorators/Entity";
 import { Column } from "../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";

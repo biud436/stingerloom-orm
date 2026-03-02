@@ -148,12 +148,18 @@ export function resetMetadata(): void {
 /**
  * 테스트 테이블을 DROP합니다.
  * afterAll에서 사용하여 테스트 테이블을 정리합니다.
+ * 현재 연결된 드라이버 타입을 자동 감지합니다.
  */
 export async function dropTestTable(tableName: string): Promise<void> {
   const connector = DatabaseClient.getInstance().getConnection();
+  const driverType = DatabaseClient.getInstance().type;
 
   try {
-    await connector.query(`DROP TABLE IF EXISTS \`${tableName}\``);
+    if (driverType === "postgres") {
+      await connector.query(`DROP TABLE IF EXISTS "${tableName}" CASCADE`);
+    } else {
+      await connector.query(`DROP TABLE IF EXISTS \`${tableName}\``);
+    }
   } catch {
     // 테이블이 없으면 무시
   }
@@ -162,14 +168,24 @@ export async function dropTestTable(tableName: string): Promise<void> {
 /**
  * 테스트 테이블의 모든 데이터를 삭제합니다.
  * beforeEach에서 사용하여 테스트 간 데이터를 격리합니다.
+ * 현재 연결된 드라이버 타입을 자동 감지합니다.
  */
 export async function truncateTestTable(tableName: string): Promise<void> {
   const connector = DatabaseClient.getInstance().getConnection();
+  const driverType = DatabaseClient.getInstance().type;
 
   try {
-    await connector.query(`DELETE FROM \`${tableName}\``);
-    // AUTO_INCREMENT 리셋 (MySQL)
-    await connector.query(`ALTER TABLE \`${tableName}\` AUTO_INCREMENT = 1`);
+    if (driverType === "postgres") {
+      await connector.query(
+        `TRUNCATE TABLE "${tableName}" RESTART IDENTITY CASCADE`,
+      );
+    } else {
+      await connector.query(`DELETE FROM \`${tableName}\``);
+      // AUTO_INCREMENT 리셋 (MySQL)
+      await connector.query(
+        `ALTER TABLE \`${tableName}\` AUTO_INCREMENT = 1`,
+      );
+    }
   } catch {
     // 테이블이 없으면 무시
   }

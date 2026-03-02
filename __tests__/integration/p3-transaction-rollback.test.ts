@@ -25,6 +25,12 @@ import {
   createCrudTestEntity,
   type DynamicEntityResult,
 } from "./helpers/create-test-entity";
+import {
+  getTestDrivers,
+  type TestDriverConfig,
+  type TestDriverType,
+} from "./helpers/driver-config";
+import { qi } from "./helpers/driver-helpers";
 
 const skipReason = !process.env.INTEGRATION_TEST
   ? "INTEGRATION_TEST 환경변수가 설정되지 않음"
@@ -41,312 +47,315 @@ function toArray<T>(result: any): T[] {
   return [result];
 }
 
-describeIf("[S-1] 트랜잭션 롤백 통합 테스트", () => {
-  let conn: TestConnectionResult;
-  let em: EntityManager;
-  let testEntity: DynamicEntityResult;
+describeIf.each(getTestDrivers())(
+  "[S-1] 트랜잭션 롤백 통합 테스트 ($label)",
+  ({ type, options }: TestDriverConfig) => {
+    let conn: TestConnectionResult;
+    let em: EntityManager;
+    let testEntity: DynamicEntityResult;
 
-  beforeAll(async () => {
-    conn = await createTestConnection(
-      { synchronize: true, logging: false },
-      () => {
-        testEntity = createCrudTestEntity("txn_rollback_test");
-        return { entities: [testEntity.EntityClass] };
-      },
-    );
-    em = conn.em;
-  }, 30000);
-
-  afterAll(async () => {
-    try {
-      await dropTestTable(testEntity.tableName);
-    } catch {
-      // ignore
-    }
-    if (conn) await conn.cleanup();
-  }, 15000);
-
-  beforeEach(async () => {
-    await truncateTestTable(testEntity.tableName);
-  });
-
-  // ─── S-1 Basic: 수동 트랜잭션 롤백 ───────────────────────────────────────
-
-  describe("수동 트랜잭션 롤백 (TransactionSessionManager)", () => {
-    it("롤백하면 INSERT된 엔티티가 DB에 존재하지 않아야 한다", async () => {
-      const session = new TransactionSessionManager();
-      try {
-        await session.connect();
-        await session.startTransaction();
-
-        const tableName = testEntity.tableName;
-        await session.query(
-          sql`INSERT INTO ${raw(`\`${tableName}\``)} (\`name\`, \`age\`, \`email\`)
-              VALUES (${"RolledBack"}, ${99}, ${"rollback@test.com"})`,
-        );
-
-        // 롤백
-        await session.rollback();
-      } finally {
-        await session.close();
-      }
-
-      // DB에서 확인 — 엔티티가 존재하지 않아야 함
-      const result = await em.find(testEntity.EntityClass, {
-        where: { name: "RolledBack" },
-      });
-      const found = toArray(result);
-      expect(found).toHaveLength(0);
-    });
-
-    it("커밋하면 INSERT된 엔티티가 DB에 존재해야 한다", async () => {
-      const session = new TransactionSessionManager();
-      try {
-        await session.connect();
-        await session.startTransaction();
-
-        const tableName = testEntity.tableName;
-        await session.query(
-          sql`INSERT INTO ${raw(`\`${tableName}\``)} (\`name\`, \`age\`, \`email\`)
-              VALUES (${"Committed"}, ${30}, ${"commit@test.com"})`,
-        );
-
-        await session.commit();
-      } finally {
-        await session.close();
-      }
-
-      // DB에서 확인 — 엔티티가 존재해야 함
-      const result = await em.findOne(testEntity.EntityClass, {
-        where: { name: "Committed" },
-      });
-      expect(result).toBeDefined();
-      expect(result!.name).toBe("Committed");
-      expect(result!.age).toBe(30);
-      expect(result!.email).toBe("commit@test.com");
-    });
-  });
-
-  // ─── S-1 Multiple: 여러 INSERT 후 롤백 ────────────────────────────────────
-
-  describe("여러 INSERT 후 롤백", () => {
-    it("2개의 INSERT 후 롤백하면 둘 다 DB에 존재하지 않아야 한다", async () => {
-      const session = new TransactionSessionManager();
-      try {
-        await session.connect();
-        await session.startTransaction();
-
-        const tableName = testEntity.tableName;
-
-        // 엔티티 A INSERT
-        await session.query(
-          sql`INSERT INTO ${raw(`\`${tableName}\``)} (\`name\`, \`age\`)
-              VALUES (${"EntityA"}, ${25})`,
-        );
-
-        // 엔티티 B INSERT
-        await session.query(
-          sql`INSERT INTO ${raw(`\`${tableName}\``)} (\`name\`, \`age\`)
-              VALUES (${"EntityB"}, ${35})`,
-        );
-
-        // 롤백
-        await session.rollback();
-      } finally {
-        await session.close();
-      }
-
-      // 둘 다 존재하지 않아야 함
-      const foundA = toArray(
-        await em.find(testEntity.EntityClass, { where: { name: "EntityA" } }),
+    beforeAll(async () => {
+      conn = await createTestConnection(
+        { synchronize: true, logging: false, ...options },
+        () => {
+          testEntity = createCrudTestEntity("txn_rollback_test");
+          return { entities: [testEntity.EntityClass] };
+        },
       );
-      const foundB = toArray(
-        await em.find(testEntity.EntityClass, { where: { name: "EntityB" } }),
-      );
-      expect(foundA).toHaveLength(0);
-      expect(foundB).toHaveLength(0);
-    });
+      em = conn.em;
+    }, 30000);
 
-    it("2개의 INSERT 후 커밋하면 둘 다 DB에 존재해야 한다", async () => {
-      const session = new TransactionSessionManager();
+    afterAll(async () => {
       try {
-        await session.connect();
-        await session.startTransaction();
-
-        const tableName = testEntity.tableName;
-
-        await session.query(
-          sql`INSERT INTO ${raw(`\`${tableName}\``)} (\`name\`, \`age\`)
-              VALUES (${"CommitA"}, ${40})`,
-        );
-
-        await session.query(
-          sql`INSERT INTO ${raw(`\`${tableName}\``)} (\`name\`, \`age\`)
-              VALUES (${"CommitB"}, ${50})`,
-        );
-
-        await session.commit();
-      } finally {
-        await session.close();
-      }
-
-      const resultA = await em.findOne(testEntity.EntityClass, {
-        where: { name: "CommitA" },
-      });
-      const resultB = await em.findOne(testEntity.EntityClass, {
-        where: { name: "CommitB" },
-      });
-      expect(resultA).toBeDefined();
-      expect(resultA!.name).toBe("CommitA");
-      expect(resultA!.age).toBe(40);
-      expect(resultB).toBeDefined();
-      expect(resultB!.name).toBe("CommitB");
-      expect(resultB!.age).toBe(50);
-    });
-  });
-
-  // ─── S-1 에러 시 롤백 ──────────────────────────────────────────────────────
-
-  describe("에러 발생 시 롤백 패턴", () => {
-    it("INSERT 후 에러가 발생하면 try/catch에서 롤백하여 데이터가 없어야 한다", async () => {
-      const session = new TransactionSessionManager();
-      let errorOccurred = false;
-
-      try {
-        await session.connect();
-        await session.startTransaction();
-
-        const tableName = testEntity.tableName;
-
-        // 유효한 INSERT
-        await session.query(
-          sql`INSERT INTO ${raw(`\`${tableName}\``)} (\`name\`, \`age\`)
-              VALUES (${"WillRollback"}, ${20})`,
-        );
-
-        // 의도적으로 에러 발생 (존재하지 않는 테이블에 INSERT)
-        await session.query(
-          sql`INSERT INTO ${raw("`nonexistent_table_xyz`")} (\`col\`) VALUES (${"x"})`,
-        );
+        await dropTestTable(testEntity.tableName);
       } catch {
-        errorOccurred = true;
-        await session.rollback();
-      } finally {
-        await session.close();
+        // ignore
       }
+      if (conn) await conn.cleanup();
+    }, 15000);
 
-      expect(errorOccurred).toBe(true);
-
-      // 유효했던 첫 번째 INSERT도 롤백되어야 함
-      const found = toArray(
-        await em.find(testEntity.EntityClass, {
-          where: { name: "WillRollback" },
-        }),
-      );
-      expect(found).toHaveLength(0);
+    beforeEach(async () => {
+      await truncateTestTable(testEntity.tableName);
     });
-  });
 
-  // ─── S-1 Savepoint ──────────────────────────────────────────────────────
+    // ─── S-1 Basic: 수동 트랜잭션 롤백 ───────────────────────────────────────
 
-  describe("Savepoint 롤백", () => {
-    it("savepoint까지만 롤백하면 이전 INSERT는 유지되어야 한다", async () => {
-      const session = new TransactionSessionManager();
-      try {
-        await session.connect();
-        await session.startTransaction();
+    describe("수동 트랜잭션 롤백 (TransactionSessionManager)", () => {
+      it("롤백하면 INSERT된 엔티티가 DB에 존재하지 않아야 한다", async () => {
+        const session = new TransactionSessionManager();
+        try {
+          await session.connect();
+          await session.startTransaction();
 
-        const tableName = testEntity.tableName;
+          const tableName = testEntity.tableName;
+          await session.query(
+            sql`INSERT INTO ${raw(qi(type, tableName))} (${raw(qi(type, "name"))}, ${raw(qi(type, "age"))}, ${raw(qi(type, "email"))})
+                VALUES (${"RolledBack"}, ${99}, ${"rollback@test.com"})`,
+          );
 
-        // 첫 번째 INSERT
-        await session.query(
-          sql`INSERT INTO ${raw(`\`${tableName}\``)} (\`name\`, \`age\`)
-              VALUES (${"BeforeSavepoint"}, ${10})`,
+          // 롤백
+          await session.rollback();
+        } finally {
+          await session.close();
+        }
+
+        // DB에서 확인 — 엔티티가 존재하지 않아야 함
+        const result = await em.find(testEntity.EntityClass, {
+          where: { name: "RolledBack" },
+        });
+        const found = toArray(result);
+        expect(found).toHaveLength(0);
+      });
+
+      it("커밋하면 INSERT된 엔티티가 DB에 존재해야 한다", async () => {
+        const session = new TransactionSessionManager();
+        try {
+          await session.connect();
+          await session.startTransaction();
+
+          const tableName = testEntity.tableName;
+          await session.query(
+            sql`INSERT INTO ${raw(qi(type, tableName))} (${raw(qi(type, "name"))}, ${raw(qi(type, "age"))}, ${raw(qi(type, "email"))})
+                VALUES (${"Committed"}, ${30}, ${"commit@test.com"})`,
+          );
+
+          await session.commit();
+        } finally {
+          await session.close();
+        }
+
+        // DB에서 확인 — 엔티티가 존재해야 함
+        const result = await em.findOne(testEntity.EntityClass, {
+          where: { name: "Committed" },
+        });
+        expect(result).toBeDefined();
+        expect(result!.name).toBe("Committed");
+        expect(result!.age).toBe(30);
+        expect(result!.email).toBe("commit@test.com");
+      });
+    });
+
+    // ─── S-1 Multiple: 여러 INSERT 후 롤백 ────────────────────────────────────
+
+    describe("여러 INSERT 후 롤백", () => {
+      it("2개의 INSERT 후 롤백하면 둘 다 DB에 존재하지 않아야 한다", async () => {
+        const session = new TransactionSessionManager();
+        try {
+          await session.connect();
+          await session.startTransaction();
+
+          const tableName = testEntity.tableName;
+
+          // 엔티티 A INSERT
+          await session.query(
+            sql`INSERT INTO ${raw(qi(type, tableName))} (${raw(qi(type, "name"))}, ${raw(qi(type, "age"))})
+                VALUES (${"EntityA"}, ${25})`,
+          );
+
+          // 엔티티 B INSERT
+          await session.query(
+            sql`INSERT INTO ${raw(qi(type, tableName))} (${raw(qi(type, "name"))}, ${raw(qi(type, "age"))})
+                VALUES (${"EntityB"}, ${35})`,
+          );
+
+          // 롤백
+          await session.rollback();
+        } finally {
+          await session.close();
+        }
+
+        // 둘 다 존재하지 않아야 함
+        const foundA = toArray(
+          await em.find(testEntity.EntityClass, { where: { name: "EntityA" } }),
         );
-
-        // Savepoint 생성
-        await session.savepoint("sp1");
-
-        // 두 번째 INSERT (savepoint 이후)
-        await session.query(
-          sql`INSERT INTO ${raw(`\`${tableName}\``)} (\`name\`, \`age\`)
-              VALUES (${"AfterSavepoint"}, ${20})`,
+        const foundB = toArray(
+          await em.find(testEntity.EntityClass, { where: { name: "EntityB" } }),
         );
-
-        // Savepoint로 롤백
-        await session.rollbackTo("sp1");
-
-        // 커밋
-        await session.commit();
-      } finally {
-        await session.close();
-      }
-
-      // savepoint 이전 INSERT는 유지
-      const beforeResult = await em.findOne(testEntity.EntityClass, {
-        where: { name: "BeforeSavepoint" },
+        expect(foundA).toHaveLength(0);
+        expect(foundB).toHaveLength(0);
       });
-      expect(beforeResult).toBeDefined();
-      expect(beforeResult!.name).toBe("BeforeSavepoint");
 
-      // savepoint 이후 INSERT는 롤백됨
-      const afterResult = toArray(
-        await em.find(testEntity.EntityClass, {
-          where: { name: "AfterSavepoint" },
-        }),
-      );
-      expect(afterResult).toHaveLength(0);
+      it("2개의 INSERT 후 커밋하면 둘 다 DB에 존재해야 한다", async () => {
+        const session = new TransactionSessionManager();
+        try {
+          await session.connect();
+          await session.startTransaction();
+
+          const tableName = testEntity.tableName;
+
+          await session.query(
+            sql`INSERT INTO ${raw(qi(type, tableName))} (${raw(qi(type, "name"))}, ${raw(qi(type, "age"))})
+                VALUES (${"CommitA"}, ${40})`,
+          );
+
+          await session.query(
+            sql`INSERT INTO ${raw(qi(type, tableName))} (${raw(qi(type, "name"))}, ${raw(qi(type, "age"))})
+                VALUES (${"CommitB"}, ${50})`,
+          );
+
+          await session.commit();
+        } finally {
+          await session.close();
+        }
+
+        const resultA = await em.findOne(testEntity.EntityClass, {
+          where: { name: "CommitA" },
+        });
+        const resultB = await em.findOne(testEntity.EntityClass, {
+          where: { name: "CommitB" },
+        });
+        expect(resultA).toBeDefined();
+        expect(resultA!.name).toBe("CommitA");
+        expect(resultA!.age).toBe(40);
+        expect(resultB).toBeDefined();
+        expect(resultB!.name).toBe("CommitB");
+        expect(resultB!.age).toBe(50);
+      });
     });
-  });
 
-  // ─── S-1 EntityManager save() 자동 커밋 검증 ──────────────────────────────
+    // ─── S-1 에러 시 롤백 ──────────────────────────────────────────────────────
 
-  describe("EntityManager save()는 자동 커밋", () => {
-    it("save()로 저장한 엔티티는 개별 트랜잭션으로 커밋되어 즉시 조회 가능해야 한다", async () => {
-      const repo = em.getRepository(testEntity.EntityClass);
+    describe("에러 발생 시 롤백 패턴", () => {
+      it("INSERT 후 에러가 발생하면 try/catch에서 롤백하여 데이터가 없어야 한다", async () => {
+        const session = new TransactionSessionManager();
+        let errorOccurred = false;
 
-      const saved = await repo.save({
-        name: "AutoCommitted",
-        age: 42,
-        email: "auto@test.com",
-      });
+        try {
+          await session.connect();
+          await session.startTransaction();
 
-      expect(saved.id).toBeDefined();
+          const tableName = testEntity.tableName;
 
-      // 별도 세션에서 조회해도 존재해야 함 (자동 커밋 되었으므로)
-      const result = await em.findOne(testEntity.EntityClass, {
-        where: { name: "AutoCommitted" },
-      });
-      expect(result).toBeDefined();
-      expect(result!.name).toBe("AutoCommitted");
-    });
-  });
+          // 유효한 INSERT
+          await session.query(
+            sql`INSERT INTO ${raw(qi(type, tableName))} (${raw(qi(type, "name"))}, ${raw(qi(type, "age"))})
+                VALUES (${"WillRollback"}, ${20})`,
+          );
 
-  // ─── S-1 격리 수준 ──────────────────────────────────────────────────────
+          // 의도적으로 에러 발생 (존재하지 않는 테이블에 INSERT)
+          await session.query(
+            sql`INSERT INTO ${raw(qi(type, "nonexistent_table_xyz"))} (${raw(qi(type, "col"))}) VALUES (${"x"})`,
+          );
+        } catch {
+          errorOccurred = true;
+          await session.rollback();
+        } finally {
+          await session.close();
+        }
 
-  describe("트랜잭션 격리 수준 설정", () => {
-    it("SERIALIZABLE 격리 수준으로 트랜잭션을 시작할 수 있어야 한다", async () => {
-      const session = new TransactionSessionManager();
-      try {
-        await session.connect();
-        await session.startTransaction("SERIALIZABLE");
+        expect(errorOccurred).toBe(true);
 
-        const tableName = testEntity.tableName;
-        await session.query(
-          sql`INSERT INTO ${raw(`\`${tableName}\``)} (\`name\`, \`age\`)
-              VALUES (${"Serializable"}, ${60})`,
+        // 유효했던 첫 번째 INSERT도 롤백되어야 함
+        const found = toArray(
+          await em.find(testEntity.EntityClass, {
+            where: { name: "WillRollback" },
+          }),
         );
-
-        await session.commit();
-      } finally {
-        await session.close();
-      }
-
-      const result = await em.findOne(testEntity.EntityClass, {
-        where: { name: "Serializable" },
+        expect(found).toHaveLength(0);
       });
-      expect(result).toBeDefined();
-      expect(result!.name).toBe("Serializable");
     });
-  });
-});
+
+    // ─── S-1 Savepoint ──────────────────────────────────────────────────────
+
+    describe("Savepoint 롤백", () => {
+      it("savepoint까지만 롤백하면 이전 INSERT는 유지되어야 한다", async () => {
+        const session = new TransactionSessionManager();
+        try {
+          await session.connect();
+          await session.startTransaction();
+
+          const tableName = testEntity.tableName;
+
+          // 첫 번째 INSERT
+          await session.query(
+            sql`INSERT INTO ${raw(qi(type, tableName))} (${raw(qi(type, "name"))}, ${raw(qi(type, "age"))})
+                VALUES (${"BeforeSavepoint"}, ${10})`,
+          );
+
+          // Savepoint 생성
+          await session.savepoint("sp1");
+
+          // 두 번째 INSERT (savepoint 이후)
+          await session.query(
+            sql`INSERT INTO ${raw(qi(type, tableName))} (${raw(qi(type, "name"))}, ${raw(qi(type, "age"))})
+                VALUES (${"AfterSavepoint"}, ${20})`,
+          );
+
+          // Savepoint로 롤백
+          await session.rollbackTo("sp1");
+
+          // 커밋
+          await session.commit();
+        } finally {
+          await session.close();
+        }
+
+        // savepoint 이전 INSERT는 유지
+        const beforeResult = await em.findOne(testEntity.EntityClass, {
+          where: { name: "BeforeSavepoint" },
+        });
+        expect(beforeResult).toBeDefined();
+        expect(beforeResult!.name).toBe("BeforeSavepoint");
+
+        // savepoint 이후 INSERT는 롤백됨
+        const afterResult = toArray(
+          await em.find(testEntity.EntityClass, {
+            where: { name: "AfterSavepoint" },
+          }),
+        );
+        expect(afterResult).toHaveLength(0);
+      });
+    });
+
+    // ─── S-1 EntityManager save() 자동 커밋 검증 ──────────────────────────────
+
+    describe("EntityManager save()는 자동 커밋", () => {
+      it("save()로 저장한 엔티티는 개별 트랜잭션으로 커밋되어 즉시 조회 가능해야 한다", async () => {
+        const repo = em.getRepository(testEntity.EntityClass);
+
+        const saved = await repo.save({
+          name: "AutoCommitted",
+          age: 42,
+          email: "auto@test.com",
+        });
+
+        expect(saved.id).toBeDefined();
+
+        // 별도 세션에서 조회해도 존재해야 함 (자동 커밋 되었으므로)
+        const result = await em.findOne(testEntity.EntityClass, {
+          where: { name: "AutoCommitted" },
+        });
+        expect(result).toBeDefined();
+        expect(result!.name).toBe("AutoCommitted");
+      });
+    });
+
+    // ─── S-1 격리 수준 ──────────────────────────────────────────────────────
+
+    describe("트랜잭션 격리 수준 설정", () => {
+      it("SERIALIZABLE 격리 수준으로 트랜잭션을 시작할 수 있어야 한다", async () => {
+        const session = new TransactionSessionManager();
+        try {
+          await session.connect();
+          await session.startTransaction("SERIALIZABLE");
+
+          const tableName = testEntity.tableName;
+          await session.query(
+            sql`INSERT INTO ${raw(qi(type, tableName))} (${raw(qi(type, "name"))}, ${raw(qi(type, "age"))})
+                VALUES (${"Serializable"}, ${60})`,
+          );
+
+          await session.commit();
+        } finally {
+          await session.close();
+        }
+
+        const result = await em.findOne(testEntity.EntityClass, {
+          where: { name: "Serializable" },
+        });
+        expect(result).toBeDefined();
+        expect(result!.name).toBe("Serializable");
+      });
+    });
+  },
+);

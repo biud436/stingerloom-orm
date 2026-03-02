@@ -24,8 +24,11 @@ import {
   createCrudTestEntity,
   DynamicEntityResult,
 } from "./helpers/create-test-entity";
+import { getTestDrivers, type TestDriverConfig } from "./helpers/driver-config";
 
-describe("[Integration] 기본 CRUD 테스트", () => {
+const drivers = getTestDrivers();
+
+describe.each(drivers)("[Integration] $label: 기본 CRUD 테스트", ({ type, options }) => {
   let conn: TestConnectionResult;
   let em: EntityManager;
   let testEntity: DynamicEntityResult;
@@ -35,7 +38,7 @@ describe("[Integration] 기본 CRUD 테스트", () => {
     // entityFactory 패턴: 메타데이터 리셋 → 엔티티 생성 → 연결
     // 이렇게 해야 MetadataLayerRegistry.reset() 이후에 엔티티가 등록됩니다.
     conn = await createTestConnection(
-      { synchronize: true, logging: false },
+      { ...options, synchronize: true, logging: false },
       () => {
         testEntity = createCrudTestEntity();
         return { entities: [testEntity.EntityClass] };

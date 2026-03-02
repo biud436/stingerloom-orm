@@ -12,8 +12,8 @@
  * - DROP TABLE 후 재연결 시 테이블 재생성
  *
  * 실행 전 필요 사항:
- * - MySQL 서버 실행 중
- * - examples/nestjs-cats/.env의 연결 정보가 유효
+ * - MySQL 또는 PostgreSQL 서버 실행 중
+ * - 연결 정보가 유효
  */
 
 import "reflect-metadata";
@@ -33,6 +33,25 @@ import {
 } from "../../src";
 import Container from "typedi";
 import { ColumnScanner, ManyToOneScanner } from "../../src/scanner";
+import {
+  getTestDrivers,
+  type TestDriverConfig,
+  type TestDriverType,
+} from "./helpers/driver-config";
+import {
+  qi,
+  disableFkChecksSql,
+  enableFkChecksSql,
+  hasTableSql,
+  getColumnsSql,
+  getColumnSql,
+  getIndexesSql,
+  getForeignKeysSql,
+  getPrimaryKeyColumnsSql,
+  normalizeColumns,
+  normalizeIndexes,
+  normalizeForeignKeys,
+} from "./helpers/driver-helpers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 동적 엔티티 팩토리
@@ -199,254 +218,260 @@ function createFkTestEntities(): FkEntitiesResult {
 // 테스트 스위트
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("[Integration] SchemaGenerator (synchronize)", () => {
-  // ─── 테이블 생성 ─────────────────────────────────────────────────────────
+describe.each(getTestDrivers())(
+  "[Integration] SchemaGenerator (synchronize) ($label)",
+  ({ type, options }: TestDriverConfig) => {
+    // ─── 테이블 생성 ─────────────────────────────────────────────────────────
 
-  describe("테이블 자동 생성", () => {
-    let conn: TestConnectionResult;
-    let entity: SchemaTestResult;
-
-    afterEach(async () => {
-      try {
-        if (entity) await dropTestTable(entity.tableName);
-      } catch {
-        // ignore
-      }
-      if (conn) await conn.cleanup();
-    }, 15000);
-
-    it("synchronize: true 시 엔티티 테이블이 자동으로 생성되어야 한다", async () => {
-      conn = await createTestConnection(
-        { synchronize: true, logging: false },
-        () => {
-          entity = createBasicSchemaEntity();
-          return { entities: [entity.EntityClass] };
-        },
-      );
-
-      // SHOW TABLES로 테이블 존재 확인
-      const result = await rawQuery(
-        `SHOW TABLES LIKE '${entity.tableName}'`,
-      );
-      const rs = result?.results ?? result;
-      const rows = Array.isArray(rs) ? rs : [rs];
-      expect(rows.length).toBeGreaterThan(0);
-    }, 30000);
-
-    it("생성된 테이블에 정의한 컬럼이 모두 존재해야 한다", async () => {
-      conn = await createTestConnection(
-        { synchronize: true, logging: false },
-        () => {
-          entity = createBasicSchemaEntity();
-          return { entities: [entity.EntityClass] };
-        },
-      );
-
-      const result = await rawQuery(
-        `SHOW COLUMNS FROM \`${entity.tableName}\``,
-      );
-      const rs = result?.results ?? result;
-      const columns = Array.isArray(rs) ? rs : [rs];
-      const colNames = columns.map((c: any) => c.Field);
-
-      expect(colNames).toContain("id");
-      expect(colNames).toContain("name");
-      expect(colNames).toContain("age");
-      expect(colNames).toContain("email");
-    }, 30000);
-
-    it("PrimaryGeneratedColumn이 AUTO_INCREMENT PK로 생성되어야 한다", async () => {
-      conn = await createTestConnection(
-        { synchronize: true, logging: false },
-        () => {
-          entity = createBasicSchemaEntity();
-          return { entities: [entity.EntityClass] };
-        },
-      );
-
-      const result = await rawQuery(
-        `SHOW COLUMNS FROM \`${entity.tableName}\` WHERE Field = 'id'`,
-      );
-      const rs = result?.results ?? result;
-      const idCol = Array.isArray(rs) ? rs[0] : rs;
-
-      expect(idCol.Key).toBe("PRI");
-      expect(idCol.Extra).toContain("auto_increment");
-    }, 30000);
-  });
-
-  // ─── 인덱스 생성 ─────────────────────────────────────────────────────────
-
-  describe("@Index 인덱스 생성", () => {
-    let conn: TestConnectionResult;
-    let entity: IndexedEntityResult;
-
-    afterEach(async () => {
-      try {
-        if (entity) await dropTestTable(entity.tableName);
-      } catch {
-        // ignore
-      }
-      if (conn) await conn.cleanup();
-    }, 15000);
-
-    it("@Index 데코레이터가 있는 컬럼에 DB 인덱스가 생성되어야 한다", async () => {
-      conn = await createTestConnection(
-        { synchronize: true, logging: false },
-        () => {
-          entity = createIndexedEntity();
-          return { entities: [entity.EntityClass] };
-        },
-      );
-
-      const result = await rawQuery(
-        `SHOW INDEX FROM \`${entity.tableName}\``,
-      );
-      const rs = result?.results ?? result;
-      const indexes = Array.isArray(rs) ? rs : [rs];
-      const indexNames = indexes.map((idx: any) => idx.Key_name);
-
-      // INDEX_<tableName>_name, INDEX_<tableName>_email 형식
-      const expectedNameIndex = `INDEX_${entity.tableName}_name`;
-      const expectedEmailIndex = `INDEX_${entity.tableName}_email`;
-
-      expect(indexNames).toContain(expectedNameIndex);
-      expect(indexNames).toContain(expectedEmailIndex);
-    }, 30000);
-  });
-
-  // ─── 외래키 생성 ─────────────────────────────────────────────────────────
-
-  describe("@ManyToOne FK 제약 생성", () => {
-    let conn: TestConnectionResult;
-    let entities: FkEntitiesResult;
-
-    afterEach(async () => {
-      try {
-        await rawQuery("SET FOREIGN_KEY_CHECKS = 0");
-        if (entities) await dropTestTable(entities.childTableName);
-        if (entities) await dropTestTable(entities.parentTableName);
-        await rawQuery("SET FOREIGN_KEY_CHECKS = 1");
-      } catch {
-        // ignore
-      }
-      if (conn) await conn.cleanup();
-    }, 15000);
-
-    it("@ManyToOne 관계가 DB FK 제약으로 생성되어야 한다", async () => {
-      conn = await createTestConnection(
-        { synchronize: true, logging: false },
-        () => {
-          entities = createFkTestEntities();
-          // Parent를 먼저 등록해야 FK 대상 테이블이 존재
-          return {
-            entities: [entities.ParentClass, entities.ChildClass],
-          };
-        },
-      );
-
-      // INFORMATION_SCHEMA에서 FK 확인
-      const result = await rawQuery(`
-        SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
-        FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-        WHERE TABLE_NAME = '${entities.childTableName}'
-          AND REFERENCED_TABLE_NAME IS NOT NULL
-          AND TABLE_SCHEMA = DATABASE()
-      `);
-      const rs = result?.results ?? result;
-      const fks = Array.isArray(rs) ? rs : rs ? [rs] : [];
-
-      expect(fks.length).toBeGreaterThan(0);
-
-      // parentFk 컬럼이 FK로 등록되어 있는지 확인
-      const parentFk = fks.find(
-        (fk: any) => fk.COLUMN_NAME === "parentFk",
-      );
-      expect(parentFk).toBeDefined();
-      expect(parentFk.REFERENCED_TABLE_NAME).toBe(entities.parentTableName);
-      expect(parentFk.REFERENCED_COLUMN_NAME).toBe("id");
-    }, 30000);
-  });
-
-  // ─── DROP 후 재생성 ───────────────────────────────────────────────────────
-
-  describe("DROP TABLE 후 재생성", () => {
-    it("테이블 DROP 후 재연결(synchronize)하면 테이블이 재생성되어야 한다", async () => {
+    describe("테이블 자동 생성", () => {
+      let conn: TestConnectionResult;
       let entity: SchemaTestResult;
 
-      // 1. 첫 번째 연결 — 테이블 생성
-      let conn = await createTestConnection(
-        { synchronize: true, logging: false },
-        () => {
-          entity = createBasicSchemaEntity("recreate");
-          return { entities: [entity!.EntityClass] };
-        },
-      );
+      afterEach(async () => {
+        try {
+          if (entity) await dropTestTable(entity.tableName);
+        } catch {
+          // ignore
+        }
+        if (conn) await conn.cleanup();
+      }, 15000);
 
-      // 테이블 존재 확인
-      let result = await rawQuery(
-        `SHOW TABLES LIKE '${entity!.tableName}'`,
-      );
-      let rs = result?.results ?? result;
-      expect((Array.isArray(rs) ? rs : [rs]).length).toBeGreaterThan(0);
+      it("synchronize: true 시 엔티티 테이블이 자동으로 생성되어야 한다", async () => {
+        conn = await createTestConnection(
+          { synchronize: true, logging: false, ...options },
+          () => {
+            entity = createBasicSchemaEntity();
+            return { entities: [entity.EntityClass] };
+          },
+        );
 
-      // 2. 테이블 DROP
-      await dropTestTable(entity!.tableName);
+        // 테이블 존재 확인
+        const result = await rawQuery(hasTableSql(type, entity.tableName));
+        const rs = result?.results ?? result;
+        const rows = Array.isArray(rs) ? rs : rs ? [rs] : [];
+        expect(rows.length).toBeGreaterThan(0);
+      }, 30000);
 
-      // DROP 확인
-      result = await rawQuery(
-        `SHOW TABLES LIKE '${entity!.tableName}'`,
-      );
-      rs = result?.results ?? result;
-      const afterDrop = Array.isArray(rs) ? rs : rs ? [rs] : [];
-      expect(afterDrop.length).toBe(0);
+      it("생성된 테이블에 정의한 컬럼이 모두 존재해야 한다", async () => {
+        conn = await createTestConnection(
+          { synchronize: true, logging: false, ...options },
+          () => {
+            entity = createBasicSchemaEntity();
+            return { entities: [entity.EntityClass] };
+          },
+        );
 
-      // 3. 연결 종료
-      await conn.cleanup();
+        const result = await rawQuery(getColumnsSql(type, entity.tableName));
+        const rs = result?.results ?? result;
+        const columns = Array.isArray(rs) ? rs : [rs];
+        const normalized = normalizeColumns(type, columns);
+        const colNames = normalized.map((c) => c.name);
 
-      // 4. 재연결 — 같은 엔티티 클래스(같은 테이블명)
-      // 새로운 엔티티를 같은 테이블명으로 생성
-      conn = await createTestConnection(
-        { synchronize: true, logging: false },
-        () => {
-          const tableName = entity!.tableName;
-          const DynamicClass = class {} as any;
-          Object.defineProperty(DynamicClass, "name", {
-            value: tableName,
-            writable: false,
-          });
+        expect(colNames).toContain("id");
+        expect(colNames).toContain("name");
+        expect(colNames).toContain("age");
+        expect(colNames).toContain("email");
+      }, 30000);
 
-          Container.get(ColumnScanner).clear();
+      it("PrimaryGeneratedColumn이 AUTO_INCREMENT PK로 생성되어야 한다", async () => {
+        conn = await createTestConnection(
+          { synchronize: true, logging: false, ...options },
+          () => {
+            entity = createBasicSchemaEntity();
+            return { entities: [entity.EntityClass] };
+          },
+        );
 
-          Reflect.defineMetadata("design:type", Number, DynamicClass.prototype, "id");
-          PrimaryGeneratedColumn()(DynamicClass.prototype, "id");
-          Reflect.defineMetadata("design:type", String, DynamicClass.prototype, "name");
-          Column()(DynamicClass.prototype, "name");
-          Reflect.defineMetadata("design:type", Number, DynamicClass.prototype, "age");
-          Column({ type: "int" })(DynamicClass.prototype, "age");
-          Reflect.defineMetadata("design:type", String, DynamicClass.prototype, "email");
-          Column({ type: "varchar", length: 255, nullable: true })(DynamicClass.prototype, "email");
+        const result = await rawQuery(getColumnSql(type, entity.tableName, "id"));
+        const rs = result?.results ?? result;
+        const rows = Array.isArray(rs) ? rs : [rs];
+        const normalized = normalizeColumns(type, rows);
+        const idCol = normalized[0];
 
-          Entity()(DynamicClass);
+        expect(idCol).toBeDefined();
+        expect(idCol.isAutoIncrement).toBe(true);
 
-          return { entities: [DynamicClass] };
-        },
-      );
+        if (type === "mysql") {
+          // MySQL: SHOW COLUMNS Key 필드로 PK 확인
+          expect(idCol.isPrimary).toBe(true);
+        } else {
+          // PostgreSQL: 별도 PK 쿼리로 확인
+          const pkResult = await rawQuery(getPrimaryKeyColumnsSql(entity.tableName));
+          const pkRs = pkResult?.results ?? pkResult;
+          const pkRows = Array.isArray(pkRs) ? pkRs : pkRs ? [pkRs] : [];
+          const pkCols = pkRows.map((r: any) => r.column_name);
+          expect(pkCols).toContain("id");
+        }
+      }, 30000);
+    });
 
-      // 5. 테이블 재생성 확인
-      result = await rawQuery(
-        `SHOW TABLES LIKE '${entity!.tableName}'`,
-      );
-      rs = result?.results ?? result;
-      expect((Array.isArray(rs) ? rs : [rs]).length).toBeGreaterThan(0);
+    // ─── 인덱스 생성 ─────────────────────────────────────────────────────────
 
-      // cleanup
-      try {
+    describe("@Index 인덱스 생성", () => {
+      let conn: TestConnectionResult;
+      let entity: IndexedEntityResult;
+
+      afterEach(async () => {
+        try {
+          if (entity) await dropTestTable(entity.tableName);
+        } catch {
+          // ignore
+        }
+        if (conn) await conn.cleanup();
+      }, 15000);
+
+      it("@Index 데코레이터가 있는 컬럼에 DB 인덱스가 생성되어야 한다", async () => {
+        conn = await createTestConnection(
+          { synchronize: true, logging: false, ...options },
+          () => {
+            entity = createIndexedEntity();
+            return { entities: [entity.EntityClass] };
+          },
+        );
+
+        const result = await rawQuery(getIndexesSql(type, entity.tableName));
+        const rs = result?.results ?? result;
+        const indexes = Array.isArray(rs) ? rs : [rs];
+        const normalized = normalizeIndexes(type, indexes);
+        const indexNames = normalized.map((idx) => idx.name);
+
+        // INDEX_<tableName>_name, INDEX_<tableName>_email 형식
+        const expectedNameIndex = `INDEX_${entity.tableName}_name`;
+        const expectedEmailIndex = `INDEX_${entity.tableName}_email`;
+
+        // PostgreSQL lowercases index names, so check case-insensitively
+        const indexNamesLower = indexNames.map((n) => n.toLowerCase());
+        expect(indexNamesLower).toContain(expectedNameIndex.toLowerCase());
+        expect(indexNamesLower).toContain(expectedEmailIndex.toLowerCase());
+      }, 30000);
+    });
+
+    // ─── 외래키 생성 ─────────────────────────────────────────────────────────
+
+    describe("@ManyToOne FK 제약 생성", () => {
+      let conn: TestConnectionResult;
+      let entities: FkEntitiesResult;
+
+      afterEach(async () => {
+        try {
+          await rawQuery(disableFkChecksSql(type));
+          if (entities) await dropTestTable(entities.childTableName);
+          if (entities) await dropTestTable(entities.parentTableName);
+          await rawQuery(enableFkChecksSql(type));
+        } catch {
+          // ignore
+        }
+        if (conn) await conn.cleanup();
+      }, 15000);
+
+      it("@ManyToOne 관계가 DB FK 제약으로 생성되어야 한다", async () => {
+        conn = await createTestConnection(
+          { synchronize: true, logging: false, ...options },
+          () => {
+            entities = createFkTestEntities();
+            // Parent를 먼저 등록해야 FK 대상 테이블이 존재
+            return {
+              entities: [entities.ParentClass, entities.ChildClass],
+            };
+          },
+        );
+
+        // FK 확인
+        const result = await rawQuery(
+          getForeignKeysSql(type, entities.childTableName),
+        );
+        const rs = result?.results ?? result;
+        const fkRows = Array.isArray(rs) ? rs : rs ? [rs] : [];
+        const fks = normalizeForeignKeys(type, fkRows);
+
+        expect(fks.length).toBeGreaterThan(0);
+
+        // parentFk 컬럼이 FK로 등록되어 있는지 확인
+        const parentFk = fks.find(
+          (fk) => fk.columnName === "parentFk",
+        );
+        expect(parentFk).toBeDefined();
+        expect(parentFk!.referencedTableName).toBe(entities.parentTableName);
+        expect(parentFk!.referencedColumnName).toBe("id");
+      }, 30000);
+    });
+
+    // ─── DROP 후 재생성 ───────────────────────────────────────────────────────
+
+    describe("DROP TABLE 후 재생성", () => {
+      it("테이블 DROP 후 재연결(synchronize)하면 테이블이 재생성되어야 한다", async () => {
+        let entity: SchemaTestResult;
+
+        // 1. 첫 번째 연결 — 테이블 생성
+        let conn = await createTestConnection(
+          { synchronize: true, logging: false, ...options },
+          () => {
+            entity = createBasicSchemaEntity("recreate");
+            return { entities: [entity!.EntityClass] };
+          },
+        );
+
+        // 테이블 존재 확인
+        let result = await rawQuery(hasTableSql(type, entity!.tableName));
+        let rs = result?.results ?? result;
+        let rows = Array.isArray(rs) ? rs : rs ? [rs] : [];
+        expect(rows.length).toBeGreaterThan(0);
+
+        // 2. 테이블 DROP
         await dropTestTable(entity!.tableName);
-      } catch {
-        // ignore
-      }
-      await conn.cleanup();
-    }, 60000);
-  });
-});
+
+        // DROP 확인
+        result = await rawQuery(hasTableSql(type, entity!.tableName));
+        rs = result?.results ?? result;
+        const afterDrop = Array.isArray(rs) ? rs : rs ? [rs] : [];
+        expect(afterDrop.length).toBe(0);
+
+        // 3. 연결 종료
+        await conn.cleanup();
+
+        // 4. 재연결 — 같은 엔티티 클래스(같은 테이블명)
+        // 새로운 엔티티를 같은 테이블명으로 생성
+        conn = await createTestConnection(
+          { synchronize: true, logging: false, ...options },
+          () => {
+            const tableName = entity!.tableName;
+            const DynamicClass = class {} as any;
+            Object.defineProperty(DynamicClass, "name", {
+              value: tableName,
+              writable: false,
+            });
+
+            Container.get(ColumnScanner).clear();
+
+            Reflect.defineMetadata("design:type", Number, DynamicClass.prototype, "id");
+            PrimaryGeneratedColumn()(DynamicClass.prototype, "id");
+            Reflect.defineMetadata("design:type", String, DynamicClass.prototype, "name");
+            Column()(DynamicClass.prototype, "name");
+            Reflect.defineMetadata("design:type", Number, DynamicClass.prototype, "age");
+            Column({ type: "int" })(DynamicClass.prototype, "age");
+            Reflect.defineMetadata("design:type", String, DynamicClass.prototype, "email");
+            Column({ type: "varchar", length: 255, nullable: true })(DynamicClass.prototype, "email");
+
+            Entity()(DynamicClass);
+
+            return { entities: [DynamicClass] };
+          },
+        );
+
+        // 5. 테이블 재생성 확인
+        result = await rawQuery(hasTableSql(type, entity!.tableName));
+        rs = result?.results ?? result;
+        rows = Array.isArray(rs) ? rs : rs ? [rs] : [];
+        expect(rows.length).toBeGreaterThan(0);
+
+        // cleanup
+        try {
+          await dropTestTable(entity!.tableName);
+        } catch {
+          // ignore
+        }
+        await conn.cleanup();
+      }, 60000);
+    });
+  },
+);

@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import { SchemaDiff, SchemaDiffResult } from "../../src/core/SchemaDiff";
+import { SchemaDiff, SchemaDiffResult } from "../../src/core/generators/SchemaDiff";
 import {
   SchemaDiffMigrationGenerator,
-} from "../../src/core/SchemaDiffMigrationGenerator";
+} from "../../src/core/generators/SchemaDiffMigrationGenerator";
 import { Entity } from "../../src/decorators/Entity";
 import { Column } from "../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";

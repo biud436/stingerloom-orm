@@ -31,6 +31,7 @@ import {
 } from "../../src";
 import Container from "typedi";
 import { ColumnScanner } from "../../src/scanner";
+import { getTestDrivers, type TestDriverConfig } from "./helpers/driver-config";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 훅 호출 추적용 전역 배열
@@ -128,7 +129,9 @@ function createInstance(
 // 테스트 스위트
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("[Integration] 생명주기 훅 (@BeforeInsert/@AfterInsert/@BeforeUpdate/@AfterUpdate)", () => {
+const drivers = getTestDrivers();
+
+describe.each(drivers)("[Integration] $label: 생명주기 훅 (@BeforeInsert/@AfterInsert/@BeforeUpdate/@AfterUpdate)", ({ type, options }) => {
   let conn: TestConnectionResult;
   let em: EntityManager;
   let testEntity: HookEntityResult;
@@ -136,7 +139,7 @@ describe("[Integration] 생명주기 훅 (@BeforeInsert/@AfterInsert/@BeforeUpda
 
   beforeAll(async () => {
     conn = await createTestConnection(
-      { synchronize: true, logging: false },
+      { ...options, synchronize: true, logging: false },
       () => {
         testEntity = createHookTestEntity();
         return { entities: [testEntity.EntityClass] };

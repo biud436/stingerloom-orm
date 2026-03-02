@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
 import sql from "sql-template-tag";
-import { ClazzType } from "../utils";
-import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../decorators/Column";
-import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
-import { ColumnMetadata } from "../scanner/ColumnScanner";
+import { ClazzType } from "../../utils";
+import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../../decorators/Column";
+import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
+import { ColumnMetadata } from "../../scanner/ColumnScanner";
 import { SchemaDialect } from "./SchemaGenerator";
 
 export interface ColumnChange {

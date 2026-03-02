@@ -26,8 +26,11 @@ import {
   createCrudTestEntity,
   DynamicEntityResult,
 } from "./helpers/create-test-entity";
+import { getTestDrivers, type TestDriverConfig } from "./helpers/driver-config";
 
-describe("[Integration] 집계 함수 (count/sum/avg/min/max)", () => {
+const drivers = getTestDrivers();
+
+describe.each(drivers)("[Integration] $label: 집계 함수 (count/sum/avg/min/max)", ({ type, options }) => {
   let conn: TestConnectionResult;
   let em: EntityManager;
   let testEntity: DynamicEntityResult;
@@ -35,7 +38,7 @@ describe("[Integration] 집계 함수 (count/sum/avg/min/max)", () => {
 
   beforeAll(async () => {
     conn = await createTestConnection(
-      { synchronize: true, logging: false },
+      { ...options, synchronize: true, logging: false },
       () => {
         testEntity = createCrudTestEntity("agg_test");
         return { entities: [testEntity.EntityClass] };

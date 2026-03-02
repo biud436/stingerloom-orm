@@ -25,3 +25,33 @@ export {
   createCascadeRelationEntities,
   type RelatedEntitiesResult,
 } from "./create-relation-entity";
+
+export {
+  getTestDrivers,
+  getMySqlConfig,
+  getPostgresConfig,
+  type TestDriverType,
+  type TestDriverConfig,
+} from "./driver-config";
+
+export {
+  qi,
+  dropTableSql,
+  disableFkChecksSql,
+  enableFkChecksSql,
+  createJoinTableSql,
+  createUniqueIndexSql,
+  setAutocommitSql,
+  hasTableSql,
+  getColumnsSql,
+  getColumnSql,
+  getIndexesSql,
+  getForeignKeysSql,
+  getPrimaryKeyColumnsSql,
+  normalizeColumns,
+  normalizeIndexes,
+  normalizeForeignKeys,
+  type NormalizedColumn,
+  type NormalizedIndex,
+  type NormalizedForeignKey,
+} from "./driver-helpers";

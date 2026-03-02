@@ -17,7 +17,7 @@ import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../dialects/sqlite/SqliteDriver";
 import { MssqlDriver } from "../dialects/mssql/MssqlDriver";
 import { ISqlDriver } from "../dialects/SqlDriver";
-import { SchemaGenerator } from "./SchemaGenerator";
+import { SchemaGenerator } from "./generators/SchemaGenerator";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
 import {
   UNIQUE_INDEX_TOKEN,

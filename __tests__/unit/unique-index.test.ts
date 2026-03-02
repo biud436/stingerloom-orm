@@ -12,7 +12,7 @@ import { MySqlDriver } from "../../src/dialects/mysql/MySqlDriver";
 import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../../src/dialects/sqlite/SqliteDriver";
 import { MssqlDriver } from "../../src/dialects/mssql/MssqlDriver";
-import { SchemaGenerator } from "../../src/core/SchemaGenerator";
+import { SchemaGenerator } from "../../src/core/generators/SchemaGenerator";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 
 // ─────────────────────────────────────────────
