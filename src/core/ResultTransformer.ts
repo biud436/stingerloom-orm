@@ -3,7 +3,7 @@
 import { MyClassConstructor } from "./MyClassConstructor";
 import type { QueryResult } from "../types/QueryResult";
 import { BaseResultTransformer } from "./BaseResultTransformer";
-import { deserializeEntity } from "./DeserializeEntity";
+import { deserializeEntity } from "./deserializer/DeserializeEntity";
 import {
   ENTITY_TOKEN,
   MANY_TO_ONE_TOKEN,

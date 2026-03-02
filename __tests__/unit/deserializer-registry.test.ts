@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { DeserializerRegistry } from "../../src/core/DeserializerRegistry";
-import { ClassTransformerDeserializer } from "../../src/core/ClassTransformerDeserializer";
-import { Deserializer } from "../../src/core/Deserializer";
+import { DeserializerRegistry } from "../../src/core/deserializer/DeserializerRegistry";
+import { ClassTransformerDeserializer } from "../../src/core/deserializer/ClassTransformerDeserializer";
+import { Deserializer } from "../../src/core/deserializer/Deserializer";
 
 class TestUser {
   name!: string;

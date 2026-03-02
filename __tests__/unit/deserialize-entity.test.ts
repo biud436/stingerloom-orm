@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
 import { Expose } from "class-transformer";
-import { deserializeEntity } from "../../src/core/DeserializeEntity";
+import { deserializeEntity } from "../../src/core/deserializer/DeserializeEntity";
 
 describe("DeserializeEntity", () => {
   class User {

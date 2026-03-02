@@ -2,7 +2,7 @@
 import { DeserializeOptions } from "./DeserializeOptions";
 import { Deserializer } from "./Deserializer";
 import { DeserializerRegistry } from "./DeserializerRegistry";
-import { MyClassConstructor } from "./MyClassConstructor";
+import { MyClassConstructor } from "../MyClassConstructor";
 
 /**
  * 전역 DeserializerRegistry 싱글톤 인스턴스입니다.

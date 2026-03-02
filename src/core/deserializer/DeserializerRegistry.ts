@@ -2,7 +2,7 @@
 import { ClassTransformerDeserializer } from "./ClassTransformerDeserializer";
 import { DeserializeOptions } from "./DeserializeOptions";
 import { Deserializer } from "./Deserializer";
-import { MyClassConstructor } from "./MyClassConstructor";
+import { MyClassConstructor } from "../MyClassConstructor";
 
 /**
  * 역직렬화 전략을 관리하는 레지스트리 클래스입니다.

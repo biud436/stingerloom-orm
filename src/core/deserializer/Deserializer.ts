@@ -1,5 +1,5 @@
 import { DeserializeOptions } from "./DeserializeOptions";
-import { MyClassConstructor } from "./MyClassConstructor";
+import { MyClassConstructor } from "../MyClassConstructor";
 
 /**
  * 역직렬화 전략 인터페이스입니다.

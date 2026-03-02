@@ -2,7 +2,7 @@
 import { plainToClass } from "class-transformer";
 import { DeserializeOptions } from "./DeserializeOptions";
 import { Deserializer } from "./Deserializer";
-import { MyClassConstructor } from "./MyClassConstructor";
+import { MyClassConstructor } from "../MyClassConstructor";
 
 /**
  * class-transformer 기반 역직렬화 구현체입니다.
