@@ -2,7 +2,7 @@
 import type { Pool, PoolConnection } from "mysql2";
 import sql, { Sql } from "sql-template-tag";
 import { Logger } from "../../utils/Logger";
-import { Connection } from "../../core/Connection";
+import { Connection } from "./Connection";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { ConnectionNotFound } from "./ConnectionNotFound";
 import { PoolNotFound } from "./PoolNotFound";

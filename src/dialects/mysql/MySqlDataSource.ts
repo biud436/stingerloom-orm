@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Connection } from "../../core/Connection";
+import { Connection } from "./Connection";
 import { IConnector } from "../../core/IConnector";
 import { IDataSource } from "../IDataSource";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
