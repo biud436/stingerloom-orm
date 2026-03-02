@@ -46,7 +46,7 @@ describe("NotSupportedDatabaseTypeError", () => {
   it("should have correct message and status 500", () => {
     const error = new NotSupportedDatabaseTypeError();
 
-    expect(error.message).toBe("지원하지 않는 데이터베이스 타입입니다.");
+    expect(error.message).toBe("Unsupported database type.");
     expect(error.status).toBe(500);
     expect(error).toBeInstanceOf(Exception);
     expect(error).toBeInstanceOf(Error);

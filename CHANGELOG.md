@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+### Refactor
+
+- `Connection.ts`를 `core/`에서 `dialects/mysql/`로 이동 — mysql2 전용 타입 정리
+- Deserializer 관련 파일을 `core/deserializer/` 폴더로 이동
+- 스키마 관련 파일 위치 정리
+- `createLazyProxy` 함수 시그니처 단순화
+- 코드 스타일 표준화 및 가독성 개선
+- MCP 서버 `server.tool()` → `server.registerTool()` API 마이그레이션
+
+### Fixed
+
+- `NotSupportedDatabaseTypeError` 에러 메시지를 영어로 통일 + 테스트 동기화
+- Partial update 시 FK 보존 + `save()` 반환 타입 수정
+- INSERT/UPDATE 시 ManyToOne FK 컬럼 중복 방지
+- ManyToOne 관계가 명시적으로 null일 때 FK를 NULL로 설정
+- `save()` INSERT/UPDATE에 ManyToOne FK 컬럼 포함
+
 ### Added
 
 - **MCP 서버** (`d00e6ad`, `a614fd4`)
@@ -11,6 +28,17 @@
   - `mcp/postgres-server.ts`: PostgreSQL 직접 접근 (query, list_tables, describe_table, list_schemas, list_databases)
   - `@modelcontextprotocol/sdk` 기반, `registerTool()` API 사용
   - pnpm workspace에 `mcp` 패키지 등록
+- Onboarding 가이드 추가
+
+### Tests
+
+- PostgreSQL 드라이버 통합 테스트 35개 추가
+- FK object assignment 패턴 P0 통합 테스트 추가
+- nestjs-cats e2e 통합 테스트 추가
+
+### Docs
+
+- README 영어 리라이트 (minimal style)
 
 ---
 
@@ -243,6 +271,8 @@
 | EXPLAIN 쿼리 + 신기능 통합 테스트 추가 | **1163** (전부 통과) |
 | OneToMany/ManyToOne 관계 통합 테스트 추가 | 1163+ |
 | Read Replica explain() + 테스트 커버리지 강화 + NestJS 예제 | **1226** ✅ |
+| 안정성 감사 + 멀티테넌시 격리 수정 + SQL Injection 수정 | **1405** (26 skipped) ✅ |
+| 리팩토링 + 파일 정리 | **1287** (63 suites, 0 failures) ✅ |
 
 ---
 
