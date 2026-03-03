@@ -6,6 +6,8 @@ import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { ConnectionNotFound } from "./ConnectionNotFound";
 import { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { IConnector } from "../../core/IConnector";
+import { IConnection } from "../IConnection";
+import { SqliteConnection } from "./SqliteConnection";
 
 /**
  * SQLite connector implementation.
@@ -53,6 +55,11 @@ export class SqliteConnector extends IConnector {
     }
 
     return this.db;
+  }
+
+  async acquireConnection(): Promise<IConnection<Database.Database>> {
+    const raw = await this.getConnection();
+    return new SqliteConnection(raw);
   }
 
   async runTestSql(): Promise<void> {

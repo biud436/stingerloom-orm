@@ -2,6 +2,7 @@
 import { Sql } from "sql-template-tag";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { TRANSACTION_ISOLATION_LEVEL } from "../dialects/IsolationLevel";
+import { IConnection } from "../dialects/IConnection";
 
 /**
  * Interface representing a database connector.
@@ -42,10 +43,17 @@ export abstract class IConnector {
   abstract query<T = any>(sql: Sql, connection?: any): Promise<T>;
 
   /**
-   * Gets a database connection.
-   * @returns A promise that resolves with the database connection.
+   * Gets a raw database connection from the pool.
+   * @returns A promise that resolves with the raw database connection.
    */
   abstract getConnection(): Promise<any>;
+
+  /**
+   * Acquires a typed connection wrapper from the pool.
+   * Returns an IConnection that tracks acquisition time for leak detection.
+   * @returns A promise that resolves with the IConnection wrapper.
+   */
+  abstract acquireConnection(): Promise<IConnection>;
 
   /**
    * Sets the transaction isolation level for a connection.

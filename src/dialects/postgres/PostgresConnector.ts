@@ -7,6 +7,8 @@ import { ConnectionNotFound } from "./ConnectionNotFound";
 import { PoolNotFound } from "./PoolNotFound";
 import { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { IConnector } from "../../core/IConnector";
+import { IConnection } from "../IConnection";
+import { PostgresConnection } from "./PostgresConnection";
 import { MetadataContext } from "../../metadata/MetadataContext";
 
 export class PostgresConnector extends IConnector {
@@ -67,6 +69,11 @@ export class PostgresConnector extends IConnector {
     }
 
     return this.pool.connect();
+  }
+
+  async acquireConnection(): Promise<IConnection<PoolClient>> {
+    const raw = await this.getConnection();
+    return new PostgresConnection(raw);
   }
 
   async runTestSql(): Promise<void> {

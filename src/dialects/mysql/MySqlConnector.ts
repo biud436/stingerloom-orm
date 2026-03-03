@@ -8,10 +8,12 @@ import { ConnectionNotFound } from "./ConnectionNotFound";
 import { PoolNotFound } from "./PoolNotFound";
 import { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { IConnector } from "../../core/IConnector";
+import { IConnection } from "../IConnection";
+import { MysqlConnection } from "./MysqlConnection";
 export type AnyEntity = any;
 export type IDatabaseType = "mysql" | "mariadb" | "postgres" | "sqlite" | "mssql";
 
-export class MySqlConnector implements IConnector {
+export class MySqlConnector extends IConnector {
   pool?: Pool;
   private isDebug = false;
   private readonly logger = new Logger("MySqlConnector");
@@ -79,6 +81,11 @@ export class MySqlConnector implements IConnector {
         resolve(connection);
       });
     });
+  }
+
+  async acquireConnection(): Promise<IConnection<PoolConnection>> {
+    const raw = await this.getConnection();
+    return new MysqlConnection(raw);
   }
 
   async runTestSql(): Promise<void> {

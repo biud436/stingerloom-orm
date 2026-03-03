@@ -7,6 +7,8 @@ import { ConnectionNotFound } from "./ConnectionNotFound";
 import { PoolNotFound } from "./PoolNotFound";
 import { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { IConnector } from "../../core/IConnector";
+import { IConnection } from "../IConnection";
+import { MssqlConnection } from "./MssqlConnection";
 
 // Lazy-loaded mssql module (populated in connect())
 let mssql: typeof MssqlTypes;
@@ -98,6 +100,11 @@ export class MssqlConnector extends IConnector {
     }
 
     return this.pool;
+  }
+
+  async acquireConnection(): Promise<IConnection<MssqlTypes.ConnectionPool>> {
+    const raw = await this.getConnection();
+    return new MssqlConnection(raw);
   }
 
   async runTestSql(): Promise<void> {
