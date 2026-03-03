@@ -292,4 +292,45 @@ export interface ISqlDriver<T = any> {
    * @returns A promise that resolves to true if the column exists, false otherwise.
    */
   hasColumn(tableName: string, columnName: string): Promise<boolean>;
+
+  /**
+   * Acquires an advisory lock with the given lock ID.
+   * Used to prevent concurrent migration execution across multiple instances.
+   *
+   * @param lockId - A string identifier for the lock.
+   * @param timeoutMs - Optional timeout in milliseconds. 0 = try once without waiting.
+   * @returns A promise that resolves to true if the lock was acquired, false otherwise.
+   */
+  acquireAdvisoryLock(lockId: string, timeoutMs?: number): Promise<boolean>;
+
+  /**
+   * Releases a previously acquired advisory lock.
+   *
+   * @param lockId - The string identifier of the lock to release.
+   */
+  releaseAdvisoryLock(lockId: string): Promise<void>;
+
+  /**
+   * Creates a savepoint within the current transaction.
+   *
+   * @param name - The savepoint name.
+   * @returns The SQL string to create the savepoint.
+   */
+  createSavepointSql(name: string): string;
+
+  /**
+   * Rolls back to a previously created savepoint.
+   *
+   * @param name - The savepoint name.
+   * @returns The SQL string to rollback to the savepoint.
+   */
+  rollbackToSavepointSql(name: string): string;
+
+  /**
+   * Releases a previously created savepoint.
+   *
+   * @param name - The savepoint name.
+   * @returns The SQL string to release the savepoint.
+   */
+  releaseSavepointSql(name: string): string;
 }

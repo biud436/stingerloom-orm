@@ -419,6 +419,27 @@ export class SqliteDriver implements ISqlDriver {
     );
   }
 
+  // SQLite는 단일 프로세스이므로 advisory lock은 no-op으로 처리합니다.
+  async acquireAdvisoryLock(_lockId: string, _timeoutMs?: number): Promise<boolean> {
+    return true;
+  }
+
+  async releaseAdvisoryLock(_lockId: string): Promise<void> {
+    // no-op
+  }
+
+  createSavepointSql(name: string): string {
+    return `SAVEPOINT ${this.wrap(name)}`;
+  }
+
+  rollbackToSavepointSql(name: string): string {
+    return `ROLLBACK TO SAVEPOINT ${this.wrap(name)}`;
+  }
+
+  releaseSavepointSql(name: string): string {
+    return `RELEASE SAVEPOINT ${this.wrap(name)}`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    * SQLite는 데이터베이스 수준 잠금을 사용하며 행 단위 잠금을 지원하지 않습니다.

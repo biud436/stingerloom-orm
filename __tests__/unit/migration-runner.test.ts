@@ -34,6 +34,11 @@ function createMockDriver(isMySql: boolean): ISqlDriver {
     getColumnType: jest.fn(),
     castType: jest.fn(),
     getForUpdateNoWait: jest.fn().mockReturnValue("FOR UPDATE NOWAIT"),
+    acquireAdvisoryLock: jest.fn().mockResolvedValue(true),
+    releaseAdvisoryLock: jest.fn().mockResolvedValue(undefined),
+    createSavepointSql: jest.fn().mockReturnValue("SAVEPOINT sp"),
+    rollbackToSavepointSql: jest.fn().mockReturnValue("ROLLBACK TO SAVEPOINT sp"),
+    releaseSavepointSql: jest.fn().mockReturnValue("RELEASE SAVEPOINT sp"),
   } as unknown as ISqlDriver;
 }
 

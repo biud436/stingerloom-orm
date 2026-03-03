@@ -419,6 +419,40 @@ export class MssqlDriver implements ISqlDriver {
     );
   }
 
+  async acquireAdvisoryLock(lockId: string, timeoutMs: number = 0): Promise<boolean> {
+    const timeout = Math.max(0, Math.floor(timeoutMs));
+    const result: any = await this.connector.query(
+      sql`EXEC sp_getapplock @Resource = ${lockId}, @LockMode = 'Exclusive', @LockTimeout = ${timeout}, @LockOwner = 'Session'`,
+    );
+    // sp_getapplock returns 0 or positive on success, negative on failure
+    const rows = Array.isArray(result) ? result : result?.recordset ?? result?.rows ?? [];
+    if (rows.length === 0) {
+      // If no result rows, check if the call succeeded (return code >= 0)
+      return true;
+    }
+    const returnValue = rows[0]?.[""] ?? rows[0]?.returnValue ?? 0;
+    return returnValue >= 0;
+  }
+
+  async releaseAdvisoryLock(lockId: string): Promise<void> {
+    await this.connector.query(
+      sql`EXEC sp_releaseapplock @Resource = ${lockId}, @LockOwner = 'Session'`,
+    );
+  }
+
+  createSavepointSql(name: string): string {
+    return `SAVE TRANSACTION ${this.wrap(name)}`;
+  }
+
+  rollbackToSavepointSql(name: string): string {
+    return `ROLLBACK TRANSACTION ${this.wrap(name)}`;
+  }
+
+  releaseSavepointSql(_name: string): string {
+    // MSSQL does not support RELEASE SAVEPOINT; savepoints are implicitly released on COMMIT
+    return "";
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    * MSSQL은 WITH (UPDLOCK, ROWLOCK) 힌트를 사용하지만,

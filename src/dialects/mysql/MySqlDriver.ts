@@ -442,6 +442,34 @@ export class MySqlDriver implements ISqlDriver {
     );
   }
 
+  async acquireAdvisoryLock(lockId: string, timeoutMs: number = 0): Promise<boolean> {
+    const timeoutSec = Math.max(0, Math.floor(timeoutMs / 1000));
+    const result: any = await this.connector.query(
+      sql`SELECT GET_LOCK(${lockId}, ${timeoutSec}) AS lock_result`,
+    );
+    const rows = Array.isArray(result) ? result : result?.results ?? result?.rows ?? [];
+    if (rows.length === 0) return false;
+    return rows[0]?.lock_result === 1;
+  }
+
+  async releaseAdvisoryLock(lockId: string): Promise<void> {
+    await this.connector.query(
+      sql`SELECT RELEASE_LOCK(${lockId})`,
+    );
+  }
+
+  createSavepointSql(name: string): string {
+    return `SAVEPOINT ${this.wrap(name)}`;
+  }
+
+  rollbackToSavepointSql(name: string): string {
+    return `ROLLBACK TO SAVEPOINT ${this.wrap(name)}`;
+  }
+
+  releaseSavepointSql(name: string): string {
+    return `RELEASE SAVEPOINT ${this.wrap(name)}`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    *

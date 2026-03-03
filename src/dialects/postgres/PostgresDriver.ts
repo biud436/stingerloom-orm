@@ -784,6 +784,74 @@ export class PostgresDriver implements ISqlDriver {
     );
   }
 
+  async acquireAdvisoryLock(lockId: string, timeoutMs: number = 0): Promise<boolean> {
+    // Convert string lockId to a numeric hash for pg_advisory_lock
+    const hash = this.hashLockId(lockId);
+
+    if (timeoutMs <= 0) {
+      // Try to acquire without waiting
+      const result: any = await this.connector.query(
+        sql`SELECT pg_try_advisory_lock(${hash}) AS lock_result`,
+      );
+      const rows = Array.isArray(result) ? result : result?.rows ?? [];
+      if (rows.length === 0) return false;
+      return rows[0]?.lock_result === true;
+    }
+
+    // Set a statement timeout for the blocking lock attempt
+    const savedTimeout = await this.connector.query(
+      `SHOW statement_timeout`,
+    );
+
+    await this.connector.query(
+      `SET LOCAL statement_timeout = '${Math.floor(timeoutMs)}ms'`,
+    );
+
+    try {
+      await this.connector.query(
+        sql`SELECT pg_advisory_lock(${hash})`,
+      );
+      return true;
+    } catch {
+      return false;
+    } finally {
+      // Restore original timeout
+      const rows = Array.isArray(savedTimeout) ? savedTimeout : savedTimeout?.rows ?? [];
+      const original = rows.length > 0 ? rows[0]?.statement_timeout ?? "0" : "0";
+      await this.connector.query(
+        `SET LOCAL statement_timeout = '${original}'`,
+      );
+    }
+  }
+
+  async releaseAdvisoryLock(lockId: string): Promise<void> {
+    const hash = this.hashLockId(lockId);
+    await this.connector.query(
+      sql`SELECT pg_advisory_unlock(${hash})`,
+    );
+  }
+
+  private hashLockId(lockId: string): number {
+    let hash = 0;
+    for (let i = 0; i < lockId.length; i++) {
+      const char = lockId.charCodeAt(i);
+      hash = ((hash << 5) - hash + char) | 0;
+    }
+    return hash;
+  }
+
+  createSavepointSql(name: string): string {
+    return `SAVEPOINT ${this.wrap(name)}`;
+  }
+
+  rollbackToSavepointSql(name: string): string {
+    return `ROLLBACK TO SAVEPOINT ${this.wrap(name)}`;
+  }
+
+  releaseSavepointSql(name: string): string {
+    return `RELEASE SAVEPOINT ${this.wrap(name)}`;
+  }
+
   /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    *

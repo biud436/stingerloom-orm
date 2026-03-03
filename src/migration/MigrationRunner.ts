@@ -2,6 +2,7 @@
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { Logger } from "../utils";
 import { Migration, MigrationContext } from "./Migration";
+import { AdvisoryLockError } from "../errors/AdvisoryLockError";
 
 /**
  * 마이그레이션 실행 결과.
@@ -34,21 +35,31 @@ export interface MigrationQueryRunner {
  * 미실행 마이그레이션을 순서대로 실행하고 __migrations 테이블에 기록합니다.
  * MySQL/PostgreSQL 드라이버 모두 지원합니다.
  */
+export interface MigrationRunnerOptions {
+  lockId?: string;
+  lockTimeoutMs?: number;
+}
+
 export class MigrationRunner {
   private readonly logger = new Logger(MigrationRunner.name);
   private readonly migrations: Migration[];
   private readonly driver: ISqlDriver;
   private readonly queryRunner: MigrationQueryRunner;
   private readonly tableName = "__migrations";
+  private readonly lockId: string;
+  private readonly lockTimeoutMs: number;
 
   constructor(
     migrations: Migration[],
     driver: ISqlDriver,
     queryRunner: MigrationQueryRunner,
+    options?: MigrationRunnerOptions,
   ) {
     this.migrations = migrations;
     this.driver = driver;
     this.queryRunner = queryRunner;
+    this.lockId = options?.lockId ?? "stingerloom_migration_lock";
+    this.lockTimeoutMs = options?.lockTimeoutMs ?? 10000;
   }
 
   /**
@@ -96,25 +107,41 @@ export class MigrationRunner {
 
   /**
    * 미실행 마이그레이션을 순서대로 실행합니다.
+   * Advisory lock을 사용하여 동시 실행을 방지합니다.
    */
   async runAll(): Promise<MigrationResult[]> {
-    await this.ensureMigrationTable();
-    const executed = await this.getExecutedMigrations();
-    const pending = this.migrations.filter(
-      (m) => !executed.includes(m.name),
+    const acquired = await this.driver.acquireAdvisoryLock(
+      this.lockId,
+      this.lockTimeoutMs,
     );
 
-    const results: MigrationResult[] = [];
-
-    for (const migration of pending) {
-      const result = await this.runUp(migration);
-      results.push(result);
-      if (!result.success) {
-        break;
-      }
+    if (!acquired) {
+      throw new AdvisoryLockError(
+        `Failed to acquire migration lock "${this.lockId}" within ${this.lockTimeoutMs}ms. Another migration may be running.`,
+      );
     }
 
-    return results;
+    try {
+      await this.ensureMigrationTable();
+      const executed = await this.getExecutedMigrations();
+      const pending = this.migrations.filter(
+        (m) => !executed.includes(m.name),
+      );
+
+      const results: MigrationResult[] = [];
+
+      for (const migration of pending) {
+        const result = await this.runUp(migration);
+        results.push(result);
+        if (!result.success) {
+          break;
+        }
+      }
+
+      return results;
+    } finally {
+      await this.driver.releaseAdvisoryLock(this.lockId);
+    }
   }
 
   /**
