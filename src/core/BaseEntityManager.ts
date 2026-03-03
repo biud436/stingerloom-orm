@@ -35,7 +35,10 @@ export abstract class BaseEntityManager {
    * 서버가 어떠한 이유로 인해 종료될 때 호출됩니다.
    * 통합 테스트 환경에서는 이 메서드가 빈번하게 호출될 수 있습니다.
    */
-  abstract propagateShutdown(): Promise<void>;
+  abstract propagateShutdown(options?: {
+    gracefulTimeoutMs?: number;
+    closeConnections?: boolean;
+  }): Promise<boolean>;
 
   /**
    * 데이터베이스 쿼리를 수행하여 결과를 1건 반환합니다.

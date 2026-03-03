@@ -222,8 +222,8 @@ describe("propagateShutdown() resource cleanup", () => {
     em.on("beforeInsert", listener);
     em.addSubscriber({ listenTo: () => FalsyTestEntity } as any);
     (em as any).dirtyEntities.add({});
-    (em as any).queryTracker = { getLog: () => [] };
-    (em as any).replicationRouter = {};
+    (em as any).queryTracker = { getLog: () => [], reset: jest.fn() };
+    (em as any).replicationRouter = { resetFailedSlaves: jest.fn() };
 
     // Call propagateShutdown
     await em.propagateShutdown();

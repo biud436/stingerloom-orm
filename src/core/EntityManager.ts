@@ -79,7 +79,7 @@ import {
   UpdateEvent,
   DeleteEvent,
 } from "./EntitySubscriber";
-import { QueryTracker, QueryLogEntry } from "./QueryTracker";
+import { QueryTracker, QueryLogEntry, QueryTrackerOptions } from "./QueryTracker";
 import { LoggingOptions } from "./DatabaseClientOptions";
 import {
   CursorPaginationOption,
@@ -210,9 +210,19 @@ export class EntityManager implements BaseEntityManager {
     const logging = options.logging;
     if (typeof logging === "object" && logging !== null) {
       const loggingOpts = logging as LoggingOptions;
+
+      // enableQueryTracking이 명시적으로 false이면 비활성화
+      if (loggingOpts.enableQueryTracking === false) {
+        this.queryTracker = null;
+        return;
+      }
+
       if (loggingOpts.nPlusOne || loggingOpts.slowQueryMs) {
         this.queryTracker = new QueryTracker({
           slowQueryMs: loggingOpts.slowQueryMs ?? null,
+          enabled: loggingOpts.enableQueryTracking ?? true,
+          maxLogEntries: loggingOpts.maxLogEntries,
+          ttlMs: loggingOpts.ttlMs,
         });
       }
     }
@@ -226,13 +236,31 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
-   * 쿼리 실행을 추적합니다. QueryTracker가 활성화된 경우에만 동작합니다.
+   * 현재 QueryTracker 인스턴스를 반환합니다.
+   * graceful shutdown 시 활성 쿼리 대기에 사용합니다.
+   */
+  getQueryTracker(): QueryTracker | null {
+    return this.queryTracker;
+  }
+
+  /**
+   * 쿼리 실행 시작을 기록합니다. (활성 쿼리 카운터 증가)
+   * trackQuery()와 쌍으로 사용하세요.
+   */
+  private beginTrackQuery(): void {
+    this.queryTracker?.beginQuery();
+  }
+
+  /**
+   * 쿼리 실행 완료를 기록하고 로그에 추가합니다.
+   * QueryTracker가 활성화된 경우에만 동작합니다.
    */
   private trackQuery(
     entityName: string,
     sqlText: string,
     durationMs: number,
   ): void {
+    this.queryTracker?.endQuery();
     this.queryTracker?.track(entityName, sqlText, durationMs);
   }
 
@@ -338,12 +366,66 @@ export class EntityManager implements BaseEntityManager {
     }
   }
 
-  public async propagateShutdown() {
+  /**
+   * 리소스를 정리하고 종료합니다.
+   *
+   * @param options.gracefulTimeoutMs 진행 중인 쿼리 완료를 대기할 최대 시간 (ms).
+   *   0이면 즉시 종료. 기본값 0.
+   * @param options.closeConnections true이면 DatabaseClient 커넥션까지 종료합니다. 기본값 false.
+   * @returns 모든 쿼리가 정상 완료되었으면 true, 타임아웃으로 강제 종료되었으면 false.
+   */
+  public async propagateShutdown(options?: {
+    gracefulTimeoutMs?: number;
+    closeConnections?: boolean;
+  }): Promise<boolean> {
+    const gracefulTimeoutMs = options?.gracefulTimeoutMs ?? 0;
+    const closeConnections = options?.closeConnections ?? false;
+
+    let allQueriesCompleted = true;
+
+    // 1. 진행 중 쿼리 대기
+    if (gracefulTimeoutMs > 0 && this.queryTracker) {
+      const activeCount = this.queryTracker.activeQueryCount;
+      if (activeCount > 0) {
+        this.logger.info(
+          `[Shutdown] Waiting for ${activeCount} active queries (timeout: ${gracefulTimeoutMs}ms)...`,
+        );
+        allQueriesCompleted = await this.queryTracker.waitForQueries(gracefulTimeoutMs);
+        if (!allQueriesCompleted) {
+          this.logger.warn(
+            `[Shutdown] Timed out waiting for active queries. Forcing shutdown.`,
+          );
+        }
+      }
+    }
+
+    // 2. 이벤트 리스너 / 구독자 / dirty 엔티티 정리
     this.removeAllListeners();
     this.subscribers.length = 0;
     this.dirtyEntities.clear();
+
+    // 3. QueryTracker 정리
+    this.queryTracker?.reset();
     this.queryTracker = null;
-    this.replicationRouter = null;
+
+    // 4. ReplicationRouter 정리
+    if (this.replicationRouter) {
+      this.replicationRouter.resetFailedSlaves();
+      this.replicationRouter = null;
+    }
+
+    // 5. 커넥션 풀 종료 (요청 시)
+    if (closeConnections) {
+      try {
+        await this.client.close(this.connectionName);
+      } catch (err) {
+        this.logger.warn(
+          `[Shutdown] Error closing connection '${this.connectionName}': ${err}`,
+        );
+      }
+    }
+
+    return allQueriesCompleted;
   }
 
   getNameStrategy<T>(clazz: ClazzType<T>): string {
@@ -985,6 +1067,7 @@ export class EntityManager implements BaseEntityManager {
 
           const resultQuery = qb.build();
           const subQueryStart = Date.now();
+          this.beginTrackQuery();
           const queryResult = (await transactionHolder.query(
             resultQuery,
           )) as QueryResult;
@@ -2014,6 +2097,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       const queryStartTime = Date.now();
+      this.beginTrackQuery();
       const queryResult = (await transactionHolder.query<T>(
         resultQuery,
       )) as QueryResult;
@@ -2330,6 +2414,7 @@ export class EntityManager implements BaseEntityManager {
                         VALUES (${join(values, ", ")})${returningSql}
                     `;
         const saveQueryStart = Date.now();
+        this.beginTrackQuery();
         const queryResult = (await transactionManager.query<T>(insertSql)) as {
           results: any;
           fields: any;
@@ -2486,6 +2571,7 @@ export class EntityManager implements BaseEntityManager {
             WHERE ${join(pkWhereClauses, " AND ")}
                   `;
         const updateStart = Date.now();
+        this.beginTrackQuery();
         await transactionManager.query<T>(updateSql);
         this.trackQuery(
           entity.name,
@@ -2947,6 +3033,7 @@ export class EntityManager implements BaseEntityManager {
       const deleteQuery = sql`DELETE FROM ${raw(this.wrap(metadata.name!))} WHERE ${whereSql}`;
 
       const deleteStart = Date.now();
+      this.beginTrackQuery();
       const queryResult = (await transactionManager.query(deleteQuery)) as {
         results: any;
         fields: any;

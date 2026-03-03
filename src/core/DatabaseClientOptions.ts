@@ -34,6 +34,13 @@ export interface PoolOptions {
    * @default 10000
    */
   idleTimeoutMs?: number;
+
+  /**
+   * Time (ms) a connection can be held before a leak warning is logged.
+   * Set to 0 to disable leak detection.
+   * @default 30000
+   */
+  leakDetectionThresholdMs?: number;
 }
 
 /**
@@ -134,6 +141,25 @@ export interface LoggingOptions {
 
   /** N+1 쿼리 감지 경고를 활성화합니다 */
   nPlusOne?: boolean;
+
+  /**
+   * QueryTracker 활성화 여부. false이면 쿼리 추적을 완전히 비활성화합니다.
+   * 프로덕션 환경에서 오버헤드를 제거하려면 false로 설정하세요.
+   * @default true (nPlusOne 또는 slowQueryMs 설정 시)
+   */
+  enableQueryTracking?: boolean;
+
+  /**
+   * QueryTracker 최대 로그 보관 수. Ring buffer 방식으로 초과 시 가장 오래된 항목부터 제거됩니다.
+   * @default 1000
+   */
+  maxLogEntries?: number;
+
+  /**
+   * QueryTracker 로그 항목 자동 삭제 TTL (ms).
+   * 설정 시 track() 호출마다 이 시간보다 오래된 항목을 제거합니다.
+   */
+  ttlMs?: number;
 }
 
 /**
