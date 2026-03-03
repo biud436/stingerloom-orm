@@ -2,9 +2,27 @@ module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
   clearMocks: true,
-  collectCoverage: false,
+  collectCoverage: true,
   coverageDirectory: "coverage",
   coverageProvider: "v8",
+
+  // Coverage thresholds
+  coverageThreshold: {
+    global: {
+      branches: 70,
+      functions: 70,
+      lines: 70,
+      statements: 70,
+    },
+  },
+
+  // Coverage ignore patterns
+  coveragePathIgnorePatterns: [
+    "/node_modules/",
+    "/dist/",
+    "/__tests__/",
+    "/examples/",
+  ],
 
   // Module file extensions
   moduleFileExtensions: ["js", "ts", "json", "node"],
