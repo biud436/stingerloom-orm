@@ -3,21 +3,21 @@ import sql, { Sql, join, raw } from "sql-template-tag";
 
 export class Conditions {
   /**
-   * 컬럼이 특정 값과 같은지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column equals a specific value.
    */
   static equals(column: string, value: any): Sql {
     return sql`${raw(column)} = ${value}`;
   }
 
   /**
-   * 컬럼이 특정 값과 같지 않은지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column does not equal a specific value.
    */
   static notEquals(column: string, value: any): Sql {
     return sql`${raw(column)} != ${value}`;
   }
 
   /**
-   * 컬럼이 특정 값들 중 하나에 해당하는지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column matches one of the specified values.
    */
   static in(column: string, values: any[]): Sql {
     return sql`${raw(column)} IN (${join(
@@ -27,7 +27,7 @@ export class Conditions {
   }
 
   /**
-   * 컬럼이 특정 값들 중 하나에 해당하지 않는지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column does not match any of the specified values.
    */
   static notIn(column: string, values: any[]): Sql {
     return sql`${raw(column)} NOT IN (${join(
@@ -37,49 +37,49 @@ export class Conditions {
   }
 
   /**
-   * 컬럼이 특정 패턴과 일치하는지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column matches a specific pattern.
    */
   static like(column: string, pattern: string): Sql {
     return sql`${raw(column)} LIKE ${pattern}`;
   }
 
   /**
-   * 컬럼이 특정 패턴과 일치하지 않는지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column does not match a specific pattern.
    */
   static notLike(column: string, pattern: string): Sql {
     return sql`${raw(column)} NOT LIKE ${pattern}`;
   }
 
   /**
-   * 컬럼이 NULL인지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column is NULL.
    */
   static isNull(column: string): Sql {
     return sql`${raw(column)} IS NULL`;
   }
 
   /**
-   * 컬럼이 NULL이 아닌지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column is NOT NULL.
    */
   static isNotNull(column: string): Sql {
     return sql`${raw(column)} IS NOT NULL`;
   }
 
   /**
-   * 컬럼이 특정 범위 내에 있는지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column is within a specific range.
    */
   static between(column: string, start: any, end: any): Sql {
     return sql`${raw(column)} BETWEEN ${start} AND ${end}`;
   }
 
   /**
-   * 컬럼이 특정 범위 내에 있지 않은지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column is not within a specific range.
    */
   static notBetween(column: string, start: any, end: any): Sql {
     return sql`${raw(column)} NOT BETWEEN ${start} AND ${end}`;
   }
 
   /**
-   * 컬럼이 특정 값보다 큰지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column is greater than a specific value.
    */
   static gt(column: string | Sql, value: any): Sql {
     if (typeof column === "string") {
@@ -89,14 +89,14 @@ export class Conditions {
   }
 
   /**
-   * 컬럼이 특정 값보다 크거나 같은지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column is greater than or equal to a specific value.
    */
   static gte(column: string, value: any): Sql {
     return sql`${raw(column)} >= ${value}`;
   }
 
   /**
-   * 컬럼이 특정 값보다 작은지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column is less than a specific value.
    */
   static lt(column: string | Sql, value: any): Sql {
     if (typeof column === "string") {
@@ -106,80 +106,80 @@ export class Conditions {
   }
 
   /**
-   * 컬럼이 특정 값보다 작거나 같은지 확인하는 조건을 생성합니다.
+   * Creates a condition that checks if a column is less than or equal to a specific value.
    */
   static lte(column: string, value: any): Sql {
     return sql`${raw(column)} <= ${value}`;
   }
 
   /**
-   * 여러 조건을 OR로 결합합니다.
+   * Combines multiple conditions with OR.
    */
   static or(conditions: Sql[]): Sql {
     return sql`(${join(conditions, " OR ")})`;
   }
 
   /**
-   * 여러 조건을 AND로 결합합니다.
+   * Combines multiple conditions with AND.
    */
   static and(conditions: Sql[]): Sql {
     return sql`(${join(conditions, " AND ")})`;
   }
 
   /**
-   * 임의의 조건식을 생성합니다.
+   * Creates an arbitrary raw condition expression.
    */
   static raw(condition: string): Sql {
     return sql`${raw(condition)}`;
   }
 
   /**
-   * 집계 함수를 생성합니다.
+   * Creates an aggregate function expression.
    */
   static aggregate(fn: string, column: string): Sql {
     return sql`${raw(fn)}(${raw(column)})`;
   }
 
   /**
-   * 컬럼의 개수를 세는 집계 함수를 생성합니다.
+   * Creates a COUNT aggregate function for a column.
    */
   static count(column: string): Sql {
     return this.aggregate("COUNT", column);
   }
 
   /**
-   * 컬럼의 합계를 구하는 집계 함수를 생성합니다.
+   * Creates a SUM aggregate function for a column.
    */
   static sum(column: string): Sql {
     return this.aggregate("SUM", column);
   }
 
   /**
-   * 컬럼의 평균을 구하는 집계 함수를 생성합니다.
+   * Creates an AVG aggregate function for a column.
    */
   static avg(column: string): Sql {
     return this.aggregate("AVG", column);
   }
 
   /**
-   * IN (서브쿼리) 조건을 생성합니다.
+   * Creates an IN (subquery) condition.
    */
   static inSubquery(column: string, subquery: Sql): Sql {
     return sql`${raw(column)} IN ${subquery}`;
   }
 
   /**
-   * NOT IN (서브쿼리) 조건을 생성합니다.
+   * Creates a NOT IN (subquery) condition.
    */
   static notInSubquery(column: string, subquery: Sql): Sql {
     return sql`${raw(column)} NOT IN ${subquery}`;
   }
 
   /**
-   * EXISTS 조건을 생성합니다.
+   * Creates an EXISTS condition.
    */
   static exists(subquery: Sql): Sql {
-    // EXISTS 키워드가 이미 포함되어 있는지 확인
+    // Check if EXISTS keyword is already included
     const subquerySql = subquery.sql;
     if (subquerySql.startsWith("EXISTS (")) {
       return subquery;
@@ -188,7 +188,7 @@ export class Conditions {
   }
 
   /**
-   * NOT EXISTS 조건을 생성합니다.
+   * Creates a NOT EXISTS condition.
    */
   static notExists(subquery: Sql): Sql {
     return sql`NOT EXISTS ${subquery}`;
@@ -213,13 +213,13 @@ export class Conditions {
     const normalized = operator.trim().toUpperCase();
     if (!Conditions.ALLOWED_OPERATORS.includes(normalized)) {
       throw new Error(
-        `허용되지 않은 연산자입니다: "${operator}". 허용된 연산자: ${Conditions.ALLOWED_OPERATORS.join(", ")}`,
+        `Invalid operator: "${operator}". Allowed operators: ${Conditions.ALLOWED_OPERATORS.join(", ")}`,
       );
     }
   }
 
   /**
-   * 비교 연산자와 서브쿼리를 조합합니다.
+   * Combines a comparison operator with a subquery.
    */
   static compareSubquery(column: string, operator: string, subquery: Sql): Sql {
     Conditions.validateOperator(operator);
@@ -227,7 +227,7 @@ export class Conditions {
   }
 
   /**
-   * 컬럼 비교 조건을 생성합니다.
+   * Creates a column-to-column comparison condition.
    */
   static compareColumns(
     column1: string,
