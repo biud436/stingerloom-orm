@@ -2743,6 +2743,11 @@ export class EntityManager implements BaseEntityManager {
         await transactionManager.query("SET autocommit = 0");
       }
 
+      // @BeforeInsert 훅 실행 (columns/values 추출 전에 실행해야 훅의 변경사항이 반영됨)
+      for (const item of items) {
+        await this.runHooks(entity, item, "beforeInsert");
+      }
+
       // auto-increment PK 컬럼을 제외한 삽입 대상 컬럼 결정
       const insertableColumns = metadata.columns.filter(
         (column: ColumnMetadata) => {

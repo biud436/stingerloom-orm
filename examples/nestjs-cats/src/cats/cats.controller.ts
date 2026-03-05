@@ -15,11 +15,12 @@ import {
   ApiResponse,
   ApiParam,
   ApiQuery,
-  ApiBody,
 } from "@nestjs/swagger";
 import { CatsService } from "./cats.service";
 import { CreateCatDto } from "./dto/create-cat.dto";
 import { UpdateCatDto } from "./dto/update-cat.dto";
+import { BulkCreateCatDto } from "./dto/bulk-create-cat.dto";
+import { BulkDeleteCatDto } from "./dto/bulk-delete-cat.dto";
 
 @ApiTags("cats")
 @Controller("cats")
@@ -46,13 +47,12 @@ export class CatsController {
     description:
       "여러 고양이를 한 번의 INSERT 쿼리로 일괄 생성합니다 (insertMany).",
   })
-  @ApiBody({ type: [CreateCatDto], description: "생성할 고양이 배열" })
   @ApiResponse({
     status: 201,
     description: "배치 생성 완료. affected 수 반환.",
   })
-  bulkCreate(@Body() dtos: CreateCatDto[]) {
-    return this.catsService.bulkCreate(dtos);
+  bulkCreate(@Body() dto: BulkCreateCatDto) {
+    return this.catsService.bulkCreate(dto.cats);
   }
 
   /** GET /cats -- soft-deleted 제외 목록 (자동 필터 데모) */
@@ -165,6 +165,21 @@ export class CatsController {
     return this.catsService.update(id, updateCatDto);
   }
 
+  /** DELETE /cats/bulk -- ID 배열로 배치 삭제 (deleteMany 데모) */
+  @Delete("bulk")
+  @ApiOperation({
+    summary: "고양이 배치 삭제",
+    description:
+      "ID 배열로 여러 고양이를 한 번의 쿼리로 영구 삭제합니다 (deleteMany).",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "배치 삭제 완료. affected 수 반환.",
+  })
+  removeMany(@Body() dto: BulkDeleteCatDto) {
+    return this.catsService.removeMany(dto.ids);
+  }
+
   /** DELETE /cats/:id -- 영구 삭제 */
   @Delete(":id")
   @ApiOperation({
@@ -205,26 +220,4 @@ export class CatsController {
     return this.catsService.restore(id);
   }
 
-  /** DELETE /cats/bulk -- ID 배열로 배치 삭제 (deleteMany 데모) */
-  @Delete("bulk")
-  @ApiOperation({
-    summary: "고양이 배치 삭제",
-    description:
-      "ID 배열로 여러 고양이를 한 번의 쿼리로 영구 삭제합니다 (deleteMany).",
-  })
-  @ApiBody({
-    description: "삭제할 고양이 ID 배열",
-    schema: {
-      type: "array",
-      items: { type: "number" },
-      example: [1, 2, 3],
-    },
-  })
-  @ApiResponse({
-    status: 200,
-    description: "배치 삭제 완료. affected 수 반환.",
-  })
-  removeMany(@Body() ids: number[]) {
-    return this.catsService.removeMany(ids);
-  }
 }
