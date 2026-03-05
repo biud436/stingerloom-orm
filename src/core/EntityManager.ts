@@ -2745,10 +2745,14 @@ export class EntityManager implements BaseEntityManager {
 
       // timestamp 컬럼 자동 설정 (O(1) Date 생성 + 컬럼별 일괄 적용)
       // @BeforeInsert 훅 대신 메타데이터 기반으로 처리하여 per-item 함수 호출을 제거합니다.
+      // @DeletedAt 컬럼은 soft delete 전용이므로 제외합니다.
+      const deletedAtColumn = this.getDeletedAtColumn(entity);
       const timestampTypes = new Set(["datetime", "timestamp", "date"]);
       const timestampColumns = metadata.columns.filter(
         (col: ColumnMetadata) =>
-          col.options?.type && timestampTypes.has(col.options.type),
+          col.options?.type &&
+          timestampTypes.has(col.options.type) &&
+          col.name !== deletedAtColumn,
       );
       if (timestampColumns.length > 0) {
         const now = new Date();
