@@ -2358,25 +2358,27 @@ export class EntityManager implements BaseEntityManager {
         });
 
         // ManyToOne FK 컬럼 값 추출 (joinColumn이 명시된 관계에서 관계 객체의 PK 추출)
+        // 지원하는 할당 패턴:
+        //   1. cat.owner = ownerEntity   → owner.id 추출
+        //   2. cat.ownerId = 1           → {propertyName}Id 컨벤션
+        //   3. cat.owner = null          → FK를 NULL로 설정
         // @Column과 @ManyToOne joinColumn이 같은 이름일 수 있으므로 중복 방지
         const manyToOneRelations = this.resolveManyToOneMetadata(entity);
         for (const rel of manyToOneRelations) {
           if (!rel.joinColumn) continue;
           const relatedValue = (item as any)[rel.columnName];
+          const idPropValue = (item as any)[`${rel.columnName}Id`];
 
           // joinColumn이 이미 @Column으로 columns에 포함되어 있는지 확인
           const existingIdx = insertableColumns.findIndex(
             (col: ColumnMetadata) => col.name === rel.joinColumn,
           );
 
+          let fkValue: any = undefined;
+
           // null 할당 시 FK를 NULL로 INSERT
           if (relatedValue === null) {
-            if (existingIdx >= 0) {
-              values[existingIdx] = null;
-            } else {
-              columns.push(raw(this.wrap(rel.joinColumn)));
-              values.push(null);
-            }
+            fkValue = null;
           } else if (relatedValue && typeof relatedValue === "object") {
             const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
             const relatedMeta = this.resolveEntityMetadata(RelatedEntity);
@@ -2385,16 +2387,20 @@ export class EntityManager implements BaseEntityManager {
                 (col: any) => col.options?.primary,
               );
               if (relatedPk) {
-                const fkValue = relatedValue[relatedPk.name!];
-                if (fkValue !== undefined && fkValue !== null) {
-                  if (existingIdx >= 0) {
-                    values[existingIdx] = fkValue;
-                  } else {
-                    columns.push(raw(this.wrap(rel.joinColumn)));
-                    values.push(fkValue);
-                  }
-                }
+                fkValue = relatedValue[relatedPk.name!] ?? undefined;
               }
+            }
+          } else if (idPropValue != null) {
+            // {propertyName}Id 컨벤션 (예: cat.ownerId = 1)
+            fkValue = idPropValue;
+          }
+
+          if (fkValue !== undefined) {
+            if (existingIdx >= 0) {
+              values[existingIdx] = fkValue;
+            } else {
+              columns.push(raw(this.wrap(rel.joinColumn)));
+              values.push(fkValue);
             }
           }
         }
@@ -2783,11 +2789,56 @@ export class EntityManager implements BaseEntityManager {
         raw(this.wrap(column.name!)),
       );
 
+      // ManyToOne FK 컬럼 추가 (@Column에 포함되지 않은 joinColumn을 columns에 추가)
+      const manyToOneRelations = this.resolveManyToOneMetadata(entity);
+      const fkColumns: { joinColumn: string; propertyName: string; relMeta: any }[] = [];
+      for (const rel of manyToOneRelations) {
+        if (!rel.joinColumn) continue;
+        // 이미 @Column으로 포함된 경우 스킵
+        const alreadyIncluded = insertableColumns.some(
+          (col: ColumnMetadata) => col.name === rel.joinColumn,
+        );
+        if (!alreadyIncluded) {
+          columns.push(raw(this.wrap(rel.joinColumn)));
+          fkColumns.push({
+            joinColumn: rel.joinColumn,
+            propertyName: rel.columnName,
+            relMeta: rel,
+          });
+        }
+      }
+
       // 각 아이템의 값을 VALUES 절로 구성
       const valueRows = items.map((item) => {
         const rowValues = insertableColumns.map(
           (column: ColumnMetadata) => (item as any)[column.name!],
         );
+        // ManyToOne FK 값 추출
+        // 지원하는 할당 패턴:
+        //   1. cat.owner = ownerEntity   → owner.id 추출
+        //   2. cat.owner = 1             → 직접 FK 값
+        //   3. cat.ownerId = 1           → {propertyName}Id 컨벤션
+        for (const fk of fkColumns) {
+          const relatedValue = (item as any)[fk.propertyName];
+          const idPropValue = (item as any)[`${fk.propertyName}Id`];
+
+          if (relatedValue != null) {
+            if (typeof relatedValue === "object") {
+              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<any>;
+              const relatedMeta = this.resolveEntityMetadata(RelatedEntity);
+              const relatedPk = relatedMeta?.columns.find(
+                (col: any) => col.options?.primary,
+              );
+              rowValues.push(relatedPk ? relatedValue[relatedPk.name!] ?? null : null);
+            } else {
+              rowValues.push(relatedValue);
+            }
+          } else if (idPropValue != null) {
+            rowValues.push(idPropValue);
+          } else {
+            rowValues.push(null);
+          }
+        }
         return sql`(${join(rowValues, ", ")})`;
       });
 

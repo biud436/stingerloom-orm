@@ -64,7 +64,9 @@ export class CatsService {
     cat.name = createCatDto.name;
     cat.age = createCatDto.age;
     cat.breed = createCatDto.breed;
-    // createdAt / updatedAt은 @BeforeInsert 훅에서 자동 설정됨
+    if (createCatDto.ownerId) {
+      cat.ownerId = createCatDto.ownerId;
+    }
 
     const result = await this.catRepository.save(cat);
     if (!result) {
@@ -82,6 +84,9 @@ export class CatsService {
       cat.name = dto.name;
       cat.age = dto.age;
       cat.breed = dto.breed;
+      if (dto.ownerId) {
+        cat.ownerId = dto.ownerId;
+      }
       return cat;
     });
     return this.catRepository.insertMany(cats);
@@ -91,7 +96,9 @@ export class CatsService {
    * soft-deleted 엔티티 제외한 목록 조회 (기본 동작 — deleted_at IS NULL 자동 필터).
    */
   async findAll(): Promise<Cat[]> {
-    const result = await this.catRepository.find({});
+    const result = await this.catRepository.find({
+      relations: ["owner"], // @ManyToOne eager 로딩 데모
+    });
     if (!result) return [];
     return Array.isArray(result) ? result : [result];
   }
@@ -108,6 +115,7 @@ export class CatsService {
   async findOne(id: number): Promise<Cat> {
     const result = await this.catRepository.findOne({
       where: { id } as any,
+      relations: ["owner"], // @ManyToOne eager 로딩 데모
     });
 
     if (!result) {

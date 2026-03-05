@@ -61,6 +61,12 @@ export class Cat {
   owner!: Owner;
 
   /**
+   * FK shorthand — cat.ownerId = 1 로 설정하면
+   * ORM이 owner_id 컬럼에 매핑합니다. @Column 없이 동작.
+   */
+  ownerId?: number;
+
+  /**
    * @BeforeInsert — INSERT 직전에 createdAt, updatedAt을 자동 설정.
    */
   @BeforeInsert()
