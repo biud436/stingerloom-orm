@@ -853,6 +853,17 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
+   * 테이블의 모든 데이터를 제거합니다 (TRUNCATE ... RESTART IDENTITY CASCADE).
+   * CASCADE: FK 참조 테이블도 함께 truncate합니다.
+   * RESTART IDENTITY: 시퀀스를 초기화합니다.
+   */
+  clear(tableName: string) {
+    return this.connector.query(
+      `TRUNCATE TABLE ${this.wrapQualified(tableName)} RESTART IDENTITY CASCADE`,
+    );
+  }
+
+  /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    *
    * PostgreSQL은 FOR UPDATE NOWAIT를 지원합니다.

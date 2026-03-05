@@ -333,4 +333,13 @@ export interface ISqlDriver<T = any> {
    * @returns The SQL string to release the savepoint.
    */
   releaseSavepointSql(name: string): string;
+
+  /**
+   * Removes all rows from the specified table.
+   * Uses TRUNCATE where supported, or DELETE FROM as fallback.
+   *
+   * @param tableName - The name of the table to clear.
+   * @returns A promise that resolves when the operation is complete.
+   */
+  clear(tableName: string): Promise<T>;
 }

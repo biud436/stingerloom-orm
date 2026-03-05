@@ -165,6 +165,18 @@ export class CatsController {
     return this.catsService.update(id, updateCatDto);
   }
 
+  /** DELETE /cats/clear -- 테이블 전체 데이터 삭제 (TRUNCATE) */
+  @Delete("clear")
+  @ApiOperation({
+    summary: "고양이 전체 삭제",
+    description:
+      "고양이 테이블의 모든 데이터를 제거합니다 (TRUNCATE TABLE).",
+  })
+  @ApiResponse({ status: 200, description: "테이블 데이터 전체 삭제 완료" })
+  clear() {
+    return this.catsService.clear();
+  }
+
   /** DELETE /cats/bulk -- ID 배열로 배치 삭제 (deleteMany 데모) */
   @Delete("bulk")
   @ApiOperation({

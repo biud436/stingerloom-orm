@@ -168,6 +168,13 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Removes all rows from the entity table (TRUNCATE or DELETE FROM).
+   */
+  async clear(): Promise<void> {
+    return await this.em.clear<T>(this.entity);
+  }
+
+  /**
    * Returns the count of entities matching the given conditions.
    */
   async count(where?: { [K in keyof T]?: T[K] }): Promise<number> {

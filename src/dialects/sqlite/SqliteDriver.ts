@@ -441,6 +441,16 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
+   * 테이블의 모든 데이터를 제거합니다.
+   * SQLite는 TRUNCATE를 지원하지 않으므로 DELETE FROM을 사용합니다.
+   */
+  clear(tableName: string) {
+    return this.connector.query(
+      `DELETE FROM ${this.wrap(tableName)}`,
+    );
+  }
+
+  /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    * SQLite는 데이터베이스 수준 잠금을 사용하며 행 단위 잠금을 지원하지 않습니다.
    * BEGIN EXCLUSIVE 트랜잭션을 통해 잠금을 구현합니다.

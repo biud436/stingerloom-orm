@@ -2743,9 +2743,22 @@ export class EntityManager implements BaseEntityManager {
         await transactionManager.query("SET autocommit = 0");
       }
 
-      // @BeforeInsert 훅 실행 (columns/values 추출 전에 실행해야 훅의 변경사항이 반영됨)
-      for (const item of items) {
-        await this.runHooks(entity, item, "beforeInsert");
+      // timestamp 컬럼 자동 설정 (O(1) Date 생성 + 컬럼별 일괄 적용)
+      // @BeforeInsert 훅 대신 메타데이터 기반으로 처리하여 per-item 함수 호출을 제거합니다.
+      const timestampTypes = new Set(["datetime", "timestamp", "date"]);
+      const timestampColumns = metadata.columns.filter(
+        (col: ColumnMetadata) =>
+          col.options?.type && timestampTypes.has(col.options.type),
+      );
+      if (timestampColumns.length > 0) {
+        const now = new Date();
+        for (const item of items) {
+          for (const col of timestampColumns) {
+            if ((item as any)[col.name!] == null) {
+              (item as any)[col.name!] = now;
+            }
+          }
+        }
       }
 
       // auto-increment PK 컬럼을 제외한 삽입 대상 컬럼 결정
@@ -3083,6 +3096,25 @@ export class EntityManager implements BaseEntityManager {
         this.logger.error(`Failed to close transaction: ${closeError}`);
       }
     }
+  }
+
+  /**
+   * 엔티티 테이블의 모든 데이터를 제거합니다.
+   * 드라이버에 따라 TRUNCATE TABLE 또는 DELETE FROM을 사용합니다.
+   *
+   * @param entity 대상 엔티티 클래스
+   */
+  async clear<T>(entity: ClazzType<T>): Promise<void> {
+    const metadata = this.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    if (!this.driver) {
+      throw new Error("Driver is not initialized. Call connect() first.");
+    }
+
+    await this.driver.clear(metadata.name!);
   }
 
   /**

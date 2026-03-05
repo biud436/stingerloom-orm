@@ -183,6 +183,13 @@ export class CatsService {
   }
 
   /**
+   * clear — 테이블의 모든 데이터를 제거합니다 (TRUNCATE).
+   */
+  async clear(): Promise<void> {
+    await this.catRepository.clear();
+  }
+
+  /**
    * deleteMany — ID 배열로 여러 고양이를 한 번의 쿼리로 삭제합니다.
    */
   async removeMany(ids: number[]): Promise<{ affected: number }> {

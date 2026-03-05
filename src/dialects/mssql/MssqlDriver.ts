@@ -454,6 +454,15 @@ export class MssqlDriver implements ISqlDriver {
   }
 
   /**
+   * 테이블의 모든 데이터를 제거합니다 (TRUNCATE TABLE).
+   */
+  clear(tableName: string) {
+    return this.connector.query(
+      `TRUNCATE TABLE ${this.wrap(tableName)}`,
+    );
+  }
+
+  /**
    * 비관적 잠금을 위한 SQL을 반환합니다.
    * MSSQL은 WITH (UPDLOCK, ROWLOCK) 힌트를 사용하지만,
    * SELECT ... FOR UPDATE 호환성을 위해 UPDLOCK 힌트를 반환합니다.
