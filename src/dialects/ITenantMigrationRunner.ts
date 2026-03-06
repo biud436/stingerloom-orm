@@ -26,7 +26,7 @@ export interface TenantSyncResult {
  * 공통 인터페이스입니다.
  *
  * - PostgreSQL: 스키마 기반 격리 (CREATE SCHEMA + LIKE ... INCLUDING ALL)
- * - MySQL/SQLite/MSSQL: 미지원 (UnsupportedError throw)
+ * - MySQL/SQLite: 미지원 (UnsupportedError throw)
  */
 export interface ITenantMigrationRunner {
   /**

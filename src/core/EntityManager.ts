@@ -15,7 +15,6 @@ import { DatabaseClient } from "../DatabaseClient";
 import { MySqlDriver } from "../dialects/mysql/MySqlDriver";
 import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../dialects/sqlite/SqliteDriver";
-import { MssqlDriver } from "../dialects/mssql/MssqlDriver";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { SchemaGenerator } from "./generators/SchemaGenerator";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
@@ -31,7 +30,6 @@ import { IDataSource } from "../dialects/IDataSource";
 import { MySqlDataSource } from "../dialects/mysql/MySqlDataSource";
 import { PostgresDataSource } from "../dialects/postgres/PostgresDataSource";
 import { SqliteDataSource } from "../dialects/sqlite/SqliteDataSource";
-import { MssqlDataSource } from "../dialects/mssql/MssqlDataSource";
 import sql, { Sql, join, raw } from "sql-template-tag";
 import {
   ENTITY_TOKEN,
@@ -181,10 +179,6 @@ export class EntityManager implements BaseEntityManager {
       case "sqlite":
         this.driver = new SqliteDriver(connector);
         this.dataSource = new SqliteDataSource(connector);
-        break;
-      case "mssql":
-        this.driver = new MssqlDriver(connector);
-        this.dataSource = new MssqlDataSource(connector);
         break;
       default:
         throw new NotSupportedDatabaseTypeError();
@@ -3033,21 +3027,7 @@ export class EntityManager implements BaseEntityManager {
       return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
     }
 
-    // MSSQL: MERGE 문
-    const joinCondition = join(
-      conflictColumns.map((col) => raw(`target.${col} = source.${col}`)),
-      " AND ",
-    );
-    const updateSet = join(
-      updateColumns.map((col) => raw(`target.${col} = source.${col}`)),
-      ", ",
-    );
-    const sourceCols = join(
-      columns.map((col) => raw(`source.${col}`)),
-      ", ",
-    );
-
-    return sql`MERGE INTO ${raw(tableName)} AS target USING (SELECT ${valueList}) AS source (${columnList}) ON (${joinCondition}) WHEN MATCHED THEN UPDATE SET ${updateSet} WHEN NOT MATCHED THEN INSERT (${columnList}) VALUES (${sourceCols});`;
+    throw new Error(`Unsupported database type for upsert: ${this.dbType}`);
   }
 
   /**

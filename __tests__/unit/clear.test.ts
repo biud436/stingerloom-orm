@@ -183,15 +183,4 @@ describe("Driver.clear() SQL generation", () => {
     expect(mockConnector.query).toHaveBeenCalledWith('DELETE FROM "cats"');
   });
 
-  it("MSSQL: should generate TRUNCATE TABLE with bracket-wrapped name", () => {
-    const { MssqlDriver } = jest.requireActual(
-      "../../src/dialects/mssql/MssqlDriver",
-    );
-    const mockConnector = { query: jest.fn().mockResolvedValue(undefined) };
-    const driver = new MssqlDriver(mockConnector);
-
-    driver.clear("cats");
-
-    expect(mockConnector.query).toHaveBeenCalledWith("TRUNCATE TABLE [cats]");
-  });
 });

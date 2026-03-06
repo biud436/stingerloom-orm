@@ -11,7 +11,7 @@ import { IConnector } from "../../core/IConnector";
 import { IConnection } from "../IConnection";
 import { MysqlConnection } from "./MysqlConnection";
 export type AnyEntity = any;
-export type IDatabaseType = "mysql" | "mariadb" | "postgres" | "sqlite" | "mssql";
+export type IDatabaseType = "mysql" | "mariadb" | "postgres" | "sqlite";
 
 export class MySqlConnector extends IConnector {
   pool?: Pool;

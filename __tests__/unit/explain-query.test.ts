@@ -2,7 +2,6 @@ import "reflect-metadata";
 import { MySqlDriver } from "../../src/dialects/mysql/MySqlDriver";
 import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../../src/dialects/sqlite/SqliteDriver";
-import { MssqlDriver } from "../../src/dialects/mssql/MssqlDriver";
 import { EntityManager } from "../../src/core/EntityManager";
 import { ExplainResult } from "../../src/core/ExplainResult";
 import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
@@ -89,20 +88,6 @@ describe("Driver supportsExplain() / buildExplainSql()", () => {
     });
   });
 
-  describe("MssqlDriver", () => {
-    let driver: MssqlDriver;
-    beforeEach(() => { driver = new MssqlDriver({} as any); });
-
-    it("should not support EXPLAIN", () => {
-      expect(driver.supportsExplain()).toBe(false);
-    });
-
-    it("should throw when buildExplainSql is called", () => {
-      expect(() => driver.buildExplainSql("SELECT * FROM users")).toThrow(
-        "EXPLAIN is not supported for MSSQL.",
-      );
-    });
-  });
 });
 
 // ─── EntityManager.explain() 테스트 ──────────────────────────────────────
@@ -140,7 +125,7 @@ describe("EntityManager.explain()", () => {
   });
 
   it("should throw InvalidQueryError when driver does not support EXPLAIN", async () => {
-    setupDriver(new MssqlDriver({} as any));
+    setupDriver({ supportsExplain: () => false, buildExplainSql: () => { throw new Error(); } });
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(false);
 
     await expect(em.explain(TestEntity)).rejects.toThrow(InvalidQueryError);

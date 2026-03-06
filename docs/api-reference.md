@@ -260,7 +260,7 @@ type CascadeOption = boolean | ("insert" | "update" | "delete" | "remove")[];
 
 ```typescript
 interface DatabaseClientOptions {
-  type: "mysql" | "mariadb" | "postgres" | "sqlite" | "mssql";
+  type: "mysql" | "mariadb" | "postgres" | "sqlite";
   host: string;
   port: number;
   username: string;
@@ -361,7 +361,7 @@ interface ITenantMigrationRunner {
 interface TenantSyncResult { created: string[]; skipped: string[]; }
 ```
 
-구현체: `PostgresTenantMigrationRunner`, `MySqlTenantMigrationRunner`, `SqliteTenantMigrationRunner`, `MssqlTenantMigrationRunner`
+구현체: `PostgresTenantMigrationRunner`, `MySqlTenantMigrationRunner`, `SqliteTenantMigrationRunner`
 
 ### Migration
 

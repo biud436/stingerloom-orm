@@ -69,7 +69,6 @@ ORM을 사용하는 것이 목적이라면 **시작하기** 문서부터 따라�
 | PostgreSQL | 전체 지원 (스키마 격리, ENUM, RETURNING) |
 | MySQL / MariaDB | 전체 지원 |
 | SQLite | 지원 (파일 기반, 풀링 미지원) |
-| MSSQL | 지원 |
 
 ## 설치
 

@@ -3,7 +3,7 @@
  *
  * These tests verify:
  * - Each dialect's IConnection implementation (MysqlConnection, PostgresConnection,
- *   SqliteConnection, MssqlConnection)
+ *   SqliteConnection)
  * - IConnection contract: getUnderlying(), release(), isAlive(), acquiredAt
  * - ConnectionLeakDetector: tracking, untracking, leak warnings, shutdown
  * - IConnector.acquireConnection() returns IConnection instances
@@ -12,7 +12,6 @@
 import { MysqlConnection } from "../../src/dialects/mysql/MysqlConnection";
 import { PostgresConnection } from "../../src/dialects/postgres/PostgresConnection";
 import { SqliteConnection } from "../../src/dialects/sqlite/SqliteConnection";
-import { MssqlConnection } from "../../src/dialects/mssql/MssqlConnection";
 import {
   ConnectionLeakDetector,
 } from "../../src/dialects/ConnectionLeakDetector";
@@ -49,13 +48,6 @@ function createMockSqliteDb() {
   };
 }
 
-function createMockMssqlPool() {
-  return {
-    connected: true,
-    close: jest.fn(),
-    request: jest.fn(),
-  };
-}
 
 // ─── MysqlConnection ────────────────────────────────────────────────────────
 
@@ -175,42 +167,6 @@ describe("SqliteConnection", () => {
 
   it("should report isAlive as false when db is closed", () => {
     raw.open = false;
-    expect(conn.isAlive()).toBe(false);
-  });
-});
-
-// ─── MssqlConnection ────────────────────────────────────────────────────────
-
-describe("MssqlConnection", () => {
-  let raw: ReturnType<typeof createMockMssqlPool>;
-  let conn: MssqlConnection;
-
-  beforeEach(() => {
-    raw = createMockMssqlPool();
-    conn = new MssqlConnection(raw as any);
-  });
-
-  it("should return the underlying raw connection", () => {
-    expect(conn.getUnderlying()).toBe(raw);
-  });
-
-  it("should record acquiredAt timestamp", () => {
-    const now = Date.now();
-    expect(conn.acquiredAt).toBeGreaterThanOrEqual(now - 100);
-    expect(conn.acquiredAt).toBeLessThanOrEqual(now + 100);
-  });
-
-  it("should report isAlive as true when pool is connected", () => {
-    expect(conn.isAlive()).toBe(true);
-  });
-
-  it("should report isAlive as false after release", async () => {
-    await conn.release();
-    expect(conn.isAlive()).toBe(false);
-  });
-
-  it("should report isAlive as false when pool is disconnected", () => {
-    raw.connected = false;
     expect(conn.isAlive()).toBe(false);
   });
 });
@@ -392,16 +348,6 @@ describe("IConnector.acquireConnection()", () => {
     expect(conn.getUnderlying()).toBe(mockRaw);
   });
 
-  it("MssqlConnector.acquireConnection should return MssqlConnection", async () => {
-    const { MssqlConnector } = require("../../src/dialects/mssql/MssqlConnector");
-    const connector = new MssqlConnector();
-    const mockRaw = createMockMssqlPool();
-    connector.getConnection = jest.fn().mockResolvedValue(mockRaw);
-
-    const conn = await connector.acquireConnection();
-    expect(conn).toBeInstanceOf(MssqlConnection);
-    expect(conn.getUnderlying()).toBe(mockRaw);
-  });
 });
 
 // ─── PoolOptions.leakDetectionThresholdMs ────────────────────────────────────

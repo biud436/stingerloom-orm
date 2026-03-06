@@ -5,7 +5,6 @@ import { IConnector } from "../core/IConnector";
 import { MySqlDataSource } from "./mysql/MySqlDataSource";
 import { PostgresDataSource } from "./postgres/PostgresDataSource";
 import { SqliteDataSource } from "./sqlite/SqliteDataSource";
-import { MssqlDataSource } from "./mssql/MssqlDataSource";
 import { IDataSource } from "./IDataSource";
 import { Logger } from "../utils";
 import { DatabaseConnectionFailedError } from "../errors/DatabaseConnectionFailedError";
@@ -16,7 +15,6 @@ import { Exception } from "../errors";
 import { ReplicationNodeConfig } from "./ReplicationRouter";
 import { MySqlConnector } from "./mysql/MySqlConnector";
 import { PostgresConnector } from "./postgres/PostgresConnector";
-import { MssqlConnector } from "./mssql/MssqlConnector";
 
 /**
  * The `TransactionHolder` class extends the `IQueryEngine` and is responsible for managing
@@ -51,8 +49,6 @@ export class TransactionSessionManager extends IQueryEngine {
         this.dataSource = new SqliteDataSource(this.connection);
       } else if (dbType === "mysql") {
         this.dataSource = new MySqlDataSource(this.connection);
-      } else if (dbType === "mssql") {
-        this.dataSource = new MssqlDataSource(this.connection);
       } else {
         throw new Error(`Unsupported database type: ${dbType}`);
       }
@@ -78,8 +74,6 @@ export class TransactionSessionManager extends IQueryEngine {
       let connector: IConnector;
       if (dbType === "postgres") {
         connector = new PostgresConnector();
-      } else if (dbType === "mssql") {
-        connector = new MssqlConnector();
       } else {
         // mysql, mariadb
         connector = new MySqlConnector();
@@ -103,8 +97,6 @@ export class TransactionSessionManager extends IQueryEngine {
         this.dataSource = new SqliteDataSource(this.connection);
       } else if (dbType === "mysql" || dbType === "mariadb") {
         this.dataSource = new MySqlDataSource(this.connection);
-      } else if (dbType === "mssql") {
-        this.dataSource = new MssqlDataSource(this.connection);
       } else {
         throw new Error(`Unsupported database type: ${dbType}`);
       }

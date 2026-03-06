@@ -260,17 +260,6 @@ describe("Advisory Lock", () => {
       expect(driver.releaseSavepointSql("sp1")).toBe('RELEASE SAVEPOINT "sp1"');
     });
 
-    it("MSSQL should generate correct savepoint SQL", () => {
-      const { MssqlDriver } = require("../../src/dialects/mssql/MssqlDriver");
-      const mockConnector = { query: jest.fn() };
-      const driver = new MssqlDriver(mockConnector);
-
-      expect(driver.createSavepointSql("sp1")).toBe("SAVE TRANSACTION [sp1]");
-      expect(driver.rollbackToSavepointSql("sp1")).toBe("ROLLBACK TRANSACTION [sp1]");
-      // MSSQL does not support RELEASE SAVEPOINT
-      expect(driver.releaseSavepointSql("sp1")).toBe("");
-    });
-
     it("savepoint name should be properly escaped", () => {
       const { MySqlDriver } = require("../../src/dialects/mysql/MySqlDriver");
       const mockConnector = { query: jest.fn() };

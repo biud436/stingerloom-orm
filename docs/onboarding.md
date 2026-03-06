@@ -82,7 +82,7 @@ cd examples/nestjs-blog && pnpm install && pnpm start
 src/
 ├── core/               ← 핵심 로직 (EntityManager, Repository, QueryBuilder 등)
 ├── decorators/         ← @Entity, @Column 등 데코레이터 정의
-├── dialects/           ← DB별 드라이버 구현 (MySQL, PostgreSQL, SQLite, MSSQL)
+├── dialects/           ← DB별 드라이버 구현 (MySQL, PostgreSQL, SQLite)
 ├── metadata/           ← 레이어드 메타데이터 시스템 (멀티테넌시)
 ├── scanner/            ← 데코레이터 메타데이터 수집기 (EntityScanner, ColumnScanner 등)
 ├── migration/          ← 마이그레이션 시스템
@@ -179,7 +179,6 @@ Docker의 OverlayFS와 동일한 개념으로 동작합니다.
 | MySQL | 백틱 (`` ` ``) | `AUTO_INCREMENT` | 미지원 | `src/dialects/mysql/MySqlDriver.ts` |
 | PostgreSQL | 큰따옴표 (`"`) | `SERIAL` / `RETURNING` | 지원 (`schema.table`) | `src/dialects/postgres/PostgresDriver.ts` |
 | SQLite | 큰따옴표 (`"`) | `INTEGER PRIMARY KEY` | 미지원 | `src/dialects/sqlite/SqliteDriver.ts` |
-| MSSQL | 대괄호 (`[]`) | `IDENTITY` | 지원 (`schema.table`) | `src/dialects/mssql/MssqlDriver.ts` |
 
 각 드라이버의 연결 계층 구조:
 
@@ -419,7 +418,7 @@ const query = `SELECT * FROM users WHERE id = ${userId}`;
 테이블명/컬럼명 같은 식별자는 드라이버의 `escapeIdentifier()` 또는 `wrapIdentifier()`로 래핑합니다.
 
 ```typescript
-// MySQL: `users`, PostgreSQL: "users", MSSQL: [users]
+// MySQL: `users`, PostgreSQL: "users"
 const tableName = driver.escapeIdentifier("users");
 ```
 

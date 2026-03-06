@@ -54,21 +54,6 @@ await em.register({
 });
 ```
 
-### MSSQL
-
-```typescript
-await em.register({
-  type: "mssql",
-  host: "localhost",
-  port: 1433,
-  username: "sa",
-  password: "password",
-  database: "mydb",
-  entities: [User],
-  synchronize: true,
-});
-```
-
 ## synchronize 옵션
 
 `synchronize: true`로 설정하면 엔티티 정의를 기반으로 테이블이 자동 생성됩니다.
@@ -94,12 +79,12 @@ await em.register({
 
 DB에 따라 지원하는 옵션이 다릅니다.
 
-| 옵션 | MySQL | PostgreSQL | SQLite | MSSQL |
-|------|-------|-----------|--------|-------|
-| `max` | O | O | 무시 | O |
-| `min` | - | O | 무시 | O |
-| `acquireTimeoutMs` | - | O | 무시 | O |
-| `idleTimeoutMs` | - | O | 무시 | - |
+| 옵션 | MySQL | PostgreSQL | SQLite |
+|------|-------|-----------|--------|
+| `max` | O | O | 무시 |
+| `min` | - | O | 무시 |
+| `acquireTimeoutMs` | - | O | 무시 |
+| `idleTimeoutMs` | - | O | 무시 |
 
 > **Hint** SQLite는 파일 기반 단일 연결이므로 풀 설정이 무시됩니다.
 
@@ -187,7 +172,6 @@ const users = await em.find(User, {
 | MySQL | `SET max_execution_time = N` |
 | PostgreSQL | `SET LOCAL statement_timeout = N` |
 | SQLite | 드라이버 레벨 타임아웃 |
-| MSSQL | `SET QUERY_GOVERNOR_COST_LIMIT N` |
 
 ## Read Replica (읽기/쓰기 분리)
 
@@ -279,7 +263,7 @@ console.log(analyticsEm.getConnectionName()); // "analytics"
 
 ```typescript
 interface DatabaseClientOptions {
-  type: "mysql" | "mariadb" | "postgres" | "sqlite" | "mssql";
+  type: "mysql" | "mariadb" | "postgres" | "sqlite";
   host: string;
   port: number;
   username: string;

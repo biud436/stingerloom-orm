@@ -4,7 +4,6 @@ import { EntityManager } from "../../src/core/EntityManager";
 import { MySqlDriver } from "../../src/dialects/mysql/MySqlDriver";
 import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../../src/dialects/sqlite/SqliteDriver";
-import { MssqlDriver } from "../../src/dialects/mssql/MssqlDriver";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 
 // Mock 모듈 설정
@@ -117,19 +116,6 @@ function createEntityManagerWithDriver(driverType: string) {
       buildUpsertSql: SqliteDriver.prototype.buildUpsertSql,
       isMySqlFamily: () => false,
     };
-  } else if (driverType === "mssql") {
-    const { DatabaseClient } = jest.requireMock("../../src/DatabaseClient");
-    DatabaseClient.getInstance.mockReturnValue({
-      type: "mssql",
-      getConnection: jest.fn(),
-      getOptions: jest.fn().mockReturnValue({ synchronize: false }),
-      connect: jest.fn(),
-    });
-    (em as any).driver = {
-      wrap: (name: string) => `[${name}]`,
-      buildUpsertSql: MssqlDriver.prototype.buildUpsertSql,
-      isMySqlFamily: () => false,
-    };
   }
 
   return em;
@@ -203,28 +189,6 @@ describe("Driver.buildUpsertSql()", () => {
     });
   });
 
-  describe("MssqlDriver", () => {
-    const driver = new MssqlDriver(connector);
-
-    it("should generate MERGE SQL", () => {
-      const result = driver.buildUpsertSql(
-        "[User]",
-        ["[id]", "[email]", "[name]"],
-        ["[id]"],
-        ["[email]", "[name]"],
-      );
-
-      expect(result).toContain("MERGE INTO [User] AS target");
-      expect(result).toContain("USING (SELECT ?, ?, ?) AS source");
-      expect(result).toContain("([id], [email], [name])");
-      expect(result).toContain("ON (target.[id] = source.[id])");
-      expect(result).toContain("WHEN MATCHED THEN UPDATE SET");
-      expect(result).toContain("target.[email] = source.[email]");
-      expect(result).toContain("target.[name] = source.[name]");
-      expect(result).toContain("WHEN NOT MATCHED THEN INSERT");
-      expect(result).toContain("VALUES (source.[id], source.[email], source.[name])");
-    });
-  });
 });
 
 // ─────────────────────────────────────────────
@@ -352,24 +316,6 @@ describe("EntityManager.upsert()", () => {
     });
   });
 
-  describe("with MSSQL driver", () => {
-    beforeEach(() => {
-      em = createEntityManagerWithDriver("mssql");
-    });
-
-    it("should generate MERGE SQL for MSSQL", async () => {
-      (em as any).resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
-
-      await em.upsert(ProductEntity, { sku: "ABC123", name: "Widget", price: 9.99 });
-
-      const queryCalls = mockQuery.mock.calls;
-      const upsertCall = queryCalls.find((call: any[]) => {
-        const sqlText = call[0]?.text || String(call[0]);
-        return sqlText.includes("MERGE");
-      });
-      expect(upsertCall).toBeDefined();
-    });
-  });
 
   describe("conflict columns edge cases", () => {
     beforeEach(() => {

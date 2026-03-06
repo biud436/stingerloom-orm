@@ -2,7 +2,6 @@ import "reflect-metadata";
 import { MySqlDriver } from "../../src/dialects/mysql/MySqlDriver";
 import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../../src/dialects/sqlite/SqliteDriver";
-import { MssqlDriver } from "../../src/dialects/mssql/MssqlDriver";
 import { QueryTimeoutError } from "../../src/errors/QueryTimeoutError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 import { EntityManager } from "../../src/core/EntityManager";
@@ -132,29 +131,6 @@ describe("Driver setQueryTimeout()", () => {
     });
   });
 
-  describe("MssqlDriver", () => {
-    let driver: MssqlDriver;
-
-    beforeEach(() => {
-      driver = new MssqlDriver({} as any);
-    });
-
-    it("should return SET LOCK_TIMEOUT SQL", () => {
-      expect(driver.setQueryTimeout(4000)).toBe("SET LOCK_TIMEOUT 4000");
-    });
-
-    it("should floor fractional milliseconds", () => {
-      expect(driver.setQueryTimeout(3333.6)).toBe("SET LOCK_TIMEOUT 3333");
-    });
-
-    it("should handle zero timeout", () => {
-      expect(driver.setQueryTimeout(0)).toBe("SET LOCK_TIMEOUT 0");
-    });
-
-    it("should clamp negative values to zero", () => {
-      expect(driver.setQueryTimeout(-1)).toBe("SET LOCK_TIMEOUT 0");
-    });
-  });
 });
 
 // ─── QueryTimeoutError 테스트 ────────────────────────────────────────────────

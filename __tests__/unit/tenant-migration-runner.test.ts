@@ -7,7 +7,6 @@ import { TenantSyncResult } from "../../src/dialects/ITenantMigrationRunner";
 import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
 import { MySqlTenantMigrationRunner } from "../../src/dialects/mysql/MySqlTenantMigrationRunner";
 import { SqliteTenantMigrationRunner } from "../../src/dialects/sqlite/SqliteTenantMigrationRunner";
-import { MssqlTenantMigrationRunner } from "../../src/dialects/mssql/MssqlTenantMigrationRunner";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 
 /**
@@ -410,7 +409,6 @@ describe("PostgresTenantMigrationRunner", () => {
 describe.each([
   ["MySqlTenantMigrationRunner", () => new MySqlTenantMigrationRunner()],
   ["SqliteTenantMigrationRunner", () => new SqliteTenantMigrationRunner()],
-  ["MssqlTenantMigrationRunner", () => new MssqlTenantMigrationRunner()],
 ])("%s", (_name, factory) => {
   const methods = [
     "discoverSchemas",

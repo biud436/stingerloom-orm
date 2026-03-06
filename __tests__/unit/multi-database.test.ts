@@ -33,13 +33,6 @@ jest.mock("../../src/dialects/sqlite/SqliteConnector", () => ({
   })),
 }));
 
-jest.mock("../../src/dialects/mssql/MssqlConnector", () => ({
-  MssqlConnector: jest.fn().mockImplementation(() => ({
-    connect: jest.fn().mockResolvedValue(undefined),
-    close: jest.fn().mockResolvedValue(undefined),
-  })),
-}));
-
 const BASE_OPTIONS = {
   host: "localhost",
   username: "test",
@@ -156,20 +149,18 @@ describe("DatabaseClient - Named Connections (Multi-Database)", () => {
     expect(client.getRegisteredNames()).toHaveLength(0);
   });
 
-  it("MySQL, PostgreSQL, SQLite, MSSQL 4가지 타입의 named connection을 동시에 유지할 수 있어야 한다", async () => {
+  it("MySQL, PostgreSQL, SQLite 3가지 타입의 named connection을 동시에 유지할 수 있어야 한다", async () => {
     const DatabaseClient = resetDatabaseClient();
     const client = DatabaseClient.getInstance();
 
     await client.connect({ ...BASE_OPTIONS, type: "mysql", port: 3306 }, "mysql-db");
     await client.connect({ ...BASE_OPTIONS, type: "postgres", port: 5432 }, "pg-db");
     await client.connect({ ...BASE_OPTIONS, type: "sqlite", port: 0 }, "sqlite-db");
-    await client.connect({ ...BASE_OPTIONS, type: "mssql", port: 1433 }, "mssql-db");
 
     expect(client.getType("mysql-db")).toBe("mysql");
     expect(client.getType("pg-db")).toBe("postgres");
     expect(client.getType("sqlite-db")).toBe("sqlite");
-    expect(client.getType("mssql-db")).toBe("mssql");
-    expect(client.getRegisteredNames()).toHaveLength(4);
+    expect(client.getRegisteredNames()).toHaveLength(3);
   });
 });
 

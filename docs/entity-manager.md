@@ -310,7 +310,7 @@ console.log(result.key);  // "idx_user_email"
 console.log(result.rows); // 1 — 예상 검사 행 수
 ```
 
-> **Hint** `explain()`은 MySQL과 PostgreSQL에서 지원됩니다. SQLite/MSSQL에서는 `InvalidQueryError`가 발생합니다.
+> **Hint** `explain()`은 MySQL과 PostgreSQL에서 지원됩니다. SQLite에서는 `InvalidQueryError`가 발생합니다.
 
 ## 이벤트 리스너
 

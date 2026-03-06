@@ -6,7 +6,7 @@
 
 - Node.js 18 이상
 - TypeScript 프로젝트
-- MySQL, PostgreSQL, SQLite, 또는 MSSQL 데이터베이스
+- MySQL, PostgreSQL, 또는 SQLite 데이터베이스
 
 ## 1단계: 설치
 
@@ -158,7 +158,6 @@ console.log("삭제된 행 수:", result.affected); // 1
 | PostgreSQL | `"postgres"` | 5432 | `schema` 옵션으로 스키마 지정 가능 |
 | MySQL / MariaDB | `"mysql"` | 3306 | `charset: "utf8mb4"` 권장 |
 | SQLite | `"sqlite"` | 0 | `database`에 파일 경로 지정 (예: `"./mydb.sqlite"`) |
-| MSSQL | `"mssql"` | 1433 | - |
 
 ```typescript
 // MySQL 예제

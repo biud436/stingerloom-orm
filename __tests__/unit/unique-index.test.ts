@@ -11,7 +11,6 @@ import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedCol
 import { MySqlDriver } from "../../src/dialects/mysql/MySqlDriver";
 import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../../src/dialects/sqlite/SqliteDriver";
-import { MssqlDriver } from "../../src/dialects/mssql/MssqlDriver";
 import { SchemaGenerator } from "../../src/core/generators/SchemaGenerator";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 
@@ -176,20 +175,6 @@ describe("Driver.addCompositeUniqueIndex()", () => {
     });
   });
 
-  describe("MssqlDriver", () => {
-    it("should generate CREATE UNIQUE INDEX DDL", async () => {
-      const driver = new MssqlDriver(connector);
-      await driver.addCompositeUniqueIndex("User", ["email", "tenantId"], "uq_User_email_tenantId");
-
-      expect(mockQuery).toHaveBeenCalledTimes(1);
-      const sql = mockQuery.mock.calls[0][0];
-      expect(sql).toContain("CREATE UNIQUE INDEX");
-      expect(sql).toContain("[uq_User_email_tenantId]");
-      expect(sql).toContain("[User]");
-      expect(sql).toContain("[email]");
-      expect(sql).toContain("[tenantId]");
-    });
-  });
 });
 
 // ─────────────────────────────────────────────

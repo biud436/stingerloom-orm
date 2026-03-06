@@ -24,7 +24,6 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL을 지원하며 Docker OverlayF
 │   │   ├── mysql/          # MySqlDriver, MySqlConnector, MySqlDataSource, MySqlTenantMigrationRunner
 │   │   ├── postgres/       # PostgresDriver, PostgresConnector, PostgresDataSource, PostgresTenantMigrationRunner
 │   │   ├── sqlite/         # SqliteDriver, SqliteConnector, SqliteDataSource
-│   │   └── mssql/          # MssqlDriver, MssqlConnector, MssqlDataSource
 │   ├── metadata/           # LayeredMetadataStore, MetadataLayer, MetadataContext (AsyncLocalStorage)
 │   ├── scanner/            # EntityScanner, ColumnScanner, ManyToOneScanner
 │   ├── migration/          # MigrationRunner, MigrationGenerator
@@ -77,7 +76,6 @@ Docker OverlayFS와 동일한 개념:
 | MySQL | 백틱 (`) | AUTO_INCREMENT | 미지원 |
 | PostgreSQL | 큰따옴표 (") | SERIAL / RETURNING | 지원 (schema.table) |
 | SQLite | 큰따옴표 (") | INTEGER PRIMARY KEY | 미지원 |
-| MSSQL | 대괄호 ([]) | IDENTITY | 지원 (schema.table) |
 
 새 드라이버 작성 시 `ISqlDriver` 인터페이스 완전 구현 필수.
 
@@ -183,7 +181,7 @@ pnpm start          # NestJS 서버 시작
 - 관계: @ManyToOne, @OneToMany, @ManyToMany, @OneToOne
 - Eager / Lazy 로딩
 - 트랜잭션 (@Transactional, 격리 수준, Savepoint)
-- MySQL / PostgreSQL / SQLite / MSSQL 드라이버
+- MySQL / PostgreSQL / SQLite 드라이버
 - PostgreSQL ENUM 타입, 스키마 한정 식별자
 - DeserializerRegistry, NestJS 통합 (@InjectRepository, @InjectEntityManager)
 - 마이그레이션 시스템 + CLI
@@ -226,7 +224,7 @@ pnpm start          # NestJS 서버 시작
 에이전트 정의: `.claude/agents/*.md` (Claude Code 팀 시스템 사용)
 
 ### dialect-engineer (다이얼렉트 엔지니어)
-- DB 드라이버 구현/유지 (MySQL, PostgreSQL, SQLite, MSSQL)
+- DB 드라이버 구현/유지 (MySQL, PostgreSQL, SQLite)
 - SQL Injection 방지 감사 및 수정
 - `ISqlDriver` 인터페이스 준수, 파라미터 바인딩 검증
 

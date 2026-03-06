@@ -180,7 +180,7 @@ export class TenantProvisioningService implements OnModuleInit {
 }
 ```
 
-> **Hint** 현재 스키마 기반 멀티테넌시는 PostgreSQL에서만 지원됩니다. MySQL, SQLite, MSSQL은 `UnsupportedError`를 반환합니다.
+> **Hint** 현재 스키마 기반 멀티테넌시는 PostgreSQL에서만 지원됩니다. MySQL, SQLite는 `UnsupportedError`를 반환합니다.
 
 ## 레이어드 메타데이터 직접 사용
 
