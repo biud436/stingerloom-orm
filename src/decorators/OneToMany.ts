@@ -7,11 +7,12 @@ import { CascadeOption, normalizeCascade } from "../types/CascadeType";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const ONE_TO_MANY_TOKEN = Symbol.for("STG_ONE_TO_MANY");
 
-export type OneToManyOption = {
+export type OneToManyOption<T = any> = {
   /**
    * 연관관계 소유자(ManyToOne 측)의 프로퍼티 이름입니다.
+   * 타입 추론을 통해 대상 엔티티의 프로퍼티 이름만 허용됩니다.
    */
-  mappedBy: string;
+  mappedBy: Extract<keyof T, string> | (string & {});
   /**
    * Cascade 작업 유형입니다.
    * true이면 모든 cascade(insert, update, delete) 적용.
@@ -51,20 +52,20 @@ export type OneToManyMetadata<T> = {
  */
 export function OneToMany<T>(
   getRelatedEntity: () => ClazzType<T>,
-  option: OneToManyOption,
+  option: OneToManyOption<T>,
 ): PropertyDecorator {
   return (target, propertyKey) => {
     const cls = target.constructor;
 
     const scanner = Container.get(OneToManyScanner);
 
-    const metadata = <OneToManyMetadata<T>>{
-      target: cls,
+    const metadata = {
+      target: cls as ClazzType<unknown>,
       propertyKey: propertyKey.toString(),
       getRelatedEntity,
-      mappedBy: option.mappedBy,
+      mappedBy: option.mappedBy as string,
       cascade: option.cascade,
-    };
+    } as OneToManyMetadata<T>;
 
     const columns = Reflect.getMetadata(ONE_TO_MANY_TOKEN, cls);
 

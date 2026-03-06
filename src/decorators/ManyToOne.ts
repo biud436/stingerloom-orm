@@ -6,7 +6,6 @@ import { CascadeOption } from "../types/CascadeType";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const MANY_TO_ONE_TOKEN = Symbol.for("STG_MANY_TO_ONE");
-export const JOIN_COLUMN_TOKEN = Symbol.for("STG_JOIN_COLUMN");
 
 export type EntityLike<T = any> = ClazzType<T>;
 export type RetrieveEntity<T> = () => T;
@@ -20,6 +19,11 @@ export type ManyToOneOption = {
    */
   transform?: <T = any>(raw: unknown) => T;
   joinColumn?: string;
+  /**
+   * 참조 대상 엔티티의 컬럼 이름입니다.
+   * 생략 시 대상 엔티티의 Primary Key를 참조합니다.
+   */
+  references?: string;
   /**
    * true일 경우, find/findOne 시 자동으로 LEFT JOIN을 수행하여 관계 엔티티를 함께 로드합니다.
    */
@@ -44,6 +48,12 @@ export type ManyToOneMetadata<T> = {
   columnName: string;
 
   joinColumn?: string;
+
+  /**
+   * 참조 대상 엔티티의 컬럼 이름입니다.
+   * 생략 시 대상 엔티티의 PK를 참조합니다.
+   */
+  references?: string;
 
   /**
    * 연관관계의 엔티티를 가져오는 함수입니다
@@ -85,6 +95,7 @@ export function ManyToOne<T extends EntityLike>(
       type: injectParam,
       columnName,
       joinColumn: option?.joinColumn,
+      references: option?.references,
       getMappingEntity,
       getMappingProperty,
       option,

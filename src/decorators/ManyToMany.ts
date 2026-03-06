@@ -23,7 +23,7 @@ export type JoinTableOption = {
   inverseJoinColumn: string;
 };
 
-export type ManyToManyOption = {
+export type ManyToManyOption<T = any> = {
   /**
    * 중간 테이블 정보입니다.
    * 관계의 소유측(owning side)에서 설정해야 합니다.
@@ -32,8 +32,9 @@ export type ManyToManyOption = {
 
   /**
    * 역방향(inverse side)에서 소유측의 프로퍼티 이름을 가리킵니다.
+   * 타입 추론을 통해 대상 엔티티의 프로퍼티 이름만 허용됩니다.
    */
-  mappedBy?: string;
+  mappedBy?: Extract<keyof T, string> | (string & {});
 };
 
 export type ManyToManyMetadata<T> = {
@@ -78,7 +79,7 @@ export type ManyToManyMetadata<T> = {
  */
 export function ManyToMany<T>(
   getRelatedEntity: () => ClazzType<T>,
-  option?: ManyToManyOption,
+  option?: ManyToManyOption<T>,
 ): PropertyDecorator {
   return (target, propertyKey) => {
     const cls = target.constructor;

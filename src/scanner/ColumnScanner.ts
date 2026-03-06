@@ -11,6 +11,10 @@ export type ColumnMetadata = {
    */
   target: ClazzType<unknown>;
   /**
+   * 원본 TypeScript 프로퍼티 이름입니다.
+   */
+  propertyKey?: string;
+  /**
    * Specifies the name of the column.
    * if not specified, the name of the column is the same as the property name.
    * the table is created using the name of the column.

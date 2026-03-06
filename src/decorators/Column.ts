@@ -164,6 +164,7 @@ export function Column(option?: ColumnOption): PropertyDecorator {
     const name = resolvedOption.name || propertyKey.toString();
     const metadata = <ColumnMetadata>{
       target,
+      propertyKey: propertyKey.toString(),
       name,
       options: resolvedOption,
       type: injectParam,

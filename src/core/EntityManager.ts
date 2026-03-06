@@ -740,7 +740,7 @@ export class EntityManager implements BaseEntityManager {
       .filter((rel) => rel.target === entity);
 
     if (allRelations.length > 0) {
-      return allRelations;
+      return this.resolveJoinColumnsFromColumnMeta(entity, allRelations);
     }
 
     // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
@@ -756,10 +756,55 @@ export class EntityManager implements BaseEntityManager {
       this.logger.warn(
         `[resolveManyToOneMetadata] "${entity.name}" ManyToOne resolved via Reflect.getMetadata fallback.`,
       );
-      return reflectMetadata;
+      return this.resolveJoinColumnsFromColumnMeta(entity, reflectMetadata);
     }
 
     return [];
+  }
+
+  /**
+   * ManyToOne 관계의 joinColumn을 자동 해석합니다.
+   *
+   * 해석 우선순위:
+   * 1. @ManyToOne option의 joinColumn이 명시적으로 지정된 경우 → 그대로 사용
+   * 2. 같은 엔티티에 @Column으로 선언된 `{propertyName}Id` 프로퍼티가 있으면
+   *    → 해당 @Column의 실제 DB 컬럼명(name)을 FK 컬럼으로 사용
+   * 3. 둘 다 없으면 → joinColumn 미설정 (기존 {propertyName}Id 컨벤션 fallback)
+   */
+  private resolveJoinColumnsFromColumnMeta(
+    entity: ClazzType<any>,
+    relations: ManyToOneMetadata<any>[],
+  ): ManyToOneMetadata<any>[] {
+    // @Column 메타데이터 조회 (property key → column metadata)
+    const columnsMeta: ColumnMetadata[] =
+      Reflect.getMetadata(COLUMN_TOKEN, entity) ??
+      Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
+      [];
+
+    if (columnsMeta.length === 0) {
+      return relations;
+    }
+
+    return relations.map((rel) => {
+      // 이미 joinColumn이 명시된 경우 → 그대로
+      if (rel.joinColumn) return rel;
+
+      // {propertyName}Id 패턴의 @Column 탐색
+      const fkPropertyName = `${rel.columnName}Id`;
+      const matchingColumn = columnsMeta.find(
+        (col: ColumnMetadata) => col.propertyKey === fkPropertyName,
+      );
+
+      if (!matchingColumn) return rel;
+
+      // @Column의 실제 DB 이름 사용 (name이 있으면 name, 없으면 propertyKey)
+      const resolvedJoinColumn = matchingColumn.name ?? fkPropertyName;
+
+      return {
+        ...rel,
+        joinColumn: resolvedJoinColumn,
+      };
+    });
   }
 
   /**
@@ -921,7 +966,10 @@ export class EntityManager implements BaseEntityManager {
       .filter((rel) => rel.target === entity);
 
     if (allRelations.length > 0) {
-      return allRelations;
+      return this.resolveJoinColumnsFromColumnMetaForOneToOne(
+        entity,
+        allRelations,
+      );
     }
 
     // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
@@ -937,10 +985,49 @@ export class EntityManager implements BaseEntityManager {
       this.logger.warn(
         `[resolveOneToOneMetadata] "${entity.name}" OneToOne resolved via Reflect.getMetadata fallback.`,
       );
-      return reflectMetadata;
+      return this.resolveJoinColumnsFromColumnMetaForOneToOne(
+        entity,
+        reflectMetadata,
+      );
     }
 
     return [];
+  }
+
+  /**
+   * OneToOne 관계의 joinColumn을 @Column 메타데이터에서 자동 해석합니다.
+   * 해석 우선순위는 ManyToOne과 동일합니다.
+   */
+  private resolveJoinColumnsFromColumnMetaForOneToOne(
+    entity: ClazzType<any>,
+    relations: OneToOneMetadata<any>[],
+  ): OneToOneMetadata<any>[] {
+    const columnsMeta: ColumnMetadata[] =
+      Reflect.getMetadata(COLUMN_TOKEN, entity) ??
+      Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
+      [];
+
+    if (columnsMeta.length === 0) {
+      return relations;
+    }
+
+    return relations.map((rel) => {
+      if (rel.joinColumn) return rel;
+
+      const fkPropertyName = `${rel.propertyKey}Id`;
+      const matchingColumn = columnsMeta.find(
+        (col: ColumnMetadata) => col.propertyKey === fkPropertyName,
+      );
+
+      if (!matchingColumn) return rel;
+
+      const resolvedJoinColumn = matchingColumn.name ?? fkPropertyName;
+
+      return {
+        ...rel,
+        joinColumn: resolvedJoinColumn,
+      };
+    });
   }
 
   /**
@@ -1219,12 +1306,13 @@ export class EntityManager implements BaseEntityManager {
           throw new InvalidQueryError("JoinColumn does not exist.");
         }
 
-        // Get the primary key of the mapping table.
-        const mappingTablePrimaryKey = mappingTableMetadata.columns.find(
-          (e: any) => e.options?.primary,
-        )?.name;
+        // references 옵션이 있으면 해당 컬럼, 없으면 PK를 참조
+        const mappingTablePrimaryKey = manyToOneItem.references
+          ? manyToOneItem.references
+          : mappingTableMetadata.columns.find(
+              (e: any) => e.options?.primary,
+            )?.name;
 
-        // Throw an error if the primary key does not exist.
         if (!mappingTablePrimaryKey) {
           throw new PrimaryKeyNotFoundError(mappingEntity.name);
         }

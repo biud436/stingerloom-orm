@@ -7,7 +7,7 @@ import { CascadeOption } from "../types/CascadeType";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const ONE_TO_ONE_TOKEN = Symbol.for("STG_ONE_TO_ONE");
 
-export type OneToOneOption = {
+export type OneToOneOption<T = any> = {
   /**
    * FK 컬럼 이름입니다. 소유측(owning side)에서 설정합니다.
    */
@@ -15,8 +15,9 @@ export type OneToOneOption = {
 
   /**
    * 역방향(inverse side)에서 소유측의 프로퍼티 이름을 가리킵니다.
+   * 타입 추론을 통해 대상 엔티티의 프로퍼티 이름만 허용됩니다.
    */
-  inverseSide?: string;
+  inverseSide?: Extract<keyof T, string> | (string & {});
 
   /**
    * true일 경우, find/findOne 시 자동으로 LEFT JOIN을 수행하여 관계 엔티티를 함께 로드합니다.
@@ -72,7 +73,7 @@ export type OneToOneMetadata<T> = {
  */
 export function OneToOne<T>(
   getRelatedEntity: () => ClazzType<T>,
-  option?: OneToOneOption,
+  option?: OneToOneOption<T>,
 ): PropertyDecorator {
   return (target, propertyKey) => {
     const cls = target.constructor;
