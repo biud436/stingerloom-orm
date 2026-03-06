@@ -61,7 +61,58 @@ export class Cat {
 - `(owner) => owner.cats` — 반대편 프로퍼티 (양방향일 때 사용, 단방향이면 생략 가능)
 - `{ joinColumn: "owner_id" }` — 외래키 컬럼명
 
-> **Hint** `joinColumn`을 생략하면 프로퍼티명(`owner`)이 그대로 컬럼명이 됩니다.
+> **Hint** `joinColumn`을 생략해도 됩니다. 아래의 **@Column 기반 FK 자동 감지**를 참고하세요.
+
+### @Column 기반 FK 자동 감지
+
+`joinColumn`을 매번 지정하는 것은 번거롭고, `@Column`의 DB 컬럼명과 불일치할 위험이 있습니다. Stingerloom은 같은 엔티티에 `{프로퍼티명}Id` 패턴의 `@Column`이 선언되어 있으면, 해당 컬럼의 **실제 DB 이름**을 FK 컬럼으로 자동 사용합니다.
+
+```typescript
+@Entity()
+export class Cat {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  name!: string;
+
+  // DB 컬럼명이 "owner_fk"인 FK 컬럼
+  @Column({ name: "owner_fk", type: "int" })
+  ownerId!: number;
+
+  // joinColumn 없이도 ownerId의 DB 이름 "owner_fk"가 자동 적용
+  @ManyToOne(() => Owner, (owner) => owner.cats)
+  owner!: Owner;
+}
+```
+
+해석 우선순위는 다음과 같습니다.
+
+1. `@ManyToOne`의 `joinColumn` 옵션이 명시된 경우 → 그대로 사용
+2. 같은 엔티티에 `@Column`으로 선언된 `{프로퍼티명}Id`가 있으면 → 해당 `@Column`의 DB 컬럼명 사용
+3. 둘 다 없으면 → `{프로퍼티명}Id` 컨벤션 fallback
+
+`@Column`을 선언하면 FK 값을 엔티티에서 직접 읽고 쓸 수 있는 장점도 있습니다.
+
+```typescript
+const cat = new Cat();
+cat.ownerId = 3;          // FK 값을 직접 설정
+await em.save(Cat, cat);
+
+console.log(cat.ownerId); // FK 값을 직접 읽기
+```
+
+### PK가 아닌 컬럼 참조 (references)
+
+기본적으로 FK는 대상 엔티티의 PK를 참조합니다. PK 외의 컬럼을 참조하려면 `references` 옵션을 사용합니다.
+
+```typescript
+@ManyToOne(() => Owner, (owner) => owner.cats, {
+  joinColumn: "owner_uuid_fk",
+  references: "uuid",  // Owner.uuid 컬럼을 참조
+})
+owner!: Owner;
+```
 
 ## @OneToMany — "이 주인의 고양이들은?"
 
@@ -86,6 +137,8 @@ export class Owner {
 ```
 
 `mappedBy: "owner"`는 "Cat 엔티티의 `owner` 프로퍼티가 외래키를 가지고 있다"는 뜻입니다. `@OneToMany` 자체는 DB에 컬럼을 만들지 않습니다. 단지 조회할 때 관련 데이터를 가져올 수 있게 해주는 역할입니다.
+
+> **Hint** `mappedBy`는 대상 엔티티의 프로퍼티 이름에 대한 **IntelliSense 자동완성**을 지원합니다. IDE에서 `mappedBy: ""`를 입력하면 Cat 엔티티의 프로퍼티 목록이 표시됩니다. `@ManyToMany`의 `mappedBy`, `@OneToOne`의 `inverseSide`도 동일합니다.
 
 이제 주인의 고양이들을 가져올 수 있습니다.
 
@@ -182,6 +235,8 @@ export class User {
 ```
 
 user 테이블에 `profile_id` 컬럼이 생성됩니다. `eager: true`이므로 User를 조회하면 Profile도 함께 로드됩니다.
+
+> **Hint** `@OneToOne`도 `@ManyToOne`과 동일하게 `@Column` 기반 FK 자동 감지를 지원합니다. `@Column({ name: "profile_fk" }) profileId: number`를 선언하면 `joinColumn`을 생략할 수 있습니다.
 
 ### 양방향
 

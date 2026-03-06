@@ -229,32 +229,35 @@ type ColumnType =
 
 ```typescript
 interface ManyToOneOption {
-  joinColumn?: string;
+  joinColumn?: string;        // FK 컬럼명 (생략 시 @Column 자동 감지)
+  references?: string;        // 대상 참조 컬럼 (생략 시 PK)
   eager?: boolean;
   lazy?: boolean;
   cascade?: CascadeOption;
   transform?: (raw: unknown) => any;
 }
 
-interface OneToManyOption {
-  mappedBy: string;
+interface OneToManyOption<T> {
+  mappedBy: Extract<keyof T, string> | (string & {});  // IntelliSense 지원
   cascade?: CascadeOption;
 }
 
-interface OneToOneOption {
-  joinColumn?: string;
-  inverseSide?: string;
+interface OneToOneOption<T> {
+  joinColumn?: string;        // FK 컬럼명 (생략 시 @Column 자동 감지)
+  inverseSide?: Extract<keyof T, string> | (string & {});  // IntelliSense 지원
   eager?: boolean;
   cascade?: CascadeOption;
 }
 
-interface ManyToManyOption {
+interface ManyToManyOption<T> {
   joinTable?: { name: string; joinColumn: string; inverseJoinColumn: string };
-  mappedBy?: string;
+  mappedBy?: Extract<keyof T, string> | (string & {});     // IntelliSense 지원
 }
 
 type CascadeOption = boolean | ("insert" | "update" | "delete" | "remove")[];
 ```
+
+> `mappedBy`, `inverseSide`는 대상 엔티티의 프로퍼티 이름을 자동완성합니다. 임의 문자열도 허용됩니다.
 
 ### 설정 옵션
 
