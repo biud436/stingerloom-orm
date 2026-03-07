@@ -16,7 +16,7 @@
 npm install @stingerloom/orm reflect-metadata
 ```
 
-DB 드라이버는 사용하는 것만 설치하면 됩니다:
+Install only the driver you need:
 
 ```bash
 npm install mysql2        # MySQL
