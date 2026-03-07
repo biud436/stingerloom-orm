@@ -169,7 +169,7 @@ const slowQueries = em.getQueryLog().filter(
 **1단계: 현재 스키마와 엔티티 차이 확인**
 
 ```typescript
-import { SchemaDiff } from "stingerloom-orm";
+import { SchemaDiff } from "@stingerloom/orm";
 
 const diff = await SchemaDiff.compare(em, [User, Post, Comment]);
 
@@ -181,7 +181,7 @@ console.log("수정될 테이블:", diff.modifiedTables);
 **2단계: 마이그레이션 자동 생성**
 
 ```typescript
-import { SchemaDiff, SchemaDiffMigrationGenerator } from "stingerloom-orm";
+import { SchemaDiff, SchemaDiffMigrationGenerator } from "@stingerloom/orm";
 
 const diff = await SchemaDiff.compare(em, [User, Post]);
 const generator = new SchemaDiffMigrationGenerator();
@@ -194,7 +194,7 @@ console.log(`${migrations.length}개 마이그레이션 생성됨`);
 
 ```typescript
 // src/migrate.ts
-import { MigrationCli } from "stingerloom-orm";
+import { MigrationCli } from "@stingerloom/orm";
 import { CreateUsersTable } from "./migrations/001_CreateUsersTable";
 import { AddPhoneToUsers } from "./migrations/002_AddPhoneToUsers";
 
@@ -416,7 +416,7 @@ pool: { max: 30 }
 ```typescript
 // 문제: try 없이 트랜잭션 사용 → 에러 발생 시 커넥션 반환 안 됨
 // Stingerloom의 @Transactional 데코레이터를 쓰면 자동 관리됩니다.
-import { Transactional } from "stingerloom-orm";
+import { Transactional } from "@stingerloom/orm";
 
 @Transactional()
 async createOrder(data: CreateOrderDto) {
@@ -461,7 +461,7 @@ import {
   OnModuleInit,
   OnApplicationShutdown,
 } from "@nestjs/common";
-import { EntityManager } from "stingerloom-orm";
+import { EntityManager } from "@stingerloom/orm";
 
 @Injectable()
 export class StinglerloomOrmService
@@ -487,7 +487,7 @@ export class StinglerloomOrmService
 ```typescript
 // main.ts (순수 Node.js)
 import "reflect-metadata";
-import { EntityManager } from "stingerloom-orm";
+import { EntityManager } from "@stingerloom/orm";
 
 const em = new EntityManager();
 
@@ -575,7 +575,7 @@ await em.register({
 ```typescript
 // tenant-provisioning.service.ts
 import { Injectable, OnModuleInit } from "@nestjs/common";
-import { EntityManager, PostgresTenantMigrationRunner } from "stingerloom-orm";
+import { EntityManager, PostgresTenantMigrationRunner } from "@stingerloom/orm";
 
 @Injectable()
 export class TenantProvisioningService implements OnModuleInit {
@@ -619,7 +619,7 @@ export class TenantProvisioningService implements OnModuleInit {
 // tenant.middleware.ts
 import { Injectable, NestMiddleware } from "@nestjs/common";
 import { Request, Response, NextFunction } from "express";
-import { MetadataContext } from "stingerloom-orm";
+import { MetadataContext } from "@stingerloom/orm";
 
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {

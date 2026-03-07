@@ -21,7 +21,7 @@ Stingerloom ORM은 네 가지 관계를 지원합니다.
 
 ```typescript
 // owner.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column } from "@stingerloom/orm";
 
 @Entity()
 export class Owner {
@@ -35,7 +35,7 @@ export class Owner {
 
 ```typescript
 // cat.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from "@stingerloom/orm";
 import { Owner } from "./owner.entity";
 
 @Entity()
@@ -120,7 +120,7 @@ owner!: Owner;
 
 ```typescript
 // owner.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from "@stingerloom/orm";
 import { Cat } from "./cat.entity";
 
 @Entity()
@@ -218,7 +218,7 @@ export class Profile {
 
 ```typescript
 // user.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, OneToOne } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column, OneToOne } from "@stingerloom/orm";
 import { Profile } from "./profile.entity";
 
 @Entity()
@@ -269,7 +269,7 @@ console.log(profile.user.name); // "홍길동"
 
 ```typescript
 // post.entity.ts — 소유측
-import { Entity, PrimaryGeneratedColumn, Column, ManyToMany } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column, ManyToMany } from "@stingerloom/orm";
 import { Tag } from "./tag.entity";
 
 @Entity()
@@ -293,7 +293,7 @@ export class Post {
 
 ```typescript
 // tag.entity.ts — 역방향
-import { Entity, PrimaryGeneratedColumn, Column, ManyToMany } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column, ManyToMany } from "@stingerloom/orm";
 import { Post } from "./post.entity";
 
 @Entity()

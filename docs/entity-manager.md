@@ -3,7 +3,7 @@
 **EntityManager**는 Stingerloom ORM의 핵심 진입점입니다. 데이터를 생성, 조회, 수정, 삭제하는 모든 작업이 EntityManager를 통해 이루어집니다.
 
 ```typescript
-import { EntityManager } from "stingerloom-orm";
+import { EntityManager } from "@stingerloom/orm";
 
 const em = new EntityManager();
 ```
@@ -17,7 +17,7 @@ EntityManager를 사용하려면 먼저 데이터베이스에 연결해야 합�
 ```typescript
 // main.ts
 import "reflect-metadata";
-import { EntityManager } from "stingerloom-orm";
+import { EntityManager } from "@stingerloom/orm";
 import { User } from "./user.entity";
 
 const em = new EntityManager();

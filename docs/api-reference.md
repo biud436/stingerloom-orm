@@ -9,7 +9,7 @@
 ## EntityManager
 
 ```typescript
-import { EntityManager } from "stingerloom-orm";
+import { EntityManager } from "@stingerloom/orm";
 const em = new EntityManager();
 ```
 

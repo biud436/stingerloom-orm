@@ -13,7 +13,7 @@
 
 ```typescript
 // migrations/001_CreateUsersTable.ts
-import { Migration, MigrationContext } from "stingerloom-orm";
+import { Migration, MigrationContext } from "@stingerloom/orm";
 
 export class CreateUsersTable extends Migration {
   async up(context: MigrationContext) {
@@ -110,7 +110,7 @@ export class SeedRoles extends Migration {
 
 ```typescript
 // src/migrate.ts
-import { MigrationCli } from "stingerloom-orm";
+import { MigrationCli } from "@stingerloom/orm";
 import { CreateUsersTable } from "./migrations/001_CreateUsersTable";
 import { AddPhoneToUsers } from "./migrations/002_AddPhoneToUsers";
 import { AddEmailIndex } from "./migrations/003_AddEmailIndex";
@@ -209,7 +209,7 @@ migrations/
 ### 1단계: 차이 비교
 
 ```typescript
-import { SchemaDiff } from "stingerloom-orm";
+import { SchemaDiff } from "@stingerloom/orm";
 
 const diff = await SchemaDiff.compare(em, [User, Post, Comment]);
 
@@ -221,7 +221,7 @@ console.log(diff.modifiedTables); // [{ tableName: "user", addedColumns: [...] }
 ### 2단계: 마이그레이션 생성 및 실행
 
 ```typescript
-import { SchemaDiff, SchemaDiffMigrationGenerator } from "stingerloom-orm";
+import { SchemaDiff, SchemaDiffMigrationGenerator } from "@stingerloom/orm";
 
 // 차이 비교
 const diff = await SchemaDiff.compare(em, [User, Post]);

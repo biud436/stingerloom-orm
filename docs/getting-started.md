@@ -11,7 +11,7 @@
 ## 1단계: 설치
 
 ```bash
-pnpm add stingerloom-orm reflect-metadata
+pnpm add @stingerloom/orm reflect-metadata
 ```
 
 > **Hint** npm이나 yarn을 사용한다면 `npm install` 또는 `yarn add`로 대체하세요.
@@ -39,7 +39,7 @@ pnpm add stingerloom-orm reflect-metadata
 
 ```typescript
 // user.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column } from "@stingerloom/orm";
 
 @Entity()
 export class User {
@@ -65,7 +65,7 @@ export class User {
 ```typescript
 // main.ts
 import "reflect-metadata";
-import { EntityManager } from "stingerloom-orm";
+import { EntityManager } from "@stingerloom/orm";
 import { User } from "./user.entity";
 
 async function main() {
@@ -222,7 +222,7 @@ export class AppModule {}
 ```typescript
 // users.service.ts
 import { Injectable } from "@nestjs/common";
-import { BaseRepository, InjectRepository } from "stingerloom-orm";
+import { BaseRepository, InjectRepository } from "@stingerloom/orm";
 import { User } from "./user.entity";
 
 @Injectable()

@@ -9,7 +9,7 @@ Stingerloom ORM에서 트랜잭션을 사용하는 가장 쉬운 방법은 `@Tra
 메서드 위에 `@Transactional()`을 붙이면 그 메서드 전체가 하나의 트랜잭션으로 실행됩니다.
 
 ```typescript
-import { Transactional } from "stingerloom-orm";
+import { Transactional } from "@stingerloom/orm";
 
 class OrderService {
   @Transactional()
@@ -97,7 +97,7 @@ class UserService {
 데코레이터 대신 `TransactionSessionManager`를 직접 사용할 수도 있습니다. 트랜잭션 경계를 세밀하게 제어해야 할 때 유용합니다.
 
 ```typescript
-import { TransactionSessionManager } from "stingerloom-orm";
+import { TransactionSessionManager } from "@stingerloom/orm";
 import sql from "sql-template-tag";
 
 const session = new TransactionSessionManager();
@@ -160,7 +160,7 @@ NestJS 서비스에서도 동일하게 `@Transactional()`을 사용합니다.
 ```typescript
 // cats.service.ts
 import { Injectable } from "@nestjs/common";
-import { Transactional, BaseRepository } from "stingerloom-orm";
+import { Transactional, BaseRepository } from "@stingerloom/orm";
 import { InjectRepository } from "../stingerloom-orm/inject-repository.decorator";
 import { Cat } from "./cat.entity";
 

@@ -7,7 +7,7 @@
 ### PostgreSQL
 
 ```typescript
-import { EntityManager } from "stingerloom-orm";
+import { EntityManager } from "@stingerloom/orm";
 import { User } from "./user.entity";
 
 const em = new EntityManager();

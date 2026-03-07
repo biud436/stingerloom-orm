@@ -27,7 +27,7 @@ Stingerloom ORM은 **레이어드 메타데이터 시스템**으로 멀티테넌
 `MetadataContext.run()`으로 특정 테넌트 컨텍스트 안에서 코드를 실행합니다.
 
 ```typescript
-import { MetadataContext } from "stingerloom-orm";
+import { MetadataContext } from "@stingerloom/orm";
 
 // tenant_1 컨텍스트에서 실행
 await MetadataContext.run("tenant_1", async () => {
@@ -54,7 +54,7 @@ const isActive = MetadataContext.isActive();       // true / false
 // tenant.middleware.ts
 import { Injectable, NestMiddleware } from "@nestjs/common";
 import { Request, Response, NextFunction } from "express";
-import { MetadataContext } from "stingerloom-orm";
+import { MetadataContext } from "@stingerloom/orm";
 
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {
@@ -99,7 +99,7 @@ PostgreSQL에서는 스키마를 사용하여 테넌트 데이터를 물리적�
 ### 테넌트 스키마 프로비저닝
 
 ```typescript
-import { PostgresTenantMigrationRunner, EntityManager } from "stingerloom-orm";
+import { PostgresTenantMigrationRunner, EntityManager } from "@stingerloom/orm";
 
 const em = new EntityManager();
 await em.register({
@@ -155,7 +155,7 @@ runner.getProvisionedSchemas();       // ["acme_corp", "globex", ...]
 ```typescript
 // tenant-provisioning.service.ts
 import { Injectable, OnModuleInit } from "@nestjs/common";
-import { EntityManager, PostgresTenantMigrationRunner } from "stingerloom-orm";
+import { EntityManager, PostgresTenantMigrationRunner } from "@stingerloom/orm";
 
 @Injectable()
 export class TenantProvisioningService implements OnModuleInit {
@@ -187,7 +187,7 @@ export class TenantProvisioningService implements OnModuleInit {
 대부분의 경우 `MetadataContext.run()`만으로 충분하지만, 테넌트별로 메타데이터를 직접 오버라이드해야 할 때는 `LayeredMetadataStore`를 사용합니다.
 
 ```typescript
-import { LayeredMetadataStore } from "stingerloom-orm";
+import { LayeredMetadataStore } from "@stingerloom/orm";
 
 const store = new LayeredMetadataStore();
 

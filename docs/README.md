@@ -4,7 +4,7 @@
 
 ```typescript
 // user.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column } from "@stingerloom/orm";
 
 @Entity()
 export class User {
@@ -73,7 +73,7 @@ ORM을 사용하는 것이 목적이라면 **시작하기** 문서부터 따라�
 ## 설치
 
 ```bash
-pnpm add stingerloom-orm reflect-metadata
+pnpm add @stingerloom/orm reflect-metadata
 ```
 
 > **Hint** `reflect-metadata`는 데코레이터 메타데이터에 필요합니다. 앱 진입점 최상단에서 `import "reflect-metadata"`를 추가하세요.

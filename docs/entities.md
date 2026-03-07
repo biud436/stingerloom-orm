@@ -10,7 +10,7 @@
 
 ```typescript
 // user.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column } from "@stingerloom/orm";
 
 @Entity()
 export class User {
@@ -145,7 +145,7 @@ status!: string;
 
 ```typescript
 // config.entity.ts
-import { Entity, PrimaryColumn, Column } from "stingerloom-orm";
+import { Entity, PrimaryColumn, Column } from "@stingerloom/orm";
 
 @Entity()
 export class Config {
@@ -165,7 +165,7 @@ export class Config {
 
 ```typescript
 // user.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, Index } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column, Index } from "@stingerloom/orm";
 
 @Entity()
 export class User {
@@ -186,7 +186,7 @@ export class User {
 
 ```typescript
 // post.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, UniqueIndex } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column, UniqueIndex } from "@stingerloom/orm";
 
 @UniqueIndex(["categoryId", "slug"])
 @Entity()
@@ -216,7 +216,7 @@ export class Post {
 
 ```typescript
 // order.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, Version } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column, Version } from "@stingerloom/orm";
 
 @Entity()
 export class Order {
@@ -239,7 +239,7 @@ export class Order {
 
 ```typescript
 // post.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, DeletedAt } from "stingerloom-orm";
+import { Entity, PrimaryGeneratedColumn, Column, DeletedAt } from "@stingerloom/orm";
 
 @Entity()
 export class Post {
@@ -278,7 +278,7 @@ await em.restore(Post, { id: 1 });                         // 복원
 import {
   Entity, PrimaryGeneratedColumn, Column,
   BeforeInsert, BeforeUpdate,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 
 @Entity()
 export class Article {
@@ -332,7 +332,7 @@ export class Article {
 import {
   Entity, PrimaryGeneratedColumn, Column,
   NotNull, MinLength, MaxLength, Min, Max,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 
 @Entity()
 export class Member {
@@ -375,7 +375,7 @@ import {
   Entity, PrimaryGeneratedColumn, Column, Index, Version,
   DeletedAt, BeforeInsert, BeforeUpdate, AfterInsert,
   NotNull, MinLength, MaxLength,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 
 @Entity()
 export class User {

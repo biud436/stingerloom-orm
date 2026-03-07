@@ -15,7 +15,7 @@
 `RawQueryBuilderFactory.create()`로 쿼리 빌더를 만들고, 메서드를 체이닝한 다음 `build()`로 완성합니다.
 
 ```typescript
-import { RawQueryBuilderFactory } from "stingerloom-orm";
+import { RawQueryBuilderFactory } from "@stingerloom/orm";
 import sql from "sql-template-tag";
 
 const qb = RawQueryBuilderFactory.create();

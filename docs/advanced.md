@@ -15,7 +15,7 @@ import {
   InsertEvent,
   UpdateEvent,
   DeleteEvent,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 import { User } from "./user.entity";
 
 class UserAuditSubscriber implements EntitySubscriber<User> {
@@ -140,7 +140,7 @@ async function getPosts(req: Request, res: Response) {
 import {
   Entity, Column, PrimaryGeneratedColumn,
   NotNull, MinLength, MaxLength, Min, Max,
-} from "stingerloom-orm";
+} from "@stingerloom/orm";
 
 @Entity()
 export class Product {
