@@ -28,7 +28,7 @@ export class TagsService {
 
   async findOne(id: number): Promise<Tag> {
     const result = await this.tagRepository.findOne({
-      where: { id } as any,
+      where: { id },
     });
 
     if (!result) throw new NotFoundException(`Tag with ID ${id} not found`);
@@ -37,7 +37,7 @@ export class TagsService {
 
   async remove(id: number): Promise<void> {
     await this.findOne(id);
-    await this.tagRepository.delete({ id } as any);
+    await this.tagRepository.delete({ id });
   }
 
   async count(): Promise<number> {
@@ -62,9 +62,8 @@ export class TagsService {
     limit = 10,
   ): Promise<{ data: Tag[]; total: number }> {
     const [data, total] = await this.tagRepository.findAndCount({
-      take: limit,
-      skip: (page - 1) * limit,
-    } as any);
+      limit: [(page - 1) * limit, limit],
+    });
     return { data, total };
   }
 }

@@ -29,7 +29,7 @@ export class UsersService {
   }
 
   async findOne(id: number): Promise<User> {
-    const result = await this.userRepository.findOne({ where: { id } as any });
+    const result = await this.userRepository.findOne({ where: { id } });
     if (!result) throw new NotFoundException(`User with ID ${id} not found`);
     return result;
   }
@@ -47,6 +47,6 @@ export class UsersService {
 
   async remove(id: number): Promise<void> {
     await this.findOne(id);
-    await this.userRepository.delete({ id } as any);
+    await this.userRepository.delete({ id });
   }
 }

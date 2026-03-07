@@ -114,7 +114,7 @@ describeIf("[P0] FK 객체 할당 패턴 통합 테스트", () => {
         });
 
         const rows = await rawQuery(
-          `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+          `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
         );
         const rs = rows?.results ?? rows;
         const row = Array.isArray(rs) ? rs[0] : rs;
@@ -286,7 +286,7 @@ describeIf("[P0] FK 객체 할당 패턴 통합 테스트", () => {
 
         // DB raw 검증
         const rows = await rawQuery(
-          `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+          `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
         );
         const rs = rows?.results ?? rows;
         const row = Array.isArray(rs) ? rs[0] : rs;

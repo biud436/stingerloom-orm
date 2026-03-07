@@ -308,7 +308,7 @@ describe("EntityManager 훅 통합 테스트", () => {
 
   it("UPDATE 시 @BeforeUpdate, @AfterUpdate 훅을 호출해야 함", async () => {
     mockQuery
-      .mockResolvedValueOnce({ results: { rowCount: 1 }, fields: [] })
+      .mockResolvedValueOnce({ results: [], rowCount: 1, fields: [] })
       .mockResolvedValue({ results: [{ id: 1, name: "updated" }], fields: [] });
 
     const item = new TrackedItem();
@@ -325,7 +325,7 @@ describe("EntityManager 훅 통합 테스트", () => {
 
   it("DELETE 시 @BeforeDelete, @AfterDelete 훅을 호출해야 함", async () => {
     mockQuery.mockResolvedValue({
-      results: { rowCount: 1 },
+      results: [], rowCount: 1,
       fields: [],
     });
 
@@ -425,7 +425,7 @@ describe("EntityManager 훅 통합 테스트", () => {
     }
 
     mockQuery.mockResolvedValue({
-      results: { rowCount: 1 },
+      results: [], rowCount: 1,
       fields: [],
     });
 

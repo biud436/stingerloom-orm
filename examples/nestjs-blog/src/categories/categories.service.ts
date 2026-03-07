@@ -37,7 +37,7 @@ export class CategoriesService {
 
   async findOne(id: number): Promise<Category> {
     const result = await this.categoryRepository.findOne({
-      where: { id } as any,
+      where: { id },
     });
 
     if (!result) throw new NotFoundException(`Category with ID ${id} not found`);
@@ -57,7 +57,7 @@ export class CategoriesService {
 
   async remove(id: number): Promise<void> {
     await this.findOne(id);
-    await this.categoryRepository.delete({ id } as any);
+    await this.categoryRepository.delete({ id });
   }
 
   async count(): Promise<number> {
@@ -80,7 +80,7 @@ export class CategoriesService {
       .build();
 
     const result = await this.entityManager.query<
-      Array<{ name: string; postCount: number }>
+      { name: string; postCount: number }
     >(query.sql, query.values);
 
     if (!result) return [];

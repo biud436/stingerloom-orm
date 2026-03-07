@@ -188,7 +188,7 @@ describeIf("[P1] M-6: 부분 업데이트 시 FK 보존", () => {
 
         // DB raw 쿼리로 FK 검증
         const rows = await rawQuery(
-          `SELECT parentFk, age, title FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+          `SELECT ${qi(type, "parentFk")}, ${qi(type, "age")}, ${qi(type, "title")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
         );
         const rs = rows?.results ?? rows;
         const row = Array.isArray(rs) ? rs[0] : rs;
@@ -234,7 +234,7 @@ describeIf("[P1] M-6: 부분 업데이트 시 FK 보존", () => {
         });
 
         const rows = await rawQuery(
-          `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+          `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
         );
         const rs = rows?.results ?? rows;
         const row = Array.isArray(rs) ? rs[0] : rs;
@@ -259,7 +259,7 @@ describeIf("[P1] M-6: 부분 업데이트 시 FK 보존", () => {
         });
 
         const rows = await rawQuery(
-          `SELECT age, title FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+          `SELECT ${qi(type, "age")}, ${qi(type, "title")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
         );
         const rs = rows?.results ?? rows;
         const row = Array.isArray(rs) ? rs[0] : rs;
@@ -281,7 +281,7 @@ describeIf("[P1] M-6: 부분 업데이트 시 FK 보존", () => {
         });
 
         const rows = await rawQuery(
-          `SELECT age, title FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+          `SELECT ${qi(type, "age")}, ${qi(type, "title")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
         );
         const rs = rows?.results ?? rows;
         const row = Array.isArray(rs) ? rs[0] : rs;
@@ -304,7 +304,7 @@ describeIf("[P1] M-6: 부분 업데이트 시 FK 보존", () => {
         });
 
         const rows = await rawQuery(
-          `SELECT title, age, parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+          `SELECT ${qi(type, "title")}, ${qi(type, "age")}, ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
         );
         const rs = rows?.results ?? rows;
         const row = Array.isArray(rs) ? rs[0] : rs;
@@ -334,7 +334,7 @@ describeIf("[P1] M-6: 부분 업데이트 시 FK 보존", () => {
         });
 
         const rows = await rawQuery(
-          `SELECT title, age, parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+          `SELECT ${qi(type, "title")}, ${qi(type, "age")}, ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
         );
         const rs = rows?.results ?? rows;
         const row = Array.isArray(rs) ? rs[0] : rs;
@@ -359,7 +359,7 @@ describeIf("[P1] M-6: 부분 업데이트 시 FK 보존", () => {
         });
 
         const rows = await rawQuery(
-          `SELECT parentFk, title FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+          `SELECT ${qi(type, "parentFk")}, ${qi(type, "title")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
         );
         const rs = rows?.results ?? rows;
         const row = Array.isArray(rs) ? rs[0] : rs;
@@ -387,7 +387,7 @@ describeIf("[P1] M-6: 부분 업데이트 시 FK 보존", () => {
         });
 
         const rows = await rawQuery(
-          `SELECT title, age, parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+          `SELECT ${qi(type, "title")}, ${qi(type, "age")}, ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
         );
         const rs = rows?.results ?? rows;
         const row = Array.isArray(rs) ? rs[0] : rs;
@@ -413,7 +413,7 @@ describeIf("[P1] M-6: 부분 업데이트 시 FK 보존", () => {
         });
 
         const rows = await rawQuery(
-          `SELECT parentFk, title, age FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+          `SELECT ${qi(type, "parentFk")}, ${qi(type, "title")}, ${qi(type, "age")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
         );
         const rs = rows?.results ?? rows;
         const row = Array.isArray(rs) ? rs[0] : rs;

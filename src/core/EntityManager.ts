@@ -24,7 +24,7 @@ import {
 } from "../decorators/UniqueIndex";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
-import { FindOption } from "../dialects/FindOption";
+import { FindOption, WhereClause } from "../dialects/FindOption";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
 import { MySqlDataSource } from "../dialects/mysql/MySqlDataSource";
@@ -856,7 +856,7 @@ export class EntityManager implements BaseEntityManager {
   private async loadOneToManyRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
-    relations: (keyof T)[],
+    relations: string[],
   ): Promise<void> {
     const oneToManyMeta = this.resolveOneToManyMetadata(entity);
     if (oneToManyMeta.length === 0) return;
@@ -875,7 +875,7 @@ export class EntityManager implements BaseEntityManager {
 
     for (const rel of oneToManyMeta) {
       // relations 배열에 해당 propertyKey가 포함된 경우에만 로드
-      if (!relations.includes(rel.propertyKey as keyof T)) continue;
+      if (!relations.includes(rel.propertyKey)) continue;
 
       const RelatedEntity = rel.getRelatedEntity();
       const relatedMetadata = this.resolveEntityMetadata(RelatedEntity);
@@ -1078,7 +1078,7 @@ export class EntityManager implements BaseEntityManager {
   private async loadManyToManyRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
-    relations: (keyof T)[],
+    relations: string[],
   ): Promise<void> {
     const manyToManyMeta = this.resolveManyToManyMetadata(entity);
     if (manyToManyMeta.length === 0) return;
@@ -1096,7 +1096,7 @@ export class EntityManager implements BaseEntityManager {
       : [parentResults];
 
     for (const rel of manyToManyMeta) {
-      if (!relations.includes(rel.propertyKey as keyof T)) continue;
+      if (!relations.includes(rel.propertyKey)) continue;
 
       const joinInfo = this.resolveManyToManyJoinTable(rel);
       if (!joinInfo) continue;
@@ -1200,7 +1200,7 @@ export class EntityManager implements BaseEntityManager {
   private async loadOneToOneRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
-    relations: (keyof T)[],
+    relations: string[],
   ): Promise<void> {
     const oneToOneMeta = this.resolveOneToOneMetadata(entity);
     if (oneToOneMeta.length === 0) return;
@@ -1218,7 +1218,7 @@ export class EntityManager implements BaseEntityManager {
       : [parentResults];
 
     for (const rel of oneToOneMeta) {
-      if (!relations.includes(rel.propertyKey as keyof T)) continue;
+      if (!relations.includes(rel.propertyKey)) continue;
 
       // 소유측은 eager JOIN + transformNested에서 이미 매핑됨 → 스킵
       if (rel.joinColumn) {
@@ -1506,7 +1506,7 @@ export class EntityManager implements BaseEntityManager {
     const eagerRelations = manyToOneRelations.filter((rel) => {
       const isEager = rel.option?.eager === true;
       const isInRelations = findOption.relations?.includes(
-        rel.columnName as keyof T,
+        rel.columnName,
       );
       return isEager || isInRelations;
     });
@@ -1516,7 +1516,7 @@ export class EntityManager implements BaseEntityManager {
       if (!rel.joinColumn) return false;
       const isEager = rel.option?.eager === true;
       const isInRelations = findOption.relations?.includes(
-        rel.propertyKey as keyof T,
+        rel.propertyKey,
       );
       return isEager || isInRelations;
     });
@@ -1952,7 +1952,7 @@ export class EntityManager implements BaseEntityManager {
       const eagerRelations = manyToOneRelations.filter((rel) => {
         const isEager = rel.option?.eager === true;
         const isInRelations = findOption.relations?.includes(
-          rel.columnName as keyof T,
+          rel.columnName,
         );
         return isEager || isInRelations;
       });
@@ -1963,7 +1963,7 @@ export class EntityManager implements BaseEntityManager {
         if (!rel.joinColumn) return false; // 소유측만 eager JOIN 가능
         const isEager = rel.option?.eager === true;
         const isInRelations = findOption.relations?.includes(
-          rel.propertyKey as keyof T,
+          rel.propertyKey,
         );
         return isEager || isInRelations;
       });
@@ -2747,6 +2747,7 @@ export class EntityManager implements BaseEntityManager {
       const queryResult = (await transactionManager.query(deleteQuery)) as {
         results: any;
         fields: any;
+        rowCount?: number;
       };
 
       await transactionManager.commit();
@@ -2755,7 +2756,7 @@ export class EntityManager implements BaseEntityManager {
       if (this.isMySqlFamily()) {
         affected = queryResult?.results?.affectedRows ?? 0;
       } else {
-        affected = queryResult?.results?.rowCount ?? 0;
+        affected = queryResult?.rowCount ?? 0;
       }
 
       return { affected };
@@ -2929,6 +2930,7 @@ export class EntityManager implements BaseEntityManager {
       const queryResult = (await transactionManager.query(queryStr)) as {
         results: any;
         fields: any;
+        rowCount?: number;
       };
 
       await transactionManager.commit();
@@ -2936,8 +2938,8 @@ export class EntityManager implements BaseEntityManager {
       let affected = items.length;
       if (this.isMySqlFamily()) {
         affected = queryResult?.results?.affectedRows ?? items.length;
-      } else if (queryResult?.results?.rowCount !== undefined) {
-        affected = queryResult.results.rowCount;
+      } else if (queryResult?.rowCount !== undefined) {
+        affected = queryResult.rowCount;
       }
 
       return { affected };
@@ -3127,7 +3129,7 @@ export class EntityManager implements BaseEntityManager {
    */
   async delete<T>(
     entity: ClazzType<T>,
-    criteria: { [K in keyof T]?: T[K] },
+    criteria: WhereClause<T>,
   ): Promise<DeleteResult> {
     const metadata = this.resolveEntityMetadata(entity);
 
@@ -3178,6 +3180,7 @@ export class EntityManager implements BaseEntityManager {
       const queryResult = (await transactionManager.query(deleteQuery)) as {
         results: any;
         fields: any;
+        rowCount?: number;
       };
       this.trackQuery(
         entity.name,
@@ -3191,8 +3194,8 @@ export class EntityManager implements BaseEntityManager {
       if (this.isMySqlFamily()) {
         affected = queryResult?.results?.affectedRows ?? 0;
       } else {
-        // PostgreSQL: rowCount is on the results object
-        affected = queryResult?.results?.rowCount ?? 0;
+        // PostgreSQL: rowCount from pg driver
+        affected = queryResult?.rowCount ?? 0;
       }
 
       // @AfterDelete 훅 실행
@@ -3246,7 +3249,7 @@ export class EntityManager implements BaseEntityManager {
    */
   async softDelete<T>(
     entity: ClazzType<T>,
-    criteria: { [K in keyof T]?: T[K] },
+    criteria: WhereClause<T>,
   ): Promise<DeleteResult> {
     const metadata = this.resolveEntityMetadata(entity);
     if (!metadata) {
@@ -3290,6 +3293,7 @@ export class EntityManager implements BaseEntityManager {
       const queryResult = (await transactionManager.query(updateQuery)) as {
         results: any;
         fields: any;
+        rowCount?: number;
       };
 
       await transactionManager.commit();
@@ -3298,7 +3302,7 @@ export class EntityManager implements BaseEntityManager {
       if (this.isMySqlFamily()) {
         affected = queryResult?.results?.affectedRows ?? 0;
       } else {
-        affected = queryResult?.results?.rowCount ?? 0;
+        affected = queryResult?.rowCount ?? 0;
       }
 
       return { affected };
@@ -3324,7 +3328,7 @@ export class EntityManager implements BaseEntityManager {
    */
   async restore<T>(
     entity: ClazzType<T>,
-    criteria: { [K in keyof T]?: T[K] },
+    criteria: WhereClause<T>,
   ): Promise<DeleteResult> {
     const metadata = this.resolveEntityMetadata(entity);
     if (!metadata) {
@@ -3367,6 +3371,7 @@ export class EntityManager implements BaseEntityManager {
       const queryResult = (await transactionManager.query(restoreQuery)) as {
         results: any;
         fields: any;
+        rowCount?: number;
       };
 
       await transactionManager.commit();
@@ -3375,7 +3380,7 @@ export class EntityManager implements BaseEntityManager {
       if (this.isMySqlFamily()) {
         affected = queryResult?.results?.affectedRows ?? 0;
       } else {
-        affected = queryResult?.results?.rowCount ?? 0;
+        affected = queryResult?.rowCount ?? 0;
       }
 
       return { affected };
@@ -3474,7 +3479,7 @@ export class EntityManager implements BaseEntityManager {
    */
   private async cascadeDeleteOneToMany<T>(
     entity: ClazzType<T>,
-    criteria: { [K in keyof T]?: T[K] },
+    criteria: WhereClause<T>,
   ): Promise<void> {
     const oneToManyMeta = this.resolveOneToManyMetadata(entity);
 
@@ -3525,7 +3530,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     fn: string,
     field: string,
-    where?: { [K in keyof T]?: T[K] },
+    where?: WhereClause<T>,
   ): Promise<number> {
     const metadata = this.resolveEntityMetadata(entity);
     if (!metadata) {
@@ -3598,7 +3603,7 @@ export class EntityManager implements BaseEntityManager {
    */
   async count<T>(
     entity: ClazzType<T>,
-    where?: { [K in keyof T]?: T[K] },
+    where?: WhereClause<T>,
   ): Promise<number> {
     return this.aggregate(entity, "COUNT", "*", where);
   }
@@ -3630,7 +3635,7 @@ export class EntityManager implements BaseEntityManager {
   async sum<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
-    where?: { [K in keyof T]?: T[K] },
+    where?: WhereClause<T>,
   ): Promise<number> {
     return this.aggregate(entity, "SUM", field, where);
   }
@@ -3641,7 +3646,7 @@ export class EntityManager implements BaseEntityManager {
   async avg<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
-    where?: { [K in keyof T]?: T[K] },
+    where?: WhereClause<T>,
   ): Promise<number> {
     return this.aggregate(entity, "AVG", field, where);
   }
@@ -3652,7 +3657,7 @@ export class EntityManager implements BaseEntityManager {
   async min<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
-    where?: { [K in keyof T]?: T[K] },
+    where?: WhereClause<T>,
   ): Promise<number> {
     return this.aggregate(entity, "MIN", field, where);
   }
@@ -3663,7 +3668,7 @@ export class EntityManager implements BaseEntityManager {
   async max<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
-    where?: { [K in keyof T]?: T[K] },
+    where?: WhereClause<T>,
   ): Promise<number> {
     return this.aggregate(entity, "MAX", field, where);
   }

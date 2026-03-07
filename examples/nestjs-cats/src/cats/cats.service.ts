@@ -42,14 +42,14 @@ export class CatsService {
 
     console.log("Cat with ID 1 already exists:", cat);
 
-    const onwer = await this.ownersService.findOne(7);
+    const owner = await this.ownersService.findOne(7);
 
-    if (!onwer) {
+    if (!owner) {
       console.log("Owner with ID 7 not found");
       return;
     }
 
-    cat.owner = onwer;
+    cat.owner = owner;
     await this.catRepository.save(cat);
     console.log("Associated cat with owner:", cat);
 
@@ -112,14 +112,14 @@ export class CatsService {
    * withDeleted: true — soft-deleted 엔티티 포함 전체 조회.
    */
   async findAllIncludeDeleted(): Promise<Cat[]> {
-    const result = await this.catRepository.find({ withDeleted: true } as any);
+    const result = await this.catRepository.find({ withDeleted: true });
     if (!result) return [];
     return Array.isArray(result) ? result : [result];
   }
 
   async findOne(id: number): Promise<Cat> {
     const result = await this.catRepository.findOne({
-      where: { id } as any,
+      where: { id },
       relations: ["owner"], // @ManyToOne eager 로딩 데모
     });
 
@@ -155,7 +155,7 @@ export class CatsService {
    */
   async remove(id: number): Promise<void> {
     await this.findOne(id);
-    await this.catRepository.delete({ id } as any);
+    await this.catRepository.delete({ id });
   }
 
   /**
@@ -164,14 +164,14 @@ export class CatsService {
    */
   async softRemove(id: number): Promise<void> {
     await this.findOne(id);
-    await this.catRepository.softDelete({ id } as any);
+    await this.catRepository.softDelete({ id });
   }
 
   /**
    * Restore — soft-deleted 엔티티의 deleted_at을 NULL로 복원.
    */
   async restore(id: number): Promise<void> {
-    await this.catRepository.restore({ id } as any);
+    await this.catRepository.restore({ id });
   }
 
   /**

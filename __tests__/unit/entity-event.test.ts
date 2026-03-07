@@ -237,7 +237,7 @@ describe("EntityManager 이벤트 통합 테스트", () => {
     });
 
     mockQuery
-      .mockResolvedValueOnce({ results: { rowCount: 1 }, fields: [] })
+      .mockResolvedValueOnce({ results: [], rowCount: 1, fields: [] })
       .mockResolvedValue({
         results: [{ id: 1, name: "updated" }],
         fields: [],
@@ -260,7 +260,7 @@ describe("EntityManager 이벤트 통합 테스트", () => {
     });
 
     mockQuery.mockResolvedValue({
-      results: { rowCount: 1 },
+      results: [], rowCount: 1,
       fields: [],
     });
 
@@ -334,7 +334,7 @@ describe("EntityManager 이벤트 통합 테스트", () => {
     ).resolves.toBeDefined();
 
     mockQuery.mockResolvedValue({
-      results: { rowCount: 1 },
+      results: [], rowCount: 1,
       fields: [],
     });
 

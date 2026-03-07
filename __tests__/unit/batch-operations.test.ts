@@ -333,7 +333,7 @@ describe("EntityManager.insertMany()", () => {
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(false);
 
     __mockQuery.mockResolvedValue({
-      results: { rowCount: 5 },
+      results: [], rowCount: 5,
       fields: [],
     });
 
@@ -487,7 +487,7 @@ describe("EntityManager.deleteMany()", () => {
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(false);
 
     __mockQuery.mockResolvedValue({
-      results: { rowCount: 2 },
+      results: [], rowCount: 2,
       fields: [],
     });
 

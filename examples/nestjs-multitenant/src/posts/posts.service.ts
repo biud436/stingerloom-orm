@@ -17,6 +17,7 @@ export class PostsService {
     post.title = dto.title;
     post.content = dto.content;
     if (dto.published !== undefined) post.published = dto.published;
+    if (dto.authorId) post.authorId = dto.authorId;
 
     const result = await this.postRepository.save(post);
     return Array.isArray(result) ? result[0] : result;
@@ -29,7 +30,7 @@ export class PostsService {
   }
 
   async findOne(id: number): Promise<Post> {
-    const result = await this.postRepository.findOne({ where: { id } as any });
+    const result = await this.postRepository.findOne({ where: { id } });
     if (!result) throw new NotFoundException(`Post with ID ${id} not found`);
     return result;
   }
@@ -47,6 +48,6 @@ export class PostsService {
 
   async remove(id: number): Promise<void> {
     await this.findOne(id);
-    await this.postRepository.delete({ id } as any);
+    await this.postRepository.delete({ id });
   }
 }

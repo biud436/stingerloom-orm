@@ -25,6 +25,7 @@
     "mysql2": "^3.9.3",
     "pg": "^8.11.3",
     "reflect-metadata": "^0.2.2",
+    "sql-template-tag": "^4.0.0",
     "rxjs": "^7.8.1",
     "typedi": "^0.10.0"
   },

@@ -103,7 +103,7 @@ const drivers = getTestDrivers();
 
           // DB에서 FK 값 직접 확인
           const rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
           );
           const row = (rows?.results ?? rows)?.[0];
           expect(Number(row?.parentFk)).toBe(parent.id);
@@ -136,7 +136,7 @@ const drivers = getTestDrivers();
           const saved = await childRepo.save(child);
 
           const rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
           );
           const row = (rows?.results ?? rows)?.[0];
           expect(row?.parentFk).toBeNull();
@@ -163,7 +163,7 @@ const drivers = getTestDrivers();
           await childRepo.save(saved);
 
           const rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
           );
           const row = (rows?.results ?? rows)?.[0];
           expect(Number(row?.parentFk)).toBe(parent2.id);
@@ -179,7 +179,7 @@ const drivers = getTestDrivers();
 
           // FK 확인 (설정됨)
           let rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
           );
           let row = (rows?.results ?? rows)?.[0];
           expect(Number(row?.parentFk)).toBe(parent.id);
@@ -190,7 +190,7 @@ const drivers = getTestDrivers();
 
           // FK 확인 (NULL)
           rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
           );
           row = (rows?.results ?? rows)?.[0];
           expect(row?.parentFk).toBeNull();
@@ -209,7 +209,7 @@ const drivers = getTestDrivers();
           await childRepo.save(saved);
 
           const rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
           );
           const row = (rows?.results ?? rows)?.[0];
           expect(Number(row?.parentFk)).toBe(parent.id);
@@ -233,7 +233,7 @@ const drivers = getTestDrivers();
           await childRepo.save(saved);
 
           const rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
           );
           const row = (rows?.results ?? rows)?.[0];
           expect(Number(row?.parentFk)).toBe(parent2.id);
@@ -250,7 +250,7 @@ const drivers = getTestDrivers();
           }
 
           const rows = await rawQuery(
-            `SELECT COUNT(*) AS cnt FROM ${qi(type, entities.childTableName)} WHERE parentFk = ${parent.id}`,
+            `SELECT COUNT(*) AS cnt FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "parentFk")} = ${parent.id}`,
           );
           const row = (rows?.results ?? rows)?.[0];
           expect(Number(row?.cnt)).toBe(3);
@@ -289,7 +289,7 @@ const drivers = getTestDrivers();
 
           // DB 직접 검증
           const rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${found.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${found.id}`,
           );
           const row = (rows?.results ?? rows)?.[0];
           expect(Number(row?.parentFk)).toBe(parent2.id);
@@ -316,7 +316,7 @@ const drivers = getTestDrivers();
           await childRepo.save(found);
 
           const rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${found.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${found.id}`,
           );
           const row = (rows?.results ?? rows)?.[0];
           expect(row?.parentFk).toBeNull();
@@ -334,7 +334,7 @@ const drivers = getTestDrivers();
           const saved = await childRepo.save(child);
 
           const rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
           );
           const row = (rows?.results ?? rows)?.[0];
           // 관계 객체의 PK(parent2.id)가 INSERT SQL 뒤쪽에서 덮어쓰므로 우선
@@ -369,7 +369,7 @@ const drivers = getTestDrivers();
           }
 
           const rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
           );
           const row = (rows?.results ?? rows)?.[0];
           expect(Number(row?.parentFk)).toBe(parent.id);
@@ -389,7 +389,7 @@ const drivers = getTestDrivers();
 
           // FK NULL 확인
           const rows = await rawQuery(
-            `SELECT parentFk FROM ${qi(type, entities.childTableName)} WHERE id = ${saved.id}`,
+            `SELECT ${qi(type, "parentFk")} FROM ${qi(type, entities.childTableName)} WHERE ${qi(type, "id")} = ${saved.id}`,
           );
           const row = (rows?.results ?? rows)?.[0];
           expect(row?.parentFk).toBeNull();
@@ -398,7 +398,7 @@ const drivers = getTestDrivers();
           await parentRepo.delete({ id: parent.id } as any);
 
           const parentRows = await rawQuery(
-            `SELECT COUNT(*) AS cnt FROM ${qi(type, entities.parentTableName)} WHERE id = ${parent.id}`,
+            `SELECT COUNT(*) AS cnt FROM ${qi(type, entities.parentTableName)} WHERE ${qi(type, "id")} = ${parent.id}`,
           );
           const pr = (parentRows?.results ?? parentRows)?.[0];
           expect(Number(pr?.cnt)).toBe(0);

@@ -39,7 +39,7 @@ export class OwnersService implements OnModuleInit {
 
   async findOne(id: number): Promise<Owner> {
     const result = await this.ownerRepository.findOne({
-      where: { id } as any,
+      where: { id },
     });
 
     if (!result) throw new NotFoundException(`Owner with ID ${id} not found`);
@@ -48,7 +48,7 @@ export class OwnersService implements OnModuleInit {
 
   async remove(id: number): Promise<void> {
     await this.findOne(id);
-    await this.ownerRepository.delete({ id } as any);
+    await this.ownerRepository.delete({ id });
   }
 
   /**

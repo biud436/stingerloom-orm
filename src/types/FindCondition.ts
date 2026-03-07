@@ -46,4 +46,4 @@ export interface FindOperator<T> {
  */
 export type FindCondition<T> = {
   [K in keyof T]?: T[K] | FindOperator<T[K]>;
-};
+} & Record<string, any>;

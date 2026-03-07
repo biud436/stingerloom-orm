@@ -45,8 +45,12 @@ module.exports = {
     "**/*.spec.ts",
   ],
 
-  // Files to ignore
-  testPathIgnorePatterns: ["/node_modules/", "/dist/"],
+  // Files to ignore — integration tests require INTEGRATION_TEST=true
+  testPathIgnorePatterns: [
+    "/node_modules/",
+    "/dist/",
+    ...(process.env.INTEGRATION_TEST === "true" ? [] : ["/__tests__/integration/"]),
+  ],
   transformIgnorePatterns: ["<rootDir>/node_modules/"],
 
   // Setup files

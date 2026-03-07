@@ -104,6 +104,7 @@ export class PostgresConnector extends IConnector {
         return {
           results: result.rows,
           fields: result.fields,
+          rowCount: result.rowCount,
           error: null,
         } as T;
       }
@@ -131,6 +132,7 @@ export class PostgresConnector extends IConnector {
         return {
           results: result.rows,
           fields: result.fields,
+          rowCount: result.rowCount,
           error: null,
         } as T;
       }

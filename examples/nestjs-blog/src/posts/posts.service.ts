@@ -30,6 +30,8 @@ export class PostsService {
     post.title = dto.title;
     post.slug = dto.slug;
     post.content = dto.content;
+    if (dto.authorId) post.authorId = dto.authorId;
+    if (dto.categoryId) post.categoryId = dto.categoryId;
 
     const result = await this.postRepository.save(post);
     return Array.isArray(result) ? result[0] : result;
@@ -42,14 +44,14 @@ export class PostsService {
   }
 
   async findAllIncludeDeleted(): Promise<Post[]> {
-    const result = await this.postRepository.find({ withDeleted: true } as any);
+    const result = await this.postRepository.find({ withDeleted: true });
     if (!result) return [];
     return Array.isArray(result) ? result : [result];
   }
 
   async findOne(id: number): Promise<Post> {
     const result = await this.postRepository.findOne({
-      where: { id } as any,
+      where: { id },
     });
 
     if (!result) throw new NotFoundException(`Post with ID ${id} not found`);
@@ -72,16 +74,16 @@ export class PostsService {
 
   async remove(id: number): Promise<void> {
     await this.findOne(id);
-    await this.postRepository.delete({ id } as any);
+    await this.postRepository.delete({ id });
   }
 
   async softRemove(id: number): Promise<void> {
     await this.findOne(id);
-    await this.postRepository.softDelete({ id } as any);
+    await this.postRepository.softDelete({ id });
   }
 
   async restore(id: number): Promise<void> {
-    await this.postRepository.restore({ id } as any);
+    await this.postRepository.restore({ id });
   }
 
   async count(): Promise<number> {
@@ -96,9 +98,8 @@ export class PostsService {
     limit = 10,
   ): Promise<{ data: Post[]; total: number; page: number; totalPages: number }> {
     const [data, total] = await this.postRepository.findAndCount({
-      take: limit,
-      skip: (page - 1) * limit,
-    } as any);
+      limit: [(page - 1) * limit, limit],
+    });
     return { data, total, page, totalPages: Math.ceil(total / limit) };
   }
 
@@ -118,7 +119,7 @@ export class PostsService {
    * explain — 쿼리 실행 계획 조회.
    */
   async explainQuery(id: number): Promise<ExplainResult> {
-    return this.postRepository.explain({ where: { id } } as any);
+    return this.postRepository.explain({ where: { id } });
   }
 
   /**
@@ -175,12 +176,12 @@ export class PostsService {
    */
   async getPostTags(postId: number): Promise<Tag[]> {
     const result = await this.postRepository.findOne({
-      where: { id: postId } as any,
+      where: { id: postId },
       relations: ["tags"],
     });
     const post = Array.isArray(result) ? result[0] : result;
     if (!post) throw new NotFoundException(`Post with ID ${postId} not found`);
-    return (post as any).tags ?? [];
+    return post.tags ?? [];
   }
 
   async findWithCursor(

@@ -31,7 +31,7 @@ export class UsersService {
 
   async findOne(id: number): Promise<User> {
     const result = await this.userRepository.findOne({
-      where: { id } as any,
+      where: { id },
     });
 
     if (!result) throw new NotFoundException(`User with ID ${id} not found`);
@@ -52,7 +52,7 @@ export class UsersService {
 
   async remove(id: number): Promise<void> {
     await this.findOne(id);
-    await this.userRepository.delete({ id } as any);
+    await this.userRepository.delete({ id });
   }
 
   async count(): Promise<number> {
@@ -65,9 +65,8 @@ export class UsersService {
     limit = 10,
   ): Promise<{ data: User[]; total: number; page: number; totalPages: number }> {
     const [data, total] = await this.userRepository.findAndCount({
-      take: limit,
-      skip: (page - 1) * limit,
-    } as any);
+      limit: [(page - 1) * limit, limit],
+    });
     return { data, total, page, totalPages: Math.ceil(total / limit) };
   }
 }

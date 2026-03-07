@@ -339,7 +339,7 @@ describe("EntityManager 복합 PK 통합 테스트", () => {
   describe("DELETE (복합 PK)", () => {
     it("복합 PK 조건으로 삭제가 동작해야 한다", async () => {
       mockQuery.mockResolvedValue({
-        results: { rowCount: 1 },
+        results: [], rowCount: 1,
         fields: [],
       });
 

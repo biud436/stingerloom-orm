@@ -50,11 +50,15 @@ export class Post {
   })
   author!: User;
 
+  authorId?: number;
+
   @ManyToOne(() => Category, (category) => category.posts, {
     joinColumn: "category_id",
     eager: true,
   })
   category!: Category;
+
+  categoryId?: number;
 
   @ManyToMany(() => Tag, {
     joinTable: {

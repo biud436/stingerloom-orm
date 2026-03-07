@@ -62,7 +62,7 @@ export function getMySqlConfig(): Partial<DatabaseClientOptions> {
     port: parseInt(process.env.DB_PORT || "3306", 10),
     username: process.env.DB_USER || "root",
     password: process.env.DB_PASSWORD || "password",
-    database: process.env.DB_NAME || "stingerloom_test",
+    database: process.env.DB_NAME || "fastify",
   };
 }
 

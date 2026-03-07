@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../utils";
-import { FindOption } from "../dialects/FindOption";
+import { FindOption, WhereClause } from "../dialects/FindOption";
 import { EntityManager } from "./EntityManager";
 import { EntityResult } from "../types/EntityResult";
 import { DeleteResult } from "../types/DeleteResult";
@@ -98,7 +98,7 @@ export class BaseRepository<T> {
    * @param criteria The conditions to match entities for deletion.
    * @returns A promise that resolves to the number of affected rows.
    */
-  async delete(criteria: { [K in keyof T]?: T[K] }): Promise<DeleteResult> {
+  async delete(criteria: WhereClause<T>): Promise<DeleteResult> {
     return await this.em.delete<T>(this.entity, criteria);
   }
 
@@ -119,7 +119,7 @@ export class BaseRepository<T> {
    * @param criteria The conditions to match entities for soft deletion.
    * @returns A promise that resolves to the number of affected rows.
    */
-  async softDelete(criteria: { [K in keyof T]?: T[K] }): Promise<DeleteResult> {
+  async softDelete(criteria: WhereClause<T>): Promise<DeleteResult> {
     return await this.em.softDelete<T>(this.entity, criteria);
   }
 
@@ -130,7 +130,7 @@ export class BaseRepository<T> {
    * @param criteria The conditions to match entities for restoration.
    * @returns A promise that resolves to the number of affected rows.
    */
-  async restore(criteria: { [K in keyof T]?: T[K] }): Promise<DeleteResult> {
+  async restore(criteria: WhereClause<T>): Promise<DeleteResult> {
     return await this.em.restore<T>(this.entity, criteria);
   }
 
@@ -177,7 +177,7 @@ export class BaseRepository<T> {
   /**
    * Returns the count of entities matching the given conditions.
    */
-  async count(where?: { [K in keyof T]?: T[K] }): Promise<number> {
+  async count(where?: WhereClause<T>): Promise<number> {
     return await this.em.count<T>(this.entity, where);
   }
 
@@ -186,7 +186,7 @@ export class BaseRepository<T> {
    */
   async sum(
     field: keyof T & string,
-    where?: { [K in keyof T]?: T[K] },
+    where?: WhereClause<T>,
   ): Promise<number> {
     return await this.em.sum<T>(this.entity, field, where);
   }
@@ -196,7 +196,7 @@ export class BaseRepository<T> {
    */
   async avg(
     field: keyof T & string,
-    where?: { [K in keyof T]?: T[K] },
+    where?: WhereClause<T>,
   ): Promise<number> {
     return await this.em.avg<T>(this.entity, field, where);
   }
@@ -206,7 +206,7 @@ export class BaseRepository<T> {
    */
   async min(
     field: keyof T & string,
-    where?: { [K in keyof T]?: T[K] },
+    where?: WhereClause<T>,
   ): Promise<number> {
     return await this.em.min<T>(this.entity, field, where);
   }
@@ -216,7 +216,7 @@ export class BaseRepository<T> {
    */
   async max(
     field: keyof T & string,
-    where?: { [K in keyof T]?: T[K] },
+    where?: WhereClause<T>,
   ): Promise<number> {
     return await this.em.max<T>(this.entity, field, where);
   }

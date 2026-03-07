@@ -191,7 +191,7 @@ describe("Conditions - operator 화이트리스트 검증", () => {
     it("should reject SQL injection via operator", () => {
       expect(() => {
         Conditions.compareColumns("col1", "= 1; DROP TABLE users; --", "col2");
-      }).toThrow(/허용되지 않은 연산자/);
+      }).toThrow(/Invalid operator/);
     });
 
     it("should reject UNION-based injection via operator", () => {
@@ -201,25 +201,25 @@ describe("Conditions - operator 화이트리스트 검증", () => {
           "= 1 UNION SELECT * FROM passwords --",
           "col2",
         );
-      }).toThrow(/허용되지 않은 연산자/);
+      }).toThrow(/Invalid operator/);
     });
 
     it("should reject OR-based injection via operator", () => {
       expect(() => {
         Conditions.compareColumns("col1", "= 1 OR 1=1 --", "col2");
-      }).toThrow(/허용되지 않은 연산자/);
+      }).toThrow(/Invalid operator/);
     });
 
     it("should reject empty operator", () => {
       expect(() => {
         Conditions.compareColumns("col1", "", "col2");
-      }).toThrow(/허용되지 않은 연산자/);
+      }).toThrow(/Invalid operator/);
     });
 
     it("should reject arbitrary string as operator", () => {
       expect(() => {
         Conditions.compareColumns("col1", "EXECUTE", "col2");
-      }).toThrow(/허용되지 않은 연산자/);
+      }).toThrow(/Invalid operator/);
     });
   });
 
@@ -239,7 +239,7 @@ describe("Conditions - operator 화이트리스트 검증", () => {
           "; DROP TABLE users --",
           subquery,
         );
-      }).toThrow(/허용되지 않은 연산자/);
+      }).toThrow(/Invalid operator/);
     });
   });
 });

@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { WhereClause } from "../dialects/FindOption";
 
 /**
  * 커서 기반 페이지네이션 옵션
@@ -33,9 +34,7 @@ export type CursorPaginationOption<T> = {
   /**
    * 추가 WHERE 조건
    */
-  where?: {
-    [K in keyof T]?: T[K];
-  };
+  where?: WhereClause<T>;
 
   /**
    * Replication 환경에서 강제로 master 노드를 사용하여 읽기 쿼리를 실행합니다.

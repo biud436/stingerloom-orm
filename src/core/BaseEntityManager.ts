@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../utils";
-import { FindOption } from "../dialects/FindOption";
+import { FindOption, WhereClause } from "../dialects/FindOption";
 import { BaseRepository } from "./BaseRepository";
 import { EntityResult } from "../types/EntityResult";
 import { DeleteResult } from "../types/DeleteResult";
@@ -100,7 +100,7 @@ export abstract class BaseEntityManager {
    */
   abstract delete<T>(
     entity: ClazzType<T>,
-    criteria: { [K in keyof T]?: T[K] },
+    criteria: WhereClause<T>,
   ): Promise<DeleteResult>;
 
   /**
@@ -131,7 +131,7 @@ export abstract class BaseEntityManager {
    */
   abstract softDelete<T>(
     entity: ClazzType<T>,
-    criteria: { [K in keyof T]?: T[K] },
+    criteria: WhereClause<T>,
   ): Promise<DeleteResult>;
 
   /**
@@ -144,7 +144,7 @@ export abstract class BaseEntityManager {
    */
   abstract restore<T>(
     entity: ClazzType<T>,
-    criteria: { [K in keyof T]?: T[K] },
+    criteria: WhereClause<T>,
   ): Promise<DeleteResult>;
 
   /**

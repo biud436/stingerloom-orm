@@ -3,6 +3,14 @@ import { IOrderBy } from "./IOrderBy";
 import { Sql } from "sql-template-tag";
 
 /**
+ * WHERE 조건 타입. 엔티티 필드 기반 자동완성을 제공하면서
+ * 임의의 문자열 키(FK 컬럼 등)도 허용합니다.
+ */
+export type WhereClause<T> = {
+  [K in keyof T]?: T[K];
+} & Record<string, any>;
+
+/**
  * Represents the options that can be used to find entities in the ORM.
  *
  * @template T - The type of the entity.
@@ -17,9 +25,7 @@ export type FindOption<T> = {
    * Specifies the conditions to filter the entities.
    * Each key corresponds to a field in the entity, and the value is the value to match.
    */
-  where?: {
-    [K in keyof T]?: T[K];
-  };
+  where?: WhereClause<T>;
 
   /**
    * Specifies the limit for the number of entities to retrieve.
@@ -51,7 +57,7 @@ export type FindOption<T> = {
   /**
    * Specifies the relations to include in the query.
    */
-  relations?: (keyof T)[];
+  relations?: string[];
 
   /**
    * If true, includes soft-deleted entities (@DeletedAt) in the results.

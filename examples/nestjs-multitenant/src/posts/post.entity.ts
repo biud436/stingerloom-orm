@@ -34,6 +34,8 @@ export class Post {
   })
   author!: User;
 
+  authorId?: number;
+
   @BeforeInsert()
   setTimestamps() {
     const now = new Date();

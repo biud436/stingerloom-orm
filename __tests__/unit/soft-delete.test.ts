@@ -136,7 +136,7 @@ describe("EntityManager soft delete", () => {
   describe("softDelete()", () => {
     it("@DeletedAt 컬럼이 있는 엔티티에 UPDATE ... SET deleted_at = NOW() 쿼리를 생성해야 함", async () => {
       mockQuery.mockResolvedValue({
-        results: { rowCount: 1 },
+        results: [], rowCount: 1,
         fields: [],
       });
 
@@ -177,7 +177,7 @@ describe("EntityManager soft delete", () => {
   describe("restore()", () => {
     it("@DeletedAt 컬럼이 있는 엔티티에 UPDATE ... SET deleted_at = NULL 쿼리를 생성해야 함", async () => {
       mockQuery.mockResolvedValue({
-        results: { rowCount: 2 },
+        results: [], rowCount: 2,
         fields: [],
       });
 
@@ -287,7 +287,7 @@ describe("EntityManager soft delete", () => {
       const repo = em.getRepository(Article);
 
       mockQuery.mockResolvedValue({
-        results: { rowCount: 1 },
+        results: [], rowCount: 1,
         fields: [],
       });
 
@@ -299,7 +299,7 @@ describe("EntityManager soft delete", () => {
       const repo = em.getRepository(Article);
 
       mockQuery.mockResolvedValue({
-        results: { rowCount: 1 },
+        results: [], rowCount: 1,
         fields: [],
       });
 
