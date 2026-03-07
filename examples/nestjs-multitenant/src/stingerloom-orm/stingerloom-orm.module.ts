@@ -59,7 +59,7 @@ export class StinglerloomOrmModule {
 
     return {
       module: StinglerloomOrmModule,
-      imports: [StingerloomOrmCoreModule.forRoot()],
+      imports: [StingerloomOrmCoreModule.forRoot(options)],
       providers: [StinglerloomOrmService],
       exports: [StinglerloomOrmService, StingerloomOrmCoreModule],
       global: true,

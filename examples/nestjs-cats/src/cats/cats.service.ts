@@ -19,7 +19,12 @@ export class CatsService {
   ) {}
 
   async onModuleInit() {
-    await this.associateCatWithOwner();
+    await this.truncateCats();
+  }
+
+  @Transactional()
+  async truncateCats() {
+    await this.catRepository.clear();
   }
 
   @Transactional()

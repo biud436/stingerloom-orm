@@ -6,11 +6,6 @@ import {
 } from "@nestjs/common";
 import { EntityManager, ClazzType, Logger } from "@stingerloom/orm";
 import Container from "typedi";
-import {
-  STINGERLOOM_ORM_OPTION_TOKEN,
-  StinglerloomOrmModule,
-  DatabaseClientOptions,
-} from "./stingerloom-orm.module";
 
 export const STINGERLOOM_ORM_SERVICE_TOKEN = Symbol.for(
   "STINGERLOOM_ORM_SERVICE_TOKEN",
@@ -42,7 +37,7 @@ export class StinglerloomOrmService
     }
 
     await this.initEntityManager();
-    await this.registerEntities();
+    // register()는 EntityManager async factory에서 이미 완료됨
   }
 
   async onApplicationShutdown(): Promise<void> {
@@ -54,21 +49,6 @@ export class StinglerloomOrmService
     if (!Container.has(EntityManager)) {
       Container.set(EntityManager, this.entityManager);
     }
-  }
-
-  private async registerEntities(): Promise<void> {
-    const options = Reflect.getMetadata(
-      STINGERLOOM_ORM_OPTION_TOKEN,
-      StinglerloomOrmModule,
-    ) as DatabaseClientOptions;
-
-    if (!options) {
-      throw new Error(
-        "Database configuration is required. Did you call StinglerloomOrmModule.forRoot()?",
-      );
-    }
-
-    await this.entityManager.register(options);
   }
 
   private async propagateShutdown(): Promise<void> {

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { CreateOwnerDto } from "./dto/create-owner.dto";
 import { Owner } from "./owner.entity";
 
@@ -6,11 +6,19 @@ import { BaseRepository, Transactional } from "@stingerloom/orm";
 import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
 
 @Injectable()
-export class OwnersService {
+export class OwnersService implements OnModuleInit {
   constructor(
     @InjectRepository(Owner)
     private readonly ownerRepository: BaseRepository<Owner>,
   ) {}
+
+  async onModuleInit() {
+    await this.truncateOwners();
+  }
+
+  async truncateOwners() {
+    await this.ownerRepository.clear();
+  }
 
   @Transactional()
   async create(dto: CreateOwnerDto): Promise<Owner> {

@@ -473,10 +473,15 @@ export class MySqlDriver implements ISqlDriver {
   /**
    * 테이블의 모든 데이터를 제거합니다 (TRUNCATE TABLE).
    */
-  clear(tableName: string) {
-    return this.connector.query(
-      `TRUNCATE TABLE ${this.wrap(tableName)}`,
-    );
+  async clear(tableName: string) {
+    await this.connector.query(`SET FOREIGN_KEY_CHECKS = 0`);
+    try {
+      return await this.connector.query(
+        `TRUNCATE TABLE ${this.wrap(tableName)}`,
+      );
+    } finally {
+      await this.connector.query(`SET FOREIGN_KEY_CHECKS = 1`);
+    }
   }
 
   /**

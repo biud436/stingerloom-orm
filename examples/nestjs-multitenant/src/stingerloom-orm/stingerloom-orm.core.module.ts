@@ -1,12 +1,21 @@
-import { Module } from "@nestjs/common";
-import { EntityManager } from "@stingerloom/orm";
+import { DynamicModule, Module } from "@nestjs/common";
+import { EntityManager, type DatabaseClientOptions } from "@stingerloom/orm";
 
 @Module({})
 export class StingerloomOrmCoreModule {
-  static forRoot() {
+  static forRoot(options: DatabaseClientOptions): DynamicModule {
     return {
       module: StingerloomOrmCoreModule,
-      providers: [EntityManager],
+      providers: [
+        {
+          provide: EntityManager,
+          useFactory: async () => {
+            const em = new EntityManager();
+            await em.register(options);
+            return em;
+          },
+        },
+      ],
       exports: [EntityManager],
     };
   }

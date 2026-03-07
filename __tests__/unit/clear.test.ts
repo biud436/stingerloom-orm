@@ -117,28 +117,47 @@ describe("BaseRepository.clear()", () => {
 });
 
 describe("Driver.clear() SQL generation", () => {
-  it("MySQL: should generate TRUNCATE TABLE with backtick-wrapped name", () => {
+  it("MySQL: should generate TRUNCATE TABLE with FK checks disabled", async () => {
     const { MySqlDriver } = jest.requireActual(
       "../../src/dialects/mysql/MySqlDriver",
     );
     const mockConnector = { query: jest.fn().mockResolvedValue(undefined) };
     const driver = new MySqlDriver(mockConnector);
 
-    driver.clear("cats");
+    await driver.clear("cats");
 
-    expect(mockConnector.query).toHaveBeenCalledWith("TRUNCATE TABLE `cats`");
+    expect(mockConnector.query).toHaveBeenCalledTimes(3);
+    expect(mockConnector.query).toHaveBeenNthCalledWith(1, "SET FOREIGN_KEY_CHECKS = 0");
+    expect(mockConnector.query).toHaveBeenNthCalledWith(2, "TRUNCATE TABLE `cats`");
+    expect(mockConnector.query).toHaveBeenNthCalledWith(3, "SET FOREIGN_KEY_CHECKS = 1");
   });
 
-  it("MySQL: should escape special characters in table name", () => {
+  it("MySQL: should re-enable FK checks even on error", async () => {
+    const { MySqlDriver } = jest.requireActual(
+      "../../src/dialects/mysql/MySqlDriver",
+    );
+    const mockConnector = {
+      query: jest.fn()
+        .mockResolvedValueOnce(undefined) // SET FK_CHECKS = 0
+        .mockRejectedValueOnce(new Error("TRUNCATE failed"))
+        .mockResolvedValueOnce(undefined), // SET FK_CHECKS = 1
+    };
+    const driver = new MySqlDriver(mockConnector);
+
+    await expect(driver.clear("cats")).rejects.toThrow("TRUNCATE failed");
+    expect(mockConnector.query).toHaveBeenNthCalledWith(3, "SET FOREIGN_KEY_CHECKS = 1");
+  });
+
+  it("MySQL: should escape special characters in table name", async () => {
     const { MySqlDriver } = jest.requireActual(
       "../../src/dialects/mysql/MySqlDriver",
     );
     const mockConnector = { query: jest.fn().mockResolvedValue(undefined) };
     const driver = new MySqlDriver(mockConnector);
 
-    driver.clear("my`table");
+    await driver.clear("my`table");
 
-    expect(mockConnector.query).toHaveBeenCalledWith(
+    expect(mockConnector.query).toHaveBeenNthCalledWith(2,
       "TRUNCATE TABLE `my``table`",
     );
   });
