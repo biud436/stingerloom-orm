@@ -1,6 +1,6 @@
 {
   "name": "@stingerloom/orm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A standalone, framework-agnostic TypeScript ORM that can be used with any Node.js framework",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -49,9 +49,15 @@
     "better-sqlite3": ">=9.0.0"
   },
   "peerDependenciesMeta": {
-    "mysql2": { "optional": true },
-    "pg": { "optional": true },
-    "better-sqlite3": { "optional": true }
+    "mysql2": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
