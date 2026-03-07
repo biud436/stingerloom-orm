@@ -30,7 +30,6 @@
     "database",
     "decorator",
     "multi-tenancy",
-    "typeorm-alternative",
     "stingerloom"
   ],
   "scripts": {
