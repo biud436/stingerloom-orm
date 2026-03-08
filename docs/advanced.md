@@ -1,12 +1,12 @@
-# 고급 기능 (Advanced)
+# Advanced Features
 
-이 문서에서는 프로덕션 환경에서 유용한 고급 기능을 다룹니다. 기본 CRUD와 관계를 익힌 후에 필요한 기능을 골라 읽으세요.
+This document covers advanced features useful in production environments. Read selectively after familiarizing yourself with basic CRUD and relationships.
 
-## EntitySubscriber — 엔티티별 이벤트 구독
+## EntitySubscriber — Per-Entity Event Subscription
 
-`em.on()`은 모든 엔티티의 이벤트를 수신하지만, `EntitySubscriber`를 사용하면 특정 엔티티에 대한 이벤트만 받을 수 있습니다.
+`em.on()` receives events for all entities, but `EntitySubscriber` lets you receive events for specific entities only.
 
-예를 들어, User가 생성/수정/삭제될 때마다 감사 로그를 기록하려면:
+For example, to log an audit trail whenever a User is created, updated, or deleted:
 
 ```typescript
 // user-audit.subscriber.ts
@@ -20,59 +20,59 @@ import { User } from "./user.entity";
 
 class UserAuditSubscriber implements EntitySubscriber<User> {
   listenTo() {
-    return User; // 이 엔티티의 이벤트만 수신
+    return User; // Only receive events for this entity
   }
 
   async afterInsert(event: InsertEvent<User>) {
-    console.log("User 생성:", event.entity);
+    console.log("User created:", event.entity);
   }
 
   async afterUpdate(event: UpdateEvent<User>) {
-    console.log("User 수정:", event.entity);
+    console.log("User updated:", event.entity);
   }
 
   async afterDelete(event: DeleteEvent<User>) {
-    console.log("User 삭제, 조건:", event.criteria);
+    console.log("User deleted, criteria:", event.criteria);
   }
 }
 ```
 
 ```typescript
-// 등록
+// Register
 em.addSubscriber(new UserAuditSubscriber());
 
-// 해제
+// Unregister
 em.removeSubscriber(subscriber);
 ```
 
-EntitySubscriber가 지원하는 이벤트 목록입니다.
+Here is the list of events supported by EntitySubscriber.
 
-| 메서드 | 시점 |
-|--------|------|
-| `afterLoad(entity)` | DB에서 엔티티 로드 후 |
-| `beforeInsert(event)` / `afterInsert(event)` | INSERT 전/후 |
-| `beforeUpdate(event)` / `afterUpdate(event)` | UPDATE 전/후 |
-| `beforeDelete(event)` / `afterDelete(event)` | DELETE 전/후 |
-| `beforeTransactionStart()` / `afterTransactionStart()` | 트랜잭션 시작 전/후 |
-| `beforeTransactionCommit()` / `afterTransactionCommit()` | COMMIT 전/후 |
-| `beforeTransactionRollback()` / `afterTransactionRollback()` | ROLLBACK 전/후 |
+| Method | Timing |
+|--------|--------|
+| `afterLoad(entity)` | After loading entity from DB |
+| `beforeInsert(event)` / `afterInsert(event)` | Before/after INSERT |
+| `beforeUpdate(event)` / `afterUpdate(event)` | Before/after UPDATE |
+| `beforeDelete(event)` / `afterDelete(event)` | Before/after DELETE |
+| `beforeTransactionStart()` / `afterTransactionStart()` | Before/after transaction start |
+| `beforeTransactionCommit()` / `afterTransactionCommit()` | Before/after COMMIT |
+| `beforeTransactionRollback()` / `afterTransactionRollback()` | Before/after ROLLBACK |
 
-## N+1 감지와 슬로우 쿼리 경고
+## N+1 Detection and Slow Query Warnings
 
-**N+1 문제**는 목록을 조회한 후 각 항목의 관계를 개별 쿼리로 가져오는 패턴입니다. 10개 항목이면 1 + 10 = 11번의 쿼리가 실행됩니다. Stingerloom은 이 패턴을 자동으로 감지하여 경고합니다.
+The **N+1 problem** is a pattern where, after querying a list, each item's relationships are fetched with individual queries. With 10 items, this results in 1 + 10 = 11 queries. Stingerloom automatically detects this pattern and issues warnings.
 
 ```typescript
 await em.register({
   type: "postgres",
   // ...
   logging: {
-    slowQueryMs: 500,  // 500ms 이상 걸리는 쿼리에 경고
-    nPlusOne: true,    // N+1 패턴 감지
+    slowQueryMs: 500,  // Warn on queries taking longer than 500ms
+    nPlusOne: true,    // Enable N+1 pattern detection
   },
 });
 ```
 
-설정 후 쿼리 로그를 확인할 수 있습니다.
+After configuration, you can inspect the query log.
 
 ```typescript
 const log = em.getQueryLog();
@@ -83,14 +83,14 @@ const log = em.getQueryLog();
 // ]
 ```
 
-> **Hint** N+1이 감지되면 `eager: true` 또는 `relations` 옵션으로 JOIN 기반 로딩으로 전환하세요.
+> **Hint** When N+1 is detected, switch to JOIN-based loading using `eager: true` or the `relations` option.
 
-## 커서 기반 페이지네이션
+## Cursor-Based Pagination
 
-offset 방식(`LIMIT 10 OFFSET 10000`)은 데이터가 많아질수록 느려집니다. 커서 방식은 마지막 항목의 위치를 기억하여 항상 일정한 성능을 보장합니다.
+The offset approach (`LIMIT 10 OFFSET 10000`) gets slower as the dataset grows. Cursor-based pagination remembers the position of the last item, ensuring consistent performance.
 
 ```typescript
-// 첫 페이지
+// First page
 const page1 = await em.findWithCursor(Post, {
   take: 20,
   orderBy: "id",
@@ -98,7 +98,7 @@ const page1 = await em.findWithCursor(Post, {
   where: { isPublished: true },
 });
 
-// 두 번째 페이지 — nextCursor를 전달
+// Second page — pass nextCursor
 const page2 = await em.findWithCursor(Post, {
   take: 20,
   cursor: page1.nextCursor!,
@@ -109,10 +109,10 @@ const page2 = await em.findWithCursor(Post, {
 
 console.log(page2.data);        // Post[]
 console.log(page2.hasNextPage); // true/false
-console.log(page2.nextCursor);  // 다음 페이지용 커서
+console.log(page2.nextCursor);  // Cursor for the next page
 ```
 
-REST API에서 사용하는 예시입니다.
+Here is an example of using it in a REST API.
 
 ```typescript
 // GET /posts?take=20&cursor=eyJ2IjoyMH0=
@@ -132,9 +132,9 @@ async function getPosts(req: Request, res: Response) {
 }
 ```
 
-## 유효성 검사
+## Validation
 
-`save()` 호출 시 데코레이터로 정의한 제약 조건을 자동으로 검사합니다. 검사에 실패하면 `ValidationError`가 발생합니다.
+When `save()` is called, constraints defined via decorators are automatically validated. If validation fails, a `ValidationError` is thrown.
 
 ```typescript
 import {
@@ -168,29 +168,29 @@ try {
 }
 ```
 
-| 데코레이터 | 대상 | 설명 |
-|-----------|------|------|
-| `@NotNull()` | 모든 타입 | null/undefined 불허 |
-| `@MinLength(n)` | string | 최소 길이 |
-| `@MaxLength(n)` | string | 최대 길이 |
-| `@Min(n)` | number | 최솟값 |
-| `@Max(n)` | number | 최댓값 |
+| Decorator | Target | Description |
+|-----------|--------|-------------|
+| `@NotNull()` | All types | Disallow null/undefined |
+| `@MinLength(n)` | string | Minimum length |
+| `@MaxLength(n)` | string | Maximum length |
+| `@Min(n)` | number | Minimum value |
+| `@Max(n)` | number | Maximum value |
 
-## BaseRepository — 리포지토리 패턴
+## BaseRepository — Repository Pattern
 
-`BaseRepository`는 EntityManager의 메서드를 특정 엔티티에 바인딩한 래퍼입니다.
+`BaseRepository` is a wrapper that binds EntityManager methods to a specific entity.
 
 ```typescript
 const userRepo = em.getRepository(User);
 
-// EntityManager와 동일한 API를 엔티티 지정 없이 사용
+// Use the same API as EntityManager without specifying the entity
 const users = await userRepo.find();
 const user = await userRepo.findOne({ where: { id: 1 } as any });
-await userRepo.save({ name: "홍길동" });
+await userRepo.save({ name: "John Doe" });
 await userRepo.delete({ id: 1 });
 ```
 
-NestJS에서는 `@InjectRepository()`로 서비스에 주입할 수 있습니다.
+In NestJS, you can inject it into services using `@InjectRepository()`.
 
 ```typescript
 @Injectable()
@@ -205,11 +205,11 @@ class UsersService {
 }
 ```
 
-BaseRepository는 EntityManager의 거의 모든 메서드를 지원합니다: `find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`.
+BaseRepository supports nearly all EntityManager methods: `find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`.
 
-## Read Replica — 읽기/쓰기 분리
+## Read Replica — Read/Write Splitting
 
-`replication` 옵션으로 쓰기는 master로, 읽기는 slave로 자동 라우팅됩니다.
+The `replication` option automatically routes writes to master and reads to slave.
 
 ```typescript
 await em.register({
@@ -249,82 +249,82 @@ await em.register({
 });
 ```
 
-- **쓰기 쿼리** (`save`, `delete`, `upsert` 등) → 항상 master
-- **읽기 쿼리** (`find`, `findOne`, `count` 등) → slave 라운드 로빈
-- **slave 장애** → master로 자동 fallback
+- **Write queries** (`save`, `delete`, `upsert`, etc.) -> always go to master
+- **Read queries** (`find`, `findOne`, `count`, etc.) -> round-robin across slaves
+- **Slave failure** -> automatic fallback to master
 
-쓰기 직후 최신 데이터를 읽어야 할 때는 `useMaster` 옵션을 사용합니다.
+When you need to read the latest data immediately after a write, use the `useMaster` option.
 
 ```typescript
-await em.save(User, { id: 1, name: "수정됨" });
+await em.save(User, { id: 1, name: "Updated" });
 
-// replica lag 없이 master에서 직접 읽기
+// Read directly from master without replica lag
 const user = await em.findOne(User, {
   where: { id: 1 },
   useMaster: true,
 });
 ```
 
-## 연결 풀링
+## Connection Pooling
 
 ```typescript
 await em.register({
   type: "postgres",
   // ...
   pool: {
-    max: 20,              // 최대 연결 수
-    min: 5,               // 최소 유휴 연결 수 (PostgreSQL만)
-    acquireTimeoutMs: 5000, // 연결 획득 대기 시간
-    idleTimeoutMs: 30000,  // 유휴 연결 종료 시간 (PostgreSQL만)
+    max: 20,              // Maximum number of connections
+    min: 5,               // Minimum idle connections (PostgreSQL only)
+    acquireTimeoutMs: 5000, // Connection acquire wait time
+    idleTimeoutMs: 30000,  // Idle connection timeout (PostgreSQL only)
   },
 });
 ```
 
-> **Hint** SQLite는 파일 기반 단일 연결이므로 풀 설정이 무시됩니다.
+> **Hint** SQLite is file-based with a single connection, so pool settings are ignored.
 
-## 연결 재시도
+## Connection Retry
 
-DB 연결 실패 시 지수 백오프 방식으로 자동 재시도합니다.
+Automatically retries with exponential backoff on DB connection failure.
 
 ```typescript
 await em.register({
   type: "mysql",
   // ...
   retry: {
-    maxAttempts: 5,   // 최대 재시도 횟수
-    backoffMs: 500,   // 기본 지연: 500ms → 1s → 2s → 4s → 8s
+    maxAttempts: 5,   // Maximum retry attempts
+    backoffMs: 500,   // Base delay: 500ms -> 1s -> 2s -> 4s -> 8s
   },
 });
 ```
 
-## 쿼리 타임아웃
+## Query Timeout
 
 ```typescript
-// 모든 쿼리에 5초 타임아웃
+// 5-second timeout for all queries
 await em.register({
   type: "mysql",
   // ...
   queryTimeout: 5000,
 });
 
-// 특정 쿼리에만 2초 타임아웃 (전역 설정보다 우선)
+// 2-second timeout for a specific query only (overrides global setting)
 const users = await em.find(User, {
   where: { isActive: true },
   timeout: 2000,
 });
 ```
 
-타임아웃 초과 시 `QueryTimeoutError`가 발생합니다.
+A `QueryTimeoutError` is thrown when the timeout is exceeded.
 
-## 종료 처리 — propagateShutdown()
+## Shutdown Handling — propagateShutdown()
 
-애플리케이션 종료 시 EntityManager의 내부 리소스를 정리합니다. 이벤트 리스너, 구독자, 쿼리 트래커, 복제 라우터를 모두 초기화합니다.
+Cleans up EntityManager's internal resources when the application shuts down. This resets event listeners, subscribers, query tracker, and replication router.
 
 ```typescript
 await em.propagateShutdown();
 ```
 
-NestJS에서는 `OnModuleDestroy` 훅에서 호출하세요.
+In NestJS, call it from the `OnModuleDestroy` hook.
 
 ```typescript
 @Injectable()
@@ -337,8 +337,8 @@ export class AppService implements OnModuleDestroy {
 }
 ```
 
-## 다음 단계
+## Next Steps
 
-- [설정 가이드](./configuration.md) — 모든 옵션을 한눈에 보기
-- [멀티테넌시](./multi-tenancy.md) — 테넌트별 데이터 격리
-- [API 레퍼런스](./api-reference.md) — 메서드 시그니처 빠르게 확인
+- [Configuration Guide](./configuration.md) — All options at a glance
+- [Multi-Tenancy](./multi-tenancy.md) — Per-tenant data isolation
+- [API Reference](./api-reference.md) — Quick method signature lookup

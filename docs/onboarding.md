@@ -1,36 +1,36 @@
-# 컨트리뷰터 온보딩 가이드
+# Contributor Onboarding Guide
 
-> **이 문서의 목적:** Stingerloom ORM의 **내부 아키텍처**를 이해하고, 코드를 수정하거나 새 기능을 추가할 수 있도록 돕는 것입니다. API 사용법을 찾고 있다면 [시작하기](./getting-started.md)를 먼저 읽어주세요.
+> **Purpose of this document:** To help you understand the **internal architecture** of Stingerloom ORM and enable you to modify code or add new features. If you are looking for API usage, please read [Getting Started](./getting-started.md) first.
 
-> **대상 독자:** 프로젝트에 처음 투입된 개발자 또는 외부 컨트리뷰터
+> **Target audience:** Developers newly joining the project or external contributors
 
 ---
 
-## 1. 로컬 개발 환경 설정
+## 1. Local Development Environment Setup
 
-### 필수 도구
+### Required Tools
 
-| 도구 | 최소 버전 | 비고 |
-|------|----------|------|
-| Node.js | ≥16 | `package.json`의 `engines` 필드 참고 |
-| pnpm | ≥8 | 프로젝트 패키지 매니저 |
-| TypeScript | ≥5.6 | `devDependencies`에 포함 |
-| Docker | 최신 안정 버전 | 통합 테스트용 MySQL/PostgreSQL |
+| Tool | Minimum Version | Notes |
+|------|----------------|-------|
+| Node.js | >=16 | See the `engines` field in `package.json` |
+| pnpm | >=8 | Project package manager |
+| TypeScript | >=5.6 | Included in `devDependencies` |
+| Docker | Latest stable | For integration test MySQL/PostgreSQL |
 
-### 클론 및 빌드
+### Clone and Build
 
 ```bash
 git clone https://github.com/biud436/stingerloom-orm.git
 cd stingerloom-orm
 pnpm install
-pnpm build          # dist/ 생성 — 예제 실행 전 반드시 필요
+pnpm build          # Generate dist/ — required before running examples
 ```
 
-`pnpm build`는 `rimraf dist && tsc`를 실행합니다. ORM이 아직 npm에 배포되지 않았으므로, `examples/` 프로젝트는 로컬 빌드 결과물(`dist/`)을 참조합니다.
+`pnpm build` runs `rimraf dist && tsc`. Since the ORM is not yet published on npm, `examples/` projects reference the local build output (`dist/`).
 
-### Docker로 데이터베이스 설정
+### Database Setup with Docker
 
-통합 테스트를 실행하려면 MySQL과 PostgreSQL이 필요합니다.
+Integration tests require MySQL and PostgreSQL.
 
 ```bash
 # MySQL
@@ -48,251 +48,254 @@ docker run -d --name stingerloom-postgres \
   postgres:16
 ```
 
-### 테스트 실행
+### Running Tests
 
 ```bash
-# 유닛 테스트 (DB 연결 불필요)
+# Unit tests (no DB connection required)
 pnpm test
 
-# 특정 테스트 파일만 실행
+# Run a specific test file only
 pnpm test -- --testPathPattern="schema-diff"
 
-# 통합 테스트 (MySQL/PostgreSQL 실행 중이어야 함)
+# Integration tests (MySQL/PostgreSQL must be running)
 INTEGRATION_TEST=true pnpm test -- --testPathPattern="integration"
 ```
 
-유닛 테스트는 72+ 파일, 1400+ 케이스로 구성됩니다. 통합 테스트는 `INTEGRATION_TEST=true` 환경변수가 없으면 자동으로 skip됩니다.
+Unit tests consist of 72+ files with 1400+ cases. Integration tests are automatically skipped without the `INTEGRATION_TEST=true` environment variable.
 
-### 예제 실행
+### Running Examples
 
 ```bash
-pnpm build                              # 반드시 먼저 빌드
+pnpm build                              # Must build first
 cd examples/nestjs-cats && pnpm install && pnpm start
-# 또는
+# or
 cd examples/nestjs-blog && pnpm install && pnpm start
 ```
 
 ---
 
-## 2. 아키텍처 개요
+## 2. Architecture Overview
 
-### 디렉토리 구조
+### Directory Structure
 
 ```
 src/
-├── core/               ← 핵심 로직 (EntityManager, Repository, QueryBuilder 등)
-├── decorators/         ← @Entity, @Column 등 데코레이터 정의
-├── dialects/           ← DB별 드라이버 구현 (MySQL, PostgreSQL, SQLite)
-├── metadata/           ← 레이어드 메타데이터 시스템 (멀티테넌시)
-├── scanner/            ← 데코레이터 메타데이터 수집기 (EntityScanner, ColumnScanner 등)
-├── migration/          ← 마이그레이션 시스템
-├── types/              ← 공통 타입 정의
-├── utils/              ← 헬퍼 (Logger, ReflectManager)
-└── errors/             ← 에러 클래스 계층
+├── core/               <- Core logic (EntityManager, Repository, QueryBuilder, etc.)
+├── decorators/         <- Decorator definitions (@Entity, @Column, etc.)
+├── dialects/           <- Per-DB driver implementations (MySQL, PostgreSQL, SQLite)
+├── metadata/           <- Layered metadata system (multi-tenancy)
+├── scanner/            <- Decorator metadata collectors (EntityScanner, ColumnScanner, etc.)
+├── migration/          <- Migration system
+├── types/              <- Common type definitions
+├── utils/              <- Helpers (Logger, ReflectManager)
+└── errors/             <- Error class hierarchy
 ```
 
-**왜 이렇게 나뉘어 있나?**
+**Why is it structured this way?**
 
-- `core/`와 `dialects/`를 분리하여 DB 독립적인 로직과 DB 특화 코드를 격리합니다.
-- `scanner/`와 `decorators/`를 분리하여 "메타데이터 수집"과 "메타데이터 정의"의 관심사를 나눕니다.
-- `metadata/`를 독립 모듈로 두어 멀티테넌시 레이어 시스템이 다른 코드에 영향을 주지 않습니다.
+- `core/` and `dialects/` are separated to isolate DB-independent logic from DB-specific code.
+- `scanner/` and `decorators/` are separated to distinguish the concerns of "metadata collection" and "metadata definition."
+- `metadata/` is an independent module so the multi-tenancy layer system does not affect other code.
 
-### 데이터 흐름
+### Data Flow
 
-엔티티 클래스가 정의되어 DB에 저장되기까지의 전체 흐름입니다.
+The complete flow from entity class definition to DB storage.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                      데코레이터 등록 (앱 로드 시)                      │
+│                    Decorator Registration (at app load)              │
 │                                                                     │
-│  @Column()    →  ColumnScanner.set()   ─┐                           │
-│  @ManyToOne() →  ManyToOneScanner.set() ├→ MetadataLayerRegistry    │
-│  @Entity()    →  EntityScanner.set()   ─┘   (public 레이어에 기록)    │
+│  @Column()    ->  ColumnScanner.set()   ─┐                          │
+│  @ManyToOne() ->  ManyToOneScanner.set() ├-> MetadataLayerRegistry  │
+│  @Entity()    ->  EntityScanner.set()   ─┘   (written to public     │
+│                                               layer)                │
 └─────────────────────────────────────────────────────────────────────┘
                             │
-                            ▼
+                            v
 ┌─────────────────────────────────────────────────────────────────────┐
-│                 EntityManager.register() 호출                       │
+│                 EntityManager.register() call                       │
 │                                                                     │
-│  DatabaseClient.connect()  →  Connector 생성  →  Driver 생성        │
-│       (싱글톤)                  (MySQL/PG/...)     (ISqlDriver 구현)  │
+│  DatabaseClient.connect()  ->  Connector created  ->  Driver created│
+│       (singleton)              (MySQL/PG/...)        (ISqlDriver     │
+│                                                       impl)         │
 │                                                                     │
-│  registerEntities()                                                  │
-│    1패스: createTable() — 테이블 DDL 생성                              │
-│    2패스: registerForeignKeys/Index — FK/인덱스 추가                   │
-│    3패스: ManyToMany 중간 테이블 생성                                   │
+│  registerEntities()                                                 │
+│    Pass 1: createTable() — generate table DDL                       │
+│    Pass 2: registerForeignKeys/Index — add FK/indexes               │
+│    Pass 3: ManyToMany join table creation                           │
 └─────────────────────────────────────────────────────────────────────┘
                             │
-                            ▼
+                            v
 ┌─────────────────────────────────────────────────────────────────────┐
-│                      CRUD 실행 (런타임)                              │
+│                      CRUD Execution (runtime)                       │
 │                                                                     │
 │  em.save(User, data)                                                │
-│    → 메타데이터 조회 (MetadataLayerRegistry)                          │
-│    → BeforeInsert 훅 실행                                            │
-│    → TransactionSessionManager.connect()                             │
-│    → START TRANSACTION / BEGIN                                       │
-│    → SQL 빌드 (sql-template-tag 파라미터 바인딩)                       │
-│    → Driver를 통해 실행                                               │
-│    → 역직렬화 (Deserializer)                                         │
-│    → COMMIT (또는 에러 시 ROLLBACK)                                   │
-│    → AfterInsert 훅 실행                                             │
+│    -> Query metadata (MetadataLayerRegistry)                        │
+│    -> Execute BeforeInsert hook                                     │
+│    -> TransactionSessionManager.connect()                           │
+│    -> START TRANSACTION / BEGIN                                      │
+│    -> Build SQL (sql-template-tag parameter binding)                 │
+│    -> Execute via Driver                                            │
+│    -> Deserialize (Deserializer)                                    │
+│    -> COMMIT (or ROLLBACK on error)                                 │
+│    -> Execute AfterInsert hook                                      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 레이어드 메타데이터 시스템
+### Layered Metadata System
 
-Docker의 OverlayFS와 동일한 개념으로 동작합니다.
+Works on the same concept as Docker's OverlayFS.
 
 ```
 ┌──────────────────────────────┐
-│    Tenant Layer (upper)      │  ← 테넌트별 수정 사항 (Copy-on-Write)
-│    예: "tenant_1", "tenant_2"│
+│    Tenant Layer (upper)      │  <- Per-tenant modifications (Copy-on-Write)
+│    e.g. "tenant_1", "tenant_2"│
 ├──────────────────────────────┤
-│    Public Layer (lower)      │  ← 기본 스키마 (모든 엔티티 메타데이터)
-│    읽기 전용 (데코레이터 등록 후)│
+│    Public Layer (lower)      │  <- Base schema (all entity metadata)
+│    Read-only (after decorator │
+│    registration)              │
 └──────────────────────────────┘
 ```
 
-**동작 원리:**
+**How it works:**
 
-1. 앱 로드 시 `@Entity`, `@Column` 등의 데코레이터가 public 레이어에 메타데이터를 기록합니다.
-2. 멀티테넌트 환경에서 `MetadataContext.run("tenant_1", callback)`을 호출하면, 해당 콜백 내에서는 tenant_1 레이어가 활성화됩니다.
-3. 메타데이터 조회 시 tenant 레이어를 먼저 확인하고, 없으면 public 레이어로 fallback합니다 (OverlayFS).
-4. 쓰기는 항상 tenant 레이어에만 발생합니다 (Copy-on-Write).
+1. At app load, decorators like `@Entity` and `@Column` write metadata to the public layer.
+2. In a multi-tenant environment, when `MetadataContext.run("tenant_1", callback)` is called, the tenant_1 layer is activated within that callback.
+3. When querying metadata, the tenant layer is checked first, then falls back to the public layer (OverlayFS).
+4. Writes always occur only on the tenant layer (Copy-on-Write).
 
-**핵심 파일:**
+**Key files:**
 
-| 파일 | 역할 |
+| File | Role |
 |------|------|
-| `src/metadata/MetadataContext.ts` | AsyncLocalStorage 기반 요청 스코프 컨텍스트 |
-| `src/metadata/LayeredMetadataStore.ts` | 레이어 기반 메타데이터 저장소 |
-| `src/metadata/MetadataLayer.ts` | 개별 레이어 (key-value Map) |
-| `src/scanner/MetadataScanner.ts` | MetadataLayerRegistry를 사용하는 스캐너 기반 클래스 |
+| `src/metadata/MetadataContext.ts` | AsyncLocalStorage-based request-scoped context |
+| `src/metadata/LayeredMetadataStore.ts` | Layer-based metadata store |
+| `src/metadata/MetadataLayer.ts` | Individual layer (key-value Map) |
+| `src/scanner/MetadataScanner.ts` | Scanner base class using MetadataLayerRegistry |
 
-### 드라이버 추상화
+### Driver Abstraction
 
-모든 DB 드라이버는 `ISqlDriver` 인터페이스(`src/dialects/SqlDriver.ts`)를 구현합니다.
+All DB drivers implement the `ISqlDriver` interface (`src/dialects/SqlDriver.ts`).
 
-| 드라이버 | 식별자 래핑 | PK 자동 생성 | 스키마 지원 | 파일 경로 |
-|---------|-----------|-------------|-----------|----------|
-| MySQL | 백틱 (`` ` ``) | `AUTO_INCREMENT` | 미지원 | `src/dialects/mysql/MySqlDriver.ts` |
-| PostgreSQL | 큰따옴표 (`"`) | `SERIAL` / `RETURNING` | 지원 (`schema.table`) | `src/dialects/postgres/PostgresDriver.ts` |
-| SQLite | 큰따옴표 (`"`) | `INTEGER PRIMARY KEY` | 미지원 | `src/dialects/sqlite/SqliteDriver.ts` |
+| Driver | Identifier Wrapping | Auto PK Generation | Schema Support | File Path |
+|--------|--------------------|--------------------|---------------|-----------|
+| MySQL | Backtick (`` ` ``) | `AUTO_INCREMENT` | Not supported | `src/dialects/mysql/MySqlDriver.ts` |
+| PostgreSQL | Double quote (`"`) | `SERIAL` / `RETURNING` | Supported (`schema.table`) | `src/dialects/postgres/PostgresDriver.ts` |
+| SQLite | Double quote (`"`) | `INTEGER PRIMARY KEY` | Not supported | `src/dialects/sqlite/SqliteDriver.ts` |
 
-각 드라이버의 연결 계층 구조:
+Connection layer hierarchy for each driver:
 
 ```
-DatabaseClient (싱글톤)
-  └→ Connector (IConnector 구현 — 실제 DB 연결 관리)
-       └→ Driver (ISqlDriver 구현 — DDL/DML 추상화)
-            └→ DataSource (IDataSource 구현 — 트랜잭션/쿼리 실행)
+DatabaseClient (singleton)
+  └-> Connector (IConnector implementation — manages actual DB connections)
+       └-> Driver (ISqlDriver implementation — DDL/DML abstraction)
+            └-> DataSource (IDataSource implementation — transaction/query execution)
 ```
 
 ---
 
-## 3. 주요 코드 흐름
+## 3. Key Code Flows
 
-### 연결 흐름
+### Connection Flow
 
 ```
 EntityManager.register(options)
-  → EntityManager.connect(options)
-      → DatabaseClient.getInstance().connect(options)
-          → createConnector(type)   // MySqlConnector | PostgresConnector | ...
-          → connector.connect(options)
-      → Driver 생성 (MySqlDriver | PostgresDriver | ...)
-      → DataSource 생성 (트랜잭션 관리용)
-  → EntityManager.registerEntities()
+  -> EntityManager.connect(options)
+      -> DatabaseClient.getInstance().connect(options)
+          -> createConnector(type)   // MySqlConnector | PostgresConnector | ...
+          -> connector.connect(options)
+      -> Driver creation (MySqlDriver | PostgresDriver | ...)
+      -> DataSource creation (for transaction management)
+  -> EntityManager.registerEntities()
 ```
 
-**관련 파일:**
-- `src/core/EntityManager.ts:121` — `register()` 메서드
-- `src/core/EntityManager.ts:146` — `connect()` 메서드
-- `src/DatabaseClient.ts:48` — `connect()` 메서드
+**Related files:**
+- `src/core/EntityManager.ts:121` — `register()` method
+- `src/core/EntityManager.ts:146` — `connect()` method
+- `src/DatabaseClient.ts:48` — `connect()` method
 
-### 엔티티 등록 흐름
+### Entity Registration Flow
 
-데코레이터는 클래스 정의 시점(모듈 로드 시)에 실행됩니다. 실행 순서가 중요합니다.
-
-```
-1. @Column() 실행 (프로퍼티 데코레이터 — 클래스 본문 순서대로)
-   → inferColumnDefaults()로 design:type 추론
-   → ColumnScanner.set()으로 메타데이터 임시 저장
-
-2. @ManyToOne() 실행 (프로퍼티 데코레이터)
-   → ManyToOneScanner.set()으로 관계 메타데이터 임시 저장
-
-3. @Entity() 실행 (클래스 데코레이터 — 가장 마지막)
-   → ColumnScanner.allMetadata()로 수집된 컬럼 가져오기
-   → ManyToOneScanner.allMetadata()로 수집된 관계 가져오기
-   → EntityScanner.set()으로 엔티티 메타데이터 스냅샷
-   → ColumnScanner.clear()로 임시 버퍼 초기화
-```
-
-**핵심 포인트:** `@Column()`이 `@Entity()`보다 먼저 실행됩니다. `@Entity()`는 그때까지 수집된 컬럼 메타데이터를 스냅샷으로 저장하고 임시 버퍼를 비웁니다.
-
-**관련 파일:**
-- `src/decorators/Column.ts:153` — `Column()` 데코레이터
-- `src/decorators/Entity.ts:24` — `Entity()` 데코레이터
-- `src/scanner/MetadataScanner.ts:179` — 스캐너 기반 클래스
-
-### CRUD 흐름 (save 예시)
+Decorators execute at class definition time (module load). The execution order is important.
 
 ```
-em.save(User, { name: "홍길동", email: "hong@example.com" })
+1. @Column() executes (property decorator — in class body order)
+   -> inferColumnDefaults() infers design:type
+   -> ColumnScanner.set() temporarily stores metadata
+
+2. @ManyToOne() executes (property decorator)
+   -> ManyToOneScanner.set() temporarily stores relation metadata
+
+3. @Entity() executes (class decorator — last)
+   -> ColumnScanner.allMetadata() retrieves collected columns
+   -> ManyToOneScanner.allMetadata() retrieves collected relations
+   -> EntityScanner.set() snapshots entity metadata
+   -> ColumnScanner.clear() resets temporary buffer
+```
+
+**Key point:** `@Column()` executes before `@Entity()`. `@Entity()` takes a snapshot of column metadata collected up to that point and clears the temporary buffer.
+
+**Related files:**
+- `src/decorators/Column.ts:153` — `Column()` decorator
+- `src/decorators/Entity.ts:24` — `Entity()` decorator
+- `src/scanner/MetadataScanner.ts:179` — Scanner base class
+
+### CRUD Flow (save example)
+
+```
+em.save(User, { name: "John Doe", email: "john@example.com" })
   1. resolveEntityMetadata(User)
-     → EntityScanner.scan(User) 또는 Reflect.getMetadata(ENTITY_TOKEN, User)
+     -> EntityScanner.scan(User) or Reflect.getMetadata(ENTITY_TOKEN, User)
   2. EntityValidator.validate(entity)
-     → @Validation 데코레이터 검증
-  3. 훅 실행: BeforeInsert
-  4. EntitySubscriber.beforeInsert() 이벤트
-  5. TransactionSessionManager 생성 → connect() → startTransaction()
-  6. SQL 빌드: INSERT INTO "users" ("name", "email") VALUES ($1, $2)
-     → sql-template-tag로 파라미터 바인딩
-  7. query 실행 → 결과 행 반환
+     -> @Validation decorator checks
+  3. Hook execution: BeforeInsert
+  4. EntitySubscriber.beforeInsert() event
+  5. TransactionSessionManager creation -> connect() -> startTransaction()
+  6. SQL build: INSERT INTO "users" ("name", "email") VALUES ($1, $2)
+     -> Parameter binding via sql-template-tag
+  7. Execute query -> return result rows
   8. commit()
-  9. Deserializer로 결과 → User 인스턴스 변환
-  10. 훅 실행: AfterInsert
-  11. EntitySubscriber.afterInsert() 이벤트
+  9. Deserializer converts result -> User instance
+  10. Hook execution: AfterInsert
+  11. EntitySubscriber.afterInsert() event
 ```
 
-**관련 파일:**
-- `src/core/EntityManager.ts:2146` — `save()` 메서드
-- `src/dialects/TransactionSessionManager.ts` — 트랜잭션 관리
-- `src/core/EntityValidator.ts` — 유효성 검사
+**Related files:**
+- `src/core/EntityManager.ts:2146` — `save()` method
+- `src/dialects/TransactionSessionManager.ts` — Transaction management
+- `src/core/EntityValidator.ts` — Validation
 
-### 관계 로딩
+### Relation Loading
 
-**Eager Loading (기본):**
+**Eager Loading (default):**
 
 ```
 em.find(Post, { relations: ["author"] })
-  → LEFT JOIN으로 관계 엔티티를 한 번에 조회
-  → ResultTransformer가 flat한 행을 중첩 객체로 변환
+  -> Queries related entities at once with LEFT JOIN
+  -> ResultTransformer converts flat rows to nested objects
 ```
 
 **Lazy Loading:**
 
 ```
-em.find(Post, { relations: [] })  // lazy로 설정된 관계
-  → Object.defineProperty()로 getter proxy 주입
-  → post.author에 접근 시 → 별도 SELECT 쿼리 실행
-  → 이후 접근 시 캐시된 값 반환
+em.find(Post, { relations: [] })  // Relations configured as lazy
+  -> Injects getter proxy via Object.defineProperty()
+  -> Accessing post.author -> executes separate SELECT query
+  -> Subsequent access returns cached value
 ```
 
-**관련 파일:**
+**Related files:**
 - `src/core/LazyLoader.ts` — `injectLazyProxy()`, `createLazyProxy()`
 
 ---
 
-## 4. 새 기능 추가 가이드
+## 4. Adding New Features Guide
 
-### 새 데코레이터 추가
+### Adding a New Decorator
 
-예시: `@CreatedAt()` 데코레이터를 추가한다고 가정합니다.
+Example: Assume we are adding a `@CreatedAt()` decorator.
 
-**1단계: Symbol 토큰 정의 + 데코레이터 함수 작성**
+**Step 1: Define Symbol token + write decorator function**
 
 ```typescript
 // src/decorators/CreatedAt.ts
@@ -305,83 +308,83 @@ export function CreatedAt(): PropertyDecorator {
 }
 ```
 
-**2단계: 데코레이터 export**
+**Step 2: Export the decorator**
 
 ```typescript
-// src/decorators/index.ts에 추가
+// Add to src/decorators/index.ts
 export * from "./CreatedAt";
 ```
 
-**3단계: EntityManager에서 토큰 사용**
+**Step 3: Use the token in EntityManager**
 
-save/update 메서드에서 `Reflect.getMetadata(CREATED_AT_TOKEN, entity)`를 조회하여 자동으로 날짜를 설정합니다.
+In save/update methods, query `Reflect.getMetadata(CREATED_AT_TOKEN, entity)` to automatically set the date.
 
-**4단계: 테스트 작성**
+**Step 4: Write tests**
 
-`__tests__/unit/created-at.test.ts` 파일을 생성하고 데코레이터 동작을 검증합니다.
+Create `__tests__/unit/created-at.test.ts` and verify the decorator behavior.
 
-**네이밍 규칙:**
-- 토큰 심볼: `STG_` 접두사 (예: `Symbol.for("STG_CREATED_AT")`)
-- 데코레이터 파일: PascalCase (예: `CreatedAt.ts`)
-- 토큰 상수: SCREAMING_SNAKE_CASE + `_TOKEN` 접미사 (예: `CREATED_AT_TOKEN`)
+**Naming conventions:**
+- Token symbols: `STG_` prefix (e.g., `Symbol.for("STG_CREATED_AT")`)
+- Decorator files: PascalCase (e.g., `CreatedAt.ts`)
+- Token constants: SCREAMING_SNAKE_CASE + `_TOKEN` suffix (e.g., `CREATED_AT_TOKEN`)
 
-### 새 드라이버 추가
+### Adding a New Driver
 
-새 데이터베이스(예: CockroachDB)를 지원하려면:
+To support a new database (e.g., CockroachDB):
 
-**1단계: 디렉토리 생성**
+**Step 1: Create directory**
 
 ```
 src/dialects/cockroach/
-  ├── CockroachDriver.ts       ← ISqlDriver 구현
-  ├── CockroachConnector.ts    ← IConnector 구현
-  └── CockroachDataSource.ts   ← IDataSource 구현
+  ├── CockroachDriver.ts       <- ISqlDriver implementation
+  ├── CockroachConnector.ts    <- IConnector implementation
+  └── CockroachDataSource.ts   <- IDataSource implementation
 ```
 
-**2단계: ISqlDriver 완전 구현**
+**Step 2: Fully implement ISqlDriver**
 
-`src/dialects/SqlDriver.ts`의 `ISqlDriver` 인터페이스에 정의된 모든 메서드를 구현합니다. 주요 메서드:
+Implement all methods defined in the `ISqlDriver` interface in `src/dialects/SqlDriver.ts`. Key methods:
 - `createTable()` / `hasTable()` — DDL
-- `addForeignKey()` / `addIndex()` — 제약 조건
-- `castType()` — ColumnType → DB 네이티브 타입 변환
-- `buildUpsertSql()` — UPSERT 구문
-- `setQueryTimeout()` — 쿼리 타임아웃
+- `addForeignKey()` / `addIndex()` — Constraints
+- `castType()` — ColumnType -> DB native type conversion
+- `buildUpsertSql()` — UPSERT syntax
+- `setQueryTimeout()` — Query timeout
 
-**3단계: 등록 코드 추가**
+**Step 3: Add registration code**
 
-세 곳에 분기를 추가합니다:
-- `src/DatabaseClient.ts:72` — `createConnector()` 메서드
-- `src/core/EntityManager.ts:158` — `connect()` 메서드의 switch
-- `src/dialects/TransactionSessionManager.ts:48` — `connect()` 메서드의 if-else
+Add branching in three places:
+- `src/DatabaseClient.ts:72` — `createConnector()` method
+- `src/core/EntityManager.ts:158` — switch in `connect()` method
+- `src/dialects/TransactionSessionManager.ts:48` — if-else in `connect()` method
 
-**4단계: 테스트**
+**Step 4: Tests**
 
-`__tests__/unit/cockroach-driver.test.ts` 파일을 생성합니다.
+Create `__tests__/unit/cockroach-driver.test.ts`.
 
-### EntityManager에 새 메서드 추가
+### Adding a New Method to EntityManager
 
-EntityManager의 공개 API를 추가하는 절차:
+Procedure for adding a public API to EntityManager:
 
-**1단계:** `src/core/BaseEntityManager.ts` 인터페이스에 메서드 시그니처 추가
+**Step 1:** Add method signature to the `src/core/BaseEntityManager.ts` interface
 
-**2단계:** `src/core/EntityManager.ts`에 구현
+**Step 2:** Implement in `src/core/EntityManager.ts`
 
-**3단계:** `src/core/BaseRepository.ts`에 래퍼 메서드 추가 (Repository 패턴 지원)
+**Step 3:** Add wrapper method in `src/core/BaseRepository.ts` (for Repository pattern support)
 
-**4단계:** 필요하면 `src/index.ts` → `src/core/index.ts`에서 export 확인
+**Step 4:** If needed, verify exports in `src/index.ts` -> `src/core/index.ts`
 
-### 새 에러 클래스 추가
+### Adding a New Error Class
 
-**1단계:** `src/errors/OrmErrorCode.ts`에 새 에러 코드 추가
+**Step 1:** Add a new error code to `src/errors/OrmErrorCode.ts`
 
 ```typescript
 export enum OrmErrorCode {
-  // ... 기존 코드
+  // ... existing codes
   MY_NEW_ERROR = "ORM_MY_NEW_ERROR",
 }
 ```
 
-**2단계:** `src/errors/` 디렉토리에 에러 클래스 생성
+**Step 2:** Create an error class in the `src/errors/` directory
 
 ```typescript
 // src/errors/MyNewError.ts
@@ -390,60 +393,60 @@ import { OrmErrorCode } from "./OrmErrorCode";
 
 export class MyNewError extends OrmError {
   constructor() {
-    super(OrmErrorCode.MY_NEW_ERROR, "설명 메시지");
+    super(OrmErrorCode.MY_NEW_ERROR, "Description message");
     this.name = "MyNewError";
   }
 }
 ```
 
-**3단계:** `src/errors/index.ts`에서 export
+**Step 3:** Export from `src/errors/index.ts`
 
 ---
 
-## 5. 코딩 컨벤션
+## 5. Coding Conventions
 
-### SQL Injection 방지
+### SQL Injection Prevention
 
-**절대 규칙:** 사용자 입력을 SQL 문자열에 직접 삽입하지 않습니다.
+**Absolute rule:** Never insert user input directly into SQL strings.
 
 ```typescript
-// 올바른 방법 — sql-template-tag 사용
+// Correct approach — use sql-template-tag
 import sql from "sql-template-tag";
 const query = sql`SELECT * FROM users WHERE id = ${userId}`;
 
-// 잘못된 방법
+// Wrong approach
 const query = `SELECT * FROM users WHERE id = ${userId}`;
 ```
 
-테이블명/컬럼명 같은 식별자는 드라이버의 `escapeIdentifier()` 또는 `wrapIdentifier()`로 래핑합니다.
+Identifiers like table names and column names must be wrapped with the driver's `escapeIdentifier()` or `wrapIdentifier()`.
 
 ```typescript
 // MySQL: `users`, PostgreSQL: "users"
 const tableName = driver.escapeIdentifier("users");
 ```
 
-### 메타데이터 격리
+### Metadata Isolation
 
 ```typescript
-// 올바른 방법 — AsyncLocalStorage 기반 요청 스코프
+// Correct approach — AsyncLocalStorage-based request scope
 MetadataContext.run("tenant_1", async () => {
-  await em.find(User);  // tenant_1 컨텍스트에서 실행
+  await em.find(User);  // Executes in tenant_1 context
 });
 
-// 잘못된 방법 — 인스턴스 상태 변경 (동시 요청 시 안전하지 않음)
+// Wrong approach — modifying instance state (not safe with concurrent requests)
 store.setContext("tenant_1");  // deprecated!
 ```
 
-### TypeScript strict 모드
+### TypeScript strict Mode
 
-`tsconfig.json`에 `strict: true`가 설정되어 있습니다. `any` 타입은 최소화하되, 프레임워크 특성상 메타데이터 처리에서 불가피한 경우 `eslint-disable` 주석을 사용합니다.
+`tsconfig.json` has `strict: true` set. Minimize use of `any` type, but when unavoidable due to framework metadata handling, use `eslint-disable` comments.
 
-### 테스트 패턴
+### Test Patterns
 
-**유닛 테스트:**
+**Unit tests:**
 
 ```typescript
-// jest.mock으로 DB 연결을 모킹
+// Mock DB connections with jest.mock
 jest.mock("../../src/DatabaseClient", () => ({
   DatabaseClient: {
     getInstance: jest.fn().mockReturnValue({
@@ -455,7 +458,7 @@ jest.mock("../../src/DatabaseClient", () => ({
 }));
 ```
 
-**통합 테스트:**
+**Integration tests:**
 
 ```typescript
 import { createTestConnection, generateTableName, dropTestTable } from "./helpers";
@@ -474,56 +477,56 @@ describe("CRUD basic", () => {
 });
 ```
 
-통합 테스트 파일 상단에는 반드시 다음 가드를 넣습니다:
+Integration test files must include the following guard at the top:
 
 ```typescript
 const SKIP = !process.env.INTEGRATION_TEST;
 (SKIP ? describe.skip : describe)("Integration: ...", () => { ... });
 ```
 
-### 네이밍 규칙
+### Naming Conventions
 
-| 대상 | 규칙 | 예시 |
-|------|------|------|
-| 엔티티 클래스 | PascalCase | `User`, `BlogPost` |
-| 테이블명 | snake_case (자동 변환) | `user`, `blog_post` |
-| 데코레이터 토큰 | `STG_` 접두사 + SCREAMING_SNAKE | `Symbol.for("STG_ENTITY")` |
-| 드라이버 클래스 | `{DB}Driver` | `MySqlDriver`, `PostgresDriver` |
-| 커넥터 클래스 | `{DB}Connector` | `MySqlConnector` |
-| 데이터 소스 클래스 | `{DB}DataSource` | `MySqlDataSource` |
-| 스캐너 클래스 | `{Name}Scanner` | `ColumnScanner`, `EntityScanner` |
-| 에러 클래스 | `{Desc}Error` | `EntityNotFound`, `InvalidQueryError` |
+| Subject | Convention | Example |
+|---------|-----------|---------|
+| Entity class | PascalCase | `User`, `BlogPost` |
+| Table name | snake_case (auto-converted) | `user`, `blog_post` |
+| Decorator token | `STG_` prefix + SCREAMING_SNAKE | `Symbol.for("STG_ENTITY")` |
+| Driver class | `{DB}Driver` | `MySqlDriver`, `PostgresDriver` |
+| Connector class | `{DB}Connector` | `MySqlConnector` |
+| DataSource class | `{DB}DataSource` | `MySqlDataSource` |
+| Scanner class | `{Name}Scanner` | `ColumnScanner`, `EntityScanner` |
+| Error class | `{Desc}Error` | `EntityNotFound`, `InvalidQueryError` |
 
-### 커밋 메시지
+### Commit Messages
 
 ```
-feat: 새 기능 추가
-fix: 버그 수정
-docs: 문서 변경
-test: 테스트 추가/수정
-refactor: 리팩토링 (기능 변경 없음)
-chore: 빌드, 설정 변경
+feat: Add new feature
+fix: Fix bug
+docs: Documentation changes
+test: Add/modify tests
+refactor: Refactoring (no functional changes)
+chore: Build, configuration changes
 ```
 
 ---
 
-## 6. 흔한 실수와 트러블슈팅
+## 6. Common Mistakes and Troubleshooting
 
-### `reflect-metadata` 미임포트
+### Missing `reflect-metadata` Import
 
 ```
 TypeError: Reflect.getMetadata is not a function
 ```
 
-**해결:** 앱 진입점 최상단에 `import "reflect-metadata"` 추가. 이 패키지가 없으면 데코레이터 메타데이터 (`design:type` 등)를 읽을 수 없습니다.
+**Solution:** Add `import "reflect-metadata"` at the very top of your app entry point. Without this package, decorator metadata (`design:type`, etc.) cannot be read.
 
-### tsconfig.json 설정 누락
+### Missing tsconfig.json Settings
 
 ```
 Unable to resolve signature of class decorator...
 ```
 
-**해결:** `tsconfig.json`에 다음 두 옵션이 반드시 있어야 합니다:
+**Solution:** The following two options must be present in `tsconfig.json`:
 
 ```json
 {
@@ -534,19 +537,19 @@ Unable to resolve signature of class decorator...
 }
 ```
 
-### 빌드 없이 예제 실행
+### Running Examples Without Building
 
 ```
 Cannot find module '@stingerloom/orm'
 ```
 
-**해결:** `examples/`는 로컬 `dist/`를 참조합니다. 예제 실행 전 반드시 `pnpm build`를 프로젝트 루트에서 실행하세요.
+**Solution:** `examples/` references the local `dist/`. You must run `pnpm build` at the project root before running examples.
 
-### 테스트 간 MetadataLayerRegistry 오염
+### MetadataLayerRegistry Contamination Between Tests
 
-서로 다른 테스트 파일에서 같은 엔티티를 정의하면, MetadataLayerRegistry가 전역 싱글톤이므로 메타데이터가 겹칠 수 있습니다.
+When different test files define the same entity, metadata can overlap since MetadataLayerRegistry is a global singleton.
 
-**해결:** 테스트 시작 전 레지스트리를 초기화합니다:
+**Solution:** Reset the registry before each test:
 
 ```typescript
 beforeEach(() => {
@@ -555,61 +558,61 @@ beforeEach(() => {
 });
 ```
 
-### WHERE 조건에서 falsy 값 처리
+### Falsy Value Handling in WHERE Conditions
 
-`0`, `false`, `""` 같은 falsy 값이 WHERE 조건에서 무시되는 버그가 있었습니다 (수정 완료).
+There was a bug where falsy values like `0`, `false`, and `""` were ignored in WHERE conditions (fixed).
 
-**주의:** 조건 검사 시 `if (value)` 대신 `if (value !== undefined && value !== null)`을 사용하세요.
+**Note:** Use `if (value !== undefined && value !== null)` instead of `if (value)` when checking conditions.
 
 ```typescript
-// 올바른 방법
+// Correct approach
 if (value !== undefined && value !== null) {
   conditions.push(sql`${column} = ${value}`);
 }
 
-// 잘못된 방법 — 0, false, "" 를 무시함
+// Wrong approach — ignores 0, false, ""
 if (value) {
   conditions.push(sql`${column} = ${value}`);
 }
 ```
 
-### MySQL connection pool 이중 해제
+### MySQL Connection Pool Double Release
 
-MySQL 드라이버에서 `commit()` 또는 `rollback()` 후 connection 참조를 `undefined`로 설정하지 않으면, 같은 connection이 두 번 release될 수 있습니다.
+In the MySQL driver, if the connection reference is not set to `undefined` after `commit()` or `rollback()`, the same connection can be released twice.
 
-**관련 코드:** `src/dialects/mysql/MySqlDataSource.ts` — commit/rollback 후 `this.connection = undefined` 설정 필수.
+**Related code:** `src/dialects/mysql/MySqlDataSource.ts` — Setting `this.connection = undefined` after commit/rollback is required.
 
 ---
 
-## 7. 기여 워크플로우
+## 7. Contribution Workflow
 
-### 브랜치 전략
+### Branch Strategy
 
 ```
-main (기본 브랜치)
-  └── feature/새기능명       ← 새 기능
-  └── fix/버그설명           ← 버그 수정
-  └── docs/문서주제          ← 문서 변경
+main (default branch)
+  └── feature/feature-name       <- New features
+  └── fix/bug-description        <- Bug fixes
+  └── docs/doc-topic             <- Documentation changes
 ```
 
-main 브랜치에서 분기하고, 작업 완료 후 PR을 생성합니다.
+Branch from main and create a PR after completing the work.
 
-### PR 체크리스트
+### PR Checklist
 
-PR을 올리기 전에 다음을 확인하세요:
+Before opening a PR, verify the following:
 
-- [ ] `pnpm test` 전체 통과 (0 failures)
-- [ ] `pnpm build` 성공 (TypeScript 컴파일 에러 없음)
-- [ ] 새 기능에 대한 유닛 테스트 추가
-- [ ] SQL 쿼리에 사용자 입력이 파라미터 바인딩으로 처리됨
-- [ ] 식별자(테이블명, 컬럼명)가 `escapeIdentifier()`로 래핑됨
-- [ ] 메타데이터 접근이 레이어 시스템을 통해 이루어짐 (전역 상태 사용 금지)
-- [ ] API가 변경되었다면 관련 문서(`docs/`) 업데이트
-- [ ] 예제 프로젝트에 영향이 있다면 `examples/`도 함께 수정
+- [ ] `pnpm test` passes completely (0 failures)
+- [ ] `pnpm build` succeeds (no TypeScript compilation errors)
+- [ ] Unit tests added for new features
+- [ ] User inputs in SQL queries are handled with parameter binding
+- [ ] Identifiers (table names, column names) are wrapped with `escapeIdentifier()`
+- [ ] Metadata access goes through the layer system (no global state usage)
+- [ ] Related documentation (`docs/`) updated if API changed
+- [ ] `examples/` updated if example projects are affected
 
-### 예제 프로젝트 타입 체크
+### Example Project Type Check
 
-ORM API를 변경했다면 예제가 깨지지 않는지 확인합니다:
+If you changed the ORM API, verify that examples are not broken:
 
 ```bash
 pnpm build
@@ -620,39 +623,39 @@ cd ../nestjs-multitenant && pnpm install && npx tsc --noEmit
 
 ---
 
-## 8. 참고 자료
+## 8. References
 
-### 기존 문서 크로스 레퍼런스
+### Existing Documentation Cross-Reference
 
-| 문서 | 내용 | 언제 참고하나요? |
-|------|------|----------------|
-| [시작하기](./getting-started.md) | 설치, 첫 엔티티, 첫 CRUD | ORM 사용법을 처음 배울 때 |
-| [엔티티 정의](./entities.md) | 컬럼, 인덱스, 훅, 유효성 검사 | 데코레이터 동작을 이해할 때 |
-| [관계 설정](./relations.md) | ManyToOne, OneToMany, ManyToMany | 관계 로딩 코드를 수정할 때 |
-| [EntityManager](./entity-manager.md) | find, save, delete, 집계 | EntityManager API를 확장할 때 |
-| [쿼리 빌더](./query-builder.md) | JOIN, GROUP BY, 서브쿼리 | QueryBuilder 코드를 수정할 때 |
-| [트랜잭션](./transactions.md) | 격리 수준, Savepoint | TransactionSessionManager를 수정할 때 |
-| [마이그레이션](./migrations.md) | MigrationRunner, CLI | 마이그레이션 시스템을 수정할 때 |
-| [설정 가이드](./configuration.md) | 풀링, 타임아웃, Read Replica | DatabaseClientOptions를 확장할 때 |
-| [고급 기능](./advanced.md) | N+1 감지, 이벤트, 커서 페이지네이션 | QueryTracker, EventEmitter를 수정할 때 |
-| [멀티테넌시](./multi-tenancy.md) | 레이어드 메타데이터, 스키마 격리 | 멀티테넌시 기능을 수정할 때 |
-| [API 레퍼런스](./api-reference.md) | 메서드 시그니처 목록 | 공개 API 확인 시 |
-| [수동 테스트 가이드](./manual-testing-guide.md) | 통합 테스트 수동 실행 | 통합 테스트 환경 설정 시 |
-| [배포 전 체크리스트](./pre-release-checklist.md) | 릴리즈 전 검증 항목 | 버전 배포 준비 시 |
+| Document | Content | When to reference |
+|----------|---------|-------------------|
+| [Getting Started](./getting-started.md) | Installation, first entity, first CRUD | When first learning ORM usage |
+| [Entity Definition](./entities.md) | Columns, indexes, hooks, validation | When understanding decorator behavior |
+| [Relations](./relations.md) | ManyToOne, OneToMany, ManyToMany | When modifying relation loading code |
+| [EntityManager](./entity-manager.md) | find, save, delete, aggregation | When extending EntityManager API |
+| [Query Builder](./query-builder.md) | JOIN, GROUP BY, subqueries | When modifying QueryBuilder code |
+| [Transactions](./transactions.md) | Isolation levels, Savepoint | When modifying TransactionSessionManager |
+| [Migrations](./migrations.md) | MigrationRunner, CLI | When modifying the migration system |
+| [Configuration Guide](./configuration.md) | Pooling, timeout, Read Replica | When extending DatabaseClientOptions |
+| [Advanced Features](./advanced.md) | N+1 detection, events, cursor pagination | When modifying QueryTracker, EventEmitter |
+| [Multi-Tenancy](./multi-tenancy.md) | Layered metadata, schema isolation | When modifying multi-tenancy features |
+| [API Reference](./api-reference.md) | Method signature list | When checking public API |
+| [Manual Testing Guide](./manual-testing-guide.md) | Manual integration test execution | When setting up integration test environments |
+| [Pre-Release Checklist](./pre-release-checklist.md) | Pre-release verification items | When preparing version releases |
 
-### 핵심 소스 파일 빠른 참조
+### Key Source File Quick Reference
 
-| 파일 | 한 줄 설명 |
-|------|-----------|
-| `src/core/EntityManager.ts` | CRUD, 관계 로딩, 트랜잭션 — ORM의 중심 |
-| `src/dialects/SqlDriver.ts` | `ISqlDriver` 인터페이스 정의 |
-| `src/metadata/MetadataContext.ts` | AsyncLocalStorage 기반 테넌트 컨텍스트 |
-| `src/scanner/MetadataScanner.ts` | MetadataLayerRegistry 기반 스캐너 기반 클래스 |
-| `src/metadata/LayeredMetadataStore.ts` | Trie 기반 레이어드 메타데이터 저장소 |
-| `src/decorators/Entity.ts` | `@Entity()` 데코레이터 — 엔티티 메타데이터 스냅샷 |
-| `src/decorators/Column.ts` | `@Column()` 데코레이터 — 컬럼 메타데이터 + 타입 추론 |
-| `src/DatabaseClient.ts` | DB 연결 싱글톤 (named connections 지원) |
-| `src/dialects/TransactionSessionManager.ts` | 트랜잭션 라이프사이클 관리 |
-| `src/core/BaseRepository.ts` | Repository 패턴 기반 클래스 |
-| `src/errors/OrmError.ts` | 에러 기반 클래스 (`OrmErrorCode` 기반) |
-| `src/index.ts` | 패키지 공개 API 진입점 |
+| File | One-Line Description |
+|------|---------------------|
+| `src/core/EntityManager.ts` | CRUD, relation loading, transactions — the center of the ORM |
+| `src/dialects/SqlDriver.ts` | `ISqlDriver` interface definition |
+| `src/metadata/MetadataContext.ts` | AsyncLocalStorage-based tenant context |
+| `src/scanner/MetadataScanner.ts` | Scanner base class using MetadataLayerRegistry |
+| `src/metadata/LayeredMetadataStore.ts` | Trie-based layered metadata store |
+| `src/decorators/Entity.ts` | `@Entity()` decorator — entity metadata snapshot |
+| `src/decorators/Column.ts` | `@Column()` decorator — column metadata + type inference |
+| `src/DatabaseClient.ts` | DB connection singleton (named connections support) |
+| `src/dialects/TransactionSessionManager.ts` | Transaction lifecycle management |
+| `src/core/BaseRepository.ts` | Repository pattern base class |
+| `src/errors/OrmError.ts` | Error base class (`OrmErrorCode` based) |
+| `src/index.ts` | Package public API entry point |

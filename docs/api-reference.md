@@ -1,10 +1,10 @@
-# API 레퍼런스 (API Reference)
+# API Reference
 
-메서드 시그니처와 타입을 빠르게 확인하는 레퍼런스입니다. 사용법과 예제는 각 주제별 문서를 참고하세요.
+A quick-reference for method signatures and types. For usage and examples, see the topic-specific documentation.
 
-- [엔티티 정의](./entities.md) | [관계](./relations.md) | [EntityManager](./entity-manager.md)
-- [쿼리 빌더](./query-builder.md) | [트랜잭션](./transactions.md) | [마이그레이션](./migrations.md)
-- [고급 기능](./advanced.md) | [멀티테넌시](./multi-tenancy.md) | [설정](./configuration.md)
+- [Entity Definition](./entities.md) | [Relations](./relations.md) | [EntityManager](./entity-manager.md)
+- [Query Builder](./query-builder.md) | [Transactions](./transactions.md) | [Migrations](./migrations.md)
+- [Advanced Features](./advanced.md) | [Multi-Tenancy](./multi-tenancy.md) | [Configuration](./configuration.md)
 
 ## EntityManager
 
@@ -13,131 +13,131 @@ import { EntityManager } from "@stingerloom/orm";
 const em = new EntityManager();
 ```
 
-### 연결
+### Connection
 
-| 메서드 | 시그니처 | 설명 |
-|--------|---------|------|
-| `register` | `(options: DatabaseClientOptions, connectionName?: string): Promise<void>` | DB 연결 + 엔티티 등록 |
-| `getConnectionName` | `(): string` | 연결 이름 (기본값: `"default"`) |
-| `getDriver` | `(): ISqlDriver \| undefined` | SQL 드라이버 |
-| `propagateShutdown` | `(): Promise<void>` | 내부 리소스 정리 |
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `register` | `(options: DatabaseClientOptions, connectionName?: string): Promise<void>` | Connect to DB + register entities |
+| `getConnectionName` | `(): string` | Connection name (default: `"default"`) |
+| `getDriver` | `(): ISqlDriver \| undefined` | SQL driver |
+| `propagateShutdown` | `(): Promise<void>` | Clean up internal resources |
 
 ### CRUD
 
-| 메서드 | 시그니처 | 설명 |
-|--------|---------|------|
-| `find` | `<T>(entity, option?): Promise<EntityResult<T>>` | 목록 조회 |
-| `findOne` | `<T>(entity, option): Promise<T \| null>` | 단건 조회 |
-| `findAndCount` | `<T>(entity, option?): Promise<[T[], number]>` | 목록 + 전체 개수 |
-| `findWithCursor` | `<T>(entity, option?): Promise<CursorPaginationResult<T>>` | 커서 페이지네이션 |
-| `save` | `<T>(entity, item): Promise<InstanceType<ClazzType<T>>>` | INSERT 또는 UPDATE |
-| `delete` | `<T>(entity, criteria): Promise<DeleteResult>` | 영구 삭제 |
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `find` | `<T>(entity, option?): Promise<EntityResult<T>>` | List query |
+| `findOne` | `<T>(entity, option): Promise<T \| null>` | Single record query |
+| `findAndCount` | `<T>(entity, option?): Promise<[T[], number]>` | List + total count |
+| `findWithCursor` | `<T>(entity, option?): Promise<CursorPaginationResult<T>>` | Cursor pagination |
+| `save` | `<T>(entity, item): Promise<InstanceType<ClazzType<T>>>` | INSERT or UPDATE |
+| `delete` | `<T>(entity, criteria): Promise<DeleteResult>` | Permanent delete |
 | `softDelete` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete |
-| `restore` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete 복원 |
+| `restore` | `<T>(entity, criteria): Promise<DeleteResult>` | Restore Soft Delete |
 | `upsert` | `<T>(entity, data, conflictColumns?): Promise<void>` | INSERT ... ON CONFLICT |
 
-### 배치
+### Batch
 
-| 메서드 | 시그니처 | 설명 |
-|--------|---------|------|
-| `insertMany` | `<T>(entity, items[]): Promise<{ affected: number }>` | 다건 INSERT |
-| `saveMany` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | 다건 INSERT/UPDATE |
-| `deleteMany` | `<T>(entity, ids[]): Promise<DeleteResult>` | 다건 삭제 |
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `insertMany` | `<T>(entity, items[]): Promise<{ affected: number }>` | Multi-row INSERT |
+| `saveMany` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | Multi-row INSERT/UPDATE |
+| `deleteMany` | `<T>(entity, ids[]): Promise<DeleteResult>` | Multi-row delete |
 
-### 집계
+### Aggregation
 
-| 메서드 | 시그니처 | 설명 |
-|--------|---------|------|
-| `count` | `<T>(entity, where?): Promise<number>` | 개수 |
-| `sum` | `<T>(entity, field, where?): Promise<number>` | 합계 |
-| `avg` | `<T>(entity, field, where?): Promise<number>` | 평균 |
-| `min` | `<T>(entity, field, where?): Promise<number>` | 최솟값 |
-| `max` | `<T>(entity, field, where?): Promise<number>` | 최댓값 |
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `count` | `<T>(entity, where?): Promise<number>` | Count |
+| `sum` | `<T>(entity, field, where?): Promise<number>` | Sum |
+| `avg` | `<T>(entity, field, where?): Promise<number>` | Average |
+| `min` | `<T>(entity, field, where?): Promise<number>` | Minimum |
+| `max` | `<T>(entity, field, where?): Promise<number>` | Maximum |
 
-### Raw Query / 분석
+### Raw Query / Analysis
 
-| 메서드 | 시그니처 | 설명 |
-|--------|---------|------|
-| `query` | `<T>(sql: string \| Sql, params?: unknown[]): Promise<T[]>` | 임의 SQL 실행 |
-| `explain` | `<T>(entity, option?): Promise<ExplainResult>` | EXPLAIN 분석 |
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `query` | `<T>(sql: string \| Sql, params?: unknown[]): Promise<T[]>` | Execute arbitrary SQL |
+| `explain` | `<T>(entity, option?): Promise<ExplainResult>` | EXPLAIN analysis |
 
-### 이벤트
+### Events
 
-| 메서드 | 시그니처 | 설명 |
-|--------|---------|------|
-| `on` | `(event: EntityEventType, listener): void` | 리스너 등록 |
-| `off` | `(event: EntityEventType, listener): void` | 리스너 제거 |
-| `removeAllListeners` | `(): void` | 전체 리스너 제거 |
-| `addSubscriber` | `(subscriber: EntitySubscriber<any>): void` | 구독자 등록 |
-| `removeSubscriber` | `(subscriber: EntitySubscriber<any>): void` | 구독자 제거 |
-| `getQueryLog` | `(): ReadonlyArray<QueryLogEntry>` | 쿼리 로그 |
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `on` | `(event: EntityEventType, listener): void` | Register listener |
+| `off` | `(event: EntityEventType, listener): void` | Remove listener |
+| `removeAllListeners` | `(): void` | Remove all listeners |
+| `addSubscriber` | `(subscriber: EntitySubscriber<any>): void` | Register subscriber |
+| `removeSubscriber` | `(subscriber: EntitySubscriber<any>): void` | Remove subscriber |
+| `getQueryLog` | `(): ReadonlyArray<QueryLogEntry>` | Query log |
 
 ## BaseRepository
 
-엔티티별 CRUD 래퍼. [사용법 →](./advanced.md)
+Per-entity CRUD wrapper. [Usage ->](./advanced.md)
 
 ```typescript
 const userRepo = em.getRepository(User);
-// 또는
+// or
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist` — EntityManager와 동일한 API를 엔티티 지정 없이 사용합니다.
+`find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist` — Uses the same API as EntityManager without specifying the entity.
 
-## 데코레이터
+## Decorators
 
-### 엔티티
+### Entity
 
-| 데코레이터 | 설명 |
-|-----------|------|
-| `@Entity(options?)` | 클래스를 ORM 엔티티로 등록. `{ name: "table_name" }` |
-| `@Column(option?)` | 일반 컬럼 |
-| `@PrimaryGeneratedColumn(option?)` | 자동 증가 PK |
-| `@PrimaryColumn(option?)` | 수동 PK |
-| `@Index()` | 컬럼 인덱스 |
-| `@UniqueIndex(columns, options?)` | 복합 유니크 인덱스 (클래스 레벨) |
-| `@Version()` | 낙관적 잠금 버전 컬럼 |
-| `@DeletedAt()` | Soft Delete 타임스탬프 |
+| Decorator | Description |
+|-----------|-------------|
+| `@Entity(options?)` | Register a class as an ORM entity. `{ name: "table_name" }` |
+| `@Column(option?)` | Regular column |
+| `@PrimaryGeneratedColumn(option?)` | Auto-increment PK |
+| `@PrimaryColumn(option?)` | Manual PK |
+| `@Index()` | Column index |
+| `@UniqueIndex(columns, options?)` | Composite unique index (class level) |
+| `@Version()` | Optimistic locking version column |
+| `@DeletedAt()` | Soft Delete timestamp |
 
-### 관계
+### Relations
 
-| 데코레이터 | 설명 |
-|-----------|------|
-| `@ManyToOne(getEntity, getProperty?, option?)` | 다대일 (FK 소유측) |
-| `@OneToMany(getEntity, option)` | 일대다 (역방향) |
-| `@OneToOne(getEntity, option?)` | 일대일 |
-| `@ManyToMany(getEntity, option?)` | 다대다 |
+| Decorator | Description |
+|-----------|-------------|
+| `@ManyToOne(getEntity, getProperty?, option?)` | Many-to-one (FK owner side) |
+| `@OneToMany(getEntity, option)` | One-to-many (inverse side) |
+| `@OneToOne(getEntity, option?)` | One-to-one |
+| `@ManyToMany(getEntity, option?)` | Many-to-many |
 
-### 생명주기 훅
+### Lifecycle Hooks
 
-| 데코레이터 | 시점 |
-|-----------|------|
-| `@BeforeInsert` | INSERT 직전 |
-| `@AfterInsert` | INSERT 후 |
-| `@BeforeUpdate` | UPDATE 직전 |
-| `@AfterUpdate` | UPDATE 후 |
-| `@BeforeDelete` | DELETE 직전 |
-| `@AfterDelete` | DELETE 후 |
+| Decorator | Timing |
+|-----------|--------|
+| `@BeforeInsert` | Just before INSERT |
+| `@AfterInsert` | After INSERT |
+| `@BeforeUpdate` | Just before UPDATE |
+| `@AfterUpdate` | After UPDATE |
+| `@BeforeDelete` | Just before DELETE |
+| `@AfterDelete` | After DELETE |
 
-### 유효성 검사
+### Validation
 
-| 데코레이터 | 설명 |
-|-----------|------|
-| `@NotNull()` | null/undefined 불허 |
-| `@MinLength(n)` | 문자열 최소 길이 |
-| `@MaxLength(n)` | 문자열 최대 길이 |
-| `@Min(n)` | 숫자 최솟값 |
-| `@Max(n)` | 숫자 최댓값 |
+| Decorator | Description |
+|-----------|-------------|
+| `@NotNull()` | Disallow null/undefined |
+| `@MinLength(n)` | Minimum string length |
+| `@MaxLength(n)` | Maximum string length |
+| `@Min(n)` | Minimum numeric value |
+| `@Max(n)` | Maximum numeric value |
 
-### 트랜잭션 / DI
+### Transaction / DI
 
-| 데코레이터 | 설명 |
-|-----------|------|
-| `@Transactional(isolationLevel?)` | 메서드를 트랜잭션으로 래핑 |
-| `@InjectRepository(Entity)` | NestJS에 `BaseRepository<T>` 주입 |
-| `@InjectEntityManager()` | NestJS에 `EntityManager` 주입 |
+| Decorator | Description |
+|-----------|-------------|
+| `@Transactional(isolationLevel?)` | Wrap method in a transaction |
+| `@InjectRepository(Entity)` | Inject `BaseRepository<T>` in NestJS |
+| `@InjectEntityManager()` | Inject `EntityManager` in NestJS |
 
-## 타입 레퍼런스
+## Type Reference
 
 ### FindOption\<T\>
 
@@ -161,11 +161,11 @@ interface FindOption<T> {
 
 ```typescript
 interface CursorPaginationOption<T> {
-  take?: number;               // 페이지 크기 (기본값: 20)
-  cursor?: string;             // Base64 커서
-  orderBy?: keyof T & string;  // 정렬 컬럼 (기본값: PK)
-  direction?: "ASC" | "DESC";  // 정렬 방향 (기본값: "ASC")
-  where?: Partial<T>;          // WHERE 조건
+  take?: number;               // Page size (default: 20)
+  cursor?: string;             // Base64 cursor
+  orderBy?: keyof T & string;  // Sort column (default: PK)
+  direction?: "ASC" | "DESC";  // Sort direction (default: "ASC")
+  where?: Partial<T>;          // WHERE conditions
 }
 
 interface CursorPaginationResult<T> {
@@ -182,7 +182,7 @@ interface CursorPaginationResult<T> {
 interface ExplainResult {
   raw: Record<string, unknown>[];
   rows: number | null;
-  type: string | null;           // ALL, ref, Seq Scan 등
+  type: string | null;           // ALL, ref, Seq Scan, etc.
   possibleKeys: string[] | null;
   key: string | null;
   cost: number | null;
@@ -201,17 +201,17 @@ interface DeleteResult {
 
 ```typescript
 interface ColumnOption {
-  name?: string;           // 컬럼명 (생략 시 프로퍼티명)
-  type?: ColumnType;       // 컬럼 타입 (생략 시 자동 추론)
+  name?: string;           // Column name (defaults to property name)
+  type?: ColumnType;       // Column type (auto-inferred if omitted)
   length?: number;
-  nullable?: boolean;      // 기본값: false
+  nullable?: boolean;      // Default: false
   primary?: boolean;
   autoIncrement?: boolean;
   transform?: (raw: unknown) => any;
   precision?: number;
   scale?: number;
   enumValues?: string[];   // PostgreSQL ENUM
-  enumName?: string;       // PostgreSQL ENUM 타입명
+  enumName?: string;       // PostgreSQL ENUM type name
 }
 ```
 
@@ -225,12 +225,12 @@ type ColumnType =
   | "json" | "jsonb" | "enum";
 ```
 
-### 관계 옵션
+### Relation Options
 
 ```typescript
 interface ManyToOneOption {
-  joinColumn?: string;        // FK 컬럼명 (생략 시 @Column 자동 감지)
-  references?: string;        // 대상 참조 컬럼 (생략 시 PK)
+  joinColumn?: string;        // FK column name (auto-detected from @Column if omitted)
+  references?: string;        // Target reference column (defaults to PK)
   eager?: boolean;
   lazy?: boolean;
   cascade?: CascadeOption;
@@ -238,28 +238,28 @@ interface ManyToOneOption {
 }
 
 interface OneToManyOption<T> {
-  mappedBy: Extract<keyof T, string> | (string & {});  // IntelliSense 지원
+  mappedBy: Extract<keyof T, string> | (string & {});  // IntelliSense supported
   cascade?: CascadeOption;
 }
 
 interface OneToOneOption<T> {
-  joinColumn?: string;        // FK 컬럼명 (생략 시 @Column 자동 감지)
-  inverseSide?: Extract<keyof T, string> | (string & {});  // IntelliSense 지원
+  joinColumn?: string;        // FK column name (auto-detected from @Column if omitted)
+  inverseSide?: Extract<keyof T, string> | (string & {});  // IntelliSense supported
   eager?: boolean;
   cascade?: CascadeOption;
 }
 
 interface ManyToManyOption<T> {
   joinTable?: { name: string; joinColumn: string; inverseJoinColumn: string };
-  mappedBy?: Extract<keyof T, string> | (string & {});     // IntelliSense 지원
+  mappedBy?: Extract<keyof T, string> | (string & {});     // IntelliSense supported
 }
 
 type CascadeOption = boolean | ("insert" | "update" | "delete" | "remove")[];
 ```
 
-> `mappedBy`, `inverseSide`는 대상 엔티티의 프로퍼티 이름을 자동완성합니다. 임의 문자열도 허용됩니다.
+> `mappedBy` and `inverseSide` provide auto-completion for the target entity's property names. Arbitrary strings are also allowed.
 
-### 설정 옵션
+### Configuration Options
 
 ```typescript
 interface DatabaseClientOptions {
@@ -282,15 +282,15 @@ interface DatabaseClientOptions {
 }
 
 interface PoolOptions {
-  max?: number;              // 기본값: 10
-  min?: number;              // 기본값: 0
-  acquireTimeoutMs?: number; // 기본값: 30000
-  idleTimeoutMs?: number;    // 기본값: 10000
+  max?: number;              // Default: 10
+  min?: number;              // Default: 0
+  acquireTimeoutMs?: number; // Default: 30000
+  idleTimeoutMs?: number;    // Default: 10000
 }
 
 interface RetryOptions {
-  maxAttempts: number;  // 기본값: 3
-  backoffMs: number;    // 기본값: 1000
+  maxAttempts: number;  // Default: 3
+  backoffMs: number;    // Default: 1000
 }
 
 interface LoggingOptions {
@@ -349,7 +349,7 @@ type EntityEventType =
 
 ### ITenantMigrationRunner
 
-[사용법 →](./multi-tenancy.md)
+[Usage ->](./multi-tenancy.md)
 
 ```typescript
 interface ITenantMigrationRunner {
@@ -364,11 +364,11 @@ interface ITenantMigrationRunner {
 interface TenantSyncResult { created: string[]; skipped: string[]; }
 ```
 
-구현체: `PostgresTenantMigrationRunner`, `MySqlTenantMigrationRunner`, `SqliteTenantMigrationRunner`
+Implementations: `PostgresTenantMigrationRunner`, `MySqlTenantMigrationRunner`, `SqliteTenantMigrationRunner`
 
 ### Migration
 
-[사용법 →](./migrations.md)
+[Usage ->](./migrations.md)
 
 ```typescript
 abstract class Migration {
@@ -383,24 +383,24 @@ interface MigrationContext {
 }
 ```
 
-관련 클래스: `MigrationRunner`, `MigrationCli`, `SchemaDiff`, `SchemaDiffMigrationGenerator`
+Related classes: `MigrationRunner`, `MigrationCli`, `SchemaDiff`, `SchemaDiffMigrationGenerator`
 
-## 에러
+## Errors
 
-| 에러 | 설명 |
-|------|------|
-| `OrmError` | 기본 ORM 에러 |
-| `ValidationError` | 유효성 검사 실패 |
-| `EntityNotFoundError` | 엔티티를 찾을 수 없음 |
-| `EntityMetadataNotFoundError` | 메타데이터 없음 |
-| `InvalidQueryError` | 잘못된 쿼리 |
-| `PrimaryKeyNotFoundError` | PK 없음 |
-| `DeleteWithoutConditionsError` | 조건 없는 삭제 |
-| `QueryTimeoutError` | 쿼리 타임아웃 |
-| `TransactionError` | 트랜잭션 에러 |
-| `DatabaseNotConnectedError` | DB 미연결 |
-| `DatabaseConnectionFailedError` | DB 연결 실패 |
-| `NotSupportedDatabaseTypeError` | 미지원 DB 타입 |
+| Error | Description |
+|-------|-------------|
+| `OrmError` | Base ORM error |
+| `ValidationError` | Validation failure |
+| `EntityNotFoundError` | Entity not found |
+| `EntityMetadataNotFoundError` | Metadata not found |
+| `InvalidQueryError` | Invalid query |
+| `PrimaryKeyNotFoundError` | PK not found |
+| `DeleteWithoutConditionsError` | Delete without conditions |
+| `QueryTimeoutError` | Query timeout |
+| `TransactionError` | Transaction error |
+| `DatabaseNotConnectedError` | DB not connected |
+| `DatabaseConnectionFailedError` | DB connection failed |
+| `NotSupportedDatabaseTypeError` | Unsupported DB type |
 
 ### OrmErrorCode
 
@@ -421,15 +421,15 @@ enum OrmErrorCode {
 }
 ```
 
-## 유틸리티
+## Utilities
 
-| export | 설명 |
-|--------|------|
+| Export | Description |
+|--------|-------------|
 | `ClazzType<T>` | `new (...args: any[]) => T` |
 | `EntityResult<T>` | `T \| T[]` |
-| `DeepPartial<T>` | 깊은 부분 타입 |
+| `DeepPartial<T>` | Deep partial type |
 | `FindCondition<T>` | `{ [P in keyof T]?: T[P] }` |
-| `RawQueryBuilderFactory` | 쿼리 빌더 팩토리 |
-| `LayeredMetadataStore` | 레이어드 메타데이터 |
-| `MetadataContext` | AsyncLocalStorage 기반 테넌트 컨텍스트 |
-| `Logger` | 내부 로깅 유틸리티 |
+| `RawQueryBuilderFactory` | Query builder factory |
+| `LayeredMetadataStore` | Layered metadata |
+| `MetadataContext` | AsyncLocalStorage-based tenant context |
+| `Logger` | Internal logging utility |

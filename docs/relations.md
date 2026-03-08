@@ -1,23 +1,23 @@
-# 관계 설정 (Relations)
+# Relations
 
-**관계(Relation)**는 두 엔티티 사이의 연결을 의미합니다. "블로그 글은 작성자가 있다", "주인은 여러 마리의 고양이를 키운다"처럼 현실 세계의 관계를 데이터베이스에 반영하는 것이죠.
+A **Relation** is a connection between two entities. It reflects real-world relationships in the database, such as "a blog post has an author" or "an owner has multiple cats."
 
-Stingerloom ORM은 네 가지 관계를 지원합니다.
+Stingerloom ORM supports four types of relations.
 
-| 관계 | 예시 | 데코레이터 |
-|------|------|-----------|
-| 다대일 (N:1) | 고양이 → 주인 | `@ManyToOne` |
-| 일대다 (1:N) | 주인 → 고양이들 | `@OneToMany` |
-| 일대일 (1:1) | 사용자 → 프로필 | `@OneToOne` |
-| 다대다 (N:M) | 글 ↔ 태그 | `@ManyToMany` |
+| Relation | Example | Decorator |
+|----------|---------|-----------|
+| Many-to-One (N:1) | Cat -> Owner | `@ManyToOne` |
+| One-to-Many (1:N) | Owner -> Cats | `@OneToMany` |
+| One-to-One (1:1) | User -> Profile | `@OneToOne` |
+| Many-to-Many (N:M) | Post <-> Tag | `@ManyToMany` |
 
-가장 흔한 다대일 관계부터 하나씩 따라해보겠습니다.
+Let's start with the most common Many-to-One relation and work through each one.
 
-## @ManyToOne — "이 고양이의 주인은 누구?"
+## @ManyToOne — "Who is this cat's owner?"
 
-고양이와 주인 관계를 생각해봅시다. 한 주인이 여러 고양이를 키울 수 있지만, 고양이 한 마리의 주인은 한 명입니다. 이것이 **다대일(N:1)** 관계입니다.
+Think about the relationship between cats and owners. One owner can have multiple cats, but each cat has only one owner. This is a **Many-to-One (N:1)** relation.
 
-먼저 두 엔티티를 만듭니다.
+First, create the two entities.
 
 ```typescript
 // owner.entity.ts
@@ -53,19 +53,19 @@ export class Cat {
 }
 ```
 
-`@ManyToOne`이 하는 일은 명확합니다. cat 테이블에 `owner_id` 외래키 컬럼을 만들고, 이 컬럼이 owner 테이블의 PK를 참조하도록 합니다.
+What `@ManyToOne` does is clear: it creates an `owner_id` foreign key column in the cat table that references the PK of the owner table.
 
-세 개의 인자를 살펴보면:
+Looking at the three arguments:
 
-- `() => Owner` — 연결 대상 엔티티 (순환 참조 방지를 위해 함수로 감쌉니다)
-- `(owner) => owner.cats` — 반대편 프로퍼티 (양방향일 때 사용, 단방향이면 생략 가능)
-- `{ joinColumn: "owner_id" }` — 외래키 컬럼명
+- `() => Owner` — The target entity (wrapped in a function to prevent circular references)
+- `(owner) => owner.cats` — The inverse property (used for bidirectional relations; can be omitted for unidirectional)
+- `{ joinColumn: "owner_id" }` — The foreign key column name
 
-> **Hint** `joinColumn`을 생략해도 됩니다. 아래의 **@Column 기반 FK 자동 감지**를 참고하세요.
+> **Hint** You can omit `joinColumn`. See **@Column-based FK Auto-Detection** below.
 
-### @Column 기반 FK 자동 감지
+### @Column-based FK Auto-Detection
 
-`joinColumn`을 매번 지정하는 것은 번거롭고, `@Column`의 DB 컬럼명과 불일치할 위험이 있습니다. Stingerloom은 같은 엔티티에 `{프로퍼티명}Id` 패턴의 `@Column`이 선언되어 있으면, 해당 컬럼의 **실제 DB 이름**을 FK 컬럼으로 자동 사용합니다.
+Specifying `joinColumn` every time is tedious and risks mismatch with `@Column`'s DB column name. Stingerloom automatically uses the **actual DB name** of the `@Column` as the FK column when a `@Column` with the `{propertyName}Id` pattern is declared on the same entity.
 
 ```typescript
 @Entity()
@@ -76,47 +76,47 @@ export class Cat {
   @Column()
   name!: string;
 
-  // DB 컬럼명이 "owner_fk"인 FK 컬럼
+  // FK column with DB column name "owner_fk"
   @Column({ name: "owner_fk", type: "int" })
   ownerId!: number;
 
-  // joinColumn 없이도 ownerId의 DB 이름 "owner_fk"가 자동 적용
+  // "owner_fk" from ownerId's DB name is auto-applied without joinColumn
   @ManyToOne(() => Owner, (owner) => owner.cats)
   owner!: Owner;
 }
 ```
 
-해석 우선순위는 다음과 같습니다.
+The resolution priority is as follows.
 
-1. `@ManyToOne`의 `joinColumn` 옵션이 명시된 경우 → 그대로 사용
-2. 같은 엔티티에 `@Column`으로 선언된 `{프로퍼티명}Id`가 있으면 → 해당 `@Column`의 DB 컬럼명 사용
-3. 둘 다 없으면 → `{프로퍼티명}Id` 컨벤션 fallback
+1. If `@ManyToOne`'s `joinColumn` option is specified -> use as-is
+2. If a `@Column` with `{propertyName}Id` is declared on the same entity -> use that `@Column`'s DB column name
+3. If neither exists -> fallback to `{propertyName}Id` convention
 
-`@Column`을 선언하면 FK 값을 엔티티에서 직접 읽고 쓸 수 있는 장점도 있습니다.
+Declaring a `@Column` also has the advantage of being able to directly read and write FK values on the entity.
 
 ```typescript
 const cat = new Cat();
-cat.ownerId = 3;          // FK 값을 직접 설정
+cat.ownerId = 3;          // Set FK value directly
 await em.save(Cat, cat);
 
-console.log(cat.ownerId); // FK 값을 직접 읽기
+console.log(cat.ownerId); // Read FK value directly
 ```
 
-### PK가 아닌 컬럼 참조 (references)
+### Referencing Non-PK Columns (references)
 
-기본적으로 FK는 대상 엔티티의 PK를 참조합니다. PK 외의 컬럼을 참조하려면 `references` 옵션을 사용합니다.
+By default, FKs reference the target entity's PK. To reference a column other than the PK, use the `references` option.
 
 ```typescript
 @ManyToOne(() => Owner, (owner) => owner.cats, {
   joinColumn: "owner_uuid_fk",
-  references: "uuid",  // Owner.uuid 컬럼을 참조
+  references: "uuid",  // References Owner.uuid column
 })
 owner!: Owner;
 ```
 
-## @OneToMany — "이 주인의 고양이들은?"
+## @OneToMany — "What are this owner's cats?"
 
-주인 쪽에서 고양이 목록을 가져오고 싶다면 `@OneToMany`를 추가합니다. 이것은 `@ManyToOne`의 반대 방향입니다.
+If you want to fetch a list of cats from the owner side, add `@OneToMany`. This is the inverse direction of `@ManyToOne`.
 
 ```typescript
 // owner.entity.ts
@@ -136,11 +136,11 @@ export class Owner {
 }
 ```
 
-`mappedBy: "owner"`는 "Cat 엔티티의 `owner` 프로퍼티가 외래키를 가지고 있다"는 뜻입니다. `@OneToMany` 자체는 DB에 컬럼을 만들지 않습니다. 단지 조회할 때 관련 데이터를 가져올 수 있게 해주는 역할입니다.
+`mappedBy: "owner"` means "the `owner` property on the Cat entity holds the foreign key." `@OneToMany` itself does not create a column in the DB. It simply enables fetching related data during queries.
 
-> **Hint** `mappedBy`는 대상 엔티티의 프로퍼티 이름에 대한 **IntelliSense 자동완성**을 지원합니다. IDE에서 `mappedBy: ""`를 입력하면 Cat 엔티티의 프로퍼티 목록이 표시됩니다. `@ManyToMany`의 `mappedBy`, `@OneToOne`의 `inverseSide`도 동일합니다.
+> **Hint** `mappedBy` supports **IntelliSense auto-completion** for the target entity's property names. When you type `mappedBy: ""` in your IDE, Cat entity's property list will be displayed. The same applies to `@ManyToMany`'s `mappedBy` and `@OneToOne`'s `inverseSide`.
 
-이제 주인의 고양이들을 가져올 수 있습니다.
+Now you can fetch an owner's cats.
 
 ```typescript
 const owner = await em.findOne(Owner, {
@@ -148,61 +148,61 @@ const owner = await em.findOne(Owner, {
   relations: ["cats"],
 });
 
-console.log(owner.cats); // [{ id: 1, name: "나비" }, { id: 2, name: "치즈" }]
+console.log(owner.cats); // [{ id: 1, name: "Whiskers" }, { id: 2, name: "Cheddar" }]
 ```
 
-> **Hint** `relations`를 지정하지 않으면 `cats`는 로드되지 않습니다. 필요할 때만 명시적으로 로드하세요.
+> **Hint** Without specifying `relations`, `cats` will not be loaded. Explicitly load only when needed.
 
-## Eager 로딩과 Lazy 로딩
+## Eager Loading and Lazy Loading
 
-매번 `relations: ["owner"]`를 쓰기 번거롭다면 두 가지 자동 로딩 방식이 있습니다.
+If writing `relations: ["owner"]` every time is tedious, there are two automatic loading methods.
 
-### Eager 로딩 — 항상 함께 가져오기
+### Eager Loading — Always Fetch Together
 
-`eager: true`로 설정하면 `find()`나 `findOne()` 호출 시 자동으로 LEFT JOIN이 실행됩니다.
+Setting `eager: true` automatically executes a LEFT JOIN when `find()` or `findOne()` is called.
 
 ```typescript
 // cat.entity.ts
 @ManyToOne(() => Owner, (owner) => owner.cats, {
   joinColumn: "owner_id",
-  eager: true,  // find() 시 owner가 자동으로 로드됨
+  eager: true,  // owner is automatically loaded on find()
 })
 owner!: Owner;
 ```
 
 ```typescript
 const cat = await em.findOne(Cat, { where: { id: 1 } });
-console.log(cat.owner.name); // "홍길동" — relations 없이도 로드됨
+console.log(cat.owner.name); // "John" — loaded without relations
 ```
 
-관계 데이터가 항상 필요한 경우에 유용합니다.
+Useful when related data is always needed.
 
-### Lazy 로딩 — 접근할 때 가져오기
+### Lazy Loading — Fetch on Access
 
-`lazy: true`로 설정하면 Proxy 기반 지연 로딩을 사용합니다. 프로퍼티에 실제로 접근하는 순간에 DB 쿼리가 실행됩니다.
+Setting `lazy: true` uses Proxy-based deferred loading. A DB query is executed at the moment the property is actually accessed.
 
 ```typescript
 // cat.entity.ts
 @ManyToOne(() => Owner, (owner) => owner.cats, {
   joinColumn: "owner_id",
-  lazy: true,  // 접근 시점에 쿼리 실행
+  lazy: true,  // Query executes on access
 })
 owner!: Owner;
 ```
 
 ```typescript
 const cat = await em.findOne(Cat, { where: { id: 1 } });
-const owner = await cat.owner; // 이 시점에 SELECT 쿼리 실행
+const owner = await cat.owner; // SELECT query executes at this point
 console.log(owner.name);
 ```
 
-> **Warning** `eager`와 `lazy`를 동시에 사용할 수 없습니다. 둘 다 설정하면 `eager`가 우선됩니다.
+> **Warning** `eager` and `lazy` cannot be used simultaneously. If both are set, `eager` takes priority.
 
-## @OneToOne — "사용자의 프로필"
+## @OneToOne — "A user's profile"
 
-사용자 한 명에 프로필 하나. 이것이 **일대일(1:1)** 관계입니다.
+One user, one profile. This is a **One-to-One (1:1)** relation.
 
-### 단방향 (소유측만)
+### Unidirectional (Owner Side Only)
 
 ```typescript
 // profile.entity.ts
@@ -234,41 +234,41 @@ export class User {
 }
 ```
 
-user 테이블에 `profile_id` 컬럼이 생성됩니다. `eager: true`이므로 User를 조회하면 Profile도 함께 로드됩니다.
+A `profile_id` column is created in the user table. Since `eager: true`, the Profile is loaded together when querying User.
 
-> **Hint** `@OneToOne`도 `@ManyToOne`과 동일하게 `@Column` 기반 FK 자동 감지를 지원합니다. `@Column({ name: "profile_fk" }) profileId: number`를 선언하면 `joinColumn`을 생략할 수 있습니다.
+> **Hint** `@OneToOne` also supports `@Column`-based FK auto-detection just like `@ManyToOne`. If you declare `@Column({ name: "profile_fk" }) profileId: number`, you can omit `joinColumn`.
 
-### 양방향
+### Bidirectional
 
-Profile에서도 User를 참조하고 싶다면 `inverseSide`를 사용합니다.
+If you also want to reference User from Profile, use `inverseSide`.
 
 ```typescript
-// user.entity.ts — 소유측 (FK를 가진 쪽)
+// user.entity.ts — Owner side (the side with the FK)
 @OneToOne(() => Profile, { joinColumn: "profile_id", inverseSide: "user" })
 profile!: Profile;
 
-// profile.entity.ts — 역방향
+// profile.entity.ts — Inverse side
 @OneToOne(() => User, { inverseSide: "profile" })
 user!: User;
 ```
 
 ```typescript
-// 역방향에서 조회
+// Query from the inverse side
 const profile = await em.findOne(Profile, {
   where: { id: 1 },
   relations: ["user"],
 });
-console.log(profile.user.name); // "홍길동"
+console.log(profile.user.name); // "John"
 ```
 
-## @ManyToMany — "글에 태그 달기"
+## @ManyToMany — "Tagging Posts"
 
-블로그 글에 태그를 달 수 있고, 하나의 태그는 여러 글에 사용될 수 있습니다. 이것이 **다대다(N:M)** 관계입니다.
+Blog posts can have tags, and a single tag can be used on multiple posts. This is a **Many-to-Many (N:M)** relation.
 
-다대다 관계에는 **중간 테이블(join table)**이 필요합니다. Stingerloom이 자동으로 생성해줍니다.
+Many-to-Many relations require a **join table**. Stingerloom creates it automatically.
 
 ```typescript
-// post.entity.ts — 소유측
+// post.entity.ts — Owner side
 import { Entity, PrimaryGeneratedColumn, Column, ManyToMany } from "@stingerloom/orm";
 import { Tag } from "./tag.entity";
 
@@ -282,9 +282,9 @@ export class Post {
 
   @ManyToMany(() => Tag, {
     joinTable: {
-      name: "post_tags",           // 중간 테이블명
-      joinColumn: "post_id",       // 현재 엔티티의 FK
-      inverseJoinColumn: "tag_id", // 대상 엔티티의 FK
+      name: "post_tags",           // Join table name
+      joinColumn: "post_id",       // FK for the current entity
+      inverseJoinColumn: "tag_id", // FK for the target entity
     },
   })
   tags!: Tag[];
@@ -292,7 +292,7 @@ export class Post {
 ```
 
 ```typescript
-// tag.entity.ts — 역방향
+// tag.entity.ts — Inverse side
 import { Entity, PrimaryGeneratedColumn, Column, ManyToMany } from "@stingerloom/orm";
 import { Post } from "./post.entity";
 
@@ -309,10 +309,10 @@ export class Tag {
 }
 ```
 
-`synchronize: true`이면 `post_tags` 중간 테이블이 자동 생성되며, 두 테이블의 PK를 참조하는 외래키가 설정됩니다.
+With `synchronize: true`, the `post_tags` join table is automatically created with foreign keys referencing both tables' PKs.
 
 ```typescript
-// 태그와 함께 글 조회
+// Fetch post with tags
 const post = await em.findOne(Post, {
   where: { id: 1 },
   relations: ["tags"],
@@ -320,11 +320,11 @@ const post = await em.findOne(Post, {
 console.log(post.tags); // [{ id: 1, name: "TypeScript" }, { id: 2, name: "ORM" }]
 ```
 
-> **Hint** 중간 테이블에 데이터를 추가/삭제하려면 `em.query()`로 직접 SQL을 실행합니다. 자세한 내용은 [EntityManager](./entity-manager.md) 문서를 참고하세요.
+> **Hint** To add/remove data in the join table, execute SQL directly with `em.query()`. See the [EntityManager](./entity-manager.md) documentation for details.
 
-## Cascade — 부모와 함께 저장/삭제
+## Cascade — Save/Delete with Parent
 
-**Cascade**를 사용하면 부모 엔티티를 저장하거나 삭제할 때 자식 엔티티도 자동으로 처리됩니다.
+**Cascade** allows child entities to be automatically processed when saving or deleting the parent entity.
 
 ```typescript
 // owner.entity.ts
@@ -332,53 +332,53 @@ console.log(post.tags); // [{ id: 1, name: "TypeScript" }, { id: 2, name: "ORM" 
 cats!: Cat[];
 ```
 
-이렇게 설정하면 Owner를 저장할 때 cats 배열에 새 Cat이 있으면 자동으로 INSERT됩니다.
+With this setting, when saving an Owner, new Cats in the cats array are automatically INSERTed.
 
-Cascade 옵션은 다음 중에서 선택합니다.
+Choose from the following cascade options.
 
-| 옵션 | 동작 |
-|------|------|
-| `"insert"` | 부모 저장 시 자식도 INSERT |
-| `"update"` | 부모 수정 시 자식도 UPDATE |
-| `"delete"` | 부모 삭제 시 자식도 DELETE |
-| `true` | 위 세 가지 모두 적용 |
+| Option | Behavior |
+|--------|----------|
+| `"insert"` | INSERT children when saving parent |
+| `"update"` | UPDATE children when modifying parent |
+| `"delete"` | DELETE children when deleting parent |
+| `true` | Apply all three above |
 
-배열로 조합할 수 있습니다.
+You can combine them in an array.
 
 ```typescript
-// 삽입과 삭제만 cascade
+// Cascade only insert and delete
 @OneToMany(() => Cat, { mappedBy: "owner", cascade: ["insert", "delete"] })
 cats!: Cat[];
 
-// 모든 cascade 적용
+// Apply all cascades
 @OneToMany(() => Comment, { mappedBy: "post", cascade: true })
 comments!: Comment[];
 ```
 
-> **Warning** `cascade: ["delete"]`는 강력한 기능입니다. 부모를 삭제하면 모든 자식이 함께 삭제되므로, 의도치 않은 데이터 손실에 주의하세요.
+> **Warning** `cascade: ["delete"]` is a powerful feature. Deleting a parent will delete all children, so be careful of unintended data loss.
 
-## 관계 로딩 정리
+## Relation Loading Summary
 
-관계 데이터를 가져오는 세 가지 방법을 정리합니다.
+Here's a summary of the three ways to fetch related data.
 
-| 방법 | 설정 위치 | 동작 | 언제 사용? |
-|------|----------|------|-----------|
-| `relations` 옵션 | `find()` 호출 시 | 지정한 관계만 JOIN | 필요할 때만 관계를 로드하고 싶을 때 |
-| `eager: true` | 데코레이터 옵션 | 항상 자동 JOIN | 관계가 거의 항상 필요할 때 |
-| `lazy: true` | 데코레이터 옵션 | 프로퍼티 접근 시 쿼리 | 관계를 드물게 사용할 때 |
+| Method | Configuration Location | Behavior | When to Use |
+|--------|----------------------|----------|-------------|
+| `relations` option | At `find()` call time | JOIN only specified relations | When you want to load relations only when needed |
+| `eager: true` | Decorator option | Always auto JOIN | When the relation is almost always needed |
+| `lazy: true` | Decorator option | Query on property access | When the relation is rarely used |
 
 ```typescript
-// relations 옵션으로 여러 관계를 한 번에 로드
+// Load multiple relations at once with the relations option
 const user = await em.findOne(User, {
   where: { id: 1 },
   relations: ["profile", "posts"],
 });
 ```
 
-## 다음 단계
+## Next Steps
 
-엔티티 간 관계를 설정했으니, 이제 데이터를 조작하는 다양한 방법을 알아볼 차례입니다.
+Now that you've set up relationships between entities, it's time to learn various ways to manipulate data.
 
-- [EntityManager](./entity-manager.md) — find, save, delete, 집계, 페이지네이션
-- [쿼리 빌더](./query-builder.md) — JOIN, GROUP BY 등 복잡한 SQL이 필요할 때
-- [트랜잭션](./transactions.md) — 여러 작업을 하나로 묶어야 할 때
+- [EntityManager](./entity-manager.md) — find, save, delete, aggregation, pagination
+- [Query Builder](./query-builder.md) — When you need complex SQL like JOIN, GROUP BY
+- [Transactions](./transactions.md) — When you need to group multiple operations into one

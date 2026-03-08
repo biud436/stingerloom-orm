@@ -1,6 +1,6 @@
 # EntityManager
 
-**EntityManager**는 Stingerloom ORM의 핵심 진입점입니다. 데이터를 생성, 조회, 수정, 삭제하는 모든 작업이 EntityManager를 통해 이루어집니다.
+**EntityManager** is the core entry point of Stingerloom ORM. All operations for creating, reading, updating, and deleting data are performed through EntityManager.
 
 ```typescript
 import { EntityManager } from "@stingerloom/orm";
@@ -8,11 +8,11 @@ import { EntityManager } from "@stingerloom/orm";
 const em = new EntityManager();
 ```
 
-이 문서에서는 개발할 때 가장 많이 사용하는 기능부터 순서대로 설명합니다.
+This document explains the most commonly used features in order of development usage.
 
-## DB 연결하기 — register()
+## Connecting to the DB — register()
 
-EntityManager를 사용하려면 먼저 데이터베이스에 연결해야 합니다.
+To use EntityManager, you must first connect to a database.
 
 ```typescript
 // main.ts
@@ -34,43 +34,43 @@ await em.register({
 });
 ```
 
-`register()`가 하는 일은 세 가지입니다: DB에 연결하고, 엔티티 메타데이터를 스캔하고, `synchronize: true`이면 테이블을 자동 생성합니다.
+`register()` does three things: connects to the DB, scans entity metadata, and auto-creates tables if `synchronize: true`.
 
-> **Warning** `synchronize: true`는 개발 환경에서만 사용하세요. 프로덕션에서는 [마이그레이션](./migrations.md)으로 스키마를 관리해야 합니다.
+> **Warning** Use `synchronize: true` only in development. In production, manage your schema with [migrations](./migrations.md).
 
-연결 옵션에 대한 자세한 내용은 [설정 가이드](./configuration.md)를 참고하세요.
+For more details on connection options, see the [Configuration Guide](./configuration.md).
 
-## 저장하기 — save()
+## Saving — save()
 
-데이터를 저장할 때는 `save()`를 사용합니다. PK가 없으면 INSERT, PK가 있으면 UPDATE를 자동으로 수행합니다.
+Use `save()` to save data. It automatically performs an INSERT when there is no PK, and an UPDATE when there is.
 
 ```typescript
-// INSERT — PK(id)가 없으므로 새 행 삽입
+// INSERT — No PK (id), so a new row is inserted
 const user = await em.save(User, {
-  name: "홍길동",
-  email: "hong@example.com",
+  name: "John Doe",
+  email: "john@example.com",
 });
-console.log(user.id); // 1 — 자동 생성된 PK
+console.log(user.id); // 1 — Auto-generated PK
 
-// UPDATE — PK(id)가 있으므로 기존 행 수정
+// UPDATE — PK (id) present, so existing row is modified
 const updated = await em.save(User, {
   id: 1,
-  name: "홍길동(수정)",
-  email: "hong@example.com",
+  name: "John Doe (edited)",
+  email: "john@example.com",
 });
 ```
 
-`save()`는 저장된 엔티티 객체를 반환하므로, INSERT 후에도 자동 생성된 `id`를 바로 사용할 수 있습니다.
+`save()` returns the saved entity object, so you can immediately use the auto-generated `id` even after INSERT.
 
-## 조회하기 — find(), findOne()
+## Querying — find(), findOne()
 
-### 목록 조회
+### List Query
 
 ```typescript
-// 전체 조회
+// Fetch all
 const users = await em.find(User);
 
-// WHERE 조건
+// WHERE condition
 const activeUsers = await em.find(User, {
   where: { isActive: true },
 });
@@ -82,35 +82,35 @@ const recent = await em.find(Post, {
 });
 ```
 
-### 단건 조회
+### Single Record Query
 
 ```typescript
 const user = await em.findOne(User, { where: { id: 1 } });
 
 if (user === null) {
-  throw new Error("사용자를 찾을 수 없습니다");
+  throw new Error("User not found");
 }
 ```
 
-`findOne()`은 결과가 없으면 `null`을 반환합니다. 항상 null 체크를 해주세요.
+`findOne()` returns `null` when no result is found. Always perform a null check.
 
-### 특정 컬럼만 SELECT
+### SELECT Specific Columns Only
 
-필요한 컬럼만 가져오면 쿼리가 가벼워집니다.
+Fetching only the columns you need makes queries lighter.
 
 ```typescript
-// 배열 방식
+// Array style
 const names = await em.find(User, {
   select: ["id", "name"],
 });
 
-// 객체 방식
+// Object style
 const names2 = await em.find(User, {
   select: { id: true, name: true },
 });
 ```
 
-### 관계 엔티티 함께 로드
+### Loading Related Entities
 
 ```typescript
 const owner = await em.findOne(Owner, {
@@ -120,88 +120,88 @@ const owner = await em.findOne(Owner, {
 console.log(owner.cats); // Cat[]
 ```
 
-### Soft Delete된 데이터 포함
+### Including Soft Deleted Data
 
 ```typescript
 const allPosts = await em.find(Post, {
-  withDeleted: true, // deleted_at이 NULL이 아닌 행도 포함
+  withDeleted: true, // Include rows where deleted_at is not NULL
 });
 ```
 
-## 삭제하기 — delete(), softDelete()
+## Deleting — delete(), softDelete()
 
-### 영구 삭제
+### Permanent Delete
 
 ```typescript
 const result = await em.delete(User, { id: 1 });
 console.log(result.affected); // 1
 ```
 
-빈 조건으로 삭제하면 `DeleteWithoutConditionsError`가 발생합니다. 실수로 전체 데이터를 삭제하는 것을 방지합니다.
+Deleting with empty conditions throws a `DeleteWithoutConditionsError`. This prevents accidentally deleting all data.
 
 ### Soft Delete
 
-`@DeletedAt` 컬럼이 있는 엔티티에 사용합니다. 실제로 삭제하지 않고 `deleted_at = NOW()`로 표시만 합니다.
+Used with entities that have a `@DeletedAt` column. Instead of actually deleting, it marks the record with `deleted_at = NOW()`.
 
 ```typescript
 // soft delete
 await em.softDelete(Post, { id: 1 });
 
-// 이후 find()에서 자동 제외됨
-const posts = await em.find(Post); // deleted_at IS NULL인 것만 조회
+// Automatically excluded from find() afterwards
+const posts = await em.find(Post); // Only queries where deleted_at IS NULL
 
-// 복원
+// Restore
 await em.restore(Post, { id: 1 });
 ```
 
-## 배치 연산 — insertMany(), saveMany(), deleteMany()
+## Batch Operations — insertMany(), saveMany(), deleteMany()
 
-여러 건의 데이터를 한 번에 처리해야 할 때 사용합니다.
+Use these when you need to process multiple records at once.
 
 ```typescript
-// 단일 INSERT 쿼리로 여러 건 삽입 (가장 빠름)
+// Insert multiple records with a single INSERT query (fastest)
 await em.insertMany(User, [
-  { name: "홍길동", email: "hong@example.com" },
-  { name: "김철수", email: "kim@example.com" },
-  { name: "이영희", email: "lee@example.com" },
+  { name: "John Doe", email: "john@example.com" },
+  { name: "Jane Smith", email: "jane@example.com" },
+  { name: "Bob Wilson", email: "bob@example.com" },
 ]);
 
-// 각 건마다 INSERT/UPDATE 판단 (PK 유무에 따라)
+// Determines INSERT/UPDATE for each record (based on PK presence)
 const users = await em.saveMany(User, [
-  { name: "새사용자", email: "new@example.com" },       // INSERT
-  { id: 2, name: "수정", email: "updated@example.com" }, // UPDATE
+  { name: "New User", email: "new@example.com" },       // INSERT
+  { id: 2, name: "Updated", email: "updated@example.com" }, // UPDATE
 ]);
 
-// PK 배열로 한 번에 삭제
+// Delete multiple at once by PK array
 await em.deleteMany(User, [1, 2, 3]);
 ```
 
-> **Hint** 대량 INSERT는 `insertMany()`가 가장 효율적입니다. 단일 `INSERT INTO ... VALUES (...), (...)` 쿼리로 실행되기 때문입니다.
+> **Hint** For bulk INSERTs, `insertMany()` is the most efficient. It executes as a single `INSERT INTO ... VALUES (...), (...)` query.
 
-## Upsert — 있으면 수정, 없으면 삽입
+## Upsert — Update if Exists, Insert if Not
 
-`upsert()`는 PK나 유니크 컬럼 기준으로 충돌 여부를 확인합니다. 이미 있으면 UPDATE, 없으면 INSERT를 수행합니다.
+`upsert()` checks for conflicts based on PK or unique columns. If the record already exists, it performs an UPDATE; otherwise, an INSERT.
 
 ```typescript
-// PK 기준 upsert
+// Upsert by PK
 await em.upsert(User, {
   id: 1,
-  name: "홍길동",
-  email: "hong@example.com",
+  name: "John Doe",
+  email: "john@example.com",
 });
 
-// 유니크 컬럼 기준 upsert
+// Upsert by unique column
 await em.upsert(User, {
-  email: "hong@example.com",
-  name: "홍길동",
-}, ["email"]); // email이 이미 있으면 UPDATE, 없으면 INSERT
+  email: "john@example.com",
+  name: "John Doe",
+}, ["email"]); // UPDATE if email exists, INSERT otherwise
 ```
 
-내부적으로 MySQL은 `INSERT ... ON DUPLICATE KEY UPDATE`, PostgreSQL은 `INSERT ... ON CONFLICT DO UPDATE`를 사용합니다.
+Internally, MySQL uses `INSERT ... ON DUPLICATE KEY UPDATE`, and PostgreSQL uses `INSERT ... ON CONFLICT DO UPDATE`.
 
-## 집계 함수 — count(), sum(), avg(), min(), max()
+## Aggregate Functions — count(), sum(), avg(), min(), max()
 
-통계 데이터가 필요할 때 사용합니다.
+Use these when you need statistical data.
 
 ```typescript
 const total = await em.count(User);
@@ -213,7 +213,7 @@ const oldest = await em.max(User, "age");
 const totalAge = await em.sum(User, "age");
 ```
 
-여러 집계를 동시에 조회하면 성능이 좋습니다.
+Querying multiple aggregates simultaneously improves performance.
 
 ```typescript
 const [total, avgAge, minAge, maxAge] = await Promise.all([
@@ -224,20 +224,20 @@ const [total, avgAge, minAge, maxAge] = await Promise.all([
 ]);
 ```
 
-## 페이지네이션
+## Pagination
 
-### Offset 방식
+### Offset-Based
 
-전통적인 LIMIT/OFFSET 페이지네이션입니다. 소규모 데이터셋에 적합합니다.
+Traditional LIMIT/OFFSET pagination. Suitable for small datasets.
 
 ```typescript
-// 방법 1: take + limit
+// Method 1: take + limit
 const page2 = await em.find(Post, {
   orderBy: { createdAt: "DESC" },
   limit: [10, 10], // OFFSET 10, LIMIT 10
 });
 
-// 방법 2: findAndCount — 전체 개수도 함께 반환
+// Method 2: findAndCount — also returns total count
 const [posts, total] = await em.findAndCount(Post, {
   orderBy: { createdAt: "DESC" },
   take: 10,
@@ -245,26 +245,26 @@ const [posts, total] = await em.findAndCount(Post, {
 });
 
 console.log(posts.length); // 10
-console.log(total);        // 전체 게시글 수 (예: 235)
+console.log(total);        // Total number of posts (e.g., 235)
 ```
 
-### 커서 방식
+### Cursor-Based
 
-대용량 데이터에서는 커서 기반 페이지네이션이 성능이 일정합니다.
+For large datasets, cursor-based pagination provides consistent performance.
 
 ```typescript
-// 첫 페이지
+// First page
 const page1 = await em.findWithCursor(Post, {
   take: 20,
   orderBy: "id",
   direction: "ASC",
 });
 
-console.log(page1.data);        // Post[] (최대 20건)
+console.log(page1.data);        // Post[] (up to 20 records)
 console.log(page1.hasNextPage); // true
 console.log(page1.nextCursor);  // "eyJ2IjoyMH0=" (Base64)
 
-// 두 번째 페이지 — 이전 커서를 전달
+// Second page — pass the previous cursor
 const page2 = await em.findWithCursor(Post, {
   take: 20,
   cursor: page1.nextCursor!,
@@ -273,79 +273,79 @@ const page2 = await em.findWithCursor(Post, {
 });
 ```
 
-> **Hint** 커서 방식은 "다음 페이지"/"이전 페이지" 네비게이션에 적합합니다. 특정 페이지로 점프해야 한다면 offset 방식을 사용하세요.
+> **Hint** Cursor-based pagination is suited for "next page"/"previous page" navigation. If you need to jump to a specific page, use offset-based pagination.
 
-## Raw SQL 실행 — query()
+## Raw SQL Execution — query()
 
-ORM이 제공하지 않는 복잡한 쿼리가 필요할 때 직접 SQL을 실행할 수 있습니다.
+When you need complex queries that the ORM doesn't provide, you can execute SQL directly.
 
 ```typescript
 import sql from "sql-template-tag";
 
-// sql-template-tag 사용 (권장 — SQL Injection 방지)
+// Using sql-template-tag (recommended — prevents SQL Injection)
 const users = await em.query<{ id: number; name: string }>(
   sql`SELECT * FROM "user" WHERE "id" = ${1}`
 );
 
-// 문자열 + 파라미터 배열
+// String + parameter array
 const posts = await em.query<{ id: number; title: string }>(
   "SELECT id, title FROM post WHERE author_id = ?",
   [42]
 );
 ```
 
-> **Warning** Raw SQL을 사용할 때는 반드시 파라미터 바인딩을 사용하세요. 문자열 연결로 값을 끼워넣으면 SQL Injection 위험이 있습니다.
+> **Warning** When using Raw SQL, always use parameter binding. Concatenating values into strings poses SQL Injection risks.
 
-## EXPLAIN — 쿼리 분석
+## EXPLAIN — Query Analysis
 
-쿼리가 인덱스를 제대로 사용하는지 확인할 때 유용합니다.
+Useful for verifying whether a query is properly using indexes.
 
 ```typescript
 const result = await em.explain(User, {
-  where: { email: "hong@example.com" },
+  where: { email: "john@example.com" },
 });
 
-console.log(result.type); // "ref" — 인덱스 사용 중
+console.log(result.type); // "ref" — using an index
 console.log(result.key);  // "idx_user_email"
-console.log(result.rows); // 1 — 예상 검사 행 수
+console.log(result.rows); // 1 — estimated number of rows examined
 ```
 
-> **Hint** `explain()`은 MySQL과 PostgreSQL에서 지원됩니다. SQLite에서는 `InvalidQueryError`가 발생합니다.
+> **Hint** `explain()` is supported in MySQL and PostgreSQL. In SQLite, an `InvalidQueryError` is thrown.
 
-## 이벤트 리스너
+## Event Listeners
 
-데이터가 생성/수정/삭제될 때 자동으로 실행되는 로직을 등록할 수 있습니다.
+You can register logic that runs automatically when data is created/updated/deleted.
 
 ```typescript
-// 리스너 등록
+// Register listener
 em.on("afterInsert", ({ entity, data }) => {
-  console.log(`${entity.name} 생성됨:`, data);
+  console.log(`${entity.name} created:`, data);
 });
 
-// 리스너 제거
+// Remove listener
 em.off("afterInsert", listener);
 
-// 전체 리스너 제거
+// Remove all listeners
 em.removeAllListeners();
 ```
 
-사용 가능한 이벤트: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`
+Available events: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`
 
-특정 엔티티에만 반응하는 구독자가 필요하다면 [EntitySubscriber](./advanced.md)를 참고하세요.
+If you need subscribers that react only to specific entities, see [EntitySubscriber](./advanced.md).
 
-## 리포지토리 패턴
+## Repository Pattern
 
-엔티티별로 CRUD를 캡슐화하고 싶다면 `getRepository()`를 사용합니다.
+If you want to encapsulate CRUD per entity, use `getRepository()`.
 
 ```typescript
 const userRepo = em.getRepository(User);
 
 const users = await userRepo.find();
 const user = await userRepo.findOne({ where: { id: 1 } as any });
-await userRepo.save({ name: "홍길동" });
+await userRepo.save({ name: "John Doe" });
 ```
 
-NestJS에서는 `@InjectRepository()`로 서비스에 주입할 수 있습니다.
+In NestJS, you can inject repositories into services using `@InjectRepository()`.
 
 ```typescript
 // users.service.ts
@@ -361,36 +361,36 @@ export class UsersService {
 }
 ```
 
-## 종료 — propagateShutdown()
+## Shutdown — propagateShutdown()
 
-애플리케이션을 종료할 때 EntityManager의 내부 리소스를 정리합니다.
+Cleans up EntityManager's internal resources when shutting down the application.
 
 ```typescript
 await em.propagateShutdown();
 ```
 
-NestJS에서는 `OnModuleDestroy` 훅에서 호출하세요.
+In NestJS, call this in the `OnModuleDestroy` hook.
 
-## FindOption 전체 옵션
+## FindOption Full Options
 
-`find()`, `findOne()`, `explain()` 등에 전달할 수 있는 옵션 목록입니다.
+List of options that can be passed to `find()`, `findOne()`, `explain()`, etc.
 
-| 옵션 | 타입 | 설명 |
-|------|------|------|
-| `where` | `Partial<T>` | WHERE 조건 |
-| `select` | `(keyof T)[]` 또는 `Record<keyof T, boolean>` | SELECT 컬럼 |
+| Option | Type | Description |
+|--------|------|-------------|
+| `where` | `Partial<T>` | WHERE conditions |
+| `select` | `(keyof T)[]` or `Record<keyof T, boolean>` | SELECT columns |
 | `orderBy` | `Record<keyof T, "ASC" \| "DESC">` | ORDER BY |
-| `limit` | `number` 또는 `[offset, count]` | LIMIT |
-| `take` | `number` | 가져올 행 수 |
-| `relations` | `(keyof T)[]` | 로드할 관계 프로퍼티 |
-| `withDeleted` | `boolean` | soft-deleted 포함 여부 |
+| `limit` | `number` or `[offset, count]` | LIMIT |
+| `take` | `number` | Number of rows to fetch |
+| `relations` | `(keyof T)[]` | Relation properties to load |
+| `withDeleted` | `boolean` | Whether to include soft-deleted records |
 | `groupBy` | `(keyof T)[]` | GROUP BY |
-| `having` | `Sql[]` | HAVING 절 |
-| `timeout` | `number` | 쿼리 타임아웃 (ms) |
-| `useMaster` | `boolean` | Read Replica 환경에서 master 강제 |
+| `having` | `Sql[]` | HAVING clause |
+| `timeout` | `number` | Query timeout (ms) |
+| `useMaster` | `boolean` | Force master in Read Replica environments |
 
-## 다음 단계
+## Next Steps
 
-- [쿼리 빌더](./query-builder.md) — JOIN, GROUP BY, 서브쿼리 등 복잡한 SQL이 필요할 때
-- [트랜잭션](./transactions.md) — 여러 작업을 하나의 단위로 묶어야 할 때
-- [설정 가이드](./configuration.md) — 풀링, 타임아웃, Read Replica 등 운영 설정
+- [Query Builder](./query-builder.md) — When you need complex SQL like JOIN, GROUP BY, subqueries
+- [Transactions](./transactions.md) — When you need to group multiple operations into a single unit
+- [Configuration Guide](./configuration.md) — Pooling, timeouts, Read Replica, and other operational settings

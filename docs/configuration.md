@@ -1,8 +1,8 @@
-# 설정 가이드 (Configuration)
+# Configuration Guide
 
-`EntityManager.register()`에 전달하는 옵션으로 DB 연결, 풀링, 타임아웃, Read Replica 등을 설정합니다. 이 문서에서는 가장 흔한 설정부터 시작하여 운영 환경에 필요한 설정까지 안내합니다.
+Configure DB connections, pooling, timeouts, Read Replicas, and more through options passed to `EntityManager.register()`. This document starts with the most common settings and progresses to production-level configurations.
 
-## 기본 연결
+## Basic Connection
 
 ### PostgreSQL
 
@@ -27,7 +27,7 @@ await em.register({
 
 ```typescript
 await em.register({
-  type: "mysql",        // MariaDB는 "mariadb"
+  type: "mysql",        // Use "mariadb" for MariaDB
   host: "localhost",
   port: 3306,
   username: "root",
@@ -35,7 +35,7 @@ await em.register({
   database: "mydb",
   entities: [User],
   synchronize: true,
-  charset: "utf8mb4",   // 이모지를 저장하려면 utf8mb4 필요
+  charset: "utf8mb4",   // utf8mb4 is required to store emojis
 });
 ```
 
@@ -48,134 +48,134 @@ await em.register({
   port: 0,
   username: "",
   password: "",
-  database: "./mydb.sqlite",  // 파일 경로
+  database: "./mydb.sqlite",  // File path
   entities: [User],
   synchronize: true,
 });
 ```
 
-## synchronize 옵션
+## synchronize Option
 
-`synchronize: true`로 설정하면 엔티티 정의를 기반으로 테이블이 자동 생성됩니다.
+Setting `synchronize: true` automatically creates tables based on entity definitions.
 
-> **Warning** `synchronize: true`는 개발 환경에서만 사용하세요. 프로덕션에서는 데이터 손실 위험이 있으므로 [마이그레이션](./migrations.md)을 사용해야 합니다.
+> **Warning** Only use `synchronize: true` in development environments. In production, there is a risk of data loss, so you should use [migrations](./migrations.md) instead.
 
-## 연결 풀링
+## Connection Pooling
 
-동시 요청이 많을 때 DB 연결을 효율적으로 재사용합니다.
+Efficiently reuses DB connections when there are many concurrent requests.
 
 ```typescript
 await em.register({
   type: "postgres",
   // ...
   pool: {
-    max: 20,                // 최대 연결 수 (기본값: 10)
-    min: 5,                 // 최소 유휴 연결 수 (기본값: 0)
-    acquireTimeoutMs: 5000, // 연결 획득 대기 시간 (기본값: 30000ms)
-    idleTimeoutMs: 30000,   // 유휴 연결 종료 시간 (기본값: 10000ms)
+    max: 20,                // Maximum connections (default: 10)
+    min: 5,                 // Minimum idle connections (default: 0)
+    acquireTimeoutMs: 5000, // Connection acquire wait time (default: 30000ms)
+    idleTimeoutMs: 30000,   // Idle connection timeout (default: 10000ms)
   },
 });
 ```
 
-DB에 따라 지원하는 옵션이 다릅니다.
+Supported options vary by database.
 
-| 옵션 | MySQL | PostgreSQL | SQLite |
-|------|-------|-----------|--------|
-| `max` | O | O | 무시 |
-| `min` | - | O | 무시 |
-| `acquireTimeoutMs` | - | O | 무시 |
-| `idleTimeoutMs` | - | O | 무시 |
+| Option | MySQL | PostgreSQL | SQLite |
+|--------|-------|-----------|--------|
+| `max` | O | O | Ignored |
+| `min` | - | O | Ignored |
+| `acquireTimeoutMs` | - | O | Ignored |
+| `idleTimeoutMs` | - | O | Ignored |
 
-> **Hint** SQLite는 파일 기반 단일 연결이므로 풀 설정이 무시됩니다.
+> **Hint** SQLite is file-based with a single connection, so pool settings are ignored.
 
-## 연결 재시도
+## Connection Retry
 
-DB가 아직 시작되지 않았거나 일시적으로 연결이 끊겼을 때 자동으로 재시도합니다. 지수 백오프 방식으로 대기 시간이 점점 늘어납니다.
+Automatically retries when the DB is not yet started or the connection is temporarily lost. Wait times increase with exponential backoff.
 
 ```typescript
 await em.register({
   type: "mysql",
   // ...
   retry: {
-    maxAttempts: 5,   // 최대 재시도 횟수 (기본값: 3)
-    backoffMs: 500,   // 기본 지연 시간 (기본값: 1000ms)
+    maxAttempts: 5,   // Maximum retry attempts (default: 3)
+    backoffMs: 500,   // Base delay time (default: 1000ms)
   },
 });
 ```
 
-위 설정에서 실제 대기 시간은 이렇게 됩니다.
+With the above configuration, the actual wait times are as follows.
 
-| 시도 | 대기 시간 |
-|------|----------|
-| 1차 | 500ms |
-| 2차 | 1000ms |
-| 3차 | 2000ms |
-| 4차 | 4000ms |
-| 5차 | 8000ms |
+| Attempt | Wait Time |
+|---------|-----------|
+| 1st | 500ms |
+| 2nd | 1000ms |
+| 3rd | 2000ms |
+| 4th | 4000ms |
+| 5th | 8000ms |
 
-## 쿼리 로깅
+## Query Logging
 
-### 기본 로깅
+### Basic Logging
 
 ```typescript
 await em.register({
   // ...
-  logging: true, // 실행되는 SQL을 콘솔에 출력
+  logging: true, // Print executed SQL to console
 });
 ```
 
-### 상세 로깅
+### Detailed Logging
 
 ```typescript
 await em.register({
   // ...
   logging: {
-    queries: true,       // SQL 출력
-    slowQueryMs: 500,    // 500ms 초과 쿼리에 경고
-    nPlusOne: true,      // N+1 패턴 감지
+    queries: true,       // Print SQL
+    slowQueryMs: 500,    // Warn on queries exceeding 500ms
+    nPlusOne: true,      // Enable N+1 pattern detection
   },
 });
 ```
 
-로그를 코드에서 조회할 수도 있습니다.
+You can also query the log programmatically.
 
 ```typescript
 const log = em.getQueryLog();
 ```
 
-## 쿼리 타임아웃
+## Query Timeout
 
-### 전역 설정
+### Global Setting
 
 ```typescript
 await em.register({
   // ...
-  queryTimeout: 5000, // 모든 쿼리에 5초 타임아웃
+  queryTimeout: 5000, // 5-second timeout for all queries
 });
 ```
 
-### 쿼리별 설정
+### Per-Query Setting
 
-전역 설정보다 우선 적용됩니다.
+Takes precedence over the global setting.
 
 ```typescript
 const users = await em.find(User, {
   where: { isActive: true },
-  timeout: 2000, // 이 쿼리에만 2초 타임아웃
+  timeout: 2000, // 2-second timeout for this query only
 });
 ```
 
-타임아웃이 초과되면 `QueryTimeoutError`가 발생합니다.
+A `QueryTimeoutError` is thrown when the timeout is exceeded.
 
-| DB | 내부 구현 |
-|----|----------|
+| DB | Internal Implementation |
+|----|------------------------|
 | MySQL | `SET max_execution_time = N` |
 | PostgreSQL | `SET LOCAL statement_timeout = N` |
-| SQLite | 드라이버 레벨 타임아웃 |
+| SQLite | Driver-level timeout |
 
-## Read Replica (읽기/쓰기 분리)
+## Read Replica (Read/Write Splitting)
 
-쓰기는 master로, 읽기는 slave로 자동 라우팅합니다.
+Automatically routes writes to master and reads to slave.
 
 ```typescript
 await em.register({
@@ -215,22 +215,22 @@ await em.register({
 });
 ```
 
-slave가 여러 개이면 라운드 로빈 방식으로 분산됩니다. slave 전체가 장애이면 master로 자동 fallback합니다.
+When there are multiple slaves, they are distributed using round-robin. If all slaves fail, it automatically falls back to master.
 
-쓰기 직후 최신 데이터가 필요하면 `useMaster` 옵션을 사용합니다.
+When you need the latest data immediately after a write, use the `useMaster` option.
 
 ```typescript
-await em.save(User, { id: 1, name: "수정됨" });
+await em.save(User, { id: 1, name: "Updated" });
 
 const user = await em.findOne(User, {
   where: { id: 1 },
-  useMaster: true, // replica lag 무시
+  useMaster: true, // Ignore replica lag
 });
 ```
 
-## 멀티 DB 연결
+## Multi-DB Connections
 
-서로 다른 DB를 독립적으로 운용할 수 있습니다. `register()`의 두 번째 인자로 연결 이름을 지정합니다.
+You can operate different databases independently. Specify the connection name as the second argument to `register()`.
 
 ```typescript
 // Primary DB (MySQL)
@@ -251,7 +251,7 @@ await analyticsEm.register({
   synchronize: true,
 }, "analytics");
 
-// 각각 독립적으로 사용
+// Use each independently
 const users = await primaryEm.find(User);
 const logs = await analyticsEm.find(Log);
 
@@ -259,7 +259,7 @@ console.log(primaryEm.getConnectionName());   // "primary"
 console.log(analyticsEm.getConnectionName()); // "analytics"
 ```
 
-## 전체 옵션 레퍼런스
+## Full Options Reference
 
 ```typescript
 interface DatabaseClientOptions {
@@ -270,20 +270,20 @@ interface DatabaseClientOptions {
   password: string;
   database: string;
   entities: AnyEntity[];
-  synchronize?: boolean;         // 테이블 자동 생성 (기본값: false)
-  schema?: string;               // PostgreSQL 스키마 (기본값: "public")
-  charset?: string;              // MySQL 문자셋
-  datesStrings?: boolean;        // MySQL 날짜를 문자열로 반환
-  queryTimeout?: number;         // 전역 쿼리 타임아웃 (ms)
-  pool?: PoolOptions;            // 연결 풀 설정
-  retry?: RetryOptions;          // 연결 재시도 설정
-  logging?: boolean | LoggingOptions;  // 쿼리 로깅
-  replication?: ReplicationConfig;     // Read Replica 설정
+  synchronize?: boolean;         // Auto-create tables (default: false)
+  schema?: string;               // PostgreSQL schema (default: "public")
+  charset?: string;              // MySQL charset
+  datesStrings?: boolean;        // Return MySQL dates as strings
+  queryTimeout?: number;         // Global query timeout (ms)
+  pool?: PoolOptions;            // Connection pool settings
+  retry?: RetryOptions;          // Connection retry settings
+  logging?: boolean | LoggingOptions;  // Query logging
+  replication?: ReplicationConfig;     // Read Replica settings
 }
 ```
 
-## 다음 단계
+## Next Steps
 
-- [고급 기능](./advanced.md) — N+1 감지, 이벤트 시스템, 성능 최적화
-- [멀티테넌시](./multi-tenancy.md) — 테넌트별 데이터 격리
-- [API 레퍼런스](./api-reference.md) — 전체 메서드 시그니처
+- [Advanced Features](./advanced.md) — N+1 detection, event system, performance optimization
+- [Multi-Tenancy](./multi-tenancy.md) — Per-tenant data isolation
+- [API Reference](./api-reference.md) — Full method signatures

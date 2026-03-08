@@ -1,15 +1,15 @@
-# 마이그레이션 (Migrations)
+# Migrations
 
-개발할 때는 `synchronize: true`가 편리하지만, 프로덕션에서는 위험합니다. 이미 데이터가 있는 테이블을 엔티티 정의만으로 자동 변경하면 데이터가 손실될 수 있습니다.
+While `synchronize: true` is convenient during development, it is dangerous in production. Automatically changing tables with existing data based solely on entity definitions can result in data loss.
 
-**마이그레이션**은 스키마 변경을 코드로 작성하여 버전 관리하는 방법입니다. "언제, 무엇이 변경되었는지" 추적할 수 있고, 문제가 생기면 되돌릴 수도 있습니다.
+**Migrations** are a way to write schema changes as code and version-control them. You can track "when and what changed," and roll back if something goes wrong.
 
-## 마이그레이션 파일 만들기
+## Creating a Migration File
 
-마이그레이션은 `Migration` 클래스를 상속하여 `up()`과 `down()` 메서드를 구현합니다.
+A migration extends the `Migration` class and implements `up()` and `down()` methods.
 
-- **`up()`** — 변경 적용 (예: 테이블 생성, 컬럼 추가)
-- **`down()`** — 변경 되돌리기 (예: 테이블 삭제, 컬럼 삭제)
+- **`up()`** — Apply the change (e.g., create table, add column)
+- **`down()`** — Revert the change (e.g., drop table, drop column)
 
 ```typescript
 // migrations/001_CreateUsersTable.ts
@@ -33,16 +33,16 @@ export class CreateUsersTable extends Migration {
 }
 ```
 
-`MigrationContext`는 두 가지를 제공합니다.
+`MigrationContext` provides two things.
 
-| 속성 | 설명 |
-|------|------|
-| `context.query(sql)` | 임의의 SQL을 실행합니다 |
-| `context.driver` | DB 드라이버에 접근합니다 (DDL 헬퍼 등) |
+| Property | Description |
+|----------|-------------|
+| `context.query(sql)` | Executes arbitrary SQL |
+| `context.driver` | Access to the DB driver (DDL helpers, etc.) |
 
-## 마이그레이션 더 만들어보기
+## Creating More Migrations
 
-### 컬럼 추가
+### Adding a Column
 
 ```typescript
 // migrations/002_AddPhoneToUsers.ts
@@ -61,7 +61,7 @@ export class AddPhoneToUsers extends Migration {
 }
 ```
 
-### 인덱스 추가
+### Adding an Index
 
 ```typescript
 // migrations/003_AddEmailIndex.ts
@@ -80,7 +80,7 @@ export class AddEmailIndex extends Migration {
 }
 ```
 
-### 초기 데이터 삽입
+### Seeding Initial Data
 
 ```typescript
 // migrations/004_SeedRoles.ts
@@ -88,9 +88,9 @@ export class SeedRoles extends Migration {
   async up(context: MigrationContext) {
     await context.query(`
       INSERT INTO "roles" ("name", "description") VALUES
-      ('admin', '관리자'),
-      ('user', '일반 사용자'),
-      ('guest', '게스트')
+      ('admin', 'Administrator'),
+      ('user', 'Regular user'),
+      ('guest', 'Guest')
     `);
   }
 
@@ -102,11 +102,11 @@ export class SeedRoles extends Migration {
 }
 ```
 
-## 마이그레이션 실행하기
+## Running Migrations
 
-### MigrationCli 사용 (권장)
+### Using MigrationCli (Recommended)
 
-`MigrationCli`는 DB 연결과 마이그레이션 실행을 한 번에 처리합니다.
+`MigrationCli` handles DB connection and migration execution all at once.
 
 ```typescript
 // src/migrate.ts
@@ -146,7 +146,7 @@ async function main() {
 main().catch(console.error);
 ```
 
-package.json에 스크립트를 등록하면 편리합니다.
+Registering scripts in package.json is convenient.
 
 ```json
 {
@@ -158,24 +158,24 @@ package.json에 스크립트를 등록하면 편리합니다.
 }
 ```
 
-이제 터미널에서 실행합니다.
+Now run from the terminal.
 
 ```bash
-# 미실행 마이그레이션 모두 적용
+# Apply all pending migrations
 pnpm migrate:run
 
-# 마지막 마이그레이션 되돌리기
+# Roll back the last migration
 pnpm migrate:rollback
 
-# 현재 상태 확인
+# Check current status
 pnpm migrate:status
 ```
 
-Stingerloom은 `__migrations` 테이블을 자동 생성하여 어떤 마이그레이션이 실행되었는지 추적합니다.
+Stingerloom automatically creates a `__migrations` table to track which migrations have been executed.
 
-## 마이그레이션 결과 확인
+## Checking Migration Results
 
-각 마이그레이션의 성공/실패 여부를 확인할 수 있습니다.
+You can verify the success/failure status of each migration.
 
 ```typescript
 const results = await cli.migrateRun();
@@ -189,9 +189,9 @@ for (const result of results) {
 }
 ```
 
-## 파일 명명 규칙
+## File Naming Convention
 
-마이그레이션은 배열에 등록한 순서대로 실행됩니다. 파일명에 순번을 붙여 순서를 명확하게 표현하세요.
+Migrations are executed in the order they are registered in the array. Add sequence numbers to filenames to clearly express the order.
 
 ```
 migrations/
@@ -202,49 +202,49 @@ migrations/
 └── 005_SeedRoles.ts
 ```
 
-## Schema Diff — 마이그레이션 자동 생성
+## Schema Diff — Automatic Migration Generation
 
-마이그레이션 파일을 수동으로 작성하는 대신, 엔티티 정의와 실제 DB 스키마를 비교하여 자동으로 생성할 수 있습니다.
+Instead of writing migration files manually, you can automatically generate them by comparing entity definitions with the actual DB schema.
 
-### 1단계: 차이 비교
+### Step 1: Compare Differences
 
 ```typescript
 import { SchemaDiff } from "@stingerloom/orm";
 
 const diff = await SchemaDiff.compare(em, [User, Post, Comment]);
 
-console.log(diff.addedTables);    // ["comment"] — 새로 추가된 테이블
-console.log(diff.droppedTables);  // [] — 삭제된 테이블
+console.log(diff.addedTables);    // ["comment"] — Newly added tables
+console.log(diff.droppedTables);  // [] — Dropped tables
 console.log(diff.modifiedTables); // [{ tableName: "user", addedColumns: [...] }]
 ```
 
-### 2단계: 마이그레이션 생성 및 실행
+### Step 2: Generate and Execute Migration
 
 ```typescript
 import { SchemaDiff, SchemaDiffMigrationGenerator } from "@stingerloom/orm";
 
-// 차이 비교
+// Compare differences
 const diff = await SchemaDiff.compare(em, [User, Post]);
 
-// 변경 사항이 없으면 종료
+// Exit if no changes
 if (diff.addedTables.length === 0 &&
     diff.droppedTables.length === 0 &&
     diff.modifiedTables.length === 0) {
-  console.log("스키마 변경 없음");
+  console.log("No schema changes");
   return;
 }
 
-// 마이그레이션 자동 생성
+// Auto-generate migrations
 const generator = new SchemaDiffMigrationGenerator();
 const migrations = generator.generate(diff);
 
-console.log(`${migrations.length}개 마이그레이션 생성됨`);
+console.log(`${migrations.length} migrations generated`);
 ```
 
-예를 들어 User 엔티티에 `phone` 컬럼을 추가했다면, 다음과 같은 마이그레이션이 자동으로 생성됩니다.
+For example, if you added a `phone` column to the User entity, the following migration is automatically generated.
 
 ```typescript
-// 자동 생성된 마이그레이션
+// Auto-generated migration
 class SchemaDiff_1708000000000 extends Migration {
   async up(context: MigrationContext) {
     await context.query(
@@ -259,24 +259,24 @@ class SchemaDiff_1708000000000 extends Migration {
 }
 ```
 
-> **Hint** Schema Diff는 테이블과 컬럼의 추가/삭제를 감지합니다. 컬럼 타입 변경은 지원하지 않으므로 수동 마이그레이션으로 작성하세요.
+> **Hint** Schema Diff detects additions and deletions of tables and columns. Column type changes are not supported, so write those as manual migrations.
 
 ## MigrationRunner API
 
-| 메서드 | 설명 |
-|--------|------|
-| `run(migrations?)` | 미실행 마이그레이션 순서대로 실행 |
-| `rollback(n?)` | 최근 n개 마이그레이션 되돌리기 (기본값: 1) |
-| `status()` | `{ executed: string[], pending: string[] }` 반환 |
-| `runAll()` | 미실행 마이그레이션 전체 실행 |
-| `runUp(migration)` | 단일 마이그레이션 적용 |
-| `runDown(migration)` | 단일 마이그레이션 되돌리기 |
-| `revertLast()` | 마지막 마이그레이션 되돌리기 |
-| `getPendingMigrations()` | 미실행 목록 반환 |
-| `getExecutedMigrations()` | 실행된 목록 반환 |
+| Method | Description |
+|--------|-------------|
+| `run(migrations?)` | Execute pending migrations in order |
+| `rollback(n?)` | Roll back the last n migrations (default: 1) |
+| `status()` | Returns `{ executed: string[], pending: string[] }` |
+| `runAll()` | Execute all pending migrations |
+| `runUp(migration)` | Apply a single migration |
+| `runDown(migration)` | Revert a single migration |
+| `revertLast()` | Revert the last migration |
+| `getPendingMigrations()` | Return the list of pending migrations |
+| `getExecutedMigrations()` | Return the list of executed migrations |
 
-## 다음 단계
+## Next Steps
 
-- [설정 가이드](./configuration.md) — 풀링, 타임아웃, Read Replica 설정
-- [멀티테넌시](./multi-tenancy.md) — 테넌트별 스키마 자동 프로비저닝
-- [EntityManager](./entity-manager.md) — CRUD API 전체 보기
+- [Configuration Guide](./configuration.md) — Pooling, timeouts, Read Replica settings
+- [Multi-Tenancy](./multi-tenancy.md) — Automatic schema provisioning per tenant
+- [EntityManager](./entity-manager.md) — Full CRUD API reference

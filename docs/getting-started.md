@@ -1,24 +1,24 @@
-# 시작하기 (Getting Started)
+# Getting Started
 
-이 가이드에서는 Stingerloom ORM을 설치하고, 첫 번째 엔티티를 정의한 뒤, 데이터를 생성/조회/수정/삭제하는 과정을 단계별로 진행합니다. 5분이면 완료할 수 있습니다.
+This guide walks you through installing Stingerloom ORM, defining your first entity, and performing create/read/update/delete operations step by step. It should take about 5 minutes.
 
-## 전제 조건
+## Prerequisites
 
-- Node.js 18 이상
-- TypeScript 프로젝트
-- MySQL, PostgreSQL, 또는 SQLite 데이터베이스
+- Node.js 18 or higher
+- TypeScript project
+- MySQL, PostgreSQL, or SQLite database
 
-## 1단계: 설치
+## Step 1: Installation
 
 ```bash
 pnpm add @stingerloom/orm reflect-metadata
 ```
 
-> **Hint** npm이나 yarn을 사용한다면 `npm install` 또는 `yarn add`로 대체하세요.
+> **Hint** If you use npm or yarn, replace with `npm install` or `yarn add`.
 
-## 2단계: TypeScript 설정
+## Step 2: TypeScript Configuration
 
-`tsconfig.json`에 데코레이터 관련 옵션을 활성화합니다.
+Enable decorator-related options in your `tsconfig.json`.
 
 ```json
 // tsconfig.json
@@ -31,11 +31,11 @@ pnpm add @stingerloom/orm reflect-metadata
 }
 ```
 
-`experimentalDecorators`와 `emitDecoratorMetadata`는 `@Entity()`, `@Column()` 같은 데코레이터가 동작하는 데 필수입니다. `strictPropertyInitialization`을 끄면 엔티티 프로퍼티에 `!:` 없이도 초기화 오류가 발생하지 않습니다.
+`experimentalDecorators` and `emitDecoratorMetadata` are required for decorators like `@Entity()` and `@Column()` to work. Disabling `strictPropertyInitialization` prevents initialization errors on entity properties without `!:`.
 
-## 3단계: 엔티티 정의
+## Step 3: Define an Entity
 
-**엔티티(Entity)**는 데이터베이스 테이블을 TypeScript 클래스로 표현한 것입니다. 간단한 사용자 엔티티를 만들어보겠습니다.
+An **Entity** is a TypeScript class that represents a database table. Let's create a simple user entity.
 
 ```typescript
 // user.entity.ts
@@ -54,13 +54,13 @@ export class User {
 }
 ```
 
-`@Entity()`는 이 클래스가 DB 테이블에 대응된다는 선언이고, `@PrimaryGeneratedColumn()`은 자동 증가 기본키, `@Column()`은 일반 컬럼입니다. 이 코드만으로 `user` 테이블이 만들어집니다.
+`@Entity()` declares that this class corresponds to a DB table, `@PrimaryGeneratedColumn()` defines an auto-increment primary key, and `@Column()` defines a regular column. This code alone will create a `user` table.
 
-> **Hint** 엔티티에 대해 더 자세히 알고 싶다면 [엔티티 정의](./entities.md) 문서를 참고하세요.
+> **Hint** To learn more about entities, refer to the [Entities](./entities.md) documentation.
 
-## 4단계: 데이터베이스 연결
+## Step 4: Connect to the Database
 
-이제 `EntityManager`로 DB에 연결하고 엔티티를 등록합니다. 앱 진입점 최상단에서 `reflect-metadata`를 반드시 임포트하세요.
+Now connect to the DB using `EntityManager` and register your entities. Make sure to import `reflect-metadata` at the very top of your application entry point.
 
 ```typescript
 // main.ts
@@ -82,85 +82,85 @@ async function main() {
     synchronize: true,
   });
 
-  console.log("DB 연결 성공!");
+  console.log("DB connection successful!");
 }
 
 main().catch(console.error);
 ```
 
-`synchronize: true`로 설정하면 엔티티 정의를 기반으로 테이블이 자동 생성됩니다. 아직 `user` 테이블이 없어도 걱정할 필요 없습니다.
+When `synchronize: true` is set, tables are automatically created based on entity definitions. No need to worry if the `user` table doesn't exist yet.
 
-> **Warning** `synchronize: true`는 개발 환경에서만 사용하세요. 프로덕션에서는 [마이그레이션](./migrations.md)으로 스키마를 관리해야 합니다.
+> **Warning** Use `synchronize: true` only in development. In production, manage your schema with [migrations](./migrations.md).
 
-## 5단계: CRUD 해보기
+## Step 5: Try CRUD
 
-DB 연결이 되었으니 데이터를 생성, 조회, 수정, 삭제해보겠습니다. `main()` 함수 안에 이어서 작성합니다.
+Now that the DB is connected, let's create, read, update, and delete data. Continue writing inside the `main()` function.
 
-### 생성 (Create)
+### Create
 
 ```typescript
-// main.ts (main 함수 안)
+// main.ts (inside main function)
 const user = await em.save(User, {
-  name: "홍길동",
-  email: "hong@example.com",
+  name: "John Doe",
+  email: "john@example.com",
 });
-console.log("저장된 유저:", user);
-// { id: 1, name: "홍길동", email: "hong@example.com" }
+console.log("Saved user:", user);
+// { id: 1, name: "John Doe", email: "john@example.com" }
 ```
 
-`em.save()`는 PK가 없으면 INSERT, 있으면 UPDATE를 수행합니다. 자동 생성된 `id`가 포함된 객체가 반환됩니다.
+`em.save()` performs an INSERT when there is no PK, and an UPDATE when there is. It returns an object that includes the auto-generated `id`.
 
-### 조회 (Read)
+### Read
 
 ```typescript
 // main.ts
-// 전체 조회
+// Fetch all
 const users = await em.find(User);
-console.log("전체 유저:", users);
+console.log("All users:", users);
 
-// 조건부 단건 조회
+// Find one by condition
 const found = await em.findOne(User, { where: { id: 1 } });
-console.log("단건 조회:", found); // User | null
+console.log("Single user:", found); // User | null
 ```
 
-`find()`는 배열을, `findOne()`은 단일 객체 또는 `null`을 반환합니다.
+`find()` returns an array, and `findOne()` returns a single object or `null`.
 
-### 수정 (Update)
+### Update
 
 ```typescript
 // main.ts
 const updated = await em.save(User, {
-  id: 1,               // PK가 있으므로 UPDATE
-  name: "홍길동(수정)",
-  email: "hong@example.com",
+  id: 1,               // PK present, so UPDATE
+  name: "John Doe (edited)",
+  email: "john@example.com",
 });
-console.log("수정된 유저:", updated);
+console.log("Updated user:", updated);
 ```
 
-`save()`에 PK(`id`)를 포함하면 해당 행이 업데이트됩니다.
+When `save()` includes a PK (`id`), the corresponding row is updated.
 
-### 삭제 (Delete)
+### Delete
 
 ```typescript
 // main.ts
 const result = await em.delete(User, { id: 1 });
-console.log("삭제된 행 수:", result.affected); // 1
+console.log("Rows deleted:", result.affected); // 1
 ```
 
-축하합니다! 첫 번째 CRUD를 완성했습니다.
+Congratulations! You've completed your first CRUD.
 
-## 다른 데이터베이스 사용하기
+## Using Other Databases
 
-위 예제는 PostgreSQL을 사용했지만, `type` 옵션만 바꾸면 다른 DB도 동일하게 사용할 수 있습니다.
+The example above uses PostgreSQL, but you can use other databases by simply changing the `type` option.
 
-| DB | `type` | `port` | 비고 |
-|----|--------|--------|------|
-| PostgreSQL | `"postgres"` | 5432 | `schema` 옵션으로 스키마 지정 가능 |
-| MySQL / MariaDB | `"mysql"` | 3306 | `charset: "utf8mb4"` 권장 |
-| SQLite | `"sqlite"` | 0 | `database`에 파일 경로 지정 (예: `"./mydb.sqlite"`) |
+| DB | `type` | `port` | Notes |
+|----|--------|--------|-------|
+| PostgreSQL | `"postgres"` | 5432 | Schema can be specified with the `schema` option |
+| MySQL / MariaDB | `"mysql"` | 3306 | `charset: "utf8mb4"` recommended |
+| SQLite | `"sqlite"` | 0 | Specify file path for `database` (e.g., `"./mydb.sqlite"`) |
 
 ```typescript
-// MySQL 예제
+// MySQL example
 await em.register({
   type: "mysql",
   host: "localhost",
@@ -175,7 +175,7 @@ await em.register({
 ```
 
 ```typescript
-// SQLite 예제 — host, port, username, password는 빈 값
+// SQLite example — host, port, username, password are empty
 await em.register({
   type: "sqlite",
   host: "",
@@ -188,11 +188,11 @@ await em.register({
 });
 ```
 
-## NestJS에서 사용하기
+## Using with NestJS
 
-NestJS 프로젝트에서는 `StinglerloomOrmModule`로 루트 모듈에 등록하고, 서비스에서 `@InjectRepository()`로 리포지토리를 주입받습니다.
+In a NestJS project, register with `StinglerloomOrmModule` in the root module and inject repositories into services using `@InjectRepository()`.
 
-### 모듈 등록
+### Module Registration
 
 ```typescript
 // app.module.ts
@@ -217,7 +217,7 @@ import { User } from "./user.entity";
 export class AppModule {}
 ```
 
-### 서비스에서 사용
+### Usage in Services
 
 ```typescript
 // users.service.ts
@@ -245,13 +245,13 @@ export class UsersService {
 }
 ```
 
-> **Hint** `examples/nestjs-cats/`, `examples/nestjs-blog/`, `examples/nestjs-multitenant/` 폴더에 완전한 NestJS 예제가 포함되어 있습니다.
+> **Hint** Complete NestJS examples are included in the `examples/nestjs-cats/`, `examples/nestjs-blog/`, and `examples/nestjs-multitenant/` directories.
 
-## 다음 단계
+## Next Steps
 
-기본적인 설정과 CRUD를 배웠습니다. 이제 엔티티를 더 풍부하게 정의해보세요.
+You've learned the basic setup and CRUD. Now try defining richer entities.
 
-- [엔티티 정의](./entities.md) — 컬럼 타입, 인덱스, Soft Delete, 생명주기 훅
-- [관계 설정](./relations.md) — `@ManyToOne`, `@OneToMany`로 테이블 간 관계 정의
-- [EntityManager](./entity-manager.md) — find 옵션, 집계, 페이지네이션 활용법
-- [설정 가이드](./configuration.md) — 풀링, 타임아웃, Read Replica 등 운영 설정
+- [Entities](./entities.md) — Column types, indexes, Soft Delete, lifecycle hooks
+- [Relations](./relations.md) — Define relationships between tables with `@ManyToOne`, `@OneToMany`
+- [EntityManager](./entity-manager.md) — Find options, aggregation, pagination
+- [Configuration Guide](./configuration.md) — Pooling, timeouts, Read Replica, and other operational settings
