@@ -1,18 +1,18 @@
 # NestJS Multi-Tenant API — Stingerloom ORM Example
 
-NestJS 기반 멀티테넌시 REST API 예제입니다. Stingerloom ORM의 **레이어드 메타데이터 시스템**과 **AsyncLocalStorage** 기반 자동 테넌트 컨텍스트를 시연합니다.
+A multi-tenant REST API built with NestJS demonstrating Stingerloom ORM's **Layered Metadata System** and **AsyncLocalStorage**-based automatic tenant context.
 
-## 기능
+## Features
 
-- **자동 테넌트 컨텍스트** — `TenantMiddleware`가 `x-tenant-id` 헤더를 읽어 AsyncLocalStorage 컨텍스트를 자동 설정
-- **TenantModule.forRoot()** — 미들웨어 적용 경로, 헤더명, 기본 테넌트 설정 가능
-- **TenantContext** — Injectable 서비스로 현재 테넌트 정보 조회
-- **@Tenant() 데코레이터** — 컨트롤러 파라미터에서 현재 테넌트 ID 추출
-- **서비스 자동화** — `em.withTenant()` 수동 호출 없이 미들웨어가 컨텍스트 처리
-- **CRUD** — Users, Posts (테넌트별 격리)
-- **관계** — ManyToOne (Post→User, eager loading)
+- **Automatic Tenant Context** — `TenantMiddleware` reads the `x-tenant-id` header and sets the AsyncLocalStorage context automatically
+- **TenantModule.forRoot()** — Configure middleware routes, header name, and default tenant
+- **TenantContext** — Injectable service to query current tenant information
+- **@Tenant() Decorator** — Extract current tenant ID from controller parameters
+- **Service Automation** — Middleware handles context; no manual `em.withTenant()` calls needed
+- **CRUD** — Users, Posts (isolated per tenant)
+- **Relations** — ManyToOne (Post→User, eager loading)
 
-## 아키텍처
+## Architecture
 
 ```
 HTTP Request (x-tenant-id: tenant_a)
@@ -20,38 +20,38 @@ HTTP Request (x-tenant-id: tenant_a)
   TenantMiddleware
        ↓  MetadataContext.run("tenant_a", () => next())
        ↓
-  AsyncLocalStorage 컨텍스트 활성화
+  AsyncLocalStorage context activated
        ↓
-  Controller (tenantId 파라미터 불필요)
+  Controller (no tenantId parameter needed)
        ↓
-  Service (em.withTenant() 래핑 불필요)
+  Service (no em.withTenant() wrapper needed)
        ↓
   EntityManager → MetadataLayerRegistry
        ↓  MetadataContext.getCurrentTenant() → "tenant_a"
        ↓
-  테넌트 레이어 기반 메타데이터 조회
+  Tenant layer-based metadata lookup
 ```
 
-### TenantModule 설정
+### TenantModule Configuration
 
 ```typescript
-// 특정 컨트롤러에만 적용
+// Apply to specific controllers only
 TenantModule.forRoot({
-  headerName: "x-tenant-id",     // 기본값
-  defaultTenant: "public",       // 기본값
+  headerName: "x-tenant-id",     // default
+  defaultTenant: "public",       // default
   routes: [UsersController, PostsController],
 })
 
-// 모든 라우트에 적용
+// Apply to all routes
 TenantModule.forRoot()
 
-// 커스텀 헤더명
+// Custom header name
 TenantModule.forRoot({ headerName: "x-org-id" })
 ```
 
-### 서비스 코드 비교
+### Service Code Comparison
 
-**Before (수동)**
+**Before (manual)**
 ```typescript
 async create(tenantId: string, dto: CreateUserDto) {
   return this.em.withTenant(tenantId, async (em) => {
@@ -63,7 +63,7 @@ async create(tenantId: string, dto: CreateUserDto) {
 }
 ```
 
-**After (자동)**
+**After (automatic)**
 ```typescript
 async create(dto: CreateUserDto) {
   const user = new User();
@@ -73,125 +73,125 @@ async create(dto: CreateUserDto) {
 }
 ```
 
-## 사전 요구사항
+## Prerequisites
 
 - Node.js 18+
 - pnpm
 - PostgreSQL
 
-## 설치 및 실행
+## Installation & Running
 
 ```bash
-# 1. ORM 빌드 (루트 디렉토리에서)
+# 1. Build ORM (from root directory)
 cd /path/to/stingerloom-orm
 pnpm build
 
-# 2. 의존성 설치
+# 2. Install dependencies
 cd examples/nestjs-multitenant
 pnpm install
 
-# 3. 환경변수 설정 (.env 파일 수정)
+# 3. Configure environment variables (edit .env file)
 #    DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 
-# 4. 서버 실행
-pnpm start        # 또는 pnpm start:dev (watch 모드)
+# 4. Start server
+pnpm start        # or pnpm start:dev (watch mode)
 ```
 
-서버가 시작되면 `http://localhost:3000` 에서 API에 접근할 수 있습니다.
+Once started, the API is accessible at `http://localhost:3000`.
 
-## API 엔드포인트
+## API Endpoints
 
 ### Tenant (`/tenant`)
-| Method | Path | 설명 |
-|--------|------|------|
-| GET | `/tenant/current` | 현재 테넌트 정보 조회 (`{ tenant, isActive }`) |
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/tenant/current` | Get current tenant info (`{ tenant, isActive }`) |
 
 ### Users (`/users`)
-| Method | Path | 설명 |
-|--------|------|------|
-| POST | `/users` | 사용자 생성 |
-| GET | `/users` | 전체 조회 |
-| GET | `/users/:id` | 단건 조회 |
-| PATCH | `/users/:id` | 수정 |
-| DELETE | `/users/:id` | 삭제 |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/users` | Create user |
+| GET | `/users` | List all |
+| GET | `/users/:id` | Get by ID |
+| PATCH | `/users/:id` | Update |
+| DELETE | `/users/:id` | Delete |
 
 ### Posts (`/posts`)
-| Method | Path | 설명 |
-|--------|------|------|
-| POST | `/posts` | 포스트 생성 |
-| GET | `/posts` | 전체 조회 |
-| GET | `/posts/:id` | 단건 조회 |
-| PATCH | `/posts/:id` | 수정 |
-| DELETE | `/posts/:id` | 삭제 |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/posts` | Create post |
+| GET | `/posts` | List all |
+| GET | `/posts/:id` | Get by ID |
+| PATCH | `/posts/:id` | Update |
+| DELETE | `/posts/:id` | Delete |
 
-### 사용 예시
+### Usage Examples
 
 ```bash
-# tenant_a에 사용자 생성
+# Create user in tenant_a
 curl -X POST http://localhost:3000/users \
   -H "Content-Type: application/json" \
   -H "x-tenant-id: tenant_a" \
   -d '{"username": "alice", "email": "alice@example.com"}'
 
-# tenant_b에 사용자 생성
+# Create user in tenant_b
 curl -X POST http://localhost:3000/users \
   -H "Content-Type: application/json" \
   -H "x-tenant-id: tenant_b" \
   -d '{"username": "bob", "email": "bob@example.com"}'
 
-# tenant_a의 사용자만 조회
+# List only tenant_a users
 curl -H "x-tenant-id: tenant_a" http://localhost:3000/users
 
-# 현재 테넌트 확인
+# Check current tenant
 curl -H "x-tenant-id: tenant_a" http://localhost:3000/tenant/current
 # → { "tenant": "tenant_a", "isActive": true }
 
-# 헤더 없이 요청 (public 테넌트)
+# Request without header (public tenant)
 curl http://localhost:3000/tenant/current
 # → { "tenant": "public", "isActive": true }
 ```
 
-## 테스트
+## Testing
 
-### E2E 통합 테스트 실행
+### Running E2E Integration Tests
 
-실제 PostgreSQL 데이터베이스 연결이 필요합니다. `INTEGRATION_TEST=true` 환경변수를 설정해야 합니다.
+Requires a real PostgreSQL database connection. Set the `INTEGRATION_TEST=true` environment variable.
 
 ```bash
-# ORM 빌드 (아직 안 했다면)
+# Build ORM (if not already done)
 cd /path/to/stingerloom-orm
 pnpm build
 
-# 테스트 실행
+# Run tests
 cd examples/nestjs-multitenant
 INTEGRATION_TEST=true pnpm test:e2e
 ```
 
-`INTEGRATION_TEST` 환경변수가 없으면 모든 테스트가 skip됩니다.
+All tests are skipped if `INTEGRATION_TEST` is not set.
 
-### 테스트 커버리지 (26개 테스트)
+### Test Coverage (26 tests)
 
-| 영역 | 테스트 수 | 내용 |
-|------|----------|------|
-| Tenant Context | 3 | public/tenant_a/tenant_b 컨텍스트 검증 |
-| Tenant A Users | 3 | 생성, 목록 조회, 단건 조회 |
-| Tenant B Users | 2 | 생성, 목록 조회 |
-| Public Tenant Users | 2 | 생성, 목록 조회 |
-| Cross-Tenant Isolation | 3 | 테넌트 간 데이터 격리 검증 |
-| Tenant A Posts | 4 | 생성, 목록 조회, 단건 조회, 수정 |
-| User Update | 1 | tenant_a 사용자 수정 |
-| Middleware Auto Context | 2 | withTenant() 없이 동작 확인, 기본 테넌트 |
-| Error Handling | 2 | 404 응답 (Users, Posts) |
-| Cleanup | 4 | 테스트 데이터 정리 |
+| Area | Tests | Description |
+|------|-------|-------------|
+| Tenant Context | 3 | public/tenant_a/tenant_b context validation |
+| Tenant A Users | 3 | Create, list, get by ID |
+| Tenant B Users | 2 | Create, list |
+| Public Tenant Users | 2 | Create, list |
+| Cross-Tenant Isolation | 3 | Data isolation between tenants |
+| Tenant A Posts | 4 | Create, list, get by ID, update |
+| User Update | 1 | Update tenant_a user |
+| Middleware Auto Context | 2 | Works without withTenant(), default tenant |
+| Error Handling | 2 | 404 responses (Users, Posts) |
+| Cleanup | 4 | Test data cleanup |
 
-### 환경변수
+### Environment Variables
 
-| 변수 | 기본값 | 설명 |
-|------|--------|------|
-| `DB_HOST` | `localhost` | 데이터베이스 호스트 |
-| `DB_PORT` | `5432` | 데이터베이스 포트 |
-| `DB_USER` | `postgres` | 데이터베이스 사용자 |
-| `DB_PASSWORD` | `postgres` | 데이터베이스 비밀번호 |
-| `DB_NAME` | `multi_tenancy_db` | 데이터베이스 이름 |
-| `PORT` | `3000` | 애플리케이션 포트 |
-| `INTEGRATION_TEST` | — | `true`로 설정 시 e2e 테스트 활성화 |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_HOST` | `localhost` | Database host |
+| `DB_PORT` | `5432` | Database port |
+| `DB_USER` | `postgres` | Database user |
+| `DB_PASSWORD` | `postgres` | Database password |
+| `DB_NAME` | `multi_tenancy_db` | Database name |
+| `PORT` | `3000` | Application port |
+| `INTEGRATION_TEST` | — | Set to `true` to enable e2e tests |
