@@ -53,7 +53,9 @@ export class MetadataContext {
    * AsyncLocalStorage 컨텍스트가 활성화되어 있는지 확인합니다.
    */
   static isActive(): boolean {
-    return this.storage.getStore() !== undefined;
+    const store = this.storage.getStore();
+    const isActive = store !== undefined;
+    return isActive;
   }
 
   /**
