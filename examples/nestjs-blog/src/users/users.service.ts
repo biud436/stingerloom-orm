@@ -3,7 +3,7 @@ import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { User } from "./user.entity";
 import { BaseRepository, Transactional } from "@stingerloom/orm";
-import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 
 @Injectable()
 export class UsersService {

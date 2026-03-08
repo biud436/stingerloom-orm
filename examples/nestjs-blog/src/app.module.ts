@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
-import { StinglerloomOrmModule } from "./stingerloom-orm/stingerloom-orm.module";
+import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { UsersModule } from "./users/users.module";
 import { PostsModule } from "./posts/posts.module";
 import { TagsModule } from "./tags/tags.module";

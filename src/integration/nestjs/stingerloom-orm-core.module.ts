@@ -1,5 +1,6 @@
 import { DynamicModule, Module } from "@nestjs/common";
-import { EntityManager, type DatabaseClientOptions } from "@stingerloom/orm";
+import { EntityManager } from "../../core/EntityManager";
+import type { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 
 @Module({})
 export class StingerloomOrmCoreModule {

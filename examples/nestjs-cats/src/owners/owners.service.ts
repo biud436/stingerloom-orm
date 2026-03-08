@@ -3,7 +3,7 @@ import { CreateOwnerDto } from "./dto/create-owner.dto";
 import { Owner } from "./owner.entity";
 
 import { BaseRepository, Transactional } from "@stingerloom/orm";
-import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 
 @Injectable()
 export class OwnersService implements OnModuleInit {

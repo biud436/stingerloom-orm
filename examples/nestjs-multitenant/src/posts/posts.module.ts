@@ -1,7 +1,7 @@
 import { Module } from "@nestjs/common";
 import { PostsService } from "./posts.service";
 import { PostsController } from "./posts.controller";
-import { StinglerloomOrmModule } from "../stingerloom-orm/stingerloom-orm.module";
+import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { Post } from "./post.entity";
 
 @Module({

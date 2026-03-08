@@ -4,7 +4,9 @@ import {
   OnModuleInit,
   OnApplicationShutdown,
 } from "@nestjs/common";
-import { EntityManager, ClazzType, Logger } from "@stingerloom/orm";
+import { EntityManager } from "../../core/EntityManager";
+import { Logger } from "../../utils/Logger";
+import type { ClazzType } from "../../utils/types";
 import Container from "typedi";
 
 export const STINGERLOOM_ORM_SERVICE_TOKEN = Symbol.for(
@@ -37,12 +39,11 @@ export class StinglerloomOrmService
     }
 
     await this.initEntityManager();
-    // register()는 EntityManager async factory에서 이미 완료됨
   }
 
   async onApplicationShutdown(): Promise<void> {
     await this.propagateShutdown();
-    console.log("Stingerloom ORM disconnected");
+    this.logger.info("Stingerloom ORM disconnected");
   }
 
   private async initEntityManager(): Promise<void> {

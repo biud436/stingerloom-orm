@@ -1,6 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
-import { StinglerloomOrmModule } from "./stingerloom-orm/stingerloom-orm.module";
+import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { TodosModule } from "./todos/todos.module";
 
 @Module({

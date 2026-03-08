@@ -12,7 +12,7 @@ import {
   SchemaDiff,
   SchemaDiffMigrationGenerator,
 } from "@stingerloom/orm";
-import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Inject } from "@nestjs/common";
 
 @Injectable()

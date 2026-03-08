@@ -3,14 +3,10 @@ import {
   StinglerloomOrmService,
   STINGERLOOM_ORM_SERVICE_TOKEN,
 } from "./stingerloom-orm.service";
-import {
-  EntityManager,
-  type ClazzType,
-  type DatabaseClientOptions,
-} from "@stingerloom/orm";
-import { StingerloomOrmCoreModule } from "./stingerloom-orm.core.module";
-
-export type { DatabaseClientOptions } from "@stingerloom/orm";
+import { EntityManager } from "../../core/EntityManager";
+import type { ClazzType } from "../../utils/types";
+import type { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
+import { StingerloomOrmCoreModule } from "./stingerloom-orm-core.module";
 
 export const STINGERLOOM_ORM_OPTION_TOKEN = Symbol.for(
   "STINGERLOOM_ORM_OPTION_TOKEN",
@@ -49,14 +45,12 @@ export class StinglerloomOrmModule {
   }
 
   static forRoot(options: DatabaseClientOptions): DynamicModule {
-    // Store configuration in metadata
     Reflect.defineMetadata(
       STINGERLOOM_ORM_OPTION_TOKEN,
       options,
       StinglerloomOrmModule,
     );
 
-    // Mark this module as captured for initialization
     StinglerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN] = true;
 
     return {

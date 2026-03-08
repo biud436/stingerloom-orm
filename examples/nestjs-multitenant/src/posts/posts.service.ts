@@ -3,7 +3,7 @@ import { CreatePostDto } from "./dto/create-post.dto";
 import { UpdatePostDto } from "./dto/update-post.dto";
 import { Post } from "./post.entity";
 import { BaseRepository } from "@stingerloom/orm";
-import { InjectRepository } from "../stingerloom-orm/inject-repository.decorator";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 
 @Injectable()
 export class PostsService {

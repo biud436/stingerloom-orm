@@ -8,7 +8,7 @@ import {
   Transactional,
   CursorPaginationResult,
 } from "@stingerloom/orm";
-import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { OwnersService } from "src/owners/owners.service";
 
 @Injectable()

@@ -8,7 +8,7 @@ import {
   EntityManager,
   RawQueryBuilder,
 } from "@stingerloom/orm";
-import { InjectRepository } from "src/stingerloom-orm/inject-repository.decorator";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import sql from "sql-template-tag";
 
 @Injectable()

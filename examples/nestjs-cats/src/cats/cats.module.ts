@@ -1,8 +1,7 @@
 import { Module, OnModuleInit } from "@nestjs/common";
 import { CatsService } from "./cats.service";
 import { CatsController } from "./cats.controller";
-import { StinglerloomOrmModule } from "src/stingerloom-orm/stingerloom-orm.module";
-import { StinglerloomOrmService } from "src/stingerloom-orm/stingerloom-orm.service";
+import { StinglerloomOrmModule, StinglerloomOrmService } from "@stingerloom/orm/nestjs";
 import { Cat } from "./cat.entity";
 import { CatSubscriber } from "./cat.subscriber";
 import { OwnersModule } from "src/owners/owners.module";

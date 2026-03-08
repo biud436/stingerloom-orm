@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "./stingerloom-orm/stingerloom-orm.module";
+import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { TenantModule } from "./tenant/tenant.module";
 import { UsersModule } from "./users/users.module";
 import { PostsModule } from "./posts/posts.module";

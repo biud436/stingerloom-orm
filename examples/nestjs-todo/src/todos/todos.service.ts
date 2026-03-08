@@ -3,7 +3,7 @@ import { EntityManager, BaseRepository } from "@stingerloom/orm";
 import { Todo } from "./todo.entity";
 import { CreateTodoDto } from "./dto/create-todo.dto";
 import { UpdateTodoDto } from "./dto/update-todo.dto";
-import { InjectRepository } from "../stingerloom-orm/inject-repository.decorator";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Inject } from "@nestjs/common";
 
 @Injectable()
