@@ -190,15 +190,26 @@ await em.register({
 
 ## Using with NestJS
 
-In a NestJS project, register with `StinglerloomOrmModule` in the root module and inject repositories into services using `@InjectRepository()`.
+Stingerloom ORM provides a first-party NestJS integration module via the `@stingerloom/orm/nestjs` subpath export.
 
-### Module Registration
+### Installation
+
+```bash
+pnpm add @stingerloom/orm reflect-metadata
+```
+
+`@nestjs/common` and `@nestjs/core` are listed as optional peer dependencies — they are already present in any NestJS project.
+
+### Root Module Registration
+
+Use `StinglerloomOrmModule.forRoot()` to initialize the database connection, and `StinglerloomOrmModule.forFeature()` to register entity repositories.
 
 ```typescript
 // app.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "./stingerloom-orm/stingerloom-orm.module";
+import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { User } from "./user.entity";
+import { UsersModule } from "./users/users.module";
 
 @Module({
   imports: [
@@ -212,17 +223,38 @@ import { User } from "./user.entity";
       entities: [User],
       synchronize: true,
     }),
+    UsersModule,
   ],
 })
 export class AppModule {}
 ```
 
-### Usage in Services
+### Feature Module Registration
 
 ```typescript
-// users.service.ts
+// users/users.module.ts
+import { Module } from "@nestjs/common";
+import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { User } from "./user.entity";
+import { UsersService } from "./users.service";
+
+@Module({
+  imports: [StinglerloomOrmModule.forFeature([User])],
+  providers: [UsersService],
+  exports: [UsersService],
+})
+export class UsersModule {}
+```
+
+### Usage in Services
+
+Import `InjectRepository` from `@stingerloom/orm/nestjs` to inject typed repositories.
+
+```typescript
+// users/users.service.ts
 import { Injectable } from "@nestjs/common";
-import { BaseRepository, InjectRepository } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
+import { BaseRepository } from "@stingerloom/orm";
 import { User } from "./user.entity";
 
 @Injectable()
