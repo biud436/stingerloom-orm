@@ -40,6 +40,8 @@ import {
   MANY_TO_MANY_TOKEN,
   ManyToManyMetadata,
   DELETED_AT_TOKEN,
+  CREATE_TIMESTAMP_TOKEN,
+  UPDATE_TIMESTAMP_TOKEN,
   HOOK_TOKEN,
   HookEvent,
   HookMetadata,
@@ -478,6 +480,26 @@ export class EntityManager implements BaseEntityManager {
    */
   private getDeletedAtColumn<T>(entity: ClazzType<T>): string | null {
     const column = Reflect.getMetadata(DELETED_AT_TOKEN, entity) as
+      | string
+      | undefined;
+    return column ?? null;
+  }
+
+  /**
+   * @CreateTimestamp 데코레이터가 적용된 컬럼 이름을 반환합니다.
+   */
+  private getCreateTimestampColumn<T>(entity: ClazzType<T>): string | null {
+    const column = Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, entity) as
+      | string
+      | undefined;
+    return column ?? null;
+  }
+
+  /**
+   * @UpdateTimestamp 데코레이터가 적용된 컬럼 이름을 반환합니다.
+   */
+  private getUpdateTimestampColumn<T>(entity: ClazzType<T>): string | null {
+    const column = Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, entity) as
       | string
       | undefined;
     return column ?? null;
@@ -2439,6 +2461,27 @@ export class EntityManager implements BaseEntityManager {
           return (item as any)[column.name!];
         });
 
+        // @CreateTimestamp / @UpdateTimestamp 자동 주입 (INSERT 시)
+        const now = new Date().toISOString();
+        const createTsCol = this.getCreateTimestampColumn(entity);
+        if (createTsCol) {
+          const idx = insertableColumns.findIndex(
+            (col: ColumnMetadata) => col.name === createTsCol,
+          );
+          if (idx >= 0) {
+            values[idx] = (item as any)[createTsCol]?.toISOString?.() ?? now;
+          }
+        }
+        const updateTsCol = this.getUpdateTimestampColumn(entity);
+        if (updateTsCol) {
+          const idx = insertableColumns.findIndex(
+            (col: ColumnMetadata) => col.name === updateTsCol,
+          );
+          if (idx >= 0) {
+            values[idx] = (item as any)[updateTsCol]?.toISOString?.() ?? now;
+          }
+        }
+
         // ManyToOne FK 컬럼 값 추출 (joinColumn이 명시된 관계에서 관계 객체의 PK 추출)
         // 지원하는 할당 패턴:
         //   1. cat.owner = ownerEntity   → owner.id 추출
@@ -2590,6 +2633,23 @@ export class EntityManager implements BaseEntityManager {
       const updateMap = updatableColumns.map((column: ColumnMetadata) => {
         return sql`${raw(this.wrap(column.name!))} = ${(item as any)[column.name!]}`;
       });
+
+      // @UpdateTimestamp 자동 주입 (UPDATE 시)
+      const updateTsColName = this.getUpdateTimestampColumn(entity);
+      if (updateTsColName) {
+        const existingIdx = updatableColumns.findIndex(
+          (col: ColumnMetadata) => col.name === updateTsColName,
+        );
+        const updateNow = new Date().toISOString();
+        if (existingIdx >= 0) {
+          updateMap[existingIdx] =
+            sql`${raw(this.wrap(updateTsColName))} = ${updateNow}`;
+        } else {
+          updateMap.push(
+            sql`${raw(this.wrap(updateTsColName))} = ${updateNow}`,
+          );
+        }
+      }
 
       // 이미 SET에 포함된 컬럼명을 추적 (중복 방지)
       const updatedColumnNames = new Set(

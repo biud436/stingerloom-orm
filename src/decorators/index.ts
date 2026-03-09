@@ -10,6 +10,8 @@ export * from "./ManyToOne";
 export * from "./OneToMany";
 export * from "./ManyToMany";
 export * from "./DeletedAt";
+export * from "./CreateTimestamp";
+export * from "./UpdateTimestamp";
 export * from "./Hooks";
 export * from "./Validation";
 export * from "./Transactional";
