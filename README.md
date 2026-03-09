@@ -3,7 +3,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@stingerloom/orm"><img src="https://img.shields.io/npm/v/@stingerloom/orm" alt="npm" /></a>
-  <img src="https://img.shields.io/badge/tests-1%2C405%20passed-brightgreen" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-1%2C348%20passed-brightgreen" alt="Tests" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License" />
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" alt="TypeScript" />
 </p>
