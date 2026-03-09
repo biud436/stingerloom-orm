@@ -201,6 +201,20 @@ TeamCreate → TaskCreate → Task(spawn agents) → TaskUpdate
 
 ---
 
+## npm 배포 이력
+
+| 버전 | 날짜 | 주요 내용 |
+|------|------|----------|
+| 0.1.0 | 2026-03-07 | 최초 배포 |
+| 0.1.1 | 2026-03-07 | 패치 |
+| 0.1.2 | 2026-03-07 | 패치 |
+| 0.2.0 | 2026-03-08 | NestJS 통합 모듈 추출 (`@stingerloom/orm/nestjs`) |
+| 0.2.1 | 2026-03-09 | `@CreateTimestamp`, `@UpdateTimestamp`, `timestamptz` |
+
+GitHub Releases: https://github.com/biud436/stingerloom-orm/releases
+
+---
+
 ## 백로그 (향후 개선 가능 항목)
 
 | 기능 | 설명 | 우선순위 |
@@ -208,4 +222,3 @@ TeamCreate → TaskCreate → Task(spawn agents) → TaskUpdate
 | Oracle 드라이버 | 새 DB 드라이버 (사용자 지시로 이전 중단됨) | LOW |
 | MetadataLayer.clone() 깊은 복사 | structuredClone 실패 시 얕은 복사 fallback 개선 | LOW |
 | Conditions.raw() 문서 경고 | SQL Injection 위험 명시 | LOW |
-| npm 배포 | package.json 설정 + CI/CD 파이프라인 | 미정 |
