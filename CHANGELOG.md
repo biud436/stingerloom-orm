@@ -1,343 +1,196 @@
 # Changelog
 
-모든 주목할 만한 변경 사항은 이 파일에 기록됩니다.
+All notable changes to this project are documented in this file.
 
-## [Unreleased]
+Releases: https://github.com/biud436/stingerloom-orm/releases
+
+---
+
+## [0.2.1] — 2026-03-09
 
 ### Added
 
-- **@CreateTimestamp / @UpdateTimestamp 데코레이터** (`5271d29`)
-  - `@CreateTimestamp()`: INSERT 시 자동 시각 설정, UPDATE 시 변경 없음
-  - `@UpdateTimestamp()`: INSERT 및 UPDATE 시 자동 시각 설정
-  - `DATETIME` (MySQL) / `TIMESTAMP` (PostgreSQL) NOT NULL 컬럼 생성
-  - 사용자 값이 명시적으로 전달된 경우 해당 값 우선 사용
-  - 유닛 테스트 8개 + PostgreSQL 통합 테스트 3개
-
-- **`timestamptz` 컬럼 타입 지원** (`f4117c3`)
-  - PostgreSQL: `TIMESTAMPTZ` (timestamp with time zone)
-  - MySQL: `DATETIME` fallback (네이티브 timestamptz 미지원)
-  - SQLite: `TEXT` fallback
-  - ColumnType, SchemaGenerator, 3개 드라이버 castType() 모두 반영
-  - 유닛 테스트 6개
+- **`@CreateTimestamp()` decorator** — Auto-set current time on INSERT (`DATETIME NOT NULL`)
+- **`@UpdateTimestamp()` decorator** — Auto-set current time on INSERT and UPDATE (`DATETIME NOT NULL`)
+- **`timestamptz` column type** — PostgreSQL `TIMESTAMPTZ` (MySQL: `DATETIME`, SQLite: `TEXT` fallback)
 
 ### Tests
 
-- `@Column` 데코레이터 없는 속성이 DDL에서 제외되는지 검증 (`7cdde40`, `71ca717`)
-  - 유닛 테스트 6개 (메타데이터 + MySQL/PostgreSQL DDL)
-  - PostgreSQL 통합 테스트 1개 (실제 DB introspect)
+- `@Column` 데코레이터 없는 속성이 DDL에서 제외되는지 검증 (유닛 6개 + 통합 1개)
+- `@CreateTimestamp` / `@UpdateTimestamp` 유닛 8개 + 통합 3개
+- `timestamptz` 유닛 6개 (3개 드라이버)
 
 ### Docs
 
-- `docs/entities.md`: `@CreateTimestamp`/`@UpdateTimestamp` 섹션 추가, ColumnType 테이블에 `timestamptz` 추가 (`defeec1`)
-- `docs/api-reference.md`: 데코레이터 테이블 및 ColumnType 정의 업데이트 (`defeec1`)
+- `docs/entities.md`: `@CreateTimestamp`/`@UpdateTimestamp` 섹션, `timestamptz` 타입 추가
+- `docs/api-reference.md`: 데코레이터 테이블 및 ColumnType 정의 업데이트
+- 전체 문서 및 예제 README 영어 번역
 
-### Refactor
+### Other
 
-- `Connection.ts`를 `core/`에서 `dialects/mysql/`로 이동 — mysql2 전용 타입 정리
-- Deserializer 관련 파일을 `core/deserializer/` 폴더로 이동
-- 스키마 관련 파일 위치 정리
-- `createLazyProxy` 함수 시그니처 단순화
-- 코드 스타일 표준화 및 가독성 개선
-- MCP 서버 `server.tool()` → `server.registerTool()` API 마이그레이션
+- `MetadataContext.isActive()` 단순화
+- NestJS 예제를 `@stingerloom/orm/nestjs` subpath export로 전환
+- `nestjs-todo`를 배포된 `@stingerloom/orm@^0.2.0`으로 전환
 
-### Fixed
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.2.0...v0.2.1
 
-- `NotSupportedDatabaseTypeError` 에러 메시지를 영어로 통일 + 테스트 동기화
-- Partial update 시 FK 보존 + `save()` 반환 타입 수정
-- INSERT/UPDATE 시 ManyToOne FK 컬럼 중복 방지
-- ManyToOne 관계가 명시적으로 null일 때 FK를 NULL로 설정
-- `save()` INSERT/UPDATE에 ManyToOne FK 컬럼 포함
+---
+
+## [0.2.0] — 2026-03-08
 
 ### Added
 
-- **MCP 서버** (`d00e6ad`, `a614fd4`)
-  - `mcp/mysql-server.ts`: MySQL/MariaDB 직접 접근 (query, list_tables, describe_table, list_databases)
-  - `mcp/postgres-server.ts`: PostgreSQL 직접 접근 (query, list_tables, describe_table, list_schemas, list_databases)
-  - `@modelcontextprotocol/sdk` 기반, `registerTool()` API 사용
-  - pnpm workspace에 `mcp` 패키지 등록
-- Onboarding 가이드 추가
+- **NestJS 통합 모듈 추출** (`@stingerloom/orm/nestjs`)
+  - `StinglerloomOrmModule` — `forRoot()` / `forFeature()` 지원
+  - `StingerloomOrmCoreModule` — EntityManager provider
+  - `StinglerloomOrmService` — NestJS 생명주기 훅
+  - `InjectRepository` — NestJS 전용 리포지토리 인젝션 데코레이터
+  - `@nestjs/common`, `@nestjs/core` optional peer dependencies
+  - `typesVersions` 필드 추가 (`moduleResolution: "node"` 호환)
+  - 4개 예제 프로젝트에서 중복 16개 파일 삭제 (-729 lines)
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.1.2...v0.2.0
+
+---
+
+## [0.1.2] — 2026-03-07
+
+### Added
+
+- **nestjs-todo 예제** 추가
+- README 설치 안내 업데이트
+
+### Docs
+
+- README 한국어 잔여 텍스트 영어로 수정
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.1.1...v0.1.2
+
+---
+
+## [0.1.1] — 2026-03-07
+
+### Added
+
+- **MCP 서버** — MySQL/PostgreSQL 직접 접근 (`mcp/mysql-server.ts`, `mcp/postgres-server.ts`)
+- **IConnection 인터페이스** + 다이얼렉트별 커넥션 + 커넥션 누수 감지기
+- **Advisory lock** + 중첩 트랜잭션 세이브포인트 전파
+- **QueryTracker 메모리 누수 방지** + Graceful shutdown
+- **Swagger UI + class-validator** 전 예제 프로젝트에 추가
+- `{propertyName}Id` FK 자동 컨벤션 (`save()`, `insertMany()`)
+- `@Column` 기반 FK 자동 감지 + `mappedBy`/`inverseSide` 타입 안전성
+- `clear()` 메서드 + `insertMany` 타임스탬프 성능 개선
+
+### Fixed
+
+- ORM 안정성 점검 — `WhereClause<T>` 타입 통합, `as any` 28개 제거, `skip→limit` 버그 수정
+- EntityManager async factory로 NestJS `onModuleInit` 순서 문제 해결
+- Partial update 시 FK 보존 + `save()` 반환 타입 수정
+- INSERT/UPDATE 시 ManyToOne FK 컬럼 중복 방지
+- ManyToOne 관계가 명시적으로 null일 때 FK를 NULL로 설정
+- `insertMany` @BeforeInsert 훅 + @DeletedAt 컬럼 제외
+- `NotSupportedDatabaseTypeError` 에러 메시지 영어 통일
+
+### Refactor
+
+- MSSQL 드라이버 제거
+- `Connection.ts`를 `core/`에서 `dialects/mysql/`로 이동
+- Deserializer 관련 파일을 `core/deserializer/` 폴더로 이동
+- `createLazyProxy` 함수 시그니처 단순화
+- MCP 서버 `server.tool()` → `server.registerTool()` API 마이그레이션
 
 ### Tests
 
-- PostgreSQL 드라이버 통합 테스트 35개 추가
-- FK object assignment 패턴 P0 통합 테스트 추가
-- nestjs-cats e2e 통합 테스트 추가
+- PostgreSQL 드라이버 통합 테스트 35개
+- FK object assignment 패턴 P0 통합 테스트
+- nestjs-cats e2e 통합 테스트
+- Jest 커버리지 설정 + SQLite 통합 테스트 + 스트레스 테스트
 
 ### Docs
 
 - README 영어 리라이트 (minimal style)
+- 프로덕션 운영 가이드 작성
+- Onboarding 가이드 추가
+
+### Security
+
+- SQL Injection 취약점 6건 수정 (MySqlDriver 5, SchemaDiff 1)
+- `getAllInContext()` 테넌트 간 데이터 유출 차단
+- `AsyncLocalStorage` 동시성 안전 (`resolveContext()` 도입)
 
 ---
 
-## [0.1.0] — 내실 다지기 세션 (2026-02-22)
+## [0.1.0] — 2026-03-07 (최초 npm 배포)
 
-### Added
+최초 배포. 2026-02-22 ~ 2026-03-07 개발 기간의 전체 기능 포함.
 
-- **이벤트 시스템** (`bfc6159`)
-  - `EntityEventEmitter`: on/off/emit/removeAllListeners API
-  - `EntityManager.on(event, handler)` / `EntityManager.off(event, handler)`
-  - 이벤트: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`
-  - 22개 유닛 테스트
+### Core
 
-- **Select 특정 컬럼** (`2258dd5`)
-  - `FindOption.select?: string[] | Record<string, boolean>` 옵션 추가
-  - `find(Entity, { select: ["id", "name"] })` → `SELECT "id", "name" FROM ...`
-  - `escapeIdentifier()`로 컬럼명 escape 보장
-  - 7개 유닛 테스트
+- **CRUD** — `EntityManager.find`, `findOne`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `upsert`
+- **Batch** — `insertMany`, `saveMany`, `deleteMany`
+- **Aggregation** — `count`, `sum`, `avg`, `min`, `max`
+- **Raw Query** — `query<T>(sql, params?)` 제네릭 메서드
+- **BaseRepository** — 엔티티별 CRUD 래퍼
 
-- **Raw Query 제네릭 타입** (`21008a3`)
-  - `EntityManager.query<T>(sql, params?): Promise<T[]>` 제네릭 메서드
-  - `string` SQL 및 `sql-template-tag` Sql 객체 모두 지원
-  - 자동 트랜잭션 관리 (commit/rollback)
-  - 12개 유닛 테스트
+### Relations
 
-- **Connection Retry (지수 백오프)** (`21008a3`)
-  - `DatabaseClientOptions.retry?: RetryOptions`
-  - `RetryOptions { maxAttempts: number, backoffMs: number }`
-  - 실제 지연: `backoffMs * 2^(attempt-1)`
-  - 11개 유닛 테스트
+- `@ManyToOne`, `@OneToMany`, `@OneToOne`, `@ManyToMany`
+- Eager / Lazy 로딩
+- Cascade (insert/update/delete)
+- ManyToMany 중간 테이블 DDL 자동 생성
 
-- **복합 PK 지원** (`a124fb0`)
-  - `@PrimaryColumn(options?)` 데코레이터 추가 (auto-increment 없는 수동 PK)
-  - 여러 `@PrimaryColumn` → `PRIMARY KEY (col1, col2)` DDL 생성
-  - `EntityManager.find/findOne/delete`에서 복합 PK WHERE 절 처리
-  - `SchemaGenerator` DDL 반영
-  - 16개 유닛 테스트
+### Schema & Migrations
 
-- **MSSQL 드라이버** (`9b2c681`)
-  - `MssqlDriver` / `MssqlConnector` / `MssqlDataSource` 구현
-  - 식별자 래핑: `[column_name]` (대괄호)
-  - PK: `IDENTITY(1,1)`, 파라미터: `@param0` 형식
-  - 타입 매핑: varchar→NVARCHAR, boolean→BIT, datetime→DATETIME2
-  - `DatabaseClient`, `TransactionSessionManager`, `EntityManager`에 `"mssql"` 통합
-  - 69개 유닛 테스트
+- `SchemaGenerator` — syncSchema/createTable DDL 자동 생성
+- `SchemaDiff` + `SchemaDiffMigrationGenerator` — 스키마 비교 → 마이그레이션 자동 생성
+- `MigrationRunner` + `MigrationCli` — migrate:run/rollback/status
 
-- **쿼리 결과 캐싱** (`d856ab6`, `b88274b`)
-  - `QueryCache`: Map 기반, TTL 자동 만료 (기본 30초)
-  - `FindOption.cache?: boolean | number` (`true` → 30초, `number` → 해당 ms)
-  - 캐시 키: 엔티티명 + where/orderBy/limit/take/select 조합 해시
-  - `EntityManager.clearCache(entity?)` 수동 무효화
-  - save/update/delete/deleteMany/insertMany/softDelete/restore 시 자동 무효화
-  - 32개 유닛 테스트
+### Decorators
 
-- **타입 시스템 강화** (`b88274b`)
-  - `FindCondition<T>`: `$eq/$ne/$gt/$lt/$gte/$lte/$like/$in/$notIn/$isNull` 연산자 타입
-  - `DeepPartial<T>`: 재귀적 optional 타입 (save/update 인자용)
-  - `OrderByOption<T>`: SortDirection + 엔티티 필드 기반 타입 안전 정렬
-  - `FindOption<T>` 제네릭 교체
+- `@Entity`, `@Column`, `@PrimaryGeneratedColumn`, `@PrimaryColumn`
+- `@Index`, `@UniqueIndex`, `@Version`, `@DeletedAt`
+- `@BeforeInsert`, `@AfterInsert`, `@BeforeUpdate`, `@AfterUpdate`, `@BeforeDelete`, `@AfterDelete`
+- `@NotNull`, `@MinLength`, `@MaxLength`, `@Min`, `@Max`
+- `@Transactional` (AsyncLocalStorage 기반)
 
-- **OrmError 체계화** (`b88274b`)
-  - `OrmError` (base) + `OrmErrorCode` enum (11개 코드)
-  - `EntityMetadataNotFoundError`, `EntityNotFoundError`, `PrimaryKeyNotFoundError`
-  - `InvalidQueryError`, `TransactionError`, `DeleteWithoutConditionsError`
-  - `EntityManager` 전체 throw 지점 구체적 에러 클래스로 교체
-  - 39개 유닛 테스트 (type-safety.test.ts)
+### Drivers
 
-- **EntitySubscriber 패턴** (`91ddf9f`)
-  - `EntitySubscriber<T>` 인터페이스: `listenTo()` + 생명주기 훅 + 트랜잭션 훅
-  - `InsertEvent<T>`, `UpdateEvent<T>`, `DeleteEvent<T>` 이벤트 객체
-  - `EntityManager.addSubscriber()` / `removeSubscriber()`
-  - `notifySubscribers()`: `listenTo()`로 대상 엔티티 필터링
-  - 22개 유닛 테스트
+- **MySQL/MariaDB** — `MySqlDriver`, 연결 풀링, Read Replica
+- **PostgreSQL** — `PostgresDriver`, 스키마 한정 식별자, ENUM 타입
+- **SQLite** — `SqliteDriver`
 
-- **EXPLAIN 쿼리 지원** (`58c8c37`)
-  - `EntityManager.explain<T>(entity, option?): Promise<ExplainResult>`
-  - `ExplainResult`: raw/rows/type/possibleKeys/key/cost 표준화 타입
-  - MySQL: `EXPLAIN SELECT ...`, PostgreSQL: `EXPLAIN (FORMAT JSON) SELECT ...`, SQLite: `EXPLAIN QUERY PLAN`
-  - `ISqlDriver.supportsExplain(): boolean`
-  - `BaseRepository.explain(option?)` 위임 메서드
+### Multi-Tenancy
 
-- **신기능 통합 테스트 추가** (`55d9422`)
-  - `integration/query-cache.test.ts`, `integration/entity-subscriber.test.ts`
-  - `integration/many-to-many.test.ts`, `integration/schema-generator.test.ts`
+- 레이어드 메타데이터 (Docker OverlayFS 방식)
+- `MetadataContext.run()` — AsyncLocalStorage 기반 컨텍스트 전환
+- `TenantMigrationRunner` — PostgreSQL 스키마 기반 자동 프로비저닝
 
-- **멀티테넌시 테스트 커버리지** (`3b0f2ee`)
-  - `__tests__/unit/metadata-layer-registry.test.ts` — MetadataLayerRegistry 유닛 테스트 24개
-    - resolveAll() 병합 뷰, resolveValue() OverlayFS fallback, 레이어 관리, 다중 테넌트 격리
-    - EntityScanner/ColumnScanner prefix 격리, has()/size/switchContext()
-  - `__tests__/integration/multi-tenancy-postgres.test.ts` — PostgreSQL 통합 테스트 22개
-    - Suite 1: 스키마 자동 생성 및 라우팅 (pg_tables 검증)
-    - Suite 2: schema_a ↔ schema_b 데이터 격리
-    - Suite 3: BaseRepository 스키마 한정 동작
-    - Suite 4: withTenant() 컨텍스트 전파 및 10개 동시 격리
-    - Suite 5: MetadataLayerRegistry + withTenant() 통합
+### Query Builder
 
-- **findAndCount()** (`a1ea2ab`)
-  - `EntityManager.findAndCount<T>(entity, findOption?): Promise<[T[], number]>`
-  - `find()` + `count()` 병렬 실행 (Promise.all), FindOption 전체 지원
-  - `BaseRepository.findAndCount()` 위임 메서드
-  - 유닛 테스트 10개
+- `RawQueryBuilderFactory` — SELECT/JOIN/WHERE/GROUP BY/HAVING/ORDER BY/LIMIT
+- `FindOption<T>` — select, where, limit, take, orderBy, groupBy, having, relations, withDeleted, timeout, useMaster
 
-- **Upsert 지원** (`7145dff`)
-  - `ISqlDriver.buildUpsertSql(tableName, columns, conflictColumns)` 인터페이스
-  - MySQL: `INSERT ... ON DUPLICATE KEY UPDATE`
-  - PostgreSQL: `INSERT ... ON CONFLICT (cols) DO UPDATE SET`
-  - SQLite: `INSERT ... ON CONFLICT (cols) DO UPDATE SET`
-  - MSSQL: `MERGE INTO ... WHEN MATCHED THEN UPDATE ...`
-  - `EntityManager.upsert(entity, data, conflictColumns?)` — conflictColumns 미지정 시 PK 자동
-  - `BaseRepository.upsert()` 위임 메서드
-  - 유닛 테스트 16개
+### Advanced
 
-- **Query Builder GROUP BY / HAVING** (`271de44`)
-  - `FindOption<T>.groupBy?: string[]`, `FindOption<T>.having?: Sql[]` 추가
-  - SQL 순서: WHERE → GROUP BY → HAVING → ORDER BY → LIMIT
-  - eager join 시 테이블명 prefix 자동 적용
-  - QueryCache 키에 groupBy/having 포함
-  - 유닛 테스트 12개
+- 커서 기반 페이지네이션 (`findWithCursor`)
+- EXPLAIN 쿼리 분석 (`ExplainResult`)
+- N+1 감지 + 슬로우 쿼리 경고 (`QueryTracker`)
+- 이벤트 시스템 (`on`/`off`) + `EntitySubscriber` 패턴
+- 연결 풀링 (`PoolOptions`)
+- Connection Retry (지수 백오프)
+- 쿼리 타임아웃 (per-query / connection-level)
+- Read Replica (읽기/쓰기 분리)
+- 멀티 DB 지원 (named connections)
+- `propagateShutdown()` — 리소스 정리 생명주기
+- SQL Injection 방지 — `escapeIdentifier()` + `sql-template-tag`
 
-- **@UniqueIndex 복합 고유 인덱스** (`79d03d1`)
-  - `@UniqueIndex(columns, name?)` 클래스 레벨 데코레이터
-  - `UNIQUE_INDEX_TOKEN` + `UniqueIndexMetadata` 타입
-  - `ISqlDriver.addCompositeUniqueIndex(tableName, columns, indexName)`
-  - MySQL/PostgreSQL/SQLite/MSSQL 각 DDL 구현
-  - `EntityManager.registerUniqueIndexes()` — synchronize 시 자동 생성
-  - `SchemaGenerator.generateUniqueIndexDDL()` 통합
-  - 유닛 테스트 13개
+### Examples
 
-- **Read Replica explain() slave 라우팅** (`ec61879`)
-  - `explain()` 메서드에 slave 연결 라우팅 추가 (누락되어 있던 읽기 메서드)
-  - `explain()` 관련 유닛 테스트 2개 추가 (slave 라우팅, useMaster=true)
+- `examples/nestjs-cats` — 기본 CRUD, EntitySubscriber, 커서 페이지네이션
+- `examples/nestjs-blog` — M2M, soft delete, upsert, 59 e2e tests
+- `examples/nestjs-multitenant` — PostgreSQL 스키마 격리
 
-- **테스트 커버리지 강화** (`447ba17`)
-  - `__tests__/unit/coverage-edge-cases.test.ts` 신규 (61개 테스트)
-  - OrmError 서브클래스, QueryCache TTL, CursorPagination 디코딩, EntityEventEmitter, EntitySubscriber, Connection retry backoff, 생명주기 훅 예외 전파
+### Tests
 
-- **examples/nestjs-cats 신기능 반영** (`f6ece05`)
-  - `CatsService.findAll()` — `cache: 5000` (5초 TTL) 옵션 추가
-  - `CatSubscriber` — `afterInsert` 훅 로그 출력, `OnModuleInit`에서 등록
-  - `GET /cats/cursor` 엔드포인트 — 커서 기반 페이지네이션 데모
-
-- **OneToMany / ManyToOne 관계 통합 테스트** (미커밋 신규)
-  - `integration/helpers/create-relation-entity.ts`: 동적 엔티티 쌍 팩토리
-    - `createOneToManyTestEntities()`: 기본 관계 (cascade 없음)
-    - `createCascadeRelationEntities()`: cascade insert 관계
-    - MySQL FK 64자 제한 대응 짧은 테이블명 생성 (`shortTableName`)
-  - `integration/relations-one-to-many.test.ts`: 20개 통합 테스트
-    - Suite 1: 기본 ManyToOne/OneToMany — CRUD + eager 로딩 + relations 옵션 + FK 무결성
-    - Suite 2: Cascade Insert — OneToMany cascade: ["insert"] 자동 자식 저장
-
-- **커서 기반 페이지네이션** (`c608296`)
-  - `CursorPaginationOption<T>`: take, cursor, orderBy, direction, where
-  - `CursorPaginationResult<T>`: data, hasNextPage, nextCursor, count
-  - `encodeCursor()` / `decodeCursor()`: Base64 JSON 인코딩/디코딩
-  - `EntityManager.findWithCursor<T>(entity, option)`: `take+1` 조회로 hasNextPage 결정
-  - `@DeletedAt` 자동 필터, WHERE 조건 병합, orderBy 미지정 시 PK 기본값
-  - `BaseRepository.findWithCursor(option)` 위임 메서드
-  - 30개 유닛 테스트
-
-- **쿼리 타임아웃** (`3641c79`)
-  - `DatabaseClientOptions.queryTimeout?: number` — connection-level 기본 타임아웃
-  - `FindOption.timeout?: number` — per-query 타임아웃
-  - `ISqlDriver.setQueryTimeout(ms): string` — 드라이버별 SET 문 생성
-    - MySQL: `SET SESSION max_execution_time = N`
-    - PostgreSQL: `SET LOCAL statement_timeout = 'Nms'`
-    - SQLite: `PRAGMA busy_timeout = N`
-    - MSSQL: `SET LOCK_TIMEOUT N`
-  - `QueryTimeoutError` + `OrmErrorCode.QUERY_TIMEOUT`
-  - 25개 유닛 테스트
-
-- **한국어 문서화** (`aae2983`)
-  - `docs/` 폴더 신규 생성, 10개 파일
-  - getting-started, entities, relations, entity-manager, query-builder, transactions, migrations, advanced, multi-tenancy
-
-- **N+1 쿼리 감지 및 슬로우 쿼리 경고** (`935c1ee`)
-  - `QueryTracker`: 쿼리 이력 추적 (엔티티명, SQL, 실행시간, 타임스탬프)
-  - N+1 감지: 동일 엔티티 100ms 내 10회+ → `[N+1 WARNING]` 경고
-  - 슬로우 쿼리: `slowQueryMs` 초과 시 `[SLOW QUERY] 245ms: ...` 경고
-  - `DatabaseClientOptions.logging`: `queries?`, `slowQueryMs?`, `nPlusOne?` 확장
-  - `EntityManager.getQueryLog()` 쿼리 로그 반환
-  - 23개 유닛 테스트
-
-- **통합 테스트 인프라 및 테스트 파일** (`3b0aaa6`, `ee32fe4`)
-  - `__tests__/integration/helpers/`: test-connection, create-test-entity, create-relation-entity
-  - `crud-basic.test.ts`, `relations-one-to-many.test.ts`
-  - `soft-delete.test.ts`, `aggregate.test.ts`, `batch-operations.test.ts`
-  - `lifecycle-hooks.test.ts`, `one-to-one.test.ts`
-  - INTEGRATION_TEST 환경변수 기반 skip 처리
-
-### Fixed
-
-- **`makeManyTones()` 오타 수정** (`d908034`)
-  - `ManyToOneScanner.makeManyTones` → `makeManyToOnes`
-
-- **Eager load LEFT JOIN 순서 버그** (`1d8356b`)
-  - `find()`에서 WHERE/ORDER BY 뒤에 LEFT JOIN이 붙던 문제 수정
-  - `SELECT ... FROM t LEFT JOIN ... WHERE ...` 올바른 순서로 변경
-  - MariaDB SQL syntax 에러 해결
-
-- **@BeforeInsert 뮤테이션 미반영** (`3cef629`)
-  - `save()`에서 columns/values가 훅 실행 전에 추출되던 문제 수정
-  - 훅 실행 후 엔티티 최신 값을 INSERT SQL에 반영
-
-- **@OneToOne eager load 결과 undefined** (`3cef629`)
-  - `ResultTransformer.transformNested()`가 `ONE_TO_ONE_TOKEN` 미처리 문제 수정
-  - OneToOne도 ManyToOne과 동일한 alias 패턴으로 처리
-
-- **null FK LEFT JOIN 결과 null 미처리** (`3cef629`)
-  - LEFT JOIN 미매칭 시 모든 컬럼 NULL인 객체를 `null`로 올바르게 처리
-
----
-
-## 테스트 현황
-
-| 시점 | 테스트 수 |
-|------|----------|
-| SQLite 드라이버 추가 후 | 363 |
-| Eager 로딩 추가 후 | 370 |
-| 마이그레이션 시스템 후 | 415 |
-| @ManyToMany 후 | 427 |
-| Cascade + Lazy 로딩 후 | 496 |
-| Soft Delete 추가 후 | 540 |
-| 세션 시작 (2026-02-22) | **691** |
-| 이벤트 시스템 + Select 컬럼 + Raw Query 제네릭 | 721 |
-| 복합 PK + MSSQL + 쿼리 캐싱 + 타입 강화 | 813 |
-| EntitySubscriber | 906 |
-| N+1 감지 시스템 | 929 |
-| 통합 테스트 5개 파일 추가 | **1059** |
-| 쿼리 타임아웃 + 커서 페이지네이션 + 한국어 문서 | 1163 |
-| EXPLAIN 쿼리 + 신기능 통합 테스트 추가 | **1163** (전부 통과) |
-| OneToMany/ManyToOne 관계 통합 테스트 추가 | 1163+ |
-| Read Replica explain() + 테스트 커버리지 강화 + NestJS 예제 | **1226** ✅ |
-| 안정성 감사 + 멀티테넌시 격리 수정 + SQL Injection 수정 | **1405** (26 skipped) ✅ |
-| 리팩토링 + 파일 정리 | **1287** (63 suites, 0 failures) ✅ |
-
----
-
-## 이전 릴리스
-
-### 내실 다지기 이전 (주요 기능)
-
-- **Soft Delete** — `@DeletedAt`, softDelete/restore, withDeleted 옵션
-- **Cascade 옵션** — CascadeType, cascadeSaveOneToMany/ManyToOne/Delete
-- **Lazy 로딩** — Proxy 기반 LazyLoader, `@ManyToOne lazy: true`
-- **마이그레이션 시스템 + CLI** — Migration/MigrationRunner, migrate:run/rollback/status
-- **`@ManyToMany` 관계** — JoinTable, ManyToManyScanner
-- **연결 풀링 (PoolOptions)** — max/min/acquireTimeoutMs/idleTimeoutMs
-- **Schema Generation** — syncSchema/createTable DDL 자동 생성
-- **`@OneToOne` 관계** — 단방향/양방향, eager 지원
-- **배치 연산** — insertMany/saveMany/deleteMany
-- **유효성 검사 데코레이터** — @NotNull, @MinLength, @MaxLength, @Min, @Max
-- **Entity 생명주기 훅** — @BeforeInsert/Update/Delete, @AfterInsert/Update/Delete
-- **Aggregate 쿼리** — count/sum/avg/min/max
-- **@Transactional 데코레이터** — AsyncLocalStorage 기반
-- **Query Builder WHERE 개선** — andWhere/orWhere/whereIn/whereNotIn/whereNull/whereNotNull/whereBetween
-
-### 멀티테넌시 & 코어
-
-- **레이어드 메타데이터** (`26ff198`, `289d2cf`, `59cdb08`)
-  - Docker OverlayFS 방식의 Public/Tenant 레이어
-  - `withTenant(tenantId, callback)` API
-  - `AsyncLocalStorage` 기반 컨텍스트 전환
-
-- **PostgreSQL 지원** (`347ec72`)
-  - `PostgresDriver`, `PostgresConnector`, `PostgresDataSource`
-  - 스키마 한정 식별자 (`schema.table`)
-  - ENUM 타입 지원
-
-- **SQL Injection 방지** (`530b748`)
-  - `wrapIdentifier()` 강제화
-  - operator 화이트리스트
-  - DDL 식별자 escape
-
-- **`DeserializerRegistry`** (`6fa2c9f`)
-  - 플러거블 역직렬화 전략 패턴
+- 1,400+ 유닛 테스트, 0 failures
+- 4개 예제 프로젝트 타입 체크 통과
