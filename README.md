@@ -170,7 +170,7 @@ const migration = new SchemaDiffMigrationGenerator().generate(diff, "mysql");
 
 ## Test Status
 
-- **1,405** unit tests passed, 0 failures
+- **1,348** unit tests passed, 0 failures
 - **4** example projects type-checked (nestjs-cats, nestjs-blog, nestjs-multitenant, nestjs-todo)
 - **6** SQL injection vectors patched and audited across all drivers
 
