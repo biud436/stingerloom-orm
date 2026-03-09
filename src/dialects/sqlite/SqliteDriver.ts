@@ -344,6 +344,7 @@ export class SqliteDriver implements ISqlDriver {
       case "datetime":
       case "date":
       case "timestamp":
+      case "timestamptz":
         return "TEXT";
       case "int":
       case "number":

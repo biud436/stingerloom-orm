@@ -468,6 +468,8 @@ export class SchemaGenerator {
         return "DATE";
       case "timestamp":
         return "TIMESTAMP";
+      case "timestamptz":
+        return "DATETIME";
       case "float":
         return "FLOAT";
       case "double":
@@ -505,6 +507,8 @@ export class SchemaGenerator {
       case "datetime":
       case "timestamp":
         return "TIMESTAMP";
+      case "timestamptz":
+        return "TIMESTAMPTZ";
       case "date":
         return "DATE";
       case "float":

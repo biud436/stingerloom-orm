@@ -696,6 +696,8 @@ export class PostgresDriver implements ISqlDriver {
         return "DATE";
       case "timestamp":
         return "TIMESTAMP";
+      case "timestamptz":
+        return "TIMESTAMPTZ";
       case "float":
         return "REAL";
       case "double":

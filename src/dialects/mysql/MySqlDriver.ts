@@ -359,6 +359,8 @@ export class MySqlDriver implements ISqlDriver {
         return "DATE";
       case "timestamp":
         return "TIMESTAMP";
+      case "timestamptz":
+        return "DATETIME";
       case "float":
         return "FLOAT";
       case "double":

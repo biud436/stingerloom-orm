@@ -22,6 +22,7 @@ export type ColumnType =
   | "double"
   /** Date */
   | "timestamp"
+  | "timestamptz"
   | "date"
   | "datetime"
   /** Buffer */
