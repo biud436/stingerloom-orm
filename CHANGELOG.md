@@ -4,6 +4,33 @@
 
 ## [Unreleased]
 
+### Added
+
+- **@CreateTimestamp / @UpdateTimestamp 데코레이터** (`5271d29`)
+  - `@CreateTimestamp()`: INSERT 시 자동 시각 설정, UPDATE 시 변경 없음
+  - `@UpdateTimestamp()`: INSERT 및 UPDATE 시 자동 시각 설정
+  - `DATETIME` (MySQL) / `TIMESTAMP` (PostgreSQL) NOT NULL 컬럼 생성
+  - 사용자 값이 명시적으로 전달된 경우 해당 값 우선 사용
+  - 유닛 테스트 8개 + PostgreSQL 통합 테스트 3개
+
+- **`timestamptz` 컬럼 타입 지원** (`f4117c3`)
+  - PostgreSQL: `TIMESTAMPTZ` (timestamp with time zone)
+  - MySQL: `DATETIME` fallback (네이티브 timestamptz 미지원)
+  - SQLite: `TEXT` fallback
+  - ColumnType, SchemaGenerator, 3개 드라이버 castType() 모두 반영
+  - 유닛 테스트 6개
+
+### Tests
+
+- `@Column` 데코레이터 없는 속성이 DDL에서 제외되는지 검증 (`7cdde40`, `71ca717`)
+  - 유닛 테스트 6개 (메타데이터 + MySQL/PostgreSQL DDL)
+  - PostgreSQL 통합 테스트 1개 (실제 DB introspect)
+
+### Docs
+
+- `docs/entities.md`: `@CreateTimestamp`/`@UpdateTimestamp` 섹션 추가, ColumnType 테이블에 `timestamptz` 추가 (`defeec1`)
+- `docs/api-reference.md`: 데코레이터 테이블 및 ColumnType 정의 업데이트 (`defeec1`)
+
 ### Refactor
 
 - `Connection.ts`를 `core/`에서 `dialects/mysql/`로 이동 — mysql2 전용 타입 정리

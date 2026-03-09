@@ -19,6 +19,7 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL을 지원하며 Docker OverlayF
 │   ├── core/               # EntityManager, BaseRepository, QueryBuilder, Deserializer,
 │   │                       # SchemaGenerator, SchemaDiff, EntitySubscriber, QueryTracker
 │   ├── decorators/         # @Entity, @Column, @ManyToOne, @Index, @Version, @UniqueIndex,
+│   │                       # @CreateTimestamp, @UpdateTimestamp, @DeletedAt,
 │   │                       # @InjectRepository, @Transactional, @Hooks, @Validation 등
 │   ├── dialects/
 │   │   ├── mysql/          # MySqlDriver, MySqlConnector, MySqlDataSource, MySqlTenantMigrationRunner
@@ -87,9 +88,11 @@ Docker OverlayFS와 동일한 개념:
 ### 3. ColumnType 매핑
 
 ```typescript
-// src/types/ColumnType.ts
-type ColumnType = "varchar" | "int" | "boolean" | "datetime" | "timestamp"
-                | "text" | "blob" | "json" | "number" | "float" | "enum";
+// src/decorators/Column.ts
+type ColumnType = "varchar" | "int" | "number" | "float" | "double" | "bigint"
+                | "boolean" | "datetime" | "timestamp" | "timestamptz" | "date"
+                | "text" | "longtext" | "blob" | "char"
+                | "json" | "jsonb" | "enum" | "array";
 ```
 
 각 드라이버에서 `castType(type: ColumnType): string` 메서드로 DB별 타입으로 변환.
@@ -114,6 +117,8 @@ type ColumnType = "varchar" | "int" | "boolean" | "datetime" | "timestamp"
 @ManyToOne(() => Entity, { joinColumn: "fk_column" })
 @Index()
 @Version()
+@CreateTimestamp()   // INSERT 시 자동 시각 설정
+@UpdateTimestamp()   // INSERT/UPDATE 시 자동 시각 설정
 ```
 
 스캐너 체계: `EntityScanner` → `ColumnScanner` → `ManyToOneScanner` (TypeDI @Service)

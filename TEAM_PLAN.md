@@ -133,15 +133,24 @@
 | 67 | MCP 서버 추가 (MySQL + PostgreSQL) | d00e6ad |
 | 68 | server.tool() → registerTool() 마이그레이션 | a614fd4 |
 
+### 신규 기능 (2026-03-10)
+
+| # | 기능 | 커밋 |
+|---|------|------|
+| 69 | @CreateTimestamp / @UpdateTimestamp 데코레이터 | 5271d29 |
+| 70 | timestamptz 컬럼 타입 지원 (PG: TIMESTAMPTZ) | f4117c3 |
+| 71 | @Column 제외 속성 DDL 테스트 (유닛+통합) | 7cdde40, 71ca717 |
+| 72 | 문서 업데이트 (entities, api-reference) | defeec1 |
+
 ---
 
 ## 현재 테스트 현황
 
-**1,405개 테스트** (2026-02-27 기준)
+**1,348개 유닛 테스트** (2026-03-10 기준)
 
 ```
-Test Suites: 2 skipped, 72 passed, 72 of 74 total
-Tests:       26 skipped, 1405 passed, 1431 total
+Test Suites: 3 skipped, 72 passed, 72 of 75 total
+Tests:       12 skipped, 1348 passed, 1360 total
 0 failures
 ```
 
