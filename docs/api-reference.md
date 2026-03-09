@@ -98,6 +98,8 @@ const userRepo = BaseRepository.of(User, em);
 | `@UniqueIndex(columns, options?)` | Composite unique index (class level) |
 | `@Version()` | Optimistic locking version column |
 | `@DeletedAt()` | Soft Delete timestamp |
+| `@CreateTimestamp()` | Auto-set on INSERT (datetime NOT NULL) |
+| `@UpdateTimestamp()` | Auto-set on INSERT and UPDATE (datetime NOT NULL) |
 
 ### Relations
 
@@ -220,7 +222,7 @@ interface ColumnOption {
 ```typescript
 type ColumnType =
   | "varchar" | "int" | "number" | "float" | "double" | "bigint"
-  | "boolean" | "datetime" | "timestamp" | "date"
+  | "boolean" | "datetime" | "timestamp" | "timestamptz" | "date"
   | "text" | "longtext" | "blob"
   | "json" | "jsonb" | "enum";
 ```

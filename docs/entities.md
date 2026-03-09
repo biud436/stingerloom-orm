@@ -269,9 +269,44 @@ const all = await em.find(Post, { withDeleted: true });    // includes deleted
 await em.restore(Post, { id: 1 });                         // restore
 ```
 
+## Automatic Timestamps (@CreateTimestamp / @UpdateTimestamp)
+
+Most entities need `createdAt` and `updatedAt` columns. Instead of manually setting these with lifecycle hooks, use the built-in timestamp decorators.
+
+```typescript
+// article.entity.ts
+import {
+  Entity, PrimaryGeneratedColumn, Column,
+  CreateTimestamp, UpdateTimestamp,
+} from "@stingerloom/orm";
+
+@Entity()
+export class Article {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  title!: string;
+
+  @CreateTimestamp()
+  createdAt!: Date;
+
+  @UpdateTimestamp()
+  updatedAt!: Date;
+}
+```
+
+**`@CreateTimestamp()`** automatically sets the current time on INSERT. The value is never changed on subsequent UPDATEs.
+
+**`@UpdateTimestamp()`** automatically sets the current time on both INSERT and UPDATE.
+
+Both decorators create a `DATETIME` (MySQL) / `TIMESTAMP` (PostgreSQL) NOT NULL column. If you need timezone-aware timestamps in PostgreSQL, use `@Column({ type: "timestamptz" })` with lifecycle hooks instead.
+
+> **Hint** If a value is explicitly provided for a `@CreateTimestamp` or `@UpdateTimestamp` column in the `save()` call, the provided value is used instead of the auto-generated one.
+
 ## Lifecycle Hooks
 
-You can define **code that runs automatically** when an entity is saved, updated, or deleted. The most common use case is automatically setting `createdAt` and `updatedAt`.
+You can define **code that runs automatically** when an entity is saved, updated, or deleted. This is useful for custom logic beyond what `@CreateTimestamp`/`@UpdateTimestamp` provide.
 
 ```typescript
 // article.entity.ts
@@ -288,22 +323,14 @@ export class Article {
   @Column()
   title!: string;
 
-  @Column({ type: "datetime", nullable: true })
-  createdAt!: Date;
-
-  @Column({ type: "datetime", nullable: true })
-  updatedAt!: Date;
+  @Column({ type: "varchar", length: 255, nullable: true })
+  slug!: string | null;
 
   @BeforeInsert()
-  setTimestamps() {
-    const now = new Date();
-    this.createdAt = now;
-    this.updatedAt = now;
-  }
-
-  @BeforeUpdate()
-  updateTimestamp() {
-    this.updatedAt = new Date();
+  generateSlug() {
+    if (!this.slug) {
+      this.slug = this.title.toLowerCase().replace(/\s+/g, "-");
+    }
   }
 }
 ```
@@ -373,7 +400,7 @@ Here is a blog user entity that combines all the features covered so far.
 // user.entity.ts
 import {
   Entity, PrimaryGeneratedColumn, Column, Index, Version,
-  DeletedAt, BeforeInsert, BeforeUpdate, AfterInsert,
+  DeletedAt, CreateTimestamp, UpdateTimestamp, AfterInsert,
   NotNull, MinLength, MaxLength,
 } from "@stingerloom/orm";
 
@@ -408,24 +435,11 @@ export class User {
   @DeletedAt()
   deletedAt!: Date | null;
 
-  @Column({ type: "datetime", nullable: true })
+  @CreateTimestamp()
   createdAt!: Date;
 
-  @Column({ type: "datetime", nullable: true })
+  @UpdateTimestamp()
   updatedAt!: Date;
-
-  @BeforeInsert()
-  init() {
-    const now = new Date();
-    this.createdAt = now;
-    this.updatedAt = now;
-    this.isActive = true;
-  }
-
-  @BeforeUpdate()
-  touch() {
-    this.updatedAt = new Date();
-  }
 
   @AfterInsert()
   log() {
@@ -463,6 +477,7 @@ When `type` is omitted in `@Column()`, it is automatically inferred from the Typ
 | `boolean` | TINYINT(1) | BOOLEAN | INTEGER |
 | `datetime` | DATETIME | TIMESTAMP | TEXT |
 | `timestamp` | TIMESTAMP | TIMESTAMP | TEXT |
+| `timestamptz` | DATETIME | TIMESTAMPTZ | TEXT |
 | `date` | DATE | DATE | TEXT |
 | `text` | TEXT | TEXT | TEXT |
 | `longtext` | LONGTEXT | TEXT | TEXT |
