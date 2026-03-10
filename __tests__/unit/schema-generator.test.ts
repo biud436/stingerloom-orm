@@ -139,13 +139,11 @@ describe("SchemaGenerator", () => {
     });
 
     it("@Version 데코레이터가 VERSION_TOKEN 메타데이터를 설정해야 함", () => {
-      // @Version()은 VERSION_TOKEN 메타데이터만 설정하고
-      // Column 호출은 반환값으로만 존재합니다 (실제 호출되지 않음).
-      // 따라서 SchemaGenerator의 DDL에는 version 컬럼이 별도 Column으로 등록되지 않습니다.
-      // 실제 동기화에서는 별도 처리가 필요합니다.
+      // @Version()은 VERSION_TOKEN에 프로퍼티 이름(컬럼명)을 저장하고,
+      // Column 데코레이터도 함께 호출하여 int 컬럼으로 등록합니다.
       const VERSION_TOKEN = Symbol.for("STG_VERSION");
-      const hasVersion = Reflect.getMetadata(VERSION_TOKEN, Product.prototype);
-      expect(hasVersion).toBe(true);
+      const versionColumn = Reflect.getMetadata(VERSION_TOKEN, Product);
+      expect(versionColumn).toBe("version");
     });
 
     it("@DeletedAt 컬럼이 nullable로 포함되어야 함", () => {

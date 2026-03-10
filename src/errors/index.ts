@@ -13,3 +13,4 @@ export * from "./PrimaryKeyNotFoundError";
 export * from "./DeleteWithoutConditionsError";
 export * from "./QueryTimeoutError";
 export * from "./AdvisoryLockError";
+export * from "./OptimisticLockError";

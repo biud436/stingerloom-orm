@@ -48,6 +48,7 @@ import {
   ONE_TO_ONE_TOKEN,
   OneToOneMetadata,
   COLUMN_TOKEN,
+  VERSION_TOKEN,
 } from "../decorators";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
@@ -70,6 +71,7 @@ import {
 } from "./EntityEventEmitter";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
+import { OptimisticLockError } from "../errors/OptimisticLockError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { DeleteWithoutConditionsError } from "../errors/DeleteWithoutConditionsError";
 import { NotSupportedDatabaseTypeError } from "../errors/NotSupportedDatabaseTypeError";
@@ -500,6 +502,17 @@ export class EntityManager implements BaseEntityManager {
    */
   private getUpdateTimestampColumn<T>(entity: ClazzType<T>): string | null {
     const column = Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, entity) as
+      | string
+      | undefined;
+    return column ?? null;
+  }
+
+  /**
+   * @Version 데코레이터가 적용된 컬럼 이름을 반환합니다.
+   * 없으면 null을 반환합니다.
+   */
+  private getVersionColumn<T>(entity: ClazzType<T>): string | null {
+    const column = Reflect.getMetadata(VERSION_TOKEN, entity) as
       | string
       | undefined;
     return column ?? null;
@@ -2482,6 +2495,17 @@ export class EntityManager implements BaseEntityManager {
           }
         }
 
+        // @Version 컬럼 자동 초기화 (INSERT 시 version = 1)
+        const versionCol = this.getVersionColumn(entity);
+        if (versionCol) {
+          const versionIdx = insertableColumns.findIndex(
+            (col: ColumnMetadata) => col.name === versionCol,
+          );
+          if (versionIdx >= 0) {
+            values[versionIdx] = 1;
+          }
+        }
+
         // ManyToOne FK 컬럼 값 추출 (joinColumn이 명시된 관계에서 관계 객체의 PK 추출)
         // 지원하는 할당 패턴:
         //   1. cat.owner = ownerEntity   → owner.id 추출
@@ -2620,13 +2644,15 @@ export class EntityManager implements BaseEntityManager {
       } as UpdateEvent<T>);
 
       // 부분 업데이트 지원: undefined가 아닌 컬럼만 SET 절에 포함
-      // PK 컬럼은 WHERE 절에서 사용하므로 SET에서 제외
+      // PK 컬럼 및 @Version 컬럼은 SET에서 제외 (version은 별도로 version + 1 처리)
+      const versionColName = this.getVersionColumn(entity);
       const pkColumnNames = new Set(
         pkColumns.map((col: ColumnMetadata) => col.name!),
       );
       const updatableColumns = metadata.columns.filter(
         (column: ColumnMetadata) => {
           if (pkColumnNames.has(column.name!)) return false;
+          if (versionColName && column.name === versionColName) return false;
           return (item as any)[column.name!] !== undefined;
         },
       );
@@ -2711,6 +2737,23 @@ export class EntityManager implements BaseEntityManager {
 
       const pkWhereClauses = buildPkWhere();
 
+      // @Version: Optimistic Locking — SET version = version + 1, WHERE version = currentVersion
+      const currentVersion = versionColName
+        ? (item as any)[versionColName]
+        : undefined;
+      if (versionColName) {
+        // SET 절에 version = version + 1 추가
+        updateMap.push(
+          sql`${raw(this.wrap(versionColName))} = ${raw(this.wrap(versionColName))} + 1`,
+        );
+        // WHERE 절에 현재 version 조건 추가
+        if (currentVersion !== undefined && currentVersion !== null) {
+          pkWhereClauses.push(
+            sql`${raw(this.wrap(versionColName))} = ${currentVersion}`,
+          );
+        }
+      }
+
       // updateMap이 비어있으면 (PK만 전달된 경우) UPDATE를 스킵
       if (updateMap.length > 0) {
         const updateSql = sql`
@@ -2720,12 +2763,29 @@ export class EntityManager implements BaseEntityManager {
                   `;
         const updateStart = Date.now();
         this.beginTrackQuery();
-        await transactionManager.query<T>(updateSql);
+        const updateResult = (await transactionManager.query<T>(updateSql)) as {
+          results: any;
+          fields: any;
+          rowCount?: number;
+        };
         this.trackQuery(
           entity.name,
           updateSql.text ?? String(updateSql),
           Date.now() - updateStart,
         );
+
+        // @Version: affectedRows === 0이면 동시 수정 감지 → OptimisticLockError throw
+        if (versionColName && currentVersion !== undefined && currentVersion !== null) {
+          let affected = 0;
+          if (this.isMySqlFamily()) {
+            affected = updateResult?.results?.affectedRows ?? 0;
+          } else {
+            affected = updateResult?.rowCount ?? 0;
+          }
+          if (affected === 0) {
+            throw new OptimisticLockError(entity.name, currentVersion);
+          }
+        }
       }
 
       await transactionManager.commit();
@@ -2910,6 +2970,16 @@ export class EntityManager implements BaseEntityManager {
             if ((item as any)[col.name!] == null) {
               (item as any)[col.name!] = now;
             }
+          }
+        }
+      }
+
+      // @Version 컬럼 자동 초기화 (insertMany에서도 version = 1)
+      const versionCol = this.getVersionColumn(entity);
+      if (versionCol) {
+        for (const item of items) {
+          if ((item as any)[versionCol] == null) {
+            (item as any)[versionCol] = 1;
           }
         }
       }
