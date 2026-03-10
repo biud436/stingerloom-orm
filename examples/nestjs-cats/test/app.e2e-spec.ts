@@ -161,7 +161,7 @@ describeIf("[E2E] nestjs-cats API", () => {
 
       const res = await request(server)
         .post("/cats/bulk")
-        .send(cats)
+        .send({ cats })
         .expect(201);
 
       expect(res.body).toHaveProperty("affected");
@@ -279,16 +279,8 @@ describeIf("[E2E] nestjs-cats API", () => {
       if (bulkIds.length > 0) {
         const deleteRes = await request(server)
           .delete("/cats/bulk")
-          .send(bulkIds);
-        // 200 또는 배열 body 파싱 이슈로 400이 올 수 있음
-        expect([200, 400]).toContain(deleteRes.status);
-        if (deleteRes.status === 400) {
-          // NestJS에서 raw array body 파싱 실패 시 개별 삭제로 fallback
-          for (const id of bulkIds) {
-            await request(server).delete(`/cats/${id}`).expect(200);
-            await wait();
-          }
-        }
+          .send({ ids: bulkIds });
+        expect(deleteRes.status).toBe(200);
         await wait();
       }
     });

@@ -92,9 +92,9 @@ describe("EntityManager.saveMany()", () => {
     expect(result).toEqual([]);
   });
 
-  it("should call save() for each item", async () => {
-    const saveSpy = jest
-      .spyOn(em, "save")
+  it("should call saveInternal() for each item", async () => {
+    const saveInternalSpy = jest
+      .spyOn(em as any, "saveInternal")
       .mockResolvedValueOnce({ id: 1, name: "Alice", email: "a@test.com" } as any)
       .mockResolvedValueOnce({ id: 2, name: "Bob", email: "b@test.com" } as any);
 
@@ -105,29 +105,37 @@ describe("EntityManager.saveMany()", () => {
 
     const result = await em.saveMany(userMetadata.target, items);
 
-    expect(saveSpy).toHaveBeenCalledTimes(2);
-    expect(saveSpy).toHaveBeenCalledWith(userMetadata.target, items[0]);
-    expect(saveSpy).toHaveBeenCalledWith(userMetadata.target, items[1]);
+    expect(saveInternalSpy).toHaveBeenCalledTimes(2);
+    expect(saveInternalSpy).toHaveBeenCalledWith(
+      userMetadata.target,
+      items[0],
+      expect.anything(),
+    );
+    expect(saveInternalSpy).toHaveBeenCalledWith(
+      userMetadata.target,
+      items[1],
+      expect.anything(),
+    );
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ id: 1, name: "Alice", email: "a@test.com" });
     expect(result[1]).toEqual({ id: 2, name: "Bob", email: "b@test.com" });
   });
 
   it("should handle a single item", async () => {
-    const saveSpy = jest
-      .spyOn(em, "save")
+    const saveInternalSpy = jest
+      .spyOn(em as any, "saveInternal")
       .mockResolvedValueOnce({ id: 1, name: "Solo" } as any);
 
     const result = await em.saveMany(userMetadata.target, [{ name: "Solo" }]);
 
-    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(saveInternalSpy).toHaveBeenCalledTimes(1);
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual({ id: 1, name: "Solo" });
   });
 
-  it("should propagate errors from save()", async () => {
+  it("should propagate errors from saveInternal()", async () => {
     jest
-      .spyOn(em, "save")
+      .spyOn(em as any, "saveInternal")
       .mockResolvedValueOnce({ id: 1, name: "Ok" } as any)
       .mockRejectedValueOnce(new Error("DB connection lost"));
 
@@ -145,9 +153,9 @@ describe("EntityManager.saveMany()", () => {
       email: `user${i}@test.com`,
     }));
 
-    const saveSpy = jest.spyOn(em, "save");
+    const saveInternalSpy = jest.spyOn(em as any, "saveInternal");
     for (let i = 0; i < 10; i++) {
-      saveSpy.mockResolvedValueOnce({
+      saveInternalSpy.mockResolvedValueOnce({
         id: i + 1,
         name: `User ${i}`,
         email: `user${i}@test.com`,
@@ -156,7 +164,7 @@ describe("EntityManager.saveMany()", () => {
 
     const result = await em.saveMany(userMetadata.target, items);
 
-    expect(saveSpy).toHaveBeenCalledTimes(10);
+    expect(saveInternalSpy).toHaveBeenCalledTimes(10);
     expect(result).toHaveLength(10);
     expect(result[0]).toEqual({
       id: 1,

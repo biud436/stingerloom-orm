@@ -5,7 +5,6 @@ import {
   ManyToOne,
   ManyToMany,
   DeletedAt,
-  Version,
   UniqueIndex,
   BeforeInsert,
   BeforeUpdate,
@@ -40,9 +39,6 @@ export class Post {
 
   @DeletedAt()
   deletedAt!: Date | null;
-
-  @Version()
-  version!: number;
 
   @ManyToOne(() => User, (user) => user.posts, {
     joinColumn: "author_id",

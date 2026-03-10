@@ -118,8 +118,8 @@ describe("EntitySubscriber", () => {
     // getDeletedAtColumn mock
     jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
 
-    // findOne mock (for save)
-    jest.spyOn(em as any, "findOne").mockResolvedValue(undefined);
+    // findOneInternal mock (for save — internal re-read after INSERT/UPDATE)
+    jest.spyOn(em as any, "findOneInternal").mockResolvedValue(undefined);
   });
 
   describe("addSubscriber / removeSubscriber", () => {

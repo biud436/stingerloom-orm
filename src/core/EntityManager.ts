@@ -95,6 +95,7 @@ import {
   ReplicationRouter,
   ReplicationNodeConfig,
 } from "../dialects/ReplicationRouter";
+import { transactionStorage } from "../decorators/Transactional";
 
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
@@ -887,11 +888,13 @@ export class EntityManager implements BaseEntityManager {
    * @param entity 부모 엔티티 클래스
    * @param parentResults 부모 쿼리 결과 (단일 또는 배열)
    * @param relations 로드할 관계 필드명 배열
+   * @param existingSession 재사용할 기존 세션 (커넥션 풀 절약)
    */
   private async loadOneToManyRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
     relations: string[],
+    existingSession?: TransactionSessionManager,
   ): Promise<void> {
     const oneToManyMeta = this.resolveOneToManyMetadata(entity);
     if (oneToManyMeta.length === 0) return;
@@ -929,9 +932,9 @@ export class EntityManager implements BaseEntityManager {
         const parentId = (parent as any)[pk.name!];
         if (parentId === undefined || parentId === null) continue;
 
-        const children = await this.find(RelatedEntity, {
+        const children = await this.findInternal(RelatedEntity, {
           where: { [fkColumn]: parentId } as any,
-        });
+        }, existingSession);
 
         // 결과를 배열로 정규화하여 할당
         if (children === undefined) {
@@ -1109,11 +1112,14 @@ export class EntityManager implements BaseEntityManager {
    * SELECT target.* FROM target
    * INNER JOIN join_table ON target.pk = join_table.inverseJoinColumn
    * WHERE join_table.joinColumn = :parentId
+   *
+   * @param existingSession 재사용할 기존 세션 (커넥션 풀 절약)
    */
   private async loadManyToManyRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
     relations: string[],
+    existingSession?: TransactionSessionManager,
   ): Promise<void> {
     const manyToManyMeta = this.resolveManyToManyMetadata(entity);
     if (manyToManyMeta.length === 0) return;
@@ -1172,19 +1178,11 @@ export class EntityManager implements BaseEntityManager {
           )
           .where([whereCondition]);
 
-        const transactionHolder = new TransactionSessionManager();
-        try {
-          await transactionHolder.connect();
-          await transactionHolder.startTransaction();
-
-          if (this.isMySqlFamily()) {
-            await transactionHolder.query("SET autocommit = 0");
-          }
-
+        const executeQuery = async (session: TransactionSessionManager) => {
           const resultQuery = qb.build();
           const subQueryStart = Date.now();
           this.beginTrackQuery();
-          const queryResult = (await transactionHolder.query(
+          const queryResult = (await session.query(
             resultQuery,
           )) as QueryResult;
           this.trackQuery(
@@ -1192,8 +1190,6 @@ export class EntityManager implements BaseEntityManager {
             resultQuery.text ?? String(resultQuery),
             Date.now() - subQueryStart,
           );
-
-          await transactionHolder.commit();
 
           const resultTransformer = ResultTransformerFactory.create();
           const { results } = queryResult;
@@ -1206,24 +1202,9 @@ export class EntityManager implements BaseEntityManager {
               queryResult,
             );
           }
-        } catch (e) {
-          try {
-            await transactionHolder.rollback();
-          } catch (rollbackError) {
-            this.logger.error(
-              `Failed to rollback ManyToMany transaction: ${rollbackError}`,
-            );
-          }
-          throw e;
-        } finally {
-          try {
-            await transactionHolder.close();
-          } catch (closeError) {
-            this.logger.error(
-              `Failed to close ManyToMany transaction: ${closeError}`,
-            );
-          }
-        }
+        };
+
+        await this.executeInTransaction(executeQuery, existingSession);
       }
     }
   }
@@ -1231,11 +1212,14 @@ export class EntityManager implements BaseEntityManager {
   /**
    * OneToOne 관계를 별도 쿼리로 로드하여 부모 엔티티에 할당합니다.
    * Eager JOIN으로 처리되지 않은 OneToOne 관계(inverseSide 등)를 relations 옵션으로 로드합니다.
+   *
+   * @param existingSession 재사용할 기존 세션 (커넥션 풀 절약)
    */
   private async loadOneToOneRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
     relations: string[],
+    existingSession?: TransactionSessionManager,
   ): Promise<void> {
     const oneToOneMeta = this.resolveOneToOneMetadata(entity);
     if (oneToOneMeta.length === 0) return;
@@ -1278,9 +1262,9 @@ export class EntityManager implements BaseEntityManager {
             continue;
           }
 
-          const related = await this.findOne(RelatedEntity, {
+          const related = await this.findOneInternal(RelatedEntity, {
             where: { [relatedPk.name!]: fkValue } as any,
-          });
+          }, existingSession);
           (parent as any)[rel.propertyKey] = related ?? null;
         } else if (rel.inverseSide) {
           // 역방향: 상대측의 joinColumn으로 부모 PK를 검색
@@ -1297,9 +1281,9 @@ export class EntityManager implements BaseEntityManager {
           );
 
           if (ownerRel?.joinColumn) {
-            const related = await this.findOne(RelatedEntity, {
+            const related = await this.findOneInternal(RelatedEntity, {
               where: { [ownerRel.joinColumn]: parentId } as any,
-            });
+            }, existingSession);
             (parent as any)[rel.propertyKey] = related ?? null;
           } else {
             (parent as any)[rel.propertyKey] = null;
@@ -1496,7 +1480,18 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T>,
   ): Promise<T | null> {
-    const result = await this.find<T>(entity, { ...findOption, limit: 1 });
+    return this.findOneInternal(entity, findOption);
+  }
+
+  /**
+   * findOne()의 내부 구현. optional session 파라미터를 받아 커넥션을 재사용합니다.
+   */
+  private async findOneInternal<T>(
+    entity: ClazzType<T>,
+    findOption: FindOption<T>,
+    existingSession?: TransactionSessionManager,
+  ): Promise<T | null> {
+    const result = await this.findInternal<T>(entity, { ...findOption, limit: 1 }, existingSession);
     if (result === undefined || result === null) {
       return null;
     }
@@ -1643,37 +1638,14 @@ export class EntityManager implements BaseEntityManager {
     const explainPrefix = this.driver.buildExplainSql("");
     const explainQuery = sql`${raw(explainPrefix)}${selectQuery}`;
 
-    const transactionHolder = new TransactionSessionManager();
-    try {
-      // Replication: EXPLAIN은 읽기 전용이므로 slave로 라우팅
-      const readNode = this.getReadNode(findOption.useMaster);
-      if (readNode) {
-        await transactionHolder.connectToNode(readNode);
-      } else {
-        await transactionHolder.connect();
-      }
-      await transactionHolder.startTransaction();
-      if (this.isMySqlFamily()) {
-        await transactionHolder.query("SET autocommit = 0");
-      }
-      const result = await transactionHolder.query(explainQuery);
-      await transactionHolder.commit();
+    // Replication: EXPLAIN은 읽기 전용이므로 slave로 라우팅
+    const readNode = this.getReadNode(findOption.useMaster);
+
+    return this.executeInTransaction(async (session) => {
+      const result = await session.query(explainQuery);
       const rawRows: Record<string, unknown>[] = (result as any)?.results ?? [];
       return this.parseExplainResult(rawRows);
-    } catch (e) {
-      try {
-        await transactionHolder.rollback();
-      } catch {
-        /* ignore */
-      }
-      throw e;
-    } finally {
-      try {
-        await transactionHolder.close();
-      } catch {
-        /* ignore */
-      }
-    }
+    }, undefined, readNode);
   }
 
   private parseExplainResult(
@@ -1814,24 +1786,11 @@ export class EntityManager implements BaseEntityManager {
     // find() 옵션 구성
     const where: any = { ...(option.where ?? {}) };
 
-    // 커서 조건: WHERE col > cursor (ASC) 또는 WHERE col < cursor (DESC)
-    // find()는 단순 equality만 지원하므로 직접 쿼리를 구성합니다.
-    const transactionHolder = new TransactionSessionManager();
-    const resultTransformer = ResultTransformerFactory.create();
+    // Replication: 읽기 쿼리는 slave로 라우팅 (useMaster가 아닌 경우)
+    const readNode = this.getReadNode(option.useMaster);
 
-    try {
-      // Replication: 읽기 쿼리는 slave로 라우팅 (useMaster가 아닌 경우)
-      const readNode = this.getReadNode(option.useMaster);
-      if (readNode) {
-        await transactionHolder.connectToNode(readNode);
-      } else {
-        await transactionHolder.connect();
-      }
-      await transactionHolder.startTransaction();
-
-      if (this.isMySqlFamily()) {
-        await transactionHolder.query("SET autocommit = 0");
-      }
+    return this.executeInTransaction(async (session) => {
+      const resultTransformer = ResultTransformerFactory.create();
 
       const tableName = metadata.name!;
       const qb = RawQueryBuilderFactory.create();
@@ -1877,11 +1836,9 @@ export class EntityManager implements BaseEntityManager {
 
       const resultQuery = qb.build();
 
-      const queryResult = (await transactionHolder.query<T>(
+      const queryResult = (await session.query<T>(
         resultQuery,
       )) as QueryResult;
-
-      await transactionHolder.commit();
 
       const { results } = queryResult;
       if (!results || results.length === 0) {
@@ -1917,20 +1874,7 @@ export class EntityManager implements BaseEntityManager {
         nextCursor,
         count: entities.length,
       };
-    } catch (e: unknown) {
-      try {
-        await transactionHolder.rollback();
-      } catch (rollbackError) {
-        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
-      }
-      throw e;
-    } finally {
-      try {
-        await transactionHolder.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close transaction: ${closeError}`);
-      }
-    }
+    }, undefined, readNode);
   }
 
   /**
@@ -1944,27 +1888,24 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<EntityResult<T>> {
+    return this.findInternal(entity, findOption);
+  }
+
+  /**
+   * find()의 내부 구현. optional session 파라미터를 받아 커넥션을 재사용합니다.
+   */
+  private async findInternal<T>(
+    entity: ClazzType<T>,
+    findOption: FindOption<T> = {},
+    existingSession?: TransactionSessionManager,
+  ): Promise<EntityResult<T>> {
     const { select, orderBy, where, take, groupBy, having } = findOption;
     const { limit } = findOption;
 
-    const transactionHolder = new TransactionSessionManager();
-    const resultTransformer = ResultTransformerFactory.create();
+    const readNode = this.getReadNode(findOption.useMaster);
 
-    try {
-      // Replication: 읽기 쿼리는 slave로 라우팅 (useMaster가 아닌 경우)
-      const readNode = this.getReadNode(findOption.useMaster);
-      if (readNode) {
-        await transactionHolder.connectToNode(readNode);
-      } else {
-        await transactionHolder.connect();
-      }
-      await transactionHolder.startTransaction();
-
-      // MySQL/MariaDB 전용: autocommit 비활성화
-      // PostgreSQL은 BEGIN으로 트랜잭션을 시작하면 자동으로 autocommit이 꺼집니다.
-      if (this.isMySqlFamily()) {
-        await transactionHolder.query("SET autocommit = 0");
-      }
+    return this.executeInTransaction(async (session) => {
+      const resultTransformer = ResultTransformerFactory.create();
 
       // 메타데이터를 가져옵니다 (레이어 시스템 경유).
       const metadata = this.resolveEntityMetadata(entity);
@@ -2210,12 +2151,12 @@ export class EntityManager implements BaseEntityManager {
       const effectiveTimeout = findOption.timeout ?? this.defaultQueryTimeout;
       if (effectiveTimeout && effectiveTimeout > 0 && this.driver) {
         const timeoutSql = this.driver.setQueryTimeout(effectiveTimeout);
-        await transactionHolder.query(timeoutSql);
+        await session.query(timeoutSql);
       }
 
       const queryStartTime = Date.now();
       this.beginTrackQuery();
-      const queryResult = (await transactionHolder.query<T>(
+      const queryResult = (await session.query<T>(
         resultQuery,
       )) as QueryResult;
       this.trackQuery(
@@ -2223,9 +2164,6 @@ export class EntityManager implements BaseEntityManager {
         resultQuery.text ?? String(resultQuery),
         Date.now() - queryStartTime,
       );
-
-      // 트랜잭션을 커밋합니다.
-      await transactionHolder.commit();
 
       const { results } = queryResult;
       if (!results || results.length === 0) {
@@ -2256,16 +2194,19 @@ export class EntityManager implements BaseEntityManager {
           entity,
           entityResult as T | T[],
           findOption.relations,
+          session,
         );
         await this.loadManyToManyRelations(
           entity,
           entityResult as T | T[],
           findOption.relations,
+          session,
         );
         await this.loadOneToOneRelations(
           entity,
           entityResult as T | T[],
           findOption.relations,
+          session,
         );
       }
 
@@ -2309,22 +2250,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       return entityResult;
-    } catch (e: unknown) {
-      // 트랜잭션 롤백
-      try {
-        await transactionHolder.rollback();
-      } catch (rollbackError) {
-        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
-      }
-      throw e;
-    } finally {
-      // 트랜잭션 종료
-      try {
-        await transactionHolder.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close transaction: ${closeError}`);
-      }
-    }
+    }, existingSession, readNode);
   }
 
   /**
@@ -2372,6 +2298,60 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * 트랜잭션 내에서 작업을 실행하는 내부 헬퍼입니다.
+   * existingSession이 있으면 재사용하고 (commit/rollback/close를 하지 않음),
+   * 없으면 새 세션을 생성하여 자동으로 commit/rollback/close를 수행합니다.
+   *
+   * @param fn 트랜잭션 내에서 실행할 비동기 작업
+   * @param existingSession 재사용할 기존 세션 (없으면 새로 생성)
+   * @param readNodeOverride 읽기 쿼리 라우팅을 위한 노드 설정
+   */
+  private async executeInTransaction<R>(
+    fn: (session: TransactionSessionManager) => Promise<R>,
+    existingSession?: TransactionSessionManager,
+    readNodeOverride?: ReplicationNodeConfig | null,
+  ): Promise<R> {
+    // 1순위: 명시적으로 전달된 세션 (내부 메서드 간 커넥션 공유)
+    // 2순위: @Transactional이 AsyncLocalStorage에 저장한 세션
+    const reusable = existingSession ?? transactionStorage.getStore();
+    if (reusable) {
+      return fn(reusable);
+    }
+
+    // 3순위: 새 세션 생성 + 라이프사이클 관리
+    const session = new TransactionSessionManager();
+    try {
+      if (readNodeOverride) {
+        await session.connectToNode(readNodeOverride);
+      } else {
+        await session.connect();
+      }
+      await session.startTransaction();
+
+      if (this.isMySqlFamily()) {
+        await session.query("SET autocommit = 0");
+      }
+
+      const result = await fn(session);
+      await session.commit();
+      return result;
+    } catch (e: unknown) {
+      try {
+        await session.rollback();
+      } catch (rollbackError) {
+        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
+      }
+      throw e;
+    } finally {
+      try {
+        await session.close();
+      } catch (closeError) {
+        this.logger.error(`Failed to close transaction: ${closeError}`);
+      }
+    }
+  }
+
+  /**
    * 엔티티를 저장하거나 수정합니다.
    *
    * 주의해야 할 점은 트랜잭션이 자동으로 시작되, SQL 처리 후 커밋 또는 롤백을 수행한다는 점입니다.
@@ -2379,6 +2359,17 @@ export class EntityManager implements BaseEntityManager {
   async save<T>(
     entity: ClazzType<T>,
     item: Partial<T>,
+  ): Promise<InstanceType<ClazzType<T>>> {
+    return this.saveInternal(entity, item);
+  }
+
+  /**
+   * save()의 내부 구현. optional session 파라미터를 받아 커넥션을 재사용합니다.
+   */
+  private async saveInternal<T>(
+    entity: ClazzType<T>,
+    item: Partial<T>,
+    existingSession?: TransactionSessionManager,
   ): Promise<InstanceType<ClazzType<T>>> {
     const metadata = this.resolveEntityMetadata(entity);
 
@@ -2392,17 +2383,7 @@ export class EntityManager implements BaseEntityManager {
     // Cascade: ManyToOne 관계의 부모 엔티티를 먼저 저장
     await this.cascadeSaveManyToOne(entity, item);
 
-    const transactionManager = new TransactionSessionManager();
-
-    try {
-      await transactionManager.connect();
-      await transactionManager.startTransaction();
-
-      // MySQL/MariaDB 전용: autocommit 비활성화
-      if (this.isMySqlFamily()) {
-        await transactionManager.query("SET autocommit = 0");
-      }
-
+    return this.executeInTransaction(async (session) => {
       // PK 컬럼 수집 (복합 PK 지원)
       const pkColumns = metadata.columns.filter(
         (column: ColumnMetadata) => column.options?.primary,
@@ -2570,7 +2551,7 @@ export class EntityManager implements BaseEntityManager {
                     `;
         const saveQueryStart = Date.now();
         this.beginTrackQuery();
-        const queryResult = (await transactionManager.query<T>(insertSql)) as {
+        const queryResult = (await session.query<T>(insertSql)) as {
           results: any;
           fields: any;
         };
@@ -2580,15 +2561,13 @@ export class EntityManager implements BaseEntityManager {
           Date.now() - saveQueryStart,
         );
 
-        await transactionManager.commit();
-
         if (this.isMySqlFamily()) {
           const findWhere = hasAutoIncrementPk
             ? { [pk.name!]: queryResult?.results?.insertId }
             : buildPkFindWhere();
-          const result = await this.findOne(entity, {
+          const result = await this.findOneInternal(entity, {
             where: findWhere,
-          } as any);
+          } as any, session);
 
           const cascadeId = hasAutoIncrementPk
             ? queryResult?.results?.insertId
@@ -2608,9 +2587,9 @@ export class EntityManager implements BaseEntityManager {
         if (isPostgres && queryResult?.results?.length > 0) {
           const returnedRow = queryResult.results[0];
           const findWhere = buildPkFindWhere(returnedRow);
-          const result = await this.findOne(entity, {
+          const result = await this.findOneInternal(entity, {
             where: findWhere,
-          } as any);
+          } as any, session);
 
           const cascadeId = returnedRow[pk.name!];
           await this.cascadeSaveOneToMany(entity, item, cascadeId);
@@ -2763,7 +2742,7 @@ export class EntityManager implements BaseEntityManager {
                   `;
         const updateStart = Date.now();
         this.beginTrackQuery();
-        const updateResult = (await transactionManager.query<T>(updateSql)) as {
+        const updateResult = (await session.query<T>(updateSql)) as {
           results: any;
           fields: any;
           rowCount?: number;
@@ -2788,8 +2767,6 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      await transactionManager.commit();
-
       await this.cascadeSaveOneToMany(entity, item, primaryKeyValue);
 
       // @AfterUpdate 훅 실행
@@ -2801,25 +2778,12 @@ export class EntityManager implements BaseEntityManager {
       } as UpdateEvent<T>);
 
       // Retrieve and return the updated entity.
-      const result = await this.findOne(entity, {
+      const result = await this.findOneInternal(entity, {
         where: buildPkFindWhere(),
-      } as any);
+      } as any, session);
 
       return result as T;
-    } catch (e: unknown) {
-      try {
-        await transactionManager.rollback();
-      } catch (rollbackError) {
-        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
-      }
-      throw e;
-    } finally {
-      try {
-        await transactionManager.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close transaction: ${closeError}`);
-      }
-    }
+    }, existingSession);
   }
 
   /**
@@ -2847,16 +2811,7 @@ export class EntityManager implements BaseEntityManager {
       throw new PrimaryKeyNotFoundError(entity.name);
     }
 
-    const transactionManager = new TransactionSessionManager();
-
-    try {
-      await transactionManager.connect();
-      await transactionManager.startTransaction();
-
-      if (this.isMySqlFamily()) {
-        await transactionManager.query("SET autocommit = 0");
-      }
-
+    return this.executeInTransaction(async (session) => {
       const placeholders = join(
         ids.map((id) => sql`${id}`),
         ", ",
@@ -2864,13 +2819,11 @@ export class EntityManager implements BaseEntityManager {
 
       const deleteQuery = sql`DELETE FROM ${raw(this.wrap(metadata.name!))} WHERE ${raw(this.wrap(pk.name!))} IN (${placeholders})`;
 
-      const queryResult = (await transactionManager.query(deleteQuery)) as {
+      const queryResult = (await session.query(deleteQuery)) as {
         results: any;
         fields: any;
         rowCount?: number;
       };
-
-      await transactionManager.commit();
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -2880,20 +2833,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       return { affected };
-    } catch (e: unknown) {
-      try {
-        await transactionManager.rollback();
-      } catch (rollbackError) {
-        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
-      }
-      throw e;
-    } finally {
-      try {
-        await transactionManager.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close transaction: ${closeError}`);
-      }
-    }
+    });
   }
 
   /**
@@ -2912,12 +2852,14 @@ export class EntityManager implements BaseEntityManager {
       return [];
     }
 
-    const results: InstanceType<ClazzType<T>>[] = [];
-    for (const item of items) {
-      const saved = await this.save(entity, item);
-      results.push(saved);
-    }
-    return results;
+    return this.executeInTransaction(async (session) => {
+      const results: InstanceType<ClazzType<T>>[] = [];
+      for (const item of items) {
+        const saved = await this.saveInternal(entity, item, session);
+        results.push(saved);
+      }
+      return results;
+    });
   }
 
   /**
@@ -2942,16 +2884,7 @@ export class EntityManager implements BaseEntityManager {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
-    const transactionManager = new TransactionSessionManager();
-
-    try {
-      await transactionManager.connect();
-      await transactionManager.startTransaction();
-
-      if (this.isMySqlFamily()) {
-        await transactionManager.query("SET autocommit = 0");
-      }
-
+    return this.executeInTransaction(async (session) => {
       // timestamp 컬럼 자동 설정 (O(1) Date 생성 + 컬럼별 일괄 적용)
       // @BeforeInsert 훅 대신 메타데이터 기반으로 처리하여 per-item 함수 호출을 제거합니다.
       // @DeletedAt 컬럼은 soft delete 전용이므로 제외합니다.
@@ -3057,13 +2990,11 @@ export class EntityManager implements BaseEntityManager {
 
       const queryStr = sql`INSERT INTO ${raw(this.wrap(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
 
-      const queryResult = (await transactionManager.query(queryStr)) as {
+      const queryResult = (await session.query(queryStr)) as {
         results: any;
         fields: any;
         rowCount?: number;
       };
-
-      await transactionManager.commit();
 
       let affected = items.length;
       if (this.isMySqlFamily()) {
@@ -3073,20 +3004,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       return { affected };
-    } catch (e: unknown) {
-      try {
-        await transactionManager.rollback();
-      } catch (rollbackError) {
-        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
-      }
-      throw e;
-    } finally {
-      try {
-        await transactionManager.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close transaction: ${closeError}`);
-      }
-    }
+    });
   }
 
   /**
@@ -3161,16 +3079,7 @@ export class EntityManager implements BaseEntityManager {
       return;
     }
 
-    const transactionManager = new TransactionSessionManager();
-
-    try {
-      await transactionManager.connect();
-      await transactionManager.startTransaction();
-
-      if (this.isMySqlFamily()) {
-        await transactionManager.query("SET autocommit = 0");
-      }
-
+    await this.executeInTransaction(async (session) => {
       const columnValues = insertableColumns.map(
         (col: ColumnMetadata) => (data as any)[col.name!],
       );
@@ -3183,22 +3092,8 @@ export class EntityManager implements BaseEntityManager {
         wrappedUpdate,
       );
 
-      await transactionManager.query(upsertSql);
-      await transactionManager.commit();
-    } catch (e: unknown) {
-      try {
-        await transactionManager.rollback();
-      } catch (rollbackError) {
-        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
-      }
-      throw e;
-    } finally {
-      try {
-        await transactionManager.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close transaction: ${closeError}`);
-      }
-    }
+      await session.query(upsertSql);
+    });
   }
 
   /**
@@ -3267,16 +3162,7 @@ export class EntityManager implements BaseEntityManager {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
-    const transactionManager = new TransactionSessionManager();
-
-    try {
-      await transactionManager.connect();
-      await transactionManager.startTransaction();
-
-      if (this.isMySqlFamily()) {
-        await transactionManager.query("SET autocommit = 0");
-      }
-
+    return this.executeInTransaction(async (session) => {
       // @BeforeDelete 훅 실행
       await this.runHooks(entity, criteria, "beforeDelete");
       await this.eventEmitter.emit("beforeDelete", { entity, data: criteria });
@@ -3307,7 +3193,7 @@ export class EntityManager implements BaseEntityManager {
 
       const deleteStart = Date.now();
       this.beginTrackQuery();
-      const queryResult = (await transactionManager.query(deleteQuery)) as {
+      const queryResult = (await session.query(deleteQuery)) as {
         results: any;
         fields: any;
         rowCount?: number;
@@ -3317,8 +3203,6 @@ export class EntityManager implements BaseEntityManager {
         deleteQuery.text ?? String(deleteQuery),
         Date.now() - deleteStart,
       );
-
-      await transactionManager.commit();
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -3338,20 +3222,7 @@ export class EntityManager implements BaseEntityManager {
       } as DeleteEvent<T>);
 
       return { affected };
-    } catch (e: unknown) {
-      try {
-        await transactionManager.rollback();
-      } catch (rollbackError) {
-        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
-      }
-      throw e;
-    } finally {
-      try {
-        await transactionManager.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close transaction: ${closeError}`);
-      }
-    }
+    });
   }
 
   /**
@@ -3393,16 +3264,7 @@ export class EntityManager implements BaseEntityManager {
       );
     }
 
-    const transactionManager = new TransactionSessionManager();
-
-    try {
-      await transactionManager.connect();
-      await transactionManager.startTransaction();
-
-      if (this.isMySqlFamily()) {
-        await transactionManager.query("SET autocommit = 0");
-      }
-
+    return this.executeInTransaction(async (session) => {
       const whereMap: Sql[] = [];
       for (const key in criteria) {
         const value = (criteria as any)[key];
@@ -3420,13 +3282,11 @@ export class EntityManager implements BaseEntityManager {
       const nowExpr = this.isPostgres() ? raw("NOW()") : raw("NOW()");
       const updateQuery = sql`UPDATE ${raw(this.wrap(metadata.name!))} SET ${raw(this.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`;
 
-      const queryResult = (await transactionManager.query(updateQuery)) as {
+      const queryResult = (await session.query(updateQuery)) as {
         results: any;
         fields: any;
         rowCount?: number;
       };
-
-      await transactionManager.commit();
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -3436,20 +3296,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       return { affected };
-    } catch (e: unknown) {
-      try {
-        await transactionManager.rollback();
-      } catch (rollbackError) {
-        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
-      }
-      throw e;
-    } finally {
-      try {
-        await transactionManager.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close transaction: ${closeError}`);
-      }
-    }
+    });
   }
 
   /**
@@ -3472,16 +3319,7 @@ export class EntityManager implements BaseEntityManager {
       );
     }
 
-    const transactionManager = new TransactionSessionManager();
-
-    try {
-      await transactionManager.connect();
-      await transactionManager.startTransaction();
-
-      if (this.isMySqlFamily()) {
-        await transactionManager.query("SET autocommit = 0");
-      }
-
+    return this.executeInTransaction(async (session) => {
       const whereMap: Sql[] = [];
       for (const key in criteria) {
         const value = (criteria as any)[key];
@@ -3498,13 +3336,11 @@ export class EntityManager implements BaseEntityManager {
 
       const restoreQuery = sql`UPDATE ${raw(this.wrap(metadata.name!))} SET ${raw(this.wrap(deletedAtColumn))} = NULL WHERE ${whereSql}`;
 
-      const queryResult = (await transactionManager.query(restoreQuery)) as {
+      const queryResult = (await session.query(restoreQuery)) as {
         results: any;
         fields: any;
         rowCount?: number;
       };
-
-      await transactionManager.commit();
 
       let affected = 0;
       if (this.isMySqlFamily()) {
@@ -3514,20 +3350,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       return { affected };
-    } catch (e: unknown) {
-      try {
-        await transactionManager.rollback();
-      } catch (rollbackError) {
-        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
-      }
-      throw e;
-    } finally {
-      try {
-        await transactionManager.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close transaction: ${closeError}`);
-      }
-    }
+    });
   }
 
   /**
@@ -3661,22 +3484,14 @@ export class EntityManager implements BaseEntityManager {
     fn: string,
     field: string,
     where?: WhereClause<T>,
+    existingSession?: TransactionSessionManager,
   ): Promise<number> {
     const metadata = this.resolveEntityMetadata(entity);
     if (!metadata) {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
-    const transactionManager = new TransactionSessionManager();
-
-    try {
-      await transactionManager.connect();
-      await transactionManager.startTransaction();
-
-      if (this.isMySqlFamily()) {
-        await transactionManager.query("SET autocommit = 0");
-      }
-
+    return this.executeInTransaction(async (session) => {
       const tableName = metadata.name!;
       const selectExpr = raw(
         `${fn}(${field === "*" ? "*" : this.wrap(field)})`,
@@ -3700,11 +3515,9 @@ export class EntityManager implements BaseEntityManager {
         queryStr = sql`SELECT ${selectExpr} AS ${raw(this.wrap("result"))} FROM ${raw(this.wrap(tableName))}`;
       }
 
-      const queryResult = (await transactionManager.query(
+      const queryResult = (await session.query(
         queryStr,
       )) as QueryResult;
-
-      await transactionManager.commit();
 
       const { results } = queryResult;
       if (!results || results.length === 0) return 0;
@@ -3712,20 +3525,7 @@ export class EntityManager implements BaseEntityManager {
       const row = results[0];
       const value = row.result ?? row["result"];
       return value === null || value === undefined ? 0 : Number(value);
-    } catch (e: unknown) {
-      try {
-        await transactionManager.rollback();
-      } catch (rollbackError) {
-        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
-      }
-      throw e;
-    } finally {
-      try {
-        await transactionManager.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close transaction: ${closeError}`);
-      }
-    }
+    }, existingSession);
   }
 
   /**
@@ -3751,12 +3551,12 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<[T[], number]> {
-    const [entities, totalCount] = await Promise.all([
-      this.find<T>(entity, findOption),
-      this.count<T>(entity, findOption.where),
-    ]);
+    return this.executeInTransaction(async (session) => {
+      const entities = await this.findInternal<T>(entity, findOption, session);
+      const totalCount = await this.aggregate<T>(entity, "COUNT", "*", findOption.where, session);
 
-    return [entities as unknown as T[], totalCount];
+      return [entities as unknown as T[], totalCount];
+    });
   }
 
   /**
@@ -3820,16 +3620,7 @@ export class EntityManager implements BaseEntityManager {
     sqlQuery: string | Sql,
     params?: unknown[],
   ): Promise<T[]> {
-    const transactionHolder = new TransactionSessionManager();
-
-    try {
-      await transactionHolder.connect();
-      await transactionHolder.startTransaction();
-
-      if (this.isMySqlFamily()) {
-        await transactionHolder.query("SET autocommit = 0");
-      }
-
+    return this.executeInTransaction(async (session) => {
       let queryResult: any;
       if (typeof sqlQuery === "string") {
         // string SQL with optional params: build a Sql object with parameter binding
@@ -3841,15 +3632,13 @@ export class EntityManager implements BaseEntityManager {
             values: params,
             strings: [sqlQuery],
           } as unknown as Sql;
-          queryResult = await transactionHolder.query(parameterizedSql);
+          queryResult = await session.query(parameterizedSql);
         } else {
-          queryResult = await transactionHolder.query(sqlQuery);
+          queryResult = await session.query(sqlQuery);
         }
       } else {
-        queryResult = await transactionHolder.query(sqlQuery);
+        queryResult = await session.query(sqlQuery);
       }
-
-      await transactionHolder.commit();
 
       // 드라이버별 결과 정규화
       if (queryResult?.results) {
@@ -3860,24 +3649,7 @@ export class EntityManager implements BaseEntityManager {
         return queryResult as T[];
       }
       return [];
-    } catch (e: unknown) {
-      try {
-        await transactionHolder.rollback();
-      } catch (rollbackError) {
-        this.logger.error(
-          `Failed to rollback raw query transaction: ${rollbackError}`,
-        );
-      }
-      throw e;
-    } finally {
-      try {
-        await transactionHolder.close();
-      } catch (closeError) {
-        this.logger.error(
-          `Failed to close raw query transaction: ${closeError}`,
-        );
-      }
-    }
+    });
   }
 
   getRepository<T>(entity: ClazzType<T>) {

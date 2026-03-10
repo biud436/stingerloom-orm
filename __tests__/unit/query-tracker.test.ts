@@ -279,7 +279,7 @@ describe("EntityManager QueryTracker integration", () => {
     jest.spyOn(em as any, "runHooks").mockResolvedValue(undefined);
     jest.spyOn(em as any, "cascadeSaveOneToMany").mockResolvedValue(undefined);
     jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
-    jest.spyOn(em as any, "findOne").mockResolvedValue(undefined);
+    jest.spyOn(em as any, "findOneInternal").mockResolvedValue(undefined);
   });
 
   it("should return empty query log by default", () => {
