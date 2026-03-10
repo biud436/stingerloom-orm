@@ -7,6 +7,7 @@ import { ISqlDriver } from "../SqlDriver";
 import { Exception } from "../../errors";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
+import { validateSavepointName } from "../../utils/validateSavepointName";
 
 /**
  * PostgreSQL용 SQL 드라이버 구현체입니다.
@@ -843,14 +844,17 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   createSavepointSql(name: string): string {
+    validateSavepointName(name);
     return `SAVEPOINT ${this.wrap(name)}`;
   }
 
   rollbackToSavepointSql(name: string): string {
+    validateSavepointName(name);
     return `ROLLBACK TO SAVEPOINT ${this.wrap(name)}`;
   }
 
   releaseSavepointSql(name: string): string {
+    validateSavepointName(name);
     return `RELEASE SAVEPOINT ${this.wrap(name)}`;
   }
 

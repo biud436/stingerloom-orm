@@ -260,13 +260,14 @@ describe("Advisory Lock", () => {
       expect(driver.releaseSavepointSql("sp1")).toBe('RELEASE SAVEPOINT "sp1"');
     });
 
-    it("savepoint name should be properly escaped", () => {
+    it("savepoint name with special characters should be rejected", () => {
       const { MySqlDriver } = require("../../src/dialects/mysql/MySqlDriver");
+      const { OrmError } = require("../../src/errors/OrmError");
       const mockConnector = { query: jest.fn() };
       const driver = new MySqlDriver(mockConnector);
 
-      // Backtick in name should be escaped
-      expect(driver.createSavepointSql("sp`1")).toBe("SAVEPOINT `sp``1`");
+      // Backtick in name should be rejected (SQL injection prevention)
+      expect(() => driver.createSavepointSql("sp`1")).toThrow(OrmError);
     });
   });
 });

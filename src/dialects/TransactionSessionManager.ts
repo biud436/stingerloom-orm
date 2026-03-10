@@ -15,6 +15,7 @@ import { Exception } from "../errors";
 import { ReplicationNodeConfig } from "./ReplicationRouter";
 import { MySqlConnector } from "./mysql/MySqlConnector";
 import { PostgresConnector } from "./postgres/PostgresConnector";
+import { validateSavepointName } from "../utils/validateSavepointName";
 
 /**
  * The `TransactionHolder` class extends the `IQueryEngine` and is responsible for managing
@@ -167,6 +168,7 @@ export class TransactionSessionManager extends IQueryEngine {
    * @returns A promise that resolves when the savepoint is created.
    */
   public async savepoint(name: string) {
+    validateSavepointName(name);
     return this.dataSource?.savepoint(name);
   }
 
@@ -177,6 +179,7 @@ export class TransactionSessionManager extends IQueryEngine {
    * @returns A promise that resolves when the transaction is rolled back to the savepoint.
    */
   public async rollbackTo(name: string) {
+    validateSavepointName(name);
     return this.dataSource?.rollbackTo(name);
   }
 

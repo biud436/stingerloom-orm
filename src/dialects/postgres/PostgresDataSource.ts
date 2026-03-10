@@ -4,6 +4,7 @@ import { IConnector } from "../../core/IConnector";
 import { IDataSource } from "../IDataSource";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { PostgresConnectionError } from "./PostgresConnectionError";
+import { validateSavepointName } from "../../utils/validateSavepointName";
 
 export class PostgresDataSource implements IDataSource {
   private connection?: any;
@@ -74,6 +75,7 @@ export class PostgresDataSource implements IDataSource {
       throw new PostgresConnectionError();
     }
 
+    validateSavepointName(name);
     await this.query(`SAVEPOINT ${name}`);
   }
 
@@ -82,6 +84,7 @@ export class PostgresDataSource implements IDataSource {
       throw new PostgresConnectionError();
     }
 
+    validateSavepointName(name);
     await this.query(`ROLLBACK TO SAVEPOINT ${name}`);
   }
 }

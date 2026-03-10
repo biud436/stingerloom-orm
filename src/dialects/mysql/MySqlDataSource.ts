@@ -4,6 +4,7 @@ import { IConnector } from "../../core/IConnector";
 import { IDataSource } from "../IDataSource";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { MySqlConnectionError } from "./MySqlConnectionError";
+import { validateSavepointName } from "../../utils/validateSavepointName";
 
 export class MySqlDataSource implements IDataSource {
   private connection?: Connection;
@@ -67,6 +68,7 @@ export class MySqlDataSource implements IDataSource {
       throw new MySqlConnectionError();
     }
 
+    validateSavepointName(name);
     await this.query(`SAVEPOINT ${name}`);
   }
 
@@ -75,6 +77,7 @@ export class MySqlDataSource implements IDataSource {
       throw new MySqlConnectionError();
     }
 
+    validateSavepointName(name);
     await this.query(`ROLLBACK TO ${name}`);
   }
 }

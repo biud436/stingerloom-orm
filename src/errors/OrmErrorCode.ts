@@ -27,4 +27,7 @@ export enum OrmErrorCode {
 
   // 유효성 검사
   VALIDATION_FAILED = "ORM_VALIDATION_FAILED",
+
+  // Savepoint 관련
+  INVALID_SAVEPOINT_NAME = "ORM_INVALID_SAVEPOINT_NAME",
 }

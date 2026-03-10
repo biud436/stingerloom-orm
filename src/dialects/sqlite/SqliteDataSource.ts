@@ -4,6 +4,7 @@ import { IConnector } from "../../core/IConnector";
 import { IDataSource } from "../IDataSource";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { SqliteConnectionError } from "./SqliteConnectionError";
+import { validateSavepointName } from "../../utils/validateSavepointName";
 
 export class SqliteDataSource implements IDataSource {
   private connection?: any;
@@ -60,6 +61,7 @@ export class SqliteDataSource implements IDataSource {
       throw new SqliteConnectionError();
     }
 
+    validateSavepointName(name);
     await this.query(`SAVEPOINT ${name}`);
   }
 
@@ -68,6 +70,7 @@ export class SqliteDataSource implements IDataSource {
       throw new SqliteConnectionError();
     }
 
+    validateSavepointName(name);
     await this.query(`ROLLBACK TO SAVEPOINT ${name}`);
   }
 }

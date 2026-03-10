@@ -7,6 +7,7 @@ import { ISqlDriver } from "../SqlDriver";
 import { Exception } from "../../errors";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
+import { validateSavepointName } from "../../utils/validateSavepointName";
 
 export class MySqlDriver implements ISqlDriver {
   constructor(
@@ -461,14 +462,17 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   createSavepointSql(name: string): string {
+    validateSavepointName(name);
     return `SAVEPOINT ${this.wrap(name)}`;
   }
 
   rollbackToSavepointSql(name: string): string {
+    validateSavepointName(name);
     return `ROLLBACK TO SAVEPOINT ${this.wrap(name)}`;
   }
 
   releaseSavepointSql(name: string): string {
+    validateSavepointName(name);
     return `RELEASE SAVEPOINT ${this.wrap(name)}`;
   }
 
