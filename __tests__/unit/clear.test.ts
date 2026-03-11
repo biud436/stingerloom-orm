@@ -117,48 +117,61 @@ describe("BaseRepository.clear()", () => {
 });
 
 describe("Driver.clear() SQL generation", () => {
-  it("MySQL: should generate TRUNCATE TABLE with FK checks disabled", async () => {
+  it("MySQL: should use a single connection for FK checks isolation", async () => {
     const { MySqlDriver } = jest.requireActual(
       "../../src/dialects/mysql/MySqlDriver",
     );
-    const mockConnector = { query: jest.fn().mockResolvedValue(undefined) };
+    const mockConn = { release: jest.fn() };
+    const mockConnector = {
+      query: jest.fn().mockResolvedValue(undefined),
+      getConnection: jest.fn().mockResolvedValue(mockConn),
+    };
     const driver = new MySqlDriver(mockConnector);
 
     await driver.clear("cats");
 
+    expect(mockConnector.getConnection).toHaveBeenCalledTimes(1);
     expect(mockConnector.query).toHaveBeenCalledTimes(3);
-    expect(mockConnector.query).toHaveBeenNthCalledWith(1, "SET FOREIGN_KEY_CHECKS = 0");
-    expect(mockConnector.query).toHaveBeenNthCalledWith(2, "TRUNCATE TABLE `cats`");
-    expect(mockConnector.query).toHaveBeenNthCalledWith(3, "SET FOREIGN_KEY_CHECKS = 1");
+    expect(mockConnector.query).toHaveBeenNthCalledWith(1, "SET FOREIGN_KEY_CHECKS = 0", mockConn);
+    expect(mockConnector.query).toHaveBeenNthCalledWith(2, "TRUNCATE TABLE `cats`", mockConn);
+    expect(mockConnector.query).toHaveBeenNthCalledWith(3, "SET FOREIGN_KEY_CHECKS = 1", mockConn);
+    expect(mockConn.release).toHaveBeenCalledTimes(1);
   });
 
-  it("MySQL: should re-enable FK checks even on error", async () => {
+  it("MySQL: should re-enable FK checks and release connection even on error", async () => {
     const { MySqlDriver } = jest.requireActual(
       "../../src/dialects/mysql/MySqlDriver",
     );
+    const mockConn = { release: jest.fn() };
     const mockConnector = {
       query: jest.fn()
         .mockResolvedValueOnce(undefined) // SET FK_CHECKS = 0
         .mockRejectedValueOnce(new Error("TRUNCATE failed"))
         .mockResolvedValueOnce(undefined), // SET FK_CHECKS = 1
+      getConnection: jest.fn().mockResolvedValue(mockConn),
     };
     const driver = new MySqlDriver(mockConnector);
 
     await expect(driver.clear("cats")).rejects.toThrow("TRUNCATE failed");
-    expect(mockConnector.query).toHaveBeenNthCalledWith(3, "SET FOREIGN_KEY_CHECKS = 1");
+    expect(mockConnector.query).toHaveBeenNthCalledWith(3, "SET FOREIGN_KEY_CHECKS = 1", mockConn);
+    expect(mockConn.release).toHaveBeenCalledTimes(1);
   });
 
   it("MySQL: should escape special characters in table name", async () => {
     const { MySqlDriver } = jest.requireActual(
       "../../src/dialects/mysql/MySqlDriver",
     );
-    const mockConnector = { query: jest.fn().mockResolvedValue(undefined) };
+    const mockConn = { release: jest.fn() };
+    const mockConnector = {
+      query: jest.fn().mockResolvedValue(undefined),
+      getConnection: jest.fn().mockResolvedValue(mockConn),
+    };
     const driver = new MySqlDriver(mockConnector);
 
     await driver.clear("my`table");
 
     expect(mockConnector.query).toHaveBeenNthCalledWith(2,
-      "TRUNCATE TABLE `my``table`",
+      "TRUNCATE TABLE `my``table`", mockConn,
     );
   });
 

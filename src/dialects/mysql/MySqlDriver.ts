@@ -478,15 +478,19 @@ export class MySqlDriver implements ISqlDriver {
 
   /**
    * 테이블의 모든 데이터를 제거합니다 (TRUNCATE TABLE).
+   * 단일 커넥션에서 FOREIGN_KEY_CHECKS를 비활성화/복원하여 커넥션 격리를 보장합니다.
    */
   async clear(tableName: string) {
-    await this.connector.query(`SET FOREIGN_KEY_CHECKS = 0`);
+    const conn = await this.connector.getConnection();
     try {
+      await this.connector.query(`SET FOREIGN_KEY_CHECKS = 0`, conn);
       return await this.connector.query(
         `TRUNCATE TABLE ${this.wrap(tableName)}`,
+        conn,
       );
     } finally {
-      await this.connector.query(`SET FOREIGN_KEY_CHECKS = 1`);
+      await this.connector.query(`SET FOREIGN_KEY_CHECKS = 1`, conn);
+      conn.release();
     }
   }
 
