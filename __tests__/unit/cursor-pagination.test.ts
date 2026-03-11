@@ -69,8 +69,8 @@ const itemMetadata = {
 };
 
 function setupMocks(em: EntityManager): void {
-  jest.spyOn(em as any, "resolveEntityMetadata").mockReturnValue(itemMetadata);
-  jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
+  jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(itemMetadata);
+  jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
 }
 
 function makeRows(start: number, count: number) {
@@ -359,7 +359,7 @@ describe("EntityManager.findWithCursor", () => {
   it("should throw for unknown entity", async () => {
     const UnknownEntity = class Unknown {} as any;
     // Override the mock to return null for unknown entity
-    jest.spyOn(em as any, "resolveEntityMetadata").mockReturnValue(null);
+    jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(null);
 
     await expect(
       em.findWithCursor(UnknownEntity),

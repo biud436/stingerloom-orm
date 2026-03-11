@@ -102,11 +102,11 @@ function createReplicatedEntityManager(): EntityManager {
   (em as any).driver = {
     wrap: (name: string) => `\`${name}\``,
   };
-  (em as any).replicationRouter = new ReplicationRouter(replicationConfig);
-  jest.spyOn(em as any, "resolveEntityMetadata").mockReturnValue(itemMetadata);
-  jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
-  jest.spyOn(em as any, "resolveManyToOneMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "resolveOneToOneMetadata").mockReturnValue([]);
+  (em as any).replication["router"] = new ReplicationRouter(replicationConfig);
+  jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(itemMetadata);
+  jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
+  jest.spyOn((em as any).resolver, "resolveManyToOneMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveOneToOneMetadata").mockReturnValue([]);
   return em;
 }
 
@@ -115,10 +115,10 @@ function createNonReplicatedEntityManager(): EntityManager {
   (em as any).driver = {
     wrap: (name: string) => `\`${name}\``,
   };
-  jest.spyOn(em as any, "resolveEntityMetadata").mockReturnValue(itemMetadata);
-  jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
-  jest.spyOn(em as any, "resolveManyToOneMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "resolveOneToOneMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(itemMetadata);
+  jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
+  jest.spyOn((em as any).resolver, "resolveManyToOneMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveOneToOneMetadata").mockReturnValue([]);
   return em;
 }
 

@@ -75,11 +75,11 @@ describe("findOne() return type: T | null", () => {
         { name: "email", options: {} },
       ],
     };
-    jest.spyOn(em as any, "resolveEntityMetadata").mockReturnValue(metadata);
-    jest.spyOn(em as any, "resolveManyToOneMetadata").mockReturnValue([]);
-    jest.spyOn(em as any, "resolveOneToOneMetadata").mockReturnValue([]);
-    jest.spyOn(em as any, "resolveOneToManyMetadata").mockReturnValue([]);
-    jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
+    jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(metadata);
+    jest.spyOn((em as any).resolver, "resolveManyToOneMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "resolveOneToOneMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
   });
 
   it("should return a single entity (not an array) when a row is found", async () => {

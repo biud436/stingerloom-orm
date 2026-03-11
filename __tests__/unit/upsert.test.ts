@@ -209,8 +209,8 @@ describe("EntityManager.upsert()", () => {
     });
 
     it("should use PK columns as conflict columns when not specified", async () => {
-      // resolveEntityMetadata를 모킹
-      (em as any).resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
+      // resolveEntityMetadata를 모킹 (resolver 핸들러로 이동됨)
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
 
       await em.upsert(UserEntity, { id: 1, email: "test@test.com", name: "Test" });
 
@@ -231,7 +231,7 @@ describe("EntityManager.upsert()", () => {
     });
 
     it("should use specified conflict columns", async () => {
-      (em as any).resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
 
       await em.upsert(
         UserEntity,
@@ -243,7 +243,7 @@ describe("EntityManager.upsert()", () => {
     });
 
     it("should throw if entity metadata is not found", async () => {
-      (em as any).resolveEntityMetadata = jest.fn().mockReturnValue(null);
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(null);
 
       await expect(
         em.upsert(UserEntity, { id: 1, email: "test@test.com" }),
@@ -258,7 +258,7 @@ describe("EntityManager.upsert()", () => {
           { name: "id", options: { primary: true, autoIncrement: true } },
         ],
       };
-      (em as any).resolveEntityMetadata = jest.fn().mockReturnValue(emptyMeta);
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(emptyMeta);
 
       // data에 id 값이 없어 autoIncrement 컬럼이 제외되어 insertable이 0
       await em.upsert(emptyMeta.target, {});
@@ -267,7 +267,7 @@ describe("EntityManager.upsert()", () => {
     });
 
     it("should rollback on query error", async () => {
-      (em as any).resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
       mockQuery.mockRejectedValueOnce(new Error("Query failed"));
 
       await expect(
@@ -284,7 +284,7 @@ describe("EntityManager.upsert()", () => {
     });
 
     it("should generate ON CONFLICT DO UPDATE SQL for PostgreSQL", async () => {
-      (em as any).resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
 
       await em.upsert(ProductEntity, { sku: "ABC123", name: "Widget", price: 9.99 });
 
@@ -303,7 +303,7 @@ describe("EntityManager.upsert()", () => {
     });
 
     it("should generate ON CONFLICT DO UPDATE SQL for SQLite", async () => {
-      (em as any).resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
 
       await em.upsert(ProductEntity, { sku: "ABC123", name: "Widget", price: 9.99 });
 
@@ -331,7 +331,7 @@ describe("EntityManager.upsert()", () => {
           { name: "field2", options: {} },
         ],
       };
-      (em as any).resolveEntityMetadata = jest.fn().mockReturnValue(noPkMeta);
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(noPkMeta);
 
       await expect(
         em.upsert(noPkMeta.target, { field1: "a", field2: "b" }),
@@ -339,7 +339,7 @@ describe("EntityManager.upsert()", () => {
     });
 
     it("should skip update columns that are also conflict columns", async () => {
-      (em as any).resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
 
       // sku가 conflict 이자 유일한 컬럼인 경우
       await em.upsert(ProductEntity, { sku: "ONLY" }, ["sku"]);

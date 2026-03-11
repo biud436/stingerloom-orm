@@ -187,13 +187,13 @@ describe("EntityManager query timeout integration", () => {
     };
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(mockMetadata);
     jest
-      .spyOn(em as any, "resolveManyToOneMetadata")
+      .spyOn((em as any).resolver, "resolveManyToOneMetadata")
       .mockReturnValue([]);
     jest
-      .spyOn(em as any, "resolveOneToOneMetadata")
+      .spyOn((em as any).resolver, "resolveOneToOneMetadata")
       .mockReturnValue([]);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
@@ -229,13 +229,13 @@ describe("EntityManager query timeout integration", () => {
     };
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(mockMetadata);
     jest
-      .spyOn(em as any, "resolveManyToOneMetadata")
+      .spyOn((em as any).resolver, "resolveManyToOneMetadata")
       .mockReturnValue([]);
     jest
-      .spyOn(em as any, "resolveOneToOneMetadata")
+      .spyOn((em as any).resolver, "resolveOneToOneMetadata")
       .mockReturnValue([]);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
@@ -270,13 +270,13 @@ describe("EntityManager query timeout integration", () => {
     };
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(mockMetadata);
     jest
-      .spyOn(em as any, "resolveManyToOneMetadata")
+      .spyOn((em as any).resolver, "resolveManyToOneMetadata")
       .mockReturnValue([]);
     jest
-      .spyOn(em as any, "resolveOneToOneMetadata")
+      .spyOn((em as any).resolver, "resolveOneToOneMetadata")
       .mockReturnValue([]);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
@@ -310,13 +310,13 @@ describe("EntityManager query timeout integration", () => {
     };
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(mockMetadata);
     jest
-      .spyOn(em as any, "resolveManyToOneMetadata")
+      .spyOn((em as any).resolver, "resolveManyToOneMetadata")
       .mockReturnValue([]);
     jest
-      .spyOn(em as any, "resolveOneToOneMetadata")
+      .spyOn((em as any).resolver, "resolveOneToOneMetadata")
       .mockReturnValue([]);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
@@ -350,13 +350,13 @@ describe("EntityManager query timeout integration", () => {
     };
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(mockMetadata);
     jest
-      .spyOn(em as any, "resolveManyToOneMetadata")
+      .spyOn((em as any).resolver, "resolveManyToOneMetadata")
       .mockReturnValue([]);
     jest
-      .spyOn(em as any, "resolveOneToOneMetadata")
+      .spyOn((em as any).resolver, "resolveOneToOneMetadata")
       .mockReturnValue([]);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(false);
 

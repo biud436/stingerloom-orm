@@ -260,7 +260,7 @@ describe("EntityManager QueryTracker integration", () => {
     em = new EntityManager();
 
     // resolveEntityMetadata mock
-    jest.spyOn(em as any, "resolveEntityMetadata").mockReturnValue({
+    jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue({
       name: "User",
       target: class User {},
       columns: [
@@ -273,12 +273,12 @@ describe("EntityManager QueryTracker integration", () => {
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
     jest.spyOn(em as any, "isPostgres").mockReturnValue(false);
     jest.spyOn(em as any, "wrap").mockImplementation((...args: any[]) => `\`${args[0]}\``);
-    jest.spyOn(em as any, "resolveOneToOneMetadata").mockReturnValue([]);
-    jest.spyOn(em as any, "resolveManyToOneMetadata").mockReturnValue([]);
-    jest.spyOn(em as any, "resolveOneToManyMetadata").mockReturnValue([]);
-    jest.spyOn(em as any, "runHooks").mockResolvedValue(undefined);
-    jest.spyOn(em as any, "cascadeSaveOneToMany").mockResolvedValue(undefined);
-    jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
+    jest.spyOn((em as any).resolver, "resolveOneToOneMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "resolveManyToOneMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).cascadeHandler, "runHooks").mockResolvedValue(undefined);
+    jest.spyOn((em as any).cascadeHandler, "cascadeSaveOneToMany").mockResolvedValue(undefined);
+    jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
     jest.spyOn(em as any, "findOneInternal").mockResolvedValue(undefined);
   });
 
@@ -377,7 +377,7 @@ describe("EntityManager QueryTracker integration", () => {
       });
 
     class User { id!: number; name!: string; }
-    jest.spyOn(em as any, "resolveEntityMetadata").mockReturnValue({
+    jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue({
       name: "User",
       target: User,
       columns: [
@@ -413,7 +413,7 @@ describe("EntityManager QueryTracker integration", () => {
       });
 
     class User { id!: number; name!: string; }
-    jest.spyOn(em as any, "resolveEntityMetadata").mockReturnValue({
+    jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue({
       name: "User",
       target: User,
       columns: [

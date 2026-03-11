@@ -64,7 +64,7 @@ describe("EntityManager.clear()", () => {
 
   it("should call driver.clear() with the table name", async () => {
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
 
     await em.clear(User);
@@ -75,7 +75,7 @@ describe("EntityManager.clear()", () => {
 
   it("should throw EntityMetadataNotFoundError if metadata is not found", async () => {
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(null);
 
     await expect(em.clear(User)).rejects.toThrow();
@@ -83,7 +83,7 @@ describe("EntityManager.clear()", () => {
 
   it("should throw if driver is not initialized", async () => {
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
     (em as any).driver = undefined;
 
@@ -94,7 +94,7 @@ describe("EntityManager.clear()", () => {
 
   it("should propagate driver errors", async () => {
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
     mockClear.mockRejectedValue(new Error("TRUNCATE failed"));
 

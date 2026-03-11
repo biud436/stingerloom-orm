@@ -83,7 +83,7 @@ describe("EntitySubscriber", () => {
     em = new EntityManager();
 
     // resolveEntityMetadata mock
-    jest.spyOn(em as any, "resolveEntityMetadata").mockImplementation(
+    jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockImplementation(
       (entity: any) => {
         if (entity === User) return userMetadata;
         if (entity === Post) return postMetadata;
@@ -101,22 +101,22 @@ describe("EntitySubscriber", () => {
     jest.spyOn(em as any, "wrap").mockImplementation((...args: any[]) => `\`${args[0]}\``);
 
     // resolveOneToOneMetadata mock
-    jest.spyOn(em as any, "resolveOneToOneMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "resolveOneToOneMetadata").mockReturnValue([]);
 
     // resolveManyToOneMetadata mock
-    jest.spyOn(em as any, "resolveManyToOneMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "resolveManyToOneMetadata").mockReturnValue([]);
 
     // resolveOneToManyMetadata mock
-    jest.spyOn(em as any, "resolveOneToManyMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([]);
 
     // runHooks mock
-    jest.spyOn(em as any, "runHooks").mockResolvedValue(undefined);
+    jest.spyOn((em as any).cascadeHandler, "runHooks").mockResolvedValue(undefined);
 
     // cascadeSaveOneToMany mock
-    jest.spyOn(em as any, "cascadeSaveOneToMany").mockResolvedValue(undefined);
+    jest.spyOn((em as any).cascadeHandler, "cascadeSaveOneToMany").mockResolvedValue(undefined);
 
     // getDeletedAtColumn mock
-    jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
+    jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
 
     // findOneInternal mock (for save — internal re-read after INSERT/UPDATE)
     jest.spyOn(em as any, "findOneInternal").mockResolvedValue(undefined);

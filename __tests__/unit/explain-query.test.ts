@@ -107,10 +107,10 @@ describe("EntityManager.explain()", () => {
   function setupDriver(driver: any) {
     (em as any).driver = driver;
     (em as any)._entities = [];
-    jest.spyOn(em as any, "resolveEntityMetadata").mockReturnValue(mockMetadata);
-    jest.spyOn(em as any, "resolveManyToOneMetadata").mockReturnValue([]);
-    jest.spyOn(em as any, "resolveOneToOneMetadata").mockReturnValue([]);
-    jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
+    jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(mockMetadata);
+    jest.spyOn((em as any).resolver, "resolveManyToOneMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "resolveOneToOneMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
   }
 
   class TestEntity {

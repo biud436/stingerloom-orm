@@ -199,7 +199,7 @@ describe("EntityManager.insertMany()", () => {
 
     // resolveEntityMetadata returns null for unknown entities
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(null);
 
     await expect(
@@ -212,7 +212,7 @@ describe("EntityManager.insertMany()", () => {
       jest.requireMock("../../src/dialects/TransactionSessionManager");
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
 
     // isMySqlFamily returns true
@@ -256,7 +256,7 @@ describe("EntityManager.insertMany()", () => {
       jest.requireMock("../../src/dialects/TransactionSessionManager");
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
@@ -277,7 +277,7 @@ describe("EntityManager.insertMany()", () => {
       jest.requireMock("../../src/dialects/TransactionSessionManager");
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
@@ -315,7 +315,7 @@ describe("EntityManager.insertMany()", () => {
     } = jest.requireMock("../../src/dialects/TransactionSessionManager");
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
@@ -336,7 +336,7 @@ describe("EntityManager.insertMany()", () => {
       jest.requireMock("../../src/dialects/TransactionSessionManager");
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(false);
 
@@ -375,7 +375,7 @@ describe("EntityManager.deleteMany()", () => {
     class UnknownEntity {}
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(null);
 
     await expect(
@@ -393,7 +393,7 @@ describe("EntityManager.deleteMany()", () => {
     };
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(noPkMetadata);
 
     await expect(
@@ -406,7 +406,7 @@ describe("EntityManager.deleteMany()", () => {
       jest.requireMock("../../src/dialects/TransactionSessionManager");
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
@@ -438,7 +438,7 @@ describe("EntityManager.deleteMany()", () => {
       jest.requireMock("../../src/dialects/TransactionSessionManager");
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
@@ -457,7 +457,7 @@ describe("EntityManager.deleteMany()", () => {
       jest.requireMock("../../src/dialects/TransactionSessionManager");
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
@@ -490,7 +490,7 @@ describe("EntityManager.deleteMany()", () => {
       jest.requireMock("../../src/dialects/TransactionSessionManager");
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(false);
 
@@ -511,7 +511,7 @@ describe("EntityManager.deleteMany()", () => {
     } = jest.requireMock("../../src/dialects/TransactionSessionManager");
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 

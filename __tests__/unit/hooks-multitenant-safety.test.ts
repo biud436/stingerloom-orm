@@ -108,11 +108,11 @@ function createTestEntityManager(): EntityManager {
       { name: "active", options: {} },
     ],
   };
-  jest.spyOn(em as any, "resolveEntityMetadata").mockReturnValue(metadata);
-  jest.spyOn(em as any, "resolveManyToOneMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "resolveOneToOneMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "resolveOneToManyMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
+  jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(metadata);
+  jest.spyOn((em as any).resolver, "resolveManyToOneMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveOneToOneMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
 
   return em;
 }
@@ -297,8 +297,8 @@ describe("생명주기 훅 — 멀티테넌시 AsyncLocalStorage 안전성", () 
     const tenantsDuringDelay: string[] = [];
 
     // 지연이 있는 BeforeInsert를 시뮬레이션하기 위해 runHooks를 래핑
-    const originalRunHooks = (em as any).runHooks.bind(em);
-    jest.spyOn(em as any, "runHooks").mockImplementation(
+    const originalRunHooks = (em as any).cascadeHandler.runHooks.bind((em as any).cascadeHandler);
+    jest.spyOn((em as any).cascadeHandler, "runHooks").mockImplementation(
       async (entity: any, item: any, event: any) => {
         // 원래 훅 실행
         await originalRunHooks(entity, item, event);

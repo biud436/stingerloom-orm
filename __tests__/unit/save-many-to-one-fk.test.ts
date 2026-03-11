@@ -108,7 +108,7 @@ function createTestEntityManager() {
 }
 
 function setupMocks(em: EntityManager) {
-  jest.spyOn(em as any, "resolveEntityMetadata").mockImplementation(
+  jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockImplementation(
     (entity: any) => {
       if (entity === TestPet) return petMetadata;
       if (entity === TestOwner) return ownerMetadata;
@@ -116,15 +116,15 @@ function setupMocks(em: EntityManager) {
     },
   );
   jest
-    .spyOn(em as any, "resolveManyToOneMetadata")
+    .spyOn((em as any).resolver, "resolveManyToOneMetadata")
     .mockImplementation((entity: any) => {
       if (entity === TestPet) return manyToOneRelations;
       return [];
     });
-  jest.spyOn(em as any, "resolveOneToOneMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "resolveOneToManyMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "resolveManyToManyMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
+  jest.spyOn((em as any).resolver, "resolveOneToOneMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveManyToManyMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
 }
 
 function getSqlText(call: any[]): string {

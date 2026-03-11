@@ -93,16 +93,16 @@ describe("Graceful Shutdown (Issue #18)", () => {
     it("should null out replicationRouter", async () => {
       // Manually set a replication router
       const { ReplicationRouter } = require("../../src/dialects/ReplicationRouter");
-      (em as any).replicationRouter = new ReplicationRouter({
+      (em as any).replication["router"] = new ReplicationRouter({
         master: { host: "master", port: 5432, username: "u", password: "p", database: "db" },
         slaves: [{ host: "slave1", port: 5432, username: "u", password: "p", database: "db" }],
       });
 
-      expect((em as any).replicationRouter).not.toBeNull();
+      expect((em as any).replication["router"]).not.toBeNull();
 
       await em.propagateShutdown();
 
-      expect((em as any).replicationRouter).toBeNull();
+      expect((em as any).replication["router"]).toBeNull();
     });
 
     it("should reset replicationRouter failedSlaves before nulling", async () => {
@@ -115,7 +115,7 @@ describe("Graceful Shutdown (Issue #18)", () => {
       router.markSlaveFailed(slave);
       expect(router.healthySlaveCount).toBe(0);
 
-      (em as any).replicationRouter = router;
+      (em as any).replication["router"] = router;
 
       const resetSpy = jest.spyOn(router, "resetFailedSlaves");
       await em.propagateShutdown();
@@ -289,7 +289,7 @@ describe("Graceful Shutdown (Issue #18)", () => {
       expect(result).toBe(true);
       expect(mockClient.close).toHaveBeenCalled();
       expect((em as any).queryTracker).toBeNull();
-      expect((em as any).replicationRouter).toBeNull();
+      expect((em as any).replication["router"]).toBeNull();
     });
   });
 

@@ -83,12 +83,12 @@ function setupMocks(em: EntityManager) {
       { name: "count", options: {} },
     ],
   };
-  jest.spyOn(em as any, "resolveEntityMetadata").mockReturnValue(metadata);
-  jest.spyOn(em as any, "resolveManyToOneMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "resolveOneToOneMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "resolveOneToManyMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "resolveManyToManyMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
+  jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(metadata);
+  jest.spyOn((em as any).resolver, "resolveManyToOneMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveOneToOneMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveManyToManyMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
 }
 
 describe("find() WHERE with falsy values (regression)", () => {
@@ -223,7 +223,7 @@ describe("propagateShutdown() resource cleanup", () => {
     em.addSubscriber({ listenTo: () => FalsyTestEntity } as any);
     (em as any).dirtyEntities.add({});
     (em as any).queryTracker = { getLog: () => [], reset: jest.fn() };
-    (em as any).replicationRouter = { resetFailedSlaves: jest.fn() };
+    (em as any).replication["router"] = { resetFailedSlaves: jest.fn() };
 
     // Call propagateShutdown
     await em.propagateShutdown();
@@ -232,6 +232,6 @@ describe("propagateShutdown() resource cleanup", () => {
     expect((em as any).subscribers.length).toBe(0);
     expect((em as any).dirtyEntities.size).toBe(0);
     expect((em as any).queryTracker).toBeNull();
-    expect((em as any).replicationRouter).toBeNull();
+    expect((em as any).replication["router"]).toBeNull();
   });
 });

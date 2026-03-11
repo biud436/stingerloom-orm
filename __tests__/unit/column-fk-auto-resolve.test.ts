@@ -145,19 +145,19 @@ describe("@Column 기반 FK 자동 감지 (ManyToOne)", () => {
   });
 
   it("@Column({ name: 'custom_owner_fk' }) ownerId → joinColumn이 'custom_owner_fk'로 해석된다", () => {
-    const relations = (em as any).resolveManyToOneMetadata(PetWithCustomFk);
+    const relations = (em as any).resolver.resolveManyToOneMetadata(PetWithCustomFk);
     expect(relations).toHaveLength(1);
     expect(relations[0].joinColumn).toBe("custom_owner_fk");
   });
 
   it("@Column() ownerId (name 생략) → joinColumn이 'ownerId'로 해석된다", () => {
-    const relations = (em as any).resolveManyToOneMetadata(PetWithDefaultFk);
+    const relations = (em as any).resolver.resolveManyToOneMetadata(PetWithDefaultFk);
     expect(relations).toHaveLength(1);
     expect(relations[0].joinColumn).toBe("ownerId");
   });
 
   it("joinColumn이 명시되면 @Column 무시 → 'explicit_fk' 유지", () => {
-    const relations = (em as any).resolveManyToOneMetadata(
+    const relations = (em as any).resolver.resolveManyToOneMetadata(
       PetWithExplicitJoinColumn,
     );
     expect(relations).toHaveLength(1);
@@ -165,7 +165,7 @@ describe("@Column 기반 FK 자동 감지 (ManyToOne)", () => {
   });
 
   it("{propertyName}Id 패턴의 @Column이 없으면 joinColumn은 undefined", () => {
-    const relations = (em as any).resolveManyToOneMetadata(PetWithoutFkColumn);
+    const relations = (em as any).resolver.resolveManyToOneMetadata(PetWithoutFkColumn);
     expect(relations).toHaveLength(1);
     expect(relations[0].joinColumn).toBeUndefined();
   });
@@ -180,7 +180,7 @@ describe("@Column 기반 FK 자동 감지 (OneToOne)", () => {
   });
 
   it("@Column({ name: 'user_fk' }) userId → joinColumn이 'user_fk'로 해석된다", () => {
-    const relations = (em as any).resolveOneToOneMetadata(Profile);
+    const relations = (em as any).resolver.resolveOneToOneMetadata(Profile);
     expect(relations).toHaveLength(1);
     expect(relations[0].joinColumn).toBe("user_fk");
   });
@@ -211,16 +211,16 @@ describe("@Column FK 자동 감지 + save() 통합", () => {
     };
 
     jest
-      .spyOn(em as any, "resolveEntityMetadata")
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockImplementation((entity: any) => {
         if (entity === PetWithCustomFk) return petMeta;
         if (entity === Owner) return ownerMeta;
         return null;
       });
-    jest.spyOn(em as any, "resolveOneToOneMetadata").mockReturnValue([]);
-    jest.spyOn(em as any, "resolveOneToManyMetadata").mockReturnValue([]);
-    jest.spyOn(em as any, "resolveManyToManyMetadata").mockReturnValue([]);
-    jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
+    jest.spyOn((em as any).resolver, "resolveOneToOneMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "resolveManyToManyMetadata").mockReturnValue([]);
+    jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
   });
 
   it("@Column({ name: 'custom_owner_fk' })가 INSERT에 반영된다", async () => {

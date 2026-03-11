@@ -95,7 +95,7 @@ function createTestEntityManager() {
     supportsExplain: () => false,
   };
 
-  jest.spyOn(em as any, "resolveEntityMetadata").mockImplementation(
+  jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockImplementation(
     (entity: any) => {
       if (entity === User) return userMetadata;
       if (entity === Post) return postMetadata;
@@ -108,15 +108,15 @@ function createTestEntityManager() {
   jest.spyOn(em as any, "wrap").mockImplementation(
     (...args: any[]) => `\`${args[0]}\``,
   );
-  jest.spyOn(em as any, "resolveOneToOneMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "resolveManyToOneMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "resolveOneToManyMetadata").mockReturnValue([]);
-  jest.spyOn(em as any, "runHooks").mockResolvedValue(undefined);
-  jest.spyOn(em as any, "cascadeSaveOneToMany").mockResolvedValue(undefined);
-  jest.spyOn(em as any, "cascadeSaveManyToOne").mockResolvedValue(undefined);
-  jest.spyOn(em as any, "getDeletedAtColumn").mockReturnValue(null);
-  jest.spyOn(em as any, "getCreateTimestampColumn").mockReturnValue(null);
-  jest.spyOn(em as any, "getUpdateTimestampColumn").mockReturnValue(null);
+  jest.spyOn((em as any).resolver, "resolveOneToOneMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveManyToOneMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([]);
+  jest.spyOn((em as any).cascadeHandler, "runHooks").mockResolvedValue(undefined);
+  jest.spyOn((em as any).cascadeHandler, "cascadeSaveOneToMany").mockResolvedValue(undefined);
+  jest.spyOn((em as any).cascadeHandler, "cascadeSaveManyToOne").mockResolvedValue(undefined);
+  jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
+  jest.spyOn((em as any).resolver, "getCreateTimestampColumn").mockReturnValue(null);
+  jest.spyOn((em as any).resolver, "getUpdateTimestampColumn").mockReturnValue(null);
   return em;
 }
 
@@ -140,7 +140,7 @@ describe("Connection Reuse (Issue #30)", () => {
   describe("find() with relation loading", () => {
     it("should use exactly 1 TransactionSessionManager when loading relations", async () => {
       // OneToMany 관계 메타데이터 설정
-      jest.spyOn(em as any, "resolveOneToManyMetadata").mockReturnValue([
+      jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([
         {
           propertyName: "posts",
           getMappingEntity: () => Post,
