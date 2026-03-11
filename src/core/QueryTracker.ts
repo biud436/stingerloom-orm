@@ -24,7 +24,7 @@ export interface QueryTrackerOptions {
   slowQueryMs?: number | null;
 
   /**
-   * 최대 로그 보관 수. Ring buffer 방식으로 초과 시 가장 오래된 항목부터 제거됩니다.
+   * 최대 로그 보관 수. 순환 버퍼 방식으로 초과 시 가장 오래된 항목부터 제거됩니다.
    * 0 또는 Infinity이면 무제한.
    * @default 1000
    */
@@ -51,11 +51,19 @@ export interface QueryTrackerOptions {
  * 동일 엔티티에 대해 짧은 시간(windowMs) 내 threshold 이상의 쿼리가 실행되면
  * N+1 경고를 발행합니다.
  *
- * Ring buffer 방식으로 maxLogEntries를 초과하면 가장 오래된 항목부터 제거합니다.
+ * O(1) 삽입의 순환 버퍼로 maxLogEntries를 초과하면 가장 오래된 항목부터 제거합니다.
  * enabled=false로 프로덕션에서 오버헤드를 완전히 제거할 수 있습니다.
  */
 export class QueryTracker {
-  private readonly log: QueryLogEntry[] = [];
+  // --- Bounded mode: circular buffer (O(1) insert) ---
+  private buffer: (QueryLogEntry | undefined)[] = [];
+  private head = 0;
+  private _size = 0;
+
+  // --- Unbounded mode (maxLogEntries=0 or Infinity): plain array ---
+  private readonly unboundedLog: QueryLogEntry[] = [];
+  private readonly unbounded: boolean;
+
   private readonly logger = new Logger("QueryTracker");
 
   private readonly windowMs: number;
@@ -76,6 +84,11 @@ export class QueryTracker {
     this.maxLogEntries = options?.maxLogEntries ?? 1000;
     this.enabled = options?.enabled ?? true;
     this.ttlMs = options?.ttlMs ?? 0;
+    this.unbounded =
+      this.maxLogEntries <= 0 || !isFinite(this.maxLogEntries);
+    if (!this.unbounded) {
+      this.buffer = new Array(this.maxLogEntries);
+    }
   }
 
   /**
@@ -92,23 +105,29 @@ export class QueryTracker {
       this.evictExpired(now);
     }
 
-    this.log.push({
+    const entry: QueryLogEntry = {
       entityName,
       sql: sqlText,
       durationMs,
       timestamp: now,
-    });
+    };
 
-    // Ring buffer: maxLogEntries 초과 시 가장 오래된 항목 제거
-    if (this.maxLogEntries > 0 && this.log.length > this.maxLogEntries) {
-      this.log.splice(0, this.log.length - this.maxLogEntries);
+    if (this.unbounded) {
+      this.unboundedLog.push(entry);
+    } else {
+      // O(1) circular buffer insertion
+      const writeIdx = (this.head + this._size) % this.maxLogEntries;
+      this.buffer[writeIdx] = entry;
+      if (this._size < this.maxLogEntries) {
+        this._size++;
+      } else {
+        this.head = (this.head + 1) % this.maxLogEntries;
+      }
     }
 
     // 슬로우 쿼리 감지
     if (this.slowQueryMs !== null && durationMs > this.slowQueryMs) {
-      this.logger.warn(
-        `[SLOW QUERY] ${durationMs}ms: ${sqlText}`,
-      );
+      this.logger.warn(`[SLOW QUERY] ${durationMs}ms: ${sqlText}`);
     }
 
     // N+1 감지: windowMs 이내의 동일 엔티티 쿼리 수 카운트
@@ -116,10 +135,17 @@ export class QueryTracker {
   }
 
   /**
-   * 전체 쿼리 로그를 반환합니다.
+   * 전체 쿼리 로그를 반환합니다 (시간순, 가장 오래된 항목이 앞).
    */
   getLog(): ReadonlyArray<QueryLogEntry> {
-    return this.log;
+    if (this.unbounded) return this.unboundedLog;
+    const result: QueryLogEntry[] = [];
+    for (let i = 0; i < this._size; i++) {
+      result.push(
+        this.buffer[(this.head + i) % this.maxLogEntries]!,
+      );
+    }
+    return result;
   }
 
   /**
@@ -174,25 +200,43 @@ export class QueryTracker {
    * 쿼리 로그와 경고 이력을 초기화합니다.
    */
   reset(): void {
-    this.log.length = 0;
+    if (this.unbounded) {
+      this.unboundedLog.length = 0;
+    } else {
+      this.head = 0;
+      this._size = 0;
+    }
     this.warned.clear();
   }
 
   /**
-   * TTL보다 오래된 로그 항목을 제거합니다.
+   * TTL보다 오래된 로그 항목을 제거합니다. O(k) — k = 제거 대상 수.
    */
   private evictExpired(now: number): void {
     const cutoff = now - this.ttlMs;
-    let removeCount = 0;
-    for (let i = 0; i < this.log.length; i++) {
-      if (this.log[i].timestamp < cutoff) {
-        removeCount++;
-      } else {
-        break; // log는 시간순이므로 첫 유효 항목에서 중단
+    if (this.unbounded) {
+      let removeCount = 0;
+      for (let i = 0; i < this.unboundedLog.length; i++) {
+        if (this.unboundedLog[i].timestamp < cutoff) {
+          removeCount++;
+        } else {
+          break; // 시간순이므로 첫 유효 항목에서 중단
+        }
       }
-    }
-    if (removeCount > 0) {
-      this.log.splice(0, removeCount);
+      if (removeCount > 0) {
+        this.unboundedLog.splice(0, removeCount);
+      }
+    } else {
+      // Circular buffer: head 포인터만 전진 — O(k)
+      while (this._size > 0) {
+        const entry = this.buffer[this.head];
+        if (entry && entry.timestamp < cutoff) {
+          this.head = (this.head + 1) % this.maxLogEntries;
+          this._size--;
+        } else {
+          break;
+        }
+      }
     }
   }
 
@@ -203,12 +247,19 @@ export class QueryTracker {
     const windowStart = now - this.windowMs;
     let count = 0;
 
-    // 최근 로그를 뒤에서부터 탐색 (최신 항목이 끝에 있으므로)
-    for (let i = this.log.length - 1; i >= 0; i--) {
-      const entry = this.log[i];
-      if (entry.timestamp < windowStart) break;
-      if (entry.entityName === entityName) {
-        count++;
+    if (this.unbounded) {
+      // 최근 로그를 뒤에서부터 탐색
+      for (let i = this.unboundedLog.length - 1; i >= 0; i--) {
+        const entry = this.unboundedLog[i];
+        if (entry.timestamp < windowStart) break;
+        if (entry.entityName === entityName) count++;
+      }
+    } else {
+      // 순환 버퍼: 뒤에서부터 탐색
+      for (let i = this._size - 1; i >= 0; i--) {
+        const entry = this.buffer[(this.head + i) % this.maxLogEntries]!;
+        if (entry.timestamp < windowStart) break;
+        if (entry.entityName === entityName) count++;
       }
     }
 

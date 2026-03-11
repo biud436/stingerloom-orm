@@ -63,6 +63,21 @@ describe("QueryTracker — Memory Leak Prevention (Issue #14)", () => {
       expect(tracker.getLog()[0].entityName).toBe("B");
       expect(tracker.getLog()[2].entityName).toBe("D");
     });
+
+    it("should maintain O(1) insertion with circular buffer", () => {
+      // Verify that many insertions beyond capacity still work correctly
+      const tracker = new QueryTracker({ maxLogEntries: 3 });
+
+      for (let i = 0; i < 100; i++) {
+        tracker.track("E", `SELECT ${i}`, 1);
+      }
+
+      const log = tracker.getLog();
+      expect(log).toHaveLength(3);
+      expect(log[0].sql).toBe("SELECT 97");
+      expect(log[1].sql).toBe("SELECT 98");
+      expect(log[2].sql).toBe("SELECT 99");
+    });
   });
 
   describe("enabled option", () => {
@@ -124,23 +139,23 @@ describe("QueryTracker — Memory Leak Prevention (Issue #14)", () => {
 
   describe("TTL mechanism", () => {
     it("should evict entries older than ttlMs", () => {
+      const baseTime = 100000;
+      const dateNowSpy = jest.spyOn(Date, "now")
+        .mockReturnValueOnce(baseTime)       // track Old1
+        .mockReturnValueOnce(baseTime + 100) // track Old2
+        .mockReturnValueOnce(baseTime + 600); // track New (cutoff = 600-200 = 400)
+
       const tracker = new QueryTracker({ ttlMs: 200, maxLogEntries: 0 });
-
-      // Add entries with old timestamps by manipulating the log directly
-      const now = Date.now();
-      const log = (tracker as any).log as QueryLogEntry[];
-      log.push(
-        { entityName: "Old1", sql: "SELECT old1", durationMs: 1, timestamp: now - 500 },
-        { entityName: "Old2", sql: "SELECT old2", durationMs: 1, timestamp: now - 300 },
-      );
-
-      // track() triggers eviction
+      tracker.track("Old1", "SELECT old1", 1);
+      tracker.track("Old2", "SELECT old2", 1);
+      // New entry triggers eviction: cutoff = baseTime+400, Old1(+0) and Old2(+100) are evicted
       tracker.track("New", "SELECT new", 1);
 
       const result = tracker.getLog();
-      // Old1 and Old2 should be evicted (> 200ms old), only New remains
       expect(result).toHaveLength(1);
       expect(result[0].entityName).toBe("New");
+
+      dateNowSpy.mockRestore();
     });
 
     it("should not evict entries within ttlMs", () => {
@@ -154,32 +169,34 @@ describe("QueryTracker — Memory Leak Prevention (Issue #14)", () => {
     });
 
     it("should not perform TTL eviction when ttlMs is 0 (disabled)", () => {
+      const baseTime = 100000;
+      const dateNowSpy = jest.spyOn(Date, "now")
+        .mockReturnValueOnce(baseTime)          // track Old
+        .mockReturnValueOnce(baseTime + 200000); // track New
+
       const tracker = new QueryTracker({ ttlMs: 0, maxLogEntries: 0 });
-
-      const now = Date.now();
-      const log = (tracker as any).log as QueryLogEntry[];
-      log.push(
-        { entityName: "Old", sql: "SELECT old", durationMs: 1, timestamp: now - 100000 },
-      );
-
+      tracker.track("Old", "SELECT old", 1);
       tracker.track("New", "SELECT new", 1);
 
       expect(tracker.getLog()).toHaveLength(2);
+
+      dateNowSpy.mockRestore();
     });
 
     it("should combine TTL and maxLogEntries", () => {
+      const baseTime = 100000;
+      const dateNowSpy = jest.spyOn(Date, "now")
+        .mockReturnValueOnce(baseTime)       // Old1
+        .mockReturnValueOnce(baseTime + 100) // Old2
+        .mockReturnValueOnce(baseTime + 200) // Old3
+        .mockReturnValueOnce(baseTime + 700) // New1 (TTL evicts all old, cutoff=500)
+        .mockReturnValueOnce(baseTime + 800) // New2
+        .mockReturnValueOnce(baseTime + 900); // New3
+
       const tracker = new QueryTracker({ ttlMs: 200, maxLogEntries: 2 });
-
-      const now = Date.now();
-      const log = (tracker as any).log as QueryLogEntry[];
-      // Add 3 old entries
-      log.push(
-        { entityName: "Old1", sql: "SELECT old1", durationMs: 1, timestamp: now - 500 },
-        { entityName: "Old2", sql: "SELECT old2", durationMs: 1, timestamp: now - 400 },
-        { entityName: "Old3", sql: "SELECT old3", durationMs: 1, timestamp: now - 300 },
-      );
-
-      // New entry triggers TTL first (removes all 3 old), then adds 1
+      tracker.track("Old1", "SELECT old1", 1);
+      tracker.track("Old2", "SELECT old2", 1);
+      tracker.track("Old3", "SELECT old3", 1);
       tracker.track("New1", "SELECT new1", 1);
       tracker.track("New2", "SELECT new2", 1);
       tracker.track("New3", "SELECT new3", 1);
@@ -189,6 +206,27 @@ describe("QueryTracker — Memory Leak Prevention (Issue #14)", () => {
       expect(result).toHaveLength(2);
       expect(result[0].entityName).toBe("New2");
       expect(result[1].entityName).toBe("New3");
+
+      dateNowSpy.mockRestore();
+    });
+
+    it("should evict correctly in bounded circular buffer mode", () => {
+      const baseTime = 100000;
+      const dateNowSpy = jest.spyOn(Date, "now")
+        .mockReturnValueOnce(baseTime)       // A
+        .mockReturnValueOnce(baseTime + 50)  // B
+        .mockReturnValueOnce(baseTime + 500); // C (cutoff = 300, evicts A and B)
+
+      const tracker = new QueryTracker({ ttlMs: 200, maxLogEntries: 10 });
+      tracker.track("A", "SELECT a", 1);
+      tracker.track("B", "SELECT b", 1);
+      tracker.track("C", "SELECT c", 1);
+
+      const result = tracker.getLog();
+      expect(result).toHaveLength(1);
+      expect(result[0].entityName).toBe("C");
+
+      dateNowSpy.mockRestore();
     });
   });
 
