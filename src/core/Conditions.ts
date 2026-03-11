@@ -128,16 +128,46 @@ export class Conditions {
 
   /**
    * Creates an arbitrary raw condition expression.
+   *
+   * @warning SQL Injection 위험: 사용자 입력을 직접 전달하지 마세요.
+   * 이 메서드는 내부 또는 신뢰된 리터럴에만 사용해야 합니다.
+   * @deprecated `unsafeRaw()`를 대신 사용하세요 — 위험성을 명시적으로 나타냅니다.
    */
   static raw(condition: string): Sql {
-    return sql`${raw(condition)}`;
+    return Conditions.unsafeRaw(condition);
   }
 
   /**
+   * Creates an arbitrary raw condition expression.
+   *
+   * @warning SQL Injection 위험: 사용자 입력을 직접 전달하지 마세요.
+   * 이 메서드는 내부 또는 신뢰된 리터럴에만 사용해야 합니다.
+   */
+  static unsafeRaw(condition: string): Sql {
+    return sql`${raw(condition)}`;
+  }
+
+  private static readonly ALLOWED_AGGREGATES = [
+    "COUNT",
+    "SUM",
+    "AVG",
+    "MIN",
+    "MAX",
+  ];
+
+  /**
    * Creates an aggregate function expression.
+   *
+   * @throws {Error} 허용되지 않은 집계 함수명이 전달되면 에러를 발생시킵니다.
    */
   static aggregate(fn: string, column: string): Sql {
-    return sql`${raw(fn)}(${raw(column)})`;
+    const normalized = fn.trim().toUpperCase();
+    if (!Conditions.ALLOWED_AGGREGATES.includes(normalized)) {
+      throw new Error(
+        `Unsupported aggregate function: "${fn}". Allowed: ${Conditions.ALLOWED_AGGREGATES.join(", ")}`,
+      );
+    }
+    return sql`${raw(normalized)}(${raw(column)})`;
   }
 
   /**

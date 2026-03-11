@@ -129,7 +129,7 @@ describe("Conditions - 추가 테스트", () => {
   });
 
   describe("raw 조건", () => {
-    it("raw는 임의의 SQL 조건을 생성해야 함", () => {
+    it("raw는 임의의 SQL 조건을 생성해야 함 (deprecated, unsafeRaw으로 위임)", () => {
       const condition = Conditions.raw("DATE(created_at) = CURDATE()");
 
       expect(condition.sql).toBe("DATE(created_at) = CURDATE()");
@@ -145,6 +145,35 @@ describe("Conditions - 추가 테스트", () => {
         "CONCAT(first_name, ' ', last_name) LIKE '%John%'",
       );
       expect(condition.values).toEqual([]);
+    });
+
+    it("unsafeRaw는 raw와 동일하게 동작해야 함", () => {
+      const condition = Conditions.unsafeRaw("1 = 1");
+
+      expect(condition.sql).toBe("1 = 1");
+      expect(condition.values).toEqual([]);
+    });
+  });
+
+  describe("aggregate 허용 목록 검증", () => {
+    it("허용된 집계 함수는 정상 동작해야 함", () => {
+      expect(Conditions.aggregate("COUNT", "*").sql).toBe("COUNT(*)");
+      expect(Conditions.aggregate("sum", "price").sql).toBe("SUM(price)");
+      expect(Conditions.aggregate(" avg ", "rating").sql).toBe("AVG(rating)");
+      expect(Conditions.aggregate("MIN", "age").sql).toBe("MIN(age)");
+      expect(Conditions.aggregate("MAX", "score").sql).toBe("MAX(score)");
+    });
+
+    it("허용되지 않은 집계 함수는 에러를 발생시켜야 함", () => {
+      expect(() => Conditions.aggregate("DROP TABLE users; --", "id")).toThrow(
+        /Unsupported aggregate function/,
+      );
+      expect(() => Conditions.aggregate("CONCAT", "name")).toThrow(
+        /Unsupported aggregate function/,
+      );
+      expect(() => Conditions.aggregate("", "id")).toThrow(
+        /Unsupported aggregate function/,
+      );
     });
   });
 
