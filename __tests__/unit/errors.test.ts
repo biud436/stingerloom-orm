@@ -40,6 +40,26 @@ describe("DatabaseConnectionFailedError", () => {
     expect(error).toBeInstanceOf(Exception);
     expect(error).toBeInstanceOf(Error);
   });
+
+  it("should preserve original Error message and cause", () => {
+    const original = new Error("ECONNREFUSED 127.0.0.1:5432");
+    const error = new DatabaseConnectionFailedError(original);
+
+    expect(error.message).toBe(
+      "데이터베이스 연결에 실패했습니다: ECONNREFUSED 127.0.0.1:5432",
+    );
+    expect((error as any).cause).toBe(original);
+    expect(error.status).toBe(500);
+  });
+
+  it("should handle non-Error original values", () => {
+    const error = new DatabaseConnectionFailedError("pool exhausted");
+
+    expect(error.message).toBe(
+      "데이터베이스 연결에 실패했습니다: pool exhausted",
+    );
+    expect((error as any).cause).toBe("pool exhausted");
+  });
 });
 
 describe("NotSupportedDatabaseTypeError", () => {

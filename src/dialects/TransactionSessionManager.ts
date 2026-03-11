@@ -56,7 +56,7 @@ export class TransactionSessionManager extends IQueryEngine {
 
       await this.dataSource.createConnection();
     } catch (error: unknown) {
-      throw new DatabaseConnectionFailedError();
+      throw new DatabaseConnectionFailedError(error);
     }
   }
 
@@ -104,7 +104,7 @@ export class TransactionSessionManager extends IQueryEngine {
 
       await this.dataSource.createConnection();
     } catch (error: unknown) {
-      throw new DatabaseConnectionFailedError();
+      throw new DatabaseConnectionFailedError(error);
     }
   }
 
