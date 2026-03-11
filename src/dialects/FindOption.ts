@@ -3,12 +3,12 @@ import { IOrderBy } from "./IOrderBy";
 import { Sql } from "sql-template-tag";
 
 /**
- * WHERE 조건 타입. 엔티티 필드 기반 자동완성을 제공하면서
- * 임의의 문자열 키(FK 컬럼 등)도 허용합니다.
+ * WHERE 조건 타입. 엔티티 필드 기반 자동완성과 타입 체크를 제공합니다.
+ * 값에 `Sql` 객체(Conditions.* 결과)도 허용합니다.
  */
 export type WhereClause<T> = {
-  [K in keyof T]?: T[K];
-} & Record<string, any>;
+  [K in keyof T]?: T[K] | Sql | null;
+};
 
 /**
  * Represents the options that can be used to find entities in the ORM.

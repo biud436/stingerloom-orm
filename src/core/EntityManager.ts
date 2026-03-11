@@ -3164,8 +3164,8 @@ export class EntityManager implements BaseEntityManager {
 
     return this.executeInTransaction(async (session) => {
       // @BeforeDelete 훅 실행
-      await this.runHooks(entity, criteria, "beforeDelete");
-      await this.eventEmitter.emit("beforeDelete", { entity, data: criteria });
+      await this.runHooks(entity, criteria as Partial<T>, "beforeDelete");
+      await this.eventEmitter.emit("beforeDelete", { entity, data: criteria as Partial<T> });
       await this.notifySubscribers(entity, "beforeDelete", {
         entityClass: entity,
         criteria,
@@ -3213,8 +3213,8 @@ export class EntityManager implements BaseEntityManager {
       }
 
       // @AfterDelete 훅 실행
-      await this.runHooks(entity, criteria, "afterDelete");
-      await this.eventEmitter.emit("afterDelete", { entity, data: criteria });
+      await this.runHooks(entity, criteria as Partial<T>, "afterDelete");
+      await this.eventEmitter.emit("afterDelete", { entity, data: criteria as Partial<T> });
       await this.notifySubscribers(entity, "afterDelete", {
         entityClass: entity,
         criteria,
