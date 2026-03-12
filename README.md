@@ -176,4 +176,4 @@ const migration = new SchemaDiffMigrationGenerator().generate(diff, "mysql");
 
 ## Documentation
 
-Full documentation available at [docs/](https://github.com/biud436/stingerloom-orm/tree/main/docs).
+Full documentation available at [biud436.github.io/stingerloom-orm](https://biud436.github.io/stingerloom-orm/).
