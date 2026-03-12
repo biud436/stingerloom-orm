@@ -20,7 +20,7 @@ export default defineConfig({
 
     sidebar: [
       {
-        text: "가이드",
+        text: "Guide",
         items: [
           { text: "Getting Started", link: "/getting-started" },
           { text: "Entities", link: "/entities" },
@@ -33,7 +33,7 @@ export default defineConfig({
         ],
       },
       {
-        text: "고급 기능",
+        text: "Advanced",
         items: [
           { text: "Advanced Features", link: "/advanced" },
           { text: "Multi-Tenancy", link: "/multi-tenancy" },
@@ -41,7 +41,7 @@ export default defineConfig({
         ],
       },
       {
-        text: "레퍼런스",
+        text: "Reference",
         items: [
           { text: "API Reference", link: "/api-reference" },
           { text: "Contributor Onboarding", link: "/onboarding" },
