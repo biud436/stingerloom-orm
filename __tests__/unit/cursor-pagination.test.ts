@@ -409,6 +409,406 @@ describe("EntityManager.findWithCursor", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// UUID PK 커서 페이지네이션 테스트
+// ─────────────────────────────────────────────────────────────────────────────
+
+const UuidEntity = class UuidItem {} as any;
+
+const uuidMetadata = {
+  name: "UuidItem",
+  target: UuidEntity,
+  columns: [
+    { name: "id", options: { primary: true, type: "varchar" } },
+    { name: "title", options: {} },
+    { name: "createdAt", options: {} },
+  ],
+};
+
+function setupUuidMocks(em: EntityManager): void {
+  jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(uuidMetadata);
+  jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
+}
+
+/** 정렬된 UUID v4 목록 생성 (사전순) */
+function makeSortedUuids(count: number): string[] {
+  const uuids = [
+    "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d",
+    "1b2c3d4e-5f6a-4b7c-9d8e-9f0a1b2c3d4e",
+    "2c3d4e5f-6a7b-4c8d-ae9f-0a1b2c3d4e5f",
+    "3d4e5f6a-7b8c-4d9e-bf0a-1b2c3d4e5f6a",
+    "4e5f6a7b-8c9d-4eaf-c01b-2c3d4e5f6a7b",
+    "5f6a7b8c-9dae-4fb0-d12c-3d4e5f6a7b8c",
+    "6a7b8c9d-aebf-40c1-e23d-4e5f6a7b8c9d",
+    "7b8c9dae-bfc0-41d2-f34e-5f6a7b8c9dae",
+    "8c9daebf-c0d1-42e3-a45f-6a7b8c9daebf",
+    "9daebfc0-d1e2-43f4-b560-7b8c9daebfc0",
+  ];
+  return uuids.slice(0, count);
+}
+
+function makeUuidRows(uuids: string[]) {
+  return uuids.map((id, i) => ({
+    id,
+    title: `Item ${i + 1}`,
+    createdAt: `2024-01-${String(i + 1).padStart(2, "0")}`,
+  }));
+}
+
+describe("UUID PK cursor pagination", () => {
+  let em: EntityManager;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    em = createTestEntityManager();
+    setupUuidMocks(em);
+  });
+
+  it("should encode and decode UUID cursor values correctly", () => {
+    const uuid = "550e8400-e29b-41d4-a716-446655440000";
+    const encoded = encodeCursor(uuid);
+    const decoded = decodeCursor(encoded);
+    expect(decoded).toBe(uuid);
+  });
+
+  it("should return first page with UUID PKs", async () => {
+    const uuids = makeSortedUuids(4);
+    const rows = makeUuidRows(uuids);
+    mockQuery
+      .mockResolvedValueOnce(undefined) // SET autocommit = 0
+      .mockResolvedValueOnce({ results: rows, fields: [] });
+
+    const result = await em.findWithCursor(UuidEntity, { take: 3 });
+
+    expect(result.data.length).toBe(3);
+    expect(result.hasNextPage).toBe(true);
+    expect(result.nextCursor).not.toBeNull();
+    // nextCursor should encode the 3rd UUID (index 2)
+    expect(result.nextCursor).toBe(encodeCursor(uuids[2]));
+  });
+
+  it("should generate > operator with UUID cursor for ASC", async () => {
+    const uuids = makeSortedUuids(3);
+    const cursor = encodeCursor(uuids[0]);
+    const rows = makeUuidRows(uuids.slice(1));
+    mockQuery
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ results: rows, fields: [] });
+
+    await em.findWithCursor(UuidEntity, {
+      take: 5,
+      cursor,
+      orderBy: "id",
+    });
+
+    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
+    expect(sqlText).toContain(">");
+  });
+
+  it("should generate < operator with UUID cursor for DESC", async () => {
+    const uuids = makeSortedUuids(3);
+    const cursor = encodeCursor(uuids[2]);
+    const rows = makeUuidRows(uuids.slice(0, 2).reverse());
+    mockQuery
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ results: rows, fields: [] });
+
+    await em.findWithCursor(UuidEntity, {
+      take: 5,
+      cursor,
+      direction: "DESC",
+      orderBy: "id",
+    });
+
+    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
+    expect(sqlText).toContain("<");
+  });
+
+  it("should pass UUID cursor as parameterized value (not interpolated)", async () => {
+    const uuids = makeSortedUuids(3);
+    const cursor = encodeCursor(uuids[0]);
+    const rows = makeUuidRows(uuids.slice(1));
+    mockQuery
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ results: rows, fields: [] });
+
+    await em.findWithCursor(UuidEntity, { take: 5, cursor, orderBy: "id" });
+
+    const sqlCall = mockQuery.mock.calls[1][0];
+    // UUID should be in the values array (parameterized), not inline in SQL
+    const values = sqlCall.values ?? [];
+    expect(values).toContain(uuids[0]);
+    // SQL text should NOT contain the raw UUID string
+    const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
+    expect(sqlText).not.toContain(uuids[0]);
+  });
+
+  it("should traverse multiple pages with UUID PKs", async () => {
+    const allUuids = makeSortedUuids(7);
+
+    // Page 1: take=3 → query 4, returns first 4
+    const page1Rows = makeUuidRows(allUuids.slice(0, 4));
+    mockQuery
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ results: page1Rows, fields: [] });
+
+    const page1 = await em.findWithCursor(UuidEntity, { take: 3 });
+    expect(page1.data.length).toBe(3);
+    expect(page1.hasNextPage).toBe(true);
+    const cursor1 = page1.nextCursor!;
+    expect(decodeCursor(cursor1)).toBe(allUuids[2]);
+
+    // Page 2: cursor from page 1, take=3 → query 4, returns next 4
+    jest.clearAllMocks();
+    em = createTestEntityManager();
+    setupUuidMocks(em);
+
+    const page2Rows = makeUuidRows(allUuids.slice(3, 7));
+    mockQuery
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ results: page2Rows, fields: [] });
+
+    const page2 = await em.findWithCursor(UuidEntity, {
+      take: 3,
+      cursor: cursor1,
+    });
+    expect(page2.data.length).toBe(3);
+    expect(page2.hasNextPage).toBe(true);
+    const cursor2 = page2.nextCursor!;
+    expect(decodeCursor(cursor2)).toBe(allUuids[5]);
+
+    // Page 3: last page, only 1 item left
+    jest.clearAllMocks();
+    em = createTestEntityManager();
+    setupUuidMocks(em);
+
+    const page3Rows = makeUuidRows(allUuids.slice(6));
+    mockQuery
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ results: page3Rows, fields: [] });
+
+    const page3 = await em.findWithCursor(UuidEntity, {
+      take: 3,
+      cursor: cursor2,
+    });
+    expect(page3.data.length).toBe(1);
+    expect(page3.hasNextPage).toBe(false);
+    expect(page3.nextCursor).toBeNull();
+  });
+
+  it("should use createdAt as orderBy for meaningful UUID ordering", async () => {
+    const uuids = makeSortedUuids(3);
+    const rows = makeUuidRows(uuids);
+    mockQuery
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ results: rows, fields: [] });
+
+    await em.findWithCursor(UuidEntity, {
+      take: 5,
+      orderBy: "createdAt",
+    });
+
+    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
+    expect(sqlText).toContain("`createdAt`");
+    expect(sqlText).toContain("ORDER BY");
+  });
+
+  it("should support where condition with UUID cursor", async () => {
+    const uuids = makeSortedUuids(2);
+    const cursor = encodeCursor(uuids[0]);
+    const rows = makeUuidRows(uuids.slice(1));
+    mockQuery
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ results: rows, fields: [] });
+
+    await em.findWithCursor(UuidEntity, {
+      take: 5,
+      cursor,
+      where: { title: "Item 2" } as any,
+      orderBy: "id",
+    });
+
+    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
+    expect(sqlText).toContain(">");
+    expect(sqlText).toContain("`title`");
+  });
+
+  it("should return empty result for UUID entity with no rows", async () => {
+    mockQuery
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ results: [], fields: [] });
+
+    const result = await em.findWithCursor(UuidEntity);
+    expect(result.data).toEqual([]);
+    expect(result.hasNextPage).toBe(false);
+    expect(result.nextCursor).toBeNull();
+    expect(result.count).toBe(0);
+  });
+
+  it("should handle random UUID v4 values (non-sequential)", async () => {
+    // UUID v4는 랜덤이므로 사전순 정렬 시 삽입 순서와 다를 수 있음
+    const randomUuids = [
+      "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "6ba7b810-9dad-41d9-80b4-00c04fd430c8",
+      "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+    ];
+    // DB가 ORDER BY id ASC로 정렬하면 사전순: 6ba... < a0e... < f47...
+    const sorted = [...randomUuids].sort();
+    const rows = makeUuidRows(sorted);
+
+    mockQuery
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ results: rows, fields: [] });
+
+    const result = await em.findWithCursor(UuidEntity, { take: 2 });
+
+    expect(result.data.length).toBe(2);
+    expect(result.hasNextPage).toBe(true);
+    // cursor should be the 2nd item in sorted order
+    expect(decodeCursor(result.nextCursor!)).toBe(sorted[1]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 비숫자형 PK 경고 테스트
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Non-numeric PK cursor pagination warnings", () => {
+  let em: EntityManager;
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // mockQuery에 기본 반환값 설정 — 경고 테스트에서는 쿼리 결과가 중요하지 않음
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValue({ results: [], fields: [] });
+    em = createTestEntityManager();
+    warnSpy = jest.spyOn((em as any).logger, "warn");
+  });
+
+  function setupWithPkType(type: string) {
+    const meta = {
+      name: "TestEntity",
+      target: UuidEntity,
+      columns: [
+        { name: "id", options: { primary: true, type } },
+        { name: "title", options: {} },
+      ],
+    };
+    jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(meta);
+    jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
+  }
+
+  it("should warn when PK is varchar and orderBy is not specified (MySQL)", async () => {
+    (em as any).dbType = "mysql";
+    setupWithPkType("varchar");
+
+    await em.findWithCursor(UuidEntity);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain("MySQL");
+    expect(warnSpy.mock.calls[0][0]).toContain("VARCHAR");
+    expect(warnSpy.mock.calls[0][0]).toContain("orderBy");
+  });
+
+  it("should warn when PK is varchar and orderBy is not specified (PostgreSQL)", async () => {
+    (em as any).dbType = "postgres";
+    setupWithPkType("varchar");
+
+    await em.findWithCursor(UuidEntity);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain("PostgreSQL");
+    expect(warnSpy.mock.calls[0][0]).toContain("UUID v7");
+  });
+
+  it("should warn when PK is char (SQLite)", async () => {
+    (em as any).dbType = "sqlite";
+    setupWithPkType("char");
+
+    await em.findWithCursor(UuidEntity);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain("SQLite");
+    expect(warnSpy.mock.calls[0][0]).toContain("INTEGER PK");
+  });
+
+  it("should warn when PK is text type", async () => {
+    (em as any).dbType = "mysql";
+    setupWithPkType("text");
+
+    await em.findWithCursor(UuidEntity);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain("non-numeric PK");
+  });
+
+  it("should NOT warn when PK is int", async () => {
+    (em as any).dbType = "mysql";
+    setupWithPkType("int");
+
+    await em.findWithCursor(UuidEntity);
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("should NOT warn when PK is bigint", async () => {
+    (em as any).dbType = "postgres";
+    setupWithPkType("bigint");
+
+    await em.findWithCursor(UuidEntity);
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("should NOT warn when explicit orderBy is provided", async () => {
+    (em as any).dbType = "mysql";
+    setupWithPkType("varchar");
+
+    await em.findWithCursor(UuidEntity, { orderBy: "createdAt" as any });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("should warn only once per entity (dedup)", async () => {
+    (em as any).dbType = "mysql";
+    setupWithPkType("varchar");
+
+    await em.findWithCursor(UuidEntity);
+    await em.findWithCursor(UuidEntity);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("should warn for MariaDB (same as MySQL)", async () => {
+    (em as any).dbType = "mariadb";
+    setupWithPkType("varchar");
+
+    await em.findWithCursor(UuidEntity);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain("MySQL");
+  });
+
+  it("should clear warning dedup set on propagateShutdown", async () => {
+    (em as any).dbType = "mysql";
+    setupWithPkType("varchar");
+
+    await em.findWithCursor(UuidEntity);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    await em.propagateShutdown();
+    warnSpy.mockClear();
+
+    await em.findWithCursor(UuidEntity);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BaseRepository.findWithCursor 위임 테스트
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -79,6 +79,7 @@ export class EntityManager implements BaseEntityManager {
   private dirtyEntities: Set<InstanceType<ClazzType<any>>> = new Set();
   private readonly eventEmitter = new EntityEventEmitter();
   private readonly subscribers: EntitySubscriber<any>[] = [];
+  private readonly cursorPkWarned = new Set<string>();
   private queryTracker: QueryTracker | null = null;
   private defaultQueryTimeout: number | undefined;
 
@@ -244,6 +245,7 @@ export class EntityManager implements BaseEntityManager {
     this.removeAllListeners();
     this.subscribers.length = 0;
     this.dirtyEntities.clear();
+    this.cursorPkWarned.clear();
 
     // 3. QueryTracker 정리
     this.queryTracker?.reset();
@@ -757,6 +759,11 @@ export class EntityManager implements BaseEntityManager {
       throw new InvalidQueryError(
         "Cursor pagination requires an orderBy column or a primary key.",
       );
+    }
+
+    // orderBy를 명시하지 않은 경우 PK 타입을 검사하여 비숫자형이면 경고
+    if (!option.orderBy && pk) {
+      this.warnIfNonSortablePk(entity.name, pk);
     }
 
     const direction = option.direction ?? "ASC";
@@ -1818,6 +1825,60 @@ export class EntityManager implements BaseEntityManager {
   private isPostgres() {
     const t = this.dbType ?? (this.client as any).type;
     return t === "postgres";
+  }
+
+  private isSqlite() {
+    const t = this.dbType ?? (this.client as any).type;
+    return t === "sqlite";
+  }
+
+  /**
+   * 커서 페이지네이션에서 PK가 비숫자형(varchar, char, text 등)일 때
+   * 다이얼렉트별 경고를 한 번만 출력합니다.
+   */
+  private warnIfNonSortablePk(entityName: string, pk: ColumnMetadata): void {
+    const pkType = pk.options?.type as string | undefined;
+    const numericTypes = new Set([
+      "int", "number", "float", "double", "bigint",
+    ]);
+    if (!pkType || numericTypes.has(pkType)) {
+      return;
+    }
+
+    const key = entityName;
+    if (this.cursorPkWarned.has(key)) {
+      return;
+    }
+    this.cursorPkWarned.add(key);
+
+    const base =
+      `[CursorPagination] '${entityName}' entity uses a non-numeric PK ` +
+      `(type: ${pkType}). Cursor pagination defaults to PK ordering, ` +
+      `which may not reflect insertion order for random values like UUID v4.`;
+
+    if (this.isMySqlFamily()) {
+      this.logger.warn(
+        `${base} MySQL stores UUIDs as VARCHAR — lexicographic ordering ` +
+        `does not match time-based ordering. Consider specifying ` +
+        `orderBy: "createdAt" or using a sequential ID.`,
+      );
+    } else if (this.isPostgres()) {
+      this.logger.warn(
+        `${base} PostgreSQL compares UUID values lexicographically. ` +
+        `For time-ordered pagination, use UUID v7 (sortable) or specify ` +
+        `orderBy: "createdAt".`,
+      );
+    } else if (this.isSqlite()) {
+      this.logger.warn(
+        `${base} SQLite compares TEXT values lexicographically. ` +
+        `Consider specifying orderBy: "createdAt" or using an INTEGER PK.`,
+      );
+    } else {
+      this.logger.warn(
+        `${base} Consider specifying an explicit orderBy column ` +
+        `(e.g. orderBy: "createdAt") for meaningful pagination order.`,
+      );
+    }
   }
 
   private async executeInTransaction<R>(
