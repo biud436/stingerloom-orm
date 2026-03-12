@@ -46,7 +46,10 @@
   "scripts": {
     "build": "rimraf dist && tsc",
     "prepublishOnly": "pnpm run build",
-    "test": "jest"
+    "test": "jest",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "dependencies": {
     "class-transformer": "^0.5.1",
@@ -93,7 +96,8 @@
     "rimraf": "^6.1.2",
     "rxjs": "^7.8.2",
     "ts-jest": "^29.1.1",
-    "typescript": "^5.6.2"
+    "typescript": "^5.6.2",
+    "vitepress": "^1.6.4"
   },
   "repository": {
     "type": "git",
