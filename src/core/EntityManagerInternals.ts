@@ -28,6 +28,7 @@ export interface EntityManagerInternals {
   beginTrackQuery(): void;
   trackQuery(entityName: string, sql: string, ms: number): void;
   getReadNode(useMaster?: boolean): ReplicationNodeConfig | null;
+  getEntities(): ClazzType<any>[];
   getNameStrategy<T>(clazz: ClazzType<T>): string;
   resolveSelectColumns<T>(select: ISelectOption<T>): string[];
   markDirty(entity: any): void;

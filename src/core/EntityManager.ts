@@ -106,7 +106,8 @@ export class EntityManager implements BaseEntityManager {
     isMySqlFamily: () => this.isMySqlFamily(),
     isPostgres: () => this.isPostgres(),
     getDriver: () => this.driver,
-    getSynchronize: () => this.client.getOptions().synchronize ?? false,
+    getEntities: () => this._entities,
+    getSynchronize: () => this.client.getOptions(this.connectionName).synchronize ?? false,
     executeInTransaction: (fn, s, r) => this.executeInTransaction(fn, s, r),
     beginTrackQuery: () => this.beginTrackQuery(),
     trackQuery: (e, s, m) => this.trackQuery(e, s, m),
@@ -162,6 +163,7 @@ export class EntityManager implements BaseEntityManager {
     connectionName = "default",
   ) {
     this.connectionName = connectionName;
+    this._entities = (databaseClientOptions.entities ?? []) as ClazzType<any>[];
 
     const client = this.client as any;
     const connector = await client.connect(

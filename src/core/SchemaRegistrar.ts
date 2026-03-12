@@ -69,6 +69,13 @@ export class SchemaRegistrar {
 
       const metadata = entity.value as EntityScannerMetadata;
       const TargetEntity = metadata.target as ClazzType<any>;
+
+      // Multi-DB: 이 EntityManager에 속하지 않은 엔티티는 건너뜀
+      const scopedEntities = this.ctx.getEntities();
+      if (scopedEntities.length > 0 && !scopedEntities.includes(TargetEntity)) {
+        continue;
+      }
+
       let tableName = metadata.name;
       if (!tableName) {
         tableName = this.ctx.getNameStrategy(TargetEntity);
