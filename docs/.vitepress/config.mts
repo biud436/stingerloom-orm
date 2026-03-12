@@ -6,9 +6,12 @@ export default defineConfig({
     "A standalone, framework-agnostic TypeScript ORM with multi-tenancy support",
   base: "/stingerloom-orm/",
 
-  head: [["link", { rel: "icon", type: "image/svg+xml", href: "/logo.svg" }]],
+  head: [
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/stingerloom-orm/logo.svg" }],
+  ],
 
   themeConfig: {
+    logo: "/logo.svg",
     nav: [
       { text: "Guide", link: "/getting-started" },
       { text: "API Reference", link: "/api-reference" },

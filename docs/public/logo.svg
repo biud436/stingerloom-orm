@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <!-- Stinger point -->
+  <path d="M64 118 L58 98 L70 98 Z" fill="#F59E0B"/>
+
+  <!-- Bottom layer (public) -->
+  <ellipse cx="64" cy="88" rx="38" ry="12" fill="#F59E0B"/>
+  <path d="M26 78 v10 a38 12 0 0 0 76 0 v-10 a38 12 0 0 1 -76 0Z" fill="#D97706"/>
+  <ellipse cx="64" cy="78" rx="38" ry="12" fill="#F59E0B"/>
+
+  <!-- Middle layer (tenant) -->
+  <ellipse cx="64" cy="62" rx="38" ry="12" fill="#3B82F6"/>
+  <path d="M26 52 v10 a38 12 0 0 0 76 0 v-10 a38 12 0 0 1 -76 0Z" fill="#2563EB"/>
+  <ellipse cx="64" cy="52" rx="38" ry="12" fill="#3B82F6"/>
+
+  <!-- Top layer (context) -->
+  <ellipse cx="64" cy="36" rx="38" ry="12" fill="#8B5CF6"/>
+  <path d="M26 26 v10 a38 12 0 0 0 76 0 v-10 a38 12 0 0 1 -76 0Z" fill="#7C3AED"/>
+  <ellipse cx="64" cy="26" rx="38" ry="12" fill="#8B5CF6"/>
+</svg>
