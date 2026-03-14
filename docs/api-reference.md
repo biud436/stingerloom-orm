@@ -26,7 +26,7 @@ const em = new EntityManager();
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `find` | `<T>(entity, option?): Promise<EntityResult<T>>` | List query |
+| `find` | `<T>(entity, option?): Promise<T[]>` | List query |
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | Single record query |
 | `findAndCount` | `<T>(entity, option?): Promise<[T[], number]>` | List + total count |
 | `findWithCursor` | `<T>(entity, option?): Promise<CursorPaginationResult<T>>` | Cursor pagination |
@@ -35,6 +35,7 @@ const em = new EntityManager();
 | `softDelete` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete |
 | `restore` | `<T>(entity, criteria): Promise<DeleteResult>` | Restore Soft Delete |
 | `upsert` | `<T>(entity, data, conflictColumns?): Promise<void>` | INSERT ... ON CONFLICT |
+| `updateMany` | `<T>(entity, criteria, partial): Promise<{ affected: number }>` | Bulk UPDATE by condition |
 
 ### Batch
 
@@ -53,6 +54,12 @@ const em = new EntityManager();
 | `avg` | `<T>(entity, field, where?): Promise<number>` | Average |
 | `min` | `<T>(entity, field, where?): Promise<number>` | Minimum |
 | `max` | `<T>(entity, field, where?): Promise<number>` | Maximum |
+
+### Transaction
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `transaction` | `<T>(callback: (em: EntityManager) => Promise<T>): Promise<T>` | Execute callback in a transaction |
 
 ### Raw Query / Analysis
 
@@ -148,6 +155,7 @@ interface FindOption<T> {
   select?: (keyof T)[] | Partial<Record<keyof T, boolean>>;
   where?: Partial<T>;
   limit?: number | [number, number];
+  skip?: number;
   take?: number;
   orderBy?: Partial<Record<keyof T, "ASC" | "DESC">>;
   groupBy?: (keyof T)[];
@@ -209,6 +217,7 @@ interface ColumnOption {
   nullable?: boolean;      // Default: false
   primary?: boolean;
   autoIncrement?: boolean;
+  default?: unknown;       // Column default value (string, number, boolean, or raw SQL in parentheses)
   transform?: (raw: unknown) => any;
   precision?: number;
   scale?: number;
@@ -272,7 +281,7 @@ interface DatabaseClientOptions {
   password: string;
   database: string;
   entities: AnyEntity[];
-  synchronize?: boolean;
+  synchronize?: boolean | "safe" | "dry-run";
   schema?: string;
   charset?: string;
   datesStrings?: boolean;
@@ -391,7 +400,7 @@ Related classes: `MigrationRunner`, `MigrationCli`, `SchemaDiff`, `SchemaDiffMig
 
 | Error | Description |
 |-------|-------------|
-| `OrmError` | Base ORM error |
+| `OrmError` | Base ORM error (includes optional `suggestion: string \| null` field with actionable fix hint) |
 | `ValidationError` | Validation failure |
 | `EntityNotFoundError` | Entity not found |
 | `EntityMetadataNotFoundError` | Metadata not found |
@@ -420,6 +429,8 @@ enum OrmErrorCode {
   TRANSACTION_FAILED = "ORM_TRANSACTION_FAILED",
   TRANSACTION_ROLLBACK_FAILED = "ORM_TRANSACTION_ROLLBACK_FAILED",
   VALIDATION_FAILED = "ORM_VALIDATION_FAILED",
+  UNIQUE_VIOLATION = "ORM_UNIQUE_VIOLATION",
+  FK_VIOLATION = "ORM_FK_VIOLATION",
 }
 ```
 
@@ -428,9 +439,10 @@ enum OrmErrorCode {
 | Export | Description |
 |--------|-------------|
 | `ClazzType<T>` | `new (...args: any[]) => T` |
-| `EntityResult<T>` | `T \| T[]` |
+| `EntityResult<T>` | **Deprecated** — was `T \| T[]`, replaced by `T[]` for `find()` and `T` for `save()` |
 | `DeepPartial<T>` | Deep partial type |
-| `FindCondition<T>` | `{ [P in keyof T]?: T[P] }` |
+| `WhereClause<T>` | `{ [P in keyof T]?: T[P] }` — typed WHERE conditions |
+| `FindCondition<T>` | **Deprecated** — use `WhereClause<T>` instead |
 | `RawQueryBuilderFactory` | Query builder factory |
 | `LayeredMetadataStore` | Layered metadata |
 | `MetadataContext` | AsyncLocalStorage-based tenant context |

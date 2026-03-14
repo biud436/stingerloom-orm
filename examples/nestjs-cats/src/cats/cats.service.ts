@@ -73,11 +73,7 @@ export class CatsService {
       cat.ownerId = createCatDto.ownerId;
     }
 
-    const result = await this.catRepository.save(cat);
-    if (!result) {
-      throw new Error("Failed to create cat");
-    }
-    return Array.isArray(result) ? result[0] : result;
+    return await this.catRepository.save(cat);
   }
 
   /**
@@ -101,20 +97,16 @@ export class CatsService {
    * soft-deleted 엔티티 제외한 목록 조회 (기본 동작 — deleted_at IS NULL 자동 필터).
    */
   async findAll(): Promise<Cat[]> {
-    const result = await this.catRepository.find({
+    return await this.catRepository.find({
       relations: ["owner"], // @ManyToOne eager 로딩 데모
     });
-    if (!result) return [];
-    return Array.isArray(result) ? result : [result];
   }
 
   /**
    * withDeleted: true — soft-deleted 엔티티 포함 전체 조회.
    */
   async findAllIncludeDeleted(): Promise<Cat[]> {
-    const result = await this.catRepository.find({ withDeleted: true });
-    if (!result) return [];
-    return Array.isArray(result) ? result : [result];
+    return await this.catRepository.find({ withDeleted: true });
   }
 
   async findOne(id: number): Promise<Cat> {
@@ -127,11 +119,7 @@ export class CatsService {
       throw new NotFoundException(`Cat with ID ${id} not found`);
     }
 
-    const cat = Array.isArray(result) ? result[0] : result;
-    if (!cat) {
-      throw new NotFoundException(`Cat with ID ${id} not found`);
-    }
-    return cat;
+    return result;
   }
 
   @Transactional()
@@ -143,11 +131,7 @@ export class CatsService {
     if (updateCatDto.breed !== undefined) cat.breed = updateCatDto.breed;
     // updatedAt은 @BeforeUpdate 훅에서 자동 갱신됨
 
-    const result = await this.catRepository.save(cat);
-    if (!result) {
-      throw new Error("Failed to update cat");
-    }
-    return Array.isArray(result) ? result[0] : result;
+    return await this.catRepository.save(cat);
   }
 
   /**

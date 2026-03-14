@@ -42,6 +42,39 @@ class OrderService {
 
 That's all there is to it. If an error occurs, it automatically ROLLBACKs, and on normal completion, it automatically COMMITs.
 
+## em.transaction() — Callback API
+
+For cases where you want a quick, self-contained transaction without a decorator, use the `em.transaction()` callback API. The callback receives a transactional EntityManager; if the callback returns successfully, the transaction is committed. If it throws, the transaction is automatically rolled back.
+
+```typescript
+import { EntityManager } from "@stingerloom/orm";
+
+const result = await em.transaction(async (txEm) => {
+  const order = await txEm.save(Order, {
+    userId: data.userId,
+    status: "pending",
+  });
+
+  await txEm.insertMany(OrderItem, data.items.map(item => ({
+    orderId: order.id,
+    productId: item.productId,
+    quantity: item.quantity,
+  })));
+
+  await txEm.save(Payment, {
+    orderId: order.id,
+    amount: data.totalAmount,
+  });
+
+  return order;
+  // COMMIT on success, ROLLBACK on error
+});
+```
+
+This approach is ideal for service methods, scripts, and anywhere you need a one-off transaction without creating a class method with `@Transactional()`.
+
+> **Hint** `@Transactional()` and `em.transaction()` are interchangeable. Use `@Transactional()` when you want to annotate a class method, and `em.transaction()` for inline/functional usage.
+
 ## Setting Isolation Levels
 
 When multiple users read and write the same data simultaneously, you can specify how much isolation to enforce.

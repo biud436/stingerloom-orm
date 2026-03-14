@@ -19,14 +19,11 @@ export class PostsService {
     if (dto.published !== undefined) post.published = dto.published;
     if (dto.authorId) post.authorId = dto.authorId;
 
-    const result = await this.postRepository.save(post);
-    return Array.isArray(result) ? result[0] : result;
+    return await this.postRepository.save(post);
   }
 
   async findAll(): Promise<Post[]> {
-    const result = await this.postRepository.find({});
-    if (!result) return [];
-    return Array.isArray(result) ? result : [result];
+    return await this.postRepository.find({});
   }
 
   async findOne(id: number): Promise<Post> {
@@ -42,8 +39,7 @@ export class PostsService {
     if (dto.content !== undefined) post.content = dto.content;
     if (dto.published !== undefined) post.published = dto.published;
 
-    const saved = await this.postRepository.save(post);
-    return Array.isArray(saved) ? saved[0] : saved;
+    return await this.postRepository.save(post);
   }
 
   async remove(id: number): Promise<void> {

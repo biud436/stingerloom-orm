@@ -16,14 +16,11 @@ export class TagsService {
     const tag = new Tag();
     tag.name = dto.name;
 
-    const result = await this.tagRepository.save(tag);
-    return Array.isArray(result) ? result[0] : result;
+    return await this.tagRepository.save(tag);
   }
 
   async findAll(): Promise<Tag[]> {
-    const result = await this.tagRepository.find();
-    if (!result) return [];
-    return Array.isArray(result) ? result : [result];
+    return await this.tagRepository.find();
   }
 
   async findOne(id: number): Promise<Tag> {
@@ -32,7 +29,7 @@ export class TagsService {
     });
 
     if (!result) throw new NotFoundException(`Tag with ID ${id} not found`);
-    return Array.isArray(result) ? result[0] : result;
+    return result;
   }
 
   async remove(id: number): Promise<void> {

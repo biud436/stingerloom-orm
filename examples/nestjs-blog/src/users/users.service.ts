@@ -19,14 +19,11 @@ export class UsersService {
     user.email = dto.email;
     if (dto.bio) user.bio = dto.bio;
 
-    const result = await this.userRepository.save(user);
-    return Array.isArray(result) ? result[0] : result;
+    return await this.userRepository.save(user);
   }
 
   async findAll(): Promise<User[]> {
-    const result = await this.userRepository.find();
-    if (!result) return [];
-    return Array.isArray(result) ? result : [result];
+    return await this.userRepository.find();
   }
 
   async findOne(id: number): Promise<User> {
@@ -35,7 +32,7 @@ export class UsersService {
     });
 
     if (!result) throw new NotFoundException(`User with ID ${id} not found`);
-    return Array.isArray(result) ? result[0] : result;
+    return result;
   }
 
   @Transactional()
@@ -46,8 +43,7 @@ export class UsersService {
     if (dto.email !== undefined) user.email = dto.email;
     if (dto.bio !== undefined) user.bio = dto.bio;
 
-    const result = await this.userRepository.save(user);
-    return Array.isArray(result) ? result[0] : result;
+    return await this.userRepository.save(user);
   }
 
   async remove(id: number): Promise<void> {

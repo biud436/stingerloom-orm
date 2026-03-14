@@ -25,14 +25,11 @@ export class CategoriesService {
     category.name = dto.name;
     if (dto.description) category.description = dto.description;
 
-    const result = await this.categoryRepository.save(category);
-    return Array.isArray(result) ? result[0] : result;
+    return await this.categoryRepository.save(category);
   }
 
   async findAll(): Promise<Category[]> {
-    const result = await this.categoryRepository.find();
-    if (!result) return [];
-    return Array.isArray(result) ? result : [result];
+    return await this.categoryRepository.find();
   }
 
   async findOne(id: number): Promise<Category> {
@@ -41,7 +38,7 @@ export class CategoriesService {
     });
 
     if (!result) throw new NotFoundException(`Category with ID ${id} not found`);
-    return Array.isArray(result) ? result[0] : result;
+    return result;
   }
 
   @Transactional()
@@ -51,8 +48,7 @@ export class CategoriesService {
     if (dto.name !== undefined) category.name = dto.name;
     if (dto.description !== undefined) category.description = dto.description;
 
-    const result = await this.categoryRepository.save(category);
-    return Array.isArray(result) ? result[0] : result;
+    return await this.categoryRepository.save(category);
   }
 
   async remove(id: number): Promise<void> {
@@ -83,9 +79,7 @@ export class CategoriesService {
       { name: string; postCount: number }
     >(query.sql, query.values);
 
-    if (!result) return [];
-    const rows = Array.isArray(result) ? result : [result];
-    return rows.map((row: any) => ({
+    return result.map((row: any) => ({
       name: row.name,
       postCount: Number(row.postCount ?? row.postcount ?? 0),
     }));

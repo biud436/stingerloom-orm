@@ -19,20 +19,17 @@ export class TodosService {
     todo.description = dto.description ?? null;
     todo.completed = dto.completed ?? false;
 
-    const result = await this.todoRepository.save(todo);
-    return Array.isArray(result) ? result[0] : result;
+    return await this.todoRepository.save(todo);
   }
 
   async findAll(): Promise<Todo[]> {
-    const result = await this.todoRepository.find({});
-    if (!result) return [];
-    return Array.isArray(result) ? result : [result];
+    return await this.todoRepository.find({});
   }
 
   async findOne(id: number): Promise<Todo> {
     const result = await this.todoRepository.findOne({ where: { id } });
     if (!result) throw new NotFoundException(`Todo #${id} not found`);
-    return Array.isArray(result) ? result[0] : result;
+    return result;
   }
 
   async update(id: number, dto: UpdateTodoDto): Promise<Todo> {
@@ -41,8 +38,7 @@ export class TodosService {
     if (dto.description !== undefined) todo.description = dto.description;
     if (dto.completed !== undefined) todo.completed = dto.completed;
 
-    const result = await this.todoRepository.save(todo);
-    return Array.isArray(result) ? result[0] : result;
+    return await this.todoRepository.save(todo);
   }
 
   async softRemove(id: number): Promise<void> {

@@ -27,14 +27,11 @@ export class OwnersService implements OnModuleInit {
     owner.email = dto.email;
     // createdAt은 @BeforeInsert 훅에서 자동 설정
 
-    const result = await this.ownerRepository.save(owner);
-    return Array.isArray(result) ? result[0] : result;
+    return await this.ownerRepository.save(owner);
   }
 
   async findAll(): Promise<Owner[]> {
-    const result = await this.ownerRepository.find();
-    if (!result) return [];
-    return Array.isArray(result) ? result : [result];
+    return await this.ownerRepository.find();
   }
 
   async findOne(id: number): Promise<Owner> {
@@ -43,7 +40,7 @@ export class OwnersService implements OnModuleInit {
     });
 
     if (!result) throw new NotFoundException(`Owner with ID ${id} not found`);
-    return Array.isArray(result) ? result[0] : result;
+    return result;
   }
 
   async remove(id: number): Promise<void> {

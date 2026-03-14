@@ -66,6 +66,8 @@ const updated = await em.save(User, {
 
 ### List Query
 
+`find()` always returns `T[]` (an array). An empty table returns `[]`, never `null` or `undefined`.
+
 ```typescript
 // Fetch all
 const users = await em.find(User);
@@ -231,17 +233,24 @@ const [total, avgAge, minAge, maxAge] = await Promise.all([
 Traditional LIMIT/OFFSET pagination. Suitable for small datasets.
 
 ```typescript
-// Method 1: take + limit
+// Method 1: skip + take (recommended)
 const page2 = await em.find(Post, {
+  orderBy: { createdAt: "DESC" },
+  skip: 10,
+  take: 10,
+});
+
+// Method 2: limit tuple [offset, count]
+const page2Alt = await em.find(Post, {
   orderBy: { createdAt: "DESC" },
   limit: [10, 10], // OFFSET 10, LIMIT 10
 });
 
-// Method 2: findAndCount — also returns total count
+// Method 3: findAndCount — also returns total count
 const [posts, total] = await em.findAndCount(Post, {
   orderBy: { createdAt: "DESC" },
+  skip: 0,
   take: 10,
-  limit: [0, 10],
 });
 
 console.log(posts.length); // 10
@@ -274,6 +283,45 @@ const page2 = await em.findWithCursor(Post, {
 ```
 
 > **Hint** Cursor-based pagination is suited for "next page"/"previous page" navigation. If you need to jump to a specific page, use offset-based pagination.
+
+## Bulk Update — updateMany()
+
+Use `updateMany()` to update multiple rows matching a condition in a single query.
+
+```typescript
+// Deactivate all users who haven't logged in for 90 days
+const result = await em.updateMany(User,
+  { isActive: true },           // WHERE condition
+  { isActive: false },          // SET values
+);
+console.log(result.affected);   // Number of updated rows
+```
+
+Unlike `save()` which operates on individual entities, `updateMany()` issues a single `UPDATE ... SET ... WHERE ...` statement, making it much more efficient for bulk operations.
+
+## Transaction Callback — transaction()
+
+For simple transactional workflows, use the `em.transaction()` callback API. The callback receives a transactional EntityManager; if the callback succeeds, the transaction is committed, and if it throws, the transaction is rolled back.
+
+```typescript
+const order = await em.transaction(async (txEm) => {
+  // All operations use the transactional EntityManager
+  const order = await txEm.save(Order, {
+    userId: 1,
+    status: "pending",
+  });
+
+  await txEm.insertMany(OrderItem, [
+    { orderId: order.id, productId: 10, quantity: 2 },
+    { orderId: order.id, productId: 20, quantity: 1 },
+  ]);
+
+  return order;
+  // Auto-COMMIT on success, auto-ROLLBACK on error
+});
+```
+
+For decorator-based transactions and isolation level control, see [Transactions](./transactions.md).
 
 ## Raw SQL Execution — query()
 
@@ -384,6 +432,7 @@ List of options that can be passed to `find()`, `findOne()`, `explain()`, etc.
 | `select` | `(keyof T)[]` or `Record<keyof T, boolean>` | SELECT columns |
 | `orderBy` | `Record<keyof T, "ASC" \| "DESC">` | ORDER BY |
 | `limit` | `number` or `[offset, count]` | LIMIT |
+| `skip` | `number` | Offset for pagination (alternative to limit tuple) |
 | `take` | `number` | Number of rows to fetch |
 | `relations` | `(keyof T)[]` | Relation properties to load |
 | `withDeleted` | `boolean` | Whether to include soft-deleted records |

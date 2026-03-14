@@ -56,9 +56,23 @@ await em.register({
 
 ## synchronize Option
 
-Setting `synchronize: true` automatically creates tables based on entity definitions.
+The `synchronize` option controls how Stingerloom keeps the DB schema in sync with entity definitions.
 
-> **Warning** Only use `synchronize: true` in development environments. In production, there is a risk of data loss, so you should use [migrations](./migrations.md) instead.
+| Value | Behavior |
+|-------|----------|
+| `true` | **Full sync** — creates, alters, and drops tables/columns to match entities. Existing data may be lost. |
+| `"safe"` | **Safe sync** — creates new tables and adds new columns, but never drops anything. Safe for staging environments. |
+| `"dry-run"` | **Dry run** — logs the DDL statements that would be executed without actually running them. Useful for reviewing changes before applying. |
+| `false` | **No sync** (default) — schema is not modified at all. |
+
+```typescript
+await em.register({
+  // ...
+  synchronize: "safe",    // Add new tables/columns, never drop
+});
+```
+
+> **Warning** Only use `synchronize: true` in development environments. In production, there is a risk of data loss, so you should use [migrations](./migrations.md) instead. Consider `"safe"` mode for staging or `"dry-run"` to preview changes.
 
 ## Connection Pooling
 
@@ -130,12 +144,14 @@ await em.register({
 await em.register({
   // ...
   logging: {
-    queries: true,       // Print SQL
+    queries: true,       // Print every executed SQL statement to console
     slowQueryMs: 500,    // Warn on queries exceeding 500ms
     nPlusOne: true,      // Enable N+1 pattern detection
   },
 });
 ```
+
+The `queries` option is the most commonly used. When set to `true`, every SQL statement executed by the ORM is printed to the console along with its parameters. This is invaluable for debugging during development but should be disabled in production to avoid performance overhead and log noise.
 
 You can also query the log programmatically.
 
@@ -311,7 +327,7 @@ interface DatabaseClientOptions {
   password: string;
   database: string;
   entities: AnyEntity[];
-  synchronize?: boolean;         // Auto-create tables (default: false)
+  synchronize?: boolean | "safe" | "dry-run";  // Schema sync mode (default: false)
   schema?: string;               // PostgreSQL schema (default: "public")
   charset?: string;              // MySQL charset
   datesStrings?: boolean;        // Return MySQL dates as strings

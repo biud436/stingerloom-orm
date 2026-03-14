@@ -106,6 +106,26 @@ price!: number;
 // TypeScript: product.price / DB: unit_price
 ```
 
+### Default Value
+
+Use the `default` option to set a column's default value. Literal values (string, number, boolean) are used as-is. To use a raw SQL expression (such as a function), wrap it in parentheses.
+
+```typescript
+@Column({ default: "active" })
+status!: string;
+
+@Column({ default: 0 })
+retryCount!: number;
+
+@Column({ default: true })
+isVisible!: boolean;
+
+@Column({ default: "(CURRENT_TIMESTAMP)" })
+createdAt!: Date;
+```
+
+When the value is wrapped in parentheses like `"(CURRENT_TIMESTAMP)"`, Stingerloom emits it as a raw SQL `DEFAULT` expression in the DDL instead of a quoted string literal.
+
 ### JSON Column
 
 Use the JSON type to store structured data in a single column.
@@ -496,6 +516,7 @@ When `type` is omitted in `@Column()`, it is automatically inferred from the Typ
 | `nullable` | `boolean` | Allow NULL (default: false) |
 | `primary` | `boolean` | Whether it is a primary key |
 | `autoIncrement` | `boolean` | Whether to apply AUTO_INCREMENT |
+| `default` | `unknown` | Column default value (literal or raw SQL in parentheses) |
 | `transform` | `(raw) => any` | Value transform function when reading from DB |
 | `precision` | `number` | Decimal precision |
 | `scale` | `number` | Decimal scale |

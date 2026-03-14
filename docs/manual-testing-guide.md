@@ -21,13 +21,18 @@ expect(cat.owner.id).toBe(7);
 
 Existing tests use `parentFk: parent.id` to directly set FK column values. However, users who read the documentation use the **relation object assignment** pattern like `cat.owner = ownerEntity`. This pattern was absent from tests, which led to the bug going undetected.
 
-### 3. Return Type Mismatch
+### 3. Return Type (Resolved)
 
-The return type of `BaseRepository.save()` is `EntityResult<T>` (`T | T[] | undefined`). If a user follows the documentation and expects a single object, directly accessing a property causes a type error.
+Previously, `BaseRepository.save()` returned `EntityResult<T>` (`T | T[] | undefined`), requiring defensive `Array.isArray()` checks. This has been fixed: `find()` now returns `T[]` and `save()` returns `T`, so no defensive wrapping is needed.
 
 ```typescript
+// Before (old API — no longer needed)
 const result = await repo.save(cat);
-const saved = Array.isArray(result) ? result[0] : result; // Defensive code needed
+const saved = Array.isArray(result) ? result[0] : result;
+
+// After (current API)
+const saved = await repo.save(cat);   // returns T directly
+const users = await repo.find();       // returns T[] directly
 ```
 
 ---
@@ -83,13 +88,13 @@ const cat = await catRepo.save({ name: "Nabi", ownerFk: owner.id });
 
 ```typescript
 const result = await catRepo.save({ name: "Nabi" });
-console.log(result.name); // Type error? Runtime error?
+console.log(result.name); // Should work directly — no defensive checks needed
 ```
 
 | #   | Check Item                                                       | Pass | Notes                     |
 | --- | ---------------------------------------------------------------- | ---- | ------------------------- |
-| 1   | Is `result` a single object or an array?                         |      | `EntityResult<T>` union   |
-| 2   | Can you access properties directly without `Array.isArray(result)`? |      | TS compile error or not   |
+| 1   | Is `result` a single object (not an array)?                      |      | `save()` returns `T`      |
+| 2   | Can you access properties directly without `Array.isArray(result)`? |      | Yes, fixed in DX update   |
 | 3   | Does `findOne()` always return a single object or `null`?        |      | `T \| null` type          |
 
 ### J-5. Query Non-Existent ID
@@ -112,7 +117,7 @@ const cats = await catRepo.find({});
 | #   | Check Item                               | Pass | Notes             |
 | --- | ---------------------------------------- | ---- | ----------------- |
 | 1   | Does it return without errors?           |      |                   |
-| 2   | Is it an empty array `[]`, not `undefined`? |      | `EntityResult<T>` |
+| 2   | Is it an empty array `[]`, not `undefined`? |      | `find()` returns `T[]` |
 
 ---
 

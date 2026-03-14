@@ -33,20 +33,15 @@ export class PostsService {
     if (dto.authorId) post.authorId = dto.authorId;
     if (dto.categoryId) post.categoryId = dto.categoryId;
 
-    const result = await this.postRepository.save(post);
-    return Array.isArray(result) ? result[0] : result;
+    return await this.postRepository.save(post);
   }
 
   async findAll(): Promise<Post[]> {
-    const result = await this.postRepository.find({});
-    if (!result) return [];
-    return Array.isArray(result) ? result : [result];
+    return await this.postRepository.find({});
   }
 
   async findAllIncludeDeleted(): Promise<Post[]> {
-    const result = await this.postRepository.find({ withDeleted: true });
-    if (!result) return [];
-    return Array.isArray(result) ? result : [result];
+    return await this.postRepository.find({ withDeleted: true });
   }
 
   async findOne(id: number): Promise<Post> {
@@ -55,9 +50,7 @@ export class PostsService {
     });
 
     if (!result) throw new NotFoundException(`Post with ID ${id} not found`);
-    const post = Array.isArray(result) ? result[0] : result;
-    if (!post) throw new NotFoundException(`Post with ID ${id} not found`);
-    return post;
+    return result;
   }
 
   @Transactional()
@@ -68,8 +61,7 @@ export class PostsService {
     if (dto.slug !== undefined) post.slug = dto.slug;
     if (dto.content !== undefined) post.content = dto.content;
 
-    const result = await this.postRepository.save(post);
-    return Array.isArray(result) ? result[0] : result;
+    return await this.postRepository.save(post);
   }
 
   async remove(id: number): Promise<void> {
@@ -179,9 +171,8 @@ export class PostsService {
       where: { id: postId },
       relations: ["tags"],
     });
-    const post = Array.isArray(result) ? result[0] : result;
-    if (!post) throw new NotFoundException(`Post with ID ${postId} not found`);
-    return post.tags ?? [];
+    if (!result) throw new NotFoundException(`Post with ID ${postId} not found`);
+    return result.tags ?? [];
   }
 
   async findWithCursor(

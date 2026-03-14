@@ -153,7 +153,8 @@ Registering scripts in package.json is convenient.
   "scripts": {
     "migrate:run": "ts-node ./src/migrate.ts migrate:run",
     "migrate:rollback": "ts-node ./src/migrate.ts migrate:rollback",
-    "migrate:status": "ts-node ./src/migrate.ts migrate:status"
+    "migrate:status": "ts-node ./src/migrate.ts migrate:status",
+    "migrate:generate": "ts-node ./src/migrate.ts migrate:generate"
   }
 }
 ```
@@ -169,6 +170,9 @@ pnpm migrate:rollback
 
 # Check current status
 pnpm migrate:status
+
+# Auto-generate a migration from entity/schema diff (see below)
+pnpm migrate:generate
 ```
 
 Stingerloom automatically creates a `__migrations` table to track which migrations have been executed.
@@ -206,7 +210,23 @@ migrations/
 
 Instead of writing migration files manually, you can automatically generate them by comparing entity definitions with the actual DB schema.
 
-### Step 1: Compare Differences
+### Using the CLI — migrate:generate
+
+The simplest way to generate a migration is through the `migrate:generate` CLI command. It compares the current entity definitions against the live database schema and produces a migration file for any differences.
+
+```bash
+pnpm migrate:generate
+```
+
+This will:
+1. Connect to the database using the configured options.
+2. Run `SchemaDiff.compare()` against all registered entities.
+3. If differences are found, generate a timestamped migration class with the appropriate `up()` and `down()` methods.
+4. Print the generated migration to the console (or write it to the migrations directory if configured).
+
+If the schema is already in sync, it prints "No schema changes" and exits.
+
+### Step 1: Compare Differences (Programmatic API)
 
 ```typescript
 import { SchemaDiff } from "@stingerloom/orm";
