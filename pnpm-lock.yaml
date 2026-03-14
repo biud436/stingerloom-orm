@@ -307,8 +307,8 @@ importers:
         specifier: ^11.2.6
         version: 11.2.6(@nestjs/common@10.4.22(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@10.4.22)(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)
       '@stingerloom/orm':
-        specifier: workspace:*
-        version: link:../..
+        specifier: ^0.4.0
+        version: 0.4.0(@nestjs/common@10.4.22(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@10.4.22)(better-sqlite3@12.6.2)(mysql2@3.16.3)(pg@8.18.0)(reflect-metadata@0.2.2)
       class-transformer:
         specifier: ^0.5.1
         version: 0.5.1
@@ -1377,6 +1377,28 @@ packages:
 
   '@sinonjs/fake-timers@13.0.5':
     resolution: {integrity: sha512-36/hTbH2uaWuGVERyC6da9YwGWnzUZXuPro/F2LfsdOsLnCojz/iSH8MxUt/FD2S5XBSVPhmArFUXcpCQ2Hkiw==}
+
+  '@stingerloom/orm@0.4.0':
+    resolution: {integrity: sha512-mCkOKT4DjDO/KpDNwNIFSrU9jDHB7ldLJ2q0bfwvAeVQjg0WAWN1XcnGVfPFG/IWDISTvDnGqtOFW7fXQVtmLA==}
+    engines: {node: '>=16.0.0'}
+    peerDependencies:
+      '@nestjs/common': '>=8.0.0'
+      '@nestjs/core': '>=8.0.0'
+      better-sqlite3: '>=9.0.0'
+      mysql2: ^3.0.0
+      pg: ^8.0.0
+      reflect-metadata: '>=0.1.0'
+    peerDependenciesMeta:
+      '@nestjs/common':
+        optional: true
+      '@nestjs/core':
+        optional: true
+      better-sqlite3:
+        optional: true
+      mysql2:
+        optional: true
+      pg:
+        optional: true
 
   '@tokenizer/inflate@0.2.7':
     resolution: {integrity: sha512-MADQgmZT1eKjp06jpI2yozxaU9uVs4GzzgSL+uEq7bVcJ9V1ZXQkeGNql1fsSI0gMy1vhvNTNbUqrx+pZfJVmg==}
@@ -5552,6 +5574,19 @@ snapshots:
   '@sinonjs/fake-timers@13.0.5':
     dependencies:
       '@sinonjs/commons': 3.0.1
+
+  '@stingerloom/orm@0.4.0(@nestjs/common@10.4.22(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@10.4.22)(better-sqlite3@12.6.2)(mysql2@3.16.3)(pg@8.18.0)(reflect-metadata@0.2.2)':
+    dependencies:
+      class-transformer: 0.5.1
+      reflect-metadata: 0.2.2
+      sql-template-tag: 4.1.0
+      typedi: 0.10.0
+    optionalDependencies:
+      '@nestjs/common': 10.4.22(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/core': 10.4.22(@nestjs/common@10.4.22(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@10.4.22)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      better-sqlite3: 12.6.2
+      mysql2: 3.16.3
+      pg: 8.18.0
 
   '@tokenizer/inflate@0.2.7':
     dependencies:
