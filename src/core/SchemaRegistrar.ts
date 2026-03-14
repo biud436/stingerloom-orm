@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import { ClazzType, ReflectManager } from "../utils";
+import { ClazzType, ReflectManager, Logger } from "../utils";
 import {
   ColumnMetadata,
   EntityScannerMetadata,
@@ -34,6 +34,7 @@ import { EntityManagerInternals } from "./EntityManagerInternals";
  */
 export class SchemaRegistrar {
   private readonly namingStrategy: NamingStrategy;
+  private readonly logger = new Logger(SchemaRegistrar.name);
 
   constructor(
     private readonly resolver: RelationMetadataResolver,
@@ -49,10 +50,12 @@ export class SchemaRegistrar {
 
     let entity: IteratorResult<EntityScannerMetadata>;
 
-    const synchronize = this.ctx.getSynchronize();
+    const syncOption = this.ctx.getSynchronize();
+    const synchronize = !!syncOption; // truthy for true, 'safe', 'dry-run'
+    const isDryRun = syncOption === "dry-run";
 
     // PostgreSQL: 스키마가 존재하지 않으면 자동으로 생성합니다.
-    if (synchronize && this.ctx.isPostgres() && this.ctx.getDriver()) {
+    if (synchronize && !isDryRun && this.ctx.isPostgres() && this.ctx.getDriver()) {
       const pgDriver = this.ctx.getDriver() as PostgresDriver;
       const hasSchema = await pgDriver.hasSchema();
       if (!hasSchema || hasSchema.length === 0) {
@@ -95,7 +98,11 @@ export class SchemaRegistrar {
       if (synchronize) {
         const hasTable = await driver?.hasTable(tableName);
         if (!hasTable || hasTable.length === 0) {
-          await driver?.createTable(tableName, metadata.columns);
+          if (isDryRun) {
+            this.logger.info(`[dry-run] Would CREATE TABLE ${tableName}`);
+          } else {
+            await driver?.createTable(tableName, metadata.columns);
+          }
         }
       }
 
@@ -103,7 +110,7 @@ export class SchemaRegistrar {
     }
 
     // 2패스: 모든 테이블이 생성된 후 FK, 인덱스, 유니크 인덱스를 등록합니다.
-    if (synchronize) {
+    if (synchronize && !isDryRun) {
       for (const { TargetEntity, tableName } of entityList) {
         // 외래키를 생성합니다.
         await this.registerForeignKeys(TargetEntity, tableName);
@@ -119,6 +126,10 @@ export class SchemaRegistrar {
       await this.registerManyToManyJoinTables(
         entityList.map((e) => e.TargetEntity),
       );
+    } else if (isDryRun) {
+      for (const { tableName } of entityList) {
+        this.logger.info(`[dry-run] Would register FKs/indexes for ${tableName}`);
+      }
     }
   }
 

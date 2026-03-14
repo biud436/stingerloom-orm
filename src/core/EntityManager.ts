@@ -82,6 +82,7 @@ export class EntityManager implements BaseEntityManager {
   private readonly cursorPkWarned = new Set<string>();
   private queryTracker: QueryTracker | null = null;
   private defaultQueryTimeout: number | undefined;
+  private queryLoggingEnabled = false;
 
   /**
    * 이 EntityManager가 사용할 연결 이름.
@@ -107,7 +108,7 @@ export class EntityManager implements BaseEntityManager {
     isPostgres: () => this.isPostgres(),
     getDriver: () => this.driver,
     getEntities: () => this._entities,
-    getSynchronize: () => this.client.getOptions(this.connectionName).synchronize ?? false,
+    getSynchronize: () => this.client.getOptions(this.connectionName).synchronize ?? false as boolean | "safe" | "dry-run",
     executeInTransaction: (fn, s, r) => this.executeInTransaction(fn, s, r),
     beginTrackQuery: () => this.beginTrackQuery(),
     trackQuery: (e, s, m) => this.trackQuery(e, s, m),
@@ -285,8 +286,20 @@ export class EntityManager implements BaseEntityManager {
 
   private initQueryTracker(options: DatabaseClientOptions): void {
     const logging = options.logging;
+
+    // logging: true → enable query SQL logging
+    if (logging === true) {
+      this.queryLoggingEnabled = true;
+      return;
+    }
+
     if (typeof logging === "object" && logging !== null) {
       const loggingOpts = logging as LoggingOptions;
+
+      // queries: true → log generated SQL
+      if (loggingOpts.queries) {
+        this.queryLoggingEnabled = true;
+      }
 
       // enableQueryTracking이 명시적으로 false이면 비활성화
       if (loggingOpts.enableQueryTracking === false) {
@@ -322,6 +335,9 @@ export class EntityManager implements BaseEntityManager {
     sqlText: string,
     durationMs: number,
   ): void {
+    if (this.queryLoggingEnabled) {
+      this.logger.debug(`[${entityName}] ${sqlText} (+${durationMs}ms)`);
+    }
     this.queryTracker?.endQuery();
     this.queryTracker?.track(entityName, sqlText, durationMs);
   }
@@ -418,8 +434,11 @@ export class EntityManager implements BaseEntityManager {
   async find<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
-  ): Promise<EntityResult<T>> {
-    return this.findInternal(entity, findOption);
+  ): Promise<T[]> {
+    const result = await this.findInternal(entity, findOption);
+    if (result === undefined || result === null) return [];
+    if (Array.isArray(result)) return result as T[];
+    return [result as T];
   }
 
   private async findInternal<T>(
@@ -427,7 +446,7 @@ export class EntityManager implements BaseEntityManager {
     findOption: FindOption<T> = {},
     existingSession?: TransactionSessionManager,
   ): Promise<EntityResult<T>> {
-    const { select, orderBy, where, take, groupBy, having } = findOption;
+    const { select, orderBy, where, take, skip, groupBy, having } = findOption;
     const { limit } = findOption;
 
     const readNode = this.getReadNode(findOption.useMaster);
@@ -643,6 +662,20 @@ export class EntityManager implements BaseEntityManager {
         if (take && take > 0) count = take;
         if (this.isMySqlFamily()) qb.setDatabaseType("mysql");
         qb.limit([offset, count]);
+      } else if (skip !== undefined || (take !== undefined && !limit)) {
+        // skip/take pagination → convert to limit tuple
+        const offset = Math.max(skip ?? 0, 0);
+        const count = Math.max(take ?? 0, 0) || undefined;
+        if (count) {
+          if (this.isMySqlFamily()) qb.setDatabaseType("mysql");
+          qb.limit([offset, count]);
+        } else if (offset > 0 && this.isMySqlFamily()) {
+          // MySQL requires a count with OFFSET — use a very large number
+          qb.setDatabaseType("mysql");
+          qb.limit([offset, 2147483647]);
+        } else if (offset > 0) {
+          qb.limit([offset, 2147483647]);
+        }
       } else {
         if (limit) {
           qb.limit(limit as number);
@@ -1555,6 +1588,100 @@ export class EntityManager implements BaseEntityManager {
     await this.driver.clear(metadata.name!);
   }
 
+  /**
+   * Updates multiple entities matching the WHERE condition with the given data.
+   *
+   * @param entity The entity class.
+   * @param data The partial data to set on matching rows.
+   * @param options Options with `where` clause to filter rows.
+   * @returns The number of affected rows.
+   *
+   * @example
+   * ```ts
+   * const result = await em.updateMany(User, { active: true }, { where: { status: 'pending' } });
+   * console.log(result.affected); // 42
+   * ```
+   */
+  async updateMany<T>(
+    entity: ClazzType<T>,
+    data: Partial<T>,
+    options: { where: WhereClause<T> },
+  ): Promise<{ affected: number }> {
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    const { where } = options;
+    if (!where || Object.keys(where).length === 0) {
+      throw new DeleteWithoutConditionsError("Update");
+    }
+
+    return this.executeInTransaction(async (session) => {
+      const setMap: Sql[] = [];
+      for (const key in data) {
+        const value = (data as any)[key];
+        if (value !== undefined) {
+          setMap.push(sql`${raw(this.wrap(key))} = ${value}`);
+        }
+      }
+
+      // @UpdateTimestamp auto-inject
+      const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
+      if (updateTsColName) {
+        const hasExplicit = setMap.some(
+          (s) => s.text?.includes(this.wrap(updateTsColName)),
+        );
+        if (!hasExplicit) {
+          setMap.push(
+            sql`${raw(this.wrap(updateTsColName))} = ${new Date().toISOString()}`,
+          );
+        }
+      }
+
+      if (setMap.length === 0) {
+        return { affected: 0 };
+      }
+
+      const whereMap: Sql[] = [];
+      for (const key in where) {
+        const value = (where as any)[key];
+        if (value !== undefined && value !== null) {
+          const col = this.wrap(key);
+          whereMap.push(
+            Array.isArray(value)
+              ? Conditions.in(col, value)
+              : Conditions.equals(col, value),
+          );
+        }
+      }
+
+      const updateSql = sql`UPDATE ${raw(this.wrap(metadata.name!))} SET ${join(setMap, ", ")} WHERE ${join(whereMap, " AND ")}`;
+
+      const queryStart = Date.now();
+      this.beginTrackQuery();
+      const queryResult = (await session.query(updateSql)) as {
+        results: any;
+        fields: any;
+        rowCount?: number;
+      };
+      this.trackQuery(
+        entity.name,
+        updateSql.text ?? String(updateSql),
+        Date.now() - queryStart,
+      );
+
+      let affected = 0;
+      if (this.isMySqlFamily()) {
+        affected = queryResult?.results?.affectedRows ?? 0;
+      } else {
+        affected = queryResult?.rowCount ?? 0;
+      }
+
+      return { affected };
+    });
+  }
+
   async softDelete<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
@@ -2002,6 +2129,30 @@ export class EntityManager implements BaseEntityManager {
         return queryResult as T[];
       }
       return [];
+    });
+  }
+
+  /**
+   * Executes a callback within a database transaction.
+   * Auto-commits on success, auto-rollbacks on error.
+   *
+   * All EntityManager operations inside the callback share the same transaction.
+   *
+   * @param callback A function that receives this EntityManager and performs DB operations.
+   * @returns The return value of the callback.
+   *
+   * @example
+   * ```ts
+   * const result = await em.transaction(async (txEm) => {
+   *   await txEm.save(User, { name: "Alice" });
+   *   await txEm.save(Post, { title: "Hello", authorId: 1 });
+   *   return "done";
+   * });
+   * ```
+   */
+  async transaction<R>(callback: (em: this) => Promise<R>): Promise<R> {
+    return this.executeInTransaction(async (session) => {
+      return transactionStorage.run(session, () => callback(this));
     });
   }
 

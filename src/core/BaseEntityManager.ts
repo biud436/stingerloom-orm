@@ -2,7 +2,6 @@
 import { ClazzType } from "../utils";
 import { FindOption, WhereClause } from "../dialects/FindOption";
 import { BaseRepository } from "./BaseRepository";
-import { EntityResult } from "../types/EntityResult";
 import { DeleteResult } from "../types/DeleteResult";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { Sql } from "sql-template-tag";
@@ -60,7 +59,7 @@ export abstract class BaseEntityManager {
   abstract find<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,
-  ): Promise<EntityResult<T>>;
+  ): Promise<T[]>;
 
   /**
    * 커서 기반 페이지네이션으로 엔티티를 조회합니다.
@@ -190,6 +189,22 @@ export abstract class BaseEntityManager {
    * });
    * ```
    */
+  /**
+   * Updates multiple entities matching the WHERE condition with the given data.
+   * Returns the number of affected rows.
+   */
+  /**
+   * Executes a callback within a database transaction.
+   * Auto-commits on success, auto-rollbacks on error.
+   */
+  abstract transaction<R>(callback: (em: this) => Promise<R>): Promise<R>;
+
+  abstract updateMany<T>(
+    entity: ClazzType<T>,
+    data: Partial<T>,
+    options: { where: WhereClause<T> },
+  ): Promise<{ affected: number }>;
+
   abstract withTenant<R>(
     tenantId: string,
     callback: (em: this) => Promise<R>,

@@ -9,6 +9,7 @@ export class EntityMetadataNotFoundError extends OrmError {
     super(
       OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
       `Entity metadata for "${entityName}" does not exist.`,
+      `Ensure the class is decorated with @Entity() and included in the "entities" array of your DatabaseClientOptions.`,
     );
     this.name = "EntityMetadataNotFoundError";
   }

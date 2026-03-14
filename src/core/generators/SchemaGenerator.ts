@@ -452,7 +452,30 @@ export class SchemaGenerator {
         ? " AUTO_INCREMENT"
         : "";
 
-    return `${this.wrapId(name)} ${typeWithLength} ${nullable}${pk}${autoInc}`;
+    // DEFAULT clause
+    const defaultClause = this.renderDefaultClause(options.default);
+
+    return `${this.wrapId(name)} ${typeWithLength} ${nullable}${defaultClause}${pk}${autoInc}`;
+  }
+
+  /**
+   * Renders the DEFAULT clause for a column definition.
+   * Parenthesized values like "(CURRENT_TIMESTAMP)" are treated as raw SQL expressions.
+   */
+  private renderDefaultClause(value: string | number | boolean | null | undefined): string {
+    if (value === undefined) return "";
+    if (value === null) return " DEFAULT NULL";
+    if (typeof value === "number") return ` DEFAULT ${value}`;
+    if (typeof value === "boolean") {
+      if (this.dialect === "mysql") return ` DEFAULT ${value ? "1" : "0"}`;
+      return ` DEFAULT ${value ? "TRUE" : "FALSE"}`;
+    }
+    // Parenthesized strings → raw SQL expression
+    if (typeof value === "string" && value.startsWith("(") && value.endsWith(")")) {
+      return ` DEFAULT ${value.slice(1, -1)}`;
+    }
+    // String literal — escape single quotes
+    return ` DEFAULT '${value.replace(/'/g, "''")}'`;
   }
 
   private castType(type: ColumnType): string {

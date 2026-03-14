@@ -57,6 +57,19 @@ export interface ColumnOption {
    */
   transform?: <T = any>(raw: unknown) => T;
 
+  /**
+   * DB-level default value for the column.
+   * - String/number/boolean values are used as literal defaults.
+   * - Use a raw SQL string wrapped in parentheses for expressions: `"(CURRENT_TIMESTAMP)"`.
+   *
+   * @example
+   * @Column({ default: 'active' })           // DEFAULT 'active'
+   * @Column({ default: 0 })                  // DEFAULT 0
+   * @Column({ default: true })               // DEFAULT TRUE (or 1 for MySQL)
+   * @Column({ default: "(CURRENT_TIMESTAMP)" }) // DEFAULT CURRENT_TIMESTAMP
+   */
+  default?: string | number | boolean | null;
+
   precision?: number;
   scale?: number;
 

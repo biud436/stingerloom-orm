@@ -2,7 +2,6 @@
 import { ClazzType } from "../utils";
 import { FindOption, WhereClause } from "../dialects/FindOption";
 import { EntityManager } from "./EntityManager";
-import { EntityResult } from "../types/EntityResult";
 import { DeleteResult } from "../types/DeleteResult";
 import {
   CursorPaginationOption,
@@ -44,7 +43,7 @@ export class BaseRepository<T> {
    * @param findOption The options to find entities.
    * @returns A promise that resolves to the result of the find operation.
    */
-  async find(findOption?: FindOption<T>): Promise<EntityResult<T>> {
+  async find(findOption?: FindOption<T>): Promise<T[]> {
     return await this.em.find<T>(this.entity, findOption);
   }
 
@@ -229,6 +228,20 @@ export class BaseRepository<T> {
    */
   async explain(findOption?: FindOption<T>): Promise<ExplainResult> {
     return await this.em.explain<T>(this.entity, findOption);
+  }
+
+  /**
+   * Updates multiple entities matching the WHERE condition with the given data.
+   *
+   * @param data The partial data to set on matching rows.
+   * @param options Options with `where` clause to filter rows.
+   * @returns The number of affected rows.
+   */
+  async updateMany(
+    data: Partial<T>,
+    options: { where: WhereClause<T> },
+  ): Promise<{ affected: number }> {
+    return await this.em.updateMany<T>(this.entity, data, options);
   }
 
   /**

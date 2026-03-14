@@ -7,9 +7,16 @@ import { OrmErrorCode } from "./OrmErrorCode";
 export class OrmError extends Error {
   public readonly code: OrmErrorCode;
 
-  constructor(code: OrmErrorCode, message: string) {
+  /**
+   * Actionable suggestion to help the user resolve this error.
+   * May be null when no specific guidance is available.
+   */
+  public readonly suggestion: string | null;
+
+  constructor(code: OrmErrorCode, message: string, suggestion?: string) {
     super(message);
     this.name = "OrmError";
     this.code = code;
+    this.suggestion = suggestion ?? null;
   }
 }

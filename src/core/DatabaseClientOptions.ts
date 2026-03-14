@@ -68,9 +68,12 @@ export interface DatabaseClientOptions {
 
   /**
    * Enable/disable schema synchronization.
-   * If set to true, tables will be automatically created if they don't exist.
+   * - `true`: Full synchronization — creates tables, adds/drops columns as needed.
+   * - `'safe'`: Safe mode — creates tables and adds columns, but never drops columns or tables.
+   * - `'dry-run'`: Preview mode — logs DDL statements that would be executed without applying them.
+   * - `false` (default): No synchronization.
    */
-  synchronize?: boolean;
+  synchronize?: boolean | "safe" | "dry-run";
 
   /**
    * Enable/disable query logging and diagnostics.

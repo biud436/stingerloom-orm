@@ -9,22 +9,41 @@ import { ISqlDriver } from "../dialects/SqlDriver";
 import { Logger } from "../utils";
 import { Migration } from "./Migration";
 import { MigrationResult, MigrationRunner } from "./MigrationRunner";
+import { SchemaDiff } from "../core/generators/SchemaDiff";
+import { SchemaDiffMigrationGenerator } from "../core/generators/SchemaDiffMigrationGenerator";
+import { SchemaDialect } from "../core/generators/SchemaGenerator";
 
-export type MigrationCommand = "migrate:run" | "migrate:rollback" | "migrate:status";
+export type MigrationCommand = "migrate:run" | "migrate:rollback" | "migrate:status" | "migrate:generate";
 
 /**
  * 마이그레이션 CLI 진입점.
  * DatabaseClientOptions를 받아 연결 후 MigrationRunner를 실행합니다.
  */
+export interface MigrationGenerateOptions {
+  /** Directory to output generated migration files. Default: "./migrations" */
+  outputDir?: string;
+  /** Optional migration name suffix for the generated file. */
+  name?: string;
+}
+
 export class MigrationCli {
   private readonly logger = new Logger(MigrationCli.name);
   private runner?: MigrationRunner;
   private driver?: ISqlDriver;
+  private generateOptions: MigrationGenerateOptions = {};
 
   constructor(
     private readonly migrations: Migration[],
     private readonly options: DatabaseClientOptions,
   ) {}
+
+  /**
+   * Sets options for migrate:generate command.
+   */
+  setGenerateOptions(opts: MigrationGenerateOptions): this {
+    this.generateOptions = opts;
+    return this;
+  }
 
   /**
    * DB에 연결하고 MigrationRunner를 초기화합니다.
@@ -67,7 +86,7 @@ export class MigrationCli {
   /**
    * CLI 명령어를 실행합니다.
    */
-  async execute(command: MigrationCommand): Promise<MigrationResult[] | { executed: string[]; pending: string[] }> {
+  async execute(command: MigrationCommand): Promise<MigrationResult[] | { executed: string[]; pending: string[] } | { filePath: string; sql: { up: string[]; down: string[] } }> {
     if (!this.runner) {
       throw new Error("Not connected. Call connect() before execute().");
     }
@@ -79,6 +98,8 @@ export class MigrationCli {
         return this.migrateRollback();
       case "migrate:status":
         return this.migrateStatus();
+      case "migrate:generate":
+        return this.migrateGenerate();
       default:
         throw new Error(`Unknown command: ${command}`);
     }
@@ -155,5 +176,61 @@ export class MigrationCli {
     }
 
     return status;
+  }
+
+  /**
+   * migrate:generate — Compares entity definitions against the current DB schema
+   * and auto-generates a migration file with the detected changes.
+   */
+  async migrateGenerate(): Promise<{ filePath: string; sql: { up: string[]; down: string[] } }> {
+    if (!this.driver) {
+      throw new Error("Not connected. Call connect() before migrateGenerate().");
+    }
+
+    const entities = (this.options.entities ?? []) as Array<new (...args: any[]) => any>;
+    const dbType = this.options.type;
+    const dialect: SchemaDialect =
+      dbType === "mysql" || dbType === "mariadb" ? "mysql"
+        : dbType === "sqlite" ? "sqlite"
+        : "postgres";
+
+    this.logger.info("Comparing entity definitions against database schema...");
+
+    const queryRunner = {
+      query: async (sqlStr: string | import("sql-template-tag").Sql) => {
+        const client = DatabaseClient.getInstance();
+        const conn = await client.getConnection();
+        const result = await conn.query(sqlStr as any);
+        return (result as any)?.results ?? result;
+      },
+    };
+
+    const schemaDiff = new SchemaDiff();
+    const diff = await schemaDiff.diff(entities, queryRunner, dialect);
+
+    const hasChanges =
+      diff.addTables.length > 0 ||
+      diff.dropTables.length > 0 ||
+      diff.addColumns.length > 0 ||
+      diff.dropColumns.length > 0 ||
+      diff.alterColumns.length > 0;
+
+    if (!hasChanges) {
+      this.logger.info("No schema changes detected. No migration generated.");
+      return { filePath: "", sql: { up: [], down: [] } };
+    }
+
+    const generator = new SchemaDiffMigrationGenerator();
+    const content = generator.generate(diff, dialect);
+    const sqlPreview = generator.dryRun(diff, dialect);
+
+    const outputDir = this.generateOptions.outputDir ?? "./migrations";
+    const filePath = await generator.save(content, outputDir);
+
+    this.logger.info(`Migration generated: ${filePath}`);
+    this.logger.info(`  Up statements: ${sqlPreview.up.length}`);
+    this.logger.info(`  Down statements: ${sqlPreview.down.length}`);
+
+    return { filePath, sql: sqlPreview };
   }
 }

@@ -64,9 +64,9 @@ describe("DeepPartial", () => {
 });
 
 // ==========================
-// FindCondition type tests
+// FindCondition type tests (deprecated — kept for backward compat)
 // ==========================
-describe("FindCondition", () => {
+describe("FindCondition (deprecated)", () => {
   it("should allow direct value matching", () => {
     const where: FindCondition<User> = { name: "Alice", age: 30 };
     expect(where.name).toBe("Alice");

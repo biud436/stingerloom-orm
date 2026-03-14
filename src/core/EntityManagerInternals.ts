@@ -4,8 +4,8 @@ import { ISqlDriver } from "../dialects/SqlDriver";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
 import { FindOption, WhereClause } from "../dialects/FindOption";
 import { ReplicationNodeConfig } from "../dialects/ReplicationRouter";
-import { EntityResult } from "../types/EntityResult";
 import { DeleteResult } from "../types/DeleteResult";
+import { EntityResult } from "../types/EntityResult";
 import { ISelectOption } from "../dialects/ISelectOption";
 
 /**
@@ -19,7 +19,7 @@ export interface EntityManagerInternals {
   isMySqlFamily(): boolean;
   isPostgres(): boolean;
   getDriver(): ISqlDriver | undefined;
-  getSynchronize(): boolean;
+  getSynchronize(): boolean | "safe" | "dry-run";
   executeInTransaction<R>(
     fn: (session: TransactionSessionManager) => Promise<R>,
     existingSession?: TransactionSessionManager,
@@ -53,7 +53,7 @@ export interface EntityManagerInternals {
   find<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,
-  ): Promise<EntityResult<T>>;
+  ): Promise<T[]>;
   delete<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,

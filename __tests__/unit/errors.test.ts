@@ -1,4 +1,5 @@
 import { Exception } from "../../src/errors/Exception";
+import { OrmError } from "../../src/errors/OrmError";
 import { DatabaseNotConnectedError } from "../../src/errors/DatabaseNotConnectedError";
 import { DatabaseConnectionFailedError } from "../../src/errors/DatabaseConnectionFailedError";
 import { NotSupportedDatabaseTypeError } from "../../src/errors/NotSupportedDatabaseTypeError";
@@ -21,12 +22,13 @@ describe("Exception", () => {
 });
 
 describe("DatabaseNotConnectedError", () => {
-  it("should have correct message and status 500", () => {
+  it("should have correct message and OrmError code", () => {
     const error = new DatabaseNotConnectedError();
 
-    expect(error.message).toBe("데이터베이스 연결이 되어있지 않습니다.");
-    expect(error.status).toBe(500);
-    expect(error).toBeInstanceOf(Exception);
+    expect(error.message).toBe("Database is not connected.");
+    expect(error.code).toBe("ORM_NOT_CONNECTED");
+    expect(error.suggestion).toBeTruthy();
+    expect(error).toBeInstanceOf(OrmError);
     expect(error).toBeInstanceOf(Error);
   });
 });

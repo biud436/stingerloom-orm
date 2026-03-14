@@ -9,6 +9,7 @@ export class PrimaryKeyNotFoundError extends OrmError {
     super(
       OrmErrorCode.PRIMARY_KEY_NOT_FOUND,
       `Primary key column not found for entity "${entityName}".`,
+      `Add @PrimaryGeneratedColumn() or @PrimaryColumn() decorator to one of the entity's properties.`,
     );
     this.name = "PrimaryKeyNotFoundError";
   }

@@ -31,7 +31,7 @@ export class ExplainQueryHandler {
       );
     }
 
-    const { select, orderBy, where, take } = findOption;
+    const { select, orderBy, where, take, skip } = findOption;
     const { limit } = findOption;
 
     const metadata = this.resolver.resolveEntityMetadata(entity);
@@ -139,6 +139,16 @@ export class ExplainQueryHandler {
       if (take && take > 0) count = take;
       if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
       qb.limit([offset, count]);
+    } else if (skip !== undefined || (take !== undefined && !limit)) {
+      const offset = Math.max(skip ?? 0, 0);
+      const count = Math.max(take ?? 0, 0) || undefined;
+      if (count) {
+        if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
+        qb.limit([offset, count]);
+      } else if (offset > 0) {
+        if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
+        qb.limit([offset, 2147483647]);
+      }
     } else if (limit) {
       qb.limit(limit as number);
     }

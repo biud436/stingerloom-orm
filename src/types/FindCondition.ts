@@ -1,4 +1,8 @@
 /**
+ * @deprecated This type is not used at runtime. Use `WhereClause<T>` from FindOption instead.
+ * These MongoDB-style operators ($eq, $ne, $gt, etc.) are not implemented in the query engine.
+ * This file will be removed in a future version.
+ *
  * WHERE 조건에 사용할 수 있는 비교 연산자 타입입니다.
  *
  * @example

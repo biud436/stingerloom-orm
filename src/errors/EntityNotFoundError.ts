@@ -9,6 +9,7 @@ export class EntityNotFoundError extends OrmError {
     super(
       OrmErrorCode.ENTITY_NOT_FOUND,
       `Entity "${entityName}" not found.`,
+      `Check that the entity exists in the database and the query conditions are correct.`,
     );
     this.name = "EntityNotFoundError";
   }
