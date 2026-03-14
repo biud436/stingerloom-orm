@@ -4,7 +4,7 @@ This guide walks you through installing Stingerloom ORM, defining your first ent
 
 ## Prerequisites
 
-- Node.js 16 or higher
+- Node.js 20 or higher (latest LTS recommended)
 - TypeScript project
 - MySQL, PostgreSQL, or SQLite database
 
