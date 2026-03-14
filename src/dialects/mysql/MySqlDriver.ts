@@ -261,6 +261,12 @@ export class MySqlDriver implements ISqlDriver {
         type = type.replace("$n", option.length?.toString() ?? "1");
       }
 
+      // ENUM 타입의 경우, enumValues로 값 목록을 설정합니다.
+      if (option.type === "enum" && option.enumValues && option.enumValues.length > 0) {
+        const values = option.enumValues.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(",");
+        type = `ENUM(${values})`;
+      }
+
       // DECIMAL 타입의 경우, precision과 scale을 설정합니다.
       if (type.startsWith("DECIMAL")) {
         if (option.precision !== undefined) {

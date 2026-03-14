@@ -72,6 +72,15 @@ import { SchemaRegistrar } from "./SchemaRegistrar";
 import { ExplainQueryHandler } from "./ExplainQueryHandler";
 import { AggregateQueryHandler } from "./AggregateQueryHandler";
 
+/**
+ * Date를 MySQL/MariaDB 호환 'YYYY-MM-DD HH:MM:SS' 형식으로 변환합니다.
+ * ISO 8601 형식은 MariaDB strict mode에서 거부될 수 있습니다.
+ */
+function formatDateTimeForSQL(date: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
   private readonly logger = new Logger(EntityManager.name);
@@ -1012,14 +1021,16 @@ export class EntityManager implements BaseEntityManager {
         });
 
         // @CreateTimestamp / @UpdateTimestamp 자동 주입 (INSERT 시)
-        const now = new Date().toISOString();
+        const now = new Date();
+        const nowStr = formatDateTimeForSQL(now);
         const createTsCol = this.resolver.getCreateTimestampColumn(entity);
         if (createTsCol) {
           const idx = insertableColumns.findIndex(
             (col: ColumnMetadata) => col.name === createTsCol,
           );
           if (idx >= 0) {
-            values[idx] = (item as any)[createTsCol]?.toISOString?.() ?? now;
+            const existing = (item as any)[createTsCol];
+            values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : (existing ?? nowStr);
           }
         }
         const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
@@ -1028,7 +1039,8 @@ export class EntityManager implements BaseEntityManager {
             (col: ColumnMetadata) => col.name === updateTsCol,
           );
           if (idx >= 0) {
-            values[idx] = (item as any)[updateTsCol]?.toISOString?.() ?? now;
+            const existing = (item as any)[updateTsCol];
+            values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : (existing ?? nowStr);
           }
         }
 
@@ -1187,7 +1199,7 @@ export class EntityManager implements BaseEntityManager {
         const existingIdx = updatableColumns.findIndex(
           (col: ColumnMetadata) => col.name === updateTsColName,
         );
-        const updateNow = new Date().toISOString();
+        const updateNow = formatDateTimeForSQL(new Date());
         if (existingIdx >= 0) {
           updateMap[existingIdx] =
             sql`${raw(this.wrap(updateTsColName))} = ${updateNow}`;
@@ -1635,7 +1647,7 @@ export class EntityManager implements BaseEntityManager {
         );
         if (!hasExplicit) {
           setMap.push(
-            sql`${raw(this.wrap(updateTsColName))} = ${new Date().toISOString()}`,
+            sql`${raw(this.wrap(updateTsColName))} = ${formatDateTimeForSQL(new Date())}`,
           );
         }
       }
