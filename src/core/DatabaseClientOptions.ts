@@ -82,8 +82,12 @@ export interface DatabaseClientOptions {
    */
   logging?: boolean | LoggingOptions;
 
-  /** Array of entity classes that will be used by the connection */
-  entities: AnyEntity[];
+  /**
+   * Array of entity classes or glob patterns that will be used by the connection.
+   * Glob patterns (e.g. `__dirname + '/**\/*.entity{.ts,.js}'`) are resolved via `fast-glob`.
+   * Install `fast-glob` as a dependency if you use glob patterns.
+   */
+  entities: (AnyEntity | string)[];
 
   /** MySQL Only: Forces date types to be returned as strings */
   datesStrings?: boolean;

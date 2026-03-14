@@ -27,6 +27,7 @@ export { Logger } from "./utils/Logger";
 export { ReflectManager } from "./utils/ReflectManager";
 export { createEntityKey } from "./utils/scanner";
 export { camelToSnakeCase } from "./utils/camelToSnakeCase";
+export { resolveEntityGlobs } from "./utils/resolveEntityGlobs";
 
 // Migration system
 export * from "./migration";

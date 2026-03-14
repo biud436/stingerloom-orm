@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import { ClazzType, Logger } from "../utils";
+import { ClazzType, Logger, resolveEntityGlobs } from "../utils";
 import { ColumnMetadata } from "../scanner";
 import { DatabaseClient } from "../DatabaseClient";
 import { MySqlDriver } from "../dialects/mysql/MySqlDriver";
@@ -181,7 +181,10 @@ export class EntityManager implements BaseEntityManager {
     connectionName = "default",
   ) {
     this.connectionName = connectionName;
-    this._entities = (databaseClientOptions.entities ?? []) as ClazzType<any>[];
+    const resolvedEntities = await resolveEntityGlobs(
+      databaseClientOptions.entities ?? [],
+    );
+    this._entities = resolvedEntities as ClazzType<any>[];
 
     const client = this.client as any;
     const connector = await client.connect(

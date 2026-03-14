@@ -4,3 +4,4 @@ export * from "./ReflectManager";
 export * from "./scanner";
 export * from "./camelToSnakeCase";
 export * from "./validateSavepointName";
+export * from "./resolveEntityGlobs";
