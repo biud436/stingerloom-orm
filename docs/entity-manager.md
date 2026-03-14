@@ -345,7 +345,7 @@ const user = await userRepo.findOne({ where: { id: 1 } as any });
 await userRepo.save({ name: "John Doe" });
 ```
 
-In NestJS, you can inject repositories into services using `@InjectRepository()`.
+In NestJS, you can inject repositories into services using `@InjectRepository()`. Multi-DB 환경에서는 두 번째 인수로 connectionName을 지정할 수 있습니다.
 
 ```typescript
 // users.service.ts
@@ -353,6 +353,7 @@ In NestJS, you can inject repositories into services using `@InjectRepository()`
 export class UsersService {
   constructor(
     @InjectRepository(User) private readonly userRepo: BaseRepository<User>,
+    // Named connection: @InjectRepository(Event, "analytics")
   ) {}
 
   async findAll() {
@@ -360,6 +361,8 @@ export class UsersService {
   }
 }
 ```
+
+EntityManager도 `@InjectEntityManager(connectionName?)`로 직접 주입할 수 있습니다.
 
 ## Shutdown — propagateShutdown()
 

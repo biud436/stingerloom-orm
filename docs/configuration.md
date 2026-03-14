@@ -259,6 +259,47 @@ console.log(primaryEm.getConnectionName());   // "primary"
 console.log(analyticsEm.getConnectionName()); // "analytics"
 ```
 
+### NestJS에서 Multi-DB
+
+NestJS 통합 모듈도 named connection을 지원합니다. `forRoot()`와 `forFeature()`에 두 번째 인수로 connectionName을 전달하세요.
+
+```typescript
+// app.module.ts
+@Module({
+  imports: [
+    StinglerloomOrmModule.forRoot(mysqlOptions),                  // "default"
+    StinglerloomOrmModule.forRoot(postgresOptions, "analytics"),  // named
+    UsersModule,
+    AnalyticsModule,
+  ],
+})
+export class AppModule {}
+
+// analytics.module.ts
+@Module({
+  imports: [StinglerloomOrmModule.forFeature([Event], "analytics")],
+})
+export class AnalyticsModule {}
+
+// analytics.service.ts
+@Injectable()
+export class AnalyticsService {
+  constructor(
+    @InjectRepository(Event, "analytics")
+    private readonly eventRepo: BaseRepository<Event>,
+    @InjectEntityManager("analytics")
+    private readonly em: EntityManager,
+  ) {}
+}
+```
+
+connectionName을 생략하면 `"default"` 커넥션이 사용되므로 기존 코드와 완전히 호환됩니다.
+
+토큰 헬퍼 함수도 사용 가능합니다:
+- `getEntityManagerToken(connectionName?)` — EntityManager DI 토큰 반환
+- `getOrmServiceToken(connectionName?)` — OrmService DI 토큰 반환
+- `makeInjectRepositoryToken(entity, connectionName?)` — Repository DI 토큰 반환
+
 ## Full Options Reference
 
 ```typescript

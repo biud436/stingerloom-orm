@@ -277,6 +277,82 @@ export class UsersService {
 }
 ```
 
+### Multi-DB (Named Connections)
+
+`forRoot()`과 `forFeature()`에 `connectionName`을 전달하면 여러 데이터베이스를 동시에 사용할 수 있습니다.
+
+```typescript
+// app.module.ts
+import { Module } from "@nestjs/common";
+import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { User } from "./user.entity";
+import { Event } from "./event.entity";
+
+@Module({
+  imports: [
+    // Default connection (MySQL)
+    StinglerloomOrmModule.forRoot({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+      username: "root",
+      password: "password",
+      database: "main",
+      entities: [User],
+    }),
+    // Named connection (PostgreSQL)
+    StinglerloomOrmModule.forRoot({
+      type: "postgres",
+      host: "localhost",
+      port: 5432,
+      username: "postgres",
+      password: "password",
+      database: "analytics",
+      entities: [Event],
+    }, "analytics"),
+    UsersModule,
+    AnalyticsModule,
+  ],
+})
+export class AppModule {}
+```
+
+Feature 모듈에서 connectionName을 지정합니다:
+
+```typescript
+// analytics/analytics.module.ts
+@Module({
+  imports: [StinglerloomOrmModule.forFeature([Event], "analytics")],
+  providers: [AnalyticsService],
+})
+export class AnalyticsModule {}
+```
+
+서비스에서 `@InjectRepository`와 `@InjectEntityManager`에 connectionName을 전달합니다:
+
+```typescript
+// analytics/analytics.service.ts
+import { Injectable } from "@nestjs/common";
+import {
+  InjectRepository,
+  InjectEntityManager,
+} from "@stingerloom/orm/nestjs";
+import { BaseRepository, EntityManager } from "@stingerloom/orm";
+import { Event } from "./event.entity";
+
+@Injectable()
+export class AnalyticsService {
+  constructor(
+    @InjectRepository(Event, "analytics")
+    private readonly eventRepo: BaseRepository<Event>,
+    @InjectEntityManager("analytics")
+    private readonly em: EntityManager,
+  ) {}
+}
+```
+
+> connectionName을 생략하면 `"default"`로 동작하므로, 기존 단일 DB 코드는 수정 없이 그대로 사용할 수 있습니다.
+
 > **Hint** Complete NestJS examples are included in the `examples/nestjs-cats/`, `examples/nestjs-blog/`, and `examples/nestjs-multitenant/` directories.
 
 ## Next Steps

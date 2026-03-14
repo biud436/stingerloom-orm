@@ -136,8 +136,8 @@ const userRepo = BaseRepository.of(User, em);
 | Decorator | Description |
 |-----------|-------------|
 | `@Transactional(isolationLevel?)` | Wrap method in a transaction |
-| `@InjectRepository(Entity)` | Inject `BaseRepository<T>` in NestJS |
-| `@InjectEntityManager()` | Inject `EntityManager` in NestJS |
+| `@InjectRepository(Entity, connectionName?)` | Inject `BaseRepository<T>` in NestJS (default connection if omitted) |
+| `@InjectEntityManager(connectionName?)` | Inject `EntityManager` in NestJS (default connection if omitted) |
 
 ## Type Reference
 
