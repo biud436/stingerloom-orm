@@ -434,6 +434,74 @@ enum OrmErrorCode {
 }
 ```
 
+## EntitySchema (Decorator-Free Entity Definition)
+
+[Usage ->](./entities.md#defining-entities-without-decorators-entityschema)
+
+```typescript
+import { EntitySchema, EntitySchemaOptions, ColumnSchemaDef } from "@stingerloom/orm";
+
+const schema = new EntitySchema<T>(options: EntitySchemaOptions<T>);
+```
+
+### EntitySchemaOptions\<T\>
+
+```typescript
+interface EntitySchemaOptions<T> {
+  target: ClazzType<T>;                                    // Entity class
+  tableName?: string;                                      // Table name (defaults to snake_case of class name)
+  columns: { [K in keyof T]?: ColumnSchemaDef };           // Column definitions
+  relations?: { [K in keyof T]?: RelationSchemaDef };      // Relation definitions
+  uniqueIndexes?: { columns: string[]; name?: string }[];  // Composite unique indexes
+  hooks?: Partial<Record<HookEvent, Extract<keyof T, string>>>;  // Lifecycle hooks
+}
+```
+
+### ColumnSchemaDef
+
+```typescript
+interface ColumnSchemaDef {
+  type: ColumnType;
+  primary?: boolean;
+  autoIncrement?: boolean;
+  length?: number;
+  nullable?: boolean;
+  default?: string | number | boolean | null;
+  precision?: number;
+  scale?: number;
+  enumValues?: string[];
+  enumName?: string;
+  name?: string;
+  transform?: (raw: unknown) => any;
+
+  // Special column flags
+  index?: boolean;              // Equivalent to @Index()
+  createTimestamp?: boolean;     // Equivalent to @CreateTimestamp()
+  updateTimestamp?: boolean;     // Equivalent to @UpdateTimestamp()
+  deletedAt?: boolean;           // Equivalent to @DeletedAt()
+  version?: boolean;             // Equivalent to @Version()
+
+  // Inline validation
+  validation?: ValidationDef[];
+}
+
+interface ValidationDef {
+  constraint: "notNull" | "minLength" | "maxLength" | "min" | "max";
+  value?: number;
+  message?: string;
+}
+```
+
+### RelationSchemaDef
+
+```typescript
+type RelationSchemaDef =
+  | { kind: "manyToOne"; target: () => ClazzType; joinColumn?: string; references?: string; eager?: boolean; cascade?: CascadeOption; lazy?: boolean }
+  | { kind: "oneToMany"; target: () => ClazzType; mappedBy: string; cascade?: CascadeOption }
+  | { kind: "oneToOne"; target: () => ClazzType; joinColumn?: string; inverseSide?: string; eager?: boolean; cascade?: CascadeOption }
+  | { kind: "manyToMany"; target: () => ClazzType; joinTable?: JoinTableOption; mappedBy?: string };
+```
+
 ## Utilities
 
 | Export | Description |

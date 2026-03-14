@@ -523,6 +523,201 @@ When `type` is omitted in `@Column()`, it is automatically inferred from the Typ
 | `enumValues` | `string[]` | PostgreSQL ENUM value list |
 | `enumName` | `string` | PostgreSQL ENUM type name |
 
+## Defining Entities Without Decorators (EntitySchema)
+
+If you prefer not to use decorators — for example, when using build tools like esbuild or SWC that don't support `emitDecoratorMetadata`, or simply to keep schema definitions separate from your classes — you can use `EntitySchema`.
+
+`EntitySchema` registers the same metadata as the decorator-based approach, so the rest of the ORM (EntityManager, SchemaGenerator, etc.) works identically. Both approaches can coexist in the same project.
+
+### Basic Usage
+
+```typescript
+import { EntitySchema } from "@stingerloom/orm";
+
+class User {
+  id!: number;
+  name!: string;
+  email!: string;
+}
+
+const UserSchema = new EntitySchema<User>({
+  target: User,
+  tableName: "users",
+  columns: {
+    id:    { type: "int", primary: true, autoIncrement: true },
+    name:  { type: "varchar" },
+    email: { type: "varchar", nullable: true, index: true },
+  },
+});
+```
+
+The `target` class is a plain TypeScript class — no decorators needed. The `tableName` is optional; if omitted, it is derived from the class name in snake_case (same as `@Entity()`).
+
+### Column Options
+
+`ColumnSchemaDef` supports the same options as `@Column()`, plus flags for special decorators:
+
+```typescript
+columns: {
+  id:        { type: "int", primary: true, autoIncrement: true },
+  name:      { type: "varchar", length: 100 },
+  email:     { type: "varchar", nullable: true, index: true },
+  status:    { type: "enum", enumValues: ["active", "inactive"], enumName: "user_status" },
+  bio:       { type: "text", nullable: true, default: null },
+  version:   { type: "int", version: true },
+  createdAt: { type: "datetime", createTimestamp: true },
+  updatedAt: { type: "datetime", updateTimestamp: true },
+  deletedAt: { type: "datetime", nullable: true, deletedAt: true },
+}
+```
+
+The `version`, `createTimestamp`, `updateTimestamp`, and `deletedAt` flags replace the corresponding `@Version()`, `@CreateTimestamp()`, `@UpdateTimestamp()`, and `@DeletedAt()` decorators.
+
+### Relations
+
+Relations are defined using the `relations` option with a `kind` discriminator:
+
+```typescript
+class Post {
+  id!: number;
+  title!: string;
+  author!: User;
+  comments!: Comment[];
+  tags!: Tag[];
+}
+
+const PostSchema = new EntitySchema<Post>({
+  target: Post,
+  columns: {
+    id:    { type: "int", primary: true, autoIncrement: true },
+    title: { type: "varchar" },
+  },
+  relations: {
+    author: {
+      kind: "manyToOne",
+      target: () => User,
+      joinColumn: "author_id",
+      eager: true,
+    },
+    comments: {
+      kind: "oneToMany",
+      target: () => Comment,
+      mappedBy: "post",
+    },
+    tags: {
+      kind: "manyToMany",
+      target: () => Tag,
+      joinTable: {
+        name: "post_tags",
+        joinColumn: "post_id",
+        inverseJoinColumn: "tag_id",
+      },
+    },
+  },
+});
+```
+
+All four relation kinds are supported:
+
+| `kind` | Equivalent Decorator | Required Options |
+|--------|---------------------|-----------------|
+| `"manyToOne"` | `@ManyToOne()` | `target`, optionally `joinColumn`, `eager`, `lazy`, `cascade` |
+| `"oneToMany"` | `@OneToMany()` | `target`, `mappedBy` |
+| `"oneToOne"` | `@OneToOne()` | `target`, optionally `joinColumn`, `inverseSide`, `eager`, `cascade` |
+| `"manyToMany"` | `@ManyToMany()` | `target`, optionally `joinTable` (owning) or `mappedBy` (inverse) |
+
+### Unique Indexes
+
+```typescript
+const UserSchema = new EntitySchema<User>({
+  target: User,
+  columns: { /* ... */ },
+  uniqueIndexes: [
+    { columns: ["email", "tenantId"], name: "uq_user_email_tenant" },
+  ],
+});
+```
+
+### Lifecycle Hooks
+
+Point to method names on the target class:
+
+```typescript
+class Article {
+  id!: number;
+  title!: string;
+
+  generateSlug() {
+    // ...
+  }
+}
+
+const ArticleSchema = new EntitySchema<Article>({
+  target: Article,
+  columns: {
+    id:    { type: "int", primary: true, autoIncrement: true },
+    title: { type: "varchar" },
+  },
+  hooks: {
+    beforeInsert: "generateSlug",
+  },
+});
+```
+
+### Validation
+
+Inline validation via the `validation` array in column definitions:
+
+```typescript
+columns: {
+  name: {
+    type: "varchar",
+    validation: [
+      { constraint: "notNull" },
+      { constraint: "minLength", value: 2, message: "Name too short" },
+    ],
+  },
+  age: {
+    type: "int",
+    validation: [
+      { constraint: "min", value: 0 },
+      { constraint: "max", value: 150 },
+    ],
+  },
+}
+```
+
+### Mixing Decorator and EntitySchema Entities
+
+Both approaches produce the same metadata, so you can freely mix them:
+
+```typescript
+// user.entity.ts — uses decorators
+@Entity()
+export class User {
+  @PrimaryGeneratedColumn()
+  id!: number;
+  // ...
+}
+
+// audit-log.schema.ts — uses EntitySchema
+class AuditLog {
+  id!: number;
+  action!: string;
+}
+
+const AuditLogSchema = new EntitySchema<AuditLog>({
+  target: AuditLog,
+  columns: {
+    id:     { type: "int", primary: true, autoIncrement: true },
+    action: { type: "varchar" },
+  },
+});
+
+// Both can be used with EntityManager
+await em.register({ entities: [User, AuditLog], /* ... */ });
+```
+
 ## Next Steps
 
 Now that you've defined entities, it's time to set up relationships between them.

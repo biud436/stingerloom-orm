@@ -33,3 +33,6 @@ export * from "./migration";
 
 // Error classes
 export * from "./errors";
+
+// Schema-based entity definitions (decorator-free)
+export * from "./schema";
