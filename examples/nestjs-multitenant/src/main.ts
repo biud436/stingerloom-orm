@@ -17,13 +17,18 @@ async function bootstrap() {
         "x-tenant-id 헤더를 통해 테넌트를 전환합니다.",
     )
     .setVersion("1.0")
-    .addGlobalParameters({
+    // .addGlobalParameters({
+    //   name: "x-tenant-id",
+    //   in: "header",
+    //   required: false,
+    //   description:
+    //     '테넌트 식별자 (예: "tenant_1", "tenant_2"). 미지정 시 "public" 사용.',
+    //   schema: { type: "string", default: "public" },
+    // })
+    .addSecurity("x-tenant-id", {
+      type: "apiKey",
       name: "x-tenant-id",
       in: "header",
-      required: false,
-      description:
-        '테넌트 식별자 (예: "tenant_1", "tenant_2"). 미지정 시 "public" 사용.',
-      schema: { type: "string", default: "public" },
     })
     .build();
 

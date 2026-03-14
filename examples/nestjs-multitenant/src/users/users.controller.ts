@@ -13,6 +13,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiSecurity,
 } from "@nestjs/swagger";
 import { UsersService } from "./users.service";
 import { CreateUserDto } from "./dto/create-user.dto";
@@ -20,11 +21,15 @@ import { UpdateUserDto } from "./dto/update-user.dto";
 
 @ApiTags("Users")
 @Controller("users")
+@ApiSecurity("x-tenant-id")
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  @ApiOperation({ summary: "사용자 생성", description: "새로운 사용자를 생성합니다." })
+  @ApiOperation({
+    summary: "사용자 생성",
+    description: "새로운 사용자를 생성합니다.",
+  })
   @ApiResponse({ status: 201, description: "사용자가 성공적으로 생성됨" })
   @ApiResponse({ status: 400, description: "잘못된 요청 데이터" })
   create(@Body() dto: CreateUserDto) {
@@ -61,10 +66,7 @@ export class UsersController {
   @ApiParam({ name: "id", type: Number, description: "사용자 ID" })
   @ApiResponse({ status: 200, description: "수정된 사용자 정보 반환" })
   @ApiResponse({ status: 404, description: "사용자를 찾을 수 없음" })
-  update(
-    @Param("id", ParseIntPipe) id: number,
-    @Body() dto: UpdateUserDto,
-  ) {
+  update(@Param("id", ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
     return this.usersService.update(id, dto);
   }
 
