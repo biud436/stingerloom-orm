@@ -22,6 +22,7 @@ import { QueryResult } from "../types/QueryResult";
 import { EntityResult } from "../types/EntityResult";
 import { DeleteResult } from "../types/DeleteResult";
 import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
+import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { Conditions } from "./Conditions";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
@@ -2165,6 +2166,13 @@ export class EntityManager implements BaseEntityManager {
     callback: (em: this) => Promise<R>,
   ): Promise<R> {
     return MetadataContext.run(tenantId, () => callback(this)) as Promise<R>;
+  }
+
+  createQueryBuilder(): BaseRawQueryBuilder {
+    const qb = RawQueryBuilderFactory.create();
+    if (this.isMySqlFamily()) qb.setDatabaseType("mysql");
+    else qb.setDatabaseType("postgresql");
+    return qb;
   }
 
   getDriver(): ISqlDriver | undefined {

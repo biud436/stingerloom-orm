@@ -2,6 +2,7 @@
 import { ClazzType } from "../utils";
 import { FindOption, WhereClause } from "../dialects/FindOption";
 import { BaseRepository } from "./BaseRepository";
+import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { DeleteResult } from "../types/DeleteResult";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { Sql } from "sql-template-tag";
@@ -209,4 +210,9 @@ export abstract class BaseEntityManager {
     tenantId: string,
     callback: (em: this) => Promise<R>,
   ): Promise<R>;
+
+  /**
+   * Creates a new QueryBuilder instance with the database type auto-configured.
+   */
+  abstract createQueryBuilder(): BaseRawQueryBuilder;
 }

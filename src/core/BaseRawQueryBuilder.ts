@@ -26,7 +26,7 @@ export interface BaseRawQueryBuilder {
    * @param alias - An optional alias for the table.
    * @returns The current instance of the query builder.
    */
-  from(table: string, alias?: string): BaseRawQueryBuilder;
+  from(table: string | Sql, alias?: string): BaseRawQueryBuilder;
 
   /**
    * Adds conditions to the WHERE clause of the query.
@@ -98,7 +98,7 @@ export interface BaseRawQueryBuilder {
    */
   join(
     type: "INNER" | "LEFT" | "RIGHT",
-    table: string,
+    table: string | Sql,
     alias: string,
     condition: Sql,
   ): BaseRawQueryBuilder;
@@ -108,7 +108,7 @@ export interface BaseRawQueryBuilder {
    * Convenience method for join("LEFT", ...).
    */
   leftJoin(
-    table: string,
+    table: string | Sql,
     alias: string,
     condition: Sql,
   ): BaseRawQueryBuilder;
@@ -118,7 +118,7 @@ export interface BaseRawQueryBuilder {
    * Convenience method for join("INNER", ...).
    */
   innerJoin(
-    table: string,
+    table: string | Sql,
     alias: string,
     condition: Sql,
   ): BaseRawQueryBuilder;
@@ -128,7 +128,7 @@ export interface BaseRawQueryBuilder {
    * Convenience method for join("RIGHT", ...).
    */
   rightJoin(
-    table: string,
+    table: string | Sql,
     alias: string,
     condition: Sql,
   ): BaseRawQueryBuilder;

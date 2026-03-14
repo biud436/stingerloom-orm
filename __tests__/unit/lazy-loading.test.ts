@@ -389,6 +389,85 @@ describe("injectLazyProxy", () => {
   });
 });
 
+describe("createLazyProxy - race condition fix (undefined/null loadFn result)", () => {
+  it("should call loadFn only once when it returns undefined", async () => {
+    const loadFn = jest.fn().mockResolvedValue(undefined);
+    const proxy = createLazyProxy(loadFn);
+
+    // Trigger first load
+    (proxy as any).someProp;
+    expect(loadFn).toHaveBeenCalledTimes(1);
+
+    // Wait for resolve
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Access again — should NOT call loadFn again
+    const val = (proxy as any).someProp;
+    expect(val).toBeUndefined();
+    expect(loadFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("should call loadFn only once when it returns null", async () => {
+    const loadFn = jest.fn().mockResolvedValue(null);
+    const proxy = createLazyProxy(loadFn);
+
+    // Trigger first load
+    (proxy as any).someProp;
+    expect(loadFn).toHaveBeenCalledTimes(1);
+
+    // Wait for resolve
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Access again — should NOT call loadFn again
+    const val = (proxy as any).someProp;
+    expect(val).toBeUndefined();
+    expect(loadFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("should handle 'has' trap correctly when loadFn returns null", async () => {
+    const loadFn = jest.fn().mockResolvedValue(null);
+    const proxy = createLazyProxy(loadFn);
+
+    // Trigger load
+    (proxy as any).id;
+    await new Promise((r) => setTimeout(r, 10));
+
+    // 'in' check should return false for null result
+    expect("id" in proxy).toBe(false);
+    expect(loadFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("should call loadFn only once with concurrent access (Promise.all)", async () => {
+    let resolveLoad!: (v: any) => void;
+    const loadFn = jest.fn(
+      () => new Promise<{ id: number } | undefined>((resolve) => { resolveLoad = resolve; }),
+    );
+
+    const proxy = createLazyProxy(loadFn);
+
+    // 10 concurrent accesses
+    const accesses = Array.from({ length: 10 }, () => {
+      return new Promise<any>((resolve) => {
+        const val = (proxy as any).id;
+        resolve(val);
+      });
+    });
+
+    await Promise.all(accesses);
+
+    // loadFn should only be called once despite 10 concurrent accesses
+    expect(loadFn).toHaveBeenCalledTimes(1);
+
+    // Resolve and verify cached access works
+    resolveLoad!({ id: 42 });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const result = (proxy as any).id;
+    expect(result).toBe(42);
+    expect(loadFn).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Lazy loading - eager takes precedence", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();

@@ -23,6 +23,7 @@ import {
 } from "../../decorators/ManyToMany";
 import { ColumnMetadata } from "../../scanner/ColumnScanner";
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
+import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
 
 export type SchemaDialect = "mysql" | "postgres" | "sqlite";
 
@@ -67,6 +68,9 @@ export class SchemaGenerator {
 
     // 복합 PK 감지: primary 컬럼이 2개 이상이면 복합 PK
     const pkColumns = columns.filter((col) => col.options.primary);
+    if (pkColumns.length === 0) {
+      throw new PrimaryKeyNotFoundError(tableName);
+    }
     const isCompositePk = pkColumns.length > 1;
 
     const columnDefs = columns.map((col) =>

@@ -1,5 +1,3 @@
-import { EventEmitter } from "events";
-
 type LOG_LEVEL =
   | "info"
   | "warn"
@@ -9,59 +7,76 @@ type LOG_LEVEL =
   | "trace"
   | "silent";
 
-class LoggerState {
-  private state = "Logger";
+const LOG_LEVEL_PRIORITY: Record<LOG_LEVEL, number> = {
+  trace: 0,
+  debug: 1,
+  info: 2,
+  warn: 3,
+  error: 4,
+  fatal: 5,
+  silent: 6,
+};
 
-  public info() {
-    this.state = "INFO";
-  }
-
-  public warn() {
-    this.state = "WARN";
-  }
-
-  public error() {
-    this.state = "ERROR";
-  }
-
-  public debug() {
-    this.state = "DEBUG";
-  }
-
-  public fatal() {
-    this.state = "FATAL";
-  }
-
-  public trace() {
-    this.state = "TRACE";
-  }
-
-  public silent() {
-    this.state = "SILENT";
-  }
-
-  public toString() {
-    return this.state;
-  }
+export interface ILogger {
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+  debug(message: string, ...args: unknown[]): void;
+  fatal(message: string, ...args: unknown[]): void;
+  trace(message: string, ...args: unknown[]): void;
 }
 
 /**
- * Simple logger for ORM operations
+ * Simple logger for ORM operations with level filtering.
  */
-export class Logger extends EventEmitter {
-  private readonly state: LoggerState = new LoggerState();
+export class Logger implements ILogger {
+  private static minLevel: LOG_LEVEL = "info";
+  private static output: ((msg: string) => void) | null = null;
+
   public name? = "";
 
   constructor(name?: string) {
-    super();
     this.name = name;
   }
 
-  print =
-    (level: string) =>
+  /**
+   * Sets the minimum log level. Messages below this level are suppressed.
+   */
+  static setLevel(level: LOG_LEVEL): void {
+    Logger.minLevel = level;
+  }
+
+  /**
+   * Returns the current minimum log level.
+   */
+  static getLevel(): LOG_LEVEL {
+    return Logger.minLevel;
+  }
+
+  /**
+   * Sets a custom output function (default: console.log).
+   */
+  static setOutput(fn: (msg: string) => void): void {
+    Logger.output = fn;
+  }
+
+  /**
+   * Resets to default settings (level: "info", output: console.log).
+   */
+  static reset(): void {
+    Logger.minLevel = "info";
+    Logger.output = null;
+  }
+
+  private print =
+    (level: LOG_LEVEL) =>
     (message: string, ...args: unknown[]) => {
+      // Level filtering
+      if (LOG_LEVEL_PRIORITY[level] < LOG_LEVEL_PRIORITY[Logger.minLevel]) {
+        return;
+      }
+
       const processId = process.pid;
-      this.state[level as LOG_LEVEL]();
 
       let formattedMessage = message;
       if (args.length > 0) {
@@ -81,10 +96,11 @@ export class Logger extends EventEmitter {
       }
 
       const timestamp = new Date().toISOString();
-      const logLevel = this.state.toString();
+      const logLevel = level.toUpperCase();
       const context = this.name ? `[${this.name}]` : "";
 
-      console.log(
+      const out = Logger.output ?? console.log;
+      out(
         `${processId} - ${timestamp} ${logLevel} ${context} ${formattedMessage}`,
       );
     };
@@ -95,5 +111,4 @@ export class Logger extends EventEmitter {
   debug = this.print("debug");
   fatal = this.print("fatal");
   trace = this.print("trace");
-  silent = this.print("silent");
 }

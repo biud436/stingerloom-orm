@@ -38,7 +38,8 @@ export function createLazyProxy<T extends object>(loadFn: LazyLoadFn<T>): T {
       }
 
       // 이미 로드되었으면 캐시된 값에서 반환
-      if (loaded && cachedValue !== undefined) {
+      if (loaded) {
+        if (cachedValue == null) return undefined;
         return Reflect.get(cachedValue as object, prop, receiver);
       }
 
@@ -59,7 +60,8 @@ export function createLazyProxy<T extends object>(loadFn: LazyLoadFn<T>): T {
 
     has(_target, prop) {
       if (prop === LAZY_MARKER) return true;
-      if (loaded && cachedValue !== undefined) {
+      if (loaded) {
+        if (cachedValue == null) return false;
         return prop in (cachedValue as object);
       }
       return false;

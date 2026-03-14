@@ -5,6 +5,7 @@ export * from "./Conditions";
 export * from "./SelectUtils";
 export * from "./ResultTransformerFactory";
 export * from "./RawQueryBuilderFactory";
+export * from "./BaseRawQueryBuilder";
 export * from "./BaseInsertQueryBuilder";
 export * from "./deserializer";
 export * from "./MyClassConstructor";

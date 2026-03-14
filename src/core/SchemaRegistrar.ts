@@ -94,6 +94,14 @@ export class SchemaRegistrar {
         throw new EntityMetadataNotFoundError(tableName ?? "Unknown");
       }
 
+      // PK validation: every entity must have at least one primary key column
+      const hasPrimaryKey = metadata.columns.some(
+        (col: any) => col.options?.primary,
+      );
+      if (!hasPrimaryKey) {
+        throw new PrimaryKeyNotFoundError(tableName ?? "Unknown");
+      }
+
       const driver = this.ctx.getDriver();
       if (synchronize) {
         const hasTable = await driver?.hasTable(tableName);
