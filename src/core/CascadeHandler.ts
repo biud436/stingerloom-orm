@@ -6,6 +6,7 @@ import { HOOK_TOKEN, HookEvent, HookMetadata } from "../decorators";
 import { hasCascade } from "../types/CascadeType";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
+import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 
 /**
  * 캐스케이드 저장/삭제 + 라이프사이클 훅 핸들러.
@@ -118,13 +119,14 @@ export class CascadeHandler {
 
       // 저장된 부모의 PK를 FK 컬럼에 설정
       const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
-      if (relatedMetadata) {
-        const relatedPk = relatedMetadata.columns.find(
-          (col: any) => col.options?.primary,
-        );
-        if (relatedPk && rel.joinColumn) {
-          (item as any)[rel.joinColumn] = (saved as any)[relatedPk.name!];
-        }
+      if (!relatedMetadata) {
+        throw new EntityMetadataNotFoundError(RelatedEntity.name);
+      }
+      const relatedPk = relatedMetadata.columns.find(
+        (col: any) => col.options?.primary,
+      );
+      if (relatedPk && rel.joinColumn) {
+        (item as any)[rel.joinColumn] = (saved as any)[relatedPk.name!];
       }
     }
   }

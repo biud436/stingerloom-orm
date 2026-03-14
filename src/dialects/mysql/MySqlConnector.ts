@@ -10,6 +10,7 @@ import { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { IConnector } from "../../core/IConnector";
 import { IConnection } from "../IConnection";
 import { MysqlConnection } from "./MysqlConnection";
+import { validateIsolationLevel } from "../../utils/validateIsolationLevel";
 export type AnyEntity = any;
 export type IDatabaseType = "mysql" | "mariadb" | "postgres" | "sqlite";
 
@@ -75,7 +76,7 @@ export class MySqlConnector extends IConnector {
     return new Promise((resolve, reject) => {
       this.pool?.getConnection((error, connection) => {
         if (error) {
-          reject(error);
+          return reject(error);
         }
 
         resolve(connection);
@@ -109,7 +110,7 @@ export class MySqlConnector extends IConnector {
       if (typeof rawSql === "string") {
         qb.query(rawSql, (error, results, fields) => {
           if (error) {
-            reject(error);
+            return reject(error);
           }
 
           if (this.isDebug) {
@@ -127,7 +128,7 @@ export class MySqlConnector extends IConnector {
 
         qb.query(sql, values, (error, results, fields) => {
           if (error) {
-            reject(error);
+            return reject(error);
           }
 
           if (this.isDebug) {
@@ -154,7 +155,7 @@ export class MySqlConnector extends IConnector {
 
       this.pool.end((error) => {
         if (error) {
-          reject(error);
+          return reject(error);
         }
 
         resolve();
@@ -166,9 +167,11 @@ export class MySqlConnector extends IConnector {
     connection: Connection,
     level: TRANSACTION_ISOLATION_LEVEL,
   ): Promise<void> {
+    validateIsolationLevel(level);
+
     return new Promise((resolve, reject) => {
       if (!connection) {
-        reject(new ConnectionNotFound());
+        return reject(new ConnectionNotFound());
       }
 
       /**
@@ -176,7 +179,7 @@ export class MySqlConnector extends IConnector {
        */
       connection.query(`SET TRANSACTION ISOLATION LEVEL ${level}`, (error) => {
         if (error) {
-          reject(error);
+          return reject(error);
         }
 
         resolve();
@@ -190,14 +193,14 @@ export class MySqlConnector extends IConnector {
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!connection) {
-        reject(new ConnectionNotFound());
+        return reject(new ConnectionNotFound());
       }
 
       this.setTransactionIsolationLevel(connection, level)
         .then(() => {
           connection.beginTransaction((error) => {
             if (error) {
-              reject(error);
+              return reject(error);
             }
 
             resolve();
@@ -212,7 +215,7 @@ export class MySqlConnector extends IConnector {
   async rollback(connection: Connection): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!connection) {
-        reject(new ConnectionNotFound());
+        return reject(new ConnectionNotFound());
       }
 
       connection.rollback(() => {
@@ -228,7 +231,7 @@ export class MySqlConnector extends IConnector {
   async commit(connection: Connection): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!connection) {
-        reject(new ConnectionNotFound());
+        return reject(new ConnectionNotFound());
       }
 
       connection.commit((error) => {

@@ -10,6 +10,7 @@ import { IConnector } from "../../core/IConnector";
 import { IConnection } from "../IConnection";
 import { PostgresConnection } from "./PostgresConnection";
 import { MetadataContext } from "../../metadata/MetadataContext";
+import { validateIsolationLevel } from "../../utils/validateIsolationLevel";
 
 export class PostgresConnector extends IConnector {
   pool?: Pool;
@@ -153,6 +154,8 @@ export class PostgresConnector extends IConnector {
     connection: any,
     level: TRANSACTION_ISOLATION_LEVEL,
   ): Promise<void> {
+    validateIsolationLevel(level);
+
     const client = connection as PoolClient;
     if (!client) {
       throw new ConnectionNotFound();

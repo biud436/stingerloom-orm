@@ -68,11 +68,11 @@ export class TransactionSessionManager extends IQueryEngine {
    * @throws {DatabaseConnectionFailedError} 연결 실패 시
    */
   public async connectToNode(nodeConfig: ReplicationNodeConfig): Promise<void> {
+    let connector: IConnector | undefined;
     try {
       const dbType = DatabaseClient.getInstance().type;
       const options = DatabaseClient.getInstance().getOptions();
 
-      let connector: IConnector;
       if (dbType === "postgres") {
         connector = new PostgresConnector();
       } else {
@@ -104,6 +104,9 @@ export class TransactionSessionManager extends IQueryEngine {
 
       await this.dataSource.createConnection();
     } catch (error: unknown) {
+      if (connector && connector !== this.connection) {
+        try { await connector.close(); } catch { /* ignore */ }
+      }
       throw new DatabaseConnectionFailedError(error);
     }
   }

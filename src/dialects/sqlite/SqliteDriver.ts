@@ -7,6 +7,7 @@ import { ISqlDriver } from "../SqlDriver";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
+import { Logger } from "../../utils/Logger";
 
 /**
  * SQLite용 SQL 드라이버 구현체입니다.
@@ -16,6 +17,8 @@ import { validateSavepointName } from "../../utils/validateSavepointName";
  * 식별자 래핑에는 PostgreSQL과 동일하게 큰따옴표를 사용합니다.
  */
 export class SqliteDriver implements ISqlDriver {
+  private readonly logger = new Logger("SqliteDriver");
+
   constructor(
     private readonly connector: IConnector,
   ) {}
@@ -463,6 +466,9 @@ export class SqliteDriver implements ISqlDriver {
    */
   getForUpdateNoWait(): string {
     // SQLite는 행 단위 잠금을 지원하지 않으므로, 빈 문자열 반환
+    this.logger.warn(
+      "SQLite does not support FOR UPDATE — pessimistic locking is not applied",
+    );
     return "";
   }
 }

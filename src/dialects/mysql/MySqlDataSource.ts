@@ -26,7 +26,11 @@ export class MySqlDataSource implements IDataSource {
 
     const conn = this.connection;
     this.connection = undefined;
-    conn.release();
+    try {
+      conn.release();
+    } catch {
+      // 이미 해제된 커넥션인 경우 무시
+    }
   }
 
   async startTransaction(level?: TRANSACTION_ISOLATION_LEVEL) {

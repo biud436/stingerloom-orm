@@ -489,8 +489,11 @@ export class MySqlDriver implements ISqlDriver {
         conn,
       );
     } finally {
-      await this.connector.query(`SET FOREIGN_KEY_CHECKS = 1`, conn);
-      conn.release();
+      try {
+        await this.connector.query(`SET FOREIGN_KEY_CHECKS = 1`, conn);
+      } finally {
+        conn.release();
+      }
     }
   }
 
