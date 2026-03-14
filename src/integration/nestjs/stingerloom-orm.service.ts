@@ -13,6 +13,13 @@ export const STINGERLOOM_ORM_SERVICE_TOKEN = Symbol.for(
   "STINGERLOOM_ORM_SERVICE_TOKEN",
 );
 
+export function getOrmServiceToken(
+  connectionName = "default",
+): string | typeof StinglerloomOrmService {
+  if (connectionName === "default") return StinglerloomOrmService;
+  return `STINGERLOOM_ORM_SERVICE_${connectionName}`;
+}
+
 @Injectable()
 export class StinglerloomOrmService
   implements OnModuleInit, OnApplicationShutdown
