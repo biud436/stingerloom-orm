@@ -259,9 +259,9 @@ console.log(primaryEm.getConnectionName());   // "primary"
 console.log(analyticsEm.getConnectionName()); // "analytics"
 ```
 
-### NestJS에서 Multi-DB
+### Multi-DB in NestJS
 
-NestJS 통합 모듈도 named connection을 지원합니다. `forRoot()`와 `forFeature()`에 두 번째 인수로 connectionName을 전달하세요.
+The NestJS integration module also supports named connections. Pass a connectionName as the second argument to `forRoot()` and `forFeature()`.
 
 ```typescript
 // app.module.ts
@@ -293,12 +293,12 @@ export class AnalyticsService {
 }
 ```
 
-connectionName을 생략하면 `"default"` 커넥션이 사용되므로 기존 코드와 완전히 호환됩니다.
+When connectionName is omitted, the `"default"` connection is used, maintaining full backward compatibility.
 
-토큰 헬퍼 함수도 사용 가능합니다:
-- `getEntityManagerToken(connectionName?)` — EntityManager DI 토큰 반환
-- `getOrmServiceToken(connectionName?)` — OrmService DI 토큰 반환
-- `makeInjectRepositoryToken(entity, connectionName?)` — Repository DI 토큰 반환
+Token helper functions are also available:
+- `getEntityManagerToken(connectionName?)` — Returns the EntityManager DI token
+- `getOrmServiceToken(connectionName?)` — Returns the OrmService DI token
+- `makeInjectRepositoryToken(entity, connectionName?)` — Returns the Repository DI token
 
 ## Full Options Reference
 

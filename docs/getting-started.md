@@ -279,7 +279,7 @@ export class UsersService {
 
 ### Multi-DB (Named Connections)
 
-`forRoot()`과 `forFeature()`에 `connectionName`을 전달하면 여러 데이터베이스를 동시에 사용할 수 있습니다.
+Pass a `connectionName` to `forRoot()` and `forFeature()` to use multiple databases simultaneously.
 
 ```typescript
 // app.module.ts
@@ -317,7 +317,7 @@ import { Event } from "./event.entity";
 export class AppModule {}
 ```
 
-Feature 모듈에서 connectionName을 지정합니다:
+Specify the connectionName in feature modules:
 
 ```typescript
 // analytics/analytics.module.ts
@@ -328,7 +328,7 @@ Feature 모듈에서 connectionName을 지정합니다:
 export class AnalyticsModule {}
 ```
 
-서비스에서 `@InjectRepository`와 `@InjectEntityManager`에 connectionName을 전달합니다:
+Pass the connectionName to `@InjectRepository` and `@InjectEntityManager` in services:
 
 ```typescript
 // analytics/analytics.service.ts
@@ -351,7 +351,7 @@ export class AnalyticsService {
 }
 ```
 
-> connectionName을 생략하면 `"default"`로 동작하므로, 기존 단일 DB 코드는 수정 없이 그대로 사용할 수 있습니다.
+> When connectionName is omitted, it defaults to `"default"`, so existing single-DB code works without any changes.
 
 > **Hint** Complete NestJS examples are included in the `examples/nestjs-cats/`, `examples/nestjs-blog/`, and `examples/nestjs-multitenant/` directories.
 
