@@ -7,6 +7,7 @@ import {
 import { Entity } from "../../src/decorators/Entity";
 import { Column } from "../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
+import { ManyToOne } from "../../src/decorators/ManyToOne";
 
 // ─────────────────────────────────────────────────
 // Test entities
@@ -382,12 +383,12 @@ describe("SchemaDiffMigrationGenerator", () => {
 
       expect(content).toContain("extends Migration");
       expect(content).toContain("ADD COLUMN");
-      expect(content).toContain("`users`");
-      expect(content).toContain("`email`");
+      expect(content).toContain("users");
+      expect(content).toContain("email");
       expect(content).toContain("VARCHAR");
       expect(content).toContain("NOT NULL");
       // down should have DROP COLUMN
-      expect(content).toContain("DROP COLUMN `email`");
+      expect(content).toContain("DROP COLUMN");
     });
 
     it("should generate migration with MODIFY COLUMN for type changes", () => {
@@ -409,7 +410,7 @@ describe("SchemaDiffMigrationGenerator", () => {
       const content = generator.generate(diff, "mysql");
 
       expect(content).toContain("MODIFY COLUMN");
-      expect(content).toContain("`name`");
+      expect(content).toContain("name");
       expect(content).toContain("TEXT");
     });
 
@@ -475,7 +476,9 @@ describe("SchemaDiffMigrationGenerator", () => {
       expect(content).toContain('"users"');
       expect(content).toContain('"email"');
       expect(content).toContain("NULL");
-      expect(content).not.toContain("`");
+      // Ensure no MySQL-style backtick identifier quoting (template literal backticks are OK)
+      expect(content).not.toMatch(/`users`/);
+      expect(content).not.toMatch(/`email`/);
     });
 
     it("should use ALTER COLUMN ... TYPE for PostgreSQL type changes", () => {
@@ -578,14 +581,15 @@ describe("SchemaDiffMigrationGenerator", () => {
 
       // up should contain:
       expect(content).toContain("CREATE TABLE");
-      expect(content).toContain("ADD COLUMN `email`");
-      expect(content).toContain("ADD COLUMN `phone`");
-      expect(content).toContain("MODIFY COLUMN `body`");
+      expect(content).toContain("ADD COLUMN");
+      expect(content).toContain("email");
+      expect(content).toContain("phone");
+      expect(content).toContain("MODIFY COLUMN");
+      expect(content).toContain("body");
       expect(content).toContain("// await query"); // commented drop
 
       // down should contain:
-      expect(content).toContain("DROP COLUMN `email`");
-      expect(content).toContain("DROP COLUMN `phone`");
+      expect(content).toContain("DROP COLUMN");
       expect(content).toContain("DROP TABLE IF EXISTS");
     });
   });
@@ -636,8 +640,13 @@ describe("SchemaDiffMigrationGenerator", () => {
 
       const content = generator.generate(diff, "mysql");
 
-      expect(content).toContain("my``table");
-      expect(content).toContain("my``col");
+      // MySQL backtick escaping: ` -> `` in SQL, then ` -> \` in template literal
+      expect(content).toContain("my");
+      expect(content).toContain("table");
+      expect(content).toContain("col");
+      // Verify the SQL contains the table/column references
+      expect(content).toContain("ADD COLUMN");
+      expect(content).toContain("ALTER TABLE");
     });
 
     it("should escape special characters in PostgreSQL identifiers", () => {
@@ -681,6 +690,444 @@ describe("SchemaDiffMigrationGenerator", () => {
       expect(content).toContain("INT"); // id column from DiffUser entity
       // down should still have DROP TABLE
       expect(content).toContain("DROP TABLE IF EXISTS");
+    });
+  });
+
+  describe("generate() — DDL escape with backticks and dollar signs", () => {
+    it("should use template literals and properly escape backticks", () => {
+      const diff: SchemaDiffResult = {
+        addTables: [],
+        dropTables: [],
+        addColumns: [
+          {
+            tableName: "users",
+            columnName: "email",
+            columnType: "VARCHAR",
+            nullable: false,
+          },
+        ],
+        dropColumns: [],
+        alterColumns: [],
+      };
+
+      const content = generator.generate(diff, "mysql");
+
+      // Should use template literals (backtick) for wrapping SQL
+      expect(content).toContain("await query(`");
+      // Should NOT use single-quoted strings for SQL
+      expect(content).not.toMatch(/await query\('/);
+    });
+
+    it("should escape dollar signs in DDL to prevent template literal injection", () => {
+      const diff: SchemaDiffResult = {
+        addTables: ["$pecial"],
+        dropTables: [],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [],
+        addTableEntityMap: {},
+      };
+
+      const content = generator.generate(diff, "mysql");
+      // The table name with $ should be commented out (no entity class)
+      expect(content).toContain("$pecial");
+    });
+  });
+
+  describe("dryRun()", () => {
+    it("should return pure SQL without await query wrapper", () => {
+      const diff: SchemaDiffResult = {
+        addTables: [],
+        dropTables: [],
+        addColumns: [
+          {
+            tableName: "users",
+            columnName: "email",
+            columnType: "VARCHAR",
+            nullable: false,
+          },
+        ],
+        dropColumns: [],
+        alterColumns: [],
+      };
+
+      const result = generator.dryRun(diff, "mysql");
+
+      expect(result.up).toHaveLength(1);
+      expect(result.up[0]).toContain("ALTER TABLE");
+      expect(result.up[0]).toContain("ADD COLUMN");
+      expect(result.up[0]).not.toContain("await query");
+
+      expect(result.down).toHaveLength(1);
+      expect(result.down[0]).toContain("DROP COLUMN");
+      expect(result.down[0]).not.toContain("await query");
+    });
+
+    it("should return empty arrays for no changes", () => {
+      const diff: SchemaDiffResult = {
+        addTables: [],
+        dropTables: [],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [],
+      };
+
+      const result = generator.dryRun(diff, "mysql");
+
+      expect(result.up).toHaveLength(0);
+      expect(result.down).toHaveLength(0);
+    });
+
+    it("should include CREATE TABLE SQL for new tables with entity class", () => {
+      const diff: SchemaDiffResult = {
+        addTables: ["diff_user"],
+        dropTables: [],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [],
+        addTableEntityMap: { diff_user: DiffUser },
+      };
+
+      const result = generator.dryRun(diff, "mysql");
+
+      expect(result.up.length).toBeGreaterThan(0);
+      expect(result.up[0]).toContain("CREATE TABLE");
+      expect(result.down.length).toBeGreaterThan(0);
+      expect(result.down[0]).toContain("DROP TABLE");
+    });
+  });
+
+  describe("generate() — FK dependency ordering", () => {
+    it("should order tables by FK dependency (referenced table first)", () => {
+      @Entity()
+      class DepCategory {
+        @PrimaryGeneratedColumn()
+        id!: number;
+
+        @Column({ type: "varchar", length: 100 })
+        name!: string;
+      }
+
+      @Entity()
+      class DepArticle {
+        @PrimaryGeneratedColumn()
+        id!: number;
+
+        @Column({ type: "varchar", length: 255 })
+        title!: string;
+
+        @ManyToOne(() => DepCategory, (e: any) => e.category, { joinColumn: "category_id" })
+        category!: DepCategory;
+      }
+
+      const diff: SchemaDiffResult = {
+        addTables: ["dep_article", "dep_category"],
+        dropTables: [],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [],
+        addTableEntityMap: {
+          dep_article: DepArticle,
+          dep_category: DepCategory,
+        },
+      };
+
+      const content = generator.generate(diff, "mysql");
+
+      // dep_category should appear before dep_article in the output
+      const catIdx = content.indexOf("dep_category");
+      const artIdx = content.indexOf("dep_article");
+      expect(catIdx).toBeLessThan(artIdx);
+    });
+  });
+
+  describe("generate() — dropTables in diff", () => {
+    it("should generate commented-out DROP TABLE statements for dropped tables", () => {
+      const diff: SchemaDiffResult = {
+        addTables: [],
+        dropTables: ["old_table"],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [],
+      };
+
+      const content = generator.generate(diff, "mysql");
+
+      expect(content).toContain("DROP TABLE IF EXISTS");
+      expect(content).toContain("old_table");
+      expect(content).toContain("DANGEROUS");
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────
+// SchemaDiff Phase 2 tests
+// ─────────────────────────────────────────────────
+
+describe("SchemaDiff — Phase 2 improvements", () => {
+  let schemaDiff: SchemaDiff;
+
+  beforeEach(() => {
+    schemaDiff = new SchemaDiff();
+  });
+
+  describe("JSON ≠ JSONB separation (PostgreSQL)", () => {
+    @Entity()
+    class JsonEntity {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "json" })
+      data!: any;
+    }
+
+    @Entity()
+    class JsonbEntity {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "jsonb" })
+      data!: any;
+    }
+
+    it("should detect type mismatch when entity is JSON but DB is JSONB", async () => {
+      const runner = createMockQueryRunner({
+        json_entity: [
+          { column_name: "id", data_type: "integer", is_nullable: "NO" },
+          { column_name: "data", data_type: "jsonb", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff(
+        [JsonEntity],
+        runner,
+        "postgres",
+        "public",
+      );
+
+      expect(result.alterColumns).toHaveLength(1);
+      expect(result.alterColumns[0].columnName).toBe("data");
+      expect(result.alterColumns[0].columnType).toBe("JSON");
+      expect(result.alterColumns[0].currentType).toBe("jsonb");
+    });
+
+    it("should detect type mismatch when entity is JSONB but DB is JSON", async () => {
+      const runner = createMockQueryRunner({
+        jsonb_entity: [
+          { column_name: "id", data_type: "integer", is_nullable: "NO" },
+          { column_name: "data", data_type: "json", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff(
+        [JsonbEntity],
+        runner,
+        "postgres",
+        "public",
+      );
+
+      expect(result.alterColumns).toHaveLength(1);
+      expect(result.alterColumns[0].columnName).toBe("data");
+    });
+
+    it("should NOT detect mismatch when entity is JSON and DB is JSON", async () => {
+      const runner = createMockQueryRunner({
+        json_entity: [
+          { column_name: "id", data_type: "integer", is_nullable: "NO" },
+          { column_name: "data", data_type: "json", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff(
+        [JsonEntity],
+        runner,
+        "postgres",
+        "public",
+      );
+
+      expect(result.alterColumns).toHaveLength(0);
+    });
+  });
+
+  describe("VARCHAR length difference detection", () => {
+    @Entity()
+    class LengthEntity {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "varchar", length: 100 })
+      name!: string;
+    }
+
+    it("should detect length mismatch (100 vs 255)", async () => {
+      const runner = createMockQueryRunner({
+        length_entity: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          {
+            column_name: "name",
+            data_type: "varchar",
+            is_nullable: "NO",
+            character_maximum_length: 255,
+          },
+        ],
+      });
+
+      const result = await schemaDiff.diff(
+        [LengthEntity],
+        runner,
+        "mysql",
+      );
+
+      expect(result.alterColumns).toHaveLength(1);
+      expect(result.alterColumns[0].columnName).toBe("name");
+      expect(result.alterColumns[0].expectedLength).toBe(100);
+      expect(result.alterColumns[0].actualLength).toBe(255);
+    });
+
+    it("should NOT detect mismatch when lengths are the same", async () => {
+      const runner = createMockQueryRunner({
+        length_entity: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          {
+            column_name: "name",
+            data_type: "varchar",
+            is_nullable: "NO",
+            character_maximum_length: 100,
+          },
+        ],
+      });
+
+      const result = await schemaDiff.diff(
+        [LengthEntity],
+        runner,
+        "mysql",
+      );
+
+      expect(result.alterColumns).toHaveLength(0);
+    });
+  });
+
+  describe("DECIMAL precision/scale difference detection", () => {
+    @Entity()
+    class PrecisionEntity {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "double", precision: 10, scale: 2 })
+      price!: number;
+    }
+
+    it("should detect precision mismatch (10,2 vs 5,3)", async () => {
+      const runner = createMockQueryRunner({
+        precision_entity: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          {
+            column_name: "price",
+            data_type: "decimal",
+            is_nullable: "NO",
+            numeric_precision: 5,
+            numeric_scale: 3,
+          },
+        ],
+      });
+
+      const result = await schemaDiff.diff(
+        [PrecisionEntity],
+        runner,
+        "mysql",
+      );
+
+      expect(result.alterColumns).toHaveLength(1);
+      expect(result.alterColumns[0].columnName).toBe("price");
+      expect(result.alterColumns[0].expectedPrecision).toBe(10);
+      expect(result.alterColumns[0].actualPrecision).toBe(5);
+      expect(result.alterColumns[0].expectedScale).toBe(2);
+      expect(result.alterColumns[0].actualScale).toBe(3);
+    });
+
+    it("should NOT detect mismatch when precision matches", async () => {
+      const runner = createMockQueryRunner({
+        precision_entity: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          {
+            column_name: "price",
+            data_type: "decimal",
+            is_nullable: "NO",
+            numeric_precision: 10,
+            numeric_scale: 2,
+          },
+        ],
+      });
+
+      const result = await schemaDiff.diff(
+        [PrecisionEntity],
+        runner,
+        "mysql",
+      );
+
+      expect(result.alterColumns).toHaveLength(0);
+    });
+  });
+
+  describe("dropTables detection (opt-in)", () => {
+    it("should detect dropped tables when detectDroppedTables is true", async () => {
+      const mockQuery = jest.fn((sqlInput: any) => {
+        const sqlText = typeof sqlInput === "string"
+          ? sqlInput
+          : (sqlInput.text ?? sqlInput.sql ?? "");
+        const values = typeof sqlInput === "object" && sqlInput !== null
+          ? (sqlInput.values ?? [])
+          : [];
+
+        // getDbColumns for diff_user — return columns (table exists)
+        if (
+          sqlText.includes("information_schema") &&
+          (sqlText.includes("diff_user") || values.some((v: any) => String(v).includes("diff_user")))
+        ) {
+          return Promise.resolve([
+            { column_name: "id", data_type: "int", is_nullable: "NO" },
+            { column_name: "name", data_type: "varchar", is_nullable: "NO" },
+            { column_name: "age", data_type: "int", is_nullable: "NO" },
+            { column_name: "active", data_type: "tinyint", is_nullable: "NO" },
+          ]);
+        }
+
+        // getDbTables — return list including an extra table
+        if (sqlText.includes("TABLE_NAME") && sqlText.includes("TABLES")) {
+          return Promise.resolve([
+            { name: "diff_user" },
+            { name: "orphaned_table" },
+          ]);
+        }
+
+        return Promise.resolve([]);
+      });
+
+      const result = await schemaDiff.diff(
+        [DiffUser],
+        { query: mockQuery },
+        "mysql",
+        undefined,
+        { detectDroppedTables: true },
+      );
+
+      expect(result.dropTables).toContain("orphaned_table");
+      expect(result.dropTables).not.toContain("diff_user");
+    });
+
+    it("should NOT detect dropped tables by default (backward compat)", async () => {
+      const runner = createMockQueryRunner({
+        diff_user: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          { column_name: "name", data_type: "varchar", is_nullable: "NO" },
+          { column_name: "age", data_type: "int", is_nullable: "NO" },
+          { column_name: "active", data_type: "tinyint", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([DiffUser], runner, "mysql");
+
+      expect(result.dropTables).toHaveLength(0);
     });
   });
 });

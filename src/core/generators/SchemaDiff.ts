@@ -13,6 +13,12 @@ export interface ColumnChange {
   columnType?: string;
   currentType?: string;
   nullable?: boolean;
+  expectedLength?: number | null;
+  actualLength?: number | null;
+  expectedPrecision?: number | null;
+  actualPrecision?: number | null;
+  expectedScale?: number | null;
+  actualScale?: number | null;
 }
 
 export interface SchemaDiffResult {
@@ -28,6 +34,17 @@ interface DbColumnInfo {
   column_name: string;
   data_type: string;
   is_nullable: string;
+  character_maximum_length?: number | null;
+  numeric_precision?: number | null;
+  numeric_scale?: number | null;
+}
+
+export interface SchemaDiffOptions {
+  /**
+   * If true, detect tables in DB that are not in the entity list and add them to dropTables.
+   * Default: false (backward compatible — only detects add/alter/drop columns)
+   */
+  detectDroppedTables?: boolean;
 }
 
 interface QueryRunner {
@@ -47,6 +64,7 @@ export class SchemaDiff {
     queryRunner: QueryRunner,
     dialect: SchemaDialect,
     schema?: string,
+    options?: SchemaDiffOptions,
   ): Promise<SchemaDiffResult> {
     const result: SchemaDiffResult = {
       addTables: [],
@@ -56,8 +74,11 @@ export class SchemaDiff {
       alterColumns: [],
     };
 
+    const entityTableNames = new Set<string>();
+
     for (const entity of entities) {
       const tableName = this.getTableName(entity);
+      entityTableNames.add(tableName.toLowerCase());
       const entityColumns = this.getEntityColumns(entity);
       const dbColumns = await this.getDbColumns(
         queryRunner,
@@ -113,6 +134,20 @@ export class SchemaDiff {
               columnType: expectedType,
               currentType: dbCol.data_type,
             });
+          } else if (!this.lengthsMatch(col.options, dbCol)) {
+            // Types match but length/precision differs
+            result.alterColumns.push({
+              tableName,
+              columnName: colName,
+              columnType: expectedType,
+              currentType: dbCol.data_type,
+              expectedLength: col.options?.length ?? null,
+              actualLength: dbCol.character_maximum_length ?? null,
+              expectedPrecision: col.options?.precision ?? null,
+              actualPrecision: dbCol.numeric_precision ?? null,
+              expectedScale: col.options?.scale ?? null,
+              actualScale: dbCol.numeric_scale ?? null,
+            });
           }
         }
       }
@@ -125,6 +160,16 @@ export class SchemaDiff {
             columnName: dbCol.column_name,
             currentType: dbCol.data_type,
           });
+        }
+      }
+    }
+
+    // Detect dropped tables (opt-in)
+    if (options?.detectDroppedTables) {
+      const dbTables = await this.getDbTables(queryRunner, dialect, schema);
+      for (const dbTable of dbTables) {
+        if (!entityTableNames.has(dbTable.toLowerCase())) {
+          result.dropTables.push(dbTable);
         }
       }
     }
@@ -165,25 +210,70 @@ export class SchemaDiff {
     if (dialect === "sqlite") {
       rawResult = await queryRunner.query(`PRAGMA table_info(${tableName})`);
       const rows = this.normalizeRows(rawResult);
-      return rows.map((row: any) => ({
-        column_name: row.name,
-        data_type: row.type || "TEXT",
-        is_nullable: row.notnull === 0 ? "YES" : "NO",
-      }));
+      return rows.map((row: any) => {
+        const parsed = this.parseSqliteTypeLength(row.type || "TEXT");
+        return {
+          column_name: row.name,
+          data_type: parsed.type,
+          is_nullable: row.notnull === 0 ? "YES" : "NO",
+          character_maximum_length: parsed.length ?? null,
+        };
+      });
     }
 
     if (dialect === "mysql") {
       rawResult = await queryRunner.query(
-        sql`SELECT COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${tableName}`,
+        sql`SELECT COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable, CHARACTER_MAXIMUM_LENGTH as character_maximum_length, NUMERIC_PRECISION as numeric_precision, NUMERIC_SCALE as numeric_scale FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${tableName}`,
       );
     } else {
       const pgSchema = schema ?? "public";
       rawResult = await queryRunner.query(
-        sql`SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = ${pgSchema} AND table_name = ${tableName}`,
+        sql`SELECT column_name, data_type, is_nullable, character_maximum_length, numeric_precision, numeric_scale FROM information_schema.columns WHERE table_schema = ${pgSchema} AND table_name = ${tableName}`,
       );
     }
 
     return this.normalizeRows(rawResult);
+  }
+
+  private async getDbTables(
+    queryRunner: QueryRunner,
+    dialect: SchemaDialect,
+    schema?: string,
+  ): Promise<string[]> {
+    let rawResult: any;
+
+    if (dialect === "sqlite") {
+      rawResult = await queryRunner.query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+      );
+    } else if (dialect === "mysql") {
+      rawResult = await queryRunner.query(
+        "SELECT TABLE_NAME as name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()",
+      );
+    } else {
+      const pgSchema = schema ?? "public";
+      rawResult = await queryRunner.query(
+        sql`SELECT tablename as name FROM pg_tables WHERE schemaname = ${pgSchema}`,
+      );
+    }
+
+    const rows = this.normalizeRows(rawResult);
+    return rows.map((row: any) => row.name ?? row.TABLE_NAME ?? row.tablename);
+  }
+
+  /**
+   * Parse SQLite type string to extract type and length.
+   * e.g. "VARCHAR(255)" → { type: "VARCHAR", length: 255 }
+   */
+  private parseSqliteTypeLength(typeStr: string): {
+    type: string;
+    length?: number;
+  } {
+    const match = typeStr.match(/^(\w+)\((\d+)\)$/);
+    if (match) {
+      return { type: match[1], length: parseInt(match[2], 10) };
+    }
+    return { type: typeStr };
   }
 
   private castType(type: ColumnType, dialect: SchemaDialect): string {
@@ -353,7 +443,8 @@ export class SchemaDiff {
       BLOB: ["BLOB", "BYTEA"],
       BYTEA: ["BYTEA", "BLOB"],
       DATETIME: ["DATETIME", "TIMESTAMP"],
-      JSON: ["JSON", "JSONB"],
+      JSON: ["JSON"],
+      JSONB: ["JSONB"],
       CHARACTER: ["CHARACTER", "CHAR", "BPCHAR"],
       CHAR: ["CHAR", "CHARACTER", "BPCHAR"],
     };
@@ -362,6 +453,56 @@ export class SchemaDiff {
     if (expectedAliases && expectedAliases.includes(a)) return true;
 
     return false;
+  }
+
+  /**
+   * Compare entity column length/precision with DB column metadata.
+   * Returns true if they match (or if comparison is not applicable).
+   */
+  private lengthsMatch(
+    entityOptions: ColumnOption | undefined,
+    dbCol: DbColumnInfo,
+  ): boolean {
+    if (!entityOptions) return true;
+
+    // Check character_maximum_length (varchar, char, etc.)
+    if (
+      entityOptions.length !== undefined &&
+      entityOptions.length !== null &&
+      entityOptions.length > 0 &&
+      dbCol.character_maximum_length !== undefined &&
+      dbCol.character_maximum_length !== null
+    ) {
+      if (entityOptions.length !== dbCol.character_maximum_length) {
+        return false;
+      }
+    }
+
+    // Check numeric precision
+    if (
+      entityOptions.precision !== undefined &&
+      entityOptions.precision !== null &&
+      dbCol.numeric_precision !== undefined &&
+      dbCol.numeric_precision !== null
+    ) {
+      if (entityOptions.precision !== dbCol.numeric_precision) {
+        return false;
+      }
+    }
+
+    // Check numeric scale
+    if (
+      entityOptions.scale !== undefined &&
+      entityOptions.scale !== null &&
+      dbCol.numeric_scale !== undefined &&
+      dbCol.numeric_scale !== null
+    ) {
+      if (entityOptions.scale !== dbCol.numeric_scale) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private normalizeRows(result: any): DbColumnInfo[] {

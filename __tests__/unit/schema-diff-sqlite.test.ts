@@ -419,7 +419,9 @@ describe("SchemaDiffMigrationGenerator — SQLite dialect", () => {
 
     expect(content).toContain('"users"');
     expect(content).toContain('"email"');
-    expect(content).not.toContain("`");
+    // Ensure no MySQL-style backtick identifier quoting (template literal backticks are OK)
+    expect(content).not.toMatch(/`users`/);
+    expect(content).not.toMatch(/`email`/);
   });
 
   it("should generate TODO comment for ALTER COLUMN TYPE (unsupported in SQLite)", () => {

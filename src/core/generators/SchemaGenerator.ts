@@ -22,12 +22,14 @@ import {
   ManyToManyMetadata,
 } from "../../decorators/ManyToMany";
 import { ColumnMetadata } from "../../scanner/ColumnScanner";
+import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
 
 export type SchemaDialect = "mysql" | "postgres" | "sqlite";
 
 export interface SchemaGeneratorOptions {
   dialect: SchemaDialect;
   schema?: string; // PostgreSQL schema (default: "public")
+  namingStrategy?: NamingStrategy;
 }
 
 interface ColumnDef {
@@ -48,10 +50,12 @@ interface ForeignKeyDef {
 export class SchemaGenerator {
   private readonly dialect: SchemaDialect;
   private readonly pgSchema: string;
+  private readonly namingStrategy: NamingStrategy;
 
   constructor(options: SchemaGeneratorOptions) {
     this.dialect = options.dialect;
     this.pgSchema = options.schema ?? "public";
+    this.namingStrategy = options.namingStrategy ?? new DefaultNamingStrategy();
   }
 
   /**
@@ -91,7 +95,7 @@ export class SchemaGenerator {
     const tableName = this.getTableName(entity);
     const indexes = this.getIndexes(entity);
     return indexes.map((idx) => {
-      const indexName = `INDEX_${tableName}_${idx.name}`;
+      const indexName = this.namingStrategy.indexName(tableName, idx.name);
       if (this.dialect === "postgres" || this.dialect === "sqlite") {
         return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${this.wrapId(idx.name)})`;
       }
@@ -106,7 +110,7 @@ export class SchemaGenerator {
     const tableName = this.getTableName(entity);
     const fks = this.getForeignKeys(entity);
     return fks.map((fk) => {
-      const fkName = SchemaGenerator.generateForeignKeyName(tableName, fk.column, fk.referencedTable);
+      const fkName = this.namingStrategy.foreignKeyName(tableName, fk.column, fk.referencedTable);
       return `ALTER TABLE ${this.wrapTable(tableName)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(fk.column)}) REFERENCES ${this.wrapTable(fk.referencedTable)}(${this.wrapId(fk.referencedColumn)}) ON DELETE NO ACTION ON UPDATE NO ACTION`;
     });
   }
@@ -118,7 +122,7 @@ export class SchemaGenerator {
     const tableName = this.getTableName(entity);
     const uniqueIndexes = this.getUniqueIndexes(entity);
     return uniqueIndexes.map((uq) => {
-      const indexName = uq.name ?? `uq_${tableName}_${uq.columns.join("_")}`;
+      const indexName = uq.name ?? this.namingStrategy.uniqueIndexName(tableName, uq.columns);
       const columnList = uq.columns
         .map((col) => this.wrapId(col))
         .join(", ");
@@ -203,14 +207,14 @@ export class SchemaGenerator {
         const relatedPk = this.findPrimaryKeyColumn(relatedEntity);
 
         if (ownerPk) {
-          const fkName = SchemaGenerator.generateForeignKeyName(name, joinColumn, ownerTable);
+          const fkName = this.namingStrategy.foreignKeyName(name, joinColumn, ownerTable);
           ddls.push(
             `ALTER TABLE ${this.wrapTable(name)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(joinColumn)}) REFERENCES ${this.wrapTable(ownerTable)}(${this.wrapId(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
           );
         }
 
         if (relatedPk) {
-          const fkName = SchemaGenerator.generateForeignKeyName(name, inverseJoinColumn, relatedTable);
+          const fkName = this.namingStrategy.foreignKeyName(name, inverseJoinColumn, relatedTable);
           ddls.push(
             `ALTER TABLE ${this.wrapTable(name)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(inverseJoinColumn)}) REFERENCES ${this.wrapTable(relatedTable)}(${this.wrapId(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
           );
@@ -596,6 +600,9 @@ export class SchemaGenerator {
    * FK 제약 조건 이름을 해시 기반으로 생성합니다.
    * SHA1 해시의 앞 8자를 사용하여 고유성을 보장하며,
    * MySQL 64자 / PostgreSQL 63자 제한을 준수합니다.
+   *
+   * @deprecated Use `NamingStrategy.foreignKeyName()` instead.
+   * This static method is kept for backward compatibility with existing driver code.
    *
    * @param tableName - 소스 테이블 이름
    * @param column - FK 컬럼 이름

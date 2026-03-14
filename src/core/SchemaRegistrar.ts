@@ -9,6 +9,7 @@ import {
 import Container from "typedi";
 import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { SchemaGenerator } from "./generators/SchemaGenerator";
+import { NamingStrategy, DefaultNamingStrategy } from "./generators/NamingStrategy";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
 import {
   UNIQUE_INDEX_TOKEN,
@@ -32,10 +33,15 @@ import { EntityManagerInternals } from "./EntityManagerInternals";
  * 런타임 CRUD와 무관합니다.
  */
 export class SchemaRegistrar {
+  private readonly namingStrategy: NamingStrategy;
+
   constructor(
     private readonly resolver: RelationMetadataResolver,
     private readonly ctx: EntityManagerInternals,
-  ) {}
+    namingStrategy?: NamingStrategy,
+  ) {
+    this.namingStrategy = namingStrategy ?? new DefaultNamingStrategy();
+  }
 
   async registerEntities() {
     const entityScanner = Container.get(EntityScanner);
@@ -132,7 +138,7 @@ export class SchemaRegistrar {
 
     const driver = this.ctx.getDriver();
     for (const uq of uniqueIndexes) {
-      const indexName = uq.name ?? `uq_${tableName}_${uq.columns.join("_")}`;
+      const indexName = uq.name ?? this.namingStrategy.uniqueIndexName(tableName, uq.columns);
 
       // 이미 존재하는지 확인
       const indexes = (await driver?.getIndexes(tableName)) as any[];
@@ -217,7 +223,7 @@ export class SchemaRegistrar {
         const relatedPk = relatedColumns.find((c) => c.options?.primary)?.name;
 
         // 3. 소유측 FK 추가
-        const ownerFkName = SchemaGenerator.generateForeignKeyName(
+        const ownerFkName = this.namingStrategy.foreignKeyName(
           joinTableName,
           joinColumn,
           ownerTable,
@@ -232,7 +238,7 @@ export class SchemaRegistrar {
         }
 
         // 4. 역측 FK 추가
-        const relatedFkName = SchemaGenerator.generateForeignKeyName(
+        const relatedFkName = this.namingStrategy.foreignKeyName(
           joinTableName,
           inverseJoinColumn,
           relatedTable,
@@ -310,10 +316,10 @@ export class SchemaRegistrar {
 
         // FK 제약이 이미 존재하면 중복 추가를 건너뜁니다.
         if (driver) {
-          const fkName = driver.generateForeignKeyName(
+          const fkName = this.namingStrategy.foreignKeyName(
             tableName,
-            mappingTableName,
             joinColumn,
+            mappingTableName,
           );
           const fkExists = await driver.hasForeignKey(tableName, fkName);
           if (fkExists) continue;
@@ -370,10 +376,10 @@ export class SchemaRegistrar {
 
       // FK 제약이 이미 존재하면 중복 추가를 건너뜁니다.
       if (driver) {
-        const fkName = driver.generateForeignKeyName(
+        const fkName = this.namingStrategy.foreignKeyName(
           tableName,
-          relatedTableName,
           joinColumn,
+          relatedTableName,
         );
         const fkExists = await driver.hasForeignKey(tableName, fkName);
         if (fkExists) continue;
@@ -399,7 +405,7 @@ export class SchemaRegistrar {
     if (indexer) {
       const driver = this.ctx.getDriver();
       for (const index of indexer) {
-        const indexName = `INDEX_${tableName}_${index.name}`;
+        const indexName = this.namingStrategy.indexName(tableName, index.name);
 
         const indexes = (await driver?.getIndexes(tableName)) as any[];
 

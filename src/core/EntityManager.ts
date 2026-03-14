@@ -124,7 +124,7 @@ export class EntityManager implements BaseEntityManager {
 
   private readonly cascadeHandler = new CascadeHandler(this.resolver, this._ctx);
   private readonly relationLoader = new RelationLoader(this.resolver, this._ctx);
-  private readonly schemaRegistrar = new SchemaRegistrar(this.resolver, this._ctx);
+  private schemaRegistrar = new SchemaRegistrar(this.resolver, this._ctx);
   private readonly explainHandler = new ExplainQueryHandler(this.resolver, this._ctx);
   private readonly aggregateHandler = new AggregateQueryHandler(this.resolver, this._ctx);
 
@@ -134,6 +134,13 @@ export class EntityManager implements BaseEntityManager {
     databaseClientOptions: DatabaseClientOptions,
     connectionName = "default",
   ) {
+    if (databaseClientOptions.namingStrategy) {
+      this.schemaRegistrar = new SchemaRegistrar(
+        this.resolver,
+        this._ctx,
+        databaseClientOptions.namingStrategy,
+      );
+    }
     await this.connect(databaseClientOptions, connectionName);
     await this.schemaRegistrar.registerEntities();
   }

@@ -1,5 +1,6 @@
 import { IDatabaseType, AnyEntity } from "../dialects/mysql/MySqlConnector";
 import { ReplicationConfig } from "../dialects/ReplicationRouter";
+import { NamingStrategy } from "./generators/NamingStrategy";
 
 /**
  * Connection pool configuration options.
@@ -127,6 +128,12 @@ export interface DatabaseClientOptions {
    * slave 실패 시 master로 자동 fallback됩니다.
    */
   replication?: ReplicationConfig;
+
+  /**
+   * Custom naming strategy for FK constraints, indexes, and unique indexes.
+   * If not provided, DefaultNamingStrategy is used (SHA1-based FK names, convention-based index names).
+   */
+  namingStrategy?: NamingStrategy;
 }
 
 /**
