@@ -674,7 +674,7 @@ Below is a complete configuration example recommended for NestJS production envi
 ```typescript
 // app.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "./stingerloom-orm/stingerloom-orm.module";
+import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { User, Post, Comment } from "./entities";
 
 @Module({

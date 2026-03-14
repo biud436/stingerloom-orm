@@ -1,4 +1,4 @@
-# Pre-Release Final Review (v0.1.0)
+# Pre-Release Final Review (v0.3.0)
 
 ## Review Date: 2026-03-01
 

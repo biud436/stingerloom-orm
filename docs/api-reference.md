@@ -221,10 +221,10 @@ interface ColumnOption {
 
 ```typescript
 type ColumnType =
-  | "varchar" | "int" | "number" | "float" | "double" | "bigint"
+  | "varchar" | "char" | "int" | "number" | "float" | "double" | "bigint"
   | "boolean" | "datetime" | "timestamp" | "timestamptz" | "date"
   | "text" | "longtext" | "blob"
-  | "json" | "jsonb" | "enum";
+  | "json" | "jsonb" | "enum" | "array";
 ```
 
 ### Relation Options

@@ -161,7 +161,7 @@ In NestJS services, use `@Transactional()` the same way.
 // cats.service.ts
 import { Injectable } from "@nestjs/common";
 import { Transactional, BaseRepository } from "@stingerloom/orm";
-import { InjectRepository } from "../stingerloom-orm/inject-repository.decorator";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Cat } from "./cat.entity";
 
 @Injectable()
