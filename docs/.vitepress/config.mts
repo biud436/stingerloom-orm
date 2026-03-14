@@ -33,6 +33,7 @@ export default defineConfig({
           { text: "Transactions", link: "/transactions" },
           { text: "Migrations", link: "/migrations" },
           { text: "Configuration", link: "/configuration" },
+          { text: "Prisma Import", link: "/prisma-import" },
         ],
       },
       {

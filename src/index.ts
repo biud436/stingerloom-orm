@@ -36,3 +36,6 @@ export * from "./errors";
 
 // Schema-based entity definitions (decorator-free)
 export * from "./schema";
+
+// Prisma import (requires optional @mrleebo/prisma-ast)
+export * from "./integration/prisma-import";
