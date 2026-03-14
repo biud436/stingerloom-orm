@@ -133,6 +133,7 @@ export class CascadeHandler {
 
   /**
    * delete 시 cascade: "delete" (또는 "remove") 가 설정된 OneToMany 관계의 자식 엔티티를 먼저 삭제합니다.
+   * PK만 SELECT + IN 절 배치 DELETE로 메모리 및 쿼리 최적화.
    */
   async cascadeDeleteOneToMany<T>(
     entity: ClazzType<T>,
@@ -154,13 +155,22 @@ export class CascadeHandler {
       );
       if (!pk) continue;
 
+      // PK만 SELECT하여 메모리 절약
       const parents = await this.ctx.find(entity, {
         where: criteria,
+        select: { [pk.name!]: true },
       } as any);
 
       if (!parents) continue;
 
       const parentArray = Array.isArray(parents) ? parents : [parents];
+
+      // 부모 PK를 수집
+      const parentIds = parentArray
+        .map((p: any) => p[pk.name!])
+        .filter((id: any) => id !== undefined && id !== null);
+
+      if (parentIds.length === 0) continue;
 
       // ManyToOne 측의 FK 컬럼 찾기
       const manyToOneItems = this.resolver.resolveManyToOneMetadata(RelatedEntity);
@@ -169,12 +179,14 @@ export class CascadeHandler {
       );
       const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
 
-      for (const parent of parentArray) {
-        const parentId = (parent as any)[pk.name!];
-        if (parentId === undefined || parentId === null) continue;
-
+      // IN 절로 한 번에 자식 삭제
+      if (parentIds.length === 1) {
         await this.ctx.delete(RelatedEntity, {
-          [fkColumn]: parentId,
+          [fkColumn]: parentIds[0],
+        } as any);
+      } else {
+        await this.ctx.delete(RelatedEntity, {
+          [fkColumn]: parentIds,
         } as any);
       }
     }

@@ -8,6 +8,8 @@ import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
 import { Logger } from "../../utils/Logger";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
 /**
  * SQLite용 SQL 드라이버 구현체입니다.
@@ -41,12 +43,10 @@ export class SqliteDriver implements ISqlDriver {
    * SQLite에서는 ALTER TABLE로 기본키를 추가할 수 없습니다.
    * 테이블 재생성이 필요하지만, 인터페이스 호환을 위해 에러를 발생시킵니다.
    */
-  addPrimaryKey(tableName: string, columnName: string) {
-    // SQLite does not support ADD PRIMARY KEY via ALTER TABLE.
-    // This would require table recreation. For interface compatibility,
-    // we attempt the query and let SQLite report the error.
-    return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} ADD PRIMARY KEY (${this.wrap(columnName)})`,
+  addPrimaryKey(_tableName: string, _columnName: string): Promise<any> {
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_OPERATION,
+      `SQLite does not support ALTER TABLE ADD PRIMARY KEY. Recreate the table instead.`,
     );
   }
 
@@ -54,10 +54,10 @@ export class SqliteDriver implements ISqlDriver {
    * 테이블에 자동 증가를 추가합니다.
    * SQLite에서는 INTEGER PRIMARY KEY가 자동으로 AUTOINCREMENT 역할을 합니다.
    */
-  addAutoIncrement(tableName: string, columnName: string) {
-    // SQLite does not support modifying columns via ALTER TABLE.
-    return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} ADD ${this.wrap(columnName)} INTEGER PRIMARY KEY AUTOINCREMENT`,
+  addAutoIncrement(_tableName: string, _columnName: string): Promise<any> {
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_OPERATION,
+      `SQLite does not support ALTER TABLE ADD AUTOINCREMENT. Recreate the table instead.`,
     );
   }
 
@@ -65,9 +65,10 @@ export class SqliteDriver implements ISqlDriver {
    * 테이블의 기본키를 제거합니다.
    * SQLite에서는 ALTER TABLE로 기본키를 제거할 수 없습니다.
    */
-  dropPrimaryKey(tableName: string) {
-    return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} DROP PRIMARY KEY`,
+  dropPrimaryKey(_tableName: string): Promise<any> {
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_OPERATION,
+      `SQLite does not support ALTER TABLE DROP PRIMARY KEY. Recreate the table instead.`,
     );
   }
 
@@ -116,22 +117,14 @@ export class SqliteDriver implements ISqlDriver {
    * 테이블 생성 시 FOREIGN KEY 절을 포함해야 합니다.
    */
   addForeignKey(
-    tableName: string,
-    columnName: string,
-    foreignTableName: string,
-    foreignColumnName: string,
-  ) {
-    // SQLite does not support ADD CONSTRAINT for foreign keys via ALTER TABLE.
-    // Foreign keys must be defined at table creation time.
-    // For interface compatibility, we attempt the query.
-    const foreignKeyName = this.generateForeignKeyName(
-      tableName,
-      foreignTableName,
-      columnName,
-    );
-
-    return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} ADD CONSTRAINT ${foreignKeyName} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${this.wrap(foreignTableName)}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
+    _tableName: string,
+    _columnName: string,
+    _foreignTableName: string,
+    _foreignColumnName: string,
+  ): Promise<any> {
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_OPERATION,
+      `SQLite does not support ALTER TABLE ADD FOREIGN KEY. Define foreign keys at table creation time instead.`,
     );
   }
 
@@ -150,10 +143,10 @@ export class SqliteDriver implements ISqlDriver {
   /**
    * 외래키를 제거합니다.
    */
-  dropForeignKey(tableName: string, columnName: string) {
-    // SQLite does not support DROP FOREIGN KEY.
-    return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} DROP FOREIGN KEY ${this.wrap(columnName)}`,
+  dropForeignKey(_tableName: string, _columnName: string): Promise<any> {
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_OPERATION,
+      `SQLite does not support ALTER TABLE DROP FOREIGN KEY. Recreate the table instead.`,
     );
   }
 

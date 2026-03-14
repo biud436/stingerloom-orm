@@ -31,4 +31,7 @@ export enum OrmErrorCode {
 
   // Savepoint 관련
   INVALID_SAVEPOINT_NAME = "ORM_INVALID_SAVEPOINT_NAME",
+
+  // 지원하지 않는 연산
+  UNSUPPORTED_OPERATION = "ORM_UNSUPPORTED_OPERATION",
 }

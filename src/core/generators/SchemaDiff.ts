@@ -162,6 +162,16 @@ export class SchemaDiff {
   ): Promise<DbColumnInfo[]> {
     let rawResult: any;
 
+    if (dialect === "sqlite") {
+      rawResult = await queryRunner.query(`PRAGMA table_info(${tableName})`);
+      const rows = this.normalizeRows(rawResult);
+      return rows.map((row: any) => ({
+        column_name: row.name,
+        data_type: row.type || "TEXT",
+        is_nullable: row.notnull === 0 ? "YES" : "NO",
+      }));
+    }
+
     if (dialect === "mysql") {
       rawResult = await queryRunner.query(
         sql`SELECT COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${tableName}`,
@@ -177,6 +187,9 @@ export class SchemaDiff {
   }
 
   private castType(type: ColumnType, dialect: SchemaDialect): string {
+    if (dialect === "sqlite") {
+      return this.castTypeSqlite(type);
+    }
     if (dialect === "postgres") {
       return this.castTypePostgres(type);
     }
@@ -262,6 +275,36 @@ export class SchemaDiff {
     }
   }
 
+  private castTypeSqlite(type: ColumnType): string {
+    switch (type) {
+      case "varchar":
+      case "text":
+      case "longtext":
+      case "char":
+      case "enum":
+      case "json":
+      case "jsonb":
+      case "array":
+      case "datetime":
+      case "date":
+      case "timestamp":
+      case "timestamptz":
+        return "TEXT";
+      case "int":
+      case "number":
+      case "boolean":
+      case "bigint":
+        return "INTEGER";
+      case "float":
+      case "double":
+        return "REAL";
+      case "blob":
+        return "BLOB";
+      default:
+        return (type as string).toUpperCase();
+    }
+  }
+
   /**
    * Compare expected type (from entity metadata) with actual DB type.
    * Uses a simplified comparison since DB types can vary in detail.
@@ -269,14 +312,27 @@ export class SchemaDiff {
   private typesMatch(
     expected: string,
     actual: string,
-    _dialect: SchemaDialect,
+    dialect: SchemaDialect,
   ): boolean {
     const e = expected.toUpperCase().trim();
     const a = actual.toUpperCase().trim();
 
     if (e === a) return true;
 
-    // Handle common aliases
+    // SQLite type affinity: broad matching since SQLite only has 5 storage classes
+    if (dialect === "sqlite") {
+      const sqliteAffinity: Record<string, string[]> = {
+        TEXT: ["TEXT", "VARCHAR", "LONGTEXT", "CHAR"],
+        INTEGER: ["INTEGER", "INT", "TINYINT", "BIGINT", "BOOLEAN"],
+        REAL: ["REAL", "FLOAT", "DOUBLE"],
+        BLOB: ["BLOB", "BYTEA"],
+      };
+      const eAliases = sqliteAffinity[e];
+      if (eAliases && eAliases.includes(a)) return true;
+      return false;
+    }
+
+    // Handle common aliases for MySQL / PostgreSQL
     const aliases: Record<string, string[]> = {
       INT: ["INT", "INTEGER", "INT4"],
       VARCHAR: ["VARCHAR", "CHARACTER VARYING"],

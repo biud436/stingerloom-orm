@@ -23,7 +23,7 @@ import {
 } from "../../decorators/ManyToMany";
 import { ColumnMetadata } from "../../scanner/ColumnScanner";
 
-export type SchemaDialect = "mysql" | "postgres";
+export type SchemaDialect = "mysql" | "postgres" | "sqlite";
 
 export interface SchemaGeneratorOptions {
   dialect: SchemaDialect;
@@ -92,7 +92,7 @@ export class SchemaGenerator {
     const indexes = this.getIndexes(entity);
     return indexes.map((idx) => {
       const indexName = `INDEX_${tableName}_${idx.name}`;
-      if (this.dialect === "postgres") {
+      if (this.dialect === "postgres" || this.dialect === "sqlite") {
         return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${this.wrapId(idx.name)})`;
       }
       return `CREATE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${this.wrapId(idx.name)})`;
@@ -122,7 +122,7 @@ export class SchemaGenerator {
       const columnList = uq.columns
         .map((col) => this.wrapId(col))
         .join(", ");
-      if (this.dialect === "postgres") {
+      if (this.dialect === "postgres" || this.dialect === "sqlite") {
         return `CREATE UNIQUE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
       }
       return `CREATE UNIQUE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
@@ -429,6 +429,11 @@ export class SchemaGenerator {
       return `${this.wrapId(name)} SERIAL ${nullable}${pk}`;
     }
 
+    // SQLite: INTEGER PRIMARY KEY AUTOINCREMENT
+    if (options.autoIncrement && this.dialect === "sqlite") {
+      return `${this.wrapId(name)} INTEGER PRIMARY KEY AUTOINCREMENT`;
+    }
+
     // 길이 처리
     const alreadyHasParens = type.includes("(");
     const needsLength =
@@ -447,6 +452,9 @@ export class SchemaGenerator {
   }
 
   private castType(type: ColumnType): string {
+    if (this.dialect === "sqlite") {
+      return this.castTypeSqlite(type);
+    }
     if (this.dialect === "postgres") {
       return this.castTypePostgres(type);
     }
@@ -537,8 +545,38 @@ export class SchemaGenerator {
     }
   }
 
+  private castTypeSqlite(type: ColumnType): string {
+    switch (type) {
+      case "varchar":
+      case "text":
+      case "longtext":
+      case "char":
+      case "enum":
+      case "json":
+      case "jsonb":
+      case "array":
+      case "datetime":
+      case "date":
+      case "timestamp":
+      case "timestamptz":
+        return "TEXT";
+      case "int":
+      case "number":
+      case "boolean":
+      case "bigint":
+        return "INTEGER";
+      case "float":
+      case "double":
+        return "REAL";
+      case "blob":
+        return "BLOB";
+      default:
+        return type as string;
+    }
+  }
+
   private wrapId(name: string): string {
-    if (this.dialect === "postgres") {
+    if (this.dialect === "postgres" || this.dialect === "sqlite") {
       return `"${name.replace(/"/g, '""')}"`;
     }
     return `\`${name.replace(/`/g, "``")}\``;
@@ -547,6 +585,9 @@ export class SchemaGenerator {
   private wrapTable(name: string): string {
     if (this.dialect === "postgres") {
       return `"${this.pgSchema}"."${name.replace(/"/g, '""')}"`;
+    }
+    if (this.dialect === "sqlite") {
+      return `"${name.replace(/"/g, '""')}"`;
     }
     return `\`${name.replace(/`/g, "``")}\``;
   }

@@ -80,7 +80,11 @@ export class SchemaDiffMigrationGenerator {
     // Alter columns (type change)
     for (const col of diff.alterColumns) {
       const typeStr = col.columnType ?? "VARCHAR(255)";
-      if (dialect === "mysql") {
+      if (dialect === "sqlite") {
+        stmts.push(
+          `// TODO: SQLite does not support ALTER COLUMN TYPE for ${this.escapeId(col.tableName, dialect)}.${this.escapeId(col.columnName, dialect)} (${col.currentType} -> ${typeStr}). Recreate the table instead.`,
+        );
+      } else if (dialect === "mysql") {
         stmts.push(
           `await query('ALTER TABLE ${this.escapeId(col.tableName, dialect)} MODIFY COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr}');`,
         );
@@ -152,10 +156,10 @@ export class SchemaDiffMigrationGenerator {
   }
 
   private escapeId(name: string, dialect: SchemaDialect): string {
-    if (dialect === "postgres") {
-      return `"${name.replace(/"/g, '""')}"`;
+    if (dialect === "mysql") {
+      return `\`${name.replace(/`/g, "``")}\``;
     }
-    return `\`${name.replace(/`/g, "``")}\``;
+    return `"${name.replace(/"/g, '""')}"`;
   }
 
   private renderColumnType(col: ColumnChange, _dialect: SchemaDialect): string {

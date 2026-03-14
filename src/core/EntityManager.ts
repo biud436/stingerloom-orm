@@ -526,14 +526,19 @@ export class EntityManager implements BaseEntityManager {
         const value = where[key];
         if (value !== undefined && value !== null) {
           if (hasEagerJoins) {
+            const col = `${this.wrap(tableName)}.${this.wrap(key)}`;
             whereMap.push(
-              Conditions.equals(
-                `${this.wrap(tableName)}.${this.wrap(key)}`,
-                value,
-              ),
+              Array.isArray(value)
+                ? Conditions.in(col, value)
+                : Conditions.equals(col, value),
             );
           } else {
-            whereMap.push(Conditions.equals(this.wrap(key), value));
+            const col = this.wrap(key);
+            whereMap.push(
+              Array.isArray(value)
+                ? Conditions.in(col, value)
+                : Conditions.equals(col, value),
+            );
           }
         }
       }
@@ -797,7 +802,12 @@ export class EntityManager implements BaseEntityManager {
       for (const key in where) {
         const value = where[key];
         if (value !== undefined && value !== null) {
-          whereMap.push(Conditions.equals(this.wrap(key), value));
+          const col = this.wrap(key);
+          whereMap.push(
+            Array.isArray(value)
+              ? Conditions.in(col, value)
+              : Conditions.equals(col, value),
+          );
         }
       }
 
@@ -1434,7 +1444,12 @@ export class EntityManager implements BaseEntityManager {
       for (const key in criteria) {
         const value = (criteria as any)[key];
         if (value !== undefined && value !== null) {
-          whereMap.push(Conditions.equals(this.wrap(key), value));
+          const col = this.wrap(key);
+          whereMap.push(
+            Array.isArray(value)
+              ? Conditions.in(col, value)
+              : Conditions.equals(col, value),
+          );
         }
       }
 
@@ -1554,7 +1569,12 @@ export class EntityManager implements BaseEntityManager {
       for (const key in criteria) {
         const value = (criteria as any)[key];
         if (value !== undefined && value !== null) {
-          whereMap.push(Conditions.equals(this.wrap(key), value));
+          const col = this.wrap(key);
+          whereMap.push(
+            Array.isArray(value)
+              ? Conditions.in(col, value)
+              : Conditions.equals(col, value),
+          );
         }
       }
 
@@ -1605,7 +1625,12 @@ export class EntityManager implements BaseEntityManager {
       for (const key in criteria) {
         const value = (criteria as any)[key];
         if (value !== undefined && value !== null) {
-          whereMap.push(Conditions.equals(this.wrap(key), value));
+          const col = this.wrap(key);
+          whereMap.push(
+            Array.isArray(value)
+              ? Conditions.in(col, value)
+              : Conditions.equals(col, value),
+          );
         }
       }
 
