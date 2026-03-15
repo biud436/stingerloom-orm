@@ -17,6 +17,7 @@ export * from "./generators";
 export * from "./EntitySubscriber";
 export * from "./QueryTracker";
 export * from "./CursorPagination";
+export * from "./PagePagination";
 export * from "./ExplainResult";
 export * from "./EntityManagerInternals";
 export * from "./RelationMetadataResolver";

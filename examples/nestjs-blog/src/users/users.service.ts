@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { User } from "./user.entity";
-import { BaseRepository, Transactional } from "@stingerloom/orm";
+import { BaseRepository, Transactional, PagePaginationResult } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 
 @Injectable()
@@ -55,14 +55,11 @@ export class UsersService {
     return this.userRepository.count();
   }
 
-  /** findAndCount — 사용자 목록 + 총 개수 페이지네이션 */
+  /** findWithPage — offset-based page pagination. */
   async findPaginated(
     page = 1,
     limit = 10,
-  ): Promise<{ data: User[]; total: number; page: number; totalPages: number }> {
-    const [data, total] = await this.userRepository.findAndCount({
-      limit: [(page - 1) * limit, limit],
-    });
-    return { data, total, page, totalPages: Math.ceil(total / limit) };
+  ): Promise<PagePaginationResult<User>> {
+    return this.userRepository.findWithPage({ page, pageSize: limit });
   }
 }

@@ -8,6 +8,7 @@ import {
   EntityManager,
   Transactional,
   CursorPaginationResult,
+  PagePaginationResult,
   ExplainResult,
   SchemaDiff,
   SchemaDiffMigrationGenerator,
@@ -83,16 +84,13 @@ export class PostsService {
   }
 
   /**
-   * findAndCount — 페이지네이션 메타데이터 반환 (total count 포함).
+   * findWithPage — offset-based page pagination.
    */
   async findPaginated(
     page = 1,
     limit = 10,
-  ): Promise<{ data: Post[]; total: number; page: number; totalPages: number }> {
-    const [data, total] = await this.postRepository.findAndCount({
-      limit: [(page - 1) * limit, limit],
-    });
-    return { data, total, page, totalPages: Math.ceil(total / limit) };
+  ): Promise<PagePaginationResult<Post>> {
+    return this.postRepository.findWithPage({ page, pageSize: limit });
   }
 
   /**

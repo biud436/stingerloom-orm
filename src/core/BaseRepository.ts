@@ -7,6 +7,10 @@ import {
   CursorPaginationOption,
   CursorPaginationResult,
 } from "./CursorPagination";
+import {
+  PagePaginationOption,
+  PagePaginationResult,
+} from "./PagePagination";
 import { ExplainResult } from "./ExplainResult";
 
 /**
@@ -67,6 +71,18 @@ export class BaseRepository<T> {
     option?: CursorPaginationOption<T>,
   ): Promise<CursorPaginationResult<T>> {
     return await this.em.findWithCursor<T>(this.entity, option);
+  }
+
+  /**
+   * Retrieves entities using offset-based page pagination.
+   *
+   * @param option Page pagination options.
+   * @returns A promise that resolves to the paginated result.
+   */
+  async findWithPage(
+    option?: PagePaginationOption<T>,
+  ): Promise<PagePaginationResult<T>> {
+    return await this.em.findWithPage<T>(this.entity, option);
   }
 
   /**

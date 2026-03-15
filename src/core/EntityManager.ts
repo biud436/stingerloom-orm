@@ -55,6 +55,11 @@ import {
   decodeCursor,
   normalizePageSize,
 } from "./CursorPagination";
+import {
+  PagePaginationOption,
+  PagePaginationResult,
+  normalizePage,
+} from "./PagePagination";
 import { ExplainResult } from "./ExplainResult";
 import {
   ReplicationRouter,
@@ -934,6 +939,41 @@ export class EntityManager implements BaseEntityManager {
 
       return [entities as unknown as T[], totalCount];
     });
+  }
+
+  async findWithPage<T>(
+    entity: ClazzType<T>,
+    option: PagePaginationOption<T> = {},
+  ): Promise<PagePaginationResult<T>> {
+    const page = normalizePage(option.page);
+    const pageSize = normalizePageSize(option.pageSize);
+    const offset = (page - 1) * pageSize;
+
+    const [rawData, total] = await this.findAndCount<T>(entity, {
+      where: option.where,
+      orderBy: option.orderBy,
+      select: option.select,
+      relations: option.relations,
+      withDeleted: option.withDeleted,
+      timeout: option.timeout,
+      useMaster: option.useMaster,
+      groupBy: option.groupBy,
+      having: option.having,
+      limit: [offset, pageSize],
+    });
+
+    const data = (rawData ?? []) as T[];
+    const totalPages = Math.ceil(total / pageSize);
+
+    return {
+      data,
+      total,
+      page,
+      pageSize,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1,
+    };
   }
 
   // ── CRUD: 쓰기 ────────────────────────────────────────────

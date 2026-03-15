@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { CreateTagDto } from "./dto/create-tag.dto";
 import { Tag } from "./tag.entity";
-import { BaseRepository, Transactional } from "@stingerloom/orm";
+import { BaseRepository, Transactional, PagePaginationResult } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 
 @Injectable()
@@ -51,16 +51,11 @@ export class TagsService {
     return { message: `Tag upserted: ${name}` };
   }
 
-  /**
-   * findAndCount — 태그 목록 + 총 개수 반환.
-   */
+  /** findWithPage — offset-based page pagination. */
   async findPaginated(
     page = 1,
     limit = 10,
-  ): Promise<{ data: Tag[]; total: number }> {
-    const [data, total] = await this.tagRepository.findAndCount({
-      limit: [(page - 1) * limit, limit],
-    });
-    return { data, total };
+  ): Promise<PagePaginationResult<Tag>> {
+    return this.tagRepository.findWithPage({ page, pageSize: limit });
   }
 }

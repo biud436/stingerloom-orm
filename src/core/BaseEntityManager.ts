@@ -10,6 +10,10 @@ import {
   CursorPaginationOption,
   CursorPaginationResult,
 } from "./CursorPagination";
+import {
+  PagePaginationOption,
+  PagePaginationResult,
+} from "./PagePagination";
 
 export abstract class BaseEntityManager {
   /**
@@ -73,6 +77,18 @@ export abstract class BaseEntityManager {
     entity: ClazzType<T>,
     option?: CursorPaginationOption<T>,
   ): Promise<CursorPaginationResult<T>>;
+
+  /**
+   * Retrieves entities using offset-based page pagination.
+   *
+   * @param entity Entity class
+   * @param option Page pagination options (page, pageSize, where, orderBy, etc.)
+   * @returns Pagination result (data, total, page, pageSize, totalPages, hasNextPage, hasPreviousPage)
+   */
+  abstract findWithPage<T>(
+    entity: ClazzType<T>,
+    option?: PagePaginationOption<T>,
+  ): Promise<PagePaginationResult<T>>;
 
   /**
    * 데이터베이스에 데이터를 저장하거나 수정합니다.
