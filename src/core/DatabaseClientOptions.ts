@@ -42,6 +42,14 @@ export interface PoolOptions {
    * @default 30000
    */
   leakDetectionThresholdMs?: number;
+
+  /**
+   * Validate connections with a ping/SELECT 1 before handing them to the caller.
+   * Stale connections (e.g. after DB restart) are destroyed and replaced transparently.
+   * MySQL uses COM_PING; PostgreSQL uses SELECT 1. SQLite ignores this option.
+   * @default false
+   */
+  validateOnBorrow?: boolean;
 }
 
 /**

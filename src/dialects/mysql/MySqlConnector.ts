@@ -11,12 +11,15 @@ import { IConnector } from "../../core/IConnector";
 import { IConnection } from "../IConnection";
 import { MysqlConnection } from "./MysqlConnection";
 import { validateIsolationLevel } from "../../utils/validateIsolationLevel";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 export type AnyEntity = any;
 export type IDatabaseType = "mysql" | "mariadb" | "postgres" | "sqlite";
 
 export class MySqlConnector extends IConnector {
   pool?: Pool;
   private isDebug = false;
+  private validateOnBorrow = false;
   private readonly logger = new Logger("MySqlConnector");
 
   async connect(options: DatabaseClientOptions): Promise<void> {
@@ -58,6 +61,7 @@ export class MySqlConnector extends IConnector {
       });
 
       this.isDebug = !!logging;
+      this.validateOnBorrow = poolOptions?.validateOnBorrow ?? false;
 
       this.pool = pool;
     } catch (e: unknown) {
@@ -66,9 +70,9 @@ export class MySqlConnector extends IConnector {
   }
 
   /**
-   * 트랜잭션 처리를 위해 커넥션 풀에서 커넥션을 하나 가져옵니다.
+   * 풀에서 raw connection을 하나 가져옵니다.
    */
-  async getConnection(): Promise<PoolConnection> {
+  private acquireRawConnection(): Promise<PoolConnection> {
     if (!this.pool) {
       throw new PoolNotFound();
     }
@@ -82,6 +86,50 @@ export class MySqlConnector extends IConnector {
         resolve(connection);
       });
     });
+  }
+
+  /**
+   * mysql2 네이티브 COM_PING으로 연결 상태를 확인합니다.
+   */
+  private pingConnection(connection: PoolConnection): Promise<boolean> {
+    return new Promise((resolve) => {
+      connection.ping((err) => {
+        resolve(!err);
+      });
+    });
+  }
+
+  /**
+   * 트랜잭션 처리를 위해 커넥션 풀에서 커넥션을 하나 가져옵니다.
+   * validateOnBorrow가 활성화되면 ping으로 연결 상태를 확인하고,
+   * stale 연결은 폐기 후 새 연결로 교체합니다.
+   */
+  async getConnection(): Promise<PoolConnection> {
+    const conn = await this.acquireRawConnection();
+
+    if (!this.validateOnBorrow) {
+      return conn;
+    }
+
+    if (await this.pingConnection(conn)) {
+      return conn;
+    }
+
+    // stale connection — destroy and retry once
+    conn.destroy();
+
+    const retryConn = await this.acquireRawConnection();
+
+    if (await this.pingConnection(retryConn)) {
+      return retryConn;
+    }
+
+    retryConn.destroy();
+    throw new OrmError(
+      OrmErrorCode.CONNECTION_FAILED,
+      "Connection health check failed after retry",
+      "Check that the database server is running and reachable",
+    );
   }
 
   async acquireConnection(): Promise<IConnection<PoolConnection>> {

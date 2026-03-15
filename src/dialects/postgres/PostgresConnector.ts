@@ -11,11 +11,14 @@ import { IConnection } from "../IConnection";
 import { PostgresConnection } from "./PostgresConnection";
 import { MetadataContext } from "../../metadata/MetadataContext";
 import { validateIsolationLevel } from "../../utils/validateIsolationLevel";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
 export class PostgresConnector extends IConnector {
   pool?: Pool;
   private isDebug = false;
   private schema = "public";
+  private validateOnBorrow = false;
   private readonly logger = new Logger("PostgresConnector");
 
   async connect(options: DatabaseClientOptions): Promise<void> {
@@ -49,6 +52,7 @@ export class PostgresConnector extends IConnector {
       });
 
       this.isDebug = !!logging;
+      this.validateOnBorrow = poolOptions?.validateOnBorrow ?? false;
       this.pool = pool;
 
       // 기본 search_path를 설정합니다.
@@ -62,14 +66,59 @@ export class PostgresConnector extends IConnector {
   }
 
   /**
-   * 트랜잭션 처리를 위해 커넥션 풀에서 커넥션을 하나 가져옵니다.
+   * 풀에서 raw client를 하나 가져옵니다.
    */
-  async getConnection(): Promise<PoolClient> {
+  private async acquireRawConnection(): Promise<PoolClient> {
     if (!this.pool) {
       throw new PoolNotFound();
     }
 
     return this.pool.connect();
+  }
+
+  /**
+   * SELECT 1으로 연결 상태를 확인합니다.
+   */
+  private async pingConnection(client: PoolClient): Promise<boolean> {
+    try {
+      await client.query("SELECT 1");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 트랜잭션 처리를 위해 커넥션 풀에서 커넥션을 하나 가져옵니다.
+   * validateOnBorrow가 활성화되면 SELECT 1로 연결 상태를 확인하고,
+   * stale 연결은 폐기 후 새 연결로 교체합니다.
+   */
+  async getConnection(): Promise<PoolClient> {
+    const client = await this.acquireRawConnection();
+
+    if (!this.validateOnBorrow) {
+      return client;
+    }
+
+    if (await this.pingConnection(client)) {
+      return client;
+    }
+
+    // stale connection — destroy and retry once
+    client.release(true);
+
+    const retryClient = await this.acquireRawConnection();
+
+    if (await this.pingConnection(retryClient)) {
+      return retryClient;
+    }
+
+    retryClient.release(true);
+    throw new OrmError(
+      OrmErrorCode.CONNECTION_FAILED,
+      "Connection health check failed after retry",
+      "Check that the database server is running and reachable",
+    );
   }
 
   async acquireConnection(): Promise<IConnection<PoolClient>> {
