@@ -101,7 +101,7 @@ export class RelationLoader {
         }
 
         qb.select(selectCols)
-          .from(this.ctx.wrap(relatedTableName))
+          .from(this.ctx.wrapTable(relatedTableName))
           .where(whereConditions);
 
         const resultQuery = qb.build();
@@ -230,9 +230,9 @@ export class RelationLoader {
         );
 
         qb.select(selectCols)
-          .from(this.ctx.wrap(relatedTableName))
+          .from(this.ctx.wrapTable(relatedTableName))
           .innerJoin(
-            this.ctx.wrap(joinInfo.joinTableName),
+            this.ctx.wrapTable(joinInfo.joinTableName),
             this.ctx.wrap(joinInfo.joinTableName),
             joinCondition,
           )
@@ -380,7 +380,7 @@ export class RelationLoader {
           }
 
           qb.select(selectCols)
-            .from(this.ctx.wrap(relatedTableName))
+            .from(this.ctx.wrapTable(relatedTableName))
             .where(whereConditions);
 
           const resultQuery = qb.build();

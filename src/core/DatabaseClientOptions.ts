@@ -149,6 +149,18 @@ export interface DatabaseClientOptions {
    * If not provided, DefaultNamingStrategy is used (SHA1-based FK names, convention-based index names).
    */
   namingStrategy?: NamingStrategy;
+
+  /**
+   * Multi-tenant query strategy for PostgreSQL.
+   * - "search_path" (default): Uses SET LOCAL search_path inside a transaction for tenant reads.
+   *   Safe for all cases but requires 5 round-trips per tenant read.
+   * - "schema_qualified": Uses schema-qualified table names (e.g. "tenant_a"."users").
+   *   Allows single-round-trip tenant reads without transactions.
+   *
+   * This option only affects PostgreSQL tenant reads. Non-tenant reads, writes,
+   * MySQL, and SQLite are unaffected.
+   */
+  tenantStrategy?: "search_path" | "schema_qualified";
 }
 
 /**

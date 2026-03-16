@@ -16,6 +16,7 @@ import { ISelectOption } from "../dialects/ISelectOption";
  */
 export interface EntityManagerInternals {
   wrap(col: string): string;
+  wrapTable(tableName: string): string;
   isMySqlFamily(): boolean;
   isPostgres(): boolean;
   getDriver(): ISqlDriver | undefined;

@@ -76,6 +76,11 @@ import { RelationLoader } from "./RelationLoader";
 import { SchemaRegistrar } from "./SchemaRegistrar";
 import { ExplainQueryHandler } from "./ExplainQueryHandler";
 import { AggregateQueryHandler } from "./AggregateQueryHandler";
+import {
+  TenantQueryStrategy,
+  SearchPathStrategy,
+  SchemaQualifiedStrategy,
+} from "./TenantQueryStrategy";
 
 /**
  * Date를 MySQL/MariaDB 호환 'YYYY-MM-DD HH:MM:SS' 형식으로 변환합니다.
@@ -98,6 +103,7 @@ export class EntityManager implements BaseEntityManager {
   private queryTracker: QueryTracker | null = null;
   private defaultQueryTimeout: number | undefined;
   private queryLoggingEnabled = false;
+  private tenantStrategy: TenantQueryStrategy = new SearchPathStrategy();
 
   /**
    * 이 EntityManager가 사용할 연결 이름.
@@ -119,6 +125,7 @@ export class EntityManager implements BaseEntityManager {
   /** @internal 추출된 클래스에게 EntityManager 내부 기능을 노출하는 어댑터 */
   private readonly _ctx: EntityManagerInternals = {
     wrap: (col) => this.wrap(col),
+    wrapTable: (tableName) => this.wrapTable(tableName),
     isMySqlFamily: () => this.isMySqlFamily(),
     isPostgres: () => this.isPostgres(),
     getDriver: () => this.driver,
@@ -234,6 +241,11 @@ export class EntityManager implements BaseEntityManager {
 
     if (isTimeoutSupported) {
       this.defaultQueryTimeout = queryTimeout;
+    }
+
+    // TenantQueryStrategy 초기화
+    if (databaseClientOptions.tenantStrategy === "schema_qualified") {
+      this.tenantStrategy = new SchemaQualifiedStrategy();
     }
 
     // ReplicationRouter 초기화
@@ -610,7 +622,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      qb.select(selectMap).from(this.wrap(tableName));
+      qb.select(selectMap).from(this.wrapTable(tableName));
 
       // Eager ManyToOne LEFT JOIN
       for (const rel of eagerRelations) {
@@ -628,7 +640,7 @@ export class EntityManager implements BaseEntityManager {
 
         const joinCondition = sql`${raw(this.wrap(tableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relatedTableName))}.${raw(this.wrap(relatedPk.name!))}`;
         qb.leftJoin(
-          this.wrap(relatedTableName),
+          this.wrapTable(relatedTableName),
           this.wrap(relatedTableName),
           joinCondition,
         );
@@ -650,7 +662,7 @@ export class EntityManager implements BaseEntityManager {
 
         const joinCondition = sql`${raw(this.wrap(tableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relatedTableName))}.${raw(this.wrap(relatedPk.name!))}`;
         qb.leftJoin(
-          this.wrap(relatedTableName),
+          this.wrapTable(relatedTableName),
           this.wrap(relatedTableName),
           joinCondition,
         );
@@ -885,7 +897,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       qb.select(selectMap)
-        .from(this.wrap(tableName))
+        .from(this.wrapTable(tableName))
         .where(whereMap)
         .orderBy([{ column: this.wrap(orderByColumn), direction }]);
 
@@ -1150,7 +1162,7 @@ export class EntityManager implements BaseEntityManager {
           : raw("");
 
         const insertSql = sql`
-                        INSERT INTO ${raw(this.wrap(metadata.name!))}
+                        INSERT INTO ${raw(this.wrapTable(metadata.name!))}
                         (${join(columns, ", ")})
                         VALUES (${join(values, ", ")})${returningSql}
                     `;
@@ -1327,7 +1339,7 @@ export class EntityManager implements BaseEntityManager {
 
       if (updateMap.length > 0) {
         const updateSql = sql`
-            UPDATE ${raw(this.wrap(metadata.name!))}
+            UPDATE ${raw(this.wrapTable(metadata.name!))}
             SET ${join(updateMap, ", ")}
             WHERE ${join(pkWhereClauses, " AND ")}
                   `;
@@ -1495,7 +1507,7 @@ export class EntityManager implements BaseEntityManager {
         return sql`(${join(rowValues, ", ")})`;
       });
 
-      const queryStr = sql`INSERT INTO ${raw(this.wrap(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
+      const queryStr = sql`INSERT INTO ${raw(this.wrapTable(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
 
       const queryResult = (await session.query(queryStr)) as {
         results: any;
@@ -1557,7 +1569,7 @@ export class EntityManager implements BaseEntityManager {
 
       const whereSql = join(whereMap, " AND ");
 
-      const deleteQuery = sql`DELETE FROM ${raw(this.wrap(metadata.name!))} WHERE ${whereSql}`;
+      const deleteQuery = sql`DELETE FROM ${raw(this.wrapTable(metadata.name!))} WHERE ${whereSql}`;
 
       const deleteStart = Date.now();
       this.beginTrackQuery();
@@ -1614,7 +1626,7 @@ export class EntityManager implements BaseEntityManager {
         ", ",
       );
 
-      const deleteQuery = sql`DELETE FROM ${raw(this.wrap(metadata.name!))} WHERE ${raw(this.wrap(pk.name!))} IN (${placeholders})`;
+      const deleteQuery = sql`DELETE FROM ${raw(this.wrapTable(metadata.name!))} WHERE ${raw(this.wrap(pk.name!))} IN (${placeholders})`;
 
       const queryResult = (await session.query(deleteQuery)) as {
         results: any;
@@ -1714,7 +1726,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      const updateSql = sql`UPDATE ${raw(this.wrap(metadata.name!))} SET ${join(setMap, ", ")} WHERE ${join(whereMap, " AND ")}`;
+      const updateSql = sql`UPDATE ${raw(this.wrapTable(metadata.name!))} SET ${join(setMap, ", ")} WHERE ${join(whereMap, " AND ")}`;
 
       const queryStart = Date.now();
       this.beginTrackQuery();
@@ -1777,7 +1789,7 @@ export class EntityManager implements BaseEntityManager {
       const whereSql = join(whereMap, " AND ");
 
       const nowExpr = this.isPostgres() ? raw("NOW()") : raw("NOW()");
-      const updateQuery = sql`UPDATE ${raw(this.wrap(metadata.name!))} SET ${raw(this.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`;
+      const updateQuery = sql`UPDATE ${raw(this.wrapTable(metadata.name!))} SET ${raw(this.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`;
 
       const queryResult = (await session.query(updateQuery)) as {
         results: any;
@@ -1832,7 +1844,7 @@ export class EntityManager implements BaseEntityManager {
 
       const whereSql = join(whereMap, " AND ");
 
-      const restoreQuery = sql`UPDATE ${raw(this.wrap(metadata.name!))} SET ${raw(this.wrap(deletedAtColumn))} = NULL WHERE ${whereSql}`;
+      const restoreQuery = sql`UPDATE ${raw(this.wrapTable(metadata.name!))} SET ${raw(this.wrap(deletedAtColumn))} = NULL WHERE ${whereSql}`;
 
       const queryResult = (await session.query(restoreQuery)) as {
         results: any;
@@ -1905,7 +1917,7 @@ export class EntityManager implements BaseEntityManager {
     );
     const wrappedUpdate = updateColumnNames.map((name) => this.wrap(name));
 
-    const tableName = this.wrap(metadata.name!);
+    const tableName = this.wrapTable(metadata.name!);
 
     if (wrappedUpdate.length === 0) {
       return;
@@ -2036,6 +2048,19 @@ export class EntityManager implements BaseEntityManager {
     return `\`${columnName.replace(/`/g, "``")}\``;
   }
 
+  /**
+   * Wrap a table name with optional schema qualification for multi-tenant queries.
+   * Uses the configured TenantQueryStrategy to determine whether to prefix with tenant schema.
+   */
+  wrapTable(tableName: string): string {
+    const tenant = this.isPostgres()
+      ? MetadataContext.getCurrentTenant()
+      : "public";
+    return this.tenantStrategy.qualifyTable(tableName, tenant, (n) =>
+      this.wrap(n),
+    );
+  }
+
   private isMySqlFamily() {
     const t = this.dbType ?? (this.client as any).type;
     return ["mysql", "mariadb"].includes(t as IDatabaseType);
@@ -2158,8 +2183,15 @@ export class EntityManager implements BaseEntityManager {
       return fn(reusable);
     }
 
-    // 2. PostgreSQL + timeout → SET LOCAL requires transaction
-    if (this.isPostgres() && timeout && timeout > 0) {
+    // 2. PostgreSQL tenant or timeout → need transaction for SET LOCAL
+    const tenant = this.isPostgres()
+      ? MetadataContext.getCurrentTenant()
+      : "public";
+    const needsTxForTenant =
+      this.isPostgres() &&
+      tenant !== "public" &&
+      this.tenantStrategy.needsTransactionForTenantRead();
+    if (this.isPostgres() && (needsTxForTenant || (timeout && timeout > 0))) {
       return this.executeInTransaction(fn, existingSession, readNodeOverride);
     }
 
@@ -2172,50 +2204,20 @@ export class EntityManager implements BaseEntityManager {
         await session.connect();
       }
 
-      // Multi-tenancy: set search_path without transaction
-      const tenant = this.isPostgres() ? MetadataContext.getCurrentTenant() : "public";
-      const needsSearchPath = this.isPostgres() && tenant !== "public";
-      if (needsSearchPath) {
-        const escaped = tenant.replace(/"/g, '""');
-        await session.query(`SET search_path TO "${escaped}"`);
-      }
-
       // MySQL timeout (SET SESSION — no transaction needed)
       if (timeout && timeout > 0 && this.driver && this.isMySqlFamily()) {
         const timeoutSql = this.driver.setQueryTimeout(timeout);
         await session.query(timeoutSql);
       }
 
-      try {
-        const result = await fn(session);
-        return result;
-      } finally {
-        // Reset search_path before returning connection to pool
-        if (needsSearchPath) {
-          try {
-            const defaultSchema = this.getDefaultSchema();
-            const escapedDefault = defaultSchema.replace(/"/g, '""');
-            await session.query(`SET search_path TO "${escapedDefault}"`);
-          } catch {
-            this.logger.warn("Failed to reset search_path after read-only query");
-          }
-        }
-      }
+      const result = await fn(session);
+      return result;
     } finally {
       try {
         await session.close();
       } catch (closeError) {
         this.logger.error(`Failed to close read-only session: ${closeError}`);
       }
-    }
-  }
-
-  private getDefaultSchema(): string {
-    try {
-      const options = this.client.getOptions(this.connectionName);
-      return (options as any).schema ?? "public";
-    } catch {
-      return "public";
     }
   }
 

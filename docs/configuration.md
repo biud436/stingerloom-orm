@@ -336,6 +336,8 @@ interface DatabaseClientOptions {
   retry?: RetryOptions;          // Connection retry settings
   logging?: boolean | LoggingOptions;  // Query logging
   replication?: ReplicationConfig;     // Read Replica settings
+  namingStrategy?: NamingStrategy;     // Custom FK/index naming strategy
+  tenantStrategy?: "search_path" | "schema_qualified"; // PG tenant query strategy (default: "search_path")
 }
 ```
 

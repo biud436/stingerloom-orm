@@ -128,7 +128,7 @@ export class ExplainQueryHandler {
       }
     }
 
-    qb.select(selectMap).from(this.ctx.wrap(tableName));
+    qb.select(selectMap).from(this.ctx.wrapTable(tableName));
     qb.where(whereMap).orderBy(orderByMap);
 
     if (Array.isArray(limit)) {

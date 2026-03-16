@@ -27,3 +27,4 @@ export * from "./SchemaRegistrar";
 export * from "./ExplainQueryHandler";
 export * from "./AggregateQueryHandler";
 export * from "./CascadeHandler";
+export * from "./TenantQueryStrategy";

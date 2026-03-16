@@ -182,6 +182,65 @@ export class TenantProvisioningService implements OnModuleInit {
 
 > **Hint** Schema-based multi-tenancy is currently only supported on PostgreSQL. MySQL and SQLite return an `UnsupportedError`.
 
+## Tenant Query Strategy
+
+When using schema-based isolation, Stingerloom needs to route queries to the correct tenant schema. Two strategies are available, configured via the `tenantStrategy` option.
+
+### `"search_path"` (Default)
+
+Sets `search_path` inside a transaction before each tenant read. This is the safest approach but requires 5 round-trips per read query (connect, BEGIN, SET LOCAL, query, COMMIT).
+
+```typescript
+await em.register({
+  type: "postgres",
+  // ...
+  tenantStrategy: "search_path", // default — can be omitted
+});
+```
+
+### `"schema_qualified"`
+
+Prefixes table names with the tenant schema directly (e.g. `"acme_corp"."users"`). This eliminates the need for a transaction on tenant reads, reducing each read to a single round-trip.
+
+```typescript
+await em.register({
+  type: "postgres",
+  // ...
+  tenantStrategy: "schema_qualified",
+});
+```
+
+With this strategy, a query like `em.find(User)` inside `MetadataContext.run("acme_corp", ...)` generates:
+
+```sql
+SELECT "id", "name" FROM "acme_corp"."users"
+-- instead of: BEGIN; SET LOCAL search_path = "acme_corp"; SELECT ...; COMMIT;
+```
+
+### Comparison
+
+| Scenario | `search_path` | `schema_qualified` |
+|----------|:-------------:|:------------------:|
+| Tenant read (round-trips) | 5 | **1** |
+| Non-tenant read | 1 | 1 |
+| Write operations | Transaction (unchanged) | Transaction (unchanged) |
+| PG + query timeout | Transaction | Transaction |
+| MySQL / SQLite | No effect | No effect |
+
+> **When to choose `schema_qualified`:** If your application is read-heavy with many tenant-scoped queries, `schema_qualified` can significantly reduce latency by avoiding unnecessary transactions. Both strategies produce identical results — the difference is purely in performance.
+
+### Programmatic Access
+
+The strategy classes are exported for advanced use cases such as custom middleware or testing.
+
+```typescript
+import {
+  TenantQueryStrategy,
+  SearchPathStrategy,
+  SchemaQualifiedStrategy,
+} from "@stingerloom/orm";
+```
+
 ## Direct Use of Layered Metadata
 
 In most cases, `MetadataContext.run()` is sufficient, but when you need to directly override metadata per tenant, use `LayeredMetadataStore`.

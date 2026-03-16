@@ -5,6 +5,7 @@ import { EntityManager } from "../../src/core/EntityManager";
 import { TransactionSessionManager } from "../../src/dialects/TransactionSessionManager";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 import { MetadataContext } from "../../src/metadata/MetadataContext";
+import { SchemaQualifiedStrategy } from "../../src/core/TenantQueryStrategy";
 
 /**
  * Read-only query optimization tests (Issue #78).
@@ -16,7 +17,7 @@ import { MetadataContext } from "../../src/metadata/MetadataContext";
  * - 비테넌트, 비타임아웃 → 트랜잭션 스킵 (80% 왕복 감소)
  * - PostgreSQL + timeout → 트랜잭션 fallback (SET LOCAL 필요)
  * - MySQL + timeout → 트랜잭션 스킵 (SET SESSION은 트랜잭션 불필요)
- * - 테넌트 (PG, tenant≠"public") → SET search_path + 리셋
+ * - 테넌트 (PG, tenant≠"public") → 트랜잭션 fallback (SET LOCAL search_path)
  * - findAndCount → 트랜잭션 유지 (스냅샷 일관성)
  * - 기존 세션 (@Transactional) → 세션 재사용
  */
@@ -97,10 +98,15 @@ const postMetadata = {
 function createTestEntityManager(opts?: {
   isMySql?: boolean;
   isPostgres?: boolean;
+  tenantStrategy?: "schema_qualified";
 }) {
   const em = new EntityManager();
   const isMySql = opts?.isMySql ?? true;
   const isPg = opts?.isPostgres ?? false;
+
+  if (opts?.tenantStrategy === "schema_qualified") {
+    (em as any).tenantStrategy = new SchemaQualifiedStrategy();
+  }
 
   (em as any).driver = {
     wrap: (name: string) => isMySql ? `\`${name}\`` : `"${name}"`,
@@ -449,61 +455,38 @@ describe("Read-only Query Optimization (Issue #78)", () => {
       em = createTestEntityManager({ isMySql: false, isPostgres: true });
     });
 
-    it("15. find() with tenant context should SET search_path", async () => {
-      mockQuery
-        .mockResolvedValueOnce(undefined) // SET search_path
-        .mockResolvedValueOnce({
-          results: [{ id: 1, name: "Alice" }],
-          fields: [],
-        })
-        .mockResolvedValueOnce(undefined); // RESET search_path
+    it("15. find() with tenant context should fallback to transaction (SET LOCAL safety)", async () => {
+      // PG transaction path: connect → startTransaction → fn(session) → commit
+      // startTransaction is its own mock, no query call needed for it
+      mockQuery.mockResolvedValueOnce({
+        results: [{ id: 1, name: "Alice" }],
+        fields: [],
+      });
 
       await MetadataContext.run("tenant_a", async () => {
         await em.find(User, {});
       });
 
-      expect(mockStartTransaction).not.toHaveBeenCalled();
-      // First query: SET search_path TO "tenant_a"
-      const firstCall = mockQuery.mock.calls[0][0];
-      expect(firstCall).toContain("SET search_path");
-      expect(firstCall).toContain("tenant_a");
+      // Tenant reads must go through executeInTransaction for SET LOCAL search_path
+      expect(mockStartTransaction).toHaveBeenCalledTimes(1);
+      expect(mockCommit).toHaveBeenCalledTimes(1);
     });
 
-    it("16. find() with tenant context should RESET search_path after query", async () => {
-      mockQuery
-        .mockResolvedValueOnce(undefined) // SET search_path
-        .mockResolvedValueOnce({
-          results: [{ id: 1, name: "Alice" }],
-          fields: [],
-        })
-        .mockResolvedValueOnce(undefined); // RESET search_path
-
-      await MetadataContext.run("tenant_b", async () => {
-        await em.find(User, {});
-      });
-
-      // Last query before close should reset search_path
-      const lastQueryCall = mockQuery.mock.calls[mockQuery.mock.calls.length - 1][0];
-      expect(lastQueryCall).toContain("SET search_path");
-      expect(lastQueryCall).toContain("public");
-    });
-
-    it("17. find() with tenant context should reset search_path and close even on error", async () => {
-      mockQuery
-        .mockResolvedValueOnce(undefined) // SET search_path
-        .mockRejectedValueOnce(new Error("PG error")) // SELECT throws
-        .mockResolvedValueOnce(undefined); // RESET search_path (in finally)
+    it("16. find() with tenant context should use transaction even on error", async () => {
+      // PG transaction path: connect → startTransaction → fn(session) throws → rollback
+      mockQuery.mockRejectedValueOnce(new Error("PG error"));
 
       await MetadataContext.run("tenant_c", async () => {
         await expect(em.find(User, {})).rejects.toThrow("PG error");
       });
 
-      // search_path should still be reset
-      expect(mockQuery).toHaveBeenCalledTimes(3);
+      // Transaction path handles rollback on error
+      expect(mockStartTransaction).toHaveBeenCalledTimes(1);
+      expect(mockRollback).toHaveBeenCalledTimes(1);
       expect(mockClose).toHaveBeenCalledTimes(1);
     });
 
-    it("18. find() without tenant (public) should NOT SET search_path", async () => {
+    it("17. find() without tenant (public) should NOT start a transaction", async () => {
       mockQuery.mockResolvedValueOnce({
         results: [{ id: 1, name: "Alice" }],
         fields: [],
@@ -512,9 +495,25 @@ describe("Read-only Query Optimization (Issue #78)", () => {
       // No MetadataContext.run → tenant = "public"
       await em.find(User, {});
 
-      // No SET search_path calls
+      // No SET search_path, no transaction
       expect(mockQuery).toHaveBeenCalledTimes(1);
       expect(mockStartTransaction).not.toHaveBeenCalled();
+    });
+
+    it("18. MySQL find() with tenant context should NOT start a transaction (no search_path)", async () => {
+      const mysqlEm = createTestEntityManager({ isMySql: true, isPostgres: false });
+      mockQuery.mockResolvedValueOnce({
+        results: [{ id: 1, name: "Alice" }],
+        fields: [],
+      });
+
+      await MetadataContext.run("tenant_a", async () => {
+        await mysqlEm.find(User, {});
+      });
+
+      // MySQL has no search_path concept — lightweight path
+      expect(mockStartTransaction).not.toHaveBeenCalled();
+      expect(mockClose).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -584,23 +583,99 @@ describe("Read-only Query Optimization (Issue #78)", () => {
       expect(mockClose).toHaveBeenCalledTimes(1);
     });
 
-    it("23. search_path reset failure should still close session", async () => {
+    it("23. PG tenant read uses transaction path — close on commit", async () => {
       const pgEm = createTestEntityManager({ isMySql: false, isPostgres: true });
-      mockQuery
-        .mockResolvedValueOnce(undefined) // SET search_path
-        .mockResolvedValueOnce({
-          results: [{ id: 1, name: "Alice" }],
-          fields: [],
-        })
-        .mockRejectedValueOnce(new Error("Reset failed")); // RESET search_path fails
+      mockQuery.mockResolvedValueOnce({
+        results: [{ id: 1, name: "Alice" }],
+        fields: [],
+      });
 
       await MetadataContext.run("tenant_x", async () => {
-        // Should NOT throw — reset failure is swallowed with warning
         const result = await pgEm.find(User, {});
         expect(result).toHaveLength(1);
       });
 
+      // Transaction path: startTransaction → commit → close
+      expect(mockStartTransaction).toHaveBeenCalledTimes(1);
+      expect(mockCommit).toHaveBeenCalledTimes(1);
       expect(mockClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── G. SchemaQualified tenant strategy ──────────────────────
+
+  describe("G. SchemaQualified tenant strategy (PostgreSQL)", () => {
+    let em: EntityManager;
+
+    beforeEach(() => {
+      em = createTestEntityManager({
+        isMySql: false,
+        isPostgres: true,
+        tenantStrategy: "schema_qualified",
+      });
+    });
+
+    it("24. find() with tenant context should NOT start a transaction (schema-qualified)", async () => {
+      mockQuery.mockResolvedValueOnce({
+        results: [{ id: 1, name: "Alice", email: "a@test.com" }],
+        fields: [],
+      });
+
+      await MetadataContext.run("tenant_a", async () => {
+        await em.find(User, {});
+      });
+
+      // SchemaQualified strategy skips transaction for tenant reads
+      expect(mockStartTransaction).not.toHaveBeenCalled();
+      expect(mockCommit).not.toHaveBeenCalled();
+      expect(mockClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("25. find() query should contain schema-qualified table name", async () => {
+      mockQuery.mockResolvedValueOnce({
+        results: [{ id: 1, name: "Alice", email: "a@test.com" }],
+        fields: [],
+      });
+
+      await MetadataContext.run("tenant_a", async () => {
+        await em.find(User, {});
+      });
+
+      // The query should contain "tenant_a"."User"
+      const queryCalls = mockQuery.mock.calls;
+      const sqlText = String(queryCalls[0][0]?.text ?? queryCalls[0][0]);
+      expect(sqlText).toContain('"tenant_a"."User"');
+    });
+
+    it("26. find() without tenant (public) should NOT schema-qualify", async () => {
+      mockQuery.mockResolvedValueOnce({
+        results: [{ id: 1, name: "Alice", email: "a@test.com" }],
+        fields: [],
+      });
+
+      // No MetadataContext.run → tenant = "public"
+      await em.find(User, {});
+
+      const queryCalls = mockQuery.mock.calls;
+      const sqlText = String(queryCalls[0][0]?.text ?? queryCalls[0][0]);
+      // Should NOT contain "tenant_a" — just plain "User"
+      expect(sqlText).not.toContain('"tenant_a"');
+      expect(sqlText).toContain('"User"');
+    });
+
+    it("27. PG + timeout should still fallback to transaction even with schema_qualified", async () => {
+      mockQuery
+        .mockResolvedValueOnce(undefined) // SET LOCAL statement_timeout
+        .mockResolvedValueOnce({
+          results: [{ id: 1, name: "Alice" }],
+          fields: [],
+        });
+
+      await em.find(User, { timeout: 5000 });
+
+      // Timeout always requires transaction for SET LOCAL
+      expect(mockStartTransaction).toHaveBeenCalledTimes(1);
+      expect(mockCommit).toHaveBeenCalledTimes(1);
     });
   });
 });

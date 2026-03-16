@@ -56,9 +56,9 @@ export class AggregateQueryHandler {
       let queryStr: Sql;
       if (whereMap.length > 0) {
         const whereSql = join(whereMap, " AND ");
-        queryStr = sql`SELECT ${selectExpr} AS ${raw(this.ctx.wrap("result"))} FROM ${raw(this.ctx.wrap(tableName))} WHERE ${whereSql}`;
+        queryStr = sql`SELECT ${selectExpr} AS ${raw(this.ctx.wrap("result"))} FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${whereSql}`;
       } else {
-        queryStr = sql`SELECT ${selectExpr} AS ${raw(this.ctx.wrap("result"))} FROM ${raw(this.ctx.wrap(tableName))}`;
+        queryStr = sql`SELECT ${selectExpr} AS ${raw(this.ctx.wrap("result"))} FROM ${raw(this.ctx.wrapTable(tableName))}`;
       }
 
       const queryResult = (await session.query(
