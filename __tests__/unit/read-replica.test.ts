@@ -224,7 +224,6 @@ describe("EntityManager read replica routing", () => {
     const em = createReplicatedEntityManager();
 
     mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit
       .mockResolvedValueOnce({ results: [{ id: 1, title: "Test" }], fields: [] });
 
     await em.find(ItemEntity, { where: { id: 1 } as any });
@@ -240,7 +239,6 @@ describe("EntityManager read replica routing", () => {
     const em = createNonReplicatedEntityManager();
 
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: [{ id: 1, title: "Test" }], fields: [] });
 
     await em.find(ItemEntity, { where: { id: 1 } as any });
@@ -253,7 +251,6 @@ describe("EntityManager read replica routing", () => {
     const em = createReplicatedEntityManager();
 
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: [{ id: 1, title: "Test" }], fields: [] });
 
     await em.find(ItemEntity, {
@@ -269,7 +266,6 @@ describe("EntityManager read replica routing", () => {
     const em = createReplicatedEntityManager();
 
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: [{ id: 1, title: "Test" }], fields: [] });
 
     await em.findWithCursor(ItemEntity, { take: 10 });
@@ -283,7 +279,6 @@ describe("EntityManager read replica routing", () => {
     const em = createReplicatedEntityManager();
 
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: [{ id: 1, title: "Test" }], fields: [] });
 
     await em.findWithCursor(ItemEntity, { take: 10, useMaster: true });
@@ -323,7 +318,6 @@ describe("EntityManager read replica routing", () => {
     (em as any).driver.buildExplainSql = () => "EXPLAIN ";
 
     mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit
       .mockResolvedValueOnce({
         results: [{ id: 1, select_type: "SIMPLE", type: "ALL", rows: 10 }],
         fields: [],
@@ -342,7 +336,6 @@ describe("EntityManager read replica routing", () => {
     (em as any).driver.buildExplainSql = () => "EXPLAIN ";
 
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({
         results: [{ id: 1, select_type: "SIMPLE", type: "ALL", rows: 10 }],
         fields: [],

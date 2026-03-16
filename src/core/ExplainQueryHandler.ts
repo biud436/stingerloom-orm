@@ -160,11 +160,11 @@ export class ExplainQueryHandler {
     // Replication: EXPLAIN은 읽기 전용이므로 slave로 라우팅
     const readNode = this.ctx.getReadNode(findOption.useMaster);
 
-    return this.ctx.executeInTransaction(async (session) => {
+    return this.ctx.executeReadOnly(async (session) => {
       const result = await session.query(explainQuery);
       const rawRows: Record<string, unknown>[] = (result as any)?.results ?? [];
       return this.parseExplainResult(rawRows);
-    }, undefined, readNode);
+    }, { readNodeOverride: readNode });
   }
 
   parseExplainResult(

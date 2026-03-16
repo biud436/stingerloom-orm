@@ -25,6 +25,14 @@ export interface EntityManagerInternals {
     existingSession?: TransactionSessionManager,
     readNodeOverride?: ReplicationNodeConfig | null,
   ): Promise<R>;
+  executeReadOnly<R>(
+    fn: (session: TransactionSessionManager) => Promise<R>,
+    options?: {
+      existingSession?: TransactionSessionManager;
+      readNodeOverride?: ReplicationNodeConfig | null;
+      timeout?: number;
+    },
+  ): Promise<R>;
   beginTrackQuery(): void;
   trackQuery(entityName: string, sql: string, ms: number): void;
   getReadNode(useMaster?: boolean): ReplicationNodeConfig | null;
