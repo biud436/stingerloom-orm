@@ -101,8 +101,9 @@ const userRepo = BaseRepository.of(User, em);
 | `@Column(option?)` | Regular column |
 | `@PrimaryGeneratedColumn(option?)` | Auto-increment PK |
 | `@PrimaryColumn(option?)` | Manual PK |
-| `@Index()` | Column index |
-| `@UniqueIndex(columns, options?)` | Composite unique index (class level) |
+| `@Index()` | Single-column index (property level) |
+| `@Index(columns, name?)` | Composite non-unique index (class level) |
+| `@UniqueIndex(columns, name?)` | Composite unique index (class level) |
 | `@Version()` | Optimistic locking version column |
 | `@DeletedAt()` | Soft Delete timestamp |
 | `@CreateTimestamp()` | Auto-set on INSERT (datetime NOT NULL) |
@@ -245,6 +246,9 @@ interface ManyToOneOption {
   eager?: boolean;
   lazy?: boolean;
   cascade?: CascadeOption;
+  onDelete?: ReferentialAction;  // 'CASCADE' | 'SET NULL' | 'SET DEFAULT' | 'RESTRICT' | 'NO ACTION'
+  onUpdate?: ReferentialAction;  // default: 'NO ACTION'
+  createForeignKeyConstraints?: boolean;  // false to skip FK constraint in DDL
   transform?: (raw: unknown) => any;
 }
 
@@ -258,6 +262,9 @@ interface OneToOneOption<T> {
   inverseSide?: Extract<keyof T, string> | (string & {});  // IntelliSense supported
   eager?: boolean;
   cascade?: CascadeOption;
+  onDelete?: ReferentialAction;  // 'CASCADE' | 'SET NULL' | 'SET DEFAULT' | 'RESTRICT' | 'NO ACTION'
+  onUpdate?: ReferentialAction;  // default: 'NO ACTION'
+  createForeignKeyConstraints?: boolean;  // false to skip FK constraint in DDL
 }
 
 interface ManyToManyOption<T> {

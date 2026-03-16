@@ -114,6 +114,45 @@ By default, FKs reference the target entity's PK. To reference a column other th
 owner!: Owner;
 ```
 
+### Referential Actions (onDelete / onUpdate)
+
+By default, foreign keys use `ON DELETE NO ACTION ON UPDATE NO ACTION`. You can change this behavior using `onDelete` and `onUpdate` options.
+
+```typescript
+@ManyToOne(() => Owner, (owner) => owner.cats, {
+  joinColumn: "owner_id",
+  onDelete: "CASCADE",     // Delete cats when owner is deleted
+  onUpdate: "CASCADE",     // Update FK when owner PK changes
+})
+owner!: Owner;
+```
+
+Available actions:
+
+| Action | Behavior |
+|--------|----------|
+| `'NO ACTION'` | Reject if child rows exist (default) |
+| `'RESTRICT'` | Same as NO ACTION (checked immediately) |
+| `'CASCADE'` | Delete/update children automatically |
+| `'SET NULL'` | Set FK to NULL (column must be nullable) |
+| `'SET DEFAULT'` | Set FK to its default value |
+
+These options work on both `@ManyToOne` and `@OneToOne`.
+
+### Skipping FK Constraints (createForeignKeyConstraints)
+
+In some cases (e.g., cross-database references, performance-critical tables), you may want to skip FK constraint creation while keeping the logical relation.
+
+```typescript
+@ManyToOne(() => ExternalEntity, (e) => e.items, {
+  joinColumn: "external_id",
+  createForeignKeyConstraints: false,  // No FK constraint in DDL
+})
+external!: ExternalEntity;
+```
+
+The column is still created, but no `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY` is generated. This option also works on `@OneToOne`.
+
 ## @OneToMany — "What are this owner's cats?"
 
 If you want to fetch a list of cats from the owner side, add `@OneToMany`. This is the inverse direction of `@ManyToOne`.

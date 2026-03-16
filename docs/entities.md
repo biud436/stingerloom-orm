@@ -200,6 +200,36 @@ export class User {
 
 Adding `@Index()` automatically creates an index in the format `INDEX_user_email`. Be sure to add it if you frequently use `email` in WHERE conditions.
 
+### Composite Index (@Index on class)
+
+`@Index()` can also be used as a **class-level** decorator to create a composite (multi-column) non-unique index. This is useful for queries that filter on multiple columns.
+
+```typescript
+// order.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column, Index } from "@stingerloom/orm";
+
+@Index(["tenantId", "status"])
+@Entity()
+export class Order {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "int" })
+  tenantId!: number;
+
+  @Column({ type: "varchar", length: 50 })
+  status!: string;
+}
+```
+
+This creates `CREATE INDEX idx_order_tenantId_status ON order (tenantId, status)`. You can also specify a custom index name.
+
+```typescript
+@Index(["tenantId", "status"], "idx_custom_name")
+```
+
+> **Hint** Property-level `@Index()` creates a single-column index. Class-level `@Index(columns)` creates a composite index. Both can be used on the same entity.
+
 ### Composite Unique Index (@UniqueIndex)
 
 Sometimes the **combination** of multiple columns must be unique. For example, when a slug only needs to be unique within the same category.
@@ -228,7 +258,7 @@ This creates a UNIQUE INDEX on the `(categoryId, slug)` combination. You can als
 @UniqueIndex(["categoryId", "slug"], { name: "uq_post_category_slug" })
 ```
 
-> **Hint** `@UniqueIndex` is a **class-level** decorator. Remember that `@Index()` is placed on properties, while `@UniqueIndex()` is placed on classes.
+> **Hint** `@UniqueIndex` and `@Index(columns)` are both **class-level** decorators. Property-level `@Index()` (no arguments) is placed on individual properties.
 
 ## Optimistic Locking (@Version)
 
