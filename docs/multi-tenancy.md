@@ -186,9 +186,30 @@ export class TenantProvisioningService implements OnModuleInit {
 
 When using schema-based isolation, Stingerloom needs to route queries to the correct tenant schema. Two strategies are available, configured via the `tenantStrategy` option.
 
+### What is a "round-trip"?
+
+A round-trip is a single request-response cycle between your application and the PostgreSQL server over the network. Each round-trip incurs at least one network latency cost.
+
+For example, if your database is in another region with 10ms latency, 5 round-trips = 50ms overhead before you even get your data back. In a nearby region with 1ms latency, it's 5ms — still significant when multiplied across hundreds of concurrent tenant reads.
+
 ### `"search_path"` (Default)
 
-Sets `search_path` inside a transaction before each tenant read. This is the safest approach but requires 5 round-trips per read query (connect, BEGIN, SET LOCAL, query, COMMIT).
+Sets `search_path` inside a transaction before each tenant read. Safe, but requires 5 round-trips:
+
+```
+App                                PostgreSQL
+ │                                      │
+ ├─── 1. connect ─────────────────────►│
+ │◄── ack ──────────────────────────────┤
+ ├─── 2. BEGIN ───────────────────────►│
+ │◄── ack ──────────────────────────────┤
+ ├─── 3. SET LOCAL search_path ──────►│
+ │◄── ack ──────────────────────────────┤
+ ├─── 4. SELECT * FROM "users" ──────►│
+ │◄── rows ─────────────────────────────┤
+ ├─── 5. COMMIT ──────────────────────►│
+ │◄── ack ──────────────────────────────┤
+```
 
 ```typescript
 await em.register({
@@ -200,7 +221,16 @@ await em.register({
 
 ### `"schema_qualified"`
 
-Prefixes table names with the tenant schema directly (e.g. `"acme_corp"."users"`). This eliminates the need for a transaction on tenant reads, reducing each read to a single round-trip.
+Prefixes table names with the tenant schema directly (e.g. `"acme_corp"."users"`). No transaction needed — just 2 round-trips:
+
+```
+App                                PostgreSQL
+ │                                      │
+ ├─── 1. connect ─────────────────────►│
+ │◄── ack ──────────────────────────────┤
+ ├─── 2. SELECT * FROM "acme_corp"."users" ►│
+ │◄── rows ─────────────────────────────┤
+```
 
 ```typescript
 await em.register({
@@ -221,13 +251,13 @@ SELECT "id", "name" FROM "acme_corp"."users"
 
 | Scenario | `search_path` | `schema_qualified` |
 |----------|:-------------:|:------------------:|
-| Tenant read (round-trips) | 5 | **1** |
-| Non-tenant read | 1 | 1 |
+| Tenant read (round-trips) | 5 | **2** |
+| Non-tenant read | 2 | 2 |
 | Write operations | Transaction (unchanged) | Transaction (unchanged) |
 | PG + query timeout | Transaction | Transaction |
 | MySQL / SQLite | No effect | No effect |
 
-> **When to choose `schema_qualified`:** If your application is read-heavy with many tenant-scoped queries, `schema_qualified` can significantly reduce latency by avoiding unnecessary transactions. Both strategies produce identical results — the difference is purely in performance.
+> **When to choose `schema_qualified`:** If your application is read-heavy with many tenant-scoped queries, `schema_qualified` can significantly reduce latency by avoiding unnecessary transactions. With 10ms network latency, a single tenant read goes from 50ms overhead to 20ms. Both strategies produce identical results — the difference is purely in performance.
 
 ### Programmatic Access
 
