@@ -4,11 +4,17 @@ import crypto from "crypto";
 import { ClazzType } from "../../utils";
 import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../../decorators/Column";
 import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
-import { INDEX_TOKEN, IndexMetadata } from "../../decorators/Indexer";
+import {
+  INDEX_TOKEN,
+  IndexMetadata,
+  COMPOSITE_INDEX_TOKEN,
+  CompositeIndexMetadata,
+} from "../../decorators/Indexer";
 import {
   UNIQUE_INDEX_TOKEN,
   UniqueIndexMetadata,
 } from "../../decorators/UniqueIndex";
+import { ReferentialAction } from "../../types/ReferentialAction";
 import {
   MANY_TO_ONE_TOKEN,
   ManyToOneMetadata,
@@ -42,6 +48,8 @@ interface ForeignKeyDef {
   column: string;
   referencedTable: string;
   referencedColumn: string;
+  onDelete?: ReferentialAction;
+  onUpdate?: ReferentialAction;
 }
 
 /**
@@ -115,7 +123,9 @@ export class SchemaGenerator {
     const fks = this.getForeignKeys(entity);
     return fks.map((fk) => {
       const fkName = this.namingStrategy.foreignKeyName(tableName, fk.column, fk.referencedTable);
-      return `ALTER TABLE ${this.wrapTable(tableName)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(fk.column)}) REFERENCES ${this.wrapTable(fk.referencedTable)}(${this.wrapId(fk.referencedColumn)}) ON DELETE NO ACTION ON UPDATE NO ACTION`;
+      const onDelete = fk.onDelete ?? "NO ACTION";
+      const onUpdate = fk.onUpdate ?? "NO ACTION";
+      return `ALTER TABLE ${this.wrapTable(tableName)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(fk.column)}) REFERENCES ${this.wrapTable(fk.referencedTable)}(${this.wrapId(fk.referencedColumn)}) ON DELETE ${onDelete} ON UPDATE ${onUpdate}`;
     });
   }
 
@@ -134,6 +144,25 @@ export class SchemaGenerator {
         return `CREATE UNIQUE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
       }
       return `CREATE UNIQUE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
+    });
+  }
+
+  /**
+   * 단일 엔티티에 대한 CREATE INDEX DDL 배열을 생성합니다 (class-level composite indexes).
+   */
+  generateCompositeIndexDDL<T>(entity: ClazzType<T>): string[] {
+    const tableName = this.getTableName(entity);
+    const compositeIndexes = this.getCompositeIndexes(entity);
+    return compositeIndexes.map((ci) => {
+      const indexName =
+        ci.name ?? this.namingStrategy.compositeIndexName(tableName, ci.columns);
+      const columnList = ci.columns
+        .map((col) => this.wrapId(col))
+        .join(", ");
+      if (this.dialect === "postgres" || this.dialect === "sqlite") {
+        return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
+      }
+      return `CREATE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
     });
   }
 
@@ -265,9 +294,14 @@ export class SchemaGenerator {
       ddls.push(this.generateCreateTableDDL(entity));
     }
 
-    // 2. CREATE INDEX
+    // 2. CREATE INDEX (single-column)
     for (const entity of entities) {
       ddls.push(...this.generateCreateIndexDDL(entity));
+    }
+
+    // 2b. CREATE INDEX (composite)
+    for (const entity of entities) {
+      ddls.push(...this.generateCompositeIndexDDL(entity));
     }
 
     // 3. CREATE UNIQUE INDEX
@@ -336,6 +370,14 @@ export class SchemaGenerator {
     );
   }
 
+  private getCompositeIndexes<T>(entity: ClazzType<T>): CompositeIndexMetadata[] {
+    return (
+      (Reflect.getMetadata(COMPOSITE_INDEX_TOKEN, entity) as
+        | CompositeIndexMetadata[]
+        | undefined) ?? []
+    );
+  }
+
   private getUniqueIndexes<T>(entity: ClazzType<T>): UniqueIndexMetadata[] {
     return (
       (Reflect.getMetadata(UNIQUE_INDEX_TOKEN, entity) as
@@ -354,6 +396,7 @@ export class SchemaGenerator {
 
     for (const rel of manyToOnes) {
       if (!rel.joinColumn) continue;
+      if (rel.option?.createForeignKeyConstraints === false) continue;
       const relatedEntity = rel.getMappingEntity();
       const relatedTable = this.getTableName(relatedEntity as ClazzType<any>);
       const relatedPk = this.findPrimaryKeyColumn(
@@ -364,6 +407,8 @@ export class SchemaGenerator {
           column: rel.joinColumn,
           referencedTable: relatedTable,
           referencedColumn: relatedPk,
+          onDelete: rel.option?.onDelete,
+          onUpdate: rel.option?.onUpdate,
         });
       }
     }
@@ -374,6 +419,7 @@ export class SchemaGenerator {
 
     for (const rel of oneToOnes) {
       if (!rel.joinColumn) continue;
+      if (rel.option?.createForeignKeyConstraints === false) continue;
       const relatedEntity = rel.getRelatedEntity();
       const relatedTable = this.getTableName(relatedEntity);
       const relatedPk = this.findPrimaryKeyColumn(relatedEntity);
@@ -382,6 +428,8 @@ export class SchemaGenerator {
           column: rel.joinColumn,
           referencedTable: relatedTable,
           referencedColumn: relatedPk,
+          onDelete: rel.option?.onDelete,
+          onUpdate: rel.option?.onUpdate,
         });
       }
     }

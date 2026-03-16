@@ -3,6 +3,7 @@ import { ClazzType } from "../utils";
 import Container from "typedi";
 import { OneToOneScanner } from "../scanner/OneToOneScanner";
 import { CascadeOption } from "../types/CascadeType";
+import { ReferentialAction } from "../types/ReferentialAction";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const ONE_TO_ONE_TOKEN = Symbol.for("STG_ONE_TO_ONE");
@@ -30,6 +31,21 @@ export type OneToOneOption<T = any> = {
    * 배열이면 선택적 적용. 예: ["insert", "delete"]
    */
   cascade?: CascadeOption;
+  /**
+   * Referential action for ON DELETE clause.
+   * @default 'NO ACTION'
+   */
+  onDelete?: ReferentialAction;
+  /**
+   * Referential action for ON UPDATE clause.
+   * @default 'NO ACTION'
+   */
+  onUpdate?: ReferentialAction;
+  /**
+   * Set to false to skip creating FK constraint in DDL.
+   * @default true
+   */
+  createForeignKeyConstraints?: boolean;
 };
 
 export type OneToOneMetadata<T> = {

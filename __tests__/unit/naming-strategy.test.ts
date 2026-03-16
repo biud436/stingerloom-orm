@@ -110,6 +110,8 @@ describe("Custom NamingStrategy with SchemaGenerator", () => {
       uniqueIndexName: (table, cols) =>
         `custom_uq_${table}_${cols.join("_")}`,
       indexName: (table, col) => `custom_idx_${table}_${col}`,
+      compositeIndexName: (table, cols) =>
+        `custom_cidx_${table}_${cols.join("_")}`,
     };
 
     const sg = new SchemaGenerator({

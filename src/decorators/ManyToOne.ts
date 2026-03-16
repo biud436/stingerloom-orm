@@ -3,6 +3,7 @@ import { ClazzType, ReflectManager } from "../utils";
 import Container from "typedi";
 import { ManyToOneScanner } from "../scanner";
 import { CascadeOption } from "../types/CascadeType";
+import { ReferentialAction } from "../types/ReferentialAction";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const MANY_TO_ONE_TOKEN = Symbol.for("STG_MANY_TO_ONE");
@@ -39,6 +40,22 @@ export type ManyToOneOption = {
    * eager와 동시에 사용할 수 없습니다. eager가 우선됩니다.
    */
   lazy?: boolean;
+  /**
+   * Referential action for ON DELETE clause.
+   * @default 'NO ACTION'
+   */
+  onDelete?: ReferentialAction;
+  /**
+   * Referential action for ON UPDATE clause.
+   * @default 'NO ACTION'
+   */
+  onUpdate?: ReferentialAction;
+  /**
+   * Set to false to skip creating FK constraint in DDL.
+   * The column will still be created but without a FOREIGN KEY constraint.
+   * @default true
+   */
+  createForeignKeyConstraints?: boolean;
 };
 
 export type ManyToOneMetadata<T> = {

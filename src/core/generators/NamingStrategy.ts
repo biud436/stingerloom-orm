@@ -36,6 +36,15 @@ export interface NamingStrategy {
    * @returns An index name
    */
   indexName(tableName: string, columnName: string): string;
+
+  /**
+   * Generates a composite index name.
+   *
+   * @param tableName - The table name
+   * @param columns - The column names included in the index
+   * @returns A composite index name
+   */
+  compositeIndexName(tableName: string, columns: string[]): string;
 }
 
 /**
@@ -77,5 +86,13 @@ export class DefaultNamingStrategy implements NamingStrategy {
    */
   indexName(tableName: string, columnName: string): string {
     return `INDEX_${tableName}_${columnName}`;
+  }
+
+  /**
+   * Generates a composite index name.
+   * Format: `idx_{tableName}_{col1}_{col2}_...`
+   */
+  compositeIndexName(tableName: string, columns: string[]): string {
+    return `idx_${tableName}_${columns.join("_")}`;
   }
 }
