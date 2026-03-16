@@ -31,7 +31,13 @@ export class AggregateQueryHandler {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
-    return this.ctx.executeInTransaction(async (session) => {
+    const executor = existingSession
+      ? (fn2: (s: TransactionSessionManager) => Promise<number>) =>
+          this.ctx.executeInTransaction(fn2, existingSession)
+      : (fn2: (s: TransactionSessionManager) => Promise<number>) =>
+          this.ctx.executeReadOnly(fn2, {});
+
+    return executor(async (session) => {
       const tableName = metadata.name!;
       const selectExpr = raw(
         `${fn}(${field === "*" ? "*" : this.ctx.wrap(field)})`,
@@ -65,7 +71,7 @@ export class AggregateQueryHandler {
       const row = results[0];
       const value = row.result ?? row["result"];
       return value === null || value === undefined ? 0 : Number(value);
-    }, existingSession);
+    });
   }
 
   async count<T>(

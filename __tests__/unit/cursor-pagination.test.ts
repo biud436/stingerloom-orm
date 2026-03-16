@@ -166,7 +166,6 @@ describe("EntityManager.findWithCursor", () => {
 
   it("should return empty result when no rows exist", async () => {
     mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit = 0
       .mockResolvedValueOnce({ results: [], fields: [] });
 
     const result = await em.findWithCursor(ItemEntity);
@@ -180,7 +179,6 @@ describe("EntityManager.findWithCursor", () => {
   it("should return data with hasNextPage=false when results <= take", async () => {
     const rows = makeRows(1, 3);
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     const result = await em.findWithCursor(ItemEntity, { take: 5 });
@@ -195,7 +193,6 @@ describe("EntityManager.findWithCursor", () => {
     // take=3 -> query fetches 4 -> 4 returned -> hasNextPage=true
     const rows = makeRows(1, 4);
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     const result = await em.findWithCursor(ItemEntity, { take: 3 });
@@ -209,7 +206,6 @@ describe("EntityManager.findWithCursor", () => {
   it("should use default take of 20 when not specified", async () => {
     const rows = makeRows(1, 21); // 21 = default 20 + 1
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     const result = await em.findWithCursor(ItemEntity);
@@ -221,7 +217,6 @@ describe("EntityManager.findWithCursor", () => {
   it("should generate correct nextCursor from last item", async () => {
     const rows = makeRows(10, 4); // id: 10, 11, 12, 13
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     const result = await em.findWithCursor(ItemEntity, {
@@ -237,7 +232,6 @@ describe("EntityManager.findWithCursor", () => {
     const cursor = encodeCursor(5);
     const rows = makeRows(6, 3);
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     const result = await em.findWithCursor(ItemEntity, {
@@ -248,7 +242,7 @@ describe("EntityManager.findWithCursor", () => {
 
     expect(result.data.length).toBe(3);
     // SQL should contain > operator for ASC direction
-    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlCall = mockQuery.mock.calls[0][0];
     const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
     expect(sqlText).toContain(">");
   });
@@ -262,7 +256,6 @@ describe("EntityManager.findWithCursor", () => {
   it("should support DESC direction", async () => {
     const rows = makeRows(7, 4);
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     const result = await em.findWithCursor(ItemEntity, {
@@ -274,7 +267,7 @@ describe("EntityManager.findWithCursor", () => {
     expect(result.data.length).toBe(3);
     expect(result.hasNextPage).toBe(true);
 
-    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlCall = mockQuery.mock.calls[0][0];
     const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
     expect(sqlText).toContain("DESC");
   });
@@ -283,7 +276,6 @@ describe("EntityManager.findWithCursor", () => {
     const cursor = encodeCursor(100);
     const rows = makeRows(90, 3);
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     await em.findWithCursor(ItemEntity, {
@@ -293,7 +285,7 @@ describe("EntityManager.findWithCursor", () => {
       orderBy: "id",
     });
 
-    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlCall = mockQuery.mock.calls[0][0];
     const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
     expect(sqlText).toContain("<");
   });
@@ -301,7 +293,6 @@ describe("EntityManager.findWithCursor", () => {
   it("should support where condition alongside cursor", async () => {
     const rows = makeRows(1, 2);
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     await em.findWithCursor(ItemEntity, {
@@ -309,7 +300,7 @@ describe("EntityManager.findWithCursor", () => {
       where: { title: "Item 1" } as any,
     });
 
-    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlCall = mockQuery.mock.calls[0][0];
     const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
     expect(sqlText).toContain("`title`");
   });
@@ -317,12 +308,11 @@ describe("EntityManager.findWithCursor", () => {
   it("should use PK as default orderBy when not specified", async () => {
     const rows = makeRows(1, 2);
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     await em.findWithCursor(ItemEntity, { take: 5 });
 
-    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlCall = mockQuery.mock.calls[0][0];
     const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
     expect(sqlText).toContain("`id`");
     expect(sqlText).toContain("ASC");
@@ -331,7 +321,6 @@ describe("EntityManager.findWithCursor", () => {
   it("should support custom orderBy column", async () => {
     const rows = makeRows(1, 2);
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     await em.findWithCursor(ItemEntity, {
@@ -339,21 +328,21 @@ describe("EntityManager.findWithCursor", () => {
       orderBy: "createdAt",
     });
 
-    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlCall = mockQuery.mock.calls[0][0];
     const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
     expect(sqlText).toContain("`createdAt`");
   });
 
-  it("should rollback on query error", async () => {
+  it("should close session on query error (read-only: no rollback)", async () => {
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error("DB error"));
 
     await expect(
       em.findWithCursor(ItemEntity, { take: 5 }),
     ).rejects.toThrow("DB error");
 
-    expect(mockRollback).toHaveBeenCalled();
+    expect(mockRollback).not.toHaveBeenCalled();
+    expect(mockClose).toHaveBeenCalled();
   });
 
   it("should throw for unknown entity", async () => {
@@ -369,7 +358,6 @@ describe("EntityManager.findWithCursor", () => {
   it("should return exactly take items when results equal take+1", async () => {
     const rows = makeRows(1, 6); // take=5, query fetches 6
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     const result = await em.findWithCursor(ItemEntity, { take: 5 });
@@ -384,7 +372,6 @@ describe("EntityManager.findWithCursor", () => {
   it("should return hasNextPage=false when results exactly equal take", async () => {
     const rows = makeRows(1, 5); // exactly take=5, no extra
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     const result = await em.findWithCursor(ItemEntity, { take: 5 });
@@ -396,7 +383,6 @@ describe("EntityManager.findWithCursor", () => {
 
   it("should handle null results gracefully", async () => {
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: null, fields: [] });
 
     const result = await em.findWithCursor(ItemEntity);
@@ -474,7 +460,6 @@ describe("UUID PK cursor pagination", () => {
     const uuids = makeSortedUuids(4);
     const rows = makeUuidRows(uuids);
     mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit = 0
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     const result = await em.findWithCursor(UuidEntity, { take: 3 });
@@ -491,7 +476,6 @@ describe("UUID PK cursor pagination", () => {
     const cursor = encodeCursor(uuids[0]);
     const rows = makeUuidRows(uuids.slice(1));
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     await em.findWithCursor(UuidEntity, {
@@ -500,7 +484,7 @@ describe("UUID PK cursor pagination", () => {
       orderBy: "id",
     });
 
-    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlCall = mockQuery.mock.calls[0][0];
     const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
     expect(sqlText).toContain(">");
   });
@@ -510,7 +494,6 @@ describe("UUID PK cursor pagination", () => {
     const cursor = encodeCursor(uuids[2]);
     const rows = makeUuidRows(uuids.slice(0, 2).reverse());
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     await em.findWithCursor(UuidEntity, {
@@ -520,7 +503,7 @@ describe("UUID PK cursor pagination", () => {
       orderBy: "id",
     });
 
-    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlCall = mockQuery.mock.calls[0][0];
     const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
     expect(sqlText).toContain("<");
   });
@@ -530,12 +513,11 @@ describe("UUID PK cursor pagination", () => {
     const cursor = encodeCursor(uuids[0]);
     const rows = makeUuidRows(uuids.slice(1));
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     await em.findWithCursor(UuidEntity, { take: 5, cursor, orderBy: "id" });
 
-    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlCall = mockQuery.mock.calls[0][0];
     // UUID should be in the values array (parameterized), not inline in SQL
     const values = sqlCall.values ?? [];
     expect(values).toContain(uuids[0]);
@@ -550,7 +532,6 @@ describe("UUID PK cursor pagination", () => {
     // Page 1: take=3 → query 4, returns first 4
     const page1Rows = makeUuidRows(allUuids.slice(0, 4));
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: page1Rows, fields: [] });
 
     const page1 = await em.findWithCursor(UuidEntity, { take: 3 });
@@ -566,7 +547,6 @@ describe("UUID PK cursor pagination", () => {
 
     const page2Rows = makeUuidRows(allUuids.slice(3, 7));
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: page2Rows, fields: [] });
 
     const page2 = await em.findWithCursor(UuidEntity, {
@@ -585,7 +565,6 @@ describe("UUID PK cursor pagination", () => {
 
     const page3Rows = makeUuidRows(allUuids.slice(6));
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: page3Rows, fields: [] });
 
     const page3 = await em.findWithCursor(UuidEntity, {
@@ -601,7 +580,6 @@ describe("UUID PK cursor pagination", () => {
     const uuids = makeSortedUuids(3);
     const rows = makeUuidRows(uuids);
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     await em.findWithCursor(UuidEntity, {
@@ -609,7 +587,7 @@ describe("UUID PK cursor pagination", () => {
       orderBy: "createdAt",
     });
 
-    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlCall = mockQuery.mock.calls[0][0];
     const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
     expect(sqlText).toContain("`createdAt`");
     expect(sqlText).toContain("ORDER BY");
@@ -620,7 +598,6 @@ describe("UUID PK cursor pagination", () => {
     const cursor = encodeCursor(uuids[0]);
     const rows = makeUuidRows(uuids.slice(1));
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     await em.findWithCursor(UuidEntity, {
@@ -630,7 +607,7 @@ describe("UUID PK cursor pagination", () => {
       orderBy: "id",
     });
 
-    const sqlCall = mockQuery.mock.calls[1][0];
+    const sqlCall = mockQuery.mock.calls[0][0];
     const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
     expect(sqlText).toContain(">");
     expect(sqlText).toContain("`title`");
@@ -638,7 +615,6 @@ describe("UUID PK cursor pagination", () => {
 
   it("should return empty result for UUID entity with no rows", async () => {
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: [], fields: [] });
 
     const result = await em.findWithCursor(UuidEntity);
@@ -660,7 +636,6 @@ describe("UUID PK cursor pagination", () => {
     const rows = makeUuidRows(sorted);
 
     mockQuery
-      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ results: rows, fields: [] });
 
     const result = await em.findWithCursor(UuidEntity, { take: 2 });

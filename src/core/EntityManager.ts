@@ -125,6 +125,7 @@ export class EntityManager implements BaseEntityManager {
     getEntities: () => this._entities,
     getSynchronize: () => this.client.getOptions(this.connectionName).synchronize ?? false as boolean | "safe" | "dry-run",
     executeInTransaction: (fn, s, r) => this.executeInTransaction(fn, s, r),
+    executeReadOnly: (fn, opts) => this.executeReadOnly(fn, opts),
     beginTrackQuery: () => this.beginTrackQuery(),
     trackQuery: (e, s, m) => this.trackQuery(e, s, m),
     getReadNode: (u) => this.getReadNode(u),
@@ -468,8 +469,9 @@ export class EntityManager implements BaseEntityManager {
     const { limit } = findOption;
 
     const readNode = this.getReadNode(findOption.useMaster);
+    const effectiveTimeout = findOption.timeout ?? this.defaultQueryTimeout;
 
-    return this.executeInTransaction(async (session) => {
+    return this.executeReadOnly(async (session) => {
       const resultTransformer = ResultTransformerFactory.create();
 
       const metadata = this.resolver.resolveEntityMetadata(entity);
@@ -802,7 +804,7 @@ export class EntityManager implements BaseEntityManager {
       }
 
       return entityResult;
-    }, existingSession, readNode);
+    }, { existingSession, readNodeOverride: readNode, timeout: effectiveTimeout });
   }
 
   async findWithCursor<T>(
@@ -845,7 +847,7 @@ export class EntityManager implements BaseEntityManager {
     const where: any = { ...(option.where ?? {}) };
     const readNode = this.getReadNode(option.useMaster);
 
-    return this.executeInTransaction(async (session) => {
+    return this.executeReadOnly(async (session) => {
       const resultTransformer = ResultTransformerFactory.create();
 
       const tableName = metadata.name!;
@@ -926,7 +928,7 @@ export class EntityManager implements BaseEntityManager {
         nextCursor,
         count: entities.length,
       };
-    }, undefined, readNode);
+    }, { readNodeOverride: readNode });
   }
 
   async findAndCount<T>(
@@ -2137,6 +2139,83 @@ export class EntityManager implements BaseEntityManager {
       } catch (closeError) {
         this.logger.error(`Failed to close transaction: ${closeError}`);
       }
+    }
+  }
+
+  private async executeReadOnly<R>(
+    fn: (session: TransactionSessionManager) => Promise<R>,
+    options?: {
+      existingSession?: TransactionSessionManager;
+      readNodeOverride?: ReplicationNodeConfig | null;
+      timeout?: number;
+    },
+  ): Promise<R> {
+    const { existingSession, readNodeOverride, timeout } = options ?? {};
+
+    // 1. Reuse existing session (@Transactional or nested call)
+    const reusable = existingSession ?? transactionStorage.getStore();
+    if (reusable) {
+      return fn(reusable);
+    }
+
+    // 2. PostgreSQL + timeout → SET LOCAL requires transaction
+    if (this.isPostgres() && timeout && timeout > 0) {
+      return this.executeInTransaction(fn, existingSession, readNodeOverride);
+    }
+
+    // 3. Lightweight read-only path (no BEGIN/COMMIT)
+    const session = new TransactionSessionManager();
+    try {
+      if (readNodeOverride) {
+        await session.connectToNode(readNodeOverride);
+      } else {
+        await session.connect();
+      }
+
+      // Multi-tenancy: set search_path without transaction
+      const tenant = this.isPostgres() ? MetadataContext.getCurrentTenant() : "public";
+      const needsSearchPath = this.isPostgres() && tenant !== "public";
+      if (needsSearchPath) {
+        const escaped = tenant.replace(/"/g, '""');
+        await session.query(`SET search_path TO "${escaped}"`);
+      }
+
+      // MySQL timeout (SET SESSION — no transaction needed)
+      if (timeout && timeout > 0 && this.driver && this.isMySqlFamily()) {
+        const timeoutSql = this.driver.setQueryTimeout(timeout);
+        await session.query(timeoutSql);
+      }
+
+      try {
+        const result = await fn(session);
+        return result;
+      } finally {
+        // Reset search_path before returning connection to pool
+        if (needsSearchPath) {
+          try {
+            const defaultSchema = this.getDefaultSchema();
+            const escapedDefault = defaultSchema.replace(/"/g, '""');
+            await session.query(`SET search_path TO "${escapedDefault}"`);
+          } catch {
+            this.logger.warn("Failed to reset search_path after read-only query");
+          }
+        }
+      }
+    } finally {
+      try {
+        await session.close();
+      } catch (closeError) {
+        this.logger.error(`Failed to close read-only session: ${closeError}`);
+      }
+    }
+  }
+
+  private getDefaultSchema(): string {
+    try {
+      const options = this.client.getOptions(this.connectionName);
+      return (options as any).schema ?? "public";
+    } catch {
+      return "public";
     }
   }
 

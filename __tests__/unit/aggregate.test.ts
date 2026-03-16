@@ -110,7 +110,9 @@ describe("Aggregate Queries", () => {
       const result = await em.count(Product);
       expect(result).toBe(42);
       expect(mockConnect).toHaveBeenCalled();
-      expect(mockCommit).toHaveBeenCalled();
+      expect(mockClose).toHaveBeenCalled();
+      expect(mockStartTransaction).not.toHaveBeenCalled();
+      expect(mockCommit).not.toHaveBeenCalled();
     });
 
     it("WHERE 조건이 있으면 조건에 맞는 행 수를 반환해야 한다", async () => {
@@ -283,24 +285,15 @@ describe("Aggregate Queries", () => {
       ).rejects.toThrow("Entity metadata for \"Unknown\" does not exist.");
     });
 
-    it("쿼리 에러 시 rollback 후 에러를 재throw해야 한다", async () => {
+    it("쿼리 에러 시 close만 호출하고 에러를 재throw해야 한다 (read-only: no rollback)", async () => {
       mockQuery.mockRejectedValueOnce(new Error("DB error"));
 
       await expect(
         em.count(Product),
       ).rejects.toThrow("DB error");
 
-      expect(mockRollback).toHaveBeenCalled();
+      expect(mockRollback).not.toHaveBeenCalled();
       expect(mockClose).toHaveBeenCalled();
-    });
-
-    it("rollback 실패 시에도 원래 에러를 throw해야 한다", async () => {
-      mockQuery.mockRejectedValueOnce(new Error("DB error"));
-      mockRollback.mockRejectedValueOnce(new Error("Rollback failed"));
-
-      await expect(
-        em.count(Product),
-      ).rejects.toThrow("DB error");
     });
   });
 
@@ -362,7 +355,7 @@ describe("Aggregate Queries", () => {
   });
 
   describe("MySQL autocommit", () => {
-    it("MySQL에서 SET autocommit = 0을 호출해야 한다", async () => {
+    it("standalone aggregate는 MySQL에서 SET autocommit = 0을 호출하지 않는다 (read-only)", async () => {
       mockQuery.mockResolvedValue({
         results: [{ result: 1 }],
         fields: [],
@@ -370,33 +363,21 @@ describe("Aggregate Queries", () => {
 
       await em.count(Product);
 
-      // 첫 번째 query 호출이 SET autocommit = 0
-      expect(mockQuery).toHaveBeenCalledWith("SET autocommit = 0");
+      // executeReadOnly() 경로는 SET autocommit = 0을 호출하지 않음
+      expect(mockQuery).not.toHaveBeenCalledWith("SET autocommit = 0");
     });
   });
 
   describe("트랜잭션 라이프사이클", () => {
-    it("connect → startTransaction → query → commit → close 순서로 호출해야 한다", async () => {
+    it("standalone aggregate: connect → query → close 순서로 호출해야 한다 (no transaction)", async () => {
       const callOrder: string[] = [];
       mockConnect.mockImplementation(() => {
         callOrder.push("connect");
         return Promise.resolve();
       });
-      mockStartTransaction.mockImplementation(() => {
-        callOrder.push("startTransaction");
-        return Promise.resolve();
-      });
-      mockQuery.mockImplementation((q: any) => {
-        if (typeof q === "string" && q.includes("autocommit")) {
-          callOrder.push("autocommit");
-        } else {
-          callOrder.push("query");
-        }
+      mockQuery.mockImplementation(() => {
+        callOrder.push("query");
         return Promise.resolve({ results: [{ result: 1 }], fields: [] });
-      });
-      mockCommit.mockImplementation(() => {
-        callOrder.push("commit");
-        return Promise.resolve();
       });
       mockClose.mockImplementation(() => {
         callOrder.push("close");
@@ -407,12 +388,11 @@ describe("Aggregate Queries", () => {
 
       expect(callOrder).toEqual([
         "connect",
-        "startTransaction",
-        "autocommit",
         "query",
-        "commit",
         "close",
       ]);
+      expect(mockStartTransaction).not.toHaveBeenCalled();
+      expect(mockCommit).not.toHaveBeenCalled();
     });
   });
 });

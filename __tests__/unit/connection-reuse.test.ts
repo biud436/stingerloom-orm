@@ -138,7 +138,7 @@ describe("Connection Reuse (Issue #30)", () => {
   });
 
   describe("find() with relation loading", () => {
-    it("should use exactly 1 TransactionSessionManager when loading relations", async () => {
+    it("should use exactly 1 TransactionSessionManager when loading relations (no transaction)", async () => {
       // OneToMany 관계 메타데이터 설정
       jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([
         {
@@ -148,9 +148,8 @@ describe("Connection Reuse (Issue #30)", () => {
         },
       ]);
 
-      // 메인 쿼리 (SET autocommit + SELECT users)
+      // 메인 쿼리 (no SET autocommit for read-only path)
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: [{ id: 1, name: "Alice", email: "alice@test.com" }],
           fields: [],
@@ -168,8 +167,9 @@ describe("Connection Reuse (Issue #30)", () => {
       // 커넥션이 1개만 생성되어야 합니다
       expect(sessionInstanceCount).toBe(1);
       expect(mockConnect).toHaveBeenCalledTimes(1);
-      expect(mockStartTransaction).toHaveBeenCalledTimes(1);
-      expect(mockCommit).toHaveBeenCalledTimes(1);
+      // Read-only: no transaction
+      expect(mockStartTransaction).not.toHaveBeenCalled();
+      expect(mockCommit).not.toHaveBeenCalled();
       expect(mockClose).toHaveBeenCalledTimes(1);
     });
   });
@@ -289,18 +289,17 @@ describe("Connection Reuse (Issue #30)", () => {
   });
 
   describe("error rollback", () => {
-    it("should rollback and close when an error occurs", async () => {
+    it("should close session when a read-only query error occurs (no rollback)", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockRejectedValueOnce(new Error("Query failed")); // SELECT throws
 
       await expect(em.find(User, {})).rejects.toThrow("Query failed");
 
-      // 에러 발생 시 rollback과 close가 호출되어야 합니다
+      // Read-only: no transaction, no rollback — just close
       expect(sessionInstanceCount).toBe(1);
-      expect(mockRollback).toHaveBeenCalledTimes(1);
+      expect(mockStartTransaction).not.toHaveBeenCalled();
+      expect(mockRollback).not.toHaveBeenCalled();
       expect(mockClose).toHaveBeenCalledTimes(1);
-      // commit은 호출되지 않아야 합니다
       expect(mockCommit).not.toHaveBeenCalled();
     });
 
@@ -486,10 +485,9 @@ describe("Connection Reuse (Issue #30)", () => {
       expect(externalSession.close).not.toHaveBeenCalled();
     });
 
-    it("should create new session when no @Transactional and no existingSession", async () => {
+    it("should create new session when no @Transactional and no existingSession (read-only, no tx)", async () => {
       // transactionStorage에 아무것도 없는 상태
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: [{ id: 1, name: "Alice" }],
           fields: [],
@@ -497,10 +495,11 @@ describe("Connection Reuse (Issue #30)", () => {
 
       await em.find(User, {});
 
-      // @Transactional이 없으므로 새 세션이 생성되어야 합니다
+      // @Transactional이 없으므로 새 세션이 생성되어야 합니다 (read-only: no tx)
       expect(sessionInstanceCount).toBe(1);
       expect(mockConnect).toHaveBeenCalledTimes(1);
-      expect(mockCommit).toHaveBeenCalledTimes(1);
+      expect(mockStartTransaction).not.toHaveBeenCalled();
+      expect(mockCommit).not.toHaveBeenCalled();
       expect(mockClose).toHaveBeenCalledTimes(1);
     });
   });
