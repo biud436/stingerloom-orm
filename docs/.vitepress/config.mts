@@ -47,6 +47,7 @@ export default defineConfig({
       {
         text: "Reference",
         items: [
+          { text: "Architecture", link: "/architecture" },
           { text: "API Reference", link: "/api-reference" },
           { text: "Contributor Onboarding", link: "/onboarding" },
           { text: "Manual Testing Guide", link: "/manual-testing-guide" },
