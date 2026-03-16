@@ -130,9 +130,7 @@ export class RelationMetadataResolver {
   ): ManyToOneMetadata<any>[] {
     // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
     const manyToOneScanner = Container.get(ManyToOneScanner);
-    const allRelations = manyToOneScanner
-      .allMetadata<ManyToOneMetadata<any>>()
-      .filter((rel) => rel.target === entity);
+    const allRelations = manyToOneScanner.getByTarget<ManyToOneMetadata<any>>(entity);
 
     if (allRelations.length > 0) {
       return this.resolveJoinColumnsFromColumnMeta(entity, allRelations);
@@ -214,9 +212,7 @@ export class RelationMetadataResolver {
   ): OneToManyMetadata<any>[] {
     // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
     const oneToManyScanner = Container.get(OneToManyScanner);
-    const allRelations = oneToManyScanner
-      .allMetadata<OneToManyMetadata<any>>()
-      .filter((rel) => rel.target === entity);
+    const allRelations = oneToManyScanner.getByTarget<OneToManyMetadata<any>>(entity);
 
     if (allRelations.length > 0) {
       return allRelations;
@@ -253,9 +249,7 @@ export class RelationMetadataResolver {
   ): ManyToManyMetadata<any>[] {
     // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
     const manyToManyScanner = Container.get(ManyToManyScanner);
-    const allRelations = manyToManyScanner
-      .allMetadata<ManyToManyMetadata<any>>()
-      .filter((rel) => rel.target === entity);
+    const allRelations = manyToManyScanner.getByTarget<ManyToManyMetadata<any>>(entity);
 
     if (allRelations.length > 0) {
       return allRelations;
@@ -292,9 +286,7 @@ export class RelationMetadataResolver {
   ): OneToOneMetadata<any>[] {
     // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
     const oneToOneScanner = Container.get(OneToOneScanner);
-    const allRelations = oneToOneScanner
-      .allMetadata<OneToOneMetadata<any>>()
-      .filter((rel) => rel.target === entity);
+    const allRelations = oneToOneScanner.getByTarget<OneToOneMetadata<any>>(entity);
 
     if (allRelations.length > 0) {
       return this.resolveJoinColumnsFromColumnMetaForOneToOne(

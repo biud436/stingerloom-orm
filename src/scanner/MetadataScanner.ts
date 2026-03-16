@@ -18,6 +18,10 @@ export class MetadataLayerRegistry {
   private layers: Map<string, MetadataLayer> = new Map();
   private currentContext: string = "public";
 
+  // resolveAll() cache (#80)
+  private resolveAllCache: Map<string, Map<string, any>> = new Map();
+  private dirtyContexts: Set<string> = new Set(["public"]);
+
   private constructor() {
     // 기본 lower 레이어 (쓰기 가능 — 데코레이터 단계에서 기록해야 하므로)
     this.layers.set("public", new MetadataLayer("public", false));
@@ -59,6 +63,7 @@ export class MetadataLayerRegistry {
     // 해당 레이어가 없으면 자동 생성
     if (!this.layers.has(context)) {
       this.layers.set(context, new MetadataLayer(context, false));
+      this.dirtyContexts.add(context);
     }
   }
 
@@ -95,6 +100,7 @@ export class MetadataLayerRegistry {
     if (!source) throw new Error(`Source layer "${sourceName}" not found.`);
     const cloned = source.clone(targetName, false);
     this.layers.set(targetName, cloned);
+    this.dirtyContexts.add(targetName);
     return cloned;
   }
 
@@ -103,6 +109,8 @@ export class MetadataLayerRegistry {
    */
   removeLayer(name: string): boolean {
     if (name === "public") throw new Error('Cannot remove "public" layer.');
+    this.resolveAllCache.delete(name);
+    this.dirtyContexts.delete(name);
     return this.layers.delete(name);
   }
 
@@ -138,9 +146,17 @@ export class MetadataLayerRegistry {
 
   /**
    * 병합된 뷰의 모든 엔트리를 반환 (lower → upper 순서로 덮어쓰기)
+   * 결과는 dirty flag 기반으로 캐시됩니다 (#80).
    */
   resolveAll<T>(): Map<string, T> {
     const ctx = this.getContext();
+
+    // 캐시 히트: context가 dirty가 아니면 캐시된 결과 반환
+    if (!this.dirtyContexts.has(ctx)) {
+      const cached = this.resolveAllCache.get(ctx);
+      if (cached) return cached as Map<string, T>;
+    }
+
     const result = new Map<string, T>();
 
     // 1. public 레이어 (lower)
@@ -161,7 +177,25 @@ export class MetadataLayerRegistry {
       }
     }
 
+    this.resolveAllCache.set(ctx, result);
+    this.dirtyContexts.delete(ctx);
+
     return result;
+  }
+
+  /**
+   * 지정된 context의 resolveAll 캐시를 무효화합니다.
+   * "public"이 dirty되면 모든 context 캐시가 무효화됩니다.
+   */
+  markDirty(context: string): void {
+    if (context === "public") {
+      this.resolveAllCache.clear();
+      for (const key of this.layers.keys()) {
+        this.dirtyContexts.add(key);
+      }
+    } else {
+      this.dirtyContexts.add(context);
+    }
   }
 }
 
@@ -256,6 +290,7 @@ export class MetadataScanner {
    */
   public set<T>(key: string, value: T): void {
     this.registry.getCurrentLayer().set(this.prefixKey(key), value);
+    this.registry.markDirty(this.registry.getContext());
   }
 
   /**
@@ -273,6 +308,7 @@ export class MetadataScanner {
     const layer = this.registry.getCurrentLayer();
     if (!this.scannerPrefix) {
       layer.clear();
+      this.registry.markDirty(this.registry.getContext());
       return;
     }
     const prefix = `${this.scannerPrefix}::`;
@@ -283,8 +319,11 @@ export class MetadataScanner {
         keysToDelete.push(key);
       }
     }
-    for (const key of keysToDelete) {
-      raw.delete(key);
+    if (keysToDelete.length > 0) {
+      for (const key of keysToDelete) {
+        raw.delete(key);
+      }
+      this.registry.markDirty(this.registry.getContext());
     }
   }
 
@@ -318,6 +357,38 @@ export class MetadataScanner {
    */
   public get size(): number {
     return this.allMetadata().length;
+  }
+
+  // ── O(1) Target Lookup (#77) ────────────────────────────
+
+  private lastResolvedMap: Map<string, any> | null = null;
+  private targetIndexMap: Map<Function, any[]> = new Map();
+
+  /**
+   * O(1) lookup by entity class (target).
+   * Returns all metadata entries in this scanner's namespace whose `target` matches.
+   * The index is lazily rebuilt when the underlying resolveAll() map changes.
+   */
+  public getByTarget<T extends { target: Function }>(target: Function): T[] {
+    const merged = this.registry.resolveAll<T>();
+    if (merged !== this.lastResolvedMap) {
+      this.targetIndexMap.clear();
+      const prefix = this.scannerPrefix ? `${this.scannerPrefix}::` : "";
+      for (const [key, value] of merged) {
+        if (prefix && !key.startsWith(prefix)) continue;
+        if (value && typeof value === "object" && "target" in value) {
+          const fn = (value as any).target as Function;
+          const existing = this.targetIndexMap.get(fn);
+          if (existing) {
+            existing.push(value);
+          } else {
+            this.targetIndexMap.set(fn, [value]);
+          }
+        }
+      }
+      this.lastResolvedMap = merged;
+    }
+    return (this.targetIndexMap.get(target) ?? []) as T[];
   }
 
   // ── 멀티테넌트 지원 API ─────────────────────────────────

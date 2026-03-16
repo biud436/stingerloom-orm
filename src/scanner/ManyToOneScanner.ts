@@ -17,12 +17,6 @@ export class ManyToOneScanner extends MetadataScanner {
   }
 
   public scan(target: ClazzType<unknown>): ManyToOneMetadata<unknown> | null {
-    for (const [_, value] of this.mapper) {
-      if (value.target === target) {
-        return value;
-      }
-    }
-
-    return null;
+    return this.getByTarget<ManyToOneMetadata<unknown>>(target)[0] ?? null;
   }
 }
