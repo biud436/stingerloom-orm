@@ -663,7 +663,90 @@ describe("Read-only Query Optimization (Issue #78)", () => {
       expect(sqlText).toContain('"User"');
     });
 
-    it("27. PG + timeout should still fallback to transaction even with schema_qualified", async () => {
+    it("27. save() query should contain schema-qualified table name", async () => {
+      mockQuery
+        .mockResolvedValueOnce(undefined) // SET autocommit = 0
+        .mockResolvedValueOnce({
+          results: { insertId: 1, affectedRows: 1 },
+          fields: [],
+        })
+        .mockResolvedValueOnce({
+          results: [{ id: 1, name: "Alice", email: "a@test.com" }],
+          fields: [],
+        });
+
+      await MetadataContext.run("tenant_a", async () => {
+        await em.save(User, { name: "Alice", email: "a@test.com" });
+      });
+
+      const allSql = mockQuery.mock.calls.map(
+        (c) => String(c[0]?.text ?? c[0]),
+      );
+      const insertSql = allSql.find((s) => s.includes("INSERT INTO"));
+      expect(insertSql).toBeDefined();
+      expect(insertSql).toContain('"tenant_a"."User"');
+    });
+
+    it("28. delete() query should contain schema-qualified table name", async () => {
+      mockQuery
+        .mockResolvedValueOnce(undefined) // SET autocommit = 0
+        .mockResolvedValueOnce({
+          results: { affectedRows: 1 },
+          fields: [],
+        });
+
+      await MetadataContext.run("tenant_b", async () => {
+        await em.delete(User, { id: 1 } as any);
+      });
+
+      const allSql = mockQuery.mock.calls.map(
+        (c) => String(c[0]?.text ?? c[0]),
+      );
+      const deleteSql = allSql.find((s) => s.includes("DELETE FROM"));
+      expect(deleteSql).toBeDefined();
+      expect(deleteSql).toContain('"tenant_b"."User"');
+    });
+
+    it("29. count() query should contain schema-qualified table name", async () => {
+      mockQuery.mockResolvedValueOnce({
+        results: [{ result: 5 }],
+        fields: [],
+      });
+
+      await MetadataContext.run("tenant_a", async () => {
+        await em.count(User);
+      });
+
+      const sqlText = String(mockQuery.mock.calls[0][0]?.text ?? mockQuery.mock.calls[0][0]);
+      expect(sqlText).toContain('"tenant_a"."User"');
+    });
+
+    it("30. SearchPath strategy: find() with tenant should NOT schema-qualify table name", async () => {
+      // Create a default-strategy (SearchPath) PG EntityManager
+      const spEm = createTestEntityManager({ isMySql: false, isPostgres: true });
+      // Do NOT set schema_qualified — default is SearchPathStrategy
+
+      mockQuery.mockResolvedValueOnce({
+        results: [{ id: 1, name: "Alice", email: "a@test.com" }],
+        fields: [],
+      });
+
+      await MetadataContext.run("tenant_a", async () => {
+        await spEm.find(User, {});
+      });
+
+      // SearchPath strategy uses transaction (tested in D.15),
+      // but more importantly, the SQL should NOT contain schema prefix
+      const allSql = mockQuery.mock.calls.map(
+        (c) => String(c[0]?.text ?? c[0]),
+      );
+      const selectSql = allSql.find((s) => s.includes("SELECT"));
+      expect(selectSql).toBeDefined();
+      expect(selectSql).not.toContain('"tenant_a"."User"');
+      expect(selectSql).toContain('"User"');
+    });
+
+    it("31. PG + timeout should still fallback to transaction even with schema_qualified", async () => {
       mockQuery
         .mockResolvedValueOnce(undefined) // SET LOCAL statement_timeout
         .mockResolvedValueOnce({
