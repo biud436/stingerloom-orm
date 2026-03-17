@@ -148,6 +148,65 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     });
   });
 
+  // ── Identity Map ───────────────────────────────────────────────
+
+  describe("Identity Map", () => {
+    it("같은 PK를 두 번 findOne해도 동일 인스턴스를 반환해야 한다", async () => {
+      const created = await seedUser({ name: "IdentityTest", age: 25 });
+
+      const mut: Mutation = (em as any).mutate();
+      const first = await mut.findOne(testEntity.EntityClass, { where: { id: created.id } as any });
+      first.name = "Modified";
+
+      const second = await mut.findOne(testEntity.EntityClass, { where: { id: created.id } as any });
+
+      expect(first).toBe(second); // 같은 참조
+      expect(second.name).toBe("Modified"); // 수정된 값이 보여야 함
+      expect(mut.tracked()).toHaveLength(1); // 중복 tracking 없음
+    });
+
+    it("find() 결과 중 이미 tracked된 PK는 기존 인스턴스로 대체되어야 한다", async () => {
+      const u1 = await seedUser({ name: "User1", age: 10 });
+      await seedUser({ name: "User2", age: 20 });
+
+      const mut: Mutation = (em as any).mutate();
+
+      // u1을 먼저 findOne으로 로드 + 수정
+      const tracked = await mut.findOne(testEntity.EntityClass, { where: { id: u1.id } as any });
+      tracked.name = "Locally Modified";
+
+      // find()로 전체 조회 — u1은 기존 인스턴스여야 함
+      const all = await mut.find(testEntity.EntityClass, {});
+
+      const matchedU1 = all.find((u: any) => u.id === u1.id);
+      expect(matchedU1).toBe(tracked); // 같은 참조
+      expect(matchedU1.name).toBe("Locally Modified"); // DB 값("User1")이 아닌 로컬 수정 값
+
+      // flush하면 수정이 DB에 반영되어야 함
+      const result = await mut.flush();
+      expect(result.updates).toBe(1); // Locally Modified만 dirty
+
+      const found = await findById(u1.id);
+      expect(found.name).toBe("Locally Modified");
+    });
+
+    it("같은 PK의 다른 인스턴스를 track하면 에러가 발생해야 한다", async () => {
+      const created = await seedUser({ name: "Conflict", age: 30 });
+
+      const mut: Mutation = (em as any).mutate();
+      await mut.findOne(testEntity.EntityClass, { where: { id: created.id } as any });
+
+      // 새 인스턴스를 수동으로 만들어서 track 시도
+      const duplicate = Object.assign(Object.create(testEntity.EntityClass.prototype), {
+        id: created.id,
+        name: "Duplicate",
+        age: 99,
+      });
+
+      expect(() => mut.track(duplicate)).toThrow(/Identity conflict/);
+    });
+  });
+
   // ── UPDATE: track + dirty + flush ─────────────────────────────
 
   describe("tracked entity UPDATE", () => {

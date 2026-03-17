@@ -11,10 +11,16 @@ import { MutationStrategy, SnapshotStrategy } from "./MutationStrategy";
 /**
  * Mutation — tracks entity changes and provides batch flush.
  *
+ * Maintains an Identity Map scoped to this Mutation instance:
+ * the same database row (identified by entity class + PK) is always
+ * represented by the same object reference. This prevents duplicate
+ * tracking and conflicting updates on flush().
+ *
  * Created via `em.mutate()` after installing the mutation plugin.
  */
 export class Mutation {
   private readonly trackedEntries = new Map<any, TrackedEntry>();
+  private readonly identityMap = new Map<string, any>();
   private readonly insertQueue: InsertEntry[] = [];
   private readonly deleteQueue: DeleteEntry[] = [];
   private readonly strategy: MutationStrategy;
@@ -35,16 +41,30 @@ export class Mutation {
   /**
    * Track an existing entity instance for dirty checking.
    * Takes a snapshot of the current column values.
+   *
+   * If another instance with the same PK is already tracked,
+   * throws an error to prevent conflicting updates.
    */
   track(instance: any): this {
     if (this.trackedEntries.has(instance)) {
-      return this; // idempotent
+      return this; // idempotent — same reference
     }
 
     const entityClass = instance.constructor as ClazzType<any>;
     this.validateEntity(entityClass);
 
     const { columnNames, pkColumns } = this.getColumnInfo(entityClass);
+
+    // Identity Map check — prevent two different instances for the same PK
+    const key = this.buildIdentityKey(entityClass, instance, pkColumns);
+    const existing = this.identityMap.get(key);
+    if (existing && existing !== instance) {
+      throw new Error(
+        `Identity conflict: another instance of "${entityClass.name}" with PK (${key}) is already tracked. ` +
+        `Use the existing tracked instance, or untrack() the old one first.`,
+      );
+    }
+
     const snapshot = this.strategy.snapshot(instance, columnNames);
 
     this.trackedEntries.set(instance, {
@@ -54,13 +74,17 @@ export class Mutation {
       columnNames,
       pkColumns,
     });
+    this.identityMap.set(key, instance);
 
     return this;
   }
 
   /**
    * Load a single entity and automatically track it.
-   * Equivalent to `em.findOne()` + `mut.track()`.
+   *
+   * If an entity with the same PK is already in the Identity Map,
+   * returns the existing tracked instance (DB is still queried to
+   * confirm the row exists, but the cached reference is returned).
    *
    * Returns `null` if no matching row is found.
    */
@@ -69,25 +93,22 @@ export class Mutation {
     option: FindOption<T>,
   ): Promise<T | null> {
     const result = await this.ctx.em.findOne(entity, option);
-    if (result !== null) {
-      this.track(result);
-    }
-    return result;
+    if (result === null) return null;
+    return this.resolveIdentity(entity, result) as T;
   }
 
   /**
    * Load multiple entities and automatically track them all.
-   * Equivalent to `em.find()` + `mut.track()` for each result.
+   *
+   * For each result, if an entity with the same PK is already in
+   * the Identity Map, the existing tracked instance is used instead.
    */
   async find<T>(
     entity: ClazzType<T>,
     option: FindOption<T> = {},
   ): Promise<T[]> {
     const results = await this.ctx.em.find(entity, option);
-    for (const item of results) {
-      this.track(item);
-    }
-    return results;
+    return results.map((item) => this.resolveIdentity(entity, item) as T);
   }
 
   /**
@@ -133,18 +154,24 @@ export class Mutation {
   }
 
   /**
-   * Remove a specific entity from tracking.
+   * Remove a specific entity from tracking and the Identity Map.
    */
   untrack(instance: any): this {
+    const entry = this.trackedEntries.get(instance);
+    if (entry) {
+      const key = this.buildIdentityKey(entry.entity, instance, entry.pkColumns);
+      this.identityMap.delete(key);
+    }
     this.trackedEntries.delete(instance);
     return this;
   }
 
   /**
-   * Clear all tracked entities and queued operations.
+   * Clear all tracked entities, Identity Map, and queued operations.
    */
   clear(): this {
     this.trackedEntries.clear();
+    this.identityMap.clear();
     this.insertQueue.length = 0;
     this.deleteQueue.length = 0;
     return this;
@@ -267,6 +294,7 @@ export class Mutation {
         }
       } else {
         this.trackedEntries.clear();
+        this.identityMap.clear();
       }
 
       return result;
@@ -281,6 +309,25 @@ export class Mutation {
   }
 
   // ── Private helpers ──────────────────────────────────────────
+
+  /**
+   * Resolve an entity instance against the Identity Map.
+   * If the same PK is already tracked, returns the existing instance.
+   * Otherwise, tracks the new instance and returns it.
+   */
+  private resolveIdentity(entityClass: ClazzType<any>, instance: any): any {
+    const { pkColumns } = this.getColumnInfo(entityClass);
+    const key = this.buildIdentityKey(entityClass, instance, pkColumns);
+
+    const existing = this.identityMap.get(key);
+    if (existing) {
+      return existing; // return the already-tracked instance
+    }
+
+    // New entity — track it
+    this.track(instance);
+    return instance;
+  }
 
   private validateEntity(entityClass: ClazzType<any>): void {
     const entities = this.ctx.getEntities();
@@ -305,6 +352,18 @@ export class Mutation {
       .map((c) => c.name ?? c.propertyKey!);
 
     return { columnNames, pkColumns };
+  }
+
+  /**
+   * Build an identity key: "EntityName:pk1=v1,pk2=v2"
+   */
+  private buildIdentityKey(
+    entityClass: ClazzType<any>,
+    instance: any,
+    pkColumns: string[],
+  ): string {
+    const pkParts = pkColumns.map((pk) => `${pk}=${instance[pk]}`).join(",");
+    return `${entityClass.name}:${pkParts}`;
   }
 
   private buildPkWhere(entry: TrackedEntry): Record<string, any> {

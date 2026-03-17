@@ -306,6 +306,106 @@ describe("Mutation Plugin", () => {
     });
   });
 
+  // ── Identity Map ───────────────────────────────────────────────
+
+  describe("Identity Map", () => {
+    it("findOne() twice with same PK should return same instance", async () => {
+      const em = createExtendedEm(User);
+      const dbUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      jest.spyOn(em, "findOne").mockResolvedValue(dbUser);
+
+      const mut = em.mutate();
+      const first = await mut.findOne(User, { where: { id: 1 } as any });
+
+      // Second call returns a fresh DB object, but identity map should return the cached one
+      const dbUser2 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      jest.spyOn(em, "findOne").mockResolvedValue(dbUser2);
+      const second = await mut.findOne(User, { where: { id: 1 } as any });
+
+      expect(first).toBe(second); // same reference
+      expect(mut.tracked()).toHaveLength(1); // not duplicated
+    });
+
+    it("find() should return cached instances for already-tracked PKs", async () => {
+      const em = createExtendedEm(User);
+      const u1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      jest.spyOn(em, "findOne").mockResolvedValue(u1);
+
+      const mut = em.mutate();
+      const tracked = await mut.findOne(User, { where: { id: 1 } as any });
+      tracked!.name = "Modified"; // modify the tracked instance
+
+      // find() returns fresh DB instances
+      const freshU1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const freshU2 = Object.assign(new User(), { id: 2, name: "Bob", email: "b@c.d" });
+      jest.spyOn(em, "find").mockResolvedValue([freshU1, freshU2]);
+
+      const results = await mut.find(User);
+
+      // id=1 should be the tracked (modified) instance, not the fresh one
+      expect(results[0]).toBe(tracked);
+      expect(results[0].name).toBe("Modified");
+      // id=2 is new, tracked as-is
+      expect(results[1]).toBe(freshU2);
+      expect(mut.tracked()).toHaveLength(2);
+    });
+
+    it("track() should throw when different instance with same PK is already tracked", () => {
+      const em = createExtendedEm(User);
+      const mut = em.mutate();
+
+      const user1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const user2 = Object.assign(new User(), { id: 1, name: "Bob", email: "b@c.d" });
+
+      mut.track(user1);
+      expect(() => mut.track(user2)).toThrow(/Identity conflict/);
+    });
+
+    it("untrack() should remove from Identity Map, allowing re-track of same PK", () => {
+      const em = createExtendedEm(User);
+      const mut = em.mutate();
+
+      const user1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const user2 = Object.assign(new User(), { id: 1, name: "Bob", email: "b@c.d" });
+
+      mut.track(user1);
+      mut.untrack(user1);
+      mut.track(user2); // should not throw
+
+      expect(mut.tracked()).toEqual([user2]);
+    });
+
+    it("clear() should clear Identity Map", async () => {
+      const em = createExtendedEm(User);
+      const dbUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      jest.spyOn(em, "findOne").mockResolvedValue(dbUser);
+
+      const mut = em.mutate();
+      await mut.findOne(User, { where: { id: 1 } as any });
+      mut.clear();
+
+      // After clear, a new instance with the same PK should be trackable
+      const newUser = Object.assign(new User(), { id: 1, name: "New", email: "new@b.c" });
+      mut.track(newUser); // should not throw
+      expect(mut.tracked()).toEqual([newUser]);
+    });
+
+    it("composite PK Identity Map key should work correctly", () => {
+      const em = createExtendedEm(OrderItem);
+      const mut = em.mutate();
+
+      const item1 = Object.assign(new OrderItem(), { orderId: 1, productId: 2, quantity: 5 });
+      const item2 = Object.assign(new OrderItem(), { orderId: 1, productId: 3, quantity: 10 });
+      const item1dup = Object.assign(new OrderItem(), { orderId: 1, productId: 2, quantity: 99 });
+
+      mut.track(item1);
+      mut.track(item2); // different composite PK, OK
+
+      expect(() => mut.track(item1dup)).toThrow(/Identity conflict/);
+      expect(mut.tracked()).toHaveLength(2);
+    });
+  });
+
   // ── dirty() ───────────────────────────────────────────────────
 
   describe("dirty()", () => {
