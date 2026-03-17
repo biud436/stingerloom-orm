@@ -125,6 +125,9 @@ export class EntityManager implements BaseEntityManager {
   private dbType: IDatabaseType | undefined;
 
   // ── Plugin System ──────────────────────────────────────────
+  static readonly PLUGIN_PLACEHOLDER = Symbol.for("STG_PLUGIN_PLACEHOLDER");
+  /** Method names that are stub placeholders and can be overridden by plugins */
+  private static readonly PLUGIN_PLACEHOLDERS = new Set<string>(["mutate"]);
   private readonly _plugins = new Map<string, InstalledPlugin>();
   private _pluginContext: PluginContext | null = null;
 
@@ -488,6 +491,10 @@ export class EntityManager implements BaseEntityManager {
     // Check for conflicts with existing properties
     const reserved = new Set(Object.getOwnPropertyNames(EntityManager.prototype));
     for (const key of Object.keys(api)) {
+      // Allow plugins to override placeholder stubs (e.g. mutate())
+      if (EntityManager.PLUGIN_PLACEHOLDERS.has(key)) {
+        continue;
+      }
       if (key in this || reserved.has(key)) {
         throw new OrmError(
           OrmErrorCode.PLUGIN_CONFLICT,
@@ -522,6 +529,20 @@ export class EntityManager implements BaseEntityManager {
   getPluginApi<T = unknown>(name: string): T | undefined {
     const installed = this._plugins.get(name);
     return installed ? (installed.api as T) : undefined;
+  }
+
+  /**
+   * Create a Mutation instance for tracking entity changes and batch flush.
+   * Requires the mutation plugin to be installed first via `em.extend(mutationPlugin())`.
+   *
+   * @throws OrmError with MUTATION_NOT_INSTALLED if the mutation plugin is not installed.
+   */
+  mutate(): any {
+    throw new OrmError(
+      OrmErrorCode.MUTATION_NOT_INSTALLED,
+      "mutate() requires the mutation plugin to be installed",
+      "Call em.extend(mutationPlugin()) before using em.mutate()",
+    );
   }
 
   /**
