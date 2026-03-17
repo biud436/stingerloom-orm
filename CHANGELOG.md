@@ -6,31 +6,117 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.5.0] — 2026-03-16
+
+### Highlights
+
+- **TenantQueryStrategy** — Configurable multi-tenant query routing for PostgreSQL. Choose `search_path` (default, safe, 5 round-trips) or `schema_qualified` (1 round-trip, prefixes table names with tenant schema).
+- **Read-only query optimization** — `find`, `findOne`, `findWithCursor`, `count`, `sum`, `avg`, `min`, `max`, `explain` skip `BEGIN`/`COMMIT` when no transaction is needed — up to 80% fewer round-trips (#78, #86).
+
+### Added
+
+- **EntitySchema** — Decorator-free entity definitions via plain objects (#75)
+- **Prisma Import** — Generate Stingerloom entities from existing Prisma schemas
+- **`findWithPage()`** — Offset-based pagination API
+- **Glob pattern entities** — Register entities with glob patterns like `__dirname + '/**/*.entity.ts'` (#76)
+- **`validateOnBorrow`** — Connection health check (ping/SELECT 1) before pool checkout (#73)
+- **Composite `@Index`** — Multi-column indexes with `@Index({ columns: ['a', 'b'] })` (#83)
+- **`onDelete` / `onUpdate`** — FK referential actions on `@ManyToOne` (#84)
+- **`createForeignKeyConstraints`** — Option to disable FK constraint generation (#85)
+- **Plugin system** — `em.extend()` (dayjs-style), `StingerloomPlugin` interface, `PluginContext`, dependency/conflict validation, LIFO shutdown
+- **Mutation plugin** (experimental) — entity change tracking, Identity Map, dirty checking, batch flush
+- **GitHub Actions CI** + multi-tenant stress tests (#81, #82)
+
+### Performance
+
+- O(1) scanner target index + `resolveAll()` cache (#77, #80)
+- Pluggable QueryBuilder strategy — swappable SQL generation backends (#72)
+
+### Fixed
+
+- 3 query builder bugs (#65, #67, #71)
+- MySQL ENUM DDL and datetime format
+- pnpm version conflict in CI workflow
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.4.0...v0.5.0
+
+---
+
+## [0.4.0] — 2026-03-14
+
+### Breaking Changes
+
+- `find()` now returns `T[]` instead of `EntityResult<T>` (#54)
+- `DatabaseNotConnectedError` now extends `OrmError` (was `Exception`)
+
+### Added
+
+- **skip/take pagination** alongside existing `limit` tuple (#55)
+- **SQL query logging** via `logging: true` or `logging: { queries: true }` (#56)
+- **`@Column({ default })`** for DB-level DEFAULT values in DDL (#57)
+- **`updateMany()`** for conditional bulk UPDATE with affected count (#60)
+- **Type-safe `relations`** via `RelationKeys<T>` type (#59)
+- **`em.transaction()` callback API** with auto-commit/rollback (#64)
+- **Schema sync safety**: `synchronize: 'safe'` (no drops) and `'dry-run'` (preview only) (#62)
+- **`migrate:generate` CLI** command for auto-creating migration files (#63)
+- **NestJS multi-DB `connectionName`** — `forRoot`/`forFeature`/`InjectRepository`/`InjectEntityManager` (#26)
+
+### Improved
+
+- **Actionable error suggestions** — `OrmError.suggestion` field on all error classes (#61)
+- New error codes: `UNIQUE_VIOLATION`, `FK_VIOLATION`
+- Deprecated `EntityResult<T>`, `FindCondition<T>`, `FindOperator<T>` (unused at runtime) (#58)
+- `NamingStrategy` interface extraction + `SchemaDiff` precision (#27, #39)
+
+### Fixed
+
+- Scope DDL entity registration by connection in multi-DB environments
+- SQLite SchemaDiff, N+1 batch, cascade memory, entity metadata (#32, #49, #50, #51)
+- Critical/high/medium bugs (#43-#53)
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.3.0...v0.4.0
+
+---
+
+## [0.3.0] — 2026-03-12
+
+### Highlights
+
+- **EntityManager refactoring** — Extract 7 handler classes for separation of concerns (#40)
+- **Optimistic Locking** — `@Version` decorator support (#29)
+- **VitePress docs site** — GitHub Pages deployment (#41)
+- **`WhereClause<T>` type safety** — Remove `Record<string, any>` for stricter typing (#37)
+
+### Fixed
+
+- Reuse DB connections within public EntityManager methods (#30)
+- Preserve original error info in `DatabaseConnectionFailedError` (#33)
+- SQL injection safeguards in `Conditions.raw()` and `aggregate()` (#35)
+- Isolate `FOREIGN_KEY_CHECKS` to single connection in `MySqlDriver.clear()` (#36)
+- Filter metadata by target class in `@Entity` decorator (#38)
+- Validate savepoint names to prevent SQL injection (#28)
+- Non-numeric PK warning in cursor pagination per dialect
+
+### Performance
+
+- O(1) circular buffer in `QueryTracker` (#34)
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.2.1...v0.3.0
+
+---
+
 ## [0.2.1] — 2026-03-09
 
 ### Added
 
-- **`@CreateTimestamp()` decorator** — Auto-set current time on INSERT (`DATETIME NOT NULL`)
-- **`@UpdateTimestamp()` decorator** — Auto-set current time on INSERT and UPDATE (`DATETIME NOT NULL`)
+- **`@CreateTimestamp()` decorator** — auto-set current time on INSERT
+- **`@UpdateTimestamp()` decorator** — auto-set current time on INSERT and UPDATE
 - **`timestamptz` column type** — PostgreSQL `TIMESTAMPTZ` (MySQL: `DATETIME`, SQLite: `TEXT` fallback)
-
-### Tests
-
-- `@Column` 데코레이터 없는 속성이 DDL에서 제외되는지 검증 (유닛 6개 + 통합 1개)
-- `@CreateTimestamp` / `@UpdateTimestamp` 유닛 8개 + 통합 3개
-- `timestamptz` 유닛 6개 (3개 드라이버)
 
 ### Docs
 
-- `docs/entities.md`: `@CreateTimestamp`/`@UpdateTimestamp` 섹션, `timestamptz` 타입 추가
-- `docs/api-reference.md`: 데코레이터 테이블 및 ColumnType 정의 업데이트
-- 전체 문서 및 예제 README 영어 번역
-
-### Other
-
-- `MetadataContext.isActive()` 단순화
-- NestJS 예제를 `@stingerloom/orm/nestjs` subpath export로 전환
-- `nestjs-todo`를 배포된 `@stingerloom/orm@^0.2.0`으로 전환
+- `@CreateTimestamp`/`@UpdateTimestamp` section in entities guide
+- Full docs and example READMEs translated to English
 
 **Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.2.0...v0.2.1
 
@@ -40,14 +126,11 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ### Added
 
-- **NestJS 통합 모듈 추출** (`@stingerloom/orm/nestjs`)
-  - `StinglerloomOrmModule` — `forRoot()` / `forFeature()` 지원
-  - `StingerloomOrmCoreModule` — EntityManager provider
-  - `StinglerloomOrmService` — NestJS 생명주기 훅
-  - `InjectRepository` — NestJS 전용 리포지토리 인젝션 데코레이터
-  - `@nestjs/common`, `@nestjs/core` optional peer dependencies
-  - `typesVersions` 필드 추가 (`moduleResolution: "node"` 호환)
-  - 4개 예제 프로젝트에서 중복 16개 파일 삭제 (-729 lines)
+- **NestJS integration module** (`@stingerloom/orm/nestjs`)
+  - `StinglerloomOrmModule` — `forRoot()` / `forFeature()`
+  - `InjectRepository` — NestJS repository injection decorator
+  - `typesVersions` for `moduleResolution: "node"` compatibility
+  - Removed 16 duplicate files across 4 examples (-729 lines)
 
 **Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.1.2...v0.2.0
 
@@ -57,12 +140,7 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ### Added
 
-- **nestjs-todo 예제** 추가
-- README 설치 안내 업데이트
-
-### Docs
-
-- README 한국어 잔여 텍스트 영어로 수정
+- **nestjs-todo example**
 
 **Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.1.1...v0.1.2
 
@@ -72,125 +150,74 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ### Added
 
-- **MCP 서버** — MySQL/PostgreSQL 직접 접근 (`mcp/mysql-server.ts`, `mcp/postgres-server.ts`)
-- **IConnection 인터페이스** + 다이얼렉트별 커넥션 + 커넥션 누수 감지기
-- **Advisory lock** + 중첩 트랜잭션 세이브포인트 전파
-- **QueryTracker 메모리 누수 방지** + Graceful shutdown
-- **Swagger UI + class-validator** 전 예제 프로젝트에 추가
-- `{propertyName}Id` FK 자동 컨벤션 (`save()`, `insertMany()`)
-- `@Column` 기반 FK 자동 감지 + `mappedBy`/`inverseSide` 타입 안전성
-- `clear()` 메서드 + `insertMany` 타임스탬프 성능 개선
+- **MCP server** — MySQL/PostgreSQL direct access
+- **IConnection interface** + per-dialect connections + connection leak detector
+- **Advisory lock** + nested transaction savepoint propagation
+- `{propertyName}Id` FK auto-convention for `save()` / `insertMany()`
 
 ### Fixed
 
-- ORM 안정성 점검 — `WhereClause<T>` 타입 통합, `as any` 28개 제거, `skip→limit` 버그 수정
-- EntityManager async factory로 NestJS `onModuleInit` 순서 문제 해결
-- Partial update 시 FK 보존 + `save()` 반환 타입 수정
-- INSERT/UPDATE 시 ManyToOne FK 컬럼 중복 방지
-- ManyToOne 관계가 명시적으로 null일 때 FK를 NULL로 설정
-- `insertMany` @BeforeInsert 훅 + @DeletedAt 컬럼 제외
-- `NotSupportedDatabaseTypeError` 에러 메시지 영어 통일
-
-### Refactor
-
-- MSSQL 드라이버 제거
-- `Connection.ts`를 `core/`에서 `dialects/mysql/`로 이동
-- Deserializer 관련 파일을 `core/deserializer/` 폴더로 이동
-- `createLazyProxy` 함수 시그니처 단순화
-- MCP 서버 `server.tool()` → `server.registerTool()` API 마이그레이션
-
-### Tests
-
-- PostgreSQL 드라이버 통합 테스트 35개
-- FK object assignment 패턴 P0 통합 테스트
-- nestjs-cats e2e 통합 테스트
-- Jest 커버리지 설정 + SQLite 통합 테스트 + 스트레스 테스트
-
-### Docs
-
-- README 영어 리라이트 (minimal style)
-- 프로덕션 운영 가이드 작성
-- Onboarding 가이드 추가
+- `WhereClause<T>` type unification, 28 `as any` removed, `skip→limit` bug
+- Partial update FK preservation + `save()` return type
+- ManyToOne FK column deduplication on INSERT/UPDATE
 
 ### Security
 
-- SQL Injection 취약점 6건 수정 (MySqlDriver 5, SchemaDiff 1)
-- `getAllInContext()` 테넌트 간 데이터 유출 차단
-- `AsyncLocalStorage` 동시성 안전 (`resolveContext()` 도입)
+- SQL Injection 6 vulnerabilities fixed (MySqlDriver 5, SchemaDiff 1)
+- `getAllInContext()` tenant data leak prevention
+- `AsyncLocalStorage` concurrency safety (`resolveContext()`)
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.1.0...v0.1.1
 
 ---
 
-## [0.1.0] — 2026-03-07 (최초 npm 배포)
+## [0.1.0] — 2026-03-07 (initial npm release)
 
-최초 배포. 2026-02-22 ~ 2026-03-07 개발 기간의 전체 기능 포함.
+Full feature set from 2026-02-22 to 2026-03-07 development.
 
 ### Core
 
-- **CRUD** — `EntityManager.find`, `findOne`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `upsert`
+- **CRUD** — `find`, `findOne`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `upsert`
 - **Batch** — `insertMany`, `saveMany`, `deleteMany`
 - **Aggregation** — `count`, `sum`, `avg`, `min`, `max`
-- **Raw Query** — `query<T>(sql, params?)` 제네릭 메서드
-- **BaseRepository** — 엔티티별 CRUD 래퍼
+- **Raw Query** — `query<T>(sql, params?)`
+- **BaseRepository** — per-entity CRUD wrapper
 
 ### Relations
 
 - `@ManyToOne`, `@OneToMany`, `@OneToOne`, `@ManyToMany`
-- Eager / Lazy 로딩
-- Cascade (insert/update/delete)
-- ManyToMany 중간 테이블 DDL 자동 생성
+- Eager / Lazy loading, Cascade, ManyToMany join table DDL auto-generation
 
 ### Schema & Migrations
 
-- `SchemaGenerator` — syncSchema/createTable DDL 자동 생성
-- `SchemaDiff` + `SchemaDiffMigrationGenerator` — 스키마 비교 → 마이그레이션 자동 생성
-- `MigrationRunner` + `MigrationCli` — migrate:run/rollback/status
+- `SchemaGenerator` — syncSchema/createTable DDL
+- `SchemaDiff` + `SchemaDiffMigrationGenerator`
+- `MigrationRunner` + `MigrationCli`
 
 ### Decorators
 
 - `@Entity`, `@Column`, `@PrimaryGeneratedColumn`, `@PrimaryColumn`
 - `@Index`, `@UniqueIndex`, `@Version`, `@DeletedAt`
-- `@BeforeInsert`, `@AfterInsert`, `@BeforeUpdate`, `@AfterUpdate`, `@BeforeDelete`, `@AfterDelete`
-- `@NotNull`, `@MinLength`, `@MaxLength`, `@Min`, `@Max`
-- `@Transactional` (AsyncLocalStorage 기반)
+- Lifecycle hooks: `@BeforeInsert`, `@AfterInsert`, `@BeforeUpdate`, `@AfterUpdate`, `@BeforeDelete`, `@AfterDelete`
+- Validation: `@NotNull`, `@MinLength`, `@MaxLength`, `@Min`, `@Max`
+- `@Transactional` (AsyncLocalStorage-based)
 
 ### Drivers
 
-- **MySQL/MariaDB** — `MySqlDriver`, 연결 풀링, Read Replica
-- **PostgreSQL** — `PostgresDriver`, 스키마 한정 식별자, ENUM 타입
-- **SQLite** — `SqliteDriver`
+- **MySQL/MariaDB** — connection pooling, Read Replica
+- **PostgreSQL** — schema-qualified identifiers, ENUM type
+- **SQLite**
 
 ### Multi-Tenancy
 
-- 레이어드 메타데이터 (Docker OverlayFS 방식)
-- `MetadataContext.run()` — AsyncLocalStorage 기반 컨텍스트 전환
-- `TenantMigrationRunner` — PostgreSQL 스키마 기반 자동 프로비저닝
-
-### Query Builder
-
-- `RawQueryBuilderFactory` — SELECT/JOIN/WHERE/GROUP BY/HAVING/ORDER BY/LIMIT
-- `FindOption<T>` — select, where, limit, take, orderBy, groupBy, having, relations, withDeleted, timeout, useMaster
+- Layered metadata (Docker OverlayFS model)
+- `MetadataContext.run()` — AsyncLocalStorage-based context switching
+- `TenantMigrationRunner` — PostgreSQL schema-based auto-provisioning
 
 ### Advanced
 
-- 커서 기반 페이지네이션 (`findWithCursor`)
-- EXPLAIN 쿼리 분석 (`ExplainResult`)
-- N+1 감지 + 슬로우 쿼리 경고 (`QueryTracker`)
-- 이벤트 시스템 (`on`/`off`) + `EntitySubscriber` 패턴
-- 연결 풀링 (`PoolOptions`)
-- Connection Retry (지수 백오프)
-- 쿼리 타임아웃 (per-query / connection-level)
-- Read Replica (읽기/쓰기 분리)
-- 멀티 DB 지원 (named connections)
-- `propagateShutdown()` — 리소스 정리 생명주기
-- SQL Injection 방지 — `escapeIdentifier()` + `sql-template-tag`
-
-### Examples
-
-- `examples/nestjs-cats` — 기본 CRUD, EntitySubscriber, 커서 페이지네이션
-- `examples/nestjs-blog` — M2M, soft delete, upsert, 59 e2e tests
-- `examples/nestjs-multitenant` — PostgreSQL 스키마 격리
-
-### Tests
-
-- 1,400+ 유닛 테스트, 0 failures
-- 4개 예제 프로젝트 타입 체크 통과
+- Cursor-based pagination, EXPLAIN query analysis, N+1 detection
+- Event system + `EntitySubscriber` pattern
+- Connection pooling, retry (exponential backoff), query timeout
+- Read Replica, multi-DB (named connections)
+- `propagateShutdown()`, SQL Injection prevention
