@@ -81,6 +81,13 @@ import {
   SearchPathStrategy,
   SchemaQualifiedStrategy,
 } from "./TenantQueryStrategy";
+import {
+  StingerloomPlugin,
+  InstalledPlugin,
+} from "./plugin/StingerloomPlugin";
+import { PluginContext } from "./plugin/PluginContext";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * Date를 MySQL/MariaDB 호환 'YYYY-MM-DD HH:MM:SS' 형식으로 변환합니다.
@@ -116,6 +123,10 @@ export class EntityManager implements BaseEntityManager {
    * 연결된 DB 타입. connect() 시 캐싱됩니다. (isMySqlFamily/isPostgres 내부 분기용)
    */
   private dbType: IDatabaseType | undefined;
+
+  // ── Plugin System ──────────────────────────────────────────
+  private readonly _plugins = new Map<string, InstalledPlugin>();
+  private _pluginContext: PluginContext | null = null;
 
   // ── 추출된 핸들러 ──────────────────────────────────────────
 
@@ -167,6 +178,13 @@ export class EntityManager implements BaseEntityManager {
     }
     await this.connect(databaseClientOptions, connectionName);
     await this.schemaRegistrar.registerEntities();
+
+    // Install plugins (in array order)
+    if (databaseClientOptions.plugins) {
+      for (const plugin of databaseClientOptions.plugins) {
+        this.extend(plugin);
+      }
+    }
   }
 
   get client() {
@@ -282,20 +300,36 @@ export class EntityManager implements BaseEntityManager {
       }
     }
 
-    // 2. 이벤트 리스너 / 구독자 / dirty 엔티티 정리
+    // 2. Plugin shutdown (reverse installation order — LIFO)
+    const pluginEntries = [...this._plugins.values()].reverse();
+    for (const { plugin } of pluginEntries) {
+      if (plugin.shutdown) {
+        try {
+          await plugin.shutdown();
+        } catch (err) {
+          this.logger.warn(
+            `[Shutdown] Plugin "${plugin.name}" shutdown error: ${err}`,
+          );
+        }
+      }
+    }
+    this._plugins.clear();
+    this._pluginContext = null;
+
+    // 3. 이벤트 리스너 / 구독자 / dirty 엔티티 정리
     this.removeAllListeners();
     this.subscribers.length = 0;
     this.dirtyEntities.clear();
     this.cursorPkWarned.clear();
 
-    // 3. QueryTracker 정리
+    // 4. QueryTracker 정리
     this.queryTracker?.reset();
     this.queryTracker = null;
 
-    // 4. ReplicationRouter 정리
+    // 5. ReplicationRouter 정리
     this.replication.shutdown();
 
-    // 5. 커넥션 풀 종료 (요청 시)
+    // 6. 커넥션 풀 종료 (요청 시)
     if (closeConnections) {
       try {
         await this.client.close(this.connectionName);
@@ -414,6 +448,115 @@ export class EntityManager implements BaseEntityManager {
     if (idx !== -1) {
       this.subscribers.splice(idx, 1);
     }
+  }
+
+  // ── Plugin System ──────────────────────────────────────────
+
+  /**
+   * Install a plugin on this EntityManager instance.
+   * Idempotent — installing the same plugin name twice is a no-op.
+   *
+   * @returns `this` with the plugin's API methods mixed in
+   */
+  extend<TApi extends Record<string, any>>(
+    plugin: StingerloomPlugin<TApi>,
+  ): this & TApi {
+    // Idempotent: skip if already installed
+    if (this._plugins.has(plugin.name)) {
+      return this as this & TApi;
+    }
+
+    // Check dependencies
+    if (plugin.dependencies) {
+      for (const dep of plugin.dependencies) {
+        if (!this._plugins.has(dep)) {
+          throw new OrmError(
+            OrmErrorCode.PLUGIN_DEPENDENCY_MISSING,
+            `Plugin "${plugin.name}" requires "${dep}" to be installed first`,
+            `Call em.extend(${dep}Plugin) before em.extend(${plugin.name}Plugin)`,
+          );
+        }
+      }
+    }
+
+    // Create context (lazy singleton)
+    const ctx = this.getPluginContext();
+
+    // Install
+    const api = (plugin.install(ctx) ?? {}) as Record<string, any>;
+
+    // Check for conflicts with existing properties
+    const reserved = new Set(Object.getOwnPropertyNames(EntityManager.prototype));
+    for (const key of Object.keys(api)) {
+      if (key in this || reserved.has(key)) {
+        throw new OrmError(
+          OrmErrorCode.PLUGIN_CONFLICT,
+          `Plugin "${plugin.name}" method "${key}" conflicts with an existing EntityManager member`,
+          `Rename the "${key}" method in the plugin's install() return object`,
+        );
+      }
+    }
+
+    // Mix API methods into this instance
+    for (const [key, value] of Object.entries(api)) {
+      (this as any)[key] = value;
+    }
+
+    // Store
+    this._plugins.set(plugin.name, { plugin, api });
+
+    return this as this & TApi;
+  }
+
+  /**
+   * Check if a plugin with the given name is installed.
+   */
+  hasPlugin(name: string): boolean {
+    return this._plugins.has(name);
+  }
+
+  /**
+   * Get a plugin's API object by name.
+   * Returns undefined if the plugin is not installed.
+   */
+  getPluginApi<T = unknown>(name: string): T | undefined {
+    const installed = this._plugins.get(name);
+    return installed ? (installed.api as T) : undefined;
+  }
+
+  /**
+   * Create or return the cached PluginContext for this EntityManager.
+   */
+  private getPluginContext(): PluginContext {
+    if (!this._pluginContext) {
+      const self = this;
+      this._pluginContext = {
+        get em() {
+          return self;
+        },
+        get driver() {
+          return self.driver;
+        },
+        get events() {
+          return self.eventEmitter;
+        },
+        get connectionName() {
+          return self.connectionName;
+        },
+        addSubscriber: (s) => this.addSubscriber(s),
+        removeSubscriber: (s) => this.removeSubscriber(s),
+        getEntities: () => this._entities,
+        getPlugin: <T = unknown>(name: string) => this.getPluginApi<T>(name),
+        isMySqlFamily: () => this.isMySqlFamily(),
+        isPostgres: () => this.isPostgres(),
+        isSqlite: () => this.isSqlite(),
+        wrap: (id) => this.wrap(id),
+        wrapTable: (t) => this.wrapTable(t),
+        executeInTransaction: (fn) => this.executeInTransaction(fn),
+        executeReadOnly: (fn) => this.executeReadOnly(fn),
+      };
+    }
+    return this._pluginContext;
   }
 
   private async notifySubscribers<T>(

@@ -1,6 +1,7 @@
 import { IDatabaseType, AnyEntity } from "../dialects/mysql/MySqlConnector";
 import { ReplicationConfig } from "../dialects/ReplicationRouter";
 import { NamingStrategy } from "./generators/NamingStrategy";
+import { StingerloomPlugin } from "./plugin/StingerloomPlugin";
 
 /**
  * Connection pool configuration options.
@@ -161,6 +162,13 @@ export interface DatabaseClientOptions {
    * MySQL, and SQLite are unaffected.
    */
   tenantStrategy?: "search_path" | "schema_qualified";
+
+  /**
+   * Plugins to install on the EntityManager after registration.
+   * Plugins are installed in array order; dependencies must come before dependents.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  plugins?: StingerloomPlugin<any>[];
 }
 
 /**

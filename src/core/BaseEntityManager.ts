@@ -14,6 +14,7 @@ import {
   PagePaginationOption,
   PagePaginationResult,
 } from "./PagePagination";
+import { StingerloomPlugin } from "./plugin/StingerloomPlugin";
 
 export abstract class BaseEntityManager {
   /**
@@ -231,4 +232,18 @@ export abstract class BaseEntityManager {
    * Creates a new QueryBuilder instance with the database type auto-configured.
    */
   abstract createQueryBuilder(): BaseRawQueryBuilder;
+
+  /**
+   * Install a plugin on this EntityManager instance.
+   * Returns `this` with the plugin's API mixed in for chaining.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  abstract extend<TApi extends Record<string, any>>(
+    plugin: StingerloomPlugin<TApi>,
+  ): this & TApi;
+
+  /**
+   * Check if a plugin with the given name is installed.
+   */
+  abstract hasPlugin(name: string): boolean;
 }
