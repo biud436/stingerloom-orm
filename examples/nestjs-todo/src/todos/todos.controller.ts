@@ -34,7 +34,7 @@ export class TodosController {
 
   @Patch("batch/complete")
   @ApiOperation({
-    summary: "할 일 일괄 완료 (Mutation Plugin)",
+    summary: "할 일 일괄 완료 (Buffer Plugin)",
     description: "여러 할 일을 한 트랜잭션으로 일괄 완료합니다. track → modify → flush 패턴을 사용합니다.",
   })
   @ApiResponse({ status: 200, description: "일괄 완료 결과 (updates/inserts/deletes 카운트)" })

@@ -1,8 +1,8 @@
 /**
- * Mutation Plugin 통합 테스트
+ * Buffer Plugin 통합 테스트
  *
  * 실제 MySQL/PostgreSQL 데이터베이스에 연결하여
- * mutationPlugin의 track → dirty → flush 전체 사이클을 검증합니다.
+ * bufferPlugin의 track → dirty → flush 전체 사이클을 검증합니다.
  *
  * 검증 항목:
  * - track()된 엔티티의 변경이 flush() 시 실제 DB에 반영되는지
@@ -26,19 +26,19 @@ import {
   DynamicEntityResult,
 } from "./helpers/create-test-entity";
 import { getTestDrivers } from "./helpers/driver-config";
-import { mutationPlugin } from "../../src/core/plugin/mutation/mutationPlugin";
-import { Mutation } from "../../src/core/plugin/mutation/Mutation";
+import { bufferPlugin } from "../../src/core/plugin/buffer/bufferPlugin";
+import { WriteBuffer } from "../../src/core/plugin/buffer/WriteBuffer";
 
 const drivers = getTestDrivers();
 
-describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options }) => {
+describe.each(drivers)("[Integration] $label: Buffer Plugin", ({ type, options }) => {
   let conn: TestConnectionResult;
   let em: EntityManager;
   let testEntity: DynamicEntityResult;
 
   beforeAll(async () => {
     conn = await createTestConnection(
-      { ...options, synchronize: true, logging: false, plugins: [mutationPlugin()] },
+      { ...options, synchronize: true, logging: false, plugins: [bufferPlugin()] },
       () => {
         testEntity = createCrudTestEntity("mut_test");
         return { entities: [testEntity.EntityClass] };
@@ -84,7 +84,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
 
   describe("plugin installation", () => {
     it("mutate()가 Mutation 인스턴스를 반환해야 한다", () => {
-      const mut = (em as any).mutate();
+      const mut = (em as any).buffer();
       expect(mut).toBeInstanceOf(Mutation);
     });
   });
@@ -95,7 +95,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     it("mut.findOne()으로 로드하면 자동 track되어야 한다", async () => {
       const created = await seedUser({ name: "AutoTrack", age: 30 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       const user = await mut.findOne(testEntity.EntityClass, { where: { id: created.id } as any });
 
       expect(user).toBeDefined();
@@ -111,7 +111,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     });
 
     it("mut.findOne()에서 결과 없으면 null 반환, track 없음", async () => {
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       const user = await mut.findOne(testEntity.EntityClass, { where: { id: 999999 } as any });
 
       expect(user).toBeNull();
@@ -123,7 +123,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
       await seedUser({ name: "Batch2", age: 20 });
       await seedUser({ name: "Batch3", age: 30 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       const users = await mut.find(testEntity.EntityClass, {});
 
       expect(users.length).toBe(3);
@@ -154,7 +154,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     it("같은 PK를 두 번 findOne해도 동일 인스턴스를 반환해야 한다", async () => {
       const created = await seedUser({ name: "IdentityTest", age: 25 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       const first = await mut.findOne(testEntity.EntityClass, { where: { id: created.id } as any });
       first.name = "Modified";
 
@@ -169,7 +169,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
       const u1 = await seedUser({ name: "User1", age: 10 });
       await seedUser({ name: "User2", age: 20 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
 
       // u1을 먼저 findOne으로 로드 + 수정
       const tracked = await mut.findOne(testEntity.EntityClass, { where: { id: u1.id } as any });
@@ -193,7 +193,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     it("같은 PK의 다른 인스턴스를 track하면 에러가 발생해야 한다", async () => {
       const created = await seedUser({ name: "Conflict", age: 30 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       await mut.findOne(testEntity.EntityClass, { where: { id: created.id } as any });
 
       // 새 인스턴스를 수동으로 만들어서 track 시도
@@ -213,7 +213,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     it("track → 변경 → flush 시 실제 DB에 UPDATE가 반영되어야 한다", async () => {
       const created = await seedUser({ name: "Alice", age: 25, email: "alice@test.com" });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.track(created);
       created.name = "Alice Updated";
       created.age = 26;
@@ -235,7 +235,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     it("변경 없이 flush하면 no-op이어야 한다", async () => {
       const created = await seedUser({ name: "Bob", age: 30 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.track(created);
 
       expect(mut.dirty()).toHaveLength(0);
@@ -255,7 +255,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
       const user2 = await seedUser({ name: "User2", age: 30 });
       const user3 = await seedUser({ name: "User3", age: 40 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.track(user1);
       mut.track(user2);
       mut.track(user3);
@@ -283,7 +283,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
 
   describe("queued INSERT via save()", () => {
     it("save() 큐잉 후 flush 시 실제 DB에 INSERT가 반영되어야 한다", async () => {
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.save(testEntity.EntityClass, { name: "NewUser", age: 22, email: "new@test.com" });
 
       const result = await mut.flush();
@@ -296,7 +296,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     });
 
     it("여러 INSERT를 큐잉하고 한번에 flush할 수 있어야 한다", async () => {
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.save(testEntity.EntityClass, { name: "A", age: 10 });
       mut.save(testEntity.EntityClass, { name: "B", age: 20 });
       mut.save(testEntity.EntityClass, { name: "C", age: 30 });
@@ -315,7 +315,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     it("delete() 큐잉 후 flush 시 실제 DB에서 삭제되어야 한다", async () => {
       const created = await seedUser({ name: "ToDelete", age: 99 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.delete(testEntity.EntityClass, { id: created.id } as any);
 
       const result = await mut.flush();
@@ -330,7 +330,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
       await seedUser({ name: "Remove", age: 99 });
       await seedUser({ name: "Remove", age: 99 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.delete(testEntity.EntityClass, { name: "Remove" } as any);
 
       const result = await mut.flush();
@@ -350,7 +350,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
       const existing = await seedUser({ name: "Existing", age: 25 });
       const toDelete = await seedUser({ name: "ToDelete", age: 99 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
 
       // UPDATE: track + modify
       mut.track(existing);
@@ -386,7 +386,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     it("flush 후 re-snapshot되어 추가 변경을 다시 flush할 수 있어야 한다", async () => {
       const user = await seedUser({ name: "Step1", age: 10 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.track(user);
 
       // 1차 변경 + flush
@@ -422,7 +422,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     it("flush 전에 preview로 실행할 연산을 확인할 수 있어야 한다", async () => {
       const user = await seedUser({ name: "PreviewUser", age: 25 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.track(user);
       user.name = "Changed";
       mut.save(testEntity.EntityClass, { name: "NewItem", age: 1 });
@@ -447,7 +447,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     it("flush 중간에 에러 발생 시 모든 변경이 롤백되어야 한다", async () => {
       const user = await seedUser({ name: "AtomicTest", age: 25 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.track(user);
       user.name = "ShouldRollback";
 
@@ -474,7 +474,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
       const user1 = await seedUser({ name: "Keep", age: 10 });
       const user2 = await seedUser({ name: "Untrack", age: 20 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.track(user1);
       mut.track(user2);
       user1.name = "Keep Modified";
@@ -495,7 +495,7 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     it("clear() 후 flush는 no-op이어야 한다", async () => {
       const user = await seedUser({ name: "ClearTest", age: 10 });
 
-      const mut: Mutation = (em as any).mutate();
+      const mut: Mutation = (em as any).buffer();
       mut.track(user);
       user.name = "Modified";
       mut.save(testEntity.EntityClass, { name: "NewItem", age: 1 });

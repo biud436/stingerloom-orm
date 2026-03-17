@@ -3,7 +3,7 @@
 /**
  * A preview entry describing an operation that will be executed on flush.
  */
-export type MutationPreviewEntry =
+export type BufferPreviewEntry =
   | { action: "update"; entity: string; where: Record<string, any>; data: Record<string, any> }
   | { action: "insert"; entity: string; data: Record<string, any> }
   | { action: "delete"; entity: string; criteria: Record<string, any> };
@@ -11,19 +11,19 @@ export type MutationPreviewEntry =
 /**
  * Result returned after a successful flush.
  */
-export interface MutationFlushResult {
+export interface BufferFlushResult {
   updates: number;
   inserts: number;
   deletes: number;
 }
 
 /**
- * Options for the mutation plugin.
+ * Options for the buffer plugin.
  */
-export interface MutationPluginOptions {
+export interface BufferPluginOptions {
   /**
    * If true (default), tracked entities are re-snapshotted after flush
-   * so that further mutations can be accumulated and flushed again.
+   * so that further changes can be accumulated and flushed again.
    * If false, all tracked state is cleared after flush.
    */
   retainAfterFlush?: boolean;

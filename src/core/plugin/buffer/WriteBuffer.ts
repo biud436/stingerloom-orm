@@ -4,32 +4,32 @@ import { COLUMN_TOKEN } from "../../../decorators/Column";
 import { ColumnMetadata } from "../../../scanner/ColumnScanner";
 import { FindOption } from "../../../dialects/FindOption";
 import { PluginContext } from "../PluginContext";
-import { TrackedEntry, InsertEntry, DeleteEntry } from "./MutationEntry";
-import { MutationPreviewEntry, MutationFlushResult, MutationPluginOptions } from "./MutationPreview";
-import { MutationStrategy, SnapshotStrategy } from "./MutationStrategy";
+import { TrackedEntry, InsertEntry, DeleteEntry } from "./BufferEntry";
+import { BufferPreviewEntry, BufferFlushResult, BufferPluginOptions } from "./BufferPreview";
+import { BufferStrategy, SnapshotStrategy } from "./BufferStrategy";
 
 /**
- * Mutation — tracks entity changes and provides batch flush.
+ * WriteBuffer — buffers entity writes and flushes them in a single transaction.
  *
- * Maintains an Identity Map scoped to this Mutation instance:
+ * Maintains an Identity Map scoped to this WriteBuffer instance:
  * the same database row (identified by entity class + PK) is always
  * represented by the same object reference. This prevents duplicate
  * tracking and conflicting updates on flush().
  *
- * Created via `em.mutate()` after installing the mutation plugin.
+ * Created via `em.buffer()` after installing the buffer plugin.
  */
-export class Mutation {
+export class WriteBuffer {
   private readonly trackedEntries = new Map<any, TrackedEntry>();
   private readonly identityMap = new Map<string, any>();
   private readonly insertQueue: InsertEntry[] = [];
   private readonly deleteQueue: DeleteEntry[] = [];
-  private readonly strategy: MutationStrategy;
+  private readonly strategy: BufferStrategy;
   private readonly ctx: PluginContext;
-  private readonly options: Required<MutationPluginOptions>;
+  private readonly options: Required<BufferPluginOptions>;
 
   constructor(
     ctx: PluginContext,
-    options: MutationPluginOptions = {},
+    options: BufferPluginOptions = {},
   ) {
     this.ctx = ctx;
     this.strategy = new SnapshotStrategy();
@@ -194,8 +194,8 @@ export class Mutation {
    * Preview the operations that will be executed on flush, in execution order.
    * Order: updates → inserts → deletes.
    */
-  preview(): MutationPreviewEntry[] {
-    const entries: MutationPreviewEntry[] = [];
+  preview(): BufferPreviewEntry[] {
+    const entries: BufferPreviewEntry[] = [];
 
     // Updates (dirty tracked entities)
     for (const entry of this.trackedEntries.values()) {
@@ -240,14 +240,14 @@ export class Mutation {
    * Execute all pending operations atomically within a transaction.
    * Order: updates → inserts → deletes.
    */
-  async flush(): Promise<MutationFlushResult> {
+  async flush(): Promise<BufferFlushResult> {
     // No-op if nothing to do (avoids unnecessary diff computation)
     if (!this.hasPendingWork()) {
       return { updates: 0, inserts: 0, deletes: 0 };
     }
 
     const em = this.ctx.em;
-    const result: MutationFlushResult = { updates: 0, inserts: 0, deletes: 0 };
+    const result: BufferFlushResult = { updates: 0, inserts: 0, deletes: 0 };
 
     // Capture queues before flush (for retry on failure)
     const insertsCopy = [...this.insertQueue];
@@ -320,21 +320,15 @@ export class Mutation {
 
   // ── Private helpers ──────────────────────────────────────────
 
-  /**
-   * Resolve an entity instance against the Identity Map.
-   * If the same PK is already tracked, returns the existing instance.
-   * Otherwise, tracks the new instance and returns it.
-   */
   private resolveIdentity(entityClass: ClazzType<any>, instance: any): any {
     const { pkColumns } = this.getColumnInfo(entityClass);
     const key = this.buildIdentityKey(entityClass, instance, pkColumns);
 
     const existing = this.identityMap.get(key);
     if (existing) {
-      return existing; // return the already-tracked instance
+      return existing;
     }
 
-    // New entity — track it
     this.track(instance);
     return instance;
   }
@@ -364,10 +358,6 @@ export class Mutation {
     return { columnNames, pkColumns };
   }
 
-  /**
-   * Build an identity key: "EntityName:pk1=v1,pk2=v2"
-   * Throws if any PK value is undefined/null (unsaved entity).
-   */
   private buildIdentityKey(
     entityClass: ClazzType<any>,
     instance: any,
@@ -387,9 +377,6 @@ export class Mutation {
     return `${entityClass.name}:${pkParts}`;
   }
 
-  /**
-   * Check if there are any pending operations (dirty entities, queued inserts/deletes).
-   */
   private hasPendingWork(): boolean {
     if (this.insertQueue.length > 0 || this.deleteQueue.length > 0) {
       return true;

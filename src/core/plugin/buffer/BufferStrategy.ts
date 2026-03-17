@@ -3,7 +3,7 @@
 /**
  * Strategy interface for snapshotting and diffing entity state.
  */
-export interface MutationStrategy {
+export interface BufferStrategy {
   /**
    * Create a deep clone of the entity's column values.
    */
@@ -66,10 +66,10 @@ export function deepEquals(a: any, b: any): boolean {
 }
 
 /**
- * Snapshot-based mutation strategy.
+ * Snapshot-based buffer strategy.
  * Takes a deep clone at track() time and diffs against the live instance at flush() time.
  */
-export class SnapshotStrategy implements MutationStrategy {
+export class SnapshotStrategy implements BufferStrategy {
   snapshot(instance: any, columnNames: string[]): Record<string, any> {
     const snap: Record<string, any> = {};
     for (const col of columnNames) {
@@ -88,7 +88,6 @@ export class SnapshotStrategy implements MutationStrategy {
     let hasChanges = false;
 
     for (const col of columnNames) {
-      // Skip PK columns — they identify the row, not a mutation
       if (pkColumns.includes(col)) continue;
 
       if (!deepEquals(instance[col], snapshot[col])) {

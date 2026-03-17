@@ -127,7 +127,7 @@ export class EntityManager implements BaseEntityManager {
   // ── Plugin System ──────────────────────────────────────────
   static readonly PLUGIN_PLACEHOLDER = Symbol.for("STG_PLUGIN_PLACEHOLDER");
   /** Method names that are stub placeholders and can be overridden by plugins */
-  private static readonly PLUGIN_PLACEHOLDERS = new Set<string>(["mutate"]);
+  private static readonly PLUGIN_PLACEHOLDERS = new Set<string>(["buffer"]);
   private readonly _plugins = new Map<string, InstalledPlugin>();
   private _pluginContext: PluginContext | null = null;
 
@@ -532,16 +532,16 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
-   * Create a Mutation instance for tracking entity changes and batch flush.
-   * Requires the mutation plugin to be installed first via `em.extend(mutationPlugin())`.
+   * Create a WriteBuffer instance for tracking entity changes and batch flush.
+   * Requires the buffer plugin to be installed first via `em.extend(bufferPlugin())`.
    *
-   * @throws OrmError with MUTATION_NOT_INSTALLED if the mutation plugin is not installed.
+   * @throws OrmError with BUFFER_NOT_INSTALLED if the buffer plugin is not installed.
    */
-  mutate(): any {
+  buffer(): any {
     throw new OrmError(
-      OrmErrorCode.MUTATION_NOT_INSTALLED,
-      "mutate() requires the mutation plugin to be installed",
-      "Call em.extend(mutationPlugin()) before using em.mutate()",
+      OrmErrorCode.BUFFER_NOT_INSTALLED,
+      "buffer() requires the buffer plugin to be installed",
+      "Call em.extend(bufferPlugin()) before using em.buffer()",
     );
   }
 

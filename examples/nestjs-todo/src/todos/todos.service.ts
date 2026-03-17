@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { EntityManager, BaseRepository, MutationFlushResult } from "@stingerloom/orm";
+import { EntityManager, BaseRepository, BufferFlushResult } from "@stingerloom/orm";
 import { Todo } from "./todo.entity";
 import { CreateTodoDto } from "./dto/create-todo.dto";
 import { UpdateTodoDto } from "./dto/update-todo.dto";
@@ -54,21 +54,21 @@ export class TodosService {
   }
 
   /**
-   * Batch complete multiple todos using the Mutation Plugin.
+   * Batch complete multiple todos using the Buffer Plugin.
    *
-   * Demonstrates: mut.findOne() auto-tracks, then flush() in a single transaction.
+   * Demonstrates: buf.findOne() auto-tracks, then flush() in a single transaction.
    */
-  async batchComplete(dto: BatchCompleteDto): Promise<MutationFlushResult> {
-    const mut = (this.em as any).mutate();
+  async batchComplete(dto: BatchCompleteDto): Promise<BufferFlushResult> {
+    const buf = (this.em as any).buffer();
 
     // Load and auto-track each todo (mut.findOne = em.findOne + track)
     for (const id of dto.ids) {
-      const todo = await mut.findOne(Todo, { where: { id } });
+      const todo = await buf.findOne(Todo, { where: { id } });
       if (!todo) throw new NotFoundException(`Todo #${id} not found`);
       todo.completed = true;
     }
 
     // Flush all updates atomically (BEGIN → UPDATE × N → COMMIT)
-    return mut.flush();
+    return buf.flush();
   }
 }

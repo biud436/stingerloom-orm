@@ -24,7 +24,7 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 - **`onDelete` / `onUpdate`** — FK referential actions on `@ManyToOne` (#84)
 - **`createForeignKeyConstraints`** — Option to disable FK constraint generation (#85)
 - **Plugin system** — `em.extend()` (dayjs-style), `StingerloomPlugin` interface, `PluginContext`, dependency/conflict validation, LIFO shutdown
-- **Mutation plugin** (experimental) — entity change tracking, Identity Map, dirty checking, batch flush
+- **Buffer plugin** (experimental) — entity change tracking, Identity Map, dirty checking, batch flush
 - **GitHub Actions CI** + multi-tenant stress tests (#81, #82)
 
 ### Performance

@@ -3,13 +3,13 @@ import "reflect-metadata";
 import { EntityManager } from "../../src/core/EntityManager";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 import { OrmError } from "../../src/errors/OrmError";
-import { mutationPlugin } from "../../src/core/plugin/mutation/mutationPlugin";
-import { Mutation } from "../../src/core/plugin/mutation/Mutation";
+import { bufferPlugin } from "../../src/core/plugin/buffer/bufferPlugin";
+import { WriteBuffer } from "../../src/core/plugin/buffer/WriteBuffer";
 import {
   SnapshotStrategy,
   cloneValue,
   deepEquals,
-} from "../../src/core/plugin/mutation/MutationStrategy";
+} from "../../src/core/plugin/buffer/BufferStrategy";
 import { COLUMN_TOKEN } from "../../src/decorators/Column";
 import { ENTITY_TOKEN } from "../../src/decorators/Entity";
 
@@ -142,35 +142,35 @@ function createEmWithEntities(...entities: any[]): EntityManager {
 
 function createExtendedEm(...entities: any[]) {
   const em = createEmWithEntities(...entities);
-  return em.extend(mutationPlugin());
+  return em.extend(bufferPlugin());
 }
 
 // ── Tests ───────────────────────────────────────────────────────
 
-describe("Mutation Plugin", () => {
+describe("Buffer Plugin", () => {
   // ── Installation & Stub ───────────────────────────────────────
 
   describe("installation", () => {
-    it("should allow em.mutate() after installing mutation plugin", () => {
+    it("should allow em.buffer() after installing buffer plugin", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
-      expect(mut).toBeInstanceOf(Mutation);
+      const mut = em.buffer();
+      expect(mut).toBeInstanceOf(WriteBuffer);
     });
 
-    it("should throw MUTATION_NOT_INSTALLED when plugin is not installed", () => {
+    it("should throw BUFFER_NOT_INSTALLED when plugin is not installed", () => {
       const em = new EntityManager();
-      expect(() => em.mutate()).toThrow(OrmError);
+      expect(() => em.buffer()).toThrow(OrmError);
       try {
-        em.mutate();
+        em.buffer();
       } catch (err: any) {
-        expect(err.code).toBe(OrmErrorCode.MUTATION_NOT_INSTALLED);
+        expect(err.code).toBe(OrmErrorCode.BUFFER_NOT_INSTALLED);
       }
     });
 
-    it("should return independent Mutation instances per mutate() call", () => {
+    it("should return independent WriteBuffer instances per mutate() call", () => {
       const em = createExtendedEm(User);
-      const mut1 = em.mutate();
-      const mut2 = em.mutate();
+      const mut1 = em.buffer();
+      const mut2 = em.buffer();
       expect(mut1).not.toBe(mut2);
     });
   });
@@ -180,7 +180,7 @@ describe("Mutation Plugin", () => {
   describe("track()", () => {
     it("should store snapshot at track time", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
@@ -192,14 +192,14 @@ describe("Mutation Plugin", () => {
     it("should throw for non-entity instances", () => {
       class NotAnEntity { x = 1; }
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       expect(() => mut.track(new NotAnEntity())).toThrow(/not a registered entity/);
     });
 
     it("should throw when PK value is undefined", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user = Object.assign(new User(), { id: undefined, name: "Alice", email: "a@b.c" });
       expect(() => mut.track(user)).toThrow(/PK column "id" is undefined/);
@@ -207,7 +207,7 @@ describe("Mutation Plugin", () => {
 
     it("should throw when PK value is null", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user = Object.assign(new User(), { id: null, name: "Alice", email: "a@b.c" });
       expect(() => mut.track(user)).toThrow(/PK column "id" is null/);
@@ -215,7 +215,7 @@ describe("Mutation Plugin", () => {
 
     it("should be idempotent (same instance tracked twice)", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
@@ -226,7 +226,7 @@ describe("Mutation Plugin", () => {
 
     it("should infer entity class from instance.constructor", () => {
       const em = createExtendedEm(User, Comment);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       const comment = Object.assign(new Comment(), { id: 1, body: "hi", postId: 1 });
@@ -239,7 +239,7 @@ describe("Mutation Plugin", () => {
 
     it("should support composite PK entities", () => {
       const em = createExtendedEm(OrderItem);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const item = Object.assign(new OrderItem(), { orderId: 1, productId: 2, quantity: 5 });
       mut.track(item);
@@ -256,7 +256,7 @@ describe("Mutation Plugin", () => {
       const mockUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       jest.spyOn(em, "findOne").mockResolvedValue(mockUser);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const result = await mut.findOne(User, { where: { id: 1 } as any });
 
       expect(result).toBe(mockUser);
@@ -267,7 +267,7 @@ describe("Mutation Plugin", () => {
       const em = createExtendedEm(User);
       jest.spyOn(em, "findOne").mockResolvedValue(null);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const result = await mut.findOne(User, { where: { id: 999 } as any });
 
       expect(result).toBeNull();
@@ -282,7 +282,7 @@ describe("Mutation Plugin", () => {
       ];
       jest.spyOn(em, "find").mockResolvedValue(users);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const result = await mut.find(User, { where: { name: "Alice" } as any });
 
       expect(result).toEqual(users);
@@ -293,7 +293,7 @@ describe("Mutation Plugin", () => {
       const em = createExtendedEm(User);
       jest.spyOn(em, "find").mockResolvedValue([]);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const result = await mut.find(User);
 
       expect(result).toEqual([]);
@@ -307,7 +307,7 @@ describe("Mutation Plugin", () => {
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
       const saveSpy = jest.spyOn(em, "save").mockResolvedValue(mockUser as any);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const user = await mut.findOne(User, { where: { id: 1 } as any });
       user!.name = "Updated";
 
@@ -326,7 +326,7 @@ describe("Mutation Plugin", () => {
       const dbUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       jest.spyOn(em, "findOne").mockResolvedValue(dbUser);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const first = await mut.findOne(User, { where: { id: 1 } as any });
 
       // Second call returns a fresh DB object, but identity map should return the cached one
@@ -343,7 +343,7 @@ describe("Mutation Plugin", () => {
       const u1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       jest.spyOn(em, "findOne").mockResolvedValue(u1);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const tracked = await mut.findOne(User, { where: { id: 1 } as any });
       tracked!.name = "Modified"; // modify the tracked instance
 
@@ -364,7 +364,7 @@ describe("Mutation Plugin", () => {
 
     it("track() should throw when different instance with same PK is already tracked", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       const user2 = Object.assign(new User(), { id: 1, name: "Bob", email: "b@c.d" });
@@ -375,7 +375,7 @@ describe("Mutation Plugin", () => {
 
     it("untrack() should remove from Identity Map, allowing re-track of same PK", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       const user2 = Object.assign(new User(), { id: 1, name: "Bob", email: "b@c.d" });
@@ -392,7 +392,7 @@ describe("Mutation Plugin", () => {
       const dbUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       jest.spyOn(em, "findOne").mockResolvedValue(dbUser);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       await mut.findOne(User, { where: { id: 1 } as any });
       mut.clear();
 
@@ -404,7 +404,7 @@ describe("Mutation Plugin", () => {
 
     it("composite PK Identity Map key should work correctly", () => {
       const em = createExtendedEm(OrderItem);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const item1 = Object.assign(new OrderItem(), { orderId: 1, productId: 2, quantity: 5 });
       const item2 = Object.assign(new OrderItem(), { orderId: 1, productId: 3, quantity: 10 });
@@ -423,7 +423,7 @@ describe("Mutation Plugin", () => {
   describe("dirty()", () => {
     it("should return empty when nothing changed", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
@@ -433,7 +433,7 @@ describe("Mutation Plugin", () => {
 
     it("should detect property changes", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
@@ -444,7 +444,7 @@ describe("Mutation Plugin", () => {
 
     it("should detect Date field changes", () => {
       const em = createExtendedEm(Profile);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const profile = Object.assign(new Profile(), {
         id: 1,
@@ -459,7 +459,7 @@ describe("Mutation Plugin", () => {
 
     it("should detect JSON/object field changes (deep comparison)", () => {
       const em = createExtendedEm(Profile);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const profile = Object.assign(new Profile(), {
         id: 1,
@@ -474,7 +474,7 @@ describe("Mutation Plugin", () => {
 
     it("should NOT consider PK changes as dirty", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
@@ -489,7 +489,7 @@ describe("Mutation Plugin", () => {
   describe("save() and delete() queuing", () => {
     it("should queue INSERT operations", () => {
       const em = createExtendedEm(Comment);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       mut.save(Comment, { body: "new comment", postId: 1 });
 
@@ -498,7 +498,7 @@ describe("Mutation Plugin", () => {
 
     it("should queue DELETE operations", () => {
       const em = createExtendedEm(Tag);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       mut.delete(Tag, { id: 5 });
 
@@ -508,7 +508,7 @@ describe("Mutation Plugin", () => {
     it("should throw for non-entity class in save()", () => {
       class NotAnEntity {}
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       expect(() => mut.save(NotAnEntity as any, { name: "x" })).toThrow(/not a registered entity/);
     });
@@ -516,7 +516,7 @@ describe("Mutation Plugin", () => {
     it("should throw for non-entity class in delete()", () => {
       class NotAnEntity {}
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       expect(() => mut.delete(NotAnEntity as any, { id: 1 })).toThrow(/not a registered entity/);
     });
@@ -527,7 +527,7 @@ describe("Mutation Plugin", () => {
   describe("preview()", () => {
     it("should respect flush order: updates → inserts → deletes", () => {
       const em = createExtendedEm(User, Comment, Tag);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       // Track + modify user
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
@@ -548,7 +548,7 @@ describe("Mutation Plugin", () => {
 
     it("should include PK values in update WHERE", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user = Object.assign(new User(), { id: 42, name: "Alice", email: "a@b.c" });
       mut.track(user);
@@ -565,7 +565,7 @@ describe("Mutation Plugin", () => {
 
     it("should return empty array when nothing to do", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       expect(mut.preview()).toEqual([]);
     });
@@ -581,7 +581,7 @@ describe("Mutation Plugin", () => {
       );
       jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
       user.name = "Bob";
@@ -597,7 +597,7 @@ describe("Mutation Plugin", () => {
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
       const saveSpy = jest.spyOn(em, "save").mockResolvedValue({} as any);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
       user.name = "Bob";
@@ -613,7 +613,7 @@ describe("Mutation Plugin", () => {
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
       const saveSpy = jest.spyOn(em, "save").mockResolvedValue({} as any);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       mut.save(Comment, { body: "new", postId: 1 });
 
       await mut.flush();
@@ -627,7 +627,7 @@ describe("Mutation Plugin", () => {
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
       const deleteSpy = jest.spyOn(em, "delete").mockResolvedValue({ affected: 1 });
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       mut.delete(Tag, { id: 5 });
 
       await mut.flush();
@@ -652,7 +652,7 @@ describe("Mutation Plugin", () => {
         return { affected: 1 };
       });
 
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       // Queue delete first, insert second, then track+modify
       mut.delete(Tag, { id: 5 });
@@ -671,7 +671,7 @@ describe("Mutation Plugin", () => {
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
       jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
       user.name = "Bob";
@@ -695,7 +695,7 @@ describe("Mutation Plugin", () => {
         // Simulate a @Version column increment (if the entity had one)
       }));
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
       user.name = "Bob";
@@ -709,11 +709,11 @@ describe("Mutation Plugin", () => {
 
     it("should clear tracked state when retainAfterFlush is false", async () => {
       const em = createEmWithEntities(User);
-      const extended = em.extend(mutationPlugin({ retainAfterFlush: false }));
+      const extended = em.extend(bufferPlugin({ retainAfterFlush: false }));
       jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
       jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
 
-      const mut = extended.mutate();
+      const mut = extended.buffer();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
       user.name = "Bob";
@@ -727,7 +727,7 @@ describe("Mutation Plugin", () => {
       const em = createExtendedEm(User, Comment);
       jest.spyOn(em, "transaction").mockRejectedValue(new Error("DB error"));
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
       user.name = "Bob";
@@ -740,13 +740,13 @@ describe("Mutation Plugin", () => {
       expect(mut.size().inserts).toBe(1);
     });
 
-    it("should return correct MutationFlushResult counts", async () => {
+    it("should return correct BufferFlushResult counts", async () => {
       const em = createExtendedEm(User, Comment, Tag);
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
       jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
       jest.spyOn(em, "delete").mockResolvedValue({ affected: 1 });
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
       user.name = "Bob";
@@ -763,7 +763,7 @@ describe("Mutation Plugin", () => {
       const em = createExtendedEm(User);
       const transactionSpy = jest.spyOn(em, "transaction");
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const result = await mut.flush();
 
       expect(result).toEqual({ updates: 0, inserts: 0, deletes: 0 });
@@ -774,7 +774,7 @@ describe("Mutation Plugin", () => {
       const em = createExtendedEm(User);
       const transactionSpy = jest.spyOn(em, "transaction");
 
-      const mut = em.mutate();
+      const mut = em.buffer();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
       // no changes to user
@@ -791,7 +791,7 @@ describe("Mutation Plugin", () => {
   describe("clear(), untrack(), size()", () => {
     it("should clear all state", () => {
       const em = createExtendedEm(User, Comment, Tag);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       mut.track(user);
@@ -806,7 +806,7 @@ describe("Mutation Plugin", () => {
 
     it("should untrack a specific entity", () => {
       const em = createExtendedEm(User);
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       const user1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       const user2 = Object.assign(new User(), { id: 2, name: "Bob", email: "b@c.d" });
@@ -828,7 +828,7 @@ describe("Mutation Plugin", () => {
       const saveSpy = jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
       const deleteSpy = jest.spyOn(em, "delete").mockResolvedValue({ affected: 1 });
 
-      const mut = em.mutate();
+      const mut = em.buffer();
 
       // Track and modify
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
