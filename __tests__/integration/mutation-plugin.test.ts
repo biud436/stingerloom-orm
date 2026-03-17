@@ -89,6 +89,65 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
     });
   });
 
+  // ── mut.findOne() / mut.find() — auto-tracking ────────────
+
+  describe("auto-tracking via mut.findOne() and mut.find()", () => {
+    it("mut.findOne()으로 로드하면 자동 track되어야 한다", async () => {
+      const created = await seedUser({ name: "AutoTrack", age: 30 });
+
+      const mut: Mutation = (em as any).mutate();
+      const user = await mut.findOne(testEntity.EntityClass, { where: { id: created.id } as any });
+
+      expect(user).toBeDefined();
+      expect(mut.tracked()).toHaveLength(1);
+
+      // 변경 후 flush
+      user.name = "AutoTracked Updated";
+      const result = await mut.flush();
+      expect(result.updates).toBe(1);
+
+      const found = await findById(created.id);
+      expect(found.name).toBe("AutoTracked Updated");
+    });
+
+    it("mut.findOne()에서 결과 없으면 null 반환, track 없음", async () => {
+      const mut: Mutation = (em as any).mutate();
+      const user = await mut.findOne(testEntity.EntityClass, { where: { id: 999999 } as any });
+
+      expect(user).toBeNull();
+      expect(mut.tracked()).toHaveLength(0);
+    });
+
+    it("mut.find()로 여러 엔티티를 로드하면 모두 자동 track되어야 한다", async () => {
+      await seedUser({ name: "Batch1", age: 10 });
+      await seedUser({ name: "Batch2", age: 20 });
+      await seedUser({ name: "Batch3", age: 30 });
+
+      const mut: Mutation = (em as any).mutate();
+      const users = await mut.find(testEntity.EntityClass, {});
+
+      expect(users.length).toBe(3);
+      expect(mut.tracked()).toHaveLength(3);
+
+      // 일부만 변경
+      users[0].name = "Modified1";
+      users[2].name = "Modified3";
+
+      expect(mut.dirty()).toHaveLength(2);
+
+      const result = await mut.flush();
+      expect(result.updates).toBe(2);
+
+      const found0 = await findById(users[0].id);
+      const found1 = await findById(users[1].id);
+      const found2 = await findById(users[2].id);
+
+      expect(found0.name).toBe("Modified1");
+      expect(found1.name).toBe("Batch2"); // 불변
+      expect(found2.name).toBe("Modified3");
+    });
+  });
+
   // ── UPDATE: track + dirty + flush ─────────────────────────────
 
   describe("tracked entity UPDATE", () => {

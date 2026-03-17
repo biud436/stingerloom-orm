@@ -232,6 +232,80 @@ describe("Mutation Plugin", () => {
     });
   });
 
+  // ── find() / findOne() — auto-tracking ─────────────────────
+
+  describe("find() and findOne() auto-tracking", () => {
+    it("findOne() should load and auto-track the entity", async () => {
+      const em = createExtendedEm(User);
+      const mockUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      jest.spyOn(em, "findOne").mockResolvedValue(mockUser);
+
+      const mut = em.mutate();
+      const result = await mut.findOne(User, { where: { id: 1 } as any });
+
+      expect(result).toBe(mockUser);
+      expect(mut.tracked()).toEqual([mockUser]);
+    });
+
+    it("findOne() should return null and not track when not found", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(null);
+
+      const mut = em.mutate();
+      const result = await mut.findOne(User, { where: { id: 999 } as any });
+
+      expect(result).toBeNull();
+      expect(mut.tracked()).toHaveLength(0);
+    });
+
+    it("find() should load and auto-track all results", async () => {
+      const em = createExtendedEm(User);
+      const users = [
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+        Object.assign(new User(), { id: 2, name: "Bob", email: "b@c.d" }),
+      ];
+      jest.spyOn(em, "find").mockResolvedValue(users);
+
+      const mut = em.mutate();
+      const result = await mut.find(User, { where: { name: "Alice" } as any });
+
+      expect(result).toEqual(users);
+      expect(mut.tracked()).toHaveLength(2);
+    });
+
+    it("find() should return empty array and not track when no results", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "find").mockResolvedValue([]);
+
+      const mut = em.mutate();
+      const result = await mut.find(User);
+
+      expect(result).toEqual([]);
+      expect(mut.tracked()).toHaveLength(0);
+    });
+
+    it("findOne() + modify + flush should update DB", async () => {
+      const em = createExtendedEm(User);
+      const mockUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      jest.spyOn(em, "findOne").mockResolvedValue(mockUser);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const updateSpy = jest.spyOn(em, "updateMany").mockResolvedValue({ affected: 1 });
+
+      const mut = em.mutate();
+      const user = await mut.findOne(User, { where: { id: 1 } as any });
+      user!.name = "Updated";
+
+      const result = await mut.flush();
+
+      expect(result.updates).toBe(1);
+      expect(updateSpy).toHaveBeenCalledWith(
+        User,
+        { name: "Updated" },
+        { where: { id: 1 } },
+      );
+    });
+  });
+
   // ── dirty() ───────────────────────────────────────────────────
 
   describe("dirty()", () => {

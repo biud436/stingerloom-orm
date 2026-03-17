@@ -56,15 +56,15 @@ export class TodosService {
   /**
    * Batch complete multiple todos using the Mutation Plugin.
    *
-   * Demonstrates: track() → modify → flush() in a single transaction.
+   * Demonstrates: mut.findOne() auto-tracks, then flush() in a single transaction.
    */
   async batchComplete(dto: BatchCompleteDto): Promise<MutationFlushResult> {
     const mut = (this.em as any).mutate();
 
-    // Load and track each todo
+    // Load and auto-track each todo (mut.findOne = em.findOne + track)
     for (const id of dto.ids) {
-      const todo = await this.findOne(id); // throws 404 if not found
-      mut.track(todo);
+      const todo = await mut.findOne(Todo, { where: { id } });
+      if (!todo) throw new NotFoundException(`Todo #${id} not found`);
       todo.completed = true;
     }
 

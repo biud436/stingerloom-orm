@@ -51,9 +51,8 @@ em.extend(mutationPlugin());
 
 const mut = em.mutate();
 
-// 1. Track an existing entity (takes a snapshot)
-const user = await em.findOne(User, { where: { id: 1 } });
-mut.track(user);
+// 1. Load an entity — mut.findOne() auto-tracks it
+const user = await mut.findOne(User, { where: { id: 1 } });
 
 // 2. Modify it — just change properties
 user.name = "Updated Name";
@@ -71,15 +70,18 @@ console.log(result);
 // { updates: 1, inserts: 1, deletes: 1 }
 ```
 
+`mut.findOne()` and `mut.find()` work exactly like their EntityManager counterparts, but automatically track the loaded entities. No manual `track()` calls needed.
+
 `flush()` wraps everything in `em.transaction()`. If any operation fails, the entire batch is rolled back and your mutation state is preserved for retry.
+
+> **Hint** You can still use `mut.track(entity)` directly if you already have an entity instance from elsewhere (e.g., loaded via `em.find()` or passed from another layer).
 
 ### Dirty Checking
 
-After `track()`, the plugin takes a snapshot of the entity's column values. When you call `dirty()` or `flush()`, it compares the current values against the snapshot to detect changes.
+When an entity is tracked (via `mut.findOne()`, `mut.find()`, or `mut.track()`), the plugin takes a snapshot of its column values. When you call `dirty()` or `flush()`, it compares the current values against the snapshot to detect changes.
 
 ```typescript
-const user = await em.findOne(User, { where: { id: 1 } });
-mut.track(user);
+const user = await mut.findOne(User, { where: { id: 1 } });
 
 mut.dirty(); // [] — nothing changed yet
 
@@ -112,8 +114,7 @@ The order is always **updates → inserts → deletes**.
 By default, `flush()` re-snapshots tracked entities after a successful commit. This lets you keep accumulating changes and flushing again.
 
 ```typescript
-const user = await em.findOne(User, { where: { id: 1 } });
-mut.track(user);
+const user = await mut.findOne(User, { where: { id: 1 } });
 
 // First batch
 user.name = "Step 1";
@@ -272,7 +273,9 @@ interface MutationPluginOptions {
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `track` | `(instance: any): this` | Track an entity (takes snapshot) |
+| `findOne` | `<T>(entity, option): Promise<T \| null>` | Load one entity + auto-track |
+| `find` | `<T>(entity, option?): Promise<T[]>` | Load entities + auto-track all |
+| `track` | `(instance: any): this` | Manually track an existing entity |
 | `save` | `(entity, data): this` | Queue an INSERT |
 | `delete` | `(entity, criteria): this` | Queue a DELETE |
 | `tracked` | `(): any[]` | All tracked instances |

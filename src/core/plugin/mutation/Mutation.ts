@@ -2,6 +2,7 @@
 import { ClazzType } from "../../../utils";
 import { COLUMN_TOKEN } from "../../../decorators/Column";
 import { ColumnMetadata } from "../../../scanner/ColumnScanner";
+import { FindOption } from "../../../dialects/FindOption";
 import { PluginContext } from "../PluginContext";
 import { TrackedEntry, InsertEntry, DeleteEntry } from "./MutationEntry";
 import { MutationPreviewEntry, MutationFlushResult, MutationPluginOptions } from "./MutationPreview";
@@ -55,6 +56,38 @@ export class Mutation {
     });
 
     return this;
+  }
+
+  /**
+   * Load a single entity and automatically track it.
+   * Equivalent to `em.findOne()` + `mut.track()`.
+   *
+   * Returns `null` if no matching row is found.
+   */
+  async findOne<T>(
+    entity: ClazzType<T>,
+    option: FindOption<T>,
+  ): Promise<T | null> {
+    const result = await this.ctx.em.findOne(entity, option);
+    if (result !== null) {
+      this.track(result);
+    }
+    return result;
+  }
+
+  /**
+   * Load multiple entities and automatically track them all.
+   * Equivalent to `em.find()` + `mut.track()` for each result.
+   */
+  async find<T>(
+    entity: ClazzType<T>,
+    option: FindOption<T> = {},
+  ): Promise<T[]> {
+    const results = await this.ctx.em.find(entity, option);
+    for (const item of results) {
+      this.track(item);
+    }
+    return results;
   }
 
   /**

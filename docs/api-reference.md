@@ -394,6 +394,8 @@ interface StingerloomPlugin<TApi = {}> {
 
 ```typescript
 class Mutation {
+  findOne<T>(entity: ClazzType<T>, option: FindOption<T>): Promise<T | null>;
+  find<T>(entity: ClazzType<T>, option?: FindOption<T>): Promise<T[]>;
   track(instance: any): this;
   save(entity: ClazzType, data: Record<string, any>): this;
   delete(entity: ClazzType, criteria: Record<string, any>): this;
