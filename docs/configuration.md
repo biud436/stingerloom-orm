@@ -338,6 +338,7 @@ interface DatabaseClientOptions {
   replication?: ReplicationConfig;     // Read Replica settings
   namingStrategy?: NamingStrategy;     // Custom FK/index naming strategy
   tenantStrategy?: "search_path" | "schema_qualified"; // PG tenant query strategy (default: "search_path")
+  plugins?: StingerloomPlugin[];       // Auto-install plugins on register()
 }
 ```
 

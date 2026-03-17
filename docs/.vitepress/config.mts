@@ -40,6 +40,7 @@ export default defineConfig({
         text: "Advanced",
         items: [
           { text: "Advanced Features", link: "/advanced" },
+          { text: "Plugins", link: "/plugins" },
           { text: "Multi-Tenancy", link: "/multi-tenancy" },
           { text: "Production Guide", link: "/production-guide" },
         ],
