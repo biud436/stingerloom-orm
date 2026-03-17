@@ -4,9 +4,10 @@ import { INestApplication, ValidationPipe } from "@nestjs/common";
 import request from "supertest";
 import { AppModule } from "../src/app.module";
 
-describe("Todos (e2e) - npm @stingerloom/orm verification", () => {
+describe("Todos (e2e) - @stingerloom/orm verification", () => {
   let app: INestApplication;
   let createdId: number;
+  let batchIds: number[];
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -82,6 +83,48 @@ describe("Todos (e2e) - npm @stingerloom/orm verification", () => {
   it("GET /todos/:id - 404 for non-existent", async () => {
     await request(app.getHttpServer())
       .get("/todos/999999")
+      .expect(404);
+  });
+
+  // ── Mutation Plugin: batch complete ───────────────────────
+
+  it("PATCH /todos/batch/complete - batch complete multiple todos", async () => {
+    // Create 3 todos
+    const ids: number[] = [];
+    for (const title of ["Task A", "Task B", "Task C"]) {
+      const res = await request(app.getHttpServer())
+        .post("/todos")
+        .send({ title })
+        .expect(201);
+      ids.push(res.body.id);
+    }
+    batchIds = ids;
+
+    // Batch complete
+    const res = await request(app.getHttpServer())
+      .patch("/todos/batch/complete")
+      .send({ ids })
+      .expect(200);
+
+    expect(res.body.updates).toBe(3);
+    expect(res.body.inserts).toBe(0);
+    expect(res.body.deletes).toBe(0);
+  });
+
+  it("PATCH /todos/batch/complete - verify todos are completed", async () => {
+    for (const id of batchIds) {
+      const res = await request(app.getHttpServer())
+        .get(`/todos/${id}`)
+        .expect(200);
+
+      expect(res.body.completed).toBeTruthy();
+    }
+  });
+
+  it("PATCH /todos/batch/complete - 404 for non-existent id", async () => {
+    await request(app.getHttpServer())
+      .patch("/todos/batch/complete")
+      .send({ ids: [999999] })
       .expect(404);
   });
 });

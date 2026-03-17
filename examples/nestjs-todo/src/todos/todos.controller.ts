@@ -17,6 +17,7 @@ import {
 import { TodosService } from "./todos.service";
 import { CreateTodoDto } from "./dto/create-todo.dto";
 import { UpdateTodoDto } from "./dto/update-todo.dto";
+import { BatchCompleteDto } from "./dto/batch-complete.dto";
 
 @ApiTags("todos")
 @Controller("todos")
@@ -29,6 +30,17 @@ export class TodosController {
   @ApiResponse({ status: 400, description: "잘못된 요청 데이터" })
   create(@Body() dto: CreateTodoDto) {
     return this.todosService.create(dto);
+  }
+
+  @Patch("batch/complete")
+  @ApiOperation({
+    summary: "할 일 일괄 완료 (Mutation Plugin)",
+    description: "여러 할 일을 한 트랜잭션으로 일괄 완료합니다. track → modify → flush 패턴을 사용합니다.",
+  })
+  @ApiResponse({ status: 200, description: "일괄 완료 결과 (updates/inserts/deletes 카운트)" })
+  @ApiResponse({ status: 404, description: "ID에 해당하는 할 일을 찾을 수 없음" })
+  batchComplete(@Body() dto: BatchCompleteDto) {
+    return this.todosService.batchComplete(dto);
   }
 
   @Get()

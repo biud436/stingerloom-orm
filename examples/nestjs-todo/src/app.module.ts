@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { mutationPlugin } from "@stingerloom/orm";
 import { TodosModule } from "./todos/todos.module";
 
 @Module({
@@ -16,6 +17,7 @@ import { TodosModule } from "./todos/todos.module";
       entities: [__dirname + "/**/*.entity{.ts,.js}"],
       synchronize: true,
       logging: true,
+      plugins: [mutationPlugin()],
     }),
     TodosModule,
   ],
