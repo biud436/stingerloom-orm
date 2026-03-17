@@ -75,7 +75,6 @@ const em = new EntityManager();
 | `extend` | `<TApi>(plugin: StingerloomPlugin<TApi>): this & TApi` | Install a plugin |
 | `hasPlugin` | `(name: string): boolean` | Check if installed |
 | `getPluginApi` | `<T>(name: string): T \| undefined` | Get plugin API by name |
-| `mutate` | `(): Mutation` | Create a Mutation instance (requires mutation plugin) |
 
 ### Events
 
@@ -386,29 +385,6 @@ interface StingerloomPlugin<TApi = {}> {
   install(context: PluginContext): TApi | void;
   shutdown?(): Promise<void> | void;
 }
-```
-
-### Mutation
-
-[Usage ->](./plugins.md#mutation-plugin)
-
-```typescript
-class Mutation {
-  findOne<T>(entity: ClazzType<T>, option: FindOption<T>): Promise<T | null>;
-  find<T>(entity: ClazzType<T>, option?: FindOption<T>): Promise<T[]>;
-  track(instance: any): this;
-  save(entity: ClazzType, data: Record<string, any>): this;
-  delete(entity: ClazzType, criteria: Record<string, any>): this;
-  tracked(): any[];
-  dirty(): any[];
-  untrack(instance: any): this;
-  clear(): this;
-  size(): { tracked: number; inserts: number; deletes: number };
-  preview(): MutationPreviewEntry[];
-  flush(): Promise<MutationFlushResult>;
-}
-
-interface MutationFlushResult { updates: number; inserts: number; deletes: number; }
 ```
 
 ### ITenantMigrationRunner

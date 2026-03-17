@@ -197,6 +197,22 @@ describe("Mutation Plugin", () => {
       expect(() => mut.track(new NotAnEntity())).toThrow(/not a registered entity/);
     });
 
+    it("should throw when PK value is undefined", () => {
+      const em = createExtendedEm(User);
+      const mut = em.mutate();
+
+      const user = Object.assign(new User(), { id: undefined, name: "Alice", email: "a@b.c" });
+      expect(() => mut.track(user)).toThrow(/PK column "id" is undefined/);
+    });
+
+    it("should throw when PK value is null", () => {
+      const em = createExtendedEm(User);
+      const mut = em.mutate();
+
+      const user = Object.assign(new User(), { id: null, name: "Alice", email: "a@b.c" });
+      expect(() => mut.track(user)).toThrow(/PK column "id" is null/);
+    });
+
     it("should be idempotent (same instance tracked twice)", () => {
       const em = createExtendedEm(User);
       const mut = em.mutate();
@@ -289,7 +305,7 @@ describe("Mutation Plugin", () => {
       const mockUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
       jest.spyOn(em, "findOne").mockResolvedValue(mockUser);
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      const updateSpy = jest.spyOn(em, "updateMany").mockResolvedValue({ affected: 1 });
+      const saveSpy = jest.spyOn(em, "save").mockResolvedValue(mockUser as any);
 
       const mut = em.mutate();
       const user = await mut.findOne(User, { where: { id: 1 } as any });
@@ -298,11 +314,7 @@ describe("Mutation Plugin", () => {
       const result = await mut.flush();
 
       expect(result.updates).toBe(1);
-      expect(updateSpy).toHaveBeenCalledWith(
-        User,
-        { name: "Updated" },
-        { where: { id: 1 } },
-      );
+      expect(saveSpy).toHaveBeenCalledWith(User, mockUser);
     });
   });
 
@@ -492,6 +504,22 @@ describe("Mutation Plugin", () => {
 
       expect(mut.size().deletes).toBe(1);
     });
+
+    it("should throw for non-entity class in save()", () => {
+      class NotAnEntity {}
+      const em = createExtendedEm(User);
+      const mut = em.mutate();
+
+      expect(() => mut.save(NotAnEntity as any, { name: "x" })).toThrow(/not a registered entity/);
+    });
+
+    it("should throw for non-entity class in delete()", () => {
+      class NotAnEntity {}
+      const em = createExtendedEm(User);
+      const mut = em.mutate();
+
+      expect(() => mut.delete(NotAnEntity as any, { id: 1 })).toThrow(/not a registered entity/);
+    });
   });
 
   // ── preview() ─────────────────────────────────────────────────
@@ -551,6 +579,7 @@ describe("Mutation Plugin", () => {
       const transactionSpy = jest.spyOn(em, "transaction").mockImplementation(
         async (cb) => cb(em as any),
       );
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
 
       const mut = em.mutate();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
@@ -563,10 +592,10 @@ describe("Mutation Plugin", () => {
       transactionSpy.mockRestore();
     });
 
-    it("should call em.updateMany() for dirty entities", async () => {
+    it("should call em.save() for dirty tracked entities (supports @Version)", async () => {
       const em = createExtendedEm(User);
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      const updateManySpy = jest.spyOn(em, "updateMany").mockResolvedValue({ affected: 1 });
+      const saveSpy = jest.spyOn(em, "save").mockResolvedValue({} as any);
 
       const mut = em.mutate();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
@@ -575,12 +604,8 @@ describe("Mutation Plugin", () => {
 
       await mut.flush();
 
-      expect(updateManySpy).toHaveBeenCalledWith(
-        User,
-        { name: "Bob" },
-        { where: { id: 1 } },
-      );
-      updateManySpy.mockRestore();
+      expect(saveSpy).toHaveBeenCalledWith(User, user);
+      saveSpy.mockRestore();
     });
 
     it("should call em.save() for queued inserts", async () => {
@@ -616,13 +641,11 @@ describe("Mutation Plugin", () => {
       const callOrder: string[] = [];
 
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      jest.spyOn(em, "updateMany").mockImplementation(async () => {
-        callOrder.push("update");
-        return { affected: 1 };
-      });
-      jest.spyOn(em, "save").mockImplementation(async () => {
-        callOrder.push("insert");
-        return {} as any;
+      // save() is called for both updates (tracked entities) and inserts (queued data).
+      // Distinguish by checking if the data has an assigned PK (update) or not (insert).
+      jest.spyOn(em, "save").mockImplementation(async (_entity: any, data: any) => {
+        callOrder.push(data.id !== undefined ? "update" : "insert");
+        return data;
       });
       jest.spyOn(em, "delete").mockImplementation(async () => {
         callOrder.push("delete");
@@ -646,7 +669,7 @@ describe("Mutation Plugin", () => {
     it("should re-snapshot when retainAfterFlush is true (default)", async () => {
       const em = createExtendedEm(User);
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      jest.spyOn(em, "updateMany").mockResolvedValue({ affected: 1 });
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
 
       const mut = em.mutate();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
@@ -660,11 +683,35 @@ describe("Mutation Plugin", () => {
       expect(mut.tracked()).toEqual([user]);
     });
 
+    it("should sync auto-updated columns (version, timestamps) back to tracked instance", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      // Simulate DB returning updated version/timestamp
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id,
+        name: data.name,
+        email: data.email,
+        // Simulate a @Version column increment (if the entity had one)
+      }));
+
+      const mut = em.mutate();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      user.name = "Bob";
+
+      await mut.flush();
+
+      // The tracked instance should have the values returned by save()
+      expect(user.name).toBe("Bob");
+      expect(user.email).toBe("a@b.c");
+    });
+
     it("should clear tracked state when retainAfterFlush is false", async () => {
       const em = createEmWithEntities(User);
       const extended = em.extend(mutationPlugin({ retainAfterFlush: false }));
       jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
-      jest.spyOn(extended, "updateMany").mockResolvedValue({ affected: 1 });
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
 
       const mut = extended.mutate();
       const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
@@ -696,8 +743,7 @@ describe("Mutation Plugin", () => {
     it("should return correct MutationFlushResult counts", async () => {
       const em = createExtendedEm(User, Comment, Tag);
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      jest.spyOn(em, "updateMany").mockResolvedValue({ affected: 1 });
-      jest.spyOn(em, "save").mockResolvedValue({} as any);
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
       jest.spyOn(em, "delete").mockResolvedValue({ affected: 1 });
 
       const mut = em.mutate();
@@ -718,6 +764,21 @@ describe("Mutation Plugin", () => {
       const transactionSpy = jest.spyOn(em, "transaction");
 
       const mut = em.mutate();
+      const result = await mut.flush();
+
+      expect(result).toEqual({ updates: 0, inserts: 0, deletes: 0 });
+      expect(transactionSpy).not.toHaveBeenCalled();
+    });
+
+    it("should be a no-op when tracked entities are not dirty", async () => {
+      const em = createExtendedEm(User);
+      const transactionSpy = jest.spyOn(em, "transaction");
+
+      const mut = em.mutate();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      // no changes to user
+
       const result = await mut.flush();
 
       expect(result).toEqual({ updates: 0, inserts: 0, deletes: 0 });
@@ -764,8 +825,7 @@ describe("Mutation Plugin", () => {
     it("should handle tracked updates + queued inserts + queued deletes", async () => {
       const em = createExtendedEm(User, Comment, Tag);
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      const updateManySpy = jest.spyOn(em, "updateMany").mockResolvedValue({ affected: 1 });
-      const saveSpy = jest.spyOn(em, "save").mockResolvedValue({} as any);
+      const saveSpy = jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
       const deleteSpy = jest.spyOn(em, "delete").mockResolvedValue({ affected: 1 });
 
       const mut = em.mutate();
@@ -782,8 +842,7 @@ describe("Mutation Plugin", () => {
       const result = await mut.flush();
 
       expect(result).toEqual({ updates: 1, inserts: 1, deletes: 1 });
-      expect(updateManySpy).toHaveBeenCalledTimes(1);
-      expect(saveSpy).toHaveBeenCalledTimes(1);
+      expect(saveSpy).toHaveBeenCalledTimes(2); // 1 update + 1 insert
       expect(deleteSpy).toHaveBeenCalledTimes(1);
     });
   });

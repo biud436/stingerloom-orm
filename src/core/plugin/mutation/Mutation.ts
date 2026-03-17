@@ -115,6 +115,7 @@ export class Mutation {
    * Queue an INSERT operation.
    */
   save(entityClass: ClazzType<any>, data: Record<string, any>): this {
+    this.validateEntity(entityClass);
     this.insertQueue.push({ entity: entityClass, data });
     return this;
   }
@@ -123,6 +124,7 @@ export class Mutation {
    * Queue a DELETE operation.
    */
   delete(entityClass: ClazzType<any>, criteria: Record<string, any>): this {
+    this.validateEntity(entityClass);
     this.deleteQueue.push({ entity: entityClass, criteria });
     return this;
   }
@@ -239,10 +241,8 @@ export class Mutation {
    * Order: updates → inserts → deletes.
    */
   async flush(): Promise<MutationFlushResult> {
-    const preview = this.preview();
-
-    // No-op if nothing to do
-    if (preview.length === 0) {
+    // No-op if nothing to do (avoids unnecessary diff computation)
+    if (!this.hasPendingWork()) {
       return { updates: 0, inserts: 0, deletes: 0 };
     }
 
@@ -256,6 +256,8 @@ export class Mutation {
     try {
       await em.transaction(async (txEm) => {
         // 1. Updates — dirty tracked entities
+        //    Uses em.save() to get @Version optimistic locking,
+        //    lifecycle hooks, and EntitySubscriber events.
         for (const entry of this.trackedEntries.values()) {
           const diff = this.strategy.diff(
             entry.instance,
@@ -264,8 +266,16 @@ export class Mutation {
             entry.pkColumns,
           );
           if (diff) {
-            const where = this.buildPkWhere(entry);
-            await txEm.updateMany(entry.entity, diff, { where });
+            const updated = await txEm.save(entry.entity, entry.instance);
+            // Sync auto-updated columns back (version, timestamps, etc.)
+            if (updated) {
+              for (const col of entry.columnNames) {
+                const freshValue = (updated as any)[col];
+                if (freshValue !== undefined) {
+                  entry.instance[col] = freshValue;
+                }
+              }
+            }
             result.updates++;
           }
         }
@@ -356,14 +366,44 @@ export class Mutation {
 
   /**
    * Build an identity key: "EntityName:pk1=v1,pk2=v2"
+   * Throws if any PK value is undefined/null (unsaved entity).
    */
   private buildIdentityKey(
     entityClass: ClazzType<any>,
     instance: any,
     pkColumns: string[],
   ): string {
-    const pkParts = pkColumns.map((pk) => `${pk}=${instance[pk]}`).join(",");
+    const pkParts = pkColumns.map((pk) => {
+      const value = instance[pk];
+      if (value === undefined || value === null) {
+        throw new Error(
+          `Cannot track instance of "${entityClass.name}": PK column "${pk}" is ${value}. ` +
+          `Only persisted entities with assigned PK values can be tracked. ` +
+          `Use save() to queue new entities for insertion instead.`,
+        );
+      }
+      return `${pk}=${value}`;
+    }).join(",");
     return `${entityClass.name}:${pkParts}`;
+  }
+
+  /**
+   * Check if there are any pending operations (dirty entities, queued inserts/deletes).
+   */
+  private hasPendingWork(): boolean {
+    if (this.insertQueue.length > 0 || this.deleteQueue.length > 0) {
+      return true;
+    }
+    for (const entry of this.trackedEntries.values()) {
+      const diff = this.strategy.diff(
+        entry.instance,
+        entry.snapshot,
+        entry.columnNames,
+        entry.pkColumns,
+      );
+      if (diff) return true;
+    }
+    return false;
   }
 
   private buildPkWhere(entry: TrackedEntry): Record<string, any> {

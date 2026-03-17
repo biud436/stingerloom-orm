@@ -451,13 +451,11 @@ describe.each(drivers)("[Integration] $label: Mutation Plugin", ({ type, options
       mut.track(user);
       user.name = "ShouldRollback";
 
-      // 존재하지 않는 테이블에 INSERT → 에러 유발
-      class FakeEntity {}
-      mut.save(FakeEntity as any, { name: "will fail" });
+      // NOT NULL 제약 위반으로 INSERT 에러 유발 (name은 NOT NULL)
+      mut.save(testEntity.EntityClass, { name: null as any, age: null as any });
 
       try {
         await mut.flush();
-        // flush가 성공하면 안 됨
         fail("flush should have thrown");
       } catch {
         // expected

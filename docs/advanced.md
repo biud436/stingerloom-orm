@@ -213,7 +213,7 @@ Read Replica, Connection Pooling, Connection Retry, Query Timeout, and Shutdown 
 
 ## Next Steps
 
-- [Plugins](./plugins.md) — Plugin system and the Mutation Plugin
+- [Plugins](./plugins.md) — Plugin system and custom plugin authoring
 - [Configuration Guide](./configuration.md) — All options at a glance
 - [Multi-Tenancy](./multi-tenancy.md) — Per-tenant data isolation
 - [API Reference](./api-reference.md) — Quick method signature lookup
