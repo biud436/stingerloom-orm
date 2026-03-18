@@ -9,7 +9,26 @@
  *   INTEGRATION_TEST_POSTGRES=false → PostgreSQL 테스트 비활성화
  */
 
+import * as path from "path";
+import * as fs from "fs";
 import { DatabaseClientOptions } from "../../../src/core/DatabaseClientOptions";
+
+/** Load key=value pairs from examples/nestjs-cats/.env */
+function loadEnvFile(): Record<string, string> {
+  const envPath = path.resolve(__dirname, "../../../examples/nestjs-cats/.env");
+  const result: Record<string, string> = {};
+  try {
+    const content = fs.readFileSync(envPath, "utf-8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx === -1) continue;
+      result[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
+    }
+  } catch {}
+  return result;
+}
 
 export type TestDriverType = "mysql" | "postgres";
 
@@ -56,13 +75,15 @@ export function getTestDrivers(): TestDriverConfig[] {
  * 환경 변수 또는 기본값을 사용합니다.
  */
 export function getMySqlConfig(): Partial<DatabaseClientOptions> {
+  // Load from .env if env vars are not set
+  const env = loadEnvFile();
   return {
     type: "mysql",
-    host: process.env.DB_HOST || "localhost",
-    port: parseInt(process.env.DB_PORT || "3306", 10),
-    username: process.env.DB_USER || "root",
-    password: process.env.DB_PASSWORD || "password",
-    database: process.env.DB_NAME || "fastify",
+    host: process.env.DB_HOST || env.DB_HOST || "localhost",
+    port: parseInt(process.env.DB_PORT || env.DB_PORT || "3306", 10),
+    username: process.env.DB_USER || env.DB_USER || "root",
+    password: process.env.DB_PASSWORD || env.DB_PASSWORD || "password",
+    database: process.env.DB_NAME || env.DB_NAME || "fastify",
   };
 }
 
