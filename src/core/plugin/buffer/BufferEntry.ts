@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../../../utils";
+import { CollectionSnapshot } from "./CollectionTracker";
 
 /**
  * A tracked entity with its snapshot for dirty checking.
@@ -10,6 +11,8 @@ export interface TrackedEntry {
   snapshot: Record<string, any>;
   columnNames: string[];
   pkColumns: string[];
+  /** Collection snapshots for O2M/M2M diff tracking */
+  collectionSnapshots?: CollectionSnapshot[];
 }
 
 /**
@@ -26,4 +29,16 @@ export interface InsertEntry {
 export interface DeleteEntry {
   entity: ClazzType<any>;
   criteria: Record<string, any>;
+}
+
+/**
+ * An instance-based INSERT entry queued via persist().
+ * Holds a reference to the original instance so that generated PK
+ * and auto-columns can be written back after flush.
+ */
+export interface PersistEntry {
+  entity: ClazzType<any>;
+  instance: any;
+  columnNames: string[];
+  pkColumns: string[];
 }
