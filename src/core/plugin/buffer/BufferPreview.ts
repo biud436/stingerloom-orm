@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../../../utils";
-import { WhereClause } from "../../../dialects/FindOption";
 
 /**
  * A preview entry describing an operation that will be executed on flush.
@@ -62,16 +61,8 @@ export enum FlushMode {
 
 // ── Pessimistic Locking ─────────────────────────────────────────
 
-/**
- * Pessimistic lock modes for buffer queries.
- *
- * - PESSIMISTIC_READ:  SELECT ... FOR SHARE (MySQL) / FOR KEY SHARE (PostgreSQL)
- * - PESSIMISTIC_WRITE: SELECT ... FOR UPDATE
- */
-export enum LockMode {
-  PESSIMISTIC_READ = "PESSIMISTIC_READ",
-  PESSIMISTIC_WRITE = "PESSIMISTIC_WRITE",
-}
+// Re-export LockMode from FindOption (canonical location) for backward compatibility.
+export { LockMode } from "../../../dialects/FindOption";
 
 // ── Flush Events ────────────────────────────────────────────────
 

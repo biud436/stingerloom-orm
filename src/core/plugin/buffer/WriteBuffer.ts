@@ -13,7 +13,7 @@ import { PluginContext } from "../PluginContext";
 import { TrackedEntry, InsertEntry, DeleteEntry, PersistEntry } from "./BufferEntry";
 import {
   BufferPreviewEntry, BufferFlushResult, BufferPluginOptions, BufferChangeset,
-  ChangeTrackingPolicy, FlushMode, LockMode,
+  ChangeTrackingPolicy, FlushMode,
   FlushEventType, FlushEvent, FlushEventListener,
   BulkUpdateEntry, BulkDeleteEntry,
 } from "./BufferPreview";
@@ -148,14 +148,12 @@ export class WriteBuffer {
    */
   async findOne<T>(
     entity: ClazzType<T>,
-    option: FindOption<T> & { lock?: LockMode } = {},
+    option: FindOption<T> = {},
   ): Promise<T | null> {
     await this.autoFlushIfNeeded();
-    const { lock, ...findOption } = option;
-    const result = await this.ctx.em.findOne(entity, findOption as FindOption<T>);
+    const result = await this.ctx.em.findOne(entity, option);
     if (result === null) return null;
     const tracked = this.resolveIdentity(entity, result) as T;
-    if (lock) this.applyLock(tracked, lock);
     return tracked;
   }
 
@@ -169,14 +167,12 @@ export class WriteBuffer {
    */
   async find<T>(
     entity: ClazzType<T>,
-    option: FindOption<T> & { lock?: LockMode } = {},
+    option: FindOption<T> = {},
   ): Promise<T[]> {
     await this.autoFlushIfNeeded();
-    const { lock, ...findOption } = option;
-    const results = await this.ctx.em.find(entity, findOption as FindOption<T>);
+    const results = await this.ctx.em.find(entity, option);
     return results.map((item) => {
       const tracked = this.resolveIdentity(entity, item) as T;
-      if (lock) this.applyLock(tracked, lock);
       return tracked;
     });
   }
@@ -798,9 +794,6 @@ export class WriteBuffer {
       const flushFn = async (txEm: EntityManager) => {
         const visited = new Set<any>();
 
-        // 0. Acquire pessimistic locks
-        await this.acquireLocks(txEm);
-
         // 1. Updates — dirty tracked entities (topological order)
         const sortedTracked = sortForInsert(
           [...this.trackedEntries.values()].filter(
@@ -901,25 +894,38 @@ export class WriteBuffer {
           await this.emitFlushEvent("postDelete", del.entity, undefined, undefined, del.criteria);
         }
 
-        // 7. Bulk UPDATE
+        // 7. Bulk UPDATE — sync tracked entries after execution
         for (const bu of bulkUpdatesCopy) {
           await this.executeBulkUpdate(txEm, bu);
           result.updates++;
+          this.syncTrackedAfterBulkUpdate(bu);
         }
 
-        // 8. Bulk DELETE
+        // 8. Bulk DELETE — evict matching tracked entries after execution
         for (const bd of bulkDeletesCopy) {
           await this.executeBulkDelete(txEm, bd);
           result.deletes++;
+          this.evictTrackedAfterBulkDelete(bd);
         }
       };
 
-      // Nested UoW → use SAVEPOINT; top-level → normal transaction
-      if (this.parent) {
-        await this.flushNested(em, flushFn);
-      } else {
-        await em.transaction(async (txEm) => flushFn(txEm));
-      }
+      // Both nested and top-level flush run inside em.transaction().
+      // For nested UoW, a SAVEPOINT is created inside the transaction
+      // so that it runs on the same connection as the parent.
+      await em.transaction(async (txEm) => {
+        if (this.parent) {
+          const spName = `sp_nested_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          try {
+            await txEm.query(`SAVEPOINT ${spName}`);
+            await flushFn(txEm);
+          } catch (error) {
+            await txEm.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+            throw error;
+          }
+        } else {
+          await flushFn(txEm);
+        }
+      });
 
       // Success — clear queues
       this.insertQueue.length = 0;
@@ -1088,11 +1094,6 @@ export class WriteBuffer {
   /**
    * Apply a pessimistic lock to a tracked entity for acquisition during flush.
    */
-  private applyLock(instance: any, mode: LockMode): void {
-    const entry = this.trackedEntries.get(instance);
-    if (entry) entry.lockMode = mode;
-  }
-
   private buildPkWhere(entry: TrackedEntry): Record<string, any> {
     const where: Record<string, any> = {};
     for (const pk of entry.pkColumns) {
@@ -1733,36 +1734,6 @@ export class WriteBuffer {
     }
   }
 
-  // ── Pessimistic Locking ────────────────────────────────────────
-
-  /**
-   * Acquire pessimistic locks for all tracked entities that have a lockMode set.
-   * Must be called within a transaction.
-   */
-  private async acquireLocks(txEm: EntityManager): Promise<void> {
-    for (const entry of this.trackedEntries.values()) {
-      if (!entry.lockMode) continue;
-
-      const entityMeta = Reflect.getMetadata(ENTITY_TOKEN, entry.entity);
-      const tableName = entityMeta?.name || entry.entity.name;
-      const wrappedTable = this.ctx.wrapTable(tableName);
-
-      const where: string[] = [];
-      const params: any[] = [];
-      for (const pk of entry.pkColumns) {
-        where.push(`${this.ctx.wrap(pk)} = ?`);
-        params.push(entry.instance[pk]);
-      }
-
-      const lockSuffix = entry.lockMode === LockMode.PESSIMISTIC_WRITE
-        ? "FOR UPDATE"
-        : this.ctx.isMySqlFamily() ? "LOCK IN SHARE MODE" : "FOR SHARE";
-
-      const sql = `SELECT 1 FROM ${wrappedTable} WHERE ${where.join(" AND ")} ${lockSuffix}`;
-      await txEm.query(sql, params);
-    }
-  }
-
   // ── Bulk DML ───────────────────────────────────────────────────
 
   /**
@@ -1817,23 +1788,55 @@ export class WriteBuffer {
     await txEm.query(sql, params);
   }
 
-  // ── Nested UoW (Savepoint) ─────────────────────────────────────
+  /**
+   * After a bulk UPDATE, sync tracked in-memory instances that match
+   * the WHERE clause: apply SET values and re-snapshot.
+   */
+  private syncTrackedAfterBulkUpdate(entry: BulkUpdateEntry): void {
+    for (const tracked of this.trackedEntries.values()) {
+      if (tracked.entity !== entry.entity) continue;
+      if (!this.matchesWhere(tracked.instance, entry.where)) continue;
+      for (const [col, val] of Object.entries(entry.set)) {
+        tracked.instance[col] = val;
+      }
+      tracked.snapshot = this.strategy.snapshot(tracked.instance, tracked.columnNames);
+    }
+  }
 
   /**
-   * Execute flush within a SAVEPOINT for nested UoW.
+   * After a bulk DELETE, evict tracked instances that match the WHERE clause
+   * from identityMap, trackedEntries, and stateMap.
    */
-  private async flushNested(
-    em: EntityManager,
-    flushFn: (txEm: EntityManager) => Promise<void>,
-  ): Promise<void> {
-    const spName = `sp_nested_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    try {
-      await em.query(`SAVEPOINT ${spName}`);
-      await flushFn(em);
-    } catch (error) {
-      await em.query(`ROLLBACK TO SAVEPOINT ${spName}`);
-      throw error;
+  private evictTrackedAfterBulkDelete(entry: BulkDeleteEntry): void {
+    const toEvict: any[] = [];
+    for (const tracked of this.trackedEntries.values()) {
+      if (tracked.entity !== entry.entity) continue;
+      if (!this.matchesWhere(tracked.instance, entry.where)) continue;
+      toEvict.push(tracked.instance);
     }
+    for (const instance of toEvict) {
+      this.trackedEntries.delete(instance);
+      this.stateMap.set(instance, EntityState.DETACHED);
+      // Remove from identityMap
+      const tracked = this.trackedEntries.get(instance);
+      // Instance already removed from trackedEntries; scan identityMap
+      for (const [key, val] of this.identityMap.entries()) {
+        if (val === instance) {
+          this.identityMap.delete(key);
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * Check if an entity instance matches a simple WHERE clause (equality check).
+   */
+  private matchesWhere(instance: any, where: Record<string, any>): boolean {
+    for (const [col, val] of Object.entries(where)) {
+      if (instance[col] !== val) return false;
+    }
+    return true;
   }
 
   // ── Proxy Lazy Loading ─────────────────────────────────────────

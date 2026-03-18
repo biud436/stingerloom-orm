@@ -3,6 +3,17 @@ import { IOrderBy } from "./IOrderBy";
 import { Sql } from "sql-template-tag";
 
 /**
+ * Pessimistic lock modes for SELECT queries.
+ *
+ * - PESSIMISTIC_READ:  SELECT ... FOR SHARE (PostgreSQL) / LOCK IN SHARE MODE (MySQL)
+ * - PESSIMISTIC_WRITE: SELECT ... FOR UPDATE
+ */
+export enum LockMode {
+  PESSIMISTIC_READ = "PESSIMISTIC_READ",
+  PESSIMISTIC_WRITE = "PESSIMISTIC_WRITE",
+}
+
+/**
  * Type-safe relations type. Accepts entity property keys or arbitrary strings
  * (for nested relations like "author.profile").
  */
@@ -112,4 +123,13 @@ export type FindOption<T> = {
    * 쓰기 직후 최신 데이터를 읽어야 하는 경우 등에 사용합니다.
    */
   useMaster?: boolean;
+
+  /**
+   * Pessimistic lock mode. When set, the generated SELECT query includes
+   * a locking clause (FOR UPDATE / FOR SHARE / LOCK IN SHARE MODE).
+   *
+   * - `PESSIMISTIC_WRITE`: `SELECT ... FOR UPDATE`
+   * - `PESSIMISTIC_READ`: `SELECT ... FOR SHARE` (PostgreSQL) / `LOCK IN SHARE MODE` (MySQL)
+   */
+  lock?: LockMode;
 };

@@ -878,6 +878,14 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      // Pessimistic lock suffix
+      if (findOption.lock) {
+        const lockSuffix = findOption.lock === "PESSIMISTIC_WRITE"
+          ? "FOR UPDATE"
+          : this.isMySqlFamily() ? "LOCK IN SHARE MODE" : "FOR SHARE";
+        qb.appendSql(raw(lockSuffix));
+      }
+
       const resultQuery = qb.build();
 
       // per-query 또는 connection-level 타임아웃 적용

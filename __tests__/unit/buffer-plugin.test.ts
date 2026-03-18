@@ -3335,47 +3335,35 @@ describe("Buffer Plugin", () => {
       expect(buf.tracked()).toHaveLength(1);
     });
 
-    it("should execute FOR UPDATE during flush", async () => {
+    it("should pass lock option to em.findOne at read time (FOR UPDATE)", async () => {
       const em = createExtendedEm(User);
-      jest.spyOn(em, "findOne").mockResolvedValue(
+      const findOneSpy = jest.spyOn(em, "findOne").mockResolvedValue(
         Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
       );
-      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
-      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
 
       const buf = em.buffer();
-      const user = await buf.findOne(User, { where: { id: 1 } as any, lock: LockMode.PESSIMISTIC_WRITE });
-      (user as any).name = "Bob";
+      await buf.findOne(User, { where: { id: 1 } as any, lock: LockMode.PESSIMISTIC_WRITE });
 
-      await buf.flush();
-
-      // Should have executed a FOR UPDATE query
-      expect(querySpy).toHaveBeenCalledWith(
-        expect.stringContaining("FOR UPDATE"),
-        expect.any(Array),
+      // Lock option should be forwarded to em.findOne (generates FOR UPDATE SQL)
+      expect(findOneSpy).toHaveBeenCalledWith(
+        User,
+        expect.objectContaining({ lock: LockMode.PESSIMISTIC_WRITE }),
       );
     });
 
-    it("should execute FOR SHARE / LOCK IN SHARE MODE for PESSIMISTIC_READ", async () => {
+    it("should pass lock option to em.findOne at read time (PESSIMISTIC_READ)", async () => {
       const em = createExtendedEm(User);
-      jest.spyOn(em, "findOne").mockResolvedValue(
+      const findOneSpy = jest.spyOn(em, "findOne").mockResolvedValue(
         Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
       );
-      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
-      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
 
       const buf = em.buffer();
-      const user = await buf.findOne(User, { where: { id: 1 } as any, lock: LockMode.PESSIMISTIC_READ });
-      (user as any).name = "Bob";
+      await buf.findOne(User, { where: { id: 1 } as any, lock: LockMode.PESSIMISTIC_READ });
 
-      await buf.flush();
-
-      // Should have a lock query (LOCK IN SHARE MODE for MySQL, FOR SHARE for others)
-      expect(querySpy).toHaveBeenCalledWith(
-        expect.stringMatching(/LOCK IN SHARE MODE|FOR SHARE/),
-        expect.any(Array),
+      // Lock option should be forwarded to em.findOne (generates FOR SHARE SQL)
+      expect(findOneSpy).toHaveBeenCalledWith(
+        User,
+        expect.objectContaining({ lock: LockMode.PESSIMISTIC_READ }),
       );
     });
   });
@@ -3621,6 +3609,105 @@ describe("Buffer Plugin", () => {
       expect(querySpy).toHaveBeenCalledWith(
         expect.stringContaining("ROLLBACK TO SAVEPOINT"),
       );
+    });
+
+    it("nested flush SAVEPOINT should run inside em.transaction (same connection)", async () => {
+      const em = createExtendedEm(User);
+      const callOrder: string[] = [];
+
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => {
+        callOrder.push("transaction:start");
+        const result = await cb(em as any);
+        callOrder.push("transaction:end");
+        return result;
+      });
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: data.id ?? 1,
+      }));
+      jest.spyOn(em, "query").mockImplementation(async (sqlQuery: any) => {
+        if (typeof sqlQuery === "string" && sqlQuery.startsWith("SAVEPOINT")) {
+          callOrder.push("savepoint");
+        }
+        return [];
+      });
+
+      const buf = em.buffer();
+      const nested = buf.beginNested();
+      nested.persist(Object.assign(new User(), { name: "A", email: "a@b.c" }));
+
+      await nested.flush();
+
+      // SAVEPOINT must be inside the transaction
+      expect(callOrder).toEqual(["transaction:start", "savepoint", "transaction:end"]);
+    });
+  });
+
+  // ── Fix 2: Bulk DML identity map sync ────────────────────────────
+
+  describe("bulk DML identity map sync", () => {
+    it("updateMany should sync tracked entity values and re-snapshot", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      const user = await buf.findOne(User, { where: { id: 1 } as any });
+
+      buf.updateMany(User, { where: { id: 1 }, set: { name: "Updated" } });
+      await buf.flush();
+
+      // In-memory value should be synced
+      expect((user as any).name).toBe("Updated");
+
+      // Should not be dirty after sync (snapshot was refreshed)
+      const preview = buf.preview();
+      const updateEntries = preview.filter((e: any) => e.action === "update");
+      expect(updateEntries).toHaveLength(0);
+    });
+
+    it("deleteMany should evict matching tracked entities from identity map", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      await buf.findOne(User, { where: { id: 1 } as any });
+      expect(buf.tracked()).toHaveLength(1);
+
+      buf.deleteMany(User, { id: 1 });
+      await buf.flush();
+
+      // Entity should be evicted from tracked entries
+      expect(buf.tracked()).toHaveLength(0);
+    });
+
+    it("updateMany should not affect non-matching tracked entities", async () => {
+      const em = createExtendedEm(User);
+      const findSpy = jest.spyOn(em, "findOne");
+      findSpy.mockResolvedValueOnce(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+      findSpy.mockResolvedValueOnce(
+        Object.assign(new User(), { id: 2, name: "Bob", email: "b@b.c" }),
+      );
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      const user1 = await buf.findOne(User, { where: { id: 1 } as any });
+      const user2 = await buf.findOne(User, { where: { id: 2 } as any });
+
+      buf.updateMany(User, { where: { id: 1 }, set: { name: "Changed" } });
+      await buf.flush();
+
+      expect((user1 as any).name).toBe("Changed");
+      expect((user2 as any).name).toBe("Bob"); // unchanged
     });
   });
 });

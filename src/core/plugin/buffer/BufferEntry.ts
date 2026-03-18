@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../../../utils";
 import { CollectionSnapshot } from "./CollectionTracker";
-import { LockMode } from "./BufferPreview";
 
 /**
  * A tracked entity with its snapshot for dirty checking.
@@ -14,8 +13,6 @@ export interface TrackedEntry {
   pkColumns: string[];
   /** Collection snapshots for O2M/M2M diff tracking */
   collectionSnapshots?: CollectionSnapshot[];
-  /** Pessimistic lock mode to acquire during flush */
-  lockMode?: LockMode;
   /** When true, skip dirty checking on flush (immutable entity) */
   readOnly?: boolean;
   /** Explicitly marked dirty (for DEFERRED_EXPLICIT tracking) */

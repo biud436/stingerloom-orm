@@ -165,14 +165,13 @@ await buf.flush();
 
 `flush()` executes all pending operations in a single transaction. The execution order is:
 
-1. Acquire pessimistic locks (if any)
-2. UPDATEs (dirty tracked entities)
-3. INSERTs (persisted instances, then queued saves)
-4. Collection diffs (O2M orphan removal, M2M pivot sync)
-5. Cascade DELETEs (children first)
-6. DELETEs (reverse topological order)
-7. Bulk UPDATEs
-8. Bulk DELETEs
+1. UPDATEs (dirty tracked entities)
+2. INSERTs (persisted instances, then queued saves)
+3. Collection diffs (O2M orphan removal, M2M pivot sync)
+4. Cascade DELETEs (children first)
+5. DELETEs (reverse topological order)
+6. Bulk UPDATEs (tracked entities are synced in-memory after execution)
+7. Bulk DELETEs (matching tracked entities are evicted from identity map)
 
 If any operation fails, the entire transaction is rolled back. The queues are preserved so you can fix the issue and retry.
 
@@ -264,23 +263,64 @@ You can override a lazy property by assigning directly — the proxy is replaced
 post.comments = [myComment]; // no DB query, proxy is gone
 ```
 
+### Important: Promise behavior on first access
+
+Due to JavaScript language constraints, property getters are synchronous. A lazy proxy's first access returns a **Promise**, not the entity itself. You must `await` it:
+
+```typescript
+// WRONG — post.author is a Promise on first access
+console.log(post.author.name); // undefined!
+
+// CORRECT — await the first access
+const author = await post.author;
+console.log(author.name); // "Alice"
+```
+
+After the first `await`, the proxy replaces itself with the resolved value. Subsequent accesses are synchronous:
+
+```typescript
+const author = await post.author;  // DB query, resolves Promise
+console.log(post.author.name);     // "Alice" — no Promise, no query
+```
+
+**Three patterns to avoid the Promise pitfall:**
+
+1. **Eager load via `relations`** — no proxy, no Promise:
+   ```typescript
+   const post = await buf.findOne(Post, {
+     where: { id: 1 },
+     relations: ["author"],
+   });
+   console.log(post.author.name); // works immediately
+   ```
+
+2. **Always `await` the first access:**
+   ```typescript
+   const author = await post.author;
+   ```
+
+3. **Access after prior resolution** — if any code path already awaited the relation, subsequent synchronous access is safe.
+
 ## Pessimistic Locking
 
-To prevent concurrent modifications, you can request a database lock when loading entities. The lock is acquired during `flush()` within the transaction.
+To prevent concurrent modifications, you can request a database lock when loading entities. The lock clause (`FOR UPDATE` / `FOR SHARE`) is included in the SELECT query itself, so the row is locked at read time — not deferred to flush.
 
 ```typescript
 import { LockMode } from "@stingerloom/orm";
 
 const buf = em.buffer();
 
+// SELECT ... FOR UPDATE — lock is acquired NOW
 const user = await buf.findOne(User, {
   where: { id: 1 },
-  lock: LockMode.PESSIMISTIC_WRITE, // SELECT ... FOR UPDATE
+  lock: LockMode.PESSIMISTIC_WRITE,
 });
 
 user.balance -= 100;
-await buf.flush(); // lock acquired, then UPDATE, then COMMIT
+await buf.flush(); // UPDATE within transaction, then COMMIT releases lock
 ```
+
+The `lock` option also works with `em.findOne()` and `em.find()` directly (without the buffer).
 
 | Mode | SQL | Use case |
 |------|-----|----------|
