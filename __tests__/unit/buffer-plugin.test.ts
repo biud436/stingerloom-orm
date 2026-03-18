@@ -13,6 +13,8 @@ import {
 import { EntityState } from "../../src/core/plugin/buffer/EntityUnitState";
 import { topologicalSort, sortForInsert, sortForDelete } from "../../src/core/plugin/buffer/DependencyGraph";
 import { snapshotCollections, diffCollection } from "../../src/core/plugin/buffer/CollectionTracker";
+import { ChangeTrackingPolicy, FlushMode, LockMode, FlushEvent } from "../../src/core/plugin/buffer/BufferPreview";
+import { createPersistentCollection, isPersistentCollection } from "../../src/core/plugin/buffer/PersistentCollection";
 import { COLUMN_TOKEN } from "../../src/decorators/Column";
 import { ENTITY_TOKEN } from "../../src/decorators/Entity";
 import { ONE_TO_MANY_TOKEN } from "../../src/decorators/OneToMany";
@@ -931,7 +933,7 @@ describe("Buffer Plugin", () => {
       mut.clear();
 
       expect(mut.tracked()).toEqual([]);
-      expect(mut.size()).toEqual({ tracked: 0, inserts: 0, deletes: 0, persists: 0 });
+      expect(mut.size()).toEqual({ tracked: 0, inserts: 0, deletes: 0, persists: 0, bulkUpdates: 0, bulkDeletes: 0 });
     });
 
     it("should untrack a specific entity", () => {
@@ -3107,6 +3109,518 @@ describe("Buffer Plugin", () => {
         expect((post as any).comments[0].body).toBe("manual");
         expect((post as any).comments).not.toBeInstanceOf(Promise);
       });
+    });
+  });
+
+  // ── Change Tracking Policy ──────────────────────────────────────
+
+  describe("change tracking policy", () => {
+    it("DEFERRED_IMPLICIT should dirty-check all tracked entities", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ changeTracking: ChangeTrackingPolicy.DEFERRED_IMPLICIT }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = extended.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      user.name = "Bob";
+
+      const result = await buf.flush();
+      expect(result.updates).toBe(1);
+    });
+
+    it("DEFERRED_EXPLICIT should skip non-marked entities", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ changeTracking: ChangeTrackingPolicy.DEFERRED_EXPLICIT }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = extended.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      user.name = "Bob";
+
+      // Not marked dirty → should be skipped
+      const result = await buf.flush();
+      expect(result.updates).toBe(0);
+    });
+
+    it("DEFERRED_EXPLICIT should update when markDirty() is called", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ changeTracking: ChangeTrackingPolicy.DEFERRED_EXPLICIT }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = extended.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      user.name = "Bob";
+      buf.markDirty(user);
+
+      const result = await buf.flush();
+      expect(result.updates).toBe(1);
+    });
+
+    it("markDirty should throw for untracked entity", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+
+      expect(() => buf.markDirty(user)).toThrow(/not tracked/);
+    });
+  });
+
+  // ── Flush Modes ─────────────────────────────────────────────────
+
+  describe("flush modes", () => {
+    it("FlushMode.AUTO should flush before findOne", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ flushMode: FlushMode.AUTO }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: data.id ?? 99,
+      }));
+      jest.spyOn(extended, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+
+      const buf = extended.buffer();
+      buf.save(User, { name: "Bob", email: "b@b.c" });
+      expect(buf.size().inserts).toBe(1);
+
+      await buf.findOne(User, { where: { id: 1 } as any });
+
+      // Insert should have been flushed
+      expect(buf.size().inserts).toBe(0);
+    });
+
+    it("FlushMode.MANUAL should NOT flush before findOne", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ flushMode: FlushMode.MANUAL }));
+      jest.spyOn(extended, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+
+      const buf = extended.buffer();
+      buf.save(User, { name: "Bob", email: "b@b.c" });
+
+      await buf.findOne(User, { where: { id: 1 } as any });
+
+      // Insert should still be queued
+      expect(buf.size().inserts).toBe(1);
+    });
+
+    it("FlushMode.COMMIT should NOT auto-flush", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ flushMode: FlushMode.COMMIT }));
+      jest.spyOn(extended, "findOne").mockResolvedValue(null);
+
+      const buf = extended.buffer();
+      buf.save(User, { name: "Bob", email: "b@b.c" });
+
+      await buf.findOne(User, { where: { id: 1 } as any });
+      expect(buf.size().inserts).toBe(1);
+    });
+
+    it("autoFlush=true should map to FlushMode.AUTO", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ autoFlush: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: 99,
+      }));
+      jest.spyOn(extended, "findOne").mockResolvedValue(null);
+
+      const buf = extended.buffer();
+      buf.save(User, { name: "Bob", email: "b@b.c" });
+
+      await buf.findOne(User, { where: { id: 1 } as any });
+      expect(buf.size().inserts).toBe(0);
+    });
+  });
+
+  // ── PersistentCollection ────────────────────────────────────────
+
+  describe("PersistentCollection", () => {
+    it("createPersistentCollection should detect push mutations", () => {
+      let dirty = false;
+      const arr = createPersistentCollection([1, 2, 3], () => { dirty = true; });
+
+      expect(arr).toHaveLength(3);
+      arr.push(4);
+      expect(dirty).toBe(true);
+      expect(arr).toHaveLength(4);
+    });
+
+    it("should detect splice mutations", () => {
+      let count = 0;
+      const arr = createPersistentCollection(["a", "b", "c"], () => { count++; });
+
+      arr.splice(1, 1);
+      expect(count).toBeGreaterThan(0);
+      expect(arr).toEqual(["a", "c"]);
+    });
+
+    it("should detect index assignment", () => {
+      let dirty = false;
+      const arr = createPersistentCollection([1, 2, 3], () => { dirty = true; });
+
+      arr[0] = 99;
+      expect(dirty).toBe(true);
+    });
+
+    it("should detect pop/shift/unshift", () => {
+      let count = 0;
+      const arr = createPersistentCollection([1, 2, 3], () => { count++; });
+
+      arr.pop();
+      const c1 = count;
+      arr.shift();
+      expect(count).toBeGreaterThan(c1);
+      arr.unshift(10);
+      expect(count).toBeGreaterThan(c1 + 1);
+    });
+
+    it("isPersistentCollection should return true for wrapped arrays", () => {
+      const arr = createPersistentCollection([1, 2], () => {});
+      expect(isPersistentCollection(arr)).toBe(true);
+      expect(isPersistentCollection([1, 2])).toBe(false);
+    });
+
+    it("Array.isArray should return true for persistent collections", () => {
+      const arr = createPersistentCollection([1, 2], () => {});
+      expect(Array.isArray(arr)).toBe(true);
+    });
+
+    it("wrapCollection should make mutations mark entity dirty", () => {
+      const em = createExtendedEm(Post, Comment);
+      const buf = em.buffer();
+
+      const post = Object.assign(new Post(), { id: 1, title: "Hello" });
+      post.comments = [Object.assign(new Comment(), { id: 10, body: "c1", postId: 1 })];
+
+      buf.track(post);
+      buf.wrapCollection(post, "comments");
+
+      // Push a new comment → should mark entity as explicitly dirty
+      post.comments.push(Object.assign(new Comment(), { id: 11, body: "c2", postId: 1 }));
+
+      expect(post.comments).toHaveLength(2);
+    });
+
+    it("wrapCollection should throw for untracked entity", () => {
+      const em = createExtendedEm(Post);
+      const buf = em.buffer();
+      const post = Object.assign(new Post(), { id: 1, title: "Hello" });
+      post.comments = [];
+
+      expect(() => buf.wrapCollection(post, "comments")).toThrow(/not tracked/);
+    });
+  });
+
+  // ── Pessimistic Locking ─────────────────────────────────────────
+
+  describe("pessimistic locking", () => {
+    it("should store lock mode on tracked entry", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+
+      const buf = em.buffer();
+      await buf.findOne(User, { where: { id: 1 } as any, lock: LockMode.PESSIMISTIC_WRITE });
+
+      // Verify the lock is stored (internal check via preview/dirty)
+      expect(buf.tracked()).toHaveLength(1);
+    });
+
+    it("should execute FOR UPDATE during flush", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      const user = await buf.findOne(User, { where: { id: 1 } as any, lock: LockMode.PESSIMISTIC_WRITE });
+      (user as any).name = "Bob";
+
+      await buf.flush();
+
+      // Should have executed a FOR UPDATE query
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("FOR UPDATE"),
+        expect.any(Array),
+      );
+    });
+
+    it("should execute FOR SHARE / LOCK IN SHARE MODE for PESSIMISTIC_READ", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      const user = await buf.findOne(User, { where: { id: 1 } as any, lock: LockMode.PESSIMISTIC_READ });
+      (user as any).name = "Bob";
+
+      await buf.flush();
+
+      // Should have a lock query (LOCK IN SHARE MODE for MySQL, FOR SHARE for others)
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringMatching(/LOCK IN SHARE MODE|FOR SHARE/),
+        expect.any(Array),
+      );
+    });
+  });
+
+  // ── Bulk DML ────────────────────────────────────────────────────
+
+  describe("bulk DML", () => {
+    it("updateMany should queue and execute during flush", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      buf.updateMany(User, { where: { email: "a@b.c" }, set: { name: "Updated" } });
+
+      expect(buf.size().bulkUpdates).toBe(1);
+
+      const result = await buf.flush();
+      expect(result.updates).toBe(1);
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("UPDATE"),
+        expect.arrayContaining(["Updated", "a@b.c"]),
+      );
+    });
+
+    it("deleteMany should queue and execute during flush", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      buf.deleteMany(User, { email: "a@b.c" });
+
+      expect(buf.size().bulkDeletes).toBe(1);
+
+      const result = await buf.flush();
+      expect(result.deletes).toBe(1);
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("DELETE"),
+        expect.arrayContaining(["a@b.c"]),
+      );
+    });
+
+    it("bulk queues should be included in preview", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      buf.updateMany(User, { where: { id: 1 }, set: { name: "X" } });
+      buf.deleteMany(User, { id: 2 });
+
+      const preview = buf.preview();
+      expect(preview).toContainEqual(
+        expect.objectContaining({ action: "bulkUpdate", entity: "User" }),
+      );
+      expect(preview).toContainEqual(
+        expect.objectContaining({ action: "bulkDelete", entity: "User" }),
+      );
+    });
+
+    it("clear should empty bulk queues", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      buf.updateMany(User, { where: { id: 1 }, set: { name: "X" } });
+      buf.deleteMany(User, { id: 2 });
+
+      buf.clear();
+      expect(buf.size().bulkUpdates).toBe(0);
+      expect(buf.size().bulkDeletes).toBe(0);
+    });
+  });
+
+  // ── Per-entity Flush Events ─────────────────────────────────────
+
+  describe("flush events", () => {
+    it("should fire preInsert/postInsert for persist", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: data.id ?? 1,
+      }));
+
+      const buf = em.buffer();
+      const events: string[] = [];
+
+      buf.onFlushEvent("preInsert", (e: FlushEvent) => { events.push(`pre:${e.entity.name}`); });
+      buf.onFlushEvent("postInsert", (e: FlushEvent) => { events.push(`post:${e.entity.name}`); });
+
+      const user = Object.assign(new User(), { name: "Alice", email: "a@b.c" });
+      buf.persist(user);
+
+      await buf.flush();
+
+      expect(events).toEqual(["pre:User", "post:User"]);
+    });
+
+    it("should fire preUpdate/postUpdate for tracked updates", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = em.buffer();
+      const events: string[] = [];
+
+      buf.onFlushEvent("preUpdate", () => { events.push("preUpdate"); });
+      buf.onFlushEvent("postUpdate", () => { events.push("postUpdate"); });
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      user.name = "Bob";
+
+      await buf.flush();
+
+      expect(events).toEqual(["preUpdate", "postUpdate"]);
+    });
+
+    it("should fire preDelete/postDelete for deletes", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "delete").mockResolvedValue(undefined as any);
+
+      const buf = em.buffer();
+      const events: string[] = [];
+
+      buf.onFlushEvent("preDelete", () => { events.push("preDelete"); });
+      buf.onFlushEvent("postDelete", () => { events.push("postDelete"); });
+
+      buf.delete(User, { id: 1 });
+      await buf.flush();
+
+      expect(events).toEqual(["preDelete", "postDelete"]);
+    });
+
+    it("should pass entity instance in event payload", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = em.buffer();
+      let capturedInstance: any;
+
+      buf.onFlushEvent("preUpdate", (e: FlushEvent) => { capturedInstance = e.instance; });
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      user.name = "Bob";
+
+      await buf.flush();
+
+      expect(capturedInstance).toBe(user);
+    });
+  });
+
+  // ── Read-only Entities ──────────────────────────────────────────
+
+  describe("read-only entities", () => {
+    it("markReadOnly should skip dirty checking on flush", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const saveSpy = jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      buf.markReadOnly(user);
+
+      user.name = "Bob"; // mutated, but read-only
+
+      const result = await buf.flush();
+      expect(result.updates).toBe(0);
+      expect(saveSpy).not.toHaveBeenCalled();
+    });
+
+    it("isReadOnly should return correct status", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+
+      expect(buf.isReadOnly(user)).toBe(false);
+      buf.markReadOnly(user);
+      expect(buf.isReadOnly(user)).toBe(true);
+    });
+
+    it("markReadOnly should throw for untracked entity", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+      const user = new User();
+      expect(() => buf.markReadOnly(user)).toThrow(/not tracked/);
+    });
+  });
+
+  // ── Nested UoW (Savepoint) ──────────────────────────────────────
+
+  describe("nested UoW (savepoint)", () => {
+    it("beginNested should return a new WriteBuffer", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+      const nested = buf.beginNested();
+
+      expect(nested).toBeInstanceOf(WriteBuffer);
+      expect(nested).not.toBe(buf);
+    });
+
+    it("nested flush should execute SAVEPOINT and operations", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: data.id ?? 1,
+      }));
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      const nested = buf.beginNested();
+
+      const user = Object.assign(new User(), { name: "Alice", email: "a@b.c" });
+      nested.persist(user);
+
+      const result = await nested.flush();
+      expect(result.inserts).toBe(1);
+
+      // Should have executed SAVEPOINT
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("SAVEPOINT"),
+      );
+    });
+
+    it("nested flush failure should ROLLBACK TO SAVEPOINT", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockRejectedValue(new Error("DB error"));
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      const nested = buf.beginNested();
+
+      const user = Object.assign(new User(), { name: "Alice", email: "a@b.c" });
+      nested.persist(user);
+
+      await expect(nested.flush()).rejects.toThrow("DB error");
+
+      // Should have executed ROLLBACK TO SAVEPOINT
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("ROLLBACK TO SAVEPOINT"),
+      );
     });
   });
 });

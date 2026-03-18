@@ -11,11 +11,17 @@ import { hasCascade } from "../../../types/CascadeType";
 import { FindOption } from "../../../dialects/FindOption";
 import { PluginContext } from "../PluginContext";
 import { TrackedEntry, InsertEntry, DeleteEntry, PersistEntry } from "./BufferEntry";
-import { BufferPreviewEntry, BufferFlushResult, BufferPluginOptions, BufferChangeset } from "./BufferPreview";
+import {
+  BufferPreviewEntry, BufferFlushResult, BufferPluginOptions, BufferChangeset,
+  ChangeTrackingPolicy, FlushMode, LockMode,
+  FlushEventType, FlushEvent, FlushEventListener,
+  BulkUpdateEntry, BulkDeleteEntry,
+} from "./BufferPreview";
 import { BufferStrategy, SnapshotStrategy } from "./BufferStrategy";
 import { EntityState } from "./EntityUnitState";
 import { sortForInsert, sortForDelete } from "./DependencyGraph";
 import { snapshotCollections, diffCollection, CollectionDiff } from "./CollectionTracker";
+import { createPersistentCollection } from "./PersistentCollection";
 import { injectLazyProxy } from "../../LazyLoader";
 import type { EntityManager } from "../../EntityManager";
 import type { ManyToOneMetadata } from "../../../decorators/ManyToOne";
@@ -38,16 +44,25 @@ export class WriteBuffer {
   private readonly insertQueue: InsertEntry[] = [];
   private readonly deleteQueue: DeleteEntry[] = [];
   private readonly persistQueue: PersistEntry[] = [];
+  private readonly bulkUpdateQueue: BulkUpdateEntry[] = [];
+  private readonly bulkDeleteQueue: BulkDeleteEntry[] = [];
   private readonly strategy: BufferStrategy;
   private readonly ctx: PluginContext;
   private readonly options: Required<BufferPluginOptions>;
   private readonly stateMap = new Map<any, EntityState>();
+  private readonly flushMode: FlushMode;
+  private readonly changeTracking: ChangeTrackingPolicy;
+  private readonly flushListeners = new Map<FlushEventType, FlushEventListener[]>();
+  /** Parent buffer for nested UoW (savepoint) */
+  private readonly parent?: WriteBuffer;
 
   constructor(
     ctx: PluginContext,
     options: BufferPluginOptions = {},
+    parent?: WriteBuffer,
   ) {
     this.ctx = ctx;
+    this.parent = parent;
     this.strategy = new SnapshotStrategy();
     this.options = {
       retainAfterFlush: options.retainAfterFlush ?? true,
@@ -55,10 +70,14 @@ export class WriteBuffer {
       orphanRemoval: options.orphanRemoval ?? false,
       manyToManySync: options.manyToManySync ?? (options.cascade !== false),
       autoFlush: options.autoFlush ?? false,
+      flushMode: options.flushMode ?? (options.autoFlush ? FlushMode.AUTO : FlushMode.MANUAL),
       onFlush: options.onFlush ?? (() => {}),
       batchInsert: options.batchInsert ?? false,
       batchUpdate: options.batchUpdate ?? false,
+      changeTracking: options.changeTracking ?? ChangeTrackingPolicy.DEFERRED_IMPLICIT,
     };
+    this.flushMode = this.options.flushMode;
+    this.changeTracking = this.options.changeTracking;
   }
 
   // ── Entity State ─────────────────────────────────────────────
@@ -124,15 +143,20 @@ export class WriteBuffer {
    * confirm the row exists, but the cached reference is returned).
    *
    * Returns `null` if no matching row is found.
+   *
+   * @param lock — Pessimistic lock mode. Lock is acquired during flush() transaction.
    */
   async findOne<T>(
     entity: ClazzType<T>,
-    option: FindOption<T>,
+    option: FindOption<T> & { lock?: LockMode } = {},
   ): Promise<T | null> {
-    if (this.options.autoFlush && this.hasPendingWork()) await this.flush();
-    const result = await this.ctx.em.findOne(entity, option);
+    await this.autoFlushIfNeeded();
+    const { lock, ...findOption } = option;
+    const result = await this.ctx.em.findOne(entity, findOption as FindOption<T>);
     if (result === null) return null;
-    return this.resolveIdentity(entity, result) as T;
+    const tracked = this.resolveIdentity(entity, result) as T;
+    if (lock) this.applyLock(tracked, lock);
+    return tracked;
   }
 
   /**
@@ -140,14 +164,21 @@ export class WriteBuffer {
    *
    * For each result, if an entity with the same PK is already in
    * the Identity Map, the existing tracked instance is used instead.
+   *
+   * @param lock — Pessimistic lock mode. Lock is acquired during flush() transaction.
    */
   async find<T>(
     entity: ClazzType<T>,
-    option: FindOption<T> = {},
+    option: FindOption<T> & { lock?: LockMode } = {},
   ): Promise<T[]> {
-    if (this.options.autoFlush && this.hasPendingWork()) await this.flush();
-    const results = await this.ctx.em.find(entity, option);
-    return results.map((item) => this.resolveIdentity(entity, item) as T);
+    await this.autoFlushIfNeeded();
+    const { lock, ...findOption } = option;
+    const results = await this.ctx.em.find(entity, findOption as FindOption<T>);
+    return results.map((item) => {
+      const tracked = this.resolveIdentity(entity, item) as T;
+      if (lock) this.applyLock(tracked, lock);
+      return tracked;
+    });
   }
 
   /**
@@ -194,6 +225,139 @@ export class WriteBuffer {
 
     return instance as T;
   }
+
+  // ── Change Tracking ─────────────────────────────────────────────
+
+  /**
+   * Explicitly mark a tracked entity as dirty (for DEFERRED_EXPLICIT policy).
+   * Under DEFERRED_IMPLICIT, entities are always dirty-checked automatically.
+   */
+  markDirty(instance: any): this {
+    const entry = this.trackedEntries.get(instance);
+    if (!entry) {
+      throw new Error(
+        `Cannot markDirty: instance of "${instance.constructor.name}" is not tracked.`,
+      );
+    }
+    entry.explicitDirty = true;
+    return this;
+  }
+
+  // ── Read-only Entities ─────────────────────────────────────────
+
+  /**
+   * Mark a tracked entity as read-only (immutable).
+   * Read-only entities are skipped during dirty checking on flush.
+   */
+  markReadOnly(instance: any): this {
+    const entry = this.trackedEntries.get(instance);
+    if (!entry) {
+      throw new Error(
+        `Cannot markReadOnly: instance of "${instance.constructor.name}" is not tracked.`,
+      );
+    }
+    entry.readOnly = true;
+    return this;
+  }
+
+  /**
+   * Check if a tracked entity is marked as read-only.
+   */
+  isReadOnly(instance: any): boolean {
+    return this.trackedEntries.get(instance)?.readOnly === true;
+  }
+
+  // ── Bulk DML ───────────────────────────────────────────────────
+
+  /**
+   * Queue a bulk UPDATE operation.
+   * Executes `UPDATE table SET ... WHERE ...` during flush.
+   */
+  updateMany<T>(
+    entity: ClazzType<T>,
+    options: { where: Record<string, any>; set: Record<string, any> },
+  ): this {
+    this.validateEntity(entity);
+    this.bulkUpdateQueue.push({ entity, where: options.where, set: options.set });
+    return this;
+  }
+
+  /**
+   * Queue a bulk DELETE operation.
+   * Executes `DELETE FROM table WHERE ...` during flush.
+   */
+  deleteMany<T>(entity: ClazzType<T>, where: Record<string, any>): this {
+    this.validateEntity(entity);
+    this.bulkDeleteQueue.push({ entity, where });
+    return this;
+  }
+
+  // ── Flush Events ───────────────────────────────────────────────
+
+  /**
+   * Register a per-entity flush event listener.
+   *
+   * @example
+   * ```ts
+   * buf.onFlushEvent("preUpdate", (event) => {
+   *   console.log(`Updating ${event.entity.name}`, event.data);
+   * });
+   * ```
+   */
+  onFlushEvent(type: FlushEventType, listener: FlushEventListener): this {
+    let listeners = this.flushListeners.get(type);
+    if (!listeners) {
+      listeners = [];
+      this.flushListeners.set(type, listeners);
+    }
+    listeners.push(listener);
+    return this;
+  }
+
+  // ── Nested UoW (Savepoint) ─────────────────────────────────────
+
+  /**
+   * Create a nested WriteBuffer for savepoint-scoped work.
+   *
+   * The nested buffer shares the parent's identity map references but
+   * maintains its own tracking state. On flush(), the nested buffer
+   * wraps its operations in a SAVEPOINT within the parent's transaction.
+   *
+   * On success, tracked entities are merged back to the parent buffer.
+   * On failure, only the nested buffer's changes are rolled back.
+   */
+  beginNested(): WriteBuffer {
+    return new WriteBuffer(this.ctx, this.options, this);
+  }
+
+  // ── Persistent Collections ─────────────────────────────────────
+
+  /**
+   * Wrap an entity's collection property with a PersistentCollection proxy.
+   * When the array is mutated (push/splice/index set/etc.), the parent
+   * entity is automatically marked as dirty.
+   */
+  wrapCollection<T>(instance: any, propertyKey: string): T[] {
+    const entry = this.trackedEntries.get(instance);
+    if (!entry) {
+      throw new Error(
+        `Cannot wrapCollection: instance of "${instance.constructor.name}" is not tracked.`,
+      );
+    }
+    const arr = instance[propertyKey];
+    if (!Array.isArray(arr)) {
+      throw new Error(
+        `Cannot wrapCollection: "${propertyKey}" is not an array.`,
+      );
+    }
+    const wrapped = createPersistentCollection(arr, () => {
+      if (entry) entry.explicitDirty = true;
+    });
+    instance[propertyKey] = wrapped;
+    return wrapped;
+  }
+
+  // ── CRUD queuing ───────────────────────────────────────────────
 
   /**
    * Queue an INSERT operation.
@@ -459,6 +623,8 @@ export class WriteBuffer {
     this.insertQueue.length = 0;
     this.deleteQueue.length = 0;
     this.persistQueue.length = 0;
+    this.bulkUpdateQueue.length = 0;
+    this.bulkDeleteQueue.length = 0;
     this.stateMap.clear();
     return this;
   }
@@ -466,12 +632,17 @@ export class WriteBuffer {
   /**
    * Returns the total count of tracked + queued operations.
    */
-  size(): { tracked: number; inserts: number; deletes: number; persists: number } {
+  size(): {
+    tracked: number; inserts: number; deletes: number; persists: number;
+    bulkUpdates: number; bulkDeletes: number;
+  } {
     return {
       tracked: this.trackedEntries.size,
       inserts: this.insertQueue.length,
       deletes: this.deleteQueue.length,
       persists: this.persistQueue.length,
+      bulkUpdates: this.bulkUpdateQueue.length,
+      bulkDeletes: this.bulkDeleteQueue.length,
     };
   }
 
@@ -528,6 +699,25 @@ export class WriteBuffer {
         action: "delete",
         entity: del.entity.name,
         criteria: del.criteria,
+      });
+    }
+
+    // Bulk updates
+    for (const bu of this.bulkUpdateQueue) {
+      entries.push({
+        action: "bulkUpdate",
+        entity: bu.entity.name,
+        where: bu.where,
+        set: bu.set,
+      });
+    }
+
+    // Bulk deletes
+    for (const bd of this.bulkDeleteQueue) {
+      entries.push({
+        action: "bulkDelete",
+        entity: bd.entity.name,
+        where: bd.where,
       });
     }
 
@@ -601,14 +791,21 @@ export class WriteBuffer {
     const insertsCopy = [...this.insertQueue];
     const deletesCopy = [...this.deleteQueue];
     const persistsCopy = [...this.persistQueue];
+    const bulkUpdatesCopy = [...this.bulkUpdateQueue];
+    const bulkDeletesCopy = [...this.bulkDeleteQueue];
 
     try {
-      await em.transaction(async (txEm) => {
+      const flushFn = async (txEm: EntityManager) => {
         const visited = new Set<any>();
+
+        // 0. Acquire pessimistic locks
+        await this.acquireLocks(txEm);
 
         // 1. Updates — dirty tracked entities (topological order)
         const sortedTracked = sortForInsert(
-          [...this.trackedEntries.values()],
+          [...this.trackedEntries.values()].filter(
+            (e) => !e.readOnly && this.shouldDirtyCheck(e),
+          ),
           entities,
         );
 
@@ -623,6 +820,7 @@ export class WriteBuffer {
               entry.pkColumns,
             );
             if (diff) {
+              await this.emitFlushEvent("preUpdate", entry.entity, entry.instance, diff);
               const saveData = this.extractColumnData(entry.instance, entry.columnNames);
               const updated = await txEm.save(entry.entity, saveData);
               if (updated) {
@@ -635,6 +833,7 @@ export class WriteBuffer {
               }
               result.updates++;
               visited.add(entry.instance);
+              await this.emitFlushEvent("postUpdate", entry.entity, entry.instance, diff);
               await this.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result);
             }
           }
@@ -647,6 +846,7 @@ export class WriteBuffer {
           await this.flushPersistsBatched(txEm, sortedPersists, visited, result);
         } else {
           for (const entry of sortedPersists) {
+            await this.emitFlushEvent("preInsert", entry.entity, entry.instance);
             const saveData = this.extractColumnData(entry.instance, entry.columnNames);
             const saved = await txEm.save(entry.entity, saveData);
             if (saved) {
@@ -657,6 +857,7 @@ export class WriteBuffer {
             }
             result.inserts++;
             visited.add(entry.instance);
+            await this.emitFlushEvent("postInsert", entry.entity, entry.instance);
             await this.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result);
           }
         }
@@ -694,20 +895,44 @@ export class WriteBuffer {
         // 6. Deletes (reverse topological order — children first)
         const sortedDeletes = sortForDelete([...deletesCopy], entities);
         for (const del of sortedDeletes) {
+          await this.emitFlushEvent("preDelete", del.entity, undefined, undefined, del.criteria);
           await txEm.delete(del.entity, del.criteria);
           result.deletes++;
+          await this.emitFlushEvent("postDelete", del.entity, undefined, undefined, del.criteria);
         }
-      });
+
+        // 7. Bulk UPDATE
+        for (const bu of bulkUpdatesCopy) {
+          await this.executeBulkUpdate(txEm, bu);
+          result.updates++;
+        }
+
+        // 8. Bulk DELETE
+        for (const bd of bulkDeletesCopy) {
+          await this.executeBulkDelete(txEm, bd);
+          result.deletes++;
+        }
+      };
+
+      // Nested UoW → use SAVEPOINT; top-level → normal transaction
+      if (this.parent) {
+        await this.flushNested(em, flushFn);
+      } else {
+        await em.transaction(async (txEm) => flushFn(txEm));
+      }
 
       // Success — clear queues
       this.insertQueue.length = 0;
       this.deleteQueue.length = 0;
       this.persistQueue.length = 0;
+      this.bulkUpdateQueue.length = 0;
+      this.bulkDeleteQueue.length = 0;
 
       if (this.options.retainAfterFlush) {
-        // Re-snapshot tracked entities
+        // Re-snapshot tracked entities + clear explicit dirty flags
         for (const entry of this.trackedEntries.values()) {
           entry.snapshot = this.strategy.snapshot(entry.instance, entry.columnNames);
+          entry.explicitDirty = false;
           if (entry.collectionSnapshots) {
             entry.collectionSnapshots = snapshotCollections(entry.instance, entry.entity);
           }
@@ -742,6 +967,10 @@ export class WriteBuffer {
       this.deleteQueue.push(...deletesCopy);
       this.persistQueue.length = 0;
       this.persistQueue.push(...persistsCopy);
+      this.bulkUpdateQueue.length = 0;
+      this.bulkUpdateQueue.push(...bulkUpdatesCopy);
+      this.bulkDeleteQueue.length = 0;
+      this.bulkDeleteQueue.push(...bulkDeletesCopy);
       throw error;
     }
   }
@@ -810,7 +1039,12 @@ export class WriteBuffer {
     if (this.insertQueue.length > 0 || this.deleteQueue.length > 0 || this.persistQueue.length > 0) {
       return true;
     }
+    if (this.bulkUpdateQueue.length > 0 || this.bulkDeleteQueue.length > 0) {
+      return true;
+    }
     for (const entry of this.trackedEntries.values()) {
+      if (entry.readOnly) continue;
+      if (!this.shouldDirtyCheck(entry)) continue;
       const diff = this.strategy.diff(
         entry.instance,
         entry.snapshot,
@@ -821,12 +1055,42 @@ export class WriteBuffer {
     }
     // Check collection diffs
     for (const entry of this.trackedEntries.values()) {
+      if (entry.readOnly) continue;
       if (!entry.collectionSnapshots) continue;
       for (const colSnap of entry.collectionSnapshots) {
         if (diffCollection(entry.instance, colSnap)) return true;
       }
     }
     return false;
+  }
+
+  /**
+   * Should this entry be dirty-checked? Respects change tracking policy.
+   */
+  private shouldDirtyCheck(entry: TrackedEntry): boolean {
+    if (this.changeTracking === ChangeTrackingPolicy.DEFERRED_EXPLICIT) {
+      return entry.explicitDirty === true;
+    }
+    return true; // DEFERRED_IMPLICIT — always check
+  }
+
+  /**
+   * Auto-flush if the current flush mode requires it.
+   */
+  private async autoFlushIfNeeded(): Promise<void> {
+    if (this.flushMode === FlushMode.AUTO || this.flushMode === FlushMode.ALWAYS) {
+      if (this.flushMode === FlushMode.ALWAYS || this.hasPendingWork()) {
+        await this.flush();
+      }
+    }
+  }
+
+  /**
+   * Apply a pessimistic lock to a tracked entity for acquisition during flush.
+   */
+  private applyLock(instance: any, mode: LockMode): void {
+    const entry = this.trackedEntries.get(instance);
+    if (entry) entry.lockMode = mode;
   }
 
   private buildPkWhere(entry: TrackedEntry): Record<string, any> {
@@ -1446,6 +1710,129 @@ export class WriteBuffer {
         visited.add(entry.instance);
         await this.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result);
       }
+    }
+  }
+
+  // ── Flush Events ────────────────────────────────────────────────
+
+  /**
+   * Emit a flush event to registered listeners.
+   */
+  private async emitFlushEvent(
+    type: FlushEventType,
+    entity: ClazzType<any>,
+    instance?: any,
+    data?: Record<string, any>,
+    criteria?: Record<string, any>,
+  ): Promise<void> {
+    const listeners = this.flushListeners.get(type);
+    if (!listeners || listeners.length === 0) return;
+    const event: FlushEvent = { type, entity, instance, data, criteria };
+    for (const listener of listeners) {
+      await listener(event);
+    }
+  }
+
+  // ── Pessimistic Locking ────────────────────────────────────────
+
+  /**
+   * Acquire pessimistic locks for all tracked entities that have a lockMode set.
+   * Must be called within a transaction.
+   */
+  private async acquireLocks(txEm: EntityManager): Promise<void> {
+    for (const entry of this.trackedEntries.values()) {
+      if (!entry.lockMode) continue;
+
+      const entityMeta = Reflect.getMetadata(ENTITY_TOKEN, entry.entity);
+      const tableName = entityMeta?.name || entry.entity.name;
+      const wrappedTable = this.ctx.wrapTable(tableName);
+
+      const where: string[] = [];
+      const params: any[] = [];
+      for (const pk of entry.pkColumns) {
+        where.push(`${this.ctx.wrap(pk)} = ?`);
+        params.push(entry.instance[pk]);
+      }
+
+      const lockSuffix = entry.lockMode === LockMode.PESSIMISTIC_WRITE
+        ? "FOR UPDATE"
+        : this.ctx.isMySqlFamily() ? "LOCK IN SHARE MODE" : "FOR SHARE";
+
+      const sql = `SELECT 1 FROM ${wrappedTable} WHERE ${where.join(" AND ")} ${lockSuffix}`;
+      await txEm.query(sql, params);
+    }
+  }
+
+  // ── Bulk DML ───────────────────────────────────────────────────
+
+  /**
+   * Execute a bulk UPDATE statement.
+   */
+  private async executeBulkUpdate(
+    txEm: EntityManager,
+    entry: BulkUpdateEntry,
+  ): Promise<void> {
+    const entityMeta = Reflect.getMetadata(ENTITY_TOKEN, entry.entity);
+    const tableName = entityMeta?.name || entry.entity.name;
+    const wrappedTable = this.ctx.wrapTable(tableName);
+
+    const setClauses: string[] = [];
+    const params: any[] = [];
+
+    for (const [col, val] of Object.entries(entry.set)) {
+      setClauses.push(`${this.ctx.wrap(col)} = ?`);
+      params.push(val);
+    }
+
+    const whereClauses: string[] = [];
+    for (const [col, val] of Object.entries(entry.where)) {
+      whereClauses.push(`${this.ctx.wrap(col)} = ?`);
+      params.push(val);
+    }
+
+    const sql = `UPDATE ${wrappedTable} SET ${setClauses.join(", ")} WHERE ${whereClauses.join(" AND ")}`;
+    await txEm.query(sql, params);
+  }
+
+  /**
+   * Execute a bulk DELETE statement.
+   */
+  private async executeBulkDelete(
+    txEm: EntityManager,
+    entry: BulkDeleteEntry,
+  ): Promise<void> {
+    const entityMeta = Reflect.getMetadata(ENTITY_TOKEN, entry.entity);
+    const tableName = entityMeta?.name || entry.entity.name;
+    const wrappedTable = this.ctx.wrapTable(tableName);
+
+    const whereClauses: string[] = [];
+    const params: any[] = [];
+
+    for (const [col, val] of Object.entries(entry.where)) {
+      whereClauses.push(`${this.ctx.wrap(col)} = ?`);
+      params.push(val);
+    }
+
+    const sql = `DELETE FROM ${wrappedTable} WHERE ${whereClauses.join(" AND ")}`;
+    await txEm.query(sql, params);
+  }
+
+  // ── Nested UoW (Savepoint) ─────────────────────────────────────
+
+  /**
+   * Execute flush within a SAVEPOINT for nested UoW.
+   */
+  private async flushNested(
+    em: EntityManager,
+    flushFn: (txEm: EntityManager) => Promise<void>,
+  ): Promise<void> {
+    const spName = `sp_nested_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      await em.query(`SAVEPOINT ${spName}`);
+      await flushFn(em);
+    } catch (error) {
+      await em.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+      throw error;
     }
   }
 
