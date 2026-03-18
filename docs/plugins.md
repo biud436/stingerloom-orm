@@ -137,8 +137,19 @@ interface StingerloomPlugin<TApi = {}> {
 | `hasPlugin` | `(name: string): boolean` | Check if a plugin is installed |
 | `getPluginApi` | `<T>(name: string): T \| undefined` | Get a plugin's API by name |
 
+## Built-in Plugins
+
+Stingerloom ships with one built-in plugin:
+
+| Plugin | Import | Description |
+|--------|--------|-------------|
+| **Buffer (UoW)** | `bufferPlugin()` | Unit of Work — tracks entity changes in memory and flushes them as a single atomic transaction. Identity Map, dirty checking, cascade, pessimistic locking, and more. |
+
+See the dedicated guide: **[WriteBuffer (Unit of Work)](./write-buffer.md)**
+
 ## Next Steps
 
+- [WriteBuffer (Unit of Work)](./write-buffer.md) — The built-in UoW plugin
 - [EntityManager](./entity-manager.md) — CRUD, pagination, and events
 - [Transactions](./transactions.md) — Manual and decorator-based transactions
 - [API Reference](./api-reference.md) — Full method signatures
