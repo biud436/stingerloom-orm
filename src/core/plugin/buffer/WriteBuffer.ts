@@ -16,7 +16,11 @@ import { BufferStrategy, SnapshotStrategy } from "./BufferStrategy";
 import { EntityState } from "./EntityUnitState";
 import { sortForInsert, sortForDelete } from "./DependencyGraph";
 import { snapshotCollections, diffCollection, CollectionDiff } from "./CollectionTracker";
+import { injectLazyProxy } from "../../LazyLoader";
 import type { EntityManager } from "../../EntityManager";
+import type { ManyToOneMetadata } from "../../../decorators/ManyToOne";
+import type { OneToOneMetadata } from "../../../decorators/OneToOne";
+import type { ManyToManyMetadata } from "../../../decorators/ManyToMany";
 
 /**
  * WriteBuffer — buffers entity writes and flushes them in a single transaction.
@@ -144,6 +148,51 @@ export class WriteBuffer {
     if (this.options.autoFlush && this.hasPendingWork()) await this.flush();
     const results = await this.ctx.em.find(entity, option);
     return results.map((item) => this.resolveIdentity(entity, item) as T);
+  }
+
+  /**
+   * Get or create a lightweight reference for an entity by PK.
+   *
+   * Returns an identity-mapped instance with only PK columns set.
+   * Useful for setting FK references without a database roundtrip:
+   *
+   * ```ts
+   * comment.post = buf.getReference(Post, 1);
+   * ```
+   *
+   * If an entity with the same PK is already in the Identity Map,
+   * returns the existing tracked instance.
+   *
+   * Relation properties are initialized as lazy proxies — accessing them
+   * triggers a DB query and registers the loaded entities in this buffer.
+   */
+  getReference<T>(entityClass: ClazzType<T>, pk: any): T {
+    this.validateEntity(entityClass);
+    const { pkColumns } = this.getColumnInfo(entityClass);
+
+    // Normalize PK — support both scalar and object form
+    const instance = new entityClass() as any;
+    if (pkColumns.length === 1 && (typeof pk !== "object" || pk === null || pk instanceof Date)) {
+      instance[pkColumns[0]] = pk;
+    } else if (typeof pk === "object" && pk !== null) {
+      for (const [k, v] of Object.entries(pk)) {
+        instance[k] = v;
+      }
+    }
+
+    // Check identity map — return existing if found
+    const key = this.buildIdentityKey(entityClass, instance, pkColumns);
+    const existing = this.identityMap.get(key);
+    if (existing) return existing as T;
+
+    // Register in identity map (not snapshot-tracked — reference only)
+    this.identityMap.set(key, instance);
+    this.stateMap.set(instance, EntityState.MANAGED);
+
+    // Inject lazy proxies for relation properties
+    this.injectLazyRelations(instance, entityClass);
+
+    return instance as T;
   }
 
   /**
@@ -709,6 +758,7 @@ export class WriteBuffer {
     }
 
     this.track(instance);
+    this.injectLazyRelations(instance, entityClass);
     return instance;
   }
 
@@ -1397,5 +1447,292 @@ export class WriteBuffer {
         await this.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result);
       }
     }
+  }
+
+  // ── Proxy Lazy Loading ─────────────────────────────────────────
+
+  /**
+   * Inject lazy-loading proxies on unloaded relation properties.
+   *
+   * When a proxied property is accessed:
+   * - First access returns a Promise that loads from DB.
+   * - After resolution, the property is replaced with the actual value.
+   * - Loaded entities are registered in this buffer's Identity Map.
+   *
+   * Supports: @ManyToOne, @OneToMany, @OneToOne, @ManyToMany
+   */
+  private injectLazyRelations(instance: any, entityClass: ClazzType<any>): void {
+    this.injectLazyManyToOne(instance, entityClass);
+    this.injectLazyOneToMany(instance, entityClass);
+    this.injectLazyOneToOne(instance, entityClass);
+    this.injectLazyManyToMany(instance, entityClass);
+  }
+
+  /**
+   * @ManyToOne lazy: access `instance.author` → loads Author by FK value.
+   */
+  private injectLazyManyToOne(instance: any, entityClass: ClazzType<any>): void {
+    const meta: ManyToOneMetadata<any>[] =
+      Reflect.getMetadata(MANY_TO_ONE_TOKEN, entityClass) ?? [];
+
+    for (const rel of meta) {
+      // Skip if already loaded (not undefined)
+      if (instance[rel.columnName] !== undefined) continue;
+
+      // FK column: explicit joinColumn or fallback to columnName
+      const fkProp = rel.joinColumn ?? rel.columnName;
+      const fkValue = instance[fkProp];
+      if (fkValue === undefined || fkValue === null) continue;
+
+      const RelatedEntity = rel.getMappingEntity() as any as ClazzType<any>;
+      try { this.validateEntity(RelatedEntity); } catch { continue; }
+
+      const relatedPkCols = this.getColumnInfo(RelatedEntity).pkColumns;
+      const refColumn = rel.references ?? (relatedPkCols.length === 1 ? relatedPkCols[0] : null);
+      if (!refColumn) continue;
+
+      injectLazyProxy(instance, rel.columnName, async () => {
+        const result = await this.ctx.em.findOne(RelatedEntity, {
+          where: { [refColumn]: fkValue } as any,
+        });
+        if (result) return this.resolveIdentity(RelatedEntity, result);
+        return undefined;
+      });
+    }
+  }
+
+  /**
+   * @OneToMany lazy: access `instance.comments` → loads Comment[] by FK.
+   */
+  private injectLazyOneToMany(instance: any, entityClass: ClazzType<any>): void {
+    const meta: OneToManyMetadata<any>[] =
+      Reflect.getMetadata(ONE_TO_MANY_TOKEN, entityClass) ?? [];
+
+    for (const rel of meta) {
+      if (instance[rel.propertyKey] !== undefined) continue;
+
+      const ChildEntity = rel.getRelatedEntity();
+      try { this.validateEntity(ChildEntity); } catch { continue; }
+
+      const fkColumn = this.resolveFkColumn(rel, ChildEntity);
+      const parentPk = this.getParentPkValue(instance, entityClass);
+      if (parentPk === undefined || parentPk === null) continue;
+
+      this.injectLazyCollectionProxy(instance, rel.propertyKey, ChildEntity, {
+        [fkColumn]: parentPk,
+      });
+    }
+  }
+
+  /**
+   * @OneToOne lazy: access `instance.profile` → loads Profile by FK or inverse lookup.
+   */
+  private injectLazyOneToOne(instance: any, entityClass: ClazzType<any>): void {
+    const meta: OneToOneMetadata<any>[] =
+      Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) ?? [];
+
+    for (const rel of meta) {
+      if (instance[rel.propertyKey] !== undefined) continue;
+
+      const RelatedEntity = rel.getRelatedEntity();
+      try { this.validateEntity(RelatedEntity); } catch { continue; }
+
+      if (rel.joinColumn) {
+        // Owning side — FK column on this entity
+        const fkValue = instance[rel.joinColumn];
+        if (fkValue === undefined || fkValue === null) continue;
+
+        const relatedPkCols = this.getColumnInfo(RelatedEntity).pkColumns;
+        if (relatedPkCols.length !== 1) continue;
+
+        injectLazyProxy(instance, rel.propertyKey, async () => {
+          const result = await this.ctx.em.findOne(RelatedEntity, {
+            where: { [relatedPkCols[0]]: fkValue } as any,
+          });
+          if (result) return this.resolveIdentity(RelatedEntity, result);
+          return undefined;
+        });
+      } else if (rel.inverseSide) {
+        // Inverse side — find where owning side references our PK
+        const parentPk = this.getParentPkValue(instance, entityClass);
+        if (parentPk === undefined || parentPk === null) continue;
+
+        const owningMeta: OneToOneMetadata<any>[] =
+          Reflect.getMetadata(ONE_TO_ONE_TOKEN, RelatedEntity) ?? [];
+        const owningRel = owningMeta.find(
+          (r) => r.propertyKey === rel.inverseSide,
+        );
+        if (!owningRel?.joinColumn) continue;
+
+        injectLazyProxy(instance, rel.propertyKey, async () => {
+          const result = await this.ctx.em.findOne(RelatedEntity, {
+            where: { [owningRel.joinColumn!]: parentPk } as any,
+          });
+          if (result) return this.resolveIdentity(RelatedEntity, result);
+          return undefined;
+        });
+      }
+    }
+  }
+
+  /**
+   * @ManyToMany lazy: access `instance.tags` → queries pivot table + loads related entities.
+   */
+  private injectLazyManyToMany(instance: any, entityClass: ClazzType<any>): void {
+    const meta: ManyToManyMetadata<any>[] =
+      Reflect.getMetadata(MANY_TO_MANY_TOKEN, entityClass) ?? [];
+
+    for (const rel of meta) {
+      if (instance[rel.propertyKey] !== undefined) continue;
+
+      const RelatedEntity = rel.getRelatedEntity();
+      try { this.validateEntity(RelatedEntity); } catch { continue; }
+
+      const parentPk = this.getParentPkValue(instance, entityClass);
+      if (parentPk === undefined || parentPk === null) continue;
+
+      let tableName: string;
+      let joinColumn: string;
+      let inverseJoinColumn: string;
+
+      if (rel.joinTable) {
+        // Owning side
+        tableName = rel.joinTable.name;
+        joinColumn = rel.joinTable.joinColumn;
+        inverseJoinColumn = rel.joinTable.inverseJoinColumn;
+      } else if (rel.mappedBy) {
+        // Inverse side — look up owning side's joinTable
+        const owningMeta: ManyToManyMetadata<any>[] =
+          Reflect.getMetadata(MANY_TO_MANY_TOKEN, RelatedEntity) ?? [];
+        const owningRel = owningMeta.find(
+          (r) => r.propertyKey === rel.mappedBy,
+        );
+        if (!owningRel?.joinTable) continue;
+        // Swap columns for inverse side
+        tableName = owningRel.joinTable.name;
+        joinColumn = owningRel.joinTable.inverseJoinColumn;
+        inverseJoinColumn = owningRel.joinTable.joinColumn;
+      } else {
+        continue;
+      }
+
+      this.injectLazyM2MProxy(
+        instance, rel.propertyKey, RelatedEntity,
+        tableName, joinColumn, inverseJoinColumn, parentPk,
+      );
+    }
+  }
+
+  /**
+   * Inject a lazy collection proxy (for O2M).
+   * First access returns a Promise<T[]>; after resolution, the property
+   * holds the actual array.
+   */
+  private injectLazyCollectionProxy(
+    instance: any,
+    propertyKey: string,
+    ChildEntity: ClazzType<any>,
+    where: Record<string, any>,
+  ): void {
+    let loaded = false;
+    let cachedValue: any[] | undefined;
+
+    Object.defineProperty(instance, propertyKey, {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        if (loaded) return cachedValue;
+        const promise = this.ctx.em.find(ChildEntity, { where: where as any })
+          .then((results) => {
+            cachedValue = results.map((r) => this.resolveIdentity(ChildEntity, r));
+            loaded = true;
+            Object.defineProperty(instance, propertyKey, {
+              configurable: true, enumerable: true, writable: true,
+              value: cachedValue,
+            });
+            return cachedValue;
+          });
+        return promise;
+      },
+      set: (value: any) => {
+        loaded = true;
+        cachedValue = value;
+        Object.defineProperty(instance, propertyKey, {
+          configurable: true, enumerable: true, writable: true, value,
+        });
+      },
+    });
+  }
+
+  /**
+   * Inject a lazy M2M proxy that queries the pivot table + loads entities.
+   */
+  private injectLazyM2MProxy(
+    instance: any,
+    propertyKey: string,
+    RelatedEntity: ClazzType<any>,
+    tableName: string,
+    joinColumn: string,
+    inverseJoinColumn: string,
+    parentPk: any,
+  ): void {
+    let loaded = false;
+    let cachedValue: any[] | undefined;
+
+    Object.defineProperty(instance, propertyKey, {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        if (loaded) return cachedValue;
+
+        const relatedPkCols = this.getColumnInfo(RelatedEntity).pkColumns;
+        if (relatedPkCols.length !== 1) {
+          loaded = true;
+          cachedValue = [];
+          return [];
+        }
+
+        const wrappedTable = this.ctx.wrapTable(tableName);
+        const wrappedJoinCol = this.ctx.wrap(joinColumn);
+        const wrappedInverseCol = this.ctx.wrap(inverseJoinColumn);
+        const relatedPk = relatedPkCols[0];
+
+        const promise = this.ctx.em.query(
+          `SELECT ${wrappedInverseCol} FROM ${wrappedTable} WHERE ${wrappedJoinCol} = ?`,
+          [parentPk],
+        ).then(async (rows: any[]) => {
+          const ids = rows.map((r: any) => r[inverseJoinColumn]);
+          if (ids.length === 0) {
+            cachedValue = [];
+            loaded = true;
+            Object.defineProperty(instance, propertyKey, {
+              configurable: true, enumerable: true, writable: true, value: [],
+            });
+            return [];
+          }
+          const results: any[] = [];
+          for (const id of ids) {
+            const result = await this.ctx.em.findOne(RelatedEntity, {
+              where: { [relatedPk]: id } as any,
+            });
+            if (result) results.push(this.resolveIdentity(RelatedEntity, result));
+          }
+          cachedValue = results;
+          loaded = true;
+          Object.defineProperty(instance, propertyKey, {
+            configurable: true, enumerable: true, writable: true, value: results,
+          });
+          return results;
+        });
+        return promise;
+      },
+      set: (value: any) => {
+        loaded = true;
+        cachedValue = value;
+        Object.defineProperty(instance, propertyKey, {
+          configurable: true, enumerable: true, writable: true, value,
+        });
+      },
+    });
   }
 }

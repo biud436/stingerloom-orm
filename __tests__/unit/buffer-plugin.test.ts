@@ -2658,4 +2658,455 @@ describe("Buffer Plugin", () => {
       expect(result.inserts).toBeGreaterThanOrEqual(2);
     });
   });
+
+  // ── Proxy Lazy Loading ───────────────────────────────────────────
+
+  describe("getReference()", () => {
+    it("should create a reference with only PK set", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      const ref = buf.getReference(User, 42);
+
+      expect(ref).toBeInstanceOf(User);
+      expect((ref as any).id).toBe(42);
+    });
+
+    it("should return existing identity-mapped instance", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 5, name: "Alice", email: "a@b.c" }),
+      );
+
+      const buf = em.buffer();
+      const loaded = await buf.findOne(User, { where: { id: 5 } as any });
+      const ref = buf.getReference(User, 5);
+
+      expect(ref).toBe(loaded);
+    });
+
+    it("should support composite PK via object", () => {
+      const em = createExtendedEm(OrderItem);
+      const buf = em.buffer();
+
+      const ref = buf.getReference(OrderItem, { orderId: 1, productId: 2 });
+
+      expect((ref as any).orderId).toBe(1);
+      expect((ref as any).productId).toBe(2);
+    });
+
+    it("should register reference in identity map (no duplicate)", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      const ref1 = buf.getReference(User, 10);
+      const ref2 = buf.getReference(User, 10);
+
+      expect(ref1).toBe(ref2);
+    });
+
+    it("should set state to MANAGED", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      const ref = buf.getReference(User, 7);
+      expect(buf.getState(ref)).toBe(EntityState.MANAGED);
+    });
+
+    it("should throw for non-registered entity", () => {
+      class Ghost { id!: number; }
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      expect(() => buf.getReference(Ghost as any, 1)).toThrow(/not a registered entity/);
+    });
+  });
+
+  describe("lazy relation proxies", () => {
+    // ── M2O lazy ─────────────────────────────────────────────────
+
+    describe("ManyToOne lazy", () => {
+      class Author {
+        id!: number;
+        name!: string;
+      }
+
+      class BlogPost {
+        id!: number;
+        title!: string;
+        authorId!: number;
+        author!: Author;
+      }
+
+      beforeAll(() => {
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "Author" }, Author);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "name", propertyKey: "name", type: String, options: {} },
+        ], Author.prototype);
+
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "BlogPost" }, BlogPost);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "title", propertyKey: "title", type: String, options: {} },
+          { name: "authorId", propertyKey: "authorId", type: Number, options: {} },
+        ], BlogPost.prototype);
+
+        Reflect.defineMetadata(MANY_TO_ONE_TOKEN, [{
+          target: BlogPost,
+          type: Author,
+          columnName: "author",
+          joinColumn: "authorId",
+          getMappingEntity: () => Author,
+          getMappingProperty: (e: any) => e.author,
+          option: {},
+        }], BlogPost);
+      });
+
+      it("should inject lazy proxy on M2O property after findOne", async () => {
+        const em = createExtendedEm(BlogPost, Author);
+        const authorData = Object.assign(new Author(), { id: 10, name: "Bob" });
+
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any, opt: any) => {
+          if (entity === BlogPost) {
+            return Object.assign(new BlogPost(), { id: 1, title: "Hello", authorId: 10 });
+          }
+          if (entity === Author) {
+            return authorData;
+          }
+          return null;
+        });
+
+        const buf = em.buffer();
+        const post = await buf.findOne(BlogPost, { where: { id: 1 } as any });
+
+        expect(post).not.toBeNull();
+        // author property should be a lazy proxy (returns Promise on first access)
+        const authorOrPromise = (post as any).author;
+        expect(authorOrPromise).toBeInstanceOf(Promise);
+
+        const author = await authorOrPromise;
+        expect(author.id).toBe(10);
+        expect(author.name).toBe("Bob");
+
+        // Second access should return cached value (not Promise)
+        expect((post as any).author).not.toBeInstanceOf(Promise);
+        expect((post as any).author.name).toBe("Bob");
+      });
+
+      it("should resolve loaded entity through identity map", async () => {
+        const em = createExtendedEm(BlogPost, Author);
+
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any) => {
+          if (entity === BlogPost) {
+            return Object.assign(new BlogPost(), { id: 1, title: "Hello", authorId: 10 });
+          }
+          if (entity === Author) return Object.assign(new Author(), { id: 10, name: "Bob" });
+          return null;
+        });
+
+        const buf = em.buffer();
+        const post = await buf.findOne(BlogPost, { where: { id: 1 } as any });
+
+        // Load author via lazy proxy
+        const author = await (post as any).author;
+
+        // Author should now be tracked
+        expect(buf.getState(author)).toBe(EntityState.MANAGED);
+      });
+
+      it("should skip injection when relation property already has a value", async () => {
+        const em = createExtendedEm(BlogPost, Author);
+
+        const existingAuthor = Object.assign(new Author(), { id: 10, name: "Pre-loaded" });
+        jest.spyOn(em, "findOne").mockResolvedValue(
+          Object.assign(new BlogPost(), { id: 1, title: "Hello", authorId: 10, author: existingAuthor }),
+        );
+
+        const buf = em.buffer();
+        const post = await buf.findOne(BlogPost, { where: { id: 1 } as any });
+
+        // Should NOT be a promise — already loaded
+        expect((post as any).author).toBe(existingAuthor);
+      });
+    });
+
+    // ── O2M lazy ─────────────────────────────────────────────────
+
+    describe("OneToMany lazy", () => {
+      it("should inject lazy collection proxy on O2M property", async () => {
+        const em = createExtendedEm(Post, Comment);
+
+        jest.spyOn(em, "findOne").mockResolvedValue(
+          Object.assign(new Post(), { id: 1, title: "Hello" }),
+        );
+        jest.spyOn(em, "find").mockResolvedValue([
+          Object.assign(new Comment(), { id: 10, body: "c1", postId: 1 }),
+          Object.assign(new Comment(), { id: 11, body: "c2", postId: 1 }),
+        ]);
+
+        const buf = em.buffer();
+        const post = await buf.findOne(Post, { where: { id: 1 } as any });
+
+        // comments should be a lazy proxy
+        const commentsOrPromise = (post as any).comments;
+        expect(commentsOrPromise).toBeInstanceOf(Promise);
+
+        const comments = await commentsOrPromise;
+        expect(comments).toHaveLength(2);
+        expect(comments[0].body).toBe("c1");
+
+        // Second access — cached
+        expect((post as any).comments).toHaveLength(2);
+        expect((post as any).comments).not.toBeInstanceOf(Promise);
+      });
+
+      it("should track loaded children in identity map", async () => {
+        const em = createExtendedEm(Post, Comment);
+
+        jest.spyOn(em, "findOne").mockResolvedValue(
+          Object.assign(new Post(), { id: 1, title: "Hello" }),
+        );
+        jest.spyOn(em, "find").mockResolvedValue([
+          Object.assign(new Comment(), { id: 10, body: "c1", postId: 1 }),
+        ]);
+
+        const buf = em.buffer();
+        const post = await buf.findOne(Post, { where: { id: 1 } as any });
+        const comments = await (post as any).comments;
+
+        expect(buf.getState(comments[0])).toBe(EntityState.MANAGED);
+      });
+    });
+
+    // ── O2O lazy ─────────────────────────────────────────────────
+
+    describe("OneToOne lazy", () => {
+      class LazyUser {
+        id!: number;
+        name!: string;
+        profileId!: number;
+        profile!: any;
+      }
+
+      class LazyProfile {
+        id!: number;
+        bio!: string;
+      }
+
+      beforeAll(() => {
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "LazyUser" }, LazyUser);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "name", propertyKey: "name", type: String, options: {} },
+          { name: "profileId", propertyKey: "profileId", type: Number, options: {} },
+        ], LazyUser.prototype);
+
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "LazyProfile" }, LazyProfile);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "bio", propertyKey: "bio", type: String, options: {} },
+        ], LazyProfile.prototype);
+
+        Reflect.defineMetadata(ONE_TO_ONE_TOKEN, [{
+          target: LazyUser,
+          propertyKey: "profile",
+          getRelatedEntity: () => LazyProfile,
+          joinColumn: "profileId",
+          option: {},
+        }], LazyUser);
+      });
+
+      it("should inject lazy proxy on O2O owning side", async () => {
+        const em = createExtendedEm(LazyUser, LazyProfile);
+
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any) => {
+          if (entity === LazyUser) {
+            return Object.assign(new LazyUser(), { id: 1, name: "Alice", profileId: 5 });
+          }
+          if (entity === LazyProfile) {
+            return Object.assign(new LazyProfile(), { id: 5, bio: "Hello" });
+          }
+          return null;
+        });
+
+        const buf = em.buffer();
+        const user = await buf.findOne(LazyUser, { where: { id: 1 } as any });
+
+        const profileOrPromise = (user as any).profile;
+        expect(profileOrPromise).toBeInstanceOf(Promise);
+
+        const profile = await profileOrPromise;
+        expect(profile.id).toBe(5);
+        expect(profile.bio).toBe("Hello");
+      });
+
+      it("should inject lazy proxy on O2O inverse side", async () => {
+        class InvProfile {
+          id!: number;
+          bio!: string;
+          user!: any;
+        }
+
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "InvProfile" }, InvProfile);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "bio", propertyKey: "bio", type: String, options: {} },
+        ], InvProfile.prototype);
+
+        // Inverse side: InvProfile.user → inverseSide: "profile"
+        Reflect.defineMetadata(ONE_TO_ONE_TOKEN, [{
+          target: InvProfile,
+          propertyKey: "user",
+          getRelatedEntity: () => LazyUser,
+          inverseSide: "profile",
+          option: {},
+        }], InvProfile);
+
+        const em = createExtendedEm(InvProfile, LazyUser, LazyProfile);
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any, opt: any) => {
+          if (entity === InvProfile) {
+            return Object.assign(new InvProfile(), { id: 5, bio: "Hello" });
+          }
+          if (entity === LazyUser) {
+            return Object.assign(new LazyUser(), { id: 1, name: "Alice", profileId: 5 });
+          }
+          return null;
+        });
+
+        const buf = em.buffer();
+        const profile = await buf.findOne(InvProfile, { where: { id: 5 } as any });
+
+        const userOrPromise = (profile as any).user;
+        expect(userOrPromise).toBeInstanceOf(Promise);
+
+        const user = await userOrPromise;
+        expect(user.id).toBe(1);
+        expect(user.name).toBe("Alice");
+      });
+    });
+
+    // ── M2M lazy ─────────────────────────────────────────────────
+
+    describe("ManyToMany lazy", () => {
+      it("should inject lazy M2M proxy on owning side", async () => {
+        const em = createExtendedEm(Article, Tag);
+
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any) => {
+          if (entity === Article) {
+            return Object.assign(new Article(), { id: 1, title: "Hello" });
+          }
+          if (entity === Tag) {
+            return Object.assign(new Tag(), { id: 10, label: "ts" });
+          }
+          return null;
+        });
+        jest.spyOn(em, "query").mockResolvedValue([
+          { tag_id: 10 },
+          { tag_id: 20 },
+        ] as any);
+
+        const buf = em.buffer();
+        const article = await buf.findOne(Article, { where: { id: 1 } as any });
+
+        const tagsOrPromise = (article as any).tags;
+        expect(tagsOrPromise).toBeInstanceOf(Promise);
+      });
+
+      it("should inject lazy M2M proxy on inverse side", async () => {
+        const em = createExtendedEm(Article, Tag);
+
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any) => {
+          if (entity === Tag) {
+            return Object.assign(new Tag(), { id: 10, label: "ts" });
+          }
+          return null;
+        });
+        jest.spyOn(em, "query").mockResolvedValue([] as any);
+
+        const buf = em.buffer();
+        const tag = await buf.findOne(Tag, { where: { id: 10 } as any });
+
+        const articlesOrPromise = (tag as any).articles;
+        expect(articlesOrPromise).toBeInstanceOf(Promise);
+
+        const articles = await articlesOrPromise;
+        expect(articles).toEqual([]);
+      });
+    });
+
+    // ── getReference + lazy ──────────────────────────────────────
+
+    describe("getReference with lazy relations", () => {
+      it("should inject lazy M2O proxy on reference", async () => {
+        class RefPost {
+          id!: number;
+          title!: string;
+          authorId!: number;
+          author!: any;
+        }
+
+        class RefAuthor {
+          id!: number;
+          name!: string;
+        }
+
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "RefPost" }, RefPost);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "title", propertyKey: "title", type: String, options: {} },
+          { name: "authorId", propertyKey: "authorId", type: Number, options: {} },
+        ], RefPost.prototype);
+
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "RefAuthor" }, RefAuthor);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "name", propertyKey: "name", type: String, options: {} },
+        ], RefAuthor.prototype);
+
+        Reflect.defineMetadata(MANY_TO_ONE_TOKEN, [{
+          target: RefPost,
+          type: RefAuthor,
+          columnName: "author",
+          joinColumn: "authorId",
+          getMappingEntity: () => RefAuthor,
+          getMappingProperty: (e: any) => e.author,
+          option: {},
+        }], RefPost);
+
+        const em = createExtendedEm(RefPost, RefAuthor);
+        // getReference doesn't touch DB, but the lazy proxy will
+        jest.spyOn(em, "findOne").mockResolvedValue(
+          Object.assign(new RefAuthor(), { id: 7, name: "Charlie" }),
+        );
+
+        const buf = em.buffer();
+
+        // Create reference — author is not loaded but authorId is not set either
+        // so no M2O proxy will fire (no FK value)
+        const ref = buf.getReference(RefPost, 1);
+        expect((ref as any).id).toBe(1);
+        // author property — no FK value, so undefined
+        expect((ref as any).author).toBeUndefined();
+      });
+
+      it("should allow setting value on lazy proxy property", async () => {
+        const em = createExtendedEm(Post, Comment);
+        jest.spyOn(em, "findOne").mockResolvedValue(
+          Object.assign(new Post(), { id: 1, title: "Hello" }),
+        );
+
+        const buf = em.buffer();
+        const post = await buf.findOne(Post, { where: { id: 1 } as any });
+
+        // Set the lazy property directly — should override the proxy
+        (post as any).comments = [Object.assign(new Comment(), { id: 99, body: "manual", postId: 1 })];
+
+        // Should return the manually set value, not trigger DB load
+        expect((post as any).comments).toHaveLength(1);
+        expect((post as any).comments[0].body).toBe("manual");
+        expect((post as any).comments).not.toBeInstanceOf(Promise);
+      });
+    });
+  });
 });
