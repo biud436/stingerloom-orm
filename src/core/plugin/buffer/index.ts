@@ -3,3 +3,7 @@ export * from "./BufferPreview";
 export * from "./BufferStrategy";
 export * from "./WriteBuffer";
 export * from "./bufferPlugin";
+export * from "./EntityUnitState";
+export * from "./DependencyGraph";
+export * from "./CollectionTracker";
+export * from "./PersistentCollection";

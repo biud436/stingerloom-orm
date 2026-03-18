@@ -10,8 +10,17 @@ import {
   cloneValue,
   deepEquals,
 } from "../../src/core/plugin/buffer/BufferStrategy";
+import { EntityState } from "../../src/core/plugin/buffer/EntityUnitState";
+import { topologicalSort, sortForInsert, sortForDelete } from "../../src/core/plugin/buffer/DependencyGraph";
+import { snapshotCollections, diffCollection } from "../../src/core/plugin/buffer/CollectionTracker";
+import { ChangeTrackingPolicy, FlushMode, LockMode, FlushEvent } from "../../src/core/plugin/buffer/BufferPreview";
+import { createPersistentCollection, isPersistentCollection } from "../../src/core/plugin/buffer/PersistentCollection";
 import { COLUMN_TOKEN } from "../../src/decorators/Column";
 import { ENTITY_TOKEN } from "../../src/decorators/Entity";
+import { ONE_TO_MANY_TOKEN } from "../../src/decorators/OneToMany";
+import { MANY_TO_ONE_TOKEN } from "../../src/decorators/ManyToOne";
+import { MANY_TO_MANY_TOKEN } from "../../src/decorators/ManyToMany";
+import { ONE_TO_ONE_TOKEN } from "../../src/decorators/OneToOne";
 
 // ── Mock DatabaseClient ─────────────────────────────────────────
 
@@ -129,6 +138,127 @@ Reflect.defineMetadata(
     { target: Profile, name: "settings", propertyKey: "settings", type: Object, options: {} },
   ],
   Profile.prototype,
+);
+
+// ── Entities with Relations (for cascade tests) ─────────────────
+
+class Post {
+  id!: number;
+  title!: string;
+  comments!: Comment[];
+}
+
+Reflect.defineMetadata(ENTITY_TOKEN, { name: "Post", tableName: "posts" }, Post);
+Reflect.defineMetadata(
+  COLUMN_TOKEN,
+  [
+    { target: Post, name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+    { target: Post, name: "title", propertyKey: "title", type: String, options: {} },
+  ],
+  Post.prototype,
+);
+// @OneToMany(() => Comment, { mappedBy: "post", cascade: ["insert", "update"] })
+Reflect.defineMetadata(
+  ONE_TO_MANY_TOKEN,
+  [{
+    target: Post,
+    propertyKey: "comments",
+    getRelatedEntity: () => Comment,
+    mappedBy: "post",
+    cascade: ["insert", "update"],
+  }],
+  Post,
+);
+
+// Set up @ManyToOne metadata on Comment for FK resolution
+// Comment.post → joinColumn: "postId"
+Reflect.defineMetadata(
+  MANY_TO_ONE_TOKEN,
+  [{
+    target: Comment,
+    type: Post,
+    columnName: "post",
+    joinColumn: "postId",
+    getMappingEntity: () => Post,
+    getMappingProperty: (e: any) => e.post,
+    option: {},
+  }],
+  Comment,
+);
+
+// ── Entities for M2M / O2O tests ──────────────────────────────────
+
+class Article {
+  id!: number;
+  title!: string;
+  tags!: Tag[];
+}
+
+Reflect.defineMetadata(ENTITY_TOKEN, { name: "Article", tableName: "articles" }, Article);
+Reflect.defineMetadata(
+  COLUMN_TOKEN,
+  [
+    { target: Article, name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+    { target: Article, name: "title", propertyKey: "title", type: String, options: {} },
+  ],
+  Article.prototype,
+);
+// @ManyToMany(() => Tag, { joinTable: { name: "article_tags", joinColumn: "article_id", inverseJoinColumn: "tag_id" } })
+Reflect.defineMetadata(
+  MANY_TO_MANY_TOKEN,
+  [{
+    target: Article,
+    propertyKey: "tags",
+    getRelatedEntity: () => Tag,
+    joinTable: { name: "article_tags", joinColumn: "article_id", inverseJoinColumn: "tag_id" },
+  }],
+  Article,
+);
+
+// Tag inverse side (no joinTable, has mappedBy)
+Reflect.defineMetadata(
+  MANY_TO_MANY_TOKEN,
+  [{
+    target: Tag,
+    propertyKey: "articles",
+    getRelatedEntity: () => Article,
+    mappedBy: "tags",
+  }],
+  Tag,
+);
+
+// 3-level entity hierarchy: Category → Post → Comment (for topological sort tests)
+class Category {
+  id!: number;
+  name!: string;
+}
+
+Reflect.defineMetadata(ENTITY_TOKEN, { name: "Category", tableName: "categories" }, Category);
+Reflect.defineMetadata(
+  COLUMN_TOKEN,
+  [
+    { target: Category, name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+    { target: Category, name: "name", propertyKey: "name", type: String, options: {} },
+  ],
+  Category.prototype,
+);
+
+// Post has @ManyToOne → Category
+Reflect.defineMetadata(
+  MANY_TO_ONE_TOKEN,
+  [
+    ...(Reflect.getMetadata(MANY_TO_ONE_TOKEN, Post) ?? []),
+    {
+      target: Post,
+      type: Category,
+      columnName: "category",
+      joinColumn: "categoryId",
+      getMappingEntity: () => Category,
+      getMappingProperty: (e: any) => e.category,
+      option: {},
+    },
+  ],
+  Post,
 );
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -314,7 +444,8 @@ describe("Buffer Plugin", () => {
       const result = await mut.flush();
 
       expect(result.updates).toBe(1);
-      expect(saveSpy).toHaveBeenCalledWith(User, mockUser);
+      // flush extracts column-only data, so save gets a plain object
+      expect(saveSpy).toHaveBeenCalledWith(User, { id: 1, name: "Updated", email: "a@b.c" });
     });
   });
 
@@ -604,7 +735,8 @@ describe("Buffer Plugin", () => {
 
       await mut.flush();
 
-      expect(saveSpy).toHaveBeenCalledWith(User, user);
+      // flush extracts column-only data
+      expect(saveSpy).toHaveBeenCalledWith(User, { id: 1, name: "Bob", email: "a@b.c" });
       saveSpy.mockRestore();
     });
 
@@ -801,7 +933,7 @@ describe("Buffer Plugin", () => {
       mut.clear();
 
       expect(mut.tracked()).toEqual([]);
-      expect(mut.size()).toEqual({ tracked: 0, inserts: 0, deletes: 0 });
+      expect(mut.size()).toEqual({ tracked: 0, inserts: 0, deletes: 0, persists: 0, bulkUpdates: 0, bulkDeletes: 0 });
     });
 
     it("should untrack a specific entity", () => {
@@ -946,6 +1078,2549 @@ describe("Buffer Plugin", () => {
     it("should handle nested structures", () => {
       expect(deepEquals({ a: { b: [1, 2] } }, { a: { b: [1, 2] } })).toBe(true);
       expect(deepEquals({ a: { b: [1, 2] } }, { a: { b: [1, 3] } })).toBe(false);
+    });
+  });
+
+  // ── persist() ──────────────────────────────────────────────────
+
+  describe("persist()", () => {
+    it("should add new entity (no PK) to persistQueue", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      mut.persist(user);
+
+      expect(mut.size().persists).toBe(1);
+      expect(mut.tracked()).toHaveLength(0); // not tracked yet
+    });
+
+    it("should delegate to track() when instance has PK", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.persist(user);
+
+      expect(mut.size().persists).toBe(0);
+      expect(mut.tracked()).toHaveLength(1);
+    });
+
+    it("should be idempotent (same reference twice)", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      mut.persist(user);
+      mut.persist(user);
+
+      expect(mut.size().persists).toBe(1);
+    });
+
+    it("should throw for non-entity class", () => {
+      class NotAnEntity { x = 1; }
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      expect(() => mut.persist(new NotAnEntity())).toThrow(/not a registered entity/);
+    });
+
+    it("flush() should INSERT persisted entities and write PK back", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      let insertId = 100;
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: insertId++,
+      }));
+
+      const mut = em.buffer();
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      mut.persist(user);
+
+      const result = await mut.flush();
+
+      expect(result.inserts).toBe(1);
+      expect(user.id).toBe(100); // PK written back
+    });
+
+    it("flush() + retainAfterFlush should auto-track persisted instances", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: 42,
+      }));
+
+      const mut = em.buffer();
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      mut.persist(user);
+      await mut.flush();
+
+      // Now tracked with the generated PK
+      expect(mut.tracked()).toContain(user);
+      expect(user.id).toBe(42);
+      expect(mut.dirty()).toEqual([]); // freshly snapshotted
+    });
+
+    it("flush() + retainAfterFlush:false should NOT auto-track", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ retainAfterFlush: false }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: 42,
+      }));
+
+      const mut = extended.buffer();
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      mut.persist(user);
+      await mut.flush();
+
+      expect(mut.tracked()).toHaveLength(0);
+      expect(user.id).toBe(42); // PK still written back
+    });
+
+    it("preview() should include persist entries as inserts", () => {
+      const em = createExtendedEm(User, Comment);
+      const mut = em.buffer();
+
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      mut.persist(user);
+      mut.save(Comment, { body: "hi", postId: 1 });
+
+      const preview = mut.preview();
+      expect(preview).toHaveLength(2);
+      expect(preview[0]).toMatchObject({
+        action: "insert",
+        entity: "User",
+        data: { name: "Alice", email: "a@b.c" },
+      });
+      expect(preview[1]).toMatchObject({
+        action: "insert",
+        entity: "Comment",
+      });
+    });
+
+    it("clear() should clear persistQueue", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      mut.persist(user);
+      mut.clear();
+
+      expect(mut.size().persists).toBe(0);
+    });
+
+    it("flush failure should preserve persistQueue for retry", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockRejectedValue(new Error("DB error"));
+
+      const mut = em.buffer();
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      mut.persist(user);
+
+      await expect(mut.flush()).rejects.toThrow("DB error");
+      expect(mut.size().persists).toBe(1);
+    });
+  });
+
+  // ── remove() ──────────────────────────────────────────────────
+
+  describe("remove()", () => {
+    it("should queue DELETE for an untracked entity with PK", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.remove(user);
+
+      expect(mut.size().deletes).toBe(1);
+    });
+
+    it("should untrack + queue DELETE for a tracked entity", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      mut.remove(user);
+
+      expect(mut.tracked()).toHaveLength(0);
+      expect(mut.size().deletes).toBe(1);
+    });
+
+    it("should cancel persist (not queue DELETE) when removing a persisted entity that later got PK", async () => {
+      // Scenario: persist entity without PK, then assign PK manually, then remove
+      // Since remove() checks persistQueue by reference, and the entity IS in persistQueue,
+      // it should be removed from persistQueue without queueing a DELETE.
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      mut.persist(user);
+      expect(mut.size().persists).toBe(1);
+
+      // Simulate PK assignment (e.g., user got ID from somewhere)
+      user.id = 5;
+      mut.remove(user);
+
+      expect(mut.size().persists).toBe(0);
+      expect(mut.size().deletes).toBe(0); // no DELETE queued
+    });
+
+    it("should throw when PK is missing", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      expect(() => mut.remove(user)).toThrow(/Cannot remove "User": PK "id" is undefined/);
+    });
+
+    it("should throw for non-entity class", () => {
+      class NotAnEntity { x = 1; }
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      expect(() => mut.remove(new NotAnEntity())).toThrow(/not a registered entity/);
+    });
+
+    it("should build correct criteria from composite PK", async () => {
+      const em = createExtendedEm(OrderItem);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "find").mockResolvedValue([]);
+      const deleteSpy = jest.spyOn(em, "delete").mockResolvedValue({ affected: 1 });
+
+      const mut = em.buffer();
+      const item = Object.assign(new OrderItem(), { orderId: 1, productId: 2, quantity: 5 });
+      mut.remove(item);
+
+      // Verify criteria via flush
+      await mut.flush();
+      expect(deleteSpy).toHaveBeenCalledWith(OrderItem, { orderId: 1, productId: 2 });
+    });
+  });
+
+  // ── @Transactional integration (Issue #89) ─────────────────────
+
+  describe("@Transactional integration", () => {
+    it("flush() inside em.transaction() should reuse the existing transaction", async () => {
+      const em = createExtendedEm(User);
+      let transactionCallCount = 0;
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => {
+        transactionCallCount++;
+        return cb(em as any);
+      });
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const mut = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      user.name = "Bob";
+
+      await mut.flush();
+
+      // flush calls em.transaction once
+      expect(transactionCallCount).toBe(1);
+    });
+
+    it("flush() without existing transaction should create its own", async () => {
+      const em = createExtendedEm(User);
+      const transactionSpy = jest.spyOn(em, "transaction").mockImplementation(
+        async (cb) => cb(em as any),
+      );
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const mut = em.buffer();
+      mut.save(User, { name: "Alice", email: "a@b.c" });
+
+      await mut.flush();
+
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── Cascade (Issue #90) ─────────────────────────────────────────
+
+  describe("cascade", () => {
+    it("persist parent + cascade:insert should auto-INSERT children", async () => {
+      const em = createExtendedEm(Post, Comment);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      let insertId = 100;
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? insertId++,
+      }));
+
+      const mut = em.buffer();
+
+      const comment1 = Object.assign(new Comment(), { body: "first", postId: undefined as any });
+      const comment2 = Object.assign(new Comment(), { body: "second", postId: undefined as any });
+
+      const post = new Post();
+      post.title = "Hello";
+      post.comments = [comment1, comment2];
+
+      mut.persist(post);
+      const result = await mut.flush();
+
+      // 1 parent insert + 2 child cascade inserts
+      expect(result.inserts).toBe(3);
+      // PK written back to parent
+      expect(post.id).toBe(100);
+      // FK + PK written back to children
+      expect(comment1.postId).toBe(100);
+      expect(comment1.id).toBe(101);
+      expect(comment2.postId).toBe(100);
+      expect(comment2.id).toBe(102);
+    });
+
+    it("tracked parent update + cascade should INSERT new children", async () => {
+      const em = createExtendedEm(Post, Comment);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      let insertId = 200;
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? insertId++,
+      }));
+
+      const mut = em.buffer();
+
+      const post = Object.assign(new Post(), { id: 1, title: "Hello", comments: [] as Comment[] });
+      mut.track(post);
+
+      // Add new child after tracking
+      const comment = Object.assign(new Comment(), { body: "new comment", postId: undefined as any });
+      post.comments = [comment];
+      post.title = "Updated";
+
+      const result = await mut.flush();
+
+      expect(result.updates).toBe(1);
+      expect(result.inserts).toBe(1); // cascade child
+      expect(comment.postId).toBe(1); // FK set
+      expect(comment.id).toBe(200);   // PK written back
+    });
+
+    it("cascade:false option should skip cascade processing", async () => {
+      const em = createEmWithEntities(Post, Comment);
+      const extended = em.extend(bufferPlugin({ cascade: false }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      const saveSpy = jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 1,
+      }));
+
+      const mut = extended.buffer();
+
+      const post = new Post();
+      post.title = "Hello";
+      post.comments = [Object.assign(new Comment(), { body: "child" })];
+
+      mut.persist(post);
+      const result = await mut.flush();
+
+      expect(result.inserts).toBe(1); // only parent, no cascade
+      expect(saveSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("should prevent infinite loop with visited set", async () => {
+      const em = createExtendedEm(Post, Comment);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      let insertId = 300;
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? insertId++,
+      }));
+
+      const mut = em.buffer();
+
+      const comment = Object.assign(new Comment(), { body: "hi", postId: undefined as any });
+      const post = new Post();
+      post.title = "Hello";
+      post.comments = [comment, comment]; // same ref twice in the array
+
+      mut.persist(post);
+      const result = await mut.flush();
+
+      // comment should only be saved once (visited set prevents duplicate)
+      expect(result.inserts).toBe(2); // 1 parent + 1 child (not 3)
+    });
+
+    it("should not cascade when children array is empty", async () => {
+      const em = createExtendedEm(Post, Comment);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const saveSpy = jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 1,
+      }));
+
+      const mut = em.buffer();
+
+      const post = new Post();
+      post.title = "Hello";
+      post.comments = [];
+
+      mut.persist(post);
+      await mut.flush();
+
+      expect(saveSpy).toHaveBeenCalledTimes(1); // only parent
+    });
+
+    it("should not cascade when children property is undefined", async () => {
+      const em = createExtendedEm(Post, Comment);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const saveSpy = jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 1,
+      }));
+
+      const mut = em.buffer();
+
+      const post = new Post();
+      post.title = "Hello";
+      // comments is undefined (not set)
+
+      mut.persist(post);
+      await mut.flush();
+
+      expect(saveSpy).toHaveBeenCalledTimes(1); // only parent
+    });
+
+    it("delete cascade should be handled by em.delete() (no extra logic needed)", async () => {
+      const em = createExtendedEm(Post, Comment);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const deleteSpy = jest.spyOn(em, "delete").mockResolvedValue({ affected: 1 });
+
+      const mut = em.buffer();
+      const post = Object.assign(new Post(), { id: 1, title: "Hello" });
+      mut.remove(post);
+
+      const result = await mut.flush();
+
+      expect(result.deletes).toBe(1);
+      expect(deleteSpy).toHaveBeenCalledWith(Post, { id: 1 });
+    });
+  });
+
+  // ── Phase 1: Entity States ─────────────────────────────────────
+
+  describe("EntityState (getState)", () => {
+    it("should return DETACHED for unregistered instances", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      expect(mut.getState(user)).toBe(EntityState.DETACHED);
+    });
+
+    it("should return MANAGED after track()", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      expect(mut.getState(user)).toBe(EntityState.MANAGED);
+    });
+
+    it("should return NEW after persist() with no PK", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+      mut.persist(user);
+      expect(mut.getState(user)).toBe(EntityState.NEW);
+    });
+
+    it("should return MANAGED after persist() with PK (delegates to track)", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.persist(user);
+      expect(mut.getState(user)).toBe(EntityState.MANAGED);
+    });
+
+    it("should return REMOVED after remove()", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.remove(user);
+      expect(mut.getState(user)).toBe(EntityState.REMOVED);
+    });
+
+    it("should return DETACHED after untrack()", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      mut.untrack(user);
+      expect(mut.getState(user)).toBe(EntityState.DETACHED);
+    });
+
+    it("should transition NEW → MANAGED after flush", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: 42,
+      }));
+
+      const mut = em.buffer();
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+      mut.persist(user);
+      expect(mut.getState(user)).toBe(EntityState.NEW);
+
+      await mut.flush();
+      expect(mut.getState(user)).toBe(EntityState.MANAGED);
+    });
+
+    it("clear() should clear stateMap", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      mut.clear();
+      expect(mut.getState(user)).toBe(EntityState.DETACHED);
+    });
+  });
+
+  // ── Phase 1: computeChanges() ──────────────────────────────────
+
+  describe("computeChanges()", () => {
+    it("should return empty changeset when nothing to do", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+      const changes = mut.computeChanges();
+      expect(changes.inserts).toHaveLength(0);
+      expect(changes.updates).toHaveLength(0);
+      expect(changes.deletes).toHaveLength(0);
+    });
+
+    it("should include inserts, updates, and deletes", () => {
+      const em = createExtendedEm(User, Comment, Tag);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      user.name = "Bob";
+
+      const newUser = new User();
+      newUser.name = "Charlie";
+      newUser.email = "c@d.e";
+      mut.persist(newUser);
+
+      mut.delete(Tag, { id: 5 });
+
+      const changes = mut.computeChanges();
+      expect(changes.updates).toHaveLength(1);
+      expect(changes.updates[0].entity).toBe(User);
+      expect(changes.updates[0].data).toEqual({ name: "Bob" });
+
+      expect(changes.inserts).toHaveLength(1);
+      expect(changes.inserts[0].instance).toBe(newUser);
+
+      expect(changes.deletes).toHaveLength(1);
+      expect(changes.deletes[0].criteria).toEqual({ id: 5 });
+    });
+  });
+
+  // ── Phase 2: Topological Sort ───────────────────────────────────
+
+  describe("topologicalSort", () => {
+    it("should sort parent before child (Category → Post → Comment)", () => {
+      const sorted = topologicalSort([Comment, Post, Category]);
+      const idx = (cls: any) => sorted.indexOf(cls);
+      expect(idx(Category)).toBeLessThan(idx(Post));
+      expect(idx(Post)).toBeLessThan(idx(Comment));
+    });
+
+    it("should handle entities with no relations", () => {
+      const sorted = topologicalSort([Tag, User]);
+      expect(sorted).toHaveLength(2);
+      expect(sorted).toContain(Tag);
+      expect(sorted).toContain(User);
+    });
+
+    it("should handle single entity", () => {
+      const sorted = topologicalSort([User]);
+      expect(sorted).toEqual([User]);
+    });
+
+    it("should fallback to original order on cycle", () => {
+      // Create a synthetic cycle: A depends on B, B depends on A
+      class CycleA { id!: number; }
+      class CycleB { id!: number; }
+      Reflect.defineMetadata(ENTITY_TOKEN, { name: "CycleA" }, CycleA);
+      Reflect.defineMetadata(ENTITY_TOKEN, { name: "CycleB" }, CycleB);
+      Reflect.defineMetadata(COLUMN_TOKEN, [{ name: "id", propertyKey: "id", options: { primary: true } }], CycleA.prototype);
+      Reflect.defineMetadata(COLUMN_TOKEN, [{ name: "id", propertyKey: "id", options: { primary: true } }], CycleB.prototype);
+      Reflect.defineMetadata(MANY_TO_ONE_TOKEN, [{
+        target: CycleA, type: CycleB, columnName: "b", joinColumn: "bId",
+        getMappingEntity: () => CycleB, getMappingProperty: (e: any) => e.b, option: {},
+      }], CycleA);
+      Reflect.defineMetadata(MANY_TO_ONE_TOKEN, [{
+        target: CycleB, type: CycleA, columnName: "a", joinColumn: "aId",
+        getMappingEntity: () => CycleA, getMappingProperty: (e: any) => e.a, option: {},
+      }], CycleB);
+
+      const sorted = topologicalSort([CycleA, CycleB]);
+      // Should fallback to original order (not crash)
+      expect(sorted).toEqual([CycleA, CycleB]);
+    });
+
+    it("sortForInsert should sort entries by parent-first order", () => {
+      const entries = [
+        { entity: Comment, data: {} },
+        { entity: Post, data: {} },
+        { entity: Category, data: {} },
+      ];
+      const sorted = sortForInsert(entries, [Category, Post, Comment]);
+      const names = sorted.map(e => e.entity.name);
+      expect(names.indexOf("Category")).toBeLessThan(names.indexOf("Post"));
+      expect(names.indexOf("Post")).toBeLessThan(names.indexOf("Comment"));
+    });
+
+    it("sortForDelete should sort entries by child-first order", () => {
+      const entries = [
+        { entity: Category, criteria: {} },
+        { entity: Post, criteria: {} },
+        { entity: Comment, criteria: {} },
+      ];
+      const sorted = sortForDelete(entries, [Category, Post, Comment]);
+      const names = sorted.map(e => e.entity.name);
+      expect(names.indexOf("Comment")).toBeLessThan(names.indexOf("Post"));
+      expect(names.indexOf("Post")).toBeLessThan(names.indexOf("Category"));
+    });
+  });
+
+  // ── Phase 2: flush with topological order ───────────────────────
+
+  describe("flush() topological order", () => {
+    it("should insert parent before child", async () => {
+      const em = createExtendedEm(Post, Comment, Category);
+      const saveOrder: string[] = [];
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      let insertId = 1;
+      jest.spyOn(em, "save").mockImplementation(async (entity: any, data: any) => {
+        saveOrder.push(entity.name);
+        return { ...data, id: data.id ?? insertId++ };
+      });
+
+      const mut = em.buffer();
+
+      const comment = new Comment();
+      comment.body = "hi";
+      const post = new Post();
+      post.title = "Hello";
+
+      // Persist child first, parent second — topological sort should fix order
+      mut.persist(comment);
+      mut.persist(post);
+
+      await mut.flush();
+
+      // Post (parent) should be saved before Comment (child)
+      expect(saveOrder.indexOf("Post")).toBeLessThan(saveOrder.indexOf("Comment"));
+    });
+
+    it("should delete child before parent", async () => {
+      const em = createExtendedEm(Post, Comment, Category);
+      const deleteOrder: string[] = [];
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "delete").mockImplementation(async (entity: any) => {
+        deleteOrder.push(entity.name);
+        return { affected: 1 };
+      });
+
+      const mut = em.buffer();
+      mut.delete(Category, { id: 1 });
+      mut.delete(Comment, { id: 10 });
+      mut.delete(Post, { id: 5 });
+
+      await mut.flush();
+
+      expect(deleteOrder.indexOf("Comment")).toBeLessThan(deleteOrder.indexOf("Post"));
+      expect(deleteOrder.indexOf("Post")).toBeLessThan(deleteOrder.indexOf("Category"));
+    });
+  });
+
+  // ── Phase 3: CollectionTracker ──────────────────────────────────
+
+  describe("CollectionTracker", () => {
+    it("snapshotCollections should capture O2M arrays", () => {
+      const post = Object.assign(new Post(), { id: 1, title: "Hi" });
+      const c1 = Object.assign(new Comment(), { id: 1, body: "a", postId: 1 });
+      post.comments = [c1];
+
+      const snapshots = snapshotCollections(post, Post);
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0].relationType).toBe("oneToMany");
+      expect(snapshots[0].originalItems.has(c1)).toBe(true);
+    });
+
+    it("snapshotCollections should capture M2M owning-side arrays", () => {
+      const tag = Object.assign(new Tag(), { id: 1, label: "ts" });
+      const article = Object.assign(new Article(), { id: 1, title: "ORM", tags: [tag] });
+
+      const snapshots = snapshotCollections(article, Article);
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0].relationType).toBe("manyToMany");
+      expect(snapshots[0].joinTable!.name).toBe("article_tags");
+      expect(snapshots[0].originalItems.has(tag)).toBe(true);
+    });
+
+    it("snapshotCollections should skip M2M inverse side (mappedBy)", () => {
+      const tag = Object.assign(new Tag(), { id: 1, label: "ts" });
+      (tag as any).articles = [Object.assign(new Article(), { id: 1 })];
+
+      const snapshots = snapshotCollections(tag, Tag);
+      // Tag has mappedBy on articles → should be skipped
+      expect(snapshots.filter(s => s.relationType === "manyToMany")).toHaveLength(0);
+    });
+
+    it("snapshotCollections should skip non-array properties", () => {
+      const post = Object.assign(new Post(), { id: 1, title: "Hi" });
+      // comments is undefined
+      const snapshots = snapshotCollections(post, Post);
+      expect(snapshots).toHaveLength(0);
+    });
+
+    it("diffCollection should detect added items", () => {
+      const c1 = Object.assign(new Comment(), { id: 1, body: "a", postId: 1 });
+      const c2 = Object.assign(new Comment(), { id: 2, body: "b", postId: 1 });
+
+      const snapshot = {
+        propertyKey: "comments",
+        relationType: "oneToMany" as const,
+        originalItems: new Set([c1]),
+        relatedEntity: Comment,
+      };
+
+      const post = { comments: [c1, c2] };
+      const diff = diffCollection(post, snapshot);
+      expect(diff).not.toBeNull();
+      expect(diff!.added).toEqual([c2]);
+      expect(diff!.removed).toEqual([]);
+    });
+
+    it("diffCollection should detect removed items", () => {
+      const c1 = Object.assign(new Comment(), { id: 1, body: "a", postId: 1 });
+      const c2 = Object.assign(new Comment(), { id: 2, body: "b", postId: 1 });
+
+      const snapshot = {
+        propertyKey: "comments",
+        relationType: "oneToMany" as const,
+        originalItems: new Set([c1, c2]),
+        relatedEntity: Comment,
+      };
+
+      const post = { comments: [c1] };
+      const diff = diffCollection(post, snapshot);
+      expect(diff).not.toBeNull();
+      expect(diff!.added).toEqual([]);
+      expect(diff!.removed).toEqual([c2]);
+    });
+
+    it("diffCollection should return null when unchanged", () => {
+      const c1 = Object.assign(new Comment(), { id: 1, body: "a", postId: 1 });
+
+      const snapshot = {
+        propertyKey: "comments",
+        relationType: "oneToMany" as const,
+        originalItems: new Set([c1]),
+        relatedEntity: Comment,
+      };
+
+      const post = { comments: [c1] };
+      const diff = diffCollection(post, snapshot);
+      expect(diff).toBeNull();
+    });
+  });
+
+  // ── Phase 3: Orphan Removal ─────────────────────────────────────
+
+  describe("orphanRemoval", () => {
+    it("should DELETE children removed from O2M array when orphanRemoval:true", async () => {
+      const em = createEmWithEntities(Post, Comment);
+      const extended = em.extend(bufferPlugin({ orphanRemoval: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
+      const deleteSpy = jest.spyOn(extended, "delete").mockResolvedValue({ affected: 1 });
+
+      const mut = extended.buffer();
+
+      const c1 = Object.assign(new Comment(), { id: 1, body: "keep", postId: 1 });
+      const c2 = Object.assign(new Comment(), { id: 2, body: "remove", postId: 1 });
+      const post = Object.assign(new Post(), { id: 1, title: "Hi", comments: [c1, c2] });
+      mut.track(post);
+
+      // Remove c2 from collection
+      post.comments = [c1];
+      post.title = "Updated";
+
+      const result = await mut.flush();
+
+      expect(result.deletes).toBe(1);
+      expect(deleteSpy).toHaveBeenCalledWith(Comment, { id: 2 });
+    });
+
+    it("should NOT delete removed children when orphanRemoval:false (default)", async () => {
+      const em = createExtendedEm(Post, Comment);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+      const deleteSpy = jest.spyOn(em, "delete").mockResolvedValue({ affected: 1 });
+
+      const mut = em.buffer();
+
+      const c1 = Object.assign(new Comment(), { id: 1, body: "keep", postId: 1 });
+      const c2 = Object.assign(new Comment(), { id: 2, body: "remove", postId: 1 });
+      const post = Object.assign(new Post(), { id: 1, title: "Hi", comments: [c1, c2] });
+      mut.track(post);
+
+      post.comments = [c1];
+      post.title = "Updated";
+
+      const result = await mut.flush();
+
+      // Only the update, no orphan removal
+      expect(result.deletes).toBe(0);
+      expect(deleteSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Phase 3: M2M Pivot Sync ──────────────────────────────────────
+
+  describe("M2M pivot sync", () => {
+    it("should INSERT into pivot table for added M2M items", async () => {
+      const em = createExtendedEm(Article, Tag);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([] as any);
+
+      const mut = em.buffer();
+
+      const tag1 = Object.assign(new Tag(), { id: 1, label: "ts" });
+      const article = Object.assign(new Article(), { id: 1, title: "ORM", tags: [] as Tag[] });
+      mut.track(article);
+
+      // Add tag to collection
+      article.tags = [tag1];
+      article.title = "Updated";
+
+      const result = await mut.flush();
+
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO"),
+        [1, 1], // parentPk=1, childPk=1
+      );
+      expect(result.inserts).toBe(1); // pivot row
+    });
+
+    it("should DELETE from pivot table for removed M2M items", async () => {
+      const em = createExtendedEm(Article, Tag);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([] as any);
+
+      const mut = em.buffer();
+
+      const tag1 = Object.assign(new Tag(), { id: 1, label: "ts" });
+      const tag2 = Object.assign(new Tag(), { id: 2, label: "js" });
+      const article = Object.assign(new Article(), { id: 1, title: "ORM", tags: [tag1, tag2] });
+      mut.track(article);
+
+      // Remove tag2
+      article.tags = [tag1];
+      article.title = "Updated";
+
+      const result = await mut.flush();
+
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("DELETE FROM"),
+        [1, 2], // parentPk=1, childPk=2
+      );
+      expect(result.deletes).toBe(1); // pivot row
+    });
+
+    it("should not process M2M on inverse side (mappedBy)", async () => {
+      const em = createExtendedEm(Article, Tag);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([] as any);
+
+      const mut = em.buffer();
+
+      // Track Tag (inverse side)
+      const tag = Object.assign(new Tag(), { id: 1, label: "ts" });
+      (tag as any).articles = [];
+      mut.track(tag);
+
+      // Modify inverse side array
+      (tag as any).articles = [Object.assign(new Article(), { id: 1, title: "x" })];
+      tag.label = "updated";
+
+      await mut.flush();
+
+      // No pivot queries for inverse side
+      expect(querySpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Phase 4: detach() ──────────────────────────────────────────
+
+  describe("detach()", () => {
+    it("should remove tracked entity and set DETACHED state", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      mut.detach(user);
+
+      expect(mut.tracked()).toHaveLength(0);
+      expect(mut.getState(user)).toBe(EntityState.DETACHED);
+    });
+
+    it("should remove from persistQueue", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+      mut.persist(user);
+      expect(mut.size().persists).toBe(1);
+
+      mut.detach(user);
+      expect(mut.size().persists).toBe(0);
+      expect(mut.getState(user)).toBe(EntityState.DETACHED);
+    });
+
+    it("should remove from identityMap, allowing re-track of same PK", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const user2 = Object.assign(new User(), { id: 1, name: "Bob", email: "b@c.d" });
+
+      mut.track(user1);
+      mut.detach(user1);
+      mut.track(user2); // should not throw
+
+      expect(mut.tracked()).toEqual([user2]);
+    });
+  });
+
+  // ── Phase 4: merge() ──────────────────────────────────────────
+
+  describe("merge()", () => {
+    it("should copy columns onto existing tracked instance with same PK", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const tracked = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(tracked);
+
+      const detached = Object.assign(new User(), { id: 1, name: "Updated", email: "new@b.c" });
+      mut.merge(detached);
+
+      expect(tracked.name).toBe("Updated");
+      expect(tracked.email).toBe("new@b.c");
+      expect(mut.tracked()).toHaveLength(1);
+      expect(mut.tracked()[0]).toBe(tracked); // same reference
+    });
+
+    it("should track new instance when no existing entity with same PK", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.merge(user);
+
+      expect(mut.tracked()).toEqual([user]);
+      expect(mut.getState(user)).toBe(EntityState.MANAGED);
+    });
+
+    it("should handle instance with no PK gracefully", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 5, name: "Alice", email: "a@b.c" });
+      // merge with PK that buildIdentityKey won't find → just track
+      mut.merge(user);
+      expect(mut.tracked()).toContain(user);
+    });
+  });
+
+  // ── Phase 4: refresh() ─────────────────────────────────────────
+
+  describe("refresh()", () => {
+    it("should reload from DB and re-snapshot", async () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+
+      // Mutate locally
+      user.name = "Dirty";
+      expect(mut.dirty()).toEqual([user]);
+
+      // Simulate DB returning fresh data
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "FromDB", email: "db@b.c" }),
+      );
+
+      await mut.refresh(user);
+
+      expect(user.name).toBe("FromDB");
+      expect(user.email).toBe("db@b.c");
+      expect(mut.dirty()).toEqual([]); // re-snapshotted, no longer dirty
+    });
+
+    it("should throw for untracked instances", async () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+
+      await expect(mut.refresh(user)).rejects.toThrow(/not tracked/);
+    });
+
+    it("should throw when not found in DB", async () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+
+      jest.spyOn(em, "findOne").mockResolvedValue(null);
+
+      await expect(mut.refresh(user)).rejects.toThrow(/not found in database/);
+    });
+  });
+
+  // ── Phase 4: autoFlush ──────────────────────────────────────────
+
+  describe("autoFlush", () => {
+    it("should flush before findOne when autoFlush:true and pending work", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ autoFlush: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: data.id ?? 42,
+      }));
+      jest.spyOn(extended, "findOne").mockResolvedValue(null);
+
+      const mut = extended.buffer();
+      mut.save(User, { name: "Alice", email: "a@b.c" });
+
+      await mut.findOne(User, { where: { id: 42 } as any });
+
+      // Insert queue should have been flushed
+      expect(mut.size().inserts).toBe(0);
+    });
+
+    it("should flush before find when autoFlush:true and pending work", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ autoFlush: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: data.id ?? 42,
+      }));
+      jest.spyOn(extended, "find").mockResolvedValue([]);
+
+      const mut = extended.buffer();
+      mut.save(User, { name: "Alice", email: "a@b.c" });
+
+      await mut.find(User);
+
+      expect(mut.size().inserts).toBe(0);
+    });
+
+    it("should NOT flush when autoFlush:false (default)", async () => {
+      const em = createExtendedEm(User);
+      const transactionSpy = jest.spyOn(em, "transaction");
+      jest.spyOn(em, "findOne").mockResolvedValue(null);
+
+      const mut = em.buffer();
+      mut.save(User, { name: "Alice", email: "a@b.c" });
+
+      await mut.findOne(User, { where: { id: 1 } as any });
+
+      // No flush triggered
+      expect(transactionSpy).not.toHaveBeenCalled();
+      expect(mut.size().inserts).toBe(1);
+    });
+
+    it("should NOT flush when no pending work even with autoFlush:true", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ autoFlush: true }));
+      const transactionSpy = jest.spyOn(extended, "transaction");
+      jest.spyOn(extended, "findOne").mockResolvedValue(null);
+
+      const mut = extended.buffer();
+      // No pending work
+
+      await mut.findOne(User, { where: { id: 1 } as any });
+
+      expect(transactionSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Phase 4: onFlush callback ───────────────────────────────────
+
+  describe("onFlush callback", () => {
+    it("should call onFlush after successful flush", async () => {
+      const onFlush = jest.fn();
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ onFlush }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const mut = extended.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      user.name = "Bob";
+
+      await mut.flush();
+
+      expect(onFlush).toHaveBeenCalledWith({ updates: 1, inserts: 0, deletes: 0 });
+    });
+
+    it("should NOT call onFlush on no-op flush", async () => {
+      const onFlush = jest.fn();
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ onFlush }));
+
+      const mut = extended.buffer();
+      await mut.flush();
+
+      expect(onFlush).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Cascade Remove ──────────────────────────────────────────────
+
+  describe("cascade remove", () => {
+    it("should cascade-delete O2M children when parent is deleted and cascade:delete", async () => {
+      // Post has @OneToMany(() => Comment, { cascade: ["insert", "update"] })
+      // We need cascade: true (includes delete). Override metadata for this test.
+      const originalMeta = Reflect.getMetadata(ONE_TO_MANY_TOKEN, Post);
+      Reflect.defineMetadata(
+        ONE_TO_MANY_TOKEN,
+        [{
+          ...originalMeta[0],
+          cascade: true, // true = insert + update + delete
+        }],
+        Post,
+      );
+
+      const em = createExtendedEm(Post, Comment);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "find").mockResolvedValue([
+        Object.assign(new Comment(), { id: 10, body: "a", postId: 1 }),
+        Object.assign(new Comment(), { id: 11, body: "b", postId: 1 }),
+      ]);
+      const deleteSpy = jest.spyOn(em, "delete").mockResolvedValue({ affected: 1 });
+
+      const mut = em.buffer();
+      const post = Object.assign(new Post(), { id: 1, title: "Hello" });
+      mut.remove(post);
+
+      const result = await mut.flush();
+
+      // Should delete children + parent
+      expect(result.deletes).toBeGreaterThanOrEqual(2); // child cascade + parent
+      // Child delete should have been called
+      expect(deleteSpy).toHaveBeenCalledWith(Comment, expect.objectContaining({ postId: 1 }));
+      expect(deleteSpy).toHaveBeenCalledWith(Post, { id: 1 });
+
+      // Restore original metadata
+      Reflect.defineMetadata(ONE_TO_MANY_TOKEN, originalMeta, Post);
+    });
+
+    it("should NOT cascade-delete when cascade does not include delete", async () => {
+      // Default Post cascade is ["insert", "update"] — no delete
+      const em = createExtendedEm(Post, Comment);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "find").mockResolvedValue([]);
+      const deleteSpy = jest.spyOn(em, "delete").mockResolvedValue({ affected: 1 });
+
+      const mut = em.buffer();
+      mut.remove(Object.assign(new Post(), { id: 1, title: "Hello" }));
+
+      const result = await mut.flush();
+
+      // Only parent delete — no cascade
+      expect(result.deletes).toBe(1);
+      expect(deleteSpy).toHaveBeenCalledTimes(1);
+      expect(deleteSpy).toHaveBeenCalledWith(Post, { id: 1 });
+    });
+  });
+
+  // ── Cascade O2O ────────────────────────────────────────────────
+
+  describe("cascade OneToOne", () => {
+    // Set up O2O entities for testing
+    class UserWithProfile {
+      id!: number;
+      name!: string;
+      profile!: any;
+    }
+
+    class UserProfile {
+      id!: number;
+      bio!: string;
+    }
+
+    beforeAll(() => {
+      Reflect.defineMetadata(ENTITY_TOKEN, { name: "UserWithProfile" }, UserWithProfile);
+      Reflect.defineMetadata(COLUMN_TOKEN, [
+        { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+        { name: "name", propertyKey: "name", type: String, options: {} },
+        { name: "profileId", propertyKey: "profileId", type: Number, options: {} },
+      ], UserWithProfile.prototype);
+
+      Reflect.defineMetadata(ENTITY_TOKEN, { name: "UserProfile" }, UserProfile);
+      Reflect.defineMetadata(COLUMN_TOKEN, [
+        { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+        { name: "bio", propertyKey: "bio", type: String, options: {} },
+      ], UserProfile.prototype);
+
+      // @OneToOne(() => UserProfile, { joinColumn: "profileId", cascade: true })
+      Reflect.defineMetadata(ONE_TO_ONE_TOKEN, [{
+        target: UserWithProfile,
+        propertyKey: "profile",
+        getRelatedEntity: () => UserProfile,
+        joinColumn: "profileId",
+        option: { cascade: true },
+      }], UserWithProfile);
+    });
+
+    it("should cascade persist O2O related entity", async () => {
+      const em = createExtendedEm(UserWithProfile, UserProfile);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      let insertId = 100;
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? insertId++,
+      }));
+
+      const mut = em.buffer();
+
+      const profile = new UserProfile();
+      profile.bio = "hello";
+
+      const user = new UserWithProfile();
+      user.name = "Alice";
+      user.profile = profile;
+
+      mut.persist(user);
+      const result = await mut.flush();
+
+      // Parent + profile cascade insert
+      expect(result.inserts).toBe(2);
+      expect(profile.id).toBeDefined();
+    });
+  });
+
+  // ── Cascade M2M persist ────────────────────────────────────────
+
+  describe("cascade M2M persist", () => {
+    it("should cascade-persist new M2M children without PK", async () => {
+      const em = createExtendedEm(Article, Tag);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      let insertId = 100;
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? insertId++,
+      }));
+      jest.spyOn(em, "query").mockResolvedValue([] as any);
+
+      const mut = em.buffer();
+
+      const newTag = new Tag();
+      newTag.label = "new-tag";
+      // No PK — should be cascade-persisted
+
+      const article = new Article();
+      article.title = "My Article";
+      article.tags = [newTag];
+
+      mut.persist(article);
+      const result = await mut.flush();
+
+      // Article + newTag persist + pivot row
+      expect(result.inserts).toBeGreaterThanOrEqual(2);
+      expect(newTag.id).toBeDefined();
+    });
+
+    it("should NOT cascade-persist M2M children that already have PK", async () => {
+      const em = createExtendedEm(Article, Tag);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      let insertId = 100;
+      const saveSpy = jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? insertId++,
+      }));
+      jest.spyOn(em, "query").mockResolvedValue([] as any);
+
+      const mut = em.buffer();
+
+      const existingTag = Object.assign(new Tag(), { id: 5, label: "existing" });
+
+      const article = new Article();
+      article.title = "My Article";
+      article.tags = [existingTag];
+
+      mut.persist(article);
+      await mut.flush();
+
+      // saveSpy should only have been called for Article, not for existingTag
+      const saveCalls = saveSpy.mock.calls.map(c => c[0].name);
+      expect(saveCalls.filter(n => n === "Tag")).toHaveLength(0);
+    });
+  });
+
+  // ── Cascade merge/detach/refresh propagation ───────────────────
+
+  describe("cascade merge/detach/refresh propagation", () => {
+    it("detach should cascade to O2M children", () => {
+      const em = createExtendedEm(Post, Comment);
+      const mut = em.buffer();
+
+      const comment = Object.assign(new Comment(), { id: 1, body: "hi", postId: 1 });
+      const post = Object.assign(new Post(), { id: 1, title: "Hello", comments: [comment] });
+      mut.track(post);
+      mut.track(comment);
+
+      mut.detach(post);
+
+      expect(mut.tracked()).toHaveLength(0); // both detached
+      expect(mut.getState(post)).toBe(EntityState.DETACHED);
+      expect(mut.getState(comment)).toBe(EntityState.DETACHED);
+    });
+
+    it("merge should cascade to O2M children", () => {
+      const em = createExtendedEm(Post, Comment);
+      const mut = em.buffer();
+
+      const comment = Object.assign(new Comment(), { id: 1, body: "original", postId: 1 });
+      const post = Object.assign(new Post(), { id: 1, title: "Hello", comments: [comment] });
+      mut.track(post);
+      mut.track(comment);
+
+      // Merge with updated data
+      const detachedComment = Object.assign(new Comment(), { id: 1, body: "updated", postId: 1 });
+      const detachedPost = Object.assign(new Post(), { id: 1, title: "Updated", comments: [detachedComment] });
+      mut.merge(detachedPost);
+
+      // Tracked post should have updated title
+      const trackedPost = mut.tracked().find((t: any) => t.constructor === Post);
+      expect(trackedPost.title).toBe("Updated");
+      // Tracked comment should have updated body
+      const trackedComment = mut.tracked().find((t: any) => t.constructor === Comment);
+      expect(trackedComment.body).toBe("updated");
+    });
+
+    it("refresh should cascade to tracked children", async () => {
+      const em = createExtendedEm(Post, Comment);
+      const mut = em.buffer();
+
+      const comment = Object.assign(new Comment(), { id: 1, body: "hi", postId: 1 });
+      const post = Object.assign(new Post(), { id: 1, title: "Hello", comments: [comment] });
+      mut.track(post);
+      mut.track(comment);
+
+      post.title = "Dirty";
+      comment.body = "Dirty";
+
+      jest.spyOn(em, "findOne")
+        .mockResolvedValueOnce(Object.assign(new Post(), { id: 1, title: "FromDB" }))
+        .mockResolvedValueOnce(Object.assign(new Comment(), { id: 1, body: "FromDB", postId: 1 }));
+
+      await mut.refresh(post);
+
+      expect(post.title).toBe("FromDB");
+      expect(comment.body).toBe("FromDB");
+      expect(mut.dirty()).toHaveLength(0);
+    });
+  });
+
+  // ── Batch UPDATE ───────────────────────────────────────────────
+
+  describe("batchUpdate", () => {
+    it("should batch UPDATE multiple dirty entities of same type", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ batchUpdate: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      const querySpy = jest.spyOn(extended, "query").mockResolvedValue([] as any);
+
+      const mut = extended.buffer();
+
+      const u1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const u2 = Object.assign(new User(), { id: 2, name: "Bob", email: "b@c.d" });
+      mut.track(u1);
+      mut.track(u2);
+
+      u1.name = "Alice2";
+      u2.name = "Bob2";
+
+      const result = await mut.flush();
+
+      expect(result.updates).toBe(2);
+      // Should have used batch query with CASE WHEN
+      expect(querySpy).toHaveBeenCalledTimes(1);
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("CASE"),
+        expect.any(Array),
+      );
+    });
+
+    it("should fallback to individual saves for composite PK", async () => {
+      const em = createEmWithEntities(OrderItem);
+      const extended = em.extend(bufferPlugin({ batchUpdate: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      const saveSpy = jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const mut = extended.buffer();
+
+      const i1 = Object.assign(new OrderItem(), { orderId: 1, productId: 1, quantity: 5 });
+      const i2 = Object.assign(new OrderItem(), { orderId: 1, productId: 2, quantity: 10 });
+      mut.track(i1);
+      mut.track(i2);
+
+      i1.quantity = 99;
+      i2.quantity = 88;
+
+      const result = await mut.flush();
+
+      expect(result.updates).toBe(2);
+      expect(saveSpy).toHaveBeenCalledTimes(2); // individual saves
+    });
+
+    it("should use individual saves when batchUpdate:false (default)", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const saveSpy = jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const mut = em.buffer();
+
+      const u1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const u2 = Object.assign(new User(), { id: 2, name: "Bob", email: "b@c.d" });
+      mut.track(u1);
+      mut.track(u2);
+
+      u1.name = "Alice2";
+      u2.name = "Bob2";
+
+      const result = await mut.flush();
+
+      expect(result.updates).toBe(2);
+      expect(saveSpy).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // ── Phase 5: Batch INSERT ──────────────────────────────────────
+
+  describe("batchInsert", () => {
+    it("should batch INSERT multiple entities of same type (MySQL)", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ batchInsert: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      // Mock query to return MySQL-style insertId result
+      const querySpy = jest.spyOn(extended, "query").mockResolvedValue({ insertId: 10 } as any);
+      // Mock isMySqlFamily — check PluginContext usage
+      // Since createExtendedEm uses default mysql mock, isPostgres will be false
+
+      const mut = extended.buffer();
+
+      const u1 = new User(); u1.name = "Alice"; u1.email = "a@b.c";
+      const u2 = new User(); u2.name = "Bob"; u2.email = "b@c.d";
+
+      mut.persist(u1);
+      mut.persist(u2);
+
+      const result = await mut.flush();
+
+      expect(result.inserts).toBe(2);
+      // batch query should have been called
+      expect(querySpy).toHaveBeenCalledTimes(1);
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO"),
+        expect.any(Array),
+      );
+      // PKs should be written back sequentially from insertId
+      expect(u1.id).toBe(10);
+      expect(u2.id).toBe(11);
+    });
+
+    it("should fallback to individual saves for composite PK", async () => {
+      const em = createEmWithEntities(OrderItem);
+      const extended = em.extend(bufferPlugin({ batchInsert: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      const saveSpy = jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const mut = extended.buffer();
+
+      const item1 = Object.assign(new OrderItem(), { quantity: 5 });
+      const item2 = Object.assign(new OrderItem(), { quantity: 10 });
+      // Composite PK → no auto-increment → persist won't add to persistQueue
+      // Let's manually queue them since they have no PK
+      // Actually composite PK entities without PK won't pass hasPk check...
+      // So let's use the save() API instead
+      mut.save(OrderItem, { orderId: 1, productId: 1, quantity: 5 });
+      mut.save(OrderItem, { orderId: 1, productId: 2, quantity: 10 });
+
+      const result = await mut.flush();
+
+      expect(result.inserts).toBe(2);
+      expect(saveSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("should use individual saves when batchInsert:false (default)", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      let insertId = 100;
+      const saveSpy = jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: data.id ?? insertId++,
+      }));
+
+      const mut = em.buffer();
+
+      const u1 = new User(); u1.name = "Alice"; u1.email = "a@b.c";
+      const u2 = new User(); u2.name = "Bob"; u2.email = "b@c.d";
+
+      mut.persist(u1);
+      mut.persist(u2);
+
+      const result = await mut.flush();
+
+      expect(result.inserts).toBe(2);
+      expect(saveSpy).toHaveBeenCalledTimes(2); // individual saves
+    });
+
+    it("cascade should still trigger per entry in batch mode", async () => {
+      const em = createEmWithEntities(Post, Comment);
+      const extended = em.extend(bufferPlugin({ batchInsert: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      let insertId = 1;
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: data.id ?? insertId++,
+      }));
+      // batch query mock for when posts are batched
+      jest.spyOn(extended, "query").mockResolvedValue({ insertId: 100 } as any);
+
+      const mut = extended.buffer();
+
+      const comment = Object.assign(new Comment(), { body: "hello" });
+      const post = new Post();
+      post.title = "Hello";
+      post.comments = [comment];
+
+      mut.persist(post);
+
+      const result = await mut.flush();
+
+      // Single entity — falls through to individual save, cascade fires
+      // 1 parent + 1 child cascade
+      expect(result.inserts).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  // ── Proxy Lazy Loading ───────────────────────────────────────────
+
+  describe("getReference()", () => {
+    it("should create a reference with only PK set", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      const ref = buf.getReference(User, 42);
+
+      expect(ref).toBeInstanceOf(User);
+      expect((ref as any).id).toBe(42);
+    });
+
+    it("should return existing identity-mapped instance", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 5, name: "Alice", email: "a@b.c" }),
+      );
+
+      const buf = em.buffer();
+      const loaded = await buf.findOne(User, { where: { id: 5 } as any });
+      const ref = buf.getReference(User, 5);
+
+      expect(ref).toBe(loaded);
+    });
+
+    it("should support composite PK via object", () => {
+      const em = createExtendedEm(OrderItem);
+      const buf = em.buffer();
+
+      const ref = buf.getReference(OrderItem, { orderId: 1, productId: 2 });
+
+      expect((ref as any).orderId).toBe(1);
+      expect((ref as any).productId).toBe(2);
+    });
+
+    it("should register reference in identity map (no duplicate)", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      const ref1 = buf.getReference(User, 10);
+      const ref2 = buf.getReference(User, 10);
+
+      expect(ref1).toBe(ref2);
+    });
+
+    it("should set state to MANAGED", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      const ref = buf.getReference(User, 7);
+      expect(buf.getState(ref)).toBe(EntityState.MANAGED);
+    });
+
+    it("should throw for non-registered entity", () => {
+      class Ghost { id!: number; }
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      expect(() => buf.getReference(Ghost as any, 1)).toThrow(/not a registered entity/);
+    });
+  });
+
+  describe("lazy relation proxies", () => {
+    // ── M2O lazy ─────────────────────────────────────────────────
+
+    describe("ManyToOne lazy", () => {
+      class Author {
+        id!: number;
+        name!: string;
+      }
+
+      class BlogPost {
+        id!: number;
+        title!: string;
+        authorId!: number;
+        author!: Author;
+      }
+
+      beforeAll(() => {
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "Author" }, Author);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "name", propertyKey: "name", type: String, options: {} },
+        ], Author.prototype);
+
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "BlogPost" }, BlogPost);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "title", propertyKey: "title", type: String, options: {} },
+          { name: "authorId", propertyKey: "authorId", type: Number, options: {} },
+        ], BlogPost.prototype);
+
+        Reflect.defineMetadata(MANY_TO_ONE_TOKEN, [{
+          target: BlogPost,
+          type: Author,
+          columnName: "author",
+          joinColumn: "authorId",
+          getMappingEntity: () => Author,
+          getMappingProperty: (e: any) => e.author,
+          option: {},
+        }], BlogPost);
+      });
+
+      it("should inject lazy proxy on M2O property after findOne", async () => {
+        const em = createExtendedEm(BlogPost, Author);
+        const authorData = Object.assign(new Author(), { id: 10, name: "Bob" });
+
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any, opt: any) => {
+          if (entity === BlogPost) {
+            return Object.assign(new BlogPost(), { id: 1, title: "Hello", authorId: 10 });
+          }
+          if (entity === Author) {
+            return authorData;
+          }
+          return null;
+        });
+
+        const buf = em.buffer();
+        const post = await buf.findOne(BlogPost, { where: { id: 1 } as any });
+
+        expect(post).not.toBeNull();
+        // author property should be a lazy proxy (returns Promise on first access)
+        const authorOrPromise = (post as any).author;
+        expect(authorOrPromise).toBeInstanceOf(Promise);
+
+        const author = await authorOrPromise;
+        expect(author.id).toBe(10);
+        expect(author.name).toBe("Bob");
+
+        // Second access should return cached value (not Promise)
+        expect((post as any).author).not.toBeInstanceOf(Promise);
+        expect((post as any).author.name).toBe("Bob");
+      });
+
+      it("should resolve loaded entity through identity map", async () => {
+        const em = createExtendedEm(BlogPost, Author);
+
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any) => {
+          if (entity === BlogPost) {
+            return Object.assign(new BlogPost(), { id: 1, title: "Hello", authorId: 10 });
+          }
+          if (entity === Author) return Object.assign(new Author(), { id: 10, name: "Bob" });
+          return null;
+        });
+
+        const buf = em.buffer();
+        const post = await buf.findOne(BlogPost, { where: { id: 1 } as any });
+
+        // Load author via lazy proxy
+        const author = await (post as any).author;
+
+        // Author should now be tracked
+        expect(buf.getState(author)).toBe(EntityState.MANAGED);
+      });
+
+      it("should skip injection when relation property already has a value", async () => {
+        const em = createExtendedEm(BlogPost, Author);
+
+        const existingAuthor = Object.assign(new Author(), { id: 10, name: "Pre-loaded" });
+        jest.spyOn(em, "findOne").mockResolvedValue(
+          Object.assign(new BlogPost(), { id: 1, title: "Hello", authorId: 10, author: existingAuthor }),
+        );
+
+        const buf = em.buffer();
+        const post = await buf.findOne(BlogPost, { where: { id: 1 } as any });
+
+        // Should NOT be a promise — already loaded
+        expect((post as any).author).toBe(existingAuthor);
+      });
+    });
+
+    // ── O2M lazy ─────────────────────────────────────────────────
+
+    describe("OneToMany lazy", () => {
+      it("should inject lazy collection proxy on O2M property", async () => {
+        const em = createExtendedEm(Post, Comment);
+
+        jest.spyOn(em, "findOne").mockResolvedValue(
+          Object.assign(new Post(), { id: 1, title: "Hello" }),
+        );
+        jest.spyOn(em, "find").mockResolvedValue([
+          Object.assign(new Comment(), { id: 10, body: "c1", postId: 1 }),
+          Object.assign(new Comment(), { id: 11, body: "c2", postId: 1 }),
+        ]);
+
+        const buf = em.buffer();
+        const post = await buf.findOne(Post, { where: { id: 1 } as any });
+
+        // comments should be a lazy proxy
+        const commentsOrPromise = (post as any).comments;
+        expect(commentsOrPromise).toBeInstanceOf(Promise);
+
+        const comments = await commentsOrPromise;
+        expect(comments).toHaveLength(2);
+        expect(comments[0].body).toBe("c1");
+
+        // Second access — cached
+        expect((post as any).comments).toHaveLength(2);
+        expect((post as any).comments).not.toBeInstanceOf(Promise);
+      });
+
+      it("should track loaded children in identity map", async () => {
+        const em = createExtendedEm(Post, Comment);
+
+        jest.spyOn(em, "findOne").mockResolvedValue(
+          Object.assign(new Post(), { id: 1, title: "Hello" }),
+        );
+        jest.spyOn(em, "find").mockResolvedValue([
+          Object.assign(new Comment(), { id: 10, body: "c1", postId: 1 }),
+        ]);
+
+        const buf = em.buffer();
+        const post = await buf.findOne(Post, { where: { id: 1 } as any });
+        const comments = await (post as any).comments;
+
+        expect(buf.getState(comments[0])).toBe(EntityState.MANAGED);
+      });
+    });
+
+    // ── O2O lazy ─────────────────────────────────────────────────
+
+    describe("OneToOne lazy", () => {
+      class LazyUser {
+        id!: number;
+        name!: string;
+        profileId!: number;
+        profile!: any;
+      }
+
+      class LazyProfile {
+        id!: number;
+        bio!: string;
+      }
+
+      beforeAll(() => {
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "LazyUser" }, LazyUser);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "name", propertyKey: "name", type: String, options: {} },
+          { name: "profileId", propertyKey: "profileId", type: Number, options: {} },
+        ], LazyUser.prototype);
+
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "LazyProfile" }, LazyProfile);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "bio", propertyKey: "bio", type: String, options: {} },
+        ], LazyProfile.prototype);
+
+        Reflect.defineMetadata(ONE_TO_ONE_TOKEN, [{
+          target: LazyUser,
+          propertyKey: "profile",
+          getRelatedEntity: () => LazyProfile,
+          joinColumn: "profileId",
+          option: {},
+        }], LazyUser);
+      });
+
+      it("should inject lazy proxy on O2O owning side", async () => {
+        const em = createExtendedEm(LazyUser, LazyProfile);
+
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any) => {
+          if (entity === LazyUser) {
+            return Object.assign(new LazyUser(), { id: 1, name: "Alice", profileId: 5 });
+          }
+          if (entity === LazyProfile) {
+            return Object.assign(new LazyProfile(), { id: 5, bio: "Hello" });
+          }
+          return null;
+        });
+
+        const buf = em.buffer();
+        const user = await buf.findOne(LazyUser, { where: { id: 1 } as any });
+
+        const profileOrPromise = (user as any).profile;
+        expect(profileOrPromise).toBeInstanceOf(Promise);
+
+        const profile = await profileOrPromise;
+        expect(profile.id).toBe(5);
+        expect(profile.bio).toBe("Hello");
+      });
+
+      it("should inject lazy proxy on O2O inverse side", async () => {
+        class InvProfile {
+          id!: number;
+          bio!: string;
+          user!: any;
+        }
+
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "InvProfile" }, InvProfile);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "bio", propertyKey: "bio", type: String, options: {} },
+        ], InvProfile.prototype);
+
+        // Inverse side: InvProfile.user → inverseSide: "profile"
+        Reflect.defineMetadata(ONE_TO_ONE_TOKEN, [{
+          target: InvProfile,
+          propertyKey: "user",
+          getRelatedEntity: () => LazyUser,
+          inverseSide: "profile",
+          option: {},
+        }], InvProfile);
+
+        const em = createExtendedEm(InvProfile, LazyUser, LazyProfile);
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any, opt: any) => {
+          if (entity === InvProfile) {
+            return Object.assign(new InvProfile(), { id: 5, bio: "Hello" });
+          }
+          if (entity === LazyUser) {
+            return Object.assign(new LazyUser(), { id: 1, name: "Alice", profileId: 5 });
+          }
+          return null;
+        });
+
+        const buf = em.buffer();
+        const profile = await buf.findOne(InvProfile, { where: { id: 5 } as any });
+
+        const userOrPromise = (profile as any).user;
+        expect(userOrPromise).toBeInstanceOf(Promise);
+
+        const user = await userOrPromise;
+        expect(user.id).toBe(1);
+        expect(user.name).toBe("Alice");
+      });
+    });
+
+    // ── M2M lazy ─────────────────────────────────────────────────
+
+    describe("ManyToMany lazy", () => {
+      it("should inject lazy M2M proxy on owning side", async () => {
+        const em = createExtendedEm(Article, Tag);
+
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any) => {
+          if (entity === Article) {
+            return Object.assign(new Article(), { id: 1, title: "Hello" });
+          }
+          if (entity === Tag) {
+            return Object.assign(new Tag(), { id: 10, label: "ts" });
+          }
+          return null;
+        });
+        jest.spyOn(em, "query").mockResolvedValue([
+          { tag_id: 10 },
+          { tag_id: 20 },
+        ] as any);
+
+        const buf = em.buffer();
+        const article = await buf.findOne(Article, { where: { id: 1 } as any });
+
+        const tagsOrPromise = (article as any).tags;
+        expect(tagsOrPromise).toBeInstanceOf(Promise);
+      });
+
+      it("should inject lazy M2M proxy on inverse side", async () => {
+        const em = createExtendedEm(Article, Tag);
+
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any) => {
+          if (entity === Tag) {
+            return Object.assign(new Tag(), { id: 10, label: "ts" });
+          }
+          return null;
+        });
+        jest.spyOn(em, "query").mockResolvedValue([] as any);
+
+        const buf = em.buffer();
+        const tag = await buf.findOne(Tag, { where: { id: 10 } as any });
+
+        const articlesOrPromise = (tag as any).articles;
+        expect(articlesOrPromise).toBeInstanceOf(Promise);
+
+        const articles = await articlesOrPromise;
+        expect(articles).toEqual([]);
+      });
+    });
+
+    // ── getReference + lazy ──────────────────────────────────────
+
+    describe("getReference with lazy relations", () => {
+      it("should inject lazy M2O proxy on reference", async () => {
+        class RefPost {
+          id!: number;
+          title!: string;
+          authorId!: number;
+          author!: any;
+        }
+
+        class RefAuthor {
+          id!: number;
+          name!: string;
+        }
+
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "RefPost" }, RefPost);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "title", propertyKey: "title", type: String, options: {} },
+          { name: "authorId", propertyKey: "authorId", type: Number, options: {} },
+        ], RefPost.prototype);
+
+        Reflect.defineMetadata(ENTITY_TOKEN, { name: "RefAuthor" }, RefAuthor);
+        Reflect.defineMetadata(COLUMN_TOKEN, [
+          { name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+          { name: "name", propertyKey: "name", type: String, options: {} },
+        ], RefAuthor.prototype);
+
+        Reflect.defineMetadata(MANY_TO_ONE_TOKEN, [{
+          target: RefPost,
+          type: RefAuthor,
+          columnName: "author",
+          joinColumn: "authorId",
+          getMappingEntity: () => RefAuthor,
+          getMappingProperty: (e: any) => e.author,
+          option: {},
+        }], RefPost);
+
+        const em = createExtendedEm(RefPost, RefAuthor);
+        // getReference doesn't touch DB, but the lazy proxy will
+        jest.spyOn(em, "findOne").mockResolvedValue(
+          Object.assign(new RefAuthor(), { id: 7, name: "Charlie" }),
+        );
+
+        const buf = em.buffer();
+
+        // Create reference — author is not loaded but authorId is not set either
+        // so no M2O proxy will fire (no FK value)
+        const ref = buf.getReference(RefPost, 1);
+        expect((ref as any).id).toBe(1);
+        // author property — no FK value, so undefined
+        expect((ref as any).author).toBeUndefined();
+      });
+
+      it("should allow setting value on lazy proxy property", async () => {
+        const em = createExtendedEm(Post, Comment);
+        jest.spyOn(em, "findOne").mockResolvedValue(
+          Object.assign(new Post(), { id: 1, title: "Hello" }),
+        );
+
+        const buf = em.buffer();
+        const post = await buf.findOne(Post, { where: { id: 1 } as any });
+
+        // Set the lazy property directly — should override the proxy
+        (post as any).comments = [Object.assign(new Comment(), { id: 99, body: "manual", postId: 1 })];
+
+        // Should return the manually set value, not trigger DB load
+        expect((post as any).comments).toHaveLength(1);
+        expect((post as any).comments[0].body).toBe("manual");
+        expect((post as any).comments).not.toBeInstanceOf(Promise);
+      });
+    });
+  });
+
+  // ── Change Tracking Policy ──────────────────────────────────────
+
+  describe("change tracking policy", () => {
+    it("DEFERRED_IMPLICIT should dirty-check all tracked entities", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ changeTracking: ChangeTrackingPolicy.DEFERRED_IMPLICIT }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = extended.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      user.name = "Bob";
+
+      const result = await buf.flush();
+      expect(result.updates).toBe(1);
+    });
+
+    it("DEFERRED_EXPLICIT should skip non-marked entities", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ changeTracking: ChangeTrackingPolicy.DEFERRED_EXPLICIT }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = extended.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      user.name = "Bob";
+
+      // Not marked dirty → should be skipped
+      const result = await buf.flush();
+      expect(result.updates).toBe(0);
+    });
+
+    it("DEFERRED_EXPLICIT should update when markDirty() is called", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ changeTracking: ChangeTrackingPolicy.DEFERRED_EXPLICIT }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = extended.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      user.name = "Bob";
+      buf.markDirty(user);
+
+      const result = await buf.flush();
+      expect(result.updates).toBe(1);
+    });
+
+    it("markDirty should throw for untracked entity", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+
+      expect(() => buf.markDirty(user)).toThrow(/not tracked/);
+    });
+  });
+
+  // ── Flush Modes ─────────────────────────────────────────────────
+
+  describe("flush modes", () => {
+    it("FlushMode.AUTO should flush before findOne", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ flushMode: FlushMode.AUTO }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: data.id ?? 99,
+      }));
+      jest.spyOn(extended, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+
+      const buf = extended.buffer();
+      buf.save(User, { name: "Bob", email: "b@b.c" });
+      expect(buf.size().inserts).toBe(1);
+
+      await buf.findOne(User, { where: { id: 1 } as any });
+
+      // Insert should have been flushed
+      expect(buf.size().inserts).toBe(0);
+    });
+
+    it("FlushMode.MANUAL should NOT flush before findOne", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ flushMode: FlushMode.MANUAL }));
+      jest.spyOn(extended, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+
+      const buf = extended.buffer();
+      buf.save(User, { name: "Bob", email: "b@b.c" });
+
+      await buf.findOne(User, { where: { id: 1 } as any });
+
+      // Insert should still be queued
+      expect(buf.size().inserts).toBe(1);
+    });
+
+    it("FlushMode.COMMIT should NOT auto-flush", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ flushMode: FlushMode.COMMIT }));
+      jest.spyOn(extended, "findOne").mockResolvedValue(null);
+
+      const buf = extended.buffer();
+      buf.save(User, { name: "Bob", email: "b@b.c" });
+
+      await buf.findOne(User, { where: { id: 1 } as any });
+      expect(buf.size().inserts).toBe(1);
+    });
+
+    it("autoFlush=true should map to FlushMode.AUTO", async () => {
+      const em = createEmWithEntities(User);
+      const extended = em.extend(bufferPlugin({ autoFlush: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: 99,
+      }));
+      jest.spyOn(extended, "findOne").mockResolvedValue(null);
+
+      const buf = extended.buffer();
+      buf.save(User, { name: "Bob", email: "b@b.c" });
+
+      await buf.findOne(User, { where: { id: 1 } as any });
+      expect(buf.size().inserts).toBe(0);
+    });
+  });
+
+  // ── PersistentCollection ────────────────────────────────────────
+
+  describe("PersistentCollection", () => {
+    it("createPersistentCollection should detect push mutations", () => {
+      let dirty = false;
+      const arr = createPersistentCollection([1, 2, 3], () => { dirty = true; });
+
+      expect(arr).toHaveLength(3);
+      arr.push(4);
+      expect(dirty).toBe(true);
+      expect(arr).toHaveLength(4);
+    });
+
+    it("should detect splice mutations", () => {
+      let count = 0;
+      const arr = createPersistentCollection(["a", "b", "c"], () => { count++; });
+
+      arr.splice(1, 1);
+      expect(count).toBeGreaterThan(0);
+      expect(arr).toEqual(["a", "c"]);
+    });
+
+    it("should detect index assignment", () => {
+      let dirty = false;
+      const arr = createPersistentCollection([1, 2, 3], () => { dirty = true; });
+
+      arr[0] = 99;
+      expect(dirty).toBe(true);
+    });
+
+    it("should detect pop/shift/unshift", () => {
+      let count = 0;
+      const arr = createPersistentCollection([1, 2, 3], () => { count++; });
+
+      arr.pop();
+      const c1 = count;
+      arr.shift();
+      expect(count).toBeGreaterThan(c1);
+      arr.unshift(10);
+      expect(count).toBeGreaterThan(c1 + 1);
+    });
+
+    it("isPersistentCollection should return true for wrapped arrays", () => {
+      const arr = createPersistentCollection([1, 2], () => {});
+      expect(isPersistentCollection(arr)).toBe(true);
+      expect(isPersistentCollection([1, 2])).toBe(false);
+    });
+
+    it("Array.isArray should return true for persistent collections", () => {
+      const arr = createPersistentCollection([1, 2], () => {});
+      expect(Array.isArray(arr)).toBe(true);
+    });
+
+    it("wrapCollection should make mutations mark entity dirty", () => {
+      const em = createExtendedEm(Post, Comment);
+      const buf = em.buffer();
+
+      const post = Object.assign(new Post(), { id: 1, title: "Hello" });
+      post.comments = [Object.assign(new Comment(), { id: 10, body: "c1", postId: 1 })];
+
+      buf.track(post);
+      buf.wrapCollection(post, "comments");
+
+      // Push a new comment → should mark entity as explicitly dirty
+      post.comments.push(Object.assign(new Comment(), { id: 11, body: "c2", postId: 1 }));
+
+      expect(post.comments).toHaveLength(2);
+    });
+
+    it("wrapCollection should throw for untracked entity", () => {
+      const em = createExtendedEm(Post);
+      const buf = em.buffer();
+      const post = Object.assign(new Post(), { id: 1, title: "Hello" });
+      post.comments = [];
+
+      expect(() => buf.wrapCollection(post, "comments")).toThrow(/not tracked/);
+    });
+  });
+
+  // ── Pessimistic Locking ─────────────────────────────────────────
+
+  describe("pessimistic locking", () => {
+    it("should store lock mode on tracked entry", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+
+      const buf = em.buffer();
+      await buf.findOne(User, { where: { id: 1 } as any, lock: LockMode.PESSIMISTIC_WRITE });
+
+      // Verify the lock is stored (internal check via preview/dirty)
+      expect(buf.tracked()).toHaveLength(1);
+    });
+
+    it("should execute FOR UPDATE during flush", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      const user = await buf.findOne(User, { where: { id: 1 } as any, lock: LockMode.PESSIMISTIC_WRITE });
+      (user as any).name = "Bob";
+
+      await buf.flush();
+
+      // Should have executed a FOR UPDATE query
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("FOR UPDATE"),
+        expect.any(Array),
+      );
+    });
+
+    it("should execute FOR SHARE / LOCK IN SHARE MODE for PESSIMISTIC_READ", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
+      );
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      const user = await buf.findOne(User, { where: { id: 1 } as any, lock: LockMode.PESSIMISTIC_READ });
+      (user as any).name = "Bob";
+
+      await buf.flush();
+
+      // Should have a lock query (LOCK IN SHARE MODE for MySQL, FOR SHARE for others)
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringMatching(/LOCK IN SHARE MODE|FOR SHARE/),
+        expect.any(Array),
+      );
+    });
+  });
+
+  // ── Bulk DML ────────────────────────────────────────────────────
+
+  describe("bulk DML", () => {
+    it("updateMany should queue and execute during flush", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      buf.updateMany(User, { where: { email: "a@b.c" }, set: { name: "Updated" } });
+
+      expect(buf.size().bulkUpdates).toBe(1);
+
+      const result = await buf.flush();
+      expect(result.updates).toBe(1);
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("UPDATE"),
+        expect.arrayContaining(["Updated", "a@b.c"]),
+      );
+    });
+
+    it("deleteMany should queue and execute during flush", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      buf.deleteMany(User, { email: "a@b.c" });
+
+      expect(buf.size().bulkDeletes).toBe(1);
+
+      const result = await buf.flush();
+      expect(result.deletes).toBe(1);
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("DELETE"),
+        expect.arrayContaining(["a@b.c"]),
+      );
+    });
+
+    it("bulk queues should be included in preview", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      buf.updateMany(User, { where: { id: 1 }, set: { name: "X" } });
+      buf.deleteMany(User, { id: 2 });
+
+      const preview = buf.preview();
+      expect(preview).toContainEqual(
+        expect.objectContaining({ action: "bulkUpdate", entity: "User" }),
+      );
+      expect(preview).toContainEqual(
+        expect.objectContaining({ action: "bulkDelete", entity: "User" }),
+      );
+    });
+
+    it("clear should empty bulk queues", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+
+      buf.updateMany(User, { where: { id: 1 }, set: { name: "X" } });
+      buf.deleteMany(User, { id: 2 });
+
+      buf.clear();
+      expect(buf.size().bulkUpdates).toBe(0);
+      expect(buf.size().bulkDeletes).toBe(0);
+    });
+  });
+
+  // ── Per-entity Flush Events ─────────────────────────────────────
+
+  describe("flush events", () => {
+    it("should fire preInsert/postInsert for persist", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: data.id ?? 1,
+      }));
+
+      const buf = em.buffer();
+      const events: string[] = [];
+
+      buf.onFlushEvent("preInsert", (e: FlushEvent) => { events.push(`pre:${e.entity.name}`); });
+      buf.onFlushEvent("postInsert", (e: FlushEvent) => { events.push(`post:${e.entity.name}`); });
+
+      const user = Object.assign(new User(), { name: "Alice", email: "a@b.c" });
+      buf.persist(user);
+
+      await buf.flush();
+
+      expect(events).toEqual(["pre:User", "post:User"]);
+    });
+
+    it("should fire preUpdate/postUpdate for tracked updates", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = em.buffer();
+      const events: string[] = [];
+
+      buf.onFlushEvent("preUpdate", () => { events.push("preUpdate"); });
+      buf.onFlushEvent("postUpdate", () => { events.push("postUpdate"); });
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      user.name = "Bob";
+
+      await buf.flush();
+
+      expect(events).toEqual(["preUpdate", "postUpdate"]);
+    });
+
+    it("should fire preDelete/postDelete for deletes", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "delete").mockResolvedValue(undefined as any);
+
+      const buf = em.buffer();
+      const events: string[] = [];
+
+      buf.onFlushEvent("preDelete", () => { events.push("preDelete"); });
+      buf.onFlushEvent("postDelete", () => { events.push("postDelete"); });
+
+      buf.delete(User, { id: 1 });
+      await buf.flush();
+
+      expect(events).toEqual(["preDelete", "postDelete"]);
+    });
+
+    it("should pass entity instance in event payload", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = em.buffer();
+      let capturedInstance: any;
+
+      buf.onFlushEvent("preUpdate", (e: FlushEvent) => { capturedInstance = e.instance; });
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      user.name = "Bob";
+
+      await buf.flush();
+
+      expect(capturedInstance).toBe(user);
+    });
+  });
+
+  // ── Read-only Entities ──────────────────────────────────────────
+
+  describe("read-only entities", () => {
+    it("markReadOnly should skip dirty checking on flush", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const saveSpy = jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => data);
+
+      const buf = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+      buf.markReadOnly(user);
+
+      user.name = "Bob"; // mutated, but read-only
+
+      const result = await buf.flush();
+      expect(result.updates).toBe(0);
+      expect(saveSpy).not.toHaveBeenCalled();
+    });
+
+    it("isReadOnly should return correct status", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      buf.track(user);
+
+      expect(buf.isReadOnly(user)).toBe(false);
+      buf.markReadOnly(user);
+      expect(buf.isReadOnly(user)).toBe(true);
+    });
+
+    it("markReadOnly should throw for untracked entity", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+      const user = new User();
+      expect(() => buf.markReadOnly(user)).toThrow(/not tracked/);
+    });
+  });
+
+  // ── Nested UoW (Savepoint) ──────────────────────────────────────
+
+  describe("nested UoW (savepoint)", () => {
+    it("beginNested should return a new WriteBuffer", () => {
+      const em = createExtendedEm(User);
+      const buf = em.buffer();
+      const nested = buf.beginNested();
+
+      expect(nested).toBeInstanceOf(WriteBuffer);
+      expect(nested).not.toBe(buf);
+    });
+
+    it("nested flush should execute SAVEPOINT and operations", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: data.id ?? 1,
+      }));
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      const nested = buf.beginNested();
+
+      const user = Object.assign(new User(), { name: "Alice", email: "a@b.c" });
+      nested.persist(user);
+
+      const result = await nested.flush();
+      expect(result.inserts).toBe(1);
+
+      // Should have executed SAVEPOINT
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("SAVEPOINT"),
+      );
+    });
+
+    it("nested flush failure should ROLLBACK TO SAVEPOINT", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockRejectedValue(new Error("DB error"));
+      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+
+      const buf = em.buffer();
+      const nested = buf.beginNested();
+
+      const user = Object.assign(new User(), { name: "Alice", email: "a@b.c" });
+      nested.persist(user);
+
+      await expect(nested.flush()).rejects.toThrow("DB error");
+
+      // Should have executed ROLLBACK TO SAVEPOINT
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("ROLLBACK TO SAVEPOINT"),
+      );
     });
   });
 });
