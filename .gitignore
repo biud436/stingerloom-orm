@@ -17,3 +17,4 @@ coverage/
 PUBLISHING.md
 docs/.vitepress/cache
 docs/.vitepress/dist
+docker-compose.yml
