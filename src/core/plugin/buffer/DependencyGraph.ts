@@ -8,7 +8,7 @@ import { ONE_TO_ONE_TOKEN } from "../../../decorators/OneToOne";
  * A child "depends on" its parent (the entity it references via FK).
  *
  * Returns entities in topological order (parents first) using Kahn's algorithm.
- * On cycle detection, falls back to the original order (safe default).
+ * On cycle detection, logs a warning and falls back to the original order.
  */
 export function topologicalSort(entityClasses: ClazzType<any>[]): ClazzType<any>[] {
   if (entityClasses.length <= 1) return [...entityClasses];
@@ -70,12 +70,43 @@ export function topologicalSort(entityClasses: ClazzType<any>[]): ClazzType<any>
     }
   }
 
-  // Cycle detected — fallback to original order
+  // Cycle detected — warn and fallback to original order
   if (sorted.length !== entityClasses.length) {
+    const missing = entityClasses.filter(c => !sorted.includes(c)).map(c => c.name);
+    console.warn(`[WriteBuffer] Dependency cycle detected: [${missing.join(', ')}]. Using original order.`);
     return [...entityClasses];
   }
 
   return sorted;
+}
+
+/**
+ * Compute the topological sort once and return an index map for reuse.
+ * Avoids redundant sorts when both sortForInsert and sortForDelete are needed.
+ */
+export function buildTopologicalIndexMap(
+  registered: ClazzType<any>[],
+): Map<ClazzType<any>, number> {
+  const order = topologicalSort(registered);
+  const indexMap = new Map<ClazzType<any>, number>();
+  order.forEach((cls, i) => indexMap.set(cls, i));
+  return indexMap;
+}
+
+/**
+ * Sort entries by a pre-computed topological index map.
+ * Avoids re-running topologicalSort() for each sort operation.
+ */
+export function sortByIndex<T extends { entity: ClazzType<any> }>(
+  entries: T[],
+  indexMap: Map<ClazzType<any>, number>,
+  reverse = false,
+): T[] {
+  return [...entries].sort((a, b) => {
+    const ai = indexMap.get(a.entity) ?? (reverse ? -1 : Number.MAX_SAFE_INTEGER);
+    const bi = indexMap.get(b.entity) ?? (reverse ? -1 : Number.MAX_SAFE_INTEGER);
+    return reverse ? bi - ai : ai - bi;
+  });
 }
 
 /**
@@ -85,15 +116,8 @@ export function sortForInsert<T extends { entity: ClazzType<any> }>(
   entries: T[],
   registered: ClazzType<any>[],
 ): T[] {
-  const order = topologicalSort(registered);
-  const indexMap = new Map<ClazzType<any>, number>();
-  order.forEach((cls, i) => indexMap.set(cls, i));
-
-  return [...entries].sort((a, b) => {
-    const ai = indexMap.get(a.entity) ?? Number.MAX_SAFE_INTEGER;
-    const bi = indexMap.get(b.entity) ?? Number.MAX_SAFE_INTEGER;
-    return ai - bi;
-  });
+  const indexMap = buildTopologicalIndexMap(registered);
+  return sortByIndex(entries, indexMap);
 }
 
 /**
@@ -103,13 +127,6 @@ export function sortForDelete<T extends { entity: ClazzType<any> }>(
   entries: T[],
   registered: ClazzType<any>[],
 ): T[] {
-  const order = topologicalSort(registered);
-  const indexMap = new Map<ClazzType<any>, number>();
-  order.forEach((cls, i) => indexMap.set(cls, i));
-
-  return [...entries].sort((a, b) => {
-    const ai = indexMap.get(a.entity) ?? -1;
-    const bi = indexMap.get(b.entity) ?? -1;
-    return bi - ai; // reverse
-  });
+  const indexMap = buildTopologicalIndexMap(registered);
+  return sortByIndex(entries, indexMap, true);
 }

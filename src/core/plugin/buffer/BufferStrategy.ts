@@ -45,6 +45,7 @@ export function deepEquals(a: any, b: any): boolean {
   if (a === b) return true;
   if (a === null || a === undefined || b === null || b === undefined) return a === b;
   if (typeof a !== typeof b) return false;
+  if (typeof a === "bigint") return a === b;
   if (typeof a !== "object") return false;
 
   if (a instanceof Date && b instanceof Date) {

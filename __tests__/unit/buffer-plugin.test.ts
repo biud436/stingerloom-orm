@@ -11,7 +11,7 @@ import {
   deepEquals,
 } from "../../src/core/plugin/buffer/BufferStrategy";
 import { EntityState } from "../../src/core/plugin/buffer/EntityUnitState";
-import { topologicalSort, sortForInsert, sortForDelete } from "../../src/core/plugin/buffer/DependencyGraph";
+import { topologicalSort, sortForInsert, sortForDelete, buildTopologicalIndexMap, sortByIndex } from "../../src/core/plugin/buffer/DependencyGraph";
 import { snapshotCollections, diffCollection } from "../../src/core/plugin/buffer/CollectionTracker";
 import { ChangeTrackingPolicy, FlushMode, LockMode, FlushEvent } from "../../src/core/plugin/buffer/BufferPreview";
 import { createPersistentCollection, isPersistentCollection } from "../../src/core/plugin/buffer/PersistentCollection";
@@ -3003,6 +3003,16 @@ describe("Buffer Plugin", () => {
           }
           return null;
         });
+        // Mock find() for batched M2M lazy loading (uses IN query)
+        jest.spyOn(em, "find").mockImplementation(async (entity: any) => {
+          if (entity === Tag) {
+            return [
+              Object.assign(new Tag(), { id: 10, label: "ts" }),
+              Object.assign(new Tag(), { id: 20, label: "js" }),
+            ];
+          }
+          return [];
+        });
         jest.spyOn(em, "query").mockResolvedValue([
           { tag_id: 10 },
           { tag_id: 20 },
@@ -3708,6 +3718,164 @@ describe("Buffer Plugin", () => {
 
       expect((user1 as any).name).toBe("Changed");
       expect((user2 as any).name).toBe("Bob"); // unchanged
+    });
+  });
+
+  // ── Phase 2/3/4 Regression Tests ──────────────────────────────
+
+  describe("evictTrackedAfterBulkDelete O(1) identity map cleanup", () => {
+    it("should remove from identityMap without O(n) scan", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockImplementation(async () =>
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@a.com" }),
+      );
+      jest.spyOn(em, "find").mockResolvedValue([]);
+      jest.spyOn(em, "query").mockResolvedValue([]);
+      jest.spyOn(em, "transaction").mockImplementation(async (fn: any) => fn(em));
+      jest.spyOn(em, "delete").mockResolvedValue(undefined as any);
+
+      const buf = em.buffer();
+      const user = await buf.findOne(User, { where: { id: 1 } as any });
+      expect(buf.size().tracked).toBe(1);
+
+      // Bulk delete matching the tracked user
+      buf.deleteMany(User, { id: 1 });
+      await buf.flush();
+
+      // Entity should be evicted from tracking and set to DETACHED
+      expect(buf.size().tracked).toBe(0);
+      expect(buf.getState(user)).toBe(EntityState.DETACHED);
+    });
+  });
+
+  describe("DependencyGraph cycle detection warning", () => {
+    it("should log a warning when a cycle is detected", () => {
+      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+      class CycleX {}
+      class CycleY {}
+      Reflect.defineMetadata(ENTITY_TOKEN, { name: "CycleX" }, CycleX);
+      Reflect.defineMetadata(COLUMN_TOKEN, [
+        { name: "id", propertyKey: "id", options: { primary: true } },
+      ], CycleX.prototype);
+      Reflect.defineMetadata(MANY_TO_ONE_TOKEN, [{
+        columnName: "cycleY",
+        getMappingEntity: () => CycleY,
+        joinColumn: "cycleYId",
+      }], CycleX);
+
+      Reflect.defineMetadata(ENTITY_TOKEN, { name: "CycleY" }, CycleY);
+      Reflect.defineMetadata(COLUMN_TOKEN, [
+        { name: "id", propertyKey: "id", options: { primary: true } },
+      ], CycleY.prototype);
+      Reflect.defineMetadata(MANY_TO_ONE_TOKEN, [{
+        columnName: "cycleX",
+        getMappingEntity: () => CycleX,
+        joinColumn: "cycleXId",
+      }], CycleY);
+
+      const result = topologicalSort([CycleX, CycleY]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Dependency cycle detected"),
+      );
+      // Fallback: returns original order
+      expect(result).toEqual([CycleX, CycleY]);
+
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe("BigInt in deepEquals", () => {
+    it("should compare BigInt values correctly", () => {
+      expect(deepEquals(1n, 1n)).toBe(true);
+      expect(deepEquals(1n, 2n)).toBe(false);
+      expect(deepEquals(1n, 1)).toBe(false);  // different types
+      expect(deepEquals(0n, 0n)).toBe(true);
+    });
+  });
+
+  describe("hasPendingWork early exit correctness", () => {
+    it("should detect dirty tracked entries in single loop", () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 1, name: "Alice", email: "a@a.com" }),
+      );
+
+      const buf = em.buffer();
+      const user = new User();
+      user.id = 1;
+      user.name = "Alice";
+      user.email = "a@a.com";
+      buf.track(user);
+
+      // No pending work initially
+      const preview1 = buf.preview();
+      expect(preview1.length).toBe(0);
+
+      // Mutate and check
+      user.name = "Bob";
+      const preview2 = buf.preview();
+      expect(preview2.length).toBe(1);
+      expect(preview2[0].action).toBe("update");
+    });
+  });
+
+  describe("M2M lazy batched loading", () => {
+    it("should use find() instead of N findOne() calls", async () => {
+      const em = createExtendedEm(Article, Tag);
+
+      const findOneSpy = jest.spyOn(em, "findOne").mockImplementation(async (entity: any) => {
+        if (entity === Article) {
+          return Object.assign(new Article(), { id: 1, title: "Post" });
+        }
+        return null;
+      });
+      const findSpy = jest.spyOn(em, "find").mockImplementation(async (entity: any) => {
+        if (entity === Tag) {
+          return [
+            Object.assign(new Tag(), { id: 10, label: "ts" }),
+            Object.assign(new Tag(), { id: 20, label: "js" }),
+            Object.assign(new Tag(), { id: 30, label: "go" }),
+          ];
+        }
+        return [];
+      });
+      jest.spyOn(em, "query").mockResolvedValue([
+        { tag_id: 10 },
+        { tag_id: 20 },
+        { tag_id: 30 },
+      ] as any);
+
+      const buf = em.buffer();
+      const article = await buf.findOne(Article, { where: { id: 1 } as any });
+
+      const tagsPromise = (article as any).tags;
+      const tags = await tagsPromise;
+
+      // Should use 1 find() call instead of 3 findOne() calls
+      expect(findSpy).toHaveBeenCalledWith(Tag, expect.objectContaining({
+        where: { id: [10, 20, 30] },
+      }));
+      // findOne should only be called once (for the initial Article load)
+      expect(findOneSpy).toHaveBeenCalledTimes(1);
+      expect(tags).toHaveLength(3);
+    });
+  });
+
+  describe("sortByIndex caches topological sort", () => {
+    it("should sort using pre-computed index map", () => {
+      const indexMap = buildTopologicalIndexMap([User, Comment]);
+      const entries = [
+        { entity: Comment, data: {} },
+        { entity: User, data: {} },
+      ];
+      const sorted = sortByIndex(entries, indexMap);
+      // User should come before Comment (parent before child)
+      expect(sorted[0].entity).toBe(User);
+
+      const reverseSorted = sortByIndex(entries, indexMap, true);
+      // Reversed: Comment before User (children first)
+      expect(reverseSorted[0].entity).toBe(Comment);
     });
   });
 });

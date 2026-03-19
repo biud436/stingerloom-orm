@@ -119,8 +119,9 @@ export function diffCollection(
 
 /**
  * Resolve the FK column name on the child entity for a given @OneToMany relation.
+ * Exported for reuse by CascadeProcessor and LazyRelationInjector.
  */
-function resolveFkColumn(
+export function resolveFkColumn(
   rel: OneToManyMetadata<any>,
   ChildEntity: ClazzType<any>,
 ): string {
