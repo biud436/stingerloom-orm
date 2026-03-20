@@ -83,7 +83,11 @@ export class SqliteConnector extends IConnector {
         this.logger.info(`Query: ${rawSql}`);
       }
 
-      return this.executeRaw(db, rawSql) as T;
+      const raw = this.executeRaw(db, rawSql);
+      if (connection) {
+        return { results: raw, fields: null } as T;
+      }
+      return raw as T;
     } else {
       const { sql, values } = rawSql;
 
@@ -91,18 +95,29 @@ export class SqliteConnector extends IConnector {
         this.logger.info(`Query: ${sql}, # ${JSON.stringify(values)}`);
       }
 
-      return this.executeRaw(db, sql, values) as T;
+      const raw = this.executeRaw(db, sql, values);
+      if (connection) {
+        return { results: raw, fields: null } as T;
+      }
+      return raw as T;
     }
   }
 
   /**
    * Sanitize bind values for better-sqlite3.
-   * SQLite has no native boolean type, so convert `true`/`false` to `1`/`0`.
    * better-sqlite3 only accepts: number | string | bigint | Buffer | null.
+   * - boolean `true`/`false` → `1`/`0`
+   * - Date objects → ISO 8601 string
+   * - undefined → null
    */
   private sanitizeValues(values?: any[]): any[] | undefined {
     if (!values) return values;
-    return values.map((v) => (typeof v === "boolean" ? (v ? 1 : 0) : v));
+    return values.map((v) => {
+      if (typeof v === "boolean") return v ? 1 : 0;
+      if (v instanceof Date) return v.toISOString();
+      if (v === undefined) return null;
+      return v;
+    });
   }
 
   private executeRaw(db: Database.Database, sql: string, values?: any[]): any {

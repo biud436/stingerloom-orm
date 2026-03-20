@@ -339,7 +339,8 @@ describe("SqliteDataSource - IDataSource 구현", () => {
     await dataSource.createConnection();
 
     const result = await dataSource.query("SELECT 1 + 1 as result");
-    expect(result[0].result).toBe(2);
+    // SqliteDataSource wraps results in { results, fields } (consistent with MySQL/PostgreSQL)
+    expect(result.results[0].result).toBe(2);
 
     await dataSource.close();
     await connector.close();
