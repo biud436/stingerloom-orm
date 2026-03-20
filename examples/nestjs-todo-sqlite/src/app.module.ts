@@ -1,0 +1,24 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { StinglerloomOrmModule } from '@stingerloom/orm/nestjs';
+import { TodosModule } from './todos/todos.module';
+import { Todo } from './todos/todo.entity';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    StinglerloomOrmModule.forRoot({
+      type: 'sqlite',
+      host: '',
+      port: 0,
+      username: '',
+      password: '',
+      database: process.env.DB_PATH || 'todo.db',
+      entities: [Todo],
+      synchronize: true,
+      logging: true,
+    }),
+    TodosModule,
+  ],
+})
+export class AppModule {}

@@ -911,6 +911,22 @@ export class EntityManager implements BaseEntityManager {
         return undefined;
       }
 
+      // SQLite: INTEGER 0/1 → boolean 역변환
+      if (this.isSqlite() && results.length > 0) {
+        const boolColumns = metadata.columns
+          .filter((c: any) => c.options?.type === "boolean")
+          .map((c: any) => c.name as string);
+        if (boolColumns.length > 0) {
+          for (const row of results) {
+            for (const col of boolColumns) {
+              if (col in row) {
+                row[col] = !!row[col];
+              }
+            }
+          }
+        }
+      }
+
       const isEntityArray = results.length > 1;
       let entityResult: EntityResult<T>;
       if (hasEagerJoins) {
@@ -1380,6 +1396,29 @@ export class EntityManager implements BaseEntityManager {
           } as any, session);
 
           const cascadeId = returnedRow[pk.name!];
+          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId);
+          await this.cascadeHandler.runHooks(entity, item, "afterInsert");
+          await this.eventEmitter.emit("afterInsert", { entity, data: item });
+          await this.notifySubscribers(entity, "afterInsert", {
+            entity: item,
+            manager: this,
+          } as InsertEvent<T>);
+          return result as T;
+        }
+
+        // SQLite: lastInsertRowid로 삽입된 엔티티 조회
+        if (this.isSqlite()) {
+          const sqliteRunResult = queryResult?.results ?? queryResult;
+          const findWhere = hasAutoIncrementPk
+            ? { [pk.name!]: Number(sqliteRunResult?.lastInsertRowid) }
+            : buildPkFindWhere();
+          const result = await this.findOneInternal(entity, {
+            where: findWhere,
+          } as any, session);
+
+          const cascadeId = hasAutoIncrementPk
+            ? Number(sqliteRunResult?.lastInsertRowid)
+            : primaryKeyValue;
           await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
@@ -1960,7 +1999,7 @@ export class EntityManager implements BaseEntityManager {
 
       const whereSql = join(whereMap, " AND ");
 
-      const nowExpr = this.isPostgres() ? raw("NOW()") : raw("NOW()");
+      const nowExpr = this.isSqlite() ? raw("datetime('now')") : raw("NOW()");
       const updateQuery = sql`UPDATE ${raw(this.wrapTable(metadata.name!))} SET ${raw(this.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`;
 
       const queryResult = (await session.query(updateQuery)) as {
