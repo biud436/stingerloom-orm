@@ -95,7 +95,18 @@ export class SqliteConnector extends IConnector {
     }
   }
 
+  /**
+   * Sanitize bind values for better-sqlite3.
+   * SQLite has no native boolean type, so convert `true`/`false` to `1`/`0`.
+   * better-sqlite3 only accepts: number | string | bigint | Buffer | null.
+   */
+  private sanitizeValues(values?: any[]): any[] | undefined {
+    if (!values) return values;
+    return values.map((v) => (typeof v === "boolean" ? (v ? 1 : 0) : v));
+  }
+
   private executeRaw(db: Database.Database, sql: string, values?: any[]): any {
+    const sanitized = this.sanitizeValues(values);
     const trimmed = sql.trimStart().toUpperCase();
 
     // Statements that return rows: SELECT / PRAGMA / EXPLAIN / WITH (CTE)
@@ -106,13 +117,17 @@ export class SqliteConnector extends IConnector {
       trimmed.startsWith("WITH")
     ) {
       const stmt = db.prepare(sql);
-      return values && values.length > 0 ? stmt.all(...values) : stmt.all();
+      return sanitized && sanitized.length > 0
+        ? stmt.all(...sanitized)
+        : stmt.all();
     }
 
     // Non-query statements: INSERT / UPDATE / DELETE / CREATE / ALTER / DROP
     const stmt = db.prepare(sql);
     const result =
-      values && values.length > 0 ? stmt.run(...values) : stmt.run();
+      sanitized && sanitized.length > 0
+        ? stmt.run(...sanitized)
+        : stmt.run();
 
     return result;
   }
