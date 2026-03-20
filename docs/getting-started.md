@@ -10,11 +10,25 @@ This guide walks you through installing Stingerloom ORM, defining your first ent
 
 ## Step 1: Installation
 
+Install the core package and `reflect-metadata`, then add the driver for your database.
+
 ```bash
 pnpm add @stingerloom/orm reflect-metadata
 ```
 
-> **Hint** If you use npm or yarn, replace with `npm install` or `yarn add`.
+| Database | Driver package | Command |
+|----------|---------------|---------|
+| PostgreSQL | `pg` | `pnpm add pg` |
+| MySQL / MariaDB | `mysql2` | `pnpm add mysql2` |
+| SQLite | `better-sqlite3` | `pnpm add better-sqlite3` |
+
+For example, a PostgreSQL project needs:
+
+```bash
+pnpm add @stingerloom/orm reflect-metadata pg
+```
+
+> **Hint** If you use npm or yarn, replace `pnpm add` with `npm install` or `yarn add`.
 
 ## Step 2: TypeScript Configuration
 
