@@ -265,12 +265,11 @@ describeIf("[E2E] nestjs-cats API", () => {
     let bufCatIds: number[];
 
     beforeAll(async () => {
-      // Create 3 cats for buffer tests
       bufCatIds = [];
       for (const c of [
-        { name: "BufCat1", age: 1, breed: "Maine Coon" },
-        { name: "BufCat2", age: 2, breed: "Ragdoll" },
-        { name: "BufCat3", age: 3, breed: "Bengal" },
+        { name: "Luna", age: 2, breed: "Persian" },
+        { name: "Milo", age: 3, breed: "Persian" },
+        { name: "Nabi", age: 1, breed: "Bengal" },
       ]) {
         const res = await request(server).post("/cats").send(c).expect(201);
         bufCatIds.push(res.body.id);
@@ -279,19 +278,18 @@ describeIf("[E2E] nestjs-cats API", () => {
     });
 
     afterAll(async () => {
-      // Clean up buffer test cats (ignore 404s for already-deleted ones)
       for (const id of bufCatIds) {
         await request(server).delete(`/cats/${id}`);
       }
     });
 
-    it("PATCH /cats/buffer/batch-update — batch update via dirty checking", async () => {
+    it("PATCH /cats/buffer/rename — batch rename via dirty checking", async () => {
       const res = await request(server)
-        .patch("/cats/buffer/batch-update")
+        .patch("/cats/buffer/rename")
         .send({
           updates: [
-            { id: bufCatIds[0], name: "BufUpdated1", age: 10 },
-            { id: bufCatIds[1], breed: "Persian" },
+            { id: bufCatIds[0], name: "Luna★" },
+            { id: bufCatIds[1], name: "Milo★" },
           ],
         })
         .expect(200);
@@ -300,39 +298,36 @@ describeIf("[E2E] nestjs-cats API", () => {
       expect(res.body.inserts).toBe(0);
       expect(res.body.deletes).toBe(0);
 
-      // Verify changes persisted
+      // Verify
       const cat0 = await request(server).get(`/cats/${bufCatIds[0]}`).expect(200);
-      expect(cat0.body.name).toBe("BufUpdated1");
-      expect(cat0.body.age).toBe(10);
-
+      expect(cat0.body.name).toBe("Luna★");
       const cat1 = await request(server).get(`/cats/${bufCatIds[1]}`).expect(200);
-      expect(cat1.body.breed).toBe("Persian");
+      expect(cat1.body.name).toBe("Milo★");
     });
 
-    it("PATCH /cats/buffer/batch-update — no-op flush (same values)", async () => {
-      // Fetch current values
-      const current = await request(server).get(`/cats/${bufCatIds[0]}`).expect(200);
-
+    it("PATCH /cats/buffer/rename — no-op when name unchanged", async () => {
       const res = await request(server)
-        .patch("/cats/buffer/batch-update")
-        .send({
-          updates: [
-            { id: bufCatIds[0], name: current.body.name, age: current.body.age },
-          ],
-        })
+        .patch("/cats/buffer/rename")
+        .send({ updates: [{ id: bufCatIds[0], name: "Luna★" }] })
         .expect(200);
 
       expect(res.body.updates).toBe(0);
+    });
+
+    it("PATCH /cats/buffer/rename — 404 for non-existent cat", async () => {
+      await request(server)
+        .patch("/cats/buffer/rename")
+        .send({ updates: [{ id: 999999, name: "Ghost" }] })
+        .expect(404);
     });
 
     it("POST /cats/buffer/mixed-flush — create + update + delete atomically", async () => {
       const res = await request(server)
         .post("/cats/buffer/mixed-flush")
         .send({
-          create: { name: "MixedNew", age: 5, breed: "Sphynx" },
-          updateId: bufCatIds[0],
-          update: { name: "MixedUpdated" },
-          deleteId: bufCatIds[2],
+          create: [{ name: "NewCat", age: 1, breed: "Sphynx" }],
+          update: [{ id: bufCatIds[0], name: "Luna-Mixed" }],
+          deleteIds: [bufCatIds[2]],
         })
         .expect(201);
 
@@ -340,33 +335,60 @@ describeIf("[E2E] nestjs-cats API", () => {
       expect(res.body.updates).toBe(1);
       expect(res.body.deletes).toBe(1);
 
-      // Verify update persisted
+      // Verify update
       const updated = await request(server).get(`/cats/${bufCatIds[0]}`).expect(200);
-      expect(updated.body.name).toBe("MixedUpdated");
+      expect(updated.body.name).toBe("Luna-Mixed");
 
-      // Verify delete — should 404
+      // Verify delete
       await request(server).get(`/cats/${bufCatIds[2]}`).expect(404);
 
-      // Find the newly created cat and track it for cleanup
+      // Track new cat for cleanup
       const allCats = await request(server).get("/cats").expect(200);
-      const mixed = allCats.body.find((c: any) => c.name === "MixedNew");
-      expect(mixed).toBeDefined();
-      if (mixed) bufCatIds.push(mixed.id);
+      const newCat = allCats.body.find((c: any) => c.name === "NewCat");
+      if (newCat) bufCatIds.push(newCat.id);
     });
 
-    it("POST /cats/buffer/preview — dry-run without DB write", async () => {
+    it("POST /cats/buffer/birthday — increment age for a breed", async () => {
+      const before0 = await request(server).get(`/cats/${bufCatIds[0]}`).expect(200);
+      const before1 = await request(server).get(`/cats/${bufCatIds[1]}`).expect(200);
+
       const res = await request(server)
-        .post("/cats/buffer/preview")
-        .send({ ids: [bufCatIds[0]], name: "PreviewOnly" })
+        .post("/cats/buffer/birthday")
+        .send({ breed: "Persian" })
+        .expect(201);
+
+      expect(res.body.updates).toBeGreaterThanOrEqual(2);
+
+      const after0 = await request(server).get(`/cats/${bufCatIds[0]}`).expect(200);
+      const after1 = await request(server).get(`/cats/${bufCatIds[1]}`).expect(200);
+      expect(after0.body.age).toBe(before0.body.age + 1);
+      expect(after1.body.age).toBe(before1.body.age + 1);
+    });
+
+    it("POST /cats/buffer/birthday — no-op for non-existent breed", async () => {
+      const res = await request(server)
+        .post("/cats/buffer/birthday")
+        .send({ breed: "Unicorn" })
+        .expect(201);
+
+      expect(res.body.updates).toBe(0);
+      expect(res.body.inserts).toBe(0);
+    });
+
+    it("POST /cats/buffer/preview-breed-rename — dry-run without DB write", async () => {
+      const res = await request(server)
+        .post("/cats/buffer/preview-breed-rename")
+        .send({ from: "Persian", to: "Persian Longhair" })
         .expect(201);
 
       expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBeGreaterThanOrEqual(1);
+      expect(res.body.length).toBeGreaterThanOrEqual(2);
       expect(res.body[0].action).toBe("update");
+      expect(res.body[0].data.breed).toBe("Persian Longhair");
 
       // Verify DB unchanged
       const cat = await request(server).get(`/cats/${bufCatIds[0]}`).expect(200);
-      expect(cat.body.name).not.toBe("PreviewOnly");
+      expect(cat.body.breed).toBe("Persian");
     });
 
     it("GET /cats/buffer/identity-map/:id — same reference", async () => {
@@ -384,31 +406,6 @@ describeIf("[E2E] nestjs-cats API", () => {
 
       expect(res.body.afterLoad).toBe("MANAGED");
       expect(res.body.afterRemove).toBe("REMOVED");
-    });
-
-    it("POST /cats/buffer/with-owner — persist cat with FK via buffer", async () => {
-      const res = await request(server)
-        .post("/cats/buffer/with-owner")
-        .send({
-          owner: { name: "BufOwner", email: "bufowner@test.com" },
-          cat: { name: "BufOwnedCat", age: 2, breed: "Abyssinian" },
-        })
-        .expect(201);
-
-      expect(res.body.inserts).toBeGreaterThanOrEqual(1);
-
-      // Find the created cat
-      const allCats = await request(server).get("/cats").expect(200);
-      const ownedCat = allCats.body.find((c: any) => c.name === "BufOwnedCat");
-      expect(ownedCat).toBeDefined();
-      if (ownedCat) bufCatIds.push(ownedCat.id);
-    });
-
-    it("PATCH /cats/buffer/batch-update — 404 for non-existent cat", async () => {
-      await request(server)
-        .patch("/cats/buffer/batch-update")
-        .send({ updates: [{ id: 999999, name: "Ghost" }] })
-        .expect(404);
     });
   });
 

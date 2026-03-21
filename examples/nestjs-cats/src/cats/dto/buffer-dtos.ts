@@ -12,20 +12,41 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { CreateCatDto } from "./create-cat.dto";
-import { UpdateCatDto } from "./update-cat.dto";
 
-// ── Batch Update ────────────────────────────────────────────────
+// ── Batch Rename ────────────────────────────────────────────────
 
-export class BufferBatchUpdateItemDto {
-  @ApiProperty({ description: "Cat ID to update", example: 1 })
+export class RenameItemDto {
+  @ApiProperty({ description: "Cat ID", example: 1 })
   @IsInt()
   @Min(1)
   id!: number;
 
-  @ApiPropertyOptional({ example: "Mittens" })
-  @IsOptional()
+  @ApiProperty({ description: "New name", example: "Mittens" })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(100)
+  name!: string;
+}
+
+export class BufferRenameDto {
+  @ApiProperty({ type: [RenameItemDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RenameItemDto)
+  updates!: RenameItemDto[];
+}
+
+// ── Mixed Flush (create + update + delete) ──────────────────────
+
+class MixedUpdateItemDto {
+  @ApiProperty({ example: 1 })
+  @IsInt()
+  @Min(1)
+  id!: number;
+
+  @ApiPropertyOptional({ example: "Updated" })
+  @IsOptional()
+  @IsString()
   @MaxLength(100)
   name?: string;
 
@@ -39,95 +60,54 @@ export class BufferBatchUpdateItemDto {
   @ApiPropertyOptional({ example: "Siamese" })
   @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(100)
   breed?: string;
 }
-
-export class BufferBatchUpdateDto {
-  @ApiProperty({ type: [BufferBatchUpdateItemDto] })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => BufferBatchUpdateItemDto)
-  updates!: BufferBatchUpdateItemDto[];
-}
-
-// ── Mixed Flush ─────────────────────────────────────────────────
 
 export class BufferMixedFlushDto {
-  @ApiProperty({ type: CreateCatDto })
-  @ValidateNested()
+  @ApiPropertyOptional({ type: [CreateCatDto], description: "Cats to create" })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
   @Type(() => CreateCatDto)
-  create!: CreateCatDto;
+  create?: CreateCatDto[];
 
-  @ApiProperty({ description: "ID of cat to update", example: 1 })
-  @IsInt()
-  @Min(1)
-  updateId!: number;
+  @ApiPropertyOptional({ type: [MixedUpdateItemDto], description: "Cats to update" })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MixedUpdateItemDto)
+  update?: MixedUpdateItemDto[];
 
-  @ApiProperty({ type: UpdateCatDto })
-  @ValidateNested()
-  @Type(() => UpdateCatDto)
-  update!: UpdateCatDto;
-
-  @ApiProperty({ description: "ID of cat to delete", example: 2 })
-  @IsInt()
-  @Min(1)
-  deleteId!: number;
-}
-
-// ── Preview ─────────────────────────────────────────────────────
-
-export class BufferPreviewDto {
-  @ApiProperty({ type: [Number], description: "Cat IDs to mutate" })
+  @ApiPropertyOptional({ type: [Number], description: "Cat IDs to delete" })
+  @IsOptional()
   @IsArray()
   @IsInt({ each: true })
-  ids!: number[];
+  deleteIds?: number[];
+}
 
-  @ApiPropertyOptional({ example: "Previewed" })
-  @IsOptional()
+// ── Birthday (age +1 by breed) ──────────────────────────────────
+
+export class BirthdayDto {
+  @ApiProperty({ description: "Breed to age up", example: "Persian" })
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
-  name?: string;
+  breed!: string;
+}
 
-  @ApiPropertyOptional({ example: 10 })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(30)
-  age?: number;
+// ── Preview Rename Breed ────────────────────────────────────────
 
-  @ApiPropertyOptional({ example: "Ragdoll" })
-  @IsOptional()
+export class PreviewBreedRenameDto {
+  @ApiProperty({ description: "Current breed name", example: "Persian" })
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
-  breed?: string;
-}
+  from!: string;
 
-// ── With Owner ──────────────────────────────────────────────────
-
-export class BufferOwnerDataDto {
-  @ApiProperty({ example: "Bob" })
+  @ApiProperty({ description: "New breed name", example: "Persian Longhair" })
   @IsString()
   @IsNotEmpty()
-  name!: string;
-
-  @ApiProperty({ example: "bob@test.com" })
-  @IsString()
-  @IsNotEmpty()
-  email!: string;
-}
-
-export class BufferWithOwnerDto {
-  @ApiProperty({ type: BufferOwnerDataDto })
-  @ValidateNested()
-  @Type(() => BufferOwnerDataDto)
-  owner!: BufferOwnerDataDto;
-
-  @ApiProperty({ type: CreateCatDto })
-  @ValidateNested()
-  @Type(() => CreateCatDto)
-  cat!: CreateCatDto;
+  @MaxLength(100)
+  to!: string;
 }

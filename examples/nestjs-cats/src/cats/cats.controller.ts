@@ -22,10 +22,10 @@ import { UpdateCatDto } from "./dto/update-cat.dto";
 import { BulkCreateCatDto } from "./dto/bulk-create-cat.dto";
 import { BulkDeleteCatDto } from "./dto/bulk-delete-cat.dto";
 import {
-  BufferBatchUpdateDto,
+  BufferRenameDto,
   BufferMixedFlushDto,
-  BufferPreviewDto,
-  BufferWithOwnerDto,
+  BirthdayDto,
+  PreviewBreedRenameDto,
 } from "./dto/buffer-dtos";
 
 @ApiTags("cats")
@@ -142,31 +142,32 @@ export class CatsController {
 
   // ─── Buffer Plugin Endpoints ───────────────────────────────
 
-  /** PATCH /cats/buffer/batch-update — Buffer dirty-checking batch update */
-  @Patch("buffer/batch-update")
-  bufferBatchUpdate(@Body() dto: BufferBatchUpdateDto) {
-    return this.catsService.bufferBatchUpdate(dto.updates);
+  /** PATCH /cats/buffer/rename — Batch rename cats via dirty checking */
+  @Patch("buffer/rename")
+  bufferRename(@Body() dto: BufferRenameDto) {
+    return this.catsService.bufferRename(dto.updates);
   }
 
-  /** POST /cats/buffer/mixed-flush — Create + Update + Delete in single flush */
+  /** POST /cats/buffer/mixed-flush — Create + Update + Delete in one transaction */
   @Post("buffer/mixed-flush")
   bufferMixedFlush(@Body() dto: BufferMixedFlushDto) {
     return this.catsService.bufferMixedFlush(
-      dto.create,
-      dto.updateId,
-      dto.update,
-      dto.deleteId,
+      dto.create ?? [],
+      dto.update ?? [],
+      dto.deleteIds ?? [],
     );
   }
 
-  /** POST /cats/buffer/preview — Dry-run preview without DB write */
-  @Post("buffer/preview")
-  bufferPreview(@Body() dto: BufferPreviewDto) {
-    return this.catsService.bufferPreview(dto.ids, {
-      name: dto.name,
-      age: dto.age,
-      breed: dto.breed,
-    });
+  /** POST /cats/buffer/birthday — Increment age for all cats of a breed */
+  @Post("buffer/birthday")
+  birthday(@Body() dto: BirthdayDto) {
+    return this.catsService.birthday(dto.breed);
+  }
+
+  /** POST /cats/buffer/preview-breed-rename — Preview breed rename (dry-run) */
+  @Post("buffer/preview-breed-rename")
+  previewBreedRename(@Body() dto: PreviewBreedRenameDto) {
+    return this.catsService.previewBreedRename(dto.from, dto.to);
   }
 
   /** GET /cats/buffer/identity-map/:id — Verify identity map (same reference) */
@@ -179,12 +180,6 @@ export class CatsController {
   @Get("buffer/entity-state/:id")
   bufferEntityState(@Param("id", ParseIntPipe) id: number) {
     return this.catsService.bufferEntityState(id);
-  }
-
-  /** POST /cats/buffer/with-owner — Persist cat with owner FK via buffer */
-  @Post("buffer/with-owner")
-  bufferWithOwner(@Body() dto: BufferWithOwnerDto) {
-    return this.catsService.bufferWithOwner(dto.owner, dto.cat);
   }
 
   /** GET /cats/:id -- 단건 조회 (@ManyToOne eager 로딩으로 owner 포함) */
