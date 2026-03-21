@@ -51,33 +51,92 @@ jobs:
         working-directory: examples/${{ matrix.example }}
         run: npx tsc --noEmit
 
-  # Phase 2: Integration tests with PostgreSQL + MySQL service containers
-  # integration:
-  #   name: Integration Tests
-  #   runs-on: ubuntu-latest
-  #   services:
-  #     postgres:
-  #       image: postgres:16
-  #       env:
-  #         POSTGRES_USER: test
-  #         POSTGRES_PASSWORD: test
-  #         POSTGRES_DB: test
-  #       ports: ['5432:5432']
-  #       options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
-  #     mysql:
-  #       image: mysql:8
-  #       env:
-  #         MYSQL_ROOT_PASSWORD: test
-  #         MYSQL_DATABASE: fastify
-  #       ports: ['3306:3306']
-  #       options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=5
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: pnpm/action-setup@v4
-  #     - uses: actions/setup-node@v4
-  #       with:
-  #         node-version: 20
-  #         cache: pnpm
-  #     - run: pnpm install --frozen-lockfile
-  #     - run: pnpm build
-  #     - run: INTEGRATION_TEST=true pnpm test
+  integration-sqlite:
+    name: Integration Tests (SQLite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run SQLite integration tests
+        run: INTEGRATION_TEST=true INTEGRATION_TEST_MYSQL=false INTEGRATION_TEST_POSTGRES=false pnpm test -- --testPathPattern="integration/sqlite"
+
+  integration-mysql:
+    name: Integration Tests (MySQL)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: fastify
+        ports: ['3306:3306']
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run MySQL integration tests
+        env:
+          INTEGRATION_TEST: "true"
+          INTEGRATION_TEST_POSTGRES: "false"
+          DB_HOST: 127.0.0.1
+          DB_PORT: "3306"
+          DB_USER: root
+          DB_PASSWORD: password
+          DB_NAME: fastify
+        run: pnpm test -- --testPathPattern="integration/" --testPathIgnorePatterns="integration/sqlite" --testPathIgnorePatterns="multi-tenancy-postgres"
+
+  integration-postgres:
+    name: Integration Tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: multi_tenancy_db
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run PostgreSQL integration tests
+        env:
+          INTEGRATION_TEST: "true"
+          INTEGRATION_TEST_MYSQL: "false"
+          PG_HOST: 127.0.0.1
+          PG_PORT: "5432"
+          PG_USER: postgres
+          PG_PASSWORD: postgres
+          PG_DATABASE: multi_tenancy_db
+        run: pnpm test -- --testPathPattern="integration/" --testPathIgnorePatterns="integration/sqlite"
