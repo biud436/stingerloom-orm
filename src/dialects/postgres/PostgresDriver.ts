@@ -877,4 +877,8 @@ export class PostgresDriver implements ISqlDriver {
   getForUpdateNoWait(): string {
     return " FOR UPDATE NOWAIT";
   }
+
+  supportsReturning(): boolean {
+    return true;
+  }
 }

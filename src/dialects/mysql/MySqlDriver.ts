@@ -578,4 +578,8 @@ export class MySqlDriver implements ISqlDriver {
 
     return " FOR UPDATE NOWAIT";
   }
+
+  supportsReturning(): boolean {
+    return false;
+  }
 }

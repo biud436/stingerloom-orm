@@ -88,6 +88,7 @@ import {
 import { PluginContext } from "./plugin/PluginContext";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { deserializeEntity } from "./deserializer/DeserializeEntity";
 
 /**
  * Date를 MySQL/MariaDB 호환 'YYYY-MM-DD HH:MM:SS' 형식으로 변환합니다.
@@ -1340,13 +1341,10 @@ export class EntityManager implements BaseEntityManager {
           }
         }
 
-        // PostgreSQL: INSERT ... RETURNING PK 컬럼들
-        const isPostgres = this.isPostgres();
-        const returningCols = pkColumns
-          .map((col: ColumnMetadata) => this.wrap(col.name!))
-          .join(", ");
-        const returningSql = isPostgres
-          ? raw(` RETURNING ${returningCols}`)
+        // PostgreSQL: INSERT ... RETURNING *
+        const useReturning = typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning();
+        const returningSql = useReturning
+          ? raw(` RETURNING *`)
           : raw("");
 
         const insertSql = sql`
@@ -1387,14 +1385,9 @@ export class EntityManager implements BaseEntityManager {
           return result as T;
         }
 
-        // PostgreSQL: RETURNING 절로 받은 PK 값으로 조회
-        if (isPostgres && queryResult?.results?.length > 0) {
+        // RETURNING * 지원 드라이버: 반환 행으로 직접 역직렬화 (eager 관계 없을 때)
+        if (useReturning && queryResult?.results?.length > 0) {
           const returnedRow = queryResult.results[0];
-          const findWhere = buildPkFindWhere(returnedRow);
-          const result = await this.findOneInternal(entity, {
-            where: findWhere,
-          } as any, session);
-
           const cascadeId = returnedRow[pk.name!];
           await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
@@ -1403,6 +1396,15 @@ export class EntityManager implements BaseEntityManager {
             entity: item,
             manager: this,
           } as InsertEvent<T>);
+
+          const hasEagerRelations = this.hasEagerRelations(entity);
+          if (!hasEagerRelations) {
+            return deserializeEntity(entity, returnedRow) as T;
+          }
+          const findWhere = buildPkFindWhere(returnedRow);
+          const result = await this.findOneInternal(entity, {
+            where: findWhere,
+          } as any, session);
           return result as T;
         }
 
@@ -1548,11 +1550,17 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      const useReturningForUpdate = typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning();
+      let updateReturnedRow: any = null;
+
       if (updateMap.length > 0) {
+        const updateReturningSql = useReturningForUpdate
+          ? raw(` RETURNING *`)
+          : raw("");
         const updateSql = sql`
             UPDATE ${raw(this.wrapTable(metadata.name!))}
             SET ${join(updateMap, ", ")}
-            WHERE ${join(pkWhereClauses, " AND ")}
+            WHERE ${join(pkWhereClauses, " AND ")}${updateReturningSql}
                   `;
         const updateStart = Date.now();
         this.beginTrackQuery();
@@ -1578,6 +1586,10 @@ export class EntityManager implements BaseEntityManager {
             throw new OptimisticLockError(entity.name, currentVersion);
           }
         }
+
+        if (useReturningForUpdate && updateResult?.results?.length > 0) {
+          updateReturnedRow = updateResult.results[0];
+        }
       }
 
       await this.cascadeHandler.cascadeSaveOneToMany(entity, item, primaryKeyValue);
@@ -1588,6 +1600,10 @@ export class EntityManager implements BaseEntityManager {
         entity: item,
         manager: this,
       } as UpdateEvent<T>);
+
+      if (updateReturnedRow && !this.hasEagerRelations(entity)) {
+        return deserializeEntity(entity, updateReturnedRow) as T;
+      }
 
       const result = await this.findOneInternal(entity, {
         where: buildPkFindWhere(),
@@ -2285,6 +2301,14 @@ export class EntityManager implements BaseEntityManager {
   private isSqlite() {
     const t = this.dbType ?? (this.client as any).type;
     return t === "sqlite";
+  }
+
+  private hasEagerRelations<T>(entity: ClazzType<T>): boolean {
+    const m2o = this.resolver.resolveManyToOneMetadata(entity);
+    if (m2o.some((rel) => rel.option?.eager === true)) return true;
+    const o2o = this.resolver.resolveOneToOneMetadata(entity);
+    if (o2o.some((rel) => rel.joinColumn && rel.option?.eager === true)) return true;
+    return false;
   }
 
   /**

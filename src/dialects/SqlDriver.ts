@@ -345,4 +345,10 @@ export interface ISqlDriver<T = any> {
    * @returns A promise that resolves when the operation is complete.
    */
   clear(tableName: string): Promise<T>;
+
+  /**
+   * Whether the database supports the RETURNING clause on INSERT/UPDATE.
+   * PostgreSQL supports it; MySQL and SQLite (via better-sqlite3) do not.
+   */
+  supportsReturning(): boolean;
 }

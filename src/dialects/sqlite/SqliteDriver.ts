@@ -464,4 +464,8 @@ export class SqliteDriver implements ISqlDriver {
     );
     return "";
   }
+
+  supportsReturning(): boolean {
+    return false;
+  }
 }
