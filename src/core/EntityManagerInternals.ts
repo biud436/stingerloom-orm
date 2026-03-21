@@ -59,6 +59,11 @@ export interface EntityManagerInternals {
     entity: ClazzType<T>,
     item: Partial<T>,
   ): Promise<InstanceType<ClazzType<T>>>;
+  saveWithSession<T>(
+    entity: ClazzType<T>,
+    item: Partial<T>,
+    session: TransactionSessionManager,
+  ): Promise<InstanceType<ClazzType<T>>>;
   find<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,

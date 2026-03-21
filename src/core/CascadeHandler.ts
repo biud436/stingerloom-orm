@@ -7,6 +7,7 @@ import { hasCascade } from "../types/CascadeType";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
+import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
 
 /**
  * 캐스케이드 저장/삭제 + 라이프사이클 훅 핸들러.
@@ -63,6 +64,7 @@ export class CascadeHandler {
     entity: ClazzType<T>,
     item: Partial<T>,
     savedParentId: any,
+    session?: TransactionSessionManager,
   ): Promise<void> {
     const oneToManyMeta = this.resolver.resolveOneToManyMetadata(entity);
 
@@ -90,7 +92,11 @@ export class CascadeHandler {
       for (const child of children) {
         // FK를 부모의 PK로 설정
         (child as any)[fkColumn] = savedParentId;
-        await this.ctx.save(RelatedEntity, child);
+        if (session) {
+          await this.ctx.saveWithSession(RelatedEntity, child, session);
+        } else {
+          await this.ctx.save(RelatedEntity, child);
+        }
       }
     }
   }

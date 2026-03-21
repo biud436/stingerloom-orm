@@ -157,6 +157,7 @@ export class EntityManager implements BaseEntityManager {
     findInternal: (e, o, s) => this.findInternal(e, o, s),
     findOneInternal: (e, o, s) => this.findOneInternal(e, o, s),
     save: (e, i) => this.save(e, i),
+    saveWithSession: (e, i, s) => this.saveInternal(e, i, s),
     find: (e, o) => this.find(e, o),
     delete: (e, c) => this.delete(e, c),
   };
@@ -1376,7 +1377,7 @@ export class EntityManager implements BaseEntityManager {
           const cascadeId = hasAutoIncrementPk
             ? queryResult?.results?.insertId
             : primaryKeyValue;
-          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId);
+          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
           await this.notifySubscribers(entity, "afterInsert", {
@@ -1390,7 +1391,7 @@ export class EntityManager implements BaseEntityManager {
         if (useReturning && queryResult?.results?.length > 0) {
           const returnedRow = queryResult.results[0];
           const cascadeId = returnedRow[pk.name!];
-          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId);
+          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
           await this.notifySubscribers(entity, "afterInsert", {
@@ -1422,7 +1423,7 @@ export class EntityManager implements BaseEntityManager {
           const cascadeId = hasAutoIncrementPk
             ? Number(sqliteRunResult?.lastInsertRowid)
             : primaryKeyValue;
-          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId);
+          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
           await this.notifySubscribers(entity, "afterInsert", {
@@ -1593,7 +1594,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      await this.cascadeHandler.cascadeSaveOneToMany(entity, item, primaryKeyValue);
+      await this.cascadeHandler.cascadeSaveOneToMany(entity, item, primaryKeyValue, session);
 
       await this.cascadeHandler.runHooks(entity, item, "afterUpdate");
       await this.eventEmitter.emit("afterUpdate", { entity, data: item });
