@@ -81,15 +81,12 @@ function makeRows(start: number, count: number) {
 }
 
 /**
- * findWithPage internally calls findAndCount which issues:
- * 1. SET autocommit = 0
- * 2. SELECT ... (data query)
- * 3. SELECT COUNT(*) (count query)
- * We mock all three.
+ * findWithPage internally calls findAndCount which issues (read-only, no transaction):
+ * 1. SELECT ... (data query)
+ * 2. SELECT COUNT(*) (count query)
  */
 function mockFindAndCount(rows: any[], total: number) {
   mockQuery
-    .mockResolvedValueOnce(undefined) // SET autocommit = 0
     .mockResolvedValueOnce({ results: rows, fields: [] }) // data
     .mockResolvedValueOnce({ results: [{ result: total }], fields: [] }); // count
 }

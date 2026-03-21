@@ -27,7 +27,7 @@ describe("findAndCount()", () => {
     jest.spyOn(em as any, "findInternal").mockResolvedValue(users as any);
     jest.spyOn((em as any).aggregateHandler, "aggregate").mockResolvedValue(10);
     // executeInTransaction을 우회하여 세션 없이 콜백 실행
-    jest.spyOn(em as any, "executeInTransaction").mockImplementation(
+    jest.spyOn(em as any, "executeReadOnly").mockImplementation(
       async (fn: any) => fn({}),
     );
 
@@ -46,7 +46,7 @@ describe("findAndCount()", () => {
     const aggregateSpy = jest
       .spyOn((em as any).aggregateHandler, "aggregate")
       .mockResolvedValue(0);
-    jest.spyOn(em as any, "executeInTransaction").mockImplementation(
+    jest.spyOn(em as any, "executeReadOnly").mockImplementation(
       async (fn: any) => fn({}),
     );
 
@@ -64,7 +64,7 @@ describe("findAndCount()", () => {
     const aggregateSpy = jest
       .spyOn((em as any).aggregateHandler, "aggregate")
       .mockResolvedValue(100);
-    jest.spyOn(em as any, "executeInTransaction").mockImplementation(
+    jest.spyOn(em as any, "executeReadOnly").mockImplementation(
       async (fn: any) => fn({}),
     );
 
@@ -91,7 +91,7 @@ describe("findAndCount()", () => {
     const aggregateSpy = jest
       .spyOn((em as any).aggregateHandler, "aggregate")
       .mockResolvedValue(0);
-    jest.spyOn(em as any, "executeInTransaction").mockImplementation(
+    jest.spyOn(em as any, "executeReadOnly").mockImplementation(
       async (fn: any) => fn({}),
     );
 
@@ -117,7 +117,7 @@ describe("findAndCount()", () => {
     const aggregateSpy = jest
       .spyOn((em as any).aggregateHandler, "aggregate")
       .mockResolvedValue(0);
-    jest.spyOn(em as any, "executeInTransaction").mockImplementation(
+    jest.spyOn(em as any, "executeReadOnly").mockImplementation(
       async (fn: any) => fn(mockSession),
     );
 
@@ -143,7 +143,7 @@ describe("findAndCount()", () => {
       .spyOn(em as any, "findInternal")
       .mockRejectedValue(new Error("find error"));
     jest.spyOn((em as any).aggregateHandler, "aggregate").mockResolvedValue(0);
-    jest.spyOn(em as any, "executeInTransaction").mockImplementation(
+    jest.spyOn(em as any, "executeReadOnly").mockImplementation(
       async (fn: any) => fn({}),
     );
 
@@ -157,7 +157,7 @@ describe("findAndCount()", () => {
     jest
       .spyOn((em as any).aggregateHandler, "aggregate")
       .mockRejectedValue(new Error("count error"));
-    jest.spyOn(em as any, "executeInTransaction").mockImplementation(
+    jest.spyOn(em as any, "executeReadOnly").mockImplementation(
       async (fn: any) => fn({}),
     );
 
@@ -169,7 +169,7 @@ describe("findAndCount()", () => {
       .spyOn(em as any, "findInternal")
       .mockResolvedValue([] as any);
     jest.spyOn((em as any).aggregateHandler, "aggregate").mockResolvedValue(0);
-    jest.spyOn(em as any, "executeInTransaction").mockImplementation(
+    jest.spyOn(em as any, "executeReadOnly").mockImplementation(
       async (fn: any) => fn({}),
     );
 

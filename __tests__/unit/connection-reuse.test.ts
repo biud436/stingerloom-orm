@@ -259,9 +259,8 @@ describe("Connection Reuse (Issue #30)", () => {
   });
 
   describe("findAndCount()", () => {
-    it("should use exactly 1 TransactionSessionManager for find + count", async () => {
+    it("should use exactly 1 TransactionSessionManager for find + count (read-only, no transaction)", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: [
             { id: 1, name: "Alice", email: "alice@test.com" },
@@ -276,11 +275,11 @@ describe("Connection Reuse (Issue #30)", () => {
 
       const [entities, count] = await em.findAndCount(User);
 
-      // 1개의 세션으로 find + count를 모두 실행해야 합니다
+      // 1개의 세션으로 find + count를 모두 실행하되, 트랜잭션 없이
       expect(sessionInstanceCount).toBe(1);
       expect(mockConnect).toHaveBeenCalledTimes(1);
-      expect(mockStartTransaction).toHaveBeenCalledTimes(1);
-      expect(mockCommit).toHaveBeenCalledTimes(1);
+      expect(mockStartTransaction).not.toHaveBeenCalled();
+      expect(mockCommit).not.toHaveBeenCalled();
       expect(mockClose).toHaveBeenCalledTimes(1);
 
       expect(entities).toHaveLength(2);

@@ -1136,12 +1136,13 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<[T[], number]> {
-    return this.executeInTransaction(async (session) => {
+    const readNode = this.getReadNode(findOption.useMaster);
+    return this.executeReadOnly(async (session) => {
       const entities = await this.findInternal<T>(entity, findOption, session);
       const totalCount = await this.aggregateHandler.aggregate<T>(entity, "COUNT", "*", findOption.where, session);
 
       return [entities as unknown as T[], totalCount];
-    });
+    }, { readNodeOverride: readNode, timeout: findOption.timeout });
   }
 
   async findWithPage<T>(

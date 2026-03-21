@@ -267,9 +267,8 @@ describe("Read-only Query Optimization (Issue #78)", () => {
       em = createTestEntityManager({ isMySql: true });
     });
 
-    it("7. findAndCount() should still use a transaction (snapshot consistency)", async () => {
+    it("7. findAndCount() should use read-only path (no transaction)", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: [
             { id: 1, name: "Alice", email: "a@test.com" },
@@ -286,8 +285,8 @@ describe("Read-only Query Optimization (Issue #78)", () => {
 
       expect(entities).toHaveLength(2);
       expect(count).toBe(5);
-      expect(mockStartTransaction).toHaveBeenCalledTimes(1);
-      expect(mockCommit).toHaveBeenCalledTimes(1);
+      expect(mockStartTransaction).not.toHaveBeenCalled();
+      expect(mockCommit).not.toHaveBeenCalled();
     });
 
     it("8. save() should still use a transaction", async () => {
@@ -425,9 +424,8 @@ describe("Read-only Query Optimization (Issue #78)", () => {
       expect(externalSession.query).toHaveBeenCalled();
     });
 
-    it("14. findAndCount() should share session between findInternal and aggregate", async () => {
+    it("14. findAndCount() should share session between findInternal and aggregate (read-only)", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: [{ id: 1, name: "Alice" }],
           fields: [],
@@ -439,10 +437,10 @@ describe("Read-only Query Optimization (Issue #78)", () => {
 
       await em.findAndCount(User);
 
-      // Only 1 session for both find + count
+      // Only 1 session for both find + count, no transaction
       expect(sessionInstanceCount).toBe(1);
-      expect(mockStartTransaction).toHaveBeenCalledTimes(1);
-      expect(mockCommit).toHaveBeenCalledTimes(1);
+      expect(mockStartTransaction).not.toHaveBeenCalled();
+      expect(mockCommit).not.toHaveBeenCalled();
     });
   });
 
