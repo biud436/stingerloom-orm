@@ -68,7 +68,11 @@ jobs:
       - run: pnpm build
 
       - name: Run SQLite integration tests
-        run: INTEGRATION_TEST=true INTEGRATION_TEST_MYSQL=false INTEGRATION_TEST_POSTGRES=false pnpm test -- --testPathPattern="integration/sqlite"
+        env:
+          INTEGRATION_TEST: "true"
+          INTEGRATION_TEST_MYSQL: "false"
+          INTEGRATION_TEST_POSTGRES: "false"
+        run: npx jest --testPathPattern="integration/sqlite"
 
   integration-mysql:
     name: Integration Tests (MySQL)
@@ -103,7 +107,7 @@ jobs:
           DB_USER: root
           DB_PASSWORD: password
           DB_NAME: fastify
-        run: pnpm test -- --testPathPattern="integration/" --testPathIgnorePatterns="integration/sqlite" --testPathIgnorePatterns="multi-tenancy-postgres"
+        run: npx jest --testPathPattern="integration/(?!sqlite|multi-tenancy-postgres)"
 
   integration-postgres:
     name: Integration Tests (PostgreSQL)
@@ -139,4 +143,4 @@ jobs:
           PG_USER: postgres
           PG_PASSWORD: postgres
           PG_DATABASE: multi_tenancy_db
-        run: pnpm test -- --testPathPattern="integration/" --testPathIgnorePatterns="integration/sqlite"
+        run: npx jest --testPathPattern="integration/(?!sqlite)"
