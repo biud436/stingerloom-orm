@@ -5,16 +5,22 @@ import { Cat } from "./cat.entity";
 
 import {
   BaseRepository,
+  EntityManager,
   Transactional,
   CursorPaginationResult,
+  BufferFlushResult,
+  BufferPreviewEntry,
+  EntityState,
 } from "@stingerloom/orm";
-import { InjectRepository } from "@stingerloom/orm/nestjs";
+import { InjectRepository, InjectEntityManager } from "@stingerloom/orm/nestjs";
 import { OwnersService } from "src/owners/owners.service";
+import { Owner } from "src/owners/owner.entity";
 
 @Injectable()
 export class CatsService {
   constructor(
     @InjectRepository(Cat) private readonly catRepository: BaseRepository<Cat>,
+    @InjectEntityManager() private readonly em: EntityManager,
     private readonly ownersService: OwnersService,
   ) {}
 
@@ -207,5 +213,136 @@ export class CatsService {
       orderBy: "id",
       direction: "ASC",
     });
+  }
+
+  // ─── Buffer Plugin Methods ────────────────────────────────────
+
+  /**
+   * Batch update cats via dirty checking — load, mutate, flush.
+   */
+  async bufferBatchUpdate(
+    updates: { id: number; name?: string; age?: number; breed?: string }[],
+  ): Promise<BufferFlushResult> {
+    const buf = (this.em as any).buffer();
+
+    for (const upd of updates) {
+      const cat = await buf.findOne(Cat, { where: { id: upd.id } });
+      if (!cat) throw new NotFoundException(`Cat #${upd.id} not found`);
+      if (upd.name !== undefined) cat.name = upd.name;
+      if (upd.age !== undefined) cat.age = upd.age;
+      if (upd.breed !== undefined) cat.breed = upd.breed;
+    }
+
+    return buf.flush();
+  }
+
+  /**
+   * Mixed flush — create + update + delete in a single flush.
+   */
+  async bufferMixedFlush(
+    createDto: CreateCatDto,
+    updateId: number,
+    updateDto: UpdateCatDto,
+    deleteId: number,
+  ): Promise<BufferFlushResult> {
+    const buf = (this.em as any).buffer();
+
+    // persist new cat
+    const newCat = new Cat();
+    newCat.name = createDto.name;
+    newCat.age = createDto.age;
+    newCat.breed = createDto.breed;
+    buf.persist(newCat);
+
+    // load and mutate existing cat
+    const existing = await buf.findOne(Cat, { where: { id: updateId } });
+    if (!existing) throw new NotFoundException(`Cat #${updateId} not found`);
+    if (updateDto.name !== undefined) existing.name = updateDto.name;
+    if (updateDto.age !== undefined) existing.age = updateDto.age;
+    if (updateDto.breed !== undefined) existing.breed = updateDto.breed;
+
+    // mark for deletion
+    const toDelete = await buf.findOne(Cat, { where: { id: deleteId } });
+    if (!toDelete) throw new NotFoundException(`Cat #${deleteId} not found`);
+    buf.remove(toDelete);
+
+    return buf.flush();
+  }
+
+  /**
+   * Preview — dry-run showing what flush would do, without writing to DB.
+   */
+  async bufferPreview(
+    ids: number[],
+    updates: { name?: string; age?: number; breed?: string },
+  ): Promise<BufferPreviewEntry[]> {
+    const buf = (this.em as any).buffer();
+
+    for (const id of ids) {
+      const cat = await buf.findOne(Cat, { where: { id } });
+      if (!cat) throw new NotFoundException(`Cat #${id} not found`);
+      if (updates.name !== undefined) cat.name = updates.name;
+      if (updates.age !== undefined) cat.age = updates.age;
+      if (updates.breed !== undefined) cat.breed = updates.breed;
+    }
+
+    return buf.preview();
+  }
+
+  /**
+   * Identity map — findOne twice returns the same reference.
+   */
+  async bufferIdentityMap(id: number): Promise<{ same: boolean }> {
+    const buf = (this.em as any).buffer();
+
+    const ref1 = await buf.findOne(Cat, { where: { id } });
+    if (!ref1) throw new NotFoundException(`Cat #${id} not found`);
+
+    const ref2 = await buf.findOne(Cat, { where: { id } });
+    return { same: ref1 === ref2 };
+  }
+
+  /**
+   * Entity state transitions — MANAGED after load, REMOVED after remove().
+   */
+  async bufferEntityState(
+    id: number,
+  ): Promise<{ afterLoad: string; afterRemove: string }> {
+    const buf = (this.em as any).buffer();
+
+    const cat = await buf.findOne(Cat, { where: { id } });
+    if (!cat) throw new NotFoundException(`Cat #${id} not found`);
+
+    const afterLoad = buf.getState(cat);
+
+    buf.remove(cat);
+    const afterRemove = buf.getState(cat);
+
+    return { afterLoad, afterRemove };
+  }
+
+  /**
+   * Buffer with owner FK — create owner via repo, then persist cat via buffer.
+   */
+  async bufferWithOwner(
+    ownerData: { name: string; email: string },
+    catData: CreateCatDto,
+  ): Promise<BufferFlushResult> {
+    // Create owner via repository (outside buffer)
+    const owner = new Owner();
+    owner.name = ownerData.name;
+    owner.email = ownerData.email;
+    const savedOwner = await this.em.save(Owner, owner);
+
+    // Persist cat via buffer with owner FK
+    const buf = (this.em as any).buffer();
+    const cat = new Cat();
+    cat.name = catData.name;
+    cat.age = catData.age;
+    cat.breed = catData.breed;
+    cat.ownerId = savedOwner.id;
+    buf.persist(cat);
+
+    return buf.flush();
   }
 }

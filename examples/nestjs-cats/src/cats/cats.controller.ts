@@ -21,6 +21,12 @@ import { CreateCatDto } from "./dto/create-cat.dto";
 import { UpdateCatDto } from "./dto/update-cat.dto";
 import { BulkCreateCatDto } from "./dto/bulk-create-cat.dto";
 import { BulkDeleteCatDto } from "./dto/bulk-delete-cat.dto";
+import {
+  BufferBatchUpdateDto,
+  BufferMixedFlushDto,
+  BufferPreviewDto,
+  BufferWithOwnerDto,
+} from "./dto/buffer-dtos";
 
 @ApiTags("cats")
 @Controller("cats")
@@ -132,6 +138,53 @@ export class CatsController {
   })
   stats() {
     return this.catsService.stats();
+  }
+
+  // ─── Buffer Plugin Endpoints ───────────────────────────────
+
+  /** PATCH /cats/buffer/batch-update — Buffer dirty-checking batch update */
+  @Patch("buffer/batch-update")
+  bufferBatchUpdate(@Body() dto: BufferBatchUpdateDto) {
+    return this.catsService.bufferBatchUpdate(dto.updates);
+  }
+
+  /** POST /cats/buffer/mixed-flush — Create + Update + Delete in single flush */
+  @Post("buffer/mixed-flush")
+  bufferMixedFlush(@Body() dto: BufferMixedFlushDto) {
+    return this.catsService.bufferMixedFlush(
+      dto.create,
+      dto.updateId,
+      dto.update,
+      dto.deleteId,
+    );
+  }
+
+  /** POST /cats/buffer/preview — Dry-run preview without DB write */
+  @Post("buffer/preview")
+  bufferPreview(@Body() dto: BufferPreviewDto) {
+    return this.catsService.bufferPreview(dto.ids, {
+      name: dto.name,
+      age: dto.age,
+      breed: dto.breed,
+    });
+  }
+
+  /** GET /cats/buffer/identity-map/:id — Verify identity map (same reference) */
+  @Get("buffer/identity-map/:id")
+  bufferIdentityMap(@Param("id", ParseIntPipe) id: number) {
+    return this.catsService.bufferIdentityMap(id);
+  }
+
+  /** GET /cats/buffer/entity-state/:id — Entity state transitions */
+  @Get("buffer/entity-state/:id")
+  bufferEntityState(@Param("id", ParseIntPipe) id: number) {
+    return this.catsService.bufferEntityState(id);
+  }
+
+  /** POST /cats/buffer/with-owner — Persist cat with owner FK via buffer */
+  @Post("buffer/with-owner")
+  bufferWithOwner(@Body() dto: BufferWithOwnerDto) {
+    return this.catsService.bufferWithOwner(dto.owner, dto.cat);
   }
 
   /** GET /cats/:id -- 단건 조회 (@ManyToOne eager 로딩으로 owner 포함) */

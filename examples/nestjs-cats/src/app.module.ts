@@ -3,6 +3,7 @@ import { ConfigModule } from "@nestjs/config";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
 import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { bufferPlugin } from "@stingerloom/orm";
 import { CatsModule } from "./cats/cats.module";
 import { OwnersModule } from "./owners/owners.module";
 
@@ -19,6 +20,7 @@ import { OwnersModule } from "./owners/owners.module";
       entities: [__dirname + "/**/*.entity{.ts,.js}"],
       synchronize: true,
       logging: true,
+      plugins: [bufferPlugin()],
     }),
     CatsModule,
     OwnersModule,

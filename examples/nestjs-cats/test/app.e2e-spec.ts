@@ -259,6 +259,159 @@ describeIf("[E2E] nestjs-cats API", () => {
     });
   });
 
+  // ─── Buffer Plugin ────────────────────────────────
+
+  describe("Buffer Plugin", () => {
+    let bufCatIds: number[];
+
+    beforeAll(async () => {
+      // Create 3 cats for buffer tests
+      bufCatIds = [];
+      for (const c of [
+        { name: "BufCat1", age: 1, breed: "Maine Coon" },
+        { name: "BufCat2", age: 2, breed: "Ragdoll" },
+        { name: "BufCat3", age: 3, breed: "Bengal" },
+      ]) {
+        const res = await request(server).post("/cats").send(c).expect(201);
+        bufCatIds.push(res.body.id);
+        await wait();
+      }
+    });
+
+    afterAll(async () => {
+      // Clean up buffer test cats (ignore 404s for already-deleted ones)
+      for (const id of bufCatIds) {
+        await request(server).delete(`/cats/${id}`);
+      }
+    });
+
+    it("PATCH /cats/buffer/batch-update — batch update via dirty checking", async () => {
+      const res = await request(server)
+        .patch("/cats/buffer/batch-update")
+        .send({
+          updates: [
+            { id: bufCatIds[0], name: "BufUpdated1", age: 10 },
+            { id: bufCatIds[1], breed: "Persian" },
+          ],
+        })
+        .expect(200);
+
+      expect(res.body.updates).toBe(2);
+      expect(res.body.inserts).toBe(0);
+      expect(res.body.deletes).toBe(0);
+
+      // Verify changes persisted
+      const cat0 = await request(server).get(`/cats/${bufCatIds[0]}`).expect(200);
+      expect(cat0.body.name).toBe("BufUpdated1");
+      expect(cat0.body.age).toBe(10);
+
+      const cat1 = await request(server).get(`/cats/${bufCatIds[1]}`).expect(200);
+      expect(cat1.body.breed).toBe("Persian");
+    });
+
+    it("PATCH /cats/buffer/batch-update — no-op flush (same values)", async () => {
+      // Fetch current values
+      const current = await request(server).get(`/cats/${bufCatIds[0]}`).expect(200);
+
+      const res = await request(server)
+        .patch("/cats/buffer/batch-update")
+        .send({
+          updates: [
+            { id: bufCatIds[0], name: current.body.name, age: current.body.age },
+          ],
+        })
+        .expect(200);
+
+      expect(res.body.updates).toBe(0);
+    });
+
+    it("POST /cats/buffer/mixed-flush — create + update + delete atomically", async () => {
+      const res = await request(server)
+        .post("/cats/buffer/mixed-flush")
+        .send({
+          create: { name: "MixedNew", age: 5, breed: "Sphynx" },
+          updateId: bufCatIds[0],
+          update: { name: "MixedUpdated" },
+          deleteId: bufCatIds[2],
+        })
+        .expect(201);
+
+      expect(res.body.inserts).toBe(1);
+      expect(res.body.updates).toBe(1);
+      expect(res.body.deletes).toBe(1);
+
+      // Verify update persisted
+      const updated = await request(server).get(`/cats/${bufCatIds[0]}`).expect(200);
+      expect(updated.body.name).toBe("MixedUpdated");
+
+      // Verify delete — should 404
+      await request(server).get(`/cats/${bufCatIds[2]}`).expect(404);
+
+      // Find the newly created cat and track it for cleanup
+      const allCats = await request(server).get("/cats").expect(200);
+      const mixed = allCats.body.find((c: any) => c.name === "MixedNew");
+      expect(mixed).toBeDefined();
+      if (mixed) bufCatIds.push(mixed.id);
+    });
+
+    it("POST /cats/buffer/preview — dry-run without DB write", async () => {
+      const res = await request(server)
+        .post("/cats/buffer/preview")
+        .send({ ids: [bufCatIds[0]], name: "PreviewOnly" })
+        .expect(201);
+
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body.length).toBeGreaterThanOrEqual(1);
+      expect(res.body[0].action).toBe("update");
+
+      // Verify DB unchanged
+      const cat = await request(server).get(`/cats/${bufCatIds[0]}`).expect(200);
+      expect(cat.body.name).not.toBe("PreviewOnly");
+    });
+
+    it("GET /cats/buffer/identity-map/:id — same reference", async () => {
+      const res = await request(server)
+        .get(`/cats/buffer/identity-map/${bufCatIds[0]}`)
+        .expect(200);
+
+      expect(res.body.same).toBe(true);
+    });
+
+    it("GET /cats/buffer/entity-state/:id — MANAGED → REMOVED", async () => {
+      const res = await request(server)
+        .get(`/cats/buffer/entity-state/${bufCatIds[0]}`)
+        .expect(200);
+
+      expect(res.body.afterLoad).toBe("MANAGED");
+      expect(res.body.afterRemove).toBe("REMOVED");
+    });
+
+    it("POST /cats/buffer/with-owner — persist cat with FK via buffer", async () => {
+      const res = await request(server)
+        .post("/cats/buffer/with-owner")
+        .send({
+          owner: { name: "BufOwner", email: "bufowner@test.com" },
+          cat: { name: "BufOwnedCat", age: 2, breed: "Abyssinian" },
+        })
+        .expect(201);
+
+      expect(res.body.inserts).toBeGreaterThanOrEqual(1);
+
+      // Find the created cat
+      const allCats = await request(server).get("/cats").expect(200);
+      const ownedCat = allCats.body.find((c: any) => c.name === "BufOwnedCat");
+      expect(ownedCat).toBeDefined();
+      if (ownedCat) bufCatIds.push(ownedCat.id);
+    });
+
+    it("PATCH /cats/buffer/batch-update — 404 for non-existent cat", async () => {
+      await request(server)
+        .patch("/cats/buffer/batch-update")
+        .send({ updates: [{ id: 999999, name: "Ghost" }] })
+        .expect(404);
+    });
+  });
+
   // ─── Delete Operations ─────────────────────────────
 
   describe("Delete Operations", () => {
