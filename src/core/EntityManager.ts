@@ -89,6 +89,8 @@ import { PluginContext } from "./plugin/PluginContext";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { deserializeEntity } from "./deserializer/DeserializeEntity";
+import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
+import type { BufferPluginOptions } from "./plugin/buffer/BufferPreview";
 
 /**
  * Date를 MySQL/MariaDB 호환 'YYYY-MM-DD HH:MM:SS' 형식으로 변환합니다.
@@ -537,9 +539,10 @@ export class EntityManager implements BaseEntityManager {
    * Create a WriteBuffer instance for tracking entity changes and batch flush.
    * Requires the buffer plugin to be installed first via `em.extend(bufferPlugin())`.
    *
+   * @param opts — Per-buffer option overrides (e.g. `{ logging: true }`)
    * @throws OrmError with BUFFER_NOT_INSTALLED if the buffer plugin is not installed.
    */
-  buffer(): any {
+  buffer(opts?: BufferPluginOptions): WriteBuffer {
     throw new OrmError(
       OrmErrorCode.BUFFER_NOT_INSTALLED,
       "buffer() requires the buffer plugin to be installed",

@@ -223,7 +223,7 @@ export class CatsService {
   async bufferBatchUpdate(
     updates: { id: number; name?: string; age?: number; breed?: string }[],
   ): Promise<BufferFlushResult> {
-    const buf = (this.em as any).buffer();
+    const buf = this.em.buffer();
 
     for (const upd of updates) {
       const cat = await buf.findOne(Cat, { where: { id: upd.id } });
@@ -245,7 +245,7 @@ export class CatsService {
     updateDto: UpdateCatDto,
     deleteId: number,
   ): Promise<BufferFlushResult> {
-    const buf = (this.em as any).buffer();
+    const buf = this.em.buffer();
 
     // persist new cat
     const newCat = new Cat();
@@ -276,7 +276,7 @@ export class CatsService {
     ids: number[],
     updates: { name?: string; age?: number; breed?: string },
   ): Promise<BufferPreviewEntry[]> {
-    const buf = (this.em as any).buffer();
+    const buf = this.em.buffer();
 
     for (const id of ids) {
       const cat = await buf.findOne(Cat, { where: { id } });
@@ -293,7 +293,7 @@ export class CatsService {
    * Identity map — findOne twice returns the same reference.
    */
   async bufferIdentityMap(id: number): Promise<{ same: boolean }> {
-    const buf = (this.em as any).buffer();
+    const buf = this.em.buffer();
 
     const ref1 = await buf.findOne(Cat, { where: { id } });
     if (!ref1) throw new NotFoundException(`Cat #${id} not found`);
@@ -308,7 +308,7 @@ export class CatsService {
   async bufferEntityState(
     id: number,
   ): Promise<{ afterLoad: string; afterRemove: string }> {
-    const buf = (this.em as any).buffer();
+    const buf = this.em.buffer();
 
     const cat = await buf.findOne(Cat, { where: { id } });
     if (!cat) throw new NotFoundException(`Cat #${id} not found`);
@@ -335,7 +335,7 @@ export class CatsService {
     const savedOwner = await this.em.save(Owner, owner);
 
     // Persist cat via buffer with owner FK
-    const buf = (this.em as any).buffer();
+    const buf = this.em.buffer();
     const cat = new Cat();
     cat.name = catData.name;
     cat.age = catData.age;

@@ -59,7 +59,7 @@ export class TodosService {
    * Demonstrates: buf.findOne() auto-tracks, then flush() in a single transaction.
    */
   async batchComplete(dto: BatchCompleteDto): Promise<BufferFlushResult> {
-    const buf = (this.em as any).buffer();
+    const buf = this.em.buffer();
 
     // Load and auto-track each todo (mut.findOne = em.findOne + track)
     for (const id of dto.ids) {

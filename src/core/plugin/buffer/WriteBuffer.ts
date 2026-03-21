@@ -77,9 +77,20 @@ export class WriteBuffer {
       batchInsert: options.batchInsert ?? false,
       batchUpdate: options.batchUpdate ?? false,
       changeTracking: options.changeTracking ?? ChangeTrackingPolicy.DEFERRED_IMPLICIT,
+      logging: options.logging ?? false,
     };
     this.flushMode = this.options.flushMode;
     this.changeTracking = this.options.changeTracking;
+
+    if (this.options.logging) {
+      this.log("buffer created", {
+        flushMode: this.flushMode,
+        changeTracking: this.changeTracking,
+        cascade: this.options.cascade,
+        batchInsert: this.options.batchInsert,
+        batchUpdate: this.options.batchUpdate,
+      });
+    }
 
     // Initialize sub-modules
     this.idMap = new IdentityMapManager(ctx);
@@ -144,6 +155,8 @@ export class WriteBuffer {
     this.idMap.identityMap.set(key, instance);
     this.idMap.stateMap.set(instance, EntityState.MANAGED);
 
+    if (this.options.logging) this.log("track", { entity: entityClass.name, key });
+
     return this;
   }
 
@@ -164,8 +177,17 @@ export class WriteBuffer {
   ): Promise<T | null> {
     await this.autoFlushIfNeeded();
     const result = await this.ctx.em.findOne(entity, option);
-    if (result === null) return null;
+    if (result === null) {
+      if (this.options.logging) this.log("findOne → null", { entity: entity.name });
+      return null;
+    }
     const tracked = this.resolveIdentity(entity, result) as T;
+    if (this.options.logging) {
+      const { pkColumns } = this.idMap.getColumnInfo(entity);
+      const key = this.idMap.buildIdentityKey(entity, result, pkColumns);
+      const fromMap = this.idMap.identityMap.get(key) === tracked && tracked !== result;
+      this.log("findOne → tracked", { entity: entity.name, key, identityMapHit: fromMap });
+    }
     return tracked;
   }
 
@@ -389,6 +411,7 @@ export class WriteBuffer {
 
     this.persistQueue.push({ entity: entityClass, instance, columnNames, pkColumns });
     this.idMap.stateMap.set(instance, EntityState.NEW);
+    if (this.options.logging) this.log("persist (queued INSERT)", { entity: entityClass.name });
     return this;
   }
 
@@ -425,6 +448,7 @@ export class WriteBuffer {
 
     this.deleteQueue.push({ entity: entityClass, criteria });
     this.idMap.stateMap.set(instance, EntityState.REMOVED);
+    if (this.options.logging) this.log("remove (queued DELETE)", { entity: entityClass.name, criteria });
     return this;
   }
 
@@ -592,6 +616,7 @@ export class WriteBuffer {
     if (entry) {
       const key = this.idMap.buildIdentityKey(entry.entity, instance, entry.pkColumns);
       this.idMap.identityMap.delete(key);
+      if (this.options.logging) this.log("untrack", { entity: entry.entity.name, key });
     }
     this.trackedEntries.delete(instance);
     this.idMap.stateMap.set(instance, EntityState.DETACHED);
@@ -763,12 +788,21 @@ export class WriteBuffer {
   async flush(): Promise<BufferFlushResult> {
     // No-op if nothing to do
     if (!this.hasPendingWork()) {
+      if (this.options.logging) this.log("flush → no-op (no pending work)");
       return { updates: 0, inserts: 0, deletes: 0 };
     }
 
     const em = this.ctx.em;
     const result: BufferFlushResult = { updates: 0, inserts: 0, deletes: 0 };
     const entities = this.ctx.getEntities();
+
+    if (this.options.logging) {
+      const sz = this.size();
+      this.log("flush → begin", {
+        tracked: sz.tracked, persists: sz.persists, deletes: sz.deletes,
+        inserts: sz.inserts, bulkUpdates: sz.bulkUpdates, bulkDeletes: sz.bulkDeletes,
+      });
+    }
 
     // Compute topological index map once for the entire flush
     const indexMap = buildTopologicalIndexMap(entities);
@@ -803,6 +837,10 @@ export class WriteBuffer {
               entry.pkColumns,
             );
             if (diff) {
+              if (this.options.logging) {
+                const pk = this.idMap.buildPkWhere(entry.instance, entry.pkColumns);
+                this.log("flush: UPDATE (dirty)", { entity: entry.entity.name, pk, changed: Object.keys(diff) });
+              }
               await this.flushExec.emitFlushEvent("preUpdate", entry.entity, entry.instance, diff);
               const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
               const updated = await txEm.save(entry.entity, saveData);
@@ -829,6 +867,7 @@ export class WriteBuffer {
           await this.flushExec.flushPersistsBatched(txEm, sortedPersists, visited, result);
         } else {
           for (const entry of sortedPersists) {
+            if (this.options.logging) this.log("flush: INSERT", { entity: entry.entity.name });
             await this.flushExec.emitFlushEvent("preInsert", entry.entity, entry.instance);
             const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
             const saved = await txEm.save(entry.entity, saveData);
@@ -878,6 +917,7 @@ export class WriteBuffer {
         // 6. Deletes (reverse topological order — children first)
         const sortedDeletes = sortByIndex([...deletesCopy], indexMap, true);
         for (const del of sortedDeletes) {
+          if (this.options.logging) this.log("flush: DELETE", { entity: del.entity.name, criteria: del.criteria });
           await this.flushExec.emitFlushEvent("preDelete", del.entity, undefined, undefined, del.criteria);
           await txEm.delete(del.entity, del.criteria);
           result.deletes++;
@@ -952,8 +992,11 @@ export class WriteBuffer {
         await this.options.onFlush(result);
       }
 
+      if (this.options.logging) this.log("flush → success", result);
+
       return result;
     } catch (error) {
+      if (this.options.logging) this.log("flush → FAILED (queues restored)", { error: (error as Error).message });
       // On failure, restore queues so the user can retry
       this.insertQueue.length = 0;
       this.insertQueue.push(...insertsCopy);
@@ -1033,8 +1076,16 @@ export class WriteBuffer {
   private async autoFlushIfNeeded(): Promise<void> {
     if (this.flushMode === FlushMode.AUTO || this.flushMode === FlushMode.ALWAYS) {
       if (this.flushMode === FlushMode.ALWAYS || this.hasPendingWork()) {
+        if (this.options.logging) this.log("auto-flush triggered", { mode: this.flushMode });
         await this.flush();
       }
     }
+  }
+
+  /** Structured console log for buffer lifecycle events. */
+  private log(action: string, detail?: Record<string, any>): void {
+    const ts = new Date().toISOString();
+    const extra = detail ? " " + JSON.stringify(detail) : "";
+    console.log(`${ts} [WriteBuffer] ${action}${extra}`);
   }
 }

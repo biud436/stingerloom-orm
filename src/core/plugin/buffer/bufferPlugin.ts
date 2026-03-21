@@ -20,13 +20,14 @@ import { BufferPluginOptions } from "./BufferPreview";
  */
 export function bufferPlugin(
   opts?: BufferPluginOptions,
-): StingerloomPlugin<{ buffer(): WriteBuffer }> {
+): StingerloomPlugin<{ buffer(overrides?: BufferPluginOptions): WriteBuffer }> {
   return {
     name: "buffer",
     install(ctx) {
       return {
-        buffer(): WriteBuffer {
-          return new WriteBuffer(ctx, opts);
+        buffer(overrides?: BufferPluginOptions): WriteBuffer {
+          const merged = overrides ? { ...opts, ...overrides } : opts;
+          return new WriteBuffer(ctx, merged);
         },
       };
     },

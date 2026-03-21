@@ -167,4 +167,10 @@ export interface BufferPluginOptions {
    * @default ChangeTrackingPolicy.DEFERRED_IMPLICIT
    */
   changeTracking?: ChangeTrackingPolicy;
+  /**
+   * Enable verbose logging for buffer operations.
+   * Logs track/persist/remove/flush lifecycle events to console.
+   * @default false
+   */
+  logging?: boolean;
 }

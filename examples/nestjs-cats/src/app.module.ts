@@ -20,7 +20,11 @@ import { OwnersModule } from "./owners/owners.module";
       entities: [__dirname + "/**/*.entity{.ts,.js}"],
       synchronize: true,
       logging: true,
-      plugins: [bufferPlugin()],
+      plugins: [
+        bufferPlugin({
+          logging: true,
+        }),
+      ],
     }),
     CatsModule,
     OwnersModule,
