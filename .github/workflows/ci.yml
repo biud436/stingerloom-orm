@@ -107,7 +107,7 @@ jobs:
           DB_USER: root
           DB_PASSWORD: password
           DB_NAME: fastify
-        run: npx jest --testPathPattern="integration/(?!sqlite|multi-tenancy-postgres)" --no-coverage
+        run: npx jest --testPathPattern="integration/(?!sqlite|multi-tenancy-postgres|postgres-driver)" --no-coverage
 
   integration-postgres:
     name: Integration Tests (PostgreSQL)
