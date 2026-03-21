@@ -252,7 +252,7 @@ describeIf.each(getTestDrivers())(
         // 현재 동작: undefined 반환
         // 사용자 코드에서 안전하게 처리하려면 null/undefined 체크 필요
         const items = result ?? [];
-        expect(Array.isArray(items) || items === undefined || items === null || items.length === 0).toBeTruthy();
+        expect(Array.isArray(items) || items === undefined || items === null || (items as any[]).length === 0).toBeTruthy();
       });
 
       it("where 조건 매칭이 없어도 에러 없이 반환해야 한다", async () => {
