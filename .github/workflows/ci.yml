@@ -72,7 +72,7 @@ jobs:
           INTEGRATION_TEST: "true"
           INTEGRATION_TEST_MYSQL: "false"
           INTEGRATION_TEST_POSTGRES: "false"
-        run: npx jest --testPathPattern="integration/sqlite"
+        run: npx jest --testPathPattern="integration/sqlite" --no-coverage
 
   integration-mysql:
     name: Integration Tests (MySQL)
@@ -107,7 +107,7 @@ jobs:
           DB_USER: root
           DB_PASSWORD: password
           DB_NAME: fastify
-        run: npx jest --testPathPattern="integration/(?!sqlite|multi-tenancy-postgres)"
+        run: npx jest --testPathPattern="integration/(?!sqlite|multi-tenancy-postgres)" --no-coverage
 
   integration-postgres:
     name: Integration Tests (PostgreSQL)
@@ -143,4 +143,4 @@ jobs:
           PG_USER: postgres
           PG_PASSWORD: postgres
           PG_DATABASE: multi_tenancy_db
-        run: npx jest --testPathPattern="integration/(?!sqlite)"
+        run: npx jest --testPathPattern="integration/(?!sqlite)" --no-coverage
