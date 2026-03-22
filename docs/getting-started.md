@@ -395,4 +395,5 @@ You've learned the basic setup and CRUD. Now try defining richer entities.
 - [Entities](./entities.md) — Column types, indexes, Soft Delete, lifecycle hooks
 - [Relations](./relations.md) — Define relationships between tables with `@ManyToOne`, `@OneToMany`
 - [EntityManager](./entity-manager.md) — Find options, aggregation, pagination
-- [Configuration Guide](./configuration.md) — Pooling, timeouts, Read Replica, and other operational settings
+- [NestJS Integration](./nestjs.md) — forRoot/forFeature, @InjectRepository, multi-DB
+- [Configuration](./configuration.md) — Pooling, timeouts, Read Replica, and other operational settings

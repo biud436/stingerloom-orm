@@ -494,7 +494,7 @@ em.removeAllListeners();
 
 Available events: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`
 
-If you need subscribers that react only to specific entities, see [EntitySubscriber](./advanced.md).
+If you need subscribers that react only to specific entities, see [Events & Subscribers](./events.md).
 
 ## Query Builder — createQueryBuilder()
 
@@ -588,7 +588,9 @@ List of options that can be passed to `find()`, `findOne()`, `explain()`, etc.
 
 ## Next Steps
 
-- [Query Builder](./query-builder.md) — Type-safe queries, UNION, CTE, window functions, and subqueries
+- [Query Builder](./query-builder.md) — Type-safe queries with SelectQueryBuilder
+- [Raw SQL & CTE](./raw-sql.md) — UNION, CTE, window functions
+- [Pagination & Streaming](./pagination.md) — Offset, cursor, and streaming strategies
+- [Events & Subscribers](./events.md) — Entity lifecycle events and audit patterns
 - [Transactions](./transactions.md) — Decorator and callback-based transactions, deadlock retry
-- [Advanced Features](./advanced.md) — Streaming, N+1 detection, EntitySubscriber, validation
-- [Configuration Guide](./configuration.md) — Pooling, timeouts, Read Replica, CJS/ESM
+- [Configuration](./configuration.md) — Pooling, timeouts, Read Replica, CJS/ESM

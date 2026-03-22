@@ -294,8 +294,10 @@ Read Replica, Connection Pooling, Connection Retry, Query Timeout, and Shutdown 
 
 ## Next Steps
 
-- [Query Builder](./query-builder.md) — SelectQueryBuilder, RawQueryBuilder, UNION, CTE, window functions
+- [Query Builder](./query-builder.md) — Type-safe SelectQueryBuilder
+- [Raw SQL & CTE](./raw-sql.md) — UNION, CTE, window functions
+- [Events & Subscribers](./events.md) — Detailed event system guide
+- [Logging & Diagnostics](./logging.md) — N+1 detection, slow queries, EXPLAIN
 - [Plugins](./plugins.md) — Plugin system and custom plugin authoring
-- [Configuration Guide](./configuration.md) — All options at a glance
 - [Multi-Tenancy](./multi-tenancy.md) — Per-tenant data isolation
 - [API Reference](./api-reference.md) — Quick method signature lookup

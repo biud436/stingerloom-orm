@@ -400,6 +400,7 @@ The rename detection works by comparing the data types of added and dropped colu
 
 ## Next Steps
 
-- [Configuration Guide](./configuration.md) — Pooling, timeouts, Read Replica settings
+- [Migration CLI](./cli.md) — CLI commands, programmatic API, schema diff auto-generation
+- [Configuration](./configuration.md) — Pooling, timeouts, Read Replica settings
 - [Multi-Tenancy](./multi-tenancy.md) — Automatic schema provisioning per tenant
-- [EntityManager](./entity-manager.md) — Full CRUD API reference
+- [Production Guide](./production-guide.md) — Zero-downtime migration strategies

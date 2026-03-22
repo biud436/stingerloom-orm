@@ -14,6 +14,15 @@ export default defineConfig({
     logo: "/logo.svg",
     nav: [
       { text: "Guide", link: "/getting-started" },
+      {
+        text: "Querying",
+        items: [
+          { text: "Query Builder", link: "/query-builder" },
+          { text: "Raw SQL & CTE", link: "/raw-sql" },
+          { text: "Pagination & Streaming", link: "/pagination" },
+        ],
+      },
+      { text: "NestJS", link: "/nestjs" },
       { text: "API Reference", link: "/api-reference" },
       {
         text: "GitHub",
@@ -23,37 +32,66 @@ export default defineConfig({
 
     sidebar: [
       {
-        text: "Guide",
+        text: "Introduction",
         items: [
           { text: "Getting Started", link: "/getting-started" },
-          { text: "Entities", link: "/entities" },
-          { text: "Relations", link: "/relations" },
-          { text: "EntityManager", link: "/entity-manager" },
-          { text: "Query Builder", link: "/query-builder" },
-          { text: "Transactions", link: "/transactions" },
-          { text: "Migrations", link: "/migrations" },
           { text: "Configuration", link: "/configuration" },
+        ],
+      },
+      {
+        text: "Essentials",
+        items: [
+          { text: "Entities & Columns", link: "/entities" },
+          { text: "Relations", link: "/relations" },
+          { text: "Entity Manager", link: "/entity-manager" },
+          { text: "Transactions", link: "/transactions" },
+        ],
+      },
+      {
+        text: "Querying",
+        items: [
+          { text: "Query Builder", link: "/query-builder" },
+          { text: "Raw SQL & CTE", link: "/raw-sql" },
+          { text: "Pagination & Streaming", link: "/pagination" },
+        ],
+      },
+      {
+        text: "Schema & Migrations",
+        items: [
+          { text: "Migrations", link: "/migrations" },
+          { text: "Migration CLI", link: "/cli" },
           { text: "Prisma Import", link: "/prisma-import" },
         ],
       },
       {
         text: "Advanced",
         items: [
-          { text: "Advanced Features", link: "/advanced" },
-          { text: "Plugins", link: "/plugins" },
-          { text: "WriteBuffer (Unit of Work)", link: "/write-buffer" },
           { text: "Multi-Tenancy", link: "/multi-tenancy" },
+          { text: "Events & Subscribers", link: "/events" },
+          { text: "Logging & Diagnostics", link: "/logging" },
+          { text: "Plugins", link: "/plugins" },
+          { text: "Write Buffer (UoW)", link: "/write-buffer" },
+        ],
+      },
+      {
+        text: "NestJS Integration",
+        items: [
+          { text: "Module Setup", link: "/nestjs" },
+        ],
+      },
+      {
+        text: "Deployment",
+        items: [
           { text: "Production Guide", link: "/production-guide" },
+          { text: "Pre-Release Checklist", link: "/pre-release-checklist" },
         ],
       },
       {
         text: "Reference",
         items: [
-          { text: "Architecture", link: "/architecture" },
           { text: "API Reference", link: "/api-reference" },
-          { text: "Contributor Onboarding", link: "/onboarding" },
-          { text: "Manual Testing Guide", link: "/manual-testing-guide" },
-          { text: "Pre-Release Checklist", link: "/pre-release-checklist" },
+          { text: "Architecture", link: "/architecture" },
+          { text: "Contributor Guide", link: "/onboarding" },
         ],
       },
     ],
