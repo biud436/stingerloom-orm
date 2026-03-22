@@ -6,9 +6,21 @@ If you are migrating from Prisma to Stingerloom ORM, the **Prisma Import** tool 
 
 The tool requires `@mrleebo/prisma-ast` as a peer dependency:
 
-```bash
+::: code-group
+
+```bash [npm]
+npm install -D @mrleebo/prisma-ast
+```
+
+```bash [pnpm]
 pnpm add -D @mrleebo/prisma-ast
 ```
+
+```bash [yarn]
+yarn add -D @mrleebo/prisma-ast
+```
+
+:::
 
 ## CLI Usage
 

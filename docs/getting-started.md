@@ -12,23 +12,57 @@ This guide walks you through installing Stingerloom ORM, defining your first ent
 
 Install the core package and `reflect-metadata`, then add the driver for your database.
 
-```bash
+::: code-group
+
+```bash [npm]
+npm install @stingerloom/orm reflect-metadata
+```
+
+```bash [pnpm]
 pnpm add @stingerloom/orm reflect-metadata
 ```
 
-| Database | Driver package | Command |
-|----------|---------------|---------|
-| PostgreSQL | `pg` | `pnpm add pg` |
-| MySQL / MariaDB | `mysql2` | `pnpm add mysql2` |
-| SQLite | `better-sqlite3` | `pnpm add better-sqlite3` |
+```bash [yarn]
+yarn add @stingerloom/orm reflect-metadata
+```
+
+:::
+
+Then install the driver for your database:
+
+::: code-group
+
+```bash [PostgreSQL]
+npm install pg            # or pnpm add pg / yarn add pg
+```
+
+```bash [MySQL / MariaDB]
+npm install mysql2        # or pnpm add mysql2 / yarn add mysql2
+```
+
+```bash [SQLite]
+npm install better-sqlite3  # or pnpm add better-sqlite3 / yarn add better-sqlite3
+```
+
+:::
 
 For example, a PostgreSQL project needs:
 
-```bash
+::: code-group
+
+```bash [npm]
+npm install @stingerloom/orm reflect-metadata pg
+```
+
+```bash [pnpm]
 pnpm add @stingerloom/orm reflect-metadata pg
 ```
 
-> **Hint** If you use npm or yarn, replace `pnpm add` with `npm install` or `yarn add`.
+```bash [yarn]
+yarn add @stingerloom/orm reflect-metadata pg
+```
+
+:::
 
 ### CJS and ESM
 
@@ -227,9 +261,21 @@ Stingerloom ORM provides a first-party NestJS integration module via the `@sting
 
 ### Installation
 
-```bash
+::: code-group
+
+```bash [npm]
+npm install @stingerloom/orm reflect-metadata
+```
+
+```bash [pnpm]
 pnpm add @stingerloom/orm reflect-metadata
 ```
+
+```bash [yarn]
+yarn add @stingerloom/orm reflect-metadata
+```
+
+:::
 
 `@nestjs/common` and `@nestjs/core` are listed as optional peer dependencies — they are already present in any NestJS project.
 
