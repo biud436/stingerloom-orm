@@ -8,6 +8,28 @@ import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
+ * Validator function that can be attached to a SelectQueryBuilder.
+ *
+ * Called on each row returned by getMany()/getOne(). If it throws,
+ * the entire query result is rejected with the validation error.
+ *
+ * Supports three patterns:
+ * 1. **Plain function**: `(row: TResult) => TResult` — validate and return
+ * 2. **Zod-style**: any object with a `.parse(data)` method
+ * 3. **Array-level**: `(rows: TResult[]) => TResult[]` via `validateArray()`
+ */
+export type RowValidator<TResult> =
+  | ((row: TResult) => TResult)
+  | { parse(data: unknown): TResult };
+
+/**
+ * Array-level validator: validates the entire result array at once.
+ */
+export type ArrayValidator<TResult> =
+  | ((rows: TResult[]) => TResult[])
+  | { parse(data: unknown): TResult[] };
+
+/**
  * Type-safe column reference: entity property keys (string keys only).
  */
 type ColumnOf<T> = keyof T & string;
@@ -69,6 +91,8 @@ export class SelectQueryBuilder<T, TResult = T> {
   private lockClause: string | undefined;
   private withDeletedFlag = false;
   private extraSegments: Sql[] = [];
+  private rowValidator: RowValidator<any> | undefined;
+  private arrayValidatorFn: ArrayValidator<any> | undefined;
 
   constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
     this.entity = entity;
@@ -408,6 +432,66 @@ export class SelectQueryBuilder<T, TResult = T> {
     return this;
   }
 
+  // ── VALIDATION ──────────────────────────────────────────
+
+  /**
+   * Attach a **row-level** validator. Each row returned by `getMany()` /
+   * `getOne()` is passed through this validator before being returned.
+   *
+   * Accepts:
+   * - A plain function: `(row) => row` (throw to reject)
+   * - A zod schema (or anything with a `.parse()` method)
+   *
+   * By default, no validator is attached — zero overhead.
+   *
+   * @example
+   * ```ts
+   * // With zod
+   * import { z } from "zod";
+   * const UserRow = z.object({ id: z.number(), name: z.string() });
+   *
+   * const users = await em
+   *   .createQueryBuilder(User, "u")
+   *   .select(["id", "name"])
+   *   .validate(UserRow)
+   *   .getMany();  // throws ZodError if any row doesn't match
+   *
+   * // With a plain function
+   * .validate((row) => {
+   *   if (!row.name) throw new Error("name is required");
+   *   return row;
+   * })
+   * ```
+   */
+  validate(validator: RowValidator<TResult>): this {
+    this.rowValidator = validator;
+    return this;
+  }
+
+  /**
+   * Attach an **array-level** validator. The entire result array is passed
+   * through this validator before being returned from `getMany()`.
+   *
+   * Accepts:
+   * - A plain function: `(rows) => rows` (throw to reject)
+   * - A zod array schema (or anything with a `.parse()` method)
+   *
+   * @example
+   * ```ts
+   * import { z } from "zod";
+   * const UsersArray = z.array(z.object({ id: z.number(), name: z.string() }));
+   *
+   * const users = await qb
+   *   .select(["id", "name"])
+   *   .validateArray(UsersArray)
+   *   .getMany();
+   * ```
+   */
+  validateArray(validator: ArrayValidator<TResult>): this {
+    this.arrayValidatorFn = validator;
+    return this;
+  }
+
   // ── RAW APPEND ──────────────────────────────────────────
 
   /**
@@ -529,11 +613,14 @@ export class SelectQueryBuilder<T, TResult = T> {
    *
    * The return type reflects `select()`: if specific columns were selected,
    * the type narrows to `Pick<T, K>[]` instead of `T[]`.
+   *
+   * If a validator is attached via `validate()` or `validateArray()`,
+   * the results are validated before being returned.
    */
   async getMany(): Promise<TResult[]> {
     const built = this.toSql();
     const rows = await this.em.query<any>(built);
-    return rows as TResult[];
+    return this.applyValidation(rows);
   }
 
   /**
@@ -631,6 +718,37 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   // ── Private ─────────────────────────────────────────────
+
+  /**
+   * Apply row-level and/or array-level validation to query results.
+   * When no validators are attached, returns the rows as-is (zero overhead).
+   */
+  private applyValidation(rows: any[]): TResult[] {
+    let result = rows as TResult[];
+
+    // Row-level validation
+    if (this.rowValidator) {
+      const v = this.rowValidator;
+      if (typeof v === "function") {
+        result = result.map(v);
+      } else {
+        // Zod-style: object with .parse() method
+        result = result.map((row) => v.parse(row));
+      }
+    }
+
+    // Array-level validation
+    if (this.arrayValidatorFn) {
+      const v = this.arrayValidatorFn;
+      if (typeof v === "function") {
+        result = v(result);
+      } else {
+        result = v.parse(result);
+      }
+    }
+
+    return result;
+  }
 
   private resolveTableName(): string {
     const resolver = (this.em as any).resolver;
