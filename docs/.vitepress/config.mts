@@ -49,7 +49,7 @@ export default defineConfig({
       },
       {
         text: "Querying",
-        collapsed: false,
+        collapsed: true,
         items: [
           { text: "Query Builder", link: "/query-builder" },
           { text: "Raw SQL & CTE", link: "/raw-sql" },
@@ -58,7 +58,7 @@ export default defineConfig({
       },
       {
         text: "Schema & Migrations",
-        collapsed: false,
+        collapsed: true,
         items: [
           { text: "Migrations", link: "/migrations" },
           { text: "Migration CLI", link: "/cli" },
@@ -72,13 +72,19 @@ export default defineConfig({
           { text: "Multi-Tenancy", link: "/multi-tenancy" },
           { text: "Events & Subscribers", link: "/events" },
           { text: "Logging & Diagnostics", link: "/logging" },
-          { text: "Plugins", link: "/plugins" },
+        ],
+      },
+      {
+        text: "Plugins",
+        collapsed: true,
+        items: [
+          { text: "Plugin System", link: "/plugins" },
           { text: "Write Buffer (UoW)", link: "/write-buffer" },
         ],
       },
       {
         text: "NestJS Integration",
-        collapsed: false,
+        collapsed: true,
         items: [
           { text: "Module Setup", link: "/nestjs" },
         ],
