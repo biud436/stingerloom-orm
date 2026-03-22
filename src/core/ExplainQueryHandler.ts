@@ -28,6 +28,7 @@ export class ExplainQueryHandler {
     if (!driver || !driver.supportsExplain()) {
       throw new InvalidQueryError(
         "EXPLAIN is not supported by the current database driver.",
+        "Use MySQL or PostgreSQL driver which support EXPLAIN queries.",
       );
     }
 

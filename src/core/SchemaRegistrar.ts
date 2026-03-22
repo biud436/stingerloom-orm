@@ -304,7 +304,10 @@ export class SchemaRegistrar {
         }
 
         if (!joinColumn) {
-          throw new InvalidQueryError("JoinColumn does not exist.");
+          throw new InvalidQueryError(
+            "JoinColumn does not exist.",
+            "Add { joinColumn: 'column_name' } option to your @ManyToOne() decorator.",
+          );
         }
 
         // references 옵션이 있으면 해당 컬럼, 없으면 PK를 참조

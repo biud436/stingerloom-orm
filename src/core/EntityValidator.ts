@@ -27,6 +27,8 @@ export class EntityValidator {
               meta.propertyKey,
               "notNull",
               meta.message,
+              value,
+              "non-null value",
             );
           }
           break;
@@ -37,6 +39,8 @@ export class EntityValidator {
               meta.propertyKey,
               "minLength",
               meta.message,
+              value.length,
+              meta.value,
             );
           }
           break;
@@ -47,19 +51,33 @@ export class EntityValidator {
               meta.propertyKey,
               "maxLength",
               meta.message,
+              value.length,
+              meta.value,
             );
           }
           break;
 
         case "min":
           if (typeof value === "number" && value < meta.value!) {
-            throw new ValidationError(meta.propertyKey, "min", meta.message);
+            throw new ValidationError(
+              meta.propertyKey,
+              "min",
+              meta.message,
+              value,
+              meta.value,
+            );
           }
           break;
 
         case "max":
           if (typeof value === "number" && value > meta.value!) {
-            throw new ValidationError(meta.propertyKey, "max", meta.message);
+            throw new ValidationError(
+              meta.propertyKey,
+              "max",
+              meta.message,
+              value,
+              meta.value,
+            );
           }
           break;
       }

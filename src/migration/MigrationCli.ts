@@ -7,6 +7,8 @@ import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../dialects/sqlite/SqliteDriver";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { Logger } from "../utils";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { Migration } from "./Migration";
 import { MigrationResult, MigrationRunner } from "./MigrationRunner";
 import { SchemaDiff } from "../core/generators/SchemaDiff";
@@ -68,7 +70,10 @@ export class MigrationCli {
         this.driver = new SqliteDriver(connector);
         break;
       default:
-        throw new Error("Unsupported database type.");
+        throw new OrmError(
+          OrmErrorCode.UNSUPPORTED_DATABASE,
+          `Unsupported database type: "${this.options.type}". Supported types: mysql, mariadb, postgres, sqlite.`,
+        );
     }
 
     this.runner = new MigrationRunner(this.migrations, this.driver, {
@@ -88,7 +93,7 @@ export class MigrationCli {
    */
   async execute(command: MigrationCommand): Promise<MigrationResult[] | { executed: string[]; pending: string[] } | { filePath: string; sql: { up: string[]; down: string[] } }> {
     if (!this.runner) {
-      throw new Error("Not connected. Call connect() before execute().");
+      throw new OrmError(OrmErrorCode.NOT_CONNECTED, "Not connected. Call connect() before execute().");
     }
 
     switch (command) {
@@ -101,7 +106,10 @@ export class MigrationCli {
       case "migrate:generate":
         return this.migrateGenerate();
       default:
-        throw new Error(`Unknown command: ${command}`);
+        throw new OrmError(
+          OrmErrorCode.INVALID_QUERY,
+          `Unknown command: ${command}. Valid commands: migrate:run, migrate:rollback, migrate:status, migrate:generate.`,
+        );
     }
   }
 
@@ -110,7 +118,7 @@ export class MigrationCli {
    */
   async migrateRun(): Promise<MigrationResult[]> {
     if (!this.runner) {
-      throw new Error("Not connected. Call connect() before migrateRun().");
+      throw new OrmError(OrmErrorCode.NOT_CONNECTED, "Not connected. Call connect() before migrateRun().");
     }
 
     this.logger.info("Running pending migrations...");
@@ -135,7 +143,7 @@ export class MigrationCli {
    */
   async migrateRollback(): Promise<MigrationResult[]> {
     if (!this.runner) {
-      throw new Error("Not connected. Call connect() before migrateRollback().");
+      throw new OrmError(OrmErrorCode.NOT_CONNECTED, "Not connected. Call connect() before migrateRollback().");
     }
 
     this.logger.info("Rolling back last migration...");
@@ -160,7 +168,7 @@ export class MigrationCli {
    */
   async migrateStatus(): Promise<{ executed: string[]; pending: string[] }> {
     if (!this.runner) {
-      throw new Error("Not connected. Call connect() before migrateStatus().");
+      throw new OrmError(OrmErrorCode.NOT_CONNECTED, "Not connected. Call connect() before migrateStatus().");
     }
 
     const status = await this.runner.status();
@@ -184,7 +192,7 @@ export class MigrationCli {
    */
   async migrateGenerate(): Promise<{ filePath: string; sql: { up: string[]; down: string[] } }> {
     if (!this.driver) {
-      throw new Error("Not connected. Call connect() before migrateGenerate().");
+      throw new OrmError(OrmErrorCode.NOT_CONNECTED, "Not connected. Call connect() before migrateGenerate().");
     }
 
     const entities = (this.options.entities ?? []) as Array<new (...args: any[]) => any>;

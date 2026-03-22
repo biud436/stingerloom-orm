@@ -1030,6 +1030,7 @@ export class EntityManager implements BaseEntityManager {
     if (!orderByColumn) {
       throw new InvalidQueryError(
         "Cursor pagination requires an orderBy column or a primary key.",
+        "Add @PrimaryGeneratedColumn() to your entity or pass orderBy in FindOption.",
       );
     }
 
@@ -1045,7 +1046,10 @@ export class EntityManager implements BaseEntityManager {
     if (option.cursor) {
       cursorValue = decodeCursor(option.cursor);
       if (cursorValue === null) {
-        throw new InvalidQueryError("Invalid cursor value.");
+        throw new InvalidQueryError(
+          "Invalid cursor value.",
+          "Ensure the cursor string was returned from a previous findWithCursor() call.",
+        );
       }
     }
 
@@ -2000,6 +2004,7 @@ export class EntityManager implements BaseEntityManager {
     if (!deletedAtColumn) {
       throw new InvalidQueryError(
         `Entity "${entity.name}" does not have a @DeletedAt column. Use delete() instead.`,
+        `Add @DeletedAt() decorator to a Date column in "${entity.name}" to enable soft delete.`,
       );
     }
 
@@ -2056,6 +2061,7 @@ export class EntityManager implements BaseEntityManager {
     if (!deletedAtColumn) {
       throw new InvalidQueryError(
         `Entity "${entity.name}" does not have a @DeletedAt column. Cannot restore.`,
+        `Add @DeletedAt() decorator to a Date column in "${entity.name}" to enable soft delete/restore.`,
       );
     }
 
@@ -2111,7 +2117,10 @@ export class EntityManager implements BaseEntityManager {
     }
 
     if (!this.driver) {
-      throw new Error("Driver is not initialized.");
+      throw new OrmError(
+        OrmErrorCode.NOT_CONNECTED,
+        "Driver is not initialized. Call connect() first.",
+      );
     }
 
     const pkColumns = metadata.columns
@@ -2218,7 +2227,10 @@ export class EntityManager implements BaseEntityManager {
       return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
     }
 
-    throw new Error(`Unsupported database type for upsert: ${this.dbType}`);
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_DATABASE,
+      `Unsupported database type for upsert: ${this.dbType}`,
+    );
   }
 
   // ── 집계 위임 ─────────────────────────────────────────────
