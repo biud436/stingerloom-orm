@@ -269,6 +269,145 @@ If your entity has a `@DeletedAt` column, the query builder automatically exclud
 qb.withDeleted();
 ```
 
+### Result Validation — validate()
+
+Compile-time type narrowing catches many mistakes, but it can't verify what the database actually returns. A column might contain `null` when you expected a string, or a number might arrive as a string due to driver behavior. For runtime safety, you can attach a **validator** that checks every row before it reaches your application code.
+
+The simplest form is a plain function:
+
+```typescript
+const users = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name"])
+  .validate((row) => {
+    if (!row.name) throw new Error("name must not be empty");
+    return row;
+  })
+  .getMany();
+```
+
+Each row passes through the validator. If the function throws, the entire `getMany()` call rejects with that error. If it returns successfully, the row is included in the results. By default, no validator is attached — `getMany()` returns raw rows with zero overhead.
+
+The validator function can also **transform** data. Whatever it returns becomes the actual result:
+
+```typescript
+.validate((row) => ({
+  ...row,
+  name: row.name.trim().toLowerCase(),
+}))
+```
+
+#### Using Zod for Schema Validation
+
+Writing validation functions by hand gets tedious. If you use [zod](https://zod.dev), you can pass a schema directly — the query builder recognizes any object with a `.parse()` method.
+
+```typescript
+import { z } from "zod";
+
+const UserRow = z.object({
+  id: z.number(),
+  name: z.string().min(1),
+});
+
+const users = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name"])
+  .validate(UserRow)
+  .getMany();
+```
+
+If any row fails the zod schema, `getMany()` throws a `ZodError` with details about which field failed and why. This catches data issues — NULL where you expected a string, a string where you expected a number — at the earliest possible point.
+
+Zod's `.transform()` works too. This lets you validate and reshape data in one step:
+
+```typescript
+const NormalizedUser = z.object({
+  id: z.number(),
+  name: z.string().transform((s) => s.toUpperCase()),
+  email: z.string().email(),
+});
+
+const users = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name", "email"])
+  .validate(NormalizedUser)
+  .getMany();
+// [{ id: 1, name: "ALICE", email: "alice@example.com" }, ...]
+```
+
+And `.strict()` rejects rows with unexpected extra fields — useful for catching schema drift:
+
+```typescript
+const StrictUser = z.object({ id: z.number(), name: z.string() }).strict();
+
+// Throws if the DB returns columns beyond id and name
+.validate(StrictUser)
+```
+
+Any library that provides a `.parse(data)` method works — not just zod. io-ts, superstruct, and similar libraries are all compatible.
+
+#### Array-Level Validation — validateArray()
+
+Sometimes you need to validate the result set as a whole, not individual rows. For example, enforcing a maximum number of results or checking that the array is non-empty.
+
+```typescript
+const users = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name"])
+  .validateArray((rows) => {
+    if (rows.length === 0) throw new Error("expected at least one user");
+    if (rows.length > 1000) throw new Error("result set too large");
+    return rows;
+  })
+  .getMany();
+```
+
+Zod array schemas work here too:
+
+```typescript
+const UsersArray = z
+  .array(z.object({ id: z.number(), name: z.string() }))
+  .min(1)
+  .max(100);
+
+const users = await qb
+  .select(["id", "name"])
+  .validateArray(UsersArray)
+  .getMany();
+```
+
+#### Combining Row and Array Validation
+
+You can use both `validate()` and `validateArray()` on the same query. Row-level validation runs first, then array-level:
+
+```typescript
+const users = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name"])
+  .validate(z.object({             // 1. Each row: validate + transform
+    id: z.number(),
+    name: z.string().transform((s) => s.trim()),
+  }))
+  .validateArray((rows) => {       // 2. Whole array: check constraints
+    if (rows.length > 100) throw new Error("too many results");
+    return rows;
+  })
+  .getMany();
+```
+
+#### When to Use Validation
+
+Validation adds a per-row function call, so it's not free. Here's when it pays for itself:
+
+| Scenario | Validate? | Why |
+|----------|-----------|-----|
+| Internal service, trusted schema | No | Speed is more important |
+| API endpoint returning user data | Yes | Catch nulls/type mismatches before they reach the client |
+| ETL pipeline with loose source data | Yes | Prevent bad data from propagating |
+| Debugging a deserialization bug | Yes (temporarily) | Pinpoint exactly which row/field is wrong |
+
+The default — no validator, zero overhead — is the right choice for most internal queries. Add validation at the boundaries where data crosses trust zones.
+
 ### Executing the Query
 
 You've built the query — now you need to run it. The query builder offers several execution methods depending on what you need back.

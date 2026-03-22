@@ -242,10 +242,12 @@ class SelectQueryBuilder<T> {
   forShare(): this;
   withDeleted(): this;
   appendSql(fragment: Sql): this;
+  validate(validator: RowValidator<TResult>): this;
+  validateArray(validator: ArrayValidator<TResult>): this;
   toSql(): Sql;
   getSql(): { text: string; values: any[] };
-  getMany(): Promise<T[]>;
-  getOne(): Promise<T | null>;
+  getMany(): Promise<TResult[]>;
+  getOne(): Promise<TResult | null>;
   getCount(): Promise<number>;
   getManyAndCount(): Promise<[T[], number]>;
   exists(): Promise<boolean>;
@@ -284,6 +286,22 @@ interface WindowColumn {
   over: { partitionBy?: string; orderBy?: string };
   alias: string;
 }
+```
+
+### RowValidator / ArrayValidator
+
+[Usage ->](./query-builder.md#result-validation--validate)
+
+```typescript
+// Row-level: validates each row individually
+type RowValidator<TResult> =
+  | ((row: TResult) => TResult)         // Plain function
+  | { parse(data: unknown): TResult };  // Zod-style (.parse() method)
+
+// Array-level: validates the entire result array
+type ArrayValidator<TResult> =
+  | ((rows: TResult[]) => TResult[])
+  | { parse(data: unknown): TResult[] };
 ```
 
 ### CursorPaginationOption\<T\> / CursorPaginationResult\<T\>
