@@ -3,6 +3,7 @@ import { ClazzType } from "../utils";
 import { FindOption, WhereClause } from "../dialects/FindOption";
 import { EntityManager } from "./EntityManager";
 import { DeleteResult } from "../types/DeleteResult";
+import { SelectQueryBuilder } from "./SelectQueryBuilder";
 import {
   CursorPaginationOption,
   CursorPaginationResult,
@@ -94,6 +95,14 @@ export class BaseRepository<T> {
    */
   async findAndCount(findOption?: FindOption<T>): Promise<[T[], number]> {
     return await this.em.findAndCount<T>(this.entity, findOption);
+  }
+
+  /**
+   * Returns an AsyncGenerator that yields entities in batches.
+   * Suitable for processing large datasets without loading all rows into memory.
+   */
+  async *stream(options?: FindOption<T>, batchSize?: number): AsyncGenerator<T, void, undefined> {
+    yield* this.em.stream<T>(this.entity, options, batchSize);
   }
 
   /**
@@ -282,5 +291,27 @@ export class BaseRepository<T> {
    */
   async persist(item: T): Promise<InstanceType<ClazzType<T>>> {
     return await this.em.save<T>(this.entity, item);
+  }
+
+  /**
+   * Creates a type-safe SelectQueryBuilder for this entity.
+   * Column references enjoy `keyof T` auto-completion.
+   *
+   * @param alias Table alias used in the generated SQL.
+   * @returns A new SelectQueryBuilder instance.
+   *
+   * @example
+   * ```ts
+   * const users = await userRepo
+   *   .createQueryBuilder("u")
+   *   .select(["id", "name"])
+   *   .where("status", "active")
+   *   .orderBy({ createdAt: "DESC" })
+   *   .limit(10)
+   *   .getMany();
+   * ```
+   */
+  createQueryBuilder(alias: string): SelectQueryBuilder<T> {
+    return new SelectQueryBuilder<T>(this.entity, alias, this.em);
   }
 }

@@ -91,6 +91,37 @@ import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { deserializeEntity } from "./deserializer/DeserializeEntity";
 import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
 import type { BufferPluginOptions } from "./plugin/buffer/BufferPreview";
+import { SelectQueryBuilder } from "./SelectQueryBuilder";
+
+/**
+ * Transaction options for configurable retry behavior.
+ */
+export interface TransactionOptions {
+  /** If true, automatically retry the transaction on deadlock. */
+  retryOnDeadlock?: boolean;
+  /** Maximum number of retries on deadlock (default: 3). */
+  maxRetries?: number;
+  /** Delay between retries in milliseconds (default: 100). */
+  retryDelayMs?: number;
+}
+
+/**
+ * Checks if an error is a deadlock error based on dialect-specific error codes.
+ * - MySQL: errno 1213 (ER_LOCK_DEADLOCK)
+ * - PostgreSQL: code 40P01 (deadlock_detected)
+ * - SQLite: code SQLITE_BUSY / "database is locked"
+ */
+function isDeadlockError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const err = e as any;
+  // MySQL: errno 1213
+  if (err.errno === 1213 || err.code === "ER_LOCK_DEADLOCK") return true;
+  // PostgreSQL: code 40P01
+  if (err.code === "40P01") return true;
+  // SQLite: SQLITE_BUSY
+  if (err.code === "SQLITE_BUSY" || err.message?.includes("database is locked")) return true;
+  return false;
+}
 
 /**
  * Date를 MySQL/MariaDB 호환 'YYYY-MM-DD HH:MM:SS' 형식으로 변환합니다.
@@ -791,7 +822,11 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      qb.select(selectMap).from(this.wrapTable(tableName));
+      if (findOption.distinct) {
+        qb.selectDistinct(selectMap).from(this.wrapTable(tableName));
+      } else {
+        qb.select(selectMap).from(this.wrapTable(tableName));
+      }
 
       // Eager ManyToOne LEFT JOIN
       for (const rel of eagerRelations) {
@@ -1151,6 +1186,39 @@ export class EntityManager implements BaseEntityManager {
 
       return [entities as unknown as T[], totalCount];
     }, { readNodeOverride: readNode, timeout: findOption.timeout });
+  }
+
+  /**
+   * Returns an AsyncGenerator that yields entities in batches using LIMIT/OFFSET.
+   * Works across all dialects without driver-level streaming support.
+   *
+   * @param entity - The entity class
+   * @param options - Find options (where, orderBy, relations, etc.)
+   * @param batchSize - Number of rows per batch (default: 1000)
+   */
+  async *stream<T>(
+    entity: ClazzType<T>,
+    options: FindOption<T> = {},
+    batchSize: number = 1000,
+  ): AsyncGenerator<T, void, undefined> {
+    let offset = 0;
+    const effectiveBatchSize = Math.max(batchSize, 1);
+
+    while (true) {
+      const batch = await this.find<T>(entity, {
+        ...options,
+        limit: [offset, effectiveBatchSize],
+      });
+
+      if (batch.length === 0) break;
+
+      for (const item of batch) {
+        yield item;
+      }
+
+      if (batch.length < effectiveBatchSize) break;
+      offset += effectiveBatchSize;
+    }
   }
 
   async findWithPage<T>(
@@ -2543,10 +2611,32 @@ export class EntityManager implements BaseEntityManager {
    * });
    * ```
    */
-  async transaction<R>(callback: (em: this) => Promise<R>): Promise<R> {
-    return this.executeInTransaction(async (session) => {
-      return transactionStorage.run(session, () => callback(this));
-    });
+  async transaction<R>(
+    callback: (em: this) => Promise<R>,
+    options?: TransactionOptions,
+  ): Promise<R> {
+    const maxRetries = options?.retryOnDeadlock ? (options.maxRetries ?? 3) : 0;
+    const retryDelayMs = options?.retryDelayMs ?? 100;
+
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.executeInTransaction(async (session) => {
+          return transactionStorage.run(session, () => callback(this));
+        });
+      } catch (e: unknown) {
+        lastError = e;
+        if (attempt < maxRetries && isDeadlockError(e)) {
+          this.logger.warn(
+            `Deadlock detected (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${retryDelayMs}ms...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw lastError;
   }
 
   getRepository<T>(entity: ClazzType<T>) {
@@ -2560,7 +2650,12 @@ export class EntityManager implements BaseEntityManager {
     return MetadataContext.run(tenantId, () => callback(this)) as Promise<R>;
   }
 
-  createQueryBuilder(): BaseRawQueryBuilder {
+  createQueryBuilder(): BaseRawQueryBuilder;
+  createQueryBuilder<T>(entity: ClazzType<T>, alias: string): SelectQueryBuilder<T>;
+  createQueryBuilder<T>(entity?: ClazzType<T>, alias?: string): BaseRawQueryBuilder | SelectQueryBuilder<T> {
+    if (entity && alias) {
+      return new SelectQueryBuilder<T>(entity, alias, this);
+    }
     const qb = RawQueryBuilderFactory.create();
     if (this.isMySqlFamily()) qb.setDatabaseType("mysql");
     else qb.setDatabaseType("postgresql");

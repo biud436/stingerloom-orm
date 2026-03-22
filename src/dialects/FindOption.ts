@@ -132,4 +132,10 @@ export type FindOption<T> = {
    * - `PESSIMISTIC_READ`: `SELECT ... FOR SHARE` (PostgreSQL) / `LOCK IN SHARE MODE` (MySQL)
    */
   lock?: LockMode;
+
+  /**
+   * If true, generates SELECT DISTINCT instead of SELECT.
+   * Removes duplicate rows from the result set.
+   */
+  distinct?: boolean;
 };

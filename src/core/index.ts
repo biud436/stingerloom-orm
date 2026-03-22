@@ -6,6 +6,7 @@ export * from "./SelectUtils";
 export * from "./ResultTransformerFactory";
 export * from "./RawQueryBuilderFactory";
 export * from "./BaseRawQueryBuilder";
+export * from "./SelectQueryBuilder";
 export * from "./BaseInsertQueryBuilder";
 export * from "./deserializer";
 export * from "./MyClassConstructor";

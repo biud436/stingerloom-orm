@@ -1,0 +1,709 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import sql, { Sql, raw, join } from "sql-template-tag";
+import { Conditions } from "./Conditions";
+import { EntityManager } from "./EntityManager";
+import { ClazzType } from "../utils/types";
+import { RawQueryBuilder } from "./RawQueryBuilder";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
+
+/**
+ * Type-safe column reference: entity property keys (string keys only).
+ */
+type ColumnOf<T> = keyof T & string;
+
+/**
+ * Type-safe order-by specification.
+ */
+type OrderBySpec<T> = {
+  [K in ColumnOf<T>]?: "ASC" | "DESC";
+};
+
+/**
+ * A type-safe, fluent query builder derived from a repository entity type.
+ *
+ * Created via `repository.createQueryBuilder("alias")` or
+ * `em.createSelectQueryBuilder(Entity, "alias")`.
+ *
+ * All column references enjoy `keyof T` auto-completion.
+ *
+ * @example
+ * ```ts
+ * const users = await repo
+ *   .createQueryBuilder("u")
+ *   .select(["id", "name", "email"])
+ *   .where("status", "active")
+ *   .andWhere("age", ">=", 18)
+ *   .orderBy({ createdAt: "DESC" })
+ *   .limit(10)
+ *   .getMany();
+ * ```
+ */
+export class SelectQueryBuilder<T> {
+  private readonly alias: string;
+  private readonly entity: ClazzType<T>;
+  private readonly em: EntityManager;
+
+  private selectColumns: string[] | "*" = "*";
+  private distinct = false;
+  private whereClauses: Sql[] = [];
+  private orderByClauses: Array<{ column: string; direction: "ASC" | "DESC" }> =
+    [];
+  private groupByCols: string[] = [];
+  private havingClauses: Sql[] = [];
+  private joinClauses: Array<{
+    type: "LEFT" | "INNER" | "RIGHT";
+    table: string;
+    alias: string;
+    condition: Sql;
+  }> = [];
+  private limitValue: number | [number, number] | undefined;
+  private offsetValue: number | undefined;
+  private lockClause: string | undefined;
+  private withDeletedFlag = false;
+  private extraSegments: Sql[] = [];
+
+  constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
+    this.entity = entity;
+    this.alias = alias;
+    this.em = em;
+  }
+
+  // ── Helpers ──────────────────────────────────────────────
+
+  /** Qualify a column with the main alias: `"u"."name"` */
+  private col(column: string): string {
+    return `${this.em.wrap(this.alias)}.${this.em.wrap(column)}`;
+  }
+
+  /** Qualify a column for a different alias */
+  private qualifiedCol(tableAlias: string, column: string): string {
+    return `${this.em.wrap(tableAlias)}.${this.em.wrap(column)}`;
+  }
+
+  // ── SELECT ───────────────────────────────────────────────
+
+  /**
+   * Select specific columns. Receives `keyof T` auto-completion.
+   *
+   * @example
+   * ```ts
+   * qb.select(["id", "name", "email"])
+   * ```
+   */
+  select(columns: ColumnOf<T>[] | "*"): this {
+    if (columns === "*") {
+      this.selectColumns = "*";
+    } else {
+      this.selectColumns = columns.map((c) => this.col(c));
+    }
+    return this;
+  }
+
+  /**
+   * Add additional select expressions (raw SQL fragments or aggregates).
+   *
+   * @example
+   * ```ts
+   * qb.addSelect(Conditions.count("*"), "total")
+   * ```
+   */
+  addSelect(expr: Sql | string, alias?: string): this {
+    const exprStr =
+      typeof expr === "string" ? this.col(expr) : expr.sql;
+    const fragment = alias ? `${exprStr} AS ${this.em.wrap(alias)}` : exprStr;
+    if (this.selectColumns === "*") {
+      this.selectColumns = [`${this.em.wrap(this.alias)}.*`, fragment];
+    } else {
+      (this.selectColumns as string[]).push(fragment);
+    }
+    return this;
+  }
+
+  /**
+   * Enable SELECT DISTINCT.
+   */
+  setDistinct(value = true): this {
+    this.distinct = value;
+    return this;
+  }
+
+  // ── WHERE ────────────────────────────────────────────────
+
+  /**
+   * Add a WHERE condition. Supports multiple call signatures:
+   *
+   * 1. `where("name", "Alice")` → equals
+   * 2. `where("age", ">=", 18)` → operator
+   * 3. `where(Conditions.like("u"."name", "%alice%"))` → raw Sql
+   */
+  where(condition: Sql): this;
+  where(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
+  where(
+    column: ColumnOf<T>,
+    operator: string,
+    value: any,
+  ): this;
+  where(
+    columnOrCondition: ColumnOf<T> | Sql,
+    operatorOrValue?: any,
+    value?: any,
+  ): this {
+    this.whereClauses.push(
+      this.resolveCondition(columnOrCondition, operatorOrValue, value),
+    );
+    return this;
+  }
+
+  /**
+   * Add an AND WHERE condition.
+   */
+  andWhere(condition: Sql): this;
+  andWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
+  andWhere(column: ColumnOf<T>, operator: string, value: any): this;
+  andWhere(
+    columnOrCondition: ColumnOf<T> | Sql,
+    operatorOrValue?: any,
+    value?: any,
+  ): this {
+    this.whereClauses.push(
+      this.resolveCondition(columnOrCondition, operatorOrValue, value),
+    );
+    return this;
+  }
+
+  /**
+   * Add an OR WHERE condition (wrapped in parentheses with existing conditions).
+   */
+  orWhere(condition: Sql): this;
+  orWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
+  orWhere(column: ColumnOf<T>, operator: string, value: any): this;
+  orWhere(
+    columnOrCondition: ColumnOf<T> | Sql,
+    operatorOrValue?: any,
+    value?: any,
+  ): this {
+    const cond = this.resolveCondition(
+      columnOrCondition,
+      operatorOrValue,
+      value,
+    );
+    if (this.whereClauses.length === 0) {
+      this.whereClauses.push(cond);
+    } else {
+      // Wrap existing AND clauses and add OR
+      const existing = Conditions.and(this.whereClauses);
+      this.whereClauses = [Conditions.or([existing, cond])];
+    }
+    return this;
+  }
+
+  /**
+   * WHERE column IN (values).
+   */
+  whereIn(column: ColumnOf<T>, values: any[]): this {
+    this.whereClauses.push(Conditions.in(this.col(column), values));
+    return this;
+  }
+
+  /**
+   * WHERE column NOT IN (values).
+   */
+  whereNotIn(column: ColumnOf<T>, values: any[]): this {
+    this.whereClauses.push(Conditions.notIn(this.col(column), values));
+    return this;
+  }
+
+  /**
+   * WHERE column IS NULL.
+   */
+  whereNull(column: ColumnOf<T>): this {
+    this.whereClauses.push(Conditions.isNull(this.col(column)));
+    return this;
+  }
+
+  /**
+   * WHERE column IS NOT NULL.
+   */
+  whereNotNull(column: ColumnOf<T>): this {
+    this.whereClauses.push(Conditions.isNotNull(this.col(column)));
+    return this;
+  }
+
+  /**
+   * WHERE column BETWEEN min AND max.
+   */
+  whereBetween(column: ColumnOf<T>, min: any, max: any): this {
+    this.whereClauses.push(Conditions.between(this.col(column), min, max));
+    return this;
+  }
+
+  /**
+   * WHERE column LIKE pattern.
+   */
+  whereLike(column: ColumnOf<T>, pattern: string): this {
+    this.whereClauses.push(Conditions.like(this.col(column), pattern));
+    return this;
+  }
+
+  // ── JOIN ─────────────────────────────────────────────────
+
+  /**
+   * Add a LEFT JOIN.
+   *
+   * @example
+   * ```ts
+   * qb.leftJoin("posts", "p", "u.id = p.authorId")
+   * ```
+   */
+  leftJoin(table: string, alias: string, condition: Sql | string): this {
+    return this.addJoin("LEFT", table, alias, condition);
+  }
+
+  /**
+   * Add an INNER JOIN.
+   */
+  innerJoin(table: string, alias: string, condition: Sql | string): this {
+    return this.addJoin("INNER", table, alias, condition);
+  }
+
+  /**
+   * Add a RIGHT JOIN.
+   */
+  rightJoin(table: string, alias: string, condition: Sql | string): this {
+    return this.addJoin("RIGHT", table, alias, condition);
+  }
+
+  private addJoin(
+    type: "LEFT" | "INNER" | "RIGHT",
+    table: string,
+    alias: string,
+    condition: Sql | string,
+  ): this {
+    const cond =
+      typeof condition === "string"
+        ? sql`${raw(condition)}`
+        : condition;
+    this.joinClauses.push({ type, table, alias, condition: cond });
+    return this;
+  }
+
+  // ── ORDER BY / GROUP BY / HAVING ────────────────────────
+
+  /**
+   * Set ORDER BY with type-safe column references.
+   *
+   * @example
+   * ```ts
+   * qb.orderBy({ createdAt: "DESC", name: "ASC" })
+   * ```
+   */
+  orderBy(spec: OrderBySpec<T>): this {
+    for (const key in spec) {
+      const direction = spec[key as ColumnOf<T>];
+      if (direction) {
+        this.orderByClauses.push({
+          column: this.col(key),
+          direction,
+        });
+      }
+    }
+    return this;
+  }
+
+  /**
+   * Add a single ORDER BY clause.
+   */
+  addOrderBy(column: ColumnOf<T>, direction: "ASC" | "DESC"): this {
+    this.orderByClauses.push({ column: this.col(column), direction });
+    return this;
+  }
+
+  /**
+   * Set GROUP BY columns.
+   */
+  groupBy(columns: ColumnOf<T>[]): this {
+    this.groupByCols = columns.map((c) => this.col(c));
+    return this;
+  }
+
+  /**
+   * Add HAVING conditions (used with GROUP BY).
+   */
+  having(condition: Sql): this {
+    this.havingClauses.push(condition);
+    return this;
+  }
+
+  // ── LIMIT / OFFSET ──────────────────────────────────────
+
+  /**
+   * Set the maximum number of rows to return.
+   */
+  limit(count: number): this {
+    this.limitValue = count;
+    return this;
+  }
+
+  /**
+   * Set the number of rows to skip.
+   */
+  offset(count: number): this {
+    this.offsetValue = count;
+    return this;
+  }
+
+  /**
+   * Convenience: set both skip and take.
+   */
+  skip(count: number): this {
+    this.offsetValue = count;
+    return this;
+  }
+
+  take(count: number): this {
+    this.limitValue = count;
+    return this;
+  }
+
+  // ── LOCK / SOFT DELETE ──────────────────────────────────
+
+  /**
+   * Add FOR UPDATE lock.
+   */
+  forUpdate(): this {
+    this.lockClause = "FOR UPDATE";
+    return this;
+  }
+
+  /**
+   * Add FOR SHARE lock.
+   */
+  forShare(): this {
+    const internals = (this.em as any)._ctx;
+    this.lockClause = internals.isMySqlFamily()
+      ? "LOCK IN SHARE MODE"
+      : "FOR SHARE";
+    return this;
+  }
+
+  /**
+   * Include soft-deleted entities in results.
+   */
+  withDeleted(): this {
+    this.withDeletedFlag = true;
+    return this;
+  }
+
+  // ── RAW APPEND ──────────────────────────────────────────
+
+  /**
+   * Append a raw SQL fragment to the query.
+   */
+  appendSql(fragment: Sql): this {
+    this.extraSegments.push(fragment);
+    return this;
+  }
+
+  // ── BUILD ───────────────────────────────────────────────
+
+  /**
+   * Build the final SQL query. Returns a `Sql` object (sql-template-tag).
+   */
+  toSql(): Sql {
+    const tableName = this.resolveTableName();
+    const qb = new RawQueryBuilder();
+
+    // Database type
+    const internals = (this.em as any)._ctx;
+    if (internals.isMySqlFamily()) qb.setDatabaseType("mysql");
+    else qb.setDatabaseType("postgresql");
+
+    // SELECT
+    if (this.selectColumns === "*") {
+      const allCols = `${this.em.wrap(this.alias)}.*`;
+      if (this.distinct) {
+        qb.selectDistinct([allCols]);
+      } else {
+        qb.select([allCols]);
+      }
+    } else {
+      if (this.distinct) {
+        qb.selectDistinct(this.selectColumns as string[]);
+      } else {
+        qb.select(this.selectColumns as string[]);
+      }
+    }
+
+    // FROM
+    qb.from(
+      `${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`,
+    );
+
+    // JOINs
+    for (const j of this.joinClauses) {
+      qb.join(
+        j.type,
+        `${this.em.wrapTable(j.table)} AS ${this.em.wrap(j.alias)}`,
+        j.alias,
+        j.condition,
+      );
+    }
+
+    // Soft delete auto-filter
+    const resolver = (this.em as any).resolver;
+    if (resolver) {
+      const deletedAtColumn = resolver.getDeletedAtColumn(this.entity);
+      if (deletedAtColumn && !this.withDeletedFlag) {
+        this.whereClauses.push(
+          Conditions.isNull(this.col(deletedAtColumn)),
+        );
+      }
+    }
+
+    // WHERE
+    qb.where(this.whereClauses);
+
+    // GROUP BY
+    if (this.groupByCols.length > 0) {
+      qb.groupBy(this.groupByCols);
+    }
+
+    // HAVING
+    if (this.havingClauses.length > 0) {
+      qb.having(this.havingClauses);
+    }
+
+    // ORDER BY
+    if (this.orderByClauses.length > 0) {
+      qb.orderBy(this.orderByClauses);
+    }
+
+    // LIMIT / OFFSET
+    if (this.offsetValue !== undefined && this.limitValue !== undefined) {
+      qb.limit([this.offsetValue, this.limitValue as number]);
+    } else if (this.limitValue !== undefined) {
+      qb.limit(this.limitValue as number);
+    } else if (this.offsetValue !== undefined) {
+      qb.limit([this.offsetValue, 2147483647]);
+    }
+
+    // LOCK
+    if (this.lockClause) {
+      qb.appendSql(raw(this.lockClause));
+    }
+
+    // Extra segments
+    for (const seg of this.extraSegments) {
+      qb.appendSql(seg);
+    }
+
+    return qb.build();
+  }
+
+  /**
+   * Get the raw SQL text and parameters (for debugging).
+   */
+  getSql(): { text: string; values: any[] } {
+    const built = this.toSql();
+    return { text: built.text ?? built.sql, values: built.values };
+  }
+
+  // ── EXECUTION ───────────────────────────────────────────
+
+  /**
+   * Execute the query and return multiple results typed as `T[]`.
+   */
+  async getMany(): Promise<T[]> {
+    const built = this.toSql();
+    const rows = await this.em.query<any>(built);
+    return rows as T[];
+  }
+
+  /**
+   * Execute the query and return a single result or null.
+   * Automatically adds LIMIT 1 if not already set.
+   */
+  async getOne(): Promise<T | null> {
+    if (this.limitValue === undefined) {
+      this.limitValue = 1;
+    }
+    const results = await this.getMany();
+    return results.length > 0 ? results[0] : null;
+  }
+
+  /**
+   * Execute a COUNT(*) query with the same WHERE/JOIN conditions.
+   */
+  async getCount(): Promise<number> {
+    const tableName = this.resolveTableName();
+    const qb = new RawQueryBuilder();
+
+    const internals = (this.em as any)._ctx;
+    if (internals.isMySqlFamily()) qb.setDatabaseType("mysql");
+    else qb.setDatabaseType("postgresql");
+
+    qb.select(["COUNT(*) AS count"]);
+    qb.from(
+      `${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`,
+    );
+
+    for (const j of this.joinClauses) {
+      qb.join(
+        j.type,
+        `${this.em.wrapTable(j.table)} AS ${this.em.wrap(j.alias)}`,
+        j.alias,
+        j.condition,
+      );
+    }
+
+    // Soft delete auto-filter (re-derive, don't mutate shared state)
+    const countWhere = [...this.whereClauses];
+    const resolver = (this.em as any).resolver;
+    if (resolver) {
+      const deletedAtColumn = resolver.getDeletedAtColumn(this.entity);
+      if (deletedAtColumn && !this.withDeletedFlag) {
+        countWhere.push(Conditions.isNull(this.col(deletedAtColumn)));
+      }
+    }
+
+    qb.where(countWhere);
+
+    if (this.groupByCols.length > 0) {
+      qb.groupBy(this.groupByCols);
+    }
+    if (this.havingClauses.length > 0) {
+      qb.having(this.havingClauses);
+    }
+
+    const built = qb.build();
+    const rows = await this.em.query<{ count: string | number }>(built);
+    if (rows.length === 0) return 0;
+    return Number(rows[0].count);
+  }
+
+  /**
+   * Execute the query and return both results and total count.
+   */
+  async getManyAndCount(): Promise<[T[], number]> {
+    const [results, count] = await Promise.all([
+      this.getMany(),
+      this.getCount(),
+    ]);
+    return [results, count];
+  }
+
+  /**
+   * Check if any rows match the conditions.
+   */
+  async exists(): Promise<boolean> {
+    const count = await this.getCount();
+    return count > 0;
+  }
+
+  /**
+   * Return the query as a Sql subquery with an alias (for use in FROM/JOIN).
+   */
+  asSubquery(alias: string): Sql {
+    const built = this.toSql();
+    return sql`(${built}) AS ${raw(this.em.wrap(alias))}`;
+  }
+
+  // ── Private ─────────────────────────────────────────────
+
+  private resolveTableName(): string {
+    const resolver = (this.em as any).resolver;
+    if (!resolver) {
+      throw new OrmError(
+        OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
+        `EntityManager not connected. Cannot resolve table name for ${this.entity.name}.`,
+      );
+    }
+    const metadata = resolver.resolveEntityMetadata(this.entity);
+    if (!metadata) {
+      throw new OrmError(
+        OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
+        `Entity metadata not found for ${this.entity.name}. Did you register the entity?`,
+      );
+    }
+    return metadata.name!;
+  }
+
+  private resolveCondition(
+    columnOrCondition: ColumnOf<T> | Sql,
+    operatorOrValue?: any,
+    value?: any,
+  ): Sql {
+    // Overload 1: raw Sql condition
+    if (typeof columnOrCondition !== "string") {
+      return columnOrCondition;
+    }
+
+    const column = columnOrCondition;
+    const qualified = this.col(column);
+
+    // Overload 2: where("name", "Alice") — 2 args, equals
+    if (value === undefined) {
+      const val = operatorOrValue;
+      if (val === null) {
+        return Conditions.isNull(qualified);
+      }
+      if (val instanceof Object && "sql" in val) {
+        // Sql object passed as value
+        return sql`${raw(qualified)} = ${val}`;
+      }
+      if (Array.isArray(val)) {
+        return Conditions.in(qualified, val);
+      }
+      return Conditions.equals(qualified, val);
+    }
+
+    // Overload 3: where("age", ">=", 18) — 3 args, operator
+    const operator = operatorOrValue as string;
+    const normalizedOp = operator.trim().toUpperCase();
+
+    switch (normalizedOp) {
+      case "=":
+        return Conditions.equals(qualified, value);
+      case "!=":
+      case "<>":
+        return Conditions.notEquals(qualified, value);
+      case ">":
+        return Conditions.gt(qualified, value);
+      case ">=":
+        return Conditions.gte(qualified, value);
+      case "<":
+        return Conditions.lt(qualified, value);
+      case "<=":
+        return Conditions.lte(qualified, value);
+      case "LIKE":
+        return Conditions.like(qualified, value);
+      case "NOT LIKE":
+        return Conditions.notLike(qualified, value);
+      case "IN":
+        return Conditions.in(qualified, Array.isArray(value) ? value : [value]);
+      case "NOT IN":
+        return Conditions.notIn(
+          qualified,
+          Array.isArray(value) ? value : [value],
+        );
+      case "IS NULL":
+        return Conditions.isNull(qualified);
+      case "IS NOT NULL":
+        return Conditions.isNotNull(qualified);
+      case "BETWEEN":
+        if (Array.isArray(value) && value.length === 2) {
+          return Conditions.between(qualified, value[0], value[1]);
+        }
+        throw new OrmError(
+          OrmErrorCode.INVALID_QUERY,
+          `BETWEEN operator requires an array of [min, max]. Got: ${typeof value}`,
+        );
+      default:
+        throw new OrmError(
+          OrmErrorCode.INVALID_QUERY,
+          `Unsupported operator: "${operator}". Use =, !=, <>, <, >, <=, >=, LIKE, IN, NOT IN, IS NULL, IS NOT NULL, BETWEEN.`,
+        );
+    }
+  }
+}

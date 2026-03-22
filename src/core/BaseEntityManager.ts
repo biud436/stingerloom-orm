@@ -92,6 +92,20 @@ export abstract class BaseEntityManager {
   ): Promise<PagePaginationResult<T>>;
 
   /**
+   * Returns an AsyncGenerator that yields entities in batches using LIMIT/OFFSET.
+   * Suitable for processing large datasets without loading all rows into memory.
+   *
+   * @param entity Entity class
+   * @param options Find options (where, orderBy, relations, etc.)
+   * @param batchSize Number of rows per internal batch (default: 1000)
+   */
+  abstract stream<T>(
+    entity: ClazzType<T>,
+    options?: FindOption<T>,
+    batchSize?: number,
+  ): AsyncGenerator<T, void, undefined>;
+
+  /**
    * 데이터베이스에 데이터를 저장하거나 수정합니다.
    * 수정 시에는 PK 컬럼이 존재해야하고, 없을 경우 저장 작업을 수행합니다.
    *
