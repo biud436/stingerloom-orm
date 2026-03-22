@@ -2,6 +2,32 @@
 
 This guide walks you through installing Stingerloom ORM, defining your first entity, and performing create/read/update/delete operations step by step. It should take about 5 minutes.
 
+## What Is an ORM?
+
+When you write a web application, your data lives in two very different worlds. In your TypeScript code, data lives in **objects** -- classes with properties and methods. In your database, data lives in **tables** -- rows and columns of raw values.
+
+An ORM (Object-Relational Mapper) is the translation layer between these two worlds. Instead of writing SQL strings by hand, you define a TypeScript class, and the ORM figures out how to create the table, insert rows, query data, and give you back typed objects.
+
+Think of it like a universal translator. You speak TypeScript, your database speaks SQL, and the ORM translates every conversation between them.
+
+Without an ORM:
+
+```typescript
+// You write raw SQL strings, get back untyped rows
+const result = await pool.query('SELECT * FROM "user" WHERE "id" = $1', [1]);
+const user = result.rows[0]; // { id: 1, name: "Alice" } -- no type safety
+```
+
+With an ORM:
+
+```typescript
+// You work with typed objects, the ORM writes the SQL
+const user = await em.findOne(User, { where: { id: 1 } });
+// user is User | null -- full type safety, auto-completed properties
+```
+
+The ORM handles the translation in both directions: your class definition becomes a `CREATE TABLE` statement, your `save()` call becomes an `INSERT`, and your `find()` call becomes a `SELECT`. You will see the exact SQL for each of these operations in this guide.
+
 ## Prerequisites
 
 - Node.js 20 or higher (latest LTS recommended)
@@ -64,9 +90,17 @@ yarn add @stingerloom/orm reflect-metadata pg
 
 :::
 
+### Why reflect-metadata?
+
+When you write `@Column()` on a class property, TypeScript records some information about that property (its type, its name) at compile time. But by default, that information is erased when the code is compiled to JavaScript.
+
+`reflect-metadata` is a polyfill that makes this metadata available at **runtime**. The ORM needs it to answer questions like "what type is the `email` property?" so it can map `string` to `VARCHAR` and `number` to `INTEGER` automatically. Without it, decorators like `@Entity()` and `@Column()` would have no way to know what your class looks like.
+
+You only need to import it once, at the very top of your application entry point. After that, every decorator in the ORM can read the type information it needs.
+
 ### CJS and ESM
 
-Stingerloom ORM ships as a **dual CJS/ESM package**. Both `require()` and `import` work out of the box — no extra configuration needed.
+Stingerloom ORM ships as a **dual CJS/ESM package**. Both `require()` and `import` work out of the box -- no extra configuration needed.
 
 ```typescript
 // ESM (recommended)
@@ -98,11 +132,15 @@ Enable decorator-related options in your `tsconfig.json`.
 }
 ```
 
-`experimentalDecorators` and `emitDecoratorMetadata` are required for decorators like `@Entity()` and `@Column()` to work. Disabling `strictPropertyInitialization` prevents initialization errors on entity properties without `!:`.
+Here is what each option does:
+
+- `experimentalDecorators` -- Enables the `@Entity()`, `@Column()` syntax. Without this, TypeScript treats `@` as a syntax error.
+- `emitDecoratorMetadata` -- Tells the compiler to emit type information that `reflect-metadata` can read at runtime. This is how the ORM knows that `name: string` should become a `VARCHAR` column.
+- `strictPropertyInitialization` -- Normally, TypeScript complains if a class property is not assigned in the constructor. Entity properties are populated by the ORM, not the constructor, so we disable this check to avoid needing `!:` on every property.
 
 ## Step 3: Define an Entity
 
-An **Entity** is a TypeScript class that represents a database table. Let's create a simple user entity.
+An **Entity** is a TypeScript class that represents a database table. Each instance of the class represents one row. Let's create a simple user entity.
 
 ```typescript
 // user.entity.ts
@@ -121,17 +159,41 @@ export class User {
 }
 ```
 
-`@Entity()` declares that this class corresponds to a DB table, `@PrimaryGeneratedColumn()` defines an auto-increment primary key, and `@Column()` defines a regular column. This code alone will create a `user` table.
+What each decorator does:
+
+- `@Entity()` -- Tells the ORM: "this class maps to a database table." The table name defaults to the lowercased class name (`user`).
+- `@PrimaryGeneratedColumn()` -- This column is the primary key, and the database auto-generates its value (auto-increment for MySQL, `SERIAL` for PostgreSQL).
+- `@Column()` -- A regular column. The ORM infers the SQL type from the TypeScript type: `string` becomes `VARCHAR(255)`, `number` becomes `INTEGER`, `boolean` becomes `BOOLEAN`.
+
+When `synchronize: true` is set (next step), the ORM generates this DDL and executes it:
+
+```sql
+-- PostgreSQL
+CREATE TABLE "user" (
+  "id" SERIAL PRIMARY KEY,
+  "name" VARCHAR(255),
+  "email" VARCHAR(255)
+);
+
+-- MySQL
+CREATE TABLE `user` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `name` VARCHAR(255),
+  `email` VARCHAR(255)
+);
+```
+
+Notice the identifier wrapping difference: PostgreSQL uses `"double quotes"`, MySQL uses `` `backticks` ``. The ORM handles this automatically based on your `type` setting.
 
 > **Hint** To learn more about entities, refer to the [Entities](./entities.md) documentation.
 
 ## Step 4: Connect to the Database
 
-Now connect to the DB using `EntityManager` and register your entities. Make sure to import `reflect-metadata` at the very top of your application entry point.
+Now connect to the DB using `EntityManager` and register your entities. Make sure to import `reflect-metadata` at the very top of your application entry point -- before any other imports that use decorators.
 
 ```typescript
 // main.ts
-import "reflect-metadata";
+import "reflect-metadata";  // Must be the very first import
 import { EntityManager } from "@stingerloom/orm";
 import { User } from "./user.entity";
 
@@ -155,9 +217,9 @@ async function main() {
 main().catch(console.error);
 ```
 
-When `synchronize: true` is set, tables are automatically created based on entity definitions. No need to worry if the `user` table doesn't exist yet.
+When `synchronize: true` is set, the ORM compares your entity definitions against the live database and creates or alters tables to match. If the `user` table does not exist yet, it executes the `CREATE TABLE` DDL shown above. If the table exists but is missing a column you added, it runs `ALTER TABLE` to add it.
 
-> **Warning** Use `synchronize: true` only in development. In production, manage your schema with [migrations](./migrations.md).
+> **Warning** Use `synchronize: true` only in development. In production, it can drop columns or tables that no longer match your entities. Use [migrations](./migrations.md) instead -- they give you full control over what changes reach your production database.
 
 ## Step 5: Try CRUD
 
@@ -175,7 +237,20 @@ console.log("Saved user:", user);
 // { id: 1, name: "John Doe", email: "john@example.com" }
 ```
 
-`em.save()` performs an INSERT when there is no PK, and an UPDATE when there is. It returns an object that includes the auto-generated `id`.
+`em.save()` sees that no `id` is provided, so it performs an INSERT. Here is the actual SQL that gets executed:
+
+```sql
+-- PostgreSQL
+INSERT INTO "user" ("name", "email") VALUES ($1, $2) RETURNING *
+-- Parameters: ["John Doe", "john@example.com"]
+
+-- MySQL
+INSERT INTO `user` (`name`, `email`) VALUES (?, ?)
+-- Parameters: ["John Doe", "john@example.com"]
+-- Then: SELECT * FROM `user` WHERE `id` = LAST_INSERT_ID()
+```
+
+Notice that user-provided values are never placed directly in the SQL string. They appear as `$1`, `$2` (PostgreSQL) or `?` (MySQL) -- this is **parameter binding**, and it prevents SQL injection. PostgreSQL also supports `RETURNING *`, which returns the inserted row in a single round-trip. MySQL needs a second query to fetch the auto-generated `id`.
 
 ### Read
 
@@ -190,7 +265,18 @@ const found = await em.findOne(User, { where: { id: 1 } });
 console.log("Single user:", found); // User | null
 ```
 
-`find()` returns an array, and `findOne()` returns a single object or `null`.
+The generated SQL:
+
+```sql
+-- find() -- fetch all users
+SELECT "id", "name", "email" FROM "user"
+
+-- findOne() -- find by condition
+SELECT "id", "name", "email" FROM "user" WHERE "id" = $1 LIMIT 1
+-- Parameters: [1]
+```
+
+`find()` returns an array (empty if no rows match). `findOne()` returns a single typed object or `null`. The ORM automatically adds `LIMIT 1` for `findOne()` since you only need one row.
 
 ### Update
 
@@ -204,7 +290,17 @@ const updated = await em.save(User, {
 console.log("Updated user:", updated);
 ```
 
-When `save()` includes a PK (`id`), the corresponding row is updated.
+When `save()` receives an object with a primary key (`id: 1`), it performs an UPDATE instead of an INSERT:
+
+```sql
+-- PostgreSQL
+UPDATE "user" SET "name" = $1, "email" = $2 WHERE "id" = $3
+-- Parameters: ["John Doe (edited)", "john@example.com", 1]
+
+-- MySQL
+UPDATE `user` SET `name` = ?, `email` = ? WHERE `id` = ?
+-- Parameters: ["John Doe (edited)", "john@example.com", 1]
+```
 
 ### Delete
 
@@ -214,11 +310,18 @@ const result = await em.delete(User, { id: 1 });
 console.log("Rows deleted:", result.affected); // 1
 ```
 
-Congratulations! You've completed your first CRUD.
+The generated SQL:
+
+```sql
+DELETE FROM "user" WHERE "id" = $1
+-- Parameters: [1]
+```
+
+Congratulations -- you have completed your first CRUD. Every operation was a single method call, and the ORM handled the SQL generation, parameter binding, and result deserialization behind the scenes.
 
 ## Using Other Databases
 
-The example above uses PostgreSQL, but you can use other databases by simply changing the `type` option.
+The example above uses PostgreSQL, but you can use other databases by simply changing the `type` option. The rest of your code stays identical.
 
 | DB | `type` | `port` | Notes |
 |----|--------|--------|-------|
@@ -242,7 +345,7 @@ await em.register({
 ```
 
 ```typescript
-// SQLite example — host, port, username, password are empty
+// SQLite example -- host, port, username, password are empty
 await em.register({
   type: "sqlite",
   host: "",
@@ -258,6 +361,17 @@ await em.register({
 ## Using with NestJS
 
 Stingerloom ORM provides a first-party NestJS integration module via the `@stingerloom/orm/nestjs` subpath export.
+
+### Why a Separate Module?
+
+NestJS uses **Dependency Injection (DI)** -- instead of creating objects yourself with `new`, you declare what you need, and NestJS provides it. The ORM module bridges these two worlds: it creates the `EntityManager` and repositories, then registers them in NestJS's DI container so your services can declare them as constructor parameters.
+
+The flow works like this:
+
+1. `forRoot()` creates an `EntityManager`, connects to the database, and registers it as a global NestJS provider.
+2. `forFeature([User])` creates a `BaseRepository<User>` and registers it with a unique token derived from the `User` class.
+3. `@InjectRepository(User)` in your service tells NestJS: "give me the repository registered for User."
+4. NestJS resolves the dependency and passes the repository to your service's constructor.
 
 ### Installation
 
@@ -277,7 +391,7 @@ yarn add @stingerloom/orm reflect-metadata
 
 :::
 
-`@nestjs/common` and `@nestjs/core` are listed as optional peer dependencies — they are already present in any NestJS project.
+`@nestjs/common` and `@nestjs/core` are listed as optional peer dependencies -- they are already present in any NestJS project.
 
 ### Root Module Registration
 
@@ -436,10 +550,10 @@ export class AnalyticsService {
 
 ## Next Steps
 
-You've learned the basic setup and CRUD. Now try defining richer entities.
+You have learned the basic setup and CRUD. Now try defining richer entities.
 
-- [Entities](./entities.md) — Column types, indexes, Soft Delete, lifecycle hooks
-- [Relations](./relations.md) — Define relationships between tables with `@ManyToOne`, `@OneToMany`
-- [EntityManager](./entity-manager.md) — Find options, aggregation, pagination
-- [NestJS Integration](./nestjs.md) — forRoot/forFeature, @InjectRepository, multi-DB
-- [Configuration](./configuration.md) — Pooling, timeouts, Read Replica, and other operational settings
+- [Entities](./entities.md) -- Column types, indexes, Soft Delete, lifecycle hooks
+- [Relations](./relations.md) -- Define relationships between tables with `@ManyToOne`, `@OneToMany`
+- [EntityManager](./entity-manager.md) -- Find options, aggregation, pagination
+- [NestJS Integration](./nestjs.md) -- forRoot/forFeature, @InjectRepository, multi-DB
+- [Configuration](./configuration.md) -- Pooling, timeouts, Read Replica, and other operational settings

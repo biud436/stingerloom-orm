@@ -1,6 +1,15 @@
 # Raw SQL & CTE
 
-When you need SQL features that go beyond a single entity — combining results from different tables with UNION, recursive queries with CTE, or analytics with window functions — switch to `RawQueryBuilder`.
+## Why Raw SQL?
+
+The ORM's `find()`, `save()`, and `SelectQueryBuilder` cover the vast majority of queries. But SQL is a rich language, and some things cannot be expressed through an entity-based API:
+
+- **Combining results from different tables** that have no relation (UNION)
+- **Traversing hierarchical data** like org charts or category trees (recursive CTE)
+- **Computing rankings or running totals** across rows (window functions)
+- **Cross-database analytics** that span multiple entities in complex ways
+
+For these cases, `RawQueryBuilder` gives you the full power of SQL while still providing parameter binding (to prevent SQL injection) and a composable builder API (so you can construct queries programmatically rather than concatenating strings).
 
 The trade-off is clear: you lose the type-safe `keyof T` auto-completion, but you gain the full expressive power of SQL. Table and column names must be quoted manually (`"double quotes"` for PostgreSQL, `` `backticks` `` for MySQL), though the ORM auto-detects the database type when you create the builder via `em.createQueryBuilder()`.
 
@@ -24,11 +33,11 @@ const query = qb
 const users = await em.query(query);
 ```
 
-The `where()` method in RawQueryBuilder takes an **array** of conditions (joined with AND). Values are always parameter-bound via `sql-template-tag` — never concatenated into the SQL string.
+The `where()` method in RawQueryBuilder takes an **array** of conditions (joined with AND). Values are always parameter-bound via `sql-template-tag` -- never concatenated into the SQL string.
 
 ## WHERE, JOIN, and Subqueries
 
-RawQueryBuilder has the same WHERE helpers as SelectQueryBuilder — `andWhere()`, `orWhere()`, `whereIn()`, `whereNull()`, `whereBetween()`, etc. The difference is that column names are raw strings, not type-safe.
+RawQueryBuilder has the same WHERE helpers as SelectQueryBuilder -- `andWhere()`, `orWhere()`, `whereIn()`, `whereNull()`, `whereBetween()`, etc. The difference is that column names are raw strings, not type-safe.
 
 JOINs work the same way:
 
@@ -49,7 +58,7 @@ const posts = await em.query(query);
 For subqueries, the builder provides `asInQuery()`, `asExists()`, and `as()` to embed one query inside another.
 
 ```typescript
-// IN subquery — find users who have at least one order
+// IN subquery -- find users who have at least one order
 const orderUsers = em.createQueryBuilder()
   .select(['"user_id"'])
   .from('"orders"')
@@ -64,7 +73,7 @@ const query = em.createQueryBuilder()
   .build();
 ```
 
-## Set Operations — UNION, INTERSECT, EXCEPT
+## Set Operations -- UNION, INTERSECT, EXCEPT
 
 Sometimes you need to combine results from completely different queries. For example, merging employees and contractors into a single list.
 
@@ -107,7 +116,30 @@ const subscribedEmails = await em.query(query);
 
 ## Common Table Expressions (CTE)
 
-A **CTE** (Common Table Expression) lets you define a temporary named result set that exists only for the duration of the query. Think of it as a local variable for SQL. CTEs make complex queries much more readable by breaking them into named steps.
+### Why CTEs?
+
+Think of a CTE like naming a subquery and storing it in a variable. In regular programming, you would never write a 50-line expression inline -- you would break it into named variables. CTEs do the same thing for SQL.
+
+Without a CTE, you end up nesting subqueries inside subqueries, which becomes unreadable fast. With a CTE, you define each step as a named block, then compose them together. The database executes them in order, and each step can reference the ones before it.
+
+It is exactly like writing:
+
+```
+// Pseudocode
+const activeUsers = SELECT id, name FROM users WHERE is_active = true;
+const result = SELECT * FROM activeUsers;
+```
+
+Except in SQL, you write it as:
+
+```sql
+WITH active_users AS (
+  SELECT "id", "name" FROM "users" WHERE "is_active" = true
+)
+SELECT * FROM active_users
+```
+
+### How
 
 ```typescript
 const query = em.createQueryBuilder()
@@ -125,7 +157,7 @@ The `with()` method takes a name and either a `Sql` object or a callback that re
 
 ### Recursive CTE
 
-Some data is naturally hierarchical — org charts, category trees, threaded comments. A **recursive CTE** lets you traverse these hierarchies in a single query.
+Some data is naturally hierarchical -- org charts, category trees, threaded comments. A **recursive CTE** lets you traverse these hierarchies in a single query, instead of making one query per level.
 
 Suppose you have an `employees` table where each employee has a `manager_id` pointing to their manager. To get the entire org tree starting from the CEO:
 
@@ -152,14 +184,20 @@ const orgChart = await em.query(query);
 ```
 
 The recursive CTE has two parts joined by `UNION ALL`:
-1. **Base case** — the starting rows (employees with no manager = the CEO)
-2. **Recursive step** — join the CTE result back to the original table to find children
+1. **Base case** -- the starting rows (employees with no manager = the CEO)
+2. **Recursive step** -- join the CTE result back to the original table to find children
 
-The database executes the recursive step repeatedly until no new rows are produced.
+The database executes the recursive step repeatedly until no new rows are produced. Each iteration goes one level deeper in the tree.
 
 ## Window Functions
 
-**Window functions** compute a value across a set of rows that are related to the current row. Unlike GROUP BY, which collapses rows, window functions keep every row and add computed columns alongside them.
+### Why Window Functions?
+
+Suppose you want to rank employees by salary within each department. With GROUP BY, you would collapse all employees in a department into a single row -- losing individual employee data. Window functions let you **keep every row** while adding computed values alongside them.
+
+Think of it like this: GROUP BY is a blender (everything merges into one result per group). A window function is a calculator that sits next to each row, looks at related rows through a "window," and writes down its answer without changing anything.
+
+### How
 
 The classic example is ranking. Suppose you want to rank employees by salary within each department.
 
@@ -189,10 +227,10 @@ const ranked = await em.query(query);
 
 Each element in the `selectWithWindow()` array is either a plain column string or an object describing a window function:
 
-- `expr` — The function to apply (`ROW_NUMBER()`, `RANK()`, `SUM(salary)`, etc.)
-- `over.partitionBy` — Which column to group by (like GROUP BY, but without collapsing rows)
-- `over.orderBy` — How to sort within each group
-- `alias` — The name for the computed column
+- `expr` -- The function to apply (`ROW_NUMBER()`, `RANK()`, `SUM(salary)`, etc.)
+- `over.partitionBy` -- Which column to group by (like GROUP BY, but without collapsing rows)
+- `over.orderBy` -- How to sort within each group
+- `alias` -- The name for the computed column
 
 Here are the most commonly used window functions:
 
@@ -206,7 +244,7 @@ Here are the most commonly used window functions:
 | `LAG(col)` | Previous row's value | Day-over-day comparison |
 | `LEAD(col)` | Next row's value | Forecasting |
 
-A practical example — computing cumulative revenue by month:
+A practical example -- computing cumulative revenue by month:
 
 ```typescript
 const query = em.createQueryBuilder()
@@ -223,9 +261,9 @@ const query = em.createQueryBuilder()
   .build();
 ```
 
-When `partitionBy` is omitted, the window spans the entire result set.
+When `partitionBy` is omitted, the window spans the entire result set -- the running total accumulates across all rows, not per group.
 
-## DISTINCT — Removing Duplicates
+## DISTINCT -- Removing Duplicates
 
 RawQueryBuilder also supports DISTINCT variants.
 
@@ -233,7 +271,7 @@ RawQueryBuilder also supports DISTINCT variants.
 // SELECT DISTINCT
 qb.selectDistinct(['"city"', '"country"']).from('"users"');
 
-// DISTINCT ON (PostgreSQL only) — keep only the first row per group
+// DISTINCT ON (PostgreSQL only) -- keep only the first row per group
 qb.selectDistinctOn(['"department"'], ['"id"', '"name"', '"salary"'])
   .from('"employees"');
 // SELECT DISTINCT ON ("department") "id", "name", "salary" FROM "employees"
@@ -250,12 +288,12 @@ qb.selectDistinctOn(['"department"'], ['"id"', '"name"', '"salary"'])
 | Do you need UNION / INTERSECT / EXCEPT? | No | Yes |
 | Do you need CTE (WITH / WITH RECURSIVE)? | No | Yes |
 | Do you need window functions? | No | Yes |
-| Returns class instances? | `getMany()` yes / `getPartialMany()` no | No — raw objects via `em.query()` |
+| Returns class instances? | `getMany()` yes / `getPartialMany()` no | No -- raw objects via `em.query()` |
 
-In practice, start with `SelectQueryBuilder` for everyday queries. If you hit a wall — you need UNION, recursive hierarchy traversal, or window analytics — switch to `RawQueryBuilder` for that specific query.
+In practice, start with `SelectQueryBuilder` for everyday queries. If you hit a wall -- you need UNION, recursive hierarchy traversal, or window analytics -- switch to `RawQueryBuilder` for that specific query.
 
 ## Next Steps
 
-- [Query Builder](./query-builder.md) — Type-safe SelectQueryBuilder with `keyof T` auto-complete
-- [EntityManager](./entity-manager.md) — Basic CRUD with find(), save(), etc.
-- [API Reference](./api-reference.md) — Quick reference for all method signatures
+- [Query Builder](./query-builder.md) -- Type-safe SelectQueryBuilder with `keyof T` auto-complete
+- [EntityManager](./entity-manager.md) -- Basic CRUD with find(), save(), etc.
+- [API Reference](./api-reference.md) -- Quick reference for all method signatures

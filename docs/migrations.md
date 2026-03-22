@@ -1,15 +1,40 @@
 # Migrations
 
-While `synchronize: true` is convenient during development, it is dangerous in production. Automatically changing tables with existing data based solely on entity definitions can result in data loss.
+## Why Migrations Exist
 
-**Migrations** are a way to write schema changes as code and version-control them. You can track "when and what changed," and roll back if something goes wrong.
+During development, you might use `synchronize: true` to let the ORM automatically create and alter tables based on your entity definitions. This is convenient. It is also dangerous.
+
+Here is why. Imagine you have a `users` table with 50,000 rows. You rename a column from `phone` to `mobile` in your entity class. With `synchronize: true`, the ORM sees that `phone` no longer exists and `mobile` is new. It does the simplest thing: DROP the `phone` column and ADD a `mobile` column. Every phone number in your database is gone.
+
+**Migrations** solve this problem by letting you write schema changes as explicit, versioned code. Instead of the ORM guessing what changed, you tell it exactly what to do:
+
+```sql
+-- What synchronize: true would do (DANGEROUS):
+ALTER TABLE "users" DROP COLUMN "phone";
+ALTER TABLE "users" ADD COLUMN "mobile" VARCHAR(20);
+-- All phone data is lost!
+
+-- What a migration does (SAFE):
+ALTER TABLE "users" RENAME COLUMN "phone" TO "mobile";
+-- Data preserved. Column renamed.
+```
+
+Migrations give you three things that `synchronize: true` cannot:
+
+1. **Safety** -- You control exactly what SQL runs against your database
+2. **History** -- Every schema change is version-controlled, just like your code
+3. **Rollback** -- If something goes wrong, you can undo the change
+
+---
 
 ## Creating a Migration File
 
-A migration extends the `Migration` class and implements `up()` and `down()` methods.
+A migration is a class with two methods:
 
-- **`up()`** — Apply the change (e.g., create table, add column)
-- **`down()`** — Revert the change (e.g., drop table, drop column)
+- **`up()`** -- Apply the change (move forward)
+- **`down()`** -- Undo the change (move backward)
+
+Think of it like an elevator: `up()` takes you to the next floor, `down()` brings you back.
 
 ```typescript
 // migrations/001_CreateUsersTable.ts
@@ -33,16 +58,20 @@ export class CreateUsersTable extends Migration {
 }
 ```
 
-`MigrationContext` provides two things.
+The `MigrationContext` object gives you two things:
 
 | Property | Description |
 |----------|-------------|
-| `context.query(sql)` | Executes arbitrary SQL |
-| `context.driver` | Access to the DB driver (DDL helpers, etc.) |
+| `context.query(sql)` | Execute any SQL statement |
+| `context.driver` | Access to the database driver (for DDL helpers, identifier escaping, etc.) |
 
-## Creating More Migrations
+---
+
+## More Migration Examples
 
 ### Adding a Column
+
+You shipped the users table last week. Now the product team wants a phone number field. You do not modify the original migration -- you create a new one.
 
 ```typescript
 // migrations/002_AddPhoneToUsers.ts
@@ -61,7 +90,21 @@ export class AddPhoneToUsers extends Migration {
 }
 ```
 
+The generated SQL on `up()`:
+
+```sql
+ALTER TABLE "users" ADD COLUMN "phone" VARCHAR(20) NULL;
+```
+
+The generated SQL on `down()` (rollback):
+
+```sql
+ALTER TABLE "users" DROP COLUMN "phone";
+```
+
 ### Adding an Index
+
+Queries filtering by email are slow. You add an index:
 
 ```typescript
 // migrations/003_AddEmailIndex.ts
@@ -80,7 +123,15 @@ export class AddEmailIndex extends Migration {
 }
 ```
 
+The `up()` SQL:
+
+```sql
+CREATE INDEX "idx_users_email" ON "users" ("email");
+```
+
 ### Seeding Initial Data
+
+Migrations are not limited to schema changes. You can also insert seed data:
 
 ```typescript
 // migrations/004_SeedRoles.ts
@@ -102,13 +153,62 @@ export class SeedRoles extends Migration {
 }
 ```
 
+---
+
+## How Migration Tracking Works
+
+When you run migrations for the first time, Stingerloom automatically creates a special table called `__migrations`. This table is the ORM's memory -- it records which migrations have already been applied.
+
+For PostgreSQL / SQLite, the table looks like this:
+
+```sql
+CREATE TABLE IF NOT EXISTS "__migrations" (
+  "id" SERIAL PRIMARY KEY,
+  "name" VARCHAR(255) NOT NULL UNIQUE,
+  "executed_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+For MySQL:
+
+```sql
+CREATE TABLE IF NOT EXISTS `__migrations` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `name` VARCHAR(255) NOT NULL UNIQUE,
+  `executed_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+Every time a migration runs successfully, a row is inserted:
+
+```sql
+INSERT INTO "__migrations" ("name") VALUES ('CreateUsersTable');
+```
+
+When you run migrations again, the runner queries this table first:
+
+```sql
+SELECT "name" FROM "__migrations" ORDER BY "id" ASC;
+-- Returns: ['CreateUsersTable', 'AddPhoneToUsers']
+```
+
+It then compares this list against your registered migrations and only runs the ones that are not in the table yet. This is how migrations are **idempotent** -- running `migrate:run` twice does not apply the same migration twice.
+
+When you rollback, the corresponding row is deleted:
+
+```sql
+DELETE FROM "__migrations" WHERE "name" = 'AddPhoneToUsers';
+```
+
+---
+
 ## Running Migrations
 
-There are two ways to run migrations: the built-in **CLI executable** (simplest) and the **programmatic MigrationCli** (for custom setups).
+There are two ways to run migrations: the built-in **CLI** (simplest) and the **programmatic API** (for custom setups).
 
 ### Using the Built-in CLI (Recommended)
 
-Stingerloom ships with a CLI executable that reads your config file and runs migrations directly from the terminal. No boilerplate code needed.
+Stingerloom ships with a CLI executable that reads your config file and runs migrations directly from the terminal.
 
 ```bash
 # Run all pending migrations
@@ -120,7 +220,7 @@ npx stingerloom migrate:rollback
 # Show executed and pending migrations
 npx stingerloom migrate:status
 
-# Auto-generate a migration from schema diff
+# Auto-generate a migration from schema diff (see below)
 npx stingerloom migrate:generate
 ```
 
@@ -171,11 +271,27 @@ npx stingerloom migrate:generate --output ./src/migrations --name AddEmailIndex
 | `--name <suffix>` | Migration name suffix for generated file |
 | `--help` | Show help message |
 
-> **Hint** The CLI supports TypeScript config files natively via `ts-node` or `tsx`. If neither is installed, use `.js` config files.
+> The CLI supports TypeScript config files natively via `ts-node` or `tsx`. If neither is installed, use `.js` config files.
+
+### Concurrent Safety with Advisory Locks
+
+When multiple servers start at the same time (common in Kubernetes deployments), they might try to run migrations simultaneously. This could cause duplicate table creation errors or worse.
+
+Stingerloom prevents this with **advisory locks**. Before running any migration, the runner acquires a database-level lock:
+
+```
+Server A: acquireAdvisoryLock("stingerloom_migration_lock") -> acquired!
+Server B: acquireAdvisoryLock("stingerloom_migration_lock") -> waiting...
+Server A: runs migrations, releases lock
+Server B: acquireAdvisoryLock("stingerloom_migration_lock") -> acquired!
+Server B: checks __migrations table, finds nothing pending, exits
+```
+
+If the lock cannot be acquired within the timeout (default: 10 seconds), the runner throws an `AdvisoryLockError`.
 
 ### Using MigrationCli (Programmatic)
 
-For more control, create a custom migration script with `MigrationCli`. This is useful when you need custom logic before or after migrations, or when your config comes from environment variables.
+For more control, create a custom migration script. This is useful when your config comes from environment variables or you need custom logic before/after migrations.
 
 ```typescript
 // src/migrate.ts
@@ -215,7 +331,7 @@ async function main() {
 main().catch(console.error);
 ```
 
-Register scripts in package.json for convenience.
+Register scripts in package.json for convenience:
 
 ```json
 {
@@ -228,25 +344,11 @@ Register scripts in package.json for convenience.
 }
 ```
 
-```bash
-# Apply all pending migrations
-pnpm migrate:run
-
-# Roll back the last migration
-pnpm migrate:rollback
-
-# Check current status
-pnpm migrate:status
-
-# Auto-generate a migration from entity/schema diff (see below)
-pnpm migrate:generate
-```
-
-Stingerloom automatically creates a `__migrations` table to track which migrations have been executed.
+---
 
 ## Checking Migration Results
 
-You can verify the success/failure status of each migration.
+Each migration returns a result object that tells you whether it succeeded or failed:
 
 ```typescript
 const results = await cli.migrateRun();
@@ -260,9 +362,13 @@ for (const result of results) {
 }
 ```
 
+If a migration fails, the runner stops immediately -- it does not attempt to run subsequent migrations, because they likely depend on the one that failed.
+
+---
+
 ## File Naming Convention
 
-Migrations are executed in the order they are registered in the array. Add sequence numbers to filenames to clearly express the order.
+Migrations are executed in the order they are registered in the array. Use sequence numbers in filenames to make the order obvious:
 
 ```
 migrations/
@@ -273,65 +379,111 @@ migrations/
 └── 005_SeedRoles.ts
 ```
 
-## Schema Diff — Automatic Migration Generation
+---
 
-Instead of writing migration files manually, you can automatically generate them by comparing entity definitions with the actual DB schema.
+## Schema Diff -- Automatic Migration Generation
 
-### Using the CLI — migrate:generate
+Writing migration files by hand is fine for simple changes, but tedious for complex ones. Schema Diff automates this by comparing your entity definitions against the actual database schema and generating the necessary migration code.
 
-The simplest way to generate a migration is through the `migrate:generate` CLI command. It compares the current entity definitions against the live database schema and produces a migration file for any differences.
+### How Schema Diff Works, Step by Step
+
+Here is what happens inside `SchemaDiff.diff()`:
+
+**Step 1: Read your entity definitions.** The diff engine uses `reflect-metadata` to extract every `@Entity` class and its `@Column` definitions -- table names, column names, types, lengths, and nullability.
+
+**Step 2: Query the real database.** It runs an `information_schema` query to discover what tables and columns actually exist:
+
+```sql
+-- PostgreSQL
+SELECT column_name, data_type, is_nullable, character_maximum_length
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'users';
+
+-- MySQL
+SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users';
+```
+
+**Step 3: Compare.** For each entity, it checks:
+- Does the table exist in the database? If not, it goes into `addTables`.
+- For each column in the entity, does it exist in the database? If not, it goes into `addColumns`.
+- For each column in the database, does it exist in the entity? If not, it goes into `dropColumns`.
+- If both exist, do the types and lengths match? If not, it goes into `alterColumns`.
+
+**Step 4: Detect renames.** Before finalizing, the engine looks for possible column renames (explained below).
+
+**Step 5: Generate migration code.** The `SchemaDiffMigrationGenerator` takes the diff result and produces a migration class with the appropriate `up()` and `down()` methods.
+
+### Using the CLI
+
+The simplest way to generate a migration:
 
 ```bash
-pnpm migrate:generate
+npx stingerloom migrate:generate
 ```
 
 This will:
-1. Connect to the database using the configured options.
-2. Run `SchemaDiff.compare()` against all registered entities.
-3. If differences are found, generate a timestamped migration class with the appropriate `up()` and `down()` methods.
-4. Print the generated migration to the console (or write it to the migrations directory if configured).
+1. Connect to the database using your config.
+2. Run `SchemaDiff.diff()` against all registered entities.
+3. If differences are found, generate a timestamped migration file.
+4. If the schema is already in sync, print "No schema changes" and exit.
 
-If the schema is already in sync, it prints "No schema changes" and exits.
-
-### Step 1: Compare Differences (Programmatic API)
-
-```typescript
-import { SchemaDiff } from "@stingerloom/orm";
-
-const diff = await SchemaDiff.compare(em, [User, Post, Comment]);
-
-console.log(diff.addedTables);    // ["comment"] — Newly added tables
-console.log(diff.droppedTables);  // [] — Dropped tables
-console.log(diff.modifiedTables); // [{ tableName: "user", addedColumns: [...] }]
-```
-
-### Step 2: Generate and Execute Migration
+### Using the Programmatic API
 
 ```typescript
 import { SchemaDiff, SchemaDiffMigrationGenerator } from "@stingerloom/orm";
 
-// Compare differences
-const diff = await SchemaDiff.compare(em, [User, Post]);
+// Step 1: Compare entity definitions with the live database
+const schemaDiff = new SchemaDiff();
+const diff = await schemaDiff.diff(
+  [User, Post, Comment],   // your entity classes
+  queryRunner,              // something with a .query() method
+  "postgres",               // dialect: "postgres" | "mysql" | "sqlite"
+);
 
-// Exit if no changes
-if (diff.addedTables.length === 0 &&
-    diff.droppedTables.length === 0 &&
-    diff.modifiedTables.length === 0) {
+console.log(diff.addTables);      // ["comment"]
+console.log(diff.dropTables);     // []
+console.log(diff.addColumns);     // [{ tableName: "users", columnName: "phone", ... }]
+console.log(diff.renamedColumns); // [{ tableName: "users", oldColumnName: "phone", newColumnName: "mobile", ... }]
+
+// Step 2: Generate migration code from the diff
+if (diff.addTables.length === 0 &&
+    diff.dropTables.length === 0 &&
+    diff.addColumns.length === 0 &&
+    diff.dropColumns.length === 0 &&
+    diff.alterColumns.length === 0 &&
+    (diff.renamedColumns?.length ?? 0) === 0) {
   console.log("No schema changes");
   return;
 }
 
-// Auto-generate migrations
 const generator = new SchemaDiffMigrationGenerator();
 const migrations = generator.generate(diff);
-
 console.log(`${migrations.length} migrations generated`);
 ```
 
-For example, if you added a `phone` column to the User entity, the following migration is automatically generated.
+### Example: Adding a Column
+
+You add a `phone` column to the User entity:
 
 ```typescript
-// Auto-generated migration
+@Entity()
+class User {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "varchar", length: 100 })
+  name!: string;
+
+  @Column({ type: "varchar", length: 20 })  // NEW
+  phone!: string;
+}
+```
+
+Running `migrate:generate` detects that `phone` exists in the entity but not in the database, and produces:
+
+```typescript
 class SchemaDiff_1708000000000 extends Migration {
   async up(context: MigrationContext) {
     await context.query(
@@ -348,9 +500,15 @@ class SchemaDiff_1708000000000 extends Migration {
 
 ### Column Rename Detection
 
-Schema Diff uses heuristic matching to detect column renames. When a column is dropped from a table and a new column with a compatible type is added in the same table, the diff engine treats this as a **rename** rather than a drop + add.
+This is one of the cleverest parts of Schema Diff. When you rename a column, the naive approach sees a "drop" and an "add" -- because the old name disappeared and a new name appeared. But the diff engine uses a **heuristic** to detect renames and avoid data loss.
 
-For example, if you rename `phone` to `mobile` in the User entity:
+Here is how the heuristic works:
+
+1. For each table, gather all columns that would be **dropped** (exist in DB but not in entity) and all columns that would be **added** (exist in entity but not in DB).
+2. For each dropped column, check if there is an added column with a **compatible type** in the same table.
+3. If a 1:1 match is found (one dropped column matches one added column by type), treat it as a **rename** instead of a drop + add.
+
+For example, if you rename `phone` to `mobile`:
 
 ```typescript
 // Before
@@ -362,10 +520,14 @@ phone!: string;
 mobile!: string;
 ```
 
-Running `migrate:generate` produces:
+The diff engine sees:
+- Dropped: `phone` (type: VARCHAR)
+- Added: `mobile` (type: VARCHAR)
+- Same table, compatible types, 1:1 match -- this is a rename.
+
+The generated migration uses `RENAME COLUMN` instead of `DROP` + `ADD`:
 
 ```typescript
-// Auto-generated migration
 class SchemaDiff_1708000000000 extends Migration {
   async up(context: MigrationContext) {
     await context.query(
@@ -380,9 +542,11 @@ class SchemaDiff_1708000000000 extends Migration {
 }
 ```
 
-The rename detection works by comparing the data types of added and dropped columns within the same table. If a dropped column and an added column share compatible types, they are matched as a rename. This avoids data loss that would occur with a naive drop-then-add approach.
+The rename detection works because compatible types narrow down the candidates. If you renamed `phone` (VARCHAR) and simultaneously added `age` (INT), the engine would not confuse them -- VARCHAR and INT are not compatible types.
 
-> **Hint** Schema Diff detects additions, deletions, and renames of tables and columns. Column type changes are not supported, so write those as manual migrations.
+> Schema Diff detects additions, deletions, and renames of tables and columns. Column type changes (e.g., changing VARCHAR to TEXT) are detected as `alterColumns` in the diff result, but write those as manual migrations for safety.
+
+---
 
 ## MigrationRunner API
 
@@ -398,9 +562,10 @@ The rename detection works by comparing the data types of added and dropped colu
 | `getPendingMigrations()` | Return the list of pending migrations |
 | `getExecutedMigrations()` | Return the list of executed migrations |
 
+---
+
 ## Next Steps
 
-- [Migration CLI](./cli.md) — CLI commands, programmatic API, schema diff auto-generation
-- [Configuration](./configuration.md) — Pooling, timeouts, Read Replica settings
-- [Multi-Tenancy](./multi-tenancy.md) — Automatic schema provisioning per tenant
-- [Production Guide](./production-guide.md) — Zero-downtime migration strategies
+- [Configuration](./configuration.md) -- Pooling, timeouts, Read Replica settings
+- [Multi-Tenancy](./multi-tenancy.md) -- Automatic schema provisioning per tenant
+- [Events & Subscribers](./events.md) -- Lifecycle hooks and entity event system

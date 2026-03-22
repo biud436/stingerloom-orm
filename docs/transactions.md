@@ -1,12 +1,41 @@
 # Transactions
 
-When creating an order, you need to save the order information, order items, and payment information all together. If any one of them fails, the rest should also be canceled. This is a **transaction** — grouping multiple operations into a single unit so that they either all succeed or all fail.
+## Why Transactions Exist
 
-The easiest way to use transactions in Stingerloom ORM is with the `@Transactional()` decorator.
+Imagine you are transferring $500 from Account A to Account B. This requires two operations:
 
-## @Transactional()
+1. Subtract $500 from Account A
+2. Add $500 to Account B
 
-Adding `@Transactional()` above a method makes the entire method execute as a single transaction.
+Now imagine the server crashes after step 1 but before step 2. Account A lost $500, but Account B never received it. The money vanished. This is not a hypothetical -- it is the most common category of data corruption in applications that skip transactions.
+
+A **transaction** is a promise from the database: either ALL operations in the group succeed together, or NONE of them take effect. There is no in-between state. The database literature calls this property **atomicity** -- the operations are indivisible, like an atom.
+
+Here is what a transaction looks like at the SQL level:
+
+```sql
+BEGIN;                                                  -- 1. Start the transaction
+UPDATE "accounts" SET "balance" = "balance" - 500 WHERE "id" = 1;  -- 2. Deduct from A
+UPDATE "accounts" SET "balance" = "balance" + 500 WHERE "id" = 2;  -- 3. Add to B
+COMMIT;                                                 -- 4. Make both changes permanent
+```
+
+If anything goes wrong between `BEGIN` and `COMMIT`, the database executes `ROLLBACK` instead -- which erases every change made since `BEGIN`, as if none of them ever happened:
+
+```sql
+BEGIN;
+UPDATE "accounts" SET "balance" = "balance" - 500 WHERE "id" = 1;  -- Deducted...
+UPDATE "accounts" SET "balance" = "balance" + 500 WHERE "id" = 2;  -- ERROR!
+ROLLBACK;                                               -- Undo everything. Both accounts unchanged.
+```
+
+Stingerloom ORM wraps every write operation in a transaction automatically. The sections below show you how to control that behavior.
+
+---
+
+## @Transactional() -- The Decorator Approach
+
+Adding `@Transactional()` above a method tells Stingerloom: "Wrap everything inside this method in a single transaction." You do not write BEGIN or COMMIT yourself -- the decorator handles it.
 
 ```typescript
 import { Transactional } from "@stingerloom/orm";
@@ -34,17 +63,37 @@ class OrderService {
     });
 
     return order;
-    // If all succeed -> COMMIT
-    // If any fails -> ROLLBACK (1, 2, 3 all canceled)
   }
 }
 ```
 
-That's all there is to it. If an error occurs, it automatically ROLLBACKs, and on normal completion, it automatically COMMITs.
+Behind the scenes, the decorator generates this SQL timeline:
 
-## em.transaction() — Callback API
+```sql
+-- @Transactional() starts here
+BEGIN;
 
-For cases where you want a quick, self-contained transaction without a decorator, use the `em.transaction()` callback API. The callback receives a transactional EntityManager; if the callback returns successfully, the transaction is committed. If it throws, the transaction is automatically rolled back.
+-- em.save(Order, {...})
+INSERT INTO "orders" ("user_id", "status") VALUES (7, 'pending') RETURNING "id";
+
+-- em.insertMany(OrderItem, [...])
+INSERT INTO "order_items" ("order_id", "product_id", "quantity") VALUES (1, 42, 2), (1, 88, 1);
+
+-- em.save(Payment, {...})
+INSERT INTO "payments" ("order_id", "amount") VALUES (1, 15000);
+
+COMMIT;
+-- If any INSERT above threw an error, ROLLBACK would run instead of COMMIT.
+-- All three inserts would be erased. The database returns to its state before BEGIN.
+```
+
+That is all there is to it. If the method returns normally, the transaction commits. If the method throws an error, the transaction rolls back automatically.
+
+---
+
+## em.transaction() -- The Callback Approach
+
+For cases where you want a quick, self-contained transaction without decorating a class method, use the callback API. The callback receives a transactional EntityManager. If the callback succeeds, the transaction commits. If it throws, the transaction rolls back.
 
 ```typescript
 import { EntityManager } from "@stingerloom/orm";
@@ -67,19 +116,184 @@ const result = await em.transaction(async (txEm) => {
   });
 
   return order;
-  // COMMIT on success, ROLLBACK on error
 });
 ```
 
-This approach is ideal for service methods, scripts, and anywhere you need a one-off transaction without creating a class method with `@Transactional()`.
+The generated SQL is identical to the decorator example above. The difference is purely a matter of code style:
 
-> **Hint** `@Transactional()` and `em.transaction()` are interchangeable. Use `@Transactional()` when you want to annotate a class method, and `em.transaction()` for inline/functional usage.
+- Use `@Transactional()` when you want to annotate a class method.
+- Use `em.transaction()` for inline/functional usage, scripts, or one-off operations.
+
+They are interchangeable.
+
+---
+
+## Setting Isolation Levels
+
+### Why Isolation Levels Exist
+
+When multiple users read and write the same data at the same time, strange things can happen. Isolation levels control how much "strangeness" the database allows. Think of it as a dial: turn it up for more safety, turn it down for more speed.
+
+The four standard isolation levels protect against increasingly subtle problems. Here is each one, explained with concrete scenarios.
+
+### READ UNCOMMITTED -- The Wild West
+
+**What it allows:** One transaction can read data that another transaction has written but not yet committed (a "dirty read").
+
+**Scenario -- The Dirty Read:**
+```
+Time   Transaction A                        Transaction B
+----   ---------------------------          ---------------------------
+  1    BEGIN;
+  2    UPDATE "accounts" SET "balance" = 0
+       WHERE "id" = 1;                      -- (balance was 1000)
+  3                                          BEGIN;
+  4                                          SELECT "balance" FROM "accounts"
+                                             WHERE "id" = 1;
+                                             -- Reads 0 (uncommitted!)
+  5    ROLLBACK;                             -- A decided to undo the change
+  6                                          -- B already acted on the value 0,
+                                             -- but the real balance is still 1000.
+```
+
+Transaction B saw data that never actually existed. In practice, you almost never use this level.
+
+### READ COMMITTED -- The Default
+
+**What it prevents:** Dirty reads. You only see data that has been committed.
+
+**What it allows:** Non-repeatable reads -- if you read the same row twice within one transaction, you might get different values because another transaction committed a change between your two reads.
+
+**Scenario -- The Non-Repeatable Read:**
+```
+Time   Transaction A                        Transaction B
+----   ---------------------------          ---------------------------
+  1    BEGIN;
+  2    SELECT "balance" FROM "accounts"
+       WHERE "id" = 1;
+       -- Reads 1000
+  3                                          BEGIN;
+  4                                          UPDATE "accounts"
+                                             SET "balance" = 500
+                                             WHERE "id" = 1;
+  5                                          COMMIT;
+  6    SELECT "balance" FROM "accounts"
+       WHERE "id" = 1;
+       -- Reads 500 (different!)
+  7    COMMIT;
+```
+
+Transaction A read the same row twice and got two different answers. This is fine for most applications, which is why READ COMMITTED is the default.
+
+### REPEATABLE READ -- Consistent Snapshots
+
+**What it prevents:** Dirty reads AND non-repeatable reads. Once you read a row, it stays the same for the rest of your transaction.
+
+**What it allows:** Phantom reads -- new rows that match your query criteria can appear between reads.
+
+**Scenario -- The Phantom Read:**
+```
+Time   Transaction A                        Transaction B
+----   ---------------------------          ---------------------------
+  1    BEGIN;  (REPEATABLE READ)
+  2    SELECT COUNT(*) FROM "orders"
+       WHERE "status" = 'pending';
+       -- Returns 5
+  3                                          BEGIN;
+  4                                          INSERT INTO "orders"
+                                             ("status") VALUES ('pending');
+  5                                          COMMIT;
+  6    SELECT COUNT(*) FROM "orders"
+       WHERE "status" = 'pending';
+       -- Returns 6! A new "phantom" row appeared.
+  7    COMMIT;
+```
+
+Use this level when you need consistent reads within a single transaction, such as bank transfers or financial reports.
+
+### SERIALIZABLE -- Maximum Safety
+
+**What it prevents:** Everything above, including phantom reads. The database behaves as if transactions ran one at a time, in sequence.
+
+**Trade-off:** The database may reject a transaction with a serialization error if it detects a conflict, and you must retry it.
+
+Use this level when absolute correctness matters more than throughput, such as inventory deduction or seat booking.
+
+### Summary Table
+
+| Isolation Level | Dirty Read | Non-Repeatable Read | Phantom Read | Performance |
+|----------------|-----------|-------------------|-------------|-------------|
+| `READ UNCOMMITTED` | Possible | Possible | Possible | Fastest |
+| `READ COMMITTED` | Prevented | Possible | Possible | Good (default) |
+| `REPEATABLE READ` | Prevented | Prevented | Possible | Slower |
+| `SERIALIZABLE` | Prevented | Prevented | Prevented | Slowest |
+
+### Using Isolation Levels in Stingerloom
+
+Pass the level as a string argument to `@Transactional()`:
+
+```typescript
+@Transactional("REPEATABLE READ")
+async transfer(fromId: number, toId: number, amount: number) {
+  const from = await em.findOne(Account, { where: { id: fromId } });
+  const to = await em.findOne(Account, { where: { id: toId } });
+
+  if (!from || from.balance < amount) {
+    throw new Error("Insufficient balance");
+  }
+
+  await em.save(Account, { ...from, balance: from.balance - amount });
+  await em.save(Account, { ...to, balance: to.balance + amount });
+}
+```
+
+The generated SQL:
+
+```sql
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+BEGIN;
+
+SELECT * FROM "accounts" WHERE "id" = 1;    -- from
+SELECT * FROM "accounts" WHERE "id" = 2;    -- to
+
+UPDATE "accounts" SET "balance" = 500  WHERE "id" = 1;   -- deduct
+UPDATE "accounts" SET "balance" = 1500 WHERE "id" = 2;   -- credit
+
+COMMIT;
+```
+
+---
 
 ## Deadlock Retry
 
-A **deadlock** occurs when two transactions each hold a lock that the other needs. The database detects this and kills one of the transactions with an error. In high-concurrency environments, deadlocks are not bugs — they are a normal part of database operation.
+### Why Deadlocks Happen
 
-Instead of failing immediately, you can tell Stingerloom to automatically retry the transaction when a deadlock is detected.
+A **deadlock** is when two transactions each hold a lock that the other needs, so neither can proceed. The database detects this circular wait and kills one of them.
+
+Here is exactly how it happens:
+
+```
+Time   Transaction A                        Transaction B
+----   ---------------------------          ---------------------------
+  1    BEGIN;                                BEGIN;
+  2    UPDATE "products" SET "stock" = 9     UPDATE "orders" SET "status" = 'done'
+       WHERE "id" = 1;                      WHERE "id" = 99;
+       -- A now holds lock on products.1    -- B now holds lock on orders.99
+
+  3    UPDATE "orders" SET "status" = 'new'  UPDATE "products" SET "stock" = 8
+       WHERE "id" = 99;                     WHERE "id" = 1;
+       -- A waits for orders.99 lock...     -- B waits for products.1 lock...
+       -- (B holds it)                      -- (A holds it)
+
+       DEADLOCK! Neither can proceed.
+       Database kills one transaction with an error.
+```
+
+In high-concurrency environments, deadlocks are not bugs -- they are a normal part of database operation. The correct response is to retry.
+
+### Automatic Retry
+
+Instead of failing immediately on a deadlock, you can tell Stingerloom to retry the transaction automatically:
 
 ```typescript
 const order = await em.transaction(async (txEm) => {
@@ -99,9 +313,15 @@ const order = await em.transaction(async (txEm) => {
 });
 ```
 
-When `retryOnDeadlock` is enabled, the ORM catches deadlock errors and re-executes the entire callback from scratch. This means your callback must be **idempotent** — it should produce the same result regardless of how many times it runs.
+When a deadlock is detected, the ORM:
+1. Catches the deadlock error
+2. Waits for `retryDelayMs` milliseconds (the delay helps prevent the same two transactions from immediately colliding again)
+3. Re-executes the entire callback from scratch
+4. After `maxRetries` failed attempts, throws the last error normally
 
-The deadlock detection works across all three databases:
+Your callback must be **idempotent** -- it should produce the same result regardless of how many times it runs. This means reading fresh data at the start of each attempt, not relying on values captured outside the callback.
+
+### Deadlock Detection Across Databases
 
 | Database | Detection |
 |----------|-----------|
@@ -119,41 +339,17 @@ interface TransactionOptions {
 }
 ```
 
-The delay between retries helps prevent the same two transactions from immediately deadlocking again. After `maxRetries` attempts, the last error is thrown normally.
+> Deadlock retry is only available with `em.transaction()`. The `@Transactional()` decorator does not support it -- use `em.transaction()` for operations where deadlocks are likely (e.g., inventory deduction, counter increments).
 
-> **Hint** Deadlock retry is only available with the `em.transaction()` callback API. The `@Transactional()` decorator does not support it — use `em.transaction()` for operations where deadlocks are likely (e.g., inventory deduction, counter increments).
-
-## Setting Isolation Levels
-
-When multiple users read and write the same data simultaneously, you can specify how much isolation to enforce.
-
-```typescript
-@Transactional("REPEATABLE READ")
-async transfer(fromId: number, toId: number, amount: number) {
-  const from = await em.findOne(Account, { where: { id: fromId } });
-  const to = await em.findOne(Account, { where: { id: toId } });
-
-  if (!from || from.balance < amount) {
-    throw new Error("Insufficient balance");
-  }
-
-  await em.save(Account, { ...from, balance: from.balance - amount });
-  await em.save(Account, { ...to, balance: to.balance + amount });
-}
-```
-
-Higher isolation levels are safer but lower in performance. In most cases, the default (`READ COMMITTED`) is sufficient.
-
-| Isolation Level | Safety | Performance | When to Use |
-|----------------|--------|-------------|-------------|
-| `READ UNCOMMITTED` | Low | High | Rarely used |
-| `READ COMMITTED` | Moderate | Moderate | Default, most cases |
-| `REPEATABLE READ` | High | Low | When consistent reads are needed, like bank transfers |
-| `SERIALIZABLE` | Highest | Lowest | When conflicts must absolutely be prevented, like inventory deduction |
+---
 
 ## Nested Transactions
 
-When a `@Transactional` method calls another `@Transactional` method, it reuses the existing transaction instead of starting a new one.
+### Why Nesting Matters
+
+When a `@Transactional()` method calls another `@Transactional()` method, you do not want two separate transactions -- you want them to share one. If the outer method rolls back, the inner method's work should roll back too.
+
+This is the default behavior (called `REQUIRED` propagation). If a transaction already exists, the inner method joins it. If no transaction exists, a new one is created.
 
 ```typescript
 class UserService {
@@ -166,42 +362,86 @@ class UserService {
 
   @Transactional()
   async createProfile(userId: number, profileData: any) {
-    // When called from above -> reuses existing transaction
+    // When called from createUserWithProfile -> reuses existing transaction
     // When called independently -> starts a new transaction
     return em.save(Profile, { userId, ...profileData });
   }
 }
 ```
 
-## Manual Transaction Management
+The SQL timeline when `createUserWithProfile()` is called:
 
-Instead of decorators, you can use `TransactionSessionManager` directly. This is useful when you need fine-grained control over transaction boundaries.
+```sql
+BEGIN;                                                              -- outer @Transactional starts
+
+INSERT INTO "users" ("name", "email") VALUES ('John', 'j@x.com') RETURNING "id";
+
+-- createProfile() is called, but no new BEGIN -- it joins the existing transaction
+
+INSERT INTO "profiles" ("user_id", "bio") VALUES (1, 'Hello world');
+
+COMMIT;                                                             -- outer @Transactional commits both
+```
+
+There is only one `BEGIN` and one `COMMIT`. Both inserts live in the same transaction.
+
+### Propagation Strategies
+
+Stingerloom supports three propagation modes, matching what you find in frameworks like Spring or Jakarta EE:
+
+| Propagation | Behavior |
+|-------------|----------|
+| `REQUIRED` (default) | Join the existing transaction if one exists; otherwise create a new one |
+| `REQUIRES_NEW` | Always create a new, independent transaction (new database connection) |
+| `NESTED` | Create a savepoint within the existing transaction; rollback only the savepoint on failure |
 
 ```typescript
-import { TransactionSessionManager } from "@stingerloom/orm";
-import sql from "sql-template-tag";
+import { Transactional, TransactionPropagation } from "@stingerloom/orm";
 
-const session = new TransactionSessionManager();
+@Transactional({ propagation: TransactionPropagation.REQUIRES_NEW })
+async sendNotification(userId: number) {
+  // This runs in its own transaction, independent of the caller.
+  // If this fails, the caller's transaction is NOT affected.
+}
 
-try {
-  await session.connect();
-  await session.startTransaction("READ COMMITTED");
-
-  await session.query(sql`INSERT INTO "users" ("name") VALUES (${"John Doe"})`);
-  await session.query(sql`UPDATE "profiles" SET "is_complete" = ${true} WHERE "user_id" = ${1}`);
-
-  await session.commit();
-} catch (error) {
-  await session.rollback();
-  throw error;
-} finally {
-  await session.close();
+@Transactional({ propagation: TransactionPropagation.NESTED })
+async optionalStep() {
+  // This creates a savepoint. If it fails, only this step rolls back.
+  // The parent transaction continues.
 }
 ```
 
-## Savepoint — Partial Rollback
+---
 
-When you want to roll back to a specific point without rolling back the entire transaction, use Savepoints.
+## Savepoint -- Partial Rollback
+
+### Why Savepoints Exist
+
+Sometimes you want to attempt a risky operation inside a transaction, and if it fails, undo just that operation while keeping everything else. Without savepoints, a failure means rolling back the entire transaction. With savepoints, you can roll back to a specific checkpoint.
+
+Think of it like "save game" in a video game. You save before a boss fight. If you die, you reload from that save point -- you do not restart the entire game.
+
+### How It Works at the SQL Level
+
+```sql
+BEGIN;
+
+-- Task 1: Create user (this will be kept regardless)
+INSERT INTO "users" ("name") VALUES ('John Doe');
+
+SAVEPOINT sp1;                    -- Save the current state
+
+-- Task 2: Risky operation
+UPDATE "accounts" SET "balance" = -100 WHERE "id" = 1;
+-- Oops, constraint violation!
+
+ROLLBACK TO SAVEPOINT sp1;       -- Undo only Task 2. Task 1 is preserved.
+RELEASE SAVEPOINT sp1;           -- Clean up the savepoint
+
+COMMIT;                           -- Task 1 is committed. Task 2 never happened.
+```
+
+### Using Savepoints in Code
 
 ```typescript
 const session = new TransactionSessionManager();
@@ -214,17 +454,16 @@ try {
   await session.query(sql`INSERT INTO "users" ("name") VALUES (${"John Doe"})`);
 
   // Save the state up to this point
-  await session.query("SAVEPOINT sp1");
+  await session.savepoint("sp1");
 
   try {
     // Task 2: Risky operation
     await session.query(sql`UPDATE "accounts" SET "balance" = ${-100} WHERE "id" = ${1}`);
   } catch {
     // Roll back only task 2 (task 1 is preserved)
-    await session.query("ROLLBACK TO SAVEPOINT sp1");
+    await session.rollbackTo("sp1");
   }
 
-  await session.query("RELEASE SAVEPOINT sp1");
   await session.commit();
 } catch (error) {
   await session.rollback();
@@ -234,9 +473,51 @@ try {
 }
 ```
 
+---
+
+## Manual Transaction Management
+
+For full control over transaction boundaries, use `TransactionSessionManager` directly. This is useful when you need to interleave transaction logic with non-database operations, or when you want explicit control over the connection lifecycle.
+
+```typescript
+import { TransactionSessionManager } from "@stingerloom/orm";
+import sql from "sql-template-tag";
+
+const session = new TransactionSessionManager();
+
+try {
+  await session.connect();                              // 1. Get a database connection
+  await session.startTransaction("READ COMMITTED");     // 2. BEGIN
+
+  await session.query(sql`INSERT INTO "users" ("name") VALUES (${"John Doe"})`);
+  await session.query(sql`UPDATE "profiles" SET "is_complete" = ${true} WHERE "user_id" = ${1}`);
+
+  await session.commit();                               // 3. COMMIT
+} catch (error) {
+  await session.rollback();                             // 3. ROLLBACK (on error)
+  throw error;
+} finally {
+  await session.close();                                // 4. Release the connection
+}
+```
+
+The generated SQL:
+
+```sql
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+BEGIN;
+
+INSERT INTO "users" ("name") VALUES ('John Doe');
+UPDATE "profiles" SET "is_complete" = true WHERE "user_id" = 1;
+
+COMMIT;   -- or ROLLBACK if an error was caught
+```
+
+---
+
 ## Using with NestJS
 
-In NestJS services, use `@Transactional()` the same way.
+In NestJS services, `@Transactional()` works exactly the same way. Inject your repository and decorate the method:
 
 ```typescript
 // cats.service.ts
@@ -269,8 +550,28 @@ export class CatsService {
 }
 ```
 
+The `create()` method generates:
+
+```sql
+BEGIN;
+INSERT INTO "cats" ("name", "age", "breed") VALUES ('Milo', 3, 'Persian') RETURNING "id";
+COMMIT;
+```
+
+The `updateAge()` method generates:
+
+```sql
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+BEGIN;
+SELECT * FROM "cats" WHERE "id" = 1;
+UPDATE "cats" SET "age" = 4 WHERE "id" = 1;
+COMMIT;
+```
+
+---
+
 ## Next Steps
 
-- [Migrations](./migrations.md) — Safely change schema in production
-- [Configuration Guide](./configuration.md) — Pooling, timeouts, Read Replica settings
-- [EntityManager](./entity-manager.md) — Full CRUD API reference
+- [Migrations](./migrations.md) -- Safely change schema in production
+- [Configuration Guide](./configuration.md) -- Pooling, timeouts, Read Replica settings
+- [EntityManager](./entity-manager.md) -- Full CRUD API reference

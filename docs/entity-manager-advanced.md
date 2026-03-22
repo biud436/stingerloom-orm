@@ -1,4 +1,4 @@
-# EntityManager — Advanced
+# EntityManager -- Advanced
 
 This page covers the advanced features of EntityManager: event listeners, entity subscribers, multi-tenancy, plugins, query diagnostics, the repository pattern, and graceful shutdown.
 
@@ -8,7 +8,24 @@ For basic CRUD, see [CRUD Basics](./entity-manager.md). For querying, see [Query
 
 ## Event Listeners
 
-EntityManager emits events when data is created, updated, or deleted. Register listeners with `on()` and remove them with `off()`.
+### Why events?
+
+Every `save()`, `delete()`, or `softDelete()` call changes data in your database. Sometimes you need to react to those changes -- not inside the CRUD logic itself, but in a separate, decoupled piece of code. Common examples:
+
+- **Audit logging**: Record who changed what, and when.
+- **Cache invalidation**: Clear a Redis cache when the underlying data changes.
+- **Analytics**: Send a tracking event whenever a new user is created.
+- **Notifications**: Trigger a webhook or email after an order is placed.
+
+You could put this logic directly in your service code, but then every service that creates a user would need to remember to log, invalidate cache, and send analytics. Events let you write that logic once, in one place, and it fires automatically no matter where the data change originates.
+
+### When to use events vs. lifecycle hooks
+
+The distinction matters:
+
+- **Lifecycle hooks** (`@BeforeInsert`, `@AfterUpdate`, etc.) are defined on the **entity class itself**. They are tightly coupled to the entity and run as part of the save/delete pipeline. Use them for entity-internal concerns like "hash the password before insert" or "normalize the email to lowercase."
+
+- **Event listeners** are defined on the **EntityManager**. They are decoupled from the entity and can observe all entity types at once. Use them for cross-cutting concerns like "log every database write to an audit table."
 
 ### Available events
 
@@ -34,8 +51,8 @@ em.on("beforeUpdate", ({ entity, data }) => {
 ```
 
 The listener receives an object with:
-- `entity` — the entity class (constructor function)
-- `data` — the entity data being inserted/updated/deleted
+- `entity` -- the entity class (constructor function)
+- `data` -- the entity data being inserted/updated/deleted
 
 ### Removing listeners
 
@@ -57,7 +74,23 @@ Event listeners fire for **all entities**. If you need listeners scoped to a spe
 
 ## Entity Subscribers
 
-While event listeners are global (they fire for every entity), **subscribers** let you react to lifecycle events for a **specific entity class**.
+### Why subscribers when events already exist?
+
+Event listeners fire for every entity type. If you register an `afterInsert` listener, it fires when a User is created, when a Post is created, when an Order is created -- for everything. Your listener code must then check which entity triggered it.
+
+Subscribers solve this by binding to a **specific entity class**. A `UserSubscriber` only fires for `User` events, never for `Post` or `Order`. This is cleaner, safer, and easier to reason about.
+
+Think of it as the difference between a security camera that watches the entire building (events) versus one that watches only the vault (subscribers).
+
+### When to use subscribers vs. global events
+
+| Use case | Recommended approach |
+|----------|---------------------|
+| Log every database write to an audit table | Global event listener |
+| Invalidate all caches on any data change | Global event listener |
+| Send a welcome email when a User is created | Entity subscriber (UserSubscriber) |
+| Update a search index when a Post changes | Entity subscriber (PostSubscriber) |
+| Recalculate order total when OrderItem changes | Entity subscriber (OrderItemSubscriber) |
 
 ### Creating a subscriber
 
@@ -95,13 +128,21 @@ em.addSubscriber(subscriber);
 em.removeSubscriber(subscriber);
 ```
 
-Subscribers support the same lifecycle methods as event listeners: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`. Each is optional — implement only the ones you need.
+Subscribers support the same lifecycle methods as event listeners: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`. Each is optional -- implement only the ones you need.
 
 For a comprehensive guide on event patterns (audit logging, cache invalidation), see [Events & Subscribers](./events.md).
 
 ---
 
-## Multi-Tenancy — withTenant()
+## Multi-Tenancy -- withTenant()
+
+### Why multi-tenancy?
+
+Multi-tenancy means serving multiple customers (tenants) from the same application, with each tenant's data isolated from the others. Think of an apartment building: everyone shares the same building infrastructure, but each tenant has their own locked apartment.
+
+Without an ORM-level solution, you would need to manually prefix every query with the tenant schema, manage search paths, and ensure no query accidentally crosses tenant boundaries. `withTenant()` handles all of this automatically.
+
+### How it works
 
 `withTenant()` executes a callback in the context of a specific tenant. All EntityManager operations inside the callback are automatically scoped to that tenant's schema/data.
 
@@ -113,16 +154,45 @@ const result = await em.withTenant("tenant_acme", async (tenantEm) => {
 });
 ```
 
-Under the hood, `withTenant()` uses `MetadataContext.run()` with `AsyncLocalStorage` to isolate the tenant context. This means it's safe to use in concurrent request handlers — each request gets its own context.
+Under the hood, `withTenant()` uses `MetadataContext.run()` with `AsyncLocalStorage` to isolate the tenant context. This means it is safe to use in concurrent request handlers -- each HTTP request gets its own isolated context, even though they all run in the same Node.js process.
 
-### How tenant queries work
+### The SQL difference: two strategies
 
 The behavior depends on your `tenantStrategy` setting in `register()`:
+
+#### Strategy 1: search_path (default)
+
+With `search_path`, the ORM sets the PostgreSQL search path inside a transaction before running any queries:
+
+```sql
+-- 5 round-trips per tenant read:
+BEGIN
+SET LOCAL search_path = 'tenant_acme'
+SELECT "id", "name", "email" FROM "user" WHERE "isActive" = $1
+COMMIT
+-- (+ connection acquire/release)
+```
+
+`SET LOCAL` scopes the search path to the current transaction only. Once the transaction ends, the search path reverts. This is safe but requires a transaction wrapper even for simple reads.
 
 | Strategy | Behavior | Tradeoff |
 |----------|----------|----------|
 | `"search_path"` (default) | `SET LOCAL search_path = 'tenant_acme'` inside a transaction | Safe for all cases, but requires 5 round-trips per read |
+
+#### Strategy 2: schema_qualified
+
+With `schema_qualified`, the ORM prefixes table names directly in the SQL, eliminating the need for a transaction:
+
+```sql
+-- 1 round-trip:
+SELECT "id", "name", "email" FROM "tenant_acme"."user" WHERE "isActive" = $1
+```
+
+| Strategy | Behavior | Tradeoff |
+|----------|----------|----------|
 | `"schema_qualified"` | Uses `"tenant_acme"."users"` in the query | Single round-trip, but all queries must be schema-aware |
+
+To enable it:
 
 ```typescript
 await em.register({
@@ -132,13 +202,23 @@ await em.register({
 });
 ```
 
+The `schema_qualified` strategy is faster (1 round-trip vs 5), but `search_path` is the default because it works with every PostgreSQL feature without surprises (e.g., functions, triggers, and extensions all respect the search path).
+
 For the full multi-tenancy setup guide (tenant provisioning, schema migration), see [Multi-Tenancy](./multi-tenancy.md).
 
 ---
 
-## Plugin System — extend()
+## Plugin System -- extend()
 
-Plugins add new capabilities to EntityManager at runtime. Install a plugin with `extend()`:
+### Why plugins?
+
+As an ORM grows, every team wants different features: write buffering, audit trails, soft-delete overrides, custom caching. Putting all of these into the core would make EntityManager massive and force every user to pay the cost (in bundle size and complexity) for features they may never use.
+
+Plugins solve this by letting you opt into additional capabilities. The core stays lean. You add what you need.
+
+### Installing a plugin
+
+Install a plugin with `extend()`:
 
 ```typescript
 import { bufferPlugin } from "@stingerloom/orm";
@@ -146,7 +226,7 @@ import { bufferPlugin } from "@stingerloom/orm";
 const em = new EntityManager();
 await em.register({ /* ... */ });
 
-// Install plugin — new methods are mixed into `em`
+// Install plugin -- new methods are mixed into `em`
 em.extend(bufferPlugin());
 ```
 
@@ -174,13 +254,13 @@ const api = em.getPluginApi<BufferApi>("buffer");
 
 - Installing the same plugin twice is a **no-op** (safe to call multiple times).
 - Plugins can declare dependencies. If a dependency is not installed, `extend()` throws `OrmError` with code `PLUGIN_DEPENDENCY_MISSING`.
-- Plugin method names must not conflict with existing EntityManager members — conflicts throw `OrmError` with code `PLUGIN_CONFLICT`.
+- Plugin method names must not conflict with existing EntityManager members -- conflicts throw `OrmError` with code `PLUGIN_CONFLICT`.
 
 For the full plugin authoring guide and built-in plugins, see [Plugin System](./plugins.md).
 
 ---
 
-## Query Builder — createQueryBuilder()
+## Query Builder -- createQueryBuilder()
 
 EntityManager provides two flavors of query builder for complex queries that go beyond `find()`.
 
@@ -220,7 +300,7 @@ For the full guide (JOIN, UNION, CTE, window functions, subqueries, validation),
 
 ---
 
-## Repository Pattern — getRepository()
+## Repository Pattern -- getRepository()
 
 If you prefer to encapsulate CRUD per entity rather than passing the entity class to every method, use repositories.
 
@@ -281,7 +361,7 @@ For the full NestJS integration guide, see [NestJS Module Setup](./nestjs.md).
 
 ---
 
-## Driver Access — getDriver()
+## Driver Access -- getDriver()
 
 Access the underlying SQL driver for low-level operations:
 
@@ -301,9 +381,15 @@ The driver implements the `ISqlDriver` interface. Common use cases include schem
 
 ## Query Diagnostics
 
+### Why query diagnostics?
+
+When your application slows down, the cause is almost always in the database layer. But which queries are slow? Are you accidentally running the same query hundreds of times (the N+1 problem)? Without visibility into what SQL is being executed, you are debugging blind.
+
+Query diagnostics give you that visibility. You can log every query, detect N+1 patterns automatically, and get warnings when a query exceeds a time threshold.
+
 ### getQueryLog()
 
-Returns the query tracker's log — an array of recent queries with entity name, SQL text, and duration.
+Returns the query tracker's log -- an array of recent queries with entity name, SQL text, and duration.
 
 ```typescript
 const log = em.getQueryLog();
@@ -311,6 +397,11 @@ for (const entry of log) {
   console.log(`[${entry.entityName}] ${entry.sql} (${entry.durationMs}ms)`);
 }
 ```
+
+This is useful for:
+- **Debugging**: "What SQL did my last API call actually execute?"
+- **Performance monitoring**: "Which queries are taking the longest?"
+- **Test assertions**: "Did this service call execute the expected number of queries?"
 
 ::: info
 Query logging requires the `logging` option in `register()`. Without it, `getQueryLog()` returns an empty array.
@@ -342,9 +433,19 @@ For the full logging and diagnostics guide, see [Logging & Diagnostics](./loggin
 
 ---
 
-## Shutdown — propagateShutdown()
+## Shutdown -- propagateShutdown()
 
-Cleans up all EntityManager resources: event listeners, subscribers, plugins, query tracker, and optionally the connection pool.
+### Why explicit shutdown?
+
+Node.js processes can hold resources that outlive individual requests: connection pools, event listeners, subscriber references, plugin state, and query tracker buffers. If you just stop the process without cleaning up, you risk:
+
+- **Connection pool leaks**: The database sees abandoned connections that count against its `max_connections` limit.
+- **Unfinished transactions**: In-flight queries may leave locks held or transactions open.
+- **Memory leaks in long-running processes**: If the EntityManager is recreated without shutting down the old one (common in hot-reload development), listeners and subscribers accumulate.
+
+`propagateShutdown()` cleans up all of these resources in the correct order.
+
+### Basic usage
 
 ```typescript
 await em.propagateShutdown();
@@ -368,23 +469,27 @@ if (!allCompleted) {
 | `gracefulTimeoutMs` | `number` | `0` | Max time (ms) to wait for in-flight queries. `0` = don't wait. |
 | `closeConnections` | `boolean` | `false` | Whether to close the underlying connection pool. |
 
-**Return value**: `boolean` — `true` if all active queries completed within the timeout, `false` if the shutdown was forced.
+**Return value**: `boolean` -- `true` if all active queries completed within the timeout, `false` if the shutdown was forced.
 
 ### Shutdown sequence
 
-1. **Wait for active queries** (if `gracefulTimeoutMs > 0`)
-2. **Shutdown plugins** in reverse installation order (LIFO)
-3. **Clear** event listeners, subscribers, and dirty entity tracking
-4. **Reset** the query tracker
-5. **Shutdown** the replication router
-6. **Close connection pool** (if `closeConnections: true`)
+Here is what happens internally, in order:
 
-### NestJS integration
+1. **Wait for active queries** (if `gracefulTimeoutMs > 0`) -- The ORM checks if any queries are currently executing. If so, it waits up to the specified timeout for them to finish.
+2. **Shutdown plugins** in reverse installation order (LIFO) -- If you installed plugins A, then B, then C, they shut down in order C, B, A. This respects dependencies (a plugin that depends on another shuts down before its dependency).
+3. **Clear** event listeners, subscribers, and dirty entity tracking -- Removes all registered `on()` listeners and subscriber instances to prevent memory leaks.
+4. **Reset** the query tracker -- Clears accumulated query logs and statistics.
+5. **Shutdown** the replication router -- Stops health checks for read replicas.
+6. **Close connection pool** (if `closeConnections: true`) -- Terminates all database connections in the pool.
 
-In NestJS, call `propagateShutdown()` in the `OnModuleDestroy` lifecycle hook:
+### Real-world NestJS scenario
+
+In a NestJS application, the typical pattern is to call `propagateShutdown()` in the `OnModuleDestroy` lifecycle hook. This ensures that when NestJS shuts down (due to a SIGTERM signal from Kubernetes, a deployment, or a test teardown), the ORM releases all resources:
 
 ```typescript
-import { OnModuleDestroy } from "@nestjs/common";
+import { OnModuleDestroy, Injectable } from "@nestjs/common";
+import { InjectEntityManager } from "@stingerloom/orm/nestjs";
+import { EntityManager } from "@stingerloom/orm";
 
 @Injectable()
 export class AppService implements OnModuleDestroy {
@@ -393,9 +498,34 @@ export class AppService implements OnModuleDestroy {
   ) {}
 
   async onModuleDestroy() {
-    await em.propagateShutdown({ closeConnections: true });
+    // Wait up to 10 seconds for queries to finish, then close everything
+    const clean = await em.propagateShutdown({
+      gracefulTimeoutMs: 10_000,
+      closeConnections: true,
+    });
+
+    if (!clean) {
+      console.warn("ORM shutdown was forced -- some queries may not have completed");
+    }
   }
 }
+```
+
+In a Kubernetes environment, the timeline looks like this:
+
+```
+1. Kubernetes sends SIGTERM to the pod
+2. NestJS receives SIGTERM, starts shutting down modules
+3. onModuleDestroy() fires
+4. propagateShutdown() starts:
+   - Waits up to 10s for 3 active queries to finish (they complete in 2s)
+   - Shuts down buffer plugin
+   - Clears 5 event listeners and 2 subscribers
+   - Resets the query tracker
+   - Closes the connection pool (releases 10 connections)
+5. Returns true (all queries completed)
+6. NestJS finishes shutdown
+7. Process exits cleanly
 ```
 
 ---
@@ -425,11 +555,11 @@ Complete list of options accepted by `find()`, `findOne()`, `findAndCount()`, `f
 
 ## Next Steps
 
-- **[CRUD Basics](./entity-manager.md)** — save, find, delete, soft delete
-- **[Querying & Pagination](./entity-manager-querying.md)** — SELECT, pagination, streaming, aggregates
-- **[Writes & Transactions](./entity-manager-writes.md)** — Batch operations, upsert, transactions, raw SQL
-- **[Query Builder](./query-builder.md)** — Type-safe fluent queries
-- **[Events & Subscribers](./events.md)** — Entity lifecycle events and audit patterns
-- **[Plugin System](./plugins.md)** — Writing and using plugins
-- **[Multi-Tenancy](./multi-tenancy.md)** — Tenant provisioning and schema isolation
-- **[Configuration](./configuration.md)** — Pooling, timeouts, replication, logging
+- **[CRUD Basics](./entity-manager.md)** -- save, find, delete, soft delete
+- **[Querying & Pagination](./entity-manager-querying.md)** -- SELECT, pagination, streaming, aggregates
+- **[Writes & Transactions](./entity-manager-writes.md)** -- Batch operations, upsert, transactions, raw SQL
+- **[Query Builder](./query-builder.md)** -- Type-safe fluent queries
+- **[Events & Subscribers](./events.md)** -- Entity lifecycle events and audit patterns
+- **[Plugin System](./plugins.md)** -- Writing and using plugins
+- **[Multi-Tenancy](./multi-tenancy.md)** -- Tenant provisioning and schema isolation
+- **[Configuration](./configuration.md)** -- Pooling, timeouts, replication, logging

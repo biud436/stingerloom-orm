@@ -1,20 +1,30 @@
 # NestJS Integration
 
-Stingerloom provides first-class NestJS support through a dedicated module with dependency injection, lifecycle management, and multi-database connections.
+## Why NestJS Integration Exists
+
+NestJS uses dependency injection (DI) to wire services together. When you write `constructor(private readonly userService: UserService)`, NestJS looks up `UserService` in its DI container and provides an instance. This works beautifully for your own classes, but an ORM's EntityManager and repositories are not NestJS services by default. The framework does not know how to create them, when to initialize the database connection, or when to shut it down.
+
+The Stingerloom NestJS integration module solves three problems:
+
+1. **Lifecycle management** -- It creates the EntityManager, establishes the database connection when NestJS starts, and cleanly closes it when NestJS shuts down.
+2. **Repository injection** -- It registers each entity's repository as a NestJS provider so you can inject it with a decorator, just like any other service.
+3. **Multi-database support** -- When your application connects to multiple databases, it ensures each repository is wired to the correct EntityManager using scoped DI tokens.
 
 ## Installation
 
-The NestJS integration is available as a subpath export — no extra package needed.
+The NestJS integration is available as a subpath export -- no extra package needed.
 
 ```typescript
 import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
 ```
 
+---
+
 ## Quick Start
 
-### 1. Register the Module
+### Step 1: Register the Module with forRoot()
 
-Use `forRoot()` in your root `AppModule` to establish the database connection:
+Call `forRoot()` in your root `AppModule`. This is where the database connection is established.
 
 ```typescript
 // app.module.ts
@@ -41,9 +51,18 @@ import { Cat } from "./entities/cat.entity";
 export class AppModule {}
 ```
 
-### 2. Register Entities per Feature Module
+#### What forRoot() does under the hood
 
-Use `forFeature()` to make entity repositories available for injection in feature modules:
+When NestJS processes `StinglerloomOrmModule.forRoot(options)`, four things happen:
+
+1. **Creates an EntityManager** -- A new `EntityManager` instance is created.
+2. **Calls `em.register(options)`** -- This connects to the database, scans entities, and optionally synchronizes the schema. This happens inside a NestJS factory provider, so it runs during module initialization.
+3. **Registers the EntityManager as a global provider** -- The `EntityManager` instance is placed into NestJS's DI container under a specific token. Because the module is marked `global: true`, this provider is available to every module in your application without re-importing.
+4. **Creates a StinglerloomOrmService** -- This service wraps the EntityManager and implements NestJS lifecycle hooks: `OnModuleInit` for setup and `OnApplicationShutdown` for calling `propagateShutdown()` to close connections and clean up resources.
+
+The key insight: `forRoot()` should be called **once** per database connection, in your root module.
+
+### Step 2: Register Entities per Feature Module with forFeature()
 
 ```typescript
 // cats.module.ts
@@ -61,7 +80,17 @@ import { CatsController } from "./cats.controller";
 export class CatsModule {}
 ```
 
-### 3. Inject into Services
+#### What forFeature() does under the hood
+
+When NestJS processes `StinglerloomOrmModule.forFeature([Cat])`, it creates a provider for each entity:
+
+1. **Generates a unique DI token** for `Cat` -- a Symbol like `Symbol("INJECT_REPOSITORIES_TOKEN_Cat")`. This token is cached in a WeakMap keyed by the entity class, so calling `forFeature([Cat])` in multiple modules always produces the same token.
+2. **Creates a factory provider** that receives the EntityManager (from `forRoot()`) and calls `em.getRepository(Cat)` to get a `BaseRepository<Cat>`.
+3. **Exports the provider** so it is available for injection in the module's services and controllers.
+
+The result: when NestJS encounters `@InjectRepository(Cat)` in a constructor, it knows exactly which token to look up and which `BaseRepository<Cat>` instance to inject.
+
+### Step 3: Inject into Services
 
 ```typescript
 // cats.service.ts
@@ -95,22 +124,32 @@ export class CatsService {
 }
 ```
 
+---
+
 ## Decorators
 
 ### @InjectRepository(Entity, connectionName?)
 
-Injects a `BaseRepository<T>` for the specified entity. The entity must be registered via `forFeature()`.
+Injects a `BaseRepository<T>` for the specified entity.
 
 ```typescript
 @InjectRepository(Cat)
 private readonly catRepo: BaseRepository<Cat>;
 ```
 
+#### Why you need this decorator
+
+In NestJS, constructor injection works by matching parameter types to DI tokens. But `BaseRepository<Cat>` and `BaseRepository<Dog>` have the same runtime type -- TypeScript generics are erased at runtime. NestJS has no way to distinguish them.
+
+`@InjectRepository(Cat)` solves this by attaching a unique DI token (a Symbol) to the constructor parameter. The token is derived from the entity class itself, so `@InjectRepository(Cat)` and `@InjectRepository(Dog)` produce different tokens, and NestJS injects the correct repository for each.
+
+Under the hood, `@InjectRepository(Cat)` is equivalent to `@Inject(Symbol("INJECT_REPOSITORIES_TOKEN_Cat"))`. The decorator exists so you do not have to manage tokens manually.
+
 `BaseRepository` provides: `find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `insertMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `stream`, `createQueryBuilder`, and more.
 
 ### @InjectEntityManager(connectionName?)
 
-Injects the `EntityManager` directly. Use this when you need operations beyond what the repository offers — raw queries, transactions, subscribers, or buffer operations.
+Injects the `EntityManager` directly. Use this when you need operations beyond what the repository offers -- raw queries, transactions, subscribers, or buffer operations.
 
 ```typescript
 import { InjectEntityManager } from "@stingerloom/orm/nestjs";
@@ -138,12 +177,14 @@ export class CatsService {
 }
 ```
 
+---
+
 ## Lifecycle Management
 
-The `StinglerloomOrmService` manages the EntityManager lifecycle automatically:
+The `StinglerloomOrmService` manages the EntityManager lifecycle automatically through NestJS hooks:
 
-- **OnModuleInit** — Initializes the EntityManager and establishes the database connection
-- **OnApplicationShutdown** — Calls `propagateShutdown()` to cleanly close connections, clear listeners, and release resources
+- **OnModuleInit** -- Registers the EntityManager in the TypeDI container (for compatibility with `@Service()` decorators) and logs initialization.
+- **OnApplicationShutdown** -- Calls `em.propagateShutdown()` which: closes all database connections, removes event listeners, clears entity subscribers, stops the QueryTracker, and shuts down plugins in reverse order.
 
 To use NestJS shutdown hooks, enable them in `main.ts`:
 
@@ -156,9 +197,23 @@ async function bootstrap() {
 bootstrap();
 ```
 
+Without `enableShutdownHooks()`, NestJS does not call `onApplicationShutdown()`, and database connections may leak when the process exits.
+
+---
+
 ## Multi-Database Connections
 
-For applications that connect to multiple databases, pass a `connectionName` to `forRoot()` and `forFeature()`.
+### Why multi-database?
+
+Your application might store users and business data in MySQL, analytics events in PostgreSQL, and audit logs in a separate database for compliance. Each database needs its own EntityManager, its own connection, and its own set of repositories.
+
+The challenge in a DI framework: when a service asks for `BaseRepository<Event>`, how does NestJS know which database to get it from? The answer is **token scoping** -- each connection gets its own set of DI tokens.
+
+### How token scoping works
+
+When you call `forRoot(options, "analytics")`, Stingerloom creates the EntityManager under the token `"STINGERLOOM_ENTITY_MANAGER_analytics"` instead of the default `EntityManager` class token. When you call `forFeature([Event], "analytics")`, the repository for `Event` is created under `Symbol("INJECT_REPOSITORIES_TOKEN_Event_analytics")` instead of `Symbol("INJECT_REPOSITORIES_TOKEN_Event")`.
+
+This means `@InjectRepository(Event)` (no connection name) and `@InjectRepository(Event, "analytics")` resolve to completely different providers, even though they are for the same entity class.
 
 ### Setup
 
@@ -225,7 +280,9 @@ export class AnalyticsService {
 }
 ```
 
-Omitting the connection name always uses the `"default"` connection.
+Omitting the connection name always uses the `"default"` connection. This means existing single-database applications continue to work without any code changes.
+
+---
 
 ## Registering Event Subscribers
 
@@ -249,6 +306,8 @@ export class CatsSubscriberService implements OnModuleInit {
 }
 ```
 
+---
+
 ## StinglerloomOrmService
 
 The service is available for injection and provides direct access to the EntityManager:
@@ -264,6 +323,8 @@ const em = ormService.getEntityManager();
 const repo = ormService.getRepository(User);
 ```
 
+---
+
 ## Exported API
 
 Everything is imported from `@stingerloom/orm/nestjs`:
@@ -271,7 +332,7 @@ Everything is imported from `@stingerloom/orm/nestjs`:
 | Export | Description |
 |--------|-------------|
 | `StinglerloomOrmModule` | Main module with `forRoot()` and `forFeature()` |
-| `StinglerloomOrmService` | Service with EntityManager lifecycle |
+| `StinglerloomOrmService` | Service with EntityManager lifecycle management |
 | `InjectRepository` | Decorator for repository injection |
 | `InjectEntityManager` | Decorator for EntityManager injection |
 | `getEntityManagerToken(name?)` | Token helper for manual DI |
@@ -280,7 +341,7 @@ Everything is imported from `@stingerloom/orm/nestjs`:
 
 ## Next Steps
 
-- [EntityManager](./entity-manager.md) — Full CRUD API reference
-- [Events & Subscribers](./events.md) — EntitySubscriber pattern in detail
-- [Configuration](./configuration.md) — Connection pooling, read replicas, and more
-- [Multi-Tenancy](./multi-tenancy.md) — Per-tenant schema isolation with NestJS
+- [EntityManager](./entity-manager.md) -- Full CRUD API reference
+- [Events & Subscribers](./events.md) -- EntitySubscriber pattern in detail
+- [Configuration](./configuration.md) -- Connection pooling, read replicas, and more
+- [Multi-Tenancy](./multi-tenancy.md) -- Per-tenant schema isolation with NestJS
