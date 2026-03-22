@@ -1,5 +1,7 @@
 import { Conditions } from "../../src/core/Conditions";
 import { RawQueryBuilderFactory } from "../../src/core/RawQueryBuilderFactory";
+import { RawQueryBuilder } from "../../src/core/RawQueryBuilder";
+import { OrmError } from "../../src/errors/OrmError";
 
 describe("RawQueryBuilder", () => {
   describe("select", () => {
@@ -402,6 +404,203 @@ describe("RawQueryBuilder", () => {
       ].join(" ");
 
       expect(query.sql).toBe(expectedSql);
+    });
+  });
+
+  describe("select([]) empty array", () => {
+    it("should throw OrmError for empty column array", () => {
+      expect(() => {
+        RawQueryBuilderFactory.create().select([]);
+      }).toThrow(OrmError);
+    });
+
+    it("should include helpful message", () => {
+      expect(() => {
+        RawQueryBuilderFactory.create().select([]);
+      }).toThrow("select() requires at least one column");
+    });
+  });
+
+  describe("UNION / INTERSECT / EXCEPT", () => {
+    it("should generate UNION query", () => {
+      const query = RawQueryBuilderFactory.create()
+        .select(["name"]).from("active_users")
+        .union()
+        .select(["name"]).from("archived_users")
+        .build();
+
+      expect(query.sql).toBe(
+        "SELECT name FROM active_users UNION SELECT name FROM archived_users",
+      );
+    });
+
+    it("should generate UNION ALL query", () => {
+      const query = RawQueryBuilderFactory.create()
+        .select(["id"]).from("table_a")
+        .unionAll()
+        .select(["id"]).from("table_b")
+        .build();
+
+      expect(query.sql).toBe(
+        "SELECT id FROM table_a UNION ALL SELECT id FROM table_b",
+      );
+    });
+
+    it("should generate INTERSECT query", () => {
+      const query = RawQueryBuilderFactory.create()
+        .select(["email"]).from("subscribers")
+        .intersect()
+        .select(["email"]).from("customers")
+        .build();
+
+      expect(query.sql).toBe(
+        "SELECT email FROM subscribers INTERSECT SELECT email FROM customers",
+      );
+    });
+
+    it("should generate EXCEPT query", () => {
+      const query = RawQueryBuilderFactory.create()
+        .select(["id"]).from("all_users")
+        .except()
+        .select(["id"]).from("banned_users")
+        .build();
+
+      expect(query.sql).toBe(
+        "SELECT id FROM all_users EXCEPT SELECT id FROM banned_users",
+      );
+    });
+
+    it("should support UNION with ORDER BY at the end", () => {
+      const query = RawQueryBuilderFactory.create()
+        .select(["name", "email"]).from("users_a")
+        .union()
+        .select(["name", "email"]).from("users_b")
+        .orderBy([{ column: "name", direction: "ASC" }])
+        .build();
+
+      expect(query.sql).toBe(
+        "SELECT name, email FROM users_a UNION SELECT name, email FROM users_b ORDER BY name ASC",
+      );
+    });
+  });
+
+  describe("DISTINCT", () => {
+    it("should generate SELECT DISTINCT query", () => {
+      const query = RawQueryBuilderFactory.create()
+        .selectDistinct(["category", "brand"])
+        .from("products")
+        .build();
+
+      expect(query.sql).toBe("SELECT DISTINCT category, brand FROM products");
+    });
+
+    it("should throw OrmError for empty selectDistinct", () => {
+      expect(() => {
+        RawQueryBuilderFactory.create().selectDistinct([]);
+      }).toThrow(OrmError);
+    });
+
+    it("should generate SELECT DISTINCT ON query", () => {
+      const query = RawQueryBuilderFactory.create()
+        .selectDistinctOn(["customer_id"], "*")
+        .from("orders")
+        .orderBy([{ column: "customer_id", direction: "ASC" }])
+        .build();
+
+      expect(query.sql).toBe(
+        "SELECT DISTINCT ON (customer_id) * FROM orders ORDER BY customer_id ASC",
+      );
+    });
+
+    it("should generate DISTINCT ON with specific columns", () => {
+      const query = RawQueryBuilderFactory.create()
+        .selectDistinctOn(["customer_id"], ["customer_id", "total", "created_at"])
+        .from("orders")
+        .build();
+
+      expect(query.sql).toBe(
+        "SELECT DISTINCT ON (customer_id) customer_id, total, created_at FROM orders",
+      );
+    });
+
+    it("should throw for empty DISTINCT ON columns", () => {
+      expect(() => {
+        RawQueryBuilderFactory.create().selectDistinctOn([], "*");
+      }).toThrow(OrmError);
+    });
+  });
+
+  describe("CTE (WITH clause)", () => {
+    it("should generate WITH clause using callback", () => {
+      const query = RawQueryBuilderFactory.create()
+        .with("active", (qb) => qb.select(["id", "name"]).from("users").where([Conditions.equals("active", true)]))
+        .select("*")
+        .from("active")
+        .build();
+
+      expect(query.sql).toBe(
+        "WITH active AS (SELECT id, name FROM users WHERE active = ?) SELECT * FROM active",
+      );
+      expect(query.values).toEqual([true]);
+    });
+
+    it("should generate WITH RECURSIVE clause", () => {
+      const query = RawQueryBuilderFactory.create()
+        .withRecursive("tree", (qb) =>
+          qb.select(["id", "name", "parent_id"]).from("categories").where([Conditions.isNull("parent_id")]),
+        )
+        .select("*")
+        .from("tree")
+        .build();
+
+      expect(query.sql).toBe(
+        "WITH RECURSIVE tree AS (SELECT id, name, parent_id FROM categories WHERE parent_id IS NULL) SELECT * FROM tree",
+      );
+    });
+  });
+
+  describe("Window Functions", () => {
+    it("should generate window function query", () => {
+      const query = RawQueryBuilderFactory.create()
+        .selectWithWindow([
+          "name",
+          "salary",
+          { expr: "ROW_NUMBER()", over: { partitionBy: "department", orderBy: "salary DESC" }, alias: "rank" },
+        ])
+        .from("employees")
+        .build();
+
+      expect(query.sql).toBe(
+        "SELECT name, salary, ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) AS rank FROM employees",
+      );
+    });
+
+    it("should support window function with only ORDER BY", () => {
+      const query = RawQueryBuilderFactory.create()
+        .selectWithWindow([
+          "id",
+          { expr: "SUM(amount)", over: { orderBy: "created_at" }, alias: "running_total" },
+        ])
+        .from("transactions")
+        .build();
+
+      expect(query.sql).toBe(
+        "SELECT id, SUM(amount) OVER (ORDER BY created_at) AS running_total FROM transactions",
+      );
+    });
+
+    it("should support window function with only PARTITION BY", () => {
+      const query = RawQueryBuilderFactory.create()
+        .selectWithWindow([
+          "department",
+          { expr: "AVG(salary)", over: { partitionBy: "department" }, alias: "dept_avg" },
+        ])
+        .from("employees")
+        .build();
+
+      expect(query.sql).toBe(
+        "SELECT department, AVG(salary) OVER (PARTITION BY department) AS dept_avg FROM employees",
+      );
     });
   });
 });

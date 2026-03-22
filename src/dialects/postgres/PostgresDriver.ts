@@ -832,29 +832,39 @@ export class PostgresDriver implements ISqlDriver {
       return rows[0]?.lock_result === true;
     }
 
-    // Set a statement timeout for the blocking lock attempt
-    const savedTimeout = await this.connector.query(
-      `SHOW statement_timeout`,
-    );
-
-    await this.connector.query(
-      `SET LOCAL statement_timeout = '${Math.floor(timeoutMs)}ms'`,
-    );
-
+    // Use a single dedicated connection so SET and the lock query share the same session
+    const client = await this.connector.getConnection();
     try {
-      await this.connector.query(
-        sql`SELECT pg_advisory_lock(${hash})`,
+      const savedTimeout = await this.connector.query(
+        `SHOW statement_timeout`,
+        client,
       );
-      return true;
-    } catch {
-      return false;
+
+      const timeoutValue = `${Math.floor(timeoutMs)}ms`;
+      await this.connector.query(
+        sql`SET statement_timeout = ${timeoutValue}`,
+        client,
+      );
+
+      try {
+        await this.connector.query(
+          sql`SELECT pg_advisory_lock(${hash})`,
+          client,
+        );
+        return true;
+      } catch {
+        return false;
+      } finally {
+        // Restore original timeout on the same connection
+        const rows = Array.isArray(savedTimeout) ? savedTimeout : savedTimeout?.rows ?? [];
+        const original = rows.length > 0 ? rows[0]?.statement_timeout ?? "0" : "0";
+        await this.connector.query(
+          sql`SET statement_timeout = ${original}`,
+          client,
+        );
+      }
     } finally {
-      // Restore original timeout
-      const rows = Array.isArray(savedTimeout) ? savedTimeout : savedTimeout?.rows ?? [];
-      const original = rows.length > 0 ? rows[0]?.statement_timeout ?? "0" : "0";
-      await this.connector.query(
-        `SET LOCAL statement_timeout = '${original}'`,
-      );
+      client.release();
     }
   }
 

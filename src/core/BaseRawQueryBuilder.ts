@@ -1,5 +1,5 @@
 import { Sql } from "sql-template-tag";
-import { DatabaseType } from "./RawQueryBuilder";
+import type { DatabaseType, RawQueryBuilder } from "./RawQueryBuilder";
 
 /**
  * Interface representing a base raw query builder.
@@ -179,6 +179,53 @@ export interface BaseRawQueryBuilder {
    * @returns The SQL object representing the query.
    */
   asExists(): Sql;
+
+  /**
+   * Adds a UNION clause.
+   */
+  union(): BaseRawQueryBuilder;
+
+  /**
+   * Adds a UNION ALL clause.
+   */
+  unionAll(): BaseRawQueryBuilder;
+
+  /**
+   * Adds an INTERSECT clause.
+   */
+  intersect(): BaseRawQueryBuilder;
+
+  /**
+   * Adds an EXCEPT clause.
+   */
+  except(): BaseRawQueryBuilder;
+
+  /**
+   * Adds a SELECT DISTINCT clause.
+   */
+  selectDistinct(columns: string[]): BaseRawQueryBuilder;
+
+  /**
+   * Adds a SELECT DISTINCT ON clause (PostgreSQL only).
+   */
+  selectDistinctOn(distinctColumns: string[], selectColumns: string[] | "*"): BaseRawQueryBuilder;
+
+  /**
+   * Adds a CTE (WITH clause).
+   */
+  with(name: string, subquery: Sql | ((qb: RawQueryBuilder) => RawQueryBuilder)): BaseRawQueryBuilder;
+
+  /**
+   * Adds a recursive CTE (WITH RECURSIVE clause).
+   */
+  withRecursive(name: string, subquery: Sql | ((qb: RawQueryBuilder) => RawQueryBuilder)): BaseRawQueryBuilder;
+
+  /**
+   * Adds a SELECT with window function expressions.
+   */
+  selectWithWindow(
+    columns: Array<string | { expr: string; over: { partitionBy?: string; orderBy?: string }; alias: string }>,
+  ): BaseRawQueryBuilder;
 
   /**
    * Builds the final SQL object representing the query.

@@ -45,6 +45,15 @@ describe("RawQueryBuilderFactory strategy pattern", () => {
       as: jest.fn(),
       asInQuery: jest.fn(),
       asExists: jest.fn(),
+      union: jest.fn().mockReturnThis(),
+      unionAll: jest.fn().mockReturnThis(),
+      intersect: jest.fn().mockReturnThis(),
+      except: jest.fn().mockReturnThis(),
+      selectDistinct: jest.fn().mockReturnThis(),
+      selectDistinctOn: jest.fn().mockReturnThis(),
+      with: jest.fn().mockReturnThis(),
+      withRecursive: jest.fn().mockReturnThis(),
+      selectWithWindow: jest.fn().mockReturnThis(),
       build: jest.fn(),
     };
 

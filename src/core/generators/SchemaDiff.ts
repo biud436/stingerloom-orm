@@ -235,7 +235,9 @@ export class SchemaDiff {
     let rawResult: any;
 
     if (dialect === "sqlite") {
-      rawResult = await queryRunner.query(`PRAGMA table_info(${tableName})`);
+      // SQLite PRAGMA does not support parameterized queries, so validate the identifier
+      const escaped = tableName.replace(/"/g, '""');
+      rawResult = await queryRunner.query(`PRAGMA table_info("${escaped}")`);
       const rows = this.normalizeRows(rawResult);
       return rows.map((row: any) => {
         const parsed = this.parseSqliteTypeLength(row.type || "TEXT");

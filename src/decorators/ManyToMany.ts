@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { ClazzType } from "../utils";
 import Container from "typedi";
 import { ManyToManyScanner } from "../scanner";
+import { CascadeOption } from "../types/CascadeType";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const MANY_TO_MANY_TOKEN = Symbol.for("STG_MANY_TO_MANY");
@@ -35,6 +36,11 @@ export type ManyToManyOption<T = any> = {
    * 타입 추론을 통해 대상 엔티티의 프로퍼티 이름만 허용됩니다.
    */
   mappedBy?: Extract<keyof T, string> | (string & {});
+
+  /**
+   * 캐스케이드 옵션 (insert, update, delete 또는 true/false)
+   */
+  cascade?: CascadeOption;
 };
 
 export type ManyToManyMetadata<T> = {
@@ -55,6 +61,11 @@ export type ManyToManyMetadata<T> = {
    * 역방향 참조 시 소유측 프로퍼티 이름
    */
   mappedBy?: string;
+
+  /**
+   * 캐스케이드 옵션
+   */
+  cascade?: CascadeOption;
 };
 
 /**
@@ -92,6 +103,7 @@ export function ManyToMany<T>(
       getRelatedEntity,
       joinTable: option?.joinTable,
       mappedBy: option?.mappedBy,
+      cascade: option?.cascade,
     };
 
     const existing = Reflect.getMetadata(MANY_TO_MANY_TOKEN, cls);

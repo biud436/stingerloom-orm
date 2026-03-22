@@ -90,7 +90,7 @@ export class SchemaDiffMigrationGenerator {
     // Add columns
     for (const col of diff.addColumns) {
       const typeStr = this.renderColumnType(col, dialect);
-      const nullability = col.nullable ? "NULL" : "NOT NULL";
+      const nullability = col.nullable === false ? "NOT NULL" : "NULL";
       sqls.push(
         `ALTER TABLE ${this.escapeId(col.tableName, dialect)} ADD COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr} ${nullability}`,
       );
@@ -201,7 +201,7 @@ export class SchemaDiffMigrationGenerator {
     // Add columns
     for (const col of diff.addColumns) {
       const typeStr = this.renderColumnType(col, dialect);
-      const nullability = col.nullable ? "NULL" : "NOT NULL";
+      const nullability = col.nullable === false ? "NOT NULL" : "NULL";
       stmts.push(
         this.wrapSqlInQuery(
           `ALTER TABLE ${this.escapeId(col.tableName, dialect)} ADD COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr} ${nullability}`,
@@ -391,25 +391,8 @@ export class SchemaDiffMigrationGenerator {
       }
     }
 
-    // Kahn's algorithm
+    // Kahn's algorithm: in-degree = number of dependencies (tables that must be created first)
     const inDegree = new Map<string, number>();
-    for (const table of addTables) {
-      inDegree.set(table, 0);
-    }
-    for (const [, depSet] of deps) {
-      for (const dep of depSet) {
-        // Find the original-case table name
-        const canonical = addTables.find(
-          (t) => t.toLowerCase() === dep.toLowerCase(),
-        );
-        if (canonical) {
-          // The table with the dependency should wait for dep — not the dep itself
-          // dep has no extra in-degree from this edge; the table that depends on dep does
-        }
-      }
-    }
-
-    // Recompute: for each table, its in-degree = number of tables that must be created before it
     for (const table of addTables) {
       inDegree.set(table, deps.get(table)!.size);
     }

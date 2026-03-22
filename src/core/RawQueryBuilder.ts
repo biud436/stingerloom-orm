@@ -1,5 +1,7 @@
 import sql, { Sql, raw, join } from "sql-template-tag";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 export type DatabaseType = "mysql" | "postgresql";
 export type SubqueryType = "SELECT" | "FROM" | "WHERE" | "HAVING";
@@ -50,6 +52,12 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
     if (columns === "*") {
       this.sqlQuerySegments.push(sql`SELECT *`);
     } else {
+      if (columns.length === 0) {
+        throw new OrmError(
+          OrmErrorCode.INVALID_QUERY,
+          "select() requires at least one column. Use \"*\" to select all columns.",
+        );
+      }
       const columnSqls = columns.map((col) => sql`${raw(col)}`);
       this.sqlQuerySegments.push(sql`SELECT ${join(columnSqls, ", ")}`);
     }
@@ -362,6 +370,140 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   asExists(): Sql {
     const query = this.build();
     return sql`EXISTS (${query})`;
+  }
+
+  /**
+   * Adds a UNION clause to combine result sets (removes duplicates).
+   */
+  union(): RawQueryBuilder {
+    this.sqlQuerySegments.push(sql`UNION`);
+    return this;
+  }
+
+  /**
+   * Adds a UNION ALL clause to combine result sets (keeps duplicates).
+   */
+  unionAll(): RawQueryBuilder {
+    this.sqlQuerySegments.push(sql`UNION ALL`);
+    return this;
+  }
+
+  /**
+   * Adds an INTERSECT clause to return only rows common to both result sets.
+   */
+  intersect(): RawQueryBuilder {
+    this.sqlQuerySegments.push(sql`INTERSECT`);
+    return this;
+  }
+
+  /**
+   * Adds an EXCEPT clause to return rows in the first result set but not in the second.
+   */
+  except(): RawQueryBuilder {
+    this.sqlQuerySegments.push(sql`EXCEPT`);
+    return this;
+  }
+
+  /**
+   * Adds a SELECT DISTINCT clause.
+   */
+  selectDistinct(columns: string[]): RawQueryBuilder {
+    if (columns.length === 0) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        "selectDistinct() requires at least one column.",
+      );
+    }
+    const columnSqls = columns.map((col) => sql`${raw(col)}`);
+    this.sqlQuerySegments.push(sql`SELECT DISTINCT ${join(columnSqls, ", ")}`);
+    return this;
+  }
+
+  /**
+   * Adds a SELECT DISTINCT ON clause (PostgreSQL only).
+   */
+  selectDistinctOn(distinctColumns: string[], selectColumns: string[] | "*"): RawQueryBuilder {
+    if (distinctColumns.length === 0) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        "selectDistinctOn() requires at least one DISTINCT ON column.",
+      );
+    }
+    const distinctSqls = distinctColumns.map((col) => sql`${raw(col)}`);
+    if (selectColumns === "*") {
+      this.sqlQuerySegments.push(
+        sql`SELECT DISTINCT ON (${join(distinctSqls, ", ")}) *`,
+      );
+    } else {
+      if (selectColumns.length === 0) {
+        throw new OrmError(
+          OrmErrorCode.INVALID_QUERY,
+          "selectDistinctOn() requires at least one select column. Use \"*\" to select all.",
+        );
+      }
+      const selectSqls = selectColumns.map((col) => sql`${raw(col)}`);
+      this.sqlQuerySegments.push(
+        sql`SELECT DISTINCT ON (${join(distinctSqls, ", ")}) ${join(selectSqls, ", ")}`,
+      );
+    }
+    return this;
+  }
+
+  /**
+   * Adds a CTE (Common Table Expression / WITH clause).
+   * @param name - CTE name
+   * @param subquery - A built Sql object or a callback that receives a new RawQueryBuilder
+   */
+  with(name: string, subquery: Sql | ((qb: RawQueryBuilder) => RawQueryBuilder)): RawQueryBuilder {
+    let subSql: Sql;
+    if (typeof subquery === "function") {
+      const sub = new RawQueryBuilder();
+      subSql = subquery(sub).build();
+    } else {
+      subSql = subquery;
+    }
+    this.sqlQuerySegments.push(sql`WITH ${raw(name)} AS (${subSql})`);
+    return this;
+  }
+
+  /**
+   * Adds a recursive CTE (WITH RECURSIVE clause).
+   * @param name - CTE name
+   * @param subquery - A built Sql object or a callback that receives a new RawQueryBuilder
+   */
+  withRecursive(name: string, subquery: Sql | ((qb: RawQueryBuilder) => RawQueryBuilder)): RawQueryBuilder {
+    let subSql: Sql;
+    if (typeof subquery === "function") {
+      const sub = new RawQueryBuilder();
+      subSql = subquery(sub).build();
+    } else {
+      subSql = subquery;
+    }
+    this.sqlQuerySegments.push(sql`WITH RECURSIVE ${raw(name)} AS (${subSql})`);
+    return this;
+  }
+
+  /**
+   * Adds a window function expression.
+   * @param expr - Window function expression (e.g. "ROW_NUMBER()")
+   * @param over - Window specification
+   */
+  selectWithWindow(
+    columns: Array<string | { expr: string; over: { partitionBy?: string; orderBy?: string }; alias: string }>,
+  ): RawQueryBuilder {
+    const parts: Sql[] = [];
+    for (const col of columns) {
+      if (typeof col === "string") {
+        parts.push(sql`${raw(col)}`);
+      } else {
+        const overParts: string[] = [];
+        if (col.over.partitionBy) overParts.push(`PARTITION BY ${col.over.partitionBy}`);
+        if (col.over.orderBy) overParts.push(`ORDER BY ${col.over.orderBy}`);
+        parts.push(sql`${raw(col.expr)} OVER (${raw(overParts.join(" "))}) AS ${raw(col.alias)}`);
+      }
+    }
+    this.sqlQuerySegments.push(sql`SELECT ${join(parts, ", ")}`);
+    return this;
   }
 
   /**
