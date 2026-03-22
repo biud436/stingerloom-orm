@@ -29,6 +29,7 @@
     }
   },
   "bin": {
+    "stingerloom": "dist/migration/cli-entry.js",
     "stingerloom-prisma-import": "dist/integration/prisma-import/cli.js"
   },
   "files": [
