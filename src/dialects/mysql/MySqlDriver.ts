@@ -5,6 +5,8 @@ import { MysqlSchemaInterface } from "./BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
 import { ISqlDriver } from "../SqlDriver";
 import { Exception } from "../../errors";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
@@ -161,9 +163,25 @@ export class MySqlDriver implements ISqlDriver {
    * @param tableName
    * @param columnName
    */
-  dropForeignKey(tableName: string, columnName: string) {
+  async dropForeignKey(tableName: string, columnName: string) {
+    const rows: any[] = await this.connector.query(
+      sql`SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = ${tableName}
+            AND COLUMN_NAME = ${columnName}
+            AND REFERENCED_TABLE_NAME IS NOT NULL`,
+    );
+
+    if (!rows || rows.length === 0) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        `No foreign key constraint found for column "${columnName}" on table "${tableName}"`,
+      );
+    }
+
+    const constraintName = rows[0].CONSTRAINT_NAME;
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} DROP FOREIGN KEY ${this.wrap(columnName)}`,
+      `ALTER TABLE ${this.wrap(tableName)} DROP FOREIGN KEY ${this.wrap(constraintName)}`,
     );
   }
 

@@ -5,6 +5,7 @@ import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
 import { ISqlDriver } from "../SqlDriver";
 import { Exception } from "../../errors";
+import { Logger } from "../../utils";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
@@ -19,6 +20,7 @@ import { validateSavepointName } from "../../utils/validateSavepointName";
  */
 export class PostgresDriver implements ISqlDriver {
   private readonly schema: string;
+  private readonly logger = new Logger("PostgresDriver");
 
   constructor(
     private readonly connector: IConnector,
@@ -376,6 +378,35 @@ export class PostgresDriver implements ISqlDriver {
   async createEnumType(enumName: string, values: string[]): Promise<any> {
     const rows: any[] = await this.hasEnumType(enumName);
     if (rows && rows.length > 0) {
+      // Enum already exists — check for missing values and add them
+      const existingRows: any[] = await this.connector.query(
+        sql`SELECT e.enumlabel
+            FROM pg_enum e
+            JOIN pg_type t ON e.enumtypid = t.oid
+            JOIN pg_namespace n ON t.typnamespace = n.oid
+            WHERE t.typname = ${enumName}
+              AND n.nspname = ${this.schema}`,
+      );
+      const existingValues = new Set(existingRows.map((r) => r.enumlabel));
+
+      for (const val of values) {
+        if (!existingValues.has(val)) {
+          const escaped = val.replace(/'/g, "''");
+          await this.connector.query(
+            `ALTER TYPE ${this.wrapQualified(enumName)} ADD VALUE IF NOT EXISTS '${escaped}'`,
+          );
+        }
+      }
+
+      // Warn about values in DB but not in entity definition
+      for (const existing of existingValues) {
+        if (!values.includes(existing)) {
+          this.logger.warn(
+            `Enum "${enumName}" has DB value "${existing}" not present in entity definition`,
+          );
+        }
+      }
+
       return;
     }
 

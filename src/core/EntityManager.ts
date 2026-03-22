@@ -1884,7 +1884,10 @@ export class EntityManager implements BaseEntityManager {
     }
 
     if (!this.driver) {
-      throw new Error("Driver is not initialized. Call connect() first.");
+      throw new OrmError(
+        OrmErrorCode.NOT_CONNECTED,
+        "Driver is not initialized. Call connect() first.",
+      );
     }
 
     await this.driver.clear(metadata.name!);

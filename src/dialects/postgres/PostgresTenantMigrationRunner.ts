@@ -112,12 +112,12 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
 
     for (const row of tables as any[]) {
       const tableName = row.tablename as string;
-      const escapedTenant = tenantId.replace(/"/g, '""');
-      const escapedTable = tableName.replace(/"/g, '""');
-      const escapedSource = this.sourceSchema.replace(/"/g, '""');
+      const wrappedTenant = this.driver.wrap(tenantId);
+      const wrappedTable = this.driver.wrap(tableName);
+      const wrappedSource = this.driver.wrap(this.sourceSchema);
 
       await this.driver.executeRaw(
-        `CREATE TABLE IF NOT EXISTS "${escapedTenant}"."${escapedTable}" (LIKE "${escapedSource}"."${escapedTable}" INCLUDING ALL)`,
+        `CREATE TABLE IF NOT EXISTS ${wrappedTenant}.${wrappedTable} (LIKE ${wrappedSource}.${wrappedTable} INCLUDING ALL)`,
       );
     }
 

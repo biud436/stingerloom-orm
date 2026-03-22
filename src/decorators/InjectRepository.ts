@@ -24,19 +24,12 @@ export function getRepositoryToken(entityClass: ClazzType<unknown>): symbol {
 }
 
 /**
- * Parameter decorator that injects a BaseRepository<T> for the given entity class.
- * Works with DI frameworks (e.g., NestJS) by using a unique token per entity class.
- *
- * @param entityClass The entity class whose repository should be injected
- * @returns A ParameterDecorator
+ * @deprecated This core decorator stores metadata that no runtime reads.
+ * Use `InjectRepository` from `stingerloom-orm/nestjs` instead for NestJS projects.
  *
  * @example
  * ```ts
- * class CatsService {
- *   constructor(
- *     @InjectRepository(Cat) private readonly catRepo: BaseRepository<Cat>,
- *   ) {}
- * }
+ * import { InjectRepository } from "stingerloom-orm/nestjs";
  * ```
  */
 export function InjectRepository(
@@ -48,8 +41,6 @@ export function InjectRepository(
     propertyKey: string | symbol | undefined,
     parameterIndex: number,
   ) => {
-    // Store the injection token as metadata on the constructor parameter.
-    // This is compatible with reflect-metadata based DI containers.
     const existingTokens: Record<number, symbol> =
       Reflect.getOwnMetadata("custom:inject_tokens", target) || {};
     existingTokens[parameterIndex] = token;

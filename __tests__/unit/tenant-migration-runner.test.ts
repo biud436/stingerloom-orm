@@ -45,6 +45,7 @@ function createMockDriver(options?: {
     }),
     setSearchPath: jest.fn().mockResolvedValue([]),
     getSchema: jest.fn().mockReturnValue("public"),
+    wrap: jest.fn().mockImplementation((name: string) => `"${name.replace(/"/g, '""')}"`),
   } as unknown as jest.Mocked<PostgresDriver>;
 
   return driver;
