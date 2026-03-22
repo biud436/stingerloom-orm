@@ -48,10 +48,19 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
       return existing;
     }
 
-    const promise = this.provision(tenantId).then(() => {
-      this.provisionedSchemas.add(tenantId);
-      this.provisioningLocks.delete(tenantId);
-    });
+    const promise = this.provision(tenantId)
+      .then(() => {
+        this.provisionedSchemas.add(tenantId);
+      })
+      .catch((err) => {
+        this.logger.error(
+          `Failed to provision schema "${tenantId}": ${err.message}`,
+        );
+        throw err;
+      })
+      .finally(() => {
+        this.provisioningLocks.delete(tenantId);
+      });
 
     this.provisioningLocks.set(tenantId, promise);
     return promise;

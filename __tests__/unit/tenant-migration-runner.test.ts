@@ -348,6 +348,50 @@ describe("PostgresTenantMigrationRunner", () => {
       );
     });
 
+    it("provision 실패 후 재시도가 가능해야 한다 (#98)", async () => {
+      const driver = createMockDriver({ tables: ["users"] });
+      let callCount = 0;
+      driver.createSchema = jest.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.reject(new Error("transient DB timeout"));
+        }
+        return Promise.resolve([]);
+      });
+      const runner = new PostgresTenantMigrationRunner(driver);
+
+      // 첫 번째 호출: 실패
+      await expect(runner.ensureSchema("tenant_retry")).rejects.toThrow(
+        "transient DB timeout",
+      );
+      expect(runner.isProvisioned("tenant_retry")).toBe(false);
+
+      // 두 번째 호출: 락이 정리되었으므로 재시도 성공해야 함
+      await runner.ensureSchema("tenant_retry");
+      expect(runner.isProvisioned("tenant_retry")).toBe(true);
+      expect(driver.createSchema).toHaveBeenCalledTimes(2);
+    });
+
+    it("동시 호출 중 실패 시 lock이 정리되어야 한다 (#98)", async () => {
+      const driver = createMockDriver({ tables: ["t1"] });
+      driver.createSchema = jest
+        .fn()
+        .mockRejectedValueOnce(new Error("network error"))
+        .mockResolvedValue([]);
+      const runner = new PostgresTenantMigrationRunner(driver);
+
+      // 동시 호출 — 첫 번째 provision이 실패하면 모두 reject
+      const results = await Promise.allSettled([
+        runner.ensureSchema("tenant_c"),
+        runner.ensureSchema("tenant_c"),
+      ]);
+      expect(results.every((r) => r.status === "rejected")).toBe(true);
+
+      // lock이 정리되었으므로 재시도 성공
+      await runner.ensureSchema("tenant_c");
+      expect(runner.isProvisioned("tenant_c")).toBe(true);
+    });
+
     it("syncTenantSchemas 중 실패 시 이미 생성된 스키마는 유지되어야 한다", async () => {
       const driver = createMockDriver({
         schemas: ["public"],
