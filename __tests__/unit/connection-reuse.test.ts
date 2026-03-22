@@ -502,4 +502,79 @@ describe("Connection Reuse (Issue #30)", () => {
       expect(mockClose).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("dirtyEntities cleanup after transaction (Issue #97)", () => {
+    it("should clear dirtyEntities after successful commit", async () => {
+      mockQuery
+        .mockResolvedValueOnce(undefined) // SET autocommit = 0
+        .mockResolvedValueOnce({
+          results: { insertId: 1, affectedRows: 1 },
+          fields: [],
+        }) // INSERT
+        .mockResolvedValueOnce({
+          results: [{ id: 1, name: "Alice", email: "a@test.com" }],
+          fields: [],
+        }); // re-read
+
+      const dirtyEntities = (em as any).dirtyEntities as Set<any>;
+      // Simulate entities marked dirty during cascade
+      dirtyEntities.add({ id: 99 });
+      dirtyEntities.add({ id: 100 });
+      expect(dirtyEntities.size).toBe(2);
+
+      await em.save(User, { name: "Alice", email: "a@test.com" });
+
+      // dirtyEntities should be cleared after transaction completes
+      expect(dirtyEntities.size).toBe(0);
+    });
+
+    it("should clear dirtyEntities after rollback on error", async () => {
+      mockQuery
+        .mockResolvedValueOnce(undefined) // SET autocommit = 0
+        .mockRejectedValueOnce(new Error("Constraint violation")); // INSERT fails
+
+      const dirtyEntities = (em as any).dirtyEntities as Set<any>;
+      dirtyEntities.add({ id: 99 });
+      expect(dirtyEntities.size).toBe(1);
+
+      await expect(
+        em.save(User, { name: "Fail", email: "fail@test.com" }),
+      ).rejects.toThrow("Constraint violation");
+
+      // dirtyEntities should still be cleared even on rollback
+      expect(dirtyEntities.size).toBe(0);
+    });
+
+    it("should not clear dirtyEntities for reused session (nested transaction)", async () => {
+      const { transactionStorage } = require("../../src/decorators/Transactional");
+      const externalSession = {
+        query: jest.fn()
+          .mockResolvedValueOnce({
+            results: { insertId: 1, affectedRows: 1 },
+            fields: [],
+          })
+          .mockResolvedValueOnce({
+            results: [{ id: 1, name: "Alice", email: "a@test.com" }],
+            fields: [],
+          }),
+        connect: jest.fn(),
+        connectToNode: jest.fn(),
+        startTransaction: jest.fn(),
+        commit: jest.fn(),
+        rollback: jest.fn(),
+        close: jest.fn(),
+      };
+
+      const dirtyEntities = (em as any).dirtyEntities as Set<any>;
+      dirtyEntities.add({ id: 99 });
+
+      await transactionStorage.run(externalSession, async () => {
+        await em.save(User, { name: "Alice", email: "a@test.com" });
+      });
+
+      // Reused session: dirtyEntities should NOT be cleared
+      // (the outer transaction owner is responsible for cleanup)
+      expect(dirtyEntities.size).toBe(1);
+    });
+  });
 });
