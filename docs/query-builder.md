@@ -21,9 +21,9 @@ Before diving in, it's worth asking: why not just use `find()` for everything?
 
 The answer comes down to what `find()` can't express. `find()` gives you `WHERE field = value`, but it can't do `WHERE age >= 18`, or `JOIN` to unrelated tables, or `GROUP BY category HAVING COUNT(*) > 5`. For these, you need a query builder.
 
-Stingerloom's query builder has two return modes depending on how you use `select()`:
+Stingerloom's query builder provides three execution methods with different safety guarantees:
 
-**No projection (default)** — `getMany()` returns actual **class instances**. The results are deserialized through `class-transformer`, so `instanceof` checks work, class methods are available, and the objects can be passed directly to `em.save()`.
+**`getMany()`** — always returns **class instances**. `instanceof` works, class methods are available, results can be passed to `em.save()`. When `select()` is used, validates that all non-nullable columns are included.
 
 ```typescript
 const users = await em
@@ -35,20 +35,20 @@ users[0] instanceof User; // ✓ true — real class instance
 await em.save(User, users[0]); // ✓ works correctly
 ```
 
-**With projection** — when you call `select(["id", "name"])`, the return type narrows from `User[]` to `Pick<User, "id" | "name">[]`. The results are **plain objects** (not class instances), because a partial projection cannot represent the full entity. Accessing an unselected column becomes a compile-time error.
+**`getPartialMany()`** — returns **typed plain objects** with `Pick<T, K>` narrowing. Accessing unselected columns is a compile-time error. No required-column validation.
 
 ```typescript
 const users = await em
   .createQueryBuilder(User, "u")
   .select(["id", "name"])
-  .getMany();
+  .getPartialMany();
 
 users[0].id;    // ✓ number — exists in Pick<User, "id" | "name">
 users[0].name;  // ✓ string — exists
-users[0].email; // ✗ Compile error! Property 'email' does not exist on type Pick<User, "id" | "name">
+users[0].email; // ✗ Compile error! Property 'email' does not exist
 ```
 
-This distinction matters: class instances carry their prototype chain (methods, `instanceof`, event listener eligibility), while projected plain objects are lightweight DTOs. Choose based on what you need.
+**`getRawMany()`** — returns **untyped plain objects** (`Record<string, unknown>`). Use for queries with computed columns like `addSelect(sql`COUNT(*)`, "cnt")`.
 
 `where()` and `orderBy()` always accept any column from the full entity — because you can filter and sort by columns you don't SELECT. The type system tracks the **projection** (what you get back) separately from the **entity** (what you can query on).
 
@@ -74,7 +74,7 @@ const users = await em
   .where("isActive", true)
   .orderBy({ createdAt: "DESC" })
   .limit(10)
-  .getMany();
+  .getPartialMany();
 ```
 
 So far, there's no real advantage. The power of the query builder becomes clear when you need things that `find()` can't express — operators like `>=`, JOINs to unrelated tables, GROUP BY with aggregates, or pessimistic locking.
@@ -174,7 +174,7 @@ const posts = await em
   .leftJoin("users", "u", sql`"p"."author_id" = "u"."id"`)
   .orderBy({ createdAt: "DESC" })
   .limit(20)
-  .getMany();
+  .getRawMany();
 ```
 
 Let's break down what happened:
@@ -234,7 +234,7 @@ const stats = await em
   .addSelect(sql`COUNT(*)`, "postCount")
   .groupBy(["category"])
   .having(sql`COUNT(*) >= ${5}`)
-  .getMany();
+  .getRawMany();
 // [{ category: "tech", postCount: 42 }, { category: "life", postCount: 17 }, ...]
 ```
 
@@ -249,7 +249,7 @@ const uniqueCities = await em
   .createQueryBuilder(User, "u")
   .select(["city"])
   .setDistinct()
-  .getMany();
+  .getPartialMany();
 // SELECT DISTINCT "u"."city" FROM "user" AS "u"
 ```
 
@@ -297,10 +297,10 @@ const users = await em
     if (!row.name) throw new Error("name must not be empty");
     return row;
   })
-  .getMany();
+  .getPartialMany();
 ```
 
-Each row passes through the validator. If the function throws, the entire `getMany()` call rejects with that error. If it returns successfully, the row is included in the results. By default, no validator is attached — `getMany()` returns raw rows with zero overhead.
+Each row passes through the validator. If the function throws, the entire call rejects with that error. If it returns successfully, the row is included in the results. By default, no validator is attached — zero overhead. Validators work with both `getPartialMany()` and `getMany()`.
 
 The validator function can also **transform** data. Whatever it returns becomes the actual result:
 
@@ -327,10 +327,10 @@ const users = await em
   .createQueryBuilder(User, "u")
   .select(["id", "name"])
   .validate(UserRow)
-  .getMany();
+  .getPartialMany();
 ```
 
-If any row fails the zod schema, `getMany()` throws a `ZodError` with details about which field failed and why. This catches data issues — NULL where you expected a string, a string where you expected a number — at the earliest possible point.
+If any row fails the zod schema, the call throws a `ZodError` with details about which field failed and why. This catches data issues — NULL where you expected a string, a string where you expected a number — at the earliest possible point.
 
 Zod's `.transform()` works too. This lets you validate and reshape data in one step:
 
@@ -345,7 +345,7 @@ const users = await em
   .createQueryBuilder(User, "u")
   .select(["id", "name", "email"])
   .validate(NormalizedUser)
-  .getMany();
+  .getPartialMany();
 // [{ id: 1, name: "ALICE", email: "alice@example.com" }, ...]
 ```
 
@@ -373,7 +373,7 @@ const users = await em
     if (rows.length > 1000) throw new Error("result set too large");
     return rows;
   })
-  .getMany();
+  .getPartialMany();
 ```
 
 Zod array schemas work here too:
@@ -387,7 +387,7 @@ const UsersArray = z
 const users = await qb
   .select(["id", "name"])
   .validateArray(UsersArray)
-  .getMany();
+  .getPartialMany();
 ```
 
 #### Combining Row and Array Validation
@@ -406,7 +406,7 @@ const users = await em
     if (rows.length > 100) throw new Error("too many results");
     return rows;
   })
-  .getMany();
+  .getPartialMany();
 ```
 
 #### When to Use Validation
@@ -506,7 +506,7 @@ async function searchPosts(filters: {
     .orderBy({ createdAt: "DESC" })
     .skip(filters.page * filters.pageSize)
     .take(filters.pageSize)
-    .getManyAndCount();
+    .getPartialManyAndCount();
 
   return { posts, total, page: filters.page, pageSize: filters.pageSize };
 }
