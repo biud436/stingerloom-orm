@@ -226,7 +226,7 @@ Operators are determined by the field type — `string` fields get extra operato
 { like, notLike, ilike, contains, startsWith, endsWith }
 ```
 
-See [Querying — WHERE Filters](./entity-manager-querying.md#where-filters--prisma-style-operators) for usage examples.
+See [Querying — WHERE Filters](./entity-manager-querying.md#where-filters) for usage examples.
 
 ### WhereOperator (SelectQueryBuilder)
 

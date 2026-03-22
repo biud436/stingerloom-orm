@@ -82,7 +82,7 @@ For column-level deduplication (e.g., PostgreSQL `DISTINCT ON`), use the [Query 
 
 ---
 
-## WHERE Filters — Prisma-Style Operators
+## WHERE Filters
 
 By default, each field in `where` is matched with `=` (equality). For richer conditions, pass an **operator object** instead of a plain value. No imports are needed — operators are just object keys.
 
