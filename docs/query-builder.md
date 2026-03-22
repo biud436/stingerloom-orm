@@ -424,15 +424,45 @@ The default — no validator, zero overhead — is the right choice for most int
 
 ### Executing the Query
 
-You've built the query — now you need to run it. The query builder offers several execution methods depending on what you need back.
+You've built the query — now you need to run it. The query builder provides three tiers of execution methods, each with different safety and typing guarantees.
+
+**Safe — class instances with required-column validation:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `getMany()` | `T[]` | All matching rows |
-| `getOne()` | `T \| null` | First row, or null (auto-adds LIMIT 1) |
-| `getCount()` | `number` | COUNT(*) with the same conditions |
-| `getManyAndCount()` | `[T[], number]` | Both rows and total count in parallel |
+| `getMany()` | `T[]` | Class instances. Validates required columns when `select()` is used |
+| `getOne()` | `T \| null` | Single class instance or null (auto-adds LIMIT 1) |
+| `getManyAndCount()` | `[T[], number]` | Class instances + total count in parallel |
+
+These always deserialize rows into entity class instances. `instanceof` works, class methods are available, results can be passed to `em.save()`. When `select()` is used with specific columns, non-nullable columns must be included — otherwise an `OrmError` is thrown.
+
+**Partial — typed plain objects (Pick):**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getPartialMany()` | `TResult[]` | Plain objects with `Pick<T, K>` narrowing |
+| `getPartialOne()` | `TResult \| null` | Single plain object or null |
+| `getPartialManyAndCount()` | `[TResult[], number]` | Plain objects + total count |
+
+No deserialization, no required-column validation. When `select(["id", "name"])` is used, the return type narrows to `Pick<T, "id" | "name">[]` — accessing unselected columns is a compile error. Do not pass results to `em.save()`.
+
+**Raw — untyped plain objects:**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getRawMany()` | `Record<string, unknown>[]` | Untyped plain objects |
+| `getRawOne()` | `Record<string, unknown> \| null` | Single untyped object or null |
+
+Use when the result includes computed columns not in the entity (e.g. `addSelect(sql`COUNT(*)`, "cnt")`). No type information, no deserialization.
+
+**Utility (unchanged):**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getCount()` | `number` | COUNT(*) with the same WHERE/JOIN |
 | `exists()` | `boolean` | Whether any rows match |
+
+**Which to use?** Default to `getMany()`. Use `getPartialMany()` for read-only DTOs where you want compile-time narrowing. Use `getRawMany()` for queries with `addSelect` or computed columns.
 
 For debugging, `getSql()` returns the raw SQL and parameters without executing anything.
 
@@ -733,53 +763,74 @@ qb.selectDistinctOn(['"department"'], ['"id"', '"name"', '"salary"'])
 
 ---
 
-## Class Instances vs Plain Objects
+## Choosing the Right Execution Method
 
-Understanding what `getMany()` returns is important for writing correct code.
-
-**Without `select()`** — results are deserialized into class instances via `class-transformer`. They have the entity's prototype chain, so `instanceof` works, class methods are available, and they can be passed to `em.save()` or matched by `EntitySubscriber.listenTo()`.
-
-**With `select(["id", "name"])`** — results are plain objects typed as `Pick<T, K>`. They are lightweight DTOs with no class identity.
+The query builder provides three tiers of execution methods. Choose based on what you need from the result.
 
 ```typescript
-// ✓ Class instance — full entity behavior
-const user = await em.createQueryBuilder(User, "u")
-  .where("id", 1)
-  .getOne();
-user instanceof User;     // true
-await em.save(User, user); // works
-
-// ✓ Plain object — projection DTO
-const partial = await em.createQueryBuilder(User, "u")
+const qb = em.createQueryBuilder(User, "u")
   .select(["id", "name"])
-  .where("id", 1)
-  .getOne();
-partial instanceof User;   // false
-partial.email;              // compile error (not in Pick)
+  .where("isActive", true);
+
+// 1. Safe — class instances, validates required columns
+const entities = await qb.getMany();         // T[] — instanceof User === true
+await em.save(User, entities[0]);             // ✓ works
+
+// 2. Partial — typed plain objects, no validation
+const dtos = await qb.getPartialMany();       // Pick<User, "id" | "name">[]
+dtos[0].email;                                // ✗ compile error
+dtos[0] instanceof User;                      // false
+
+// 3. Raw — untyped plain objects
+const raw = await qb.getRawMany();            // Record<string, unknown>[]
 ```
 
-### What breaks with projected results
+### Required Column Validation
 
-Projected results (`select()` with specific columns) are plain objects, not entity instances. This means:
+`getMany()` validates that all non-nullable columns are included when `select()` is used. This prevents creating invalid class instances where required fields are `undefined`.
 
-- **`instanceof` returns false** — `partial instanceof User` is `false`.
-- **Class methods are missing** — if `User` has a `fullName()` getter, projected results don't have it.
-- **EntitySubscriber won't match** — `listenTo()` matches by class reference, so `afterLoad` and other subscriber hooks won't fire for projected results.
-- **Passing to `em.save()` is unsafe** — `save()` expects a class instance. Passing a plain object may silently skip lifecycle hooks (`@BeforeInsert`, `@BeforeUpdate`) and event listeners.
+```typescript
+@Entity()
+class User {
+  @PrimaryGeneratedColumn()         // autoIncrement — can omit
+  id!: number;
 
-### When to use select() and when not to
+  @Column({ type: "varchar" })      // non-nullable — REQUIRED
+  name!: string;
 
-| Scenario | Use `select()`? | Why |
-|----------|----------------|-----|
-| API response that only needs a few fields | Yes | Reduce data transfer, compile-time safety on returned shape |
-| Data you'll pass back to `em.save()` | **No** | You need a class instance with full lifecycle support |
-| EntitySubscriber / lifecycle hooks matter | **No** | Projected results bypass the entity lifecycle entirely |
-| Read-only display or serialization | Yes | Plain DTOs are fine when you won't mutate them |
-| Complex projection with JOINs and aggregates | Use **RawQueryBuilder** instead | At that point you're writing SQL, not querying entities |
+  @Column({ nullable: true })       // nullable — can omit
+  bio!: string | null;
 
-**Rule of thumb:** if the result will be used as an entity (saved, updated, passed to subscribers), skip `select()`. If it's a read-only DTO leaving the system (API response, report), `select()` is safe and useful.
+  @Column({ default: "active" })    // has default — can omit
+  status!: string;
+}
 
-Note that `em.find()` also supports a `select` option, but it does **not** narrow the return type — `find()` always returns `T[]` regardless. If type safety on projections matters, use the query builder's `.select()` method instead.
+// ✓ OK — "name" (the only required column) is included
+await qb.select(["name"]).getMany();
+
+// ✗ Throws OrmError MISSING_REQUIRED_COLUMNS — "name" is missing
+await qb.select(["bio"]).getMany();
+
+// ✓ Use getPartialMany() to skip validation
+await qb.select(["bio"]).getPartialMany();  // OK — plain object
+```
+
+A column is considered **required** if all of these are true:
+- `nullable` is not `true`
+- No `default` value specified
+- Not `autoIncrement` (e.g. `@PrimaryGeneratedColumn`)
+
+### When to use each method
+
+| Scenario | Method | Why |
+|----------|--------|-----|
+| Data you'll pass to `em.save()` | `getMany()` | Class instances with full lifecycle support |
+| EntitySubscriber / lifecycle hooks | `getMany()` | Only class instances are matched by `listenTo()` |
+| Read-only API response | `getPartialMany()` | Typed DTO, compile-time safety, lightweight |
+| Aggregates / computed columns | `getRawMany()` | `addSelect(sql`COUNT(*)`, "cnt")` can't be typed as `Pick` |
+| Quick existence check | `exists()` | Boolean — no data fetched |
+
+Note that `em.find()` also supports a `select` option, but it does **not** narrow the return type — `find()` always returns `T[]` regardless. If type safety on projections matters, use the query builder's `getPartialMany()` method instead.
 
 ---
 
@@ -792,7 +843,7 @@ Note that `em.find()` also supports a `select` option, but it does **not** narro
 | Do you need UNION / INTERSECT / EXCEPT? | No | Yes |
 | Do you need CTE (WITH / WITH RECURSIVE)? | No | Yes |
 | Do you need window functions? | No | Yes |
-| Returns class instances? | Yes (without `select()`) / No (with projection) | No — raw objects via `em.query()` |
+| Returns class instances? | `getMany()` yes / `getPartialMany()` no | No — raw objects via `em.query()` |
 
 In practice, start with `SelectQueryBuilder` for everyday queries. If you hit a wall — you need UNION, recursive hierarchy traversal, or window analytics — switch to `RawQueryBuilder` for that specific query.
 

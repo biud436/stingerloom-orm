@@ -57,16 +57,16 @@ describe("SelectQueryBuilder — validate()", () => {
       const em = createMockEm(rows);
       const qb = new SelectQueryBuilder(User, "u", em);
 
-      const result = await qb.select(["id", "name"]).getMany();
+      const result = await qb.select(["id", "name"]).getPartialMany();
       expect(result).toEqual(rows);
     });
 
-    it("should return raw row from getOne() without validation", async () => {
+    it("should return raw row from getPartialOne() without validation", async () => {
       const rows = [{ id: 1, name: "Alice" }];
       const em = createMockEm(rows);
       const qb = new SelectQueryBuilder(User, "u", em);
 
-      const result = await qb.select(["id", "name"]).getOne();
+      const result = await qb.select(["id", "name"]).getPartialOne();
       expect(result).toEqual({ id: 1, name: "Alice" });
     });
   });
@@ -85,7 +85,7 @@ describe("SelectQueryBuilder — validate()", () => {
           validated.push(row);
           return row;
         })
-        .getMany();
+        .getPartialMany();
 
       expect(result).toEqual(rows);
       expect(validated).toHaveLength(2);
@@ -106,7 +106,7 @@ describe("SelectQueryBuilder — validate()", () => {
             if (!row.name) throw new Error("name is required");
             return row;
           })
-          .getMany(),
+          .getPartialMany(),
       ).rejects.toThrow("name is required");
     });
 
@@ -117,7 +117,7 @@ describe("SelectQueryBuilder — validate()", () => {
       const result = await new SelectQueryBuilder(User, "u", em)
         .select(["id", "name"])
         .validate((row) => ({ ...row, validated: true }) as any)
-        .getOne();
+        .getPartialOne();
 
       expect((result as any).validated).toBe(true);
     });
@@ -139,7 +139,7 @@ describe("SelectQueryBuilder — validate()", () => {
       const result = await new SelectQueryBuilder(User, "u", em)
         .select(["id", "name"])
         .validate(UserRow)
-        .getMany();
+        .getPartialMany();
 
       expect(result).toEqual(rows);
     });
@@ -155,7 +155,7 @@ describe("SelectQueryBuilder — validate()", () => {
         new SelectQueryBuilder(User, "u", em)
           .select(["id", "name"])
           .validate(UserRow)
-          .getMany(),
+          .getPartialMany(),
       ).rejects.toThrow(); // ZodError
     });
 
@@ -168,7 +168,7 @@ describe("SelectQueryBuilder — validate()", () => {
         new SelectQueryBuilder(User, "u", em)
           .select(["id", "name"])
           .validate(StrictRow)
-          .getMany(),
+          .getPartialMany(),
       ).rejects.toThrow(); // Unrecognized key
     });
 
@@ -183,7 +183,7 @@ describe("SelectQueryBuilder — validate()", () => {
       const result = await new SelectQueryBuilder(User, "u", em)
         .select(["id", "name"])
         .validate(TransformRow)
-        .getMany();
+        .getPartialMany();
 
       expect(result[0]).toEqual({ id: 1, name: "ALICE" });
     });
@@ -203,7 +203,7 @@ describe("SelectQueryBuilder — validate()", () => {
           if (arr.length > 100) throw new Error("too many");
           return arr;
         })
-        .getMany();
+        .getPartialMany();
 
       expect(result).toEqual(rows);
     });
@@ -219,7 +219,7 @@ describe("SelectQueryBuilder — validate()", () => {
             if (arr.length > 2) throw new Error("max 2 rows");
             return arr;
           })
-          .getMany(),
+          .getPartialMany(),
       ).rejects.toThrow("max 2 rows");
     });
 
@@ -236,7 +236,7 @@ describe("SelectQueryBuilder — validate()", () => {
       const result = await new SelectQueryBuilder(User, "u", em)
         .select(["id", "name"])
         .validateArray(UsersArray)
-        .getMany();
+        .getPartialMany();
 
       expect(result).toEqual(rows);
     });
@@ -255,7 +255,7 @@ describe("SelectQueryBuilder — validate()", () => {
         new SelectQueryBuilder(User, "u", em)
           .select(["id", "name"])
           .validateArray(UsersArray)
-          .getMany(),
+          .getPartialMany(),
       ).rejects.toThrow(); // ZodError: too many items
     });
   });
@@ -279,7 +279,7 @@ describe("SelectQueryBuilder — validate()", () => {
           callOrder.push(`array:${arr.length}`);
           return arr;
         })
-        .getMany();
+        .getPartialMany();
 
       expect(callOrder).toEqual(["row:alice", "row:bob", "array:2"]);
       expect(result[0]).toEqual({ id: 1, name: "ALICE" });

@@ -153,18 +153,30 @@ describe("SelectQueryBuilder type safety", () => {
   it("should verify runtime behavior matches type narrowing", async () => {
     const em = createMockEm();
 
-    // With select — getMany returns the narrowed type
+    // With select — getPartialMany returns the narrowed Pick type
     const results = await new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .select(["id", "name"])
-      .getMany();
+      .getPartialMany();
 
     expect(results).toEqual([]);
 
-    // getOne returns null from empty mock
+    // getPartialOne returns null from empty mock
     const one = await new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .select(["id", "name"])
-      .getOne();
+      .getPartialOne();
 
     expect(one).toBeNull();
+
+    // getMany without select returns T[] (class instances)
+    const entities = await new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
+      .getMany();
+
+    expect(entities).toEqual([]);
+
+    // getRawMany returns Record<string, unknown>[]
+    const raw = await new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
+      .getRawMany();
+
+    expect(raw).toEqual([]);
   });
 });

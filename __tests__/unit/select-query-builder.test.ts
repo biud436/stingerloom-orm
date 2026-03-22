@@ -680,7 +680,23 @@ describe("SelectQueryBuilder", () => {
     });
   });
 
-  describe("getMany() deserialization", () => {
+  describe("3-tier execution methods", () => {
+    // Entity with optional fields for required-column validation testing
+    @Entity()
+    class UserWithOptionals {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "varchar", length: 255 })
+      name!: string; // required (non-nullable, no default)
+
+      @Column({ type: "varchar", nullable: true })
+      bio!: string | null; // optional (nullable)
+
+      @Column({ type: "varchar", default: "active" })
+      status!: string; // optional (has default)
+    }
+
     function createMockEmWithData(rows: any[], dbType: "mysql" | "postgresql" = "mysql") {
       const resolver = new RelationMetadataResolver();
       function wrap(col: string) {
@@ -701,80 +717,180 @@ describe("SelectQueryBuilder", () => {
       } as unknown as EntityManager;
     }
 
-    it("should return class instances when no select() is called", async () => {
-      const em = createMockEmWithData([
-        { id: 1, name: "Alice", email: "alice@test.com", age: 30, status: "active", createdAt: new Date() },
-      ]);
-      const qb = new SelectQueryBuilder(User, "u", em);
-      const results = await qb.getMany();
+    describe("getMany() — safe, class instances", () => {
+      it("should return class instances when no select()", async () => {
+        const em = createMockEmWithData([
+          { id: 1, name: "Alice", email: "a@t.com", age: 30, status: "active", createdAt: new Date() },
+        ]);
+        const qb = new SelectQueryBuilder(User, "u", em);
+        const results = await qb.getMany();
 
-      expect(results).toHaveLength(1);
-      expect(results[0]).toBeInstanceOf(User);
-      expect(results[0].id).toBe(1);
-      expect(results[0].name).toBe("Alice");
+        expect(results).toHaveLength(1);
+        expect(results[0]).toBeInstanceOf(User);
+        expect(results[0].id).toBe(1);
+        expect(results[0].name).toBe("Alice");
+      });
+
+      it("should return class instances when select('*')", async () => {
+        const em = createMockEmWithData([
+          { id: 2, name: "Bob", email: "b@t.com", age: 25, status: "active", createdAt: new Date() },
+        ]);
+        const qb = new SelectQueryBuilder(User, "u", em);
+        qb.select("*");
+        const results = await qb.getMany();
+
+        expect(results).toHaveLength(1);
+        expect(results[0]).toBeInstanceOf(User);
+      });
+
+      it("should return class instances when all required columns are selected", async () => {
+        const em = createMockEmWithData([{ id: 1, name: "Alice" }]);
+        const qb = new SelectQueryBuilder(UserWithOptionals, "u", em);
+        // id is autoIncrement (optional), name is required, bio is nullable, status has default
+        const results = await qb.select(["name"]).getMany();
+
+        expect(results).toHaveLength(1);
+        expect(results[0]).toBeInstanceOf(UserWithOptionals);
+      });
+
+      it("should throw MISSING_REQUIRED_COLUMNS when required column is omitted", async () => {
+        const em = createMockEmWithData([{ id: 1, bio: null }]);
+        const qb = new SelectQueryBuilder(UserWithOptionals, "u", em);
+        // Selecting only optional columns, omitting required "name"
+        await expect(qb.select(["bio"]).getMany()).rejects.toThrow(
+          /Missing.*name/,
+        );
+      });
+
+      it("should not require nullable columns", async () => {
+        const em = createMockEmWithData([{ name: "Alice" }]);
+        const qb = new SelectQueryBuilder(UserWithOptionals, "u", em);
+        // bio is nullable — can be omitted
+        const results = await qb.select(["name"]).getMany();
+        expect(results).toHaveLength(1);
+      });
+
+      it("should not require columns with default values", async () => {
+        const em = createMockEmWithData([{ name: "Alice" }]);
+        const qb = new SelectQueryBuilder(UserWithOptionals, "u", em);
+        // status has default — can be omitted
+        const results = await qb.select(["name"]).getMany();
+        expect(results).toHaveLength(1);
+      });
+
+      it("should not require autoIncrement columns", async () => {
+        const em = createMockEmWithData([{ name: "Alice" }]);
+        const qb = new SelectQueryBuilder(UserWithOptionals, "u", em);
+        // id is autoIncrement — can be omitted
+        const results = await qb.select(["name"]).getMany();
+        expect(results).toHaveLength(1);
+      });
     });
 
-    it("should return class instances when select('*') is called", async () => {
-      const em = createMockEmWithData([
-        { id: 2, name: "Bob", email: "bob@test.com", age: 25, status: "active", createdAt: new Date() },
-      ]);
-      const qb = new SelectQueryBuilder(User, "u", em);
-      qb.select("*");
-      const results = await qb.getMany();
+    describe("getOne() — safe, single class instance", () => {
+      it("should return class instance when no select()", async () => {
+        const em = createMockEmWithData([
+          { id: 1, name: "Alice", email: "a@t.com", age: 30, status: "active", createdAt: new Date() },
+        ]);
+        const result = await new SelectQueryBuilder(User, "u", em).getOne();
 
-      expect(results).toHaveLength(1);
-      expect(results[0]).toBeInstanceOf(User);
+        expect(result).not.toBeNull();
+        expect(result).toBeInstanceOf(User);
+      });
+
+      it("should return null for empty result", async () => {
+        const em = createMockEmWithData([]);
+        const result = await new SelectQueryBuilder(User, "u", em).getOne();
+        expect(result).toBeNull();
+      });
     });
 
-    it("should return plain objects when select() with specific columns is called", async () => {
-      const em = createMockEmWithData([
-        { id: 1, name: "Alice" },
-      ]);
-      const qb = new SelectQueryBuilder(User, "u", em);
-      qb.select(["id", "name"]);
-      const results = await qb.getMany();
+    describe("getManyAndCount() — safe", () => {
+      it("should return class instances with count", async () => {
+        const em = createMockEmWithData([
+          { id: 1, name: "Alice", email: "a@t.com", age: 30, status: "active", createdAt: new Date() },
+        ]);
+        const qb = new SelectQueryBuilder(User, "u", em);
+        jest.spyOn(qb, "getCount").mockResolvedValue(1);
+        const [results, count] = await qb.getManyAndCount();
 
-      expect(results).toHaveLength(1);
-      expect(results[0]).not.toBeInstanceOf(User);
-      expect(results[0].id).toBe(1);
-      expect(results[0].name).toBe("Alice");
+        expect(results).toHaveLength(1);
+        expect(results[0]).toBeInstanceOf(User);
+        expect(count).toBe(1);
+      });
     });
 
-    it("getOne() should return class instance when no select()", async () => {
-      const em = createMockEmWithData([
-        { id: 1, name: "Alice", email: "alice@test.com", age: 30, status: "active", createdAt: new Date() },
-      ]);
-      const qb = new SelectQueryBuilder(User, "u", em);
-      const result = await qb.getOne();
+    describe("getPartialMany() — typed plain objects", () => {
+      it("should return plain objects (not class instances)", async () => {
+        const em = createMockEmWithData([{ id: 1, name: "Alice" }]);
+        const qb = new SelectQueryBuilder(User, "u", em);
+        const results = await qb.select(["id", "name"]).getPartialMany();
 
-      expect(result).not.toBeNull();
-      expect(result).toBeInstanceOf(User);
+        expect(results).toHaveLength(1);
+        expect(results[0]).not.toBeInstanceOf(User);
+        expect(results[0].id).toBe(1);
+        expect(results[0].name).toBe("Alice");
+      });
+
+      it("should not validate required columns", async () => {
+        const em = createMockEmWithData([{ bio: null }]);
+        const qb = new SelectQueryBuilder(UserWithOptionals, "u", em);
+        // Omitting required "name" — getPartialMany should NOT throw
+        const results = await qb.select(["bio"]).getPartialMany();
+        expect(results).toHaveLength(1);
+      });
     });
 
-    it("getOne() should return plain object when select() with columns", async () => {
-      const em = createMockEmWithData([
-        { id: 1, name: "Alice" },
-      ]);
-      const qb = new SelectQueryBuilder(User, "u", em);
-      qb.select(["id", "name"]);
-      const result = await qb.getOne();
+    describe("getPartialOne() — typed plain object", () => {
+      it("should return plain object or null", async () => {
+        const em = createMockEmWithData([{ id: 1, name: "Alice" }]);
+        const result = await new SelectQueryBuilder(User, "u", em)
+          .select(["id", "name"])
+          .getPartialOne();
 
-      expect(result).not.toBeNull();
-      expect(result).not.toBeInstanceOf(User);
+        expect(result).not.toBeNull();
+        expect(result).not.toBeInstanceOf(User);
+      });
     });
 
-    it("getManyAndCount() should return class instances when no select()", async () => {
-      const em = createMockEmWithData([
-        { id: 1, name: "Alice", email: "a@t.com", age: 30, status: "active", createdAt: new Date() },
-      ]);
-      // Override getCount to avoid count query against mock
-      const qb = new SelectQueryBuilder(User, "u", em);
-      jest.spyOn(qb, "getCount").mockResolvedValue(1);
-      const [results, count] = await qb.getManyAndCount();
+    describe("getPartialManyAndCount()", () => {
+      it("should return plain objects with count", async () => {
+        const em = createMockEmWithData([{ id: 1, name: "Alice" }]);
+        const qb = new SelectQueryBuilder(User, "u", em).select(["id", "name"]);
+        jest.spyOn(qb, "getCount").mockResolvedValue(5);
+        const [results, count] = await qb.getPartialManyAndCount();
 
-      expect(results).toHaveLength(1);
-      expect(results[0]).toBeInstanceOf(User);
-      expect(count).toBe(1);
+        expect(results[0]).not.toBeInstanceOf(User);
+        expect(count).toBe(5);
+      });
+    });
+
+    describe("getRawMany() — untyped plain objects", () => {
+      it("should return Record<string, unknown>[]", async () => {
+        const em = createMockEmWithData([{ id: 1, name: "Alice", cnt: 42 }]);
+        const qb = new SelectQueryBuilder(User, "u", em);
+        const results = await qb.getRawMany();
+
+        expect(results).toHaveLength(1);
+        expect(results[0]).not.toBeInstanceOf(User);
+        expect((results[0] as any).cnt).toBe(42);
+      });
+    });
+
+    describe("getRawOne() — untyped plain object", () => {
+      it("should return single record or null", async () => {
+        const em = createMockEmWithData([{ id: 1, name: "Alice" }]);
+        const result = await new SelectQueryBuilder(User, "u", em).getRawOne();
+
+        expect(result).not.toBeNull();
+        expect(result).not.toBeInstanceOf(User);
+      });
+
+      it("should return null for empty result", async () => {
+        const em = createMockEmWithData([]);
+        const result = await new SelectQueryBuilder(User, "u", em).getRawOne();
+        expect(result).toBeNull();
+      });
     });
   });
 });

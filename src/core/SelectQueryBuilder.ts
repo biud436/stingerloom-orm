@@ -7,6 +7,8 @@ import { RawQueryBuilder } from "./RawQueryBuilder";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
+import { COLUMN_TOKEN } from "../decorators/Column";
+import type { ColumnMetadata } from "../scanner/ColumnScanner";
 
 /**
  * Validator function that can be attached to a SelectQueryBuilder.
@@ -94,6 +96,7 @@ export class SelectQueryBuilder<T, TResult = T> {
   private extraSegments: Sql[] = [];
   private rowValidator: RowValidator<any> | undefined;
   private arrayValidatorFn: ArrayValidator<any> | undefined;
+  private selectedPropertyKeys: string[] | null = null;
 
   constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
     this.entity = entity;
@@ -132,8 +135,10 @@ export class SelectQueryBuilder<T, TResult = T> {
   select<K extends ColumnOf<T>>(columns: K[] | "*"): SelectQueryBuilder<T, any> {
     if (columns === "*") {
       this.selectColumns = "*";
+      this.selectedPropertyKeys = null;
     } else {
       this.selectColumns = (columns as string[]).map((c) => this.col(c));
+      this.selectedPropertyKeys = columns as string[];
     }
     return this as any;
   }
@@ -607,50 +612,127 @@ export class SelectQueryBuilder<T, TResult = T> {
     return { text: built.sql, values: built.values };
   }
 
-  // ── EXECUTION ───────────────────────────────────────────
+  // ── EXECUTION: Safe (class instances) ───────────────────
 
   /**
-   * Execute the query and return multiple results.
+   * Execute the query and return class instances.
    *
-   * The return type reflects `select()`: if specific columns were selected,
-   * the type narrows to `Pick<T, K>[]` instead of `T[]`.
+   * Always deserializes rows into actual entity instances via
+   * `class-transformer`, so `instanceof`, class methods, lifecycle hooks,
+   * and `em.save()` all work correctly.
    *
-   * If a validator is attached via `validate()` or `validateArray()`,
-   * the results are validated before being returned.
+   * When `select()` is used with specific columns, validates that all
+   * required (non-nullable) columns are included. Throws `OrmError` with
+   * `MISSING_REQUIRED_COLUMNS` if a required column is omitted.
+   *
+   * For plain-object projections without validation, use `getPartialMany()`.
+   * For completely untyped results, use `getRawMany()`.
    */
-  async getMany(): Promise<TResult[]> {
+  async getMany(): Promise<T[]> {
+    this.validateRequiredColumns();
+
     const built = this.toSql();
     const rows = await this.em.query<any>(built);
 
-    // When selecting all columns (no projection), deserialize rows into
-    // actual class instances so that class methods, prototype chain, and
-    // instanceof checks work correctly.  Projected queries (select with
-    // specific columns) intentionally return plain objects (Pick<T, K>).
-    if (this.selectColumns === "*") {
-      const registry = DeserializerRegistry.getInstance();
-      const entities = rows.map((row: any) =>
-        registry.deserialize(this.entity, row),
-      );
-      return this.applyValidation(entities);
-    }
+    const registry = DeserializerRegistry.getInstance();
+    const entities = rows.map((row: any) =>
+      registry.deserialize(this.entity, row),
+    );
 
-    return this.applyValidation(rows);
+    return this.applyValidation(entities) as unknown as T[];
   }
 
   /**
-   * Execute the query and return a single result or null.
+   * Execute the query and return a single class instance or null.
    * Automatically adds LIMIT 1 if not already set.
-   *
-   * The return type reflects `select()`: if specific columns were selected,
-   * the type narrows to `Pick<T, K> | null` instead of `T | null`.
    */
-  async getOne(): Promise<TResult | null> {
+  async getOne(): Promise<T | null> {
     if (this.limitValue === undefined) {
       this.limitValue = 1;
     }
     const results = await this.getMany();
     return results.length > 0 ? results[0] : null;
   }
+
+  /**
+   * Execute the query and return both class instances and total count.
+   */
+  async getManyAndCount(): Promise<[T[], number]> {
+    const [results, count] = await Promise.all([
+      this.getMany(),
+      this.getCount(),
+    ]);
+    return [results, count];
+  }
+
+  // ── EXECUTION: Partial (typed plain objects) ───────────
+
+  /**
+   * Execute the query and return plain objects with `Pick<T, K>` typing.
+   *
+   * No deserialization — results are NOT class instances. `instanceof`
+   * returns false and lifecycle hooks do not fire. Do not pass these
+   * to `em.save()`.
+   *
+   * When `select()` is used, the return type narrows to `Pick<T, K>[]`,
+   * preventing access to unselected columns at compile time.
+   */
+  async getPartialMany(): Promise<TResult[]> {
+    const built = this.toSql();
+    const rows = await this.em.query<any>(built);
+    return this.applyValidation(rows);
+  }
+
+  /**
+   * Execute the query and return a single plain object or null.
+   * Automatically adds LIMIT 1 if not already set.
+   */
+  async getPartialOne(): Promise<TResult | null> {
+    if (this.limitValue === undefined) {
+      this.limitValue = 1;
+    }
+    const results = await this.getPartialMany();
+    return results.length > 0 ? results[0] : null;
+  }
+
+  /**
+   * Execute the query and return both plain objects and total count.
+   */
+  async getPartialManyAndCount(): Promise<[TResult[], number]> {
+    const [results, count] = await Promise.all([
+      this.getPartialMany(),
+      this.getCount(),
+    ]);
+    return [results, count];
+  }
+
+  // ── EXECUTION: Raw (untyped plain objects) ─────────────
+
+  /**
+   * Execute the query and return untyped plain objects.
+   *
+   * Use when the result includes columns not in the entity definition
+   * (e.g. `addSelect(sql\`COUNT(*)\`, "cnt")`). No deserialization,
+   * no validation, no type narrowing.
+   */
+  async getRawMany(): Promise<Record<string, unknown>[]> {
+    const built = this.toSql();
+    return this.em.query<Record<string, unknown>>(built);
+  }
+
+  /**
+   * Execute the query and return a single untyped plain object or null.
+   * Automatically adds LIMIT 1 if not already set.
+   */
+  async getRawOne(): Promise<Record<string, unknown> | null> {
+    if (this.limitValue === undefined) {
+      this.limitValue = 1;
+    }
+    const results = await this.getRawMany();
+    return results.length > 0 ? results[0] : null;
+  }
+
+  // ── EXECUTION: Utility ─────────────────────────────────
 
   /**
    * Execute a COUNT(*) query with the same WHERE/JOIN conditions.
@@ -703,19 +785,6 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
-   * Execute the query and return both results and total count.
-   *
-   * The result array type reflects `select()`.
-   */
-  async getManyAndCount(): Promise<[TResult[], number]> {
-    const [results, count] = await Promise.all([
-      this.getMany(),
-      this.getCount(),
-    ]);
-    return [results, count];
-  }
-
-  /**
    * Check if any rows match the conditions.
    */
   async exists(): Promise<boolean> {
@@ -732,6 +801,47 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   // ── Private ─────────────────────────────────────────────
+
+  /**
+   * Validate that all required (non-nullable) columns are included in
+   * the select() projection. Only runs when select() was called with
+   * specific columns. Throws OrmError if required columns are missing.
+   */
+  private validateRequiredColumns(): void {
+    if (this.selectedPropertyKeys === null) return;
+
+    const columns: ColumnMetadata[] =
+      Reflect.getMetadata(COLUMN_TOKEN, this.entity.prototype) ??
+      Reflect.getMetadata(COLUMN_TOKEN, this.entity) ??
+      [];
+
+    if (columns.length === 0) return;
+
+    const selectedSet = new Set(this.selectedPropertyKeys);
+    const missing: string[] = [];
+
+    for (const col of columns) {
+      const opts = col.options ?? ({} as any);
+      const isRequired =
+        opts.nullable !== true &&
+        opts.default === undefined &&
+        opts.autoIncrement !== true;
+
+      const key = col.propertyKey ?? col.name;
+      if (isRequired && key && !selectedSet.has(key)) {
+        missing.push(key);
+      }
+    }
+
+    if (missing.length > 0) {
+      throw new OrmError(
+        OrmErrorCode.MISSING_REQUIRED_COLUMNS,
+        `getMany() requires all non-nullable columns when using select(). ` +
+          `Missing: [${missing.join(", ")}]. ` +
+          `Use getPartialMany() to skip this check.`,
+      );
+    }
+  }
 
   /**
    * Apply row-level and/or array-level validation to query results.
