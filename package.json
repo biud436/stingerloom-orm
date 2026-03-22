@@ -7,14 +7,17 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "import": "./dist/esm/index.js",
       "require": "./dist/index.js"
     },
     "./nestjs": {
       "types": "./dist/integration/nestjs/index.d.ts",
+      "import": "./dist/esm/integration/nestjs/index.js",
       "require": "./dist/integration/nestjs/index.js"
     },
     "./prisma-import": {
       "types": "./dist/integration/prisma-import/index.d.ts",
+      "import": "./dist/esm/integration/prisma-import/index.js",
       "require": "./dist/integration/prisma-import/index.js"
     }
   },
@@ -56,7 +59,7 @@
     "stingerloom"
   ],
   "scripts": {
-    "build": "rimraf dist && tsc",
+    "build": "rimraf dist && tsc && tsc -p tsconfig.esm.json",
     "prepublishOnly": "pnpm run build",
     "test": "jest",
     "docs:dev": "vitepress dev docs",
