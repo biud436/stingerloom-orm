@@ -739,7 +739,7 @@ Understanding what `getMany()` returns is important for writing correct code.
 
 **Without `select()`** — results are deserialized into class instances via `class-transformer`. They have the entity's prototype chain, so `instanceof` works, class methods are available, and they can be passed to `em.save()` or matched by `EntitySubscriber.listenTo()`.
 
-**With `select(["id", "name"])`** — results are plain objects typed as `Pick<T, K>`. They are lightweight DTOs with no class identity. Do not pass them to `em.save()` or expect `instanceof` checks to work.
+**With `select(["id", "name"])`** — results are plain objects typed as `Pick<T, K>`. They are lightweight DTOs with no class identity.
 
 ```typescript
 // ✓ Class instance — full entity behavior
@@ -757,6 +757,27 @@ const partial = await em.createQueryBuilder(User, "u")
 partial instanceof User;   // false
 partial.email;              // compile error (not in Pick)
 ```
+
+### What breaks with projected results
+
+Projected results (`select()` with specific columns) are plain objects, not entity instances. This means:
+
+- **`instanceof` returns false** — `partial instanceof User` is `false`.
+- **Class methods are missing** — if `User` has a `fullName()` getter, projected results don't have it.
+- **EntitySubscriber won't match** — `listenTo()` matches by class reference, so `afterLoad` and other subscriber hooks won't fire for projected results.
+- **Passing to `em.save()` is unsafe** — `save()` expects a class instance. Passing a plain object may silently skip lifecycle hooks (`@BeforeInsert`, `@BeforeUpdate`) and event listeners.
+
+### When to use select() and when not to
+
+| Scenario | Use `select()`? | Why |
+|----------|----------------|-----|
+| API response that only needs a few fields | Yes | Reduce data transfer, compile-time safety on returned shape |
+| Data you'll pass back to `em.save()` | **No** | You need a class instance with full lifecycle support |
+| EntitySubscriber / lifecycle hooks matter | **No** | Projected results bypass the entity lifecycle entirely |
+| Read-only display or serialization | Yes | Plain DTOs are fine when you won't mutate them |
+| Complex projection with JOINs and aggregates | Use **RawQueryBuilder** instead | At that point you're writing SQL, not querying entities |
+
+**Rule of thumb:** if the result will be used as an entity (saved, updated, passed to subscribers), skip `select()`. If it's a read-only DTO leaving the system (API response, report), `select()` is safe and useful.
 
 Note that `em.find()` also supports a `select` option, but it does **not** narrow the return type — `find()` always returns `T[]` regardless. If type safety on projections matters, use the query builder's `.select()` method instead.
 
