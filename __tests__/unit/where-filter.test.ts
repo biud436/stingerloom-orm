@@ -339,6 +339,84 @@ describe("WhereResolver", () => {
     });
   });
 
+  describe("doc example: status + NOT + AND combo", () => {
+    it("should handle mixed field + NOT + AND conditions", () => {
+      const results = resolve({
+        status: "active",
+        NOT: { status: "banned" },
+        AND: [
+          { age: { gte: 18 } },
+          { age: { lte: 65 } },
+        ],
+      });
+      // status = 1, NOT = 1, AND = 1
+      expect(results.length).toBe(3);
+
+      const sqlText = results.map((r) => r.sql).join(" ");
+      expect(sqlText).toContain("`status` =");
+      expect(sqlText).toContain("NOT (");
+      expect(sqlText).toContain("AND");
+    });
+  });
+
+  describe("AND with filter operators", () => {
+    it("should AND-combine clauses containing filter operators", () => {
+      const results = resolve({
+        AND: [
+          { age: { gte: 18 } },
+          { age: { lte: 65 } },
+        ],
+      });
+      expect(results).toHaveLength(1);
+      const s = results[0].sql;
+      expect(s).toContain("`age` >=");
+      expect(s).toContain("`age` <=");
+      expect(s).toContain("AND");
+      expect(results[0].values).toEqual([18, 65]);
+    });
+  });
+
+  describe("startsWith/endsWith escape", () => {
+    it("startsWith should escape % and _", () => {
+      const result = resolveSingle({ name: { startsWith: "50%" } });
+      expect(result.values).toContain("50\\%%");
+    });
+
+    it("endsWith should escape % and _", () => {
+      const result = resolveSingle({ name: { endsWith: "user_1" } });
+      expect(result.values).toContain("%user\\_1");
+    });
+  });
+
+  describe("empty OR/AND arrays", () => {
+    it("empty OR should produce no conditions", () => {
+      const results = resolve({ OR: [] });
+      expect(results).toHaveLength(0);
+    });
+
+    it("empty AND should produce no conditions", () => {
+      const results = resolve({ AND: [] });
+      expect(results).toHaveLength(0);
+    });
+  });
+
+  describe("nested NOT with OR", () => {
+    it("NOT: { OR: [...] } should negate the OR group", () => {
+      const results = resolve({
+        NOT: {
+          OR: [
+            { status: "banned" },
+            { status: "deleted" },
+          ],
+        },
+      });
+      expect(results).toHaveLength(1);
+      const s = results[0].sql;
+      expect(s).toContain("NOT (");
+      expect(s).toContain("OR");
+    });
+  });
+
   describe("undefined where", () => {
     it("should return empty array for undefined", () => {
       const results = resolveWhereClause<User>(undefined, { wrapColumn: wrap });
