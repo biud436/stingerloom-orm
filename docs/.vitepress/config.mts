@@ -76,10 +76,11 @@ export default defineConfig({
       },
       {
         text: "Plugins",
-        collapsed: true,
+        collapsed: false,
         items: [
           { text: "Plugin System", link: "/plugins" },
-          { text: "Write Buffer (UoW)", link: "/write-buffer" },
+          { text: "Write Buffer — Basics", link: "/write-buffer" },
+          { text: "Write Buffer — Advanced", link: "/write-buffer-advanced" },
         ],
       },
       {
