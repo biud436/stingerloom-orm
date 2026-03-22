@@ -54,13 +54,15 @@ Once you've learned the basics, pick the topics you need.
 
 | Document | When Do You Need It? |
 |----------|---------------------|
-| [Query Builder](./query-builder.md) | When you need complex SQL like JOIN, GROUP BY, subqueries |
-| [Transactions](./transactions.md) | When you need to group multiple operations into a single unit |
-| [Migrations](./migrations.md) | When you need to safely change schema in production |
-| [Configuration Guide](./configuration.md) | When configuring pooling, timeouts, Read Replica, etc. |
-| [Advanced Features](./advanced.md) | When you need performance optimization, event subscription, N+1 detection |
-| [Multi-Tenancy](./multi-tenancy.md) | When isolating multiple customer data in a single app |
-| [API Reference](./api-reference.md) | When you need to quickly check method signatures |
+| [Query Builder](./query-builder.md) | Type-safe queries, JOIN, GROUP BY, UNION, CTE, window functions |
+| [Transactions](./transactions.md) | Grouping operations, isolation levels, deadlock retry |
+| [Migrations](./migrations.md) | Safely change schema in production, CLI (`npx stingerloom`) |
+| [Configuration Guide](./configuration.md) | Pooling, timeouts, Read Replica, CJS/ESM |
+| [Advanced Features](./advanced.md) | Streaming, event subscription, N+1 detection, query builder |
+| [Plugins](./plugins.md) | Plugin system and WriteBuffer (Unit of Work) |
+| [WriteBuffer](./write-buffer.md) | Identity Map, dirty checking, cascade, pessimistic locking |
+| [Multi-Tenancy](./multi-tenancy.md) | Isolating multiple customer data in a single app |
+| [API Reference](./api-reference.md) | Quick method signature lookup |
 
 ## Supported Databases
 

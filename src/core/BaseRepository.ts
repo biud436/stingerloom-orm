@@ -311,7 +311,7 @@ export class BaseRepository<T> {
    *   .getMany();
    * ```
    */
-  createQueryBuilder(alias: string): SelectQueryBuilder<T> {
-    return new SelectQueryBuilder<T>(this.entity, alias, this.em);
+  createQueryBuilder(alias: string): SelectQueryBuilder<T, T> {
+    return new SelectQueryBuilder<T, T>(this.entity, alias, this.em);
   }
 }

@@ -205,7 +205,88 @@ class UsersService {
 }
 ```
 
-BaseRepository supports nearly all EntityManager methods: `find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`.
+BaseRepository supports nearly all EntityManager methods: `find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `stream`, and `createQueryBuilder`.
+
+```typescript
+// Streaming via repository
+for await (const user of userRepo.stream({ where: { isActive: true } })) {
+  await process(user);
+}
+
+// Type-safe query builder via repository
+const [users, total] = await userRepo
+  .createQueryBuilder("u")
+  .where("isActive", true)
+  .orderBy({ createdAt: "DESC" })
+  .skip(20)
+  .take(10)
+  .getManyAndCount();
+```
+
+## Streaming Large Datasets
+
+When you need to process millions of rows, loading them all at once uses too much memory. `stream()` returns an `AsyncGenerator` that fetches rows in configurable batches while yielding one entity at a time.
+
+```typescript
+// Process users one at a time (fetched in batches of 500 internally)
+for await (const user of em.stream(User, { where: { isActive: true } }, 500)) {
+  await sendWelcomeEmail(user.email);
+}
+```
+
+Use `stream()` for ETL pipelines, data exports, batch notifications, or any task that touches a large fraction of your data. For API endpoints, prefer `find()` with pagination.
+
+`stream()` supports all `FindOption` properties — `where`, `orderBy`, `relations`, `select`, etc.
+
+```typescript
+// Stream posts with their authors, ordered by date
+for await (const post of em.stream(Post, {
+  relations: ["author"],
+  orderBy: { createdAt: "DESC" },
+}, 1000)) {
+  await index(post);
+}
+```
+
+> **Hint** `stream()` uses LIMIT/OFFSET batching internally. For consistent results on large mutable tables, wrap the stream in a transaction with `REPEATABLE READ` isolation.
+
+## Type-Safe Query Builder
+
+For queries that go beyond what `find()` offers — complex JOINs, GROUP BY with aggregates, pessimistic locking, or DISTINCT — use the `SelectQueryBuilder`.
+
+```typescript
+const [activeUsers, total] = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name", "email"])
+  .where("isActive", true)
+  .andWhere("age", ">=", 18)
+  .orderBy({ createdAt: "DESC" })
+  .skip(20)
+  .take(10)
+  .getManyAndCount();
+```
+
+All column references (`"id"`, `"name"`, `"isActive"`) are validated against `keyof T` — your IDE auto-completes them, and typos become compile errors.
+
+For more advanced SQL — UNION, CTE, window functions — use `RawQueryBuilder`. See the full [Query Builder](./query-builder.md) guide for both builders.
+
+## Deadlock Retry
+
+In high-concurrency scenarios, database deadlocks are inevitable. The `em.transaction()` API supports automatic retry when a deadlock is detected.
+
+```typescript
+await em.transaction(async (txEm) => {
+  const account = await txEm.findOne(Account, { where: { id: fromId } });
+  account.balance -= amount;
+  await txEm.save(Account, account);
+}, {
+  retryOnDeadlock: true,
+  maxRetries: 3,
+  retryDelayMs: 100,
+});
+```
+
+When a deadlock is caught, the transaction is rolled back and the callback re-executed from scratch. The callback must be idempotent. See [Transactions](./transactions.md) for the full guide.
 
 ## Operational Features
 
@@ -213,6 +294,7 @@ Read Replica, Connection Pooling, Connection Retry, Query Timeout, and Shutdown 
 
 ## Next Steps
 
+- [Query Builder](./query-builder.md) — SelectQueryBuilder, RawQueryBuilder, UNION, CTE, window functions
 - [Plugins](./plugins.md) — Plugin system and custom plugin authoring
 - [Configuration Guide](./configuration.md) — All options at a glance
 - [Multi-Tenancy](./multi-tenancy.md) — Per-tenant data isolation

@@ -321,6 +321,24 @@ const order = await em.transaction(async (txEm) => {
 });
 ```
 
+### Deadlock Retry
+
+For operations where concurrent transactions may deadlock (e.g., inventory deduction), pass `TransactionOptions` to enable automatic retry:
+
+```typescript
+await em.transaction(async (txEm) => {
+  const stock = await txEm.findOne(Inventory, { where: { productId: 42 } });
+  stock.quantity -= 1;
+  await txEm.save(Inventory, stock);
+}, {
+  retryOnDeadlock: true,  // Retry on deadlock
+  maxRetries: 3,          // Up to 3 retries (default)
+  retryDelayMs: 100,      // 100ms delay between retries (default)
+});
+```
+
+The ORM detects deadlock errors for MySQL (`errno 1213`), PostgreSQL (`40P01`), and SQLite (`SQLITE_BUSY`), and re-executes the entire callback from scratch. The callback must be **idempotent**.
+
 For decorator-based transactions and isolation level control, see [Transactions](./transactions.md).
 
 ## Raw SQL Execution — query()
@@ -343,6 +361,103 @@ const posts = await em.query<{ id: number; title: string }>(
 ```
 
 > **Warning** When using Raw SQL, always use parameter binding. Concatenating values into strings poses SQL Injection risks.
+
+## Streaming — stream()
+
+When processing millions of rows, loading them all into memory at once is impractical. `stream()` returns an `AsyncGenerator` that fetches rows in configurable batches — you process one entity at a time without holding the entire result set in memory.
+
+```typescript
+async *stream<T>(entity: Class<T>, options?: FindOption<T>, batchSize?: number): AsyncGenerator<T>
+```
+
+### Basic Usage
+
+```typescript
+for await (const user of em.stream(User, { where: { isActive: true } })) {
+  await sendEmail(user.email);
+}
+```
+
+The third parameter controls the batch size (default: 1000). Internally, the ORM uses LIMIT/OFFSET to fetch one batch at a time. When a batch returns fewer rows than the batch size, the generator knows it has reached the end and stops.
+
+```typescript
+// Fetch in batches of 500
+for await (const post of em.stream(Post, { orderBy: { id: "ASC" } }, 500)) {
+  await indexPost(post);
+}
+```
+
+### Supported Options
+
+`stream()` supports all `FindOption` properties — `where`, `orderBy`, `relations`, `select`, `withDeleted`, etc.
+
+```typescript
+// Stream with relations and filtered columns
+for await (const post of em.stream(Post, {
+  select: ["id", "title"],
+  relations: ["author"],
+  where: { isPublished: true },
+  orderBy: { createdAt: "DESC" },
+}, 2000)) {
+  console.log(`${post.title} by ${post.author.name}`);
+}
+```
+
+### When to Use stream() vs find()
+
+| Scenario | Use |
+|----------|-----|
+| API endpoint returning a page of results | `find()` with pagination |
+| Processing all rows in a table (ETL, export, batch emails) | `stream()` |
+| Aggregating data from a large dataset | `stream()` or `em.query()` with DB-side aggregation |
+
+> **Hint** For consistent results on large mutable tables, consider wrapping the stream in a transaction with `REPEATABLE READ` isolation to prevent phantom reads during iteration.
+
+### Counting Before Streaming
+
+If you need the total count before processing, use `count()` first:
+
+```typescript
+const total = await em.count(User, { isActive: true });
+console.log(`Processing ${total} users...`);
+
+let processed = 0;
+for await (const user of em.stream(User, { where: { isActive: true } })) {
+  await process(user);
+  processed++;
+  if (processed % 1000 === 0) console.log(`${processed}/${total}`);
+}
+```
+
+## DISTINCT Queries
+
+Add `distinct: true` to generate `SELECT DISTINCT`, which removes duplicate rows from the result.
+
+```typescript
+const uniqueCities = await em.find(User, {
+  select: ["city"],
+  distinct: true,
+});
+// SELECT DISTINCT "city" FROM "user"
+```
+
+This is useful when selecting a subset of columns and you only want unique combinations.
+
+```typescript
+// Get all unique category + status combinations
+const combos = await em.find(Product, {
+  select: ["category", "status"],
+  distinct: true,
+});
+
+// Works with findAndCount too
+const [uniqueCountries, total] = await em.findAndCount(User, {
+  select: ["country"],
+  distinct: true,
+});
+```
+
+> **Hint** `distinct` applies to the entire row. If you select `["city", "country"]` with `distinct: true`, rows are only deduplicated when both columns match. For more complex deduplication (e.g., PostgreSQL's `DISTINCT ON`), use the [Query Builder](./query-builder.md).
 
 ## EXPLAIN — Query Analysis
 
@@ -380,6 +495,35 @@ em.removeAllListeners();
 Available events: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`
 
 If you need subscribers that react only to specific entities, see [EntitySubscriber](./advanced.md).
+
+## Query Builder — createQueryBuilder()
+
+When you need more control than `find()` provides — JOINs across multiple tables, GROUP BY with aggregates, DISTINCT, or pessimistic locking — use the query builder.
+
+```typescript
+// Type-safe SelectQueryBuilder (auto-completes column names)
+const users = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name", "email"])
+  .where("isActive", true)
+  .andWhere("age", ">=", 18)
+  .orderBy({ createdAt: "DESC" })
+  .limit(10)
+  .getMany();
+```
+
+```typescript
+// RawQueryBuilder (free-form SQL)
+const qb = em.createQueryBuilder();
+const query = qb
+  .select(["*"])
+  .from('"users"')
+  .where([sql`"is_active" = ${true}`])
+  .build();
+const result = await em.query(query);
+```
+
+For the full guide including UNION, CTE, window functions, and subqueries, see [Query Builder](./query-builder.md).
 
 ## Repository Pattern
 
@@ -439,10 +583,12 @@ List of options that can be passed to `find()`, `findOne()`, `explain()`, etc.
 | `groupBy` | `(keyof T)[]` | GROUP BY |
 | `having` | `Sql[]` | HAVING clause |
 | `timeout` | `number` | Query timeout (ms) |
+| `distinct` | `boolean` | Generate `SELECT DISTINCT` |
 | `useMaster` | `boolean` | Force master in Read Replica environments |
 
 ## Next Steps
 
-- [Query Builder](./query-builder.md) — When you need complex SQL like JOIN, GROUP BY, subqueries
-- [Transactions](./transactions.md) — When you need to group multiple operations into a single unit
-- [Configuration Guide](./configuration.md) — Pooling, timeouts, Read Replica, and other operational settings
+- [Query Builder](./query-builder.md) — Type-safe queries, UNION, CTE, window functions, and subqueries
+- [Transactions](./transactions.md) — Decorator and callback-based transactions, deadlock retry
+- [Advanced Features](./advanced.md) — Streaming, N+1 detection, EntitySubscriber, validation
+- [Configuration Guide](./configuration.md) — Pooling, timeouts, Read Replica, CJS/ESM

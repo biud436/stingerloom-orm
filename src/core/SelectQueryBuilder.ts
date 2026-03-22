@@ -23,23 +23,30 @@ type OrderBySpec<T> = {
  * A type-safe, fluent query builder derived from a repository entity type.
  *
  * Created via `repository.createQueryBuilder("alias")` or
- * `em.createSelectQueryBuilder(Entity, "alias")`.
+ * `em.createQueryBuilder(Entity, "alias")`.
  *
- * All column references enjoy `keyof T` auto-completion.
+ * **Type-safe projections:** When you call `select(["id", "name"])`, the
+ * return type of `getMany()` narrows from `T[]` to `Pick<T, "id" | "name">[]`.
+ * Accessing unselected columns becomes a compile-time error.
+ *
+ * @template T       The full entity type — used for column references in where/orderBy.
+ * @template TResult The projected result type — defaults to `T` (all columns).
+ *                   Changes when `select()` is called with specific columns.
  *
  * @example
  * ```ts
  * const users = await repo
  *   .createQueryBuilder("u")
- *   .select(["id", "name", "email"])
- *   .where("status", "active")
- *   .andWhere("age", ">=", 18)
- *   .orderBy({ createdAt: "DESC" })
- *   .limit(10)
- *   .getMany();
+ *   .select(["id", "name"])      // TResult = Pick<User, "id" | "name">
+ *   .where("status", "active")   // still references full User columns
+ *   .getMany();                  // Promise<Pick<User, "id" | "name">[]>
+ *
+ * users[0].id;    // ✓ OK
+ * users[0].name;  // ✓ OK
+ * users[0].email; // ✗ Compile error — "email" not in Pick<User, "id" | "name">
  * ```
  */
-export class SelectQueryBuilder<T> {
+export class SelectQueryBuilder<T, TResult = T> {
   private readonly alias: string;
   private readonly entity: ClazzType<T>;
   private readonly em: EntityManager;
@@ -86,18 +93,24 @@ export class SelectQueryBuilder<T> {
   /**
    * Select specific columns. Receives `keyof T` auto-completion.
    *
+   * When specific columns are provided, the result type narrows to
+   * `Pick<T, K>` — accessing unselected columns becomes a compile error.
+   *
    * @example
    * ```ts
-   * qb.select(["id", "name", "email"])
+   * qb.select(["id", "name"])   // result type: Pick<User, "id" | "name">
+   * qb.select("*")              // result type: T (all columns)
    * ```
    */
-  select(columns: ColumnOf<T>[] | "*"): this {
+  select<K extends ColumnOf<T>>(columns: K[]): SelectQueryBuilder<T, Pick<T, K>>;
+  select(columns: "*"): SelectQueryBuilder<T, T>;
+  select<K extends ColumnOf<T>>(columns: K[] | "*"): SelectQueryBuilder<T, any> {
     if (columns === "*") {
       this.selectColumns = "*";
     } else {
-      this.selectColumns = columns.map((c) => this.col(c));
+      this.selectColumns = (columns as string[]).map((c) => this.col(c));
     }
-    return this;
+    return this as any;
   }
 
   /**
@@ -512,19 +525,25 @@ export class SelectQueryBuilder<T> {
   // ── EXECUTION ───────────────────────────────────────────
 
   /**
-   * Execute the query and return multiple results typed as `T[]`.
+   * Execute the query and return multiple results.
+   *
+   * The return type reflects `select()`: if specific columns were selected,
+   * the type narrows to `Pick<T, K>[]` instead of `T[]`.
    */
-  async getMany(): Promise<T[]> {
+  async getMany(): Promise<TResult[]> {
     const built = this.toSql();
     const rows = await this.em.query<any>(built);
-    return rows as T[];
+    return rows as TResult[];
   }
 
   /**
    * Execute the query and return a single result or null.
    * Automatically adds LIMIT 1 if not already set.
+   *
+   * The return type reflects `select()`: if specific columns were selected,
+   * the type narrows to `Pick<T, K> | null` instead of `T | null`.
    */
-  async getOne(): Promise<T | null> {
+  async getOne(): Promise<TResult | null> {
     if (this.limitValue === undefined) {
       this.limitValue = 1;
     }
@@ -584,8 +603,10 @@ export class SelectQueryBuilder<T> {
 
   /**
    * Execute the query and return both results and total count.
+   *
+   * The result array type reflects `select()`.
    */
-  async getManyAndCount(): Promise<[T[], number]> {
+  async getManyAndCount(): Promise<[TResult[], number]> {
     const [results, count] = await Promise.all([
       this.getMany(),
       this.getCount(),

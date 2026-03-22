@@ -20,7 +20,12 @@ When your application started, `@Entity()` and `@Column()` decorators on the `Us
 
 ### Step 2: Build the SQL
 
-`RawQueryBuilder` takes the metadata and your `FindOption` and assembles a parameterized SQL query. For example:
+The query builder takes the metadata and your `FindOption` and assembles a parameterized SQL query. Stingerloom has two query builders:
+
+- **`RawQueryBuilder`** — Low-level, free-form SQL builder. Used internally by `find()`, `save()`, and other EntityManager methods.
+- **`SelectQueryBuilder`** — Type-safe, entity-aware builder created via `em.createQueryBuilder(User, "u")`. Provides `keyof T` auto-completion for column names.
+
+For a simple `find()` call, the ORM uses `RawQueryBuilder` internally to produce:
 
 ```sql
 SELECT "id", "name", "email" FROM "user" WHERE "isActive" = $1
@@ -178,7 +183,9 @@ async transferFunds(fromId: number, toId: number, amount: number) {
 }
 ```
 
-Read-only queries (`find`, `findOne`, `count`, `explain`) skip transactions when possible. No `BEGIN`, no `COMMIT` — just connect, query, close. This is the optimization introduced in v0.5.0 that reduces read latency significantly.
+Read-only queries (`find`, `findOne`, `count`, `explain`) skip transactions when possible. No `BEGIN`, no `COMMIT` — just connect, query, close. This optimization reduces read latency significantly.
+
+When a transaction hits a deadlock (two transactions each waiting for the other's lock), the database kills one of them. With `retryOnDeadlock: true` in `TransactionOptions`, the ORM catches the deadlock error and re-executes the entire callback. See [Transactions](./transactions.md) for the full guide.
 
 ## Schema Sync and Migrations
 
@@ -230,7 +237,9 @@ src/
 │   ├── AggregateQueryHandler.ts   COUNT/SUM/AVG/MIN/MAX
 │   ├── ExplainQueryHandler.ts     EXPLAIN query parsing
 │   ├── TenantQueryStrategy.ts     search_path vs schema_qualified
-│   ├── BaseRawQueryBuilder.ts     SQL query construction
+│   ├── SelectQueryBuilder.ts      Type-safe, entity-aware query builder
+│   ├── BaseRawQueryBuilder.ts     Low-level SQL query construction
+│   ├── RawQueryBuilder.ts         Free-form SQL (UNION, CTE, window functions)
 │   ├── SchemaGenerator.ts         DDL generation
 │   └── SchemaDiff.ts              Live DB ↔ entity metadata comparison
 ├── decorators/            @Entity, @Column, @ManyToOne, hooks, validation
@@ -246,7 +255,7 @@ src/
 │   ├── MetadataContext.ts         AsyncLocalStorage-based tenant scoping
 │   └── MetadataLayer.ts           Individual layer storage
 ├── scanner/               Reads decorators → builds metadata registry
-├── migration/             MigrationRunner + CLI
+├── migration/             MigrationRunner + CLI (`npx stingerloom`)
 ├── schema/                Decorator-free EntitySchema API
 ├── integration/           NestJS module, Prisma importer
 ├── types/                 Shared types (QueryResult, EntityResult, ColumnType)

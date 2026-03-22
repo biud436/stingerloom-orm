@@ -342,8 +342,30 @@ interface DatabaseClientOptions {
 }
 ```
 
+## CJS/ESM Dual Build
+
+Stingerloom is published as a dual CJS/ESM package. Both module systems work automatically without extra configuration:
+
+```typescript
+// ESM (modern, recommended)
+import { EntityManager } from "@stingerloom/orm";
+
+// CommonJS (legacy)
+const { EntityManager } = require("@stingerloom/orm");
+```
+
+Subpath exports are also dual:
+
+| Subpath | Description |
+|---------|-------------|
+| `@stingerloom/orm` | Core ORM (EntityManager, decorators, etc.) |
+| `@stingerloom/orm/nestjs` | NestJS integration module |
+| `@stingerloom/orm/prisma-import` | Prisma schema importer |
+
+The `exports` field in `package.json` maps each subpath to the appropriate `import` (ESM) or `require` (CJS) entry point. No configuration needed on your side.
+
 ## Next Steps
 
-- [Advanced Features](./advanced.md) — N+1 detection, event system, performance optimization
+- [Advanced Features](./advanced.md) — Streaming, event system, query builder, N+1 detection
 - [Multi-Tenancy](./multi-tenancy.md) — Per-tenant data isolation
 - [API Reference](./api-reference.md) — Full method signatures

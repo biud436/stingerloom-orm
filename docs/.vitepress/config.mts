@@ -41,6 +41,7 @@ export default defineConfig({
         items: [
           { text: "Advanced Features", link: "/advanced" },
           { text: "Plugins", link: "/plugins" },
+          { text: "WriteBuffer (Unit of Work)", link: "/write-buffer" },
           { text: "Multi-Tenancy", link: "/multi-tenancy" },
           { text: "Production Guide", link: "/production-guide" },
         ],

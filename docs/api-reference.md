@@ -55,11 +55,23 @@ const em = new EntityManager();
 | `min` | `<T>(entity, field, where?): Promise<number>` | Minimum |
 | `max` | `<T>(entity, field, where?): Promise<number>` | Maximum |
 
+### Streaming
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `stream` | `<T>(entity, option?, batchSize?): AsyncGenerator<T>` | Async generator for large datasets |
+
+```typescript
+for await (const user of em.stream(User, { where: { isActive: true } }, 1000)) {
+  // process one entity at a time without holding all rows in memory
+}
+```
+
 ### Transaction
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `transaction` | `<T>(callback: (em: EntityManager) => Promise<T>): Promise<T>` | Execute callback in a transaction |
+| `transaction` | `<T>(callback: (em: EntityManager) => Promise<T>, options?: TransactionOptions): Promise<T>` | Execute callback in a transaction (with optional deadlock retry) |
 
 ### Raw Query / Analysis
 
@@ -67,6 +79,13 @@ const em = new EntityManager();
 |--------|-----------|-------------|
 | `query` | `<T>(sql: string \| Sql, params?: unknown[]): Promise<T[]>` | Execute arbitrary SQL |
 | `explain` | `<T>(entity, option?): Promise<ExplainResult>` | EXPLAIN analysis |
+
+### Query Builder
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `createQueryBuilder` | `(): BaseRawQueryBuilder` | Create a RawQueryBuilder (free-form SQL) |
+| `createQueryBuilder` | `<T>(entity, alias): SelectQueryBuilder<T>` | Create a type-safe SelectQueryBuilder |
 
 ### Plugin System
 
@@ -97,7 +116,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist` — Uses the same API as EntityManager without specifying the entity.
+`find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `createQueryBuilder` — Uses the same API as EntityManager without specifying the entity.
 
 ## Decorators
 
@@ -171,8 +190,99 @@ interface FindOption<T> {
   having?: Sql[];
   relations?: (keyof T)[];
   withDeleted?: boolean;
+  distinct?: boolean;            // SELECT DISTINCT
   timeout?: number;
   useMaster?: boolean;
+}
+```
+
+### TransactionOptions
+
+```typescript
+interface TransactionOptions {
+  retryOnDeadlock?: boolean;  // Enable deadlock retry (default: false)
+  maxRetries?: number;        // Maximum retries (default: 3)
+  retryDelayMs?: number;      // Delay between retries in ms (default: 100)
+}
+```
+
+### SelectQueryBuilder\<T\>
+
+[Usage ->](./query-builder.md)
+
+```typescript
+// Created via em.createQueryBuilder(Entity, "alias")
+class SelectQueryBuilder<T> {
+  select(columns: (keyof T & string)[] | "*"): this;
+  addSelect(expr: Sql | string, alias?: string): this;
+  setDistinct(value?: boolean): this;
+  where(condition: Sql): this;
+  where(column: keyof T & string, value: any): this;
+  where(column: keyof T & string, operator: string, value: any): this;
+  andWhere(...): this;
+  orWhere(...): this;
+  whereIn(column: keyof T & string, values: any[]): this;
+  whereNotIn(column: keyof T & string, values: any[]): this;
+  whereNull(column: keyof T & string): this;
+  whereNotNull(column: keyof T & string): this;
+  whereBetween(column: keyof T & string, min: any, max: any): this;
+  whereLike(column: keyof T & string, pattern: string): this;
+  leftJoin(table: string, alias: string, condition: Sql | string): this;
+  innerJoin(table: string, alias: string, condition: Sql | string): this;
+  rightJoin(table: string, alias: string, condition: Sql | string): this;
+  orderBy(spec: { [K in keyof T & string]?: "ASC" | "DESC" }): this;
+  addOrderBy(column: keyof T & string, direction: "ASC" | "DESC"): this;
+  groupBy(columns: (keyof T & string)[]): this;
+  having(condition: Sql): this;
+  limit(count: number): this;
+  offset(count: number): this;
+  skip(count: number): this;
+  take(count: number): this;
+  forUpdate(): this;
+  forShare(): this;
+  withDeleted(): this;
+  appendSql(fragment: Sql): this;
+  toSql(): Sql;
+  getSql(): { text: string; values: any[] };
+  getMany(): Promise<T[]>;
+  getOne(): Promise<T | null>;
+  getCount(): Promise<number>;
+  getManyAndCount(): Promise<[T[], number]>;
+  exists(): Promise<boolean>;
+  asSubquery(alias: string): Sql;
+}
+```
+
+### RawQueryBuilder — Set Operations, CTE, Window Functions
+
+[Usage ->](./query-builder.md)
+
+```typescript
+class RawQueryBuilder {
+  // ... (basic SELECT/FROM/WHERE/JOIN/ORDER BY/LIMIT methods)
+
+  // Set Operations
+  union(): this;
+  unionAll(): this;
+  intersect(): this;
+  except(): this;
+
+  // DISTINCT
+  selectDistinct(columns: string[]): this;
+  selectDistinctOn(distinctColumns: string[], selectColumns: string[] | "*"): this;
+
+  // Common Table Expressions
+  with(name: string, subquery: Sql | ((qb: RawQueryBuilder) => RawQueryBuilder)): this;
+  withRecursive(name: string, subquery: Sql | ((qb: RawQueryBuilder) => RawQueryBuilder)): this;
+
+  // Window Functions
+  selectWithWindow(columns: Array<string | WindowColumn>): this;
+}
+
+interface WindowColumn {
+  expr: string;                         // e.g. "ROW_NUMBER()", "SUM(salary)"
+  over: { partitionBy?: string; orderBy?: string };
+  alias: string;
 }
 ```
 
@@ -423,17 +533,90 @@ interface MigrationContext {
 }
 ```
 
+### SchemaDiffResult
+
+```typescript
+interface SchemaDiffResult {
+  addedTables: string[];
+  droppedTables: string[];
+  modifiedTables: ModifiedTable[];
+  renamedColumns?: RenamedColumn[];       // Heuristic-detected column renames
+  addTableEntityMap?: Record<string, ClazzType<any>>;
+}
+
+interface ModifiedTable {
+  tableName: string;
+  addedColumns: ColumnChange[];
+  droppedColumns: ColumnChange[];
+}
+
+interface ColumnChange {
+  columnName: string;
+  columnType?: string;
+  nullable?: boolean;
+}
+
+interface RenamedColumn {
+  tableName: string;
+  oldColumnName: string;
+  newColumnName: string;
+}
+```
+
+### MigrationCli
+
+```typescript
+class MigrationCli {
+  constructor(migrations: Migration[], options: DatabaseClientOptions);
+  connect(): Promise<void>;
+  close(): Promise<void>;
+  execute(command: MigrationCommand): Promise<any>;
+}
+
+type MigrationCommand = "migrate:run" | "migrate:rollback" | "migrate:status" | "migrate:generate";
+```
+
+CLI executable: `npx stingerloom migrate:run|rollback|status|generate`
+
 Related classes: `MigrationRunner`, `MigrationCli`, `SchemaDiff`, `SchemaDiffMigrationGenerator`
 
 ## Errors
 
+All ORM errors extend `OrmError`, which includes an optional `suggestion` field with an actionable fix hint. This helps you diagnose problems without consulting documentation:
+
+```typescript
+try {
+  await em.find(UnregisteredEntity);
+} catch (e) {
+  if (e instanceof OrmError) {
+    console.error(e.message);      // "Entity metadata not found for UnregisteredEntity"
+    console.error(e.suggestion);   // "Did you register the entity in the entities array?"
+    console.error(e.code);         // "ORM_ENTITY_METADATA_NOT_FOUND"
+  }
+}
+```
+
+`ValidationError` additionally carries `actual` and `expected` fields for quick diagnosis:
+
+```typescript
+try {
+  await em.save(User, { name: "A" }); // @MinLength(2) fails
+} catch (e) {
+  if (e instanceof ValidationError) {
+    console.error(e.message);    // "name must be at least 2 characters long"
+    console.error(e.actual);     // "A"
+    console.error(e.expected);   // "minLength: 2"
+  }
+}
+```
+
 | Error | Description |
 |-------|-------------|
-| `OrmError` | Base ORM error (includes optional `suggestion: string \| null` field with actionable fix hint) |
-| `ValidationError` | Validation failure |
+| `OrmError` | Base ORM error (includes `code`, `message`, and optional `suggestion`) |
+| `ValidationError` | Validation failure (includes `actual` and `expected` fields) |
+| `InvalidQueryError` | Invalid query (includes optional `suggestion` for fix hints) |
 | `EntityNotFoundError` | Entity not found |
 | `EntityMetadataNotFoundError` | Metadata not found |
-| `InvalidQueryError` | Invalid query |
 | `PrimaryKeyNotFoundError` | PK not found |
 | `DeleteWithoutConditionsError` | Delete without conditions |
 | `QueryTimeoutError` | Query timeout |

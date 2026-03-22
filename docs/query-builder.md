@@ -1,280 +1,628 @@
 # Query Builder
 
-While `find()` and `findOne()` can handle most queries, sometimes you need complex SQL like JOINs, GROUP BY, or subqueries. That's when you use **RawQueryBuilder**.
+`find()` and `findOne()` can handle most everyday queries — filtering by conditions, loading relations, pagination. But sometimes you need something more. Suppose you want to join two tables that don't have a direct relation, group rows by category and count them, or combine results from two different tables with UNION. These are the situations where the **query builder** comes in.
 
-## When to Use the Query Builder?
+Stingerloom provides two query builders, and the choice is simple.
 
-| Scenario | Recommendation |
-|----------|---------------|
-| Simple CRUD, WHERE conditions | Use `em.find()`, `em.save()` |
-| JOIN, GROUP BY, subqueries | Use the query builder |
-| DB-specific functions, complex aggregation | Use the query builder or `em.query()` |
+| Builder | When to use | How to create |
+|---------|-------------|---------------|
+| **SelectQueryBuilder** | You're querying an entity and want auto-complete on column names | `em.createQueryBuilder(User, "u")` |
+| **RawQueryBuilder** | You need raw SQL control — UNION, CTE, window functions | `em.createQueryBuilder()` (no arguments) |
 
-## Basic Usage
+Most of the time, you'll use `SelectQueryBuilder`. Let's start there.
 
-Create a query builder with `RawQueryBuilderFactory.create()`, chain methods, and finalize with `build()`.
+---
+
+## SelectQueryBuilder — Type-Safe Queries
+
+### Why a Query Builder at All?
+
+Before diving in, it's worth asking: why not just use `find()` for everything?
+
+The answer comes down to what `find()` can't express. `find()` gives you `WHERE field = value`, but it can't do `WHERE age >= 18`, or `JOIN` to unrelated tables, or `GROUP BY category HAVING COUNT(*) > 5`. For these, you need a query builder.
+
+But query builders in other ORMs have a well-known problem: **type unsafety**. TypeORM's `SelectQueryBuilder`, for example, always returns `T[]` from `getMany()`, even when you selected only two columns. The TypeScript compiler happily lets you access `user.email` on a result that only contains `{ id, name }` — it compiles, but crashes at runtime with `undefined`.
+
+Stingerloom's query builder solves this. When you call `select(["id", "name"])`, the return type of `getMany()` narrows from `User[]` to `Pick<User, "id" | "name">[]`. Accessing an unselected column becomes a **compile-time error**, not a runtime surprise.
 
 ```typescript
-import { RawQueryBuilderFactory } from "@stingerloom/orm";
+const users = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name"])
+  .getMany();
+
+users[0].id;    // ✓ number — exists in Pick<User, "id" | "name">
+users[0].name;  // ✓ string — exists
+users[0].email; // ✗ Compile error! Property 'email' does not exist on type Pick<User, "id" | "name">
+```
+
+Meanwhile, `where()` and `orderBy()` still accept any column from the full `User` entity — because you can filter and sort by columns you don't SELECT. The type system tracks the **projection** (what you get back) separately from the **entity** (what you can query on).
+
+### Your First Query Builder Query
+
+Imagine you want to find active users sorted by registration date, but only their `id`, `name`, and `email` columns. With `find()`, you'd write:
+
+```typescript
+const users = await em.find(User, {
+  select: ["id", "name", "email"],
+  where: { isActive: true },
+  orderBy: { createdAt: "DESC" },
+  take: 10,
+});
+```
+
+With the query builder, the same query looks like this:
+
+```typescript
+const users = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name", "email"])
+  .where("isActive", true)
+  .orderBy({ createdAt: "DESC" })
+  .limit(10)
+  .getMany();
+```
+
+So far, there's no real advantage. The power of the query builder becomes clear when you need things that `find()` can't express — operators like `>=`, JOINs to unrelated tables, GROUP BY with aggregates, or pessimistic locking.
+
+The `"u"` in `createQueryBuilder(User, "u")` is a **table alias**. It's the short name used to qualify columns in the generated SQL: `"u"."id"`, `"u"."name"`, etc. You'll see why aliases matter when we get to JOINs.
+
+> **Hint** You can also create a query builder from a repository: `userRepo.createQueryBuilder("u")`. Both work the same way.
+
+### WHERE — Filtering Rows
+
+The `where()` method supports three styles, depending on the complexity of your condition.
+
+**Equals** — the simplest form. Pass a column name and a value.
+
+```typescript
+qb.where("status", "active");
+// WHERE "u"."status" = $1
+```
+
+**Operator** — when you need `>=`, `<`, `LIKE`, etc. Pass the operator as the second argument.
+
+```typescript
+qb.where("age", ">=", 18);
+// WHERE "u"."age" >= $1
+```
+
+**Raw SQL** — for anything the ORM can't express. Pass a `sql` template literal directly.
+
+```typescript
 import sql from "sql-template-tag";
 
-const qb = RawQueryBuilderFactory.create();
+qb.where(sql`"u"."score" > ${90}`);
+```
+
+All three styles are type-safe — the column name (`"age"`, `"status"`) auto-completes from `keyof User`. A typo becomes a compile error.
+
+### Combining Conditions — AND, OR
+
+Chain multiple conditions with `andWhere()` and `orWhere()`.
+
+```typescript
+const qb = em.createQueryBuilder(User, "u");
+
+const users = await qb
+  .where("isActive", true)
+  .andWhere("age", ">=", 18)
+  .getMany();
+// WHERE "u"."is_active" = $1 AND "u"."age" >= $2
+```
+
+`orWhere()` wraps the existing conditions in parentheses and adds an OR branch.
+
+```typescript
+qb.where("isActive", true)
+  .andWhere("age", ">=", 18)
+  .orWhere("role", "admin");
+// WHERE ("u"."is_active" = $1 AND "u"."age" >= $2) OR "u"."role" = $3
+```
+
+This means: either (active AND 18+), or admin regardless of age.
+
+### Common WHERE Helpers
+
+Instead of writing raw SQL for common patterns, use the built-in helpers.
+
+```typescript
+// IN — match any value in the list
+qb.whereIn("status", ["active", "pending"]);
+
+// NOT IN — exclude these values
+qb.whereNotIn("id", [1, 2, 3]);
+
+// NULL checks
+qb.whereNull("deletedAt");
+qb.whereNotNull("email");
+
+// BETWEEN — range check
+qb.whereBetween("age", 18, 65);
+
+// LIKE — pattern matching
+qb.whereLike("name", "%alice%");
+```
+
+Each helper appends an AND condition to the existing WHERE clause. You can mix them freely with `where()` and `andWhere()`.
+
+### JOIN — Combining Tables
+
+This is where the query builder really shines. Suppose you want to list posts along with their author's name. The `Post` entity has an `authorId` column, but you want the actual name from the `User` table.
+
+```typescript
+import sql from "sql-template-tag";
+
+const posts = await em
+  .createQueryBuilder(Post, "p")
+  .select(["id", "title"])
+  .addSelect(sql`"u"."name"`, "authorName")
+  .leftJoin("users", "u", sql`"p"."author_id" = "u"."id"`)
+  .orderBy({ createdAt: "DESC" })
+  .limit(20)
+  .getMany();
+```
+
+Let's break down what happened:
+
+- `leftJoin("users", "u", ...)` joins the `users` table with alias `"u"`, using the given condition.
+- `addSelect(sql\`"u"."name"\`, "authorName")` adds a raw column from the joined table. Since `"name"` belongs to `User`, not `Post`, we use `addSelect` with raw SQL instead of the type-safe `select()`.
+- The result is a `LEFT JOIN` — posts without an author still appear (with `authorName` as NULL).
+
+Three join types are available:
+
+| Method | SQL | When to use |
+|--------|-----|-------------|
+| `leftJoin()` | `LEFT JOIN` | Include rows even if the joined table has no match |
+| `innerJoin()` | `INNER JOIN` | Only rows that have a match in both tables |
+| `rightJoin()` | `RIGHT JOIN` | Include all rows from the joined table |
+
+### ORDER BY and Pagination
+
+Sorting and pagination work just like you'd expect.
+
+```typescript
+// Type-safe ORDER BY — column names auto-complete
+qb.orderBy({ createdAt: "DESC", name: "ASC" });
+
+// LIMIT and OFFSET
+qb.limit(10).offset(20);
+
+// Or use the skip/take aliases (same effect)
+qb.skip(20).take(10);
+```
+
+Need both the data and the total count? `getManyAndCount()` runs both queries in parallel and returns `[T[], number]`.
+
+```typescript
+const [users, total] = await em
+  .createQueryBuilder(User, "u")
+  .where("isActive", true)
+  .orderBy({ createdAt: "DESC" })
+  .skip(20)
+  .take(10)
+  .getManyAndCount();
+
+console.log(users.length); // up to 10
+console.log(total);        // e.g. 235
+```
+
+### GROUP BY and Aggregation
+
+Suppose you want to count how many posts each category has. This requires GROUP BY.
+
+```typescript
+import sql from "sql-template-tag";
+
+const stats = await em
+  .createQueryBuilder(Post, "p")
+  .select(["category"])
+  .addSelect(sql`COUNT(*)`, "postCount")
+  .groupBy(["category"])
+  .having(sql`COUNT(*) >= ${5}`)
+  .getMany();
+// [{ category: "tech", postCount: 42 }, { category: "life", postCount: 17 }, ...]
+```
+
+`groupBy()` takes an array of column names (type-safe). `having()` filters groups after aggregation — here, only categories with 5 or more posts.
+
+### DISTINCT
+
+When you want unique rows only, enable DISTINCT.
+
+```typescript
+const uniqueCities = await em
+  .createQueryBuilder(User, "u")
+  .select(["city"])
+  .setDistinct()
+  .getMany();
+// SELECT DISTINCT "u"."city" FROM "user" AS "u"
+```
+
+This removes duplicate rows from the result set. Useful when selecting a subset of columns where many rows may share the same values.
+
+### Pessimistic Locking
+
+In high-concurrency scenarios, you sometimes need to lock rows while reading them to prevent other transactions from modifying them.
+
+```typescript
+const user = await em
+  .createQueryBuilder(User, "u")
+  .where("id", 1)
+  .forUpdate()
+  .getOne();
+// SELECT ... FROM "user" AS "u" WHERE "u"."id" = $1 FOR UPDATE
+```
+
+`forUpdate()` adds `FOR UPDATE` — an exclusive lock. No other transaction can read or modify this row until yours commits. `forShare()` adds a shared lock instead — others can read but not write.
+
+| Method | SQL | Effect |
+|--------|-----|--------|
+| `forUpdate()` | `FOR UPDATE` | Exclusive lock — blocks reads and writes |
+| `forShare()` | `FOR SHARE` / `LOCK IN SHARE MODE` | Shared lock — blocks writes only |
+
+### Soft Delete Handling
+
+If your entity has a `@DeletedAt` column, the query builder automatically excludes soft-deleted rows. To include them:
+
+```typescript
+qb.withDeleted();
+```
+
+### Executing the Query
+
+You've built the query — now you need to run it. The query builder offers several execution methods depending on what you need back.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getMany()` | `T[]` | All matching rows |
+| `getOne()` | `T \| null` | First row, or null (auto-adds LIMIT 1) |
+| `getCount()` | `number` | COUNT(*) with the same conditions |
+| `getManyAndCount()` | `[T[], number]` | Both rows and total count in parallel |
+| `exists()` | `boolean` | Whether any rows match |
+
+For debugging, `getSql()` returns the raw SQL and parameters without executing anything.
+
+```typescript
+const { text, values } = qb.getSql();
+console.log(text);   // SELECT "u"."id", ... WHERE "u"."is_active" = ?
+console.log(values);  // [true]
+```
+
+> **Hint** The `?` placeholders in `getSql()` output are for readability. The actual query uses driver-appropriate parameters (`$1`, `$2` for PostgreSQL, `?` for MySQL).
+
+### Practical Example — Filtered Search with Pagination
+
+Here's a realistic example that brings everything together. A search endpoint that accepts optional filters and returns paginated results with a total count.
+
+```typescript
+async function searchPosts(filters: {
+  authorName?: string;
+  category?: string;
+  minLikes?: number;
+  page: number;
+  pageSize: number;
+}) {
+  const qb = em
+    .createQueryBuilder(Post, "p")
+    .select(["id", "title", "createdAt"])
+    .leftJoin("users", "u", sql`"p"."author_id" = "u"."id"`);
+
+  // Each filter is optional — add conditions only when present
+  if (filters.authorName) {
+    qb.where(sql`"u"."name" LIKE ${`%${filters.authorName}%`}`);
+  }
+  if (filters.category) {
+    qb.andWhere("category", filters.category);
+  }
+  if (filters.minLikes) {
+    qb.andWhere("likeCount", ">=", filters.minLikes);
+  }
+
+  const [posts, total] = await qb
+    .orderBy({ createdAt: "DESC" })
+    .skip(filters.page * filters.pageSize)
+    .take(filters.pageSize)
+    .getManyAndCount();
+
+  return { posts, total, page: filters.page, pageSize: filters.pageSize };
+}
+```
+
+Notice how the query builder lets you **conditionally build** the query. With `find()`, you'd have to construct the `where` object manually. With the query builder, you just call methods as needed.
+
+---
+
+## RawQueryBuilder — Full SQL Control
+
+When you need SQL features that go beyond a single entity — combining results from different tables with UNION, recursive queries with CTE, or analytics with window functions — switch to `RawQueryBuilder`.
+
+The trade-off is clear: you lose the type-safe `keyof T` auto-completion, but you gain the full expressive power of SQL. Table and column names must be quoted manually (`"double quotes"` for PostgreSQL, `` `backticks` `` for MySQL), though the ORM auto-detects the database type when you create the builder via `em.createQueryBuilder()`.
+
+### Getting Started
+
+Create a RawQueryBuilder with `em.createQueryBuilder()` (no arguments), chain methods, and call `build()` to get the SQL. Then execute it with `em.query()`.
+
+```typescript
+import sql from "sql-template-tag";
+
+const qb = em.createQueryBuilder();
 
 const query = qb
-  .select(["id", "name", "email"])
+  .select(['"id"', '"name"', '"email"'])
   .from('"users"')
   .where([sql`"is_active" = ${true}`])
   .orderBy([{ column: '"created_at"', direction: "DESC" }])
   .limit(10)
   .build();
 
-// Execute with EntityManager
 const users = await em.query(query);
 ```
 
-> **Hint** Table and column names must be quoted appropriately for your DB. PostgreSQL uses double quotes (`"`), MySQL uses backticks (`` ` ``).
+The `where()` method in RawQueryBuilder takes an **array** of conditions (joined with AND). Values are always parameter-bound via `sql-template-tag` — never concatenated into the SQL string.
 
-## SELECT
+### WHERE, JOIN, and Subqueries
 
-```typescript
-// Specific columns
-qb.select(['"id"', '"name"', '"email"']);
+RawQueryBuilder has the same WHERE helpers as SelectQueryBuilder — `andWhere()`, `orWhere()`, `whereIn()`, `whereNull()`, `whereBetween()`, etc. The difference is that column names are raw strings, not type-safe.
 
-// All columns
-qb.select("*");
-
-// Aliases
-qb.select(['"u"."id"', '"u"."name" AS "userName"']);
-```
-
-## FROM
-
-```typescript
-// Basic
-qb.from('"users"');
-
-// With alias
-qb.from('"users"', "u");
-```
-
-## WHERE Conditions
-
-`where()` uses `sql-template-tag` template literals to safely bind values.
-
-```typescript
-import sql from "sql-template-tag";
-
-// Basic WHERE (multiple conditions are joined with AND)
-qb.where([
-  sql`"is_active" = ${true}`,
-  sql`"age" >= ${18}`,
-]);
-// WHERE "is_active" = $1 AND "age" >= $2
-
-// Empty array results in WHERE 1=1 (allows adding conditions later)
-qb.where([]);
-
-// Adding AND / OR
-qb.where([sql`"type" = ${"admin"}`])
-  .andWhere(sql`"age" < ${60}`)
-  .orWhere(sql`"type" = ${"superadmin"}`);
-```
-
-### IN / NOT IN
-
-```typescript
-qb.where([])
-  .whereIn('"status"', ["active", "pending"]);
-// WHERE 1=1 AND "status" IN ($1, $2)
-
-qb.where([])
-  .whereNotIn('"id"', [1, 2, 3]);
-```
-
-### NULL Check
-
-```typescript
-qb.where([])
-  .whereNull('"deleted_at"');
-// WHERE 1=1 AND "deleted_at" IS NULL
-
-qb.where([])
-  .whereNotNull('"email"');
-```
-
-### BETWEEN
-
-```typescript
-qb.where([])
-  .whereBetween('"age"', 18, 65);
-// WHERE 1=1 AND "age" BETWEEN $1 AND $2
-```
-
-## JOIN
-
-Used for joining tables.
+JOINs work the same way:
 
 ```typescript
 import sql, { raw } from "sql-template-tag";
 
-// LEFT JOIN
-qb.select(['"p".*', '"u"."name" AS "authorName"'])
+const query = em.createQueryBuilder()
+  .select(['"p".*', '"u"."name" AS "authorName"'])
   .from('"posts"', "p")
-  .leftJoin(
-    '"users"',
-    "u",
-    sql`${raw('"p"')}."author_id" = ${raw('"u"')}."id"`
-  );
-
-// INNER JOIN
-qb.select(['"o".*'])
-  .from('"orders"', "o")
-  .innerJoin(
-    '"order_items"',
-    "oi",
-    sql`${raw('"o"')}."id" = ${raw('"oi"')}."order_id"`
-  );
-
-// RIGHT JOIN works the same way
-qb.rightJoin('"employees"', "e", sql`...`);
-```
-
-## ORDER BY, LIMIT, OFFSET
-
-```typescript
-// ORDER BY
-qb.orderBy([
-  { column: '"created_at"', direction: "DESC" },
-  { column: '"id"', direction: "ASC" },
-]);
-
-// LIMIT
-qb.limit(10);
-
-// [offset, count] format
-qb.setDatabaseType("mysql").limit([20, 10]);
-// MySQL: LIMIT 20, 10
-
-qb.setDatabaseType("postgresql").limit([20, 10]);
-// PostgreSQL: LIMIT 10 OFFSET 20
-
-// LIMIT + OFFSET
-qb.limit(10).offset(20);
-```
-
-## GROUP BY, HAVING
-
-Used for aggregate queries.
-
-```typescript
-qb.select(['"category"', "COUNT(*) AS cnt"])
-  .from('"posts"')
-  .where([sql`"is_active" = ${true}`])
-  .groupBy(['"category"'])
-  .having([sql`COUNT(*) >= ${5}`]);
-// SELECT "category", COUNT(*) AS cnt
-// FROM "posts"
-// WHERE "is_active" = $1
-// GROUP BY "category"
-// HAVING COUNT(*) >= $2
-```
-
-## Subqueries
-
-### IN Subquery
-
-```typescript
-const subQuery = RawQueryBuilderFactory.create()
-  .select(['"user_id"'])
-  .from('"premium_subscriptions"')
-  .where([sql`"is_active" = ${true}`])
-  .asInQuery();
-
-qb.select(["*"])
-  .from('"users"')
-  .where([])
-  .appendSql(sql`AND "id" IN ${subQuery}`);
-// SELECT * FROM "users" WHERE 1=1 AND "id" IN (SELECT "user_id" FROM ...)
-```
-
-### EXISTS Subquery
-
-```typescript
-const exists = RawQueryBuilderFactory.create()
-  .select(['"1"'])
-  .from('"orders"')
-  .where([sql`"user_id" = "u"."id"`])
-  .asExists();
-
-qb.select(["*"])
-  .from('"users"', "u")
-  .where([exists]);
-// SELECT * FROM "users" AS u WHERE EXISTS (SELECT "1" FROM "orders" WHERE ...)
-```
-
-### FROM Subquery
-
-```typescript
-const subQuery = RawQueryBuilderFactory.create()
-  .select(['"post_id"', "COUNT(*) AS cnt"])
-  .from('"comments"')
-  .groupBy(['"post_id"'])
-  .as("comment_counts");
-
-qb.select(['"p"."id"', '"p"."title"', '"cc"."cnt"'])
-  .from('"posts"', "p")
-  .leftJoin(subQuery, "cc", sql`"p"."id" = "cc"."post_id"`);
-```
-
-## Practical Examples
-
-### Order Statistics by User
-
-```typescript
-const query = RawQueryBuilderFactory.create()
-  .select([
-    '"u"."id"',
-    '"u"."name"',
-    'COUNT("o"."id") AS "orderCount"',
-    'SUM("o"."total") AS "totalAmount"',
-  ])
-  .from('"users"', "u")
-  .leftJoin(
-    '"orders"', "o",
-    sql`${raw('"u"')}."id" = ${raw('"o"')}."user_id"`
-  )
-  .where([sql`${raw('"u"')}."is_active" = ${true}`])
-  .groupBy(['"u"."id"', '"u"."name"'])
-  .having([sql`COUNT("o"."id") >= ${1}`])
-  .orderBy([{ column: '"totalAmount"', direction: "DESC" }])
+  .leftJoin('"users"', "u", sql`${raw('"p"')}."author_id" = ${raw('"u"')}."id"`)
+  .where([sql`${raw('"p"')}."is_published" = ${true}`])
   .limit(20)
   .build();
 
-const stats = await em.query(query);
+const posts = await em.query(query);
 ```
 
-### Date Range + Status Filter + Pagination
+For subqueries, the builder provides `asInQuery()`, `asExists()`, and `as()` to embed one query inside another.
 
 ```typescript
-const startDate = new Date("2024-01-01");
-const endDate = new Date("2024-12-31");
-
-const query = RawQueryBuilderFactory.create()
-  .select(["*"])
+// IN subquery — find users who have at least one order
+const orderUsers = em.createQueryBuilder()
+  .select(['"user_id"'])
   .from('"orders"')
-  .where([sql`"created_at" BETWEEN ${startDate} AND ${endDate}`])
-  .whereIn('"status"', ["pending", "processing"])
-  .whereNotNull('"customer_id"')
-  .orderBy([{ column: '"created_at"', direction: "DESC" }])
-  .limit(10)
-  .offset(20)
+  .where([sql`"status" = ${"completed"}`])
+  .asInQuery();
+
+const query = em.createQueryBuilder()
+  .select(["*"])
+  .from('"users"')
+  .where([])
+  .appendSql(sql`AND "id" IN ${orderUsers}`)
+  .build();
+```
+
+Up to this point, RawQueryBuilder does the same things as SelectQueryBuilder, just without type safety. The real value comes from the features below.
+
+### Set Operations — UNION, INTERSECT, EXCEPT
+
+Sometimes you need to combine results from completely different queries. For example, merging employees and contractors into a single list.
+
+```typescript
+const query = em.createQueryBuilder()
+  .select(['"id"', '"name"', '"email"'])
+  .from('"employees"')
+  .where([sql`"department" = ${"engineering"}`])
+  .union()
+  .select(['"id"', '"name"', '"email"'])
+  .from('"contractors"')
+  .where([sql`"department" = ${"engineering"}`])
   .build();
 
-const orders = await em.query(query);
+const allEngineers = await em.query(query);
 ```
+
+After calling `union()`, you start a new SELECT that becomes the second half of the UNION. The result contains rows from both queries with duplicates removed.
+
+Four set operations are available:
+
+| Method | SQL | What it does |
+|--------|-----|-------------|
+| `union()` | `UNION` | Combine two result sets, remove duplicates |
+| `unionAll()` | `UNION ALL` | Combine two result sets, keep duplicates (faster) |
+| `intersect()` | `INTERSECT` | Only rows that appear in both result sets |
+| `except()` | `EXCEPT` | Rows in the first set that don't appear in the second |
+
+A practical example: finding email addresses that exist in the users table but not in the unsubscribed table.
+
+```typescript
+const query = em.createQueryBuilder()
+  .select(['"email"']).from('"users"')
+  .except()
+  .select(['"email"']).from('"unsubscribed"')
+  .build();
+
+const subscribedEmails = await em.query(query);
+```
+
+### Common Table Expressions (CTE)
+
+A **CTE** (Common Table Expression) lets you define a temporary named result set that exists only for the duration of the query. Think of it as a local variable for SQL. CTEs make complex queries much more readable by breaking them into named steps.
+
+```typescript
+const query = em.createQueryBuilder()
+  .with("active_users", (sub) =>
+    sub.select(['"id"', '"name"']).from('"users"').where([sql`"is_active" = ${true}`])
+  )
+  .select(["*"])
+  .from(sql`active_users`)
+  .build();
+
+const users = await em.query(query);
+```
+
+The `with()` method takes a name and either a `Sql` object or a callback that receives a fresh `RawQueryBuilder`. The CTE result can then be referenced in the main query's FROM clause like a regular table.
+
+#### Recursive CTE
+
+Some data is naturally hierarchical — org charts, category trees, threaded comments. A **recursive CTE** lets you traverse these hierarchies in a single query.
+
+Suppose you have an `employees` table where each employee has a `manager_id` pointing to their manager. To get the entire org tree starting from the CEO:
+
+```typescript
+const query = em.createQueryBuilder()
+  .withRecursive("org_tree", sql`
+    SELECT "id", "name", "manager_id", 1 AS depth
+    FROM "employees"
+    WHERE "manager_id" IS NULL
+
+    UNION ALL
+
+    SELECT "e"."id", "e"."name", "e"."manager_id", "ot"."depth" + 1
+    FROM "employees" "e"
+    INNER JOIN "org_tree" "ot" ON "e"."manager_id" = "ot"."id"
+  `)
+  .select(["*"])
+  .from(sql`org_tree`)
+  .orderBy([{ column: '"depth"', direction: "ASC" }])
+  .build();
+
+const orgChart = await em.query(query);
+// [{ id: 1, name: "CEO", depth: 1 }, { id: 2, name: "VP Eng", depth: 2 }, ...]
+```
+
+The recursive CTE has two parts joined by `UNION ALL`:
+1. **Base case** — the starting rows (employees with no manager = the CEO)
+2. **Recursive step** — join the CTE result back to the original table to find children
+
+The database executes the recursive step repeatedly until no new rows are produced.
+
+### Window Functions
+
+**Window functions** compute a value across a set of rows that are related to the current row. Unlike GROUP BY, which collapses rows, window functions keep every row and add computed columns alongside them.
+
+The classic example is ranking. Suppose you want to rank employees by salary within each department.
+
+```typescript
+const query = em.createQueryBuilder()
+  .selectWithWindow([
+    '"name"',
+    '"department"',
+    '"salary"',
+    {
+      expr: "ROW_NUMBER()",
+      over: { partitionBy: '"department"', orderBy: '"salary" DESC' },
+      alias: "rank",
+    },
+  ])
+  .from('"employees"')
+  .build();
+
+const ranked = await em.query(query);
+// [
+//   { name: "Alice", department: "eng", salary: 150000, rank: 1 },
+//   { name: "Bob",   department: "eng", salary: 130000, rank: 2 },
+//   { name: "Carol", department: "sales", salary: 140000, rank: 1 },
+//   ...
+// ]
+```
+
+Each element in the `selectWithWindow()` array is either a plain column string or an object describing a window function:
+
+- `expr` — The function to apply (`ROW_NUMBER()`, `RANK()`, `SUM(salary)`, etc.)
+- `over.partitionBy` — Which column to group by (like GROUP BY, but without collapsing rows)
+- `over.orderBy` — How to sort within each group
+- `alias` — The name for the computed column
+
+Here are the most commonly used window functions:
+
+| Function | What it does | Example |
+|----------|-------------|---------|
+| `ROW_NUMBER()` | Sequential number within partition | Paginating within groups |
+| `RANK()` | Rank with gaps on ties (1, 2, 2, 4) | Leaderboards |
+| `DENSE_RANK()` | Rank without gaps (1, 2, 2, 3) | Top-N per category |
+| `SUM(col)` | Running total across the partition | Cumulative revenue |
+| `AVG(col)` | Running average | Moving averages |
+| `LAG(col)` | Previous row's value | Day-over-day comparison |
+| `LEAD(col)` | Next row's value | Forecasting |
+
+A practical example — computing cumulative revenue by month:
+
+```typescript
+const query = em.createQueryBuilder()
+  .selectWithWindow([
+    '"month"',
+    '"revenue"',
+    {
+      expr: "SUM(revenue)",
+      over: { orderBy: '"month" ASC' },
+      alias: "cumulative_revenue",
+    },
+  ])
+  .from('"monthly_sales"')
+  .build();
+```
+
+When `partitionBy` is omitted, the window spans the entire result set.
+
+### DISTINCT — Removing Duplicates
+
+RawQueryBuilder also supports DISTINCT variants.
+
+```typescript
+// SELECT DISTINCT
+qb.selectDistinct(['"city"', '"country"']).from('"users"');
+
+// DISTINCT ON (PostgreSQL only) — keep only the first row per group
+qb.selectDistinctOn(['"department"'], ['"id"', '"name"', '"salary"'])
+  .from('"employees"');
+// SELECT DISTINCT ON ("department") "id", "name", "salary" FROM "employees"
+```
+
+`DISTINCT ON` is a PostgreSQL extension that returns one row per distinct value in the specified column(s). It's like GROUP BY but lets you pick which row to keep (determined by ORDER BY).
+
+---
+
+## A Note on Type Safety with find() and select
+
+The `em.find()` method also supports a `select` option, but it does **not** narrow the return type. If you write:
+
+```typescript
+const users = await em.find(User, { select: ["id", "name"] });
+// TypeScript type: User[] — but runtime shape is { id, name } only
+users[0].email; // TypeScript says string, runtime says undefined!
+```
+
+This is a known limitation. `find()` returns `T[]` regardless of the `select` option, because TypeScript's type inference for object literals doesn't support conditional narrowing in the same way that method chaining does.
+
+If type safety on projections matters to you — and it should for any code that accesses specific columns — **use the SelectQueryBuilder** instead of `find()` with `select`. The query builder's `.select()` method properly narrows the result type, so the compiler catches mistakes before they reach runtime.
+
+```typescript
+// ✗ Unsafe — find() always returns User[]
+const users = await em.find(User, { select: ["id", "name"] });
+users[0].email; // compiles but undefined at runtime
+
+// ✓ Safe — SelectQueryBuilder narrows to Pick<User, "id" | "name">
+const users = await em.createQueryBuilder(User, "u")
+  .select(["id", "name"])
+  .getMany();
+users[0].email; // compile error!
+```
+
+---
+
+## Choosing Between the Two Builders
+
+| Question | SelectQueryBuilder | RawQueryBuilder |
+|----------|-------------------|----------------|
+| Are you querying a registered entity? | Yes | Not required |
+| Do you want `keyof T` auto-complete? | Yes | No |
+| Do you need UNION / INTERSECT / EXCEPT? | No | Yes |
+| Do you need CTE (WITH / WITH RECURSIVE)? | No | Yes |
+| Do you need window functions? | No | Yes |
+| Can the result be deserialized into `T`? | Yes (`getMany()`) | Manual (`em.query()`) |
+
+In practice, start with `SelectQueryBuilder` for everyday queries. If you hit a wall — you need UNION, recursive hierarchy traversal, or window analytics — switch to `RawQueryBuilder` for that specific query.
 
 ## Next Steps
 
-- [Transactions](./transactions.md) — Grouping multiple queries into a single unit of work
 - [EntityManager](./entity-manager.md) — Back to basic CRUD with find(), save(), etc.
+- [Transactions](./transactions.md) — Grouping multiple queries into a single unit of work
 - [API Reference](./api-reference.md) — Quick reference for all method signatures

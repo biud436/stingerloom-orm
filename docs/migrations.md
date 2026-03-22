@@ -104,9 +104,78 @@ export class SeedRoles extends Migration {
 
 ## Running Migrations
 
-### Using MigrationCli (Recommended)
+There are two ways to run migrations: the built-in **CLI executable** (simplest) and the **programmatic MigrationCli** (for custom setups).
 
-`MigrationCli` handles DB connection and migration execution all at once.
+### Using the Built-in CLI (Recommended)
+
+Stingerloom ships with a CLI executable that reads your config file and runs migrations directly from the terminal. No boilerplate code needed.
+
+```bash
+# Run all pending migrations
+npx stingerloom migrate:run
+
+# Roll back the last migration
+npx stingerloom migrate:rollback
+
+# Show executed and pending migrations
+npx stingerloom migrate:status
+
+# Auto-generate a migration from schema diff
+npx stingerloom migrate:generate
+```
+
+#### Config File
+
+The CLI auto-detects a config file in the project root. It searches for these filenames in order:
+
+1. `stingerloom.config.ts`
+2. `stingerloom.config.js`
+3. `ormconfig.ts`
+4. `ormconfig.js`
+
+```typescript
+// stingerloom.config.ts
+import { User } from "./src/entities/user.entity";
+import { Post } from "./src/entities/post.entity";
+import { CreateUsersTable } from "./migrations/001_CreateUsersTable";
+import { AddPhoneToUsers } from "./migrations/002_AddPhoneToUsers";
+
+export default {
+  connection: {
+    type: "postgres",
+    host: "localhost",
+    port: 5432,
+    username: "postgres",
+    password: "password",
+    database: "mydb",
+    entities: [User, Post],
+  },
+  migrations: [
+    new CreateUsersTable(),
+    new AddPhoneToUsers(),
+  ],
+};
+```
+
+You can override the config path and set options with CLI flags:
+
+```bash
+npx stingerloom migrate:run --config ./config/prod.config.ts
+npx stingerloom migrate:generate --output ./src/migrations --name AddEmailIndex
+```
+
+| Flag | Description |
+|------|-------------|
+| `--config <path>` | Path to config file (default: auto-detect) |
+| `--output <dir>` | Output directory for generated migrations (default: `./migrations`) |
+| `--name <suffix>` | Migration name suffix for generated file |
+| `--help` | Show help message |
+
+> **Hint** The CLI supports TypeScript config files natively via `ts-node` or `tsx`. If neither is installed, use `.js` config files.
+
+### Using MigrationCli (Programmatic)
+
+For more control, create a custom migration script with `MigrationCli`. This is useful when you need custom logic before or after migrations, or when your config comes from environment variables.
 
 ```typescript
 // src/migrate.ts
@@ -123,11 +192,11 @@ const migrations = [
 
 const cli = new MigrationCli(migrations, {
   type: "postgres",
-  host: "localhost",
-  port: 5432,
-  username: "postgres",
-  password: "password",
-  database: "mydb",
+  host: process.env.DB_HOST ?? "localhost",
+  port: Number(process.env.DB_PORT ?? 5432),
+  username: process.env.DB_USER ?? "postgres",
+  password: process.env.DB_PASS ?? "password",
+  database: process.env.DB_NAME ?? "mydb",
   entities: [],
 });
 
@@ -146,7 +215,7 @@ async function main() {
 main().catch(console.error);
 ```
 
-Registering scripts in package.json is convenient.
+Register scripts in package.json for convenience.
 
 ```json
 {
@@ -158,8 +227,6 @@ Registering scripts in package.json is convenient.
   }
 }
 ```
-
-Now run from the terminal.
 
 ```bash
 # Apply all pending migrations
@@ -279,7 +346,43 @@ class SchemaDiff_1708000000000 extends Migration {
 }
 ```
 
-> **Hint** Schema Diff detects additions and deletions of tables and columns. Column type changes are not supported, so write those as manual migrations.
+### Column Rename Detection
+
+Schema Diff uses heuristic matching to detect column renames. When a column is dropped from a table and a new column with a compatible type is added in the same table, the diff engine treats this as a **rename** rather than a drop + add.
+
+For example, if you rename `phone` to `mobile` in the User entity:
+
+```typescript
+// Before
+@Column({ type: "varchar", length: 20 })
+phone!: string;
+
+// After
+@Column({ type: "varchar", length: 20 })
+mobile!: string;
+```
+
+Running `migrate:generate` produces:
+
+```typescript
+// Auto-generated migration
+class SchemaDiff_1708000000000 extends Migration {
+  async up(context: MigrationContext) {
+    await context.query(
+      `ALTER TABLE "users" RENAME COLUMN "phone" TO "mobile"`
+    );
+  }
+  async down(context: MigrationContext) {
+    await context.query(
+      `ALTER TABLE "users" RENAME COLUMN "mobile" TO "phone"`
+    );
+  }
+}
+```
+
+The rename detection works by comparing the data types of added and dropped columns within the same table. If a dropped column and an added column share compatible types, they are matched as a rename. This avoids data loss that would occur with a naive drop-then-add approach.
+
+> **Hint** Schema Diff detects additions, deletions, and renames of tables and columns. Column type changes are not supported, so write those as manual migrations.
 
 ## MigrationRunner API
 

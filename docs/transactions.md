@@ -75,6 +75,54 @@ This approach is ideal for service methods, scripts, and anywhere you need a one
 
 > **Hint** `@Transactional()` and `em.transaction()` are interchangeable. Use `@Transactional()` when you want to annotate a class method, and `em.transaction()` for inline/functional usage.
 
+## Deadlock Retry
+
+A **deadlock** occurs when two transactions each hold a lock that the other needs. The database detects this and kills one of the transactions with an error. In high-concurrency environments, deadlocks are not bugs — they are a normal part of database operation.
+
+Instead of failing immediately, you can tell Stingerloom to automatically retry the transaction when a deadlock is detected.
+
+```typescript
+const order = await em.transaction(async (txEm) => {
+  const inventory = await txEm.findOne(Inventory, {
+    where: { productId: 42 },
+  });
+
+  if (inventory.stock < 1) throw new Error("Out of stock");
+
+  inventory.stock -= 1;
+  await txEm.save(Inventory, inventory);
+  return txEm.save(Order, { productId: 42, userId: data.userId });
+}, {
+  retryOnDeadlock: true,  // Enable automatic retry
+  maxRetries: 3,          // Maximum retry attempts (default: 3)
+  retryDelayMs: 100,      // Delay between retries in ms (default: 100)
+});
+```
+
+When `retryOnDeadlock` is enabled, the ORM catches deadlock errors and re-executes the entire callback from scratch. This means your callback must be **idempotent** — it should produce the same result regardless of how many times it runs.
+
+The deadlock detection works across all three databases:
+
+| Database | Detection |
+|----------|-----------|
+| MySQL | `errno 1213` (ER_LOCK_DEADLOCK) |
+| PostgreSQL | Error code `40P01` (deadlock_detected) |
+| SQLite | `SQLITE_BUSY` or "database is locked" message |
+
+### TransactionOptions
+
+```typescript
+interface TransactionOptions {
+  retryOnDeadlock?: boolean;  // Enable deadlock retry (default: false)
+  maxRetries?: number;        // Maximum retries (default: 3)
+  retryDelayMs?: number;      // Delay between retries in ms (default: 100)
+}
+```
+
+The delay between retries helps prevent the same two transactions from immediately deadlocking again. After `maxRetries` attempts, the last error is thrown normally.
+
+> **Hint** Deadlock retry is only available with the `em.transaction()` callback API. The `@Transactional()` decorator does not support it — use `em.transaction()` for operations where deadlocks are likely (e.g., inventory deduction, counter increments).
+
 ## Setting Isolation Levels
 
 When multiple users read and write the same data simultaneously, you can specify how much isolation to enforce.

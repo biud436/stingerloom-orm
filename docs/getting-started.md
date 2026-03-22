@@ -30,6 +30,25 @@ pnpm add @stingerloom/orm reflect-metadata pg
 
 > **Hint** If you use npm or yarn, replace `pnpm add` with `npm install` or `yarn add`.
 
+### CJS and ESM
+
+Stingerloom ORM ships as a **dual CJS/ESM package**. Both `require()` and `import` work out of the box — no extra configuration needed.
+
+```typescript
+// ESM (recommended)
+import { EntityManager } from "@stingerloom/orm";
+
+// CommonJS
+const { EntityManager } = require("@stingerloom/orm");
+```
+
+Subpath exports are also dual:
+
+```typescript
+import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { PrismaImporter } from "@stingerloom/orm/prisma-import";
+```
+
 ## Step 2: TypeScript Configuration
 
 Enable decorator-related options in your `tsconfig.json`.

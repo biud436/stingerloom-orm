@@ -2651,8 +2651,8 @@ export class EntityManager implements BaseEntityManager {
   }
 
   createQueryBuilder(): BaseRawQueryBuilder;
-  createQueryBuilder<T>(entity: ClazzType<T>, alias: string): SelectQueryBuilder<T>;
-  createQueryBuilder<T>(entity?: ClazzType<T>, alias?: string): BaseRawQueryBuilder | SelectQueryBuilder<T> {
+  createQueryBuilder<T>(entity: ClazzType<T>, alias: string): SelectQueryBuilder<T, T>;
+  createQueryBuilder<T>(entity?: ClazzType<T>, alias?: string): BaseRawQueryBuilder | SelectQueryBuilder<T, T> {
     if (entity && alias) {
       return new SelectQueryBuilder<T>(entity, alias, this);
     }
