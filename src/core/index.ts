@@ -30,3 +30,4 @@ export * from "./AggregateQueryHandler";
 export * from "./CascadeHandler";
 export * from "./TenantQueryStrategy";
 export * from "./plugin";
+export * from "./WhereResolver";

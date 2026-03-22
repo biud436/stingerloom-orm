@@ -82,6 +82,181 @@ For column-level deduplication (e.g., PostgreSQL `DISTINCT ON`), use the [Query 
 
 ---
 
+## WHERE Filters — Prisma-Style Operators
+
+By default, each field in `where` is matched with `=` (equality). For richer conditions, pass an **operator object** instead of a plain value. No imports are needed — operators are just object keys.
+
+### Comparison Operators
+
+```typescript
+const users = await em.find(User, {
+  where: {
+    age: { gt: 18, lte: 65 },       // age > 18 AND age <= 65
+    score: { gte: 60 },             // score >= 60
+    status: { ne: "deleted" },      // status != 'deleted'
+  },
+});
+```
+
+| Operator | SQL | Example |
+|----------|-----|---------|
+| `eq` | `=` | `{ age: { eq: 25 } }` |
+| `ne` | `!=` | `{ status: { ne: "deleted" } }` |
+| `gt` | `>` | `{ age: { gt: 18 } }` |
+| `gte` | `>=` | `{ score: { gte: 60 } }` |
+| `lt` | `<` | `{ age: { lt: 65 } }` |
+| `lte` | `<=` | `{ age: { lte: 100 } }` |
+
+Multiple operators on the same field are AND-combined: `{ gt: 18, lte: 65 }` becomes `age > 18 AND age <= 65`.
+
+### Set Operators
+
+```typescript
+const users = await em.find(User, {
+  where: {
+    role: { in: ["admin", "editor"] },       // IN
+    status: { notIn: ["banned", "deleted"] }, // NOT IN
+    score: { between: [60, 100] },           // BETWEEN 60 AND 100
+  },
+});
+```
+
+| Operator | SQL | Value Type |
+|----------|-----|------------|
+| `in` | `IN (...)` | `T[]` |
+| `notIn` | `NOT IN (...)` | `T[]` |
+| `between` | `BETWEEN ... AND ...` | `[T, T]` |
+
+### String Operators
+
+```typescript
+const users = await em.find(User, {
+  where: {
+    name: { like: "%alice%" },              // raw LIKE pattern
+    email: { contains: "gmail" },           // LIKE '%gmail%' (auto-escaped)
+    username: { startsWith: "admin" },      // LIKE 'admin%'
+    domain: { endsWith: ".com" },           // LIKE '%.com'
+    bio: { notLike: "%spam%" },             // NOT LIKE
+    name: { ilike: "%ALICE%" },             // ILIKE (PostgreSQL only)
+  },
+});
+```
+
+| Operator | SQL | Wildcards |
+|----------|-----|-----------|
+| `like` | `LIKE` | You provide `%` and `_` yourself |
+| `notLike` | `NOT LIKE` | You provide `%` and `_` yourself |
+| `ilike` | `ILIKE` | PostgreSQL only, case-insensitive |
+| `contains` | `LIKE '%val%'` | Auto-wrapped and escaped |
+| `startsWith` | `LIKE 'val%'` | Auto-wrapped and escaped |
+| `endsWith` | `LIKE '%val'` | Auto-wrapped and escaped |
+
+`contains`, `startsWith`, and `endsWith` automatically escape `%` and `_` in the value, so `{ contains: "50%" }` safely matches the literal string "50%".
+
+### NULL Operators
+
+```typescript
+const users = await em.find(User, {
+  where: {
+    deletedAt: null,                 // IS NULL (shorthand)
+    deletedAt: { isNull: true },     // IS NULL (explicit)
+    bio: { isNull: false },          // IS NOT NULL
+  },
+});
+```
+
+### NOT Operator
+
+`not` negates a value or a nested filter:
+
+```typescript
+const users = await em.find(User, {
+  where: {
+    role: { not: "admin" },                // role != 'admin'
+    bio: { not: null },                    // IS NOT NULL
+    age: { not: { gt: 65 } },             // NOT (age > 65)
+  },
+});
+```
+
+### Logical Combinators — OR, AND, NOT
+
+By default, all fields in a `where` object are AND-combined. For OR logic, use the `OR` key:
+
+```typescript
+// WHERE (role = 'admin') OR (score >= 90)
+const users = await em.find(User, {
+  where: {
+    OR: [
+      { role: "admin" },
+      { score: { gte: 90 } },
+    ],
+  },
+});
+```
+
+You can also use `AND` (explicit) and `NOT` (negation):
+
+```typescript
+const users = await em.find(User, {
+  where: {
+    status: "active",
+    NOT: { role: "banned" },
+    AND: [
+      { age: { gte: 18 } },
+      { age: { lte: 65 } },
+    ],
+  },
+});
+// WHERE status = 'active' AND NOT (role = 'banned') AND (age >= 18 AND age <= 65)
+```
+
+### Array WHERE — OR Shorthand
+
+Pass an **array** of where objects for an OR between groups:
+
+```typescript
+const users = await em.find(User, {
+  where: [
+    { name: "Alice", status: "active" },   // group 1 (AND)
+    { age: { gt: 30 }, role: "admin" },    // group 2 (AND)
+  ],
+});
+// WHERE (name = 'Alice' AND status = 'active') OR (age > 30 AND role = 'admin')
+```
+
+### Type Safety
+
+Filter operators are type-checked against the field type. A `number` field only accepts number operators; a `string` field gets additional string operators like `contains` and `startsWith`:
+
+```typescript
+// ✓ OK — age is number, gt accepts number
+where: { age: { gt: 18 } }
+
+// ✗ Compile error — age is number, contains is string-only
+where: { age: { contains: "18" } }
+
+// ✗ Compile error — gt expects number, not string
+where: { age: { gt: "eighteen" } }
+```
+
+### Backward Compatibility
+
+All existing `where` usage continues to work unchanged:
+
+```typescript
+// Plain equality — unchanged
+em.find(User, { where: { name: "Alice" } })
+
+// Array → IN — unchanged
+em.find(User, { where: { id: [1, 2, 3] } })
+
+// Sql objects — unchanged
+em.find(User, { where: { age: Conditions.gt("`age`", 18) } })
+```
+
+---
+
 ## Including Soft-Deleted Records
 
 Entities with a `@DeletedAt` column are automatically excluded from queries. Set `withDeleted: true` to include them:

@@ -4,6 +4,7 @@ import { WhereClause } from "../dialects/FindOption";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
 import sql, { Sql, join, raw } from "sql-template-tag";
 import { Conditions } from "./Conditions";
+import { resolveWhereClause } from "./WhereResolver";
 import { QueryResult } from "../types/QueryResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
@@ -23,7 +24,7 @@ export class AggregateQueryHandler {
     entity: ClazzType<T>,
     fn: string,
     field: string,
-    where?: WhereClause<T>,
+    where?: WhereClause<T> | WhereClause<T>[],
     existingSession?: TransactionSessionManager,
   ): Promise<number> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
@@ -43,15 +44,9 @@ export class AggregateQueryHandler {
         `${fn}(${field === "*" ? "*" : this.ctx.wrap(field)})`,
       );
 
-      const whereMap: Sql[] = [];
-      if (where) {
-        for (const key in where) {
-          const value = (where as any)[key];
-          if (value !== undefined && value !== null) {
-            whereMap.push(Conditions.equals(this.ctx.wrap(key), value));
-          }
-        }
-      }
+      const whereMap: Sql[] = resolveWhereClause(where, {
+        wrapColumn: (n) => this.ctx.wrap(n),
+      });
 
       let queryStr: Sql;
       if (whereMap.length > 0) {

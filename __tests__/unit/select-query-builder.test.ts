@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
+import { SelectQueryBuilder, WhereOperator } from "../../src/core/SelectQueryBuilder";
 import { Conditions } from "../../src/core/Conditions";
 import { Entity, PrimaryGeneratedColumn, Column, DeletedAt } from "../../src/decorators";
 import { EntityManager } from "../../src/core/EntityManager";
@@ -260,7 +260,7 @@ describe("SelectQueryBuilder", () => {
     });
 
     it("should support all comparison operators via 3-arg", () => {
-      const operators = ["=", "!=", "<>", "<", ">", "<=", ">="];
+      const operators: WhereOperator[] = ["=", "!=", "<>", "<", ">", "<=", ">="];
       for (const op of operators) {
         const em = createMockEm("mysql");
         const qb = new SelectQueryBuilder(User, "u", em);
@@ -270,10 +270,11 @@ describe("SelectQueryBuilder", () => {
       }
     });
 
-    it("should throw for unsupported operator", () => {
+    it("should throw for unsupported operator at runtime", () => {
       const em = createMockEm("mysql");
       const qb = new SelectQueryBuilder(User, "u", em);
-      expect(() => qb.where("age", "REGEX", ".*")).toThrow(
+      // "REGEX" is now a compile-time error; cast to bypass for runtime test
+      expect(() => qb.where("age", "REGEX" as any, ".*")).toThrow(
         "Unsupported operator",
       );
     });

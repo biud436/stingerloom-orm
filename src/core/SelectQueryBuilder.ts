@@ -38,6 +38,27 @@ export type ArrayValidator<TResult> =
 type ColumnOf<T> = keyof T & string;
 
 /**
+ * Allowed comparison operators for type-safe WHERE conditions.
+ * Using any other string literal will produce a compile-time error.
+ */
+export type WhereOperator =
+  | "="
+  | "!="
+  | "<>"
+  | "<"
+  | ">"
+  | "<="
+  | ">="
+  | "LIKE"
+  | "NOT LIKE"
+  | "ILIKE"
+  | "IN"
+  | "NOT IN"
+  | "IS NULL"
+  | "IS NOT NULL"
+  | "BETWEEN";
+
+/**
  * Type-safe order-by specification.
  */
 type OrderBySpec<T> = {
@@ -184,7 +205,7 @@ export class SelectQueryBuilder<T, TResult = T> {
   where(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   where(
     column: ColumnOf<T>,
-    operator: string,
+    operator: WhereOperator,
     value: any,
   ): this;
   where(
@@ -203,7 +224,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   andWhere(condition: Sql): this;
   andWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
-  andWhere(column: ColumnOf<T>, operator: string, value: any): this;
+  andWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   andWhere(
     columnOrCondition: ColumnOf<T> | Sql,
     operatorOrValue?: any,
@@ -220,7 +241,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   orWhere(condition: Sql): this;
   orWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
-  orWhere(column: ColumnOf<T>, operator: string, value: any): this;
+  orWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   orWhere(
     columnOrCondition: ColumnOf<T> | Sql,
     operatorOrValue?: any,
@@ -943,6 +964,8 @@ export class SelectQueryBuilder<T, TResult = T> {
         return Conditions.like(qualified, value);
       case "NOT LIKE":
         return Conditions.notLike(qualified, value);
+      case "ILIKE":
+        return sql`${raw(qualified)} ILIKE ${value}`;
       case "IN":
         return Conditions.in(qualified, Array.isArray(value) ? value : [value]);
       case "NOT IN":

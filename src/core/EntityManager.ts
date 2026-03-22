@@ -10,6 +10,7 @@ import { ISqlDriver } from "../dialects/SqlDriver";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
 import { FindOption, WhereClause } from "../dialects/FindOption";
+import { resolveWhereClause } from "./WhereResolver";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
 import { MySqlDataSource } from "../dialects/mysql/MySqlDataSource";
@@ -780,26 +781,13 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      for (const key in where) {
-        const value = where[key];
-        if (value !== undefined && value !== null) {
-          if (hasEagerJoins) {
-            const col = `${this.wrap(tableName)}.${this.wrap(key)}`;
-            whereMap.push(
-              Array.isArray(value)
-                ? Conditions.in(col, value)
-                : Conditions.equals(col, value),
-            );
-          } else {
-            const col = this.wrap(key);
-            whereMap.push(
-              Array.isArray(value)
-                ? Conditions.in(col, value)
-                : Conditions.equals(col, value),
-            );
-          }
-        }
-      }
+      whereMap.push(
+        ...resolveWhereClause(where, {
+          wrapColumn: (n) => this.wrap(n),
+          qualified: hasEagerJoins,
+          tableName: hasEagerJoins ? tableName : undefined,
+        }),
+      );
 
       // @DeletedAt 컬럼이 있으면 자동으로 WHERE deleted_at IS NULL 조건 추가
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
@@ -1101,19 +1089,9 @@ export class EntityManager implements BaseEntityManager {
         this.wrap(column.name!),
       );
 
-      const whereMap: Sql[] = [];
-
-      for (const key in where) {
-        const value = where[key];
-        if (value !== undefined && value !== null) {
-          const col = this.wrap(key);
-          whereMap.push(
-            Array.isArray(value)
-              ? Conditions.in(col, value)
-              : Conditions.equals(col, value),
-          );
-        }
-      }
+      const whereMap: Sql[] = resolveWhereClause(where, {
+        wrapColumn: (n) => this.wrap(n),
+      });
 
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
       if (deletedAtColumn) {
@@ -2020,18 +1998,9 @@ export class EntityManager implements BaseEntityManager {
         return { affected: 0 };
       }
 
-      const whereMap: Sql[] = [];
-      for (const key in where) {
-        const value = (where as any)[key];
-        if (value !== undefined && value !== null) {
-          const col = this.wrap(key);
-          whereMap.push(
-            Array.isArray(value)
-              ? Conditions.in(col, value)
-              : Conditions.equals(col, value),
-          );
-        }
-      }
+      const whereMap: Sql[] = resolveWhereClause(where, {
+        wrapColumn: (n) => this.wrap(n),
+      });
 
       const updateSql = sql`UPDATE ${raw(this.wrapTable(metadata.name!))} SET ${join(setMap, ", ")} WHERE ${join(whereMap, " AND ")}`;
 

@@ -19,12 +19,126 @@ export enum LockMode {
  */
 export type RelationKeys<T> = Array<(keyof T & string) | (string & {})>;
 
+// ── Filter Types (Prisma-style) ─────────────────────────────
+
 /**
- * WHERE 조건 타입. 엔티티 필드 기반 자동완성과 타입 체크를 제공합니다.
- * 값에 `Sql` 객체(Conditions.* 결과)도 허용합니다.
+ * Base filter operators available for all field types.
+ */
+export interface BaseFilter<T> {
+  eq?: T;
+  ne?: T;
+  in?: T[];
+  notIn?: T[];
+  not?: T | FieldFilter<T>;
+  isNull?: boolean;
+}
+
+/**
+ * Filter operators for comparable types (number, Date, string, bigint).
+ * Adds gt/gte/lt/lte/between on top of BaseFilter.
+ */
+export interface ComparableFilter<T> extends BaseFilter<T> {
+  gt?: T;
+  gte?: T;
+  lt?: T;
+  lte?: T;
+  between?: [T, T];
+}
+
+/**
+ * Filter operators for string fields.
+ * Adds like/ilike/contains/startsWith/endsWith on top of ComparableFilter.
+ *
+ * - `like` / `notLike`: raw LIKE pattern (user provides `%` wildcards)
+ * - `ilike`: case-insensitive LIKE (PostgreSQL only)
+ * - `contains`: LIKE '%value%' (wildcards auto-escaped)
+ * - `startsWith`: LIKE 'value%' (wildcards auto-escaped)
+ * - `endsWith`: LIKE '%value' (wildcards auto-escaped)
+ */
+export interface StringFilter extends ComparableFilter<string> {
+  like?: string;
+  notLike?: string;
+  ilike?: string;
+  contains?: string;
+  startsWith?: string;
+  endsWith?: string;
+}
+
+/**
+ * Maps a field type to its allowed filter operators.
+ *
+ * - `string` → StringFilter (includes like, contains, startsWith, endsWith)
+ * - `number | Date | bigint` → ComparableFilter (includes gt, lt, between)
+ * - everything else → BaseFilter (eq, ne, in, notIn, isNull)
+ */
+export type FieldFilter<T> = T extends string
+  ? StringFilter
+  : T extends number | Date | bigint
+    ? ComparableFilter<T>
+    : BaseFilter<T>;
+
+// ── Where Clause ────────────────────────────────────────────
+
+/**
+ * Set of operator keys used to distinguish filter objects from plain values
+ * at runtime.
+ */
+export const FILTER_OPERATOR_KEYS = new Set([
+  "eq",
+  "ne",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "in",
+  "notIn",
+  "like",
+  "notLike",
+  "ilike",
+  "between",
+  "isNull",
+  "not",
+  "contains",
+  "startsWith",
+  "endsWith",
+]);
+
+/**
+ * WHERE clause type with Prisma-style nested filter operators.
+ *
+ * Each field accepts:
+ * - A literal value (implicit equality)
+ * - A filter object with named operators (`{ gt: 18, lte: 65 }`)
+ * - A raw `Sql` object (for advanced/custom conditions)
+ * - `null` (IS NULL)
+ *
+ * Logical combinators are available as special keys:
+ * - `OR`: array of WhereClause — conditions joined with OR
+ * - `AND`: array of WhereClause — conditions joined with AND
+ * - `NOT`: a single WhereClause — negated with NOT
+ *
+ * @example
+ * ```ts
+ * em.find(User, {
+ *   where: {
+ *     age: { gt: 18, lte: 65 },
+ *     name: { contains: "alice" },
+ *     role: { in: ["admin", "editor"] },
+ *     status: { ne: "deleted" },
+ *     OR: [
+ *       { role: "admin" },
+ *       { score: { gte: 90 } },
+ *     ],
+ *   }
+ * })
+ * ```
  */
 export type WhereClause<T> = {
-  [K in keyof T]?: T[K] | Sql | null;
+  [K in keyof T]?: T[K] | FieldFilter<T[K]> | Sql | null;
+} & {
+  OR?: WhereClause<T>[];
+  AND?: WhereClause<T>[];
+  NOT?: WhereClause<T>;
 };
 
 /**
@@ -40,9 +154,25 @@ export type FindOption<T> = {
 
   /**
    * Specifies the conditions to filter the entities.
-   * Each key corresponds to a field in the entity, and the value is the value to match.
+   *
+   * Accepts a single WhereClause (all conditions AND-ed),
+   * or an array of WhereClauses (each element AND-ed internally, elements OR-ed together).
+   *
+   * @example
+   * ```ts
+   * // Single where (AND)
+   * em.find(User, { where: { name: "Alice", age: { gt: 18 } } })
+   *
+   * // Array where (OR between groups)
+   * em.find(User, {
+   *   where: [
+   *     { name: "Alice", status: "active" },
+   *     { age: { gt: 30 }, role: "admin" },
+   *   ]
+   * })
+   * ```
    */
-  where?: WhereClause<T>;
+  where?: WhereClause<T> | WhereClause<T>[];
 
   /**
    * Specifies the limit for the number of entities to retrieve.

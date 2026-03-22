@@ -181,7 +181,7 @@ const userRepo = BaseRepository.of(User, em);
 ```typescript
 interface FindOption<T> {
   select?: (keyof T)[] | Partial<Record<keyof T, boolean>>;
-  where?: Partial<T>;
+  where?: WhereClause<T> | WhereClause<T>[];  // single or array (OR between groups)
   limit?: number | [number, number];
   skip?: number;
   take?: number;
@@ -193,7 +193,51 @@ interface FindOption<T> {
   distinct?: boolean;            // SELECT DISTINCT
   timeout?: number;
   useMaster?: boolean;
+  lock?: LockMode;
 }
+```
+
+### WhereClause\<T\>
+
+Each field accepts a plain value (equality), a filter object, a `Sql` object, or `null`:
+
+```typescript
+type WhereClause<T> = {
+  [K in keyof T]?: T[K] | FieldFilter<T[K]> | Sql | null;
+} & {
+  OR?: WhereClause<T>[];
+  AND?: WhereClause<T>[];
+  NOT?: WhereClause<T>;
+};
+```
+
+### Filter Operators
+
+Operators are determined by the field type — `string` fields get extra operators like `contains` and `startsWith`.
+
+```typescript
+// All types: BaseFilter<T>
+{ eq, ne, in, notIn, not, isNull }
+
+// number, Date, bigint: ComparableFilter<T> (extends BaseFilter)
+{ gt, gte, lt, lte, between }
+
+// string: StringFilter (extends ComparableFilter)
+{ like, notLike, ilike, contains, startsWith, endsWith }
+```
+
+See [Querying — WHERE Filters](./entity-manager-querying.md#where-filters--prisma-style-operators) for usage examples.
+
+### WhereOperator (SelectQueryBuilder)
+
+Type-safe operator union for the 3-arg `where()` method:
+
+```typescript
+type WhereOperator =
+  | "=" | "!=" | "<>" | "<" | ">" | "<=" | ">="
+  | "LIKE" | "NOT LIKE" | "ILIKE"
+  | "IN" | "NOT IN"
+  | "IS NULL" | "IS NOT NULL" | "BETWEEN";
 ```
 
 ### TransactionOptions

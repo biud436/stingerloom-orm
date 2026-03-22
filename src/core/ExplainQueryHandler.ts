@@ -3,6 +3,7 @@ import { ClazzType } from "../utils";
 import { FindOption } from "../dialects/FindOption";
 import sql, { Sql, raw } from "sql-template-tag";
 import { Conditions } from "./Conditions";
+import { resolveWhereClause } from "./WhereResolver";
 import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { ExplainResult } from "./ExplainResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
@@ -93,21 +94,13 @@ export class ExplainQueryHandler {
       }
     }
 
-    for (const key in where) {
-      const value = where[key];
-      if (value !== undefined && value !== null) {
-        if (hasEagerJoins) {
-          whereMap.push(
-            Conditions.equals(
-              `${this.ctx.wrap(tableName)}.${this.ctx.wrap(key)}`,
-              value,
-            ),
-          );
-        } else {
-          whereMap.push(Conditions.equals(this.ctx.wrap(key), value));
-        }
-      }
-    }
+    whereMap.push(
+      ...resolveWhereClause(where, {
+        wrapColumn: (n) => this.ctx.wrap(n),
+        qualified: hasEagerJoins,
+        tableName: hasEagerJoins ? tableName : undefined,
+      }),
+    );
 
     const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
     if (deletedAtColumn && !(findOption as any).withDeleted) {

@@ -94,11 +94,15 @@ qb.where("status", "active");
 // WHERE "u"."status" = $1
 ```
 
-**Operator** — when you need `>=`, `<`, `LIKE`, etc. Pass the operator as the second argument.
+**Operator** — when you need `>=`, `<`, `LIKE`, etc. Pass the operator as the second argument. The operator is type-checked — only valid SQL operators are accepted, so typos like `"LKIE"` become compile-time errors.
 
 ```typescript
 qb.where("age", ">=", 18);
 // WHERE "u"."age" >= $1
+
+// Allowed operators:
+// =, !=, <>, <, >, <=, >=, LIKE, NOT LIKE, ILIKE, IN, NOT IN,
+// IS NULL, IS NOT NULL, BETWEEN
 ```
 
 **Raw SQL** — for anything the ORM can't express. Pass a `sql` template literal directly.
