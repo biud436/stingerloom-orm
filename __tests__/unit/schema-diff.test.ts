@@ -377,6 +377,7 @@ describe("SchemaDiffMigrationGenerator", () => {
         ],
         dropColumns: [],
         alterColumns: [],
+        renamedColumns: [],
       };
 
       const content = generator.generate(diff, "mysql");
@@ -1128,6 +1129,97 @@ describe("SchemaDiff — Phase 2 improvements", () => {
       const result = await schemaDiff.diff([DiffUser], runner, "mysql");
 
       expect(result.dropTables).toHaveLength(0);
+    });
+  });
+
+  describe("column rename detection (#74)", () => {
+    @Entity()
+    class RenameUser {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "varchar", length: 255 })
+      full_name!: string;
+
+      @Column({ type: "int" })
+      age!: number;
+    }
+
+    it("should detect rename when add/drop pair has same type", async () => {
+      const runner = createMockQueryRunner({
+        rename_user: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          { column_name: "name", data_type: "varchar", is_nullable: "NO" },
+          { column_name: "age", data_type: "int", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([RenameUser], runner, "mysql");
+
+      expect(result.renamedColumns).toHaveLength(1);
+      expect(result.renamedColumns![0].oldColumnName).toBe("name");
+      expect(result.renamedColumns![0].newColumnName).toBe("full_name");
+      expect(result.addColumns).toHaveLength(0);
+      expect(result.dropColumns).toHaveLength(0);
+    });
+
+    it("should not detect rename when types differ", async () => {
+      const runner = createMockQueryRunner({
+        rename_user: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          { column_name: "name", data_type: "text", is_nullable: "NO" },
+          { column_name: "age", data_type: "int", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([RenameUser], runner, "mysql");
+
+      // TEXT != VARCHAR so no rename, treated as add + drop
+      expect(result.renamedColumns ?? []).toHaveLength(0);
+      expect(result.addColumns.length).toBeGreaterThan(0);
+      expect(result.dropColumns.length).toBeGreaterThan(0);
+    });
+
+    it("should generate RENAME COLUMN DDL", () => {
+      const generator = new SchemaDiffMigrationGenerator();
+      const diff: SchemaDiffResult = {
+        addTables: [],
+        dropTables: [],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [],
+        renamedColumns: [
+          { tableName: "users", oldColumnName: "name", newColumnName: "full_name", columnType: "VARCHAR" },
+        ],
+      };
+
+      const content = generator.generate(diff, "mysql");
+      expect(content).toContain("RENAME COLUMN");
+      expect(content).toContain("\\`name\\`");
+      expect(content).toContain("\\`full_name\\`");
+
+      const pg = generator.generate(diff, "postgres");
+      expect(pg).toContain("RENAME COLUMN");
+      expect(pg).toContain('"name"');
+      expect(pg).toContain('"full_name"');
+    });
+
+    it("should generate reversible RENAME COLUMN in down()", () => {
+      const generator = new SchemaDiffMigrationGenerator();
+      const diff: SchemaDiffResult = {
+        addTables: [],
+        dropTables: [],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [],
+        renamedColumns: [
+          { tableName: "users", oldColumnName: "name", newColumnName: "full_name", columnType: "VARCHAR" },
+        ],
+      };
+
+      const result = generator.dryRun(diff, "postgres");
+      expect(result.up[0]).toContain('RENAME COLUMN "name" TO "full_name"');
+      expect(result.down[0]).toContain('RENAME COLUMN "full_name" TO "name"');
     });
   });
 });

@@ -21,13 +21,36 @@ export interface ColumnChange {
   actualScale?: number | null;
 }
 
+export interface RenamedColumn {
+  tableName: string;
+  oldColumnName: string;
+  newColumnName: string;
+  columnType: string;
+}
+
 export interface SchemaDiffResult {
   addTables: string[];
   dropTables: string[];
   addColumns: ColumnChange[];
   dropColumns: ColumnChange[];
   alterColumns: ColumnChange[];
+  renamedColumns?: RenamedColumn[];
   addTableEntityMap?: Record<string, ClazzType<any>>;
+}
+
+/**
+ * Creates a SchemaDiffResult with defaults for optional fields.
+ */
+export function createSchemaDiffResult(partial?: Partial<SchemaDiffResult>): SchemaDiffResult {
+  return {
+    addTables: [],
+    dropTables: [],
+    addColumns: [],
+    dropColumns: [],
+    alterColumns: [],
+    renamedColumns: [],
+    ...partial,
+  };
 }
 
 interface DbColumnInfo {
@@ -72,6 +95,7 @@ export class SchemaDiff {
       addColumns: [],
       dropColumns: [],
       alterColumns: [],
+      renamedColumns: [],
     };
 
     const entityTableNames = new Set<string>();
@@ -163,6 +187,9 @@ export class SchemaDiff {
         }
       }
     }
+
+    // Detect column renames: match 1:1 add/drop pairs with same type per table
+    this.detectRenames(result, dialect);
 
     // Detect dropped tables (opt-in)
     if (options?.detectDroppedTables) {
@@ -503,6 +530,60 @@ export class SchemaDiff {
     }
 
     return true;
+  }
+
+  /**
+   * Detect column renames by matching addColumns and dropColumns on the same table
+   * with compatible types. Matched pairs are moved to renamedColumns.
+   */
+  private detectRenames(
+    result: SchemaDiffResult,
+    dialect: SchemaDialect,
+  ): void {
+    const tables = new Set([
+      ...result.addColumns.map((c) => c.tableName),
+      ...result.dropColumns.map((c) => c.tableName),
+    ]);
+
+    for (const table of tables) {
+      const adds = result.addColumns.filter((c) => c.tableName === table);
+      const drops = result.dropColumns.filter((c) => c.tableName === table);
+
+      const matchedAddIdx = new Set<number>();
+      const matchedDropIdx = new Set<number>();
+
+      for (let di = 0; di < drops.length; di++) {
+        if (matchedDropIdx.has(di)) continue;
+        const drop = drops[di];
+        const dropType = (drop.currentType ?? "").toUpperCase();
+
+        for (let ai = 0; ai < adds.length; ai++) {
+          if (matchedAddIdx.has(ai)) continue;
+          const add = adds[ai];
+          const addType = (add.columnType ?? "").toUpperCase();
+
+          if (this.typesMatch(addType, dropType, dialect)) {
+            result.renamedColumns!.push({
+              tableName: table,
+              oldColumnName: drop.columnName,
+              newColumnName: add.columnName,
+              columnType: add.columnType ?? dropType,
+            });
+            matchedAddIdx.add(ai);
+            matchedDropIdx.add(di);
+            break;
+          }
+        }
+      }
+
+      // Remove matched items from addColumns and dropColumns
+      result.addColumns = result.addColumns.filter(
+        (c) => c.tableName !== table || !matchedAddIdx.has(adds.indexOf(c)),
+      );
+      result.dropColumns = result.dropColumns.filter(
+        (c) => c.tableName !== table || !matchedDropIdx.has(drops.indexOf(c)),
+      );
+    }
   }
 
   private normalizeRows(result: any): DbColumnInfo[] {

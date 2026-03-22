@@ -2,7 +2,7 @@
 import "reflect-metadata";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { SchemaDiffResult, ColumnChange } from "./SchemaDiff";
+import { SchemaDiffResult, ColumnChange, RenamedColumn } from "./SchemaDiff";
 import { SchemaGenerator, SchemaDialect } from "./SchemaGenerator";
 import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../../decorators/ManyToOne";
 import { ONE_TO_ONE_TOKEN, OneToOneMetadata } from "../../decorators/OneToOne";
@@ -112,6 +112,11 @@ export class SchemaDiffMigrationGenerator {
       }
     }
 
+    // Rename columns
+    for (const rename of diff.renamedColumns ?? []) {
+      sqls.push(this.buildRenameColumnSql(rename, dialect));
+    }
+
     // Drop tables
     for (const table of diff.dropTables) {
       sqls.push(`DROP TABLE IF EXISTS ${this.escapeId(table, dialect)}`);
@@ -145,6 +150,16 @@ export class SchemaDiffMigrationGenerator {
           `ALTER TABLE ${this.escapeId(col.tableName, dialect)} ALTER COLUMN ${this.escapeId(col.columnName, dialect)} TYPE ${typeStr}`,
         );
       }
+    }
+
+    // Reverse of renames
+    for (const rename of diff.renamedColumns ?? []) {
+      sqls.push(
+        this.buildRenameColumnSql(
+          { ...rename, oldColumnName: rename.newColumnName, newColumnName: rename.oldColumnName },
+          dialect,
+        ),
+      );
     }
 
     // Reverse of add tables
@@ -216,6 +231,11 @@ export class SchemaDiffMigrationGenerator {
       }
     }
 
+    // Rename columns
+    for (const rename of diff.renamedColumns ?? []) {
+      stmts.push(this.wrapSqlInQuery(this.buildRenameColumnSql(rename, dialect)));
+    }
+
     // Drop columns (dangerous — commented out)
     for (const col of diff.dropColumns) {
       stmts.push(
@@ -270,6 +290,18 @@ export class SchemaDiffMigrationGenerator {
       }
     }
 
+    // Reverse of renames
+    for (const rename of diff.renamedColumns ?? []) {
+      stmts.push(
+        this.wrapSqlInQuery(
+          this.buildRenameColumnSql(
+            { ...rename, oldColumnName: rename.newColumnName, newColumnName: rename.oldColumnName },
+            dialect,
+          ),
+        ),
+      );
+    }
+
     // Reverse of new tables — drop them
     for (const table of diff.addTables) {
       stmts.push(
@@ -309,6 +341,19 @@ export class SchemaDiffMigrationGenerator {
       return `\`${name.replace(/`/g, "``")}\``;
     }
     return `"${name.replace(/"/g, '""')}"`;
+  }
+
+  private buildRenameColumnSql(rename: RenamedColumn, dialect: SchemaDialect): string {
+    const table = this.escapeId(rename.tableName, dialect);
+    const oldCol = this.escapeId(rename.oldColumnName, dialect);
+    const newCol = this.escapeId(rename.newColumnName, dialect);
+
+    if (dialect === "mysql") {
+      // MySQL < 8.0 doesn't support RENAME COLUMN, but 8.0+ does
+      return `ALTER TABLE ${table} RENAME COLUMN ${oldCol} TO ${newCol}`;
+    }
+    // PostgreSQL, SQLite (3.25.0+)
+    return `ALTER TABLE ${table} RENAME COLUMN ${oldCol} TO ${newCol}`;
   }
 
   private renderColumnType(col: ColumnChange, _dialect: SchemaDialect): string {
