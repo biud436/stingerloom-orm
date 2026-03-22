@@ -679,4 +679,102 @@ describe("SelectQueryBuilder", () => {
       expect(values).toEqual([4, 5]);
     });
   });
+
+  describe("getMany() deserialization", () => {
+    function createMockEmWithData(rows: any[], dbType: "mysql" | "postgresql" = "mysql") {
+      const resolver = new RelationMetadataResolver();
+      function wrap(col: string) {
+        if (dbType === "mysql") return `\`${col.replace(/`/g, "``")}\``;
+        return `"${col.replace(/"/g, '""')}"`;
+      }
+      return {
+        wrap,
+        wrapTable: wrap,
+        resolver,
+        _ctx: {
+          isMySqlFamily: () => dbType === "mysql",
+          isPostgres: () => dbType === "postgresql",
+        },
+        async query<T>(): Promise<T[]> {
+          return rows as T[];
+        },
+      } as unknown as EntityManager;
+    }
+
+    it("should return class instances when no select() is called", async () => {
+      const em = createMockEmWithData([
+        { id: 1, name: "Alice", email: "alice@test.com", age: 30, status: "active", createdAt: new Date() },
+      ]);
+      const qb = new SelectQueryBuilder(User, "u", em);
+      const results = await qb.getMany();
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toBeInstanceOf(User);
+      expect(results[0].id).toBe(1);
+      expect(results[0].name).toBe("Alice");
+    });
+
+    it("should return class instances when select('*') is called", async () => {
+      const em = createMockEmWithData([
+        { id: 2, name: "Bob", email: "bob@test.com", age: 25, status: "active", createdAt: new Date() },
+      ]);
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.select("*");
+      const results = await qb.getMany();
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toBeInstanceOf(User);
+    });
+
+    it("should return plain objects when select() with specific columns is called", async () => {
+      const em = createMockEmWithData([
+        { id: 1, name: "Alice" },
+      ]);
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.select(["id", "name"]);
+      const results = await qb.getMany();
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).not.toBeInstanceOf(User);
+      expect(results[0].id).toBe(1);
+      expect(results[0].name).toBe("Alice");
+    });
+
+    it("getOne() should return class instance when no select()", async () => {
+      const em = createMockEmWithData([
+        { id: 1, name: "Alice", email: "alice@test.com", age: 30, status: "active", createdAt: new Date() },
+      ]);
+      const qb = new SelectQueryBuilder(User, "u", em);
+      const result = await qb.getOne();
+
+      expect(result).not.toBeNull();
+      expect(result).toBeInstanceOf(User);
+    });
+
+    it("getOne() should return plain object when select() with columns", async () => {
+      const em = createMockEmWithData([
+        { id: 1, name: "Alice" },
+      ]);
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.select(["id", "name"]);
+      const result = await qb.getOne();
+
+      expect(result).not.toBeNull();
+      expect(result).not.toBeInstanceOf(User);
+    });
+
+    it("getManyAndCount() should return class instances when no select()", async () => {
+      const em = createMockEmWithData([
+        { id: 1, name: "Alice", email: "a@t.com", age: 30, status: "active", createdAt: new Date() },
+      ]);
+      // Override getCount to avoid count query against mock
+      const qb = new SelectQueryBuilder(User, "u", em);
+      jest.spyOn(qb, "getCount").mockResolvedValue(1);
+      const [results, count] = await qb.getManyAndCount();
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toBeInstanceOf(User);
+      expect(count).toBe(1);
+    });
+  });
 });

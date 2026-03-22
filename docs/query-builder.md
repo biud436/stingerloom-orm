@@ -21,9 +21,21 @@ Before diving in, it's worth asking: why not just use `find()` for everything?
 
 The answer comes down to what `find()` can't express. `find()` gives you `WHERE field = value`, but it can't do `WHERE age >= 18`, or `JOIN` to unrelated tables, or `GROUP BY category HAVING COUNT(*) > 5`. For these, you need a query builder.
 
-But query builders in other ORMs have a well-known problem: **type unsafety**. TypeORM's `SelectQueryBuilder`, for example, always returns `T[]` from `getMany()`, even when you selected only two columns. The TypeScript compiler happily lets you access `user.email` on a result that only contains `{ id, name }` — it compiles, but crashes at runtime with `undefined`.
+Stingerloom's query builder has two return modes depending on how you use `select()`:
 
-Stingerloom's query builder solves this. When you call `select(["id", "name"])`, the return type of `getMany()` narrows from `User[]` to `Pick<User, "id" | "name">[]`. Accessing an unselected column becomes a **compile-time error**, not a runtime surprise.
+**No projection (default)** — `getMany()` returns actual **class instances**. The results are deserialized through `class-transformer`, so `instanceof` checks work, class methods are available, and the objects can be passed directly to `em.save()`.
+
+```typescript
+const users = await em
+  .createQueryBuilder(User, "u")
+  .where("isActive", true)
+  .getMany();
+
+users[0] instanceof User; // ✓ true — real class instance
+await em.save(User, users[0]); // ✓ works correctly
+```
+
+**With projection** — when you call `select(["id", "name"])`, the return type narrows from `User[]` to `Pick<User, "id" | "name">[]`. The results are **plain objects** (not class instances), because a partial projection cannot represent the full entity. Accessing an unselected column becomes a compile-time error.
 
 ```typescript
 const users = await em
@@ -36,7 +48,9 @@ users[0].name;  // ✓ string — exists
 users[0].email; // ✗ Compile error! Property 'email' does not exist on type Pick<User, "id" | "name">
 ```
 
-Meanwhile, `where()` and `orderBy()` still accept any column from the full `User` entity — because you can filter and sort by columns you don't SELECT. The type system tracks the **projection** (what you get back) separately from the **entity** (what you can query on).
+This distinction matters: class instances carry their prototype chain (methods, `instanceof`, event listener eligibility), while projected plain objects are lightweight DTOs. Choose based on what you need.
+
+`where()` and `orderBy()` always accept any column from the full entity — because you can filter and sort by columns you don't SELECT. The type system tracks the **projection** (what you get back) separately from the **entity** (what you can query on).
 
 ### Your First Query Builder Query
 
@@ -719,31 +733,32 @@ qb.selectDistinctOn(['"department"'], ['"id"', '"name"', '"salary"'])
 
 ---
 
-## A Note on Type Safety with find() and select
+## Class Instances vs Plain Objects
 
-The `em.find()` method also supports a `select` option, but it does **not** narrow the return type. If you write:
+Understanding what `getMany()` returns is important for writing correct code.
 
-```typescript
-const users = await em.find(User, { select: ["id", "name"] });
-// TypeScript type: User[] — but runtime shape is { id, name } only
-users[0].email; // TypeScript says string, runtime says undefined!
-```
+**Without `select()`** — results are deserialized into class instances via `class-transformer`. They have the entity's prototype chain, so `instanceof` works, class methods are available, and they can be passed to `em.save()` or matched by `EntitySubscriber.listenTo()`.
 
-This is a known limitation. `find()` returns `T[]` regardless of the `select` option, because TypeScript's type inference for object literals doesn't support conditional narrowing in the same way that method chaining does.
-
-If type safety on projections matters to you — and it should for any code that accesses specific columns — **use the SelectQueryBuilder** instead of `find()` with `select`. The query builder's `.select()` method properly narrows the result type, so the compiler catches mistakes before they reach runtime.
+**With `select(["id", "name"])`** — results are plain objects typed as `Pick<T, K>`. They are lightweight DTOs with no class identity. Do not pass them to `em.save()` or expect `instanceof` checks to work.
 
 ```typescript
-// ✗ Unsafe — find() always returns User[]
-const users = await em.find(User, { select: ["id", "name"] });
-users[0].email; // compiles but undefined at runtime
+// ✓ Class instance — full entity behavior
+const user = await em.createQueryBuilder(User, "u")
+  .where("id", 1)
+  .getOne();
+user instanceof User;     // true
+await em.save(User, user); // works
 
-// ✓ Safe — SelectQueryBuilder narrows to Pick<User, "id" | "name">
-const users = await em.createQueryBuilder(User, "u")
+// ✓ Plain object — projection DTO
+const partial = await em.createQueryBuilder(User, "u")
   .select(["id", "name"])
-  .getMany();
-users[0].email; // compile error!
+  .where("id", 1)
+  .getOne();
+partial instanceof User;   // false
+partial.email;              // compile error (not in Pick)
 ```
+
+Note that `em.find()` also supports a `select` option, but it does **not** narrow the return type — `find()` always returns `T[]` regardless. If type safety on projections matters, use the query builder's `.select()` method instead.
 
 ---
 
@@ -756,7 +771,7 @@ users[0].email; // compile error!
 | Do you need UNION / INTERSECT / EXCEPT? | No | Yes |
 | Do you need CTE (WITH / WITH RECURSIVE)? | No | Yes |
 | Do you need window functions? | No | Yes |
-| Can the result be deserialized into `T`? | Yes (`getMany()`) | Manual (`em.query()`) |
+| Returns class instances? | Yes (without `select()`) / No (with projection) | No — raw objects via `em.query()` |
 
 In practice, start with `SelectQueryBuilder` for everyday queries. If you hit a wall — you need UNION, recursive hierarchy traversal, or window analytics — switch to `RawQueryBuilder` for that specific query.
 

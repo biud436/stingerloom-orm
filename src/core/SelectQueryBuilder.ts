@@ -6,6 +6,7 @@ import { ClazzType } from "../utils/types";
 import { RawQueryBuilder } from "./RawQueryBuilder";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
 
 /**
  * Validator function that can be attached to a SelectQueryBuilder.
@@ -620,6 +621,19 @@ export class SelectQueryBuilder<T, TResult = T> {
   async getMany(): Promise<TResult[]> {
     const built = this.toSql();
     const rows = await this.em.query<any>(built);
+
+    // When selecting all columns (no projection), deserialize rows into
+    // actual class instances so that class methods, prototype chain, and
+    // instanceof checks work correctly.  Projected queries (select with
+    // specific columns) intentionally return plain objects (Pick<T, K>).
+    if (this.selectColumns === "*") {
+      const registry = DeserializerRegistry.getInstance();
+      const entities = rows.map((row: any) =>
+        registry.deserialize(this.entity, row),
+      );
+      return this.applyValidation(entities);
+    }
+
     return this.applyValidation(rows);
   }
 
