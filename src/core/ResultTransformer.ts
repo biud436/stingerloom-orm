@@ -207,10 +207,7 @@ export class ResultTransformer implements BaseResultTransformer {
         }
 
         // LEFT JOIN으로 매칭되지 않은 경우 모든 값이 null → null 할당
-        const allNull = Object.keys(foreignObject).length === 0 ||
-          Object.values(foreignObject).every((v) => v === null || v === undefined);
-
-        baseEntity[columnName] = allNull
+        baseEntity[columnName] = this.isDeepNull(foreignObject)
           ? null
           : deserializeEntity(ForeignClass, foreignObject);
       }
@@ -240,11 +237,23 @@ export class ResultTransformer implements BaseResultTransformer {
           }
         }
 
-        // LEFT JOIN으로 매칭되지 않은 경우 null 할당
-        const allNull = Object.keys(foreignObject).length === 0 ||
-          Object.values(foreignObject).every((v) => v === null || v === undefined);
+        // #116: Recursively process nested ManyToOne relations within OneToOne entities
+        // Pass foreignObject as resultSet so nested prefix matching works correctly
+        const relatedManyToOneMappings = Reflect.getMetadata(
+          MANY_TO_ONE_TOKEN,
+          RelatedClass,
+        ) as ManyToOneMetadata<any>[];
 
-        baseEntity[propertyKey] = allNull
+        if (relatedManyToOneMappings) {
+          this.fillPropertiesToForeignObject(
+            RelatedClass,
+            foreignObject,
+            foreignObject,
+          );
+        }
+
+        // LEFT JOIN으로 매칭되지 않은 경우 null 할당
+        baseEntity[propertyKey] = this.isDeepNull(foreignObject)
           ? null
           : deserializeEntity(RelatedClass, foreignObject);
       }
@@ -253,6 +262,22 @@ export class ResultTransformer implements BaseResultTransformer {
     const finalEntity = deserializeEntity(entityClass, { ...baseEntity });
 
     return finalEntity;
+  }
+
+  /**
+   * Recursively checks if an object is "deep null": all leaf values are null/undefined.
+   * Handles nested objects created by recursive fillPropertiesToForeignObject calls.
+   */
+  private isDeepNull(obj: ForeignObject<any>): boolean {
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return true;
+    return Object.values(obj).every((v) => {
+      if (v === null || v === undefined) return true;
+      if (typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)) {
+        return this.isDeepNull(v);
+      }
+      return false;
+    });
   }
 
   /**
