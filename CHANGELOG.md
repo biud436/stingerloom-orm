@@ -6,6 +6,125 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.7.0] — 2026-03-22
+
+### Highlights
+
+- **SelectQueryBuilder 3-tier execution** — `getMany()` (class instances with required-column validation), `getPartialMany()` (typed `Pick<T, K>` plain objects), `getRawMany()` (untyped). Compile-time projection narrowing and runtime safety in one API.
+- **Docs site overhaul** — Sidebar restructured from 3 to 8 collapsible groups, 6 new pages, package manager tab controls, Write Buffer split into Basics/Advanced.
+
+### Added
+
+- **`getMany()` / `getPartialMany()` / `getRawMany()`** — 3-tier SelectQueryBuilder execution methods with `Pick<T, K>` type narrowing (#SelectQueryBuilder)
+- **`validate()` / `validateArray()`** — Per-row and array-level result validation hooks (supports Zod, io-ts, or plain functions)
+- **`getPartialManyAndCount()`** — Typed pagination with `Pick` narrowing + total count
+- **`exists()`** — Boolean existence check without fetching data
+- **Migration CLI executable** — `npx stingerloom migrate:run|rollback|status|generate` (#66)
+- **Dual CJS/ESM build** — Both `require()` and `import` work out of the box (#68)
+- **SchemaDiff column rename detection** — Heuristic matching generates `RENAME COLUMN` instead of drop+add (#74)
+- **Actionable error messages** — `OrmError.suggestion` field with fix hints across all error classes (#70)
+- **`stream()`** — AsyncGenerator-based streaming for large dataset processing (#112)
+- **`distinct` in FindOption** — `SELECT DISTINCT` via `em.find(E, { distinct: true })` (#113)
+- **Deadlock retry** — `em.transaction(fn, { retryOnDeadlock: true })` (#114)
+- **RawQueryBuilder set operations** — `union()`, `unionAll()`, `intersect()`, `except()` (#110)
+- **Common Table Expressions** — `with()`, `withRecursive()` for CTEs (#111)
+- **Window functions** — `selectWithWindow()` with ROW_NUMBER, RANK, LAG, etc. (#113)
+- **`selectDistinctOn()`** — PostgreSQL `DISTINCT ON` support
+
+### Docs
+
+- **6 new documentation pages**: Raw SQL & CTE, Pagination & Streaming, Migration CLI, Events & Subscribers, Logging & Diagnostics, NestJS Integration
+- **Write Buffer split** into Basics (Identity Map, dirty checking, flush, cascade) and Advanced (lazy loading, locking, batch DML, flush modes, nested UoW)
+- **Sidebar restructured** from 3 groups to 9 collapsible groups (Introduction, Essentials, Querying, Schema & Migrations, Advanced, Plugins, NestJS, Deployment, Reference)
+- **Package manager tabs** — npm/pnpm/yarn code groups on installation commands
+- **Plugins section** separated from Advanced with expanded Write Buffer coverage
+
+### Performance
+
+- **Read-only query optimization** — `findAndCount()` skips `BEGIN`/`COMMIT` wrapper
+- **`RETURNING *`** — PostgreSQL `save()` uses RETURNING instead of re-fetching
+
+### Fixed
+
+- SelectQueryBuilder `getMany()` returns class instances when no projection is used
+- SelectQueryBuilder JOIN double alias generation + `getSql()` placeholder format
+- Nested `@OneToOne` eager loading and deep NULL detection (#116, #117)
+- 6 bug fixes: FK constraint check, savepoint naming, entity metadata scope, query builder edge cases (#104–#109)
+- 5 additional bug fixes (#99–#103)
+- Tenant provisioning lock cleanup on failure (#98)
+- `dirtyEntities` cleared after transaction completion (#97)
+- Cascade save uses parent's transaction session
+
+### CI
+
+- GitHub Actions: PostgreSQL, MySQL, and SQLite integration test jobs
+- Sequential integration test execution to prevent resource conflicts
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.6.2...v0.7.0
+
+---
+
+## [0.6.2] — 2026-03-20
+
+### Fixed
+
+- **SQLite driver compatibility** — boolean value sanitization, Date handling, result array wrapping, and soft delete for `better-sqlite3` (#95, #96)
+- SQLite example project added
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.6.0...v0.6.2
+
+---
+
+## [0.6.0] — 2026-03-20
+
+### Highlights
+
+- **WriteBuffer (Unit of Work)** — Hibernate/Doctrine-grade UoW with Identity Map, dirty checking, cascade, batch flush, lazy loading, pessimistic locking, nested savepoints, and flush events.
+- **Plugin system** — `em.extend(plugin)` API (dayjs-style) with dependency/conflict validation and LIFO shutdown.
+
+### Added
+
+- **Plugin system infrastructure** — `StingerloomPlugin` interface, `em.extend()`, `PluginContext`
+- **Buffer plugin** — `bufferPlugin()` adds `em.buffer()` for Unit of Work pattern
+  - Identity Map with PK-based conflict detection
+  - Dirty checking with deep snapshot/diff
+  - Entity states: NEW → MANAGED → DETACHED → REMOVED
+  - `persist()`, `remove()`, `save()`, `delete()`, `track()`, `detach()`, `merge()`, `refresh()`
+  - `flush()` — atomic transaction with topological ordering (Kahn's algorithm)
+  - `preview()` / `computeChanges()` — dry-run inspection
+  - Cascade insert/update/delete through @OneToMany, @OneToOne, @ManyToMany
+  - Orphan removal for O2M collections
+  - Lazy relation proxies (auto-injected on all 4 relation types)
+  - `getReference()` — lightweight PK-only identity-mapped reference
+  - Pessimistic locking (`LockMode.PESSIMISTIC_WRITE` / `PESSIMISTIC_READ`)
+  - Batch INSERT (multi-row) and batch UPDATE (CASE WHEN)
+  - Bulk DML: `updateMany()` / `deleteMany()`
+  - Flush events: pre/post Insert/Update/Delete
+  - Read-only entities (`markReadOnly`)
+  - Change tracking policy: DEFERRED_IMPLICIT / DEFERRED_EXPLICIT
+  - Flush modes: MANUAL / AUTO / COMMIT / ALWAYS
+  - PersistentCollection — array mutation detection proxy
+  - Nested UoW with SAVEPOINT support
+  - 33 integration tests x 2 drivers (MySQL + PostgreSQL)
+
+### Refactored
+
+- WriteBuffer decomposed into 8 sub-modules: IdentityMapManager, CascadeProcessor, FlushExecutor, LazyRelationInjector, DependencyGraph, BufferStrategy, CollectionTracker, PersistentCollection
+
+### Fixed
+
+- 4 WriteBuffer defects: nested SAVEPOINT, bulk DML in-memory sync, pessimistic lock timing, lazy proxy first-access
+
+### Docs
+
+- Architecture overview with module hierarchy diagrams
+- Tenant strategy round-trip latency explanation
+- Plugins guide and WriteBuffer (UoW) guide
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.5.0...v0.6.0
+
+---
+
 ## [0.5.0] — 2026-03-16
 
 ### Highlights
