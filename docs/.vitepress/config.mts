@@ -49,6 +49,7 @@ export default defineConfig({
       },
       {
         text: "Querying",
+        collapsed: false,
         items: [
           { text: "Query Builder", link: "/query-builder" },
           { text: "Raw SQL & CTE", link: "/raw-sql" },
@@ -57,6 +58,7 @@ export default defineConfig({
       },
       {
         text: "Schema & Migrations",
+        collapsed: false,
         items: [
           { text: "Migrations", link: "/migrations" },
           { text: "Migration CLI", link: "/cli" },
@@ -65,6 +67,7 @@ export default defineConfig({
       },
       {
         text: "Advanced",
+        collapsed: false,
         items: [
           { text: "Multi-Tenancy", link: "/multi-tenancy" },
           { text: "Events & Subscribers", link: "/events" },
@@ -75,12 +78,14 @@ export default defineConfig({
       },
       {
         text: "NestJS Integration",
+        collapsed: false,
         items: [
           { text: "Module Setup", link: "/nestjs" },
         ],
       },
       {
         text: "Deployment",
+        collapsed: true,
         items: [
           { text: "Production Guide", link: "/production-guide" },
           { text: "Pre-Release Checklist", link: "/pre-release-checklist" },
@@ -88,6 +93,7 @@ export default defineConfig({
       },
       {
         text: "Reference",
+        collapsed: true,
         items: [
           { text: "API Reference", link: "/api-reference" },
           { text: "Architecture", link: "/architecture" },
