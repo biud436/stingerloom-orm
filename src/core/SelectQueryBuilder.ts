@@ -444,8 +444,8 @@ export class SelectQueryBuilder<T> {
     for (const j of this.joinClauses) {
       qb.join(
         j.type,
-        `${this.em.wrapTable(j.table)} AS ${this.em.wrap(j.alias)}`,
-        j.alias,
+        this.em.wrapTable(j.table),
+        this.em.wrap(j.alias),
         j.condition,
       );
     }
@@ -506,7 +506,7 @@ export class SelectQueryBuilder<T> {
    */
   getSql(): { text: string; values: any[] } {
     const built = this.toSql();
-    return { text: built.text ?? built.sql, values: built.values };
+    return { text: built.sql, values: built.values };
   }
 
   // ── EXECUTION ───────────────────────────────────────────
@@ -551,8 +551,8 @@ export class SelectQueryBuilder<T> {
     for (const j of this.joinClauses) {
       qb.join(
         j.type,
-        `${this.em.wrapTable(j.table)} AS ${this.em.wrap(j.alias)}`,
-        j.alias,
+        this.em.wrapTable(j.table),
+        this.em.wrap(j.alias),
         j.condition,
       );
     }
