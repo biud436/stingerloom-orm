@@ -43,8 +43,17 @@ export default defineConfig({
         items: [
           { text: "Entities & Columns", link: "/entities" },
           { text: "Relations", link: "/relations" },
-          { text: "Entity Manager", link: "/entity-manager" },
           { text: "Transactions", link: "/transactions" },
+        ],
+      },
+      {
+        text: "Entity Manager",
+        collapsed: false,
+        items: [
+          { text: "CRUD Basics", link: "/entity-manager" },
+          { text: "Querying & Pagination", link: "/entity-manager-querying" },
+          { text: "Writes & Transactions", link: "/entity-manager-writes" },
+          { text: "Advanced", link: "/entity-manager-advanced" },
         ],
       },
       {

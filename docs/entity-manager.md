@@ -1,6 +1,6 @@
-# EntityManager
+# EntityManager — CRUD Basics
 
-**EntityManager** is the core entry point of Stingerloom ORM. All operations for creating, reading, updating, and deleting data are performed through EntityManager.
+**EntityManager** is the central gateway to all database operations in Stingerloom ORM. Every create, read, update, and delete flows through it.
 
 ```typescript
 import { EntityManager } from "@stingerloom/orm";
@@ -8,68 +8,124 @@ import { EntityManager } from "@stingerloom/orm";
 const em = new EntityManager();
 ```
 
-This document explains the most commonly used features in order of development usage.
+This page covers the essential CRUD lifecycle. For querying features (pagination, aggregates, streaming), see [Querying & Pagination](./entity-manager-querying.md). For batch writes, upserts, and transactions, see [Writes & Transactions](./entity-manager-writes.md).
 
-## Connecting to the DB — register()
+---
 
-To use EntityManager, you must first connect to a database.
+## Connecting — register()
+
+Before any operation, you must connect to a database and register your entities.
 
 ```typescript
-// main.ts
 import "reflect-metadata";
 import { EntityManager } from "@stingerloom/orm";
 import { User } from "./user.entity";
+import { Post } from "./post.entity";
 
 const em = new EntityManager();
 
 await em.register({
-  type: "postgres",
+  type: "postgres",          // "mysql" | "postgres" | "sqlite"
   host: "localhost",
   port: 5432,
   username: "postgres",
   password: "password",
   database: "mydb",
-  entities: [User],
+  entities: [User, Post],
   synchronize: true,
 });
 ```
 
-`register()` does three things: connects to the DB, scans entity metadata, and auto-creates tables if `synchronize: true`.
+`register()` performs three steps internally:
 
-> **Warning** Use `synchronize: true` only in development. In production, manage your schema with [migrations](./migrations.md).
+1. **Connects** to the database (creating a connection pool).
+2. **Scans** entity metadata from decorators (`@Entity`, `@Column`, etc.).
+3. **Synchronizes** the schema if `synchronize` is enabled — creates missing tables, adds new columns.
 
-For more details on connection options, see the [Configuration Guide](./configuration.md).
+### synchronize modes
+
+| Value | Behavior |
+|-------|----------|
+| `true` | Full sync — creates tables, adds **and drops** columns to match entities. |
+| `"safe"` | Safe mode — creates tables and adds columns, but **never drops** columns or tables. |
+| `"dry-run"` | Preview — logs DDL statements that *would* execute, without applying them. |
+| `false` (default) | No synchronization. Manage schema with [migrations](./migrations.md). |
+
+::: warning
+Use `synchronize: true` only in development. It can drop columns in production. Use [migrations](./migrations.md) for production schema management.
+:::
+
+### Named connections (multi-DB)
+
+You can run multiple databases simultaneously by passing a connection name as the second argument:
+
+```typescript
+const em = new EntityManager();
+
+// Primary database
+await em.register({ type: "postgres", /* ... */ entities: [User] }, "default");
+
+// Analytics database
+const analyticsEm = new EntityManager();
+await analyticsEm.register({ type: "mysql", /* ... */ entities: [Event] }, "analytics");
+```
+
+For the full list of connection options (pooling, retry, replication, query timeout), see the [Configuration Guide](./configuration.md).
+
+---
 
 ## Saving — save()
 
-Use `save()` to save data. It automatically performs an INSERT when there is no PK, and an UPDATE when there is.
+`save()` is an **intelligent upsert at the entity level**. It inspects the primary key to decide whether to INSERT or UPDATE:
+
+- **No PK present** → `INSERT` a new row and return the entity with the generated PK.
+- **PK present** → `UPDATE` the existing row.
 
 ```typescript
-// INSERT — No PK (id), so a new row is inserted
+// INSERT — no id, so a new row is created
 const user = await em.save(User, {
-  name: "John Doe",
-  email: "john@example.com",
+  name: "Alice",
+  email: "alice@example.com",
 });
-console.log(user.id); // 1 — Auto-generated PK
+console.log(user.id); // 1 — auto-generated primary key
 
-// UPDATE — PK (id) present, so existing row is modified
+// UPDATE — id is present, so the existing row is modified
 const updated = await em.save(User, {
   id: 1,
-  name: "John Doe (edited)",
-  email: "john@example.com",
+  name: "Alice Kim",
+  email: "alice@example.com",
 });
+console.log(updated.name); // "Alice Kim"
 ```
 
-`save()` returns the saved entity object, so you can immediately use the auto-generated `id` even after INSERT.
+### What happens during save()
 
-## Querying — find(), findOne()
+1. **Validation** — If the entity has `@Validation` decorators, they run before the query.
+2. **Lifecycle hooks** — `@BeforeInsert` / `@BeforeUpdate` callbacks fire.
+3. **Timestamp injection** — `@CreateTimestamp` is set on INSERT; `@UpdateTimestamp` is set on INSERT and UPDATE.
+4. **Optimistic locking** — If the entity has a `@Version` column, the ORM checks the version matches and increments it. A mismatch throws `OptimisticLockError`.
+5. **Cascade** — Related entities marked with `cascade: true` are saved recursively.
+6. **Event emission** — `afterInsert` / `afterUpdate` events fire.
 
-### List Query
+### Partial updates
 
-`find()` always returns `T[]` (an array). An empty table returns `[]`, never `null` or `undefined`.
+`save()` only touches the columns you provide. Omitted columns are left unchanged:
 
 ```typescript
-// Fetch all
+// Only updates the name — email and other columns are untouched
+await em.save(User, { id: 1, name: "Bob" });
+```
+
+---
+
+## Querying — find() and findOne()
+
+### List query — find()
+
+`find()` always returns `T[]`. An empty table returns `[]`, never `null` or `undefined`.
+
+```typescript
+// Fetch all users
 const users = await em.find(User);
 
 // WHERE condition
@@ -82,9 +138,19 @@ const recent = await em.find(Post, {
   orderBy: { createdAt: "DESC" },
   take: 10,
 });
+
+// Multiple WHERE conditions (AND)
+const filtered = await em.find(User, {
+  where: { isActive: true, role: "admin" },
+  orderBy: { name: "ASC" },
+});
 ```
 
-### Single Record Query
+Every key in `where` becomes an `AND` condition. For more complex queries (OR, subqueries, raw conditions), use the [Query Builder](./query-builder.md).
+
+### Single record — findOne()
+
+`findOne()` returns `T | null`. Always check for `null` before using the result.
 
 ```typescript
 const user = await em.findOne(User, { where: { id: 1 } });
@@ -92,505 +158,133 @@ const user = await em.findOne(User, { where: { id: 1 } });
 if (user === null) {
   throw new Error("User not found");
 }
+
+console.log(user.name);
 ```
 
-`findOne()` returns `null` when no result is found. Always perform a null check.
+::: tip
+`findOne()` internally adds `LIMIT 1` to the query, so it is efficient even on large tables.
+:::
 
-### SELECT Specific Columns Only
+### Loading relations
 
-Fetching only the columns you need makes queries lighter.
-
-```typescript
-// Array style
-const names = await em.find(User, {
-  select: ["id", "name"],
-});
-
-// Object style
-const names2 = await em.find(User, {
-  select: { id: true, name: true },
-});
-```
-
-### Loading Related Entities
+Pass `relations` to eagerly load associated entities via LEFT JOIN:
 
 ```typescript
-const owner = await em.findOne(Owner, {
+const post = await em.findOne(Post, {
   where: { id: 1 },
-  relations: ["cats"],
+  relations: ["author", "tags"],
 });
-console.log(owner.cats); // Cat[]
+
+console.log(post.author.name);  // User entity
+console.log(post.tags);         // Tag[]
 ```
 
-### Including Soft Deleted Data
+For a deeper look at select, distinct, locking, pagination, and aggregates, see [Querying & Pagination](./entity-manager-querying.md).
 
-```typescript
-const allPosts = await em.find(Post, {
-  withDeleted: true, // Include rows where deleted_at is not NULL
-});
-```
+---
 
-## Deleting — delete(), softDelete()
+## Deleting — delete()
 
-### Permanent Delete
+Permanently removes rows from the database.
 
 ```typescript
 const result = await em.delete(User, { id: 1 });
 console.log(result.affected); // 1
 ```
 
-Deleting with empty conditions throws a `DeleteWithoutConditionsError`. This prevents accidentally deleting all data.
-
-### Soft Delete
-
-Used with entities that have a `@DeletedAt` column. Instead of actually deleting, it marks the record with `deleted_at = NOW()`.
+You can delete by any column, not just the primary key:
 
 ```typescript
-// soft delete
+// Delete all inactive users
+const result = await em.delete(User, { isActive: false });
+console.log(result.affected); // number of deleted rows
+```
+
+::: danger
+Calling `delete()` with an empty condition object throws `DeleteWithoutConditionsError`. This is a safety mechanism to prevent accidentally deleting all rows.
+:::
+
+```typescript
+// This throws DeleteWithoutConditionsError
+await em.delete(User, {});
+```
+
+---
+
+## Soft Delete — softDelete() and restore()
+
+Soft delete doesn't remove the row. Instead, it sets a timestamp on the `@DeletedAt` column. Soft-deleted rows are automatically excluded from `find()` and `findOne()`.
+
+### Entity setup
+
+Your entity must have a `@DeletedAt` column:
+
+```typescript
+import { Entity, PrimaryGeneratedColumn, Column, DeletedAt } from "@stingerloom/orm";
+
+@Entity()
+class Post {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ type: "varchar" })
+  title: string;
+
+  @DeletedAt()
+  deletedAt: Date | null;
+}
+```
+
+### Soft deleting
+
+```typescript
 await em.softDelete(Post, { id: 1 });
+// The row now has deletedAt = '2026-03-22 12:00:00'
+```
 
-// Automatically excluded from find() afterwards
-const posts = await em.find(Post); // Only queries where deleted_at IS NULL
+After soft deletion, the row becomes invisible to normal queries:
 
-// Restore
+```typescript
+const posts = await em.find(Post);
+// Post with id=1 is NOT included
+
+const allPosts = await em.find(Post, { withDeleted: true });
+// Post with id=1 IS included
+```
+
+### Restoring
+
+`restore()` sets `deletedAt` back to `NULL`, making the row visible again:
+
+```typescript
 await em.restore(Post, { id: 1 });
+
+const post = await em.findOne(Post, { where: { id: 1 } });
+// post is now found
 ```
 
-## Batch Operations — insertMany(), saveMany(), deleteMany()
+---
 
-Use these when you need to process multiple records at once.
+## Clearing a Table — clear()
+
+`clear()` deletes **all rows** from a table. Use with caution.
 
 ```typescript
-// Insert multiple records with a single INSERT query (fastest)
-await em.insertMany(User, [
-  { name: "John Doe", email: "john@example.com" },
-  { name: "Jane Smith", email: "jane@example.com" },
-  { name: "Bob Wilson", email: "bob@example.com" },
-]);
-
-// Determines INSERT/UPDATE for each record (based on PK presence)
-const users = await em.saveMany(User, [
-  { name: "New User", email: "new@example.com" },       // INSERT
-  { id: 2, name: "Updated", email: "updated@example.com" }, // UPDATE
-]);
-
-// Delete multiple at once by PK array
-await em.deleteMany(User, [1, 2, 3]);
+await em.clear(User);
+// All rows in the "user" table are deleted
 ```
 
-> **Hint** For bulk INSERTs, `insertMany()` is the most efficient. It executes as a single `INSERT INTO ... VALUES (...), (...)` query.
+Unlike `delete()`, this does not require a WHERE condition — it intentionally removes everything. Useful for test teardown or resetting seed data.
 
-## Upsert — Update if Exists, Insert if Not
+::: warning
+`clear()` is a permanent, irreversible operation. There is no soft-delete equivalent.
+:::
 
-`upsert()` checks for conflicts based on PK or unique columns. If the record already exists, it performs an UPDATE; otherwise, an INSERT.
-
-```typescript
-// Upsert by PK
-await em.upsert(User, {
-  id: 1,
-  name: "John Doe",
-  email: "john@example.com",
-});
-
-// Upsert by unique column
-await em.upsert(User, {
-  email: "john@example.com",
-  name: "John Doe",
-}, ["email"]); // UPDATE if email exists, INSERT otherwise
-```
-
-Internally, MySQL uses `INSERT ... ON DUPLICATE KEY UPDATE`, and PostgreSQL uses `INSERT ... ON CONFLICT DO UPDATE`.
-
-## Aggregate Functions — count(), sum(), avg(), min(), max()
-
-Use these when you need statistical data.
-
-```typescript
-const total = await em.count(User);
-const active = await em.count(User, { isActive: true });
-
-const avgAge = await em.avg(User, "age");
-const youngest = await em.min(User, "age");
-const oldest = await em.max(User, "age");
-const totalAge = await em.sum(User, "age");
-```
-
-Querying multiple aggregates simultaneously improves performance.
-
-```typescript
-const [total, avgAge, minAge, maxAge] = await Promise.all([
-  em.count(User),
-  em.avg(User, "age"),
-  em.min(User, "age"),
-  em.max(User, "age"),
-]);
-```
-
-## Pagination
-
-### Offset-Based
-
-Traditional LIMIT/OFFSET pagination. Suitable for small datasets.
-
-```typescript
-// Method 1: skip + take (recommended)
-const page2 = await em.find(Post, {
-  orderBy: { createdAt: "DESC" },
-  skip: 10,
-  take: 10,
-});
-
-// Method 2: limit tuple [offset, count]
-const page2Alt = await em.find(Post, {
-  orderBy: { createdAt: "DESC" },
-  limit: [10, 10], // OFFSET 10, LIMIT 10
-});
-
-// Method 3: findAndCount — also returns total count
-const [posts, total] = await em.findAndCount(Post, {
-  orderBy: { createdAt: "DESC" },
-  skip: 0,
-  take: 10,
-});
-
-console.log(posts.length); // 10
-console.log(total);        // Total number of posts (e.g., 235)
-```
-
-### Cursor-Based
-
-For large datasets, cursor-based pagination provides consistent performance.
-
-```typescript
-// First page
-const page1 = await em.findWithCursor(Post, {
-  take: 20,
-  orderBy: "id",
-  direction: "ASC",
-});
-
-console.log(page1.data);        // Post[] (up to 20 records)
-console.log(page1.hasNextPage); // true
-console.log(page1.nextCursor);  // "eyJ2IjoyMH0=" (Base64)
-
-// Second page — pass the previous cursor
-const page2 = await em.findWithCursor(Post, {
-  take: 20,
-  cursor: page1.nextCursor!,
-  orderBy: "id",
-  direction: "ASC",
-});
-```
-
-> **Hint** Cursor-based pagination is suited for "next page"/"previous page" navigation. If you need to jump to a specific page, use offset-based pagination.
-
-## Bulk Update — updateMany()
-
-Use `updateMany()` to update multiple rows matching a condition in a single query.
-
-```typescript
-// Deactivate all users who haven't logged in for 90 days
-const result = await em.updateMany(User,
-  { isActive: true },           // WHERE condition
-  { isActive: false },          // SET values
-);
-console.log(result.affected);   // Number of updated rows
-```
-
-Unlike `save()` which operates on individual entities, `updateMany()` issues a single `UPDATE ... SET ... WHERE ...` statement, making it much more efficient for bulk operations.
-
-## Transaction Callback — transaction()
-
-For simple transactional workflows, use the `em.transaction()` callback API. The callback receives a transactional EntityManager; if the callback succeeds, the transaction is committed, and if it throws, the transaction is rolled back.
-
-```typescript
-const order = await em.transaction(async (txEm) => {
-  // All operations use the transactional EntityManager
-  const order = await txEm.save(Order, {
-    userId: 1,
-    status: "pending",
-  });
-
-  await txEm.insertMany(OrderItem, [
-    { orderId: order.id, productId: 10, quantity: 2 },
-    { orderId: order.id, productId: 20, quantity: 1 },
-  ]);
-
-  return order;
-  // Auto-COMMIT on success, auto-ROLLBACK on error
-});
-```
-
-### Deadlock Retry
-
-For operations where concurrent transactions may deadlock (e.g., inventory deduction), pass `TransactionOptions` to enable automatic retry:
-
-```typescript
-await em.transaction(async (txEm) => {
-  const stock = await txEm.findOne(Inventory, { where: { productId: 42 } });
-  stock.quantity -= 1;
-  await txEm.save(Inventory, stock);
-}, {
-  retryOnDeadlock: true,  // Retry on deadlock
-  maxRetries: 3,          // Up to 3 retries (default)
-  retryDelayMs: 100,      // 100ms delay between retries (default)
-});
-```
-
-The ORM detects deadlock errors for MySQL (`errno 1213`), PostgreSQL (`40P01`), and SQLite (`SQLITE_BUSY`), and re-executes the entire callback from scratch. The callback must be **idempotent**.
-
-For decorator-based transactions and isolation level control, see [Transactions](./transactions.md).
-
-## Raw SQL Execution — query()
-
-When you need complex queries that the ORM doesn't provide, you can execute SQL directly.
-
-```typescript
-import sql from "sql-template-tag";
-
-// Using sql-template-tag (recommended — prevents SQL Injection)
-const users = await em.query<{ id: number; name: string }>(
-  sql`SELECT * FROM "user" WHERE "id" = ${1}`
-);
-
-// String + parameter array
-const posts = await em.query<{ id: number; title: string }>(
-  "SELECT id, title FROM post WHERE author_id = ?",
-  [42]
-);
-```
-
-> **Warning** When using Raw SQL, always use parameter binding. Concatenating values into strings poses SQL Injection risks.
-
-## Streaming — stream()
-
-When processing millions of rows, loading them all into memory at once is impractical. `stream()` returns an `AsyncGenerator` that fetches rows in configurable batches — you process one entity at a time without holding the entire result set in memory.
-
-```typescript
-async *stream<T>(entity: Class<T>, options?: FindOption<T>, batchSize?: number): AsyncGenerator<T>
-```
-
-### Basic Usage
-
-```typescript
-for await (const user of em.stream(User, { where: { isActive: true } })) {
-  await sendEmail(user.email);
-}
-```
-
-The third parameter controls the batch size (default: 1000). Internally, the ORM uses LIMIT/OFFSET to fetch one batch at a time. When a batch returns fewer rows than the batch size, the generator knows it has reached the end and stops.
-
-```typescript
-// Fetch in batches of 500
-for await (const post of em.stream(Post, { orderBy: { id: "ASC" } }, 500)) {
-  await indexPost(post);
-}
-```
-
-### Supported Options
-
-`stream()` supports all `FindOption` properties — `where`, `orderBy`, `relations`, `select`, `withDeleted`, etc.
-
-```typescript
-// Stream with relations and filtered columns
-for await (const post of em.stream(Post, {
-  select: ["id", "title"],
-  relations: ["author"],
-  where: { isPublished: true },
-  orderBy: { createdAt: "DESC" },
-}, 2000)) {
-  console.log(`${post.title} by ${post.author.name}`);
-}
-```
-
-### When to Use stream() vs find()
-
-| Scenario | Use |
-|----------|-----|
-| API endpoint returning a page of results | `find()` with pagination |
-| Processing all rows in a table (ETL, export, batch emails) | `stream()` |
-| Aggregating data from a large dataset | `stream()` or `em.query()` with DB-side aggregation |
-
-> **Hint** For consistent results on large mutable tables, consider wrapping the stream in a transaction with `REPEATABLE READ` isolation to prevent phantom reads during iteration.
-
-### Counting Before Streaming
-
-If you need the total count before processing, use `count()` first:
-
-```typescript
-const total = await em.count(User, { isActive: true });
-console.log(`Processing ${total} users...`);
-
-let processed = 0;
-for await (const user of em.stream(User, { where: { isActive: true } })) {
-  await process(user);
-  processed++;
-  if (processed % 1000 === 0) console.log(`${processed}/${total}`);
-}
-```
-
-## DISTINCT Queries
-
-Add `distinct: true` to generate `SELECT DISTINCT`, which removes duplicate rows from the result.
-
-```typescript
-const uniqueCities = await em.find(User, {
-  select: ["city"],
-  distinct: true,
-});
-// SELECT DISTINCT "city" FROM "user"
-```
-
-This is useful when selecting a subset of columns and you only want unique combinations.
-
-```typescript
-// Get all unique category + status combinations
-const combos = await em.find(Product, {
-  select: ["category", "status"],
-  distinct: true,
-});
-
-// Works with findAndCount too
-const [uniqueCountries, total] = await em.findAndCount(User, {
-  select: ["country"],
-  distinct: true,
-});
-```
-
-> **Hint** `distinct` applies to the entire row. If you select `["city", "country"]` with `distinct: true`, rows are only deduplicated when both columns match. For more complex deduplication (e.g., PostgreSQL's `DISTINCT ON`), use the [Query Builder](./query-builder.md).
-
-## EXPLAIN — Query Analysis
-
-Useful for verifying whether a query is properly using indexes.
-
-```typescript
-const result = await em.explain(User, {
-  where: { email: "john@example.com" },
-});
-
-console.log(result.type); // "ref" — using an index
-console.log(result.key);  // "idx_user_email"
-console.log(result.rows); // 1 — estimated number of rows examined
-```
-
-> **Hint** `explain()` is supported in MySQL and PostgreSQL. In SQLite, an `InvalidQueryError` is thrown.
-
-## Event Listeners
-
-You can register logic that runs automatically when data is created/updated/deleted.
-
-```typescript
-// Register listener
-em.on("afterInsert", ({ entity, data }) => {
-  console.log(`${entity.name} created:`, data);
-});
-
-// Remove listener
-em.off("afterInsert", listener);
-
-// Remove all listeners
-em.removeAllListeners();
-```
-
-Available events: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`
-
-If you need subscribers that react only to specific entities, see [Events & Subscribers](./events.md).
-
-## Query Builder — createQueryBuilder()
-
-When you need more control than `find()` provides — JOINs across multiple tables, GROUP BY with aggregates, DISTINCT, or pessimistic locking — use the query builder.
-
-```typescript
-// Type-safe SelectQueryBuilder (auto-completes column names)
-const users = await em
-  .createQueryBuilder(User, "u")
-  .select(["id", "name", "email"])
-  .where("isActive", true)
-  .andWhere("age", ">=", 18)
-  .orderBy({ createdAt: "DESC" })
-  .limit(10)
-  .getMany();
-```
-
-```typescript
-// RawQueryBuilder (free-form SQL)
-const qb = em.createQueryBuilder();
-const query = qb
-  .select(["*"])
-  .from('"users"')
-  .where([sql`"is_active" = ${true}`])
-  .build();
-const result = await em.query(query);
-```
-
-For the full guide including UNION, CTE, window functions, and subqueries, see [Query Builder](./query-builder.md).
-
-## Repository Pattern
-
-If you want to encapsulate CRUD per entity, use `getRepository()`.
-
-```typescript
-const userRepo = em.getRepository(User);
-
-const users = await userRepo.find();
-const user = await userRepo.findOne({ where: { id: 1 } as any });
-await userRepo.save({ name: "John Doe" });
-```
-
-In NestJS, you can inject repositories into services using `@InjectRepository()`. For multi-DB environments, pass a connectionName as the second argument.
-
-```typescript
-// users.service.ts
-@Injectable()
-export class UsersService {
-  constructor(
-    @InjectRepository(User) private readonly userRepo: BaseRepository<User>,
-    // Named connection: @InjectRepository(Event, "analytics")
-  ) {}
-
-  async findAll() {
-    return this.userRepo.find();
-  }
-}
-```
-
-You can also inject the EntityManager directly using `@InjectEntityManager(connectionName?)`.
-
-## Shutdown — propagateShutdown()
-
-Cleans up EntityManager's internal resources when shutting down the application.
-
-```typescript
-await em.propagateShutdown();
-```
-
-In NestJS, call this in the `OnModuleDestroy` hook.
-
-## FindOption Full Options
-
-List of options that can be passed to `find()`, `findOne()`, `explain()`, etc.
-
-| Option | Type | Description |
-|--------|------|-------------|
-| `where` | `Partial<T>` | WHERE conditions |
-| `select` | `(keyof T)[]` or `Record<keyof T, boolean>` | SELECT columns |
-| `orderBy` | `Record<keyof T, "ASC" \| "DESC">` | ORDER BY |
-| `limit` | `number` or `[offset, count]` | LIMIT |
-| `skip` | `number` | Offset for pagination (alternative to limit tuple) |
-| `take` | `number` | Number of rows to fetch |
-| `relations` | `(keyof T)[]` | Relation properties to load |
-| `withDeleted` | `boolean` | Whether to include soft-deleted records |
-| `groupBy` | `(keyof T)[]` | GROUP BY |
-| `having` | `Sql[]` | HAVING clause |
-| `timeout` | `number` | Query timeout (ms) |
-| `distinct` | `boolean` | Generate `SELECT DISTINCT` |
-| `useMaster` | `boolean` | Force master in Read Replica environments |
+---
 
 ## Next Steps
 
-- [Query Builder](./query-builder.md) — Type-safe queries with SelectQueryBuilder
-- [Raw SQL & CTE](./raw-sql.md) — UNION, CTE, window functions
-- [Pagination & Streaming](./pagination.md) — Offset, cursor, and streaming strategies
-- [Events & Subscribers](./events.md) — Entity lifecycle events and audit patterns
-- [Transactions](./transactions.md) — Decorator and callback-based transactions, deadlock retry
-- [Configuration](./configuration.md) — Pooling, timeouts, Read Replica, CJS/ESM
+- **[Querying & Pagination](./entity-manager-querying.md)** — SELECT columns, ordering, DISTINCT, locking, pagination, streaming, aggregates, EXPLAIN
+- **[Writes & Transactions](./entity-manager-writes.md)** — Batch operations, upsert, transactions, raw SQL
+- **[Advanced](./entity-manager-advanced.md)** — Events, subscribers, multi-tenancy, plugins, shutdown, FindOption reference
