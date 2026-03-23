@@ -152,6 +152,19 @@ describe("[Integration] SQLite In-Memory: 드라이버 DDL 테스트", () => {
     });
 
     it("유니크 제약이 있으면 중복 값 INSERT가 실패해야 한다", async () => {
+      // 인덱스가 없으면 직접 생성 (이전 테스트 상태에 의존하지 않음)
+      const indexes = await driver.getIndexes("ddl_test");
+      const hasIdx = (indexes as any[]).some(
+        (idx: any) => idx.name === "uq_ddl_test_name",
+      );
+      if (!hasIdx) {
+        await driver.addUniqueKey("ddl_test", "name");
+      }
+
+      // 기존 데이터 정리 후 삽입
+      await connector.query(
+        "DELETE FROM \"ddl_test\" WHERE \"name\" = 'unique_val'",
+      );
       await connector.query(
         "INSERT INTO \"ddl_test\" (\"name\", \"active\") VALUES ('unique_val', 1)",
       );
@@ -164,6 +177,15 @@ describe("[Integration] SQLite In-Memory: 드라이버 DDL 테스트", () => {
     });
 
     it("dropUniqueKey로 유니크 인덱스를 삭제할 수 있어야 한다", async () => {
+      // 인덱스가 없으면 먼저 생성 (이전 테스트 상태에 의존하지 않음)
+      const indexesBefore = await driver.getIndexes("ddl_test");
+      const hasIdx = (indexesBefore as any[]).some(
+        (idx: any) => idx.name === "uq_ddl_test_name",
+      );
+      if (!hasIdx) {
+        await driver.addUniqueKey("ddl_test", "name");
+      }
+
       await driver.dropUniqueKey("ddl_test", "name");
 
       const indexes = await driver.getIndexes("ddl_test");
@@ -204,6 +226,23 @@ describe("[Integration] SQLite In-Memory: 드라이버 DDL 테스트", () => {
     });
 
     it("복합 유니크 제약에서 동일 조합의 INSERT가 실패해야 한다", async () => {
+      // 인덱스가 없으면 직접 생성 (이전 테스트 상태에 의존하지 않음)
+      const indexes = await driver.getIndexes("composite_test");
+      const hasIdx = (indexes as any[]).some(
+        (idx: any) => idx.name === "uq_composite_ab",
+      );
+      if (!hasIdx) {
+        await driver.addCompositeUniqueIndex(
+          "composite_test",
+          ["col_a", "col_b"],
+          "uq_composite_ab",
+        );
+      }
+
+      // 기존 데이터 정리 후 삽입
+      await connector.query(
+        "DELETE FROM \"composite_test\" WHERE \"col_a\" = 'x' AND \"col_b\" = 'y'",
+      );
       await connector.query(
         "INSERT INTO \"composite_test\" (\"col_a\", \"col_b\") VALUES ('x', 'y')",
       );
