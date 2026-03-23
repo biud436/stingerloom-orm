@@ -7,6 +7,7 @@ import { ReplicationNodeConfig } from "../dialects/ReplicationRouter";
 import { DeleteResult } from "../types/DeleteResult";
 import { EntityResult } from "../types/EntityResult";
 import { ISelectOption } from "../dialects/ISelectOption";
+import { SchemaDialect } from "./generators/SchemaGenerator";
 
 /**
  * EntityManager의 내부 기능을 추출된 핸들러 클래스들에게 노출하는 인터페이스.
@@ -21,6 +22,9 @@ export interface EntityManagerInternals {
   isPostgres(): boolean;
   getDriver(): ISqlDriver | undefined;
   getSynchronize(): boolean | "safe" | "dry-run";
+  getDialect(): SchemaDialect;
+  getSchema(): string | undefined;
+  getConnection(): { query: (sql: any) => Promise<any> } | undefined;
   executeInTransaction<R>(
     fn: (session: TransactionSessionManager) => Promise<R>,
     existingSession?: TransactionSessionManager,

@@ -180,6 +180,13 @@ export class EntityManager implements BaseEntityManager {
     getDriver: () => this.driver,
     getEntities: () => this._entities,
     getSynchronize: () => this.client.getOptions(this.connectionName).synchronize ?? false as boolean | "safe" | "dry-run",
+    getDialect: () => {
+      if (this.isMySqlFamily()) return "mysql" as const;
+      if (this.isPostgres()) return "postgres" as const;
+      return "sqlite" as const;
+    },
+    getSchema: () => this.client.getOptions(this.connectionName).schema,
+    getConnection: () => this.connection,
     executeInTransaction: (fn, s, r) => this.executeInTransaction(fn, s, r),
     executeReadOnly: (fn, opts) => this.executeReadOnly(fn, opts),
     beginTrackQuery: () => this.beginTrackQuery(),

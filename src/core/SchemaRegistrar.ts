@@ -8,7 +8,7 @@ import {
 } from "../scanner";
 import Container from "typedi";
 import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
-import { SchemaGenerator } from "./generators/SchemaGenerator";
+import { SchemaGenerator, SchemaDialect } from "./generators/SchemaGenerator";
 import { NamingStrategy, DefaultNamingStrategy } from "./generators/NamingStrategy";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
 import {
@@ -27,6 +27,7 @@ import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
+import { SchemaDiff, ColumnChange, SchemaDiffResult } from "./generators/SchemaDiff";
 
 /**
  * 앱 시작 시 1회 실행되는 DDL/스키마 동기화 핸들러.
@@ -53,6 +54,7 @@ export class SchemaRegistrar {
     const syncOption = this.ctx.getSynchronize();
     const synchronize = !!syncOption; // truthy for true, 'safe', 'dry-run'
     const isDryRun = syncOption === "dry-run";
+    const isSafe = syncOption === "safe";
 
     // PostgreSQL: 스키마가 존재하지 않으면 자동으로 생성합니다.
     if (synchronize && !isDryRun && this.ctx.isPostgres() && this.ctx.getDriver()) {
@@ -69,6 +71,7 @@ export class SchemaRegistrar {
       TargetEntity: ClazzType<any>;
       tableName: string;
       metadata: EntityScannerMetadata;
+      tableExisted: boolean;
     }> = [];
 
     while ((entity = entities.next())) {
@@ -102,10 +105,12 @@ export class SchemaRegistrar {
         throw new PrimaryKeyNotFoundError(tableName ?? "Unknown");
       }
 
+      let tableExisted = false;
       const driver = this.ctx.getDriver();
       if (synchronize) {
         const hasTable = await driver?.hasTable(tableName);
-        if (!hasTable || hasTable.length === 0) {
+        tableExisted = !!(hasTable && hasTable.length > 0);
+        if (!tableExisted) {
           if (isDryRun) {
             this.logger.info(`[dry-run] Would CREATE TABLE ${tableName}`);
           } else {
@@ -114,7 +119,19 @@ export class SchemaRegistrar {
         }
       }
 
-      entityList.push({ TargetEntity, tableName, metadata });
+      entityList.push({ TargetEntity, tableName, metadata, tableExisted });
+    }
+
+    // 1.5패스: 이미 존재하는 테이블에 대해 SchemaDiff를 실행하여 컬럼 변경사항을 적용합니다.
+    if (synchronize) {
+      const existingEntities = entityList.filter((e) => e.tableExisted);
+      if (existingEntities.length > 0) {
+        await this.syncExistingTables(
+          existingEntities.map((e) => e.TargetEntity),
+          entityList,
+          syncOption,
+        );
+      }
     }
 
     // 2패스: 모든 테이블이 생성된 후 FK, 인덱스, 유니크 인덱스를 등록합니다.
@@ -139,6 +156,187 @@ export class SchemaRegistrar {
         this.logger.info(`[dry-run] Would register FKs/indexes for ${tableName}`);
       }
     }
+  }
+
+  /**
+   * 이미 존재하는 테이블에 대해 SchemaDiff를 실행하여 엔티티 변경사항을 동기화합니다.
+   */
+  private async syncExistingTables(
+    existingEntities: ClazzType<any>[],
+    entityList: Array<{ TargetEntity: ClazzType<any>; tableName: string }>,
+    syncOption: boolean | "safe" | "dry-run",
+  ): Promise<void> {
+    const connection = this.ctx.getConnection();
+    if (!connection) return;
+
+    const dialect = this.ctx.getDialect();
+    const schema = this.ctx.getSchema();
+    const queryRunner = { query: (s: any) => connection.query(s) };
+
+    const schemaDiff = new SchemaDiff();
+
+    let diff: SchemaDiffResult;
+    try {
+      diff = await schemaDiff.diff(existingEntities, queryRunner, dialect, schema);
+    } catch (err) {
+      this.logger.warn(`[sync] SchemaDiff failed, skipping ALTER operations: ${err}`);
+      return;
+    }
+
+    // addTables는 이미 1패스에서 처리되므로 무시 (여기서는 기존 테이블만 처리)
+
+    // FK 컬럼 수집 (DROP에서 제외하기 위해)
+    const fkColumnsPerTable = new Map<string, Set<string>>();
+    for (const { TargetEntity, tableName } of entityList) {
+      fkColumnsPerTable.set(
+        tableName.toLowerCase(),
+        this.collectForeignKeyColumns(TargetEntity),
+      );
+    }
+
+    await this.applySchemaDiff(diff, fkColumnsPerTable, syncOption, dialect);
+  }
+
+  /**
+   * SchemaDiffResult를 모드에 따라 적용합니다.
+   */
+  private async applySchemaDiff(
+    diff: SchemaDiffResult,
+    fkColumnsPerTable: Map<string, Set<string>>,
+    mode: boolean | "safe" | "dry-run",
+    dialect: SchemaDialect,
+  ): Promise<void> {
+    const driver = this.ctx.getDriver();
+    if (!driver) return;
+
+    const isDryRun = mode === "dry-run";
+    const isSafe = mode === "safe";
+    const isFull = mode === true;
+
+    // 1. ADD COLUMNS (true, safe 모두 실행)
+    for (const col of diff.addColumns) {
+      const typeDef = this.buildAddColumnTypeDef(col);
+      if (isDryRun) {
+        this.logger.info(`[dry-run] ALTER TABLE ${col.tableName} ADD COLUMN ${col.columnName} ${typeDef}`);
+      } else {
+        this.logger.info(`[sync] Adding column ${col.tableName}.${col.columnName} (${typeDef})`);
+        await driver.addColumn(col.tableName, col.columnName, typeDef);
+      }
+    }
+
+    // 2. ALTER COLUMNS (true만 실행, safe는 건너뜀)
+    if (isFull || isDryRun) {
+      for (const col of diff.alterColumns) {
+        const ddl = this.buildAlterColumnDDL(col, dialect);
+        if (!ddl) continue; // SQLite: 미지원
+        if (isDryRun) {
+          this.logger.info(`[dry-run] ${ddl}`);
+        } else {
+          this.logger.warn(`[sync] Altering column ${col.tableName}.${col.columnName}: ${col.currentType} → ${col.columnType}`);
+          await driver.executeRaw(ddl);
+        }
+      }
+    }
+
+    // 3. DROP COLUMNS (true만 실행, safe는 건너뜀)
+    if (isFull || isDryRun) {
+      for (const col of diff.dropColumns) {
+        // FK 컬럼은 DROP에서 제외 (2패스에서 관리됨)
+        const tableFkCols = fkColumnsPerTable.get(col.tableName.toLowerCase());
+        if (tableFkCols?.has(col.columnName.toLowerCase())) continue;
+
+        if (isDryRun) {
+          this.logger.info(`[dry-run] ALTER TABLE ${col.tableName} DROP COLUMN ${col.columnName}`);
+        } else {
+          this.logger.warn(`[sync] Dropping column ${col.tableName}.${col.columnName}`);
+          await driver.dropColumn(col.tableName, col.columnName);
+        }
+      }
+    }
+
+    // 4. RENAME COLUMNS (true만 실행)
+    if ((isFull || isDryRun) && diff.renamedColumns) {
+      for (const rename of diff.renamedColumns) {
+        const ddl = `ALTER TABLE ${this.ctx.wrap(rename.tableName)} RENAME COLUMN ${this.ctx.wrap(rename.oldColumnName)} TO ${this.ctx.wrap(rename.newColumnName)}`;
+        if (isDryRun) {
+          this.logger.info(`[dry-run] ${ddl}`);
+        } else {
+          this.logger.warn(`[sync] Renaming column ${rename.tableName}.${rename.oldColumnName} → ${rename.newColumnName}`);
+          await driver.executeRaw(ddl);
+        }
+      }
+    }
+  }
+
+  /**
+   * ColumnChange에서 ADD COLUMN용 타입 정의 문자열을 생성합니다.
+   * 예: "VARCHAR(255) NULL", "INT NOT NULL"
+   */
+  private buildAddColumnTypeDef(col: ColumnChange): string {
+    let type = col.columnType ?? "VARCHAR(255)";
+
+    // 길이가 지정되어 있고 타입에 아직 괄호가 없으면 추가
+    if (col.expectedLength && !type.includes("(")) {
+      type = `${type}(${col.expectedLength})`;
+    }
+
+    // 정밀도/스케일이 지정되어 있으면 추가
+    if (col.expectedPrecision && !type.includes("(")) {
+      const scale = col.expectedScale !== undefined && col.expectedScale !== null
+        ? `,${col.expectedScale}`
+        : "";
+      type = `${type}(${col.expectedPrecision}${scale})`;
+    }
+
+    // 새 컬럼은 기본적으로 NULL 허용 (기존 행에 값이 없으므로)
+    const nullable = col.nullable === false ? "NOT NULL DEFAULT ''" : "NULL";
+    return `${type} ${nullable}`;
+  }
+
+  /**
+   * ALTER COLUMN DDL을 다이얼렉트별로 생성합니다.
+   * SQLite는 ALTER COLUMN TYPE을 지원하지 않으므로 null을 반환합니다.
+   */
+  private buildAlterColumnDDL(
+    col: ColumnChange,
+    dialect: SchemaDialect,
+  ): string | null {
+    const typeStr = col.columnType ?? "VARCHAR(255)";
+    const tableName = this.ctx.wrapTable(col.tableName);
+    const columnName = this.ctx.wrap(col.columnName);
+
+    if (dialect === "sqlite") {
+      this.logger.warn(
+        `[sync] SQLite does not support ALTER COLUMN TYPE for ${col.tableName}.${col.columnName} ` +
+        `(${col.currentType} → ${typeStr}). Skipping.`,
+      );
+      return null;
+    }
+
+    if (dialect === "mysql") {
+      const nullable = col.nullable === false ? "NOT NULL" : "NULL";
+      return `ALTER TABLE ${tableName} MODIFY COLUMN ${columnName} ${typeStr} ${nullable}`;
+    }
+
+    // PostgreSQL
+    return `ALTER TABLE ${tableName} ALTER COLUMN ${columnName} TYPE ${typeStr}`;
+  }
+
+  /**
+   * 엔티티의 @ManyToOne/@OneToOne 관계에서 FK 조인 컬럼명을 수집합니다.
+   * DROP COLUMN에서 이 컬럼들을 제외하기 위해 사용됩니다.
+   */
+  private collectForeignKeyColumns(TargetEntity: ClazzType<any>): Set<string> {
+    const fkColumns = new Set<string>();
+    const m2o = this.resolver.resolveManyToOneMetadata(TargetEntity);
+    for (const rel of m2o) {
+      if (rel.joinColumn) fkColumns.add(rel.joinColumn.toLowerCase());
+    }
+    const o2o = this.resolver.resolveOneToOneMetadata(TargetEntity);
+    for (const rel of o2o) {
+      if (rel.joinColumn) fkColumns.add(rel.joinColumn.toLowerCase());
+    }
+    return fkColumns;
   }
 
   /**
