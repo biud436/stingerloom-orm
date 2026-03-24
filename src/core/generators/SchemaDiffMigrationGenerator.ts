@@ -2,7 +2,7 @@
 import "reflect-metadata";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { SchemaDiffResult, ColumnChange, RenamedColumn } from "./SchemaDiff";
+import { SchemaDiffResult, ColumnChange, RenamedColumn, EnumChange } from "./SchemaDiff";
 import { SchemaGenerator, SchemaDialect } from "./SchemaGenerator";
 import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../../decorators/ManyToOne";
 import { ONE_TO_ONE_TOKEN, OneToOneMetadata } from "../../decorators/OneToOne";
@@ -75,6 +75,11 @@ export class SchemaDiffMigrationGenerator {
   ): string[] {
     const sqls: string[] = [];
 
+    // ENUM type changes (PostgreSQL only — must come before CREATE TABLE)
+    for (const ec of diff.enumChanges ?? []) {
+      sqls.push(...this.buildEnumUpSql(ec, dialect));
+    }
+
     // Sort addTables by FK dependency order
     const orderedTables = this.sortTablesByDependency(diff);
 
@@ -131,6 +136,11 @@ export class SchemaDiffMigrationGenerator {
   ): string[] {
     const sqls: string[] = [];
 
+    // Reverse of enum changes
+    for (const ec of diff.enumChanges ?? []) {
+      sqls.push(...this.buildEnumDownSql(ec, dialect));
+    }
+
     // Reverse of add columns
     for (const col of diff.addColumns) {
       sqls.push(
@@ -179,6 +189,13 @@ export class SchemaDiffMigrationGenerator {
     dialect: SchemaDialect,
   ): string[] {
     const stmts: string[] = [];
+
+    // ENUM type changes (PostgreSQL only — must come before CREATE TABLE)
+    for (const ec of diff.enumChanges ?? []) {
+      for (const sqlStr of this.buildEnumUpSql(ec, dialect)) {
+        stmts.push(this.wrapSqlInQuery(sqlStr));
+      }
+    }
 
     // Sort addTables by FK dependency order
     const orderedTables = this.sortTablesByDependency(diff);
@@ -263,6 +280,13 @@ export class SchemaDiffMigrationGenerator {
   ): string[] {
     const stmts: string[] = [];
 
+    // Reverse of enum changes
+    for (const ec of diff.enumChanges ?? []) {
+      for (const sqlStr of this.buildEnumDownSql(ec, dialect)) {
+        stmts.push(this.wrapSqlInQuery(sqlStr));
+      }
+    }
+
     // Reverse of add columns — drop them
     for (const col of diff.addColumns) {
       stmts.push(
@@ -326,6 +350,61 @@ export class SchemaDiffMigrationGenerator {
   // ─────────────────────────────────────────────────
   // Helpers
   // ─────────────────────────────────────────────────
+
+  /**
+   * Generates ALTER TYPE / CREATE TYPE SQL for enum changes (PostgreSQL).
+   */
+  private buildEnumUpSql(ec: EnumChange, dialect: SchemaDialect): string[] {
+    if (dialect !== "postgres") return [];
+    const sqls: string[] = [];
+    const escapedName = this.escapeId(ec.enumName, dialect);
+
+    if (ec.isNew) {
+      const valuesList = ec.addValues
+        .map((v) => `'${v.replace(/'/g, "''")}'`)
+        .join(", ");
+      sqls.push(`CREATE TYPE ${escapedName} AS ENUM (${valuesList})`);
+    } else {
+      // Add new values with IF NOT EXISTS
+      for (const val of ec.addValues) {
+        const escapedVal = val.replace(/'/g, "''");
+        sqls.push(
+          `ALTER TYPE ${escapedName} ADD VALUE IF NOT EXISTS '${escapedVal}'`,
+        );
+      }
+      // Removed values: PostgreSQL cannot remove enum values — emit a warning comment
+      if (ec.removeValues.length > 0) {
+        sqls.push(
+          `-- WARNING: Cannot remove enum values from ${escapedName}: ${ec.removeValues.join(", ")}. Recreate the type manually if needed.`,
+        );
+      }
+    }
+
+    return sqls;
+  }
+
+  /**
+   * Generates down-migration SQL for enum changes.
+   */
+  private buildEnumDownSql(ec: EnumChange, dialect: SchemaDialect): string[] {
+    if (dialect !== "postgres") return [];
+    const sqls: string[] = [];
+    const escapedName = this.escapeId(ec.enumName, dialect);
+
+    if (ec.isNew) {
+      // Reverse of CREATE TYPE — drop it
+      sqls.push(`DROP TYPE IF EXISTS ${escapedName}`);
+    } else {
+      // Cannot reverse ALTER TYPE ADD VALUE in PostgreSQL — emit comment
+      if (ec.addValues.length > 0) {
+        sqls.push(
+          `-- WARNING: Cannot reverse ALTER TYPE ADD VALUE for ${escapedName}. Recreate the type manually if needed.`,
+        );
+      }
+    }
+
+    return sqls;
+  }
 
   /**
    * Wraps a SQL string in a template literal `await query(...)` call.

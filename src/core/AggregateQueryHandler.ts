@@ -46,6 +46,7 @@ export class AggregateQueryHandler {
 
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.ctx.wrap(n),
+        dialect: this.ctx.getDialect(),
       });
 
       let queryStr: Sql;

@@ -32,6 +32,12 @@ export { resolveEntityGlobs } from "./utils/resolveEntityGlobs";
 // Migration system
 export * from "./migration";
 
+// Database seeding framework
+export * from "./seeding";
+
+// Database introspection (entity generation from existing schema)
+export * from "./introspection";
+
 // Error classes
 export * from "./errors";
 

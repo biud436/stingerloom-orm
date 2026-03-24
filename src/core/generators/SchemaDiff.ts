@@ -28,6 +28,13 @@ export interface RenamedColumn {
   columnType: string;
 }
 
+export interface EnumChange {
+  enumName: string;
+  addValues: string[];
+  removeValues: string[];
+  isNew: boolean;
+}
+
 export interface SchemaDiffResult {
   addTables: string[];
   dropTables: string[];
@@ -36,6 +43,7 @@ export interface SchemaDiffResult {
   alterColumns: ColumnChange[];
   renamedColumns?: RenamedColumn[];
   addTableEntityMap?: Record<string, ClazzType<any>>;
+  enumChanges?: EnumChange[];
 }
 
 /**
@@ -49,6 +57,7 @@ export function createSchemaDiffResult(partial?: Partial<SchemaDiffResult>): Sch
     dropColumns: [],
     alterColumns: [],
     renamedColumns: [],
+    enumChanges: [],
     ...partial,
   };
 }
@@ -96,6 +105,7 @@ export class SchemaDiff {
       dropColumns: [],
       alterColumns: [],
       renamedColumns: [],
+      enumChanges: [],
     };
 
     const entityTableNames = new Set<string>();
@@ -186,6 +196,11 @@ export class SchemaDiff {
           });
         }
       }
+    }
+
+    // Detect ENUM changes (PostgreSQL only)
+    if (dialect === "postgres") {
+      await this.detectEnumChanges(result, entities, queryRunner, schema);
     }
 
     // Detect column renames: match 1:1 add/drop pairs with same type per table
@@ -532,6 +547,102 @@ export class SchemaDiff {
     }
 
     return true;
+  }
+
+  /**
+   * Detect ENUM type changes for PostgreSQL.
+   * For new tables, marks enums as isNew. For existing tables, queries pg_enum/pg_type
+   * to compare current vs expected values.
+   */
+  private async detectEnumChanges(
+    result: SchemaDiffResult,
+    entities: ClazzType<any>[],
+    queryRunner: QueryRunner,
+    schema?: string,
+  ): Promise<void> {
+    const processedEnums = new Set<string>();
+
+    for (const entity of entities) {
+      const tableName = this.getTableName(entity);
+      const entityColumns = this.getEntityColumns(entity);
+      const isNewTable = result.addTables.includes(tableName);
+
+      for (const col of entityColumns) {
+        if (col.options?.type !== "enum") continue;
+        const enumValues = col.options.enumValues;
+        if (!enumValues || enumValues.length === 0) continue;
+
+        const colName = col.name ?? "unknown";
+        const enumName = col.options.enumName ?? `${tableName}_${colName}_enum`;
+
+        if (processedEnums.has(enumName)) continue;
+        processedEnums.add(enumName);
+
+        if (isNewTable) {
+          // New table — enum type needs to be created
+          result.enumChanges!.push({
+            enumName,
+            addValues: [...enumValues],
+            removeValues: [],
+            isNew: true,
+          });
+        } else {
+          // Existing table — query current enum values from pg_enum + pg_type
+          const currentValues = await this.getPostgresEnumValues(
+            queryRunner,
+            enumName,
+            schema,
+          );
+
+          if (currentValues.length === 0) {
+            // Enum type does not exist yet (new column on existing table)
+            result.enumChanges!.push({
+              enumName,
+              addValues: [...enumValues],
+              removeValues: [],
+              isNew: true,
+            });
+          } else {
+            // Compare current vs expected
+            const currentSet = new Set(currentValues);
+            const expectedSet = new Set(enumValues);
+            const addValues = enumValues.filter((v) => !currentSet.has(v));
+            const removeValues = currentValues.filter((v) => !expectedSet.has(v));
+
+            if (addValues.length > 0 || removeValues.length > 0) {
+              result.enumChanges!.push({
+                enumName,
+                addValues,
+                removeValues,
+                isNew: false,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Query PostgreSQL pg_enum + pg_type to get current enum values for a given type name.
+   */
+  private async getPostgresEnumValues(
+    queryRunner: QueryRunner,
+    enumName: string,
+    schema?: string,
+  ): Promise<string[]> {
+    const pgSchema = schema ?? "public";
+    const rawResult = await queryRunner.query(
+      sql`SELECT e.enumlabel
+          FROM pg_type t
+          JOIN pg_enum e ON t.oid = e.enumtypid
+          JOIN pg_namespace n ON t.typnamespace = n.oid
+          WHERE t.typname = ${enumName}
+            AND n.nspname = ${pgSchema}
+          ORDER BY e.enumsortorder`,
+    );
+    const rows = this.normalizeRows(rawResult);
+    return rows.map((row: any) => row.enumlabel);
   }
 
   /**

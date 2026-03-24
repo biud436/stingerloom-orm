@@ -830,6 +830,7 @@ export class EntityManager implements BaseEntityManager {
           wrapColumn: (n) => this.wrap(n),
           qualified: hasEagerJoins,
           tableName: hasEagerJoins ? tableName : undefined,
+          dialect: this._ctx.getDialect(),
         }),
       );
 
@@ -1132,6 +1133,7 @@ export class EntityManager implements BaseEntityManager {
 
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.wrap(n),
+        dialect: this._ctx.getDialect(),
       });
 
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
@@ -2064,6 +2066,7 @@ export class EntityManager implements BaseEntityManager {
 
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.wrap(n),
+        dialect: this._ctx.getDialect(),
       });
 
       const updateSql = sql`UPDATE ${raw(this.wrapTable(metadata.name!))} SET ${join(setMap, ", ")} WHERE ${join(whereMap, " AND ")}`;

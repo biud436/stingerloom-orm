@@ -29,7 +29,7 @@ function isFilterObject(value: unknown): boolean {
  * Resolve a single filter-operator object (e.g. `{ gt: 18, lte: 65 }`)
  * into one or more SQL conditions joined with AND.
  */
-function resolveFilterObject(column: string, filter: Record<string, any>): Sql {
+function resolveFilterObject(column: string, filter: Record<string, any>, dialect?: string): Sql {
   const clauses: Sql[] = [];
 
   for (const [op, val] of Object.entries(filter)) {
@@ -77,7 +77,7 @@ function resolveFilterObject(column: string, filter: Record<string, any>): Sql {
         break;
       case "not":
         if (typeof val === "object" && val !== null && isFilterObject(val)) {
-          const inner = resolveFilterObject(column, val);
+          const inner = resolveFilterObject(column, val, dialect);
           clauses.push(sql`NOT (${inner})`);
         } else if (val === null) {
           clauses.push(Conditions.isNotNull(column));
@@ -93,6 +93,9 @@ function resolveFilterObject(column: string, filter: Record<string, any>): Sql {
         break;
       case "endsWith":
         clauses.push(Conditions.like(column, `%${escapeLikePattern(val)}`));
+        break;
+      case "search":
+        clauses.push(Conditions.fullTextSearch(column, val, dialect));
         break;
     }
   }
@@ -110,7 +113,7 @@ function resolveFilterObject(column: string, filter: Record<string, any>): Sql {
  * - filter object `{ gt: 18 }` → operator expansion
  * - plain value → equals
  */
-function resolveWhereValue(column: string, value: any): Sql {
+function resolveWhereValue(column: string, value: any, dialect?: string): Sql {
   if (value === null) {
     return Conditions.isNull(column);
   }
@@ -123,7 +126,7 @@ function resolveWhereValue(column: string, value: any): Sql {
   }
   // Filter operator object
   if (typeof value === "object" && isFilterObject(value)) {
-    return resolveFilterObject(column, value);
+    return resolveFilterObject(column, value, dialect);
   }
   // Plain equality
   return Conditions.equals(column, value);
@@ -139,6 +142,8 @@ export interface WhereResolverOptions {
   qualified?: boolean;
   /** Table name to use when `qualified` is true. */
   tableName?: string;
+  /** Dialect hint for dialect-specific operators like `search` (full-text). */
+  dialect?: "mysql" | "postgres" | "sqlite";
 }
 
 /**
@@ -177,7 +182,7 @@ function resolveWhereSingleObject<T>(
   opts: WhereResolverOptions,
 ): Sql[] {
   const result: Sql[] = [];
-  const { wrapColumn, qualified, tableName } = opts;
+  const { wrapColumn, qualified, tableName, dialect } = opts;
 
   for (const key of Object.keys(where)) {
     const value = (where as any)[key];
@@ -222,7 +227,7 @@ function resolveWhereSingleObject<T>(
         ? `${wrapColumn(tableName)}.${wrapColumn(key)}`
         : wrapColumn(key);
 
-    result.push(resolveWhereValue(col, value));
+    result.push(resolveWhereValue(col, value, dialect));
   }
 
   return result;

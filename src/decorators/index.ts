@@ -19,3 +19,4 @@ export * from "./OneToOne";
 export * from "./UniqueIndex";
 export * from "./InjectRepository";
 export * from "./ComputedColumn";
+export * from "./FullTextIndex";

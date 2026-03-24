@@ -1,0 +1,272 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { EntityManager } from "../core/EntityManager";
+import { Seeder, SeederContext } from "./Seeder";
+import { Logger } from "../utils";
+
+/**
+ * Result of a single seeder execution.
+ */
+export interface SeederResult {
+  name: string;
+  direction: "run" | "revert";
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Options for the SeederRunner.
+ */
+export interface SeederRunnerOptions {
+  /**
+   * Whether to track execution in a __seeds table.
+   * When false, seeders are always executed without tracking.
+   * Default: true
+   */
+  trackExecution?: boolean;
+
+  /**
+   * Name of the seed tracking table.
+   * Default: "__seeds"
+   */
+  tableName?: string;
+}
+
+/**
+ * Query runner interface for SeederRunner.
+ * Decoupled from EntityManager for testability.
+ */
+export interface SeederQueryRunner {
+  query: (sql: string) => Promise<any>;
+}
+
+/**
+ * Runs database seeders in order, tracking execution in a __seeds table.
+ *
+ * Follows the same pattern as MigrationRunner:
+ * - Tracking table records which seeders have been executed
+ * - runAll() skips already-executed seeders
+ * - revertLast() calls the most recent seeder's revert() method
+ * - status() shows executed/pending seeders
+ */
+export class SeederRunner {
+  private readonly logger = new Logger(SeederRunner.name);
+  private readonly seeders: Seeder[];
+  private readonly em: EntityManager;
+  private readonly queryRunner: SeederQueryRunner;
+  private readonly trackExecution: boolean;
+  private readonly tableName: string;
+
+  constructor(
+    seeders: Seeder[],
+    em: EntityManager,
+    queryRunner: SeederQueryRunner,
+    options?: SeederRunnerOptions,
+  ) {
+    this.seeders = seeders;
+    this.em = em;
+    this.queryRunner = queryRunner;
+    this.trackExecution = options?.trackExecution ?? true;
+    this.tableName = options?.tableName ?? "__seeds";
+  }
+
+  /**
+   * Creates the seed tracking table if it does not exist.
+   * Uses the EntityManager's driver to determine MySQL vs PostgreSQL/SQLite syntax.
+   */
+  async ensureSeedTable(): Promise<void> {
+    const isMySql = this.isMySql();
+
+    if (isMySql) {
+      await this.queryRunner.query(
+        `CREATE TABLE IF NOT EXISTS \`${this.tableName}\` (` +
+          `\`id\` INT AUTO_INCREMENT PRIMARY KEY, ` +
+          `\`name\` VARCHAR(255) NOT NULL UNIQUE, ` +
+          `\`executed_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP` +
+          `)`,
+      );
+    } else {
+      await this.queryRunner.query(
+        `CREATE TABLE IF NOT EXISTS "${this.tableName}" (` +
+          `"id" SERIAL PRIMARY KEY, ` +
+          `"name" VARCHAR(255) NOT NULL UNIQUE, ` +
+          `"executed_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP` +
+          `)`,
+      );
+    }
+  }
+
+  /**
+   * Returns the list of already-executed seeder names.
+   */
+  async getExecutedSeeds(): Promise<string[]> {
+    const isMySql = this.isMySql();
+    const quote = isMySql ? "`" : '"';
+
+    const result = await this.queryRunner.query(
+      `SELECT ${quote}name${quote} FROM ${quote}${this.tableName}${quote} ORDER BY ${quote}id${quote} ASC`,
+    );
+
+    const rows = this.normalizeRows(result);
+    return rows.map((row: any) => row.name);
+  }
+
+  /**
+   * Run all pending seeders in order.
+   * If trackExecution is true, only runs seeders not yet recorded.
+   * Stops on first error.
+   */
+  async runAll(): Promise<SeederResult[]> {
+    if (this.trackExecution) {
+      await this.ensureSeedTable();
+    }
+
+    const executed = this.trackExecution
+      ? await this.getExecutedSeeds()
+      : [];
+    const pending = this.seeders.filter((s) => !executed.includes(s.name));
+
+    const results: SeederResult[] = [];
+
+    for (const seeder of pending) {
+      const result = await this.runOne(seeder);
+      results.push(result);
+      if (!result.success) {
+        break;
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Run a single seeder.
+   */
+  async runOne(seeder: Seeder): Promise<SeederResult> {
+    const ctx = this.createContext();
+
+    try {
+      this.logger.info(`Running seeder: ${seeder.name}`);
+      await seeder.run(ctx);
+      if (this.trackExecution) {
+        await this.recordSeed(seeder.name);
+      }
+      this.logger.info(`Seeder completed: ${seeder.name}`);
+      return { name: seeder.name, direction: "run", success: true };
+    } catch (e: unknown) {
+      const error = e instanceof Error ? e.message : String(e);
+      this.logger.error(`Seeder failed: ${seeder.name} - ${error}`);
+      return { name: seeder.name, direction: "run", success: false, error };
+    }
+  }
+
+  /**
+   * Revert the most recently executed seeder.
+   * Returns null if no seeders have been executed or the seeder has no revert() method.
+   */
+  async revertLast(): Promise<SeederResult | null> {
+    if (this.trackExecution) {
+      await this.ensureSeedTable();
+    }
+
+    const executed = this.trackExecution
+      ? await this.getExecutedSeeds()
+      : [];
+
+    if (executed.length === 0) {
+      this.logger.info("No seeders to revert.");
+      return null;
+    }
+
+    const lastName = executed[executed.length - 1];
+    const seeder = this.seeders.find((s) => s.name === lastName);
+
+    if (!seeder) {
+      const error = `Seeder "${lastName}" not found in registered seeders.`;
+      this.logger.error(error);
+      return { name: lastName, direction: "revert", success: false, error };
+    }
+
+    if (!seeder.revert) {
+      const error = `Seeder "${lastName}" does not implement revert().`;
+      this.logger.error(error);
+      return { name: lastName, direction: "revert", success: false, error };
+    }
+
+    const ctx = this.createContext();
+
+    try {
+      this.logger.info(`Reverting seeder: ${seeder.name}`);
+      await seeder.revert(ctx);
+      if (this.trackExecution) {
+        await this.removeSeedRecord(seeder.name);
+      }
+      this.logger.info(`Seeder reverted: ${seeder.name}`);
+      return { name: seeder.name, direction: "revert", success: true };
+    } catch (e: unknown) {
+      const error = e instanceof Error ? e.message : String(e);
+      this.logger.error(`Seeder revert failed: ${seeder.name} - ${error}`);
+      return { name: seeder.name, direction: "revert", success: false, error };
+    }
+  }
+
+  /**
+   * Returns the current status: which seeders are executed and which are pending.
+   */
+  async status(): Promise<{ executed: string[]; pending: string[] }> {
+    if (this.trackExecution) {
+      await this.ensureSeedTable();
+    }
+
+    const executed = this.trackExecution
+      ? await this.getExecutedSeeds()
+      : [];
+    const pending = this.seeders
+      .filter((s) => !executed.includes(s.name))
+      .map((s) => s.name);
+
+    return { executed, pending };
+  }
+
+  private createContext(): SeederContext {
+    return { em: this.em };
+  }
+
+  /**
+   * Check if the driver is MySQL-family.
+   * Throws if EntityManager has no driver connected.
+   */
+  private isMySql(): boolean {
+    const driver = this.em.getDriver();
+    if (!driver) {
+      throw new Error("SeederRunner: EntityManager has no driver connected.");
+    }
+    return driver.isMySqlFamily();
+  }
+
+  private async recordSeed(name: string): Promise<void> {
+    const isMySql = this.isMySql();
+    const quote = isMySql ? "`" : '"';
+    await this.queryRunner.query(
+      `INSERT INTO ${quote}${this.tableName}${quote} (${quote}name${quote}) VALUES ('${name.replace(/'/g, "''")}')`,
+    );
+  }
+
+  private async removeSeedRecord(name: string): Promise<void> {
+    const isMySql = this.isMySql();
+    const quote = isMySql ? "`" : '"';
+    await this.queryRunner.query(
+      `DELETE FROM ${quote}${this.tableName}${quote} WHERE ${quote}name${quote} = '${name.replace(/'/g, "''")}'`,
+    );
+  }
+
+  /**
+   * Normalize driver-specific query results to a plain array of rows.
+   */
+  private normalizeRows(result: any): any[] {
+    if (!result) return [];
+    if (Array.isArray(result)) return result;
+    if (result.results && Array.isArray(result.results)) return result.results;
+    if (result.rows && Array.isArray(result.rows)) return result.rows;
+    return [];
+  }
+}

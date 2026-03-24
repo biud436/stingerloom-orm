@@ -9,11 +9,16 @@ import {
   IndexMetadata,
   COMPOSITE_INDEX_TOKEN,
   CompositeIndexMetadata,
+  AdvancedIndexOptions,
 } from "../../decorators/Indexer";
 import {
   UNIQUE_INDEX_TOKEN,
   UniqueIndexMetadata,
 } from "../../decorators/UniqueIndex";
+import {
+  FULLTEXT_INDEX_TOKEN,
+  FullTextIndexMetadata,
+} from "../../decorators/FullTextIndex";
 import { ReferentialAction } from "../../types/ReferentialAction";
 import {
   MANY_TO_ONE_TOKEN,
@@ -163,20 +168,102 @@ export class SchemaGenerator {
 
   /**
    * 단일 엔티티에 대한 CREATE INDEX DDL 배열을 생성합니다 (class-level composite indexes).
+   * Supports advanced options: USING, WHERE, expression, INCLUDE.
    */
   generateCompositeIndexDDL<T>(entity: ClazzType<T>): string[] {
     const tableName = this.getTableName(entity);
     const compositeIndexes = this.getCompositeIndexes(entity);
     return compositeIndexes.map((ci) => {
+      const opts = ci.options;
       const indexName =
-        ci.name ?? this.namingStrategy.compositeIndexName(tableName, ci.columns);
-      const columnList = ci.columns
-        .map((col) => this.wrapId(col))
-        .join(", ");
-      if (this.dialect === "postgres" || this.dialect === "sqlite") {
-        return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
+        ci.name ?? opts?.name ?? this.namingStrategy.compositeIndexName(tableName, ci.columns);
+
+      return this.buildAdvancedIndexDDL(tableName, indexName, ci.columns, opts);
+    });
+  }
+
+  /**
+   * Builds a CREATE INDEX DDL with optional advanced features.
+   * Unsupported features for a given dialect are silently skipped.
+   */
+  private buildAdvancedIndexDDL(
+    tableName: string,
+    indexName: string,
+    columns: string[],
+    opts?: AdvancedIndexOptions,
+  ): string {
+    const ifNotExists = (this.dialect === "postgres" || this.dialect === "sqlite")
+      ? "IF NOT EXISTS " : "";
+
+    // USING clause
+    let usingClause = "";
+    if (opts?.using) {
+      const method = opts.using.toLowerCase();
+      if (this.dialect === "mysql") {
+        // MySQL only supports btree and hash
+        if (method === "btree" || method === "hash") {
+          usingClause = ` USING ${method.toUpperCase()}`;
+        }
+        // Other methods silently skipped for MySQL
+      } else {
+        // PostgreSQL/SQLite support all methods
+        usingClause = ` USING ${method}`;
       }
-      return `CREATE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
+    }
+
+    // Column list or expression
+    let columnExpr: string;
+    if (opts?.expression) {
+      columnExpr = `(${opts.expression})`;
+    } else {
+      columnExpr = `(${columns.map((col) => this.wrapId(col)).join(", ")})`;
+    }
+
+    // INCLUDE clause (PostgreSQL only)
+    let includeClause = "";
+    if (opts?.include && opts.include.length > 0 && this.dialect === "postgres") {
+      const includeCols = opts.include.map((col) => this.wrapId(col)).join(", ");
+      includeClause = ` INCLUDE (${includeCols})`;
+    }
+
+    // WHERE clause (partial index — PostgreSQL and SQLite only)
+    let whereClause = "";
+    if (opts?.where && this.dialect !== "mysql") {
+      whereClause = ` WHERE ${opts.where}`;
+    }
+
+    return `CREATE INDEX ${ifNotExists}${this.wrapId(indexName)} ON ${this.wrapTable(tableName)}${usingClause} ${columnExpr}${includeClause}${whereClause}`;
+  }
+
+  /**
+   * 단일 엔티티에 대한 FULLTEXT / GIN 인덱스 DDL 배열을 생성합니다.
+   *
+   * - PostgreSQL: `CREATE INDEX ... USING gin (to_tsvector('lang', col1 || ' ' || col2))`
+   * - MySQL: `CREATE FULLTEXT INDEX ... ON table (col1, col2)`
+   * - SQLite: not supported (returns empty array).
+   */
+  generateFullTextIndexDDL<T>(entity: ClazzType<T>): string[] {
+    if (this.dialect === "sqlite") return [];
+
+    const tableName = this.getTableName(entity);
+    const ftIndexes = this.getFullTextIndexes(entity);
+    return ftIndexes.map((ft) => {
+      const indexName =
+        ft.name ?? `fts_${tableName}_${ft.columns.join("_")}`;
+
+      if (this.dialect === "postgres") {
+        const lang = ft.language ?? "english";
+        const expr = ft.columns.length === 1
+          ? `to_tsvector('${lang}', ${this.wrapId(ft.columns[0])})`
+          : `to_tsvector('${lang}', ${ft.columns.map((c) => this.wrapId(c)).join(" || ' ' || ")})`;
+        return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} USING gin (${expr})`;
+      }
+
+      // MySQL: FULLTEXT INDEX
+      const columnList = ft.columns
+        .map((c) => this.wrapId(c))
+        .join(", ");
+      return `CREATE FULLTEXT INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
     });
   }
 
@@ -318,6 +405,11 @@ export class SchemaGenerator {
       ddls.push(...this.generateCompositeIndexDDL(entity));
     }
 
+    // 2c. CREATE FULLTEXT/GIN INDEX
+    for (const entity of entities) {
+      ddls.push(...this.generateFullTextIndexDDL(entity));
+    }
+
     // 3. CREATE UNIQUE INDEX
     for (const entity of entities) {
       ddls.push(...this.generateUniqueIndexDDL(entity));
@@ -396,6 +488,14 @@ export class SchemaGenerator {
     return (
       (Reflect.getMetadata(UNIQUE_INDEX_TOKEN, entity) as
         | UniqueIndexMetadata[]
+        | undefined) ?? []
+    );
+  }
+
+  private getFullTextIndexes<T>(entity: ClazzType<T>): FullTextIndexMetadata[] {
+    return (
+      (Reflect.getMetadata(FULLTEXT_INDEX_TOKEN, entity) as
+        | FullTextIndexMetadata[]
         | undefined) ?? []
     );
   }

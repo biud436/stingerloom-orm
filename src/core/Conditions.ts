@@ -257,6 +257,31 @@ export class Conditions {
   }
 
   /**
+   * Creates a full-text search condition.
+   *
+   * - MySQL: `MATCH(column) AGAINST(query IN BOOLEAN MODE)`
+   * - PostgreSQL (default): `to_tsvector('lang', column) @@ plainto_tsquery('lang', query)`
+   *
+   * @param column - Already-escaped column identifier.
+   * @param query - The search query string (parameterized).
+   * @param dialect - "mysql" | "postgres" | "sqlite" (default: "postgres").
+   * @param language - PostgreSQL text search config (default: "english").
+   */
+  static fullTextSearch(
+    column: string,
+    query: string,
+    dialect?: string,
+    language?: string,
+  ): Sql {
+    if (dialect === "mysql") {
+      return sql`MATCH(${raw(column)}) AGAINST(${query} IN BOOLEAN MODE)`;
+    }
+    // PostgreSQL default
+    const lang = language ?? "english";
+    return sql`to_tsvector(${lang}, ${raw(column)}) @@ plainto_tsquery(${lang}, ${query})`;
+  }
+
+  /**
    * Creates a column-to-column comparison condition.
    */
   static compareColumns(

@@ -99,6 +99,7 @@ export class ExplainQueryHandler {
         wrapColumn: (n) => this.ctx.wrap(n),
         qualified: hasEagerJoins,
         tableName: hasEagerJoins ? tableName : undefined,
+        dialect: this.ctx.getDialect(),
       }),
     );
 

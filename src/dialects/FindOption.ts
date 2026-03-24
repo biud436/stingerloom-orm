@@ -62,6 +62,8 @@ export interface StringFilter extends ComparableFilter<string> {
   contains?: string;
   startsWith?: string;
   endsWith?: string;
+  /** Full-text search query. Uses MATCH...AGAINST on MySQL, to_tsvector/plainto_tsquery on PostgreSQL. */
+  search?: string;
 }
 
 /**
@@ -101,6 +103,7 @@ export const FILTER_OPERATOR_KEYS = new Set([
   "contains",
   "startsWith",
   "endsWith",
+  "search",
 ]);
 
 /**
