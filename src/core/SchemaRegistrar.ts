@@ -9,7 +9,10 @@ import {
 import Container from "typedi";
 import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { SchemaGenerator, SchemaDialect } from "./generators/SchemaGenerator";
-import { NamingStrategy, DefaultNamingStrategy } from "./generators/NamingStrategy";
+import {
+  NamingStrategy,
+  DefaultNamingStrategy,
+} from "./generators/NamingStrategy";
 import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
 import {
   UNIQUE_INDEX_TOKEN,
@@ -27,7 +30,11 @@ import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
-import { SchemaDiff, ColumnChange, SchemaDiffResult } from "./generators/SchemaDiff";
+import {
+  SchemaDiff,
+  ColumnChange,
+  SchemaDiffResult,
+} from "./generators/SchemaDiff";
 
 /**
  * 앱 시작 시 1회 실행되는 DDL/스키마 동기화 핸들러.
@@ -57,7 +64,12 @@ export class SchemaRegistrar {
     const isSafe = syncOption === "safe";
 
     // PostgreSQL: 스키마가 존재하지 않으면 자동으로 생성합니다.
-    if (synchronize && !isDryRun && this.ctx.isPostgres() && this.ctx.getDriver()) {
+    if (
+      synchronize &&
+      !isDryRun &&
+      this.ctx.isPostgres() &&
+      this.ctx.getDriver()
+    ) {
       const pgDriver = this.ctx.getDriver() as PostgresDriver;
       const hasSchema = await pgDriver.hasSchema();
       if (!hasSchema || hasSchema.length === 0) {
@@ -153,7 +165,9 @@ export class SchemaRegistrar {
       );
     } else if (isDryRun) {
       for (const { tableName } of entityList) {
-        this.logger.info(`[dry-run] Would register FKs/indexes for ${tableName}`);
+        this.logger.info(
+          `[dry-run] Would register FKs/indexes for ${tableName}`,
+        );
       }
     }
   }
@@ -177,9 +191,16 @@ export class SchemaRegistrar {
 
     let diff: SchemaDiffResult;
     try {
-      diff = await schemaDiff.diff(existingEntities, queryRunner, dialect, schema);
+      diff = await schemaDiff.diff(
+        existingEntities,
+        queryRunner,
+        dialect,
+        schema,
+      );
     } catch (err) {
-      this.logger.warn(`[sync] SchemaDiff failed, skipping ALTER operations: ${err}`);
+      this.logger.warn(
+        `[sync] SchemaDiff failed, skipping ALTER operations: ${err}`,
+      );
       return;
     }
 
@@ -217,9 +238,13 @@ export class SchemaRegistrar {
     for (const col of diff.addColumns) {
       const typeDef = this.buildAddColumnTypeDef(col);
       if (isDryRun) {
-        this.logger.info(`[dry-run] ALTER TABLE ${col.tableName} ADD COLUMN ${col.columnName} ${typeDef}`);
+        this.logger.info(
+          `[dry-run] ALTER TABLE ${col.tableName} ADD COLUMN ${col.columnName} ${typeDef}`,
+        );
       } else {
-        this.logger.info(`[sync] Adding column ${col.tableName}.${col.columnName} (${typeDef})`);
+        this.logger.info(
+          `[sync] Adding column ${col.tableName}.${col.columnName} (${typeDef})`,
+        );
         await driver.addColumn(col.tableName, col.columnName, typeDef);
       }
     }
@@ -232,7 +257,9 @@ export class SchemaRegistrar {
         if (isDryRun) {
           this.logger.info(`[dry-run] ${ddl}`);
         } else {
-          this.logger.warn(`[sync] Altering column ${col.tableName}.${col.columnName}: ${col.currentType} → ${col.columnType}`);
+          this.logger.warn(
+            `[sync] Altering column ${col.tableName}.${col.columnName}: ${col.currentType} → ${col.columnType}`,
+          );
           await driver.executeRaw(ddl);
         }
       }
@@ -246,9 +273,13 @@ export class SchemaRegistrar {
         if (tableFkCols?.has(col.columnName.toLowerCase())) continue;
 
         if (isDryRun) {
-          this.logger.info(`[dry-run] ALTER TABLE ${col.tableName} DROP COLUMN ${col.columnName}`);
+          this.logger.info(
+            `[dry-run] ALTER TABLE ${col.tableName} DROP COLUMN ${col.columnName}`,
+          );
         } else {
-          this.logger.warn(`[sync] Dropping column ${col.tableName}.${col.columnName}`);
+          this.logger.warn(
+            `[sync] Dropping column ${col.tableName}.${col.columnName}`,
+          );
           await driver.dropColumn(col.tableName, col.columnName);
         }
       }
@@ -261,7 +292,9 @@ export class SchemaRegistrar {
         if (isDryRun) {
           this.logger.info(`[dry-run] ${ddl}`);
         } else {
-          this.logger.warn(`[sync] Renaming column ${rename.tableName}.${rename.oldColumnName} → ${rename.newColumnName}`);
+          this.logger.warn(
+            `[sync] Renaming column ${rename.tableName}.${rename.oldColumnName} → ${rename.newColumnName}`,
+          );
           await driver.executeRaw(ddl);
         }
       }
@@ -275,6 +308,15 @@ export class SchemaRegistrar {
   private buildAddColumnTypeDef(col: ColumnChange): string {
     let type = col.columnType ?? "VARCHAR(255)";
 
+    // ENUM 타입의 경우, enumValues로 값 목록을 포함
+    const isENUM = type.toUpperCase().startsWith("ENUM");
+    if (isENUM && col.enumValues && col.enumValues.length > 0) {
+      const values = col.enumValues
+        .map((v: string) => `'${v.replace(/'/g, "''")}'`)
+        .join(",");
+      type = `ENUM(${values})`;
+    }
+
     // 길이가 지정되어 있고 타입에 아직 괄호가 없으면 추가
     if (col.expectedLength && !type.includes("(")) {
       type = `${type}(${col.expectedLength})`;
@@ -282,9 +324,10 @@ export class SchemaRegistrar {
 
     // 정밀도/스케일이 지정되어 있으면 추가
     if (col.expectedPrecision && !type.includes("(")) {
-      const scale = col.expectedScale !== undefined && col.expectedScale !== null
-        ? `,${col.expectedScale}`
-        : "";
+      const scale =
+        col.expectedScale !== undefined && col.expectedScale !== null
+          ? `,${col.expectedScale}`
+          : "";
       type = `${type}(${col.expectedPrecision}${scale})`;
     }
 
@@ -308,14 +351,22 @@ export class SchemaRegistrar {
     if (dialect === "sqlite") {
       this.logger.warn(
         `[sync] SQLite does not support ALTER COLUMN TYPE for ${col.tableName}.${col.columnName} ` +
-        `(${col.currentType} → ${typeStr}). Skipping.`,
+          `(${col.currentType} → ${typeStr}). Skipping.`,
       );
       return null;
     }
 
     if (dialect === "mysql") {
       const nullable = col.nullable === false ? "NOT NULL" : "NULL";
-      return `ALTER TABLE ${tableName} MODIFY COLUMN ${columnName} ${typeStr} ${nullable}`;
+      const isENUM = col.columnType?.toUpperCase().startsWith("ENUM");
+      let typeExpr = typeStr;
+      if (isENUM && col.enumValues && col.enumValues.length > 0) {
+        const values = col.enumValues
+          .map((v: string) => `'${v.replace(/'/g, "''")}'`)
+          .join(",");
+        typeExpr = `ENUM(${values})`;
+      }
+      return `ALTER TABLE ${tableName} MODIFY COLUMN ${columnName} ${typeExpr} ${nullable}`;
     }
 
     // PostgreSQL
@@ -342,10 +393,7 @@ export class SchemaRegistrar {
   /**
    * @UniqueIndex 데코레이터로 선언된 복합 유니크 인덱스를 등록합니다.
    */
-  async registerUniqueIndexes(
-    TargetEntity: ClazzType<any>,
-    tableName: string,
-  ) {
+  async registerUniqueIndexes(TargetEntity: ClazzType<any>, tableName: string) {
     const uniqueIndexes = Reflect.getMetadata(
       UNIQUE_INDEX_TOKEN,
       TargetEntity,
@@ -355,7 +403,8 @@ export class SchemaRegistrar {
 
     const driver = this.ctx.getDriver();
     for (const uq of uniqueIndexes) {
-      const indexName = uq.name ?? this.namingStrategy.uniqueIndexName(tableName, uq.columns);
+      const indexName =
+        uq.name ?? this.namingStrategy.uniqueIndexName(tableName, uq.columns);
 
       // 이미 존재하는지 확인
       const indexes = (await driver?.getIndexes(tableName)) as any[];
@@ -370,11 +419,7 @@ export class SchemaRegistrar {
       }
 
       if (!isExist) {
-        await driver?.addCompositeUniqueIndex(
-          tableName,
-          uq.columns,
-          indexName,
-        );
+        await driver?.addCompositeUniqueIndex(tableName, uq.columns, indexName);
       }
     }
   }
@@ -472,10 +517,7 @@ export class SchemaRegistrar {
     }
   }
 
-  async registerForeignKeys(
-    TargetEntity: ClazzType<any>,
-    tableName: string,
-  ) {
+  async registerForeignKeys(TargetEntity: ClazzType<any>, tableName: string) {
     // 엔티티 매니저를 가지고 옵니다.
     const entityScanner = Container.get(EntityScanner);
     const driver = this.ctx.getDriver();
@@ -511,9 +553,8 @@ export class SchemaRegistrar {
         // references 옵션이 있으면 해당 컬럼, 없으면 PK를 참조
         const mappingTablePrimaryKey = manyToOneItem.references
           ? manyToOneItem.references
-          : mappingTableMetadata.columns.find(
-              (e: any) => e.options?.primary,
-            )?.name;
+          : mappingTableMetadata.columns.find((e: any) => e.options?.primary)
+              ?.name;
 
         if (!mappingTablePrimaryKey) {
           throw new PrimaryKeyNotFoundError(mappingEntity.name);
@@ -524,10 +565,7 @@ export class SchemaRegistrar {
 
         // joinColumn 컬럼이 테이블에 없으면 먼저 추가합니다.
         if (driver) {
-          const columnExists = await driver.hasColumn(
-            tableName,
-            joinColumn,
-          );
+          const columnExists = await driver.hasColumn(tableName, joinColumn);
           if (!columnExists) {
             const fkColumnType = driver.castType("int") + " NULL";
             await driver.addColumn(tableName, joinColumn, fkColumnType);

@@ -1,4 +1,10 @@
-import { Column, CreateTimestamp, Entity, OneToMany, PrimaryGeneratedColumn } from "@stingerloom/orm";
+import {
+  Column,
+  CreateTimestamp,
+  Entity,
+  OneToMany,
+  PrimaryGeneratedColumn,
+} from "@stingerloom/orm";
 import { OrderItem } from "./order_item.entity";
 import { Category } from "./category.enum";
 
@@ -14,12 +20,16 @@ export class Product {
   price!: number;
 
   @Column({ type: "text", nullable: true })
-  description!: string | null;
+  description!: string;
 
   @Column({ default: 0 })
   stock!: number;
 
-  @Column({ type: "enum", enumName: "Category", enumValues: ["ELECTRONICS", "CLOTHING", "FOOD", "BOOKS", "TOYS"] })
+  @Column({
+    type: "enum",
+    enumName: "Category",
+    enumValues: ["ELECTRONICS", "CLOTHING", "FOOD", "BOOKS", "TOYS"],
+  })
   category!: string;
 
   @CreateTimestamp()
@@ -27,5 +37,4 @@ export class Product {
 
   @OneToMany(() => OrderItem, { mappedBy: "product" })
   orderItems!: OrderItem[];
-
 }

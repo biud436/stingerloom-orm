@@ -2,7 +2,11 @@
 import "reflect-metadata";
 import sql from "sql-template-tag";
 import { ClazzType } from "../../utils";
-import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../../decorators/Column";
+import {
+  COLUMN_TOKEN,
+  ColumnOption,
+  ColumnType,
+} from "../../decorators/Column";
 import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
 import { ColumnMetadata } from "../../scanner/ColumnScanner";
 import { SchemaDialect } from "./SchemaGenerator";
@@ -19,6 +23,7 @@ export interface ColumnChange {
   actualPrecision?: number | null;
   expectedScale?: number | null;
   actualScale?: number | null;
+  enumValues?: string[];
 }
 
 export interface RenamedColumn {
@@ -49,7 +54,9 @@ export interface SchemaDiffResult {
 /**
  * Creates a SchemaDiffResult with defaults for optional fields.
  */
-export function createSchemaDiffResult(partial?: Partial<SchemaDiffResult>): SchemaDiffResult {
+export function createSchemaDiffResult(
+  partial?: Partial<SchemaDiffResult>,
+): SchemaDiffResult {
   return {
     addTables: [],
     dropTables: [],
@@ -152,6 +159,7 @@ export class SchemaDiff {
             columnName: colName,
             columnType: castTypeName,
             nullable: col.options?.nullable ?? false,
+            enumValues: col.options?.enumValues,
           });
         } else {
           // Column exists in both — check for type changes
@@ -167,6 +175,7 @@ export class SchemaDiff {
               columnName: colName,
               columnType: expectedType,
               currentType: dbCol.data_type,
+              enumValues: col.options?.enumValues,
             });
           } else if (!this.lengthsMatch(col.options, dbCol)) {
             // Types match but length/precision differs
@@ -181,6 +190,7 @@ export class SchemaDiff {
               actualPrecision: dbCol.numeric_precision ?? null,
               expectedScale: col.options?.scale ?? null,
               actualScale: dbCol.numeric_scale ?? null,
+              enumValues: col.options?.enumValues,
             });
           }
         }
@@ -607,7 +617,9 @@ export class SchemaDiff {
             const currentSet = new Set(currentValues);
             const expectedSet = new Set(enumValues);
             const addValues = enumValues.filter((v) => !currentSet.has(v));
-            const removeValues = currentValues.filter((v) => !expectedSet.has(v));
+            const removeValues = currentValues.filter(
+              (v) => !expectedSet.has(v),
+            );
 
             if (addValues.length > 0 || removeValues.length > 0) {
               result.enumChanges!.push({

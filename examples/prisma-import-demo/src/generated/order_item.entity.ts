@@ -1,4 +1,10 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, UniqueIndex } from "@stingerloom/orm";
+import {
+  Column,
+  Entity,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  UniqueIndex,
+} from "@stingerloom/orm";
 import { Order } from "./order.entity";
 import { Product } from "./product.entity";
 
@@ -19,5 +25,4 @@ export class OrderItem {
 
   @ManyToOne(() => Product, (e) => e.orderItems, { joinColumn: "productId" })
   product!: Product;
-
 }
