@@ -627,6 +627,146 @@ The operator object syntax is purely additive — no breaking changes.
 
 ---
 
+## Full-Text Search
+
+### The problem with LIKE
+
+Suppose you're building a blog search feature. Your first instinct is to use `LIKE '%typescript%'` to find posts containing "typescript". This works, but it has a fundamental performance problem: `LIKE '%...'` with a leading wildcard **cannot use indexes**. The database must scan every single row, read every character of every text column, and check if the pattern matches. On a table with 100,000 posts, this means reading 100,000 rows for every search query.
+
+Full-text search solves this by building a **specialized index** that understands language. Think of it like the index at the back of a textbook -- instead of reading every page to find "TypeScript", you look it up in the index and jump directly to the right pages. The database does the same thing: it pre-processes your text into searchable tokens (handling stemming, stop words, and ranking) and stores them in an index structure that allows near-instant lookups.
+
+- **PostgreSQL** uses `tsvector` (the indexed document) and `tsquery` (your search) with **GIN indexes**.
+- **MySQL** uses `FULLTEXT` indexes with `MATCH ... AGAINST`.
+
+### Step 1: Declare the index on your entity
+
+The `@FullTextIndex` decorator tells the ORM which columns to index for full-text search. Place it on the entity class, before `@Entity()`:
+
+```typescript
+import { Entity, Column, PrimaryGeneratedColumn } from "@stingerloom/orm";
+import { FullTextIndex } from "@stingerloom/orm";
+
+@FullTextIndex(["title", "content"], { language: "english" })
+@Entity()
+class Post {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "varchar", length: 200 })
+  title!: string;
+
+  @Column({ type: "text" })
+  content!: string;
+}
+```
+
+The decorator accepts two arguments:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `columns` | `string[]` | Column names to include in the full-text index |
+| `options.language` | `string` | PostgreSQL text search configuration (default: `"english"`) |
+| `options.name` | `string` | Custom index name (default: `fts_{table}_{columns}`) |
+
+When `syncSchema` or `migrate:generate` runs, this generates dialect-specific DDL.
+
+**PostgreSQL** -- creates a GIN index on a `tsvector` expression:
+
+```sql
+CREATE INDEX IF NOT EXISTS "fts_post_title_content"
+  ON "post" USING gin (to_tsvector('english', "title" || ' ' || "content"))
+```
+
+**MySQL** -- creates a FULLTEXT index:
+
+```sql
+CREATE FULLTEXT INDEX `fts_post_title_content` ON `post` (`title`, `content`)
+```
+
+**SQLite** -- full-text indexes are not supported. The decorator is silently ignored.
+
+### Step 2: Query with the `search` operator
+
+Once the index exists, use the `search` operator in your `where` clause. This is a string-specific filter, just like `contains` or `startsWith`:
+
+```typescript
+const results = await em.find(Post, {
+  where: {
+    title: { search: "typescript orm" },
+  },
+});
+```
+
+The ORM generates different SQL depending on the database driver.
+
+**PostgreSQL:**
+
+```sql
+SELECT * FROM "post"
+WHERE to_tsvector('english', "title") @@ plainto_tsquery('english', $1)
+-- parameters: ['typescript orm']
+```
+
+The `@@` operator checks whether the document vector matches the query. `plainto_tsquery` splits your search string into individual terms and combines them with AND -- so `"typescript orm"` matches posts that contain both "typescript" and "orm" (in any order, with stemming applied).
+
+**MySQL:**
+
+```sql
+SELECT * FROM `post`
+WHERE MATCH(`title`) AGAINST(? IN BOOLEAN MODE)
+-- parameters: ['typescript orm']
+```
+
+`BOOLEAN MODE` allows operators like `+required -excluded "exact phrase"`. By default, terms are optional and results are ranked by relevance.
+
+### Combining search with other filters
+
+`search` is just another where operator. You can combine it with any other filter:
+
+```typescript
+const results = await em.find(Post, {
+  where: {
+    title: { search: "typescript" },
+    isPublished: true,
+  },
+  orderBy: { createdAt: "DESC" },
+  take: 20,
+});
+```
+
+```sql
+-- PostgreSQL
+SELECT * FROM "post"
+WHERE to_tsvector('english', "title") @@ plainto_tsquery('english', $1)
+  AND "isPublished" = $2
+ORDER BY "createdAt" DESC
+LIMIT 20
+-- parameters: ['typescript', true]
+```
+
+### Multi-column indexes
+
+When you specify multiple columns in `@FullTextIndex(["title", "content"])`, the generated index covers both columns. On PostgreSQL, the columns are concatenated with a space separator in the `to_tsvector` expression, so a search matches across both title and content simultaneously.
+
+However, the `search` operator in `where` applies to a **single column** at the query level. If you need to search across the combined index, use the `Conditions.fullTextSearch` helper directly:
+
+```typescript
+import { Conditions } from "@stingerloom/orm";
+
+const results = await em.find(Post, {
+  where: {
+    title: Conditions.fullTextSearch(
+      '"title" || \' \' || "content"',
+      "typescript orm",
+      "postgres",
+      "english",
+    ),
+  },
+});
+```
+
+---
+
 ## Including Soft-Deleted Records
 
 If your entity has a `@DeletedAt` column, the ORM **automatically** adds a `WHERE "deletedAt" IS NULL` filter to every query. This means "deleted" records are invisible by default — they're still in the database, but your application pretends they don't exist.

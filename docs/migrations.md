@@ -546,6 +546,79 @@ The rename detection works because compatible types narrow down the candidates. 
 
 > Schema Diff detects additions, deletions, and renames of tables and columns. Column type changes (e.g., changing VARCHAR to TEXT) are detected as `alterColumns` in the diff result, but write those as manual migrations for safety.
 
+### ENUM Value Synchronization (PostgreSQL)
+
+Most schema changes -- adding a column, renaming a table -- happen at the **table level**. But PostgreSQL has an unusual feature: ENUM types are **separate database objects** that live outside any table. When you define a column with `@Column({ type: "enum", enumValues: ["admin", "user"] })`, PostgreSQL creates a named type (like `users_role_enum`) and the column references that type.
+
+Here's the problem. Suppose you add a new role:
+
+```typescript
+@Column({
+  type: "enum",
+  enumValues: ["admin", "user", "moderator"],  // "moderator" is new
+})
+role!: string;
+```
+
+A regular `ALTER TABLE` can't detect this change. The column type is still `users_role_enum` -- it hasn't changed. What changed is the **enum type definition itself**, which is a different database object. Without auto-sync, you'd have to manually write:
+
+```sql
+ALTER TYPE "users_role_enum" ADD VALUE IF NOT EXISTS 'moderator';
+```
+
+SchemaDiff now handles this automatically for PostgreSQL.
+
+**How it works.** During the diff step, after comparing tables and columns, SchemaDiff runs an additional check for PostgreSQL enum types:
+
+1. For each `@Column({ type: "enum" })` in your entities, it reads the current enum values from `pg_enum` and `pg_type` in the database.
+2. It compares the values in your entity definition against the values in the database.
+3. New values go into `addValues`. Removed values go into `removeValues`.
+
+The result is stored in the `enumChanges` array of the diff:
+
+```typescript
+interface EnumChange {
+  enumName: string;        // e.g. "users_role_enum"
+  addValues: string[];     // values to add
+  removeValues: string[];  // values that were removed
+  isNew: boolean;          // true if the entire enum type needs to be created
+}
+```
+
+**Generated migration -- adding a value:**
+
+When you add `"moderator"` to your enum, the migration generator produces:
+
+```typescript
+class AutoMigration_1708000000000 extends Migration {
+  async up({ query }: MigrationContext): Promise<void> {
+    await query(`ALTER TYPE "users_role_enum" ADD VALUE IF NOT EXISTS 'moderator'`);
+  }
+
+  async down({ query }: MigrationContext): Promise<void> {
+    // WARNING: Cannot reverse ALTER TYPE ADD VALUE for "users_role_enum".
+    // Recreate the type manually if needed.
+  }
+}
+```
+
+The `IF NOT EXISTS` clause makes this safe to run multiple times -- if the value already exists, PostgreSQL silently skips it.
+
+**Generated migration -- removing a value:**
+
+PostgreSQL has a fundamental limitation: you **cannot remove a value from an existing enum type**. The only way is to drop and recreate the entire type, which requires updating every column that references it. The migration generator acknowledges this with a warning comment instead of generating unsafe DDL:
+
+```sql
+-- WARNING: Cannot remove enum values from "users_role_enum": guest.
+-- Recreate the type manually if needed.
+```
+
+This is intentionally cautious. Dropping and recreating an enum type is a multi-step operation that can fail if any row contains the removed value. It's safer as a manual migration where you control the process.
+
+**What about MySQL?**
+
+MySQL handles enums differently -- the enum values are part of the column definition itself (`role ENUM('admin','user','moderator')`). When you change enum values in MySQL, SchemaDiff detects it as a regular column type modification in `alterColumns`. The generated migration uses `MODIFY COLUMN` to update the full column definition. No special enum handling is needed.
+
 ---
 
 ## MigrationRunner API

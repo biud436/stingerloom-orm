@@ -71,6 +71,8 @@ export default defineConfig({
         items: [
           { text: "Migrations", link: "/migrations" },
           { text: "Migration CLI", link: "/cli" },
+          { text: "Database Seeding", link: "/seeding" },
+          { text: "Database Introspection", link: "/introspection" },
           { text: "Prisma Import", link: "/prisma-import" },
         ],
       },

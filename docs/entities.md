@@ -245,6 +245,69 @@ isActive!: boolean;
 
 When Stingerloom reads a row from the database, it passes the raw `isActive` value through this function. So the raw number `1` becomes `true`, and `0` becomes `false`.
 
+### Column Transformers
+
+The `transform` option shown above only works in one direction -- when reading from the database. But in practice, you often need to transform values in **both** directions. Think of it like a translator who converts between two languages: you need translation going in and coming out.
+
+Consider email addresses. You want every email stored in lowercase to avoid duplicates (`Alice@Example.com` and `alice@example.com` should match). Without a transformer, you must remember to call `.toLowerCase()` before every INSERT and every UPDATE. Forget once, and you have inconsistent data. A column transformer solves this by declaring the transformation once, on the column definition itself.
+
+```typescript
+@Column({
+  type: "varchar",
+  transformer: {
+    to: (value: string) => value.toLowerCase(),   // before INSERT/UPDATE
+    from: (value: string) => value.toUpperCase(),  // after SELECT
+  },
+})
+email: string;
+```
+
+The `to` function runs automatically before every INSERT and UPDATE. The `from` function runs automatically after every SELECT, transforming the raw database value back into your application's preferred format.
+
+Here is what happens at the SQL level:
+
+```typescript
+await em.save(User, { email: "Alice@Example.COM" });
+// The transformer.to runs first: "Alice@Example.COM" → "alice@example.com"
+// Generated SQL:
+// INSERT INTO "user" ("email") VALUES ('alice@example.com')
+
+const user = await em.findOne(User, { where: { id: 1 } });
+// DB returns: { email: "alice@example.com" }
+// The transformer.from runs: "alice@example.com" → "ALICE@EXAMPLE.COM"
+// user.email === "ALICE@EXAMPLE.COM"
+```
+
+Another common use case is encryption. You can encrypt sensitive data before it reaches the database and decrypt it when reading:
+
+```typescript
+@Column({
+  type: "text",
+  transformer: {
+    to: (value: string) => encrypt(value),   // plaintext → ciphertext
+    from: (value: string) => decrypt(value), // ciphertext → plaintext
+  },
+})
+ssn: string;
+```
+
+The database stores the encrypted ciphertext. Your application code works with the plaintext. The transformation is invisible to the rest of your codebase.
+
+**Backward compatibility with `transform`:** The legacy read-only `transform` option still works. If you set both `transform` and `transformer` on the same column, `transformer.from` takes precedence for the read direction. The `transform` option is deprecated -- use `transformer` for all new code.
+
+```typescript
+// Legacy (read-only, deprecated):
+@Column({ transform: (raw) => raw === 1 })
+
+// Modern (bidirectional, recommended):
+@Column({
+  transformer: {
+    to: (value: boolean) => value ? 1 : 0,
+    from: (raw: number) => raw === 1,
+  },
+})
+```
+
 ### PostgreSQL ENUM
 
 You can use custom ENUM types in PostgreSQL. An ENUM restricts a column to a fixed set of allowed values, enforced by the database itself.
@@ -445,6 +508,162 @@ You can also specify the index name directly.
 ```
 
 > **Hint** `@UniqueIndex` and `@Index(columns)` are both **class-level** decorators. Property-level `@Index()` (no arguments) is placed on individual properties.
+
+### Advanced Index Options
+
+A basic B-tree index on a column is the most common case, but real-world databases need more specialized indexes. Think of it like tools in a workshop: a hammer works for most nails, but sometimes you need a screwdriver, a wrench, or a saw. Similarly, different query patterns call for different index strategies.
+
+**Partial indexes** save disk space and improve performance by indexing only a subset of rows. If 90% of your users are active and you almost never query inactive users, why index all of them?
+
+**Expression indexes** let you index a computed value. Without one, `WHERE LOWER(email) = 'alice@example.com'` cannot use a regular index on the `email` column because the index stores the original mixed-case values.
+
+**GIN indexes** enable fast searches inside JSONB data and full-text search. **BRIN indexes** are extremely compact indexes for time-series data where values naturally correlate with physical row order.
+
+The `@Index` class-level decorator accepts an `AdvancedIndexOptions` object as its second argument to configure all of these.
+
+#### Partial Index
+
+A partial index includes only rows that match a `WHERE` condition. This is useful for tables with soft delete, where you almost always query non-deleted rows.
+
+```typescript
+@Entity()
+@Index(["email"], { where: "deleted_at IS NULL" })
+export class User {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  email!: string;
+
+  @DeletedAt()
+  deletedAt!: Date | null;
+}
+```
+
+**PostgreSQL DDL:**
+
+```sql
+CREATE INDEX "idx_user_email" ON "user" ("email") WHERE deleted_at IS NULL;
+```
+
+This index is smaller than a full index because it excludes soft-deleted rows. Queries with `WHERE email = '...' AND deleted_at IS NULL` use this index directly.
+
+> **Note:** Partial indexes are supported on PostgreSQL and SQLite. MySQL does not support the `WHERE` clause on indexes.
+
+#### Expression Index
+
+An expression index indexes the result of an expression rather than a raw column value. This is essential for case-insensitive email lookups.
+
+```typescript
+@Entity()
+@Index([], { expression: "LOWER(email)" })
+export class User {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  email!: string;
+}
+```
+
+**PostgreSQL DDL:**
+
+```sql
+CREATE INDEX "idx_user_lower_email" ON "user" ((LOWER(email)));
+```
+
+Now the query `WHERE LOWER(email) = 'alice@example.com'` uses this index instead of doing a full table scan. Notice that the column array is empty (`[]`) because the expression replaces the column list.
+
+#### Index Type (USING)
+
+By default, databases create B-tree indexes, which are optimal for equality and range queries. But other index types exist for specialized use cases.
+
+```typescript
+@Entity()
+@Index(["metadata"], { using: "gin" })
+export class Product {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "jsonb" })
+  metadata!: Record<string, unknown>;
+}
+```
+
+**PostgreSQL DDL:**
+
+```sql
+CREATE INDEX "idx_product_metadata" ON "product" USING gin ("metadata");
+```
+
+This GIN (Generalized Inverted Index) enables fast `@>` containment queries on JSONB data:
+
+```sql
+-- Find products where metadata contains {"color": "red"}
+SELECT * FROM "product" WHERE "metadata" @> '{"color": "red"}';
+-- Uses the GIN index instead of scanning every row
+```
+
+Available index types:
+
+| Type | Best For | PostgreSQL | MySQL |
+|------|----------|-----------|-------|
+| `btree` | Equality, range, sorting (default) | Yes | Yes |
+| `hash` | Equality only (no range) | Yes | Yes |
+| `gin` | JSONB, arrays, full-text search | Yes | No |
+| `gist` | Geometric, full-text, range types | Yes | No |
+| `brin` | Large time-series tables | Yes | No |
+
+> **Note:** MySQL only supports `btree` and `hash`. If you specify `gin`, `gist`, or `brin` and run against MySQL, the index creation will fail.
+
+#### Covering Index (INCLUDE)
+
+A covering index stores additional columns alongside the indexed columns so that the database can answer a query entirely from the index, without reading the main table. This is called an "index-only scan."
+
+```typescript
+@Entity()
+@Index(["email"], { include: ["name"] })
+export class User {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  email!: string;
+
+  @Column()
+  name!: string;
+}
+```
+
+**PostgreSQL DDL:**
+
+```sql
+CREATE INDEX "idx_user_email" ON "user" ("email") INCLUDE ("name");
+```
+
+Now a query like `SELECT name FROM "user" WHERE email = 'alice@example.com'` can be served entirely from the index without touching the heap (main table storage). The `INCLUDE` columns are stored in the index leaf pages but are not part of the search key.
+
+> **Note:** Covering indexes with `INCLUDE` are supported on PostgreSQL 11+. MySQL does not support the `INCLUDE` clause.
+
+#### Combining Options
+
+Advanced index options can be combined. For example, a partial covering index:
+
+```typescript
+@Index(["email"], {
+  where: "deleted_at IS NULL",
+  include: ["name"],
+  name: "idx_active_user_email",
+})
+```
+
+**PostgreSQL DDL:**
+
+```sql
+CREATE INDEX "idx_active_user_email" ON "user" ("email") INCLUDE ("name") WHERE deleted_at IS NULL;
+```
+
+This creates a compact, high-performance index that covers only active users and includes the name column for index-only scans.
 
 ## Optimistic Locking (@Version)
 
@@ -694,6 +913,133 @@ WHERE "id" = 1;
 Both decorators create a `DATETIME` (MySQL) / `TIMESTAMP` (PostgreSQL) NOT NULL column. If you need timezone-aware timestamps in PostgreSQL, use `@Column({ type: "timestamptz" })` with lifecycle hooks instead.
 
 > **Hint** If a value is explicitly provided for a `@CreateTimestamp` or `@UpdateTimestamp` column in the `save()` call, the provided value is used instead of the auto-generated one. This is useful for data migration scenarios where you want to preserve original timestamps.
+
+### Computed Columns (@ComputedColumn)
+
+Some column values are always derived from other columns. A person's full name is always `first_name + ' ' + last_name`. An order line's total is always `price * quantity`. You could calculate these in your application code, but then every query, every service, and every report must repeat the same formula. Forget once, and the value is wrong. It is like having a spreadsheet where instead of using a formula, you manually type the total in every cell -- eventually someone makes a mistake.
+
+A **computed column** (also called a "generated column") moves this formula into the database itself. The database guarantees the value is always correct, just like a spreadsheet formula that recalculates automatically.
+
+```typescript
+// order-line.entity.ts
+import {
+  Entity, PrimaryGeneratedColumn, Column, ComputedColumn,
+} from "@stingerloom/orm";
+
+@Entity()
+export class OrderLine {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "float" })
+  price!: number;
+
+  @Column({ type: "int" })
+  quantity!: number;
+
+  @ComputedColumn({
+    expression: "price * quantity",
+    stored: true,
+    type: "float",
+  })
+  total!: number;
+}
+```
+
+**PostgreSQL DDL:**
+
+```sql
+CREATE TABLE "orderLine" (
+  "id" SERIAL PRIMARY KEY,
+  "price" REAL NOT NULL,
+  "quantity" INTEGER NOT NULL,
+  "total" REAL GENERATED ALWAYS AS (price * quantity) STORED
+);
+```
+
+**MySQL DDL:**
+
+```sql
+CREATE TABLE `orderLine` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `price` FLOAT NOT NULL,
+  `quantity` INT NOT NULL,
+  `total` FLOAT GENERATED ALWAYS AS (price * quantity) STORED,
+  PRIMARY KEY (`id`)
+);
+```
+
+The `GENERATED ALWAYS AS (expression)` clause tells the database to compute this value automatically. You never set it yourself -- in fact, the database will reject any INSERT or UPDATE that tries to write to a generated column.
+
+Stingerloom automatically excludes computed columns from INSERT and UPDATE statements. When you call `em.save()`, the ORM knows not to include `total` in the SQL:
+
+```typescript
+await em.save(OrderLine, { price: 29.99, quantity: 3 });
+// Generated SQL (PostgreSQL):
+// INSERT INTO "orderLine" ("price", "quantity") VALUES (29.99, 3)
+// Note: "total" is NOT in the INSERT -- the DB computes it as 89.97
+```
+
+Here is another common example -- concatenating first and last names:
+
+```typescript
+@Entity()
+export class Person {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  firstName!: string;
+
+  @Column()
+  lastName!: string;
+
+  @ComputedColumn({
+    expression: "first_name || ' ' || last_name",
+    stored: true,
+    type: "varchar",
+    length: 511,
+  })
+  fullName!: string;
+}
+```
+
+**PostgreSQL DDL:**
+
+```sql
+"fullName" VARCHAR(511) GENERATED ALWAYS AS (first_name || ' ' || last_name) STORED
+```
+
+#### STORED vs VIRTUAL
+
+The `stored` option controls how the database handles the computed value:
+
+| Mode | `stored` | Behavior | Disk Space | Indexable |
+|------|----------|----------|-----------|-----------|
+| **STORED** | `true` | Computed on INSERT/UPDATE, saved to disk | Uses space | Yes |
+| **VIRTUAL** | `false` (default) | Computed on every SELECT read | No extra space | Limited |
+
+**STORED** columns are computed once when the row is written and persisted on disk like a regular column. They can be indexed, which makes them suitable for columns you search or sort by (like `fullName`).
+
+**VIRTUAL** columns are computed every time the row is read. They use no extra disk space but add CPU overhead on every SELECT. Use virtual columns for values you display but never search by.
+
+```typescript
+// VIRTUAL -- computed on every read, no disk usage
+@ComputedColumn({
+  expression: "price * quantity",
+  stored: false,  // this is the default
+})
+total!: number;
+
+// STORED -- computed once on write, persisted, indexable
+@ComputedColumn({
+  expression: "price * quantity",
+  stored: true,
+})
+total!: number;
+```
+
+> **Hint** Computed columns are supported on PostgreSQL 12+, MySQL 5.7+, and SQLite. The `@ComputedColumn` decorator accepts optional `type`, `length`, and `nullable` options. If `type` is omitted, the database infers the type from the expression.
 
 ## Lifecycle Hooks
 
@@ -967,7 +1313,8 @@ This table shows how each abstract `ColumnType` is translated to a concrete data
 | `primary` | `boolean` | Whether it is a primary key |
 | `autoIncrement` | `boolean` | Whether to apply AUTO_INCREMENT |
 | `default` | `unknown` | Column default value (literal or raw SQL in parentheses) |
-| `transform` | `(raw) => any` | Value transform function when reading from DB |
+| `transform` | `(raw) => any` | **(deprecated)** Read-only value transform function |
+| `transformer` | `{ to, from }` | Bidirectional value transformer (write and read) |
 | `precision` | `number` | Decimal precision |
 | `scale` | `number` | Decimal scale |
 | `enumValues` | `string[]` | PostgreSQL ENUM value list |
