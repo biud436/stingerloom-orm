@@ -524,7 +524,7 @@ export class SchemaGenerator {
     }
     // Parenthesized strings → raw SQL expression
     if (typeof value === "string" && value.startsWith("(") && value.endsWith(")")) {
-      return ` DEFAULT ${value.slice(1, -1)}`;
+      return ` DEFAULT ${value}`;
     }
     // String literal — escape single quotes
     return ` DEFAULT '${value.replace(/'/g, "''")}'`;

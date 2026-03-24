@@ -144,7 +144,7 @@ export abstract class BaseEntityManager {
    */
   abstract deleteMany<T>(
     entity: ClazzType<T>,
-    ids: any[],
+    ids: unknown[],
   ): Promise<DeleteResult>;
 
   /**

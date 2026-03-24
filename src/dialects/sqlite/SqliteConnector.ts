@@ -8,6 +8,8 @@ import { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { IConnector } from "../../core/IConnector";
 import { IConnection } from "../IConnection";
 import { SqliteConnection } from "./SqliteConnection";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
 /**
  * SQLite connector implementation.
@@ -27,8 +29,10 @@ export class SqliteConnector extends IConnector {
       try {
         DatabaseConstructor = require("better-sqlite3");
       } catch {
-        throw new Error(
-          "better-sqlite3 패키지가 필요합니다. npm install better-sqlite3",
+        throw new OrmError(
+          OrmErrorCode.MISSING_DEPENDENCY,
+          "better-sqlite3 패키지가 필요합니다.",
+          "Run: npm install better-sqlite3",
         );
       }
 
@@ -42,7 +46,12 @@ export class SqliteConnector extends IConnector {
       // Enable foreign key constraints
       this.db.pragma("foreign_keys = ON");
     } catch (e: unknown) {
-      throw new Error(`Failed to connect to SQLite. ${e}`);
+      if (e instanceof OrmError) throw e;
+      throw new OrmError(
+        OrmErrorCode.CONNECTION_FAILED,
+        `Failed to connect to SQLite. ${e}`,
+        "Check that the database path is valid and writable",
+      );
     }
   }
 

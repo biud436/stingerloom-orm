@@ -27,8 +27,10 @@ export class PostgresConnector extends IConnector {
       try {
         PgPool = require("pg").Pool;
       } catch {
-        throw new Error(
-          "pg 패키지가 필요합니다. npm install pg",
+        throw new OrmError(
+          OrmErrorCode.MISSING_DEPENDENCY,
+          "pg 패키지가 필요합니다.",
+          "Run: npm install pg",
         );
       }
 
@@ -61,7 +63,12 @@ export class PostgresConnector extends IConnector {
         client.query(`SET search_path TO ${this.schema}`);
       });
     } catch (e: unknown) {
-      throw new Error(`PostgreSQL 연결에 실패했습니다. ${e}`);
+      if (e instanceof OrmError) throw e;
+      throw new OrmError(
+        OrmErrorCode.CONNECTION_FAILED,
+        `PostgreSQL 연결에 실패했습니다. ${e}`,
+        "Check that the PostgreSQL server is running and reachable",
+      );
     }
   }
 

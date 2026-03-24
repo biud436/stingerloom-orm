@@ -103,7 +103,7 @@ describe("Issue 4: @Column({ default })", () => {
   it("should generate DDL with DEFAULT expression (parenthesized)", () => {
     const sg = new SchemaGenerator({ dialect: "postgres" });
     const ddl = sg.generateCreateTableDDL(TestDefaultEntity);
-    expect(ddl).toContain("DEFAULT CURRENT_TIMESTAMP");
+    expect(ddl).toContain("DEFAULT (CURRENT_TIMESTAMP)");
   });
 
   it("should escape single quotes in default string values", () => {

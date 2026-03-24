@@ -187,7 +187,7 @@ export class BaseRepository<T> {
    * @param ids The primary key values of entities to delete.
    * @returns A promise that resolves to the number of affected rows.
    */
-  async deleteMany(ids: any[]): Promise<DeleteResult> {
+  async deleteMany(ids: unknown[]): Promise<DeleteResult> {
     return await this.em.deleteMany<T>(this.entity, ids);
   }
 

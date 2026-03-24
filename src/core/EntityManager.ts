@@ -688,6 +688,42 @@ export class EntityManager implements BaseEntityManager {
     const { select, orderBy, where, take, skip, groupBy, having } = findOption;
     const { limit } = findOption;
 
+    // Validate pagination values
+    if (skip !== undefined && skip < 0) {
+      throw new InvalidQueryError(
+        `"skip" must be a non-negative integer, but received ${skip}`,
+        "Ensure skip is >= 0",
+      );
+    }
+    if (take !== undefined && take < 0) {
+      throw new InvalidQueryError(
+        `"take" must be a non-negative integer, but received ${take}`,
+        "Ensure take is >= 0",
+      );
+    }
+    if (limit !== undefined) {
+      if (Array.isArray(limit)) {
+        const [off, cnt] = limit;
+        if (off < 0) {
+          throw new InvalidQueryError(
+            `"limit" offset must be non-negative, but received ${off}`,
+            "Ensure the first element of the limit tuple is >= 0",
+          );
+        }
+        if (cnt < 0) {
+          throw new InvalidQueryError(
+            `"limit" count must be non-negative, but received ${cnt}`,
+            "Ensure the second element of the limit tuple is >= 0",
+          );
+        }
+      } else if (typeof limit === "number" && limit < 0) {
+        throw new InvalidQueryError(
+          `"limit" must be non-negative, but received ${limit}`,
+          "Ensure limit is >= 0",
+        );
+      }
+    }
+
     const readNode = this.getReadNode(findOption.useMaster);
     const effectiveTimeout = findOption.timeout ?? this.defaultQueryTimeout;
 
@@ -886,17 +922,14 @@ export class EntityManager implements BaseEntityManager {
       qb.orderBy(orderByMap);
 
       if (Array.isArray(limit)) {
-        let [offset, count] = limit;
-        if (offset < 0) offset = 0;
-        if (count < 0) count = 0;
-        if (count === 0) count = 1;
-        if (take && take > 0) count = take;
+        const [offset, count] = limit;
+        const effectiveCount = (take && take > 0) ? take : (count === 0 ? 1 : count);
         if (this.isMySqlFamily()) qb.setDatabaseType("mysql");
-        qb.limit([offset, count]);
+        qb.limit([offset, effectiveCount]);
       } else if (skip !== undefined || (take !== undefined && !limit)) {
         // skip/take pagination → convert to limit tuple
-        const offset = Math.max(skip ?? 0, 0);
-        const count = Math.max(take ?? 0, 0) || undefined;
+        const offset = skip ?? 0;
+        const count = (take ?? 0) || undefined;
         if (count) {
           if (this.isMySqlFamily()) qb.setDatabaseType("mysql");
           qb.limit([offset, count]);
@@ -1828,8 +1861,8 @@ export class EntityManager implements BaseEntityManager {
     }
 
     return this.executeInTransaction(async (session) => {
-      await this.cascadeHandler.runHooks(entity, criteria as Partial<T>, "beforeDelete");
-      await this.eventEmitter.emit("beforeDelete", { entity, data: criteria as Partial<T> });
+      await this.cascadeHandler.runHooks(entity, criteria, "beforeDelete");
+      await this.eventEmitter.emit("beforeDelete", { entity, data: criteria });
       await this.notifySubscribers(entity, "beforeDelete", {
         entityClass: entity,
         criteria,
@@ -1880,8 +1913,8 @@ export class EntityManager implements BaseEntityManager {
         affected = queryResult?.rowCount ?? 0;
       }
 
-      await this.cascadeHandler.runHooks(entity, criteria as Partial<T>, "afterDelete");
-      await this.eventEmitter.emit("afterDelete", { entity, data: criteria as Partial<T> });
+      await this.cascadeHandler.runHooks(entity, criteria, "afterDelete");
+      await this.eventEmitter.emit("afterDelete", { entity, data: criteria });
       await this.notifySubscribers(entity, "afterDelete", {
         entityClass: entity,
         criteria,
@@ -1892,9 +1925,18 @@ export class EntityManager implements BaseEntityManager {
     });
   }
 
-  async deleteMany<T>(entity: ClazzType<T>, ids: any[]): Promise<DeleteResult> {
+  async deleteMany<T>(entity: ClazzType<T>, ids: unknown[]): Promise<DeleteResult> {
     if (ids.length === 0) {
       return { affected: 0 };
+    }
+
+    for (const id of ids) {
+      if (typeof id !== "string" && typeof id !== "number" && typeof id !== "bigint") {
+        throw new InvalidQueryError(
+          `deleteMany() expects scalar primary key values (string | number | bigint), but received ${typeof id}`,
+          "Pass only primitive ID values, e.g. deleteMany(User, [1, 2, 3])",
+        );
+      }
     }
 
     const metadata = this.resolver.resolveEntityMetadata(entity);
@@ -1911,7 +1953,7 @@ export class EntityManager implements BaseEntityManager {
 
     return this.executeInTransaction(async (session) => {
       const placeholders = join(
-        ids.map((id) => sql`${id}`),
+        ids.map((id) => sql`${id as string | number}`),
         ", ",
       );
 

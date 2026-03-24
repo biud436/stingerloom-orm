@@ -3750,7 +3750,7 @@ describe("Buffer Plugin", () => {
 
   describe("DependencyGraph cycle detection warning", () => {
     it("should log a warning when a cycle is detected", () => {
-      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+      const warnSpy = jest.spyOn(console, "log").mockImplementation(() => {});
 
       class CycleX {}
       class CycleY {}

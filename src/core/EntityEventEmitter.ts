@@ -17,7 +17,7 @@ export type EntityEventType =
  */
 export interface EntityEventPayload<T = any> {
   entity: new (...args: any[]) => T;
-  data: Partial<T>;
+  data: Partial<T> | Record<string, unknown>;
 }
 
 export type EntityEventListener<T = any> = (

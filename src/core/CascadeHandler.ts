@@ -25,7 +25,7 @@ export class CascadeHandler {
    */
   async runHooks<T>(
     entity: ClazzType<T>,
-    item: Partial<T>,
+    item: Partial<T> | WhereClause<T>,
     event: HookEvent,
   ): Promise<void> {
     const hooks = Reflect.getMetadata(HOOK_TOKEN, entity) as

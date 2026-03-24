@@ -1,7 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../../../utils";
+import { Logger } from "../../../utils/Logger";
 import { MANY_TO_ONE_TOKEN } from "../../../decorators/ManyToOne";
 import { ONE_TO_ONE_TOKEN } from "../../../decorators/OneToOne";
+
+const logger = new Logger("DependencyGraph");
 
 /**
  * Build a dependency graph from @ManyToOne and @OneToOne(joinColumn) metadata.
@@ -73,7 +76,7 @@ export function topologicalSort(entityClasses: ClazzType<any>[]): ClazzType<any>
   // Cycle detected — warn and fallback to original order
   if (sorted.length !== entityClasses.length) {
     const missing = entityClasses.filter(c => !sorted.includes(c)).map(c => c.name);
-    console.warn(`[WriteBuffer] Dependency cycle detected: [${missing.join(', ')}]. Using original order.`);
+    logger.warn(`Dependency cycle detected: [${missing.join(', ')}]. Using original order.`);
     return [...entityClasses];
   }
 

@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Logger } from "../utils";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * 단일 DB 노드의 연결 정보
@@ -41,11 +43,17 @@ export class ReplicationRouter {
 
   constructor(config: ReplicationConfig) {
     if (!config.master) {
-      throw new Error("Replication master configuration is required.");
+      throw new OrmError(
+        OrmErrorCode.VALIDATION_FAILED,
+        "Replication master configuration is required.",
+        "Provide a 'master' node in the replication config",
+      );
     }
     if (!config.slaves || config.slaves.length === 0) {
-      throw new Error(
+      throw new OrmError(
+        OrmErrorCode.VALIDATION_FAILED,
         "At least one slave is required for replication configuration.",
+        "Provide at least one 'slave' node in the replication config",
       );
     }
 

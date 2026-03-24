@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import type { WhereClause } from "../dialects/FindOption";
 import type { EntityManager } from "./EntityManager";
 
 /**
@@ -23,7 +24,7 @@ export interface UpdateEvent<T> {
  */
 export interface DeleteEvent<T> {
   entityClass: new (...args: any[]) => T;
-  criteria: any;
+  criteria: WhereClause<T>;
   manager: EntityManager;
 }
 

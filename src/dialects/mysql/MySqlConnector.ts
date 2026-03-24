@@ -28,8 +28,10 @@ export class MySqlConnector extends IConnector {
       try {
         mysql = require("mysql2");
       } catch {
-        throw new Error(
-          "mysql2 패키지가 필요합니다. npm install mysql2",
+        throw new OrmError(
+          OrmErrorCode.MISSING_DEPENDENCY,
+          "mysql2 패키지가 필요합니다.",
+          "Run: npm install mysql2",
         );
       }
 
@@ -65,7 +67,12 @@ export class MySqlConnector extends IConnector {
 
       this.pool = pool;
     } catch (e: unknown) {
-      throw new Error(`MySQL 연결에 실패했습니다. ${e}`);
+      if (e instanceof OrmError) throw e;
+      throw new OrmError(
+        OrmErrorCode.CONNECTION_FAILED,
+        `MySQL 연결에 실패했습니다. ${e}`,
+        "Check that the MySQL server is running and reachable",
+      );
     }
   }
 

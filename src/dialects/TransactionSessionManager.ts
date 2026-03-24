@@ -13,6 +13,8 @@ import { IQueryEngine } from "./IQueryEngine";
 import { TRANSACTION_ISOLATION_LEVEL } from "./IsolationLevel";
 import { Exception } from "../errors";
 import { ReplicationNodeConfig } from "./ReplicationRouter";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { MySqlConnector } from "./mysql/MySqlConnector";
 import { PostgresConnector } from "./postgres/PostgresConnector";
 import { validateSavepointName } from "../utils/validateSavepointName";
@@ -51,7 +53,11 @@ export class TransactionSessionManager extends IQueryEngine {
       } else if (dbType === "mysql") {
         this.dataSource = new MySqlDataSource(this.connection);
       } else {
-        throw new Error(`Unsupported database type: ${dbType}`);
+        throw new OrmError(
+          OrmErrorCode.UNSUPPORTED_DATABASE,
+          `Unsupported database type: ${dbType}`,
+          "Supported types: mysql, postgres, sqlite",
+        );
       }
 
       await this.dataSource.createConnection();
@@ -99,7 +105,11 @@ export class TransactionSessionManager extends IQueryEngine {
       } else if (dbType === "mysql" || dbType === "mariadb") {
         this.dataSource = new MySqlDataSource(this.connection);
       } else {
-        throw new Error(`Unsupported database type: ${dbType}`);
+        throw new OrmError(
+          OrmErrorCode.UNSUPPORTED_DATABASE,
+          `Unsupported database type: ${dbType}`,
+          "Supported types: mysql, postgres, sqlite",
+        );
       }
 
       await this.dataSource.createConnection();
