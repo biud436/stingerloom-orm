@@ -41,6 +41,7 @@ import { OptimisticLockError } from "../errors/OptimisticLockError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { DeleteWithoutConditionsError } from "../errors/DeleteWithoutConditionsError";
 import { NotSupportedDatabaseTypeError } from "../errors/NotSupportedDatabaseTypeError";
+import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../decorators/ComputedColumn";
 import {
   EntitySubscriber,
   InsertEvent,
@@ -1342,8 +1343,10 @@ export class EntityManager implements BaseEntityManager {
           manager: this,
         } as InsertEvent<T>);
 
+        const computedCols = this.getComputedColumnNames(entity);
         const insertableColumns = metadata.columns.filter(
           (column: ColumnMetadata) => {
+            if (computedCols.has(column.name!)) return false;
             const isAutoIncrement = column.options?.autoIncrement;
             const value = (item as any)[column.name!];
             if (isAutoIncrement && (value === null || value === undefined)) {
@@ -1358,7 +1361,11 @@ export class EntityManager implements BaseEntityManager {
         });
 
         const values = insertableColumns.map((column: ColumnMetadata) => {
-          return (item as any)[column.name!];
+          const rawValue = (item as any)[column.name!];
+          if (column.transformer?.to) {
+            return column.transformer.to(rawValue);
+          }
+          return rawValue;
         });
 
         // @CreateTimestamp / @UpdateTimestamp 자동 주입 (INSERT 시)
@@ -1547,15 +1554,21 @@ export class EntityManager implements BaseEntityManager {
       const pkColumnNames = new Set(
         pkColumns.map((col: ColumnMetadata) => col.name!),
       );
+      const computedColsForUpdate = this.getComputedColumnNames(entity);
       const updatableColumns = metadata.columns.filter(
         (column: ColumnMetadata) => {
+          if (computedColsForUpdate.has(column.name!)) return false;
           if (pkColumnNames.has(column.name!)) return false;
           if (versionColName && column.name === versionColName) return false;
           return (item as any)[column.name!] !== undefined;
         },
       );
       const updateMap = updatableColumns.map((column: ColumnMetadata) => {
-        return sql`${raw(this.wrap(column.name!))} = ${(item as any)[column.name!]}`;
+        let value = (item as any)[column.name!];
+        if (column.transformer?.to) {
+          value = column.transformer.to(value);
+        }
+        return sql`${raw(this.wrap(column.name!))} = ${value}`;
       });
 
       // @UpdateTimestamp 자동 주입
@@ -1768,8 +1781,10 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      const computedColsMany = this.getComputedColumnNames(entity);
       const insertableColumns = metadata.columns.filter(
         (column: ColumnMetadata) => {
+          if (computedColsMany.has(column.name!)) return false;
           const isAutoIncrement = column.options?.autoIncrement;
           if (!isAutoIncrement) return true;
           return items.every(
@@ -2219,7 +2234,9 @@ export class EntityManager implements BaseEntityManager {
       throw new PrimaryKeyNotFoundError(entity.name);
     }
 
+    const computedColsUpsert = this.getComputedColumnNames(entity);
     const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
+      if (computedColsUpsert.has(col.name!)) return false;
       const value = (data as any)[col.name!];
       if (
         col.options?.autoIncrement &&
@@ -2255,7 +2272,10 @@ export class EntityManager implements BaseEntityManager {
 
     await this.executeInTransaction(async (session) => {
       const columnValues = insertableColumns.map(
-        (col: ColumnMetadata) => (data as any)[col.name!],
+        (col: ColumnMetadata) => {
+          const rawValue = (data as any)[col.name!];
+          return col.transformer?.to ? col.transformer.to(rawValue) : rawValue;
+        },
       );
 
       const upsertSql = this.buildUpsertQuery(
@@ -2392,6 +2412,12 @@ export class EntityManager implements BaseEntityManager {
     return this.tenantStrategy.qualifyTable(tableName, tenant, (n) =>
       this.wrap(n),
     );
+  }
+
+  private getComputedColumnNames<T>(entity: ClazzType<T>): Set<string> {
+    const meta: ComputedColumnMetadata[] =
+      Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity?.prototype) ?? [];
+    return new Set(meta.map((m) => m.name));
   }
 
   private isMySqlFamily() {

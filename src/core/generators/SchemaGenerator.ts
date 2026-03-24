@@ -30,6 +30,7 @@ import {
 import { ColumnMetadata } from "../../scanner/ColumnScanner";
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
+import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 
 export type SchemaDialect = "mysql" | "postgres" | "sqlite";
 
@@ -84,6 +85,19 @@ export class SchemaGenerator {
     const columnDefs = columns.map((col) =>
       this.renderColumnDef(col, tableName, isCompositePk),
     );
+
+    // Computed/generated columns
+    const computedMeta: ComputedColumnMetadata[] =
+      Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity.prototype) ?? [];
+    for (const cc of computedMeta) {
+      const colType = cc.options.type ? this.castType(cc.options.type) : "TEXT";
+      const length = cc.options.length ? `(${cc.options.length})` : "";
+      const nullable = cc.options.nullable === false ? " NOT NULL" : "";
+      const storedOrVirtual = cc.options.stored ? "STORED" : "VIRTUAL";
+      columnDefs.push(
+        `${this.wrapId(cc.name)} ${colType}${length}${nullable} GENERATED ALWAYS AS (${cc.options.expression}) ${storedOrVirtual}`,
+      );
+    }
 
     // 복합 PK인 경우 PRIMARY KEY (col1, col2, ...) 제약 조건 추가
     if (isCompositePk) {

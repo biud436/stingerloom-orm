@@ -23,6 +23,7 @@ export type ColumnMetadata = {
   options?: ColumnOption;
   type: any;
   transform?: (raw: unknown) => any;
+  transformer?: import("../decorators/Column").ColumnTransformer;
 };
 
 @Service()

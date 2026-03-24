@@ -18,3 +18,4 @@ export * from "./Transactional";
 export * from "./OneToOne";
 export * from "./UniqueIndex";
 export * from "./InjectRepository";
+export * from "./ComputedColumn";

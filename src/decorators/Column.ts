@@ -39,6 +39,29 @@ export type ColumnType =
   | "bigint"
   | "longtext";
 
+/**
+ * Bidirectional column value transformer.
+ *
+ * - `to`: transforms the entity value before writing to the database (INSERT/UPDATE).
+ * - `from`: transforms the raw database value when reading into the entity.
+ *
+ * @example
+ * ```ts
+ * @Column({
+ *   type: "varchar",
+ *   transformer: {
+ *     to: (value: string) => value.toLowerCase(),
+ *     from: (raw: string) => raw.toUpperCase(),
+ *   },
+ * })
+ * email: string;
+ * ```
+ */
+export interface ColumnTransformer {
+  to: (entityValue: any) => any;
+  from: (dbValue: any) => any;
+}
+
 export interface ColumnOption {
   name?: string;
   length?: number;
@@ -54,8 +77,15 @@ export interface ColumnOption {
 
   /**
    * 데이터베이스에서 컬럼의 값을 가져올 때, 오브젝트에 매핑되는 컬럼의 타입을 변환할 수 있는 함수입니다.
+   * @deprecated Use `transformer` instead for bidirectional transforms.
    */
   transform?: <T = any>(raw: unknown) => T;
+
+  /**
+   * Bidirectional value transformer applied on read (from) and write (to).
+   * When both `transform` and `transformer` are set, `transformer.from` takes precedence.
+   */
+  transformer?: ColumnTransformer;
 
   /**
    * DB-level default value for the column.
@@ -183,6 +213,7 @@ export function Column(option?: ColumnOption): PropertyDecorator {
       options: resolvedOption,
       type: injectParam,
       transform: resolvedOption.transform,
+      transformer: resolvedOption.transformer,
     };
 
     const columns = Reflect.getMetadata(COLUMN_TOKEN, target);

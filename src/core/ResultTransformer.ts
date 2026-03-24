@@ -6,12 +6,14 @@ import { BaseResultTransformer } from "./BaseResultTransformer";
 import { deserializeEntity } from "./deserializer/DeserializeEntity";
 import {
   ENTITY_TOKEN,
+  COLUMN_TOKEN,
   MANY_TO_ONE_TOKEN,
   ManyToOneMetadata,
   ONE_TO_ONE_TOKEN,
   OneToOneMetadata,
 } from "../decorators";
 import { ClazzType } from "../utils";
+import { ColumnMetadata } from "../scanner/ColumnScanner";
 
 export type ForeignObject<T = any> = { [key: string]: T };
 
@@ -26,6 +28,33 @@ export class ResultTransformer implements BaseResultTransformer {
    */
   private hasNoResults(queryResult: QueryResult<any> | undefined): boolean {
     return !queryResult?.results || queryResult.results.length === 0;
+  }
+
+  /**
+   * Apply column-level `transformer.from()` (or legacy `transform`) to an entity instance.
+   */
+  private applyColumnTransforms<T>(entityClass: MyClassConstructor<T>, instance: T): T {
+    if (!instance) return instance;
+    const columns: ColumnMetadata[] | undefined = Reflect.getMetadata(
+      COLUMN_TOKEN,
+      entityClass.prototype ?? entityClass,
+    );
+    if (!columns) return instance;
+
+    for (const col of columns) {
+      const key = col.propertyKey ?? col.name;
+      if (!key) continue;
+      const raw = (instance as any)[key];
+      if (raw === undefined || raw === null) continue;
+
+      if (col.transformer?.from) {
+        (instance as any)[key] = col.transformer.from(raw);
+      } else if (col.transform) {
+        (instance as any)[key] = col.transform(raw);
+      }
+    }
+
+    return instance;
   }
 
   /**
@@ -91,7 +120,7 @@ export class ResultTransformer implements BaseResultTransformer {
 
     const r = result!;
 
-    return deserializeEntity(entityClass, r.results[0]);
+    return this.applyColumnTransforms(entityClass, deserializeEntity(entityClass, r.results[0]));
   }
 
   /**
@@ -107,7 +136,7 @@ export class ResultTransformer implements BaseResultTransformer {
 
     const r = result!;
 
-    return r.results.map((item) => deserializeEntity(entityClass, item));
+    return r.results.map((item) => this.applyColumnTransforms(entityClass, deserializeEntity(entityClass, item)));
   }
 
   /**
@@ -129,10 +158,10 @@ export class ResultTransformer implements BaseResultTransformer {
 
     const isSingleEntity = r.results.length === 1;
     if (isSingleEntity) {
-      return deserializeEntity(entityClass, r.results[0]);
+      return this.applyColumnTransforms(entityClass, deserializeEntity(entityClass, r.results[0]));
     }
 
-    return r.results.map((item) => deserializeEntity(entityClass, item));
+    return r.results.map((item) => this.applyColumnTransforms(entityClass, deserializeEntity(entityClass, item)));
   }
 
   /**
