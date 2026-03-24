@@ -7,7 +7,10 @@ export default defineConfig({
   base: "/stingerloom-orm/",
 
   head: [
-    ["link", { rel: "icon", type: "image/svg+xml", href: "/stingerloom-orm/logo.svg" }],
+    [
+      "link",
+      { rel: "icon", type: "image/svg+xml", href: "/stingerloom-orm/logo.svg" },
+    ],
   ],
 
   themeConfig: {
@@ -71,9 +74,9 @@ export default defineConfig({
         items: [
           { text: "Migrations", link: "/migrations" },
           { text: "Migration CLI", link: "/cli" },
-          { text: "Database Seeding", link: "/seeding" },
-          { text: "Database Introspection", link: "/introspection" },
-          { text: "Prisma Import", link: "/prisma-import" },
+          // { text: "Database Seeding", link: "/seeding" },
+          // { text: "Database Introspection", link: "/introspection" },
+          // { text: "Prisma Import", link: "/prisma-import" },
         ],
       },
       {
@@ -97,9 +100,7 @@ export default defineConfig({
       {
         text: "NestJS Integration",
         collapsed: true,
-        items: [
-          { text: "Module Setup", link: "/nestjs" },
-        ],
+        items: [{ text: "Module Setup", link: "/nestjs" }],
       },
       {
         text: "Deployment",
