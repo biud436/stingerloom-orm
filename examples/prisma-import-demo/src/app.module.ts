@@ -19,7 +19,7 @@ import { OrdersModule } from "./orders/orders.module";
       password: process.env.DB_PASSWORD || "password",
       database: process.env.DB_NAME || "ecommerce_db",
       entities: [Customer, Product, Order, OrderItem],
-      synchronize: true,
+      synchronize: "safe",
       logging: true,
     }),
     CustomersModule,
