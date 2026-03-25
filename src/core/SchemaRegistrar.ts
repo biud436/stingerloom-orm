@@ -302,10 +302,11 @@ export class SchemaRegistrar {
   }
 
   /**
-   * ColumnChange에서 ADD COLUMN용 타입 정의 문자열을 생성합니다.
-   * 예: "VARCHAR(255) NULL", "INT NOT NULL"
+   * ColumnChange에서 순수 타입 문자열만 생성합니다.
+   * ENUM 값, 길이, precision/scale을 포함합니다.
+   * 예: "VARCHAR(255)", "ENUM('a','b')", "DECIMAL(10,2)"
    */
-  private buildAddColumnTypeDef(col: ColumnChange): string {
+  private buildColumnTypeExpr(col: ColumnChange): string {
     let type = col.columnType ?? "VARCHAR(255)";
 
     // ENUM 타입의 경우, enumValues로 값 목록을 포함
@@ -331,6 +332,16 @@ export class SchemaRegistrar {
       type = `${type}(${col.expectedPrecision}${scale})`;
     }
 
+    return type;
+  }
+
+  /**
+   * ColumnChange에서 ADD COLUMN용 타입 정의 문자열을 생성합니다.
+   * 예: "VARCHAR(255) NULL", "INT NOT NULL"
+   */
+  private buildAddColumnTypeDef(col: ColumnChange): string {
+    const type = this.buildColumnTypeExpr(col);
+
     // 새 컬럼은 기본적으로 NULL 허용 (기존 행에 값이 없으므로)
     const nullable = col.nullable === false ? "NOT NULL DEFAULT ''" : "NULL";
     return `${type} ${nullable}`;
@@ -344,33 +355,25 @@ export class SchemaRegistrar {
     col: ColumnChange,
     dialect: SchemaDialect,
   ): string | null {
-    const typeStr = col.columnType ?? "VARCHAR(255)";
+    const typeExpr = this.buildColumnTypeExpr(col);
     const tableName = this.ctx.wrapTable(col.tableName);
     const columnName = this.ctx.wrap(col.columnName);
 
     if (dialect === "sqlite") {
       this.logger.warn(
         `[sync] SQLite does not support ALTER COLUMN TYPE for ${col.tableName}.${col.columnName} ` +
-          `(${col.currentType} → ${typeStr}). Skipping.`,
+          `(${col.currentType} → ${typeExpr}). Skipping.`,
       );
       return null;
     }
 
     if (dialect === "mysql") {
       const nullable = col.nullable === false ? "NOT NULL" : "NULL";
-      const isENUM = col.columnType?.toUpperCase().startsWith("ENUM");
-      let typeExpr = typeStr;
-      if (isENUM && col.enumValues && col.enumValues.length > 0) {
-        const values = col.enumValues
-          .map((v: string) => `'${v.replace(/'/g, "''")}'`)
-          .join(",");
-        typeExpr = `ENUM(${values})`;
-      }
       return `ALTER TABLE ${tableName} MODIFY COLUMN ${columnName} ${typeExpr} ${nullable}`;
     }
 
     // PostgreSQL
-    return `ALTER TABLE ${tableName} ALTER COLUMN ${columnName} TYPE ${typeStr}`;
+    return `ALTER TABLE ${tableName} ALTER COLUMN ${columnName} TYPE ${typeExpr}`;
   }
 
   /**
