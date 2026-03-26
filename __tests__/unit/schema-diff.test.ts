@@ -525,7 +525,7 @@ describe("SchemaDiffMigrationGenerator", () => {
   });
 
   describe("generate() — import statement", () => {
-    it("should import from stingerloom-orm", () => {
+    it("should import from @stingerloom/orm", () => {
       const diff: SchemaDiffResult = {
         addTables: [],
         dropTables: [],
@@ -537,7 +537,7 @@ describe("SchemaDiffMigrationGenerator", () => {
       const content = generator.generate(diff, "mysql");
 
       expect(content).toContain(
-        'import { Migration, MigrationContext } from "stingerloom-orm"',
+        'import { Migration, MigrationContext } from "@stingerloom/orm"',
       );
     });
   });

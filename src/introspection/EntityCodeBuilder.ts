@@ -12,6 +12,7 @@ export interface DbColumn {
   numeric_precision?: number | null;
   numeric_scale?: number | null;
   column_default?: string | null;
+  extra?: string | null;
 }
 
 /**
@@ -71,6 +72,9 @@ export class EntityCodeBuilder {
     const usedDecorators = new Set<string>(["Entity"]);
     const lines: string[] = [];
 
+    // Track referenced class names for FK imports
+    const referencedClasses = new Set<string>();
+
     // Build property lines first to know which decorators we need
     const propertyBlocks: string[] = [];
 
@@ -83,12 +87,22 @@ export class EntityCodeBuilder {
       const tsType = IntrospectionTypeMapper.toTsType(columnType);
 
       if (isPk) {
-        usedDecorators.add("PrimaryGeneratedColumn");
-        const block = [
-          "  @PrimaryGeneratedColumn()",
-          `  ${this.columnNameToPropertyName(col.column_name)}!: ${tsType};`,
-        ];
-        propertyBlocks.push(block.join("\n"));
+        const isGenerated = this.isGeneratedPrimaryKey(col);
+        if (isGenerated) {
+          usedDecorators.add("PrimaryGeneratedColumn");
+          const block = [
+            "  @PrimaryGeneratedColumn()",
+            `  ${this.columnNameToPropertyName(col.column_name)}!: ${tsType};`,
+          ];
+          propertyBlocks.push(block.join("\n"));
+        } else {
+          usedDecorators.add("PrimaryColumn");
+          const block = [
+            "  @PrimaryColumn()",
+            `  ${this.columnNameToPropertyName(col.column_name)}!: ${tsType};`,
+          ];
+          propertyBlocks.push(block.join("\n"));
+        }
       } else {
         usedDecorators.add("Column");
         const opts = this.buildColumnOptions(col, columnType);
@@ -104,9 +118,10 @@ export class EntityCodeBuilder {
     for (const fk of fks) {
       usedDecorators.add("ManyToOne");
       const refClassName = this.tableNameToClassName(fk.referenced_table);
+      referencedClasses.add(refClassName);
       const propertyName = this.fkToPropertyName(fk.column_name);
       const block = [
-        `  @ManyToOne(() => ${refClassName}, { joinColumn: "${fk.column_name}" })`,
+        `  @ManyToOne(() => ${refClassName}, (entity: any) => entity.${propertyName}, { joinColumn: "${fk.column_name}" })`,
         `  ${propertyName}!: ${refClassName};`,
       ];
       propertyBlocks.push(block.join("\n"));
@@ -117,10 +132,17 @@ export class EntityCodeBuilder {
     lines.push(
       `import { ${sortedDecorators.join(", ")} } from "${this.importPath}";`,
     );
+
+    // Emit imports for referenced entity classes (FK targets)
+    for (const refClass of Array.from(referencedClasses).sort()) {
+      const refFileName = this.classNameToFileName(refClass);
+      lines.push(`import { ${refClass} } from "./${refFileName.replace(/\.ts$/, "")}";`);
+    }
+
     lines.push("");
 
     // Class declaration
-    lines.push("@Entity()");
+    lines.push(`@Entity({ name: "${tableName}" })`);
     lines.push(`export class ${className} {`);
     lines.push(propertyBlocks.join("\n\n"));
     lines.push("}");
@@ -171,6 +193,42 @@ export class EntityCodeBuilder {
   private fkToPropertyName(columnName: string): string {
     const name = columnName.replace(/_id$/i, "");
     return this.columnNameToPropertyName(name);
+  }
+
+  /**
+   * Determine whether a PK column is auto-generated.
+   * Checks column_default for 'nextval' (PostgreSQL sequences),
+   * data_type for 'serial'/'bigserial', and extra for 'auto_increment' (MySQL).
+   */
+  private isGeneratedPrimaryKey(col: DbColumn): boolean {
+    const dataTypeLower = col.data_type.toLowerCase();
+    if (dataTypeLower === "serial" || dataTypeLower === "bigserial") {
+      return true;
+    }
+
+    const defaultVal = (col.column_default ?? "").toLowerCase();
+    if (defaultVal.includes("nextval") || defaultVal.includes("auto_increment")) {
+      return true;
+    }
+
+    const extra = (col.extra ?? "").toLowerCase();
+    if (extra.includes("auto_increment")) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Convert PascalCase class name to kebab-case file name.
+   * e.g. "UserProfile" -> "user-profile.entity.ts"
+   */
+  private classNameToFileName(className: string): string {
+    const kebab = className
+      .replace(/([a-z])([A-Z])/g, "$1-$2")
+      .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
+      .toLowerCase();
+    return `${kebab}.entity.ts`;
   }
 
   /**

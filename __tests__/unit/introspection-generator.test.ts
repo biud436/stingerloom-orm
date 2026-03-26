@@ -140,8 +140,8 @@ describe("EntityCodeBuilder", () => {
     });
   });
 
-  describe("build() — simple table", () => {
-    it("should generate entity code with PK and columns", () => {
+  describe("build() — simple table (non-generated PK)", () => {
+    it("should generate entity code with PrimaryColumn for non-generated PK", () => {
       const columns: DbColumn[] = [
         { column_name: "id", data_type: "integer", is_nullable: "NO" },
         {
@@ -161,14 +161,15 @@ describe("EntityCodeBuilder", () => {
 
       const code = builder.build("users", columns, ["id"], [], "postgres");
 
-      // Should contain import
-      expect(code).toContain('import { Column, Entity, PrimaryGeneratedColumn } from "@stingerloom/orm"');
-      // Should contain @Entity decorator
-      expect(code).toContain("@Entity()");
+      // Should contain import with PrimaryColumn (not PrimaryGeneratedColumn)
+      expect(code).toContain('import { Column, Entity, PrimaryColumn } from "@stingerloom/orm"');
+      // Should contain @Entity with table name
+      expect(code).toContain('@Entity({ name: "users" })');
       // Should contain class declaration
       expect(code).toContain("export class User {");
-      // Should contain @PrimaryGeneratedColumn
-      expect(code).toContain("@PrimaryGeneratedColumn()");
+      // Should contain @PrimaryColumn (not @PrimaryGeneratedColumn)
+      expect(code).toContain("@PrimaryColumn()");
+      expect(code).not.toContain("@PrimaryGeneratedColumn()");
       expect(code).toContain("id!: number;");
       // Should contain @Column with type
       expect(code).toContain('@Column({ type: "varchar", length: 255 })');
@@ -182,8 +183,49 @@ describe("EntityCodeBuilder", () => {
     });
   });
 
+  describe("build() — generated PK (PostgreSQL nextval)", () => {
+    it("should use @PrimaryGeneratedColumn when column_default has nextval", () => {
+      const columns: DbColumn[] = [
+        { column_name: "id", data_type: "integer", is_nullable: "NO", column_default: "nextval('users_id_seq'::regclass)" },
+        { column_name: "name", data_type: "character varying", is_nullable: "NO", character_maximum_length: 255 },
+      ];
+
+      const code = builder.build("users", columns, ["id"], [], "postgres");
+
+      expect(code).toContain("@PrimaryGeneratedColumn()");
+      expect(code).not.toContain("@PrimaryColumn()");
+      expect(code).toContain('import { Column, Entity, PrimaryGeneratedColumn } from "@stingerloom/orm"');
+    });
+  });
+
+  describe("build() — generated PK (serial data_type)", () => {
+    it("should use @PrimaryGeneratedColumn when data_type is serial", () => {
+      const columns: DbColumn[] = [
+        { column_name: "id", data_type: "serial", is_nullable: "NO" },
+      ];
+
+      const code = builder.build("items", columns, ["id"], [], "postgres");
+
+      expect(code).toContain("@PrimaryGeneratedColumn()");
+      expect(code).not.toContain("@PrimaryColumn()");
+    });
+  });
+
+  describe("build() — generated PK (MySQL auto_increment)", () => {
+    it("should use @PrimaryGeneratedColumn when extra has auto_increment", () => {
+      const columns: DbColumn[] = [
+        { column_name: "id", data_type: "int", is_nullable: "NO", extra: "auto_increment" },
+      ];
+
+      const code = builder.build("items", columns, ["id"], [], "mysql");
+
+      expect(code).toContain("@PrimaryGeneratedColumn()");
+      expect(code).not.toContain("@PrimaryColumn()");
+    });
+  });
+
   describe("build() — FK generates @ManyToOne", () => {
-    it("should produce @ManyToOne for foreign key columns", () => {
+    it("should produce @ManyToOne with correct 3-arg signature and import for FK columns", () => {
       const columns: DbColumn[] = [
         { column_name: "id", data_type: "integer", is_nullable: "NO" },
         { column_name: "title", data_type: "varchar", is_nullable: "NO", character_maximum_length: 255 },
@@ -204,9 +246,13 @@ describe("EntityCodeBuilder", () => {
       expect(code).toContain("ManyToOne");
       // Should NOT contain author_id as a plain @Column
       expect(code).not.toMatch(/@Column\([^)]*\)\s*\n\s*authorId/);
-      // Should contain ManyToOne relation
-      expect(code).toContain('@ManyToOne(() => User, { joinColumn: "author_id" })');
+      // Should contain ManyToOne relation with correct 3-arg signature
+      expect(code).toContain('@ManyToOne(() => User, (entity: any) => entity.author, { joinColumn: "author_id" })');
       expect(code).toContain("author!: User;");
+      // Should contain import for referenced User class
+      expect(code).toContain('import { User } from "./user.entity";');
+      // Should contain @Entity with table name
+      expect(code).toContain('@Entity({ name: "posts" })');
     });
   });
 
@@ -221,6 +267,7 @@ describe("EntityCodeBuilder", () => {
 
       expect(code).toContain('@Column({ type: "enum" })');
       expect(code).toContain("status!: string;");
+      expect(code).toContain('@Entity({ name: "orders" })');
     });
 
     it("should detect MySQL ENUM type", () => {
@@ -232,6 +279,7 @@ describe("EntityCodeBuilder", () => {
       const code = builder.build("users", columns, ["id"], [], "mysql");
 
       expect(code).toContain('@Column({ type: "enum" })');
+      expect(code).toContain('@Entity({ name: "users" })');
     });
   });
 

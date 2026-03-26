@@ -3,7 +3,7 @@ import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 
-export type DatabaseType = "mysql" | "postgresql";
+export type DatabaseType = "mysql" | "postgresql" | "sqlite";
 export type SubqueryType = "SELECT" | "FROM" | "WHERE" | "HAVING";
 
 /**
@@ -16,6 +16,8 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   private sqlQuerySegments: Sql[] = [];
   private dbType: DatabaseType = "mysql"; // 기본값
   private isSubquery: boolean = false;
+  private hasWhereClause: boolean = false;
+  private cteClauses: Array<{ name: string; sql: Sql; recursive: boolean }> = [];
 
   /**
    * Create a new instance of the RawQueryBuilder.
@@ -97,6 +99,7 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
     } else {
       this.sqlQuerySegments.push(sql`WHERE ${join(conditions, " AND ")}`);
     }
+    this.hasWhereClause = true;
     return this;
   }
 
@@ -131,9 +134,11 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    */
   whereIn(column: string, values: any[]): RawQueryBuilder {
     const valueSqls = values.map((v) => sql`${v}`);
+    const keyword = this.hasWhereClause ? "AND" : "WHERE";
     this.sqlQuerySegments.push(
-      sql`AND ${raw(column)} IN (${join(valueSqls, ", ")})`,
+      sql`${raw(keyword)} ${raw(column)} IN (${join(valueSqls, ", ")})`,
     );
+    this.hasWhereClause = true;
     return this;
   }
 
@@ -145,9 +150,11 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    */
   whereNotIn(column: string, values: any[]): RawQueryBuilder {
     const valueSqls = values.map((v) => sql`${v}`);
+    const keyword = this.hasWhereClause ? "AND" : "WHERE";
     this.sqlQuerySegments.push(
-      sql`AND ${raw(column)} NOT IN (${join(valueSqls, ", ")})`,
+      sql`${raw(keyword)} ${raw(column)} NOT IN (${join(valueSqls, ", ")})`,
     );
+    this.hasWhereClause = true;
     return this;
   }
 
@@ -157,7 +164,9 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    * @returns The current instance of the query builder.
    */
   whereNull(column: string): RawQueryBuilder {
-    this.sqlQuerySegments.push(sql`AND ${raw(column)} IS NULL`);
+    const keyword = this.hasWhereClause ? "AND" : "WHERE";
+    this.sqlQuerySegments.push(sql`${raw(keyword)} ${raw(column)} IS NULL`);
+    this.hasWhereClause = true;
     return this;
   }
 
@@ -167,7 +176,9 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    * @returns The current instance of the query builder.
    */
   whereNotNull(column: string): RawQueryBuilder {
-    this.sqlQuerySegments.push(sql`AND ${raw(column)} IS NOT NULL`);
+    const keyword = this.hasWhereClause ? "AND" : "WHERE";
+    this.sqlQuerySegments.push(sql`${raw(keyword)} ${raw(column)} IS NOT NULL`);
+    this.hasWhereClause = true;
     return this;
   }
 
@@ -179,9 +190,11 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    * @returns The current instance of the query builder.
    */
   whereBetween(column: string, min: any, max: any): RawQueryBuilder {
+    const keyword = this.hasWhereClause ? "AND" : "WHERE";
     this.sqlQuerySegments.push(
-      sql`AND ${raw(column)} BETWEEN ${min} AND ${max}`,
+      sql`${raw(keyword)} ${raw(column)} BETWEEN ${min} AND ${max}`,
     );
+    this.hasWhereClause = true;
     return this;
   }
 
@@ -423,6 +436,12 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    * Adds a SELECT DISTINCT ON clause (PostgreSQL only).
    */
   selectDistinctOn(distinctColumns: string[], selectColumns: string[] | "*"): RawQueryBuilder {
+    if (this.dbType !== "postgresql") {
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        `selectDistinctOn() is only supported on PostgreSQL. Current dialect: ${this.dbType}`,
+      );
+    }
     if (distinctColumns.length === 0) {
       throw new OrmError(
         OrmErrorCode.INVALID_QUERY,
@@ -451,36 +470,59 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
 
   /**
    * Adds a CTE (Common Table Expression / WITH clause).
+   * Multiple calls are collected and rendered as a single WITH clause.
    * @param name - CTE name
    * @param subquery - A built Sql object or a callback that receives a new RawQueryBuilder
    */
   with(name: string, subquery: Sql | ((qb: RawQueryBuilder) => RawQueryBuilder)): RawQueryBuilder {
     let subSql: Sql;
     if (typeof subquery === "function") {
-      const sub = new RawQueryBuilder();
+      // #180: Use factory subquery() if available, otherwise fallback to new instance
+      // #175: inherit parent dialect
+      const sub = this.createSubBuilder();
       subSql = subquery(sub).build();
     } else {
       subSql = subquery;
     }
-    this.sqlQuerySegments.push(sql`WITH ${raw(name)} AS (${subSql})`);
+    this.cteClauses.push({ name, sql: subSql, recursive: false });
     return this;
   }
 
   /**
    * Adds a recursive CTE (WITH RECURSIVE clause).
+   * Multiple calls are collected and rendered as a single WITH RECURSIVE clause.
    * @param name - CTE name
    * @param subquery - A built Sql object or a callback that receives a new RawQueryBuilder
    */
   withRecursive(name: string, subquery: Sql | ((qb: RawQueryBuilder) => RawQueryBuilder)): RawQueryBuilder {
     let subSql: Sql;
     if (typeof subquery === "function") {
-      const sub = new RawQueryBuilder();
+      const sub = this.createSubBuilder();
       subSql = subquery(sub).build();
     } else {
       subSql = subquery;
     }
-    this.sqlQuerySegments.push(sql`WITH RECURSIVE ${raw(name)} AS (${subSql})`);
+    this.cteClauses.push({ name, sql: subSql, recursive: true });
     return this;
+  }
+
+  /**
+   * Creates a sub-builder for CTE callbacks.
+   * Uses RawQueryBuilderFactory.subquery() if available, inherits parent dbType.
+   */
+  private createSubBuilder(): RawQueryBuilder {
+    let sub: RawQueryBuilder;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { RawQueryBuilderFactory } = require("./RawQueryBuilderFactory");
+      sub = RawQueryBuilderFactory.subquery() as RawQueryBuilder;
+    } catch {
+      sub = new RawQueryBuilder();
+    }
+    if (sub.setDatabaseType) {
+      sub.setDatabaseType(this.dbType);
+    }
+    return sub;
   }
 
   /**
@@ -511,6 +553,19 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    * @returns The SQL object representing the query.
    */
   build(): Sql {
-    return join(this.sqlQuerySegments, " ");
+    const segments: Sql[] = [];
+
+    // #174: Render all CTEs as a single WITH clause
+    if (this.cteClauses.length > 0) {
+      const hasRecursive = this.cteClauses.some((c) => c.recursive);
+      const keyword = hasRecursive ? "WITH RECURSIVE" : "WITH";
+      const cteParts = this.cteClauses.map(
+        (c) => sql`${raw(c.name)} AS (${c.sql})`,
+      );
+      segments.push(sql`${raw(keyword)} ${join(cteParts, ", ")}`);
+    }
+
+    segments.push(...this.sqlQuerySegments);
+    return join(segments, " ");
   }
 }

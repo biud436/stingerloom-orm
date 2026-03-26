@@ -152,7 +152,7 @@ export class SchemaRegistrar {
         // 외래키를 생성합니다.
         await this.registerForeignKeys(TargetEntity, tableName);
 
-        // 인덱스를 생성합니다.
+        // 인덱스를 생성합��다.
         await this.registerIndex(TargetEntity, tableName);
 
         // 복합 유니크 인덱스를 생성합니다.
@@ -173,7 +173,7 @@ export class SchemaRegistrar {
   }
 
   /**
-   * 이미 존재하는 테이블에 대해 SchemaDiff를 실행하여 엔티티 변경사항을 동기화합니다.
+   * 이미 존���하는 테이블에 대해 SchemaDiff를 실행하여 엔티티 변경사항을 동기화합니다.
    */
   private async syncExistingTables(
     existingEntities: ClazzType<any>[],
@@ -265,7 +265,7 @@ export class SchemaRegistrar {
       }
     }
 
-    // 3. DROP COLUMNS (true만 실행, safe는 건너뜀)
+    // 3. DROP COLUMNS (true만 실행, safe는 건��뜀)
     if (isFull || isDryRun) {
       for (const col of diff.dropColumns) {
         // FK 컬럼은 DROP에서 제외 (2패스에서 관리됨)
@@ -302,7 +302,7 @@ export class SchemaRegistrar {
   }
 
   /**
-   * ColumnChange에서 순수 타입 문자열만 생성합니다.
+   * ColumnChange에서 순수 타입 문자열만 생��합니다.
    * ENUM 값, 길이, precision/scale을 포함합니다.
    * 예: "VARCHAR(255)", "ENUM('a','b')", "DECIMAL(10,2)"
    */
@@ -323,7 +323,7 @@ export class SchemaRegistrar {
       type = `${type}(${col.expectedLength})`;
     }
 
-    // 정밀도/스케일이 지정되어 있으면 추가
+    // 정밀도/스케일이 지정되어 있으면 추���
     if (col.expectedPrecision && !type.includes("(")) {
       const scale =
         col.expectedScale !== undefined && col.expectedScale !== null
@@ -337,19 +337,45 @@ export class SchemaRegistrar {
 
   /**
    * ColumnChange에서 ADD COLUMN용 타입 정의 문자열을 생성합니다.
-   * 예: "VARCHAR(255) NULL", "INT NOT NULL"
+   * 예: "VARCHAR(255) NULL", "INT NOT NULL DEFAULT 0"
+   *
+   * For non-nullable columns being backfilled into existing rows,
+   * a type-appropriate default is used (#177):
+   *   - String types (VARCHAR, TEXT, CHAR, LONGTEXT) -> DEFAULT ''
+   *   - Numeric types (INT, BIGINT, FLOAT, etc.) -> DEFAULT 0
+   *   - Boolean -> DEFAULT FALSE (pg/sqlite) or DEFAULT 0 (mysql)
+   *   - Datetime/timestamp/date -> forced NULL (no safe default)
+   *   - Other types (JSON, BLOB, etc.) -> forced NULL (no safe default)
    */
   private buildAddColumnTypeDef(col: ColumnChange): string {
     const type = this.buildColumnTypeExpr(col);
 
-    // 새 컬럼은 기본적으로 NULL 허용 (기존 행에 값이 없으므로)
-    const nullable = col.nullable === false ? "NOT NULL DEFAULT ''" : "NULL";
-    return `${type} ${nullable}`;
+    if (col.nullable !== false) {
+      return `${type} NULL`;
+    }
+
+    // Type-appropriate default for NOT NULL backfill (#177)
+    const upperType = type.toUpperCase();
+
+    if (/^(VARCHAR|TEXT|CHAR|LONGTEXT|MEDIUMTEXT|TINYTEXT|ENUM)/.test(upperType)) {
+      return `${type} NOT NULL DEFAULT ''`;
+    }
+    if (/^(INT|BIGINT|FLOAT|DOUBLE|DECIMAL|NUMERIC|REAL|SMALLINT|TINYINT|SERIAL|INTEGER|MEDIUMINT)/.test(upperType)) {
+      return `${type} NOT NULL DEFAULT 0`;
+    }
+    if (/^(BOOL|BOOLEAN)/.test(upperType)) {
+      const defaultVal = this.ctx.isMySqlFamily() ? "0" : "FALSE";
+      return `${type} NOT NULL DEFAULT ${defaultVal}`;
+    }
+
+    // Datetime/timestamp/date and other types (JSON, JSONB, BLOB, BYTEA, ARRAY, etc.)
+    // cannot have a safe universal default — force nullable for existing rows
+    return `${type} NULL`;
   }
 
   /**
    * ALTER COLUMN DDL을 다이얼렉트별로 생성합니다.
-   * SQLite는 ALTER COLUMN TYPE을 지원하지 않으므로 null을 반환합니다.
+   * SQLite는 ALTER COLUMN TYPE을 지원하지 않으므로 null을 반환���니다.
    */
   private buildAlterColumnDDL(
     col: ColumnChange,
@@ -394,7 +420,32 @@ export class SchemaRegistrar {
   }
 
   /**
-   * @UniqueIndex 데코레이터로 선언된 복합 유니크 인덱스를 등록합니다.
+   * Resolves the SQL column type for the primary key of an entity.
+   * Falls back to the driver's castType("int") if no PK metadata is found.
+   * Used to derive correct join column types for ManyToMany tables (#178).
+   */
+  private resolvePkColumnType(entityClass: ClazzType<any>): string {
+    const driver = this.ctx.getDriver();
+    const columns = (Reflect.getMetadata(
+      COLUMN_TOKEN,
+      entityClass.prototype,
+    ) ?? []) as ColumnMetadata[];
+    const pkCol = columns.find((c) => c.options?.primary);
+    if (!pkCol || !pkCol.options?.type || !driver) {
+      return driver ? driver.castType("int") : "INT";
+    }
+    let sqlType = driver.castType(pkCol.options.type);
+    // Append length for varchar/char PK types
+    const colType = pkCol.options.type;
+    if (pkCol.options.length && pkCol.options.length > 0 && !sqlType.includes("(")
+        && (colType === "varchar" || colType === "char")) {
+      sqlType = `${sqlType}(${pkCol.options.length})`;
+    }
+    return sqlType;
+  }
+
+  /**
+   * @UniqueIndex 데코레이터로 선언된 복합 유니��� 인덱스를 등록��니다.
    */
   async registerUniqueIndexes(TargetEntity: ClazzType<any>, tableName: string) {
     const uniqueIndexes = Reflect.getMetadata(
@@ -405,9 +456,24 @@ export class SchemaRegistrar {
     if (!uniqueIndexes || uniqueIndexes.length === 0) return;
 
     const driver = this.ctx.getDriver();
+
+    // Build property-to-column name map to resolve @UniqueIndex() property keys (#176)
+    const colMeta = (Reflect.getMetadata(
+      COLUMN_TOKEN,
+      TargetEntity.prototype,
+    ) ?? []) as ColumnMetadata[];
+    const propColMap = new Map<string, string>();
+    for (const col of colMeta) {
+      if (col.propertyKey && col.name) {
+        propColMap.set(col.propertyKey, col.name);
+      }
+    }
+
     for (const uq of uniqueIndexes) {
+      // Resolve property keys to actual DB column names (#176)
+      const resolvedColumns = uq.columns.map((col) => propColMap.get(col) ?? col);
       const indexName =
-        uq.name ?? this.namingStrategy.uniqueIndexName(tableName, uq.columns);
+        uq.name ?? this.namingStrategy.uniqueIndexName(tableName, resolvedColumns);
 
       // 이미 존재하는지 확인
       const indexes = (await driver?.getIndexes(tableName)) as any[];
@@ -422,14 +488,15 @@ export class SchemaRegistrar {
       }
 
       if (!isExist) {
-        await driver?.addCompositeUniqueIndex(tableName, uq.columns, indexName);
+        await driver?.addCompositeUniqueIndex(tableName, resolvedColumns, indexName);
       }
     }
   }
 
   /**
    * ManyToMany 중간 테이블과 FK 제약을 생성합니다.
-   * joinTable 소유측 엔티티만 처리하며, 중복은 Set으로 방지합니다.
+   * joinTable 소유측 엔티티만 처리하며, 중복은 Set으로 방지��니다.
+   * Join column types are derived from the actual PK types of the referenced entities (#178).
    */
   async registerManyToManyJoinTables(entities: ClazzType<any>[]) {
     const processedTables = new Set<string>();
@@ -469,7 +536,10 @@ export class SchemaRegistrar {
           const wJoinTable = this.ctx.wrap(joinTableName);
           const wJoinCol = this.ctx.wrap(joinColumn);
           const wInvCol = this.ctx.wrap(inverseJoinColumn);
-          let ddl = `CREATE TABLE IF NOT EXISTS ${wJoinTable} (${wJoinCol} INT NOT NULL, ${wInvCol} INT NOT NULL, PRIMARY KEY (${wJoinCol}, ${wInvCol}))`;
+          // Derive join column types from actual PK types (#178)
+          const ownerPkType = this.resolvePkColumnType(entity);
+          const relatedPkType = this.resolvePkColumnType(relatedEntity);
+          let ddl = `CREATE TABLE IF NOT EXISTS ${wJoinTable} (${wJoinCol} ${ownerPkType} NOT NULL, ${wInvCol} ${relatedPkType} NOT NULL, PRIMARY KEY (${wJoinCol}, ${wInvCol}))`;
           if (this.ctx.isMySqlFamily()) ddl += " ENGINE=InnoDB";
           await driver?.executeRaw(ddl);
         }
@@ -566,7 +636,7 @@ export class SchemaRegistrar {
         const mappingTableName =
           mappingTableMetadata.name || this.ctx.getNameStrategy(mappingEntity);
 
-        // joinColumn 컬럼이 테이블에 없으면 먼저 추가합니다.
+        // joinColumn 컬럼이 테이블에 ���으면 먼저 추가합니다.
         if (driver) {
           const columnExists = await driver.hasColumn(tableName, joinColumn);
           if (!columnExists) {
@@ -575,7 +645,7 @@ export class SchemaRegistrar {
           }
         }
 
-        // FK 제약이 이미 존재하면 중복 추가를 건너뜁니다.
+        // FK 제약이 이미 존재하면 중복 추가를 건���뜁니다.
         if (driver) {
           const fkName = this.namingStrategy.foreignKeyName(
             tableName,
@@ -623,7 +693,7 @@ export class SchemaRegistrar {
         throw new PrimaryKeyNotFoundError(RelatedEntity.name);
       }
 
-      // joinColumn 컬럼이 테이블에 없으면 먼저 추가합니다.
+      // joinColumn 컬럼이 테이블에 없으면 먼��� 추가합니다.
       if (driver) {
         const columnExists = await driver.hasColumn(tableName, joinColumn);
         if (!columnExists) {
@@ -635,7 +705,7 @@ export class SchemaRegistrar {
       const relatedTableName =
         relatedMetadata.name || this.ctx.getNameStrategy(RelatedEntity);
 
-      // FK 제약이 이미 존재하면 중복 추가를 건너뜁니다.
+      // FK 제약이 이미 ���재하면 중복 ��가를 건너뜁니다.
       if (driver) {
         const fkName = this.namingStrategy.foreignKeyName(
           tableName,
@@ -657,6 +727,7 @@ export class SchemaRegistrar {
 
   /**
    * 인덱스를 생성합니다.
+   * Resolves property keys to actual DB column names (#176).
    */
   async registerIndex(TargetEntity: ClazzType<any>, tableName: string) {
     const indexer = Reflect.getMetadata(
@@ -665,8 +736,22 @@ export class SchemaRegistrar {
     ) as IndexMetadata[];
     if (indexer) {
       const driver = this.ctx.getDriver();
+      // Build property-to-column name map to resolve @Index() property keys (#176)
+      const columns = (Reflect.getMetadata(
+        COLUMN_TOKEN,
+        TargetEntity.prototype,
+      ) ?? []) as ColumnMetadata[];
+      const propColMap = new Map<string, string>();
+      for (const col of columns) {
+        if (col.propertyKey && col.name) {
+          propColMap.set(col.propertyKey, col.name);
+        }
+      }
+
       for (const index of indexer) {
-        const indexName = this.namingStrategy.indexName(tableName, index.name);
+        // index.name is the property key; resolve to actual DB column name
+        const columnName = propColMap.get(index.name) ?? index.name;
+        const indexName = this.namingStrategy.indexName(tableName, columnName);
 
         const indexes = (await driver?.getIndexes(tableName)) as any[];
 
@@ -681,7 +766,7 @@ export class SchemaRegistrar {
         }
 
         if (!isExist) {
-          await driver?.addIndex(tableName, index.name, indexName);
+          await driver?.addIndex(tableName, columnName, indexName);
         }
       }
     }

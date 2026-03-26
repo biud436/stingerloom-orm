@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../../../utils";
 import { ENTITY_TOKEN } from "../../../decorators/Entity";
+import { VERSION_TOKEN } from "../../../decorators/Version";
+import { CREATE_TIMESTAMP_TOKEN } from "../../../decorators/CreateTimestamp";
+import { UPDATE_TIMESTAMP_TOKEN } from "../../../decorators/UpdateTimestamp";
 import { PluginContext } from "../PluginContext";
 import { TrackedEntry, PersistEntry } from "./BufferEntry";
 import {
@@ -44,6 +47,17 @@ export class FlushExecutor {
   }
 
   /**
+   * #162/#163: Check if entity has ORM-managed metadata (version, timestamps)
+   * that would be bypassed by batch operations.
+   */
+  private hasOrmManagedFields(entityClass: ClazzType<any>): boolean {
+    const hasVersion = Reflect.getMetadata(VERSION_TOKEN, entityClass.prototype);
+    const hasCreateTs = Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, entityClass.prototype);
+    const hasUpdateTs = Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, entityClass.prototype);
+    return !!(hasVersion || hasCreateTs || hasUpdateTs);
+  }
+
+  /**
    * Batch INSERT for multiple entities of the same type.
    * Groups by entity class, builds multi-row INSERT, writes back generated PKs.
    */
@@ -65,8 +79,9 @@ export class FlushExecutor {
     }
 
     for (const [entityClass, entries] of groups) {
-      // Composite PK or single entry -> fallback to individual saves
-      if (entries.length === 1 || entries[0].pkColumns.length > 1) {
+      // Fallback to individual saves for: single entry, composite PK,
+      // SQLite (#159), or entities with version/timestamp (#162)
+      if (entries.length === 1 || entries[0].pkColumns.length > 1 || this.ctx.isSqlite?.() || this.hasOrmManagedFields(entityClass)) {
         for (const entry of entries) {
           const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
           const saved = await txEm.save(entry.entity, saveData);
@@ -178,8 +193,8 @@ export class FlushExecutor {
     }
 
     for (const [entityClass, items] of groups) {
-      // Single item or composite PK -> fallback to individual save
-      if (items.length === 1 || items[0].entry.pkColumns.length > 1) {
+      // Fallback to individual save for: single item, composite PK, or entities with version/timestamp (#163)
+      if (items.length === 1 || items[0].entry.pkColumns.length > 1 || this.hasOrmManagedFields(entityClass)) {
         for (const { entry } of items) {
           const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
           const updated = await txEm.save(entry.entity, saveData);

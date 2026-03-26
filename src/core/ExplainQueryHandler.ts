@@ -126,22 +126,24 @@ export class ExplainQueryHandler {
     qb.select(selectMap).from(this.ctx.wrapTable(tableName));
     qb.where(whereMap).orderBy(orderByMap);
 
+    // #145: Set database type for all dialects, not just MySQL
+    if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
+    else if (this.ctx.isSqlite?.()) qb.setDatabaseType("sqlite");
+    else qb.setDatabaseType("postgresql");
+
     if (Array.isArray(limit)) {
       let [offset, count] = limit;
       if (offset < 0) offset = 0;
       if (count < 0) count = 0;
       if (count === 0) count = 1;
       if (take && take > 0) count = take;
-      if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
       qb.limit([offset, count]);
     } else if (skip !== undefined || (take !== undefined && !limit)) {
       const offset = Math.max(skip ?? 0, 0);
       const count = Math.max(take ?? 0, 0) || undefined;
       if (count) {
-        if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
         qb.limit([offset, count]);
       } else if (offset > 0) {
-        if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
         qb.limit([offset, 2147483647]);
       }
     } else if (limit) {

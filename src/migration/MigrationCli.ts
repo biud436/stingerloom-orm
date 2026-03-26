@@ -233,7 +233,7 @@ export class MigrationCli {
     const sqlPreview = generator.dryRun(diff, dialect);
 
     const outputDir = this.generateOptions.outputDir ?? "./migrations";
-    const filePath = await generator.save(content, outputDir);
+    const filePath = await generator.save(content, outputDir, this.generateOptions.name);
 
     this.logger.info(`Migration generated: ${filePath}`);
     this.logger.info(`  Up statements: ${sqlPreview.up.length}`);

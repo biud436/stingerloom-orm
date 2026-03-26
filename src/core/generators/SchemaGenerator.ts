@@ -121,16 +121,21 @@ export class SchemaGenerator {
 
   /**
    * 단일 엔티티에 대한 CREATE INDEX DDL 배열을 생성합니다.
+   * @Index() property decorator stores the TypeScript property key;
+   * this method resolves it to the actual DB column name via @Column({ name }) (#176).
    */
   generateCreateIndexDDL<T>(entity: ClazzType<T>): string[] {
     const tableName = this.getTableName(entity);
     const indexes = this.getIndexes(entity);
+    const propColMap = this.buildPropertyToColumnMap(entity);
     return indexes.map((idx) => {
-      const indexName = this.namingStrategy.indexName(tableName, idx.name);
+      // idx.name is the property key; resolve to actual DB column name
+      const columnName = propColMap.get(idx.name) ?? idx.name;
+      const indexName = this.namingStrategy.indexName(tableName, columnName);
       if (this.dialect === "postgres" || this.dialect === "sqlite") {
-        return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${this.wrapId(idx.name)})`;
+        return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${this.wrapId(columnName)})`;
       }
-      return `CREATE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${this.wrapId(idx.name)})`;
+      return `CREATE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${this.wrapId(columnName)})`;
     });
   }
 
@@ -154,9 +159,12 @@ export class SchemaGenerator {
   generateUniqueIndexDDL<T>(entity: ClazzType<T>): string[] {
     const tableName = this.getTableName(entity);
     const uniqueIndexes = this.getUniqueIndexes(entity);
+    const propColMap = this.buildPropertyToColumnMap(entity);
     return uniqueIndexes.map((uq) => {
-      const indexName = uq.name ?? this.namingStrategy.uniqueIndexName(tableName, uq.columns);
-      const columnList = uq.columns
+      // Resolve property keys to actual DB column names (#176)
+      const resolvedColumns = uq.columns.map((col) => propColMap.get(col) ?? col);
+      const indexName = uq.name ?? this.namingStrategy.uniqueIndexName(tableName, resolvedColumns);
+      const columnList = resolvedColumns
         .map((col) => this.wrapId(col))
         .join(", ");
       if (this.dialect === "postgres" || this.dialect === "sqlite") {
@@ -278,6 +286,7 @@ export class SchemaGenerator {
   /**
    * ManyToMany 관계의 중간 테이블 CREATE TABLE DDL을 생성합니다.
    * 소유측(joinTable이 있는 측)만 처리하며, 중복 테이블 이름은 건너뜁니다.
+   * Join column types are derived from the actual PK types of the referenced entities (#178).
    */
   generateManyToManyJoinTableDDL(entities: ClazzType<any>[]): string[] {
     const ddls: string[] = [];
@@ -298,9 +307,14 @@ export class SchemaGenerator {
         const wrappedJoinCol = this.wrapId(joinColumn);
         const wrappedInverseCol = this.wrapId(inverseJoinColumn);
 
+        // Derive join column types from the actual PK types (#178)
+        const ownerPkType = this.findPrimaryKeyColumnType(entity);
+        const relatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+        const relatedPkType = this.findPrimaryKeyColumnType(relatedEntity);
+
         const columnDefs = [
-          `${wrappedJoinCol} INT NOT NULL`,
-          `${wrappedInverseCol} INT NOT NULL`,
+          `${wrappedJoinCol} ${ownerPkType} NOT NULL`,
+          `${wrappedInverseCol} ${relatedPkType} NOT NULL`,
           `PRIMARY KEY (${wrappedJoinCol}, ${wrappedInverseCol})`,
         ];
 
@@ -468,6 +482,22 @@ export class SchemaGenerator {
     }));
   }
 
+  /**
+   * Builds a map from TypeScript property keys to actual DB column names.
+   * Used to resolve @Index() property decorator names to the correct column (#176).
+   */
+  private buildPropertyToColumnMap<T>(entity: ClazzType<T>): Map<string, string> {
+    const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
+      []) as ColumnMetadata[];
+    const map = new Map<string, string>();
+    for (const col of columns) {
+      if (col.propertyKey && col.name) {
+        map.set(col.propertyKey, col.name);
+      }
+    }
+    return map;
+  }
+
   private getIndexes<T>(entity: ClazzType<T>): IndexMetadata[] {
     return (
       (Reflect.getMetadata(INDEX_TOKEN, entity.prototype) as
@@ -555,6 +585,39 @@ export class SchemaGenerator {
     const columns = this.getColumns(entity);
     const pk = columns.find((col) => col.options.primary);
     return pk?.name ?? null;
+  }
+
+  /**
+   * Finds the first PK column's SQL type string for the given entity.
+   * Used by ManyToMany join table DDL to derive the correct column type
+   * instead of hard-coding INT (#178).
+   */
+  private findPrimaryKeyColumnType<T>(entity: ClazzType<T>): string {
+    const columns = this.getColumns(entity);
+    const pk = columns.find((col) => col.options.primary);
+    if (!pk) return this.castType("int"); // fallback
+
+    const colType = pk.options.type ?? "int";
+    let sqlType = this.castType(colType);
+
+    // Handle length for varchar/char types
+    if (pk.options.length && pk.options.length > 0 && !sqlType.includes("(")
+        && (colType === "varchar" || colType === "char")) {
+      sqlType = `${sqlType}(${pk.options.length})`;
+    }
+
+    // Handle precision/scale (e.g., DECIMAL)
+    if (sqlType.includes("$precision")) {
+      sqlType = sqlType.replace("$precision", (pk.options.precision ?? 10).toString());
+      sqlType = sqlType.replace("$scale", (pk.options.scale ?? 2).toString());
+    }
+
+    // Handle boolean MySQL placeholder
+    if (colType === "boolean" && this.dialect === "mysql") {
+      sqlType = sqlType.replace("$n", (pk.options.length ?? 1).toString());
+    }
+
+    return sqlType;
   }
 
   /**

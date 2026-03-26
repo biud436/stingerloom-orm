@@ -4,6 +4,7 @@ import { SchemaGenerator } from "../../src/core/generators/SchemaGenerator";
 import { Entity } from "../../src/decorators/Entity";
 import { Column } from "../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
+import { PrimaryColumn } from "../../src/decorators/PrimaryColumn";
 import { ManyToMany } from "../../src/decorators/ManyToMany";
 
 // ─────────────────────────────────────────────────
@@ -78,6 +79,67 @@ class SimpleEntity {
 
   @Column({ type: "varchar", length: 100 })
   name!: string;
+}
+
+// Entities with non-INT primary keys for #178 regression tests
+@Entity()
+class UuidArticle {
+  @PrimaryColumn({ type: "varchar", length: 36 })
+  id!: string;
+
+  @Column({ type: "varchar", length: 255 })
+  title!: string;
+
+  @ManyToMany(() => UuidLabel, {
+    joinTable: {
+      name: "article_labels",
+      joinColumn: "article_id",
+      inverseJoinColumn: "label_id",
+    },
+  })
+  labels!: UuidLabel[];
+}
+
+@Entity()
+class UuidLabel {
+  @PrimaryColumn({ type: "varchar", length: 36 })
+  id!: string;
+
+  @Column({ type: "varchar", length: 100 })
+  name!: string;
+
+  @ManyToMany(() => UuidArticle, { mappedBy: "labels" })
+  articles!: UuidArticle[];
+}
+
+@Entity()
+class BigIdPost {
+  @PrimaryGeneratedColumn({ type: "bigint" })
+  id!: number;
+
+  @Column({ type: "varchar", length: 255 })
+  title!: string;
+
+  @ManyToMany(() => BigIdTag, {
+    joinTable: {
+      name: "bigid_post_tags",
+      joinColumn: "post_id",
+      inverseJoinColumn: "tag_id",
+    },
+  })
+  tags!: BigIdTag[];
+}
+
+@Entity()
+class BigIdTag {
+  @PrimaryGeneratedColumn({ type: "bigint" })
+  id!: number;
+
+  @Column({ type: "varchar", length: 100 })
+  name!: string;
+
+  @ManyToMany(() => BigIdPost, { mappedBy: "tags" })
+  posts!: BigIdPost[];
 }
 
 // ─────────────────────────────────────────────────
@@ -176,8 +238,9 @@ describe("SchemaGenerator - ManyToMany Join Table DDL", () => {
       expect(ddls.length).toBe(1);
       expect(ddls[0]).toContain("CREATE TABLE IF NOT EXISTS");
       expect(ddls[0]).toContain('"myschema"."post_tags"');
-      expect(ddls[0]).toContain('"post_id" INT NOT NULL');
-      expect(ddls[0]).toContain('"tag_id" INT NOT NULL');
+      // PostgreSQL uses INTEGER for int type (#178)
+      expect(ddls[0]).toContain('"post_id" INTEGER NOT NULL');
+      expect(ddls[0]).toContain('"tag_id" INTEGER NOT NULL');
       expect(ddls[0]).toContain('PRIMARY KEY ("post_id", "tag_id")');
       expect(ddls[0]).not.toContain("ENGINE=InnoDB");
     });
@@ -282,6 +345,40 @@ describe("SchemaGenerator - ManyToMany Join Table DDL", () => {
       const ddls = gen.generateDropSchemaDDL([Post, Tag]);
       // 중간 테이블 1개 + 엔티티 테이블 2개
       expect(ddls.length).toBe(3);
+    });
+  });
+
+  describe("Non-INT PK types in M2M join tables (#178)", () => {
+    it("should use VARCHAR(36) for UUID PK entities (MySQL)", () => {
+      const gen = new SchemaGenerator({ dialect: "mysql" });
+      const ddls = gen.generateManyToManyJoinTableDDL([UuidArticle, UuidLabel]);
+      expect(ddls.length).toBe(1);
+      expect(ddls[0]).toContain("`article_id` VARCHAR(36) NOT NULL");
+      expect(ddls[0]).toContain("`label_id` VARCHAR(36) NOT NULL");
+    });
+
+    it("should use VARCHAR(36) for UUID PK entities (PostgreSQL)", () => {
+      const gen = new SchemaGenerator({ dialect: "postgres" });
+      const ddls = gen.generateManyToManyJoinTableDDL([UuidArticle, UuidLabel]);
+      expect(ddls.length).toBe(1);
+      expect(ddls[0]).toContain('"article_id" VARCHAR(36) NOT NULL');
+      expect(ddls[0]).toContain('"label_id" VARCHAR(36) NOT NULL');
+    });
+
+    it("should use BIGINT for bigint PK entities (MySQL)", () => {
+      const gen = new SchemaGenerator({ dialect: "mysql" });
+      const ddls = gen.generateManyToManyJoinTableDDL([BigIdPost, BigIdTag]);
+      expect(ddls.length).toBe(1);
+      expect(ddls[0]).toContain("`post_id` BIGINT NOT NULL");
+      expect(ddls[0]).toContain("`tag_id` BIGINT NOT NULL");
+    });
+
+    it("should use BIGINT for bigint PK entities (PostgreSQL)", () => {
+      const gen = new SchemaGenerator({ dialect: "postgres" });
+      const ddls = gen.generateManyToManyJoinTableDDL([BigIdPost, BigIdTag]);
+      expect(ddls.length).toBe(1);
+      expect(ddls[0]).toContain('"post_id" BIGINT NOT NULL');
+      expect(ddls[0]).toContain('"tag_id" BIGINT NOT NULL');
     });
   });
 });

@@ -17,7 +17,7 @@ export interface SeederContext {
  * ```ts
  * class UserSeeder extends Seeder {
  *   async run(ctx: SeederContext): Promise<void> {
- *     await ctx.em.create(User, { name: "Alice", email: "alice@example.com" });
+ *     await ctx.em.save(User, { name: "Alice", email: "alice@example.com" });
  *   }
  *   async revert(ctx: SeederContext): Promise<void> {
  *     await ctx.em.delete(User, { email: "alice@example.com" });

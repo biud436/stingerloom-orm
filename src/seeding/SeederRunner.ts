@@ -161,7 +161,8 @@ export class SeederRunner {
 
   /**
    * Revert the most recently executed seeder.
-   * Returns null if no seeders have been executed or the seeder has no revert() method.
+   * Returns null if no seeders have been executed.
+   * Returns a failure result if the seeder is not found or has no revert() method.
    */
   async revertLast(): Promise<SeederResult | null> {
     if (this.trackExecution) {

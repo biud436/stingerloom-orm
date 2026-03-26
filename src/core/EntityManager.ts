@@ -2510,7 +2510,7 @@ export class EntityManager implements BaseEntityManager {
       if (readNodeOverride) {
         await session.connectToNode(readNodeOverride);
       } else {
-        await session.connect();
+        await session.connect(this.connectionName);
       }
       await session.startTransaction();
 
@@ -2572,7 +2572,7 @@ export class EntityManager implements BaseEntityManager {
       if (readNodeOverride) {
         await session.connectToNode(readNodeOverride);
       } else {
-        await session.connect();
+        await session.connect(this.connectionName);
       }
 
       // MySQL timeout (SET SESSION — no transaction needed)
@@ -2705,6 +2705,7 @@ export class EntityManager implements BaseEntityManager {
     }
     const qb = RawQueryBuilderFactory.create();
     if (this.isMySqlFamily()) qb.setDatabaseType("mysql");
+    else if (this.isSqlite()) qb.setDatabaseType("sqlite");
     else qb.setDatabaseType("postgresql");
     return qb;
   }

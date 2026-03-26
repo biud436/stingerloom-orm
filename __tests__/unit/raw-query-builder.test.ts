@@ -502,6 +502,7 @@ describe("RawQueryBuilder", () => {
 
     it("should generate SELECT DISTINCT ON query", () => {
       const query = RawQueryBuilderFactory.create()
+        .setDatabaseType("postgresql")
         .selectDistinctOn(["customer_id"], "*")
         .from("orders")
         .orderBy([{ column: "customer_id", direction: "ASC" }])
@@ -514,6 +515,7 @@ describe("RawQueryBuilder", () => {
 
     it("should generate DISTINCT ON with specific columns", () => {
       const query = RawQueryBuilderFactory.create()
+        .setDatabaseType("postgresql")
         .selectDistinctOn(["customer_id"], ["customer_id", "total", "created_at"])
         .from("orders")
         .build();
@@ -525,7 +527,13 @@ describe("RawQueryBuilder", () => {
 
     it("should throw for empty DISTINCT ON columns", () => {
       expect(() => {
-        RawQueryBuilderFactory.create().selectDistinctOn([], "*");
+        RawQueryBuilderFactory.create().setDatabaseType("postgresql").selectDistinctOn([], "*");
+      }).toThrow(OrmError);
+    });
+
+    it("should throw for non-PostgreSQL dialect", () => {
+      expect(() => {
+        RawQueryBuilderFactory.create().setDatabaseType("mysql").selectDistinctOn(["id"], "*");
       }).toThrow(OrmError);
     });
   });

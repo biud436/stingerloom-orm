@@ -239,6 +239,37 @@ export class Conditions {
     "IS NOT NULL",
   ];
 
+  /**
+   * Binary operators valid for column-to-column comparisons.
+   * Excludes unary (IS NULL, IS NOT NULL) and set (IN, NOT IN) operators.
+   */
+  private static readonly BINARY_OPERATORS = [
+    "=",
+    "!=",
+    "<>",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "LIKE",
+  ];
+
+  /**
+   * Operators valid for column-to-subquery comparisons.
+   * Excludes unary operators (IS NULL, IS NOT NULL).
+   */
+  private static readonly SUBQUERY_OPERATORS = [
+    "=",
+    "!=",
+    "<>",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "IN",
+    "NOT IN",
+  ];
+
   private static validateOperator(operator: string): void {
     const normalized = operator.trim().toUpperCase();
     if (!Conditions.ALLOWED_OPERATORS.includes(normalized)) {
@@ -248,11 +279,29 @@ export class Conditions {
     }
   }
 
+  private static validateSubqueryOperator(operator: string): void {
+    const normalized = operator.trim().toUpperCase();
+    if (!Conditions.SUBQUERY_OPERATORS.includes(normalized)) {
+      throw new Error(
+        `Invalid operator for subquery comparison: "${operator}". Allowed operators: ${Conditions.SUBQUERY_OPERATORS.join(", ")}`,
+      );
+    }
+  }
+
+  private static validateBinaryOperator(operator: string): void {
+    const normalized = operator.trim().toUpperCase();
+    if (!Conditions.BINARY_OPERATORS.includes(normalized)) {
+      throw new Error(
+        `Invalid operator for column comparison: "${operator}". Allowed operators: ${Conditions.BINARY_OPERATORS.join(", ")}`,
+      );
+    }
+  }
+
   /**
    * Combines a comparison operator with a subquery.
    */
   static compareSubquery(column: string, operator: string, subquery: Sql): Sql {
-    Conditions.validateOperator(operator);
+    Conditions.validateSubqueryOperator(operator);
     return sql`${raw(column)} ${raw(operator.trim().toUpperCase())} ${subquery}`;
   }
 
@@ -289,7 +338,7 @@ export class Conditions {
     operator: string,
     column2: string,
   ): Sql {
-    Conditions.validateOperator(operator);
+    Conditions.validateBinaryOperator(operator);
     return sql`${raw(column1)} ${raw(operator.trim().toUpperCase())} ${raw(column2)}`;
   }
 }

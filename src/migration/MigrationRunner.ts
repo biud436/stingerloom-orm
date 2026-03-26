@@ -186,26 +186,41 @@ export class MigrationRunner {
 
   /**
    * 가장 최근에 실행된 마이그레이션을 되돌립니다.
+   * Advisory lock을 사용하여 동시 실행을 방지합니다.
    */
   async revertLast(): Promise<MigrationResult | null> {
-    await this.ensureMigrationTable();
-    const executed = await this.getExecutedMigrations();
-
-    if (executed.length === 0) {
-      this.logger.info("No migrations to revert.");
-      return null;
+    const acquired = await this.driver.acquireAdvisoryLock(
+      this.lockId,
+      this.lockTimeoutMs,
+    );
+    if (!acquired) {
+      throw new AdvisoryLockError(
+        `Failed to acquire migration lock "${this.lockId}" within ${this.lockTimeoutMs}ms. Another migration may be running.`,
+      );
     }
 
-    const lastName = executed[executed.length - 1];
-    const migration = this.migrations.find((m) => m.name === lastName);
+    try {
+      await this.ensureMigrationTable();
+      const executed = await this.getExecutedMigrations();
 
-    if (!migration) {
-      const error = `Migration "${lastName}" not found in registered migrations.`;
-      this.logger.error(error);
-      return { name: lastName, direction: "down", success: false, error };
+      if (executed.length === 0) {
+        this.logger.info("No migrations to revert.");
+        return null;
+      }
+
+      const lastName = executed[executed.length - 1];
+      const migration = this.migrations.find((m) => m.name === lastName);
+
+      if (!migration) {
+        const error = `Migration "${lastName}" not found in registered migrations.`;
+        this.logger.error(error);
+        return { name: lastName, direction: "down", success: false, error };
+      }
+
+      return this.runDown(migration);
+    } finally {
+      await this.driver.releaseAdvisoryLock(this.lockId);
     }
-
-    return this.runDown(migration);
   }
 
   /**
@@ -227,32 +242,47 @@ export class MigrationRunner {
 
   /**
    * 최근 n개의 마이그레이션을 되돌립니다.
+   * Advisory lock을 사용하여 동시 실행을 방지합니다.
    *
    * @param n 되돌릴 마이그레이션 수. 기본값 1.
    */
   async rollback(n: number = 1): Promise<MigrationResult[]> {
-    await this.ensureMigrationTable();
-    const executed = await this.getExecutedMigrations();
-    const results: MigrationResult[] = [];
-
-    const toRevert = executed.slice(-n).reverse();
-
-    for (const name of toRevert) {
-      const migration = this.migrations.find((m) => m.name === name);
-      if (!migration) {
-        const error = `Migration "${name}" not found in registered migrations.`;
-        this.logger.error(error);
-        results.push({ name, direction: "down", success: false, error });
-        break;
-      }
-      const result = await this.runDown(migration);
-      results.push(result);
-      if (!result.success) {
-        break;
-      }
+    const acquired = await this.driver.acquireAdvisoryLock(
+      this.lockId,
+      this.lockTimeoutMs,
+    );
+    if (!acquired) {
+      throw new AdvisoryLockError(
+        `Failed to acquire migration lock "${this.lockId}" within ${this.lockTimeoutMs}ms. Another migration may be running.`,
+      );
     }
 
-    return results;
+    try {
+      await this.ensureMigrationTable();
+      const executed = await this.getExecutedMigrations();
+      const results: MigrationResult[] = [];
+
+      const toRevert = executed.slice(-n).reverse();
+
+      for (const name of toRevert) {
+        const migration = this.migrations.find((m) => m.name === name);
+        if (!migration) {
+          const error = `Migration "${name}" not found in registered migrations.`;
+          this.logger.error(error);
+          results.push({ name, direction: "down", success: false, error });
+          break;
+        }
+        const result = await this.runDown(migration);
+        results.push(result);
+        if (!result.success) {
+          break;
+        }
+      }
+
+      return results;
+    } finally {
+      await this.driver.releaseAdvisoryLock(this.lockId);
+    }
   }
 
   /**

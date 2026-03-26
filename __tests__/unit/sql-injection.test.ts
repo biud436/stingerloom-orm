@@ -156,10 +156,6 @@ describe("Conditions - operator 화이트리스트 검증", () => {
       "<=",
       ">=",
       "LIKE",
-      "IN",
-      "NOT IN",
-      "IS NULL",
-      "IS NOT NULL",
     ];
 
     allowedOperators.forEach((op) => {
@@ -167,6 +163,15 @@ describe("Conditions - operator 화이트리스트 검증", () => {
         expect(() => {
           Conditions.compareColumns("col1", op, "col2");
         }).not.toThrow();
+      });
+    });
+
+    const rejectedForColumns = ["IN", "NOT IN", "IS NULL", "IS NOT NULL"];
+    rejectedForColumns.forEach((op) => {
+      it(`should reject operator for column comparison: ${op}`, () => {
+        expect(() => {
+          Conditions.compareColumns("col1", op, "col2");
+        }).toThrow(/Invalid operator for column comparison/);
       });
     });
 

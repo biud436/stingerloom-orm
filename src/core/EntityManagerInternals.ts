@@ -20,6 +20,7 @@ export interface EntityManagerInternals {
   wrapTable(tableName: string): string;
   isMySqlFamily(): boolean;
   isPostgres(): boolean;
+  isSqlite?(): boolean;
   getDriver(): ISqlDriver | undefined;
   getSynchronize(): boolean | "safe" | "dry-run";
   getDialect(): SchemaDialect;

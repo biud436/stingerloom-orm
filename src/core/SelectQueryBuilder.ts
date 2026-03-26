@@ -4,6 +4,7 @@ import { Conditions } from "./Conditions";
 import { EntityManager } from "./EntityManager";
 import { ClazzType } from "../utils/types";
 import { RawQueryBuilder } from "./RawQueryBuilder";
+import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
@@ -536,11 +537,12 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   toSql(): Sql {
     const tableName = this.resolveTableName();
-    const qb = new RawQueryBuilder();
+    const qb = RawQueryBuilderFactory.create() as RawQueryBuilder;
 
     // Database type
     const internals = (this.em as any)._ctx;
     if (internals.isMySqlFamily()) qb.setDatabaseType("mysql");
+    else if (internals.isSqlite?.()) qb.setDatabaseType("sqlite");
     else qb.setDatabaseType("postgresql");
 
     // SELECT
@@ -760,10 +762,11 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   async getCount(): Promise<number> {
     const tableName = this.resolveTableName();
-    const qb = new RawQueryBuilder();
+    const qb = RawQueryBuilderFactory.create() as RawQueryBuilder;
 
     const internals = (this.em as any)._ctx;
     if (internals.isMySqlFamily()) qb.setDatabaseType("mysql");
+    else if (internals.isSqlite?.()) qb.setDatabaseType("sqlite");
     else qb.setDatabaseType("postgresql");
 
     qb.select(["COUNT(*) AS count"]);

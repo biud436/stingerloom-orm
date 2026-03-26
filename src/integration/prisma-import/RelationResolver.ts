@@ -23,6 +23,8 @@ export interface ManyToOneRelation {
   joinColumn: string;
   references?: string;
   cascade?: string[];
+  onDelete?: string;
+  onUpdate?: string;
 }
 
 export interface OneToManyRelation {
@@ -39,6 +41,8 @@ export interface OneToOneOwningRelation {
   joinColumn: string;
   references?: string;
   cascade?: string[];
+  onDelete?: string;
+  onUpdate?: string;
 }
 
 export interface OneToOneInverseRelation {
@@ -150,6 +154,8 @@ export class RelationResolver {
         : undefined;
 
     const cascade = this.extractCascade(field);
+    const onDelete = this.mapReferentialAction(field.relation?.onDelete);
+    const onUpdate = this.mapReferentialAction(field.relation?.onUpdate);
 
     if (isUnique) {
       // 1:1 owning side
@@ -160,6 +166,8 @@ export class RelationResolver {
         joinColumn,
         references,
         cascade,
+        onDelete,
+        onUpdate,
       };
     }
 
@@ -171,6 +179,8 @@ export class RelationResolver {
       joinColumn,
       references,
       cascade,
+      onDelete,
+      onUpdate,
     };
   }
 
@@ -315,5 +325,22 @@ export class RelationResolver {
 
     if (onDelete === "Cascade") return ["delete"];
     return undefined;
+  }
+
+  /**
+   * Map Prisma referential action names to SQL standard values.
+   */
+  private mapReferentialAction(
+    prismaAction: string | undefined,
+  ): string | undefined {
+    if (!prismaAction) return undefined;
+    const map: Record<string, string> = {
+      Cascade: "CASCADE",
+      SetNull: "SET NULL",
+      SetDefault: "SET DEFAULT",
+      Restrict: "RESTRICT",
+      NoAction: "NO ACTION",
+    };
+    return map[prismaAction];
   }
 }

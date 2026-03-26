@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ColumnType } from "../decorators/Column";
 import { CascadeOption } from "../types/CascadeType";
+import { ReferentialAction } from "../types/ReferentialAction";
 import { JoinTableOption } from "../decorators/ManyToMany";
 import { HookEvent } from "../decorators/Hooks";
 import { ConstraintType } from "../decorators/Validation";
@@ -63,6 +64,9 @@ export interface ManyToOneRelationDef {
   eager?: boolean;
   cascade?: CascadeOption;
   lazy?: boolean;
+  onDelete?: ReferentialAction;
+  onUpdate?: ReferentialAction;
+  createForeignKeyConstraints?: boolean;
 }
 
 export interface OneToManyRelationDef {
@@ -79,6 +83,9 @@ export interface OneToOneRelationDef {
   inverseSide?: string;
   eager?: boolean;
   cascade?: CascadeOption;
+  onDelete?: ReferentialAction;
+  onUpdate?: ReferentialAction;
+  createForeignKeyConstraints?: boolean;
 }
 
 export interface ManyToManyRelationDef {
@@ -86,6 +93,7 @@ export interface ManyToManyRelationDef {
   target: () => ClazzType;
   joinTable?: JoinTableOption;
   mappedBy?: string;
+  cascade?: CascadeOption;
 }
 
 /**
@@ -98,5 +106,6 @@ export interface EntitySchemaOptions<T> {
   columns: { [K in keyof T]?: ColumnSchemaDef };
   relations?: { [K in keyof T]?: RelationSchemaDef };
   uniqueIndexes?: { columns: string[]; name?: string }[];
+  indexes?: { columns: string[]; name?: string }[];
   hooks?: Partial<Record<HookEvent, Extract<keyof T, string>>>;
 }

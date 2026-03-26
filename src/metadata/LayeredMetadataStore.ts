@@ -9,7 +9,7 @@ import { MetadataPath } from "./MetadataPath";
  * Lower Layer (읽기 전용): 기본 스키마 (예: "public")
  * Upper Layers (읽기/쓰기): 테넌트별 수정사항 (예: "tenant_1", "tenant_2")
  *
- * 읽기: 상위 레이어 → 하위 레이어 순서로 병합
+ * 읽기: 현재 컨텍스트 레이어 → public 레이어 순서로 검색 (다른 테넌트 레이어는 절대 참조하지 않음)
  * 쓰기: 최상위 work 레이어에만 기록 (Copy-on-Write)
  */
 export class LayeredMetadataStore {
@@ -85,6 +85,16 @@ export class LayeredMetadataStore {
     const context = this.resolveContext();
     const fullPath = `${context}/${key}`;
 
+    // #148: public 레이어에 직접 쓰기 허용
+    if (context === "public") {
+      const publicLayer = this.getLayer("public");
+      if (publicLayer) {
+        publicLayer.getInternalMap().set(key, value);
+        this.pathTrie.insert(fullPath, { layer: "public", key, value });
+        return;
+      }
+    }
+
     // 현재 컨텍스트에 해당하는 쓰기 가능한 레이어 찾기
     let workLayer = this.layers.find(
       (l) => l.getName() === context && !l.isReadOnlyLayer(),
@@ -104,28 +114,28 @@ export class LayeredMetadataStore {
 
   /**
    * 메타데이터 조회 (병합된 뷰 제공)
-   * 상위 레이어 → 하위 레이어 순서로 검색
+   * 현재 컨텍스트 레이어 → public 레이어 순서로 검색 (다른 테넌트 레이어는 절대 참조하지 않음)
    */
   get<T>(key: string): T | undefined {
     const context = this.resolveContext();
     const fullPath = `${context}/${key}`;
 
-    // Trie에서 먼저 확인
+    // 1. Trie에서 현재 컨텍스트 경로 확인
     const pathData = this.pathTrie.search(fullPath);
     if (pathData) {
       return pathData.value;
     }
 
-    // 레이어를 역순으로 검색 (최신 레이어부터)
-    for (let i = this.layers.length - 1; i >= 0; i--) {
-      const layer = this.layers[i];
-      const value = layer.get<T>(key);
+    // 2. 현재 컨텍스트 레이어에서만 검색 (다른 테넌트 레이어 절대 참조 안 함)
+    const contextLayer = this.getLayer(context);
+    if (contextLayer) {
+      const value = contextLayer.get<T>(key);
       if (value !== undefined) {
         return value;
       }
     }
 
-    // 현재 컨텍스트에서 못 찾으면 public(lower)에서 찾기
+    // 3. public(lower) 레이어 fallback
     if (context !== "public") {
       const publicPath = `public/${key}`;
       const publicData = this.pathTrie.search(publicPath);
@@ -133,7 +143,7 @@ export class LayeredMetadataStore {
         return publicData.value;
       }
 
-      const publicLayer = this.layers.find((l) => l.getName() === "public");
+      const publicLayer = this.getLayer("public");
       if (publicLayer) {
         return publicLayer.get<T>(key);
       }
@@ -189,6 +199,12 @@ export class LayeredMetadataStore {
       throw new Error(`Source layer "${sourceName}" not found.`);
     }
 
+    // #141: 대상 레이어 이름 중복 방지
+    const existingLayer = this.getLayer(targetName);
+    if (existingLayer) {
+      throw new Error(`Layer "${targetName}" already exists.`);
+    }
+
     const clonedLayer = sourceLayer.clone(targetName, false);
     this.layers.push(clonedLayer);
 
@@ -215,13 +231,35 @@ export class LayeredMetadataStore {
     if (!targetLayer) {
       throw new Error(`Target layer "${targetName}" not found.`);
     }
-    if (targetLayer.isReadOnlyLayer()) {
-      throw new Error(`Cannot merge into read-only layer "${targetName}".`);
-    }
 
-    // 소스 레이어의 모든 데이터를 타겟 레이어로 복사
+    // #148: public 레이어로의 병합 허용 (getInternalMap 사용)
+    const isTargetReadOnly = targetLayer.isReadOnlyLayer();
+
+    // 소스 레이어의 모든 데이터를 타겟 레이어로 복사 + trie 동기화 (#143)
     for (const [key, value] of sourceLayer.entries()) {
-      targetLayer.set(key, value);
+      if (isTargetReadOnly) {
+        targetLayer.getInternalMap().set(key, value);
+      } else {
+        targetLayer.set(key, value);
+      }
+      const fullPath = `${targetName}/${key}`;
+      this.pathTrie.insert(fullPath, { layer: targetName, key, value });
+    }
+  }
+
+  /**
+   * 레이어 데이터 초기화 + trie 동기화 (#143)
+   */
+  clearLayer(name: string): void {
+    const layer = this.getLayer(name);
+    if (!layer) {
+      throw new Error(`Layer "${name}" not found.`);
+    }
+    layer.clear();
+    // trie에서도 해당 레이어의 경로 제거
+    const paths = this.pathTrie.findByPrefix(name);
+    for (const { path } of paths) {
+      this.pathTrie.delete(path);
     }
   }
 

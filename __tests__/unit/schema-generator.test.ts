@@ -80,6 +80,20 @@ class UserWithProfile {
   profile!: Profile;
 }
 
+// Entity with renamed column + @Index() (#176)
+@Entity()
+class TenantOrder {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Index()
+  @Column({ type: "int", name: "tenant_id" })
+  tenantId!: number;
+
+  @Column({ type: "varchar", length: 50 })
+  status!: string;
+}
+
 // ─────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────
@@ -335,6 +349,46 @@ describe("SchemaGenerator", () => {
       const fk1 = SchemaGenerator.generateForeignKeyName("posts", "author_id", "users");
       const fk2 = SchemaGenerator.generateForeignKeyName("posts", "reviewer_id", "users");
       expect(fk1).not.toBe(fk2);
+    });
+  });
+
+  describe("Index DDL resolves renamed columns (#176)", () => {
+    it("should use DB column name (tenant_id) not property key (tenantId) in MySQL index DDL", () => {
+      const gen = new SchemaGenerator({ dialect: "mysql" });
+      const indexes = gen.generateCreateIndexDDL(TenantOrder);
+      expect(indexes.length).toBeGreaterThanOrEqual(1);
+      const tenantIndex = indexes.find((i) => i.includes("tenant_id"));
+      expect(tenantIndex).toBeDefined();
+      expect(tenantIndex).toContain("`tenant_id`");
+      // Should NOT contain the property key
+      expect(tenantIndex).not.toContain("`tenantId`");
+    });
+
+    it("should use DB column name in PostgreSQL index DDL", () => {
+      const gen = new SchemaGenerator({ dialect: "postgres" });
+      const indexes = gen.generateCreateIndexDDL(TenantOrder);
+      expect(indexes.length).toBeGreaterThanOrEqual(1);
+      const tenantIndex = indexes.find((i) => i.includes("tenant_id"));
+      expect(tenantIndex).toBeDefined();
+      expect(tenantIndex).toContain('"tenant_id"');
+      expect(tenantIndex).not.toContain('"tenantId"');
+    });
+
+    it("should use DB column name in index name generation", () => {
+      const gen = new SchemaGenerator({ dialect: "mysql" });
+      const indexes = gen.generateCreateIndexDDL(TenantOrder);
+      const tenantIndex = indexes.find((i) => i.includes("tenant_id"));
+      // Index name should reference the DB column name, not property key
+      // @Entity() auto-converts class name to snake_case: TenantOrder -> tenant_order
+      expect(tenantIndex).toContain("INDEX_tenant_order_tenant_id");
+    });
+
+    it("should still work when property key matches column name (no rename)", () => {
+      const gen = new SchemaGenerator({ dialect: "mysql" });
+      const indexes = gen.generateCreateIndexDDL(Product);
+      const skuIndex = indexes.find((i) => i.includes("sku"));
+      expect(skuIndex).toBeDefined();
+      expect(skuIndex).toContain("`sku`");
     });
   });
 });

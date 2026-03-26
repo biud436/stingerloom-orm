@@ -19,6 +19,7 @@ export enum TransactionPropagation {
 export interface TransactionalOptions {
   isolationLevel?: TRANSACTION_ISOLATION_LEVEL;
   propagation?: TransactionPropagation;
+  connectionName?: string;
 }
 
 /**
@@ -54,6 +55,7 @@ export function Transactional(
 
   const isolationLevel = resolved.isolationLevel;
   const propagation = resolved.propagation ?? TransactionPropagation.REQUIRED;
+  const connectionName = resolved.connectionName;
 
   return (_target, _propertyKey, descriptor: PropertyDescriptor) => {
     const originalMethod = descriptor.value;
@@ -64,7 +66,7 @@ export function Transactional(
       // ──── REQUIRES_NEW: Always start a fresh transaction ────
       if (propagation === TransactionPropagation.REQUIRES_NEW) {
         const session = new TransactionSessionManager();
-        await session.connect();
+        await session.connect(connectionName);
         await session.startTransaction(isolationLevel);
 
         try {
@@ -102,7 +104,7 @@ export function Transactional(
       }
 
       const session = new TransactionSessionManager();
-      await session.connect();
+      await session.connect(connectionName);
       await session.startTransaction(isolationLevel);
 
       try {

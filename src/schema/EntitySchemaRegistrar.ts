@@ -17,7 +17,7 @@ import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../decorators/ManyToOne";
 import { ONE_TO_MANY_TOKEN, OneToManyMetadata } from "../decorators/OneToMany";
 import { ONE_TO_ONE_TOKEN, OneToOneMetadata } from "../decorators/OneToOne";
 import { MANY_TO_MANY_TOKEN, ManyToManyMetadata } from "../decorators/ManyToMany";
-import { INDEX_TOKEN } from "../decorators/Indexer";
+import { INDEX_TOKEN, COMPOSITE_INDEX_TOKEN, CompositeIndexMetadata } from "../decorators/Indexer";
 import { UNIQUE_INDEX_TOKEN, UniqueIndexMetadata } from "../decorators/UniqueIndex";
 import { VERSION_TOKEN } from "../decorators/Version";
 import { CREATE_TIMESTAMP_TOKEN } from "../decorators/CreateTimestamp";
@@ -178,7 +178,7 @@ export class EntitySchemaRegistrar {
   private static registerManyToOne(
     cls: ClazzType,
     propertyKey: string,
-    def: { kind: "manyToOne"; target: () => ClazzType; joinColumn?: string; references?: string; eager?: boolean; cascade?: any; lazy?: boolean },
+    def: { kind: "manyToOne"; target: () => ClazzType; joinColumn?: string; references?: string; eager?: boolean; cascade?: any; lazy?: boolean; onDelete?: any; onUpdate?: any; createForeignKeyConstraints?: boolean },
   ): void {
     const scanner = Container.get(ManyToOneScanner);
 
@@ -196,6 +196,9 @@ export class EntitySchemaRegistrar {
         eager: def.eager,
         cascade: def.cascade,
         lazy: def.lazy,
+        onDelete: def.onDelete,
+        onUpdate: def.onUpdate,
+        createForeignKeyConstraints: def.createForeignKeyConstraints,
       },
     };
 
@@ -231,7 +234,7 @@ export class EntitySchemaRegistrar {
   private static registerOneToOne(
     cls: ClazzType,
     propertyKey: string,
-    def: { kind: "oneToOne"; target: () => ClazzType; joinColumn?: string; inverseSide?: string; eager?: boolean; cascade?: any },
+    def: { kind: "oneToOne"; target: () => ClazzType; joinColumn?: string; inverseSide?: string; eager?: boolean; cascade?: any; onDelete?: any; onUpdate?: any; createForeignKeyConstraints?: boolean },
   ): void {
     const scanner = Container.get(OneToOneScanner);
 
@@ -246,6 +249,9 @@ export class EntitySchemaRegistrar {
         inverseSide: def.inverseSide,
         eager: def.eager,
         cascade: def.cascade,
+        onDelete: def.onDelete,
+        onUpdate: def.onUpdate,
+        createForeignKeyConstraints: def.createForeignKeyConstraints,
       },
     };
 
@@ -259,7 +265,7 @@ export class EntitySchemaRegistrar {
   private static registerManyToMany(
     cls: ClazzType,
     propertyKey: string,
-    def: { kind: "manyToMany"; target: () => ClazzType; joinTable?: any; mappedBy?: string },
+    def: { kind: "manyToMany"; target: () => ClazzType; joinTable?: any; mappedBy?: string; cascade?: any },
   ): void {
     const scanner = Container.get(ManyToManyScanner);
 
@@ -269,6 +275,7 @@ export class EntitySchemaRegistrar {
       getRelatedEntity: def.target,
       joinTable: def.joinTable,
       mappedBy: def.mappedBy,
+      cascade: def.cascade,
     };
 
     const existing = Reflect.getMetadata(MANY_TO_MANY_TOKEN, cls) || [];
@@ -325,6 +332,17 @@ export class EntitySchemaRegistrar {
       Reflect.defineMetadata(
         UNIQUE_INDEX_TOKEN,
         [...existing, ...options.uniqueIndexes],
+        cls,
+      );
+    }
+
+    // Composite non-unique indexes
+    if (options.indexes) {
+      const existing: CompositeIndexMetadata[] =
+        Reflect.getMetadata(COMPOSITE_INDEX_TOKEN, cls) ?? [];
+      Reflect.defineMetadata(
+        COMPOSITE_INDEX_TOKEN,
+        [...existing, ...options.indexes.map((idx) => ({ columns: idx.columns, name: idx.name }))],
         cls,
       );
     }

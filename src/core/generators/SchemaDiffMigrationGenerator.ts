@@ -23,7 +23,7 @@ export class SchemaDiffMigrationGenerator {
     const downStatements = this.buildDownStatements(diff, dialect);
 
     return [
-      `import { Migration, MigrationContext } from "stingerloom-orm";`,
+      `import { Migration, MigrationContext } from "@stingerloom/orm";`,
       ``,
       `export class ${className} extends Migration {`,
       `  async up({ query }: MigrationContext): Promise<void> {`,
@@ -54,12 +54,13 @@ export class SchemaDiffMigrationGenerator {
 
   /**
    * Migration 파일을 디스크에 저장합니다.
-   * 파일명: {outputDir}/{timestamp}_auto_migration.ts
+   * 파일명: {outputDir}/{timestamp}_{name}.ts
    */
-  async save(content: string, outputDir: string): Promise<string> {
+  async save(content: string, outputDir: string, name?: string): Promise<string> {
     await mkdir(outputDir, { recursive: true });
     const timestamp = Date.now();
-    const fileName = `${timestamp}_auto_migration.ts`;
+    const suffix = name ? name.replace(/\s+/g, "_") : "auto_migration";
+    const fileName = `${timestamp}_${suffix}.ts`;
     const filePath = join(outputDir, fileName);
     await writeFile(filePath, content, "utf-8");
     return filePath;

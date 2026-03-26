@@ -41,22 +41,26 @@ export class TransactionSessionManager extends IQueryEngine {
    *
    * @throws {DatabaseConnectionFailedError} If the connection to the database fails.
    */
-  public async connect() {
+  public async connect(connectionName?: string) {
     try {
-      this.connection = await DatabaseClient.getInstance().getConnection();
+      this.connection = connectionName
+        ? await DatabaseClient.getInstance().getConnection(connectionName)
+        : await DatabaseClient.getInstance().getConnection();
 
-      const dbType = DatabaseClient.getInstance().type;
+      const dbType = connectionName
+        ? DatabaseClient.getInstance().getType?.(connectionName) ?? DatabaseClient.getInstance().type
+        : DatabaseClient.getInstance().type;
       if (dbType === "postgres") {
         this.dataSource = new PostgresDataSource(this.connection);
       } else if (dbType === "sqlite") {
         this.dataSource = new SqliteDataSource(this.connection);
-      } else if (dbType === "mysql") {
+      } else if (dbType === "mysql" || dbType === "mariadb") {
         this.dataSource = new MySqlDataSource(this.connection);
       } else {
         throw new OrmError(
           OrmErrorCode.UNSUPPORTED_DATABASE,
           `Unsupported database type: ${dbType}`,
-          "Supported types: mysql, postgres, sqlite",
+          "Supported types: mysql, mariadb, postgres, sqlite",
         );
       }
 

@@ -16,13 +16,19 @@ export class EntityCodeGenerator {
   private modelNames: Set<string>;
   private enumNames: Set<string>;
 
+  private enumDbNameMap: Map<string, string>; // logical name → dbName
+
   constructor(
     private context: PrismaImportContext,
     private relations: Map<string, ResolvedRelation[]>,
   ) {
     const enumMap = new Map<string, string[]>();
+    this.enumDbNameMap = new Map<string, string>();
     for (const e of context.enums) {
       enumMap.set(e.name, e.values);
+      if (e.dbName) {
+        this.enumDbNameMap.set(e.name, e.dbName);
+      }
     }
     this.typeMapper = new TypeMapper(context.provider, enumMap);
     this.modelNames = new Set(context.models.map((m) => m.name));
@@ -94,7 +100,16 @@ export class EntityCodeGenerator {
       imports.addOrm("UniqueIndex");
     }
 
-    // Process fields
+    // @@index → @Index
+    for (const cols of model.indexes) {
+      classDecorators.push(
+        `@Index([${cols.map((c) => `"${c}"`).join(", ")}])`,
+      );
+      imports.addOrm("Index");
+    }
+
+    // Process fields (also collect field-level @unique for class decorators)
+    const fieldUniqueColumns: string[] = [];
     for (const field of model.fields) {
       // Skip relation fields (they're handled separately)
       if (this.isRelationField(field)) continue;
@@ -102,12 +117,23 @@ export class EntityCodeGenerator {
       // Skip FK fields that are handled by relation decorators
       if (fkFields.has(field.name)) continue;
 
+      // Collect field-level @unique (not PK, not relation, not FK)
+      if (field.isUnique && !field.isId && !model.compositeId?.includes(field.name)) {
+        fieldUniqueColumns.push(field.columnName ?? field.name);
+      }
+
       const fieldLines = this.generateColumnField(
         model,
         field,
         imports,
       );
       bodyLines.push(...fieldLines);
+    }
+
+    // Emit field-level @unique as class-level @UniqueIndex
+    for (const col of fieldUniqueColumns) {
+      classDecorators.push(`@UniqueIndex(["${col}"])`);
+      imports.addOrm("UniqueIndex");
     }
 
     // Process relations
@@ -242,20 +268,6 @@ export class EntityCodeGenerator {
       return lines;
     }
 
-    // @unique on a single field
-    if (field.isUnique) {
-      imports.addOrm("UniqueIndex");
-      // Will add UniqueIndex at class level is cleaner, but for single field unique
-      // we note it as a class decorator in parent scope. Actually for code gen simplicity,
-      // let's just mark it in a class-level @UniqueIndex
-      // But this is already handled by model-level; for field-level @unique
-      // we need to emit it as part of the model class decorators.
-      // We'll handle this by appending to a collector — but since we already
-      // emitted class decorators, let's just add a comment.
-      // Actually, let's just emit it in the column options or as a separate decorator.
-      // The cleanest approach: add it as class-level decorator.
-    }
-
     // Regular column
     const mapping = this.typeMapper.map(field.fieldType, field.nativeType);
 
@@ -300,6 +312,8 @@ export class EntityCodeGenerator {
           opts.push(
             `cascade: [${rel.cascade.map((c) => `"${c}"`).join(", ")}]`,
           );
+        if (rel.onDelete) opts.push(`onDelete: "${rel.onDelete}"`);
+        if (rel.onUpdate) opts.push(`onUpdate: "${rel.onUpdate}"`);
         const optsStr = opts.length > 0 ? `, { ${opts.join(", ")} }` : "";
         lines.push(
           `  @ManyToOne(() => ${rel.targetModel}, (e) => e.${this.findInverseProperty(rel.targetModel, rel.propertyName)}${optsStr})`,
@@ -335,6 +349,8 @@ export class EntityCodeGenerator {
           opts.push(
             `cascade: [${rel.cascade.map((c) => `"${c}"`).join(", ")}]`,
           );
+        if (rel.onDelete) opts.push(`onDelete: "${rel.onDelete}"`);
+        if (rel.onUpdate) opts.push(`onUpdate: "${rel.onUpdate}"`);
         const optsStr = opts.length > 0 ? `{ ${opts.join(", ")} }` : "";
         lines.push(
           `  @OneToOne(() => ${rel.targetModel}${optsStr ? ", " + optsStr : ""})`,
@@ -455,7 +471,8 @@ export class EntityCodeGenerator {
 
     // Enum
     if (mapping.enumName) {
-      opts.push(`enumName: "${mapping.enumName}"`);
+      const enumDbName = this.enumDbNameMap.get(mapping.enumName) ?? mapping.enumName;
+      opts.push(`enumName: "${enumDbName}"`);
       opts.push(
         `enumValues: [${mapping.enumValues!.map((v) => `"${v}"`).join(", ")}]`,
       );
