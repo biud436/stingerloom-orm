@@ -153,7 +153,17 @@ export class MigrationRunner {
     try {
       this.logger.info(`Running migration: ${migration.name}`);
       await migration.up(context);
-      await this.recordMigration(migration.name);
+      try {
+        await this.recordMigration(migration.name);
+      } catch (trackError: unknown) {
+        // #161: Schema changed but tracking record failed — critical desync
+        const msg = trackError instanceof Error ? trackError.message : String(trackError);
+        this.logger.error(
+          `CRITICAL: Migration "${migration.name}" applied but tracking record failed: ${msg}. ` +
+          `The __migrations table may be out of sync with the actual schema.`,
+        );
+        return { name: migration.name, direction: "up", success: false, error: `Tracking failed: ${msg}` };
+      }
       this.logger.info(`Migration completed: ${migration.name}`);
       return { name: migration.name, direction: "up", success: true };
     } catch (e: unknown) {
@@ -172,7 +182,17 @@ export class MigrationRunner {
     try {
       this.logger.info(`Reverting migration: ${migration.name}`);
       await migration.down(context);
-      await this.removeMigrationRecord(migration.name);
+      try {
+        await this.removeMigrationRecord(migration.name);
+      } catch (trackError: unknown) {
+        // #161: Schema reverted but tracking record removal failed — critical desync
+        const msg = trackError instanceof Error ? trackError.message : String(trackError);
+        this.logger.error(
+          `CRITICAL: Migration "${migration.name}" reverted but tracking record removal failed: ${msg}. ` +
+          `The __migrations table may be out of sync.`,
+        );
+        return { name: migration.name, direction: "down", success: false, error: `Tracking failed: ${msg}` };
+      }
       this.logger.info(`Migration reverted: ${migration.name}`);
       return { name: migration.name, direction: "down", success: true };
     } catch (e: unknown) {

@@ -113,6 +113,7 @@ export class SeederRunner {
   /**
    * Run all pending seeders in order.
    * If trackExecution is true, only runs seeders not yet recorded.
+   * Uses advisory lock via driver (if available) to prevent concurrent execution (#168).
    * Stops on first error.
    */
   async runAll(): Promise<SeederResult[]> {
@@ -120,22 +121,41 @@ export class SeederRunner {
       await this.ensureSeedTable();
     }
 
-    const executed = this.trackExecution
-      ? await this.getExecutedSeeds()
-      : [];
-    const pending = this.seeders.filter((s) => !executed.includes(s.name));
-
-    const results: SeederResult[] = [];
-
-    for (const seeder of pending) {
-      const result = await this.runOne(seeder);
-      results.push(result);
-      if (!result.success) {
-        break;
+    // #168: Acquire advisory lock to prevent concurrent tracked seed execution
+    const driver = this.em.getDriver();
+    const lockId = "stingerloom_seed_lock";
+    let lockAcquired = false;
+    if (this.trackExecution && driver?.acquireAdvisoryLock) {
+      lockAcquired = await driver.acquireAdvisoryLock(lockId, 10000);
+      if (!lockAcquired) {
+        throw new Error(
+          `Failed to acquire seed lock "${lockId}". Another seeder may be running.`,
+        );
       }
     }
 
-    return results;
+    try {
+      const executed = this.trackExecution
+        ? await this.getExecutedSeeds()
+        : [];
+      const pending = this.seeders.filter((s) => !executed.includes(s.name));
+
+      const results: SeederResult[] = [];
+
+      for (const seeder of pending) {
+        const result = await this.runOne(seeder);
+        results.push(result);
+        if (!result.success) {
+          break;
+        }
+      }
+
+      return results;
+    } finally {
+      if (lockAcquired && driver?.releaseAdvisoryLock) {
+        await driver.releaseAdvisoryLock(lockId);
+      }
+    }
   }
 
   /**
@@ -148,7 +168,17 @@ export class SeederRunner {
       this.logger.info(`Running seeder: ${seeder.name}`);
       await seeder.run(ctx);
       if (this.trackExecution) {
-        await this.recordSeed(seeder.name);
+        try {
+          await this.recordSeed(seeder.name);
+        } catch (trackError: unknown) {
+          // #169: If tracking fails after data mutation, log critical warning
+          const msg = trackError instanceof Error ? trackError.message : String(trackError);
+          this.logger.error(
+            `CRITICAL: Seeder "${seeder.name}" ran successfully but tracking record failed: ${msg}. ` +
+            `The __seeds table may be out of sync with actual data state.`,
+          );
+          return { name: seeder.name, direction: "run", success: false, error: `Tracking failed: ${msg}` };
+        }
       }
       this.logger.info(`Seeder completed: ${seeder.name}`);
       return { name: seeder.name, direction: "run", success: true };
@@ -199,7 +229,17 @@ export class SeederRunner {
       this.logger.info(`Reverting seeder: ${seeder.name}`);
       await seeder.revert(ctx);
       if (this.trackExecution) {
-        await this.removeSeedRecord(seeder.name);
+        try {
+          await this.removeSeedRecord(seeder.name);
+        } catch (trackError: unknown) {
+          // #169: If tracking removal fails after data revert, log critical warning
+          const msg = trackError instanceof Error ? trackError.message : String(trackError);
+          this.logger.error(
+            `CRITICAL: Seeder "${seeder.name}" reverted but tracking record removal failed: ${msg}. ` +
+            `The __seeds table may be out of sync.`,
+          );
+          return { name: seeder.name, direction: "revert", success: false, error: `Tracking failed: ${msg}` };
+        }
       }
       this.logger.info(`Seeder reverted: ${seeder.name}`);
       return { name: seeder.name, direction: "revert", success: true };
