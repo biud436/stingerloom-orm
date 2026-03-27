@@ -133,8 +133,14 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    * @returns The current instance of the query builder.
    */
   whereIn(column: string, values: any[]): RawQueryBuilder {
-    const valueSqls = values.map((v) => sql`${v}`);
     const keyword = this.hasWhereClause ? "AND" : "WHERE";
+    if (values.length === 0) {
+      // Empty IN set can never match — emit FALSE
+      this.sqlQuerySegments.push(sql`${raw(keyword)} 1=0`);
+      this.hasWhereClause = true;
+      return this;
+    }
+    const valueSqls = values.map((v) => sql`${v}`);
     this.sqlQuerySegments.push(
       sql`${raw(keyword)} ${raw(column)} IN (${join(valueSqls, ", ")})`,
     );
@@ -149,6 +155,10 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    * @returns The current instance of the query builder.
    */
   whereNotIn(column: string, values: any[]): RawQueryBuilder {
+    if (values.length === 0) {
+      // Empty NOT IN set matches everything — no condition needed
+      return this;
+    }
     const valueSqls = values.map((v) => sql`${v}`);
     const keyword = this.hasWhereClause ? "AND" : "WHERE";
     this.sqlQuerySegments.push(

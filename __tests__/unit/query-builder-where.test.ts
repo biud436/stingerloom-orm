@@ -112,6 +112,58 @@ describe("Query Builder WHERE 개선", () => {
     });
   });
 
+  describe("whereIn/whereNotIn empty array (Issue #184)", () => {
+    it("whereIn with empty array should produce 1=0 (no match)", () => {
+      const result = qb
+        .select("*")
+        .from('"users"')
+        .whereIn('"id"', [])
+        .build();
+
+      expect(result.sql).toContain("1=0");
+      expect(result.sql).not.toContain("IN ()");
+      expect(result.values).toHaveLength(0);
+    });
+
+    it("whereNotIn with empty array should add no condition", () => {
+      const result = qb
+        .select("*")
+        .from('"users"')
+        .where([])
+        .whereNotIn('"id"', [])
+        .build();
+
+      expect(result.sql).not.toContain("NOT IN");
+      expect(result.sql).not.toContain("IN ()");
+    });
+
+    it("whereIn empty array after existing WHERE should use AND 1=0", () => {
+      const result = qb
+        .select("*")
+        .from('"users"')
+        .where([Conditions.equals('"active"', true)])
+        .whereIn('"id"', [])
+        .build();
+
+      expect(result.sql).toContain("AND 1=0");
+      expect(result.sql).not.toContain("IN ()");
+    });
+
+    it("whereNotIn empty array should not break chaining", () => {
+      const result = qb
+        .select("*")
+        .from('"users"')
+        .whereNotIn('"id"', [])
+        .whereIn('"status"', ["active"])
+        .build();
+
+      // whereNotIn([]) adds nothing, so whereIn should produce WHERE (not AND)
+      expect(result.sql).toContain("WHERE");
+      expect(result.sql).toContain("IN");
+      expect(result.values).toContain("active");
+    });
+  });
+
   describe("whereNull()", () => {
     it("WHERE col IS NULL 조건을 추가해야 함", () => {
       const result = qb
