@@ -793,7 +793,7 @@ export class SchemaGenerator {
       case "char":
         return "CHAR";
       case "enum":
-        return "TEXT";
+        return "USER-DEFINED";
       case "array":
         return "ARRAY";
       default:

@@ -273,9 +273,20 @@ export class MySqlConnector extends IConnector {
         return reject(new ConnectionNotFound());
       }
 
-      connection.rollback(() => {
+      connection.rollback((rollbackErr) => {
+        if (rollbackErr) {
+          // Rollback failed — destroy connection instead of returning to pool
+          connection.destroy();
+          reject(rollbackErr);
+          return;
+        }
         // autocommit을 다시 활성화한 후 connection을 pool에 반환
-        connection.query("SET autocommit = 1", () => {
+        connection.query("SET autocommit = 1", (queryErr) => {
+          if (queryErr) {
+            connection.destroy();
+            reject(queryErr);
+            return;
+          }
           connection.release();
           resolve();
         });
@@ -291,8 +302,19 @@ export class MySqlConnector extends IConnector {
 
       connection.commit((error) => {
         if (error) {
-          connection.rollback(() => {
-            connection.query("SET autocommit = 1", () => {
+          connection.rollback((rollbackErr) => {
+            if (rollbackErr) {
+              // Both commit and rollback failed — destroy connection
+              connection.destroy();
+              reject(error);
+              return;
+            }
+            connection.query("SET autocommit = 1", (queryErr) => {
+              if (queryErr) {
+                connection.destroy();
+                reject(error);
+                return;
+              }
               connection.release();
               reject(error);
             });
@@ -301,7 +323,12 @@ export class MySqlConnector extends IConnector {
         }
 
         // autocommit을 다시 활성화한 후 connection을 pool에 반환
-        connection.query("SET autocommit = 1", () => {
+        connection.query("SET autocommit = 1", (queryErr) => {
+          if (queryErr) {
+            connection.destroy();
+            resolve();
+            return;
+          }
           connection.release();
           resolve();
         });

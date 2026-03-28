@@ -332,7 +332,7 @@ describe("PostgresDriver - castType", () => {
     expect(driver.castType("longtext")).toBe("TEXT");
   });
 
-  it("should map enum to TEXT (fallback when no enumName)", () => {
-    expect(driver.castType("enum")).toBe("TEXT");
+  it("should map enum to USER-DEFINED (matches information_schema introspection)", () => {
+    expect(driver.castType("enum")).toBe("USER-DEFINED");
   });
 });

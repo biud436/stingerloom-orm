@@ -748,10 +748,9 @@ export class PostgresDriver implements ISqlDriver {
       case "char":
         return "CHAR";
       case "enum":
-        // PostgreSQL은 CREATE TYPE ... AS ENUM (...) 으로 사용자 정의 ENUM 타입을 생성해야 합니다.
-        // createTable()에서 enumName 옵션을 통해 실제 타입명으로 대체되므로,
-        // 여기서의 반환값("TEXT")은 enumName이 없을 때의 최종 폴백으로만 사용됩니다.
-        return "TEXT";
+        // PostgreSQL은 CREATE TYPE ... AS ENUM (...) 으로 사용자 정의 ENUM 타입을 생성합니다.
+        // information_schema에서 enum 컬럼은 "USER-DEFINED"로 조회되므로 SchemaDiff와 일치시킵니다.
+        return "USER-DEFINED";
       case "array":
         return "ARRAY";
       default:

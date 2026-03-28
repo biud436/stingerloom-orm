@@ -1073,6 +1073,14 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      // afterLoad 구독자 이벤트 호출
+      if (entityResult) {
+        const loadedEntities = Array.isArray(entityResult) ? entityResult : [entityResult];
+        for (const loadedEntity of loadedEntities) {
+          await this.notifySubscribers(entity, "afterLoad", loadedEntity);
+        }
+      }
+
       return entityResult;
     }, { existingSession, readNodeOverride: readNode, timeout: effectiveTimeout });
   }
@@ -1143,9 +1151,17 @@ export class EntityManager implements BaseEntityManager {
 
       if (cursorValue !== null) {
         if (direction === "ASC") {
-          whereMap.push(Conditions.gt(this.wrap(orderByColumn), cursorValue));
+          // Include NULL rows that haven't been seen yet (NULLs sort last in ASC)
+          whereMap.push(Conditions.or([
+            Conditions.gt(this.wrap(orderByColumn), cursorValue),
+            Conditions.isNull(this.wrap(orderByColumn)),
+          ]));
         } else {
-          whereMap.push(Conditions.lt(this.wrap(orderByColumn), cursorValue));
+          // Include NULL rows that haven't been seen yet (NULLs sort first in DESC)
+          whereMap.push(Conditions.or([
+            Conditions.lt(this.wrap(orderByColumn), cursorValue),
+            Conditions.isNull(this.wrap(orderByColumn)),
+          ]));
         }
       }
 
@@ -1179,6 +1195,11 @@ export class EntityManager implements BaseEntityManager {
         results: pageResults,
         fields: queryResult.fields,
       });
+
+      // afterLoad 구독자 이벤트 호출
+      for (const loadedEntity of entities) {
+        await this.notifySubscribers(entity, "afterLoad", loadedEntity);
+      }
 
       let nextCursor: string | null = null;
       if (hasNextPage && pageResults.length > 0) {
@@ -2512,18 +2533,24 @@ export class EntityManager implements BaseEntityManager {
       } else {
         await session.connect(this.connectionName);
       }
+      await this.notifyTransactionSubscribers("beforeTransactionStart");
       await session.startTransaction();
 
       if (this.isMySqlFamily()) {
         await session.query("SET autocommit = 0");
       }
+      await this.notifyTransactionSubscribers("afterTransactionStart");
 
       const result = await fn(session);
+      await this.notifyTransactionSubscribers("beforeTransactionCommit");
       await session.commit();
+      await this.notifyTransactionSubscribers("afterTransactionCommit");
       return result;
     } catch (e: unknown) {
       try {
+        await this.notifyTransactionSubscribers("beforeTransactionRollback");
         await session.rollback();
+        await this.notifyTransactionSubscribers("afterTransactionRollback");
       } catch (rollbackError) {
         this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
       }

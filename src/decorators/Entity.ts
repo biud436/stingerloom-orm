@@ -41,24 +41,40 @@ export function Entity(options?: EntityOption): ClassDecorator {
     const nameKey = camelToSnakeCase(target.name);
     const name = createEntityKey(nameKey);
 
-    // target 기반 필터링: 이 클래스의 메타데이터만 수집
+    // target 기반 필터링: 이 클래스 및 부모 클래스의 메타데이터를 수집 (상속 지원)
     // @Column의 target은 prototype, @ManyToOne/@OneToMany/@OneToOne/@ManyToMany의 target은 constructor
     const proto = target.prototype;
+
+    // 프로토타입 체인을 순회하여 부모 클래스의 메타데이터도 포함
+    const protoChain: object[] = [];
+    let current = proto;
+    while (current && current !== Object.prototype) {
+      protoChain.push(current);
+      current = Object.getPrototypeOf(current);
+    }
+
+    const constructorChain: Function[] = [];
+    let ctor: Function = target;
+    while (ctor && ctor !== Function.prototype && ctor !== Object) {
+      constructorChain.push(ctor);
+      ctor = Object.getPrototypeOf(ctor);
+    }
+
     const columns = columnScanner
       .allMetadata<ColumnMetadata>()
-      .filter((c) => c.target === proto);
+      .filter((c) => protoChain.includes(c.target as object));
     const manyToOnes = manyToOneScanner
       .allMetadata<ManyToOneMetadata<unknown>>()
-      .filter((m) => (m.target as Function) === target);
+      .filter((m) => constructorChain.includes(m.target as Function));
     const oneToManys = oneToManyScanner
       .allMetadata<OneToManyMetadata<unknown>>()
-      .filter((m) => (m.target as Function) === target);
+      .filter((m) => constructorChain.includes(m.target as Function));
     const oneToOnes = oneToOneScanner
       .allMetadata<OneToOneMetadata<unknown>>()
-      .filter((m) => (m.target as Function) === target);
+      .filter((m) => constructorChain.includes(m.target as Function));
     const manyToManys = manyToManyScanner
       .allMetadata<ManyToManyMetadata<unknown>>()
-      .filter((m) => (m.target as Function) === target);
+      .filter((m) => constructorChain.includes(m.target as Function));
 
     const metadata = {
       target,
