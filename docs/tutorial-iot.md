@@ -137,13 +137,15 @@ cd smart-thermo-api
 ```bash [pnpm]
 pnpm add @stingerloom/orm pg reflect-metadata
 pnpm add @nestjs/passport passport passport-jwt jwks-rsa
-pnpm add @nestjs/bullmq bullmq ioredis
+pnpm add @nestjs/bullmq bullmq
+pnpm add @nestjs-modules/ioredis ioredis
 pnpm add -D @types/passport-jwt
 ```
 ```bash [npm]
 npm install @stingerloom/orm pg reflect-metadata
 npm install @nestjs/passport passport passport-jwt jwks-rsa
-npm install @nestjs/bullmq bullmq ioredis
+npm install @nestjs/bullmq bullmq
+npm install @nestjs-modules/ioredis ioredis
 npm install -D @types/passport-jwt
 ```
 :::
@@ -167,6 +169,7 @@ Make sure your `tsconfig.json` has these two flags:
 // src/app.module.ts
 import { Module } from "@nestjs/common";
 import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { RedisModule } from "@nestjs-modules/ioredis";
 import { Device } from "./entities/device.entity";
 import { User } from "./entities/user.entity";
 import { TemperatureReading } from "./entities/temperature-reading.entity";
@@ -187,11 +190,17 @@ import { DailyStats } from "./entities/daily-stats.entity";
       synchronize: true,
       logging: true,
     }),
+    RedisModule.forRoot({
+      type: "single",
+      url: process.env.REDIS_URL || "redis://localhost:6379",
+    }),
     // ... other modules added later
   ],
 })
 export class AppModule {}
 ```
+
+`RedisModule.forRoot()` registers a global Redis connection that can be injected anywhere with `@InjectRedis()`. No more `new Redis()` scattered throughout your services.
 
 ::: warning
 `synchronize: true` is convenient during development — the ORM creates and alters tables to match your entities. **Never use it in production.** Use [Migrations](./migrations.md) instead.
@@ -1030,6 +1039,32 @@ export class ReadingsController {
 
 A mobile app needs several types of queries. Let's implement each one and see the SQL the ORM generates.
 
+All the methods below live in their respective services, which inject repositories through `@InjectRepository`:
+
+```typescript
+// src/devices/devices.service.ts
+import { Injectable } from "@nestjs/common";
+import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
+import { Device } from "../entities/device.entity";
+import { TemperatureReading } from "../entities/temperature-reading.entity";
+
+@Injectable()
+export class DevicesService {
+  constructor(
+    @InjectRepository(Device)
+    private readonly deviceRepo: BaseRepository<Device>,
+    @InjectRepository(TemperatureReading)
+    private readonly readingRepo: BaseRepository<TemperatureReading>,
+  ) {}
+
+  // methods below...
+}
+```
+
+::: tip @InjectRepository vs @Inject(EntityManager)
+Use `@InjectRepository` for standard CRUD, pagination, aggregation, and upserts — it covers 90% of use cases. Reserve `@Inject(EntityManager)` for infrastructure-level operations: raw SQL (`em.query()`), streaming (`em.stream()`), subscriber registration (`em.addSubscriber()`), and driver access (`em.getDriver()`).
+:::
+
 ### Latest Reading Per Device
 
 When you open the app, the first thing you see is the current temperature for each of your devices.
@@ -1059,7 +1094,7 @@ Why not offset pagination? Imagine the device has 1 million readings. Requesting
 
 ```typescript
 async getReadingHistory(deviceId: number, cursor?: string) {
-  return this.em.findWithCursor(TemperatureReading, {
+  return this.readingRepo.findWithCursor({
     where: { device: { id: deviceId } },
     take: 50,
     orderBy: "recordedAt",
@@ -1106,7 +1141,7 @@ The "My Devices" screen shows a paginated list with a total count ("Showing 1–
 
 ```typescript
 async getDevices(page: number, pageSize: number) {
-  return this.em.findAndCount(Device, {
+  return this.deviceRepo.findAndCount({
     where: { isActive: true },
     relations: ["user"],
     take: pageSize,
@@ -1168,11 +1203,11 @@ Imagine the mobile app has a dashboard that shows "Average temperature this week
 
 ```typescript
 const [avg, max] = await Promise.all([
-  this.em.avg(TemperatureReading, "temperatureCelsius", {
+  this.readingRepo.avg("temperatureCelsius", {
     device: { id: deviceId },
     recordedAt: { gte: sevenDaysAgo },
   }),
-  this.em.max(TemperatureReading, "temperatureCelsius", {
+  this.readingRepo.max("temperatureCelsius", {
     device: { id: deviceId },
     recordedAt: { gte: oneDayAgo },
   }),
@@ -1198,6 +1233,7 @@ Instead of scanning raw data on every request, we pre-compute daily summaries. L
 ```typescript
 // src/stats/stats.service.ts
 import { Injectable, Inject } from "@nestjs/common";
+import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
 import { EntityManager } from "@stingerloom/orm";
 import { DailyStats } from "../entities/daily-stats.entity";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
@@ -1206,11 +1242,15 @@ import sql from "sql-template-tag";
 @Injectable()
 export class StatsService {
   constructor(
-    @Inject(EntityManager) private readonly em: EntityManager,
+    @InjectRepository(TemperatureReading)
+    private readonly readingRepo: BaseRepository<TemperatureReading>,
+    @InjectRepository(DailyStats)
+    private readonly statsRepo: BaseRepository<DailyStats>,
+    @Inject(EntityManager) private readonly em: EntityManager, // for raw SQL only
   ) {}
 
   async aggregateDay(deviceId: number, date: string): Promise<void> {
-    // Use ORM aggregates to compute the summary
+    // Use repository aggregates to compute the summary
     const where = {
       device: { id: deviceId },
       recordedAt: {
@@ -1219,16 +1259,16 @@ export class StatsService {
     };
 
     const [avg, min, max, count] = await Promise.all([
-      this.em.avg(TemperatureReading, "temperatureCelsius", where),
-      this.em.min(TemperatureReading, "temperatureCelsius", where),
-      this.em.max(TemperatureReading, "temperatureCelsius", where),
-      this.em.count(TemperatureReading, where),
+      this.readingRepo.avg("temperatureCelsius", where),
+      this.readingRepo.min("temperatureCelsius", where),
+      this.readingRepo.max("temperatureCelsius", where),
+      this.readingRepo.count(where),
     ]);
 
     if (count === 0) return; // No readings for this day
 
     // Upsert: create if new, update if already aggregated
-    await this.em.upsert(DailyStats, {
+    await this.statsRepo.upsert({
       device: { id: deviceId },
       date,
       avgTemperature: avg,
@@ -1296,7 +1336,7 @@ async getHourlyBreakdown(deviceId: number): Promise<Array<{
 
 | Need | Use | Why |
 |------|-----|-----|
-| Single aggregate (count, avg, max) | `em.count()`, `em.avg()`, `em.max()` | Simpler, type-safe, dialect-portable |
+| Single aggregate (count, avg, max) | `repo.count()`, `repo.avg()`, `repo.max()` | Simpler, type-safe, dialect-portable |
 | GROUP BY, window functions, CTEs | `em.query()` with `sql-template-tag` | ORM finders don't support GROUP BY with expressions |
 | Application-side aggregation | `em.stream()` + loop | When DB can't express the logic (ML scoring, custom algorithms) |
 
@@ -1313,7 +1353,7 @@ async getWeeklySummary(deviceId: number) {
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   const dateStr = sevenDaysAgo.toISOString().split("T")[0];
 
-  return this.em.find(DailyStats, {
+  return this.statsRepo.find({
     where: {
       device: { id: deviceId },
       date: { gte: dateStr },
@@ -1345,6 +1385,7 @@ Loading 28.8 million rows into memory would crash your Node.js process. `em.stre
 ```typescript
 // src/stats/aggregation.processor.ts
 import { Inject, Injectable } from "@nestjs/common";
+import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
 import { EntityManager } from "@stingerloom/orm";
 import { Device } from "../entities/device.entity";
 import { StatsService } from "./stats.service";
@@ -1352,7 +1393,9 @@ import { StatsService } from "./stats.service";
 @Injectable()
 export class AggregationProcessor {
   constructor(
-    @Inject(EntityManager) private readonly em: EntityManager,
+    @InjectRepository(Device)
+    private readonly deviceRepo: BaseRepository<Device>,
+    @Inject(EntityManager) private readonly em: EntityManager, // stream() requires EntityManager
     private readonly statsService: StatsService,
   ) {}
 
@@ -1361,11 +1404,13 @@ export class AggregationProcessor {
     yesterday.setDate(yesterday.getDate() - 1);
     const dateStr = yesterday.toISOString().split("T")[0];
 
-    const totalDevices = await this.em.count(Device, { isActive: true });
+    const totalDevices = await this.deviceRepo.count({ isActive: true });
     console.log(`Aggregating ${dateStr} for ${totalDevices} devices...`);
 
     let processed = 0;
 
+    // stream() is an EntityManager-level operation — it handles
+    // memory-efficient batched iteration over millions of rows.
     for await (const device of this.em.stream(
       Device,
       { where: { isActive: true } },
@@ -1476,20 +1521,20 @@ Mobile App requests GET /devices/1/stats/weekly
 
 ```typescript
 // src/stats/cached-stats.service.ts
-import { Injectable, Inject } from "@nestjs/common";
-import { EntityManager, MetadataContext } from "@stingerloom/orm";
+import { Injectable } from "@nestjs/common";
+import { InjectRedis } from "@nestjs-modules/ioredis";
+import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
+import { MetadataContext } from "@stingerloom/orm";
 import { DailyStats } from "../entities/daily-stats.entity";
 import Redis from "ioredis";
 
 @Injectable()
 export class CachedStatsService {
-  private redis: Redis;
-
   constructor(
-    @Inject(EntityManager) private readonly em: EntityManager,
-  ) {
-    this.redis = new Redis({ host: "localhost", port: 6379 });
-  }
+    @InjectRepository(DailyStats)
+    private readonly statsRepo: BaseRepository<DailyStats>,
+    @InjectRedis() private readonly redis: Redis,
+  ) {}
 
   async getWeeklySummary(deviceId: number): Promise<DailyStats[]> {
     const tenant = MetadataContext.getCurrentTenant();
@@ -1499,11 +1544,11 @@ export class CachedStatsService {
     const cached = await this.redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
-    // 2. Cache miss — query the ORM
+    // 2. Cache miss — query the ORM via repository
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    const stats = await this.em.find(DailyStats, {
+    const stats = await this.statsRepo.find({
       where: {
         device: { id: deviceId },
         date: { gte: sevenDaysAgo.toISOString().split("T")[0] },
@@ -1519,6 +1564,8 @@ export class CachedStatsService {
 }
 ```
 
+Notice: no `new Redis()` anywhere. The `@InjectRedis()` decorator pulls the connection from the `RedisModule` we registered in Step 1. This means all Redis connections are managed by NestJS's lifecycle — proper cleanup on shutdown, shared configuration, and testability through DI.
+
 ### Cache Invalidation with EntitySubscriber
 
 When new daily stats are computed (by the nightly aggregation cron), the cached data is stale. We use an `EntitySubscriber` to automatically invalidate the relevant cache keys:
@@ -1530,11 +1577,7 @@ import { DailyStats } from "../entities/daily-stats.entity";
 import Redis from "ioredis";
 
 export class DailyStatsCacheSubscriber implements EntitySubscriber<DailyStats> {
-  private redis: Redis;
-
-  constructor() {
-    this.redis = new Redis({ host: "localhost", port: 6379 });
-  }
+  constructor(private readonly redis: Redis) {}
 
   listenTo() {
     return DailyStats;
@@ -1558,6 +1601,23 @@ export class DailyStatsCacheSubscriber implements EntitySubscriber<DailyStats> {
 }
 ```
 
+The subscriber receives the Redis instance through its constructor. We pass the DI-managed Redis when registering the subscriber:
+
+```typescript
+// src/stats/stats.module.ts (subscriber registration)
+@Module({ /* ... */ })
+export class StatsModule implements OnModuleInit {
+  constructor(
+    @Inject(EntityManager) private readonly em: EntityManager,
+    @InjectRedis() private readonly redis: Redis,
+  ) {}
+
+  onModuleInit() {
+    this.em.addSubscriber(new DailyStatsCacheSubscriber(this.redis));
+  }
+}
+```
+
 The beauty of this pattern: the aggregation service (`StatsService`) doesn't know about Redis. The cache service doesn't know about aggregation schedules. The subscriber bridges them — when the ORM writes a `DailyStats` row, the subscriber reacts by deleting the stale cache. The systems are fully decoupled.
 
 ---
@@ -1576,8 +1636,9 @@ These two operations must succeed or fail together. If the alert is created but 
 
 ```typescript
 // src/alerts/alerts.service.ts
-import { Injectable, Inject } from "@nestjs/common";
-import { EntityManager, Transactional } from "@stingerloom/orm";
+import { Injectable } from "@nestjs/common";
+import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
+import { Transactional } from "@stingerloom/orm";
 import { Alert } from "../entities/alert.entity";
 import { AlertRule } from "../entities/alert-rule.entity";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
@@ -1585,7 +1646,8 @@ import { TemperatureReading } from "../entities/temperature-reading.entity";
 @Injectable()
 export class AlertsService {
   constructor(
-    @Inject(EntityManager) private readonly em: EntityManager,
+    @InjectRepository(Alert)
+    private readonly alertRepo: BaseRepository<Alert>,
   ) {}
 
   @Transactional()
@@ -1602,8 +1664,7 @@ export class AlertsService {
     alert.temperatureCelsius = reading.temperatureCelsius;
     alert.acknowledged = false;
 
-    const saved = await this.em.save(Alert, alert);
-    return saved;
+    return this.alertRepo.save(alert);
   }
 }
 ```
@@ -1647,7 +1708,7 @@ Both approaches produce identical SQL. `@Transactional()` is cleaner for simple 
 
 ```typescript
 async getUnacknowledgedAlerts(deviceId: number) {
-  return this.em.find(Alert, {
+  return this.alertRepo.find({
     where: {
       rule: { device: { id: deviceId } },
       acknowledged: false,
