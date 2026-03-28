@@ -382,14 +382,14 @@ export class SqliteDriver implements ISqlDriver {
     conflictColumns: string[],
     updateColumns: string[],
   ): string {
-    const columnList = columns.join(", ");
+    const columnList = columns.map((c) => this.wrap(c)).join(", ");
     const valuePlaceholders = columns.map(() => "?").join(", ");
-    const conflictList = conflictColumns.join(", ");
+    const conflictList = conflictColumns.map((c) => this.wrap(c)).join(", ");
     const updateSet = updateColumns
-      .map((col) => `${col} = excluded.${col}`)
+      .map((col) => `${this.wrap(col)} = excluded.${this.wrap(col)}`)
       .join(", ");
 
-    return `INSERT INTO ${tableName} (${columnList}) VALUES (${valuePlaceholders}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+    return `INSERT INTO ${this.wrap(tableName)} (${columnList}) VALUES (${valuePlaceholders}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
   }
 
   async hasColumn(tableName: string, columnName: string): Promise<boolean> {

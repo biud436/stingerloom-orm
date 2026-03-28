@@ -4,19 +4,29 @@
 
 ## ORM이란?
 
-TypeScript 코드에서는 **객체**(클래스), DB에서는 **테이블**(행/열)로 데이터가 존재해요. ORM은 이 둘 사이를 자동 변환해 줘요.
+웹 애플리케이션을 만들 때, 데이터는 서로 전혀 다른 두 세계에 존재해요. TypeScript 코드 안에서 데이터는 **객체**로 존재해요 — 프로퍼티와 메서드를 가진 클래스. 데이터베이스 안에서 데이터는 **테이블**로 존재해요 — 행과 열로 이루어진 원시 값.
+
+ORM(Object-Relational Mapper)은 이 두 세계 사이의 변환 계층이에요. SQL 문자열을 직접 작성하는 대신, TypeScript 클래스를 정의하면 ORM이 테이블 생성, 행 삽입, 데이터 조회, 타입이 지정된 객체 반환까지 알아서 처리해요.
+
+일종의 통역사라고 생각하면 돼요. 여러분은 TypeScript를 쓰고, 데이터베이스는 SQL을 쓰고, ORM이 그 사이의 모든 대화를 번역해 줘요.
+
+ORM 없이:
 
 ```typescript
-// ORM 없이 — raw SQL, 타입 없음
+// raw SQL 문자열을 직접 작성, 결과는 타입 없음
 const result = await pool.query('SELECT * FROM "user" WHERE "id" = $1', [1]);
-const user = result.rows[0]; // any
-
-// ORM — 타입 안전
-const user = await em.findOne(User, { where: { id: 1 } });
-// User | null
+const user = result.rows[0]; // { id: 1, name: "Alice" } — 타입 안전성 없음
 ```
 
-클래스 정의 → `CREATE TABLE`, `save()` → `INSERT`, `find()` → `SELECT`. 각 단계에서 실제 생성되는 SQL도 함께 보여줄게요.
+ORM을 쓰면:
+
+```typescript
+// 타입이 지정된 객체로 작업, SQL은 ORM이 작성
+const user = await em.findOne(User, { where: { id: 1 } });
+// user는 User | null — 타입 안전, 프로퍼티 자동완성
+```
+
+ORM은 양방향으로 변환을 처리해요. 클래스 정의 → `CREATE TABLE`, `save()` 호출 → `INSERT`, `find()` 호출 → `SELECT`. 이 가이드에서 각 연산의 실제 SQL도 함께 보여줄게요.
 
 ## 사전 요구사항
 
@@ -80,9 +90,13 @@ yarn add @stingerloom/orm reflect-metadata pg
 
 :::
 
-### reflect-metadata
+### reflect-metadata가 왜 필요할까?
 
-데코레이터가 런타임에 타입 정보(`string` → `VARCHAR`, `number` → `INTEGER`)를 읽으려면 이 폴리필이 필요해요. 앱 진입점 최상단에서 한 번만 import하면 돼요.
+`@Column()`을 클래스 프로퍼티에 붙이면, TypeScript는 컴파일 타임에 해당 프로퍼티의 타입이나 이름 같은 정보를 기록해요. 하지만 기본적으로 이 정보는 JavaScript로 컴파일될 때 사라져요.
+
+`reflect-metadata`는 이 메타데이터를 **런타임**에도 사용할 수 있게 해주는 폴리필이에요. ORM이 "`email` 프로퍼티의 타입이 뭐지?"라는 질문에 답할 수 있어야 `string` → `VARCHAR`, `number` → `INTEGER`로 자동 매핑할 수 있거든요. 이 폴리필이 없으면 `@Entity()`나 `@Column()` 같은 데코레이터가 클래스 구조를 전혀 알 수 없어요.
+
+앱 진입점 최상단에서 한 번만 import하면 돼요. 그 이후로 ORM의 모든 데코레이터가 필요한 타입 정보를 읽을 수 있어요.
 
 ### CJS / ESM
 
@@ -118,13 +132,15 @@ import { PrismaImporter } from "@stingerloom/orm/prisma-import";
 }
 ```
 
-- `experimentalDecorators` -- `@Entity()`, `@Column()` 문법 활성화
-- `emitDecoratorMetadata` -- 런타임 타입 정보 출력 (`string` → `VARCHAR` 매핑에 필요)
-- `strictPropertyInitialization` -- 엔티티 프로퍼티는 ORM이 채우므로 생성자 할당 체크 비활성화
+각 옵션이 하는 일:
+
+- `experimentalDecorators` -- `@Entity()`, `@Column()` 문법을 활성화해요. 이 옵션 없이는 TypeScript가 `@`를 문법 오류로 처리해요.
+- `emitDecoratorMetadata` -- 컴파일러에게 `reflect-metadata`가 런타임에 읽을 수 있는 타입 정보를 출력하라고 지시해요. ORM이 `name: string`을 `VARCHAR` 컬럼으로 매핑할 수 있는 게 이 옵션 덕분이에요.
+- `strictPropertyInitialization` -- 보통 TypeScript는 클래스 프로퍼티가 생성자에서 할당되지 않으면 경고해요. 엔티티 프로퍼티는 생성자가 아니라 ORM이 채워주기 때문에, 모든 프로퍼티에 `!:`를 붙이지 않으려면 이 체크를 꺼야 해요.
 
 ## 3단계: 엔티티 정의
 
-엔티티는 DB 테이블에 대응하는 TypeScript 클래스예요. 인스턴스 하나가 행 하나에요.
+**엔티티(Entity)**는 데이터베이스 테이블에 대응하는 TypeScript 클래스예요. 클래스의 인스턴스 하나가 테이블의 행 하나를 나타내요. 간단한 User 엔티티를 만들어 볼게요.
 
 ```typescript
 // user.entity.ts
@@ -143,9 +159,11 @@ export class User {
 }
 ```
 
-- `@Entity()` -- 이 클래스가 DB 테이블임을 선언. 테이블명은 소문자 클래스명(`user`)
-- `@PrimaryGeneratedColumn()` -- 자동 생성 PK (MySQL: auto-increment, PostgreSQL: `SERIAL`)
-- `@Column()` -- 일반 컬럼. TS 타입에서 SQL 타입 자동 추론 (`string` → `VARCHAR(255)`, `number` → `INTEGER`)
+각 데코레이터가 하는 일:
+
+- `@Entity()` -- ORM에게 "이 클래스는 DB 테이블이야"라고 알려줘요. 테이블명은 기본적으로 소문자 클래스명(`user`)이에요.
+- `@PrimaryGeneratedColumn()` -- 이 컬럼이 PK이고, 값은 DB가 자동 생성해요 (MySQL: auto-increment, PostgreSQL: `SERIAL`).
+- `@Column()` -- 일반 컬럼. ORM이 TypeScript 타입에서 SQL 타입을 자동 추론해요: `string` → `VARCHAR(255)`, `number` → `INTEGER`, `boolean` → `BOOLEAN`.
 
 `synchronize: true` 시 ORM이 생성하는 DDL:
 
@@ -199,9 +217,9 @@ async function main() {
 main().catch(console.error);
 ```
 
-`synchronize: true`면 엔티티와 DB를 비교해서 `CREATE TABLE` / `ALTER TABLE`을 자동 실행해요.
+`synchronize: true`로 설정하면, ORM이 엔티티 정의와 실제 DB를 비교해서 테이블을 맞춰줘요. `user` 테이블이 아직 없으면 위의 `CREATE TABLE` DDL을 실행하고, 테이블은 있지만 새로 추가한 컬럼이 빠져 있으면 `ALTER TABLE`로 추가해요.
 
-> **경고** `synchronize: true`는 개발 전용이에요. 프로덕션에서는 [마이그레이션](./migrations.md)을 사용하세요.
+> **경고** `synchronize: true`는 개발 전용이에요. 프로덕션에서는 엔티티에서 사라진 컬럼이나 테이블을 DROP할 수 있어요. [마이그레이션](./migrations.md)을 사용하면 어떤 변경이 프로덕션 DB에 적용되는지 직접 제어할 수 있어요.
 
 ## 5단계: CRUD 실습
 
@@ -219,7 +237,7 @@ console.log("저장된 사용자:", user);
 // { id: 1, name: "John Doe", email: "john@example.com" }
 ```
 
-`id`가 없으므로 INSERT를 실행해요. 실제 SQL:
+`em.save()`는 `id`가 없는 것을 보고 INSERT를 실행해요. 실제 생성되는 SQL:
 
 ```sql
 -- PostgreSQL
@@ -232,7 +250,7 @@ INSERT INTO `user` (`name`, `email`) VALUES (?, ?)
 -- 이후: SELECT * FROM `user` WHERE `id` = LAST_INSERT_ID()
 ```
 
-값은 `$1`, `$2` (PostgreSQL) / `?` (MySQL)로 파라미터 바인딩되어 SQL injection을 방지해요. PostgreSQL은 `RETURNING *`로 한 번에 결과를 받고, MySQL은 두 번째 SELECT가 필요해요.
+사용자가 제공한 값은 SQL 문자열에 직접 들어가지 않아요. `$1`, `$2` (PostgreSQL) / `?` (MySQL)로 표시되는데, 이게 **파라미터 바인딩**이고 SQL injection을 방지해요. PostgreSQL은 `RETURNING *`를 지원해서 INSERT 결과를 한 번의 왕복으로 받을 수 있고, MySQL은 자동 생성된 `id`를 가져오려면 두 번째 쿼리가 필요해요.
 
 ### 조회 (Read)
 
@@ -248,11 +266,15 @@ console.log("단일 사용자:", found); // User | null
 ```
 
 ```sql
+-- find() — 전체 조회
 SELECT "id", "name", "email" FROM "user"
+
+-- findOne() — 조건으로 하나 찾기
 SELECT "id", "name", "email" FROM "user" WHERE "id" = $1 LIMIT 1
+-- 파라미터: [1]
 ```
 
-`find()` → 배열, `findOne()` → 단일 객체 또는 `null`. `LIMIT 1`은 자동 추가돼요.
+`find()`는 배열을 반환해요 (매칭되는 행이 없으면 빈 배열). `findOne()`은 타입이 지정된 단일 객체 또는 `null`을 반환해요. 한 행만 필요하니까 ORM이 자동으로 `LIMIT 1`을 추가해요.
 
 ### 수정 (Update)
 
@@ -266,7 +288,7 @@ const updated = await em.save(User, {
 console.log("수정된 사용자:", updated);
 ```
 
-PK가 있으면 UPDATE를 실행해요:
+`save()`에 PK(`id: 1`)가 포함된 객체를 전달하면, INSERT 대신 UPDATE를 실행해요:
 
 ```sql
 -- PostgreSQL
@@ -288,9 +310,10 @@ console.log("삭제된 행 수:", result.affected); // 1
 
 ```sql
 DELETE FROM "user" WHERE "id" = $1
+-- 파라미터: [1]
 ```
 
-여기까지가 기본 CRUD예요. 모든 작업이 메서드 하나로 끝나고, SQL 생성과 파라미터 바인딩은 ORM이 처리해요.
+여기까지가 첫 CRUD예요. 모든 작업이 메서드 하나로 끝나고, SQL 생성, 파라미터 바인딩, 결과 역직렬화는 ORM이 뒤에서 처리해요.
 
 ## 다른 데이터베이스 사용
 
@@ -333,9 +356,18 @@ await em.register({
 
 ## NestJS 통합
 
-`@stingerloom/orm/nestjs`로 NestJS DI와 통합돼요.
+Stingerloom ORM은 `@stingerloom/orm/nestjs` subpath export를 통해 NestJS 통합 모듈을 제공해요.
 
-`forRoot()` → DB 연결 + EntityManager 글로벌 등록, `forFeature([User])` → Repository 등록, `@InjectRepository(User)` → 서비스에 주입이에요.
+### 왜 별도의 모듈이 필요할까?
+
+NestJS는 **의존성 주입(DI)**을 사용해요 — `new`로 직접 객체를 만드는 대신, 필요한 것을 선언하면 NestJS가 알아서 제공해요. ORM 모듈은 이 두 세계를 연결하는 다리예요: `EntityManager`와 리포지토리를 생성한 뒤, NestJS의 DI 컨테이너에 등록해서 서비스의 생성자 파라미터로 주입받을 수 있게 해요.
+
+흐름은 이렇게 동작해요:
+
+1. `forRoot()` — `EntityManager`를 생성하고, DB에 연결하고, 글로벌 NestJS 프로바이더로 등록해요.
+2. `forFeature([User])` — `BaseRepository<User>`를 생성하고, `User` 클래스에서 유도된 고유 토큰으로 등록해요.
+3. `@InjectRepository(User)` — 서비스에서 NestJS에게 "User에 대해 등록된 리포지토리를 줘"라고 알려줘요.
+4. NestJS가 의존성을 해석해서 서비스의 생성자에 리포지토리를 전달해요.
 
 ### 설치
 

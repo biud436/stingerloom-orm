@@ -218,11 +218,23 @@ export class MySqlConnector extends IConnector {
     });
   }
 
+  private static readonly ISOLATION_LEVEL_SQL: Record<string, string> = {
+    "READ UNCOMMITTED": "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED",
+    "READ COMMITTED": "SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+    "REPEATABLE READ": "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+    "SERIALIZABLE": "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE",
+  };
+
   async setTransactionIsolationLevel(
     connection: Connection,
     level: TRANSACTION_ISOLATION_LEVEL,
   ): Promise<void> {
     validateIsolationLevel(level);
+
+    const safeSql = MySqlConnector.ISOLATION_LEVEL_SQL[level];
+    if (!safeSql) {
+      throw new Error(`Invalid isolation level: ${level}`);
+    }
 
     return new Promise((resolve, reject) => {
       if (!connection) {
@@ -232,7 +244,7 @@ export class MySqlConnector extends IConnector {
       /**
        * 커넥션에 설정된 트랜잭션 격리 수준은 해당 커넥션에서 수행되는 모든 트랜잭션에만 적용됨
        */
-      connection.query(`SET TRANSACTION ISOLATION LEVEL ${level}`, (error) => {
+      connection.query(safeSql, (error) => {
         if (error) {
           return reject(error);
         }

@@ -437,13 +437,13 @@ export class MySqlDriver implements ISqlDriver {
     conflictColumns: string[],
     updateColumns: string[],
   ): string {
-    const columnList = columns.join(", ");
+    const columnList = columns.map((c) => this.wrap(c)).join(", ");
     const valuePlaceholders = columns.map(() => "?").join(", ");
     const updateSet = updateColumns
-      .map((col) => `${col} = VALUES(${col})`)
+      .map((col) => `${this.wrap(col)} = VALUES(${this.wrap(col)})`)
       .join(", ");
 
-    return `INSERT INTO ${tableName} (${columnList}) VALUES (${valuePlaceholders}) ON DUPLICATE KEY UPDATE ${updateSet}`;
+    return `INSERT INTO ${this.wrap(tableName)} (${columnList}) VALUES (${valuePlaceholders}) ON DUPLICATE KEY UPDATE ${updateSet}`;
   }
 
   async hasColumn(tableName: string, columnName: string): Promise<boolean> {

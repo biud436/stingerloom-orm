@@ -21,6 +21,37 @@ export class PostgresConnector extends IConnector {
   private validateOnBorrow = false;
   private readonly logger = new Logger("PostgresConnector");
 
+  private static readonly ISOLATION_LEVEL_SQL: Record<string, string> = {
+    "READ UNCOMMITTED": "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED",
+    "READ COMMITTED": "SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+    "REPEATABLE READ": "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+    "SERIALIZABLE": "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE",
+  };
+
+  /**
+   * PostgreSQL 식별자 유효성 검증 (alphanumeric, underscore, dollar sign만 허용).
+   * 유효하지 않은 문자가 포함되면 예외를 발생시킵니다.
+   */
+  private static validateIdentifier(name: string): void {
+    if (!/^[a-zA-Z_][a-zA-Z0-9_$]*$/.test(name)) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        `Invalid identifier: "${name}". Only alphanumeric characters, underscores, and dollar signs are allowed.`,
+        "Use a valid PostgreSQL identifier (alphanumeric + underscore)",
+      );
+    }
+  }
+
+  /**
+   * 식별자를 큰따옴표로 감싸서 반환합니다 (PostgreSQL 표준).
+   * 내부에 포함된 `"` 문자는 PostgreSQL 표준인 `""` 으로 이스케이프합니다.
+   * 추가로 strict validation을 수행합니다.
+   */
+  private escapeIdentifier(name: string): string {
+    PostgresConnector.validateIdentifier(name);
+    return `"${name.replace(/"/g, '""')}"`;
+  }
+
   async connect(options: DatabaseClientOptions): Promise<void> {
     try {
       let PgPool: typeof import("pg").Pool;
@@ -59,8 +90,9 @@ export class PostgresConnector extends IConnector {
 
       // 기본 search_path를 설정합니다.
       // 이후 풀에서 가져오는 모든 커넥션에 적용됩니다.
+      const safeSchema = this.escapeIdentifier(this.schema);
       this.pool.on("connect", (client) => {
-        client.query(`SET search_path TO ${this.schema}`);
+        client.query(`SET search_path TO ${safeSchema}`);
       });
     } catch (e: unknown) {
       if (e instanceof OrmError) throw e;
@@ -212,12 +244,17 @@ export class PostgresConnector extends IConnector {
   ): Promise<void> {
     validateIsolationLevel(level);
 
+    const safeSql = PostgresConnector.ISOLATION_LEVEL_SQL[level];
+    if (!safeSql) {
+      throw new Error(`Invalid isolation level: ${level}`);
+    }
+
     const client = connection as PoolClient;
     if (!client) {
       throw new ConnectionNotFound();
     }
 
-    await client.query(`SET TRANSACTION ISOLATION LEVEL ${level}`);
+    await client.query(safeSql);
   }
 
   async startTransaction(
@@ -236,8 +273,8 @@ export class PostgresConnector extends IConnector {
     // SET LOCAL은 현재 트랜잭션에만 적용되고 COMMIT/ROLLBACK 시 자동 복원
     const tenant = MetadataContext.getCurrentTenant();
     const schema = tenant !== "public" ? tenant : this.schema;
-    const escaped = schema.replace(/"/g, '""');
-    await client.query(`SET LOCAL search_path TO "${escaped}"`);
+    const safeSchema = this.escapeIdentifier(schema);
+    await client.query(`SET LOCAL search_path TO ${safeSchema}`);
   }
 
   async rollback(connection: any): Promise<void> {

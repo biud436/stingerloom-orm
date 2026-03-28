@@ -132,10 +132,10 @@ describe("Driver.buildUpsertSql()", () => {
 
     it("should generate ON DUPLICATE KEY UPDATE SQL", () => {
       const result = driver.buildUpsertSql(
-        "`User`",
-        ["`id`", "`email`", "`name`"],
-        ["`id`"],
-        ["`email`", "`name`"],
+        "User",
+        ["id", "email", "name"],
+        ["id"],
+        ["email", "name"],
       );
 
       expect(result).toContain("INSERT INTO `User`");
@@ -152,10 +152,10 @@ describe("Driver.buildUpsertSql()", () => {
 
     it("should generate ON CONFLICT DO UPDATE SQL", () => {
       const result = driver.buildUpsertSql(
-        '"User"',
-        ['"id"', '"email"', '"name"'],
-        ['"id"'],
-        ['"email"', '"name"'],
+        "User",
+        ["id", "email", "name"],
+        ["id"],
+        ["email", "name"],
       );
 
       expect(result).toContain('INSERT INTO "User"');
@@ -173,10 +173,10 @@ describe("Driver.buildUpsertSql()", () => {
 
     it("should generate ON CONFLICT DO UPDATE SQL", () => {
       const result = driver.buildUpsertSql(
-        '"User"',
-        ['"id"', '"email"', '"name"'],
-        ['"id"'],
-        ['"email"', '"name"'],
+        "User",
+        ["id", "email", "name"],
+        ["id"],
+        ["email", "name"],
       );
 
       expect(result).toContain('INSERT INTO "User"');

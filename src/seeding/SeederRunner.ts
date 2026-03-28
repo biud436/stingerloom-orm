@@ -76,9 +76,11 @@ export class SeederRunner {
   async ensureSeedTable(): Promise<void> {
     const isMySql = this.isMySql();
 
+    const table = this.quotedTableName();
+
     if (isMySql) {
       await this.queryRunner.query(
-        `CREATE TABLE IF NOT EXISTS \`${this.tableName}\` (` +
+        `CREATE TABLE IF NOT EXISTS ${table} (` +
           `\`id\` INT AUTO_INCREMENT PRIMARY KEY, ` +
           `\`name\` VARCHAR(255) NOT NULL UNIQUE, ` +
           `\`executed_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP` +
@@ -86,7 +88,7 @@ export class SeederRunner {
       );
     } else {
       await this.queryRunner.query(
-        `CREATE TABLE IF NOT EXISTS "${this.tableName}" (` +
+        `CREATE TABLE IF NOT EXISTS ${table} (` +
           `"id" SERIAL PRIMARY KEY, ` +
           `"name" VARCHAR(255) NOT NULL UNIQUE, ` +
           `"executed_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP` +
@@ -101,9 +103,10 @@ export class SeederRunner {
   async getExecutedSeeds(): Promise<string[]> {
     const isMySql = this.isMySql();
     const quote = isMySql ? "`" : '"';
+    const table = this.quotedTableName();
 
     const result = await this.queryRunner.query(
-      `SELECT ${quote}name${quote} FROM ${quote}${this.tableName}${quote} ORDER BY ${quote}id${quote} ASC`,
+      `SELECT ${quote}name${quote} FROM ${table} ORDER BY ${quote}id${quote} ASC`,
     );
 
     const rows = this.normalizeRows(result);
@@ -284,19 +287,36 @@ export class SeederRunner {
     return driver.isMySqlFamily();
   }
 
+  /**
+   * Returns the table name properly escaped and wrapped with the appropriate
+   * quote character for the current dialect.
+   *
+   * MySQL uses backticks: `table` (backtick inside name escaped as ``)
+   * PostgreSQL/SQLite use double quotes: "table" (double quote inside name escaped as "")
+   */
+  private quotedTableName(): string {
+    const isMySql = this.isMySql();
+    if (isMySql) {
+      return "`" + this.tableName.replace(/`/g, "``") + "`";
+    }
+    return '"' + this.tableName.replace(/"/g, '""') + '"';
+  }
+
   private async recordSeed(name: string): Promise<void> {
     const isMySql = this.isMySql();
     const quote = isMySql ? "`" : '"';
+    const table = this.quotedTableName();
     await this.queryRunner.query(
-      `INSERT INTO ${quote}${this.tableName}${quote} (${quote}name${quote}) VALUES ('${name.replace(/'/g, "''")}')`,
+      `INSERT INTO ${table} (${quote}name${quote}) VALUES ('${name.replace(/'/g, "''")}')`,
     );
   }
 
   private async removeSeedRecord(name: string): Promise<void> {
     const isMySql = this.isMySql();
     const quote = isMySql ? "`" : '"';
+    const table = this.quotedTableName();
     await this.queryRunner.query(
-      `DELETE FROM ${quote}${this.tableName}${quote} WHERE ${quote}name${quote} = '${name.replace(/'/g, "''")}'`,
+      `DELETE FROM ${table} WHERE ${quote}name${quote} = '${name.replace(/'/g, "''")}'`,
     );
   }
 

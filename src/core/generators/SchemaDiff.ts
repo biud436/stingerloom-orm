@@ -10,6 +10,8 @@ import {
 import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
 import { ColumnMetadata } from "../../scanner/ColumnScanner";
 import { SchemaDialect } from "./SchemaGenerator";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
 export interface ColumnChange {
   tableName: string;
@@ -266,7 +268,10 @@ export class SchemaDiff {
     let rawResult: any;
 
     if (dialect === "sqlite") {
-      // SQLite PRAGMA does not support parameterized queries, so validate the identifier
+      // SQLite PRAGMA does not support parameterized queries, so validate the identifier strictly
+      if (!/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(tableName)) {
+        throw new OrmError(OrmErrorCode.SCHEMA_ERROR, `Invalid table name: ${tableName}`);
+      }
       const escaped = tableName.replace(/"/g, '""');
       rawResult = await queryRunner.query(`PRAGMA table_info("${escaped}")`);
       const rows = this.normalizeRows(rawResult);

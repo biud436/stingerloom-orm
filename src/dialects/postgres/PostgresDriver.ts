@@ -5,10 +5,23 @@ import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
 import { ISqlDriver } from "../SqlDriver";
 import { Exception } from "../../errors";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { Logger } from "../../utils";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
+
+/**
+ * Escape an enum value for safe interpolation into DDL strings.
+ * Rejects null bytes and escapes backslashes + single quotes.
+ */
+function escapeEnumValue(val: string): string {
+  if (val.includes('\0')) {
+    throw new OrmError(OrmErrorCode.VALIDATION_ERROR, `Enum value contains null byte`);
+  }
+  return val.replace(/\\/g, '\\\\').replace(/'/g, "''");
+}
 
 /**
  * PostgreSQL용 SQL 드라이버 구현체입니다.
@@ -391,7 +404,7 @@ export class PostgresDriver implements ISqlDriver {
 
       for (const val of values) {
         if (!existingValues.has(val)) {
-          const escaped = val.replace(/'/g, "''");
+          const escaped = escapeEnumValue(val);
           await this.connector.query(
             `ALTER TYPE ${this.wrapQualified(enumName)} ADD VALUE IF NOT EXISTS '${escaped}'`,
           );
@@ -411,7 +424,7 @@ export class PostgresDriver implements ISqlDriver {
     }
 
     const escapedValues = values
-      .map((v) => `'${v.replace(/'/g, "''")}'`)
+      .map((v) => `'${escapeEnumValue(v)}'`)
       .join(", ");
 
     return this.connector.query(
@@ -455,13 +468,13 @@ export class PostgresDriver implements ISqlDriver {
     value: string,
     placement?: { before?: string; after?: string },
   ): Promise<any> {
-    const escaped = `'${value.replace(/'/g, "''")}'`;
+    const escaped = `'${escapeEnumValue(value)}'`;
     let suffix = "";
 
     if (placement?.before) {
-      suffix = ` BEFORE '${placement.before.replace(/'/g, "''")}'`;
+      suffix = ` BEFORE '${escapeEnumValue(placement.before)}'`;
     } else if (placement?.after) {
-      suffix = ` AFTER '${placement.after.replace(/'/g, "''")}'`;
+      suffix = ` AFTER '${escapeEnumValue(placement.after)}'`;
     }
 
     return this.connector.query(
@@ -483,7 +496,7 @@ export class PostgresDriver implements ISqlDriver {
     newValue: string,
   ): Promise<any> {
     return this.connector.query(
-      `ALTER TYPE ${this.wrapQualified(enumName)} RENAME VALUE '${oldValue.replace(/'/g, "''")}' TO '${newValue.replace(/'/g, "''")}'`,
+      `ALTER TYPE ${this.wrapQualified(enumName)} RENAME VALUE '${escapeEnumValue(oldValue)}' TO '${escapeEnumValue(newValue)}'`,
     );
   }
 
@@ -782,16 +795,16 @@ export class PostgresDriver implements ISqlDriver {
     conflictColumns: string[],
     updateColumns: string[],
   ): string {
-    const columnList = columns.join(", ");
+    const columnList = columns.map((c) => this.wrap(c)).join(", ");
     const valuePlaceholders = columns
       .map((_, i) => `$${i + 1}`)
       .join(", ");
-    const conflictList = conflictColumns.join(", ");
+    const conflictList = conflictColumns.map((c) => this.wrap(c)).join(", ");
     const updateSet = updateColumns
-      .map((col) => `${col} = EXCLUDED.${col}`)
+      .map((col) => `${this.wrap(col)} = EXCLUDED.${this.wrap(col)}`)
       .join(", ");
 
-    return `INSERT INTO ${tableName} (${columnList}) VALUES (${valuePlaceholders}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+    return `INSERT INTO ${this.wrap(tableName)} (${columnList}) VALUES (${valuePlaceholders}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
   }
 
   async hasColumn(tableName: string, columnName: string): Promise<boolean> {

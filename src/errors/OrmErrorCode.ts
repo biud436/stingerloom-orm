@@ -53,4 +53,13 @@ export enum OrmErrorCode {
 
   // Query Builder
   MISSING_REQUIRED_COLUMNS = "ORM_MISSING_REQUIRED_COLUMNS",
+
+  // Schema
+  SCHEMA_ERROR = "ORM_SCHEMA_ERROR",
+
+  // Validation
+  VALIDATION_ERROR = "ORM_VALIDATION_ERROR",
+
+  // Query
+  QUERY_ERROR = "ORM_QUERY_ERROR",
 }
