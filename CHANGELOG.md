@@ -6,6 +6,53 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.9.0] — 2026-03-28
+
+### Highlights
+
+- **NamingStrategy** — Pluggable naming strategies with built-in `SnakeNamingStrategy`. Automatically maps camelCase entity properties to snake_case DB columns across all operations (SELECT, INSERT, UPDATE, DELETE, soft-delete, restore). ResultTransformer remaps column names back to entity properties.
+- **Synchronize modes** — `synchronize: true | "safe" | "dry-run"` now fully functional. `true` performs CREATE + ADD + ALTER + DROP + RENAME; `"safe"` only creates/adds; `"dry-run"` logs DDL without executing. Closes #137.
+- **UUID column type** — `@PrimaryGeneratedColumn("uuid")` with UUIDv7 support for time-ordered, sortable primary keys. Closes #189, #190.
+
+### Added
+
+- **`NamingStrategy` interface + `SnakeNamingStrategy`** — `tableName()`, `columnName()`, `joinColumnName()` hooks with full CRUD integration (#206)
+- **Synchronize `true` / `"safe"` / `"dry-run"` modes** — SchemaDiff-driven ALTER/DROP/RENAME for existing tables (#137)
+- **UUID column type with UUIDv7** — Time-ordered UUID generation without external dependencies (#189, #190)
+- **Column transformers & computed columns** — `@Column({ transformer })` for value conversion on read/write
+- **ENUM value synchronization** — PostgreSQL `ALTER TYPE ... ADD VALUE` for new enum entries
+- **Advanced indexes** — Full-text search index support
+- **Seeding system** — `Seeder` / `SeederRunner` for database seeding with atomicity and concurrency control
+- **Introspection** — Generate entity classes from existing database schemas
+
+### Fixed
+
+- 14 issues: SQL injection, identifier escaping, validation, tenant isolation (901226e)
+- 6 issues: MySQL rollback, cursor NULL handling, inheritance, enum diff, `@AfterLoad`, transaction events (#176–#182)
+- `whereIn()` / `whereNotIn()` with empty array generates valid SQL instead of crashing (#184)
+- 30+ issues across ORM core, query builder, metadata, drivers, and tooling (719f6f1)
+- Migration/seeder atomicity and concurrency fixes
+- MySQL ENUM requires explicit value definitions (#138)
+- 6 bug fixes (#120–#125)
+- Column type expression methods renamed for clarity
+
+### Docs
+
+- **Korean localization (VitePress)** — 5 phases complete: infrastructure, core pages, entity manager, advanced/integration, tutorials/reference (11 pages)
+- IoT tutorial expanded with DDL, design decisions, testing, and production guide
+- Full-text search, introspection, ENUM sync, and seeding system documentation
+
+### Tests
+
+- 6 SQLite integration test files (91 new tests) — #118, #119
+- Multi-driver integration tests for MySQL/PostgreSQL
+- Snake-naming-strategy integration test
+- **Total: 2,669 passed, 19 skipped, 0 failures**
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.8.0...v0.9.0
+
+---
+
 ## [0.7.0] — 2026-03-22
 
 ### Highlights
