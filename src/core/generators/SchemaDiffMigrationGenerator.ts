@@ -8,6 +8,22 @@ import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../../decorators/ManyToOne
 import { ONE_TO_ONE_TOKEN, OneToOneMetadata } from "../../decorators/OneToOne";
 import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
 import { ClazzType } from "../../utils";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
+
+/**
+ * Escapes an enum value for safe embedding in DDL strings.
+ * Rejects null bytes and escapes backslashes and single quotes.
+ */
+function escapeEnumValue(val: string): string {
+  if (val.includes("\0")) {
+    throw new OrmError(
+      OrmErrorCode.VALIDATION_ERROR,
+      `Enum value contains null byte`,
+    );
+  }
+  return val.replace(/\\/g, "\\\\").replace(/'/g, "''");
+}
 
 /**
  * SchemaDiffResult를 받아 Migration TypeScript 파일을 생성합니다.
@@ -362,13 +378,13 @@ export class SchemaDiffMigrationGenerator {
 
     if (ec.isNew) {
       const valuesList = ec.addValues
-        .map((v) => `'${v.replace(/'/g, "''")}'`)
+        .map((v) => `'${escapeEnumValue(v)}'`)
         .join(", ");
       sqls.push(`CREATE TYPE ${escapedName} AS ENUM (${valuesList})`);
     } else {
       // Add new values with IF NOT EXISTS
       for (const val of ec.addValues) {
-        const escapedVal = val.replace(/'/g, "''");
+        const escapedVal = escapeEnumValue(val);
         sqls.push(
           `ALTER TYPE ${escapedName} ADD VALUE IF NOT EXISTS '${escapedVal}'`,
         );

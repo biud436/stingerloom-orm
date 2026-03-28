@@ -227,7 +227,13 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
     if (orders.length === 0) return this;
 
     const orderSqls = orders.map(
-      ({ column, direction }) => sql`${raw(column)} ${raw(direction)}`,
+      ({ column, direction }) => {
+        const safeDirection = direction.toUpperCase();
+        if (safeDirection !== "ASC" && safeDirection !== "DESC") {
+          throw new OrmError(OrmErrorCode.QUERY_ERROR, `Invalid ORDER BY direction: ${direction}`);
+        }
+        return sql`${raw(column)} ${raw(safeDirection)}`;
+      },
     );
     this.sqlQuerySegments.push(sql`ORDER BY ${join(orderSqls, ", ")}`);
     return this;

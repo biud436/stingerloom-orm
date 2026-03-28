@@ -260,10 +260,10 @@ export interface ISqlDriver<T = any> {
   /**
    * Builds an upsert SQL string for the specific dialect.
    *
-   * @param tableName - The escaped table name.
-   * @param columns - The escaped column names.
-   * @param conflictColumns - The escaped conflict/key column names.
-   * @param updateColumns - The escaped column names to update on conflict.
+   * @param tableName - The raw (unescaped) table name. Escaped internally via wrap().
+   * @param columns - The raw (unescaped) column names. Escaped internally via wrap().
+   * @param conflictColumns - The raw (unescaped) conflict/key column names. Escaped internally via wrap().
+   * @param updateColumns - The raw (unescaped) column names to update on conflict. Escaped internally via wrap().
    * @returns The dialect-specific upsert SQL template string.
    */
   buildUpsertSql(
