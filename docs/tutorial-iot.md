@@ -362,6 +362,21 @@ export class Device {
 
 The `@BeforeInsert()` hook runs before the INSERT SQL is sent to the database. Here we use it to set sensible defaults — a newly registered thermometer should be active, and if no name is given, we generate one from the serial number.
 
+```sql
+-- What the ORM generates for this entity (PostgreSQL)
+CREATE TABLE "devices" (
+  "id" SERIAL PRIMARY KEY,
+  "serialNumber" VARCHAR(64) NOT NULL,
+  "name" VARCHAR(100) NOT NULL,
+  "location" VARCHAR(200),
+  "isActive" BOOLEAN NOT NULL,
+  "user_id" INTEGER NOT NULL REFERENCES "users"("id"),
+  "createdAt" TIMESTAMP DEFAULT NOW(),
+  "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX "idx_devices_serialNumber" ON "devices" ("serialNumber");
+```
+
 ### TemperatureReading
 
 This is the **high-volume entity** — the one that will have millions of rows. Its design decisions directly impact query performance.
@@ -416,6 +431,21 @@ export class TemperatureReading {
 }
 ```
 
+```sql
+-- What the ORM generates for this entity (PostgreSQL)
+CREATE TABLE "temperature_readings" (
+  "id" SERIAL PRIMARY KEY,
+  "device_id" INTEGER NOT NULL REFERENCES "devices"("id"),
+  "temperatureCelsius" FLOAT NOT NULL,
+  "humidity" FLOAT,
+  "batteryLevel" FLOAT,
+  "recordedAt" TIMESTAMP NOT NULL,
+  "createdAt" TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX "idx_temperature_readings_temperatureCelsius" ON "temperature_readings" ("temperatureCelsius");
+CREATE INDEX "idx_temperature_readings_recordedAt" ON "temperature_readings" ("recordedAt");
+```
+
 Notice the `@Index()` on `recordedAt` and `temperatureCelsius`. Without indexes, a query like "find the highest temperature in the last 7 days" would scan every row in the table. With the index, the database can jump directly to the relevant date range.
 
 The `@BeforeInsert()` hook acts as a data quality gate. A sensor that reports -500°C is clearly malfunctioning. We reject the data before it even reaches the database.
@@ -455,6 +485,18 @@ export class AlertRule {
 }
 ```
 
+```sql
+-- What the ORM generates for this entity (PostgreSQL)
+CREATE TABLE "alert_rules" (
+  "id" SERIAL PRIMARY KEY,
+  "device_id" INTEGER NOT NULL REFERENCES "devices"("id"),
+  "condition" VARCHAR(20) NOT NULL,
+  "thresholdCelsius" FLOAT NOT NULL,
+  "isEnabled" BOOLEAN NOT NULL,
+  "createdAt" TIMESTAMP DEFAULT NOW()
+);
+```
+
 ### Alert
 
 ```typescript
@@ -489,6 +531,18 @@ export class Alert {
   @CreateTimestamp()
   firedAt!: Date;
 }
+```
+
+```sql
+-- What the ORM generates for this entity (PostgreSQL)
+CREATE TABLE "alerts" (
+  "id" SERIAL PRIMARY KEY,
+  "alert_rule_id" INTEGER NOT NULL REFERENCES "alert_rules"("id"),
+  "reading_id" INTEGER NOT NULL REFERENCES "temperature_readings"("id"),
+  "temperatureCelsius" FLOAT NOT NULL,
+  "acknowledged" BOOLEAN NOT NULL,
+  "firedAt" TIMESTAMP DEFAULT NOW()
+);
 ```
 
 ### DailyStats
@@ -537,6 +591,56 @@ export class DailyStats {
 ```
 
 The `@UpdateTimestamp()` decorator is critical here. When the nightly cron job re-aggregates today's data, the ORM automatically updates this field. If you see `updatedAt` is stale, you know the cron job hasn't run.
+
+```sql
+-- What the ORM generates for this entity (PostgreSQL)
+CREATE TABLE "daily_stats" (
+  "id" SERIAL PRIMARY KEY,
+  "device_id" INTEGER NOT NULL REFERENCES "devices"("id"),
+  "date" DATE NOT NULL,
+  "avgTemperature" FLOAT NOT NULL,
+  "minTemperature" FLOAT NOT NULL,
+  "maxTemperature" FLOAT NOT NULL,
+  "readingCount" INTEGER NOT NULL,
+  "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX "idx_daily_stats_date" ON "daily_stats" ("date");
+```
+
+### Design Decisions Explained
+
+#### Why `@Index()` on `recordedAt` and `temperatureCelsius`?
+
+PostgreSQL stores indexes as B-tree structures by default. A B-tree on `recordedAt` allows the database to satisfy range queries (`BETWEEN`, `>=`, `<`) and `ORDER BY` without scanning the entire table. Instead of reading every row to find "readings from the last 7 days," the database walks the tree to the starting point and reads sequentially from there.
+
+Without the index, a table with 10 million rows requires a sequential scan — the database reads every single row and checks the WHERE condition. This takes seconds. With a B-tree index, the same query completes in milliseconds because the database skips directly to the relevant range.
+
+The index on `temperatureCelsius` serves the same purpose for threshold queries ("find all readings above 35 degrees"). In Step 6, we will use `explain()` to verify that these indexes are actually being used by the query planner.
+
+#### Why `@BeforeInsert()` instead of database CHECK constraints?
+
+Both approaches validate data, but they operate at different layers:
+
+- **ORM hooks** (`@BeforeInsert()`) run in your application code, before the SQL reaches the database. They can produce descriptive error messages ("Temperature cannot be below absolute zero"), run complex business logic (cross-field validation, external API calls), and integrate with your application's error handling pipeline.
+
+- **Database CHECK constraints** (`CHECK (temperature_celsius >= -273.15)`) run inside PostgreSQL. They are the last line of defense — they catch invalid data even if it bypasses your ORM (raw SQL scripts, database migrations, other applications writing to the same database).
+
+The ideal approach is to use both: hooks for user-facing validation with clear error messages, and CHECK constraints as a safety net for data integrity. In this tutorial we focus on hooks because they are the ORM feature being demonstrated, but in production, add CHECK constraints to your migration files.
+
+#### Why `@DeletedAt()` (soft delete) for Users but not for Readings?
+
+Users have audit and compliance requirements. Under regulations like GDPR, you may need to "delete" a user's visible presence while preserving records that prove you handled their data correctly. Soft delete achieves this — the user disappears from all queries, but the row remains for auditors.
+
+Temperature readings are raw sensor data. They do not represent people. If you need to delete them, you typically purge in bulk by date range (`DELETE FROM temperature_readings WHERE recordedAt < '2025-01-01'`), not individually. Adding a `deletedAt` column to a table with tens of millions of rows wastes significant storage and forces every query to include an extra `WHERE deletedAt IS NULL` filter — an unnecessary cost on your highest-volume table.
+
+#### Why separate `DailyStats` instead of materialized views?
+
+PostgreSQL materialized views (`CREATE MATERIALIZED VIEW`) can serve a similar purpose, but they have practical limitations:
+
+1. **Portability.** Not all PostgreSQL hosting providers support materialized views with all features (concurrent refresh, indexes). A regular table works identically across all providers and all databases the ORM supports.
+2. **Version control.** The `DailyStats` entity is defined in code and tracked by migrations. Changes to its schema go through pull requests and code review, just like any other entity.
+3. **Observability.** The `@UpdateTimestamp()` decorator gives you a built-in "last refreshed" indicator. If `updatedAt` is 3 days old, you know immediately that your aggregation cron job is broken.
+4. **Granular control.** You can update a single device's stats without refreshing the entire view. Materialized view refresh is all-or-nothing.
 
 ---
 
@@ -604,6 +708,52 @@ Controller → Service → Repository → EntityManager
     ▼
 SQL: SELECT * FROM "building_a"."devices" WHERE ...
 ```
+
+### How AsyncLocalStorage Guarantees Isolation
+
+Node.js runs on a single thread, but it handles many concurrent HTTP requests through its event loop. Without careful context management, two simultaneous requests could interfere with each other's tenant identity. `AsyncLocalStorage` solves this by giving each asynchronous execution chain its own isolated storage — even when their operations interleave on the same thread.
+
+Here is a concrete timeline showing two concurrent requests:
+
+```
+Timeline (single Node.js thread):
+──────────────────────────────────────────────
+t1: Request A arrives (tenant: building_a)
+    -> MetadataContext.run("building_a", ...)
+t2: Request B arrives (tenant: building_b)
+    -> MetadataContext.run("building_b", ...)
+t3: Request A's DB query executes
+    -> AsyncLocalStorage resolves -> "building_a"
+    -> SQL: SELECT * FROM "building_a"."devices"
+t4: Request B's DB query executes
+    -> AsyncLocalStorage resolves -> "building_b"
+    -> SQL: SELECT * FROM "building_b"."devices"
+──────────────────────────────────────────────
+```
+
+At time t3, even though Request B has already started and set its own context at t2, Request A still correctly resolves to `building_a`. Each `MetadataContext.run()` call creates an independent execution context that follows the async call chain — through `await`, Promises, and callbacks — without leaking into other concurrent contexts.
+
+Without `AsyncLocalStorage`, a naive global variable approach (e.g., `global.currentTenant = tenantId`) would race: Request B would overwrite the tenant to `building_b` before Request A's database query executes, causing Request A to query the wrong schema. This is a classic concurrency bug that `AsyncLocalStorage` eliminates by design.
+
+### What Happens Without Tenant Context?
+
+If code runs outside `MetadataContext.run()` — for example, in a startup script or a module initializer — the ORM falls back to the `public` schema. This is by design: the public schema holds the template tables that `ensureSchema()` clones from.
+
+```typescript
+// Outside any MetadataContext — targets "public" schema
+const users = await em.find(User, {});
+// SQL: SELECT * FROM "public"."users"
+
+// Inside tenant context — targets tenant schema
+MetadataContext.run("building_a", async () => {
+  const users = await em.find(User, {});
+  // SQL: SELECT * FROM "building_a"."users"
+});
+```
+
+::: warning
+Never store tenant-specific data in the public schema. It exists only as a structural template for `ensureSchema()` to clone from. If you accidentally write data to the public schema, it will not be visible to any tenant, and it will not be cleaned up by tenant-scoped delete operations.
+:::
 
 ### Tenant Schema Service
 
@@ -1193,6 +1343,81 @@ ORDER BY "recordedAt" ASC
 
 The `between` and `gte` operators translate directly to SQL `BETWEEN` and `>=`. No string concatenation, no SQL injection risk — every value goes through parameter binding.
 
+### Diagnosing Slow Queries with EXPLAIN
+
+When a query runs slower than expected, `explain()` shows you the database's execution plan — which indexes it uses, how many rows it scans, and where bottlenecks are.
+
+```typescript
+async diagnoseSlowQuery(deviceId: number) {
+  const plan = await this.readingRepo.explain({
+    where: {
+      device: { id: deviceId },
+      recordedAt: { gte: new Date('2026-01-01') },
+    },
+    orderBy: { recordedAt: "DESC" },
+  });
+
+  console.log(plan);
+  // ExplainResult:
+  // {
+  //   plan: "Index Scan using idx_temperature_readings_recordedAt on temperature_readings",
+  //   cost: { startup: 0.43, total: 12.56 },
+  //   rows: 2880,
+  //   width: 64,
+  //   rawPlan: [ ... ]
+  // }
+}
+```
+
+The key thing to look for: **"Seq Scan"** means a full table scan — the database is reading every row in the table to find matches. On a table with millions of rows, this is slow. **"Index Scan"** or **"Index Only Scan"** means the database is efficiently using a B-tree index to jump directly to the relevant rows.
+
+If you see a Seq Scan where you expected an Index Scan, check:
+1. Does the column have an `@Index()` decorator?
+2. Did you run `synchronize` or a migration to actually create the index?
+3. Is the table small enough that PostgreSQL decided a sequential scan is faster? (The query planner is smart — on tables with fewer than ~1,000 rows, a sequential scan can be faster than an index lookup.)
+
+### Detecting N+1 Queries with QueryTracker
+
+N+1 is the most common ORM performance problem. It happens when you load a list of entities, then loop through them and trigger a separate query for each related entity.
+
+```typescript
+// BAD: N+1 — one query for devices, then one query per device for readings
+const devices = await this.deviceRepo.find({ where: { isActive: true } });
+for (const device of devices) {
+  // This triggers a separate SELECT for each device!
+  const latest = await this.readingRepo.findOne({
+    where: { device: { id: device.id } },
+    orderBy: { recordedAt: "DESC" },
+  });
+}
+// With 100 devices -> 101 queries (1 for devices + 100 for readings)
+```
+
+Stingerloom ORM's `QueryTracker` detects this pattern automatically:
+
+```typescript
+// Enable query tracking (usually in development or staging)
+em.enableQueryTracker({ warnThreshold: 5, slowQueryMs: 500 });
+```
+
+When the tracker detects more than 5 similar queries in a short window, it logs a warning:
+
+```
+[QueryTracker] N+1 detected: 100 queries to "temperature_readings" in 1.2s
+```
+
+**The fix**: use `relations` to eager-load, or restructure as a single query:
+
+```typescript
+// GOOD: single query with join
+const devices = await this.deviceRepo.find({
+  where: { isActive: true },
+  relations: ["readings"],
+});
+```
+
+With `relations: ["readings"]`, the ORM generates a single `LEFT JOIN` query that fetches all devices and their readings in one round-trip. For 100 devices, this is 1 query instead of 101.
+
 ---
 
 ## Step 7: Aggregation — Daily Statistics
@@ -1732,6 +1957,128 @@ LIMIT 50
 
 ---
 
+## Step 11: Testing
+
+### Unit Testing Services
+
+Since repositories are injected via `@InjectRepository`, you can mock them in tests. This lets you test your business logic in isolation — without a running database, without Docker, and in milliseconds.
+
+```typescript
+// src/readings/readings.service.spec.ts
+import { Test, TestingModule } from "@nestjs/testing";
+import { ReadingsService } from "./readings.service";
+import { getRepositoryToken } from "@stingerloom/orm/nestjs";
+import { TemperatureReading } from "../entities/temperature-reading.entity";
+
+describe("ReadingsService", () => {
+  let service: ReadingsService;
+  const mockRepo = {
+    save: jest.fn(),
+    find: jest.fn(),
+    findOne: jest.fn(),
+    insertMany: jest.fn(),
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ReadingsService,
+        {
+          provide: getRepositoryToken(TemperatureReading),
+          useValue: mockRepo,
+        },
+      ],
+    }).compile();
+
+    service = module.get(ReadingsService);
+  });
+
+  it("should save a single reading", async () => {
+    const mockReading = { id: 1, temperatureCelsius: 23.5 };
+    mockRepo.save.mockResolvedValue(mockReading);
+
+    const result = await service.ingestOne(1, {
+      temperatureCelsius: 23.5,
+      recordedAt: new Date(),
+    });
+
+    expect(result).toEqual(mockReading);
+    expect(mockRepo.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("should reject temperatures below absolute zero", async () => {
+    // The @BeforeInsert hook runs inside the ORM, so for unit tests
+    // we test the entity method directly
+    const reading = new TemperatureReading();
+    reading.temperatureCelsius = -300;
+
+    expect(() => reading.validateTemperature()).toThrow(
+      "Temperature cannot be below absolute zero"
+    );
+  });
+});
+```
+
+### Integration Testing with Real Database
+
+For tests that need actual database behavior (transactions, constraints, tenant isolation), use the ORM's test utilities:
+
+```typescript
+// test/integration/multi-tenant.spec.ts
+import { EntityManager, MetadataContext } from "@stingerloom/orm";
+import { Device } from "../../src/entities/device.entity";
+
+describe("Multi-Tenant Isolation", () => {
+  let em: EntityManager;
+
+  beforeAll(async () => {
+    // Connect to a test database
+    em = new EntityManager({
+      type: "postgres",
+      host: "localhost",
+      port: 5432,
+      database: "smart_thermo_test",
+      username: "postgres",
+      password: "postgres",
+    });
+  });
+
+  afterAll(async () => {
+    await em.propagateShutdown();
+  });
+
+  it("tenant A cannot see tenant B data", async () => {
+    // Insert device in tenant A
+    await MetadataContext.run("tenant_a", async () => {
+      await em.save(Device, {
+        serialNumber: "SENSOR-A-001",
+        name: "Lobby Sensor",
+        isActive: true,
+      });
+    });
+
+    // Query from tenant B — should see nothing
+    await MetadataContext.run("tenant_b", async () => {
+      const devices = await em.find(Device, {});
+      expect(devices).toHaveLength(0);
+    });
+
+    // Query from tenant A — should see the device
+    await MetadataContext.run("tenant_a", async () => {
+      const devices = await em.find(Device, {});
+      expect(devices).toHaveLength(1);
+      expect(devices[0].serialNumber).toBe("SENSOR-A-001");
+    });
+  });
+});
+```
+
+::: tip
+Always use a separate test database. The `synchronize: true` option creates tables automatically, but it also drops and recreates them — never point tests at your production database.
+:::
+
+---
+
 ## What We Built
 
 Let's step back and look at the complete system:
@@ -1752,6 +2099,42 @@ Let's step back and look at the complete system:
 | BullMQ Cron | Nightly aggregation trigger | No (triggers ORM code) |
 
 The ORM handles everything between your TypeScript objects and PostgreSQL. Redis, BullMQ, and Keycloak are external systems that the ORM bridges through well-defined boundaries (EntitySubscriber for cache invalidation, MetadataContext.run() for background jobs).
+
+### Production Checklist
+
+Before deploying to production, verify these critical points:
+
+| Item | Status | Notes |
+|------|--------|-------|
+| `synchronize: false` in production config | Required | Use migrations instead — synchronize can drop columns |
+| Connection pooling configured | Required | Set `pool: { min: 2, max: 10 }` in ORM config |
+| Query timeout set | Recommended | `timeout: 30000` (30s) prevents runaway queries |
+| N+1 detection enabled in staging | Recommended | `em.enableQueryTracker({ warnThreshold: 5 })` |
+| Redis connection error handling | Required | ioredis auto-reconnects, but log failures |
+| Tenant schema migration strategy | Required | Run `TenantMigrationRunner.syncTenantSchemas()` on deploy |
+| JWT public key rotation | Important | jwks-rsa caches keys — set `cache: true, rateLimit: true` |
+| Database backup schedule | Required | pg_dump with `--schema` flag for per-tenant backups |
+| Graceful shutdown | Required | Call `em.propagateShutdown()` in NestJS `onModuleDestroy()` |
+
+### Graceful Shutdown
+
+```typescript
+// src/app.module.ts
+import { Module, OnModuleDestroy, Inject } from "@nestjs/common";
+import { EntityManager } from "@stingerloom/orm";
+
+@Module({ /* ... */ })
+export class AppModule implements OnModuleDestroy {
+  constructor(@Inject(EntityManager) private readonly em: EntityManager) {}
+
+  async onModuleDestroy() {
+    await this.em.propagateShutdown();
+    console.log("ORM connections closed gracefully.");
+  }
+}
+```
+
+`propagateShutdown()` closes all database connections, clears event listeners and subscribers, and releases query tracker resources. Without this, your process may hang on shutdown with dangling PostgreSQL connections. In containerized environments (Docker, Kubernetes), a dangling connection prevents the container from stopping cleanly, which can lead to forced kills and data loss during in-flight transactions.
 
 ## Next Steps
 
