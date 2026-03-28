@@ -4,6 +4,7 @@ import {
   NamingStrategy,
   DefaultNamingStrategy,
 } from "../../src/core/generators/NamingStrategy";
+import { SnakeNamingStrategy } from "../../src/core/generators/SnakeNamingStrategy";
 import { SchemaGenerator } from "../../src/core/generators/SchemaGenerator";
 import { Entity } from "../../src/decorators/Entity";
 import { Column } from "../../src/decorators/Column";
@@ -106,6 +107,9 @@ describe("DefaultNamingStrategy", () => {
 describe("Custom NamingStrategy with SchemaGenerator", () => {
   it("should use custom naming strategy for FK names", () => {
     const custom: NamingStrategy = {
+      tableName: (name) => name,
+      columnName: (name) => name,
+      joinColumnName: (prop, ref) => `${prop}${ref.charAt(0).toUpperCase()}${ref.slice(1)}`,
       foreignKeyName: (table, col, ref) => `custom_fk_${table}_${col}_${ref}`,
       uniqueIndexName: (table, cols) =>
         `custom_uq_${table}_${cols.join("_")}`,
@@ -151,5 +155,63 @@ describe("SchemaGenerator.generateForeignKeyName() backward compat", () => {
     const a = SchemaGenerator.generateForeignKeyName("t", "c", "r");
     const b = SchemaGenerator.generateForeignKeyName("t", "c", "r");
     expect(a).toBe(b);
+  });
+});
+
+// ─────────────────────────────────────────────────
+// SnakeNamingStrategy tests
+// ─────────────────────────────────────────────────
+
+describe("SnakeNamingStrategy", () => {
+  const snake = new SnakeNamingStrategy();
+
+  describe("tableName()", () => {
+    it("should convert PascalCase class names to snake_case", () => {
+      expect(snake.tableName("User")).toBe("user");
+      expect(snake.tableName("UserProfile")).toBe("user_profile");
+      expect(snake.tableName("BlogPostComment")).toBe("blog_post_comment");
+      expect(snake.tableName("APIKey")).toBe("apikey");
+    });
+  });
+
+  describe("columnName()", () => {
+    it("should convert camelCase property names to snake_case", () => {
+      expect(snake.columnName("id")).toBe("id");
+      expect(snake.columnName("firstName")).toBe("first_name");
+      expect(snake.columnName("createdAt")).toBe("created_at");
+      expect(snake.columnName("isActive")).toBe("is_active");
+      expect(snake.columnName("postViewCount")).toBe("post_view_count");
+    });
+
+    it("should handle already-lowered names", () => {
+      expect(snake.columnName("name")).toBe("name");
+      expect(snake.columnName("email")).toBe("email");
+    });
+  });
+
+  describe("joinColumnName()", () => {
+    it("should produce snake_case FK column names", () => {
+      expect(snake.joinColumnName("author", "id")).toBe("author_id");
+      expect(snake.joinColumnName("categoryGroup", "id")).toBe("category_group_id");
+      expect(snake.joinColumnName("parentComment", "id")).toBe("parent_comment_id");
+    });
+  });
+});
+
+describe("DefaultNamingStrategy — table/column methods", () => {
+  const def = new DefaultNamingStrategy();
+
+  it("tableName should apply camelToSnakeCase (backward compat)", () => {
+    expect(def.tableName("User")).toBe("user");
+    expect(def.tableName("UserProfile")).toBe("user_profile");
+  });
+
+  it("columnName should be identity (backward compat)", () => {
+    expect(def.columnName("firstName")).toBe("firstName");
+    expect(def.columnName("id")).toBe("id");
+  });
+
+  it("joinColumnName should be camelCase concat (backward compat)", () => {
+    expect(def.joinColumnName("author", "id")).toBe("authorId");
   });
 });

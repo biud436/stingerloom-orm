@@ -1,17 +1,41 @@
 import crypto from "crypto";
+import { camelToSnakeCase } from "../../utils/camelToSnakeCase";
 
 /**
- * Strategy interface for generating database constraint and index names.
- * Implement this interface to customize how FK, index, and unique index names are generated.
+ * Strategy interface for naming database objects (tables, columns, constraints, indexes).
+ * Implement this interface to customize how names are generated.
  */
 export interface NamingStrategy {
   /**
-   * Generates a foreign key constraint name.
+   * Converts an entity class name to a database table name.
+   * Called during entity registration for entities without explicit `@Entity({ name })`.
    *
-   * @param tableName - The source table name
-   * @param columnName - The FK column name
-   * @param referencedTableName - The referenced (target) table name
-   * @returns A constraint name (max 63 characters for cross-DB compatibility)
+   * @param className - The entity class name (e.g. "UserProfile")
+   * @returns The database table name (e.g. "user_profile")
+   */
+  tableName(className: string): string;
+
+  /**
+   * Converts a TypeScript property name to a database column name.
+   * Called during entity registration for columns without explicit `@Column({ name })`.
+   *
+   * @param propertyName - The property name (e.g. "firstName")
+   * @returns The database column name (e.g. "first_name")
+   */
+  columnName(propertyName: string): string;
+
+  /**
+   * Generates a foreign key column name for a relation.
+   * Called for `@ManyToOne`/`@OneToOne` without explicit `joinColumn`.
+   *
+   * @param propertyName - The relation property name (e.g. "author")
+   * @param referencedColumnName - The referenced PK column name (e.g. "id")
+   * @returns The FK column name (e.g. "author_id")
+   */
+  joinColumnName(propertyName: string, referencedColumnName: string): string;
+
+  /**
+   * Generates a foreign key constraint name.
    */
   foreignKeyName(
     tableName: string,
@@ -21,28 +45,16 @@ export interface NamingStrategy {
 
   /**
    * Generates a unique index name.
-   *
-   * @param tableName - The table name
-   * @param columns - The column names included in the unique index
-   * @returns A unique index name
    */
   uniqueIndexName(tableName: string, columns: string[]): string;
 
   /**
    * Generates an index name.
-   *
-   * @param tableName - The table name
-   * @param columnName - The indexed column name
-   * @returns An index name
    */
   indexName(tableName: string, columnName: string): string;
 
   /**
    * Generates a composite index name.
-   *
-   * @param tableName - The table name
-   * @param columns - The column names included in the index
-   * @returns A composite index name
    */
   compositeIndexName(tableName: string, columns: string[]): string;
 }
@@ -52,6 +64,18 @@ export interface NamingStrategy {
  * and convention-based names for indexes.
  */
 export class DefaultNamingStrategy implements NamingStrategy {
+  tableName(className: string): string {
+    return camelToSnakeCase(className);
+  }
+
+  columnName(propertyName: string): string {
+    return propertyName;
+  }
+
+  joinColumnName(propertyName: string, referencedColumnName: string): string {
+    return `${propertyName}${referencedColumnName.charAt(0).toUpperCase()}${referencedColumnName.slice(1)}`;
+  }
+
   /**
    * Generates a FK name using SHA1 hash for uniqueness.
    * Format: `fk_{tableName}_{hash8}` (truncated to 63 chars max).

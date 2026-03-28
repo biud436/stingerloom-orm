@@ -120,17 +120,27 @@ export class SelectQueryBuilder<T, TResult = T> {
   private arrayValidatorFn: ArrayValidator<any> | undefined;
   private selectedPropertyKeys: string[] | null = null;
 
+  /** Maps TypeScript property names to DB column names (NamingStrategy). */
+  private propertyToColumnMap?: Map<string, string>;
+
   constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
     this.entity = entity;
     this.alias = alias;
     this.em = em;
   }
 
+  /** Set the property-to-column mapping for NamingStrategy support. */
+  setPropertyToColumnMap(map: Map<string, string>): this {
+    this.propertyToColumnMap = map;
+    return this;
+  }
+
   // ── Helpers ──────────────────────────────────────────────
 
   /** Qualify a column with the main alias: `"u"."name"` */
   private col(column: string): string {
-    return `${this.em.wrap(this.alias)}.${this.em.wrap(column)}`;
+    const dbCol = this.propertyToColumnMap?.get(column) ?? column;
+    return `${this.em.wrap(this.alias)}.${this.em.wrap(dbCol)}`;
   }
 
   /** Qualify a column for a different alias */

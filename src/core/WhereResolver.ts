@@ -144,6 +144,8 @@ export interface WhereResolverOptions {
   tableName?: string;
   /** Dialect hint for dialect-specific operators like `search` (full-text). */
   dialect?: "mysql" | "postgres" | "sqlite";
+  /** Maps TypeScript property names to database column names (for NamingStrategy support). */
+  propertyToColumn?: Map<string, string>;
 }
 
 /**
@@ -221,11 +223,12 @@ function resolveWhereSingleObject<T>(
     // Skip undefined
     if (value === undefined) continue;
 
-    // Regular field
+    // Regular field — resolve property name to DB column name via NamingStrategy map
+    const dbColumnName = opts.propertyToColumn?.get(key) ?? key;
     const col =
       qualified && tableName
-        ? `${wrapColumn(tableName)}.${wrapColumn(key)}`
-        : wrapColumn(key);
+        ? `${wrapColumn(tableName)}.${wrapColumn(dbColumnName)}`
+        : wrapColumn(dbColumnName);
 
     result.push(resolveWhereValue(col, value, dialect));
   }

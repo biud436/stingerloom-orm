@@ -91,6 +91,13 @@ import {
 import { PluginContext } from "./plugin/PluginContext";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { DefaultNamingStrategy, NamingStrategy } from "./generators/NamingStrategy";
+import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
+import { COLUMN_TOKEN } from "../decorators/Column";
+import { CREATE_TIMESTAMP_TOKEN } from "../decorators/CreateTimestamp";
+import { UPDATE_TIMESTAMP_TOKEN } from "../decorators/UpdateTimestamp";
+import { DELETED_AT_TOKEN } from "../decorators/DeletedAt";
+import { VERSION_TOKEN } from "../decorators/Version";
 import { deserializeEntity } from "./deserializer/DeserializeEntity";
 import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
 import type { BufferPluginOptions } from "./plugin/buffer/BufferPreview";
@@ -238,6 +245,7 @@ export class EntityManager implements BaseEntityManager {
       );
     }
     await this.connect(databaseClientOptions, connectionName);
+    this.applyNamingStrategy(databaseClientOptions.namingStrategy);
     await this.schemaRegistrar.registerEntities();
 
     // Install plugins (in array order)
@@ -245,6 +253,57 @@ export class EntityManager implements BaseEntityManager {
       for (const plugin of databaseClientOptions.plugins) {
         this.extend(plugin);
       }
+    }
+  }
+
+  private applyNamingStrategy(strategy?: NamingStrategy): void {
+    const ns = strategy ?? new DefaultNamingStrategy();
+
+    for (const entity of this._entities) {
+      const meta = Reflect.getMetadata(ENTITY_TOKEN, entity) as EntityMetadata | undefined;
+      if (!meta) continue;
+
+      // 1. Table name
+      if (!meta.nameExplicit) {
+        meta.name = ns.tableName(meta.rawClassName ?? entity.name);
+      }
+
+      // 2. Column names
+      const columns: ColumnMetadata[] = Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ?? [];
+      for (const col of columns) {
+        if (!col.nameExplicit) {
+          col.name = ns.columnName(col.propertyKey!);
+        }
+      }
+      // Also update entity metadata's columns reference
+      if (meta.columns) {
+        for (const col of meta.columns as unknown as ColumnMetadata[]) {
+          if (!col.nameExplicit) {
+            col.name = ns.columnName(col.propertyKey!);
+          }
+        }
+      }
+
+      // 3. Timestamp / DeletedAt / Version tokens — these store propertyKey,
+      //    but are used as SQL column names. Update them if the naming strategy transforms them.
+      const updateToken = (token: symbol) => {
+        const propName = Reflect.getMetadata(token, entity) as string | undefined;
+        if (propName) {
+          // Find matching column to get its resolved DB name
+          const matchingCol = columns.find((c) => c.propertyKey === propName);
+          if (matchingCol && matchingCol.name !== propName) {
+            Reflect.defineMetadata(token, matchingCol.name, entity);
+          }
+        }
+      };
+      updateToken(CREATE_TIMESTAMP_TOKEN);
+      updateToken(UPDATE_TIMESTAMP_TOKEN);
+      updateToken(DELETED_AT_TOKEN);
+      updateToken(VERSION_TOKEN);
+
+      // 4. Update Reflect metadata
+      Reflect.defineMetadata(ENTITY_TOKEN, meta, entity);
+      Reflect.defineMetadata(COLUMN_TOKEN, columns, entity.prototype);
     }
   }
 
@@ -785,7 +844,9 @@ export class EntityManager implements BaseEntityManager {
       const tableName = metadata.name!;
 
       if (select) {
-        const selectedColumns = this.resolveSelectColumns<T>(select);
+        const propToCol = this.buildPropertyToColumnMap(metadata);
+        const selectedColumns = this.resolveSelectColumns<T>(select)
+          .map((prop) => propToCol.get(prop) ?? prop);
         if (hasEagerJoins) {
           selectMap.push(
             ...selectedColumns.map(
@@ -845,6 +906,7 @@ export class EntityManager implements BaseEntityManager {
           qualified: hasEagerJoins,
           tableName: hasEagerJoins ? tableName : undefined,
           dialect: this._ctx.getDialect(),
+          propertyToColumn: this.buildPropertyToColumnMap(metadata),
         }),
       );
 
@@ -862,10 +924,12 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      const orderPropToCol = this.buildPropertyToColumnMap(metadata);
       for (const key in orderBy) {
         const value = orderBy[key];
         if (value) {
-          orderByMap.push({ column: this.wrap(key), direction: value });
+          const dbCol = orderPropToCol.get(key) ?? key;
+          orderByMap.push({ column: this.wrap(dbCol), direction: value });
         }
       }
 
@@ -1079,7 +1143,7 @@ export class EntityManager implements BaseEntityManager {
             const em = this;
             injectLazyProxy(item as any, rel.columnName, async () => {
               const result = await em.findOne(RelatedEntity, {
-                where: { [relatedPk.name!]: fkValue } as any,
+                where: { [this.propKey(relatedPk)]: fkValue } as any,
               });
               return result as any;
             });
@@ -1156,6 +1220,7 @@ export class EntityManager implements BaseEntityManager {
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.wrap(n),
         dialect: this._ctx.getDialect(),
+        propertyToColumn: this.buildPropertyToColumnMap(metadata),
       });
 
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
@@ -1353,7 +1418,7 @@ export class EntityManager implements BaseEntityManager {
           col.options?.generationStrategy === "uuid" ||
           col.options?.generationStrategy === "uuid-v7",
       );
-      const primaryKeyValue = pk ? (item as any)[pk.name!] : undefined;
+      const primaryKeyValue = pk ? (item as any)[this.propKey(pk)] : undefined;
 
       const isInsert = hasGeneratedPk
         ? !primaryKeyValue
@@ -1363,7 +1428,7 @@ export class EntityManager implements BaseEntityManager {
         return pkColumns.map((col: ColumnMetadata) => {
           const value = pkValues
             ? pkValues[col.name!]
-            : (item as any)[col.name!];
+            : (item as any)[this.propKey(col)];
           return sql`${raw(this.wrap(col.name!))} = ${value}`;
         });
       };
@@ -1371,9 +1436,9 @@ export class EntityManager implements BaseEntityManager {
       const buildPkFindWhere = (pkValues?: Record<string, any>) => {
         const where: any = {};
         for (const col of pkColumns) {
-          where[col.name!] = pkValues
+          where[this.propKey(col)] = pkValues
             ? pkValues[col.name!]
-            : (item as any)[col.name!];
+            : (item as any)[this.propKey(col)];
         }
         return where;
       };
@@ -1391,7 +1456,7 @@ export class EntityManager implements BaseEntityManager {
           (column: ColumnMetadata) => {
             if (computedCols.has(column.name!)) return false;
             const isAutoIncrement = column.options?.autoIncrement;
-            const value = (item as any)[column.name!];
+            const value = (item as any)[this.propKey(column)];
             if (isAutoIncrement && (value === null || value === undefined)) {
               return false;
             }
@@ -1404,7 +1469,7 @@ export class EntityManager implements BaseEntityManager {
         });
 
         const values = insertableColumns.map((column: ColumnMetadata) => {
-          const rawValue = (item as any)[column.name!];
+          const rawValue = (item as any)[this.propKey(column)];
           if (column.transformer?.to) {
             return column.transformer.to(rawValue);
           }
@@ -1465,10 +1530,10 @@ export class EntityManager implements BaseEntityManager {
 
           if (strategy === "uuid") {
             values[i] = randomUUID();
-            (item as any)[col.name!] = values[i];
+            (item as any)[this.propKey(col)] = values[i];
           } else if (strategy === "uuid-v7") {
             values[i] = generateUUIDv7();
-            (item as any)[col.name!] = values[i];
+            (item as any)[this.propKey(col)] = values[i];
           }
         }
 
@@ -1495,7 +1560,7 @@ export class EntityManager implements BaseEntityManager {
                 (col: any) => col.options?.primary,
               );
               if (relatedPk) {
-                fkValue = relatedValue[relatedPk.name!] ?? undefined;
+                fkValue = relatedValue[this.propKey(relatedPk)] ?? undefined;
               }
             }
           } else if (idPropValue != null) {
@@ -1537,7 +1602,7 @@ export class EntityManager implements BaseEntityManager {
 
         if (this.isMySqlFamily()) {
           const findWhere = hasAutoIncrementPk
-            ? { [pk.name!]: queryResult?.results?.insertId }
+            ? { [this.propKey(pk)]: queryResult?.results?.insertId }
             : buildPkFindWhere();
           const result = await this.findOneInternal(entity, {
             where: findWhere,
@@ -1583,7 +1648,7 @@ export class EntityManager implements BaseEntityManager {
         if (this.isSqlite()) {
           const sqliteRunResult = queryResult?.results ?? queryResult;
           const findWhere = hasAutoIncrementPk
-            ? { [pk.name!]: Number(sqliteRunResult?.lastInsertRowid) }
+            ? { [this.propKey(pk)]: Number(sqliteRunResult?.lastInsertRowid) }
             : buildPkFindWhere();
           const result = await this.findOneInternal(entity, {
             where: findWhere,
@@ -1629,11 +1694,11 @@ export class EntityManager implements BaseEntityManager {
           if (computedColsForUpdate.has(column.name!)) return false;
           if (pkColumnNames.has(column.name!)) return false;
           if (versionColName && column.name === versionColName) return false;
-          return (item as any)[column.name!] !== undefined;
+          return (item as any)[this.propKey(column)] !== undefined;
         },
       );
       const updateMap = updatableColumns.map((column: ColumnMetadata) => {
-        let value = (item as any)[column.name!];
+        let value = (item as any)[this.propKey(column)];
         if (column.transformer?.to) {
           value = column.transformer.to(value);
         }
@@ -1690,7 +1755,7 @@ export class EntityManager implements BaseEntityManager {
               (col: any) => col.options?.primary,
             );
             if (relatedPk) {
-              const fkValue = relatedValue[relatedPk.name!];
+              const fkValue = relatedValue[this.propKey(relatedPk)];
               if (fkValue !== undefined && fkValue !== null) {
                 if (alreadyInSet) {
                   const existingIdx = updatableColumns.findIndex(
@@ -1837,8 +1902,8 @@ export class EntityManager implements BaseEntityManager {
         const now = new Date();
         for (const item of items) {
           for (const col of timestampColumns) {
-            if ((item as any)[col.name!] == null) {
-              (item as any)[col.name!] = now;
+            if ((item as any)[this.propKey(col)] == null) {
+              (item as any)[this.propKey(col)] = now;
             }
           }
         }
@@ -1861,8 +1926,8 @@ export class EntityManager implements BaseEntityManager {
           if (!isAutoIncrement) return true;
           return items.every(
             (item) =>
-              (item as any)[column.name!] !== null &&
-              (item as any)[column.name!] !== undefined,
+              (item as any)[this.propKey(column)] !== null &&
+              (item as any)[this.propKey(column)] !== undefined,
           );
         },
       );
@@ -1890,7 +1955,7 @@ export class EntityManager implements BaseEntityManager {
 
       const valueRows = items.map((item) => {
         const rowValues = insertableColumns.map(
-          (column: ColumnMetadata) => (item as any)[column.name!],
+          (column: ColumnMetadata) => (item as any)[this.propKey(column)],
         );
         for (const fk of fkColumns) {
           const relatedValue = (item as any)[fk.propertyName];
@@ -1903,7 +1968,7 @@ export class EntityManager implements BaseEntityManager {
               const relatedPk = relatedMeta?.columns.find(
                 (col: any) => col.options?.primary,
               );
-              rowValues.push(relatedPk ? relatedValue[relatedPk.name!] ?? null : null);
+              rowValues.push(relatedPk ? relatedValue[this.propKey(relatedPk)] ?? null : null);
             } else {
               rowValues.push(relatedValue);
             }
@@ -1961,11 +2026,13 @@ export class EntityManager implements BaseEntityManager {
       // cascade remove
       await this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria);
 
+      const deletePropToCol = this.buildPropertyToColumnMap(metadata);
       const whereMap: Sql[] = [];
       for (const key in criteria) {
         const value = (criteria as any)[key];
         if (value !== undefined && value !== null) {
-          const col = this.wrap(key);
+          const dbCol = deletePropToCol.get(key) ?? key;
+          const col = this.wrap(dbCol);
           whereMap.push(
             Array.isArray(value)
               ? Conditions.in(col, value)
@@ -2114,11 +2181,13 @@ export class EntityManager implements BaseEntityManager {
     this.validateCriteriaKeys(metadata, where, entity.name);
 
     return this.executeInTransaction(async (session) => {
+      const updatePropToCol = this.buildPropertyToColumnMap(metadata);
       const setMap: Sql[] = [];
       for (const key in data) {
         const value = (data as any)[key];
         if (value !== undefined) {
-          setMap.push(sql`${raw(this.wrap(key))} = ${value}`);
+          const dbCol = updatePropToCol.get(key) ?? key;
+          setMap.push(sql`${raw(this.wrap(dbCol))} = ${value}`);
         }
       }
 
@@ -2142,6 +2211,7 @@ export class EntityManager implements BaseEntityManager {
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.wrap(n),
         dialect: this._ctx.getDialect(),
+        propertyToColumn: this.buildPropertyToColumnMap(metadata),
       });
 
       const updateSql = sql`UPDATE ${raw(this.wrapTable(metadata.name!))} SET ${join(setMap, ", ")} WHERE ${join(whereMap, " AND ")}`;
@@ -2190,11 +2260,13 @@ export class EntityManager implements BaseEntityManager {
     this.validateCriteriaKeys(metadata, criteria, entity.name);
 
     return this.executeInTransaction(async (session) => {
+      const sdPropToCol = this.buildPropertyToColumnMap(metadata);
       const whereMap: Sql[] = [];
       for (const key in criteria) {
         const value = (criteria as any)[key];
         if (value !== undefined && value !== null) {
-          const col = this.wrap(key);
+          const dbCol = sdPropToCol.get(key) ?? key;
+          const col = this.wrap(dbCol);
           whereMap.push(
             Array.isArray(value)
               ? Conditions.in(col, value)
@@ -2249,11 +2321,13 @@ export class EntityManager implements BaseEntityManager {
     this.validateCriteriaKeys(metadata, criteria, entity.name);
 
     return this.executeInTransaction(async (session) => {
+      const restorePropToCol = this.buildPropertyToColumnMap(metadata);
       const whereMap: Sql[] = [];
       for (const key in criteria) {
         const value = (criteria as any)[key];
         if (value !== undefined && value !== null) {
-          const col = this.wrap(key);
+          const dbCol = restorePropToCol.get(key) ?? key;
+          const col = this.wrap(dbCol);
           whereMap.push(
             Array.isArray(value)
               ? Conditions.in(col, value)
@@ -2319,7 +2393,7 @@ export class EntityManager implements BaseEntityManager {
     const computedColsUpsert = this.getComputedColumnNames(entity);
     const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
       if (computedColsUpsert.has(col.name!)) return false;
-      const value = (data as any)[col.name!];
+      const value = (data as any)[this.propKey(col)];
       if (
         col.options?.autoIncrement &&
         (value === null || value === undefined)
@@ -2355,7 +2429,7 @@ export class EntityManager implements BaseEntityManager {
     await this.executeInTransaction(async (session) => {
       const columnValues = insertableColumns.map(
         (col: ColumnMetadata) => {
-          const rawValue = (data as any)[col.name!];
+          const rawValue = (data as any)[this.propKey(col)];
           return col.transformer?.to ? col.transformer.to(rawValue) : rawValue;
         },
       );
@@ -2494,6 +2568,27 @@ export class EntityManager implements BaseEntityManager {
         );
       }
     }
+  }
+
+  /**
+   * Returns the TypeScript property key for a column metadata entry.
+   * Use this when accessing entity object properties (not for SQL generation).
+   */
+  private propKey(col: { propertyKey?: string; name?: string }): string {
+    return col.propertyKey ?? col.name!;
+  }
+
+  /**
+   * Builds a Map from TypeScript property names to DB column names
+   * for NamingStrategy-aware WHERE/SELECT/ORDER resolution.
+   */
+  private buildPropertyToColumnMap(metadata: { columns: ColumnMetadata[] }): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const col of metadata.columns) {
+      const prop = col.propertyKey ?? col.name!;
+      map.set(prop, col.name!);
+    }
+    return map;
   }
 
   wrap(columnName: string) {
@@ -2818,7 +2913,12 @@ export class EntityManager implements BaseEntityManager {
   createQueryBuilder<T>(entity: ClazzType<T>, alias: string): SelectQueryBuilder<T, T>;
   createQueryBuilder<T>(entity?: ClazzType<T>, alias?: string): BaseRawQueryBuilder | SelectQueryBuilder<T, T> {
     if (entity && alias) {
-      return new SelectQueryBuilder<T>(entity, alias, this);
+      const qb = new SelectQueryBuilder<T>(entity, alias, this);
+      const meta = this.resolver.resolveEntityMetadata(entity);
+      if (meta) {
+        qb.setPropertyToColumnMap(this.buildPropertyToColumnMap(meta));
+      }
+      return qb;
     }
     const qb = RawQueryBuilderFactory.create();
     if (this.isMySqlFamily()) qb.setDatabaseType("mysql");
