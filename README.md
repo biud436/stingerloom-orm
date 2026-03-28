@@ -3,7 +3,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@stingerloom/orm"><img src="https://img.shields.io/npm/v/@stingerloom/orm" alt="npm version" /></a>
-  <a href="https://github.com/biud436/stingerloom-orm/actions"><img src="https://img.shields.io/badge/tests-1%2C500%2B%20passed-brightgreen" alt="tests" /></a>
+  <a href="https://github.com/biud436/stingerloom-orm/actions"><img src="https://img.shields.io/badge/tests-2%2C669%20passed-brightgreen" alt="tests" /></a>
   <a href="https://github.com/biud436/stingerloom-orm/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license" /></a>
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" alt="TypeScript strict" />
 </p>
