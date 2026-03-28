@@ -1,12 +1,12 @@
 # 관계 (Relations)
 
-**관계(Relation)**란 두 엔티티 간의 연결을 의미합니다. "블로그 글에는 작성자가 있다"거나 "한 주인이 여러 마리의 고양이를 가진다"와 같은 실세계의 관계를 데이터베이스에 반영합니다.
+**관계(Relation)**는 두 엔티티 사이의 연결이에요. "블로그 글에는 작성자가 있다"거나 "한 주인이 여러 마리의 고양이를 가진다"같은 실세계의 관계를 데이터베이스에 반영해요.
 
-데코레이터에 대해 알아보기 전에, 관계가 어떤 문제를 해결하는지 먼저 이해해봅시다.
+데코레이터를 알아보기 전에, 관계가 어떤 문제를 해결하는지 먼저 이해해봐요.
 
-관계가 없다면, 고양이 테이블에 주인의 ID를 단순 정수로 저장한 뒤, 고양이를 조회할 때 주인의 데이터를 가져오기 위해 직접 JOIN 쿼리를 작성해야 합니다. 또한 외래 키 제약 조건, null 검사, 데이터 무결성도 직접 처리해야 합니다. 관계는 이 모든 것을 자동화합니다: 연결을 한 번 선언하면 ORM이 올바른 JOIN, FK 제약 조건, DDL을 자동으로 생성합니다.
+관계가 없다면, 고양이 테이블에 주인의 ID를 단순 정수로 저장한 뒤, 고양이를 조회할 때 주인 데이터를 가져오려고 직접 JOIN 쿼리를 작성해야 해요. 외래 키 제약 조건, null 검사, 데이터 무결성도 직접 처리해야 하고요. 관계는 이 모든 걸 자동화해요: 연결을 한 번 선언하면 ORM이 올바른 JOIN, FK 제약 조건, DDL을 알아서 생성해줘요.
 
-Stingerloom ORM은 네 가지 유형의 관계를 지원합니다.
+Stingerloom ORM은 네 가지 유형의 관계를 지원해요.
 
 | 관계 | 예시 | 데코레이터 |
 |------|------|-----------|
@@ -15,13 +15,13 @@ Stingerloom ORM은 네 가지 유형의 관계를 지원합니다.
 | One-to-One (1:1) | User -> Profile | `@OneToOne` |
 | Many-to-Many (N:M) | Post <-> Tag | `@ManyToMany` |
 
-가장 흔한 Many-to-One 관계부터 시작하여 하나씩 살펴보겠습니다.
+가장 흔한 Many-to-One 관계부터 하나씩 살펴볼게요.
 
 ## @ManyToOne -- "이 고양이의 주인은 누구인가?"
 
 ### 이 관계가 존재하는 이유
 
-고양이와 주인의 관계를 생각해봅시다. 한 주인이 여러 마리의 고양이를 가질 수 있지만, 각 고양이에게는 주인이 한 명뿐입니다. 모든 데이터를 하나의 테이블에 저장하면, 고양이마다 주인의 정보가 중복됩니다:
+고양이와 주인의 관계를 생각해봐요. 한 주인이 여러 마리의 고양이를 가질 수 있지만, 각 고양이에게는 주인이 한 명뿐이에요. 모든 데이터를 하나의 테이블에 저장하면, 고양이마다 주인 정보가 중복돼요:
 
 | cat_name | owner_name | owner_email |
 |----------|-----------|-------------|
@@ -29,13 +29,13 @@ Stingerloom ORM은 네 가지 유형의 관계를 지원합니다.
 | Cheddar | John | john@mail.com |
 | Luna | Jane | jane@mail.com |
 
-이는 낭비이며 위험합니다 -- John이 이메일을 변경하면 여러 행을 수정해야 하고, 하나라도 놓치면 데이터가 불일치 상태가 됩니다. 해결책은 **정규화(normalization)**입니다: 주인을 하나의 테이블에, 고양이를 다른 테이블에 저장한 뒤, **외래 키(FK)**로 연결합니다.
+이건 낭비이고 위험해요 -- John이 이메일을 변경하면 여러 행을 수정해야 하고, 하나라도 놓치면 데이터가 불일치 상태가 돼요. 해결책은 **정규화(normalization)**예요: 주인을 하나의 테이블에, 고양이를 다른 테이블에 저장한 뒤 **외래 키(FK)**로 연결하는 거예요.
 
-외래 키는 한 테이블의 컬럼이 다른 테이블의 기본 키를 참조하는 것입니다. "이 값은 항상 다른 테이블의 유효한 행을 가리킨다"는 약속입니다.
+외래 키는 한 테이블의 컬럼이 다른 테이블의 기본 키를 참조하는 거예요. "이 값은 항상 다른 테이블의 유효한 행을 가리킨다"는 약속이에요.
 
 ### 동작 방식
 
-먼저 두 엔티티를 생성합니다.
+먼저 두 엔티티를 생성해요.
 
 ```typescript
 // owner.entity.ts
@@ -73,7 +73,7 @@ export class Cat {
 
 ### 생성되는 DDL
 
-다음은 두 엔티티에 대해 Stingerloom이 생성하는 정확한 SQL입니다.
+두 엔티티에 대해 Stingerloom이 생성하는 SQL이에요.
 
 **PostgreSQL:**
 
@@ -117,15 +117,15 @@ ALTER TABLE `cat`
   ON DELETE NO ACTION ON UPDATE NO ACTION;
 ```
 
-세 가지 사항을 주목하세요:
+세 가지를 주목해주세요:
 
-1. `owner_id` 컬럼은 `cat` 테이블에 생성됩니다 ("다(many)" 쪽이 항상 FK를 보유합니다)
-2. `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY`는 모든 `owner_id` 값이 기존 `owner.id`에 대응하는지 보장합니다
-3. FK 제약 조건 이름에는 고유성을 위한 해시 접미사(예: `a1b2c3d4`)가 포함됩니다
+1. `owner_id` 컬럼은 `cat` 테이블에 생성돼요 ("다(many)" 쪽이 항상 FK를 가져요)
+2. `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY`는 모든 `owner_id` 값이 기존 `owner.id`에 대응하는지 보장해요
+3. FK 제약 조건 이름에는 고유성을 위한 해시 접미사(예: `a1b2c3d4`)가 포함돼요
 
 ### JOIN이 포함된 SELECT 생성
 
-고양이를 주인과 함께 조회하면, Stingerloom은 LEFT JOIN 쿼리를 생성합니다:
+고양이를 주인과 함께 조회하면, Stingerloom은 LEFT JOIN 쿼리를 생성해요:
 
 ```typescript
 const cat = await em.findOne(Cat, {
@@ -148,21 +148,21 @@ LEFT JOIN "owner" ON "cat"."owner_id" = "owner"."id"
 WHERE "cat"."id" = 1;
 ```
 
-`LEFT JOIN`은 "주인이 없는 고양이(owner_id가 NULL)라도 반환하라"는 뜻입니다. `INNER JOIN`을 사용하면, 주인이 없는 고양이는 결과에서 제외됩니다.
+`LEFT JOIN`은 "주인이 없는 고양이(owner_id가 NULL)라도 반환하라"는 뜻이에요. `INNER JOIN`을 쓰면, 주인이 없는 고양이는 결과에서 빠져요.
 
 ### 데코레이터 인자 이해하기
 
-`@ManyToOne`의 세 가지 인자를 살펴봅시다:
+`@ManyToOne`의 세 가지 인자를 살펴볼게요:
 
-- `() => Owner` -- 대상 엔티티 (import 시점의 순환 참조를 방지하기 위해 함수로 감쌈)
-- `(owner) => owner.cats` -- 역방향 프로퍼티 (양방향 관계에 사용; 단방향이면 생략 가능)
+- `() => Owner` -- 대상 엔티티 (import 시점의 순환 참조를 방지하려고 함수로 감싸요)
+- `(owner) => owner.cats` -- 역방향 프로퍼티 (양방향 관계에 사용, 단방향이면 생략 가능)
 - `{ joinColumn: "owner_id" }` -- 외래 키 컬럼명
 
-> **힌트** `joinColumn`은 생략할 수 있습니다. 아래의 **@Column 기반 FK 자동 감지**를 참고하세요.
+> **힌트** `joinColumn`은 생략할 수 있어요. 아래의 **@Column 기반 FK 자동 감지**를 참고해주세요.
 
 ### @Column 기반 FK 자동 감지
 
-매번 `joinColumn`을 지정하는 것은 번거롭고, `@Column`의 DB 컬럼명과 불일치할 위험이 있습니다. Stingerloom은 같은 엔티티에 `{propertyName}Id` 패턴의 `@Column`이 선언되어 있으면, 해당 `@Column`의 **실제 DB 이름**을 FK 컬럼으로 자동 사용합니다.
+매번 `joinColumn`을 지정하는 건 번거롭고, `@Column`의 DB 컬럼명과 불일치할 위험이 있어요. Stingerloom은 같은 엔티티에 `{propertyName}Id` 패턴의 `@Column`이 선언되어 있으면, 해당 `@Column`의 **실제 DB 이름**을 FK 컬럼으로 자동 사용해요.
 
 ```typescript
 @Entity()
@@ -177,19 +177,19 @@ export class Cat {
   @Column({ name: "owner_fk", type: "int" })
   ownerId!: number;
 
-  // ownerId의 DB 이름인 "owner_fk"가 joinColumn 없이 자동 적용됩니다
+  // ownerId의 DB 이름인 "owner_fk"가 joinColumn 없이 자동 적용돼요
   @ManyToOne(() => Owner, (owner) => owner.cats)
   owner!: Owner;
 }
 ```
 
-해석 우선순위는 다음과 같습니다.
+해석 우선순위는 이래요.
 
 1. `@ManyToOne`의 `joinColumn` 옵션이 지정된 경우 -> 그대로 사용
 2. 같은 엔티티에 `{propertyName}Id`인 `@Column`이 선언된 경우 -> 해당 `@Column`의 DB 컬럼명 사용
 3. 둘 다 없는 경우 -> `{propertyName}Id` 규칙으로 폴백
 
-`@Column`을 선언하면 엔티티에서 FK 값을 직접 읽고 쓸 수 있다는 장점도 있습니다.
+`@Column`을 선언하면 엔티티에서 FK 값을 직접 읽고 쓸 수 있다는 장점도 있어요.
 
 ```typescript
 const cat = new Cat();
@@ -207,7 +207,7 @@ INSERT INTO "cat" ("name", "owner_fk") VALUES ('Whiskers', 3);
 
 ### PK가 아닌 컬럼 참조 (references)
 
-기본적으로 FK는 대상 엔티티의 PK를 참조합니다. PK가 아닌 컬럼을 참조하려면 `references` 옵션을 사용합니다.
+기본적으로 FK는 대상 엔티티의 PK를 참조해요. PK가 아닌 컬럼을 참조하려면 `references` 옵션을 사용하면 돼요.
 
 ```typescript
 @ManyToOne(() => Owner, (owner) => owner.cats, {
@@ -227,7 +227,7 @@ ALTER TABLE "cat"
 
 ### 참조 무결성 액션 (onDelete / onUpdate)
 
-기본적으로 외래 키는 `ON DELETE NO ACTION ON UPDATE NO ACTION`을 사용합니다. 이는 고양이를 가진 주인을 삭제하거나, 주인의 PK를 변경하려는 시도를 데이터베이스가 거부한다는 뜻입니다. `onDelete`와 `onUpdate` 옵션으로 이 동작을 변경할 수 있습니다.
+기본적으로 외래 키는 `ON DELETE NO ACTION ON UPDATE NO ACTION`을 사용해요. 고양이를 가진 주인을 삭제하거나, 주인의 PK를 변경하려는 시도를 데이터베이스가 거부한다는 뜻이에요. `onDelete`와 `onUpdate` 옵션으로 이 동작을 바꿀 수 있어요.
 
 ```typescript
 @ManyToOne(() => Owner, (owner) => owner.cats, {
@@ -247,7 +247,7 @@ ALTER TABLE "cat"
   ON DELETE CASCADE ON UPDATE CASCADE;
 ```
 
-`CASCADE`를 사용하면, 주인 #3을 삭제할 때 데이터베이스가 `owner_id = 3`인 모든 고양이를 자동으로 삭제합니다. 이 옵션이 없으면 삭제 시 외래 키 위반 오류가 발생합니다.
+`CASCADE`를 쓰면, 주인 #3을 삭제할 때 데이터베이스가 `owner_id = 3`인 모든 고양이를 자동으로 삭제해요. 이 옵션이 없으면 삭제 시 외래 키 위반 오류가 발생해요.
 
 사용 가능한 액션:
 
@@ -256,14 +256,14 @@ ALTER TABLE "cat"
 | `'NO ACTION'` | 자식 행이 존재하면 거부 (기본값) |
 | `'RESTRICT'` | NO ACTION과 동일 (즉시 검사) |
 | `'CASCADE'` | 자식을 자동으로 삭제/갱신 |
-| `'SET NULL'` | FK를 NULL로 설정 (컬럼이 nullable이어야 함) |
+| `'SET NULL'` | FK를 NULL로 설정 (컬럼이 nullable이어야 해요) |
 | `'SET DEFAULT'` | FK를 기본값으로 설정 |
 
-이 옵션들은 `@ManyToOne`과 `@OneToOne` 모두에서 동작합니다.
+이 옵션들은 `@ManyToOne`과 `@OneToOne` 모두에서 동작해요.
 
 ### FK 제약 조건 건너뛰기 (createForeignKeyConstraints)
 
-일부 경우(예: 크로스 데이터베이스 참조, 성능이 중요한 테이블)에는 논리적 관계는 유지하면서 FK 제약 조건 생성을 건너뛰고 싶을 수 있습니다.
+일부 경우(예: 크로스 데이터베이스 참조, 성능이 중요한 테이블)에는 논리적 관계는 유지하면서 FK 제약 조건 생성을 건너뛰고 싶을 수 있어요.
 
 ```typescript
 @ManyToOne(() => ExternalEntity, (e) => e.items, {
@@ -273,17 +273,17 @@ ALTER TABLE "cat"
 external!: ExternalEntity;
 ```
 
-컬럼은 여전히 생성되지만, `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY`는 생성되지 않습니다. ORM은 여전히 관계를 이해하고 JOIN을 올바르게 생성합니다 -- 단지 데이터베이스에 연결을 강제하도록 요청하지 않을 뿐입니다. 이 옵션은 `@OneToOne`에서도 동작합니다.
+컬럼은 여전히 생성되지만, `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY`는 생성되지 않아요. ORM은 여전히 관계를 이해하고 JOIN을 올바르게 생성해요 -- 단지 데이터베이스에 연결을 강제하도록 요청하지 않을 뿐이에요. 이 옵션은 `@OneToOne`에서도 동작해요.
 
 ## @OneToMany -- "이 주인의 고양이들은?"
 
 ### 역방향(Inverse) 측인 이유
 
-주인 쪽에서 고양이 목록을 가져오고 싶다면 `@OneToMany`를 추가합니다. 이는 `@ManyToOne`의 역방향입니다.
+주인 쪽에서 고양이 목록을 가져오고 싶다면 `@OneToMany`를 추가해요. `@ManyToOne`의 역방향이에요.
 
-중요한 점을 이해해야 합니다: **`@OneToMany`는 데이터베이스에 어떤 컬럼도 생성하지 않습니다.** 외래 키 컬럼(`owner_id`)은 `@ManyToOne`에 의해 `cat` 테이블에 존재합니다. `@OneToMany` 데코레이터는 단순히 ORM에게 "누군가 주인의 고양이를 요청하면, FK를 사용하여 `cat` 테이블을 조회하라"고 알려줍니다.
+중요한 점이 있어요: **`@OneToMany`는 데이터베이스에 어떤 컬럼도 생성하지 않아요.** 외래 키 컬럼(`owner_id`)은 `@ManyToOne`에 의해 `cat` 테이블에 있어요. `@OneToMany` 데코레이터는 단순히 ORM에게 "누군가 주인의 고양이를 요청하면, FK를 사용해서 `cat` 테이블을 조회하라"고 알려주는 거예요.
 
-이렇게 생각해보세요: 현실 세계에서 각 고양이는 주인의 이름이 적힌 목걸이(FK)를 착용합니다. 주인은 고양이 ID 목록을 가지고 다니지 않습니다. 주인의 고양이를 찾으려면 모든 목걸이를 확인합니다.
+이렇게 생각해보면 돼요: 현실 세계에서 각 고양이는 주인의 이름이 적힌 목걸이(FK)를 착용해요. 주인은 고양이 ID 목록을 가지고 다니지 않아요. 주인의 고양이를 찾으려면 모든 목걸이를 확인하면 돼요.
 
 ### 동작 방식
 
@@ -305,9 +305,9 @@ export class Owner {
 }
 ```
 
-`mappedBy: "owner"`는 "Cat 엔티티의 `owner` 프로퍼티가 외래 키를 보유한다"는 뜻입니다. 이를 통해 ORM은 JOIN에 어떤 컬럼을 사용할지 알게 됩니다.
+`mappedBy: "owner"`는 "Cat 엔티티의 `owner` 프로퍼티가 외래 키를 가지고 있다"는 뜻이에요. 이걸 통해 ORM은 JOIN에 어떤 컬럼을 쓸지 알게 돼요.
 
-**Owner 테이블의 DDL은 변경되지 않습니다.** 추가 컬럼이 생기지 않습니다:
+**Owner 테이블의 DDL은 변경되지 않아요.** 추가 컬럼이 생기지 않아요:
 
 ```sql
 -- PostgreSQL
@@ -315,14 +315,14 @@ CREATE TABLE "owner" (
   "id" SERIAL PRIMARY KEY,
   "name" VARCHAR(255) NOT NULL
 );
--- 이것이 전부입니다. "cats" 컬럼은 존재하지 않습니다.
+-- 이게 전부예요. "cats" 컬럼은 존재하지 않아요.
 ```
 
-> **힌트** `mappedBy`는 대상 엔티티의 프로퍼티 이름에 대해 **IntelliSense 자동 완성**을 지원합니다. IDE에서 `mappedBy: ""`를 입력하면 Cat 엔티티의 프로퍼티 목록이 표시됩니다. `@ManyToMany`의 `mappedBy`와 `@OneToOne`의 `inverseSide`도 동일하게 적용됩니다.
+> **힌트** `mappedBy`는 대상 엔티티의 프로퍼티 이름에 대해 **IntelliSense 자동 완성**을 지원해요. IDE에서 `mappedBy: ""`를 입력하면 Cat 엔티티의 프로퍼티 목록이 표시돼요. `@ManyToMany`의 `mappedBy`와 `@OneToOne`의 `inverseSide`도 마찬가지예요.
 
 ### 생성되는 SELECT
 
-이제 주인의 고양이들을 조회할 수 있습니다.
+이제 주인의 고양이들을 조회할 수 있어요.
 
 ```typescript
 const owner = await em.findOne(Owner, {
@@ -343,15 +343,15 @@ SELECT * FROM "owner" WHERE "id" = 1;
 SELECT * FROM "cat" WHERE "owner_id" = 1;
 ```
 
-ORM은 두 개의 별도 쿼리를 실행합니다: 하나는 주인, 하나는 고양이. 그런 다음 이를 `cats` 배열이 포함된 하나의 객체로 조합합니다.
+ORM은 두 개의 별도 쿼리를 실행해요: 하나는 주인, 하나는 고양이. 그런 다음 이걸 `cats` 배열이 포함된 하나의 객체로 조합해요.
 
-> **힌트** `relations`를 지정하지 않으면 `cats`가 로드되지 않습니다. 필요할 때만 명시적으로 로드하여 불필요한 쿼리를 방지하세요.
+> **힌트** `relations`를 지정하지 않으면 `cats`가 로드되지 않아요. 필요할 때만 명시적으로 로드해서 불필요한 쿼리를 방지하세요.
 
 ## 즉시 로딩과 지연 로딩
 
 ### 로딩 전략이 중요한 이유
 
-50마리의 고양이를 나열하는 페이지를 생각해봅시다. 각 고양이에 주인이 있고, 순회하면서 주인을 하나씩 로드한다면:
+50마리의 고양이를 나열하는 페이지를 생각해봐요. 각 고양이에 주인이 있고, 순회하면서 주인을 하나씩 로드한다면:
 
 ```sql
 SELECT * FROM "cat";                          -- 1개 쿼리: 50마리 고양이 조회
@@ -361,15 +361,15 @@ SELECT * FROM "owner" WHERE "id" = 2;         -- 쿼리 #3
 SELECT * FROM "owner" WHERE "id" = 50;        -- 쿼리 #51
 ```
 
-총 51개의 쿼리입니다. 이를 **N+1 문제**라고 합니다: N마리의 고양이를 가져오는 1개 쿼리 + 각 주인을 가져오는 N개 쿼리. 빠른 데이터베이스에서는 50ms가 걸리겠지만, 네트워크가 분리된 데이터베이스에서는 5초가 걸릴 수도 있습니다.
+총 51개의 쿼리예요. 이걸 **N+1 문제**라고 해요: N마리의 고양이를 가져오는 1개 쿼리 + 각 주인을 가져오는 N개 쿼리. 빠른 데이터베이스에서는 50ms가 걸리겠지만, 네트워크가 분리된 데이터베이스에서는 5초가 걸릴 수도 있어요.
 
-해결책은 관련 데이터를 더 적은 쿼리로 로드하는 것입니다. 미리 한꺼번에(eager) 또는 필요할 때(lazy) 로드할 수 있습니다.
+해결책은 관련 데이터를 더 적은 쿼리로 로드하는 거예요. 미리 한꺼번에(eager) 또는 필요할 때(lazy) 로드할 수 있어요.
 
-매번 `relations: ["owner"]`를 작성하는 것이 번거롭다면, 두 가지 자동 로딩 방법이 있습니다.
+매번 `relations: ["owner"]`를 쓰는 게 번거롭다면, 두 가지 자동 로딩 방법이 있어요.
 
 ### 즉시 로딩(Eager Loading) -- 항상 함께 조회 (1개 쿼리, JOIN 포함)
 
-`eager: true`를 설정하면 `find()` 또는 `findOne()` 호출 시 자동으로 LEFT JOIN이 실행됩니다.
+`eager: true`를 설정하면 `find()` 또는 `findOne()` 호출 시 자동으로 LEFT JOIN이 실행돼요.
 
 ```typescript
 // cat.entity.ts
@@ -399,11 +399,11 @@ LEFT JOIN "owner" ON "cat"."owner_id" = "owner"."id"
 WHERE "cat"."id" = 1;
 ```
 
-모든 데이터를 한 번의 라운드트립으로 반환하는 단일 쿼리입니다. LEFT JOIN은 "주인이 없는 고양이도 포함하라"는 뜻입니다. 관련 데이터가 항상 필요할 때 유용합니다.
+모든 데이터를 한 번의 라운드트립으로 반환하는 단일 쿼리예요. LEFT JOIN은 "주인이 없는 고양이도 포함하라"는 뜻이에요. 관련 데이터가 항상 필요할 때 유용해요.
 
 ### 지연 로딩(Lazy Loading) -- 접근 시 조회 (별도 쿼리)
 
-`lazy: true`를 설정하면 Proxy 기반의 지연 로딩을 사용합니다. 프로퍼티에 실제로 접근하는 시점에 DB 쿼리가 실행됩니다.
+`lazy: true`를 설정하면 Proxy 기반의 지연 로딩을 사용해요. 프로퍼티에 실제로 접근하는 시점에 DB 쿼리가 실행돼요.
 
 ```typescript
 // cat.entity.ts
@@ -416,9 +416,9 @@ owner!: Owner;
 
 ```typescript
 const cat = await em.findOne(Cat, { where: { id: 1 } });
-// 이 시점에서는 고양이 행만 로드됩니다. JOIN도 추가 쿼리도 없습니다.
+// 이 시점에서는 고양이 행만 로드돼요. JOIN도 추가 쿼리도 없어요.
 
-const owner = await cat.owner; // 지금 SELECT가 실행됩니다
+const owner = await cat.owner; // 지금 SELECT가 실행돼요
 console.log(owner.name);
 ```
 
@@ -432,7 +432,7 @@ SELECT * FROM "cat" WHERE "id" = 1;
 SELECT * FROM "owner" WHERE "id" = 3;
 ```
 
-지연 로딩은 관계가 거의 접근되지 않을 때 유용합니다. 50마리의 고양이를 나열하면서 첫 번째 고양이의 주인만 표시한다면, 49개의 불필요한 쿼리를 피할 수 있습니다.
+지연 로딩은 관계가 거의 접근되지 않을 때 유용해요. 50마리의 고양이를 나열하면서 첫 번째 고양이의 주인만 표시한다면, 49개의 불필요한 쿼리를 피할 수 있어요.
 
 ### N+1 트레이드오프
 
@@ -443,21 +443,21 @@ SELECT * FROM "owner" WHERE "id" = 3;
 | `eager: true` | 1 (JOIN) | 관계가 항상 필요할 때 |
 | `lazy: true` | 1 ~ 51 (접근에 따라 다름) | 관계가 거의 필요 없을 때 |
 
-> **주의** `eager`와 `lazy`는 동시에 사용할 수 없습니다. 둘 다 설정된 경우 `eager`가 우선합니다.
+> **주의** `eager`와 `lazy`는 동시에 사용할 수 없어요. 둘 다 설정하면 `eager`가 우선해요.
 
-> **힌트** Stingerloom에는 런타임에 N+1 패턴을 감지하고 경고를 로그에 남기는 **QueryTracker**가 포함되어 있습니다. 활성화 방법은 [EntityManager](./entity-manager.md) 문서를 참고하세요.
+> **힌트** Stingerloom에는 런타임에 N+1 패턴을 감지하고 경고를 로그에 남기는 **QueryTracker**가 있어요. 활성화 방법은 [EntityManager](./entity-manager.md) 문서를 참고해주세요.
 
 ## @OneToOne -- "사용자의 프로필"
 
 ### One-to-One이 존재하는 이유
 
-사용자 한 명, 프로필 하나. 모든 프로필 필드를 User 테이블에 직접 넣을 수도 있지만, 분리해야 하는 이유가 있습니다:
+사용자 한 명, 프로필 하나. 모든 프로필 필드를 User 테이블에 직접 넣을 수도 있지만, 분리해야 하는 이유가 있어요:
 
-1. 프로필이 크다 (bio, 아바타 URL, 소셜 링크) 그리고 거의 로드되지 않는다
-2. 접근 패턴이 다르다: 사용자 테이블은 매 요청마다 읽히지만, 프로필은 프로필 페이지에서만 읽힌다
+1. 프로필이 크고 (bio, 아바타 URL, 소셜 링크) 거의 로드되지 않아요
+2. 접근 패턴이 달라요: 사용자 테이블은 매 요청마다 읽히지만, 프로필은 프로필 페이지에서만 읽혀요
 3. 관심사의 분리: 사용자 인증 데이터 vs. 표시 데이터
 
-One-to-One 관계는 한쪽("소유자" 측)에 FK를 생성하여 최대 하나의 관련 레코드를 보장합니다.
+One-to-One 관계는 한쪽("소유자" 측)에 FK를 생성해서 최대 하나의 관련 레코드를 보장해요.
 
 ### 단방향 (소유자 측만)
 
@@ -513,7 +513,7 @@ ALTER TABLE "user"
   ON DELETE NO ACTION ON UPDATE NO ACTION;
 ```
 
-`profile_id` 컬럼이 user 테이블에 생성됩니다. `eager: true`이므로 User를 조회할 때 Profile이 함께 로드됩니다.
+`profile_id` 컬럼이 user 테이블에 생성돼요. `eager: true`이므로 User를 조회할 때 Profile이 함께 로드돼요.
 
 **즉시 로딩에 의해 생성되는 SQL (PostgreSQL):**
 
@@ -529,11 +529,11 @@ LEFT JOIN "profile" ON "user"."profile_id" = "profile"."id"
 WHERE "user"."id" = 1;
 ```
 
-> **힌트** `@OneToOne`도 `@ManyToOne`과 동일하게 `@Column` 기반 FK 자동 감지를 지원합니다. `@Column({ name: "profile_fk" }) profileId: number`를 선언하면 `joinColumn`을 생략할 수 있습니다.
+> **힌트** `@OneToOne`도 `@ManyToOne`과 동일하게 `@Column` 기반 FK 자동 감지를 지원해요. `@Column({ name: "profile_fk" }) profileId: number`를 선언하면 `joinColumn`을 생략할 수 있어요.
 
 ### 양방향
 
-Profile에서 User도 참조하고 싶다면 `inverseSide`를 사용합니다.
+Profile에서 User도 참조하고 싶다면 `inverseSide`를 사용해요.
 
 ```typescript
 // user.entity.ts — 소유자 측 (FK가 있는 쪽)
@@ -545,7 +545,7 @@ profile!: Profile;
 user!: User;
 ```
 
-`@OneToMany`와 마찬가지로, 역방향 측은 추가 컬럼을 생성하지 않습니다. `profile_id` FK는 `user` 테이블에만 존재합니다.
+`@OneToMany`와 마찬가지로, 역방향 측은 추가 컬럼을 생성하지 않아요. `profile_id` FK는 `user` 테이블에만 있어요.
 
 ```typescript
 // 역방향에서 쿼리
@@ -569,17 +569,17 @@ LEFT JOIN "user" ON "user"."profile_id" = "profile"."id"
 WHERE "profile"."id" = 1;
 ```
 
-JOIN 방향이 반대가 된 것에 주목하세요: ORM이 `profile_id`가 일치하는 user 행을 찾아 profile에서 user로 조인합니다.
+JOIN 방향이 반대가 된 거 보이시죠? ORM이 `profile_id`가 일치하는 user 행을 찾아서 profile에서 user로 조인해요.
 
 ## @ManyToMany -- "글에 태그 달기"
 
 ### Many-to-Many에 조인 테이블이 필요한 이유
 
-블로그 글에는 태그가 있고, 하나의 태그는 여러 글에 사용될 수 있습니다. 이것이 **Many-to-Many (N:M)** 관계입니다.
+블로그 글에는 태그가 있고, 하나의 태그는 여러 글에 사용될 수 있어요. 이게 **Many-to-Many (N:M)** 관계예요.
 
-단일 FK 컬럼으로는 이를 표현할 수 없습니다. post 테이블에 `tag_id`를 추가하면 각 글에 태그가 하나만 가능합니다. tag 테이블에 `post_id`를 추가하면 각 태그가 하나의 글에만 붙을 수 있습니다. 둘 다 안 됩니다.
+단일 FK 컬럼으로는 이걸 표현할 수 없어요. post 테이블에 `tag_id`를 추가하면 각 글에 태그가 하나만 가능하고, tag 테이블에 `post_id`를 추가하면 각 태그가 하나의 글에만 붙을 수 있어요. 둘 다 안 돼요.
 
-해결책은 **조인 테이블**(연결 테이블 또는 브릿지 테이블이라고도 함)입니다: 각 쪽을 가리키는 두 개의 FK 컬럼을 가진 세 번째 테이블입니다.
+해결책은 **조인 테이블**(연결 테이블 또는 브릿지 테이블이라고도 해요)이에요: 각 쪽을 가리키는 두 개의 FK 컬럼을 가진 세 번째 테이블이에요.
 
 ```
 post (id, title)
@@ -589,7 +589,7 @@ post (id, title)
 tag (id, name)
 ```
 
-`post_tags`의 각 행은 하나의 연결을 나타냅니다: "글 #1에 태그 #2가 있다."
+`post_tags`의 각 행은 하나의 연결을 나타내요: "글 #1에 태그 #2가 있다."
 
 ### 동작 방식
 
@@ -637,7 +637,7 @@ export class Tag {
 
 ### 생성되는 DDL
 
-`synchronize: true`를 사용하면 `post_tags` 조인 테이블이 자동으로 생성됩니다. 다음은 정확한 DDL입니다.
+`synchronize: true`를 쓰면 `post_tags` 조인 테이블이 자동으로 생성돼요. DDL은 이래요.
 
 **PostgreSQL:**
 
@@ -698,7 +698,7 @@ ALTER TABLE `post_tags`
   FOREIGN KEY (`tag_id`) REFERENCES `tag` (`id`);
 ```
 
-조인 테이블에 **복합 기본 키**(`post_id`, `tag_id`)가 있어서 동일한 post-tag 쌍이 중복될 수 없다는 점에 주목하세요.
+조인 테이블에 **복합 기본 키**(`post_id`, `tag_id`)가 있어서 동일한 post-tag 쌍이 중복될 수 없어요.
 
 ### 생성되는 SELECT
 
@@ -724,11 +724,11 @@ INNER JOIN "post_tags" ON "post_tags"."tag_id" = "tag"."id"
 WHERE "post_tags"."post_id" = 1;
 ```
 
-조인 테이블을 쿼리하여 글 #1에 속하는 태그 ID를 찾은 다음, 해당 태그들을 로드합니다.
+조인 테이블을 쿼리해서 글 #1에 속하는 태그 ID를 찾은 다음, 해당 태그들을 로드해요.
 
 ### 조인 테이블 데이터 관리
 
-조인 테이블의 항목을 추가하거나 제거하려면 `em.query()`로 SQL을 직접 실행합니다. 조인 테이블은 엔티티가 아니라 순수한 관계 브릿지입니다.
+조인 테이블의 항목을 추가하거나 제거하려면 `em.query()`로 SQL을 직접 실행해요. 조인 테이블은 엔티티가 아니라 순수한 관계 브릿지예요.
 
 ```typescript
 // 글에 태그 추가
@@ -738,13 +738,13 @@ await em.query("INSERT INTO post_tags (post_id, tag_id) VALUES ($1, $2)", [1, 3]
 await em.query("DELETE FROM post_tags WHERE post_id = $1 AND tag_id = $2", [1, 3]);
 ```
 
-> **힌트** `em.query()`에 대한 자세한 내용은 [EntityManager](./entity-manager.md) 문서를 참고하세요.
+> **힌트** `em.query()`에 대한 자세한 내용은 [EntityManager](./entity-manager.md) 문서를 참고해주세요.
 
 ## Cascade -- 부모와 함께 저장/삭제
 
 ### Cascade가 존재하는 이유
 
-Cascade가 없으면, 부모 엔티티와 자식을 저장할 때 여러 번의 명시적 호출이 필요합니다:
+Cascade가 없으면, 부모 엔티티와 자식을 저장할 때 여러 번의 명시적 호출이 필요해요:
 
 ```typescript
 // Cascade 없음: 각 자식을 개별적으로 저장해야 함
@@ -754,9 +754,9 @@ await em.save(Cat, { name: "Cheddar", ownerId: owner.id });
 await em.save(Cat, { name: "Luna", ownerId: owner.id });
 ```
 
-이는 번거롭고 오류가 발생하기 쉽습니다 -- 자식을 저장하는 것을 잊을 수 있고, 부모 저장은 성공했지만 자식 저장이 실패할 수 있습니다 (데이터가 불일치 상태로 남게 됩니다).
+번거롭고 오류가 발생하기 쉬워요 -- 자식을 저장하는 걸 잊을 수도 있고, 부모 저장은 성공했지만 자식 저장이 실패할 수도 있어요 (데이터가 불일치 상태로 남게 돼요).
 
-Cascade를 사용하면, 부모를 저장할 때 ORM이 자동으로 자식을 저장합니다:
+Cascade를 쓰면, 부모를 저장할 때 ORM이 자동으로 자식을 저장해요:
 
 ```typescript
 // Cascade 사용: 자식이 자동으로 저장됨
@@ -772,7 +772,7 @@ const owner = await em.save(Owner, {
 
 ### 동작 방식
 
-**Cascade**를 사용하면 부모 엔티티를 저장하거나 삭제할 때 자식 엔티티가 자동으로 처리됩니다.
+**Cascade**를 쓰면 부모 엔티티를 저장하거나 삭제할 때 자식 엔티티가 자동으로 처리돼요.
 
 ```typescript
 // owner.entity.ts
@@ -780,7 +780,7 @@ const owner = await em.save(Owner, {
 cats!: Cat[];
 ```
 
-이 설정을 사용하면, Owner를 저장할 때 cats 배열의 새로운 Cat들이 자동으로 INSERT됩니다.
+이 설정을 쓰면, Owner를 저장할 때 cats 배열의 새로운 Cat들이 자동으로 INSERT돼요.
 
 **생성되는 SQL (PostgreSQL):**
 
@@ -795,7 +795,7 @@ INSERT INTO "cat" ("name", "owner_id") VALUES ('Cheddar', 1) RETURNING *;
 INSERT INTO "cat" ("name", "owner_id") VALUES ('Luna', 1) RETURNING *;
 ```
 
-다음 cascade 옵션 중에서 선택할 수 있습니다.
+다음 cascade 옵션 중에서 선택할 수 있어요.
 
 | 옵션 | 동작 |
 |------|------|
@@ -804,7 +804,7 @@ INSERT INTO "cat" ("name", "owner_id") VALUES ('Luna', 1) RETURNING *;
 | `"delete"` | 부모 삭제 시 자식을 DELETE |
 | `true` | 위 세 가지 모두 적용 |
 
-배열로 조합할 수 있습니다.
+배열로 조합할 수 있어요.
 
 ```typescript
 // insert와 delete만 cascade
@@ -818,7 +818,7 @@ comments!: Comment[];
 
 ### Cascade 없이 발생하는 일
 
-`cascade: ["delete"]` 없이 자식이 있는 부모를 삭제하면, FK 제약 조건이 적용되어 있는 경우 실패합니다:
+`cascade: ["delete"]` 없이 자식이 있는 부모를 삭제하면, FK 제약 조건이 적용되어 있는 경우 실패해요:
 
 ```sql
 DELETE FROM "owner" WHERE "id" = 1;
@@ -827,20 +827,20 @@ DELETE FROM "owner" WHERE "id" = 1;
 -- Detail: Key (id)=(1) is still referenced from table "cat".
 ```
 
-자식을 먼저 삭제한 다음 부모를 삭제해야 합니다:
+자식을 먼저 삭제한 다음 부모를 삭제해야 해요:
 
 ```sql
 DELETE FROM "cat" WHERE "owner_id" = 1;    -- 먼저 자식 삭제
 DELETE FROM "owner" WHERE "id" = 1;        -- 그 다음 부모 삭제
 ```
 
-`cascade: ["delete"]`를 사용하면 ORM이 올바른 순서로 자동으로 처리합니다.
+`cascade: ["delete"]`를 쓰면 ORM이 올바른 순서로 자동으로 처리해요.
 
-> **주의** `cascade: ["delete"]`는 강력한 기능입니다. 부모를 삭제하면 모든 자식이 삭제되므로, 의도치 않은 데이터 손실에 주의하세요. 이는 ORM 수준의 cascade(Stingerloom이 순서를 처리)로, FK 제약 조건의 데이터베이스 수준 `ON DELETE CASCADE`와는 다릅니다. 둘 다 유사한 결과를 얻지만, ORM cascade는 생명주기 훅과 이벤트 구독자도 트리거합니다.
+> **주의** `cascade: ["delete"]`는 강력한 기능이에요. 부모를 삭제하면 모든 자식이 삭제되므로, 의도치 않은 데이터 손실에 주의하세요. 이건 ORM 수준의 cascade(Stingerloom이 순서를 처리)로, FK 제약 조건의 데이터베이스 수준 `ON DELETE CASCADE`와는 달라요. 둘 다 비슷한 결과를 얻지만, ORM cascade는 생명주기 훅과 이벤트 구독자도 트리거해요.
 
 ## 관계 로딩 요약
 
-관련 데이터를 조회하는 세 가지 방법을 요약합니다.
+관련 데이터를 조회하는 세 가지 방법을 정리할게요.
 
 | 방법 | 설정 위치 | 동작 | 사용 시기 |
 |------|----------|------|----------|
@@ -871,11 +871,11 @@ WHERE "user"."id" = 1;
 SELECT * FROM "post" WHERE "author_id" = 1;
 ```
 
-ManyToOne과 OneToOne 관계는 LEFT JOIN으로 로드됩니다 (단일 쿼리). OneToMany 관계는 별도 쿼리로 로드되는데, JOIN을 사용하면 부모 행이 곱해지기 때문입니다.
+ManyToOne과 OneToOne 관계는 LEFT JOIN으로 로드돼요 (단일 쿼리). OneToMany 관계는 별도 쿼리로 로드되는데, JOIN을 쓰면 부모 행이 곱해지기 때문이에요.
 
 ## 다음 단계
 
-엔티티 간의 관계를 설정했으니, 이제 데이터를 조작하는 다양한 방법을 배울 차례입니다.
+엔티티 간의 관계를 설정했으니, 이제 데이터를 조작하는 다양한 방법을 배울 차례예요.
 
 - [EntityManager](./entity-manager.md) -- find, save, delete, 집계, 페이지네이션
 - [Query Builder](./query-builder.md) -- JOIN, GROUP BY 같은 복잡한 SQL이 필요할 때
