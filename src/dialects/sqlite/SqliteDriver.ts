@@ -353,6 +353,8 @@ export class SqliteDriver implements ISqlDriver {
         return "REAL";
       case "blob":
         return "BLOB";
+      case "uuid":
+        return "VARCHAR(36)";
       default:
         return type as string;
     }

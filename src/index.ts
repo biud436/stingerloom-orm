@@ -28,6 +28,7 @@ export { ReflectManager } from "./utils/ReflectManager";
 export { createEntityKey } from "./utils/scanner";
 export { camelToSnakeCase } from "./utils/camelToSnakeCase";
 export { resolveEntityGlobs } from "./utils/resolveEntityGlobs";
+export { generateUUIDv7, extractTimestampFromUUIDv7 } from "./utils/uuid-v7";
 
 // Migration system
 export * from "./migration";

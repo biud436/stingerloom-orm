@@ -408,6 +408,8 @@ export class MySqlDriver implements ISqlDriver {
         return "JSON"; // MySQL에서 array는 JSON으로 처리
       case "jsonb": // MySQL에서 jsonb는 json과 동일
         return "JSON";
+      case "uuid":
+        return "CHAR(36)";
       default:
         return type as string;
     }

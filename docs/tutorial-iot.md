@@ -276,7 +276,7 @@ export class User {
   @Column({ type: "varchar", length: 255 })
   email!: string;
 
-  @Column({ type: "varchar", length: 255 })
+  @Column({ type: "uuid" })
   keycloakSubjectId!: string;
 
   @OneToMany(() => Device, { mappedBy: "user" })
@@ -298,7 +298,7 @@ CREATE TABLE "users" (
   "id" SERIAL PRIMARY KEY,
   "name" VARCHAR(100) NOT NULL,
   "email" VARCHAR(255) NOT NULL,
-  "keycloakSubjectId" VARCHAR(255) NOT NULL,
+  "keycloakSubjectId" UUID NOT NULL,
   "createdAt" TIMESTAMP DEFAULT NOW(),
   "deletedAt" TIMESTAMP
 );

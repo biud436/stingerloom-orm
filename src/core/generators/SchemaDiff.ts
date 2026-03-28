@@ -374,6 +374,8 @@ export class SchemaDiff {
         return "CHAR";
       case "enum":
         return "ENUM";
+      case "uuid":
+        return "CHAR";
       default:
         return (type as string).toUpperCase();
     }
@@ -414,6 +416,8 @@ export class SchemaDiff {
         return "USER-DEFINED";
       case "array":
         return "ARRAY";
+      case "uuid":
+        return "UUID";
       default:
         return (type as string).toUpperCase();
     }
@@ -444,6 +448,8 @@ export class SchemaDiff {
         return "REAL";
       case "blob":
         return "BLOB";
+      case "uuid":
+        return "TEXT";
       default:
         return (type as string).toUpperCase();
     }
@@ -466,7 +472,7 @@ export class SchemaDiff {
     // SQLite type affinity: broad matching since SQLite only has 5 storage classes
     if (dialect === "sqlite") {
       const sqliteAffinity: Record<string, string[]> = {
-        TEXT: ["TEXT", "VARCHAR", "LONGTEXT", "CHAR"],
+        TEXT: ["TEXT", "VARCHAR", "LONGTEXT", "CHAR", "UUID"],
         INTEGER: ["INTEGER", "INT", "TINYINT", "BIGINT", "BOOLEAN"],
         REAL: ["REAL", "FLOAT", "DOUBLE"],
         BLOB: ["BLOB", "BYTEA"],
@@ -501,6 +507,7 @@ export class SchemaDiff {
       JSONB: ["JSONB"],
       CHARACTER: ["CHARACTER", "CHAR", "BPCHAR"],
       CHAR: ["CHAR", "CHARACTER", "BPCHAR"],
+      UUID: ["UUID"],
     };
 
     const expectedAliases = aliases[e];

@@ -37,7 +37,8 @@ export type ColumnType =
   | "jsonb"
   | "array"
   | "bigint"
-  | "longtext";
+  | "longtext"
+  | "uuid";
 
 /**
  * Bidirectional column value transformer.
@@ -99,6 +100,14 @@ export interface ColumnOption {
    * @Column({ default: "(CURRENT_TIMESTAMP)" }) // DEFAULT CURRENT_TIMESTAMP
    */
   default?: string | number | boolean | null;
+
+  /**
+   * Primary key generation strategy.
+   * - `"increment"`: auto-increment integer (default for @PrimaryGeneratedColumn())
+   * - `"uuid"`: UUIDv4 (PG: gen_random_uuid() DB-side, MySQL/SQLite: crypto.randomUUID() app-side)
+   * - `"uuid-v7"`: UUIDv7 time-sortable (app-side on all drivers)
+   */
+  generationStrategy?: "increment" | "uuid" | "uuid-v7";
 
   precision?: number;
   scale?: number;

@@ -655,6 +655,13 @@ export class SchemaGenerator {
       type = this.wrapTable(enumName);
     }
 
+    // UUID PK with generation strategy
+    if (options.type === "uuid" && options.generationStrategy === "uuid" && this.dialect === "postgres") {
+      const nullable = options.nullable ? "NULL" : "NOT NULL";
+      const pk = options.primary && !isCompositePk ? " PRIMARY KEY" : "";
+      return `${this.wrapId(name)} UUID ${nullable} DEFAULT gen_random_uuid()${pk}`;
+    }
+
     // auto increment
     if (options.autoIncrement && this.dialect === "postgres") {
       const nullable = options.nullable ? "NULL" : "NOT NULL";
@@ -669,8 +676,10 @@ export class SchemaGenerator {
 
     // 길이 처리
     const alreadyHasParens = type.includes("(");
+    // UUID type on PostgreSQL has no length parameter (native fixed-size type)
+    const isFixedSizeType = options.type === "uuid" && this.dialect === "postgres";
     const needsLength =
-      !alreadyHasParens && options.length && options.length > 0;
+      !alreadyHasParens && !isFixedSizeType && options.length && options.length > 0;
     const typeWithLength = needsLength ? `${type}(${options.length})` : type;
 
     const nullable = options.nullable ? "NULL" : "NOT NULL";
@@ -754,6 +763,8 @@ export class SchemaGenerator {
         return "CHAR";
       case "enum":
         return "ENUM";
+      case "uuid":
+        return "CHAR(36)";
       default:
         return type as string;
     }
@@ -796,6 +807,8 @@ export class SchemaGenerator {
         return "USER-DEFINED";
       case "array":
         return "ARRAY";
+      case "uuid":
+        return "UUID";
       default:
         return type as string;
     }
@@ -826,6 +839,8 @@ export class SchemaGenerator {
         return "REAL";
       case "blob":
         return "BLOB";
+      case "uuid":
+        return "VARCHAR(36)";
       default:
         return type as string;
     }

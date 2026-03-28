@@ -753,6 +753,8 @@ export class PostgresDriver implements ISqlDriver {
         return "USER-DEFINED";
       case "array":
         return "ARRAY";
+      case "uuid":
+        return "UUID";
       default:
         return type as string;
     }

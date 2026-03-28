@@ -1,20 +1,70 @@
 import { ColumnOption, Column } from "./Column";
 
 /**
- * 프라이머리(PK) 컬럼을 설정합니다.
- * `@PrimaryColumn` 데코레이터로 마킹함으로써 해당 컬럼에 프라이머리 키 (기본키)를 설정할 수 있습니다.
+ * Auto-generated primary key generation strategy.
+ *
+ * - `"increment"` (default): auto-increment integer (INT AUTO_INCREMENT / SERIAL)
+ * - `"uuid"`: UUIDv4 — PG: `DEFAULT gen_random_uuid()`, MySQL/SQLite: app-side `crypto.randomUUID()`
+ * - `"uuid-v7"`: UUIDv7 time-sortable — app-side generation on all drivers (RFC 9562)
+ */
+export type GenerationStrategy = "increment" | "uuid" | "uuid-v7";
+
+/**
+ * Marks a property as an auto-generated primary key column.
+ *
+ * @example
+ * // Auto-increment integer (default)
+ * @PrimaryGeneratedColumn()
+ * id!: number;
+ *
+ * // UUIDv4
+ * @PrimaryGeneratedColumn("uuid")
+ * id!: string;
+ *
+ * // UUIDv7 (time-sortable)
+ * @PrimaryGeneratedColumn("uuid-v7")
+ * id!: string;
+ *
+ * // With additional options
+ * @PrimaryGeneratedColumn("uuid", { name: "pk_id" })
+ * id!: string;
  */
 export function PrimaryGeneratedColumn(
+  strategyOrOption?: GenerationStrategy | ColumnOption,
   option?: ColumnOption,
 ): PropertyDecorator {
   return (target, propertyKey) => {
-    Column({
-      primary: true,
-      length: 11,
-      nullable: false,
-      autoIncrement: true,
-      type: "int",
-      ...option,
-    })(target, propertyKey);
+    let strategy: GenerationStrategy = "increment";
+    let opts: ColumnOption = {};
+
+    if (typeof strategyOrOption === "string") {
+      strategy = strategyOrOption;
+      opts = option ?? {};
+    } else if (strategyOrOption) {
+      opts = strategyOrOption;
+    }
+
+    if (strategy === "uuid" || strategy === "uuid-v7") {
+      Column({
+        type: "uuid",
+        length: 36,
+        nullable: false,
+        primary: true,
+        autoIncrement: false,
+        generationStrategy: strategy,
+        ...opts,
+      })(target, propertyKey);
+    } else {
+      // increment (default)
+      Column({
+        primary: true,
+        length: 11,
+        nullable: false,
+        autoIncrement: true,
+        type: "int",
+        generationStrategy: "increment",
+        ...opts,
+      })(target, propertyKey);
+    }
   };
 }

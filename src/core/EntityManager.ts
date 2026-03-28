@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import { ClazzType, Logger, resolveEntityGlobs } from "../utils";
+import { randomUUID } from "node:crypto";
+import { ClazzType, Logger, resolveEntityGlobs, generateUUIDv7 } from "../utils";
 import { ColumnMetadata } from "../scanner";
 import { DatabaseClient } from "../DatabaseClient";
 import { MySqlDriver } from "../dialects/mysql/MySqlDriver";
@@ -1333,9 +1334,15 @@ export class EntityManager implements BaseEntityManager {
       const hasAutoIncrementPk = pkColumns.some(
         (col: ColumnMetadata) => col.options?.autoIncrement,
       );
+      const hasGeneratedPk = pkColumns.some(
+        (col: ColumnMetadata) =>
+          col.options?.autoIncrement ||
+          col.options?.generationStrategy === "uuid" ||
+          col.options?.generationStrategy === "uuid-v7",
+      );
       const primaryKeyValue = pk ? (item as any)[pk.name!] : undefined;
 
-      const isInsert = hasAutoIncrementPk
+      const isInsert = hasGeneratedPk
         ? !primaryKeyValue
         : true;
 
@@ -1423,6 +1430,32 @@ export class EntityManager implements BaseEntityManager {
           );
           if (versionIdx >= 0) {
             values[versionIdx] = 1;
+          }
+        }
+
+        // UUID PK 자동 생성 (앱사이드)
+        for (let i = 0; i < insertableColumns.length; i++) {
+          const col = insertableColumns[i];
+          const strategy = col.options?.generationStrategy;
+          if (!strategy || strategy === "increment") continue;
+          if (values[i] !== null && values[i] !== undefined) continue;
+
+          // PostgreSQL uuid strategy: DB generates via DEFAULT gen_random_uuid()
+          if (strategy === "uuid" && this.isPostgres()) {
+            // exclude column from INSERT so DEFAULT kicks in
+            columns.splice(i, 1);
+            values.splice(i, 1);
+            insertableColumns.splice(i, 1);
+            i--;
+            continue;
+          }
+
+          if (strategy === "uuid") {
+            values[i] = randomUUID();
+            (item as any)[col.name!] = values[i];
+          } else if (strategy === "uuid-v7") {
+            values[i] = generateUUIDv7();
+            (item as any)[col.name!] = values[i];
           }
         }
 
