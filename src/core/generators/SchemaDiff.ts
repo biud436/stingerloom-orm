@@ -159,6 +159,9 @@ export class SchemaDiff {
             columnName: colName,
             columnType: castTypeName,
             nullable: col.options?.nullable ?? false,
+            expectedLength: col.options?.length ?? null,
+            expectedPrecision: col.options?.precision ?? null,
+            expectedScale: col.options?.scale ?? null,
             enumValues: col.options?.enumValues,
           });
         } else {
@@ -203,6 +206,9 @@ export class SchemaDiff {
             tableName,
             columnName: dbCol.column_name,
             currentType: dbCol.data_type,
+            actualLength: dbCol.character_maximum_length ?? null,
+            actualPrecision: dbCol.numeric_precision ?? null,
+            actualScale: dbCol.numeric_scale ?? null,
           });
         }
       }
@@ -695,15 +701,26 @@ export class SchemaDiff {
           const addType = (add.columnType ?? "").toUpperCase();
 
           if (this.typesMatch(addType, dropType, dialect)) {
-            result.renamedColumns!.push({
-              tableName: table,
-              oldColumnName: drop.columnName,
-              newColumnName: add.columnName,
-              columnType: add.columnType ?? dropType,
-            });
-            matchedAddIdx.add(ai);
-            matchedDropIdx.add(di);
-            break;
+            // Also verify length/precision match to avoid false renames,
+            // but only when both sides have length/precision info
+            const hasLengthInfo = drop.actualLength != null || drop.actualPrecision != null;
+            const lengthMatch = !hasLengthInfo || (
+              (add.expectedLength ?? null) === (drop.actualLength ?? null) &&
+              (add.expectedPrecision ?? null) === (drop.actualPrecision ?? null) &&
+              (add.expectedScale ?? null) === (drop.actualScale ?? null)
+            );
+
+            if (lengthMatch) {
+              result.renamedColumns!.push({
+                tableName: table,
+                oldColumnName: drop.columnName,
+                newColumnName: add.columnName,
+                columnType: add.columnType ?? dropType,
+              });
+              matchedAddIdx.add(ai);
+              matchedDropIdx.add(di);
+              break;
+            }
           }
         }
       }

@@ -18,7 +18,8 @@ export class MetadataLayerRegistry {
   private layers: Map<string, MetadataLayer> = new Map();
   private currentContext: string = "public";
 
-  // resolveAll() cache (#80)
+  // resolveAll() cache (#80) — bounded to prevent memory leak in multi-tenant
+  private static readonly MAX_CACHE_SIZE = 1000;
   private resolveAllCache: Map<string, Map<string, any>> = new Map();
   private dirtyContexts: Set<string> = new Set(["public"]);
 
@@ -174,6 +175,14 @@ export class MetadataLayerRegistry {
         for (const [k, v] of contextLayer.entries<T>()) {
           result.set(k, v);
         }
+      }
+    }
+
+    // Evict oldest entries if cache exceeds max size
+    if (this.resolveAllCache.size >= MetadataLayerRegistry.MAX_CACHE_SIZE) {
+      const firstKey = this.resolveAllCache.keys().next().value;
+      if (firstKey !== undefined && firstKey !== "public") {
+        this.resolveAllCache.delete(firstKey);
       }
     }
 

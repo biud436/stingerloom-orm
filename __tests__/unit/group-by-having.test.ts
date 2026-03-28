@@ -15,7 +15,7 @@ describe("GROUP BY / HAVING", () => {
         .build();
 
       expect(query.sql).toBe(
-        "SELECT department, COUNT(*) AS cnt FROM employees WHERE 1=1 GROUP BY department",
+        "SELECT department, COUNT(*) AS cnt FROM employees GROUP BY department",
       );
     });
 
@@ -28,7 +28,7 @@ describe("GROUP BY / HAVING", () => {
         .build();
 
       expect(query.sql).toBe(
-        "SELECT department, role, COUNT(*) AS cnt FROM employees WHERE 1=1 GROUP BY department, role",
+        "SELECT department, role, COUNT(*) AS cnt FROM employees GROUP BY department, role",
       );
     });
 
@@ -40,7 +40,7 @@ describe("GROUP BY / HAVING", () => {
         .groupBy([])
         .build();
 
-      expect(query.sql).toBe("SELECT * FROM employees WHERE 1=1");
+      expect(query.sql).toBe("SELECT * FROM employees");
     });
   });
 
@@ -55,7 +55,7 @@ describe("GROUP BY / HAVING", () => {
         .build();
 
       expect(query.sql).toBe(
-        "SELECT department, COUNT(*) AS cnt FROM employees WHERE 1=1 GROUP BY department HAVING COUNT(*) > ?",
+        "SELECT department, COUNT(*) AS cnt FROM employees GROUP BY department HAVING COUNT(*) > ?",
       );
       expect(query.values).toEqual([5]);
     });
@@ -74,7 +74,7 @@ describe("GROUP BY / HAVING", () => {
 
       expect(query.sql).toBe(
         "SELECT department, COUNT(*) AS cnt, AVG(salary) AS avg_sal " +
-          "FROM employees WHERE 1=1 " +
+          "FROM employees " +
           "GROUP BY department " +
           "HAVING COUNT(*) > ? AND AVG(salary) > ?",
       );
@@ -91,7 +91,7 @@ describe("GROUP BY / HAVING", () => {
         .build();
 
       expect(query.sql).toBe(
-        "SELECT department, COUNT(*) AS cnt FROM employees WHERE 1=1 GROUP BY department",
+        "SELECT department, COUNT(*) AS cnt FROM employees GROUP BY department",
       );
     });
   });
@@ -138,7 +138,7 @@ describe("GROUP BY / HAVING", () => {
         "SELECT u.name, COUNT(o.id) AS order_count " +
           "FROM users AS u " +
           "LEFT JOIN orders AS o ON u.id = o.user_id " +
-          "WHERE 1=1 " +
+          "" +
           "GROUP BY u.name " +
           "HAVING COUNT(o.id) > ? " +
           "ORDER BY order_count DESC",

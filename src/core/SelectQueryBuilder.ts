@@ -611,7 +611,12 @@ export class SelectQueryBuilder<T, TResult = T> {
     } else if (this.limitValue !== undefined) {
       qb.limit(this.limitValue as number);
     } else if (this.offsetValue !== undefined) {
-      qb.limit([this.offsetValue, 2147483647]);
+      if (internals.isMySqlFamily()) {
+        // MySQL requires LIMIT with OFFSET; use Number.MAX_SAFE_INTEGER
+        qb.limit([this.offsetValue, Number.MAX_SAFE_INTEGER]);
+      } else {
+        qb.offset(this.offsetValue);
+      }
     }
 
     // LOCK

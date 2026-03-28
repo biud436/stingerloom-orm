@@ -118,11 +118,12 @@ export function ManyToOne<T extends EntityLike>(
       option,
     };
 
-    const columns = Reflect.getMetadata(MANY_TO_ONE_TOKEN, cls);
+    const columns: ManyToOneMetadata<T>[] = Reflect.getMetadata(MANY_TO_ONE_TOKEN, cls) || [];
+    const filtered = columns.filter((c) => c.columnName !== metadata.columnName);
 
     Reflect.defineMetadata(
       MANY_TO_ONE_TOKEN,
-      [...(columns || []), metadata],
+      [...filtered, metadata],
       cls,
     );
 

@@ -62,7 +62,8 @@ export class SqliteDataSource implements IDataSource {
     }
 
     validateSavepointName(name);
-    await this.query(`SAVEPOINT ${name}`);
+    const escaped = `"${name.replace(/"/g, '""')}"`;
+    await this.query(`SAVEPOINT ${escaped}`);
   }
 
   async rollbackTo(name: string) {
@@ -71,6 +72,7 @@ export class SqliteDataSource implements IDataSource {
     }
 
     validateSavepointName(name);
-    await this.query(`ROLLBACK TO SAVEPOINT ${name}`);
+    const escaped = `"${name.replace(/"/g, '""')}"`;
+    await this.query(`ROLLBACK TO SAVEPOINT ${escaped}`);
   }
 }

@@ -1,7 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { ReflectManager } from "../utils";
+import { ReflectManager, Logger } from "../utils";
 import { ColumnMetadata, ColumnScanner } from "../scanner/ColumnScanner";
 import Container from "typedi";
+
+const columnLogger = new Logger("Column");
 
 /**
  * 데이터베이스 독립적인 추상 컬럼 타입입니다.
@@ -187,6 +189,10 @@ export function inferColumnDefaults(
     case Buffer:
       return { type: "blob", length: 0, nullable: true };
     default:
+      columnLogger.warn(
+        `Unknown design:type "${designType?.name ?? designType}" — falling back to "text". ` +
+        `Specify an explicit type in @Column({ type: "..." }) to avoid this.`,
+      );
       return { type: "text", length: 0, nullable: true };
   }
 }
@@ -225,11 +231,12 @@ export function Column(option?: ColumnOption): PropertyDecorator {
       transformer: resolvedOption.transformer,
     };
 
-    const columns = Reflect.getMetadata(COLUMN_TOKEN, target);
+    const columns: ColumnMetadata[] = Reflect.getMetadata(COLUMN_TOKEN, target) || [];
+    const filtered = columns.filter((c) => c.propertyKey !== metadata.propertyKey);
 
     Reflect.defineMetadata(
       COLUMN_TOKEN,
-      [...(columns || []), metadata],
+      [...filtered, metadata],
       target,
     );
 

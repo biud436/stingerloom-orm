@@ -61,7 +61,7 @@ describe("RawQueryBuilder", () => {
         .where([])
         .build();
 
-      expect(query.sql).toBe("SELECT * FROM users WHERE 1=1");
+      expect(query.sql).toBe("SELECT * FROM users");
       expect(query.values).toEqual([]);
     });
   });
@@ -579,7 +579,7 @@ describe("RawQueryBuilder", () => {
         .build();
 
       expect(query.sql).toBe(
-        "SELECT name, salary, ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) AS rank FROM employees",
+        "SELECT `name`, `salary`, ROW_NUMBER() OVER (PARTITION BY `department` ORDER BY `salary` DESC) AS `rank` FROM employees",
       );
     });
 
@@ -593,7 +593,7 @@ describe("RawQueryBuilder", () => {
         .build();
 
       expect(query.sql).toBe(
-        "SELECT id, SUM(amount) OVER (ORDER BY created_at) AS running_total FROM transactions",
+        "SELECT `id`, SUM(amount) OVER (ORDER BY `created_at`) AS `running_total` FROM transactions",
       );
     });
 
@@ -607,7 +607,7 @@ describe("RawQueryBuilder", () => {
         .build();
 
       expect(query.sql).toBe(
-        "SELECT department, AVG(salary) OVER (PARTITION BY department) AS dept_avg FROM employees",
+        "SELECT `department`, AVG(salary) OVER (PARTITION BY `department`) AS `dept_avg` FROM employees",
       );
     });
   });

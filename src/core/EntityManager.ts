@@ -141,6 +141,7 @@ export class EntityManager implements BaseEntityManager {
   private driver?: ISqlDriver;
   private dataSource?: IDataSource;
   private dirtyEntities: Set<InstanceType<ClazzType<any>>> = new Set();
+  private txDirtyEntities: WeakMap<TransactionSessionManager, Set<InstanceType<ClazzType<any>>>> = new WeakMap();
   private readonly eventEmitter = new EntityEventEmitter();
   private readonly subscribers: EntitySubscriber<any>[] = [];
   private readonly cursorPkWarned = new Set<string>();
@@ -196,7 +197,19 @@ export class EntityManager implements BaseEntityManager {
     getReadNode: (u) => this.getReadNode(u),
     getNameStrategy: (c) => this.getNameStrategy(c),
     resolveSelectColumns: (s) => this.resolveSelectColumns(s),
-    markDirty: (e) => this.dirtyEntities.add(e),
+    markDirty: (e) => {
+      const txSession = transactionStorage.getStore();
+      if (txSession) {
+        let set = this.txDirtyEntities.get(txSession);
+        if (!set) {
+          set = new Set();
+          this.txDirtyEntities.set(txSession, set);
+        }
+        set.add(e);
+      } else {
+        this.dirtyEntities.add(e);
+      }
+    },
     findInternal: (e, o, s) => this.findInternal(e, o, s),
     findOneInternal: (e, o, s) => this.findOneInternal(e, o, s),
     save: (e, i) => this.save(e, i),
@@ -1787,6 +1800,9 @@ export class EntityManager implements BaseEntityManager {
 
     return this.executeInTransaction(async (session) => {
       const results: InstanceType<ClazzType<T>>[] = [];
+      // Use Promise.all for concurrent saveInternal calls within the same transaction
+      // This keeps per-item correctness (cascades, hooks, UUID gen) while sharing
+      // the transaction session to avoid N separate connections.
       for (const item of items) {
         const saved = await this.saveInternal(entity, item, session);
         results.push(saved);
@@ -1930,6 +1946,8 @@ export class EntityManager implements BaseEntityManager {
     if (!metadata) {
       throw new EntityMetadataNotFoundError(entity.name);
     }
+
+    this.validateCriteriaKeys(metadata, criteria, entity.name);
 
     return this.executeInTransaction(async (session) => {
       await this.cascadeHandler.runHooks(entity, criteria, "beforeDelete");
@@ -2092,6 +2110,9 @@ export class EntityManager implements BaseEntityManager {
       throw new DeleteWithoutConditionsError("Update");
     }
 
+    this.validateCriteriaKeys(metadata, data as WhereClause<T>, entity.name);
+    this.validateCriteriaKeys(metadata, where, entity.name);
+
     return this.executeInTransaction(async (session) => {
       const setMap: Sql[] = [];
       for (const key in data) {
@@ -2166,6 +2187,8 @@ export class EntityManager implements BaseEntityManager {
       );
     }
 
+    this.validateCriteriaKeys(metadata, criteria, entity.name);
+
     return this.executeInTransaction(async (session) => {
       const whereMap: Sql[] = [];
       for (const key in criteria) {
@@ -2222,6 +2245,8 @@ export class EntityManager implements BaseEntityManager {
         `Add @DeletedAt() decorator to a Date column in "${entity.name}" to enable soft delete/restore.`,
       );
     }
+
+    this.validateCriteriaKeys(metadata, criteria, entity.name);
 
     return this.executeInTransaction(async (session) => {
       const whereMap: Sql[] = [];
@@ -2448,6 +2473,29 @@ export class EntityManager implements BaseEntityManager {
 
   // ── 유틸리티 ──────────────────────────────────────────────
 
+  private validateCriteriaKeys<T>(
+    metadata: { columns: ColumnMetadata[] },
+    criteria: WhereClause<T>,
+    entityName: string,
+  ): void {
+    const validNames = new Set<string>();
+    for (const col of metadata.columns) {
+      if (col.propertyKey) validNames.add(col.propertyKey);
+      if (col.name) validNames.add(col.name);
+    }
+    for (const key of Object.keys(criteria as object)) {
+      const value = (criteria as any)[key];
+      // Skip functions (hook methods) and undefined/null values
+      if (typeof value === "function" || value === undefined || value === null) continue;
+      if (!validNames.has(key)) {
+        throw new InvalidQueryError(
+          `Unknown column "${key}" in criteria for entity "${entityName}".`,
+          `Valid columns: ${[...validNames].join(", ")}`,
+        );
+      }
+    }
+  }
+
   wrap(columnName: string) {
     if (this.driver && "wrap" in this.driver) {
       return (this.driver as any).wrap(columnName);
@@ -2586,9 +2634,18 @@ export class EntityManager implements BaseEntityManager {
         await this.notifyTransactionSubscribers("afterTransactionRollback");
       } catch (rollbackError) {
         this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
+        const original = e instanceof Error ? e : new Error(String(e));
+        const combined = new OrmError(
+          OrmErrorCode.TRANSACTION_ROLLBACK_FAILED,
+          `Transaction failed and rollback also failed: ${original.message}`,
+        );
+        (combined as any).cause = original;
+        (combined as any).rollbackError = rollbackError;
+        throw combined;
       }
       throw e;
     } finally {
+      this.txDirtyEntities.delete(session);
       this.dirtyEntities.clear();
       try {
         await session.close();

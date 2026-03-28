@@ -19,6 +19,13 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   private hasWhereClause: boolean = false;
   private cteClauses: Array<{ name: string; sql: Sql; recursive: boolean }> = [];
 
+  private escapeIdent(name: string): string {
+    if (this.dbType === "mysql") {
+      return `\`${name.replace(/`/g, "``")}\``;
+    }
+    return `"${name.replace(/"/g, '""')}"`;
+  }
+
   /**
    * Create a new instance of the RawQueryBuilder.
    */
@@ -95,10 +102,11 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    */
   where(conditions: Sql[]): RawQueryBuilder {
     if (conditions.length === 0) {
-      this.sqlQuerySegments.push(sql`WHERE 1=1`);
-    } else {
-      this.sqlQuerySegments.push(sql`WHERE ${join(conditions, " AND ")}`);
+      // No conditions: skip WHERE clause entirely (matches all rows)
+      this.hasWhereClause = true;
+      return this;
     }
+    this.sqlQuerySegments.push(sql`WHERE ${join(conditions, " AND ")}`);
     this.hasWhereClause = true;
     return this;
   }
@@ -543,15 +551,38 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   selectWithWindow(
     columns: Array<string | { expr: string; over: { partitionBy?: string; orderBy?: string }; alias: string }>,
   ): RawQueryBuilder {
+    const escapeColumnList = (input: string): string =>
+      input
+        .split(",")
+        .map((part) => {
+          const trimmed = part.trim();
+          const tokens = trimmed.split(/\s+/);
+          // Handle "col DESC" / "col ASC" pattern
+          if (tokens.length === 2 && /^(ASC|DESC)$/i.test(tokens[1])) {
+            return `${this.escapeIdent(tokens[0])} ${tokens[1]}`;
+          }
+          return this.escapeIdent(trimmed);
+        })
+        .join(", ");
+
+    const ALLOWED_EXPR = /^[A-Z_]+\([a-zA-Z0-9_.*,\s]*\)$/;
+
     const parts: Sql[] = [];
     for (const col of columns) {
       if (typeof col === "string") {
-        parts.push(sql`${raw(col)}`);
+        parts.push(sql`${raw(this.escapeIdent(col))}`);
       } else {
+        if (!ALLOWED_EXPR.test(col.expr)) {
+          throw new OrmError(
+            OrmErrorCode.INVALID_QUERY,
+            `selectWithWindow: invalid expression "${col.expr}". Only simple function calls like "ROW_NUMBER()" are allowed.`,
+          );
+        }
         const overParts: string[] = [];
-        if (col.over.partitionBy) overParts.push(`PARTITION BY ${col.over.partitionBy}`);
-        if (col.over.orderBy) overParts.push(`ORDER BY ${col.over.orderBy}`);
-        parts.push(sql`${raw(col.expr)} OVER (${raw(overParts.join(" "))}) AS ${raw(col.alias)}`);
+        if (col.over.partitionBy) overParts.push(`PARTITION BY ${escapeColumnList(col.over.partitionBy)}`);
+        if (col.over.orderBy) overParts.push(`ORDER BY ${escapeColumnList(col.over.orderBy)}`);
+        const safeAlias = this.escapeIdent(col.alias);
+        parts.push(sql`${raw(col.expr)} OVER (${raw(overParts.join(" "))}) AS ${raw(safeAlias)}`);
       }
     }
     this.sqlQuerySegments.push(sql`SELECT ${join(parts, ", ")}`);

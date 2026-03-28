@@ -106,11 +106,12 @@ export function ManyToMany<T>(
       cascade: option?.cascade,
     };
 
-    const existing = Reflect.getMetadata(MANY_TO_MANY_TOKEN, cls);
+    const existing: ManyToManyMetadata<T>[] = Reflect.getMetadata(MANY_TO_MANY_TOKEN, cls) || [];
+    const filtered = existing.filter((c) => c.propertyKey !== metadata.propertyKey);
 
     Reflect.defineMetadata(
       MANY_TO_MANY_TOKEN,
-      [...(existing || []), metadata],
+      [...filtered, metadata],
       cls,
     );
 

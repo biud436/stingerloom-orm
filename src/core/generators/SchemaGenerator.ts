@@ -855,7 +855,8 @@ export class SchemaGenerator {
 
   private wrapTable(name: string): string {
     if (this.dialect === "postgres") {
-      return `"${this.pgSchema}"."${name.replace(/"/g, '""')}"`;
+      return `"${this.pgSchema.replace(/"/g, '""')}"."${name.replace(/"/g, '""')}"`;
+
     }
     if (this.dialect === "sqlite") {
       return `"${name.replace(/"/g, '""')}"`;
