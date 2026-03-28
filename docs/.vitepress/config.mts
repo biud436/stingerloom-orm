@@ -25,7 +25,11 @@ export default defineConfig({
           { text: "Pagination & Streaming", link: "/pagination" },
         ],
       },
-      { text: "NestJS", link: "/nestjs" },
+      {
+        text: "Integration",
+        items: [{ text: "NestJS", link: "/nestjs" }],
+      },
+      { text: "Tutorials", link: "/tutorial-iot" },
       { text: "API Reference", link: "/api-reference" },
       {
         text: "GitHub",
@@ -86,28 +90,27 @@ export default defineConfig({
           { text: "Multi-Tenancy", link: "/multi-tenancy" },
           { text: "Events & Subscribers", link: "/events" },
           { text: "Logging & Diagnostics", link: "/logging" },
+          { text: "Plugins", link: "/plugins" },
         ],
       },
       {
-        text: "Plugins",
+        text: "Write Buffer",
         collapsed: false,
         items: [
-          { text: "Plugin System", link: "/plugins" },
-          { text: "Write Buffer — Basics", link: "/write-buffer" },
-          { text: "Write Buffer — Advanced", link: "/write-buffer-advanced" },
+          { text: "Basics", link: "/write-buffer" },
+          { text: "Advanced Patterns", link: "/write-buffer-advanced" },
         ],
       },
       {
-        text: "NestJS Integration",
+        text: "Integration",
         collapsed: true,
-        items: [{ text: "Module Setup", link: "/nestjs" }],
+        items: [{ text: "NestJS", link: "/nestjs" }],
       },
       {
-        text: "Deployment",
-        collapsed: true,
+        text: "Tutorials",
+        collapsed: false,
         items: [
-          { text: "Production Guide", link: "/production-guide" },
-          { text: "Pre-Release Checklist", link: "/pre-release-checklist" },
+          { text: "IoT Smart Thermometer", link: "/tutorial-iot" },
         ],
       },
       {
@@ -116,6 +119,7 @@ export default defineConfig({
         items: [
           { text: "API Reference", link: "/api-reference" },
           { text: "Architecture", link: "/architecture" },
+          { text: "Production Guide", link: "/production-guide" },
           { text: "Contributor Guide", link: "/onboarding" },
         ],
       },
