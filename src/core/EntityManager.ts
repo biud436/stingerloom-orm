@@ -2026,11 +2026,13 @@ export class EntityManager implements BaseEntityManager {
       // cascade remove
       await this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria);
 
+      const deletePropToCol = this.buildPropertyToColumnMap(metadata);
       const whereMap: Sql[] = [];
       for (const key in criteria) {
         const value = (criteria as any)[key];
         if (value !== undefined && value !== null) {
-          const col = this.wrap(key);
+          const dbCol = deletePropToCol.get(key) ?? key;
+          const col = this.wrap(dbCol);
           whereMap.push(
             Array.isArray(value)
               ? Conditions.in(col, value)
@@ -2258,11 +2260,13 @@ export class EntityManager implements BaseEntityManager {
     this.validateCriteriaKeys(metadata, criteria, entity.name);
 
     return this.executeInTransaction(async (session) => {
+      const sdPropToCol = this.buildPropertyToColumnMap(metadata);
       const whereMap: Sql[] = [];
       for (const key in criteria) {
         const value = (criteria as any)[key];
         if (value !== undefined && value !== null) {
-          const col = this.wrap(key);
+          const dbCol = sdPropToCol.get(key) ?? key;
+          const col = this.wrap(dbCol);
           whereMap.push(
             Array.isArray(value)
               ? Conditions.in(col, value)
@@ -2317,11 +2321,13 @@ export class EntityManager implements BaseEntityManager {
     this.validateCriteriaKeys(metadata, criteria, entity.name);
 
     return this.executeInTransaction(async (session) => {
+      const restorePropToCol = this.buildPropertyToColumnMap(metadata);
       const whereMap: Sql[] = [];
       for (const key in criteria) {
         const value = (criteria as any)[key];
         if (value !== undefined && value !== null) {
-          const col = this.wrap(key);
+          const dbCol = restorePropToCol.get(key) ?? key;
+          const col = this.wrap(dbCol);
           whereMap.push(
             Array.isArray(value)
               ? Conditions.in(col, value)

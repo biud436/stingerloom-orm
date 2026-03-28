@@ -17,6 +17,39 @@ import { ColumnMetadata } from "../scanner/ColumnScanner";
 
 export type ForeignObject<T = any> = { [key: string]: T };
 
+/**
+ * Remap DB row keys (column names) to entity property keys.
+ * This is needed when NamingStrategy transforms column names (e.g., first_name → firstName).
+ */
+function remapRowToPropertyKeys(
+  entityClass: MyClassConstructor<any>,
+  row: any,
+): any {
+  const columns: ColumnMetadata[] | undefined = Reflect.getMetadata(
+    COLUMN_TOKEN,
+    entityClass.prototype ?? entityClass,
+  );
+  if (!row || !columns || columns.length === 0) return row;
+
+  // Build column name → propertyKey map
+  const colToProperty = new Map<string, string>();
+  let needsRemap = false;
+  for (const col of columns) {
+    if (col.name && col.propertyKey && col.name !== col.propertyKey) {
+      colToProperty.set(col.name, col.propertyKey);
+      needsRemap = true;
+    }
+  }
+  if (!needsRemap) return row;
+
+  const remapped: any = {};
+  for (const [key, value] of Object.entries(row)) {
+    const propKey = colToProperty.get(key) ?? key;
+    remapped[propKey] = value;
+  }
+  return remapped;
+}
+
 export class ResultTransformer implements BaseResultTransformer {
   private static PropertySeparator = "_";
 
@@ -69,12 +102,27 @@ export class ResultTransformer implements BaseResultTransformer {
     row: any,
     baseEntity: any,
   ) {
+    // Build column name → propertyKey map for NamingStrategy support
+    const columns: ColumnMetadata[] | undefined = Reflect.getMetadata(
+      COLUMN_TOKEN,
+      entityClass.prototype ?? entityClass,
+    );
+    const colToProperty = new Map<string, string>();
+    if (columns) {
+      for (const col of columns) {
+        if (col.name && col.propertyKey && col.name !== col.propertyKey) {
+          colToProperty.set(col.name, col.propertyKey);
+        }
+      }
+    }
+
     const enties = Object.entries(row);
 
     for (const [key, value] of enties) {
       const isUnderScored = key.includes(ResultTransformer.PropertySeparator);
       if (!isUnderScored) {
-        baseEntity[key] = value;
+        const propKey = colToProperty.get(key) ?? key;
+        baseEntity[propKey] = value;
       }
     }
   }
@@ -120,7 +168,8 @@ export class ResultTransformer implements BaseResultTransformer {
 
     const r = result!;
 
-    return this.applyColumnTransforms(entityClass, deserializeEntity(entityClass, r.results[0]));
+    const remapped = remapRowToPropertyKeys(entityClass, r.results[0]);
+    return this.applyColumnTransforms(entityClass, deserializeEntity(entityClass, remapped));
   }
 
   /**
@@ -136,7 +185,10 @@ export class ResultTransformer implements BaseResultTransformer {
 
     const r = result!;
 
-    return r.results.map((item) => this.applyColumnTransforms(entityClass, deserializeEntity(entityClass, item)));
+    return r.results.map((item) => {
+      const remapped = remapRowToPropertyKeys(entityClass, item);
+      return this.applyColumnTransforms(entityClass, deserializeEntity(entityClass, remapped));
+    });
   }
 
   /**
