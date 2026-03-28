@@ -14,6 +14,7 @@ import {
   rawQuery,
   TestConnectionResult,
 } from "./helpers/test-connection";
+import { getMySqlConfig } from "./helpers/driver-config";
 import { generateTableName } from "./helpers/create-test-entity";
 import {
   Entity,
@@ -28,8 +29,10 @@ import { ColumnScanner } from "../../src/scanner";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 import { DatabaseClient } from "../../src/DatabaseClient";
 
-// Skip if INTEGRATION_TEST is not set
-const shouldRun = process.env.INTEGRATION_TEST === "true";
+// Skip if INTEGRATION_TEST is not set or MySQL is disabled
+const shouldRun =
+  process.env.INTEGRATION_TEST === "true" &&
+  process.env.INTEGRATION_TEST_MYSQL !== "false";
 const describeIf = shouldRun ? describe : describe.skip;
 
 describeIf("[Integration] SnakeNamingStrategy", () => {
@@ -47,6 +50,7 @@ describeIf("[Integration] SnakeNamingStrategy", () => {
 
     conn = await createTestConnection(
       {
+        ...getMySqlConfig(),
         synchronize: true,
         logging: false,
         namingStrategy: new SnakeNamingStrategy(),
@@ -116,7 +120,7 @@ describeIf("[Integration] SnakeNamingStrategy", () => {
     try {
       await dropTestTable(authorTableName);
     } catch {}
-    await conn.cleanup();
+    await conn?.cleanup();
   }, 15000);
 
   beforeEach(async () => {
