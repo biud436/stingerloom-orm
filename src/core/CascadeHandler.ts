@@ -132,7 +132,7 @@ export class CascadeHandler {
         (col: any) => col.options?.primary,
       );
       if (relatedPk && rel.joinColumn) {
-        (item as any)[rel.joinColumn] = (saved as any)[relatedPk.name!];
+        (item as any)[rel.joinColumn] = (saved as any)[relatedPk.propertyKey ?? relatedPk.name!];
       }
     }
   }
@@ -173,7 +173,7 @@ export class CascadeHandler {
 
       // 부모 PK를 수집
       const parentIds = parentArray
-        .map((p: any) => p[pk.name!])
+        .map((p: any) => p[pk.propertyKey ?? pk.name!])
         .filter((id: any) => id !== undefined && id !== null);
 
       if (parentIds.length === 0) continue;

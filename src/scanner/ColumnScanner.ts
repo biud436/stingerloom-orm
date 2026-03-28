@@ -20,6 +20,8 @@ export type ColumnMetadata = {
    * the table is created using the name of the column.
    */
   name?: string;
+  /** True when the user explicitly provided `@Column({ name: "..." })`. */
+  nameExplicit?: boolean;
   options?: ColumnOption;
   type: any;
   transform?: (raw: unknown) => any;

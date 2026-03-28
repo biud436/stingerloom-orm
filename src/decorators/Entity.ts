@@ -21,6 +21,10 @@ export const ENTITY_TOKEN = Symbol.for("STG_ENTITY");
 export type EntityMetadata<T = any> = {
   target: ClazzType<T>;
   name: string;
+  /** True when the user explicitly provided `@Entity({ name: "..." })`. */
+  nameExplicit?: boolean;
+  /** Raw class name before NamingStrategy transformation. */
+  rawClassName?: string;
   columns: ColumnOption[];
   manyToOnes?: ManyToOneMetadata<unknown>[];
   oneToManys?: OneToManyMetadata<unknown>[];
@@ -38,7 +42,10 @@ export function Entity(options?: EntityOption): ClassDecorator {
     const oneToOneScanner = Container.get(OneToOneScanner);
     const manyToManyScanner = Container.get(ManyToManyScanner);
 
-    const nameKey = camelToSnakeCase(target.name);
+    const hasExplicitName = !!options?.name;
+    const nameKey = hasExplicitName
+      ? options!.name!
+      : camelToSnakeCase(target.name);
     const name = createEntityKey(nameKey);
 
     // target 기반 필터링: 이 클래스 및 부모 클래스의 메타데이터를 수집 (상속 지원)
@@ -85,6 +92,8 @@ export function Entity(options?: EntityOption): ClassDecorator {
       manyToManys,
       options,
       name: nameKey,
+      nameExplicit: hasExplicitName,
+      rawClassName: target.name,
     };
     scanner.set(name, metadata);
 

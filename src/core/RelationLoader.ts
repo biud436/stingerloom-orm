@@ -69,7 +69,7 @@ export class RelationLoader {
       // 1. 모든 부모 ID를 수집 (null/undefined 제외)
       const parentIds: any[] = [];
       for (const parent of parents) {
-        const parentId = (parent as any)[pk.name!];
+        const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
         if (parentId !== undefined && parentId !== null) {
           parentIds.push(parentId);
         }
@@ -138,7 +138,7 @@ export class RelationLoader {
 
       // 4. 각 부모에게 해당하는 자식 배열을 할당
       for (const parent of parents) {
-        const parentId = (parent as any)[pk.name!];
+        const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
         (parent as any)[rel.propertyKey] = childrenByParentId.get(parentId) ?? [];
       }
     }
@@ -196,7 +196,7 @@ export class RelationLoader {
       // 1. 모든 부모 ID를 수집 (null/undefined 제외)
       const parentIds: any[] = [];
       for (const parent of parents) {
-        const parentId = (parent as any)[pk.name!];
+        const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
         if (parentId !== undefined && parentId !== null) {
           parentIds.push(parentId);
         }
@@ -277,7 +277,7 @@ export class RelationLoader {
 
       // 4. 각 부모에게 해당하는 자식 배열을 할당
       for (const parent of parents) {
-        const parentId = (parent as any)[pk.name!];
+        const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
         (parent as any)[rel.propertyKey] = childrenByParentId.get(parentId) ?? [];
       }
     }
@@ -348,7 +348,7 @@ export class RelationLoader {
         // 1. 모든 부모 ID를 수집 (null/undefined 제외)
         const parentIds: any[] = [];
         for (const parent of parents) {
-          const parentId = (parent as any)[pk.name!];
+          const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
           if (parentId !== undefined && parentId !== null) {
             parentIds.push(parentId);
           }
@@ -413,7 +413,7 @@ export class RelationLoader {
 
         // 4. 각 부모에게 해당하는 관련 엔티티를 할당
         for (const parent of parents) {
-          const parentId = (parent as any)[pk.name!];
+          const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
           (parent as any)[rel.propertyKey] = relatedByParentId.get(parentId) ?? null;
         }
       } else {

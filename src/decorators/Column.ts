@@ -220,11 +220,13 @@ export function Column(option?: ColumnOption): PropertyDecorator {
       ...option,
     };
 
+    const hasExplicitName = !!option?.name;
     const name = resolvedOption.name || propertyKey.toString();
     const metadata = <ColumnMetadata>{
       target,
       propertyKey: propertyKey.toString(),
       name,
+      nameExplicit: hasExplicitName,
       options: resolvedOption,
       type: injectParam,
       transform: resolvedOption.transform,
