@@ -548,49 +548,100 @@ for await (const batch of pipeline.raw()) {
 
 ## Performance Benchmark
 
-We measured four approaches for reading data from a SQLite in-memory database with 6 columns per row. Each method was run 5 times and the median is reported.
+Performance varies significantly by driver. SQLite is in-process (no network), PostgreSQL and MySQL are remote (network round-trips). Read all three to understand the trade-offs before choosing.
 
-### 1,000 rows
+### SQLite (in-memory, no network)
 
-| Method | Time | Memory | Throughput |
-|--------|------|--------|------------|
-| `em.find()` | 6.5ms | 8.79 MB | 153,579 rows/s |
-| `em.query()` | 0.6ms | 0.69 MB | 1,626,016 rows/s |
-| `pipe().raw()` | 1.0ms | 0.74 MB | 988,631 rows/s |
-| `pipe().binary()` | 0.5ms | 0.28 MB | 2,095,338 rows/s |
+All results collected into memory. 6 columns per row, median of 5 runs.
 
-### 10,000 rows
+| Method | 100K Time | 100K Memory | Throughput |
+|--------|-----------|-------------|------------|
+| `em.find()` | 322.7ms | 83.11 MB | 309,866 rows/s |
+| `em.query()` | 111.4ms | 67.15 MB | 897,864 rows/s |
+| `pipe().raw()` | 96.7ms | 63.94 MB | 1,033,701 rows/s |
+| **`pipe().binary()`** | **76.4ms** | **27.22 MB** | **1,308,623 rows/s** |
 
-| Method | Time | Memory | Throughput |
-|--------|------|--------|------------|
-| `em.find()` | 36.6ms | 18.80 MB | 272,947 rows/s |
-| `em.query()` | 3.8ms | 6.74 MB | 2,610,114 rows/s |
-| `pipe().raw()` | 5.6ms | 7.19 MB | 1,794,299 rows/s |
-| `pipe().binary()` | 3.6ms | 2.88 MB | 2,772,644 rows/s |
+SQLite has no network overhead, so `pipe()` is **4.2x faster** than `em.find()` — the savings come entirely from skipping entity transformation.
 
-### 100,000 rows
+### PostgreSQL (remote server, ~1ms network latency)
 
-| Method | Time | Memory | Throughput |
-|--------|------|--------|------------|
-| `em.find()` | 319.5ms | 83.12 MB | 313,015 rows/s |
-| `em.query()` | 110.2ms | 67.15 MB | 907,842 rows/s |
-| `pipe().raw()` | 102.6ms | 64.55 MB | 974,222 rows/s |
-| **`pipe().binary()`** | **76.7ms** | **27.25 MB** | **1,303,337 rows/s** |
+All results collected into memory. 6 columns per row, median of 5 runs.
 
-### What the Numbers Tell Us
+| Method | 100K Time | 100K Memory |
+|--------|-----------|-------------|
+| `em.find()` | **1.54s** | 44.28 MB |
+| `pipe().raw()` | 3.04s | 27.87 MB |
+| `pipe().binary()` | 2.79s | 27.36 MB |
+| `pipe().arrayMode()` | 2.77s | 27.40 MB |
 
-At 100,000 rows:
+### MySQL (remote MariaDB, ~1ms network latency)
 
-- **`pipe().binary()` is 4.2x faster than `em.find()`** and uses 67% less memory.
-- **`pipe().raw()` is 3.1x faster than `em.find()`** and uses 22% less memory.
-- `em.query()` is similar in speed to `pipe().raw()`, but `pipe()` adds batched streaming so memory stays bounded regardless of total row count.
+All results collected into memory. 6 columns per row, median of 5 runs.
 
-The gap widens with more rows. At 1,000 rows, the overhead is negligible -- use `em.find()` and enjoy type safety. At 100,000+ rows, the Raw Pipeline pays for itself.
+| Method | 100K Time | 100K Memory |
+|--------|-----------|-------------|
+| `em.find()` | **1.32s** | 41.84 MB |
+| `pipe().raw()` | 5.99s | 29.97 MB |
+| `pipe().binary()` | 5.76s | 36.41 MB |
+| `pipe().arrayMode()` | 5.58s | 31.37 MB |
+
+### Why pipe() Is Slower on Remote Databases
+
+On PostgreSQL and MySQL, `pipe()` is 2-5x *slower* than `em.find()` despite skipping entity transformation. The bottleneck is **query count**, not transformation:
+
+```
+em.find()       →  1 query   (SELECT *)
+pipe(bs=1000)   →  101 queries (SELECT ... LIMIT 1000) × 100 + 1 empty check
+```
+
+Each query is a full TCP round-trip. 101 round-trips at ~1ms each = ~100ms of pure network overhead before any data transfer. On SQLite (in-process), this cost is zero.
+
+### Stream-and-Discard: Where pipe() Actually Wins
+
+The benchmarks above collected all pipe() results into a single array — defeating the purpose of batching. In real usage, you process each batch and let it go. The key metric is **MaxBatch**: the largest amount of data held at any single moment.
+
+**PostgreSQL — 100,000 rows:**
+
+| Method | Time | MaxBatch (held at once) | Total Rows |
+|--------|------|------------------------|------------|
+| `em.find()` | 1.42s | **17.10 MB** | 100,000 |
+| `pipe().raw()` | 2.86s | **0.17 MB** | 100,000 |
+| `pipe().arrayMode()` | 3.18s | **0.13 MB** | 100,000 |
+
+**MySQL — 100,000 rows:**
+
+| Method | Time | MaxBatch (held at once) | Total Rows |
+|--------|------|------------------------|------------|
+| `em.find()` | 937.9ms | **16.76 MB** | 100,000 |
+| `pipe().raw()` | 5.83s | **0.17 MB** | 100,000 |
+| `pipe().arrayMode()` | 6.38s | **0.13 MB** | 100,000 |
+
+At 100K rows, `em.find()` holds **17 MB** at once. `pipe()` holds **0.17 MB** — 100x less.
+
+At 1M rows, `em.find()` would hold ~170 MB. At 10M rows, ~1.7 GB. `pipe()` stays at 0.17 MB regardless. This is the point.
+
+### Reading the Numbers Correctly
+
+::: warning Do not compare pipe() and em.find() on speed alone
+`pipe()` is not a drop-in replacement for `em.find()`. They solve different problems:
+
+- **`em.find()`** loads everything into memory in one fast query. Use it when the result fits in RAM and you need entity instances.
+- **`pipe()`** streams data in bounded-memory batches. Use it when the result does NOT fit in RAM, or when you are forwarding to an external sink (gRPC, CSV file, message queue).
+
+On remote databases, `pipe()` will always be slower in wall-clock time because it makes more queries. But it uses 100x less memory per moment, which is the only thing that matters when your dataset exceeds available RAM.
+:::
 
 ### How to Reproduce
 
 ```bash
-NODE_OPTIONS="--expose-gc" npx ts-node --project __tests__/bench/tsconfig.json __tests__/bench/raw-pipeline-bench.ts
+# SQLite (in-memory)
+NODE_OPTIONS="--expose-gc" npx ts-node --project __tests__/bench/tsconfig.json \
+  __tests__/bench/raw-pipeline-bench.ts
+
+# PostgreSQL / MySQL (requires real databases)
+INTEGRATION_TEST=true \
+  NODE_OPTIONS="--expose-gc" npx ts-node --project __tests__/bench/tsconfig.json \
+  __tests__/bench/raw-pipeline-binary-bench.ts
 ```
 
 ## Choosing the Right Method

@@ -54,6 +54,31 @@ async function measure<T>(fn: () => Promise<T>): Promise<{ time: number; mem: nu
   return { time, mem: Math.max(0, memAfter - memBefore) };
 }
 
+/**
+ * Measure the largest single batch size in bytes.
+ * No GC dependency — we directly measure what the program holds at each step.
+ * Returns { time, maxBatchBytes, totalRows }.
+ */
+async function measureStreaming(
+  gen: AsyncGenerator<any[], void, undefined>,
+): Promise<{ time: number; maxBatchBytes: number; totalRows: number }> {
+  let maxBatchBytes = 0;
+  let totalRows = 0;
+
+  const start = performance.now();
+  for await (const batch of gen) {
+    // Estimate batch size: JSON.stringify is a rough but GC-independent measure
+    // of the live data the program holds in this iteration.
+    const batchBytes = Buffer.byteLength(JSON.stringify(batch), "utf-8");
+    if (batchBytes > maxBatchBytes) maxBatchBytes = batchBytes;
+    totalRows += batch.length;
+    // batch goes out of scope here — eligible for GC (but we don't depend on it)
+  }
+  const time = performance.now() - start;
+
+  return { time, maxBatchBytes, totalRows };
+}
+
 // ── Driver configs ──────────────────────────────────────────
 
 interface DriverConfig {
@@ -255,6 +280,60 @@ async function main() {
               formatMs(medTime).padStart(12) +
               formatMB(medMem).padStart(12) +
               rowsPerSec.toLocaleString().padStart(15),
+          );
+        }
+
+        // ── Stream-and-discard: measure max batch held at one time ──
+        console.log("\n  Stream-and-discard (process each batch, hold nothing):\n");
+        console.log(
+          "  " +
+            "Method".padEnd(22) +
+            "Time".padStart(12) +
+            "MaxBatch".padStart(12) +
+            "Rows".padStart(10),
+        );
+        console.log("  " + "-".repeat(56));
+
+        // em.find() — must hold everything (no streaming)
+        {
+          const start = performance.now();
+          const all = await em.find(BenchEntity);
+          const time = performance.now() - start;
+          const totalBytes = Buffer.byteLength(JSON.stringify(all), "utf-8");
+          console.log(
+            "  " +
+              "em.find() (all)".padEnd(22) +
+              formatMs(time).padStart(12) +
+              formatMB(totalBytes).padStart(12) +
+              String(all.length).padStart(10),
+          );
+        }
+
+        // pipe().raw() — stream and discard
+        {
+          const s = await measureStreaming(
+            em.pipe(BenchEntity, { batchSize: BATCH_SIZE }).raw(),
+          );
+          console.log(
+            "  " +
+              "pipe().raw()".padEnd(22) +
+              formatMs(s.time).padStart(12) +
+              formatMB(s.maxBatchBytes).padStart(12) +
+              String(s.totalRows).padStart(10),
+          );
+        }
+
+        // pipe().arrayMode() — stream and discard
+        {
+          const s = await measureStreaming(
+            em.pipe(BenchEntity, { batchSize: BATCH_SIZE }).binary({ arrayMode: true }),
+          );
+          console.log(
+            "  " +
+              "pipe().arrayMode()".padEnd(22) +
+              formatMs(s.time).padStart(12) +
+              formatMB(s.maxBatchBytes).padStart(12) +
+              String(s.totalRows).padStart(10),
           );
         }
 
