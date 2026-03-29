@@ -1,11 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { Sql } from "sql-template-tag";
-import sqlTag, { raw as sqlRaw } from "sql-template-tag";
+import sql, { Sql, raw, join } from "sql-template-tag";
 import type { PluginContext } from "../PluginContext";
 import type { ClazzType } from "../../../utils/types";
-import type { FindOption } from "../../../dialects/FindOption";
+import type { FindOption, WhereClause } from "../../../dialects/FindOption";
 import type { DriverQueryOptions } from "../../../types/DriverQueryOptions";
 import { ENTITY_TOKEN, type EntityMetadata } from "../../../decorators/Entity";
+import { COLUMN_TOKEN } from "../../../decorators/Column";
+import { resolveWhereClause, type WhereResolverOptions } from "../../WhereResolver";
+import type { ColumnMetadata } from "../../../scanner/ColumnScanner";
 
 /**
  * Options for creating a RawPipeline.
@@ -13,6 +15,12 @@ import { ENTITY_TOKEN, type EntityMetadata } from "../../../decorators/Entity";
 export interface RawPipelineOptions<T> extends FindOption<T> {
   /** Number of rows per batch (default: 1000) */
   batchSize?: number;
+  /**
+   * Use keyset (cursor) pagination instead of LIMIT/OFFSET.
+   * Requires `orderBy` to be set with exactly one column.
+   * Much faster for large offsets because the DB can use an index seek.
+   */
+  keyset?: boolean;
 }
 
 /**
@@ -24,33 +32,21 @@ export class MappedPipeline<U> {
     private readonly mapFn: (row: Record<string, unknown>) => U,
   ) {}
 
-  /**
-   * Yield mapped batches using the raw (non-entity) path.
-   */
   async *raw(): AsyncGenerator<U[], void, undefined> {
     for await (const batch of this.source.raw()) {
       yield batch.map(this.mapFn);
     }
   }
 
-  /**
-   * Chain another transformation.
-   */
   map<V>(fn: (row: U) => V): MappedPipeline<V> {
     const combined = (row: Record<string, unknown>) => fn(this.mapFn(row));
     return new MappedPipeline<V>(this.source, combined);
   }
 
-  /**
-   * Filter rows before yielding.
-   */
   filter(predicate: (row: U) => boolean): FilteredMappedPipeline<U> {
     return new FilteredMappedPipeline(this.source, this.mapFn, predicate);
   }
 
-  /**
-   * Collect all batches into a single array.
-   */
   async collect(): Promise<U[]> {
     const all: U[] = [];
     for await (const batch of this.raw()) {
@@ -86,32 +82,67 @@ export class FilteredMappedPipeline<U> {
   }
 }
 
+// ── Cached entity info ──────────────────────────────────────
+
+interface EntityInfo {
+  tableName: string;
+  columns: ColumnMetadata[];
+  propToCol: Map<string, string>;
+  primaryKey: string | null;
+}
+
+const entityInfoCache = new WeakMap<Function, EntityInfo>();
+
+function getEntityInfo(entity: ClazzType<any>, wrap: (s: string) => string): EntityInfo {
+  let cached = entityInfoCache.get(entity);
+  if (cached) return cached;
+
+  const meta = Reflect.getMetadata(ENTITY_TOKEN, entity) as EntityMetadata | undefined;
+  const tableName = meta?.name ?? entity.name;
+
+  const columns: ColumnMetadata[] =
+    Reflect.getMetadata(COLUMN_TOKEN, entity.prototype ?? entity) ?? [];
+
+  const propToCol = new Map<string, string>();
+  let primaryKey: string | null = null;
+  for (const col of columns) {
+    const prop = col.propertyKey ?? col.name!;
+    propToCol.set(prop, col.name!);
+    if (col.options?.primary || col.options?.autoIncrement) {
+      primaryKey = col.name!;
+    }
+  }
+
+  cached = { tableName, columns, propToCol, primaryKey };
+  entityInfoCache.set(entity, cached);
+  return cached;
+}
+
 /**
  * RawPipeline bypasses ORM entity transformation for large-data scenarios.
  *
- * Instead of `em.find()` which creates entity instances for every row,
- * RawPipeline uses `em.query()` (or driver-level `queryWithOptions()`)
- * to return plain objects or raw buffers directly from the database driver.
+ * Uses the same WHERE resolver as `em.find()` for query compatibility,
+ * and supports keyset pagination for efficient large-offset traversal.
  *
  * @example
  * ```ts
  * em.extend(rawPipelinePlugin());
  *
- * const pipeline = em.pipe(User, { where: { active: true }, batchSize: 5000 });
- *
- * // Raw objects (no entity transformation)
- * for await (const rows of pipeline.raw()) {
- *   sendToGrpc(rows);
+ * // Batched streaming (no entity transformation)
+ * for await (const batch of em.pipe(User, { where: { active: true }, batchSize: 5000 }).raw()) {
+ *   sendToGrpc(batch);
  * }
  *
- * // With transformation chain
- * for await (const rows of pipeline.map(r => ({ id: r.id })).raw()) {
- *   process(rows);
+ * // Keyset pagination for large datasets
+ * for await (const batch of em.pipe(User, { orderBy: { id: "ASC" }, keyset: true }).raw()) {
+ *   process(batch);
  * }
  * ```
  */
 export class RawPipeline<T> {
   private readonly batchSize: number;
+  private readonly info: EntityInfo;
+  private readonly useKeyset: boolean;
 
   constructor(
     private readonly ctx: PluginContext,
@@ -119,13 +150,25 @@ export class RawPipeline<T> {
     private readonly options: RawPipelineOptions<T>,
   ) {
     this.batchSize = Math.max(options.batchSize ?? 1000, 1);
+    this.info = getEntityInfo(entity, (s) => ctx.wrap(s));
+    this.useKeyset = !!options.keyset && !!options.orderBy;
   }
 
   /**
    * Yield batches of plain objects (no entity instantiation).
-   * Uses `em.query()` which already bypasses ResultTransformer.
    */
   async *raw(): AsyncGenerator<Record<string, unknown>[], void, undefined> {
+    if (this.useKeyset) {
+      yield* this.rawKeyset();
+    } else {
+      yield* this.rawOffset();
+    }
+  }
+
+  /**
+   * LIMIT/OFFSET pagination.
+   */
+  private async *rawOffset(): AsyncGenerator<Record<string, unknown>[], void, undefined> {
     let offset = 0;
 
     while (true) {
@@ -133,28 +176,66 @@ export class RawPipeline<T> {
       const rows = await this.ctx.em.query<Record<string, unknown>>(query);
 
       if (rows.length === 0) break;
-
       yield rows;
-
       if (rows.length < this.batchSize) break;
       offset += this.batchSize;
     }
   }
 
   /**
-   * Yield batches using driver-level options (binary mode, array mode, etc).
-   * Falls back to `raw()` if the driver does not support `queryWithOptions`.
+   * Keyset (cursor) pagination — uses WHERE col > lastValue instead of OFFSET.
+   * Requires orderBy with exactly one column.
+   */
+  private async *rawKeyset(): AsyncGenerator<Record<string, unknown>[], void, undefined> {
+    const orderEntries = Object.entries(this.options.orderBy ?? {});
+    if (orderEntries.length === 0) {
+      yield* this.rawOffset();
+      return;
+    }
+
+    const [orderProp, orderDir] = orderEntries[0];
+    const orderCol = this.info.propToCol.get(orderProp) ?? orderProp;
+    const isAsc = orderDir !== "DESC";
+
+    let lastValue: unknown = null;
+    let isFirst = true;
+
+    while (true) {
+      const query = this.buildKeysetQuery(orderCol, isAsc, lastValue, isFirst);
+      const rows = await this.ctx.em.query<Record<string, unknown>>(query);
+
+      if (rows.length === 0) break;
+      yield rows;
+
+      // Update cursor from last row
+      const lastRow = rows[rows.length - 1];
+      lastValue = lastRow[orderCol] ?? lastRow[orderProp];
+      isFirst = false;
+
+      if (rows.length < this.batchSize) break;
+    }
+  }
+
+  /**
+   * Yield batches using driver-level options (binary mode, array mode).
    */
   async *binary(
     driverOptions: DriverQueryOptions = { binary: true },
   ): AsyncGenerator<any[], void, undefined> {
     const driver = this.ctx.driver;
     if (!driver?.queryWithOptions) {
-      // Fallback: use raw() if driver doesn't support options
       yield* this.raw();
       return;
     }
 
+    if (this.useKeyset) {
+      yield* this.binaryKeyset(driver, driverOptions);
+    } else {
+      yield* this.binaryOffset(driver, driverOptions);
+    }
+  }
+
+  private async *binaryOffset(driver: any, driverOptions: DriverQueryOptions): AsyncGenerator<any[], void, undefined> {
     let offset = 0;
 
     while (true) {
@@ -162,32 +243,53 @@ export class RawPipeline<T> {
       const rows = await driver.queryWithOptions(query, driverOptions);
 
       if (!rows || rows.length === 0) break;
-
       yield rows;
-
       if (rows.length < this.batchSize) break;
       offset += this.batchSize;
     }
   }
 
-  /**
-   * Chain a transformation function on each row.
-   */
+  private async *binaryKeyset(driver: any, driverOptions: DriverQueryOptions): AsyncGenerator<any[], void, undefined> {
+    const orderEntries = Object.entries(this.options.orderBy ?? {});
+    if (orderEntries.length === 0) {
+      yield* this.binaryOffset(driver, driverOptions);
+      return;
+    }
+
+    const [orderProp, orderDir] = orderEntries[0];
+    const orderCol = this.info.propToCol.get(orderProp) ?? orderProp;
+    const isAsc = orderDir !== "DESC";
+
+    let lastValue: unknown = null;
+    let isFirst = true;
+
+    while (true) {
+      const query = this.buildKeysetQuery(orderCol, isAsc, lastValue, isFirst);
+      const rows = await driver.queryWithOptions(query, driverOptions);
+
+      if (!rows || rows.length === 0) break;
+      yield rows;
+
+      const lastRow = rows[rows.length - 1];
+      lastValue = lastRow[orderCol] ?? lastRow[orderProp];
+      isFirst = false;
+
+      if (rows.length < this.batchSize) break;
+    }
+  }
+
   map<U>(fn: (row: Record<string, unknown>) => U): MappedPipeline<U> {
     return new MappedPipeline(this, fn);
   }
 
-  /**
-   * Filter rows in each batch.
-   */
   filter(
     predicate: (row: Record<string, unknown>) => boolean,
   ): MappedPipeline<Record<string, unknown>> {
-    const pipeline = new MappedPipeline<Record<string, unknown>>(this, (r) => r);
+    const self = this;
     return new MappedPipeline<Record<string, unknown>>(
       {
         raw: async function* () {
-          for await (const batch of pipeline.raw()) {
+          for await (const batch of self.raw()) {
             const filtered = batch.filter(predicate);
             if (filtered.length > 0) yield filtered;
           }
@@ -197,10 +299,6 @@ export class RawPipeline<T> {
     );
   }
 
-  /**
-   * Collect all batches into a single array (convenience method).
-   * Caution: loads all data into memory.
-   */
   async collect(): Promise<Record<string, unknown>[]> {
     const all: Record<string, unknown>[] = [];
     for await (const batch of this.raw()) {
@@ -210,179 +308,126 @@ export class RawPipeline<T> {
   }
 
   /**
-   * Count total rows matching the pipeline's where clause.
+   * Count rows matching the pipeline's WHERE clause.
    */
   async count(): Promise<number> {
-    const tableName = this.resolveTableName();
-    const countSql = sqlTag`SELECT COUNT(*) as cnt FROM ${sqlRaw(tableName)}`;
+    const wrappedTable = this.ctx.wrapTable(this.info.tableName);
+    const whereClauses = this.resolveWhere();
+
+    let countSql: Sql;
+    if (whereClauses.length > 0) {
+      countSql = sql`SELECT COUNT(*) as cnt FROM ${raw(wrappedTable)} WHERE ${join(whereClauses, " AND ")}`;
+    } else {
+      countSql = sql`SELECT COUNT(*) as cnt FROM ${raw(wrappedTable)}`;
+    }
+
     const result = await this.ctx.em.query<{ cnt: number | string }>(countSql);
     return Number(result[0]?.cnt ?? 0);
   }
 
+  // ── SQL Building (reuses core WhereResolver) ─────────────
+
   /**
-   * Build the SELECT query with LIMIT/OFFSET for batch pagination.
+   * Build SELECT with LIMIT/OFFSET pagination.
    */
   private buildQuery(offset: number): Sql {
-    const tableName = this.resolveTableName();
+    const wrappedTable = this.ctx.wrapTable(this.info.tableName);
     const columns = this.resolveColumns();
+    const whereClauses = this.resolveWhere();
+    const orderByClause = this.resolveOrderBy();
 
-    const parts: string[] = [`SELECT ${columns} FROM ${tableName}`];
-    const values: any[] = [];
+    const parts: Sql[] = [sql`SELECT ${raw(columns)} FROM ${raw(wrappedTable)}`];
 
-    // WHERE
-    if (this.options.where) {
-      const { clause, params } = this.buildWhereClause(this.options.where);
-      if (clause) {
-        parts.push(`WHERE ${clause}`);
-        values.push(...params);
-      }
+    if (whereClauses.length > 0) {
+      parts.push(sql`WHERE ${join(whereClauses, " AND ")}`);
+    }
+    if (orderByClause) {
+      parts.push(sql`ORDER BY ${raw(orderByClause)}`);
     }
 
-    // ORDER BY
-    if (this.options.orderBy) {
-      const orderParts: string[] = [];
-      for (const [key, dir] of Object.entries(this.options.orderBy)) {
-        const safeDir = dir === "DESC" ? "DESC" : "ASC";
-        orderParts.push(`${this.wrapIdentifier(key)} ${safeDir}`);
-      }
-      if (orderParts.length > 0) {
-        parts.push(`ORDER BY ${orderParts.join(", ")}`);
-      }
-    }
-
-    // LIMIT/OFFSET
-    parts.push(`LIMIT ?`);
-    values.push(this.batchSize);
+    parts.push(sql`LIMIT ${this.batchSize}`);
     if (offset > 0) {
-      parts.push(`OFFSET ?`);
-      values.push(offset);
+      parts.push(sql`OFFSET ${offset}`);
     }
 
-    const text = parts.join(" ");
-    return {
-      sql: text,
-      text,
-      values,
-      strings: [text],
-    } as unknown as Sql;
+    return join(parts, " ");
   }
 
-  private resolveTableName(): string {
-    const meta = Reflect.getMetadata(ENTITY_TOKEN, this.entity) as EntityMetadata | undefined;
-    const rawName = meta?.name ?? this.entity.name;
-    return this.wrapIdentifier(rawName);
+  /**
+   * Build SELECT with keyset (cursor) pagination.
+   */
+  private buildKeysetQuery(
+    orderCol: string,
+    isAsc: boolean,
+    lastValue: unknown,
+    isFirst: boolean,
+  ): Sql {
+    const wrappedTable = this.ctx.wrapTable(this.info.tableName);
+    const columns = this.resolveColumns();
+    const whereClauses = this.resolveWhere();
+    const wrappedCol = this.ctx.wrap(orderCol);
+
+    // Add keyset condition
+    if (!isFirst && lastValue !== null && lastValue !== undefined) {
+      const cursorCondition = isAsc
+        ? sql`${raw(wrappedCol)} > ${lastValue as any}`
+        : sql`${raw(wrappedCol)} < ${lastValue as any}`;
+      whereClauses.push(cursorCondition);
+    }
+
+    const dir = isAsc ? "ASC" : "DESC";
+    const parts: Sql[] = [sql`SELECT ${raw(columns)} FROM ${raw(wrappedTable)}`];
+
+    if (whereClauses.length > 0) {
+      parts.push(sql`WHERE ${join(whereClauses, " AND ")}`);
+    }
+
+    parts.push(sql`ORDER BY ${raw(wrappedCol)} ${raw(dir)}`);
+    parts.push(sql`LIMIT ${this.batchSize}`);
+
+    return join(parts, " ");
+  }
+
+  /**
+   * Resolve WHERE clause using the same WhereResolver as em.find().
+   */
+  private resolveWhere(): Sql[] {
+    if (!this.options.where) return [];
+
+    const opts: WhereResolverOptions = {
+      wrapColumn: (n) => this.ctx.wrap(n),
+      propertyToColumn: this.info.propToCol,
+    };
+
+    // Detect dialect
+    if (this.ctx.isMySqlFamily()) opts.dialect = "mysql";
+    else if (this.ctx.isPostgres()) opts.dialect = "postgres";
+    else if (this.ctx.isSqlite()) opts.dialect = "sqlite";
+
+    return [...resolveWhereClause(this.options.where as WhereClause<T>, opts)];
   }
 
   private resolveColumns(): string {
     if (this.options.select && Array.isArray(this.options.select)) {
       return (this.options.select as string[])
-        .map((col) => this.wrapIdentifier(col))
+        .map((prop) => {
+          const dbCol = this.info.propToCol.get(prop) ?? prop;
+          return this.ctx.wrap(dbCol);
+        })
         .join(", ");
     }
     return "*";
   }
 
-  private wrapIdentifier(name: string): string {
-    return this.ctx.wrap(name);
-  }
+  private resolveOrderBy(): string | null {
+    if (!this.options.orderBy) return null;
 
-  private buildWhereClause(where: any): { clause: string; params: any[] } {
-    const conditions: string[] = [];
-    const params: any[] = [];
-
-    // Handle OR conditions
-    if (where.OR && Array.isArray(where.OR)) {
-      const orParts: string[] = [];
-      for (const orClause of where.OR) {
-        const sub = this.buildWhereClause(orClause);
-        if (sub.clause) {
-          orParts.push(`(${sub.clause})`);
-          params.push(...sub.params);
-        }
-      }
-      if (orParts.length > 0) {
-        conditions.push(`(${orParts.join(" OR ")})`);
-      }
+    const parts: string[] = [];
+    for (const [key, dir] of Object.entries(this.options.orderBy)) {
+      const dbCol = this.info.propToCol.get(key) ?? key;
+      const safeDir = dir === "DESC" ? "DESC" : "ASC";
+      parts.push(`${this.ctx.wrap(dbCol)} ${safeDir}`);
     }
-
-    // Handle AND conditions (implicit from object keys)
-    for (const [key, value] of Object.entries(where)) {
-      if (key === "OR") continue;
-
-      if (value === null) {
-        conditions.push(`${this.wrapIdentifier(key)} IS NULL`);
-      } else if (typeof value === "object" && !Array.isArray(value) && !(value instanceof Date)) {
-        // Filter operators: { eq, ne, gt, gte, lt, lte, in, like, ... }
-        const filter = value as Record<string, any>;
-        for (const [op, opValue] of Object.entries(filter)) {
-          switch (op) {
-            case "eq":
-              conditions.push(`${this.wrapIdentifier(key)} = ?`);
-              params.push(opValue);
-              break;
-            case "ne":
-              conditions.push(`${this.wrapIdentifier(key)} != ?`);
-              params.push(opValue);
-              break;
-            case "gt":
-              conditions.push(`${this.wrapIdentifier(key)} > ?`);
-              params.push(opValue);
-              break;
-            case "gte":
-              conditions.push(`${this.wrapIdentifier(key)} >= ?`);
-              params.push(opValue);
-              break;
-            case "lt":
-              conditions.push(`${this.wrapIdentifier(key)} < ?`);
-              params.push(opValue);
-              break;
-            case "lte":
-              conditions.push(`${this.wrapIdentifier(key)} <= ?`);
-              params.push(opValue);
-              break;
-            case "in":
-              if (Array.isArray(opValue) && opValue.length > 0) {
-                const placeholders = opValue.map(() => "?").join(", ");
-                conditions.push(`${this.wrapIdentifier(key)} IN (${placeholders})`);
-                params.push(...opValue);
-              }
-              break;
-            case "notIn":
-              if (Array.isArray(opValue) && opValue.length > 0) {
-                const placeholders = opValue.map(() => "?").join(", ");
-                conditions.push(`${this.wrapIdentifier(key)} NOT IN (${placeholders})`);
-                params.push(...opValue);
-              }
-              break;
-            case "like":
-              conditions.push(`${this.wrapIdentifier(key)} LIKE ?`);
-              params.push(opValue);
-              break;
-            case "isNull":
-              conditions.push(
-                opValue
-                  ? `${this.wrapIdentifier(key)} IS NULL`
-                  : `${this.wrapIdentifier(key)} IS NOT NULL`,
-              );
-              break;
-            case "between":
-              if (Array.isArray(opValue) && opValue.length === 2) {
-                conditions.push(`${this.wrapIdentifier(key)} BETWEEN ? AND ?`);
-                params.push(opValue[0], opValue[1]);
-              }
-              break;
-          }
-        }
-      } else {
-        // Simple equality: { column: value }
-        conditions.push(`${this.wrapIdentifier(key)} = ?`);
-        params.push(value);
-      }
-    }
-
-    return {
-      clause: conditions.join(" AND "),
-      params,
-    };
+    return parts.length > 0 ? parts.join(", ") : null;
   }
 }
