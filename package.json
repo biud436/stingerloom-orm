@@ -1,6 +1,6 @@
 {
   "name": "@stingerloom/orm",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "A standalone, framework-agnostic TypeScript ORM that can be used with any Node.js framework",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -83,20 +83,48 @@
   },
   "typesVersions": {
     "*": {
-      "core": ["dist/core/index.d.ts"],
-      "decorators": ["dist/decorators/index.d.ts"],
-      "mysql": ["dist/dialects/mysql/index.d.ts"],
-      "postgres": ["dist/dialects/postgres/index.d.ts"],
-      "sqlite": ["dist/dialects/sqlite/index.d.ts"],
-      "metadata": ["dist/metadata/index.d.ts"],
-      "migration": ["dist/migration/index.d.ts"],
-      "seeding": ["dist/seeding/index.d.ts"],
-      "introspection": ["dist/introspection/index.d.ts"],
-      "schema": ["dist/schema/index.d.ts"],
-      "errors": ["dist/errors/index.d.ts"],
-      "plugin": ["dist/core/plugin/index.d.ts"],
-      "nestjs": ["dist/integration/nestjs/index.d.ts"],
-      "prisma-import": ["dist/integration/prisma-import/index.d.ts"]
+      "core": [
+        "dist/core/index.d.ts"
+      ],
+      "decorators": [
+        "dist/decorators/index.d.ts"
+      ],
+      "mysql": [
+        "dist/dialects/mysql/index.d.ts"
+      ],
+      "postgres": [
+        "dist/dialects/postgres/index.d.ts"
+      ],
+      "sqlite": [
+        "dist/dialects/sqlite/index.d.ts"
+      ],
+      "metadata": [
+        "dist/metadata/index.d.ts"
+      ],
+      "migration": [
+        "dist/migration/index.d.ts"
+      ],
+      "seeding": [
+        "dist/seeding/index.d.ts"
+      ],
+      "introspection": [
+        "dist/introspection/index.d.ts"
+      ],
+      "schema": [
+        "dist/schema/index.d.ts"
+      ],
+      "errors": [
+        "dist/errors/index.d.ts"
+      ],
+      "plugin": [
+        "dist/core/plugin/index.d.ts"
+      ],
+      "nestjs": [
+        "dist/integration/nestjs/index.d.ts"
+      ],
+      "prisma-import": [
+        "dist/integration/prisma-import/index.d.ts"
+      ]
     }
   },
   "bin": {
