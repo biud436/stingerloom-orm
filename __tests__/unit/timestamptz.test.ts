@@ -92,10 +92,9 @@ describe("timestamptz 컬럼 타입", () => {
 
   describe("SQLite castType (timestamptz → TEXT fallback)", () => {
     it("SqliteDriver.castType('timestamptz')가 TEXT를 반환해야 함", async () => {
-      const { SqliteDriver } = await import("../../src/dialects/sqlite/SqliteDriver");
-      // castType은 prototype에 정의된 순수 함수이므로 인스턴스 없이 호출 가능
-      const castType = SqliteDriver.prototype.castType;
-      expect(castType("timestamptz")).toBe("TEXT");
+      const { SqliteColumnDefinitionBuilder } = await import("../../src/dialects/sqlite/SqliteColumnDefinitionBuilder");
+      const builder = new SqliteColumnDefinitionBuilder();
+      expect(builder.castType("timestamptz")).toBe("TEXT");
     });
   });
 });

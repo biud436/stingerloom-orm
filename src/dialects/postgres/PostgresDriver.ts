@@ -11,6 +11,7 @@ import { Logger } from "../../utils";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
+import { PostgresColumnDefinitionBuilder } from "./PostgresColumnDefinitionBuilder";
 
 /**
  * Escape an enum value for safe interpolation into DDL strings.
@@ -34,6 +35,7 @@ function escapeEnumValue(val: string): string {
 export class PostgresDriver implements ISqlDriver {
   private readonly schema: string;
   private readonly logger = new Logger("PostgresDriver");
+  private readonly columnDefBuilder: PostgresColumnDefinitionBuilder;
 
   constructor(
     private readonly connector: IConnector,
@@ -41,6 +43,7 @@ export class PostgresDriver implements ISqlDriver {
     schema?: string,
   ) {
     this.schema = schema ?? "public";
+    this.columnDefBuilder = new PostgresColumnDefinitionBuilder(this.schema);
   }
 
   // ──────────────────────────────────────────────
@@ -597,61 +600,12 @@ export class PostgresDriver implements ISqlDriver {
    */
   createTable(tableName: string, columns: SchemaOptions[]) {
     const columnsMap = columns.map((column) => {
-      // column.options가 없을 경우 기본값 제공
-      const option = (column.options ?? {
-        type: "varchar",
-        length: 255,
-        nullable: false,
-      }) as ColumnOption;
-
-      let type = this.castType(option.type ?? "varchar");
-
-      // BOOLEAN 타입은 PostgreSQL 네이티브 BOOLEAN 사용
-      if (option.type === "boolean") {
-        type = "BOOLEAN";
-      }
-
-      // ENUM 타입: enumName이 지정된 경우 해당 사용자 정의 타입을 사용,
-      // 없는 경우 자동으로 "${tableName}_${columnName}_enum" 형식으로 타입 이름을 생성합니다.
-      if (option.type === "enum") {
-        const resolvedEnumName =
-          option.enumName ?? `${tableName}_${column.name}_enum`;
-        // ENUM 타입도 schema-qualified 형식으로 참조합니다.
-        type = this.wrapQualified(resolvedEnumName);
-      }
-
-      // DECIMAL 타입의 경우, precision과 scale을 설정합니다.
-      if (type.startsWith("NUMERIC")) {
-        if (option.precision !== undefined && option.precision > 1000) {
-          throw new Exception(
-            "PostgreSQL에서 지원하는 NUMERIC 타입의 precision은 1000 이하입니다.",
-            400,
-          );
-        }
-
-        type = type.replace("$precision", option.precision?.toString() || "10");
-        type = type.replace("$scale", option.scale?.toString() || "2");
-      }
-
-      const nullable = option.nullable ?? false;
-
-      // auto_increment → SERIAL (PRIMARY KEY와 함께)
-      if (option.autoIncrement) {
-        return raw(
-          `${this.wrap(column.name!)} SERIAL ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""}`,
-        );
-      }
-
-      // 길이가 있는 타입 (VARCHAR 등)
-      const needsLength = ["VARCHAR", "CHAR"].some((t) =>
-        type.toUpperCase().startsWith(t),
-      );
-
-      const typeWithLength =
-        needsLength && option.length ? `${type}(${option.length})` : type;
-
+      const option = (column.options ?? this.columnDefBuilder.defaultColumnOption) as ColumnOption;
       return raw(
-        `${this.wrap(column.name!)} ${typeWithLength} ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""}`,
+        this.columnDefBuilder.buildColumnDef(option, {
+          columnName: column.name!,
+          tableName,
+        }),
       );
     });
 
@@ -727,50 +681,7 @@ export class PostgresDriver implements ISqlDriver {
    *              | enumName 없을 때 폴백 → TEXT   |
    */
   castType(type: ColumnType): string {
-    switch (type) {
-      case "varchar":
-        return "VARCHAR";
-      case "int":
-      case "number":
-        return "INTEGER";
-      case "boolean":
-        return "BOOLEAN";
-      case "datetime":
-        return "TIMESTAMP";
-      case "date":
-        return "DATE";
-      case "timestamp":
-        return "TIMESTAMP";
-      case "timestamptz":
-        return "TIMESTAMPTZ";
-      case "float":
-        return "REAL";
-      case "double":
-        return "NUMERIC($precision, $scale)";
-      case "blob":
-        return "BYTEA";
-      case "text":
-      case "longtext": // PostgreSQL에서는 TEXT로 통합
-        return "TEXT";
-      case "bigint":
-        return "BIGINT";
-      case "json":
-        return "JSON";
-      case "jsonb":
-        return "JSONB";
-      case "char":
-        return "CHAR";
-      case "enum":
-        // PostgreSQL은 CREATE TYPE ... AS ENUM (...) 으로 사용자 정의 ENUM 타입을 생성합니다.
-        // information_schema에서 enum 컬럼은 "USER-DEFINED"로 조회되므로 SchemaDiff와 일치시킵니다.
-        return "USER-DEFINED";
-      case "array":
-        return "ARRAY";
-      case "uuid":
-        return "UUID";
-      default:
-        return type as string;
-    }
+    return this.columnDefBuilder.castType(type);
   }
 
   public isMySqlFamily() {

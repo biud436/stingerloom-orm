@@ -35,6 +35,10 @@ import { ColumnMetadata } from "../../scanner/ColumnScanner";
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../../decorators/ComputedColumn";
+import {
+  ColumnDefinitionBuilder,
+  createColumnDefinitionBuilder,
+} from "../../dialects/ColumnDefinitionBuilder";
 
 export type SchemaDialect = "mysql" | "postgres" | "sqlite";
 
@@ -65,11 +69,16 @@ export class SchemaGenerator {
   private readonly dialect: SchemaDialect;
   private readonly pgSchema: string;
   private readonly namingStrategy: NamingStrategy;
+  private readonly columnDefBuilder: ColumnDefinitionBuilder;
 
   constructor(options: SchemaGeneratorOptions) {
     this.dialect = options.dialect;
     this.pgSchema = options.schema ?? "public";
     this.namingStrategy = options.namingStrategy ?? new DefaultNamingStrategy();
+    this.columnDefBuilder = createColumnDefinitionBuilder(
+      this.dialect,
+      this.pgSchema,
+    );
   }
 
   /**
@@ -631,225 +640,22 @@ export class SchemaGenerator {
 
   private renderColumnDef(
     col: ColumnDef,
-    tableName: string,
+    _tableName: string,
     isCompositePk = false,
   ): string {
-    const { name, options } = col;
-    let type = this.castType(options.type ?? "varchar");
-
-    // Boolean 처리
-    if (options.type === "boolean" && this.dialect === "mysql") {
-      type = type.replace("$n", options.length?.toString() ?? "1");
-    }
-
-    // DECIMAL / NUMERIC 처리
-    if (type.includes("$precision")) {
-      type = type.replace("$precision", options.precision?.toString() ?? "10");
-      type = type.replace("$scale", options.scale?.toString() ?? "2");
-    }
-
-    // ENUM (PostgreSQL)
-    if (options.type === "enum" && this.dialect === "postgres") {
-      const enumName = options.enumName ?? `${tableName}_${name}_enum`;
-      type = this.wrapTable(enumName);
-    }
-
-    // UUID PK with generation strategy
-    if (options.type === "uuid" && options.generationStrategy === "uuid" && this.dialect === "postgres") {
-      const nullable = options.nullable ? "NULL" : "NOT NULL";
-      const pk = options.primary && !isCompositePk ? " PRIMARY KEY" : "";
-      return `${this.wrapId(name)} UUID ${nullable} DEFAULT gen_random_uuid()${pk}`;
-    }
-
-    // auto increment
-    if (options.autoIncrement && this.dialect === "postgres") {
-      const nullable = options.nullable ? "NULL" : "NOT NULL";
-      const pk = options.primary && !isCompositePk ? " PRIMARY KEY" : "";
-      return `${this.wrapId(name)} SERIAL ${nullable}${pk}`;
-    }
-
-    // SQLite: INTEGER PRIMARY KEY AUTOINCREMENT
-    if (options.autoIncrement && this.dialect === "sqlite") {
-      return `${this.wrapId(name)} INTEGER PRIMARY KEY AUTOINCREMENT`;
-    }
-
-    // 길이 처리
-    const alreadyHasParens = type.includes("(");
-    // UUID type on PostgreSQL has no length parameter (native fixed-size type)
-    const isFixedSizeType = options.type === "uuid" && this.dialect === "postgres";
-    const needsLength =
-      !alreadyHasParens && !isFixedSizeType && options.length && options.length > 0;
-    const typeWithLength = needsLength ? `${type}(${options.length})` : type;
-
-    const nullable = options.nullable ? "NULL" : "NOT NULL";
-    // 복합 PK일 때는 인라인 PRIMARY KEY를 생략 (테이블 레벨에서 추가)
-    const pk = options.primary && !isCompositePk ? " PRIMARY KEY" : "";
-    const autoInc =
-      options.autoIncrement && this.dialect === "mysql"
-        ? " AUTO_INCREMENT"
-        : "";
-
-    // DEFAULT clause
-    const defaultClause = this.renderDefaultClause(options.default);
-
-    return `${this.wrapId(name)} ${typeWithLength} ${nullable}${defaultClause}${pk}${autoInc}`;
-  }
-
-  /**
-   * Renders the DEFAULT clause for a column definition.
-   * Parenthesized values like "(CURRENT_TIMESTAMP)" are treated as raw SQL expressions.
-   */
-  private renderDefaultClause(value: string | number | boolean | null | undefined): string {
-    if (value === undefined) return "";
-    if (value === null) return " DEFAULT NULL";
-    if (typeof value === "number") return ` DEFAULT ${value}`;
-    if (typeof value === "boolean") {
-      if (this.dialect === "mysql") return ` DEFAULT ${value ? "1" : "0"}`;
-      return ` DEFAULT ${value ? "TRUE" : "FALSE"}`;
-    }
-    // Parenthesized strings → raw SQL expression
-    if (typeof value === "string" && value.startsWith("(") && value.endsWith(")")) {
-      return ` DEFAULT ${value}`;
-    }
-    // String literal — escape single quotes
-    return ` DEFAULT '${value.replace(/'/g, "''")}'`;
+    return this.columnDefBuilder.buildColumnDef(col.options, {
+      columnName: col.name,
+      tableName: _tableName,
+      isCompositePk,
+    });
   }
 
   private castType(type: ColumnType): string {
-    if (this.dialect === "sqlite") {
-      return this.castTypeSqlite(type);
-    }
-    if (this.dialect === "postgres") {
-      return this.castTypePostgres(type);
-    }
-    return this.castTypeMysql(type);
-  }
-
-  private castTypeMysql(type: ColumnType): string {
-    switch (type) {
-      case "varchar":
-        return "VARCHAR";
-      case "int":
-      case "number":
-        return "INT";
-      case "boolean":
-        return "TINYINT($n)";
-      case "datetime":
-        return "DATETIME";
-      case "date":
-        return "DATE";
-      case "timestamp":
-        return "TIMESTAMP";
-      case "timestamptz":
-        return "DATETIME";
-      case "float":
-        return "FLOAT";
-      case "double":
-        return "DECIMAL($precision, $scale)";
-      case "blob":
-        return "BLOB";
-      case "text":
-        return "TEXT";
-      case "longtext":
-        return "LONGTEXT";
-      case "bigint":
-        return "BIGINT";
-      case "json":
-      case "jsonb":
-      case "array":
-        return "JSON";
-      case "char":
-        return "CHAR";
-      case "enum":
-        return "ENUM";
-      case "uuid":
-        return "CHAR(36)";
-      default:
-        return type as string;
-    }
-  }
-
-  private castTypePostgres(type: ColumnType): string {
-    switch (type) {
-      case "varchar":
-        return "VARCHAR";
-      case "int":
-      case "number":
-        return "INTEGER";
-      case "boolean":
-        return "BOOLEAN";
-      case "datetime":
-      case "timestamp":
-        return "TIMESTAMP";
-      case "timestamptz":
-        return "TIMESTAMPTZ";
-      case "date":
-        return "DATE";
-      case "float":
-        return "REAL";
-      case "double":
-        return "NUMERIC($precision, $scale)";
-      case "blob":
-        return "BYTEA";
-      case "text":
-      case "longtext":
-        return "TEXT";
-      case "bigint":
-        return "BIGINT";
-      case "json":
-        return "JSON";
-      case "jsonb":
-        return "JSONB";
-      case "char":
-        return "CHAR";
-      case "enum":
-        return "USER-DEFINED";
-      case "array":
-        return "ARRAY";
-      case "uuid":
-        return "UUID";
-      default:
-        return type as string;
-    }
-  }
-
-  private castTypeSqlite(type: ColumnType): string {
-    switch (type) {
-      case "varchar":
-      case "text":
-      case "longtext":
-      case "char":
-      case "enum":
-      case "json":
-      case "jsonb":
-      case "array":
-      case "datetime":
-      case "date":
-      case "timestamp":
-      case "timestamptz":
-        return "TEXT";
-      case "int":
-      case "number":
-      case "boolean":
-      case "bigint":
-        return "INTEGER";
-      case "float":
-      case "double":
-        return "REAL";
-      case "blob":
-        return "BLOB";
-      case "uuid":
-        return "VARCHAR(36)";
-      default:
-        return type as string;
-    }
+    return this.columnDefBuilder.castType(type);
   }
 
   private wrapId(name: string): string {
-    if (this.dialect === "postgres" || this.dialect === "sqlite") {
-      return `"${name.replace(/"/g, '""')}"`;
-    }
-    return `\`${name.replace(/`/g, "``")}\``;
+    return this.columnDefBuilder.wrapIdentifier(name);
   }
 
   private wrapTable(name: string): string {

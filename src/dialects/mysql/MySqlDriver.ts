@@ -10,8 +10,11 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
+import { MySqlColumnDefinitionBuilder } from "./MySqlColumnDefinitionBuilder";
 
 export class MySqlDriver implements ISqlDriver {
+  private readonly columnDefBuilder = new MySqlColumnDefinitionBuilder();
+
   constructor(
     private readonly connector: IConnector,
     private readonly clientType: string = "mysql",
@@ -264,52 +267,12 @@ export class MySqlDriver implements ISqlDriver {
    */
   createTable(tableName: string, columns: SchemaOptions[]) {
     const columnsMap = columns.map((column) => {
-      // column.options가 없을 경우 기본값 제공
-      const option = (column.options ?? {
-        type: "varchar",
-        length: 255,
-        nullable: false,
-      }) as ColumnOption;
-
-      let type = this.castType(option.type ?? "varchar");
-
-      // BOOLEAN 타입의 길이를 설정합니다.
-      // 길이가 설정되어 있지 않다면 기본값은 1입니다.
-      if (option.type === "boolean") {
-        type = type.replace("$n", option.length?.toString() ?? "1");
-      }
-
-      // ENUM 타입의 경우, enumValues로 값 목록을 설정합니다.
-      if (option.type === "enum" && option.enumValues && option.enumValues.length > 0) {
-        const values = option.enumValues.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(",");
-        type = `ENUM(${values})`;
-      }
-
-      // DECIMAL 타입의 경우, precision과 scale을 설정합니다.
-      if (type.startsWith("DECIMAL")) {
-        if (option.precision !== undefined) {
-          // 65 이상의 값은 MySQL에서 지원하지 않습니다.
-          if (option.precision > 65) {
-            throw new Exception(
-              "MySQL에서 지원하는 DECIMAL 타입의 precision은 65 이하입니다.",
-              400,
-            );
-          }
-        }
-
-        type = type.replace("$precision", option.precision?.toString() || "10");
-        type = type.replace("$scale", option.scale?.toString() || "2");
-      }
-
-      // 타입에 이미 괄호가 포함되어 있거나 (TINYINT(1), DECIMAL(10,2) 등)
-      // length가 없거나 0인 경우에는 길이를 추가하지 않습니다.
-      const alreadyHasParens = type.includes("(");
-      const nullable = option.nullable ?? false;
-      const typeWithLength =
-        alreadyHasParens || !option.length ? type : `${type}(${option.length})`;
-
+      const option = (column.options ?? this.columnDefBuilder.defaultColumnOption) as ColumnOption;
       return raw(
-        `${this.wrap(column.name!)} ${typeWithLength} ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""} ${option.autoIncrement ? "AUTO_INCREMENT" : ""}`,
+        this.columnDefBuilder.buildColumnDef(option, {
+          columnName: column.name!,
+          tableName,
+        }),
       );
     });
 
@@ -370,49 +333,7 @@ export class MySqlDriver implements ISqlDriver {
    * | json       | JSON                           |
    */
   castType(type: ColumnType): string {
-    switch (type) {
-      case "varchar":
-        return "VARCHAR";
-      case "int":
-      case "number":
-        return "INT";
-      case "boolean":
-        return "TINYINT($n)";
-      case "datetime":
-        return "DATETIME";
-      case "date":
-        return "DATE";
-      case "timestamp":
-        return "TIMESTAMP";
-      case "timestamptz":
-        return "DATETIME";
-      case "float":
-        return "FLOAT";
-      case "double":
-        return "DECIMAL($precision, $scale)";
-      case "blob":
-        return "BLOB";
-      case "text":
-        return "TEXT";
-      case "longtext":
-        return "LONGTEXT";
-      case "bigint":
-        return "BIGINT";
-      case "json":
-        return "JSON";
-      case "char":
-        return "CHAR";
-      case "enum":
-        return "ENUM";
-      case "array":
-        return "JSON"; // MySQL에서 array는 JSON으로 처리
-      case "jsonb": // MySQL에서 jsonb는 json과 동일
-        return "JSON";
-      case "uuid":
-        return "CHAR(36)";
-      default:
-        return type as string;
-    }
+    return this.columnDefBuilder.castType(type);
   }
 
   public isMySqlFamily() {

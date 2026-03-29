@@ -29,3 +29,8 @@ export * from "./SqlDriver";
 export * from "./TransactionSessionManager";
 export * from "./EntityNotFound";
 export * from "./ReplicationRouter";
+export * from "./ColumnDefinitionBuilder";
+export { BaseColumnDefinitionBuilder } from "./BaseColumnDefinitionBuilder";
+export { MySqlColumnDefinitionBuilder } from "./mysql/MySqlColumnDefinitionBuilder";
+export { PostgresColumnDefinitionBuilder } from "./postgres/PostgresColumnDefinitionBuilder";
+export { SqliteColumnDefinitionBuilder } from "./sqlite/SqliteColumnDefinitionBuilder";

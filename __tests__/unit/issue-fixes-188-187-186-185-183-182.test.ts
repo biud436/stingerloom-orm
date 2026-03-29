@@ -474,10 +474,10 @@ describe("Issue #185: Enum type consistency", () => {
     expect(result).toBe("USER-DEFINED");
   });
 
-  it("SchemaGenerator castTypePostgres('enum') should return 'USER-DEFINED'", () => {
+  it("SchemaGenerator castType('enum') for postgres should return 'USER-DEFINED'", () => {
     const generator = new SchemaGenerator({ dialect: "postgres" });
-    // castTypePostgres is private, so we access it directly
-    const result = (generator as any).castTypePostgres("enum");
+    // castType delegates to the ColumnDefinitionBuilder
+    const result = (generator as any).castType("enum");
     expect(result).toBe("USER-DEFINED");
   });
 
@@ -488,7 +488,7 @@ describe("Issue #185: Enum type consistency", () => {
 
     const driverResult = driver.castType("enum");
     const schemaDiffResult = (schemaDiff as any).castTypePostgres("enum");
-    const generatorResult = (generator as any).castTypePostgres("enum");
+    const generatorResult = (generator as any).castType("enum");
 
     expect(driverResult).toBe(schemaDiffResult);
     expect(schemaDiffResult).toBe(generatorResult);

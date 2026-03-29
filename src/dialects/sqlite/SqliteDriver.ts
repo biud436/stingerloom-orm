@@ -10,6 +10,7 @@ import { validateSavepointName } from "../../utils/validateSavepointName";
 import { Logger } from "../../utils/Logger";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
+import { SqliteColumnDefinitionBuilder } from "./SqliteColumnDefinitionBuilder";
 
 /**
  * SQLite용 SQL 드라이버 구현체입니다.
@@ -20,6 +21,7 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
  */
 export class SqliteDriver implements ISqlDriver {
   private readonly logger = new Logger("SqliteDriver");
+  private readonly columnDefBuilder = new SqliteColumnDefinitionBuilder();
 
   constructor(
     private readonly connector: IConnector,
@@ -219,41 +221,12 @@ export class SqliteDriver implements ISqlDriver {
    */
   createTable(tableName: string, columns: SchemaOptions[]) {
     const columnsMap = columns.map((column) => {
-      const option = (column.options ?? {
-        type: "varchar",
-        length: 255,
-        nullable: false,
-      }) as ColumnOption;
-
-      let type = this.castType(option.type ?? "varchar");
-
-      // SQLite는 BOOLEAN을 INTEGER로 처리합니다.
-      if (option.type === "boolean") {
-        type = "INTEGER";
-      }
-
-      const nullable = option.nullable ?? false;
-
-      // auto_increment → INTEGER PRIMARY KEY AUTOINCREMENT
-      if (option.autoIncrement) {
-        return raw(
-          `${this.wrap(column.name!)} INTEGER PRIMARY KEY AUTOINCREMENT`,
-        );
-      }
-
-      // SQLite의 VARCHAR 등에서 길이 지정은 선택사항이지만 호환성을 위해 유지
-      const needsLength = ["TEXT", "VARCHAR", "CHAR"].some((t) =>
-        type.toUpperCase().startsWith(t),
-      );
-
-      const alreadyHasParens = type.includes("(");
-      const typeWithLength =
-        alreadyHasParens || !needsLength || !option.length
-          ? type
-          : `${type}(${option.length})`;
-
+      const option = (column.options ?? this.columnDefBuilder.defaultColumnOption) as ColumnOption;
       return raw(
-        `${this.wrap(column.name!)} ${typeWithLength} ${nullable ? "NULL" : "NOT NULL"} ${option.primary ? "PRIMARY KEY" : ""}`,
+        this.columnDefBuilder.buildColumnDef(option, {
+          columnName: column.name!,
+          tableName,
+        }),
       );
     });
 
@@ -329,35 +302,7 @@ export class SqliteDriver implements ISqlDriver {
    * | array      | TEXT         |
    */
   castType(type: ColumnType): string {
-    switch (type) {
-      case "varchar":
-      case "text":
-      case "longtext":
-      case "char":
-      case "enum":
-      case "json":
-      case "jsonb":
-      case "array":
-      case "datetime":
-      case "date":
-      case "timestamp":
-      case "timestamptz":
-        return "TEXT";
-      case "int":
-      case "number":
-      case "boolean":
-      case "bigint":
-        return "INTEGER";
-      case "float":
-      case "double":
-        return "REAL";
-      case "blob":
-        return "BLOB";
-      case "uuid":
-        return "VARCHAR(36)";
-      default:
-        return type as string;
-    }
+    return this.columnDefBuilder.castType(type);
   }
 
   public isMySqlFamily() {
