@@ -94,6 +94,7 @@ import { VERSION_TOKEN } from "../decorators/Version";
 import { deserializeEntity } from "./deserializer/DeserializeEntity";
 import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
 import type { BufferPluginOptions } from "./plugin/buffer/BufferPreview";
+import type { RawPipeline, RawPipelineOptions } from "./plugin/raw-pipeline/RawPipeline";
 import { SelectQueryBuilder } from "./SelectQueryBuilder";
 
 /**
@@ -165,7 +166,7 @@ export class EntityManager implements BaseEntityManager {
   // ── Plugin System ──────────────────────────────────────────
   static readonly PLUGIN_PLACEHOLDER = Symbol.for("STG_PLUGIN_PLACEHOLDER");
   /** Method names that are stub placeholders and can be overridden by plugins */
-  private static readonly PLUGIN_PLACEHOLDERS = new Set<string>(["buffer"]);
+  private static readonly PLUGIN_PLACEHOLDERS = new Set<string>(["buffer", "pipe"]);
   private readonly _plugins = new Map<string, InstalledPlugin>();
   private _pluginContext: PluginContext | null = null;
 
@@ -672,6 +673,22 @@ export class EntityManager implements BaseEntityManager {
       OrmErrorCode.BUFFER_NOT_INSTALLED,
       "buffer() requires the buffer plugin to be installed",
       "Call em.extend(bufferPlugin()) before using em.buffer()",
+    );
+  }
+
+  /**
+   * Create a RawPipeline for large-data processing without entity transformation.
+   * Requires the raw-pipeline plugin to be installed first via `em.extend(rawPipelinePlugin())`.
+   *
+   * @param entity - The entity class (used for table name / column resolution)
+   * @param options - FindOption + batchSize
+   * @throws OrmError if the raw-pipeline plugin is not installed.
+   */
+  pipe<T>(_entity: ClazzType<T>, _options?: RawPipelineOptions<T>): RawPipeline<T> {
+    throw new OrmError(
+      OrmErrorCode.PLUGIN_DEPENDENCY_MISSING,
+      "pipe() requires the raw-pipeline plugin to be installed",
+      "Call em.extend(rawPipelinePlugin()) before using em.pipe()",
     );
   }
 

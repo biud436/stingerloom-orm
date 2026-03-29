@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { join, raw } from "sql-template-tag";
+import sql, { join, raw, Sql } from "sql-template-tag";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
@@ -11,6 +11,8 @@ import { Logger } from "../../utils/Logger";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { SqliteColumnDefinitionBuilder } from "./SqliteColumnDefinitionBuilder";
+import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
+import type { SqliteConnector } from "./SqliteConnector";
 
 /**
  * SQLite용 SQL 드라이버 구현체입니다.
@@ -38,6 +40,32 @@ export class SqliteDriver implements ISqlDriver {
 
   executeRaw(sqlStr: string) {
     return this.connector.query(sqlStr);
+  }
+
+  async queryWithOptions(query: Sql, options: DriverQueryOptions): Promise<any[]> {
+    const sqliteConnector = this.connector as SqliteConnector;
+    const db = await sqliteConnector.getConnection();
+
+    const sanitized = this.sanitizeValuesForOptions(query.values);
+    const stmt = db.prepare(query.sql);
+
+    if (options.arrayMode) {
+      stmt.raw(true);
+    }
+
+    return sanitized && sanitized.length > 0
+      ? stmt.all(...sanitized)
+      : stmt.all();
+  }
+
+  private sanitizeValuesForOptions(values?: any[]): any[] | undefined {
+    if (!values) return values;
+    return values.map((v) => {
+      if (typeof v === "boolean") return v ? 1 : 0;
+      if (v instanceof Date) return v.toISOString();
+      if (v === undefined) return null;
+      return v;
+    });
   }
 
   /**

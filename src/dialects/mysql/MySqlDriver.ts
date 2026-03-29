@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { join, raw } from "sql-template-tag";
+import sql, { join, raw, Sql } from "sql-template-tag";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "./BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
@@ -11,6 +11,8 @@ import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
 import { MySqlColumnDefinitionBuilder } from "./MySqlColumnDefinitionBuilder";
+import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
+import type { MySqlConnector } from "./MySqlConnector";
 
 export class MySqlDriver implements ISqlDriver {
   private readonly columnDefBuilder = new MySqlColumnDefinitionBuilder();
@@ -29,6 +31,31 @@ export class MySqlDriver implements ISqlDriver {
 
   executeRaw(sqlStr: string) {
     return this.connector.query(sqlStr);
+  }
+
+  async queryWithOptions(query: Sql, options: DriverQueryOptions): Promise<any[]> {
+    const mysqlConnector = this.connector as MySqlConnector;
+    if (!mysqlConnector.pool) {
+      throw new OrmError(
+        OrmErrorCode.CONNECTION_FAILED,
+        "No pool available for queryWithOptions",
+        "Ensure the database is connected before using the raw pipeline",
+      );
+    }
+
+    const queryOpts: any = {
+      sql: query.sql,
+      values: query.values,
+    };
+    if (options.binary) queryOpts.typeCast = false;
+    if (options.arrayMode) queryOpts.rowsAsArray = true;
+
+    return new Promise((resolve, reject) => {
+      (mysqlConnector.pool as any).query(queryOpts, (error: any, results: any) => {
+        if (error) return reject(error);
+        resolve(Array.isArray(results) ? results : []);
+      });
+    });
   }
 
   /**

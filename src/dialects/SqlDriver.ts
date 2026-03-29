@@ -2,6 +2,8 @@
 import { ColumnType } from "../decorators/Column";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
 import { MysqlSchemaInterface } from "./mysql/BaseSchema";
+import type { DriverQueryOptions } from "../types/DriverQueryOptions";
+import type { Sql } from "sql-template-tag";
 
 export interface ISqlDriver<T = any> {
   /**
@@ -351,4 +353,13 @@ export interface ISqlDriver<T = any> {
    * PostgreSQL supports it; MySQL and SQLite (via better-sqlite3) do not.
    */
   supportsReturning(): boolean;
+
+  /**
+   * Execute a query with driver-level options that control result format.
+   * Used by the RawPipeline plugin to bypass ORM entity transformation.
+   *
+   * Optional — drivers that do not implement this will fall back to
+   * the standard `executeRaw()` path.
+   */
+  queryWithOptions?(sql: Sql, options: DriverQueryOptions): Promise<any[]>;
 }

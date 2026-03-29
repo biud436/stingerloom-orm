@@ -8,3 +8,4 @@ export * from "./DeepPartial";
 export * from "./FindCondition";
 export * from "./OrderByOption";
 export * from "./ReferentialAction";
+export * from "./DriverQueryOptions";

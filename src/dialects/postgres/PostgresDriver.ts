@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { join, raw } from "sql-template-tag";
+import sql, { join, raw, Sql } from "sql-template-tag";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
@@ -12,6 +12,8 @@ import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
 import { PostgresColumnDefinitionBuilder } from "./PostgresColumnDefinitionBuilder";
+import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
+import type { PostgresConnector } from "./PostgresConnector";
 
 /**
  * Escape an enum value for safe interpolation into DDL strings.
@@ -155,6 +157,30 @@ export class PostgresDriver implements ISqlDriver {
 
   executeRaw(sqlStr: string) {
     return this.connector.query(sqlStr);
+  }
+
+  async queryWithOptions(query: Sql, options: DriverQueryOptions): Promise<any[]> {
+    const pgConnector = this.connector as PostgresConnector;
+    if (!pgConnector.pool) {
+      throw new OrmError(
+        OrmErrorCode.CONNECTION_FAILED,
+        "No pool available for queryWithOptions",
+        "Ensure the database is connected before using the raw pipeline",
+      );
+    }
+
+    let paramIndex = 0;
+    const pgSql = query.sql.replace(/\?/g, () => `$${++paramIndex}`);
+
+    const queryConfig: any = {
+      text: pgSql,
+      values: query.values,
+    };
+    if (options.binary) queryConfig.binary = true;
+    if (options.arrayMode) queryConfig.rowMode = "array";
+
+    const result: any = await pgConnector.pool.query(queryConfig);
+    return result.rows;
   }
 
   /**
