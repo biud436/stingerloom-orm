@@ -33,7 +33,7 @@ function sidebarEn() {
     },
     {
       text: "Querying",
-      collapsed: true,
+      collapsed: false,
       items: [
         { text: "Query Builder", link: "/query-builder" },
         { text: "Raw SQL & CTE", link: "/raw-sql" },
@@ -43,7 +43,7 @@ function sidebarEn() {
     },
     {
       text: "Schema & Migrations",
-      collapsed: true,
+      collapsed: false,
       items: [
         { text: "Migrations", link: "/migrations" },
         { text: "Migration CLI", link: "/cli" },
@@ -69,7 +69,7 @@ function sidebarEn() {
     },
     {
       text: "Integration",
-      collapsed: true,
+      collapsed: false,
       items: [{ text: "NestJS", link: "/nestjs" }],
     },
     {
@@ -121,7 +121,7 @@ function sidebarKo() {
     },
     {
       text: "쿼리",
-      collapsed: true,
+      collapsed: false,
       items: [
         { text: "쿼리 빌더", link: "/ko/query-builder" },
         { text: "Raw SQL & CTE", link: "/ko/raw-sql" },
@@ -131,7 +131,7 @@ function sidebarKo() {
     },
     {
       text: "스키마 & 마이그레이션",
-      collapsed: true,
+      collapsed: false,
       items: [
         { text: "마이그레이션", link: "/ko/migrations" },
         { text: "마이그레이션 CLI", link: "/ko/cli" },
@@ -157,7 +157,7 @@ function sidebarKo() {
     },
     {
       text: "통합",
-      collapsed: true,
+      collapsed: false,
       items: [{ text: "NestJS", link: "/ko/nestjs" }],
     },
     {
