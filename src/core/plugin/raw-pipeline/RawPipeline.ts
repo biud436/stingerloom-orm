@@ -161,6 +161,22 @@ export class RawPipeline<T> {
   }
 
   /**
+   * Execute a query using the fastest available path.
+   *
+   * Prefers driver.queryWithOptions() (direct pool query, no transaction wrapper)
+   * over em.query() (wraps each call in BEGIN/COMMIT) to avoid per-batch
+   * transaction overhead on remote databases.
+   */
+  private async executeQuery(query: Sql): Promise<Record<string, unknown>[]> {
+    const driver = this.ctx.driver;
+    if (driver?.queryWithOptions) {
+      return driver.queryWithOptions(query, {}) as Promise<Record<string, unknown>[]>;
+    }
+    // Fallback for drivers without queryWithOptions
+    return this.ctx.em.query<Record<string, unknown>>(query);
+  }
+
+  /**
    * Yield batches of plain objects (no entity instantiation).
    */
   async *raw(): AsyncGenerator<Record<string, unknown>[], void, undefined> {
@@ -179,7 +195,7 @@ export class RawPipeline<T> {
 
     while (true) {
       const query = this.buildQuery(offset);
-      const rows = await this.ctx.em.query<Record<string, unknown>>(query);
+      const rows = await this.executeQuery(query);
 
       if (rows.length === 0) break;
       yield rows;
@@ -208,7 +224,7 @@ export class RawPipeline<T> {
 
     while (true) {
       const query = this.buildKeysetQuery(orderCol, isAsc, lastValue, isFirst);
-      const rows = await this.ctx.em.query<Record<string, unknown>>(query);
+      const rows = await this.executeQuery(query);
 
       if (rows.length === 0) break;
       yield rows;

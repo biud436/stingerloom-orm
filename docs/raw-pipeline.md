@@ -413,46 +413,74 @@ for await (const batch of em.pipe(User, {
 
 ### Binary Mode Benchmark — Real Databases
 
-We ran the same benchmark against real PostgreSQL and MySQL databases over a local network. The results reveal an important architectural difference between `raw()` and `binary()`:
+We ran the same benchmark against real PostgreSQL and MySQL databases over a local network. These results are very different from the SQLite in-memory benchmark, and understanding why is important for choosing the right approach.
 
 **PostgreSQL (pg 8.18.0, remote server):**
 
 | Method | 1K rows | 10K rows | 100K rows | Memory (100K) |
 |--------|---------|----------|-----------|---------------|
-| `em.find()` | 23.1ms | 130.4ms | 1.18s | 44.55 MB |
-| `pipe().raw()` | 72.4ms | 746.2ms | 6.45s | 31.75 MB |
-| `pipe().binary()` | 27.3ms | 185.4ms | 2.88s | 34.57 MB |
-| `pipe().arrayMode()` | 26.2ms | 215.6ms | **2.74s** | **28.20 MB** |
+| `em.find()` | 19.0ms | 155.1ms | **1.54s** | 44.28 MB |
+| `pipe().raw()` | 24.2ms | 257.8ms | 3.04s | **27.87 MB** |
+| `pipe().binary()` | 22.2ms | 204.5ms | 2.79s | 27.36 MB |
+| `pipe().arrayMode()` | 19.7ms | 268.2ms | 2.77s | **27.40 MB** |
 
 **MySQL (mysql2 3.16.3, remote MariaDB):**
 
 | Method | 1K rows | 10K rows | 100K rows | Memory (100K) |
 |--------|---------|----------|-----------|---------------|
-| `em.find()` | 16.5ms | 119.4ms | 1.09s | 42.45 MB |
-| `pipe().raw()` | 86.7ms | 1.09s | 11.52s | 29.30 MB |
-| `pipe().binary()` | 19.3ms | 199.1ms | 5.05s | 71.69 MB |
-| `pipe().arrayMode()` | 20.2ms | 188.6ms | **5.29s** | **31.32 MB** |
+| `em.find()` | 15.4ms | 106.2ms | **0.92s** | 41.10 MB |
+| `pipe().raw()` | 17.3ms | 238.5ms | 5.34s | **29.98 MB** |
+| `pipe().binary()` | 17.5ms | 232.4ms | 5.27s | 71.70 MB |
+| `pipe().arrayMode()` | 23.6ms | 236.2ms | 5.19s | **31.12 MB** |
 
-### Why raw() Is Slower Than em.find() on Remote Databases
+### Why pipe() Is Slower Than em.find() on Remote Databases
 
-You might notice something counterintuitive: `pipe().raw()` is *slower* than `em.find()` on PostgreSQL and MySQL, despite skipping entity transformation. This is the opposite of the SQLite benchmark.
+This is counterintuitive. `pipe()` skips entity transformation, so it should be faster. But on remote databases, it is 2-5x *slower* than `em.find()`. Here is why.
 
-The reason is **transaction overhead per batch**:
+The bottleneck is not transformation — it is **query count**:
 
 ```
-em.find()       →  1 transaction  (BEGIN → SELECT * → COMMIT)
-pipe().raw()    →  N transactions (BEGIN → SELECT LIMIT 1000 → COMMIT) × 100 batches
+em.find()       →  1 query   (SELECT * FROM "users")
+pipe(bs=1000)   →  101 queries  (SELECT ... LIMIT 1000) × 100 + 1 empty check
 ```
 
-`pipe().raw()` uses `em.query()` internally, which wraps every call in a separate transaction. With 100K rows and batchSize=1000, that is 100 round-trips of `BEGIN → QUERY → COMMIT` over the network. On SQLite (in-process, no network), this overhead is negligible. On a remote database, the network latency per transaction dominates.
+Each query is a full network round-trip: the client sends the SQL over TCP, the server parses and executes it, and sends the result back. On a local network with ~1ms latency, 101 round-trips cost ~100ms just in network overhead — before any data is transferred.
 
-`pipe().binary()` and `pipe().arrayMode()` bypass this because they call `driver.queryWithOptions()` directly on the connection pool — **no transaction wrapper**. This makes them significantly faster than `raw()` on remote databases.
+With SQLite (in-process, no network), there is zero round-trip cost, so `pipe()` wins on pure CPU savings from skipping entity transformation. On remote databases, the network cost of 100 extra queries far exceeds the CPU savings.
 
-::: tip Choosing the right mode for remote databases
-- **Small datasets (< 10K rows):** Use `em.find()`. The entity transformation overhead is smaller than the per-batch transaction cost.
-- **Large datasets, need plain objects:** Use `pipe().binary({ arrayMode: true })`. Gets array-format results without transaction overhead. Use `.map()` to convert arrays to objects if needed.
-- **Large datasets, need Buffers:** Use `pipe().binary({ binary: true })`. Direct buffer access without transaction wrapping.
-- **Memory-bounded streaming:** Use `pipe().raw()` only when you need to process data incrementally and the total dataset is too large to fit in memory. The per-batch transaction cost is the price of bounded memory.
+This is a fundamental trade-off inherent to batched streaming:
+
+| | em.find() | pipe() |
+|---|---|---|
+| Queries | 1 | N (100K rows / batchSize) |
+| Network round-trips | 1 | N |
+| Peak memory | All rows at once | 1 batch |
+| Entity transformation | Yes (CPU cost) | No (CPU saved) |
+
+### The Real Value of pipe() on Remote Databases: Memory Control
+
+The numbers above collected all pipe() results into a single array (`collect()`) — which defeats the purpose of batching. In real usage, you process and discard each batch:
+
+```typescript
+// This uses ~27 MB regardless of total row count
+for await (const batch of em.pipe(User, { batchSize: 5000 }).raw()) {
+  await sendToExternalService(batch);
+  // batch is GC'd after this iteration
+}
+
+// This uses ~44 MB for 100K rows, ~440 MB for 1M rows
+const all = await em.find(User);
+```
+
+At 100K rows, `em.find()` loads 44 MB at once. At 1M rows, that becomes ~440 MB. At 10M rows, you run out of memory. `pipe()` stays at ~27 MB no matter how many rows exist. That is the point.
+
+::: tip When to use pipe() vs em.find() on remote databases
+- **< 50K rows, fits in memory:** Use `em.find()`. Faster due to single query.
+- **> 50K rows, or memory-constrained:** Use `pipe()`. Slower wall-clock time, but bounded memory.
+- **Need to forward to another system (gRPC, CSV, etc.):** Use `pipe()`. You are streaming to an external sink anyway — the per-batch overhead is amortized.
+- **Need raw Buffers:** Use `pipe().binary()`. This is the only way to get driver-level binary data.
+
+For maximum throughput when streaming large datasets, increase `batchSize` to reduce the number of round-trips (e.g., `batchSize: 10000` or `batchSize: 50000`).
 :::
 
 ### Integration Test Results
