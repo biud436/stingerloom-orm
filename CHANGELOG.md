@@ -6,6 +6,53 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.11.0] — 2026-03-29
+
+### Highlights
+
+- **RawPipeline Plugin** — Large-data transformation without entity overhead. Process millions of rows with `pipe()` and `pipe().raw()` using AsyncGenerator streaming, keyset pagination, and binary mode for MySQL/PostgreSQL.
+- **Bundle Optimization** — 41% smaller tarball and 30% faster cold start through subpath exports and optional `class-transformer`.
+- **ResultTransformer Metadata Caching** — Per-entity metadata caching for faster result transformation (#208).
+
+### Added
+
+- **`RawPipeline` plugin** — `em.extend(rawPipelinePlugin())` enables `pipe().from(Entity).where(...).each(fn)` and `pipe().raw()` for streaming large datasets without entity instantiation
+- **Keyset pagination in RawPipeline** — Efficient cursor-based iteration via WhereResolver integration
+- **Binary mode** — MySQL/PostgreSQL binary protocol for reduced serialization overhead; MySQL selective `typeCast` reduces memory by 49%
+- **`ColumnDefinitionBuilder`** — Extracted column definition building into dedicated builder class
+
+### Performance
+
+- **Bundle size** — 41% smaller tarball, 30% faster cold start (subpath exports, optional `class-transformer`)
+- **ResultTransformer** — Cache per-entity metadata to avoid repeated reflection lookups (#208)
+- **RawPipeline transactions** — Eliminate per-batch transaction overhead in `pipe().raw()`
+- **MySQL binary mode** — 49% memory reduction with selective `typeCast`
+
+### Security
+
+- **SQL injection hardening** — Additional parameter binding defenses in `RawQueryBuilder` and `SchemaDiffMigrationGenerator`
+
+### Fixed
+
+- VitePress Korean docs bold formatting not rendering (markdown-it bug workaround)
+- `.gitignore` patterns updated
+
+### Docs
+
+- Raw Pipeline guide with benchmark results (EN + KO)
+- Binary mode benchmarks for MySQL and PostgreSQL (per-driver comparison, stream-and-discard benchmark)
+- Bundle optimization documentation (subpath exports, optional class-transformer)
+- Expanded VitePress sidebar sections
+
+### Tests
+
+- Binary mode integration tests for MySQL and PostgreSQL
+- **Total: 2,669+ passed, 0 failures**
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.9.0...v0.11.0
+
+---
+
 ## [0.9.0] — 2026-03-28
 
 ### Highlights
