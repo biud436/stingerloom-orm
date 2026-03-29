@@ -428,10 +428,10 @@ for await (const batch of em.pipe(User, {
 
 | 방식 | 1K행 | 10K행 | 100K행 | 메모리 (100K) |
 |------|------|-------|--------|--------------|
-| `em.find()` | 15.4ms | 106.2ms | **0.92s** | 41.10 MB |
-| `pipe().raw()` | 17.3ms | 238.5ms | 5.34s | **29.98 MB** |
-| `pipe().binary()` | 17.5ms | 232.4ms | 5.27s | 71.70 MB |
-| `pipe().arrayMode()` | 23.6ms | 236.2ms | 5.19s | **31.12 MB** |
+| `em.find()` | 17.9ms | 146.4ms | **1.32s** | 41.84 MB |
+| `pipe().raw()` | 22.9ms | 262.6ms | 5.99s | **29.97 MB** |
+| `pipe().binary()` | 23.5ms | 288.6ms | 5.76s | **36.41 MB** |
+| `pipe().arrayMode()` | 21.0ms | 299.0ms | 5.58s | **31.37 MB** |
 
 ### 원격 DB에서 pipe()가 em.find()보다 느린 이유
 
