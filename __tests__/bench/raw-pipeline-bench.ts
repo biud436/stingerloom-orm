@@ -11,7 +11,7 @@
  * Uses SQLite in-memory for reproducibility (no external DB required).
  *
  * Run:
- *   NODE_OPTIONS="--expose-gc" npx ts-node __tests__/bench/raw-pipeline-bench.ts
+ *   NODE_OPTIONS="--expose-gc" npx ts-node --project __tests__/bench/tsconfig.json __tests__/bench/raw-pipeline-bench.ts
  */
 
 import "reflect-metadata";
@@ -69,7 +69,9 @@ function tryGC(): void {
   }
 }
 
-async function measureMemory<T>(fn: () => Promise<T>): Promise<{ result: T; memDelta: number; time: number }> {
+async function measureMemory<T>(
+  fn: () => Promise<T>,
+): Promise<{ result: T; memDelta: number; time: number }> {
   tryGC();
   const memBefore = process.memoryUsage().heapUsed;
   const start = performance.now();
@@ -155,7 +157,9 @@ async function main() {
       {
         const { time, memDelta } = await measureMemory(async () => {
           const all: Record<string, unknown>[] = [];
-          for await (const batch of em.pipe(BenchUser, { batchSize: BATCH_SIZE }).raw()) {
+          for await (const batch of em
+            .pipe(BenchUser, { batchSize: BATCH_SIZE })
+            .raw()) {
             all.push(...batch);
           }
           return all;
@@ -168,7 +172,9 @@ async function main() {
       {
         const { time, memDelta } = await measureMemory(async () => {
           const all: any[] = [];
-          for await (const batch of em.pipe(BenchUser, { batchSize: BATCH_SIZE }).binary({ arrayMode: true })) {
+          for await (const batch of em
+            .pipe(BenchUser, { batchSize: BATCH_SIZE })
+            .binary({ arrayMode: true })) {
             all.push(...batch);
           }
           return all;
@@ -204,7 +210,7 @@ async function main() {
     }
 
     // Cleanup for next round
-    await em.query("DELETE FROM \"bench_users\"");
+    await em.query('DELETE FROM "bench_users"');
   }
 
   // Shutdown
