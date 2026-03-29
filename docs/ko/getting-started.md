@@ -150,7 +150,7 @@ npm install class-transformer   # 선택사항, 고급 역직렬화용
 
 ## 3단계: 엔티티 정의
 
-**엔티티(Entity)**는 데이터베이스 테이블에 대응하는 TypeScript 클래스예요. 클래스의 인스턴스 하나가 테이블의 행 하나를 나타내요. 간단한 User 엔티티를 만들어 볼게요.
+**엔티티**(Entity)는 데이터베이스 테이블에 대응하는 TypeScript 클래스예요. 클래스의 인스턴스 하나가 테이블의 행 하나를 나타내요. 간단한 User 엔티티를 만들어 볼게요.
 
 ```typescript
 // user.entity.ts
@@ -370,7 +370,7 @@ Stingerloom ORM은 `@stingerloom/orm/nestjs` subpath export를 통해 NestJS 통
 
 ### 왜 별도의 모듈이 필요할까?
 
-NestJS는 **의존성 주입(DI)**을 사용해요 — `new`로 직접 객체를 만드는 대신, 필요한 것을 선언하면 NestJS가 알아서 제공해요. ORM 모듈은 이 두 세계를 연결하는 다리예요: `EntityManager`와 리포지토리를 생성한 뒤, NestJS의 DI 컨테이너에 등록해서 서비스의 생성자 파라미터로 주입받을 수 있게 해요.
+NestJS는 **의존성 주입**(DI)을 사용해요 — `new`로 직접 객체를 만드는 대신, 필요한 것을 선언하면 NestJS가 알아서 제공해요. ORM 모듈은 이 두 세계를 연결하는 다리예요: `EntityManager`와 리포지토리를 생성한 뒤, NestJS의 DI 컨테이너에 등록해서 서비스의 생성자 파라미터로 주입받을 수 있게 해요.
 
 흐름은 이렇게 동작해요:
 

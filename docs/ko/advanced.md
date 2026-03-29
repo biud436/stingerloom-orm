@@ -390,7 +390,7 @@ await em.transaction(async (txEm) => {
 });
 ```
 
-Deadlock이 감지되면 트랜잭션이 롤백되고 콜백이 처음부터 다시 실행돼요. 콜백은 **멱등(idempotent)**이어야 해요 -- 여러 번 실행해도 같은 결과를 내야 해요. 전체 가이드는 [Transactions](./transactions.md)를 참고하세요.
+Deadlock이 감지되면 트랜잭션이 롤백되고 콜백이 처음부터 다시 실행돼요. 콜백은 **멱등**(idempotent)이어야 해요 -- 여러 번 실행해도 같은 결과를 내야 해요. 전체 가이드는 [Transactions](./transactions.md)를 참고하세요.
 
 ## 운영 기능
 

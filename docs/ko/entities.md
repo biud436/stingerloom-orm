@@ -1,6 +1,6 @@
 # 엔티티
 
-**엔티티(Entity)**는 데이터베이스 테이블을 나타내는 TypeScript 클래스예요. 각 엔티티 클래스는 하나의 테이블에 대응하고, 클래스의 프로퍼티가 테이블의 컬럼이 돼요.
+**엔티티**(Entity)는 데이터베이스 테이블을 나타내는 TypeScript 클래스예요. 각 엔티티 클래스는 하나의 테이블에 대응하고, 클래스의 프로퍼티가 테이블의 컬럼이 돼요.
 
 코드를 작성하기 전에, 엔티티가 어떤 문제를 해결하는지 먼저 이해해 볼게요.
 
@@ -58,10 +58,13 @@ CREATE TABLE `user` (
 ```typescript
 // user.entity.ts
 @Entity({ name: "app_users" })
-export class User { /* table name: app_users */ }
+export class User {
+  /* table name: app_users */
+}
 ```
 
 **`@PrimaryGeneratedColumn()`**은 자동 증가 기본 키를 정의해요. SQL 수준에서 이건 이렇게 변환돼요:
+
 - **PostgreSQL:** `SERIAL PRIMARY KEY` (시퀀스를 생성하고 기본값으로 설정하는 축약형)
 - **MySQL:** `INT NOT NULL AUTO_INCREMENT PRIMARY KEY`
 
@@ -93,19 +96,19 @@ export class Product {
   id!: number;
 
   @Column()
-  name!: string;                    // VARCHAR(255) auto-inferred
+  name!: string; // VARCHAR(255) auto-inferred
 
   @Column({ type: "text" })
-  description!: string;             // TEXT (long strings)
+  description!: string; // TEXT (long strings)
 
   @Column({ type: "float" })
-  price!: number;                   // FLOAT
+  price!: number; // FLOAT
 
   @Column({ type: "boolean" })
-  isAvailable!: boolean;            // TINYINT(1) / BOOLEAN
+  isAvailable!: boolean; // TINYINT(1) / BOOLEAN
 
   @Column({ type: "datetime" })
-  releaseDate!: Date;               // DATETIME / TIMESTAMP
+  releaseDate!: Date; // DATETIME / TIMESTAMP
 }
 ```
 
@@ -384,7 +387,12 @@ await em.save(Config, { key: "site.title", value: "My Blog" });
 
 ```typescript
 // user.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, Index } from "@stingerloom/orm";
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  Index,
+} from "@stingerloom/orm";
 
 @Entity()
 export class User {
@@ -421,7 +429,12 @@ SELECT * FROM "user" WHERE "email" = 'alice@example.com';
 
 ```typescript
 // order.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, Index } from "@stingerloom/orm";
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  Index,
+} from "@stingerloom/orm";
 
 @Index(["tenantId", "status"])
 @Entity()
@@ -445,6 +458,7 @@ CREATE INDEX "idx_order_tenantId_status" ON "order" ("tenantId", "status");
 ```
 
 복합 인덱스는 성(姓)으로 먼저 정렬하고 이름으로 다음에 정렬한 전화번호부와 같아요. 데이터베이스는 이걸 다음에 사용할 수 있어요:
+
 - `WHERE tenantId = 5` (가장 왼쪽 컬럼 사용)
 - `WHERE tenantId = 5 AND status = 'pending'` (두 컬럼 모두 사용 -- 가장 효율적)
 
@@ -464,7 +478,12 @@ CREATE INDEX "idx_order_tenantId_status" ON "order" ("tenantId", "status");
 
 ```typescript
 // post.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, UniqueIndex } from "@stingerloom/orm";
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  UniqueIndex,
+} from "@stingerloom/orm";
 
 @UniqueIndex(["categoryId", "slug"])
 @Entity()
@@ -489,17 +508,17 @@ CREATE UNIQUE INDEX "UQ_post_categoryId_slug" ON "post" ("categoryId", "slug");
 
 이 고유 인덱스가 있으면 다음 데이터는 허용돼요:
 
-| categoryId | slug |
-|------------|------|
-| 1 | hello-world |
-| 2 | hello-world |
+| categoryId | slug        |
+| ---------- | ----------- |
+| 1          | hello-world |
+| 2          | hello-world |
 
 하지만 다음은 데이터베이스가 거부해요:
 
-| categoryId | slug |
-|------------|------|
-| 1 | hello-world |
-| 1 | hello-world |
+| categoryId | slug        |
+| ---------- | ----------- |
+| 1          | hello-world |
+| 1          | hello-world |
 
 인덱스 이름을 직접 지정할 수도 있어요.
 
@@ -606,13 +625,13 @@ SELECT * FROM "product" WHERE "metadata" @> '{"color": "red"}';
 
 사용 가능한 인덱스 타입:
 
-| 타입 | 적합한 용도 | PostgreSQL | MySQL |
-|------|-----------|-----------|-------|
-| `btree` | 동등, 범위, 정렬 (기본값) | 지원 | 지원 |
-| `hash` | 동등만 (범위 불가) | 지원 | 지원 |
-| `gin` | JSONB, 배열, 전문 검색 | 지원 | 미지원 |
-| `gist` | 기하학, 전문 검색, 범위 타입 | 지원 | 미지원 |
-| `brin` | 대규모 시계열 테이블 | 지원 | 미지원 |
+| 타입    | 적합한 용도                  | PostgreSQL | MySQL  |
+| ------- | ---------------------------- | ---------- | ------ |
+| `btree` | 동등, 범위, 정렬 (기본값)    | 지원       | 지원   |
+| `hash`  | 동등만 (범위 불가)           | 지원       | 지원   |
+| `gin`   | JSONB, 배열, 전문 검색       | 지원       | 미지원 |
+| `gist`  | 기하학, 전문 검색, 범위 타입 | 지원       | 미지원 |
+| `brin`  | 대규모 시계열 테이블         | 지원       | 미지원 |
 
 > **참고:** MySQL은 `btree`와 `hash`만 지원해요. `gin`, `gist`, 또는 `brin`을 지정하고 MySQL에서 실행하면 인덱스 생성이 실패해요.
 
@@ -679,7 +698,12 @@ CREATE INDEX "idx_active_user_email" ON "user" ("email") INCLUDE ("name") WHERE 
 
 ```typescript
 // order.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, Version } from "@stingerloom/orm";
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  Version,
+} from "@stingerloom/orm";
 
 @Entity()
 export class Order {
@@ -751,7 +775,12 @@ UPDATE가 0행에 영향을 미치면, 다른 누군가가 먼저 데이터를 �
 
 ```typescript
 // post.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, DeletedAt } from "@stingerloom/orm";
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  DeletedAt,
+} from "@stingerloom/orm";
 
 @Entity()
 export class Post {
@@ -822,10 +851,10 @@ UPDATE "post" SET "deletedAt" = NULL WHERE "id" = 1;
 코드로 보는 전체 라이프사이클이에요:
 
 ```typescript
-await em.softDelete(Post, { id: 1 });                      // soft delete
-const posts = await em.find(Post);                         // excludes deleted
-const all = await em.find(Post, { withDeleted: true });    // includes deleted
-await em.restore(Post, { id: 1 });                         // restore
+await em.softDelete(Post, { id: 1 }); // soft delete
+const posts = await em.find(Post); // excludes deleted
+const all = await em.find(Post, { withDeleted: true }); // includes deleted
+await em.restore(Post, { id: 1 }); // restore
 ```
 
 ## 자동 타임스탬프 (@CreateTimestamp / @UpdateTimestamp)
@@ -841,8 +870,11 @@ await em.restore(Post, { id: 1 });                         // restore
 ```typescript
 // article.entity.ts
 import {
-  Entity, PrimaryGeneratedColumn, Column,
-  CreateTimestamp, UpdateTimestamp,
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateTimestamp,
+  UpdateTimestamp,
 } from "@stingerloom/orm";
 
 @Entity()
@@ -923,7 +955,10 @@ WHERE "id" = 1;
 ```typescript
 // order-line.entity.ts
 import {
-  Entity, PrimaryGeneratedColumn, Column, ComputedColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ComputedColumn,
 } from "@stingerloom/orm";
 
 @Entity()
@@ -1014,10 +1049,10 @@ export class Person {
 
 `stored` 옵션은 데이터베이스가 계산된 값을 처리하는 방식을 제어해요:
 
-| 모드 | `stored` | 동작 | 디스크 공간 | 인덱싱 가능 |
-|------|----------|------|-----------|-----------|
-| **STORED** | `true` | INSERT/UPDATE 시 계산하여 디스크에 저장 | 공간 사용 | 가능 |
-| **VIRTUAL** | `false` (기본값) | 매 SELECT 읽기마다 계산 | 추가 공간 없음 | 제한적 |
+| 모드        | `stored`         | 동작                                    | 디스크 공간    | 인덱싱 가능 |
+| ----------- | ---------------- | --------------------------------------- | -------------- | ----------- |
+| **STORED**  | `true`           | INSERT/UPDATE 시 계산하여 디스크에 저장 | 공간 사용      | 가능        |
+| **VIRTUAL** | `false` (기본값) | 매 SELECT 읽기마다 계산                 | 추가 공간 없음 | 제한적      |
 
 **STORED** 컬럼은 행이 기록될 때 한 번 계산되고 일반 컬럼처럼 디스크에 유지돼요. 인덱싱이 가능하므로, 검색하거나 정렬하는 컬럼(`fullName` 같은)에 적합해요.
 
@@ -1054,8 +1089,11 @@ total!: number;
 ```typescript
 // article.entity.ts
 import {
-  Entity, PrimaryGeneratedColumn, Column,
-  BeforeInsert, BeforeUpdate,
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  BeforeInsert,
+  BeforeUpdate,
 } from "@stingerloom/orm";
 
 @Entity()
@@ -1086,14 +1124,14 @@ INSERT INTO "article" ("title", "slug") VALUES ('Hello World', 'hello-world');
 
 총 6개의 라이프사이클 훅을 사용할 수 있어요.
 
-| 데코레이터 | 실행 시점 | 사용 시기 |
-|-----------|---------|---------|
+| 데코레이터        | 실행 시점            | 사용 시기                               |
+| ----------------- | -------------------- | --------------------------------------- |
 | `@BeforeInsert()` | INSERT SQL 실행 직전 | 기본값 설정, 슬러그 생성, 데이터 정규화 |
-| `@AfterInsert()` | INSERT 완료 후 | 로깅, 알림 전송, 캐시 무효화 |
-| `@BeforeUpdate()` | UPDATE SQL 실행 직전 | 계산 필드 업데이트, 유효성 검사 |
-| `@AfterUpdate()` | UPDATE 완료 후 | 변경 이력 기록, 웹훅 트리거 |
-| `@BeforeDelete()` | DELETE SQL 실행 직전 | 삭제 전 정리, 권한 확인 |
-| `@AfterDelete()` | DELETE 완료 후 | 관련 리소스 정리, 로깅 |
+| `@AfterInsert()`  | INSERT 완료 후       | 로깅, 알림 전송, 캐시 무효화            |
+| `@BeforeUpdate()` | UPDATE SQL 실행 직전 | 계산 필드 업데이트, 유효성 검사         |
+| `@AfterUpdate()`  | UPDATE 완료 후       | 변경 이력 기록, 웹훅 트리거             |
+| `@BeforeDelete()` | DELETE SQL 실행 직전 | 삭제 전 정리, 권한 확인                 |
+| `@AfterDelete()`  | DELETE 완료 후       | 관련 리소스 정리, 로깅                  |
 
 새 엔티티를 삽입하는 `save()` 호출의 실행 순서는 이래요:
 
@@ -1116,8 +1154,14 @@ INSERT INTO "article" ("title", "slug") VALUES ('Hello World', 'hello-world');
 ```typescript
 // member.entity.ts
 import {
-  Entity, PrimaryGeneratedColumn, Column,
-  NotNull, MinLength, MaxLength, Min, Max,
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  NotNull,
+  MinLength,
+  MaxLength,
+  Min,
+  Max,
 } from "@stingerloom/orm";
 
 @Entity()
@@ -1161,9 +1205,18 @@ await em.save(Member, { name: "A", age: -1 });
 ```typescript
 // user.entity.ts
 import {
-  Entity, PrimaryGeneratedColumn, Column, Index, Version,
-  DeletedAt, CreateTimestamp, UpdateTimestamp, AfterInsert,
-  NotNull, MinLength, MaxLength,
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  Index,
+  Version,
+  DeletedAt,
+  CreateTimestamp,
+  UpdateTimestamp,
+  AfterInsert,
+  NotNull,
+  MinLength,
+  MaxLength,
 } from "@stingerloom/orm";
 
 @Entity()
@@ -1271,54 +1324,54 @@ SELECT * FROM "user" WHERE "deletedAt" IS NULL;
 `@Column()`에서 `type`을 생략하면 TypeScript 타입에서 자동으로 추론돼요.
 
 | TypeScript 타입 | ColumnType | 기본 길이 | nullable |
-|----------------|-----------|---------|----------|
-| `String` | varchar | 255 | false |
-| `Number` | int | 11 | false |
-| `Boolean` | boolean | 1 | false |
-| `Date` | datetime | 0 | false |
-| `Buffer` | blob | 0 | true |
-| 기타 | text | 0 | true |
+| --------------- | ---------- | --------- | -------- |
+| `String`        | varchar    | 255       | false    |
+| `Number`        | int        | 11        | false    |
+| `Boolean`       | boolean    | 1         | false    |
+| `Date`          | datetime   | 0         | false    |
+| `Buffer`        | blob       | 0         | true     |
+| 기타            | text       | 0         | true     |
 
 ### ColumnType별 DB 매핑
 
 이 표는 각 추상 `ColumnType`이 각 드라이버의 `castType()` 메서드에 의해 구체적인 데이터베이스 타입으로 어떻게 변환되는지 보여줘요.
 
-| ColumnType | MySQL/MariaDB | PostgreSQL | SQLite |
-|-----------|--------------|-----------|--------|
-| `varchar` | VARCHAR(n) | VARCHAR(n) | TEXT |
-| `int` / `number` | INT | INTEGER | INTEGER |
-| `float` | FLOAT | REAL | REAL |
-| `double` | DOUBLE | DOUBLE PRECISION | REAL |
-| `bigint` | BIGINT | BIGINT | INTEGER |
-| `boolean` | TINYINT(1) | BOOLEAN | INTEGER |
-| `datetime` | DATETIME | TIMESTAMP | TEXT |
-| `timestamp` | TIMESTAMP | TIMESTAMP | TEXT |
-| `timestamptz` | DATETIME | TIMESTAMPTZ | TEXT |
-| `date` | DATE | DATE | TEXT |
-| `text` | TEXT | TEXT | TEXT |
-| `longtext` | LONGTEXT | TEXT | TEXT |
-| `blob` | BLOB | BYTEA | BLOB |
-| `json` | JSON | JSON | TEXT |
-| `jsonb` | JSON | JSONB | TEXT |
-| `enum` | ENUM | (custom ENUM) | TEXT |
+| ColumnType       | MySQL/MariaDB | PostgreSQL       | SQLite  |
+| ---------------- | ------------- | ---------------- | ------- |
+| `varchar`        | VARCHAR(n)    | VARCHAR(n)       | TEXT    |
+| `int` / `number` | INT           | INTEGER          | INTEGER |
+| `float`          | FLOAT         | REAL             | REAL    |
+| `double`         | DOUBLE        | DOUBLE PRECISION | REAL    |
+| `bigint`         | BIGINT        | BIGINT           | INTEGER |
+| `boolean`        | TINYINT(1)    | BOOLEAN          | INTEGER |
+| `datetime`       | DATETIME      | TIMESTAMP        | TEXT    |
+| `timestamp`      | TIMESTAMP     | TIMESTAMP        | TEXT    |
+| `timestamptz`    | DATETIME      | TIMESTAMPTZ      | TEXT    |
+| `date`           | DATE          | DATE             | TEXT    |
+| `text`           | TEXT          | TEXT             | TEXT    |
+| `longtext`       | LONGTEXT      | TEXT             | TEXT    |
+| `blob`           | BLOB          | BYTEA            | BLOB    |
+| `json`           | JSON          | JSON             | TEXT    |
+| `jsonb`          | JSON          | JSONB            | TEXT    |
+| `enum`           | ENUM          | (custom ENUM)    | TEXT    |
 
 ### @Column 전체 옵션
 
-| 옵션 | 타입 | 설명 |
-|------|------|------|
-| `name` | `string` | DB 컬럼 이름 (기본값: 프로퍼티 이름) |
-| `type` | `ColumnType` | 컬럼 타입 (생략 시 자동 추론) |
-| `length` | `number` | 컬럼 길이 |
-| `nullable` | `boolean` | NULL 허용 (기본값: false) |
-| `primary` | `boolean` | 기본 키 여부 |
-| `autoIncrement` | `boolean` | AUTO_INCREMENT 적용 여부 |
-| `default` | `unknown` | 컬럼 기본값 (리터럴 또는 괄호로 감싼 원시 SQL) |
-| `transform` | `(raw) => any` | **(폐기됨)** 읽기 전용 값 변환 함수 |
-| `transformer` | `{ to, from }` | 양방향 값 트랜스포머 (쓰기와 읽기) |
-| `precision` | `number` | 소수 정밀도 |
-| `scale` | `number` | 소수 스케일 |
-| `enumValues` | `string[]` | PostgreSQL ENUM 값 목록 |
-| `enumName` | `string` | PostgreSQL ENUM 타입 이름 |
+| 옵션            | 타입           | 설명                                           |
+| --------------- | -------------- | ---------------------------------------------- |
+| `name`          | `string`       | DB 컬럼 이름 (기본값: 프로퍼티 이름)           |
+| `type`          | `ColumnType`   | 컬럼 타입 (생략 시 자동 추론)                  |
+| `length`        | `number`       | 컬럼 길이                                      |
+| `nullable`      | `boolean`      | NULL 허용 (기본값: false)                      |
+| `primary`       | `boolean`      | 기본 키 여부                                   |
+| `autoIncrement` | `boolean`      | AUTO_INCREMENT 적용 여부                       |
+| `default`       | `unknown`      | 컬럼 기본값 (리터럴 또는 괄호로 감싼 원시 SQL) |
+| `transform`     | `(raw) => any` | **(폐기됨)** 읽기 전용 값 변환 함수            |
+| `transformer`   | `{ to, from }` | 양방향 값 트랜스포머 (쓰기와 읽기)             |
+| `precision`     | `number`       | 소수 정밀도                                    |
+| `scale`         | `number`       | 소수 스케일                                    |
+| `enumValues`    | `string[]`     | PostgreSQL ENUM 값 목록                        |
+| `enumName`      | `string`       | PostgreSQL ENUM 타입 이름                      |
 
 ## 데코레이터 없이 엔티티 정의하기 (EntitySchema)
 
@@ -1343,8 +1396,8 @@ const UserSchema = new EntitySchema<User>({
   target: User,
   tableName: "users",
   columns: {
-    id:    { type: "int", primary: true, autoIncrement: true },
-    name:  { type: "varchar" },
+    id: { type: "int", primary: true, autoIncrement: true },
+    name: { type: "varchar" },
     email: { type: "varchar", nullable: true, index: true },
   },
 });
@@ -1400,7 +1453,7 @@ class Post {
 const PostSchema = new EntitySchema<Post>({
   target: Post,
   columns: {
-    id:    { type: "int", primary: true, autoIncrement: true },
+    id: { type: "int", primary: true, autoIncrement: true },
     title: { type: "varchar" },
   },
   relations: {
@@ -1430,19 +1483,21 @@ const PostSchema = new EntitySchema<Post>({
 
 네 가지 관계 종류가 모두 지원돼요:
 
-| `kind` | 동등한 데코레이터 | 필수 옵션 |
-|--------|-----------------|---------|
-| `"manyToOne"` | `@ManyToOne()` | `target`, 선택적으로 `joinColumn`, `eager`, `lazy`, `cascade` |
-| `"oneToMany"` | `@OneToMany()` | `target`, `mappedBy` |
-| `"oneToOne"` | `@OneToOne()` | `target`, 선택적으로 `joinColumn`, `inverseSide`, `eager`, `cascade` |
-| `"manyToMany"` | `@ManyToMany()` | `target`, 선택적으로 `joinTable` (소유측) 또는 `mappedBy` (역측) |
+| `kind`         | 동등한 데코레이터 | 필수 옵션                                                            |
+| -------------- | ----------------- | -------------------------------------------------------------------- |
+| `"manyToOne"`  | `@ManyToOne()`    | `target`, 선택적으로 `joinColumn`, `eager`, `lazy`, `cascade`        |
+| `"oneToMany"`  | `@OneToMany()`    | `target`, `mappedBy`                                                 |
+| `"oneToOne"`   | `@OneToOne()`     | `target`, 선택적으로 `joinColumn`, `inverseSide`, `eager`, `cascade` |
+| `"manyToMany"` | `@ManyToMany()`   | `target`, 선택적으로 `joinTable` (소유측) 또는 `mappedBy` (역측)     |
 
 ### 고유 인덱스
 
 ```typescript
 const UserSchema = new EntitySchema<User>({
   target: User,
-  columns: { /* ... */ },
+  columns: {
+    /* ... */
+  },
   uniqueIndexes: [
     { columns: ["email", "tenantId"], name: "uq_user_email_tenant" },
   ],
@@ -1466,7 +1521,7 @@ class Article {
 const ArticleSchema = new EntitySchema<Article>({
   target: Article,
   columns: {
-    id:    { type: "int", primary: true, autoIncrement: true },
+    id: { type: "int", primary: true, autoIncrement: true },
     title: { type: "varchar" },
   },
   hooks: {
@@ -1520,13 +1575,13 @@ class AuditLog {
 const AuditLogSchema = new EntitySchema<AuditLog>({
   target: AuditLog,
   columns: {
-    id:     { type: "int", primary: true, autoIncrement: true },
+    id: { type: "int", primary: true, autoIncrement: true },
     action: { type: "varchar" },
   },
 });
 
 // Both can be used with EntityManager
-await em.register({ entities: [User, AuditLog], /* ... */ });
+await em.register({ entities: [User, AuditLog] /* ... */ });
 ```
 
 ## 다음 단계

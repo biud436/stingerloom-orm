@@ -192,7 +192,7 @@ SELECT "name" FROM "__migrations" ORDER BY "id" ASC;
 -- Returns: ['CreateUsersTable', 'AddPhoneToUsers']
 ```
 
-그리고 등록된 migration 목록과 비교해서 아직 실행되지 않은 것만 실행해요. 이 방식 덕분에 migration은 **멱등적(idempotent)**이에요 -- `migrate:run`을 두 번 실행해도 같은 migration이 중복 적용되지 않아요.
+그리고 등록된 migration 목록과 비교해서 아직 실행되지 않은 것만 실행해요. 이 방식 덕분에 migration은 **멱등적**(idempotent)이에요 -- `migrate:run`을 두 번 실행해도 같은 migration이 중복 적용되지 않아요.
 
 롤백할 때는 해당 행이 삭제돼요:
 
