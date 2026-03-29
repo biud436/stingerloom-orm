@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ReflectManager, Logger } from "../utils";
 import { ColumnMetadata, ColumnScanner } from "../scanner/ColumnScanner";
-import Container from "typedi";
+import { getScannerInstance } from "../scanner/ScannerContainer";
 
 const columnLogger = new Logger("Column");
 
@@ -242,7 +242,7 @@ export function Column(option?: ColumnOption): PropertyDecorator {
       target,
     );
 
-    const scanner = Container.get(ColumnScanner);
+    const scanner = getScannerInstance(ColumnScanner);
     const uniqueKey = scanner.createUniqueKey();
 
     scanner.set<ColumnMetadata>(uniqueKey, metadata);

@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import "reflect-metadata";
 import sql from "sql-template-tag";
 import { ClazzType } from "../../utils";
 import {

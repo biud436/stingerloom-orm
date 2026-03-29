@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import "reflect-metadata";
 
 export type HookEvent =
   | "beforeInsert"

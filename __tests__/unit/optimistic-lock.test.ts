@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import { EntityManager } from "../../src/core/EntityManager";
 import { Entity } from "../../src/decorators/Entity";
 import { Column, COLUMN_TOKEN } from "../../src/decorators/Column";

@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { ClassTransformerDeserializer } from "./ClassTransformerDeserializer";
 import { DeserializeOptions } from "./DeserializeOptions";
 import { Deserializer } from "./Deserializer";
 import { MyClassConstructor } from "../MyClassConstructor";
@@ -28,7 +27,22 @@ export class DeserializerRegistry {
   private deserializer: Deserializer;
 
   constructor(deserializer?: Deserializer) {
-    this.deserializer = deserializer ?? new ClassTransformerDeserializer();
+    this.deserializer = deserializer ?? DeserializerRegistry.createDefaultDeserializer();
+  }
+
+  /**
+   * class-transformer가 설치되어 있으면 ClassTransformerDeserializer,
+   * 없으면 PlainObjectDeserializer를 반환합니다.
+   */
+  private static createDefaultDeserializer(): Deserializer {
+    try {
+      require.resolve("class-transformer");
+      const { ClassTransformerDeserializer } = require("./ClassTransformerDeserializer");
+      return new ClassTransformerDeserializer();
+    } catch {
+      const { PlainObjectDeserializer } = require("./PlainObjectDeserializer");
+      return new PlainObjectDeserializer();
+    }
   }
 
   /**

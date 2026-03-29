@@ -34,7 +34,7 @@ import {
   ManyToOne,
   OneToMany,
 } from "../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import {
   ColumnScanner,
   ManyToOneScanner,
@@ -121,9 +121,9 @@ function createPgRelationEntities() {
   const parentTableName = `tp_${ts}`;
   const childTableName = `tc_${ts}`;
 
-  Container.get(ColumnScanner).clear();
-  Container.get(ManyToOneScanner).clear();
-  Container.get(OneToManyScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
+  getScannerInstance(ManyToOneScanner).clear();
+  getScannerInstance(OneToManyScanner).clear();
 
   // ── Parent ──
   const ParentClass = class {} as any;

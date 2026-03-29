@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import {
   Entity,
   ENTITY_TOKEN,
@@ -15,7 +15,7 @@ import {
 
 describe("EntityMetadata — relation metadata completeness (#51)", () => {
   beforeEach(() => {
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should include oneToManys in EntityMetadata", () => {

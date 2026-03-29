@@ -54,6 +54,7 @@ module.exports = {
   transformIgnorePatterns: ["<rootDir>/node_modules/"],
 
   // Setup files
+  setupFiles: ["reflect-metadata"],
   setupFilesAfterEnv: [],
 
   // Coverage configuration

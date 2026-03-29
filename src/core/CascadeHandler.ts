@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import "reflect-metadata";
 import { ClazzType } from "../utils";
 import { WhereClause } from "../dialects/FindOption";
 import { HOOK_TOKEN, HookEvent, HookMetadata } from "../decorators";

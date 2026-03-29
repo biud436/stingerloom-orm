@@ -1,12 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import "reflect-metadata";
 import { randomUUID } from "node:crypto";
 import { ClazzType, Logger, resolveEntityGlobs, generateUUIDv7 } from "../utils";
 import { ColumnMetadata } from "../scanner";
 import { DatabaseClient } from "../DatabaseClient";
-import { MySqlDriver } from "../dialects/mysql/MySqlDriver";
-import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
-import { SqliteDriver } from "../dialects/sqlite/SqliteDriver";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
@@ -14,9 +10,6 @@ import { FindOption, WhereClause } from "../dialects/FindOption";
 import { resolveWhereClause } from "./WhereResolver";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
-import { MySqlDataSource } from "../dialects/mysql/MySqlDataSource";
-import { PostgresDataSource } from "../dialects/postgres/PostgresDataSource";
-import { SqliteDataSource } from "../dialects/sqlite/SqliteDataSource";
 import sql, { Sql, join, raw } from "sql-template-tag";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
@@ -355,18 +348,37 @@ export class EntityManager implements BaseEntityManager {
 
     switch (dbType) {
       case "mariadb":
-      case "mysql":
+      case "mysql": {
+        const { MySqlDriver } = await import("../dialects/mysql/MySqlDriver");
+        const { MySqlDataSource } = await import(
+          "../dialects/mysql/MySqlDataSource"
+        );
         this.driver = new MySqlDriver(connector, dbType);
         this.dataSource = new MySqlDataSource(connector);
         break;
-      case "postgres":
+      }
+      case "postgres": {
+        const { PostgresDriver } = await import(
+          "../dialects/postgres/PostgresDriver"
+        );
+        const { PostgresDataSource } = await import(
+          "../dialects/postgres/PostgresDataSource"
+        );
         this.driver = new PostgresDriver(connector, dbType, schema);
         this.dataSource = new PostgresDataSource(connector);
         break;
-      case "sqlite":
+      }
+      case "sqlite": {
+        const { SqliteDriver } = await import(
+          "../dialects/sqlite/SqliteDriver"
+        );
+        const { SqliteDataSource } = await import(
+          "../dialects/sqlite/SqliteDataSource"
+        );
         this.driver = new SqliteDriver(connector);
         this.dataSource = new SqliteDataSource(connector);
         break;
+      }
       default:
         throw new NotSupportedDatabaseTypeError();
     }

@@ -18,7 +18,7 @@ import {
   Column,
   PrimaryGeneratedColumn,
 } from "../../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../../src/scanner";
 import { DatabaseClient } from "../../../src/DatabaseClient";
 import { SchemaDiff } from "../../../src/core/generators/SchemaDiff";
@@ -35,7 +35,7 @@ const TABLE_NAME = `sd_sync_${String(Date.now()).slice(-7)}`;
  * V1 엔티티: id (PK), name (varchar), age (int)
  */
 function createV1Entity(): new () => any {
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   const DynClass = class {} as any;
   Object.defineProperty(DynClass, "name", {
@@ -60,7 +60,7 @@ function createV1Entity(): new () => any {
  * V2 엔티티: V1 + email (varchar, nullable)
  */
 function createV2WithAddedColumn(): new () => any {
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   const DynClass = class {} as any;
   Object.defineProperty(DynClass, "name", {
@@ -88,7 +88,7 @@ function createV2WithAddedColumn(): new () => any {
  * V3 엔티티: V1 + email + bio (text, nullable) — 2개 컬럼 추가
  */
 function createV3WithMultipleAddedColumns(): new () => any {
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   const DynClass = class {} as any;
   Object.defineProperty(DynClass, "name", {
@@ -119,7 +119,7 @@ function createV3WithMultipleAddedColumns(): new () => any {
  * 타입 변경: age를 int → text로 변경
  */
 function createEntityWithChangedType(): new () => any {
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   const DynClass = class {} as any;
   Object.defineProperty(DynClass, "name", {
@@ -145,7 +145,7 @@ function createEntityWithChangedType(): new () => any {
  * 타입 변경: age를 int → float (INTEGER → REAL, affinity mismatch)
  */
 function createEntityWithRealType(): new () => any {
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   const DynClass = class {} as any;
   Object.defineProperty(DynClass, "name", {
@@ -171,7 +171,7 @@ function createEntityWithRealType(): new () => any {
  * 컬럼 삭제: age 컬럼 없음 (id, name만)
  */
 function createEntityWithDroppedColumn(): new () => any {
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   const DynClass = class {} as any;
   Object.defineProperty(DynClass, "name", {
@@ -193,7 +193,7 @@ function createEntityWithDroppedColumn(): new () => any {
  * 리네임 시뮬레이션: age 제거 + years 추가 (같은 타입 INTEGER)
  */
 function createEntityWithRenamedColumn(): new () => any {
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   const DynClass = class {} as any;
   Object.defineProperty(DynClass, "name", {
@@ -220,7 +220,7 @@ function createEntityWithRenamedColumn(): new () => any {
  */
 function createNewTableEntity(): { entity: new () => any; tableName: string } {
   const newTable = `sd_new_${String(Date.now()).slice(-7)}`;
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   const DynClass = class {} as any;
   Object.defineProperty(DynClass, "name", {
@@ -242,7 +242,7 @@ function createNewTableEntity(): { entity: new () => any; tableName: string } {
  * Type affinity 동일: name을 varchar → text (둘 다 TEXT affinity)
  */
 function createEntityWithSameAffinity(): new () => any {
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   const DynClass = class {} as any;
   Object.defineProperty(DynClass, "name", {
@@ -268,7 +268,7 @@ function createEntityWithSameAffinity(): new () => any {
  * Boolean affinity: age를 boolean으로 (둘 다 INTEGER affinity)
  */
 function createEntityWithBooleanType(): new () => any {
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   const DynClass = class {} as any;
   Object.defineProperty(DynClass, "name", {

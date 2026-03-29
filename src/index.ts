@@ -5,6 +5,9 @@
  * It provides a clean, type-safe API for working with MySQL databases.
  */
 
+// Ensure reflect-metadata is loaded before any decorator usage
+import "reflect-metadata";
+
 // Core ORM functionality
 export * from "./core";
 export * from "./DatabaseClient";

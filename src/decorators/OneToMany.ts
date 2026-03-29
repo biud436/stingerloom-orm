@@ -1,6 +1,5 @@
-import "reflect-metadata";
 import { ClazzType } from "../utils";
-import Container from "typedi";
+import { getScannerInstance } from "../scanner/ScannerContainer";
 import { OneToManyScanner } from "../scanner";
 import { CascadeOption, normalizeCascade } from "../types/CascadeType";
 
@@ -57,7 +56,7 @@ export function OneToMany<T>(
   return (target, propertyKey) => {
     const cls = target.constructor;
 
-    const scanner = Container.get(OneToManyScanner);
+    const scanner = getScannerInstance(OneToManyScanner);
 
     const metadata = {
       target: cls as ClazzType<unknown>,

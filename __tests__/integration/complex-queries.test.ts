@@ -25,7 +25,7 @@ import {
 } from "./helpers/create-test-entity";
 import { qi, dropTableSql, disableFkChecksSql, enableFkChecksSql } from "./helpers/driver-helpers";
 import { Entity, Column, PrimaryGeneratedColumn } from "../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../src/scanner";
 
 const drivers = getTestDrivers();

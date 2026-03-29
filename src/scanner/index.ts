@@ -6,3 +6,4 @@ export * from "./ManyToOneScanner";
 export * from "./OneToManyScanner";
 export * from "./ManyToManyScanner";
 export * from "./OneToOneScanner";
+export * from "./ScannerContainer";

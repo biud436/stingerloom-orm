@@ -15,7 +15,7 @@ import {
 } from "./helpers/test-connection";
 import { getTestDrivers, type TestDriverConfig } from "./helpers/driver-config";
 import { Entity, Column, PrimaryGeneratedColumn } from "../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../src/scanner";
 import { DatabaseClient } from "../../src/DatabaseClient";
 import { SchemaDiff } from "../../src/core/generators/SchemaDiff";
@@ -46,7 +46,7 @@ describe.each(drivers)(
         options?: any;
       }>,
     ): new () => any {
-      Container.get(ColumnScanner).clear();
+      getScannerInstance(ColumnScanner).clear();
 
       const DynClass = class {} as any;
       Object.defineProperty(DynClass, "name", {
@@ -217,7 +217,7 @@ describe.each(drivers)(
 
     it("should detect a brand new table", async () => {
       const newTable = shortTable("sd_new");
-      Container.get(ColumnScanner).clear();
+      getScannerInstance(ColumnScanner).clear();
 
       const NewClass = class {} as any;
       Object.defineProperty(NewClass, "name", {

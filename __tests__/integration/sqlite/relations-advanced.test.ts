@@ -21,7 +21,7 @@ import {
   ManyToOne,
   OneToMany,
 } from "../../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
 import {
   ColumnScanner,
   ManyToOneScanner,
@@ -35,9 +35,9 @@ function shortTableName(prefix: string): string {
 }
 
 function clearScanners(): void {
-  Container.get(ColumnScanner).clear();
-  Container.get(ManyToOneScanner).clear();
-  Container.get(OneToManyScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
+  getScannerInstance(ManyToOneScanner).clear();
+  getScannerInstance(OneToManyScanner).clear();
 }
 
 /**

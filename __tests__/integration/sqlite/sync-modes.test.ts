@@ -9,7 +9,7 @@ import "reflect-metadata";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../../src/scanner/ScannerContainer";
 import { EntityManager } from "../../../src/core/EntityManager";
 import { DatabaseClient } from "../../../src/DatabaseClient";
 import { MetadataLayerRegistry } from "../../../src/scanner/MetadataScanner";
@@ -28,13 +28,13 @@ const TABLE_NAME = "sync_test_users";
 
 function resetState() {
   MetadataLayerRegistry.reset();
-  Container.reset();
+  resetScannerContainer();
 }
 
 function createEntity(
   columns: Array<{ name: string; type?: string; nullable?: boolean; primary?: boolean }>,
 ): new () => any {
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   const DynClass = class {} as any;
   Object.defineProperty(DynClass, "name", { value: TABLE_NAME, writable: false });

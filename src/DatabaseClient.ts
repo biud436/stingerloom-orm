@@ -2,9 +2,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { DatabaseNotConnectedError } from "./errors/DatabaseNotConnectedError";
-import { MySqlConnector } from "./dialects/mysql/MySqlConnector";
-import { PostgresConnector } from "./dialects/postgres/PostgresConnector";
-import { SqliteConnector } from "./dialects/sqlite/SqliteConnector";
 import { DatabaseClientOptions } from "./core/DatabaseClientOptions";
 import { IConnector } from "./core/IConnector";
 import { NotSupportedDatabaseTypeError } from "./errors/NotSupportedDatabaseTypeError";
@@ -53,7 +50,7 @@ export class DatabaseClient {
     this.connectionsType.set(name, type);
     this.connectionsOptions.set(name, options);
 
-    const connector = this.createConnector(type);
+    const connector = await this.createConnector(type);
     this.connectors.set(name, connector);
 
     if (options.retry) {
@@ -66,17 +63,30 @@ export class DatabaseClient {
   }
 
   /**
-   * DB 타입에 맞는 커넥터 인스턴스를 생성합니다.
+   * DB 타입에 맞는 커넥터 인스턴스를 동적으로 생성합니다.
+   * 사용하지 않는 드라이버는 로드하지 않습니다.
    */
-  private createConnector(type: string): IConnector {
+  private async createConnector(type: string): Promise<IConnector> {
     switch (type) {
       case "mariadb":
-      case "mysql":
+      case "mysql": {
+        const { MySqlConnector } = await import(
+          "./dialects/mysql/MySqlConnector"
+        );
         return new MySqlConnector();
-      case "postgres":
+      }
+      case "postgres": {
+        const { PostgresConnector } = await import(
+          "./dialects/postgres/PostgresConnector"
+        );
         return new PostgresConnector();
-      case "sqlite":
+      }
+      case "sqlite": {
+        const { SqliteConnector } = await import(
+          "./dialects/sqlite/SqliteConnector"
+        );
         return new SqliteConnector();
+      }
       default:
         throw new NotSupportedDatabaseTypeError();
     }

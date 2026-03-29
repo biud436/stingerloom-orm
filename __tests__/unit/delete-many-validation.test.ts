@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import { EntityManager } from "../../src/core/EntityManager";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
@@ -55,7 +55,7 @@ describe("deleteMany() scalar validation (#120)", () => {
 
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
     jest.clearAllMocks();
     em = createTestEntityManager();
     (em as any).resolver = {

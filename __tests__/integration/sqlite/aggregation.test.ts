@@ -18,7 +18,7 @@ import {
   Column,
   PrimaryGeneratedColumn,
 } from "../../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../../src/scanner";
 import { generateTableName } from "../helpers/create-test-entity";
 
@@ -322,7 +322,7 @@ describe("[Integration] SQLite In-Memory: EntityManager 집계 테스트", () =>
         logging: false,
       },
       () => {
-        Container.get(ColumnScanner).clear();
+        getScannerInstance(ColumnScanner).clear();
 
         const DynClass = class {} as any;
         Object.defineProperty(DynClass, "name", {

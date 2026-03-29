@@ -15,7 +15,7 @@
 import "reflect-metadata";
 import { Entity, Column, PrimaryGeneratedColumn } from "../../../src";
 import { ColumnOption } from "../../../src/decorators/Column";
-import Container from "typedi";
+import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../../src/scanner";
 
 /**
@@ -75,7 +75,7 @@ export function createDynamicEntity(
   });
 
   // ColumnScanner 클리어 (이전 테스트의 잔여 메타데이터 방지)
-  const columnScanner = Container.get(ColumnScanner);
+  const columnScanner = getScannerInstance(ColumnScanner);
   columnScanner.clear();
 
   // 컬럼 데코레이터 프로그래밍 방식 적용

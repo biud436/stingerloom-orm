@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import "reflect-metadata";
 import { ColumnType } from "./Column";
 
 export const COMPUTED_COLUMN_TOKEN = Symbol.for("STG_COMPUTED_COLUMN");

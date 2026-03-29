@@ -32,7 +32,7 @@ import {
   PrimaryGeneratedColumn,
   ManyToMany,
 } from "../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import { ColumnScanner, ManyToManyScanner } from "../../src/scanner";
 import { TransactionSessionManager } from "../../src/dialects/TransactionSessionManager";
 import {
@@ -96,8 +96,8 @@ function createManyToManyTestEntities(): ManyToManyEntitiesResult {
   const joinTableName = shortName("mj");
 
   // 스캐너 초기화
-  Container.get(ColumnScanner).clear();
-  Container.get(ManyToManyScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
+  getScannerInstance(ManyToManyScanner).clear();
 
   // ── TagClass ──────────────────────────────────────────────────────────────
   const TagClass = class {} as any;

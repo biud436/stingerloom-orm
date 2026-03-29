@@ -33,7 +33,7 @@ import {
   ManyToOne,
   OneToMany,
 } from "../../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
 import {
   ColumnScanner,
   ManyToOneScanner,
@@ -75,9 +75,9 @@ export interface RelatedEntitiesResult {
 
 /** 스캐너 초기화 (방어적 클리어) */
 function clearRelationScanners(): void {
-  Container.get(ColumnScanner).clear();
-  Container.get(ManyToOneScanner).clear();
-  Container.get(OneToManyScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
+  getScannerInstance(ManyToOneScanner).clear();
+  getScannerInstance(OneToManyScanner).clear();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

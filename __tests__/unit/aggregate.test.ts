@@ -3,7 +3,7 @@ import { EntityManager } from "../../src/core/EntityManager";
 import { TransactionSessionManager } from "../../src/dialects/TransactionSessionManager";
 import { DatabaseClient } from "../../src/DatabaseClient";
 import { EntityScanner } from "../../src/scanner";
-import Container from "typedi";
+// ScannerContainer is mocked below
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -43,11 +43,14 @@ const mockEntityScanner = {
   makeEntities: jest.fn(),
 };
 
-// Container.get이 EntityScanner를 반환하도록 mock
-jest.spyOn(Container, "get").mockImplementation((token: any) => {
-  if (token === EntityScanner) return mockEntityScanner as any;
-  return {} as any;
-});
+// getScannerInstance가 EntityScanner mock을 반환하도록 mock
+jest.mock("../../src/scanner/ScannerContainer", () => ({
+  getScannerInstance: (cls: any) => {
+    if (cls === EntityScanner) return mockEntityScanner as any;
+    return {} as any;
+  },
+  resetScannerContainer: jest.fn(),
+}));
 
 // DatabaseClient mock
 const mockGetInstance = jest.fn().mockReturnValue({

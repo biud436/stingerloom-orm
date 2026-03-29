@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import sql from "sql-template-tag";
 import { EntityManager } from "../../src/core/EntityManager";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
@@ -57,7 +57,7 @@ describe("EntityManager.query<T>() - Raw Query Generic", () => {
 
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
     jest.clearAllMocks();
     em = createTestEntityManager();
   });

@@ -10,6 +10,66 @@
       "import": "./dist/esm/index.js",
       "require": "./dist/index.js"
     },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/esm/core/index.js",
+      "require": "./dist/core/index.js"
+    },
+    "./decorators": {
+      "types": "./dist/decorators/index.d.ts",
+      "import": "./dist/esm/decorators/index.js",
+      "require": "./dist/decorators/index.js"
+    },
+    "./mysql": {
+      "types": "./dist/dialects/mysql/index.d.ts",
+      "import": "./dist/esm/dialects/mysql/index.js",
+      "require": "./dist/dialects/mysql/index.js"
+    },
+    "./postgres": {
+      "types": "./dist/dialects/postgres/index.d.ts",
+      "import": "./dist/esm/dialects/postgres/index.js",
+      "require": "./dist/dialects/postgres/index.js"
+    },
+    "./sqlite": {
+      "types": "./dist/dialects/sqlite/index.d.ts",
+      "import": "./dist/esm/dialects/sqlite/index.js",
+      "require": "./dist/dialects/sqlite/index.js"
+    },
+    "./metadata": {
+      "types": "./dist/metadata/index.d.ts",
+      "import": "./dist/esm/metadata/index.js",
+      "require": "./dist/metadata/index.js"
+    },
+    "./migration": {
+      "types": "./dist/migration/index.d.ts",
+      "import": "./dist/esm/migration/index.js",
+      "require": "./dist/migration/index.js"
+    },
+    "./seeding": {
+      "types": "./dist/seeding/index.d.ts",
+      "import": "./dist/esm/seeding/index.js",
+      "require": "./dist/seeding/index.js"
+    },
+    "./introspection": {
+      "types": "./dist/introspection/index.d.ts",
+      "import": "./dist/esm/introspection/index.js",
+      "require": "./dist/introspection/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "import": "./dist/esm/schema/index.js",
+      "require": "./dist/schema/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors/index.d.ts",
+      "import": "./dist/esm/errors/index.js",
+      "require": "./dist/errors/index.js"
+    },
+    "./plugin": {
+      "types": "./dist/core/plugin/index.d.ts",
+      "import": "./dist/esm/core/plugin/index.js",
+      "require": "./dist/core/plugin/index.js"
+    },
     "./nestjs": {
       "types": "./dist/integration/nestjs/index.d.ts",
       "import": "./dist/esm/integration/nestjs/index.js",
@@ -23,12 +83,20 @@
   },
   "typesVersions": {
     "*": {
-      "nestjs": [
-        "dist/integration/nestjs/index.d.ts"
-      ],
-      "prisma-import": [
-        "dist/integration/prisma-import/index.d.ts"
-      ]
+      "core": ["dist/core/index.d.ts"],
+      "decorators": ["dist/decorators/index.d.ts"],
+      "mysql": ["dist/dialects/mysql/index.d.ts"],
+      "postgres": ["dist/dialects/postgres/index.d.ts"],
+      "sqlite": ["dist/dialects/sqlite/index.d.ts"],
+      "metadata": ["dist/metadata/index.d.ts"],
+      "migration": ["dist/migration/index.d.ts"],
+      "seeding": ["dist/seeding/index.d.ts"],
+      "introspection": ["dist/introspection/index.d.ts"],
+      "schema": ["dist/schema/index.d.ts"],
+      "errors": ["dist/errors/index.d.ts"],
+      "plugin": ["dist/core/plugin/index.d.ts"],
+      "nestjs": ["dist/integration/nestjs/index.d.ts"],
+      "prisma-import": ["dist/integration/prisma-import/index.d.ts"]
     }
   },
   "bin": {
@@ -39,6 +107,14 @@
     "dist",
     "LICENSE",
     "README.md"
+  ],
+  "sideEffects": [
+    "dist/decorators/*.js",
+    "dist/esm/decorators/*.js",
+    "dist/scanner/*.js",
+    "dist/esm/scanner/*.js",
+    "dist/core/deserializer/DeserializeEntity.js",
+    "dist/esm/core/deserializer/DeserializeEntity.js"
   ],
   "packageManager": "pnpm@10.29.2",
   "engines": {
@@ -67,9 +143,7 @@
     "docs:preview": "vitepress preview docs"
   },
   "dependencies": {
-    "class-transformer": "^0.5.1",
-    "sql-template-tag": "^4.0.0",
-    "typedi": "^0.10.0"
+    "sql-template-tag": "^4.0.0"
   },
   "peerDependencies": {
     "@mrleebo/prisma-ast": ">=0.12.0",
@@ -79,9 +153,13 @@
     "fast-glob": ">=3.0.0",
     "mysql2": "^3.0.0",
     "pg": "^8.0.0",
-    "reflect-metadata": ">=0.1.0"
+    "reflect-metadata": ">=0.1.0",
+    "class-transformer": ">=0.5.0"
   },
   "peerDependenciesMeta": {
+    "class-transformer": {
+      "optional": true
+    },
     "mysql2": {
       "optional": true
     },

@@ -1,12 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import "reflect-metadata";
 import { ClazzType, ReflectManager, Logger } from "../utils";
 import {
   ColumnMetadata,
   EntityScannerMetadata,
   EntityScanner,
 } from "../scanner";
-import Container from "typedi";
+import { getScannerInstance } from "../scanner/ScannerContainer";
 import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { SchemaGenerator, SchemaDialect } from "./generators/SchemaGenerator";
 import {
@@ -53,7 +52,7 @@ export class SchemaRegistrar {
   }
 
   async registerEntities() {
-    const entityScanner = Container.get(EntityScanner);
+    const entityScanner = getScannerInstance(EntityScanner);
     const entities = entityScanner.makeEntities();
 
     let entity: IteratorResult<EntityScannerMetadata>;
@@ -592,7 +591,7 @@ export class SchemaRegistrar {
 
   async registerForeignKeys(TargetEntity: ClazzType<any>, tableName: string) {
     // 엔티티 매니저를 가지고 옵니다.
-    const entityScanner = Container.get(EntityScanner);
+    const entityScanner = getScannerInstance(EntityScanner);
     const driver = this.ctx.getDriver();
 
     // ManyToOne 관계를 레이어 시스템을 통해 가져옵니다.

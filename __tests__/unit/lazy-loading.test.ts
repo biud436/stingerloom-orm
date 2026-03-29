@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import {
   ManyToOne,
   MANY_TO_ONE_TOKEN,
@@ -18,7 +18,7 @@ import {
 describe("@ManyToOne lazy option - metadata", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should store lazy: true in ManyToOne metadata option", () => {
@@ -98,7 +98,7 @@ describe("@ManyToOne lazy option - metadata", () => {
       author!: Author;
     }
 
-    const scanner = Container.get(ManyToOneScanner);
+    const scanner = getScannerInstance(ManyToOneScanner);
     const allRelations = [...scanner.makeManyToOnes()];
     const bookRelation = allRelations.find((r) => r.target === Book);
 
@@ -471,7 +471,7 @@ describe("createLazyProxy - race condition fix (undefined/null loadFn result)", 
 describe("Lazy loading - eager takes precedence", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should have both eager and lazy flags accessible in metadata", () => {

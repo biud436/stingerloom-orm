@@ -1,6 +1,5 @@
-import "reflect-metadata";
 import { ClazzType } from "../utils";
-import Container from "typedi";
+import { getScannerInstance } from "../scanner/ScannerContainer";
 import { OneToOneScanner } from "../scanner/OneToOneScanner";
 import { CascadeOption } from "../types/CascadeType";
 import { ReferentialAction } from "../types/ReferentialAction";
@@ -94,7 +93,7 @@ export function OneToOne<T>(
   return (target, propertyKey) => {
     const cls = target.constructor;
 
-    const scanner = Container.get(OneToOneScanner);
+    const scanner = getScannerInstance(OneToOneScanner);
 
     const metadata = <OneToOneMetadata<T>>{
       target: cls,

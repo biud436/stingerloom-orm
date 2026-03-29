@@ -1,4 +1,3 @@
-import "reflect-metadata";
 import {
   Injectable,
   OnModuleInit,
@@ -7,7 +6,8 @@ import {
 import { EntityManager } from "../../core/EntityManager";
 import { Logger } from "../../utils/Logger";
 import type { ClazzType } from "../../utils/types";
-import Container from "typedi";
+// Lightweight global registry for NestJS EntityManager injection
+const globalRegistry = new Map<Function, unknown>();
 
 export const STINGERLOOM_ORM_SERVICE_TOKEN = Symbol.for(
   "STINGERLOOM_ORM_SERVICE_TOKEN",
@@ -54,8 +54,8 @@ export class StinglerloomOrmService
   }
 
   private async initEntityManager(): Promise<void> {
-    if (!Container.has(EntityManager)) {
-      Container.set(EntityManager, this.entityManager);
+    if (!globalRegistry.has(EntityManager)) {
+      globalRegistry.set(EntityManager, this.entityManager);
     }
   }
 

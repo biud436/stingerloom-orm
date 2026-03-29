@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import "reflect-metadata";
 import { Type } from "./types";
 import { ENTITY_TOKEN } from "../decorators/Entity";
 import { ENTITY_METADATA_TOKEN } from "../decorators/InjectEntityManager";

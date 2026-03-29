@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance } from "../scanner/ScannerContainer";
 import {
   ColumnScanner,
   EntityScanner,
@@ -119,7 +118,7 @@ function resolveColumnOption(
 export class EntitySchemaRegistrar {
   static registerColumns<T>(options: EntitySchemaOptions<T>): void {
     const proto = options.target.prototype;
-    const columnScanner = Container.get(ColumnScanner);
+    const columnScanner = getScannerInstance(ColumnScanner);
 
     for (const [key, def] of Object.entries<ColumnSchemaDef>(
       options.columns as Record<string, ColumnSchemaDef>,
@@ -180,7 +179,7 @@ export class EntitySchemaRegistrar {
     propertyKey: string,
     def: { kind: "manyToOne"; target: () => ClazzType; joinColumn?: string; references?: string; eager?: boolean; cascade?: any; lazy?: boolean; onDelete?: any; onUpdate?: any; createForeignKeyConstraints?: boolean },
   ): void {
-    const scanner = Container.get(ManyToOneScanner);
+    const scanner = getScannerInstance(ManyToOneScanner);
 
     const metadata: ManyToOneMetadata<any> = {
       target: cls,
@@ -214,7 +213,7 @@ export class EntitySchemaRegistrar {
     propertyKey: string,
     def: { kind: "oneToMany"; target: () => ClazzType; mappedBy: string; cascade?: any },
   ): void {
-    const scanner = Container.get(OneToManyScanner);
+    const scanner = getScannerInstance(OneToManyScanner);
 
     const metadata: OneToManyMetadata<any> = {
       target: cls,
@@ -236,7 +235,7 @@ export class EntitySchemaRegistrar {
     propertyKey: string,
     def: { kind: "oneToOne"; target: () => ClazzType; joinColumn?: string; inverseSide?: string; eager?: boolean; cascade?: any; onDelete?: any; onUpdate?: any; createForeignKeyConstraints?: boolean },
   ): void {
-    const scanner = Container.get(OneToOneScanner);
+    const scanner = getScannerInstance(OneToOneScanner);
 
     const metadata: OneToOneMetadata<any> = {
       target: cls,
@@ -267,7 +266,7 @@ export class EntitySchemaRegistrar {
     propertyKey: string,
     def: { kind: "manyToMany"; target: () => ClazzType; joinTable?: any; mappedBy?: string; cascade?: any },
   ): void {
-    const scanner = Container.get(ManyToManyScanner);
+    const scanner = getScannerInstance(ManyToManyScanner);
 
     const metadata: ManyToManyMetadata<any> = {
       target: cls,
@@ -399,12 +398,12 @@ export class EntitySchemaRegistrar {
   }
 
   static registerEntity<T>(options: EntitySchemaOptions<T>): void {
-    const scanner = Container.get(EntityScanner);
-    const columnScanner = Container.get(ColumnScanner);
-    const manyToOneScanner = Container.get(ManyToOneScanner);
-    const oneToManyScanner = Container.get(OneToManyScanner);
-    const oneToOneScanner = Container.get(OneToOneScanner);
-    const manyToManyScanner = Container.get(ManyToManyScanner);
+    const scanner = getScannerInstance(EntityScanner);
+    const columnScanner = getScannerInstance(ColumnScanner);
+    const manyToOneScanner = getScannerInstance(ManyToOneScanner);
+    const oneToManyScanner = getScannerInstance(OneToManyScanner);
+    const oneToOneScanner = getScannerInstance(OneToOneScanner);
+    const manyToManyScanner = getScannerInstance(ManyToManyScanner);
 
     const cls = options.target;
     const proto = cls.prototype;

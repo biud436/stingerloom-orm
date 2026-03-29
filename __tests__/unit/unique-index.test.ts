@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import {
   UniqueIndex,
   UNIQUE_INDEX_TOKEN,
@@ -20,7 +20,7 @@ import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 describe("@UniqueIndex decorator", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should store unique index metadata on the class", () => {
@@ -183,7 +183,7 @@ describe("Driver.addCompositeUniqueIndex()", () => {
 describe("SchemaGenerator.generateUniqueIndexDDL()", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   describe("MySQL dialect", () => {
@@ -268,7 +268,7 @@ describe("SchemaGenerator.generateUniqueIndexDDL()", () => {
 describe("SchemaGenerator.generateSchemaDDL() with @UniqueIndex", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should include unique index DDL in schema generation", () => {

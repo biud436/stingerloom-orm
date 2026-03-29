@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import { EntityManager } from "../../src/core/EntityManager";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
@@ -59,7 +59,7 @@ describe("Pagination validation (#123)", () => {
 
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
     jest.clearAllMocks();
     em = createTestEntityManager();
   });

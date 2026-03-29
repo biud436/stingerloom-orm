@@ -31,7 +31,7 @@ import {
   ManyToOne,
   Index,
 } from "../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import { ColumnScanner, ManyToOneScanner } from "../../src/scanner";
 import {
   getTestDrivers,
@@ -76,7 +76,7 @@ function createBasicSchemaEntity(baseName = "schema_test"): SchemaTestResult {
     writable: false,
   });
 
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   // id (PK)
   Reflect.defineMetadata("design:type", Number, DynamicClass.prototype, "id");
@@ -121,7 +121,7 @@ function createIndexedEntity(baseName = "idx_test"): IndexedEntityResult {
     writable: false,
   });
 
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   // id (PK)
   Reflect.defineMetadata("design:type", Number, DynamicClass.prototype, "id");
@@ -158,8 +158,8 @@ function createFkTestEntities(): FkEntitiesResult {
   const parentTableName = shortTableName("sp");
   const childTableName = shortTableName("sc");
 
-  Container.get(ColumnScanner).clear();
-  Container.get(ManyToOneScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
+  getScannerInstance(ManyToOneScanner).clear();
 
   // ── ParentClass ─────────────────────────────────────────────────────────
   const ParentClass = class {} as any;
@@ -441,7 +441,7 @@ describe.each(getTestDrivers())(
               writable: false,
             });
 
-            Container.get(ColumnScanner).clear();
+            getScannerInstance(ColumnScanner).clear();
 
             Reflect.defineMetadata("design:type", Number, DynamicClass.prototype, "id");
             PrimaryGeneratedColumn()(DynamicClass.prototype, "id");

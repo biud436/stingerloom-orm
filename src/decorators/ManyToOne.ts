@@ -1,6 +1,5 @@
-import "reflect-metadata";
 import { ClazzType, ReflectManager } from "../utils";
-import Container from "typedi";
+import { getScannerInstance } from "../scanner/ScannerContainer";
 import { ManyToOneScanner } from "../scanner";
 import { CascadeOption } from "../types/CascadeType";
 import { ReferentialAction } from "../types/ReferentialAction";
@@ -104,7 +103,7 @@ export function ManyToOne<T extends EntityLike>(
 
     const injectParam = ReflectManager.getType<any>(cls, propertyKey);
 
-    const scanner = Container.get(ManyToOneScanner);
+    const scanner = getScannerInstance(ManyToOneScanner);
 
     const columnName = propertyKey.toString();
     const metadata = <ManyToOneMetadata<T>>{

@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import {
   ManyToOne,
   MANY_TO_ONE_TOKEN,
@@ -14,7 +14,7 @@ import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 describe("@ManyToOne eager option", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should store eager: true in ManyToOne metadata option", () => {
@@ -94,7 +94,7 @@ describe("@ManyToOne eager option", () => {
       author!: Author;
     }
 
-    const scanner = Container.get(ManyToOneScanner);
+    const scanner = getScannerInstance(ManyToOneScanner);
     const allRelations = [...scanner.makeManyToOnes()];
     const bookRelation = allRelations.find((r) => r.target === Book);
 
@@ -141,7 +141,7 @@ describe("@ManyToOne eager option", () => {
 describe("Eager loading with bidirectional relationships", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should support eager @ManyToOne with @OneToMany inverse", () => {

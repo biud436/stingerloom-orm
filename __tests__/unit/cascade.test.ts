@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import {
   OneToMany,
   ONE_TO_MANY_TOKEN,
@@ -96,7 +96,7 @@ describe("Cascade 옵션", () => {
   describe("@OneToMany cascade 데코레이터 통합", () => {
     beforeEach(() => {
       MetadataLayerRegistry.reset();
-      Container.reset();
+      resetScannerContainer();
     });
 
     it("cascade 배열이 메타데이터에 저장되어야 한다", () => {
@@ -266,7 +266,7 @@ describe("Cascade 옵션", () => {
   describe("@ManyToOne cascade 데코레이터 통합", () => {
     beforeEach(() => {
       MetadataLayerRegistry.reset();
-      Container.reset();
+      resetScannerContainer();
     });
 
     it("cascade 배열이 메타데이터에 저장되어야 한다", () => {
@@ -351,7 +351,7 @@ describe("Cascade 옵션", () => {
         user!: User;
       }
 
-      const scanner = Container.get(ManyToOneScanner);
+      const scanner = getScannerInstance(ManyToOneScanner);
       const allMeta = [...scanner.makeManyToOnes()];
 
       const postMeta = allMeta.find((m) => m.columnName === "user");
@@ -363,7 +363,7 @@ describe("Cascade 옵션", () => {
   describe("Cascade metadata via layer system", () => {
     beforeEach(() => {
       MetadataLayerRegistry.reset();
-      Container.reset();
+      resetScannerContainer();
     });
 
     it("cascade metadata가 OneToManyScanner에 등록되어야 한다", () => {
@@ -379,7 +379,7 @@ describe("Cascade 옵션", () => {
         posts!: Post[];
       }
 
-      const scanner = Container.get(OneToManyScanner);
+      const scanner = getScannerInstance(OneToManyScanner);
       const results = scanner.scan(User);
 
       expect(results).toHaveLength(1);
@@ -399,7 +399,7 @@ describe("Cascade 옵션", () => {
         posts!: Post[];
       }
 
-      const scanner = Container.get(OneToManyScanner);
+      const scanner = getScannerInstance(OneToManyScanner);
       const allMeta = scanner.allMetadata<OneToManyMetadata<any>>();
 
       const userPosts = allMeta.find(
@@ -414,7 +414,7 @@ describe("Cascade 옵션", () => {
     });
 
     it("tenant 컨텍스트에서 cascade metadata를 격리해야 한다", () => {
-      const scanner = Container.get(OneToManyScanner);
+      const scanner = getScannerInstance(OneToManyScanner);
 
       // Register in public context
       scanner.switchContext("public");

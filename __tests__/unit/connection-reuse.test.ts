@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import { EntityManager } from "../../src/core/EntityManager";
 import { TransactionSessionManager } from "../../src/dialects/TransactionSessionManager";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
@@ -125,7 +125,7 @@ describe("Connection Reuse (Issue #30)", () => {
 
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
     // mockQuery의 once-queue를 확실히 비우기 위해 mockReset 사용
     mockQuery.mockReset();
     mockConnect.mockReset().mockResolvedValue(undefined);

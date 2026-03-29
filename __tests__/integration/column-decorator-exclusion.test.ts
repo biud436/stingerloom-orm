@@ -26,7 +26,7 @@ import {
   normalizeColumns,
 } from "./helpers/driver-helpers";
 import { Entity, Column, PrimaryGeneratedColumn } from "../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../src/scanner";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@ function createEntityWithUndecoratedProperty(): ExclusionTestResult {
     writable: false,
   });
 
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   // id (PK) — @PrimaryGeneratedColumn 있음
   Reflect.defineMetadata("design:type", Number, DynamicClass.prototype, "id");

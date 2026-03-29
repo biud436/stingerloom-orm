@@ -1,6 +1,5 @@
-import "reflect-metadata";
 import { ClazzType } from "../utils";
-import Container from "typedi";
+import { getScannerInstance } from "../scanner/ScannerContainer";
 import { ManyToManyScanner } from "../scanner";
 import { CascadeOption } from "../types/CascadeType";
 
@@ -95,7 +94,7 @@ export function ManyToMany<T>(
   return (target, propertyKey) => {
     const cls = target.constructor;
 
-    const scanner = Container.get(ManyToManyScanner);
+    const scanner = getScannerInstance(ManyToManyScanner);
 
     const metadata = <ManyToManyMetadata<T>>{
       target: cls,

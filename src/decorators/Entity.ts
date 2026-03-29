@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import Container from "typedi";
+import { getScannerInstance } from "../scanner/ScannerContainer";
 import { ColumnScanner, EntityScanner, ManyToOneScanner, OneToManyScanner, ManyToManyScanner } from "../scanner";
 import { OneToOneScanner } from "../scanner/OneToOneScanner";
 import { createEntityKey } from "../utils/scanner";
@@ -35,12 +35,12 @@ export type EntityMetadata<T = any> = {
 
 export function Entity(options?: EntityOption): ClassDecorator {
   return function (target) {
-    const scanner = Container.get(EntityScanner);
-    const columnScanner = Container.get(ColumnScanner);
-    const manyToOneScanner = Container.get(ManyToOneScanner);
-    const oneToManyScanner = Container.get(OneToManyScanner);
-    const oneToOneScanner = Container.get(OneToOneScanner);
-    const manyToManyScanner = Container.get(ManyToManyScanner);
+    const scanner = getScannerInstance(EntityScanner);
+    const columnScanner = getScannerInstance(ColumnScanner);
+    const manyToOneScanner = getScannerInstance(ManyToOneScanner);
+    const oneToManyScanner = getScannerInstance(OneToManyScanner);
+    const oneToOneScanner = getScannerInstance(OneToOneScanner);
+    const manyToManyScanner = getScannerInstance(ManyToManyScanner);
 
     const hasExplicitName = !!options?.name;
     const nameKey = hasExplicitName

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import {
   EntitySchema,
   EntitySchemaOptions,
@@ -34,12 +34,12 @@ import { ColumnMetadata } from "../../src/scanner/ColumnScanner";
 
 // ─── Helper: clear all scanners between tests ────────────────────────────────
 function clearScanners() {
-  Container.get(EntityScanner).clear();
-  Container.get(ColumnScanner).clear();
-  Container.get(ManyToOneScanner).clear();
-  Container.get(OneToManyScanner).clear();
-  Container.get(OneToOneScanner).clear();
-  Container.get(ManyToManyScanner).clear();
+  getScannerInstance(EntityScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
+  getScannerInstance(ManyToOneScanner).clear();
+  getScannerInstance(OneToManyScanner).clear();
+  getScannerInstance(OneToOneScanner).clear();
+  getScannerInstance(ManyToManyScanner).clear();
 }
 
 // ─── Helper: create a fresh class for each test ──────────────────────────────
@@ -336,7 +336,7 @@ describe("EntitySchema — Entity Registration", () => {
       },
     });
 
-    const scanner = Container.get(EntityScanner);
+    const scanner = getScannerInstance(EntityScanner);
     const found = scanner.scan(Scanned);
     expect(found).toBeDefined();
     expect(found!.target).toBe(Scanned);
@@ -578,7 +578,7 @@ describe("EntitySchema — Relations", () => {
       },
     });
 
-    const scanner = Container.get(ManyToOneScanner);
+    const scanner = getScannerInstance(ManyToOneScanner);
     const allRels = scanner
       .allMetadata<any>()
       .filter((r: any) => r.target === A);
@@ -1056,7 +1056,7 @@ describe("EntitySchema — Scanner ↔ Reflect consistency", () => {
       COLUMN_TOKEN,
       Dual.prototype,
     );
-    const scannerCols = Container.get(ColumnScanner)
+    const scannerCols = getScannerInstance(ColumnScanner)
       .allMetadata<ColumnMetadata>()
       .filter((c) => c.target === Dual.prototype);
 

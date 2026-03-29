@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import "reflect-metadata";
 import { ClazzType, Logger } from "../utils";
 import {
   ColumnMetadata,
@@ -10,7 +9,7 @@ import {
   ManyToManyScanner,
   OneToOneScanner,
 } from "../scanner";
-import Container from "typedi";
+import { getScannerInstance } from "../scanner/ScannerContainer";
 import {
   ENTITY_TOKEN,
   MANY_TO_ONE_TOKEN,
@@ -51,7 +50,7 @@ export class RelationMetadataResolver {
       : "public";
 
     // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
-    const entityScanner = Container.get(EntityScanner);
+    const entityScanner = getScannerInstance(EntityScanner);
     const layeredMetadata = entityScanner.scan(entity);
     if (layeredMetadata) {
       return layeredMetadata;
@@ -129,7 +128,7 @@ export class RelationMetadataResolver {
     entity: ClazzType<T>,
   ): ManyToOneMetadata<any>[] {
     // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
-    const manyToOneScanner = Container.get(ManyToOneScanner);
+    const manyToOneScanner = getScannerInstance(ManyToOneScanner);
     const allRelations = manyToOneScanner.getByTarget<ManyToOneMetadata<any>>(entity);
 
     if (allRelations.length > 0) {
@@ -211,7 +210,7 @@ export class RelationMetadataResolver {
     entity: ClazzType<T>,
   ): OneToManyMetadata<any>[] {
     // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
-    const oneToManyScanner = Container.get(OneToManyScanner);
+    const oneToManyScanner = getScannerInstance(OneToManyScanner);
     const allRelations = oneToManyScanner.getByTarget<OneToManyMetadata<any>>(entity);
 
     if (allRelations.length > 0) {
@@ -248,7 +247,7 @@ export class RelationMetadataResolver {
     entity: ClazzType<T>,
   ): ManyToManyMetadata<any>[] {
     // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
-    const manyToManyScanner = Container.get(ManyToManyScanner);
+    const manyToManyScanner = getScannerInstance(ManyToManyScanner);
     const allRelations = manyToManyScanner.getByTarget<ManyToManyMetadata<any>>(entity);
 
     if (allRelations.length > 0) {
@@ -285,7 +284,7 @@ export class RelationMetadataResolver {
     entity: ClazzType<T>,
   ): OneToOneMetadata<any>[] {
     // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
-    const oneToOneScanner = Container.get(OneToOneScanner);
+    const oneToOneScanner = getScannerInstance(OneToOneScanner);
     const allRelations = oneToOneScanner.getByTarget<OneToOneMetadata<any>>(entity);
 
     if (allRelations.length > 0) {

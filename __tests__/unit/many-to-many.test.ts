@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import {
   ManyToMany,
   MANY_TO_MANY_TOKEN,
@@ -13,7 +13,7 @@ import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 describe("@ManyToMany decorator", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should store metadata with joinTable option (owning side)", () => {
@@ -134,7 +134,7 @@ describe("@ManyToMany decorator", () => {
 describe("ManyToManyScanner", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should register metadata in the scanner via the decorator", () => {
@@ -151,7 +151,7 @@ describe("ManyToManyScanner", () => {
       permissions!: Permission[];
     }
 
-    const scanner = Container.get(ManyToManyScanner);
+    const scanner = getScannerInstance(ManyToManyScanner);
     const results = scanner.scan(Role);
 
     expect(results).toHaveLength(1);
@@ -184,7 +184,7 @@ describe("ManyToManyScanner", () => {
       categories!: Category[];
     }
 
-    const scanner = Container.get(ManyToManyScanner);
+    const scanner = getScannerInstance(ManyToManyScanner);
     const allMeta = [...scanner.makeManyToManys()];
 
     expect(allMeta).toHaveLength(2);
@@ -195,14 +195,14 @@ describe("ManyToManyScanner", () => {
   it("should return empty array when scanning entity with no @ManyToMany", () => {
     class PlainEntity {}
 
-    const scanner = Container.get(ManyToManyScanner);
+    const scanner = getScannerInstance(ManyToManyScanner);
     const results = scanner.scan(PlainEntity);
 
     expect(results).toHaveLength(0);
   });
 
   it("should support layered metadata context switching", () => {
-    const scanner = Container.get(ManyToManyScanner);
+    const scanner = getScannerInstance(ManyToManyScanner);
 
     // Register in public context
     scanner.switchContext("public");
@@ -242,7 +242,7 @@ describe("ManyToManyScanner", () => {
 describe("@ManyToMany bidirectional", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should support bidirectional ManyToMany with joinTable and mappedBy", () => {

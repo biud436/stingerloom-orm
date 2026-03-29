@@ -31,7 +31,7 @@ import {
   PrimaryGeneratedColumn,
   OneToOne,
 } from "../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import {
   ColumnScanner,
   OneToOneScanner,
@@ -72,8 +72,8 @@ function createOneToOneTestEntities(): OneToOneEntitiesResult {
   const userTableName = shortTableName("ou");
 
   // 스캐너 초기화
-  Container.get(ColumnScanner).clear();
-  Container.get(OneToOneScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
+  getScannerInstance(OneToOneScanner).clear();
 
   // ── ProfileClass ──────────────────────────────────────────────────────────
   const ProfileClass = class {} as any;

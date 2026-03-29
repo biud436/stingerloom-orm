@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import "reflect-metadata";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { SchemaDiffResult, ColumnChange, RenamedColumn, EnumChange } from "./SchemaDiff";

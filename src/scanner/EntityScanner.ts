@@ -2,8 +2,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { MetadataScanner } from "./MetadataScanner";
 import { ClazzType } from "../utils";
-import { Service } from "typedi";
-
 export type EntityScannerMetadata = {
   target: ClazzType<any>;
   name?: string;
@@ -11,7 +9,6 @@ export type EntityScannerMetadata = {
   indexes?: any[];
 };
 
-@Service()
 export class EntityScanner extends MetadataScanner {
   constructor() {
     super("entities");

@@ -1,4 +1,3 @@
-import "reflect-metadata";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const VALIDATION_TOKEN = Symbol.for("STG_VALIDATION");

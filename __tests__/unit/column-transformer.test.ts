@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import { EntityManager } from "../../src/core/EntityManager";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 import { ResultTransformer } from "../../src/core/ResultTransformer";
@@ -199,7 +199,7 @@ describe("Bidirectional Column Transformers (#128)", () => {
 
     beforeEach(() => {
       MetadataLayerRegistry.reset();
-      Container.reset();
+      resetScannerContainer();
       jest.clearAllMocks();
       em = new EntityManager();
       (em as any).driver = {

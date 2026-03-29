@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import { EntityManager } from "../../src/core/EntityManager";
 import { TransactionSessionManager } from "../../src/dialects/TransactionSessionManager";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
@@ -157,7 +157,7 @@ function resetMocks() {
 describe("Read-only Query Optimization (Issue #78)", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
     resetMocks();
   });
 

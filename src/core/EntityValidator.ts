@@ -1,4 +1,3 @@
-import "reflect-metadata";
 import { ClazzType } from "../utils";
 import { VALIDATION_TOKEN, ValidationMetadata } from "../decorators/Validation";
 import { ValidationError } from "../errors/ValidationError";

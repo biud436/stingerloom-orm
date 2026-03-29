@@ -1,10 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { MetadataScanner } from "./MetadataScanner";
-import { Service } from "typedi";
 import { ManyToOneMetadata } from "../decorators";
 import { ClazzType } from "../utils";
 
-@Service()
 export class ManyToOneScanner extends MetadataScanner {
   constructor() {
     super("relations");

@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import sql, { join, raw } from "sql-template-tag";
 import { EntityManager } from "../../src/core/EntityManager";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
@@ -82,7 +82,7 @@ describe("EntityManager.saveMany()", () => {
 
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
     jest.clearAllMocks();
     em = createTestEntityManager();
   });
@@ -184,7 +184,7 @@ describe("EntityManager.insertMany()", () => {
 
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
     jest.clearAllMocks();
     em = createTestEntityManager();
   });
@@ -361,7 +361,7 @@ describe("EntityManager.deleteMany()", () => {
 
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
     jest.clearAllMocks();
     em = createTestEntityManager();
   });

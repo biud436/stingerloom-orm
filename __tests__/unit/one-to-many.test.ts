@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import { OneToMany, ONE_TO_MANY_TOKEN, OneToManyMetadata } from "../../src/decorators/OneToMany";
 import { ManyToOne } from "../../src/decorators/ManyToOne";
 import { OneToManyScanner } from "../../src/scanner/OneToManyScanner";
@@ -8,7 +8,7 @@ import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 describe("@OneToMany decorator", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should store metadata via Reflect.defineMetadata with ONE_TO_MANY_TOKEN", () => {
@@ -85,7 +85,7 @@ describe("@OneToMany decorator", () => {
 describe("OneToManyScanner", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should register metadata in the scanner via the decorator", () => {
@@ -96,7 +96,7 @@ describe("OneToManyScanner", () => {
       comments!: Comment[];
     }
 
-    const scanner = Container.get(OneToManyScanner);
+    const scanner = getScannerInstance(OneToManyScanner);
     const results = scanner.scan(Post);
 
     expect(results).toHaveLength(1);
@@ -118,7 +118,7 @@ describe("OneToManyScanner", () => {
       comments!: Comment[];
     }
 
-    const scanner = Container.get(OneToManyScanner);
+    const scanner = getScannerInstance(OneToManyScanner);
     const allMeta = [...scanner.makeOneToManys()];
 
     expect(allMeta).toHaveLength(2);
@@ -129,14 +129,14 @@ describe("OneToManyScanner", () => {
   it("should return empty array when scanning entity with no @OneToMany", () => {
     class PlainEntity {}
 
-    const scanner = Container.get(OneToManyScanner);
+    const scanner = getScannerInstance(OneToManyScanner);
     const results = scanner.scan(PlainEntity);
 
     expect(results).toHaveLength(0);
   });
 
   it("should use layered metadata store and support context switching", () => {
-    const scanner = Container.get(OneToManyScanner);
+    const scanner = getScannerInstance(OneToManyScanner);
 
     // Register in public context
     scanner.switchContext("public");
@@ -184,7 +184,7 @@ describe("OneToManyScanner", () => {
 describe("@OneToMany and @ManyToOne bidirectional", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   });
 
   it("should allow bidirectional relationship setup", () => {

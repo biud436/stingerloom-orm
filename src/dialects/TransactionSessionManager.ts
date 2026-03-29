@@ -2,9 +2,6 @@
 import { Sql } from "sql-template-tag";
 import { DatabaseClient } from "../DatabaseClient";
 import { IConnector } from "../core/IConnector";
-import { MySqlDataSource } from "./mysql/MySqlDataSource";
-import { PostgresDataSource } from "./postgres/PostgresDataSource";
-import { SqliteDataSource } from "./sqlite/SqliteDataSource";
 import { IDataSource } from "./IDataSource";
 import { Logger } from "../utils";
 import { DatabaseConnectionFailedError } from "../errors/DatabaseConnectionFailedError";
@@ -15,8 +12,6 @@ import { Exception } from "../errors";
 import { ReplicationNodeConfig } from "./ReplicationRouter";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
-import { MySqlConnector } from "./mysql/MySqlConnector";
-import { PostgresConnector } from "./postgres/PostgresConnector";
 import { validateSavepointName } from "../utils/validateSavepointName";
 
 /**
@@ -36,6 +31,29 @@ export class TransactionSessionManager extends IQueryEngine {
     super();
   }
 
+  private async createDataSource(
+    dbType: string | undefined,
+    connection: IConnector,
+  ): Promise<IDataSource> {
+    if (dbType === "postgres") {
+      const { PostgresDataSource } = await import(
+        "./postgres/PostgresDataSource"
+      );
+      return new PostgresDataSource(connection);
+    } else if (dbType === "sqlite") {
+      const { SqliteDataSource } = await import("./sqlite/SqliteDataSource");
+      return new SqliteDataSource(connection);
+    } else if (dbType === "mysql" || dbType === "mariadb") {
+      const { MySqlDataSource } = await import("./mysql/MySqlDataSource");
+      return new MySqlDataSource(connection);
+    }
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_DATABASE,
+      `Unsupported database type: ${dbType}`,
+      "Supported types: mysql, mariadb, postgres, sqlite",
+    );
+  }
+
   /**
    * Establishes a connection to the database and initializes the data source.
    *
@@ -50,19 +68,7 @@ export class TransactionSessionManager extends IQueryEngine {
       const dbType = connectionName
         ? DatabaseClient.getInstance().getType?.(connectionName) ?? DatabaseClient.getInstance().type
         : DatabaseClient.getInstance().type;
-      if (dbType === "postgres") {
-        this.dataSource = new PostgresDataSource(this.connection);
-      } else if (dbType === "sqlite") {
-        this.dataSource = new SqliteDataSource(this.connection);
-      } else if (dbType === "mysql" || dbType === "mariadb") {
-        this.dataSource = new MySqlDataSource(this.connection);
-      } else {
-        throw new OrmError(
-          OrmErrorCode.UNSUPPORTED_DATABASE,
-          `Unsupported database type: ${dbType}`,
-          "Supported types: mysql, mariadb, postgres, sqlite",
-        );
-      }
+      this.dataSource = await this.createDataSource(dbType, this.connection);
 
       await this.dataSource.createConnection();
     } catch (error: unknown) {
@@ -84,9 +90,13 @@ export class TransactionSessionManager extends IQueryEngine {
       const options = DatabaseClient.getInstance().getOptions();
 
       if (dbType === "postgres") {
+        const { PostgresConnector } = await import(
+          "./postgres/PostgresConnector"
+        );
         connector = new PostgresConnector();
       } else {
         // mysql, mariadb
+        const { MySqlConnector } = await import("./mysql/MySqlConnector");
         connector = new MySqlConnector();
       }
 
@@ -101,20 +111,7 @@ export class TransactionSessionManager extends IQueryEngine {
       });
 
       this.connection = connector;
-
-      if (dbType === "postgres") {
-        this.dataSource = new PostgresDataSource(this.connection);
-      } else if (dbType === "sqlite") {
-        this.dataSource = new SqliteDataSource(this.connection);
-      } else if (dbType === "mysql" || dbType === "mariadb") {
-        this.dataSource = new MySqlDataSource(this.connection);
-      } else {
-        throw new OrmError(
-          OrmErrorCode.UNSUPPORTED_DATABASE,
-          `Unsupported database type: ${dbType}`,
-          "Supported types: mysql, postgres, sqlite",
-        );
-      }
+      this.dataSource = await this.createDataSource(dbType, this.connection);
 
       await this.dataSource.createConnection();
     } catch (error: unknown) {

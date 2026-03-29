@@ -36,7 +36,7 @@ import {
   DeletedAt,
   DELETED_AT_TOKEN,
 } from "../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../src/scanner";
 import { getTestDrivers, type TestDriverConfig } from "./helpers/driver-config";
 
@@ -58,7 +58,7 @@ function createSoftDeleteEntity(baseName = "sd_test"): SoftDeleteEntityResult {
     writable: false,
   });
 
-  const columnScanner = Container.get(ColumnScanner);
+  const columnScanner = getScannerInstance(ColumnScanner);
   columnScanner.clear();
 
   // id (PK)

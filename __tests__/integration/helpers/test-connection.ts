@@ -15,7 +15,7 @@
 import "reflect-metadata";
 import * as path from "path";
 import * as fs from "fs";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../../src/scanner/ScannerContainer";
 import { EntityManager } from "../../../src/core/EntityManager";
 import { DatabaseClientOptions } from "../../../src/core/DatabaseClientOptions";
 import { DatabaseClient } from "../../../src/DatabaseClient";
@@ -102,7 +102,7 @@ export async function createTestConnection(
 ): Promise<TestConnectionResult> {
   // 이전 상태 클린업 (싱글톤 재사용 대비)
   MetadataLayerRegistry.reset();
-  Container.reset();
+  resetScannerContainer();
 
   // 리셋 이후에 엔티티 생성 (메타데이터가 초기화된 깨끗한 상태에서)
   let factoryResult: { entities: any[]; [key: string]: any } | undefined;
@@ -130,7 +130,7 @@ export async function createTestConnection(
       // 이미 닫혀있으면 무시
     }
     MetadataLayerRegistry.reset();
-    Container.reset();
+    resetScannerContainer();
   };
 
   return { em, cleanup, options };
@@ -142,7 +142,7 @@ export async function createTestConnection(
  */
 export function resetMetadata(): void {
   MetadataLayerRegistry.reset();
-  Container.reset();
+  resetScannerContainer();
 }
 
 /**

@@ -20,7 +20,7 @@ import {
   CreateTimestamp,
   UpdateTimestamp,
 } from "../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../src/scanner";
 import {
   getTestDrivers,
@@ -44,7 +44,7 @@ function createTimestampEntity() {
     writable: false,
   });
 
-  Container.get(ColumnScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
 
   Reflect.defineMetadata("design:type", Number, DynamicClass.prototype, "id");
   PrimaryGeneratedColumn()(DynamicClass.prototype, "id");

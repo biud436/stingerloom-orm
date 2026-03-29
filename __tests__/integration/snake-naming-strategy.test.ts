@@ -24,7 +24,7 @@ import {
   OneToMany,
 } from "../../src";
 import { SnakeNamingStrategy } from "../../src/core/generators/SnakeNamingStrategy";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../src/scanner";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 import { DatabaseClient } from "../../src/DatabaseClient";
@@ -56,7 +56,7 @@ describeIf("[Integration] SnakeNamingStrategy", () => {
         namingStrategy: new SnakeNamingStrategy(),
       },
       () => {
-        const columnScanner = Container.get(ColumnScanner);
+        const columnScanner = getScannerInstance(ColumnScanner);
         columnScanner.clear();
 
         // -- Author entity --

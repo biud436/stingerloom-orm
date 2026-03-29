@@ -24,7 +24,7 @@ import {
   ManyToOne,
   OneToMany,
 } from "../../src";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import {
   ColumnScanner,
   ManyToOneScanner,
@@ -59,9 +59,9 @@ function createPartialUpdateEntities() {
   const parentTableName = `pu_p_${ts}`;
   const childTableName = `pu_c_${ts}`;
 
-  Container.get(ColumnScanner).clear();
-  Container.get(ManyToOneScanner).clear();
-  Container.get(OneToManyScanner).clear();
+  getScannerInstance(ColumnScanner).clear();
+  getScannerInstance(ManyToOneScanner).clear();
+  getScannerInstance(OneToManyScanner).clear();
 
   // ── Parent ──
   const ParentClass = class {} as any;

@@ -2,7 +2,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { MetadataScanner } from "./MetadataScanner";
 import { ClazzType } from "../utils";
-import { Service } from "typedi";
 import { ColumnOption } from "../decorators/Column";
 
 export type ColumnMetadata = {
@@ -28,7 +27,6 @@ export type ColumnMetadata = {
   transformer?: import("../decorators/Column").ColumnTransformer;
 };
 
-@Service()
 export class ColumnScanner extends MetadataScanner {
   constructor() {
     super("columns");

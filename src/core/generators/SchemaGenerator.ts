@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import "reflect-metadata";
 import crypto from "crypto";
 import { ClazzType } from "../../utils";
 import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../../decorators/Column";

@@ -10,7 +10,7 @@
  */
 
 import "reflect-metadata";
-import Container from "typedi";
+import { getScannerInstance, resetScannerContainer } from "../../src/scanner/ScannerContainer";
 import { MetadataContext } from "../../src/metadata/MetadataContext";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 import { EntityScanner, ColumnScanner } from "../../src/scanner";
@@ -22,7 +22,7 @@ import { EntityScanner, ColumnScanner } from "../../src/scanner";
 function resetAll() {
   MetadataContext.reset();
   MetadataLayerRegistry.reset();
-  Container.reset();
+  resetScannerContainer();
 }
 
 // ────────────────────────────────────────────────────────
@@ -287,7 +287,7 @@ describe("EntityScanner — allMetadata() 병합 뷰", () => {
     // tenant_a 컨텍스트로 전환
     registry.setContext("tenant_a");
 
-    const entityScanner = Container.get(EntityScanner);
+    const entityScanner = getScannerInstance(EntityScanner);
     const all = entityScanner.allMetadata();
 
     // public의 UserBase가 tenant_a에서도 보임 (fallback)
@@ -312,7 +312,7 @@ describe("EntityScanner — allMetadata() 병합 뷰", () => {
         name: "tenant_a_table",
       });
 
-    const entityScanner = Container.get(EntityScanner);
+    const entityScanner = getScannerInstance(EntityScanner);
     const all = entityScanner.allMetadata<any>();
 
     const entry = all.find((m: any) => m.name === "tenant_a_table");
@@ -340,8 +340,8 @@ describe("EntityScanner vs ColumnScanner — prefix 격리", () => {
       .getCurrentLayer()
       .set("columns::id", { name: "id", type: "int" });
 
-    const entityScanner = Container.get(EntityScanner);
-    const columnScanner = Container.get(ColumnScanner);
+    const entityScanner = getScannerInstance(EntityScanner);
+    const columnScanner = getScannerInstance(ColumnScanner);
 
     const entities = entityScanner.allMetadata();
     const columns = columnScanner.allMetadata();
@@ -367,7 +367,7 @@ describe("MetadataScanner — has() / size / switchContext()", () => {
       .set("entities::GlobalEntity", { name: "global" });
 
     registry.setContext("tenant_x");
-    const entityScanner = Container.get(EntityScanner);
+    const entityScanner = getScannerInstance(EntityScanner);
 
     // tenant_x에 직접 없지만 public에 있으므로 has() = true
     expect(entityScanner.has("GlobalEntity")).toBe(true);
@@ -387,14 +387,14 @@ describe("MetadataScanner — has() / size / switchContext()", () => {
     registry.setContext("tenant_x");
     registry.getCurrentLayer().set("entities::C", { name: "table_c" });
 
-    const entityScanner = Container.get(EntityScanner);
+    const entityScanner = getScannerInstance(EntityScanner);
     // public 2개 + tenant 1개 = 3개
     expect(entityScanner.size).toBe(3);
   });
 
   it("switchContext()가 레지스트리 컨텍스트를 변경한다", () => {
     const registry = MetadataLayerRegistry.getInstance();
-    const entityScanner = Container.get(EntityScanner);
+    const entityScanner = getScannerInstance(EntityScanner);
 
     entityScanner.switchContext("custom_tenant");
     expect(registry.getContext()).toBe("custom_tenant");

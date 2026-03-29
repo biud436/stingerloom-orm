@@ -20,7 +20,7 @@ import {
 } from "../../src/decorators";
 import { EntityScanner, ColumnMetadata } from "../../src/scanner";
 import { Expose } from "class-transformer";
-import Container from "typedi";
+import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 
 describe("Column Accessor", () => {
   let entityScanner: EntityScanner;
@@ -138,7 +138,7 @@ describe("Column Accessor", () => {
   }
 
   beforeEach(() => {
-    entityScanner = Container.get(EntityScanner);
+    entityScanner = getScannerInstance(EntityScanner);
     // 엔티티들을 스캔하여 메타데이터 생성
     [User, Post, Category, Tag, Profile].forEach((entity) =>
       entityScanner.scan(entity),
