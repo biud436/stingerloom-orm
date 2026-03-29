@@ -53,7 +53,7 @@ CREATE TABLE `user` (
 
 세 가지 데코레이터가 각각 무엇을 하는지 살펴볼게요.
 
-**`@Entity()`**는 이 클래스가 ORM 엔티티임을 선언해요. 클래스 이름 `User`는 자동으로 snake_case로 변환되어 테이블 이름 `user`가 돼요. 테이블 이름을 직접 지정하려면 옵션을 전달하면 돼요.
+**`@Entity()`** 는 이 클래스가 ORM 엔티티임을 선언해요. 클래스 이름 `User`는 자동으로 snake_case로 변환되어 테이블 이름 `user`가 돼요. 테이블 이름을 직접 지정하려면 옵션을 전달하면 돼요.
 
 ```typescript
 // user.entity.ts
@@ -63,7 +63,7 @@ export class User {
 }
 ```
 
-**`@PrimaryGeneratedColumn()`**은 자동 증가 기본 키를 정의해요. SQL 수준에서 이건 이렇게 변환돼요:
+**`@PrimaryGeneratedColumn()`** 은 자동 증가 기본 키를 정의해요. SQL 수준에서 이건 이렇게 변환돼요:
 
 - **PostgreSQL:** `SERIAL PRIMARY KEY` (시퀀스를 생성하고 기본값으로 설정하는 축약형)
 - **MySQL:** `INT NOT NULL AUTO_INCREMENT PRIMARY KEY`
