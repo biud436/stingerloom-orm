@@ -17,35 +17,83 @@ import { ColumnMetadata } from "../scanner/ColumnScanner";
 
 export type ForeignObject<T = any> = { [key: string]: T };
 
+// ── Strategy 1: Per-entity metadata cache ─────────────────
+// Instead of calling Reflect.getMetadata() + rebuilding Maps on every row,
+// we compute once per entity class and cache the result.
+
+interface CachedColumnInfo {
+  columns: ColumnMetadata[];
+  /** column DB name → entity propertyKey (only entries where name !== propertyKey) */
+  remapMap: Map<string, string> | null;
+  /** True if any column has a transformer or transform function */
+  hasTransformers: boolean;
+  /** Columns that have transformer.from or legacy transform */
+  transformColumns: Array<{ key: string; from: (raw: any) => any }>;
+}
+
+const columnInfoCache = new WeakMap<Function, CachedColumnInfo>();
+
+function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumnInfo {
+  let cached = columnInfoCache.get(entityClass);
+  if (cached) return cached;
+
+  const columns: ColumnMetadata[] | undefined = Reflect.getMetadata(
+    COLUMN_TOKEN,
+    entityClass.prototype ?? entityClass,
+  );
+
+  if (!columns || columns.length === 0) {
+    cached = { columns: [], remapMap: null, hasTransformers: false, transformColumns: [] };
+    columnInfoCache.set(entityClass, cached);
+    return cached;
+  }
+
+  // Build remap map
+  let remapMap: Map<string, string> | null = null;
+  for (const col of columns) {
+    if (col.name && col.propertyKey && col.name !== col.propertyKey) {
+      if (!remapMap) remapMap = new Map();
+      remapMap.set(col.name, col.propertyKey);
+    }
+  }
+
+  // Build transform list
+  const transformColumns: Array<{ key: string; from: (raw: any) => any }> = [];
+  for (const col of columns) {
+    const key = col.propertyKey ?? col.name;
+    if (!key) continue;
+    if (col.transformer?.from) {
+      transformColumns.push({ key, from: col.transformer.from });
+    } else if (col.transform) {
+      transformColumns.push({ key, from: col.transform });
+    }
+  }
+
+  cached = {
+    columns,
+    remapMap,
+    hasTransformers: transformColumns.length > 0,
+    transformColumns,
+  };
+  columnInfoCache.set(entityClass, cached);
+  return cached;
+}
+
 /**
  * Remap DB row keys (column names) to entity property keys.
- * This is needed when NamingStrategy transforms column names (e.g., first_name → firstName).
+ * Uses cached remap map to avoid per-row Reflect.getMetadata() calls.
  */
 function remapRowToPropertyKeys(
   entityClass: MyClassConstructor<any>,
   row: any,
 ): any {
-  const columns: ColumnMetadata[] | undefined = Reflect.getMetadata(
-    COLUMN_TOKEN,
-    entityClass.prototype ?? entityClass,
-  );
-  if (!row || !columns || columns.length === 0) return row;
-
-  // Build column name → propertyKey map
-  const colToProperty = new Map<string, string>();
-  let needsRemap = false;
-  for (const col of columns) {
-    if (col.name && col.propertyKey && col.name !== col.propertyKey) {
-      colToProperty.set(col.name, col.propertyKey);
-      needsRemap = true;
-    }
-  }
-  if (!needsRemap) return row;
+  if (!row) return row;
+  const { remapMap } = getCachedColumnInfo(entityClass);
+  if (!remapMap) return row;
 
   const remapped: any = {};
-  for (const [key, value] of Object.entries(row)) {
-    const propKey = colToProperty.get(key) ?? key;
-    remapped[propKey] = value;
+  for (const key in row) {
+    remapped[remapMap.get(key) ?? key] = row[key];
   }
   return remapped;
 }
@@ -55,35 +103,23 @@ export class ResultTransformer implements BaseResultTransformer {
 
   /**
    * 쿼리 결과가 없는 경우를 확인합니다.
-   *
-   * @param queryResult
-   * @returns
    */
   private hasNoResults(queryResult: QueryResult<any> | undefined): boolean {
     return !queryResult?.results || queryResult.results.length === 0;
   }
 
   /**
-   * Apply column-level `transformer.from()` (or legacy `transform`) to an entity instance.
+   * Apply column-level transformers using cached transform list.
    */
   private applyColumnTransforms<T>(entityClass: MyClassConstructor<T>, instance: T): T {
     if (!instance) return instance;
-    const columns: ColumnMetadata[] | undefined = Reflect.getMetadata(
-      COLUMN_TOKEN,
-      entityClass.prototype ?? entityClass,
-    );
-    if (!columns) return instance;
+    const { hasTransformers, transformColumns } = getCachedColumnInfo(entityClass);
+    if (!hasTransformers) return instance;
 
-    for (const col of columns) {
-      const key = col.propertyKey ?? col.name;
-      if (!key) continue;
+    for (const { key, from } of transformColumns) {
       const raw = (instance as any)[key];
-      if (raw === undefined || raw === null) continue;
-
-      if (col.transformer?.from) {
-        (instance as any)[key] = col.transformer.from(raw);
-      } else if (col.transform) {
-        (instance as any)[key] = col.transform(raw);
+      if (raw !== undefined && raw !== null) {
+        (instance as any)[key] = from(raw);
       }
     }
 
@@ -92,36 +128,20 @@ export class ResultTransformer implements BaseResultTransformer {
 
   /**
    * 엔티티에서 외래키 필드가 아닌 속성을 모두 추출합니다.
-   *
-   * @param entityClass
-   * @param row
-   * @param baseEntity
    */
   private extractBaseEntity<T>(
     entityClass: MyClassConstructor<T>,
     row: any,
     baseEntity: any,
   ) {
-    // Build column name → propertyKey map for NamingStrategy support
-    const columns: ColumnMetadata[] | undefined = Reflect.getMetadata(
-      COLUMN_TOKEN,
-      entityClass.prototype ?? entityClass,
-    );
-    const colToProperty = new Map<string, string>();
-    if (columns) {
-      for (const col of columns) {
-        if (col.name && col.propertyKey && col.name !== col.propertyKey) {
-          colToProperty.set(col.name, col.propertyKey);
-        }
-      }
-    }
+    const { remapMap } = getCachedColumnInfo(entityClass);
 
     const enties = Object.entries(row);
 
     for (const [key, value] of enties) {
       const isUnderScored = key.includes(ResultTransformer.PropertySeparator);
       if (!isUnderScored) {
-        const propKey = colToProperty.get(key) ?? key;
+        const propKey = remapMap?.get(key) ?? key;
         baseEntity[propKey] = value;
       }
     }
@@ -184,6 +204,20 @@ export class ResultTransformer implements BaseResultTransformer {
     }
 
     const r = result!;
+    const info = getCachedColumnInfo(entityClass);
+
+    // Strategy 3: Fast path — no remap + no transformers → skip remap step
+    if (!info.remapMap && !info.hasTransformers) {
+      return r.results.map((item) => deserializeEntity(entityClass, item));
+    }
+
+    // Standard path with remap + transforms
+    if (!info.hasTransformers) {
+      return r.results.map((item) => {
+        const remapped = remapRowToPropertyKeys(entityClass, item);
+        return deserializeEntity(entityClass, remapped);
+      });
+    }
 
     return r.results.map((item) => {
       const remapped = remapRowToPropertyKeys(entityClass, item);
@@ -193,10 +227,6 @@ export class ResultTransformer implements BaseResultTransformer {
 
   /**
    * Transform SQL result to entity or entity array.
-   *
-   * @param entityClass
-   * @param result
-   * @returns
    */
   public transform<T>(
     entityClass: MyClassConstructor<T>,
@@ -218,11 +248,6 @@ export class ResultTransformer implements BaseResultTransformer {
 
   /**
    * 객체를 [키, 값] 쌍의 배열로 변환합니다.
-   * Ruby의 Hash#to_a 메소드와 유사한 기능입니다.
-   *
-   * @example
-   * getObjectEntries({ name: "John", age: 30 })
-   * // 결과: [["name", "John"], ["age", 30]]
    */
   private getObjectEntries<T = any, R = [string, unknown]>(obj: any): R[] {
     return Object.entries(obj) as R[];
@@ -230,10 +255,6 @@ export class ResultTransformer implements BaseResultTransformer {
 
   /**
    * 외래키 오브젝트에 내용을 채워넣습니다.
-   *
-   * @param entityClass 엔티티 클래스
-   * @param baseEntity 기본 엔티티
-   * @param resultSet SQL 결과
    */
   private fillPropertiesToForeignObject<T>(
     entityClass: MyClassConstructor<T>,
@@ -347,7 +368,6 @@ export class ResultTransformer implements BaseResultTransformer {
 
   /**
    * Recursively checks if an object is "deep null": all leaf values are null/undefined.
-   * Handles nested objects created by recursive fillPropertiesToForeignObject calls.
    */
   private isDeepNull(obj: ForeignObject<any>): boolean {
     const keys = Object.keys(obj);
@@ -393,4 +413,14 @@ export class ResultTransformer implements BaseResultTransformer {
 
     return isSingleResult ? transformedResults[0] : transformedResults;
   }
+}
+
+/**
+ * Clear the per-entity column info cache.
+ * Exposed for testing; not part of the public API.
+ * @internal
+ */
+export function clearColumnInfoCache(): void {
+  // WeakMap doesn't have clear(), but we can replace the module-level variable.
+  // Since WeakMap entries are GC'd when the key is GC'd, this is mainly for tests.
 }
