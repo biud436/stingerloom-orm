@@ -256,6 +256,13 @@ export class RawPipeline<T> {
   }
 
   private async *binaryKeyset(driver: any, driverOptions: DriverQueryOptions): AsyncGenerator<any[], void, undefined> {
+    // arrayMode returns rows as arrays — cannot extract cursor by column name.
+    // Fall back to offset pagination for arrayMode + keyset.
+    if (driverOptions.arrayMode) {
+      yield* this.binaryOffset(driver, driverOptions);
+      return;
+    }
+
     const orderEntries = Object.entries(this.options.orderBy ?? {});
     if (orderEntries.length === 0) {
       yield* this.binaryOffset(driver, driverOptions);
