@@ -143,6 +143,7 @@ export class RawPipeline<T> {
   private readonly batchSize: number;
   private readonly info: EntityInfo;
   private readonly useKeyset: boolean;
+  private readonly dialect: "mysql" | "postgres" | "sqlite" | undefined;
 
   constructor(
     private readonly ctx: PluginContext,
@@ -152,6 +153,11 @@ export class RawPipeline<T> {
     this.batchSize = Math.max(options.batchSize ?? 1000, 1);
     this.info = getEntityInfo(entity, (s) => ctx.wrap(s));
     this.useKeyset = !!options.keyset && !!options.orderBy;
+
+    // Detect dialect once at construction time
+    if (ctx.isMySqlFamily()) this.dialect = "mysql";
+    else if (ctx.isPostgres()) this.dialect = "postgres";
+    else if (ctx.isSqlite()) this.dialect = "sqlite";
   }
 
   /**
@@ -397,12 +403,8 @@ export class RawPipeline<T> {
     const opts: WhereResolverOptions = {
       wrapColumn: (n) => this.ctx.wrap(n),
       propertyToColumn: this.info.propToCol,
+      dialect: this.dialect,
     };
-
-    // Detect dialect
-    if (this.ctx.isMySqlFamily()) opts.dialect = "mysql";
-    else if (this.ctx.isPostgres()) opts.dialect = "postgres";
-    else if (this.ctx.isSqlite()) opts.dialect = "sqlite";
 
     return [...resolveWhereClause(this.options.where as WhereClause<T>, opts)];
   }
