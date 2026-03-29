@@ -231,17 +231,21 @@ interface StingerloomPlugin<TApi = {}> {
 
 ## Built-in Plugins
 
-Stingerloom ships with one built-in plugin:
+Stingerloom ships with two built-in plugins:
 
 | Plugin | Import | Description |
 |--------|--------|-------------|
 | **Buffer (UoW)** | `bufferPlugin()` | Unit of Work -- tracks entity changes in memory and flushes them as a single atomic transaction. Identity Map, dirty checking, cascade, pessimistic locking, and more. |
+| **Raw Pipeline** | `rawPipelinePlugin()` | Bypasses entity transformation for large-data scenarios. Streams raw rows or binary buffers directly from the database driver with batched pagination and transformation chaining. 4.4x faster than `em.find()` at 100K rows. |
 
-See the dedicated guide: **[WriteBuffer (Unit of Work)](./write-buffer.md)**
+See the dedicated guides:
+- **[WriteBuffer (Unit of Work)](./write-buffer.md)**
+- **[Raw Pipeline](./raw-pipeline.md)**
 
 ## Next Steps
 
 - [WriteBuffer (Unit of Work)](./write-buffer.md) -- The built-in UoW plugin
+- [Raw Pipeline](./raw-pipeline.md) -- Large-data streaming without entity overhead
 - [EntityManager](./entity-manager.md) -- CRUD, pagination, and events
 - [Transactions](./transactions.md) -- Manual and decorator-based transactions
 - [API Reference](./api-reference.md) -- Full method signatures

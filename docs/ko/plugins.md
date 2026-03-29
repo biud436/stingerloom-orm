@@ -231,17 +231,21 @@ interface StingerloomPlugin<TApi = {}> {
 
 ## Built-in Plugins
 
-Stingerloom에는 기본 제공 플러그인이 하나 있어요:
+Stingerloom에는 두 개의 기본 제공 플러그인이 있습니다:
 
 | Plugin | Import | 설명 |
 |--------|--------|------|
-| **Buffer (UoW)** | `bufferPlugin()` | Unit of Work -- 엔티티 변경사항을 메모리에 추적하고 단일 원자적 트랜잭션으로 flush해요. Identity Map, dirty checking, cascade, pessimistic locking 등을 지원해요. |
+| **Buffer (UoW)** | `bufferPlugin()` | Unit of Work -- 엔티티 변경사항을 메모리에 추적하고 단일 원자적 트랜잭션으로 flush합니다. Identity Map, dirty checking, cascade, pessimistic locking 등을 지원합니다. |
+| **Raw Pipeline** | `rawPipelinePlugin()` | 대규모 데이터 처리 시 Entity 변환을 우회합니다. 데이터베이스 드라이버에서 raw 행이나 바이너리 버퍼를 배치 페이지네이션과 변환 체이닝으로 직접 스트리밍합니다. 100K 행 기준 `em.find()`보다 4.4배 빠릅니다. |
 
-자세한 내용은 전용 가이드를 참고하세요: **[WriteBuffer (Unit of Work)](./write-buffer.md)**
+자세한 내용은 전용 가이드를 참고하세요:
+- **[WriteBuffer (Unit of Work)](./write-buffer.md)**
+- **[Raw Pipeline](./raw-pipeline.md)**
 
 ## Next Steps
 
 - [WriteBuffer (Unit of Work)](./write-buffer.md) -- 기본 제공 UoW 플러그인
+- [Raw Pipeline](./raw-pipeline.md) -- Entity 오버헤드 없는 대용량 데이터 스트리밍
 - [EntityManager](./entity-manager.md) -- CRUD, pagination, events
 - [Transactions](./transactions.md) -- 수동 및 데코레이터 기반 트랜잭션
 - [API Reference](./api-reference.md) -- 전체 메서드 시그니처

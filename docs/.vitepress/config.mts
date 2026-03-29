@@ -37,6 +37,7 @@ function sidebarEn() {
       items: [
         { text: "Query Builder", link: "/query-builder" },
         { text: "Raw SQL & CTE", link: "/raw-sql" },
+        { text: "Raw Pipeline", link: "/raw-pipeline" },
         { text: "Pagination & Streaming", link: "/pagination" },
       ],
     },
@@ -124,6 +125,7 @@ function sidebarKo() {
       items: [
         { text: "쿼리 빌더", link: "/ko/query-builder" },
         { text: "Raw SQL & CTE", link: "/ko/raw-sql" },
+        { text: "Raw Pipeline", link: "/ko/raw-pipeline" },
         { text: "페이지네이션 & 스트리밍", link: "/ko/pagination" },
       ],
     },
