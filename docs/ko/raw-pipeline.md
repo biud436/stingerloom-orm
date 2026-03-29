@@ -411,43 +411,83 @@ for await (const batch of em.pipe(User, {
 }
 ```
 
+### Binary 모드 벤치마크 — 실제 데이터베이스
+
+로컬 네트워크의 실제 PostgreSQL과 MySQL에서 동일한 벤치마크를 실행했습니다. 결과는 `raw()`와 `binary()` 사이의 중요한 아키텍처적 차이를 보여줍니다:
+
+**PostgreSQL (pg 8.18.0, 원격 서버):**
+
+| 방식 | 1K행 | 10K행 | 100K행 | 메모리 (100K) |
+|------|------|-------|--------|--------------|
+| `em.find()` | 23.1ms | 130.4ms | 1.18s | 44.55 MB |
+| `pipe().raw()` | 72.4ms | 746.2ms | 6.45s | 31.75 MB |
+| `pipe().binary()` | 27.3ms | 185.4ms | 2.88s | 34.57 MB |
+| `pipe().arrayMode()` | 26.2ms | 215.6ms | **2.74s** | **28.20 MB** |
+
+**MySQL (mysql2 3.16.3, 원격 MariaDB):**
+
+| 방식 | 1K행 | 10K행 | 100K행 | 메모리 (100K) |
+|------|------|-------|--------|--------------|
+| `em.find()` | 16.5ms | 119.4ms | 1.09s | 42.45 MB |
+| `pipe().raw()` | 86.7ms | 1.09s | 11.52s | 29.30 MB |
+| `pipe().binary()` | 19.3ms | 199.1ms | 5.05s | 71.69 MB |
+| `pipe().arrayMode()` | 20.2ms | 188.6ms | **5.29s** | **31.32 MB** |
+
+### 원격 DB에서 raw()가 em.find()보다 느린 이유
+
+직관에 반하는 결과를 발견했을 겁니다: `pipe().raw()`가 Entity 변환을 건너뛰는데도 `em.find()`보다 *느립니다*. SQLite 벤치마크와 정반대입니다.
+
+원인은 **배치당 트랜잭션 오버헤드**입니다:
+
+```
+em.find()       →  트랜잭션 1회  (BEGIN → SELECT * → COMMIT)
+pipe().raw()    →  트랜잭션 N회  (BEGIN → SELECT LIMIT 1000 → COMMIT) × 100 배치
+```
+
+`pipe().raw()`는 내부적으로 `em.query()`를 사용하는데, 이것이 매 호출마다 별도의 트랜잭션으로 감쌉니다. 100K행에 batchSize=1000이면 `BEGIN → QUERY → COMMIT`의 네트워크 왕복이 100번 발생합니다. SQLite(인프로세스, 네트워크 없음)에서는 이 오버헤드가 무시할 수준이지만, 원격 데이터베이스에서는 트랜잭션당 네트워크 지연이 지배적입니다.
+
+`pipe().binary()`와 `pipe().arrayMode()`는 `driver.queryWithOptions()`를 커넥션 풀에서 직접 호출하므로 **트랜잭션 래퍼가 없습니다**. 이 때문에 원격 DB에서 `raw()`보다 훨씬 빠릅니다.
+
+::: tip 원격 데이터베이스에서의 선택 가이드
+- **소규모 데이터셋 (10K행 이하):** `em.find()`를 사용하세요. Entity 변환 오버헤드가 배치당 트랜잭션 비용보다 작습니다.
+- **대규모, plain 객체 필요:** `pipe().binary({ arrayMode: true })`를 사용하세요. 트랜잭션 오버헤드 없이 배열 형식 결과를 받습니다. 필요하면 `.map()`으로 배열을 객체로 변환하세요.
+- **대규모, Buffer 필요:** `pipe().binary({ binary: true })`를 사용하세요. 트랜잭션 래핑 없이 직접 버퍼에 접근합니다.
+- **메모리 제한 스트리밍:** `pipe().raw()`는 데이터를 점진적으로 처리해야 하고 전체 데이터셋이 메모리에 안 들어갈 때만 사용하세요. 배치당 트랜잭션 비용이 메모리 일정성의 대가입니다.
+:::
+
 ### 통합 테스트 결과
 
-Binary 모드는 실제 PostgreSQL과 MySQL 인스턴스에서 테스트되었습니다. 27개 테스트 전부 통과:
+Binary 모드는 실제 PostgreSQL과 MySQL에서 27개 통합 테스트로 검증되었습니다:
 
 ```
-[Integration] MySQL: Raw Pipeline Binary Mode
-  raw() — plain objects baseline
-    ✓ 200행 전체를 plain object로 반환
-    ✓ WHERE 조건 적용
-    ✓ WHERE가 포함된 count() 정확성
-  binary({ arrayMode: true }) — 배열로 행 반환
-    ✓ 객체 대신 배열로 행 반환
-    ✓ 전체 행 수 정확성
-    ✓ 실제 데이터 값 포함
-  binary({ binary: true }) — MySQL typeCast 비활성화
-    ✓ Buffer로 값 반환
-    ✓ 바이너리 모드에서 전체 행 반환
-    ✓ Buffer 왕복 데이터 무결성 보존
-  keyset + binary
-    ✓ raw 모드에서 keyset 페이지네이션
-    ✓ keyset + binary (비배열) 모드
-  map() 체인
-    ✓ map()으로 행 변환
-  성능
-    ✓ pipe().raw() vs em.find()
+MySQL: 13개 테스트 통과
+  ✓ raw baseline (plain 객체, WHERE, count)
+  ✓ arrayMode (배열, 전체 수, 데이터 값)
+  ✓ binary (Buffer, 전체 행, 데이터 무결성 round-trip)
+  ✓ keyset 페이지네이션 (raw 모드, binary 비배열)
+  ✓ map() 체인, 성능 비교
 
-[Integration] PostgreSQL: Raw Pipeline Binary Mode
-  (동일한 13개 테스트 + PostgreSQL 전용 1개 추가)
-    ✓ binary + arrayMode 결합 모드
+PostgreSQL: 14개 테스트 통과
+  ✓ raw baseline (plain 객체, WHERE, count)
+  ✓ arrayMode (배열, 전체 수, 데이터 값)
+  ✓ binary (바이너리 wire 포맷, 전체 행, Buffer round-trip)
+  ✓ binary + arrayMode 결합
+  ✓ keyset 페이지네이션 (raw 모드, binary 비배열)
+  ✓ map() 체인, 성능 비교
 ```
 
-### 테스트 재현 방법
+### 벤치마크 재현 방법
 
 ```bash
-# 실제 PostgreSQL과 MySQL 데이터베이스 필요
-INTEGRATION_TEST=true \
-  npx jest --testPathPattern="raw-pipeline-binary" --no-coverage
+# PostgreSQL만
+INTEGRATION_TEST=true INTEGRATION_TEST_MYSQL=false \
+  NODE_OPTIONS="--expose-gc" npx ts-node --project __tests__/bench/tsconfig.json \
+  __tests__/bench/raw-pipeline-binary-bench.ts
+
+# MySQL만
+INTEGRATION_TEST=true INTEGRATION_TEST_POSTGRES=false \
+  NODE_OPTIONS="--expose-gc" npx ts-node --project __tests__/bench/tsconfig.json \
+  __tests__/bench/raw-pipeline-binary-bench.ts
 ```
 
 ## count()

@@ -411,62 +411,83 @@ for await (const batch of em.pipe(User, {
 }
 ```
 
+### Binary Mode Benchmark — Real Databases
+
+We ran the same benchmark against real PostgreSQL and MySQL databases over a local network. The results reveal an important architectural difference between `raw()` and `binary()`:
+
+**PostgreSQL (pg 8.18.0, remote server):**
+
+| Method | 1K rows | 10K rows | 100K rows | Memory (100K) |
+|--------|---------|----------|-----------|---------------|
+| `em.find()` | 23.1ms | 130.4ms | 1.18s | 44.55 MB |
+| `pipe().raw()` | 72.4ms | 746.2ms | 6.45s | 31.75 MB |
+| `pipe().binary()` | 27.3ms | 185.4ms | 2.88s | 34.57 MB |
+| `pipe().arrayMode()` | 26.2ms | 215.6ms | **2.74s** | **28.20 MB** |
+
+**MySQL (mysql2 3.16.3, remote MariaDB):**
+
+| Method | 1K rows | 10K rows | 100K rows | Memory (100K) |
+|--------|---------|----------|-----------|---------------|
+| `em.find()` | 16.5ms | 119.4ms | 1.09s | 42.45 MB |
+| `pipe().raw()` | 86.7ms | 1.09s | 11.52s | 29.30 MB |
+| `pipe().binary()` | 19.3ms | 199.1ms | 5.05s | 71.69 MB |
+| `pipe().arrayMode()` | 20.2ms | 188.6ms | **5.29s** | **31.32 MB** |
+
+### Why raw() Is Slower Than em.find() on Remote Databases
+
+You might notice something counterintuitive: `pipe().raw()` is *slower* than `em.find()` on PostgreSQL and MySQL, despite skipping entity transformation. This is the opposite of the SQLite benchmark.
+
+The reason is **transaction overhead per batch**:
+
+```
+em.find()       →  1 transaction  (BEGIN → SELECT * → COMMIT)
+pipe().raw()    →  N transactions (BEGIN → SELECT LIMIT 1000 → COMMIT) × 100 batches
+```
+
+`pipe().raw()` uses `em.query()` internally, which wraps every call in a separate transaction. With 100K rows and batchSize=1000, that is 100 round-trips of `BEGIN → QUERY → COMMIT` over the network. On SQLite (in-process, no network), this overhead is negligible. On a remote database, the network latency per transaction dominates.
+
+`pipe().binary()` and `pipe().arrayMode()` bypass this because they call `driver.queryWithOptions()` directly on the connection pool — **no transaction wrapper**. This makes them significantly faster than `raw()` on remote databases.
+
+::: tip Choosing the right mode for remote databases
+- **Small datasets (< 10K rows):** Use `em.find()`. The entity transformation overhead is smaller than the per-batch transaction cost.
+- **Large datasets, need plain objects:** Use `pipe().binary({ arrayMode: true })`. Gets array-format results without transaction overhead. Use `.map()` to convert arrays to objects if needed.
+- **Large datasets, need Buffers:** Use `pipe().binary({ binary: true })`. Direct buffer access without transaction wrapping.
+- **Memory-bounded streaming:** Use `pipe().raw()` only when you need to process data incrementally and the total dataset is too large to fit in memory. The per-batch transaction cost is the price of bounded memory.
+:::
+
 ### Integration Test Results
 
-The binary mode was tested against real PostgreSQL and MySQL instances. All 27 tests passed:
+The binary mode was verified with 27 integration tests against real PostgreSQL and MySQL:
 
 ```
-[Integration] MySQL: Raw Pipeline Binary Mode
-  raw() — plain objects baseline
-    ✓ should return all 200 rows as plain objects
-    ✓ should respect WHERE clause
-    ✓ should return correct count() with WHERE
-  binary({ arrayMode: true }) — rows as arrays
-    ✓ should return rows as arrays instead of objects
-    ✓ should return correct total row count
-    ✓ should contain actual data values
-  binary({ binary: true }) — MySQL typeCast disabled
-    ✓ should return values as Buffers
-    ✓ should return all rows in binary mode
-    ✓ should preserve data integrity — Buffer round-trip
-  keyset + binary
-    ✓ should work with keyset pagination in raw mode
-    ✓ should work with keyset + binary (non-array) mode
-  map() chain on raw()
-    ✓ should transform rows via map()
-  performance
-    ✓ pipe().raw() vs em.find()
+MySQL: 13 tests passed
+  ✓ raw baseline (plain objects, WHERE, count)
+  ✓ arrayMode (arrays, total count, data values)
+  ✓ binary (Buffers, all rows, data integrity round-trip)
+  ✓ keyset pagination (raw mode, binary non-array)
+  ✓ map() chain, performance comparison
 
-[Integration] PostgreSQL: Raw Pipeline Binary Mode
-  raw() — plain objects baseline
-    ✓ should return all 200 rows as plain objects
-    ✓ should respect WHERE clause
-    ✓ should return correct count() with WHERE
-  binary({ arrayMode: true }) — rows as arrays
-    ✓ should return rows as arrays instead of objects
-    ✓ should return correct total row count
-    ✓ should contain actual data values
-  binary({ binary: true }) — PostgreSQL binary wire format
-    ✓ should return rows with binary-formatted values
-    ✓ should return all rows in binary mode
-    ✓ should preserve data integrity — binary Buffer round-trip
-  binary({ binary: true, arrayMode: true }) — combined
-    ✓ should return arrays with binary-formatted values
-  keyset + binary
-    ✓ should work with keyset pagination in raw mode
-    ✓ should work with keyset + binary (non-array) mode
-  map() chain on raw()
-    ✓ should transform rows via map()
-  performance
-    ✓ pipe().raw() vs em.find()
+PostgreSQL: 14 tests passed
+  ✓ raw baseline (plain objects, WHERE, count)
+  ✓ arrayMode (arrays, total count, data values)
+  ✓ binary (binary wire format, all rows, Buffer round-trip)
+  ✓ binary + arrayMode combined
+  ✓ keyset pagination (raw mode, binary non-array)
+  ✓ map() chain, performance comparison
 ```
 
-### Reproducing the Tests
+### Reproducing the Benchmarks
 
 ```bash
-# Requires actual PostgreSQL and MySQL databases
-INTEGRATION_TEST=true \
-  npx jest --testPathPattern="raw-pipeline-binary" --no-coverage
+# PostgreSQL only
+INTEGRATION_TEST=true INTEGRATION_TEST_MYSQL=false \
+  NODE_OPTIONS="--expose-gc" npx ts-node --project __tests__/bench/tsconfig.json \
+  __tests__/bench/raw-pipeline-binary-bench.ts
+
+# MySQL only
+INTEGRATION_TEST=true INTEGRATION_TEST_POSTGRES=false \
+  NODE_OPTIONS="--expose-gc" npx ts-node --project __tests__/bench/tsconfig.json \
+  __tests__/bench/raw-pipeline-binary-bench.ts
 ```
 
 ## count()
