@@ -183,7 +183,7 @@ export class CatsService {
 
 The `StinglerloomOrmService` manages the EntityManager lifecycle automatically through NestJS hooks:
 
-- **OnModuleInit** -- Registers the EntityManager in the TypeDI container (for compatibility with `@Service()` decorators) and logs initialization.
+- **OnModuleInit** -- Registers the EntityManager in an internal registry and logs initialization.
 - **OnApplicationShutdown** -- Calls `em.propagateShutdown()` which: closes all database connections, removes event listeners, clears entity subscribers, stops the QueryTracker, and shuts down plugins in reverse order.
 
 To use NestJS shutdown hooks, enable them in `main.ts`:

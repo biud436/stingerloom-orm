@@ -495,11 +495,21 @@ Subpath exports are also dual:
 
 | Subpath | Description |
 |---------|-------------|
-| `@stingerloom/orm` | Core ORM (EntityManager, decorators, etc.) |
+| `@stingerloom/orm` | Full ORM (EntityManager, decorators, dialects, etc.) |
+| `@stingerloom/orm/core` | Core only (EntityManager, repositories, query builders) |
+| `@stingerloom/orm/decorators` | Decorators only (@Entity, @Column, etc.) |
+| `@stingerloom/orm/mysql` | MySQL dialect |
+| `@stingerloom/orm/postgres` | PostgreSQL dialect |
+| `@stingerloom/orm/sqlite` | SQLite dialect |
+| `@stingerloom/orm/metadata` | Layered metadata (multi-tenancy) |
+| `@stingerloom/orm/migration` | Migration system |
+| `@stingerloom/orm/schema` | Decorator-free entity definitions |
+| `@stingerloom/orm/errors` | Error classes |
+| `@stingerloom/orm/plugin` | Plugin system |
 | `@stingerloom/orm/nestjs` | NestJS integration module |
 | `@stingerloom/orm/prisma-import` | Prisma schema importer |
 
-The `exports` field in `package.json` maps each subpath to the appropriate `import` (ESM) or `require` (CJS) entry point. No configuration needed on your side.
+The `exports` field in `package.json` maps each subpath to the appropriate `import` (ESM) or `require` (CJS) entry point. No configuration needed on your side. Granular subpath imports reduce bundle size when used with tree-shaking bundlers.
 
 ## Next Steps
 

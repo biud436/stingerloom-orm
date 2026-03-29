@@ -115,7 +115,17 @@ Subpath exports are also dual:
 ```typescript
 import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { PrismaImporter } from "@stingerloom/orm/prisma-import";
+import { EntityManager } from "@stingerloom/orm/core";       // core only
+import { PostgresDriver } from "@stingerloom/orm/postgres";   // single dialect
 ```
+
+::: tip Optional: class-transformer
+By default, the ORM uses a lightweight `PlainObjectDeserializer` (zero dependencies). If you install `class-transformer`, it will be auto-detected and used as the deserializer -- no configuration needed.
+
+```bash
+npm install class-transformer   # optional, for advanced deserialization
+```
+:::
 
 ## Step 2: TypeScript Configuration
 

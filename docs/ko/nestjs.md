@@ -183,7 +183,7 @@ export class CatsService {
 
 `StinglerloomOrmService`가 NestJS 훅을 통해 EntityManager 라이프사이클을 자동으로 관리해요:
 
-- **OnModuleInit** -- EntityManager를 TypeDI 컨테이너에 등록하고(`@Service()` 데코레이터 호환용) 초기화 로그를 남겨요.
+- **OnModuleInit** -- EntityManager를 내부 레지스트리에 등록하고 초기화 로그를 남겨요.
 - **OnApplicationShutdown** -- `em.propagateShutdown()`을 호출해서 DB 연결 종료, 이벤트 리스너 제거, 엔티티 subscriber 정리, QueryTracker 중지, 플러그인 역순 종료를 수행해요.
 
 NestJS 종료 훅을 사용하려면 `main.ts`에서 활성화해야 해요:

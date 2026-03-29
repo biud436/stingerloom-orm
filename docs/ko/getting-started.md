@@ -115,7 +115,17 @@ Subpath export도 동일:
 ```typescript
 import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { PrismaImporter } from "@stingerloom/orm/prisma-import";
+import { EntityManager } from "@stingerloom/orm/core";       // 코어만
+import { PostgresDriver } from "@stingerloom/orm/postgres";   // 단일 드라이버
 ```
+
+::: tip 선택사항: class-transformer
+기본적으로 ORM은 의존성 없는 경량 `PlainObjectDeserializer`를 사용해요. `class-transformer`를 설치하면 자동으로 감지되어 역직렬화에 사용돼요. 별도 설정은 필요 없어요.
+
+```bash
+npm install class-transformer   # 선택사항, 고급 역직렬화용
+```
+:::
 
 ## 2단계: TypeScript 설정
 
