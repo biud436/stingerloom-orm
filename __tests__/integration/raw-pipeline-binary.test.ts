@@ -279,8 +279,8 @@ integrationDescribe.each(drivers)(
     }
 
     if (type === "mysql") {
-      describe("binary({ binary: true }) — MySQL typeCast disabled", () => {
-        it("should return values as Buffers", async () => {
+      describe("binary({ binary: true }) — MySQL lightweight binary", () => {
+        it("should return non-BLOB values as strings (not Buffer)", async () => {
           const batches: any[][] = [];
           for await (const batch of em
             .pipe(testEntity.EntityClass, { batchSize: 5 })
@@ -293,10 +293,10 @@ integrationDescribe.each(drivers)(
           const firstRow = batches[0][0];
           expect(firstRow).toBeDefined();
 
-          // MySQL with typeCast: false returns Buffer for all columns
-          const values = Object.values(firstRow);
-          const hasBuffer = values.some((v) => Buffer.isBuffer(v));
-          expect(hasBuffer).toBe(true);
+          // MySQL binary mode: non-BLOB columns are returned as strings
+          // (lightweight, avoids ~96 byte per-value Buffer overhead)
+          const nameValue = firstRow.name;
+          expect(typeof nameValue).toBe("string");
         });
 
         it("should return all rows in binary mode", async () => {
@@ -310,7 +310,7 @@ integrationDescribe.each(drivers)(
           expect(totalRows).toBe(200);
         });
 
-        it("should preserve data integrity — Buffer round-trip", async () => {
+        it("should preserve data integrity — string round-trip", async () => {
           const batches: any[][] = [];
           for await (const batch of em
             .pipe(testEntity.EntityClass, {
@@ -323,12 +323,8 @@ integrationDescribe.each(drivers)(
           }
 
           const row = batches[0][0];
-          const nameValue = row.name;
-          if (Buffer.isBuffer(nameValue)) {
-            expect(nameValue.toString("utf-8")).toBe("user_0");
-          } else {
-            expect(String(nameValue)).toBe("user_0");
-          }
+          // MySQL binary mode returns strings for non-BLOB columns
+          expect(String(row.name)).toBe("user_0");
         });
       });
     }

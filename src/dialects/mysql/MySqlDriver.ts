@@ -33,6 +33,14 @@ export class MySqlDriver implements ISqlDriver {
     return this.connector.query(sqlStr);
   }
 
+  /**
+   * Binary type names in mysql2 that should remain as Buffer.
+   */
+  private static readonly BINARY_TYPES = new Set([
+    "BLOB", "TINY_BLOB", "MEDIUM_BLOB", "LONG_BLOB",
+    "BINARY", "VARBINARY",
+  ]);
+
   async queryWithOptions(query: Sql, options: DriverQueryOptions): Promise<any[]> {
     const mysqlConnector = this.connector as MySqlConnector;
     if (!mysqlConnector.pool) {
@@ -47,7 +55,19 @@ export class MySqlDriver implements ISqlDriver {
       sql: query.sql,
       values: query.values,
     };
-    if (options.binary) queryOpts.typeCast = false;
+
+    if (options.binary) {
+      // Custom typeCast: BLOB/BINARY → Buffer, everything else → string.
+      // Avoids the ~96 byte per-value Buffer object overhead that
+      // typeCast=false creates for ALL columns including numbers and booleans.
+      queryOpts.typeCast = (field: any, next: () => any) => {
+        if (MySqlDriver.BINARY_TYPES.has(field.type)) {
+          return field.buffer();
+        }
+        return field.string();
+      };
+    }
+
     if (options.arrayMode) queryOpts.rowsAsArray = true;
 
     return new Promise((resolve, reject) => {
