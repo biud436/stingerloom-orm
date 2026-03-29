@@ -290,52 +290,184 @@ const allRows = await em.pipe(User, { where: { active: true } }).collect();
 
 ## Binary Mode
 
-`binary()` goes one level deeper. Instead of the normal driver parsing (which converts wire data into JavaScript objects), it requests raw buffers or array-format results directly from the database driver.
+### What Binary Mode Does
+
+When you call `em.find()` or even `pipe().raw()`, the database driver (pg, mysql2, better-sqlite3) parses the wire protocol response into JavaScript objects. Column values are automatically converted: integers become `number`, strings become `string`, timestamps become `Date`, and so on.
+
+`binary()` tells the driver to skip some or all of this parsing. The result depends on which options you pass:
+
+**`binary: true`** — requests raw byte buffers instead of parsed values:
 
 ```typescript
 for await (const batch of em.pipe(User, { batchSize: 5000 }).binary()) {
-  // pg: each row value is a Buffer (binary wire format)
-  // mysql2: each row value is a Buffer (typeCast disabled)
-  // sqlite: same as raw() (SQLite has no binary wire format)
+  // Default: { binary: true }
+  // pg:     row.name is Buffer<75 73 65 72 5f 30> instead of "user_0"
+  // mysql2: row.name is Buffer<75 73 65 72 5f 30> instead of "user_0"
+  // sqlite: no effect (no binary wire format)
 }
 ```
 
-You can also request array mode, which returns rows as arrays instead of keyed objects:
+**`arrayMode: true`** — returns rows as positional arrays instead of keyed objects:
 
 ```typescript
 for await (const batch of em.pipe(User).binary({ arrayMode: true })) {
-  // Each row is [value1, value2, value3, ...] instead of { col1: value1, ... }
-  // No object key allocation = less memory, less GC pressure
+  // row is [1, "user_0", 25, true] instead of { id: 1, name: "user_0", age: 25, active: true }
+  // No object key strings allocated = less memory, less GC pressure
 }
 ```
 
-Binary mode also supports keyset pagination:
+**Combined** — both options together for minimum overhead:
 
 ```typescript
-for await (const batch of em.pipe(User, {
-  orderBy: { id: "ASC" },
-  keyset: true,
-  batchSize: 10000,
-}).binary({ arrayMode: true })) {
-  // Maximum throughput: keyset + array mode
+for await (const batch of em.pipe(User).binary({ binary: true, arrayMode: true })) {
+  // row is [Buffer, Buffer, Buffer, Buffer]
+  // Absolute minimum allocation — useful for forwarding to another binary protocol
 }
 ```
 
 ### What Each Driver Does
 
+The `binary()` method calls `queryWithOptions()` on the underlying driver, which translates the options into driver-native configuration:
+
 | Option | PostgreSQL (pg) | MySQL (mysql2) | SQLite (better-sqlite3) |
 |--------|----------------|----------------|------------------------|
-| `binary: true` | Sets `binary: true` on query config. Column values arrive as `Buffer` objects in PostgreSQL's native binary format. | Sets `typeCast: false`. All columns returned as raw `Buffer` without type conversion. | No effect. BLOB columns are already `Buffer`. |
-| `arrayMode: true` | Sets `rowMode: 'array'`. Rows are `any[]` in column order. | Sets `rowsAsArray: true`. | Uses `stmt.raw().all()`. |
+| `binary: true` | Sets `binary: true` on `QueryConfig`. PostgreSQL's wire protocol natively supports binary format — the server sends column values as their binary representation instead of text. `varchar` columns arrive as `Buffer`, `int4` may still be parsed as `number` (pg handles some binary types natively). | Sets `typeCast: false` on the query options. mysql2 skips all type conversion — every column value is returned as a raw `Buffer`, regardless of type. | No effect. SQLite is an embedded database with no wire protocol. BLOB columns are already returned as `Buffer`. |
+| `arrayMode: true` | Sets `rowMode: 'array'` on `QueryConfig`. pg returns rows as `any[]` in column order instead of `{ column: value }` objects. | Sets `rowsAsArray: true`. mysql2 returns rows as `any[]` in column order. | Calls `stmt.raw(true)` before `.all()`. better-sqlite3 returns rows as arrays in column order. |
 
-### When to Use Binary Mode
+### Verified with Real Databases
 
-Binary mode is most useful when you are:
-- Forwarding data to another system that accepts binary (protobuf, MessagePack)
-- Minimizing memory allocation (array mode avoids object key strings)
-- Processing BLOB columns without double-parsing
+These behaviors were verified with 27 integration tests running against real PostgreSQL and MySQL instances:
 
-If you just need plain objects without entity transformation, `raw()` is sufficient and easier to work with.
+**PostgreSQL (pg 8.18.0):**
+
+```typescript
+// binary: true → varchar columns arrive as Buffer
+const batch = await collectFirst(em.pipe(User).binary({ binary: true }));
+const row = batch[0];
+// row.name is Buffer — decode it:
+Buffer.isBuffer(row.name); // true (for varchar columns)
+row.name.toString("utf-8"); // "user_0"
+
+// arrayMode: true → positional arrays
+const batch2 = await collectFirst(em.pipe(User).binary({ arrayMode: true }));
+Array.isArray(batch2[0]); // true
+batch2[0].length; // 4 (id, name, age, active)
+
+// combined: binary + array → Buffer arrays
+const batch3 = await collectFirst(em.pipe(User).binary({ binary: true, arrayMode: true }));
+Array.isArray(batch3[0]); // true
+// Each element is a value (some may be Buffer, some parsed)
+```
+
+**MySQL (mysql2 3.16.3):**
+
+```typescript
+// binary: true → typeCast disabled, all values as Buffer
+const batch = await collectFirst(em.pipe(User).binary({ binary: true }));
+const row = batch[0];
+Buffer.isBuffer(row.name); // true
+row.name.toString("utf-8"); // "user_0"
+
+// arrayMode: true → positional arrays
+const batch2 = await collectFirst(em.pipe(User).binary({ arrayMode: true }));
+Array.isArray(batch2[0]); // true
+batch2[0].length >= 4; // true
+
+// Data integrity preserved through Buffer round-trip
+const nameBuffer = row.name as Buffer;
+nameBuffer.toString("utf-8") === "user_0"; // true ✓
+```
+
+### When to Use Each Option
+
+| Option | Use Case | Benefit |
+|--------|----------|---------|
+| `{ binary: true }` | Forwarding to protobuf / MessagePack / Avro encoder | Skip JS type parsing. Encoder reads Buffers directly. |
+| `{ arrayMode: true }` | High-throughput ETL where you know column order | ~20% less memory (no object key strings). Faster iteration. |
+| `{ binary: true, arrayMode: true }` | Maximum throughput pipeline — data goes straight to another binary system | Minimum possible allocation per row. |
+| `{}` or `raw()` | Need human-readable data, column names matter | Easy to work with. Use for most cases. |
+
+### Keyset Pagination with Binary Mode
+
+Keyset pagination works with `binary()` in non-array modes. When `arrayMode: true` is combined with `keyset: true`, the pipeline automatically falls back to LIMIT/OFFSET — because keyset requires extracting the cursor value by column name, which is not possible when rows are positional arrays.
+
+```typescript
+// This works — keyset + binary (non-array)
+for await (const batch of em.pipe(User, {
+  orderBy: { id: "ASC" },
+  keyset: true,
+  batchSize: 5000,
+}).binary({ binary: true })) {
+  // Keyset pagination with binary Buffers
+}
+
+// This also works — but falls back to LIMIT/OFFSET internally
+for await (const batch of em.pipe(User, {
+  orderBy: { id: "ASC" },
+  keyset: true,
+  batchSize: 5000,
+}).binary({ arrayMode: true })) {
+  // arrayMode + keyset → automatic fallback to LIMIT/OFFSET
+}
+```
+
+### Integration Test Results
+
+The binary mode was tested against real PostgreSQL and MySQL instances. All 27 tests passed:
+
+```
+[Integration] MySQL: Raw Pipeline Binary Mode
+  raw() — plain objects baseline
+    ✓ should return all 200 rows as plain objects
+    ✓ should respect WHERE clause
+    ✓ should return correct count() with WHERE
+  binary({ arrayMode: true }) — rows as arrays
+    ✓ should return rows as arrays instead of objects
+    ✓ should return correct total row count
+    ✓ should contain actual data values
+  binary({ binary: true }) — MySQL typeCast disabled
+    ✓ should return values as Buffers
+    ✓ should return all rows in binary mode
+    ✓ should preserve data integrity — Buffer round-trip
+  keyset + binary
+    ✓ should work with keyset pagination in raw mode
+    ✓ should work with keyset + binary (non-array) mode
+  map() chain on raw()
+    ✓ should transform rows via map()
+  performance
+    ✓ pipe().raw() vs em.find()
+
+[Integration] PostgreSQL: Raw Pipeline Binary Mode
+  raw() — plain objects baseline
+    ✓ should return all 200 rows as plain objects
+    ✓ should respect WHERE clause
+    ✓ should return correct count() with WHERE
+  binary({ arrayMode: true }) — rows as arrays
+    ✓ should return rows as arrays instead of objects
+    ✓ should return correct total row count
+    ✓ should contain actual data values
+  binary({ binary: true }) — PostgreSQL binary wire format
+    ✓ should return rows with binary-formatted values
+    ✓ should return all rows in binary mode
+    ✓ should preserve data integrity — binary Buffer round-trip
+  binary({ binary: true, arrayMode: true }) — combined
+    ✓ should return arrays with binary-formatted values
+  keyset + binary
+    ✓ should work with keyset pagination in raw mode
+    ✓ should work with keyset + binary (non-array) mode
+  map() chain on raw()
+    ✓ should transform rows via map()
+  performance
+    ✓ pipe().raw() vs em.find()
+```
+
+### Reproducing the Tests
+
+```bash
+# Requires actual PostgreSQL and MySQL databases
+INTEGRATION_TEST=true \
+  npx jest --testPathPattern="raw-pipeline-binary" --no-coverage
+```
 
 ## count()
 

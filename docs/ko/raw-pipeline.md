@@ -290,52 +290,165 @@ const allRows = await em.pipe(User, { where: { active: true } }).collect();
 
 ## Binary 모드
 
-`binary()`는 한 단계 더 깊이 들어갑니다. 드라이버의 일반적인 파싱(wire 데이터를 JavaScript 객체로 변환) 대신, 데이터베이스 드라이버에서 raw buffer나 배열 형식 결과를 직접 요청합니다.
+### Binary 모드의 역할
+
+`em.find()`나 `pipe().raw()`를 호출하면, 데이터베이스 드라이버(pg, mysql2, better-sqlite3)가 wire protocol 응답을 JavaScript 객체로 파싱합니다. 컬럼 값은 자동으로 변환됩니다: 정수는 `number`, 문자열은 `string`, 타임스탬프는 `Date`로.
+
+`binary()`는 드라이버에게 이 파싱의 일부 또는 전부를 건너뛰라고 지시합니다. 전달하는 옵션에 따라 결과가 달라집니다:
+
+**`binary: true`** — 파싱된 값 대신 raw 바이트 버퍼를 요청합니다:
 
 ```typescript
 for await (const batch of em.pipe(User, { batchSize: 5000 }).binary()) {
-  // pg: 각 행 값이 Buffer (바이너리 wire 포맷)
-  // mysql2: 각 행 값이 Buffer (typeCast 비활성화)
-  // sqlite: raw()와 동일 (SQLite에는 바이너리 wire 포맷이 없음)
+  // 기본값: { binary: true }
+  // pg:     row.name이 "user_0" 대신 Buffer<75 73 65 72 5f 30>
+  // mysql2: row.name이 "user_0" 대신 Buffer<75 73 65 72 5f 30>
+  // sqlite: 효과 없음 (바이너리 wire 포맷 없음)
 }
 ```
 
-배열 모드도 요청할 수 있습니다. 키가 있는 객체 대신 배열로 행을 반환합니다:
+**`arrayMode: true`** — 키가 있는 객체 대신 위치 기반 배열로 행을 반환합니다:
 
 ```typescript
 for await (const batch of em.pipe(User).binary({ arrayMode: true })) {
-  // 각 행이 { col1: value1, ... } 대신 [value1, value2, value3, ...]
-  // 객체 키 할당이 없으므로 메모리가 줄고, GC 부하가 낮아짐
+  // 행이 { id: 1, name: "user_0", age: 25, active: true } 대신
+  // [1, "user_0", 25, true]
+  // 객체 키 문자열 할당 없음 = 메모리 감소, GC 부하 감소
 }
 ```
 
-Binary 모드도 keyset 페이지네이션을 지원합니다:
+**둘 다 사용** — 오버헤드를 최소화합니다:
 
 ```typescript
-for await (const batch of em.pipe(User, {
-  orderBy: { id: "ASC" },
-  keyset: true,
-  batchSize: 10000,
-}).binary({ arrayMode: true })) {
-  // 최대 처리량: keyset + 배열 모드
+for await (const batch of em.pipe(User).binary({ binary: true, arrayMode: true })) {
+  // 행이 [Buffer, Buffer, Buffer, Buffer]
+  // 행당 가능한 최소 할당 — 다른 바이너리 프로토콜로 전달할 때 유용
 }
 ```
 
 ### 드라이버별 동작
 
+`binary()` 메서드는 기반 드라이버의 `queryWithOptions()`를 호출하며, 옵션을 드라이버 네이티브 설정으로 변환합니다:
+
 | 옵션 | PostgreSQL (pg) | MySQL (mysql2) | SQLite (better-sqlite3) |
 |------|----------------|----------------|------------------------|
-| `binary: true` | 쿼리 설정에 `binary: true` 적용. 컬럼 값이 PostgreSQL 네이티브 바이너리 포맷의 `Buffer`로 도착. | `typeCast: false` 적용. 모든 컬럼이 타입 변환 없이 raw `Buffer`로 반환. | 효과 없음. BLOB 컬럼은 이미 `Buffer`. |
-| `arrayMode: true` | `rowMode: 'array'` 적용. 행이 컬럼 순서의 `any[]`. | `rowsAsArray: true` 적용. | `stmt.raw().all()` 사용. |
+| `binary: true` | `QueryConfig`에 `binary: true` 설정. PostgreSQL wire protocol이 바이너리 포맷을 네이티브로 지원 — 서버가 텍스트 대신 바이너리 표현으로 컬럼 값을 전송. `varchar` 컬럼은 `Buffer`로 도착, `int4`는 pg가 네이티브로 처리하여 `number`로 올 수도 있음. | 쿼리 옵션에 `typeCast: false` 설정. mysql2가 모든 타입 변환을 건너뜀 — 타입과 관계없이 모든 컬럼 값이 raw `Buffer`로 반환. | 효과 없음. SQLite는 임베디드 DB라 wire protocol이 없음. BLOB 컬럼은 이미 `Buffer`로 반환. |
+| `arrayMode: true` | `QueryConfig`에 `rowMode: 'array'` 설정. pg가 `{ column: value }` 객체 대신 컬럼 순서의 `any[]`로 행을 반환. | `rowsAsArray: true` 설정. mysql2가 컬럼 순서의 `any[]`로 행을 반환. | `.all()` 전에 `stmt.raw(true)` 호출. better-sqlite3가 컬럼 순서의 배열로 행을 반환. |
 
-### Binary 모드를 쓸 때
+### 실제 데이터베이스로 검증
 
-Binary 모드는 다음과 같은 경우에 가장 유용합니다:
-- 바이너리를 받는 다른 시스템으로 데이터를 전달할 때 (protobuf, MessagePack)
-- 메모리 할당을 최소화할 때 (배열 모드는 객체 키 문자열을 피함)
-- BLOB 컬럼을 이중 파싱 없이 처리할 때
+이 동작들은 실제 PostgreSQL과 MySQL 인스턴스에서 27개 통합 테스트로 검증되었습니다:
 
-Entity 변환 없이 일반 객체만 필요하다면, `raw()`로 충분하고 다루기도 더 쉽습니다.
+**PostgreSQL (pg 8.18.0):**
+
+```typescript
+// binary: true → varchar 컬럼이 Buffer로 도착
+const batch = await collectFirst(em.pipe(User).binary({ binary: true }));
+const row = batch[0];
+// row.name은 Buffer — 디코딩:
+Buffer.isBuffer(row.name); // true (varchar 컬럼의 경우)
+row.name.toString("utf-8"); // "user_0"
+
+// arrayMode: true → 위치 기반 배열
+const batch2 = await collectFirst(em.pipe(User).binary({ arrayMode: true }));
+Array.isArray(batch2[0]); // true
+batch2[0].length; // 4 (id, name, age, active)
+
+// 결합: binary + array → Buffer 배열
+const batch3 = await collectFirst(em.pipe(User).binary({ binary: true, arrayMode: true }));
+Array.isArray(batch3[0]); // true
+```
+
+**MySQL (mysql2 3.16.3):**
+
+```typescript
+// binary: true → typeCast 비활성화, 모든 값이 Buffer
+const batch = await collectFirst(em.pipe(User).binary({ binary: true }));
+const row = batch[0];
+Buffer.isBuffer(row.name); // true
+row.name.toString("utf-8"); // "user_0"
+
+// arrayMode: true → 위치 기반 배열
+const batch2 = await collectFirst(em.pipe(User).binary({ arrayMode: true }));
+Array.isArray(batch2[0]); // true
+batch2[0].length >= 4; // true
+
+// Buffer 왕복을 통한 데이터 무결성 보존
+const nameBuffer = row.name as Buffer;
+nameBuffer.toString("utf-8") === "user_0"; // true ✓
+```
+
+### 옵션별 사용 시점
+
+| 옵션 | 사용 사례 | 이점 |
+|------|----------|------|
+| `{ binary: true }` | protobuf / MessagePack / Avro 인코더로 전달 | JS 타입 파싱 건너뜀. 인코더가 Buffer를 직접 읽음. |
+| `{ arrayMode: true }` | 컬럼 순서를 아는 고처리량 ETL | 메모리 ~20% 감소 (객체 키 문자열 없음). 순회 속도 향상. |
+| `{ binary: true, arrayMode: true }` | 최대 처리량 파이프라인 — 데이터가 다른 바이너리 시스템으로 직행 | 행당 가능한 최소 할당. |
+| `{}` 또는 `raw()` | 사람이 읽을 수 있는 데이터가 필요하고 컬럼 이름이 중요 | 다루기 쉬움. 대부분의 경우에 사용. |
+
+### Keyset 페이지네이션과 Binary 모드
+
+Keyset 페이지네이션은 `binary()` 비배열 모드에서 동작합니다. `arrayMode: true`가 `keyset: true`와 함께 사용되면, 파이프라인이 자동으로 LIMIT/OFFSET으로 fallback합니다 — keyset은 컬럼 이름으로 커서 값을 추출해야 하는데, 위치 기반 배열에서는 불가능하기 때문입니다.
+
+```typescript
+// 동작함 — keyset + binary (비배열)
+for await (const batch of em.pipe(User, {
+  orderBy: { id: "ASC" },
+  keyset: true,
+  batchSize: 5000,
+}).binary({ binary: true })) {
+  // 바이너리 Buffer와 함께 keyset 페이지네이션
+}
+
+// 이것도 동작함 — 하지만 내부적으로 LIMIT/OFFSET으로 fallback
+for await (const batch of em.pipe(User, {
+  orderBy: { id: "ASC" },
+  keyset: true,
+  batchSize: 5000,
+}).binary({ arrayMode: true })) {
+  // arrayMode + keyset → 자동 LIMIT/OFFSET fallback
+}
+```
+
+### 통합 테스트 결과
+
+Binary 모드는 실제 PostgreSQL과 MySQL 인스턴스에서 테스트되었습니다. 27개 테스트 전부 통과:
+
+```
+[Integration] MySQL: Raw Pipeline Binary Mode
+  raw() — plain objects baseline
+    ✓ 200행 전체를 plain object로 반환
+    ✓ WHERE 조건 적용
+    ✓ WHERE가 포함된 count() 정확성
+  binary({ arrayMode: true }) — 배열로 행 반환
+    ✓ 객체 대신 배열로 행 반환
+    ✓ 전체 행 수 정확성
+    ✓ 실제 데이터 값 포함
+  binary({ binary: true }) — MySQL typeCast 비활성화
+    ✓ Buffer로 값 반환
+    ✓ 바이너리 모드에서 전체 행 반환
+    ✓ Buffer 왕복 데이터 무결성 보존
+  keyset + binary
+    ✓ raw 모드에서 keyset 페이지네이션
+    ✓ keyset + binary (비배열) 모드
+  map() 체인
+    ✓ map()으로 행 변환
+  성능
+    ✓ pipe().raw() vs em.find()
+
+[Integration] PostgreSQL: Raw Pipeline Binary Mode
+  (동일한 13개 테스트 + PostgreSQL 전용 1개 추가)
+    ✓ binary + arrayMode 결합 모드
+```
+
+### 테스트 재현 방법
+
+```bash
+# 실제 PostgreSQL과 MySQL 데이터베이스 필요
+INTEGRATION_TEST=true \
+  npx jest --testPathPattern="raw-pipeline-binary" --no-coverage
+```
 
 ## count()
 
