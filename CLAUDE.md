@@ -53,7 +53,7 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker O
 │   ├── utils/                  # Logger, ReflectManager, uuid-v7, camelToSnakeCase 등
 │   └── errors/                 # OrmError, OrmErrorCode + 16개 커스텀 에러 클래스
 ├── __tests__/
-│   ├── unit/                   # 124개 유닛 테스트 파일
+│   ├── unit/                   # 131개 유닛 테스트 파일
 │   └── integration/            # 35개 통합 테스트 파일 (sqlite/ 포함, INTEGRATION_TEST=true 필요)
 ├── examples/
 │   ├── nestjs-cats/            # NestJS 기본 예제 (CRUD, EntitySubscriber, cursor pagination)
@@ -226,7 +226,7 @@ pnpm start          # NestJS 서버 시작
 ## 테스트 구조
 
 ### 유닛 테스트 (`__tests__/unit/`)
-124개 파일, 2,669개 테스트 (2026-03-28 기준, 19 skipped, 0 failures)
+131개 파일, 2,978개 테스트 (2026-03-30 기준, 19 skipped, 0 failures)
 
 ### 통합 테스트 (`__tests__/integration/`)
 35개 파일 (sqlite/ 서브디렉토리 포함)
@@ -318,7 +318,7 @@ pnpm start          # NestJS 서버 시작
 - SQL Injection 전 드라이버 감사 완료
 
 ### 현재 안정성 상태 (v0.9.0, 2026-03-28 기준)
-- **테스트:** 2,669 passed, 19 skipped, 0 failures (123 suites)
+- **테스트:** 2,978 passed, 19 skipped, 0 failures (131 suites)
 - **예제:** 4개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-multitenant, nestjs-todo) 타입 체크 통과
 - **보안:** SQL Injection 취약점 수정 완료, 전 드라이버 감사 완료
 - **격리:** 테넌트 간 메타데이터 유출 차단, AsyncLocalStorage 동시성 안전 확보

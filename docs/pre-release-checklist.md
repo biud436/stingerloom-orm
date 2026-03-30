@@ -10,9 +10,9 @@
 
 | Category | Count | Status |
 |----------|-------|--------|
-| ORM unit tests | 63 suites | All passed |
+| ORM unit tests | 131 suites | All passed |
 | ORM integration tests (MySQL) | 14 suites, 182 tests | All passed |
-| ORM total | **77 suites, 1469 tests** | **0 failures** |
+| ORM total | **131 suites, 2,978 tests** | **0 failures** |
 | nestjs-cats e2e | 23 tests | All passed |
 | nestjs-blog e2e | 59 tests | All passed |
 | nestjs-multitenant e2e | 33 tests | All passed |

@@ -1,6 +1,6 @@
 # Additional Test Scenarios Guide
 
-Although 1,400+ unit tests + integration tests + 59 e2e tests all pass, a ManyToOne FK save bug was discovered in actual usage. This document identifies blind spots that existing automated tests failed to cover and provides a list of scenarios to automate as integration tests in the future.
+Although 2,978+ unit tests + integration tests + 59 e2e tests all pass, a ManyToOne FK save bug was discovered in actual usage. This document identifies blind spots that existing automated tests failed to cover and provides a list of scenarios to automate as integration tests in the future.
 
 ## Blind Spots in Existing Tests
 

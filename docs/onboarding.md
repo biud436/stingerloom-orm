@@ -61,7 +61,7 @@ pnpm test -- --testPathPattern="schema-diff"
 INTEGRATION_TEST=true pnpm test -- --testPathPattern="integration"
 ```
 
-Unit tests consist of 72+ files with 1400+ cases. Integration tests are automatically skipped without the `INTEGRATION_TEST=true` environment variable.
+Unit tests consist of 131 files with 2,978+ cases. Integration tests are automatically skipped without the `INTEGRATION_TEST=true` environment variable.
 
 ### Running Examples
 
