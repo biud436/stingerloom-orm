@@ -29,7 +29,8 @@ import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
 import { PostgresConnector } from "../../src/dialects/postgres/PostgresConnector";
 import { DatabaseClientOptions } from "../../src/core/DatabaseClientOptions";
 
-const INTEGRATION = process.env.INTEGRATION_TEST === "true";
+const INTEGRATION = process.env.INTEGRATION_TEST === "true"
+  && process.env.INTEGRATION_TEST_POSTGRES !== "false";
 const integrationDescribe = INTEGRATION ? describe : describe.skip;
 
 /** Unique suffix to avoid table name collisions across parallel runs */

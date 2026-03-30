@@ -143,4 +143,4 @@ jobs:
           PG_USER: postgres
           PG_PASSWORD: postgres
           PG_DATABASE: multi_tenancy_db
-        run: npx jest --testPathPattern="integration/(?!sqlite)" --no-coverage --runInBand
+        run: npx jest --testPathPattern="integration/(?!sqlite|mysql-driver-ddl)" --no-coverage --runInBand
