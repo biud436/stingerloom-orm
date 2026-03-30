@@ -25,24 +25,27 @@
  *
  *   Method                  │ MariaDB  │ PostgreSQL │ vs Raw batch
  *   ────────────────────────┼──────────┼────────────┼────────────
- *   Raw batch INSERT(100)   │     11ms │       10ms │ 1.0x
- *   ORM insertMany(100)     │     35ms │       41ms │ 3.1x / 3.9x
- *   ORM buffer+flush(100)   │   1.76s  │      695ms │ 153.8x / 67.2x
- *   Raw INSERT x100         │    771ms │     1.07s  │ 67.2x / 103.0x
- *   ORM save() x100         │   6.47s  │     3.45s  │ 563.7x / 333.3x
+ *   Raw batch INSERT(100)   │     12ms │        9ms │ 1.0x
+ *   ORM insertMany(100)     │     30ms │       31ms │ 2.6x / 3.5x
+ *   ORM buffer+flush(100)   │   1.56s  │     1.14s  │ 131.0x / 128.4x
+ *   Raw INSERT x100         │    638ms │     1.62s  │ 53.5x / 182.2x
+ *   ORM save() x100         │   4.80s  │     4.03s  │ 401.9x / 453.2x
  *
  *   Read (100 rows, x100 iterations):
  *
- *   Method                  │ MariaDB        │ PostgreSQL
- *   ────────────────────────┼────────────────┼──────────────
- *   ORM find() x100         │  893ms (8.9/op)│  692ms (6.9/op)
- *   ORM findOne() x100      │  652ms (6.5/op)│  645ms (6.5/op)
+ *   Method                  │ MariaDB         │ PostgreSQL      │ ORM overhead
+ *   ────────────────────────┼─────────────────┼─────────────────┼────────────
+ *   Raw SELECT * x100       │  683ms (6.8/op) │ 1.22s (12.2/op) │ 1.0x
+ *   ORM find() x100         │  891ms (8.9/op) │ 1.33s (13.3/op) │ 1.31x / 1.09x
+ *   Raw SELECT one x100     │  623ms (6.2/op) │  721ms  (7.2/op)│ 1.0x
+ *   ORM findOne() x100      │  728ms (7.3/op) │ 1.28s (12.8/op) │ 1.17x / 1.78x
  *
  *   Key takeaways:
- *   - insertMany() is the right choice for bulk inserts (3-4x vs raw, acceptable)
+ *   - insertMany() is the right choice for bulk inserts (3x vs raw, acceptable)
  *   - save() x100 is slow due to per-call transaction wrapping (6 DB round-trips each)
  *   - buffer+flush is slow because flush() internally calls save() per item
- *   - Read operations have negligible ORM overhead
+ *   - Read: ORM find() overhead is 1.1-1.3x vs raw — negligible
+ *   - Read: ORM findOne() overhead is 1.2-1.8x vs raw — still acceptable
  */
 
 import "reflect-metadata";
@@ -145,9 +148,25 @@ async function benchRawMySQL() {
   );
   const batchMs = performance.now() - t2;
 
+  // Read benchmarks — seed 100 rows first
+  await pool.execute(`DELETE FROM \`${TABLE_RAW_MY}\``);
+  for (let i = 0; i < 100; i++) {
+    await pool.execute(`INSERT INTO \`${TABLE_RAW_MY}\` (name, age) VALUES (?, ?)`, [ROWS[i].name, ROWS[i].age]);
+  }
+
+  // SELECT * x100
+  const t3 = performance.now();
+  for (let i = 0; i < 100; i++) await pool.execute(`SELECT * FROM \`${TABLE_RAW_MY}\``);
+  const findMs = performance.now() - t3;
+
+  // SELECT one x100
+  const t4 = performance.now();
+  for (let i = 0; i < 100; i++) await pool.execute(`SELECT * FROM \`${TABLE_RAW_MY}\` WHERE id = ? LIMIT 1`, [(i % 100) + 1]);
+  const findOneMs = performance.now() - t4;
+
   await pool.execute(`DROP TABLE IF EXISTS \`${TABLE_RAW_MY}\``);
   await pool.end();
-  return { individualMs, batchMs };
+  return { individualMs, batchMs, findMs, findOneMs };
 }
 
 async function benchRawPG() {
@@ -188,9 +207,25 @@ async function benchRawPG() {
   );
   const batchMs = performance.now() - t2;
 
+  // Read benchmarks — seed 100 rows first
+  await pool.query(`DELETE FROM "${TABLE_RAW_PG}"`);
+  for (let i = 0; i < 100; i++) {
+    await pool.query(`INSERT INTO "${TABLE_RAW_PG}" (name, age) VALUES ($1, $2)`, [ROWS[i].name, ROWS[i].age]);
+  }
+
+  // SELECT * x100
+  const t3 = performance.now();
+  for (let i = 0; i < 100; i++) await pool.query(`SELECT * FROM "${TABLE_RAW_PG}"`);
+  const findMs = performance.now() - t3;
+
+  // SELECT one x100
+  const t4 = performance.now();
+  for (let i = 0; i < 100; i++) await pool.query(`SELECT * FROM "${TABLE_RAW_PG}" WHERE id = $1 LIMIT 1`, [(i % 100) + 1]);
+  const findOneMs = performance.now() - t4;
+
   await pool.query(`DROP TABLE IF EXISTS "${TABLE_RAW_PG}"`);
   await pool.end();
-  return { individualMs, batchMs };
+  return { individualMs, batchMs, findMs, findOneMs };
 }
 
 // ── ORM Benchmarks ─────────────────────────────────────────
@@ -316,6 +351,8 @@ async function main() {
   const rawMy = await benchRawMySQL();
   console.log(`  Raw INSERT x100:       ${fmt(rawMy.individualMs).padStart(8)}  (${perOp(rawMy.individualMs)})`);
   console.log(`  Raw batch INSERT(100): ${fmt(rawMy.batchMs).padStart(8)}  (1 query)`);
+  console.log(`  Raw SELECT * x100:     ${fmt(rawMy.findMs).padStart(8)}  (${perOp(rawMy.findMs)})`);
+  console.log(`  Raw SELECT one x100:   ${fmt(rawMy.findOneMs).padStart(8)}  (${perOp(rawMy.findOneMs)})`);
 
   const ormMy = await benchOrmWrite("MariaDB", MY_OPTS);
   console.log(`  ORM save() x100:       ${fmt(ormMy.saveMs).padStart(8)}  (${perOp(ormMy.saveMs)})`);
@@ -334,6 +371,8 @@ async function main() {
   const rawPg = await benchRawPG();
   console.log(`  Raw INSERT x100:       ${fmt(rawPg.individualMs).padStart(8)}  (${perOp(rawPg.individualMs)})`);
   console.log(`  Raw batch INSERT(100): ${fmt(rawPg.batchMs).padStart(8)}  (1 query)`);
+  console.log(`  Raw SELECT * x100:     ${fmt(rawPg.findMs).padStart(8)}  (${perOp(rawPg.findMs)})`);
+  console.log(`  Raw SELECT one x100:   ${fmt(rawPg.findOneMs).padStart(8)}  (${perOp(rawPg.findOneMs)})`);
 
   const ormPg = await benchOrmWrite("PostgreSQL", PG_OPTS);
   console.log(`  ORM save() x100:       ${fmt(ormPg.saveMs).padStart(8)}  (${perOp(ormPg.saveMs)})`);
@@ -346,8 +385,8 @@ async function main() {
   console.log(`  ORM find() x100:       ${fmt(readPg.findMs).padStart(8)}  (${perOp(readPg.findMs)})`);
   console.log(`  ORM findOne() x100:    ${fmt(readPg.findOneMs).padStart(8)}  (${perOp(readPg.findOneMs)})`);
 
-  // ── Summary Table ────────────────────────────────────────
-  console.log("\n━━━ Summary ━━━\n");
+  // ── Summary Tables ───────────────────────────────────────
+  console.log("\n━━━ Summary: Write ━━━\n");
   console.log("  Method                  │ MariaDB  │ PostgreSQL │ vs Raw batch");
   console.log("  ────────────────────────┼──────────┼────────────┼────────────");
   console.log(`  Raw batch INSERT(100)   │ ${fmt(rawMy.batchMs).padStart(8)} │ ${fmt(rawPg.batchMs).padStart(10)} │ 1.0x`);
@@ -355,6 +394,14 @@ async function main() {
   console.log(`  ORM buffer+flush(100)   │ ${fmt(bufMy.bufferMs).padStart(8)} │ ${fmt(bufPg.bufferMs).padStart(10)} │ ${(bufMy.bufferMs / rawMy.batchMs).toFixed(1)}x / ${(bufPg.bufferMs / rawPg.batchMs).toFixed(1)}x`);
   console.log(`  Raw INSERT x100         │ ${fmt(rawMy.individualMs).padStart(8)} │ ${fmt(rawPg.individualMs).padStart(10)} │ ${(rawMy.individualMs / rawMy.batchMs).toFixed(1)}x / ${(rawPg.individualMs / rawPg.batchMs).toFixed(1)}x`);
   console.log(`  ORM save() x100         │ ${fmt(ormMy.saveMs).padStart(8)} │ ${fmt(ormPg.saveMs).padStart(10)} │ ${(ormMy.saveMs / rawMy.batchMs).toFixed(1)}x / ${(ormPg.saveMs / rawPg.batchMs).toFixed(1)}x`);
+
+  console.log("\n━━━ Summary: Read ━━━\n");
+  console.log("  Method                  │ MariaDB         │ PostgreSQL      │ ORM overhead");
+  console.log("  ────────────────────────┼─────────────────┼─────────────────┼────────────");
+  console.log(`  Raw SELECT * x100       │ ${fmt(rawMy.findMs).padStart(8)} (${perOp(rawMy.findMs)}) │ ${fmt(rawPg.findMs).padStart(8)} (${perOp(rawPg.findMs)}) │ 1.0x`);
+  console.log(`  ORM find() x100         │ ${fmt(readMy.findMs).padStart(8)} (${perOp(readMy.findMs)}) │ ${fmt(readPg.findMs).padStart(8)} (${perOp(readPg.findMs)}) │ ${(readMy.findMs / rawMy.findMs).toFixed(2)}x / ${(readPg.findMs / rawPg.findMs).toFixed(2)}x`);
+  console.log(`  Raw SELECT one x100     │ ${fmt(rawMy.findOneMs).padStart(8)} (${perOp(rawMy.findOneMs)}) │ ${fmt(rawPg.findOneMs).padStart(8)} (${perOp(rawPg.findOneMs)}) │ 1.0x`);
+  console.log(`  ORM findOne() x100      │ ${fmt(readMy.findOneMs).padStart(8)} (${perOp(readMy.findOneMs)}) │ ${fmt(readPg.findOneMs).padStart(8)} (${perOp(readPg.findOneMs)}) │ ${(readMy.findOneMs / rawMy.findOneMs).toFixed(2)}x / ${(readPg.findOneMs / rawPg.findOneMs).toFixed(2)}x`);
 }
 
 main().catch(console.error);
