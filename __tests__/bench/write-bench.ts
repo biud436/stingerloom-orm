@@ -18,6 +18,31 @@
  * Environment variables (defaults shown):
  *   DB_HOST=192.168.35.227  DB_PORT=3306  DB_USER=mariadb  DB_PASSWORD=mariadb  DB_NAME=cats_db
  *   PG_HOST=192.168.35.227  PG_PORT=5432  PG_USER=postgres PG_PASSWORD=postgres PG_DATABASE=multi_tenancy_db
+ *
+ * ── Results (2026-03-30, remote DB 192.168.35.227) ─────────────────────────
+ *
+ *   Write (100 rows INSERT):
+ *
+ *   Method                  │ MariaDB  │ PostgreSQL │ vs Raw batch
+ *   ────────────────────────┼──────────┼────────────┼────────────
+ *   Raw batch INSERT(100)   │     11ms │       10ms │ 1.0x
+ *   ORM insertMany(100)     │     35ms │       41ms │ 3.1x / 3.9x
+ *   ORM buffer+flush(100)   │   1.76s  │      695ms │ 153.8x / 67.2x
+ *   Raw INSERT x100         │    771ms │     1.07s  │ 67.2x / 103.0x
+ *   ORM save() x100         │   6.47s  │     3.45s  │ 563.7x / 333.3x
+ *
+ *   Read (100 rows, x100 iterations):
+ *
+ *   Method                  │ MariaDB        │ PostgreSQL
+ *   ────────────────────────┼────────────────┼──────────────
+ *   ORM find() x100         │  893ms (8.9/op)│  692ms (6.9/op)
+ *   ORM findOne() x100      │  652ms (6.5/op)│  645ms (6.5/op)
+ *
+ *   Key takeaways:
+ *   - insertMany() is the right choice for bulk inserts (3-4x vs raw, acceptable)
+ *   - save() x100 is slow due to per-call transaction wrapping (6 DB round-trips each)
+ *   - buffer+flush is slow because flush() internally calls save() per item
+ *   - Read operations have negligible ORM overhead
  */
 
 import "reflect-metadata";
