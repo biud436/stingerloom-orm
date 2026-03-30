@@ -25,27 +25,31 @@
  *
  *   Method                  │ MariaDB  │ PostgreSQL │ vs Raw batch
  *   ────────────────────────┼──────────┼────────────┼────────────
- *   Raw batch INSERT(100)   │     12ms │        9ms │ 1.0x
- *   ORM insertMany(100)     │     30ms │       31ms │ 2.6x / 3.5x
- *   ORM buffer+flush(100)   │   1.56s  │     1.14s  │ 131.0x / 128.4x
- *   Raw INSERT x100         │    638ms │     1.62s  │ 53.5x / 182.2x
- *   ORM save() x100         │   4.80s  │     4.03s  │ 401.9x / 453.2x
+ *   Raw batch INSERT(100)   │     13ms │       10ms │ 1.0x
+ *   ORM insertMany(100)     │     36ms │       29ms │ 2.7x / 2.9x
+ *   ORM buffer+flush(100)   │   1.31s  │      627ms │ 99.4x / 63.2x
+ *   Raw INSERT x100         │    653ms │      698ms │ 49.7x / 70.4x
+ *   ORM save() x100         │   4.16s  │     2.95s  │ 316.2x / 297.5x
  *
  *   Read (100 rows, x100 iterations):
  *
- *   Method                  │ MariaDB         │ PostgreSQL      │ ORM overhead
- *   ────────────────────────┼─────────────────┼─────────────────┼────────────
- *   Raw SELECT * x100       │  683ms (6.8/op) │ 1.22s (12.2/op) │ 1.0x
- *   ORM find() x100         │  891ms (8.9/op) │ 1.33s (13.3/op) │ 1.31x / 1.09x
- *   Raw SELECT one x100     │  623ms (6.2/op) │  721ms  (7.2/op)│ 1.0x
- *   ORM findOne() x100      │  728ms (7.3/op) │ 1.28s (12.8/op) │ 1.17x / 1.78x
+ *   Method                  │ MariaDB          │ PostgreSQL       │ vs Raw SELECT *
+ *   ────────────────────────┼──────────────────┼──────────────────┼────────────
+ *   Raw SELECT * x100       │  645ms  (6.4/op) │  661ms  (6.6/op) │ 1.0x
+ *   ORM find() x100         │ 1.23s  (12.3/op) │  618ms  (6.2/op) │ 1.91x / 0.93x
+ *   pipe().collect() x100   │  915ms  (9.1/op) │  582ms  (5.8/op) │ 1.42x / 0.88x
+ *   pipe().raw() x100       │ 1.67s  (16.7/op) │  617ms  (6.2/op) │ 2.59x / 0.93x
+ *   Raw SELECT one x100     │  597ms  (6.0/op) │  660ms  (6.6/op) │ 1.0x
+ *   ORM findOne() x100      │ 1.88s  (18.8/op) │  603ms  (6.0/op) │ 3.16x / 0.91x
  *
  *   Key takeaways:
  *   - insertMany() is the right choice for bulk inserts (3x vs raw, acceptable)
  *   - save() x100 is slow due to per-call transaction wrapping (6 DB round-trips each)
  *   - buffer+flush is slow because flush() internally calls save() per item
- *   - Read: ORM find() overhead is 1.1-1.3x vs raw — negligible
- *   - Read: ORM findOne() overhead is 1.2-1.8x vs raw — still acceptable
+ *   - PostgreSQL reads: ORM overhead is negligible (~0.9x, sometimes faster than raw)
+ *   - MariaDB reads: ORM overhead is 1.4-3.2x — mysql2 pool acquire cost is higher
+ *   - pipe().collect() is the fastest ORM read path (bypasses entity transformation)
+ *   - pipe().raw() is slower per-op due to multiple batch queries, but memory-bounded
  */
 
 import "reflect-metadata";
@@ -53,6 +57,7 @@ import { EntityManager } from "../../src/core/EntityManager";
 import { Entity, Column, PrimaryGeneratedColumn } from "../../src";
 import { DatabaseClient } from "../../src/DatabaseClient";
 import { bufferPlugin } from "../../src/core/plugin/buffer/bufferPlugin";
+import { rawPipelinePlugin } from "../../src/core/plugin/raw-pipeline";
 import mysql from "mysql2/promise";
 import pg from "pg";
 
@@ -309,6 +314,7 @@ async function benchOrmRead(label: string, dbOpts: any) {
     logging: false,
     entities: [EC],
   });
+  em.extend(rawPipelinePlugin());
   const repo = em.getRepository(EC);
 
   // Seed 100 rows
@@ -326,6 +332,22 @@ async function benchOrmRead(label: string, dbOpts: any) {
   }
   const findOneMs = performance.now() - t2;
 
+  // pipe().raw() x100 — stream all rows per iteration
+  const t3 = performance.now();
+  for (let i = 0; i < 100; i++) {
+    for await (const _batch of em.pipe(EC, { batchSize: 1000 }).raw()) {
+      // consume and discard
+    }
+  }
+  const pipeRawMs = performance.now() - t3;
+
+  // pipe().collect() x100 — collect all rows into array
+  const t4 = performance.now();
+  for (let i = 0; i < 100; i++) {
+    await em.pipe(EC, { batchSize: 1000 }).collect();
+  }
+  const pipeCollectMs = performance.now() - t4;
+
   try {
     await em.query(
       dbOpts.type === "mysql"
@@ -334,7 +356,7 @@ async function benchOrmRead(label: string, dbOpts: any) {
     );
   } catch {}
   await DatabaseClient.getInstance().close();
-  return { findMs, findOneMs };
+  return { findMs, findOneMs, pipeRawMs, pipeCollectMs };
 }
 
 // ── Main ───────────────────────────────────────────────────
@@ -364,6 +386,8 @@ async function main() {
   const readMy = await benchOrmRead("MariaDB", MY_OPTS);
   console.log(`  ORM find() x100:       ${fmt(readMy.findMs).padStart(8)}  (${perOp(readMy.findMs)})`);
   console.log(`  ORM findOne() x100:    ${fmt(readMy.findOneMs).padStart(8)}  (${perOp(readMy.findOneMs)})`);
+  console.log(`  pipe().raw() x100:     ${fmt(readMy.pipeRawMs).padStart(8)}  (${perOp(readMy.pipeRawMs)})`);
+  console.log(`  pipe().collect() x100: ${fmt(readMy.pipeCollectMs).padStart(8)}  (${perOp(readMy.pipeCollectMs)})`);
 
   // ── PostgreSQL ───────────────────────────────────────────
   console.log("\n━━━ PostgreSQL ━━━\n");
@@ -384,6 +408,8 @@ async function main() {
   const readPg = await benchOrmRead("PostgreSQL", PG_OPTS);
   console.log(`  ORM find() x100:       ${fmt(readPg.findMs).padStart(8)}  (${perOp(readPg.findMs)})`);
   console.log(`  ORM findOne() x100:    ${fmt(readPg.findOneMs).padStart(8)}  (${perOp(readPg.findOneMs)})`);
+  console.log(`  pipe().raw() x100:     ${fmt(readPg.pipeRawMs).padStart(8)}  (${perOp(readPg.pipeRawMs)})`);
+  console.log(`  pipe().collect() x100: ${fmt(readPg.pipeCollectMs).padStart(8)}  (${perOp(readPg.pipeCollectMs)})`);
 
   // ── Summary Tables ───────────────────────────────────────
   console.log("\n━━━ Summary: Write ━━━\n");
@@ -402,6 +428,8 @@ async function main() {
   console.log(`  ORM find() x100         │ ${fmt(readMy.findMs).padStart(8)} (${perOp(readMy.findMs)}) │ ${fmt(readPg.findMs).padStart(8)} (${perOp(readPg.findMs)}) │ ${(readMy.findMs / rawMy.findMs).toFixed(2)}x / ${(readPg.findMs / rawPg.findMs).toFixed(2)}x`);
   console.log(`  Raw SELECT one x100     │ ${fmt(rawMy.findOneMs).padStart(8)} (${perOp(rawMy.findOneMs)}) │ ${fmt(rawPg.findOneMs).padStart(8)} (${perOp(rawPg.findOneMs)}) │ 1.0x`);
   console.log(`  ORM findOne() x100      │ ${fmt(readMy.findOneMs).padStart(8)} (${perOp(readMy.findOneMs)}) │ ${fmt(readPg.findOneMs).padStart(8)} (${perOp(readPg.findOneMs)}) │ ${(readMy.findOneMs / rawMy.findOneMs).toFixed(2)}x / ${(readPg.findOneMs / rawPg.findOneMs).toFixed(2)}x`);
+  console.log(`  pipe().raw() x100       │ ${fmt(readMy.pipeRawMs).padStart(8)} (${perOp(readMy.pipeRawMs)}) │ ${fmt(readPg.pipeRawMs).padStart(8)} (${perOp(readPg.pipeRawMs)}) │ ${(readMy.pipeRawMs / rawMy.findMs).toFixed(2)}x / ${(readPg.pipeRawMs / rawPg.findMs).toFixed(2)}x`);
+  console.log(`  pipe().collect() x100   │ ${fmt(readMy.pipeCollectMs).padStart(8)} (${perOp(readMy.pipeCollectMs)}) │ ${fmt(readPg.pipeCollectMs).padStart(8)} (${perOp(readPg.pipeCollectMs)}) │ ${(readMy.pipeCollectMs / rawMy.findMs).toFixed(2)}x / ${(readPg.pipeCollectMs / rawPg.findMs).toFixed(2)}x`);
 }
 
 main().catch(console.error);
