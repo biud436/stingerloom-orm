@@ -49,7 +49,7 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 - Binary mode integration tests for MySQL and PostgreSQL
 - 6 new unit test files (+172 tests) — RelationLoader, ExplainQueryHandler, TransactionSessionManager, LayeredMetadataStore, LayeredMetadataScanner, NestJS integration
 - Statement coverage: 79.6% → 81.8%
-- **Total: 2,978 passed, 19 skipped, 0 failures (131 suites)**
+- **Total: 3,846 passed, 21 skipped, 0 failures (171 suites)**
 
 **Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.9.0...v0.11.0
 

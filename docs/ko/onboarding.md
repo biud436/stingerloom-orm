@@ -61,7 +61,7 @@ pnpm test -- --testPathPattern="schema-diff"
 INTEGRATION_TEST=true pnpm test -- --testPathPattern="integration"
 ```
 
-유닛 테스트는 131개 파일에 2,978개 이상의 케이스로 구성돼 있어요. 통합 테스트는 `INTEGRATION_TEST=true` 환경변수가 없으면 자동으로 건너뛰어요.
+유닛 테스트는 131개 파일에 2,978개 이상의 케이스로 구성돼 있어요. 통합 테스트는 40개 파일에 868개 이상의 케이스(MySQL, PostgreSQL, SQLite)이며, `INTEGRATION_TEST=true` 환경변수가 없으면 자동으로 건너뛰어요.
 
 ### 예제 실행
 

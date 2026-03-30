@@ -1,6 +1,6 @@
 # Additional Test Scenarios Guide
 
-Although 2,978+ unit tests + integration tests + 59 e2e tests all pass, a ManyToOne FK save bug was discovered in actual usage. This document identifies blind spots that existing automated tests failed to cover and provides a list of scenarios to automate as integration tests in the future.
+Although 3,846+ tests (2,978 unit + 868 integration across MySQL/PostgreSQL/SQLite) + 59 e2e tests all pass, a ManyToOne FK save bug was discovered in actual usage. This document identifies blind spots that existing automated tests failed to cover and provides a list of scenarios to automate as integration tests in the future.
 
 ## Blind Spots in Existing Tests
 
