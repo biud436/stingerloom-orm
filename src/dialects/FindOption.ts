@@ -145,6 +145,19 @@ export type WhereClause<T> = {
 };
 
 /**
+ * Data type for the `updateMany` SET clause.
+ * Each value can be a literal entity field value or a raw `Sql` expression.
+ *
+ * @example
+ * ```ts
+ * em.updateMany(Post, { viewCount: sql`view_count + 1` }, { where: { id: 1 } });
+ * ```
+ */
+export type UpdateData<T> = {
+  [K in keyof T]?: T[K] | Sql;
+};
+
+/**
  * Represents the options that can be used to find entities in the ORM.
  *
  * @template T - The type of the entity.

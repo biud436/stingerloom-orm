@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../utils";
-import { FindOption, WhereClause } from "../dialects/FindOption";
+import { FindOption, UpdateData, WhereClause } from "../dialects/FindOption";
 import { EntityManager } from "./EntityManager";
 import { DeleteResult } from "../types/DeleteResult";
 import { SelectQueryBuilder } from "./SelectQueryBuilder";
@@ -60,6 +60,17 @@ export class BaseRepository<T> {
    */
   async findOne(findOption: FindOption<T>): Promise<T | null> {
     return await this.em.findOne<T>(this.entity, findOption);
+  }
+
+  /**
+   * Retrieves a single entity or throws EntityNotFoundError.
+   *
+   * @param findOption Specifies the conditions for the entity to be retrieved.
+   * @returns A promise that resolves to the found entity.
+   * @throws EntityNotFoundError if no entity matches.
+   */
+  async findOneOrFail(findOption: FindOption<T>): Promise<T> {
+    return await this.em.findOneOrFail<T>(this.entity, findOption);
   }
 
   /**
@@ -263,7 +274,7 @@ export class BaseRepository<T> {
    * @returns The number of affected rows.
    */
   async updateMany(
-    data: Partial<T>,
+    data: UpdateData<T>,
     options: { where: WhereClause<T> },
   ): Promise<{ affected: number }> {
     return await this.em.updateMany<T>(this.entity, data, options);

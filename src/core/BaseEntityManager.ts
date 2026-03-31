@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../utils";
-import { FindOption, WhereClause } from "../dialects/FindOption";
+import { FindOption, UpdateData, WhereClause } from "../dialects/FindOption";
 import { BaseRepository } from "./BaseRepository";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { DeleteResult } from "../types/DeleteResult";
@@ -55,6 +55,14 @@ export abstract class BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T>,
   ): Promise<T | null>;
+
+  /**
+   * Retrieves a single entity or throws EntityNotFoundError.
+   */
+  abstract findOneOrFail<T>(
+    entity: ClazzType<T>,
+    findOption: FindOption<T>,
+  ): Promise<T>;
 
   /**
    * 데이터베이스 쿼리를 수행하여 결과를 여러 건 반환합니다.
@@ -233,7 +241,7 @@ export abstract class BaseEntityManager {
 
   abstract updateMany<T>(
     entity: ClazzType<T>,
-    data: Partial<T>,
+    data: UpdateData<T>,
     options: { where: WhereClause<T> },
   ): Promise<{ affected: number }>;
 

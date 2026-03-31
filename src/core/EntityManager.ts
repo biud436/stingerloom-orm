@@ -6,7 +6,7 @@ import { DatabaseClient } from "../DatabaseClient";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
-import { FindOption, WhereClause } from "../dialects/FindOption";
+import { FindOption, UpdateData, WhereClause } from "../dialects/FindOption";
 import { resolveWhereClause } from "./WhereResolver";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
@@ -34,6 +34,7 @@ import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { OptimisticLockError } from "../errors/OptimisticLockError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { DeleteWithoutConditionsError } from "../errors/DeleteWithoutConditionsError";
+import { EntityNotFoundError } from "../errors/EntityNotFoundError";
 import { NotSupportedDatabaseTypeError } from "../errors/NotSupportedDatabaseTypeError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../decorators/ComputedColumn";
 import {
@@ -756,6 +757,26 @@ export class EntityManager implements BaseEntityManager {
     findOption: FindOption<T>,
   ): Promise<T | null> {
     return this.findOneInternal(entity, findOption);
+  }
+
+  /**
+   * Retrieves a single entity matching the given options.
+   * Throws `EntityNotFoundError` if no entity is found.
+   *
+   * @example
+   * ```ts
+   * const user = await em.findOneOrFail(User, { where: { id: 1 } });
+   * ```
+   */
+  async findOneOrFail<T>(
+    entity: ClazzType<T>,
+    findOption: FindOption<T>,
+  ): Promise<T> {
+    const result = await this.findOne(entity, findOption);
+    if (result === null || result === undefined) {
+      throw new EntityNotFoundError(entity.name);
+    }
+    return result;
   }
 
   private async findOneInternal<T>(
@@ -2193,7 +2214,7 @@ export class EntityManager implements BaseEntityManager {
    */
   async updateMany<T>(
     entity: ClazzType<T>,
-    data: Partial<T>,
+    data: UpdateData<T>,
     options: { where: WhereClause<T> },
   ): Promise<{ affected: number }> {
     const metadata = this.resolver.resolveEntityMetadata(entity);

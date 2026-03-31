@@ -7,6 +7,7 @@ import { RawQueryBuilder } from "./RawQueryBuilder";
 import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { EntityNotFoundError } from "../errors/EntityNotFoundError";
 import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
 import { COLUMN_TOKEN } from "../decorators/Column";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
@@ -690,6 +691,18 @@ export class SelectQueryBuilder<T, TResult = T> {
     }
     const results = await this.getMany();
     return results.length > 0 ? results[0] : null;
+  }
+
+  /**
+   * Execute the query and return a single class instance.
+   * Throws EntityNotFoundError if no result is found.
+   */
+  async getOneOrFail(): Promise<T> {
+    const result = await this.getOne();
+    if (result === null) {
+      throw new EntityNotFoundError(this.entity.name);
+    }
+    return result;
   }
 
   /**

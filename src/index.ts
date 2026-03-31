@@ -50,3 +50,6 @@ export * from "./schema";
 
 // Prisma import (requires optional @mrleebo/prisma-ast)
 export * from "./integration/prisma-import";
+
+// Re-export sql-template-tag utilities for updateMany SQL expressions
+export { default as sql, Sql, raw, join, empty } from "sql-template-tag";
