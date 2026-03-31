@@ -6,6 +6,41 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.12.0] — 2026-03-31
+
+### Highlights
+
+- **SQL expressions in `updateMany`** — Pass raw SQL via `sql` template tag in SET values for column arithmetic, DB functions, and complex update patterns. Enables blog-style patterns like `sql\`pos + 1\`` without a dedicated UpdateQueryBuilder.
+- **`findOneOrFail` / `getOneOrFail`** — Fail-fast entity retrieval that throws `EntityNotFoundError` instead of returning null. Available on EntityManager, BaseRepository, and SelectQueryBuilder.
+
+### Added
+
+- **`UpdateData<T>` type** — `updateMany` SET clause now accepts `Sql` expressions alongside literal values (#210)
+- **`EntityManager.findOneOrFail()`** — Returns entity or throws `EntityNotFoundError` (#211)
+- **`BaseRepository.findOneOrFail()`** — Repository-level delegation (#211)
+- **`SelectQueryBuilder.getOneOrFail()`** — QueryBuilder-level fail-fast retrieval (#211)
+- **`sql`, `raw`, `join`, `empty`, `Sql` re-exports** — `sql-template-tag` utilities available directly from `@stingerloom/orm`
+
+### Fixed
+
+- Skip dialect-specific DDL tests when target DB is disabled in CI
+
+### Benchmarks
+
+- Write operation benchmark (save vs insertMany vs buffer vs raw)
+- `pipe().raw()` and `pipe().collect()` benchmarks
+
+### Tests
+
+- 10 new unit tests (find-one-or-fail, update-many-sql-expression)
+- MySQL/PostgreSQL driver DDL integration tests (+60 tests)
+- SQLite integration tests for soft-delete, batch ops, timestamps, hooks, queries
+- **Total: 3,009 unit tests passed, 0 failures (133 suites)**
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.11.0...v0.12.0
+
+---
+
 ## [0.11.0] — 2026-03-29
 
 ### Highlights
