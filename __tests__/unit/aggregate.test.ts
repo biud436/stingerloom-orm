@@ -357,20 +357,6 @@ describe("Aggregate Queries", () => {
     });
   });
 
-  describe("MySQL autocommit", () => {
-    it("standalone aggregate는 MySQL에서 SET autocommit = 0을 호출하지 않는다 (read-only)", async () => {
-      mockQuery.mockResolvedValue({
-        results: [{ result: 1 }],
-        fields: [],
-      });
-
-      await em.count(Product);
-
-      // executeReadOnly() 경로는 SET autocommit = 0을 호출하지 않음
-      expect(mockQuery).not.toHaveBeenCalledWith("SET autocommit = 0");
-    });
-  });
-
   describe("트랜잭션 라이프사이클", () => {
     it("standalone aggregate: connect → query → close 순서로 호출해야 한다 (no transaction)", async () => {
       const callOrder: string[] = [];

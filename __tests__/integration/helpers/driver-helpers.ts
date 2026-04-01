@@ -102,21 +102,6 @@ export function createUniqueIndexSql(
   return `CREATE UNIQUE INDEX ${q(indexName)} ON ${q(tableName)} (${q(columnName)})`;
 }
 
-/**
- * SET autocommit SQL을 반환합니다.
- * - MySQL: SET autocommit = <value>
- * - PostgreSQL: null (불필요)
- */
-export function setAutocommitSql(
-  driver: TestDriverType,
-  value: number,
-): string | null {
-  if (driver === "postgres") {
-    return null;
-  }
-  return `SET autocommit = ${value}`;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 스키마 조회 헬퍼
 // ─────────────────────────────────────────────────────────────────────────────

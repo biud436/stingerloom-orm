@@ -148,7 +148,6 @@ describe("Connection Reuse (Issue #30)", () => {
         },
       ]);
 
-      // 메인 쿼리 (no SET autocommit for read-only path)
       mockQuery
         .mockResolvedValueOnce({
           results: [{ id: 1, name: "Alice", email: "alice@test.com" }],
@@ -178,7 +177,6 @@ describe("Connection Reuse (Issue #30)", () => {
     it("should use exactly 1 TransactionSessionManager for multiple saves", async () => {
       // 각 saveInternal 호출에 대해 INSERT + findOneInternal SELECT 쿼리 mock
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         // 첫 번째 save: INSERT
         .mockResolvedValueOnce({
           results: { insertId: 1, affectedRows: 1 },
@@ -230,7 +228,6 @@ describe("Connection Reuse (Issue #30)", () => {
   describe("save() INSERT with findOneInternal re-read", () => {
     it("should use same session for INSERT and re-read findOneInternal", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { insertId: 1, affectedRows: 1 },
           fields: [],
@@ -253,8 +250,8 @@ describe("Connection Reuse (Issue #30)", () => {
       expect(mockClose).toHaveBeenCalledTimes(1);
 
       // INSERT + SELECT 쿼리가 모두 실행되어야 합니다
-      // SET autocommit(1) + INSERT(1) + SELECT(1) = 3
-      expect(mockQuery).toHaveBeenCalledTimes(3);
+      // INSERT(1) + SELECT(1) = 2
+      expect(mockQuery).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -304,7 +301,6 @@ describe("Connection Reuse (Issue #30)", () => {
 
     it("should rollback on saveMany error without leaking connections", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         // 첫 번째 save 성공
         .mockResolvedValueOnce({
           results: { insertId: 1, affectedRows: 1 },
@@ -358,7 +354,6 @@ describe("Connection Reuse (Issue #30)", () => {
   describe("delete()", () => {
     it("should use exactly 1 TransactionSessionManager", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { affectedRows: 1 },
           fields: [],
@@ -376,7 +371,6 @@ describe("Connection Reuse (Issue #30)", () => {
   describe("insertMany()", () => {
     it("should use exactly 1 TransactionSessionManager", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { affectedRows: 3 },
           fields: [],
@@ -396,7 +390,6 @@ describe("Connection Reuse (Issue #30)", () => {
   describe("deleteMany()", () => {
     it("should use exactly 1 TransactionSessionManager", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { affectedRows: 3 },
           fields: [],
@@ -506,7 +499,6 @@ describe("Connection Reuse (Issue #30)", () => {
   describe("dirtyEntities cleanup after transaction (Issue #97)", () => {
     it("should clear dirtyEntities after successful commit", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { insertId: 1, affectedRows: 1 },
           fields: [],
@@ -530,7 +522,6 @@ describe("Connection Reuse (Issue #30)", () => {
 
     it("should clear dirtyEntities after rollback on error", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockRejectedValueOnce(new Error("Constraint violation")); // INSERT fails
 
       const dirtyEntities = (em as any).dirtyEntities as Set<any>;

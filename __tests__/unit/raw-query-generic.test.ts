@@ -197,7 +197,6 @@ describe("EntityManager.query<T>() - Raw Query Generic", () => {
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
     __mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit
       .mockRejectedValueOnce(new Error("Syntax error"));
 
     await expect(
@@ -218,28 +217,8 @@ describe("EntityManager.query<T>() - Raw Query Generic", () => {
 
     await em.query("SELECT 1 as val");
 
-    // commit should be called (after SET autocommit and the query)
+    // commit should be called after the query
     expect(__mockCommit).toHaveBeenCalled();
-  });
-
-  it("should skip SET autocommit for non-MySQL databases", async () => {
-    const { __mockQuery, __mockCommit } =
-      jest.requireMock("../../src/dialects/TransactionSessionManager");
-
-    jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(false);
-
-    __mockQuery.mockResolvedValue({
-      results: [{ id: 1 }],
-      fields: [],
-    });
-
-    await em.query(sql`SELECT 1`);
-
-    // No "SET autocommit = 0" call
-    const stringCalls = __mockQuery.mock.calls.filter(
-      (call: any[]) => typeof call[0] === "string",
-    );
-    expect(stringCalls).toHaveLength(0);
   });
 
   it("should always close the transaction holder", async () => {
@@ -265,7 +244,6 @@ describe("EntityManager.query<T>() - Raw Query Generic", () => {
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
     __mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit
       .mockRejectedValueOnce(new Error("fail"));
 
     await expect(em.query("BAD")).rejects.toThrow("fail");

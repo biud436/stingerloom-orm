@@ -204,7 +204,7 @@ describe("EntityManager query timeout integration", () => {
 
     await em.find(TestEntity, { timeout: 5000 } as any);
 
-    // query 호출 순서 확인: SET autocommit → SET SESSION max_execution_time → SELECT
+    // query 호출 순서 확인: SET SESSION max_execution_time → SELECT
     const calls = mockQuery.mock.calls.map((c) =>
       typeof c[0] === "string" ? c[0] : c[0]?.text ?? String(c[0]),
     );

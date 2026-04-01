@@ -233,12 +233,8 @@ describe("EntityManager.insertMany()", () => {
 
     expect(result.affected).toBe(3);
 
-    // query should be called 3 times:
-    // 1. SET autocommit = 0
-    // 2. INSERT INTO ...
-    // So the second call should be the INSERT
     const calls = __mockQuery.mock.calls;
-    // Find the INSERT call (not "SET autocommit")
+    // Find the INSERT call
     const insertCall = calls.find(
       (call: any[]) => typeof call[0] !== "string",
     );
@@ -319,9 +315,7 @@ describe("EntityManager.insertMany()", () => {
       .mockReturnValue(userMetadata);
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
-    // First call succeeds (SET autocommit), second fails (INSERT)
     __mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit
       .mockRejectedValueOnce(new Error("Duplicate entry"));
 
     await expect(
@@ -419,7 +413,6 @@ describe("EntityManager.deleteMany()", () => {
 
     expect(result.affected).toBe(3);
 
-    // Find the DELETE call (not "SET autocommit")
     const calls = __mockQuery.mock.calls;
     const deleteCall = calls.find(
       (call: any[]) => typeof call[0] !== "string",
@@ -516,7 +509,6 @@ describe("EntityManager.deleteMany()", () => {
     jest.spyOn(em as any, "isMySqlFamily").mockReturnValue(true);
 
     __mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit
       .mockRejectedValueOnce(new Error("Foreign key constraint"));
 
     await expect(

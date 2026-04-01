@@ -291,7 +291,6 @@ describe("Read-only Query Optimization (Issue #78)", () => {
 
     it("8. save() should still use a transaction", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { insertId: 1, affectedRows: 1 },
           fields: [],
@@ -309,7 +308,6 @@ describe("Read-only Query Optimization (Issue #78)", () => {
 
     it("9. delete() should still use a transaction", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { affectedRows: 1 },
           fields: [],
@@ -323,7 +321,6 @@ describe("Read-only Query Optimization (Issue #78)", () => {
 
     it("10. saveMany() should still use a transaction", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { insertId: 1, affectedRows: 1 },
           fields: [],
@@ -352,7 +349,6 @@ describe("Read-only Query Optimization (Issue #78)", () => {
 
     it("11. query() (raw) should still use a transaction", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: [{ id: 1 }],
           fields: [],
@@ -663,7 +659,6 @@ describe("Read-only Query Optimization (Issue #78)", () => {
 
     it("27. save() query should contain schema-qualified table name", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { insertId: 1, affectedRows: 1 },
           fields: [],
@@ -687,7 +682,6 @@ describe("Read-only Query Optimization (Issue #78)", () => {
 
     it("28. delete() query should contain schema-qualified table name", async () => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { affectedRows: 1 },
           fields: [],

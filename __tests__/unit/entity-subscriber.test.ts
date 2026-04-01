@@ -163,7 +163,6 @@ describe("EntitySubscriber", () => {
   describe("save() — Insert path subscriber notifications", () => {
     beforeEach(() => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { insertId: 1, affectedRows: 1 },
           fields: [],
@@ -232,7 +231,6 @@ describe("EntitySubscriber", () => {
   describe("save() — Update path subscriber notifications", () => {
     beforeEach(() => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { affectedRows: 1 },
           fields: [],
@@ -263,7 +261,6 @@ describe("EntitySubscriber", () => {
   describe("delete() subscriber notifications", () => {
     beforeEach(() => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { affectedRows: 1 },
           fields: [],
@@ -317,7 +314,6 @@ describe("EntitySubscriber", () => {
   describe("multiple subscribers", () => {
     beforeEach(() => {
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET autocommit = 0
         .mockResolvedValueOnce({
           results: { insertId: 1, affectedRows: 1 },
           fields: [],

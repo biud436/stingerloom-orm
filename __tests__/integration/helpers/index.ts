@@ -41,7 +41,6 @@ export {
   enableFkChecksSql,
   createJoinTableSql,
   createUniqueIndexSql,
-  setAutocommitSql,
   hasTableSql,
   getColumnsSql,
   getColumnSql,

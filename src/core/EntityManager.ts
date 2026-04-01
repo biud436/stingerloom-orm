@@ -2762,9 +2762,6 @@ export class EntityManager implements BaseEntityManager {
       await this.notifyTransactionSubscribers("beforeTransactionStart");
       await session.startTransaction();
 
-      if (this.isMySqlFamily()) {
-        await session.query("SET autocommit = 0");
-      }
       await this.notifyTransactionSubscribers("afterTransactionStart");
 
       const result = await fn(session);

@@ -370,7 +370,6 @@ describe("EntityManager QueryTracker integration", () => {
     });
 
     mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit = 0
       .mockResolvedValueOnce({
         results: { insertId: 1, affectedRows: 1 },
         fields: [],
@@ -406,7 +405,6 @@ describe("EntityManager QueryTracker integration", () => {
     });
 
     mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit = 0
       .mockResolvedValueOnce({
         results: { affectedRows: 1 },
         fields: [],

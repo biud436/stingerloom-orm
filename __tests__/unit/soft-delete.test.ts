@@ -144,7 +144,7 @@ describe("EntityManager soft delete", () => {
 
       expect(mockQuery).toHaveBeenCalled();
 
-      // Find the UPDATE query call (not SET autocommit)
+      // Find the UPDATE query call
       const updateCall = mockQuery.mock.calls.find((call: any[]) => {
         const sqlObj = call[0];
         const sqlText =

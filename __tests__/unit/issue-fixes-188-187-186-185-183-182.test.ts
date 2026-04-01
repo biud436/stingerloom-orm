@@ -207,34 +207,16 @@ describe("Issue #188: MySQL connector rollback error handling", () => {
     expect(mockConnection.release).not.toHaveBeenCalled();
   });
 
-  it("should release connection after successful rollback and autocommit reset", async () => {
+  it("should release connection after successful rollback", async () => {
     const connector = new MySqlConnector();
 
     const mockConnection = createMockConnection({
       rollback: jest.fn((cb: Function) => cb(null)),
-      query: jest.fn((_sql: string, cb: Function) => cb(null)),
     });
 
     await connector.rollback(mockConnection);
     expect(mockConnection.release).toHaveBeenCalledTimes(1);
     expect(mockConnection.destroy).not.toHaveBeenCalled();
-  });
-
-  it("should destroy connection when autocommit reset after rollback fails", async () => {
-    const connector = new MySqlConnector();
-
-    const mockConnection = createMockConnection({
-      rollback: jest.fn((cb: Function) => cb(null)),
-      query: jest.fn((_sql: string, cb: Function) =>
-        cb(new Error("autocommit reset failed")),
-      ),
-    });
-
-    await expect(connector.rollback(mockConnection)).rejects.toThrow(
-      "autocommit reset failed",
-    );
-    expect(mockConnection.destroy).toHaveBeenCalledTimes(1);
-    expect(mockConnection.release).not.toHaveBeenCalled();
   });
 });
 
@@ -714,9 +696,7 @@ describe("Issue #182: Transaction lifecycle events", () => {
 
     em.addSubscriber(sub);
 
-    // Mock query for SET autocommit = 0 and INSERT
     mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit = 0
       .mockResolvedValueOnce({
         results: { insertId: 1, affectedRows: 1 },
         fields: [],
@@ -753,9 +733,8 @@ describe("Issue #182: Transaction lifecycle events", () => {
 
     em.addSubscriber(sub);
 
-    // Mock: autocommit query succeeds, then INSERT query fails
+    // Mock: INSERT query fails
     mockQuery
-      .mockResolvedValueOnce(undefined) // SET autocommit = 0
       .mockRejectedValueOnce(new Error("INSERT failed"));
 
     await expect(

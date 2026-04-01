@@ -156,7 +156,7 @@ describe("save() ManyToOne FK — Junior (기본 관계 할당)", () => {
 
     await em.save(TestPet, pet);
 
-    // Find the UPDATE query (not SET autocommit, not START TRANSACTION)
+    // Find the UPDATE query
     const updateCall = mockQuery.mock.calls.find((call: any[]) => {
       const text = getSqlText(call);
       return text.includes("UPDATE");

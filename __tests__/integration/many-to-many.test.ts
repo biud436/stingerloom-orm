@@ -45,7 +45,6 @@ import {
   disableFkChecksSql,
   enableFkChecksSql,
   createJoinTableSql,
-  setAutocommitSql,
 } from "./helpers/driver-helpers";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,11 +55,6 @@ async function execDml(driverType: TestDriverType, sqlStr: string): Promise<any>
   const tx = new TransactionSessionManager();
   try {
     await tx.connect();
-    // autocommit 리셋 (이전 ORM 트랜잭션이 0으로 남겨놨을 수 있음)
-    const autocommitSql = setAutocommitSql(driverType, 1);
-    if (autocommitSql) {
-      await tx.query(autocommitSql);
-    }
     await tx.startTransaction();
     const result = await tx.query(sqlStr);
     await tx.commit();

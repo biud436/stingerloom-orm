@@ -169,7 +169,7 @@ describe("find() WHERE with falsy values (regression)", () => {
       where: { name: null } as any,
     });
 
-    // For the SELECT query (skip SET autocommit), the text should NOT have `name` in WHERE
+    // For the SELECT query, the text should NOT have `name` in WHERE
     const queryCall = mockQuery.mock.calls.find(
       (call: any[]) => {
         const arg = call[0];

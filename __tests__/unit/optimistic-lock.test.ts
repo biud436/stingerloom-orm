@@ -211,7 +211,7 @@ describe("Optimistic Locking (@Version)", () => {
 
       await em.save(VersionedUser, { name: "Alice" });
 
-      // query가 호출된 SQL을 검증 (SET autocommit 제외)
+      // query가 호출된 SQL을 검증
       const insertCall = mockQuery.mock.calls.find(
         (call: any) => {
           const sqlText = typeof call[0] === "string" ? call[0] : call[0]?.text ?? "";
@@ -268,7 +268,7 @@ describe("Optimistic Locking (@Version)", () => {
 
       await em.save(VersionedUser, { id: 1, name: "Alice Updated", version: 3 } as any);
 
-      // SET autocommit=0, UPDATE 두 번의 query 호출 중 UPDATE를 찾음
+      // UPDATE query를 찾음
       const updateCall = mockQuery.mock.calls.find(
         (call: any) => {
           const sqlText = typeof call[0] === "string" ? call[0] : call[0]?.text ?? "";
