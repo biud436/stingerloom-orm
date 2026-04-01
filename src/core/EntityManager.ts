@@ -1913,17 +1913,231 @@ export class EntityManager implements BaseEntityManager {
       return [];
     }
 
+    // #214: 배치 INSERT 최적화 시도
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (metadata) {
+      const pkColumns = metadata.columns.filter(
+        (col: ColumnMetadata) => col.options?.primary,
+      );
+      const pk = pkColumns[0];
+      const hasGeneratedPk = pkColumns.some(
+        (col: ColumnMetadata) =>
+          col.options?.autoIncrement ||
+          col.options?.generationStrategy === "uuid" ||
+          col.options?.generationStrategy === "uuid-v7",
+      );
+      const canBatchInsert =
+        hasGeneratedPk &&
+        pkColumns.length === 1 &&
+        items.every((item) => {
+          const pkValue = pk ? (item as any)[this.propKey(pk)] : undefined;
+          return pkValue === null || pkValue === undefined;
+        });
+
+      if (canBatchInsert) {
+        // 유효성 검사 + ManyToOne cascade (트랜잭션 전)
+        for (const item of items) {
+          EntityValidator.validate(entity, item);
+        }
+        for (const item of items) {
+          await this.cascadeHandler.cascadeSaveManyToOne(entity, item);
+        }
+
+        return this.executeInTransaction(async (session) => {
+          return this.saveManyBatchInsert(entity, pk, items, session);
+        });
+      }
+    }
+
+    // 폴백: 기존 순차 저장
     return this.executeInTransaction(async (session) => {
       const results: InstanceType<ClazzType<T>>[] = [];
-      // Use Promise.all for concurrent saveInternal calls within the same transaction
-      // This keeps per-item correctness (cascades, hooks, UUID gen) while sharing
-      // the transaction session to avoid N separate connections.
       for (const item of items) {
         const saved = await this.saveInternal(entity, item, session);
         results.push(saved);
       }
       return results;
     });
+  }
+
+  /**
+   * #214: 배치 INSERT + 벌크 re-read
+   * N×(INSERT+SELECT) → 1 INSERT + 1 SELECT (또는 PG RETURNING)
+   */
+  private async saveManyBatchInsert<T>(
+    entity: ClazzType<T>,
+    pk: ColumnMetadata,
+    items: Partial<T>[],
+    session: TransactionSessionManager,
+  ): Promise<InstanceType<ClazzType<T>>[]> {
+    const metadata = this.resolver.resolveEntityMetadata(entity)!;
+    const hasAutoIncrementPk = pk.options?.autoIncrement === true;
+
+    // beforeInsert hooks/events
+    for (const item of items) {
+      await this.cascadeHandler.runHooks(entity, item, "beforeInsert");
+      await this.eventEmitter.emit("beforeInsert", { entity, data: item });
+      await this.notifySubscribers(entity, "beforeInsert", {
+        entity: item,
+        manager: this,
+      } as InsertEvent<T>);
+    }
+
+    // 컬럼 준비
+    const computedCols = this.getComputedColumnNames(entity);
+    const createTsCol = this.resolver.getCreateTimestampColumn(entity);
+    const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
+    const versionCol = this.resolver.getVersionColumn(entity);
+    const now = new Date();
+
+    const insertableColumns = metadata.columns.filter(
+      (col) => {
+        if (computedCols.has(col.name!)) return false;
+        if (col.options?.autoIncrement) return false;
+        // PostgreSQL uuid: DB DEFAULT 사용
+        if (col.options?.generationStrategy === "uuid" && this.isPostgres()) return false;
+        return true;
+      },
+    );
+
+    // 아이템 전처리: UUID, timestamp, version
+    for (const item of items) {
+      for (const col of insertableColumns) {
+        const strategy = col.options?.generationStrategy;
+        if (!strategy || strategy === "increment") continue;
+        if ((item as any)[this.propKey(col)] != null) continue;
+        if (strategy === "uuid") {
+          (item as any)[this.propKey(col)] = randomUUID();
+        } else if (strategy === "uuid-v7") {
+          (item as any)[this.propKey(col)] = generateUUIDv7();
+        }
+      }
+      if (createTsCol) {
+        const col = insertableColumns.find((c) => c.name === createTsCol);
+        if (col && (item as any)[this.propKey(col)] == null) {
+          (item as any)[this.propKey(col)] = now;
+        }
+      }
+      if (updateTsCol) {
+        const col = insertableColumns.find((c) => c.name === updateTsCol);
+        if (col && (item as any)[this.propKey(col)] == null) {
+          (item as any)[this.propKey(col)] = now;
+        }
+      }
+      if (versionCol && (item as any)[versionCol] == null) {
+        (item as any)[versionCol] = 1;
+      }
+    }
+
+    // 컬럼 목록 + FK 컬럼
+    const columns = insertableColumns.map((col) =>
+      raw(this.wrap(col.name!)),
+    );
+    const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
+    const fkColumns: { joinColumn: string; propertyName: string; relMeta: any }[] = [];
+    for (const rel of manyToOneRelations) {
+      if (!rel.joinColumn) continue;
+      if (insertableColumns.some((col) => col.name === rel.joinColumn)) continue;
+      columns.push(raw(this.wrap(rel.joinColumn)));
+      fkColumns.push({ joinColumn: rel.joinColumn, propertyName: rel.columnName, relMeta: rel });
+    }
+
+    // VALUES 행 구성
+    const valueRows = items.map((item) => {
+      const rowValues = insertableColumns.map((col) => {
+        const rawValue = (item as any)[this.propKey(col)];
+        if (col.transformer?.to) return col.transformer.to(rawValue);
+        if (rawValue instanceof Date) return formatDateTimeForSQL(rawValue);
+        return rawValue;
+      });
+      for (const fk of fkColumns) {
+        const relatedValue = (item as any)[fk.propertyName];
+        const idPropValue = (item as any)[`${fk.propertyName}Id`];
+        if (relatedValue === null) {
+          rowValues.push(null);
+        } else if (relatedValue && typeof relatedValue === "object") {
+          const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<any>;
+          const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
+          const relatedPk = relatedMeta?.columns.find((c: any) => c.options?.primary);
+          rowValues.push(relatedPk ? relatedValue[this.propKey(relatedPk)] ?? null : null);
+        } else if (idPropValue != null) {
+          rowValues.push(idPropValue);
+        } else {
+          rowValues.push(null);
+        }
+      }
+      return sql`(${join(rowValues, ", ")})`;
+    });
+
+    // INSERT SQL (PostgreSQL: RETURNING *)
+    const useReturning = typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning();
+    const returningSql = useReturning ? raw(` RETURNING *`) : raw("");
+    const insertSql = sql`INSERT INTO ${raw(this.wrapTable(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}${returningSql}`;
+
+    this.beginTrackQuery();
+    const queryStart = Date.now();
+    const queryResult = (await session.query(insertSql)) as {
+      results: any; fields: any; rowCount?: number;
+    };
+    this.trackQuery(entity.name, insertSql.text ?? String(insertSql), Date.now() - queryStart);
+
+    // 결과 수집
+    let results: InstanceType<ClazzType<T>>[];
+
+    if (useReturning && queryResult?.results?.length > 0 && !this.hasEagerRelations(entity)) {
+      // PostgreSQL RETURNING: re-read 없이 직접 역직렬화
+      results = queryResult.results.map(
+        (row: any) => deserializeEntity(entity, row) as InstanceType<ClazzType<T>>,
+      );
+    } else {
+      // PK 값 계산 → 벌크 SELECT WHERE pk IN (...)
+      let pkValues: any[];
+      if (useReturning && queryResult?.results?.length > 0) {
+        pkValues = queryResult.results.map((row: any) => row[pk.name!]);
+      } else if (this.isMySqlFamily() && hasAutoIncrementPk) {
+        const firstId = queryResult?.results?.insertId;
+        pkValues = items.map((_, i) => firstId + i);
+      } else if (this.isSqlite() && hasAutoIncrementPk) {
+        const sqliteRes = queryResult?.results ?? queryResult;
+        const lastId = Number(sqliteRes?.lastInsertRowid);
+        pkValues = items.map((_, i) => lastId - items.length + 1 + i);
+      } else {
+        // UUID — 클라이언트에서 생성한 PK 사용
+        pkValues = items.map((item) => (item as any)[this.propKey(pk)]);
+      }
+
+      const found = await this.findInternal(
+        entity,
+        { where: { [this.propKey(pk)]: pkValues } as any },
+        session,
+      );
+      const resultArray: any[] = Array.isArray(found) ? found : found ? [found] : [];
+      const resultMap = new Map<any, InstanceType<ClazzType<T>>>();
+      for (const row of resultArray) {
+        resultMap.set((row as any)[this.propKey(pk)], row as InstanceType<ClazzType<T>>);
+      }
+      results = pkValues.map((id) => resultMap.get(id)!).filter(Boolean);
+    }
+
+    // OneToMany cascade per item
+    for (let i = 0; i < items.length; i++) {
+      const cascadeId = results[i] ? (results[i] as any)[this.propKey(pk)] : undefined;
+      if (cascadeId !== undefined) {
+        await this.cascadeHandler.cascadeSaveOneToMany(entity, items[i], cascadeId, session);
+      }
+    }
+
+    // afterInsert hooks/events
+    for (const item of items) {
+      await this.cascadeHandler.runHooks(entity, item, "afterInsert");
+      await this.eventEmitter.emit("afterInsert", { entity, data: item });
+      await this.notifySubscribers(entity, "afterInsert", {
+        entity: item,
+        manager: this,
+      } as InsertEvent<T>);
+    }
+
+    return results;
   }
 
   async insertMany<T>(

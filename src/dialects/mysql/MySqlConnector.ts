@@ -254,28 +254,35 @@ export class MySqlConnector extends IConnector {
     });
   }
 
+  // MySQL 기본 격리 수준 — 동일하면 SET TRANSACTION 생략 (#212)
+  private static readonly DEFAULT_ISOLATION: TRANSACTION_ISOLATION_LEVEL = "REPEATABLE READ";
+
   async startTransaction(
     connection: Connection,
-    level: TRANSACTION_ISOLATION_LEVEL = "READ COMMITTED",
+    level: TRANSACTION_ISOLATION_LEVEL = "REPEATABLE READ",
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!connection) {
         return reject(new ConnectionNotFound());
       }
 
-      this.setTransactionIsolationLevel(connection, level)
-        .then(() => {
-          connection.beginTransaction((error) => {
-            if (error) {
-              return reject(error);
-            }
-
-            resolve();
-          });
-        })
-        .catch((error) => {
-          reject(error);
+      const beginTx = () => {
+        connection.beginTransaction((error) => {
+          if (error) {
+            return reject(error);
+          }
+          resolve();
         });
+      };
+
+      // #212: 기본 격리 수준이면 SET TRANSACTION 생략
+      if (level !== MySqlConnector.DEFAULT_ISOLATION) {
+        this.setTransactionIsolationLevel(connection, level)
+          .then(beginTx)
+          .catch(reject);
+      } else {
+        beginTx();
+      }
     });
   }
 

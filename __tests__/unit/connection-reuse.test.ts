@@ -175,36 +175,20 @@ describe("Connection Reuse (Issue #30)", () => {
 
   describe("saveMany()", () => {
     it("should use exactly 1 TransactionSessionManager for multiple saves", async () => {
-      // 각 saveInternal 호출에 대해 INSERT + findOneInternal SELECT 쿼리 mock
+      // #214 배치 경로: 단일 multi-row INSERT + 단일 SELECT WHERE pk IN (...)
       mockQuery
-        // 첫 번째 save: INSERT
+        // batch INSERT (insertId = 첫 번째 행의 auto_increment)
         .mockResolvedValueOnce({
-          results: { insertId: 1, affectedRows: 1 },
+          results: { insertId: 1, affectedRows: 3 },
           fields: [],
         })
-        // 첫 번째 save: findOneInternal → findInternal SELECT
+        // bulk re-read SELECT WHERE id IN (1,2,3)
         .mockResolvedValueOnce({
-          results: [{ id: 1, name: "Alice", email: "a@test.com" }],
-          fields: [],
-        })
-        // 두 번째 save: INSERT
-        .mockResolvedValueOnce({
-          results: { insertId: 2, affectedRows: 1 },
-          fields: [],
-        })
-        // 두 번째 save: findOneInternal → findInternal SELECT
-        .mockResolvedValueOnce({
-          results: [{ id: 2, name: "Bob", email: "b@test.com" }],
-          fields: [],
-        })
-        // 세 번째 save: INSERT
-        .mockResolvedValueOnce({
-          results: { insertId: 3, affectedRows: 1 },
-          fields: [],
-        })
-        // 세 번째 save: findOneInternal → findInternal SELECT
-        .mockResolvedValueOnce({
-          results: [{ id: 3, name: "Charlie", email: "c@test.com" }],
+          results: [
+            { id: 1, name: "Alice", email: "a@test.com" },
+            { id: 2, name: "Bob", email: "b@test.com" },
+            { id: 3, name: "Charlie", email: "c@test.com" },
+          ],
           fields: [],
         });
 
@@ -214,13 +198,15 @@ describe("Connection Reuse (Issue #30)", () => {
         { name: "Charlie", email: "c@test.com" },
       ]);
 
-      // 1개의 세션만 생성되어야 합니다 (3개 아님!)
+      // 1개의 세션만 생성되어야 합니다
       expect(sessionInstanceCount).toBe(1);
       expect(mockConnect).toHaveBeenCalledTimes(1);
       expect(mockStartTransaction).toHaveBeenCalledTimes(1);
       expect(mockCommit).toHaveBeenCalledTimes(1);
       expect(mockClose).toHaveBeenCalledTimes(1);
 
+      // 배치: INSERT 1회 + SELECT 1회 = 2 쿼리
+      expect(mockQuery).toHaveBeenCalledTimes(2);
       expect(result).toHaveLength(3);
     });
   });
@@ -300,18 +286,9 @@ describe("Connection Reuse (Issue #30)", () => {
     });
 
     it("should rollback on saveMany error without leaking connections", async () => {
+      // #214 배치 경로: INSERT 실패 시 트랜잭션 롤백
       mockQuery
-        // 첫 번째 save 성공
-        .mockResolvedValueOnce({
-          results: { insertId: 1, affectedRows: 1 },
-          fields: [],
-        })
-        .mockResolvedValueOnce({
-          results: [{ id: 1, name: "Ok" }],
-          fields: [],
-        })
-        // 두 번째 save 실패
-        .mockRejectedValueOnce(new Error("Constraint violation"));
+        .mockRejectedValueOnce(new Error("Constraint violation")); // batch INSERT 실패
 
       await expect(
         em.saveMany(User, [{ name: "Ok" }, { name: "Fail" }]),

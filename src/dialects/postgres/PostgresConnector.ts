@@ -257,6 +257,9 @@ export class PostgresConnector extends IConnector {
     await client.query(safeSql);
   }
 
+  // PostgreSQL 기본 격리 수준 — 동일하면 SET TRANSACTION 생략 (#212)
+  private static readonly DEFAULT_ISOLATION: TRANSACTION_ISOLATION_LEVEL = "READ COMMITTED";
+
   async startTransaction(
     connection: any,
     level: TRANSACTION_ISOLATION_LEVEL = "READ COMMITTED",
@@ -267,14 +270,19 @@ export class PostgresConnector extends IConnector {
     }
 
     await client.query("BEGIN");
-    await this.setTransactionIsolationLevel(client, level);
 
-    // 멀티테넌시: 트랜잭션 스코프 search_path 설정
-    // SET LOCAL은 현재 트랜잭션에만 적용되고 COMMIT/ROLLBACK 시 자동 복원
+    // #212: 기본 격리 수준이면 SET TRANSACTION 생략
+    if (level !== PostgresConnector.DEFAULT_ISOLATION) {
+      await this.setTransactionIsolationLevel(client, level);
+    }
+
+    // #213: 멀티테넌시 — public 스키마면 SET LOCAL 생략
     const tenant = MetadataContext.getCurrentTenant();
     const schema = tenant !== "public" ? tenant : this.schema;
-    const safeSchema = this.escapeIdentifier(schema);
-    await client.query(`SET LOCAL search_path TO ${safeSchema}`);
+    if (schema !== "public") {
+      const safeSchema = this.escapeIdentifier(schema);
+      await client.query(`SET LOCAL search_path TO ${safeSchema}`);
+    }
   }
 
   async rollback(connection: any): Promise<void> {
