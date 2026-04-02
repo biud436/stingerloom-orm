@@ -4,6 +4,7 @@ import {
   PrimaryGeneratedColumn,
   ManyToOne,
   ManyToMany,
+  RelationColumn,
   DeletedAt,
   UniqueIndex,
   BeforeInsert,
@@ -41,17 +42,17 @@ export class Post {
   deletedAt!: Date | null;
 
   @ManyToOne(() => User, (user) => user.posts, {
-    joinColumn: "author_id",
     eager: true,
   })
+  @RelationColumn({ name: "author_id" })
   author!: User;
 
   authorId?: number;
 
   @ManyToOne(() => Category, (category) => category.posts, {
-    joinColumn: "category_id",
     eager: true,
   })
+  @RelationColumn({ name: "category_id" })
   category!: Category;
 
   categoryId?: number;

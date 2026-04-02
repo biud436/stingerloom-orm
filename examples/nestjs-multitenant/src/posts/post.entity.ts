@@ -3,6 +3,7 @@ import {
   Column,
   PrimaryGeneratedColumn,
   ManyToOne,
+  RelationColumn,
   BeforeInsert,
   BeforeUpdate,
 } from "@stingerloom/orm";
@@ -29,9 +30,9 @@ export class Post {
   updatedAt!: Date;
 
   @ManyToOne(() => User, (user) => user.posts, {
-    joinColumn: "author_id",
     eager: true,
   })
+  @RelationColumn({ name: "author_id" })
   author!: User;
 
   authorId?: number;

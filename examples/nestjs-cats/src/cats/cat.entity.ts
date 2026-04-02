@@ -3,6 +3,7 @@ import {
   Column,
   PrimaryGeneratedColumn,
   ManyToOne,
+  RelationColumn,
   DeletedAt,
   Version,
   BeforeInsert,
@@ -55,9 +56,9 @@ export class Cat {
    * eager: true → findOne 시 LEFT JOIN으로 owner를 자동 로드.
    */
   @ManyToOne(() => Owner, (owner) => owner.cats, {
-    joinColumn: "owner_id",
     eager: true,
   })
+  @RelationColumn({ name: "owner_id" })
   owner!: Owner;
 
   /**

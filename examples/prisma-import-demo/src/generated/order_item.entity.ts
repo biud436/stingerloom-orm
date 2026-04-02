@@ -2,6 +2,7 @@ import {
   Column,
   Entity,
   ManyToOne,
+  RelationColumn,
   PrimaryGeneratedColumn,
   UniqueIndex,
 } from "@stingerloom/orm";
@@ -20,9 +21,11 @@ export class OrderItem {
   @Column({ type: "double", precision: 10, scale: 2 })
   unitPrice!: number;
 
-  @ManyToOne(() => Order, (e) => e.items, { joinColumn: "orderId" })
+  @ManyToOne(() => Order, (e) => e.items)
+  @RelationColumn({ name: "orderId" })
   order!: Order;
 
-  @ManyToOne(() => Product, (e) => e.orderItems, { joinColumn: "productId" })
+  @ManyToOne(() => Product, (e) => e.orderItems)
+  @RelationColumn({ name: "productId" })
   product!: Product;
 }
