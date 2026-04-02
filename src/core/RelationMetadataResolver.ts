@@ -25,6 +25,8 @@ import {
   OneToOneMetadata,
   COLUMN_TOKEN,
   VERSION_TOKEN,
+  RELATION_COLUMN_TOKEN,
+  RelationColumnMetadata,
 } from "../decorators";
 import { MetadataContext } from "../metadata/MetadataContext";
 
@@ -158,30 +160,54 @@ export class RelationMetadataResolver {
    * ManyToOne 관계의 joinColumn을 자동 해석합니다.
    *
    * 해석 우선순위:
-   * 1. @ManyToOne option의 joinColumn이 명시적으로 지정된 경우 → 그대로 사용
-   * 2. 같은 엔티티에 @Column으로 선언된 `{propertyName}Id` 프로퍼티가 있으면
+   * 1. @RelationColumn 메타데이터 (name 명시 또는 자동 추론)
+   * 2. @ManyToOne option의 joinColumn이 명시적으로 지정된 경우 → 그대로 사용
+   * 3. 같은 엔티티에 @Column으로 선언된 `{propertyName}Id` 프로퍼티가 있으면
    *    → 해당 @Column의 실제 DB 컬럼명(name)을 FK 컬럼으로 사용
-   * 3. 둘 다 없으면 → joinColumn 미설정 (기존 {propertyName}Id 컨벤션 fallback)
+   * 4. 모두 없으면 → joinColumn 미설정
    */
   resolveJoinColumnsFromColumnMeta(
     entity: ClazzType<any>,
     relations: ManyToOneMetadata<any>[],
   ): ManyToOneMetadata<any>[] {
+    // @RelationColumn 메타데이터 조회
+    const relationColumns: RelationColumnMetadata[] =
+      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
+      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??
+      [];
+
     // @Column 메타데이터 조회 (property key → column metadata)
     const columnsMeta: ColumnMetadata[] =
       Reflect.getMetadata(COLUMN_TOKEN, entity) ??
       Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
       [];
 
-    if (columnsMeta.length === 0) {
-      return relations;
-    }
-
     return relations.map((rel) => {
-      // 이미 joinColumn이 명시된 경우 → 그대로
+      // 1. @RelationColumn 메타데이터 확인 (최우선)
+      const relCol = relationColumns.find(
+        (rc) => rc.propertyKey === rel.columnName,
+      );
+      if (relCol) {
+        let resolvedName = relCol.name;
+        if (!resolvedName) {
+          resolvedName = `${rel.columnName}Id`;
+          this.logger.warn(
+            `@RelationColumn name not specified for '${rel.columnName}' on ${entity.name}, inferred '${resolvedName}'.`,
+          );
+        }
+        return {
+          ...rel,
+          joinColumn: resolvedName,
+          references: relCol.referencedColumn ?? rel.references,
+        };
+      }
+
+      // 2. 이미 option.joinColumn이 명시된 경우 → 그대로
       if (rel.joinColumn) return rel;
 
-      // {propertyName}Id 패턴의 @Column 탐색
+      // 3. {propertyName}Id 패턴의 @Column 탐색
+      if (columnsMeta.length === 0) return rel;
+
       const fkPropertyName = `${rel.columnName}Id`;
       const matchingColumn = columnsMeta.find(
         (col: ColumnMetadata) => col.propertyKey === fkPropertyName,
@@ -317,24 +343,49 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * OneToOne 관계의 joinColumn을 @Column 메타데이터에서 자동 해석합니다.
-   * 해석 우선순위는 ManyToOne과 동일합니다.
+   * OneToOne 관계의 joinColumn을 자동 해석합니다.
+   * 해석 우선순위는 ManyToOne과 동일:
+   * 1. @RelationColumn > 2. option.joinColumn > 3. {propName}Id @Column
    */
   resolveJoinColumnsFromColumnMetaForOneToOne(
     entity: ClazzType<any>,
     relations: OneToOneMetadata<any>[],
   ): OneToOneMetadata<any>[] {
+    // @RelationColumn 메타데이터 조회
+    const relationColumns: RelationColumnMetadata[] =
+      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
+      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??
+      [];
+
     const columnsMeta: ColumnMetadata[] =
       Reflect.getMetadata(COLUMN_TOKEN, entity) ??
       Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
       [];
 
-    if (columnsMeta.length === 0) {
-      return relations;
-    }
-
     return relations.map((rel) => {
+      // 1. @RelationColumn 메타데이터 확인 (최우선)
+      const relCol = relationColumns.find(
+        (rc) => rc.propertyKey === rel.propertyKey,
+      );
+      if (relCol) {
+        let resolvedName = relCol.name;
+        if (!resolvedName) {
+          resolvedName = `${rel.propertyKey}Id`;
+          this.logger.warn(
+            `@RelationColumn name not specified for '${rel.propertyKey}' on ${entity.name}, inferred '${resolvedName}'.`,
+          );
+        }
+        return {
+          ...rel,
+          joinColumn: resolvedName,
+        };
+      }
+
+      // 2. 이미 option.joinColumn이 명시된 경우 → 그대로
       if (rel.joinColumn) return rel;
+
+      // 3. {propertyName}Id 패턴의 @Column 탐색
+      if (columnsMeta.length === 0) return rel;
 
       const fkPropertyName = `${rel.propertyKey}Id`;
       const matchingColumn = columnsMeta.find(

@@ -32,6 +32,10 @@ import {
   ManyToManyMetadata,
 } from "../../decorators/ManyToMany";
 import { ColumnMetadata } from "../../scanner/ColumnScanner";
+import {
+  RELATION_COLUMN_TOKEN,
+  RelationColumnMetadata,
+} from "../../decorators/RelationColumn";
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../../decorators/ComputedColumn";
@@ -480,7 +484,7 @@ export class SchemaGenerator {
   private getColumns<T>(entity: ClazzType<T>): ColumnDef[] {
     const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
       []) as ColumnMetadata[];
-    return columns.map((col) => ({
+    const result = columns.map((col) => ({
       name: col.name ?? "unknown",
       options: (col.options ?? {
         type: "varchar" as ColumnType,
@@ -488,6 +492,65 @@ export class SchemaGenerator {
         nullable: false,
       }) as ColumnOption,
     }));
+
+    // @RelationColumn 가상 컬럼 추가 (대응하는 @Column이 없는 경우)
+    const relationColumns: RelationColumnMetadata[] =
+      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
+      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??
+      [];
+    const existingNames = new Set(result.map((c) => c.name));
+
+    for (const rc of relationColumns) {
+      const fkName = rc.name ?? `${rc.propertyKey}Id`;
+      if (existingNames.has(fkName)) continue; // @Column이 이미 선언됨
+
+      // FK 컬럼 타입 결정: option.type → 대상 PK 타입 추론 → fallback "int"
+      const fkType: ColumnType = rc.type ?? this.inferRelatedPkType(entity, rc.propertyKey) ?? "int";
+
+      result.push({
+        name: fkName,
+        options: {
+          type: fkType,
+          nullable: rc.nullable ?? true,
+        } as ColumnOption,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * @RelationColumn의 대상 엔티티 PK 타입을 추론합니다.
+   * ManyToOne 또는 OneToOne 메타데이터에서 대상 엔티티를 찾아 PK 타입을 반환합니다.
+   */
+  private inferRelatedPkType<T>(entity: ClazzType<T>, propertyKey: string): ColumnType | null {
+    // ManyToOne에서 대상 엔티티 검색
+    const manyToOnes = (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity) ??
+      Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity.prototype) ??
+      []) as ManyToOneMetadata<any>[];
+    const m2o = manyToOnes.find((r) => r.columnName === propertyKey);
+    if (m2o) {
+      const relatedEntity = m2o.getMappingEntity() as ClazzType<any>;
+      return this.findPrimaryKeyType(relatedEntity);
+    }
+
+    // OneToOne에서 대상 엔티티 검색
+    const oneToOnes = (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) ??
+      []) as OneToOneMetadata<any>[];
+    const o2o = oneToOnes.find((r) => r.propertyKey === propertyKey);
+    if (o2o) {
+      const relatedEntity = o2o.getRelatedEntity();
+      return this.findPrimaryKeyType(relatedEntity);
+    }
+
+    return null;
+  }
+
+  private findPrimaryKeyType<T>(entity: ClazzType<T>): ColumnType | null {
+    const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
+      []) as ColumnMetadata[];
+    const pk = columns.find((col) => col.options?.primary);
+    return (pk?.options?.type as ColumnType) ?? null;
   }
 
   /**

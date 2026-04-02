@@ -8,6 +8,18 @@ import {
 } from "../../decorators/Column";
 import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
 import { ColumnMetadata } from "../../scanner/ColumnScanner";
+import {
+  RELATION_COLUMN_TOKEN,
+  RelationColumnMetadata,
+} from "../../decorators/RelationColumn";
+import {
+  MANY_TO_ONE_TOKEN,
+  ManyToOneMetadata,
+} from "../../decorators/ManyToOne";
+import {
+  ONE_TO_ONE_TOKEN,
+  OneToOneMetadata,
+} from "../../decorators/OneToOne";
 import { SchemaDialect } from "./SchemaGenerator";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -248,7 +260,7 @@ export class SchemaDiff {
   ): Array<{ name: string; options: ColumnOption }> {
     const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
       []) as ColumnMetadata[];
-    return columns.map((col) => ({
+    const result = columns.map((col) => ({
       name: col.name ?? "unknown",
       options: (col.options ?? {
         type: "varchar" as ColumnType,
@@ -256,6 +268,62 @@ export class SchemaDiff {
         nullable: false,
       }) as ColumnOption,
     }));
+
+    // @RelationColumn 가상 컬럼 추가 (대응하는 @Column이 없는 경우)
+    const relationColumns: RelationColumnMetadata[] =
+      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
+      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??
+      [];
+    const existingNames = new Set(result.map((c) => c.name));
+
+    for (const rc of relationColumns) {
+      const fkName = rc.name ?? `${rc.propertyKey}Id`;
+      if (existingNames.has(fkName)) continue;
+
+      const fkType: ColumnType =
+        rc.type ?? this.inferRelatedPkType(entity, rc.propertyKey) ?? "int";
+
+      result.push({
+        name: fkName,
+        options: {
+          type: fkType,
+          nullable: rc.nullable ?? true,
+        } as ColumnOption,
+      });
+    }
+
+    return result;
+  }
+
+  private inferRelatedPkType<T>(
+    entity: ClazzType<T>,
+    propertyKey: string,
+  ): ColumnType | null {
+    const manyToOnes = (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity) ??
+      Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity.prototype) ??
+      []) as ManyToOneMetadata<any>[];
+    const m2o = manyToOnes.find((r) => r.columnName === propertyKey);
+    if (m2o) {
+      const relatedEntity = m2o.getMappingEntity() as ClazzType<any>;
+      return this.findPrimaryKeyType(relatedEntity);
+    }
+
+    const oneToOnes = (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) ??
+      []) as OneToOneMetadata<any>[];
+    const o2o = oneToOnes.find((r) => r.propertyKey === propertyKey);
+    if (o2o) {
+      const relatedEntity = o2o.getRelatedEntity();
+      return this.findPrimaryKeyType(relatedEntity);
+    }
+
+    return null;
+  }
+
+  private findPrimaryKeyType<T>(entity: ClazzType<T>): ColumnType | null {
+    const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
+      []) as ColumnMetadata[];
+    const pk = columns.find((col) => col.options?.primary);
+    return (pk?.options?.type as ColumnType) ?? null;
   }
 
   private async getDbColumns(

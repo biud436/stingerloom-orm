@@ -20,3 +20,4 @@ export * from "./UniqueIndex";
 export * from "./InjectRepository";
 export * from "./ComputedColumn";
 export * from "./FullTextIndex";
+export * from "./RelationColumn";
