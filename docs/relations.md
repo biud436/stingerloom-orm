@@ -185,9 +185,10 @@ export class Cat {
 
 The resolution priority is as follows.
 
-1. If `@ManyToOne`'s `joinColumn` option is specified -> use as-is
-2. If a `@Column` with `{propertyName}Id` is declared on the same entity -> use that `@Column`'s DB column name
-3. If neither exists -> fallback to `{propertyName}Id` convention
+1. If `@RelationColumn` is attached to the property -> use its `name` (or infer `{propertyName}Id` if omitted)
+2. If `@ManyToOne`'s `joinColumn` option is specified -> use as-is
+3. If a `@Column` with `{propertyName}Id` is declared on the same entity -> use that `@Column`'s DB column name
+4. If none of the above -> fallback to `{propertyName}Id` convention
 
 Declaring a `@Column` also has the advantage of being able to directly read and write FK values on the entity.
 
@@ -203,6 +204,57 @@ This generates:
 
 ```sql
 INSERT INTO "cat" ("name", "owner_fk") VALUES ('Whiskers', 3);
+```
+
+### @RelationColumn Decorator
+
+`@RelationColumn` provides a declarative way to define FK columns on `@ManyToOne` and `@OneToOne` properties. It generates the FK column in DDL automatically, without requiring a separate `@Column` declaration.
+
+```typescript
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, RelationColumn } from "@stingerloom/orm";
+
+@Entity()
+export class Post {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  title!: string;
+
+  @ManyToOne(() => User, (user) => user.posts)
+  @RelationColumn({ name: "author_id" })
+  author!: User;
+}
+```
+
+This is equivalent to manually declaring `@Column({ type: "int", name: "author_id", nullable: true }) authorId!: number` plus setting `joinColumn: "author_id"` on `@ManyToOne`.
+
+**Auto-inference:** If you omit `name`, it defaults to `{propertyName}Id` and logs a warning.
+
+```typescript
+@ManyToOne(() => User, (user) => user.posts)
+@RelationColumn()        // inferred as "authorId", warn logged
+author!: User;
+```
+
+**Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | `string` | `{propertyName}Id` | FK column name in the database |
+| `type` | `ColumnType` | target PK type | FK column type (e.g., `"int"`, `"bigint"`, `"uuid"`) |
+| `nullable` | `boolean` | `true` | Whether the FK column allows NULL |
+| `referencedColumn` | `string` | target PK | The column to reference in the target entity |
+
+**Coexisting with @Column:** If you also need direct FK access (e.g., `post.authorId = 5`), declare both `@Column` and `@RelationColumn` with the same name. The DDL will not create a duplicate column.
+
+```typescript
+@Column({ type: "int", name: "author_id" })
+authorId!: number;          // Direct FK access: post.authorId = 5
+
+@ManyToOne(() => User, (user) => user.posts)
+@RelationColumn({ name: "author_id" })
+author!: User;
 ```
 
 ### Referencing Non-PK Columns (references)
@@ -529,7 +581,7 @@ LEFT JOIN "profile" ON "user"."profile_id" = "profile"."id"
 WHERE "user"."id" = 1;
 ```
 
-> **Hint** `@OneToOne` also supports `@Column`-based FK auto-detection just like `@ManyToOne`. If you declare `@Column({ name: "profile_fk" }) profileId: number`, you can omit `joinColumn`.
+> **Hint** `@OneToOne` also supports `@RelationColumn` and `@Column`-based FK auto-detection just like `@ManyToOne`. You can use `@RelationColumn({ name: "profile_id" })` or declare `@Column({ name: "profile_fk" }) profileId: number` to omit `joinColumn`.
 
 ### Bidirectional
 

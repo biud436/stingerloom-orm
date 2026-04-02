@@ -144,6 +144,7 @@ const userRepo = BaseRepository.of(User, em);
 | `@OneToMany(getEntity, option)` | One-to-many (inverse side) |
 | `@OneToOne(getEntity, option?)` | One-to-one |
 | `@ManyToMany(getEntity, option?)` | Many-to-many |
+| `@RelationColumn(option?)` | FK column declaration for @ManyToOne/@OneToOne |
 
 ### Lifecycle Hooks
 
@@ -453,6 +454,13 @@ interface ManyToManyOption<T> {
 }
 
 type CascadeOption = boolean | ("insert" | "update" | "delete" | "remove")[];
+
+interface RelationColumnOption {
+  name?: string;              // FK column name (inferred as {propertyName}Id if omitted)
+  type?: ColumnType;          // FK column type (inferred from target PK if omitted)
+  nullable?: boolean;         // default: true
+  referencedColumn?: string;  // Target reference column (defaults to PK)
+}
 ```
 
 > `mappedBy` and `inverseSide` provide auto-completion for the target entity's property names. Arbitrary strings are also allowed.

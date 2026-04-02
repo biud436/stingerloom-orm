@@ -185,9 +185,10 @@ export class Cat {
 
 해석 우선순위는 이래요.
 
-1. `@ManyToOne`의 `joinColumn` 옵션이 지정된 경우 -> 그대로 사용
-2. 같은 엔티티에 `{propertyName}Id`인 `@Column`이 선언된 경우 -> 해당 `@Column`의 DB 컬럼명 사용
-3. 둘 다 없는 경우 -> `{propertyName}Id` 규칙으로 폴백
+1. `@RelationColumn`이 프로퍼티에 부착된 경우 -> `name` 사용 (생략 시 `{propertyName}Id` 추론)
+2. `@ManyToOne`의 `joinColumn` 옵션이 지정된 경우 -> 그대로 사용
+3. 같은 엔티티에 `{propertyName}Id`인 `@Column`이 선언된 경우 -> 해당 `@Column`의 DB 컬럼명 사용
+4. 위 모두 없는 경우 -> `{propertyName}Id` 규칙으로 폴백
 
 `@Column`을 선언하면 엔티티에서 FK 값을 직접 읽고 쓸 수 있다는 장점도 있어요.
 
@@ -203,6 +204,57 @@ console.log(cat.ownerId); // FK 값을 직접 읽기
 
 ```sql
 INSERT INTO "cat" ("name", "owner_fk") VALUES ('Whiskers', 3);
+```
+
+### @RelationColumn 데코레이터
+
+`@RelationColumn`은 `@ManyToOne`이나 `@OneToOne` 프로퍼티에서 FK 컬럼을 선언적으로 정의하는 데코레이터예요. 별도의 `@Column` 선언 없이도 DDL에 FK 컬럼을 자동 생성해요.
+
+```typescript
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, RelationColumn } from "@stingerloom/orm";
+
+@Entity()
+export class Post {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  title!: string;
+
+  @ManyToOne(() => User, (user) => user.posts)
+  @RelationColumn({ name: "author_id" })
+  author!: User;
+}
+```
+
+이건 `@Column({ type: "int", name: "author_id", nullable: true }) authorId!: number`을 선언하고 `@ManyToOne`에 `joinColumn: "author_id"`를 설정하는 것과 동일해요.
+
+**자동 추론:** `name`을 생략하면 `{propertyName}Id`로 기본 설정되고, 경고 로그가 출력돼요.
+
+```typescript
+@ManyToOne(() => User, (user) => user.posts)
+@RelationColumn()        // "authorId"로 추론, warn 로그 출력
+author!: User;
+```
+
+**옵션:**
+
+| 옵션 | 타입 | 기본값 | 설명 |
+|------|------|--------|------|
+| `name` | `string` | `{propertyName}Id` | DB에서의 FK 컬럼명 |
+| `type` | `ColumnType` | 대상 PK 타입 | FK 컬럼 타입 (예: `"int"`, `"bigint"`, `"uuid"`) |
+| `nullable` | `boolean` | `true` | FK 컬럼의 NULL 허용 여부 |
+| `referencedColumn` | `string` | 대상 PK | 대상 엔티티에서 참조할 컬럼 |
+
+**@Column과 병행 사용:** FK 값에 직접 접근이 필요하면 (예: `post.authorId = 5`), `@Column`과 `@RelationColumn`을 같은 이름으로 선언해요. DDL에 중복 컬럼이 생기지 않아요.
+
+```typescript
+@Column({ type: "int", name: "author_id" })
+authorId!: number;          // 직접 FK 접근: post.authorId = 5
+
+@ManyToOne(() => User, (user) => user.posts)
+@RelationColumn({ name: "author_id" })
+author!: User;
 ```
 
 ### PK가 아닌 컬럼 참조 (references)
@@ -529,7 +581,7 @@ LEFT JOIN "profile" ON "user"."profile_id" = "profile"."id"
 WHERE "user"."id" = 1;
 ```
 
-> **힌트** `@OneToOne`도 `@ManyToOne`과 동일하게 `@Column` 기반 FK 자동 감지를 지원해요. `@Column({ name: "profile_fk" }) profileId: number`를 선언하면 `joinColumn`을 생략할 수 있어요.
+> **힌트** `@OneToOne`도 `@ManyToOne`과 동일하게 `@RelationColumn` 및 `@Column` 기반 FK 자동 감지를 지원해요. `@RelationColumn({ name: "profile_id" })`를 사용하거나 `@Column({ name: "profile_fk" }) profileId: number`를 선언하면 `joinColumn`을 생략할 수 있어요.
 
 ### 양방향
 

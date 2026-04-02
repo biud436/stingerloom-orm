@@ -144,6 +144,7 @@ const userRepo = BaseRepository.of(User, em);
 | `@OneToMany(getEntity, option)` | One-to-many (역방향) |
 | `@OneToOne(getEntity, option?)` | One-to-one |
 | `@ManyToMany(getEntity, option?)` | Many-to-many |
+| `@RelationColumn(option?)` | @ManyToOne/@OneToOne의 FK 컬럼 선언 |
 
 ### Lifecycle Hooks
 
@@ -453,6 +454,13 @@ interface ManyToManyOption<T> {
 }
 
 type CascadeOption = boolean | ("insert" | "update" | "delete" | "remove")[];
+
+interface RelationColumnOption {
+  name?: string;              // FK 컬럼명 (생략 시 {propertyName}Id로 추론)
+  type?: ColumnType;          // FK 컬럼 타입 (생략 시 대상 PK 타입 추론)
+  nullable?: boolean;         // 기본값: true
+  referencedColumn?: string;  // 대상 참조 컬럼 (기본값: PK)
+}
 ```
 
 > `mappedBy`와 `inverseSide`는 대상 엔티티의 프로퍼티 이름 자동 완성을 지원해요. 임의의 문자열도 허용돼요.
