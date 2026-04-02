@@ -11,6 +11,9 @@ import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { Migration } from "./Migration";
 import { MigrationResult, MigrationRunner } from "./MigrationRunner";
+import { MySqlMigrationRunner } from "./MySqlMigrationRunner";
+import { PostgresMigrationRunner } from "./PostgresMigrationRunner";
+import { SqliteMigrationRunner } from "./SqliteMigrationRunner";
 import { SchemaDiff } from "../core/generators/SchemaDiff";
 import { SchemaDiffMigrationGenerator } from "../core/generators/SchemaDiffMigrationGenerator";
 import { SchemaDialect } from "../core/generators/SchemaGenerator";
@@ -76,9 +79,38 @@ export class MigrationCli {
         );
     }
 
-    this.runner = new MigrationRunner(this.migrations, this.driver, {
-      query: (sql: string) => connector.query(sql),
-    });
+    const queryRunner = { query: (sql: string) => connector.query(sql) };
+
+    switch (client.type as IDatabaseType) {
+      case "mariadb":
+      case "mysql":
+        this.runner = new MySqlMigrationRunner(
+          this.migrations,
+          this.driver,
+          queryRunner,
+        );
+        break;
+      case "postgres":
+        this.runner = new PostgresMigrationRunner(
+          this.migrations,
+          this.driver,
+          queryRunner,
+        );
+        break;
+      case "sqlite":
+        this.runner = new SqliteMigrationRunner(
+          this.migrations,
+          this.driver,
+          queryRunner,
+        );
+        break;
+      default:
+        // Should not reach here — driver switch above already throws
+        throw new OrmError(
+          OrmErrorCode.UNSUPPORTED_DATABASE,
+          `Unsupported database type for migration runner: "${this.options.type}".`,
+        );
+    }
   }
 
   /**

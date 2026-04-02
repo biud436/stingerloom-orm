@@ -4,8 +4,8 @@ import { ISqlDriver } from "../../src/dialects/SqlDriver";
 import {
   Migration,
   MigrationContext,
-  MigrationRunner,
   MigrationQueryRunner,
+  PostgresMigrationRunner,
 } from "../../src/migration";
 import { AdvisoryLockError } from "../../src/errors/AdvisoryLockError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
@@ -91,7 +91,7 @@ describe("Advisory Lock", () => {
       const driver = createMockDriver(false);
       const qr = createMockQueryRunner();
       const m = new TestMigration();
-      const runner = new MigrationRunner([m], driver, qr);
+      const runner = new PostgresMigrationRunner([m], driver, qr);
 
       await runner.runAll();
 
@@ -110,7 +110,7 @@ describe("Advisory Lock", () => {
       const driver = createMockDriver(false, { acquireResult: false });
       const qr = createMockQueryRunner();
       const m = new TestMigration();
-      const runner = new MigrationRunner([m], driver, qr);
+      const runner = new PostgresMigrationRunner([m], driver, qr);
 
       await expect(runner.runAll()).rejects.toThrow(AdvisoryLockError);
       await expect(runner.runAll()).rejects.toThrow(
@@ -130,7 +130,7 @@ describe("Advisory Lock", () => {
       }
 
       const m = new FailingMigration();
-      const runner = new MigrationRunner([m], driver, qr);
+      const runner = new PostgresMigrationRunner([m], driver, qr);
 
       // runAll catches migration errors and returns results, doesn't throw
       const results = await runner.runAll();
@@ -144,7 +144,7 @@ describe("Advisory Lock", () => {
       const driver = createMockDriver(false);
       const qr = createMockQueryRunner();
       const m = new TestMigration();
-      const runner = new MigrationRunner([m], driver, qr, {
+      const runner = new PostgresMigrationRunner([m], driver, qr, {
         lockId: "custom_lock",
       });
 
@@ -161,7 +161,7 @@ describe("Advisory Lock", () => {
       const driver = createMockDriver(false);
       const qr = createMockQueryRunner();
       const m = new TestMigration();
-      const runner = new MigrationRunner([m], driver, qr, {
+      const runner = new PostgresMigrationRunner([m], driver, qr, {
         lockTimeoutMs: 30000,
       });
 
@@ -177,7 +177,7 @@ describe("Advisory Lock", () => {
       const driver = createMockDriver(false);
       const qr = createMockQueryRunner();
       const m = new TestMigration();
-      const runner = new MigrationRunner([m], driver, qr);
+      const runner = new PostgresMigrationRunner([m], driver, qr);
 
       await runner.run();
 

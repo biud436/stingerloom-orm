@@ -33,17 +33,21 @@ export interface MigrationQueryRunner {
 /**
  * 마이그레이션 러너.
  * 미실행 마이그레이션을 순서대로 실행하고 __migrations 테이블에 기록합니다.
- * MySQL/PostgreSQL 드라이버 모두 지원합니다.
+ * MySQL/PostgreSQL/SQLite 드라이버 모두 지원합니다.
+ *
+ * 이 클래스는 abstract base class로, dialect별 구체 구현체
+ * (MySqlMigrationRunner, PostgresMigrationRunner, SqliteMigrationRunner)를
+ * 통해 사용합니다.
  */
 export interface MigrationRunnerOptions {
   lockId?: string;
   lockTimeoutMs?: number;
 }
 
-export class MigrationRunner {
+export abstract class MigrationRunner {
   private readonly logger = new Logger(MigrationRunner.name);
   private readonly migrations: Migration[];
-  private readonly driver: ISqlDriver;
+  protected readonly driver: ISqlDriver;
   private readonly queryRunner: MigrationQueryRunner;
   private readonly tableName = "__migrations";
   private readonly lockId: string;
@@ -63,41 +67,42 @@ export class MigrationRunner {
   }
 
   /**
+   * 식별자를 dialect별 문자로 감싸서 반환합니다.
+   * MySQL: backtick (`), PostgreSQL/SQLite: double-quote (")
+   */
+  protected abstract wrapIdentifier(name: string): string;
+
+  /**
+   * 자동 증가 PK 컬럼 정의를 반환합니다.
+   * MySQL: "INT AUTO_INCREMENT PRIMARY KEY"
+   * PostgreSQL: "SERIAL PRIMARY KEY"
+   * SQLite: "INTEGER PRIMARY KEY AUTOINCREMENT"
+   */
+  protected abstract autoIncrementPkDefinition(): string;
+
+  /**
    * __migrations 추적 테이블을 생성합니다.
    * 이미 존재하면 아무 작업도 하지 않습니다.
    */
   async ensureMigrationTable(): Promise<void> {
-    const isMySql = this.driver.isMySqlFamily();
-
-    if (isMySql) {
-      await this.queryRunner.query(
-        `CREATE TABLE IF NOT EXISTS \`${this.tableName}\` (` +
-          `\`id\` INT AUTO_INCREMENT PRIMARY KEY, ` +
-          `\`name\` VARCHAR(255) NOT NULL UNIQUE, ` +
-          `\`executed_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP` +
-          `)`,
-      );
-    } else {
-      // PostgreSQL / SQLite
-      await this.queryRunner.query(
-        `CREATE TABLE IF NOT EXISTS "${this.tableName}" (` +
-          `"id" SERIAL PRIMARY KEY, ` +
-          `"name" VARCHAR(255) NOT NULL UNIQUE, ` +
-          `"executed_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP` +
-          `)`,
-      );
-    }
+    const w = (n: string) => this.wrapIdentifier(n);
+    await this.queryRunner.query(
+      `CREATE TABLE IF NOT EXISTS ${w(this.tableName)} (` +
+        `${w("id")} ${this.autoIncrementPkDefinition()}, ` +
+        `${w("name")} VARCHAR(255) NOT NULL UNIQUE, ` +
+        `${w("executed_at")} TIMESTAMP DEFAULT CURRENT_TIMESTAMP` +
+        `)`,
+    );
   }
 
   /**
    * 이미 실행된 마이그레이션 이름 목록을 조회합니다.
    */
   async getExecutedMigrations(): Promise<string[]> {
-    const isMySql = this.driver.isMySqlFamily();
-    const quote = isMySql ? "`" : '"';
+    const w = (n: string) => this.wrapIdentifier(n);
 
     const result = await this.queryRunner.query(
-      `SELECT ${quote}name${quote} FROM ${quote}${this.tableName}${quote} ORDER BY ${quote}id${quote} ASC`,
+      `SELECT ${w("name")} FROM ${w(this.tableName)} ORDER BY ${w("id")} ASC`,
     );
 
     // 드라이버별 결과 형태 정규화
@@ -124,9 +129,7 @@ export class MigrationRunner {
     try {
       await this.ensureMigrationTable();
       const executed = await this.getExecutedMigrations();
-      const pending = this.migrations.filter(
-        (m) => !executed.includes(m.name),
-      );
+      const pending = this.migrations.filter((m) => !executed.includes(m.name));
 
       const results: MigrationResult[] = [];
 
@@ -157,12 +160,18 @@ export class MigrationRunner {
         await this.recordMigration(migration.name);
       } catch (trackError: unknown) {
         // #161: Schema changed but tracking record failed — critical desync
-        const msg = trackError instanceof Error ? trackError.message : String(trackError);
+        const msg =
+          trackError instanceof Error ? trackError.message : String(trackError);
         this.logger.error(
           `CRITICAL: Migration "${migration.name}" applied but tracking record failed: ${msg}. ` +
-          `The __migrations table may be out of sync with the actual schema.`,
+            `The __migrations table may be out of sync with the actual schema.`,
         );
-        return { name: migration.name, direction: "up", success: false, error: `Tracking failed: ${msg}` };
+        return {
+          name: migration.name,
+          direction: "up",
+          success: false,
+          error: `Tracking failed: ${msg}`,
+        };
       }
       this.logger.info(`Migration completed: ${migration.name}`);
       return { name: migration.name, direction: "up", success: true };
@@ -186,12 +195,18 @@ export class MigrationRunner {
         await this.removeMigrationRecord(migration.name);
       } catch (trackError: unknown) {
         // #161: Schema reverted but tracking record removal failed — critical desync
-        const msg = trackError instanceof Error ? trackError.message : String(trackError);
+        const msg =
+          trackError instanceof Error ? trackError.message : String(trackError);
         this.logger.error(
           `CRITICAL: Migration "${migration.name}" reverted but tracking record removal failed: ${msg}. ` +
-          `The __migrations table may be out of sync.`,
+            `The __migrations table may be out of sync.`,
         );
-        return { name: migration.name, direction: "down", success: false, error: `Tracking failed: ${msg}` };
+        return {
+          name: migration.name,
+          direction: "down",
+          success: false,
+          error: `Tracking failed: ${msg}`,
+        };
       }
       this.logger.info(`Migration reverted: ${migration.name}`);
       return { name: migration.name, direction: "down", success: true };
@@ -338,18 +353,16 @@ export class MigrationRunner {
   }
 
   private async recordMigration(name: string): Promise<void> {
-    const isMySql = this.driver.isMySqlFamily();
-    const quote = isMySql ? "`" : '"';
+    const w = (n: string) => this.wrapIdentifier(n);
     await this.queryRunner.query(
-      `INSERT INTO ${quote}${this.tableName}${quote} (${quote}name${quote}) VALUES ('${name.replace(/'/g, "''")}')`,
+      `INSERT INTO ${w(this.tableName)} (${w("name")}) VALUES ('${name.replace(/'/g, "''")}')`,
     );
   }
 
   private async removeMigrationRecord(name: string): Promise<void> {
-    const isMySql = this.driver.isMySqlFamily();
-    const quote = isMySql ? "`" : '"';
+    const w = (n: string) => this.wrapIdentifier(n);
     await this.queryRunner.query(
-      `DELETE FROM ${quote}${this.tableName}${quote} WHERE ${quote}name${quote} = '${name.replace(/'/g, "''")}'`,
+      `DELETE FROM ${w(this.tableName)} WHERE ${w("name")} = '${name.replace(/'/g, "''")}'`,
     );
   }
 

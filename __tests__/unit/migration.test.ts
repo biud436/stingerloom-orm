@@ -2,9 +2,11 @@
 import {
   Migration,
   MigrationContext,
-  MigrationRunner,
   MigrationQueryRunner,
+  MySqlMigrationRunner,
+  PostgresMigrationRunner,
 } from "../../src/migration";
+import { MigrationRunner } from "../../src/migration/MigrationRunner";
 import { ISqlDriver } from "../../src/dialects/SqlDriver";
 
 // ─── Mock helpers ────────────────────────────────────────────
@@ -129,7 +131,7 @@ describe("Migration System", () => {
     });
 
     it("__migrations 테이블을 PostgreSQL 구문으로 생성해야 함", async () => {
-      runner = new MigrationRunner([], driver, queryRunner);
+      runner = new PostgresMigrationRunner([], driver, queryRunner);
       await runner.ensureMigrationTable();
 
       expect(queryRunner.queries.length).toBe(1);
@@ -142,7 +144,7 @@ describe("Migration System", () => {
       const m1 = new CreateUsersTable();
       const m2 = new AddEmailToUsers();
 
-      runner = new MigrationRunner([m1, m2], driver, queryRunner);
+      runner = new PostgresMigrationRunner([m1, m2], driver, queryRunner);
 
       const results = await runner.runAll();
 
@@ -176,7 +178,7 @@ describe("Migration System", () => {
         },
       );
 
-      runner = new MigrationRunner([m1, m2], driver, queryRunner);
+      runner = new PostgresMigrationRunner([m1, m2], driver, queryRunner);
       const results = await runner.runAll();
 
       expect(results).toHaveLength(1);
@@ -188,7 +190,7 @@ describe("Migration System", () => {
       const m2 = new FailingMigration();
       const m3 = new CreatePostsTable();
 
-      runner = new MigrationRunner([m1, m2, m3], driver, queryRunner);
+      runner = new PostgresMigrationRunner([m1, m2, m3], driver, queryRunner);
       const results = await runner.runAll();
 
       expect(results).toHaveLength(2);
@@ -200,7 +202,7 @@ describe("Migration System", () => {
 
     it("마이그레이션 실행 시 __migrations에 기록해야 함", async () => {
       const m1 = new CreateUsersTable();
-      runner = new MigrationRunner([m1], driver, queryRunner);
+      runner = new PostgresMigrationRunner([m1], driver, queryRunner);
 
       await runner.runAll();
 
@@ -213,7 +215,7 @@ describe("Migration System", () => {
 
     it("runDown은 마이그레이션을 되돌리고 기록을 삭제해야 함", async () => {
       const m1 = new CreateUsersTable();
-      runner = new MigrationRunner([m1], driver, queryRunner);
+      runner = new PostgresMigrationRunner([m1], driver, queryRunner);
 
       const result = await runner.runDown(m1);
 
@@ -256,7 +258,7 @@ describe("Migration System", () => {
         },
       );
 
-      runner = new MigrationRunner([m1, m2], driver, queryRunner);
+      runner = new PostgresMigrationRunner([m1, m2], driver, queryRunner);
       const result = await runner.revertLast();
 
       expect(result).not.toBeNull();
@@ -266,7 +268,7 @@ describe("Migration System", () => {
     });
 
     it("실행된 마이그레이션이 없으면 revertLast는 null을 반환해야 함", async () => {
-      runner = new MigrationRunner([], driver, queryRunner);
+      runner = new PostgresMigrationRunner([], driver, queryRunner);
       const result = await runner.revertLast();
       expect(result).toBeNull();
     });
@@ -287,7 +289,7 @@ describe("Migration System", () => {
         },
       );
 
-      runner = new MigrationRunner([m1, m2, m3], driver, queryRunner);
+      runner = new PostgresMigrationRunner([m1, m2, m3], driver, queryRunner);
       const pending = await runner.getPendingMigrations();
 
       expect(pending).toHaveLength(2);
@@ -307,7 +309,7 @@ describe("Migration System", () => {
     });
 
     it("__migrations 테이블을 MySQL 구문으로 생성해야 함", async () => {
-      runner = new MigrationRunner([], driver, queryRunner);
+      runner = new MySqlMigrationRunner([], driver, queryRunner);
       await runner.ensureMigrationTable();
 
       expect(queryRunner.queries.length).toBe(1);
@@ -320,7 +322,7 @@ describe("Migration System", () => {
       const m1 = new CreateUsersTable();
       const m2 = new AddEmailToUsers();
 
-      runner = new MigrationRunner([m1, m2], driver, queryRunner);
+      runner = new MySqlMigrationRunner([m1, m2], driver, queryRunner);
       const results = await runner.runAll();
 
       expect(results).toHaveLength(2);
@@ -330,7 +332,7 @@ describe("Migration System", () => {
 
     it("MySQL에서 식별자가 백틱으로 래핑되어야 함", async () => {
       const m1 = new CreateUsersTable();
-      runner = new MigrationRunner([m1], driver, queryRunner);
+      runner = new MySqlMigrationRunner([m1], driver, queryRunner);
 
       await runner.runAll();
 
@@ -360,7 +362,7 @@ describe("Migration System", () => {
       }
 
       const migration = new TestMigration();
-      const runner = new MigrationRunner([migration], driver, queryRunner);
+      const runner = new PostgresMigrationRunner([migration], driver, queryRunner);
       await runner.runUp(migration);
 
       expect(migration.driverAvailable).toBe(true);
@@ -381,7 +383,7 @@ describe("Migration System", () => {
       }
 
       const migration = new DDLMigration();
-      const runner = new MigrationRunner([migration], driver, queryRunner);
+      const runner = new PostgresMigrationRunner([migration], driver, queryRunner);
 
       const result = await runner.runUp(migration);
       expect(result.success).toBe(true);
@@ -407,7 +409,7 @@ describe("Migration System", () => {
 
       const m1 = new CreateUsersTable();
       const m2 = new AddEmailToUsers();
-      const runner = new MigrationRunner([m1, m2], driver, queryRunner);
+      const runner = new PostgresMigrationRunner([m1, m2], driver, queryRunner);
       const pending = await runner.getPendingMigrations();
 
       expect(pending).toHaveLength(1);
@@ -430,7 +432,7 @@ describe("Migration System", () => {
 
       const m1 = new CreateUsersTable();
       const m2 = new AddEmailToUsers();
-      const runner = new MigrationRunner([m1, m2], driver, queryRunner);
+      const runner = new PostgresMigrationRunner([m1, m2], driver, queryRunner);
       const pending = await runner.getPendingMigrations();
 
       expect(pending).toHaveLength(1);
@@ -452,7 +454,7 @@ describe("Migration System", () => {
       );
 
       const m1 = new CreateUsersTable();
-      const runner = new MigrationRunner([m1], driver, queryRunner);
+      const runner = new PostgresMigrationRunner([m1], driver, queryRunner);
       const pending = await runner.getPendingMigrations();
 
       expect(pending).toHaveLength(1);
@@ -472,7 +474,7 @@ describe("Migration System", () => {
       }
 
       const migration = new FailOnDown();
-      const runner = new MigrationRunner([migration], driver, queryRunner);
+      const runner = new PostgresMigrationRunner([migration], driver, queryRunner);
       const result = await runner.runDown(migration);
 
       expect(result.success).toBe(false);
@@ -494,7 +496,7 @@ describe("Migration System", () => {
         },
       );
 
-      const runner = new MigrationRunner([], driver, queryRunner);
+      const runner = new PostgresMigrationRunner([], driver, queryRunner);
       const result = await runner.revertLast();
 
       expect(result).not.toBeNull();

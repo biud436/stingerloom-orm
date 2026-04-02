@@ -4,16 +4,16 @@ import {
   MigrationCommand,
   Migration,
   MigrationContext,
-  MigrationRunner,
+  PostgresMigrationRunner,
   MigrationResult,
 } from "../../src/migration";
 
 // ─── MigrationRunner mock ────────────────────────────────────
 
-jest.mock("../../src/migration/MigrationRunner");
+jest.mock("../../src/migration/PostgresMigrationRunner");
 
-const MockMigrationRunner = MigrationRunner as jest.MockedClass<
-  typeof MigrationRunner
+const MockMigrationRunner = PostgresMigrationRunner as jest.MockedClass<
+  typeof PostgresMigrationRunner
 >;
 
 // ─── DatabaseClient mock ─────────────────────────────────────
