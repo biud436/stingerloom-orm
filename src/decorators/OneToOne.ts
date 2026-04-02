@@ -1,4 +1,4 @@
-import { ClazzType } from "../utils";
+import { ClazzType, Logger } from "../utils";
 import { getScannerInstance } from "../scanner/ScannerContainer";
 import { OneToOneScanner } from "../scanner/OneToOneScanner";
 import { CascadeOption } from "../types/CascadeType";
@@ -7,9 +7,12 @@ import { ReferentialAction } from "../types/ReferentialAction";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const ONE_TO_ONE_TOKEN = Symbol.for("STG_ONE_TO_ONE");
 
+const logger = new Logger("OneToOne");
+
 export type OneToOneOption<T = any> = {
   /**
    * FK 컬럼 이름입니다. 소유측(owning side)에서 설정합니다.
+   * @deprecated `@RelationColumn({ name: "..." })` 데코레이터를 대신 사용하세요.
    */
   joinColumn?: string;
 
@@ -77,8 +80,9 @@ export type OneToOneMetadata<T> = {
  * 두 엔티티 간의 일대일 관계를 표현합니다.
  *
  * @example
- * // 소유측 (joinColumn 설정)
- * @OneToOne(() => Profile, { joinColumn: "profile_id" })
+ * // 소유측 (@RelationColumn으로 FK 컬럼 지정)
+ * @OneToOne(() => Profile)
+ * @RelationColumn({ name: "profile_id" })
  * profile: Profile;
  *
  * @example
@@ -92,6 +96,12 @@ export function OneToOne<T>(
 ): PropertyDecorator {
   return (target, propertyKey) => {
     const cls = target.constructor;
+
+    if (option?.joinColumn) {
+      logger.warn(
+        `@OneToOne '${propertyKey.toString()}' on ${cls.name}: 'joinColumn' option is deprecated. Use @RelationColumn({ name: "${option.joinColumn}" }) instead.`,
+      );
+    }
 
     const scanner = getScannerInstance(OneToOneScanner);
 

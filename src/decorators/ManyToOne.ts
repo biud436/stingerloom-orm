@@ -1,4 +1,4 @@
-import { ClazzType, ReflectManager } from "../utils";
+import { ClazzType, ReflectManager, Logger } from "../utils";
 import { getScannerInstance } from "../scanner/ScannerContainer";
 import { ManyToOneScanner } from "../scanner";
 import { CascadeOption } from "../types/CascadeType";
@@ -6,6 +6,8 @@ import { ReferentialAction } from "../types/ReferentialAction";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const MANY_TO_ONE_TOKEN = Symbol.for("STG_MANY_TO_ONE");
+
+const logger = new Logger("ManyToOne");
 
 export type EntityLike<T = any> = ClazzType<T>;
 export type RetrieveEntity<T> = () => T;
@@ -18,6 +20,10 @@ export type ManyToOneOption = {
    * 데이터베이스에서 컬럼의 값을 가져올 때, 오브젝트에 매핑되는 컬럼의 타입을 변환할 수 있는 함수입니다.
    */
   transform?: <T = any>(raw: unknown) => T;
+  /**
+   * FK 컬럼 이름입니다.
+   * @deprecated `@RelationColumn({ name: "..." })` 데코레이터를 대신 사용하세요.
+   */
   joinColumn?: string;
   /**
    * 참조 대상 엔티티의 컬럼 이름입니다.
@@ -101,6 +107,11 @@ export function ManyToOne<T extends EntityLike>(
   return (target, propertyKey) => {
     const cls = target.constructor;
 
+    if (option?.joinColumn) {
+      logger.warn(
+        `@ManyToOne '${propertyKey.toString()}' on ${cls.name}: 'joinColumn' option is deprecated. Use @RelationColumn({ name: "${option.joinColumn}" }) instead.`,
+      );
+    }
     const injectParam = ReflectManager.getType<any>(cls, propertyKey);
 
     const scanner = getScannerInstance(ManyToOneScanner);
