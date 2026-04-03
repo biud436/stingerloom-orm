@@ -14,7 +14,7 @@ import { SqliteColumnDefinitionBuilder } from "./SqliteColumnDefinitionBuilder";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import type { SqliteConnector } from "./SqliteConnector";
 import { DbVersion } from "../DbVersion";
-import { DialectCapabilities } from "../DialectCapabilities";
+import { SqliteCapabilities } from "../DialectCapabilities";
 import { resolveSqliteCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 
@@ -29,7 +29,7 @@ export class SqliteDriver implements ISqlDriver {
   private readonly logger = new Logger("SqliteDriver");
   private readonly columnDefBuilder: SqliteColumnDefinitionBuilder;
   private readonly version: DbVersion;
-  private readonly capabilities: DialectCapabilities;
+  private readonly capabilities: SqliteCapabilities;
 
   constructor(
     private readonly connector: IConnector,
@@ -44,7 +44,7 @@ export class SqliteDriver implements ISqlDriver {
     return this.version;
   }
 
-  getCapabilities(): DialectCapabilities {
+  getCapabilities(): SqliteCapabilities {
     return this.capabilities;
   }
 

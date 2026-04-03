@@ -9,7 +9,7 @@ import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
 import { ClazzType } from "../../utils";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
-import type { DialectCapabilities } from "../../dialects/DialectCapabilities";
+import type { CommonCapabilities } from "../../dialects/DialectCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 
 /**
@@ -30,10 +30,10 @@ function escapeEnumValue(val: string): string {
  * SchemaDiffResult를 받아 Migration TypeScript 파일을 생성합니다.
  */
 export class SchemaDiffMigrationGenerator {
-  private readonly capabilities?: DialectCapabilities;
+  private readonly capabilities?: CommonCapabilities;
   private readonly versionString?: string;
 
-  constructor(capabilities?: DialectCapabilities, versionString?: string) {
+  constructor(capabilities?: CommonCapabilities, versionString?: string) {
     this.capabilities = capabilities;
     this.versionString = versionString;
   }
@@ -459,7 +459,8 @@ export class SchemaDiffMigrationGenerator {
       return `ALTER TABLE ${table} CHANGE COLUMN ${oldCol} ${newCol} ${colType}`;
     }
 
-    if (dialect === "sqlite" && this.capabilities && !this.capabilities.supportsSqliteRenameColumn) {
+    const caps = this.capabilities as Record<string, boolean> | undefined;
+    if (dialect === "sqlite" && caps && caps.supportsSqliteRenameColumn === false) {
       throw new UnsupportedFeatureError(
         "ALTER TABLE RENAME COLUMN",
         "SQLite 3.25.0+",

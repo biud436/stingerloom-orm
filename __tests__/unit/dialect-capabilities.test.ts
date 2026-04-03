@@ -4,7 +4,7 @@ import {
   resolvePostgresCapabilities,
   resolveSqliteCapabilities,
 } from "../../src/dialects/resolveCapabilities";
-import { ALL_CAPABILITIES } from "../../src/dialects/DialectCapabilities";
+import { ALL_MYSQL, ALL_POSTGRES, ALL_SQLITE } from "../../src/dialects/DialectCapabilities";
 import { UnsupportedFeatureError } from "../../src/errors/UnsupportedFeatureError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 
@@ -97,18 +97,24 @@ describe("resolveMySqlCapabilities", () => {
     });
   });
 
-  describe("MySQL always-false flags", () => {
+  describe("MySQL common flags", () => {
     const caps = resolveMySqlCapabilities(DbVersion.parse("8.0.40"), false);
-
-    it("should not support PG-only features", () => {
-      expect(caps.supportsGeneratedIdentity).toBe(false);
-      expect(caps.supportsNativeGenRandomUuid).toBe(false);
-      expect(caps.supportsRenameEnumValue).toBe(false);
-      expect(caps.supportsIndexInclude).toBe(false);
-    });
 
     it("should not support RETURNING", () => {
       expect(caps.supportsReturning).toBe(false);
+    });
+
+    it("should support DROP COLUMN", () => {
+      expect(caps.supportsDropColumn).toBe(true);
+    });
+
+    it("should support UPSERT", () => {
+      expect(caps.supportsUpsert).toBe(true);
+    });
+
+    it("should not have PG-only keys", () => {
+      expect(caps).not.toHaveProperty("supportsGeneratedIdentity");
+      expect(caps).not.toHaveProperty("supportsIndexInclude");
     });
   });
 
@@ -216,16 +222,8 @@ describe("resolvePostgresCapabilities", () => {
     });
   });
 
-  describe("PostgreSQL always-true flags", () => {
+  describe("PostgreSQL always-true common flags", () => {
     const caps = resolvePostgresCapabilities(DbVersion.parse("9.5.0"));
-
-    it("should always support CHECK constraints", () => {
-      expect(caps.supportsCheckConstraints).toBe(true);
-    });
-
-    it("should always support DEFAULT expressions", () => {
-      expect(caps.supportsDefaultExpression).toBe(true);
-    });
 
     it("should always support RENAME COLUMN", () => {
       expect(caps.supportsRenameColumn).toBe(true);
@@ -312,25 +310,55 @@ describe("resolveSqliteCapabilities", () => {
     });
   });
 
-  describe("SQLite always-true flags", () => {
+  describe("SQLite should not have other dialect keys", () => {
     const caps = resolveSqliteCapabilities(DbVersion.parse("3.20.0"));
 
-    it("should always support CHECK constraints", () => {
-      expect(caps.supportsCheckConstraints).toBe(true);
+    it("should not have MySQL-specific keys", () => {
+      expect(caps).not.toHaveProperty("supportsCheckConstraints");
+      expect(caps).not.toHaveProperty("supportsJsonColumnType");
     });
 
-    it("should always support DEFAULT expressions", () => {
-      expect(caps.supportsDefaultExpression).toBe(true);
+    it("should not have PG-specific keys", () => {
+      expect(caps).not.toHaveProperty("supportsGeneratedIdentity");
+      expect(caps).not.toHaveProperty("supportsIndexInclude");
     });
   });
 });
 
-describe("ALL_CAPABILITIES", () => {
-  it("should have all flags set to true", () => {
-    for (const [key, value] of Object.entries(ALL_CAPABILITIES)) {
+describe("ALL_* defaults", () => {
+  it("ALL_MYSQL should have all flags set to true", () => {
+    for (const [, value] of Object.entries(ALL_MYSQL)) {
       expect(value).toBe(true);
-      expect(key).toBeTruthy();
     }
+  });
+
+  it("ALL_POSTGRES should have all flags set to true", () => {
+    for (const [, value] of Object.entries(ALL_POSTGRES)) {
+      expect(value).toBe(true);
+    }
+  });
+
+  it("ALL_SQLITE should have all flags set to true", () => {
+    for (const [, value] of Object.entries(ALL_SQLITE)) {
+      expect(value).toBe(true);
+    }
+  });
+
+  it("ALL_MYSQL should have MySQL-specific keys", () => {
+    expect(ALL_MYSQL).toHaveProperty("supportsCheckConstraints");
+    expect(ALL_MYSQL).toHaveProperty("supportsJsonColumnType");
+    expect(ALL_MYSQL).not.toHaveProperty("supportsGeneratedIdentity");
+  });
+
+  it("ALL_POSTGRES should have PG-specific keys", () => {
+    expect(ALL_POSTGRES).toHaveProperty("supportsGeneratedIdentity");
+    expect(ALL_POSTGRES).toHaveProperty("supportsIndexInclude");
+    expect(ALL_POSTGRES).not.toHaveProperty("supportsJsonColumnType");
+  });
+
+  it("ALL_SQLITE should have SQLite-specific keys", () => {
+    expect(ALL_SQLITE).toHaveProperty("supportsSqliteGeneratedColumns");
+    expect(ALL_SQLITE).not.toHaveProperty("supportsCheckConstraints");
   });
 });
 

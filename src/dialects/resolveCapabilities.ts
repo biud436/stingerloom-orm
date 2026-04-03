@@ -1,121 +1,92 @@
 import { DbVersion } from "./DbVersion";
-import { DialectCapabilities } from "./DialectCapabilities";
+import {
+  FeatureTable,
+  MySqlCapabilities,
+  PostgresCapabilities,
+  SqliteCapabilities,
+  resolveFromTable,
+} from "./DialectCapabilities";
 
-/**
- * Resolves MySQL or MariaDB capabilities from a detected version.
- *
- * MariaDB has its own version timeline — for example CHECK constraints
- * were enforced in MariaDB 10.2.1, but only in MySQL 8.0.16.
- */
+// ─── MySQL ─────────────────────────────────────────────────────────
+// Docs: https://dev.mysql.com/doc/relnotes/mysql/8.0/en/
+
+const MYSQL_FEATURES: FeatureTable<MySqlCapabilities> = {
+  // MySQL-specific
+  supportsCheckConstraints:  { major: 8, minor: 0, patch: 16 },
+  supportsDefaultExpression: { major: 8, minor: 0, patch: 13 },
+  supportsJsonColumnType:    { major: 5, minor: 7, patch: 8 },
+  supportsInvisibleColumns:  { major: 8, minor: 0, patch: 23 },
+  // Common
+  supportsGeneratedColumns:  { major: 5, minor: 7, patch: 6 },
+  supportsRenameColumn:      { major: 8, minor: 0 },
+  supportsReturning:         false,
+  supportsDropColumn:        true,
+  supportsUpsert:            true,
+};
+
+// ─── MariaDB ───────────────────────────────────────────────────────
+// Docs: https://mariadb.com/kb/en/release-notes/
+
+const MARIADB_FEATURES: FeatureTable<MySqlCapabilities> = {
+  // MariaDB-specific version gates (differ from MySQL)
+  supportsCheckConstraints:  { major: 10, minor: 2, patch: 1 },
+  supportsDefaultExpression: { major: 10, minor: 2, patch: 1 },
+  supportsJsonColumnType:    { major: 10, minor: 2, patch: 7 },
+  supportsInvisibleColumns:  { major: 10, minor: 3, patch: 3 },
+  // Common
+  supportsGeneratedColumns:  { major: 5, minor: 2 },
+  supportsRenameColumn:      { major: 10, minor: 5, patch: 2 },
+  supportsReturning:         { major: 10, minor: 5 },
+  supportsDropColumn:        true,
+  supportsUpsert:            true,
+};
+
+// ─── PostgreSQL ────────────────────────────────────────────────────
+// Docs: https://www.postgresql.org/docs/release/
+
+const POSTGRES_FEATURES: FeatureTable<PostgresCapabilities> = {
+  // PostgreSQL-specific
+  supportsGeneratedIdentity:     { major: 10 },
+  supportsNativeGenRandomUuid:   { major: 13 },
+  supportsRenameEnumValue:       { major: 10 },
+  supportsIfNotExistsAddColumn:  { major: 9, minor: 6 },
+  supportsIndexInclude:          { major: 11 },
+  // Common
+  supportsGeneratedColumns:      { major: 12 },
+  supportsRenameColumn:          true,
+  supportsReturning:             true,
+  supportsDropColumn:            true,
+  supportsUpsert:                true,
+};
+
+// ─── SQLite ────────────────────────────────────────────────────────
+// Docs: https://www.sqlite.org/changes.html
+
+const SQLITE_FEATURES: FeatureTable<SqliteCapabilities> = {
+  // SQLite-specific
+  supportsSqliteGeneratedColumns: { major: 3, minor: 31 },
+  supportsSqliteRenameColumn:     { major: 3, minor: 25 },
+  // Common
+  supportsGeneratedColumns:       false,
+  supportsRenameColumn:           { major: 3, minor: 25 },
+  supportsReturning:              { major: 3, minor: 35 },
+  supportsDropColumn:             { major: 3, minor: 35 },
+  supportsUpsert:                 { major: 3, minor: 24 },
+};
+
+// ─── Public resolvers ──────────────────────────────────────────────
+
 export function resolveMySqlCapabilities(
   v: DbVersion,
   isMariaDb: boolean,
-): DialectCapabilities {
-  if (isMariaDb) {
-    return Object.freeze({
-      supportsCheckConstraints: v.gte(10, 2, 1),
-      supportsDefaultExpression: v.gte(10, 2, 1),
-      supportsGeneratedColumns: v.gte(5, 2, 0),
-      supportsJsonColumnType: v.gte(10, 2, 7),
-      supportsRenameColumn: v.gte(10, 5, 2),
-      supportsInvisibleColumns: v.gte(10, 3, 3),
-
-      // PostgreSQL-only flags — always false for MySQL/MariaDB
-      supportsGeneratedIdentity: false,
-      supportsNativeGenRandomUuid: false,
-      supportsRenameEnumValue: false,
-      supportsIfNotExistsAddColumn: false,
-      supportsIndexInclude: false,
-
-      // SQLite-only flags
-      supportsDropColumn: true, // MariaDB supports DROP COLUMN
-      supportsUpsert: true, // ON DUPLICATE KEY
-      supportsSqliteGeneratedColumns: false,
-      supportsSqliteRenameColumn: false,
-
-      supportsReturning: v.gte(10, 5, 0),
-    });
-  }
-
-  // MySQL
-  return Object.freeze({
-    supportsCheckConstraints: v.gte(8, 0, 16),
-    supportsDefaultExpression: v.gte(8, 0, 13),
-    supportsGeneratedColumns: v.gte(5, 7, 6),
-    supportsJsonColumnType: v.gte(5, 7, 8),
-    supportsRenameColumn: v.gte(8, 0, 0),
-    supportsInvisibleColumns: v.gte(8, 0, 23),
-
-    supportsGeneratedIdentity: false,
-    supportsNativeGenRandomUuid: false,
-    supportsRenameEnumValue: false,
-    supportsIfNotExistsAddColumn: false,
-    supportsIndexInclude: false,
-
-    supportsDropColumn: true,
-    supportsUpsert: true,
-    supportsSqliteGeneratedColumns: false,
-    supportsSqliteRenameColumn: false,
-
-    supportsReturning: false,
-  });
+): MySqlCapabilities {
+  return resolveFromTable(v, isMariaDb ? MARIADB_FEATURES : MYSQL_FEATURES);
 }
 
-/**
- * Resolves PostgreSQL capabilities from a detected version.
- */
-export function resolvePostgresCapabilities(
-  v: DbVersion,
-): DialectCapabilities {
-  return Object.freeze({
-    // MySQL-only flags — always true/false as appropriate
-    supportsCheckConstraints: true, // PG always supports CHECK
-    supportsDefaultExpression: true, // PG always supports DEFAULT expressions
-    supportsGeneratedColumns: v.gte(12, 0), // PG 12+ for stored generated columns
-    supportsJsonColumnType: true, // PG has json/jsonb since 9.2/9.4
-    supportsRenameColumn: true, // PG always supports RENAME COLUMN
-    supportsInvisibleColumns: false, // PG does not support invisible columns
-
-    supportsGeneratedIdentity: v.gte(10, 0),
-    supportsNativeGenRandomUuid: v.gte(13, 0),
-    supportsRenameEnumValue: v.gte(10, 0),
-    supportsIfNotExistsAddColumn: v.gte(9, 6),
-    supportsIndexInclude: v.gte(11, 0),
-
-    supportsDropColumn: true, // PG always supports DROP COLUMN
-    supportsUpsert: true, // PG has ON CONFLICT since 9.5
-    supportsSqliteGeneratedColumns: false,
-    supportsSqliteRenameColumn: false,
-
-    supportsReturning: true, // PG always supports RETURNING
-  });
+export function resolvePostgresCapabilities(v: DbVersion): PostgresCapabilities {
+  return resolveFromTable(v, POSTGRES_FEATURES);
 }
 
-/**
- * Resolves SQLite capabilities from a detected version.
- */
-export function resolveSqliteCapabilities(
-  v: DbVersion,
-): DialectCapabilities {
-  return Object.freeze({
-    supportsCheckConstraints: true, // SQLite always supports CHECK
-    supportsDefaultExpression: true, // SQLite always supports DEFAULT expressions
-    supportsGeneratedColumns: false, // N/A for MySQL sense
-    supportsJsonColumnType: v.gte(3, 9, 0), // json1 built-in since 3.38, extension before
-    supportsRenameColumn: v.gte(3, 25, 0),
-    supportsInvisibleColumns: false,
-
-    supportsGeneratedIdentity: false,
-    supportsNativeGenRandomUuid: false,
-    supportsRenameEnumValue: false,
-    supportsIfNotExistsAddColumn: false,
-    supportsIndexInclude: false,
-
-    supportsDropColumn: v.gte(3, 35, 0),
-    supportsUpsert: v.gte(3, 24, 0),
-    supportsSqliteGeneratedColumns: v.gte(3, 31, 0),
-    supportsSqliteRenameColumn: v.gte(3, 25, 0),
-
-    supportsReturning: v.gte(3, 35, 0),
-  });
+export function resolveSqliteCapabilities(v: DbVersion): SqliteCapabilities {
+  return resolveFromTable(v, SQLITE_FEATURES);
 }

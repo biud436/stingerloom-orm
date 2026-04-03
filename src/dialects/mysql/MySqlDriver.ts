@@ -14,14 +14,14 @@ import { MySqlColumnDefinitionBuilder } from "./MySqlColumnDefinitionBuilder";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import type { MySqlConnector } from "./MySqlConnector";
 import { DbVersion } from "../DbVersion";
-import { DialectCapabilities, ALL_CAPABILITIES } from "../DialectCapabilities";
+import { MySqlCapabilities, ALL_MYSQL } from "../DialectCapabilities";
 import { resolveMySqlCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 
 export class MySqlDriver implements ISqlDriver {
   private readonly columnDefBuilder: MySqlColumnDefinitionBuilder;
   private readonly version: DbVersion;
-  private readonly capabilities: DialectCapabilities;
+  private readonly capabilities: MySqlCapabilities;
 
   constructor(
     private readonly connector: IConnector,
@@ -40,7 +40,7 @@ export class MySqlDriver implements ISqlDriver {
     return this.version;
   }
 
-  getCapabilities(): DialectCapabilities {
+  getCapabilities(): MySqlCapabilities {
     return this.capabilities;
   }
 

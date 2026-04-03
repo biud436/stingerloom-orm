@@ -2,7 +2,8 @@ import { ColumnOption, ColumnType } from "../../decorators/Column";
 import { ColumnDefContext } from "../ColumnDefinitionBuilder";
 import { BaseColumnDefinitionBuilder } from "../BaseColumnDefinitionBuilder";
 import { Exception } from "../../errors";
-import type { DialectCapabilities } from "../DialectCapabilities";
+import { ALL_POSTGRES } from "../DialectCapabilities";
+import type { PostgresCapabilities, CommonCapabilities } from "../DialectCapabilities";
 
 /**
  * PostgreSQL dialect column definition builder.
@@ -23,9 +24,14 @@ export class PostgresColumnDefinitionBuilder extends BaseColumnDefinitionBuilder
 
   private readonly schema: string;
 
-  constructor(schema: string = "public", capabilities?: DialectCapabilities) {
-    super(capabilities);
+  constructor(schema: string = "public", capabilities?: PostgresCapabilities | CommonCapabilities) {
+    super(capabilities ?? ALL_POSTGRES);
     this.schema = schema;
+  }
+
+  /** Access PostgreSQL-specific capabilities with proper typing. */
+  private get pg(): PostgresCapabilities {
+    return this.capabilities as PostgresCapabilities;
   }
 
   castType(type: ColumnType): string {
@@ -131,7 +137,7 @@ export class PostgresColumnDefinitionBuilder extends BaseColumnDefinitionBuilder
       const pk = option.primary && !ctx.isCompositePk ? " PRIMARY KEY" : "";
       // PG 13+: gen_random_uuid() is built-in
       // PG < 13: requires pgcrypto extension for uuid_generate_v4()
-      const defaultExpr = this.capabilities.supportsNativeGenRandomUuid
+      const defaultExpr = this.pg.supportsNativeGenRandomUuid
         ? "gen_random_uuid()"
         : "uuid_generate_v4()";
       return `${this.wrapIdentifier(ctx.columnName)} UUID ${nullable} DEFAULT ${defaultExpr}${pk}`;

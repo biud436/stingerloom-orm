@@ -15,7 +15,7 @@ import { PostgresColumnDefinitionBuilder } from "./PostgresColumnDefinitionBuild
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import type { PostgresConnector } from "./PostgresConnector";
 import { DbVersion } from "../DbVersion";
-import { DialectCapabilities } from "../DialectCapabilities";
+import { PostgresCapabilities } from "../DialectCapabilities";
 import { resolvePostgresCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 
@@ -43,7 +43,7 @@ export class PostgresDriver implements ISqlDriver {
   private readonly logger = new Logger("PostgresDriver");
   private readonly columnDefBuilder: PostgresColumnDefinitionBuilder;
   private readonly version: DbVersion;
-  private readonly capabilities: DialectCapabilities;
+  private readonly capabilities: PostgresCapabilities;
 
   constructor(
     private readonly connector: IConnector,
@@ -64,7 +64,7 @@ export class PostgresDriver implements ISqlDriver {
     return this.version;
   }
 
-  getCapabilities(): DialectCapabilities {
+  getCapabilities(): PostgresCapabilities {
     return this.capabilities;
   }
 

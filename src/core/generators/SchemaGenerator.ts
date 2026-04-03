@@ -43,7 +43,7 @@ import {
   ColumnDefinitionBuilder,
   createColumnDefinitionBuilder,
 } from "../../dialects/ColumnDefinitionBuilder";
-import type { DialectCapabilities } from "../../dialects/DialectCapabilities";
+import type { CommonCapabilities } from "../../dialects/DialectCapabilities";
 import type { DbVersion } from "../../dialects/DbVersion";
 
 export type SchemaDialect = "mysql" | "postgres" | "sqlite";
@@ -53,7 +53,7 @@ export interface SchemaGeneratorOptions {
   schema?: string; // PostgreSQL schema (default: "public")
   namingStrategy?: NamingStrategy;
   /** Feature capabilities of the connected database version. */
-  capabilities?: DialectCapabilities;
+  capabilities?: CommonCapabilities;
   /** Database version (used for error messages). */
   version?: DbVersion;
 }
@@ -80,7 +80,7 @@ export class SchemaGenerator {
   private readonly pgSchema: string;
   private readonly namingStrategy: NamingStrategy;
   private readonly columnDefBuilder: ColumnDefinitionBuilder;
-  private readonly capabilities?: DialectCapabilities;
+  private readonly capabilities?: CommonCapabilities;
   private readonly version?: DbVersion;
 
   constructor(options: SchemaGeneratorOptions) {
@@ -253,7 +253,8 @@ export class SchemaGenerator {
     // INCLUDE clause (PostgreSQL 11+ only)
     let includeClause = "";
     if (opts?.include && opts.include.length > 0 && this.dialect === "postgres") {
-      if (!this.capabilities || this.capabilities.supportsIndexInclude) {
+      const caps = this.capabilities as Record<string, boolean> | undefined;
+      if (!caps || caps.supportsIndexInclude !== false) {
         const includeCols = opts.include.map((col) => this.wrapId(col)).join(", ");
         includeClause = ` INCLUDE (${includeCols})`;
       }
