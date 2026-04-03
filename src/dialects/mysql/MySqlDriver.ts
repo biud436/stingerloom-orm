@@ -13,14 +13,36 @@ import { validateSavepointName } from "../../utils/validateSavepointName";
 import { MySqlColumnDefinitionBuilder } from "./MySqlColumnDefinitionBuilder";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import type { MySqlConnector } from "./MySqlConnector";
+import { DbVersion } from "../DbVersion";
+import { DialectCapabilities, ALL_CAPABILITIES } from "../DialectCapabilities";
+import { resolveMySqlCapabilities } from "../resolveCapabilities";
+import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 
 export class MySqlDriver implements ISqlDriver {
-  private readonly columnDefBuilder = new MySqlColumnDefinitionBuilder();
+  private readonly columnDefBuilder: MySqlColumnDefinitionBuilder;
+  private readonly version: DbVersion;
+  private readonly capabilities: DialectCapabilities;
 
   constructor(
     private readonly connector: IConnector,
     private readonly clientType: string = "mysql",
-  ) {}
+    version?: DbVersion,
+  ) {
+    this.version = version ?? connector?.getVersion?.() ?? DbVersion.UNKNOWN;
+    this.capabilities = resolveMySqlCapabilities(
+      this.version,
+      clientType === "mariadb",
+    );
+    this.columnDefBuilder = new MySqlColumnDefinitionBuilder(this.capabilities);
+  }
+
+  getVersion(): DbVersion {
+    return this.version;
+  }
+
+  getCapabilities(): DialectCapabilities {
+    return this.capabilities;
+  }
 
   /**
    * 테이블이 존재하는지 확인합니다.

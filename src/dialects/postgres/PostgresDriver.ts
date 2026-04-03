@@ -14,6 +14,10 @@ import { validateSavepointName } from "../../utils/validateSavepointName";
 import { PostgresColumnDefinitionBuilder } from "./PostgresColumnDefinitionBuilder";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import type { PostgresConnector } from "./PostgresConnector";
+import { DbVersion } from "../DbVersion";
+import { DialectCapabilities } from "../DialectCapabilities";
+import { resolvePostgresCapabilities } from "../resolveCapabilities";
+import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 
 /**
  * Escape an enum value for safe interpolation into DDL strings.
@@ -38,14 +42,30 @@ export class PostgresDriver implements ISqlDriver {
   private readonly schema: string;
   private readonly logger = new Logger("PostgresDriver");
   private readonly columnDefBuilder: PostgresColumnDefinitionBuilder;
+  private readonly version: DbVersion;
+  private readonly capabilities: DialectCapabilities;
 
   constructor(
     private readonly connector: IConnector,
     private readonly clientType: string = "postgres",
     schema?: string,
+    version?: DbVersion,
   ) {
     this.schema = schema ?? "public";
-    this.columnDefBuilder = new PostgresColumnDefinitionBuilder(this.schema);
+    this.version = version ?? connector?.getVersion?.() ?? DbVersion.UNKNOWN;
+    this.capabilities = resolvePostgresCapabilities(this.version);
+    this.columnDefBuilder = new PostgresColumnDefinitionBuilder(
+      this.schema,
+      this.capabilities,
+    );
+  }
+
+  getVersion(): DbVersion {
+    return this.version;
+  }
+
+  getCapabilities(): DialectCapabilities {
+    return this.capabilities;
   }
 
   // ──────────────────────────────────────────────
@@ -194,11 +214,20 @@ export class PostgresDriver implements ISqlDriver {
 
   /**
    * 테이블에 자동 증가를 추가합니다.
-   * PostgreSQL에서는 SERIAL 타입 또는 GENERATED ALWAYS AS IDENTITY를 사용합니다.
+   * PostgreSQL 10+: GENERATED ALWAYS AS IDENTITY
+   * PostgreSQL < 10: sequence + DEFAULT nextval() fallback
    */
   addAutoIncrement(tableName: string, columnName: string) {
+    if (this.capabilities.supportsGeneratedIdentity) {
+      return this.connector.query(
+        `ALTER TABLE ${this.wrapQualified(tableName)} ALTER COLUMN ${this.wrap(columnName)} ADD GENERATED ALWAYS AS IDENTITY`,
+      );
+    }
+    // Fallback for PG < 10: create a sequence and set DEFAULT
+    const seqName = `${tableName}_${columnName}_seq`;
     return this.connector.query(
-      `ALTER TABLE ${this.wrapQualified(tableName)} ALTER COLUMN ${this.wrap(columnName)} ADD GENERATED ALWAYS AS IDENTITY`,
+      `CREATE SEQUENCE IF NOT EXISTS ${this.wrapQualified(seqName)}; ` +
+      `ALTER TABLE ${this.wrapQualified(tableName)} ALTER COLUMN ${this.wrap(columnName)} SET DEFAULT nextval('${this.schema}.${seqName}')`,
     );
   }
 
@@ -524,6 +553,13 @@ export class PostgresDriver implements ISqlDriver {
     oldValue: string,
     newValue: string,
   ): Promise<any> {
+    if (!this.capabilities.supportsRenameEnumValue) {
+      throw new UnsupportedFeatureError(
+        "ALTER TYPE RENAME VALUE",
+        "PostgreSQL 10+",
+        this.version.toString(),
+      );
+    }
     return this.connector.query(
       `ALTER TYPE ${this.wrapQualified(enumName)} RENAME VALUE '${escapeEnumValue(oldValue)}' TO '${escapeEnumValue(newValue)}'`,
     );

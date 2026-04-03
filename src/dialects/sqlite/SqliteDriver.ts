@@ -13,6 +13,10 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { SqliteColumnDefinitionBuilder } from "./SqliteColumnDefinitionBuilder";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import type { SqliteConnector } from "./SqliteConnector";
+import { DbVersion } from "../DbVersion";
+import { DialectCapabilities } from "../DialectCapabilities";
+import { resolveSqliteCapabilities } from "../resolveCapabilities";
+import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 
 /**
  * SQLite용 SQL 드라이버 구현체입니다.
@@ -23,11 +27,26 @@ import type { SqliteConnector } from "./SqliteConnector";
  */
 export class SqliteDriver implements ISqlDriver {
   private readonly logger = new Logger("SqliteDriver");
-  private readonly columnDefBuilder = new SqliteColumnDefinitionBuilder();
+  private readonly columnDefBuilder: SqliteColumnDefinitionBuilder;
+  private readonly version: DbVersion;
+  private readonly capabilities: DialectCapabilities;
 
   constructor(
     private readonly connector: IConnector,
-  ) {}
+    version?: DbVersion,
+  ) {
+    this.version = version ?? connector?.getVersion?.() ?? DbVersion.UNKNOWN;
+    this.capabilities = resolveSqliteCapabilities(this.version);
+    this.columnDefBuilder = new SqliteColumnDefinitionBuilder(this.capabilities);
+  }
+
+  getVersion(): DbVersion {
+    return this.version;
+  }
+
+  getCapabilities(): DialectCapabilities {
+    return this.capabilities;
+  }
 
   /**
    * 테이블이 존재하는지 확인합니다.
@@ -136,6 +155,13 @@ export class SqliteDriver implements ISqlDriver {
    * SQLite 3.35.0+ 에서 DROP COLUMN을 지원합니다.
    */
   dropColumn(tableName: string, columnName: string) {
+    if (!this.capabilities.supportsDropColumn) {
+      throw new UnsupportedFeatureError(
+        "ALTER TABLE DROP COLUMN",
+        "SQLite 3.35.0+",
+        this.version.toString(),
+      );
+    }
     return this.connector.query(
       `ALTER TABLE ${this.wrap(tableName)} DROP COLUMN ${this.wrap(columnName)}`,
     );
@@ -355,6 +381,13 @@ export class SqliteDriver implements ISqlDriver {
     conflictColumns: string[],
     updateColumns: string[],
   ): string {
+    if (!this.capabilities.supportsUpsert) {
+      throw new UnsupportedFeatureError(
+        "INSERT ... ON CONFLICT (upsert)",
+        "SQLite 3.24.0+",
+        this.version.toString(),
+      );
+    }
     const columnList = columns.map((c) => this.wrap(c)).join(", ");
     const valuePlaceholders = columns.map(() => "?").join(", ");
     const conflictList = conflictColumns.map((c) => this.wrap(c)).join(", ");

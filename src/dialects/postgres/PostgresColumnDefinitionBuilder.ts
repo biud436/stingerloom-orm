@@ -2,6 +2,7 @@ import { ColumnOption, ColumnType } from "../../decorators/Column";
 import { ColumnDefContext } from "../ColumnDefinitionBuilder";
 import { BaseColumnDefinitionBuilder } from "../BaseColumnDefinitionBuilder";
 import { Exception } from "../../errors";
+import type { DialectCapabilities } from "../DialectCapabilities";
 
 /**
  * PostgreSQL dialect column definition builder.
@@ -9,8 +10,8 @@ import { Exception } from "../../errors";
  * - Boolean: native BOOLEAN
  * - Enum: "schema"."enumName" (schema-qualified custom type)
  * - Decimal: NUMERIC($p,$s), max precision 1000
- * - Auto-increment: SERIAL (early return)
- * - UUID PK: DEFAULT gen_random_uuid() (early return)
+ * - Auto-increment: SERIAL (early return) or GENERATED ALWAYS AS IDENTITY (PG 10+)
+ * - UUID PK: DEFAULT gen_random_uuid() (PG 13+) or uuid_generate_v4() (pgcrypto)
  * - Identifier quoting: double quote (")
  */
 export class PostgresColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
@@ -22,8 +23,8 @@ export class PostgresColumnDefinitionBuilder extends BaseColumnDefinitionBuilder
 
   private readonly schema: string;
 
-  constructor(schema: string = "public") {
-    super();
+  constructor(schema: string = "public", capabilities?: DialectCapabilities) {
+    super(capabilities);
     this.schema = schema;
   }
 
@@ -128,7 +129,12 @@ export class PostgresColumnDefinitionBuilder extends BaseColumnDefinitionBuilder
     if (option.type === "uuid" && option.generationStrategy === "uuid") {
       const nullable = option.nullable ? "NULL" : "NOT NULL";
       const pk = option.primary && !ctx.isCompositePk ? " PRIMARY KEY" : "";
-      return `${this.wrapIdentifier(ctx.columnName)} UUID ${nullable} DEFAULT gen_random_uuid()${pk}`;
+      // PG 13+: gen_random_uuid() is built-in
+      // PG < 13: requires pgcrypto extension for uuid_generate_v4()
+      const defaultExpr = this.capabilities.supportsNativeGenRandomUuid
+        ? "gen_random_uuid()"
+        : "uuid_generate_v4()";
+      return `${this.wrapIdentifier(ctx.columnName)} UUID ${nullable} DEFAULT ${defaultExpr}${pk}`;
     }
     return null;
   }

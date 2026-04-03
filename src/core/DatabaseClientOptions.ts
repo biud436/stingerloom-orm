@@ -169,6 +169,14 @@ export interface DatabaseClientOptions {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   plugins?: StingerloomPlugin<any>[];
+
+  /**
+   * Override the detected database version.
+   * Useful for testing version-specific DDL behavior without connecting to a specific DB version.
+   * When set, the ORM uses this version instead of auto-detecting from the connected database.
+   * @example "5.7.0", "13.0.0", "3.24.0"
+   */
+  versionOverride?: string;
 }
 
 /**

@@ -43,6 +43,8 @@ import {
   ColumnDefinitionBuilder,
   createColumnDefinitionBuilder,
 } from "../../dialects/ColumnDefinitionBuilder";
+import type { DialectCapabilities } from "../../dialects/DialectCapabilities";
+import type { DbVersion } from "../../dialects/DbVersion";
 
 export type SchemaDialect = "mysql" | "postgres" | "sqlite";
 
@@ -50,6 +52,10 @@ export interface SchemaGeneratorOptions {
   dialect: SchemaDialect;
   schema?: string; // PostgreSQL schema (default: "public")
   namingStrategy?: NamingStrategy;
+  /** Feature capabilities of the connected database version. */
+  capabilities?: DialectCapabilities;
+  /** Database version (used for error messages). */
+  version?: DbVersion;
 }
 
 interface ColumnDef {
@@ -74,14 +80,19 @@ export class SchemaGenerator {
   private readonly pgSchema: string;
   private readonly namingStrategy: NamingStrategy;
   private readonly columnDefBuilder: ColumnDefinitionBuilder;
+  private readonly capabilities?: DialectCapabilities;
+  private readonly version?: DbVersion;
 
   constructor(options: SchemaGeneratorOptions) {
     this.dialect = options.dialect;
     this.pgSchema = options.schema ?? "public";
     this.namingStrategy = options.namingStrategy ?? new DefaultNamingStrategy();
+    this.capabilities = options.capabilities;
+    this.version = options.version;
     this.columnDefBuilder = createColumnDefinitionBuilder(
       this.dialect,
       this.pgSchema,
+      options.capabilities,
     );
   }
 
@@ -239,11 +250,14 @@ export class SchemaGenerator {
       columnExpr = `(${columns.map((col) => this.wrapId(col)).join(", ")})`;
     }
 
-    // INCLUDE clause (PostgreSQL only)
+    // INCLUDE clause (PostgreSQL 11+ only)
     let includeClause = "";
     if (opts?.include && opts.include.length > 0 && this.dialect === "postgres") {
-      const includeCols = opts.include.map((col) => this.wrapId(col)).join(", ");
-      includeClause = ` INCLUDE (${includeCols})`;
+      if (!this.capabilities || this.capabilities.supportsIndexInclude) {
+        const includeCols = opts.include.map((col) => this.wrapId(col)).join(", ");
+        includeClause = ` INCLUDE (${includeCols})`;
+      }
+      // Silently skip INCLUDE for PG < 11
     }
 
     // WHERE clause (partial index — PostgreSQL and SQLite only)

@@ -3,6 +3,7 @@ import { Sql } from "sql-template-tag";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { TRANSACTION_ISOLATION_LEVEL } from "../dialects/IsolationLevel";
 import { IConnection } from "../dialects/IConnection";
+import { DbVersion } from "../dialects/DbVersion";
 
 /**
  * Interface representing a database connector.
@@ -90,4 +91,12 @@ export abstract class IConnector {
    * @returns A promise that resolves when the transaction is committed.
    */
   abstract commit(connection: any): Promise<void>;
+
+  /**
+   * Returns the detected database version after connect() completes.
+   * Returns DbVersion.UNKNOWN if version detection was not performed.
+   */
+  getVersion(): DbVersion {
+    return DbVersion.UNKNOWN;
+  }
 }

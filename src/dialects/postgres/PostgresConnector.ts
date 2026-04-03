@@ -13,6 +13,7 @@ import { MetadataContext } from "../../metadata/MetadataContext";
 import { validateIsolationLevel } from "../../utils/validateIsolationLevel";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
+import { DbVersion } from "../DbVersion";
 
 export class PostgresConnector extends IConnector {
   pool?: Pool;
@@ -20,6 +21,7 @@ export class PostgresConnector extends IConnector {
   private schema = "public";
   private validateOnBorrow = false;
   private readonly logger = new Logger("PostgresConnector");
+  private _dbVersion: DbVersion = DbVersion.UNKNOWN;
 
   private static readonly ISOLATION_LEVEL_SQL: Record<string, string> = {
     "READ UNCOMMITTED": "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED",
@@ -94,6 +96,19 @@ export class PostgresConnector extends IConnector {
       this.pool.on("connect", (client) => {
         client.query(`SET search_path TO ${safeSchema}`);
       });
+
+      // Detect database version
+      try {
+        if (options.versionOverride) {
+          this._dbVersion = DbVersion.parse(options.versionOverride);
+        } else {
+          const rows: any[] = await this.query("SELECT version() as v");
+          this._dbVersion = DbVersion.parse(rows[0]?.v ?? "unknown");
+        }
+      } catch {
+        // Version detection failure is non-fatal — default to UNKNOWN
+        this._dbVersion = DbVersion.UNKNOWN;
+      }
     } catch (e: unknown) {
       if (e instanceof OrmError) throw e;
       throw new OrmError(
@@ -102,6 +117,10 @@ export class PostgresConnector extends IConnector {
         "Check that the PostgreSQL server is running and reachable",
       );
     }
+  }
+
+  override getVersion(): DbVersion {
+    return this._dbVersion;
   }
 
   /**

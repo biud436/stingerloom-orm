@@ -1,0 +1,377 @@
+import { DbVersion } from "../../src/dialects/DbVersion";
+import {
+  resolveMySqlCapabilities,
+  resolvePostgresCapabilities,
+  resolveSqliteCapabilities,
+} from "../../src/dialects/resolveCapabilities";
+import { ALL_CAPABILITIES } from "../../src/dialects/DialectCapabilities";
+import { UnsupportedFeatureError } from "../../src/errors/UnsupportedFeatureError";
+import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
+
+describe("resolveMySqlCapabilities", () => {
+  describe("MySQL 5.7.0", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("5.7.0"), false);
+
+    it("should not support CHECK constraints", () => {
+      expect(caps.supportsCheckConstraints).toBe(false);
+    });
+
+    it("should not support DEFAULT expressions", () => {
+      expect(caps.supportsDefaultExpression).toBe(false);
+    });
+
+    it("should not support generated columns (< 5.7.6)", () => {
+      expect(caps.supportsGeneratedColumns).toBe(false);
+    });
+
+    it("should not support JSON column type (< 5.7.8)", () => {
+      expect(caps.supportsJsonColumnType).toBe(false);
+    });
+
+    it("should not support RENAME COLUMN", () => {
+      expect(caps.supportsRenameColumn).toBe(false);
+    });
+
+    it("should not support invisible columns", () => {
+      expect(caps.supportsInvisibleColumns).toBe(false);
+    });
+
+    it("should not support RETURNING", () => {
+      expect(caps.supportsReturning).toBe(false);
+    });
+  });
+
+  describe("MySQL 5.7.8", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("5.7.8"), false);
+
+    it("should support generated columns (5.7.6+)", () => {
+      expect(caps.supportsGeneratedColumns).toBe(true);
+    });
+
+    it("should support JSON column type (5.7.8+)", () => {
+      expect(caps.supportsJsonColumnType).toBe(true);
+    });
+
+    it("should still not support CHECK constraints", () => {
+      expect(caps.supportsCheckConstraints).toBe(false);
+    });
+  });
+
+  describe("MySQL 8.0.0", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("8.0.0"), false);
+
+    it("should support RENAME COLUMN (8.0+)", () => {
+      expect(caps.supportsRenameColumn).toBe(true);
+    });
+
+    it("should not yet support CHECK constraints (< 8.0.16)", () => {
+      expect(caps.supportsCheckConstraints).toBe(false);
+    });
+
+    it("should not yet support DEFAULT expressions (< 8.0.13)", () => {
+      expect(caps.supportsDefaultExpression).toBe(false);
+    });
+  });
+
+  describe("MySQL 8.0.16", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("8.0.16"), false);
+
+    it("should support CHECK constraints (8.0.16+)", () => {
+      expect(caps.supportsCheckConstraints).toBe(true);
+    });
+
+    it("should support DEFAULT expressions (8.0.13+)", () => {
+      expect(caps.supportsDefaultExpression).toBe(true);
+    });
+
+    it("should support invisible columns (8.0.23+) — not yet", () => {
+      expect(caps.supportsInvisibleColumns).toBe(false);
+    });
+  });
+
+  describe("MySQL 8.0.23", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("8.0.23"), false);
+
+    it("should support invisible columns (8.0.23+)", () => {
+      expect(caps.supportsInvisibleColumns).toBe(true);
+    });
+  });
+
+  describe("MySQL always-false flags", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("8.0.40"), false);
+
+    it("should not support PG-only features", () => {
+      expect(caps.supportsGeneratedIdentity).toBe(false);
+      expect(caps.supportsNativeGenRandomUuid).toBe(false);
+      expect(caps.supportsRenameEnumValue).toBe(false);
+      expect(caps.supportsIndexInclude).toBe(false);
+    });
+
+    it("should not support RETURNING", () => {
+      expect(caps.supportsReturning).toBe(false);
+    });
+  });
+
+  describe("MariaDB 10.2.1", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("10.2.1"), true);
+
+    it("should support CHECK constraints (MariaDB 10.2.1+)", () => {
+      expect(caps.supportsCheckConstraints).toBe(true);
+    });
+
+    it("should support DEFAULT expressions (MariaDB 10.2.1+)", () => {
+      expect(caps.supportsDefaultExpression).toBe(true);
+    });
+
+    it("should not support RENAME COLUMN (< 10.5.2)", () => {
+      expect(caps.supportsRenameColumn).toBe(false);
+    });
+  });
+
+  describe("MariaDB 10.5.2", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("10.5.2"), true);
+
+    it("should support RENAME COLUMN (MariaDB 10.5.2+)", () => {
+      expect(caps.supportsRenameColumn).toBe(true);
+    });
+
+    it("should support RETURNING (MariaDB 10.5.0+)", () => {
+      expect(caps.supportsReturning).toBe(true);
+    });
+  });
+
+  describe("MariaDB 10.1.0 (old)", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("10.1.0"), true);
+
+    it("should not support CHECK constraints", () => {
+      expect(caps.supportsCheckConstraints).toBe(false);
+    });
+
+    it("should not support JSON column type (< 10.2.7)", () => {
+      expect(caps.supportsJsonColumnType).toBe(false);
+    });
+  });
+});
+
+describe("resolvePostgresCapabilities", () => {
+  describe("PostgreSQL 9.5", () => {
+    const caps = resolvePostgresCapabilities(DbVersion.parse("9.5.0"));
+
+    it("should not support IF NOT EXISTS for ADD COLUMN (< 9.6)", () => {
+      expect(caps.supportsIfNotExistsAddColumn).toBe(false);
+    });
+
+    it("should not support GENERATED IDENTITY (< 10)", () => {
+      expect(caps.supportsGeneratedIdentity).toBe(false);
+    });
+
+    it("should not support RENAME ENUM VALUE (< 10)", () => {
+      expect(caps.supportsRenameEnumValue).toBe(false);
+    });
+  });
+
+  describe("PostgreSQL 9.6", () => {
+    const caps = resolvePostgresCapabilities(DbVersion.parse("9.6.0"));
+
+    it("should support IF NOT EXISTS for ADD COLUMN (9.6+)", () => {
+      expect(caps.supportsIfNotExistsAddColumn).toBe(true);
+    });
+  });
+
+  describe("PostgreSQL 10", () => {
+    const caps = resolvePostgresCapabilities(
+      DbVersion.parse("PostgreSQL 10.0 on x86_64"),
+    );
+
+    it("should support GENERATED IDENTITY (10+)", () => {
+      expect(caps.supportsGeneratedIdentity).toBe(true);
+    });
+
+    it("should support RENAME ENUM VALUE (10+)", () => {
+      expect(caps.supportsRenameEnumValue).toBe(true);
+    });
+
+    it("should not yet support INDEX INCLUDE (< 11)", () => {
+      expect(caps.supportsIndexInclude).toBe(false);
+    });
+
+    it("should not yet support native gen_random_uuid (< 13)", () => {
+      expect(caps.supportsNativeGenRandomUuid).toBe(false);
+    });
+  });
+
+  describe("PostgreSQL 11", () => {
+    const caps = resolvePostgresCapabilities(DbVersion.parse("11.0.0"));
+
+    it("should support INDEX INCLUDE (11+)", () => {
+      expect(caps.supportsIndexInclude).toBe(true);
+    });
+  });
+
+  describe("PostgreSQL 13", () => {
+    const caps = resolvePostgresCapabilities(DbVersion.parse("13.0.0"));
+
+    it("should support native gen_random_uuid (13+)", () => {
+      expect(caps.supportsNativeGenRandomUuid).toBe(true);
+    });
+  });
+
+  describe("PostgreSQL always-true flags", () => {
+    const caps = resolvePostgresCapabilities(DbVersion.parse("9.5.0"));
+
+    it("should always support CHECK constraints", () => {
+      expect(caps.supportsCheckConstraints).toBe(true);
+    });
+
+    it("should always support DEFAULT expressions", () => {
+      expect(caps.supportsDefaultExpression).toBe(true);
+    });
+
+    it("should always support RENAME COLUMN", () => {
+      expect(caps.supportsRenameColumn).toBe(true);
+    });
+
+    it("should always support RETURNING", () => {
+      expect(caps.supportsReturning).toBe(true);
+    });
+
+    it("should always support DROP COLUMN", () => {
+      expect(caps.supportsDropColumn).toBe(true);
+    });
+
+    it("should always support upsert (ON CONFLICT)", () => {
+      expect(caps.supportsUpsert).toBe(true);
+    });
+  });
+});
+
+describe("resolveSqliteCapabilities", () => {
+  describe("SQLite 3.20.0 (old)", () => {
+    const caps = resolveSqliteCapabilities(DbVersion.parse("3.20.0"));
+
+    it("should not support upsert (< 3.24)", () => {
+      expect(caps.supportsUpsert).toBe(false);
+    });
+
+    it("should not support RENAME COLUMN (< 3.25)", () => {
+      expect(caps.supportsSqliteRenameColumn).toBe(false);
+      expect(caps.supportsRenameColumn).toBe(false);
+    });
+
+    it("should not support generated columns (< 3.31)", () => {
+      expect(caps.supportsSqliteGeneratedColumns).toBe(false);
+    });
+
+    it("should not support DROP COLUMN (< 3.35)", () => {
+      expect(caps.supportsDropColumn).toBe(false);
+    });
+
+    it("should not support RETURNING (< 3.35)", () => {
+      expect(caps.supportsReturning).toBe(false);
+    });
+  });
+
+  describe("SQLite 3.24.0", () => {
+    const caps = resolveSqliteCapabilities(DbVersion.parse("3.24.0"));
+
+    it("should support upsert (3.24+)", () => {
+      expect(caps.supportsUpsert).toBe(true);
+    });
+
+    it("should not yet support RENAME COLUMN (< 3.25)", () => {
+      expect(caps.supportsSqliteRenameColumn).toBe(false);
+    });
+  });
+
+  describe("SQLite 3.25.0", () => {
+    const caps = resolveSqliteCapabilities(DbVersion.parse("3.25.0"));
+
+    it("should support RENAME COLUMN (3.25+)", () => {
+      expect(caps.supportsSqliteRenameColumn).toBe(true);
+      expect(caps.supportsRenameColumn).toBe(true);
+    });
+  });
+
+  describe("SQLite 3.31.0", () => {
+    const caps = resolveSqliteCapabilities(DbVersion.parse("3.31.0"));
+
+    it("should support generated columns (3.31+)", () => {
+      expect(caps.supportsSqliteGeneratedColumns).toBe(true);
+    });
+  });
+
+  describe("SQLite 3.35.0", () => {
+    const caps = resolveSqliteCapabilities(DbVersion.parse("3.35.0"));
+
+    it("should support DROP COLUMN (3.35+)", () => {
+      expect(caps.supportsDropColumn).toBe(true);
+    });
+
+    it("should support RETURNING (3.35+)", () => {
+      expect(caps.supportsReturning).toBe(true);
+    });
+  });
+
+  describe("SQLite always-true flags", () => {
+    const caps = resolveSqliteCapabilities(DbVersion.parse("3.20.0"));
+
+    it("should always support CHECK constraints", () => {
+      expect(caps.supportsCheckConstraints).toBe(true);
+    });
+
+    it("should always support DEFAULT expressions", () => {
+      expect(caps.supportsDefaultExpression).toBe(true);
+    });
+  });
+});
+
+describe("ALL_CAPABILITIES", () => {
+  it("should have all flags set to true", () => {
+    for (const [key, value] of Object.entries(ALL_CAPABILITIES)) {
+      expect(value).toBe(true);
+      expect(key).toBeTruthy();
+    }
+  });
+});
+
+describe("UnsupportedFeatureError", () => {
+  it("should have correct error code", () => {
+    const err = new UnsupportedFeatureError(
+      "ALTER TABLE DROP COLUMN",
+      "SQLite 3.35.0+",
+      "3.24.0",
+    );
+    expect(err.code).toBe(OrmErrorCode.UNSUPPORTED_OPERATION);
+  });
+
+  it("should include feature name and versions in message", () => {
+    const err = new UnsupportedFeatureError(
+      "ALTER TABLE DROP COLUMN",
+      "SQLite 3.35.0+",
+      "3.24.0",
+    );
+    expect(err.message).toContain("ALTER TABLE DROP COLUMN");
+    expect(err.message).toContain("SQLite 3.35.0+");
+    expect(err.message).toContain("3.24.0");
+  });
+
+  it("should include upgrade suggestion", () => {
+    const err = new UnsupportedFeatureError(
+      "CHECK constraints",
+      "MySQL 8.0.16+",
+      "5.7.0",
+    );
+    expect(err.suggestion).toContain("MySQL 8.0.16+");
+    expect(err.suggestion).toContain("Upgrade");
+  });
+
+  it("should have correct error name", () => {
+    const err = new UnsupportedFeatureError("test", "v1", "v0");
+    expect(err.name).toBe("UnsupportedFeatureError");
+  });
+
+  it("should be instanceof OrmError", () => {
+    const err = new UnsupportedFeatureError("test", "v1", "v0");
+    expect(err).toBeInstanceOf(Error);
+  });
+});

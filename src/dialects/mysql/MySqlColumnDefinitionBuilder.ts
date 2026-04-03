@@ -2,6 +2,7 @@ import { ColumnOption, ColumnType } from "../../decorators/Column";
 import { ColumnDefContext } from "../ColumnDefinitionBuilder";
 import { BaseColumnDefinitionBuilder } from "../BaseColumnDefinitionBuilder";
 import { Exception } from "../../errors";
+import type { DialectCapabilities } from "../DialectCapabilities";
 
 /**
  * MySQL dialect column definition builder.
@@ -13,6 +14,9 @@ import { Exception } from "../../errors";
  * - Identifier quoting: backtick (`)
  */
 export class MySqlColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
+  constructor(capabilities?: DialectCapabilities) {
+    super(capabilities);
+  }
   readonly defaultColumnOption: ColumnOption = {
     type: "varchar",
     length: 255,
@@ -51,7 +55,7 @@ export class MySqlColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
       case "json":
       case "jsonb":
       case "array":
-        return "JSON";
+        return this.capabilities.supportsJsonColumnType ? "JSON" : "LONGTEXT";
       case "char":
         return "CHAR";
       case "enum":

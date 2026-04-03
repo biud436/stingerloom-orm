@@ -1,6 +1,7 @@
 import { ColumnOption, ColumnType } from "../../decorators/Column";
 import { ColumnDefContext } from "../ColumnDefinitionBuilder";
 import { BaseColumnDefinitionBuilder } from "../BaseColumnDefinitionBuilder";
+import type { DialectCapabilities } from "../DialectCapabilities";
 
 /**
  * SQLite dialect column definition builder.
@@ -12,6 +13,9 @@ import { BaseColumnDefinitionBuilder } from "../BaseColumnDefinitionBuilder";
  * - Identifier quoting: double quote (")
  */
 export class SqliteColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
+  constructor(capabilities?: DialectCapabilities) {
+    super(capabilities);
+  }
   readonly defaultColumnOption: ColumnOption = {
     type: "varchar",
     length: 255,

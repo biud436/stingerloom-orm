@@ -2,6 +2,7 @@ import { ColumnOption, ColumnType } from "../decorators/Column";
 import { MySqlColumnDefinitionBuilder } from "./mysql/MySqlColumnDefinitionBuilder";
 import { PostgresColumnDefinitionBuilder } from "./postgres/PostgresColumnDefinitionBuilder";
 import { SqliteColumnDefinitionBuilder } from "./sqlite/SqliteColumnDefinitionBuilder";
+import type { DialectCapabilities } from "./DialectCapabilities";
 
 /**
  * Context required when building a column definition.
@@ -51,13 +52,14 @@ export type ColumnDefinitionDialect = "mysql" | "postgres" | "sqlite";
 export function createColumnDefinitionBuilder(
   dialect: ColumnDefinitionDialect,
   schema?: string,
+  capabilities?: DialectCapabilities,
 ): ColumnDefinitionBuilder {
   switch (dialect) {
     case "mysql":
-      return new MySqlColumnDefinitionBuilder();
+      return new MySqlColumnDefinitionBuilder(capabilities);
     case "postgres":
-      return new PostgresColumnDefinitionBuilder(schema ?? "public");
+      return new PostgresColumnDefinitionBuilder(schema ?? "public", capabilities);
     case "sqlite":
-      return new SqliteColumnDefinitionBuilder();
+      return new SqliteColumnDefinitionBuilder(capabilities);
   }
 }

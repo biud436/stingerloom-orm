@@ -10,6 +10,7 @@ import { IConnection } from "../IConnection";
 import { SqliteConnection } from "./SqliteConnection";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
+import { DbVersion } from "../DbVersion";
 
 /**
  * SQLite connector implementation.
@@ -22,6 +23,7 @@ export class SqliteConnector extends IConnector {
   private db?: Database.Database;
   private isDebug = false;
   private readonly logger = new Logger("SqliteConnector");
+  private _dbVersion: DbVersion = DbVersion.UNKNOWN;
 
   async connect(options: DatabaseClientOptions): Promise<void> {
     try {
@@ -45,6 +47,18 @@ export class SqliteConnector extends IConnector {
       this.db.pragma("journal_mode = WAL");
       // Enable foreign key constraints
       this.db.pragma("foreign_keys = ON");
+
+      // Detect SQLite version
+      try {
+        if (options.versionOverride) {
+          this._dbVersion = DbVersion.parse(options.versionOverride);
+        } else {
+          const rows: any[] = await this.query("SELECT sqlite_version() as v");
+          this._dbVersion = DbVersion.parse(rows[0]?.v ?? "unknown");
+        }
+      } catch {
+        this._dbVersion = DbVersion.UNKNOWN;
+      }
     } catch (e: unknown) {
       if (e instanceof OrmError) throw e;
       throw new OrmError(
@@ -53,6 +67,10 @@ export class SqliteConnector extends IConnector {
         "Check that the database path is valid and writable",
       );
     }
+  }
+
+  override getVersion(): DbVersion {
+    return this._dbVersion;
   }
 
   /**

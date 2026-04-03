@@ -1,5 +1,6 @@
 import { ColumnOption, ColumnType } from "../decorators/Column";
 import { ColumnDefinitionBuilder, ColumnDefContext } from "./ColumnDefinitionBuilder";
+import { DialectCapabilities, ALL_CAPABILITIES } from "./DialectCapabilities";
 
 /**
  * Abstract base class for column definition builders.
@@ -11,6 +12,11 @@ export abstract class BaseColumnDefinitionBuilder
   implements ColumnDefinitionBuilder
 {
   abstract readonly defaultColumnOption: ColumnOption;
+  readonly capabilities: DialectCapabilities;
+
+  constructor(capabilities?: DialectCapabilities) {
+    this.capabilities = capabilities ?? ALL_CAPABILITIES;
+  }
 
   abstract castType(type: ColumnType): string;
   abstract wrapIdentifier(name: string): string;

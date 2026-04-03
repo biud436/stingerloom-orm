@@ -4,6 +4,8 @@ import { ColumnMetadata } from "../scanner/ColumnScanner";
 import { MysqlSchemaInterface } from "./mysql/BaseSchema";
 import type { DriverQueryOptions } from "../types/DriverQueryOptions";
 import type { Sql } from "sql-template-tag";
+import type { DbVersion } from "./DbVersion";
+import type { DialectCapabilities } from "./DialectCapabilities";
 
 export interface ISqlDriver<T = any> {
   /**
@@ -362,4 +364,16 @@ export interface ISqlDriver<T = any> {
    * the standard `executeRaw()` path.
    */
   queryWithOptions?(sql: Sql, options: DriverQueryOptions): Promise<any[]>;
+
+  /**
+   * Returns the detected database server version.
+   * Returns DbVersion.UNKNOWN if version detection was not performed.
+   */
+  getVersion?(): DbVersion;
+
+  /**
+   * Returns the feature capabilities of the connected database version.
+   * Used by DDL methods to branch on version-specific syntax.
+   */
+  getCapabilities?(): DialectCapabilities;
 }

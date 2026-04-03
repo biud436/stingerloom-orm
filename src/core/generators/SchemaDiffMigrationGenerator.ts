@@ -9,6 +9,8 @@ import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
 import { ClazzType } from "../../utils";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
+import type { DialectCapabilities } from "../../dialects/DialectCapabilities";
+import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 
 /**
  * Escapes an enum value for safe embedding in DDL strings.
@@ -28,6 +30,14 @@ function escapeEnumValue(val: string): string {
  * SchemaDiffResult를 받아 Migration TypeScript 파일을 생성합니다.
  */
 export class SchemaDiffMigrationGenerator {
+  private readonly capabilities?: DialectCapabilities;
+  private readonly versionString?: string;
+
+  constructor(capabilities?: DialectCapabilities, versionString?: string) {
+    this.capabilities = capabilities;
+    this.versionString = versionString;
+  }
+
   /**
    * diff 결과를 받아 Migration TypeScript 파일 내용을 생성합니다.
    */
@@ -103,7 +113,7 @@ export class SchemaDiffMigrationGenerator {
     for (const table of orderedTables) {
       const entityClass = diff.addTableEntityMap?.[table];
       if (entityClass) {
-        const sg = new SchemaGenerator({ dialect });
+        const sg = new SchemaGenerator({ dialect, capabilities: this.capabilities });
         sqls.push(sg.generateCreateTableDDL(entityClass));
       }
     }
@@ -220,7 +230,7 @@ export class SchemaDiffMigrationGenerator {
     for (const table of orderedTables) {
       const entityClass = diff.addTableEntityMap?.[table];
       if (entityClass) {
-        const sg = new SchemaGenerator({ dialect });
+        const sg = new SchemaGenerator({ dialect, capabilities: this.capabilities });
         const ddl = sg.generateCreateTableDDL(entityClass);
         stmts.push(this.wrapSqlInQuery(ddl));
       } else {
@@ -443,11 +453,20 @@ export class SchemaDiffMigrationGenerator {
     const oldCol = this.escapeId(rename.oldColumnName, dialect);
     const newCol = this.escapeId(rename.newColumnName, dialect);
 
-    if (dialect === "mysql") {
-      // MySQL < 8.0 doesn't support RENAME COLUMN, but 8.0+ does
-      return `ALTER TABLE ${table} RENAME COLUMN ${oldCol} TO ${newCol}`;
+    if (dialect === "mysql" && this.capabilities && !this.capabilities.supportsRenameColumn) {
+      // MySQL < 8.0: RENAME COLUMN not supported, use CHANGE COLUMN
+      const colType = rename.columnType ?? "VARCHAR(255)";
+      return `ALTER TABLE ${table} CHANGE COLUMN ${oldCol} ${newCol} ${colType}`;
     }
-    // PostgreSQL, SQLite (3.25.0+)
+
+    if (dialect === "sqlite" && this.capabilities && !this.capabilities.supportsSqliteRenameColumn) {
+      throw new UnsupportedFeatureError(
+        "ALTER TABLE RENAME COLUMN",
+        "SQLite 3.25.0+",
+        this.versionString ?? "unknown",
+      );
+    }
+
     return `ALTER TABLE ${table} RENAME COLUMN ${oldCol} TO ${newCol}`;
   }
 
