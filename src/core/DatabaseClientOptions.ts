@@ -54,25 +54,10 @@ export interface PoolOptions {
 }
 
 /**
- * Configuration options for database client connection.
+ * Common options shared by all database types.
  */
-export interface DatabaseClientOptions {
-  /** Type of the database to connect to */
-  type: IDatabaseType;
-
-  /** Database server host address */
-  host: string;
-
-  /** Port number for the database connection */
-  port: number;
-
-  /** Username for database authentication */
-  username: string;
-
-  /** Password for database authentication */
-  password: string;
-
-  /** Name of the database to connect to */
+interface BaseDatabaseClientOptions {
+  /** Name of the database (or file path for SQLite) to connect to */
   database: string;
 
   /**
@@ -178,6 +163,58 @@ export interface DatabaseClientOptions {
    */
   versionOverride?: string;
 }
+
+/**
+ * Options for server-based databases (MySQL, MariaDB, PostgreSQL).
+ * Requires host, port, username, and password.
+ */
+export interface ServerDatabaseClientOptions extends BaseDatabaseClientOptions {
+  /** Type of the database to connect to */
+  type: "mysql" | "mariadb" | "postgres";
+
+  /** Database server host address */
+  host: string;
+
+  /** Port number for the database connection */
+  port: number;
+
+  /** Username for database authentication */
+  username: string;
+
+  /** Password for database authentication */
+  password: string;
+}
+
+/**
+ * Options for SQLite database.
+ * Only requires the database file path (or ":memory:" for in-memory).
+ * host, port, username, password are not needed.
+ */
+export interface SqliteDatabaseClientOptions extends BaseDatabaseClientOptions {
+  /** Type of the database to connect to */
+  type: "sqlite";
+
+  /** Not required for SQLite. Ignored if provided. */
+  host?: string;
+
+  /** Not required for SQLite. Ignored if provided. */
+  port?: number;
+
+  /** Not required for SQLite. Ignored if provided. */
+  username?: string;
+
+  /** Not required for SQLite. Ignored if provided. */
+  password?: string;
+}
+
+/**
+ * Configuration options for database client connection.
+ * For SQLite, only `type` and `database` are required.
+ * For MySQL/MariaDB/PostgreSQL, `host`, `port`, `username`, and `password` are also required.
+ */
+export type DatabaseClientOptions =
+  | ServerDatabaseClientOptions
+  | SqliteDatabaseClientOptions;
 
 /**
  * 쿼리 로깅 및 진단 상세 옵션.
