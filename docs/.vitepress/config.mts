@@ -85,6 +85,7 @@ function sidebarEn() {
       items: [
         { text: "API Reference", link: "/api-reference" },
         { text: "Architecture", link: "/architecture" },
+        { text: "Troubleshooting", link: "/troubleshooting" },
         { text: "Production Guide", link: "/production-guide" },
         { text: "Contributor Guide", link: "/onboarding" },
       ],
