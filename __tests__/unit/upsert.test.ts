@@ -388,3 +388,230 @@ describe("BaseRepository.upsert()", () => {
     );
   });
 });
+
+// ─────────────────────────────────────────────
+// EntityManager.batchUpsert() 테스트
+// ─────────────────────────────────────────────
+describe("EntityManager.batchUpsert()", () => {
+  let em: EntityManager;
+
+  beforeEach(() => {
+    MetadataLayerRegistry.reset();
+    resetScannerContainer();
+    jest.clearAllMocks();
+  });
+
+  describe("with MySQL driver", () => {
+    beforeEach(() => {
+      em = createEntityManagerWithDriver("mysql");
+    });
+
+    it("should generate multi-row VALUES upsert SQL", async () => {
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
+
+      await em.batchUpsert(UserEntity, [
+        { id: 1, email: "a@test.com", name: "A" },
+        { id: 2, email: "b@test.com", name: "B" },
+        { id: 3, email: "c@test.com", name: "C" },
+      ]);
+
+      expect(mockQuery).toHaveBeenCalled();
+      const queryCalls = mockQuery.mock.calls;
+      const upsertCall = queryCalls.find((call: any[]) => {
+        const sqlText = call[0]?.text || String(call[0]);
+        return sqlText.includes("ON DUPLICATE KEY UPDATE");
+      });
+      expect(upsertCall).toBeDefined();
+
+      // Verify all 3 rows of values are present
+      const sqlText = upsertCall![0]?.text || String(upsertCall![0]);
+      expect(sqlText).toContain("INSERT INTO");
+      // Values should contain 3 sets of placeholders
+      const values = upsertCall![0]?.values ?? [];
+      expect(values.length).toBe(9); // 3 rows × 3 columns
+    });
+
+    it("should use specified conflict columns", async () => {
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
+
+      await em.batchUpsert(
+        UserEntity,
+        [
+          { id: 1, email: "a@test.com", name: "A" },
+          { id: 2, email: "b@test.com", name: "B" },
+        ],
+        ["email"],
+      );
+
+      expect(mockCommit).toHaveBeenCalled();
+    });
+
+    it("should return early for empty array", async () => {
+      await em.batchUpsert(UserEntity, []);
+      expect(mockConnect).not.toHaveBeenCalled();
+    });
+
+    it("should throw if entity metadata is not found", async () => {
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(null);
+
+      await expect(
+        em.batchUpsert(UserEntity, [{ id: 1, email: "a@test.com" }]),
+      ).rejects.toThrow();
+    });
+
+    it("should throw if no PK and no conflict columns specified", async () => {
+      const noPkMeta = {
+        name: "NoPk",
+        target: class NoPk {},
+        columns: [
+          { name: "field1", options: {} },
+          { name: "field2", options: {} },
+        ],
+      };
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(noPkMeta);
+
+      await expect(
+        em.batchUpsert(noPkMeta.target, [{ field1: "a", field2: "b" }]),
+      ).rejects.toThrow();
+    });
+
+    it("should return early if no update columns", async () => {
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+
+      await em.batchUpsert(ProductEntity, [{ sku: "ONLY" }], ["sku"]);
+      expect(mockConnect).not.toHaveBeenCalled();
+    });
+
+    it("should rollback on query error", async () => {
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
+      mockQuery.mockRejectedValueOnce(new Error("Batch query failed"));
+
+      await expect(
+        em.batchUpsert(UserEntity, [
+          { id: 1, email: "a@test.com", name: "A" },
+          { id: 2, email: "b@test.com", name: "B" },
+        ]),
+      ).rejects.toThrow("Batch query failed");
+
+      expect(mockRollback).toHaveBeenCalled();
+    });
+
+    it("should handle items with missing optional columns (null fallback)", async () => {
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
+
+      await em.batchUpsert(UserEntity, [
+        { id: 1, email: "a@test.com", name: "A" },
+        { id: 2, email: "b@test.com" }, // name is undefined → null
+      ]);
+
+      expect(mockCommit).toHaveBeenCalled();
+      const queryCalls = mockQuery.mock.calls;
+      const upsertCall = queryCalls.find((call: any[]) => {
+        const sqlText = call[0]?.text || String(call[0]);
+        return sqlText.includes("ON DUPLICATE KEY UPDATE");
+      });
+      expect(upsertCall).toBeDefined();
+      // Second row should have null for missing name
+      const values = upsertCall![0]?.values ?? [];
+      expect(values).toContain(null);
+    });
+  });
+
+  describe("with PostgreSQL driver", () => {
+    beforeEach(() => {
+      em = createEntityManagerWithDriver("postgres");
+    });
+
+    it("should generate ON CONFLICT DO UPDATE SQL with multi-row VALUES", async () => {
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+
+      await em.batchUpsert(ProductEntity, [
+        { sku: "A1", name: "Widget A", price: 9.99 },
+        { sku: "B2", name: "Widget B", price: 19.99 },
+      ]);
+
+      const queryCalls = mockQuery.mock.calls;
+      const upsertCall = queryCalls.find((call: any[]) => {
+        const sqlText = call[0]?.text || String(call[0]);
+        return sqlText.includes("ON CONFLICT");
+      });
+      expect(upsertCall).toBeDefined();
+
+      const values = upsertCall![0]?.values ?? [];
+      expect(values.length).toBe(6); // 2 rows × 3 columns
+    });
+  });
+
+  describe("with SQLite driver", () => {
+    beforeEach(() => {
+      em = createEntityManagerWithDriver("sqlite");
+    });
+
+    it("should generate ON CONFLICT DO UPDATE SQL with multi-row VALUES", async () => {
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+
+      await em.batchUpsert(ProductEntity, [
+        { sku: "A1", name: "Widget A", price: 9.99 },
+        { sku: "B2", name: "Widget B", price: 19.99 },
+      ]);
+
+      const queryCalls = mockQuery.mock.calls;
+      const upsertCall = queryCalls.find((call: any[]) => {
+        const sqlText = call[0]?.text || String(call[0]);
+        return sqlText.includes("ON CONFLICT");
+      });
+      expect(upsertCall).toBeDefined();
+
+      const values = upsertCall![0]?.values ?? [];
+      expect(values.length).toBe(6); // 2 rows × 3 columns
+    });
+  });
+});
+
+// ─────────────────────────────────────────────
+// BaseRepository.batchUpsert() 위임 테스트
+// ─────────────────────────────────────────────
+describe("BaseRepository.batchUpsert()", () => {
+  it("should delegate to EntityManager.batchUpsert()", async () => {
+    const mockEm = {
+      batchUpsert: jest.fn().mockResolvedValue(undefined),
+    } as any;
+
+    const { BaseRepository } = require("../../src/core/BaseRepository");
+    const repo = new BaseRepository(UserEntity, mockEm);
+
+    await repo.batchUpsert(
+      [
+        { id: 1, email: "a@test.com" },
+        { id: 2, email: "b@test.com" },
+      ],
+      ["email"],
+    );
+
+    expect(mockEm.batchUpsert).toHaveBeenCalledWith(
+      UserEntity,
+      [
+        { id: 1, email: "a@test.com" },
+        { id: 2, email: "b@test.com" },
+      ],
+      ["email"],
+    );
+  });
+
+  it("should work without conflictColumns", async () => {
+    const mockEm = {
+      batchUpsert: jest.fn().mockResolvedValue(undefined),
+    } as any;
+
+    const { BaseRepository } = require("../../src/core/BaseRepository");
+    const repo = new BaseRepository(UserEntity, mockEm);
+
+    await repo.batchUpsert([{ id: 1, name: "Test" }]);
+
+    expect(mockEm.batchUpsert).toHaveBeenCalledWith(
+      UserEntity,
+      [{ id: 1, name: "Test" }],
+      undefined,
+    );
+  });
+});

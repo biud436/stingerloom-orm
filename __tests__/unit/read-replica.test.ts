@@ -362,3 +362,143 @@ describe("FindOption.useMaster", () => {
     expect(option.useMaster).toBe(true);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #225: Health check for read replicas
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ReplicationRouter health check", () => {
+  const masterNode: ReplicationNodeConfig = {
+    host: "master",
+    port: 3306,
+    username: "root",
+    password: "pass",
+    database: "db",
+  };
+  const slave1: ReplicationNodeConfig = {
+    host: "slave1",
+    port: 3306,
+    username: "root",
+    password: "pass",
+    database: "db",
+  };
+  const slave2: ReplicationNodeConfig = {
+    host: "slave2",
+    port: 3306,
+    username: "root",
+    password: "pass",
+    database: "db",
+  };
+
+  it("should auto-mark slave as failed after failureThreshold", async () => {
+    const router = new ReplicationRouter({
+      master: masterNode,
+      slaves: [slave1, slave2],
+      healthCheck: {
+        enabled: true,
+        failureThreshold: 2,
+        recoveryThreshold: 1,
+      },
+    });
+
+    const healthCheckFn = jest.fn()
+      .mockRejectedValueOnce(new Error("down")) // slave1 fail 1
+      .mockResolvedValueOnce(undefined)          // slave2 ok
+      .mockRejectedValueOnce(new Error("down")) // slave1 fail 2 → threshold
+      .mockResolvedValueOnce(undefined);         // slave2 ok
+
+    router.startHealthCheck(healthCheckFn);
+
+    // Run two health check cycles manually
+    await router.runHealthChecks();
+    expect(router.healthySlaveCount).toBe(2); // still 2 (1 failure < threshold 2)
+
+    await router.runHealthChecks();
+    expect(router.healthySlaveCount).toBe(1); // slave1 now failed
+
+    router.stopHealthCheck();
+  });
+
+  it("should auto-recover slave after recoveryThreshold", async () => {
+    const router = new ReplicationRouter({
+      master: masterNode,
+      slaves: [slave1],
+      healthCheck: {
+        enabled: true,
+        failureThreshold: 1,
+        recoveryThreshold: 2,
+      },
+    });
+
+    const healthCheckFn = jest.fn()
+      .mockRejectedValueOnce(new Error("down")) // fail → mark failed
+      .mockResolvedValueOnce(undefined)          // success 1
+      .mockResolvedValueOnce(undefined);         // success 2 → recover
+
+    router.startHealthCheck(healthCheckFn);
+
+    await router.runHealthChecks();
+    expect(router.healthySlaveCount).toBe(0); // failed
+
+    await router.runHealthChecks();
+    expect(router.healthySlaveCount).toBe(0); // 1 success, need 2
+
+    await router.runHealthChecks();
+    expect(router.healthySlaveCount).toBe(1); // recovered!
+
+    router.stopHealthCheck();
+  });
+
+  it("should use 'random' strategy when configured", () => {
+    const router = new ReplicationRouter({
+      master: masterNode,
+      slaves: [slave1, slave2],
+      strategy: "random",
+    });
+
+    // Random strategy should return one of the slaves
+    const node = router.getReadNode();
+    expect([slave1, slave2]).toContainEqual(node);
+  });
+
+  it("should fallback to master with random strategy when all slaves failed", () => {
+    const router = new ReplicationRouter({
+      master: masterNode,
+      slaves: [slave1],
+      strategy: "random",
+    });
+
+    router.markSlaveFailed(slave1);
+    expect(router.getReadNode()).toBe(masterNode);
+  });
+
+  it("should not start health check when disabled", () => {
+    const router = new ReplicationRouter({
+      master: masterNode,
+      slaves: [slave1],
+      healthCheck: { enabled: false },
+    });
+
+    const fn = jest.fn();
+    router.startHealthCheck(fn);
+    // No timer should be set — stopHealthCheck should be safe
+    router.stopHealthCheck();
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("should use default health check query SELECT 1", async () => {
+    const router = new ReplicationRouter({
+      master: masterNode,
+      slaves: [slave1],
+      healthCheck: { enabled: true },
+    });
+
+    const fn = jest.fn().mockResolvedValue(undefined);
+    router.startHealthCheck(fn);
+
+    await router.runHealthChecks();
+    expect(fn).toHaveBeenCalledWith(slave1, "SELECT 1");
+
+    router.stopHealthCheck();
+  });
+});

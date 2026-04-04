@@ -117,6 +117,14 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Returns an AsyncGenerator that yields arrays of entities in batches.
+   * Each yielded value is T[] (a full batch), suitable for batch processing.
+   */
+  async *streamBatch(options?: FindOption<T>, batchSize?: number): AsyncGenerator<T[], void, undefined> {
+    yield* this.em.streamBatch<T>(this.entity, options, batchSize);
+  }
+
+  /**
    * Creates a new instance of BaseRepository for the specified entity and entity manager.
    *
    * @param entity The class type of the entity.
@@ -314,6 +322,20 @@ export class BaseRepository<T> {
     conflictColumns?: string[],
   ): Promise<void> {
     return await this.em.upsert<T>(this.entity, data, conflictColumns);
+  }
+
+  /**
+   * Batch upsert: inserts or updates multiple entities in a single query.
+   * Uses multi-row VALUES with ON CONFLICT / ON DUPLICATE KEY UPDATE.
+   *
+   * @param items The array of partial entity data to upsert.
+   * @param conflictColumns The columns to detect conflicts on.
+   */
+  async batchUpsert(
+    items: Partial<T>[],
+    conflictColumns?: string[],
+  ): Promise<void> {
+    return await this.em.batchUpsert<T>(this.entity, items, conflictColumns);
   }
 
   /**

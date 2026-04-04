@@ -451,6 +451,128 @@ describe("SelectQueryBuilder", () => {
 
       expect(text).toContain("FOR SHARE");
     });
+
+    it("should add FOR UPDATE NOWAIT", () => {
+      const em = createMockEm("postgresql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.where("id", 1).forUpdateNowait();
+      const { text } = qb.getSql();
+
+      expect(text).toContain("FOR UPDATE NOWAIT");
+    });
+
+    it("should add FOR UPDATE SKIP LOCKED", () => {
+      const em = createMockEm("mysql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.where("id", 1).forUpdateSkipLocked();
+      const { text } = qb.getSql();
+
+      expect(text).toContain("FOR UPDATE SKIP LOCKED");
+    });
+
+    it("should add FOR SHARE NOWAIT for PostgreSQL", () => {
+      const em = createMockEm("postgresql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.where("id", 1).forShareNowait();
+      const { text } = qb.getSql();
+
+      expect(text).toContain("FOR SHARE NOWAIT");
+    });
+
+    it("should add LOCK IN SHARE MODE NOWAIT for MySQL", () => {
+      const em = createMockEm("mysql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.where("id", 1).forShareNowait();
+      const { text } = qb.getSql();
+
+      expect(text).toContain("LOCK IN SHARE MODE NOWAIT");
+    });
+
+    it("should add FOR SHARE SKIP LOCKED for PostgreSQL", () => {
+      const em = createMockEm("postgresql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.where("id", 1).forShareSkipLocked();
+      const { text } = qb.getSql();
+
+      expect(text).toContain("FOR SHARE SKIP LOCKED");
+    });
+
+    it("should add LOCK IN SHARE MODE SKIP LOCKED for MySQL", () => {
+      const em = createMockEm("mysql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.where("id", 1).forShareSkipLocked();
+      const { text } = qb.getSql();
+
+      expect(text).toContain("LOCK IN SHARE MODE SKIP LOCKED");
+    });
+  });
+
+  describe("INDEX HINTS", () => {
+    it("should add USE INDEX for MySQL", () => {
+      const em = createMockEm("mysql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.useIndex("idx_user_email").where("id", 1);
+      const { text } = qb.getSql();
+
+      expect(text).toContain("USE INDEX (`idx_user_email`)");
+    });
+
+    it("should add FORCE INDEX for MySQL", () => {
+      const em = createMockEm("mysql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.forceIndex("idx_user_status").where("id", 1);
+      const { text } = qb.getSql();
+
+      expect(text).toContain("FORCE INDEX (`idx_user_status`)");
+    });
+
+    it("should add IGNORE INDEX for MySQL", () => {
+      const em = createMockEm("mysql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.ignoreIndex("idx_user_name").where("id", 1);
+      const { text } = qb.getSql();
+
+      expect(text).toContain("IGNORE INDEX (`idx_user_name`)");
+    });
+
+    it("should support multiple index hints for MySQL", () => {
+      const em = createMockEm("mysql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.useIndex("idx1").ignoreIndex("idx2").where("id", 1);
+      const { text } = qb.getSql();
+
+      expect(text).toContain("USE INDEX (`idx1`)");
+      expect(text).toContain("IGNORE INDEX (`idx2`)");
+    });
+
+    it("should not add index hints for non-MySQL (PostgreSQL)", () => {
+      const em = createMockEm("postgresql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.useIndex("idx_test").where("id", 1);
+      const { text } = qb.getSql();
+
+      // Index hints are MySQL-only; should not appear in PG SQL
+      expect(text).not.toContain("USE INDEX");
+    });
+
+    it("should add pg_hint_plan comment for PostgreSQL", () => {
+      const em = createMockEm("postgresql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.hint("IndexScan(u idx_user_date)").where("id", 1);
+      const { text } = qb.getSql();
+
+      expect(text).toContain("/*+ IndexScan(u idx_user_date) */");
+      expect(text).toContain("SELECT");
+    });
+
+    it("should support multiple pg hints", () => {
+      const em = createMockEm("postgresql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.hint("IndexScan(u idx1)").hint("NestLoop(u o)").where("id", 1);
+      const { text } = qb.getSql();
+
+      expect(text).toContain("/*+ IndexScan(u idx1) NestLoop(u o) */");
+    });
   });
 
   describe("soft delete auto-filter", () => {

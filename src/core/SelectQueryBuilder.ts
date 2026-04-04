@@ -120,6 +120,8 @@ export class SelectQueryBuilder<T, TResult = T> {
   private rowValidator: RowValidator<any> | undefined;
   private arrayValidatorFn: ArrayValidator<any> | undefined;
   private selectedPropertyKeys: string[] | null = null;
+  private indexHints: Array<{ type: "USE" | "FORCE" | "IGNORE"; indexName: string }> = [];
+  private pgHints: string[] = [];
 
   /** Maps TypeScript property names to DB column names (NamingStrategy). */
   private propertyToColumnMap?: Map<string, string>;
@@ -464,6 +466,89 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
+   * Add FOR UPDATE NOWAIT lock (MySQL 8.0+, PostgreSQL 9.5+).
+   * Fails immediately if rows are already locked.
+   */
+  forUpdateNowait(): this {
+    this.lockClause = "FOR UPDATE NOWAIT";
+    return this;
+  }
+
+  /**
+   * Add FOR UPDATE SKIP LOCKED lock (MySQL 8.0+, PostgreSQL 9.5+).
+   * Skips rows that are already locked by other transactions.
+   */
+  forUpdateSkipLocked(): this {
+    this.lockClause = "FOR UPDATE SKIP LOCKED";
+    return this;
+  }
+
+  /**
+   * Add FOR SHARE NOWAIT lock (MySQL 8.0+, PostgreSQL 9.5+).
+   */
+  forShareNowait(): this {
+    const internals = (this.em as any)._ctx;
+    this.lockClause = internals.isMySqlFamily()
+      ? "LOCK IN SHARE MODE NOWAIT"
+      : "FOR SHARE NOWAIT";
+    return this;
+  }
+
+  /**
+   * Add FOR SHARE SKIP LOCKED lock (MySQL 8.0+, PostgreSQL 9.5+).
+   */
+  forShareSkipLocked(): this {
+    const internals = (this.em as any)._ctx;
+    this.lockClause = internals.isMySqlFamily()
+      ? "LOCK IN SHARE MODE SKIP LOCKED"
+      : "FOR SHARE SKIP LOCKED";
+    return this;
+  }
+
+  // ── INDEX HINTS ─────────────────────────────────────────
+
+  /**
+   * MySQL: USE INDEX (indexName)
+   * Suggests an index for the optimizer to consider.
+   */
+  useIndex(indexName: string): this {
+    this.indexHints.push({ type: "USE", indexName });
+    return this;
+  }
+
+  /**
+   * MySQL: FORCE INDEX (indexName)
+   * Forces the optimizer to use a specific index.
+   */
+  forceIndex(indexName: string): this {
+    this.indexHints.push({ type: "FORCE", indexName });
+    return this;
+  }
+
+  /**
+   * MySQL: IGNORE INDEX (indexName)
+   * Tells the optimizer to ignore a specific index.
+   */
+  ignoreIndex(indexName: string): this {
+    this.indexHints.push({ type: "IGNORE", indexName });
+    return this;
+  }
+
+  /**
+   * PostgreSQL: pg_hint_plan style hint comment.
+   * Added as a hint comment before SELECT.
+   *
+   * @example
+   * ```ts
+   * qb.hint("IndexScan(o idx_order_date)")
+   * ```
+   */
+  hint(hintText: string): this {
+    this.pgHints.push(hintText);
+    return this;
+  }
+
+  /**
    * Include soft-deleted entities in results.
    */
   withDeleted(): this {
@@ -572,10 +657,16 @@ export class SelectQueryBuilder<T, TResult = T> {
       }
     }
 
-    // FROM
-    qb.from(
-      `${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`,
-    );
+    // FROM + MySQL index hints
+    const fromExpr = `${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`;
+    if (this.indexHints.length > 0 && internals.isMySqlFamily()) {
+      const hints = this.indexHints
+        .map((h) => `${h.type} INDEX (${this.em.wrap(h.indexName)})`)
+        .join(" ");
+      qb.from(`${fromExpr} ${hints}`);
+    } else {
+      qb.from(fromExpr);
+    }
 
     // JOINs
     for (const j of this.joinClauses) {
@@ -640,7 +731,15 @@ export class SelectQueryBuilder<T, TResult = T> {
       qb.appendSql(seg);
     }
 
-    return qb.build();
+    const built = qb.build();
+
+    // pg_hint_plan: prepend /*+ ... */ before SELECT
+    if (this.pgHints.length > 0) {
+      const hintComment = `/*+ ${this.pgHints.join(" ")} */ `;
+      return sql`${raw(hintComment)}${built}`;
+    }
+
+    return built;
   }
 
   /**

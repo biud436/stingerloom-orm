@@ -281,3 +281,164 @@ describe("#115: SchemaDiffMigrationGenerator edge cases", () => {
     expect(result.down[0]).toContain("RENAME COLUMN");
   });
 });
+
+// ─────────────────────────────────────────────────
+// #223: LockMode NOWAIT / SKIP LOCKED
+// ─────────────────────────────────────────────────
+
+describe("#223: LockMode NOWAIT / SKIP LOCKED", () => {
+  it("LockMode enum should have 6 members", () => {
+    const { LockMode } = require("../../src/dialects/FindOption");
+    expect(LockMode.PESSIMISTIC_READ).toBe("PESSIMISTIC_READ");
+    expect(LockMode.PESSIMISTIC_WRITE).toBe("PESSIMISTIC_WRITE");
+    expect(LockMode.PESSIMISTIC_WRITE_NOWAIT).toBe("PESSIMISTIC_WRITE_NOWAIT");
+    expect(LockMode.PESSIMISTIC_READ_NOWAIT).toBe("PESSIMISTIC_READ_NOWAIT");
+    expect(LockMode.PESSIMISTIC_WRITE_SKIP_LOCKED).toBe("PESSIMISTIC_WRITE_SKIP_LOCKED");
+    expect(LockMode.PESSIMISTIC_READ_SKIP_LOCKED).toBe("PESSIMISTIC_READ_SKIP_LOCKED");
+  });
+
+  it("resolveLockSuffix should return correct SQL for NOWAIT (PostgreSQL)", () => {
+    const { EntityManager } = require("../../src/core/EntityManager");
+    const { LockMode } = require("../../src/dialects/FindOption");
+    const em = new EntityManager();
+    // Set dbType to postgres
+    (em as any).dbType = "postgres";
+
+    const result = (em as any).resolveLockSuffix(LockMode.PESSIMISTIC_WRITE_NOWAIT);
+    expect(result).toBe("FOR UPDATE NOWAIT");
+  });
+
+  it("resolveLockSuffix should return correct SQL for SKIP LOCKED (MySQL)", () => {
+    const { EntityManager } = require("../../src/core/EntityManager");
+    const { LockMode } = require("../../src/dialects/FindOption");
+    const em = new EntityManager();
+    (em as any).dbType = "mysql";
+
+    const result = (em as any).resolveLockSuffix(LockMode.PESSIMISTIC_WRITE_SKIP_LOCKED);
+    expect(result).toBe("FOR UPDATE SKIP LOCKED");
+  });
+
+  it("resolveLockSuffix should throw for SQLite NOWAIT", () => {
+    const { EntityManager } = require("../../src/core/EntityManager");
+    const { LockMode } = require("../../src/dialects/FindOption");
+    const em = new EntityManager();
+    (em as any).dbType = "sqlite";
+
+    expect(() => (em as any).resolveLockSuffix(LockMode.PESSIMISTIC_WRITE_NOWAIT)).toThrow("SQLite does not support NOWAIT");
+  });
+
+  it("resolveLockSuffix should throw for SQLite SKIP LOCKED", () => {
+    const { EntityManager } = require("../../src/core/EntityManager");
+    const { LockMode } = require("../../src/dialects/FindOption");
+    const em = new EntityManager();
+    (em as any).dbType = "sqlite";
+
+    expect(() => (em as any).resolveLockSuffix(LockMode.PESSIMISTIC_READ_SKIP_LOCKED)).toThrow("SQLite does not support SKIP LOCKED");
+  });
+
+  it("resolveLockSuffix READ_NOWAIT should use FOR SHARE NOWAIT for PostgreSQL", () => {
+    const { EntityManager } = require("../../src/core/EntityManager");
+    const { LockMode } = require("../../src/dialects/FindOption");
+    const em = new EntityManager();
+    (em as any).dbType = "postgres";
+
+    const result = (em as any).resolveLockSuffix(LockMode.PESSIMISTIC_READ_NOWAIT);
+    expect(result).toBe("FOR SHARE NOWAIT");
+  });
+
+  it("resolveLockSuffix READ_NOWAIT should use LOCK IN SHARE MODE NOWAIT for MySQL", () => {
+    const { EntityManager } = require("../../src/core/EntityManager");
+    const { LockMode } = require("../../src/dialects/FindOption");
+    const em = new EntityManager();
+    (em as any).dbType = "mysql";
+
+    const result = (em as any).resolveLockSuffix(LockMode.PESSIMISTIC_READ_NOWAIT);
+    expect(result).toBe("LOCK IN SHARE MODE NOWAIT");
+  });
+});
+
+// ─────────────────────────────────────────────────
+// #222: EntityManager.streamBatch() — batch-level yielding
+// ─────────────────────────────────────────────────
+
+describe("#222: streamBatch() AsyncGenerator", () => {
+  it("should yield T[] batches from EntityManager", async () => {
+    const { EntityManager } = require("../../src/core/EntityManager");
+    const em = new EntityManager();
+
+    const allData = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `User${i + 1}` }));
+
+    // Mock find to return batches
+    (em as any).find = jest.fn()
+      .mockResolvedValueOnce(allData.slice(0, 3)) // batch 1
+      .mockResolvedValueOnce(allData.slice(3, 6)) // batch 2
+      .mockResolvedValueOnce(allData.slice(6, 7)) // batch 3 (partial → last)
+    ;
+
+    class TestUser {}
+    const batches: any[][] = [];
+    for await (const batch of em.streamBatch(TestUser, {}, 3)) {
+      batches.push(batch);
+    }
+
+    expect(batches).toHaveLength(3);
+    expect(batches[0]).toHaveLength(3);
+    expect(batches[1]).toHaveLength(3);
+    expect(batches[2]).toHaveLength(1);
+    expect(batches[0][0]).toEqual({ id: 1, name: "User1" });
+  });
+
+  it("should yield nothing for empty result", async () => {
+    const { EntityManager } = require("../../src/core/EntityManager");
+    const em = new EntityManager();
+    (em as any).find = jest.fn().mockResolvedValueOnce([]);
+
+    class TestEmpty {}
+    const batches: any[][] = [];
+    for await (const batch of em.streamBatch(TestEmpty, {})) {
+      batches.push(batch);
+    }
+
+    expect(batches).toHaveLength(0);
+  });
+
+  it("should delegate from BaseRepository.streamBatch()", async () => {
+    const { BaseRepository } = require("../../src/core/BaseRepository");
+    class TestEntity {}
+    const allData = [{ id: 1 }, { id: 2 }];
+    const mockEm = {
+      streamBatch: jest.fn(async function* () {
+        yield allData;
+      }),
+    };
+
+    const repo = new BaseRepository(TestEntity, mockEm as any);
+    const batches: any[][] = [];
+    for await (const batch of repo.streamBatch({}, 100)) {
+      batches.push(batch);
+    }
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toEqual(allData);
+  });
+
+  it("should respect batchSize parameter", async () => {
+    const { EntityManager } = require("../../src/core/EntityManager");
+    const em = new EntityManager();
+
+    (em as any).find = jest.fn()
+      .mockResolvedValueOnce([{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }])
+      .mockResolvedValueOnce([]);
+
+    class TestBatch {}
+    const batches: any[][] = [];
+    for await (const batch of em.streamBatch(TestBatch, {}, 5)) {
+      batches.push(batch);
+    }
+
+    // find was called with limit: [0, 5]
+    expect((em as any).find).toHaveBeenCalledWith(TestBatch, expect.objectContaining({
+      limit: [0, 5],
+    }));
+  });
+});

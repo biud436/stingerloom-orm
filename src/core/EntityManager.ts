@@ -6,7 +6,7 @@ import { DatabaseClient } from "../DatabaseClient";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
-import { FindOption, UpdateData, WhereClause } from "../dialects/FindOption";
+import { FindOption, LockMode, UpdateData, WhereClause } from "../dialects/FindOption";
 import { resolveWhereClause } from "./WhereResolver";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
@@ -1080,9 +1080,7 @@ export class EntityManager implements BaseEntityManager {
 
       // Pessimistic lock suffix
       if (findOption.lock) {
-        const lockSuffix = findOption.lock === "PESSIMISTIC_WRITE"
-          ? "FOR UPDATE"
-          : this.isMySqlFamily() ? "LOCK IN SHARE MODE" : "FOR SHARE";
+        const lockSuffix = this.resolveLockSuffix(findOption.lock);
         qb.appendSql(raw(lockSuffix));
       }
 
@@ -1388,6 +1386,38 @@ export class EntityManager implements BaseEntityManager {
       for (const item of batch) {
         yield item;
       }
+
+      if (batch.length < effectiveBatchSize) break;
+      offset += effectiveBatchSize;
+    }
+  }
+
+  /**
+   * Streams entities in batches, yielding T[] arrays.
+   * Each yielded value is an array of fully-deserialized entities with relations loaded.
+   * Suitable for processing large datasets without loading all rows into memory.
+   *
+   * @param entity - The entity class
+   * @param options - FindOption (where, select, relations, orderBy, etc.)
+   * @param batchSize - Number of rows per batch (default: 1000)
+   */
+  async *streamBatch<T>(
+    entity: ClazzType<T>,
+    options: FindOption<T> = {},
+    batchSize: number = 1000,
+  ): AsyncGenerator<T[], void, undefined> {
+    let offset = 0;
+    const effectiveBatchSize = Math.max(batchSize, 1);
+
+    while (true) {
+      const batch = await this.find<T>(entity, {
+        ...options,
+        limit: [offset, effectiveBatchSize],
+      });
+
+      if (batch.length === 0) break;
+
+      yield batch;
 
       if (batch.length < effectiveBatchSize) break;
       offset += effectiveBatchSize;
@@ -2761,6 +2791,150 @@ export class EntityManager implements BaseEntityManager {
     );
   }
 
+  // ── Batch Upsert ──────────────────────────────────────────
+
+  async batchUpsert<T>(
+    entity: ClazzType<T>,
+    items: Partial<T>[],
+    conflictColumns?: string[],
+  ): Promise<void> {
+    if (items.length === 0) {
+      return;
+    }
+
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    if (!this.driver) {
+      throw new OrmError(
+        OrmErrorCode.NOT_CONNECTED,
+        "Driver is not initialized. Call connect() first.",
+      );
+    }
+
+    const pkColumns = metadata.columns
+      .filter((col: ColumnMetadata) => col.options?.primary)
+      .map((col: ColumnMetadata) => col.name!);
+
+    const resolvedConflictColumns = conflictColumns ?? pkColumns;
+
+    if (resolvedConflictColumns.length === 0) {
+      throw new PrimaryKeyNotFoundError(entity.name);
+    }
+
+    const computedCols = this.getComputedColumnNames(entity);
+    const conflictSet = new Set(resolvedConflictColumns);
+
+    // Determine insertable columns from the union of all items' defined fields
+    const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
+      if (computedCols.has(col.name!)) return false;
+      if (col.options?.autoIncrement) {
+        // Include auto-increment column only if ALL items provide a value
+        return items.every(
+          (item) =>
+            (item as any)[this.propKey(col)] !== null &&
+            (item as any)[this.propKey(col)] !== undefined,
+        );
+      }
+      // Include column if at least one item provides a value
+      return items.some((item) => (item as any)[this.propKey(col)] !== undefined);
+    });
+
+    if (insertableColumns.length === 0) {
+      return;
+    }
+
+    const updateColumnNames = insertableColumns
+      .map((col: ColumnMetadata) => col.name!)
+      .filter((name) => !conflictSet.has(name));
+
+    if (updateColumnNames.length === 0) {
+      return;
+    }
+
+    const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
+      this.wrap(col.name!),
+    );
+    const wrappedConflict = resolvedConflictColumns.map((name) =>
+      this.wrap(name),
+    );
+    const wrappedUpdate = updateColumnNames.map((name) => this.wrap(name));
+    const tableName = this.wrapTable(metadata.name!);
+
+    await this.executeInTransaction(async (session) => {
+      const valueRows = items.map((item) => {
+        const rowValues = insertableColumns.map((col: ColumnMetadata) => {
+          const rawValue = (item as any)[this.propKey(col)];
+          if (col.transformer?.to) return col.transformer.to(rawValue);
+          if (rawValue instanceof Date) return formatDateTimeForSQL(rawValue);
+          return rawValue ?? null;
+        });
+        return sql`(${join(rowValues, ", ")})`;
+      });
+
+      const upsertSql = this.buildBatchUpsertQuery(
+        tableName,
+        wrappedColumns,
+        valueRows,
+        wrappedConflict,
+        wrappedUpdate,
+      );
+
+      await session.query(upsertSql);
+    });
+  }
+
+  private buildBatchUpsertQuery(
+    tableName: string,
+    columns: string[],
+    valueRows: Sql[],
+    conflictColumns: string[],
+    updateColumns: string[],
+  ): Sql {
+    const columnList = join(
+      columns.map((c) => raw(c)),
+      ", ",
+    );
+    const valuesList = join(valueRows, ", ");
+
+    if (this.isMySqlFamily()) {
+      const updateSet = join(
+        updateColumns.map((col) => raw(`${col} = VALUES(${col})`)),
+        ", ",
+      );
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON DUPLICATE KEY UPDATE ${updateSet}`;
+    }
+
+    const conflictList = join(
+      conflictColumns.map((c) => raw(c)),
+      ", ",
+    );
+
+    if (this.isPostgres()) {
+      const updateSet = join(
+        updateColumns.map((col) => raw(`${col} = EXCLUDED.${col}`)),
+        ", ",
+      );
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+    }
+
+    // SQLite
+    if ((this.dbType ?? (this.client as any).type) === "sqlite") {
+      const updateSet = join(
+        updateColumns.map((col) => raw(`${col} = excluded.${col}`)),
+        ", ",
+      );
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+    }
+
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_DATABASE,
+      `Unsupported database type for upsert: ${this.dbType}`,
+    );
+  }
+
   // ── 집계 위임 ─────────────────────────────────────────────
 
   /**
@@ -2972,6 +3146,32 @@ export class EntityManager implements BaseEntityManager {
   private isSqlite() {
     const t = this.dbType ?? (this.client as any).type;
     return t === "sqlite";
+  }
+
+  private resolveLockSuffix(lock: LockMode): string {
+    const isMySql = this.isMySqlFamily();
+    const isSqlite = this.isSqlite();
+
+    switch (lock) {
+      case LockMode.PESSIMISTIC_WRITE:
+        return "FOR UPDATE";
+      case LockMode.PESSIMISTIC_READ:
+        return isMySql ? "LOCK IN SHARE MODE" : "FOR SHARE";
+      case LockMode.PESSIMISTIC_WRITE_NOWAIT:
+        if (isSqlite) throw new OrmError(OrmErrorCode.UNSUPPORTED_DATABASE, "SQLite does not support NOWAIT");
+        return "FOR UPDATE NOWAIT";
+      case LockMode.PESSIMISTIC_READ_NOWAIT:
+        if (isSqlite) throw new OrmError(OrmErrorCode.UNSUPPORTED_DATABASE, "SQLite does not support NOWAIT");
+        return isMySql ? "LOCK IN SHARE MODE NOWAIT" : "FOR SHARE NOWAIT";
+      case LockMode.PESSIMISTIC_WRITE_SKIP_LOCKED:
+        if (isSqlite) throw new OrmError(OrmErrorCode.UNSUPPORTED_DATABASE, "SQLite does not support SKIP LOCKED");
+        return "FOR UPDATE SKIP LOCKED";
+      case LockMode.PESSIMISTIC_READ_SKIP_LOCKED:
+        if (isSqlite) throw new OrmError(OrmErrorCode.UNSUPPORTED_DATABASE, "SQLite does not support SKIP LOCKED");
+        return isMySql ? "LOCK IN SHARE MODE SKIP LOCKED" : "FOR SHARE SKIP LOCKED";
+      default:
+        return "FOR UPDATE";
+    }
   }
 
   private hasEagerRelations<T>(entity: ClazzType<T>): boolean {
