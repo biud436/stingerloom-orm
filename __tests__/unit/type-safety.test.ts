@@ -1,5 +1,5 @@
 import { DeepPartial } from "../../src/types/DeepPartial";
-import { FindCondition, FindOperator } from "../../src/types/FindCondition";
+
 import { OrderByOption, SortDirection } from "../../src/types/OrderByOption";
 import { OrmError } from "../../src/errors/OrmError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
@@ -63,88 +63,6 @@ describe("DeepPartial", () => {
   });
 });
 
-// ==========================
-// FindCondition type tests (deprecated — kept for backward compat)
-// ==========================
-describe("FindCondition (deprecated)", () => {
-  it("should allow direct value matching", () => {
-    const where: FindCondition<User> = { name: "Alice", age: 30 };
-    expect(where.name).toBe("Alice");
-    expect(where.age).toBe(30);
-  });
-
-  it("should allow FindOperator for comparison", () => {
-    const where: FindCondition<User> = {
-      age: { $gt: 18, $lt: 65 },
-    };
-    const ageOp = where.age as FindOperator<number>;
-    expect(ageOp.$gt).toBe(18);
-    expect(ageOp.$lt).toBe(65);
-  });
-
-  it("should allow $like operator for strings", () => {
-    const where: FindCondition<User> = {
-      name: { $like: "%alice%" },
-    };
-    const nameOp = where.name as FindOperator<string>;
-    expect(nameOp.$like).toBe("%alice%");
-  });
-
-  it("should allow $in operator", () => {
-    const where: FindCondition<User> = {
-      age: { $in: [18, 25, 30] },
-    };
-    const ageOp = where.age as FindOperator<number>;
-    expect(ageOp.$in).toEqual([18, 25, 30]);
-  });
-
-  it("should allow $isNull operator", () => {
-    const where: FindCondition<User> = {
-      email: { $isNull: true },
-    };
-    const emailOp = where.email as FindOperator<string>;
-    expect(emailOp.$isNull).toBe(true);
-  });
-
-  it("should allow $eq and $ne operators", () => {
-    const where: FindCondition<User> = {
-      isActive: { $eq: true },
-    };
-    const op = where.isActive as FindOperator<boolean>;
-    expect(op.$eq).toBe(true);
-  });
-
-  it("should allow $notIn operator", () => {
-    const where: FindCondition<User> = {
-      name: { $notIn: ["admin", "root"] },
-    };
-    const nameOp = where.name as FindOperator<string>;
-    expect(nameOp.$notIn).toEqual(["admin", "root"]);
-  });
-
-  it("should allow $gte and $lte operators", () => {
-    const where: FindCondition<User> = {
-      age: { $gte: 18, $lte: 65 },
-    };
-    const ageOp = where.age as FindOperator<number>;
-    expect(ageOp.$gte).toBe(18);
-    expect(ageOp.$lte).toBe(65);
-  });
-
-  it("should allow empty condition", () => {
-    const where: FindCondition<User> = {};
-    expect(where).toEqual({});
-  });
-
-  it("should allow mixing direct values and operators", () => {
-    const where: FindCondition<User> = {
-      name: "Alice",
-      age: { $gt: 18 },
-    };
-    expect(where.name).toBe("Alice");
-    expect((where.age as FindOperator<number>).$gt).toBe(18);
-  });
-});
 
 // ==========================
 // OrderByOption type tests

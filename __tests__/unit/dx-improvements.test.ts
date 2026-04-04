@@ -122,16 +122,6 @@ describe("Issue 4: @Column({ default })", () => {
   });
 });
 
-// ── Issue 5: FindCondition deprecation ──
-
-describe("Issue 5: FindCondition deprecation", () => {
-  it("FindCondition and FindOperator are still importable (backward compat)", () => {
-    const mod = require("../../src/types/FindCondition");
-    // They are types — the module should import without error
-    expect(mod).toBeDefined();
-  });
-});
-
 // ── Issue 6: Type-safe relations ──
 
 describe("Issue 6: Type-safe relations", () => {
