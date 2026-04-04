@@ -102,8 +102,10 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected selectColumns: string[] | "*" = "*";
   protected distinct = false;
   protected whereClauses: Sql[] = [];
-  protected orderByClauses: Array<{ column: string; direction: "ASC" | "DESC" }> =
-    [];
+  protected orderByClauses: Array<{
+    column: string;
+    direction: "ASC" | "DESC";
+  }> = [];
   protected groupByCols: string[] = [];
   protected havingClauses: Sql[] = [];
   protected joinClauses: Array<{
@@ -120,7 +122,10 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected rowValidator: RowValidator<any> | undefined;
   protected arrayValidatorFn: ArrayValidator<any> | undefined;
   protected selectedPropertyKeys: string[] | null = null;
-  protected indexHints: Array<{ type: "USE" | "FORCE" | "IGNORE"; indexName: string }> = [];
+  protected indexHints: Array<{
+    type: "USE" | "FORCE" | "IGNORE";
+    indexName: string;
+  }> = [];
   protected pgHints: string[] = [];
 
   /** Maps TypeScript property names to DB column names (NamingStrategy). */
@@ -165,9 +170,13 @@ export class SelectQueryBuilder<T, TResult = T> {
    * qb.select("*")              // result type: T (all columns)
    * ```
    */
-  select<K extends ColumnOf<T>>(columns: K[]): SelectQueryBuilder<T, Pick<T, K>>;
+  select<K extends ColumnOf<T>>(
+    columns: K[],
+  ): SelectQueryBuilder<T, Pick<T, K>>;
   select(columns: "*"): SelectQueryBuilder<T, T>;
-  select<K extends ColumnOf<T>>(columns: K[] | "*"): SelectQueryBuilder<T, any> {
+  select<K extends ColumnOf<T>>(
+    columns: K[] | "*",
+  ): SelectQueryBuilder<T, any> {
     if (columns === "*") {
       this.selectColumns = "*";
       this.selectedPropertyKeys = null;
@@ -187,8 +196,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * ```
    */
   addSelect(expr: Sql | string, alias?: string): this {
-    const exprStr =
-      typeof expr === "string" ? this.col(expr) : expr.sql;
+    const exprStr = typeof expr === "string" ? this.col(expr) : expr.sql;
     const fragment = alias ? `${exprStr} AS ${this.em.wrap(alias)}` : exprStr;
     if (this.selectColumns === "*") {
       this.selectColumns = [`${this.em.wrap(this.alias)}.*`, fragment];
@@ -217,11 +225,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   where(condition: Sql): this;
   where(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
-  where(
-    column: ColumnOf<T>,
-    operator: WhereOperator,
-    value: any,
-  ): this;
+  where(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   where(
     columnOrCondition: ColumnOf<T> | Sql,
     operatorOrValue?: any,
@@ -359,9 +363,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     condition: Sql | string,
   ): this {
     const cond =
-      typeof condition === "string"
-        ? sql`${raw(condition)}`
-        : condition;
+      typeof condition === "string" ? sql`${raw(condition)}` : condition;
     this.joinClauses.push({ type, table, alias, condition: cond });
     return this;
   }
@@ -683,9 +685,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     if (resolver) {
       const deletedAtColumn = resolver.getDeletedAtColumn(this.entity);
       if (deletedAtColumn && !this.withDeletedFlag) {
-        this.whereClauses.push(
-          Conditions.isNull(this.col(deletedAtColumn)),
-        );
+        this.whereClauses.push(Conditions.isNull(this.col(deletedAtColumn)));
       }
     }
 
@@ -897,9 +897,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     else qb.setDatabaseType("postgresql");
 
     qb.select(["COUNT(*) AS count"]);
-    qb.from(
-      `${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`,
-    );
+    qb.from(`${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`);
 
     for (const j of this.joinClauses) {
       qb.join(
@@ -1074,7 +1072,7 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     // Overload 3: where("age", ">=", 18) — 3 args, operator
     const operator = operatorOrValue as string;
-    const normalizedOp = operator.trim().toUpperCase();
+    const normalizedOp = operator.trim().toUpperCase() as WhereOperator;
 
     switch (normalizedOp) {
       case "=":
