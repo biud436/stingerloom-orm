@@ -20,7 +20,7 @@ import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { Conditions } from "./Conditions";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
-import { DatabaseClientOptions } from "./DatabaseClientOptions";
+import { DatabaseClientOptions, validateDatabaseClientOptions } from "./DatabaseClientOptions";
 import { MetadataContext } from "../metadata/MetadataContext";
 import { injectLazyProxy } from "./LazyLoader";
 import { EntityValidator } from "./EntityValidator";
@@ -232,6 +232,8 @@ export class EntityManager implements BaseEntityManager {
     databaseClientOptions: DatabaseClientOptions,
     connectionName = "default",
   ) {
+    validateDatabaseClientOptions(databaseClientOptions);
+
     if (databaseClientOptions.namingStrategy) {
       this.schemaRegistrar = new SchemaRegistrar(
         this.resolver,

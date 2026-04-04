@@ -2,6 +2,8 @@ import { IDatabaseType, AnyEntity } from "../dialects/mysql/MySqlConnector";
 import { ReplicationConfig } from "../dialects/ReplicationRouter";
 import { NamingStrategy } from "./generators/NamingStrategy";
 import { StingerloomPlugin } from "./plugin/StingerloomPlugin";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * Connection pool configuration options.
@@ -247,6 +249,128 @@ export interface LoggingOptions {
    * 설정 시 track() 호출마다 이 시간보다 오래된 항목을 제거합니다.
    */
   ttlMs?: number;
+}
+
+const VALID_DB_TYPES: readonly string[] = [
+  "mysql",
+  "mariadb",
+  "postgres",
+  "sqlite",
+];
+
+/**
+ * Validates DatabaseClientOptions at runtime.
+ * Throws OrmError with INVALID_CONFIG code if validation fails.
+ */
+export function validateDatabaseClientOptions(
+  options: DatabaseClientOptions,
+): void {
+  const errors: string[] = [];
+
+  // type
+  if (!options.type) {
+    errors.push("'type' is required.");
+  } else if (!VALID_DB_TYPES.includes(options.type)) {
+    errors.push(
+      `'type' must be one of ${VALID_DB_TYPES.join(", ")}, got '${options.type}'.`,
+    );
+  }
+
+  // database
+  if (!options.database && options.database !== "") {
+    errors.push("'database' is required.");
+  } else if (typeof options.database !== "string") {
+    errors.push(
+      `'database' must be a string, got ${typeof options.database}.`,
+    );
+  }
+
+  // Server-specific fields
+  if (
+    options.type === "mysql" ||
+    options.type === "mariadb" ||
+    options.type === "postgres"
+  ) {
+    if (!options.host) {
+      errors.push(`'host' is required for ${options.type}.`);
+    } else if (typeof options.host !== "string") {
+      errors.push(
+        `'host' must be a string, got ${typeof options.host}.`,
+      );
+    }
+
+    if (options.port === undefined || options.port === null) {
+      errors.push(`'port' is required for ${options.type}.`);
+    } else if (typeof options.port !== "number" || !Number.isInteger(options.port) || options.port <= 0 || options.port > 65535) {
+      errors.push(
+        `'port' must be an integer between 1 and 65535, got ${JSON.stringify(options.port)}.`,
+      );
+    }
+
+    if (options.username === undefined || options.username === null) {
+      errors.push(`'username' is required for ${options.type}.`);
+    } else if (typeof options.username !== "string") {
+      errors.push(
+        `'username' must be a string, got ${typeof options.username}.`,
+      );
+    }
+
+    if (options.password === undefined || options.password === null) {
+      errors.push(`'password' is required for ${options.type}.`);
+    } else if (typeof options.password !== "string") {
+      errors.push(
+        `'password' must be a string, got ${typeof options.password}.`,
+      );
+    }
+  }
+
+  // entities
+  if (!options.entities) {
+    errors.push("'entities' is required.");
+  } else if (!Array.isArray(options.entities)) {
+    errors.push("'entities' must be an array.");
+  }
+
+  // queryTimeout
+  if (
+    options.queryTimeout !== undefined &&
+    (typeof options.queryTimeout !== "number" || options.queryTimeout < 0)
+  ) {
+    errors.push(
+      `'queryTimeout' must be a non-negative number, got ${JSON.stringify(options.queryTimeout)}.`,
+    );
+  }
+
+  // pool
+  if (options.pool) {
+    if (options.pool.max !== undefined && (typeof options.pool.max !== "number" || options.pool.max < 1)) {
+      errors.push(`'pool.max' must be a positive number, got ${JSON.stringify(options.pool.max)}.`);
+    }
+    if (options.pool.min !== undefined && (typeof options.pool.min !== "number" || options.pool.min < 0)) {
+      errors.push(`'pool.min' must be a non-negative number, got ${JSON.stringify(options.pool.min)}.`);
+    }
+    if (options.pool.max !== undefined && options.pool.min !== undefined && options.pool.min > options.pool.max) {
+      errors.push(`'pool.min' (${options.pool.min}) cannot exceed 'pool.max' (${options.pool.max}).`);
+    }
+  }
+
+  // retry
+  if (options.retry) {
+    if (typeof options.retry.maxAttempts !== "number" || options.retry.maxAttempts < 1) {
+      errors.push(`'retry.maxAttempts' must be a positive number, got ${JSON.stringify(options.retry.maxAttempts)}.`);
+    }
+    if (typeof options.retry.backoffMs !== "number" || options.retry.backoffMs < 0) {
+      errors.push(`'retry.backoffMs' must be a non-negative number, got ${JSON.stringify(options.retry.backoffMs)}.`);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new OrmError(
+      OrmErrorCode.INVALID_CONFIG,
+      `Invalid database configuration:\n  - ${errors.join("\n  - ")}`,
+      "Check your DatabaseClientOptions and fix the listed issues.",
+    );
+  }
 }
 
 /**

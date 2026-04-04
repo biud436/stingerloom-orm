@@ -62,4 +62,7 @@ export enum OrmErrorCode {
 
   // Query
   QUERY_ERROR = "ORM_QUERY_ERROR",
+
+  // Configuration
+  INVALID_CONFIG = "ORM_INVALID_CONFIG",
 }
