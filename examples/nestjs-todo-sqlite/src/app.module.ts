@@ -9,10 +9,6 @@ import { Todo } from './todos/todo.entity';
     ConfigModule.forRoot({ isGlobal: true }),
     StinglerloomOrmModule.forRoot({
       type: 'sqlite',
-      host: '',
-      port: 0,
-      username: '',
-      password: '',
       database: process.env.DB_PATH || 'todo.db',
       entities: [Todo],
       synchronize: true,

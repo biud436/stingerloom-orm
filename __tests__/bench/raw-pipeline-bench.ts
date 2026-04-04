@@ -96,10 +96,6 @@ async function main() {
   await em.register(
     {
       type: "sqlite",
-      host: "",
-      port: 0,
-      username: "",
-      password: "",
       database: ":memory:",
       entities: [BenchUser],
       synchronize: true,

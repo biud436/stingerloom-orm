@@ -55,10 +55,6 @@ describe("DatabaseClientOptions - PoolOptions 인터페이스", () => {
   it("should accept sqlite type without pool options", () => {
     const options: DatabaseClientOptions = {
       type: "sqlite",
-      host: "",
-      port: 0,
-      username: "",
-      password: "",
       database: ":memory:",
       entities: [],
     };
@@ -186,13 +182,9 @@ describe("SqliteConnector - 단일 연결 유지", () => {
 
     await connector.connect({
       type: "sqlite",
-      host: "",
-      port: 0,
-      username: "",
-      password: "",
       database: ":memory:",
       entities: [],
-    });
+    } as DatabaseClientOptions);
 
     const conn1 = await connector.getConnection();
     const conn2 = await connector.getConnection();
@@ -211,13 +203,9 @@ describe("SqliteConnector - 단일 연결 유지", () => {
 
     await connector.connect({
       type: "sqlite",
-      host: "",
-      port: 0,
-      username: "",
-      password: "",
       database: ":memory:",
       entities: [],
-    });
+    } as DatabaseClientOptions);
 
     const conn = await connector.getConnection();
 
@@ -243,13 +231,9 @@ describe("SqliteConnector - 단일 연결 유지", () => {
 
     await connector.connect({
       type: "sqlite",
-      host: "",
-      port: 0,
-      username: "",
-      password: "",
       database: ":memory:",
       entities: [],
-    });
+    } as DatabaseClientOptions);
 
     const conn = await connector.getConnection();
 
@@ -295,13 +279,9 @@ describe("SqliteConnector - 단일 연결 유지", () => {
 
     await connector.connect({
       type: "sqlite",
-      host: "",
-      port: 0,
-      username: "",
-      password: "",
       database: ":memory:",
       entities: [],
-    });
+    } as DatabaseClientOptions);
 
     // 외래키 활성화 확인
     const fkResult = await connector.query("PRAGMA foreign_keys");
@@ -327,13 +307,9 @@ describe("SqliteDataSource - IDataSource 구현", () => {
     const connector = new SqliteConnector();
     await connector.connect({
       type: "sqlite",
-      host: "",
-      port: 0,
-      username: "",
-      password: "",
       database: ":memory:",
       entities: [],
-    });
+    } as DatabaseClientOptions);
 
     const dataSource = new SqliteDataSource(connector);
     await dataSource.createConnection();
@@ -373,13 +349,9 @@ describe("SqliteDataSource - IDataSource 구현", () => {
     const connector = new SqliteConnector();
     await connector.connect({
       type: "sqlite",
-      host: "",
-      port: 0,
-      username: "",
-      password: "",
       database: ":memory:",
       entities: [],
-    });
+    } as DatabaseClientOptions);
 
     await connector.query(
       "CREATE TABLE sp_test (id INTEGER PRIMARY KEY, val TEXT)",

@@ -229,10 +229,6 @@ describe("DatabaseClient.connect() - Connection Retry", () => {
     let caughtError: Error | null = null;
     const connectPromise = client.connect({
       type: "sqlite",
-      host: "",
-      port: 0,
-      username: "",
-      password: "",
       database: ":memory:",
       entities: [],
       retry: { maxAttempts: 3, backoffMs: 50 },

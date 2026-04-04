@@ -65,10 +65,6 @@ async function registerWithSync(
   const em = new EntityManager();
   await em.register({
     type: "sqlite",
-    host: "",
-    port: 0,
-    username: "",
-    password: "",
     database: dbPath,
     entities: [entityClass],
     synchronize: syncMode,

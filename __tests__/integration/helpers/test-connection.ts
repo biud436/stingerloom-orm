@@ -17,7 +17,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { getScannerInstance, resetScannerContainer } from "../../../src/scanner/ScannerContainer";
 import { EntityManager } from "../../../src/core/EntityManager";
-import { DatabaseClientOptions } from "../../../src/core/DatabaseClientOptions";
+import { DatabaseClientOptions, ServerDatabaseClientOptions } from "../../../src/core/DatabaseClientOptions";
 import { DatabaseClient } from "../../../src/DatabaseClient";
 import { MetadataLayerRegistry } from "../../../src/scanner/MetadataScanner";
 
@@ -58,11 +58,11 @@ function loadDefaultEnv(): Record<string, string> {
  * 기본 DB 연결 옵션을 생성합니다.
  * .env 파일이 없으면 하드코딩된 기본값을 사용합니다.
  */
-export function getDefaultConnectionOptions(): DatabaseClientOptions {
+export function getDefaultConnectionOptions(): ServerDatabaseClientOptions {
   const env = loadDefaultEnv();
 
   return {
-    type: (env.DB_TYPE as DatabaseClientOptions["type"]) || "mysql",
+    type: (env.DB_TYPE as ServerDatabaseClientOptions["type"]) || "mysql",
     host: env.DB_HOST || "localhost",
     port: parseInt(env.DB_PORT || "3306", 10),
     username: env.DB_USER || "root",
@@ -111,14 +111,14 @@ export async function createTestConnection(
   }
 
   const defaultOptions = getDefaultConnectionOptions();
-  const options: DatabaseClientOptions = {
+  const options = {
     ...defaultOptions,
     ...overrides,
     entities: [
       ...(overrides?.entities || []),
       ...(factoryResult?.entities || []),
     ],
-  };
+  } as DatabaseClientOptions;
 
   const em = new EntityManager();
   await em.register(options);
