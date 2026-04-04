@@ -2763,6 +2763,79 @@ export class EntityManager implements BaseEntityManager {
 
   // ── 집계 위임 ─────────────────────────────────────────────
 
+  /**
+   * Returns true if at least one entity matches the given where clause.
+   */
+  async exists<T>(
+    entity: ClazzType<T>,
+    where?: WhereClause<T>,
+  ): Promise<boolean> {
+    const c = await this.aggregateHandler.count(entity, where);
+    return c > 0;
+  }
+
+  /**
+   * Finds a single entity by its primary key value.
+   * For composite PKs, pass an object with PK field names as keys.
+   */
+  async findByPK<T>(
+    entity: ClazzType<T>,
+    id: unknown,
+  ): Promise<T | null> {
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) throw new EntityMetadataNotFoundError(entity.name);
+    const pkColumns = metadata.columns.filter(
+      (col: ColumnMetadata) => col.options?.primary,
+    );
+    if (pkColumns.length === 0) {
+      throw new InvalidQueryError(
+        `Entity "${metadata.name}" has no primary key.`,
+        "Add @PrimaryGeneratedColumn() or @PrimaryColumn() to your entity.",
+      );
+    }
+
+    let where: WhereClause<T>;
+    if (pkColumns.length === 1) {
+      where = { [this.propKey(pkColumns[0])]: id } as WhereClause<T>;
+    } else {
+      where = id as WhereClause<T>;
+    }
+
+    return this.findOne<T>(entity, { where });
+  }
+
+  /**
+   * Finds multiple entities by their primary key values.
+   * For composite PKs, pass an array of objects with PK field names as keys.
+   */
+  async findByPKs<T>(
+    entity: ClazzType<T>,
+    ids: unknown[],
+  ): Promise<T[]> {
+    if (ids.length === 0) return [];
+
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) throw new EntityMetadataNotFoundError(entity.name);
+    const pkColumns = metadata.columns.filter(
+      (col: ColumnMetadata) => col.options?.primary,
+    );
+    if (pkColumns.length === 0) {
+      throw new InvalidQueryError(
+        `Entity "${metadata.name}" has no primary key.`,
+        "Add @PrimaryGeneratedColumn() or @PrimaryColumn() to your entity.",
+      );
+    }
+
+    if (pkColumns.length === 1) {
+      const where = { [this.propKey(pkColumns[0])]: { in: ids } } as WhereClause<T>;
+      return this.find<T>(entity, { where });
+    }
+
+    // Composite PK: use OR conditions
+    const where = { OR: ids } as WhereClause<T>;
+    return this.find<T>(entity, { where });
+  }
+
   async count<T>(
     entity: ClazzType<T>,
     where?: WhereClause<T>,

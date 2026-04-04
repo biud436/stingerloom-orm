@@ -210,6 +210,28 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Returns true if at least one entity matches the given where clause.
+   */
+  async exists(where?: WhereClause<T>): Promise<boolean> {
+    return await this.em.exists<T>(this.entity, where);
+  }
+
+  /**
+   * Finds a single entity by its primary key value.
+   * For composite PKs, pass an object with PK field names as keys.
+   */
+  async findByPK(id: unknown): Promise<T | null> {
+    return await this.em.findByPK<T>(this.entity, id);
+  }
+
+  /**
+   * Finds multiple entities by their primary key values.
+   */
+  async findByPKs(ids: unknown[]): Promise<T[]> {
+    return await this.em.findByPKs<T>(this.entity, ids);
+  }
+
+  /**
    * Returns the count of entities matching the given conditions.
    */
   async count(where?: WhereClause<T>): Promise<number> {
