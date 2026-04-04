@@ -95,36 +95,36 @@ type OrderBySpec<T> = {
  * ```
  */
 export class SelectQueryBuilder<T, TResult = T> {
-  private readonly alias: string;
-  private readonly entity: ClazzType<T>;
-  private readonly em: EntityManager;
+  protected readonly alias: string;
+  protected readonly entity: ClazzType<T>;
+  protected readonly em: EntityManager;
 
-  private selectColumns: string[] | "*" = "*";
-  private distinct = false;
-  private whereClauses: Sql[] = [];
-  private orderByClauses: Array<{ column: string; direction: "ASC" | "DESC" }> =
+  protected selectColumns: string[] | "*" = "*";
+  protected distinct = false;
+  protected whereClauses: Sql[] = [];
+  protected orderByClauses: Array<{ column: string; direction: "ASC" | "DESC" }> =
     [];
-  private groupByCols: string[] = [];
-  private havingClauses: Sql[] = [];
-  private joinClauses: Array<{
+  protected groupByCols: string[] = [];
+  protected havingClauses: Sql[] = [];
+  protected joinClauses: Array<{
     type: "LEFT" | "INNER" | "RIGHT";
     table: string;
     alias: string;
     condition: Sql;
   }> = [];
-  private limitValue: number | [number, number] | undefined;
-  private offsetValue: number | undefined;
-  private lockClause: string | undefined;
-  private withDeletedFlag = false;
-  private extraSegments: Sql[] = [];
-  private rowValidator: RowValidator<any> | undefined;
-  private arrayValidatorFn: ArrayValidator<any> | undefined;
-  private selectedPropertyKeys: string[] | null = null;
-  private indexHints: Array<{ type: "USE" | "FORCE" | "IGNORE"; indexName: string }> = [];
-  private pgHints: string[] = [];
+  protected limitValue: number | [number, number] | undefined;
+  protected offsetValue: number | undefined;
+  protected lockClause: string | undefined;
+  protected withDeletedFlag = false;
+  protected extraSegments: Sql[] = [];
+  protected rowValidator: RowValidator<any> | undefined;
+  protected arrayValidatorFn: ArrayValidator<any> | undefined;
+  protected selectedPropertyKeys: string[] | null = null;
+  protected indexHints: Array<{ type: "USE" | "FORCE" | "IGNORE"; indexName: string }> = [];
+  protected pgHints: string[] = [];
 
   /** Maps TypeScript property names to DB column names (NamingStrategy). */
-  private propertyToColumnMap?: Map<string, string>;
+  protected propertyToColumnMap?: Map<string, string>;
 
   constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
     this.entity = entity;
@@ -141,13 +141,13 @@ export class SelectQueryBuilder<T, TResult = T> {
   // ── Helpers ──────────────────────────────────────────────
 
   /** Qualify a column with the main alias: `"u"."name"` */
-  private col(column: string): string {
+  protected col(column: string): string {
     const dbCol = this.propertyToColumnMap?.get(column) ?? column;
     return `${this.em.wrap(this.alias)}.${this.em.wrap(dbCol)}`;
   }
 
   /** Qualify a column for a different alias */
-  private qualifiedCol(tableAlias: string, column: string): string {
+  protected qualifiedCol(tableAlias: string, column: string): string {
     return `${this.em.wrap(tableAlias)}.${this.em.wrap(column)}`;
   }
 
@@ -352,7 +352,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     return this.addJoin("RIGHT", table, alias, condition);
   }
 
-  private addJoin(
+  protected addJoin(
     type: "LEFT" | "INNER" | "RIGHT",
     table: string,
     alias: string,
@@ -958,7 +958,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * the select() projection. Only runs when select() was called with
    * specific columns. Throws OrmError if required columns are missing.
    */
-  private validateRequiredColumns(): void {
+  protected validateRequiredColumns(): void {
     if (this.selectedPropertyKeys === null) return;
 
     const columns: ColumnMetadata[] =
@@ -998,7 +998,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Apply row-level and/or array-level validation to query results.
    * When no validators are attached, returns the rows as-is (zero overhead).
    */
-  private applyValidation(rows: any[]): TResult[] {
+  protected applyValidation(rows: any[]): TResult[] {
     let result = rows as TResult[];
 
     // Row-level validation
@@ -1025,7 +1025,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     return result;
   }
 
-  private resolveTableName(): string {
+  protected resolveTableName(): string {
     const resolver = (this.em as any).resolver;
     if (!resolver) {
       throw new OrmError(
@@ -1043,7 +1043,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     return metadata.name!;
   }
 
-  private resolveCondition(
+  protected resolveCondition(
     columnOrCondition: ColumnOf<T> | Sql,
     operatorOrValue?: any,
     value?: any,

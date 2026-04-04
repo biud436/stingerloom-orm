@@ -13,13 +13,13 @@ export type SubqueryType = "SELECT" | "FROM" | "WHERE" | "HAVING";
  * 따라서 직접적으로 사용하기보단 타입이 지원되는 래퍼 클래스를 통해 사용하는 것이 좋습니다.
  */
 export class RawQueryBuilder implements BaseRawQueryBuilder {
-  private sqlQuerySegments: Sql[] = [];
-  private dbType: DatabaseType = "mysql"; // 기본값
-  private isSubquery: boolean = false;
-  private hasWhereClause: boolean = false;
-  private cteClauses: Array<{ name: string; sql: Sql; recursive: boolean }> = [];
+  protected sqlQuerySegments: Sql[] = [];
+  protected dbType: DatabaseType = "mysql"; // 기본값
+  protected isSubquery: boolean = false;
+  protected hasWhereClause: boolean = false;
+  protected cteClauses: Array<{ name: string; sql: Sql; recursive: boolean }> = [];
 
-  private escapeIdent(name: string): string {
+  protected escapeIdent(name: string): string {
     if (this.dbType === "mysql") {
       return `\`${name.replace(/`/g, "``")}\``;
     }
@@ -534,7 +534,7 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    * Creates a sub-builder for CTE callbacks.
    * Uses RawQueryBuilderFactory.subquery() if available, inherits parent dbType.
    */
-  private createSubBuilder(): RawQueryBuilder {
+  protected createSubBuilder(): RawQueryBuilder {
     let sub: RawQueryBuilder;
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
