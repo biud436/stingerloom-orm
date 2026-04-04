@@ -31,3 +31,4 @@ export * from "./CascadeHandler";
 export * from "./TenantQueryStrategy";
 export * from "./plugin";
 export * from "./WhereResolver";
+export * from "./ColumnTypeRegistry";

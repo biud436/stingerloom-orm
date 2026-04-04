@@ -4,6 +4,7 @@ import { Conditions } from "../../src/core/Conditions";
 import { Entity, PrimaryGeneratedColumn, Column, DeletedAt } from "../../src/decorators";
 import { EntityManager } from "../../src/core/EntityManager";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createDialectExpression } from "../../src/dialects/DialectExpression";
 
 // ── Test Entities ──────────────────────────────────────────
 // @Entity uses camelToSnakeCase(className) as table name:
@@ -1014,6 +1015,53 @@ describe("SelectQueryBuilder", () => {
         const result = await new SelectQueryBuilder(User, "u", em).getRawOne();
         expect(result).toBeNull();
       });
+    });
+  });
+
+  describe("ILIKE dialect translation", () => {
+    it("should generate ILIKE on PostgreSQL", () => {
+      const em = createMockEm("postgresql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.setDialectExpression(createDialectExpression("postgres"));
+      qb.where("name", "ILIKE", "%alice%");
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("ILIKE");
+      expect(values).toContain("%alice%");
+    });
+
+    it("should translate ILIKE to LIKE on MySQL", () => {
+      const em = createMockEm("mysql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.setDialectExpression(createDialectExpression("mysql"));
+      qb.where("name", "ILIKE", "%alice%");
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("LIKE");
+      expect(text).not.toContain("ILIKE");
+      expect(values).toContain("%alice%");
+    });
+
+    it("should translate ILIKE to LIKE on SQLite", () => {
+      const em = createMockEm("postgresql"); // SQLite uses same quoting as PG
+      const qb = new SelectQueryBuilder(User, "u", em);
+      qb.setDialectExpression(createDialectExpression("sqlite"));
+      qb.where("name", "ILIKE", "%alice%");
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("LIKE");
+      expect(text).not.toContain("ILIKE");
+      expect(values).toContain("%alice%");
+    });
+
+    it("should fall back to raw ILIKE when no dialectExpression is set", () => {
+      const em = createMockEm("postgresql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+      // No setDialectExpression() call
+      qb.where("name", "ILIKE", "%alice%");
+      const { text } = qb.getSql();
+
+      expect(text).toContain("ILIKE");
     });
   });
 });

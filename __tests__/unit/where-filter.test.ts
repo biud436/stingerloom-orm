@@ -7,6 +7,7 @@ import {
 import { WhereClause } from "../../src/dialects/FindOption";
 import sql from "sql-template-tag";
 import { Conditions } from "../../src/core/Conditions";
+import { createDialectExpression } from "../../src/dialects/DialectExpression";
 
 // Test entity type
 interface User {
@@ -428,6 +429,53 @@ describe("WhereResolver", () => {
     it("should return empty array for empty array", () => {
       const results = resolve([]);
       expect(results).toEqual([]);
+    });
+  });
+
+  describe("dialectExpression integration", () => {
+    function resolveWithDialect(
+      where: WhereClause<User>,
+      dialect: "mysql" | "postgres" | "sqlite",
+    ) {
+      const results = resolveWhereClause<User>(where, {
+        wrapColumn: wrap,
+        dialect,
+        dialectExpression: createDialectExpression(dialect),
+      });
+      expect(results.length).toBeGreaterThan(0);
+      return results[0];
+    }
+
+    it("ilike uses ILIKE on postgres", () => {
+      const result = resolveWithDialect({ name: { ilike: "%alice%" } }, "postgres");
+      expect(result.sql).toContain("ILIKE");
+      expect(result.values).toContain("%alice%");
+    });
+
+    it("ilike translates to LIKE on mysql", () => {
+      const result = resolveWithDialect({ name: { ilike: "%alice%" } }, "mysql");
+      expect(result.sql).toContain("LIKE");
+      expect(result.sql).not.toContain("ILIKE");
+      expect(result.values).toContain("%alice%");
+    });
+
+    it("ilike translates to LIKE on sqlite", () => {
+      const result = resolveWithDialect({ name: { ilike: "%alice%" } }, "sqlite");
+      expect(result.sql).toContain("LIKE");
+      expect(result.sql).not.toContain("ILIKE");
+      expect(result.values).toContain("%alice%");
+    });
+
+    it("search uses MATCH AGAINST on mysql", () => {
+      const result = resolveWithDialect({ name: { search: "hello" } }, "mysql");
+      expect(result.sql).toContain("MATCH");
+      expect(result.sql).toContain("AGAINST");
+    });
+
+    it("search uses tsvector on postgres", () => {
+      const result = resolveWithDialect({ name: { search: "hello" } }, "postgres");
+      expect(result.sql).toContain("to_tsvector");
+      expect(result.sql).toContain("plainto_tsquery");
     });
   });
 });

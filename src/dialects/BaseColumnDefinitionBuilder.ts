@@ -1,6 +1,7 @@
 import { ColumnOption, ColumnType } from "../decorators/Column";
 import { ColumnDefinitionBuilder, ColumnDefContext } from "./ColumnDefinitionBuilder";
 import { CommonCapabilities, ALL_COMMON } from "./DialectCapabilities";
+import { ColumnTypeRegistry, DialectName } from "../core/ColumnTypeRegistry";
 
 /**
  * Abstract base class for column definition builders.
@@ -14,12 +15,27 @@ export abstract class BaseColumnDefinitionBuilder
   abstract readonly defaultColumnOption: ColumnOption;
   readonly capabilities: CommonCapabilities;
 
+  /** The dialect name used to look up custom column types from the registry. */
+  protected abstract readonly dialectName: DialectName;
+
   constructor(capabilities?: CommonCapabilities) {
     this.capabilities = capabilities ?? ALL_COMMON;
   }
 
-  abstract castType(type: ColumnType): string;
+  abstract castBuiltinType(type: string): string;
   abstract wrapIdentifier(name: string): string;
+
+  /**
+   * Converts a ColumnType to the dialect-specific SQL type string.
+   * First checks the ColumnTypeRegistry for custom types, then falls back
+   * to the dialect's built-in type mapping.
+   */
+  castType(type: ColumnType): string {
+    const registry = ColumnTypeRegistry.getInstance();
+    const custom = registry.resolve(type, this.dialectName);
+    if (custom !== undefined) return custom;
+    return this.castBuiltinType(type);
+  }
 
   /**
    * Builds a complete column definition SQL fragment.

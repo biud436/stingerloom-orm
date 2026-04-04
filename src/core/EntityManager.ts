@@ -44,6 +44,7 @@ import {
   DeleteEvent,
 } from "./EntitySubscriber";
 import { QueryTracker, QueryLogEntry } from "./QueryTracker";
+import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
 import { LoggingOptions } from "./DatabaseClientOptions";
 import {
   CursorPaginationOption,
@@ -96,6 +97,7 @@ import { deserializeEntity } from "./deserializer/DeserializeEntity";
 import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
 import type { BufferPluginOptions } from "./plugin/buffer/BufferPreview";
 import type { RawPipeline, RawPipelineOptions } from "./plugin/raw-pipeline/RawPipeline";
+import { createDialectExpression } from "../dialects/DialectExpression";
 import { SelectQueryBuilder } from "./SelectQueryBuilder";
 
 /**
@@ -649,6 +651,26 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * Register a custom column type with per-dialect SQL mappings.
+   *
+   * @example
+   * ```ts
+   * em.registerColumnType("geometry", {
+   *   mysql: "GEOMETRY",
+   *   postgres: "geometry(Point, 4326)",
+   *   sqlite: "TEXT",
+   *   transformer: {
+   *     to: (value) => `POINT(${value.x} ${value.y})`,
+   *     from: (raw) => parsePoint(raw),
+   *   },
+   * });
+   * ```
+   */
+  registerColumnType(name: string, definition: import("./ColumnTypeRegistry").CustomColumnTypeDefinition): void {
+    ColumnTypeRegistry.getInstance().register(name, definition);
+  }
+
+  /**
    * Check if a plugin with the given name is installed.
    */
   hasPlugin(name: string): boolean {
@@ -958,6 +980,7 @@ export class EntityManager implements BaseEntityManager {
           qualified: hasEagerJoins,
           tableName: hasEagerJoins ? tableName : undefined,
           dialect: this._ctx.getDialect(),
+          dialectExpression: createDialectExpression(this._ctx.getDialect()),
           propertyToColumn: this.buildPropertyToColumnMap(metadata),
         }),
       );
@@ -1270,6 +1293,7 @@ export class EntityManager implements BaseEntityManager {
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.wrap(n),
         dialect: this._ctx.getDialect(),
+        dialectExpression: createDialectExpression(this._ctx.getDialect()),
         propertyToColumn: this.buildPropertyToColumnMap(metadata),
       });
 
@@ -1552,10 +1576,7 @@ export class EntityManager implements BaseEntityManager {
 
         const values = insertableColumns.map((column: ColumnMetadata) => {
           const rawValue = (item as any)[this.propKey(column)];
-          if (column.transformer?.to) {
-            return column.transformer.to(rawValue);
-          }
-          return rawValue;
+          return this.applyWriteTransform(column, rawValue);
         });
 
         // @CreateTimestamp / @UpdateTimestamp 자동 주입 (INSERT 시)
@@ -1781,9 +1802,7 @@ export class EntityManager implements BaseEntityManager {
       );
       const updateMap = updatableColumns.map((column: ColumnMetadata) => {
         let value = (item as any)[this.propKey(column)];
-        if (column.transformer?.to) {
-          value = column.transformer.to(value);
-        }
+        value = this.applyWriteTransform(column, value);
         return sql`${raw(this.wrap(column.name!))} = ${value}`;
       });
 
@@ -2078,9 +2097,9 @@ export class EntityManager implements BaseEntityManager {
     const valueRows = items.map((item) => {
       const rowValues = insertableColumns.map((col) => {
         const rawValue = (item as any)[this.propKey(col)];
-        if (col.transformer?.to) return col.transformer.to(rawValue);
-        if (rawValue instanceof Date) return formatDateTimeForSQL(rawValue);
-        return rawValue;
+        const transformed = this.applyWriteTransform(col, rawValue);
+        if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
+        return transformed;
       });
       for (const fk of fkColumns) {
         const relatedValue = (item as any)[fk.propertyName];
@@ -2507,6 +2526,7 @@ export class EntityManager implements BaseEntityManager {
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.wrap(n),
         dialect: this._ctx.getDialect(),
+        dialectExpression: createDialectExpression(this._ctx.getDialect()),
         propertyToColumn: this.buildPropertyToColumnMap(metadata),
       });
 
@@ -2726,7 +2746,7 @@ export class EntityManager implements BaseEntityManager {
       const columnValues = insertableColumns.map(
         (col: ColumnMetadata) => {
           const rawValue = (data as any)[this.propKey(col)];
-          return col.transformer?.to ? col.transformer.to(rawValue) : rawValue;
+          return this.applyWriteTransform(col, rawValue);
         },
       );
 
@@ -2867,9 +2887,9 @@ export class EntityManager implements BaseEntityManager {
       const valueRows = items.map((item) => {
         const rowValues = insertableColumns.map((col: ColumnMetadata) => {
           const rawValue = (item as any)[this.propKey(col)];
-          if (col.transformer?.to) return col.transformer.to(rawValue);
-          if (rawValue instanceof Date) return formatDateTimeForSQL(rawValue);
-          return rawValue ?? null;
+          const transformed = this.applyWriteTransform(col, rawValue);
+          if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
+          return transformed ?? null;
         });
         return sql`(${join(rowValues, ", ")})`;
       });
@@ -3089,6 +3109,20 @@ export class EntityManager implements BaseEntityManager {
    */
   private propKey(col: { propertyKey?: string; name?: string }): string {
     return col.propertyKey ?? col.name!;
+  }
+
+  /**
+   * Applies the column's write transformer (to) to the raw value.
+   * Checks explicit column.transformer first, then falls back to the
+   * ColumnTypeRegistry for custom column types.
+   */
+  private applyWriteTransform(col: ColumnMetadata, rawValue: any): any {
+    if (col.transformer?.to) return col.transformer.to(rawValue);
+    if (col.options?.type) {
+      const regTo = ColumnTypeRegistry.getInstance().getTransformer(col.options.type)?.to;
+      if (regTo) return regTo(rawValue);
+    }
+    return rawValue;
   }
 
   /**
@@ -3450,6 +3484,7 @@ export class EntityManager implements BaseEntityManager {
   createQueryBuilder<T>(entity?: ClazzType<T>, alias?: string): BaseRawQueryBuilder | SelectQueryBuilder<T, T> {
     if (entity && alias) {
       const qb = new SelectQueryBuilder<T>(entity, alias, this);
+      qb.setDialectExpression(createDialectExpression(this._ctx.getDialect()));
       const meta = this.resolver.resolveEntityMetadata(entity);
       if (meta) {
         qb.setPropertyToColumnMap(this.buildPropertyToColumnMap(meta));

@@ -2,6 +2,7 @@
 import sql, { Sql, raw } from "sql-template-tag";
 import { Conditions } from "./Conditions";
 import { WhereClause, FILTER_OPERATOR_KEYS } from "../dialects/FindOption";
+import type { DialectExpression } from "../dialects/DialectExpression";
 
 /**
  * Escape LIKE wildcard characters (`%`, `_`, `\`) in a literal string
@@ -29,7 +30,12 @@ function isFilterObject(value: unknown): boolean {
  * Resolve a single filter-operator object (e.g. `{ gt: 18, lte: 65 }`)
  * into one or more SQL conditions joined with AND.
  */
-function resolveFilterObject(column: string, filter: Record<string, any>, dialect?: string): Sql {
+function resolveFilterObject(
+  column: string,
+  filter: Record<string, any>,
+  dialect?: string,
+  dialectExpression?: DialectExpression,
+): Sql {
   const clauses: Sql[] = [];
 
   for (const [op, val] of Object.entries(filter)) {
@@ -65,7 +71,11 @@ function resolveFilterObject(column: string, filter: Record<string, any>, dialec
         clauses.push(Conditions.notLike(column, val));
         break;
       case "ilike":
-        clauses.push(sql`${raw(column)} ILIKE ${val}`);
+        if (dialectExpression) {
+          clauses.push(dialectExpression.ilike(column, val));
+        } else {
+          clauses.push(sql`${raw(column)} ILIKE ${val}`);
+        }
         break;
       case "between":
         clauses.push(Conditions.between(column, val[0], val[1]));
@@ -77,7 +87,7 @@ function resolveFilterObject(column: string, filter: Record<string, any>, dialec
         break;
       case "not":
         if (typeof val === "object" && val !== null && isFilterObject(val)) {
-          const inner = resolveFilterObject(column, val, dialect);
+          const inner = resolveFilterObject(column, val, dialect, dialectExpression);
           clauses.push(sql`NOT (${inner})`);
         } else if (val === null) {
           clauses.push(Conditions.isNotNull(column));
@@ -95,7 +105,11 @@ function resolveFilterObject(column: string, filter: Record<string, any>, dialec
         clauses.push(Conditions.like(column, `%${escapeLikePattern(val)}`));
         break;
       case "search":
-        clauses.push(Conditions.fullTextSearch(column, val, dialect));
+        if (dialectExpression) {
+          clauses.push(dialectExpression.fullTextSearch(column, val));
+        } else {
+          clauses.push(Conditions.fullTextSearch(column, val, dialect));
+        }
         break;
     }
   }
@@ -113,7 +127,12 @@ function resolveFilterObject(column: string, filter: Record<string, any>, dialec
  * - filter object `{ gt: 18 }` → operator expansion
  * - plain value → equals
  */
-function resolveWhereValue(column: string, value: any, dialect?: string): Sql {
+function resolveWhereValue(
+  column: string,
+  value: any,
+  dialect?: string,
+  dialectExpression?: DialectExpression,
+): Sql {
   if (value === null) {
     return Conditions.isNull(column);
   }
@@ -126,7 +145,7 @@ function resolveWhereValue(column: string, value: any, dialect?: string): Sql {
   }
   // Filter operator object
   if (typeof value === "object" && isFilterObject(value)) {
-    return resolveFilterObject(column, value, dialect);
+    return resolveFilterObject(column, value, dialect, dialectExpression);
   }
   // Plain equality
   return Conditions.equals(column, value);
@@ -146,6 +165,8 @@ export interface WhereResolverOptions {
   dialect?: "mysql" | "postgres" | "sqlite";
   /** Maps TypeScript property names to database column names (for NamingStrategy support). */
   propertyToColumn?: Map<string, string>;
+  /** Dialect expression strategy. When provided, takes precedence over dialect string for ilike/search. */
+  dialectExpression?: DialectExpression;
 }
 
 /**
@@ -184,7 +205,7 @@ function resolveWhereSingleObject<T>(
   opts: WhereResolverOptions,
 ): Sql[] {
   const result: Sql[] = [];
-  const { wrapColumn, qualified, tableName, dialect } = opts;
+  const { wrapColumn, qualified, tableName, dialect, dialectExpression } = opts;
 
   for (const key of Object.keys(where)) {
     const value = (where as any)[key];
@@ -230,7 +251,7 @@ function resolveWhereSingleObject<T>(
         ? `${wrapColumn(tableName)}.${wrapColumn(dbColumnName)}`
         : wrapColumn(dbColumnName);
 
-    result.push(resolveWhereValue(col, value, dialect));
+    result.push(resolveWhereValue(col, value, dialect, dialectExpression));
   }
 
   return result;

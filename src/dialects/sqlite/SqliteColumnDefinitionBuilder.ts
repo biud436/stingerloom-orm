@@ -3,6 +3,7 @@ import { ColumnDefContext } from "../ColumnDefinitionBuilder";
 import { BaseColumnDefinitionBuilder } from "../BaseColumnDefinitionBuilder";
 import { ALL_SQLITE } from "../DialectCapabilities";
 import type { SqliteCapabilities, CommonCapabilities } from "../DialectCapabilities";
+import type { DialectName } from "../../core/ColumnTypeRegistry";
 
 /**
  * SQLite dialect column definition builder.
@@ -14,6 +15,8 @@ import type { SqliteCapabilities, CommonCapabilities } from "../DialectCapabilit
  * - Identifier quoting: double quote (")
  */
 export class SqliteColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
+  protected readonly dialectName: DialectName = "sqlite";
+
   constructor(capabilities?: SqliteCapabilities | CommonCapabilities) {
     super(capabilities ?? ALL_SQLITE);
   }
@@ -23,7 +26,7 @@ export class SqliteColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
     nullable: false,
   };
 
-  castType(type: ColumnType): string {
+  castBuiltinType(type: ColumnType): string {
     switch (type) {
       case "varchar":
       case "text":

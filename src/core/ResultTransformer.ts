@@ -14,6 +14,7 @@ import {
 } from "../decorators";
 import { ClazzType } from "../utils";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
+import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
 
 export type ForeignObject<T = any> = { [key: string]: T };
 
@@ -59,6 +60,7 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
 
   // Build transform list
   const transformColumns: Array<{ key: string; from: (raw: any) => any }> = [];
+  const registry = ColumnTypeRegistry.getInstance();
   for (const col of columns) {
     const key = col.propertyKey ?? col.name;
     if (!key) continue;
@@ -66,6 +68,12 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
       transformColumns.push({ key, from: col.transformer.from });
     } else if (col.transform) {
       transformColumns.push({ key, from: col.transform });
+    } else if (col.options?.type) {
+      // Fall back to registry transformer for custom types
+      const regTransformer = registry.getTransformer(col.options.type);
+      if (regTransformer?.from) {
+        transformColumns.push({ key, from: regTransformer.from });
+      }
     }
   }
 

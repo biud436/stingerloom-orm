@@ -4,6 +4,7 @@ import { BaseColumnDefinitionBuilder } from "../BaseColumnDefinitionBuilder";
 import { Exception } from "../../errors";
 import { ALL_MYSQL } from "../DialectCapabilities";
 import type { MySqlCapabilities, CommonCapabilities } from "../DialectCapabilities";
+import type { DialectName } from "../../core/ColumnTypeRegistry";
 
 /**
  * MySQL dialect column definition builder.
@@ -15,6 +16,8 @@ import type { MySqlCapabilities, CommonCapabilities } from "../DialectCapabiliti
  * - Identifier quoting: backtick (`)
  */
 export class MySqlColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
+  protected readonly dialectName: DialectName = "mysql";
+
   constructor(capabilities?: MySqlCapabilities | CommonCapabilities) {
     super(capabilities ?? ALL_MYSQL);
   }
@@ -29,7 +32,7 @@ export class MySqlColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
     nullable: false,
   };
 
-  castType(type: ColumnType): string {
+  castBuiltinType(type: ColumnType): string {
     switch (type) {
       case "varchar":
         return "VARCHAR";

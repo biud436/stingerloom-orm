@@ -6,18 +6,17 @@ import { getScannerInstance } from "../scanner/ScannerContainer";
 const columnLogger = new Logger("Column");
 
 /**
- * 데이터베이스 독립적인 추상 컬럼 타입입니다.
+ * Built-in database-independent abstract column types.
  *
- * 각 DB Driver의 `castType()` 메서드에서 실제 데이터베이스 타입으로 변환됩니다.
+ * These are the 22 types that every driver supports out-of-the-box.
+ * Each DB Driver's `castType()` method converts these to actual database types.
  *
  * 예시:
  * - `"datetime"` → MySQL: `DATETIME`, PostgreSQL: `TIMESTAMP`
  * - `"boolean"` → MySQL: `TINYINT(1)`, PostgreSQL: `BOOLEAN`
  * - `"blob"` → MySQL: `BLOB`, PostgreSQL: `BYTEA`
- *
- * 이를 통해 동일한 엔티티 정의로 여러 데이터베이스를 지원할 수 있습니다.
  */
-export type ColumnType =
+export type KnownColumnType =
   | "int"
   | "number"
   | "float"
@@ -41,6 +40,25 @@ export type ColumnType =
   | "bigint"
   | "longtext"
   | "uuid";
+
+/**
+ * 데이터베이스 독립적인 추상 컬럼 타입입니다.
+ *
+ * Built-in 타입(KnownColumnType) 22개에 대해서는 자동완성이 지원되며,
+ * `ColumnTypeRegistry`에 등록된 사용자 정의 타입도 `string`으로 허용됩니다.
+ *
+ * @example
+ * ```ts
+ * // Built-in type (autocomplete supported)
+ * @Column({ type: "varchar" })
+ * name: string;
+ *
+ * // Custom type (registered via ColumnTypeRegistry)
+ * @Column({ type: "geometry" })
+ * location: string;
+ * ```
+ */
+export type ColumnType = KnownColumnType | (string & {});
 
 /**
  * Bidirectional column value transformer.

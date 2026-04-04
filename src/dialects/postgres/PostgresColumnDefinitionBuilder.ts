@@ -4,6 +4,7 @@ import { BaseColumnDefinitionBuilder } from "../BaseColumnDefinitionBuilder";
 import { Exception } from "../../errors";
 import { ALL_POSTGRES } from "../DialectCapabilities";
 import type { PostgresCapabilities, CommonCapabilities } from "../DialectCapabilities";
+import type { DialectName } from "../../core/ColumnTypeRegistry";
 
 /**
  * PostgreSQL dialect column definition builder.
@@ -16,6 +17,8 @@ import type { PostgresCapabilities, CommonCapabilities } from "../DialectCapabil
  * - Identifier quoting: double quote (")
  */
 export class PostgresColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
+  protected readonly dialectName: DialectName = "postgres";
+
   readonly defaultColumnOption: ColumnOption = {
     type: "varchar",
     length: 255,
@@ -34,7 +37,7 @@ export class PostgresColumnDefinitionBuilder extends BaseColumnDefinitionBuilder
     return this.capabilities as PostgresCapabilities;
   }
 
-  castType(type: ColumnType): string {
+  castBuiltinType(type: ColumnType): string {
     switch (type) {
       case "varchar":
         return "VARCHAR";

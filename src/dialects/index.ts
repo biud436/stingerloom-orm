@@ -37,3 +37,5 @@ export { BaseColumnDefinitionBuilder } from "./BaseColumnDefinitionBuilder";
 export { MySqlColumnDefinitionBuilder } from "./mysql/MySqlColumnDefinitionBuilder";
 export { PostgresColumnDefinitionBuilder } from "./postgres/PostgresColumnDefinitionBuilder";
 export { SqliteColumnDefinitionBuilder } from "./sqlite/SqliteColumnDefinitionBuilder";
+export * from "./DialectExpression";
+export * from "./expression";

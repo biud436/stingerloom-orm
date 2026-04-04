@@ -11,6 +11,7 @@ import { EntityNotFoundError } from "../errors/EntityNotFoundError";
 import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
 import { COLUMN_TOKEN } from "../decorators/Column";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
+import type { DialectExpression } from "../dialects/DialectExpression";
 
 /**
  * Validator function that can be attached to a SelectQueryBuilder.
@@ -131,6 +132,9 @@ export class SelectQueryBuilder<T, TResult = T> {
   /** Maps TypeScript property names to DB column names (NamingStrategy). */
   protected propertyToColumnMap?: Map<string, string>;
 
+  /** Dialect-specific SQL expression generator (ILIKE, full-text search, etc.). */
+  protected dialectExpression?: DialectExpression;
+
   constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
     this.entity = entity;
     this.alias = alias;
@@ -140,6 +144,12 @@ export class SelectQueryBuilder<T, TResult = T> {
   /** Set the property-to-column mapping for NamingStrategy support. */
   setPropertyToColumnMap(map: Map<string, string>): this {
     this.propertyToColumnMap = map;
+    return this;
+  }
+
+  /** Set the dialect expression strategy for operator translation. */
+  setDialectExpression(expr: DialectExpression): this {
+    this.dialectExpression = expr;
     return this;
   }
 
@@ -1093,6 +1103,9 @@ export class SelectQueryBuilder<T, TResult = T> {
       case "NOT LIKE":
         return Conditions.notLike(qualified, value);
       case "ILIKE":
+        if (this.dialectExpression) {
+          return this.dialectExpression.ilike(qualified, value);
+        }
         return sql`${raw(qualified)} ILIKE ${value}`;
       case "IN":
         return Conditions.in(qualified, Array.isArray(value) ? value : [value]);
