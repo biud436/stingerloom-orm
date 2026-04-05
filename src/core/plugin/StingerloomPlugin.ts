@@ -2,6 +2,18 @@
 import { PluginContext } from "./PluginContext";
 
 /**
+ * Information about a query being executed.
+ */
+export interface QueryInfo {
+  /** The SQL string being executed */
+  sql: string;
+  /** Bind parameters (if any) */
+  params?: any[];
+  /** The operation type (select, insert, update, delete, raw) */
+  operation?: string;
+}
+
+/**
  * Stingerloom ORM plugin interface.
  *
  * Plugins extend EntityManager with additional functionality
@@ -15,6 +27,9 @@ import { PluginContext } from "./PluginContext";
  *     const log: AuditEntry[] = [];
  *     ctx.events.on("afterInsert", (p) => log.push({ op: "insert", ...p }));
  *     return { getAuditLog: () => [...log] };
+ *   },
+ *   afterQuery(query, result, duration) {
+ *     auditLog.write({ sql: query.sql, duration, timestamp: Date.now() });
  *   },
  * };
  *
@@ -40,6 +55,33 @@ export interface StingerloomPlugin<TApi = {}> {
    * Used to clean up plugin resources (timers, connections, caches, etc.).
    */
   shutdown?(): Promise<void> | void;
+
+  // ── Per-query hooks ────────────────────────────────────────
+
+  /**
+   * Called before a query is executed. May return a modified QueryInfo
+   * to transform the query, or void to leave it unchanged.
+   */
+  beforeQuery?(query: QueryInfo): QueryInfo | void;
+
+  /**
+   * Called after a query is executed.
+   * @param query - The query that was executed
+   * @param result - The raw result from the driver
+   * @param durationMs - Execution time in milliseconds
+   */
+  afterQuery?(query: QueryInfo, result: any, durationMs: number): void;
+
+  /**
+   * Called before a transaction starts.
+   */
+  beforeTransaction?(isolationLevel?: string): void;
+
+  /**
+   * Called after a transaction completes.
+   * @param committed - true if committed, false if rolled back
+   */
+  afterTransaction?(committed: boolean): void;
 }
 
 /**

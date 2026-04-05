@@ -64,4 +64,10 @@ export interface PluginContext {
   executeReadOnly<R>(
     fn: (session: TransactionSessionManager) => Promise<R>,
   ): Promise<R>;
+
+  /** Get structured metadata for an entity class */
+  getEntityMetadata<T>(entity: ClazzType<T>): any | null;
+
+  /** Register a method name as a plugin placeholder */
+  registerPlaceholder(name: string): void;
 }

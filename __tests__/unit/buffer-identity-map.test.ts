@@ -99,6 +99,8 @@ const mockCtx: PluginContext = {
   wrapTable: jest.fn((t: string) => `"${t}"`),
   executeInTransaction: jest.fn(),
   executeReadOnly: jest.fn(),
+  getEntityMetadata: jest.fn().mockReturnValue(null),
+  registerPlaceholder: jest.fn(),
 };
 
 // ── Tests ────────────────────────────────────────────────────────

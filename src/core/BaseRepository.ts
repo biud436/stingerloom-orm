@@ -27,8 +27,8 @@ export class BaseRepository<T> {
    * @param em The entity manager to handle database operations.
    */
   constructor(
-    private readonly entity: ClazzType<T>,
-    private readonly em: EntityManager,
+    protected readonly entity: ClazzType<T>,
+    protected readonly em: EntityManager,
   ) {}
 
   /**

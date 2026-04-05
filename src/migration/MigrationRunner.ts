@@ -39,9 +39,29 @@ export interface MigrationQueryRunner {
  * (MySqlMigrationRunner, PostgresMigrationRunner, SqliteMigrationRunner)를
  * 통해 사용합니다.
  */
+/**
+ * Lifecycle hooks for migration execution.
+ */
+export interface MigrationHooks {
+  /** Called before any migration runs. */
+  beforeAll?(context: MigrationContext): Promise<void> | void;
+  /** Called after all migrations complete. */
+  afterAll?(context: MigrationContext, results: MigrationResult[]): Promise<void> | void;
+  /** Called before each individual migration. */
+  beforeEach?(migration: Migration, context: MigrationContext): Promise<void> | void;
+  /** Called after each individual migration succeeds. */
+  afterEach?(migration: Migration, context: MigrationContext, durationMs: number): Promise<void> | void;
+  /** Called when a migration fails. */
+  onError?(migration: Migration, error: Error, context: MigrationContext): Promise<void> | void;
+}
+
 export interface MigrationRunnerOptions {
   lockId?: string;
   lockTimeoutMs?: number;
+  /** Custom migration tracking table name (default: "__migrations"). */
+  tableName?: string;
+  /** Lifecycle hooks for migration execution. */
+  hooks?: MigrationHooks;
 }
 
 export abstract class MigrationRunner {
@@ -49,9 +69,10 @@ export abstract class MigrationRunner {
   private readonly migrations: Migration[];
   protected readonly driver: ISqlDriver;
   private readonly queryRunner: MigrationQueryRunner;
-  private readonly tableName = "__migrations";
+  private readonly tableName: string;
   private readonly lockId: string;
   private readonly lockTimeoutMs: number;
+  private readonly hooks: MigrationHooks;
 
   constructor(
     migrations: Migration[],
@@ -64,6 +85,8 @@ export abstract class MigrationRunner {
     this.queryRunner = queryRunner;
     this.lockId = options?.lockId ?? "stingerloom_migration_lock";
     this.lockTimeoutMs = options?.lockTimeoutMs ?? 10000;
+    this.tableName = options?.tableName ?? "__migrations";
+    this.hooks = options?.hooks ?? {};
   }
 
   /**
@@ -131,6 +154,9 @@ export abstract class MigrationRunner {
       const executed = await this.getExecutedMigrations();
       const pending = this.migrations.filter((m) => !executed.includes(m.name));
 
+      const ctx = this.createContext();
+      await this.hooks.beforeAll?.(ctx);
+
       const results: MigrationResult[] = [];
 
       for (const migration of pending) {
@@ -140,6 +166,8 @@ export abstract class MigrationRunner {
           break;
         }
       }
+
+      await this.hooks.afterAll?.(ctx, results);
 
       return results;
     } finally {
@@ -155,7 +183,12 @@ export abstract class MigrationRunner {
 
     try {
       this.logger.info(`Running migration: ${migration.name}`);
+      await this.hooks.beforeEach?.(migration, context);
+
+      const startTime = Date.now();
       await migration.up(context);
+      const durationMs = Date.now() - startTime;
+
       try {
         await this.recordMigration(migration.name);
       } catch (trackError: unknown) {
@@ -173,11 +206,14 @@ export abstract class MigrationRunner {
           error: `Tracking failed: ${msg}`,
         };
       }
-      this.logger.info(`Migration completed: ${migration.name}`);
+
+      await this.hooks.afterEach?.(migration, context, durationMs);
+      this.logger.info(`Migration completed: ${migration.name} (${durationMs}ms)`);
       return { name: migration.name, direction: "up", success: true };
     } catch (e: unknown) {
       const error = e instanceof Error ? e.message : String(e);
       this.logger.error(`Migration failed: ${migration.name} - ${error}`);
+      await this.hooks.onError?.(migration, e instanceof Error ? e : new Error(error), context);
       return { name: migration.name, direction: "up", success: false, error };
     }
   }
@@ -190,7 +226,12 @@ export abstract class MigrationRunner {
 
     try {
       this.logger.info(`Reverting migration: ${migration.name}`);
+      await this.hooks.beforeEach?.(migration, context);
+
+      const startTime = Date.now();
       await migration.down(context);
+      const durationMs = Date.now() - startTime;
+
       try {
         await this.removeMigrationRecord(migration.name);
       } catch (trackError: unknown) {
@@ -208,13 +249,16 @@ export abstract class MigrationRunner {
           error: `Tracking failed: ${msg}`,
         };
       }
-      this.logger.info(`Migration reverted: ${migration.name}`);
+
+      await this.hooks.afterEach?.(migration, context, durationMs);
+      this.logger.info(`Migration reverted: ${migration.name} (${durationMs}ms)`);
       return { name: migration.name, direction: "down", success: true };
     } catch (e: unknown) {
       const error = e instanceof Error ? e.message : String(e);
       this.logger.error(
         `Migration revert failed: ${migration.name} - ${error}`,
       );
+      await this.hooks.onError?.(migration, e instanceof Error ? e : new Error(error), context);
       return { name: migration.name, direction: "down", success: false, error };
     }
   }

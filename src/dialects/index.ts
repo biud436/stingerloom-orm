@@ -39,3 +39,4 @@ export { PostgresColumnDefinitionBuilder } from "./postgres/PostgresColumnDefini
 export { SqliteColumnDefinitionBuilder } from "./sqlite/SqliteColumnDefinitionBuilder";
 export * from "./DialectExpression";
 export * from "./expression";
+export * from "./DriverRegistry";

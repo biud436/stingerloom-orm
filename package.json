@@ -79,6 +79,11 @@
       "types": "./dist/integration/prisma-import/index.d.ts",
       "import": "./dist/esm/integration/prisma-import/index.js",
       "require": "./dist/integration/prisma-import/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/esm/testing/index.js",
+      "require": "./dist/testing/index.js"
     }
   },
   "typesVersions": {
@@ -124,6 +129,9 @@
       ],
       "prisma-import": [
         "dist/integration/prisma-import/index.d.ts"
+      ],
+      "testing": [
+        "dist/testing/index.d.ts"
       ]
     }
   },

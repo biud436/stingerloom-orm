@@ -100,6 +100,38 @@ import type { RawPipeline, RawPipelineOptions } from "./plugin/raw-pipeline/RawP
 import { createDialectExpression } from "../dialects/DialectExpression";
 import { SelectQueryBuilder } from "./SelectQueryBuilder";
 
+// ── Public Metadata View Types (#233) ────────────────────
+
+export interface EntityMetadataView {
+  tableName: string;
+  columns: ColumnMetadataView[];
+  relations: RelationMetadataView[];
+  indexes: any[];
+  deletedAtColumn: string | null;
+  createTimestampColumn: string | null;
+  updateTimestampColumn: string | null;
+  versionColumn: string | null;
+}
+
+export interface ColumnMetadataView {
+  propertyKey: string;
+  columnName: string;
+  type: string;
+  nullable: boolean;
+  primary: boolean;
+  unique: boolean;
+  default?: any;
+  length?: number;
+}
+
+export interface RelationMetadataView {
+  type: "ManyToOne" | "OneToMany" | "ManyToMany" | "OneToOne";
+  propertyKey: string;
+  target: ClazzType<any>;
+  joinColumn: string | null;
+  eager: boolean;
+}
+
 /**
  * Transaction options for configurable retry behavior.
  */
@@ -170,6 +202,13 @@ export class EntityManager implements BaseEntityManager {
   static readonly PLUGIN_PLACEHOLDER = Symbol.for("STG_PLUGIN_PLACEHOLDER");
   /** Method names that are stub placeholders and can be overridden by plugins */
   private static readonly PLUGIN_PLACEHOLDERS = new Set<string>(["buffer", "pipe"]);
+
+  /**
+   * Register a method name as a plugin placeholder, allowing plugins to override it.
+   */
+  static registerPluginPlaceholder(name: string): void {
+    EntityManager.PLUGIN_PLACEHOLDERS.add(name);
+  }
   private readonly _plugins = new Map<string, InstalledPlugin>();
   private _pluginContext: PluginContext | null = null;
 
@@ -352,41 +391,51 @@ export class EntityManager implements BaseEntityManager {
 
     this.dbType = dbType;
 
-    switch (dbType) {
-      case "mariadb":
-      case "mysql": {
-        const { MySqlDriver } = await import("../dialects/mysql/MySqlDriver");
-        const { MySqlDataSource } = await import(
-          "../dialects/mysql/MySqlDataSource"
-        );
-        this.driver = new MySqlDriver(connector, dbType);
-        this.dataSource = new MySqlDataSource(connector);
-        break;
+    // Check DriverRegistry first for custom drivers
+    const { DriverRegistry } = await import("../dialects/DriverRegistry");
+    const customFactory = DriverRegistry.get(dbType);
+
+    if (customFactory) {
+      this.driver = customFactory.createDriver(connector, dbType, schema);
+      this.dataSource = customFactory.createDataSource(connector);
+    } else {
+      // Built-in drivers
+      switch (dbType) {
+        case "mariadb":
+        case "mysql": {
+          const { MySqlDriver } = await import("../dialects/mysql/MySqlDriver");
+          const { MySqlDataSource } = await import(
+            "../dialects/mysql/MySqlDataSource"
+          );
+          this.driver = new MySqlDriver(connector, dbType);
+          this.dataSource = new MySqlDataSource(connector);
+          break;
+        }
+        case "postgres": {
+          const { PostgresDriver } = await import(
+            "../dialects/postgres/PostgresDriver"
+          );
+          const { PostgresDataSource } = await import(
+            "../dialects/postgres/PostgresDataSource"
+          );
+          this.driver = new PostgresDriver(connector, dbType, schema);
+          this.dataSource = new PostgresDataSource(connector);
+          break;
+        }
+        case "sqlite": {
+          const { SqliteDriver } = await import(
+            "../dialects/sqlite/SqliteDriver"
+          );
+          const { SqliteDataSource } = await import(
+            "../dialects/sqlite/SqliteDataSource"
+          );
+          this.driver = new SqliteDriver(connector);
+          this.dataSource = new SqliteDataSource(connector);
+          break;
+        }
+        default:
+          throw new NotSupportedDatabaseTypeError();
       }
-      case "postgres": {
-        const { PostgresDriver } = await import(
-          "../dialects/postgres/PostgresDriver"
-        );
-        const { PostgresDataSource } = await import(
-          "../dialects/postgres/PostgresDataSource"
-        );
-        this.driver = new PostgresDriver(connector, dbType, schema);
-        this.dataSource = new PostgresDataSource(connector);
-        break;
-      }
-      case "sqlite": {
-        const { SqliteDriver } = await import(
-          "../dialects/sqlite/SqliteDriver"
-        );
-        const { SqliteDataSource } = await import(
-          "../dialects/sqlite/SqliteDataSource"
-        );
-        this.driver = new SqliteDriver(connector);
-        this.dataSource = new SqliteDataSource(connector);
-        break;
-      }
-      default:
-        throw new NotSupportedDatabaseTypeError();
     }
 
     // QueryTracker 초기화 (logging 옵션 기반)
@@ -543,6 +592,47 @@ export class EntityManager implements BaseEntityManager {
     }
     this.queryTracker?.endQuery();
     this.queryTracker?.track(entityName, sqlText, durationMs);
+  }
+
+  // ── Plugin Query Hooks (#228) ─────────────────────────────
+
+  /** @internal Notify installed plugins before a query executes. */
+  notifyPluginBeforeQuery(queryInfo: import("./plugin/StingerloomPlugin").QueryInfo): import("./plugin/StingerloomPlugin").QueryInfo {
+    let info = queryInfo;
+    for (const { plugin } of this._plugins.values()) {
+      if (plugin.beforeQuery) {
+        const result = plugin.beforeQuery(info);
+        if (result) info = result;
+      }
+    }
+    return info;
+  }
+
+  /** @internal Notify installed plugins after a query executes. */
+  notifyPluginAfterQuery(queryInfo: import("./plugin/StingerloomPlugin").QueryInfo, result: any, durationMs: number): void {
+    for (const { plugin } of this._plugins.values()) {
+      if (plugin.afterQuery) {
+        plugin.afterQuery(queryInfo, result, durationMs);
+      }
+    }
+  }
+
+  /** @internal Notify installed plugins before a transaction. */
+  private notifyPluginBeforeTransaction(isolationLevel?: string): void {
+    for (const { plugin } of this._plugins.values()) {
+      if (plugin.beforeTransaction) {
+        plugin.beforeTransaction(isolationLevel);
+      }
+    }
+  }
+
+  /** @internal Notify installed plugins after a transaction. */
+  private notifyPluginAfterTransaction(committed: boolean): void {
+    for (const { plugin } of this._plugins.values()) {
+      if (plugin.afterTransaction) {
+        plugin.afterTransaction(committed);
+      }
+    }
   }
 
   // ── Replication 위임 ──────────────────────────────────────
@@ -747,6 +837,8 @@ export class EntityManager implements BaseEntityManager {
         wrapTable: (t) => this.wrapTable(t),
         executeInTransaction: (fn) => this.executeInTransaction(fn),
         executeReadOnly: (fn) => this.executeReadOnly(fn),
+        getEntityMetadata: (entity) => this.getEntityMetadata(entity),
+        registerPlaceholder: (name) => EntityManager.registerPluginPlaceholder(name),
       };
     }
     return this._pluginContext;
@@ -3283,6 +3375,7 @@ export class EntityManager implements BaseEntityManager {
         await session.connect(this.connectionName);
       }
       await this.notifyTransactionSubscribers("beforeTransactionStart");
+      this.notifyPluginBeforeTransaction();
       await session.startTransaction();
 
       await this.notifyTransactionSubscribers("afterTransactionStart");
@@ -3290,12 +3383,14 @@ export class EntityManager implements BaseEntityManager {
       const result = await fn(session);
       await this.notifyTransactionSubscribers("beforeTransactionCommit");
       await session.commit();
+      this.notifyPluginAfterTransaction(true);
       await this.notifyTransactionSubscribers("afterTransactionCommit");
       return result;
     } catch (e: unknown) {
       try {
         await this.notifyTransactionSubscribers("beforeTransactionRollback");
         await session.rollback();
+        this.notifyPluginAfterTransaction(false);
         await this.notifyTransactionSubscribers("afterTransactionRollback");
       } catch (rollbackError) {
         this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
@@ -3500,5 +3595,105 @@ export class EntityManager implements BaseEntityManager {
 
   getDriver(): ISqlDriver | undefined {
     return this.driver;
+  }
+
+  // ── Public Metadata API (#233) ──────��──────────────────────
+
+  /**
+   * Returns all entity classes registered on this EntityManager.
+   */
+  getRegisteredEntities(): ClazzType<any>[] {
+    return [...this._entities];
+  }
+
+  /**
+   * Returns structured metadata for the given entity class:
+   * table name, columns, relations, indexes, timestamps, etc.
+   */
+  getEntityMetadata<T>(entity: ClazzType<T>): EntityMetadataView | null {
+    const meta = this.resolver.resolveEntityMetadata(entity);
+    if (!meta) return null;
+
+    const columns = this.getColumnMetadata(entity);
+    const relations = this.getRelationMetadata(entity);
+
+    return {
+      tableName: meta.name || entity.name,
+      columns,
+      relations,
+      indexes: meta.indexes ?? [],
+      deletedAtColumn: this.resolver.getDeletedAtColumn(entity),
+      createTimestampColumn: this.resolver.getCreateTimestampColumn(entity),
+      updateTimestampColumn: this.resolver.getUpdateTimestampColumn(entity),
+      versionColumn: this.resolver.getVersionColumn(entity),
+    };
+  }
+
+  /**
+   * Returns column metadata for the given entity class.
+   */
+  getColumnMetadata<T>(entity: ClazzType<T>): ColumnMetadataView[] {
+    const meta = this.resolver.resolveEntityMetadata(entity);
+    if (!meta) return [];
+
+    return (meta.columns ?? []).map((col: any) => ({
+      propertyKey: col.propertyKey ?? col.name,
+      columnName: col.name ?? col.propertyKey,
+      type: col.options?.type ?? col.type,
+      nullable: col.options?.nullable ?? false,
+      primary: col.options?.primary ?? false,
+      unique: col.options?.unique ?? false,
+      default: col.options?.default,
+      length: col.options?.length,
+    }));
+  }
+
+  /**
+   * Returns relation metadata for the given entity class.
+   */
+  getRelationMetadata<T>(entity: ClazzType<T>): RelationMetadataView[] {
+    const results: RelationMetadataView[] = [];
+
+    for (const rel of this.resolver.resolveManyToOneMetadata(entity)) {
+      results.push({
+        type: "ManyToOne",
+        propertyKey: rel.columnName,
+        target: rel.getMappingEntity(),
+        joinColumn: rel.joinColumn ?? null,
+        eager: rel.option?.eager ?? false,
+      });
+    }
+
+    for (const rel of this.resolver.resolveOneToManyMetadata(entity)) {
+      results.push({
+        type: "OneToMany",
+        propertyKey: rel.propertyKey,
+        target: rel.getRelatedEntity(),
+        joinColumn: null,
+        eager: false,
+      });
+    }
+
+    for (const rel of this.resolver.resolveManyToManyMetadata(entity)) {
+      results.push({
+        type: "ManyToMany",
+        propertyKey: rel.propertyKey,
+        target: rel.getRelatedEntity(),
+        joinColumn: null,
+        eager: false,
+      });
+    }
+
+    for (const rel of this.resolver.resolveOneToOneMetadata(entity)) {
+      results.push({
+        type: "OneToOne",
+        propertyKey: rel.propertyKey,
+        target: rel.getRelatedEntity(),
+        joinColumn: rel.joinColumn ?? null,
+        eager: rel.option?.eager ?? false,
+      });
+    }
+
+    return results;
   }
 }
