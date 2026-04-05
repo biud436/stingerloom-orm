@@ -396,6 +396,148 @@ Deadlock이 감지되면 트랜잭션이 롤백되고 콜백이 처음부터 다
 
 Read Replica, Connection Pooling, Connection Retry, Query Timeout, Shutdown Handling은 [Configuration Guide](./configuration.md)에서 다뤄요. 프로덕션 튜닝은 [Production Guide](./production-guide.md)를 참고하세요.
 
+## 확장성
+
+### DriverRegistry -- 커스텀 데이터베이스 드라이버
+
+`DriverRegistry`를 사용하면 내장 MySQL, PostgreSQL, SQLite 외의 커스텀 데이터베이스 드라이버를 등록할 수 있어요. CockroachDB, Oracle 등 다른 SQL 데이터베이스 지원을 추가할 때 유용해요.
+
+```typescript
+import { DriverRegistry } from "@stingerloom/orm";
+
+DriverRegistry.register("oracle", {
+  createDriver: (connector, dbType, schema?) => new OracleDriver(connector),
+  createDataSource: (connector) => new OracleDataSource(connector),
+});
+
+// 이제 register()에서 type: "oracle"을 사용할 수 있어요
+await em.register({
+  type: "oracle" as any,
+  // ...
+});
+```
+
+| Method | 설명 |
+|--------|------|
+| `DriverRegistry.register(type, factory)` | 데이터베이스 타입에 대한 드라이버 팩토리 등록 |
+| `DriverRegistry.unregister(type)` | 등록된 드라이버 제거 |
+| `DriverRegistry.has(type)` | 드라이버 등록 여부 확인 |
+| `DriverRegistry.getRegisteredTypes()` | 등록된 모든 데이터베이스 타입 목록 |
+
+내장 드라이버(`mysql`, `mariadb`, `postgres`, `sqlite`)는 자동으로 등록돼요.
+
+### ColumnTypeRegistry -- 커스텀 컬럼 타입
+
+`ColumnTypeRegistry`를 사용하면 다이얼렉트별 SQL 매핑과 선택적 트랜스포머를 가진 커스텀 컬럼 타입을 정의할 수 있어요.
+
+```typescript
+import { ColumnTypeRegistry } from "@stingerloom/orm";
+
+const registry = ColumnTypeRegistry.getInstance();
+
+registry.register("money", {
+  mysql: "DECIMAL(19,4)",
+  postgres: "MONEY",
+  sqlite: "REAL",
+  transformer: {
+    to: (value: number) => value,
+    from: (raw: string) => parseFloat(raw.replace(/[$,]/g, "")),
+  },
+});
+```
+
+커스텀 타입을 `@Column`에서 사용해요:
+
+```typescript
+@Column({ type: "money" as any })
+price!: number;
+```
+
+레지스트리가 각 다이얼렉트에 맞는 SQL 타입으로 변환해요. 트랜스포머는 JavaScript 값과 데이터베이스 값 사이의 변환을 처리해요.
+
+| Method | 설명 |
+|--------|------|
+| `registry.register(name, definition)` | 커스텀 컬럼 타입 등록 |
+| `registry.resolve(name, dialect)` | 특정 다이얼렉트의 SQL 타입 가져오기 |
+| `registry.getTransformer(name)` | 커스텀 타입의 트랜스포머 가져오기 |
+| `registry.getRegisteredNames()` | 등록된 모든 커스텀 타입 목록 |
+
+### DialectExpression -- 다이얼렉트 인식 SQL
+
+`DialectExpression`은 데이터베이스마다 다른 SQL 표현식을 생성하기 위한 전략 패턴을 제공해요.
+
+```typescript
+import { createDialectExpression } from "@stingerloom/orm";
+
+const expr = createDialectExpression("postgres");
+
+// 대소문자 무시 LIKE
+const ilike = expr.ilike('"name"', "alice");
+// PostgreSQL: "name" ILIKE $1  (네이티브 ILIKE)
+// MySQL:      "name" LIKE ?    (기본적으로 대소문자 무시)
+
+// 전문 검색
+const fts = expr.fullTextSearch('"content"', "typescript orm");
+// PostgreSQL: to_tsvector('english', "content") @@ plainto_tsquery('english', $1)
+// MySQL:      MATCH("content") AGAINST(? IN BOOLEAN MODE)
+```
+
+주로 여러 데이터베이스에서 동작해야 하는 플러그인이나 커스텀 쿼리 빌더를 만들 때 유용해요.
+
+### 테스트 유틸리티
+
+Stingerloom은 실제 데이터베이스 연결 없이도 유닛 테스트를 쉽게 작성할 수 있는 테스트 헬퍼를 제공해요.
+
+#### createTestEntityManager
+
+테스트용으로 완전히 구성된 EntityManager를 생성해요. 기본값은 인메모리 SQLite라서 외부 데이터베이스가 필요 없어요.
+
+```typescript
+import { createTestEntityManager } from "@stingerloom/orm/testing";
+
+const em = await createTestEntityManager({
+  entities: [User, Post],
+  // type: "sqlite" (기본값), "mysql", 또는 "postgres"
+  // synchronize: true (기본값)
+});
+
+// 테스트에서 em을 정상적으로 사용해요
+const user = await em.save(User, { name: "Test" });
+```
+
+#### createMockRepository
+
+오버라이드 가능한 메서드를 가진 mock `BaseRepository`를 생성해요. mock 하지 않은 메서드는 호출 시 에러를 던져서 의도하지 않은 호출을 잡을 수 있어요.
+
+```typescript
+import { createMockRepository } from "@stingerloom/orm/testing";
+
+const mockRepo = createMockRepository(User, {
+  find: async () => [{ id: 1, name: "Alice" } as User],
+  findOne: async () => ({ id: 1, name: "Alice" } as User),
+});
+
+const users = await mockRepo.find(); // mock 데이터 반환
+await mockRepo.delete({ id: 1 });    // 에러 발생 -- mock 안 됨
+```
+
+#### InMemoryDriver
+
+데이터베이스가 전혀 필요 없는 순수 유닛 테스트를 위한 최소한의 인메모리 드라이버예요.
+
+```typescript
+import { InMemoryDriver } from "@stingerloom/orm/testing";
+
+const driver = new InMemoryDriver();
+driver.seedTable("users", [
+  { id: 1, name: "Alice" },
+  { id: 2, name: "Bob" },
+]);
+
+const data = driver.getTableData("users"); // [{ id: 1, name: "Alice" }, ...]
+console.log(driver.getExecutedQueries());  // SQL 이력
+```
+
 ## 다음 단계
 
 - [Query Builder](./query-builder.md) -- Type-safe SelectQueryBuilder

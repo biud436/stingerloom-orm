@@ -331,6 +331,27 @@ LIMIT 1
 
 `LIMIT 1`은 자동으로 추가돼요. 1천만 행이 있는 테이블에서도 첫 번째 매칭에서 스캔을 멈춰요.
 
+### 결과 보장 -- findOneOrFail()
+
+레코드가 반드시 존재해야 하고 수동 `null` 체크를 피하고 싶다면 `findOneOrFail()`을 사용하세요. `findOne()`과 동일하게 동작하지만, 결과가 없으면 `EntityNotFoundError`를 던져요.
+
+```typescript
+// 유저가 없으면 EntityNotFoundError 발생
+const user = await em.findOneOrFail(User, { where: { id: 1 } });
+console.log(user.name); // 안전 -- null이 아님을 보장
+```
+
+서비스 메서드에서 레코드가 없는 경우가 잘못된 입력을 의미할 때 유용해요:
+
+```typescript
+async getUser(id: number): Promise<User> {
+  return em.findOneOrFail(User, { where: { id } });
+  // if (!user) throw new NotFoundException(); 같은 코드가 필요 없어요
+}
+```
+
+던져지는 `EntityNotFoundError`에는 디버깅을 위한 엔티티 이름이 포함돼요. 리포지토리에서는 `userRepo.findOneOrFail({ where: { id } })`로 동일하게 사용할 수 있어요.
+
 ### 관계 로딩
 
 `relations`를 넘기면 LEFT JOIN으로 연관 엔티티를 즉시 로딩할 수 있어요:

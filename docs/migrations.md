@@ -621,6 +621,59 @@ MySQL handles enums differently -- the enum values are part of the column defini
 
 ---
 
+## Migration Hooks
+
+The MigrationRunner supports lifecycle hooks for monitoring, logging, and error handling during migration runs.
+
+### Available hooks
+
+```typescript
+interface MigrationHooks {
+  beforeAll?(context: MigrationContext): Promise<void> | void;
+  afterAll?(context: MigrationContext, results: MigrationResult[]): Promise<void> | void;
+  beforeEach?(migration: Migration, context: MigrationContext): Promise<void> | void;
+  afterEach?(migration: Migration, context: MigrationContext, durationMs: number): Promise<void> | void;
+  onError?(migration: Migration, error: Error, context: MigrationContext): Promise<void> | void;
+}
+```
+
+| Hook | Fires When | Parameters |
+|------|------------|------------|
+| `beforeAll` | Before the first migration runs | MigrationContext |
+| `afterAll` | After all migrations complete | MigrationContext, results array |
+| `beforeEach` | Before each individual migration | Migration, MigrationContext |
+| `afterEach` | After each successful migration | Migration, MigrationContext, duration in ms |
+| `onError` | When a migration fails | Migration, error, MigrationContext |
+
+### Example: Slack notification on failure
+
+```typescript
+import { MigrationRunner } from "@stingerloom/orm";
+
+const runner = new MigrationRunner(driver, migrations, {
+  hooks: {
+    beforeAll(ctx) {
+      console.log("Starting migrations...");
+    },
+    afterEach(migration, ctx, durationMs) {
+      console.log(`Completed ${migration.constructor.name} in ${durationMs}ms`);
+    },
+    onError(migration, error, ctx) {
+      notifySlack(`Migration failed: ${migration.constructor.name} -- ${error.message}`);
+    },
+    afterAll(ctx, results) {
+      console.log(`All done. ${results.length} migrations applied.`);
+    },
+  },
+});
+
+await runner.runAll();
+```
+
+All hooks can be async (return a Promise) or synchronous.
+
+---
+
 ## MigrationRunner API
 
 | Method | Description |

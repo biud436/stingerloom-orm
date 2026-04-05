@@ -528,6 +528,93 @@ Kubernetes 환경에서의 타임라인:
 
 ---
 
+## 배치 스트리밍 -- streamBatch()
+
+`stream()`은 엔티티를 하나씩 yield 해요. 하지만 때로는 데이터를 배치 단위로 처리해야 할 때가 있어요 -- 예를 들어, 다른 시스템에 500개씩 벌크 삽입하는 경우요. `streamBatch()`는 개별 항목이 아니라 엔티티 배열을 yield 해요.
+
+```typescript
+for await (const batch of em.streamBatch(User, { where: { isActive: true } }, 500)) {
+  // batch는 최대 500개의 User[]예요
+  await bulkIndex(batch);
+  console.log(`Indexed ${batch.length} users`);
+}
+```
+
+각 반복에서 전체 배치(`batchSize`만큼의 엔티티)를 yield 해요. 마지막 배치는 더 작을 수 있어요. 내부적으로는 `stream()`과 동일하게 LIMIT/OFFSET 페이지네이션을 사용해요.
+
+```typescript
+// 리포지토리에서도 동일하게 사용할 수 있어요
+const userRepo = em.getRepository(User);
+for await (const batch of userRepo.streamBatch({ where: { role: "admin" } }, 1000)) {
+  await sendBulkEmail(batch);
+}
+```
+
+`streamBatch()`는 `find()`와 동일한 `FindOption`을 받아요 -- `where`, `orderBy`, `relations`, `select` 등.
+
+---
+
+## 엔티티 메타데이터 API
+
+메타데이터 API는 런타임에 엔티티 스키마 정보를 읽기 전용으로 제공해요. 어드민 패널 구축, 문서 자동 생성, 범용 CRUD 컴포넌트 작성에 유용해요.
+
+### getEntityMetadata()
+
+엔티티 클래스의 전체 메타데이터를 반환해요. 테이블명, 컬럼, 관계, 인덱스, 특수 컬럼 정보가 포함돼요.
+
+```typescript
+const meta = em.getEntityMetadata(User);
+if (meta) {
+  console.log(meta.tableName);     // "user"
+  console.log(meta.columns);       // ColumnMetadataView[]
+  console.log(meta.relations);     // RelationMetadataView[]
+  console.log(meta.indexes);       // 인덱스 정의
+  console.log(meta.deletedAtColumn);     // "deletedAt" 또는 undefined
+  console.log(meta.versionColumn);       // "version" 또는 undefined
+}
+```
+
+### getColumnMetadata()
+
+컬럼 메타데이터만 반환해요. 전체 엔티티 메타데이터의 부분 집합이에요.
+
+```typescript
+const columns = em.getColumnMetadata(User);
+for (const col of columns) {
+  console.log(`${col.propertyKey} -> ${col.columnName} (${col.type})`);
+  // "name" -> "name" (varchar)
+  // "email" -> "email" (varchar)
+}
+```
+
+각 컬럼 항목에 포함되는 필드예요:
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `propertyKey` | `string` | 엔티티 프로퍼티명 |
+| `columnName` | `string` | 데이터베이스 컬럼명 |
+| `type` | `string` | 컬럼 타입 (varchar, int 등) |
+| `nullable` | `boolean` | nullable 여부 |
+| `primary` | `boolean` | 기본 키 여부 |
+| `unique` | `boolean` | 유니크 제약 조건 여부 |
+| `default` | `any` | 기본값 (설정된 경우) |
+| `length` | `number` | 컬럼 길이 (해당되는 경우) |
+
+### getRelationMetadata()
+
+엔티티의 관계 메타데이터를 반환해요.
+
+```typescript
+const relations = em.getRelationMetadata(Post);
+for (const rel of relations) {
+  console.log(`${rel.propertyKey}: ${rel.type} -> ${rel.target.name}`);
+  // "author": ManyToOne -> User
+  // "tags": ManyToMany -> Tag
+}
+```
+
+---
+
 ## FindOption 참조
 
 `find()`, `findOne()`, `findAndCount()`, `findWithCursor()`, `stream()`, `explain()`에서 사용할 수 있는 전체 옵션 목록이에요.
@@ -547,7 +634,18 @@ Kubernetes 환경에서의 타임라인:
 | `timeout` | `number` | 쿼리별 타임아웃 (ms). 연결 수준 `queryTimeout`을 오버라이드. |
 | `distinct` | `boolean` | `SELECT DISTINCT` 생성. 기본값: `false`. |
 | `useMaster` | `boolean` | Replication 환경에서 마스터 노드에서 강제 읽기. 기본값: `false`. |
-| `lock` | `LockMode` | 비관적 잠금: `PESSIMISTIC_WRITE` (FOR UPDATE) 또는 `PESSIMISTIC_READ` (FOR SHARE). |
+| `lock` | `LockMode` | 비관적 잠금. 아래 LockMode 값 참고. |
+
+### LockMode 값
+
+| LockMode | SQL | 설명 |
+|----------|-----|------|
+| `PESSIMISTIC_WRITE` | `FOR UPDATE` | Exclusive lock -- 읽기/쓰기 모두 차단 |
+| `PESSIMISTIC_READ` | `FOR SHARE` | Shared lock -- 쓰기만 차단 |
+| `PESSIMISTIC_WRITE_NOWAIT` | `FOR UPDATE NOWAIT` | 행이 잠겨 있으면 즉시 실패 |
+| `PESSIMISTIC_READ_NOWAIT` | `FOR SHARE NOWAIT` | Shared lock, 행이 잠겨 있으면 즉시 실패 |
+| `PESSIMISTIC_WRITE_SKIP_LOCKED` | `FOR UPDATE SKIP LOCKED` | 다른 트랜잭션이 잠근 행을 건너뜀 |
+| `PESSIMISTIC_READ_SKIP_LOCKED` | `FOR SHARE SKIP LOCKED` | Shared lock, 잠긴 행을 건너뜀 |
 
 ---
 

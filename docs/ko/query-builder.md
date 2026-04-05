@@ -279,6 +279,82 @@ const user = await em
 | `forUpdate()` | `FOR UPDATE` | Exclusive lock — 읽기/쓰기 모두 차단 |
 | `forShare()` | `FOR SHARE` / `LOCK IN SHARE MODE` | Shared lock — 쓰기만 차단 |
 
+#### NOWAIT과 SKIP LOCKED
+
+동시성이 높은 시나리오에서 락을 기다리는 건 병목이 될 수 있어요. 두 가지 고급 잠금 옵션으로 행이 이미 잠겨 있을 때의 동작을 제어할 수 있어요.
+
+**NOWAIT** — 락이 해제되길 기다리는 대신 즉시 에러를 던져요.
+
+```typescript
+const user = await em
+  .createQueryBuilder(User, "u")
+  .where("id", 1)
+  .forUpdateNowait()
+  .getOne();
+// SELECT ... FOR UPDATE NOWAIT
+// 다른 트랜잭션이 행을 잠그고 있으면 즉시 에러 발생
+```
+
+**SKIP LOCKED** — 이미 잠긴 행을 조용히 건너뛰어요. 여러 워커가 같은 테이블에서 작업을 가져가는 잡 큐 패턴에 특히 유용해요.
+
+```typescript
+// 워커가 다음 잠기지 않은 작업을 가져감
+const job = await em
+  .createQueryBuilder(Job, "j")
+  .where("status", "pending")
+  .orderBy({ createdAt: "ASC" })
+  .limit(1)
+  .forUpdateSkipLocked()
+  .getOne();
+// SELECT ... ORDER BY ... LIMIT 1 FOR UPDATE SKIP LOCKED
+// 모든 대기 작업이 다른 워커에 의해 잠겨 있으면 null 반환
+```
+
+네 가지 조합을 모두 사용할 수 있어요:
+
+| Method | SQL |
+|--------|-----|
+| `forUpdateNowait()` | `FOR UPDATE NOWAIT` |
+| `forUpdateSkipLocked()` | `FOR UPDATE SKIP LOCKED` |
+| `forShareNowait()` | `FOR SHARE NOWAIT` |
+| `forShareSkipLocked()` | `FOR SHARE SKIP LOCKED` |
+
+::: warning
+NOWAIT과 SKIP LOCKED는 MySQL 8.0+ 또는 PostgreSQL 9.5+가 필요해요. SQLite는 비관적 잠금을 지원하지 않고 `UNSUPPORTED_DATABASE` 에러를 던져요.
+:::
+
+### Index Hints
+
+MySQL에서는 쿼리 플래너가 사용할 인덱스를 제안할 수 있어요. 플래너가 최적이 아닌 인덱스를 선택할 때 유용해요.
+
+```typescript
+const orders = await em
+  .createQueryBuilder(Order, "o")
+  .where("status", "pending")
+  .useIndex("idx_order_status")
+  .getMany();
+// MySQL: SELECT ... FROM `order` USE INDEX (`idx_order_status`) WHERE ...
+```
+
+세 가지 MySQL 인덱스 힌트 타입을 사용할 수 있어요:
+
+| Method | SQL | 효과 |
+|--------|-----|------|
+| `useIndex(name)` | `USE INDEX (name)` | 플래너에 인덱스 제안 |
+| `forceIndex(name)` | `FORCE INDEX (name)` | 플래너가 이 인덱스를 강제로 사용하도록 |
+| `ignoreIndex(name)` | `IGNORE INDEX (name)` | 플래너가 이 인덱스를 건너뛰도록 |
+
+PostgreSQL에서는 `hint()` 메서드로 [pg_hint_plan](https://pg-hint-plan.readthedocs.io/) 스타일 힌트를 추가할 수 있어요:
+
+```typescript
+const orders = await em
+  .createQueryBuilder(Order, "o")
+  .where("status", "pending")
+  .hint("IndexScan(o idx_order_status)")
+  .getMany();
+// PostgreSQL: /*+ IndexScan(o idx_order_status) */ SELECT ...
+```
+
 ### Soft Delete 처리
 
 엔티티에 `@DeletedAt` 컬럼이 있으면, query builder가 자동으로 soft-deleted 행을 제외해요. 포함하려면:
@@ -436,6 +512,7 @@ const users = await em
 |--------|---------|------|
 | `getMany()` | `T[]` | 클래스 인스턴스. `select()` 사용 시 required 컬럼 검증 |
 | `getOne()` | `T \| null` | 단일 클래스 인스턴스 또는 null (자동으로 LIMIT 1 추가) |
+| `getOneOrFail()` | `T` | 단일 클래스 인스턴스 (결과 없으면 `EntityNotFoundError` 발생) |
 | `getManyAndCount()` | `[T[], number]` | 클래스 인스턴스 + 총 개수를 병렬 실행 |
 
 항상 행을 엔티티 클래스 인스턴스로 역직렬화해요. `instanceof`가 동작하고, 클래스 메서드를 쓸 수 있고, `em.save()`에 전달할 수 있어요. `select()`로 특정 컬럼을 지정하면, non-nullable 컬럼이 포함되어야 해요 — 아니면 `OrmError`가 throw돼요.

@@ -229,6 +229,49 @@ interface StingerloomPlugin<TApi = {}> {
 
 ---
 
+## 쿼리 훅 -- beforeQuery / afterQuery
+
+플러그인은 EntityManager가 실행하는 모든 SQL 쿼리를 가로챌 수 있어요. 쿼리 로깅, 성능 모니터링, 쿼리 변환 같은 횡단 관심사를 구현할 때 유용해요.
+
+### beforeQuery
+
+모든 SQL 쿼리 실행 전에 호출돼요. 실행 전에 쿼리를 검사하거나 변환할 수 있어요.
+
+```typescript
+const queryLogger: StingerloomPlugin = {
+  name: "query-logger",
+
+  beforeQuery(query) {
+    console.log(`[SQL] ${query.operation}: ${query.sql}`);
+    // 선택적으로 수정된 QueryInfo를 반환해서 쿼리를 변환할 수 있어요
+  },
+
+  afterQuery(query, result, durationMs) {
+    if (durationMs > 1000) {
+      console.warn(`[SLOW] ${query.sql} took ${durationMs}ms`);
+    }
+  },
+
+  install(ctx) {
+    // 믹스인할 메서드 없음 -- 훅은 자동으로 감지돼요
+  },
+};
+```
+
+### QueryInfo 구조
+
+```typescript
+interface QueryInfo {
+  sql: string;         // SQL 쿼리 텍스트
+  params?: any[];      // 파라미터화된 값
+  operation?: string;  // "select" | "insert" | "update" | "delete" | "raw"
+}
+```
+
+`beforeQuery`에서 수정된 `QueryInfo`를 반환하면 쿼리를 변환할 수 있어요. `afterQuery`는 결과와 실행 시간(ms)을 받아서 슬로우 쿼리 경고나 메트릭 수집에 활용할 수 있어요.
+
+---
+
 ## Built-in Plugins
 
 Stingerloom에는 두 개의 기본 제공 플러그인이 있습니다:

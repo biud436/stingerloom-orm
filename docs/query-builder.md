@@ -279,6 +279,82 @@ const user = await em
 | `forUpdate()` | `FOR UPDATE` | Exclusive lock — blocks reads and writes |
 | `forShare()` | `FOR SHARE` / `LOCK IN SHARE MODE` | Shared lock — blocks writes only |
 
+#### NOWAIT and SKIP LOCKED
+
+In high-concurrency scenarios, waiting for a lock can become a bottleneck. Two advanced locking options let you control what happens when rows are already locked:
+
+**NOWAIT** — fails immediately with an error instead of waiting for the lock to be released.
+
+```typescript
+const user = await em
+  .createQueryBuilder(User, "u")
+  .where("id", 1)
+  .forUpdateNowait()
+  .getOne();
+// SELECT ... FOR UPDATE NOWAIT
+// Throws immediately if the row is locked by another transaction
+```
+
+**SKIP LOCKED** — silently skips rows that are already locked. This is especially useful for job queue patterns where multiple workers pull from the same table.
+
+```typescript
+// Worker picks up the next unlocked job
+const job = await em
+  .createQueryBuilder(Job, "j")
+  .where("status", "pending")
+  .orderBy({ createdAt: "ASC" })
+  .limit(1)
+  .forUpdateSkipLocked()
+  .getOne();
+// SELECT ... ORDER BY ... LIMIT 1 FOR UPDATE SKIP LOCKED
+// Returns null if all pending jobs are locked by other workers
+```
+
+All four combinations are available:
+
+| Method | SQL |
+|--------|-----|
+| `forUpdateNowait()` | `FOR UPDATE NOWAIT` |
+| `forUpdateSkipLocked()` | `FOR UPDATE SKIP LOCKED` |
+| `forShareNowait()` | `FOR SHARE NOWAIT` |
+| `forShareSkipLocked()` | `FOR SHARE SKIP LOCKED` |
+
+::: warning
+NOWAIT and SKIP LOCKED require MySQL 8.0+ or PostgreSQL 9.5+. SQLite does not support pessimistic locking and throws `UNSUPPORTED_DATABASE`.
+:::
+
+### Index Hints
+
+For MySQL, you can suggest which index the query planner should use. This is useful when the planner picks a suboptimal index.
+
+```typescript
+const orders = await em
+  .createQueryBuilder(Order, "o")
+  .where("status", "pending")
+  .useIndex("idx_order_status")
+  .getMany();
+// MySQL: SELECT ... FROM `order` USE INDEX (`idx_order_status`) WHERE ...
+```
+
+Three MySQL index hint types are available:
+
+| Method | SQL | Effect |
+|--------|-----|--------|
+| `useIndex(name)` | `USE INDEX (name)` | Suggest an index to the planner |
+| `forceIndex(name)` | `FORCE INDEX (name)` | Force the planner to use this index |
+| `ignoreIndex(name)` | `IGNORE INDEX (name)` | Tell the planner to skip this index |
+
+For PostgreSQL, use the `hint()` method to add [pg_hint_plan](https://pg-hint-plan.readthedocs.io/) style hints:
+
+```typescript
+const orders = await em
+  .createQueryBuilder(Order, "o")
+  .where("status", "pending")
+  .hint("IndexScan(o idx_order_status)")
+  .getMany();
+// PostgreSQL: /*+ IndexScan(o idx_order_status) */ SELECT ...
+```
+
 ### Soft Delete Handling
 
 If your entity has a `@DeletedAt` column, the query builder automatically excludes soft-deleted rows. To include them:
@@ -436,6 +512,7 @@ You've built the query — now you need to run it. The query builder provides th
 |--------|---------|-------------|
 | `getMany()` | `T[]` | Class instances. Validates required columns when `select()` is used |
 | `getOne()` | `T \| null` | Single class instance or null (auto-adds LIMIT 1) |
+| `getOneOrFail()` | `T` | Single class instance (throws `EntityNotFoundError` if not found) |
 | `getManyAndCount()` | `[T[], number]` | Class instances + total count in parallel |
 
 These always deserialize rows into entity class instances. `instanceof` works, class methods are available, results can be passed to `em.save()`. When `select()` is used with specific columns, non-nullable columns must be included — otherwise an `OrmError` is thrown.

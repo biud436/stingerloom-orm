@@ -229,6 +229,55 @@ interface StingerloomPlugin<TApi = {}> {
 
 ---
 
+## Query Hooks -- beforeQuery / afterQuery
+
+Plugins can intercept every SQL query executed by the EntityManager. This enables cross-cutting concerns like query logging, performance monitoring, or query transformation.
+
+### beforeQuery
+
+Called before every SQL query. Can inspect or transform the query before execution.
+
+```typescript
+const queryLogger: StingerloomPlugin = {
+  name: "query-logger",
+
+  beforeQuery(query) {
+    console.log(`[SQL] ${query.operation}: ${query.sql}`);
+    // Optionally return a modified QueryInfo to transform the query
+  },
+
+  afterQuery(query, result, durationMs) {
+    if (durationMs > 1000) {
+      console.warn(`[SLOW] ${query.sql} took ${durationMs}ms`);
+    }
+  },
+
+  install(ctx) {
+    // No methods to mix in -- hooks are detected automatically
+  },
+};
+```
+
+### QueryInfo shape
+
+```typescript
+interface QueryInfo {
+  sql: string;         // The SQL query text
+  params?: any[];      // Parameterized values
+  operation?: string;  // "select" | "insert" | "update" | "delete" | "raw"
+}
+```
+
+### How hooks fire
+
+1. **beforeQuery** fires before the SQL is sent to the database. If it returns a `QueryInfo` object, the returned values replace the original query. If it returns `void`, the original query proceeds unchanged.
+2. The query executes against the database.
+3. **afterQuery** fires with the original query info, the raw driver result, and the execution time in milliseconds.
+
+Hooks fire for **all** registered plugins in installation order. Each plugin's `beforeQuery` runs before the next, so a chain of plugins can compose transformations.
+
+---
+
 ## Built-in Plugins
 
 Stingerloom ships with two built-in plugins:

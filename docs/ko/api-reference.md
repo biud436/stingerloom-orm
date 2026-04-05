@@ -28,6 +28,10 @@ const em = new EntityManager();
 |--------|-----------|------|
 | `find` | `<T>(entity, option?): Promise<T[]>` | 목록 조회 |
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | 단건 조회 |
+| `findOneOrFail` | `<T>(entity, option): Promise<T>` | 단건 조회 (없으면 `EntityNotFoundError` 발생) |
+| `exists` | `<T>(entity, option?): Promise<boolean>` | 매칭되는 레코드 존재 여부 |
+| `findByPK` | `<T>(entity, pk): Promise<T \| null>` | 기본 키로 조회 |
+| `findByPKs` | `<T>(entity, pks[]): Promise<T[]>` | 여러 기본 키로 조회 |
 | `findAndCount` | `<T>(entity, option?): Promise<[T[], number]>` | 목록 + 전체 개수 |
 | `findWithCursor` | `<T>(entity, option?): Promise<CursorPaginationResult<T>>` | 커서 페이지네이션 |
 | `save` | `<T>(entity, item): Promise<InstanceType<ClazzType<T>>>` | INSERT 또는 UPDATE |
@@ -35,7 +39,8 @@ const em = new EntityManager();
 | `softDelete` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete |
 | `restore` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete 복원 |
 | `upsert` | `<T>(entity, data, conflictColumns?): Promise<void>` | INSERT ... ON CONFLICT |
-| `updateMany` | `<T>(entity, criteria, partial): Promise<{ affected: number }>` | 조건별 일괄 UPDATE |
+| `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<void>` | 다건 upsert |
+| `updateMany` | `<T>(entity, data: UpdateData<T>, options): Promise<{ affected: number }>` | 조건별 일괄 UPDATE (SQL 표현식 지원) |
 
 ### Batch
 
@@ -59,11 +64,18 @@ const em = new EntityManager();
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
-| `stream` | `<T>(entity, option?, batchSize?): AsyncGenerator<T>` | 대용량 데이터를 위한 async generator |
+| `stream` | `<T>(entity, option?, batchSize?): AsyncGenerator<T>` | async generator (한 번에 하나씩) |
+| `streamBatch` | `<T>(entity, option?, batchSize?): AsyncGenerator<T[]>` | async generator (엔티티 배열 단위) |
 
 ```typescript
+// 하나씩 처리
 for await (const user of em.stream(User, { where: { isActive: true } }, 1000)) {
-  // process one entity at a time without holding all rows in memory
+  await process(user);
+}
+
+// 배치 단위 처리
+for await (const batch of em.streamBatch(User, {}, 500)) {
+  await bulkInsert(batch); // batch는 User[]
 }
 ```
 
@@ -105,6 +117,9 @@ for await (const user of em.stream(User, { where: { isActive: true } }, 1000)) {
 | `addSubscriber` | `(subscriber: EntitySubscriber<any>): void` | 구독자 등록 |
 | `removeSubscriber` | `(subscriber: EntitySubscriber<any>): void` | 구독자 제거 |
 | `getQueryLog` | `(): ReadonlyArray<QueryLogEntry>` | 쿼리 로그 |
+| `getEntityMetadata` | `<T>(entity): EntityMetadataView \| null` | 전체 엔티티 메타데이터 |
+| `getColumnMetadata` | `<T>(entity): ColumnMetadataView[]` | 컬럼 메타데이터 |
+| `getRelationMetadata` | `<T>(entity): RelationMetadataView[]` | 관계 메타데이터 |
 
 ## BaseRepository
 
@@ -116,7 +131,9 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `createQueryBuilder` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
+`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
+
+서브클래스에서 사용 가능한 protected 필드: `entity` (엔티티 클래스)와 `em` (EntityManager 인스턴스).
 
 ## Decorators
 
@@ -195,6 +212,15 @@ interface FindOption<T> {
   timeout?: number;
   useMaster?: boolean;
   lock?: LockMode;
+}
+
+enum LockMode {
+  PESSIMISTIC_WRITE = "PESSIMISTIC_WRITE",
+  PESSIMISTIC_READ = "PESSIMISTIC_READ",
+  PESSIMISTIC_WRITE_NOWAIT = "PESSIMISTIC_WRITE_NOWAIT",
+  PESSIMISTIC_READ_NOWAIT = "PESSIMISTIC_READ_NOWAIT",
+  PESSIMISTIC_WRITE_SKIP_LOCKED = "PESSIMISTIC_WRITE_SKIP_LOCKED",
+  PESSIMISTIC_READ_SKIP_LOCKED = "PESSIMISTIC_READ_SKIP_LOCKED",
 }
 ```
 
@@ -284,7 +310,15 @@ class SelectQueryBuilder<T> {
   skip(count: number): this;
   take(count: number): this;
   forUpdate(): this;
+  forUpdateNowait(): this;
+  forUpdateSkipLocked(): this;
   forShare(): this;
+  forShareNowait(): this;
+  forShareSkipLocked(): this;
+  useIndex(indexName: string): this;           // MySQL
+  forceIndex(indexName: string): this;         // MySQL
+  ignoreIndex(indexName: string): this;        // MySQL
+  hint(hintText: string): this;               // PostgreSQL (pg_hint_plan)
   withDeleted(): this;
   appendSql(fragment: Sql): this;
   validate(validator: RowValidator<TResult>): this;
@@ -293,6 +327,7 @@ class SelectQueryBuilder<T> {
   getSql(): { text: string; values: any[] };
   getMany(): Promise<TResult[]>;
   getOne(): Promise<TResult | null>;
+  getOneOrFail(): Promise<TResult>;           // EntityNotFoundError 발생
   getCount(): Promise<number>;
   getManyAndCount(): Promise<[T[], number]>;
   exists(): Promise<boolean>;
@@ -509,6 +544,15 @@ interface LoggingOptions {
 interface ReplicationConfig {
   master: ReplicationNodeConfig;
   slaves: ReplicationNodeConfig[];
+  healthCheck?: HealthCheckConfig;
+}
+
+interface HealthCheckConfig {
+  enabled: boolean;
+  intervalMs?: number;          // 기본값: 5000
+  query?: string;               // 기본값: "SELECT 1"
+  failureThreshold?: number;    // 기본값: 3
+  recoveryThreshold?: number;   // 기본값: 2
 }
 
 interface ReplicationNodeConfig {
@@ -564,6 +608,14 @@ interface StingerloomPlugin<TApi = {}> {
   readonly dependencies?: readonly string[];
   install(context: PluginContext): TApi | void;
   shutdown?(): Promise<void> | void;
+  beforeQuery?(query: QueryInfo): QueryInfo | void;
+  afterQuery?(query: QueryInfo, result: any, durationMs: number): void;
+}
+
+interface QueryInfo {
+  sql: string;
+  params?: any[];
+  operation?: string;  // "select" | "insert" | "update" | "delete" | "raw"
 }
 ```
 
@@ -633,6 +685,25 @@ interface RenamedColumn {
 }
 ```
 
+### MigrationHooks
+
+```typescript
+interface MigrationHooks {
+  beforeAll?(context: MigrationContext): Promise<void> | void;
+  afterAll?(context: MigrationContext, results: MigrationResult[]): Promise<void> | void;
+  beforeEach?(migration: Migration, context: MigrationContext): Promise<void> | void;
+  afterEach?(migration: Migration, context: MigrationContext, durationMs: number): Promise<void> | void;
+  onError?(migration: Migration, error: Error, context: MigrationContext): Promise<void> | void;
+}
+
+interface MigrationRunnerOptions {
+  lockId?: string;
+  lockTimeoutMs?: number;
+  tableName?: string;              // 기본값: "__migrations"
+  hooks?: MigrationHooks;
+}
+```
+
 ### MigrationCli
 
 ```typescript
@@ -649,6 +720,87 @@ type MigrationCommand = "migrate:run" | "migrate:rollback" | "migrate:status" | 
 CLI 실행: `npx stingerloom migrate:run|rollback|status|generate`
 
 관련 클래스: `MigrationRunner`, `MigrationCli`, `SchemaDiff`, `SchemaDiffMigrationGenerator`
+
+### EntityMetadataView
+
+```typescript
+interface EntityMetadataView {
+  tableName: string;
+  columns: ColumnMetadataView[];
+  relations: RelationMetadataView[];
+  indexes: any[];
+  deletedAtColumn?: string;
+  createTimestampColumn?: string;
+  updateTimestampColumn?: string;
+  versionColumn?: string;
+}
+
+interface ColumnMetadataView {
+  propertyKey: string;
+  columnName: string;
+  type: string;
+  nullable: boolean;
+  primary: boolean;
+  unique: boolean;
+  default?: any;
+  length?: number;
+}
+
+interface RelationMetadataView {
+  type: "ManyToOne" | "OneToMany" | "ManyToMany" | "OneToOne";
+  propertyKey: string;
+  target: ClazzType<any>;
+  joinColumn: string | null;
+  eager: boolean;
+}
+```
+
+### DriverRegistry
+
+```typescript
+class DriverRegistry {
+  static register(dbType: string, factory: DriverFactory): void;
+  static unregister(dbType: string): void;
+  static has(dbType: string): boolean;
+  static get(dbType: string): DriverFactory | undefined;
+  static getRegisteredTypes(): string[];
+}
+
+interface DriverFactory {
+  createDriver(connector: any, dbType: string, schema?: string): ISqlDriver;
+  createDataSource(connector: any): IDataSource;
+}
+```
+
+### ColumnTypeRegistry
+
+```typescript
+class ColumnTypeRegistry {
+  static getInstance(): ColumnTypeRegistry;
+  register(name: string, definition: CustomColumnTypeDefinition): void;
+  unregister(name: string): void;
+  has(name: string): boolean;
+  resolve(name: string, dialect: DialectName): string | undefined;
+  getTransformer(name: string): ColumnTransformer | undefined;
+  getRegisteredNames(): string[];
+}
+
+interface CustomColumnTypeDefinition {
+  mysql?: string;
+  postgres?: string;
+  sqlite?: string;
+  transformer?: ColumnTransformer;
+}
+```
+
+### Test Utilities
+
+```typescript
+// @stingerloom/orm/testing
+function createTestEntityManager(options: TestEntityManagerOptions): Promise<EntityManager>;
+function createMockRepository<T>(entity: ClazzType<T>, overrides?: MockMethods<T>): BaseRepository<T>;
+class InMemoryDriver implements Partial<ISqlDriver>;
+```
 
 ## Errors
 

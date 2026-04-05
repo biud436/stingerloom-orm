@@ -160,6 +160,40 @@ WHERE "isActive" = $4
 
 Notice the `"updatedAt"` column in the SET clause -- the ORM automatically injects `@UpdateTimestamp` columns, even in bulk updates.
 
+### SQL expressions in updateMany
+
+Sometimes you need computed updates -- incrementing a counter, appending to a string, or using database functions. `updateMany` accepts raw SQL expressions via `sql-template-tag` as column values:
+
+```typescript
+import sql from "sql-template-tag";
+
+// Increment view count
+await em.updateMany(Post,
+  { viewCount: sql`"viewCount" + 1` },
+  { where: { id: 1 } },
+);
+```
+
+```sql
+-- PostgreSQL
+UPDATE "post"
+SET "viewCount" = "viewCount" + 1
+WHERE "id" = $1
+-- Parameters: [1]
+```
+
+You can mix literal values and SQL expressions in the same update:
+
+```typescript
+await em.updateMany(Product,
+  {
+    price: sql`"price" * 1.1`,         // 10% price increase
+    lastUpdatedBy: "admin",             // Literal value
+  },
+  { where: { category: "electronics" } },
+);
+```
+
 Key characteristics:
 - `@UpdateTimestamp` columns are automatically injected into the SET clause.
 - An **empty WHERE condition throws** `DeleteWithoutConditionsError` (safety guard).
@@ -246,6 +280,34 @@ The "conflict columns" tell the database which uniqueness constraint to check. I
 ::: info
 The conflict columns (third argument) must have a unique constraint or be the primary key. Otherwise, the database will reject the query. In PostgreSQL, you will get: `there is no unique or exclusion constraint matching the ON CONFLICT specification`.
 :::
+
+### Batch Upsert -- batchUpsert()
+
+When you need to upsert hundreds or thousands of rows at once, `batchUpsert()` is significantly faster than calling `upsert()` in a loop. It packs all rows into a single multi-row `INSERT ... ON CONFLICT` statement.
+
+```typescript
+await em.batchUpsert(User, [
+  { email: "alice@example.com", name: "Alice", loginCount: 1 },
+  { email: "bob@example.com", name: "Bob", loginCount: 1 },
+  { email: "charlie@example.com", name: "Charlie", loginCount: 1 },
+], ["email"]);
+```
+
+```sql
+-- PostgreSQL
+INSERT INTO "user" ("email", "name", "loginCount")
+VALUES ($1, $2, $3), ($4, $5, $6), ($7, $8, $9)
+ON CONFLICT ("email") DO UPDATE SET "name" = EXCLUDED."name", "loginCount" = EXCLUDED."loginCount"
+
+-- MySQL
+INSERT INTO `user` (`email`, `name`, `loginCount`)
+VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)
+ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `loginCount` = VALUES(`loginCount`)
+```
+
+The optional third argument specifies the conflict columns. If omitted, the primary key is used.
+
+The repository equivalent is `userRepo.batchUpsert(items, conflictColumns)`.
 
 ---
 

@@ -376,6 +376,40 @@ const user = await em.findOne(User, {
 
 `useMaster`는 아껴서 쓰세요. 모든 읽기에 `useMaster`를 붙이면 레플리카를 둔 의미가 없어져요.
 
+### 레플리카 헬스 체크
+
+프로덕션에서 레플리카는 다운되거나 지연될 수 있어요. Stingerloom의 `ReplicationRouter`는 비정상 레플리카를 자동으로 로테이션에서 제외하고, 복구되면 다시 추가하는 자동 헬스 모니터링을 지원해요.
+
+```typescript
+await em.register({
+  type: "postgres",
+  // ...
+  replication: {
+    master: { /* ... */ },
+    slaves: [ /* ... */ ],
+    healthCheck: {
+      enabled: true,
+      intervalMs: 5000,          // 5초마다 체크 (기본값)
+      query: "SELECT 1",         // 헬스 체크 SQL (기본값)
+      failureThreshold: 3,       // 연속 3회 실패 후 제외 (기본값)
+      recoveryThreshold: 2,      // 연속 2회 성공 후 복구 (기본값)
+    },
+  },
+});
+```
+
+| 옵션 | 타입 | 기본값 | 설명 |
+|-----|------|-------|------|
+| `enabled` | `boolean` | `false` | 자동 헬스 체크 활성화 |
+| `intervalMs` | `number` | `5000` | 체크 간격 (ms) |
+| `query` | `string` | `"SELECT 1"` | 레플리카가 살아있는지 확인하는 SQL 쿼리 |
+| `failureThreshold` | `number` | `3` | 레플리카를 다운으로 표시하기 전 연속 실패 횟수 |
+| `recoveryThreshold` | `number` | `2` | 복구된 레플리카를 다시 사용하기 전 연속 성공 횟수 |
+
+레플리카가 `failureThreshold`만큼 연속으로 헬스 체크에 실패하면 라운드 로빈 로테이션에서 제외돼요. 읽기는 자동으로 남은 정상 레플리카 또는 마스터로 폴백해요. 실패한 레플리카가 `recoveryThreshold`만큼 연속으로 체크를 통과하면 다시 추가돼요.
+
+헬스 체크는 `propagateShutdown()` 중에 자동으로 중지돼요.
+
 ---
 
 ## 멀티 DB 연결

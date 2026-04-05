@@ -28,6 +28,10 @@ const em = new EntityManager();
 |--------|-----------|-------------|
 | `find` | `<T>(entity, option?): Promise<T[]>` | List query |
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | Single record query |
+| `findOneOrFail` | `<T>(entity, option): Promise<T>` | Single record query (throws `EntityNotFoundError`) |
+| `exists` | `<T>(entity, where?: WhereClause<T>): Promise<boolean>` | Check if any matching record exists |
+| `findByPK` | `<T>(entity, id: unknown): Promise<T \| null>` | Find by primary key value |
+| `findByPKs` | `<T>(entity, ids: unknown[]): Promise<T[]>` | Find by multiple primary key values |
 | `findAndCount` | `<T>(entity, option?): Promise<[T[], number]>` | List + total count |
 | `findWithCursor` | `<T>(entity, option?): Promise<CursorPaginationResult<T>>` | Cursor pagination |
 | `save` | `<T>(entity, item): Promise<InstanceType<ClazzType<T>>>` | INSERT or UPDATE |
@@ -35,7 +39,8 @@ const em = new EntityManager();
 | `softDelete` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete |
 | `restore` | `<T>(entity, criteria): Promise<DeleteResult>` | Restore Soft Delete |
 | `upsert` | `<T>(entity, data, conflictColumns?): Promise<void>` | INSERT ... ON CONFLICT |
-| `updateMany` | `<T>(entity, criteria, partial): Promise<{ affected: number }>` | Bulk UPDATE by condition |
+| `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<void>` | Multi-row upsert |
+| `updateMany` | `<T>(entity, data: UpdateData<T>, options): Promise<{ affected: number }>` | Bulk UPDATE (supports SQL expressions) |
 
 ### Batch
 
@@ -59,11 +64,18 @@ const em = new EntityManager();
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `stream` | `<T>(entity, option?, batchSize?): AsyncGenerator<T>` | Async generator for large datasets |
+| `stream` | `<T>(entity, option?, batchSize?): AsyncGenerator<T>` | Async generator (one entity at a time) |
+| `streamBatch` | `<T>(entity, option?, batchSize?): AsyncGenerator<T[]>` | Async generator (yields arrays of entities) |
 
 ```typescript
+// One at a time
 for await (const user of em.stream(User, { where: { isActive: true } }, 1000)) {
-  // process one entity at a time without holding all rows in memory
+  await process(user);
+}
+
+// In batches
+for await (const batch of em.streamBatch(User, {}, 500)) {
+  await bulkInsert(batch); // batch is User[]
 }
 ```
 
@@ -105,6 +117,9 @@ for await (const user of em.stream(User, { where: { isActive: true } }, 1000)) {
 | `addSubscriber` | `(subscriber: EntitySubscriber<any>): void` | Register subscriber |
 | `removeSubscriber` | `(subscriber: EntitySubscriber<any>): void` | Remove subscriber |
 | `getQueryLog` | `(): ReadonlyArray<QueryLogEntry>` | Query log |
+| `getEntityMetadata` | `<T>(entity): EntityMetadataView \| null` | Full entity metadata |
+| `getColumnMetadata` | `<T>(entity): ColumnMetadataView[]` | Column metadata |
+| `getRelationMetadata` | `<T>(entity): RelationMetadataView[]` | Relation metadata |
 
 ## BaseRepository
 
@@ -116,7 +131,9 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `createQueryBuilder` — Uses the same API as EntityManager without specifying the entity.
+`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder` — Uses the same API as EntityManager without specifying the entity.
+
+Protected fields available for subclasses: `entity` (the entity class) and `em` (the EntityManager instance).
 
 ## Decorators
 
@@ -195,6 +212,15 @@ interface FindOption<T> {
   timeout?: number;
   useMaster?: boolean;
   lock?: LockMode;
+}
+
+enum LockMode {
+  PESSIMISTIC_WRITE = "PESSIMISTIC_WRITE",
+  PESSIMISTIC_READ = "PESSIMISTIC_READ",
+  PESSIMISTIC_WRITE_NOWAIT = "PESSIMISTIC_WRITE_NOWAIT",
+  PESSIMISTIC_READ_NOWAIT = "PESSIMISTIC_READ_NOWAIT",
+  PESSIMISTIC_WRITE_SKIP_LOCKED = "PESSIMISTIC_WRITE_SKIP_LOCKED",
+  PESSIMISTIC_READ_SKIP_LOCKED = "PESSIMISTIC_READ_SKIP_LOCKED",
 }
 ```
 
@@ -284,7 +310,15 @@ class SelectQueryBuilder<T> {
   skip(count: number): this;
   take(count: number): this;
   forUpdate(): this;
+  forUpdateNowait(): this;
+  forUpdateSkipLocked(): this;
   forShare(): this;
+  forShareNowait(): this;
+  forShareSkipLocked(): this;
+  useIndex(indexName: string): this;           // MySQL
+  forceIndex(indexName: string): this;         // MySQL
+  ignoreIndex(indexName: string): this;        // MySQL
+  hint(hintText: string): this;               // PostgreSQL (pg_hint_plan)
   withDeleted(): this;
   appendSql(fragment: Sql): this;
   validate(validator: RowValidator<TResult>): this;
@@ -293,6 +327,7 @@ class SelectQueryBuilder<T> {
   getSql(): { text: string; values: any[] };
   getMany(): Promise<TResult[]>;
   getOne(): Promise<TResult | null>;
+  getOneOrFail(): Promise<TResult>;           // Throws EntityNotFoundError
   getCount(): Promise<number>;
   getManyAndCount(): Promise<[T[], number]>;
   exists(): Promise<boolean>;
@@ -509,6 +544,15 @@ interface LoggingOptions {
 interface ReplicationConfig {
   master: ReplicationNodeConfig;
   slaves: ReplicationNodeConfig[];
+  healthCheck?: HealthCheckConfig;
+}
+
+interface HealthCheckConfig {
+  enabled: boolean;
+  intervalMs?: number;          // Default: 5000
+  query?: string;               // Default: "SELECT 1"
+  failureThreshold?: number;    // Default: 3
+  recoveryThreshold?: number;   // Default: 2
 }
 
 interface ReplicationNodeConfig {
@@ -564,6 +608,14 @@ interface StingerloomPlugin<TApi = {}> {
   readonly dependencies?: readonly string[];
   install(context: PluginContext): TApi | void;
   shutdown?(): Promise<void> | void;
+  beforeQuery?(query: QueryInfo): QueryInfo | void;
+  afterQuery?(query: QueryInfo, result: any, durationMs: number): void;
+}
+
+interface QueryInfo {
+  sql: string;
+  params?: any[];
+  operation?: string;  // "select" | "insert" | "update" | "delete" | "raw"
 }
 ```
 
@@ -633,6 +685,25 @@ interface RenamedColumn {
 }
 ```
 
+### MigrationHooks
+
+```typescript
+interface MigrationHooks {
+  beforeAll?(context: MigrationContext): Promise<void> | void;
+  afterAll?(context: MigrationContext, results: MigrationResult[]): Promise<void> | void;
+  beforeEach?(migration: Migration, context: MigrationContext): Promise<void> | void;
+  afterEach?(migration: Migration, context: MigrationContext, durationMs: number): Promise<void> | void;
+  onError?(migration: Migration, error: Error, context: MigrationContext): Promise<void> | void;
+}
+
+interface MigrationRunnerOptions {
+  lockId?: string;
+  lockTimeoutMs?: number;
+  tableName?: string;              // Default: "__migrations"
+  hooks?: MigrationHooks;
+}
+```
+
 ### MigrationCli
 
 ```typescript
@@ -649,6 +720,87 @@ type MigrationCommand = "migrate:run" | "migrate:rollback" | "migrate:status" | 
 CLI executable: `npx stingerloom migrate:run|rollback|status|generate`
 
 Related classes: `MigrationRunner`, `MigrationCli`, `SchemaDiff`, `SchemaDiffMigrationGenerator`
+
+### EntityMetadataView
+
+```typescript
+interface EntityMetadataView {
+  tableName: string;
+  columns: ColumnMetadataView[];
+  relations: RelationMetadataView[];
+  indexes: any[];
+  deletedAtColumn?: string;
+  createTimestampColumn?: string;
+  updateTimestampColumn?: string;
+  versionColumn?: string;
+}
+
+interface ColumnMetadataView {
+  propertyKey: string;
+  columnName: string;
+  type: string;
+  nullable: boolean;
+  primary: boolean;
+  unique: boolean;
+  default?: any;
+  length?: number;
+}
+
+interface RelationMetadataView {
+  type: "ManyToOne" | "OneToMany" | "ManyToMany" | "OneToOne";
+  propertyKey: string;
+  target: ClazzType<any>;
+  joinColumn: string | null;
+  eager: boolean;
+}
+```
+
+### DriverRegistry
+
+```typescript
+class DriverRegistry {
+  static register(dbType: string, factory: DriverFactory): void;
+  static unregister(dbType: string): void;
+  static has(dbType: string): boolean;
+  static get(dbType: string): DriverFactory | undefined;
+  static getRegisteredTypes(): string[];
+}
+
+interface DriverFactory {
+  createDriver(connector: any, dbType: string, schema?: string): ISqlDriver;
+  createDataSource(connector: any): IDataSource;
+}
+```
+
+### ColumnTypeRegistry
+
+```typescript
+class ColumnTypeRegistry {
+  static getInstance(): ColumnTypeRegistry;
+  register(name: string, definition: CustomColumnTypeDefinition): void;
+  unregister(name: string): void;
+  has(name: string): boolean;
+  resolve(name: string, dialect: DialectName): string | undefined;
+  getTransformer(name: string): ColumnTransformer | undefined;
+  getRegisteredNames(): string[];
+}
+
+interface CustomColumnTypeDefinition {
+  mysql?: string;
+  postgres?: string;
+  sqlite?: string;
+  transformer?: ColumnTransformer;
+}
+```
+
+### Test Utilities
+
+```typescript
+// @stingerloom/orm/testing
+function createTestEntityManager(options: TestEntityManagerOptions): Promise<EntityManager>;
+function createMockRepository<T>(entity: ClazzType<T>, overrides?: MockMethods<T>): BaseRepository<T>;
+class InMemoryDriver implements Partial<ISqlDriver>;
+```
 
 ## Errors
 

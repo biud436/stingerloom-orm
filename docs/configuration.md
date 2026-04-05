@@ -376,6 +376,40 @@ const user = await em.findOne(User, {
 
 Use `useMaster` sparingly. If every read uses `useMaster`, you have eliminated the benefit of having replicas.
 
+### Replica health checks
+
+In production, replicas can go down or fall behind. Stingerloom's `ReplicationRouter` supports automatic health monitoring that removes unhealthy replicas from the rotation and re-adds them when they recover.
+
+```typescript
+await em.register({
+  type: "postgres",
+  // ...
+  replication: {
+    master: { /* ... */ },
+    slaves: [ /* ... */ ],
+    healthCheck: {
+      enabled: true,
+      intervalMs: 5000,          // Check every 5 seconds (default)
+      query: "SELECT 1",         // Health check SQL (default)
+      failureThreshold: 3,       // Remove after 3 consecutive failures (default)
+      recoveryThreshold: 2,      // Re-add after 2 consecutive successes (default)
+    },
+  },
+});
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable automatic health checks |
+| `intervalMs` | `number` | `5000` | Milliseconds between checks |
+| `query` | `string` | `"SELECT 1"` | SQL query used to verify the replica is alive |
+| `failureThreshold` | `number` | `3` | Consecutive failures before marking a replica as down |
+| `recoveryThreshold` | `number` | `2` | Consecutive successes before marking a recovered replica as available |
+
+When a replica fails the health check `failureThreshold` times in a row, it is removed from the round-robin rotation. Reads automatically fall back to remaining healthy replicas or the master. When the failed replica passes `recoveryThreshold` consecutive checks, it is added back.
+
+Health checks are stopped automatically during `propagateShutdown()`.
+
 ---
 
 ## Multi-DB Connections

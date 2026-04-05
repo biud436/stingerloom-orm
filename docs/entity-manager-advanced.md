@@ -530,6 +530,93 @@ In a Kubernetes environment, the timeline looks like this:
 
 ---
 
+## Batch Streaming -- streamBatch()
+
+`stream()` yields entities one at a time. But sometimes you need to process data in batches -- for example, bulk-inserting into another system in groups of 500. `streamBatch()` yields arrays of entities instead of individual items.
+
+```typescript
+for await (const batch of em.streamBatch(User, { where: { isActive: true } }, 500)) {
+  // batch is User[] with up to 500 items
+  await bulkIndex(batch);
+  console.log(`Indexed ${batch.length} users`);
+}
+```
+
+Each iteration yields a full batch (up to `batchSize` entities). The last batch may be smaller. Internally uses LIMIT/OFFSET pagination, same as `stream()`.
+
+```typescript
+// Repository equivalent
+const userRepo = em.getRepository(User);
+for await (const batch of userRepo.streamBatch({ where: { role: "admin" } }, 1000)) {
+  await sendBulkEmail(batch);
+}
+```
+
+The `streamBatch()` method accepts the same `FindOption` as `find()` -- `where`, `orderBy`, `relations`, `select`, etc.
+
+---
+
+## Entity Metadata API
+
+The metadata API provides read-only access to entity schema information at runtime. This is useful for building admin panels, generating documentation, or creating generic CRUD components.
+
+### getEntityMetadata()
+
+Returns the full metadata for an entity class, including table name, columns, relations, indexes, and special columns.
+
+```typescript
+const meta = em.getEntityMetadata(User);
+if (meta) {
+  console.log(meta.tableName);     // "user"
+  console.log(meta.columns);       // ColumnMetadataView[]
+  console.log(meta.relations);     // RelationMetadataView[]
+  console.log(meta.indexes);       // Index definitions
+  console.log(meta.deletedAtColumn);     // "deletedAt" or undefined
+  console.log(meta.versionColumn);       // "version" or undefined
+}
+```
+
+### getColumnMetadata()
+
+Returns column metadata only, which is a subset of the full entity metadata.
+
+```typescript
+const columns = em.getColumnMetadata(User);
+for (const col of columns) {
+  console.log(`${col.propertyKey} -> ${col.columnName} (${col.type})`);
+  // "name" -> "name" (varchar)
+  // "email" -> "email" (varchar)
+}
+```
+
+Each column entry includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `propertyKey` | `string` | Entity property name |
+| `columnName` | `string` | Database column name |
+| `type` | `string` | Column type (varchar, int, etc.) |
+| `nullable` | `boolean` | Whether the column is nullable |
+| `primary` | `boolean` | Whether it is a primary key |
+| `unique` | `boolean` | Whether it has a unique constraint |
+| `default` | `any` | Default value (if set) |
+| `length` | `number` | Column length (if applicable) |
+
+### getRelationMetadata()
+
+Returns relation metadata for an entity.
+
+```typescript
+const relations = em.getRelationMetadata(Post);
+for (const rel of relations) {
+  console.log(`${rel.propertyKey}: ${rel.type} -> ${rel.target.name}`);
+  // "author": ManyToOne -> User
+  // "tags": ManyToMany -> Tag
+}
+```
+
+---
+
 ## FindOption Reference
 
 Complete list of options accepted by `find()`, `findOne()`, `findAndCount()`, `findWithCursor()`, `stream()`, and `explain()`.
@@ -549,7 +636,20 @@ Complete list of options accepted by `find()`, `findOne()`, `findAndCount()`, `f
 | `timeout` | `number` | Per-query timeout in ms. Overrides the connection-level `queryTimeout`. |
 | `distinct` | `boolean` | Generate `SELECT DISTINCT`. Default: `false`. |
 | `useMaster` | `boolean` | Force read from master node in a replication setup. Default: `false`. |
-| `lock` | `LockMode` | Pessimistic lock: `PESSIMISTIC_WRITE` (FOR UPDATE) or `PESSIMISTIC_READ` (FOR SHARE). |
+| `lock` | `LockMode` | Pessimistic lock. See values below. |
+
+### LockMode Values
+
+| LockMode | SQL | Description |
+|----------|-----|-------------|
+| `PESSIMISTIC_WRITE` | `FOR UPDATE` | Exclusive lock -- blocks reads and writes |
+| `PESSIMISTIC_READ` | `FOR SHARE` | Shared lock -- blocks writes only |
+| `PESSIMISTIC_WRITE_NOWAIT` | `FOR UPDATE NOWAIT` | Fails immediately if rows are locked |
+| `PESSIMISTIC_READ_NOWAIT` | `FOR SHARE NOWAIT` | Shared lock, fails if rows are locked |
+| `PESSIMISTIC_WRITE_SKIP_LOCKED` | `FOR UPDATE SKIP LOCKED` | Skips rows locked by other transactions |
+| `PESSIMISTIC_READ_SKIP_LOCKED` | `FOR SHARE SKIP LOCKED` | Shared lock, skips locked rows |
+
+NOWAIT and SKIP LOCKED require MySQL 8.0+ or PostgreSQL 9.5+. SQLite does not support pessimistic locking.
 
 ---
 

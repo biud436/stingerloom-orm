@@ -396,6 +396,148 @@ When a deadlock is caught, the transaction is rolled back and the callback re-ex
 
 Read Replica, Connection Pooling, Connection Retry, Query Timeout, and Shutdown Handling are covered in the [Configuration Guide](./configuration.md). For production-level tuning, see the [Production Guide](./production-guide.md).
 
+## Extensibility
+
+### DriverRegistry -- Custom Database Drivers
+
+The `DriverRegistry` allows registering custom database drivers beyond the built-in MySQL, PostgreSQL, and SQLite. This is useful for adding support for CockroachDB, Oracle, or any other SQL database.
+
+```typescript
+import { DriverRegistry } from "@stingerloom/orm";
+
+DriverRegistry.register("oracle", {
+  createDriver: (connector, dbType, schema?) => new OracleDriver(connector),
+  createDataSource: (connector) => new OracleDataSource(connector),
+});
+
+// Now you can use type: "oracle" in register()
+await em.register({
+  type: "oracle" as any,
+  // ...
+});
+```
+
+| Method | Description |
+|--------|-------------|
+| `DriverRegistry.register(type, factory)` | Register a driver factory for a database type |
+| `DriverRegistry.unregister(type)` | Remove a registered driver |
+| `DriverRegistry.has(type)` | Check if a driver is registered |
+| `DriverRegistry.getRegisteredTypes()` | List all registered database types |
+
+Built-in drivers (`mysql`, `mariadb`, `postgres`, `sqlite`) are registered automatically.
+
+### ColumnTypeRegistry -- Custom Column Types
+
+The `ColumnTypeRegistry` lets you define custom column types with per-dialect SQL mappings and optional transformers.
+
+```typescript
+import { ColumnTypeRegistry } from "@stingerloom/orm";
+
+const registry = ColumnTypeRegistry.getInstance();
+
+registry.register("money", {
+  mysql: "DECIMAL(19,4)",
+  postgres: "MONEY",
+  sqlite: "REAL",
+  transformer: {
+    to: (value: number) => value,
+    from: (raw: string) => parseFloat(raw.replace(/[$,]/g, "")),
+  },
+});
+```
+
+Use the custom type in `@Column`:
+
+```typescript
+@Column({ type: "money" as any })
+price!: number;
+```
+
+The registry resolves the type to the appropriate SQL for each dialect. The transformer handles conversion between JavaScript and database values.
+
+| Method | Description |
+|--------|-------------|
+| `registry.register(name, definition)` | Register a custom column type |
+| `registry.resolve(name, dialect)` | Get the SQL type for a specific dialect |
+| `registry.getTransformer(name)` | Get the transformer for a custom type |
+| `registry.getRegisteredNames()` | List all registered custom types |
+
+### DialectExpression -- Dialect-Aware SQL
+
+`DialectExpression` provides a strategy pattern for generating SQL expressions that differ across databases.
+
+```typescript
+import { createDialectExpression } from "@stingerloom/orm";
+
+const expr = createDialectExpression("postgres");
+
+// Case-insensitive LIKE
+const ilike = expr.ilike('"name"', "alice");
+// PostgreSQL: "name" ILIKE $1  (native ILIKE)
+// MySQL:      "name" LIKE ?    (case-insensitive by default)
+
+// Full-text search
+const fts = expr.fullTextSearch('"content"', "typescript orm");
+// PostgreSQL: to_tsvector('english', "content") @@ plainto_tsquery('english', $1)
+// MySQL:      MATCH("content") AGAINST(? IN BOOLEAN MODE)
+```
+
+This is primarily useful when building plugins or custom query builders that need to work across multiple databases.
+
+### Test Utilities
+
+Stingerloom provides testing helpers to make unit testing easier without requiring a real database connection.
+
+#### createTestEntityManager
+
+Creates a fully configured EntityManager for testing. Defaults to in-memory SQLite so no external database is needed.
+
+```typescript
+import { createTestEntityManager } from "@stingerloom/orm/testing";
+
+const em = await createTestEntityManager({
+  entities: [User, Post],
+  // type: "sqlite" (default), "mysql", or "postgres"
+  // synchronize: true (default)
+});
+
+// Use em normally in tests
+const user = await em.save(User, { name: "Test" });
+```
+
+#### createMockRepository
+
+Creates a mock `BaseRepository` with overridable methods. Methods that are not mocked throw when called, making it easy to catch unintended calls.
+
+```typescript
+import { createMockRepository } from "@stingerloom/orm/testing";
+
+const mockRepo = createMockRepository(User, {
+  find: async () => [{ id: 1, name: "Alice" } as User],
+  findOne: async () => ({ id: 1, name: "Alice" } as User),
+});
+
+const users = await mockRepo.find(); // Returns mocked data
+await mockRepo.delete({ id: 1 });    // Throws -- not mocked
+```
+
+#### InMemoryDriver
+
+A minimal in-memory driver implementation for pure unit tests that need no database at all.
+
+```typescript
+import { InMemoryDriver } from "@stingerloom/orm/testing";
+
+const driver = new InMemoryDriver();
+driver.seedTable("users", [
+  { id: 1, name: "Alice" },
+  { id: 2, name: "Bob" },
+]);
+
+const data = driver.getTableData("users"); // [{ id: 1, name: "Alice" }, ...]
+console.log(driver.getExecutedQueries());  // SQL history
+```
+
 ## Next Steps
 
 - [Query Builder](./query-builder.md) -- Type-safe SelectQueryBuilder

@@ -160,6 +160,40 @@ WHERE "isActive" = $4
 
 SET 절에 `"updatedAt"` 컬럼이 자동으로 포함된 게 보이죠 -- ORM이 일괄 수정에서도 `@UpdateTimestamp` 컬럼을 자동 주입해요.
 
+### updateMany에서 SQL 표현식 사용
+
+가끔 계산된 업데이트가 필요할 때가 있어요 -- 카운터 증가, 문자열 추가, 데이터베이스 함수 사용 등. `updateMany`는 `sql-template-tag`를 통해 raw SQL 표현식을 컬럼 값으로 받을 수 있어요:
+
+```typescript
+import sql from "sql-template-tag";
+
+// 조회수 증가
+await em.updateMany(Post,
+  { viewCount: sql`"viewCount" + 1` },
+  { where: { id: 1 } },
+);
+```
+
+```sql
+-- PostgreSQL
+UPDATE "post"
+SET "viewCount" = "viewCount" + 1
+WHERE "id" = $1
+-- Parameters: [1]
+```
+
+리터럴 값과 SQL 표현식을 같은 업데이트에서 혼합할 수도 있어요:
+
+```typescript
+await em.updateMany(Product,
+  {
+    price: sql`"price" * 1.1`,         // 10% 가격 인상
+    lastUpdatedBy: "admin",             // 리터럴 값
+  },
+  { where: { category: "electronics" } },
+);
+```
+
 주요 특징:
 - `@UpdateTimestamp` 컬럼이 SET 절에 자동 주입돼요.
 - **빈 WHERE 조건은** `DeleteWithoutConditionsError`를 던져요 (안전 장치).
@@ -246,6 +280,34 @@ ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `lastLoginAt` = VALUES(`lastLog
 ::: info
 충돌 컬럼(세 번째 인자)에는 유니크 제약 조건이 있거나 PK여야 해요. 그렇지 않으면 데이터베이스가 쿼리를 거부해요. PostgreSQL에서는 `there is no unique or exclusion constraint matching the ON CONFLICT specification` 에러가 발생해요.
 :::
+
+### 배치 Upsert -- batchUpsert()
+
+수백 또는 수천 행을 한 번에 upsert해야 할 때 `batchUpsert()`가 `upsert()`를 루프로 호출하는 것보다 훨씬 빨라요. 모든 행을 하나의 다중 행 `INSERT ... ON CONFLICT` 문으로 묶어서 보내요.
+
+```typescript
+await em.batchUpsert(User, [
+  { email: "alice@example.com", name: "Alice", loginCount: 1 },
+  { email: "bob@example.com", name: "Bob", loginCount: 1 },
+  { email: "charlie@example.com", name: "Charlie", loginCount: 1 },
+], ["email"]);
+```
+
+```sql
+-- PostgreSQL
+INSERT INTO "user" ("email", "name", "loginCount")
+VALUES ($1, $2, $3), ($4, $5, $6), ($7, $8, $9)
+ON CONFLICT ("email") DO UPDATE SET "name" = EXCLUDED."name", "loginCount" = EXCLUDED."loginCount"
+
+-- MySQL
+INSERT INTO `user` (`email`, `name`, `loginCount`)
+VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)
+ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `loginCount` = VALUES(`loginCount`)
+```
+
+세 번째 인자(옵션)로 충돌 컬럼을 지정해요. 생략하면 기본 키가 사용돼요.
+
+리포지토리에서는 `userRepo.batchUpsert(items, conflictColumns)`로 동일하게 사용할 수 있어요.
 
 ---
 

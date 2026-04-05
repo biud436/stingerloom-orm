@@ -621,6 +621,59 @@ MySQL은 enum을 다르게 처리해요 -- enum 값이 컬럼 정의 자체에 �
 
 ---
 
+## 마이그레이션 훅
+
+MigrationRunner는 마이그레이션 실행 중 모니터링, 로깅, 에러 처리를 위한 라이프사이클 훅을 지원해요.
+
+### 사용 가능한 훅
+
+```typescript
+interface MigrationHooks {
+  beforeAll?(context: MigrationContext): Promise<void> | void;
+  afterAll?(context: MigrationContext, results: MigrationResult[]): Promise<void> | void;
+  beforeEach?(migration: Migration, context: MigrationContext): Promise<void> | void;
+  afterEach?(migration: Migration, context: MigrationContext, durationMs: number): Promise<void> | void;
+  onError?(migration: Migration, error: Error, context: MigrationContext): Promise<void> | void;
+}
+```
+
+| 훅 | 발생 시점 | 파라미터 |
+|-----|----------|---------|
+| `beforeAll` | 첫 번째 마이그레이션 실행 전 | MigrationContext |
+| `afterAll` | 모든 마이그레이션 완료 후 | MigrationContext, results 배열 |
+| `beforeEach` | 개별 마이그레이션 실행 전 | Migration, MigrationContext |
+| `afterEach` | 개별 마이그레이션 성공 후 | Migration, MigrationContext, 소요 시간(ms) |
+| `onError` | 마이그레이션 실패 시 | Migration, error, MigrationContext |
+
+### 예제: 실패 시 Slack 알림
+
+```typescript
+import { MigrationRunner } from "@stingerloom/orm";
+
+const runner = new MigrationRunner(driver, migrations, {
+  hooks: {
+    beforeAll(ctx) {
+      console.log("Starting migrations...");
+    },
+    afterEach(migration, ctx, durationMs) {
+      console.log(`Completed ${migration.constructor.name} in ${durationMs}ms`);
+    },
+    onError(migration, error, ctx) {
+      notifySlack(`Migration failed: ${migration.constructor.name} -- ${error.message}`);
+    },
+    afterAll(ctx, results) {
+      console.log(`All done. ${results.length} migrations applied.`);
+    },
+  },
+});
+
+await runner.runAll();
+```
+
+모든 훅은 비동기(Promise 반환)이거나 동기(즉시 반환)일 수 있어요.
+
+---
+
 ## MigrationRunner API
 
 | Method | 설명 |

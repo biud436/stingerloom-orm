@@ -335,6 +335,27 @@ LIMIT 1
 
 The `LIMIT 1` is added automatically. On a table with 10 million rows, the database stops at the first match instead of scanning everything.
 
+### Guaranteed result -- findOneOrFail()
+
+When you know a record must exist and want to avoid manual `null` checks, use `findOneOrFail()`. It works exactly like `findOne()` but throws `EntityNotFoundError` if no row is found.
+
+```typescript
+// Throws EntityNotFoundError if user does not exist
+const user = await em.findOneOrFail(User, { where: { id: 1 } });
+console.log(user.name); // Safe -- guaranteed non-null
+```
+
+This is useful in service methods where a missing record means invalid input:
+
+```typescript
+async getUser(id: number): Promise<User> {
+  return em.findOneOrFail(User, { where: { id } });
+  // No need for: if (!user) throw new NotFoundException();
+}
+```
+
+The thrown `EntityNotFoundError` includes the entity name for debugging. The repository equivalent is `userRepo.findOneOrFail({ where: { id } })`.
+
 ### Loading relations
 
 Pass `relations` to eagerly load associated entities via LEFT JOIN:
@@ -372,6 +393,23 @@ WHERE "post_tags"."postId" = $1
 ```
 
 For a deeper look at select, distinct, locking, pagination, and aggregates, see [Querying & Pagination](./entity-manager-querying.md).
+
+### Convenience methods -- findByPK(), findByPKs(), exists()
+
+For common lookup patterns, these shortcuts avoid writing `{ where: { id: ... } }` by hand:
+
+```typescript
+// Find by primary key
+const user = await em.findByPK(User, 1);        // User | null
+
+// Find multiple by primary keys
+const users = await em.findByPKs(User, [1, 2, 3]); // User[]
+
+// Check if any matching record exists (takes WhereClause directly)
+const hasAdmin = await em.exists(User, { role: "admin" }); // boolean
+```
+
+`exists()` is more efficient than `find()` + length check because it generates `SELECT 1 ... LIMIT 1` instead of fetching full rows.
 
 ---
 
