@@ -235,6 +235,42 @@ const users = await em
 
 `innerJoinRelation()` is also available.
 
+#### JoinAndSelect — Join + Auto SELECT
+
+When you want to include all columns from the joined entity in the result, use the `*AndSelect` variants. This is equivalent to doing a join + manually selecting every column — but in one call.
+
+```typescript
+// Before: manual join + selectRaw
+qb.leftJoin(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .selectRaw(["p.id", "p.title", "u.id", "u.name", "u.email"]);
+
+// After: joinAndSelect does it automatically
+const results = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoinAndSelect(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .where("p.status", "published")
+  .getRawMany();
+// [{ id: 1, title: "...", id: 1, name: "Alice", email: "..." }, ...]
+```
+
+All `*AndSelect` variants:
+
+| Method | Description |
+|--------|-------------|
+| `leftJoinAndSelect(Entity, alias, onBuilder)` | LEFT JOIN + auto SELECT all joined columns |
+| `innerJoinAndSelect(Entity, alias, onBuilder)` | INNER JOIN + auto SELECT all joined columns |
+| `leftJoinRelationAndSelect(property, alias)` | Relation LEFT JOIN + auto SELECT |
+| `innerJoinRelationAndSelect(property, alias)` | Relation INNER JOIN + auto SELECT |
+
+Relation-based example:
+
+```typescript
+const results = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoinRelationAndSelect("author", "u")
+  .getRawMany();
+```
+
 #### String-Based Joins (Raw)
 
 For cases where you don't have entity metadata (joining a view, a subquery, or a raw table), you can still pass a string table name.

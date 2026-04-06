@@ -231,6 +231,41 @@ const users = await em
 
 `innerJoinRelation()`도 사용할 수 있어요.
 
+#### JoinAndSelect — Join + 자동 SELECT
+
+조인된 엔티티의 모든 컬럼을 결과에 포함하고 싶을 때 `*AndSelect` 변형을 사용하세요. 조인 + 모든 컬럼 수동 선택을 한 번에 해줘요.
+
+```typescript
+// 수동: join + selectRaw
+qb.leftJoin(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .selectRaw(["p.id", "p.title", "u.id", "u.name", "u.email"]);
+
+// 자동: joinAndSelect
+const results = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoinAndSelect(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .where("p.status", "published")
+  .getRawMany();
+```
+
+모든 `*AndSelect` 변형:
+
+| Method | 설명 |
+|--------|------|
+| `leftJoinAndSelect(Entity, alias, onBuilder)` | LEFT JOIN + 조인된 컬럼 자동 SELECT |
+| `innerJoinAndSelect(Entity, alias, onBuilder)` | INNER JOIN + 조인된 컬럼 자동 SELECT |
+| `leftJoinRelationAndSelect(property, alias)` | Relation LEFT JOIN + 자동 SELECT |
+| `innerJoinRelationAndSelect(property, alias)` | Relation INNER JOIN + 자동 SELECT |
+
+Relation 기반 예제:
+
+```typescript
+const results = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoinRelationAndSelect("author", "u")
+  .getRawMany();
+```
+
 #### String 기반 Join (Raw)
 
 엔티티 메타데이터가 없는 경우(view, 서브쿼리, raw 테이블 조인)에는 여전히 문자열 테이블명을 전달할 수 있어요.
