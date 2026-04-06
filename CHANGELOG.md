@@ -6,7 +6,7 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
-## [0.14.0] — 2026-04-06
+## [0.13.0] — 2026-04-06
 
 ### Highlights
 
@@ -79,12 +79,6 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 - 146 unit test suites, **3,289 tests passed**, 0 failures
 - 13 SQLite integration suites, 196 tests passed
 - 5 example projects e2e: 139 tests passed (cats 32, blog 59, todo 9, todo-sqlite 6, multitenant 33)
-
----
-
-## [0.13.0] — 2026-04-06
-
-Internal version bump (pre-release build).
 
 ---
 
