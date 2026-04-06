@@ -170,36 +170,64 @@ qb.whereLike("name", "%alice%");
 
 여기서 query builder의 진가가 나타나요. Stingerloom은 세 단계의 JOIN을 지원해요.
 
-#### Entity-Aware Join (추천)
+#### `alias()` — 타입 안전한 컬럼 참조
 
-테이블 조인의 가장 좋은 방법은 **엔티티 클래스**를 직접 전달하는 거예요. ORM이 테이블명을 자동으로 해석하고, camelCase 프로퍼티명으로 컬럼을 참조할 수 있어요.
+조인을 설명하기 전에, 크로스 엔티티 쿼리를 type-safe하게 만드는 헬퍼를 소개할게요.
+
+테이블을 조인하면 여러 엔티티의 컬럼을 참조하게 돼요 — `"p.authorId"`, `"u.firstName"` 등. 이런 문자열에는 자동 완성이 안 돼요. `alias()` 함수가 이걸 해결해요:
 
 ```typescript
+import { alias } from "@stingerloom/orm";
+
+const p = alias(Post, "p");
+const u = alias(User, "u");
+
+p.col("authorId");   // "p.authorId" 반환 — 자동 완성 ✓
+u.col("firstName");  // "u.firstName" 반환 — 자동 완성 ✓
+u.col("typo");       // ✗ 컴파일 에러 — "typo"는 User의 키가 아님
+```
+
+`alias()`는 타입이 지정된 참조를 만들어요. `.col()` 메서드의 인자가 `keyof T`로 제한되므로 TypeScript가 프로퍼티명을 자동 완성해요. 런타임에는 `"alias.property"` 문자열을 반환하고, query builder의 alias 레지스트리가 실제 DB 컬럼명으로 변환해요.
+
+`alias()` 참조는 어디서든 쓸 수 있어요 — `where()`, `selectRaw()`, `addOrderBy()`, `whereIn()`, `JoinOnBuilder.on()` 등.
+
+#### Entity-Aware Join (추천)
+
+테이블 조인의 가장 좋은 방법은 **엔티티 클래스**를 직접 전달하는 거예요. ORM이 테이블명을 자동으로 해석하고, `alias()`로 camelCase 프로퍼티명을 자동 완성할 수 있어요.
+
+```typescript
+const p = alias(Post, "p");
+const u = alias(User, "u");
+
 const posts = await em
   .createQueryBuilder(Post, "p")
   .leftJoin(User, "u", (join) =>
-    join.on("p.authorId", "=", "u.id")
+    join.on(p.col("authorId"), "=", u.col("id"))
   )
-  .selectRaw(["p.title", "u.name"])
-  .where("u.age", ">=", 18)
+  .selectRaw([p.col("title"), u.col("name")])
+  .where(u.col("age"), ">=", 18)
   .orderBy({ createdAt: "DESC" })
   .limit(20)
   .getRawMany();
 ```
 
 - `leftJoin(User, "u", ...)` — 첫 번째 인자가 **엔티티 클래스**예요. ORM이 실제 테이블명(`user`)을 자동 해석하고, `"u"` alias를 내부 레지스트리에 등록해요.
-- `join.on("p.authorId", "=", "u.id")` — ON 조건에서 **camelCase 프로퍼티명**을 사용해요. `SnakeNamingStrategy` 사용 시 `authorId` → `author_id`로 자동 변환돼요.
-- `selectRaw(["p.title", "u.name"])` — `"alias.property"` 형식으로 여러 엔티티의 컬럼을 선택해요.
-- `where("u.age", ">=", 18)` — WHERE 조건에서도 조인된 엔티티의 컬럼을 참조할 수 있어요.
+- `join.on(p.col("authorId"), "=", u.col("id"))` — ON 조건에서 **타입이 지정된 프로퍼티 참조**를 사용해요. `SnakeNamingStrategy` 사용 시 `authorId` → `author_id`로 자동 변환돼요.
+- `selectRaw([p.col("title"), u.col("name")])` — 자동 완성이 되는 크로스 엔티티 컬럼 선택이에요.
+- `where(u.col("age"), ">=", 18)` — WHERE 조건에서도 조인된 엔티티의 컬럼을 자동 완성으로 참조할 수 있어요.
+
+::: tip
+자동 완성 없이 문자열로 직접 작성할 수도 있어요 — `where("u.age", ">=", 18)`. 런타임에서 두 형태는 동일해요.
+:::
 
 `JoinOnBuilder` 콜백은 여러 조건과 리터럴 값을 지원해요:
 
 ```typescript
 qb.leftJoin(User, "u", (join) =>
   join
-    .on("p.authorId", "=", "u.id")       // 컬럼 = 컬럼
-    .andOn("u.status", "=", "p.status")   // 추가 조건
-    .onVal("u.isActive", "=", true)       // 컬럼 = 리터럴 값
+    .on(p.col("authorId"), "=", u.col("id"))       // 컬럼 = 컬럼
+    .andOn(u.col("status"), "=", p.col("status"))   // 추가 조건
+    .onVal(u.col("isActive"), "=", true)             // 컬럼 = 리터럴 값
 );
 ```
 

@@ -170,18 +170,42 @@ All WHERE methods also accept cross-entity references using `"alias.property"` n
 
 This is where the query builder really shines. Stingerloom provides three levels of JOIN support, from fully automatic to raw SQL.
 
+#### Typed Column References with `alias()`
+
+Before diving into joins, let's introduce a helper that makes cross-entity queries type-safe.
+
+When you join tables, you reference columns from multiple entities — `"p.authorId"`, `"u.firstName"`, etc. These are plain strings with no autocomplete. The `alias()` function fixes this:
+
+```typescript
+import { alias } from "@stingerloom/orm";
+
+const p = alias(Post, "p");
+const u = alias(User, "u");
+
+p.col("authorId");   // returns "p.authorId" — with autocomplete ✓
+u.col("firstName");  // returns "u.firstName" — with autocomplete ✓
+u.col("typo");       // ✗ compile error — "typo" is not keyof User
+```
+
+`alias()` creates a typed reference. The `.col()` method constrains its argument to `keyof T` (so TypeScript auto-completes property names), and returns the `"alias.property"` string that the query builder understands. At runtime, this string is resolved to the actual DB column name via the alias registry.
+
+You can use `alias()` references everywhere — `where()`, `selectRaw()`, `addOrderBy()`, `whereIn()`, `JoinOnBuilder.on()`, etc.
+
 #### Entity-Aware Joins (Recommended)
 
 The best way to join tables is by passing the **entity class** directly. The ORM automatically resolves the table name and lets you reference columns using camelCase property names.
 
 ```typescript
+const p = alias(Post, "p");
+const u = alias(User, "u");
+
 const posts = await em
   .createQueryBuilder(Post, "p")
   .leftJoin(User, "u", (join) =>
-    join.on("p.authorId", "=", "u.id")
+    join.on(p.col("authorId"), "=", u.col("id"))
   )
-  .selectRaw(["p.title", "u.name"])
-  .where("u.age", ">=", 18)
+  .selectRaw([p.col("title"), u.col("name")])
+  .where(u.col("age"), ">=", 18)
   .orderBy({ createdAt: "DESC" })
   .limit(20)
   .getRawMany();
@@ -190,18 +214,22 @@ const posts = await em
 What's happening here:
 
 - `leftJoin(User, "u", ...)` — the first argument is the **entity class**, not a table name string. The ORM resolves the actual table name (`user`) and registers the `"u"` alias in its internal registry.
-- `join.on("p.authorId", "=", "u.id")` — the ON condition uses **camelCase property names** with alias prefix. If you're using `SnakeNamingStrategy`, `authorId` is automatically translated to `author_id` in the generated SQL.
-- `selectRaw(["p.title", "u.name"])` — cross-entity column selection using `"alias.property"` notation.
-- `where("u.age", ">=", 18)` — WHERE conditions can also reference joined entity columns.
+- `join.on(p.col("authorId"), "=", u.col("id"))` — the ON condition uses **typed property references** with autocomplete. If you're using `SnakeNamingStrategy`, `authorId` is automatically translated to `author_id` in the generated SQL.
+- `selectRaw([p.col("title"), u.col("name")])` — cross-entity column selection with autocomplete.
+- `where(u.col("age"), ">=", 18)` — WHERE conditions can also reference joined entity columns.
+
+::: tip
+You can also write string literals directly — `where("u.age", ">=", 18)` — if you prefer brevity over autocomplete. Both forms are equivalent at runtime.
+:::
 
 The `JoinOnBuilder` callback supports multiple conditions and literal values:
 
 ```typescript
 qb.leftJoin(User, "u", (join) =>
   join
-    .on("p.authorId", "=", "u.id")       // column = column
-    .andOn("u.status", "=", "p.status")   // additional condition
-    .onVal("u.isActive", "=", true)       // column = literal value
+    .on(p.col("authorId"), "=", u.col("id"))       // column = column
+    .andOn(u.col("status"), "=", p.col("status"))   // additional condition
+    .onVal(u.col("isActive"), "=", true)             // column = literal value
 );
 ```
 
@@ -286,42 +314,49 @@ This is the original API and remains fully supported.
 Chain multiple joins to traverse a graph of entities:
 
 ```typescript
+const p = alias(Post, "p");
+const u = alias(User, "u");
+const c = alias(Comment, "c");
+
 const results = await em
   .createQueryBuilder(Post, "p")
-  .leftJoin(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
-  .leftJoin(Comment, "c", (j) => j.on("c.postId", "=", "p.id"))
-  .selectRaw(["p.title", "u.name", "c.content"])
-  .where("u.age", ">=", 18)
-  .whereNotNull("c.content")
-  .addOrderBy("u.name", "ASC")
+  .leftJoin(User, "u", (j) => j.on(p.col("authorId"), "=", u.col("id")))
+  .leftJoin(Comment, "c", (j) => j.on(c.col("postId"), "=", p.col("id")))
+  .selectRaw([p.col("title"), u.col("name"), c.col("content")])
+  .where(u.col("age"), ">=", 18)
+  .whereNotNull(c.col("content"))
+  .addOrderBy(u.col("name"), "ASC")
   .limit(50)
   .getRawMany();
 ```
 
 #### Cross-Entity Column Resolution
 
-Once an entity is joined (via entity-aware or relation-based join), you can reference its columns anywhere using `"alias.property"` notation:
+Once an entity is joined (via entity-aware or relation-based join), you can reference its columns anywhere. Use `alias()` for autocomplete, or string literals for brevity — both work identically at runtime.
 
 ```typescript
-// WHERE — all styles
-qb.where("u.name", "Alice");                  // equals
-qb.where("u.age", ">=", 18);                  // operator
-qb.whereIn("u.id", [1, 2, 3]);               // IN
-qb.whereNull("u.deletedAt");                  // IS NULL
-qb.whereNotNull("u.email");                   // IS NOT NULL
-qb.whereBetween("u.age", 18, 65);            // BETWEEN
-qb.whereLike("u.name", "%alice%");            // LIKE
+const u = alias(User, "u");
+const p = alias(Post, "p");
+
+// WHERE — all styles (with autocomplete)
+qb.where(u.col("name"), "Alice");                  // equals
+qb.where(u.col("age"), ">=", 18);                  // operator
+qb.whereIn(u.col("id"), [1, 2, 3]);               // IN
+qb.whereNull(u.col("deletedAt"));                  // IS NULL
+qb.whereNotNull(u.col("email"));                   // IS NOT NULL
+qb.whereBetween(u.col("age"), 18, 65);            // BETWEEN
+qb.whereLike(u.col("name"), "%alice%");            // LIKE
 
 // SELECT — cross-entity projection
-qb.selectRaw(["p.title", "u.name"]);          // pick columns from any joined entity
-qb.addSelect("u.email", "authorEmail");        // add aliased column
+qb.selectRaw([p.col("title"), u.col("name")]);    // pick columns from any joined entity
+qb.addSelect(u.col("email"), "authorEmail");       // add aliased column
 
 // ORDER BY / GROUP BY
-qb.addOrderBy("u.name", "ASC");
-qb.groupBy(["u.id", "p.category"]);
+qb.addOrderBy(u.col("name"), "ASC");
+qb.groupBy([u.col("id"), p.col("category")]);
 ```
 
-All references are resolved through the alias registry — `"u.firstName"` becomes `"u"."first_name"` when using `SnakeNamingStrategy`.
+All references are resolved through the alias registry — `u.col("firstName")` produces `"u.firstName"` which becomes `"u"."first_name"` when using `SnakeNamingStrategy`.
 
 #### Join Types Summary
 
@@ -854,6 +889,8 @@ console.log(values);  // [true]
 Here's a realistic example that brings everything together. A search endpoint that accepts optional filters and returns paginated results with a total count.
 
 ```typescript
+import { alias } from "@stingerloom/orm";
+
 async function searchPosts(filters: {
   authorName?: string;
   category?: string;
@@ -861,16 +898,19 @@ async function searchPosts(filters: {
   page: number;
   pageSize: number;
 }) {
+  const p = alias(Post, "p");
+  const u = alias(User, "u");
+
   const qb = em
     .createQueryBuilder(Post, "p")
     .select(["id", "title", "createdAt"])
     .leftJoin(User, "u", (join) =>
-      join.on("p.authorId", "=", "u.id")
+      join.on(p.col("authorId"), "=", u.col("id"))
     );
 
   // Each filter is optional — add conditions only when present
   if (filters.authorName) {
-    qb.where("u.name", "LIKE", `%${filters.authorName}%`);
+    qb.where(u.col("name"), "LIKE", `%${filters.authorName}%`);
   }
   if (filters.category) {
     qb.andWhere("category", filters.category);
