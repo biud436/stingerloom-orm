@@ -188,7 +188,7 @@ const posts = await em
 ```
 
 - `leftJoin(User, "u", ...)` — 첫 번째 인자가 **엔티티 클래스**예요. ORM이 실제 테이블명(`user`)을 자동 해석하고, `"u"` alias를 내부 레지스트리에 등록해요.
-- `join.on("p.authorId", "=", "u.id")` — ON 조건에서 **camelCase 프로퍼티명**을 사용해요. `SnakeNamingStrategy` 사용 시 `authorId` → `author_id`로 ��동 변환돼요.
+- `join.on("p.authorId", "=", "u.id")` — ON 조건에서 **camelCase 프로퍼티명**을 사용해요. `SnakeNamingStrategy` 사용 시 `authorId` → `author_id`로 자동 변환돼요.
 - `selectRaw(["p.title", "u.name"])` — `"alias.property"` 형식으로 여러 엔티티의 컬럼을 선택해요.
 - `where("u.age", ">=", 18)` — WHERE 조건에서도 조인된 엔티티의 컬럼을 참조할 수 있어요.
 
