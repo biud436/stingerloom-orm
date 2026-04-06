@@ -2,6 +2,7 @@ import "reflect-metadata";
 import {
   SelectQueryBuilder,
   JoinOnBuilder,
+  alias,
 } from "../../src/core/SelectQueryBuilder";
 import { Conditions } from "../../src/core/Conditions";
 import {
@@ -797,6 +798,93 @@ describe("SelectQueryBuilder — Entity-Aware Joins", () => {
 
       expect(text).toContain("INNER JOIN `author` AS `au`");
       expect(text).toContain("`au`.`firstName`");
+    });
+  });
+
+  // ── alias() helper ──
+
+  describe("alias() — typed entity reference", () => {
+    it("should return alias.property strings", () => {
+      const u = alias(Author, "u");
+      expect(u.col("firstName")).toBe("u.firstName");
+      expect(u.col("age")).toBe("u.age");
+      expect(u._alias).toBe("u");
+    });
+
+    it("should work with where() for cross-entity autocomplete", () => {
+      const a = alias(Article, "a");
+      const au = alias(Author, "au");
+
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on(a.col("authorId"), "=", au.col("id")),
+      );
+      qb.where(au.col("firstName"), "LIKE", "%John%");
+      qb.where(a.col("status"), "published");
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("`au`.`firstName` LIKE ?");
+      expect(text).toContain("`a`.`status` = ?");
+      expect(values).toContain("%John%");
+      expect(values).toContain("published");
+    });
+
+    it("should work with selectRaw for cross-entity projection", () => {
+      const a = alias(Article, "a");
+      const au = alias(Author, "au");
+
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on(a.col("authorId"), "=", au.col("id")),
+      );
+      qb.selectRaw([a.col("title"), au.col("firstName")]);
+      const { text } = qb.getSql();
+
+      expect(text).toContain("`a`.`title`");
+      expect(text).toContain("`au`.`firstName`");
+    });
+
+    it("should work with addOrderBy", () => {
+      const au = alias(Author, "au");
+
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", au.col("id")),
+      );
+      qb.addOrderBy(au.col("lastName"), "DESC");
+      const { text } = qb.getSql();
+
+      expect(text).toContain("`au`.`lastName` DESC");
+    });
+
+    it("should work with whereIn, whereNull, whereBetween", () => {
+      const au = alias(Author, "au");
+
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", au.col("id")),
+      );
+      qb.whereIn(au.col("id"), [1, 2, 3]);
+      qb.whereNotNull(au.col("firstName"));
+      qb.whereBetween(au.col("age"), 18, 65);
+      const { text } = qb.getSql();
+
+      expect(text).toContain("`au`.`id` IN");
+      expect(text).toContain("`au`.`firstName` IS NOT NULL");
+      expect(text).toContain("`au`.`age` BETWEEN");
+    });
+
+    it("should work with groupBy", () => {
+      const au = alias(Author, "au");
+
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", au.col("id")),
+      );
+      qb.groupBy([au.col("firstName")] as any);
+      const { text } = qb.getSql();
+
+      expect(text).toContain("GROUP BY `au`.`firstName`");
     });
   });
 });
