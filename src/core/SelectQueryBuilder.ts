@@ -140,6 +140,158 @@ export function alias<T>(entity: ClazzType<T>, name: string): EntityRef<T> {
   };
 }
 
+// ── QueryDSL-style expressions ────────────────────────────
+
+/**
+ * A deferred WHERE condition that carries the column reference (unresolved)
+ * and resolves it through the query builder's alias registry at build time.
+ *
+ * Created by `ColumnExpression` methods like `.eq()`, `.like()`, etc.
+ * Passed directly to `where()`, `andWhere()`, `orWhere()`.
+ */
+export class ColumnCondition {
+  readonly __columnCondition = true as const;
+  constructor(
+    readonly ref: string,
+    readonly operator: string,
+    readonly value: any,
+  ) {}
+
+  /** @internal Resolve the column reference and produce final SQL. */
+  resolve(resolveColumn: (ref: string) => string): Sql {
+    const qualified = resolveColumn(this.ref);
+    switch (this.operator) {
+      case "=":
+        if (this.value === null) return Conditions.isNull(qualified);
+        if (Array.isArray(this.value)) return Conditions.in(qualified, this.value);
+        return Conditions.equals(qualified, this.value);
+      case "!=":
+      case "<>":
+        return Conditions.notEquals(qualified, this.value);
+      case ">":
+        return Conditions.gt(qualified, this.value);
+      case ">=":
+        return Conditions.gte(qualified, this.value);
+      case "<":
+        return Conditions.lt(qualified, this.value);
+      case "<=":
+        return Conditions.lte(qualified, this.value);
+      case "LIKE":
+        return Conditions.like(qualified, this.value);
+      case "NOT LIKE":
+        return Conditions.notLike(qualified, this.value);
+      case "IN":
+        return Conditions.in(qualified, this.value);
+      case "NOT IN":
+        return Conditions.notIn(qualified, this.value);
+      case "IS NULL":
+        return Conditions.isNull(qualified);
+      case "IS NOT NULL":
+        return Conditions.isNotNull(qualified);
+      case "BETWEEN":
+        return Conditions.between(qualified, this.value[0], this.value[1]);
+      default:
+        return sql`${raw(qualified)} ${raw(this.operator)} ${this.value}`;
+    }
+  }
+}
+
+/**
+ * A typed column expression providing QueryDSL-style condition builders.
+ *
+ * Each method returns a `ColumnCondition` that can be passed directly
+ * to `where()`, `andWhere()`, or `orWhere()`.
+ *
+ * @example
+ * ```ts
+ * const u = qAlias(User, "u");
+ * qb.where(u.firstName.eq("Alice"))
+ *   .where(u.age.gte(18))
+ *   .where(u.name.like("%John%"))
+ *   .where(u.status.in(["active", "pending"]))
+ *   .where(u.deletedAt.isNull())
+ * ```
+ */
+export class ColumnExpression {
+  constructor(private readonly ref: string) {}
+
+  /** `column = value` */
+  eq(value: any): ColumnCondition { return new ColumnCondition(this.ref, "=", value); }
+  /** `column != value` */
+  neq(value: any): ColumnCondition { return new ColumnCondition(this.ref, "!=", value); }
+  /** `column > value` */
+  gt(value: any): ColumnCondition { return new ColumnCondition(this.ref, ">", value); }
+  /** `column >= value` */
+  gte(value: any): ColumnCondition { return new ColumnCondition(this.ref, ">=", value); }
+  /** `column < value` */
+  lt(value: any): ColumnCondition { return new ColumnCondition(this.ref, "<", value); }
+  /** `column <= value` */
+  lte(value: any): ColumnCondition { return new ColumnCondition(this.ref, "<=", value); }
+  /** `column LIKE pattern` */
+  like(pattern: string): ColumnCondition { return new ColumnCondition(this.ref, "LIKE", pattern); }
+  /** `column NOT LIKE pattern` */
+  notLike(pattern: string): ColumnCondition { return new ColumnCondition(this.ref, "NOT LIKE", pattern); }
+  /** `column IN (values)` */
+  in(values: any[]): ColumnCondition { return new ColumnCondition(this.ref, "IN", values); }
+  /** `column NOT IN (values)` */
+  notIn(values: any[]): ColumnCondition { return new ColumnCondition(this.ref, "NOT IN", values); }
+  /** `column IS NULL` */
+  isNull(): ColumnCondition { return new ColumnCondition(this.ref, "IS NULL", undefined); }
+  /** `column IS NOT NULL` */
+  isNotNull(): ColumnCondition { return new ColumnCondition(this.ref, "IS NOT NULL", undefined); }
+  /** `column BETWEEN min AND max` */
+  between(min: any, max: any): ColumnCondition { return new ColumnCondition(this.ref, "BETWEEN", [min, max]); }
+
+  /** Returns the `"alias.property"` string (for interop with `col()`-style API). */
+  toString(): string { return this.ref; }
+}
+
+/**
+ * Mapped type: transforms entity properties into `ColumnExpression` accessors.
+ */
+export type QEntity<T> = {
+  readonly [K in keyof T & string]: ColumnExpression;
+} & EntityRef<T>;
+
+/**
+ * Create a QueryDSL-style typed entity reference with property-level expressions.
+ *
+ * Unlike `alias()` which requires `.col("name")`, `qAlias()` exposes entity
+ * properties directly — each one is a `ColumnExpression` with `.eq()`, `.like()`,
+ * `.gte()`, etc. Methods return `ColumnCondition` objects that the query builder
+ * resolves through its alias registry (respecting SnakeNamingStrategy).
+ *
+ * @example
+ * ```ts
+ * const u = qAlias(User, "u");
+ * const p = qAlias(Post, "p");
+ *
+ * em.createQueryBuilder(Post, "p")
+ *   .leftJoin(User, "u", (j) => j.on(p.col("authorId"), "=", u.col("id")))
+ *   .where(u.firstName.eq("Alice"))           // auto-complete ✓
+ *   .where(u.age.gte(18))                     // auto-complete ✓
+ *   .where(p.status.in(["active", "draft"]))  // auto-complete ✓
+ *   .where(u.deletedAt.isNull())              // auto-complete ✓
+ *   .getRawMany();
+ * ```
+ */
+export function qAlias<T>(entity: ClazzType<T>, name: string): QEntity<T> {
+  return new Proxy({} as any, {
+    get(_target: any, prop: string | symbol): any {
+      if (typeof prop === "symbol") return undefined;
+      if (prop === "_alias") return name;
+      if (prop === "_entity") return entity;
+      if (prop === "col") {
+        return (column: string) => `${name}.${column}`;
+      }
+      if (prop === "toString" || prop === "valueOf") {
+        return () => name;
+      }
+      return new ColumnExpression(`${name}.${prop}`);
+    },
+  }) as QEntity<T>;
+}
+
 /**
  * Validator function that can be attached to a SelectQueryBuilder.
  *
@@ -436,12 +588,13 @@ export class SelectQueryBuilder<T, TResult = T> {
    * 4. `where(Conditions.like(...))` → raw Sql
    */
   where(condition: Sql): this;
+  where(condition: ColumnCondition): this;
   where(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   where(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   where(column: string, value: any): this;
   where(column: string, operator: WhereOperator, value: any): this;
   where(
-    columnOrCondition: string | Sql,
+    columnOrCondition: string | Sql | ColumnCondition,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -455,12 +608,13 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Add an AND WHERE condition.
    */
   andWhere(condition: Sql): this;
+  andWhere(condition: ColumnCondition): this;
   andWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   andWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   andWhere(column: string, value: any): this;
   andWhere(column: string, operator: WhereOperator, value: any): this;
   andWhere(
-    columnOrCondition: string | Sql,
+    columnOrCondition: string | Sql | ColumnCondition,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -474,12 +628,13 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Add an OR WHERE condition (wrapped in parentheses with existing conditions).
    */
   orWhere(condition: Sql): this;
+  orWhere(condition: ColumnCondition): this;
   orWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   orWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   orWhere(column: string, value: any): this;
   orWhere(column: string, operator: WhereOperator, value: any): this;
   orWhere(
-    columnOrCondition: string | Sql,
+    columnOrCondition: string | Sql | ColumnCondition,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -1658,10 +1813,15 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   protected resolveCondition(
-    columnOrCondition: string | Sql,
+    columnOrCondition: string | Sql | ColumnCondition,
     operatorOrValue?: any,
     value?: any,
   ): Sql {
+    // ColumnCondition from QueryDSL expressions (u.firstName.eq("Alice"))
+    if (columnOrCondition instanceof ColumnCondition) {
+      return columnOrCondition.resolve((ref) => this.resolveColumn(ref));
+    }
+
     // Overload 1: raw Sql condition
     if (typeof columnOrCondition !== "string") {
       return columnOrCondition;

@@ -3,6 +3,8 @@ import {
   SelectQueryBuilder,
   JoinOnBuilder,
   alias,
+  qAlias,
+  ColumnCondition,
 } from "../../src/core/SelectQueryBuilder";
 import { Conditions } from "../../src/core/Conditions";
 import {
@@ -888,6 +890,170 @@ describe("SelectQueryBuilder — Entity-Aware Joins", () => {
       const { text } = qb.getSql();
 
       expect(text).toContain("GROUP BY `au`.`firstName`");
+    });
+  });
+
+  // ── qAlias() — QueryDSL-style expressions ──
+
+  describe("qAlias() — QueryDSL-style expressions", () => {
+    it("should expose entity properties as ColumnExpression", () => {
+      const u = qAlias(Author, "u");
+      expect(u._alias).toBe("u");
+      expect(u.col("firstName")).toBe("u.firstName");
+      // Property access returns ColumnExpression
+      const expr = u.firstName;
+      expect(expr.toString()).toBe("u.firstName");
+    });
+
+    it("u.firstName.eq('Alice') should resolve in where()", () => {
+      const a = qAlias(Article, "a");
+      const au = qAlias(Author, "au");
+
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on(a.col("authorId"), "=", au.col("id")),
+      );
+      qb.where(au.firstName.eq("Alice"));
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("`au`.`firstName` = ?");
+      expect(values).toContain("Alice");
+    });
+
+    it("u.age.gte(18) should resolve in where()", () => {
+      const au = qAlias(Author, "au");
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", au.col("id")),
+      );
+      qb.where(au.age.gte(18));
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("`au`.`age` >= ?");
+      expect(values).toContain(18);
+    });
+
+    it("u.name.like('%John%') should generate LIKE", () => {
+      const au = qAlias(Author, "au");
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", au.col("id")),
+      );
+      qb.where(au.firstName.like("%John%"));
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("`au`.`firstName` LIKE ?");
+      expect(values).toContain("%John%");
+    });
+
+    it("u.id.in([1,2,3]) should generate IN", () => {
+      const au = qAlias(Author, "au");
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", au.col("id")),
+      );
+      qb.where(au.id.in([1, 2, 3]));
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("`au`.`id` IN");
+      expect(values).toEqual([1, 2, 3]);
+    });
+
+    it("u.deletedAt.isNull() should generate IS NULL", () => {
+      const au = qAlias(Author, "au");
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", au.col("id")),
+      );
+      qb.where(au.firstName.isNull());
+      const { text } = qb.getSql();
+
+      expect(text).toContain("`au`.`firstName` IS NULL");
+    });
+
+    it("u.age.between(18, 65) should generate BETWEEN", () => {
+      const au = qAlias(Author, "au");
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", au.col("id")),
+      );
+      qb.where(au.age.between(18, 65));
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("`au`.`age` BETWEEN");
+      expect(values).toContain(18);
+      expect(values).toContain(65);
+    });
+
+    it("should work with andWhere and orWhere", () => {
+      const a = qAlias(Article, "a");
+      const au = qAlias(Author, "au");
+
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on(a.col("authorId"), "=", au.col("id")),
+      );
+      qb.where(a.status.eq("published"));
+      qb.andWhere(au.age.gte(18));
+      qb.orWhere(au.firstName.eq("Admin"));
+      const { text } = qb.getSql();
+
+      expect(text).toContain("`a`.`status` = ?");
+      expect(text).toContain("`au`.`age` >= ?");
+      expect(text).toContain("`au`.`firstName` = ?");
+      expect(text).toContain("OR");
+    });
+
+    it("neq, gt, lt, lte, notLike, notIn, isNotNull should all work", () => {
+      const au = qAlias(Author, "au");
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", au.col("id")),
+      );
+
+      // Test each operator individually
+      qb.where(au.age.neq(0));
+      qb.andWhere(au.age.gt(10));
+      qb.andWhere(au.age.lt(100));
+      qb.andWhere(au.age.lte(99));
+      qb.andWhere(au.firstName.notLike("%bot%"));
+      qb.andWhere(au.id.notIn([999]));
+      qb.andWhere(au.lastName.isNotNull());
+      const { text } = qb.getSql();
+
+      expect(text).toContain("`au`.`age` != ?");
+      expect(text).toContain("`au`.`age` > ?");
+      expect(text).toContain("`au`.`age` < ?");
+      expect(text).toContain("`au`.`age` <= ?");
+      expect(text).toContain("`au`.`firstName` NOT LIKE ?");
+      expect(text).toContain("`au`.`id` NOT IN");
+      expect(text).toContain("`au`.`lastName` IS NOT NULL");
+    });
+
+    it("complex query: join + qAlias expressions + order", () => {
+      const a = qAlias(Article, "a");
+      const au = qAlias(Author, "au");
+      const c = qAlias(Comment, "c");
+
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on(a.col("authorId"), "=", au.col("id")),
+      )
+        .leftJoin(Comment, "c", (j) =>
+          j.on(c.col("articleId"), "=", a.col("id")),
+        )
+        .where(a.status.eq("published"))
+        .where(au.age.gte(18))
+        .where(c.content.isNotNull())
+        .limit(10);
+
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("`a`.`status` = ?");
+      expect(text).toContain("`au`.`age` >= ?");
+      expect(text).toContain("`c`.`content` IS NOT NULL");
+      expect(values).toContain("published");
+      expect(values).toContain(18);
     });
   });
 });
