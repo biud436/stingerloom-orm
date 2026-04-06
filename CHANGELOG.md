@@ -6,6 +6,88 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.14.0] — 2026-04-06
+
+### Highlights
+
+- **QueryDSL-style expressions (`qAlias`)** — Access entity properties directly and chain condition methods like `u.firstName.eq("Alice")`, `u.age.gte(18)`, `p.status.in(["active"])`. Powered by ES Proxy with full TypeScript autocomplete — no code generation required. A first in the Node.js ORM ecosystem.
+- **Entity-aware joins** — Pass entity classes to `leftJoin(User, "u", ...)` instead of raw table names. The ORM resolves table names and column mappings automatically, including SnakeNamingStrategy support.
+- **Relation-based auto-joins** — `leftJoinRelation("author", "u")` reads `@ManyToOne` / `@OneToMany` metadata and generates the ON condition automatically.
+- **Cross-entity column resolution** — Use `"alias.property"` notation in `where()`, `selectRaw()`, `addOrderBy()`, `groupBy()`, and all WHERE helpers. The alias registry resolves property names to DB column names across all joined entities.
+
+### Added
+
+- **`qAlias(Entity, alias)`** — QueryDSL-style Proxy-based entity reference with 13 expression methods: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `notLike`, `in`, `notIn`, `isNull`, `isNotNull`, `between`
+- **`alias(Entity, alias)`** — Lightweight typed entity reference with `.col()` method for autocomplete
+- **`ColumnExpression`** / **`ColumnCondition`** classes — Deferred condition resolution through alias registry
+- **`JoinOnBuilder`** class — Fluent ON condition builder with `.on()`, `.andOn()`, `.onVal()` methods
+- **Entity-aware `leftJoin` / `innerJoin` / `rightJoin`** overloads accepting entity class + JoinOnBuilder callback
+- **`leftJoinRelation` / `innerJoinRelation`** — Auto-derive ON from `@ManyToOne`, `@OneToMany`, `@OneToOne` metadata
+- **`leftJoinAndSelect` / `innerJoinAndSelect`** — Join + auto-SELECT all joined entity columns
+- **`leftJoinRelationAndSelect` / `innerJoinRelationAndSelect`** — Relation join + auto-SELECT
+- **`selectRaw(columns)`** — Cross-entity SELECT using `"alias.property"` notation
+- **Cross-entity `where` / `andWhere` / `orWhere`** — String overloads accepting `"alias.property"` references
+- **Cross-entity `whereIn` / `whereNotIn` / `whereNull` / `whereNotNull` / `whereBetween` / `whereLike`** — All WHERE helpers support alias-prefixed column references
+- **Cross-entity `addOrderBy` / `groupBy`** — String overloads for cross-entity sorting and grouping
+- **`@RelationColumn` decorator** — Declarative FK column mapping, replaces deprecated `joinColumn` option (#215)
+- **`exists()` / `findByPK()` / `findByPKs()`** — Convenience methods on EntityManager and BaseRepository (#218)
+- **`batchUpsert` / `streamBatch`** — Batch upsert and async generator streaming (#221-#222)
+- **`NOWAIT` / `SKIP LOCKED` locking** — `forUpdateNowait()`, `forUpdateSkipLocked()`, `forShareNowait()`, `forShareSkipLocked()` (#223)
+- **Index hints** — `useIndex()`, `forceIndex()`, `ignoreIndex()` for MySQL, `hint()` for PostgreSQL (#224)
+- **Replica health check** — `ReplicationManager.healthCheck()` (#225)
+- **`DialectExpression` strategy** — Dialect-aware SQL expression generation (ILIKE translation, full-text search)
+- **`ColumnTypeRegistry`** — Extensible column type transformer registry
+- **Plugin hooks** — `onBeforeQuery` / `onAfterQuery` / `onSchemaSync` plugin lifecycle hooks (#227-#228)
+- **Driver registry** — `DriverRegistry.register()` for custom driver plugins (#229)
+- **Metadata API** — Public `MetadataExplorer` for runtime entity/column introspection (#230)
+- **Migration hooks** — `onBeforeMigration` / `onAfterMigration` lifecycle (#231)
+- **Test utilities** — `createTestEntityManager()` helper for plugin/extension testing (#232)
+- **Protected repository** — `BaseRepository` fields made `protected` for extensibility (#233)
+- **Version-aware DDL** — `DialectCapabilities` for conditional DDL based on database version
+- **Runtime `DatabaseClientOptions` validation** — Fail-fast on invalid configuration (#217)
+
+### Changed
+
+- `SelectQueryBuilder` / `RawQueryBuilder` fields changed from `private` to `protected` for subclass extensibility (#226)
+- `joinColumn` option in `@ManyToOne` / `@OneToOne` deprecated in favor of `@RelationColumn` (#215)
+- `WhereOperator` extracted as named type for reuse
+- Dialect-specific `MigrationRunner` subclasses extracted from monolithic runner
+
+### Fixed
+
+- SQLite `DatabaseClientOptions` no longer requires dummy `host`/`port`/`username`/`password` values (#216)
+- Removed deprecated `FindCondition` / `FindOperator` exports (#219)
+- Broken Unicode character in Korean query-builder docs
+
+### Performance
+
+- Eliminated per-transaction `SET autocommit` round-trip on MySQL/MariaDB (#209)
+- Skipped redundant `SET TRANSACTION ISOLATION LEVEL` / `SET search_path` when unchanged (#212)
+- Batch `saveMany()` reduces round-trips (#213-#214)
+
+### Documentation
+
+- Complete rewrite of query-builder JOIN section with entity-aware, relation-based, and cross-entity examples
+- Added `qAlias()` QueryDSL guide with full method reference table
+- Added aggregate functions (AVG/SUM/COUNT/MIN/MAX) and subquery examples (WHERE IN, EXISTS, FROM, CTE)
+- Added `joinAndSelect` examples
+- Added troubleshooting guide (#220)
+- Added documentation for 15 new features (#218-#233)
+
+### Tests
+
+- 146 unit test suites, **3,289 tests passed**, 0 failures
+- 13 SQLite integration suites, 196 tests passed
+- 5 example projects e2e: 139 tests passed (cats 32, blog 59, todo 9, todo-sqlite 6, multitenant 33)
+
+---
+
+## [0.13.0] — 2026-04-06
+
+Internal version bump (pre-release build).
+
+---
+
 ## [0.12.0] — 2026-03-31
 
 ### Highlights
