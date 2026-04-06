@@ -355,41 +355,59 @@ qb.leftJoin("audit_log", "al", sql`"p"."id" = "al"."post_id"`);
 여러 조인을 체이닝해서 엔티티 그래프를 탐색할 수 있어요:
 
 ```typescript
+const p = qAlias(Post, "p");
+const u = qAlias(User, "u");
+const c = qAlias(Comment, "c");
+
 const results = await em
   .createQueryBuilder(Post, "p")
-  .leftJoin(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
-  .leftJoin(Comment, "c", (j) => j.on("c.postId", "=", "p.id"))
-  .selectRaw(["p.title", "u.name", "c.content"])
-  .where("u.age", ">=", 18)
-  .whereNotNull("c.content")
-  .addOrderBy("u.name", "ASC")
+  .leftJoin(User, "u", (j) => j.on(p.col("authorId"), "=", u.col("id")))
+  .leftJoin(Comment, "c", (j) => j.on(c.col("postId"), "=", p.col("id")))
+  .selectRaw([p.col("title"), u.col("name"), c.col("content")])
+  .where(u.age.gte(18))                   // QueryDSL 스타일
+  .where(c.content.isNotNull())            // QueryDSL 스타일
+  .addOrderBy(u.col("name"), "ASC")
   .limit(50)
   .getRawMany();
 ```
 
 #### Cross-Entity 컬럼 해석
 
-엔티티 조인(entity-aware 또는 relation 기반) 후, `"alias.property"` 형식으로 어디서든 컬럼을 참조할 수 있어요:
+엔티티 조인(entity-aware 또는 relation 기반) 후, 어디서든 컬럼을 참조할 수 있어요.
+
+**`qAlias()` 사용 (QueryDSL 스타일):**
 
 ```typescript
-// WHERE — 모든 스타일
-qb.where("u.name", "Alice");                  // equals
-qb.where("u.age", ">=", 18);                  // operator
-qb.whereIn("u.id", [1, 2, 3]);               // IN
-qb.whereNull("u.deletedAt");                  // IS NULL
-qb.whereBetween("u.age", 18, 65);            // BETWEEN
-qb.whereLike("u.name", "%alice%");            // LIKE
+const u = qAlias(User, "u");
+const p = qAlias(Post, "p");
 
-// SELECT — cross-entity 프로젝션
-qb.selectRaw(["p.title", "u.name"]);          // 조인된 엔티티에서 컬럼 선택
-qb.addSelect("u.email", "authorEmail");        // alias된 컬럼 추가
+// WHERE — QueryDSL 표현식 (프로퍼티 + 연산자 자동 완성)
+qb.where(u.name.eq("Alice"));                     // equals
+qb.where(u.age.gte(18));                           // >=
+qb.where(u.id.in([1, 2, 3]));                     // IN
+qb.where(u.deletedAt.isNull());                   // IS NULL
+qb.where(u.email.isNotNull());                    // IS NOT NULL
+qb.where(u.age.between(18, 65));                  // BETWEEN
+qb.where(u.name.like("%alice%"));                 // LIKE
+
+// SELECT — .col()로 컬럼 참조
+qb.selectRaw([p.col("title"), u.col("name")]);
+qb.addSelect(u.col("email"), "authorEmail");
 
 // ORDER BY / GROUP BY
-qb.addOrderBy("u.name", "ASC");
-qb.groupBy(["u.id", "p.category"]);
+qb.addOrderBy(u.col("name"), "ASC");
+qb.groupBy([u.col("id"), p.col("category")]);
 ```
 
-모든 참조는 alias 레지스트리를 통해 해석돼요 — `SnakeNamingStrategy` 사용 시 `"u.firstName"` → `"u"."first_name"`으로 변환돼요.
+**`alias()` 사용 (.col() 스타일):**
+
+```typescript
+const u = alias(User, "u");
+qb.where(u.col("name"), "Alice");
+qb.where(u.col("age"), ">=", 18);
+```
+
+모든 참조는 alias 레지스트리를 통해 해석돼요 — `u.col("firstName")` 또는 `u.firstName.eq(...)` 모두 `SnakeNamingStrategy` 사용 시 `"u"."first_name"`으로 변환돼요.
 
 #### Join 타입 요약
 
@@ -486,13 +504,16 @@ const salesByCategory = await em
 엔티티 인식 조인과 함께 사용하면 관련 테이블을 넘나드는 집계도 가능해요:
 
 ```typescript
+const p = qAlias(Post, "p");
+const u = qAlias(User, "u");
+
 const authorStats = await em
   .createQueryBuilder(Post, "p")
-  .leftJoin(User, "u", (join) => join.on("p.authorId", "=", "u.id"))
-  .selectRaw(["u.name"])
+  .leftJoin(User, "u", (join) => join.on(p.col("authorId"), "=", u.col("id")))
+  .selectRaw([u.col("name")])
   .addSelect(sql`COUNT(*)`, "postCount")
   .addSelect(sql`AVG("p"."likeCount")`, "avgLikes")
-  .groupBy(["u.name"])
+  .groupBy([u.col("name")])
   .having(sql`COUNT(*) >= ${3}`)
   .addOrderBy("postCount", "DESC")
   .getRawMany();
@@ -916,6 +937,8 @@ console.log(values);  // [true]
 지금까지 배운 것을 합쳐볼게요. 선택적 필터를 받아서 총 개수와 함께 페이지네이션된 결과를 반환하는 검색 엔드포인트예요.
 
 ```typescript
+import { qAlias } from "@stingerloom/orm";
+
 async function searchPosts(filters: {
   authorName?: string;
   category?: string;
@@ -923,22 +946,25 @@ async function searchPosts(filters: {
   page: number;
   pageSize: number;
 }) {
+  const p = qAlias(Post, "p");
+  const u = qAlias(User, "u");
+
   const qb = em
     .createQueryBuilder(Post, "p")
     .select(["id", "title", "createdAt"])
     .leftJoin(User, "u", (join) =>
-      join.on("p.authorId", "=", "u.id")
+      join.on(p.col("authorId"), "=", u.col("id"))
     );
 
   // 각 필터는 선택적 — 값이 있을 때만 조건 추가
   if (filters.authorName) {
-    qb.where("u.name", "LIKE", `%${filters.authorName}%`);
+    qb.where(u.name.like(`%${filters.authorName}%`));
   }
   if (filters.category) {
-    qb.andWhere("category", filters.category);
+    qb.andWhere(p.category.eq(filters.category));
   }
   if (filters.minLikes) {
-    qb.andWhere("likeCount", ">=", filters.minLikes);
+    qb.andWhere(p.likeCount.gte(filters.minLikes));
   }
 
   const [posts, total] = await qb
@@ -951,7 +977,7 @@ async function searchPosts(filters: {
 }
 ```
 
-Query builder가 쿼리를 **조건부로 빌드**할 수 있다는 점에 주목하세요. `find()`로는 `where` 객체를 수동으로 구성해야 하지만, query builder에서는 필요한 메서드를 그냥 호출하면 돼요. 특히 `leftJoin(User, "u", ...)` 형태로 엔티티 클래스를 직접 전달하면 raw SQL 없이 camelCase 프로퍼티명으로 조건을 작성할 수 있어요.
+`qAlias()`를 사용하면 query builder가 자연어처럼 읽혀요 — `u.name.like(...)`, `p.category.eq(...)`. TypeScript가 프로퍼티명과 조건 메서드 모두 자동 완성하므로 오타가 컴파일 에러가 돼요.
 
 ---
 

@@ -266,8 +266,29 @@ What's happening here:
 - `selectRaw([p.col("title"), u.col("name")])` — cross-entity column selection with autocomplete.
 - `where(u.col("age"), ">=", 18)` — WHERE conditions can also reference joined entity columns.
 
+With `qAlias()`, the same query uses QueryDSL-style expressions for WHERE conditions:
+
+```typescript
+const p = qAlias(Post, "p");
+const u = qAlias(User, "u");
+
+const posts = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoin(User, "u", (join) =>
+    join.on(p.col("authorId"), "=", u.col("id"))
+  )
+  .selectRaw([p.col("title"), u.col("name")])
+  .where(u.age.gte(18))              // QueryDSL style — auto-complete on both property and method
+  .orderBy({ createdAt: "DESC" })
+  .limit(20)
+  .getRawMany();
+```
+
 ::: tip
-You can also write string literals directly — `where("u.age", ">=", 18)` — if you prefer brevity over autocomplete. Both forms are equivalent at runtime.
+Three styles are available — all equivalent at runtime:
+- `where("u.age", ">=", 18)` — string literal, no autocomplete
+- `where(u.col("age"), ">=", 18)` — `alias()` / `qAlias()` `.col()`, property autocomplete
+- `where(u.age.gte(18))` — `qAlias()` QueryDSL, property + operator autocomplete
 :::
 
 The `JoinOnBuilder` callback supports multiple conditions and literal values:
@@ -362,17 +383,17 @@ This is the original API and remains fully supported.
 Chain multiple joins to traverse a graph of entities:
 
 ```typescript
-const p = alias(Post, "p");
-const u = alias(User, "u");
-const c = alias(Comment, "c");
+const p = qAlias(Post, "p");
+const u = qAlias(User, "u");
+const c = qAlias(Comment, "c");
 
 const results = await em
   .createQueryBuilder(Post, "p")
   .leftJoin(User, "u", (j) => j.on(p.col("authorId"), "=", u.col("id")))
   .leftJoin(Comment, "c", (j) => j.on(c.col("postId"), "=", p.col("id")))
   .selectRaw([p.col("title"), u.col("name"), c.col("content")])
-  .where(u.col("age"), ">=", 18)
-  .whereNotNull(c.col("content"))
+  .where(u.age.gte(18))                   // QueryDSL style
+  .where(c.content.isNotNull())            // QueryDSL style
   .addOrderBy(u.col("name"), "ASC")
   .limit(50)
   .getRawMany();
@@ -382,29 +403,42 @@ const results = await em
 
 Once an entity is joined (via entity-aware or relation-based join), you can reference its columns anywhere. Use `alias()` for autocomplete, or string literals for brevity — both work identically at runtime.
 
+**Using `qAlias()` (QueryDSL style):**
+
 ```typescript
-const u = alias(User, "u");
-const p = alias(Post, "p");
+const u = qAlias(User, "u");
+const p = qAlias(Post, "p");
 
-// WHERE — all styles (with autocomplete)
-qb.where(u.col("name"), "Alice");                  // equals
-qb.where(u.col("age"), ">=", 18);                  // operator
-qb.whereIn(u.col("id"), [1, 2, 3]);               // IN
-qb.whereNull(u.col("deletedAt"));                  // IS NULL
-qb.whereNotNull(u.col("email"));                   // IS NOT NULL
-qb.whereBetween(u.col("age"), 18, 65);            // BETWEEN
-qb.whereLike(u.col("name"), "%alice%");            // LIKE
+// WHERE — QueryDSL expressions (property + operator autocomplete)
+qb.where(u.name.eq("Alice"));                     // equals
+qb.where(u.age.gte(18));                           // >=
+qb.where(u.id.in([1, 2, 3]));                     // IN
+qb.where(u.deletedAt.isNull());                   // IS NULL
+qb.where(u.email.isNotNull());                    // IS NOT NULL
+qb.where(u.age.between(18, 65));                  // BETWEEN
+qb.where(u.name.like("%alice%"));                 // LIKE
 
-// SELECT — cross-entity projection
-qb.selectRaw([p.col("title"), u.col("name")]);    // pick columns from any joined entity
-qb.addSelect(u.col("email"), "authorEmail");       // add aliased column
+// SELECT — .col() for column references
+qb.selectRaw([p.col("title"), u.col("name")]);
+qb.addSelect(u.col("email"), "authorEmail");
 
-// ORDER BY / GROUP BY
+// ORDER BY / GROUP BY — .col() style
 qb.addOrderBy(u.col("name"), "ASC");
 qb.groupBy([u.col("id"), p.col("category")]);
 ```
 
-All references are resolved through the alias registry — `u.col("firstName")` produces `"u.firstName"` which becomes `"u"."first_name"` when using `SnakeNamingStrategy`.
+**Using `alias()` (.col() style):**
+
+```typescript
+const u = alias(User, "u");
+const p = alias(Post, "p");
+
+qb.where(u.col("name"), "Alice");
+qb.where(u.col("age"), ">=", 18);
+qb.whereIn(u.col("id"), [1, 2, 3]);
+```
+
+All references are resolved through the alias registry — `u.col("firstName")` or `u.firstName.eq(...)` both become `"u"."first_name"` when using `SnakeNamingStrategy`.
 
 #### Join Types Summary
 
@@ -501,13 +535,16 @@ const salesByCategory = await em
 With entity-aware joins, you can aggregate across related tables:
 
 ```typescript
+const p = qAlias(Post, "p");
+const u = qAlias(User, "u");
+
 const authorStats = await em
   .createQueryBuilder(Post, "p")
-  .leftJoin(User, "u", (join) => join.on("p.authorId", "=", "u.id"))
-  .selectRaw(["u.name"])
+  .leftJoin(User, "u", (join) => join.on(p.col("authorId"), "=", u.col("id")))
+  .selectRaw([u.col("name")])
   .addSelect(sql`COUNT(*)`, "postCount")
   .addSelect(sql`AVG("p"."likeCount")`, "avgLikes")
-  .groupBy(["u.name"])
+  .groupBy([u.col("name")])
   .having(sql`COUNT(*) >= ${3}`)
   .addOrderBy("postCount", "DESC")
   .getRawMany();
@@ -937,7 +974,7 @@ console.log(values);  // [true]
 Here's a realistic example that brings everything together. A search endpoint that accepts optional filters and returns paginated results with a total count.
 
 ```typescript
-import { alias } from "@stingerloom/orm";
+import { qAlias } from "@stingerloom/orm";
 
 async function searchPosts(filters: {
   authorName?: string;
@@ -946,8 +983,8 @@ async function searchPosts(filters: {
   page: number;
   pageSize: number;
 }) {
-  const p = alias(Post, "p");
-  const u = alias(User, "u");
+  const p = qAlias(Post, "p");
+  const u = qAlias(User, "u");
 
   const qb = em
     .createQueryBuilder(Post, "p")
@@ -958,13 +995,13 @@ async function searchPosts(filters: {
 
   // Each filter is optional — add conditions only when present
   if (filters.authorName) {
-    qb.where(u.col("name"), "LIKE", `%${filters.authorName}%`);
+    qb.where(u.name.like(`%${filters.authorName}%`));
   }
   if (filters.category) {
-    qb.andWhere("category", filters.category);
+    qb.andWhere(p.category.eq(filters.category));
   }
   if (filters.minLikes) {
-    qb.andWhere("likeCount", ">=", filters.minLikes);
+    qb.andWhere(p.likeCount.gte(filters.minLikes));
   }
 
   const [posts, total] = await qb
@@ -977,7 +1014,7 @@ async function searchPosts(filters: {
 }
 ```
 
-Notice how the query builder lets you **conditionally build** the query. With `find()`, you'd have to construct the `where` object manually. With the query builder, you just call methods as needed.
+Notice how `qAlias()` makes the query builder read like natural language — `u.name.like(...)`, `p.category.eq(...)`. TypeScript auto-completes both the property name and the condition method, so typos become compile errors.
 
 ---
 
