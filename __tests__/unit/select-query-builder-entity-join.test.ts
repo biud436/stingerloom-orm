@@ -845,11 +845,12 @@ describe("SelectQueryBuilder — Entity-Aware Joins", () => {
     });
 
     it("should work with addOrderBy", () => {
+      const a = alias(Article, "a");
       const au = alias(Author, "au");
 
       const { qb } = createQb(Article, "a");
       qb.leftJoin(Author, "au", (j) =>
-        j.on("a.authorId", "=", au.col("id")),
+        j.on(a.col("authorId"), "=", au.col("id")),
       );
       qb.addOrderBy(au.col("lastName"), "DESC");
       const { text } = qb.getSql();
@@ -858,11 +859,12 @@ describe("SelectQueryBuilder — Entity-Aware Joins", () => {
     });
 
     it("should work with whereIn, whereNull, whereBetween", () => {
+      const a = alias(Article, "a");
       const au = alias(Author, "au");
 
       const { qb } = createQb(Article, "a");
       qb.leftJoin(Author, "au", (j) =>
-        j.on("a.authorId", "=", au.col("id")),
+        j.on(a.col("authorId"), "=", au.col("id")),
       );
       qb.whereIn(au.col("id"), [1, 2, 3]);
       qb.whereNotNull(au.col("firstName"));
@@ -875,11 +877,12 @@ describe("SelectQueryBuilder — Entity-Aware Joins", () => {
     });
 
     it("should work with groupBy", () => {
+      const a = alias(Article, "a");
       const au = alias(Author, "au");
 
       const { qb } = createQb(Article, "a");
       qb.leftJoin(Author, "au", (j) =>
-        j.on("a.authorId", "=", au.col("id")),
+        j.on(a.col("authorId"), "=", au.col("id")),
       );
       qb.groupBy([au.col("firstName")] as any);
       const { text } = qb.getSql();
