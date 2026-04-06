@@ -191,6 +191,54 @@ u.col("typo");       // ✗ compile error — "typo" is not keyof User
 
 You can use `alias()` references everywhere — `where()`, `selectRaw()`, `addOrderBy()`, `whereIn()`, `JoinOnBuilder.on()`, etc.
 
+#### QueryDSL-Style Expressions with `qAlias()`
+
+For an even more expressive API, `qAlias()` lets you access entity properties directly and chain condition methods — similar to JPA QueryDSL's `QUser` classes, but without code generation.
+
+```typescript
+import { qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+const p = qAlias(Post, "p");
+
+const posts = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoin(User, "u", (j) => j.on(p.col("authorId"), "=", u.col("id")))
+  .where(u.firstName.eq("Alice"))           // u.firstName auto-completes ✓
+  .where(u.age.gte(18))                     // .gte() → >= operator
+  .where(p.status.in(["active", "draft"]))  // .in() → IN (...)
+  .where(u.deletedAt.isNull())              // .isNull() → IS NULL
+  .getRawMany();
+```
+
+Every entity property becomes a `ColumnExpression` with these methods:
+
+| Method | SQL | Example |
+|--------|-----|---------|
+| `.eq(value)` | `= ?` | `u.name.eq("Alice")` |
+| `.neq(value)` | `!= ?` | `u.role.neq("guest")` |
+| `.gt(value)` | `> ?` | `u.age.gt(18)` |
+| `.gte(value)` | `>= ?` | `u.age.gte(18)` |
+| `.lt(value)` | `< ?` | `u.age.lt(65)` |
+| `.lte(value)` | `<= ?` | `u.age.lte(65)` |
+| `.like(pattern)` | `LIKE ?` | `u.name.like("%John%")` |
+| `.notLike(pattern)` | `NOT LIKE ?` | `u.name.notLike("%bot%")` |
+| `.in(values)` | `IN (?, ?, ...)` | `u.id.in([1, 2, 3])` |
+| `.notIn(values)` | `NOT IN (...)` | `u.id.notIn([999])` |
+| `.isNull()` | `IS NULL` | `u.deletedAt.isNull()` |
+| `.isNotNull()` | `IS NOT NULL` | `u.email.isNotNull()` |
+| `.between(min, max)` | `BETWEEN ? AND ?` | `u.age.between(18, 65)` |
+
+Each method returns a `ColumnCondition` that the query builder resolves through its alias registry — SnakeNamingStrategy is fully supported.
+
+`qAlias()` also supports `.col()` from `alias()`, so you can mix styles:
+
+```typescript
+const u = qAlias(User, "u");
+qb.where(u.firstName.eq("Alice"))     // QueryDSL style
+  .addOrderBy(u.col("lastName"), "ASC") // alias() style — both work
+```
+
 #### Entity-Aware Joins (Recommended)
 
 The best way to join tables is by passing the **entity class** directly. The ORM automatically resolves the table name and lets you reference columns using camelCase property names.

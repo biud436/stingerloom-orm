@@ -191,6 +191,54 @@ u.col("typo");       // ✗ 컴파일 에러 — "typo"는 User의 키가 아님
 
 `alias()` 참조는 어디서든 쓸 수 있어요 — `where()`, `selectRaw()`, `addOrderBy()`, `whereIn()`, `JoinOnBuilder.on()` 등.
 
+#### `qAlias()` — QueryDSL 스타일 표현식
+
+더 직관적인 API를 원한다면, `qAlias()`로 엔티티 프로퍼티에 직접 접근하고 조건 메서드를 체이닝할 수 있어요 — JPA QueryDSL의 `QUser` 클래스와 비슷하지만, 코드 생성이 필요 없어요.
+
+```typescript
+import { qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+const p = qAlias(Post, "p");
+
+const posts = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoin(User, "u", (j) => j.on(p.col("authorId"), "=", u.col("id")))
+  .where(u.firstName.eq("Alice"))           // u.firstName 자동 완성 ✓
+  .where(u.age.gte(18))                     // .gte() → >= 연산자
+  .where(p.status.in(["active", "draft"]))  // .in() → IN (...)
+  .where(u.deletedAt.isNull())              // .isNull() → IS NULL
+  .getRawMany();
+```
+
+모든 엔티티 프로퍼티가 이 메서드들을 가진 `ColumnExpression`이 돼요:
+
+| Method | SQL | 예시 |
+|--------|-----|------|
+| `.eq(value)` | `= ?` | `u.name.eq("Alice")` |
+| `.neq(value)` | `!= ?` | `u.role.neq("guest")` |
+| `.gt(value)` | `> ?` | `u.age.gt(18)` |
+| `.gte(value)` | `>= ?` | `u.age.gte(18)` |
+| `.lt(value)` | `< ?` | `u.age.lt(65)` |
+| `.lte(value)` | `<= ?` | `u.age.lte(65)` |
+| `.like(pattern)` | `LIKE ?` | `u.name.like("%John%")` |
+| `.notLike(pattern)` | `NOT LIKE ?` | `u.name.notLike("%bot%")` |
+| `.in(values)` | `IN (?, ?, ...)` | `u.id.in([1, 2, 3])` |
+| `.notIn(values)` | `NOT IN (...)` | `u.id.notIn([999])` |
+| `.isNull()` | `IS NULL` | `u.deletedAt.isNull()` |
+| `.isNotNull()` | `IS NOT NULL` | `u.email.isNotNull()` |
+| `.between(min, max)` | `BETWEEN ? AND ?` | `u.age.between(18, 65)` |
+
+각 메서드는 `ColumnCondition`을 반환하고, query builder가 alias 레지스트리를 통해 해석해요 — SnakeNamingStrategy도 완벽하게 지원해요.
+
+`qAlias()`는 `alias()`의 `.col()`도 지원하므로, 스타일을 섞어 쓸 수 있어요:
+
+```typescript
+const u = qAlias(User, "u");
+qb.where(u.firstName.eq("Alice"))     // QueryDSL 스타일
+  .addOrderBy(u.col("lastName"), "ASC") // alias() 스타일 — 둘 다 동작
+```
+
 #### Entity-Aware Join (추천)
 
 테이블 조인의 가장 좋은 방법은 **엔티티 클래스**를 직접 전달하는 거예요. ORM이 테이블명을 자동으로 해석하고, `alias()`로 camelCase 프로퍼티명을 자동 완성할 수 있어요.
