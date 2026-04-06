@@ -12,6 +12,82 @@ import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
 import { COLUMN_TOKEN } from "../decorators/Column";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
+import type { RelationMetadataResolver } from "./RelationMetadataResolver";
+import type { EntityScannerMetadata } from "../scanner";
+
+/**
+ * Entry in the alias registry: maps a table alias to its entity metadata.
+ */
+interface AliasEntry {
+  entity: ClazzType<any>;
+  tableName: string;
+  propertyToColumnMap: Map<string, string>;
+}
+
+/**
+ * Fluent builder for JOIN ON conditions.
+ *
+ * Used with entity-aware joins to build type-safe ON clauses
+ * using entity property names instead of raw column names.
+ *
+ * @example
+ * ```ts
+ * qb.leftJoin(User, "u", (join) =>
+ *   join.on("p.userId", "=", "u.id")
+ * )
+ * ```
+ */
+export class JoinOnBuilder {
+  private conditions: Sql[] = [];
+
+  constructor(
+    private readonly columnResolver: (ref: string) => string,
+  ) {}
+
+  /**
+   * Add an ON condition comparing two column references.
+   * Both sides are resolved through the alias registry.
+   *
+   * @example join.on("p.userId", "=", "u.id")
+   */
+  on(leftRef: string, operator: string, rightRef: string): this {
+    const left = this.columnResolver(leftRef);
+    const right = this.columnResolver(rightRef);
+    this.conditions.push(Conditions.compareColumns(left, operator, right));
+    return this;
+  }
+
+  /**
+   * Alias for `on()` — add additional ON condition with AND semantics.
+   */
+  andOn(leftRef: string, operator: string, rightRef: string): this {
+    return this.on(leftRef, operator, rightRef);
+  }
+
+  /**
+   * Add an ON condition comparing a column to a literal value.
+   *
+   * @example join.onVal("p.status", "=", "published")
+   */
+  onVal(ref: string, operator: string, value: any): this {
+    const col = this.columnResolver(ref);
+    const op = operator.trim().toUpperCase();
+    this.conditions.push(sql`${raw(col)} ${raw(op)} ${value}`);
+    return this;
+  }
+
+  /** @internal Build the combined ON condition. */
+  build(): Sql {
+    if (this.conditions.length === 0) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        "JOIN ON condition is empty. Use .on() to specify at least one condition.",
+      );
+    }
+    if (this.conditions.length === 1) return this.conditions[0];
+    return Conditions.and(this.conditions);
+  }
+}
 
 /**
  * Validator function that can be attached to a SelectQueryBuilder.
@@ -135,6 +211,12 @@ export class SelectQueryBuilder<T, TResult = T> {
   /** Dialect-specific SQL expression generator (ILIKE, full-text search, etc.). */
   protected dialectExpression?: DialectExpression;
 
+  /**
+   * Registry mapping table aliases to their entity metadata.
+   * Enables cross-entity column resolution: `"u.firstName"` → `"u"."first_name"`.
+   */
+  protected aliasRegistry: Map<string, AliasEntry> = new Map();
+
   constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
     this.entity = entity;
     this.alias = alias;
@@ -144,6 +226,18 @@ export class SelectQueryBuilder<T, TResult = T> {
   /** Set the property-to-column mapping for NamingStrategy support. */
   setPropertyToColumnMap(map: Map<string, string>): this {
     this.propertyToColumnMap = map;
+    // Also register main entity in alias registry
+    const resolver = (this.em as any).resolver as RelationMetadataResolver | undefined;
+    if (resolver) {
+      const metadata = resolver.resolveEntityMetadata(this.entity);
+      if (metadata) {
+        this.aliasRegistry.set(this.alias, {
+          entity: this.entity,
+          tableName: metadata.name!,
+          propertyToColumnMap: map,
+        });
+      }
+    }
     return this;
   }
 
@@ -161,9 +255,47 @@ export class SelectQueryBuilder<T, TResult = T> {
     return `${this.em.wrap(this.alias)}.${this.em.wrap(dbCol)}`;
   }
 
-  /** Qualify a column for a different alias */
+  /** Qualify a column for a different alias, resolving property names via alias registry. */
   protected qualifiedCol(tableAlias: string, column: string): string {
+    const entry = this.aliasRegistry.get(tableAlias);
+    if (entry) {
+      const dbCol = entry.propertyToColumnMap.get(column) ?? column;
+      return `${this.em.wrap(tableAlias)}.${this.em.wrap(dbCol)}`;
+    }
     return `${this.em.wrap(tableAlias)}.${this.em.wrap(column)}`;
+  }
+
+  /**
+   * Resolve a column reference that may use `"alias.property"` notation.
+   *
+   * - `"u.firstName"` → splits on dot, looks up alias `"u"` in registry,
+   *   maps property `"firstName"` → DB column `"first_name"` → `"u"."first_name"`
+   * - `"firstName"` → no dot, delegates to `col()` (main entity)
+   */
+  protected resolveColumn(ref: string): string {
+    const dotIndex = ref.indexOf(".");
+    if (dotIndex > 0) {
+      const alias = ref.substring(0, dotIndex);
+      const property = ref.substring(dotIndex + 1);
+      return this.qualifiedCol(alias, property);
+    }
+    return this.col(ref);
+  }
+
+  /**
+   * Build a property-to-column map from entity metadata.
+   * Duplicates EntityManager.buildPropertyToColumnMap logic to avoid
+   * depending on its private visibility.
+   */
+  protected buildPropertyToColumnMapFromMetadata(
+    metadata: { columns: ColumnMetadata[] },
+  ): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const col of metadata.columns) {
+      const prop = col.propertyKey ?? col.name!;
+      map.set(prop, col.name!);
+    }
+    return map;
   }
 
   // ── SELECT ───────────────────────────────────────────────
@@ -205,8 +337,26 @@ export class SelectQueryBuilder<T, TResult = T> {
    * qb.addSelect(Conditions.count("*"), "total")
    * ```
    */
+  /**
+   * Select columns using alias-prefixed property names for cross-entity queries.
+   *
+   * Unlike `select()`, this method accepts `"alias.property"` notation and
+   * does not perform TypeScript type narrowing.
+   *
+   * @example
+   * ```ts
+   * qb.leftJoin(User, "u", (j) => j.on("p.userId", "=", "u.id"))
+   *   .selectRaw(["p.title", "u.firstName"])
+   * ```
+   */
+  selectRaw(columns: string[]): this {
+    this.selectColumns = columns.map((c) => this.resolveColumn(c));
+    this.selectedPropertyKeys = null;
+    return this;
+  }
+
   addSelect(expr: Sql | string, alias?: string): this {
-    const exprStr = typeof expr === "string" ? this.col(expr) : expr.sql;
+    const exprStr = typeof expr === "string" ? this.resolveColumn(expr) : expr.sql;
     const fragment = alias ? `${exprStr} AS ${this.em.wrap(alias)}` : exprStr;
     if (this.selectColumns === "*") {
       this.selectColumns = [`${this.em.wrap(this.alias)}.*`, fragment];
@@ -229,15 +379,18 @@ export class SelectQueryBuilder<T, TResult = T> {
   /**
    * Add a WHERE condition. Supports multiple call signatures:
    *
-   * 1. `where("name", "Alice")` → equals
+   * 1. `where("name", "Alice")` → equals (main entity property)
    * 2. `where("age", ">=", 18)` → operator
-   * 3. `where(Conditions.like("u"."name", "%alice%"))` → raw Sql
+   * 3. `where("u.firstName", "LIKE", "%John%")` → cross-entity with alias
+   * 4. `where(Conditions.like(...))` → raw Sql
    */
   where(condition: Sql): this;
   where(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   where(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
+  where(column: string, value: any): this;
+  where(column: string, operator: WhereOperator, value: any): this;
   where(
-    columnOrCondition: ColumnOf<T> | Sql,
+    columnOrCondition: string | Sql,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -253,8 +406,10 @@ export class SelectQueryBuilder<T, TResult = T> {
   andWhere(condition: Sql): this;
   andWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   andWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
+  andWhere(column: string, value: any): this;
+  andWhere(column: string, operator: WhereOperator, value: any): this;
   andWhere(
-    columnOrCondition: ColumnOf<T> | Sql,
+    columnOrCondition: string | Sql,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -270,8 +425,10 @@ export class SelectQueryBuilder<T, TResult = T> {
   orWhere(condition: Sql): this;
   orWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   orWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
+  orWhere(column: string, value: any): this;
+  orWhere(column: string, operator: WhereOperator, value: any): this;
   orWhere(
-    columnOrCondition: ColumnOf<T> | Sql,
+    columnOrCondition: string | Sql,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -291,50 +448,62 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
-   * WHERE column IN (values).
+   * WHERE column IN (values). Supports `"alias.property"` notation.
    */
-  whereIn(column: ColumnOf<T>, values: any[]): this {
-    this.whereClauses.push(Conditions.in(this.col(column), values));
+  whereIn(column: ColumnOf<T>, values: any[]): this;
+  whereIn(column: string, values: any[]): this;
+  whereIn(column: string, values: any[]): this {
+    this.whereClauses.push(Conditions.in(this.resolveColumn(column), values));
     return this;
   }
 
   /**
-   * WHERE column NOT IN (values).
+   * WHERE column NOT IN (values). Supports `"alias.property"` notation.
    */
-  whereNotIn(column: ColumnOf<T>, values: any[]): this {
-    this.whereClauses.push(Conditions.notIn(this.col(column), values));
+  whereNotIn(column: ColumnOf<T>, values: any[]): this;
+  whereNotIn(column: string, values: any[]): this;
+  whereNotIn(column: string, values: any[]): this {
+    this.whereClauses.push(Conditions.notIn(this.resolveColumn(column), values));
     return this;
   }
 
   /**
-   * WHERE column IS NULL.
+   * WHERE column IS NULL. Supports `"alias.property"` notation.
    */
-  whereNull(column: ColumnOf<T>): this {
-    this.whereClauses.push(Conditions.isNull(this.col(column)));
+  whereNull(column: ColumnOf<T>): this;
+  whereNull(column: string): this;
+  whereNull(column: string): this {
+    this.whereClauses.push(Conditions.isNull(this.resolveColumn(column)));
     return this;
   }
 
   /**
-   * WHERE column IS NOT NULL.
+   * WHERE column IS NOT NULL. Supports `"alias.property"` notation.
    */
-  whereNotNull(column: ColumnOf<T>): this {
-    this.whereClauses.push(Conditions.isNotNull(this.col(column)));
+  whereNotNull(column: ColumnOf<T>): this;
+  whereNotNull(column: string): this;
+  whereNotNull(column: string): this {
+    this.whereClauses.push(Conditions.isNotNull(this.resolveColumn(column)));
     return this;
   }
 
   /**
-   * WHERE column BETWEEN min AND max.
+   * WHERE column BETWEEN min AND max. Supports `"alias.property"` notation.
    */
-  whereBetween(column: ColumnOf<T>, min: any, max: any): this {
-    this.whereClauses.push(Conditions.between(this.col(column), min, max));
+  whereBetween(column: ColumnOf<T>, min: any, max: any): this;
+  whereBetween(column: string, min: any, max: any): this;
+  whereBetween(column: string, min: any, max: any): this {
+    this.whereClauses.push(Conditions.between(this.resolveColumn(column), min, max));
     return this;
   }
 
   /**
-   * WHERE column LIKE pattern.
+   * WHERE column LIKE pattern. Supports `"alias.property"` notation.
    */
-  whereLike(column: ColumnOf<T>, pattern: string): this {
-    this.whereClauses.push(Conditions.like(this.col(column), pattern));
+  whereLike(column: ColumnOf<T>, pattern: string): this;
+  whereLike(column: string, pattern: string): this;
+  whereLike(column: string, pattern: string): this {
+    this.whereClauses.push(Conditions.like(this.resolveColumn(column), pattern));
     return this;
   }
 
@@ -343,27 +512,81 @@ export class SelectQueryBuilder<T, TResult = T> {
   /**
    * Add a LEFT JOIN.
    *
-   * @example
-   * ```ts
-   * qb.leftJoin("posts", "p", "u.id = p.authorId")
-   * ```
+   * Supports two forms:
+   * 1. **String-based** (backward compatible): `leftJoin("posts", "p", "u.id = p.author_id")`
+   * 2. **Entity-aware**: `leftJoin(User, "u", (join) => join.on("p.userId", "=", "u.id"))`
    */
-  leftJoin(table: string, alias: string, condition: Sql | string): this {
-    return this.addJoin("LEFT", table, alias, condition);
+  leftJoin(table: string, alias: string, condition: Sql | string): this;
+  leftJoin<U>(entity: ClazzType<U>, alias: string, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
+  leftJoin(
+    tableOrEntity: string | ClazzType<any>,
+    alias: string,
+    conditionOrBuilder: Sql | string | ((join: JoinOnBuilder) => JoinOnBuilder),
+  ): this {
+    if (typeof tableOrEntity === "function" && typeof conditionOrBuilder === "function") {
+      return this.addEntityJoin("LEFT", tableOrEntity, alias, conditionOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
+    }
+    return this.addJoin("LEFT", tableOrEntity as string, alias, conditionOrBuilder as Sql | string);
   }
 
   /**
    * Add an INNER JOIN.
+   *
+   * Supports both string-based and entity-aware forms.
    */
-  innerJoin(table: string, alias: string, condition: Sql | string): this {
-    return this.addJoin("INNER", table, alias, condition);
+  innerJoin(table: string, alias: string, condition: Sql | string): this;
+  innerJoin<U>(entity: ClazzType<U>, alias: string, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
+  innerJoin(
+    tableOrEntity: string | ClazzType<any>,
+    alias: string,
+    conditionOrBuilder: Sql | string | ((join: JoinOnBuilder) => JoinOnBuilder),
+  ): this {
+    if (typeof tableOrEntity === "function" && typeof conditionOrBuilder === "function") {
+      return this.addEntityJoin("INNER", tableOrEntity, alias, conditionOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
+    }
+    return this.addJoin("INNER", tableOrEntity as string, alias, conditionOrBuilder as Sql | string);
   }
 
   /**
    * Add a RIGHT JOIN.
+   *
+   * Supports both string-based and entity-aware forms.
    */
-  rightJoin(table: string, alias: string, condition: Sql | string): this {
-    return this.addJoin("RIGHT", table, alias, condition);
+  rightJoin(table: string, alias: string, condition: Sql | string): this;
+  rightJoin<U>(entity: ClazzType<U>, alias: string, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
+  rightJoin(
+    tableOrEntity: string | ClazzType<any>,
+    alias: string,
+    conditionOrBuilder: Sql | string | ((join: JoinOnBuilder) => JoinOnBuilder),
+  ): this {
+    if (typeof tableOrEntity === "function" && typeof conditionOrBuilder === "function") {
+      return this.addEntityJoin("RIGHT", tableOrEntity, alias, conditionOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
+    }
+    return this.addJoin("RIGHT", tableOrEntity as string, alias, conditionOrBuilder as Sql | string);
+  }
+
+  /**
+   * Add a LEFT JOIN using a relation property name.
+   * Automatically resolves the ON condition from @ManyToOne / @OneToMany / @OneToOne metadata.
+   *
+   * @example
+   * ```ts
+   * // Post has @ManyToOne(() => User) user property
+   * em.createQueryBuilder(Post, "p")
+   *   .leftJoinRelation("user", "u")   // auto: ON p.user_id = u.id
+   *   .where("u.firstName", "LIKE", "%John%")
+   * ```
+   */
+  leftJoinRelation(propertyName: string, alias: string): this {
+    return this.addRelationJoin("LEFT", propertyName, alias);
+  }
+
+  /**
+   * Add an INNER JOIN using a relation property name.
+   * @see leftJoinRelation
+   */
+  innerJoinRelation(propertyName: string, alias: string): this {
+    return this.addRelationJoin("INNER", propertyName, alias);
   }
 
   protected addJoin(
@@ -376,6 +599,242 @@ export class SelectQueryBuilder<T, TResult = T> {
       typeof condition === "string" ? sql`${raw(condition)}` : condition;
     this.joinClauses.push({ type, table, alias, condition: cond });
     return this;
+  }
+
+  protected addEntityJoin<U>(
+    type: "LEFT" | "INNER" | "RIGHT",
+    entity: ClazzType<U>,
+    alias: string,
+    onBuilder: (join: JoinOnBuilder) => JoinOnBuilder,
+  ): this {
+    const resolver = (this.em as any).resolver as RelationMetadataResolver;
+    if (!resolver) {
+      throw new OrmError(
+        OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
+        `EntityManager not connected. Cannot resolve entity metadata for ${entity.name}.`,
+      );
+    }
+    const metadata = resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new OrmError(
+        OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
+        `Entity metadata not found for ${entity.name}. Did you register the entity?`,
+      );
+    }
+
+    const propToCol = this.buildPropertyToColumnMapFromMetadata(metadata);
+    this.aliasRegistry.set(alias, {
+      entity,
+      tableName: metadata.name!,
+      propertyToColumnMap: propToCol,
+    });
+
+    const builder = new JoinOnBuilder((ref) => this.resolveColumn(ref));
+    onBuilder(builder);
+    const condition = builder.build();
+
+    this.joinClauses.push({
+      type,
+      table: metadata.name!,
+      alias,
+      condition,
+    });
+
+    return this;
+  }
+
+  protected addRelationJoin(
+    type: "LEFT" | "INNER" | "RIGHT",
+    propertyName: string,
+    alias: string,
+  ): this {
+    const resolver = (this.em as any).resolver as RelationMetadataResolver;
+    if (!resolver) {
+      throw new OrmError(
+        OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
+        `EntityManager not connected. Cannot resolve relation metadata.`,
+      );
+    }
+
+    // Check source entity — may be a joined entity if propertyName is "alias.property"
+    let sourceAlias = this.alias;
+    let sourceEntity = this.entity as ClazzType<any>;
+    let relationProp = propertyName;
+
+    const dotIndex = propertyName.indexOf(".");
+    if (dotIndex > 0) {
+      sourceAlias = propertyName.substring(0, dotIndex);
+      relationProp = propertyName.substring(dotIndex + 1);
+      const entry = this.aliasRegistry.get(sourceAlias);
+      if (entry) {
+        sourceEntity = entry.entity;
+      }
+    }
+
+    // Try ManyToOne
+    const manyToOnes = resolver.resolveManyToOneMetadata(sourceEntity);
+    const m2oRel = manyToOnes.find((r) => r.columnName === relationProp);
+    if (m2oRel) {
+      return this.addRelationJoinFromManyToOne(type, m2oRel, alias, sourceAlias, resolver);
+    }
+
+    // Try OneToMany
+    const oneToManys = resolver.resolveOneToManyMetadata(sourceEntity);
+    const o2mRel = oneToManys.find((r) => r.propertyKey === relationProp);
+    if (o2mRel) {
+      return this.addRelationJoinFromOneToMany(type, o2mRel, alias, sourceAlias, sourceEntity, resolver);
+    }
+
+    // Try OneToOne
+    const oneToOnes = resolver.resolveOneToOneMetadata(sourceEntity);
+    const o2oRel = oneToOnes.find((r) => r.propertyKey === relationProp);
+    if (o2oRel) {
+      return this.addRelationJoinFromOneToOne(type, o2oRel, alias, sourceAlias, resolver);
+    }
+
+    throw new OrmError(
+      OrmErrorCode.INVALID_QUERY,
+      `No relation found for property "${relationProp}" on entity ${sourceEntity.name}. ` +
+        `Available ManyToOne: [${manyToOnes.map((r) => r.columnName).join(", ")}], ` +
+        `OneToMany: [${oneToManys.map((r) => r.propertyKey).join(", ")}], ` +
+        `OneToOne: [${oneToOnes.map((r) => r.propertyKey).join(", ")}].`,
+    );
+  }
+
+  protected addRelationJoinFromManyToOne(
+    type: "LEFT" | "INNER" | "RIGHT",
+    rel: any,
+    alias: string,
+    sourceAlias: string,
+    resolver: RelationMetadataResolver,
+  ): this {
+    const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+    const relatedMeta = resolver.resolveEntityMetadata(RelatedEntity);
+    if (!relatedMeta) {
+      throw new OrmError(
+        OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
+        `Entity metadata not found for ${RelatedEntity.name}.`,
+      );
+    }
+
+    // FK column on source entity
+    const sourceEntry = this.aliasRegistry.get(sourceAlias);
+    const joinColumn = sourceEntry
+      ? (sourceEntry.propertyToColumnMap.get(rel.joinColumn ?? `${rel.columnName}Id`) ?? rel.joinColumn ?? `${rel.columnName}_id`)
+      : (rel.joinColumn ?? `${rel.columnName}_id`);
+
+    // PK column on related entity
+    const referencedColumn = rel.references ?? this.findPrimaryColumn(relatedMeta) ?? "id";
+
+    // Register alias
+    const propToCol = this.buildPropertyToColumnMapFromMetadata(relatedMeta);
+    this.aliasRegistry.set(alias, {
+      entity: RelatedEntity,
+      tableName: relatedMeta.name!,
+      propertyToColumnMap: propToCol,
+    });
+
+    const left = `${this.em.wrap(sourceAlias)}.${this.em.wrap(joinColumn)}`;
+    const right = `${this.em.wrap(alias)}.${this.em.wrap(referencedColumn)}`;
+    const condition = Conditions.compareColumns(left, "=", right);
+
+    this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
+    return this;
+  }
+
+  protected addRelationJoinFromOneToMany(
+    type: "LEFT" | "INNER" | "RIGHT",
+    rel: any,
+    alias: string,
+    sourceAlias: string,
+    sourceEntity: ClazzType<any>,
+    resolver: RelationMetadataResolver,
+  ): this {
+    const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+    const relatedMeta = resolver.resolveEntityMetadata(RelatedEntity);
+    if (!relatedMeta) {
+      throw new OrmError(
+        OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
+        `Entity metadata not found for ${RelatedEntity.name}.`,
+      );
+    }
+
+    // Find the ManyToOne on the related entity that maps back
+    const relatedM2Os = resolver.resolveManyToOneMetadata(RelatedEntity);
+    const reverseRel = relatedM2Os.find((r) => r.columnName === rel.mappedBy);
+
+    const propToCol = this.buildPropertyToColumnMapFromMetadata(relatedMeta);
+
+    // FK column on related entity
+    let fkColumn: string;
+    if (reverseRel?.joinColumn) {
+      fkColumn = reverseRel.joinColumn;
+    } else {
+      // fallback: use mappedById from propToCol, or convention
+      fkColumn = propToCol.get(`${rel.mappedBy}Id`) ?? `${rel.mappedBy}_id`;
+    }
+
+    // PK column on source entity
+    const sourceMeta = resolver.resolveEntityMetadata(sourceEntity);
+    const pk = sourceMeta ? this.findPrimaryColumn(sourceMeta) ?? "id" : "id";
+
+    this.aliasRegistry.set(alias, {
+      entity: RelatedEntity,
+      tableName: relatedMeta.name!,
+      propertyToColumnMap: propToCol,
+    });
+
+    const left = `${this.em.wrap(sourceAlias)}.${this.em.wrap(pk)}`;
+    const right = `${this.em.wrap(alias)}.${this.em.wrap(fkColumn)}`;
+    const condition = Conditions.compareColumns(left, "=", right);
+
+    this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
+    return this;
+  }
+
+  protected addRelationJoinFromOneToOne(
+    type: "LEFT" | "INNER" | "RIGHT",
+    rel: any,
+    alias: string,
+    sourceAlias: string,
+    resolver: RelationMetadataResolver,
+  ): this {
+    const RelatedEntity = (rel.getRelatedEntity ?? rel.getMappingEntity)() as ClazzType<any>;
+    const relatedMeta = resolver.resolveEntityMetadata(RelatedEntity);
+    if (!relatedMeta) {
+      throw new OrmError(
+        OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
+        `Entity metadata not found for ${RelatedEntity.name}.`,
+      );
+    }
+
+    const sourceEntry = this.aliasRegistry.get(sourceAlias);
+    const joinColumn = sourceEntry
+      ? (sourceEntry.propertyToColumnMap.get(rel.joinColumn ?? `${rel.propertyKey}Id`) ?? rel.joinColumn ?? `${rel.propertyKey}_id`)
+      : (rel.joinColumn ?? `${rel.propertyKey}_id`);
+
+    const referencedColumn = this.findPrimaryColumn(relatedMeta) ?? "id";
+
+    const propToCol = this.buildPropertyToColumnMapFromMetadata(relatedMeta);
+    this.aliasRegistry.set(alias, {
+      entity: RelatedEntity,
+      tableName: relatedMeta.name!,
+      propertyToColumnMap: propToCol,
+    });
+
+    const left = `${this.em.wrap(sourceAlias)}.${this.em.wrap(joinColumn)}`;
+    const right = `${this.em.wrap(alias)}.${this.em.wrap(referencedColumn)}`;
+    const condition = Conditions.compareColumns(left, "=", right);
+
+    this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
+    return this;
+  }
+
+  protected findPrimaryColumn(metadata: EntityScannerMetadata): string | null {
+    const pk = metadata.columns.find(
+      (c: ColumnMetadata) => c.options?.primary || (c.options as any)?.autoIncrement,
+    );
+    return pk?.name ?? null;
   }
 
   // ── ORDER BY / GROUP BY / HAVING ────────────────────────
@@ -402,18 +861,22 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
-   * Add a single ORDER BY clause.
+   * Add a single ORDER BY clause. Supports `"alias.property"` notation.
    */
-  addOrderBy(column: ColumnOf<T>, direction: "ASC" | "DESC"): this {
-    this.orderByClauses.push({ column: this.col(column), direction });
+  addOrderBy(column: ColumnOf<T>, direction: "ASC" | "DESC"): this;
+  addOrderBy(column: string, direction: "ASC" | "DESC"): this;
+  addOrderBy(column: string, direction: "ASC" | "DESC"): this {
+    this.orderByClauses.push({ column: this.resolveColumn(column), direction });
     return this;
   }
 
   /**
-   * Set GROUP BY columns.
+   * Set GROUP BY columns. Supports `"alias.property"` notation.
    */
-  groupBy(columns: ColumnOf<T>[]): this {
-    this.groupByCols = columns.map((c) => this.col(c));
+  groupBy(columns: ColumnOf<T>[]): this;
+  groupBy(columns: string[]): this;
+  groupBy(columns: string[]): this {
+    this.groupByCols = columns.map((c) => this.resolveColumn(c));
     return this;
   }
 
@@ -1052,7 +1515,7 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   protected resolveCondition(
-    columnOrCondition: ColumnOf<T> | Sql,
+    columnOrCondition: string | Sql,
     operatorOrValue?: any,
     value?: any,
   ): Sql {
@@ -1062,7 +1525,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     }
 
     const column = columnOrCondition;
-    const qualified = this.col(column);
+    const qualified = this.resolveColumn(column);
 
     // Overload 2: where("name", "Alice") — 2 args, equals
     if (value === undefined) {

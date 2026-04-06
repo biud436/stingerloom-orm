@@ -134,12 +134,13 @@ describe("SelectQueryBuilder type safety", () => {
     qb.select(["id", "nonexistent"]);
   });
 
-  it("should reject invalid column names in where()", () => {
+  it("should accept cross-entity string column names in where()", () => {
     const em = createMockEm();
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em);
 
-    // @ts-expect-error — "nonexistent" is not a key of TestUser
+    // Now accepts any string for cross-entity "alias.property" support
     qb.where("nonexistent", "value");
+    qb.where("u.name", "value");
   });
 
   it("should reject invalid column names in orderBy()", () => {
