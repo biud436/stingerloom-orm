@@ -164,36 +164,138 @@ qb.whereLike("name", "%alice%");
 
 Each helper appends an AND condition to the existing WHERE clause. You can mix them freely with `where()` and `andWhere()`.
 
+All WHERE methods also accept cross-entity references using `"alias.property"` notation — see [Cross-Entity Column Resolution](#cross-entity-column-resolution) in the JOIN section.
+
 ### JOIN — Combining Tables
 
-This is where the query builder really shines. Suppose you want to list posts along with their author's name. The `Post` entity has an `authorId` column, but you want the actual name from the `User` table.
+This is where the query builder really shines. Stingerloom provides three levels of JOIN support, from fully automatic to raw SQL.
+
+#### Entity-Aware Joins (Recommended)
+
+The best way to join tables is by passing the **entity class** directly. The ORM automatically resolves the table name and lets you reference columns using camelCase property names.
 
 ```typescript
-import sql from "sql-template-tag";
-
 const posts = await em
   .createQueryBuilder(Post, "p")
-  .select(["id", "title"])
-  .addSelect(sql`"u"."name"`, "authorName")
-  .leftJoin("users", "u", sql`"p"."author_id" = "u"."id"`)
+  .leftJoin(User, "u", (join) =>
+    join.on("p.authorId", "=", "u.id")
+  )
+  .selectRaw(["p.title", "u.name"])
+  .where("u.age", ">=", 18)
   .orderBy({ createdAt: "DESC" })
   .limit(20)
   .getRawMany();
 ```
 
-Let's break down what happened:
+What's happening here:
 
-- `leftJoin("users", "u", ...)` joins the `users` table with alias `"u"`, using the given condition.
-- `addSelect(sql\`"u"."name"\`, "authorName")` adds a raw column from the joined table. Since `"name"` belongs to `User`, not `Post`, we use `addSelect` with raw SQL instead of the type-safe `select()`.
-- The result is a `LEFT JOIN` — posts without an author still appear (with `authorName` as NULL).
+- `leftJoin(User, "u", ...)` — the first argument is the **entity class**, not a table name string. The ORM resolves the actual table name (`user`) and registers the `"u"` alias in its internal registry.
+- `join.on("p.authorId", "=", "u.id")` — the ON condition uses **camelCase property names** with alias prefix. If you're using `SnakeNamingStrategy`, `authorId` is automatically translated to `author_id` in the generated SQL.
+- `selectRaw(["p.title", "u.name"])` — cross-entity column selection using `"alias.property"` notation.
+- `where("u.age", ">=", 18)` — WHERE conditions can also reference joined entity columns.
 
-Three join types are available:
+The `JoinOnBuilder` callback supports multiple conditions and literal values:
+
+```typescript
+qb.leftJoin(User, "u", (join) =>
+  join
+    .on("p.authorId", "=", "u.id")       // column = column
+    .andOn("u.status", "=", "p.status")   // additional condition
+    .onVal("u.isActive", "=", true)       // column = literal value
+);
+```
+
+#### Relation-Based Joins (Automatic ON)
+
+If your entities have `@ManyToOne` / `@OneToMany` / `@OneToOne` decorators, you can skip the ON condition entirely. The ORM derives it from the relation metadata.
+
+```typescript
+// Post has: @ManyToOne(() => User) author: User;
+
+const posts = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoinRelation("author", "u")     // auto: ON p.author_id = u.id
+  .where("u.name", "LIKE", "%John%")
+  .getMany();
+```
+
+`leftJoinRelation(propertyName, alias)` reads the `@ManyToOne` metadata on `Post.author`, finds the FK column and the referenced PK, and builds the ON clause automatically.
+
+This works in both directions:
+
+```typescript
+// User has: @OneToMany(() => Post, { mappedBy: "author" }) posts: Post[];
+
+const users = await em
+  .createQueryBuilder(User, "u")
+  .leftJoinRelation("posts", "p")      // auto: ON u.id = p.author_id
+  .where("p.status", "published")
+  .getMany();
+```
+
+`innerJoinRelation()` is also available.
+
+#### String-Based Joins (Raw)
+
+For cases where you don't have entity metadata (joining a view, a subquery, or a raw table), you can still pass a string table name.
+
+```typescript
+qb.leftJoin("audit_log", "al", sql`"p"."id" = "al"."post_id"`);
+```
+
+This is the original API and remains fully supported.
+
+#### Multi-Table Joins
+
+Chain multiple joins to traverse a graph of entities:
+
+```typescript
+const results = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoin(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .leftJoin(Comment, "c", (j) => j.on("c.postId", "=", "p.id"))
+  .selectRaw(["p.title", "u.name", "c.content"])
+  .where("u.age", ">=", 18)
+  .whereNotNull("c.content")
+  .addOrderBy("u.name", "ASC")
+  .limit(50)
+  .getRawMany();
+```
+
+#### Cross-Entity Column Resolution
+
+Once an entity is joined (via entity-aware or relation-based join), you can reference its columns anywhere using `"alias.property"` notation:
+
+```typescript
+// WHERE — all styles
+qb.where("u.name", "Alice");                  // equals
+qb.where("u.age", ">=", 18);                  // operator
+qb.whereIn("u.id", [1, 2, 3]);               // IN
+qb.whereNull("u.deletedAt");                  // IS NULL
+qb.whereNotNull("u.email");                   // IS NOT NULL
+qb.whereBetween("u.age", 18, 65);            // BETWEEN
+qb.whereLike("u.name", "%alice%");            // LIKE
+
+// SELECT — cross-entity projection
+qb.selectRaw(["p.title", "u.name"]);          // pick columns from any joined entity
+qb.addSelect("u.email", "authorEmail");        // add aliased column
+
+// ORDER BY / GROUP BY
+qb.addOrderBy("u.name", "ASC");
+qb.groupBy(["u.id", "p.category"]);
+```
+
+All references are resolved through the alias registry — `"u.firstName"` becomes `"u"."first_name"` when using `SnakeNamingStrategy`.
+
+#### Join Types Summary
 
 | Method | SQL | When to use |
 |--------|-----|-------------|
 | `leftJoin()` | `LEFT JOIN` | Include rows even if the joined table has no match |
 | `innerJoin()` | `INNER JOIN` | Only rows that have a match in both tables |
 | `rightJoin()` | `RIGHT JOIN` | Include all rows from the joined table |
+| `leftJoinRelation()` | `LEFT JOIN` | Auto ON from `@ManyToOne` / `@OneToMany` metadata |
+| `innerJoinRelation()` | `INNER JOIN` | Auto ON from relation metadata |
 
 ### ORDER BY and Pagination
 
@@ -570,11 +672,13 @@ async function searchPosts(filters: {
   const qb = em
     .createQueryBuilder(Post, "p")
     .select(["id", "title", "createdAt"])
-    .leftJoin("users", "u", sql`"p"."author_id" = "u"."id"`);
+    .leftJoin(User, "u", (join) =>
+      join.on("p.authorId", "=", "u.id")
+    );
 
   // Each filter is optional — add conditions only when present
   if (filters.authorName) {
-    qb.where(sql`"u"."name" LIKE ${`%${filters.authorName}%`}`);
+    qb.where("u.name", "LIKE", `%${filters.authorName}%`);
   }
   if (filters.category) {
     qb.andWhere("category", filters.category);

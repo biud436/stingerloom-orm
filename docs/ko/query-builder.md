@@ -164,36 +164,131 @@ qb.whereLike("name", "%alice%");
 
 각 헬퍼는 기존 WHERE 절에 AND 조건을 추가해요. `where()`와 `andWhere()`와 자유롭게 섞어 쓸 수 있어요.
 
+모든 WHERE 메서드는 `"alias.property"` 형식의 cross-entity 참조도 지원해요 — JOIN 섹션의 [Cross-Entity 컬럼 해석](#cross-entity-컬럼-해석)을 참고하세요.
+
 ### JOIN — 테이블 결합
 
-여기서 query builder의 진가가 나타나요. 게시글 목록과 함께 작성자 이름을 보여주고 싶다고 해볼게요. `Post` 엔티티에는 `authorId` 컬럼이 있지만, `User` 테이블에서 실제 이름이 필요해요.
+여기서 query builder의 진가가 나타나요. Stingerloom은 세 단계의 JOIN을 지원해요.
+
+#### Entity-Aware Join (추천)
+
+테이블 조인의 가장 좋은 방법은 **엔티티 클래스**를 직접 전달하는 거예요. ORM이 테이블명을 자동으로 해석하고, camelCase 프로퍼티명으로 컬럼을 참조할 수 있어요.
 
 ```typescript
-import sql from "sql-template-tag";
-
 const posts = await em
   .createQueryBuilder(Post, "p")
-  .select(["id", "title"])
-  .addSelect(sql`"u"."name"`, "authorName")
-  .leftJoin("users", "u", sql`"p"."author_id" = "u"."id"`)
+  .leftJoin(User, "u", (join) =>
+    join.on("p.authorId", "=", "u.id")
+  )
+  .selectRaw(["p.title", "u.name"])
+  .where("u.age", ">=", 18)
   .orderBy({ createdAt: "DESC" })
   .limit(20)
   .getRawMany();
 ```
 
-하나씩 살펴볼게요:
+- `leftJoin(User, "u", ...)` — 첫 번째 인자가 **엔티티 클래스**예요. ORM이 실제 테이블명(`user`)을 자동 해석하고, `"u"` alias를 내부 레지스트리에 등록해요.
+- `join.on("p.authorId", "=", "u.id")` — ON 조건에서 **camelCase 프로퍼티명**을 사용해요. `SnakeNamingStrategy` 사용 시 `authorId` → `author_id`로 ��동 변환돼요.
+- `selectRaw(["p.title", "u.name"])` — `"alias.property"` 형식으로 여러 엔티티의 컬럼을 선택해요.
+- `where("u.age", ">=", 18)` — WHERE 조건에서도 조인된 엔티티의 컬럼을 참조할 수 있어요.
 
-- `leftJoin("users", "u", ...)` — `users` 테이블을 alias `"u"`로, 주어진 조건으로 조인해요.
-- `addSelect(sql\`"u"."name"\`, "authorName")` — 조인된 테이블의 raw 컬럼을 추가해요. `"name"`은 `Post`가 아닌 `User`에 속하므로, type-safe한 `select()` 대신 raw SQL로 `addSelect`를 사용해요.
-- 결과는 `LEFT JOIN`이에요 — 작성자가 없는 게시글도 나타나요 (`authorName`이 NULL).
+`JoinOnBuilder` 콜백은 여러 조건과 리터럴 값을 지원해요:
 
-세 가지 join 타입을 사용할 수 있어요:
+```typescript
+qb.leftJoin(User, "u", (join) =>
+  join
+    .on("p.authorId", "=", "u.id")       // 컬럼 = 컬럼
+    .andOn("u.status", "=", "p.status")   // 추가 조건
+    .onVal("u.isActive", "=", true)       // 컬럼 = 리터럴 값
+);
+```
+
+#### Relation 기반 Join (ON 자동 생성)
+
+`@ManyToOne` / `@OneToMany` / `@OneToOne` 데코레이터가 있으면 ON 조건을 생략할 수 있어요. ORM이 relation 메타데이터에서 자동으로 생성해요.
+
+```typescript
+// Post에 @ManyToOne(() => User) author: User; 가 있다면
+
+const posts = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoinRelation("author", "u")     // 자동: ON p.author_id = u.id
+  .where("u.name", "LIKE", "%John%")
+  .getMany();
+```
+
+양방향 모두 동작해요:
+
+```typescript
+// User에 @OneToMany(() => Post, { mappedBy: "author" }) posts: Post[]; 가 있다면
+
+const users = await em
+  .createQueryBuilder(User, "u")
+  .leftJoinRelation("posts", "p")      // 자동: ON u.id = p.author_id
+  .where("p.status", "published")
+  .getMany();
+```
+
+`innerJoinRelation()`도 사용할 수 있어요.
+
+#### String 기반 Join (Raw)
+
+엔티티 메타데이터가 없는 경우(view, 서브쿼리, raw 테이블 조인)에는 여전히 문자열 테이블명을 전달할 수 있어요.
+
+```typescript
+qb.leftJoin("audit_log", "al", sql`"p"."id" = "al"."post_id"`);
+```
+
+#### 멀티 테이블 Join
+
+여러 조인을 체이닝해서 엔티티 그래프를 탐색할 수 있어요:
+
+```typescript
+const results = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoin(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .leftJoin(Comment, "c", (j) => j.on("c.postId", "=", "p.id"))
+  .selectRaw(["p.title", "u.name", "c.content"])
+  .where("u.age", ">=", 18)
+  .whereNotNull("c.content")
+  .addOrderBy("u.name", "ASC")
+  .limit(50)
+  .getRawMany();
+```
+
+#### Cross-Entity 컬럼 해석
+
+엔티티 조인(entity-aware 또는 relation 기반) 후, `"alias.property"` 형식으로 어디서든 컬럼을 참조할 수 있어요:
+
+```typescript
+// WHERE — 모든 스타일
+qb.where("u.name", "Alice");                  // equals
+qb.where("u.age", ">=", 18);                  // operator
+qb.whereIn("u.id", [1, 2, 3]);               // IN
+qb.whereNull("u.deletedAt");                  // IS NULL
+qb.whereBetween("u.age", 18, 65);            // BETWEEN
+qb.whereLike("u.name", "%alice%");            // LIKE
+
+// SELECT — cross-entity 프로젝션
+qb.selectRaw(["p.title", "u.name"]);          // 조인된 엔티티에서 컬럼 선택
+qb.addSelect("u.email", "authorEmail");        // alias된 컬럼 추가
+
+// ORDER BY / GROUP BY
+qb.addOrderBy("u.name", "ASC");
+qb.groupBy(["u.id", "p.category"]);
+```
+
+모든 참조는 alias 레지스트리를 통해 해석돼요 — `SnakeNamingStrategy` 사용 시 `"u.firstName"` → `"u"."first_name"`으로 변환돼요.
+
+#### Join 타입 요약
 
 | Method | SQL | 언제 쓰나요 |
 |--------|-----|-------------|
 | `leftJoin()` | `LEFT JOIN` | 조인 테이블에 매칭이 없어도 행을 포함할 때 |
 | `innerJoin()` | `INNER JOIN` | 양쪽 테이블 모두 매칭되는 행만 필요할 때 |
 | `rightJoin()` | `RIGHT JOIN` | 조인 테이블의 모든 행을 포함할 때 |
+| `leftJoinRelation()` | `LEFT JOIN` | `@ManyToOne` / `@OneToMany` 메타데이터로 ON 자동 생성 |
+| `innerJoinRelation()` | `INNER JOIN` | relation 메타데이터로 ON 자동 생성 |
 
 ### ORDER BY와 페이지네이션
 
@@ -570,11 +665,13 @@ async function searchPosts(filters: {
   const qb = em
     .createQueryBuilder(Post, "p")
     .select(["id", "title", "createdAt"])
-    .leftJoin("users", "u", sql`"p"."author_id" = "u"."id"`);
+    .leftJoin(User, "u", (join) =>
+      join.on("p.authorId", "=", "u.id")
+    );
 
-  // Each filter is optional — add conditions only when present
+  // 각 필터는 선택적 — 값이 있을 때만 조건 추가
   if (filters.authorName) {
-    qb.where(sql`"u"."name" LIKE ${`%${filters.authorName}%`}`);
+    qb.where("u.name", "LIKE", `%${filters.authorName}%`);
   }
   if (filters.category) {
     qb.andWhere("category", filters.category);
@@ -593,7 +690,7 @@ async function searchPosts(filters: {
 }
 ```
 
-Query builder가 쿼리를 **조건부로 빌드**할 수 있다는 점에 주목하세요. `find()`로는 `where` 객체를 수동으로 구성해야 하지만, query builder에서는 필요한 메서드를 그냥 호출하면 돼요.
+Query builder가 쿼리를 **조건부로 빌드**할 수 있다는 점에 주목하세요. `find()`로는 `where` 객체를 수동으로 구성해야 하지만, query builder에서는 필요한 메서드를 그냥 호출하면 돼요. 특히 `leftJoin(User, "u", ...)` 형태로 엔티티 클래스를 직접 전달하면 raw SQL 없이 camelCase 프로퍼티명으로 조건을 작성할 수 있어요.
 
 ---
 
