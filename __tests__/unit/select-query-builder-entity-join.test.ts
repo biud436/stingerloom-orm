@@ -724,4 +724,79 @@ describe("SelectQueryBuilder — Entity-Aware Joins", () => {
       expect(text).toContain("`au`.`last_name` DESC");
     });
   });
+
+  // ── leftJoinAndSelect / innerJoinAndSelect ──
+
+  describe("leftJoinAndSelect", () => {
+    it("should join and auto-select all columns from joined entity", () => {
+      const { qb } = createQb(Article, "a");
+      qb.leftJoinAndSelect(Author, "au", (j) =>
+        j.on("a.authorId", "=", "au.id"),
+      );
+      const { text } = qb.getSql();
+
+      // Main entity columns should be present
+      expect(text).toContain("`a`.*");
+      // Joined entity columns should be individually selected
+      expect(text).toContain("`au`.`id`");
+      expect(text).toContain("`au`.`firstName`");
+      expect(text).toContain("`au`.`lastName`");
+      expect(text).toContain("`au`.`age`");
+      // JOIN itself
+      expect(text).toContain("LEFT JOIN `author` AS `au`");
+    });
+
+    it("should work with explicit select on main entity", () => {
+      const { qb } = createQb(Article, "a");
+      qb.select(["id", "title"]);
+      qb.leftJoinAndSelect(Author, "au", (j) =>
+        j.on("a.authorId", "=", "au.id"),
+      );
+      const { text } = qb.getSql();
+
+      // Main entity has specific columns
+      expect(text).toContain("`a`.`id`");
+      expect(text).toContain("`a`.`title`");
+      // Joined entity columns appended
+      expect(text).toContain("`au`.`firstName`");
+    });
+  });
+
+  describe("innerJoinAndSelect", () => {
+    it("should generate INNER JOIN and auto-select", () => {
+      const { qb } = createQb(Article, "a");
+      qb.innerJoinAndSelect(Author, "au", (j) =>
+        j.on("a.authorId", "=", "au.id"),
+      );
+      const { text } = qb.getSql();
+
+      expect(text).toContain("INNER JOIN `author` AS `au`");
+      expect(text).toContain("`au`.`firstName`");
+    });
+  });
+
+  describe("leftJoinRelationAndSelect", () => {
+    it("should auto-join from relation and auto-select", () => {
+      const { qb } = createQb(Article, "a");
+      qb.leftJoinRelationAndSelect("author", "au");
+      const { text } = qb.getSql();
+
+      expect(text).toContain("LEFT JOIN `author` AS `au`");
+      expect(text).toContain("`au`.`id`");
+      expect(text).toContain("`au`.`firstName`");
+      expect(text).toContain("`au`.`lastName`");
+      expect(text).toContain("`au`.`age`");
+    });
+  });
+
+  describe("innerJoinRelationAndSelect", () => {
+    it("should auto-join from relation and auto-select with INNER", () => {
+      const { qb } = createQb(Article, "a");
+      qb.innerJoinRelationAndSelect("author", "au");
+      const { text } = qb.getSql();
+
+      expect(text).toContain("INNER JOIN `author` AS `au`");
+      expect(text).toContain("`au`.`firstName`");
+    });
+  });
 });

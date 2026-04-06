@@ -566,6 +566,42 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
+   * LEFT JOIN and automatically SELECT all columns from the joined entity.
+   *
+   * Equivalent to `leftJoin()` + `selectRaw()` for all joined entity columns.
+   * The result includes both the main entity's and joined entity's columns.
+   *
+   * @example
+   * ```ts
+   * const results = await em
+   *   .createQueryBuilder(Post, "p")
+   *   .leftJoinAndSelect(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+   *   .where("p.status", "published")
+   *   .getRawMany();
+   * // [{ id: 1, title: "...", u_id: 1, u_name: "Alice", u_email: "..." }, ...]
+   * ```
+   */
+  leftJoinAndSelect<U>(
+    entity: ClazzType<U>,
+    alias: string,
+    onBuilder: (join: JoinOnBuilder) => JoinOnBuilder,
+  ): this {
+    return this.addEntityJoin("LEFT", entity, alias, onBuilder, true);
+  }
+
+  /**
+   * INNER JOIN and automatically SELECT all columns from the joined entity.
+   * @see leftJoinAndSelect
+   */
+  innerJoinAndSelect<U>(
+    entity: ClazzType<U>,
+    alias: string,
+    onBuilder: (join: JoinOnBuilder) => JoinOnBuilder,
+  ): this {
+    return this.addEntityJoin("INNER", entity, alias, onBuilder, true);
+  }
+
+  /**
    * Add a LEFT JOIN using a relation property name.
    * Automatically resolves the ON condition from @ManyToOne / @OneToMany / @OneToOne metadata.
    *
@@ -589,6 +625,28 @@ export class SelectQueryBuilder<T, TResult = T> {
     return this.addRelationJoin("INNER", propertyName, alias);
   }
 
+  /**
+   * LEFT JOIN using a relation property name and auto-SELECT all joined columns.
+   *
+   * @example
+   * ```ts
+   * em.createQueryBuilder(Post, "p")
+   *   .leftJoinRelationAndSelect("author", "u")
+   *   .getRawMany();
+   * ```
+   */
+  leftJoinRelationAndSelect(propertyName: string, alias: string): this {
+    return this.addRelationJoin("LEFT", propertyName, alias, true);
+  }
+
+  /**
+   * INNER JOIN using a relation property name and auto-SELECT all joined columns.
+   * @see leftJoinRelationAndSelect
+   */
+  innerJoinRelationAndSelect(propertyName: string, alias: string): this {
+    return this.addRelationJoin("INNER", propertyName, alias, true);
+  }
+
   protected addJoin(
     type: "LEFT" | "INNER" | "RIGHT",
     table: string,
@@ -606,6 +664,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     entity: ClazzType<U>,
     alias: string,
     onBuilder: (join: JoinOnBuilder) => JoinOnBuilder,
+    andSelect = false,
   ): this {
     const resolver = (this.em as any).resolver as RelationMetadataResolver;
     if (!resolver) {
@@ -640,13 +699,40 @@ export class SelectQueryBuilder<T, TResult = T> {
       condition,
     });
 
+    if (andSelect) {
+      this.appendJoinedColumnsToSelect(alias, propToCol);
+    }
+
     return this;
+  }
+
+  /**
+   * Append all columns from a joined entity to the SELECT clause.
+   * Used by *AndSelect methods.
+   */
+  protected appendJoinedColumnsToSelect(
+    alias: string,
+    propToCol: Map<string, string>,
+  ): void {
+    const cols: string[] = [];
+    for (const [, dbCol] of propToCol) {
+      cols.push(`${this.em.wrap(alias)}.${this.em.wrap(dbCol)}`);
+    }
+    if (cols.length === 0) return;
+
+    if (this.selectColumns === "*") {
+      // Expand main entity's * to explicit columns, then append joined
+      this.selectColumns = [`${this.em.wrap(this.alias)}.*`, ...cols];
+    } else {
+      (this.selectColumns as string[]).push(...cols);
+    }
   }
 
   protected addRelationJoin(
     type: "LEFT" | "INNER" | "RIGHT",
     propertyName: string,
     alias: string,
+    andSelect = false,
   ): this {
     const resolver = (this.em as any).resolver as RelationMetadataResolver;
     if (!resolver) {
@@ -675,21 +761,21 @@ export class SelectQueryBuilder<T, TResult = T> {
     const manyToOnes = resolver.resolveManyToOneMetadata(sourceEntity);
     const m2oRel = manyToOnes.find((r) => r.columnName === relationProp);
     if (m2oRel) {
-      return this.addRelationJoinFromManyToOne(type, m2oRel, alias, sourceAlias, resolver);
+      return this.addRelationJoinFromManyToOne(type, m2oRel, alias, sourceAlias, resolver, andSelect);
     }
 
     // Try OneToMany
     const oneToManys = resolver.resolveOneToManyMetadata(sourceEntity);
     const o2mRel = oneToManys.find((r) => r.propertyKey === relationProp);
     if (o2mRel) {
-      return this.addRelationJoinFromOneToMany(type, o2mRel, alias, sourceAlias, sourceEntity, resolver);
+      return this.addRelationJoinFromOneToMany(type, o2mRel, alias, sourceAlias, sourceEntity, resolver, andSelect);
     }
 
     // Try OneToOne
     const oneToOnes = resolver.resolveOneToOneMetadata(sourceEntity);
     const o2oRel = oneToOnes.find((r) => r.propertyKey === relationProp);
     if (o2oRel) {
-      return this.addRelationJoinFromOneToOne(type, o2oRel, alias, sourceAlias, resolver);
+      return this.addRelationJoinFromOneToOne(type, o2oRel, alias, sourceAlias, resolver, andSelect);
     }
 
     throw new OrmError(
@@ -707,6 +793,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     alias: string,
     sourceAlias: string,
     resolver: RelationMetadataResolver,
+    andSelect = false,
   ): this {
     const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
     const relatedMeta = resolver.resolveEntityMetadata(RelatedEntity);
@@ -739,6 +826,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const condition = Conditions.compareColumns(left, "=", right);
 
     this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
+    if (andSelect) this.appendJoinedColumnsToSelect(alias, propToCol);
     return this;
   }
 
@@ -749,6 +837,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     sourceAlias: string,
     sourceEntity: ClazzType<any>,
     resolver: RelationMetadataResolver,
+    andSelect = false,
   ): this {
     const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
     const relatedMeta = resolver.resolveEntityMetadata(RelatedEntity);
@@ -789,6 +878,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const condition = Conditions.compareColumns(left, "=", right);
 
     this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
+    if (andSelect) this.appendJoinedColumnsToSelect(alias, propToCol);
     return this;
   }
 
@@ -798,6 +888,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     alias: string,
     sourceAlias: string,
     resolver: RelationMetadataResolver,
+    andSelect = false,
   ): this {
     const RelatedEntity = (rel.getRelatedEntity ?? rel.getMappingEntity)() as ClazzType<any>;
     const relatedMeta = resolver.resolveEntityMetadata(RelatedEntity);
@@ -827,6 +918,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const condition = Conditions.compareColumns(left, "=", right);
 
     this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
+    if (andSelect) this.appendJoinedColumnsToSelect(alias, propToCol);
     return this;
   }
 
