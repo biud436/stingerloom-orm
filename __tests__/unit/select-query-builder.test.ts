@@ -80,6 +80,19 @@ function createMockEm(dbType: "mysql" | "postgresql" = "mysql") {
     async query<T>(): Promise<T[]> {
       return [] as T[];
     },
+    createQueryBuilder(entity: any, alias: string) {
+      const qb = new SelectQueryBuilder(entity, alias, em as any);
+      const meta = resolver.resolveEntityMetadata(entity);
+      if (meta) {
+        const map = new Map<string, string>();
+        for (const col of meta.columns) {
+          const prop = (col as any).propertyKey ?? col.name!;
+          map.set(prop, col.name!);
+        }
+        qb.setPropertyToColumnMap(map);
+      }
+      return qb;
+    },
   } as unknown as EntityManager;
 
   return em;

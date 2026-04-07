@@ -348,6 +348,121 @@ type OrderBySpec<T> = {
 };
 
 /**
+ * Lightweight builder for collecting WHERE conditions into an isolated group.
+ *
+ * Used by `andWhereGroup()` / `orWhereGroup()` to create parenthesized
+ * condition groups: `(a = 1 AND b = 2) OR (c = 3 AND d = 4)`.
+ *
+ * @example
+ * ```ts
+ * qb.where("status", "active")
+ *   .orWhereGroup(g => g
+ *     .where("role", "admin")
+ *     .where("verified", true)
+ *   )
+ * // WHERE "status" = 'active' OR ("role" = 'admin' AND "verified" = true)
+ * ```
+ */
+export class WhereGroupBuilder<T> {
+  private conditions: Sql[] = [];
+
+  constructor(
+    private readonly columnResolver: (ref: string) => string,
+    private readonly wrapFn: (id: string) => string,
+  ) {}
+
+  where(condition: Sql): this;
+  where(condition: ColumnCondition): this;
+  where(column: keyof T & string, value: any): this;
+  where(column: keyof T & string, operator: WhereOperator, value: any): this;
+  where(column: string, value: any): this;
+  where(column: string, operator: WhereOperator, value: any): this;
+  where(
+    columnOrCondition: string | Sql | ColumnCondition,
+    valueOrOperator?: any,
+    value?: any,
+  ): this {
+    if (columnOrCondition instanceof ColumnCondition) {
+      this.conditions.push(
+        columnOrCondition.resolve((ref) => this.columnResolver(ref)),
+      );
+      return this;
+    }
+    if (typeof columnOrCondition === "object" && "sql" in columnOrCondition) {
+      this.conditions.push(columnOrCondition as Sql);
+      return this;
+    }
+    const col = this.columnResolver(columnOrCondition as string);
+    if (value !== undefined) {
+      const op = (valueOrOperator as string).trim().toUpperCase();
+      if (op === "IS NULL") {
+        this.conditions.push(Conditions.isNull(col));
+      } else if (op === "IS NOT NULL") {
+        this.conditions.push(Conditions.isNotNull(col));
+      } else if (op === "IN") {
+        this.conditions.push(Conditions.in(col, value as any[]));
+      } else if (op === "NOT IN") {
+        this.conditions.push(Conditions.notIn(col, value as any[]));
+      } else if (op === "BETWEEN") {
+        const [min, max] = value as [any, any];
+        this.conditions.push(Conditions.between(col, min, max));
+      } else if (op === "LIKE") {
+        this.conditions.push(Conditions.like(col, value));
+      } else if (op === "NOT LIKE") {
+        this.conditions.push(Conditions.notLike(col, value));
+      } else {
+        this.conditions.push(sql`${raw(col)} ${raw(op)} ${value}`);
+      }
+    } else {
+      this.conditions.push(Conditions.equals(col, valueOrOperator));
+    }
+    return this;
+  }
+
+  whereIn(column: string, values: any[]): this {
+    this.conditions.push(Conditions.in(this.columnResolver(column), values));
+    return this;
+  }
+
+  whereNotIn(column: string, values: any[]): this {
+    this.conditions.push(Conditions.notIn(this.columnResolver(column), values));
+    return this;
+  }
+
+  whereNull(column: string): this {
+    this.conditions.push(Conditions.isNull(this.columnResolver(column)));
+    return this;
+  }
+
+  whereNotNull(column: string): this {
+    this.conditions.push(Conditions.isNotNull(this.columnResolver(column)));
+    return this;
+  }
+
+  whereBetween(column: string, min: any, max: any): this {
+    this.conditions.push(Conditions.between(this.columnResolver(column), min, max));
+    return this;
+  }
+
+  whereLike(column: string, pattern: string): this {
+    this.conditions.push(Conditions.like(this.columnResolver(column), pattern));
+    return this;
+  }
+
+  /** @internal Build the grouped condition wrapped in parentheses. */
+  build(): Sql {
+    if (this.conditions.length === 0) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        "WHERE group is empty. Add at least one condition inside the group.",
+      );
+    }
+    if (this.conditions.length === 1) return this.conditions[0];
+    return Conditions.and(this.conditions);
+  }
+}
+
+/**
  * A type-safe, fluent query builder derived from a repository entity type.
  *
  * Created via `repository.createQueryBuilder("alias")` or
@@ -419,6 +534,13 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Enables cross-entity column resolution: `"u.firstName"` → `"u"."first_name"`.
    */
   protected aliasRegistry: Map<string, AliasEntry> = new Map();
+
+  /**
+   * Parameterized SQL expressions for the SELECT clause.
+   * Unlike `selectColumns` (string[]), these preserve `sql-template-tag` parameter bindings.
+   * Used by `addSelectSubquery()` and `withCount()` for scalar subqueries in SELECT.
+   */
+  protected selectExpressions: Sql[] = [];
 
   constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
     this.entity = entity;
@@ -1135,6 +1257,235 @@ export class SelectQueryBuilder<T, TResult = T> {
     return pk?.name ?? null;
   }
 
+  /**
+   * Build a correlated EXISTS subquery for a relation.
+   * Used by `whereHas()`, `whereNotHas()`.
+   *
+   * @returns A `Sql` fragment: `SELECT 1 FROM related_table WHERE correlation [AND ...]`
+   */
+  protected buildRelationExistsSubquery(
+    propertyName: string,
+    fn?: (subQb: SelectQueryBuilder<any, any>) => void,
+  ): Sql {
+    return this.buildRelationSubquery(propertyName, "exists", fn);
+  }
+
+  /**
+   * Build a correlated COUNT subquery for a relation.
+   * Used by `withCount()`.
+   *
+   * @returns A `Sql` fragment: `SELECT COUNT(*) FROM related_table WHERE correlation [AND ...]`
+   */
+  protected buildRelationCountSubquery(
+    propertyName: string,
+    fn?: (subQb: SelectQueryBuilder<any, any>) => void,
+  ): Sql {
+    return this.buildRelationSubquery(propertyName, "count", fn);
+  }
+
+  /**
+   * Core helper: build a correlated subquery (EXISTS or COUNT) for a relation.
+   */
+  protected buildRelationSubquery(
+    propertyName: string,
+    mode: "exists" | "count",
+    fn?: (subQb: SelectQueryBuilder<any, any>) => void,
+  ): Sql {
+    const resolver = (this.em as any).resolver as RelationMetadataResolver;
+    if (!resolver) {
+      throw new OrmError(
+        OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
+        `EntityManager not connected. Cannot resolve relation metadata.`,
+      );
+    }
+
+    // Determine source
+    let sourceAlias = this.alias;
+    let sourceEntity = this.entity as ClazzType<any>;
+    let relationProp = propertyName;
+
+    const dotIndex = propertyName.indexOf(".");
+    if (dotIndex > 0) {
+      sourceAlias = propertyName.substring(0, dotIndex);
+      relationProp = propertyName.substring(dotIndex + 1);
+      const entry = this.aliasRegistry.get(sourceAlias);
+      if (entry) sourceEntity = entry.entity;
+    }
+
+    // Try ManyToOne
+    const manyToOnes = resolver.resolveManyToOneMetadata(sourceEntity);
+    const m2oRel = manyToOnes.find((r) => r.columnName === relationProp);
+    if (m2oRel) {
+      return this.buildM2OSubquery(m2oRel, sourceAlias, resolver, mode, fn);
+    }
+
+    // Try OneToMany
+    const oneToManys = resolver.resolveOneToManyMetadata(sourceEntity);
+    const o2mRel = oneToManys.find((r) => r.propertyKey === relationProp);
+    if (o2mRel) {
+      return this.buildO2MSubquery(o2mRel, sourceAlias, sourceEntity, resolver, mode, fn);
+    }
+
+    // Try OneToOne
+    const oneToOnes = resolver.resolveOneToOneMetadata(sourceEntity);
+    const o2oRel = oneToOnes.find((r) => r.propertyKey === relationProp);
+    if (o2oRel) {
+      return this.buildO2OSubquery(o2oRel, sourceAlias, resolver, mode, fn);
+    }
+
+    throw new OrmError(
+      OrmErrorCode.INVALID_QUERY,
+      `No relation found for property "${relationProp}" on entity ${sourceEntity.name}. ` +
+        `Available ManyToOne: [${manyToOnes.map((r) => r.columnName).join(", ")}], ` +
+        `OneToMany: [${oneToManys.map((r) => r.propertyKey).join(", ")}], ` +
+        `OneToOne: [${oneToOnes.map((r) => r.propertyKey).join(", ")}].`,
+    );
+  }
+
+  private buildM2OSubquery(
+    rel: any,
+    sourceAlias: string,
+    resolver: RelationMetadataResolver,
+    mode: "exists" | "count",
+    fn?: (subQb: SelectQueryBuilder<any, any>) => void,
+  ): Sql {
+    const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+    const relatedMeta = resolver.resolveEntityMetadata(RelatedEntity);
+    if (!relatedMeta) {
+      throw new OrmError(OrmErrorCode.ENTITY_METADATA_NOT_FOUND, `Entity metadata not found for ${RelatedEntity.name}.`);
+    }
+
+    const sourceEntry = this.aliasRegistry.get(sourceAlias);
+    const joinColumn = sourceEntry
+      ? (sourceEntry.propertyToColumnMap.get(rel.joinColumn ?? `${rel.columnName}Id`) ?? rel.joinColumn ?? `${rel.columnName}_id`)
+      : (rel.joinColumn ?? `${rel.columnName}_id`);
+    const referencedColumn = rel.references ?? this.findPrimaryColumn(relatedMeta) ?? "id";
+
+    const innerAlias = `__sub_${rel.columnName}`;
+    const selectExpr = mode === "exists" ? "1" : "COUNT(*)";
+
+    const outerRef = `${this.em.wrap(sourceAlias)}.${this.em.wrap(joinColumn)}`;
+    const innerRef = `${this.em.wrap(innerAlias)}.${this.em.wrap(referencedColumn)}`;
+
+    const subQb = new SelectQueryBuilder<any>(RelatedEntity, innerAlias, this.em);
+    subQb.propertyToColumnMap = this.buildPropertyToColumnMapFromMetadata(relatedMeta);
+    subQb.aliasRegistry.set(innerAlias, {
+      entity: RelatedEntity,
+      tableName: relatedMeta.name!,
+      propertyToColumnMap: subQb.propertyToColumnMap,
+    });
+    subQb.dialectExpression = this.dialectExpression;
+    subQb.withDeletedFlag = true; // subqueries don't auto-filter soft deletes
+
+    subQb.whereClauses.push(Conditions.compareColumns(innerRef, "=", outerRef));
+    if (fn) fn(subQb);
+
+    const innerWhere = subQb.whereClauses.length > 0
+      ? sql`WHERE ${join(subQb.whereClauses, " AND ")}`
+      : sql``;
+
+    return sql`SELECT ${raw(selectExpr)} FROM ${raw(this.em.wrapTable(relatedMeta.name!))} AS ${raw(this.em.wrap(innerAlias))} ${innerWhere}`;
+  }
+
+  private buildO2MSubquery(
+    rel: any,
+    sourceAlias: string,
+    sourceEntity: ClazzType<any>,
+    resolver: RelationMetadataResolver,
+    mode: "exists" | "count",
+    fn?: (subQb: SelectQueryBuilder<any, any>) => void,
+  ): Sql {
+    const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+    const relatedMeta = resolver.resolveEntityMetadata(RelatedEntity);
+    if (!relatedMeta) {
+      throw new OrmError(OrmErrorCode.ENTITY_METADATA_NOT_FOUND, `Entity metadata not found for ${RelatedEntity.name}.`);
+    }
+
+    const relatedM2Os = resolver.resolveManyToOneMetadata(RelatedEntity);
+    const reverseRel = relatedM2Os.find((r) => r.columnName === rel.mappedBy);
+    const propToCol = this.buildPropertyToColumnMapFromMetadata(relatedMeta);
+
+    let fkColumn: string;
+    if (reverseRel?.joinColumn) {
+      fkColumn = reverseRel.joinColumn;
+    } else {
+      fkColumn = propToCol.get(`${rel.mappedBy}Id`) ?? `${rel.mappedBy}_id`;
+    }
+
+    const sourceMeta = resolver.resolveEntityMetadata(sourceEntity);
+    const pk = sourceMeta ? this.findPrimaryColumn(sourceMeta) ?? "id" : "id";
+
+    const innerAlias = `__sub_${rel.propertyKey}`;
+    const selectExpr = mode === "exists" ? "1" : "COUNT(*)";
+
+    const outerRef = `${this.em.wrap(sourceAlias)}.${this.em.wrap(pk)}`;
+    const innerRef = `${this.em.wrap(innerAlias)}.${this.em.wrap(fkColumn)}`;
+
+    const subQb = new SelectQueryBuilder<any>(RelatedEntity, innerAlias, this.em);
+    subQb.propertyToColumnMap = propToCol;
+    subQb.aliasRegistry.set(innerAlias, {
+      entity: RelatedEntity,
+      tableName: relatedMeta.name!,
+      propertyToColumnMap: propToCol,
+    });
+    subQb.dialectExpression = this.dialectExpression;
+    subQb.withDeletedFlag = true;
+
+    subQb.whereClauses.push(Conditions.compareColumns(innerRef, "=", outerRef));
+    if (fn) fn(subQb);
+
+    const innerWhere = subQb.whereClauses.length > 0
+      ? sql`WHERE ${join(subQb.whereClauses, " AND ")}`
+      : sql``;
+
+    return sql`SELECT ${raw(selectExpr)} FROM ${raw(this.em.wrapTable(relatedMeta.name!))} AS ${raw(this.em.wrap(innerAlias))} ${innerWhere}`;
+  }
+
+  private buildO2OSubquery(
+    rel: any,
+    sourceAlias: string,
+    resolver: RelationMetadataResolver,
+    mode: "exists" | "count",
+    fn?: (subQb: SelectQueryBuilder<any, any>) => void,
+  ): Sql {
+    const RelatedEntity = (rel.getRelatedEntity ?? rel.getMappingEntity)() as ClazzType<any>;
+    const relatedMeta = resolver.resolveEntityMetadata(RelatedEntity);
+    if (!relatedMeta) {
+      throw new OrmError(OrmErrorCode.ENTITY_METADATA_NOT_FOUND, `Entity metadata not found for ${RelatedEntity.name}.`);
+    }
+
+    const sourceEntry = this.aliasRegistry.get(sourceAlias);
+    const joinColumn = sourceEntry
+      ? (sourceEntry.propertyToColumnMap.get(rel.joinColumn ?? `${rel.propertyKey}Id`) ?? rel.joinColumn ?? `${rel.propertyKey}_id`)
+      : (rel.joinColumn ?? `${rel.propertyKey}_id`);
+    const referencedColumn = this.findPrimaryColumn(relatedMeta) ?? "id";
+
+    const innerAlias = `__sub_${rel.propertyKey}`;
+    const selectExpr = mode === "exists" ? "1" : "COUNT(*)";
+
+    const outerRef = `${this.em.wrap(sourceAlias)}.${this.em.wrap(joinColumn)}`;
+    const innerRef = `${this.em.wrap(innerAlias)}.${this.em.wrap(referencedColumn)}`;
+
+    const subQb = new SelectQueryBuilder<any>(RelatedEntity, innerAlias, this.em);
+    subQb.propertyToColumnMap = this.buildPropertyToColumnMapFromMetadata(relatedMeta);
+    subQb.aliasRegistry.set(innerAlias, {
+      entity: RelatedEntity,
+      tableName: relatedMeta.name!,
+      propertyToColumnMap: subQb.propertyToColumnMap,
+    });
+    subQb.dialectExpression = this.dialectExpression;
+    subQb.withDeletedFlag = true;
+
+    subQb.whereClauses.push(Conditions.compareColumns(innerRef, "=", outerRef));
+    if (fn) fn(subQb);
+
+    const innerWhere = subQb.whereClauses.length > 0
+      ? sql`WHERE ${join(subQb.whereClauses, " AND ")}`
+      : sql``;
+
+    return sql`SELECT ${raw(selectExpr)} FROM ${raw(this.em.wrapTable(relatedMeta.name!))} AS ${raw(this.em.wrap(innerAlias))} ${innerWhere}`;
+  }
+
   // ── ORDER BY / GROUP BY / HAVING ────────────────────────
 
   /**
@@ -1389,6 +1740,363 @@ export class SelectQueryBuilder<T, TResult = T> {
     return this;
   }
 
+  // ── CONDITIONAL / COMPOSABLE ─────────────────────────────
+
+  /**
+   * Conditionally apply query modifications.
+   *
+   * Eliminates `if/else` blocks outside the query chain. When `condition`
+   * is truthy (or returns truthy for lazy evaluation), `fn` is called.
+   * Otherwise `elseFn` is called if provided. Always returns `this`.
+   *
+   * @example
+   * ```ts
+   * const users = await repo.createQueryBuilder("u")
+   *   .when(!!searchName, qb => qb.where("name", "LIKE", `%${searchName}%`))
+   *   .when(onlyActive, qb => qb.where("status", "active"),
+   *                     qb => qb.withDeleted())
+   *   .getMany();
+   * ```
+   */
+  when(
+    condition: boolean | (() => boolean),
+    fn: (qb: this) => void,
+    elseFn?: (qb: this) => void,
+  ): this {
+    const result = typeof condition === "function" ? condition() : condition;
+    if (result) fn(this);
+    else if (elseFn) elseFn(this);
+    return this;
+  }
+
+  /**
+   * Apply a composable query transform function.
+   *
+   * Use `pipe()` to extract reusable query logic into standalone functions
+   * and compose them in a fluent chain.
+   *
+   * @example
+   * ```ts
+   * function withPagination<T>(page: number, size: number) {
+   *   return (qb: SelectQueryBuilder<T>) =>
+   *     qb.offset((page - 1) * size).limit(size);
+   * }
+   *
+   * const users = await repo.createQueryBuilder("u")
+   *   .pipe(withPagination(2, 20))
+   *   .getMany();
+   * ```
+   */
+  pipe(fn: (qb: this) => this): this {
+    return fn(this);
+  }
+
+  /**
+   * Add a parenthesized group of AND conditions.
+   *
+   * All conditions inside the group are combined with AND, then the whole
+   * group is appended to the existing WHERE with AND semantics.
+   *
+   * @example
+   * ```ts
+   * qb.where("active", true)
+   *   .andWhereGroup(g => g
+   *     .where("age", ">=", 18)
+   *     .where("role", "user")
+   *   )
+   * // WHERE "active" = true AND ("age" >= 18 AND "role" = 'user')
+   * ```
+   */
+  andWhereGroup(fn: (group: WhereGroupBuilder<T>) => void): this {
+    const group = new WhereGroupBuilder<T>(
+      (ref) => this.resolveColumn(ref),
+      (id) => this.em.wrap(id),
+    );
+    fn(group);
+    this.whereClauses.push(group.build());
+    return this;
+  }
+
+  /**
+   * Add a parenthesized group of conditions with OR semantics.
+   *
+   * All conditions inside the group are combined with AND. The resulting
+   * group is OR-ed with the existing WHERE conditions.
+   *
+   * @example
+   * ```ts
+   * qb.where("status", "active")
+   *   .orWhereGroup(g => g
+   *     .where("role", "admin")
+   *     .where("verified", true)
+   *   )
+   * // WHERE "status" = 'active' OR ("role" = 'admin' AND "verified" = true)
+   * ```
+   */
+  orWhereGroup(fn: (group: WhereGroupBuilder<T>) => void): this {
+    const group = new WhereGroupBuilder<T>(
+      (ref) => this.resolveColumn(ref),
+      (id) => this.em.wrap(id),
+    );
+    fn(group);
+    const groupSql = group.build();
+    if (this.whereClauses.length === 0) {
+      this.whereClauses.push(groupSql);
+    } else {
+      const existing =
+        this.whereClauses.length === 1
+          ? this.whereClauses[0]
+          : Conditions.and(this.whereClauses);
+      this.whereClauses = [Conditions.or([existing, groupSql])];
+    }
+    return this;
+  }
+
+  // ── RELATION-AWARE QUERIES ─────────────────────────────
+
+  /**
+   * Filter entities that have at least one related entity matching the condition.
+   *
+   * Generates `WHERE EXISTS (SELECT 1 FROM related_table WHERE correlation AND ...)`.
+   * Resolves relation metadata automatically from `@ManyToOne`, `@OneToMany`, `@OneToOne`.
+   *
+   * @param relation - Property name of the relation on the entity (e.g., "comments", "author")
+   * @param fn - Optional callback to add extra conditions on the related entity
+   *
+   * @example
+   * ```ts
+   * // Posts that have at least one comment
+   * qb.whereHas("comments").getMany();
+   *
+   * // Posts that have recent comments
+   * qb.whereHas("comments", sub =>
+   *   sub.where("createdAt", ">=", sevenDaysAgo)
+   * ).getMany();
+   * ```
+   */
+  whereHas(
+    relation: string,
+    fn?: (subQb: SelectQueryBuilder<any, any>) => void,
+  ): this {
+    const subSql = this.buildRelationExistsSubquery(relation, fn);
+    this.whereClauses.push(Conditions.exists(sql`(${subSql})`));
+    return this;
+  }
+
+  /**
+   * Filter entities that have NO related entities matching the condition.
+   *
+   * Generates `WHERE NOT EXISTS (SELECT 1 FROM related_table WHERE ...)`.
+   *
+   * @example
+   * ```ts
+   * // Posts without any comments
+   * qb.whereNotHas("comments").getMany();
+   * ```
+   */
+  whereNotHas(
+    relation: string,
+    fn?: (subQb: SelectQueryBuilder<any, any>) => void,
+  ): this {
+    const subSql = this.buildRelationExistsSubquery(relation, fn);
+    this.whereClauses.push(Conditions.notExists(sql`(${subSql})`));
+    return this;
+  }
+
+  /**
+   * Add a relation count as a scalar subquery in the SELECT clause.
+   *
+   * @param relation - Relation property name
+   * @param alias - Column alias for the count (default: `${relation}_count`)
+   * @param fn - Optional callback to filter which related entities are counted
+   *
+   * @example
+   * ```ts
+   * const users = await em.createQueryBuilder(User, "u")
+   *   .withCount("posts", "postCount")
+   *   .withCount("posts", "activePostCount", sub => sub.where("status", "published"))
+   *   .getRawMany();
+   * ```
+   */
+  withCount(
+    relation: string,
+    alias?: string,
+    fn?: (subQb: SelectQueryBuilder<any, any>) => void,
+  ): this {
+    const countSql = this.buildRelationCountSubquery(relation, fn);
+    const colAlias = alias ?? `${relation}_count`;
+    this.selectExpressions.push(
+      sql`(${countSql}) AS ${raw(this.em.wrap(colAlias))}`,
+    );
+    return this;
+  }
+
+  /**
+   * Shorthand for `leftJoinRelationAndSelect(relation, alias)`.
+   *
+   * Loads a relation via LEFT JOIN and includes all its columns in the result.
+   *
+   * @example
+   * ```ts
+   * qb.loadRelation("author").loadRelation("comments").getMany();
+   * ```
+   */
+  loadRelation(relation: string, alias?: string): this {
+    return this.leftJoinRelationAndSelect(relation, alias ?? relation);
+  }
+
+  // ── SUBQUERY INTEGRATION ───────────────────────────────
+
+  /**
+   * Add `WHERE column IN (subquery)` using a type-safe SelectQueryBuilder.
+   *
+   * @example
+   * ```ts
+   * const activeUserIds = em.createQueryBuilder(User, "u2")
+   *   .select(["id"])
+   *   .where("status", "active");
+   *
+   * const posts = await em.createQueryBuilder(Post, "p")
+   *   .whereInSubquery("authorId", activeUserIds)
+   *   .getMany();
+   * ```
+   */
+  whereInSubquery(
+    column: ColumnOf<T>,
+    subQb: SelectQueryBuilder<any, any>,
+  ): this;
+  whereInSubquery(
+    column: string,
+    subQb: SelectQueryBuilder<any, any>,
+  ): this;
+  whereInSubquery(
+    column: string,
+    subQb: SelectQueryBuilder<any, any>,
+  ): this {
+    const qualified = this.resolveColumn(column);
+    const subSql = subQb.toSql();
+    this.whereClauses.push(
+      Conditions.inSubquery(qualified, sql`(${subSql})`),
+    );
+    return this;
+  }
+
+  /**
+   * Add `WHERE NOT IN (subquery)`.
+   */
+  whereNotInSubquery(
+    column: ColumnOf<T>,
+    subQb: SelectQueryBuilder<any, any>,
+  ): this;
+  whereNotInSubquery(
+    column: string,
+    subQb: SelectQueryBuilder<any, any>,
+  ): this;
+  whereNotInSubquery(
+    column: string,
+    subQb: SelectQueryBuilder<any, any>,
+  ): this {
+    const qualified = this.resolveColumn(column);
+    const subSql = subQb.toSql();
+    this.whereClauses.push(
+      Conditions.notInSubquery(qualified, sql`(${subSql})`),
+    );
+    return this;
+  }
+
+  /**
+   * Add `WHERE EXISTS (subquery)` using a SelectQueryBuilder.
+   *
+   * @example
+   * ```ts
+   * const activePosts = em.createQueryBuilder(Post, "p2")
+   *   .select(["id"])
+   *   .where(sql`"p2"."author_id" = "u"."id"`);
+   *
+   * const users = await em.createQueryBuilder(User, "u")
+   *   .whereExistsSubquery(activePosts)
+   *   .getMany();
+   * ```
+   */
+  whereExistsSubquery(subQb: SelectQueryBuilder<any, any>): this {
+    const subSql = subQb.toSql();
+    this.whereClauses.push(Conditions.exists(sql`(${subSql})`));
+    return this;
+  }
+
+  /**
+   * Add `WHERE NOT EXISTS (subquery)`.
+   */
+  whereNotExistsSubquery(subQb: SelectQueryBuilder<any, any>): this {
+    const subSql = subQb.toSql();
+    this.whereClauses.push(Conditions.notExists(sql`(${subSql})`));
+    return this;
+  }
+
+  /**
+   * Add a scalar subquery to the SELECT clause.
+   *
+   * @example
+   * ```ts
+   * const latestComment = em.createQueryBuilder(Comment, "c")
+   *   .select(["content"])
+   *   .where(sql`"c"."post_id" = "p"."id"`)
+   *   .orderBy({ createdAt: "DESC" })
+   *   .limit(1);
+   *
+   * const posts = await em.createQueryBuilder(Post, "p")
+   *   .addSelectSubquery(latestComment, "latestComment")
+   *   .getRawMany();
+   * ```
+   */
+  addSelectSubquery(
+    subQb: SelectQueryBuilder<any, any>,
+    alias: string,
+  ): this {
+    const subSql = subQb.toSql();
+    this.selectExpressions.push(
+      sql`(${subSql}) AS ${raw(this.em.wrap(alias))}`,
+    );
+    return this;
+  }
+
+  // ── SCOPES ─────────────────────────────────────────────
+
+  /**
+   * Apply a named scope defined as a static property on the entity class.
+   *
+   * Scopes are reusable query fragments defined on the entity:
+   * ```ts
+   * @Entity()
+   * class User {
+   *   static scopes = {
+   *     active: (qb: SelectQueryBuilder<User>) => qb.where("status", "active"),
+   *     recent: (qb: SelectQueryBuilder<User>) => qb.orderBy({ createdAt: "DESC" }).limit(10),
+   *   };
+   * }
+   * ```
+   *
+   * @example
+   * ```ts
+   * const users = await repo.createQueryBuilder("u")
+   *   .applyScope("active")
+   *   .applyScope("recent")
+   *   .getMany();
+   * ```
+   */
+  applyScope(name: string): this {
+    const scopes = (this.entity as any).scopes;
+    if (!scopes || typeof scopes[name] !== "function") {
+      const available = scopes ? Object.keys(scopes).join(", ") : "none";
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        `Scope "${name}" not found on entity ${this.entity.name}. Available: [${available}].`,
+      );
+    }
+    scopes[name](this);
+    return this;
+  }
+
   // ── RAW APPEND ──────────────────────────────────────────
 
   /**
@@ -1428,6 +2136,11 @@ export class SelectQueryBuilder<T, TResult = T> {
       } else {
         qb.select(this.selectColumns as string[]);
       }
+    }
+
+    // Parameterized SELECT expressions (withCount, addSelectSubquery)
+    for (const expr of this.selectExpressions) {
+      qb.addSelectExpression(expr);
     }
 
     // FROM + MySQL index hints
@@ -1811,6 +2524,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.propertyToColumnMap = this.propertyToColumnMap;
     cloned.dialectExpression = this.dialectExpression;
     cloned.aliasRegistry = new Map(this.aliasRegistry);
+    cloned.selectExpressions = [...this.selectExpressions];
     return cloned;
   }
 

@@ -596,6 +596,22 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   }
 
   /**
+   * Parameterized SQL expressions to append to the SELECT clause.
+   * Unlike `select()` which takes raw strings, these preserve `Sql` parameter bindings.
+   * Used by SelectQueryBuilder for scalar subqueries in SELECT (withCount, addSelectSubquery).
+   */
+  protected extraSelectExpressions: Sql[] = [];
+
+  /**
+   * Add a parameterized SQL expression to the SELECT clause.
+   * The expression is appended after the columns specified by `select()`.
+   */
+  addSelectExpression(expr: Sql): RawQueryBuilder {
+    this.extraSelectExpressions.push(expr);
+    return this;
+  }
+
+  /**
    * Builds the final SQL object representing the query.
    * @returns The SQL object representing the query.
    */
@@ -612,7 +628,16 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
       segments.push(sql`${raw(keyword)} ${join(cteParts, ", ")}`);
     }
 
-    segments.push(...this.sqlQuerySegments);
+    // Inject extra parameterized select expressions after the SELECT segment
+    if (this.extraSelectExpressions.length > 0 && this.sqlQuerySegments.length > 0) {
+      const firstSeg = this.sqlQuerySegments[0];
+      const extraCols = join(this.extraSelectExpressions, ", ");
+      segments.push(sql`${firstSeg}, ${extraCols}`);
+      segments.push(...this.sqlQuerySegments.slice(1));
+    } else {
+      segments.push(...this.sqlQuerySegments);
+    }
+
     return join(segments, " ");
   }
 }

@@ -367,6 +367,6 @@ export class BaseRepository<T> {
    * ```
    */
   createQueryBuilder(alias: string): SelectQueryBuilder<T, T> {
-    return new SelectQueryBuilder<T, T>(this.entity, alias, this.em);
+    return this.em.createQueryBuilder<T>(this.entity, alias);
   }
 }
