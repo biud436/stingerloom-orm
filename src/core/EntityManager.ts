@@ -1009,8 +1009,10 @@ export class EntityManager implements BaseEntityManager {
 
       const tableName = metadata.name!;
 
-      if (select) {
-        const propToCol = this.buildPropertyToColumnMap(metadata);
+      // Build property-to-column map once and reuse throughout findInternal
+    const propToCol = this.buildPropertyToColumnMap(metadata);
+
+    if (select) {
         const selectedColumns = this.resolveSelectColumns<T>(select)
           .map((prop) => propToCol.get(prop) ?? prop);
         if (hasEagerJoins) {
@@ -1073,7 +1075,7 @@ export class EntityManager implements BaseEntityManager {
           tableName: hasEagerJoins ? tableName : undefined,
           dialect: this._ctx.getDialect(),
           dialectExpression: createDialectExpression(this._ctx.getDialect()),
-          propertyToColumn: this.buildPropertyToColumnMap(metadata),
+          propertyToColumn: propToCol,
         }),
       );
 
@@ -1091,11 +1093,10 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      const orderPropToCol = this.buildPropertyToColumnMap(metadata);
       for (const key in orderBy) {
         const value = orderBy[key];
         if (value) {
-          const dbCol = orderPropToCol.get(key) ?? key;
+          const dbCol = propToCol.get(key) ?? key;
           orderByMap.push({ column: this.wrap(dbCol), direction: value });
         }
       }

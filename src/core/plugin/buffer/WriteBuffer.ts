@@ -786,8 +786,8 @@ export class WriteBuffer {
    * Order: updates → inserts → collection diffs → deletes.
    */
   async flush(): Promise<BufferFlushResult> {
-    // No-op if nothing to do
-    if (!this.hasPendingWork()) {
+    // No-op if nothing to do. Fast-check queues first to skip expensive diff when possible.
+    if (!this.hasQueuedWork() && !this.hasPendingWork()) {
       if (this.options.logging) this.log("flush → no-op (no pending work)");
       return { updates: 0, inserts: 0, deletes: 0 };
     }
@@ -1029,16 +1029,23 @@ export class WriteBuffer {
   }
 
   /**
+   * Fast check: are there any queued operations (no diff computation)?
+   * Used by flush() to avoid expensive dirty-checking when queues are empty.
+   */
+  private hasQueuedWork(): boolean {
+    return this.insertQueue.length > 0
+      || this.deleteQueue.length > 0
+      || this.persistQueue.length > 0
+      || this.bulkUpdateQueue.length > 0
+      || this.bulkDeleteQueue.length > 0;
+  }
+
+  /**
    * Check if there is any pending work. Merged loop for tracked entries
    * and collection snapshots with early exit on first dirty finding.
    */
   private hasPendingWork(): boolean {
-    if (this.insertQueue.length > 0 || this.deleteQueue.length > 0 || this.persistQueue.length > 0) {
-      return true;
-    }
-    if (this.bulkUpdateQueue.length > 0 || this.bulkDeleteQueue.length > 0) {
-      return true;
-    }
+    if (this.hasQueuedWork()) return true;
     // Single loop: check both column diffs and collection diffs per entry
     for (const entry of this.trackedEntries.values()) {
       if (entry.readOnly) continue;

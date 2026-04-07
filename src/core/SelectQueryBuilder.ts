@@ -1451,17 +1451,18 @@ export class SelectQueryBuilder<T, TResult = T> {
       );
     }
 
-    // Soft delete auto-filter
+    // Soft delete auto-filter (use local copy to avoid mutating shared state)
+    const effectiveWhere = [...this.whereClauses];
     const resolver = (this.em as any).resolver;
     if (resolver) {
       const deletedAtColumn = resolver.getDeletedAtColumn(this.entity);
       if (deletedAtColumn && !this.withDeletedFlag) {
-        this.whereClauses.push(Conditions.isNull(this.col(deletedAtColumn)));
+        effectiveWhere.push(Conditions.isNull(this.col(deletedAtColumn)));
       }
     }
 
     // WHERE
-    qb.where(this.whereClauses);
+    qb.where(effectiveWhere);
 
     // GROUP BY
     if (this.groupByCols.length > 0) {
@@ -1653,6 +1654,35 @@ export class SelectQueryBuilder<T, TResult = T> {
     return results.length > 0 ? results[0] : null;
   }
 
+  // ── EXECUTION: Streaming ────────────────────────────────
+
+  /**
+   * Stream results as an AsyncGenerator, fetching in batches via LIMIT/OFFSET.
+   * Avoids loading the entire result set into memory.
+   *
+   * @param batchSize Number of rows per batch (default: 1000)
+   */
+  async *stream(batchSize = 1000): AsyncGenerator<TResult, void, undefined> {
+    const effectiveBatchSize = Math.max(batchSize, 1);
+    let currentOffset = 0;
+
+    while (true) {
+      const cloned = this.clone();
+      cloned.offsetValue = currentOffset;
+      cloned.limitValue = effectiveBatchSize;
+
+      const batch = await cloned.getPartialMany();
+      if (batch.length === 0) break;
+
+      for (const row of batch) {
+        yield row;
+      }
+
+      if (batch.length < effectiveBatchSize) break;
+      currentOffset += effectiveBatchSize;
+    }
+  }
+
   // ── EXECUTION: Utility ─────────────────────────────────
 
   /**
@@ -1706,10 +1736,45 @@ export class SelectQueryBuilder<T, TResult = T> {
 
   /**
    * Check if any rows match the conditions.
+   * Uses `SELECT 1 ... LIMIT 1` for early termination instead of COUNT(*).
    */
   async exists(): Promise<boolean> {
-    const count = await this.getCount();
-    return count > 0;
+    const tableName = this.resolveTableName();
+    const qb = RawQueryBuilderFactory.create() as RawQueryBuilder;
+
+    const internals = (this.em as any)._ctx;
+    if (internals.isMySqlFamily()) qb.setDatabaseType("mysql");
+    else if (internals.isSqlite?.()) qb.setDatabaseType("sqlite");
+    else qb.setDatabaseType("postgresql");
+
+    qb.select(["1"]);
+    qb.from(`${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`);
+
+    for (const j of this.joinClauses) {
+      qb.join(
+        j.type,
+        this.em.wrapTable(j.table),
+        this.em.wrap(j.alias),
+        j.condition,
+      );
+    }
+
+    // Soft delete auto-filter (don't mutate shared state)
+    const existsWhere = [...this.whereClauses];
+    const resolver = (this.em as any).resolver;
+    if (resolver) {
+      const deletedAtColumn = resolver.getDeletedAtColumn(this.entity);
+      if (deletedAtColumn && !this.withDeletedFlag) {
+        existsWhere.push(Conditions.isNull(this.col(deletedAtColumn)));
+      }
+    }
+
+    qb.where(existsWhere);
+    qb.limit(1);
+
+    const built = qb.build();
+    const rows = await this.em.query<Record<string, unknown>>(built);
+    return rows.length > 0;
   }
 
   /**
@@ -1718,6 +1783,35 @@ export class SelectQueryBuilder<T, TResult = T> {
   asSubquery(alias: string): Sql {
     const built = this.toSql();
     return sql`(${built}) AS ${raw(this.em.wrap(alias))}`;
+  }
+
+  /**
+   * Create a shallow clone of this query builder.
+   * Useful for building variations of the same base query.
+   */
+  clone(): SelectQueryBuilder<T, TResult> {
+    const cloned = new SelectQueryBuilder<T, TResult>(this.entity, this.alias, this.em);
+    cloned.selectColumns = this.selectColumns === "*" ? "*" : [...this.selectColumns as string[]];
+    cloned.distinct = this.distinct;
+    cloned.whereClauses = [...this.whereClauses];
+    cloned.orderByClauses = [...this.orderByClauses];
+    cloned.groupByCols = [...this.groupByCols];
+    cloned.havingClauses = [...this.havingClauses];
+    cloned.joinClauses = [...this.joinClauses];
+    cloned.limitValue = this.limitValue;
+    cloned.offsetValue = this.offsetValue;
+    cloned.lockClause = this.lockClause;
+    cloned.withDeletedFlag = this.withDeletedFlag;
+    cloned.extraSegments = [...this.extraSegments];
+    cloned.rowValidator = this.rowValidator;
+    cloned.arrayValidatorFn = this.arrayValidatorFn;
+    cloned.selectedPropertyKeys = this.selectedPropertyKeys ? [...this.selectedPropertyKeys] : null;
+    cloned.indexHints = [...this.indexHints];
+    cloned.pgHints = [...this.pgHints];
+    cloned.propertyToColumnMap = this.propertyToColumnMap;
+    cloned.dialectExpression = this.dialectExpression;
+    cloned.aliasRegistry = new Map(this.aliasRegistry);
+    return cloned;
   }
 
   // ── Private ─────────────────────────────────────────────
