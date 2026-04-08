@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { TenantModule } from "./tenant/tenant.module";
 import { UsersModule } from "./users/users.module";
@@ -10,6 +11,7 @@ import { PostsController } from "./posts/posts.controller";
 
 @Module({
   imports: [
+    ConfigModule.forRoot(),
     TenantModule.forRoot({
       headerName: "x-tenant-id",
       defaultTenant: "public",
