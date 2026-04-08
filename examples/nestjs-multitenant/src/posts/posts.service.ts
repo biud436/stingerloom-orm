@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { CreatePostDto } from "./dto/create-post.dto";
 import { UpdatePostDto } from "./dto/update-post.dto";
 import { Post } from "./post.entity";
@@ -6,11 +6,15 @@ import { BaseRepository } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 
 @Injectable()
-export class PostsService {
+export class PostsService implements OnModuleInit {
   constructor(
     @InjectRepository(Post)
     private readonly postRepository: BaseRepository<Post>,
   ) {}
+
+  async onModuleInit() {
+    await this.postRepository.clear();
+  }
 
   async create(dto: CreatePostDto): Promise<Post> {
     const post = new Post();

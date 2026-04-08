@@ -4,7 +4,7 @@ import { CatsController } from "./cats.controller";
 import { StinglerloomOrmModule, StinglerloomOrmService } from "@stingerloom/orm/nestjs";
 import { Cat } from "./cat.entity";
 import { CatSubscriber } from "./cat.subscriber";
-import { OwnersModule } from "src/owners/owners.module";
+import { OwnersModule } from "../owners/owners.module";
 
 @Module({
   imports: [StinglerloomOrmModule.forFeature([Cat]), OwnersModule],

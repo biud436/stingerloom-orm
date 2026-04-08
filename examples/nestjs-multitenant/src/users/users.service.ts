@@ -4,13 +4,18 @@ import { UpdateUserDto } from "./dto/update-user.dto";
 import { User } from "./user.entity";
 import { BaseRepository } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
+import { OnModuleInit } from "@nestjs/common";
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: BaseRepository<User>,
   ) {}
+
+  async onModuleInit() {
+    await this.userRepository.clear();
+  }
 
   async create(dto: CreateUserDto): Promise<User> {
     const user = new User();

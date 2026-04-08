@@ -12,8 +12,8 @@ import {
   BufferPreviewEntry,
 } from "@stingerloom/orm";
 import { InjectRepository, InjectEntityManager } from "@stingerloom/orm/nestjs";
-import { OwnersService } from "src/owners/owners.service";
-import { Owner } from "src/owners/owner.entity";
+import { OwnersService } from "../owners/owners.service";
+import { Owner } from "../owners/owner.entity";
 
 @Injectable()
 export class CatsService {
