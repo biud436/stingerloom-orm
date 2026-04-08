@@ -8,6 +8,9 @@ import { User } from "./users/user.entity";
 import { Post } from "./posts/post.entity";
 import { UsersController } from "./users/users.controller";
 import { PostsController } from "./posts/posts.controller";
+import { Unit } from "./units/unit.entity";
+import { UnitsModule } from "./units/units.module";
+import { SnakeNamingStrategy } from "@stingerloom/orm";
 
 @Module({
   imports: [
@@ -24,12 +27,14 @@ import { PostsController } from "./posts/posts.controller";
       username: process.env.DB_USER || "postgres",
       password: process.env.DB_PASSWORD || "postgres",
       database: process.env.DB_NAME || "multi_tenancy_db2",
-      entities: [User, Post],
+      entities: [User, Post, Unit],
       synchronize: true,
       logging: true,
+      namingStrategy: new SnakeNamingStrategy(),
     }),
     UsersModule,
     PostsModule,
+    UnitsModule,
   ],
 })
 export class AppModule {}
