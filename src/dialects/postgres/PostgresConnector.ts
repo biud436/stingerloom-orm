@@ -35,11 +35,11 @@ export class PostgresConnector extends IConnector {
    * 유효하지 않은 문자가 포함되면 예외를 발생시킵니다.
    */
   private static validateIdentifier(name: string): void {
-    if (!/^[a-zA-Z_][a-zA-Z0-9_$]*$/.test(name)) {
+    if (!/^[a-zA-Z_][a-zA-Z0-9_$-]*$/.test(name)) {
       throw new OrmError(
         OrmErrorCode.INVALID_QUERY,
-        `Invalid identifier: "${name}". Only alphanumeric characters, underscores, and dollar signs are allowed.`,
-        "Use a valid PostgreSQL identifier (alphanumeric + underscore)",
+        `Invalid identifier: "${name}". Only alphanumeric characters, underscores, hyphens, and dollar signs are allowed.`,
+        "Use a valid PostgreSQL identifier (alphanumeric + underscore + hyphen)",
       );
     }
   }
