@@ -31,6 +31,7 @@ import { SnakeNamingStrategy } from "@stingerloom/orm";
       synchronize: true,
       logging: true,
       namingStrategy: new SnakeNamingStrategy(),
+      // tenantStrategy: "schema_qualified",
     }),
     UsersModule,
     PostsModule,
