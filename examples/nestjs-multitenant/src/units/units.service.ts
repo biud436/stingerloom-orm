@@ -38,4 +38,16 @@ export class UnitsService implements OnModuleInit {
 
     return unit;
   }
+
+  async findInActiveUnits(): Promise<Unit[]> {
+    const unit = qAlias(Unit, "u");
+
+    const items = await this.unitRepository
+      .createQueryBuilder("u")
+      .where(unit.active.isNull())
+      .orWhere(unit.active.eq(false))
+      .getMany();
+
+    return items;
+  }
 }

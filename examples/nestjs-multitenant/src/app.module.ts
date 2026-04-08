@@ -11,6 +11,7 @@ import { PostsController } from "./posts/posts.controller";
 import { Unit } from "./units/unit.entity";
 import { UnitsModule } from "./units/units.module";
 import { SnakeNamingStrategy } from "@stingerloom/orm";
+import { UnitsController } from "./units/units.controller";
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { SnakeNamingStrategy } from "@stingerloom/orm";
     TenantModule.forRoot({
       headerName: "x-tenant-id",
       defaultTenant: "public",
-      routes: [UsersController, PostsController],
+      routes: [UsersController, PostsController, UnitsController],
     }),
     StinglerloomOrmModule.forRoot({
       type: "postgres",
