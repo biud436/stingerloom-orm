@@ -448,6 +448,304 @@ describe("PostgresTenantMigrationRunner", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 테이블 필터링 테스트 (Issue #234)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PostgresTenantMigrationRunner — table filtering", () => {
+  const allTables = [
+    "users",
+    "posts",
+    "comments",
+    "temp_logs",
+    "temp_sessions",
+    "audit_trail",
+    "tags",
+    "post_tags",
+  ];
+
+  describe("include (테이블명 문자열)", () => {
+    it("include에 지정된 테이블만 복제해야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { include: ["users", "posts"] },
+      });
+
+      await runner.ensureSchema("t1");
+
+      expect(driver.executeRaw).toHaveBeenCalledTimes(2);
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."users"'),
+      );
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."posts"'),
+      );
+    });
+
+    it("include가 빈 배열이면 아무 테이블도 복제하지 않아야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { include: [] },
+      });
+
+      await runner.ensureSchema("t1");
+
+      expect(driver.executeRaw).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("exclude (테이블명 문자열)", () => {
+    it("exclude에 지정된 테이블을 제외해야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { exclude: ["temp_logs", "temp_sessions", "audit_trail"] },
+      });
+
+      await runner.ensureSchema("t1");
+
+      expect(driver.executeRaw).toHaveBeenCalledTimes(5);
+      for (const t of ["users", "posts", "comments", "tags", "post_tags"]) {
+        expect(driver.executeRaw).toHaveBeenCalledWith(
+          expect.stringContaining(`"t1"."${t}"`),
+        );
+      }
+    });
+  });
+
+  describe("include + exclude 조합", () => {
+    it("include 후 exclude가 적용되어야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: {
+          include: ["users", "posts", "comments"],
+          exclude: ["comments"],
+        },
+      });
+
+      await runner.ensureSchema("t1");
+
+      expect(driver.executeRaw).toHaveBeenCalledTimes(2);
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."users"'),
+      );
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."posts"'),
+      );
+    });
+  });
+
+  describe("excludePrefix", () => {
+    it("지정된 접두사로 시작하는 테이블을 제외해야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { excludePrefix: ["temp_"] },
+      });
+
+      await runner.ensureSchema("t1");
+
+      expect(driver.executeRaw).toHaveBeenCalledTimes(6);
+      // temp_logs, temp_sessions 제외됨
+      const calls = driver.executeRaw.mock.calls.map((c) => c[0] as string);
+      expect(calls.some((c) => c.includes("temp_logs"))).toBe(false);
+      expect(calls.some((c) => c.includes("temp_sessions"))).toBe(false);
+    });
+  });
+
+  describe("excludeSuffix", () => {
+    it("지정된 접미사로 끝나는 테이블을 제외해야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { excludeSuffix: ["_trail", "_tags"] },
+      });
+
+      await runner.ensureSchema("t1");
+
+      // audit_trail, post_tags 제외
+      expect(driver.executeRaw).toHaveBeenCalledTimes(6);
+      const calls = driver.executeRaw.mock.calls.map((c) => c[0] as string);
+      expect(calls.some((c) => c.includes("audit_trail"))).toBe(false);
+      expect(calls.some((c) => c.includes("post_tags"))).toBe(false);
+    });
+  });
+
+  describe("includePrefix", () => {
+    it("지정된 접두사로 시작하는 테이블만 포함해야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { includePrefix: ["post"] },
+      });
+
+      await runner.ensureSchema("t1");
+
+      // posts, post_tags만 포함
+      expect(driver.executeRaw).toHaveBeenCalledTimes(2);
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."posts"'),
+      );
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."post_tags"'),
+      );
+    });
+  });
+
+  describe("includeSuffix", () => {
+    it("지정된 접미사로 끝나는 테이블만 포함해야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { includeSuffix: ["s"] },
+      });
+
+      await runner.ensureSchema("t1");
+
+      // users, posts, comments, temp_logs, temp_sessions, tags, post_tags
+      const calls = driver.executeRaw.mock.calls.map((c) => c[0] as string);
+      for (const c of calls) {
+        // 모든 복제된 테이블이 "s"로 끝나야 함
+        const match = c.match(/"t1"\."(\w+)"/);
+        expect(match).toBeTruthy();
+        expect(match![1].endsWith("s")).toBe(true);
+      }
+    });
+  });
+
+  describe("includePrefix + excludePrefix 조합", () => {
+    it("포함 후 제외가 순서대로 적용되어야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: {
+          includePrefix: ["temp_", "post"],
+          excludePrefix: ["post_"],
+        },
+      });
+
+      await runner.ensureSchema("t1");
+
+      // includePrefix: temp_logs, temp_sessions, posts, post_tags
+      // excludePrefix: post_tags 제외
+      // 결과: temp_logs, temp_sessions, posts
+      expect(driver.executeRaw).toHaveBeenCalledTimes(3);
+      const calls = driver.executeRaw.mock.calls.map((c) => c[0] as string);
+      expect(calls.some((c) => c.includes('"posts"'))).toBe(true);
+      expect(calls.some((c) => c.includes('"temp_logs"'))).toBe(true);
+      expect(calls.some((c) => c.includes('"temp_sessions"'))).toBe(true);
+    });
+  });
+
+  describe("엔티티 클래스 기반 필터링", () => {
+    // @Entity({ name: "users" }) 를 모사하는 클래스
+    class UserEntity {}
+    Reflect.defineMetadata(
+      Symbol.for("STG_ENTITY"),
+      { name: "users", target: UserEntity, columns: [] },
+      UserEntity,
+    );
+
+    class PostEntity {}
+    Reflect.defineMetadata(
+      Symbol.for("STG_ENTITY"),
+      { name: "posts", target: PostEntity, columns: [] },
+      PostEntity,
+    );
+
+    it("include에 엔티티 클래스를 지정하면 해당 테이블만 복제해야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { include: [UserEntity, PostEntity] },
+      });
+
+      await runner.ensureSchema("t1");
+
+      expect(driver.executeRaw).toHaveBeenCalledTimes(2);
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."users"'),
+      );
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."posts"'),
+      );
+    });
+
+    it("exclude에 엔티티 클래스를 지정하면 해당 테이블을 제외해야 한다", async () => {
+      const driver = createMockDriver({ tables: ["users", "posts", "tags"] });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { exclude: [PostEntity] },
+      });
+
+      await runner.ensureSchema("t1");
+
+      expect(driver.executeRaw).toHaveBeenCalledTimes(2);
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."users"'),
+      );
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."tags"'),
+      );
+    });
+
+    it("엔티티 메타데이터가 없으면 클래스 이름을 테이블명으로 사용해야 한다", async () => {
+      class Comment {}
+      // 메타데이터 없음 — 클래스 이름 "Comment"를 테이블명으로 사용
+      const driver = createMockDriver({
+        tables: ["Comment", "users"],
+      });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { include: [Comment] },
+      });
+
+      await runner.ensureSchema("t1");
+
+      expect(driver.executeRaw).toHaveBeenCalledTimes(1);
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."Comment"'),
+      );
+    });
+
+    it("문자열과 엔티티 클래스를 혼합하여 지정할 수 있어야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { include: [UserEntity, "tags"] },
+      });
+
+      await runner.ensureSchema("t1");
+
+      expect(driver.executeRaw).toHaveBeenCalledTimes(2);
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."users"'),
+      );
+      expect(driver.executeRaw).toHaveBeenCalledWith(
+        expect.stringContaining('"t1"."tags"'),
+      );
+    });
+  });
+
+  describe("tables 옵션 없음 (하위호환)", () => {
+    it("tables 옵션이 없으면 기존처럼 모든 테이블을 복제해야 한다", async () => {
+      const driver = createMockDriver({ tables: allTables });
+      const runner = new PostgresTenantMigrationRunner(driver);
+
+      await runner.ensureSchema("t1");
+
+      expect(driver.executeRaw).toHaveBeenCalledTimes(allTables.length);
+    });
+  });
+
+  describe("syncTenantSchemas와 함께 사용", () => {
+    it("필터 옵션이 syncTenantSchemas에서도 적용되어야 한다", async () => {
+      const driver = createMockDriver({
+        schemas: ["public"],
+        tables: allTables,
+      });
+      const runner = new PostgresTenantMigrationRunner(driver, {
+        tables: { include: ["users"] },
+      });
+
+      await runner.syncTenantSchemas(["t1", "t2"]);
+
+      // 각 테넌트에 대해 users 테이블 1개씩 = 2번
+      expect(driver.executeRaw).toHaveBeenCalledTimes(2);
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 미지원 드라이버 테스트
 // ─────────────────────────────────────────────────────────────────────────────
 

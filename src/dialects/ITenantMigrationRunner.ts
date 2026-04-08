@@ -1,4 +1,38 @@
 /**
+ * 테넌트 프로비저닝 시 복제할 테이블을 필터링하는 옵션.
+ *
+ * 필터 적용 순서:
+ * 1. `include`가 지정되면 해당 테이블만 후보로 선정 (미지정 시 전체)
+ * 2. `includePrefix` / `includeSuffix`가 지정되면 추가로 좁힘
+ * 3. `exclude`로 제외할 테이블 제거
+ * 4. `excludePrefix` / `excludeSuffix`로 추가 제거
+ */
+export interface TenantTableFilterOptions {
+  /**
+   * 복제할 테이블 목록. 엔티티 클래스 또는 테이블명 문자열.
+   * 지정하지 않으면 원본 스키마의 모든 테이블이 후보입니다.
+   */
+  include?: (string | Function)[];
+
+  /**
+   * 제외할 테이블 목록. 엔티티 클래스 또는 테이블명 문자열.
+   */
+  exclude?: (string | Function)[];
+
+  /** 이 접두사로 시작하는 테이블만 포함 */
+  includePrefix?: string[];
+
+  /** 이 접미사로 끝나는 테이블만 포함 */
+  includeSuffix?: string[];
+
+  /** 이 접두사로 시작하는 테이블 제외 */
+  excludePrefix?: string[];
+
+  /** 이 접미사로 끝나는 테이블 제외 */
+  excludeSuffix?: string[];
+}
+
+/**
  * 테넌트 마이그레이션 러너 옵션.
  */
 export interface TenantMigrationRunnerOptions {
@@ -7,6 +41,12 @@ export interface TenantMigrationRunnerOptions {
    * PostgreSQL: 기본값 "public"
    */
   sourceSchema?: string;
+
+  /**
+   * 복제할 테이블 필터링 옵션.
+   * 지정하지 않으면 원본 스키마의 모든 테이블을 복제합니다.
+   */
+  tables?: TenantTableFilterOptions;
 }
 
 /**

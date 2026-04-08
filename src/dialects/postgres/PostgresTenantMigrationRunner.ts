@@ -4,8 +4,10 @@ import { Logger } from "../../utils";
 import {
   ITenantMigrationRunner,
   TenantMigrationRunnerOptions,
+  TenantTableFilterOptions,
   TenantSyncResult,
 } from "../ITenantMigrationRunner";
+import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
 
 /**
  * PostgresTenantMigrationRunner
@@ -21,6 +23,7 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
   private readonly provisionedSchemas = new Set<string>();
   private readonly provisioningLocks = new Map<string, Promise<void>>();
   private readonly sourceSchema: string;
+  private readonly tableFilter: TenantTableFilterOptions | undefined;
   private readonly logger = new Logger("PostgresTenantMigrationRunner");
 
   constructor(
@@ -28,6 +31,7 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
     options?: TenantMigrationRunnerOptions,
   ) {
     this.sourceSchema = options?.sourceSchema ?? "public";
+    this.tableFilter = options?.tables;
   }
 
   async discoverSchemas(): Promise<string[]> {
@@ -109,9 +113,10 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
     await this.driver.createSchema(tenantId);
 
     const tables = await this.driver.listTables(this.sourceSchema);
+    const allTableNames = (tables as any[]).map((r) => r.tablename as string);
+    const filtered = this.filterTables(allTableNames);
 
-    for (const row of tables as any[]) {
-      const tableName = row.tablename as string;
+    for (const tableName of filtered) {
       const wrappedTenant = this.driver.wrap(tenantId);
       const wrappedTable = this.driver.wrap(tableName);
       const wrappedSource = this.driver.wrap(this.sourceSchema);
@@ -122,7 +127,77 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
     }
 
     this.logger.info(
-      `Schema "${tenantId}" provisioned with ${(tables as any[]).length} tables`,
+      `Schema "${tenantId}" provisioned with ${filtered.length} tables`,
     );
+  }
+
+  /**
+   * 엔티티 클래스 또는 문자열에서 테이블명을 추출합니다.
+   */
+  private resolveTableName(item: string | Function): string {
+    if (typeof item === "string") return item;
+    const meta = Reflect.getMetadata(ENTITY_TOKEN, item) as
+      | EntityMetadata
+      | undefined;
+    if (meta?.name) return meta.name;
+    return item.name;
+  }
+
+  /**
+   * TenantTableFilterOptions에 따라 테이블 목록을 필터링합니다.
+   *
+   * 적용 순서:
+   * 1. include → 지정 시 해당 테이블만 후보
+   * 2. includePrefix / includeSuffix → 추가로 좁힘
+   * 3. exclude → 제외
+   * 4. excludePrefix / excludeSuffix → 추가 제외
+   */
+  private filterTables(tableNames: string[]): string[] {
+    const opts = this.tableFilter;
+    if (!opts) return tableNames;
+
+    let result = tableNames;
+
+    // 1. include (빈 배열이면 아무것도 포함하지 않음)
+    if (opts.include) {
+      const includeSet = new Set(
+        opts.include.map((item) => this.resolveTableName(item)),
+      );
+      result = result.filter((t) => includeSet.has(t));
+    }
+
+    // 2. includePrefix / includeSuffix
+    if (opts.includePrefix && opts.includePrefix.length > 0) {
+      result = result.filter((t) =>
+        opts.includePrefix!.some((p) => t.startsWith(p)),
+      );
+    }
+    if (opts.includeSuffix && opts.includeSuffix.length > 0) {
+      result = result.filter((t) =>
+        opts.includeSuffix!.some((s) => t.endsWith(s)),
+      );
+    }
+
+    // 3. exclude
+    if (opts.exclude && opts.exclude.length > 0) {
+      const excludeSet = new Set(
+        opts.exclude.map((item) => this.resolveTableName(item)),
+      );
+      result = result.filter((t) => !excludeSet.has(t));
+    }
+
+    // 4. excludePrefix / excludeSuffix
+    if (opts.excludePrefix && opts.excludePrefix.length > 0) {
+      result = result.filter(
+        (t) => !opts.excludePrefix!.some((p) => t.startsWith(p)),
+      );
+    }
+    if (opts.excludeSuffix && opts.excludeSuffix.length > 0) {
+      result = result.filter(
+        (t) => !opts.excludeSuffix!.some((s) => t.endsWith(s)),
+      );
+    }
+
+    return result;
   }
 }
