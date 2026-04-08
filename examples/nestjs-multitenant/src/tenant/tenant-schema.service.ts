@@ -8,6 +8,7 @@ import {
 import { Inject } from "@nestjs/common";
 import { User } from "../users/user.entity";
 import { Post } from "../posts/post.entity";
+import { Unit } from "../units/unit.entity";
 
 /**
  * TenantSchemaService
@@ -52,7 +53,7 @@ export class TenantSchemaService {
         // Any non-tenant tables in the public schema (e.g. shared config,
         // migration history) are excluded from provisioning.
         tables: {
-          include: [User, Post],
+          include: [User, Post, Unit],
         },
       };
 
