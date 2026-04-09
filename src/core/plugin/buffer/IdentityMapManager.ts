@@ -2,6 +2,7 @@
 import { ClazzType } from "../../../utils";
 import { COLUMN_TOKEN } from "../../../decorators/Column";
 import { ColumnMetadata } from "../../../scanner/ColumnScanner";
+import { FindOption } from "../../../dialects/FindOption";
 import { PluginContext } from "../PluginContext";
 
 /**
@@ -134,5 +135,64 @@ export class IdentityMapManager {
       if (instance[col] !== val) return false;
     }
     return true;
+  }
+
+  /**
+   * Check whether a FindOption is a simple PK-only equality lookup
+   * eligible for first-level cache (Identity Map hit → skip DB).
+   *
+   * Returns the identity map key if eligible, or null otherwise.
+   */
+  tryBuildCacheKey<T>(
+    entityClass: ClazzType<T>,
+    option: FindOption<T>,
+  ): string | null {
+    if (
+      option.relations?.length ||
+      option.select ||
+      option.orderBy ||
+      option.limit != null ||
+      option.skip != null ||
+      option.take != null ||
+      option.groupBy?.length ||
+      option.having?.length ||
+      option.lock ||
+      option.distinct ||
+      option.useMaster ||
+      option.withDeleted ||
+      option.timeout != null
+    ) {
+      return null;
+    }
+
+    const where = option.where;
+    if (!where || Array.isArray(where)) return null;
+
+    const whereObj = where as Record<string, unknown>;
+    if (whereObj.OR || whereObj.AND || whereObj.NOT) return null;
+
+    const { pkColumns } = this.getColumnInfo(entityClass);
+    if (pkColumns.length === 0) return null;
+
+    const whereKeys = Object.keys(whereObj);
+    if (whereKeys.length !== pkColumns.length) return null;
+    if (!pkColumns.every((pk) => whereKeys.includes(pk))) return null;
+
+    for (const pk of pkColumns) {
+      if (!this.isLiteralScalar(whereObj[pk])) return null;
+    }
+
+    const pkParts = pkColumns
+      .map((pk) => `${pk}=${whereObj[pk]}`)
+      .join(",");
+    return `${entityClass.name}:${pkParts}`;
+  }
+
+  private isLiteralScalar(value: unknown): boolean {
+    if (value === null || value === undefined) return false;
+    const t = typeof value;
+    if (t === "string" || t === "number" || t === "boolean" || t === "bigint") return true;
+    if (value instanceof Date) return true;
+    return false;
   }
 }

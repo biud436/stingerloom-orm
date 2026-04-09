@@ -175,6 +175,24 @@ export class WriteBuffer {
     entity: ClazzType<T>,
     option: FindOption<T> = {},
   ): Promise<T | null> {
+    // First-level cache: skip DB for simple PK lookups already in the Identity Map.
+    // FlushMode.ALWAYS is excluded — its contract is to always hit the DB.
+    if (this.flushMode !== FlushMode.ALWAYS) {
+      const cacheKey = this.idMap.tryBuildCacheKey(entity, option);
+      if (cacheKey !== null) {
+        const cached = this.idMap.identityMap.get(cacheKey);
+        if (cached) {
+          await this.autoFlushIfNeeded();
+          if (this.options.logging) {
+            this.log("findOne → cache hit (skip DB)", {
+              entity: entity.name, key: cacheKey, identityMapHit: true,
+            });
+          }
+          return cached as T;
+        }
+      }
+    }
+
     await this.autoFlushIfNeeded();
     const result = await this.ctx.em.findOne(entity, option);
     if (result === null) {

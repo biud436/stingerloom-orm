@@ -547,6 +547,113 @@ describe("Buffer Plugin", () => {
       expect(() => mut.track(item1dup)).toThrow(/Identity conflict/);
       expect(mut.tracked()).toHaveLength(2);
     });
+
+    // ── First-level cache (skip DB on PK lookup) ──────────────────
+
+    it("findOne() with PK-only where should skip DB when entity is in identity map", async () => {
+      const em = createExtendedEm(User);
+      const dbUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const findOneSpy = jest.spyOn(em, "findOne").mockResolvedValue(dbUser);
+
+      const buf = em.buffer();
+      const first = await buf.findOne(User, { where: { id: 1 } as any });
+      expect(findOneSpy).toHaveBeenCalledTimes(1);
+
+      // Second call: should NOT hit DB
+      const second = await buf.findOne(User, { where: { id: 1 } as any });
+      expect(findOneSpy).toHaveBeenCalledTimes(1); // still 1
+      expect(second).toBe(first);
+    });
+
+    it("findOne() with relations should still hit DB even if PK is cached", async () => {
+      const em = createExtendedEm(User);
+      const dbUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const findOneSpy = jest.spyOn(em, "findOne").mockResolvedValue(dbUser);
+
+      const buf = em.buffer();
+      await buf.findOne(User, { where: { id: 1 } as any });
+
+      await buf.findOne(User, { where: { id: 1 } as any, relations: ["posts"] as any });
+      expect(findOneSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("findOne() with filter operators should always hit DB", async () => {
+      const em = createExtendedEm(User);
+      const dbUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const findOneSpy = jest.spyOn(em, "findOne").mockResolvedValue(dbUser);
+
+      const buf = em.buffer();
+      await buf.findOne(User, { where: { id: 1 } as any });
+
+      await buf.findOne(User, { where: { id: { gt: 0 } } as any });
+      expect(findOneSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("findOne() cache works with composite PK", async () => {
+      const em = createExtendedEm(OrderItem);
+      const item = Object.assign(new OrderItem(), { orderId: 1, productId: 2, quantity: 10 });
+      const findOneSpy = jest.spyOn(em, "findOne").mockResolvedValue(item);
+
+      const buf = em.buffer();
+      await buf.findOne(OrderItem, { where: { orderId: 1, productId: 2 } as any });
+      await buf.findOne(OrderItem, { where: { orderId: 1, productId: 2 } as any });
+
+      expect(findOneSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("findOne() with PK not in identity map should still hit DB", async () => {
+      const em = createExtendedEm(User);
+      const dbUser1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const dbUser2 = Object.assign(new User(), { id: 2, name: "Bob", email: "b@c.d" });
+      const findOneSpy = jest.spyOn(em, "findOne")
+        .mockResolvedValueOnce(dbUser1)
+        .mockResolvedValueOnce(dbUser2);
+
+      const buf = em.buffer();
+      await buf.findOne(User, { where: { id: 1 } as any });
+      await buf.findOne(User, { where: { id: 2 } as any });
+
+      expect(findOneSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("findOne() with non-PK where should always hit DB", async () => {
+      const em = createExtendedEm(User);
+      const dbUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const findOneSpy = jest.spyOn(em, "findOne").mockResolvedValue(dbUser);
+
+      const buf = em.buffer();
+      await buf.findOne(User, { where: { id: 1 } as any });
+
+      // Query by name (not a PK column)
+      await buf.findOne(User, { where: { name: "Alice" } as any });
+      expect(findOneSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("findOne() cache should be bypassed after clear()", async () => {
+      const em = createExtendedEm(User);
+      const dbUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const findOneSpy = jest.spyOn(em, "findOne").mockResolvedValue(dbUser);
+
+      const buf = em.buffer();
+      await buf.findOne(User, { where: { id: 1 } as any });
+      buf.clear();
+
+      await buf.findOne(User, { where: { id: 1 } as any });
+      expect(findOneSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("findOne() cache should be bypassed after untrack()", async () => {
+      const em = createExtendedEm(User);
+      const dbUser = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const findOneSpy = jest.spyOn(em, "findOne").mockResolvedValue(dbUser);
+
+      const buf = em.buffer();
+      const user = await buf.findOne(User, { where: { id: 1 } as any });
+      buf.untrack(user!);
+
+      await buf.findOne(User, { where: { id: 1 } as any });
+      expect(findOneSpy).toHaveBeenCalledTimes(2);
+    });
   });
 
   // ── dirty() ───────────────────────────────────────────────────
