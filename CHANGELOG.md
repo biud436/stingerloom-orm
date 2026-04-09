@@ -6,6 +6,57 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.14.0] — 2026-04-09
+
+### Highlights
+
+- **First-level cache for WriteBuffer** — `findOne()` with PK-only WHERE skips the DB entirely when the entity is already in the Identity Map. ~480x faster for repeated lookups (benchmark included).
+- **14 new SelectQueryBuilder methods** — `when()`, `pipe()`, `whereHas()`, `whereInSubquery()`, `addSelectSubquery()`, `applyScope()`, and more for expressive query building.
+- **Tenant schema provisioning table filter** — Control which tables are provisioned per tenant with `tableFilter` option (#234).
+- **Custom column type in timestamp decorators** — `@CreateTimestamp({ type: "timestamptz" })` and `@UpdateTimestamp({ type: "timestamptz" })` (#235, #236).
+
+### Added
+
+- **`WriteBuffer.findOne()` first-level cache** — PK lookup returns cached identity map instance, 0 DB round-trips
+- **`assertTenantContext()`** — Warns when tenant context is missing in multi-tenant operations
+- **`when()`** — Conditional query clause builder
+- **`pipe()`** — Functional query transformation chain
+- **`andWhereGroup()` / `orWhereGroup()`** — Grouped WHERE with `WhereGroupBuilder`
+- **`whereHas()` / `whereNotHas()`** — Relation existence filters
+- **`withCount()`** — Inline relation count subquery
+- **`loadRelation()`** — Post-query relation loading
+- **`whereInSubquery()` / `whereNotInSubquery()`** — Subquery-driven IN filters
+- **`whereExistsSubquery()` / `whereNotExistsSubquery()`** — Correlated EXISTS
+- **`addSelectSubquery()`** — Subquery as SELECT column
+- **`applyScope()`** — Reusable query scopes
+- Tenant provisioning `tableFilter` option (#234)
+- `@CreateTimestamp` / `@UpdateTimestamp` custom `type` parameter (#235, #236)
+
+### Performance
+
+- `exists()` uses `SELECT 1 LIMIT 1` instead of `COUNT(*)` for early termination
+- `findInternal()` deduplicates `buildPropertyToColumnMap` calls (3→1)
+- `WriteBuffer.flush()` fast-checks `hasQueuedWork()` before expensive diff
+- `toSql()` no longer mutates `whereClauses` (safe for `getManyAndCount`)
+- `clone()` / `stream()` added to SelectQueryBuilder
+
+### Fixed
+
+- Allow hyphens in PostgreSQL identifier validation
+- Fix `BaseRepository.createQueryBuilder` delegation bug
+
+### Benchmarks
+
+- Identity map first-level cache benchmark (`__tests__/bench/identity-cache-bench.ts`)
+
+### Tests
+
+- 159 unit test suites, **3,403 tests passed**, 0 failures
+- 13 SQLite integration suites, 196 tests passed
+- 5 example projects e2e: 139 tests passed
+
+---
+
 ## [0.13.0] — 2026-04-06
 
 ### Highlights

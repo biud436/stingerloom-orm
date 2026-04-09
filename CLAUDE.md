@@ -4,7 +4,7 @@
 
 TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker OverlayFS 방식의 **레이어드 메타데이터 시스템**을 통해 멀티테넌시를 지원합니다.
 
-- **패키지명:** `@stingerloom/orm` (v0.9.0)
+- **패키지명:** `@stingerloom/orm` (v0.14.0)
 - **패키지 매니저:** pnpm
 - **npm 배포:** https://www.npmjs.com/package/@stingerloom/orm
 - **진입점:** `dist/index.js` (CJS) / `dist/esm/index.js` (ESM) / `dist/index.d.ts`
@@ -53,8 +53,8 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker O
 │   ├── utils/                  # Logger, ReflectManager, uuid-v7, camelToSnakeCase 등
 │   └── errors/                 # OrmError, OrmErrorCode + 16개 커스텀 에러 클래스
 ├── __tests__/
-│   ├── unit/                   # 131개 유닛 테스트 파일 (2,978 tests)
-│   └── integration/            # 35개 통합 테스트 파일 (sqlite/ 포함, INTEGRATION_TEST=true 필요)
+│   ├── unit/                   # 159개 유닛 테스트 파일 (3,403 tests)
+│   └── integration/            # 40개 통합 테스트 파일 (sqlite/ 포함, INTEGRATION_TEST=true 필요)
 ├── examples/
 │   ├── nestjs-cats/            # NestJS 기본 예제 (CRUD, EntitySubscriber, cursor pagination)
 │   ├── nestjs-blog/            # NestJS 블로그 예제 (M2M, soft delete, upsert, 59 e2e tests)
@@ -226,10 +226,10 @@ pnpm start          # NestJS 서버 시작
 ## 테스트 구조
 
 ### 유닛 테스트 (`__tests__/unit/`)
-131개 파일, 2,978개 테스트 (2026-03-30 기준, 19 skipped, 0 failures)
+159개 파일, 3,403개 테스트 (2026-04-09 기준, 19 skipped, 0 failures)
 
 ### 통합 테스트 (`__tests__/integration/`)
-40개 파일, 868개 테스트 (2026-03-30 기준, `INTEGRATION_TEST=true` 필요)
+40개 파일, 868개 테스트 (2026-04-09 기준, `INTEGRATION_TEST=true` 필요)
 - MySQL/PostgreSQL 듀얼 드라이버: `crud-basic`, `relations-one-to-many`, `soft-delete`, `aggregate`, `batch-operations`, `lifecycle-hooks`, `one-to-one`, `many-to-many`, `schema-generator`, `entity-subscriber`, `upsert`, `complex-queries`
 - PostgreSQL 전용: `postgres-driver.test.ts`, `postgres-driver-ddl.test.ts`, `multi-tenancy-postgres.test.ts`
 - MySQL 전용: `mysql-driver-ddl.test.ts`
@@ -316,9 +316,20 @@ pnpm start          # NestJS 서버 시작
 - Dual CJS/ESM 빌드
 - 영어 문서 (34페이지) + 한국어 문서 (28페이지)
 - SQL Injection 전 드라이버 감사 완료
+- WriteBuffer 1차 캐시 (PK findOne → Identity Map 히트 시 DB 스킵)
+- SelectQueryBuilder 14개 생산성 메서드 (when, pipe, whereHas, whereInSubquery, applyScope 등)
+- QueryDSL (qAlias) + Entity-aware JOIN + Relation-based auto-join
+- 테넌트 프로비저닝 tableFilter 옵션
+- @CreateTimestamp / @UpdateTimestamp 커스텀 타입 지원
+- @RelationColumn 데코레이터
+- exists() / findByPK() / findByPKs() / findOneOrFail()
+- batchUpsert / streamBatch
+- NOWAIT / SKIP LOCKED 잠금
+- Index hints (MySQL / PostgreSQL)
+- assertTenantContext() 테넌트 컨텍스트 경고
 
-### 현재 안정성 상태 (v0.9.0, 2026-03-28 기준)
-- **테스트:** 3,846 passed, 21 skipped, 0 failures (171 suites) — 유닛 2,978 + 통합 868
+### 현재 안정성 상태 (v0.14.0, 2026-04-09 기준)
+- **테스트:** 4,271 passed, 19 skipped, 0 failures (199 suites) — 유닛 3,403 + 통합 868
 - **예제:** 4개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-multitenant, nestjs-todo) 타입 체크 통과
 - **보안:** SQL Injection 취약점 수정 완료, 전 드라이버 감사 완료
 - **격리:** 테넌트 간 메타데이터 유출 차단, AsyncLocalStorage 동시성 안전 확보
