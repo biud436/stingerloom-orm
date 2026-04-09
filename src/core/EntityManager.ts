@@ -3598,6 +3598,22 @@ export class EntityManager implements BaseEntityManager {
     return this.driver;
   }
 
+  /**
+   * Checks if a tenant context (MetadataContext.run) is active.
+   * Logs a warning if not — useful in middleware/guards to catch missing context early.
+   * @returns true if tenant context is active, false if falling back to "public"
+   */
+  assertTenantContext(): boolean {
+    if (MetadataContext.isActive()) {
+      return true;
+    }
+    this.logger.warn(
+      `[multi-tenancy] No tenant context active — query will use "public" schema. ` +
+        `Wrap your code in MetadataContext.run(tenantId, callback).`,
+    );
+    return false;
+  }
+
   // ── Public Metadata API (#233) ──────��──────────────────────
 
   /**
