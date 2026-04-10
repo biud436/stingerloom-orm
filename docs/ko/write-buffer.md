@@ -37,6 +37,14 @@ const buf = em.buffer();
 const buf = em.buffer({ cascade: true, batchInsert: true });
 ```
 
+오래 유지되는 버퍼(백그라운드 워커 등)라면, Identity Map 크기를 제한해서 메모리 누적을 방지할 수 있어요:
+
+```typescript
+const buf = em.buffer({ maxIdentityMapSize: 1000 });
+// 1000개를 초과하면 가장 오래 사용되지 않은 clean 엔티티가 자동 퇴출돼요.
+// dirty, NEW, REMOVED 엔티티는 절대 퇴출되지 않아요.
+```
+
 이 시점부터 모든 읽기/쓰기는 `em` 대신 `buf`를 통해 해요.
 
 ---
@@ -77,6 +85,20 @@ console.log(a === b); // true — same JavaScript object
 ```
 Identity conflict: another instance of "User" with PK (User:id=1) is already tracked
 ```
+
+#### 메모리 관리
+
+기본적으로 Identity Map은 제한 없이 커져요 — `findOne()`, `find()`, `getReference()` 호출마다 엔트리가 추가되거든요. 요청 단위의 짧은 버퍼라면 문제없지만, 장기 실행 버퍼에서는 `maxIdentityMapSize`를 설정해서 LRU 퇴출을 활성화하세요:
+
+```typescript
+const buf = em.buffer({ maxIdentityMapSize: 500 });
+
+// 500개 초과 시 가장 오래 사용되지 않은 clean 엔티티가 퇴출돼요.
+// "clean" = snapshot과 현재 상태가 일치하고, NEW/REMOVED가 아닌 엔티티.
+// dirty 엔티티는 절대 퇴출되지 않아요 — 변경 사항은 안전해요.
+```
+
+퇴출된 엔티티는 `EntityState.DETACHED`로 전환돼요. 현재 크기는 `buf.size().identityMap`으로 확인할 수 있어요.
 
 ### Dirty Checking -- "변경된 것만 업데이트"
 
@@ -385,7 +407,7 @@ const preview = buf.preview();
 
 ```typescript
 const s = buf.size();
-// { tracked: 5, inserts: 1, deletes: 0, persists: 2, bulkUpdates: 0, bulkDeletes: 0 }
+// { tracked: 5, inserts: 1, deletes: 0, persists: 2, bulkUpdates: 0, bulkDeletes: 0, identityMap: 8 }
 ```
 
 ---

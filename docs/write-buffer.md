@@ -37,6 +37,15 @@ You can also pass options per-buffer to override the defaults:
 const buf = em.buffer({ cascade: true, batchInsert: true });
 ```
 
+For long-lived buffers (e.g., background workers), you can limit the Identity Map size to prevent unbounded memory growth:
+
+```typescript
+const buf = em.buffer({ maxIdentityMapSize: 1000 });
+// When the map exceeds 1000 entries, the least-recently-used
+// clean entities are automatically evicted.
+// Dirty, NEW, and REMOVED entities are never evicted.
+```
+
 From this point on, all reads and writes go through `buf` instead of `em` directly.
 
 ---
@@ -77,6 +86,20 @@ Internally, the Identity Map uses a key like `"User:id=1"`. For composite primar
 ```
 Identity conflict: another instance of "User" with PK (User:id=1) is already tracked
 ```
+
+#### Memory management
+
+By default, the Identity Map grows without limit — every `findOne()`, `find()`, and `getReference()` call adds entries. For short-lived request-scoped buffers this is fine. For long-lived buffers, set `maxIdentityMapSize` to enable LRU eviction:
+
+```typescript
+const buf = em.buffer({ maxIdentityMapSize: 500 });
+
+// After 500+ entries, the least-recently-used clean entities are evicted.
+// "Clean" means: snapshot matches current state, not NEW, not REMOVED.
+// Dirty entities are NEVER evicted — your pending changes are safe.
+```
+
+Evicted entities transition to `EntityState.DETACHED`. You can monitor the current size via `buf.size().identityMap`.
 
 ### Dirty Checking — "Only update what changed"
 
@@ -385,7 +408,7 @@ Check how much work is pending:
 
 ```typescript
 const s = buf.size();
-// { tracked: 5, inserts: 1, deletes: 0, persists: 2, bulkUpdates: 0, bulkDeletes: 0 }
+// { tracked: 5, inserts: 1, deletes: 0, persists: 2, bulkUpdates: 0, bulkDeletes: 0, identityMap: 8 }
 ```
 
 ---
