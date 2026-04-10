@@ -10,6 +10,7 @@ import {
   BufferFlushResult, BufferPluginOptions,
   FlushEventType, FlushEvent, FlushEventListener,
   BulkUpdateEntry, BulkDeleteEntry,
+  ResolvedBufferOptions,
 } from "./BufferPreview";
 import { BufferStrategy } from "./BufferStrategy";
 import { EntityState } from "./EntityUnitState";
@@ -26,7 +27,7 @@ export class FlushExecutor {
   private readonly ctx: PluginContext;
   private readonly idMap: IdentityMapManager;
   private readonly cascade: CascadeProcessor;
-  private readonly options: Required<BufferPluginOptions>;
+  private readonly options: ResolvedBufferOptions;
   private readonly strategy: BufferStrategy;
   private readonly flushListeners: Map<FlushEventType, FlushEventListener[]>;
 
@@ -34,7 +35,7 @@ export class FlushExecutor {
     ctx: PluginContext,
     idMap: IdentityMapManager,
     cascade: CascadeProcessor,
-    options: Required<BufferPluginOptions>,
+    options: ResolvedBufferOptions,
     strategy: BufferStrategy,
     flushListeners: Map<FlushEventType, FlushEventListener[]>,
   ) {

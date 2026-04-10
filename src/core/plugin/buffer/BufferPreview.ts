@@ -173,4 +173,19 @@ export interface BufferPluginOptions {
    * @default false
    */
   logging?: boolean;
+  /**
+   * Maximum number of entries in the Identity Map.
+   * When the limit is exceeded, the least-recently-used clean entries
+   * are evicted (dirty, NEW, or REMOVED entities are never evicted).
+   *
+   * Leave undefined (default) for unlimited growth.
+   */
+  maxIdentityMapSize?: number;
 }
+
+/**
+ * Resolved buffer options — all fields required except `maxIdentityMapSize`
+ * which remains optional (undefined = unlimited).
+ */
+export type ResolvedBufferOptions = Required<Omit<BufferPluginOptions, "maxIdentityMapSize">>
+  & Pick<BufferPluginOptions, "maxIdentityMapSize">;

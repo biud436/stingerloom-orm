@@ -1040,7 +1040,7 @@ describe("Buffer Plugin", () => {
       mut.clear();
 
       expect(mut.tracked()).toEqual([]);
-      expect(mut.size()).toEqual({ tracked: 0, inserts: 0, deletes: 0, persists: 0, bulkUpdates: 0, bulkDeletes: 0 });
+      expect(mut.size()).toEqual({ tracked: 0, inserts: 0, deletes: 0, persists: 0, bulkUpdates: 0, bulkDeletes: 0, identityMap: 0 });
     });
 
     it("should untrack a specific entity", () => {

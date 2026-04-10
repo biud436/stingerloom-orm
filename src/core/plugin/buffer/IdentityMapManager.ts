@@ -4,6 +4,8 @@ import { COLUMN_TOKEN } from "../../../decorators/Column";
 import { ColumnMetadata } from "../../../scanner/ColumnScanner";
 import { FindOption } from "../../../dialects/FindOption";
 import { PluginContext } from "../PluginContext";
+import { EntityState } from "./EntityUnitState";
+import type { TrackedEntry } from "./BufferEntry";
 
 /**
  * Semantic type alias for entity instances crossing module boundaries.
@@ -21,14 +23,116 @@ export type ColumnValueMap = Record<string, any>;
  *
  * The Identity Map ensures that the same database row (identified by
  * entity class + PK) is always represented by the same object reference.
+ *
+ * When `maxSize` is set, applies LRU eviction to keep the map bounded.
+ * Dirty, NEW, and REMOVED entities are never evicted.
  */
 export class IdentityMapManager {
   readonly identityMap = new Map<string, EntityInstance>();
   readonly stateMap = new Map<EntityInstance, string>();
   private readonly ctx: PluginContext;
+  private _maxSize: number | undefined;
+  /**
+   * External reference to the WriteBuffer's trackedEntries map.
+   * Set once by WriteBuffer after construction via `setTrackedEntries()`.
+   * Used by eviction to skip dirty entities.
+   */
+  private trackedEntries?: Map<any, TrackedEntry>;
+  private snapshotStrategy?: { snapshot(instance: any, cols: string[]): Record<string, any> };
 
   constructor(ctx: PluginContext) {
     this.ctx = ctx;
+  }
+
+  /**
+   * Configure the maximum Identity Map size for LRU eviction.
+   */
+  setMaxSize(max: number | undefined): void {
+    this._maxSize = max;
+  }
+
+  get maxSize(): number | undefined {
+    return this._maxSize;
+  }
+
+  /**
+   * Link the WriteBuffer's trackedEntries and snapshot strategy
+   * so eviction can check dirtiness.
+   */
+  setTrackedEntries(
+    entries: Map<any, TrackedEntry>,
+    strategy: { snapshot(instance: any, cols: string[]): Record<string, any> },
+  ): void {
+    this.trackedEntries = entries;
+    this.snapshotStrategy = strategy;
+  }
+
+  /**
+   * Record an access to keep LRU order fresh.
+   * Re-inserting into Map moves the key to the end (most-recently-used).
+   */
+  touch(key: string): void {
+    if (this._maxSize === undefined) return;
+    const val = this.identityMap.get(key);
+    if (val !== undefined) {
+      this.identityMap.delete(key);
+      this.identityMap.set(key, val);
+    }
+  }
+
+  /**
+   * Evict least-recently-used clean entries if the map exceeds maxSize.
+   * Dirty, NEW, and REMOVED entities are never evicted.
+   */
+  evictIfNeeded(): void {
+    if (this._maxSize === undefined) return;
+    if (this.identityMap.size <= this._maxSize) return;
+
+    const toEvict = this.identityMap.size - this._maxSize;
+    let evicted = 0;
+    const keysToDelete: string[] = [];
+
+    // Map iteration order = insertion order = oldest first (LRU candidates)
+    for (const [key, instance] of this.identityMap) {
+      if (evicted >= toEvict) break;
+      if (this.isEvictable(instance)) {
+        keysToDelete.push(key);
+        evicted++;
+      }
+    }
+
+    for (const key of keysToDelete) {
+      const instance = this.identityMap.get(key);
+      this.identityMap.delete(key);
+      if (instance !== undefined) {
+        // Remove from trackedEntries if present (reference-only entries won't be there)
+        this.trackedEntries?.delete(instance);
+        this.stateMap.set(instance, EntityState.DETACHED);
+      }
+    }
+  }
+
+  /**
+   * Check if an entity instance can be safely evicted.
+   * Returns false for dirty, NEW, or REMOVED entities.
+   */
+  private isEvictable(instance: EntityInstance): boolean {
+    const state = this.stateMap.get(instance);
+    if (state === EntityState.NEW || state === EntityState.REMOVED) return false;
+
+    // Check if instance is snapshot-tracked and dirty
+    if (this.trackedEntries && this.snapshotStrategy) {
+      const entry = this.trackedEntries.get(instance);
+      if (entry) {
+        if (entry.explicitDirty) return false;
+        const current = this.snapshotStrategy.snapshot(instance, entry.columnNames);
+        for (const col of entry.columnNames) {
+          if (current[col] !== entry.snapshot[col]) return false;
+        }
+      }
+    }
+
+    return true;
   }
 
   /**

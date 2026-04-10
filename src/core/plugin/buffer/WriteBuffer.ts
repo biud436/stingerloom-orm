@@ -8,6 +8,7 @@ import {
   ChangeTrackingPolicy, FlushMode,
   FlushEventType, FlushEventListener,
   BulkUpdateEntry, BulkDeleteEntry,
+  ResolvedBufferOptions,
 } from "./BufferPreview";
 import { BufferStrategy, SnapshotStrategy } from "./BufferStrategy";
 import { EntityState } from "./EntityUnitState";
@@ -45,7 +46,7 @@ export class WriteBuffer {
   private readonly bulkDeleteQueue: BulkDeleteEntry[] = [];
   private readonly strategy: BufferStrategy;
   private readonly ctx: PluginContext;
-  private readonly options: Required<BufferPluginOptions>;
+  private readonly options: ResolvedBufferOptions;
   private readonly flushMode: FlushMode;
   private readonly changeTracking: ChangeTrackingPolicy;
   private readonly flushListeners = new Map<FlushEventType, FlushEventListener[]>();
@@ -78,6 +79,7 @@ export class WriteBuffer {
       batchUpdate: options.batchUpdate ?? false,
       changeTracking: options.changeTracking ?? ChangeTrackingPolicy.DEFERRED_IMPLICIT,
       logging: options.logging ?? false,
+      maxIdentityMapSize: options.maxIdentityMapSize,
     };
     this.flushMode = this.options.flushMode;
     this.changeTracking = this.options.changeTracking;
@@ -94,6 +96,8 @@ export class WriteBuffer {
 
     // Initialize sub-modules
     this.idMap = new IdentityMapManager(ctx);
+    this.idMap.setMaxSize(options.maxIdentityMapSize);
+    this.idMap.setTrackedEntries(this.trackedEntries, this.strategy);
     this.cascade = new CascadeProcessor(ctx, this.idMap, this.options);
     this.flushExec = new FlushExecutor(
       ctx, this.idMap, this.cascade, this.options, this.strategy, this.flushListeners,
@@ -154,6 +158,7 @@ export class WriteBuffer {
     });
     this.idMap.identityMap.set(key, instance);
     this.idMap.stateMap.set(instance, EntityState.MANAGED);
+    this.idMap.evictIfNeeded();
 
     if (this.options.logging) this.log("track", { entity: entityClass.name, key });
 
@@ -182,6 +187,7 @@ export class WriteBuffer {
       if (cacheKey !== null) {
         const cached = this.idMap.identityMap.get(cacheKey);
         if (cached) {
+          this.idMap.touch(cacheKey);
           await this.autoFlushIfNeeded();
           if (this.options.logging) {
             this.log("findOne → cache hit (skip DB)", {
@@ -262,11 +268,15 @@ export class WriteBuffer {
     // Check identity map — return existing if found
     const key = this.idMap.buildIdentityKey(entityClass, instance, pkColumns);
     const existing = this.idMap.identityMap.get(key);
-    if (existing) return existing as T;
+    if (existing) {
+      this.idMap.touch(key);
+      return existing as T;
+    }
 
     // Register in identity map (not snapshot-tracked — reference only)
     this.idMap.identityMap.set(key, instance);
     this.idMap.stateMap.set(instance, EntityState.MANAGED);
+    this.idMap.evictIfNeeded();
 
     // Inject lazy proxies for relation properties
     this.lazyInjector.injectLazyRelations(instance, entityClass);
@@ -661,7 +671,7 @@ export class WriteBuffer {
    */
   size(): {
     tracked: number; inserts: number; deletes: number; persists: number;
-    bulkUpdates: number; bulkDeletes: number;
+    bulkUpdates: number; bulkDeletes: number; identityMap: number;
   } {
     return {
       tracked: this.trackedEntries.size,
@@ -670,6 +680,7 @@ export class WriteBuffer {
       persists: this.persistQueue.length,
       bulkUpdates: this.bulkUpdateQueue.length,
       bulkDeletes: this.bulkDeleteQueue.length,
+      identityMap: this.idMap.identityMap.size,
     };
   }
 
@@ -1038,6 +1049,7 @@ export class WriteBuffer {
 
     const existing = this.idMap.identityMap.get(key);
     if (existing) {
+      this.idMap.touch(key);
       return existing;
     }
 

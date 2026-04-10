@@ -276,4 +276,177 @@ describe("IdentityMapManager", () => {
       expect(mgr.getParentPkValue(item, OrderItem)).toEqual({ orderId: 1, productId: 2 });
     });
   });
+
+  // ── LRU Eviction (#237) ──────────────────────────────────────
+
+  describe("LRU eviction (maxSize)", () => {
+    it("should not evict when maxSize is undefined (unlimited)", () => {
+      // maxSize is undefined by default
+      for (let i = 1; i <= 100; i++) {
+        const u = Object.assign(new User(), { id: i, name: `User${i}`, email: `u${i}@test.com` });
+        const key = mgr.buildIdentityKey(User, u, ["id"]);
+        mgr.identityMap.set(key, u);
+      }
+      mgr.evictIfNeeded();
+      expect(mgr.identityMap.size).toBe(100);
+    });
+
+    it("should evict oldest clean entries when exceeding maxSize", () => {
+      mgr.setMaxSize(5);
+      const strategy = { snapshot: (inst: any, cols: string[]) => {
+        const s: Record<string, any> = {};
+        for (const c of cols) s[c] = inst[c];
+        return s;
+      }};
+      const tracked = new Map<any, any>();
+      mgr.setTrackedEntries(tracked, strategy);
+
+      // Add 10 clean entries (no trackedEntries → all evictable)
+      for (let i = 1; i <= 10; i++) {
+        const u = Object.assign(new User(), { id: i, name: `User${i}`, email: `u${i}@test.com` });
+        const key = mgr.buildIdentityKey(User, u, ["id"]);
+        mgr.identityMap.set(key, u);
+        mgr.stateMap.set(u, "MANAGED");
+      }
+      expect(mgr.identityMap.size).toBe(10);
+
+      mgr.evictIfNeeded();
+      expect(mgr.identityMap.size).toBe(5);
+
+      // The oldest 5 (id=1..5) should be evicted, newest 5 (id=6..10) should remain
+      for (let i = 1; i <= 5; i++) {
+        expect(mgr.identityMap.has(`User:id=${i}`)).toBe(false);
+      }
+      for (let i = 6; i <= 10; i++) {
+        expect(mgr.identityMap.has(`User:id=${i}`)).toBe(true);
+      }
+    });
+
+    it("should skip dirty entities during eviction", () => {
+      mgr.setMaxSize(3);
+      const strategy = { snapshot: (inst: any, cols: string[]) => {
+        const s: Record<string, any> = {};
+        for (const c of cols) s[c] = inst[c];
+        return s;
+      }};
+      const tracked = new Map<any, any>();
+      mgr.setTrackedEntries(tracked, strategy);
+
+      const users: User[] = [];
+      for (let i = 1; i <= 6; i++) {
+        const u = Object.assign(new User(), { id: i, name: `User${i}`, email: `u${i}@test.com` });
+        const key = mgr.buildIdentityKey(User, u, ["id"]);
+        mgr.identityMap.set(key, u);
+        mgr.stateMap.set(u, "MANAGED");
+        users.push(u);
+      }
+
+      // Make user 1 and 2 dirty by tracking them with a stale snapshot
+      const u1 = users[0];
+      tracked.set(u1, {
+        entity: User,
+        instance: u1,
+        snapshot: { id: 1, name: "OldName", email: "u1@test.com" }, // name differs
+        columnNames: ["id", "name", "email"],
+        pkColumns: ["id"],
+      });
+
+      const u2 = users[1];
+      tracked.set(u2, {
+        entity: User,
+        instance: u2,
+        snapshot: { id: 2, name: "User2", email: "u2@test.com" }, // clean
+        columnNames: ["id", "name", "email"],
+        pkColumns: ["id"],
+        explicitDirty: true, // explicitly marked dirty
+      });
+
+      mgr.evictIfNeeded();
+
+      // u1 (dirty snapshot) and u2 (explicitDirty) should survive
+      expect(mgr.identityMap.has("User:id=1")).toBe(true);
+      expect(mgr.identityMap.has("User:id=2")).toBe(true);
+      // 3 evictable were evicted to reach maxSize of 3, but 2 are unevictable
+      // so we can only evict clean entries: 3,4,5 (oldest clean) → keep 1,2,6
+      expect(mgr.identityMap.has("User:id=6")).toBe(true);
+      expect(mgr.identityMap.size).toBe(3);
+    });
+
+    it("should skip NEW and REMOVED entities during eviction", () => {
+      mgr.setMaxSize(2);
+      const tracked = new Map<any, any>();
+      mgr.setTrackedEntries(tracked, { snapshot: () => ({}) });
+
+      const u1 = Object.assign(new User(), { id: 1, name: "A", email: "a" });
+      const u2 = Object.assign(new User(), { id: 2, name: "B", email: "b" });
+      const u3 = Object.assign(new User(), { id: 3, name: "C", email: "c" });
+      const u4 = Object.assign(new User(), { id: 4, name: "D", email: "d" });
+
+      for (const u of [u1, u2, u3, u4]) {
+        const key = mgr.buildIdentityKey(User, u, ["id"]);
+        mgr.identityMap.set(key, u);
+      }
+      mgr.stateMap.set(u1, "NEW");
+      mgr.stateMap.set(u2, "REMOVED");
+      mgr.stateMap.set(u3, "MANAGED");
+      mgr.stateMap.set(u4, "MANAGED");
+
+      mgr.evictIfNeeded();
+      // u1 (NEW) and u2 (REMOVED) cannot be evicted
+      // u3 and u4 (both MANAGED, both evictable) get evicted to reach maxSize=2
+      expect(mgr.identityMap.has("User:id=1")).toBe(true);
+      expect(mgr.identityMap.has("User:id=2")).toBe(true);
+      expect(mgr.identityMap.has("User:id=3")).toBe(false);
+      expect(mgr.identityMap.has("User:id=4")).toBe(false);
+      expect(mgr.identityMap.size).toBe(2);
+    });
+
+    it("touch() should refresh LRU order", () => {
+      mgr.setMaxSize(3);
+      const tracked = new Map<any, any>();
+      mgr.setTrackedEntries(tracked, { snapshot: () => ({}) });
+
+      for (let i = 1; i <= 3; i++) {
+        const u = Object.assign(new User(), { id: i, name: `U${i}`, email: `u${i}` });
+        const key = mgr.buildIdentityKey(User, u, ["id"]);
+        mgr.identityMap.set(key, u);
+        mgr.stateMap.set(u, "MANAGED");
+      }
+
+      // Touch id=1 to make it most-recently-used
+      mgr.touch("User:id=1");
+
+      // Add one more → triggers eviction
+      const u4 = Object.assign(new User(), { id: 4, name: "U4", email: "u4" });
+      mgr.identityMap.set(mgr.buildIdentityKey(User, u4, ["id"]), u4);
+      mgr.stateMap.set(u4, "MANAGED");
+      mgr.evictIfNeeded();
+
+      // id=2 should be evicted (oldest after touch), id=1 should survive
+      expect(mgr.identityMap.has("User:id=1")).toBe(true);
+      expect(mgr.identityMap.has("User:id=2")).toBe(false);
+      expect(mgr.identityMap.has("User:id=3")).toBe(true);
+      expect(mgr.identityMap.has("User:id=4")).toBe(true);
+    });
+
+    it("evicted entities should have DETACHED state", () => {
+      mgr.setMaxSize(1);
+      const tracked = new Map<any, any>();
+      mgr.setTrackedEntries(tracked, { snapshot: () => ({}) });
+
+      const u1 = Object.assign(new User(), { id: 1, name: "A", email: "a" });
+      const u2 = Object.assign(new User(), { id: 2, name: "B", email: "b" });
+
+      const key1 = mgr.buildIdentityKey(User, u1, ["id"]);
+      const key2 = mgr.buildIdentityKey(User, u2, ["id"]);
+      mgr.identityMap.set(key1, u1);
+      mgr.stateMap.set(u1, "MANAGED");
+      mgr.identityMap.set(key2, u2);
+      mgr.stateMap.set(u2, "MANAGED");
+
+      mgr.evictIfNeeded();
+      expect(mgr.stateMap.get(u1)).toBe("DETACHED");
+      expect(mgr.stateMap.get(u2)).toBe("MANAGED");
+    });
+  });
 });

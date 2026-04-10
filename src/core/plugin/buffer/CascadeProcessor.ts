@@ -6,7 +6,7 @@ import { MANY_TO_MANY_TOKEN } from "../../../decorators/ManyToMany";
 import { hasCascade } from "../../../types/CascadeType";
 import { PluginContext } from "../PluginContext";
 import { TrackedEntry, DeleteEntry } from "./BufferEntry";
-import { BufferFlushResult, BufferPluginOptions } from "./BufferPreview";
+import { BufferFlushResult, BufferPluginOptions, ResolvedBufferOptions } from "./BufferPreview";
 import { CollectionDiff } from "./CollectionTracker";
 import { resolveFkColumn } from "./CollectionTracker";
 import { IdentityMapManager, EntityInstance, ColumnValueMap } from "./IdentityMapManager";
@@ -21,12 +21,12 @@ import type { EntityManager } from "../../EntityManager";
 export class CascadeProcessor {
   private readonly ctx: PluginContext;
   private readonly idMap: IdentityMapManager;
-  private readonly options: Required<BufferPluginOptions>;
+  private readonly options: ResolvedBufferOptions;
 
   constructor(
     ctx: PluginContext,
     idMap: IdentityMapManager,
-    options: Required<BufferPluginOptions>,
+    options: ResolvedBufferOptions,
   ) {
     this.ctx = ctx;
     this.idMap = idMap;
