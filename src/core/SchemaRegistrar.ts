@@ -34,6 +34,8 @@ import {
   ColumnChange,
   SchemaDiffResult,
 } from "./generators/SchemaDiff";
+import { InheritanceResolver } from "./InheritanceResolver";
+import { EntityMetadata } from "../decorators/Entity";
 
 /**
  * 앱 시작 시 1회 실행되는 DDL/스키마 동기화 핸들러.
@@ -42,6 +44,7 @@ import {
 export class SchemaRegistrar {
   private readonly namingStrategy: NamingStrategy;
   private readonly logger = new Logger(SchemaRegistrar.name);
+  private readonly inheritanceResolver = new InheritanceResolver();
 
   constructor(
     private readonly resolver: RelationMetadataResolver,
@@ -108,6 +111,87 @@ export class SchemaRegistrar {
         throw new EntityMetadataNotFoundError(tableName ?? "Unknown");
       }
 
+      // STI: 자식 엔티티는 자체 테이블을 생성하지 않음 (부모 테이블 공유)
+      if (this.inheritanceResolver.isChildEntity(TargetEntity)) {
+        const strategy = this.inheritanceResolver.getStrategy(TargetEntity);
+        if (strategy === "SINGLE_TABLE") {
+          continue;
+        }
+      }
+
+      // TPT: 자식 테이블은 고유 컬럼 + PK만 DDL에 포함 (상속 컬럼은 부모 테이블에)
+      // 주의: metadata.columns 원본은 수정하지 않음 (EntityManager가 전체 컬럼 필요)
+      let tptDdlColumns: any[] | undefined;
+      if (this.inheritanceResolver.isChildEntity(TargetEntity)) {
+        const strategy = this.inheritanceResolver.getStrategy(TargetEntity);
+        if (strategy === "JOINED") {
+          const ownCols = this.inheritanceResolver.getOwnColumns(TargetEntity);
+          const ownColNames = new Set(
+            ownCols.map((c: any) => c.propertyKey ?? c.name),
+          );
+          const pkColNames = new Set(
+            metadata.columns
+              .filter((c: any) => c.options?.primary)
+              .map((c: any) => c.name ?? c.propertyKey),
+          );
+          tptDdlColumns = metadata.columns.filter((c: any) => {
+            const key = c.propertyKey ?? c.name;
+            return pkColNames.has(key) || ownColNames.has(key);
+          });
+        }
+      }
+
+      // 상속 루트: discriminator 컬럼 추가 + STI 자식 컬럼 병합
+      if (this.inheritanceResolver.isRootEntity(TargetEntity)) {
+        const strategy = this.inheritanceResolver.getStrategy(TargetEntity);
+        const entityMeta = Reflect.getMetadata(ENTITY_TOKEN, TargetEntity) as EntityMetadata | undefined;
+        if (entityMeta) {
+          // STI/TPT: discriminator 컬럼 추가 (루트 테이블에)
+          if (strategy === "SINGLE_TABLE" || strategy === "JOINED") {
+            const discCol = entityMeta.discriminatorColumn;
+            if (discCol) {
+              const alreadyHas = metadata.columns.some(
+                (col: any) => col.name === discCol.name,
+              );
+              if (!alreadyHas) {
+                metadata.columns.push({
+                  name: discCol.name,
+                  options: {
+                    type: discCol.type,
+                    length: discCol.length,
+                    nullable: false,
+                  },
+                } as any);
+              }
+            }
+          }
+
+          // STI 전용: 자식 엔티티의 고유 컬럼 병합 (nullable 강제)
+          if (strategy === "SINGLE_TABLE") {
+            const childEntities = entityMeta.childEntities ?? [];
+            const existingColNames = new Set(
+              metadata.columns.map((col: any) => col.name ?? col.propertyKey),
+            );
+            for (const ChildEntity of childEntities) {
+              const ownCols = this.inheritanceResolver.getOwnColumns(ChildEntity);
+              for (const col of ownCols) {
+                const colName = col.name ?? col.propertyKey;
+                if (colName && !existingColNames.has(colName)) {
+                  const mergedCol = { ...col };
+                  if (mergedCol.options) {
+                    mergedCol.options = { ...mergedCol.options, nullable: true };
+                  } else {
+                    (mergedCol as any).options = { nullable: true };
+                  }
+                  metadata.columns.push(mergedCol as any);
+                  existingColNames.add(colName!);
+                }
+              }
+            }
+          }
+        }
+      }
+
       // PK validation: every entity must have at least one primary key column
       const hasPrimaryKey = metadata.columns.some(
         (col: any) => col.options?.primary,
@@ -125,7 +209,7 @@ export class SchemaRegistrar {
           if (isDryRun) {
             this.logger.info(`[dry-run] Would CREATE TABLE ${tableName}`);
           } else {
-            await driver?.createTable(tableName, metadata.columns);
+            await driver?.createTable(tableName, tptDdlColumns ?? metadata.columns);
           }
         }
       }
@@ -147,11 +231,51 @@ export class SchemaRegistrar {
 
     // 2패스: 모든 테이블이 생성된 후 FK, 인덱스, 유니크 인덱스를 등록합니다.
     if (synchronize && !isDryRun) {
-      for (const { TargetEntity, tableName } of entityList) {
+      for (const { TargetEntity, tableName, metadata } of entityList) {
         // 외래키를 생성합니다.
         await this.registerForeignKeys(TargetEntity, tableName);
 
-        // 인덱스를 생성합��다.
+        // TPT: 자식 PK → 부모 PK FK 등록
+        if (this.inheritanceResolver.isChildEntity(TargetEntity)) {
+          const tptStrategy = this.inheritanceResolver.getStrategy(TargetEntity);
+          if (tptStrategy === "JOINED") {
+            const root = this.inheritanceResolver.getRoot(TargetEntity);
+            if (root) {
+              const rootMeta = this.resolver.resolveEntityMetadata(root);
+              const pk = metadata.columns.find((c: any) => c.options?.primary);
+              const rootPk = rootMeta?.columns.find(
+                (c: any) => c.options?.primary,
+              );
+              const tptDriver = this.ctx.getDriver();
+              if (pk && rootPk && rootMeta && tptDriver) {
+                const rootTableName = rootMeta.name!;
+                const fkName = this.namingStrategy.foreignKeyName(
+                  tableName,
+                  pk.name!,
+                  rootTableName,
+                );
+                try {
+                  const fkExists = await tptDriver.hasForeignKey(tableName, fkName);
+                  if (!fkExists) {
+                    await tptDriver.addForeignKey(
+                      tableName,
+                      pk.name!,
+                      rootTableName,
+                      rootPk.name!,
+                    );
+                  }
+                } catch {
+                  // SQLite: ALTER TABLE ADD CONSTRAINT 미지원 — FK 생략
+                  this.logger.warn(
+                    `Could not create FK ${fkName} for TPT child table ${tableName} (may be unsupported by dialect)`,
+                  );
+                }
+              }
+            }
+          }
+        }
+
+        // 인덱스를 생성합니다.
         await this.registerIndex(TargetEntity, tableName);
 
         // 복합 유니크 인덱스를 생성합니다.

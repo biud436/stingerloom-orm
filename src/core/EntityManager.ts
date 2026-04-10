@@ -89,6 +89,7 @@ import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { DefaultNamingStrategy, NamingStrategy } from "./generators/NamingStrategy";
 import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
 import { COLUMN_TOKEN } from "../decorators/Column";
+import { InheritanceResolver } from "./InheritanceResolver";
 import { CREATE_TIMESTAMP_TOKEN } from "../decorators/CreateTimestamp";
 import { UPDATE_TIMESTAMP_TOKEN } from "../decorators/UpdateTimestamp";
 import { DELETED_AT_TOKEN } from "../decorators/DeletedAt";
@@ -216,6 +217,7 @@ export class EntityManager implements BaseEntityManager {
   // ── 추출된 핸들러 ──────────────────────────────────────────
 
   private readonly resolver = new RelationMetadataResolver();
+  private readonly inheritanceResolver = new InheritanceResolver();
   private readonly replication = new ReplicationManager();
 
   /** @internal 추출된 클래스에게 EntityManager 내부 기능을 노출하는 어댑터 */
@@ -302,8 +304,8 @@ export class EntityManager implements BaseEntityManager {
       const meta = Reflect.getMetadata(ENTITY_TOKEN, entity) as EntityMetadata | undefined;
       if (!meta) continue;
 
-      // 1. Table name
-      if (!meta.nameExplicit) {
+      // 1. Table name (skip STI children — they share the root's table name)
+      if (!meta.nameExplicit && !meta.inheritanceRoot) {
         meta.name = ns.tableName(meta.rawClassName ?? entity.name);
       }
 
@@ -977,6 +979,12 @@ export class EntityManager implements BaseEntityManager {
         throw new EntityMetadataNotFoundError(entity.name);
       }
 
+      // ── 상속 전략 조기 감지 ──
+      const inheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
+      const isTPTChild = inheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity);
+      const isTPTPolymorphic = inheritanceStrategy === "JOINED" && this.inheritanceResolver.isPolymorphicQuery(entity);
+      const isTPCPolymorphic = inheritanceStrategy === "TABLE_PER_CLASS" && this.inheritanceResolver.isPolymorphicQuery(entity);
+
       const qb = RawQueryBuilderFactory.create();
 
       const selectMap: string[] = [];
@@ -1006,14 +1014,49 @@ export class EntityManager implements BaseEntityManager {
       });
 
       const hasEagerJoins =
-        eagerRelations.length > 0 || eagerOneToOneRelations.length > 0;
+        eagerRelations.length > 0 || eagerOneToOneRelations.length > 0
+        || isTPTChild || isTPTPolymorphic;
 
       const tableName = metadata.name!;
 
       // Build property-to-column map once and reuse throughout findInternal
     const propToCol = this.buildPropertyToColumnMap(metadata);
 
-    if (select) {
+    // TPT 자식: 자식 테이블 컬럼(PK + own)과 부모 컬럼을 분리하여 SELECT 구성
+      if (isTPTChild) {
+        const root = this.inheritanceResolver.getRoot(entity)!;
+        const rootMeta = this.resolver.resolveEntityMetadata(root);
+        if (rootMeta) {
+          const rootTableName = rootMeta.name!;
+          const rootColNames = new Set(
+            rootMeta.columns.map((c: any) => c.name),
+          );
+          const pkColNames = new Set(
+            metadata.columns
+              .filter((c: any) => c.options?.primary)
+              .map((c: any) => c.name),
+          );
+
+          // 자식 테이블에 실제 존재하는 컬럼: PK + own (부모 전용 컬럼 제외)
+          for (const col of metadata.columns) {
+            const isPk = pkColNames.has(col.name!);
+            const isRootOnly = rootColNames.has(col.name!) && !isPk;
+            if (!isRootOnly) {
+              selectMap.push(
+                `${this.wrap(tableName)}.${this.wrap(col.name!)}`,
+              );
+            }
+          }
+
+          // 부모 테이블의 비-PK 컬럼
+          for (const col of rootMeta.columns) {
+            if (pkColNames.has(col.name)) continue;
+            selectMap.push(
+              `${this.wrap(rootTableName)}.${this.wrap(col.name!)}`,
+            );
+          }
+        }
+      } else if (select) {
         const selectedColumns = this.resolveSelectColumns<T>(select)
           .map((prop) => propToCol.get(prop) ?? prop);
         if (hasEagerJoins) {
@@ -1036,6 +1079,25 @@ export class EntityManager implements BaseEntityManager {
           selectMap.push(
             ...metadata.columns.map((column) => this.wrap(column.name!)),
           );
+        }
+      }
+
+      // TPT 다형성: 모든 자식 테이블의 고유 컬럼을 SELECT에 추가 (접두사 alias)
+      if (isTPTPolymorphic) {
+        const pk = metadata.columns.find((c: any) => c.options?.primary);
+        const children = this.inheritanceResolver
+          .getConcreteEntities(entity)
+          .filter((c) => c !== entity);
+        for (const ChildEntity of children) {
+          const childMeta = this.resolver.resolveEntityMetadata(ChildEntity);
+          if (!childMeta || !pk) continue;
+          const childTableName = childMeta.name!;
+          const ownCols = this.inheritanceResolver.getOwnColumns(ChildEntity);
+          for (const col of ownCols) {
+            selectMap.push(
+              `${this.wrap(childTableName)}.${this.wrap(col.name!)} AS ${this.wrap(`${childTableName}_${col.name!}`)}`,
+            );
+          }
         }
       }
 
@@ -1069,6 +1131,32 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      // TPT 자식: 컬럼이 부모에 속하면 부모 테이블, 자식이면 자식 테이블로 qualify
+      let tptQualifyColumn: ((dbCol: string) => string) | undefined;
+      if (isTPTChild) {
+        const tptRoot = this.inheritanceResolver.getRoot(entity)!;
+        const tptRootMeta = this.resolver.resolveEntityMetadata(tptRoot);
+        if (tptRootMeta) {
+          const tptRootTableName = tptRootMeta.name!;
+          const tptPkNames = new Set(
+            metadata.columns
+              .filter((c: any) => c.options?.primary)
+              .map((c: any) => c.name),
+          );
+          const tptRootOnlyCols = new Set(
+            tptRootMeta.columns
+              .filter((c: any) => !tptPkNames.has(c.name))
+              .map((c: any) => c.name),
+          );
+          tptQualifyColumn = (dbCol: string) => {
+            if (tptRootOnlyCols.has(dbCol)) {
+              return `${this.wrap(tptRootTableName)}.${this.wrap(dbCol)}`;
+            }
+            return `${this.wrap(tableName)}.${this.wrap(dbCol)}`;
+          };
+        }
+      }
+
       whereMap.push(
         ...resolveWhereClause(where, {
           wrapColumn: (n) => this.wrap(n),
@@ -1077,8 +1165,21 @@ export class EntityManager implements BaseEntityManager {
           dialect: this._ctx.getDialect(),
           dialectExpression: createDialectExpression(this._ctx.getDialect()),
           propertyToColumn: propToCol,
+          qualifyColumn: tptQualifyColumn,
         }),
       );
+
+      // STI: 자식 엔티티 쿼리 시 discriminator WHERE 조건 추가
+      if (inheritanceStrategy === "SINGLE_TABLE" && this.inheritanceResolver.isChildEntity(entity)) {
+        const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+        const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
+        if (discCol && discVal) {
+          const col = hasEagerJoins
+            ? `${this.wrap(tableName)}.${this.wrap(discCol.name)}`
+            : this.wrap(discCol.name);
+          whereMap.push(Conditions.equals(col, discVal));
+        }
+      }
 
       // @DeletedAt 컬럼이 있으면 자동으로 WHERE deleted_at IS NULL 조건 추가
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
@@ -1102,10 +1203,80 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      if (findOption.distinct) {
+      // TPC 다형성: UNION ALL 서브쿼리로 FROM 구성
+      if (isTPCPolymorphic) {
+        const allEntities = this.inheritanceResolver.getConcreteEntities(entity);
+        const allHierarchyCols = this.inheritanceResolver
+          .getAllHierarchyColumns(entity)
+          .map((c) => c.name!);
+        const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+        const discColName = discCol?.name ?? "dtype";
+
+        const subQueries: Sql[] = [];
+        for (const ent of allEntities) {
+          const entMeta = this.resolver.resolveEntityMetadata(ent);
+          if (!entMeta) continue;
+          const entTableName = entMeta.name!;
+          const entColNames = new Set(
+            entMeta.columns.map((c: any) => c.name),
+          );
+          const discVal =
+            this.inheritanceResolver.getDiscriminatorValue(ent) ?? ent.name;
+
+          const colExprs: Sql[] = allHierarchyCols.map((colName) =>
+            entColNames.has(colName)
+              ? sql`${raw(this.wrap(colName))}`
+              : sql`NULL AS ${raw(this.wrap(colName))}`,
+          );
+          colExprs.push(sql`${discVal} AS ${raw(this.wrap(discColName))}`);
+
+          const subSql = sql`SELECT ${join(colExprs, ", ")} FROM ${raw(this.wrapTable(entTableName))}`;
+          subQueries.push(subSql);
+        }
+
+        const unionSql = join(subQueries, " UNION ALL ");
+        qb.select(["*"]).from(sql`(${unionSql})`, this.wrap("_tpc"));
+      } else if (findOption.distinct) {
         qb.selectDistinct(selectMap).from(this.wrapTable(tableName));
       } else {
         qb.select(selectMap).from(this.wrapTable(tableName));
+      }
+
+      // TPT 자식: INNER JOIN 부모 테이블
+      if (isTPTChild) {
+        const root = this.inheritanceResolver.getRoot(entity)!;
+        const rootMeta = this.resolver.resolveEntityMetadata(root);
+        if (rootMeta) {
+          const pk = metadata.columns.find((c: any) => c.options?.primary);
+          if (pk) {
+            const rootTableName = rootMeta.name!;
+            const joinCond = sql`${raw(this.wrap(tableName))}.${raw(this.wrap(pk.name!))} = ${raw(this.wrap(rootTableName))}.${raw(this.wrap(pk.name!))}`;
+            qb.innerJoin(
+              this.wrapTable(rootTableName),
+              this.wrap(rootTableName),
+              joinCond,
+            );
+          }
+        }
+      }
+
+      // TPT 다형성: LEFT JOIN 모든 자식 테이블
+      if (isTPTPolymorphic) {
+        const pk = metadata.columns.find((c: any) => c.options?.primary);
+        const children = this.inheritanceResolver
+          .getConcreteEntities(entity)
+          .filter((c) => c !== entity);
+        for (const ChildEntity of children) {
+          const childMeta = this.resolver.resolveEntityMetadata(ChildEntity);
+          if (!childMeta || !pk) continue;
+          const childTableName = childMeta.name!;
+          const joinCond = sql`${raw(this.wrap(tableName))}.${raw(this.wrap(pk.name!))} = ${raw(this.wrap(childTableName))}.${raw(this.wrap(pk.name!))}`;
+          qb.leftJoin(
+            this.wrapTable(childTableName),
+            this.wrap(childTableName),
+            joinCond,
+          );
+        }
       }
 
       // Eager ManyToOne LEFT JOIN
@@ -1244,7 +1415,57 @@ export class EntityManager implements BaseEntityManager {
 
       const isEntityArray = results.length > 1;
       let entityResult: EntityResult<T>;
-      if (hasEagerJoins) {
+
+      // STI/TPC: 루트 엔티티 다형성 쿼리 — discriminator로 올바른 서브클래스 인스턴스화
+      if (
+        (inheritanceStrategy === "SINGLE_TABLE" || isTPCPolymorphic) &&
+        this.inheritanceResolver.isPolymorphicQuery(entity) &&
+        !(hasEagerJoins && !isTPCPolymorphic)
+      ) {
+        const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+        const discColName = discCol?.name ?? "dtype";
+        const discMap = this.inheritanceResolver.buildDiscriminatorMap(entity);
+        if (discMap.size > 0) {
+          entityResult = resultTransformer.toPolymorphicEntities(
+            entity,
+            queryResult,
+            discMap,
+            discColName,
+          ) as EntityResult<T>;
+        } else if (isEntityArray) {
+          entityResult = resultTransformer.toEntities(entity, queryResult);
+        } else {
+          entityResult = resultTransformer.toEntity(entity, queryResult);
+        }
+      } else if (isTPTPolymorphic) {
+        // TPT 다형성: 접두사 기반 자식 컬럼 해석
+        const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+        const discMap = this.inheritanceResolver.buildDiscriminatorMap(entity);
+        if (discCol && discMap.size > 0) {
+          const childPrefixMap = new Map<string, string>();
+          const children = this.inheritanceResolver
+            .getConcreteEntities(entity)
+            .filter((c) => c !== entity);
+          for (const child of children) {
+            const childMeta = this.resolver.resolveEntityMetadata(child);
+            const dv = this.inheritanceResolver.getDiscriminatorValue(child);
+            if (childMeta && dv) {
+              childPrefixMap.set(dv, childMeta.name!);
+            }
+          }
+          entityResult = resultTransformer.toTPTPolymorphicEntities(
+            entity,
+            queryResult,
+            discMap,
+            discCol.name,
+            childPrefixMap,
+          ) as EntityResult<T>;
+        } else if (isEntityArray) {
+          entityResult = resultTransformer.toEntities(entity, queryResult);
+        } else {
+          entityResult = resultTransformer.toEntity(entity, queryResult);
+        }
+      } else if (hasEagerJoins && !isTPTChild) {
         entityResult = resultTransformer.transformNested(
           entity,
           queryResult,
@@ -1734,6 +1955,24 @@ export class EntityManager implements BaseEntityManager {
           }
         }
 
+        // STI/TPT: discriminator 컬럼 값을 INSERT에 추가 또는 설정
+        const saveInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
+        if (saveInheritanceStrategy === "SINGLE_TABLE" || saveInheritanceStrategy === "JOINED") {
+          const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+          const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
+          if (discCol && discVal) {
+            const existingDiscIdx = insertableColumns.findIndex(
+              (col: ColumnMetadata) => col.name === discCol.name,
+            );
+            if (existingDiscIdx >= 0) {
+              values[existingDiscIdx] = discVal;
+            } else {
+              columns.push(raw(this.wrap(discCol.name)));
+              values.push(discVal);
+            }
+          }
+        }
+
         // ManyToOne FK 컬럼 값 추출
         const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
         for (const rel of manyToOneRelations) {
@@ -1776,6 +2015,129 @@ export class EntityManager implements BaseEntityManager {
 
         // PostgreSQL: INSERT ... RETURNING *
         const useReturning = typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning();
+
+        // TPT 자식: 부모 먼저 INSERT → 자식 INSERT (동일 PK)
+        if (saveInheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
+          const root = this.inheritanceResolver.getRoot(entity)!;
+          const rootMeta = this.resolver.resolveEntityMetadata(root);
+          if (rootMeta) {
+            const rootColNames = new Set(
+              rootMeta.columns.map((c: any) => c.name),
+            );
+            const pkColNames = new Set(
+              pkColumns.map((col: ColumnMetadata) => col.name!),
+            );
+
+            // 부모/자식 컬럼-값 분리
+            const parentCols: Sql[] = [];
+            const parentVals: any[] = [];
+            const childCols: Sql[] = [];
+            const childVals: any[] = [];
+
+            for (let i = 0; i < insertableColumns.length; i++) {
+              const col = insertableColumns[i];
+              const isPk = pkColNames.has(col.name!);
+              const isRoot = rootColNames.has(col.name!);
+
+              if (isPk || isRoot) {
+                parentCols.push(columns[i]);
+                parentVals.push(values[i]);
+              }
+              if (isPk || !isRoot) {
+                childCols.push(columns[i]);
+                childVals.push(values[i]);
+              }
+            }
+
+            // discriminator/FK 등 추가된 컬럼은 insertableColumns 범위 밖
+            for (let i = insertableColumns.length; i < columns.length; i++) {
+              parentCols.push(columns[i]);
+              parentVals.push(values[i]);
+            }
+
+            // 1. 부모 테이블 INSERT
+            const parentTableName = rootMeta.name!;
+            const parentReturningSql = useReturning ? raw(` RETURNING *`) : raw("");
+            const parentInsertSql = sql`INSERT INTO ${raw(this.wrapTable(parentTableName))}
+              (${join(parentCols, ", ")})
+              VALUES (${join(parentVals, ", ")})${parentReturningSql}`;
+
+            const parentResult = (await session.query<T>(parentInsertSql)) as {
+              results: any;
+              fields: any;
+            };
+
+            // PK 값 획득
+            let generatedPkValue: any;
+            if (useReturning && parentResult?.results?.length > 0) {
+              generatedPkValue = parentResult.results[0][pk.name!];
+            } else if (this.isMySqlFamily()) {
+              generatedPkValue = parentResult?.results?.insertId;
+            } else if (this.isSqlite()) {
+              generatedPkValue = Number(
+                (parentResult?.results ?? parentResult)?.lastInsertRowid,
+              );
+            }
+
+            // 2. 자식 테이블 INSERT (동일 PK 사용)
+            if (generatedPkValue != null) {
+              // insertableColumns와 인덱스 매핑으로 PK 위치를 찾음
+              let pkFoundInChild = false;
+              for (let ci = 0, ii = 0; ii < insertableColumns.length; ii++) {
+                const col = insertableColumns[ii];
+                const isPk = pkColNames.has(col.name!);
+                const isRoot = rootColNames.has(col.name!);
+                if (isPk || !isRoot) {
+                  // 이 컬럼은 childCols에 존재
+                  if (isPk) {
+                    childVals[ci] = generatedPkValue;
+                    pkFoundInChild = true;
+                  }
+                  ci++;
+                }
+              }
+              // PK가 childCols에 없으면 추가
+              if (!pkFoundInChild) {
+                childCols.unshift(raw(this.wrap(pk.name!)));
+                childVals.unshift(generatedPkValue);
+              }
+            }
+
+            if (childCols.length > 0) {
+              const childInsertSql = sql`INSERT INTO ${raw(this.wrapTable(metadata.name!))}
+                (${join(childCols, ", ")})
+                VALUES (${join(childVals, ", ")})`;
+              await session.query<T>(childInsertSql);
+            }
+
+            // 결과 조회
+            const pkVal = generatedPkValue ?? primaryKeyValue;
+            (item as any)[this.propKey(pk)] = pkVal;
+            const result = await this.findOneInternal(
+              entity,
+              { where: { [this.propKey(pk)]: pkVal } as any },
+              session,
+            );
+
+            await this.cascadeHandler.cascadeSaveOneToMany(
+              entity,
+              item,
+              pkVal,
+              session,
+            );
+            await this.cascadeHandler.runHooks(entity, item, "afterInsert");
+            await this.eventEmitter.emit("afterInsert", {
+              entity,
+              data: item,
+            });
+            await this.notifySubscribers(entity, "afterInsert", {
+              entity: item,
+              manager: this,
+            } as InsertEvent<T>);
+            return result as T;
+          }
+        }
+
         const returningSql = useReturning
           ? raw(` RETURNING *`)
           : raw("");
@@ -1886,11 +2248,14 @@ export class EntityManager implements BaseEntityManager {
         pkColumns.map((col: ColumnMetadata) => col.name!),
       );
       const computedColsForUpdate = this.getComputedColumnNames(entity);
+      // STI: discriminator 컬럼은 UPDATE에서 제외
+      const updateDiscCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
       const updatableColumns = metadata.columns.filter(
         (column: ColumnMetadata) => {
           if (computedColsForUpdate.has(column.name!)) return false;
           if (pkColumnNames.has(column.name!)) return false;
           if (versionColName && column.name === versionColName) return false;
+          if (updateDiscCol && column.name === updateDiscCol.name) return false;
           return (item as any)[this.propKey(column)] !== undefined;
         },
       );
@@ -1989,6 +2354,75 @@ export class EntityManager implements BaseEntityManager {
 
       const useReturningForUpdate = typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning();
       let updateReturnedRow: any = null;
+
+      // TPT 자식: 부모/자식 테이블 각각 UPDATE
+      const updateInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
+      if (
+        updateInheritanceStrategy === "JOINED" &&
+        this.inheritanceResolver.isChildEntity(entity) &&
+        updateMap.length > 0
+      ) {
+        const root = this.inheritanceResolver.getRoot(entity)!;
+        const rootMeta = this.resolver.resolveEntityMetadata(root);
+        if (rootMeta) {
+          const rootColNames = new Set(
+            rootMeta.columns.map((c: any) => c.name),
+          );
+
+          const parentUpdateMap: Sql[] = [];
+          const childUpdateMap: Sql[] = [];
+
+          for (let i = 0; i < updatableColumns.length; i++) {
+            if (rootColNames.has(updatableColumns[i].name!)) {
+              parentUpdateMap.push(updateMap[i]);
+            } else {
+              childUpdateMap.push(updateMap[i]);
+            }
+          }
+
+          // @UpdateTimestamp, @Version 등 추가 항목은 부모 테이블에
+          for (let i = updatableColumns.length; i < updateMap.length; i++) {
+            parentUpdateMap.push(updateMap[i]);
+          }
+
+          if (parentUpdateMap.length > 0) {
+            const parentUpdateSql = sql`UPDATE ${raw(this.wrapTable(rootMeta.name!))}
+              SET ${join(parentUpdateMap, ", ")}
+              WHERE ${join(pkWhereClauses, " AND ")}`;
+            await session.query<T>(parentUpdateSql);
+          }
+
+          if (childUpdateMap.length > 0) {
+            const childUpdateSql = sql`UPDATE ${raw(this.wrapTable(metadata.name!))}
+              SET ${join(childUpdateMap, ", ")}
+              WHERE ${join(pkWhereClauses, " AND ")}`;
+            await session.query<T>(childUpdateSql);
+          }
+
+          await this.cascadeHandler.cascadeSaveOneToMany(
+            entity,
+            item,
+            primaryKeyValue,
+            session,
+          );
+          await this.cascadeHandler.runHooks(entity, item, "afterUpdate");
+          await this.eventEmitter.emit("afterUpdate", {
+            entity,
+            data: item,
+          });
+          await this.notifySubscribers(entity, "afterUpdate", {
+            entity: item,
+            manager: this,
+          } as UpdateEvent<T>);
+
+          const tptResult = await this.findOneInternal(
+            entity,
+            { where: buildPkFindWhere() } as any,
+            session,
+          );
+          return tptResult as T;
+        }
+      }
 
       if (updateMap.length > 0) {
         const updateReturningSql = useReturningForUpdate
@@ -2450,11 +2884,59 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      // STI: 자식 엔티티 삭제 시 discriminator 조건 추가
+      const deleteStrategy = this.inheritanceResolver.getStrategy(entity);
+      if (deleteStrategy === "SINGLE_TABLE" && this.inheritanceResolver.isChildEntity(entity)) {
+        const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+        const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
+        if (discCol && discVal) {
+          whereMap.push(Conditions.equals(this.wrap(discCol.name), discVal));
+        }
+      }
+
       if (whereMap.length === 0) {
         throw new DeleteWithoutConditionsError("Delete");
       }
 
       const whereSql = join(whereMap, " AND ");
+
+      // TPT: 자식 먼저 삭제 → 부모 삭제
+      if (deleteStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
+        const root = this.inheritanceResolver.getRoot(entity)!;
+        const rootMeta = this.resolver.resolveEntityMetadata(root);
+        if (rootMeta) {
+          // 1. 자식 테이블 삭제
+          const childDeleteQuery = sql`DELETE FROM ${raw(this.wrapTable(metadata.name!))} WHERE ${whereSql}`;
+          await session.query(childDeleteQuery);
+
+          // 2. 부모 테이블 삭제
+          const parentDeleteQuery = sql`DELETE FROM ${raw(this.wrapTable(rootMeta.name!))} WHERE ${whereSql}`;
+          const parentResult = (await session.query(parentDeleteQuery)) as {
+            results: any;
+            rowCount?: number;
+          };
+
+          let affected = 0;
+          if (this.isMySqlFamily()) {
+            affected = parentResult?.results?.affectedRows ?? 0;
+          } else {
+            affected = parentResult?.rowCount ?? 0;
+          }
+
+          await this.cascadeHandler.runHooks(entity, criteria, "afterDelete");
+          await this.eventEmitter.emit("afterDelete", {
+            entity,
+            data: criteria,
+          });
+          await this.notifySubscribers(entity, "afterDelete", {
+            entityClass: entity,
+            criteria,
+            manager: this,
+          } as DeleteEvent<T>);
+
+          return { affected };
+        }
+      }
 
       const deleteQuery = sql`DELETE FROM ${raw(this.wrapTable(metadata.name!))} WHERE ${whereSql}`;
 

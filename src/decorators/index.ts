@@ -21,3 +21,6 @@ export * from "./InjectRepository";
 export * from "./ComputedColumn";
 export * from "./FullTextIndex";
 export * from "./RelationColumn";
+export * from "./Inheritance";
+export * from "./DiscriminatorColumn";
+export * from "./DiscriminatorValue";
