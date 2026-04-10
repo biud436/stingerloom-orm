@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../../../utils";
 import { COLUMN_TOKEN } from "../../../decorators/Column";
+import { VERSION_TOKEN } from "../../../decorators/Version";
+import { CREATE_TIMESTAMP_TOKEN } from "../../../decorators/CreateTimestamp";
+import { UPDATE_TIMESTAMP_TOKEN } from "../../../decorators/UpdateTimestamp";
 import { ColumnMetadata } from "../../../scanner/ColumnScanner";
 import { FindOption } from "../../../dialects/FindOption";
 import { PluginContext } from "../PluginContext";
@@ -229,6 +232,27 @@ export class IdentityMapManager {
       if (instance[col] !== undefined) data[col] = instance[col];
     }
     return data;
+  }
+
+  /**
+   * Get the @Version column name for an entity class, or null if none.
+   */
+  getVersionColumn(entityClass: ClazzType<any>): string | null {
+    return Reflect.getMetadata(VERSION_TOKEN, entityClass) ?? null;
+  }
+
+  /**
+   * Get the @CreateTimestamp column name for an entity class, or null if none.
+   */
+  getCreateTimestampColumn(entityClass: ClazzType<any>): string | null {
+    return Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, entityClass) ?? null;
+  }
+
+  /**
+   * Get the @UpdateTimestamp column name for an entity class, or null if none.
+   */
+  getUpdateTimestampColumn(entityClass: ClazzType<any>): string | null {
+    return Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, entityClass) ?? null;
   }
 
   /**

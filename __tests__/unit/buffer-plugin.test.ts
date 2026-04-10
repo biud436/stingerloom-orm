@@ -21,6 +21,11 @@ import { ONE_TO_MANY_TOKEN } from "../../src/decorators/OneToMany";
 import { MANY_TO_ONE_TOKEN } from "../../src/decorators/ManyToOne";
 import { MANY_TO_MANY_TOKEN } from "../../src/decorators/ManyToMany";
 import { ONE_TO_ONE_TOKEN } from "../../src/decorators/OneToOne";
+import { VERSION_TOKEN } from "../../src/decorators/Version";
+import { CREATE_TIMESTAMP_TOKEN } from "../../src/decorators/CreateTimestamp";
+import { UPDATE_TIMESTAMP_TOKEN } from "../../src/decorators/UpdateTimestamp";
+import { VALIDATION_TOKEN, ValidationMetadata } from "../../src/decorators/Validation";
+import { ValidationError } from "../../src/errors/ValidationError";
 
 // ── Mock DatabaseClient ─────────────────────────────────────────
 
@@ -259,6 +264,81 @@ Reflect.defineMetadata(
     },
   ],
   Post,
+);
+
+// ── Entities with @Version (optimistic locking) ─────────────────
+
+class VersionedProduct {
+  id!: number;
+  name!: string;
+  price!: number;
+  version!: number;
+}
+
+Reflect.defineMetadata(ENTITY_TOKEN, { name: "VersionedProduct", tableName: "versioned_products" }, VersionedProduct);
+Reflect.defineMetadata(
+  COLUMN_TOKEN,
+  [
+    { target: VersionedProduct, name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+    { target: VersionedProduct, name: "name", propertyKey: "name", type: String, options: {} },
+    { target: VersionedProduct, name: "price", propertyKey: "price", type: Number, options: {} },
+    { target: VersionedProduct, name: "version", propertyKey: "version", type: Number, options: { nullable: false } },
+  ],
+  VersionedProduct.prototype,
+);
+// @Version() metadata
+Reflect.defineMetadata(VERSION_TOKEN, "version", VersionedProduct);
+
+// ── Entities with @CreateTimestamp / @UpdateTimestamp ────────────
+
+class AuditableItem {
+  id!: number;
+  title!: string;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+Reflect.defineMetadata(ENTITY_TOKEN, { name: "AuditableItem", tableName: "auditable_items" }, AuditableItem);
+Reflect.defineMetadata(
+  COLUMN_TOKEN,
+  [
+    { target: AuditableItem, name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+    { target: AuditableItem, name: "title", propertyKey: "title", type: String, options: {} },
+    { target: AuditableItem, name: "createdAt", propertyKey: "createdAt", type: Date, options: { nullable: false } },
+    { target: AuditableItem, name: "updatedAt", propertyKey: "updatedAt", type: Date, options: { nullable: false } },
+  ],
+  AuditableItem.prototype,
+);
+Reflect.defineMetadata(CREATE_TIMESTAMP_TOKEN, "createdAt", AuditableItem);
+Reflect.defineMetadata(UPDATE_TIMESTAMP_TOKEN, "updatedAt", AuditableItem);
+
+// ── Entities with @Validation ───────────────────────────────────
+
+class ValidatedUser {
+  id!: number;
+  name!: string;
+  age!: number;
+}
+
+Reflect.defineMetadata(ENTITY_TOKEN, { name: "ValidatedUser", tableName: "validated_users" }, ValidatedUser);
+Reflect.defineMetadata(
+  COLUMN_TOKEN,
+  [
+    { target: ValidatedUser, name: "id", propertyKey: "id", type: Number, options: { primary: true, autoIncrement: true } },
+    { target: ValidatedUser, name: "name", propertyKey: "name", type: String, options: {} },
+    { target: ValidatedUser, name: "age", propertyKey: "age", type: Number, options: {} },
+  ],
+  ValidatedUser.prototype,
+);
+// @NotNull on name, @Min(0) on age
+Reflect.defineMetadata(
+  VALIDATION_TOKEN,
+  [
+    { propertyKey: "name", constraint: "notNull", message: "name must not be null or undefined" },
+    { propertyKey: "name", constraint: "minLength", value: 1, message: "name must be at least 1 characters long" },
+    { propertyKey: "age", constraint: "min", value: 0, message: "age must be at least 0" },
+  ] as ValidationMetadata[],
+  ValidatedUser,
 );
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -3983,6 +4063,514 @@ describe("Buffer Plugin", () => {
       const reverseSorted = sortByIndex(entries, indexMap, true);
       // Reversed: Comment before User (children first)
       expect(reverseSorted[0].entity).toBe(Comment);
+    });
+  });
+
+  // ── Granular Cascade Options ──────────────────────────────────
+
+  describe("granular cascade options (BufferCascadeOptions)", () => {
+    it("cascade: true should enable all operations (backward compat)", async () => {
+      const em = createEmWithEntities(Post, Comment);
+      const extended = em.extend(bufferPlugin({ cascade: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      let insertId = 500;
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? insertId++,
+      }));
+
+      const mut = extended.buffer();
+
+      const post = new Post();
+      post.title = "Hello";
+      post.comments = [Object.assign(new Comment(), { body: "child" })];
+
+      mut.persist(post);
+      const result = await mut.flush();
+
+      expect(result.inserts).toBe(2); // parent + cascaded child
+    });
+
+    it("cascade: false should disable all operations (backward compat)", async () => {
+      const em = createEmWithEntities(Post, Comment);
+      const extended = em.extend(bufferPlugin({ cascade: false }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 1,
+      }));
+
+      const mut = extended.buffer();
+
+      const post = new Post();
+      post.title = "Hello";
+      post.comments = [Object.assign(new Comment(), { body: "child" })];
+
+      mut.persist(post);
+      const result = await mut.flush();
+
+      expect(result.inserts).toBe(1); // only parent
+    });
+
+    it("cascade: { persist: false } should skip cascade on flush but allow others", () => {
+      const em = createEmWithEntities(Post, Comment);
+      const extended = em.extend(bufferPlugin({ cascade: { persist: false } }));
+      const mut = extended.buffer();
+
+      // detach should still cascade (detach defaults to true)
+      const post = Object.assign(new Post(), { id: 1, title: "Hello" });
+      const comment = Object.assign(new Comment(), { id: 10, body: "child", postId: 1 });
+      post.comments = [comment];
+
+      mut.track(post);
+      mut.track(comment);
+      mut.detach(post);
+
+      // Both should be detached (cascade.detach = true by default)
+      expect(mut.getState(post)).toBe(EntityState.DETACHED);
+      expect(mut.getState(comment)).toBe(EntityState.DETACHED);
+    });
+
+    it("cascade: { persist: true, remove: false } should cascade insert but not delete", async () => {
+      const em = createEmWithEntities(Post, Comment);
+      const extended = em.extend(bufferPlugin({ cascade: { persist: true, remove: false } }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      let insertId = 600;
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? insertId++,
+      }));
+      const findSpy = jest.spyOn(extended, "find").mockResolvedValue([]);
+      jest.spyOn(extended, "delete").mockResolvedValue({ affected: 1 } as any);
+
+      const mut = extended.buffer();
+
+      // Persist with cascade
+      const post = new Post();
+      post.title = "Hello";
+      post.comments = [Object.assign(new Comment(), { body: "child" })];
+      mut.persist(post);
+      const insertResult = await mut.flush();
+      expect(insertResult.inserts).toBe(2); // parent + child cascaded
+
+      // Delete should NOT cascade
+      mut.remove(post);
+      const deleteResult = await mut.flush();
+      expect(deleteResult.deletes).toBe(1); // only parent, no cascade delete
+    });
+
+    it("cascade: { detach: false } should not cascade detach to children", () => {
+      const em = createEmWithEntities(Post, Comment);
+      const extended = em.extend(bufferPlugin({ cascade: { detach: false } }));
+      const mut = extended.buffer();
+
+      const post = Object.assign(new Post(), { id: 1, title: "Hello" });
+      const comment = Object.assign(new Comment(), { id: 10, body: "child", postId: 1 });
+      post.comments = [comment];
+
+      mut.track(post);
+      mut.track(comment);
+      mut.detach(post);
+
+      expect(mut.getState(post)).toBe(EntityState.DETACHED);
+      expect(mut.getState(comment)).toBe(EntityState.MANAGED); // NOT detached
+    });
+
+    it("cascade: { merge: false } should not cascade merge to children", () => {
+      const em = createEmWithEntities(Post, Comment);
+      const extended = em.extend(bufferPlugin({ cascade: { merge: false } }));
+      const mut = extended.buffer();
+
+      const post = Object.assign(new Post(), { id: 1, title: "Hello" });
+      const comment = Object.assign(new Comment(), { id: 10, body: "original", postId: 1 });
+      post.comments = [comment];
+
+      mut.track(post);
+      // comment is NOT tracked separately
+
+      const detachedPost = Object.assign(new Post(), { id: 1, title: "Updated" });
+      const detachedComment = Object.assign(new Comment(), { id: 10, body: "updated child", postId: 1 });
+      detachedPost.comments = [detachedComment];
+
+      mut.merge(detachedPost);
+
+      expect(post.title).toBe("Updated"); // merge applied to parent
+      // Comment should NOT be merged because cascade.merge = false
+      // Original comment on tracked post should be unchanged
+      expect(comment.body).toBe("original");
+    });
+
+    it("cascade: { refresh: false } should not cascade refresh to children", async () => {
+      const em = createEmWithEntities(Post, Comment);
+      const extended = em.extend(bufferPlugin({ cascade: { refresh: false } }));
+      const findOneSpy = jest.spyOn(extended, "findOne");
+
+      const mut = extended.buffer();
+      const post = Object.assign(new Post(), { id: 1, title: "Hello" });
+      const comment = Object.assign(new Comment(), { id: 10, body: "child", postId: 1 });
+      post.comments = [comment];
+
+      mut.track(post);
+      mut.track(comment);
+
+      findOneSpy.mockResolvedValueOnce(
+        Object.assign(new Post(), { id: 1, title: "Refreshed" }),
+      );
+
+      await mut.refresh(post);
+      expect(post.title).toBe("Refreshed");
+      // findOne should only be called once — for post, NOT for comment
+      expect(findOneSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("partial cascade object should default unspecified keys to true", async () => {
+      const em = createEmWithEntities(Post, Comment);
+      // Only disable remove; everything else should be true
+      const extended = em.extend(bufferPlugin({ cascade: { remove: false } }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      let insertId = 700;
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? insertId++,
+      }));
+
+      const mut = extended.buffer();
+
+      // persist cascade should still work
+      const post = new Post();
+      post.title = "Hello";
+      post.comments = [Object.assign(new Comment(), { body: "child" })];
+      mut.persist(post);
+      const result = await mut.flush();
+      expect(result.inserts).toBe(2); // parent + child — persist cascade works
+    });
+  });
+
+  // ── @Version Optimistic Locking in flush ──────────────────────
+
+  describe("@Version optimistic locking in flush", () => {
+    it("should increment version on instance after flush UPDATE (MySQL — no RETURNING)", async () => {
+      const em = createExtendedEm(VersionedProduct);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      // Simulate MySQL: save() returns data WITHOUT incremented version
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        // MySQL: does NOT return updated version (no RETURNING)
+      }));
+
+      const mut = em.buffer();
+      const product = Object.assign(new VersionedProduct(), {
+        id: 1, name: "Widget", price: 100, version: 1,
+      });
+      mut.track(product);
+
+      // Dirty the entity
+      product.price = 200;
+      await mut.flush();
+
+      // Version should be incremented to 2 even without RETURNING
+      expect(product.version).toBe(2);
+    });
+
+    it("should use RETURNING version when available (PostgreSQL)", async () => {
+      const em = createExtendedEm(VersionedProduct);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      // Simulate PostgreSQL: save() returns data WITH incremented version
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        version: (data.version ?? 0) + 1, // RETURNING gives new version
+      }));
+
+      const mut = em.buffer();
+      const product = Object.assign(new VersionedProduct(), {
+        id: 1, name: "Widget", price: 100, version: 1,
+      });
+      mut.track(product);
+
+      product.price = 200;
+      await mut.flush();
+
+      // Version should be 2 (from RETURNING, not double-incremented)
+      expect(product.version).toBe(2);
+    });
+
+    it("should propagate OptimisticLockError from EntityManager", async () => {
+      const em = createExtendedEm(VersionedProduct);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockRejectedValue(
+        new Error("OptimisticLockError: VersionedProduct was modified by another transaction (version: 1)"),
+      );
+
+      const mut = em.buffer();
+      const product = Object.assign(new VersionedProduct(), {
+        id: 1, name: "Widget", price: 100, version: 1,
+      });
+      mut.track(product);
+      product.price = 200;
+
+      await expect(mut.flush()).rejects.toThrow("OptimisticLockError");
+    });
+
+    it("should correctly re-snapshot version after successful flush", async () => {
+      const em = createExtendedEm(VersionedProduct);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        // MySQL: no RETURNING
+      }));
+
+      const mut = em.buffer();
+      const product = Object.assign(new VersionedProduct(), {
+        id: 1, name: "Widget", price: 100, version: 1,
+      });
+      mut.track(product);
+
+      // First flush: version 1 → 2
+      product.price = 200;
+      await mut.flush();
+      expect(product.version).toBe(2);
+
+      // Second flush: version 2 → 3 (should not get stuck at version 1)
+      product.price = 300;
+      await mut.flush();
+      expect(product.version).toBe(3);
+    });
+
+    it("should not alter version on non-versioned entities", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+      }));
+
+      const mut = em.buffer();
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      user.name = "Bob";
+
+      await mut.flush();
+      // No version property to increment — should not add one
+      expect((user as any).version).toBeUndefined();
+    });
+
+    it("should set version=1 on INSERT via persist", async () => {
+      const em = createExtendedEm(VersionedProduct);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 42,
+        version: 1, // EntityManager sets version=1 on INSERT
+      }));
+
+      const mut = em.buffer();
+      const product = new VersionedProduct();
+      product.name = "New Widget";
+      product.price = 50;
+      // version is not set
+
+      mut.persist(product);
+      await mut.flush();
+
+      expect(product.version).toBe(1);
+      expect(product.id).toBe(42);
+    });
+  });
+
+  // ── @CreateTimestamp / @UpdateTimestamp in flush ───────────────
+
+  describe("@CreateTimestamp / @UpdateTimestamp in flush", () => {
+    it("should set createdAt and updatedAt on INSERT via persist", async () => {
+      const em = createExtendedEm(AuditableItem);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 99,
+        // MySQL: no RETURNING — timestamps not in response
+      }));
+
+      const before = new Date();
+      const mut = em.buffer();
+      const item = new AuditableItem();
+      item.title = "Test";
+
+      mut.persist(item);
+      await mut.flush();
+      const after = new Date();
+
+      expect(item.id).toBe(99);
+      expect(item.createdAt).toBeInstanceOf(Date);
+      expect(item.updatedAt).toBeInstanceOf(Date);
+      expect(item.createdAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
+      expect(item.createdAt.getTime()).toBeLessThanOrEqual(after.getTime());
+    });
+
+    it("should update updatedAt but NOT createdAt on UPDATE", async () => {
+      const em = createExtendedEm(AuditableItem);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        // MySQL: no RETURNING
+      }));
+
+      const originalCreatedAt = new Date("2025-01-01T00:00:00Z");
+      const originalUpdatedAt = new Date("2025-01-01T00:00:00Z");
+
+      const mut = em.buffer();
+      const item = Object.assign(new AuditableItem(), {
+        id: 1,
+        title: "Original",
+        createdAt: originalCreatedAt,
+        updatedAt: originalUpdatedAt,
+      });
+      mut.track(item);
+
+      item.title = "Changed";
+      await mut.flush();
+
+      // createdAt should NOT be overwritten (only set on INSERT when null)
+      expect(item.createdAt).toBe(originalCreatedAt);
+      // updatedAt should be updated to now
+      expect(item.updatedAt).not.toBe(originalUpdatedAt);
+      expect(item.updatedAt.getTime()).toBeGreaterThan(originalUpdatedAt.getTime());
+    });
+
+    it("should not set timestamps on entities without decorators", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 1,
+      }));
+
+      const mut = em.buffer();
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+      mut.persist(user);
+      await mut.flush();
+
+      expect((user as any).createdAt).toBeUndefined();
+      expect((user as any).updatedAt).toBeUndefined();
+    });
+
+    it("should preserve user-provided createdAt on INSERT", async () => {
+      const em = createExtendedEm(AuditableItem);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 99,
+      }));
+
+      const customDate = new Date("2020-06-15T12:00:00Z");
+      const mut = em.buffer();
+      const item = new AuditableItem();
+      item.title = "Test";
+      item.createdAt = customDate;
+
+      mut.persist(item);
+      await mut.flush();
+
+      // User-provided createdAt should be preserved
+      expect(item.createdAt).toBe(customDate);
+    });
+  });
+
+  // ── validateBeforeFlush ───────────────────────────────────────
+
+  describe("validateBeforeFlush", () => {
+    it("should throw ValidationError on persist with invalid data", async () => {
+      const em = createEmWithEntities(ValidatedUser);
+      const extended = em.extend(bufferPlugin({ validateBeforeFlush: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 1,
+      }));
+
+      const mut = extended.buffer();
+      const user = new ValidatedUser();
+      user.name = undefined as any; // @NotNull violation
+      user.age = 25;
+
+      mut.persist(user);
+      await expect(mut.flush()).rejects.toThrow(ValidationError);
+    });
+
+    it("should throw ValidationError on dirty tracked entity with invalid data", async () => {
+      const em = createEmWithEntities(ValidatedUser);
+      const extended = em.extend(bufferPlugin({ validateBeforeFlush: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+      }));
+
+      const mut = extended.buffer();
+      const user = Object.assign(new ValidatedUser(), { id: 1, name: "Alice", age: 25 });
+      mut.track(user);
+
+      user.age = -5; // @Min(0) violation
+      await expect(mut.flush()).rejects.toThrow(ValidationError);
+    });
+
+    it("should succeed when all entities pass validation", async () => {
+      const em = createEmWithEntities(ValidatedUser);
+      const extended = em.extend(bufferPlugin({ validateBeforeFlush: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 1,
+      }));
+
+      const mut = extended.buffer();
+      const user = new ValidatedUser();
+      user.name = "Alice";
+      user.age = 25;
+
+      mut.persist(user);
+      const result = await mut.flush();
+      expect(result.inserts).toBe(1);
+    });
+
+    it("should not validate when validateBeforeFlush is false (default)", async () => {
+      const em = createEmWithEntities(ValidatedUser);
+      const extended = em.extend(bufferPlugin()); // default: validateBeforeFlush = false
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 1,
+      }));
+
+      const mut = extended.buffer();
+      const user = new ValidatedUser();
+      user.name = undefined as any; // Would fail validation
+      user.age = 25;
+
+      mut.persist(user);
+      // Should NOT throw — validation is disabled
+      const result = await mut.flush();
+      expect(result.inserts).toBe(1);
+    });
+
+    it("should not execute any DB operations when validation fails", async () => {
+      const em = createEmWithEntities(ValidatedUser);
+      const extended = em.extend(bufferPlugin({ validateBeforeFlush: true }));
+      const txSpy = jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      const saveSpy = jest.spyOn(extended, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data,
+        id: data.id ?? 1,
+      }));
+
+      const mut = extended.buffer();
+      const user = new ValidatedUser();
+      user.name = undefined as any; // violation
+      user.age = 25;
+
+      mut.persist(user);
+      try { await mut.flush(); } catch (_) { /* expected */ }
+
+      // DB should never be touched
+      expect(txSpy).not.toHaveBeenCalled();
+      expect(saveSpy).not.toHaveBeenCalled();
     });
   });
 });

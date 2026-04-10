@@ -9,6 +9,7 @@ import {
   FlushEventType, FlushEventListener,
   BulkUpdateEntry, BulkDeleteEntry,
   ResolvedBufferOptions,
+  resolveCascadeOptions,
 } from "./BufferPreview";
 import { BufferStrategy, SnapshotStrategy } from "./BufferStrategy";
 import { EntityState } from "./EntityUnitState";
@@ -18,6 +19,7 @@ import { createPersistentCollection } from "./PersistentCollection";
 import { IdentityMapManager } from "./IdentityMapManager";
 import { CascadeProcessor } from "./CascadeProcessor";
 import { FlushExecutor } from "./FlushExecutor";
+import { EntityValidator } from "../../EntityValidator";
 import { LazyRelationInjector } from "./LazyRelationInjector";
 import type { EntityManager } from "../../EntityManager";
 
@@ -67,11 +69,12 @@ export class WriteBuffer {
     this.ctx = ctx;
     this.parent = parent;
     this.strategy = new SnapshotStrategy();
+    const resolvedCascade = resolveCascadeOptions(options.cascade);
     this.options = {
       retainAfterFlush: options.retainAfterFlush ?? true,
-      cascade: options.cascade ?? true,
+      cascade: resolvedCascade,
       orphanRemoval: options.orphanRemoval ?? false,
-      manyToManySync: options.manyToManySync ?? (options.cascade !== false),
+      manyToManySync: options.manyToManySync ?? resolvedCascade.persist,
       autoFlush: options.autoFlush ?? false,
       flushMode: options.flushMode ?? (options.autoFlush ? FlushMode.AUTO : FlushMode.MANUAL),
       onFlush: options.onFlush ?? (() => {}),
@@ -80,6 +83,7 @@ export class WriteBuffer {
       changeTracking: options.changeTracking ?? ChangeTrackingPolicy.DEFERRED_IMPLICIT,
       logging: options.logging ?? false,
       maxIdentityMapSize: options.maxIdentityMapSize,
+      validateBeforeFlush: options.validateBeforeFlush ?? false,
     };
     this.flushMode = this.options.flushMode;
     this.changeTracking = this.options.changeTracking;
@@ -504,7 +508,7 @@ export class WriteBuffer {
     this.idMap.stateMap.set(instance, EntityState.DETACHED);
 
     // Cascade detach
-    if (this.options.cascade) {
+    if (this.options.cascade.detach) {
       const entityClass = instance.constructor as ClazzType<any>;
       this.cascade.propagateToRelations(instance, entityClass, (child) => {
         this.detach(child, seen);
@@ -535,7 +539,7 @@ export class WriteBuffer {
           if (instance[col] !== undefined) existing[col] = instance[col];
         }
         // Cascade merge
-        if (this.options.cascade) {
+        if (this.options.cascade.merge) {
           this.cascade.propagateToRelations(instance, entityClass, (child) => {
             try { this.merge(child, seen); } catch (err) {
               // Only swallow "not registered" errors
@@ -600,7 +604,7 @@ export class WriteBuffer {
     }
 
     // Cascade refresh to tracked related entities
-    if (this.options.cascade) {
+    if (this.options.cascade.refresh) {
       const entityClass = instance.constructor as ClazzType<any>;
       for (const child of this.cascade.getTrackedRelatedEntities(instance, entityClass, this.trackedEntries)) {
         await this.refresh(child, seen);
@@ -821,6 +825,11 @@ export class WriteBuffer {
       return { updates: 0, inserts: 0, deletes: 0 };
     }
 
+    // Pre-flush validation: check @Validation constraints before touching the DB
+    if (this.options.validateBeforeFlush) {
+      this.validateAll();
+    }
+
     const em = this.ctx.em;
     const result: BufferFlushResult = { updates: 0, inserts: 0, deletes: 0 };
     const entities = this.ctx.getEntities();
@@ -881,6 +890,11 @@ export class WriteBuffer {
                   }
                 }
               }
+              // @Version: ensure version is incremented on the instance
+              // (MySQL without RETURNING may not return the new value)
+              this.ensureVersionIncrement(entry.entity, entry.instance, entry.snapshot);
+              // @UpdateTimestamp: ensure timestamp is set on the instance
+              this.ensureTimestamps(entry.entity, entry.instance, false);
               result.updates++;
               visited.add(entry.instance);
               await this.flushExec.emitFlushEvent("postUpdate", entry.entity, entry.instance, diff);
@@ -906,6 +920,8 @@ export class WriteBuffer {
                 if (v !== undefined) entry.instance[col] = v;
               }
             }
+            // @CreateTimestamp / @UpdateTimestamp: ensure timestamps on the instance
+            this.ensureTimestamps(entry.entity, entry.instance, true);
             result.inserts++;
             visited.add(entry.instance);
             await this.flushExec.emitFlushEvent("postInsert", entry.entity, entry.instance);
@@ -934,7 +950,7 @@ export class WriteBuffer {
         }
 
         // 5. Cascade delete — before parent delete, cascade-delete children
-        if (this.options.cascade) {
+        if (this.options.cascade.remove) {
           const cascadeDeletes: DeleteEntry[] = [];
           for (const del of deletesCopy) {
             await this.cascade.collectCascadeDeletes(txEm, del.entity, del.criteria, cascadeDeletes, new Set());
@@ -1042,6 +1058,77 @@ export class WriteBuffer {
   }
 
   // ── Private helpers ──────────────────────────────────────────
+
+  /**
+   * Validate all dirty tracked entities and persist queue entries
+   * using @Validation decorator metadata. Throws ValidationError
+   * on the first failure, aborting flush before any DB write.
+   */
+  private validateAll(): void {
+    // Dirty tracked entities (updates)
+    for (const entry of this.trackedEntries.values()) {
+      if (entry.readOnly) continue;
+      if (!this.shouldDirtyCheck(entry)) continue;
+      const diff = this.strategy.diff(
+        entry.instance,
+        entry.snapshot,
+        entry.columnNames,
+        entry.pkColumns,
+      );
+      if (diff) {
+        EntityValidator.validate(entry.entity, entry.instance);
+      }
+    }
+    // Persist queue (inserts)
+    for (const entry of this.persistQueue) {
+      EntityValidator.validate(entry.entity, entry.instance);
+    }
+  }
+
+  /**
+   * Ensure @CreateTimestamp is set on INSERT and @UpdateTimestamp is set on INSERT/UPDATE.
+   * EntityManager.save() handles the SQL, but the returned object may not contain
+   * the timestamp (MySQL without RETURNING). This ensures the instance has correct values.
+   */
+  private ensureTimestamps(
+    entityClass: ClazzType<any>,
+    instance: any,
+    isInsert: boolean,
+  ): void {
+    const now = new Date();
+    if (isInsert) {
+      const createCol = this.idMap.getCreateTimestampColumn(entityClass);
+      if (createCol && (instance[createCol] === undefined || instance[createCol] === null)) {
+        instance[createCol] = now;
+      }
+    }
+    const updateCol = this.idMap.getUpdateTimestampColumn(entityClass);
+    if (updateCol) {
+      // Always update — EntityManager.save() sets this on both INSERT and UPDATE
+      instance[updateCol] = now;
+    }
+  }
+
+  /**
+   * Ensure @Version column is incremented on the instance after a successful UPDATE.
+   * MySQL (no RETURNING) may not return the new version, so we manually increment
+   * if the value is still the same as the snapshot (pre-update value).
+   */
+  private ensureVersionIncrement(
+    entityClass: ClazzType<any>,
+    instance: any,
+    snapshot: Record<string, any>,
+  ): void {
+    const versionCol = this.idMap.getVersionColumn(entityClass);
+    if (!versionCol) return;
+    const oldVersion = snapshot[versionCol];
+    if (oldVersion === undefined || oldVersion === null) return;
+    // If the instance still has the old version (RETURNING didn't update it),
+    // manually increment — we know the DB did `version = version + 1`.
+    if (instance[versionCol] === oldVersion) {
+      instance[versionCol] = (oldVersion as number) + 1;
+    }
+  }
 
   private resolveIdentity(entityClass: ClazzType<any>, instance: any): any {
     const { pkColumns } = this.idMap.getColumnInfo(entityClass);

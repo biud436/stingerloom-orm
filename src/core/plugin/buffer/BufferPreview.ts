@@ -106,6 +106,79 @@ export interface BulkDeleteEntry {
   where: Record<string, any>;
 }
 
+// ── Buffer Cascade Options ─────────────────────────────────────
+
+/**
+ * Granular cascade options for WriteBuffer operations.
+ *
+ * Each key controls whether the buffer cascades to related entities
+ * for the corresponding lifecycle operation.
+ *
+ * @example
+ * ```ts
+ * em.buffer({
+ *   cascade: { persist: true, merge: true, remove: false, refresh: true, detach: true }
+ * })
+ * ```
+ */
+export interface BufferCascadeOptions {
+  /**
+   * Cascade persist (insert/update) to related entities during flush().
+   * @default true
+   */
+  persist?: boolean;
+  /**
+   * Cascade merge() to related entities.
+   * @default true
+   */
+  merge?: boolean;
+  /**
+   * Cascade remove() — propagate delete to related entities during flush().
+   * @default true
+   */
+  remove?: boolean;
+  /**
+   * Cascade refresh() to tracked related entities.
+   * @default true
+   */
+  refresh?: boolean;
+  /**
+   * Cascade detach() to related entities.
+   * @default true
+   */
+  detach?: boolean;
+}
+
+/**
+ * Resolved cascade options — all fields required, no undefined.
+ */
+export type ResolvedCascadeOptions = Required<BufferCascadeOptions>;
+
+/**
+ * Resolve cascade option: boolean | BufferCascadeOptions → ResolvedCascadeOptions.
+ *
+ * - `true` / `undefined` → all true
+ * - `false` → all false
+ * - object → merge with defaults (all true)
+ */
+export function resolveCascadeOptions(
+  cascade: boolean | BufferCascadeOptions | undefined,
+): ResolvedCascadeOptions {
+  if (cascade === undefined || cascade === true) {
+    return { persist: true, merge: true, remove: true, refresh: true, detach: true };
+  }
+  if (cascade === false) {
+    return { persist: false, merge: false, remove: false, refresh: false, detach: false };
+  }
+  return {
+    persist: cascade.persist ?? true,
+    merge: cascade.merge ?? true,
+    remove: cascade.remove ?? true,
+    refresh: cascade.refresh ?? true,
+    detach: cascade.detach ?? true,
+  };
+}
+
 /**
  * Options for the buffer plugin.
  */
@@ -118,11 +191,20 @@ export interface BufferPluginOptions {
   retainAfterFlush?: boolean;
   /**
    * Enable cascade processing based on @OneToMany decorator metadata.
-   * When true, persist/flush will automatically cascade insert/update
-   * to child entities that have cascade options set.
+   *
+   * - `true` (default): all cascade operations enabled
+   * - `false`: all cascade operations disabled
+   * - `BufferCascadeOptions`: granular control per operation
+   *
+   * @example
+   * ```ts
+   * // Enable persist cascade but disable remove cascade
+   * em.buffer({ cascade: { persist: true, remove: false } })
+   * ```
+   *
    * @default true
    */
-  cascade?: boolean;
+  cascade?: boolean | BufferCascadeOptions;
   /**
    * When true, child entities removed from a @OneToMany array
    * are automatically deleted from the database on flush.
@@ -181,11 +263,22 @@ export interface BufferPluginOptions {
    * Leave undefined (default) for unlimited growth.
    */
   maxIdentityMapSize?: number;
+  /**
+   * Run @Validation decorator checks on all dirty/persisted entities
+   * before executing flush. If validation fails, flush is aborted
+   * and a ValidationError is thrown.
+   * @default false
+   */
+  validateBeforeFlush?: boolean;
 }
 
 /**
  * Resolved buffer options — all fields required except `maxIdentityMapSize`
  * which remains optional (undefined = unlimited).
+ *
+ * `cascade` is resolved to `ResolvedCascadeOptions` (all boolean fields required).
  */
-export type ResolvedBufferOptions = Required<Omit<BufferPluginOptions, "maxIdentityMapSize">>
+export type ResolvedBufferOptions =
+  & Omit<Required<Omit<BufferPluginOptions, "maxIdentityMapSize" | "cascade">>, never>
+  & { cascade: ResolvedCascadeOptions }
   & Pick<BufferPluginOptions, "maxIdentityMapSize">;

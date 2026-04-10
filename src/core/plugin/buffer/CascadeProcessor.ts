@@ -43,7 +43,7 @@ export class CascadeProcessor {
     visited: Set<EntityInstance>,
     result: BufferFlushResult,
   ): Promise<void> {
-    if (!this.options.cascade) return;
+    if (!this.options.cascade.persist) return;
 
     // @OneToMany cascade
     const oneToManyMeta: OneToManyMetadata<any>[] =
@@ -177,7 +177,7 @@ export class CascadeProcessor {
     const parentPk = this.idMap.getParentPkValue(parentEntry.instance, parentEntry.entity);
 
     // Added children - cascade insert if cascade includes insert
-    if (this.options.cascade && hasCascade(snapshot.cascade, "insert")) {
+    if (this.options.cascade.persist && hasCascade(snapshot.cascade, "insert")) {
       for (const child of diff.added) {
         if (visited.has(child)) continue;
         visited.add(child);
