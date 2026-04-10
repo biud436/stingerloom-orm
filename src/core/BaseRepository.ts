@@ -3,7 +3,8 @@ import { ClazzType } from "../utils";
 import { FindOption, UpdateData, WhereClause } from "../dialects/FindOption";
 import { EntityManager } from "./EntityManager";
 import { DeleteResult } from "../types/DeleteResult";
-import { SelectQueryBuilder } from "./SelectQueryBuilder";
+import { SelectQueryBuilder, isEntityRef } from "./SelectQueryBuilder";
+import type { EntityRef } from "./SelectQueryBuilder";
 import {
   CursorPaginationOption,
   CursorPaginationResult,
@@ -366,7 +367,12 @@ export class BaseRepository<T> {
    *   .getMany();
    * ```
    */
-  createQueryBuilder(alias: string): SelectQueryBuilder<T, T> {
-    return this.em.createQueryBuilder<T>(this.entity, alias);
+  createQueryBuilder(alias: string): SelectQueryBuilder<T, T>;
+  createQueryBuilder(ref: EntityRef<T>): SelectQueryBuilder<T, T>;
+  createQueryBuilder(aliasOrRef: string | EntityRef<T>): SelectQueryBuilder<T, T> {
+    if (isEntityRef(aliasOrRef)) {
+      return this.em.createQueryBuilder<T>(aliasOrRef);
+    }
+    return this.em.createQueryBuilder<T>(this.entity, aliasOrRef);
   }
 }

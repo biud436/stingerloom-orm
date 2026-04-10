@@ -98,7 +98,8 @@ import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
 import type { BufferPluginOptions } from "./plugin/buffer/BufferPreview";
 import type { RawPipeline, RawPipelineOptions } from "./plugin/raw-pipeline/RawPipeline";
 import { createDialectExpression } from "../dialects/DialectExpression";
-import { SelectQueryBuilder } from "./SelectQueryBuilder";
+import { SelectQueryBuilder, isEntityRef } from "./SelectQueryBuilder";
+import type { EntityRef } from "./SelectQueryBuilder";
 
 // ── Public Metadata View Types (#233) ────────────────────
 
@@ -3577,9 +3578,19 @@ export class EntityManager implements BaseEntityManager {
 
   createQueryBuilder(): BaseRawQueryBuilder;
   createQueryBuilder<T>(entity: ClazzType<T>, alias: string): SelectQueryBuilder<T, T>;
-  createQueryBuilder<T>(entity?: ClazzType<T>, alias?: string): BaseRawQueryBuilder | SelectQueryBuilder<T, T> {
-    if (entity && alias) {
-      const qb = new SelectQueryBuilder<T>(entity, alias, this);
+  createQueryBuilder<T>(ref: EntityRef<T>): SelectQueryBuilder<T, T>;
+  createQueryBuilder<T>(entityOrRef?: ClazzType<T> | EntityRef<T>, alias?: string): BaseRawQueryBuilder | SelectQueryBuilder<T, T> {
+    let entity: ClazzType<T> | undefined;
+    let resolvedAlias: string | undefined;
+    if (isEntityRef(entityOrRef)) {
+      entity = entityOrRef._entity;
+      resolvedAlias = entityOrRef._alias;
+    } else {
+      entity = entityOrRef;
+      resolvedAlias = alias;
+    }
+    if (entity && resolvedAlias) {
+      const qb = new SelectQueryBuilder<T>(entity, resolvedAlias, this);
       qb.setDialectExpression(createDialectExpression(this._ctx.getDialect()));
       const meta = this.resolver.resolveEntityMetadata(entity);
       if (meta) {

@@ -140,6 +140,18 @@ export function alias<T>(entity: ClazzType<T>, name: string): EntityRef<T> {
   };
 }
 
+/**
+ * Type guard: returns `true` if the value is an `EntityRef` (or `QEntity`).
+ */
+export function isEntityRef<T = any>(value: unknown): value is EntityRef<T> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as any)._alias === "string" &&
+    typeof (value as any)._entity === "function"
+  );
+}
+
 // ── QueryDSL-style expressions ────────────────────────────
 
 /**
@@ -846,15 +858,19 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   leftJoin(table: string, alias: string, condition: Sql | string): this;
   leftJoin<U>(entity: ClazzType<U>, alias: string, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
+  leftJoin<U>(ref: EntityRef<U>, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
   leftJoin(
-    tableOrEntity: string | ClazzType<any>,
-    alias: string,
-    conditionOrBuilder: Sql | string | ((join: JoinOnBuilder) => JoinOnBuilder),
+    tableOrEntity: string | ClazzType<any> | EntityRef<any>,
+    aliasOrBuilder: string | ((join: JoinOnBuilder) => JoinOnBuilder),
+    conditionOrBuilder?: Sql | string | ((join: JoinOnBuilder) => JoinOnBuilder),
   ): this {
-    if (typeof tableOrEntity === "function" && typeof conditionOrBuilder === "function") {
-      return this.addEntityJoin("LEFT", tableOrEntity, alias, conditionOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
+    if (isEntityRef(tableOrEntity) && typeof aliasOrBuilder === "function") {
+      return this.addEntityJoin("LEFT", tableOrEntity._entity, tableOrEntity._alias, aliasOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
     }
-    return this.addJoin("LEFT", tableOrEntity as string, alias, conditionOrBuilder as Sql | string);
+    if (typeof tableOrEntity === "function" && typeof conditionOrBuilder === "function") {
+      return this.addEntityJoin("LEFT", tableOrEntity, aliasOrBuilder as string, conditionOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
+    }
+    return this.addJoin("LEFT", tableOrEntity as string, aliasOrBuilder as string, conditionOrBuilder as Sql | string);
   }
 
   /**
@@ -864,15 +880,19 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   innerJoin(table: string, alias: string, condition: Sql | string): this;
   innerJoin<U>(entity: ClazzType<U>, alias: string, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
+  innerJoin<U>(ref: EntityRef<U>, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
   innerJoin(
-    tableOrEntity: string | ClazzType<any>,
-    alias: string,
-    conditionOrBuilder: Sql | string | ((join: JoinOnBuilder) => JoinOnBuilder),
+    tableOrEntity: string | ClazzType<any> | EntityRef<any>,
+    aliasOrBuilder: string | ((join: JoinOnBuilder) => JoinOnBuilder),
+    conditionOrBuilder?: Sql | string | ((join: JoinOnBuilder) => JoinOnBuilder),
   ): this {
-    if (typeof tableOrEntity === "function" && typeof conditionOrBuilder === "function") {
-      return this.addEntityJoin("INNER", tableOrEntity, alias, conditionOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
+    if (isEntityRef(tableOrEntity) && typeof aliasOrBuilder === "function") {
+      return this.addEntityJoin("INNER", tableOrEntity._entity, tableOrEntity._alias, aliasOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
     }
-    return this.addJoin("INNER", tableOrEntity as string, alias, conditionOrBuilder as Sql | string);
+    if (typeof tableOrEntity === "function" && typeof conditionOrBuilder === "function") {
+      return this.addEntityJoin("INNER", tableOrEntity, aliasOrBuilder as string, conditionOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
+    }
+    return this.addJoin("INNER", tableOrEntity as string, aliasOrBuilder as string, conditionOrBuilder as Sql | string);
   }
 
   /**
@@ -882,15 +902,19 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   rightJoin(table: string, alias: string, condition: Sql | string): this;
   rightJoin<U>(entity: ClazzType<U>, alias: string, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
+  rightJoin<U>(ref: EntityRef<U>, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
   rightJoin(
-    tableOrEntity: string | ClazzType<any>,
-    alias: string,
-    conditionOrBuilder: Sql | string | ((join: JoinOnBuilder) => JoinOnBuilder),
+    tableOrEntity: string | ClazzType<any> | EntityRef<any>,
+    aliasOrBuilder: string | ((join: JoinOnBuilder) => JoinOnBuilder),
+    conditionOrBuilder?: Sql | string | ((join: JoinOnBuilder) => JoinOnBuilder),
   ): this {
-    if (typeof tableOrEntity === "function" && typeof conditionOrBuilder === "function") {
-      return this.addEntityJoin("RIGHT", tableOrEntity, alias, conditionOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
+    if (isEntityRef(tableOrEntity) && typeof aliasOrBuilder === "function") {
+      return this.addEntityJoin("RIGHT", tableOrEntity._entity, tableOrEntity._alias, aliasOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
     }
-    return this.addJoin("RIGHT", tableOrEntity as string, alias, conditionOrBuilder as Sql | string);
+    if (typeof tableOrEntity === "function" && typeof conditionOrBuilder === "function") {
+      return this.addEntityJoin("RIGHT", tableOrEntity, aliasOrBuilder as string, conditionOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder);
+    }
+    return this.addJoin("RIGHT", tableOrEntity as string, aliasOrBuilder as string, conditionOrBuilder as Sql | string);
   }
 
   /**
@@ -909,24 +933,34 @@ export class SelectQueryBuilder<T, TResult = T> {
    * // [{ id: 1, title: "...", u_id: 1, u_name: "Alice", u_email: "..." }, ...]
    * ```
    */
+  leftJoinAndSelect<U>(entity: ClazzType<U>, alias: string, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
+  leftJoinAndSelect<U>(ref: EntityRef<U>, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
   leftJoinAndSelect<U>(
-    entity: ClazzType<U>,
-    alias: string,
-    onBuilder: (join: JoinOnBuilder) => JoinOnBuilder,
+    entityOrRef: ClazzType<U> | EntityRef<U>,
+    aliasOrBuilder: string | ((join: JoinOnBuilder) => JoinOnBuilder),
+    onBuilder?: (join: JoinOnBuilder) => JoinOnBuilder,
   ): this {
-    return this.addEntityJoin("LEFT", entity, alias, onBuilder, true);
+    if (isEntityRef(entityOrRef) && typeof aliasOrBuilder === "function") {
+      return this.addEntityJoin("LEFT", entityOrRef._entity, entityOrRef._alias, aliasOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder, true);
+    }
+    return this.addEntityJoin("LEFT", entityOrRef as ClazzType<U>, aliasOrBuilder as string, onBuilder!, true);
   }
 
   /**
    * INNER JOIN and automatically SELECT all columns from the joined entity.
    * @see leftJoinAndSelect
    */
+  innerJoinAndSelect<U>(entity: ClazzType<U>, alias: string, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
+  innerJoinAndSelect<U>(ref: EntityRef<U>, onBuilder: (join: JoinOnBuilder) => JoinOnBuilder): this;
   innerJoinAndSelect<U>(
-    entity: ClazzType<U>,
-    alias: string,
-    onBuilder: (join: JoinOnBuilder) => JoinOnBuilder,
+    entityOrRef: ClazzType<U> | EntityRef<U>,
+    aliasOrBuilder: string | ((join: JoinOnBuilder) => JoinOnBuilder),
+    onBuilder?: (join: JoinOnBuilder) => JoinOnBuilder,
   ): this {
-    return this.addEntityJoin("INNER", entity, alias, onBuilder, true);
+    if (isEntityRef(entityOrRef) && typeof aliasOrBuilder === "function") {
+      return this.addEntityJoin("INNER", entityOrRef._entity, entityOrRef._alias, aliasOrBuilder as (join: JoinOnBuilder) => JoinOnBuilder, true);
+    }
+    return this.addEntityJoin("INNER", entityOrRef as ClazzType<U>, aliasOrBuilder as string, onBuilder!, true);
   }
 
   /**

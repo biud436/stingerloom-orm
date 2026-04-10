@@ -5,6 +5,7 @@ import {
   alias,
   qAlias,
   ColumnCondition,
+  isEntityRef,
 } from "../../src/core/SelectQueryBuilder";
 import { Conditions } from "../../src/core/Conditions";
 import {
@@ -1054,6 +1055,141 @@ describe("SelectQueryBuilder — Entity-Aware Joins", () => {
       expect(text).toContain("`c`.`content` IS NOT NULL");
       expect(values).toContain("published");
       expect(values).toContain(18);
+    });
+  });
+
+  // ── EntityRef overload tests (#238) ──
+
+  describe("isEntityRef type guard", () => {
+    it("should return true for alias()", () => {
+      const ref = alias(Author, "au");
+      expect(isEntityRef(ref)).toBe(true);
+    });
+
+    it("should return true for qAlias()", () => {
+      const ref = qAlias(Author, "au");
+      expect(isEntityRef(ref)).toBe(true);
+    });
+
+    it("should return false for plain objects", () => {
+      expect(isEntityRef(null)).toBe(false);
+      expect(isEntityRef(undefined)).toBe(false);
+      expect(isEntityRef("author")).toBe(false);
+      expect(isEntityRef(Author)).toBe(false);
+      expect(isEntityRef({ _alias: "au" })).toBe(false);
+    });
+  });
+
+  describe("EntityRef overload — leftJoin(ref, onBuilder)", () => {
+    it("should accept alias() directly (MySQL)", () => {
+      const a = alias(Article, "a");
+      const au = alias(Author, "au");
+      const { qb } = createQb(Article, "a", "mysql");
+
+      qb.leftJoin(au, (j) => j.on(a.col("authorId"), "=", au.col("id")));
+      const { text } = qb.getSql();
+
+      expect(text).toContain("LEFT JOIN `author` AS `au`");
+      expect(text).toContain("`a`.`authorId` = `au`.`id`");
+    });
+
+    it("should accept qAlias() directly (PostgreSQL)", () => {
+      const a = qAlias(Article, "a");
+      const au = qAlias(Author, "au");
+      const { qb } = createQb(Article, "a", "postgresql");
+
+      qb.leftJoin(au, (j) => j.on(a.col("authorId"), "=", au.col("id")));
+      const { text } = qb.getSql();
+
+      expect(text).toContain('LEFT JOIN "author" AS "au"');
+      expect(text).toContain('"a"."authorId" = "au"."id"');
+    });
+  });
+
+  describe("EntityRef overload — innerJoin(ref, onBuilder)", () => {
+    it("should accept alias() directly (MySQL)", () => {
+      const a = alias(Article, "a");
+      const au = alias(Author, "au");
+      const { qb } = createQb(Article, "a", "mysql");
+
+      qb.innerJoin(au, (j) => j.on(a.col("authorId"), "=", au.col("id")));
+      const { text } = qb.getSql();
+
+      expect(text).toContain("INNER JOIN `author` AS `au`");
+    });
+  });
+
+  describe("EntityRef overload — rightJoin(ref, onBuilder)", () => {
+    it("should accept alias() directly (MySQL)", () => {
+      const a = alias(Article, "a");
+      const au = alias(Author, "au");
+      const { qb } = createQb(Article, "a", "mysql");
+
+      qb.rightJoin(au, (j) => j.on(a.col("authorId"), "=", au.col("id")));
+      const { text } = qb.getSql();
+
+      expect(text).toContain("RIGHT JOIN `author` AS `au`");
+    });
+  });
+
+  describe("EntityRef overload — leftJoinAndSelect(ref, onBuilder)", () => {
+    it("should accept alias() and auto-select joined columns", () => {
+      const a = alias(Article, "a");
+      const au = alias(Author, "au");
+      const { qb } = createQb(Article, "a", "mysql");
+
+      qb.leftJoinAndSelect(au, (j) => j.on(a.col("authorId"), "=", au.col("id")));
+      const { text } = qb.getSql();
+
+      expect(text).toContain("LEFT JOIN `author` AS `au`");
+      // leftJoinAndSelect should add au.* columns to SELECT
+      expect(text).toContain("`au`.");
+    });
+  });
+
+  describe("EntityRef overload — innerJoinAndSelect(ref, onBuilder)", () => {
+    it("should accept alias() and auto-select joined columns", () => {
+      const a = alias(Article, "a");
+      const au = alias(Author, "au");
+      const { qb } = createQb(Article, "a", "mysql");
+
+      qb.innerJoinAndSelect(au, (j) => j.on(a.col("authorId"), "=", au.col("id")));
+      const { text } = qb.getSql();
+
+      expect(text).toContain("INNER JOIN `author` AS `au`");
+      expect(text).toContain("`au`.");
+    });
+  });
+
+  describe("EntityRef overload — backward compatibility", () => {
+    it("existing (entity, alias, builder) syntax still works", () => {
+      const { qb } = createQb(Article, "a", "mysql");
+      qb.leftJoin(Author, "au", (j) => j.on("a.authorId", "=", "au.id"));
+      const { text } = qb.getSql();
+      expect(text).toContain("LEFT JOIN `author` AS `au`");
+    });
+
+    it("existing string-based syntax still works", () => {
+      const { qb } = createQb(Article, "a", "mysql");
+      qb.leftJoin("users", "u", "`a`.`author_id` = `u`.`id`");
+      const { text } = qb.getSql();
+      expect(text).toContain("LEFT JOIN `users` AS `u`");
+    });
+  });
+
+  describe("EntityRef overload — chained multi-join", () => {
+    it("should chain multiple EntityRef joins", () => {
+      const a = alias(Article, "a");
+      const au = alias(Author, "au");
+      const c = alias(Comment, "c");
+      const { qb } = createQb(Article, "a", "mysql");
+
+      qb.leftJoin(au, (j) => j.on(a.col("authorId"), "=", au.col("id")))
+        .innerJoin(c, (j) => j.on(c.col("articleId"), "=", a.col("id")));
+
+      const { text } = qb.getSql();
+      expect(text).toContain("LEFT JOIN `author` AS `au`");
+      expect(text).toContain("INNER JOIN `comment` AS `c`");
     });
   });
 });
