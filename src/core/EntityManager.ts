@@ -4097,6 +4097,11 @@ export class EntityManager implements BaseEntityManager {
       if (meta) {
         qb.setPropertyToColumnMap(this.buildPropertyToColumnMap(meta));
       }
+      // Inheritance-aware setup
+      const strategy = this.inheritanceResolver.getStrategy(entity);
+      if (strategy) {
+        qb.applyInheritance(this.inheritanceResolver, this.resolver);
+      }
       return qb;
     }
     const qb = RawQueryBuilderFactory.create();

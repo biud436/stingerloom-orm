@@ -1,14 +1,13 @@
 /**
  * SQLite In-Memory: Inheritance + SelectQueryBuilder 통합 테스트
  *
- * SelectQueryBuilder는 상속 전략을 자동으로 적용하지 않습니다.
- * 자식 엔티티에서 QueryBuilder를 사용하면 해당 테이블에서만 조회합니다.
- *
- * 이 테스트는:
- * 1. STI 자식에서 QueryBuilder로 단일 테이블 조회 (discriminator 수동 WHERE 필요)
- * 2. TPT 자식에서 QueryBuilder로 자식 테이블 + 수동 JOIN으로 부모 조회
- * 3. TPC 자식에서 QueryBuilder로 독립 테이블 조회
- * 위 시나리오의 동작을 검증합니다.
+ * SelectQueryBuilder는 상속 전략을 자동으로 적용합니다:
+ * 1. STI 자식: discriminator WHERE 자동 추가
+ * 2. STI 루트: 다형성 결과 (올바른 서브클래스 인스턴스)
+ * 3. TPT 자식: 부모 테이블 INNER JOIN 자동 추가, 양쪽 컬럼 조회
+ * 4. TPT 루트: 다형성 결과 (LEFT JOIN + 서브클래스 역직렬화)
+ * 5. TPC 자식: 독립 테이블 조회 (변경 없음)
+ * 6. TPC 루트: UNION ALL 다형성 쿼리
  */
 
 import "reflect-metadata";
@@ -92,41 +91,65 @@ describe("[Integration] SQLite: STI + QueryBuilder", () => {
     // Seed data
     await conn.em.save(CreditCardPayment, { amount: 100, cardNumber: "4111-1111" });
     await conn.em.save(BankTransferPayment, { amount: 200, bankCode: "SWIFT123" });
-    await conn.em.save(Payment, { amount: 50 });
+    await conn.em.save(CreditCardPayment, { amount: 150, cardNumber: "5555-2222" });
   });
 
   afterAll(async () => {
     await conn.cleanup();
   });
 
-  it("should query child entity via QueryBuilder with manual discriminator WHERE", async () => {
+  it("should auto-filter child entity by discriminator (no manual WHERE needed)", async () => {
     const results = await conn.em
       .createQueryBuilder(CreditCardPayment, "p")
-      .where("payment_type", "credit_card")
       .getMany();
 
-    expect(results.length).toBeGreaterThanOrEqual(1);
+    // Should only return credit card payments, not all rows
+    expect(results.length).toBe(2);
     for (const r of results as any[]) {
       expect(r.amount).toBeDefined();
     }
   });
 
-  it("should return all rows from shared table without discriminator filter", async () => {
+  it("should auto-filter bank transfer child entity", async () => {
+    const results = await conn.em
+      .createQueryBuilder(BankTransferPayment, "p")
+      .getMany();
+
+    expect(results.length).toBe(1);
+    expect((results[0] as any).amount).toBe(200);
+  });
+
+  it("should support additional WHERE on auto-filtered child query", async () => {
+    const results = await conn.em
+      .createQueryBuilder(CreditCardPayment, "p")
+      .where("amount", ">=", 150)
+      .getMany();
+
+    expect(results.length).toBe(1);
+    expect((results[0] as any).amount).toBe(150);
+  });
+
+  it("should return polymorphic results from root entity", async () => {
     const results = await conn.em
       .createQueryBuilder(Payment, "p")
       .getMany();
 
-    // Without discriminator filter, returns ALL rows from the shared table
-    expect(results.length).toBeGreaterThanOrEqual(3);
+    // Root query returns ALL rows with correct subclass instances
+    expect(results.length).toBe(3);
+
+    const ccResults = results.filter((r) => r instanceof CreditCardPayment);
+    const btResults = results.filter((r) => r instanceof BankTransferPayment);
+    expect(ccResults.length).toBe(2);
+    expect(btResults.length).toBe(1);
   });
 
-  it("should support orderBy on QueryBuilder with STI entity", async () => {
+  it("should support orderBy on polymorphic root query", async () => {
     const results = await conn.em
       .createQueryBuilder(Payment, "p")
       .orderBy({ amount: "DESC" })
       .getMany();
 
-    expect(results.length).toBeGreaterThanOrEqual(3);
+    expect(results.length).toBe(3);
     for (let i = 1; i < results.length; i++) {
       expect((results[i - 1] as any).amount).toBeGreaterThanOrEqual(
         (results[i] as any).amount,
@@ -134,15 +157,49 @@ describe("[Integration] SQLite: STI + QueryBuilder", () => {
     }
   });
 
-  it("should support getRawMany for raw projections", async () => {
+  it("should support getCount on child entity", async () => {
+    const count = await conn.em
+      .createQueryBuilder(CreditCardPayment, "p")
+      .getCount();
+
+    expect(count).toBe(2);
+  });
+
+  it("should support exists on child entity", async () => {
+    const hasCC = await conn.em
+      .createQueryBuilder(CreditCardPayment, "p")
+      .exists();
+    expect(hasCC).toBe(true);
+  });
+
+  it("should support getOne on child entity", async () => {
+    const result = await conn.em
+      .createQueryBuilder(CreditCardPayment, "p")
+      .where("amount", 100)
+      .getOne();
+
+    expect(result).not.toBeNull();
+    expect((result as any).cardNumber).toBe("4111-1111");
+  });
+
+  it("should support getRawMany on child entity", async () => {
     const results = await conn.em
-      .createQueryBuilder(Payment, "p")
+      .createQueryBuilder(CreditCardPayment, "p")
       .getRawMany();
 
-    expect(results.length).toBeGreaterThanOrEqual(3);
-    for (const r of results as any[]) {
+    expect(results.length).toBe(2);
+    for (const r of results) {
       expect(r.amount).toBeDefined();
     }
+  });
+
+  it("should support clone on inheritance-aware query builder", async () => {
+    const base = conn.em
+      .createQueryBuilder(CreditCardPayment, "p");
+    const cloned = base.clone();
+
+    const results = await cloned.getMany();
+    expect(results.length).toBe(2);
   });
 });
 
@@ -152,12 +209,15 @@ describe("[Integration] SQLite: STI + QueryBuilder", () => {
 
 describe("[Integration] SQLite: TPC + QueryBuilder", () => {
   let conn: TestConnectionResult;
+  let Payment: any;
   let CreditCardPayment: any;
   let BankTransferPayment: any;
+  let rootTableName: string;
   let ccTableName: string;
   let btTableName: string;
 
   beforeAll(async () => {
+    rootTableName = shortTableName("qb_tpc");
     ccTableName = shortTableName("qb_tpc_cc");
     btTableName = shortTableName("qb_tpc_bt");
 
@@ -171,7 +231,7 @@ describe("[Integration] SQLite: TPC + QueryBuilder", () => {
       () => {
         clearScanners();
 
-        @Entity({ name: shortTableName("qb_tpc") })
+        @Entity({ name: rootTableName })
         @Inheritance({ strategy: "TABLE_PER_CLASS" })
         @DiscriminatorColumn({ name: "payment_type", type: "varchar", length: 50 })
         class PaymentEntity {
@@ -191,6 +251,7 @@ describe("[Integration] SQLite: TPC + QueryBuilder", () => {
           @Column() bankCode!: string;
         }
 
+        Payment = PaymentEntity;
         CreditCardPayment = CreditCardPaymentEntity;
         BankTransferPayment = BankTransferPaymentEntity;
 
@@ -239,6 +300,59 @@ describe("[Integration] SQLite: TPC + QueryBuilder", () => {
     expect(result).not.toBeNull();
     expect((result as any).bankCode).toBe("SWIFT");
   });
+
+  it("should return polymorphic results from TPC root entity via UNION ALL", async () => {
+    const results = await conn.em
+      .createQueryBuilder(Payment, "p")
+      .getMany();
+
+    // Root query returns ALL rows across all child tables
+    expect(results.length).toBe(3);
+
+    const ccResults = results.filter((r) => r instanceof CreditCardPayment);
+    const btResults = results.filter((r) => r instanceof BankTransferPayment);
+    expect(ccResults.length).toBe(2);
+    expect(btResults.length).toBe(1);
+  });
+
+  it("should support WHERE on TPC polymorphic query", async () => {
+    const results = await conn.em
+      .createQueryBuilder(Payment, "p")
+      .where("amount", ">=", 200)
+      .getMany();
+
+    expect(results.length).toBe(2);
+  });
+
+  it("should support getCount on TPC polymorphic query", async () => {
+    const count = await conn.em
+      .createQueryBuilder(Payment, "p")
+      .getCount();
+
+    expect(count).toBe(3);
+  });
+
+  it("should support exists on TPC polymorphic query", async () => {
+    const result = await conn.em
+      .createQueryBuilder(Payment, "p")
+      .exists();
+
+    expect(result).toBe(true);
+  });
+
+  it("should support orderBy on TPC polymorphic query", async () => {
+    const results = await conn.em
+      .createQueryBuilder(Payment, "p")
+      .orderBy({ amount: "ASC" })
+      .getRawMany();
+
+    expect(results.length).toBe(3);
+    for (let i = 1; i < results.length; i++) {
+      expect(Number(results[i].amount)).toBeGreaterThanOrEqual(
+        Number(results[i - 1].amount),
+      );
+    }
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -249,12 +363,15 @@ describe("[Integration] SQLite: TPT + QueryBuilder", () => {
   let conn: TestConnectionResult;
   let Payment: any;
   let CreditCardPayment: any;
+  let BankTransferPayment: any;
   let rootTableName: string;
   let ccTableName: string;
+  let btTableName: string;
 
   beforeAll(async () => {
     rootTableName = shortTableName("qb_tpt");
     ccTableName = shortTableName("qb_tpt_cc");
+    btTableName = shortTableName("qb_tpt_bt");
 
     conn = await createTestConnection(
       {
@@ -280,7 +397,7 @@ describe("[Integration] SQLite: TPT + QueryBuilder", () => {
           @Column() cardNumber!: string;
         }
 
-        @Entity({ name: shortTableName("qb_tpt_bt") })
+        @Entity({ name: btTableName })
         @DiscriminatorValue("bank_transfer")
         class BankTransferPaymentEntity extends PaymentEntity {
           @Column() bankCode!: string;
@@ -288,6 +405,7 @@ describe("[Integration] SQLite: TPT + QueryBuilder", () => {
 
         Payment = PaymentEntity;
         CreditCardPayment = CreditCardPaymentEntity;
+        BankTransferPayment = BankTransferPaymentEntity;
 
         return {
           entities: [PaymentEntity, CreditCardPaymentEntity, BankTransferPaymentEntity],
@@ -296,6 +414,8 @@ describe("[Integration] SQLite: TPT + QueryBuilder", () => {
     );
 
     await conn.em.save(CreditCardPayment, { amount: 100, cardNumber: "4111-TPT" });
+    await conn.em.save(CreditCardPayment, { amount: 250, cardNumber: "5555-TPT" });
+    await conn.em.save(BankTransferPayment, { amount: 300, bankCode: "SWIFT-TPT" });
     await conn.em.save(Payment, { amount: 50 });
   });
 
@@ -303,32 +423,98 @@ describe("[Integration] SQLite: TPT + QueryBuilder", () => {
     await conn.cleanup();
   });
 
-  it("should query TPT child entity's own columns via QueryBuilder", async () => {
-    // QueryBuilder on TPT child queries only the child table
-    // To get parent columns, you need manual JOIN
+  it("should auto-join parent table and return both parent+child columns", async () => {
     const results = await conn.em
       .createQueryBuilder(CreditCardPayment, "cc")
       .getMany();
 
-    expect(results.length).toBeGreaterThanOrEqual(1);
-    const cc = results[0] as any;
-    // Child's own columns should be available
-    expect(cc.cardNumber).toBeDefined();
+    expect(results.length).toBe(2);
+    for (const r of results as any[]) {
+      // Child's own column
+      expect(r.cardNumber).toBeDefined();
+      // Parent's column (via auto-join)
+      expect(r.amount).toBeDefined();
+    }
   });
 
-  it("should support manual LEFT JOIN to parent table for full data", async () => {
+  it("should support WHERE on parent column in TPT child query", async () => {
     const results = await conn.em
       .createQueryBuilder(CreditCardPayment, "cc")
-      .leftJoin(
-        rootTableName,
-        "parent",
-        `"cc"."id" = "parent"."id"`,
-      )
-      .getRawMany();
+      .where("amount", ">=", 200)
+      .getMany();
 
-    expect(results.length).toBeGreaterThanOrEqual(1);
-    const row = results[0] as any;
-    // Raw results should contain child columns
-    expect(row.cardNumber).toBeDefined();
+    expect(results.length).toBe(1);
+    expect((results[0] as any).cardNumber).toBe("5555-TPT");
+  });
+
+  it("should support WHERE on child column in TPT child query", async () => {
+    const results = await conn.em
+      .createQueryBuilder(CreditCardPayment, "cc")
+      .where("cardNumber", "4111-TPT")
+      .getMany();
+
+    expect(results.length).toBe(1);
+    expect((results[0] as any).amount).toBe(100);
+  });
+
+  it("should support getCount on TPT child query", async () => {
+    const count = await conn.em
+      .createQueryBuilder(CreditCardPayment, "cc")
+      .getCount();
+
+    expect(count).toBe(2);
+  });
+
+  it("should support getOne on TPT child query", async () => {
+    const result = await conn.em
+      .createQueryBuilder(BankTransferPayment, "bt")
+      .getOne();
+
+    expect(result).not.toBeNull();
+    expect((result as any).bankCode).toBe("SWIFT-TPT");
+    expect((result as any).amount).toBe(300);
+  });
+
+  it("should return polymorphic results from TPT root entity", async () => {
+    const results = await conn.em
+      .createQueryBuilder(Payment, "p")
+      .getMany();
+
+    // Root query returns all rows with correct subclass instances
+    expect(results.length).toBe(4);
+
+    const ccResults = results.filter((r) => r instanceof CreditCardPayment);
+    const btResults = results.filter((r) => r instanceof BankTransferPayment);
+    expect(ccResults.length).toBe(2);
+    expect(btResults.length).toBe(1);
+
+    // Verify child columns are populated on subclass instances
+    for (const cc of ccResults as any[]) {
+      expect(cc.cardNumber).toBeDefined();
+      expect(cc.amount).toBeDefined();
+    }
+    for (const bt of btResults as any[]) {
+      expect(bt.bankCode).toBeDefined();
+      expect(bt.amount).toBeDefined();
+    }
+  });
+
+  it("should support getCount on TPT polymorphic query", async () => {
+    const count = await conn.em
+      .createQueryBuilder(Payment, "p")
+      .getCount();
+
+    expect(count).toBe(4);
+  });
+
+  it("should support orderBy on TPT child query", async () => {
+    const results = await conn.em
+      .createQueryBuilder(CreditCardPayment, "cc")
+      .orderBy({ amount: "DESC" })
+      .getMany();
+
+    expect(results.length).toBe(2);
+    expect((results[0] as any).amount).toBe(250);
+    expect((results[1] as any).amount).toBe(100);
   });
 });

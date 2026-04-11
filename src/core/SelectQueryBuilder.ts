@@ -10,6 +10,8 @@ import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { EntityNotFoundError } from "../errors/EntityNotFoundError";
 import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
 import { COLUMN_TOKEN } from "../decorators/Column";
+import { InheritanceResolver } from "./InheritanceResolver";
+import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
 import type { RelationMetadataResolver } from "./RelationMetadataResolver";
@@ -554,6 +556,30 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   protected selectExpressions: Sql[] = [];
 
+  // ── Inheritance state ──────────────────────────────────
+  protected inheritanceStrategy: InheritanceStrategy | null = null;
+  protected isInheritanceChild = false;
+  protected isPolymorphicQuery = false;
+  protected discriminatorColumnName?: string;
+  protected discriminatorMap?: Map<string, ClazzType<any>>;
+
+  /** TPT child: route parent-only columns to parent table alias. */
+  protected tptParentInfo?: {
+    alias: string;
+    tableName: string;
+    parentOnlyColumns: Set<string>;
+  };
+  /** TPT child: explicit SELECT list (child cols + parent cols from different tables). */
+  protected tptSelectColumns?: string[];
+
+  /** TPT polymorphic: discriminator value → child table name (for result prefix stripping). */
+  protected tptChildPrefixMap?: Map<string, string>;
+  /** TPT polymorphic: extra SELECT expressions for child own columns (prefixed). */
+  protected tptPolymorphicSelectColumns?: string[];
+
+  /** TPC polymorphic: UNION ALL subquery for FROM clause. */
+  protected tpcFromSql?: Sql;
+
   constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
     this.entity = entity;
     this.alias = alias;
@@ -584,11 +610,215 @@ export class SelectQueryBuilder<T, TResult = T> {
     return this;
   }
 
+  /**
+   * Apply inheritance strategy setup. Called automatically by EntityManager.createQueryBuilder()
+   * when the entity participates in an inheritance hierarchy.
+   *
+   * - **STI child:** auto-adds discriminator WHERE clause
+   * - **STI root:** enables polymorphic deserialization in getMany()
+   * - **TPT child:** auto INNER JOINs parent table, routes columns correctly
+   * - **TPT root:** LEFT JOINs all child tables, polymorphic deserialization
+   * - **TPC child:** no changes (each child has its own table)
+   * - **TPC root:** replaces FROM with UNION ALL subquery, polymorphic deserialization
+   *
+   * @internal
+   */
+  applyInheritance(
+    ir: InheritanceResolver,
+    resolver: RelationMetadataResolver,
+  ): this {
+    const strategy = ir.getStrategy(this.entity);
+    if (!strategy) return this;
+
+    this.inheritanceStrategy = strategy;
+    this.isInheritanceChild = ir.isChildEntity(this.entity);
+    this.isPolymorphicQuery = ir.isPolymorphicQuery(this.entity);
+
+    const discCol = ir.getDiscriminatorColumn(this.entity);
+    this.discriminatorColumnName = discCol?.name ?? "dtype";
+
+    if (this.isPolymorphicQuery) {
+      this.discriminatorMap = ir.buildDiscriminatorMap(this.entity);
+    }
+
+    switch (strategy) {
+      case "SINGLE_TABLE":
+        this.applySTI(ir);
+        break;
+      case "JOINED":
+        this.applyTPT(ir, resolver);
+        break;
+      case "TABLE_PER_CLASS":
+        this.applyTPC(ir, resolver);
+        break;
+    }
+
+    return this;
+  }
+
+  private applySTI(ir: InheritanceResolver): void {
+    // STI child: auto-add discriminator WHERE
+    if (this.isInheritanceChild) {
+      const discVal = ir.getDiscriminatorValue(this.entity);
+      if (discVal && this.discriminatorColumnName) {
+        this.whereClauses.push(
+          Conditions.equals(
+            `${this.em.wrap(this.alias)}.${this.em.wrap(this.discriminatorColumnName)}`,
+            discVal,
+          ),
+        );
+      }
+    }
+    // STI root (polymorphic): discriminatorMap already set — getMany() handles deserialization
+  }
+
+  private applyTPT(ir: InheritanceResolver, resolver: RelationMetadataResolver): void {
+    const metadata = resolver.resolveEntityMetadata(this.entity);
+    if (!metadata) return;
+
+    const pk = metadata.columns.find((c: any) => c.options?.primary);
+    if (!pk) return;
+
+    if (this.isInheritanceChild) {
+      // TPT child: INNER JOIN parent table
+      const root = ir.getRoot(this.entity)!;
+      const rootMeta = resolver.resolveEntityMetadata(root);
+      if (!rootMeta) return;
+
+      const rootTableName = rootMeta.name!;
+      const tableName = metadata.name!;
+      const parentAlias = "__inh";
+
+      // Identify which columns belong to parent vs child
+      const pkColNames = new Set(
+        metadata.columns
+          .filter((c: any) => c.options?.primary)
+          .map((c: any) => c.name),
+      );
+      const rootColNames = new Set(
+        rootMeta.columns.map((c: any) => c.name),
+      );
+      const parentOnlyColumns = new Set<string>();
+      for (const colName of rootColNames) {
+        if (!pkColNames.has(colName)) {
+          parentOnlyColumns.add(colName);
+        }
+      }
+
+      this.tptParentInfo = { alias: parentAlias, tableName: rootTableName, parentOnlyColumns };
+
+      // Build explicit SELECT column list: child own columns + parent columns
+      const selectCols: string[] = [];
+      for (const col of metadata.columns) {
+        const isRootOnly = rootColNames.has(col.name!) && !pkColNames.has(col.name!);
+        if (!isRootOnly) {
+          selectCols.push(`${this.em.wrap(this.alias)}.${this.em.wrap(col.name!)}`);
+        }
+      }
+      for (const col of rootMeta.columns) {
+        if (!pkColNames.has(col.name)) {
+          selectCols.push(`${this.em.wrap(parentAlias)}.${this.em.wrap(col.name!)}`);
+        }
+      }
+      this.tptSelectColumns = selectCols;
+
+      // Add INNER JOIN
+      const joinCond = sql`${raw(`${this.em.wrap(this.alias)}.${this.em.wrap(pk.name!)}`)
+        } = ${raw(`${this.em.wrap(parentAlias)}.${this.em.wrap(pk.name!)}`)}`;
+      this.joinClauses.push({
+        type: "INNER",
+        table: rootTableName,
+        alias: parentAlias,
+        condition: joinCond,
+      });
+
+      // Register parent in alias registry
+      const parentPropMap = this.buildPropertyToColumnMapFromMetadata(rootMeta);
+      this.aliasRegistry.set(parentAlias, {
+        entity: root,
+        tableName: rootTableName,
+        propertyToColumnMap: parentPropMap,
+      });
+    } else if (this.isPolymorphicQuery) {
+      // TPT root (polymorphic): LEFT JOIN all child tables
+      const tableName = metadata.name!;
+      const children = ir.getConcreteEntities(this.entity).filter((c) => c !== this.entity);
+      const extraSelectCols: string[] = [];
+      const childPrefixMap = new Map<string, string>();
+
+      for (const ChildEntity of children) {
+        const childMeta = resolver.resolveEntityMetadata(ChildEntity);
+        if (!childMeta) continue;
+        const childTableName = childMeta.name!;
+        const dv = ir.getDiscriminatorValue(ChildEntity);
+
+        // LEFT JOIN child table on PK
+        const joinCond = sql`${raw(`${this.em.wrap(this.alias)}.${this.em.wrap(pk.name!)}`)
+          } = ${raw(`${this.em.wrap(childTableName)}.${this.em.wrap(pk.name!)}`)}`;
+        this.joinClauses.push({
+          type: "LEFT",
+          table: childTableName,
+          alias: childTableName,
+          condition: joinCond,
+        });
+
+        // Add child own columns to SELECT with prefix aliases
+        const ownCols = ir.getOwnColumns(ChildEntity);
+        for (const col of ownCols) {
+          extraSelectCols.push(
+            `${this.em.wrap(childTableName)}.${this.em.wrap(col.name!)} AS ${this.em.wrap(`${childTableName}_${col.name!}`)}`,
+          );
+        }
+
+        if (dv) {
+          childPrefixMap.set(dv, childTableName);
+        }
+      }
+
+      this.tptPolymorphicSelectColumns = extraSelectCols;
+      this.tptChildPrefixMap = childPrefixMap;
+    }
+  }
+
+  private applyTPC(ir: InheritanceResolver, resolver: RelationMetadataResolver): void {
+    if (!this.isPolymorphicQuery) return;
+
+    // TPC root (polymorphic): build UNION ALL subquery
+    const allEntities = ir.getConcreteEntities(this.entity);
+    const allHierarchyCols = ir.getAllHierarchyColumns(this.entity).map((c) => c.name!);
+    const discColName = this.discriminatorColumnName ?? "dtype";
+
+    const subQueries: Sql[] = [];
+    for (const ent of allEntities) {
+      const entMeta = resolver.resolveEntityMetadata(ent);
+      if (!entMeta) continue;
+      const entTableName = entMeta.name!;
+      const entColNames = new Set(entMeta.columns.map((c: any) => c.name));
+      const discVal = ir.getDiscriminatorValue(ent) ?? ent.name;
+
+      const colExprs: Sql[] = allHierarchyCols.map((colName) =>
+        entColNames.has(colName)
+          ? sql`${raw(this.em.wrap(colName))}`
+          : sql`NULL AS ${raw(this.em.wrap(colName))}`,
+      );
+      colExprs.push(sql`${discVal} AS ${raw(this.em.wrap(discColName))}`);
+
+      const subSql = sql`SELECT ${join(colExprs, ", ")} FROM ${raw(this.em.wrapTable(entTableName))}`;
+      subQueries.push(subSql);
+    }
+
+    this.tpcFromSql = join(subQueries, " UNION ALL ");
+  }
+
   // ── Helpers ──────────────────────────────────────────────
 
   /** Qualify a column with the main alias: `"u"."name"` */
   protected col(column: string): string {
     const dbCol = this.propertyToColumnMap?.get(column) ?? column;
+    // TPT child: route parent-only columns to parent table alias
+    if (this.tptParentInfo?.parentOnlyColumns.has(dbCol)) {
+      return `${this.em.wrap(this.tptParentInfo.alias)}.${this.em.wrap(dbCol)}`;
+    }
     return `${this.em.wrap(this.alias)}.${this.em.wrap(dbCol)}`;
   }
 
@@ -2156,19 +2386,43 @@ export class SelectQueryBuilder<T, TResult = T> {
     else if (internals.isSqlite?.()) qb.setDatabaseType("sqlite");
     else qb.setDatabaseType("postgresql");
 
-    // SELECT
+    // SELECT — inheritance-aware
     if (this.selectColumns === "*") {
-      const allCols = `${this.em.wrap(this.alias)}.*`;
-      if (this.distinct) {
-        qb.selectDistinct([allCols]);
+      // TPT child: use explicit column list from both tables
+      if (this.tptSelectColumns) {
+        const cols = [...this.tptSelectColumns];
+        if (this.distinct) {
+          qb.selectDistinct(cols);
+        } else {
+          qb.select(cols);
+        }
       } else {
-        qb.select([allCols]);
+        const allCols = `${this.em.wrap(this.alias)}.*`;
+        // TPT polymorphic: append child own columns with prefix aliases
+        if (this.tptPolymorphicSelectColumns?.length) {
+          const cols = [allCols, ...this.tptPolymorphicSelectColumns];
+          if (this.distinct) {
+            qb.selectDistinct(cols);
+          } else {
+            qb.select(cols);
+          }
+        } else {
+          if (this.distinct) {
+            qb.selectDistinct([allCols]);
+          } else {
+            qb.select([allCols]);
+          }
+        }
       }
     } else {
+      // TPT polymorphic: append child columns to user-specified columns
+      const cols = this.tptPolymorphicSelectColumns?.length
+        ? [...(this.selectColumns as string[]), ...this.tptPolymorphicSelectColumns]
+        : this.selectColumns as string[];
       if (this.distinct) {
-        qb.selectDistinct(this.selectColumns as string[]);
+        qb.selectDistinct(cols);
       } else {
-        qb.select(this.selectColumns as string[]);
+        qb.select(cols);
       }
     }
 
@@ -2177,15 +2431,19 @@ export class SelectQueryBuilder<T, TResult = T> {
       qb.addSelectExpression(expr);
     }
 
-    // FROM + MySQL index hints
-    const fromExpr = `${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`;
-    if (this.indexHints.length > 0 && internals.isMySqlFamily()) {
-      const hints = this.indexHints
-        .map((h) => `${h.type} INDEX (${this.em.wrap(h.indexName)})`)
-        .join(" ");
-      qb.from(`${fromExpr} ${hints}`);
+    // FROM — TPC polymorphic uses UNION ALL subquery
+    if (this.tpcFromSql) {
+      qb.from(sql`(${this.tpcFromSql})`, `AS ${this.em.wrap(this.alias)}`);
     } else {
-      qb.from(fromExpr);
+      const fromExpr = `${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`;
+      if (this.indexHints.length > 0 && internals.isMySqlFamily()) {
+        const hints = this.indexHints
+          .map((h) => `${h.type} INDEX (${this.em.wrap(h.indexName)})`)
+          .join(" ");
+        qb.from(`${fromExpr} ${hints}`);
+      } else {
+        qb.from(fromExpr);
+      }
     }
 
     // JOINs
@@ -2290,6 +2548,18 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     const built = this.toSql();
     const rows = await this.em.query<any>(built);
+
+    // Polymorphic deserialization: instantiate correct subclass per row
+    if (this.isPolymorphicQuery && this.discriminatorMap?.size) {
+      if (this.inheritanceStrategy === "JOINED" && this.tptChildPrefixMap) {
+        return this.applyValidation(
+          this.deserializeTPTPolymorphic(rows),
+        ) as unknown as T[];
+      }
+      return this.applyValidation(
+        this.deserializePolymorphic(rows),
+      ) as unknown as T[];
+    }
 
     const registry = DeserializerRegistry.getInstance();
     const entities = rows.map((row: any) =>
@@ -2445,7 +2715,13 @@ export class SelectQueryBuilder<T, TResult = T> {
     else qb.setDatabaseType("postgresql");
 
     qb.select(["COUNT(*) AS count"]);
-    qb.from(`${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`);
+
+    // TPC polymorphic: FROM UNION ALL subquery
+    if (this.tpcFromSql) {
+      qb.from(sql`(${this.tpcFromSql})`, `AS ${this.em.wrap(this.alias)}`);
+    } else {
+      qb.from(`${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`);
+    }
 
     for (const j of this.joinClauses) {
       qb.join(
@@ -2495,7 +2771,13 @@ export class SelectQueryBuilder<T, TResult = T> {
     else qb.setDatabaseType("postgresql");
 
     qb.select(["1"]);
-    qb.from(`${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`);
+
+    // TPC polymorphic: FROM UNION ALL subquery
+    if (this.tpcFromSql) {
+      qb.from(sql`(${this.tpcFromSql})`, `AS ${this.em.wrap(this.alias)}`);
+    } else {
+      qb.from(`${this.em.wrapTable(tableName)} AS ${this.em.wrap(this.alias)}`);
+    }
 
     for (const j of this.joinClauses) {
       qb.join(
@@ -2559,6 +2841,18 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.dialectExpression = this.dialectExpression;
     cloned.aliasRegistry = new Map(this.aliasRegistry);
     cloned.selectExpressions = [...this.selectExpressions];
+    // Inheritance state
+    cloned.inheritanceStrategy = this.inheritanceStrategy;
+    cloned.isInheritanceChild = this.isInheritanceChild;
+    cloned.isPolymorphicQuery = this.isPolymorphicQuery;
+    cloned.discriminatorColumnName = this.discriminatorColumnName;
+    cloned.discriminatorMap = this.discriminatorMap;
+    cloned.tptParentInfo = this.tptParentInfo;
+    cloned.tptSelectColumns = this.tptSelectColumns ? [...this.tptSelectColumns] : undefined;
+    cloned.tptChildPrefixMap = this.tptChildPrefixMap;
+    cloned.tptPolymorphicSelectColumns = this.tptPolymorphicSelectColumns
+      ? [...this.tptPolymorphicSelectColumns] : undefined;
+    cloned.tpcFromSql = this.tpcFromSql;
     return cloned;
   }
 
@@ -2740,5 +3034,82 @@ export class SelectQueryBuilder<T, TResult = T> {
           `Unsupported operator: "${operator}". Use =, !=, <>, <, >, <=, >=, LIKE, IN, NOT IN, IS NULL, IS NOT NULL, BETWEEN.`,
         );
     }
+  }
+
+  // ── Inheritance deserialization ─────────────────────────
+
+  /**
+   * STI/TPC polymorphic: read discriminator value from each row and
+   * instantiate the correct subclass.
+   */
+  private deserializePolymorphic(rows: any[]): any[] {
+    const registry = DeserializerRegistry.getInstance();
+    const discColName = this.discriminatorColumnName!;
+    const discMap = this.discriminatorMap!;
+
+    return rows.map((row) => {
+      const discValue = row[discColName];
+      const TargetClass =
+        (discValue != null ? discMap.get(String(discValue)) : undefined) ??
+        this.entity;
+      return registry.deserialize(TargetClass, row);
+    });
+  }
+
+  /**
+   * TPT polymorphic: read discriminator, strip child table prefixes,
+   * and instantiate correct subclass.
+   */
+  private deserializeTPTPolymorphic(rows: any[]): any[] {
+    const registry = DeserializerRegistry.getInstance();
+    const discColName = this.discriminatorColumnName!;
+    const discMap = this.discriminatorMap!;
+    const childPrefixMap = this.tptChildPrefixMap!;
+    const allPrefixes = new Set(childPrefixMap.values());
+
+    return rows.map((row) => {
+      const discValue = row[discColName];
+      const TargetClass =
+        (discValue != null ? discMap.get(String(discValue)) : undefined) ??
+        this.entity;
+
+      if (TargetClass === this.entity) {
+        // Root entity: strip all prefixed columns
+        const cleaned: Record<string, any> = {};
+        for (const key of Object.keys(row)) {
+          let isPrefixed = false;
+          for (const prefix of allPrefixes) {
+            if (key.startsWith(`${prefix}_`)) {
+              isPrefixed = true;
+              break;
+            }
+          }
+          if (!isPrefixed) {
+            cleaned[key] = row[key];
+          }
+        }
+        return registry.deserialize(TargetClass, cleaned);
+      }
+
+      // Child entity: move matching prefix columns to unprefixed names
+      const matchingPrefix = childPrefixMap.get(String(discValue));
+      const cleaned: Record<string, any> = {};
+      for (const key of Object.keys(row)) {
+        let isPrefixed = false;
+        for (const prefix of allPrefixes) {
+          if (key.startsWith(`${prefix}_`)) {
+            isPrefixed = true;
+            if (prefix === matchingPrefix) {
+              cleaned[key.substring(prefix.length + 1)] = row[key];
+            }
+            break;
+          }
+        }
+        if (!isPrefixed) {
+          cleaned[key] = row[key];
+        }
+      }
+      return registry.deserialize(TargetClass, cleaned);
+    });
   }
 }
