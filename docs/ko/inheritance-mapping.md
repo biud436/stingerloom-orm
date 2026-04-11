@@ -230,12 +230,23 @@ const cards = await em.find(CreditCardPayment, {});
 
 ```typescript
 const all = await em.find(Payment, {});
-all.forEach(p => {
-  if (p instanceof CreditCardPayment) {
-    console.log(p.cardNumber); // 타입 안전한 접근
-  }
-});
+// Generated SQL: SELECT * FROM "payment"
 ```
+
+단일 테이블에 모든 행이 있으므로 JOIN이나 UNION 없이 그냥 `SELECT *`면 돼요. ORM은 각 행의 `payment_type` 값을 읽어서 올바른 하위 클래스 인스턴스를 생성해요.
+
+```typescript
+console.log(JSON.stringify(all, null, 2));
+// [
+//   { "id": 1, "amount": 100, "cardNumber": "4111-1111-1111-1111" },
+//   { "id": 2, "amount": 200, "bankCode": "SWIFT123" }
+// ]
+
+all[0] instanceof CreditCardPayment;  // true
+all[1] instanceof BankTransferPayment; // true
+```
+
+`JSON.stringify` 결과에는 `payment_type`이 보이지 않아요. Discriminator 컬럼은 ORM 내부에서만 사용되고, 엔티티 속성으로 노출되지 않기 때문이에요. 대신 각 객체는 올바른 하위 클래스의 **인스턴스**이므로, `instanceof` 연산자로 타입을 구분할 수 있어요.
 
 **UPDATE** -- discriminator 컬럼은 SET 절에서 제외돼요:
 
@@ -366,8 +377,28 @@ const cards = await em.find(CreditCardPayment, {});
 
 ```typescript
 const all = await em.find(Payment, {});
-// Discriminator 컬럼을 기반으로 올바른 하위 클래스 인스턴스를 생성
+// SELECT "payment"."id", "payment"."amount", "payment"."payment_type",
+//        "credit_card_payment"."cardNumber",
+//        "bank_transfer_payment"."bankCode"
+// FROM "payment"
+// LEFT JOIN "credit_card_payment" ON "payment"."id" = "credit_card_payment"."id"
+// LEFT JOIN "bank_transfer_payment" ON "payment"."id" = "bank_transfer_payment"."id"
 ```
+
+Root 테이블을 기준으로 모든 child 테이블에 LEFT JOIN해요. 신용카드 결제 행에서는 `bankCode`가 NULL이고, 계좌이체 결제 행에서는 `cardNumber`가 NULL이에요. ORM은 `payment_type` discriminator 값을 읽어서 올바른 하위 클래스 인스턴스를 생성해요.
+
+```typescript
+console.log(JSON.stringify(all, null, 2));
+// [
+//   { "id": 1, "amount": 100, "cardNumber": "4111-1111-1111-1111" },
+//   { "id": 2, "amount": 200, "bankCode": "SWIFT123" }
+// ]
+
+all[0] instanceof CreditCardPayment;  // true
+all[1] instanceof BankTransferPayment; // true
+```
+
+각 객체에는 해당 타입의 컬럼만 포함돼요. `CreditCardPayment` 인스턴스에는 `bankCode`가 없고, `BankTransferPayment` 인스턴스에는 `cardNumber`가 없어요. ORM이 다른 자식 타입의 NULL 컬럼을 역직렬화 과정에서 제거해요.
 
 **DELETE** -- INSERT의 역순으로, child 먼저 삭제한 뒤 root를 삭제해요:
 
@@ -497,6 +528,23 @@ const all = await em.find(Payment, {});
 // UNION ALL
 // SELECT "id", "amount", NULL AS "cardNumber", "bankCode", 'bank_transfer' AS "payment_type" FROM "bank_transfer_payment"
 ```
+
+각 테이블에서 결과를 합친 뒤, ORM이 `payment_type` 값으로 올바른 하위 클래스 인스턴스를 생성해요.
+
+```typescript
+console.log(JSON.stringify(all, null, 2));
+// [
+//   { "id": 1, "amount": 50 },
+//   { "id": 1, "amount": 100, "cardNumber": "4111-1111-1111-1111" },
+//   { "id": 1, "amount": 200, "bankCode": "SWIFT123" }
+// ]
+
+all[0] instanceof Payment;             // true (root 엔티티)
+all[1] instanceof CreditCardPayment;   // true
+all[2] instanceof BankTransferPayment; // true
+```
+
+주목할 점: 서로 다른 테이블의 행이므로 `id`가 겹칠 수 있어요. TPC에서는 테이블 간 ID가 독립적이에요. 전역 고유 ID가 필요하면 `@PrimaryGeneratedColumn("uuid")`를 사용하세요.
 
 이 쿼리가 왜 느릴 수 있는지 살펴볼게요.
 

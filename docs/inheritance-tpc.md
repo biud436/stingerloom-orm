@@ -246,8 +246,18 @@ Notice four things:
 
 The `ResultTransformer.toPolymorphicEntities()` method reads the synthesized `payment_type` column, looks up the matching entity class from the discriminator map, and instantiates the correct subclass. Each object in the returned array is a proper `instanceof` its respective class.
 
+### Why UNION ALL Is Slow
+
+Let's break down why this query can be expensive.
+
+**How UNION ALL works:** UNION ALL concatenates the results of each SELECT statement. The database engine must **scan each participating table independently**. In the example above, it reads all three tables: `payment`, `credit_card_payment`, and `bank_transfer_payment`.
+
+**Why full scans happen:** With STI or TPT, the database works with one table (or a pair of JOINed tables) and can use indexes to fetch only the rows it needs. But TPC polymorphic queries are different. When you run `em.find(Payment, {})`, the ORM cannot know in advance which child tables contain data, so it must **scan every child table without exception**. With 3 child types, that is 3 table scans. With 10 child types, 10 table scans. If each table has 1 million rows, a single polymorphic query reads millions of rows.
+
+**WHERE clauses don't fully help:** Even with `em.find(Payment, { where: { amount: 100 } })`, the database applies the WHERE clause independently to each SELECT in the UNION ALL. It searches `amount = 100` in all three tables separately, then combines the results. Indexes within each table help, but the overhead of **repeating the search across N tables** is unavoidable. By contrast, STI searches one table once and is done.
+
 ::: warning
-UNION ALL scans **all** tables in the hierarchy on every query. If you have 3 child tables with 1 million rows each, every polymorphic query reads 3 million rows. Use polymorphic queries sparingly with large datasets. Prefer querying child entities directly when you know the type.
+**Bottom line:** TPC is best when `em.find(ChildEntity, {})` (querying a specific child type) is the common case, and `em.find(Payment, {})` (polymorphic queries across the whole hierarchy) is rare. Child-specific queries are the fastest of all three strategies (direct table, no JOINs), but polymorphic queries are the slowest. Understand this trade-off before choosing TPC.
 :::
 
 ## 7. SELECT -- With findOne
