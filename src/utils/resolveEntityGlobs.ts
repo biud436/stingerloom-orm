@@ -50,7 +50,10 @@ export async function resolveEntityGlobs(
     );
   }
 
-  const matched = fg.sync(patterns, {
+  // fast-glob requires forward slashes — normalise Windows backslashes
+  const normalised = patterns.map((p) => p.replace(/\\/g, "/"));
+
+  const matched = fg.sync(normalised, {
     cwd: cwd ?? process.cwd(),
     absolute: true,
   });
