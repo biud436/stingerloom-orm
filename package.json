@@ -154,7 +154,7 @@
   ],
   "packageManager": "pnpm@10.29.2",
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=22.0.0"
   },
   "author": "biud436 <biud436@gmail.com>",
   "license": "MIT",

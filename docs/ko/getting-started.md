@@ -30,7 +30,7 @@ ORM은 양방향으로 변환을 처리해요. 클래스 정의 → `CREATE TABL
 
 ## 사전 요구사항
 
-- Node.js 20+
+- Node.js 22+
 - TypeScript 프로젝트
 - MySQL, PostgreSQL, 또는 SQLite
 

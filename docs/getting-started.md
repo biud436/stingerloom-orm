@@ -30,7 +30,7 @@ The ORM handles the translation in both directions: your class definition become
 
 ## Prerequisites
 
-- Node.js 20 or higher (latest LTS recommended)
+- Node.js 22 or higher (latest LTS recommended)
 - TypeScript project
 - MySQL, PostgreSQL, or SQLite database
 

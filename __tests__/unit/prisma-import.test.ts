@@ -12,20 +12,29 @@ import { EntityCodeGenerator } from "../../src/integration/prisma-import/EntityC
 import { PrismaImporter } from "../../src/integration/prisma-import/PrismaImporter";
 import { execSync } from "child_process";
 import * as path from "path";
+import * as fs from "fs";
 
 // ─── AST Helper ───
-// Parse prisma schemas in a child process to avoid ESM/Jest issues with chevrotain
+// Parse prisma schemas in a child process to avoid ESM/Jest issues with chevrotain.
+// Uses a temp file instead of `node -e '...'` for Windows shell compatibility.
 function parsePrismaSchema(schema: string): any {
   const script = `
     const { getSchema } = require("@mrleebo/prisma-ast");
     const schema = ${JSON.stringify(schema)};
     process.stdout.write(JSON.stringify(getSchema(schema)));
   `;
-  const result = execSync(`node -e '${script.replace(/'/g, "'\\''")}'`, {
-    cwd: path.resolve(__dirname, "../.."),
-    encoding: "utf-8",
-  });
-  return JSON.parse(result);
+  const projectRoot = path.resolve(__dirname, "../..");
+  const tmpFile = path.join(projectRoot, `.prisma-parse-${process.pid}-${Date.now()}.js`);
+  try {
+    fs.writeFileSync(tmpFile, script, "utf-8");
+    const result = execSync(`node "${tmpFile}"`, {
+      cwd: projectRoot,
+      encoding: "utf-8",
+    });
+    return JSON.parse(result);
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch {}
+  }
 }
 
 // ─── Test Schemas ───
