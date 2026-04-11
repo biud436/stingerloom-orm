@@ -234,6 +234,97 @@ export class ResultTransformer implements BaseResultTransformer {
   }
 
   /**
+   * Deserializes a result set where rows may be different subclass types (STI).
+   * Reads the discriminator column from each row and instantiates
+   * the correct child entity class.
+   */
+  public toPolymorphicEntities<T>(
+    rootEntityClass: MyClassConstructor<T>,
+    result: QueryResult<any> | undefined,
+    discriminatorMap: Map<string, MyClassConstructor<any>>,
+    discriminatorColumnName: string,
+  ): T[] {
+    if (this.hasNoResults(result)) {
+      return this.buildEmptyEntities<T>();
+    }
+
+    const r = result!;
+    return r.results.map((item) => {
+      const discValue = item[discriminatorColumnName];
+      const TargetClass =
+        (discValue != null ? discriminatorMap.get(String(discValue)) : undefined) ??
+        rootEntityClass;
+      const remapped = remapRowToPropertyKeys(TargetClass, item);
+      return this.applyColumnTransforms(
+        TargetClass,
+        deserializeEntity(TargetClass, remapped),
+      ) as T;
+    });
+  }
+
+  /**
+   * Deserializes a TPT (JOINED) polymorphic result set.
+   * Root columns are unprefixed; child columns are prefixed as `childTable_colName`.
+   * Uses the discriminator column to determine the correct subclass,
+   * then strips the prefix for matching child columns.
+   */
+  public toTPTPolymorphicEntities<T>(
+    rootEntityClass: MyClassConstructor<T>,
+    result: QueryResult<any> | undefined,
+    discriminatorMap: Map<string, MyClassConstructor<any>>,
+    discriminatorColumnName: string,
+    childTablePrefixMap: Map<string, string>,
+  ): T[] {
+    if (this.hasNoResults(result)) {
+      return this.buildEmptyEntities<T>();
+    }
+
+    // Build a reverse lookup: for each disc value, get the set of all prefixes
+    // from OTHER children so we can skip them.
+    const allPrefixes = new Set(childTablePrefixMap.values());
+
+    const r = result!;
+    return r.results.map((item) => {
+      const discValue = item[discriminatorColumnName];
+      const TargetClass =
+        (discValue != null
+          ? discriminatorMap.get(String(discValue))
+          : undefined) ?? rootEntityClass;
+
+      const childPrefix = discValue != null
+        ? childTablePrefixMap.get(String(discValue))
+        : undefined;
+
+      const flatRow: any = {};
+      for (const [key, value] of Object.entries(item)) {
+        if (key === discriminatorColumnName) continue;
+        if (childPrefix && key.startsWith(`${childPrefix}_`)) {
+          // This child's prefixed column — strip prefix
+          flatRow[key.substring(childPrefix.length + 1)] = value;
+        } else {
+          // Check if it belongs to another child's prefix — skip if so
+          let isOtherChild = false;
+          for (const prefix of allPrefixes) {
+            if (prefix !== childPrefix && key.startsWith(`${prefix}_`)) {
+              isOtherChild = true;
+              break;
+            }
+          }
+          if (!isOtherChild) {
+            flatRow[key] = value;
+          }
+        }
+      }
+
+      const remapped = remapRowToPropertyKeys(TargetClass, flatRow);
+      return this.applyColumnTransforms(
+        TargetClass,
+        deserializeEntity(TargetClass, remapped),
+      ) as T;
+    });
+  }
+
+  /**
    * Transform SQL result to entity or entity array.
    */
   public transform<T>(

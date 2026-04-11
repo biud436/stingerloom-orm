@@ -167,6 +167,12 @@ export interface WhereResolverOptions {
   propertyToColumn?: Map<string, string>;
   /** Dialect expression strategy. When provided, takes precedence over dialect string for ilike/search. */
   dialectExpression?: DialectExpression;
+  /**
+   * Custom column qualification function. When provided and `qualified` is true,
+   * this overrides the default `tableName.column` pattern.
+   * Used by TPT inheritance to route columns to the correct table.
+   */
+  qualifyColumn?: (dbColumnName: string) => string;
 }
 
 /**
@@ -247,9 +253,11 @@ function resolveWhereSingleObject<T>(
     // Regular field — resolve property name to DB column name via NamingStrategy map
     const dbColumnName = opts.propertyToColumn?.get(key) ?? key;
     const col =
-      qualified && tableName
-        ? `${wrapColumn(tableName)}.${wrapColumn(dbColumnName)}`
-        : wrapColumn(dbColumnName);
+      qualified && opts.qualifyColumn
+        ? opts.qualifyColumn(dbColumnName)
+        : qualified && tableName
+          ? `${wrapColumn(tableName)}.${wrapColumn(dbColumnName)}`
+          : wrapColumn(dbColumnName);
 
     result.push(resolveWhereValue(col, value, dialect, dialectExpression));
   }
