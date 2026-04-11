@@ -6,6 +6,54 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.15.0] — 2026-04-11
+
+### Highlights
+
+- **Inheritance Mapping (STI / TPT / TPC)** — Full support for three classic ORM inheritance strategies: Single Table Inheritance, Table Per Type, and Table Per Class. Includes `@Inheritance`, `@DiscriminatorColumn`, `@DiscriminatorValue` decorators, polymorphic `find()` / `findOne()`, SelectQueryBuilder integration, EntitySchema support, and WriteBuffer flush with discriminator columns.
+- **LRU Identity Map eviction** — `maxIdentityMapSize` option bounds memory growth with LRU eviction that never evicts dirty, NEW, or REMOVED entities (#237).
+- **WriteBuffer enhancements** — Granular cascade options (`{ persist, merge, remove }`), `@Version` flush support, automatic `@CreateTimestamp` / `@UpdateTimestamp` handling during flush, and pre-flush validation (#239).
+
+### Added
+
+- **`@Inheritance(strategy)`** — Declare STI, TPT, or TPC strategy on root entity
+- **`@DiscriminatorColumn(options)`** — Configure discriminator column name, type, and length (STI/TPT)
+- **`@DiscriminatorValue(value)`** — Map entity class to discriminator value
+- **`InheritanceResolver`** — Stateless service for resolving hierarchy metadata (`getStrategy`, `getRoot`, `getConcreteEntities`, `buildDiscriminatorMap`, `getOwnColumns`, `getAllHierarchyColumns`)
+- **STI** — Single shared table with discriminator column; polymorphic `find()` auto-filters by dtype; child classes inherit parent columns
+- **TPT** — Separate table per type with automatic JOIN queries; `find()` joins parent+child tables; child tables contain only own columns + FK to parent PK
+- **TPC** — Independent table per concrete class; polymorphic `find()` generates `UNION ALL` across all concrete tables with NULL-padding for missing columns
+- **SelectQueryBuilder inheritance support** — `withInheritance()` enables polymorphic queries; auto-JOIN (TPT), auto-WHERE discriminator (STI), UNION ALL (TPC)
+- **EntitySchema inheritance** — `inheritance`, `discriminatorColumn`, `discriminatorValue`, `parent` options for decorator-free inheritance definitions
+- **EntityRef in `createQueryBuilder` / joins** — Pass `EntityRef` directly to `createQueryBuilder()` and join methods (#238)
+- **`maxIdentityMapSize`** — LRU eviction for bounded Identity Map; `size().identityMap` reports current size (#237)
+- **Granular cascade options** — `cascade: { persist: true, merge: false, remove: true }` alongside boolean shorthand
+- **`validateBeforeFlush`** — Run `@Validation` decorators before flush; throws on invalid entities
+- **`@Version` flush support** — Optimistic locking version auto-increment during WriteBuffer flush
+- **`@CreateTimestamp` / `@UpdateTimestamp` flush support** — Automatic timestamp assignment during WriteBuffer persist/merge
+
+### Changed
+
+- `BufferPluginOptions.cascade` accepts `boolean | CascadeOptions` (granular control)
+- `manyToManySync` defaults to `cascade.persist` when granular cascade is used
+
+### Tests
+
+- 162 unit test suites, **3,493 tests passed**, 19 skipped, 0 failures
+- 9 new integration test files: STI/TPT/TPC for MySQL+PostgreSQL and SQLite (including relations, QueryBuilder, WriteBuffer inheritance tests)
+- 3 new unit test suites: STI, TPT, TPC inheritance
+
+### Documentation
+
+- Inheritance Mapping overview page (EN + KO)
+- Deep-dive pages for STI, TPT, TPC strategies (EN + KO, 6 pages total)
+- WriteBuffer docs updated with LRU eviction and granular cascade options
+- API reference updated with inheritance decorators
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.14.0...v0.15.0
+
+---
+
 ## [0.14.0] — 2026-04-09
 
 ### Highlights
