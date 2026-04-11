@@ -53,6 +53,15 @@ export class MySqlConnector extends IConnector {
       // pool.max > connectionLimit > 기본값(10) 우선순위로 적용
       const maxConnections = poolOptions?.max ?? connectionLimit ?? 10;
 
+      // SSL/TLS 옵션 변환
+      const ssl = "ssl" in options ? options.ssl : undefined;
+      let sslConfig: any = undefined;
+      if (ssl === true) {
+        sslConfig = { rejectUnauthorized: true };
+      } else if (ssl && typeof ssl === "object") {
+        sslConfig = { ...ssl };
+      }
+
       const pool = mysql.createPool({
         host,
         user: username,
@@ -62,6 +71,7 @@ export class MySqlConnector extends IConnector {
         dateStrings: datesStrings,
         connectionLimit: maxConnections,
         charset: charset ?? "utf8mb4",
+        ...(sslConfig ? { ssl: sslConfig } : {}),
       });
 
       this.isDebug = !!logging;
