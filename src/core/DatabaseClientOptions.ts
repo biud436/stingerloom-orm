@@ -56,6 +56,21 @@ export interface PoolOptions {
 }
 
 /**
+ * SSL/TLS connection options for encrypted database communication.
+ * Passed directly to the underlying driver (mysql2 ssl option / pg ssl option).
+ */
+export interface SslOptions {
+  /** CA certificate (PEM string or Buffer). Used to verify server certificate. */
+  ca?: string | Buffer;
+  /** Client certificate (PEM string or Buffer). For mutual TLS. */
+  cert?: string | Buffer;
+  /** Client private key (PEM string or Buffer). For mutual TLS. */
+  key?: string | Buffer;
+  /** If false, skip server certificate verification. @default true */
+  rejectUnauthorized?: boolean;
+}
+
+/**
  * Common options shared by all database types.
  */
 interface BaseDatabaseClientOptions {
@@ -185,6 +200,26 @@ export interface ServerDatabaseClientOptions extends BaseDatabaseClientOptions {
 
   /** Password for database authentication */
   password: string;
+
+  /**
+   * SSL/TLS encryption for the database connection.
+   * - `true`: Enable SSL with default options (rejectUnauthorized: true)
+   * - `SslOptions`: Enable SSL with custom certificate/key configuration
+   * - `undefined` (default): No SSL (plaintext connection)
+   *
+   * @example
+   * // Simple SSL (e.g., cloud-managed DB with public CA)
+   * ssl: true
+   *
+   * @example
+   * // Custom CA certificate
+   * ssl: { ca: fs.readFileSync('/path/to/ca.pem', 'utf8') }
+   *
+   * @example
+   * // Mutual TLS (mTLS)
+   * ssl: { ca: caCert, cert: clientCert, key: clientKey }
+   */
+  ssl?: boolean | SslOptions;
 }
 
 /**

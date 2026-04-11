@@ -2,6 +2,7 @@
 import { Logger } from "../utils";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { SslOptions } from "../core/DatabaseClientOptions";
 
 /**
  * 단일 DB 노드의 연결 정보
@@ -12,6 +13,8 @@ export interface ReplicationNodeConfig {
   username: string;
   password: string;
   database: string;
+  /** SSL/TLS for this specific node. Overrides the top-level ssl setting. */
+  ssl?: boolean | SslOptions;
 }
 
 /**
