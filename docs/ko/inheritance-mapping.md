@@ -498,7 +498,15 @@ const all = await em.find(Payment, {});
 // SELECT "id", "amount", NULL AS "cardNumber", "bankCode", 'bank_transfer' AS "payment_type" FROM "bank_transfer_payment"
 ```
 
-UNION ALL은 모든 테이블을 풀 스캔하기 때문에 데이터가 많아지면 느려질 수 있어요. Polymorphic query가 드문 경우에만 TPC를 선택하는 게 좋은 이유예요.
+이 쿼리가 왜 느릴 수 있는지 살펴볼게요.
+
+**UNION ALL의 동작 원리:** UNION ALL은 각 SELECT 문의 결과를 단순히 이어붙이는 연산이에요. 데이터베이스 엔진은 UNION ALL에 참여하는 **모든 테이블을 각각 독립적으로 스캔**해야 해요. 위 예시에서는 `payment`, `credit_card_payment`, `bank_transfer_payment` 세 테이블 전체를 읽어요.
+
+**풀 스캔이 발생하는 이유:** STI나 TPT에서는 하나의 테이블(또는 JOIN된 테이블 쌍)에서 인덱스를 타고 필요한 행만 골라낼 수 있어요. 하지만 TPC의 polymorphic query는 사정이 달라요. `em.find(Payment, {})` 같은 루트 엔티티 조회를 실행하면, ORM은 "어떤 자식 테이블에 데이터가 있는지" 미리 알 수 없기 때문에 **모든 자식 테이블을 빠짐없이 스캔**해야 해요. 자식 타입이 3개면 3번, 10개면 10번의 테이블 스캔이 발생해요. 각 테이블에 100만 행이 있다면, 한 번의 polymorphic query가 수백만 행을 읽는 셈이에요.
+
+**WHERE 조건이 있어도 느린 이유:** `em.find(Payment, { where: { amount: 100 } })`처럼 조건을 걸어도, 데이터베이스는 UNION ALL의 각 SELECT에 독립적으로 WHERE를 적용해요. 즉, 세 테이블 각각에서 `amount = 100`을 검색하고, 그 결과를 합쳐요. 인덱스가 걸려 있다면 각 테이블 내에서의 검색은 빠르지만, **테이블 수만큼 검색을 반복**하는 오버헤드는 피할 수 없어요. 반면 STI는 하나의 테이블에서 한 번만 검색하면 끝나요.
+
+**결론:** 이런 이유로 TPC는 `em.find(ChildEntity, {})` 같은 **특정 자식 타입 조회가 대부분**이고, `em.find(Payment, {})` 같은 **polymorphic query가 드문 경우**에만 선택하는 게 좋아요. 자식 타입별 조회는 자체 테이블 하나만 읽으므로 세 전략 중 가장 빠르지만, 전체 조회는 가장 느리다는 트레이드오프를 이해하고 선택해야 해요.
 
 **DELETE** -- 자체 테이블에서만 삭제해요:
 
