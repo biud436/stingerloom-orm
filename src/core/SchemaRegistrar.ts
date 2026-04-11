@@ -726,6 +726,9 @@ export class SchemaRegistrar {
     // ManyToOne 관계가 존재할 경우, 외래키를 생성합니다.
     if (isValidManyToOne) {
       for (const manyToOneItem of manyToOneItems) {
+        // createForeignKeyConstraints: false이면 FK 생성 건너뜀
+        if (manyToOneItem.option?.createForeignKeyConstraints === false) continue;
+
         const { joinColumn } = manyToOneItem;
 
         // 매핑할 엔티티를 가져옵니다.

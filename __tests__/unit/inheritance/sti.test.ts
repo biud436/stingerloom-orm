@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import { resetScannerContainer } from "../../src/scanner/ScannerContainer";
+import { resetScannerContainer } from "../../../src/scanner/ScannerContainer";
 import {
   Entity,
   ENTITY_TOKEN,
@@ -10,8 +10,8 @@ import {
   Inheritance,
   DiscriminatorColumn,
   DiscriminatorValue,
-} from "../../src/decorators";
-import { InheritanceResolver } from "../../src/core/InheritanceResolver";
+} from "../../../src/decorators";
+import { InheritanceResolver } from "../../../src/core/InheritanceResolver";
 
 describe("Single Table Inheritance (STI)", () => {
   beforeEach(() => {

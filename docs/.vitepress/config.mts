@@ -18,6 +18,16 @@ function sidebarEn() {
       items: [
         { text: "Entities & Columns", link: "/entities" },
         { text: "Relations", link: "/relations" },
+        {
+          text: "Inheritance Mapping",
+          collapsed: false,
+          items: [
+            { text: "Overview", link: "/inheritance-mapping" },
+            { text: "Single Table (STI)", link: "/inheritance-sti" },
+            { text: "Joined / TPT", link: "/inheritance-tpt" },
+            { text: "Table Per Class (TPC)", link: "/inheritance-tpc" },
+          ],
+        },
         { text: "Transactions", link: "/transactions" },
       ],
     },
@@ -107,6 +117,16 @@ function sidebarKo() {
       items: [
         { text: "엔티티 & 컬럼", link: "/ko/entities" },
         { text: "관계", link: "/ko/relations" },
+        {
+          text: "상속 매핑",
+          collapsed: false,
+          items: [
+            { text: "개요", link: "/ko/inheritance-mapping" },
+            { text: "Single Table (STI)", link: "/ko/inheritance-sti" },
+            { text: "Joined / TPT", link: "/ko/inheritance-tpt" },
+            { text: "Table Per Class (TPC)", link: "/ko/inheritance-tpc" },
+          ],
+        },
         { text: "트랜잭션", link: "/ko/transactions" },
       ],
     },

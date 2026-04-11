@@ -1293,7 +1293,20 @@ export class EntityManager implements BaseEntityManager {
         );
         if (!relatedPk) continue;
 
-        const joinCondition = sql`${raw(this.wrap(tableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relatedTableName))}.${raw(this.wrap(relatedPk.name!))}`;
+        // TPT 자식: FK 컬럼이 부모 테이블에 있으면 부모 테이블로 qualify
+        let fkTableName = tableName;
+        if (isTPTChild) {
+          const root = this.inheritanceResolver.getRoot(entity)!;
+          const rootMeta = this.resolver.resolveEntityMetadata(root);
+          if (rootMeta) {
+            const rootColNames = new Set(rootMeta.columns.map((c: any) => c.name));
+            if (rootColNames.has(joinColumn)) {
+              fkTableName = rootMeta.name!;
+            }
+          }
+        }
+
+        const joinCondition = sql`${raw(this.wrap(fkTableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relatedTableName))}.${raw(this.wrap(relatedPk.name!))}`;
         qb.leftJoin(
           this.wrapTable(relatedTableName),
           this.wrap(relatedTableName),
@@ -1466,6 +1479,12 @@ export class EntityManager implements BaseEntityManager {
           entityResult = resultTransformer.toEntity(entity, queryResult);
         }
       } else if (hasEagerJoins && !isTPTChild) {
+        entityResult = resultTransformer.transformNested(
+          entity,
+          queryResult,
+        ) as EntityResult<T>;
+      } else if (isTPTChild && eagerRelations.length > 0) {
+        // TPT 자식 + ManyToOne eager: transformNested로 relation 역직렬화
         entityResult = resultTransformer.transformNested(
           entity,
           queryResult,

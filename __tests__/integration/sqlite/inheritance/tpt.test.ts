@@ -9,7 +9,7 @@ import "reflect-metadata";
 import {
   createTestConnection,
   type TestConnectionResult,
-} from "../helpers/test-connection";
+} from "../../helpers/test-connection";
 import {
   Entity,
   Column,
@@ -17,9 +17,9 @@ import {
   Inheritance,
   DiscriminatorColumn,
   DiscriminatorValue,
-} from "../../../src";
-import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
-import { ColumnScanner } from "../../../src/scanner";
+} from "../../../../src";
+import { getScannerInstance } from "../../../../src/scanner/ScannerContainer";
+import { ColumnScanner } from "../../../../src/scanner";
 
 function clearScanners(): void {
   getScannerInstance(ColumnScanner).clear();
