@@ -320,6 +320,10 @@ CreditCardPayment {
 
 ## 8. SELECT -- QueryBuilder 사용
 
+`SelectQueryBuilder`는 TPC 상속을 polymorphic 쿼리를 포함해서 **완전히 지원**해요.
+
+**자식 엔티티 쿼리:**
+
 ```typescript
 const cards = await em
   .createQueryBuilder(CreditCardPayment, "cc")
@@ -332,16 +336,10 @@ const cards = await em
 ```sql
 SELECT "cc".*
 FROM "credit_card_payment" "cc"
-WHERE "cc"."amount" = 100;
+WHERE "cc"."amount" = $1;
 ```
 
-**Raw SQL 결과:**
-
-| id | amount | cardNumber          |
-|----|--------|---------------------|
-| 1  | 100    | 4111-1111-1111-1111 |
-
-**역직렬화된 TypeScript 객체:**
+**역직렬화된 결과:**
 
 ```typescript
 [
@@ -353,10 +351,49 @@ WHERE "cc"."amount" = 100;
 ]
 ```
 
-TPC 자식에 대한 QueryBuilder는 해당 엔티티의 테이블만 쿼리해요 -- 상속을 사용하지 않는 엔티티와 완전히 동일하게 자연스럽게 동작해요.
+자식 쿼리는 자연스럽게 동작해요 -- 빌더가 자식의 자체 테이블만 직접 쿼리하고, 추가 로직이 없어요.
 
-::: tip
-QueryBuilder를 통한 다형성 쿼리는 지원되지 않아요. `UNION ALL` 로직은 루트 엔티티에 대한 `em.find()`와 `em.findOne()`을 통해서만 사용할 수 있어요.
+**Polymorphic 루트 엔티티 쿼리:**
+
+```typescript
+const all = await em
+  .createQueryBuilder(Payment, "p")
+  .getMany();
+```
+
+**생성된 SQL (PostgreSQL):**
+
+```sql
+SELECT * FROM (
+  SELECT "id", "amount", "cardNumber", NULL AS "bankCode",
+         'Payment' AS "payment_type"
+  FROM "payment"
+  UNION ALL
+  SELECT "id", "amount", "cardNumber", NULL AS "bankCode",
+         'credit_card' AS "payment_type"
+  FROM "credit_card_payment"
+  UNION ALL
+  SELECT "id", "amount", NULL AS "cardNumber", "bankCode",
+         'bank_transfer' AS "payment_type"
+  FROM "bank_transfer_payment"
+) "_tpc";
+```
+
+**역직렬화된 결과:**
+
+```typescript
+[
+  Payment { id: 1, amount: 50 },
+  CreditCardPayment { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" },
+  BankTransferPayment { id: 1, amount: 200, bankCode: "SWIFT123" }
+]
+// 각 요소가 올바른 서브클래스 인스턴스예요 -- instanceof 체크가 작동해요.
+```
+
+QueryBuilder가 NULL 패딩과 가상 discriminator 컬럼이 포함된 UNION ALL 서브쿼리를 자동으로 생성해요. `ResultTransformer.toPolymorphicEntities()` 메서드가 합성된 discriminator를 읽고 올바른 서브클래스를 인스턴스화해요. `em.find()`와 동일한 방식이에요. 모든 QueryBuilder 메서드(`getMany()`, `getOne()`, `getCount()`, `exists()`)가 TPC polymorphic 역직렬화를 지원해요.
+
+::: warning
+`em.find()`의 polymorphic 쿼리와 동일한 UNION ALL 성능 고려사항이 QueryBuilder에도 적용돼요. 대규모에서 왜 느릴 수 있는지는 [6절](#_6-select-다형성-쿼리-루트-엔티티-union-all)을 참고하세요.
 :::
 
 ## 9. SELECT -- WriteBuffer와 함께

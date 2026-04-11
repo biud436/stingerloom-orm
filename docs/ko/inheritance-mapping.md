@@ -639,33 +639,54 @@ all.forEach(p => {
 });
 ```
 
-## QueryBuilder 제한사항
+## QueryBuilder 지원
 
-`SelectQueryBuilder`는 상속 로직을 **자동으로 적용하지 않아요**. `em.createQueryBuilder(Entity, alias)`를 사용하면, 지정한 엔티티의 테이블만 직접 쿼리해요. Discriminator 필터, TPT JOIN, TPC UNION ALL 같은 상속 처리는 포함되지 않아요.
+`SelectQueryBuilder`는 상속 매핑을 **완전히 지원**해요. `em.createQueryBuilder(Entity, alias)`를 사용하면, 해당 엔티티의 전략에 맞는 상속 로직이 자동으로 적용돼요:
 
-STI child 엔티티의 경우, discriminator WHERE 조건을 직접 추가해야 해요.
+- **STI child**: `WHERE discriminator = 'value'` 조건이 자동 추가돼요
+- **STI root (polymorphic)**: discriminator 기반 역직렬화로 올바른 서브클래스 인스턴스를 반환해요
+- **TPT child**: 부모 테이블에 `INNER JOIN`을 자동 수행하고, 부모 + 자식 컬럼을 결합한 명시적 SELECT를 빌드해요
+- **TPT root (polymorphic)**: 모든 자식 테이블에 `LEFT JOIN`하고, 컬럼 접두사를 제거하고, 올바른 서브클래스 인스턴스를 반환해요
+- **TPC child**: 자식의 자체 테이블만 직접 쿼리해요 (추가 로직 없음)
+- **TPC root (polymorphic)**: 모든 테이블에 걸쳐 NULL 패딩과 가상 discriminator가 포함된 `UNION ALL` 서브쿼리를 자동 생성해요
 
 ```typescript
-// STI: discriminator 필터를 수동으로 추가
+// STI: discriminator WHERE가 자동으로 추가돼요
 const cards = await em
   .createQueryBuilder(CreditCardPayment, "p")
-  .where("payment_type", "credit_card")
+  .where("amount", 100)
   .getMany();
-```
+// SELECT "p".* FROM "payment" AS "p"
+// WHERE "p"."payment_type" = 'credit_card' AND "p"."amount" = $1
 
-TPT의 경우, 부모 테이블에 대한 JOIN을 직접 작성해야 해요.
+// STI root: polymorphic 역직렬화
+const all = await em
+  .createQueryBuilder(Payment, "p")
+  .getMany();
+// CreditCardPayment, BankTransferPayment, Payment 인스턴스를 반환해요
 
-```typescript
-// TPT: 부모 컬럼을 위한 수동 JOIN
-const raw = await em
+// TPT child: 부모 테이블이 자동으로 JOIN돼요
+const cards = await em
   .createQueryBuilder(CreditCardPayment, "cc")
-  .leftJoin("payment", "parent", '"cc"."id" = "parent"."id"')
-  .getRawMany();
+  .where("amount", 100)
+  .getMany();
+// SELECT "cc"."id", "cc"."cardNumber", "payment"."amount"
+// FROM "credit_card_payment" AS "cc"
+// INNER JOIN "payment" ON "cc"."id" = "payment"."id"
+// WHERE "payment"."amount" = $1
+
+// TPC root: UNION ALL이 자동 생성돼요
+const all = await em
+  .createQueryBuilder(Payment, "p")
+  .getMany();
+// SELECT * FROM (
+//   SELECT ... FROM "payment" UNION ALL
+//   SELECT ... FROM "credit_card_payment" UNION ALL
+//   SELECT ... FROM "bank_transfer_payment"
+// ) "_tpc"
 ```
 
-::: tip
-Polymorphic query와 완전한 상속 지원이 필요하면, QueryBuilder 대신 `em.find()`를 사용하세요. EntityManager가 모든 상속 로직을 자동으로 처리해줘요.
-:::
+모든 QueryBuilder 메서드(`getMany()`, `getOne()`, `getCount()`, `exists()`, `getRawMany()`, `clone()`)가 상속을 지원해요. WHERE, ORDER BY, GROUP BY 절도 polymorphic 쿼리에서 사용할 수 있어요.
 
 ## 데코레이터 레퍼런스
 
@@ -746,7 +767,7 @@ Polymorphic query가 필요한가?
 | `em.find(ChildEntity)` | 스코프 적용 (STI: WHERE discriminator, TPT: JOIN parent, TPC: 자체 테이블) |
 | `em.save(ChildEntity, data)` | 자동 discriminator 설정 + TPT 2단계 insert |
 | `em.delete(ChildEntity, criteria)` | STI: discriminator WHERE 추가, TPT: 2단계 delete |
-| `em.createQueryBuilder(Entity)` | 자동 상속 처리 없음 (수동 처리 필요) |
+| `em.createQueryBuilder(Entity)` | 완전 지원 (STI discriminator WHERE, TPT 자동 JOIN, TPC UNION ALL, polymorphic 역직렬화) |
 | `buf.find(Entity)` | 완전 지원 (EntityManager에 위임) |
 
 ## 다음 단계

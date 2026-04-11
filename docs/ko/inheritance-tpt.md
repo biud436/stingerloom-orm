@@ -474,36 +474,70 @@ WHERE "payment"."amount" = 100;
 
 ## 8. SELECT -- QueryBuilder 사용
 
-`SelectQueryBuilder`는 TPT 상속 로직을 자동으로 적용하지 **않아요**. `em.createQueryBuilder()`를 사용하면 지정된 엔티티의 테이블만 쿼리해요. 루트 컬럼이 필요하면 부모 테이블을 수동으로 JOIN해야 해요.
+`SelectQueryBuilder`는 TPT 상속 로직을 **자동으로 적용**해요. `em.createQueryBuilder()`로 자식 엔티티를 사용하면 부모 테이블이 자동으로 JOIN되고, 부모 + 자식 컬럼을 결합한 명시적 SELECT 리스트가 빌드돼요. 루트 엔티티를 조회하면 모든 자식 테이블에 LEFT JOIN하고 polymorphic 역직렬화가 올바른 서브클래스 인스턴스를 반환해요.
+
+**자식 엔티티 쿼리:**
 
 ```typescript
-const raw = await em
+const cards = await em
   .createQueryBuilder(CreditCardPayment, "cc")
-  .leftJoin("payment", "parent", '"cc"."id" = "parent"."id"')
-  .select(['"cc"."id"', '"cc"."cardNumber"', '"parent"."amount"'])
-  .getRawMany();
+  .where("amount", 100)
+  .getMany();
 ```
 
 **생성된 SQL (PostgreSQL):**
 
 ```sql
-SELECT "cc"."id", "cc"."cardNumber", "parent"."amount"
-FROM "credit_card_payment" "cc"
-LEFT JOIN "payment" "parent"
-  ON "cc"."id" = "parent"."id";
+SELECT "cc"."id", "cc"."cardNumber", "payment"."amount"
+FROM "credit_card_payment" AS "cc"
+INNER JOIN "payment"
+  ON "cc"."id" = "payment"."id"
+WHERE "payment"."amount" = $1;
 ```
 
-**Raw 결과:**
+부모 테이블 JOIN과 컬럼 라우팅이 자동으로 처리돼요 -- `amount` 같은 루트 컬럼은 부모 테이블(`"payment"."amount"`)로, 자식 컬럼은 자식 테이블로 한정돼요.
+
+**역직렬화된 결과:**
 
 ```typescript
 [
-  { id: 1, cardNumber: "4111-1111-1111-1111", amount: 100 }
+  CreditCardPayment { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" }
 ]
 ```
 
-::: tip
-자동 TPT 처리가 필요하면 `em.find()`를 사용하세요. QueryBuilder는 FindOption이 지원하는 범위를 넘어서는 세밀한 컬럼 선택, 집계, 복잡한 WHERE 로직이 필요한 경우에 적합해요.
-:::
+**Polymorphic 루트 엔티티 쿼리:**
+
+```typescript
+const all = await em
+  .createQueryBuilder(Payment, "p")
+  .getMany();
+```
+
+**생성된 SQL (PostgreSQL):**
+
+```sql
+SELECT "p"."id", "p"."amount", "p"."payment_type",
+       "credit_card_payment"."cardNumber" AS "credit_card_payment_cardNumber",
+       "bank_transfer_payment"."bankCode" AS "bank_transfer_payment_bankCode"
+FROM "payment" AS "p"
+LEFT JOIN "credit_card_payment"
+  ON "p"."id" = "credit_card_payment"."id"
+LEFT JOIN "bank_transfer_payment"
+  ON "p"."id" = "bank_transfer_payment"."id";
+```
+
+**역직렬화된 결과:**
+
+```typescript
+[
+  CreditCardPayment  { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" },
+  BankTransferPayment { id: 2, amount: 250, bankCode: "SWIFT-ABCD" }
+]
+// 각 요소가 올바른 서브클래스 인스턴스예요.
+// 자식 컬럼 접두사(예: credit_card_payment_cardNumber)가 자동으로 제거돼요.
+```
+
+`ResultTransformer.toTPTPolymorphicEntities()` 메서드가 접두사 제거와 서브클래스 인스턴스화를 처리해요. `em.find()`와 동일한 방식이에요. 모든 QueryBuilder 메서드(`getMany()`, `getOne()`, `getCount()`, `exists()`)가 TPT polymorphic 역직렬화를 지원해요.
 
 ## 9. SELECT -- WriteBuffer와 함께
 

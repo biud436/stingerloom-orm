@@ -395,12 +395,14 @@ CreditCardPayment { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" }
 
 ## SELECT -- QueryBuilder 사용
 
-`SelectQueryBuilder`는 상속 로직을 **자동으로 적용하지 않아요**. `em.createQueryBuilder()`를 사용하면 빌더가 테이블을 직접 조회해요 -- discriminator 필터가 주입되지 않아요.
+`SelectQueryBuilder`는 STI 상속 로직을 **자동으로 적용**해요. `em.createQueryBuilder()`로 자식 엔티티를 사용하면 discriminator WHERE 절이 자동으로 주입돼요. 루트 엔티티를 조회하면 polymorphic 역직렬화가 올바른 서브클래스 인스턴스를 반환해요.
+
+**자식 엔티티 쿼리:**
 
 ```typescript
 const cards = await em
   .createQueryBuilder(CreditCardPayment, "p")
-  .where("payment_type", "credit_card")  // 직접 추가해야 해요
+  .where("amount", 100)
   .getMany();
 ```
 
@@ -408,8 +410,10 @@ const cards = await em
 
 ```sql
 SELECT "p".* FROM "payment" AS "p"
-WHERE "p"."payment_type" = 'credit_card';
+WHERE "p"."payment_type" = 'credit_card' AND "p"."amount" = $1;
 ```
+
+discriminator 필터 `payment_type = 'credit_card'`가 자동으로 추가돼요 -- 직접 지정할 필요가 없어요.
 
 **Raw SQL 결과:**
 
@@ -428,11 +432,33 @@ WHERE "p"."payment_type" = 'credit_card';
 ]
 ```
 
-`.where("payment_type", "credit_card")` 호출을 생략하면 타입에 관계없이 테이블의 **모든** 행을 가져오고, 전부 `CreditCardPayment` 클래스로 역직렬화돼요 -- 이건 거의 확실히 원하는 동작이 아닐 거예요.
+**Polymorphic 루트 엔티티 쿼리:**
 
-::: tip
-자동 상속 처리가 필요하면 `em.find()`를 사용하세요. QueryBuilder는 완전한 제어를 제공하는 저수준 도구이지만, discriminator 필터링은 직접 처리해야 해요.
-:::
+```typescript
+const all = await em
+  .createQueryBuilder(Payment, "p")
+  .getMany();
+```
+
+**생성된 SQL (PostgreSQL):**
+
+```sql
+SELECT "p".* FROM "payment" AS "p";
+```
+
+**역직렬화된 결과:**
+
+```typescript
+// all is:
+[
+  CreditCardPayment  { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" },
+  BankTransferPayment { id: 2, amount: 200, bankCode: "SWIFT123" },
+  Payment             { id: 3, amount: 50 }
+]
+// 각 요소가 올바른 서브클래스 인스턴스예요 -- instanceof 체크가 작동해요.
+```
+
+QueryBuilder가 각 행의 discriminator 값을 읽고 올바른 TypeScript 클래스를 인스턴스화해요. `em.find()`와 동일한 방식이에요. 모든 QueryBuilder 메서드(`getMany()`, `getOne()`, `getCount()`, `exists()`)가 이 polymorphic 역직렬화를 지원해요.
 
 ## SELECT -- WriteBuffer 사용
 

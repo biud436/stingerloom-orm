@@ -376,12 +376,14 @@ Notice: both conditions are ANDed together. The discriminator filter is always f
 
 ## SELECT -- With QueryBuilder
 
-The `SelectQueryBuilder` does **not** automatically apply inheritance logic. When you use `em.createQueryBuilder()`, the builder queries the table directly -- no discriminator filter is injected.
+The `SelectQueryBuilder` **automatically applies** STI inheritance logic. When you use `em.createQueryBuilder()` with a child entity, the discriminator WHERE clause is injected automatically. When you query the root entity, polymorphic deserialization returns correct subclass instances.
+
+**Child entity query:**
 
 ```typescript
 const cards = await em
   .createQueryBuilder(CreditCardPayment, "p")
-  .where("payment_type", "credit_card")  // you must add this manually
+  .where("amount", 100)
   .getMany();
 ```
 
@@ -389,8 +391,10 @@ const cards = await em
 
 ```sql
 SELECT "p".* FROM "payment" AS "p"
-WHERE "p"."payment_type" = 'credit_card';
+WHERE "p"."payment_type" = 'credit_card' AND "p"."amount" = $1;
 ```
+
+The discriminator filter `payment_type = 'credit_card'` is added automatically -- you do not need to specify it.
 
 **Raw SQL result:**
 
@@ -409,11 +413,33 @@ WHERE "p"."payment_type" = 'credit_card';
 ]
 ```
 
-If you omit the `.where("payment_type", "credit_card")` call, you get **all** rows from the table regardless of type, deserialized into the `CreditCardPayment` class -- which is almost certainly not what you want.
+**Polymorphic root entity query:**
 
-::: tip
-Use `em.find()` for automatic inheritance handling. The QueryBuilder is a lower-level tool that gives you full control but expects you to handle discriminator filtering yourself.
-:::
+```typescript
+const all = await em
+  .createQueryBuilder(Payment, "p")
+  .getMany();
+```
+
+**Generated SQL (PostgreSQL):**
+
+```sql
+SELECT "p".* FROM "payment" AS "p";
+```
+
+**Deserialized result:**
+
+```typescript
+// all is:
+[
+  CreditCardPayment  { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" },
+  BankTransferPayment { id: 2, amount: 200, bankCode: "SWIFT123" },
+  Payment             { id: 3, amount: 50 }
+]
+// Each element is the correct subclass instance -- instanceof checks work.
+```
+
+The QueryBuilder reads the discriminator value of each row and instantiates the correct TypeScript class, just like `em.find()`. All QueryBuilder methods (`getMany()`, `getOne()`, `getCount()`, `exists()`) support this polymorphic deserialization.
 
 ## SELECT -- With WriteBuffer
 

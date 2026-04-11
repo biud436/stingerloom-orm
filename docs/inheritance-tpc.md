@@ -297,6 +297,10 @@ This is identical to a non-inheritance `findOne`. Since TPC children have their 
 
 ## 8. SELECT -- With QueryBuilder
 
+The `SelectQueryBuilder` **fully supports** TPC inheritance, including polymorphic queries.
+
+**Child entity query:**
+
 ```typescript
 const cards = await em
   .createQueryBuilder(CreditCardPayment, "cc")
@@ -309,16 +313,10 @@ const cards = await em
 ```sql
 SELECT "cc".*
 FROM "credit_card_payment" "cc"
-WHERE "cc"."amount" = 100;
+WHERE "cc"."amount" = $1;
 ```
 
-**Raw SQL result:**
-
-| id | amount | cardNumber          |
-|----|--------|---------------------|
-| 1  | 100    | 4111-1111-1111-1111 |
-
-**Deserialized TypeScript object:**
+**Deserialized result:**
 
 ```typescript
 [
@@ -330,10 +328,49 @@ WHERE "cc"."amount" = 100;
 ]
 ```
 
-QueryBuilder on a TPC child just queries its own table -- it works naturally, exactly like any non-inheritance entity.
+Child queries work naturally -- the builder queries the child's own table directly with no extra logic.
 
-::: tip
-Polymorphic queries via QueryBuilder are not supported. The `UNION ALL` logic is only available through `em.find()` and `em.findOne()` on the root entity.
+**Polymorphic root entity query:**
+
+```typescript
+const all = await em
+  .createQueryBuilder(Payment, "p")
+  .getMany();
+```
+
+**Generated SQL (PostgreSQL):**
+
+```sql
+SELECT * FROM (
+  SELECT "id", "amount", "cardNumber", NULL AS "bankCode",
+         'Payment' AS "payment_type"
+  FROM "payment"
+  UNION ALL
+  SELECT "id", "amount", "cardNumber", NULL AS "bankCode",
+         'credit_card' AS "payment_type"
+  FROM "credit_card_payment"
+  UNION ALL
+  SELECT "id", "amount", NULL AS "cardNumber", "bankCode",
+         'bank_transfer' AS "payment_type"
+  FROM "bank_transfer_payment"
+) "_tpc";
+```
+
+**Deserialized result:**
+
+```typescript
+[
+  Payment { id: 1, amount: 50 },
+  CreditCardPayment { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" },
+  BankTransferPayment { id: 1, amount: 200, bankCode: "SWIFT123" }
+]
+// Each element is the correct subclass instance -- instanceof checks work.
+```
+
+The QueryBuilder automatically generates the UNION ALL subquery with NULL padding and a virtual discriminator column. The `ResultTransformer.toPolymorphicEntities()` method reads the synthesized discriminator and instantiates the correct subclass, just like `em.find()`. All QueryBuilder methods (`getMany()`, `getOne()`, `getCount()`, `exists()`) support TPC polymorphic deserialization.
+
+::: warning
+The same UNION ALL performance considerations apply to QueryBuilder polymorphic queries as to `em.find()`. See [Section 6](#_6-select-polymorphic-query-root-entity-with-union-all) for details on why this can be slow at scale.
 :::
 
 ## 9. SELECT -- With WriteBuffer

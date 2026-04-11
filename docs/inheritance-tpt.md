@@ -455,36 +455,70 @@ WHERE "payment"."amount" = 100;
 
 ## 8. SELECT -- With QueryBuilder
 
-The `SelectQueryBuilder` does **not** automatically apply TPT inheritance logic. When you use `em.createQueryBuilder()`, it queries only the specified entity's table. You must manually JOIN the parent table if you need root columns.
+The `SelectQueryBuilder` **automatically applies** TPT inheritance logic. When you use `em.createQueryBuilder()` with a child entity, the parent table is auto-joined and an explicit SELECT list combining parent + child columns is built. When you query the root entity, all child tables are LEFT JOINed and polymorphic deserialization returns correct subclass instances.
+
+**Child entity query:**
 
 ```typescript
-const raw = await em
+const cards = await em
   .createQueryBuilder(CreditCardPayment, "cc")
-  .leftJoin("payment", "parent", '"cc"."id" = "parent"."id"')
-  .select(['"cc"."id"', '"cc"."cardNumber"', '"parent"."amount"'])
-  .getRawMany();
+  .where("amount", 100)
+  .getMany();
 ```
 
 **Generated SQL (PostgreSQL):**
 
 ```sql
-SELECT "cc"."id", "cc"."cardNumber", "parent"."amount"
-FROM "credit_card_payment" "cc"
-LEFT JOIN "payment" "parent"
-  ON "cc"."id" = "parent"."id";
+SELECT "cc"."id", "cc"."cardNumber", "payment"."amount"
+FROM "credit_card_payment" AS "cc"
+INNER JOIN "payment"
+  ON "cc"."id" = "payment"."id"
+WHERE "payment"."amount" = $1;
 ```
 
-**Raw result:**
+The parent table JOIN and column routing happen automatically -- root columns like `amount` are qualified to the parent table (`"payment"."amount"`), and child columns to the child table.
+
+**Deserialized result:**
 
 ```typescript
 [
-  { id: 1, cardNumber: "4111-1111-1111-1111", amount: 100 }
+  CreditCardPayment { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" }
 ]
 ```
 
-::: tip
-Use `em.find()` for automatic TPT handling. The QueryBuilder is best for cases where you need fine-grained control over column selection, aggregation, or complex WHERE logic that goes beyond what FindOption supports.
-:::
+**Polymorphic root entity query:**
+
+```typescript
+const all = await em
+  .createQueryBuilder(Payment, "p")
+  .getMany();
+```
+
+**Generated SQL (PostgreSQL):**
+
+```sql
+SELECT "p"."id", "p"."amount", "p"."payment_type",
+       "credit_card_payment"."cardNumber" AS "credit_card_payment_cardNumber",
+       "bank_transfer_payment"."bankCode" AS "bank_transfer_payment_bankCode"
+FROM "payment" AS "p"
+LEFT JOIN "credit_card_payment"
+  ON "p"."id" = "credit_card_payment"."id"
+LEFT JOIN "bank_transfer_payment"
+  ON "p"."id" = "bank_transfer_payment"."id";
+```
+
+**Deserialized result:**
+
+```typescript
+[
+  CreditCardPayment  { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" },
+  BankTransferPayment { id: 2, amount: 250, bankCode: "SWIFT-ABCD" }
+]
+// Each element is the correct subclass instance.
+// Child column prefixes (e.g., credit_card_payment_cardNumber) are stripped automatically.
+```
+
+The `ResultTransformer.toTPTPolymorphicEntities()` method handles the prefix stripping and subclass instantiation, just like `em.find()`. All QueryBuilder methods (`getMany()`, `getOne()`, `getCount()`, `exists()`) support TPT polymorphic deserialization.
 
 ## 9. SELECT -- With WriteBuffer
 

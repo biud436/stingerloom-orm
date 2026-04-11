@@ -236,31 +236,54 @@ all.forEach(p => {
 });
 ```
 
-## QueryBuilder Limitations
+## QueryBuilder Support
 
-The `SelectQueryBuilder` does **not** automatically apply inheritance logic. When you use `em.createQueryBuilder(Entity, alias)`, the builder queries only the specified entity's table -- no discriminator filters, no TPT JOINs, no TPC UNION ALLs.
+The `SelectQueryBuilder` **fully supports** inheritance mapping. When you use `em.createQueryBuilder(Entity, alias)`, the builder automatically applies the correct inheritance logic for the entity's strategy:
 
-For STI child entities, add the discriminator WHERE clause manually:
+- **STI child**: Adds a `WHERE discriminator = 'value'` clause automatically
+- **STI root (polymorphic)**: Returns correct subclass instances via discriminator-based deserialization
+- **TPT child**: Auto-joins the parent table with `INNER JOIN` and builds an explicit SELECT combining parent + child columns
+- **TPT root (polymorphic)**: `LEFT JOIN`s all child tables, strips column prefixes, and returns correct subclass instances
+- **TPC child**: Queries the child's own table directly (no extra logic needed)
+- **TPC root (polymorphic)**: Generates a `UNION ALL` subquery across all tables with NULL padding and virtual discriminator
 
 ```typescript
+// STI: discriminator WHERE is added automatically
 const cards = await em
   .createQueryBuilder(CreditCardPayment, "p")
-  .where("payment_type", "credit_card")
+  .where("amount", 100)
   .getMany();
-```
+// SELECT "p".* FROM "payment" AS "p"
+// WHERE "p"."payment_type" = 'credit_card' AND "p"."amount" = $1
 
-For TPT, manually JOIN the parent table:
+// STI root: polymorphic deserialization
+const all = await em
+  .createQueryBuilder(Payment, "p")
+  .getMany();
+// Returns CreditCardPayment, BankTransferPayment, Payment instances
 
-```typescript
-const raw = await em
+// TPT child: parent table auto-joined
+const cards = await em
   .createQueryBuilder(CreditCardPayment, "cc")
-  .leftJoin("payment", "parent", '"cc"."id" = "parent"."id"')
-  .getRawMany();
+  .where("amount", 100)
+  .getMany();
+// SELECT "cc"."id", "cc"."cardNumber", "payment"."amount"
+// FROM "credit_card_payment" AS "cc"
+// INNER JOIN "payment" ON "cc"."id" = "payment"."id"
+// WHERE "payment"."amount" = $1
+
+// TPC root: UNION ALL auto-generated
+const all = await em
+  .createQueryBuilder(Payment, "p")
+  .getMany();
+// SELECT * FROM (
+//   SELECT ... FROM "payment" UNION ALL
+//   SELECT ... FROM "credit_card_payment" UNION ALL
+//   SELECT ... FROM "bank_transfer_payment"
+// ) "_tpc"
 ```
 
-::: tip
-For polymorphic queries and full inheritance support, use `em.find()` instead of the QueryBuilder. The EntityManager handles all inheritance logic automatically.
-:::
+All QueryBuilder methods (`getMany()`, `getOne()`, `getCount()`, `exists()`, `getRawMany()`, `clone()`) work with inheritance. WHERE, ORDER BY, and GROUP BY clauses are supported on polymorphic queries.
 
 ## Decorator Reference
 
@@ -306,7 +329,7 @@ Do you need polymorphic queries (em.find(RootEntity))?
 | `em.save(ChildEntity, data)` | STI/TPT: auto-sets discriminator. TPT: two-phase insert (root then child) |
 | `em.save(ChildEntity, existing)` | TPT: two-phase update (root then child). STI: excludes discriminator from SET |
 | `em.delete(ChildEntity, criteria)` | STI: adds discriminator to WHERE. TPT: two-phase delete (child then root) |
-| `em.createQueryBuilder(Entity)` | No automatic inheritance -- manual handling required |
+| `em.createQueryBuilder(Entity)` | Full support -- STI discriminator WHERE, TPT auto JOIN, TPC UNION ALL, polymorphic deserialization |
 | `buf.find(Entity)` | Full support -- delegates to EntityManager |
 | `buf.findOne(Entity, opts)` | Full support -- delegates to EntityManager |
 
