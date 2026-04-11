@@ -890,7 +890,23 @@ interface EntitySchemaOptions<T> {
   columns: { [K in keyof T]?: ColumnSchemaDef };           // Column definitions
   relations?: { [K in keyof T]?: RelationSchemaDef };      // Relation definitions
   uniqueIndexes?: { columns: string[]; name?: string }[];  // Composite unique indexes
+  indexes?: { columns: string[]; name?: string }[];        // Composite non-unique indexes
   hooks?: Partial<Record<HookEvent, Extract<keyof T, string>>>;  // Lifecycle hooks
+
+  // Inheritance mapping (replaces @Inheritance, @DiscriminatorColumn, @DiscriminatorValue)
+  inheritance?: InheritanceSchemaDef;                      // Root entity: strategy declaration
+  discriminatorColumn?: DiscriminatorColumnSchemaDef;      // Root entity: discriminator column config
+  discriminatorValue?: string;                             // Child entity: discriminator value
+}
+
+interface InheritanceSchemaDef {
+  strategy: "SINGLE_TABLE" | "JOINED" | "TABLE_PER_CLASS";
+}
+
+interface DiscriminatorColumnSchemaDef {
+  name?: string;           // Default: "dtype"
+  type?: KnownColumnType;  // Default: "varchar"
+  length?: number;         // Default: 31
 }
 ```
 

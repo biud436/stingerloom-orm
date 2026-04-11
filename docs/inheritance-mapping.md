@@ -285,6 +285,47 @@ const all = await em
 
 All QueryBuilder methods (`getMany()`, `getOne()`, `getCount()`, `exists()`, `getRawMany()`, `clone()`) work with inheritance. WHERE, ORDER BY, and GROUP BY clauses are supported on polymorphic queries.
 
+## Using EntitySchema (Decorator-Free)
+
+If you prefer to define entities without decorators, `EntitySchema` supports all three inheritance strategies via the `inheritance`, `discriminatorColumn`, and `discriminatorValue` options:
+
+```typescript
+import { EntitySchema } from "@stingerloom/orm";
+
+class Payment {
+  id!: number;
+  amount!: number;
+}
+
+class CreditCardPayment extends Payment {
+  cardNumber!: string;
+}
+
+// Root: declare strategy + discriminator column
+new EntitySchema<Payment>({
+  target: Payment,
+  inheritance: { strategy: "SINGLE_TABLE" },
+  discriminatorColumn: { name: "payment_type", type: "varchar", length: 50 },
+  columns: {
+    id:     { type: "int", primary: true, autoIncrement: true },
+    amount: { type: "int" },
+  },
+});
+
+// Child: declare own columns + discriminator value
+new EntitySchema<CreditCardPayment>({
+  target: CreditCardPayment,
+  discriminatorValue: "credit_card",
+  columns: {
+    cardNumber: { type: "varchar", nullable: true },
+  },
+});
+```
+
+The same pattern works for `"JOINED"` (TPT) and `"TABLE_PER_CLASS"` (TPC) -- just change the `strategy` value. Child entities inherit parent columns automatically via the prototype chain. All ORM features (EntityManager, QueryBuilder, WriteBuffer) work identically.
+
+For complete EntitySchema documentation, see [Entities -- Defining Entities Without Decorators](./entities.md#defining-entities-without-decorators-entityschema).
+
 ## Decorator Reference
 
 | Decorator | Target | Options | Description |

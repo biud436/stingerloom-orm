@@ -21,6 +21,9 @@ import { UPDATE_TIMESTAMP_TOKEN } from "../../src/decorators/UpdateTimestamp";
 import { DELETED_AT_TOKEN } from "../../src/decorators/DeletedAt";
 import { HOOK_TOKEN } from "../../src/decorators/Hooks";
 import { VALIDATION_TOKEN } from "../../src/decorators/Validation";
+import { INHERITANCE_TOKEN } from "../../src/decorators/Inheritance";
+import { DISCRIMINATOR_COLUMN_TOKEN } from "../../src/decorators/DiscriminatorColumn";
+import { DISCRIMINATOR_VALUE_TOKEN } from "../../src/decorators/DiscriminatorValue";
 import { ReflectManager } from "../../src/utils/ReflectManager";
 import {
   EntityScanner,
@@ -1150,4 +1153,436 @@ describe("EntitySchema — ColumnType → design:type mapping", () => {
       ).toBe(expectedDesignType);
     },
   );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Inheritance Mapping via EntitySchema
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("EntitySchema — Inheritance Mapping", () => {
+  // Helper: create classes with actual extends relationship
+  function createPaymentHierarchy() {
+    class Payment {
+      id!: number;
+      amount!: number;
+    }
+    class CreditCardPayment extends Payment {
+      cardNumber!: string;
+    }
+    class BankTransferPayment extends Payment {
+      bankCode!: string;
+    }
+    return { Payment, CreditCardPayment, BankTransferPayment };
+  }
+
+  describe("Single Table Inheritance (STI)", () => {
+    it("should set inheritance metadata on root entity", () => {
+      const { Payment } = createPaymentHierarchy();
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "SINGLE_TABLE" },
+        discriminatorColumn: { name: "payment_type", type: "varchar", length: 50 },
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+          amount: { type: "int" },
+        },
+      });
+
+      const meta = Reflect.getMetadata(ENTITY_TOKEN, Payment) as EntityMetadata;
+      expect(meta.inheritanceStrategy).toBe("SINGLE_TABLE");
+      expect(meta.discriminatorColumn).toEqual({
+        name: "payment_type",
+        type: "varchar",
+        length: 50,
+      });
+      expect(meta.childEntities).toEqual([]);
+      expect(meta.inheritanceRoot).toBeUndefined();
+      expect(meta.discriminatorValue).toBe("Payment");
+    });
+
+    it("should set INHERITANCE_TOKEN and DISCRIMINATOR_COLUMN_TOKEN via Reflect", () => {
+      const { Payment } = createPaymentHierarchy();
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "SINGLE_TABLE" },
+        discriminatorColumn: { name: "type_col" },
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+        },
+      });
+
+      const inhMeta = Reflect.getOwnMetadata(INHERITANCE_TOKEN, Payment);
+      expect(inhMeta).toBeDefined();
+      expect(inhMeta.strategy).toBe("SINGLE_TABLE");
+
+      const dcMeta = Reflect.getOwnMetadata(DISCRIMINATOR_COLUMN_TOKEN, Payment);
+      expect(dcMeta).toBeDefined();
+      expect(dcMeta.name).toBe("type_col");
+    });
+
+    it("should register child entity with discriminator value", () => {
+      const { Payment, CreditCardPayment } = createPaymentHierarchy();
+
+      // Register root first
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "SINGLE_TABLE" },
+        discriminatorColumn: { name: "payment_type" },
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+          amount: { type: "int" },
+        },
+      });
+
+      // Register child
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        discriminatorValue: "credit_card",
+        columns: {
+          cardNumber: { type: "varchar", nullable: true },
+        },
+      });
+
+      const childMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
+      expect(childMeta.inheritanceRoot).toBe(Payment);
+      expect(childMeta.inheritanceStrategy).toBe("SINGLE_TABLE");
+      expect(childMeta.discriminatorValue).toBe("credit_card");
+      expect(childMeta.discriminatorColumn!.name).toBe("payment_type");
+
+      // Child should be added to root's childEntities
+      const rootMeta = Reflect.getMetadata(ENTITY_TOKEN, Payment) as EntityMetadata;
+      expect(rootMeta.childEntities).toContain(CreditCardPayment);
+    });
+
+    it("should use root table name for STI children", () => {
+      const { Payment, CreditCardPayment, BankTransferPayment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "SINGLE_TABLE" },
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+          amount: { type: "int" },
+        },
+      });
+
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        discriminatorValue: "credit_card",
+        columns: { cardNumber: { type: "varchar", nullable: true } },
+      });
+
+      new EntitySchema<any>({
+        target: BankTransferPayment,
+        discriminatorValue: "bank_transfer",
+        columns: { bankCode: { type: "varchar", nullable: true } },
+      });
+
+      const rootMeta = Reflect.getMetadata(ENTITY_TOKEN, Payment) as EntityMetadata;
+      const ccMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
+      const btMeta = Reflect.getMetadata(ENTITY_TOKEN, BankTransferPayment) as EntityMetadata;
+
+      // All share same table name
+      expect(ccMeta.name).toBe(rootMeta.name);
+      expect(btMeta.name).toBe(rootMeta.name);
+    });
+
+    it("should inherit columns from parent via prototype chain", () => {
+      const { Payment, CreditCardPayment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "SINGLE_TABLE" },
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+          amount: { type: "int" },
+        },
+      });
+
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        discriminatorValue: "credit_card",
+        columns: { cardNumber: { type: "varchar", nullable: true } },
+      });
+
+      const childMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
+      const columnNames = childMeta.columns.map((c: any) => c.propertyKey);
+
+      // Should have parent columns + own column
+      expect(columnNames).toContain("id");
+      expect(columnNames).toContain("amount");
+      expect(columnNames).toContain("cardNumber");
+    });
+
+    it("should use class name as default discriminator value when not specified", () => {
+      const { Payment, CreditCardPayment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "SINGLE_TABLE" },
+        columns: { id: { type: "int", primary: true, autoIncrement: true } },
+      });
+
+      // No discriminatorValue option — should default to class name
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        columns: { cardNumber: { type: "varchar", nullable: true } },
+      });
+
+      const childMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
+      expect(childMeta.discriminatorValue).toBe("CreditCardPayment");
+    });
+
+    it("should use default discriminator column when omitted", () => {
+      const { Payment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "SINGLE_TABLE" },
+        // No discriminatorColumn option
+        columns: { id: { type: "int", primary: true, autoIncrement: true } },
+      });
+
+      const meta = Reflect.getMetadata(ENTITY_TOKEN, Payment) as EntityMetadata;
+      expect(meta.discriminatorColumn).toEqual({
+        name: "dtype",
+        type: "varchar",
+        length: 31,
+      });
+    });
+  });
+
+  describe("Joined / Table Per Type (TPT)", () => {
+    it("should set JOINED strategy on root and children", () => {
+      const { Payment, CreditCardPayment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "JOINED" },
+        discriminatorColumn: { name: "payment_type" },
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+          amount: { type: "int" },
+        },
+      });
+
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        discriminatorValue: "credit_card",
+        columns: { cardNumber: { type: "varchar" } },
+      });
+
+      const rootMeta = Reflect.getMetadata(ENTITY_TOKEN, Payment) as EntityMetadata;
+      const childMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
+
+      expect(rootMeta.inheritanceStrategy).toBe("JOINED");
+      expect(childMeta.inheritanceStrategy).toBe("JOINED");
+      expect(childMeta.inheritanceRoot).toBe(Payment);
+    });
+
+    it("should NOT share table name for TPT children", () => {
+      const { Payment, CreditCardPayment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "JOINED" },
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+          amount: { type: "int" },
+        },
+      });
+
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        discriminatorValue: "credit_card",
+        columns: { cardNumber: { type: "varchar" } },
+      });
+
+      const rootMeta = Reflect.getMetadata(ENTITY_TOKEN, Payment) as EntityMetadata;
+      const childMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
+
+      // TPT: each class gets its own table
+      expect(rootMeta.name).toBe("payment");
+      expect(childMeta.name).toBe("credit_card_payment");
+      expect(rootMeta.name).not.toBe(childMeta.name);
+    });
+  });
+
+  describe("Table Per Class (TPC)", () => {
+    it("should set TABLE_PER_CLASS strategy on root and children", () => {
+      const { Payment, CreditCardPayment, BankTransferPayment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "TABLE_PER_CLASS" },
+        discriminatorColumn: { name: "payment_type" },
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+          amount: { type: "int" },
+        },
+      });
+
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        discriminatorValue: "credit_card",
+        columns: { cardNumber: { type: "varchar" } },
+      });
+
+      new EntitySchema<any>({
+        target: BankTransferPayment,
+        discriminatorValue: "bank_transfer",
+        columns: { bankCode: { type: "varchar" } },
+      });
+
+      const rootMeta = Reflect.getMetadata(ENTITY_TOKEN, Payment) as EntityMetadata;
+      const ccMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
+      const btMeta = Reflect.getMetadata(ENTITY_TOKEN, BankTransferPayment) as EntityMetadata;
+
+      expect(rootMeta.inheritanceStrategy).toBe("TABLE_PER_CLASS");
+      expect(ccMeta.inheritanceStrategy).toBe("TABLE_PER_CLASS");
+      expect(btMeta.inheritanceStrategy).toBe("TABLE_PER_CLASS");
+      expect(rootMeta.childEntities).toEqual(
+        expect.arrayContaining([CreditCardPayment, BankTransferPayment]),
+      );
+    });
+
+    it("should NOT share table name for TPC children", () => {
+      const { Payment, CreditCardPayment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "TABLE_PER_CLASS" },
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+          amount: { type: "int" },
+        },
+      });
+
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        discriminatorValue: "credit_card",
+        columns: { cardNumber: { type: "varchar" } },
+      });
+
+      const rootMeta = Reflect.getMetadata(ENTITY_TOKEN, Payment) as EntityMetadata;
+      const childMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
+
+      expect(rootMeta.name).toBe("payment");
+      expect(childMeta.name).toBe("credit_card_payment");
+    });
+
+    it("should inherit parent columns in TPC child (all columns in own table)", () => {
+      const { Payment, CreditCardPayment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "TABLE_PER_CLASS" },
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+          amount: { type: "int" },
+        },
+      });
+
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        discriminatorValue: "credit_card",
+        columns: { cardNumber: { type: "varchar" } },
+      });
+
+      const childMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
+      const columnNames = childMeta.columns.map((c: any) => c.propertyKey);
+
+      // TPC child should see parent's columns too (duplicated in its own table)
+      expect(columnNames).toContain("id");
+      expect(columnNames).toContain("amount");
+      expect(columnNames).toContain("cardNumber");
+    });
+  });
+
+  describe("Edge cases", () => {
+    it("should allow explicit tableName to override STI table name sharing", () => {
+      const { Payment, CreditCardPayment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "SINGLE_TABLE" },
+        columns: { id: { type: "int", primary: true, autoIncrement: true } },
+      });
+
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        tableName: "custom_cc_table",
+        discriminatorValue: "credit_card",
+        columns: { cardNumber: { type: "varchar", nullable: true } },
+      });
+
+      const childMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
+      expect(childMeta.name).toBe("custom_cc_table");
+    });
+
+    it("should not set inheritance fields for non-inheritance entities", () => {
+      const Plain = freshClass("PlainEntity");
+      new EntitySchema<any>({
+        target: Plain,
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+        },
+      });
+
+      const meta = Reflect.getMetadata(ENTITY_TOKEN, Plain) as EntityMetadata;
+      expect(meta.inheritanceStrategy).toBeUndefined();
+      expect(meta.inheritanceRoot).toBeUndefined();
+      expect(meta.discriminatorValue).toBeUndefined();
+      expect(meta.childEntities).toBeUndefined();
+    });
+
+    it("should set DISCRIMINATOR_VALUE_TOKEN via Reflect for child", () => {
+      const { Payment, CreditCardPayment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "SINGLE_TABLE" },
+        columns: { id: { type: "int", primary: true, autoIncrement: true } },
+      });
+
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        discriminatorValue: "cc",
+        columns: { cardNumber: { type: "varchar", nullable: true } },
+      });
+
+      const dvMeta = Reflect.getOwnMetadata(DISCRIMINATOR_VALUE_TOKEN, CreditCardPayment);
+      expect(dvMeta).toBe("cc");
+    });
+
+    it("should register multiple children in root childEntities", () => {
+      const { Payment, CreditCardPayment, BankTransferPayment } = createPaymentHierarchy();
+
+      new EntitySchema<any>({
+        target: Payment,
+        inheritance: { strategy: "SINGLE_TABLE" },
+        columns: {
+          id: { type: "int", primary: true, autoIncrement: true },
+          amount: { type: "int" },
+        },
+      });
+
+      new EntitySchema<any>({
+        target: CreditCardPayment,
+        discriminatorValue: "credit_card",
+        columns: { cardNumber: { type: "varchar", nullable: true } },
+      });
+
+      new EntitySchema<any>({
+        target: BankTransferPayment,
+        discriminatorValue: "bank_transfer",
+        columns: { bankCode: { type: "varchar", nullable: true } },
+      });
+
+      const rootMeta = Reflect.getMetadata(ENTITY_TOKEN, Payment) as EntityMetadata;
+      expect(rootMeta.childEntities).toHaveLength(2);
+      expect(rootMeta.childEntities).toContain(CreditCardPayment);
+      expect(rootMeta.childEntities).toContain(BankTransferPayment);
+    });
+  });
 });

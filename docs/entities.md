@@ -1498,6 +1498,109 @@ columns: {
 }
 ```
 
+### Inheritance Mapping
+
+EntitySchema supports all three inheritance strategies (STI, TPT, TPC) using the `inheritance`, `discriminatorColumn`, and `discriminatorValue` options. These replace the `@Inheritance()`, `@DiscriminatorColumn()`, and `@DiscriminatorValue()` decorators.
+
+**Single Table Inheritance (STI):**
+
+```typescript
+class Payment {
+  id!: number;
+  amount!: number;
+}
+
+class CreditCardPayment extends Payment {
+  cardNumber!: string;
+}
+
+class BankTransferPayment extends Payment {
+  bankCode!: string;
+}
+
+// Root entity: defines strategy + discriminator column
+new EntitySchema<Payment>({
+  target: Payment,
+  inheritance: { strategy: "SINGLE_TABLE" },
+  discriminatorColumn: { name: "payment_type", type: "varchar", length: 50 },
+  columns: {
+    id:     { type: "int", primary: true, autoIncrement: true },
+    amount: { type: "int" },
+  },
+});
+
+// Child entities: only define their own columns + discriminator value
+new EntitySchema<CreditCardPayment>({
+  target: CreditCardPayment,
+  discriminatorValue: "credit_card",
+  columns: {
+    cardNumber: { type: "varchar", nullable: true },
+  },
+});
+
+new EntitySchema<BankTransferPayment>({
+  target: BankTransferPayment,
+  discriminatorValue: "bank_transfer",
+  columns: {
+    bankCode: { type: "varchar", nullable: true },
+  },
+});
+```
+
+Child entities automatically inherit parent columns via the prototype chain. For STI, all children share the root's table name. For TPT (`"JOINED"`) and TPC (`"TABLE_PER_CLASS"`), each child gets its own table.
+
+**Joined / Table Per Type (TPT):**
+
+```typescript
+new EntitySchema<Payment>({
+  target: Payment,
+  inheritance: { strategy: "JOINED" },
+  discriminatorColumn: { name: "payment_type" },
+  columns: {
+    id:     { type: "int", primary: true, autoIncrement: true },
+    amount: { type: "int" },
+  },
+});
+
+new EntitySchema<CreditCardPayment>({
+  target: CreditCardPayment,
+  discriminatorValue: "credit_card",
+  columns: {
+    cardNumber: { type: "varchar" },  // NOT NULL is allowed in TPT
+  },
+});
+```
+
+**Table Per Class (TPC):**
+
+```typescript
+new EntitySchema<Payment>({
+  target: Payment,
+  inheritance: { strategy: "TABLE_PER_CLASS" },
+  discriminatorColumn: { name: "payment_type" },
+  columns: {
+    id:     { type: "int", primary: true, autoIncrement: true },
+    amount: { type: "int" },
+  },
+});
+
+new EntitySchema<CreditCardPayment>({
+  target: CreditCardPayment,
+  discriminatorValue: "credit_card",
+  columns: {
+    cardNumber: { type: "varchar" },
+  },
+});
+```
+
+The `discriminatorColumn` option is optional on the root entity -- if omitted, a column named `"dtype"` with type `VARCHAR(31)` is created by default. The `discriminatorValue` option is optional on child entities -- if omitted, the class name is used.
+
+All ORM features (EntityManager, QueryBuilder, WriteBuffer, InheritanceResolver) work identically whether entities are defined with decorators or EntitySchema.
+
+::: tip
+For a detailed comparison of all three strategies with generated SQL examples, see the [Inheritance Mapping](./inheritance-mapping.md) guide.
+:::
+
 ### Mixing Decorator and EntitySchema Entities
 
 Both approaches produce the same metadata, so you can freely mix them:

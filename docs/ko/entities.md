@@ -1553,6 +1553,109 @@ columns: {
 }
 ```
 
+### 상속 매핑
+
+EntitySchema는 `inheritance`, `discriminatorColumn`, `discriminatorValue` 옵션으로 세 가지 상속 전략(STI, TPT, TPC)을 모두 지원해요. `@Inheritance()`, `@DiscriminatorColumn()`, `@DiscriminatorValue()` 데코레이터를 대체해요.
+
+**Single Table Inheritance (STI):**
+
+```typescript
+class Payment {
+  id!: number;
+  amount!: number;
+}
+
+class CreditCardPayment extends Payment {
+  cardNumber!: string;
+}
+
+class BankTransferPayment extends Payment {
+  bankCode!: string;
+}
+
+// 루트 엔티티: 전략 + discriminator 컬럼 정의
+new EntitySchema<Payment>({
+  target: Payment,
+  inheritance: { strategy: "SINGLE_TABLE" },
+  discriminatorColumn: { name: "payment_type", type: "varchar", length: 50 },
+  columns: {
+    id:     { type: "int", primary: true, autoIncrement: true },
+    amount: { type: "int" },
+  },
+});
+
+// 자식 엔티티: 고유 컬럼 + discriminator 값만 정의
+new EntitySchema<CreditCardPayment>({
+  target: CreditCardPayment,
+  discriminatorValue: "credit_card",
+  columns: {
+    cardNumber: { type: "varchar", nullable: true },
+  },
+});
+
+new EntitySchema<BankTransferPayment>({
+  target: BankTransferPayment,
+  discriminatorValue: "bank_transfer",
+  columns: {
+    bankCode: { type: "varchar", nullable: true },
+  },
+});
+```
+
+자식 엔티티는 프로토타입 체인을 통해 부모 컬럼을 자동으로 상속받아요. STI에서는 모든 자식이 루트의 테이블 이름을 공유해요. TPT(`"JOINED"`)와 TPC(`"TABLE_PER_CLASS"`)에서는 각 자식이 자체 테이블을 가져요.
+
+**Joined / Table Per Type (TPT):**
+
+```typescript
+new EntitySchema<Payment>({
+  target: Payment,
+  inheritance: { strategy: "JOINED" },
+  discriminatorColumn: { name: "payment_type" },
+  columns: {
+    id:     { type: "int", primary: true, autoIncrement: true },
+    amount: { type: "int" },
+  },
+});
+
+new EntitySchema<CreditCardPayment>({
+  target: CreditCardPayment,
+  discriminatorValue: "credit_card",
+  columns: {
+    cardNumber: { type: "varchar" },  // TPT에서는 NOT NULL 가능
+  },
+});
+```
+
+**Table Per Class (TPC):**
+
+```typescript
+new EntitySchema<Payment>({
+  target: Payment,
+  inheritance: { strategy: "TABLE_PER_CLASS" },
+  discriminatorColumn: { name: "payment_type" },
+  columns: {
+    id:     { type: "int", primary: true, autoIncrement: true },
+    amount: { type: "int" },
+  },
+});
+
+new EntitySchema<CreditCardPayment>({
+  target: CreditCardPayment,
+  discriminatorValue: "credit_card",
+  columns: {
+    cardNumber: { type: "varchar" },
+  },
+});
+```
+
+`discriminatorColumn` 옵션은 루트 엔티티에서 선택 사항이에요 -- 생략하면 기본적으로 `"dtype"`이라는 이름의 `VARCHAR(31)` 컬럼이 만들어져요. `discriminatorValue` 옵션은 자식 엔티티에서 선택 사항이에요 -- 생략하면 클래스 이름이 사용돼요.
+
+EntityManager, QueryBuilder, WriteBuffer, InheritanceResolver 등 모든 ORM 기능은 데코레이터로 정의하든 EntitySchema로 정의하든 동일하게 동작해요.
+
+::: tip
+세 가지 전략의 자세한 비교와 생성되는 SQL 예시는 [상속 매핑](./inheritance-mapping.md) 가이드를 참고하세요.
+:::
+
 ### 데코레이터와 EntitySchema 엔티티 혼용
 
 두 접근 방식은 동일한 메타데이터를 생성하므로 자유롭게 혼용할 수 있어요:

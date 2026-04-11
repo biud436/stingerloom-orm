@@ -688,6 +688,47 @@ const all = await em
 
 모든 QueryBuilder 메서드(`getMany()`, `getOne()`, `getCount()`, `exists()`, `getRawMany()`, `clone()`)가 상속을 지원해요. WHERE, ORDER BY, GROUP BY 절도 polymorphic 쿼리에서 사용할 수 있어요.
 
+## EntitySchema로 정의하기 (데코레이터 없이)
+
+데코레이터 없이 엔티티를 정의하는 것을 선호한다면, `EntitySchema`에서 `inheritance`, `discriminatorColumn`, `discriminatorValue` 옵션으로 세 가지 상속 전략을 모두 지원해요:
+
+```typescript
+import { EntitySchema } from "@stingerloom/orm";
+
+class Payment {
+  id!: number;
+  amount!: number;
+}
+
+class CreditCardPayment extends Payment {
+  cardNumber!: string;
+}
+
+// 루트: 전략 + discriminator 컬럼 선언
+new EntitySchema<Payment>({
+  target: Payment,
+  inheritance: { strategy: "SINGLE_TABLE" },
+  discriminatorColumn: { name: "payment_type", type: "varchar", length: 50 },
+  columns: {
+    id:     { type: "int", primary: true, autoIncrement: true },
+    amount: { type: "int" },
+  },
+});
+
+// 자식: 고유 컬럼 + discriminator 값 선언
+new EntitySchema<CreditCardPayment>({
+  target: CreditCardPayment,
+  discriminatorValue: "credit_card",
+  columns: {
+    cardNumber: { type: "varchar", nullable: true },
+  },
+});
+```
+
+`"JOINED"` (TPT)와 `"TABLE_PER_CLASS"` (TPC)에서도 동일한 패턴이에요 -- `strategy` 값만 바꾸면 돼요. 자식 엔티티는 프로토타입 체인을 통해 부모 컬럼을 자동으로 상속받아요. 모든 ORM 기능(EntityManager, QueryBuilder, WriteBuffer)이 동일하게 동작해요.
+
+EntitySchema의 전체 문서는 [엔티티 -- 데코레이터 없이 엔티티 정의하기](./entities.md#데코레이터-없이-엔티티-정의하기-entityschema)를 참고하세요.
+
 ## 데코레이터 레퍼런스
 
 ### `@Inheritance(options)`

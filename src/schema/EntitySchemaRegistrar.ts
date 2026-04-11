@@ -10,8 +10,8 @@ import {
 import { OneToOneScanner } from "../scanner/OneToOneScanner";
 import { createEntityKey } from "../utils/scanner";
 import { camelToSnakeCase } from "../utils/camelToSnakeCase";
-import { COLUMN_TOKEN, ColumnType, ResolvedColumnOption } from "../decorators/Column";
-import { ENTITY_TOKEN } from "../decorators/Entity";
+import { COLUMN_TOKEN, ColumnType, KnownColumnType, ResolvedColumnOption } from "../decorators/Column";
+import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
 import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../decorators/ManyToOne";
 import { ONE_TO_MANY_TOKEN, OneToManyMetadata } from "../decorators/OneToMany";
 import { ONE_TO_ONE_TOKEN, OneToOneMetadata } from "../decorators/OneToOne";
@@ -24,6 +24,9 @@ import { UPDATE_TIMESTAMP_TOKEN } from "../decorators/UpdateTimestamp";
 import { DELETED_AT_TOKEN } from "../decorators/DeletedAt";
 import { HOOK_TOKEN, HookMetadata } from "../decorators/Hooks";
 import { VALIDATION_TOKEN, ValidationMetadata } from "../decorators/Validation";
+import { INHERITANCE_TOKEN, InheritanceStrategy } from "../decorators/Inheritance";
+import { DISCRIMINATOR_COLUMN_TOKEN } from "../decorators/DiscriminatorColumn";
+import { DISCRIMINATOR_VALUE_TOKEN } from "../decorators/DiscriminatorValue";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
 import { ClazzType } from "../utils/types";
 import {
@@ -397,6 +400,35 @@ export class EntitySchemaRegistrar {
     }
   }
 
+  static registerInheritance<T>(options: EntitySchemaOptions<T>): void {
+    const cls = options.target;
+
+    // Root entity: set @Inheritance + @DiscriminatorColumn metadata
+    if (options.inheritance) {
+      Reflect.defineMetadata(
+        INHERITANCE_TOKEN,
+        { strategy: options.inheritance.strategy, target: cls },
+        cls,
+      );
+
+      const dcMeta = {
+        name: options.discriminatorColumn?.name ?? "dtype",
+        type: (options.discriminatorColumn?.type ?? "varchar") as KnownColumnType,
+        length: options.discriminatorColumn?.length ?? 31,
+      };
+      Reflect.defineMetadata(DISCRIMINATOR_COLUMN_TOKEN, dcMeta, cls);
+    }
+
+    // Child entity: set @DiscriminatorValue metadata
+    if (options.discriminatorValue !== undefined) {
+      Reflect.defineMetadata(
+        DISCRIMINATOR_VALUE_TOKEN,
+        options.discriminatorValue,
+        cls,
+      );
+    }
+  }
+
   static registerEntity<T>(options: EntitySchemaOptions<T>): void {
     const scanner = getScannerInstance(EntityScanner);
     const columnScanner = getScannerInstance(ColumnScanner);
@@ -408,29 +440,134 @@ export class EntitySchemaRegistrar {
     const cls = options.target;
     const proto = cls.prototype;
 
-    const nameKey = options.tableName || camelToSnakeCase(cls.name);
-    const name = createEntityKey(nameKey);
+    const hasExplicitName = !!options.tableName;
+    let nameKey = options.tableName || camelToSnakeCase(cls.name);
 
-    // Filter metadata by target (same as @Entity decorator)
+    // ── Inheritance detection (mirrors Entity.ts logic) ──────────────
+    let inheritanceRoot: ClazzType<any> | undefined;
+    let inheritanceStrategy: InheritanceStrategy | undefined;
+    let discriminatorValue: string | undefined;
+    let discriminatorColumn:
+      | { name: string; type: KnownColumnType; length: number }
+      | undefined;
+    let childEntities: ClazzType<any>[] | undefined;
+
+    // Build prototype chain for column inheritance
+    const protoChain: object[] = [];
+    let currentProto = proto;
+    while (currentProto && currentProto !== Object.prototype) {
+      protoChain.push(currentProto);
+      currentProto = Object.getPrototypeOf(currentProto);
+    }
+
+    // Build constructor chain for relation & inheritance detection
+    const constructorChain: Function[] = [];
+    let ctor: Function = cls;
+    while (ctor && ctor !== Function.prototype && ctor !== Object) {
+      constructorChain.push(ctor);
+      ctor = Object.getPrototypeOf(ctor);
+    }
+
+    // Check if THIS class is the inheritance root
+    const inheritanceMeta = Reflect.getOwnMetadata(INHERITANCE_TOKEN, cls);
+    if (inheritanceMeta) {
+      inheritanceStrategy = inheritanceMeta.strategy;
+      const dcMeta = Reflect.getOwnMetadata(DISCRIMINATOR_COLUMN_TOKEN, cls);
+      discriminatorColumn = dcMeta ?? {
+        name: "dtype",
+        type: "varchar" as KnownColumnType,
+        length: 31,
+      };
+      childEntities = [];
+      discriminatorValue =
+        Reflect.getOwnMetadata(DISCRIMINATOR_VALUE_TOKEN, cls) ?? cls.name;
+    } else {
+      // Walk up to find parent with @Inheritance
+      for (let i = 1; i < constructorChain.length; i++) {
+        const parent = constructorChain[i];
+        const parentInheritance = Reflect.getOwnMetadata(
+          INHERITANCE_TOKEN,
+          parent,
+        );
+        if (parentInheritance) {
+          inheritanceRoot = parent as ClazzType<any>;
+          inheritanceStrategy = parentInheritance.strategy;
+
+          discriminatorValue =
+            Reflect.getOwnMetadata(DISCRIMINATOR_VALUE_TOKEN, cls) ??
+            cls.name;
+
+          discriminatorColumn =
+            Reflect.getOwnMetadata(DISCRIMINATOR_COLUMN_TOKEN, parent) ?? {
+              name: "dtype",
+              type: "varchar" as KnownColumnType,
+              length: 31,
+            };
+
+          // STI: use root's table name
+          if (inheritanceStrategy === "SINGLE_TABLE" && !hasExplicitName) {
+            const rootMeta = Reflect.getOwnMetadata(ENTITY_TOKEN, parent) as
+              | EntityMetadata
+              | undefined;
+            if (rootMeta) {
+              nameKey = rootMeta.name;
+            }
+          }
+
+          // Register this child in the root's metadata
+          const rootMeta = Reflect.getOwnMetadata(ENTITY_TOKEN, parent) as
+            | EntityMetadata
+            | undefined;
+          if (rootMeta?.childEntities) {
+            rootMeta.childEntities.push(cls);
+          }
+
+          break;
+        }
+      }
+    }
+
+    // Filter metadata by target — use prototype chain for inheritance column collection
+    const isInheritanceEntity = !!(inheritanceRoot || inheritanceStrategy);
     const columns = columnScanner
       .allMetadata<ColumnMetadata>()
-      .filter((c) => c.target === proto);
+      .filter((c) =>
+        isInheritanceEntity
+          ? protoChain.includes(c.target as object)
+          : c.target === proto,
+      );
     const manyToOnes = manyToOneScanner
       .allMetadata<ManyToOneMetadata<unknown>>()
-      .filter((m) => (m.target as Function) === cls);
+      .filter((m) =>
+        isInheritanceEntity
+          ? constructorChain.includes(m.target as Function)
+          : (m.target as Function) === cls,
+      );
     const oneToManys = oneToManyScanner
       .allMetadata<OneToManyMetadata<unknown>>()
-      .filter((m) => (m.target as Function) === cls);
+      .filter((m) =>
+        isInheritanceEntity
+          ? constructorChain.includes(m.target as Function)
+          : (m.target as Function) === cls,
+      );
     const oneToOnes = oneToOneScanner
       .allMetadata<OneToOneMetadata<unknown>>()
-      .filter((m) => (m.target as Function) === cls);
+      .filter((m) =>
+        isInheritanceEntity
+          ? constructorChain.includes(m.target as Function)
+          : (m.target as Function) === cls,
+      );
     const manyToManys = manyToManyScanner
       .allMetadata<ManyToManyMetadata<unknown>>()
-      .filter((m) => (m.target as Function) === cls);
+      .filter((m) =>
+        isInheritanceEntity
+          ? constructorChain.includes(m.target as Function)
+          : (m.target as Function) === cls,
+      );
 
     const entityOption = options.tableName ? { name: options.tableName } : undefined;
 
-    const metadata = {
+    const metadata: EntityMetadata = {
       target: cls,
       columns,
       manyToOnes,
@@ -439,9 +576,18 @@ export class EntitySchemaRegistrar {
       manyToManys,
       options: entityOption,
       name: nameKey,
+      nameExplicit: hasExplicitName,
+      rawClassName: cls.name,
+      inheritanceRoot,
+      inheritanceStrategy,
+      discriminatorValue,
+      discriminatorColumn,
+      childEntities,
     };
 
-    scanner.set(name, metadata);
+    // Scanner key: use class name (unique per class) to avoid STI key collision
+    const scannerKey = createEntityKey(camelToSnakeCase(cls.name));
+    scanner.set(scannerKey, metadata);
     Reflect.defineMetadata(ENTITY_TOKEN, metadata, cls);
   }
 }

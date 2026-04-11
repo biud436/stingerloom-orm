@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { ColumnType } from "../decorators/Column";
+import { ColumnType, KnownColumnType } from "../decorators/Column";
 import { CascadeOption } from "../types/CascadeType";
 import { ReferentialAction } from "../types/ReferentialAction";
 import { JoinTableOption } from "../decorators/ManyToMany";
 import { HookEvent } from "../decorators/Hooks";
 import { ConstraintType } from "../decorators/Validation";
+import { InheritanceStrategy } from "../decorators/Inheritance";
 import { ClazzType } from "../utils/types";
 
 /**
@@ -97,6 +98,25 @@ export interface ManyToManyRelationDef {
 }
 
 /**
+ * Inheritance strategy definition for the root entity of a hierarchy.
+ */
+export interface InheritanceSchemaDef {
+  strategy: InheritanceStrategy;
+}
+
+/**
+ * Discriminator column definition for the root entity of a hierarchy.
+ */
+export interface DiscriminatorColumnSchemaDef {
+  /** Column name in the database. Default: "dtype" */
+  name?: string;
+  /** Column type. Default: "varchar" */
+  type?: KnownColumnType;
+  /** Column length (for varchar). Default: 31 */
+  length?: number;
+}
+
+/**
  * Main input type for EntitySchema.
  * `T` is the entity class — column/relation keys are type-checked against it.
  */
@@ -108,4 +128,41 @@ export interface EntitySchemaOptions<T> {
   uniqueIndexes?: { columns: string[]; name?: string }[];
   indexes?: { columns: string[]; name?: string }[];
   hooks?: Partial<Record<HookEvent, Extract<keyof T, string>>>;
+
+  /**
+   * Marks this entity as the root of an inheritance hierarchy.
+   * Only set this on the root (parent) entity.
+   *
+   * @example
+   * ```ts
+   * new EntitySchema<Payment>({
+   *   target: Payment,
+   *   inheritance: { strategy: "SINGLE_TABLE" },
+   *   discriminatorColumn: { name: "payment_type" },
+   *   columns: { id: { type: "int", primary: true, autoIncrement: true }, amount: { type: "int" } },
+   * });
+   * ```
+   */
+  inheritance?: InheritanceSchemaDef;
+
+  /**
+   * Configures the discriminator column. Only meaningful on the root entity.
+   * Defaults to `{ name: "dtype", type: "varchar", length: 31 }` if omitted.
+   */
+  discriminatorColumn?: DiscriminatorColumnSchemaDef;
+
+  /**
+   * Discriminator value for a child entity.
+   * Defaults to the class name if omitted on a child whose parent has `inheritance`.
+   *
+   * @example
+   * ```ts
+   * new EntitySchema<CreditCardPayment>({
+   *   target: CreditCardPayment,
+   *   discriminatorValue: "credit_card",
+   *   columns: { cardNumber: { type: "varchar", nullable: true } },
+   * });
+   * ```
+   */
+  discriminatorValue?: string;
 }

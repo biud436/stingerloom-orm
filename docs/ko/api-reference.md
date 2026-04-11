@@ -885,12 +885,28 @@ const schema = new EntitySchema<T>(options: EntitySchemaOptions<T>);
 
 ```typescript
 interface EntitySchemaOptions<T> {
-  target: ClazzType<T>;                                    // Entity class
-  tableName?: string;                                      // Table name (defaults to snake_case of class name)
-  columns: { [K in keyof T]?: ColumnSchemaDef };           // Column definitions
-  relations?: { [K in keyof T]?: RelationSchemaDef };      // Relation definitions
-  uniqueIndexes?: { columns: string[]; name?: string }[];  // Composite unique indexes
-  hooks?: Partial<Record<HookEvent, Extract<keyof T, string>>>;  // Lifecycle hooks
+  target: ClazzType<T>;                                    // 엔티티 클래스
+  tableName?: string;                                      // 테이블 이름 (기본: 클래스명 snake_case)
+  columns: { [K in keyof T]?: ColumnSchemaDef };           // 컬럼 정의
+  relations?: { [K in keyof T]?: RelationSchemaDef };      // 관계 정의
+  uniqueIndexes?: { columns: string[]; name?: string }[];  // 복합 고유 인덱스
+  indexes?: { columns: string[]; name?: string }[];        // 복합 비고유 인덱스
+  hooks?: Partial<Record<HookEvent, Extract<keyof T, string>>>;  // 라이프사이클 훅
+
+  // 상속 매핑 (@Inheritance, @DiscriminatorColumn, @DiscriminatorValue 대체)
+  inheritance?: InheritanceSchemaDef;                      // 루트 엔티티: 전략 선언
+  discriminatorColumn?: DiscriminatorColumnSchemaDef;      // 루트 엔티티: discriminator 컬럼 설정
+  discriminatorValue?: string;                             // 자식 엔티티: discriminator 값
+}
+
+interface InheritanceSchemaDef {
+  strategy: "SINGLE_TABLE" | "JOINED" | "TABLE_PER_CLASS";
+}
+
+interface DiscriminatorColumnSchemaDef {
+  name?: string;           // 기본값: "dtype"
+  type?: KnownColumnType;  // 기본값: "varchar"
+  length?: number;         // 기본값: 31
 }
 ```
 
