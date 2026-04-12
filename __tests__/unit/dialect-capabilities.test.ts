@@ -141,8 +141,12 @@ describe("resolveMySqlCapabilities", () => {
       expect(caps.supportsRenameColumn).toBe(true);
     });
 
-    it("should support RETURNING (MariaDB 10.5.0+)", () => {
-      expect(caps.supportsReturning).toBe(true);
+    it("should support INSERT RETURNING (MariaDB 10.5.0+)", () => {
+      expect(caps.supportsInsertReturning).toBe(true);
+    });
+
+    it("should still NOT support full (UPDATE) RETURNING — MariaDB only does INSERT/DELETE", () => {
+      expect(caps.supportsReturning).toBe(false);
     });
   });
 
@@ -155,6 +159,78 @@ describe("resolveMySqlCapabilities", () => {
 
     it("should not support JSON column type (< 10.2.7)", () => {
       expect(caps.supportsJsonColumnType).toBe(false);
+    });
+
+    it("should not support INSERT RETURNING (< 10.5)", () => {
+      expect(caps.supportsInsertReturning).toBe(false);
+    });
+
+    it("should not support SEQUENCE (< 10.3)", () => {
+      expect(caps.supportsSequence).toBe(false);
+    });
+
+    it("should not support SYSTEM VERSIONING (< 10.3)", () => {
+      expect(caps.supportsSystemVersioning).toBe(false);
+    });
+  });
+
+  describe("MariaDB 10.3.0 — MariaDB-only features light up", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("10.3.0"), true);
+
+    it("should support SEQUENCE (10.3+)", () => {
+      expect(caps.supportsSequence).toBe(true);
+    });
+
+    it("should support SYSTEM VERSIONING (10.3+)", () => {
+      expect(caps.supportsSystemVersioning).toBe(true);
+    });
+
+    it("should not yet support INSERT RETURNING (< 10.5)", () => {
+      expect(caps.supportsInsertReturning).toBe(false);
+    });
+
+    it("should not yet support native UUID type (< 10.7)", () => {
+      expect(caps.supportsNativeUuidType).toBe(false);
+    });
+  });
+
+  describe("MariaDB 10.4.x — just before INSERT RETURNING", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("10.4.99"), true);
+
+    it("should not support INSERT RETURNING (< 10.5)", () => {
+      expect(caps.supportsInsertReturning).toBe(false);
+    });
+  });
+
+  describe("MariaDB 10.7.0 — native UUID type lights up", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("10.7.0"), true);
+
+    it("should support native UUID type (10.7+)", () => {
+      expect(caps.supportsNativeUuidType).toBe(true);
+    });
+
+    it("should support INSERT RETURNING (10.5+)", () => {
+      expect(caps.supportsInsertReturning).toBe(true);
+    });
+  });
+
+  describe("MySQL 8.0.40 — MariaDB-only features stay off", () => {
+    const caps = resolveMySqlCapabilities(DbVersion.parse("8.0.40"), false);
+
+    it("should not support INSERT RETURNING (MySQL has no RETURNING)", () => {
+      expect(caps.supportsInsertReturning).toBe(false);
+    });
+
+    it("should not support SEQUENCE", () => {
+      expect(caps.supportsSequence).toBe(false);
+    });
+
+    it("should not support native UUID type", () => {
+      expect(caps.supportsNativeUuidType).toBe(false);
+    });
+
+    it("should not support SYSTEM VERSIONING", () => {
+      expect(caps.supportsSystemVersioning).toBe(false);
     });
   });
 });

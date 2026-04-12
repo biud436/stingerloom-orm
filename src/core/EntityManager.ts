@@ -2032,8 +2032,10 @@ export class EntityManager implements BaseEntityManager {
           }
         }
 
-        // PostgreSQL: INSERT ... RETURNING *
-        const useReturning = typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning();
+        // PostgreSQL (all versions), MariaDB 10.5+: INSERT ... RETURNING *
+        const useReturning =
+          (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
+          (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
 
         // TPT 자식: 부모 먼저 INSERT → 자식 INSERT (동일 PK)
         if (saveInheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
@@ -2178,7 +2180,15 @@ export class EntityManager implements BaseEntityManager {
           Date.now() - saveQueryStart,
         );
 
-        if (this.isMySqlFamily()) {
+        // MariaDB 10.5+ returns rows via RETURNING; fall through to the generic
+        // `useReturning && results.length > 0` branch below instead of the insertId path.
+        const mariaDbReturned =
+          useReturning &&
+          this.isMySqlFamily() &&
+          Array.isArray(queryResult?.results) &&
+          queryResult.results.length > 0;
+
+        if (this.isMySqlFamily() && !mariaDbReturned) {
           const findWhere = hasAutoIncrementPk
             ? { [this.propKey(pk)]: queryResult?.results?.insertId }
             : buildPkFindWhere();
@@ -2667,8 +2677,10 @@ export class EntityManager implements BaseEntityManager {
       return sql`(${join(rowValues, ", ")})`;
     });
 
-    // INSERT SQL (PostgreSQL: RETURNING *)
-    const useReturning = typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning();
+    // INSERT SQL (PostgreSQL all versions, MariaDB 10.5+: RETURNING *)
+    const useReturning =
+      (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
+      (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
     const returningSql = useReturning ? raw(` RETURNING *`) : raw("");
     const insertSql = sql`INSERT INTO ${raw(this.wrapTable(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}${returningSql}`;
 

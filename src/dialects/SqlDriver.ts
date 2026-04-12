@@ -357,6 +357,13 @@ export interface ISqlDriver<T = any> {
   supportsReturning(): boolean;
 
   /**
+   * Whether the database supports `INSERT ... RETURNING`.
+   * PostgreSQL: always. SQLite: 3.35+. MariaDB: 10.5+. MySQL: never.
+   * Defaults to `supportsReturning()` for drivers that don't distinguish.
+   */
+  supportsInsertReturning?(): boolean;
+
+  /**
    * Execute a query with driver-level options that control result format.
    * Used by the RawPipeline plugin to bypass ORM entity transformation.
    *

@@ -909,4 +909,8 @@ export class PostgresDriver implements ISqlDriver {
   supportsReturning(): boolean {
     return true;
   }
+
+  supportsInsertReturning(): boolean {
+    return true;
+  }
 }

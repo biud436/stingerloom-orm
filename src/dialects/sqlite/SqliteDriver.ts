@@ -476,4 +476,8 @@ export class SqliteDriver implements ISqlDriver {
   supportsReturning(): boolean {
     return false;
   }
+
+  supportsInsertReturning(): boolean {
+    return this.capabilities.supportsReturning;
+  }
 }

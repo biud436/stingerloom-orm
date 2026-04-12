@@ -16,6 +16,11 @@ const MYSQL_FEATURES: FeatureTable<MySqlCapabilities> = {
   supportsDefaultExpression: { major: 8, minor: 0, patch: 13 },
   supportsJsonColumnType:    { major: 5, minor: 7, patch: 8 },
   supportsInvisibleColumns:  { major: 8, minor: 0, patch: 23 },
+  // MariaDB-only features (off on MySQL)
+  supportsInsertReturning:   false,
+  supportsSequence:          false,
+  supportsNativeUuidType:    false,
+  supportsSystemVersioning:  false,
   // Common
   supportsGeneratedColumns:  { major: 5, minor: 7, patch: 6 },
   supportsRenameColumn:      { major: 8, minor: 0 },
@@ -33,10 +38,16 @@ const MARIADB_FEATURES: FeatureTable<MySqlCapabilities> = {
   supportsDefaultExpression: { major: 10, minor: 2, patch: 1 },
   supportsJsonColumnType:    { major: 10, minor: 2, patch: 7 },
   supportsInvisibleColumns:  { major: 10, minor: 3, patch: 3 },
+  // MariaDB-only features — these are not in MySQL at all
+  supportsInsertReturning:   { major: 10, minor: 5 },
+  supportsSequence:          { major: 10, minor: 3 },
+  supportsNativeUuidType:    { major: 10, minor: 7 },
+  supportsSystemVersioning:  { major: 10, minor: 3 },
   // Common
   supportsGeneratedColumns:  { major: 5, minor: 2 },
   supportsRenameColumn:      { major: 10, minor: 5, patch: 2 },
-  supportsReturning:         { major: 10, minor: 5 },
+  // supportsReturning = full RETURNING (including UPDATE). MariaDB only supports INSERT/DELETE RETURNING.
+  supportsReturning:         false,
   supportsDropColumn:        true,
   supportsUpsert:            true,
 };

@@ -54,6 +54,14 @@ export interface MySqlCapabilities extends CommonCapabilities {
   readonly supportsJsonColumnType: boolean;
   /** Invisible columns (MySQL 8.0.23+, MariaDB 10.3.3+). */
   readonly supportsInvisibleColumns: boolean;
+  /** INSERT ... RETURNING clause. MariaDB 10.5+ only — MySQL does not support it. */
+  readonly supportsInsertReturning: boolean;
+  /** CREATE SEQUENCE / sequence objects. MariaDB 10.3+ only. */
+  readonly supportsSequence: boolean;
+  /** Native UUID column type. MariaDB 10.7+ only. */
+  readonly supportsNativeUuidType: boolean;
+  /** System-versioned (temporal) tables. MariaDB 10.3+ only. */
+  readonly supportsSystemVersioning: boolean;
 }
 
 /** PostgreSQL specific capabilities. */
@@ -100,6 +108,10 @@ export const ALL_MYSQL: Readonly<MySqlCapabilities> = Object.freeze({
   supportsDefaultExpression: true,
   supportsJsonColumnType: true,
   supportsInvisibleColumns: true,
+  supportsInsertReturning: true,
+  supportsSequence: true,
+  supportsNativeUuidType: true,
+  supportsSystemVersioning: true,
 });
 
 export const ALL_POSTGRES: Readonly<PostgresCapabilities> = Object.freeze({

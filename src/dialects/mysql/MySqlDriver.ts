@@ -592,4 +592,12 @@ export class MySqlDriver implements ISqlDriver {
   supportsReturning(): boolean {
     return false;
   }
+
+  /**
+   * MariaDB 10.5+ supports `INSERT ... RETURNING` and `DELETE ... RETURNING`
+   * (but not UPDATE RETURNING). MySQL does not support any form of RETURNING.
+   */
+  supportsInsertReturning(): boolean {
+    return this.capabilities.supportsInsertReturning;
+  }
 }
