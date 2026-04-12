@@ -6,6 +6,39 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.16.0] — 2026-04-12
+
+### Highlights
+
+- **SSL/TLS for database connections (#240)** — New `ssl` option on `ServerDatabaseClientOptions` is forwarded to `mysql2` and `pg`, unlocking encrypted connections to managed cloud databases.
+- **MariaDB-aware driver (#242)** — Four MariaDB-only capability flags let the MySQL driver exploit features that diverged from MySQL 8+. Single/batch/TPT inserts now go through `INSERT ... RETURNING` on MariaDB 10.5+, skipping the post-insert `SELECT` round-trip.
+- **Native `UUID` column type on MariaDB 10.7+ (#242)** — 16-byte storage with correct ordering, gated behind `supportsNativeUuidType`. MySQL and older MariaDB keep the `CHAR(36)` fallback.
+- **Minimum Node.js 22** — `engines.node` bumped; tooling now targets LTS.
+
+### Added
+
+- **`ssl` connection option** — `{ ssl: true }` or a full options object; propagates to `mysql2` / `pg` native SSL configuration (#240)
+- **`supportsReturning()` / `supportsInsertReturning()` / `supportsNativeUuidType` / `supportsReturningOnUpdate`** — Capability flags on the MySQL driver for MariaDB-specific optimizations (#242)
+- **`INSERT ... RETURNING` on MariaDB 10.5+** — Applied to single inserts, batch inserts, and TPT child inserts; removes an extra `SELECT` for just-inserted rows (#242)
+- **Native `UUID` DDL type on MariaDB 10.7+** — Replaces `CHAR(36)` for `@Column({ type: "uuid" })` when the driver detects MariaDB 10.7+ at connect time (#242)
+
+### Changed
+
+- `UPDATE` path intentionally keeps the stricter `supportsReturning()` check — MariaDB does not support `UPDATE ... RETURNING`
+- `ALL_MYSQL` defaults stay conservative (MariaDB-only flags off) so DDL produced without version detection remains MySQL-safe
+- `engines.node` minimum bumped to `>=22`
+
+### Fixed
+
+- Prisma-import test: use a temp file instead of `node -e '...'` to avoid shell quoting failures on Windows
+- Normalize backslashes in glob patterns before handing them to `fast-glob` — fixes entity discovery on Windows
+- Add `__tests__/tsconfig.json` so IDE-side Jest type resolution works out of the box
+- `.gitignore` tightened to exclude local analysis scratch files
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.15.0...v0.16.0
+
+---
+
 ## [0.15.0] — 2026-04-11
 
 ### Highlights
