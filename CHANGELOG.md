@@ -6,6 +6,45 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.16.1] — 2026-04-12
+
+### Highlights
+
+- **Compiled query plans** — `SelectQueryBuilder.prepare()`, `RawQueryBuilder.prepare(em)`, and the EF.CompileQuery-style `em.compile()` memoize the SQL template once so repeated executions only substitute placeholder values. Built on top of the existing `toSql` / `build` path, so drivers stay untouched.
+- **JSON path QueryDSL via `qAlias()`** — Writing `u.profile.contact.email.eq("…")` compiles to the right dialect-specific SQL (`#>>` on PostgreSQL, `JSON_EXTRACT` on MySQL, `json_extract` on SQLite). Covers comparisons, `LIKE`, `IN`, `IS NULL`, `contains`, `hasKey`, `arrayLength()`, `typeOf()`, and a `.path("a.b[0]")` escape hatch for dynamic or array paths. Every path segment, key, and value is parameter-bound — SQL-injection safe.
+
+### Added
+
+- **`SelectQueryBuilder.prepare<Params>()`** — Returns a `CompiledQuery<Result, Params>` with `execute(params)` / `executeOne(params)` that skip re-assembling SQL on each call
+- **`SelectQueryBuilder.preparePartial()`** — Compiled variant for `getPartialMany()` projections
+- **`RawQueryBuilder.prepare(em)`** — Compile hand-built SQL fragments once, parameterize via `sql-template-tag` placeholders
+- **`em.compile<Result, Params>((em, $) => qb)`** — EF Core-style wrapper: supply a builder factory that consumes a `$.param` proxy; returns a reusable `CompiledQuery`
+- **`JsonPathExpression`** — Proxy returned by `qAlias()` when a property is a `@Column({ type: "json" \| "jsonb" })`. Deep property access accumulates the JSON path; the final operator freezes the path into a `JsonPathCondition`
+- **`JsonScalarExpression`** — Scalar result of `.arrayLength()` / `.typeOf()`; exposes `.eq`, `.gt`, etc. to compare JSON function results to values
+- **`DialectExpression.jsonExtract` / `jsonContains` / `jsonHasKey` / `jsonArrayLength` / `jsonTypeOf`** — New strategy methods on the dialect expression interface, implemented for PostgreSQL (`#>>`, `#>`, `@>`, `?`, `jsonb_array_length`, `jsonb_typeof`), MySQL (`JSON_EXTRACT`, `JSON_CONTAINS`, `JSON_CONTAINS_PATH`, `JSON_LENGTH`, `JSON_TYPE`), and SQLite (`json_extract`, `json_array_length`, `json_type`)
+- **`parseJsonPath("a.b[0].c")`** — Parser for the `.path()` escape hatch; handles identifiers, array indices, and quoted segments with punctuation
+
+### Changed
+
+- `qAlias<T>(Entity, alias)` now inspects `@Column` metadata at proxy creation; JSON-typed properties return `JsonPathExpression`, everything else still returns `ColumnExpression` (fully backward compatible)
+- `SelectQueryBuilder.where()` / `.andWhere()` / `.orWhere()` gain a `JsonPathCondition` overload
+
+### Documentation
+
+- New **Navigating JSON Columns** section in `query-builder.md` (EN + KO) — problem-first, then `qAlias()` background, then TypeScript ↔ compiled SQL examples per operator, plus a dialect cheat sheet and a note on why `metadata` is a poor example column name
+- New **Compiled Query Plans** section in `entity-manager-advanced.md` (EN + KO) — motivation, comparison with WriteBuffer / batch / streaming, and examples across all four entry points
+
+### Tests
+
+- 50 new unit cases covering path parsing, JSON column detection in `qAlias`, per-driver SQL snapshots, `JsonPathCondition.resolve()`, and SQL-injection regression
+- 10 new SQLite in-memory integration cases exercising `eq` / `in` / `isNull` / `.path()` / `hasKey` / `arrayLength` / `typeOf` / scalar `contains` / combined JSON-plus-column filters end-to-end
+- Compiled query plan tests (unit + SQLite integration) from the earlier compiled-queries commit
+- No regressions: 3,590 unit + 296 SQLite integration pass
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.16.0...v0.16.1
+
+---
+
 ## [0.16.0] — 2026-04-12
 
 ### Highlights
