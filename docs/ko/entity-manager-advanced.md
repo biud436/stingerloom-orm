@@ -554,6 +554,184 @@ for await (const batch of userRepo.streamBatch({ where: { role: "admin" } }, 100
 
 ---
 
+## 쿼리 미리 만들어두기 -- `em.compile()` / `qb.prepare()`
+
+### 왜 쿼리를 미리 만들어 둬야 할까요?
+
+`em.find()`, `em.save()`, 쿼리 빌더의 실행 메서드 -- 어느 쪽을 호출하든 실제로 DB에 쿼리를 보내기 전에 항상 같은 단계들을 거쳐요:
+
+1. 엔티티의 메타데이터를 찾아와요 (관계, 컬럼, 상속 정보 등).
+2. 네이밍 전략에 따라 프로퍼티 이름을 컬럼 이름으로 바꿔요.
+3. 드라이버에 맞춰 식별자를 안전하게 감싸요(escape).
+4. `sql` 태그로 만든 조각들을 붙이고, 중첩된 `Sql` 객체를 펼쳐 최종 SQL 문자열을 만들어요.
+5. 완성된 SQL을 드라이버에 넘겨요.
+
+한 번만 호출한다면 이 비용은 신경 쓰지 않아도 돼요. 그런데 **같은 모양의 쿼리가 수만 번 반복**된다면 얘기가 달라져요. 반복이 많은 작업 -- 백그라운드 워커의 반복문, 대량 배치 작업 안에서 한 행씩 조회하는 코드, 주기적인 지표 수집 루프 -- 에서는 1~4번 과정이 조용히 CPU 시간을 꽤 잡아먹어요. 이때 느려지는 원인은 **네트워크 왕복이 아니에요**. **Node.js 프로세스 안쪽에서 SQL을 만드는 일**이 병목이 되는 거예요.
+
+미리 만들어 둔 쿼리는 이 과정을 **딱 한 번만** 거친 뒤 결과를 그대로 보관해요. 이후 실행에서는 값 자리만 채워 이미 만들어 놓은 `Sql`을 그대로 드라이버로 보내요.
+
+::: info Prepared Statement와는 달라요
+Stingerloom의 컴파일 쿼리는 **ORM 쪽에서** 결과를 기억해 두는 방식이에요. SQL 문자열과 값이 들어갈 자리를 JavaScript 쪽에 저장해 둘 뿐, 드라이버는 평소처럼 매번 쿼리를 DB로 보내요. DB 쪽에서 `PREPARE`를 걸어 두는 기능은 아니에요 -- 그건 별도 최적화로, 이후에 추가할 예정이에요.
+:::
+
+### 언제 효과가 있고, 언제 없을까요?
+
+`compile()`을 쓰기 전에 먼저 **DB 호출 자체를 줄일 수 있는지**부터 살펴봐 주세요. Stingerloom에는 이미 더 저렴한 방법들이 있거든요:
+
+| 상황 | 먼저 살펴볼 방법 |
+|------|-----------------|
+| 같은 트랜잭션 안에서 같은 행을 여러 번 조회 | [WriteBuffer](./write-buffer.md) -- PK 캐시에 있으면 DB에 가지도 않아요 |
+| 많은 INSERT/UPDATE를 한꺼번에 처리 | [`batchInsert()` / `batchUpsert()`](./entity-manager-writes.md) -- 한 번의 호출로 묶어요 |
+| 큰 결과를 한 행씩 꺼내며 처리 | [`stream()` / `streamBatch()`](#배치-스트리밍-streambatch) -- 커서 하나로 끝내요 |
+| 집계 연산 | [RawQueryBuilder](./raw-sql.md)의 GROUP BY / 윈도우 함수 -- 계산을 DB에 맡겨요 |
+
+이 방법들로도 SQL 호출을 피할 수 없고, **쿼리 모양은 그대로인데 값만 계속 바뀌는** 상황이라면 그때가 미리 만들어 두기가 빛을 발하는 순간이에요. 예를 들면:
+
+- 인증 미들웨어에서 요청마다 호출되는 사용자 조회 (`WHERE id = ?`).
+- 사용자 입력을 한 줄씩 검증하는 반복문 (`WHERE email = ?`).
+- 여러 테넌트나 여러 시간 구간을 돌면서 같은 쿼리를 계속 실행하는 스케줄러.
+- 프로파일러에서 `em.find()`나 쿼리 빌더가 위쪽에 올라오는 코드.
+
+반대로 **호출할 때마다 쿼리 모양이 바뀌는 경우**(조건이 붙었다 빠졌다 하는 동적 WHERE 등)에는 효과가 없어요. 이런 경우엔 빌더가 매번 새로 만들도록 두는 게 맞아요.
+
+### SelectQueryBuilder.prepare()
+
+가장 쉬운 시작점이에요. 나중에 들어올 값 자리에 `p("이름")`로 표시를 해 두고, `.prepare()`로 지금까지 만든 쿼리를 그대로 저장해 두세요.
+
+```typescript
+import { p } from "@stingerloom/orm";
+import sql from "sql-template-tag";
+
+const findUserById = em
+  .createQueryBuilder(User, "u")
+  .where(sql`u.id = ${p("id")}`)
+  .prepare<{ id: number }>();
+
+await findUserById.executeOne({ id: 42 });
+await findUserById.executeOne({ id: 77 });   // SQL을 다시 만들지 않아요
+await findUserById.executeOne({ id: 81 });
+```
+
+`prepare()`는 `CompiledQuery<T, P>`를 반환해요. 빌더 자체는 계속 수정할 수 있지만, **한 번 만들어 둔 컴파일 쿼리는 이후 빌더에 `.where()`나 `.limit()`을 추가해도 영향을 받지 않아요**:
+
+```typescript
+const compiled = qb.prepare();
+const savedSql = compiled.sql;
+
+qb.where("u.id = :id", { id: 99 });
+qb.limit(5);
+
+compiled.sql === savedSql;   // true -- 컴파일한 시점의 모양을 그대로 유지해요
+```
+
+결과 행은 평소처럼 엔티티 변환 과정을 거쳐요. 그래서 `execute()`의 반환값은 **클래스 인스턴스**예요 -- `instanceof User`도 잘 동작하고, 라이프사이클 훅이나 구독자도 제대로 인식하며, 결과를 그대로 `em.save()`에 다시 넘길 수도 있어요.
+
+클래스로 변환할 필요 없이 선택한 컬럼만 받고 싶으면 `preparePartial()`을 쓰세요:
+
+```typescript
+const listEmails = em
+  .createQueryBuilder(User, "u")
+  .select(["id", "email"])
+  .where(sql`u.isActive = ${p("active")}`)
+  .preparePartial<{ active: boolean }>();
+
+const rows = await listEmails.execute({ active: true });
+// rows: Pick<User, "id" | "email">[] -- 일반 객체 배열
+```
+
+### RawQueryBuilder.prepare()
+
+`RawQueryBuilder`는 UNION, CTE, 윈도우 함수처럼 `SelectQueryBuilder`로는 표현하기 어려운 SQL을 담당해요. 같은 방식으로 미리 만들어 둘 수 있는데, 결과를 일반 객체로 돌려주는 경로라서 실행에 쓸 `EntityManager`를 인자로 직접 넘겨 줘야 해요.
+
+```typescript
+const topSpenders = em
+  .createQueryBuilder()
+  .select(["user_id", "SUM(amount) AS total"])
+  .from("orders")
+  .where([sql`created_at >= ${p("since")}`])
+  .groupBy(["user_id"])
+  .having([sql`SUM(amount) >= ${p("threshold")}`])
+  .prepare<{ user_id: number; total: number }, { since: Date; threshold: number }>(em);
+
+const lastMonth = await topSpenders.execute({
+  since: new Date("2026-03-01"),
+  threshold: 500,
+});
+
+const lastWeek = await topSpenders.execute({
+  since: new Date("2026-04-05"),
+  threshold: 200,
+});
+```
+
+반환값은 일반 객체예요. 이쪽 경로에서는 엔티티 클래스로 변환하지 않고, `em.query()`와 똑같이 동작해요.
+
+### `em.compile()` -- 타입까지 친절한 방식
+
+Entity Framework의 `EF.CompileQuery`를 써 봤다면 이 방식이 익숙할 거예요. `p("id")`로 이름을 하나하나 적는 대신, **파라미터 타입을 먼저 선언**하고 콜백 안에서 `$`로 받아 원하는 자리에 꽂으면 돼요:
+
+```typescript
+const findByEmail = em.compile<User, { email: string }>((em, $) =>
+  em.createQueryBuilder(User, "u").where(sql`u.email = ${$.email}`),
+);
+
+await findByEmail.executeOne({ email: "alice@example.com" });
+await findByEmail.executeOne({ email: "bob@example.com" });
+```
+
+`.prepare()`를 직접 호출하는 방식과 비교하면 이런 장점이 있어요:
+
+- 파라미터 타입 `P`를 한 번만 써 두면 모든 `execute()` 호출에 그대로 적용돼요. 키 이름을 잘못 적으면 **IDE가 바로 빨간 줄로 알려줘요**.
+- 플레이스홀더 이름이 `$.email`처럼 속성 접근에서 만들어지기 때문에, 나중에 이름을 바꿔도 타입 체크로 바로 잡혀요.
+- 콜백이 독립적이라서 다른 곳에 옮기기 쉬워요 -- 캐시에 담아 두거나, 모듈 상단에 상수로 두거나, 리포지토리 클래스에서 내보내도 돼요.
+
+콜백에서 반환하는 빌더는 `.prepare()`를 제공하기만 하면 돼요. `SelectQueryBuilder`든 `RawQueryBuilder`든 둘 다 가능해요:
+
+```typescript
+const recentPostsByAuthor = em.compile<Post, { authorId: number }>((em, $) =>
+  em
+    .createQueryBuilder(Post, "p")
+    .where(sql`p.authorId = ${$.authorId}`)
+    .orderBy({ createdAt: "DESC" })
+    .limit(10),
+);
+```
+
+콜백이 컴파일할 수 없는 값을 반환하면 `OrmError`가 **바로** 발생해요. 한참 뒤 실행 시점에야 터지는 일은 없어요.
+
+### 실행 메서드
+
+컴파일된 쿼리에는 세 가지 실행 메서드가 있어요:
+
+| 메서드 | 반환값 | 언제 쓰나요 |
+|--------|-------|-----------|
+| `execute(params)` | `T[]` (엔티티 변환이 붙어 있으면 클래스 인스턴스 배열) | 여러 행이 필요할 때 |
+| `executeOne(params)` | `T \| null` | 최대 한 행만 기대할 때 (필요하면 쿼리에 `LIMIT 1`을 직접 넣어 주세요) |
+| `executeRaw(params)` | `unknown[]` | 엔티티 변환 없이 드라이버가 돌려준 원본 그대로 받고 싶을 때 |
+
+플레이스홀더가 하나도 없는 쿼리만 `params` 없이 호출할 수 있어요. 플레이스홀더가 있는데 값을 빠뜨리면 실행 전에 `MISSING_PLACEHOLDER` `OrmError`가 발생해요:
+
+```typescript
+await findUserById.execute({});            // 오류 -- "id" 값이 필요해요
+await findUserById.execute({ id: 1 });     // 정상
+```
+
+실행하지 않고도 컴파일 결과를 확인할 수 있어요:
+
+```typescript
+compiled.sql;              // "SELECT ... WHERE u.id = ?" (드라이버에 상관없는 공통 형태)
+compiled.parameterNames;   // readonly ["id"]
+```
+
+### 권장 사용법
+
+- **한 번 만들고 계속 재사용해 주세요.** 모듈 상단의 상수나 서비스의 필드에 담아 두는 게 좋아요. 요청마다 다시 만들면 미리 만들어 둔 의미가 없어요.
+- **쿼리 모양은 고정해 주세요.** WHERE가 조건에 따라 자꾸 바뀐다면(선택적인 조건, 선택적인 ORDER BY 등) 한 쿼리에 분기를 억지로 넣기보다 **용도별로 컴파일 쿼리를 여러 개** 만들어 두는 쪽이 더 깔끔해요.
+- **타입 도움을 받고 싶다면 `em.compile()`을 먼저 써 보세요.** 반대로 빌더가 주변 코드에서 조건부로 조립되는 경우에는 `qb.prepare()`가 더 잘 맞아요.
+- **적용 전후로 측정해 보세요.** 미리 만들어 두는 것 자체는 가볍고 안전하지만, 효과는 SQL을 만드는 데 실제로 시간이 얼마나 쓰이고 있었느냐에 따라 달라져요. [`getQueryLog()`](#쿼리-진단)나 별도 프로파일러로 실제로 빨라졌는지 확인해 주세요.
+
+---
+
 ## 엔티티 메타데이터 API
 
 메타데이터 API는 런타임에 엔티티 스키마 정보를 읽기 전용으로 제공해요. 어드민 패널 구축, 문서 자동 생성, 범용 CRUD 컴포넌트 작성에 유용해요.

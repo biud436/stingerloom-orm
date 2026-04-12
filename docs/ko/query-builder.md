@@ -1257,6 +1257,27 @@ Scope는 다른 모든 빌더 메서드와 합성돼요 — `where()`, `when()`,
 
 ---
 
+## 같은 쿼리를 미리 만들어 두기 — `prepare()`
+
+같은 모양의 쿼리가 값만 바뀌며 반복된다면, SQL을 한 번만 만들어 두고 계속 재사용할 수 있어요:
+
+```typescript
+import { p } from "@stingerloom/orm";
+import sql from "sql-template-tag";
+
+const findById = em
+  .createQueryBuilder(User, "u")
+  .where(sql`u.id = ${p("id")}`)
+  .prepare<{ id: number }>();
+
+await findById.executeOne({ id: 42 });
+await findById.executeOne({ id: 77 });   // SQL을 다시 만들지 않아요
+```
+
+선택한 컬럼만 받고 싶을 때 쓰는 `preparePartial()`도 있고, `RawQueryBuilder`에도 똑같은 `.prepare(em)`이 있어요. 언제 효과가 있고 언제 없는지, `WriteBuffer`나 배치 쓰기와는 어떻게 다른지 등 자세한 배경은 [쿼리 미리 만들어두기](./entity-manager-advanced.md#쿼리-미리-만들어두기-em-compile-qb-prepare)에서 다루고 있어요.
+
+---
+
 ## RawQueryBuilder — 완전한 SQL 제어
 
 UNION, CTE, window function, subquery 같은 고급 SQL 기능은 [Raw SQL & CTE](./raw-sql.md) 가이드를 참고하세요.

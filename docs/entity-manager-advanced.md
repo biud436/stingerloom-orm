@@ -556,6 +556,184 @@ The `streamBatch()` method accepts the same `FindOption` as `find()` -- `where`,
 
 ---
 
+## Compiled Query Plans -- `em.compile()` / `qb.prepare()`
+
+### Why compile a query at all?
+
+Every call to `em.find()`, `em.save()`, or a query builder terminal method walks the same pipeline before a single byte leaves the process:
+
+1. Resolve the entity's metadata layer (relations, columns, inheritance map).
+2. Apply the naming strategy to translate property names into column identifiers.
+3. Escape identifiers through the dialect driver.
+4. Interpolate `sql`-tagged fragments, flatten nested `Sql` objects, and glue the final template.
+5. Hand the finished `Sql` to the driver.
+
+For a single call this is negligible. But if the same shape of query runs tens of thousands of times -- a hot path in a worker, a per-row lookup inside a large batch job, a metric-collection loop -- steps 1-4 quietly become a measurable share of total CPU. The network roundtrip is not the bottleneck; the roundtrip *inside your Node.js process* is.
+
+A compiled query freezes the template after one pass through that pipeline. Later executions only substitute placeholder values and dispatch the already-built `Sql`.
+
+::: info Prepared statements vs. compiled queries
+Stingerloom's compiled queries are **ORM-layer** memoization: the SQL text and its value slots are cached in JavaScript. The driver still sends the query to the database as usual; there is no server-side `PREPARE`. Native prepared statements are a separate optimization and are planned as a follow-up.
+:::
+
+### When compilation pays off (and when it doesn't)
+
+Before reaching for `compile()`, check whether you can sidestep the database call entirely. Stingerloom already offers cheaper options for several common patterns:
+
+| Situation | Reach for |
+|-----------|-----------|
+| Same row read repeatedly inside one unit of work | [WriteBuffer](./write-buffer.md) identity map -- skips the DB entirely on PK hits |
+| Many inserts/updates flushed as one batch | [`batchInsert()` / `batchUpsert()`](./entity-manager-writes.md) -- one roundtrip, one template |
+| Looping over a large result | [`stream()` / `streamBatch()`](#batch-streaming-streambatch) -- a single cursor-shaped query |
+| Aggregating rows in SQL | [RawQueryBuilder](./raw-sql.md) with GROUP BY / window functions -- shift work into the DB |
+
+Compiled queries pay off when **the SQL call is unavoidable and the template is stable but the parameters change**. Typical fits:
+
+- Per-request entity lookup inside an authenticated middleware (`WHERE id = ?` fired on every request).
+- Tight validation loops over user input (`WHERE email = ?` for each row in an import).
+- Scheduled jobs that hammer the same query across many tenants or time windows.
+- Any code path where `em.find()` or a query builder shows up near the top of a CPU profile.
+
+They do **not** help queries whose shape changes from call to call (dynamic WHERE clauses that add and remove conditions, for example); for those, let the builder run normally.
+
+### SelectQueryBuilder.prepare()
+
+The easiest entry point. Mark runtime values with `p("name")`, then call `.prepare()` to freeze the current builder state.
+
+```typescript
+import { p } from "@stingerloom/orm";
+import sql from "sql-template-tag";
+
+const findUserById = em
+  .createQueryBuilder(User, "u")
+  .where(sql`u.id = ${p("id")}`)
+  .prepare<{ id: number }>();
+
+await findUserById.executeOne({ id: 42 });
+await findUserById.executeOne({ id: 77 });   // SQL is not rebuilt
+await findUserById.executeOne({ id: 81 });
+```
+
+`prepare()` returns a `CompiledQuery<T, P>`. The builder itself stays mutable, but the compiled object is insulated from it -- further `.where()` or `.limit()` calls on the builder do not affect a compiled query captured earlier.
+
+```typescript
+const compiled = qb.prepare();
+const frozenSql = compiled.sql;
+
+qb.where("u.id = :id", { id: 99 });
+qb.limit(5);
+
+compiled.sql === frozenSql;   // true -- compilation already snapshotted the query
+```
+
+Because rows still flow through the deserializer, `execute()` returns class instances. `instanceof User` works, lifecycle hooks and subscribers see the real entity type, and results can be passed straight back into `em.save()`.
+
+If you only want a typed projection without class materialization, use `preparePartial()`:
+
+```typescript
+const listEmails = em
+  .createQueryBuilder(User, "u")
+  .select(["id", "email"])
+  .where(sql`u.isActive = ${p("active")}`)
+  .preparePartial<{ active: boolean }>();
+
+const rows = await listEmails.execute({ active: true });
+// rows: Pick<User, "id" | "email">[] -- plain objects
+```
+
+### RawQueryBuilder.prepare()
+
+`RawQueryBuilder` covers UNION, CTE, window functions, and anything else `SelectQueryBuilder` can't model directly. It supports the same compilation flow, but because it produces raw rows you pass the `EntityManager` explicitly as the executor.
+
+```typescript
+const topSpenders = em
+  .createQueryBuilder()
+  .select(["user_id", "SUM(amount) AS total"])
+  .from("orders")
+  .where([sql`created_at >= ${p("since")}`])
+  .groupBy(["user_id"])
+  .having([sql`SUM(amount) >= ${p("threshold")}`])
+  .prepare<{ user_id: number; total: number }, { since: Date; threshold: number }>(em);
+
+const lastMonth = await topSpenders.execute({
+  since: new Date("2026-03-01"),
+  threshold: 500,
+});
+
+const lastWeek = await topSpenders.execute({
+  since: new Date("2026-04-05"),
+  threshold: 200,
+});
+```
+
+Rows are returned as plain objects -- there is no class deserialization on this path, mirroring `em.query()`.
+
+### `em.compile()` -- EF.CompileQuery-style wrapper
+
+Entity Framework users will recognize `em.compile()`. Instead of creating placeholders by name with `p("id")`, you declare the parameter shape on the compile call and receive a proxy whose property accesses generate placeholders:
+
+```typescript
+const findByEmail = em.compile<User, { email: string }>((em, $) =>
+  em.createQueryBuilder(User, "u").where(sql`u.email = ${$.email}`),
+);
+
+await findByEmail.executeOne({ email: "alice@example.com" });
+await findByEmail.executeOne({ email: "bob@example.com" });
+```
+
+The advantages over calling `.prepare()` directly:
+
+- The parameter object `P` is declared once on the compile generic and propagates into every `execute()` call -- typos on keys are compile-time errors.
+- Placeholder names come from property accesses, so refactor-renames are caught at type-check time.
+- The callback is self-contained and easy to move around -- hand it to a cache, store it on a module scope, or export it from a repository class.
+
+The callback must return a builder that exposes `.prepare()` -- either a `SelectQueryBuilder` or a `RawQueryBuilder`. Both work:
+
+```typescript
+const recentPostsByAuthor = em.compile<Post, { authorId: number }>((em, $) =>
+  em
+    .createQueryBuilder(Post, "p")
+    .where(sql`p.authorId = ${$.authorId}`)
+    .orderBy({ createdAt: "DESC" })
+    .limit(10),
+);
+```
+
+If the callback returns something that cannot be compiled, an `OrmError` is thrown up front -- never silently at execution time.
+
+### Execution methods
+
+Once compiled, a query has three terminal methods:
+
+| Method | Returns | Use when |
+|--------|---------|----------|
+| `execute(params)` | `T[]` (class instances, if a deserializer was attached) | You expect a list of results |
+| `executeOne(params)` | `T \| null` | You expect at most one row (the query should already include `LIMIT 1` if needed) |
+| `executeRaw(params)` | `unknown[]` | You want the driver rows as-is, skipping deserialization |
+
+Omitting `params` is allowed only when the query defines no placeholders; otherwise a `MISSING_PLACEHOLDER` `OrmError` fires before the query runs.
+
+```typescript
+await findUserById.execute({});            // throws -- "id" is required
+await findUserById.execute({ id: 1 });     // ok
+```
+
+You can inspect a compiled query without executing it:
+
+```typescript
+compiled.sql;              // "SELECT ... WHERE u.id = ?" (driver-agnostic form)
+compiled.parameterNames;   // readonly ["id"]
+```
+
+### Good practices
+
+- **Compile once, reuse forever.** Assign the compiled query to a module-scoped constant or a service field. Re-creating it per request defeats the purpose.
+- **Keep the template stable.** If the WHERE clause changes shape (extra conditions, optional ORDER BY), build a handful of compiled variants rather than threading optional logic through a single one.
+- **Prefer `em.compile()` when you want the typed parameter ergonomics.** `qb.prepare()` is the better fit when the builder is constructed dynamically by surrounding code.
+- **Profile before and after.** Compilation is cheap and safe, but the benefit depends on how much of your runtime was actually spent building SQL. Use [`getQueryLog()`](#query-diagnostics) or an external profiler to confirm the change moved the needle.
+
+---
+
 ## Entity Metadata API
 
 The metadata API provides read-only access to entity schema information at runtime. This is useful for building admin panels, generating documentation, or creating generic CRUD components.

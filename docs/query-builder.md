@@ -1302,6 +1302,27 @@ Calling `applyScope()` with a non-existent name throws an `OrmError` listing the
 
 ---
 
+## Compiling Repeated Queries — `prepare()`
+
+If the exact same builder shape runs many times with only the values changing, you can freeze the SQL once and reuse it:
+
+```typescript
+import { p } from "@stingerloom/orm";
+import sql from "sql-template-tag";
+
+const findById = em
+  .createQueryBuilder(User, "u")
+  .where(sql`u.id = ${p("id")}`)
+  .prepare<{ id: number }>();
+
+await findById.executeOne({ id: 42 });
+await findById.executeOne({ id: 77 });   // SQL is not rebuilt
+```
+
+`preparePartial()` is the partial-projection counterpart, and `RawQueryBuilder` exposes the same `.prepare(em)` entry point. For the full rationale — when it helps, when it doesn't, and how it compares to `WriteBuffer` and batch writes — see [Compiled Query Plans](./entity-manager-advanced.md#compiled-query-plans-em-compile-qb-prepare).
+
+---
+
 ## RawQueryBuilder — Full SQL Control
 
 For advanced SQL features — UNION, CTE, window functions, subqueries — see the dedicated [Raw SQL & CTE](./raw-sql.md) guide.
