@@ -108,10 +108,13 @@ export const ALL_MYSQL: Readonly<MySqlCapabilities> = Object.freeze({
   supportsDefaultExpression: true,
   supportsJsonColumnType: true,
   supportsInvisibleColumns: true,
-  supportsInsertReturning: true,
-  supportsSequence: true,
-  supportsNativeUuidType: true,
-  supportsSystemVersioning: true,
+  // MariaDB-only features: kept false in the "MySQL best-case" default so that
+  // DDL produced without version detection is MySQL-safe. MariaDB users get the
+  // real flags via `resolveMySqlCapabilities(version, isMariaDb=true)`.
+  supportsInsertReturning: false,
+  supportsSequence: false,
+  supportsNativeUuidType: false,
+  supportsSystemVersioning: false,
 });
 
 export const ALL_POSTGRES: Readonly<PostgresCapabilities> = Object.freeze({

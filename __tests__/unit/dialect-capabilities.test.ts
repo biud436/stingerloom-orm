@@ -402,9 +402,22 @@ describe("resolveSqliteCapabilities", () => {
 });
 
 describe("ALL_* defaults", () => {
-  it("ALL_MYSQL should have all flags set to true", () => {
-    for (const [, value] of Object.entries(ALL_MYSQL)) {
-      expect(value).toBe(true);
+  // MariaDB-only flags are intentionally false in ALL_MYSQL so that DDL
+  // produced with the optimistic default stays safe on MySQL.
+  const MARIADB_ONLY_FLAGS = new Set([
+    "supportsInsertReturning",
+    "supportsSequence",
+    "supportsNativeUuidType",
+    "supportsSystemVersioning",
+  ]);
+
+  it("ALL_MYSQL should have every non-MariaDB-only flag set to true", () => {
+    for (const [key, value] of Object.entries(ALL_MYSQL)) {
+      if (MARIADB_ONLY_FLAGS.has(key)) {
+        expect(value).toBe(false);
+      } else {
+        expect(value).toBe(true);
+      }
     }
   });
 

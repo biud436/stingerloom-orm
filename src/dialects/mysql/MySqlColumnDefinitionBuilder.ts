@@ -70,7 +70,9 @@ export class MySqlColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
       case "enum":
         return "ENUM";
       case "uuid":
-        return "CHAR(36)";
+        // MariaDB 10.7+ has a native UUID type that stores 16 bytes instead of
+        // 36 and sorts correctly. MySQL has no native UUID type at any version.
+        return this.mysql.supportsNativeUuidType ? "UUID" : "CHAR(36)";
       default:
         return type as string;
     }

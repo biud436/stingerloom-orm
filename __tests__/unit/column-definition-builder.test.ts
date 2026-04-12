@@ -65,7 +65,34 @@ describe("MySqlColumnDefinitionBuilder", () => {
     it("array → JSON", () => expect(builder.castType("array")).toBe("JSON"));
     it("char → CHAR", () => expect(builder.castType("char")).toBe("CHAR"));
     it("enum → ENUM", () => expect(builder.castType("enum")).toBe("ENUM"));
+    // Default ALL_MYSQL keeps MariaDB-only flags off so default DDL stays MySQL-safe.
     it("uuid → CHAR(36)", () => expect(builder.castType("uuid")).toBe("CHAR(36)"));
+  });
+
+  describe("castType — version-resolved", () => {
+    it("MySQL 8.x → uuid → CHAR(36) (no native UUID support)", async () => {
+      const { resolveMySqlCapabilities } = await import("../../src/dialects/resolveCapabilities");
+      const { DbVersion } = await import("../../src/dialects/DbVersion");
+      const caps = resolveMySqlCapabilities(DbVersion.parse("8.0.40"), false);
+      const mysql = new MySqlColumnDefinitionBuilder(caps);
+      expect(mysql.castType("uuid")).toBe("CHAR(36)");
+    });
+
+    it("MariaDB 10.6.x → uuid → CHAR(36) (< 10.7 has no native UUID)", async () => {
+      const { resolveMySqlCapabilities } = await import("../../src/dialects/resolveCapabilities");
+      const { DbVersion } = await import("../../src/dialects/DbVersion");
+      const caps = resolveMySqlCapabilities(DbVersion.parse("10.6.0"), true);
+      const mariadb = new MySqlColumnDefinitionBuilder(caps);
+      expect(mariadb.castType("uuid")).toBe("CHAR(36)");
+    });
+
+    it("MariaDB 10.7.0 → uuid → UUID (native UUID type)", async () => {
+      const { resolveMySqlCapabilities } = await import("../../src/dialects/resolveCapabilities");
+      const { DbVersion } = await import("../../src/dialects/DbVersion");
+      const caps = resolveMySqlCapabilities(DbVersion.parse("10.7.0"), true);
+      const mariadb = new MySqlColumnDefinitionBuilder(caps);
+      expect(mariadb.castType("uuid")).toBe("UUID");
+    });
   });
 
   describe("wrapIdentifier", () => {
