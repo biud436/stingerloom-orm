@@ -101,6 +101,7 @@ import type { RawPipeline, RawPipelineOptions } from "./plugin/raw-pipeline/RawP
 import { createDialectExpression } from "../dialects/DialectExpression";
 import { SelectQueryBuilder, isEntityRef } from "./SelectQueryBuilder";
 import type { EntityRef } from "./SelectQueryBuilder";
+import { CompiledQuery, p as createPlaceholder, PlaceholderMarker } from "./CompiledQuery";
 
 // ── Public Metadata View Types (#233) ────────────────────
 
@@ -4121,6 +4122,51 @@ export class EntityManager implements BaseEntityManager {
     else if (this.isSqlite()) qb.setDatabaseType("sqlite");
     else qb.setDatabaseType("postgresql");
     return qb;
+  }
+
+  /**
+   * Compile a query once for repeated execution with different parameters.
+   *
+   * The callback receives this `EntityManager` and a proxy that yields
+   * a fresh `PlaceholderMarker` for every property access. Use those
+   * markers wherever a value is expected — WHERE bindings, LIMIT, etc.
+   * The callback must return a builder exposing `.prepare()`.
+   *
+   * @example
+   * ```ts
+   * const getUser = em.compile<User, { id: number }>((em, $) =>
+   *   em.createQueryBuilder(User, "u").where("u.id = :id", { id: $.id })
+   * );
+   *
+   * await getUser.executeOne({ id: 42 });
+   * await getUser.executeOne({ id: 77 });   // SQL not rebuilt
+   * ```
+   */
+  compile<T, P extends Record<string, unknown>>(
+    fn: (em: this, params: { [K in keyof P]: PlaceholderMarker }) =>
+      | SelectQueryBuilder<T, any>
+      | { prepare: () => CompiledQuery<T, P> }
+      | { prepare: (executor: any) => CompiledQuery<T, P> },
+  ): CompiledQuery<T, P> {
+    const proxy = new Proxy({} as any, {
+      get: (_target, key: string | symbol) => {
+        if (typeof key === "symbol") return undefined;
+        return createPlaceholder(key);
+      },
+    });
+    const builder = fn(this, proxy);
+    const prep = (builder as any).prepare;
+    if (typeof prep !== "function") {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        "em.compile() callback must return a builder exposing .prepare().",
+      );
+    }
+    // SelectQueryBuilder.prepare() is zero-arg; RawQueryBuilder.prepare(em)
+    // needs the executor. Call length disambiguates them.
+    const result =
+      prep.length >= 1 ? prep.call(builder, this) : prep.call(builder);
+    return result as CompiledQuery<T, P>;
   }
 
   getDriver(): ISqlDriver | undefined {

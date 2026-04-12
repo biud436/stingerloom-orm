@@ -9,6 +9,7 @@ import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { EntityNotFoundError } from "../errors/EntityNotFoundError";
 import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
+import { CompiledQuery } from "./CompiledQuery";
 import { COLUMN_TOKEN } from "../decorators/Column";
 import { InheritanceResolver } from "./InheritanceResolver";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
@@ -2567,6 +2568,71 @@ export class SelectQueryBuilder<T, TResult = T> {
     );
 
     return this.applyValidation(entities) as unknown as T[];
+  }
+
+  /**
+   * Compile this query once so subsequent executions skip SQL assembly.
+   *
+   * Use `p("name")` to mark runtime parameter slots in `.where()`, `.limit()`,
+   * etc. Calling `.prepare()` freezes the current builder state: later
+   * mutations do not affect the returned `CompiledQuery`.
+   *
+   * @example
+   * ```ts
+   * const q = em.createQueryBuilder(User, "u")
+   *   .where("u.id = :id", { id: p("id") })
+   *   .prepare<{ id: number }>();
+   *
+   * await q.executeOne({ id: 42 });
+   * await q.executeOne({ id: 77 });   // no rebuild
+   * ```
+   */
+  prepare<P extends Record<string, unknown> = Record<string, unknown>>(): CompiledQuery<T, P> {
+    this.validateRequiredColumns();
+    const built = this.toSql();
+
+    const entity = this.entity;
+    const isPoly = this.isPolymorphicQuery;
+    const discMap = this.discriminatorMap;
+    const strategy = this.inheritanceStrategy;
+    const tptMap = this.tptChildPrefixMap;
+    const deserializePoly = this.deserializePolymorphic.bind(this);
+    const deserializeTPT = this.deserializeTPTPolymorphic.bind(this);
+    const applyVal = this.applyValidation.bind(this);
+
+    const deserialize = (rows: any[]): T[] => {
+      if (isPoly && discMap?.size) {
+        if (strategy === "JOINED" && tptMap) {
+          return applyVal(deserializeTPT(rows)) as unknown as T[];
+        }
+        return applyVal(deserializePoly(rows)) as unknown as T[];
+      }
+      const registry = DeserializerRegistry.getInstance();
+      const entities = rows.map((row: any) => registry.deserialize(entity, row));
+      return applyVal(entities) as unknown as T[];
+    };
+
+    return new CompiledQuery<T, P>(
+      built.strings,
+      built.values,
+      (sql) => this.em.query<any>(sql),
+      deserialize,
+    );
+  }
+
+  /**
+   * Compile a partial-projection query (no class deserialization).
+   * Mirrors `getPartialMany()` — returns plain objects shaped by `select()`.
+   */
+  preparePartial<P extends Record<string, unknown> = Record<string, unknown>>(): CompiledQuery<TResult, P> {
+    const built = this.toSql();
+    const applyVal = this.applyValidation.bind(this);
+    return new CompiledQuery<TResult, P>(
+      built.strings,
+      built.values,
+      (sql) => this.em.query<any>(sql),
+      (rows) => applyVal(rows) as unknown as TResult[],
+    );
   }
 
   /**

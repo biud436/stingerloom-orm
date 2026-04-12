@@ -2,6 +2,15 @@ import sql, { Sql, raw, join } from "sql-template-tag";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { CompiledQuery } from "./CompiledQuery";
+
+/**
+ * Minimal execution surface required by `RawQueryBuilder.prepare()`.
+ * Satisfied by `EntityManager` without creating an import cycle.
+ */
+export interface RawQueryExecutor {
+  query<T = Record<string, unknown>>(sqlQuery: Sql): Promise<T[]>;
+}
 
 export type DatabaseType = "mysql" | "postgresql" | "sqlite";
 export type SubqueryType = "SELECT" | "FROM" | "WHERE" | "HAVING";
@@ -639,5 +648,34 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
     }
 
     return join(segments, " ");
+  }
+
+  /**
+   * Compile this raw query once. Subsequent executions skip SQL assembly
+   * and only substitute placeholder values.
+   *
+   * Unlike `SelectQueryBuilder.prepare()`, rows are returned as plain
+   * untyped objects (no class deserialization).
+   *
+   * @example
+   * ```ts
+   * const qb = em.createQueryBuilder()
+   *   .select(["id", "name"])
+   *   .from("users")
+   *   .where(sql`id = ${p("id")}`);
+   * const compiled = qb.prepare(em);
+   * await compiled.execute({ id: 42 });
+   * ```
+   */
+  prepare<
+    T = Record<string, unknown>,
+    P extends Record<string, unknown> = Record<string, unknown>,
+  >(executor: RawQueryExecutor): CompiledQuery<T, P> {
+    const built = this.build();
+    return new CompiledQuery<T, P>(
+      built.strings,
+      built.values,
+      (sqlQuery) => executor.query<any>(sqlQuery),
+    );
   }
 }

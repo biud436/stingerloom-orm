@@ -33,3 +33,4 @@ export * from "./plugin";
 export * from "./WhereResolver";
 export * from "./ColumnTypeRegistry";
 export * from "./InheritanceResolver";
+export * from "./CompiledQuery";

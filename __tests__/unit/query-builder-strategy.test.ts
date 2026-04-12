@@ -55,6 +55,7 @@ describe("RawQueryBuilderFactory strategy pattern", () => {
       withRecursive: jest.fn().mockReturnThis(),
       selectWithWindow: jest.fn().mockReturnThis(),
       build: jest.fn(),
+      prepare: jest.fn(),
     };
 
     const factory = jest.fn(() => mockQb);

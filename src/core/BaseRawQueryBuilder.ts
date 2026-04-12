@@ -1,5 +1,6 @@
 import { Sql } from "sql-template-tag";
-import type { DatabaseType, RawQueryBuilder } from "./RawQueryBuilder";
+import type { DatabaseType, RawQueryBuilder, RawQueryExecutor } from "./RawQueryBuilder";
+import type { CompiledQuery } from "./CompiledQuery";
 
 /**
  * Interface representing a base raw query builder.
@@ -232,4 +233,13 @@ export interface BaseRawQueryBuilder {
    * @returns The SQL object representing the query.
    */
   build(): Sql;
+
+  /**
+   * Compile the query once; `.execute()` on the returned object skips
+   * SQL assembly and only substitutes placeholder values.
+   */
+  prepare<
+    T = Record<string, unknown>,
+    P extends Record<string, unknown> = Record<string, unknown>,
+  >(executor: RawQueryExecutor): CompiledQuery<T, P>;
 }
