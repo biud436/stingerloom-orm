@@ -34,3 +34,4 @@ export * from "./WhereResolver";
 export * from "./ColumnTypeRegistry";
 export * from "./InheritanceResolver";
 export * from "./CompiledQuery";
+export * from "./expressions/JsonPathExpression";

@@ -12,6 +12,11 @@ import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
 import { CompiledQuery } from "./CompiledQuery";
 import { COLUMN_TOKEN } from "../decorators/Column";
 import { InheritanceResolver } from "./InheritanceResolver";
+import {
+  JsonPathCondition,
+  makeJsonPathExpression,
+  type JsonPathExpression,
+} from "./expressions/JsonPathExpression";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
@@ -262,11 +267,44 @@ export class ColumnExpression {
 }
 
 /**
- * Mapped type: transforms entity properties into `ColumnExpression` accessors.
+ * Mapped type: transforms entity properties into `ColumnExpression` accessors,
+ * with JSON-typed properties surfaced as `JsonPathExpression` for deep navigation.
  */
 export type QEntity<T> = {
-  readonly [K in keyof T & string]: ColumnExpression;
+  readonly [K in keyof T & string]: T[K] extends
+    | string
+    | number
+    | boolean
+    | bigint
+    | Date
+    | null
+    | undefined
+    ? ColumnExpression
+    : T[K] extends object
+      ? JsonPathExpression
+      : ColumnExpression;
 } & EntityRef<T>;
+
+/**
+ * @internal Collect the set of TypeScript property keys whose `@Column`
+ * metadata declares a JSON type (`json` or `jsonb`). Returns an empty set
+ * if the entity has no column metadata yet.
+ */
+function collectJsonColumnProps(entity: ClazzType<any>): Set<string> {
+  const columns: ColumnMetadata[] =
+    Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
+    Reflect.getMetadata(COLUMN_TOKEN, entity) ??
+    [];
+  const out = new Set<string>();
+  for (const col of columns) {
+    const type = col.options?.type;
+    if (type === "json" || type === "jsonb") {
+      const key = col.propertyKey ?? col.name;
+      if (key) out.add(key);
+    }
+  }
+  return out;
+}
 
 /**
  * Create a QueryDSL-style typed entity reference with property-level expressions.
@@ -291,6 +329,7 @@ export type QEntity<T> = {
  * ```
  */
 export function qAlias<T>(entity: ClazzType<T>, name: string): QEntity<T> {
+  const jsonProps = collectJsonColumnProps(entity);
   return new Proxy({} as any, {
     get(_target: any, prop: string | symbol): any {
       if (typeof prop === "symbol") return undefined;
@@ -301,6 +340,9 @@ export function qAlias<T>(entity: ClazzType<T>, name: string): QEntity<T> {
       }
       if (prop === "toString" || prop === "valueOf") {
         return () => name;
+      }
+      if (jsonProps.has(prop)) {
+        return makeJsonPathExpression(`${name}.${prop}`);
       }
       return new ColumnExpression(`${name}.${prop}`);
     },
@@ -954,12 +996,13 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   where(condition: Sql): this;
   where(condition: ColumnCondition): this;
+  where(condition: JsonPathCondition): this;
   where(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   where(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   where(column: string, value: any): this;
   where(column: string, operator: WhereOperator, value: any): this;
   where(
-    columnOrCondition: string | Sql | ColumnCondition,
+    columnOrCondition: string | Sql | ColumnCondition | JsonPathCondition,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -974,12 +1017,13 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   andWhere(condition: Sql): this;
   andWhere(condition: ColumnCondition): this;
+  andWhere(condition: JsonPathCondition): this;
   andWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   andWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   andWhere(column: string, value: any): this;
   andWhere(column: string, operator: WhereOperator, value: any): this;
   andWhere(
-    columnOrCondition: string | Sql | ColumnCondition,
+    columnOrCondition: string | Sql | ColumnCondition | JsonPathCondition,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -994,12 +1038,13 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   orWhere(condition: Sql): this;
   orWhere(condition: ColumnCondition): this;
+  orWhere(condition: JsonPathCondition): this;
   orWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   orWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   orWhere(column: string, value: any): this;
   orWhere(column: string, operator: WhereOperator, value: any): this;
   orWhere(
-    columnOrCondition: string | Sql | ColumnCondition,
+    columnOrCondition: string | Sql | ColumnCondition | JsonPathCondition,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -3015,13 +3060,27 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   protected resolveCondition(
-    columnOrCondition: string | Sql | ColumnCondition,
+    columnOrCondition: string | Sql | ColumnCondition | JsonPathCondition,
     operatorOrValue?: any,
     value?: any,
   ): Sql {
     // ColumnCondition from QueryDSL expressions (u.firstName.eq("Alice"))
     if (columnOrCondition instanceof ColumnCondition) {
       return columnOrCondition.resolve((ref) => this.resolveColumn(ref));
+    }
+    // JsonPathCondition from JSON QueryDSL expressions (u.metadata.profile.email.eq(...))
+    if (columnOrCondition instanceof JsonPathCondition) {
+      if (!this.dialectExpression) {
+        throw new OrmError(
+          OrmErrorCode.INVALID_QUERY,
+          "JSON path conditions require a DialectExpression. " +
+            "Ensure the query builder was created via EntityManager.createQueryBuilder().",
+        );
+      }
+      return columnOrCondition.resolve(
+        (ref) => this.resolveColumn(ref),
+        this.dialectExpression,
+      );
     }
 
     // Overload 1: raw Sql condition
