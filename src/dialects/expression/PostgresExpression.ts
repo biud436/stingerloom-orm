@@ -37,10 +37,13 @@ export class PostgresExpression implements DialectExpression {
   }
 
   jsonHasKey(column: string, path: ReadonlyArray<string | number>, key: string): Sql {
+    // Use `jsonb_exists()` rather than the `?` operator: the operator collides
+    // with sql-template-tag's `?` parameter placeholder, which the Postgres
+    // connector rewrites to `$N` unconditionally.
     if (path.length === 0) {
-      return sql`${raw(column)} ? ${key}`;
+      return sql`jsonb_exists(${raw(column)}, ${key})`;
     }
-    return sql`(${raw(column)} #> ${this.pathArray(path)}) ? ${key}`;
+    return sql`jsonb_exists(${raw(column)} #> ${this.pathArray(path)}, ${key})`;
   }
 
   jsonArrayLength(column: string, path: ReadonlyArray<string | number>): Sql {

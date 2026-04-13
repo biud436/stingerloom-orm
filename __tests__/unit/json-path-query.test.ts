@@ -192,9 +192,12 @@ describe("PostgresExpression — JSON methods", () => {
     expect(s.values).toContain(JSON.stringify({ role: "admin" }));
   });
 
-  it("jsonHasKey uses the ? operator", () => {
+  it("jsonHasKey uses jsonb_exists() (avoids ? operator/placeholder collision)", () => {
     const s = expr.jsonHasKey('"u"."profile"', ["contact"], "email");
-    expect(s.sql).toMatch(/ \? /);
+    expect(s.sql).toContain("jsonb_exists(");
+    // Crucially must NOT contain a bare ` ? ` operator: pg connector rewrites
+    // every ? to $N, which would corrupt JSON `?` operator usage.
+    expect(s.sql).not.toMatch(/\) \? /);
     expect(s.values).toContain("email");
   });
 
@@ -378,7 +381,7 @@ describe("JsonPathCondition.resolve()", () => {
 
     const c2 = makeJsonPathExpression("u.profile").hasKey("contact");
     const s2 = c2.resolve(resolver, pg);
-    expect(s2.sql).toMatch(/ \? /);
+    expect(s2.sql).toContain("jsonb_exists(");
   });
 });
 
