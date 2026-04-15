@@ -50,12 +50,66 @@ export class FlushExecutor {
   /**
    * #162/#163: Check if entity has ORM-managed metadata (version, timestamps)
    * that would be bypassed by batch operations.
+   *
+   * Retained for the UPDATE-batch path (`flushUpdatesBatched`), where
+   * per-row WHERE version=? (optimistic locking) still requires per-row
+   * SQL. The INSERT-batch path no longer uses this — #244 pre-injects
+   * timestamps / initial version on each entry so those columns ride along
+   * in the multi-row INSERT.
    */
   private hasOrmManagedFields(entityClass: ClazzType<any>): boolean {
-    const hasVersion = Reflect.getMetadata(VERSION_TOKEN, entityClass.prototype);
-    const hasCreateTs = Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, entityClass.prototype);
-    const hasUpdateTs = Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, entityClass.prototype);
+    // @Version / @CreateTimestamp / @UpdateTimestamp store their metadata
+    // on the class constructor (see each decorator). Earlier revisions
+    // looked up on `entityClass.prototype`, which silently returned
+    // undefined — the check was a no-op, so versioned entities flowed
+    // through the batch UPDATE path bypassing their WHERE version=? guard.
+    const hasVersion = Reflect.getMetadata(VERSION_TOKEN, entityClass);
+    const hasCreateTs = Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, entityClass);
+    const hasUpdateTs = Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, entityClass);
     return !!(hasVersion || hasCreateTs || hasUpdateTs);
+  }
+
+  /**
+   * Pre-populate ORM-managed columns on each persist entry so the batched
+   * multi-row INSERT carries explicit values instead of relying on DB
+   * defaults or RETURNING:
+   *
+   * - `@CreateTimestamp` — set to `now` when unset.
+   * - `@UpdateTimestamp` — always set to `now` (matches non-batched save()).
+   * - `@Version`         — initialize to 1 when unset.
+   *
+   * Mutating the instance in place keeps parity with `WriteBuffer.ensureTimestamps` /
+   * `ensureVersionIncrement` on the per-row path, so callers observe the
+   * same post-flush instance state regardless of which flush strategy ran.
+   */
+  private injectOrmManagedFields(
+    entityClass: ClazzType<any>,
+    entries: PersistEntry[],
+    now: Date,
+  ): void {
+    const versionCol = Reflect.getMetadata(VERSION_TOKEN, entityClass) as
+      | string
+      | undefined;
+    const createCol = Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, entityClass) as
+      | string
+      | undefined;
+    const updateCol = Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, entityClass) as
+      | string
+      | undefined;
+    if (!versionCol && !createCol && !updateCol) return;
+
+    for (const entry of entries) {
+      const inst: any = entry.instance;
+      if (createCol && (inst[createCol] === undefined || inst[createCol] === null)) {
+        inst[createCol] = now;
+      }
+      if (updateCol) {
+        inst[updateCol] = now;
+      }
+      if (versionCol && (inst[versionCol] === undefined || inst[versionCol] === null)) {
+        inst[versionCol] = 1;
+      }
+    }
   }
 
   /**
@@ -79,10 +133,22 @@ export class FlushExecutor {
       arr.push(entry);
     }
 
+    // Single `now` per flush pass so every batched row in this flush shares
+    // the same wall-clock timestamp (matches intuition for @CreateTimestamp
+    // / @UpdateTimestamp on a logical transaction).
+    const now = new Date();
+
     for (const [entityClass, entries] of groups) {
-      // Fallback to individual saves for: single entry, composite PK,
-      // SQLite (#159), or entities with version/timestamp (#162)
-      if (entries.length === 1 || entries[0].pkColumns.length > 1 || this.ctx.isSqlite?.() || this.hasOrmManagedFields(entityClass)) {
+      // #244: inject ORM-managed values up-front so @Version /
+      // @CreateTimestamp / @UpdateTimestamp entities ride along in the
+      // multi-row INSERT instead of falling back to per-row save().
+      this.injectOrmManagedFields(entityClass, entries, now);
+
+      // Fallback to individual saves for: single entry, composite PK, or
+      // SQLite (#159). Entities with @Version / @CreateTimestamp /
+      // @UpdateTimestamp are no longer disqualified — their values were
+      // just injected above.
+      if (entries.length === 1 || entries[0].pkColumns.length > 1 || this.ctx.isSqlite?.()) {
         for (const entry of entries) {
           const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
           const saved = await txEm.save(entry.entity, saveData);

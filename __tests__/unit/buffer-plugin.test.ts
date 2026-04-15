@@ -2820,6 +2820,87 @@ describe("Buffer Plugin", () => {
       expect(saveSpy).toHaveBeenCalledTimes(2); // individual saves
     });
 
+    it("batches entities with @CreateTimestamp / @UpdateTimestamp (issue #244)", async () => {
+      const em = createEmWithEntities(AuditableItem);
+      const extended = em.extend(bufferPlugin({ batchInsert: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      const querySpy = jest.spyOn(extended, "query").mockResolvedValue({ insertId: 50 } as any);
+
+      const mut = extended.buffer();
+      const a = Object.assign(new AuditableItem(), { title: "a" });
+      const b = Object.assign(new AuditableItem(), { title: "b" });
+      mut.persist(a);
+      mut.persist(b);
+
+      const before = Date.now();
+      const result = await mut.flush();
+      const after = Date.now();
+
+      expect(result.inserts).toBe(2);
+      // Single multi-row INSERT, not two individual saves.
+      expect(querySpy).toHaveBeenCalledTimes(1);
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO"),
+        expect.any(Array),
+      );
+      // In-memory instances carry the injected timestamps.
+      expect(a.createdAt).toBeInstanceOf(Date);
+      expect(a.updatedAt).toBeInstanceOf(Date);
+      expect(b.createdAt).toBeInstanceOf(Date);
+      expect(b.updatedAt).toBeInstanceOf(Date);
+      const t = (a.createdAt as Date).getTime();
+      expect(t).toBeGreaterThanOrEqual(before);
+      expect(t).toBeLessThanOrEqual(after);
+      // Both rows of a single flush pass share the same `now`.
+      expect((a.createdAt as Date).getTime()).toBe((b.createdAt as Date).getTime());
+    });
+
+    it("batches entities with @Version (initializes version = 1) (issue #244)", async () => {
+      const em = createEmWithEntities(VersionedProduct);
+      const extended = em.extend(bufferPlugin({ batchInsert: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      const querySpy = jest.spyOn(extended, "query").mockResolvedValue({ insertId: 200 } as any);
+
+      const mut = extended.buffer();
+      const p1 = Object.assign(new VersionedProduct(), { name: "widget", price: 10 });
+      const p2 = Object.assign(new VersionedProduct(), { name: "gizmo", price: 20 });
+      mut.persist(p1);
+      mut.persist(p2);
+
+      const result = await mut.flush();
+
+      expect(result.inserts).toBe(2);
+      expect(querySpy).toHaveBeenCalledTimes(1);
+      expect(p1.version).toBe(1);
+      expect(p2.version).toBe(1);
+    });
+
+    it("does not clobber pre-set timestamps / versions on batched entities", async () => {
+      const em = createEmWithEntities(AuditableItem);
+      const extended = em.extend(bufferPlugin({ batchInsert: true }));
+      jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
+      jest.spyOn(extended, "query").mockResolvedValue({ insertId: 60 } as any);
+
+      const mut = extended.buffer();
+      const pre = new Date(2020, 0, 1);
+      const a = Object.assign(new AuditableItem(), { title: "a", createdAt: pre });
+      // Second entity so the batch path (N ≥ 2) activates rather than
+      // the single-entity fallback to txEm.save().
+      const b = Object.assign(new AuditableItem(), { title: "b" });
+      mut.persist(a);
+      mut.persist(b);
+
+      await mut.flush();
+
+      // createdAt preserved on entity that had it pre-set; injected on
+      // the other. updatedAt always stamped to now for both (matches
+      // non-batch save() behavior).
+      expect(a.createdAt).toBe(pre);
+      expect(a.updatedAt).not.toBe(pre);
+      expect(b.createdAt).toBeInstanceOf(Date);
+      expect(b.createdAt).not.toBe(pre);
+    });
+
     it("cascade should still trigger per entry in batch mode", async () => {
       const em = createEmWithEntities(Post, Comment);
       const extended = em.extend(bufferPlugin({ batchInsert: true }));
