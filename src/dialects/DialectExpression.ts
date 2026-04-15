@@ -5,6 +5,22 @@ import { MySqlExpression } from "./expression/MySqlExpression";
 import { SqliteExpression } from "./expression/SqliteExpression";
 
 /**
+ * Metadata about a JSON/JSONB column, threaded through JSON-path expression
+ * resolution so dialect implementations can branch on storage type.
+ *
+ * Needed because PostgreSQL distinguishes `json` (text-backed, no native
+ * containment operator) from `jsonb` (binary-encoded, supports `@>`, `?`,
+ * `jsonb_path_ops` GIN). MySQL/SQLite expose only a single JSON type each
+ * and generally ignore this hint.
+ */
+export interface ColumnJsonMeta {
+  /** Underlying storage type as declared by `@Column({ type })`. */
+  dbType: "json" | "jsonb";
+  /** Whether the column itself is nullable. */
+  nullable: boolean;
+}
+
+/**
  * Strategy interface for dialect-specific SQL expression generation.
  *
  * Each method takes already-qualified column identifiers (e.g. `"u"."name"`)
@@ -43,8 +59,14 @@ export interface DialectExpression {
    * @param path - Path segments (strings navigate objects, numbers navigate arrays).
    * @param asText - When true, coerce the extracted value to text (`->>` / `JSON_UNQUOTE`);
    *                when false, return raw JSON (`->` / `JSON_EXTRACT`).
+   * @param meta - Optional column metadata. Used by dialects that branch on `json` vs `jsonb`.
    */
-  jsonExtract(column: string, path: ReadonlyArray<string | number>, asText: boolean): Sql;
+  jsonExtract(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    asText: boolean,
+    meta?: ColumnJsonMeta,
+  ): Sql;
 
   /**
    * JSON containment check: does the sub-document at `path` contain `value`?
@@ -53,7 +75,12 @@ export interface DialectExpression {
    * - MySQL: `JSON_CONTAINS(column, JSON candidate, '$.path')`
    * - SQLite: falls back to equality for scalars; throws for objects.
    */
-  jsonContains(column: string, path: ReadonlyArray<string | number>, value: unknown): Sql;
+  jsonContains(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    value: unknown,
+    meta?: ColumnJsonMeta,
+  ): Sql;
 
   /**
    * Key existence check on a JSON object located at `path`.
@@ -62,13 +89,26 @@ export interface DialectExpression {
    * - MySQL: `JSON_CONTAINS_PATH(column, 'one', '$.path.key')`
    * - SQLite: `json_extract(column, '$.path.key') IS NOT NULL`
    */
-  jsonHasKey(column: string, path: ReadonlyArray<string | number>, key: string): Sql;
+  jsonHasKey(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    key: string,
+    meta?: ColumnJsonMeta,
+  ): Sql;
 
   /** Array length at the given JSON path. Returns an integer scalar expression. */
-  jsonArrayLength(column: string, path: ReadonlyArray<string | number>): Sql;
+  jsonArrayLength(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    meta?: ColumnJsonMeta,
+  ): Sql;
 
   /** JSON type at the given path. Returns a text scalar expression (`'object'`, `'array'`, etc.). */
-  jsonTypeOf(column: string, path: ReadonlyArray<string | number>): Sql;
+  jsonTypeOf(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    meta?: ColumnJsonMeta,
+  ): Sql;
 }
 
 /** Singleton cache — implementations are stateless. */

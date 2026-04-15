@@ -407,3 +407,111 @@ describe("SQL Injection safety — all values parameterized", () => {
     expect(s.values).toContain("evil' OR '1'='1");
   });
 });
+
+describe("ColumnJsonMeta threading (issue #246)", () => {
+  it("qAlias captures jsonb storage type on the proxy", () => {
+    const u = qAlias(JsonFixture, "u") as any;
+    expect(u.profile._meta).toEqual({ dbType: "jsonb", nullable: true });
+  });
+
+  it("qAlias captures json storage type on the proxy", () => {
+    const u = qAlias(JsonFixture, "u") as any;
+    expect(u.preferences._meta).toEqual({ dbType: "json", nullable: true });
+  });
+
+  it("path segment extension preserves meta", () => {
+    const u = qAlias(JsonFixture, "u") as any;
+    expect(u.profile.contact.email._meta).toEqual({
+      dbType: "jsonb",
+      nullable: true,
+    });
+  });
+
+  it("eq() condition carries meta", () => {
+    const u = qAlias(JsonFixture, "u") as any;
+    const cond: JsonPathCondition = u.profile.role.eq("admin");
+    expect(cond.meta).toEqual({ dbType: "jsonb", nullable: true });
+  });
+
+  it("contains() condition carries meta", () => {
+    const u = qAlias(JsonFixture, "u") as any;
+    const cond: JsonPathCondition = u.profile.tags.contains("blue");
+    expect(cond.meta).toEqual({ dbType: "jsonb", nullable: true });
+  });
+
+  it("hasKey() condition carries meta", () => {
+    const u = qAlias(JsonFixture, "u") as any;
+    const cond: JsonPathCondition = u.profile.hasKey("role");
+    expect(cond.meta).toEqual({ dbType: "jsonb", nullable: true });
+  });
+
+  it("arrayLength scalar comparison carries meta", () => {
+    const u = qAlias(JsonFixture, "u") as any;
+    const cond: JsonPathCondition = u.profile.tags.arrayLength().gt(2);
+    expect(cond.meta).toEqual({ dbType: "jsonb", nullable: true });
+  });
+
+  it("resolve() forwards meta to dialect methods", () => {
+    const received: Array<{
+      method: string;
+      meta: unknown;
+    }> = [];
+
+    const fakeDialect: any = {
+      dialect: "postgres",
+      jsonExtract: (_c: string, _p: any, _t: boolean, meta: unknown) => {
+        received.push({ method: "jsonExtract", meta });
+        return { sql: "X", values: [] };
+      },
+      jsonContains: (_c: string, _p: any, _v: unknown, meta: unknown) => {
+        received.push({ method: "jsonContains", meta });
+        return { sql: "X", values: [] };
+      },
+      jsonHasKey: (_c: string, _p: any, _k: string, meta: unknown) => {
+        received.push({ method: "jsonHasKey", meta });
+        return { sql: "X", values: [] };
+      },
+      jsonArrayLength: (_c: string, _p: any, meta: unknown) => {
+        received.push({ method: "jsonArrayLength", meta });
+        return { sql: "X", values: [] };
+      },
+      jsonTypeOf: (_c: string, _p: any, meta: unknown) => {
+        received.push({ method: "jsonTypeOf", meta });
+        return { sql: "X", values: [] };
+      },
+    };
+
+    const u = qAlias(JsonFixture, "u") as any;
+    const expectedMeta = { dbType: "jsonb", nullable: true };
+    const resolveCol = (_ref: string) => `"u"."profile"`;
+
+    (u.profile.role.eq("admin") as JsonPathCondition).resolve(resolveCol, fakeDialect);
+    (u.profile.tags.contains("x") as JsonPathCondition).resolve(resolveCol, fakeDialect);
+    (u.profile.hasKey("role") as JsonPathCondition).resolve(resolveCol, fakeDialect);
+    (u.profile.tags.arrayLength().gt(2) as JsonPathCondition).resolve(
+      resolveCol,
+      fakeDialect,
+    );
+    (u.profile.typeOf().eq("object") as JsonPathCondition).resolve(
+      resolveCol,
+      fakeDialect,
+    );
+
+    for (const r of received) {
+      expect(r.meta).toEqual(expectedMeta);
+    }
+    expect(received.map((r) => r.method)).toEqual([
+      "jsonExtract",
+      "jsonContains",
+      "jsonHasKey",
+      "jsonArrayLength",
+      "jsonTypeOf",
+    ]);
+  });
+
+  it("makeJsonPathExpression without meta yields undefined meta on conditions", () => {
+    const expr = makeJsonPathExpression("u.raw") as any;
+    const cond: JsonPathCondition = expr.eq("x");
+    expect(cond.meta).toBeUndefined();
+  });
+});

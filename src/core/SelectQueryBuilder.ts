@@ -286,21 +286,35 @@ export type QEntity<T> = {
 } & EntityRef<T>;
 
 /**
- * @internal Collect the set of TypeScript property keys whose `@Column`
- * metadata declares a JSON type (`json` or `jsonb`). Returns an empty set
- * if the entity has no column metadata yet.
+ * @internal Collect a map of TypeScript property keys → JSON column metadata
+ * (`dbType`, `nullable`) for `@Column({ type: "json" | "jsonb" })` declarations.
+ *
+ * Needed so `qAlias()` can thread storage-type information into
+ * {@link JsonPathExpression} proxies; {@link DialectExpression} implementations
+ * can then branch on `json` vs `jsonb` (relevant for PostgreSQL, which exposes
+ * native operators/GIN only on `jsonb`).
  */
-function collectJsonColumnProps(entity: ClazzType<any>): Set<string> {
+function collectJsonColumnMeta(
+  entity: ClazzType<any>,
+): Map<string, import("../dialects/DialectExpression").ColumnJsonMeta> {
   const columns: ColumnMetadata[] =
     Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
     Reflect.getMetadata(COLUMN_TOKEN, entity) ??
     [];
-  const out = new Set<string>();
+  const out = new Map<
+    string,
+    import("../dialects/DialectExpression").ColumnJsonMeta
+  >();
   for (const col of columns) {
     const type = col.options?.type;
     if (type === "json" || type === "jsonb") {
       const key = col.propertyKey ?? col.name;
-      if (key) out.add(key);
+      if (key) {
+        out.set(key, {
+          dbType: type as "json" | "jsonb",
+          nullable: col.options?.nullable === true,
+        });
+      }
     }
   }
   return out;
@@ -329,7 +343,7 @@ function collectJsonColumnProps(entity: ClazzType<any>): Set<string> {
  * ```
  */
 export function qAlias<T>(entity: ClazzType<T>, name: string): QEntity<T> {
-  const jsonProps = collectJsonColumnProps(entity);
+  const jsonMeta = collectJsonColumnMeta(entity);
   return new Proxy({} as any, {
     get(_target: any, prop: string | symbol): any {
       if (typeof prop === "symbol") return undefined;
@@ -341,8 +355,9 @@ export function qAlias<T>(entity: ClazzType<T>, name: string): QEntity<T> {
       if (prop === "toString" || prop === "valueOf") {
         return () => name;
       }
-      if (jsonProps.has(prop)) {
-        return makeJsonPathExpression(`${name}.${prop}`);
+      const meta = jsonMeta.get(prop);
+      if (meta) {
+        return makeJsonPathExpression(`${name}.${prop}`, [], meta);
       }
       return new ColumnExpression(`${name}.${prop}`);
     },

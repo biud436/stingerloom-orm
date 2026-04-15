@@ -1,6 +1,6 @@
 import sql, { raw, join } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
-import type { DialectExpression } from "../DialectExpression";
+import type { ColumnJsonMeta, DialectExpression } from "../DialectExpression";
 
 export class PostgresExpression implements DialectExpression {
   readonly dialect = "postgres" as const;
@@ -20,7 +20,12 @@ export class PostgresExpression implements DialectExpression {
     return sql`ARRAY[${join(segs, ", ")}]::text[]`;
   }
 
-  jsonExtract(column: string, path: ReadonlyArray<string | number>, asText: boolean): Sql {
+  jsonExtract(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    asText: boolean,
+    _meta?: ColumnJsonMeta,
+  ): Sql {
     if (path.length === 0) {
       return sql`${raw(column)}`;
     }
@@ -28,7 +33,12 @@ export class PostgresExpression implements DialectExpression {
     return sql`${raw(column)} ${raw(op)} ${this.pathArray(path)}`;
   }
 
-  jsonContains(column: string, path: ReadonlyArray<string | number>, value: unknown): Sql {
+  jsonContains(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    value: unknown,
+    _meta?: ColumnJsonMeta,
+  ): Sql {
     const candidate = JSON.stringify(value);
     if (path.length === 0) {
       return sql`${raw(column)} @> ${candidate}::jsonb`;
@@ -36,7 +46,12 @@ export class PostgresExpression implements DialectExpression {
     return sql`(${raw(column)} #> ${this.pathArray(path)}) @> ${candidate}::jsonb`;
   }
 
-  jsonHasKey(column: string, path: ReadonlyArray<string | number>, key: string): Sql {
+  jsonHasKey(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    key: string,
+    _meta?: ColumnJsonMeta,
+  ): Sql {
     // Use `jsonb_exists()` rather than the `?` operator: the operator collides
     // with sql-template-tag's `?` parameter placeholder, which the Postgres
     // connector rewrites to `$N` unconditionally.
@@ -46,14 +61,22 @@ export class PostgresExpression implements DialectExpression {
     return sql`jsonb_exists(${raw(column)} #> ${this.pathArray(path)}, ${key})`;
   }
 
-  jsonArrayLength(column: string, path: ReadonlyArray<string | number>): Sql {
+  jsonArrayLength(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    _meta?: ColumnJsonMeta,
+  ): Sql {
     if (path.length === 0) {
       return sql`jsonb_array_length(${raw(column)})`;
     }
     return sql`jsonb_array_length(${raw(column)} #> ${this.pathArray(path)})`;
   }
 
-  jsonTypeOf(column: string, path: ReadonlyArray<string | number>): Sql {
+  jsonTypeOf(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    _meta?: ColumnJsonMeta,
+  ): Sql {
     if (path.length === 0) {
       return sql`jsonb_typeof(${raw(column)})`;
     }

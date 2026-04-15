@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import sql, { Sql, raw, join } from "sql-template-tag";
-import type { DialectExpression } from "../../dialects/DialectExpression";
+import type {
+  ColumnJsonMeta,
+  DialectExpression,
+} from "../../dialects/DialectExpression";
 
 /**
  * A segment of a JSON navigation path.
@@ -63,6 +66,7 @@ export class JsonPathCondition {
     readonly kind: JsonConditionKind,
     readonly operator?: string,
     readonly value?: unknown,
+    readonly meta?: ColumnJsonMeta,
   ) {}
 
   /** @internal Resolve against a column resolver and dialect expression. */
@@ -71,22 +75,23 @@ export class JsonPathCondition {
     dialectExpression: DialectExpression,
   ): Sql {
     const column = resolveColumn(this.ref);
+    const m = this.meta;
     switch (this.kind) {
       case "isNull": {
-        const extract = dialectExpression.jsonExtract(column, this.path, true);
+        const extract = dialectExpression.jsonExtract(column, this.path, true, m);
         return sql`${extract} IS NULL`;
       }
       case "isNotNull": {
-        const extract = dialectExpression.jsonExtract(column, this.path, true);
+        const extract = dialectExpression.jsonExtract(column, this.path, true, m);
         return sql`${extract} IS NOT NULL`;
       }
       case "compare": {
-        const extract = dialectExpression.jsonExtract(column, this.path, true);
+        const extract = dialectExpression.jsonExtract(column, this.path, true, m);
         return sql`${extract} ${raw(this.operator!)} ${this.value as any}`;
       }
       case "in":
       case "notIn": {
-        const extract = dialectExpression.jsonExtract(column, this.path, true);
+        const extract = dialectExpression.jsonExtract(column, this.path, true, m);
         const values = (this.value as unknown[]) ?? [];
         if (values.length === 0) {
           return this.kind === "in" ? sql`1 = 0` : sql`1 = 1`;
@@ -96,20 +101,20 @@ export class JsonPathCondition {
         return sql`${extract} ${raw(op)} (${join(placeholders, ", ")})`;
       }
       case "between": {
-        const extract = dialectExpression.jsonExtract(column, this.path, true);
+        const extract = dialectExpression.jsonExtract(column, this.path, true, m);
         const [a, b] = this.value as [unknown, unknown];
         return sql`${extract} BETWEEN ${a as any} AND ${b as any}`;
       }
       case "contains":
-        return dialectExpression.jsonContains(column, this.path, this.value);
+        return dialectExpression.jsonContains(column, this.path, this.value, m);
       case "hasKey":
-        return dialectExpression.jsonHasKey(column, this.path, this.value as string);
+        return dialectExpression.jsonHasKey(column, this.path, this.value as string, m);
       case "arrayLengthCompare": {
-        const lenExpr = dialectExpression.jsonArrayLength(column, this.path);
+        const lenExpr = dialectExpression.jsonArrayLength(column, this.path, m);
         return sql`${lenExpr} ${raw(this.operator!)} ${this.value as any}`;
       }
       case "typeOfCompare": {
-        const typeExpr = dialectExpression.jsonTypeOf(column, this.path);
+        const typeExpr = dialectExpression.jsonTypeOf(column, this.path, m);
         return sql`${typeExpr} ${raw(this.operator!)} ${this.value as any}`;
       }
     }
@@ -139,6 +144,7 @@ export class JsonScalarExpression {
     private readonly ref: string,
     private readonly path: ReadonlyArray<JsonPathSegment>,
     private readonly scalarKind: "arrayLength" | "typeOf",
+    private readonly meta?: ColumnJsonMeta,
   ) {}
 
   private get compareKind(): JsonConditionKind {
@@ -146,7 +152,14 @@ export class JsonScalarExpression {
   }
 
   private make(operator: string, value: unknown): JsonPathCondition {
-    return new JsonPathCondition(this.ref, this.path, this.compareKind, operator, value);
+    return new JsonPathCondition(
+      this.ref,
+      this.path,
+      this.compareKind,
+      operator,
+      value,
+      this.meta,
+    );
   }
 
   eq(value: number | string): JsonPathCondition { return this.make("=", value); }
@@ -161,6 +174,7 @@ export class JsonScalarExpression {
 const JSON_EXPR_METHODS = new Set<string>([
   "_ref",
   "_path",
+  "_meta",
   "_isJsonPathExpression",
   "path",
   "eq",
@@ -196,75 +210,115 @@ class JsonPathExpressionBase {
   constructor(
     readonly _ref: string,
     readonly _path: ReadonlyArray<JsonPathSegment>,
+    readonly _meta?: ColumnJsonMeta,
   ) {}
 
   /** Append a dot-bracket path string (e.g. `"a.b[0].c"`). */
   path(str: string): JsonPathExpression {
-    return makeJsonPathExpression(this._ref, [...this._path, ...parseJsonPath(str)]);
+    return makeJsonPathExpression(
+      this._ref,
+      [...this._path, ...parseJsonPath(str)],
+      this._meta,
+    );
   }
 
   eq(value: unknown): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "compare", "=", value);
+    return new JsonPathCondition(this._ref, this._path, "compare", "=", value, this._meta);
   }
   neq(value: unknown): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "compare", "!=", value);
+    return new JsonPathCondition(this._ref, this._path, "compare", "!=", value, this._meta);
   }
   ne(value: unknown): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "compare", "!=", value);
+    return new JsonPathCondition(this._ref, this._path, "compare", "!=", value, this._meta);
   }
   gt(value: unknown): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "compare", ">", value);
+    return new JsonPathCondition(this._ref, this._path, "compare", ">", value, this._meta);
   }
   gte(value: unknown): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "compare", ">=", value);
+    return new JsonPathCondition(this._ref, this._path, "compare", ">=", value, this._meta);
   }
   lt(value: unknown): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "compare", "<", value);
+    return new JsonPathCondition(this._ref, this._path, "compare", "<", value, this._meta);
   }
   lte(value: unknown): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "compare", "<=", value);
+    return new JsonPathCondition(this._ref, this._path, "compare", "<=", value, this._meta);
   }
   like(pattern: string): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "compare", "LIKE", pattern);
+    return new JsonPathCondition(this._ref, this._path, "compare", "LIKE", pattern, this._meta);
   }
   notLike(pattern: string): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "compare", "NOT LIKE", pattern);
+    return new JsonPathCondition(
+      this._ref,
+      this._path,
+      "compare",
+      "NOT LIKE",
+      pattern,
+      this._meta,
+    );
   }
 
   in(values: unknown[]): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "in", undefined, values);
+    return new JsonPathCondition(this._ref, this._path, "in", undefined, values, this._meta);
   }
   notIn(values: unknown[]): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "notIn", undefined, values);
+    return new JsonPathCondition(this._ref, this._path, "notIn", undefined, values, this._meta);
   }
   isNull(): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "isNull");
+    return new JsonPathCondition(this._ref, this._path, "isNull", undefined, undefined, this._meta);
   }
   isNotNull(): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "isNotNull");
+    return new JsonPathCondition(
+      this._ref,
+      this._path,
+      "isNotNull",
+      undefined,
+      undefined,
+      this._meta,
+    );
   }
   between(min: unknown, max: unknown): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "between", undefined, [min, max]);
+    return new JsonPathCondition(
+      this._ref,
+      this._path,
+      "between",
+      undefined,
+      [min, max],
+      this._meta,
+    );
   }
 
   /** JSON containment: does the sub-document at this path contain `value`? */
   contains(value: unknown): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "contains", undefined, value);
+    return new JsonPathCondition(
+      this._ref,
+      this._path,
+      "contains",
+      undefined,
+      value,
+      this._meta,
+    );
   }
 
   /** Does the object at this path have the given key? */
   hasKey(key: string): JsonPathCondition {
-    return new JsonPathCondition(this._ref, this._path, "hasKey", undefined, key);
+    return new JsonPathCondition(
+      this._ref,
+      this._path,
+      "hasKey",
+      undefined,
+      key,
+      this._meta,
+    );
   }
 
   /** Length of the array at this path, as a comparable scalar. */
   arrayLength(): JsonScalarExpression {
-    return new JsonScalarExpression(this._ref, this._path, "arrayLength");
+    return new JsonScalarExpression(this._ref, this._path, "arrayLength", this._meta);
   }
 
   /** JSON type at this path (`'object'`, `'array'`, `'string'`, …), as a comparable scalar. */
   typeOf(): JsonScalarExpression {
-    return new JsonScalarExpression(this._ref, this._path, "typeOf");
+    return new JsonScalarExpression(this._ref, this._path, "typeOf", this._meta);
   }
 
   toString(): string {
@@ -298,8 +352,9 @@ export type JsonPathExpression = JsonPathExpressionBase & {
 export function makeJsonPathExpression(
   ref: string,
   path: ReadonlyArray<JsonPathSegment> = [],
+  meta?: ColumnJsonMeta,
 ): JsonPathExpression {
-  const base = new JsonPathExpressionBase(ref, path);
+  const base = new JsonPathExpressionBase(ref, path, meta);
   return new Proxy(base, {
     get(target: JsonPathExpressionBase, prop: string | symbol): unknown {
       if (typeof prop === "symbol") return (target as any)[prop];
@@ -307,7 +362,7 @@ export function makeJsonPathExpression(
         return (target as any)[prop];
       }
       const seg: JsonPathSegment = /^-?\d+$/.test(prop) ? Number(prop) : prop;
-      return makeJsonPathExpression(target._ref, [...target._path, seg]);
+      return makeJsonPathExpression(target._ref, [...target._path, seg], target._meta);
     },
   }) as JsonPathExpression;
 }

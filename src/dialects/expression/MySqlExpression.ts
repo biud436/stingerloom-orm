@@ -1,6 +1,6 @@
 import sql, { raw } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
-import type { DialectExpression } from "../DialectExpression";
+import type { ColumnJsonMeta, DialectExpression } from "../DialectExpression";
 
 /**
  * Serialize a JSON path into MySQL/SQLite syntax: `$.a.b[0].c`.
@@ -40,7 +40,12 @@ export class MySqlExpression implements DialectExpression {
     return sql`MATCH(${raw(column)}) AGAINST(${query} IN BOOLEAN MODE)`;
   }
 
-  jsonExtract(column: string, path: ReadonlyArray<string | number>, asText: boolean): Sql {
+  jsonExtract(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    asText: boolean,
+    _meta?: ColumnJsonMeta,
+  ): Sql {
     const p = buildJsonPathString(path);
     if (asText) {
       return sql`JSON_UNQUOTE(JSON_EXTRACT(${raw(column)}, ${p}))`;
@@ -48,18 +53,32 @@ export class MySqlExpression implements DialectExpression {
     return sql`JSON_EXTRACT(${raw(column)}, ${p})`;
   }
 
-  jsonContains(column: string, path: ReadonlyArray<string | number>, value: unknown): Sql {
+  jsonContains(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    value: unknown,
+    _meta?: ColumnJsonMeta,
+  ): Sql {
     const candidate = JSON.stringify(value);
     const p = buildJsonPathString(path);
     return sql`JSON_CONTAINS(${raw(column)}, ${candidate}, ${p})`;
   }
 
-  jsonHasKey(column: string, path: ReadonlyArray<string | number>, key: string): Sql {
+  jsonHasKey(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    key: string,
+    _meta?: ColumnJsonMeta,
+  ): Sql {
     const p = buildJsonPathString([...path, key]);
     return sql`JSON_CONTAINS_PATH(${raw(column)}, 'one', ${p})`;
   }
 
-  jsonArrayLength(column: string, path: ReadonlyArray<string | number>): Sql {
+  jsonArrayLength(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    _meta?: ColumnJsonMeta,
+  ): Sql {
     if (path.length === 0) {
       return sql`JSON_LENGTH(${raw(column)})`;
     }
@@ -67,7 +86,11 @@ export class MySqlExpression implements DialectExpression {
     return sql`JSON_LENGTH(${raw(column)}, ${p})`;
   }
 
-  jsonTypeOf(column: string, path: ReadonlyArray<string | number>): Sql {
+  jsonTypeOf(
+    column: string,
+    path: ReadonlyArray<string | number>,
+    _meta?: ColumnJsonMeta,
+  ): Sql {
     if (path.length === 0) {
       return sql`JSON_TYPE(${raw(column)})`;
     }
