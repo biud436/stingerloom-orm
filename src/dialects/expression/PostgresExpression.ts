@@ -14,21 +14,68 @@ export class PostgresExpression implements DialectExpression {
     return sql`to_tsvector(${lang}, ${raw(column)}) @@ plainto_tsquery(${lang}, ${query})`;
   }
 
-  /** Build `ARRAY[$1, $2, ...]::text[]` from path segments. */
+  /**
+   * Build `ARRAY[$1, $2, ...]::text[]` from path segments. Used as fallback
+   * for multi-segment paths where chained `->` would allocate intermediate
+   * jsonb subtrees.
+   */
   private pathArray(path: ReadonlyArray<string | number>): Sql {
     const segs = path.map((s) => sql`${String(s)}`);
     return sql`ARRAY[${join(segs, ", ")}]::text[]`;
+  }
+
+  /**
+   * Navigate `path` starting at `column` using chained `->` operators,
+   * returning the final jsonb sub-document. For jsonb columns this is
+   * friendlier to expression-GIN indexes than `#>` on an ARRAY path and
+   * lets numeric segments bind as integer array-index access.
+   *
+   * Caller must have already verified `path.length >= 1`.
+   */
+  private navigateJsonb(column: string, path: ReadonlyArray<string | number>): Sql {
+    let acc: Sql = sql`${raw(column)}`;
+    for (const seg of path) {
+      if (typeof seg === "number") {
+        acc = sql`${acc} -> ${seg}`;
+      } else {
+        acc = sql`${acc} -> ${seg}`;
+      }
+    }
+    return acc;
   }
 
   jsonExtract(
     column: string,
     path: ReadonlyArray<string | number>,
     asText: boolean,
-    _meta?: ColumnJsonMeta,
+    meta?: ColumnJsonMeta,
   ): Sql {
     if (path.length === 0) {
       return sql`${raw(column)}`;
     }
+    // Single-segment fast path: use native -> / ->> operators. Works on both
+    // json and jsonb, parameterizes one value instead of an N-element ARRAY,
+    // and on jsonb is matchable against expression indexes like
+    // `CREATE INDEX ON t USING gin ((profile -> 'tags'))`.
+    if (path.length === 1) {
+      const seg = path[0];
+      const op = asText ? "->>" : "->";
+      return sql`${raw(column)} ${raw(op)} ${
+        typeof seg === "number" ? seg : seg
+      }`;
+    }
+    // Multi-segment on jsonb: chain `->` for nested navigation, then coerce
+    // the final hop to text with `->>` when `asText` is requested. Chained
+    // `->` preserves expression-GIN applicability on prefix subpaths.
+    if (meta?.dbType === "jsonb") {
+      const head = path.slice(0, -1);
+      const tail = path[path.length - 1];
+      const base = this.navigateJsonb(column, head);
+      const tailOp = asText ? "->>" : "->";
+      return sql`${base} ${raw(tailOp)} ${typeof tail === "number" ? tail : tail}`;
+    }
+    // Multi-segment on json (or unknown storage): keep #>>/#> with ARRAY
+    // since native `@>` / expression GIN don't apply to json.
     const op = asText ? "#>>" : "#>";
     return sql`${raw(column)} ${raw(op)} ${this.pathArray(path)}`;
   }
@@ -39,6 +86,8 @@ export class PostgresExpression implements DialectExpression {
     value: unknown,
     _meta?: ColumnJsonMeta,
   ): Sql {
+    // `#245` scope keeps containment semantics unchanged; `#247` rewires
+    // single-segment + scalar-value cases to `-> 'k' @> to_jsonb(...)`.
     const candidate = JSON.stringify(value);
     if (path.length === 0) {
       return sql`${raw(column)} @> ${candidate}::jsonb`;
@@ -50,7 +99,7 @@ export class PostgresExpression implements DialectExpression {
     column: string,
     path: ReadonlyArray<string | number>,
     key: string,
-    _meta?: ColumnJsonMeta,
+    meta?: ColumnJsonMeta,
   ): Sql {
     // Use `jsonb_exists()` rather than the `?` operator: the operator collides
     // with sql-template-tag's `?` parameter placeholder, which the Postgres
@@ -58,16 +107,34 @@ export class PostgresExpression implements DialectExpression {
     if (path.length === 0) {
       return sql`jsonb_exists(${raw(column)}, ${key})`;
     }
+    if (path.length === 1) {
+      const seg = path[0];
+      return sql`jsonb_exists(${raw(column)} -> ${
+        typeof seg === "number" ? seg : seg
+      }, ${key})`;
+    }
+    if (meta?.dbType === "jsonb") {
+      return sql`jsonb_exists(${this.navigateJsonb(column, path)}, ${key})`;
+    }
     return sql`jsonb_exists(${raw(column)} #> ${this.pathArray(path)}, ${key})`;
   }
 
   jsonArrayLength(
     column: string,
     path: ReadonlyArray<string | number>,
-    _meta?: ColumnJsonMeta,
+    meta?: ColumnJsonMeta,
   ): Sql {
     if (path.length === 0) {
       return sql`jsonb_array_length(${raw(column)})`;
+    }
+    if (path.length === 1) {
+      const seg = path[0];
+      return sql`jsonb_array_length(${raw(column)} -> ${
+        typeof seg === "number" ? seg : seg
+      })`;
+    }
+    if (meta?.dbType === "jsonb") {
+      return sql`jsonb_array_length(${this.navigateJsonb(column, path)})`;
     }
     return sql`jsonb_array_length(${raw(column)} #> ${this.pathArray(path)})`;
   }
@@ -75,10 +142,19 @@ export class PostgresExpression implements DialectExpression {
   jsonTypeOf(
     column: string,
     path: ReadonlyArray<string | number>,
-    _meta?: ColumnJsonMeta,
+    meta?: ColumnJsonMeta,
   ): Sql {
     if (path.length === 0) {
       return sql`jsonb_typeof(${raw(column)})`;
+    }
+    if (path.length === 1) {
+      const seg = path[0];
+      return sql`jsonb_typeof(${raw(column)} -> ${
+        typeof seg === "number" ? seg : seg
+      })`;
+    }
+    if (meta?.dbType === "jsonb") {
+      return sql`jsonb_typeof(${this.navigateJsonb(column, path)})`;
     }
     return sql`jsonb_typeof(${raw(column)} #> ${this.pathArray(path)})`;
   }

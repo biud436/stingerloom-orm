@@ -165,18 +165,48 @@ describe("JsonPathExpression — path building via proxy", () => {
 describe("PostgresExpression — JSON methods", () => {
   const expr = new PostgresExpression();
 
-  it("jsonExtract with asText=true uses #>> operator", () => {
-    const s = expr.jsonExtract('"u"."profile"', ["contact", "email"], true);
+  it("jsonExtract multi-segment on json column uses #>> with ARRAY fallback", () => {
+    const s = expr.jsonExtract('"u"."profile"', ["contact", "email"], true, {
+      dbType: "json",
+      nullable: false,
+    });
     expect(s.sql).toContain("#>>");
     expect(s.sql).toContain('"u"."profile"');
-    // The ARRAY placeholders each bind as a parameter
     expect(s.values).toEqual(["contact", "email"]);
   });
 
-  it("jsonExtract with asText=false uses #> operator", () => {
-    const s = expr.jsonExtract('"u"."profile"', ["contact"], false);
-    expect(s.sql).toContain(" #> ");
+  it("jsonExtract multi-segment on jsonb column chains -> operators", () => {
+    const s = expr.jsonExtract('"u"."profile"', ["contact", "email"], true, {
+      dbType: "jsonb",
+      nullable: false,
+    });
+    // Chained arrow navigation lets expression GIN match prefix subpaths.
+    expect(s.sql).toContain(" -> ");
+    expect(s.sql).toContain("->>");
     expect(s.sql).not.toContain("#>>");
+    expect(s.sql).not.toContain("ARRAY[");
+    expect(s.values).toEqual(["contact", "email"]);
+  });
+
+  it("jsonExtract single-segment asText=true uses ->> (native, GIN-friendly)", () => {
+    const s = expr.jsonExtract('"u"."profile"', ["email"], true);
+    expect(s.sql).toContain("->>");
+    expect(s.sql).not.toContain("ARRAY[");
+    expect(s.sql).not.toContain("#>>");
+    expect(s.values).toEqual(["email"]);
+  });
+
+  it("jsonExtract single-segment asText=false uses -> (native, GIN-friendly)", () => {
+    const s = expr.jsonExtract('"u"."profile"', ["contact"], false);
+    expect(s.sql).toContain(" -> ");
+    expect(s.sql).not.toContain(" #> ");
+    expect(s.sql).not.toContain("ARRAY[");
+  });
+
+  it("jsonExtract single-segment numeric binds integer (array element access)", () => {
+    const s = expr.jsonExtract('"u"."profile"', [0], false);
+    expect(s.sql).toContain(" -> ");
+    expect(s.values).toEqual([0]);
   });
 
   it("jsonExtract with empty path returns column as-is (no path array)", () => {
@@ -201,14 +231,46 @@ describe("PostgresExpression — JSON methods", () => {
     expect(s.values).toContain("email");
   });
 
+  it("jsonHasKey single-segment path uses -> (not #>) for jsonb_exists target", () => {
+    const s = expr.jsonHasKey('"u"."profile"', ["contact"], "email");
+    expect(s.sql).toContain(" -> ");
+    expect(s.sql).not.toContain("ARRAY[");
+    expect(s.sql).not.toContain("#>");
+  });
+
+  it("jsonHasKey multi-segment on jsonb chains -> navigation", () => {
+    const s = expr.jsonHasKey(
+      '"u"."profile"',
+      ["contact", "addresses"],
+      "home",
+      { dbType: "jsonb", nullable: false },
+    );
+    expect(s.sql).toContain("jsonb_exists(");
+    expect(s.sql).toContain(" -> ");
+    expect(s.sql).not.toContain("ARRAY[");
+    expect(s.sql).not.toContain("#>");
+  });
+
   it("jsonArrayLength wraps with jsonb_array_length()", () => {
     const s = expr.jsonArrayLength('"u"."profile"', ["tags"]);
     expect(s.sql).toContain("jsonb_array_length(");
   });
 
+  it("jsonArrayLength single-segment uses -> (not #>)", () => {
+    const s = expr.jsonArrayLength('"u"."profile"', ["tags"]);
+    expect(s.sql).toContain(" -> ");
+    expect(s.sql).not.toContain("ARRAY[");
+  });
+
   it("jsonTypeOf wraps with jsonb_typeof()", () => {
     const s = expr.jsonTypeOf('"u"."profile"', ["contact"]);
     expect(s.sql).toContain("jsonb_typeof(");
+  });
+
+  it("jsonTypeOf single-segment uses -> (not #>)", () => {
+    const s = expr.jsonTypeOf('"u"."profile"', ["contact"]);
+    expect(s.sql).toContain(" -> ");
+    expect(s.sql).not.toContain("ARRAY[");
   });
 });
 
