@@ -222,6 +222,89 @@ describe("PostgresExpression — JSON methods", () => {
     expect(s.values).toContain(JSON.stringify({ role: "admin" }));
   });
 
+  it("jsonContains whole-column with scalar on jsonb uses to_jsonb()", () => {
+    const s = expr.jsonContains('"u"."profile"', [], "admin", {
+      dbType: "jsonb",
+      nullable: false,
+    });
+    expect(s.sql).toContain("to_jsonb(");
+    expect(s.sql).not.toContain("::jsonb");
+    expect(s.values).toEqual(["admin"]);
+  });
+
+  it("jsonContains single-segment + scalar on jsonb: col -> 'k' @> to_jsonb($1)", () => {
+    const s = expr.jsonContains('"u"."profile"', ["tags"], "blue", {
+      dbType: "jsonb",
+      nullable: false,
+    });
+    expect(s.sql).toContain(" -> ");
+    expect(s.sql).toContain("@>");
+    expect(s.sql).toContain("to_jsonb(");
+    expect(s.sql).not.toContain("ARRAY[");
+    expect(s.sql).not.toContain("#>");
+    expect(s.values).toContain("blue");
+    // Crucially no JSON-escaped candidate — the scalar binds directly.
+    expect(s.values).not.toContain('"blue"');
+  });
+
+  it("jsonContains single-segment + scalar binds numbers / booleans natively", () => {
+    const s1 = expr.jsonContains('"u"."profile"', ["age"], 42, {
+      dbType: "jsonb",
+      nullable: false,
+    });
+    expect(s1.sql).toContain("to_jsonb(");
+    expect(s1.values).toContain(42);
+
+    const s2 = expr.jsonContains('"u"."profile"', ["active"], true, {
+      dbType: "jsonb",
+      nullable: false,
+    });
+    expect(s2.sql).toContain("to_jsonb(");
+    expect(s2.values).toContain(true);
+  });
+
+  it("jsonContains single-segment + object on jsonb keeps ::jsonb cast", () => {
+    const s = expr.jsonContains(
+      '"u"."profile"',
+      ["contact"],
+      { role: "admin" },
+      { dbType: "jsonb", nullable: false },
+    );
+    expect(s.sql).toContain(" -> ");
+    expect(s.sql).toContain("@>");
+    expect(s.sql).toContain("::jsonb");
+    expect(s.sql).not.toContain("to_jsonb(");
+    expect(s.sql).not.toContain("ARRAY[");
+    expect(s.values).toContain(JSON.stringify({ role: "admin" }));
+  });
+
+  it("jsonContains multi-segment on jsonb chains -> (no ARRAY path)", () => {
+    const s = expr.jsonContains(
+      '"u"."profile"',
+      ["personal", "city"],
+      "Seoul",
+      { dbType: "jsonb", nullable: false },
+    );
+    expect(s.sql).toContain(" -> ");
+    expect(s.sql).toContain("@>");
+    expect(s.sql).toContain("to_jsonb(");
+    expect(s.sql).not.toContain("ARRAY[");
+    expect(s.sql).not.toContain("#>");
+  });
+
+  it("jsonContains on json column falls back to #> + ARRAY (no GIN lift)", () => {
+    const s = expr.jsonContains(
+      '"u"."preferences"',
+      ["theme"],
+      "dark",
+      { dbType: "json", nullable: true },
+    );
+    // json type lacks @> / expression GIN — keep legacy form.
+    expect(s.sql).toContain("#>");
+    expect(s.sql).toContain("ARRAY[");
+    expect(s.sql).toContain("::jsonb");
+  });
+
   it("jsonHasKey uses jsonb_exists() (avoids ? operator/placeholder collision)", () => {
     const s = expr.jsonHasKey('"u"."profile"', ["contact"], "email");
     expect(s.sql).toContain("jsonb_exists(");

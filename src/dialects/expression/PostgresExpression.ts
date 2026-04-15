@@ -84,14 +84,41 @@ export class PostgresExpression implements DialectExpression {
     column: string,
     path: ReadonlyArray<string | number>,
     value: unknown,
-    _meta?: ColumnJsonMeta,
+    meta?: ColumnJsonMeta,
   ): Sql {
-    // `#245` scope keeps containment semantics unchanged; `#247` rewires
-    // single-segment + scalar-value cases to `-> 'k' @> to_jsonb(...)`.
-    const candidate = JSON.stringify(value);
+    // `to_jsonb(scalar)` binds the scalar as its native pg type and wraps it
+    // without parsing a JSON literal — cheaper and placeholder-safe vs the
+    // `'"x"'::jsonb` form. Only applied to true scalars; objects and arrays
+    // still go through JSON.stringify + ::jsonb cast.
+    const isScalar =
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean";
+    const isJsonb = meta?.dbType === "jsonb";
+
     if (path.length === 0) {
+      if (isJsonb && isScalar) {
+        return sql`${raw(column)} @> to_jsonb(${value as string | number | boolean})`;
+      }
+      const candidate = JSON.stringify(value);
       return sql`${raw(column)} @> ${candidate}::jsonb`;
     }
+
+    if (isJsonb) {
+      // Chained `-> ` navigation (`col -> 'k'` for single-seg, `col -> 'a' -> 'b'`
+      // for nested) so prefix subpaths can be matched against expression-GIN
+      // indexes like `CREATE INDEX ON t USING gin ((profile -> 'tags'))`.
+      const base = this.navigateJsonb(column, path);
+      if (isScalar) {
+        return sql`${base} @> to_jsonb(${value as string | number | boolean})`;
+      }
+      const candidate = JSON.stringify(value);
+      return sql`${base} @> ${candidate}::jsonb`;
+    }
+
+    // json (non-binary) column: no native containment, fall back to
+    // `#>` with ARRAY path + candidate::jsonb cast (legacy behavior).
+    const candidate = JSON.stringify(value);
     return sql`(${raw(column)} #> ${this.pathArray(path)}) @> ${candidate}::jsonb`;
   }
 
