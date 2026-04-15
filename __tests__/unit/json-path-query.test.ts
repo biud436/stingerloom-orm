@@ -557,6 +557,58 @@ describe("SQL Injection safety — all values parameterized", () => {
   });
 });
 
+describe("qAlias root-proxy cache (issue #253)", () => {
+  it("returns the same Proxy instance for repeated (entity, alias) calls", () => {
+    const a = qAlias(JsonFixture, "u");
+    const b = qAlias(JsonFixture, "u");
+    expect(a).toBe(b);
+  });
+
+  it("returns different Proxies for different alias names on the same entity", () => {
+    const a = qAlias(JsonFixture, "u1");
+    const b = qAlias(JsonFixture, "u2");
+    expect(a).not.toBe(b);
+    // But each is stable across calls.
+    expect(qAlias(JsonFixture, "u1")).toBe(a);
+  });
+
+  it("returns different Proxies for different entities", () => {
+    @Entity()
+    class Other {
+      @PrimaryGeneratedColumn()
+      id!: number;
+      @Column({ type: "varchar", length: 64 })
+      name!: string;
+    }
+    const a = qAlias(JsonFixture, "x") as any;
+    const b = qAlias(Other, "x") as any;
+    expect(a).not.toBe(b);
+    // alias metadata round-trips correctly
+    expect(a._entity).toBe(JsonFixture);
+    expect(b._entity).toBe(Other);
+  });
+
+  it("child JsonPathExpression proxies are NOT cached (each chain is fresh)", () => {
+    // Path-carrying child proxies carry state; caching them would alias
+    // expressions across independent chains. Only the root is memoized.
+    const u = qAlias(JsonFixture, "u") as any;
+    expect(u.profile).not.toBe(u.profile);
+  });
+
+  it("repeated condition building preserves semantic equivalence", () => {
+    const u1 = qAlias(JsonFixture, "u") as any;
+    const c1: JsonPathCondition = u1.profile.role.eq("admin");
+    const u2 = qAlias(JsonFixture, "u") as any;
+    const c2: JsonPathCondition = u2.profile.role.eq("admin");
+    // Conditions are distinct objects but describe the same intent.
+    expect(c1).not.toBe(c2);
+    expect(c1.path).toEqual(c2.path);
+    expect(c1.kind).toBe(c2.kind);
+    expect(c1.operator).toBe(c2.operator);
+    expect(c1.value).toBe(c2.value);
+  });
+});
+
 describe("ColumnJsonMeta threading (issue #246)", () => {
   it("qAlias captures jsonb storage type on the proxy", () => {
     const u = qAlias(JsonFixture, "u") as any;

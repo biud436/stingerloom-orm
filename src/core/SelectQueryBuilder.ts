@@ -342,9 +342,46 @@ function collectJsonColumnMeta(
  *   .getRawMany();
  * ```
  */
+/**
+ * @internal Root-proxy cache for `qAlias()`. Keyed first by entity class via
+ * a WeakMap (entries auto-collect when the class is GC'd), then by alias
+ * name. Safe because the root proxy is immutable: the `get` trap branches
+ * purely on `(entity, name, prop)` and forwards to fresh `ColumnExpression`
+ * / `JsonPathExpression` objects on every property access. Child proxies
+ * are not cached — they carry path state and are path-unique per chain.
+ */
+const qAliasProxyCache = new WeakMap<
+  ClazzType<any>,
+  Map<string, QEntity<any>>
+>();
+
+/**
+ * @internal Memoized JSON-column-meta lookup. `collectJsonColumnMeta` scans
+ * Reflect metadata on every call; caching it per entity drops the scan from
+ * the qAlias hot path.
+ */
+const qAliasJsonMetaCache = new WeakMap<
+  ClazzType<any>,
+  Map<string, import("../dialects/DialectExpression").ColumnJsonMeta>
+>();
+
 export function qAlias<T>(entity: ClazzType<T>, name: string): QEntity<T> {
-  const jsonMeta = collectJsonColumnMeta(entity);
-  return new Proxy({} as any, {
+  let byName = qAliasProxyCache.get(entity);
+  if (byName) {
+    const cached = byName.get(name);
+    if (cached) return cached as QEntity<T>;
+  } else {
+    byName = new Map();
+    qAliasProxyCache.set(entity, byName);
+  }
+
+  let jsonMeta = qAliasJsonMetaCache.get(entity);
+  if (!jsonMeta) {
+    jsonMeta = collectJsonColumnMeta(entity);
+    qAliasJsonMetaCache.set(entity, jsonMeta);
+  }
+
+  const proxy = new Proxy({} as any, {
     get(_target: any, prop: string | symbol): any {
       if (typeof prop === "symbol") return undefined;
       if (prop === "_alias") return name;
@@ -355,13 +392,32 @@ export function qAlias<T>(entity: ClazzType<T>, name: string): QEntity<T> {
       if (prop === "toString" || prop === "valueOf") {
         return () => name;
       }
-      const meta = jsonMeta.get(prop);
+      const meta = jsonMeta!.get(prop);
       if (meta) {
         return makeJsonPathExpression(`${name}.${prop}`, [], meta);
       }
       return new ColumnExpression(`${name}.${prop}`);
     },
   }) as QEntity<T>;
+
+  byName.set(name, proxy);
+  return proxy;
+}
+
+/**
+ * @internal Drop cached qAlias proxies + JSON-column metadata for a single
+ * entity. Exposed for testing environments that redefine entity columns
+ * between suites (the scanners already offer `.clear()` for the same
+ * purpose); production code does not need this.
+ */
+export function __clearQAliasCache(entity?: ClazzType<any>): void {
+  if (entity) {
+    qAliasProxyCache.delete(entity);
+    qAliasJsonMetaCache.delete(entity);
+    return;
+  }
+  // No full-wipe helper available on WeakMap; callers that want a fresh
+  // table should pass entity references individually.
 }
 
 /**
