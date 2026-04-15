@@ -30,18 +30,31 @@ export class PostgresExpression implements DialectExpression {
    * friendlier to expression-GIN indexes than `#>` on an ARRAY path and
    * lets numeric segments bind as integer array-index access.
    *
+   * String segments are parameterized (safe for user-supplied keys).
+   * Numeric segments are inlined as integer literals — otherwise node-pg
+   * sends them with no type hint and PG falls back to the `jsonb -> text`
+   * overload, which returns NULL against an array. Inlining is safe
+   * because numeric segments originate from bounded JS integers
+   * (`parseJsonPath` numeric indices / numeric proxy keys), never from
+   * free-form user text.
+   *
    * Caller must have already verified `path.length >= 1`.
    */
   private navigateJsonb(column: string, path: ReadonlyArray<string | number>): Sql {
     let acc: Sql = sql`${raw(column)}`;
     for (const seg of path) {
-      if (typeof seg === "number") {
-        acc = sql`${acc} -> ${seg}`;
-      } else {
-        acc = sql`${acc} -> ${seg}`;
-      }
+      acc = this.arrowStep(acc, seg, "->");
     }
     return acc;
+  }
+
+  /** @internal Append a single `-> seg` or `->> seg` hop. */
+  private arrowStep(acc: Sql, seg: string | number, op: "->" | "->>"): Sql {
+    if (typeof seg === "number") {
+      // Integer literal — see `navigateJsonb` for the rationale.
+      return sql`${acc} ${raw(op)} ${raw(String(Math.trunc(seg)))}`;
+    }
+    return sql`${acc} ${raw(op)} ${seg}`;
   }
 
   jsonExtract(
@@ -58,11 +71,8 @@ export class PostgresExpression implements DialectExpression {
     // and on jsonb is matchable against expression indexes like
     // `CREATE INDEX ON t USING gin ((profile -> 'tags'))`.
     if (path.length === 1) {
-      const seg = path[0];
       const op = asText ? "->>" : "->";
-      return sql`${raw(column)} ${raw(op)} ${
-        typeof seg === "number" ? seg : seg
-      }`;
+      return this.arrowStep(sql`${raw(column)}`, path[0], op);
     }
     // Multi-segment on jsonb: chain `->` for nested navigation, then coerce
     // the final hop to text with `->>` when `asText` is requested. Chained
@@ -72,7 +82,7 @@ export class PostgresExpression implements DialectExpression {
       const tail = path[path.length - 1];
       const base = this.navigateJsonb(column, head);
       const tailOp = asText ? "->>" : "->";
-      return sql`${base} ${raw(tailOp)} ${typeof tail === "number" ? tail : tail}`;
+      return this.arrowStep(base, tail, tailOp);
     }
     // Multi-segment on json (or unknown storage): keep #>>/#> with ARRAY
     // since native `@>` / expression GIN don't apply to json.
@@ -98,7 +108,7 @@ export class PostgresExpression implements DialectExpression {
 
     if (path.length === 0) {
       if (isJsonb && isScalar) {
-        return sql`${raw(column)} @> to_jsonb(${value as string | number | boolean})`;
+        return sql`${raw(column)} @> ${this.toJsonbScalar(value)}`;
       }
       const candidate = JSON.stringify(value);
       return sql`${raw(column)} @> ${candidate}::jsonb`;
@@ -110,7 +120,7 @@ export class PostgresExpression implements DialectExpression {
       // indexes like `CREATE INDEX ON t USING gin ((profile -> 'tags'))`.
       const base = this.navigateJsonb(column, path);
       if (isScalar) {
-        return sql`${base} @> to_jsonb(${value as string | number | boolean})`;
+        return sql`${base} @> ${this.toJsonbScalar(value)}`;
       }
       const candidate = JSON.stringify(value);
       return sql`${base} @> ${candidate}::jsonb`;
@@ -120,6 +130,23 @@ export class PostgresExpression implements DialectExpression {
     // `#>` with ARRAY path + candidate::jsonb cast (legacy behavior).
     const candidate = JSON.stringify(value);
     return sql`(${raw(column)} #> ${this.pathArray(path)}) @> ${candidate}::jsonb`;
+  }
+
+  /**
+   * `to_jsonb($1)` where $1 is a plain node-pg parameter fails with
+   * "could not determine polymorphic type because input has type unknown":
+   * the function is `to_jsonb(anyelement)` and node-pg does not infer a
+   * concrete type for bare scalar parameters. Cast the placeholder to the
+   * matching pg type so the polymorphic resolver can pick the overload.
+   */
+  private toJsonbScalar(value: string | number | boolean): Sql {
+    if (typeof value === "number") {
+      return sql`to_jsonb(${value}::numeric)`;
+    }
+    if (typeof value === "boolean") {
+      return sql`to_jsonb(${value}::bool)`;
+    }
+    return sql`to_jsonb(${value}::text)`;
   }
 
   jsonHasKey(
@@ -135,10 +162,8 @@ export class PostgresExpression implements DialectExpression {
       return sql`jsonb_exists(${raw(column)}, ${key})`;
     }
     if (path.length === 1) {
-      const seg = path[0];
-      return sql`jsonb_exists(${raw(column)} -> ${
-        typeof seg === "number" ? seg : seg
-      }, ${key})`;
+      const navigated = this.arrowStep(sql`${raw(column)}`, path[0], "->");
+      return sql`jsonb_exists(${navigated}, ${key})`;
     }
     if (meta?.dbType === "jsonb") {
       return sql`jsonb_exists(${this.navigateJsonb(column, path)}, ${key})`;
@@ -155,10 +180,8 @@ export class PostgresExpression implements DialectExpression {
       return sql`jsonb_array_length(${raw(column)})`;
     }
     if (path.length === 1) {
-      const seg = path[0];
-      return sql`jsonb_array_length(${raw(column)} -> ${
-        typeof seg === "number" ? seg : seg
-      })`;
+      const navigated = this.arrowStep(sql`${raw(column)}`, path[0], "->");
+      return sql`jsonb_array_length(${navigated})`;
     }
     if (meta?.dbType === "jsonb") {
       return sql`jsonb_array_length(${this.navigateJsonb(column, path)})`;
@@ -175,10 +198,8 @@ export class PostgresExpression implements DialectExpression {
       return sql`jsonb_typeof(${raw(column)})`;
     }
     if (path.length === 1) {
-      const seg = path[0];
-      return sql`jsonb_typeof(${raw(column)} -> ${
-        typeof seg === "number" ? seg : seg
-      })`;
+      const navigated = this.arrowStep(sql`${raw(column)}`, path[0], "->");
+      return sql`jsonb_typeof(${navigated})`;
     }
     if (meta?.dbType === "jsonb") {
       return sql`jsonb_typeof(${this.navigateJsonb(column, path)})`;

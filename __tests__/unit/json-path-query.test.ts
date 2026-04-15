@@ -203,10 +203,14 @@ describe("PostgresExpression — JSON methods", () => {
     expect(s.sql).not.toContain("ARRAY[");
   });
 
-  it("jsonExtract single-segment numeric binds integer (array element access)", () => {
+  it("jsonExtract single-segment numeric inlines integer literal (array element access)", () => {
+    // Integer segments are inlined as SQL literals — PG needs concrete
+    // integer typing to pick the `jsonb -> int` array-access overload
+    // instead of the `jsonb -> text` object-member overload that node-pg
+    // type inference would resolve to from a bare numeric parameter.
     const s = expr.jsonExtract('"u"."profile"', [0], false);
-    expect(s.sql).toContain(" -> ");
-    expect(s.values).toEqual([0]);
+    expect(s.sql).toContain(" -> 0");
+    expect(s.values).toEqual([]);
   });
 
   it("jsonExtract with empty path returns column as-is (no path array)", () => {
