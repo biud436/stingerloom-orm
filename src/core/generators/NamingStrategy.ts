@@ -57,6 +57,21 @@ export interface NamingStrategy {
    * Generates a composite index name.
    */
   compositeIndexName(tableName: string, columns: string[]): string;
+
+  /**
+   * Generates a name for a JSON-path expression index.
+   *
+   * @param tableName - Target table name.
+   * @param columnName - JSON column name.
+   * @param pathSegments - Path segments (empty when indexing the whole column).
+   * @param using - Access method (`"gin"` / `"btree"`).
+   */
+  jsonIndexName(
+    tableName: string,
+    columnName: string,
+    pathSegments: ReadonlyArray<string | number>,
+    using: "gin" | "btree",
+  ): string;
 }
 
 /**
@@ -118,5 +133,39 @@ export class DefaultNamingStrategy implements NamingStrategy {
    */
   compositeIndexName(tableName: string, columns: string[]): string {
     return `idx_${tableName}_${columns.join("_")}`;
+  }
+
+  /**
+   * Generates a JSON-path expression index name.
+   * Format:
+   *   - whole column: `idx_{tableName}_{column}_{using}`
+   *   - with path:    `idx_{tableName}_{column}_{seg1}_{seg2}_..._{using}`
+   *
+   * Non-identifier path segments are replaced with their SHA1 hex prefix so
+   * the result stays within the 63-character PostgreSQL identifier limit
+   * while remaining collision-resistant. Numeric segments are kept as-is.
+   */
+  jsonIndexName(
+    tableName: string,
+    columnName: string,
+    pathSegments: ReadonlyArray<string | number>,
+    using: "gin" | "btree",
+  ): string {
+    const segs = pathSegments.map((s) => {
+      if (typeof s === "number") return String(s);
+      return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(s)
+        ? s
+        : crypto.createHash("sha1").update(s).digest("hex").slice(0, 6);
+    });
+    const pathPart = segs.length ? `_${segs.join("_")}` : "";
+    const base = `idx_${tableName}_${columnName}${pathPart}_${using}`;
+    if (base.length <= 63) return base;
+    // Fall back to a hash-tail suffix when the composed name is too long.
+    const hash = crypto
+      .createHash("sha1")
+      .update(base)
+      .digest("hex")
+      .slice(0, 8);
+    return `idx_${tableName}_${columnName}_${hash}_${using}`.slice(0, 63);
   }
 }

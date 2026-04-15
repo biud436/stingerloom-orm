@@ -18,6 +18,10 @@ import {
   FULLTEXT_INDEX_TOKEN,
   FullTextIndexMetadata,
 } from "../../decorators/FullTextIndex";
+import {
+  JSON_INDEX_TOKEN,
+  JsonIndexMetadata,
+} from "../../decorators/JsonIndex";
 import { ReferentialAction } from "../../types/ReferentialAction";
 import {
   MANY_TO_ONE_TOKEN,
@@ -303,6 +307,104 @@ export class SchemaGenerator {
   }
 
   /**
+   * Emit CREATE INDEX DDL for `@JsonIndex()` declarations.
+   *
+   * - PostgreSQL: `CREATE INDEX ... USING gin ((col -> 'path') [opclass])`
+   *   (or `USING gin (col [opclass])` when no path is supplied; `USING btree
+   *   ((col #>> '{path}'))` when `using: "btree"` is requested).
+   * - MySQL/SQLite: returns an empty array. Functional JSON indexing on
+   *   MySQL requires virtual generated columns which must be declared on
+   *   the table itself, not inferred from an index-only decorator; SQLite
+   *   has no GIN equivalent at all.
+   */
+  generateJsonIndexDDL<T>(entity: ClazzType<T>): string[] {
+    if (this.dialect !== "postgres") {
+      // Stay silent here. Users who adopt @JsonIndex for MySQL / SQLite
+      // portability should be told once at startup (handled outside this
+      // pure DDL-string generator), not per entity per sync.
+      return [];
+    }
+
+    const tableName = this.getTableName(entity);
+    const jsonIndexes = this.getJsonIndexes(entity);
+    if (jsonIndexes.length === 0) return [];
+
+    const propertyToColumnMap = this.buildPropertyToColumnMap(entity);
+
+    return jsonIndexes.map((ji) => {
+      const columnName =
+        propertyToColumnMap.get(ji.propertyKey) ?? ji.propertyKey;
+      const wrappedCol = this.wrapId(columnName);
+
+      const using = ji.options.using ?? "gin";
+      const indexName =
+        ji.options.name ??
+        this.namingStrategy.jsonIndexName(tableName, columnName, ji.pathSegments, using);
+
+      // Expression for the index column list
+      let columnExpr: string;
+      if (ji.pathSegments.length === 0) {
+        // Whole-column index
+        columnExpr = wrappedCol;
+      } else if (using === "btree") {
+        // Leaf text extraction for ordering / equality scans.
+        const pathLit = this.pgPathArrayLiteral(ji.pathSegments);
+        columnExpr = `(${wrappedCol} #>> ${pathLit})`;
+      } else {
+        // GIN on a jsonb subtree — chain `->` so the expression matches
+        // `jsonb_ops` / `jsonb_path_ops` opclasses.
+        columnExpr = `(${this.pgNavigateExpression(wrappedCol, ji.pathSegments)})`;
+      }
+
+      // Append opclass when meaningful (PG GIN on jsonb).
+      const opclass =
+        using === "gin" && ji.options.opclass ? ` ${ji.options.opclass}` : "";
+
+      const whereClause = ji.options.where ? ` WHERE ${ji.options.where}` : "";
+
+      return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} USING ${using} (${columnExpr}${opclass})${whereClause}`;
+    });
+  }
+
+  /**
+   * Build a PG text[] path literal (`'{a,b,0,c}'::text[]`) suitable for the
+   * `#>>` operator. Segments are escaped for the PG array syntax. Numeric
+   * segments are emitted bare (PG coerces during `#>>`).
+   */
+  private pgPathArrayLiteral(
+    path: ReadonlyArray<string | number>,
+  ): string {
+    const escaped = path.map((s) => {
+      if (typeof s === "number") return String(s);
+      // Quote segments containing special characters for PG array syntax;
+      // escape embedded quotes and backslashes.
+      if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(s)) return s;
+      return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    });
+    return `'{${escaped.join(",")}}'::text[]`;
+  }
+
+  /**
+   * Build a chained `-> ` / `-> N` navigation expression
+   * (`"col" -> 'a' -> 0 -> 'b'`). Used inside the GIN index expression.
+   */
+  private pgNavigateExpression(
+    wrappedColumn: string,
+    path: ReadonlyArray<string | number>,
+  ): string {
+    let acc = wrappedColumn;
+    for (const seg of path) {
+      if (typeof seg === "number") {
+        acc = `${acc} -> ${seg}`;
+      } else {
+        const literal = `'${seg.replace(/'/g, "''")}'`;
+        acc = `${acc} -> ${literal}`;
+      }
+    }
+    return acc;
+  }
+
+  /**
    * DROP TABLE DDL을 생성합니다.
    */
   generateDropTableDDL<T>(entity: ClazzType<T>): string {
@@ -449,6 +551,11 @@ export class SchemaGenerator {
     // 2c. CREATE FULLTEXT/GIN INDEX
     for (const entity of entities) {
       ddls.push(...this.generateFullTextIndexDDL(entity));
+    }
+
+    // 2d. CREATE JSON-PATH INDEX (PG only; no-op elsewhere)
+    for (const entity of entities) {
+      ddls.push(...this.generateJsonIndexDDL(entity));
     }
 
     // 3. CREATE UNIQUE INDEX
@@ -612,6 +719,14 @@ export class SchemaGenerator {
     return (
       (Reflect.getMetadata(FULLTEXT_INDEX_TOKEN, entity) as
         | FullTextIndexMetadata[]
+        | undefined) ?? []
+    );
+  }
+
+  private getJsonIndexes<T>(entity: ClazzType<T>): JsonIndexMetadata[] {
+    return (
+      (Reflect.getMetadata(JSON_INDEX_TOKEN, entity) as
+        | JsonIndexMetadata[]
         | undefined) ?? []
     );
   }
