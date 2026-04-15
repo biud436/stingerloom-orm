@@ -210,7 +210,33 @@ export class MySqlConnector extends IConnector {
       } else {
         const { sql, values } = rawSql;
 
-        qb.query(sql, values, (error, results, fields) => {
+        // Parameterized DML goes through mysql2's binary protocol
+        // (COM_STMT_PREPARE + COM_STMT_EXECUTE) via `execute()`. The server
+        // parses each distinct SQL text once and caches the resulting
+        // prepared statement; subsequent calls with the same text reuse it
+        // with a `maxPreparedStatements`-bounded LRU per connection (mysql2
+        // default ≈ 16,000).
+        //
+        // Non-DML parameterized SQL (SHOW, DESCRIBE, KILL, DDL containing
+        // placeholders, etc.) stays on the text-protocol `query()` path.
+        // MariaDB in particular rejects prepare for SHOW — e.g. `SHOW
+        // TABLES LIKE ?` used by hasTable() produces "syntax error near
+        // '?'" under COM_STMT_PREPARE even though it works fine via
+        // COM_QUERY. We detect this by prefix; safer than a try-execute /
+        // catch-parse-error fallback that would double-round-trip every
+        // failed prep.
+        const useExecute = MySqlConnector.shouldUseExecute(sql);
+        const method = useExecute ? qb.execute.bind(qb) : qb.query.bind(qb);
+        // mysql2's execute() is stricter than query(): `undefined` in the
+        // bind-parameter array throws "Bind parameters must not contain
+        // undefined" rather than being silently coerced to SQL NULL. That
+        // coercion is what sql-template-tag + query() gave us historically,
+        // so we preserve the behavior at the execute() boundary.
+        const boundValues = useExecute
+          ? MySqlConnector.normalizeBindValues(values)
+          : values;
+
+        method(sql, boundValues, (error: any, results: any, fields: any) => {
           if (error) {
             return reject(error);
           }
@@ -245,6 +271,40 @@ export class MySqlConnector extends IConnector {
         resolve();
       });
     });
+  }
+
+  /**
+   * DML keywords that are safe to send through the prepared-statement
+   * protocol on both MySQL and MariaDB. Anything else (SHOW, DESCRIBE,
+   * EXPLAIN, DDL, KILL, CALL with OUT params, …) falls back to COM_QUERY.
+   *
+   * Leading whitespace and a leading block/line comment are tolerated so
+   * sql-template-tag output like `   /* ... *\/ SELECT ...` still matches.
+   */
+  private static readonly DML_PREFIX_RE =
+    /^\s*(?:\/\*[\s\S]*?\*\/\s*|--[^\n]*\n\s*)*(SELECT|INSERT|UPDATE|DELETE|WITH|REPLACE|VALUES)\b/i;
+
+  /** @internal Exposed for unit testing. */
+  static shouldUseExecute(sqlText: string): boolean {
+    return MySqlConnector.DML_PREFIX_RE.test(sqlText);
+  }
+
+  /**
+   * @internal Replace `undefined` values (at top level only) with `null`.
+   * mysql2's text protocol silently coerces undefined → NULL, but its
+   * binary/prepared-statement protocol throws. We match the historical
+   * behavior so flipping to execute() doesn't regress callers.
+   */
+  static normalizeBindValues(values: readonly any[]): any[] {
+    let hasUndefined = false;
+    for (const v of values) {
+      if (v === undefined) {
+        hasUndefined = true;
+        break;
+      }
+    }
+    if (!hasUndefined) return values as any[];
+    return values.map((v) => (v === undefined ? null : v));
   }
 
   private static readonly ISOLATION_LEVEL_SQL: Record<string, string> = {
