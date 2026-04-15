@@ -342,4 +342,68 @@ describe("ResultTransformer", () => {
       expect(result?.address).toBeInstanceOf(Address);
     });
   });
+
+  describe("toEntities batch deserialization (issue #254)", () => {
+    @Entity()
+    class Simple {
+      @Column()
+      @Expose()
+      id!: number;
+
+      @Column()
+      @Expose()
+      name!: string;
+    }
+
+    @Entity()
+    class SnakeMapped {
+      @Column({ name: "user_id" })
+      @Expose()
+      userId!: number;
+
+      @Column({ name: "full_name" })
+      @Expose()
+      fullName!: string;
+    }
+
+    it("fast path (no remap, no transformers) batches the deserializer call", () => {
+      const rt = ResultTransformerFactory.create();
+      const rows = [
+        { id: 1, name: "alice" },
+        { id: 2, name: "bob" },
+        { id: 3, name: "carol" },
+      ];
+      const result = rt.toEntities(Simple, {
+        results: rows,
+        fields: [],
+      } as any);
+      expect(result).toHaveLength(3);
+      expect(result.every((r) => r instanceof Simple)).toBe(true);
+      expect(result.map((r) => r.name)).toEqual(["alice", "bob", "carol"]);
+    });
+
+    it("remap path (DB column → property key) still round-trips every row", () => {
+      const rt = ResultTransformerFactory.create();
+      const rows = [
+        { user_id: 10, full_name: "Alice Kim" },
+        { user_id: 20, full_name: "Bob Park" },
+      ];
+      const result = rt.toEntities(SnakeMapped, {
+        results: rows,
+        fields: [],
+      } as any);
+      expect(result).toHaveLength(2);
+      expect(result[0]).toBeInstanceOf(SnakeMapped);
+      expect(result[0].userId).toBe(10);
+      expect(result[0].fullName).toBe("Alice Kim");
+      expect(result[1].userId).toBe(20);
+      expect(result[1].fullName).toBe("Bob Park");
+    });
+
+    it("empty result set returns [] without invoking the deserializer", () => {
+      const rt = ResultTransformerFactory.create();
+      const result = rt.toEntities(Simple, { results: [], fields: [] } as any);
+      expect(result).toEqual([]);
+    });
+  });
 });

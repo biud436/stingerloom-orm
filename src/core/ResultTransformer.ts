@@ -202,6 +202,11 @@ export class ResultTransformer implements BaseResultTransformer {
 
   /**
    * SQL 결과를 엔티티 배열로 변환합니다.
+   *
+   * Batches the deserializer invocation: `class-transformer` (and other
+   * `Deserializer` impls) natively accept an array and amortize per-row
+   * function-call / option-merging / internal-scan overhead. For large
+   * result sets this is materially cheaper than one call per row.
    */
   public toEntities<T>(
     entityClass: MyClassConstructor<T>,
@@ -214,23 +219,26 @@ export class ResultTransformer implements BaseResultTransformer {
     const r = result!;
     const info = getCachedColumnInfo(entityClass);
 
-    // Strategy 3: Fast path — no remap + no transformers → skip remap step
+    // Fast path — no remap + no transformers → batch-deserialize the raw rows.
     if (!info.remapMap && !info.hasTransformers) {
-      return r.results.map((item) => deserializeEntity(entityClass, item));
+      return deserializeEntity(entityClass, r.results) as unknown as T[];
     }
 
-    // Standard path with remap + transforms
-    if (!info.hasTransformers) {
-      return r.results.map((item) => {
-        const remapped = remapRowToPropertyKeys(entityClass, item);
-        return deserializeEntity(entityClass, remapped);
-      });
+    // Standard path with remap: build a single array of remapped rows, then
+    // deserialize in one call. The `for`-loop + preallocated result array
+    // avoids the closure allocation of `.map(...)` on hot paths.
+    const remappedRows = new Array(r.results.length);
+    for (let i = 0; i < r.results.length; i++) {
+      remappedRows[i] = remapRowToPropertyKeys(entityClass, r.results[i]);
     }
+    const entities = deserializeEntity(entityClass, remappedRows) as unknown as T[];
 
-    return r.results.map((item) => {
-      const remapped = remapRowToPropertyKeys(entityClass, item);
-      return this.applyColumnTransforms(entityClass, deserializeEntity(entityClass, remapped));
-    });
+    if (!info.hasTransformers) return entities;
+
+    for (let i = 0; i < entities.length; i++) {
+      this.applyColumnTransforms(entityClass, entities[i]);
+    }
+    return entities;
   }
 
   /**
