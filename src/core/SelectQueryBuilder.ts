@@ -2660,7 +2660,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * For plain-object projections without validation, use `getPartialMany()`.
    * For completely untyped results, use `getRawMany()`.
    */
-  async getMany(): Promise<T[]> {
+  async getMany(): Promise<TResult[]> {
     this.validateRequiredColumns();
 
     const built = this.toSql();
@@ -2669,13 +2669,9 @@ export class SelectQueryBuilder<T, TResult = T> {
     // Polymorphic deserialization: instantiate correct subclass per row
     if (this.isPolymorphicQuery && this.discriminatorMap?.size) {
       if (this.inheritanceStrategy === "JOINED" && this.tptChildPrefixMap) {
-        return this.applyValidation(
-          this.deserializeTPTPolymorphic(rows),
-        ) as unknown as T[];
+        return this.applyValidation(this.deserializeTPTPolymorphic(rows));
       }
-      return this.applyValidation(
-        this.deserializePolymorphic(rows),
-      ) as unknown as T[];
+      return this.applyValidation(this.deserializePolymorphic(rows));
     }
 
     const registry = DeserializerRegistry.getInstance();
@@ -2683,7 +2679,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       registry.deserialize(this.entity, row),
     );
 
-    return this.applyValidation(entities) as unknown as T[];
+    return this.applyValidation(entities);
   }
 
   /**
@@ -2703,7 +2699,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * await q.executeOne({ id: 77 });   // no rebuild
    * ```
    */
-  prepare<P extends Record<string, unknown> = Record<string, unknown>>(): CompiledQuery<T, P> {
+  prepare<P extends Record<string, unknown> = Record<string, unknown>>(): CompiledQuery<TResult, P> {
     this.validateRequiredColumns();
     const built = this.toSql();
 
@@ -2716,19 +2712,19 @@ export class SelectQueryBuilder<T, TResult = T> {
     const deserializeTPT = this.deserializeTPTPolymorphic.bind(this);
     const applyVal = this.applyValidation.bind(this);
 
-    const deserialize = (rows: any[]): T[] => {
+    const deserialize = (rows: any[]): TResult[] => {
       if (isPoly && discMap?.size) {
         if (strategy === "JOINED" && tptMap) {
-          return applyVal(deserializeTPT(rows)) as unknown as T[];
+          return applyVal(deserializeTPT(rows));
         }
-        return applyVal(deserializePoly(rows)) as unknown as T[];
+        return applyVal(deserializePoly(rows));
       }
       const registry = DeserializerRegistry.getInstance();
       const entities = rows.map((row: any) => registry.deserialize(entity, row));
-      return applyVal(entities) as unknown as T[];
+      return applyVal(entities);
     };
 
-    return new CompiledQuery<T, P>(
+    return new CompiledQuery<TResult, P>(
       built.strings,
       built.values,
       (sql) => this.em.query<any>(sql),
@@ -2755,7 +2751,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Execute the query and return a single class instance or null.
    * Automatically adds LIMIT 1 if not already set.
    */
-  async getOne(): Promise<T | null> {
+  async getOne(): Promise<TResult | null> {
     if (this.limitValue === undefined) {
       this.limitValue = 1;
     }
@@ -2767,7 +2763,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Execute the query and return a single class instance.
    * Throws EntityNotFoundError if no result is found.
    */
-  async getOneOrFail(): Promise<T> {
+  async getOneOrFail(): Promise<TResult> {
     const result = await this.getOne();
     if (result === null) {
       throw new EntityNotFoundError(this.entity.name);
@@ -2778,7 +2774,7 @@ export class SelectQueryBuilder<T, TResult = T> {
   /**
    * Execute the query and return both class instances and total count.
    */
-  async getManyAndCount(): Promise<[T[], number]> {
+  async getManyAndCount(): Promise<[TResult[], number]> {
     const [results, count] = await Promise.all([
       this.getMany(),
       this.getCount(),
