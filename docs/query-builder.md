@@ -490,6 +490,165 @@ Use this pattern whenever you catch yourself reaching for
 `` em.query(sql`... ->> ${path}`) `` for a JSON filter — the QueryDSL path
 is both safer and portable across every driver the ORM supports.
 
+#### QueryDSL Tier 1 — Ordering, Aggregates, Logical Composition, String Convenience
+
+`qAlias()` started as a WHERE-clause helper. Tier 1 adds the everyday
+expression types that were previously missing — the ones that Java QueryDSL
+users reach for every day: **ordering helpers, aggregates that double as
+SELECT projections and HAVING conditions, logical composition on
+conditions, and string-matching convenience methods with safe LIKE
+escaping.**
+
+All of these continue to resolve column references through the alias
+registry, so `u.firstName` still becomes `"u"."first_name"` under
+`SnakeNamingStrategy` — and every user value is a bound parameter.
+
+##### Ordering — `.asc()` / `.desc()` / `.nullsFirst()` / `.nullsLast()`
+
+```typescript
+const u = qAlias(User, "u");
+
+await em.createQueryBuilder(User, "u")
+  .orderBy(u.createdAt.desc().nullsLast())
+  .addOrderBy(u.name.asc())
+  .getMany();
+```
+
+Emits native `NULLS FIRST` / `NULLS LAST` on PostgreSQL and SQLite. MySQL
+has no equivalent keyword, so Stingerloom emulates it by prefixing the
+sort with `col IS NULL` ordering — you get the same result without
+having to remember the workaround.
+
+`orderBy(expr)` replaces the existing ORDER BY list; `addOrderBy(expr)`
+appends. Both also still accept the legacy `{ column: "ASC" | "DESC" }`
+map and the `(column, direction)` overload.
+
+##### Aggregates — SELECT and HAVING in one expression
+
+```typescript
+const u = qAlias(User, "u");
+const total = u.id.count();            // AggregateExpression
+
+await em.createQueryBuilder(User, "u")
+  .select(["departmentId"])
+  .addSelect(total.as("total"))
+  .groupBy(["u.departmentId"])
+  .having(total.gt(10))                // AggregateCondition
+  .addOrderBy(u.departmentId.asc())
+  .getRawMany();
+```
+
+`ColumnExpression` exposes `.count()`, `.countDistinct()`, `.sum()`,
+`.avg()`, `.min()`, `.max()`. Each returns an `AggregateExpression`
+that plays two roles:
+
+1. **In SELECT.** `.as("alias")` sets the output column name. If omitted,
+   Stingerloom falls back to a deterministic `agg_<func>_<col>` pattern
+   (e.g. `agg_count_id`) so `getRawMany()` still has predictable keys —
+   but an explicit alias is strongly recommended.
+2. **In HAVING / WHERE.** Calling `.eq`, `.neq`, `.gt`, `.gte`, `.lt`,
+   `.lte`, or `.between` on the aggregate produces an
+   `AggregateCondition`, which can be passed to `having()`, `where()`,
+   or `andWhere()`.
+
+Aggregates also participate in ORDER BY via `.asc()` / `.desc()`, mirroring
+the ColumnExpression surface.
+
+##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
+
+```typescript
+const u = qAlias(User, "u");
+
+// Method chain — left-to-right grouping: (age >= 18 AND status = 'active')
+qb.where(u.age.gte(18).and(u.status.eq("active")));
+
+// OR across role variants
+qb.where(u.role.eq("admin").or(u.role.eq("owner")));
+
+// Negation
+qb.where(u.deletedAt.isNull().not());      // equivalent to u.deletedAt.isNotNull()
+
+// Static helpers when you need explicit grouping
+import { Expressions } from "@stingerloom/orm";
+
+qb.where(
+  Expressions.or(
+    Expressions.and(u.age.gte(18), u.status.eq("active")),
+    u.role.eq("admin"),
+  ),
+);
+// WHERE (("u"."age" >= $1 AND "u"."status" = $2) OR "u"."role" = $3)
+```
+
+Every condition type — `ColumnCondition`, `JsonPathCondition`,
+`AggregateCondition`, and nested `LogicalCondition` — implements a
+common `ConditionLike` contract, so you can compose across them freely:
+
+```typescript
+qb.where(
+  Expressions.and(
+    u.status.eq("active"),
+    u.profile.tags.contains("admin"),     // JsonPathCondition
+  ),
+);
+```
+
+Associativity follows JavaScript method-chain rules: `a.and(b).or(c)` is
+`(a AND b) OR c`. For different grouping, wrap with
+`Expressions.or(...)` / `Expressions.and(...)` explicitly.
+
+Consecutive ANDs (and ORs) are flattened in the emitted SQL — you don't
+get nested parens for every chain step.
+
+##### String convenience — `.startsWith` / `.endsWith` / `.contains` + `*IgnoreCase`
+
+Case-sensitive substring matching with automatic wildcard escaping:
+
+```typescript
+qb.where(u.name.startsWith("Al"));       // LIKE 'Al%' ESCAPE '\'
+qb.where(u.name.endsWith("son"));        // LIKE '%son' ESCAPE '\'
+qb.where(u.name.contains("lic"));        // LIKE '%lic%' ESCAPE '\'
+```
+
+These **escape `%`, `_`, and `\`** in the caller-supplied value before
+wrapping it in wildcards. A literal `"50%"` stays literal — it does not
+match `"501"`, `"502"`, `"50A"`, etc.:
+
+```typescript
+qb.where(u.name.startsWith("50%"));
+// SQL:  "u"."name" LIKE $1 ESCAPE $2
+// params: ["50\\%%", "\\"]     -- the user's % is escaped, only the
+//                                 trailing % remains as wildcard
+```
+
+Case-insensitive variants:
+
+```typescript
+qb.where(u.username.equalsIgnoreCase("alice"));
+// LOWER("u"."username") = LOWER($1)        — all dialects
+
+qb.where(u.email.containsIgnoreCase("@gmail"));
+// Postgres:      "u"."email" ILIKE $1 ESCAPE $2
+// MySQL/SQLite:  LOWER("u"."email") LIKE LOWER($1) ESCAPE $2
+```
+
+`equalsIgnoreCase` uses `LOWER()` on both sides for a collation-
+independent result on every dialect. The LIKE family uses `ILIKE`
+natively on PostgreSQL and falls back to `LOWER(col) LIKE LOWER(pattern)`
+elsewhere — so `utf8mb4_bin` collation on MySQL and the ASCII-only
+default LIKE on SQLite both produce the right answer without the caller
+having to know.
+
+Method summary for Tier 1:
+
+| Category              | Methods                                                                                         |
+|-----------------------|-------------------------------------------------------------------------------------------------|
+| String (case-sens.)   | `.startsWith`, `.endsWith`, `.contains`                                                         |
+| String (case-insens.) | `.equalsIgnoreCase`, `.likeIgnoreCase`, `.startsWithIgnoreCase`, `.endsWithIgnoreCase`, `.containsIgnoreCase` |
+| Ordering              | `.asc()`, `.desc()`, `.nullsFirst()`, `.nullsLast()`                                            |
+| Aggregates            | `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()` — each with `.as(alias)` and `.eq/.neq/.gt/.gte/.lt/.lte/.between` |
+| Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
+
 ### JOIN — Combining Tables
 
 This is where the query builder really shines. Stingerloom provides three levels of JOIN support, from fully automatic to raw SQL.

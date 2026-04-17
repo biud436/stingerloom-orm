@@ -35,3 +35,8 @@ export * from "./ColumnTypeRegistry";
 export * from "./InheritanceResolver";
 export * from "./CompiledQuery";
 export * from "./expressions/JsonPathExpression";
+export * from "./expressions/ConditionLike";
+export * from "./expressions/OrderExpression";
+export * from "./expressions/AggregateExpression";
+export * from "./expressions/LogicalCondition";
+export * from "./expressions/likeEscape";

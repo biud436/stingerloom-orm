@@ -6,6 +6,42 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [Unreleased] — QueryDSL Tier 1
+
+### Highlights
+
+- **QueryDSL Tier 1** — `qAlias()` grows the four everyday expression categories it was previously missing: ordering helpers (`.asc() / .desc() / .nullsFirst() / .nullsLast()`), aggregates that play both SELECT and HAVING roles (`.count() / .countDistinct() / .sum() / .avg() / .min() / .max()`), logical composition on every condition type (`.and() / .or() / .not()` plus `Expressions.and/or/not`), and string-matching convenience with safe LIKE escaping (`.startsWith / .endsWith / .contains` + their `*IgnoreCase` siblings). Every user value is still a bound parameter, and every condition routes through a shared `ConditionLike` contract so types mix freely.
+
+### Added
+
+- **`OrderExpression`** — New expression type returned by `ColumnExpression.asc()/.desc()` and `AggregateExpression.asc()/.desc()`; chain `.nullsFirst()` / `.nullsLast()` to control NULL ordering
+- **`AggregateExpression` / `AggregateCondition`** — Aggregates that render inside SELECT (via `.as("alias")` — explicit alias recommended; falls back to deterministic `agg_<func>_<col>`) and double as HAVING / WHERE conditions through `.eq / .neq / .gt / .gte / .lt / .lte / .between`
+- **`LogicalCondition` + `Expressions` namespace** — AND / OR / NOT composition over any `ConditionLike`. `Expressions.and(a, b, …)`, `Expressions.or(a, b, …)`, `Expressions.not(a)` plus `.and() / .or() / .not()` chains on every condition type (including `AggregateCondition` and `JsonPathCondition`). Contiguous AND or OR chains flatten in the emitted SQL
+- **`ConditionLike` interface** — Shared contract unifying `ColumnCondition`, `JsonPathCondition`, `AggregateCondition`, and `LogicalCondition`; `resolve()` threads the alias registry and dialect strategy through uniformly
+- **`DialectExpression.caseInsensitiveLike(column, pattern)`** — Collation-independent case-insensitive LIKE. `ILIKE ... ESCAPE '\'` on PostgreSQL, `LOWER(col) LIKE LOWER(pattern) ESCAPE '\'` on MySQL and SQLite
+- **`escapeLikeValue(value)`** — Shared helper that escapes `%`, `_`, and `\` so user-supplied text never silently acts as a LIKE wildcard
+- **String convenience methods on `ColumnExpression`** — `.startsWith / .endsWith / .contains` (auto-escape metacharacters, emit `LIKE … ESCAPE '\'`), `.equalsIgnoreCase` (`LOWER() = LOWER()` on every dialect), `.likeIgnoreCase`, `.startsWithIgnoreCase`, `.endsWithIgnoreCase`, `.containsIgnoreCase`
+
+### Changed
+
+- `SelectQueryBuilder.select()` and `.addSelect()` accept `AggregateExpression`; aggregate-only `select()` resets the column list
+- `SelectQueryBuilder.orderBy()` and `.addOrderBy()` accept `OrderExpression`; `orderByClauses` carries an optional `nulls` position. PostgreSQL and SQLite emit `NULLS FIRST` / `NULLS LAST` natively; MySQL emulates it with a `col IS NULL` ordering prefix
+- `SelectQueryBuilder.where() / .andWhere() / .orWhere() / .having()` and `WhereGroupBuilder.where()` all dispatch through `isConditionLike`, so any new condition type composes without further overloads
+- `ColumnCondition` now implements `ConditionLike` with `__isCondition`; its existing `resolve(resolveColumn)` signature gains an optional dialect parameter used by new operators (fully backward compatible)
+- `JsonPathCondition` now implements `ConditionLike` too — so JSON path conditions compose with `AND/OR/NOT` alongside column and aggregate conditions
+
+### Documentation
+
+- New **QueryDSL Tier 1 — Ordering, Aggregates, Logical Composition, String Convenience** section in `docs/query-builder.md` and `docs/ko/query-builder.md` with per-category examples, dialect-by-dialect SQL output, and a method-summary table
+
+### Tests
+
+- 100 new unit cases across `qdsl-tier1-order-expression.test.ts`, `qdsl-tier1-aggregate-expression.test.ts`, `qdsl-tier1-logical-condition.test.ts`, `qdsl-tier1-string-convenience.test.ts`, and `qdsl-tier1-integration.test.ts` covering construction, SQL rendering, operator behaviour, LIKE escaping, dialect branches, and composition between condition types
+- 21 new SQLite in-memory integration cases in `__tests__/integration/sqlite/qdsl-tier1.test.ts` exercising aggregate SELECT, GROUP BY + HAVING, ORDER BY with NULLS positioning, WHERE logical composition, and the string-convenience surface end-to-end against a real database
+- No regressions: full unit suite (3,745 passed, 19 skipped) and SQLite integration suite (331 passed) green
+
+---
+
 ## [0.16.1] — 2026-04-12
 
 ### Highlights

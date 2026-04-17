@@ -42,6 +42,27 @@ export interface DialectExpression {
   ilike(column: string, value: string): Sql;
 
   /**
+   * Case-insensitive LIKE with an explicit ESCAPE clause and collation-
+   * independent semantics.
+   *
+   * Unlike {@link ilike}, this method guarantees case-insensitive behavior
+   * on every dialect regardless of the column's collation:
+   *
+   * - PostgreSQL: `col ILIKE pattern ESCAPE '\'`
+   * - MySQL:      `LOWER(col) LIKE LOWER(pattern) ESCAPE '\'`
+   * - SQLite:     `LOWER(col) LIKE LOWER(pattern) ESCAPE '\'`
+   *
+   * Caller is responsible for escaping `%` / `_` / `\` in the user portion
+   * of the pattern (see `escapeLikeValue` in core/expressions).
+   *
+   * @param column - Already-escaped column identifier (e.g. `"u"."name"`).
+   * @param pattern - LIKE pattern. Metacharacters in user input should be
+   *                  pre-escaped; the wildcards added by callers (e.g.
+   *                  leading/trailing `%` for `contains`) are left intact.
+   */
+  caseInsensitiveLike(column: string, pattern: string): Sql;
+
+  /**
    * Full-text search condition.
    *
    * - PostgreSQL: `to_tsvector('lang', column) @@ plainto_tsquery('lang', query)`

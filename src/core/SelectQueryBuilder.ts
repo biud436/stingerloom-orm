@@ -17,6 +17,23 @@ import {
   makeJsonPathExpression,
   type JsonPathExpression,
 } from "./expressions/JsonPathExpression";
+import {
+  isConditionLike,
+  type ConditionLike,
+  type ColumnResolver,
+} from "./expressions/ConditionLike";
+import { OrderExpression, isOrderExpression } from "./expressions/OrderExpression";
+import {
+  AggregateExpression,
+  AggregateCondition,
+  isAggregateExpression,
+  isAggregateCondition,
+} from "./expressions/AggregateExpression";
+import {
+  LogicalCondition,
+  isLogicalCondition,
+} from "./expressions/LogicalCondition";
+import { escapeLikeValue } from "./expressions/likeEscape";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
@@ -169,17 +186,33 @@ export function isEntityRef<T = any>(value: unknown): value is EntityRef<T> {
  * Created by `ColumnExpression` methods like `.eq()`, `.like()`, etc.
  * Passed directly to `where()`, `andWhere()`, `orWhere()`.
  */
-export class ColumnCondition {
+export class ColumnCondition implements ConditionLike {
+  readonly __isCondition = true as const;
   readonly __columnCondition = true as const;
   constructor(
     readonly ref: string,
     readonly operator: string,
     readonly value: any,
+    /**
+     * Optional renderer for operators that need dialect context (e.g. the
+     * case-insensitive LIKE family). When present, {@link resolve} delegates
+     * to it instead of the built-in switch below.
+     */
+    readonly dialectRenderer?: (
+      qualified: string,
+      dialect: DialectExpression | undefined,
+    ) => Sql,
   ) {}
 
   /** @internal Resolve the column reference and produce final SQL. */
-  resolve(resolveColumn: (ref: string) => string): Sql {
+  resolve(
+    resolveColumn: (ref: string) => string,
+    dialect?: DialectExpression,
+  ): Sql {
     const qualified = resolveColumn(this.ref);
+    if (this.dialectRenderer) {
+      return this.dialectRenderer(qualified, dialect);
+    }
     switch (this.operator) {
       case "=":
         if (this.value === null) return Conditions.isNull(qualified);
@@ -214,6 +247,19 @@ export class ColumnCondition {
         return sql`${raw(qualified)} ${raw(this.operator)} ${this.value}`;
     }
   }
+
+  /** Compose with another condition using AND. */
+  and(other: ConditionLike): LogicalCondition {
+    return new LogicalCondition("AND", [this, other]);
+  }
+  /** Compose with another condition using OR. */
+  or(other: ConditionLike): LogicalCondition {
+    return new LogicalCondition("OR", [this, other]);
+  }
+  /** Negate this condition. */
+  not(): LogicalCondition {
+    return new LogicalCondition("NOT", [this]);
+  }
 }
 
 /**
@@ -247,9 +293,9 @@ export class ColumnExpression {
   lt(value: any): ColumnCondition { return new ColumnCondition(this.ref, "<", value); }
   /** `column <= value` */
   lte(value: any): ColumnCondition { return new ColumnCondition(this.ref, "<=", value); }
-  /** `column LIKE pattern` */
+  /** `column LIKE pattern` (pattern passed through verbatim — wildcards kept). */
   like(pattern: string): ColumnCondition { return new ColumnCondition(this.ref, "LIKE", pattern); }
-  /** `column NOT LIKE pattern` */
+  /** `column NOT LIKE pattern` (pattern passed through verbatim). */
   notLike(pattern: string): ColumnCondition { return new ColumnCondition(this.ref, "NOT LIKE", pattern); }
   /** `column IN (values)` */
   in(values: any[]): ColumnCondition { return new ColumnCondition(this.ref, "IN", values); }
@@ -261,6 +307,125 @@ export class ColumnExpression {
   isNotNull(): ColumnCondition { return new ColumnCondition(this.ref, "IS NOT NULL", undefined); }
   /** `column BETWEEN min AND max` */
   between(min: any, max: any): ColumnCondition { return new ColumnCondition(this.ref, "BETWEEN", [min, max]); }
+
+  // ── String convenience (Tier 1) ─────────────────────────
+  // These escape LIKE metacharacters in user input so "50%" does not
+  // match "starts with 50" patterns; callers who want raw wildcards
+  // should use .like() instead.
+
+  /** `column LIKE 'value%' ESCAPE '\\'` — matches strings starting with `value`. */
+  startsWith(value: string): ColumnCondition {
+    const pattern = `${escapeLikeValue(value)}%`;
+    return this.likeWithEscape(pattern);
+  }
+  /** `column LIKE '%value' ESCAPE '\\'` — matches strings ending with `value`. */
+  endsWith(value: string): ColumnCondition {
+    const pattern = `%${escapeLikeValue(value)}`;
+    return this.likeWithEscape(pattern);
+  }
+  /** `column LIKE '%value%' ESCAPE '\\'` — substring match. */
+  contains(value: string): ColumnCondition {
+    const pattern = `%${escapeLikeValue(value)}%`;
+    return this.likeWithEscape(pattern);
+  }
+
+  private likeWithEscape(pattern: string): ColumnCondition {
+    return new ColumnCondition(
+      this.ref,
+      "_LIKE_ESCAPED",
+      pattern,
+      (qualified) => sql`${raw(qualified)} LIKE ${pattern} ESCAPE ${"\\"}`,
+    );
+  }
+
+  /**
+   * `LOWER(column) = LOWER(value)` — collation-independent case-insensitive
+   * equality. Works on every dialect without relying on case-insensitive
+   * collation settings.
+   */
+  equalsIgnoreCase(value: string): ColumnCondition {
+    return new ColumnCondition(
+      this.ref,
+      "_CI_EQ",
+      value,
+      (qualified) =>
+        sql`LOWER(${raw(qualified)}) = LOWER(${value})`,
+    );
+  }
+
+  /**
+   * Case-insensitive LIKE. Pattern metacharacters are NOT auto-escaped
+   * (pass-through — matches the semantics of `.like()`).
+   *
+   * - PostgreSQL: native `ILIKE`
+   * - MySQL/SQLite: `LOWER(col) LIKE LOWER(pattern) ESCAPE '\\'`
+   */
+  likeIgnoreCase(pattern: string): ColumnCondition {
+    return this.ciLike(pattern);
+  }
+
+  /** Case-insensitive "starts with". Escapes metacharacters in `value`. */
+  startsWithIgnoreCase(value: string): ColumnCondition {
+    return this.ciLike(`${escapeLikeValue(value)}%`);
+  }
+  /** Case-insensitive "ends with". Escapes metacharacters in `value`. */
+  endsWithIgnoreCase(value: string): ColumnCondition {
+    return this.ciLike(`%${escapeLikeValue(value)}`);
+  }
+  /** Case-insensitive substring match. Escapes metacharacters in `value`. */
+  containsIgnoreCase(value: string): ColumnCondition {
+    return this.ciLike(`%${escapeLikeValue(value)}%`);
+  }
+
+  private ciLike(pattern: string): ColumnCondition {
+    return new ColumnCondition(
+      this.ref,
+      "_CI_LIKE",
+      pattern,
+      (qualified, dialect) => {
+        if (dialect) {
+          return dialect.caseInsensitiveLike(qualified, pattern);
+        }
+        // No dialect available (detached expression) — fall back to a
+        // collation-agnostic LOWER() comparison that works everywhere.
+        return sql`LOWER(${raw(qualified)}) LIKE LOWER(${pattern}) ESCAPE ${"\\"}`;
+      },
+    );
+  }
+
+  // ── Ordering helpers (Tier 1) ──────────────────────────
+
+  /** Ascending ORDER BY on this column. */
+  asc(): OrderExpression { return new OrderExpression(this.ref, "ASC"); }
+  /** Descending ORDER BY on this column. */
+  desc(): OrderExpression { return new OrderExpression(this.ref, "DESC"); }
+
+  // ── Aggregate helpers (Tier 1) ─────────────────────────
+
+  /** `COUNT(column)` aggregate. */
+  count(): AggregateExpression {
+    return new AggregateExpression(this.ref, "COUNT", false, undefined);
+  }
+  /** `COUNT(DISTINCT column)` aggregate. */
+  countDistinct(): AggregateExpression {
+    return new AggregateExpression(this.ref, "COUNT", true, undefined);
+  }
+  /** `SUM(column)` aggregate. */
+  sum(): AggregateExpression {
+    return new AggregateExpression(this.ref, "SUM", false, undefined);
+  }
+  /** `AVG(column)` aggregate. */
+  avg(): AggregateExpression {
+    return new AggregateExpression(this.ref, "AVG", false, undefined);
+  }
+  /** `MIN(column)` aggregate. */
+  min(): AggregateExpression {
+    return new AggregateExpression(this.ref, "MIN", false, undefined);
+  }
+  /** `MAX(column)` aggregate. */
+  max(): AggregateExpression {
+    return new AggregateExpression(this.ref, "MAX", false, undefined);
+  }
 
   /** Returns the `"alias.property"` string (for interop with `col()`-style API). */
   toString(): string { return this.ref; }
@@ -497,22 +662,32 @@ export class WhereGroupBuilder<T> {
   constructor(
     private readonly columnResolver: (ref: string) => string,
     private readonly wrapFn: (id: string) => string,
+    /**
+     * Dialect expression strategy, forwarded so group conditions that
+     * contain JSON paths or case-insensitive LIKE get resolved correctly.
+     * Optional because some call sites (legacy tests, unit fixtures)
+     * construct groups without a live EntityManager.
+     */
+    private readonly dialectExpression?: DialectExpression,
   ) {}
 
   where(condition: Sql): this;
-  where(condition: ColumnCondition): this;
+  where(condition: ConditionLike): this;
   where(column: keyof T & string, value: any): this;
   where(column: keyof T & string, operator: WhereOperator, value: any): this;
   where(column: string, value: any): this;
   where(column: string, operator: WhereOperator, value: any): this;
   where(
-    columnOrCondition: string | Sql | ColumnCondition,
+    columnOrCondition: string | Sql | ConditionLike,
     valueOrOperator?: any,
     value?: any,
   ): this {
-    if (columnOrCondition instanceof ColumnCondition) {
+    if (isConditionLike(columnOrCondition)) {
       this.conditions.push(
-        columnOrCondition.resolve((ref) => this.columnResolver(ref)),
+        columnOrCondition.resolve(
+          (ref) => this.columnResolver(ref),
+          this.dialectExpression,
+        ),
       );
       return this;
     }
@@ -628,6 +803,10 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected orderByClauses: Array<{
     column: string;
     direction: "ASC" | "DESC";
+    /** Optional NULLS FIRST/LAST position (Postgres/SQLite native; emulated on MySQL). */
+    nulls?: "FIRST" | "LAST";
+    /** When true, `column` is a pre-rendered SQL fragment — bypass resolver. */
+    isRaw?: boolean;
   }> = [];
   protected groupByCols: string[] = [];
   protected havingClauses: Sql[] = [];
@@ -997,9 +1176,26 @@ export class SelectQueryBuilder<T, TResult = T> {
     columns: K[],
   ): SelectQueryBuilder<T, Pick<T, K>>;
   select(columns: "*"): SelectQueryBuilder<T, T>;
+  /**
+   * Seed the SELECT clause with one or more {@link AggregateExpression}s.
+   *
+   * Result keying: aggregate columns are exposed under their alias — either
+   * the one passed to `.as("name")` or the deterministic default from
+   * `AggregateExpression.getAlias()` (e.g. `agg_count_id`). Prefer
+   * `getRawMany()` when the projection is aggregate-only, since TResult
+   * no longer matches the entity shape.
+   */
+  select(aggregate: AggregateExpression): SelectQueryBuilder<T, any>;
+  select(aggregates: AggregateExpression[]): SelectQueryBuilder<T, any>;
   select<K extends ColumnOf<T>>(
-    columns: K[] | "*",
+    columns: K[] | "*" | AggregateExpression | AggregateExpression[],
   ): SelectQueryBuilder<T, any> {
+    if (isAggregateExpression(columns)) {
+      return this.selectAggregates([columns]);
+    }
+    if (Array.isArray(columns) && columns.length > 0 && isAggregateExpression(columns[0])) {
+      return this.selectAggregates(columns as AggregateExpression[]);
+    }
     if (columns === "*") {
       this.selectColumns = "*";
       this.selectedPropertyKeys = null;
@@ -1008,6 +1204,27 @@ export class SelectQueryBuilder<T, TResult = T> {
       this.selectedPropertyKeys = columns as string[];
     }
     return this as any;
+  }
+
+  /**
+   * @internal Replace the SELECT clause with aggregate-only projections.
+   *
+   * Aggregates render as pure raw SQL (func name + qualified column, no
+   * bound parameters), so it's safe to stringify them and funnel through
+   * `selectColumns` — the same path as plain columns. Keeping them there
+   * avoids the `selectExpressions` merge machinery which requires a
+   * non-empty column list to attach to.
+   */
+  private selectAggregates(aggregates: AggregateExpression[]): this {
+    const fragments: string[] = [];
+    for (const agg of aggregates) {
+      const resolvedAlias = agg.alias ?? agg.getAlias();
+      const fn = agg.renderFunction((ref) => this.resolveColumn(ref));
+      fragments.push(`${fn.sql} AS ${this.em.wrap(resolvedAlias)}`);
+    }
+    this.selectColumns = fragments;
+    this.selectedPropertyKeys = null;
+    return this;
   }
 
   /**
@@ -1036,7 +1253,23 @@ export class SelectQueryBuilder<T, TResult = T> {
     return this;
   }
 
-  addSelect(expr: Sql | string, alias?: string): this {
+  addSelect(expr: AggregateExpression): this;
+  addSelect(expr: Sql | string, alias?: string): this;
+  addSelect(expr: Sql | string | AggregateExpression, alias?: string): this {
+    if (isAggregateExpression(expr)) {
+      // Aggregate SQL has no bound parameters (func name + qualified col),
+      // so funneling through selectColumns as a plain string is safe and
+      // gives consistent ordering with other SELECT fragments.
+      const resolvedAlias = expr.alias ?? alias ?? expr.getAlias();
+      const fn = expr.renderFunction((ref) => this.resolveColumn(ref));
+      const fragment = `${fn.sql} AS ${this.em.wrap(resolvedAlias)}`;
+      if (this.selectColumns === "*") {
+        this.selectColumns = [`${this.em.wrap(this.alias)}.*`, fragment];
+      } else {
+        (this.selectColumns as string[]).push(fragment);
+      }
+      return this;
+    }
     const exprStr = typeof expr === "string" ? this.resolveColumn(expr) : expr.sql;
     const fragment = alias ? `${exprStr} AS ${this.em.wrap(alias)}` : exprStr;
     if (this.selectColumns === "*") {
@@ -1068,12 +1301,15 @@ export class SelectQueryBuilder<T, TResult = T> {
   where(condition: Sql): this;
   where(condition: ColumnCondition): this;
   where(condition: JsonPathCondition): this;
+  where(condition: AggregateCondition): this;
+  where(condition: LogicalCondition): this;
+  where(condition: ConditionLike): this;
   where(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   where(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   where(column: string, value: any): this;
   where(column: string, operator: WhereOperator, value: any): this;
   where(
-    columnOrCondition: string | Sql | ColumnCondition | JsonPathCondition,
+    columnOrCondition: string | Sql | ConditionLike,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -1089,12 +1325,15 @@ export class SelectQueryBuilder<T, TResult = T> {
   andWhere(condition: Sql): this;
   andWhere(condition: ColumnCondition): this;
   andWhere(condition: JsonPathCondition): this;
+  andWhere(condition: AggregateCondition): this;
+  andWhere(condition: LogicalCondition): this;
+  andWhere(condition: ConditionLike): this;
   andWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   andWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   andWhere(column: string, value: any): this;
   andWhere(column: string, operator: WhereOperator, value: any): this;
   andWhere(
-    columnOrCondition: string | Sql | ColumnCondition | JsonPathCondition,
+    columnOrCondition: string | Sql | ConditionLike,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -1110,12 +1349,15 @@ export class SelectQueryBuilder<T, TResult = T> {
   orWhere(condition: Sql): this;
   orWhere(condition: ColumnCondition): this;
   orWhere(condition: JsonPathCondition): this;
+  orWhere(condition: AggregateCondition): this;
+  orWhere(condition: LogicalCondition): this;
+  orWhere(condition: ConditionLike): this;
   orWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   orWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   orWhere(column: string, value: any): this;
   orWhere(column: string, operator: WhereOperator, value: any): this;
   orWhere(
-    columnOrCondition: string | Sql | ColumnCondition | JsonPathCondition,
+    columnOrCondition: string | Sql | ConditionLike,
     operatorOrValue?: any,
     value?: any,
   ): this {
@@ -1877,9 +2119,20 @@ export class SelectQueryBuilder<T, TResult = T> {
    * qb.orderBy({ createdAt: "DESC", name: "ASC" })
    * ```
    */
-  orderBy(spec: OrderBySpec<T>): this {
+  orderBy(spec: OrderBySpec<T>): this;
+  /**
+   * QueryDSL-style: accept an {@link OrderExpression} from
+   * `u.col.asc()` / `.desc().nullsLast()` etc. Replaces the existing
+   * ORDER BY list so a single call can re-seed ordering.
+   */
+  orderBy(spec: OrderExpression): this;
+  orderBy(spec: OrderBySpec<T> | OrderExpression): this {
+    if (isOrderExpression(spec)) {
+      this.orderByClauses = [];
+      return this.pushOrderExpression(spec);
+    }
     for (const key in spec) {
-      const direction = spec[key as ColumnOf<T>];
+      const direction = (spec as OrderBySpec<T>)[key as ColumnOf<T>];
       if (direction) {
         this.orderByClauses.push({
           column: this.col(key),
@@ -1891,12 +2144,39 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
-   * Add a single ORDER BY clause. Supports `"alias.property"` notation.
+   * Add a single ORDER BY clause. Supports `"alias.property"` notation,
+   * or an {@link OrderExpression} from `col.asc()/.desc().nullsLast()`.
    */
+  addOrderBy(expr: OrderExpression): this;
   addOrderBy(column: ColumnOf<T>, direction: "ASC" | "DESC"): this;
   addOrderBy(column: string, direction: "ASC" | "DESC"): this;
-  addOrderBy(column: string, direction: "ASC" | "DESC"): this {
-    this.orderByClauses.push({ column: this.resolveColumn(column), direction });
+  addOrderBy(
+    columnOrExpr: string | OrderExpression,
+    direction?: "ASC" | "DESC",
+  ): this {
+    if (isOrderExpression(columnOrExpr)) {
+      return this.pushOrderExpression(columnOrExpr);
+    }
+    this.orderByClauses.push({
+      column: this.resolveColumn(columnOrExpr),
+      direction: direction!,
+    });
+    return this;
+  }
+
+  /**
+   * @internal Translate an {@link OrderExpression} (which may carry either
+   * a deferred column ref or a pre-rendered aggregate fragment) into an
+   * entry on `orderByClauses`.
+   */
+  private pushOrderExpression(expr: OrderExpression): this {
+    const column = expr.isRaw ? expr.ref : this.resolveColumn(expr.ref);
+    this.orderByClauses.push({
+      column,
+      direction: expr.direction,
+      nulls: expr.nulls,
+      isRaw: expr.isRaw,
+    });
     return this;
   }
 
@@ -1912,8 +2192,24 @@ export class SelectQueryBuilder<T, TResult = T> {
 
   /**
    * Add HAVING conditions (used with GROUP BY).
+   *
+   * Accepts raw SQL fragments or any QueryDSL condition — typically an
+   * {@link AggregateCondition} from `u.id.count().gt(10)`. Column references
+   * inside the condition are resolved through the alias registry so property
+   * names honor NamingStrategy.
    */
-  having(condition: Sql): this {
+  having(condition: Sql): this;
+  having(condition: ConditionLike): this;
+  having(condition: Sql | ConditionLike): this {
+    if (isConditionLike(condition)) {
+      this.havingClauses.push(
+        condition.resolve(
+          (ref) => this.resolveColumn(ref),
+          this.dialectExpression,
+        ),
+      );
+      return this;
+    }
     this.havingClauses.push(condition);
     return this;
   }
@@ -2192,6 +2488,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const group = new WhereGroupBuilder<T>(
       (ref) => this.resolveColumn(ref),
       (id) => this.em.wrap(id),
+      this.dialectExpression,
     );
     fn(group);
     this.whereClauses.push(group.build());
@@ -2218,6 +2515,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const group = new WhereGroupBuilder<T>(
       (ref) => this.resolveColumn(ref),
       (id) => this.em.wrap(id),
+      this.dialectExpression,
     );
     fn(group);
     const groupSql = group.build();
@@ -2598,7 +2896,8 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     // ORDER BY
     if (this.orderByClauses.length > 0) {
-      qb.orderBy(this.orderByClauses);
+      const orderFragment = this.renderOrderBy(internals.isMySqlFamily());
+      qb.appendSql(orderFragment);
     }
 
     // LIMIT / OFFSET
@@ -3126,24 +3425,68 @@ export class SelectQueryBuilder<T, TResult = T> {
     return metadata.name!;
   }
 
+  /**
+   * @internal Render the accumulated ORDER BY list as a single SQL fragment.
+   *
+   * Handles two cross-dialect concerns:
+   * - NULLS FIRST / NULLS LAST: native on PostgreSQL & SQLite (≥3.30),
+   *   emulated on MySQL via `col IS NULL` ordering prefix.
+   * - Aggregate-as-order-target: `isRaw` entries already contain a rendered
+   *   SQL fragment (e.g. `COUNT("u"."id")`) and bypass identifier wrapping.
+   */
+  protected renderOrderBy(isMySqlFamily: boolean): Sql {
+    const parts: Sql[] = this.orderByClauses.map((entry) => {
+      const dir = entry.direction;
+      if (dir !== "ASC" && dir !== "DESC") {
+        throw new OrmError(
+          OrmErrorCode.QUERY_ERROR,
+          `Invalid ORDER BY direction: ${dir}`,
+        );
+      }
+      const colSql = raw(entry.column);
+
+      if (!entry.nulls) {
+        return sql`${colSql} ${raw(dir)}`;
+      }
+
+      if (isMySqlFamily) {
+        // MySQL has no NULLS FIRST/LAST keyword. Default ordering already
+        // places NULLs first on ASC, last on DESC; flip it when the user
+        // asks for the opposite by prefixing with `(col IS NULL) <dir>`.
+        const defaultNullsFirst = dir === "ASC";
+        const wantNullsFirst = entry.nulls === "FIRST";
+        if (defaultNullsFirst === wantNullsFirst) {
+          return sql`${colSql} ${raw(dir)}`;
+        }
+        // To float NULLs to the opposite side: order by (col IS NULL) first.
+        // IS NULL → 1 (NULL rows), else 0; sorting DESC surfaces NULLs first.
+        const nullPriority = wantNullsFirst ? "DESC" : "ASC";
+        return sql`${colSql} IS NULL ${raw(nullPriority)}, ${colSql} ${raw(dir)}`;
+      }
+
+      // Postgres / SQLite: native NULLS clause.
+      return sql`${colSql} ${raw(dir)} NULLS ${raw(entry.nulls)}`;
+    });
+
+    return sql`ORDER BY ${join(parts, ", ")}`;
+  }
+
   protected resolveCondition(
-    columnOrCondition: string | Sql | ColumnCondition | JsonPathCondition,
+    columnOrCondition:
+      | string
+      | Sql
+      | ColumnCondition
+      | JsonPathCondition
+      | AggregateCondition
+      | LogicalCondition
+      | ConditionLike,
     operatorOrValue?: any,
     value?: any,
   ): Sql {
-    // ColumnCondition from QueryDSL expressions (u.firstName.eq("Alice"))
-    if (columnOrCondition instanceof ColumnCondition) {
-      return columnOrCondition.resolve((ref) => this.resolveColumn(ref));
-    }
-    // JsonPathCondition from JSON QueryDSL expressions (u.metadata.profile.email.eq(...))
-    if (columnOrCondition instanceof JsonPathCondition) {
-      if (!this.dialectExpression) {
-        throw new OrmError(
-          OrmErrorCode.INVALID_QUERY,
-          "JSON path conditions require a DialectExpression. " +
-            "Ensure the query builder was created via EntityManager.createQueryBuilder().",
-        );
-      }
+    // All QueryDSL conditions share the ConditionLike contract: column
+    // refs are deferred, so resolve them through the builder's registry
+    // and thread the dialect through for JSON / case-insensitive ops.
+    if (isConditionLike(columnOrCondition)) {
       return columnOrCondition.resolve(
         (ref) => this.resolveColumn(ref),
         this.dialectExpression,
