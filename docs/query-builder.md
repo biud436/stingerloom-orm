@@ -490,18 +490,27 @@ Use this pattern whenever you catch yourself reaching for
 `` em.query(sql`... ->> ${path}`) `` for a JSON filter — the QueryDSL path
 is both safer and portable across every driver the ORM supports.
 
-#### QueryDSL Tier 1 — Ordering, Aggregates, Logical Composition, String Convenience
+#### Sorting, Counting, Combining, and Matching
 
-`qAlias()` started as a WHERE-clause helper. Tier 1 adds the everyday
-expression types that were previously missing — the ones that Java QueryDSL
-users reach for every day: **ordering helpers, aggregates that double as
-SELECT projections and HAVING conditions, logical composition on
-conditions, and string-matching convenience methods with safe LIKE
-escaping.**
+The examples so far parked `qAlias()` inside WHERE, but column references
+show up in three other places: ORDER BY, SELECT, and HAVING. Real queries
+also run into the kind of small trap where a user types `"50%"` into a
+search box and silently turns the `%` into a LIKE wildcard. Four groups of
+helpers on `ColumnExpression` fill those gaps:
 
-All of these continue to resolve column references through the alias
-registry, so `u.firstName` still becomes `"u"."first_name"` under
-`SnakeNamingStrategy` — and every user value is a bound parameter.
+- sorting — `.asc()` / `.desc()` with a say on where NULL rows land
+- aggregates — `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()` that slot
+  into SELECT and HAVING using the same expression
+- combining — `.and()` / `.or()` / `.not()` on any condition, plus an
+  `Expressions` namespace for explicit grouping
+- matching — `.startsWith()` / `.endsWith()` / `.contains()` that escape LIKE
+  metacharacters before wrapping in wildcards, and `*IgnoreCase` siblings
+
+Everything here keeps the guarantees you've already seen: column
+references resolve through the alias registry (so `u.firstName` still
+becomes `"u"."first_name"` under `SnakeNamingStrategy`) and every
+user-supplied value — including the LIKE escape character — is a bound
+parameter.
 
 ##### Ordering — `.asc()` / `.desc()` / `.nullsFirst()` / `.nullsLast()`
 
@@ -542,10 +551,10 @@ await em.createQueryBuilder(User, "u")
 `.avg()`, `.min()`, `.max()`. Each returns an `AggregateExpression`
 that plays two roles:
 
-1. **In SELECT.** `.as("alias")` sets the output column name. If omitted,
-   Stingerloom falls back to a deterministic `agg_<func>_<col>` pattern
-   (e.g. `agg_count_id`) so `getRawMany()` still has predictable keys —
-   but an explicit alias is strongly recommended.
+1. **In SELECT.** `.as("alias")` names the output column. If you skip it,
+   Stingerloom falls back to a predictable `agg_<func>_<col>` shape
+   (e.g. `agg_count_id`) so `getRawMany()` keys don't surprise you — but
+   explicit aliases are worth the few extra characters.
 2. **In HAVING / WHERE.** Calling `.eq`, `.neq`, `.gt`, `.gte`, `.lt`,
    `.lte`, or `.between` on the aggregate produces an
    `AggregateCondition`, which can be passed to `having()`, `where()`,
@@ -639,7 +648,7 @@ elsewhere — so `utf8mb4_bin` collation on MySQL and the ASCII-only
 default LIKE on SQLite both produce the right answer without the caller
 having to know.
 
-Method summary for Tier 1:
+Method summary:
 
 | Category              | Methods                                                                                         |
 |-----------------------|-------------------------------------------------------------------------------------------------|

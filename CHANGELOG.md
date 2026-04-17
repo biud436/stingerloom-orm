@@ -6,16 +6,16 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
-## [Unreleased] — QueryDSL Tier 1
+## [Unreleased]
 
 ### Highlights
 
-- **QueryDSL Tier 1** — `qAlias()` grows the four everyday expression categories it was previously missing: ordering helpers (`.asc() / .desc() / .nullsFirst() / .nullsLast()`), aggregates that play both SELECT and HAVING roles (`.count() / .countDistinct() / .sum() / .avg() / .min() / .max()`), logical composition on every condition type (`.and() / .or() / .not()` plus `Expressions.and/or/not`), and string-matching convenience with safe LIKE escaping (`.startsWith / .endsWith / .contains` + their `*IgnoreCase` siblings). Every user value is still a bound parameter, and every condition routes through a shared `ConditionLike` contract so types mix freely.
+- **More expressions on `qAlias()`** — Sorting, counting, combining, and matching on the same typed proxy. Four groups of helpers on `ColumnExpression`: ordering (`.asc() / .desc() / .nullsFirst() / .nullsLast()`), aggregates that slot into SELECT and HAVING from one expression (`.count() / .countDistinct() / .sum() / .avg() / .min() / .max()`), condition composition on every condition type (`.and() / .or() / .not()` plus `Expressions.and/or/not`), and substring matching that escapes LIKE metacharacters before wrapping in wildcards (`.startsWith / .endsWith / .contains` + their `*IgnoreCase` siblings). Every user value — including the LIKE escape character — stays a bound parameter, and every condition routes through a shared `ConditionLike` contract so types mix freely.
 
 ### Added
 
 - **`OrderExpression`** — New expression type returned by `ColumnExpression.asc()/.desc()` and `AggregateExpression.asc()/.desc()`; chain `.nullsFirst()` / `.nullsLast()` to control NULL ordering
-- **`AggregateExpression` / `AggregateCondition`** — Aggregates that render inside SELECT (via `.as("alias")` — explicit alias recommended; falls back to deterministic `agg_<func>_<col>`) and double as HAVING / WHERE conditions through `.eq / .neq / .gt / .gte / .lt / .lte / .between`
+- **`AggregateExpression` / `AggregateCondition`** — Aggregates that render inside SELECT (via `.as("alias")` — explicit alias recommended; falls back to a predictable `agg_<func>_<col>` shape) and double as HAVING / WHERE conditions through `.eq / .neq / .gt / .gte / .lt / .lte / .between`
 - **`LogicalCondition` + `Expressions` namespace** — AND / OR / NOT composition over any `ConditionLike`. `Expressions.and(a, b, …)`, `Expressions.or(a, b, …)`, `Expressions.not(a)` plus `.and() / .or() / .not()` chains on every condition type (including `AggregateCondition` and `JsonPathCondition`). Contiguous AND or OR chains flatten in the emitted SQL
 - **`ConditionLike` interface** — Shared contract unifying `ColumnCondition`, `JsonPathCondition`, `AggregateCondition`, and `LogicalCondition`; `resolve()` threads the alias registry and dialect strategy through uniformly
 - **`DialectExpression.caseInsensitiveLike(column, pattern)`** — Collation-independent case-insensitive LIKE. `ILIKE ... ESCAPE '\'` on PostgreSQL, `LOWER(col) LIKE LOWER(pattern) ESCAPE '\'` on MySQL and SQLite
@@ -32,7 +32,7 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ### Documentation
 
-- New **QueryDSL Tier 1 — Ordering, Aggregates, Logical Composition, String Convenience** section in `docs/query-builder.md` and `docs/ko/query-builder.md` with per-category examples, dialect-by-dialect SQL output, and a method-summary table
+- New **Sorting, Counting, Combining, and Matching** section in `docs/query-builder.md` and `docs/ko/query-builder.md` covering the four `qAlias()` expression groups with per-category examples, dialect-by-dialect SQL output, and a method-summary table
 
 ### Tests
 
