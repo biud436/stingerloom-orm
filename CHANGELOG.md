@@ -38,7 +38,9 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 - 100 new unit cases across `qdsl-tier1-order-expression.test.ts`, `qdsl-tier1-aggregate-expression.test.ts`, `qdsl-tier1-logical-condition.test.ts`, `qdsl-tier1-string-convenience.test.ts`, and `qdsl-tier1-integration.test.ts` covering construction, SQL rendering, operator behaviour, LIKE escaping, dialect branches, and composition between condition types
 - 21 new SQLite in-memory integration cases in `__tests__/integration/sqlite/qdsl-tier1.test.ts` exercising aggregate SELECT, GROUP BY + HAVING, ORDER BY with NULLS positioning, WHERE logical composition, and the string-convenience surface end-to-end against a real database
-- No regressions: full unit suite (3,745 passed, 19 skipped) and SQLite integration suite (331 passed) green
+- 17 new MySQL (MariaDB) integration cases in `__tests__/integration/qdsl-tier1-mysql.test.ts` covering the `col IS NULL` NULLS emulation, `LOWER(col) LIKE LOWER(pattern) ESCAPE '\'` case-insensitive fallback, and LIKE metacharacter escaping under the default `utf8mb4` collation
+- 17 new PostgreSQL integration cases in `__tests__/integration/qdsl-tier1-postgres.test.ts` covering native `NULLS FIRST/LAST`, native `ILIKE ... ESCAPE '\'`, and parameterized ESCAPE character under `$1` numbered-placeholder binding
+- No regressions: full unit suite (3,745 passed, 19 skipped) and full integration suite (1,113 passed across 55 suites, covering SQLite + MySQL + PostgreSQL) green
 
 ---
 
