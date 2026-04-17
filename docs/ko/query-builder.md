@@ -440,6 +440,132 @@ u.profile.personal.path("history[1].city").eq("Busan");
 
 JSON 필터를 쓰려고 `` em.query(sql`... ->> ${path}`) ``에 손이 가는 순간이 온다면, 먼저 QueryDSL 경로를 떠올리세요 — 더 안전하고, 지원되는 모든 드라이버에서 이식성이 있어요.
 
+#### QueryDSL Tier 1 — 정렬 · 집계 · 논리 합성 · 문자열 편의
+
+`qAlias()`는 WHERE 절의 헬퍼로 출발했어요. Tier 1은 Java QueryDSL 사용자가 매일 쓰는 표현식 타입을 채워 넣어요 — **정렬 보조 메서드, SELECT·HAVING 어디서든 쓰이는 집계, 조건 위의 논리 합성, 그리고 LIKE 이스케이프가 포함된 문자열 편의 메서드.**
+
+모든 표현식은 기존과 동일하게 alias 레지스트리를 통해 컬럼을 resolving하므로 `u.firstName`은 `SnakeNamingStrategy` 아래에서도 여전히 `"u"."first_name"`으로 바뀌어요. 사용자가 넘기는 값은 예외 없이 파라미터 바인딩이에요.
+
+##### 정렬 — `.asc()` / `.desc()` / `.nullsFirst()` / `.nullsLast()`
+
+```typescript
+const u = qAlias(User, "u");
+
+await em.createQueryBuilder(User, "u")
+  .orderBy(u.createdAt.desc().nullsLast())
+  .addOrderBy(u.name.asc())
+  .getMany();
+```
+
+PostgreSQL과 SQLite는 `NULLS FIRST` / `NULLS LAST`를 네이티브로 지원해요. MySQL은 그런 키워드가 없으므로, Stingerloom이 `col IS NULL` 정렬을 앞에 붙여 같은 결과를 만들어 줘요 — 드라이버별 우회 문법을 외울 필요가 없어요.
+
+`orderBy(expr)`은 기존 ORDER BY 리스트를 치환하고, `addOrderBy(expr)`은 뒤에 덧붙여요. 두 메서드는 기존 `{ column: "ASC" | "DESC" }` 객체 형식과 `(column, direction)` 오버로드도 계속 지원해요.
+
+##### 집계 — SELECT와 HAVING에 모두 쓰이는 하나의 표현식
+
+```typescript
+const u = qAlias(User, "u");
+const total = u.id.count();            // AggregateExpression
+
+await em.createQueryBuilder(User, "u")
+  .select(["departmentId"])
+  .addSelect(total.as("total"))
+  .groupBy(["u.departmentId"])
+  .having(total.gt(10))                // AggregateCondition
+  .addOrderBy(u.departmentId.asc())
+  .getRawMany();
+```
+
+`ColumnExpression`에 `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()`가 추가됐어요. 각 메서드는 `AggregateExpression`을 돌려주고, 두 역할을 동시에 수행해요:
+
+1. **SELECT에서.** `.as("alias")`로 결과 컬럼 이름을 정해요. 생략하면 `agg_<func>_<col>` (예: `agg_count_id`) 같은 결정적 기본값을 써서 `getRawMany()` 결과 키를 예측 가능하게 유지하지만, 명시적 alias를 권장해요.
+2. **HAVING/WHERE에서.** aggregate에 `.eq/.neq/.gt/.gte/.lt/.lte/.between`을 호출하면 `AggregateCondition`이 돼서 `having()`, `where()`, `andWhere()`에 바로 넣을 수 있어요.
+
+집계도 `.asc()` / `.desc()`로 ORDER BY 대상이 될 수 있어요 — `ColumnExpression`과 동일한 형태예요.
+
+##### 논리 합성 — `.and()` / `.or()` / `.not()` + `Expressions`
+
+```typescript
+const u = qAlias(User, "u");
+
+// 메서드 체인 — 좌→우 결합 (age >= 18 AND status = 'active')
+qb.where(u.age.gte(18).and(u.status.eq("active")));
+
+// 역할 값 여러 개를 OR로 묶기
+qb.where(u.role.eq("admin").or(u.role.eq("owner")));
+
+// 부정
+qb.where(u.deletedAt.isNull().not());      // u.deletedAt.isNotNull()과 동일
+
+// 명시적 그룹이 필요할 때 정적 헬퍼
+import { Expressions } from "@stingerloom/orm";
+
+qb.where(
+  Expressions.or(
+    Expressions.and(u.age.gte(18), u.status.eq("active")),
+    u.role.eq("admin"),
+  ),
+);
+// WHERE (("u"."age" >= $1 AND "u"."status" = $2) OR "u"."role" = $3)
+```
+
+`ColumnCondition`, `JsonPathCondition`, `AggregateCondition`, 중첩된 `LogicalCondition` 모두 공통 `ConditionLike` 계약을 구현하므로 종류가 달라도 자유롭게 합성할 수 있어요:
+
+```typescript
+qb.where(
+  Expressions.and(
+    u.status.eq("active"),
+    u.profile.tags.contains("admin"),     // JsonPathCondition
+  ),
+);
+```
+
+결합 순서는 JavaScript 메서드 체인 규칙을 따라가요: `a.and(b).or(c)`는 `(a AND b) OR c`예요. 다른 그룹핑이 필요하면 `Expressions.or(...)` / `Expressions.and(...)`로 명시적으로 감싸세요.
+
+연속된 AND(또는 OR)는 SQL 출력에서 평탄화돼요 — 체인 한 단계마다 괄호가 중첩되지 않아요.
+
+##### 문자열 편의 — `.startsWith` / `.endsWith` / `.contains` + `*IgnoreCase`
+
+대소문자 구분 substring 매칭에 와일드카드 자동 이스케이프가 포함돼요:
+
+```typescript
+qb.where(u.name.startsWith("Al"));       // LIKE 'Al%' ESCAPE '\'
+qb.where(u.name.endsWith("son"));        // LIKE '%son' ESCAPE '\'
+qb.where(u.name.contains("lic"));        // LIKE '%lic%' ESCAPE '\'
+```
+
+호출자가 넘긴 값 안의 `%`, `_`, `\`를 **자동으로 이스케이프**한 뒤 와일드카드를 감싸요. 리터럴 `"50%"`는 리터럴로 남아요 — `"501"`, `"502"`, `"50A"`에는 매칭되지 않아요:
+
+```typescript
+qb.where(u.name.startsWith("50%"));
+// SQL:  "u"."name" LIKE $1 ESCAPE $2
+// params: ["50\\%%", "\\"]     — 사용자 쪽 %는 이스케이프되고,
+//                                 뒤에 붙는 %만 와일드카드로 남음
+```
+
+대소문자 무시 버전:
+
+```typescript
+qb.where(u.username.equalsIgnoreCase("alice"));
+// LOWER("u"."username") = LOWER($1)        — 모든 다이얼렉트
+
+qb.where(u.email.containsIgnoreCase("@gmail"));
+// Postgres:      "u"."email" ILIKE $1 ESCAPE $2
+// MySQL/SQLite:  LOWER("u"."email") LIKE LOWER($1) ESCAPE $2
+```
+
+`equalsIgnoreCase`는 양쪽에 `LOWER()`를 적용해 콜레이션과 무관하게 같은 결과를 내요. LIKE 계열은 PostgreSQL에서 `ILIKE`를 네이티브로 쓰고, 그 외에는 `LOWER(col) LIKE LOWER(pattern)`으로 폴백해요 — MySQL의 `utf8mb4_bin` 콜레이션이나 SQLite의 ASCII 전용 LIKE에서도 호출자가 내부 차이를 의식하지 않고 원하는 결과를 받아요.
+
+Tier 1 메서드 요약:
+
+| 범주              | 메서드                                                                                          |
+|-------------------|-------------------------------------------------------------------------------------------------|
+| 문자열(대소 구분) | `.startsWith`, `.endsWith`, `.contains`                                                         |
+| 문자열(대소 무시) | `.equalsIgnoreCase`, `.likeIgnoreCase`, `.startsWithIgnoreCase`, `.endsWithIgnoreCase`, `.containsIgnoreCase` |
+| 정렬              | `.asc()`, `.desc()`, `.nullsFirst()`, `.nullsLast()`                                            |
+| 집계              | `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()` — 각각 `.as(alias)`와 `.eq/.neq/.gt/.gte/.lt/.lte/.between` 지원 |
+| 논리 합성         | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
+
 ### JOIN — 테이블 결합
 
 여기서 query builder의 진가가 나타나요. Stingerloom은 세 단계의 JOIN을 지원해요.

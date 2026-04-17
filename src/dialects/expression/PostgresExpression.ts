@@ -9,6 +9,10 @@ export class PostgresExpression implements DialectExpression {
     return sql`${raw(column)} ILIKE ${value}`;
   }
 
+  caseInsensitiveLike(column: string, pattern: string): Sql {
+    return sql`${raw(column)} ILIKE ${pattern} ESCAPE ${"\\"}`;
+  }
+
   fullTextSearch(column: string, query: string, language?: string): Sql {
     const lang = language ?? "english";
     return sql`to_tsvector(${lang}, ${raw(column)}) @@ plainto_tsquery(${lang}, ${query})`;

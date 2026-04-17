@@ -17,6 +17,16 @@ export class SqliteExpression implements DialectExpression {
     return sql`${raw(column)} LIKE ${value}`;
   }
 
+  /**
+   * Guaranteed case-insensitive LIKE. SQLite's built-in LIKE is ASCII-only
+   * case-folding; wrapping in `LOWER()` extends coverage for ASCII values
+   * consistently with MySQL's fallback. Non-ASCII Unicode still requires
+   * the ICU extension — documented on the `*IgnoreCase` helpers.
+   */
+  caseInsensitiveLike(column: string, pattern: string): Sql {
+    return sql`LOWER(${raw(column)}) LIKE LOWER(${pattern}) ESCAPE ${"\\"}`;
+  }
+
   fullTextSearch(_column: string, _query: string, _language?: string): Sql {
     throw new OrmError(
       OrmErrorCode.UNSUPPORTED_DATABASE,

@@ -4,6 +4,7 @@ import type {
   ColumnJsonMeta,
   DialectExpression,
 } from "../../dialects/DialectExpression";
+import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 
 /**
  * A segment of a JSON navigation path.
@@ -58,7 +59,8 @@ export function parseJsonPath(path: string): JsonPathSegment[] {
  * and resolved at build time by the query builder, which supplies both the
  * qualified column name and the target driver's {@link DialectExpression}.
  */
-export class JsonPathCondition {
+export class JsonPathCondition implements ConditionLike {
+  readonly __isCondition = true as const;
   readonly __jsonPathCondition = true as const;
   constructor(
     readonly ref: string,
@@ -71,9 +73,15 @@ export class JsonPathCondition {
 
   /** @internal Resolve against a column resolver and dialect expression. */
   resolve(
-    resolveColumn: (ref: string) => string,
-    dialectExpression: DialectExpression,
+    resolveColumn: ColumnResolver,
+    dialectExpression?: DialectExpression,
   ): Sql {
+    if (!dialectExpression) {
+      throw new Error(
+        "JsonPathCondition.resolve() requires a DialectExpression. " +
+          "Ensure the query builder was created via EntityManager.createQueryBuilder().",
+      );
+    }
     const column = resolveColumn(this.ref);
     const m = this.meta;
     switch (this.kind) {

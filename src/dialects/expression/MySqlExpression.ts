@@ -36,6 +36,17 @@ export class MySqlExpression implements DialectExpression {
     return sql`${raw(column)} LIKE ${value}`;
   }
 
+  /**
+   * Guaranteed case-insensitive LIKE regardless of collation.
+   *
+   * `utf8mb4_bin` columns do not fold case, so relying on default `LIKE`
+   * semantics would miss matches. Wrapping both sides in `LOWER()` makes
+   * the comparison collation-independent.
+   */
+  caseInsensitiveLike(column: string, pattern: string): Sql {
+    return sql`LOWER(${raw(column)}) LIKE LOWER(${pattern}) ESCAPE ${"\\"}`;
+  }
+
   fullTextSearch(column: string, query: string, _language?: string): Sql {
     return sql`MATCH(${raw(column)}) AGAINST(${query} IN BOOLEAN MODE)`;
   }
