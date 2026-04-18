@@ -10,13 +10,13 @@
 정렬과 페이지네이션은 예상하는 대로 동작해요.
 
 ```typescript
-// Type-safe ORDER BY — column names auto-complete
+// 타입 안전 ORDER BY — 컬럼명 자동완성
 qb.orderBy({ createdAt: "DESC", name: "ASC" });
 
-// LIMIT and OFFSET
+// LIMIT / OFFSET
 qb.limit(10).offset(20);
 
-// Or use the skip/take aliases (same effect)
+// skip / take 별칭 — 같은 효과
 qb.skip(20).take(10);
 ```
 
@@ -53,10 +53,17 @@ const user = await em
 
 `forUpdate()`는 `FOR UPDATE` — exclusive lock을 추가해요. 트랜잭션이 커밋될 때까지 다른 트랜잭션이 이 행을 읽거나 수정할 수 없어요. `forShare()`는 shared lock을 추가해요 — 다른 트랜잭션이 읽을 순 있지만 쓸 수는 없어요.
 
-| Method | SQL | 효과 |
-|--------|-----|------|
-| `forUpdate()` | `FOR UPDATE` | Exclusive lock — 읽기/쓰기 모두 차단 |
-| `forShare()` | `FOR SHARE` / `LOCK IN SHARE MODE` | Shared lock — 쓰기만 차단 |
+| Method | SQL (PostgreSQL / SQLite) | SQL (MySQL) | 효과 |
+|--------|--------------------------|-------------|------|
+| `forUpdate()` | `FOR UPDATE` | `FOR UPDATE` | Exclusive lock — 읽기/쓰기 모두 차단 |
+| `forShare()` | `FOR SHARE` | `LOCK IN SHARE MODE` | Shared lock — 쓰기만 차단 |
+
+**시나리오별 선택 기준**
+
+- **재고 차감, 잔액 갱신 등 "내가 방금 읽은 값을 그대로 갱신"** → `forUpdate()`. 다른 트랜잭션이 이 행을 먼저 읽는 것 자체를 막아요.
+- **외래 키 참조 확인만 하고 싶을 때**(내가 쓰진 않지만 남이 지우면 안 됨) → `forShare()`.
+- **작업 큐에서 다른 워커가 잡고 있는 행은 건너뛰고 다음 걸 잡고 싶을 때** → `forUpdateSkipLocked()` (아래).
+- **"못 잡으면 즉시 에러로 받고 사용자에게 재시도하라 알려주고 싶을 때"** → `forUpdateNowait()`.
 
 ### NOWAIT과 SKIP LOCKED
 
@@ -123,16 +130,21 @@ const orders = await em
 | `forceIndex(name)` | `FORCE INDEX (name)` | 플래너가 이 인덱스를 강제로 사용하도록 |
 | `ignoreIndex(name)` | `IGNORE INDEX (name)` | 플래너가 이 인덱스를 건너뛰도록 |
 
-PostgreSQL에서는 `hint()` 메서드로 [pg_hint_plan](https://pg-hint-plan.readthedocs.io/) 스타일 힌트를 추가할 수 있어요:
+PostgreSQL에서는 `hint()` 메서드로 [pg_hint_plan](https://pg-hint-plan.readthedocs.io/) 스타일 힌트를 추가할 수 있어요. 여러 번 호출하면 누적돼서 하나의 `/*+ ... */` 블록으로 합쳐져요.
 
 ```typescript
 const orders = await em
   .createQueryBuilder(Order, "o")
   .where("status", "pending")
   .hint("IndexScan(o idx_order_status)")
+  .hint("Leading(o c)")                       // 추가 힌트는 누적
   .getMany();
-// PostgreSQL: /*+ IndexScan(o idx_order_status) */ SELECT ...
+// PostgreSQL: /*+ IndexScan(o idx_order_status) Leading(o c) */ SELECT ...
 ```
+
+::: warning
+`hint()`는 **`pg_hint_plan` 확장이 설치·활성화된 PostgreSQL에서만** 실제 효과가 있어요. 확장이 없으면 주석으로 무시되고 플래너는 힌트를 보지 못해요. SQLite는 모든 쿼리 힌트를 지원하지 않아요.
+:::
 
 ## Soft Delete 처리
 
@@ -218,6 +230,20 @@ const StrictUser = z.object({ id: z.number(), name: z.string() }).strict();
 ```
 
 `.parse(data)` 메서드를 제공하는 라이브러리라면 뭐든 호환돼요 — zod뿐만 아니라 io-ts, superstruct 등도 가능해요.
+
+### `validate()` vs `selectSchema()` — 뭘 쓸까
+
+두 메서드가 비슷해 보이지만 역할이 달라요.
+
+| | `.validate(schema)` | `.selectSchema(schema)` |
+|-|---------------------|-------------------------|
+| 런타임 검증 | ✓ | ✓ |
+| 데이터 변환 (`transform`) | ✓ | ✓ |
+| 반환 타입 narrowing | ✗ — 현재 타입 유지 | ✓ — `z.infer<schema>`로 좁힘 |
+| 타입 보장 | 호출자가 선언한 `TResult`를 신뢰 | 스키마가 타입의 **원천** |
+| 주 쓰임 | "호출자 타입은 이미 맞는데, 런타임 값만 한번 더 체크" | "스키마에서 타입을 도출해서 SELECT 결과 모양을 확정" |
+
+일반적인 규칙 — **런타임 검증만 필요**하면 `validate()`, **타입 추론까지 스키마에 맡기고 싶으면** `selectSchema()`. 자세한 `selectSchema` 설명과 예제는 [QueryDSL 표현식](./query-builder-querydsl.md) 페이지의 "TS 네이티브 이스케이프 해치" 섹션에 있어요.
 
 ### 배열 단위 검증 — validateArray()
 
@@ -383,7 +409,7 @@ await qb.select(["bio"]).getPartialMany();  // OK — plain object
 
 ## 같은 쿼리를 미리 만들어 두기 — `prepare()`
 
-같은 모양의 쿼리가 값만 바뀌며 반복된다면, SQL을 한 번만 만들어 두고 계속 재사용할 수 있어요:
+같은 **모양의** 쿼리가 값만 바뀌며 반복된다면, SQL을 한 번만 만들어 두고 계속 재사용할 수 있어요. 배치 잡에서 수백 개의 ID로 상세 쿼리를 돌리는 경우가 전형적이에요.
 
 ```typescript
 import { p } from "@stingerloom/orm";
@@ -394,11 +420,17 @@ const findById = em
   .where(sql`u.id = ${p("id")}`)
   .prepare<{ id: number }>();
 
-await findById.executeOne({ id: 42 });
-await findById.executeOne({ id: 77 });   // SQL을 다시 만들지 않아요
+for (const id of userIds) {
+  const user = await findById.executeOne({ id });
+  // SQL 문자열은 한 번만 생성, 이후에는 파라미터만 교체
+}
 ```
 
-선택한 컬럼만 받고 싶을 때 쓰는 `preparePartial()`도 있고, `RawQueryBuilder`에도 똑같은 `.prepare(em)`이 있어요. 언제 효과가 있고 언제 없는지, `WriteBuffer`나 배치 쓰기와는 어떻게 다른지 등 자세한 배경은 [쿼리 미리 만들어두기](./entity-manager-advanced.md#쿼리-미리-만들어두기-em-compile-qb-prepare)에서 다루고 있어요.
+`SelectQueryBuilder`의 **투영된 부분 컬럼만 타입드로 받고 싶을 때**는 `preparePartial()`을 쓰면 `TResult`가 `Pick<...>`로 좁혀져요. `RawQueryBuilder`에도 같은 모양의 `.prepare(em)`이 있어요.
+
+> **주의 — 조건 자체가 동적으로 달라지면 `prepare()`가 효과 없음.** "필터가 선택적으로 붙는 검색 엔드포인트"처럼 쿼리 구조 자체가 변하는 경우는 `when()` / `pipe()` 쪽이 맞고, `prepare()`는 어울리지 않아요.
+
+언제 효과가 있고 없는지, `WriteBuffer`나 배치 쓰기와 어떻게 다른지의 전체 배경은 [쿼리 미리 만들어두기](./entity-manager-advanced.md#쿼리-미리-만들어두기-em-compile-qb-prepare)에 있어요.
 
 ## 실전 예제 — 필터 검색 + 페이지네이션
 

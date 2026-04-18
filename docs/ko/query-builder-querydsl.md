@@ -204,13 +204,16 @@ qb.where(i.sku.intValue().gt(1000));
 
 CAST 헬퍼는 `ColumnExpression`과 `ScalarExpression` 양쪽에 다 달려 있어요. `coalesce(u.price, 0).floatValue()`처럼 이미 파생된 스칼라에도 이어 붙일 수 있고, 결과도 `ScalarExpression`이라 `.as()` / `.eq()` / 중첩된 `coalesce`에 그대로 쓸 수 있어요.
 
-| Kind     | MySQL      | PostgreSQL | SQLite    |
-|----------|------------|------------|-----------|
-| string   | `CHAR`     | `TEXT`     | `TEXT`    |
-| int      | `SIGNED`   | `INTEGER`  | `INTEGER` |
-| long     | `SIGNED`   | `BIGINT`   | `INTEGER` |
-| float    | `DECIMAL`  | `REAL`     | `REAL`    |
-| boolean  | `UNSIGNED` | `BOOLEAN`  | `INTEGER` |
+| Kind     | MySQL      | PostgreSQL | SQLite    | 호출 메서드                |
+|----------|------------|------------|-----------|---------------------------|
+| string   | `CHAR`     | `TEXT`     | `TEXT`    | `.stringValue()`           |
+| int      | `SIGNED`   | `INTEGER`  | `INTEGER` | `.intValue()`              |
+| long     | `SIGNED`   | `BIGINT`   | `INTEGER` | `.longValue()`             |
+| bigint   | `SIGNED`   | `BIGINT`   | `INTEGER` | `.bigintValue()` (별칭)    |
+| float    | `DECIMAL`  | `REAL`     | `REAL`    | `.floatValue()`            |
+| boolean  | `UNSIGNED` | `BOOLEAN`  | `INTEGER` | `.booleanValue()`          |
+
+`.bigintValue()`는 `.longValue()`와 동일한 SQL을 내지만 "JS `bigint`를 기대한다"는 의도를 읽는 사람에게 전달해요. 드라이버가 결과를 문자열로 돌려주는 경우가 있어서 JS 쪽에서 `BigInt(row.col)`로 감싸는 게 안전해요.
 
 ## 날짜 / 시각 컴포넌트 — `.year()` / `.month()` / `.day()` / `.hour()` / …
 
@@ -227,19 +230,19 @@ qb.select([e.startsAt.year().as("yr"), e.id.count().as("total")])
 // SQLite: CAST(strftime(?, "e"."starts_at") AS INTEGER) = ?   -- '%Y'
 ```
 
-드라이버별 SQL 생성:
+드라이버별 SQL 생성 (PostgreSQL과 SQLite는 결과를 **정수**로 쓰기 위해 `CAST(... AS INTEGER)`로 자동 감싸요 — 다운스트림 비교가 정수 산술로 유지돼요):
 
 | 헬퍼 | MySQL | PostgreSQL | SQLite |
 |------|-------|------------|--------|
-| `year()` | `YEAR(col)` | `EXTRACT(YEAR FROM col)` | `strftime('%Y', col)` |
-| `month()` | `MONTH(col)` | `EXTRACT(MONTH FROM col)` | `strftime('%m', col)` |
-| `day()` / `dayOfMonth()` | `DAYOFMONTH(col)` | `EXTRACT(DAY FROM col)` | `strftime('%d', col)` |
-| `hour()` | `HOUR(col)` | `EXTRACT(HOUR FROM col)` | `strftime('%H', col)` |
-| `minute()` | `MINUTE(col)` | `EXTRACT(MINUTE FROM col)` | `strftime('%M', col)` |
-| `second()` | `SECOND(col)` | `EXTRACT(SECOND FROM col)` | `strftime('%S', col)` |
-| `dayOfWeek()` | `DAYOFWEEK(col)` | `EXTRACT(DOW FROM col)` | `strftime('%w', col)` |
-| `dayOfYear()` | `DAYOFYEAR(col)` | `EXTRACT(DOY FROM col)` | `strftime('%j', col)` |
-| `week()` | `WEEK(col)` | `EXTRACT(WEEK FROM col)` | `strftime('%W', col)` |
+| `year()` | `YEAR(col)` | `CAST(EXTRACT(YEAR FROM col) AS INTEGER)` | `CAST(strftime('%Y', col) AS INTEGER)` |
+| `month()` | `MONTH(col)` | `CAST(EXTRACT(MONTH FROM col) AS INTEGER)` | `CAST(strftime('%m', col) AS INTEGER)` |
+| `day()` / `dayOfMonth()` | `DAYOFMONTH(col)` | `CAST(EXTRACT(DAY FROM col) AS INTEGER)` | `CAST(strftime('%d', col) AS INTEGER)` |
+| `hour()` | `HOUR(col)` | `CAST(EXTRACT(HOUR FROM col) AS INTEGER)` | `CAST(strftime('%H', col) AS INTEGER)` |
+| `minute()` | `MINUTE(col)` | `CAST(EXTRACT(MINUTE FROM col) AS INTEGER)` | `CAST(strftime('%M', col) AS INTEGER)` |
+| `second()` | `SECOND(col)` | `CAST(EXTRACT(SECOND FROM col) AS INTEGER)` | `CAST(strftime('%S', col) AS INTEGER)` |
+| `dayOfWeek()` | `DAYOFWEEK(col)` | `CAST(EXTRACT(DOW FROM col) AS INTEGER)` | `CAST(strftime('%w', col) AS INTEGER)` |
+| `dayOfYear()` | `DAYOFYEAR(col)` | `CAST(EXTRACT(DOY FROM col) AS INTEGER)` | `CAST(strftime('%j', col) AS INTEGER)` |
+| `week()` | `WEEK(col)` | `CAST(EXTRACT(WEEK FROM col) AS INTEGER)` | `CAST(strftime('%W', col) AS INTEGER)` |
 
 `dayOfWeek`와 `week`는 드라이버마다 인코딩이 살짝 달라요 — MySQL의 `DAYOFWEEK`은 1=일…7=토, PostgreSQL의 `DOW`는 0=일…6=토, SQLite의 `%w`는 PG와 같아요. 리포트 이식성이 중요하면 애플리케이션 계층에서 정규화하거나, 드라이버별 raw SQL을 쓰는 편이 안전해요.
 
@@ -321,6 +324,32 @@ qb.select([weight.as("w")]);
 
 오용 방어도 들어가 있어요. `.otherwise()` 뒤의 `.when()`, 중복 `.otherwise()`, WHEN 없이 `.end()` — 이 세 경우는 명확한 에러 메시지로 막히니까, 잘못된 SQL이 쿼리 실행까지 가지 않아요.
 
+### 실전 — CASE를 "변수처럼" 재사용
+
+CASE 표현식을 한 번 만들어 두면 SELECT와 WHERE 양쪽에서 재사용할 수 있어요. `coalesce`로 NULL fallback까지 얹으면, **서버에서 계산되는 파생 필드**가 되는 거예요.
+
+```typescript
+const u = qAlias(User, "u");
+
+const tier = Expressions.caseBuilder()
+  .when(u.score.gte(90)).then("gold")
+  .when(u.score.gte(70)).then("silver")
+  .otherwise("bronze")
+  .end();
+
+// SELECT + WHERE 에서 같은 표현식 재사용
+const golds = await em.createQueryBuilder(User, "u")
+  .select(["id", "name"])
+  .addSelect(Expressions.coalesce(tier, u.status, "unknown").as("tier"))
+  .where(Expressions.and(
+    tier.eq("gold"),
+    u.role.eq("member"),
+  ))
+  .getRawMany();
+```
+
+같은 CASE를 두 번 적지 않아도 되고, 등급 기준이 바뀌어도 한 군데만 고치면 돼요.
+
 ## 문자열 / 숫자 / 수학 — JS와 같은 이름
 
 Tier 3의 문자열·숫자·수학 헬퍼는 TypeScript 개발자 손에 이미 익은 이름(`String.prototype`, 산술 연산자, `Math.*`)을 그대로 노출해요. 결과는 전부 `ScalarExpression`이니까 `.as()` / cast / coalesce / 비교 / 논리 결합 등 Tier 2에서 본 모든 기능과 바로 이어져요.
@@ -383,7 +412,7 @@ SQLite의 year/month 차이는 365.25 / 30.4375로 근사해요. 정확한 달�
 
 ## 윈도우 함수 — `aggregate.over()` + `WindowBuilder`
 
-집계(`count`, `sum`, `avg`, `min`, `max`, `countDistinct`)에는 `.over()`가 달려 있어요. 체인으로 PARTITION BY / ORDER BY / ROWS 또는 RANGE 프레임을 지정하고, `.as(alias)`로 마무리해요.
+집계(`count`, `sum`, `avg`, `min`, `max`, `countDistinct`)에는 `.over()`가 달려 있어요. 체인으로 PARTITION BY / ORDER BY / `rowsBetween` 또는 `rangeBetween` 프레임을 지정하고, `.as(alias)`로 마무리해요.
 
 ```typescript
 const e = qAlias(Event, "e");
@@ -401,11 +430,40 @@ qb.select([
 // AS "running_total"
 ```
 
+`partitionBy(...)` / `orderBy(...)`는 **가변 인자**라서 복합 파티션 키나 다중 정렬 기준을 한 번에 넘길 수 있어요 — `partitionBy(e.teamId, e.region)`.
+
 마무리는 둘 중 하나예요:
 - `.as("alias")` — `AliasedExpression`으로 끝내서 SELECT에 바로 사용.
-- `.toScalar()` — `ScalarExpression`으로 끝내서 다른 표현식 안에 중첩 (예: `qb.where(e.score.gt(avg.over().partitionBy(...).toScalar()))`).
+- `.toScalar()` — `ScalarExpression`으로 끝내서 다른 표현식 안에 중첩 (아래 리더보드 예제의 두 번째 쿼리 참고).
 
-프레임 문자열(`"UNBOUNDED PRECEDING"`, `"CURRENT ROW"`, `"5 PRECEDING"` 등)은 그대로 SQL에 삽입돼요. **사용자 입력을 이 자리에 넘기지 마세요.** 누적 집계에는 `rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")`를 쓰는 게 가장 일반적이에요.
+프레임 문자열(`"UNBOUNDED PRECEDING"`, `"CURRENT ROW"`, `"5 PRECEDING"` 등)은 그대로 SQL에 삽입돼요. **사용자 입력을 이 자리에 넘기지 마세요.** 누적 집계에는 `rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")`를 쓰는 게 가장 일반적이고, 시간 범위 기반 집계에는 `rangeBetween(...)`을 쓰면 돼요.
+
+### 실전 — 팀별 리더보드
+
+팀 단위 시계열 이벤트에서 두 가지 리포트가 자주 필요해요 — 누적 점수와, "같은 팀 평균보다 높은 이벤트"예요. 후자는 `.toScalar()`로 윈도우 결과를 서브쿼리처럼 `WHERE`에 꽂는 패턴이에요.
+
+```typescript
+const e = qAlias(Event, "e");
+
+// (1) 팀별 누적 점수 — SELECT 자리
+const board = await em.createQueryBuilder(Event, "e")
+  .select(["id", "teamId", "score"])
+  .addSelect(
+    e.score.sum().over()
+      .partitionBy(e.teamId)
+      .orderBy(e.createdAt.desc())
+      .rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")
+      .as("running_total"),
+  )
+  .getRawMany();
+
+// (2) 팀 평균보다 높은 이벤트만 — 윈도우를 WHERE에 중첩
+const teamAvg = e.score.avg().over().partitionBy(e.teamId).toScalar();
+const aboveAvg = await em.createQueryBuilder(Event, "e")
+  .where(e.score.gt(teamAvg))
+  .getMany();
+// WHERE "e"."score" > AVG("e"."score") OVER (PARTITION BY "e"."teamId")
+```
 
 ## TS 네이티브 이스케이프 해치 — `Expressions.raw<T>()` / `.bigintValue()` / `qb.selectSchema(...)`
 
@@ -536,7 +594,19 @@ qb.where(u.email.endsWithIgnoreCase(".com"));
 qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 쓰고 싶을 때
 ```
 
-여기도 드라이버별로 내부 동작이 달라요 — PostgreSQL은 `ILIKE`를 가지고 있어서 그걸 바로 쓰고, MySQL과 SQLite는 `LOWER()`를 양쪽에 씌워요. 컬럼 콜레이션이 대소문자 구분이든 아니든 결과가 똑같이 나오도록 맞춰 줘요. 코드는 드라이버에 상관없이 한 줄로 끝나요.
+여기도 드라이버별로 내부 동작이 달라요.
+
+- **`.likeIgnoreCase` 계열 (패턴 매칭)** — PostgreSQL은 `ILIKE`를 가지고 있어서 그걸 바로 쓰고, MySQL과 SQLite는 `LOWER()`를 양쪽에 씌워요.
+- **`.equalsIgnoreCase`** — 세 드라이버 모두 `LOWER(col) = LOWER(?)`로 내려가요 (ILIKE는 와일드카드가 없는 동등 비교에는 쓰이지 않아요). 컬럼 콜레이션이 대소문자 구분이든 아니든 결과가 똑같이 나오도록 맞춰 줘요.
+
+코드는 드라이버에 상관없이 한 줄로 끝나요 — 로그인 폼의 이메일 조회를 생각해 보세요.
+
+```typescript
+// 사용자가 "Alice@Example.com"이든 "alice@example.com"이든 같은 결과
+const user = await em.createQueryBuilder(User, "u")
+  .where(u.email.equalsIgnoreCase(inputEmail))
+  .getOne();
+```
 
 ## 한눈에 보기
 
@@ -555,7 +625,7 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | CASE 표현식               | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject)...end()`     |
 | 문자열 / 숫자 / 수학      | `.toLowerCase/.toUpperCase/.trim/.length/.substring/.concat/.indexOf/.replace`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
 | 날짜 산술                 | `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `Expressions.dateDiff(a, b, unit)`, `Expressions.random()` |
-| 윈도우 함수               | `aggregate.over().partitionBy(...).orderBy(...).rowsBetween(start, end).as("alias")` — `WindowBuilder` 체인 |
+| 윈도우 함수               | `aggregate.over().partitionBy(...).orderBy(...).rowsBetween(start, end).as("alias")` — `rangeBetween` 도 동일하게 지원 |
 | Raw SQL 이스케이프 해치   | `Expressions.raw<T>(sql`...`)` → `ScalarExpression` (체인 합성 가능) |
 | BigInt cast               | `.bigintValue()` (BIGINT / SIGNED / INTEGER) |
 | 스키마 기반 행 추론       | `qb.selectSchema(zodSchema)` — `TResult`를 `z.infer<schema>`로 narrow + 런타임 검증 |

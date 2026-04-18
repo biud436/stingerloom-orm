@@ -149,6 +149,8 @@ const users = await em
 
 `innerJoinRelation()`도 사용할 수 있어요.
 
+> **`@ManyToMany` 는 현재 `leftJoinRelation` / `innerJoinRelation` 대상에서 빠져 있어요.** 중간 테이블을 자동으로 두 번 조인해 주지는 않으니까, M2M 조인은 중간 테이블을 직접 문자열 조인으로 연결하거나 서브쿼리로 풀어 주세요. 같은 이유로 `whereHas`도 `@ManyToMany` 를 지원하지 않아요 ([편의 패턴 → `whereHas`](./query-builder-patterns.md#wherehas-wherenothas-relation-존재-필터) 참고).
+
 ## JoinAndSelect — Join + 자동 SELECT
 
 조인된 엔티티의 모든 컬럼을 결과에 포함하고 싶을 때 `*AndSelect` 변형을 사용하세요. 조인 + 모든 컬럼 수동 선택을 한 번에 해줘요.
@@ -212,6 +214,30 @@ const results = await em
   .limit(50)
   .getRawMany();
 ```
+
+## 실전 — B2B 매출 리포트 (3단 JOIN + 집계)
+
+조인이 두 개 넘어가는 전형적인 시나리오는 리포트성 쿼리예요. "2026년 이후 주문 중 총 주문 수량이 50개를 넘는 고객을 수량 내림차순으로" 같은 걸 써 본다면 JOIN과 집계가 한 화면에 모이는 모습이 그려져요.
+
+```typescript
+const c = qAlias(Customer, "c");
+const o = qAlias(Order, "o");
+const oi = qAlias(OrderItem, "oi");
+const totalQty = oi.quantity.sum();
+
+const top = await em.createQueryBuilder(Customer, "c")
+  .innerJoin(Order, "o", (j) => j.on(o.col("customerId"), "=", c.col("id")))
+  .innerJoin(OrderItem, "oi", (j) => j.on(oi.col("orderId"), "=", o.col("id")))
+  .selectRaw([c.col("name")])
+  .addSelect(totalQty.as("totalQty"))
+  .where(o.createdAt.gte(new Date("2026-01-01")))
+  .groupBy([c.col("name")])
+  .having(totalQty.gt(50))
+  .addOrderBy(totalQty.desc())
+  .getRawMany();
+```
+
+포인트 세 가지 — `innerJoin`을 엔티티 클래스로 두 번 체이닝, 집계 표현식을 한 번 정의해서 SELECT / HAVING / ORDER BY에 재사용, `o.createdAt.gte()`처럼 조인 건너의 컬럼도 타입 자동완성으로 필터. 집계 서피스의 전체 설명은 [집계 & 서브쿼리](./query-builder-aggregations.md)에 있어요.
 
 ## Cross-Entity 컬럼 해석
 

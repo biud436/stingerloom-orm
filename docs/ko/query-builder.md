@@ -195,68 +195,21 @@ qb.whereLike("name", "%alice%");
 
 ---
 
-## 이어서 볼 것
+## 학습 경로
 
-- **[JOIN](./query-builder-joins.md)** — 타입드 컬럼 참조로 다른
-  엔티티 조인, relation 메타데이터로 ON 자동 생성, `*AndSelect` 변형
-- **[QueryDSL 표현식](./query-builder-querydsl.md)** — `qAlias()`, 집계,
-  CASE, CAST, 날짜 컴포넌트, 윈도우 함수, 조건 묶기 전체
-- **[JSON 컬럼 탐색](./query-builder-json.md)** — 세 다이얼렉트 공통
-  프록시 기반 `json` / `jsonb` 탐색
-- **[집계 & 서브쿼리](./query-builder-aggregations.md)** — GROUP BY,
-  HAVING, 상관 서브쿼리, DISTINCT
-- **[실행 & 결과](./query-builder-execution.md)** — ORDER BY,
-  페이지네이션, 비관적 잠금, 인덱스 힌트, `validate()`, `getMany()` /
-  `getPartialMany()` / `getRawMany()`, `prepare()`
-- **[편의 패턴](./query-builder-patterns.md)** — `when()`, `pipe()`,
-  `whereHas()`, `withCount()`, scope
-- **[Raw SQL & CTE](./raw-sql.md)** — UNION, 재귀 CTE, 윈도우 함수,
-  DISTINCT ON이 필요한 상황을 위한 `RawQueryBuilder`
+아래 순서가 문서 세트의 자연스러운 독법이에요. 처음 읽는다면 위에서 아래로, 참고용으로 돌아올 때는 필요한 항목만 펼쳐 보세요.
 
----
+1. **[JOIN](./query-builder-joins.md)** — 타입드 컬럼 참조로 다른 엔티티 조인, relation 메타데이터로 ON 자동 생성, `*AndSelect` 변형
+2. **[QueryDSL 표현식](./query-builder-querydsl.md)** — 레퍼런스. `qAlias()` 집계 / CASE / CAST / 날짜 컴포넌트 / 윈도우 함수 / 조건 묶기 / 문자열 매칭 전체. 항상 옆에 펴두는 책
+3. **[JSON 컬럼 탐색](./query-builder-json.md)** — 세 다이얼렉트 공통 프록시 기반 `json` / `jsonb` 탐색
+4. **[집계 & 서브쿼리](./query-builder-aggregations.md)** — GROUP BY, HAVING, 상관 서브쿼리, DISTINCT, 윈도우 집계로의 교두보
+5. **[실행 & 결과](./query-builder-execution.md)** — ORDER BY, 페이지네이션, 비관적 잠금, 인덱스 힌트, `validate()`, `getMany()` / `getPartialMany()` / `getRawMany()`, `prepare()`
+6. **[편의 패턴](./query-builder-patterns.md)** — `when()`, `pipe()`, `whereHas()`, `withCount()`, scope — 서비스 레이어에서 실제로 쓰게 되는 합성 도구
 
-## RawQueryBuilder — 완전한 SQL 제어
+한계 너머로 가야 하면 — UNION / 재귀 CTE / 복잡한 윈도우 / `DISTINCT ON` — **[Raw SQL & CTE](./raw-sql.md)** 로 `RawQueryBuilder`를 꺼내세요. 일상 쿼리는 `SelectQueryBuilder`로, 특수 쿼리만 `RawQueryBuilder`로 갈아타는 게 이 ORM의 기본 전략이에요.
 
-UNION, CTE, window function, subquery 같은 고급 SQL 기능은 [Raw SQL & CTE](./raw-sql.md) 가이드를 참고하세요.
+## 더 가볼 곳
 
-간단한 미리보기예요:
-
-```typescript
-import sql from "sql-template-tag";
-
-const qb = em.createQueryBuilder();
-
-const query = qb
-  .select(['"id"', '"name"', '"email"'])
-  .from('"users"')
-  .where([sql`"is_active" = ${true}`])
-  .orderBy([{ column: '"created_at"', direction: "DESC" }])
-  .limit(10)
-  .build();
-
-const users = await em.query(query);
-```
-
-RawQueryBuilder는 UNION / INTERSECT / EXCEPT, Common Table Expression (CTE), recursive CTE, window function (ROW_NUMBER, RANK, LAG 등), DISTINCT ON을 지원해요. 자세한 내용은 [전체 가이드](./raw-sql.md)를 참고하세요.
-
----
-
-## 두 Builder 중 어떤 걸 선택할까요
-
-| 질문 | SelectQueryBuilder | RawQueryBuilder |
-|------|-------------------|----------------|
-| 등록된 엔티티를 쿼리하나요? | Yes | 필수 아님 |
-| `keyof T` 자동완성이 필요하나요? | Yes | No |
-| UNION / INTERSECT / EXCEPT가 필요하나요? | No | Yes |
-| CTE (WITH / WITH RECURSIVE)가 필요하나요? | No | Yes |
-| Window function이 필요하나요? | No | Yes |
-| 클래스 인스턴스를 반환하나요? | `getMany()` yes / `getPartialMany()` no | No — `em.query()`를 통한 raw object |
-
-실무에서는 일상적인 쿼리에 `SelectQueryBuilder`로 시작하세요. 한계에 부딪히면 — UNION, 재귀 계층 탐색, window 분석이 필요하면 — 해당 쿼리만 `RawQueryBuilder`로 전환하세요.
-
-## Next Steps
-
-- [Raw SQL & CTE](./raw-sql.md) — UNION, CTE, window function, DISTINCT ON
 - [Pagination & Streaming](./pagination.md) — Offset, cursor, streaming 전략
-- [EntityManager](./entity-manager.md) — find(), save() 등 기본 CRUD
+- [EntityManager](./entity-manager.md) — `find()`, `save()` 등 기본 CRUD
 - [API Reference](./api-reference.md) — 모든 메서드 시그니처 빠른 참조

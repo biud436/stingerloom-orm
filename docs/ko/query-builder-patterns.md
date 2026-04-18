@@ -1,8 +1,6 @@
 # Query Builder — 편의 패턴
 
-이 페이지는 Stingerloom query builder를 차별화하는 헬퍼들을 모아놨어요
-— 조건부 빌딩, 그룹 조건, 합성 가능한 변환, relation 기반 쿼리,
-subquery 통합, 재사용 가능한 scope까지.
+서비스 레이어에서 query builder를 쓰다 보면 세 가지 반복이 눈에 띄어요 — **선택적 필터를 `if` 블록으로 두르는 것**, **같은 조건을 여러 메서드가 복붙하는 것**, 그리고 **관계 데이터를 존재 여부 기준으로 걸러야 하는 것**. 이 페이지는 그 세 가지를 정확히 겨냥한 헬퍼를 모아 놨어요 — 조건부 빌딩(`when`), 합성 가능한 변환(`pipe` / `scope`), 관계 기반 쿼리(`whereHas` / `withCount`), 서브쿼리 통합(`whereInSubquery` 등).
 
 ## 조건부 빌딩 — `when()`
 
@@ -120,7 +118,9 @@ const drafts = await em
   .getMany();
 ```
 
-`@ManyToOne`, `@OneToMany`, `@OneToOne` relation 모두 지원해요. 상관 조건은 데코레이터 메타데이터에서 자동으로 해석돼요.
+`@ManyToOne`, `@OneToMany`, `@OneToOne` relation을 지원해요. 상관 조건은 데코레이터 메타데이터에서 자동으로 해석돼요.
+
+> **주의** — `@ManyToMany`는 `whereHas` / `whereNotHas` 대상에서 빠져 있어요. `OrmError`가 나니까, M2M에는 `leftJoinRelation` + `whereIn` 또는 중간 테이블을 직접 조인하는 방식으로 우회하세요.
 
 ### `withCount()` — Relation 카운트 컬럼
 
@@ -138,17 +138,30 @@ const users = await em
 // SELECT "u".*, (SELECT COUNT(*) FROM post ...) AS "posts_count", ...
 ```
 
+`orderBy`의 `as any`가 거슬린다면 이유는 분명해요 — `posts_count`는 엔티티 프로퍼티가 아니라 런타임에 붙는 파생 컬럼이라, `keyof User` 자동완성 대상이 아니거든요. `withCount` 결과를 정렬하려면 `as any`를 달거나, 아래처럼 `raw` 정렬 + `getRawMany()`를 쓰는 게 타입 측면에서 깔끔해요.
+
+```typescript
+import sql from "sql-template-tag";
+
+qb.withCount("posts")
+  .addOrderBy(sql`"posts_count"`, "DESC");
+```
+
 ### `loadRelation()` — 간편한 Relation 로딩
 
-`leftJoinRelationAndSelect()`의 간결한 단축어예요:
+`leftJoinRelationAndSelect()`의 간결한 단축어예요. 두 번째 인자로 alias를 지정할 수 있고, 생략하면 relation 이름이 그대로 alias가 돼요.
 
 ```typescript
 // 대신:
 qb.leftJoinRelationAndSelect("author", "author")
   .leftJoinRelationAndSelect("comments", "comments");
 
-// 이렇게:
+// 이렇게 — alias 생략
 qb.loadRelation("author").loadRelation("comments");
+
+// 같은 relation을 다른 각도로 두 번 조인해야 하면 alias 필수
+qb.loadRelation("posts", "recentPosts")
+  .loadRelation("posts", "draftPosts");
 ```
 
 ## Subquery 통합
@@ -238,12 +251,43 @@ const users = await repo
   .getMany();
 ```
 
-Scope는 다른 모든 빌더 메서드와 합성돼요 — `where()`, `when()`, `pipe()`, `whereHas()` 등. 본질적으로 query builder를 받는 함수일 뿐이에요.
+Scope는 다른 모든 빌더 메서드와 합성돼요 — `where()`, `when()`, `pipe()`, `whereHas()` 등. 본질적으로 query builder를 받는 함수일 뿐이에요. `pipe()`가 "일회용 함수"라면 scope는 "엔티티에 고정된 이름 붙은 `pipe`"예요.
 
 존재하지 않는 scope 이름으로 `applyScope()`를 호출하면 사용 가능한 scope 목록과 함께 `OrmError`가 발생해요.
+
+### 실전 — 워커 큐에서 안전하게 한 건 집기
+
+scope를 잠금과 합치면 백그라운드 워커 패턴이 한 줄로 정리돼요. `forUpdateSkipLocked()`는 다른 워커가 잠근 행을 건너뛰니까, 여러 워커가 경합 없이 같은 테이블에서 작업을 꺼내 쓸 수 있어요.
+
+```typescript
+@Entity()
+class Job {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() status!: string;
+  @Column() createdAt!: Date;
+
+  static scopes = {
+    pending: (qb: SelectQueryBuilder<Job>) =>
+      qb.where("status", "pending").orderBy({ createdAt: "ASC" }),
+  };
+}
+
+async function claimNext(): Promise<Job | null> {
+  return em.createQueryBuilder(Job, "j")
+    .applyScope("pending")
+    .limit(1)
+    .forUpdateSkipLocked()        // 이미 잠긴 행은 스킵 → 경합 제로
+    .getOne();
+}
+```
+
+트랜잭션 안에서 실행해야 잠금이 의미가 있고, 잠금 옵션의 드라이버 호환성은 [실행 & 결과 → NOWAIT과 SKIP LOCKED](./query-builder-execution.md#nowait과-skip-locked)에서 확인하세요.
 
 ## 다음 단계
 
 - [실행 & 결과](./query-builder-execution.md) — 페이지네이션, 잠금, 검증, `prepare()`
-- [QueryDSL 표현식](./query-builder-querydsl.md) — 타입드 조건 / 프로젝션 표현
-- [Query Builder 개요](./query-builder.md) — 기본 사용법과 전체 지도
+- [QueryDSL 표현식](./query-builder-querydsl.md) — 타입드 조건 / 프로젝션 레퍼런스
+- [Raw SQL & CTE](./raw-sql.md) — UNION / 재귀 CTE / DISTINCT ON이 필요한 순간
+- [페이지네이션 & 스트리밍](./pagination.md) — 커서 / 오프셋 / 스트림 전략
+- [EntityManager](./entity-manager.md) — 빌더 밖에서 쓰는 일상 CRUD
+- [Query Builder 개요](./query-builder.md) — 전체 지도로 돌아가기
