@@ -733,6 +733,53 @@ for `DOW`, and SQLite matches PostgreSQL via `%w`. If portability
 within your reports matters, normalize in the application layer or
 use dialect-specific raw SQL.
 
+##### Subquery comparisons — `.in(subquery)` / `.eq(subquery)` / `exists` / `notExists`
+
+`ColumnExpression.in()` / `.notIn()` accept either a value list
+(existing behavior) or a `SelectQueryBuilder` — the latter embeds as
+`col IN (SELECT ...)` with all inner bindings preserved. All scalar
+comparison methods (`.eq` / `.neq` / `.gt` / `.gte` / `.lt` / `.lte`)
+likewise accept a subquery and emit `col <op> (SELECT ...)` for
+one-row-one-column scalar subqueries.
+
+```typescript
+const u = qAlias(User, "u");
+const p = qAlias(Post, "p");
+
+// Users whose id appears in the authorId column of published posts
+const activeAuthors = em
+  .createQueryBuilder(Post, "p")
+  .select(["authorId"])
+  .where(p.status.eq("published"));
+
+qb.where(u.id.in(activeAuthors));
+// WHERE "u"."id" IN (SELECT "p"."authorId" FROM "post" AS "p"
+//                     WHERE "p"."status" = $1)
+
+// Scalar subquery — compare against a single aggregate
+const avgViews = em
+  .createQueryBuilder(Post, "p2")
+  .selectRaw(["AVG(p2.views)"]);
+
+qb.where(p.views.gt(avgViews));
+// WHERE "p"."views" > (SELECT AVG(p2.views) FROM …)
+```
+
+`Expressions.exists(subQb)` and `Expressions.notExists(subQb)` build
+correlated-subquery conditions:
+
+```typescript
+qb.where(Expressions.exists(em.createQueryBuilder(Post, "p")
+  .select(["id"])
+  .where(sql`"p"."author_id" = "u"."id"`)));
+// WHERE EXISTS (SELECT "id" FROM "post" AS "p"
+//                WHERE "p"."author_id" = "u"."id")
+```
+
+`ExistsCondition.not()` toggles the `EXISTS` / `NOT EXISTS` flag
+rather than wrapping in a redundant `NOT (…)`, keeping output SQL
+clean.
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -831,6 +878,7 @@ Method summary:
 | Current date / time   | `currentDate()`, `currentTime()`, `currentTimestamp()` — also on `Expressions`                 |
 | Type casts            | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` — dialect-specific type names |
 | Date components       | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfMonth()`, `.dayOfYear()`, `.week()` |
+| Subquery compare      | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables

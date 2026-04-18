@@ -620,6 +620,44 @@ qb.select([e.startsAt.year().as("yr"), e.id.count().as("total")])
 
 `dayOfWeek`와 `week`는 드라이버마다 인코딩이 살짝 달라요 — MySQL의 `DAYOFWEEK`은 1=일…7=토, PostgreSQL의 `DOW`는 0=일…6=토, SQLite의 `%w`는 PG와 같아요. 리포트 이식성이 중요하면 애플리케이션 계층에서 정규화하거나, 드라이버별 raw SQL을 쓰는 편이 안전해요.
 
+##### 서브쿼리 비교 — `.in(subquery)` / `.eq(subquery)` / `exists` / `notExists`
+
+`ColumnExpression.in()` / `.notIn()`은 값 배열뿐 아니라 `SelectQueryBuilder`도 받아요. 서브쿼리를 넘기면 `col IN (SELECT …)` 형태로 내려가고, 안쪽 파라미터 바인딩까지 그대로 보존돼요. `.eq` / `.neq` / `.gt` / `.gte` / `.lt` / `.lte`도 마찬가지로 (단일 값 반환) 서브쿼리를 받아 `col <op> (SELECT …)` 로 만들어요.
+
+```typescript
+const u = qAlias(User, "u");
+const p = qAlias(Post, "p");
+
+const activeAuthors = em
+  .createQueryBuilder(Post, "p")
+  .select(["authorId"])
+  .where(p.status.eq("published"));
+
+qb.where(u.id.in(activeAuthors));
+// WHERE "u"."id" IN (SELECT "p"."authorId" FROM "post" AS "p"
+//                     WHERE "p"."status" = ?)
+
+// 스칼라 서브쿼리 — 집계와 비교
+const avgViews = em
+  .createQueryBuilder(Post, "p2")
+  .selectRaw(["AVG(p2.views)"]);
+
+qb.where(p.views.gt(avgViews));
+// WHERE "p"."views" > (SELECT AVG(p2.views) FROM …)
+```
+
+`Expressions.exists(subQb)` / `Expressions.notExists(subQb)`는 상관 서브쿼리 조건을 만들어요.
+
+```typescript
+qb.where(Expressions.exists(em.createQueryBuilder(Post, "p")
+  .select(["id"])
+  .where(sql`"p"."author_id" = "u"."id"`)));
+// WHERE EXISTS (SELECT "id" FROM "post" AS "p"
+//                WHERE "p"."author_id" = "u"."id")
+```
+
+`ExistsCondition.not()`은 `NOT (…)`으로 감싸지 않고 내부의 `EXISTS` ↔ `NOT EXISTS` 플래그만 뒤집어요. SQL이 깔끔하게 나와요.
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -723,6 +761,7 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | 현재 날짜 / 시각          | `currentDate()`, `currentTime()`, `currentTimestamp()` — `Expressions`에도 있음                 |
 | 타입 변환                 | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()`             |
 | 날짜 컴포넌트             | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfYear()`, `.week()` |
+| 서브쿼리 비교             | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |

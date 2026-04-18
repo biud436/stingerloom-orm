@@ -11,6 +11,12 @@ import {
   currentTimestamp,
 } from "./TemporalExpression";
 import type { ScalarExpression } from "./ScalarExpression";
+import {
+  exists as existsFactory,
+  notExists as notExistsFactory,
+  registerExistsLogicalComposer,
+  ExistsCondition,
+} from "./SubqueryExpression";
 
 export type LogicalOperator = "AND" | "OR" | "NOT";
 
@@ -172,6 +178,21 @@ export const Expressions = {
   currentTimestamp(): ScalarExpression {
     return currentTimestamp();
   },
+
+  /**
+   * `EXISTS (subquery)`. Pass a `SelectQueryBuilder`; the subquery is
+   * rendered (with bindings preserved) at condition-resolution time.
+   */
+  exists(subquery: { toSql(): import("sql-template-tag").Sql }): ExistsCondition {
+    return existsFactory(subquery);
+  },
+
+  /** `NOT EXISTS (subquery)`. Mirror of {@link exists}. */
+  notExists(
+    subquery: { toSql(): import("sql-template-tag").Sql },
+  ): ExistsCondition {
+    return notExistsFactory(subquery);
+  },
 } as const;
 
 // Register the composer so AggregateCondition.and/.or/.not (and any other
@@ -184,6 +205,12 @@ registerLogicalComposer({
 });
 
 registerScalarLogicalComposer({
+  and: (a, b) => new LogicalCondition("AND", [a, b]),
+  or: (a, b) => new LogicalCondition("OR", [a, b]),
+  not: (a) => new LogicalCondition("NOT", [a]),
+});
+
+registerExistsLogicalComposer({
   and: (a, b) => new LogicalCondition("AND", [a, b]),
   or: (a, b) => new LogicalCondition("OR", [a, b]),
   not: (a) => new LogicalCondition("NOT", [a]),

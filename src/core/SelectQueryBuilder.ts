@@ -214,10 +214,24 @@ export class ColumnCondition implements ConditionLike {
   ) {}
 
   /**
+   * @internal Duck-type guard for `SelectQueryBuilder`-like subqueries.
+   * Kept inline to avoid importing the concrete class (which lives in
+   * the same file but cycles through compilation).
+   */
+  private isSubqueryLike(value: unknown): value is { toSql(): Sql } {
+    return (
+      value !== null &&
+      typeof value === "object" &&
+      typeof (value as { toSql?: unknown }).toSql === "function" &&
+      typeof (value as { getSql?: unknown }).getSql === "function"
+    );
+  }
+
+  /**
    * @internal Unwrap a value that may be a {@link ScalarExpression} (e.g.
-   * `Expressions.currentTimestamp()`) into a rendered `Sql` fragment.
-   * Plain values pass through unchanged so `sql-template-tag` binds them
-   * as parameters.
+   * `Expressions.currentTimestamp()`) or a subquery-like `SelectQueryBuilder`
+   * into a rendered `Sql` fragment. Plain values pass through unchanged
+   * so `sql-template-tag` binds them as parameters.
    */
   private resolveValue(
     value: unknown,
@@ -235,6 +249,18 @@ export class ColumnCondition implements ConditionLike {
           d?: DialectExpression,
         ) => Sql;
       }).renderer(resolveColumn, dialect);
+    }
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      typeof (value as { toSql?: unknown }).toSql === "function" &&
+      typeof (value as { getSql?: unknown }).getSql === "function"
+    ) {
+      // SelectQueryBuilder-like — embed as a parenthesized subquery so
+      // `col = (SELECT ...)` / `col IN (SELECT ...)` etc. work through
+      // the same code path as scalar / primitive comparisons.
+      const inner = (value as { toSql(): Sql }).toSql();
+      return sql`(${inner})`;
     }
     return value;
   }
@@ -270,8 +296,16 @@ export class ColumnCondition implements ConditionLike {
       case "NOT LIKE":
         return Conditions.notLike(qualified, value as string);
       case "IN":
+        if (this.value !== null && this.isSubqueryLike(this.value)) {
+          const sub = (this.value as { toSql(): Sql }).toSql();
+          return sql`${raw(qualified)} IN (${sub})`;
+        }
         return Conditions.in(qualified, value as unknown[]);
       case "NOT IN":
+        if (this.value !== null && this.isSubqueryLike(this.value)) {
+          const sub = (this.value as { toSql(): Sql }).toSql();
+          return sql`${raw(qualified)} NOT IN (${sub})`;
+        }
         return Conditions.notIn(qualified, value as unknown[]);
       case "IS NULL":
         return Conditions.isNull(qualified);
@@ -338,10 +372,18 @@ export class ColumnExpression {
   like(pattern: string): ColumnCondition { return new ColumnCondition(this.ref, "LIKE", pattern); }
   /** `column NOT LIKE pattern` (pattern passed through verbatim). */
   notLike(pattern: string): ColumnCondition { return new ColumnCondition(this.ref, "NOT LIKE", pattern); }
-  /** `column IN (values)` */
-  in(values: any[]): ColumnCondition { return new ColumnCondition(this.ref, "IN", values); }
-  /** `column NOT IN (values)` */
-  notIn(values: any[]): ColumnCondition { return new ColumnCondition(this.ref, "NOT IN", values); }
+  /** `column IN (values)` — accepts either a value list or a subquery. */
+  in(values: any[]): ColumnCondition;
+  in(subquery: { toSql(): Sql }): ColumnCondition;
+  in(valuesOrSubquery: any[] | { toSql(): Sql }): ColumnCondition {
+    return new ColumnCondition(this.ref, "IN", valuesOrSubquery);
+  }
+  /** `column NOT IN (values)` — accepts either a value list or a subquery. */
+  notIn(values: any[]): ColumnCondition;
+  notIn(subquery: { toSql(): Sql }): ColumnCondition;
+  notIn(valuesOrSubquery: any[] | { toSql(): Sql }): ColumnCondition {
+    return new ColumnCondition(this.ref, "NOT IN", valuesOrSubquery);
+  }
   /** `column IS NULL` */
   isNull(): ColumnCondition { return new ColumnCondition(this.ref, "IS NULL", undefined); }
   /** `column IS NOT NULL` */
