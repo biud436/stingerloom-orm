@@ -42,6 +42,30 @@ import { ScalarExpression } from "./expressions/ScalarExpression";
 import { coalesce as coalesceFn } from "./expressions/NullishExpression";
 import { buildCastScalar } from "./expressions/CastExpression";
 import { buildDateComponentFromRef } from "./expressions/DateComponentExpression";
+import {
+  buildToLowerCase,
+  buildToUpperCase,
+  buildTrim,
+  buildLength,
+  buildSubstring,
+  buildConcat,
+  buildIndexOf,
+  buildReplace,
+  type InnerRenderer,
+} from "./expressions/StringExpression";
+import {
+  buildAdd,
+  buildSub,
+  buildMul,
+  buildDiv,
+  buildMod,
+  buildNeg,
+  buildAbs,
+  buildFloor,
+  buildCeil,
+  buildRound,
+  buildSqrt,
+} from "./expressions/NumericExpression";
 import type { CastKind, DateComponent } from "../dialects/DialectExpression";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
@@ -605,6 +629,103 @@ export class ColumnExpression {
 
   private buildDateComponent(component: DateComponent): ScalarExpression {
     return buildDateComponentFromRef(component, this.ref);
+  }
+
+  // ── String helpers (Tier 3 / JS-idiomatic) ─────────────
+
+  /** `LOWER(col)`. Matches JS `String.prototype.toLowerCase`. */
+  toLowerCase(): ScalarExpression {
+    return buildToLowerCase(this.innerRenderer());
+  }
+  /** `UPPER(col)`. Matches JS `String.prototype.toUpperCase`. */
+  toUpperCase(): ScalarExpression {
+    return buildToUpperCase(this.innerRenderer());
+  }
+  /** `TRIM(col)`. */
+  trim(): ScalarExpression {
+    return buildTrim(this.innerRenderer());
+  }
+  /** `CHAR_LENGTH(col)` — character count (multibyte safe). */
+  length(): ScalarExpression {
+    return buildLength(this.innerRenderer());
+  }
+  /**
+   * `SUBSTR(col, start+1[, end-start])` — matches JS `String.prototype
+   * .substring(indexStart, indexEnd?)` (0-based, end exclusive).
+   */
+  substring(start: number, end?: number): ScalarExpression {
+    return buildSubstring(this.innerRenderer(), start, end);
+  }
+  /** `CONCAT(col, ...args)`. */
+  concat(...args: unknown[]): ScalarExpression {
+    return buildConcat(this.innerRenderer(), args);
+  }
+  /**
+   * `STRPOS/LOCATE/INSTR(col, needle) - 1` — returns 0-based position,
+   * `-1` when not found. Matches JS `String.prototype.indexOf`.
+   */
+  indexOf(needle: unknown): ScalarExpression {
+    return buildIndexOf(this.innerRenderer(), needle);
+  }
+  /** `REPLACE(col, from, to)`. */
+  replace(from: unknown, to: unknown): ScalarExpression {
+    return buildReplace(this.innerRenderer(), from, to);
+  }
+
+  // ── Numeric arithmetic (Tier 3) ────────────────────────
+
+  /** `(col + right)`. Right may be a primitive or another expression. */
+  add(right: unknown): ScalarExpression {
+    return buildAdd(this.innerRenderer(), right);
+  }
+  /** `(col - right)`. */
+  sub(right: unknown): ScalarExpression {
+    return buildSub(this.innerRenderer(), right);
+  }
+  /** `(col * right)`. */
+  mul(right: unknown): ScalarExpression {
+    return buildMul(this.innerRenderer(), right);
+  }
+  /** `(col / right)`. */
+  div(right: unknown): ScalarExpression {
+    return buildDiv(this.innerRenderer(), right);
+  }
+  /** `(col % right)`. */
+  mod(right: unknown): ScalarExpression {
+    return buildMod(this.innerRenderer(), right);
+  }
+  /** `-col`. */
+  neg(): ScalarExpression {
+    return buildNeg(this.innerRenderer());
+  }
+
+  // ── Math functions (Tier 3) ────────────────────────────
+
+  /** `ABS(col)`. */
+  abs(): ScalarExpression {
+    return buildAbs(this.innerRenderer());
+  }
+  /** `FLOOR(col)`. */
+  floor(): ScalarExpression {
+    return buildFloor(this.innerRenderer());
+  }
+  /** `CEIL(col)`. */
+  ceil(): ScalarExpression {
+    return buildCeil(this.innerRenderer());
+  }
+  /** `ROUND(col)` or `ROUND(col, digits)`. */
+  round(digits?: number): ScalarExpression {
+    return buildRound(this.innerRenderer(), digits);
+  }
+  /** `SQRT(col)`. */
+  sqrt(): ScalarExpression {
+    return buildSqrt(this.innerRenderer());
+  }
+
+  /** @internal Inner-fragment renderer shared by Tier 3 helpers. */
+  private innerRenderer(): InnerRenderer {
+    const ref = this.ref;
+    return (resolveColumn) => sql`${raw(resolveColumn(ref))}`;
   }
 
   // ── Aggregate helpers (Tier 1) ─────────────────────────

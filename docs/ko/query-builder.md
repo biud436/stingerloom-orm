@@ -698,6 +698,40 @@ qb.select([weight.as("w")]);
 
 오용 방어도 들어가 있어요. `.otherwise()` 뒤의 `.when()`, 중복 `.otherwise()`, WHEN 없이 `.end()` — 이 세 경우는 명확한 에러 메시지로 막히니까, 잘못된 SQL이 쿼리 실행까지 가지 않아요.
 
+##### 문자열 / 숫자 / 수학 — JS와 같은 이름
+
+Tier 3의 문자열·숫자·수학 헬퍼는 TypeScript 개발자 손에 이미 익은 이름(`String.prototype`, 산술 연산자, `Math.*`)을 그대로 노출해요. 결과는 전부 `ScalarExpression`이니까 `.as()` / cast / coalesce / 비교 / 논리 결합 등 Tier 2에서 본 모든 기능과 바로 이어져요.
+
+```typescript
+const p = qAlias(Product, "p");
+
+qb.select([
+  p.name.toLowerCase().as("name_lc"),            // LOWER("p"."name")
+  p.name.substring(0, 10).as("preview"),         // SUBSTR("p"."name", 1, 10)
+  p.name.concat(" — ", p.sku).as("label"),       // CONCAT("p"."name", ' — ', "p"."sku")
+  p.price.mul(0.9).round(2).as("discounted"),    // ROUND(("p"."price" * 0.9), 2)
+  p.stock.abs().as("stock_abs"),                 // ABS("p"."stock")
+])
+.where(p.name.length().gt(20));                   // CHAR_LENGTH("p"."name") > 20
+```
+
+메서드 한눈에:
+
+| 분류 | 메서드 |
+|------|--------|
+| 문자열 | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring(start, end?)`, `.concat(...args)`, `.indexOf(needle)`, `.replace(from, to)` |
+| 산술 | `.add(x)`, `.sub(x)`, `.mul(x)`, `.div(x)`, `.mod(x)`, `.neg()` |
+| 수학 | `.abs()`, `.floor()`, `.ceil()`, `.round(digits?)`, `.sqrt()` |
+
+알아두면 편한 동작 요약:
+
+- **`substring`** — JS와 똑같이 0-based, end exclusive. 내부에서 `SUBSTR(col, start + 1, end - start)`로 변환돼요.
+- **`length`** — `CHAR_LENGTH`라서 멀티바이트 안전. 바이트 수가 아니라 문자 수예요.
+- **`indexOf`** — 못 찾으면 `-1`, 찾으면 0-based 위치. 드라이버별(`STRPOS` / `LOCATE` / `INSTR`) 1-based 결과에서 1을 빼 JS와 일치하게 맞춰요.
+- **`mod`** — SQL `%` 연산자. 양수 피연산자는 JS와 결과가 같지만, 음수는 엔진마다 달라요 (PostgreSQL은 피제수 부호 유지, MySQL/SQLite는 JS와 같음).
+
+모든 인자는 원시값(파라미터 바인딩) 또는 다른 컬럼/스칼라 표현식을 받으니, `p.price.add(p.discount)` 처럼 컬럼끼리도, `p.name.concat(" (", p.sku, ")")` 같은 혼합도 자연스럽게 돼요.
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -803,6 +837,7 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | 날짜 컴포넌트             | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfYear()`, `.week()` |
 | 서브쿼리 비교             | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | CASE 표현식               | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject)...end()`     |
+| 문자열 / 숫자 / 수학      | `.toLowerCase/.toUpperCase/.trim/.length/.substring/.concat/.indexOf/.replace`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |

@@ -47,4 +47,6 @@ export * from "./expressions/CastExpression";
 export * from "./expressions/DateComponentExpression";
 export * from "./expressions/SubqueryExpression";
 export * from "./expressions/CaseExpression";
+export * from "./expressions/StringExpression";
+export * from "./expressions/NumericExpression";
 export * from "./expressions/likeEscape";

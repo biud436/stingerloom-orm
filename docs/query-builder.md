@@ -829,6 +829,52 @@ Misuse-guard: `.when()` after `.otherwise()`, duplicate `.otherwise()`,
 or `.end()` with no branches each throw an explanatory error early,
 rather than producing malformed SQL.
 
+##### String, numeric & math — JS-idiomatic helpers
+
+Tier 3's string/numeric/math helpers borrow the names already in a
+TypeScript developer's muscle memory — `String.prototype`, arithmetic
+operators, and `Math.*`. Each returns a `ScalarExpression`, so they
+flow into `.as()`, cast, coalesce, comparisons, and the rest of the
+Tier 2 surface.
+
+```typescript
+const p = qAlias(Product, "p");
+
+qb.select([
+  p.name.toLowerCase().as("name_lc"),            // LOWER("p"."name")
+  p.name.substring(0, 10).as("preview"),         // SUBSTR("p"."name", 1, 10)
+  p.name.concat(" — ", p.sku).as("label"),       // CONCAT("p"."name", ' — ', "p"."sku")
+  p.price.mul(0.9).round(2).as("discounted"),    // ROUND(("p"."price" * 0.9), 2)
+  p.stock.abs().as("stock_abs"),                  // ABS("p"."stock")
+])
+.where(p.name.length().gt(20));                   // CHAR_LENGTH("p"."name") > 20
+```
+
+Method coverage:
+
+| Category | Methods |
+|----------|---------|
+| String | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring(start, end?)`, `.concat(...args)`, `.indexOf(needle)`, `.replace(from, to)` |
+| Arithmetic | `.add(x)`, `.sub(x)`, `.mul(x)`, `.div(x)`, `.mod(x)`, `.neg()` |
+| Math | `.abs()`, `.floor()`, `.ceil()`, `.round(digits?)`, `.sqrt()` |
+
+Behavior notes worth knowing:
+
+- **`substring`** matches JS semantics (0-based, end exclusive). The
+  helper converts to SQL's 1-based `SUBSTR(col, start + 1, end - start)`.
+- **`length`** uses `CHAR_LENGTH` (character count) rather than byte
+  length — multibyte safe on every dialect.
+- **`indexOf`** returns `-1` when the needle is missing and a 0-based
+  position otherwise — dialect-specific (`STRPOS` / `LOCATE` / `INSTR`)
+  shifted down by 1 so it matches `String.prototype.indexOf`.
+- **`mod`** uses the SQL `%` operator; results match JS for positive
+  operands. For negative values the sign semantics vary per engine
+  (PostgreSQL keeps the dividend's sign, MySQL/SQLite match JS).
+
+All operands accept either primitives (bound as parameters) or other
+column/scalar expressions — so `p.price.add(p.discount)` or
+`p.name.concat(" (", p.sku, ")")` compose naturally.
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -929,6 +975,7 @@ Method summary:
 | Date components       | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfMonth()`, `.dayOfYear()`, `.week()` |
 | Subquery compare      | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | CASE expressions      | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject).when(val, result)...end()` |
+| String / numeric / math | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring()`, `.concat()`, `.indexOf()`, `.replace()`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables

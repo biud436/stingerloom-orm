@@ -128,6 +128,11 @@ export class MySqlExpression implements DialectExpression {
     }
   }
 
+  stringIndexOf(haystack: Sql, needle: Sql): Sql {
+    // MySQL LOCATE takes (needle, haystack) — reversed from STRPOS/INSTR.
+    return sql`LOCATE(${needle}, ${haystack})`;
+  }
+
   dateComponent(value: Sql, component: DateComponent): Sql {
     const fn = mysqlDateFunction(component);
     return sql`${raw(fn)}(${value})`;

@@ -123,6 +123,10 @@ export class SqliteExpression implements DialectExpression {
     }
   }
 
+  stringIndexOf(haystack: Sql, needle: Sql): Sql {
+    return sql`INSTR(${haystack}, ${needle})`;
+  }
+
   dateComponent(value: Sql, component: DateComponent): Sql {
     const format = sqliteStrftimeFormat(component);
     return sql`CAST(strftime(${format}, ${value}) AS INTEGER)`;

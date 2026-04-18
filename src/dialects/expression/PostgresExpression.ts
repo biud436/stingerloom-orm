@@ -231,6 +231,10 @@ export class PostgresExpression implements DialectExpression {
     }
   }
 
+  stringIndexOf(haystack: Sql, needle: Sql): Sql {
+    return sql`STRPOS(${haystack}, ${needle})`;
+  }
+
   dateComponent(value: Sql, component: DateComponent): Sql {
     // PostgreSQL EXTRACT returns a numeric — cast to integer so
     // downstream comparisons stay on integer arithmetic.

@@ -149,6 +149,18 @@ export interface DialectExpression {
   castTypeName(kind: CastKind): string;
 
   /**
+   * Render a case-sensitive substring-search position for `needle`
+   * inside `haystack`, returning the SQL 1-based position (or `0` when
+   * not found). The caller is expected to subtract 1 to match JS
+   * `indexOf` semantics (0-based with `-1` for "not found").
+   *
+   * - PostgreSQL: `STRPOS(haystack, needle)`
+   * - MySQL: `LOCATE(needle, haystack)`
+   * - SQLite: `INSTR(haystack, needle)`
+   */
+  stringIndexOf(haystack: Sql, needle: Sql): Sql;
+
+  /**
    * Render a date/time component extraction on `value` — e.g.
    * `YEAR(col)` (MySQL), `EXTRACT(YEAR FROM col)` (PostgreSQL),
    * `CAST(strftime('%Y', col) AS INTEGER)` (SQLite).
