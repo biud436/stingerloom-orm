@@ -497,6 +497,27 @@ SELECT에 넣을 때 `.as("total")`을 권장해요. 생략하면 `agg_count_id`
 
 중복을 빼고 세고 싶으면 `.countDistinct()`를 쓰세요. `COUNT(DISTINCT u.role)`이 나와요.
 
+##### SELECT 별칭 — `.as("name")`
+
+일반 컬럼, JSON 경로, 집계 어느 것에든 `.as("name")`을 붙일 수 있어요. 결과는 `AliasedExpression`이고 SELECT 자리에서만 의미가 있어요. `where()`나 `having()`에는 넘길 수 없도록 타입으로 막혀 있어요.
+
+```typescript
+const u = qAlias(User, "u");
+
+await em.createQueryBuilder(User, "u")
+  .select([
+    u.name.as("display_name"),                 // 그냥 컬럼 별칭
+    u.metadata.profile.email.as("contact"),    // JSON 추출 + 별칭
+    u.id.count().as("total"),                  // 집계 + 별칭
+  ])
+  .groupBy(["u.name", "u.metadata"])
+  .getRawMany();
+```
+
+JSON 경로 별칭은 드라이버의 텍스트 추출 연산자(`#>>` / `JSON_UNQUOTE(JSON_EXTRACT(...))` / `json_extract()`)로 컴파일되고, 경로 문자열은 바인딩 파라미터로 붙어서 `getRawMany()` 직렬화 과정에서도 안전하게 보존돼요.
+
+`addSelect(u.age.as("years"))`로 기존 SELECT 목록 뒤에 덧붙일 수도 있고, 한 번의 `select([...])`에 별칭 컬럼과 집계를 섞어 넣어도 돼요.
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -595,6 +616,7 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | null 위치 지정            | 위 두 개에 이어서 `.nullsFirst()` / `.nullsLast()`                            |
 | 값 집계                   | `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()`        |
 | 집계 결과로 필터          | 집계 뒤에 `.gt(10)`, `.eq(0)`, `.between(1, 100)` 등 평소대로                 |
+| SELECT 별칭               | `.as("name")` — 컬럼 / JSON 경로 / 집계 어디에든 붙여서 `AliasedExpression` 반환 |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |

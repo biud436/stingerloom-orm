@@ -83,6 +83,34 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   }
 
   /**
+   * Specifies the SELECT clause as a list of parameterized SQL fragments.
+   *
+   * Unlike {@link select}, each fragment is a `Sql` object (from
+   * `sql-template-tag`) so bound parameter values — e.g. JSON path
+   * literals from a `JSON_EXTRACT(col, ?)` call — are preserved when
+   * the query is executed.
+   *
+   * @param fragments - SELECT-list expressions (already containing any
+   *                    `AS alias` suffix).
+   * @param distinct  - When true, emits `SELECT DISTINCT` instead of
+   *                    `SELECT`.
+   * @returns The current instance of the query builder.
+   */
+  selectFragments(fragments: Sql[], distinct = false): RawQueryBuilder {
+    if (fragments.length === 0) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        "selectFragments() requires at least one fragment.",
+      );
+    }
+    const keyword = distinct ? "SELECT DISTINCT" : "SELECT";
+    this.sqlQuerySegments.push(
+      sql`${raw(keyword)} ${join(fragments, ", ")}`,
+    );
+    return this;
+  }
+
+  /**
    * Specifies the table to select from.
    * @param table - The name of the table.
    * @param alias - An optional alias for the table.

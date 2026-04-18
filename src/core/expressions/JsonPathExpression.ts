@@ -5,6 +5,7 @@ import type {
   DialectExpression,
 } from "../../dialects/DialectExpression";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
+import { AliasedExpression } from "./AliasedExpression";
 
 /**
  * A segment of a JSON navigation path.
@@ -203,6 +204,7 @@ const JSON_EXPR_METHODS = new Set<string>([
   "hasKey",
   "arrayLength",
   "typeOf",
+  "as",
   "toString",
   "valueOf",
   "constructor",
@@ -327,6 +329,34 @@ class JsonPathExpressionBase {
   /** JSON type at this path (`'object'`, `'array'`, `'string'`, …), as a comparable scalar. */
   typeOf(): JsonScalarExpression {
     return new JsonScalarExpression(this._ref, this._path, "typeOf", this._meta);
+  }
+
+  /**
+   * Tag this JSON extraction for SELECT with a result alias.
+   *
+   * Emits a dialect-specific extraction (`JSON_UNQUOTE(JSON_EXTRACT(…))`
+   * on MySQL, `#>>` on PostgreSQL, `json_extract()` on SQLite) returned
+   * as text, followed by `AS <alias>`. Only meaningful when passed to
+   * `select()` / `addSelect()`.
+   *
+   * @example
+   * ```ts
+   * qb.select([u.metadata.profile.email.as("contact")]).getRawMany();
+   * ```
+   */
+  as(alias: string): AliasedExpression {
+    const ref = this._ref;
+    const path = this._path;
+    const meta = this._meta;
+    return new AliasedExpression(alias, (resolveColumn, dialect) => {
+      if (!dialect) {
+        throw new Error(
+          "JsonPathExpression.as() requires a DialectExpression. " +
+            "Ensure the query builder was created via EntityManager.createQueryBuilder().",
+        );
+      }
+      return dialect.jsonExtract(resolveColumn(ref), path, true, meta);
+    });
   }
 
   toString(): string {

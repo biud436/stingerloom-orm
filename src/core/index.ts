@@ -39,4 +39,5 @@ export * from "./expressions/ConditionLike";
 export * from "./expressions/OrderExpression";
 export * from "./expressions/AggregateExpression";
 export * from "./expressions/LogicalCondition";
+export * from "./expressions/AliasedExpression";
 export * from "./expressions/likeEscape";

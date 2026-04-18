@@ -34,6 +34,10 @@ import {
   isLogicalCondition,
 } from "./expressions/LogicalCondition";
 import { escapeLikeValue } from "./expressions/likeEscape";
+import {
+  AliasedExpression,
+  isAliasedExpression,
+} from "./expressions/AliasedExpression";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
@@ -399,6 +403,28 @@ export class ColumnExpression {
   asc(): OrderExpression { return new OrderExpression(this.ref, "ASC"); }
   /** Descending ORDER BY on this column. */
   desc(): OrderExpression { return new OrderExpression(this.ref, "DESC"); }
+
+  // ── SELECT alias (Tier 2) ──────────────────────────────
+
+  /**
+   * Tag this column for SELECT with an explicit result alias.
+   *
+   * Produces `<qualified_col> AS <alias>` in the SELECT list. Only
+   * meaningful when passed to `select()` / `addSelect()` — the result
+   * is an {@link AliasedExpression}, not a condition, so it cannot
+   * appear in `where()` / `having()`.
+   *
+   * @example
+   * ```ts
+   * qb.select([u.firstName.as("name"), u.age.as("years")]).getRawMany();
+   * ```
+   */
+  as(alias: string): AliasedExpression {
+    const ref = this.ref;
+    return new AliasedExpression(alias, (resolveColumn) =>
+      sql`${raw(resolveColumn(ref))}`,
+    );
+  }
 
   // ── Aggregate helpers (Tier 1) ─────────────────────────
 
@@ -824,6 +850,15 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected rowValidator: RowValidator<any> | undefined;
   protected arrayValidatorFn: ArrayValidator<any> | undefined;
   protected selectedPropertyKeys: string[] | null = null;
+  /**
+   * Parameterized SELECT list built from {@link AliasedExpression}s.
+   *
+   * When non-null, this takes precedence over both {@link selectColumns}
+   * and {@link selectExpressions} in the build path — the SELECT segment
+   * is emitted via `RawQueryBuilder.selectFragments()` so bound values
+   * (e.g. JSON path literals on MySQL) are preserved through execution.
+   */
+  protected aliasedSelectList: Sql[] | null = null;
   protected indexHints: Array<{
     type: "USE" | "FORCE" | "IGNORE";
     indexName: string;
@@ -1187,21 +1222,60 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   select(aggregate: AggregateExpression): SelectQueryBuilder<T, any>;
   select(aggregates: AggregateExpression[]): SelectQueryBuilder<T, any>;
+  /**
+   * Seed the SELECT clause with one or more {@link AliasedExpression}s
+   * — columns or JSON-path extractions tagged with an explicit result
+   * alias via `.as("name")`. Mix of {@link AliasedExpression} and
+   * {@link AggregateExpression} is supported; the list is rendered as a
+   * parameterized SELECT fragment so JSON path literals survive
+   * execution.
+   */
+  select(aliased: AliasedExpression): SelectQueryBuilder<T, any>;
+  select(aliased: AliasedExpression[]): SelectQueryBuilder<T, any>;
+  select(
+    projections: Array<AliasedExpression | AggregateExpression>,
+  ): SelectQueryBuilder<T, any>;
   select<K extends ColumnOf<T>>(
-    columns: K[] | "*" | AggregateExpression | AggregateExpression[],
+    columns:
+      | K[]
+      | "*"
+      | AggregateExpression
+      | AggregateExpression[]
+      | AliasedExpression
+      | AliasedExpression[]
+      | Array<AliasedExpression | AggregateExpression>,
   ): SelectQueryBuilder<T, any> {
+    if (isAliasedExpression(columns)) {
+      return this.selectAliased([columns]);
+    }
     if (isAggregateExpression(columns)) {
       return this.selectAggregates([columns]);
     }
-    if (Array.isArray(columns) && columns.length > 0 && isAggregateExpression(columns[0])) {
-      return this.selectAggregates(columns as AggregateExpression[]);
+    if (Array.isArray(columns) && columns.length > 0) {
+      const first = columns[0];
+      if (isAliasedExpression(first) || isAggregateExpression(first)) {
+        // Any aliased entry forces the parameterized-fragment path so
+        // JSON extract bindings survive; a homogeneous aggregate array
+        // keeps the cheaper string path.
+        const hasAliased = (columns as unknown[]).some((c) =>
+          isAliasedExpression(c),
+        );
+        if (hasAliased) {
+          return this.selectAliased(
+            columns as Array<AliasedExpression | AggregateExpression>,
+          );
+        }
+        return this.selectAggregates(columns as AggregateExpression[]);
+      }
     }
     if (columns === "*") {
       this.selectColumns = "*";
       this.selectedPropertyKeys = null;
+      this.aliasedSelectList = null;
     } else {
       this.selectColumns = (columns as string[]).map((c) => this.col(c));
       this.selectedPropertyKeys = columns as string[];
+      this.aliasedSelectList = null;
     }
     return this as any;
   }
@@ -1223,6 +1297,39 @@ export class SelectQueryBuilder<T, TResult = T> {
       fragments.push(`${fn.sql} AS ${this.em.wrap(resolvedAlias)}`);
     }
     this.selectColumns = fragments;
+    this.selectedPropertyKeys = null;
+    this.aliasedSelectList = null;
+    return this;
+  }
+
+  /**
+   * @internal Replace the SELECT clause with parameterized alias
+   * fragments.
+   *
+   * Used when the projection contains an {@link AliasedExpression} —
+   * JSON path extractions encode path literals as bound parameters, so
+   * the list is rendered as a `Sql[]` (preserving those values) and
+   * handed to {@link RawQueryBuilder.selectFragments} at build time.
+   * Aggregates mixed in are rendered alongside so callers can freely
+   * combine `count().as()` with `col.as()`.
+   */
+  private selectAliased(
+    projections: Array<AliasedExpression | AggregateExpression>,
+  ): this {
+    const fragments: Sql[] = [];
+    const resolver: ColumnResolver = (ref) => this.resolveColumn(ref);
+    for (const p of projections) {
+      if (isAliasedExpression(p)) {
+        const inner = p.renderer(resolver, this.dialectExpression);
+        fragments.push(sql`${inner} AS ${raw(this.em.wrap(p.alias))}`);
+      } else if (isAggregateExpression(p)) {
+        const resolvedAlias = p.alias ?? p.getAlias();
+        const fn = p.renderFunction(resolver);
+        fragments.push(sql`${fn} AS ${raw(this.em.wrap(resolvedAlias))}`);
+      }
+    }
+    this.aliasedSelectList = fragments;
+    this.selectColumns = "*";
     this.selectedPropertyKeys = null;
     return this;
   }
@@ -1254,8 +1361,25 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   addSelect(expr: AggregateExpression): this;
+  addSelect(expr: AliasedExpression): this;
   addSelect(expr: Sql | string, alias?: string): this;
-  addSelect(expr: Sql | string | AggregateExpression, alias?: string): this {
+  addSelect(
+    expr: Sql | string | AggregateExpression | AliasedExpression,
+    alias?: string,
+  ): this {
+    if (isAliasedExpression(expr)) {
+      // Route through `selectExpressions` so JSON path bindings survive;
+      // these fragments are appended to the existing SELECT list at
+      // build time.
+      const inner = expr.renderer(
+        (ref) => this.resolveColumn(ref),
+        this.dialectExpression,
+      );
+      this.selectExpressions.push(
+        sql`${inner} AS ${raw(this.em.wrap(expr.alias))}`,
+      );
+      return this;
+    }
     if (isAggregateExpression(expr)) {
       // Aggregate SQL has no bound parameters (func name + qualified col),
       // so funneling through selectColumns as a plain string is safe and
@@ -2802,7 +2926,12 @@ export class SelectQueryBuilder<T, TResult = T> {
     else qb.setDatabaseType("postgresql");
 
     // SELECT — inheritance-aware
-    if (this.selectColumns === "*") {
+    if (this.aliasedSelectList !== null) {
+      // Aliased-expression projection (may carry bound params for JSON
+      // extract); bypass the string-based select() path to keep values
+      // attached to their placeholders.
+      qb.selectFragments(this.aliasedSelectList, this.distinct);
+    } else if (this.selectColumns === "*") {
       // TPT child: use explicit column list from both tables
       if (this.tptSelectColumns) {
         const cols = [...this.tptSelectColumns];
@@ -3318,6 +3447,9 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.dialectExpression = this.dialectExpression;
     cloned.aliasRegistry = new Map(this.aliasRegistry);
     cloned.selectExpressions = [...this.selectExpressions];
+    cloned.aliasedSelectList = this.aliasedSelectList
+      ? [...this.aliasedSelectList]
+      : null;
     // Inheritance state
     cloned.inheritanceStrategy = this.inheritanceStrategy;
     cloned.isInheritanceChild = this.isInheritanceChild;

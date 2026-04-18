@@ -563,6 +563,41 @@ that plays two roles:
 Aggregates also participate in ORDER BY via `.asc()` / `.desc()`, mirroring
 the ColumnExpression surface.
 
+##### SELECT aliases — `.as("name")` on any projectable expression
+
+`.as("alias")` works on every expression that can appear in SELECT —
+plain columns, JSON path extractions, and aggregates. The result is an
+`AliasedExpression` destined for `select()` or `addSelect()`; it is not
+a condition, so it will not compile when handed to `where()` or
+`having()`.
+
+```typescript
+const u = qAlias(User, "u");
+
+await em.createQueryBuilder(User, "u")
+  .select([
+    u.name.as("display_name"),
+    u.metadata.profile.email.as("contact"),
+    u.id.count().as("total"),
+  ])
+  .groupBy(["u.name", "u.metadata"])
+  .getRawMany();
+// SELECT "u"."name" AS "display_name",
+//        ("u"."metadata" #>> $1) AS "contact",
+//        COUNT("u"."id") AS "total"
+// …
+```
+
+JSON path aliases compile to the dialect's preferred text-extraction
+operator (`#>>` on PostgreSQL, `JSON_UNQUOTE(JSON_EXTRACT(...))` on
+MySQL, `json_extract()` on SQLite) with the path supplied as a bound
+parameter — so it survives `getRawMany()` serialization and is free of
+injection risk.
+
+`addSelect(u.age.as("years"))` appends to an existing projection; mixing
+aliased columns with aggregates in the same `select([...])` call is also
+supported.
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -656,6 +691,7 @@ Method summary:
 | String (case-insens.) | `.equalsIgnoreCase`, `.likeIgnoreCase`, `.startsWithIgnoreCase`, `.endsWithIgnoreCase`, `.containsIgnoreCase` |
 | Ordering              | `.asc()`, `.desc()`, `.nullsFirst()`, `.nullsLast()`                                            |
 | Aggregates            | `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()` — each with `.as(alias)` and `.eq/.neq/.gt/.gte/.lt/.lte/.between` |
+| SELECT alias          | `.as("name")` on columns, JSON path extracts, and aggregates — produces `AliasedExpression` |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables
