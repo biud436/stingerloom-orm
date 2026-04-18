@@ -829,6 +829,173 @@ Misuse-guard: `.when()` after `.otherwise()`, duplicate `.otherwise()`,
 or `.end()` with no branches each throw an explanatory error early,
 rather than producing malformed SQL.
 
+##### String, numeric & math — JS-idiomatic helpers
+
+Tier 3's string/numeric/math helpers borrow the names already in a
+TypeScript developer's muscle memory — `String.prototype`, arithmetic
+operators, and `Math.*`. Each returns a `ScalarExpression`, so they
+flow into `.as()`, cast, coalesce, comparisons, and the rest of the
+Tier 2 surface.
+
+```typescript
+const p = qAlias(Product, "p");
+
+qb.select([
+  p.name.toLowerCase().as("name_lc"),            // LOWER("p"."name")
+  p.name.substring(0, 10).as("preview"),         // SUBSTR("p"."name", 1, 10)
+  p.name.concat(" — ", p.sku).as("label"),       // CONCAT("p"."name", ' — ', "p"."sku")
+  p.price.mul(0.9).round(2).as("discounted"),    // ROUND(("p"."price" * 0.9), 2)
+  p.stock.abs().as("stock_abs"),                  // ABS("p"."stock")
+])
+.where(p.name.length().gt(20));                   // CHAR_LENGTH("p"."name") > 20
+```
+
+Method coverage:
+
+| Category | Methods |
+|----------|---------|
+| String | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring(start, end?)`, `.concat(...args)`, `.indexOf(needle)`, `.replace(from, to)` |
+| Arithmetic | `.add(x)`, `.sub(x)`, `.mul(x)`, `.div(x)`, `.mod(x)`, `.neg()` |
+| Math | `.abs()`, `.floor()`, `.ceil()`, `.round(digits?)`, `.sqrt()` |
+
+Behavior notes worth knowing:
+
+- **`substring`** matches JS semantics (0-based, end exclusive). The
+  helper converts to SQL's 1-based `SUBSTR(col, start + 1, end - start)`.
+- **`length`** uses `CHAR_LENGTH` (character count) rather than byte
+  length — multibyte safe on every dialect.
+- **`indexOf`** returns `-1` when the needle is missing and a 0-based
+  position otherwise — dialect-specific (`STRPOS` / `LOCATE` / `INSTR`)
+  shifted down by 1 so it matches `String.prototype.indexOf`.
+- **`mod`** uses the SQL `%` operator; results match JS for positive
+  operands. For negative values the sign semantics vary per engine
+  (PostgreSQL keeps the dividend's sign, MySQL/SQLite match JS).
+
+All operands accept either primitives (bound as parameters) or other
+column/scalar expressions — so `p.price.add(p.discount)` or
+`p.name.concat(" (", p.sku, ")")` compose naturally.
+
+##### Date arithmetic — `.addDays()` / `.addMonths()` / …, `dateDiff`, `random`
+
+`ColumnExpression` and `ScalarExpression` gain six add-* helpers for
+the usual calendar units, `Expressions.dateDiff(a, b, unit)` returns
+an integer difference, and `Expressions.random()` wraps the engine's
+RNG. Together they cover reporting queries that don't want to resort
+to raw SQL.
+
+```typescript
+const e = qAlias(Event, "e");
+
+qb.select([
+  e.startsAt.addDays(7).as("next_week"),
+  e.startsAt.addMonths(-1).as("prev_month"),
+  Expressions.dateDiff(e.endsAt, e.startsAt, "day").as("span_days"),
+  Expressions.random().as("r"),
+]);
+```
+
+Dialect mapping:
+
+| Operation | MySQL | PostgreSQL | SQLite |
+|-----------|-------|------------|--------|
+| `addDays(7)` | `DATE_ADD(col, INTERVAL 7 DAY)` | `(col + (7 * INTERVAL '1 day'))` | `datetime(col, '+7 days')` |
+| `dateDiff(a, b, "day")` | `TIMESTAMPDIFF(DAY, b, a)` | `CAST(EXTRACT(EPOCH FROM (a - b)) / 86400 AS INTEGER)` | `CAST((julianday(a) - julianday(b)) * 1 AS INTEGER)` |
+| `dateDiff(a, b, "year")` | `TIMESTAMPDIFF(YEAR, b, a)` | calendar-aware `age()` | `julianday() / 365.25` (approx.) |
+| `random()` | `RAND()` | `RANDOM()` | `RANDOM()` |
+
+Year / month differences on SQLite are approximations (365.25 /
+30.4375 days). Use `TIMESTAMPDIFF` or `age()` targets for exact
+calendar math.
+
+##### Window functions — `aggregate.over()` + `WindowBuilder`
+
+Every aggregate (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`)
+exposes `.over()` that returns a chainable `WindowBuilder`.
+
+```typescript
+const e = qAlias(Event, "e");
+
+qb.select([
+  e.score.sum().over()
+    .partitionBy(e.teamId)
+    .orderBy(e.createdAt.desc())
+    .rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")
+    .as("running_total"),
+]);
+// SUM("e"."score") OVER (PARTITION BY "e"."teamId"
+//                        ORDER BY "e"."createdAt" DESC
+//                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+// AS "running_total"
+```
+
+Terminals:
+- `.as("alias")` — finalize as an `AliasedExpression` for SELECT.
+- `.toScalar()` — finalize as a `ScalarExpression` (for nesting,
+  e.g. `qb.where(e.score.gt(avg.over().partitionBy(e.teamId).toScalar()))`).
+
+Frame clauses accept raw SQL strings for `ROWS` / `RANGE` — callers
+are responsible for ensuring they're safe (do not pass user input).
+`rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")` is the common
+cumulative-aggregate frame.
+
+##### TS-native escape hatches — `Expressions.raw<T>()` / `.bigintValue()` / `qb.selectSchema(...)`
+
+Three helpers specifically tuned to TypeScript ergonomics:
+
+**`Expressions.raw<T>(fragment)`** — wrap any `sql-template-tag` `Sql`
+fragment as a `ScalarExpression`, threading it through the Tier 2/3
+composition surface. The generic `T` documents the intended return
+type for downstream chains (`rawInt.gt(0)` reads as intended) but is
+not runtime-enforced.
+
+```typescript
+import sql from "sql-template-tag";
+import { Expressions, qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+
+const epoch = Expressions.raw<number>(
+  sql`EXTRACT(epoch FROM ${u.col("createdAt")})`,
+);
+
+qb.select([epoch.as("epoch_s")])
+  .where(epoch.gt(1700000000));
+```
+
+The parameter bindings on the template are preserved end-to-end. Use
+this for vendor-specific functions, full-text operators, or anything
+the typed builder hasn't covered yet — without giving up chain
+composition.
+
+**`.bigintValue()`** — CAST helper sibling of `.longValue()`, with a
+name that signals JS `bigint` intent. Emits `BIGINT` / `SIGNED` /
+`INTEGER` per dialect; drivers may still deliver the value as a
+string, so wrap the field with `BigInt(...)` when reading the row if
+you want a native `bigint`.
+
+**`qb.selectSchema(schema)`** — attaches a Zod / Valibot / Effect
+(anything with `.parse(data)`) schema as the row validator AND
+narrows `TResult` to `z.infer<typeof schema>` at the type level.
+
+```typescript
+import { z } from "zod";
+
+const UserRow = z.object({ id: z.number(), name: z.string() });
+
+const rows = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name"])
+  .selectSchema(UserRow)
+  .getMany();
+//    ^? Array<{ id: number; name: string }>  — inferred from UserRow
+```
+
+The SELECT list is unchanged — callers still project the shape they
+want via `.select([...])` or `.as("alias")` projections; `selectSchema`
+purely wires runtime validation plus type inference. For callers
+preferring two explicit calls, `.select(...).validate(schema)` is
+equivalent minus the type narrowing.
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -929,6 +1096,12 @@ Method summary:
 | Date components       | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfMonth()`, `.dayOfYear()`, `.week()` |
 | Subquery compare      | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | CASE expressions      | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject).when(val, result)...end()` |
+| String / numeric / math | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring()`, `.concat()`, `.indexOf()`, `.replace()`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
+| Date arithmetic       | `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `Expressions.dateDiff(a, b, unit)`, `Expressions.random()` |
+| Window functions      | `aggregate.over().partitionBy(...).orderBy(...).rowsBetween(start, end).as("alias")` — `WindowBuilder` chain |
+| Raw SQL escape hatch  | `Expressions.raw<T>(sql`...`)` returns a `ScalarExpression` (composable with `.as`, `.eq`, `coalesce`, ...) |
+| BigInt cast           | `.bigintValue()` on column / scalar — BIGINT / SIGNED / INTEGER target |
+| Schema-inferred rows  | `qb.selectSchema(zodSchema)` — narrows `TResult` to `z.infer<schema>` and validates rows at runtime |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables

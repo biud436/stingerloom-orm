@@ -3,6 +3,7 @@ import type { Sql } from "sql-template-tag";
 import type {
   CastKind,
   ColumnJsonMeta,
+  DateAddUnit,
   DateComponent,
   DialectExpression,
 } from "../DialectExpression";
@@ -223,6 +224,7 @@ export class PostgresExpression implements DialectExpression {
       case "int":
         return "INTEGER";
       case "long":
+      case "bigint":
         return "BIGINT";
       case "float":
         return "REAL";
@@ -231,11 +233,73 @@ export class PostgresExpression implements DialectExpression {
     }
   }
 
+  stringIndexOf(haystack: Sql, needle: Sql): Sql {
+    return sql`STRPOS(${haystack}, ${needle})`;
+  }
+
+  dateAdd(value: Sql, n: number, unit: DateAddUnit): Sql {
+    // `value + (N * INTERVAL '1 unit')` — the literal is injected as
+    // raw SQL because PostgreSQL does not accept a parameter for the
+    // INTERVAL type specifier.
+    const literal = pgIntervalLiteral(unit);
+    return sql`(${value} + (${n} * INTERVAL ${raw(literal)}))`;
+  }
+
+  dateDiff(a: Sql, b: Sql, unit: DateAddUnit): Sql {
+    if (unit === "year") {
+      return sql`CAST(EXTRACT(YEAR FROM age(${a}, ${b})) AS INTEGER)`;
+    }
+    if (unit === "month") {
+      return sql`CAST(
+        EXTRACT(YEAR FROM age(${a}, ${b})) * 12
+        + EXTRACT(MONTH FROM age(${a}, ${b}))
+      AS INTEGER)`;
+    }
+    const factor = secondsPerUnit(unit);
+    return sql`CAST(EXTRACT(EPOCH FROM (${a} - ${b})) / ${factor} AS INTEGER)`;
+  }
+
+  random(): Sql {
+    return sql`RANDOM()`;
+  }
+
   dateComponent(value: Sql, component: DateComponent): Sql {
     // PostgreSQL EXTRACT returns a numeric — cast to integer so
     // downstream comparisons stay on integer arithmetic.
     const field = pgExtractField(component);
     return sql`CAST(EXTRACT(${raw(field)} FROM ${value}) AS INTEGER)`;
+  }
+}
+
+function pgIntervalLiteral(unit: DateAddUnit): string {
+  switch (unit) {
+    case "year":
+      return "'1 year'";
+    case "month":
+      return "'1 month'";
+    case "day":
+      return "'1 day'";
+    case "hour":
+      return "'1 hour'";
+    case "minute":
+      return "'1 minute'";
+    case "second":
+      return "'1 second'";
+  }
+}
+
+function secondsPerUnit(unit: DateAddUnit): number {
+  switch (unit) {
+    case "day":
+      return 86400;
+    case "hour":
+      return 3600;
+    case "minute":
+      return 60;
+    case "second":
+      return 1;
+    default:
+      throw new Error(`Unsupported unit for seconds-based diff: ${unit}`);
   }
 }
 

@@ -698,6 +698,133 @@ qb.select([weight.as("w")]);
 
 오용 방어도 들어가 있어요. `.otherwise()` 뒤의 `.when()`, 중복 `.otherwise()`, WHEN 없이 `.end()` — 이 세 경우는 명확한 에러 메시지로 막히니까, 잘못된 SQL이 쿼리 실행까지 가지 않아요.
 
+##### 문자열 / 숫자 / 수학 — JS와 같은 이름
+
+Tier 3의 문자열·숫자·수학 헬퍼는 TypeScript 개발자 손에 이미 익은 이름(`String.prototype`, 산술 연산자, `Math.*`)을 그대로 노출해요. 결과는 전부 `ScalarExpression`이니까 `.as()` / cast / coalesce / 비교 / 논리 결합 등 Tier 2에서 본 모든 기능과 바로 이어져요.
+
+```typescript
+const p = qAlias(Product, "p");
+
+qb.select([
+  p.name.toLowerCase().as("name_lc"),            // LOWER("p"."name")
+  p.name.substring(0, 10).as("preview"),         // SUBSTR("p"."name", 1, 10)
+  p.name.concat(" — ", p.sku).as("label"),       // CONCAT("p"."name", ' — ', "p"."sku")
+  p.price.mul(0.9).round(2).as("discounted"),    // ROUND(("p"."price" * 0.9), 2)
+  p.stock.abs().as("stock_abs"),                 // ABS("p"."stock")
+])
+.where(p.name.length().gt(20));                   // CHAR_LENGTH("p"."name") > 20
+```
+
+메서드 한눈에:
+
+| 분류 | 메서드 |
+|------|--------|
+| 문자열 | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring(start, end?)`, `.concat(...args)`, `.indexOf(needle)`, `.replace(from, to)` |
+| 산술 | `.add(x)`, `.sub(x)`, `.mul(x)`, `.div(x)`, `.mod(x)`, `.neg()` |
+| 수학 | `.abs()`, `.floor()`, `.ceil()`, `.round(digits?)`, `.sqrt()` |
+
+알아두면 편한 동작 요약:
+
+- **`substring`** — JS와 똑같이 0-based, end exclusive. 내부에서 `SUBSTR(col, start + 1, end - start)`로 변환돼요.
+- **`length`** — `CHAR_LENGTH`라서 멀티바이트 안전. 바이트 수가 아니라 문자 수예요.
+- **`indexOf`** — 못 찾으면 `-1`, 찾으면 0-based 위치. 드라이버별(`STRPOS` / `LOCATE` / `INSTR`) 1-based 결과에서 1을 빼 JS와 일치하게 맞춰요.
+- **`mod`** — SQL `%` 연산자. 양수 피연산자는 JS와 결과가 같지만, 음수는 엔진마다 달라요 (PostgreSQL은 피제수 부호 유지, MySQL/SQLite는 JS와 같음).
+
+모든 인자는 원시값(파라미터 바인딩) 또는 다른 컬럼/스칼라 표현식을 받으니, `p.price.add(p.discount)` 처럼 컬럼끼리도, `p.name.concat(" (", p.sku, ")")` 같은 혼합도 자연스럽게 돼요.
+
+##### 날짜 산술 — `.addDays()` / `.addMonths()` / …, `dateDiff`, `random`
+
+달력 단위별 `add*` 6개(`addYears/Months/Days/Hours/Minutes/Seconds`), 두 날짜의 정수 차이를 돌려주는 `Expressions.dateDiff(a, b, unit)`, 엔진별 RNG를 감싸는 `Expressions.random()`을 한 번에 다룰 수 있어요. 리포트성 쿼리에서 raw SQL로 내려가는 일이 줄어들어요.
+
+```typescript
+const e = qAlias(Event, "e");
+
+qb.select([
+  e.startsAt.addDays(7).as("next_week"),
+  e.startsAt.addMonths(-1).as("prev_month"),
+  Expressions.dateDiff(e.endsAt, e.startsAt, "day").as("span_days"),
+  Expressions.random().as("r"),
+]);
+```
+
+드라이버별 생성:
+
+| 연산 | MySQL | PostgreSQL | SQLite |
+|------|-------|------------|--------|
+| `addDays(7)` | `DATE_ADD(col, INTERVAL 7 DAY)` | `(col + (7 * INTERVAL '1 day'))` | `datetime(col, '+7 days')` |
+| `dateDiff(a, b, "day")` | `TIMESTAMPDIFF(DAY, b, a)` | `CAST(EXTRACT(EPOCH FROM (a - b)) / 86400 AS INTEGER)` | `CAST((julianday(a) - julianday(b)) * 1 AS INTEGER)` |
+| `dateDiff(a, b, "year")` | `TIMESTAMPDIFF(YEAR, b, a)` | 달력 기반 `age()` | `julianday() / 365.25` (근사) |
+| `random()` | `RAND()` | `RANDOM()` | `RANDOM()` |
+
+SQLite의 year/month 차이는 365.25 / 30.4375로 근사해요. 정확한 달력 차가 필요하면 MySQL `TIMESTAMPDIFF` 또는 PostgreSQL `age()` 쪽을 쓰세요.
+
+##### 윈도우 함수 — `aggregate.over()` + `WindowBuilder`
+
+집계(`count`, `sum`, `avg`, `min`, `max`, `countDistinct`)에는 `.over()`가 달려 있어요. 체인으로 PARTITION BY / ORDER BY / ROWS 또는 RANGE 프레임을 지정하고, `.as(alias)`로 마무리해요.
+
+```typescript
+const e = qAlias(Event, "e");
+
+qb.select([
+  e.score.sum().over()
+    .partitionBy(e.teamId)
+    .orderBy(e.createdAt.desc())
+    .rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")
+    .as("running_total"),
+]);
+// SUM("e"."score") OVER (PARTITION BY "e"."teamId"
+//                        ORDER BY "e"."createdAt" DESC
+//                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+// AS "running_total"
+```
+
+마무리는 둘 중 하나예요:
+- `.as("alias")` — `AliasedExpression`으로 끝내서 SELECT에 바로 사용.
+- `.toScalar()` — `ScalarExpression`으로 끝내서 다른 표현식 안에 중첩 (예: `qb.where(e.score.gt(avg.over().partitionBy(...).toScalar()))`).
+
+프레임 문자열(`"UNBOUNDED PRECEDING"`, `"CURRENT ROW"`, `"5 PRECEDING"` 등)은 그대로 SQL에 삽입돼요. **사용자 입력을 이 자리에 넘기지 마세요.** 누적 집계에는 `rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")`를 쓰는 게 가장 일반적이에요.
+
+##### TS 네이티브 이스케이프 해치 — `Expressions.raw<T>()` / `.bigintValue()` / `qb.selectSchema(...)`
+
+TypeScript 생태계 맞춤 3종 세트예요.
+
+**`Expressions.raw<T>(fragment)`** — 어떤 `sql-template-tag` `Sql` fragment이든 `ScalarExpression`으로 감싸요. Tier 2/3 합성 체인(`.as`, `.eq`, `coalesce` 등)에 그대로 연결돼요. 제네릭 `T`는 다운스트림 체인의 타입 힌트용이지 런타임 검증용은 아니에요.
+
+```typescript
+import sql from "sql-template-tag";
+import { Expressions, qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+
+const epoch = Expressions.raw<number>(
+  sql`EXTRACT(epoch FROM ${u.col("createdAt")})`,
+);
+
+qb.select([epoch.as("epoch_s")])
+  .where(epoch.gt(1700000000));
+```
+
+템플릿 내부의 파라미터 바인딩은 끝까지 그대로 보존돼요. 드라이버 고유 함수, 전문 검색 연산자 등 타입드 빌더가 아직 커버하지 않은 곳의 이스케이프 해치로 쓰세요.
+
+**`.bigintValue()`** — `.longValue()`의 이름만 다른 형제. JS `bigint`를 다룬다는 의도를 명확히 표시해요. SQL은 `BIGINT` / `SIGNED` / `INTEGER`로 드라이버별 생성. 드라이버가 결과를 문자열로 내주는 경우가 있어서 JS 쪽에서 `BigInt(row.col)`로 감싸 주면 돼요.
+
+**`qb.selectSchema(schema)`** — Zod / Valibot / Effect 등 `.parse(data)`를 가진 스키마를 row 검증기로 붙이면서, 동시에 `TResult` 타입을 `z.infer<schema>`로 좁혀줘요.
+
+```typescript
+import { z } from "zod";
+
+const UserRow = z.object({ id: z.number(), name: z.string() });
+
+const rows = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name"])
+  .selectSchema(UserRow)
+  .getMany();
+//    ^? Array<{ id: number; name: string }>  — UserRow에서 추론
+```
+
+SELECT 리스트는 그대로예요 — 호출자가 `.select([...])`나 `.as("alias")`로 원하는 형태로 투영하고, `selectSchema`는 런타임 검증과 타입 추론만 걸어줘요. 두 번 호출 스타일을 선호하면 `.select(...).validate(schema)`로 같은 효과를 낼 수 있지만 타입 narrowing은 안 돼요.
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -803,6 +930,12 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | 날짜 컴포넌트             | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfYear()`, `.week()` |
 | 서브쿼리 비교             | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | CASE 표현식               | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject)...end()`     |
+| 문자열 / 숫자 / 수학      | `.toLowerCase/.toUpperCase/.trim/.length/.substring/.concat/.indexOf/.replace`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
+| 날짜 산술                 | `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `Expressions.dateDiff(a, b, unit)`, `Expressions.random()` |
+| 윈도우 함수               | `aggregate.over().partitionBy(...).orderBy(...).rowsBetween(start, end).as("alias")` — `WindowBuilder` 체인 |
+| Raw SQL 이스케이프 해치   | `Expressions.raw<T>(sql`...`)` → `ScalarExpression` (체인 합성 가능) |
+| BigInt cast               | `.bigintValue()` (BIGINT / SIGNED / INTEGER) |
+| 스키마 기반 행 추론       | `qb.selectSchema(zodSchema)` — `TResult`를 `z.infer<schema>`로 narrow + 런타임 검증 |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |

@@ -42,7 +42,36 @@ import { ScalarExpression } from "./expressions/ScalarExpression";
 import { coalesce as coalesceFn } from "./expressions/NullishExpression";
 import { buildCastScalar } from "./expressions/CastExpression";
 import { buildDateComponentFromRef } from "./expressions/DateComponentExpression";
-import type { CastKind, DateComponent } from "../dialects/DialectExpression";
+import {
+  buildToLowerCase,
+  buildToUpperCase,
+  buildTrim,
+  buildLength,
+  buildSubstring,
+  buildConcat,
+  buildIndexOf,
+  buildReplace,
+  type InnerRenderer,
+} from "./expressions/StringExpression";
+import {
+  buildAdd,
+  buildSub,
+  buildMul,
+  buildDiv,
+  buildMod,
+  buildNeg,
+  buildAbs,
+  buildFloor,
+  buildCeil,
+  buildRound,
+  buildSqrt,
+} from "./expressions/NumericExpression";
+import { buildDateAdd } from "./expressions/DateArithmeticExpression";
+import type {
+  CastKind,
+  DateAddUnit,
+  DateComponent,
+} from "../dialects/DialectExpression";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
@@ -552,6 +581,16 @@ export class ColumnExpression {
   booleanValue(): ScalarExpression {
     return this.buildCast("boolean");
   }
+  /**
+   * `CAST(column AS <dialect-bigint-type>)` — same SQL target as
+   * `.longValue()` (BIGINT / SIGNED / INTEGER), but the method name
+   * documents the intent for JavaScript `bigint` return values. The
+   * driver may still deliver the value as a string; wrap with `BigInt(...)`
+   * in application code to get a native `bigint`.
+   */
+  bigintValue(): ScalarExpression {
+    return this.buildCast("bigint");
+  }
 
   private buildCast(kind: CastKind): ScalarExpression {
     const ref = this.ref;
@@ -605,6 +644,134 @@ export class ColumnExpression {
 
   private buildDateComponent(component: DateComponent): ScalarExpression {
     return buildDateComponentFromRef(component, this.ref);
+  }
+
+  // ── String helpers (Tier 3 / JS-idiomatic) ─────────────
+
+  /** `LOWER(col)`. Matches JS `String.prototype.toLowerCase`. */
+  toLowerCase(): ScalarExpression {
+    return buildToLowerCase(this.innerRenderer());
+  }
+  /** `UPPER(col)`. Matches JS `String.prototype.toUpperCase`. */
+  toUpperCase(): ScalarExpression {
+    return buildToUpperCase(this.innerRenderer());
+  }
+  /** `TRIM(col)`. */
+  trim(): ScalarExpression {
+    return buildTrim(this.innerRenderer());
+  }
+  /** `CHAR_LENGTH(col)` — character count (multibyte safe). */
+  length(): ScalarExpression {
+    return buildLength(this.innerRenderer());
+  }
+  /**
+   * `SUBSTR(col, start+1[, end-start])` — matches JS `String.prototype
+   * .substring(indexStart, indexEnd?)` (0-based, end exclusive).
+   */
+  substring(start: number, end?: number): ScalarExpression {
+    return buildSubstring(this.innerRenderer(), start, end);
+  }
+  /** `CONCAT(col, ...args)`. */
+  concat(...args: unknown[]): ScalarExpression {
+    return buildConcat(this.innerRenderer(), args);
+  }
+  /**
+   * `STRPOS/LOCATE/INSTR(col, needle) - 1` — returns 0-based position,
+   * `-1` when not found. Matches JS `String.prototype.indexOf`.
+   */
+  indexOf(needle: unknown): ScalarExpression {
+    return buildIndexOf(this.innerRenderer(), needle);
+  }
+  /** `REPLACE(col, from, to)`. */
+  replace(from: unknown, to: unknown): ScalarExpression {
+    return buildReplace(this.innerRenderer(), from, to);
+  }
+
+  // ── Numeric arithmetic (Tier 3) ────────────────────────
+
+  /** `(col + right)`. Right may be a primitive or another expression. */
+  add(right: unknown): ScalarExpression {
+    return buildAdd(this.innerRenderer(), right);
+  }
+  /** `(col - right)`. */
+  sub(right: unknown): ScalarExpression {
+    return buildSub(this.innerRenderer(), right);
+  }
+  /** `(col * right)`. */
+  mul(right: unknown): ScalarExpression {
+    return buildMul(this.innerRenderer(), right);
+  }
+  /** `(col / right)`. */
+  div(right: unknown): ScalarExpression {
+    return buildDiv(this.innerRenderer(), right);
+  }
+  /** `(col % right)`. */
+  mod(right: unknown): ScalarExpression {
+    return buildMod(this.innerRenderer(), right);
+  }
+  /** `-col`. */
+  neg(): ScalarExpression {
+    return buildNeg(this.innerRenderer());
+  }
+
+  // ── Math functions (Tier 3) ────────────────────────────
+
+  /** `ABS(col)`. */
+  abs(): ScalarExpression {
+    return buildAbs(this.innerRenderer());
+  }
+  /** `FLOOR(col)`. */
+  floor(): ScalarExpression {
+    return buildFloor(this.innerRenderer());
+  }
+  /** `CEIL(col)`. */
+  ceil(): ScalarExpression {
+    return buildCeil(this.innerRenderer());
+  }
+  /** `ROUND(col)` or `ROUND(col, digits)`. */
+  round(digits?: number): ScalarExpression {
+    return buildRound(this.innerRenderer(), digits);
+  }
+  /** `SQRT(col)`. */
+  sqrt(): ScalarExpression {
+    return buildSqrt(this.innerRenderer());
+  }
+
+  // ── Date arithmetic (Tier 3) ───────────────────────────
+
+  /** `col + N years` — calendar-aware on all supported drivers. */
+  addYears(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "year");
+  }
+  /** `col + N months` — calendar-aware on all supported drivers. */
+  addMonths(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "month");
+  }
+  /** `col + N days`. */
+  addDays(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "day");
+  }
+  /** `col + N hours`. */
+  addHours(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "hour");
+  }
+  /** `col + N minutes`. */
+  addMinutes(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "minute");
+  }
+  /** `col + N seconds`. */
+  addSeconds(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "second");
+  }
+
+  private buildDateAdd(n: number, unit: DateAddUnit): ScalarExpression {
+    return buildDateAdd(this.innerRenderer(), n, unit);
+  }
+
+  /** @internal Inner-fragment renderer shared by Tier 3 helpers. */
+  private innerRenderer(): InnerRenderer {
+    const ref = this.ref;
+    return (resolveColumn) => sql`${raw(resolveColumn(ref))}`;
   }
 
   // ── Aggregate helpers (Tier 1) ─────────────────────────
@@ -2696,6 +2863,49 @@ export class SelectQueryBuilder<T, TResult = T> {
   validate(validator: RowValidator<TResult>): this {
     this.rowValidator = validator;
     return this;
+  }
+
+  /**
+   * Type-inferred schema-validated result — a Zod / Valibot / Effect
+   * schema (anything with a `.parse(data)` method) is attached as the
+   * row validator AND the query builder's `TResult` type narrows to
+   * the schema's inferred output type.
+   *
+   * Combines `.validate(schema)` with a type-level reshaping — the
+   * caller no longer needs to carry a separate generic for the SELECT
+   * projection.
+   *
+   * @example
+   * ```ts
+   * import { z } from "zod";
+   *
+   * const UserRow = z.object({ id: z.number(), name: z.string() });
+   *
+   * const rows = await em
+   *   .createQueryBuilder(User, "u")
+   *   .select(["id", "name"])
+   *   .selectSchema(UserRow)
+   *   .getMany();
+   * //    ^? Array<{ id: number; name: string }>   — inferred from UserRow
+   * ```
+   *
+   * @remarks
+   * The SELECT list is untouched — the caller is responsible for
+   * projecting a compatible shape (e.g. via `.select([...])` or
+   * `.as("alias")` projections). This method purely wires runtime
+   * validation plus type inference.
+   */
+  selectSchema<TSchema extends { parse(data: unknown): unknown }>(
+    schema: TSchema,
+  ): SelectQueryBuilder<
+    T,
+    TSchema extends { parse(data: unknown): infer O } ? O : never
+  > {
+    this.rowValidator = schema as unknown as RowValidator<TResult>;
+    return this as unknown as SelectQueryBuilder<
+      T,
+      TSchema extends { parse(data: unknown): infer O } ? O : never
+    >;
   }
 
   /**

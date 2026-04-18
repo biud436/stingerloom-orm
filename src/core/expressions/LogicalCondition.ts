@@ -23,6 +23,12 @@ import {
   CaseBuilder,
   CaseValueBuilder,
 } from "./CaseExpression";
+import {
+  dateDiff as dateDiffFactory,
+  random as randomFactory,
+} from "./DateArithmeticExpression";
+import { raw as rawFactory } from "./RawExpression";
+import type { DateAddUnit } from "../../dialects/DialectExpression";
 
 export type LogicalOperator = "AND" | "OR" | "NOT";
 
@@ -216,6 +222,46 @@ export const Expressions = {
    */
   cases(subject: unknown): CaseValueBuilder {
     return casesFactory(subject);
+  },
+
+  /**
+   * `dateDiff(a, b, unit)` — integer difference `a - b` in the given
+   * unit. Calendar-aware for `year`/`month` on MySQL and PostgreSQL;
+   * SQLite uses `julianday()` approximation for those.
+   */
+  dateDiff(a: unknown, b: unknown, unit: DateAddUnit): ScalarExpression {
+    return dateDiffFactory(a, b, unit);
+  },
+
+  /**
+   * `RANDOM()` / `RAND()` — dialect-native pseudo-random scalar.
+   * Commonly used as `qb.orderBy(Expressions.random().asc())` for
+   * random sampling, though the order expression wiring lives in a
+   * future phase.
+   */
+  random(): ScalarExpression {
+    return randomFactory();
+  },
+
+  /**
+   * Escape hatch — wrap a raw `Sql` fragment as a
+   * {@link ScalarExpression}. The generic `T` is a TypeScript marker
+   * that documents the intended return type; it flows through
+   * downstream chains but is not enforced at runtime.
+   *
+   * Callers take responsibility for the safety of the raw SQL.
+   *
+   * @example
+   * ```ts
+   * import sql from "sql-template-tag";
+   * const epoch = Expressions.raw<number>(
+   *   sql`EXTRACT(epoch FROM ${u.col("createdAt")})`,
+   * );
+   * qb.select([epoch.as("epoch_s")]).where(epoch.gt(1700000000));
+   * ```
+   */
+  raw<T = unknown>(fragment: import("sql-template-tag").Sql): ScalarExpression {
+    return rawFactory<T>(fragment);
   },
 } as const;
 

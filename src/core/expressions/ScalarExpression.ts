@@ -3,6 +3,7 @@ import sql, { Sql, raw, join } from "sql-template-tag";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import type {
   CastKind,
+  DateAddUnit,
   DateComponent,
   DialectExpression,
 } from "../../dialects/DialectExpression";
@@ -112,6 +113,10 @@ export class ScalarExpression {
   booleanValue(): ScalarExpression {
     return this.buildCast("boolean");
   }
+  /** Wrap in `CAST(... AS BIGINT/SIGNED/INTEGER)` — JS `bigint` intent. */
+  bigintValue(): ScalarExpression {
+    return this.buildCast("bigint");
+  }
 
   private buildCast(kind: CastKind): ScalarExpression {
     const innerRenderer = this.renderer;
@@ -183,6 +188,240 @@ export class ScalarExpression {
       return dialect.dateComponent(value, component);
     });
   }
+
+  // ── String helpers (Tier 3 — chain on any scalar) ──────
+
+  /** `LOWER(x)` — matches JS `String.prototype.toLowerCase`. */
+  toLowerCase(): ScalarExpression {
+    return buildStringFn("LOWER", this.renderer);
+  }
+  /** `UPPER(x)`. */
+  toUpperCase(): ScalarExpression {
+    return buildStringFn("UPPER", this.renderer);
+  }
+  /** `TRIM(x)`. */
+  trim(): ScalarExpression {
+    return buildStringFn("TRIM", this.renderer);
+  }
+  /** `CHAR_LENGTH(x)` — character count. */
+  length(): ScalarExpression {
+    return buildStringFn("CHAR_LENGTH", this.renderer);
+  }
+  /** `SUBSTR(x, start+1[, end-start])` — JS `substring` semantics. */
+  substring(start: number, end?: number): ScalarExpression {
+    return buildSubstringFromRenderer(this.renderer, start, end);
+  }
+  /** `CONCAT(x, ...args)`. */
+  concat(...args: unknown[]): ScalarExpression {
+    return buildConcatFromRenderer(this.renderer, args);
+  }
+  /** JS-style `indexOf` — 0-based, `-1` when not found. */
+  indexOf(needle: unknown): ScalarExpression {
+    return buildIndexOfFromRenderer(this.renderer, needle);
+  }
+  /** `REPLACE(x, from, to)`. */
+  replace(from: unknown, to: unknown): ScalarExpression {
+    return buildReplaceFromRenderer(this.renderer, from, to);
+  }
+
+  // ── Numeric (Tier 3) ───────────────────────────────────
+  add(right: unknown): ScalarExpression {
+    return buildBinaryOpFromRenderer(this.renderer, "+", right);
+  }
+  sub(right: unknown): ScalarExpression {
+    return buildBinaryOpFromRenderer(this.renderer, "-", right);
+  }
+  mul(right: unknown): ScalarExpression {
+    return buildBinaryOpFromRenderer(this.renderer, "*", right);
+  }
+  div(right: unknown): ScalarExpression {
+    return buildBinaryOpFromRenderer(this.renderer, "/", right);
+  }
+  mod(right: unknown): ScalarExpression {
+    return buildBinaryOpFromRenderer(this.renderer, "%", right);
+  }
+  neg(): ScalarExpression {
+    return buildUnaryNegFromRenderer(this.renderer);
+  }
+
+  // ── Math (Tier 3) ──────────────────────────────────────
+  abs(): ScalarExpression {
+    return buildStringFn("ABS", this.renderer);
+  }
+  floor(): ScalarExpression {
+    return buildStringFn("FLOOR", this.renderer);
+  }
+  ceil(): ScalarExpression {
+    return buildStringFn("CEIL", this.renderer);
+  }
+  round(digits?: number): ScalarExpression {
+    return buildRoundFromRenderer(this.renderer, digits);
+  }
+  sqrt(): ScalarExpression {
+    return buildStringFn("SQRT", this.renderer);
+  }
+
+  // ── Date arithmetic (Tier 3) ───────────────────────────
+  addYears(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "year");
+  }
+  addMonths(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "month");
+  }
+  addDays(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "day");
+  }
+  addHours(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "hour");
+  }
+  addMinutes(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "minute");
+  }
+  addSeconds(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "second");
+  }
+}
+
+// ── Shared helpers for ScalarExpression Tier 3 methods ──
+
+type InnerRender = (r: ColumnResolver, d?: DialectExpression) => Sql;
+
+/** @internal Build `FN(x)` wrapping the inner renderer. */
+function buildStringFn(fn: string, inner: InnerRender): ScalarExpression {
+  return new ScalarExpression((resolveColumn, dialect) => {
+    const v = inner(resolveColumn, dialect);
+    return sql`${raw(fn)}(${v})`;
+  });
+}
+
+/** @internal Render an argument as either a nested expression's inner SQL or a bound parameter. */
+function renderArg(
+  arg: unknown,
+  resolveColumn: ColumnResolver,
+  dialect?: DialectExpression,
+): Sql {
+  if (
+    arg !== null &&
+    typeof arg === "object" &&
+    (arg as { __isScalarExpression?: unknown }).__isScalarExpression === true
+  ) {
+    return (arg as { renderer: InnerRender }).renderer(resolveColumn, dialect);
+  }
+  if (
+    arg !== null &&
+    typeof arg === "object" &&
+    (arg as { __isColumnExpression?: unknown }).__isColumnExpression === true
+  ) {
+    return sql`${raw(resolveColumn((arg as { toString(): string }).toString()))}`;
+  }
+  return sql`${arg as string | number | boolean | null}`;
+}
+
+function buildSubstringFromRenderer(
+  inner: InnerRender,
+  start: number,
+  end: number | undefined,
+): ScalarExpression {
+  return new ScalarExpression((resolveColumn, dialect) => {
+    const v = inner(resolveColumn, dialect);
+    const sqlStart = start + 1;
+    if (end === undefined) return sql`SUBSTR(${v}, ${sqlStart})`;
+    const length = end - start;
+    return sql`SUBSTR(${v}, ${sqlStart}, ${length})`;
+  });
+}
+
+function buildConcatFromRenderer(
+  inner: InnerRender,
+  args: unknown[],
+): ScalarExpression {
+  return new ScalarExpression((resolveColumn, dialect) => {
+    const head = inner(resolveColumn, dialect);
+    const tail = args.map((a) => renderArg(a, resolveColumn, dialect));
+    const all = [head, ...tail];
+    // Inline manual join to avoid extra import churn.
+    let acc = sql`${all[0]}`;
+    for (let i = 1; i < all.length; i++) {
+      acc = sql`${acc}, ${all[i]}`;
+    }
+    return sql`CONCAT(${acc})`;
+  });
+}
+
+function buildIndexOfFromRenderer(
+  inner: InnerRender,
+  needle: unknown,
+): ScalarExpression {
+  return new ScalarExpression((resolveColumn, dialect) => {
+    if (!dialect) {
+      throw new Error(
+        "indexOf() requires a DialectExpression. Ensure the query builder was " +
+          "created via EntityManager.createQueryBuilder().",
+      );
+    }
+    const haystack = inner(resolveColumn, dialect);
+    const n = renderArg(needle, resolveColumn, dialect);
+    return sql`(${dialect.stringIndexOf(haystack, n)} - 1)`;
+  });
+}
+
+function buildReplaceFromRenderer(
+  inner: InnerRender,
+  from: unknown,
+  to: unknown,
+): ScalarExpression {
+  return new ScalarExpression((resolveColumn, dialect) => {
+    const v = inner(resolveColumn, dialect);
+    const a = renderArg(from, resolveColumn, dialect);
+    const b = renderArg(to, resolveColumn, dialect);
+    return sql`REPLACE(${v}, ${a}, ${b})`;
+  });
+}
+
+function buildBinaryOpFromRenderer(
+  inner: InnerRender,
+  op: string,
+  right: unknown,
+): ScalarExpression {
+  return new ScalarExpression((resolveColumn, dialect) => {
+    const left = inner(resolveColumn, dialect);
+    const r = renderArg(right, resolveColumn, dialect);
+    return sql`(${left} ${raw(op)} ${r})`;
+  });
+}
+
+function buildUnaryNegFromRenderer(inner: InnerRender): ScalarExpression {
+  return new ScalarExpression((resolveColumn, dialect) => {
+    return sql`(-${inner(resolveColumn, dialect)})`;
+  });
+}
+
+function buildRoundFromRenderer(
+  inner: InnerRender,
+  digits: number | undefined,
+): ScalarExpression {
+  return new ScalarExpression((resolveColumn, dialect) => {
+    const v = inner(resolveColumn, dialect);
+    if (digits === undefined) return sql`ROUND(${v})`;
+    return sql`ROUND(${v}, ${digits})`;
+  });
+}
+
+function buildDateAddFromRenderer(
+  inner: InnerRender,
+  n: number,
+  unit: DateAddUnit,
+): ScalarExpression {
+  return new ScalarExpression((resolveColumn, dialect) => {
+    if (!dialect) {
+      throw new Error(
+        "Date add expressions require a DialectExpression. Ensure the query " +
+          "builder was created via EntityManager.createQueryBuilder().",
+      );
+    }
+    const v = inner(resolveColumn, dialect);
+    return dialect.dateAdd(v, n, unit);
+  });
 }
 
 /**

@@ -3,6 +3,7 @@ import type { Sql } from "sql-template-tag";
 import type {
   CastKind,
   ColumnJsonMeta,
+  DateAddUnit,
   DateComponent,
   DialectExpression,
 } from "../DialectExpression";
@@ -115,6 +116,8 @@ export class SqliteExpression implements DialectExpression {
         return "TEXT";
       case "int":
       case "long":
+      case "bigint":
+        // SQLite INTEGER is already 64-bit.
         return "INTEGER";
       case "float":
         return "REAL";
@@ -123,9 +126,68 @@ export class SqliteExpression implements DialectExpression {
     }
   }
 
+  stringIndexOf(haystack: Sql, needle: Sql): Sql {
+    return sql`INSTR(${haystack}, ${needle})`;
+  }
+
+  dateAdd(value: Sql, n: number, unit: DateAddUnit): Sql {
+    // SQLite uses modifier strings: '+N days', '+N months', etc.
+    // The modifier must be a bound string parameter.
+    const modifier = sqliteModifier(n, unit);
+    return sql`datetime(${value}, ${modifier})`;
+  }
+
+  dateDiff(a: Sql, b: Sql, unit: DateAddUnit): Sql {
+    if (unit === "year") {
+      return sql`CAST((julianday(${a}) - julianday(${b})) / 365.25 AS INTEGER)`;
+    }
+    if (unit === "month") {
+      return sql`CAST((julianday(${a}) - julianday(${b})) / 30.4375 AS INTEGER)`;
+    }
+    const factor = juliandayFactor(unit);
+    return sql`CAST((julianday(${a}) - julianday(${b})) * ${factor} AS INTEGER)`;
+  }
+
+  random(): Sql {
+    return sql`RANDOM()`;
+  }
+
   dateComponent(value: Sql, component: DateComponent): Sql {
     const format = sqliteStrftimeFormat(component);
     return sql`CAST(strftime(${format}, ${value}) AS INTEGER)`;
+  }
+}
+
+function sqliteModifier(n: number, unit: DateAddUnit): string {
+  const sign = n >= 0 ? "+" : "-";
+  const abs = Math.abs(n);
+  const noun =
+    unit === "year"
+      ? "years"
+      : unit === "month"
+        ? "months"
+        : unit === "day"
+          ? "days"
+          : unit === "hour"
+            ? "hours"
+            : unit === "minute"
+              ? "minutes"
+              : "seconds";
+  return `${sign}${abs} ${noun}`;
+}
+
+function juliandayFactor(unit: DateAddUnit): number {
+  switch (unit) {
+    case "day":
+      return 1;
+    case "hour":
+      return 24;
+    case "minute":
+      return 1440;
+    case "second":
+      return 86400;
+    default:
+      throw new Error(`Unsupported unit for julianday diff: ${unit}`);
   }
 }
 
