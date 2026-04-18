@@ -5,6 +5,11 @@ import type { DialectExpression } from "../../dialects/DialectExpression";
 import { registerLogicalComposer } from "./AggregateExpression";
 import { registerScalarLogicalComposer } from "./ScalarExpression";
 import { coalesce, nullif } from "./NullishExpression";
+import {
+  currentDate,
+  currentTime,
+  currentTimestamp,
+} from "./TemporalExpression";
 import type { ScalarExpression } from "./ScalarExpression";
 
 export type LogicalOperator = "AND" | "OR" | "NOT";
@@ -151,6 +156,21 @@ export const Expressions = {
    */
   nullif(a: unknown, b: unknown): ScalarExpression {
     return nullif(a, b);
+  },
+
+  /** `CURRENT_DATE` — the database server's current date. */
+  currentDate(): ScalarExpression {
+    return currentDate();
+  },
+
+  /** `CURRENT_TIME` — the database server's current time of day. */
+  currentTime(): ScalarExpression {
+    return currentTime();
+  },
+
+  /** `CURRENT_TIMESTAMP` — the database server's current date+time. */
+  currentTimestamp(): ScalarExpression {
+    return currentTimestamp();
   },
 } as const;
 

@@ -636,6 +636,30 @@ Static helpers live on the `Expressions` namespace — `Expressions.coalesce`
 and `Expressions.nullif` — mirroring Java QueryDSL for callers who
 prefer the static entry point.
 
+##### Current date/time — `currentDate()` / `currentTime()` / `currentTimestamp()`
+
+Three small standard-SQL helpers that insert the server's clock into
+any expression position. They are scalar expressions, so they compose
+with everything already shown (`.as()`, `.eq()`, nested inside
+`coalesce`, etc.) and emit the same literal on every dialect.
+
+```typescript
+import { Expressions, qAlias } from "@stingerloom/orm";
+
+const s = qAlias(Session, "s");
+
+qb.where(s.expiresAt.gte(Expressions.currentTimestamp()));
+// WHERE "s"."expires_at" >= CURRENT_TIMESTAMP
+
+qb.select([Expressions.currentDate().as("today")]);
+// SELECT CURRENT_DATE AS "today"
+```
+
+`ColumnExpression` comparison methods now transparently unwrap a
+`ScalarExpression` operand — so `u.createdAt.lte(currentTimestamp())`
+emits an inline `CURRENT_TIMESTAMP` rather than binding the expression
+as a parameter.
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -731,6 +755,7 @@ Method summary:
 | Aggregates            | `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()` — each with `.as(alias)` and `.eq/.neq/.gt/.gte/.lt/.lte/.between` |
 | SELECT alias          | `.as("name")` on columns, JSON path extracts, and aggregates — produces `AliasedExpression` |
 | Null handling         | `coalesce(…)`, `nullif(a, b)`, `col.coalesce(…)`, `Expressions.coalesce`, `Expressions.nullif` |
+| Current date / time   | `currentDate()`, `currentTime()`, `currentTimestamp()` — also on `Expressions`                 |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables

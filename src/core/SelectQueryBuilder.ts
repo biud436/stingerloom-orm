@@ -210,6 +210,32 @@ export class ColumnCondition implements ConditionLike {
     ) => Sql,
   ) {}
 
+  /**
+   * @internal Unwrap a value that may be a {@link ScalarExpression} (e.g.
+   * `Expressions.currentTimestamp()`) into a rendered `Sql` fragment.
+   * Plain values pass through unchanged so `sql-template-tag` binds them
+   * as parameters.
+   */
+  private resolveValue(
+    value: unknown,
+    resolveColumn: (ref: string) => string,
+    dialect: DialectExpression | undefined,
+  ): unknown {
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      (value as { __isScalarExpression?: unknown }).__isScalarExpression === true
+    ) {
+      return (value as {
+        renderer: (
+          r: (ref: string) => string,
+          d?: DialectExpression,
+        ) => Sql;
+      }).renderer(resolveColumn, dialect);
+    }
+    return value;
+  }
+
   /** @internal Resolve the column reference and produce final SQL. */
   resolve(
     resolveColumn: (ref: string) => string,
@@ -219,38 +245,43 @@ export class ColumnCondition implements ConditionLike {
     if (this.dialectRenderer) {
       return this.dialectRenderer(qualified, dialect);
     }
+    const value = this.resolveValue(this.value, resolveColumn, dialect);
     switch (this.operator) {
       case "=":
-        if (this.value === null) return Conditions.isNull(qualified);
-        if (Array.isArray(this.value)) return Conditions.in(qualified, this.value);
-        return Conditions.equals(qualified, this.value);
+        if (value === null) return Conditions.isNull(qualified);
+        if (Array.isArray(value)) return Conditions.in(qualified, value);
+        return Conditions.equals(qualified, value);
       case "!=":
       case "<>":
-        return Conditions.notEquals(qualified, this.value);
+        return Conditions.notEquals(qualified, value);
       case ">":
-        return Conditions.gt(qualified, this.value);
+        return Conditions.gt(qualified, value);
       case ">=":
-        return Conditions.gte(qualified, this.value);
+        return Conditions.gte(qualified, value);
       case "<":
-        return Conditions.lt(qualified, this.value);
+        return Conditions.lt(qualified, value);
       case "<=":
-        return Conditions.lte(qualified, this.value);
+        return Conditions.lte(qualified, value);
       case "LIKE":
-        return Conditions.like(qualified, this.value);
+        return Conditions.like(qualified, value as string);
       case "NOT LIKE":
-        return Conditions.notLike(qualified, this.value);
+        return Conditions.notLike(qualified, value as string);
       case "IN":
-        return Conditions.in(qualified, this.value);
+        return Conditions.in(qualified, value as unknown[]);
       case "NOT IN":
-        return Conditions.notIn(qualified, this.value);
+        return Conditions.notIn(qualified, value as unknown[]);
       case "IS NULL":
         return Conditions.isNull(qualified);
       case "IS NOT NULL":
         return Conditions.isNotNull(qualified);
-      case "BETWEEN":
-        return Conditions.between(qualified, this.value[0], this.value[1]);
+      case "BETWEEN": {
+        const [min, max] = value as [unknown, unknown];
+        const minR = this.resolveValue(min, resolveColumn, dialect);
+        const maxR = this.resolveValue(max, resolveColumn, dialect);
+        return Conditions.between(qualified, minR, maxR);
+      }
       default:
-        return sql`${raw(qualified)} ${raw(this.operator)} ${this.value}`;
+        return sql`${raw(qualified)} ${raw(this.operator)} ${value as any}`;
     }
   }
 

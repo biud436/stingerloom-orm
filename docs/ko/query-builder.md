@@ -545,6 +545,24 @@ qb.where(coalesce(u.score, 0).gte(50));
 
 정적 헬퍼로는 `Expressions.coalesce` / `Expressions.nullif`를 제공해요. Java QueryDSL의 `Expressions.*` 스타일을 선호하면 이쪽을 쓰면 돼요.
 
+##### 현재 시각 — `currentDate()` / `currentTime()` / `currentTimestamp()`
+
+DB 서버의 시계를 어느 자리에든 넣을 수 있는 세 개의 표준 SQL 헬퍼예요. 결과는 `ScalarExpression`이라 `.as()` / `.eq()` / `coalesce`에 중첩 등 지금까지 본 합성이 전부 그대로 돼요. 드라이버 차이 없이 동일한 리터럴(`CURRENT_DATE` / `CURRENT_TIME` / `CURRENT_TIMESTAMP`)로 나가요.
+
+```typescript
+import { Expressions, qAlias } from "@stingerloom/orm";
+
+const s = qAlias(Session, "s");
+
+qb.where(s.expiresAt.gte(Expressions.currentTimestamp()));
+// WHERE "s"."expires_at" >= CURRENT_TIMESTAMP
+
+qb.select([Expressions.currentDate().as("today")]);
+// SELECT CURRENT_DATE AS "today"
+```
+
+`ColumnExpression`의 비교 메서드는 인자가 `ScalarExpression`이면 자동으로 풀어서 인라인으로 넣어요. 그래서 `u.createdAt.lte(currentTimestamp())`처럼 써도 파라미터 바인딩이 아니라 `CURRENT_TIMESTAMP`가 그대로 SQL에 박혀요.
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -645,6 +663,7 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | 집계 결과로 필터          | 집계 뒤에 `.gt(10)`, `.eq(0)`, `.between(1, 100)` 등 평소대로                 |
 | SELECT 별칭               | `.as("name")` — 컬럼 / JSON 경로 / 집계 어디에든 붙여서 `AliasedExpression` 반환 |
 | null fallback             | `coalesce(...)`, `col.coalesce(...)`, `nullif(a, b)` — 첫 non-null 값 / 일치 시 NULL 변환 |
+| 현재 날짜 / 시각          | `currentDate()`, `currentTime()`, `currentTimestamp()` — `Expressions`에도 있음                 |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |

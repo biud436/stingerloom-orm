@@ -42,4 +42,5 @@ export * from "./expressions/LogicalCondition";
 export * from "./expressions/AliasedExpression";
 export * from "./expressions/ScalarExpression";
 export * from "./expressions/NullishExpression";
+export * from "./expressions/TemporalExpression";
 export * from "./expressions/likeEscape";
