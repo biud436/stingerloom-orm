@@ -598,6 +598,44 @@ injection risk.
 aliased columns with aggregates in the same `select([...])` call is also
 supported.
 
+##### Null handling — `coalesce()` / `nullif()`
+
+`coalesce(a, b, c, …)` returns the first non-null argument. `nullif(a,
+b)` returns `NULL` when `a === b`, otherwise `a` — useful for turning a
+sentinel value (empty string, `-1`, etc.) into a real `NULL`. Both are
+standard SQL, so they compile identically on every dialect.
+
+```typescript
+import { coalesce, nullif, Expressions, qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+
+// Display name with graceful fallback — column → column → literal
+qb.select([
+  u.nickname.coalesce(u.name, "anonymous").as("display_name"),
+]);
+// SELECT COALESCE("u"."nickname", "u"."name", $1) AS "display_name"
+
+// Turn an empty email into NULL
+qb.select([nullif(u.email, "").as("email_or_null")]);
+// SELECT NULLIF("u"."email", $1) AS "email_or_null"
+
+// Both also work in WHERE / HAVING
+qb.where(coalesce(u.score, 0).gte(50));
+// WHERE COALESCE("u"."score", $1) >= $2
+```
+
+Arguments accept any expression the query builder understands: column
+references, JSON path extractions (`u.metadata.profile.tier`),
+aggregates (`u.id.count()`), other scalar expressions (nested
+`coalesce`), and plain values — bound as parameters. The result is a
+`ScalarExpression`, which exposes the same `.eq()` / `.gt()` / `.as()`
+surface you've already seen, so every derived expression composes.
+
+Static helpers live on the `Expressions` namespace — `Expressions.coalesce`
+and `Expressions.nullif` — mirroring Java QueryDSL for callers who
+prefer the static entry point.
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -692,6 +730,7 @@ Method summary:
 | Ordering              | `.asc()`, `.desc()`, `.nullsFirst()`, `.nullsLast()`                                            |
 | Aggregates            | `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()` — each with `.as(alias)` and `.eq/.neq/.gt/.gte/.lt/.lte/.between` |
 | SELECT alias          | `.as("name")` on columns, JSON path extracts, and aggregates — produces `AliasedExpression` |
+| Null handling         | `coalesce(…)`, `nullif(a, b)`, `col.coalesce(…)`, `Expressions.coalesce`, `Expressions.nullif` |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables

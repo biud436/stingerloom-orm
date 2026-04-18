@@ -3,6 +3,9 @@ import sql, { Sql, join } from "sql-template-tag";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import { registerLogicalComposer } from "./AggregateExpression";
+import { registerScalarLogicalComposer } from "./ScalarExpression";
+import { coalesce, nullif } from "./NullishExpression";
+import type { ScalarExpression } from "./ScalarExpression";
 
 export type LogicalOperator = "AND" | "OR" | "NOT";
 
@@ -121,12 +124,46 @@ export const Expressions = {
   not(cond: ConditionLike): LogicalCondition {
     return new LogicalCondition("NOT", [cond]);
   },
+
+  /**
+   * `COALESCE(a, b, c, …)` — first non-null argument.
+   *
+   * Accepts any mix of {@link ColumnExpression}, {@link ScalarExpression},
+   * {@link AggregateExpression}, JSON path extractions, and plain
+   * values. Requires at least 2 arguments.
+   *
+   * @example
+   * ```ts
+   * Expressions.coalesce(u.nickname, u.name, "anonymous")
+   * ```
+   */
+  coalesce(first: unknown, second: unknown, ...rest: unknown[]): ScalarExpression {
+    return coalesce(first, second, ...rest);
+  },
+
+  /**
+   * `NULLIF(a, b)` — returns `NULL` when `a === b`, otherwise `a`.
+   *
+   * @example
+   * ```ts
+   * Expressions.nullif(u.email, "")  // turn empty string into NULL
+   * ```
+   */
+  nullif(a: unknown, b: unknown): ScalarExpression {
+    return nullif(a, b);
+  },
 } as const;
 
 // Register the composer so AggregateCondition.and/.or/.not (and any other
 // condition type that wants to delegate) can resolve the LogicalCondition
 // factory without forming an import cycle.
 registerLogicalComposer({
+  and: (a, b) => new LogicalCondition("AND", [a, b]),
+  or: (a, b) => new LogicalCondition("OR", [a, b]),
+  not: (a) => new LogicalCondition("NOT", [a]),
+});
+
+registerScalarLogicalComposer({
   and: (a, b) => new LogicalCondition("AND", [a, b]),
   or: (a, b) => new LogicalCondition("OR", [a, b]),
   not: (a) => new LogicalCondition("NOT", [a]),

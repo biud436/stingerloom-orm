@@ -38,6 +38,8 @@ import {
   AliasedExpression,
   isAliasedExpression,
 } from "./expressions/AliasedExpression";
+import { ScalarExpression } from "./expressions/ScalarExpression";
+import { coalesce as coalesceFn } from "./expressions/NullishExpression";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
@@ -283,6 +285,7 @@ export class ColumnCondition implements ConditionLike {
  * ```
  */
 export class ColumnExpression {
+  readonly __isColumnExpression = true as const;
   constructor(private readonly ref: string) {}
 
   /** `column = value` */
@@ -424,6 +427,31 @@ export class ColumnExpression {
     return new AliasedExpression(alias, (resolveColumn) =>
       sql`${raw(resolveColumn(ref))}`,
     );
+  }
+
+  // ── Null handling (Tier 2) ─────────────────────────────
+
+  /**
+   * `COALESCE(this, fallback1, fallback2, …)` — returns the first
+   * non-null value from left to right. Useful for picking a display
+   * name with graceful fallback.
+   *
+   * Requires at least one fallback. Fallbacks may be other column
+   * expressions, scalar expressions, aggregates, JSON path extracts,
+   * or plain values (which become bound parameters).
+   *
+   * @example
+   * ```ts
+   * qb.select([u.nickname.coalesce(u.name, "anonymous").as("display")]);
+   * ```
+   */
+  coalesce(...fallbacks: unknown[]): ScalarExpression {
+    if (fallbacks.length === 0) {
+      throw new Error(
+        "coalesce() requires at least one fallback argument.",
+      );
+    }
+    return coalesceFn(this, ...fallbacks);
   }
 
   // ── Aggregate helpers (Tier 1) ─────────────────────────

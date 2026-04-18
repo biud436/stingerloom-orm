@@ -518,6 +518,33 @@ JSON 경로 별칭은 드라이버의 텍스트 추출 연산자(`#>>` / `JSON_U
 
 `addSelect(u.age.as("years"))`로 기존 SELECT 목록 뒤에 덧붙일 수도 있고, 한 번의 `select([...])`에 별칭 컬럼과 집계를 섞어 넣어도 돼요.
 
+##### null 처리 — `coalesce()` / `nullif()`
+
+`coalesce(a, b, c, …)`는 왼쪽에서 오른쪽으로 처음 non-null인 값을 반환해요. `nullif(a, b)`는 `a`가 `b`와 같으면 `NULL`, 아니면 `a`를 돌려주죠. 빈 문자열이나 `-1` 같은 센티넬 값을 진짜 NULL로 바꾸고 싶을 때 쓰세요. 둘 다 표준 SQL이어서 드라이버 구분 없이 그대로 써요.
+
+```typescript
+import { coalesce, nullif, Expressions, qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+
+// 닉네임 → 이름 → 기본값 순으로 fallback
+qb.select([
+  u.nickname.coalesce(u.name, "anonymous").as("display_name"),
+]);
+// SELECT COALESCE("u"."nickname", "u"."name", ?) AS "display_name"
+
+// 빈 이메일은 NULL로
+qb.select([nullif(u.email, "").as("email_or_null")]);
+
+// WHERE / HAVING에서도 그대로 사용
+qb.where(coalesce(u.score, 0).gte(50));
+// WHERE COALESCE("u"."score", ?) >= ?
+```
+
+인자 자리에는 컬럼, JSON 경로 추출(`u.metadata.profile.tier`), 집계(`u.id.count()`), 중첩된 다른 `coalesce`, 원시 값 무엇이든 섞어 쓸 수 있어요. 값은 자동으로 바인딩돼서 안전하고요. 결과는 `ScalarExpression`이어서 `.eq()` / `.gt()` / `.as()`를 바로 이어 붙일 수 있어요.
+
+정적 헬퍼로는 `Expressions.coalesce` / `Expressions.nullif`를 제공해요. Java QueryDSL의 `Expressions.*` 스타일을 선호하면 이쪽을 쓰면 돼요.
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -617,6 +644,7 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | 값 집계                   | `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()`        |
 | 집계 결과로 필터          | 집계 뒤에 `.gt(10)`, `.eq(0)`, `.between(1, 100)` 등 평소대로                 |
 | SELECT 별칭               | `.as("name")` — 컬럼 / JSON 경로 / 집계 어디에든 붙여서 `AliasedExpression` 반환 |
+| null fallback             | `coalesce(...)`, `col.coalesce(...)`, `nullif(a, b)` — 첫 non-null 값 / 일치 시 NULL 변환 |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |
