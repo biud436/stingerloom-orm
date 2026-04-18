@@ -43,4 +43,5 @@ export * from "./expressions/AliasedExpression";
 export * from "./expressions/ScalarExpression";
 export * from "./expressions/NullishExpression";
 export * from "./expressions/TemporalExpression";
+export * from "./expressions/CastExpression";
 export * from "./expressions/likeEscape";

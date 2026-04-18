@@ -660,6 +660,39 @@ qb.select([Expressions.currentDate().as("today")]);
 emits an inline `CURRENT_TIMESTAMP` rather than binding the expression
 as a parameter.
 
+##### Type casts — `.stringValue()` / `.intValue()` / `.longValue()` / `.floatValue()` / `.booleanValue()`
+
+Cast any column or scalar expression to a portable SQL type. The type
+name is resolved per dialect so you don't have to remember whether
+MySQL accepts `INTEGER` (it doesn't) or `SIGNED`, or whether SQLite
+has a `BOOLEAN` (it doesn't — it uses `INTEGER`).
+
+```typescript
+const i = qAlias(Item, "i");
+
+qb.select([i.quantity.stringValue().as("qty_str")]);
+// PG/SQLite:  CAST("i"."quantity" AS TEXT) AS "qty_str"
+// MySQL:      CAST(`i`.`quantity` AS CHAR)  AS `qty_str`
+
+qb.where(i.sku.intValue().gt(1000));
+// PG/SQLite:  CAST("i"."sku" AS INTEGER) > $1
+// MySQL:      CAST(`i`.`sku` AS SIGNED)  > ?
+```
+
+The cast helpers are on both `ColumnExpression` and `ScalarExpression`
+— so you can chain them onto `coalesce(u.price, 0).floatValue()` or
+any other derived scalar. The result is a `ScalarExpression` itself,
+so it plugs into `.as()`, `.eq()`, `.gt()`, and nested `coalesce`
+without anything special.
+
+| Kind     | MySQL      | PostgreSQL | SQLite    |
+|----------|------------|------------|-----------|
+| string   | `CHAR`     | `TEXT`     | `TEXT`    |
+| int      | `SIGNED`   | `INTEGER`  | `INTEGER` |
+| long     | `SIGNED`   | `BIGINT`   | `INTEGER` |
+| float    | `DECIMAL`  | `REAL`     | `REAL`    |
+| boolean  | `UNSIGNED` | `BOOLEAN`  | `INTEGER` |
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -756,6 +789,7 @@ Method summary:
 | SELECT alias          | `.as("name")` on columns, JSON path extracts, and aggregates — produces `AliasedExpression` |
 | Null handling         | `coalesce(…)`, `nullif(a, b)`, `col.coalesce(…)`, `Expressions.coalesce`, `Expressions.nullif` |
 | Current date / time   | `currentDate()`, `currentTime()`, `currentTimestamp()` — also on `Expressions`                 |
+| Type casts            | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` — dialect-specific type names |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables

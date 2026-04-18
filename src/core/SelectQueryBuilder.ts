@@ -40,6 +40,8 @@ import {
 } from "./expressions/AliasedExpression";
 import { ScalarExpression } from "./expressions/ScalarExpression";
 import { coalesce as coalesceFn } from "./expressions/NullishExpression";
+import { buildCastScalar } from "./expressions/CastExpression";
+import type { CastKind } from "../dialects/DialectExpression";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
@@ -483,6 +485,36 @@ export class ColumnExpression {
       );
     }
     return coalesceFn(this, ...fallbacks);
+  }
+
+  // ── CAST helpers (Tier 2) ──────────────────────────────
+
+  /** `CAST(column AS <dialect-string-type>)` — TEXT / CHAR. */
+  stringValue(): ScalarExpression {
+    return this.buildCast("string");
+  }
+  /** `CAST(column AS <dialect-int-type>)` — INTEGER / SIGNED. */
+  intValue(): ScalarExpression {
+    return this.buildCast("int");
+  }
+  /** `CAST(column AS <dialect-long-type>)` — BIGINT / SIGNED. */
+  longValue(): ScalarExpression {
+    return this.buildCast("long");
+  }
+  /** `CAST(column AS <dialect-float-type>)` — REAL / DECIMAL. */
+  floatValue(): ScalarExpression {
+    return this.buildCast("float");
+  }
+  /** `CAST(column AS <dialect-boolean-type>)` — BOOLEAN / UNSIGNED / INTEGER. */
+  booleanValue(): ScalarExpression {
+    return this.buildCast("boolean");
+  }
+
+  private buildCast(kind: CastKind): ScalarExpression {
+    const ref = this.ref;
+    return buildCastScalar(kind, (resolveColumn) =>
+      sql`${raw(resolveColumn(ref))}`,
+    );
   }
 
   // ── Aggregate helpers (Tier 1) ─────────────────────────

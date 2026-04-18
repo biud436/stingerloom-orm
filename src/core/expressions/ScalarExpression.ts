@@ -1,7 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import sql, { Sql, raw, join } from "sql-template-tag";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
-import type { DialectExpression } from "../../dialects/DialectExpression";
+import type {
+  CastKind,
+  DialectExpression,
+} from "../../dialects/DialectExpression";
 import { AliasedExpression } from "./AliasedExpression";
 
 /**
@@ -85,6 +88,43 @@ export class ScalarExpression {
   }
   notLike(pattern: string): ScalarCondition {
     return new ScalarCondition(this, "NOT LIKE", pattern);
+  }
+
+  // ── CAST helpers — chain a CAST onto any scalar result ──
+  /** Wrap in `CAST(... AS TEXT/CHAR)`. */
+  stringValue(): ScalarExpression {
+    return this.buildCast("string");
+  }
+  /** Wrap in `CAST(... AS INTEGER/SIGNED)`. */
+  intValue(): ScalarExpression {
+    return this.buildCast("int");
+  }
+  /** Wrap in `CAST(... AS BIGINT/SIGNED)`. */
+  longValue(): ScalarExpression {
+    return this.buildCast("long");
+  }
+  /** Wrap in `CAST(... AS REAL/DECIMAL)`. */
+  floatValue(): ScalarExpression {
+    return this.buildCast("float");
+  }
+  /** Wrap in `CAST(... AS BOOLEAN/UNSIGNED/INTEGER)`. */
+  booleanValue(): ScalarExpression {
+    return this.buildCast("boolean");
+  }
+
+  private buildCast(kind: CastKind): ScalarExpression {
+    const innerRenderer = this.renderer;
+    return new ScalarExpression((resolveColumn, dialect) => {
+      if (!dialect) {
+        throw new Error(
+          "CAST expressions require a DialectExpression. Ensure the query " +
+            "builder was created via EntityManager.createQueryBuilder().",
+        );
+      }
+      const value = innerRenderer(resolveColumn, dialect);
+      const typeName = dialect.castTypeName(kind);
+      return sql`CAST(${value} AS ${raw(typeName)})`;
+    });
   }
 }
 

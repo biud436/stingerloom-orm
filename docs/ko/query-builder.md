@@ -563,6 +563,32 @@ qb.select([Expressions.currentDate().as("today")]);
 
 `ColumnExpression`의 비교 메서드는 인자가 `ScalarExpression`이면 자동으로 풀어서 인라인으로 넣어요. 그래서 `u.createdAt.lte(currentTimestamp())`처럼 써도 파라미터 바인딩이 아니라 `CURRENT_TIMESTAMP`가 그대로 SQL에 박혀요.
 
+##### 타입 변환 — `.stringValue()` / `.intValue()` / `.longValue()` / `.floatValue()` / `.booleanValue()`
+
+컬럼이나 스칼라 표현식을 다른 SQL 타입으로 CAST해요. 드라이버별로 받는 타입명이 다르기 때문에(MySQL은 `INTEGER` 대신 `SIGNED`, SQLite는 `BOOLEAN` 대신 `INTEGER`) 메서드 이름만 기억하면 나머지는 자동으로 처리돼요.
+
+```typescript
+const i = qAlias(Item, "i");
+
+qb.select([i.quantity.stringValue().as("qty_str")]);
+// PG/SQLite:  CAST("i"."quantity" AS TEXT) AS "qty_str"
+// MySQL:      CAST(`i`.`quantity` AS CHAR)  AS `qty_str`
+
+qb.where(i.sku.intValue().gt(1000));
+// PG/SQLite:  CAST("i"."sku" AS INTEGER) > ?
+// MySQL:      CAST(`i`.`sku` AS SIGNED)  > ?
+```
+
+CAST 헬퍼는 `ColumnExpression`과 `ScalarExpression` 양쪽에 다 달려 있어요. `coalesce(u.price, 0).floatValue()`처럼 이미 파생된 스칼라에도 이어 붙일 수 있고, 결과도 `ScalarExpression`이라 `.as()` / `.eq()` / 중첩된 `coalesce`에 그대로 쓸 수 있어요.
+
+| Kind     | MySQL      | PostgreSQL | SQLite    |
+|----------|------------|------------|-----------|
+| string   | `CHAR`     | `TEXT`     | `TEXT`    |
+| int      | `SIGNED`   | `INTEGER`  | `INTEGER` |
+| long     | `SIGNED`   | `BIGINT`   | `INTEGER` |
+| float    | `DECIMAL`  | `REAL`     | `REAL`    |
+| boolean  | `UNSIGNED` | `BOOLEAN`  | `INTEGER` |
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -664,6 +690,7 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | SELECT 별칭               | `.as("name")` — 컬럼 / JSON 경로 / 집계 어디에든 붙여서 `AliasedExpression` 반환 |
 | null fallback             | `coalesce(...)`, `col.coalesce(...)`, `nullif(a, b)` — 첫 non-null 값 / 일치 시 NULL 변환 |
 | 현재 날짜 / 시각          | `currentDate()`, `currentTime()`, `currentTimestamp()` — `Expressions`에도 있음                 |
+| 타입 변환                 | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()`             |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |

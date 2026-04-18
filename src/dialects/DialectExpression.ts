@@ -130,7 +130,31 @@ export interface DialectExpression {
     path: ReadonlyArray<string | number>,
     meta?: ColumnJsonMeta,
   ): Sql;
+
+  /**
+   * Dialect-specific SQL type name for a given {@link CastKind}. Used
+   * by scalar `.stringValue()` / `.intValue()` / etc. helpers to render
+   * `CAST(x AS <name>)` with the right portable type label.
+   *
+   * Mapping:
+   *
+   * | Kind      | MySQL      | PostgreSQL | SQLite  |
+   * |-----------|------------|------------|---------|
+   * | `string`  | `CHAR`     | `TEXT`     | `TEXT`  |
+   * | `int`     | `SIGNED`   | `INTEGER`  | `INTEGER` |
+   * | `long`    | `SIGNED`   | `BIGINT`   | `INTEGER` |
+   * | `float`   | `DECIMAL`  | `REAL`     | `REAL`  |
+   * | `boolean` | `UNSIGNED` | `BOOLEAN`  | `INTEGER` |
+   */
+  castTypeName(kind: CastKind): string;
 }
+
+/**
+ * Supported CAST target kinds for the `.stringValue()` /
+ * `.intValue()` family. Resolved to a dialect-specific SQL type name
+ * by {@link DialectExpression.castTypeName}.
+ */
+export type CastKind = "string" | "int" | "long" | "float" | "boolean";
 
 /** Singleton cache — implementations are stateless. */
 const cache = new Map<DialectName, DialectExpression>();

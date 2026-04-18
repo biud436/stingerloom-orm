@@ -1,6 +1,10 @@
 import sql, { raw } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
-import type { ColumnJsonMeta, DialectExpression } from "../DialectExpression";
+import type {
+  CastKind,
+  ColumnJsonMeta,
+  DialectExpression,
+} from "../DialectExpression";
 
 /**
  * Serialize a JSON path into MySQL/SQLite syntax: `$.a.b[0].c`.
@@ -107,5 +111,19 @@ export class MySqlExpression implements DialectExpression {
     }
     const p = buildJsonPathString(path);
     return sql`JSON_TYPE(JSON_EXTRACT(${raw(column)}, ${p}))`;
+  }
+
+  castTypeName(kind: CastKind): string {
+    switch (kind) {
+      case "string":
+        return "CHAR";
+      case "int":
+      case "long":
+        return "SIGNED";
+      case "float":
+        return "DECIMAL";
+      case "boolean":
+        return "UNSIGNED";
+    }
   }
 }
