@@ -1,6 +1,11 @@
 import sql, { raw } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
-import type { ColumnJsonMeta, DialectExpression } from "../DialectExpression";
+import type {
+  CastKind,
+  ColumnJsonMeta,
+  DateComponent,
+  DialectExpression,
+} from "../DialectExpression";
 
 /**
  * Serialize a JSON path into MySQL/SQLite syntax: `$.a.b[0].c`.
@@ -107,5 +112,48 @@ export class MySqlExpression implements DialectExpression {
     }
     const p = buildJsonPathString(path);
     return sql`JSON_TYPE(JSON_EXTRACT(${raw(column)}, ${p}))`;
+  }
+
+  castTypeName(kind: CastKind): string {
+    switch (kind) {
+      case "string":
+        return "CHAR";
+      case "int":
+      case "long":
+        return "SIGNED";
+      case "float":
+        return "DECIMAL";
+      case "boolean":
+        return "UNSIGNED";
+    }
+  }
+
+  dateComponent(value: Sql, component: DateComponent): Sql {
+    const fn = mysqlDateFunction(component);
+    return sql`${raw(fn)}(${value})`;
+  }
+}
+
+function mysqlDateFunction(component: DateComponent): string {
+  switch (component) {
+    case "year":
+      return "YEAR";
+    case "month":
+      return "MONTH";
+    case "day":
+    case "dayOfMonth":
+      return "DAYOFMONTH";
+    case "hour":
+      return "HOUR";
+    case "minute":
+      return "MINUTE";
+    case "second":
+      return "SECOND";
+    case "dayOfWeek":
+      return "DAYOFWEEK";
+    case "dayOfYear":
+      return "DAYOFYEAR";
+    case "week":
+      return "WEEK";
   }
 }

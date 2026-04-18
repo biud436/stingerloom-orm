@@ -1,6 +1,11 @@
 import sql, { raw } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
-import type { ColumnJsonMeta, DialectExpression } from "../DialectExpression";
+import type {
+  CastKind,
+  ColumnJsonMeta,
+  DateComponent,
+  DialectExpression,
+} from "../DialectExpression";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { buildJsonPathString } from "./MySqlExpression";
@@ -102,5 +107,50 @@ export class SqliteExpression implements DialectExpression {
     }
     const p = buildJsonPathString(path);
     return sql`json_type(${raw(column)}, ${p})`;
+  }
+
+  castTypeName(kind: CastKind): string {
+    switch (kind) {
+      case "string":
+        return "TEXT";
+      case "int":
+      case "long":
+        return "INTEGER";
+      case "float":
+        return "REAL";
+      case "boolean":
+        return "INTEGER";
+    }
+  }
+
+  dateComponent(value: Sql, component: DateComponent): Sql {
+    const format = sqliteStrftimeFormat(component);
+    return sql`CAST(strftime(${format}, ${value}) AS INTEGER)`;
+  }
+}
+
+function sqliteStrftimeFormat(component: DateComponent): string {
+  switch (component) {
+    case "year":
+      return "%Y";
+    case "month":
+      return "%m";
+    case "day":
+    case "dayOfMonth":
+      return "%d";
+    case "hour":
+      return "%H";
+    case "minute":
+      return "%M";
+    case "second":
+      return "%S";
+    case "dayOfWeek":
+      // strftime %w: 0=Sunday..6=Saturday (matches PG DOW for 0..6).
+      return "%w";
+    case "dayOfYear":
+      return "%j";
+    case "week":
+      // %W = week 0..53 (Monday as first day). Closest portable match.
+      return "%W";
   }
 }

@@ -497,6 +497,207 @@ SELECT에 넣을 때 `.as("total")`을 권장해요. 생략하면 `agg_count_id`
 
 중복을 빼고 세고 싶으면 `.countDistinct()`를 쓰세요. `COUNT(DISTINCT u.role)`이 나와요.
 
+##### SELECT 별칭 — `.as("name")`
+
+일반 컬럼, JSON 경로, 집계 어느 것에든 `.as("name")`을 붙일 수 있어요. 결과는 `AliasedExpression`이고 SELECT 자리에서만 의미가 있어요. `where()`나 `having()`에는 넘길 수 없도록 타입으로 막혀 있어요.
+
+```typescript
+const u = qAlias(User, "u");
+
+await em.createQueryBuilder(User, "u")
+  .select([
+    u.name.as("display_name"),                 // 그냥 컬럼 별칭
+    u.metadata.profile.email.as("contact"),    // JSON 추출 + 별칭
+    u.id.count().as("total"),                  // 집계 + 별칭
+  ])
+  .groupBy(["u.name", "u.metadata"])
+  .getRawMany();
+```
+
+JSON 경로 별칭은 드라이버의 텍스트 추출 연산자(`#>>` / `JSON_UNQUOTE(JSON_EXTRACT(...))` / `json_extract()`)로 컴파일되고, 경로 문자열은 바인딩 파라미터로 붙어서 `getRawMany()` 직렬화 과정에서도 안전하게 보존돼요.
+
+`addSelect(u.age.as("years"))`로 기존 SELECT 목록 뒤에 덧붙일 수도 있고, 한 번의 `select([...])`에 별칭 컬럼과 집계를 섞어 넣어도 돼요.
+
+##### null 처리 — `coalesce()` / `nullif()`
+
+`coalesce(a, b, c, …)`는 왼쪽에서 오른쪽으로 처음 non-null인 값을 반환해요. `nullif(a, b)`는 `a`가 `b`와 같으면 `NULL`, 아니면 `a`를 돌려주죠. 빈 문자열이나 `-1` 같은 센티넬 값을 진짜 NULL로 바꾸고 싶을 때 쓰세요. 둘 다 표준 SQL이어서 드라이버 구분 없이 그대로 써요.
+
+```typescript
+import { coalesce, nullif, Expressions, qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+
+// 닉네임 → 이름 → 기본값 순으로 fallback
+qb.select([
+  u.nickname.coalesce(u.name, "anonymous").as("display_name"),
+]);
+// SELECT COALESCE("u"."nickname", "u"."name", ?) AS "display_name"
+
+// 빈 이메일은 NULL로
+qb.select([nullif(u.email, "").as("email_or_null")]);
+
+// WHERE / HAVING에서도 그대로 사용
+qb.where(coalesce(u.score, 0).gte(50));
+// WHERE COALESCE("u"."score", ?) >= ?
+```
+
+인자 자리에는 컬럼, JSON 경로 추출(`u.metadata.profile.tier`), 집계(`u.id.count()`), 중첩된 다른 `coalesce`, 원시 값 무엇이든 섞어 쓸 수 있어요. 값은 자동으로 바인딩돼서 안전하고요. 결과는 `ScalarExpression`이어서 `.eq()` / `.gt()` / `.as()`를 바로 이어 붙일 수 있어요.
+
+정적 헬퍼로는 `Expressions.coalesce` / `Expressions.nullif`를 제공해요. Java QueryDSL의 `Expressions.*` 스타일을 선호하면 이쪽을 쓰면 돼요.
+
+##### 현재 시각 — `currentDate()` / `currentTime()` / `currentTimestamp()`
+
+DB 서버의 시계를 어느 자리에든 넣을 수 있는 세 개의 표준 SQL 헬퍼예요. 결과는 `ScalarExpression`이라 `.as()` / `.eq()` / `coalesce`에 중첩 등 지금까지 본 합성이 전부 그대로 돼요. 드라이버 차이 없이 동일한 리터럴(`CURRENT_DATE` / `CURRENT_TIME` / `CURRENT_TIMESTAMP`)로 나가요.
+
+```typescript
+import { Expressions, qAlias } from "@stingerloom/orm";
+
+const s = qAlias(Session, "s");
+
+qb.where(s.expiresAt.gte(Expressions.currentTimestamp()));
+// WHERE "s"."expires_at" >= CURRENT_TIMESTAMP
+
+qb.select([Expressions.currentDate().as("today")]);
+// SELECT CURRENT_DATE AS "today"
+```
+
+`ColumnExpression`의 비교 메서드는 인자가 `ScalarExpression`이면 자동으로 풀어서 인라인으로 넣어요. 그래서 `u.createdAt.lte(currentTimestamp())`처럼 써도 파라미터 바인딩이 아니라 `CURRENT_TIMESTAMP`가 그대로 SQL에 박혀요.
+
+##### 타입 변환 — `.stringValue()` / `.intValue()` / `.longValue()` / `.floatValue()` / `.booleanValue()`
+
+컬럼이나 스칼라 표현식을 다른 SQL 타입으로 CAST해요. 드라이버별로 받는 타입명이 다르기 때문에(MySQL은 `INTEGER` 대신 `SIGNED`, SQLite는 `BOOLEAN` 대신 `INTEGER`) 메서드 이름만 기억하면 나머지는 자동으로 처리돼요.
+
+```typescript
+const i = qAlias(Item, "i");
+
+qb.select([i.quantity.stringValue().as("qty_str")]);
+// PG/SQLite:  CAST("i"."quantity" AS TEXT) AS "qty_str"
+// MySQL:      CAST(`i`.`quantity` AS CHAR)  AS `qty_str`
+
+qb.where(i.sku.intValue().gt(1000));
+// PG/SQLite:  CAST("i"."sku" AS INTEGER) > ?
+// MySQL:      CAST(`i`.`sku` AS SIGNED)  > ?
+```
+
+CAST 헬퍼는 `ColumnExpression`과 `ScalarExpression` 양쪽에 다 달려 있어요. `coalesce(u.price, 0).floatValue()`처럼 이미 파생된 스칼라에도 이어 붙일 수 있고, 결과도 `ScalarExpression`이라 `.as()` / `.eq()` / 중첩된 `coalesce`에 그대로 쓸 수 있어요.
+
+| Kind     | MySQL      | PostgreSQL | SQLite    |
+|----------|------------|------------|-----------|
+| string   | `CHAR`     | `TEXT`     | `TEXT`    |
+| int      | `SIGNED`   | `INTEGER`  | `INTEGER` |
+| long     | `SIGNED`   | `BIGINT`   | `INTEGER` |
+| float    | `DECIMAL`  | `REAL`     | `REAL`    |
+| boolean  | `UNSIGNED` | `BOOLEAN`  | `INTEGER` |
+
+##### 날짜 / 시각 컴포넌트 — `.year()` / `.month()` / `.day()` / `.hour()` / …
+
+날짜나 타임스탬프 컬럼에서 일부 성분만 뽑아낼 수 있어요. 10개 메서드가 있어요: `year`, `month`, `day`(= `dayOfMonth`), `hour`, `minute`, `second`, `dayOfWeek`, `dayOfMonth`, `dayOfYear`, `week`. 결과는 `ScalarExpression`이라 SELECT / WHERE / HAVING에 모두 쓸 수 있고, `.as()` / cast / coalesce와 바로 이어 붙일 수 있어요.
+
+```typescript
+const e = qAlias(Event, "e");
+
+qb.select([e.startsAt.year().as("yr"), e.id.count().as("total")])
+  .groupBy(["e.startsAt"])
+  .having(e.startsAt.year().gte(2026));
+// PG:     CAST(EXTRACT(YEAR FROM "e"."starts_at") AS INTEGER) = ?
+// MySQL:  YEAR(`e`.`starts_at`) = ?
+// SQLite: CAST(strftime(?, "e"."starts_at") AS INTEGER) = ?   -- '%Y'
+```
+
+드라이버별 SQL 생성:
+
+| 헬퍼 | MySQL | PostgreSQL | SQLite |
+|------|-------|------------|--------|
+| `year()` | `YEAR(col)` | `EXTRACT(YEAR FROM col)` | `strftime('%Y', col)` |
+| `month()` | `MONTH(col)` | `EXTRACT(MONTH FROM col)` | `strftime('%m', col)` |
+| `day()` / `dayOfMonth()` | `DAYOFMONTH(col)` | `EXTRACT(DAY FROM col)` | `strftime('%d', col)` |
+| `hour()` | `HOUR(col)` | `EXTRACT(HOUR FROM col)` | `strftime('%H', col)` |
+| `minute()` | `MINUTE(col)` | `EXTRACT(MINUTE FROM col)` | `strftime('%M', col)` |
+| `second()` | `SECOND(col)` | `EXTRACT(SECOND FROM col)` | `strftime('%S', col)` |
+| `dayOfWeek()` | `DAYOFWEEK(col)` | `EXTRACT(DOW FROM col)` | `strftime('%w', col)` |
+| `dayOfYear()` | `DAYOFYEAR(col)` | `EXTRACT(DOY FROM col)` | `strftime('%j', col)` |
+| `week()` | `WEEK(col)` | `EXTRACT(WEEK FROM col)` | `strftime('%W', col)` |
+
+`dayOfWeek`와 `week`는 드라이버마다 인코딩이 살짝 달라요 — MySQL의 `DAYOFWEEK`은 1=일…7=토, PostgreSQL의 `DOW`는 0=일…6=토, SQLite의 `%w`는 PG와 같아요. 리포트 이식성이 중요하면 애플리케이션 계층에서 정규화하거나, 드라이버별 raw SQL을 쓰는 편이 안전해요.
+
+##### 서브쿼리 비교 — `.in(subquery)` / `.eq(subquery)` / `exists` / `notExists`
+
+`ColumnExpression.in()` / `.notIn()`은 값 배열뿐 아니라 `SelectQueryBuilder`도 받아요. 서브쿼리를 넘기면 `col IN (SELECT …)` 형태로 내려가고, 안쪽 파라미터 바인딩까지 그대로 보존돼요. `.eq` / `.neq` / `.gt` / `.gte` / `.lt` / `.lte`도 마찬가지로 (단일 값 반환) 서브쿼리를 받아 `col <op> (SELECT …)` 로 만들어요.
+
+```typescript
+const u = qAlias(User, "u");
+const p = qAlias(Post, "p");
+
+const activeAuthors = em
+  .createQueryBuilder(Post, "p")
+  .select(["authorId"])
+  .where(p.status.eq("published"));
+
+qb.where(u.id.in(activeAuthors));
+// WHERE "u"."id" IN (SELECT "p"."authorId" FROM "post" AS "p"
+//                     WHERE "p"."status" = ?)
+
+// 스칼라 서브쿼리 — 집계와 비교
+const avgViews = em
+  .createQueryBuilder(Post, "p2")
+  .selectRaw(["AVG(p2.views)"]);
+
+qb.where(p.views.gt(avgViews));
+// WHERE "p"."views" > (SELECT AVG(p2.views) FROM …)
+```
+
+`Expressions.exists(subQb)` / `Expressions.notExists(subQb)`는 상관 서브쿼리 조건을 만들어요.
+
+```typescript
+qb.where(Expressions.exists(em.createQueryBuilder(Post, "p")
+  .select(["id"])
+  .where(sql`"p"."author_id" = "u"."id"`)));
+// WHERE EXISTS (SELECT "id" FROM "post" AS "p"
+//                WHERE "p"."author_id" = "u"."id")
+```
+
+`ExistsCondition.not()`은 `NOT (…)`으로 감싸지 않고 내부의 `EXISTS` ↔ `NOT EXISTS` 플래그만 뒤집어요. SQL이 깔끔하게 나와요.
+
+##### `CASE WHEN …` — `Expressions.caseBuilder()` / `Expressions.cases(...)`
+
+SQL이 지원하는 두 종류의 CASE를 각각 전용 빌더로 제공해요.
+
+**Searched CASE** — `caseBuilder()`. 조건 체인 형태로 쓰면 돼요. 각 분기는 `ConditionLike` + 결과값 쌍이고, 마지막에 `otherwise(default)`를 선택적으로 달고 `.end()`로 마무리해요.
+
+```typescript
+const u = qAlias(User, "u");
+
+const tier = Expressions.caseBuilder()
+  .when(u.score.gte(90)).then("gold")
+  .when(u.score.gte(70)).then("silver")
+  .otherwise("bronze")
+  .end();
+
+qb.select([tier.as("tier")]);
+// SELECT CASE WHEN "u"."score" >= ? THEN ?
+//             WHEN "u"."score" >= ? THEN ?
+//             ELSE ? END AS "tier"
+```
+
+**Simple CASE** — `cases(subject)`. 값 매칭 스위치 스타일이에요.
+
+```typescript
+const weight = Expressions.cases(u.status)
+  .when("active",  1)
+  .when("pending", 0)
+  .otherwise(-1)
+  .end();
+
+qb.select([weight.as("w")]);
+// SELECT CASE "u"."status" WHEN ? THEN ?
+//                           WHEN ? THEN ?
+//                           ELSE ? END AS "w"
+```
+
+`end()`은 `ScalarExpression`을 돌려주니까 지금까지 본 모든 연산(cast / alias / 비교 / coalesce 등)에 그대로 이어 붙일 수 있어요.
+
+오용 방어도 들어가 있어요. `.otherwise()` 뒤의 `.when()`, 중복 `.otherwise()`, WHEN 없이 `.end()` — 이 세 경우는 명확한 에러 메시지로 막히니까, 잘못된 SQL이 쿼리 실행까지 가지 않아요.
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -595,6 +796,13 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | null 위치 지정            | 위 두 개에 이어서 `.nullsFirst()` / `.nullsLast()`                            |
 | 값 집계                   | `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()`        |
 | 집계 결과로 필터          | 집계 뒤에 `.gt(10)`, `.eq(0)`, `.between(1, 100)` 등 평소대로                 |
+| SELECT 별칭               | `.as("name")` — 컬럼 / JSON 경로 / 집계 어디에든 붙여서 `AliasedExpression` 반환 |
+| null fallback             | `coalesce(...)`, `col.coalesce(...)`, `nullif(a, b)` — 첫 non-null 값 / 일치 시 NULL 변환 |
+| 현재 날짜 / 시각          | `currentDate()`, `currentTime()`, `currentTimestamp()` — `Expressions`에도 있음                 |
+| 타입 변환                 | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()`             |
+| 날짜 컴포넌트             | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfYear()`, `.week()` |
+| 서브쿼리 비교             | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
+| CASE 표현식               | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject)...end()`     |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |

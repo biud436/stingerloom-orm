@@ -34,6 +34,15 @@ import {
   isLogicalCondition,
 } from "./expressions/LogicalCondition";
 import { escapeLikeValue } from "./expressions/likeEscape";
+import {
+  AliasedExpression,
+  isAliasedExpression,
+} from "./expressions/AliasedExpression";
+import { ScalarExpression } from "./expressions/ScalarExpression";
+import { coalesce as coalesceFn } from "./expressions/NullishExpression";
+import { buildCastScalar } from "./expressions/CastExpression";
+import { buildDateComponentFromRef } from "./expressions/DateComponentExpression";
+import type { CastKind, DateComponent } from "../dialects/DialectExpression";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
@@ -204,6 +213,58 @@ export class ColumnCondition implements ConditionLike {
     ) => Sql,
   ) {}
 
+  /**
+   * @internal Duck-type guard for `SelectQueryBuilder`-like subqueries.
+   * Kept inline to avoid importing the concrete class (which lives in
+   * the same file but cycles through compilation).
+   */
+  private isSubqueryLike(value: unknown): value is { toSql(): Sql } {
+    return (
+      value !== null &&
+      typeof value === "object" &&
+      typeof (value as { toSql?: unknown }).toSql === "function" &&
+      typeof (value as { getSql?: unknown }).getSql === "function"
+    );
+  }
+
+  /**
+   * @internal Unwrap a value that may be a {@link ScalarExpression} (e.g.
+   * `Expressions.currentTimestamp()`) or a subquery-like `SelectQueryBuilder`
+   * into a rendered `Sql` fragment. Plain values pass through unchanged
+   * so `sql-template-tag` binds them as parameters.
+   */
+  private resolveValue(
+    value: unknown,
+    resolveColumn: (ref: string) => string,
+    dialect: DialectExpression | undefined,
+  ): unknown {
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      (value as { __isScalarExpression?: unknown }).__isScalarExpression === true
+    ) {
+      return (value as {
+        renderer: (
+          r: (ref: string) => string,
+          d?: DialectExpression,
+        ) => Sql;
+      }).renderer(resolveColumn, dialect);
+    }
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      typeof (value as { toSql?: unknown }).toSql === "function" &&
+      typeof (value as { getSql?: unknown }).getSql === "function"
+    ) {
+      // SelectQueryBuilder-like — embed as a parenthesized subquery so
+      // `col = (SELECT ...)` / `col IN (SELECT ...)` etc. work through
+      // the same code path as scalar / primitive comparisons.
+      const inner = (value as { toSql(): Sql }).toSql();
+      return sql`(${inner})`;
+    }
+    return value;
+  }
+
   /** @internal Resolve the column reference and produce final SQL. */
   resolve(
     resolveColumn: (ref: string) => string,
@@ -213,38 +274,51 @@ export class ColumnCondition implements ConditionLike {
     if (this.dialectRenderer) {
       return this.dialectRenderer(qualified, dialect);
     }
+    const value = this.resolveValue(this.value, resolveColumn, dialect);
     switch (this.operator) {
       case "=":
-        if (this.value === null) return Conditions.isNull(qualified);
-        if (Array.isArray(this.value)) return Conditions.in(qualified, this.value);
-        return Conditions.equals(qualified, this.value);
+        if (value === null) return Conditions.isNull(qualified);
+        if (Array.isArray(value)) return Conditions.in(qualified, value);
+        return Conditions.equals(qualified, value);
       case "!=":
       case "<>":
-        return Conditions.notEquals(qualified, this.value);
+        return Conditions.notEquals(qualified, value);
       case ">":
-        return Conditions.gt(qualified, this.value);
+        return Conditions.gt(qualified, value);
       case ">=":
-        return Conditions.gte(qualified, this.value);
+        return Conditions.gte(qualified, value);
       case "<":
-        return Conditions.lt(qualified, this.value);
+        return Conditions.lt(qualified, value);
       case "<=":
-        return Conditions.lte(qualified, this.value);
+        return Conditions.lte(qualified, value);
       case "LIKE":
-        return Conditions.like(qualified, this.value);
+        return Conditions.like(qualified, value as string);
       case "NOT LIKE":
-        return Conditions.notLike(qualified, this.value);
+        return Conditions.notLike(qualified, value as string);
       case "IN":
-        return Conditions.in(qualified, this.value);
+        if (this.value !== null && this.isSubqueryLike(this.value)) {
+          const sub = (this.value as { toSql(): Sql }).toSql();
+          return sql`${raw(qualified)} IN (${sub})`;
+        }
+        return Conditions.in(qualified, value as unknown[]);
       case "NOT IN":
-        return Conditions.notIn(qualified, this.value);
+        if (this.value !== null && this.isSubqueryLike(this.value)) {
+          const sub = (this.value as { toSql(): Sql }).toSql();
+          return sql`${raw(qualified)} NOT IN (${sub})`;
+        }
+        return Conditions.notIn(qualified, value as unknown[]);
       case "IS NULL":
         return Conditions.isNull(qualified);
       case "IS NOT NULL":
         return Conditions.isNotNull(qualified);
-      case "BETWEEN":
-        return Conditions.between(qualified, this.value[0], this.value[1]);
+      case "BETWEEN": {
+        const [min, max] = value as [unknown, unknown];
+        const minR = this.resolveValue(min, resolveColumn, dialect);
+        const maxR = this.resolveValue(max, resolveColumn, dialect);
+        return Conditions.between(qualified, minR, maxR);
+      }
       default:
-        return sql`${raw(qualified)} ${raw(this.operator)} ${this.value}`;
+        return sql`${raw(qualified)} ${raw(this.operator)} ${value as any}`;
     }
   }
 
@@ -279,6 +353,7 @@ export class ColumnCondition implements ConditionLike {
  * ```
  */
 export class ColumnExpression {
+  readonly __isColumnExpression = true as const;
   constructor(private readonly ref: string) {}
 
   /** `column = value` */
@@ -297,10 +372,18 @@ export class ColumnExpression {
   like(pattern: string): ColumnCondition { return new ColumnCondition(this.ref, "LIKE", pattern); }
   /** `column NOT LIKE pattern` (pattern passed through verbatim). */
   notLike(pattern: string): ColumnCondition { return new ColumnCondition(this.ref, "NOT LIKE", pattern); }
-  /** `column IN (values)` */
-  in(values: any[]): ColumnCondition { return new ColumnCondition(this.ref, "IN", values); }
-  /** `column NOT IN (values)` */
-  notIn(values: any[]): ColumnCondition { return new ColumnCondition(this.ref, "NOT IN", values); }
+  /** `column IN (values)` — accepts either a value list or a subquery. */
+  in(values: any[]): ColumnCondition;
+  in(subquery: { toSql(): Sql }): ColumnCondition;
+  in(valuesOrSubquery: any[] | { toSql(): Sql }): ColumnCondition {
+    return new ColumnCondition(this.ref, "IN", valuesOrSubquery);
+  }
+  /** `column NOT IN (values)` — accepts either a value list or a subquery. */
+  notIn(values: any[]): ColumnCondition;
+  notIn(subquery: { toSql(): Sql }): ColumnCondition;
+  notIn(valuesOrSubquery: any[] | { toSql(): Sql }): ColumnCondition {
+    return new ColumnCondition(this.ref, "NOT IN", valuesOrSubquery);
+  }
   /** `column IS NULL` */
   isNull(): ColumnCondition { return new ColumnCondition(this.ref, "IS NULL", undefined); }
   /** `column IS NOT NULL` */
@@ -399,6 +482,130 @@ export class ColumnExpression {
   asc(): OrderExpression { return new OrderExpression(this.ref, "ASC"); }
   /** Descending ORDER BY on this column. */
   desc(): OrderExpression { return new OrderExpression(this.ref, "DESC"); }
+
+  // ── SELECT alias (Tier 2) ──────────────────────────────
+
+  /**
+   * Tag this column for SELECT with an explicit result alias.
+   *
+   * Produces `<qualified_col> AS <alias>` in the SELECT list. Only
+   * meaningful when passed to `select()` / `addSelect()` — the result
+   * is an {@link AliasedExpression}, not a condition, so it cannot
+   * appear in `where()` / `having()`.
+   *
+   * @example
+   * ```ts
+   * qb.select([u.firstName.as("name"), u.age.as("years")]).getRawMany();
+   * ```
+   */
+  as(alias: string): AliasedExpression {
+    const ref = this.ref;
+    return new AliasedExpression(alias, (resolveColumn) =>
+      sql`${raw(resolveColumn(ref))}`,
+    );
+  }
+
+  // ── Null handling (Tier 2) ─────────────────────────────
+
+  /**
+   * `COALESCE(this, fallback1, fallback2, …)` — returns the first
+   * non-null value from left to right. Useful for picking a display
+   * name with graceful fallback.
+   *
+   * Requires at least one fallback. Fallbacks may be other column
+   * expressions, scalar expressions, aggregates, JSON path extracts,
+   * or plain values (which become bound parameters).
+   *
+   * @example
+   * ```ts
+   * qb.select([u.nickname.coalesce(u.name, "anonymous").as("display")]);
+   * ```
+   */
+  coalesce(...fallbacks: unknown[]): ScalarExpression {
+    if (fallbacks.length === 0) {
+      throw new Error(
+        "coalesce() requires at least one fallback argument.",
+      );
+    }
+    return coalesceFn(this, ...fallbacks);
+  }
+
+  // ── CAST helpers (Tier 2) ──────────────────────────────
+
+  /** `CAST(column AS <dialect-string-type>)` — TEXT / CHAR. */
+  stringValue(): ScalarExpression {
+    return this.buildCast("string");
+  }
+  /** `CAST(column AS <dialect-int-type>)` — INTEGER / SIGNED. */
+  intValue(): ScalarExpression {
+    return this.buildCast("int");
+  }
+  /** `CAST(column AS <dialect-long-type>)` — BIGINT / SIGNED. */
+  longValue(): ScalarExpression {
+    return this.buildCast("long");
+  }
+  /** `CAST(column AS <dialect-float-type>)` — REAL / DECIMAL. */
+  floatValue(): ScalarExpression {
+    return this.buildCast("float");
+  }
+  /** `CAST(column AS <dialect-boolean-type>)` — BOOLEAN / UNSIGNED / INTEGER. */
+  booleanValue(): ScalarExpression {
+    return this.buildCast("boolean");
+  }
+
+  private buildCast(kind: CastKind): ScalarExpression {
+    const ref = this.ref;
+    return buildCastScalar(kind, (resolveColumn) =>
+      sql`${raw(resolveColumn(ref))}`,
+    );
+  }
+
+  // ── Date / time component helpers (Tier 2) ─────────────
+
+  /** `EXTRACT(YEAR …)` / `YEAR(col)` / `strftime('%Y', col)`. */
+  year(): ScalarExpression {
+    return this.buildDateComponent("year");
+  }
+  /** `EXTRACT(MONTH …)` / `MONTH(col)` / `strftime('%m', col)`. */
+  month(): ScalarExpression {
+    return this.buildDateComponent("month");
+  }
+  /** Alias of `.dayOfMonth()` — 1–31. */
+  day(): ScalarExpression {
+    return this.buildDateComponent("day");
+  }
+  /** `EXTRACT(HOUR …)` / `HOUR(col)` / `strftime('%H', col)`. */
+  hour(): ScalarExpression {
+    return this.buildDateComponent("hour");
+  }
+  /** Minute of hour, 0–59. */
+  minute(): ScalarExpression {
+    return this.buildDateComponent("minute");
+  }
+  /** Second of minute, 0–59. */
+  second(): ScalarExpression {
+    return this.buildDateComponent("second");
+  }
+  /** Day of week — engine-specific encoding (see DialectExpression doc). */
+  dayOfWeek(): ScalarExpression {
+    return this.buildDateComponent("dayOfWeek");
+  }
+  /** Day of month, 1–31. */
+  dayOfMonth(): ScalarExpression {
+    return this.buildDateComponent("dayOfMonth");
+  }
+  /** Day of year, 1–366. */
+  dayOfYear(): ScalarExpression {
+    return this.buildDateComponent("dayOfYear");
+  }
+  /** Week of year — engine-specific encoding (see DialectExpression doc). */
+  week(): ScalarExpression {
+    return this.buildDateComponent("week");
+  }
+
+  private buildDateComponent(component: DateComponent): ScalarExpression {
+    return buildDateComponentFromRef(component, this.ref);
+  }
 
   // ── Aggregate helpers (Tier 1) ─────────────────────────
 
@@ -824,6 +1031,15 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected rowValidator: RowValidator<any> | undefined;
   protected arrayValidatorFn: ArrayValidator<any> | undefined;
   protected selectedPropertyKeys: string[] | null = null;
+  /**
+   * Parameterized SELECT list built from {@link AliasedExpression}s.
+   *
+   * When non-null, this takes precedence over both {@link selectColumns}
+   * and {@link selectExpressions} in the build path — the SELECT segment
+   * is emitted via `RawQueryBuilder.selectFragments()` so bound values
+   * (e.g. JSON path literals on MySQL) are preserved through execution.
+   */
+  protected aliasedSelectList: Sql[] | null = null;
   protected indexHints: Array<{
     type: "USE" | "FORCE" | "IGNORE";
     indexName: string;
@@ -1187,21 +1403,60 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   select(aggregate: AggregateExpression): SelectQueryBuilder<T, any>;
   select(aggregates: AggregateExpression[]): SelectQueryBuilder<T, any>;
+  /**
+   * Seed the SELECT clause with one or more {@link AliasedExpression}s
+   * — columns or JSON-path extractions tagged with an explicit result
+   * alias via `.as("name")`. Mix of {@link AliasedExpression} and
+   * {@link AggregateExpression} is supported; the list is rendered as a
+   * parameterized SELECT fragment so JSON path literals survive
+   * execution.
+   */
+  select(aliased: AliasedExpression): SelectQueryBuilder<T, any>;
+  select(aliased: AliasedExpression[]): SelectQueryBuilder<T, any>;
+  select(
+    projections: Array<AliasedExpression | AggregateExpression>,
+  ): SelectQueryBuilder<T, any>;
   select<K extends ColumnOf<T>>(
-    columns: K[] | "*" | AggregateExpression | AggregateExpression[],
+    columns:
+      | K[]
+      | "*"
+      | AggregateExpression
+      | AggregateExpression[]
+      | AliasedExpression
+      | AliasedExpression[]
+      | Array<AliasedExpression | AggregateExpression>,
   ): SelectQueryBuilder<T, any> {
+    if (isAliasedExpression(columns)) {
+      return this.selectAliased([columns]);
+    }
     if (isAggregateExpression(columns)) {
       return this.selectAggregates([columns]);
     }
-    if (Array.isArray(columns) && columns.length > 0 && isAggregateExpression(columns[0])) {
-      return this.selectAggregates(columns as AggregateExpression[]);
+    if (Array.isArray(columns) && columns.length > 0) {
+      const first = columns[0];
+      if (isAliasedExpression(first) || isAggregateExpression(first)) {
+        // Any aliased entry forces the parameterized-fragment path so
+        // JSON extract bindings survive; a homogeneous aggregate array
+        // keeps the cheaper string path.
+        const hasAliased = (columns as unknown[]).some((c) =>
+          isAliasedExpression(c),
+        );
+        if (hasAliased) {
+          return this.selectAliased(
+            columns as Array<AliasedExpression | AggregateExpression>,
+          );
+        }
+        return this.selectAggregates(columns as AggregateExpression[]);
+      }
     }
     if (columns === "*") {
       this.selectColumns = "*";
       this.selectedPropertyKeys = null;
+      this.aliasedSelectList = null;
     } else {
       this.selectColumns = (columns as string[]).map((c) => this.col(c));
       this.selectedPropertyKeys = columns as string[];
+      this.aliasedSelectList = null;
     }
     return this as any;
   }
@@ -1223,6 +1478,39 @@ export class SelectQueryBuilder<T, TResult = T> {
       fragments.push(`${fn.sql} AS ${this.em.wrap(resolvedAlias)}`);
     }
     this.selectColumns = fragments;
+    this.selectedPropertyKeys = null;
+    this.aliasedSelectList = null;
+    return this;
+  }
+
+  /**
+   * @internal Replace the SELECT clause with parameterized alias
+   * fragments.
+   *
+   * Used when the projection contains an {@link AliasedExpression} —
+   * JSON path extractions encode path literals as bound parameters, so
+   * the list is rendered as a `Sql[]` (preserving those values) and
+   * handed to {@link RawQueryBuilder.selectFragments} at build time.
+   * Aggregates mixed in are rendered alongside so callers can freely
+   * combine `count().as()` with `col.as()`.
+   */
+  private selectAliased(
+    projections: Array<AliasedExpression | AggregateExpression>,
+  ): this {
+    const fragments: Sql[] = [];
+    const resolver: ColumnResolver = (ref) => this.resolveColumn(ref);
+    for (const p of projections) {
+      if (isAliasedExpression(p)) {
+        const inner = p.renderer(resolver, this.dialectExpression);
+        fragments.push(sql`${inner} AS ${raw(this.em.wrap(p.alias))}`);
+      } else if (isAggregateExpression(p)) {
+        const resolvedAlias = p.alias ?? p.getAlias();
+        const fn = p.renderFunction(resolver);
+        fragments.push(sql`${fn} AS ${raw(this.em.wrap(resolvedAlias))}`);
+      }
+    }
+    this.aliasedSelectList = fragments;
+    this.selectColumns = "*";
     this.selectedPropertyKeys = null;
     return this;
   }
@@ -1254,8 +1542,25 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   addSelect(expr: AggregateExpression): this;
+  addSelect(expr: AliasedExpression): this;
   addSelect(expr: Sql | string, alias?: string): this;
-  addSelect(expr: Sql | string | AggregateExpression, alias?: string): this {
+  addSelect(
+    expr: Sql | string | AggregateExpression | AliasedExpression,
+    alias?: string,
+  ): this {
+    if (isAliasedExpression(expr)) {
+      // Route through `selectExpressions` so JSON path bindings survive;
+      // these fragments are appended to the existing SELECT list at
+      // build time.
+      const inner = expr.renderer(
+        (ref) => this.resolveColumn(ref),
+        this.dialectExpression,
+      );
+      this.selectExpressions.push(
+        sql`${inner} AS ${raw(this.em.wrap(expr.alias))}`,
+      );
+      return this;
+    }
     if (isAggregateExpression(expr)) {
       // Aggregate SQL has no bound parameters (func name + qualified col),
       // so funneling through selectColumns as a plain string is safe and
@@ -2802,7 +3107,12 @@ export class SelectQueryBuilder<T, TResult = T> {
     else qb.setDatabaseType("postgresql");
 
     // SELECT — inheritance-aware
-    if (this.selectColumns === "*") {
+    if (this.aliasedSelectList !== null) {
+      // Aliased-expression projection (may carry bound params for JSON
+      // extract); bypass the string-based select() path to keep values
+      // attached to their placeholders.
+      qb.selectFragments(this.aliasedSelectList, this.distinct);
+    } else if (this.selectColumns === "*") {
       // TPT child: use explicit column list from both tables
       if (this.tptSelectColumns) {
         const cols = [...this.tptSelectColumns];
@@ -3318,6 +3628,9 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.dialectExpression = this.dialectExpression;
     cloned.aliasRegistry = new Map(this.aliasRegistry);
     cloned.selectExpressions = [...this.selectExpressions];
+    cloned.aliasedSelectList = this.aliasedSelectList
+      ? [...this.aliasedSelectList]
+      : null;
     // Inheritance state
     cloned.inheritanceStrategy = this.inheritanceStrategy;
     cloned.isInheritanceChild = this.isInheritanceChild;

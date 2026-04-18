@@ -563,6 +563,272 @@ that plays two roles:
 Aggregates also participate in ORDER BY via `.asc()` / `.desc()`, mirroring
 the ColumnExpression surface.
 
+##### SELECT aliases — `.as("name")` on any projectable expression
+
+`.as("alias")` works on every expression that can appear in SELECT —
+plain columns, JSON path extractions, and aggregates. The result is an
+`AliasedExpression` destined for `select()` or `addSelect()`; it is not
+a condition, so it will not compile when handed to `where()` or
+`having()`.
+
+```typescript
+const u = qAlias(User, "u");
+
+await em.createQueryBuilder(User, "u")
+  .select([
+    u.name.as("display_name"),
+    u.metadata.profile.email.as("contact"),
+    u.id.count().as("total"),
+  ])
+  .groupBy(["u.name", "u.metadata"])
+  .getRawMany();
+// SELECT "u"."name" AS "display_name",
+//        ("u"."metadata" #>> $1) AS "contact",
+//        COUNT("u"."id") AS "total"
+// …
+```
+
+JSON path aliases compile to the dialect's preferred text-extraction
+operator (`#>>` on PostgreSQL, `JSON_UNQUOTE(JSON_EXTRACT(...))` on
+MySQL, `json_extract()` on SQLite) with the path supplied as a bound
+parameter — so it survives `getRawMany()` serialization and is free of
+injection risk.
+
+`addSelect(u.age.as("years"))` appends to an existing projection; mixing
+aliased columns with aggregates in the same `select([...])` call is also
+supported.
+
+##### Null handling — `coalesce()` / `nullif()`
+
+`coalesce(a, b, c, …)` returns the first non-null argument. `nullif(a,
+b)` returns `NULL` when `a === b`, otherwise `a` — useful for turning a
+sentinel value (empty string, `-1`, etc.) into a real `NULL`. Both are
+standard SQL, so they compile identically on every dialect.
+
+```typescript
+import { coalesce, nullif, Expressions, qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+
+// Display name with graceful fallback — column → column → literal
+qb.select([
+  u.nickname.coalesce(u.name, "anonymous").as("display_name"),
+]);
+// SELECT COALESCE("u"."nickname", "u"."name", $1) AS "display_name"
+
+// Turn an empty email into NULL
+qb.select([nullif(u.email, "").as("email_or_null")]);
+// SELECT NULLIF("u"."email", $1) AS "email_or_null"
+
+// Both also work in WHERE / HAVING
+qb.where(coalesce(u.score, 0).gte(50));
+// WHERE COALESCE("u"."score", $1) >= $2
+```
+
+Arguments accept any expression the query builder understands: column
+references, JSON path extractions (`u.metadata.profile.tier`),
+aggregates (`u.id.count()`), other scalar expressions (nested
+`coalesce`), and plain values — bound as parameters. The result is a
+`ScalarExpression`, which exposes the same `.eq()` / `.gt()` / `.as()`
+surface you've already seen, so every derived expression composes.
+
+Static helpers live on the `Expressions` namespace — `Expressions.coalesce`
+and `Expressions.nullif` — mirroring Java QueryDSL for callers who
+prefer the static entry point.
+
+##### Current date/time — `currentDate()` / `currentTime()` / `currentTimestamp()`
+
+Three small standard-SQL helpers that insert the server's clock into
+any expression position. They are scalar expressions, so they compose
+with everything already shown (`.as()`, `.eq()`, nested inside
+`coalesce`, etc.) and emit the same literal on every dialect.
+
+```typescript
+import { Expressions, qAlias } from "@stingerloom/orm";
+
+const s = qAlias(Session, "s");
+
+qb.where(s.expiresAt.gte(Expressions.currentTimestamp()));
+// WHERE "s"."expires_at" >= CURRENT_TIMESTAMP
+
+qb.select([Expressions.currentDate().as("today")]);
+// SELECT CURRENT_DATE AS "today"
+```
+
+`ColumnExpression` comparison methods now transparently unwrap a
+`ScalarExpression` operand — so `u.createdAt.lte(currentTimestamp())`
+emits an inline `CURRENT_TIMESTAMP` rather than binding the expression
+as a parameter.
+
+##### Type casts — `.stringValue()` / `.intValue()` / `.longValue()` / `.floatValue()` / `.booleanValue()`
+
+Cast any column or scalar expression to a portable SQL type. The type
+name is resolved per dialect so you don't have to remember whether
+MySQL accepts `INTEGER` (it doesn't) or `SIGNED`, or whether SQLite
+has a `BOOLEAN` (it doesn't — it uses `INTEGER`).
+
+```typescript
+const i = qAlias(Item, "i");
+
+qb.select([i.quantity.stringValue().as("qty_str")]);
+// PG/SQLite:  CAST("i"."quantity" AS TEXT) AS "qty_str"
+// MySQL:      CAST(`i`.`quantity` AS CHAR)  AS `qty_str`
+
+qb.where(i.sku.intValue().gt(1000));
+// PG/SQLite:  CAST("i"."sku" AS INTEGER) > $1
+// MySQL:      CAST(`i`.`sku` AS SIGNED)  > ?
+```
+
+The cast helpers are on both `ColumnExpression` and `ScalarExpression`
+— so you can chain them onto `coalesce(u.price, 0).floatValue()` or
+any other derived scalar. The result is a `ScalarExpression` itself,
+so it plugs into `.as()`, `.eq()`, `.gt()`, and nested `coalesce`
+without anything special.
+
+| Kind     | MySQL      | PostgreSQL | SQLite    |
+|----------|------------|------------|-----------|
+| string   | `CHAR`     | `TEXT`     | `TEXT`    |
+| int      | `SIGNED`   | `INTEGER`  | `INTEGER` |
+| long     | `SIGNED`   | `BIGINT`   | `INTEGER` |
+| float    | `DECIMAL`  | `REAL`     | `REAL`    |
+| boolean  | `UNSIGNED` | `BOOLEAN`  | `INTEGER` |
+
+##### Date / time components — `.year()` / `.month()` / `.day()` / `.hour()` / …
+
+Extract a component from a date or timestamp column. Ten helpers
+cover the common shapes — year, month, day (alias of `dayOfMonth`),
+hour, minute, second, `dayOfWeek`, `dayOfMonth`, `dayOfYear`, `week`.
+Each returns a `ScalarExpression`, so they drop into SELECT, WHERE,
+HAVING, chain into `.as()`, and compose with cast/coalesce.
+
+```typescript
+const e = qAlias(Event, "e");
+
+// Count events per year
+qb.select([e.startsAt.year().as("yr"), e.id.count().as("total")])
+  .groupBy(["e.startsAt"])
+  .having(e.startsAt.year().gte(2026));
+// PG:     CAST(EXTRACT(YEAR FROM "e"."starts_at") AS INTEGER) = ?
+// MySQL:  YEAR(`e`.`starts_at`) = ?
+// SQLite: CAST(strftime(?, "e"."starts_at") AS INTEGER) = ?   -- '%Y'
+```
+
+Dialect-specific emission (the caller never sees the difference):
+
+| Helper | MySQL | PostgreSQL | SQLite |
+|--------|-------|------------|--------|
+| `year()` | `YEAR(col)` | `EXTRACT(YEAR FROM col)` | `strftime('%Y', col)` |
+| `month()` | `MONTH(col)` | `EXTRACT(MONTH FROM col)` | `strftime('%m', col)` |
+| `day()` / `dayOfMonth()` | `DAYOFMONTH(col)` | `EXTRACT(DAY FROM col)` | `strftime('%d', col)` |
+| `hour()` | `HOUR(col)` | `EXTRACT(HOUR FROM col)` | `strftime('%H', col)` |
+| `minute()` | `MINUTE(col)` | `EXTRACT(MINUTE FROM col)` | `strftime('%M', col)` |
+| `second()` | `SECOND(col)` | `EXTRACT(SECOND FROM col)` | `strftime('%S', col)` |
+| `dayOfWeek()` | `DAYOFWEEK(col)` | `EXTRACT(DOW FROM col)` | `strftime('%w', col)` |
+| `dayOfYear()` | `DAYOFYEAR(col)` | `EXTRACT(DOY FROM col)` | `strftime('%j', col)` |
+| `week()` | `WEEK(col)` | `EXTRACT(WEEK FROM col)` | `strftime('%W', col)` |
+
+`dayOfWeek` and `week` encodings differ slightly between engines —
+MySQL uses `1=Sun…7=Sat` for `DAYOFWEEK`, PostgreSQL `0=Sun…6=Sat`
+for `DOW`, and SQLite matches PostgreSQL via `%w`. If portability
+within your reports matters, normalize in the application layer or
+use dialect-specific raw SQL.
+
+##### Subquery comparisons — `.in(subquery)` / `.eq(subquery)` / `exists` / `notExists`
+
+`ColumnExpression.in()` / `.notIn()` accept either a value list
+(existing behavior) or a `SelectQueryBuilder` — the latter embeds as
+`col IN (SELECT ...)` with all inner bindings preserved. All scalar
+comparison methods (`.eq` / `.neq` / `.gt` / `.gte` / `.lt` / `.lte`)
+likewise accept a subquery and emit `col <op> (SELECT ...)` for
+one-row-one-column scalar subqueries.
+
+```typescript
+const u = qAlias(User, "u");
+const p = qAlias(Post, "p");
+
+// Users whose id appears in the authorId column of published posts
+const activeAuthors = em
+  .createQueryBuilder(Post, "p")
+  .select(["authorId"])
+  .where(p.status.eq("published"));
+
+qb.where(u.id.in(activeAuthors));
+// WHERE "u"."id" IN (SELECT "p"."authorId" FROM "post" AS "p"
+//                     WHERE "p"."status" = $1)
+
+// Scalar subquery — compare against a single aggregate
+const avgViews = em
+  .createQueryBuilder(Post, "p2")
+  .selectRaw(["AVG(p2.views)"]);
+
+qb.where(p.views.gt(avgViews));
+// WHERE "p"."views" > (SELECT AVG(p2.views) FROM …)
+```
+
+`Expressions.exists(subQb)` and `Expressions.notExists(subQb)` build
+correlated-subquery conditions:
+
+```typescript
+qb.where(Expressions.exists(em.createQueryBuilder(Post, "p")
+  .select(["id"])
+  .where(sql`"p"."author_id" = "u"."id"`)));
+// WHERE EXISTS (SELECT "id" FROM "post" AS "p"
+//                WHERE "p"."author_id" = "u"."id")
+```
+
+`ExistsCondition.not()` toggles the `EXISTS` / `NOT EXISTS` flag
+rather than wrapping in a redundant `NOT (…)`, keeping output SQL
+clean.
+
+##### `CASE WHEN … THEN …` — `Expressions.caseBuilder()` / `Expressions.cases(...)`
+
+Two fluent builders cover the two forms SQL supports:
+
+**Searched CASE** — `caseBuilder()` reads like a guard chain. Each
+branch is a `ConditionLike` paired with a result value; end with an
+optional `otherwise(default)` and call `.end()` to finalize.
+
+```typescript
+const u = qAlias(User, "u");
+
+const tier = Expressions.caseBuilder()
+  .when(u.score.gte(90)).then("gold")
+  .when(u.score.gte(70)).then("silver")
+  .otherwise("bronze")
+  .end();
+
+qb.select([tier.as("tier")]);
+// SELECT CASE WHEN "u"."score" >= $1 THEN $2
+//             WHEN "u"."score" >= $3 THEN $4
+//             ELSE $5 END AS "tier"
+```
+
+**Simple CASE** — `cases(subject)` is the switch-style form, matching
+the subject against each candidate value:
+
+```typescript
+const weight = Expressions.cases(u.status)
+  .when("active",  1)
+  .when("pending", 0)
+  .otherwise(-1)
+  .end();
+
+qb.select([weight.as("w")]);
+// SELECT CASE "u"."status" WHEN $1 THEN $2
+//                           WHEN $3 THEN $4
+//                           ELSE $5 END AS "w"
+```
+
+`end()` returns a `ScalarExpression`, so the result feeds every
+downstream builder you've already seen — cast it (`.stringValue()`),
+alias it (`.as("tier")`), compare it in a condition (`.eq("gold")`),
+nest it in `coalesce(...)`, or pass it to another `CASE` branch as a
+result.
+
+Misuse-guard: `.when()` after `.otherwise()`, duplicate `.otherwise()`,
+or `.end()` with no branches each throw an explanatory error early,
+rather than producing malformed SQL.
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -656,6 +922,13 @@ Method summary:
 | String (case-insens.) | `.equalsIgnoreCase`, `.likeIgnoreCase`, `.startsWithIgnoreCase`, `.endsWithIgnoreCase`, `.containsIgnoreCase` |
 | Ordering              | `.asc()`, `.desc()`, `.nullsFirst()`, `.nullsLast()`                                            |
 | Aggregates            | `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()` — each with `.as(alias)` and `.eq/.neq/.gt/.gte/.lt/.lte/.between` |
+| SELECT alias          | `.as("name")` on columns, JSON path extracts, and aggregates — produces `AliasedExpression` |
+| Null handling         | `coalesce(…)`, `nullif(a, b)`, `col.coalesce(…)`, `Expressions.coalesce`, `Expressions.nullif` |
+| Current date / time   | `currentDate()`, `currentTime()`, `currentTimestamp()` — also on `Expressions`                 |
+| Type casts            | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` — dialect-specific type names |
+| Date components       | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfMonth()`, `.dayOfYear()`, `.week()` |
+| Subquery compare      | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
+| CASE expressions      | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject).when(val, result)...end()` |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables

@@ -1,6 +1,11 @@
 import sql, { raw, join } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
-import type { ColumnJsonMeta, DialectExpression } from "../DialectExpression";
+import type {
+  CastKind,
+  ColumnJsonMeta,
+  DateComponent,
+  DialectExpression,
+} from "../DialectExpression";
 
 export class PostgresExpression implements DialectExpression {
   readonly dialect = "postgres" as const;
@@ -209,5 +214,51 @@ export class PostgresExpression implements DialectExpression {
       return sql`jsonb_typeof(${this.navigateJsonb(column, path)})`;
     }
     return sql`jsonb_typeof(${raw(column)} #> ${this.pathArray(path)})`;
+  }
+
+  castTypeName(kind: CastKind): string {
+    switch (kind) {
+      case "string":
+        return "TEXT";
+      case "int":
+        return "INTEGER";
+      case "long":
+        return "BIGINT";
+      case "float":
+        return "REAL";
+      case "boolean":
+        return "BOOLEAN";
+    }
+  }
+
+  dateComponent(value: Sql, component: DateComponent): Sql {
+    // PostgreSQL EXTRACT returns a numeric — cast to integer so
+    // downstream comparisons stay on integer arithmetic.
+    const field = pgExtractField(component);
+    return sql`CAST(EXTRACT(${raw(field)} FROM ${value}) AS INTEGER)`;
+  }
+}
+
+function pgExtractField(component: DateComponent): string {
+  switch (component) {
+    case "year":
+      return "YEAR";
+    case "month":
+      return "MONTH";
+    case "day":
+    case "dayOfMonth":
+      return "DAY";
+    case "hour":
+      return "HOUR";
+    case "minute":
+      return "MINUTE";
+    case "second":
+      return "SECOND";
+    case "dayOfWeek":
+      return "DOW";
+    case "dayOfYear":
+      return "DOY";
+    case "week":
+      return "WEEK";
   }
 }
