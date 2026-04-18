@@ -780,6 +780,55 @@ qb.where(Expressions.exists(em.createQueryBuilder(Post, "p")
 rather than wrapping in a redundant `NOT (…)`, keeping output SQL
 clean.
 
+##### `CASE WHEN … THEN …` — `Expressions.caseBuilder()` / `Expressions.cases(...)`
+
+Two fluent builders cover the two forms SQL supports:
+
+**Searched CASE** — `caseBuilder()` reads like a guard chain. Each
+branch is a `ConditionLike` paired with a result value; end with an
+optional `otherwise(default)` and call `.end()` to finalize.
+
+```typescript
+const u = qAlias(User, "u");
+
+const tier = Expressions.caseBuilder()
+  .when(u.score.gte(90)).then("gold")
+  .when(u.score.gte(70)).then("silver")
+  .otherwise("bronze")
+  .end();
+
+qb.select([tier.as("tier")]);
+// SELECT CASE WHEN "u"."score" >= $1 THEN $2
+//             WHEN "u"."score" >= $3 THEN $4
+//             ELSE $5 END AS "tier"
+```
+
+**Simple CASE** — `cases(subject)` is the switch-style form, matching
+the subject against each candidate value:
+
+```typescript
+const weight = Expressions.cases(u.status)
+  .when("active",  1)
+  .when("pending", 0)
+  .otherwise(-1)
+  .end();
+
+qb.select([weight.as("w")]);
+// SELECT CASE "u"."status" WHEN $1 THEN $2
+//                           WHEN $3 THEN $4
+//                           ELSE $5 END AS "w"
+```
+
+`end()` returns a `ScalarExpression`, so the result feeds every
+downstream builder you've already seen — cast it (`.stringValue()`),
+alias it (`.as("tier")`), compare it in a condition (`.eq("gold")`),
+nest it in `coalesce(...)`, or pass it to another `CASE` branch as a
+result.
+
+Misuse-guard: `.when()` after `.otherwise()`, duplicate `.otherwise()`,
+or `.end()` with no branches each throw an explanatory error early,
+rather than producing malformed SQL.
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -879,6 +928,7 @@ Method summary:
 | Type casts            | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` — dialect-specific type names |
 | Date components       | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfMonth()`, `.dayOfYear()`, `.week()` |
 | Subquery compare      | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
+| CASE expressions      | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject).when(val, result)...end()` |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables

@@ -46,4 +46,5 @@ export * from "./expressions/TemporalExpression";
 export * from "./expressions/CastExpression";
 export * from "./expressions/DateComponentExpression";
 export * from "./expressions/SubqueryExpression";
+export * from "./expressions/CaseExpression";
 export * from "./expressions/likeEscape";

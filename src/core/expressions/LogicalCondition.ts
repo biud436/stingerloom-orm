@@ -17,6 +17,12 @@ import {
   registerExistsLogicalComposer,
   ExistsCondition,
 } from "./SubqueryExpression";
+import {
+  caseBuilder as caseBuilderFactory,
+  cases as casesFactory,
+  CaseBuilder,
+  CaseValueBuilder,
+} from "./CaseExpression";
 
 export type LogicalOperator = "AND" | "OR" | "NOT";
 
@@ -192,6 +198,24 @@ export const Expressions = {
     subquery: { toSql(): import("sql-template-tag").Sql },
   ): ExistsCondition {
     return notExistsFactory(subquery);
+  },
+
+  /**
+   * Start a **searched** `CASE WHEN cond THEN val … ELSE val END`
+   * builder. Chain `.when(cond).then(val)` for each branch, optionally
+   * finish with `.otherwise(val)`, then call `.end()` to finalize.
+   */
+  caseBuilder(): CaseBuilder {
+    return caseBuilderFactory();
+  },
+
+  /**
+   * Start a **simple** `CASE value WHEN v1 THEN r1 …` builder. Useful
+   * for value-switching — e.g. converting a status column into a
+   * priority number.
+   */
+  cases(subject: unknown): CaseValueBuilder {
+    return casesFactory(subject);
   },
 } as const;
 

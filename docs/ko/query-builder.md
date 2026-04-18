@@ -658,6 +658,46 @@ qb.where(Expressions.exists(em.createQueryBuilder(Post, "p")
 
 `ExistsCondition.not()`은 `NOT (…)`으로 감싸지 않고 내부의 `EXISTS` ↔ `NOT EXISTS` 플래그만 뒤집어요. SQL이 깔끔하게 나와요.
 
+##### `CASE WHEN …` — `Expressions.caseBuilder()` / `Expressions.cases(...)`
+
+SQL이 지원하는 두 종류의 CASE를 각각 전용 빌더로 제공해요.
+
+**Searched CASE** — `caseBuilder()`. 조건 체인 형태로 쓰면 돼요. 각 분기는 `ConditionLike` + 결과값 쌍이고, 마지막에 `otherwise(default)`를 선택적으로 달고 `.end()`로 마무리해요.
+
+```typescript
+const u = qAlias(User, "u");
+
+const tier = Expressions.caseBuilder()
+  .when(u.score.gte(90)).then("gold")
+  .when(u.score.gte(70)).then("silver")
+  .otherwise("bronze")
+  .end();
+
+qb.select([tier.as("tier")]);
+// SELECT CASE WHEN "u"."score" >= ? THEN ?
+//             WHEN "u"."score" >= ? THEN ?
+//             ELSE ? END AS "tier"
+```
+
+**Simple CASE** — `cases(subject)`. 값 매칭 스위치 스타일이에요.
+
+```typescript
+const weight = Expressions.cases(u.status)
+  .when("active",  1)
+  .when("pending", 0)
+  .otherwise(-1)
+  .end();
+
+qb.select([weight.as("w")]);
+// SELECT CASE "u"."status" WHEN ? THEN ?
+//                           WHEN ? THEN ?
+//                           ELSE ? END AS "w"
+```
+
+`end()`은 `ScalarExpression`을 돌려주니까 지금까지 본 모든 연산(cast / alias / 비교 / coalesce 등)에 그대로 이어 붙일 수 있어요.
+
+오용 방어도 들어가 있어요. `.otherwise()` 뒤의 `.when()`, 중복 `.otherwise()`, WHEN 없이 `.end()` — 이 세 경우는 명확한 에러 메시지로 막히니까, 잘못된 SQL이 쿼리 실행까지 가지 않아요.
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -762,6 +802,7 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | 타입 변환                 | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()`             |
 | 날짜 컴포넌트             | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfYear()`, `.week()` |
 | 서브쿼리 비교             | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
+| CASE 표현식               | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject)...end()`     |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |
