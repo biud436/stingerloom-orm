@@ -10,11 +10,11 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ### Highlights
 
-Three QueryDSL tiers, rolled into one release — `qAlias()` coverage vs. Java QueryDSL 5.x grows from ~10–15% to ~55–65%, with deliberate departures from Java idioms wherever TypeScript / Node already has a better answer.
+Three tiers of expression-surface expansion rolled into one release — `qAlias()` gains roughly three dozen new helpers across SELECT, WHERE, HAVING, ORDER BY, and GROUP BY, plus a shared `ScalarExpression` foundation and TypeScript-native escape hatches.
 
 - **Tier 1 (PR #256) — ordering, aggregates, logical composition, string convenience.** Four groups of helpers on `ColumnExpression` — `.asc/.desc/.nullsFirst/.nullsLast`, `.count/.countDistinct/.sum/.avg/.min/.max`, `.and/.or/.not` composition, and LIKE-escape-safe `.startsWith / .endsWith / .contains` (+ `*IgnoreCase` siblings). A shared `ConditionLike` contract unifies column, JSON-path, aggregate, and logical conditions — they mix freely in `where()`, `andWhere()`, `having()`, etc. Every user value (including the LIKE escape character) stays a bound parameter.
 - **Tier 2 (PR #257) — scalar expressions, CAST, date parts, subqueries, CASE.** New `ScalarExpression` foundation drives null handling (`coalesce`, `nullif`), type casts (`.stringValue / .intValue / .longValue / .floatValue / .booleanValue`), date-component extraction (`.year / .month / .day / .hour / .minute / .second / .dayOfWeek / .dayOfMonth / .dayOfYear / .week`), subquery comparisons (`.in(subQb)`, `.eq(subQb)`, `Expressions.exists / notExists`), current-time literals (`currentDate / currentTime / currentTimestamp`), and two fluent `CASE WHEN … THEN …` builders (searched `caseBuilder()` + simple `cases(subject)`). `.as("alias")` is promoted to every projectable expression; `RawQueryBuilder.selectFragments()` preserves parameter bindings in SELECT so JSON-path aliases survive execution.
-- **Tier 3 (PR #258) — TS/Node-native re-plan.** Explicitly drops Java-style `Projections.constructor`, `stringTemplate`, and `useLiterals` — TS generics + `.as()` + `getRawMany<T>()` + `sql-template-tag` already cover those idiomatically. Adds what a TypeScript developer expects: JS-idiomatic `String.prototype` / `Math.*` / arithmetic-operator-style helpers (`.toLowerCase / .substring(s, e?) / .indexOf / .replace / .add / .sub / .mul / .div / .mod / .neg / .abs / .floor / .ceil / .round / .sqrt`), date arithmetic (`.addYears/Months/Days/Hours/Minutes/Seconds`, `Expressions.dateDiff`, `Expressions.random`), window functions (`aggregate.over().partitionBy().orderBy().rowsBetween()`), and three TS-native escape hatches: `Expressions.raw<T>(sql`…`)`, `.bigintValue()`, and `qb.selectSchema(zodSchema)` with `z.infer`-driven `TResult` narrowing.
+- **Tier 3 (PR #258) — TypeScript-native helpers and escape hatches.** JS-idiomatic `String.prototype` / `Math.*` / arithmetic-operator-style helpers (`.toLowerCase / .substring(s, e?) / .indexOf / .replace / .add / .sub / .mul / .div / .mod / .neg / .abs / .floor / .ceil / .round / .sqrt`), date arithmetic (`.addYears/Months/Days/Hours/Minutes/Seconds`, `Expressions.dateDiff`, `Expressions.random`), window functions (`aggregate.over().partitionBy().orderBy().rowsBetween()`), and three TS-native escape hatches: ``Expressions.raw<T>(sql`…`)``, `.bigintValue()`, and `qb.selectSchema(zodSchema)` with `z.infer`-driven `TResult` narrowing. DTO constructor projections and template-expression wrappers are intentionally excluded — TS generics, `.as()` + `getRawMany<T>()`, and `sql-template-tag` template literals already cover those idiomatically.
 
 ### Added
 
@@ -73,6 +73,14 @@ Three QueryDSL tiers, rolled into one release — `qAlias()` coverage vs. Java Q
 - **Tier 2** — 112 new unit cases across seven files (`qdsl-tier2-aliased-expression`, `qdsl-tier2-nullish`, `qdsl-tier2-temporal`, `qdsl-tier2-cast`, `qdsl-tier2-date-component`, `qdsl-tier2-subquery`, `qdsl-tier2-case-builder`); regression clean on MySQL + PostgreSQL + SQLite via existing dual-driver suites
 - **Tier 3** — 71 new unit cases across three files (`qdsl-tier3-string-numeric-math`, `qdsl-tier3-date-window-random`, `qdsl-tier3-ts-native`)
 - **Full run** — 5,041 passed / 21 skipped / **0 failures** across 236 suites (unit + SQLite + MySQL + PostgreSQL), ~36s
+
+### Intentional exclusions
+
+Some ideas considered during design review were deliberately left out because TypeScript / Node idioms already cover them:
+
+- **DTO constructor projections** — TS generics plus `.as("alias")` and `getRawMany<Dto>()` carry the shape; `class-transformer` handles conversion where needed.
+- **Raw template-expression wrappers** — `sql-template-tag` (already a dependency) is the idiomatic tagged template; `Expressions.raw<T>(sql\`…\`)` gives the typed escape hatch.
+- **`useLiterals` toggle** — values are always parameter-bound as a security policy; no inline-literal mode is exposed.
 
 **Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.16.1...v0.19.0
 
