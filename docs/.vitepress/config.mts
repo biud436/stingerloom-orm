@@ -45,7 +45,28 @@ function sidebarEn() {
       text: "Querying",
       collapsed: false,
       items: [
-        { text: "Query Builder", link: "/query-builder" },
+        {
+          text: "Query Builder",
+          collapsed: false,
+          items: [
+            { text: "Overview", link: "/query-builder" },
+            { text: "JOINs", link: "/query-builder-joins" },
+            { text: "QueryDSL Expressions", link: "/query-builder-querydsl" },
+            { text: "JSON Navigation", link: "/query-builder-json" },
+            {
+              text: "Aggregations & Subqueries",
+              link: "/query-builder-aggregations",
+            },
+            {
+              text: "Execution & Results",
+              link: "/query-builder-execution",
+            },
+            {
+              text: "Patterns & Productivity",
+              link: "/query-builder-patterns",
+            },
+          ],
+        },
         { text: "Raw SQL & CTE", link: "/raw-sql" },
         { text: "Raw Pipeline", link: "/raw-pipeline" },
         { text: "Pagination & Streaming", link: "/pagination" },
@@ -144,7 +165,28 @@ function sidebarKo() {
       text: "쿼리",
       collapsed: false,
       items: [
-        { text: "쿼리 빌더", link: "/ko/query-builder" },
+        {
+          text: "쿼리 빌더",
+          collapsed: false,
+          items: [
+            { text: "개요", link: "/ko/query-builder" },
+            { text: "JOIN", link: "/ko/query-builder-joins" },
+            { text: "QueryDSL 표현식", link: "/ko/query-builder-querydsl" },
+            { text: "JSON 컬럼 탐색", link: "/ko/query-builder-json" },
+            {
+              text: "집계 & 서브쿼리",
+              link: "/ko/query-builder-aggregations",
+            },
+            {
+              text: "실행 & 결과",
+              link: "/ko/query-builder-execution",
+            },
+            {
+              text: "생산성 패턴",
+              link: "/ko/query-builder-patterns",
+            },
+          ],
+        },
         { text: "Raw SQL & CTE", link: "/ko/raw-sql" },
         { text: "Raw Pipeline", link: "/ko/raw-pipeline" },
         { text: "페이지네이션 & 스트리밍", link: "/ko/pagination" },
