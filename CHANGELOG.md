@@ -6,41 +6,75 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
-## [Unreleased]
+## [0.19.0] — 2026-04-18
 
 ### Highlights
 
-- **More expressions on `qAlias()`** — Sorting, counting, combining, and matching on the same typed proxy. Four groups of helpers on `ColumnExpression`: ordering (`.asc() / .desc() / .nullsFirst() / .nullsLast()`), aggregates that slot into SELECT and HAVING from one expression (`.count() / .countDistinct() / .sum() / .avg() / .min() / .max()`), condition composition on every condition type (`.and() / .or() / .not()` plus `Expressions.and/or/not`), and substring matching that escapes LIKE metacharacters before wrapping in wildcards (`.startsWith / .endsWith / .contains` + their `*IgnoreCase` siblings). Every user value — including the LIKE escape character — stays a bound parameter, and every condition routes through a shared `ConditionLike` contract so types mix freely.
+Three QueryDSL tiers, rolled into one release — `qAlias()` coverage vs. Java QueryDSL 5.x grows from ~10–15% to ~55–65%, with deliberate departures from Java idioms wherever TypeScript / Node already has a better answer.
+
+- **Tier 1 (PR #256) — ordering, aggregates, logical composition, string convenience.** Four groups of helpers on `ColumnExpression` — `.asc/.desc/.nullsFirst/.nullsLast`, `.count/.countDistinct/.sum/.avg/.min/.max`, `.and/.or/.not` composition, and LIKE-escape-safe `.startsWith / .endsWith / .contains` (+ `*IgnoreCase` siblings). A shared `ConditionLike` contract unifies column, JSON-path, aggregate, and logical conditions — they mix freely in `where()`, `andWhere()`, `having()`, etc. Every user value (including the LIKE escape character) stays a bound parameter.
+- **Tier 2 (PR #257) — scalar expressions, CAST, date parts, subqueries, CASE.** New `ScalarExpression` foundation drives null handling (`coalesce`, `nullif`), type casts (`.stringValue / .intValue / .longValue / .floatValue / .booleanValue`), date-component extraction (`.year / .month / .day / .hour / .minute / .second / .dayOfWeek / .dayOfMonth / .dayOfYear / .week`), subquery comparisons (`.in(subQb)`, `.eq(subQb)`, `Expressions.exists / notExists`), current-time literals (`currentDate / currentTime / currentTimestamp`), and two fluent `CASE WHEN … THEN …` builders (searched `caseBuilder()` + simple `cases(subject)`). `.as("alias")` is promoted to every projectable expression; `RawQueryBuilder.selectFragments()` preserves parameter bindings in SELECT so JSON-path aliases survive execution.
+- **Tier 3 (PR #258) — TS/Node-native re-plan.** Explicitly drops Java-style `Projections.constructor`, `stringTemplate`, and `useLiterals` — TS generics + `.as()` + `getRawMany<T>()` + `sql-template-tag` already cover those idiomatically. Adds what a TypeScript developer expects: JS-idiomatic `String.prototype` / `Math.*` / arithmetic-operator-style helpers (`.toLowerCase / .substring(s, e?) / .indexOf / .replace / .add / .sub / .mul / .div / .mod / .neg / .abs / .floor / .ceil / .round / .sqrt`), date arithmetic (`.addYears/Months/Days/Hours/Minutes/Seconds`, `Expressions.dateDiff`, `Expressions.random`), window functions (`aggregate.over().partitionBy().orderBy().rowsBetween()`), and three TS-native escape hatches: `Expressions.raw<T>(sql`…`)`, `.bigintValue()`, and `qb.selectSchema(zodSchema)` with `z.infer`-driven `TResult` narrowing.
 
 ### Added
 
-- **`OrderExpression`** — New expression type returned by `ColumnExpression.asc()/.desc()` and `AggregateExpression.asc()/.desc()`; chain `.nullsFirst()` / `.nullsLast()` to control NULL ordering
-- **`AggregateExpression` / `AggregateCondition`** — Aggregates that render inside SELECT (via `.as("alias")` — explicit alias recommended; falls back to a predictable `agg_<func>_<col>` shape) and double as HAVING / WHERE conditions through `.eq / .neq / .gt / .gte / .lt / .lte / .between`
-- **`LogicalCondition` + `Expressions` namespace** — AND / OR / NOT composition over any `ConditionLike`. `Expressions.and(a, b, …)`, `Expressions.or(a, b, …)`, `Expressions.not(a)` plus `.and() / .or() / .not()` chains on every condition type (including `AggregateCondition` and `JsonPathCondition`). Contiguous AND or OR chains flatten in the emitted SQL
-- **`ConditionLike` interface** — Shared contract unifying `ColumnCondition`, `JsonPathCondition`, `AggregateCondition`, and `LogicalCondition`; `resolve()` threads the alias registry and dialect strategy through uniformly
-- **`DialectExpression.caseInsensitiveLike(column, pattern)`** — Collation-independent case-insensitive LIKE. `ILIKE ... ESCAPE '\'` on PostgreSQL, `LOWER(col) LIKE LOWER(pattern) ESCAPE '\'` on MySQL and SQLite
-- **`escapeLikeValue(value)`** — Shared helper that escapes `%`, `_`, and `\` so user-supplied text never silently acts as a LIKE wildcard
+#### Tier 1 — base expression surface
+
+- **`OrderExpression`** — returned by `ColumnExpression.asc()/.desc()` and `AggregateExpression.asc()/.desc()`; chain `.nullsFirst()` / `.nullsLast()` to control NULL ordering
+- **`AggregateExpression` / `AggregateCondition`** — aggregates render inside SELECT (via `.as("alias")` — explicit alias recommended; falls back to a predictable `agg_<func>_<col>` shape) and double as HAVING / WHERE conditions through `.eq / .neq / .gt / .gte / .lt / .lte / .between`
+- **`LogicalCondition` + `Expressions` namespace** — AND / OR / NOT composition over any `ConditionLike`. Contiguous AND / OR chains flatten in the emitted SQL
+- **`ConditionLike` interface** — shared contract unifying `ColumnCondition`, `JsonPathCondition`, `AggregateCondition`, and `LogicalCondition`; `resolve()` threads the alias registry and dialect strategy through uniformly
+- **`DialectExpression.caseInsensitiveLike(column, pattern)`** — collation-independent case-insensitive LIKE; `ILIKE ... ESCAPE '\'` on PostgreSQL, `LOWER(col) LIKE LOWER(pattern) ESCAPE '\'` on MySQL / SQLite
+- **`escapeLikeValue(value)`** — helper that escapes `%`, `_`, and `\` so user-supplied text never silently acts as a LIKE wildcard
 - **String convenience methods on `ColumnExpression`** — `.startsWith / .endsWith / .contains` (auto-escape metacharacters, emit `LIKE … ESCAPE '\'`), `.equalsIgnoreCase` (`LOWER() = LOWER()` on every dialect), `.likeIgnoreCase`, `.startsWithIgnoreCase`, `.endsWithIgnoreCase`, `.containsIgnoreCase`
+
+#### Tier 2 — scalar expressions, CAST, date parts, subqueries, CASE
+
+- **`AliasedExpression` + `.as()`** — promoted to `ColumnExpression`, `JsonPathExpression`, and `AggregateExpression`. SELECT-only (not a `ConditionLike`)
+- **`ScalarExpression` / `ScalarCondition`** — deferred scalar SQL with SELECT + comparison dual role; plugs into AND/OR/NOT; the foundation for Tier 2/3 expressions (`coalesce`, CAST, date components, window, CASE, …)
+- **`coalesce(a, b, …)` / `nullif(a, b)`** — free functions and `col.coalesce(...fallbacks)` shorthand; `Expressions.coalesce` / `Expressions.nullif` for the static surface
+- **CAST helpers** — `.stringValue / .intValue / .longValue / .floatValue / .booleanValue` on column and scalar; dialect type names via `DialectExpression.castTypeName(kind)` (MySQL `CHAR / SIGNED / DECIMAL / UNSIGNED`, PostgreSQL `TEXT / INTEGER / BIGINT / REAL / BOOLEAN`, SQLite `TEXT / INTEGER / REAL / INTEGER`)
+- **Date component extraction** — `.year / .month / .day / .hour / .minute / .second / .dayOfWeek / .dayOfMonth / .dayOfYear / .week` via `DialectExpression.dateComponent(value, component)`. `EXTRACT(...)` on PostgreSQL, `YEAR(...)/MONTH(...)/…` on MySQL, `strftime('%Y/%m/...', ...)` on SQLite — always wrapped in `CAST(... AS INTEGER)` where necessary
+- **Current-time literals** — `Expressions.currentDate() / .currentTime() / .currentTimestamp()` return `ScalarExpression`; inline in SQL rather than binding as parameters
+- **Subquery operators** — `ColumnExpression.in(subQb)`, `.notIn(subQb)`, scalar `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`; `Expressions.exists(subQb)` / `Expressions.notExists(subQb)` return a negation-toggling `ExistsCondition`
+- **`CaseBuilder` + `CaseValueBuilder`** — fluent searched (`caseBuilder().when(cond).then(val)…`) and simple (`cases(subject).when(val, result)…`) CASE forms with terminal `.end()` / `.as(alias)`; early misuse guards for `.when()` after `.otherwise()`, duplicate `.otherwise()`, and empty `.end()`
+- **`RawQueryBuilder.selectFragments(fragments, distinct)`** — parameter-preserving SELECT segment used by `AliasedExpression` to carry JSON path bindings through execution
+
+#### Tier 3 — TS/Node-native helpers
+
+- **JS-idiomatic string / numeric / math methods** on column and scalar: `.toLowerCase / .toUpperCase / .trim / .length / .substring(start, end?) / .concat(...args) / .indexOf(needle) / .replace(from, to)`, `.add / .sub / .mul / .div / .mod / .neg`, `.abs / .floor / .ceil / .round(digits?) / .sqrt`. `substring` uses JS 0-based / end-exclusive semantics; `length` uses `CHAR_LENGTH` (multibyte safe); `indexOf` shifts dialect-specific `STRPOS` / `LOCATE` / `INSTR` down by one so `-1` / 0-based results match `String.prototype.indexOf`
+- **Date arithmetic** — `.addYears/Months/Days/Hours/Minutes/Seconds(n)` on column and scalar; `Expressions.dateDiff(a, b, unit)` returns integer difference (`TIMESTAMPDIFF` on MySQL, calendar-aware `age()` for year/month on PostgreSQL, `julianday()` on SQLite with 365.25 / 30.4375 approximations for year/month); `Expressions.random()` — `RAND()` / `RANDOM()`
+- **`AggregateExpression.over()` + `WindowBuilder`** — fluent `PARTITION BY / ORDER BY / ROWS BETWEEN / RANGE BETWEEN` chain; `.as("alias")` and `.toScalar()` terminals
+- **`Expressions.raw<T>(fragment)`** — typed raw `Sql`-fragment escape hatch that threads through the full Tier 2/3 composition surface (`.as`, `.eq`, `coalesce`, cast, …); parameter bindings inside the template survive end-to-end
+- **`.bigintValue()`** — CAST sibling of `.longValue()` with a name signaling JS `bigint` intent; emits `BIGINT` / `SIGNED` / `INTEGER` per dialect. `CastKind` gains a `"bigint"` variant
+- **`qb.selectSchema(schema)`** — attaches a Zod / Valibot / Effect-compatible schema as the row validator AND narrows `TResult` to `z.infer<typeof schema>` at the type level; pairs with the existing `.validate(schema)` for callers who prefer two explicit calls
 
 ### Changed
 
-- `SelectQueryBuilder.select()` and `.addSelect()` accept `AggregateExpression`; aggregate-only `select()` resets the column list
-- `SelectQueryBuilder.orderBy()` and `.addOrderBy()` accept `OrderExpression`; `orderByClauses` carries an optional `nulls` position. PostgreSQL and SQLite emit `NULLS FIRST` / `NULLS LAST` natively; MySQL emulates it with a `col IS NULL` ordering prefix
-- `SelectQueryBuilder.where() / .andWhere() / .orWhere() / .having()` and `WhereGroupBuilder.where()` all dispatch through `isConditionLike`, so any new condition type composes without further overloads
-- `ColumnCondition` now implements `ConditionLike` with `__isCondition`; its existing `resolve(resolveColumn)` signature gains an optional dialect parameter used by new operators (fully backward compatible)
-- `JsonPathCondition` now implements `ConditionLike` too — so JSON path conditions compose with `AND/OR/NOT` alongside column and aggregate conditions
+- `SelectQueryBuilder.select()` / `.addSelect()` accept `AggregateExpression`, `AliasedExpression`, or mixed arrays; aggregate-only / aliased-only `select()` resets the column list
+- `SelectQueryBuilder.orderBy()` / `.addOrderBy()` accept `OrderExpression`; `orderByClauses` carries an optional `nulls` position. PostgreSQL and SQLite emit `NULLS FIRST` / `NULLS LAST` natively; MySQL emulates it with a `col IS NULL` ordering prefix
+- `SelectQueryBuilder.where() / .andWhere() / .orWhere() / .having()` and `WhereGroupBuilder.where()` dispatch through `isConditionLike`, so any new condition type composes without further overloads
+- `ColumnCondition.resolve()` now unwraps a `ScalarExpression` or subquery-like `SelectQueryBuilder` operand inline — so `u.expiresAt.gte(currentTimestamp())` and `u.id.in(subQb)` emit the expression / `(SELECT ...)` directly instead of binding the object as a parameter
+- `ColumnCondition` and `JsonPathCondition` now implement `ConditionLike`; legacy `resolve(resolveColumn)` signatures gain an optional dialect parameter (fully backward compatible)
+
+### DialectExpression additions
+
+- Tier 1: `caseInsensitiveLike(column, pattern)`
+- Tier 2: `castTypeName(kind)`, `dateComponent(value, component)`
+- Tier 3: `stringIndexOf(haystack, needle)`, `dateAdd(value, n, unit)`, `dateDiff(a, b, unit)`, `random()`; `CastKind` extended with `"bigint"`
 
 ### Documentation
 
-- New **Sorting, Counting, Combining, and Matching** section in `docs/query-builder.md` and `docs/ko/query-builder.md` covering the four `qAlias()` expression groups with per-category examples, dialect-by-dialect SQL output, and a method-summary table
+- `docs/query-builder.md` (EN) and `docs/ko/query-builder.md` (KO) gain thirteen new sections and matching summary-table rows — covering sorting, aggregates, logical composition, string convenience (Tier 1); SELECT aliasing, null handling, current time, CAST, date components, subquery comparisons, CASE (Tier 2); JS-idiomatic string / numeric / math, date arithmetic, window functions, raw / bigint / schema escape hatches (Tier 3). Dialect mapping tables included for CAST, date components, date arithmetic, and date-component engines (`DAYOFWEEK` encoding differences documented explicitly).
 
 ### Tests
 
-- 100 new unit cases across `qdsl-tier1-order-expression.test.ts`, `qdsl-tier1-aggregate-expression.test.ts`, `qdsl-tier1-logical-condition.test.ts`, `qdsl-tier1-string-convenience.test.ts`, and `qdsl-tier1-integration.test.ts` covering construction, SQL rendering, operator behaviour, LIKE escaping, dialect branches, and composition between condition types
-- 21 new SQLite in-memory integration cases in `__tests__/integration/sqlite/qdsl-tier1.test.ts` exercising aggregate SELECT, GROUP BY + HAVING, ORDER BY with NULLS positioning, WHERE logical composition, and the string-convenience surface end-to-end against a real database
-- 17 new MySQL (MariaDB) integration cases in `__tests__/integration/qdsl-tier1-mysql.test.ts` covering the `col IS NULL` NULLS emulation, `LOWER(col) LIKE LOWER(pattern) ESCAPE '\'` case-insensitive fallback, and LIKE metacharacter escaping under the default `utf8mb4` collation
-- 17 new PostgreSQL integration cases in `__tests__/integration/qdsl-tier1-postgres.test.ts` covering native `NULLS FIRST/LAST`, native `ILIKE ... ESCAPE '\'`, and parameterized ESCAPE character under `$1` numbered-placeholder binding
-- No regressions: full unit suite (3,745 passed, 19 skipped) and full integration suite (1,113 passed across 55 suites, covering SQLite + MySQL + PostgreSQL) green
+- **Tier 1** — 100 new unit cases (`qdsl-tier1-*`) plus per-dialect integration suites: 21 SQLite, 17 MySQL, 17 PostgreSQL
+- **Tier 2** — 112 new unit cases across seven files (`qdsl-tier2-aliased-expression`, `qdsl-tier2-nullish`, `qdsl-tier2-temporal`, `qdsl-tier2-cast`, `qdsl-tier2-date-component`, `qdsl-tier2-subquery`, `qdsl-tier2-case-builder`); regression clean on MySQL + PostgreSQL + SQLite via existing dual-driver suites
+- **Tier 3** — 71 new unit cases across three files (`qdsl-tier3-string-numeric-math`, `qdsl-tier3-date-window-random`, `qdsl-tier3-ts-native`)
+- **Full run** — 5,041 passed / 21 skipped / **0 failures** across 236 suites (unit + SQLite + MySQL + PostgreSQL), ~36s
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.16.1...v0.19.0
 
 ---
 
