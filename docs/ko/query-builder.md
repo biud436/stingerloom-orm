@@ -589,6 +589,37 @@ CAST 헬퍼는 `ColumnExpression`과 `ScalarExpression` 양쪽에 다 달려 있
 | float    | `DECIMAL`  | `REAL`     | `REAL`    |
 | boolean  | `UNSIGNED` | `BOOLEAN`  | `INTEGER` |
 
+##### 날짜 / 시각 컴포넌트 — `.year()` / `.month()` / `.day()` / `.hour()` / …
+
+날짜나 타임스탬프 컬럼에서 일부 성분만 뽑아낼 수 있어요. 10개 메서드가 있어요: `year`, `month`, `day`(= `dayOfMonth`), `hour`, `minute`, `second`, `dayOfWeek`, `dayOfMonth`, `dayOfYear`, `week`. 결과는 `ScalarExpression`이라 SELECT / WHERE / HAVING에 모두 쓸 수 있고, `.as()` / cast / coalesce와 바로 이어 붙일 수 있어요.
+
+```typescript
+const e = qAlias(Event, "e");
+
+qb.select([e.startsAt.year().as("yr"), e.id.count().as("total")])
+  .groupBy(["e.startsAt"])
+  .having(e.startsAt.year().gte(2026));
+// PG:     CAST(EXTRACT(YEAR FROM "e"."starts_at") AS INTEGER) = ?
+// MySQL:  YEAR(`e`.`starts_at`) = ?
+// SQLite: CAST(strftime(?, "e"."starts_at") AS INTEGER) = ?   -- '%Y'
+```
+
+드라이버별 SQL 생성:
+
+| 헬퍼 | MySQL | PostgreSQL | SQLite |
+|------|-------|------------|--------|
+| `year()` | `YEAR(col)` | `EXTRACT(YEAR FROM col)` | `strftime('%Y', col)` |
+| `month()` | `MONTH(col)` | `EXTRACT(MONTH FROM col)` | `strftime('%m', col)` |
+| `day()` / `dayOfMonth()` | `DAYOFMONTH(col)` | `EXTRACT(DAY FROM col)` | `strftime('%d', col)` |
+| `hour()` | `HOUR(col)` | `EXTRACT(HOUR FROM col)` | `strftime('%H', col)` |
+| `minute()` | `MINUTE(col)` | `EXTRACT(MINUTE FROM col)` | `strftime('%M', col)` |
+| `second()` | `SECOND(col)` | `EXTRACT(SECOND FROM col)` | `strftime('%S', col)` |
+| `dayOfWeek()` | `DAYOFWEEK(col)` | `EXTRACT(DOW FROM col)` | `strftime('%w', col)` |
+| `dayOfYear()` | `DAYOFYEAR(col)` | `EXTRACT(DOY FROM col)` | `strftime('%j', col)` |
+| `week()` | `WEEK(col)` | `EXTRACT(WEEK FROM col)` | `strftime('%W', col)` |
+
+`dayOfWeek`와 `week`는 드라이버마다 인코딩이 살짝 달라요 — MySQL의 `DAYOFWEEK`은 1=일…7=토, PostgreSQL의 `DOW`는 0=일…6=토, SQLite의 `%w`는 PG와 같아요. 리포트 이식성이 중요하면 애플리케이션 계층에서 정규화하거나, 드라이버별 raw SQL을 쓰는 편이 안전해요.
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -691,6 +722,7 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | null fallback             | `coalesce(...)`, `col.coalesce(...)`, `nullif(a, b)` — 첫 non-null 값 / 일치 시 NULL 변환 |
 | 현재 날짜 / 시각          | `currentDate()`, `currentTime()`, `currentTimestamp()` — `Expressions`에도 있음                 |
 | 타입 변환                 | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()`             |
+| 날짜 컴포넌트             | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfYear()`, `.week()` |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |

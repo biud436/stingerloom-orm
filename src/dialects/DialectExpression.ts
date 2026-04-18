@@ -147,6 +147,31 @@ export interface DialectExpression {
    * | `boolean` | `UNSIGNED` | `BOOLEAN`  | `INTEGER` |
    */
   castTypeName(kind: CastKind): string;
+
+  /**
+   * Render a date/time component extraction on `value` — e.g.
+   * `YEAR(col)` (MySQL), `EXTRACT(YEAR FROM col)` (PostgreSQL),
+   * `CAST(strftime('%Y', col) AS INTEGER)` (SQLite).
+   *
+   * The `value` is pre-rendered (already a `Sql` fragment) so callers
+   * can pass column references, other scalar expressions, or function
+   * calls without worrying about dialect-specific quoting.
+   *
+   * Component mapping:
+   * - `year`: 4-digit year
+   * - `month`: 1–12
+   * - `day`: alias of `dayOfMonth`, 1–31
+   * - `hour`: 0–23
+   * - `minute`: 0–59
+   * - `second`: 0–59 (or 60 for leap seconds on some engines)
+   * - `dayOfWeek`: engine-dependent encoding (MySQL 1=Sun…7=Sat,
+   *   PostgreSQL 0=Sun…6=Sat, SQLite same as PG). Prefer explicit
+   *   ISO-aware logic if portability matters.
+   * - `dayOfMonth`: 1–31
+   * - `dayOfYear`: 1–366
+   * - `week`: engine-dependent week-of-year.
+   */
+  dateComponent(value: Sql, component: DateComponent): Sql;
 }
 
 /**
@@ -155,6 +180,22 @@ export interface DialectExpression {
  * by {@link DialectExpression.castTypeName}.
  */
 export type CastKind = "string" | "int" | "long" | "float" | "boolean";
+
+/**
+ * Supported date-component extraction kinds. Resolved to dialect-
+ * specific SQL by {@link DialectExpression.dateComponent}.
+ */
+export type DateComponent =
+  | "year"
+  | "month"
+  | "day"
+  | "hour"
+  | "minute"
+  | "second"
+  | "dayOfWeek"
+  | "dayOfMonth"
+  | "dayOfYear"
+  | "week";
 
 /** Singleton cache — implementations are stateless. */
 const cache = new Map<DialectName, DialectExpression>();

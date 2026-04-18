@@ -3,6 +3,7 @@ import sql, { Sql, raw, join } from "sql-template-tag";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import type {
   CastKind,
+  DateComponent,
   DialectExpression,
 } from "../../dialects/DialectExpression";
 import { AliasedExpression } from "./AliasedExpression";
@@ -124,6 +125,62 @@ export class ScalarExpression {
       const value = innerRenderer(resolveColumn, dialect);
       const typeName = dialect.castTypeName(kind);
       return sql`CAST(${value} AS ${raw(typeName)})`;
+    });
+  }
+
+  // ── Date / time component helpers (Tier 2) ─────────────
+  /** Extract year. */
+  year(): ScalarExpression {
+    return this.buildDateComponent("year");
+  }
+  /** Extract month (1–12). */
+  month(): ScalarExpression {
+    return this.buildDateComponent("month");
+  }
+  /** Alias of `.dayOfMonth()`. */
+  day(): ScalarExpression {
+    return this.buildDateComponent("day");
+  }
+  /** Extract hour (0–23). */
+  hour(): ScalarExpression {
+    return this.buildDateComponent("hour");
+  }
+  /** Extract minute of hour (0–59). */
+  minute(): ScalarExpression {
+    return this.buildDateComponent("minute");
+  }
+  /** Extract second of minute (0–59). */
+  second(): ScalarExpression {
+    return this.buildDateComponent("second");
+  }
+  /** Day of week — engine-specific encoding. */
+  dayOfWeek(): ScalarExpression {
+    return this.buildDateComponent("dayOfWeek");
+  }
+  /** Day of month (1–31). */
+  dayOfMonth(): ScalarExpression {
+    return this.buildDateComponent("dayOfMonth");
+  }
+  /** Day of year (1–366). */
+  dayOfYear(): ScalarExpression {
+    return this.buildDateComponent("dayOfYear");
+  }
+  /** Week of year — engine-specific encoding. */
+  week(): ScalarExpression {
+    return this.buildDateComponent("week");
+  }
+
+  private buildDateComponent(component: DateComponent): ScalarExpression {
+    const innerRenderer = this.renderer;
+    return new ScalarExpression((resolveColumn, dialect) => {
+      if (!dialect) {
+        throw new Error(
+          "Date component expressions require a DialectExpression. " +
+            "Ensure the query builder was created via EntityManager.createQueryBuilder().",
+        );
+      }
+      const value = innerRenderer(resolveColumn, dialect);
+      return dialect.dateComponent(value, component);
     });
   }
 }

@@ -3,6 +3,7 @@ import type { Sql } from "sql-template-tag";
 import type {
   CastKind,
   ColumnJsonMeta,
+  DateComponent,
   DialectExpression,
 } from "../DialectExpression";
 import { OrmError } from "../../errors/OrmError";
@@ -120,5 +121,36 @@ export class SqliteExpression implements DialectExpression {
       case "boolean":
         return "INTEGER";
     }
+  }
+
+  dateComponent(value: Sql, component: DateComponent): Sql {
+    const format = sqliteStrftimeFormat(component);
+    return sql`CAST(strftime(${format}, ${value}) AS INTEGER)`;
+  }
+}
+
+function sqliteStrftimeFormat(component: DateComponent): string {
+  switch (component) {
+    case "year":
+      return "%Y";
+    case "month":
+      return "%m";
+    case "day":
+    case "dayOfMonth":
+      return "%d";
+    case "hour":
+      return "%H";
+    case "minute":
+      return "%M";
+    case "second":
+      return "%S";
+    case "dayOfWeek":
+      // strftime %w: 0=Sunday..6=Saturday (matches PG DOW for 0..6).
+      return "%w";
+    case "dayOfYear":
+      return "%j";
+    case "week":
+      // %W = week 0..53 (Monday as first day). Closest portable match.
+      return "%W";
   }
 }

@@ -41,7 +41,8 @@ import {
 import { ScalarExpression } from "./expressions/ScalarExpression";
 import { coalesce as coalesceFn } from "./expressions/NullishExpression";
 import { buildCastScalar } from "./expressions/CastExpression";
-import type { CastKind } from "../dialects/DialectExpression";
+import { buildDateComponentFromRef } from "./expressions/DateComponentExpression";
+import type { CastKind, DateComponent } from "../dialects/DialectExpression";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
@@ -515,6 +516,53 @@ export class ColumnExpression {
     return buildCastScalar(kind, (resolveColumn) =>
       sql`${raw(resolveColumn(ref))}`,
     );
+  }
+
+  // ── Date / time component helpers (Tier 2) ─────────────
+
+  /** `EXTRACT(YEAR …)` / `YEAR(col)` / `strftime('%Y', col)`. */
+  year(): ScalarExpression {
+    return this.buildDateComponent("year");
+  }
+  /** `EXTRACT(MONTH …)` / `MONTH(col)` / `strftime('%m', col)`. */
+  month(): ScalarExpression {
+    return this.buildDateComponent("month");
+  }
+  /** Alias of `.dayOfMonth()` — 1–31. */
+  day(): ScalarExpression {
+    return this.buildDateComponent("day");
+  }
+  /** `EXTRACT(HOUR …)` / `HOUR(col)` / `strftime('%H', col)`. */
+  hour(): ScalarExpression {
+    return this.buildDateComponent("hour");
+  }
+  /** Minute of hour, 0–59. */
+  minute(): ScalarExpression {
+    return this.buildDateComponent("minute");
+  }
+  /** Second of minute, 0–59. */
+  second(): ScalarExpression {
+    return this.buildDateComponent("second");
+  }
+  /** Day of week — engine-specific encoding (see DialectExpression doc). */
+  dayOfWeek(): ScalarExpression {
+    return this.buildDateComponent("dayOfWeek");
+  }
+  /** Day of month, 1–31. */
+  dayOfMonth(): ScalarExpression {
+    return this.buildDateComponent("dayOfMonth");
+  }
+  /** Day of year, 1–366. */
+  dayOfYear(): ScalarExpression {
+    return this.buildDateComponent("dayOfYear");
+  }
+  /** Week of year — engine-specific encoding (see DialectExpression doc). */
+  week(): ScalarExpression {
+    return this.buildDateComponent("week");
+  }
+
+  private buildDateComponent(component: DateComponent): ScalarExpression {
+    return buildDateComponentFromRef(component, this.ref);
   }
 
   // ── Aggregate helpers (Tier 1) ─────────────────────────

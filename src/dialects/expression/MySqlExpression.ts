@@ -3,6 +3,7 @@ import type { Sql } from "sql-template-tag";
 import type {
   CastKind,
   ColumnJsonMeta,
+  DateComponent,
   DialectExpression,
 } from "../DialectExpression";
 
@@ -125,5 +126,34 @@ export class MySqlExpression implements DialectExpression {
       case "boolean":
         return "UNSIGNED";
     }
+  }
+
+  dateComponent(value: Sql, component: DateComponent): Sql {
+    const fn = mysqlDateFunction(component);
+    return sql`${raw(fn)}(${value})`;
+  }
+}
+
+function mysqlDateFunction(component: DateComponent): string {
+  switch (component) {
+    case "year":
+      return "YEAR";
+    case "month":
+      return "MONTH";
+    case "day":
+    case "dayOfMonth":
+      return "DAYOFMONTH";
+    case "hour":
+      return "HOUR";
+    case "minute":
+      return "MINUTE";
+    case "second":
+      return "SECOND";
+    case "dayOfWeek":
+      return "DAYOFWEEK";
+    case "dayOfYear":
+      return "DAYOFYEAR";
+    case "week":
+      return "WEEK";
   }
 }

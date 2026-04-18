@@ -693,6 +693,46 @@ without anything special.
 | float    | `DECIMAL`  | `REAL`     | `REAL`    |
 | boolean  | `UNSIGNED` | `BOOLEAN`  | `INTEGER` |
 
+##### Date / time components — `.year()` / `.month()` / `.day()` / `.hour()` / …
+
+Extract a component from a date or timestamp column. Ten helpers
+cover the common shapes — year, month, day (alias of `dayOfMonth`),
+hour, minute, second, `dayOfWeek`, `dayOfMonth`, `dayOfYear`, `week`.
+Each returns a `ScalarExpression`, so they drop into SELECT, WHERE,
+HAVING, chain into `.as()`, and compose with cast/coalesce.
+
+```typescript
+const e = qAlias(Event, "e");
+
+// Count events per year
+qb.select([e.startsAt.year().as("yr"), e.id.count().as("total")])
+  .groupBy(["e.startsAt"])
+  .having(e.startsAt.year().gte(2026));
+// PG:     CAST(EXTRACT(YEAR FROM "e"."starts_at") AS INTEGER) = ?
+// MySQL:  YEAR(`e`.`starts_at`) = ?
+// SQLite: CAST(strftime(?, "e"."starts_at") AS INTEGER) = ?   -- '%Y'
+```
+
+Dialect-specific emission (the caller never sees the difference):
+
+| Helper | MySQL | PostgreSQL | SQLite |
+|--------|-------|------------|--------|
+| `year()` | `YEAR(col)` | `EXTRACT(YEAR FROM col)` | `strftime('%Y', col)` |
+| `month()` | `MONTH(col)` | `EXTRACT(MONTH FROM col)` | `strftime('%m', col)` |
+| `day()` / `dayOfMonth()` | `DAYOFMONTH(col)` | `EXTRACT(DAY FROM col)` | `strftime('%d', col)` |
+| `hour()` | `HOUR(col)` | `EXTRACT(HOUR FROM col)` | `strftime('%H', col)` |
+| `minute()` | `MINUTE(col)` | `EXTRACT(MINUTE FROM col)` | `strftime('%M', col)` |
+| `second()` | `SECOND(col)` | `EXTRACT(SECOND FROM col)` | `strftime('%S', col)` |
+| `dayOfWeek()` | `DAYOFWEEK(col)` | `EXTRACT(DOW FROM col)` | `strftime('%w', col)` |
+| `dayOfYear()` | `DAYOFYEAR(col)` | `EXTRACT(DOY FROM col)` | `strftime('%j', col)` |
+| `week()` | `WEEK(col)` | `EXTRACT(WEEK FROM col)` | `strftime('%W', col)` |
+
+`dayOfWeek` and `week` encodings differ slightly between engines —
+MySQL uses `1=Sun…7=Sat` for `DAYOFWEEK`, PostgreSQL `0=Sun…6=Sat`
+for `DOW`, and SQLite matches PostgreSQL via `%w`. If portability
+within your reports matters, normalize in the application layer or
+use dialect-specific raw SQL.
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -790,6 +830,7 @@ Method summary:
 | Null handling         | `coalesce(…)`, `nullif(a, b)`, `col.coalesce(…)`, `Expressions.coalesce`, `Expressions.nullif` |
 | Current date / time   | `currentDate()`, `currentTime()`, `currentTimestamp()` — also on `Expressions`                 |
 | Type casts            | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` — dialect-specific type names |
+| Date components       | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfMonth()`, `.dayOfYear()`, `.week()` |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables
