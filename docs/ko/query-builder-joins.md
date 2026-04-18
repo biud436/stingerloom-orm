@@ -1,11 +1,11 @@
 # Query Builder — JOIN
 
-Join is where the query builder really shines compared to `find()`.
 `find()`로도 관계를 따라가며 eager load는 가능하지만, `@ManyToOne` /
 `@OneToMany` / `@OneToOne`으로 선언한 경로만 탐색할 수 있어요. Query
 builder는 한 발 더 나가서 — 어떤 엔티티든 (심지어 raw 테이블 이름으로도)
 조인하고, 조인 경계 너머의 컬럼을 TypeScript 자동완성으로 참조하며,
-관계 메타데이터가 있으면 ON 절을 아예 생략할 수 있어요.
+관계 메타데이터가 있으면 ON 절을 아예 생략할 수 있어요. Query builder의
+진가가 가장 뚜렷하게 드러나는 부분이에요.
 
 세 단계의 JOIN을 지원해요.
 

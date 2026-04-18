@@ -182,7 +182,7 @@ function sidebarKo() {
               link: "/ko/query-builder-execution",
             },
             {
-              text: "생산성 패턴",
+              text: "편의 패턴",
               link: "/ko/query-builder-patterns",
             },
           ],

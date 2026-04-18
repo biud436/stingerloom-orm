@@ -1,4 +1,4 @@
-# Query Builder — 생산성 패턴
+# Query Builder — 편의 패턴
 
 이 페이지는 Stingerloom query builder를 차별화하는 헬퍼들을 모아놨어요
 — 조건부 빌딩, 그룹 조건, 합성 가능한 변환, relation 기반 쿼리,

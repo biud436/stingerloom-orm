@@ -25,7 +25,7 @@ Stingerloom은 두 가지 query builder를 제공하고, 선택 기준은 간단
 | JSON / JSONB 컬럼 탐색 | [JSON 컬럼 탐색](./query-builder-json.md) |
 | `GROUP BY`, `HAVING`, 서브쿼리, `DISTINCT`, CTE | [집계 & 서브쿼리](./query-builder-aggregations.md) |
 | 페이지네이션, 잠금, 인덱스 힌트, `validate()`, 실행 단계, `prepare()` | [실행 & 결과](./query-builder-execution.md) |
-| `when()`, `pipe()`, `whereHas()`, `withCount()`, scope | [생산성 패턴](./query-builder-patterns.md) |
+| `when()`, `pipe()`, `whereHas()`, `withCount()`, scope | [편의 패턴](./query-builder-patterns.md) |
 | UNION, 재귀 CTE, 윈도우 함수 — `RawQueryBuilder` | [Raw SQL & CTE](./raw-sql.md) |
 
 ---
@@ -208,7 +208,7 @@ qb.whereLike("name", "%alice%");
 - **[실행 & 결과](./query-builder-execution.md)** — ORDER BY,
   페이지네이션, 비관적 잠금, 인덱스 힌트, `validate()`, `getMany()` /
   `getPartialMany()` / `getRawMany()`, `prepare()`
-- **[생산성 패턴](./query-builder-patterns.md)** — `when()`, `pipe()`,
+- **[편의 패턴](./query-builder-patterns.md)** — `when()`, `pipe()`,
   `whereHas()`, `withCount()`, scope
 - **[Raw SQL & CTE](./raw-sql.md)** — UNION, 재귀 CTE, 윈도우 함수,
   DISTINCT ON이 필요한 상황을 위한 `RawQueryBuilder`

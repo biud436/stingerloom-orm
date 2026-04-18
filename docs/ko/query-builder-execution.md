@@ -471,12 +471,12 @@ const [posts, total] = await em
   .getPartialManyAndCount();
 ```
 
-`when()`, `pipe()`, scope 같은 생산성 헬퍼는
-[생산성 패턴](./query-builder-patterns.md)에서 다뤄요.
+`when()`, `pipe()`, scope 같은 편의 헬퍼는
+[편의 패턴](./query-builder-patterns.md)에서 다뤄요.
 
 ## 다음 단계
 
-- [생산성 패턴](./query-builder-patterns.md) — `when`, `pipe`, scope, `whereHas`, `withCount`
+- [편의 패턴](./query-builder-patterns.md) — `when`, `pipe`, scope, `whereHas`, `withCount`
 - [QueryDSL 표현식](./query-builder-querydsl.md) — 타입드 조건 / 프로젝션 표현
 - [페이지네이션 & 스트리밍](./pagination.md) — 커서 페이지네이션, 스트리밍
 - [Query Builder 개요](./query-builder.md) — 기본 사용법과 전체 지도

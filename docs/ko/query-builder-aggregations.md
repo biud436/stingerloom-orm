@@ -190,7 +190,7 @@ const results = await em.query(
 - `whereExistsSubquery(subQb)` / `whereNotExistsSubquery(...)`
 - `addSelectSubquery(subQb, alias)`
 
-전체 세트는 [생산성 패턴](./query-builder-patterns.md#subquery-통합)에서
+전체 세트는 [편의 패턴](./query-builder-patterns.md#subquery-통합)에서
 다뤄요.
 
 ## DISTINCT
@@ -214,6 +214,6 @@ const uniqueCities = await em
 ## 다음 단계
 
 - [QueryDSL 표현식](./query-builder-querydsl.md) — 타입드 집계 / 윈도우 함수 / CASE / 날짜 컴포넌트
-- [생산성 패턴](./query-builder-patterns.md) — `whereHas`, `withCount`, scope
+- [편의 패턴](./query-builder-patterns.md) — `whereHas`, `withCount`, scope
 - [Raw SQL & CTE](./raw-sql.md) — UNION, 재귀 CTE, 윈도우 함수
 - [Query Builder 개요](./query-builder.md) — 기본 사용법과 전체 지도
