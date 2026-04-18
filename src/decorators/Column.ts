@@ -232,7 +232,15 @@ export function Column(option?: ColumnOption): PropertyDecorator {
     const injectParam = ReflectManager.getType<any>(target, propertyKey);
 
     // design:type으로부터 기본값을 추론한 뒤, 사용자 옵션으로 덮어씁니다.
+    // 단, 사용자가 type만 교체하고 length를 명시하지 않은 경우, 추론된
+    // length(예: String → 255)는 새 type(예: date)에 무효하므로 버립니다.
     const defaults = inferColumnDefaults(injectParam);
+    const typeOverridden =
+      option?.type !== undefined && option.type !== defaults.type;
+    const lengthNotProvided = option?.length === undefined;
+    if (typeOverridden && lengthNotProvided) {
+      (defaults as { length?: number }).length = undefined;
+    }
     const resolvedOption: ResolvedColumnOption = {
       ...defaults,
       ...option,

@@ -83,7 +83,7 @@ interface SaleShape {
           Column({ type: "varchar", length: 30 })(Cls.prototype, "region");
           Reflect.defineMetadata("design:type", String, Cls.prototype, "product");
           Column({ type: "varchar", length: 30 })(Cls.prototype, "product");
-          Reflect.defineMetadata("design:type", Date, Cls.prototype, "soldOn");
+          Reflect.defineMetadata("design:type", String, Cls.prototype, "soldOn");
           Column({ type: "date" })(Cls.prototype, "soldOn");
           Reflect.defineMetadata("design:type", Number, Cls.prototype, "amount");
           Column({ type: "int" })(Cls.prototype, "amount");

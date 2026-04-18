@@ -86,7 +86,13 @@ export class SqliteColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
   protected buildLengthSuffix(type: string, option: ColumnOption): string {
     const alreadyHasParens = type.includes("(");
     if (alreadyHasParens || !option.length) return type;
-    if (this.needsLength(type)) {
+    // SQLite casts many source types to TEXT; check the user's intent
+    // (option.type) rather than the cast output so a date/json column
+    // doesn't inherit varchar's length default via TEXT(255).
+    const userType = option.type;
+    const acceptsLength =
+      userType === "varchar" || userType === "char" || userType === "text";
+    if (acceptsLength && this.needsLength(type)) {
       return `${type}(${option.length})`;
     }
     return type;

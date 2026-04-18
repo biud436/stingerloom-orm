@@ -126,14 +126,30 @@ export class MySqlColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
     return option.autoIncrement ? " AUTO_INCREMENT" : "";
   }
 
+  // Types for which MySQL accepts a length / display-width parameter.
+  // Everything else (DATE, DATETIME, TEXT, BLOB, JSON, …) rejects a
+  // trailing `(n)` at DDL parse time.
+  private static readonly LENGTH_TYPES = [
+    "VARCHAR", "CHAR",
+    "BINARY", "VARBINARY",
+    "BIT",
+    "TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT",
+  ];
+
   protected needsLength(type: string): boolean {
-    return !type.includes("(") && !!type;
+    const u = type.toUpperCase();
+    return MySqlColumnDefinitionBuilder.LENGTH_TYPES.some(
+      (t) => u === t || u.startsWith(`${t}(`) || u.startsWith(`${t} `),
+    );
   }
 
   protected buildLengthSuffix(type: string, option: ColumnOption): string {
     const alreadyHasParens = type.includes("(");
     if (alreadyHasParens || !option.length) return type;
-    return `${type}(${option.length})`;
+    if (this.needsLength(type)) {
+      return `${type}(${option.length})`;
+    }
+    return type;
   }
 
   protected renderBooleanDefault(value: boolean): string {
