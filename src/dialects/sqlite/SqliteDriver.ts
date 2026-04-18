@@ -274,15 +274,26 @@ export class SqliteDriver implements ISqlDriver {
    * 테이블을 생성합니다.
    */
   createTable(tableName: string, columns: SchemaOptions[]) {
+    const pkColumns = columns.filter(
+      (c) => (c.options as ColumnOption | undefined)?.primary,
+    );
+    const isCompositePk = pkColumns.length > 1;
+
     const columnsMap = columns.map((column) => {
       const option = (column.options ?? this.columnDefBuilder.defaultColumnOption) as ColumnOption;
       return raw(
         this.columnDefBuilder.buildColumnDef(option, {
           columnName: column.name!,
           tableName,
+          isCompositePk,
         }),
       );
     });
+
+    if (isCompositePk) {
+      const pkList = pkColumns.map((c) => this.wrap(c.name!)).join(", ");
+      columnsMap.push(raw(`PRIMARY KEY (${pkList})`));
+    }
 
     const result = sql`CREATE TABLE IF NOT EXISTS ${raw(this.wrap(tableName))} (${join(
       columnsMap,
