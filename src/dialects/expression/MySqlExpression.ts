@@ -121,6 +121,8 @@ export class MySqlExpression implements DialectExpression {
         return "CHAR";
       case "int":
       case "long":
+      case "bigint":
+        // MySQL SIGNED is 64-bit; no distinct 32-bit cast target.
         return "SIGNED";
       case "float":
         return "DECIMAL";

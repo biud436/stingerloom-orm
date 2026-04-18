@@ -113,6 +113,10 @@ export class ScalarExpression {
   booleanValue(): ScalarExpression {
     return this.buildCast("boolean");
   }
+  /** Wrap in `CAST(... AS BIGINT/SIGNED/INTEGER)` — JS `bigint` intent. */
+  bigintValue(): ScalarExpression {
+    return this.buildCast("bigint");
+  }
 
   private buildCast(kind: CastKind): ScalarExpression {
     const innerRenderer = this.renderer;

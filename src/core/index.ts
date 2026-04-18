@@ -51,4 +51,5 @@ export * from "./expressions/StringExpression";
 export * from "./expressions/NumericExpression";
 export * from "./expressions/DateArithmeticExpression";
 export * from "./expressions/WindowExpression";
+export * from "./expressions/RawExpression";
 export * from "./expressions/likeEscape";

@@ -581,6 +581,16 @@ export class ColumnExpression {
   booleanValue(): ScalarExpression {
     return this.buildCast("boolean");
   }
+  /**
+   * `CAST(column AS <dialect-bigint-type>)` — same SQL target as
+   * `.longValue()` (BIGINT / SIGNED / INTEGER), but the method name
+   * documents the intent for JavaScript `bigint` return values. The
+   * driver may still deliver the value as a string; wrap with `BigInt(...)`
+   * in application code to get a native `bigint`.
+   */
+  bigintValue(): ScalarExpression {
+    return this.buildCast("bigint");
+  }
 
   private buildCast(kind: CastKind): ScalarExpression {
     const ref = this.ref;
@@ -2853,6 +2863,49 @@ export class SelectQueryBuilder<T, TResult = T> {
   validate(validator: RowValidator<TResult>): this {
     this.rowValidator = validator;
     return this;
+  }
+
+  /**
+   * Type-inferred schema-validated result — a Zod / Valibot / Effect
+   * schema (anything with a `.parse(data)` method) is attached as the
+   * row validator AND the query builder's `TResult` type narrows to
+   * the schema's inferred output type.
+   *
+   * Combines `.validate(schema)` with a type-level reshaping — the
+   * caller no longer needs to carry a separate generic for the SELECT
+   * projection.
+   *
+   * @example
+   * ```ts
+   * import { z } from "zod";
+   *
+   * const UserRow = z.object({ id: z.number(), name: z.string() });
+   *
+   * const rows = await em
+   *   .createQueryBuilder(User, "u")
+   *   .select(["id", "name"])
+   *   .selectSchema(UserRow)
+   *   .getMany();
+   * //    ^? Array<{ id: number; name: string }>   — inferred from UserRow
+   * ```
+   *
+   * @remarks
+   * The SELECT list is untouched — the caller is responsible for
+   * projecting a compatible shape (e.g. via `.select([...])` or
+   * `.as("alias")` projections). This method purely wires runtime
+   * validation plus type inference.
+   */
+  selectSchema<TSchema extends { parse(data: unknown): unknown }>(
+    schema: TSchema,
+  ): SelectQueryBuilder<
+    T,
+    TSchema extends { parse(data: unknown): infer O } ? O : never
+  > {
+    this.rowValidator = schema as unknown as RowValidator<TResult>;
+    return this as unknown as SelectQueryBuilder<
+      T,
+      TSchema extends { parse(data: unknown): infer O } ? O : never
+    >;
   }
 
   /**

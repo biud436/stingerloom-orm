@@ -938,6 +938,64 @@ are responsible for ensuring they're safe (do not pass user input).
 `rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")` is the common
 cumulative-aggregate frame.
 
+##### TS-native escape hatches — `Expressions.raw<T>()` / `.bigintValue()` / `qb.selectSchema(...)`
+
+Three helpers specifically tuned to TypeScript ergonomics:
+
+**`Expressions.raw<T>(fragment)`** — wrap any `sql-template-tag` `Sql`
+fragment as a `ScalarExpression`, threading it through the Tier 2/3
+composition surface. The generic `T` documents the intended return
+type for downstream chains (`rawInt.gt(0)` reads as intended) but is
+not runtime-enforced.
+
+```typescript
+import sql from "sql-template-tag";
+import { Expressions, qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+
+const epoch = Expressions.raw<number>(
+  sql`EXTRACT(epoch FROM ${u.col("createdAt")})`,
+);
+
+qb.select([epoch.as("epoch_s")])
+  .where(epoch.gt(1700000000));
+```
+
+The parameter bindings on the template are preserved end-to-end. Use
+this for vendor-specific functions, full-text operators, or anything
+the typed builder hasn't covered yet — without giving up chain
+composition.
+
+**`.bigintValue()`** — CAST helper sibling of `.longValue()`, with a
+name that signals JS `bigint` intent. Emits `BIGINT` / `SIGNED` /
+`INTEGER` per dialect; drivers may still deliver the value as a
+string, so wrap the field with `BigInt(...)` when reading the row if
+you want a native `bigint`.
+
+**`qb.selectSchema(schema)`** — attaches a Zod / Valibot / Effect
+(anything with `.parse(data)`) schema as the row validator AND
+narrows `TResult` to `z.infer<typeof schema>` at the type level.
+
+```typescript
+import { z } from "zod";
+
+const UserRow = z.object({ id: z.number(), name: z.string() });
+
+const rows = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name"])
+  .selectSchema(UserRow)
+  .getMany();
+//    ^? Array<{ id: number; name: string }>  — inferred from UserRow
+```
+
+The SELECT list is unchanged — callers still project the shape they
+want via `.select([...])` or `.as("alias")` projections; `selectSchema`
+purely wires runtime validation plus type inference. For callers
+preferring two explicit calls, `.select(...).validate(schema)` is
+equivalent minus the type narrowing.
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -1041,6 +1099,9 @@ Method summary:
 | String / numeric / math | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring()`, `.concat()`, `.indexOf()`, `.replace()`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
 | Date arithmetic       | `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `Expressions.dateDiff(a, b, unit)`, `Expressions.random()` |
 | Window functions      | `aggregate.over().partitionBy(...).orderBy(...).rowsBetween(start, end).as("alias")` — `WindowBuilder` chain |
+| Raw SQL escape hatch  | `Expressions.raw<T>(sql`...`)` returns a `ScalarExpression` (composable with `.as`, `.eq`, `coalesce`, ...) |
+| BigInt cast           | `.bigintValue()` on column / scalar — BIGINT / SIGNED / INTEGER target |
+| Schema-inferred rows  | `qb.selectSchema(zodSchema)` — narrows `TResult` to `z.infer<schema>` and validates rows at runtime |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables

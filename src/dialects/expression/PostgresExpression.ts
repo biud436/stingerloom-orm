@@ -224,6 +224,7 @@ export class PostgresExpression implements DialectExpression {
       case "int":
         return "INTEGER";
       case "long":
+      case "bigint":
         return "BIGINT";
       case "float":
         return "REAL";

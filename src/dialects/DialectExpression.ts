@@ -215,10 +215,16 @@ export interface DialectExpression {
 
 /**
  * Supported CAST target kinds for the `.stringValue()` /
- * `.intValue()` family. Resolved to a dialect-specific SQL type name
- * by {@link DialectExpression.castTypeName}.
+ * `.intValue()` / `.bigintValue()` family. Resolved to a dialect-
+ * specific SQL type name by {@link DialectExpression.castTypeName}.
  */
-export type CastKind = "string" | "int" | "long" | "float" | "boolean";
+export type CastKind =
+  | "string"
+  | "int"
+  | "long"
+  | "float"
+  | "boolean"
+  | "bigint";
 
 /**
  * Supported units for `dateAdd` / `dateDiff` helpers. Day, month,

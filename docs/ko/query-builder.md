@@ -784,6 +784,47 @@ qb.select([
 
 프레임 문자열(`"UNBOUNDED PRECEDING"`, `"CURRENT ROW"`, `"5 PRECEDING"` 등)은 그대로 SQL에 삽입돼요. **사용자 입력을 이 자리에 넘기지 마세요.** 누적 집계에는 `rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")`를 쓰는 게 가장 일반적이에요.
 
+##### TS 네이티브 이스케이프 해치 — `Expressions.raw<T>()` / `.bigintValue()` / `qb.selectSchema(...)`
+
+TypeScript 생태계 맞춤 3종 세트예요.
+
+**`Expressions.raw<T>(fragment)`** — 어떤 `sql-template-tag` `Sql` fragment이든 `ScalarExpression`으로 감싸요. Tier 2/3 합성 체인(`.as`, `.eq`, `coalesce` 등)에 그대로 연결돼요. 제네릭 `T`는 다운스트림 체인의 타입 힌트용이지 런타임 검증용은 아니에요.
+
+```typescript
+import sql from "sql-template-tag";
+import { Expressions, qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+
+const epoch = Expressions.raw<number>(
+  sql`EXTRACT(epoch FROM ${u.col("createdAt")})`,
+);
+
+qb.select([epoch.as("epoch_s")])
+  .where(epoch.gt(1700000000));
+```
+
+템플릿 내부의 파라미터 바인딩은 끝까지 그대로 보존돼요. 드라이버 고유 함수, 전문 검색 연산자 등 타입드 빌더가 아직 커버하지 않은 곳의 이스케이프 해치로 쓰세요.
+
+**`.bigintValue()`** — `.longValue()`의 이름만 다른 형제. JS `bigint`를 다룬다는 의도를 명확히 표시해요. SQL은 `BIGINT` / `SIGNED` / `INTEGER`로 드라이버별 생성. 드라이버가 결과를 문자열로 내주는 경우가 있어서 JS 쪽에서 `BigInt(row.col)`로 감싸 주면 돼요.
+
+**`qb.selectSchema(schema)`** — Zod / Valibot / Effect 등 `.parse(data)`를 가진 스키마를 row 검증기로 붙이면서, 동시에 `TResult` 타입을 `z.infer<schema>`로 좁혀줘요.
+
+```typescript
+import { z } from "zod";
+
+const UserRow = z.object({ id: z.number(), name: z.string() });
+
+const rows = await em
+  .createQueryBuilder(User, "u")
+  .select(["id", "name"])
+  .selectSchema(UserRow)
+  .getMany();
+//    ^? Array<{ id: number; name: string }>  — UserRow에서 추론
+```
+
+SELECT 리스트는 그대로예요 — 호출자가 `.select([...])`나 `.as("alias")`로 원하는 형태로 투영하고, `selectSchema`는 런타임 검증과 타입 추론만 걸어줘요. 두 번 호출 스타일을 선호하면 `.select(...).validate(schema)`로 같은 효과를 낼 수 있지만 타입 narrowing은 안 돼요.
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -892,6 +933,9 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | 문자열 / 숫자 / 수학      | `.toLowerCase/.toUpperCase/.trim/.length/.substring/.concat/.indexOf/.replace`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
 | 날짜 산술                 | `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `Expressions.dateDiff(a, b, unit)`, `Expressions.random()` |
 | 윈도우 함수               | `aggregate.over().partitionBy(...).orderBy(...).rowsBetween(start, end).as("alias")` — `WindowBuilder` 체인 |
+| Raw SQL 이스케이프 해치   | `Expressions.raw<T>(sql`...`)` → `ScalarExpression` (체인 합성 가능) |
+| BigInt cast               | `.bigintValue()` (BIGINT / SIGNED / INTEGER) |
+| 스키마 기반 행 추론       | `qb.selectSchema(zodSchema)` — `TResult`를 `z.infer<schema>`로 narrow + 런타임 검증 |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |

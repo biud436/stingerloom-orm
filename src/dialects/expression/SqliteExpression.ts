@@ -116,6 +116,8 @@ export class SqliteExpression implements DialectExpression {
         return "TEXT";
       case "int":
       case "long":
+      case "bigint":
+        // SQLite INTEGER is already 64-bit.
         return "INTEGER";
       case "float":
         return "REAL";

@@ -27,6 +27,7 @@ import {
   dateDiff as dateDiffFactory,
   random as randomFactory,
 } from "./DateArithmeticExpression";
+import { raw as rawFactory } from "./RawExpression";
 import type { DateAddUnit } from "../../dialects/DialectExpression";
 
 export type LogicalOperator = "AND" | "OR" | "NOT";
@@ -240,6 +241,27 @@ export const Expressions = {
    */
   random(): ScalarExpression {
     return randomFactory();
+  },
+
+  /**
+   * Escape hatch — wrap a raw `Sql` fragment as a
+   * {@link ScalarExpression}. The generic `T` is a TypeScript marker
+   * that documents the intended return type; it flows through
+   * downstream chains but is not enforced at runtime.
+   *
+   * Callers take responsibility for the safety of the raw SQL.
+   *
+   * @example
+   * ```ts
+   * import sql from "sql-template-tag";
+   * const epoch = Expressions.raw<number>(
+   *   sql`EXTRACT(epoch FROM ${u.col("createdAt")})`,
+   * );
+   * qb.select([epoch.as("epoch_s")]).where(epoch.gt(1700000000));
+   * ```
+   */
+  raw<T = unknown>(fragment: import("sql-template-tag").Sql): ScalarExpression {
+    return rawFactory<T>(fragment);
   },
 } as const;
 
