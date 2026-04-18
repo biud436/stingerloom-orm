@@ -161,6 +161,33 @@ export interface DialectExpression {
   stringIndexOf(haystack: Sql, needle: Sql): Sql;
 
   /**
+   * Render date addition: `value + n units` as a date/timestamp.
+   *
+   * - PostgreSQL: `value + (N * INTERVAL '1 day')` (or similar)
+   * - MySQL: `DATE_ADD(value, INTERVAL N DAY)`
+   * - SQLite: `datetime(value, '+N days')`
+   *
+   * @param n can be negative for subtraction (`addDays(-7)`).
+   */
+  dateAdd(value: Sql, n: number, unit: DateAddUnit): Sql;
+
+  /**
+   * Render `dateDiff(a, b, unit)` — `(a - b)` in the requested unit.
+   *
+   * - PostgreSQL: `EXTRACT(epoch FROM (a - b)) / factor` or age()
+   * - MySQL: `TIMESTAMPDIFF(UNIT, b, a)`
+   * - SQLite: `CAST((julianday(a) - julianday(b)) * factor AS INTEGER)`
+   */
+  dateDiff(a: Sql, b: Sql, unit: DateAddUnit): Sql;
+
+  /**
+   * Render `RANDOM()` / `RAND()` — a scalar in `[0, 1)` (PG/SQLite) or
+   * `[0, 1)` / engine-specific range. Wrap in `ORDER BY` for random
+   * sampling.
+   */
+  random(): Sql;
+
+  /**
    * Render a date/time component extraction on `value` — e.g.
    * `YEAR(col)` (MySQL), `EXTRACT(YEAR FROM col)` (PostgreSQL),
    * `CAST(strftime('%Y', col) AS INTEGER)` (SQLite).
@@ -192,6 +219,19 @@ export interface DialectExpression {
  * by {@link DialectExpression.castTypeName}.
  */
 export type CastKind = "string" | "int" | "long" | "float" | "boolean";
+
+/**
+ * Supported units for `dateAdd` / `dateDiff` helpers. Day, month,
+ * year are calendar-aware where the engine supports it; hour, minute,
+ * second are straight time deltas.
+ */
+export type DateAddUnit =
+  | "year"
+  | "month"
+  | "day"
+  | "hour"
+  | "minute"
+  | "second";
 
 /**
  * Supported date-component extraction kinds. Resolved to dialect-

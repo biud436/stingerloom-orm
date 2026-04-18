@@ -875,6 +875,69 @@ All operands accept either primitives (bound as parameters) or other
 column/scalar expressions — so `p.price.add(p.discount)` or
 `p.name.concat(" (", p.sku, ")")` compose naturally.
 
+##### Date arithmetic — `.addDays()` / `.addMonths()` / …, `dateDiff`, `random`
+
+`ColumnExpression` and `ScalarExpression` gain six add-* helpers for
+the usual calendar units, `Expressions.dateDiff(a, b, unit)` returns
+an integer difference, and `Expressions.random()` wraps the engine's
+RNG. Together they cover reporting queries that don't want to resort
+to raw SQL.
+
+```typescript
+const e = qAlias(Event, "e");
+
+qb.select([
+  e.startsAt.addDays(7).as("next_week"),
+  e.startsAt.addMonths(-1).as("prev_month"),
+  Expressions.dateDiff(e.endsAt, e.startsAt, "day").as("span_days"),
+  Expressions.random().as("r"),
+]);
+```
+
+Dialect mapping:
+
+| Operation | MySQL | PostgreSQL | SQLite |
+|-----------|-------|------------|--------|
+| `addDays(7)` | `DATE_ADD(col, INTERVAL 7 DAY)` | `(col + (7 * INTERVAL '1 day'))` | `datetime(col, '+7 days')` |
+| `dateDiff(a, b, "day")` | `TIMESTAMPDIFF(DAY, b, a)` | `CAST(EXTRACT(EPOCH FROM (a - b)) / 86400 AS INTEGER)` | `CAST((julianday(a) - julianday(b)) * 1 AS INTEGER)` |
+| `dateDiff(a, b, "year")` | `TIMESTAMPDIFF(YEAR, b, a)` | calendar-aware `age()` | `julianday() / 365.25` (approx.) |
+| `random()` | `RAND()` | `RANDOM()` | `RANDOM()` |
+
+Year / month differences on SQLite are approximations (365.25 /
+30.4375 days). Use `TIMESTAMPDIFF` or `age()` targets for exact
+calendar math.
+
+##### Window functions — `aggregate.over()` + `WindowBuilder`
+
+Every aggregate (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`)
+exposes `.over()` that returns a chainable `WindowBuilder`.
+
+```typescript
+const e = qAlias(Event, "e");
+
+qb.select([
+  e.score.sum().over()
+    .partitionBy(e.teamId)
+    .orderBy(e.createdAt.desc())
+    .rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")
+    .as("running_total"),
+]);
+// SUM("e"."score") OVER (PARTITION BY "e"."teamId"
+//                        ORDER BY "e"."createdAt" DESC
+//                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+// AS "running_total"
+```
+
+Terminals:
+- `.as("alias")` — finalize as an `AliasedExpression` for SELECT.
+- `.toScalar()` — finalize as a `ScalarExpression` (for nesting,
+  e.g. `qb.where(e.score.gt(avg.over().partitionBy(e.teamId).toScalar()))`).
+
+Frame clauses accept raw SQL strings for `ROWS` / `RANGE` — callers
+are responsible for ensuring they're safe (do not pass user input).
+`rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")` is the common
+cumulative-aggregate frame.
+
 ##### Logical composition — `.and()` / `.or()` / `.not()` + `Expressions`
 
 ```typescript
@@ -976,6 +1039,8 @@ Method summary:
 | Subquery compare      | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | CASE expressions      | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject).when(val, result)...end()` |
 | String / numeric / math | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring()`, `.concat()`, `.indexOf()`, `.replace()`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
+| Date arithmetic       | `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `Expressions.dateDiff(a, b, unit)`, `Expressions.random()` |
+| Window functions      | `aggregate.over().partitionBy(...).orderBy(...).rowsBetween(start, end).as("alias")` — `WindowBuilder` chain |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
 ### JOIN — Combining Tables

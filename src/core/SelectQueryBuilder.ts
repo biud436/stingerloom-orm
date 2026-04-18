@@ -66,7 +66,12 @@ import {
   buildRound,
   buildSqrt,
 } from "./expressions/NumericExpression";
-import type { CastKind, DateComponent } from "../dialects/DialectExpression";
+import { buildDateAdd } from "./expressions/DateArithmeticExpression";
+import type {
+  CastKind,
+  DateAddUnit,
+  DateComponent,
+} from "../dialects/DialectExpression";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
@@ -720,6 +725,37 @@ export class ColumnExpression {
   /** `SQRT(col)`. */
   sqrt(): ScalarExpression {
     return buildSqrt(this.innerRenderer());
+  }
+
+  // ── Date arithmetic (Tier 3) ───────────────────────────
+
+  /** `col + N years` — calendar-aware on all supported drivers. */
+  addYears(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "year");
+  }
+  /** `col + N months` — calendar-aware on all supported drivers. */
+  addMonths(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "month");
+  }
+  /** `col + N days`. */
+  addDays(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "day");
+  }
+  /** `col + N hours`. */
+  addHours(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "hour");
+  }
+  /** `col + N minutes`. */
+  addMinutes(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "minute");
+  }
+  /** `col + N seconds`. */
+  addSeconds(n: number): ScalarExpression {
+    return this.buildDateAdd(n, "second");
+  }
+
+  private buildDateAdd(n: number, unit: DateAddUnit): ScalarExpression {
+    return buildDateAdd(this.innerRenderer(), n, unit);
   }
 
   /** @internal Inner-fragment renderer shared by Tier 3 helpers. */

@@ -49,4 +49,6 @@ export * from "./expressions/SubqueryExpression";
 export * from "./expressions/CaseExpression";
 export * from "./expressions/StringExpression";
 export * from "./expressions/NumericExpression";
+export * from "./expressions/DateArithmeticExpression";
+export * from "./expressions/WindowExpression";
 export * from "./expressions/likeEscape";

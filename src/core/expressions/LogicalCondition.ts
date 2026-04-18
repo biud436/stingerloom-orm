@@ -23,6 +23,11 @@ import {
   CaseBuilder,
   CaseValueBuilder,
 } from "./CaseExpression";
+import {
+  dateDiff as dateDiffFactory,
+  random as randomFactory,
+} from "./DateArithmeticExpression";
+import type { DateAddUnit } from "../../dialects/DialectExpression";
 
 export type LogicalOperator = "AND" | "OR" | "NOT";
 
@@ -216,6 +221,25 @@ export const Expressions = {
    */
   cases(subject: unknown): CaseValueBuilder {
     return casesFactory(subject);
+  },
+
+  /**
+   * `dateDiff(a, b, unit)` — integer difference `a - b` in the given
+   * unit. Calendar-aware for `year`/`month` on MySQL and PostgreSQL;
+   * SQLite uses `julianday()` approximation for those.
+   */
+  dateDiff(a: unknown, b: unknown, unit: DateAddUnit): ScalarExpression {
+    return dateDiffFactory(a, b, unit);
+  },
+
+  /**
+   * `RANDOM()` / `RAND()` — dialect-native pseudo-random scalar.
+   * Commonly used as `qb.orderBy(Expressions.random().asc())` for
+   * random sampling, though the order expression wiring lives in a
+   * future phase.
+   */
+  random(): ScalarExpression {
+    return randomFactory();
   },
 } as const;
 

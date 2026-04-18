@@ -732,6 +732,58 @@ qb.select([
 
 모든 인자는 원시값(파라미터 바인딩) 또는 다른 컬럼/스칼라 표현식을 받으니, `p.price.add(p.discount)` 처럼 컬럼끼리도, `p.name.concat(" (", p.sku, ")")` 같은 혼합도 자연스럽게 돼요.
 
+##### 날짜 산술 — `.addDays()` / `.addMonths()` / …, `dateDiff`, `random`
+
+달력 단위별 `add*` 6개(`addYears/Months/Days/Hours/Minutes/Seconds`), 두 날짜의 정수 차이를 돌려주는 `Expressions.dateDiff(a, b, unit)`, 엔진별 RNG를 감싸는 `Expressions.random()`을 한 번에 다룰 수 있어요. 리포트성 쿼리에서 raw SQL로 내려가는 일이 줄어들어요.
+
+```typescript
+const e = qAlias(Event, "e");
+
+qb.select([
+  e.startsAt.addDays(7).as("next_week"),
+  e.startsAt.addMonths(-1).as("prev_month"),
+  Expressions.dateDiff(e.endsAt, e.startsAt, "day").as("span_days"),
+  Expressions.random().as("r"),
+]);
+```
+
+드라이버별 생성:
+
+| 연산 | MySQL | PostgreSQL | SQLite |
+|------|-------|------------|--------|
+| `addDays(7)` | `DATE_ADD(col, INTERVAL 7 DAY)` | `(col + (7 * INTERVAL '1 day'))` | `datetime(col, '+7 days')` |
+| `dateDiff(a, b, "day")` | `TIMESTAMPDIFF(DAY, b, a)` | `CAST(EXTRACT(EPOCH FROM (a - b)) / 86400 AS INTEGER)` | `CAST((julianday(a) - julianday(b)) * 1 AS INTEGER)` |
+| `dateDiff(a, b, "year")` | `TIMESTAMPDIFF(YEAR, b, a)` | 달력 기반 `age()` | `julianday() / 365.25` (근사) |
+| `random()` | `RAND()` | `RANDOM()` | `RANDOM()` |
+
+SQLite의 year/month 차이는 365.25 / 30.4375로 근사해요. 정확한 달력 차가 필요하면 MySQL `TIMESTAMPDIFF` 또는 PostgreSQL `age()` 쪽을 쓰세요.
+
+##### 윈도우 함수 — `aggregate.over()` + `WindowBuilder`
+
+집계(`count`, `sum`, `avg`, `min`, `max`, `countDistinct`)에는 `.over()`가 달려 있어요. 체인으로 PARTITION BY / ORDER BY / ROWS 또는 RANGE 프레임을 지정하고, `.as(alias)`로 마무리해요.
+
+```typescript
+const e = qAlias(Event, "e");
+
+qb.select([
+  e.score.sum().over()
+    .partitionBy(e.teamId)
+    .orderBy(e.createdAt.desc())
+    .rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")
+    .as("running_total"),
+]);
+// SUM("e"."score") OVER (PARTITION BY "e"."teamId"
+//                        ORDER BY "e"."createdAt" DESC
+//                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+// AS "running_total"
+```
+
+마무리는 둘 중 하나예요:
+- `.as("alias")` — `AliasedExpression`으로 끝내서 SELECT에 바로 사용.
+- `.toScalar()` — `ScalarExpression`으로 끝내서 다른 표현식 안에 중첩 (예: `qb.where(e.score.gt(avg.over().partitionBy(...).toScalar()))`).
+
+프레임 문자열(`"UNBOUNDED PRECEDING"`, `"CURRENT ROW"`, `"5 PRECEDING"` 등)은 그대로 SQL에 삽입돼요. **사용자 입력을 이 자리에 넘기지 마세요.** 누적 집계에는 `rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")`를 쓰는 게 가장 일반적이에요.
+
 ##### 조건 묶기 — `.and()` / `.or()` / `.not()`
 
 조건 두 개를 AND로 묶거나, OR로 풀거나, 부정할 수 있어요.
@@ -838,6 +890,8 @@ qb.where(u.name.likeIgnoreCase("%Al%"));          // 와일드카드를 직접 �
 | 서브쿼리 비교             | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | CASE 표현식               | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject)...end()`     |
 | 문자열 / 숫자 / 수학      | `.toLowerCase/.toUpperCase/.trim/.length/.substring/.concat/.indexOf/.replace`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
+| 날짜 산술                 | `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `Expressions.dateDiff(a, b, unit)`, `Expressions.random()` |
+| 윈도우 함수               | `aggregate.over().partitionBy(...).orderBy(...).rowsBetween(start, end).as("alias")` — `WindowBuilder` 체인 |
 | 조건 묶기                 | `.and(other)`, `.or(other)`, `.not()`                                         |
 | 그룹을 직접 짜고 싶을 때  | `Expressions.and(...)`, `Expressions.or(...)`, `Expressions.not(cond)`        |
 | 안전한 prefix / suffix / 포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프)   |

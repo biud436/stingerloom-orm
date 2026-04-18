@@ -112,7 +112,35 @@ export class AggregateExpression {
   desc(): OrderExpression {
     return new OrderExpression(this.ref, "DESC");
   }
+
+  // ── Window function (Tier 3) ──────────────────────────
+
+  /**
+   * Start a window-function chain. Returns a {@link WindowBuilder}
+   * that accepts PARTITION BY, ORDER BY, and ROWS/RANGE frame clauses
+   * before being finalized with `.as(alias)` or `.toScalar()`.
+   *
+   * @example
+   * ```ts
+   * qb.select([
+   *   u.score.sum().over()
+   *     .partitionBy(u.teamId)
+   *     .orderBy(u.createdAt.desc())
+   *     .rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")
+   *     .as("running_total"),
+   * ]);
+   * ```
+   */
+  over(): WindowBuilder {
+    return new WindowBuilder(this);
+  }
 }
+
+// Imported after the class body to keep a one-way value dependency:
+// WindowExpression depends on AggregateExpression as a type only, so
+// AggregateExpression can freely construct WindowBuilder without
+// forming a compile-time cycle.
+import { WindowBuilder } from "./WindowExpression";
 
 /**
  * Type guard — true if `value` is an {@link AggregateExpression}.

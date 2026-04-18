@@ -3,6 +3,7 @@ import type { Sql } from "sql-template-tag";
 import type {
   CastKind,
   ColumnJsonMeta,
+  DateAddUnit,
   DateComponent,
   DialectExpression,
 } from "../DialectExpression";
@@ -133,9 +134,44 @@ export class MySqlExpression implements DialectExpression {
     return sql`LOCATE(${needle}, ${haystack})`;
   }
 
+  dateAdd(value: Sql, n: number, unit: DateAddUnit): Sql {
+    // MySQL uses an unquoted INTERVAL keyword + value + unit keyword.
+    // Injecting the unit via raw() because MySQL doesn't parameterize
+    // interval units.
+    const unitKw = mysqlUnitKeyword(unit);
+    return sql`DATE_ADD(${value}, INTERVAL ${n} ${raw(unitKw)})`;
+  }
+
+  dateDiff(a: Sql, b: Sql, unit: DateAddUnit): Sql {
+    // TIMESTAMPDIFF(UNIT, start, end) returns end - start.
+    const unitKw = mysqlUnitKeyword(unit);
+    return sql`TIMESTAMPDIFF(${raw(unitKw)}, ${b}, ${a})`;
+  }
+
+  random(): Sql {
+    return sql`RAND()`;
+  }
+
   dateComponent(value: Sql, component: DateComponent): Sql {
     const fn = mysqlDateFunction(component);
     return sql`${raw(fn)}(${value})`;
+  }
+}
+
+function mysqlUnitKeyword(unit: DateAddUnit): string {
+  switch (unit) {
+    case "year":
+      return "YEAR";
+    case "month":
+      return "MONTH";
+    case "day":
+      return "DAY";
+    case "hour":
+      return "HOUR";
+    case "minute":
+      return "MINUTE";
+    case "second":
+      return "SECOND";
   }
 }
 

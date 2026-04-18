@@ -3,6 +3,7 @@ import sql, { Sql, raw, join } from "sql-template-tag";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import type {
   CastKind,
+  DateAddUnit,
   DateComponent,
   DialectExpression,
 } from "../../dialects/DialectExpression";
@@ -255,6 +256,26 @@ export class ScalarExpression {
   sqrt(): ScalarExpression {
     return buildStringFn("SQRT", this.renderer);
   }
+
+  // ── Date arithmetic (Tier 3) ───────────────────────────
+  addYears(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "year");
+  }
+  addMonths(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "month");
+  }
+  addDays(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "day");
+  }
+  addHours(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "hour");
+  }
+  addMinutes(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "minute");
+  }
+  addSeconds(n: number): ScalarExpression {
+    return buildDateAddFromRenderer(this.renderer, n, "second");
+  }
 }
 
 // ── Shared helpers for ScalarExpression Tier 3 methods ──
@@ -379,6 +400,23 @@ function buildRoundFromRenderer(
     const v = inner(resolveColumn, dialect);
     if (digits === undefined) return sql`ROUND(${v})`;
     return sql`ROUND(${v}, ${digits})`;
+  });
+}
+
+function buildDateAddFromRenderer(
+  inner: InnerRender,
+  n: number,
+  unit: DateAddUnit,
+): ScalarExpression {
+  return new ScalarExpression((resolveColumn, dialect) => {
+    if (!dialect) {
+      throw new Error(
+        "Date add expressions require a DialectExpression. Ensure the query " +
+          "builder was created via EntityManager.createQueryBuilder().",
+      );
+    }
+    const v = inner(resolveColumn, dialect);
+    return dialect.dateAdd(v, n, unit);
   });
 }
 
