@@ -668,7 +668,7 @@ const lastWeek = await topSpenders.execute({
 
 ### `em.compile()` -- 타입까지 친절한 방식
 
-Entity Framework의 `EF.CompileQuery`를 써 봤다면 이 방식이 익숙할 거예요. `p("id")`로 이름을 하나하나 적는 대신, **파라미터 타입을 먼저 선언**하고 콜백 안에서 `$`로 받아 원하는 자리에 꽂으면 돼요:
+`p("id")`로 플레이스홀더 이름을 하나하나 적는 방식 말고도, **파라미터 타입을 먼저 선언**하고 콜백 안에서 `$`로 받아서 꽂는 방식도 있어요:
 
 ```typescript
 const findByEmail = em.compile<User, { email: string }>((em, $) =>

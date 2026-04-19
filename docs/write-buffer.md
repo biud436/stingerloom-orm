@@ -13,7 +13,7 @@ await em.save(User, user);     // → UPDATE users SET email='alice@new.com' WHE
 
 That's two separate UPDATE queries, two network round-trips, and two transactions — for what could have been a single UPDATE. Now imagine you're processing an order: create a user, create an order, create 5 order items, update inventory for 5 products. That's 12 separate queries.
 
-The **Unit of Work** pattern solves this. Instead of immediately executing each change, you collect all changes in memory, then apply them all at once in a single transaction. This is how Hibernate (Java) and Doctrine (PHP) work — and now Stingerloom has it too.
+The **Unit of Work** pattern solves this. Instead of immediately executing each change, you collect all changes in memory, then apply them all at once in a single transaction. Stingerloom's `WriteBuffer` is an opt-in implementation of this pattern.
 
 ## Setup
 

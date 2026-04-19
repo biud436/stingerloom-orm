@@ -89,7 +89,7 @@ Inheritance mapping automates all three approaches. You define the shared fields
 
 ## Brief History
 
-This pattern comes from Object-Relational Mapping (ORM) theory. Martin Fowler documented three patterns in *Patterns of Enterprise Application Architecture* (2003): Single Table Inheritance, Class Table Inheritance, and Concrete Table Inheritance. JPA/Hibernate later standardized them as `SINGLE_TABLE`, `JOINED`, and `TABLE_PER_CLASS`. Stingerloom adopts the same three strategies with the same names, so if you have used Hibernate or JPA, this will feel familiar.
+This pattern comes from Object-Relational Mapping (ORM) theory. Martin Fowler documented three patterns in *Patterns of Enterprise Application Architecture* (2003): Single Table Inheritance, Class Table Inheritance, and Concrete Table Inheritance. The widely-adopted names in ORM ecosystems are `SINGLE_TABLE`, `JOINED`, and `TABLE_PER_CLASS`. Stingerloom adopts the same three strategies with the same names.
 
 ## Strategy Comparison
 

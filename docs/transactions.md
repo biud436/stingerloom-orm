@@ -387,7 +387,7 @@ There is only one `BEGIN` and one `COMMIT`. Both inserts live in the same transa
 
 ### Propagation Strategies
 
-Stingerloom supports three propagation modes, matching what you find in frameworks like Spring or Jakarta EE:
+Stingerloom supports three propagation modes:
 
 | Propagation | Behavior |
 |-------------|----------|

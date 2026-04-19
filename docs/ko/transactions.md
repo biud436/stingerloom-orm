@@ -387,7 +387,7 @@ COMMIT;                                                             -- outer @Tr
 
 ### 전파 전략
 
-Stingerloom은 Spring이나 Jakarta EE 같은 프레임워크에서 볼 수 있는 세 가지 전파 모드를 지원해요:
+Stingerloom은 세 가지 전파 모드를 지원합니다.
 
 | 전파 방식 | 동작 |
 |-------------|----------|

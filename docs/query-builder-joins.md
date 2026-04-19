@@ -44,8 +44,8 @@ You can use `alias()` references everywhere — `where()`, `selectRaw()`,
 ## QueryDSL-Style Expressions with `qAlias()`
 
 For an even more expressive API, `qAlias()` lets you access entity properties
-directly and chain condition methods — similar to JPA QueryDSL's `QUser`
-classes, but without code generation.
+directly and chain condition methods on them. No code generation step — it
+works through a runtime `Proxy`.
 
 ```typescript
 import { qAlias } from "@stingerloom/orm";

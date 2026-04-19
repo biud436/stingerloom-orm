@@ -83,9 +83,9 @@ TypeScript 레벨에서는 깔끔하지만, ORM이 이 상속 관계를 모르�
 - **Class Table Inheritance** -- 부모/자식 테이블을 분리하고 JOIN으로 조합
 - **Concrete Table Inheritance** -- 각 클래스가 독립 테이블을 가짐
 
-이후 Java 진영에서 JPA(Java Persistence API)가 이 패턴들을 `@Inheritance`, `@DiscriminatorColumn`, `@DiscriminatorValue` 어노테이션으로 표준화했고, Hibernate가 참조 구현을 제공했어요. 이 표준은 20년 넘게 검증된 패턴이에요.
+ORM 생태계에서는 이 세 가지가 `SINGLE_TABLE`, `JOINED`, `TABLE_PER_CLASS`라는 이름으로 널리 쓰이면서 20년 넘게 다듬어졌습니다.
 
-Stingerloom ORM은 이 JPA/Hibernate 표준을 TypeScript에 맞게 도입했어요. 데코레이터 이름과 전략 식별자(`SINGLE_TABLE`, `JOINED`, `TABLE_PER_CLASS`)는 JPA 명세와 동일하기 때문에, Java/Kotlin 경험이 있다면 바로 익숙하게 느껴질 거예요.
+Stingerloom ORM은 같은 세 가지 전략을 같은 이름으로 채택했습니다. 데코레이터는 `@Inheritance`, `@DiscriminatorColumn`, `@DiscriminatorValue` 세 개입니다.
 
 ## 전략 비교
 

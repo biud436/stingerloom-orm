@@ -2,11 +2,11 @@
 
 ## Migration이 필요한 이유
 
-개발 중에는 `synchronize: true`를 사용해서 ORM이 엔티티 정의에 맞춰 테이블을 자동으로 만들고 변경하게 할 수 있어요. 편리하지만, 위험해요.
+개발 중에는 `synchronize: true`로 두면 ORM이 엔티티 정의에 맞춰 테이블을 자동으로 맞춰 줍니다. 편하긴 해요. 다만 프로덕션에 그대로 갖다 두기에는 위험합니다.
 
-예를 들어볼게요. `users` 테이블에 50,000개의 행이 있다고 해봐요. 엔티티 클래스에서 컬럼 이름을 `phone`에서 `mobile`로 바꿨어요. `synchronize: true` 모드에서는 ORM이 `phone`이 사라지고 `mobile`이 새로 생긴 걸로 판단해요. 그래서 `phone` 컬럼을 DROP하고 `mobile` 컬럼을 ADD해요. 전화번호 데이터가 전부 날아가요.
+한 장면을 상상해 볼게요. `users` 테이블에 행이 5만 개 쌓여 있습니다. 엔티티 클래스에서 컬럼 이름 하나를 `phone`에서 `mobile`로 바꿨어요. `synchronize: true` 모드의 ORM은 이걸 "`phone`이 사라지고 `mobile`이 새로 생겼다"고 읽습니다. 그래서 `phone`을 DROP하고 `mobile`을 ADD해요. 전화번호 5만 건이 그 순간 사라집니다.
 
-**Migration**은 스키마 변경을 명시적인 버전 관리 코드로 작성해서 이 문제를 해결해요. ORM이 추측하는 대신, 정확히 무엇을 할지 직접 지정하는 거예요:
+**Migration**은 스키마 변경을 코드로, 그것도 버전 관리되는 코드로 적어 두는 방식입니다. ORM의 추측에 맡기는 대신, 무엇을 할지 직접 적어 놓는 거예요.
 
 ```sql
 -- What synchronize: true would do (DANGEROUS):
@@ -19,22 +19,22 @@ ALTER TABLE "users" RENAME COLUMN "phone" TO "mobile";
 -- Data preserved. Column renamed.
 ```
 
-Migration이 `synchronize: true`보다 나은 세 가지 이유예요:
+Migration이 `synchronize: true`를 앞서는 이유는 세 가지입니다.
 
-1. **안전성** -- 데이터베이스에 어떤 SQL이 실행될지 직접 제어해요
-2. **이력 관리** -- 모든 스키마 변경이 코드처럼 버전 관리돼요
-3. **롤백** -- 문제가 생기면 변경을 되돌릴 수 있어요
+1. **안전성** — DB에 실행될 SQL을 직접 정해 놓습니다.
+2. **이력** — 모든 스키마 변경이 코드처럼 버전 관리됩니다.
+3. **되돌리기** — 문제가 생기면 변경을 거꾸로 돌릴 수 있습니다.
 
 ---
 
 ## Migration 파일 만들기
 
-Migration은 두 개의 메서드를 가진 클래스예요:
+Migration은 메서드가 두 개인 클래스입니다.
 
-- **`up()`** -- 변경 적용 (앞으로 이동)
-- **`down()`** -- 변경 되돌리기 (뒤로 이동)
+- **`up()`** — 변경을 적용 (앞으로)
+- **`down()`** — 변경을 되돌림 (뒤로)
 
-엘리베이터처럼 생각하면 돼요: `up()`은 다음 층으로 올라가고, `down()`은 다시 내려와요.
+엘리베이터처럼 생각하면 편해요. `up()`은 다음 층으로 올라가는 버튼, `down()`은 이전 층으로 내려오는 버튼.
 
 ```typescript
 // migrations/001_CreateUsersTable.ts

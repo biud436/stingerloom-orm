@@ -13,7 +13,7 @@ await em.save(User, user);     // → UPDATE users SET email='alice@new.com' WHE
 
 UPDATE 2번, 네트워크 왕복 2번, 트랜잭션 2번인데 -- 사실 UPDATE 하나로 충분해요. 주문 처리를 생각해 보면 더 심각해요: 사용자 생성, 주문 생성, 주문 항목 5개 생성, 재고 업데이트 5개. 총 12번의 쿼리가 나가요.
 
-**Unit of Work** 패턴이 이 문제를 해결해요. 변경사항을 즉시 실행하는 대신, 메모리에 모아뒀다가 한 번에 하나의 트랜잭션으로 실행하는 방식이에요. Hibernate(Java)와 Doctrine(PHP)이 쓰는 방식이고, 이제 Stingerloom에서도 쓸 수 있어요.
+**Unit of Work** 패턴이 이 문제를 풀어 줍니다. 변경사항을 즉시 실행하지 않고 메모리에 모아 뒀다가, 한 번에 하나의 트랜잭션으로 흘려보냅니다. Stingerloom의 `WriteBuffer`는 이 패턴을 선택적으로 쓸 수 있게 붙여 둔 플러그인이에요.
 
 ## Setup
 
