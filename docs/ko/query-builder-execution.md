@@ -1,13 +1,10 @@
 # Query Builder — 실행 & 결과
 
-쿼리 모양이 정해진 다음엔 실제 실행과 결과 반환이 남아요. 정렬,
-페이지네이션, 비관적 잠금, 인덱스 힌트, soft-delete 처리, 런타임 결과
-검증, 실행 메서드 세 단계(`getMany` / `getPartialMany` / `getRawMany`),
-그리고 반복 쿼리의 컴파일 — 전부 이 페이지에서 다뤄요.
+쿼리의 모양을 다 잡고 나면 남는 건 실제 실행과 결과 처리입니다. 정렬, 페이지네이션, 비관적 잠금, 인덱스 힌트, soft delete 처리, 런타임 결과 검증, 실행 메서드 세 단계(`getMany` / `getPartialMany` / `getRawMany`), 반복 쿼리의 컴파일 — 이 장에서 한 번에 정리합니다.
 
 ## ORDER BY와 페이지네이션
 
-정렬과 페이지네이션은 예상하는 대로 동작해요.
+정렬과 페이지네이션은 기대한 대로 동작해요.
 
 ```typescript
 // 타입 안전 ORDER BY — 컬럼명 자동완성
@@ -16,11 +13,11 @@ qb.orderBy({ createdAt: "DESC", name: "ASC" });
 // LIMIT / OFFSET
 qb.limit(10).offset(20);
 
-// skip / take 별칭 — 같은 효과
+// skip / take — 같은 의미의 별칭
 qb.skip(20).take(10);
 ```
 
-데이터와 전체 개수가 둘 다 필요하다면? `getManyAndCount()`가 두 쿼리를 병렬로 실행하고 `[T[], number]`를 반환해요.
+데이터와 전체 개수가 동시에 필요하다면 `getManyAndCount()`를 씁니다. 두 쿼리를 병렬로 실행해 `[T[], number]`를 돌려줘요.
 
 ```typescript
 const [users, total] = await em
@@ -31,16 +28,15 @@ const [users, total] = await em
   .take(10)
   .getManyAndCount();
 
-console.log(users.length); // up to 10
-console.log(total);        // e.g. 235
+console.log(users.length); // 최대 10
+console.log(total);        // 예: 235
 ```
 
-> 커서 기반 페이지네이션, 스트리밍, 전략 선택 가이드는
-> [페이지네이션 & 스트리밍](./pagination.md)에 있어요.
+> 커서 기반 페이지네이션, 스트리밍, 전략 선택 가이드는 [페이지네이션 & 스트리밍](./pagination.md)에 있습니다.
 
-## Pessimistic Locking
+## 비관적 잠금
 
-동시성이 높은 상황에서는 다른 트랜잭션이 수정하지 못하도록 읽기 시 행을 잠가야 할 때가 있어요.
+동시성이 높은 상황에서는 읽은 뒤 다른 트랜잭션이 수정하지 못하도록 행을 잠가야 할 때가 있어요.
 
 ```typescript
 const user = await em
@@ -51,25 +47,25 @@ const user = await em
 // SELECT ... FROM "user" AS "u" WHERE "u"."id" = $1 FOR UPDATE
 ```
 
-`forUpdate()`는 `FOR UPDATE` — exclusive lock을 추가해요. 트랜잭션이 커밋될 때까지 다른 트랜잭션이 이 행을 읽거나 수정할 수 없어요. `forShare()`는 shared lock을 추가해요 — 다른 트랜잭션이 읽을 순 있지만 쓸 수는 없어요.
+`forUpdate()`는 배타 잠금(`FOR UPDATE`)을 겁니다. 내 트랜잭션이 커밋될 때까지 다른 트랜잭션이 이 행을 읽지도 쓰지도 못해요. `forShare()`는 공유 잠금입니다 — 다른 트랜잭션이 읽을 순 있지만 쓰진 못합니다.
 
-| Method | SQL (PostgreSQL / SQLite) | SQL (MySQL) | 효과 |
+| 메서드 | SQL (PostgreSQL / SQLite) | SQL (MySQL) | 효과 |
 |--------|--------------------------|-------------|------|
-| `forUpdate()` | `FOR UPDATE` | `FOR UPDATE` | Exclusive lock — 읽기/쓰기 모두 차단 |
-| `forShare()` | `FOR SHARE` | `LOCK IN SHARE MODE` | Shared lock — 쓰기만 차단 |
+| `forUpdate()` | `FOR UPDATE` | `FOR UPDATE` | 배타 잠금 — 읽기·쓰기 모두 차단 |
+| `forShare()` | `FOR SHARE` | `LOCK IN SHARE MODE` | 공유 잠금 — 쓰기만 차단 |
 
-**시나리오별 선택 기준**
+**언제 무엇을 쓸까**
 
-- **재고 차감, 잔액 갱신 등 "내가 방금 읽은 값을 그대로 갱신"** → `forUpdate()`. 다른 트랜잭션이 이 행을 먼저 읽는 것 자체를 막아요.
-- **외래 키 참조 확인만 하고 싶을 때**(내가 쓰진 않지만 남이 지우면 안 됨) → `forShare()`.
-- **작업 큐에서 다른 워커가 잡고 있는 행은 건너뛰고 다음 걸 잡고 싶을 때** → `forUpdateSkipLocked()` (아래).
-- **"못 잡으면 즉시 에러로 받고 사용자에게 재시도하라 알려주고 싶을 때"** → `forUpdateNowait()`.
+- **재고 차감, 잔액 갱신처럼 "방금 읽은 값을 그대로 갱신"** 할 때 → `forUpdate()`. 다른 트랜잭션이 이 행을 먼저 읽는 것부터 막습니다.
+- **외래 키 참조가 유효한지 확인만 하고 싶을 때** (내가 쓰진 않지만 남이 지우면 안 됨) → `forShare()`.
+- **작업 큐에서 다른 워커가 잡은 행은 넘기고 다음 걸 잡고 싶을 때** → `forUpdateSkipLocked()` (아래).
+- **잡지 못하면 즉시 에러로 받고 사용자에게 재시도를 알리고 싶을 때** → `forUpdateNowait()`.
 
 ### NOWAIT과 SKIP LOCKED
 
-동시성이 높은 시나리오에서 락을 기다리는 건 병목이 될 수 있어요. 두 가지 고급 잠금 옵션으로 행이 이미 잠겨 있을 때의 동작을 제어할 수 있어요.
+동시성이 높은 상황에서 잠금이 풀리기를 기다리는 건 병목이 되기 쉽습니다. 두 가지 고급 옵션으로 "이미 잠긴 행을 만났을 때 어떻게 행동할지"를 조절할 수 있어요.
 
-**NOWAIT** — 락이 해제되길 기다리는 대신 즉시 에러를 던져요.
+**NOWAIT** — 잠금이 풀리기를 기다리는 대신 즉시 에러를 던집니다.
 
 ```typescript
 const user = await em
@@ -78,13 +74,13 @@ const user = await em
   .forUpdateNowait()
   .getOne();
 // SELECT ... FOR UPDATE NOWAIT
-// 다른 트랜잭션이 행을 잠그고 있으면 즉시 에러 발생
+// 다른 트랜잭션이 잠그고 있으면 즉시 에러
 ```
 
-**SKIP LOCKED** — 이미 잠긴 행을 조용히 건너뛰어요. 여러 워커가 같은 테이블에서 작업을 가져가는 잡 큐 패턴에 특히 유용해요.
+**SKIP LOCKED** — 이미 잠긴 행을 조용히 건너뜁니다. 여러 워커가 같은 테이블에서 작업을 집어가는 잡 큐 패턴에 특히 잘 맞아요.
 
 ```typescript
-// 워커가 다음 잠기지 않은 작업을 가져감
+// 워커가 다음 비잠금 작업을 집어감
 const job = await em
   .createQueryBuilder(Job, "j")
   .where("status", "pending")
@@ -93,12 +89,12 @@ const job = await em
   .forUpdateSkipLocked()
   .getOne();
 // SELECT ... ORDER BY ... LIMIT 1 FOR UPDATE SKIP LOCKED
-// 모든 대기 작업이 다른 워커에 의해 잠겨 있으면 null 반환
+// 남은 작업이 전부 잠겨 있으면 null
 ```
 
-네 가지 조합을 모두 사용할 수 있어요:
+네 가지 조합이 모두 제공됩니다.
 
-| Method | SQL |
+| 메서드 | SQL |
 |--------|-----|
 | `forUpdateNowait()` | `FOR UPDATE NOWAIT` |
 | `forUpdateSkipLocked()` | `FOR UPDATE SKIP LOCKED` |
@@ -106,12 +102,12 @@ const job = await em
 | `forShareSkipLocked()` | `FOR SHARE SKIP LOCKED` |
 
 ::: warning
-NOWAIT과 SKIP LOCKED는 MySQL 8.0+ 또는 PostgreSQL 9.5+가 필요해요. SQLite는 비관적 잠금을 지원하지 않고 `UNSUPPORTED_DATABASE` 에러를 던져요.
+NOWAIT과 SKIP LOCKED는 MySQL 8.0 이상 또는 PostgreSQL 9.5 이상이 필요해요. SQLite는 비관적 잠금 자체를 지원하지 않아 `UNSUPPORTED_DATABASE` 에러가 발생합니다.
 :::
 
-## Index Hints
+## 인덱스 힌트
 
-MySQL에서는 쿼리 플래너가 사용할 인덱스를 제안할 수 있어요. 플래너가 최적이 아닌 인덱스를 선택할 때 유용해요.
+MySQL에서는 옵티마이저가 어떤 인덱스를 쓰면 좋을지 제안할 수 있습니다. 옵티마이저가 최적이 아닌 인덱스를 고를 때 유용해요.
 
 ```typescript
 const orders = await em
@@ -122,43 +118,43 @@ const orders = await em
 // MySQL: SELECT ... FROM `order` USE INDEX (`idx_order_status`) WHERE ...
 ```
 
-세 가지 MySQL 인덱스 힌트 타입을 사용할 수 있어요:
+MySQL에는 세 종류의 힌트가 있습니다.
 
-| Method | SQL | 효과 |
+| 메서드 | SQL | 효과 |
 |--------|-----|------|
-| `useIndex(name)` | `USE INDEX (name)` | 플래너에 인덱스 제안 |
-| `forceIndex(name)` | `FORCE INDEX (name)` | 플래너가 이 인덱스를 강제로 사용하도록 |
-| `ignoreIndex(name)` | `IGNORE INDEX (name)` | 플래너가 이 인덱스를 건너뛰도록 |
+| `useIndex(name)` | `USE INDEX (name)` | 옵티마이저에 인덱스 제안 |
+| `forceIndex(name)` | `FORCE INDEX (name)` | 특정 인덱스 사용 강제 |
+| `ignoreIndex(name)` | `IGNORE INDEX (name)` | 특정 인덱스 제외 |
 
-PostgreSQL에서는 `hint()` 메서드로 [pg_hint_plan](https://pg-hint-plan.readthedocs.io/) 스타일 힌트를 추가할 수 있어요. 여러 번 호출하면 누적돼서 하나의 `/*+ ... */` 블록으로 합쳐져요.
+PostgreSQL에서는 `hint()` 메서드로 [pg_hint_plan](https://pg-hint-plan.readthedocs.io/) 스타일 힌트를 넣을 수 있습니다. 여러 번 호출하면 누적돼 하나의 `/*+ ... */` 블록으로 합쳐져요.
 
 ```typescript
 const orders = await em
   .createQueryBuilder(Order, "o")
   .where("status", "pending")
   .hint("IndexScan(o idx_order_status)")
-  .hint("Leading(o c)")                       // 추가 힌트는 누적
+  .hint("Leading(o c)")                       // 힌트 누적
   .getMany();
 // PostgreSQL: /*+ IndexScan(o idx_order_status) Leading(o c) */ SELECT ...
 ```
 
 ::: warning
-`hint()`는 **`pg_hint_plan` 확장이 설치·활성화된 PostgreSQL에서만** 실제 효과가 있어요. 확장이 없으면 주석으로 무시되고 플래너는 힌트를 보지 못해요. SQLite는 모든 쿼리 힌트를 지원하지 않아요.
+`hint()`는 **`pg_hint_plan` 확장이 설치되고 활성화된 PostgreSQL에서만** 실제 효과가 있어요. 확장이 없으면 주석으로 처리되어 옵티마이저가 힌트를 보지 못합니다. SQLite는 모든 쿼리 힌트를 지원하지 않아요.
 :::
 
 ## Soft Delete 처리
 
-엔티티에 `@DeletedAt` 컬럼이 있으면, query builder가 자동으로 soft-deleted 행을 제외해요. 포함하려면:
+엔티티에 `@DeletedAt` 컬럼이 있으면 쿼리 빌더가 soft-deleted 행을 자동으로 제외합니다. 포함하고 싶다면:
 
 ```typescript
 qb.withDeleted();
 ```
 
-## 결과 검증 — validate()
+## 결과 검증 — `validate()`
 
-컴파일 타임 타입 narrowing이 많은 실수를 잡아주지만, 데이터베이스가 실제로 반환하는 값까지는 확인할 수 없어요. 문자열을 기대한 컬럼에 `null`이 올 수도 있고, 드라이버 동작 때문에 숫자가 문자열로 올 수도 있거든요. 런타임 안전성을 위해 **validator**를 붙여서 모든 행을 애플리케이션 코드에 도달하기 전에 체크할 수 있어요.
+컴파일 타임 타입 narrowing이 많은 실수를 잡아 주지만, DB가 실제로 돌려주는 값까지 확인해 주지는 않아요. 문자열을 기대한 컬럼에 `null`이 올 수도 있고, 드라이버의 특성 때문에 숫자가 문자열로 올 수도 있습니다. 이 틈은 **validator**를 붙여 메워요. 모든 행이 애플리케이션 코드에 도달하기 전에 한 번 더 검사를 받습니다.
 
-가장 간단한 형태는 일반 함수예요:
+가장 단순한 형태는 평범한 함수입니다.
 
 ```typescript
 const users = await em
@@ -171,9 +167,9 @@ const users = await em
   .getPartialMany();
 ```
 
-각 행이 validator를 통과해요. 함수가 throw하면 전체 호출이 해당 에러로 reject돼요. 성공하면 결과에 포함돼요. 기본값은 validator 없음 — 오버헤드 제로예요. Validator는 `getPartialMany()`와 `getMany()` 모두에서 동작해요.
+각 행이 validator를 통과합니다. 함수가 throw하면 전체 호출이 그 에러로 reject되고, 성공하면 결과에 포함돼요. 기본값은 validator 없음 — 오버헤드 제로입니다. Validator는 `getPartialMany()`와 `getMany()` 모두에서 동작해요.
 
-Validator 함수로 데이터 **변환**도 할 수 있어요. 반환한 값이 실제 결과가 돼요:
+Validator 함수로 **데이터 변환**까지 할 수 있습니다. 반환한 값이 실제 결과가 돼요.
 
 ```typescript
 .validate((row) => ({
@@ -182,9 +178,9 @@ Validator 함수로 데이터 **변환**도 할 수 있어요. 반환한 값이 
 }))
 ```
 
-### Zod로 Schema Validation 하기
+### Zod로 스키마 검증하기
 
-검증 함수를 직접 작성하는 건 번거로워요. [zod](https://zod.dev)를 쓴다면 스키마를 직접 넘길 수 있어요 — query builder는 `.parse()` 메서드가 있는 객체를 인식해요.
+검증 함수를 손수 쓰는 건 번거롭습니다. [zod](https://zod.dev)를 쓰고 있다면 스키마를 그대로 넘기세요 — 쿼리 빌더는 `.parse()` 메서드가 있는 객체를 알아봅니다.
 
 ```typescript
 import { z } from "zod";
@@ -201,9 +197,9 @@ const users = await em
   .getPartialMany();
 ```
 
-행이 zod 스키마를 통과하지 못하면, 어떤 필드가 왜 실패했는지 상세한 `ZodError`가 throw돼요. 문자열을 기대한 곳에 NULL이 오거나, 숫자를 기대한 곳에 문자열이 오는 등의 데이터 문제를 가장 빠른 시점에 잡아줘요.
+행이 zod 스키마를 통과하지 못하면 어떤 필드가 왜 실패했는지 상세한 `ZodError`가 throw됩니다. 문자열을 기대한 자리에 NULL이 오거나, 숫자를 기대한 자리에 문자열이 오는 것 같은 데이터 문제를 가장 이른 시점에 잡아 줘요.
 
-Zod의 `.transform()`도 사용 가능해요. 검증과 데이터 변환을 한 번에 할 수 있어요:
+Zod의 `.transform()`도 그대로 씁니다. 검증과 변환을 한 번에 할 수 있어요.
 
 ```typescript
 const NormalizedUser = z.object({
@@ -220,34 +216,34 @@ const users = await em
 // [{ id: 1, name: "ALICE", email: "alice@example.com" }, ...]
 ```
 
-`.strict()`는 예상치 못한 추가 필드가 있는 행을 거부해요 — schema drift를 감지하는 데 유용해요:
+`.strict()`는 예상치 못한 추가 필드가 있는 행을 거부합니다 — 스키마 드리프트를 감지하는 데 유용해요.
 
 ```typescript
 const StrictUser = z.object({ id: z.number(), name: z.string() }).strict();
 
-// Throws if the DB returns columns beyond id and name
+// id, name 이외의 컬럼이 내려오면 throw
 .validate(StrictUser)
 ```
 
-`.parse(data)` 메서드를 제공하는 라이브러리라면 뭐든 호환돼요 — zod뿐만 아니라 io-ts, superstruct 등도 가능해요.
+`.parse(data)` 메서드를 가진 라이브러리라면 무엇이든 호환됩니다 — zod뿐 아니라 io-ts, superstruct 같은 것도 가능해요.
 
-### `validate()` vs `selectSchema()` — 뭘 쓸까
+### `validate()`와 `selectSchema()` — 뭘 쓸까
 
-두 메서드가 비슷해 보이지만 역할이 달라요.
+두 메서드가 비슷해 보이지만 역할이 다릅니다.
 
 | | `.validate(schema)` | `.selectSchema(schema)` |
 |-|---------------------|-------------------------|
 | 런타임 검증 | ✓ | ✓ |
 | 데이터 변환 (`transform`) | ✓ | ✓ |
 | 반환 타입 narrowing | ✗ — 현재 타입 유지 | ✓ — `z.infer<schema>`로 좁힘 |
-| 타입 보장 | 호출자가 선언한 `TResult`를 신뢰 | 스키마가 타입의 **원천** |
-| 주 쓰임 | "호출자 타입은 이미 맞는데, 런타임 값만 한번 더 체크" | "스키마에서 타입을 도출해서 SELECT 결과 모양을 확정" |
+| 타입의 근거 | 호출자가 선언한 `TResult`를 신뢰 | 스키마가 타입의 **원천** |
+| 주 쓰임새 | "호출자 타입은 이미 맞고, 런타임 값만 한 번 더 체크" | "스키마에서 타입을 도출해 SELECT 모양을 확정" |
 
-일반적인 규칙 — **런타임 검증만 필요**하면 `validate()`, **타입 추론까지 스키마에 맡기고 싶으면** `selectSchema()`. 자세한 `selectSchema` 설명과 예제는 [QueryDSL 표현식](./query-builder-querydsl.md) 페이지의 "TS 네이티브 이스케이프 해치" 섹션에 있어요.
+간단한 규칙 — 런타임 검증만 필요하면 `validate()`, 타입 추론까지 스키마에 맡길 거면 `selectSchema()`. `selectSchema`의 자세한 설명과 예제는 [QueryDSL 표현식](./query-builder-querydsl.md)의 "TypeScript 친화 이스케이프 해치" 섹션에 있어요.
 
-### 배열 단위 검증 — validateArray()
+### 배열 단위 검증 — `validateArray()`
 
-개별 행이 아닌 결과 집합 전체를 검증해야 할 때도 있어요. 최대 결과 수를 제한하거나, 배열이 비어있지 않은지 확인하는 경우예요.
+개별 행이 아니라 결과 집합 전체를 검사해야 할 때도 있죠. 최대 결과 수를 제한하거나, 결과가 비어 있지 않은지 확인하는 경우예요.
 
 ```typescript
 const users = await em
@@ -261,7 +257,7 @@ const users = await em
   .getPartialMany();
 ```
 
-Zod 배열 스키마도 사용할 수 있어요:
+Zod 배열 스키마도 씁니다.
 
 ```typescript
 const UsersArray = z
@@ -275,82 +271,82 @@ const users = await qb
   .getPartialMany();
 ```
 
-### 행 검증과 배열 검증 결합하기
+### 행 검증과 배열 검증 섞어 쓰기
 
-같은 쿼리에 `validate()`와 `validateArray()`를 함께 쓸 수 있어요. 행 단위 검증이 먼저 실행되고, 그다음 배열 단위 검증이 실행돼요:
+한 쿼리에 `validate()`와 `validateArray()`를 함께 붙여도 됩니다. 행 단위 검증이 먼저, 그다음 배열 단위 검증이 실행돼요.
 
 ```typescript
 const users = await em
   .createQueryBuilder(User, "u")
   .select(["id", "name"])
-  .validate(z.object({             // 1. Each row: validate + transform
+  .validate(z.object({             // 1. 각 행 검증 + 변환
     id: z.number(),
     name: z.string().transform((s) => s.trim()),
   }))
-  .validateArray((rows) => {       // 2. Whole array: check constraints
+  .validateArray((rows) => {       // 2. 배열 전체 제약
     if (rows.length > 100) throw new Error("too many results");
     return rows;
   })
   .getPartialMany();
 ```
 
-### 언제 검증을 사용할까요
+### 언제 검증을 쓸까
 
-검증은 행마다 함수 호출이 추가되므로 공짜가 아니에요. 효과가 있는 상황은 이래요:
+검증은 행마다 함수 호출이 더해지니 공짜가 아닙니다. 비용 대비 효과가 큰 상황은 다음과 같아요.
 
 | 상황 | 검증? | 이유 |
 |------|-------|------|
-| 내부 서비스, 신뢰할 수 있는 스키마 | No | 속도가 더 중요해요 |
-| 사용자 데이터를 반환하는 API 엔드포인트 | Yes | null/타입 불일치를 클라이언트에 도달하기 전에 잡아요 |
-| 느슨한 소스 데이터를 다루는 ETL 파이프라인 | Yes | 잘못된 데이터 전파를 방지해요 |
-| 역직렬화 버그 디버깅 | Yes (일시적으로) | 정확히 어떤 행/필드가 문제인지 특정해요 |
+| 내부 서비스, 스키마를 신뢰 | 아니오 | 속도가 더 중요 |
+| 사용자 데이터를 반환하는 API 엔드포인트 | 예 | null / 타입 불일치를 클라이언트에 닿기 전에 차단 |
+| 느슨한 소스 데이터를 다루는 ETL 파이프라인 | 예 | 잘못된 데이터의 전파 차단 |
+| 역직렬화 버그 디버깅 | 일시적으로 예 | 정확히 어떤 행/필드가 문제인지 특정 |
 
-기본값 — validator 없음, 오버헤드 제로 — 이 대부분의 내부 쿼리에 맞는 선택이에요. 데이터가 신뢰 경계를 넘는 곳에서 검증을 추가하세요.
+기본값 — validator 없음, 오버헤드 제로 — 이 대부분의 내부 쿼리에 어울리는 선택이에요. 데이터가 신뢰 경계를 넘어가는 지점에서 검증을 얹으면 됩니다.
 
 ## 쿼리 실행하기
 
-쿼리를 만들었으니 실행해야겠죠. Query builder는 안전성과 타이핑 보장 수준이 다른 세 단계의 실행 메서드를 제공해요.
+쿼리를 다 만들었으니 실행하는 일이 남았습니다. 쿼리 빌더는 안전성과 타이핑 보장이 다른 세 단계의 실행 메서드를 제공해요.
 
-**Safe — required 컬럼 검증이 있는 클래스 인스턴스:**
+**Safe — 필수 컬럼 검증이 있는 클래스 인스턴스:**
 
-| Method | Returns | 설명 |
-|--------|---------|------|
-| `getMany()` | `T[]` | 클래스 인스턴스. `select()` 사용 시 required 컬럼 검증 |
-| `getOne()` | `T \| null` | 단일 클래스 인스턴스 또는 null (자동으로 LIMIT 1 추가) |
-| `getOneOrFail()` | `T` | 단일 클래스 인스턴스 (결과 없으면 `EntityNotFoundError` 발생) |
-| `getManyAndCount()` | `[T[], number]` | 클래스 인스턴스 + 총 개수를 병렬 실행 |
+| 메서드 | 반환 | 설명 |
+|--------|------|------|
+| `getMany()` | `T[]` | 클래스 인스턴스. `select()` 사용 시 필수 컬럼 검증 |
+| `getOne()` | `T \| null` | 단일 인스턴스 또는 null (자동으로 `LIMIT 1`) |
+| `getOneOrFail()` | `T` | 단일 인스턴스 (결과 없으면 `EntityNotFoundError`) |
+| `getManyAndCount()` | `[T[], number]` | 인스턴스 배열 + 총 개수 병렬 실행 |
 
-항상 행을 엔티티 클래스 인스턴스로 역직렬화해요. `instanceof`가 동작하고, 클래스 메서드를 쓸 수 있고, `em.save()`에 전달할 수 있어요. `select()`로 특정 컬럼을 지정하면, non-nullable 컬럼이 포함되어야 해요 — 아니면 `OrmError`가 throw돼요.
+행을 항상 엔티티 클래스 인스턴스로 역직렬화합니다. `instanceof`가 동작하고, 클래스 메서드를 쓸 수 있고, `em.save()`에 그대로 넘길 수 있어요. `select()`로 일부 컬럼을 고르는 경우에는 not-null 컬럼이 반드시 포함돼야 합니다 — 아니면 `OrmError`를 던져요.
 
-**Partial — typed plain object (Pick):**
+**Partial — 타입드 plain object (Pick):**
 
-| Method | Returns | 설명 |
-|--------|---------|------|
-| `getPartialMany()` | `TResult[]` | `Pick<T, K>` narrowing된 plain object |
+| 메서드 | 반환 | 설명 |
+|--------|------|------|
+| `getPartialMany()` | `TResult[]` | `Pick<T, K>`로 좁혀진 plain object |
 | `getPartialOne()` | `TResult \| null` | 단일 plain object 또는 null |
-| `getPartialManyAndCount()` | `[TResult[], number]` | Plain object + 총 개수 |
+| `getPartialManyAndCount()` | `[TResult[], number]` | plain object 배열 + 총 개수 |
 
-역직렬화 없음, required 컬럼 검증 없음. `select(["id", "name"])` 사용 시 반환 타입이 `Pick<T, "id" | "name">[]`로 좁혀져요 — 선택하지 않은 컬럼에 접근하면 컴파일 에러예요. `em.save()`에 전달하지 마세요.
+역직렬화도, 필수 컬럼 검증도 하지 않습니다. `select(["id", "name"])`를 쓰면 반환 타입이 `Pick<T, "id" | "name">[]`로 좁혀져요 — 선택하지 않은 컬럼에 접근하면 컴파일 에러입니다. `em.save()`에는 넘기지 마세요.
 
-**Raw — untyped plain object:**
+**Raw — 타입 없는 plain object:**
 
-| Method | Returns | 설명 |
-|--------|---------|------|
-| `getRawMany()` | `Record<string, unknown>[]` | Untyped plain object |
-| `getRawOne()` | `Record<string, unknown> \| null` | 단일 untyped object 또는 null |
+| 메서드 | 반환 | 설명 |
+|--------|------|------|
+| `getRawMany()` | `Record<string, unknown>[]` | 타입 없는 plain object |
+| `getRawOne()` | `Record<string, unknown> \| null` | 단일 plain object 또는 null |
 
-결과에 엔티티에 없는 computed column이 포함될 때 사용해요 (예: `addSelect(sql`COUNT(*)`, "cnt")`). 타입 정보 없음, 역직렬화 없음.
+엔티티에 없는 계산 컬럼(예: `addSelect(sql`COUNT(*)`, "cnt")`)이 결과에 섞일 때 씁니다. 타입 정보도 역직렬화도 없습니다.
 
-**Utility (변경 없음):**
+**유틸 (결과 모양 변경 없음):**
 
-| Method | Returns | 설명 |
-|--------|---------|------|
-| `getCount()` | `number` | 같은 WHERE/JOIN으로 COUNT(*) |
-| `exists()` | `boolean` | 매칭되는 행이 있는지 여부 |
+| 메서드 | 반환 | 설명 |
+|--------|------|------|
+| `getCount()` | `number` | 같은 WHERE/JOIN으로 `COUNT(*)` |
+| `exists()` | `boolean` | 매칭 행이 있는지 여부 |
 
-**어떤 걸 써야 할까요?** 기본적으로 `getMany()`를 쓰세요. 컴파일 타임 narrowing이 필요한 read-only DTO에는 `getPartialMany()`를 쓰세요. `addSelect`나 computed column이 있는 쿼리에는 `getRawMany()`를 쓰세요.
+**어떤 걸 쓸지.** 기본값은 `getMany()`. 컴파일 타임 narrowing이 필요한 읽기 전용 DTO에는 `getPartialMany()`. `addSelect`나 계산 컬럼이 섞인 쿼리에는 `getRawMany()`.
 
-디버깅할 때는 `getSql()`이 실행 없이 raw SQL과 파라미터를 반환해요.
+디버깅할 때는 `getSql()`로 실행 없이 SQL 문자열과 파라미터를 꺼내볼 수 있어요.
 
 ```typescript
 const { text, values } = qb.getSql();
@@ -358,58 +354,59 @@ console.log(text);   // SELECT "u"."id", ... WHERE "u"."is_active" = ?
 console.log(values);  // [true]
 ```
 
-> **Hint** `getSql()` 출력의 `?` placeholder는 가독성을 위한 거예요. 실제 쿼리는 드라이버에 맞는 파라미터를 사용해요 (PostgreSQL은 `$1`, `$2`, MySQL은 `?`).
+> **참고** `getSql()` 출력의 `?` 플레이스홀더는 가독성을 위한 표시입니다. 실제 실행 쿼리는 드라이버 규약에 맞는 파라미터(PostgreSQL은 `$1`, `$2`, MySQL은 `?`)를 씁니다.
 
-### Required 컬럼 검증
+### 필수 컬럼 검증
 
-`getMany()`는 `select()` 사용 시 non-nullable 컬럼이 모두 포함됐는지 검증해요. required 필드가 `undefined`인 잘못된 클래스 인스턴스 생성을 방지해요.
+`getMany()`는 `select()` 사용 시 not-null 컬럼이 모두 포함됐는지 확인합니다. 필수 필드가 `undefined`인 불완전한 클래스 인스턴스가 만들어지는 걸 막아줘요.
 
 ```typescript
 @Entity()
 class User {
-  @PrimaryGeneratedColumn()         // autoIncrement — can omit
+  @PrimaryGeneratedColumn()         // autoIncrement — 생략 가능
   id!: number;
 
-  @Column({ type: "varchar" })      // non-nullable — REQUIRED
+  @Column({ type: "varchar" })      // not-null — 필수
   name!: string;
 
-  @Column({ nullable: true })       // nullable — can omit
+  @Column({ nullable: true })       // nullable — 생략 가능
   bio!: string | null;
 
-  @Column({ default: "active" })    // has default — can omit
+  @Column({ default: "active" })    // 기본값 있음 — 생략 가능
   status!: string;
 }
 
-// ✓ OK — "name" (the only required column) is included
+// ✓ OK — "name" (유일한 필수 컬럼)이 포함됨
 await qb.select(["name"]).getMany();
 
-// ✗ Throws OrmError MISSING_REQUIRED_COLUMNS — "name" is missing
+// ✗ OrmError MISSING_REQUIRED_COLUMNS — "name" 누락
 await qb.select(["bio"]).getMany();
 
-// ✓ Use getPartialMany() to skip validation
+// ✓ getPartialMany()는 검증 스킵
 await qb.select(["bio"]).getPartialMany();  // OK — plain object
 ```
 
-컬럼이 **required**로 간주되려면 다음이 모두 참이어야 해요:
+컬럼이 **필수**로 분류되려면 다음이 모두 참이어야 해요.
+
 - `nullable`이 `true`가 아님
-- `default` 값이 지정되지 않음
+- `default` 값이 없음
 - `autoIncrement`가 아님 (예: `@PrimaryGeneratedColumn`)
 
 ### 메서드별 사용 시나리오
 
-| 상황 | Method | 이유 |
+| 상황 | 메서드 | 이유 |
 |------|--------|------|
-| `em.save()`에 전달할 데이터 | `getMany()` | 전체 lifecycle을 지원하는 클래스 인스턴스 |
-| EntitySubscriber / lifecycle hook | `getMany()` | 클래스 인스턴스만 `listenTo()`에 매칭돼요 |
-| Read-only API 응답 | `getPartialMany()` | Typed DTO, 컴파일 타임 안전성, 경량 |
-| Aggregate / computed column | `getRawMany()` | `addSelect(sql`COUNT(*)`, "cnt")`는 `Pick`으로 타이핑할 수 없어요 |
-| 존재 여부 확인 | `exists()` | Boolean — 데이터를 가져오지 않아요 |
+| `em.save()`에 넘길 데이터 | `getMany()` | 전체 생명주기를 지원하는 클래스 인스턴스 |
+| EntitySubscriber / 생명주기 훅 | `getMany()` | 클래스 인스턴스만 `listenTo()`에 매칭 |
+| 읽기 전용 API 응답 | `getPartialMany()` | 타입드 DTO, 컴파일 타임 안전, 가벼움 |
+| 집계 / 계산 컬럼 | `getRawMany()` | `addSelect(sql`COUNT(*)`, "cnt")`는 `Pick`으로 타이핑 불가 |
+| 존재 여부 확인 | `exists()` | boolean만 반환 — 데이터 가져오지 않음 |
 
-`em.find()`에도 `select` 옵션이 있지만, 반환 타입을 좁혀주지는 않아요 — `find()`는 항상 `T[]`를 반환해요. Projection의 타입 안전성이 중요하다면 query builder의 `getPartialMany()`를 사용하세요.
+`em.find()`에도 `select` 옵션이 있지만 반환 타입을 좁혀주지는 않아요 — `find()`는 항상 `T[]`입니다. 투영의 타입 안전이 중요하면 쿼리 빌더의 `getPartialMany()`를 쓰세요.
 
 ## 같은 쿼리를 미리 만들어 두기 — `prepare()`
 
-같은 **모양의** 쿼리가 값만 바뀌며 반복된다면, SQL을 한 번만 만들어 두고 계속 재사용할 수 있어요. 배치 잡에서 수백 개의 ID로 상세 쿼리를 돌리는 경우가 전형적이에요.
+같은 **모양의** 쿼리가 값만 바뀌며 반복될 때는 SQL을 한 번만 만들어 두고 재사용할 수 있습니다. 배치 잡에서 수백 개의 ID로 상세 쿼리를 돌리는 상황이 전형적이에요.
 
 ```typescript
 import { p } from "@stingerloom/orm";
@@ -422,19 +419,19 @@ const findById = em
 
 for (const id of userIds) {
   const user = await findById.executeOne({ id });
-  // SQL 문자열은 한 번만 생성, 이후에는 파라미터만 교체
+  // SQL 문자열은 한 번만 생성, 이후엔 파라미터만 교체
 }
 ```
 
-`SelectQueryBuilder`의 **투영된 부분 컬럼만 타입드로 받고 싶을 때**는 `preparePartial()`을 쓰면 `TResult`가 `Pick<...>`로 좁혀져요. `RawQueryBuilder`에도 같은 모양의 `.prepare(em)`이 있어요.
+`SelectQueryBuilder`의 **투영된 일부 컬럼만 타입드로 받고 싶을 때**는 `preparePartial()`을 쓰면 `TResult`가 `Pick<...>`로 좁혀집니다. `RawQueryBuilder`에도 같은 모양의 `.prepare(em)`이 있어요.
 
-> **주의 — 조건 자체가 동적으로 달라지면 `prepare()`가 효과 없음.** "필터가 선택적으로 붙는 검색 엔드포인트"처럼 쿼리 구조 자체가 변하는 경우는 `when()` / `pipe()` 쪽이 맞고, `prepare()`는 어울리지 않아요.
+> **주의 — 쿼리 구조 자체가 달라지면 `prepare()`는 효과가 없습니다.** "필터가 선택적으로 붙는 검색 엔드포인트"처럼 SQL 골격이 매번 바뀌는 경우는 `when()` / `pipe()` 쪽이 맞고, `prepare()`는 어울리지 않아요.
 
-언제 효과가 있고 없는지, `WriteBuffer`나 배치 쓰기와 어떻게 다른지의 전체 배경은 [쿼리 미리 만들어두기](./entity-manager-advanced.md#쿼리-미리-만들어두기-em-compile-qb-prepare)에 있어요.
+언제 효과가 있는지, `WriteBuffer`나 배치 쓰기와는 어떻게 다른지의 전체 배경은 [쿼리 미리 만들어두기](./entity-manager-advanced.md#쿼리-미리-만들어두기-em-compile-qb-prepare)에서 이어집니다.
 
 ## 실전 예제 — 필터 검색 + 페이지네이션
 
-지금까지 배운 것을 합쳐볼게요. 선택적 필터를 받아서 총 개수와 함께 페이지네이션된 결과를 반환하는 검색 엔드포인트예요.
+지금까지 본 것들을 합쳐 봅시다. 선택적 필터를 받아 총 개수와 함께 페이지네이션된 결과를 돌려주는 검색 엔드포인트예요.
 
 ```typescript
 import { qAlias } from "@stingerloom/orm";
@@ -456,7 +453,7 @@ async function searchPosts(filters: {
       join.on(p.col("authorId"), "=", u.col("id"))
     );
 
-  // 각 필터는 선택적 — 값이 있을 때만 조건 추가
+  // 각 필터는 선택 — 값이 있을 때만 조건 추가
   if (filters.authorName) {
     qb.where(u.name.like(`%${filters.authorName}%`));
   }
@@ -477,9 +474,9 @@ async function searchPosts(filters: {
 }
 ```
 
-`qAlias()`를 사용하면 query builder가 자연어처럼 읽혀요 — `u.name.like(...)`, `p.category.eq(...)`. TypeScript가 프로퍼티명과 조건 메서드 모두 자동 완성하므로 오타가 컴파일 에러가 돼요.
+`qAlias()`를 쓰면 쿼리 빌더가 자연스럽게 읽힙니다 — `u.name.like(...)`, `p.category.eq(...)`. 타입스크립트가 프로퍼티 이름도, 조건 메서드도 자동완성해 주니 오타가 컴파일 에러로 잡혀요.
 
-하지만 `when()`을 쓰면 `if` 블록이 아예 사라져요:
+`when()`을 쓰면 `if` 블록을 아예 없앨 수 있습니다.
 
 ```typescript
 const [posts, total] = await em
@@ -503,8 +500,7 @@ const [posts, total] = await em
   .getPartialManyAndCount();
 ```
 
-`when()`, `pipe()`, scope 같은 편의 헬퍼는
-[편의 패턴](./query-builder-patterns.md)에서 다뤄요.
+`when()`, `pipe()`, scope 같은 편의 헬퍼는 [편의 패턴](./query-builder-patterns.md)에서 이어집니다.
 
 ## 다음 단계
 

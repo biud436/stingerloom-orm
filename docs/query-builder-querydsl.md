@@ -1,83 +1,95 @@
 # Query Builder — QueryDSL Expressions
 
-This page documents the `qAlias()` expression surface — the QueryDSL-style
-API that turns entity property access into typed SQL expressions. If you've
-used JPA QueryDSL's `QUser` classes, the mental model is identical. Unlike
-JPA, Stingerloom does not need a code generator — the whole thing is a
-TypeScript `Proxy`.
+## Why this exists
 
-## The Road to `qAlias()`
-
-Before this surface existed, the query builder had two ways of referring to
-a column:
+Using the query builder, you'll run into a curious asymmetry. Column names autocomplete — operators don't.
 
 ```typescript
-qb.where("firstName", "Alice")                        // stringly-typed
-qb.where(alias(User, "u").col("firstName"), "Alice")  // alias() — autocomplete on column name
+qb.where("age", ">=", 18);
 ```
 
-Both still require you to spell the operator yourself (`"="`, `"LIKE"`, …).
-JPA users will recognise the next step: code-generate a `QUser` class with
-typed fields, and write `qUser.firstName.eq("Alice")`. JPA's QueryDSL does
-exactly that — but it needs a build-time code generator.
+`"age"` is checked against `keyof User`, so a typo fails at compile time. But `">="`? Misspell `"LIKE"` as `"LKIE"` and TypeScript has nothing to say — it's "just a string." You'll find out at runtime, if you're lucky.
 
-**`qAlias()` is the TypeScript equivalent without the codegen.** It returns
-a `Proxy` that pretends to have every entity property as a
-`ColumnExpression`:
+There's a second annoyance. The same expression often has to appear in several clauses:
 
 ```typescript
+qb.addSelect(sql`COUNT(*)`, "total")
+  .having(sql`COUNT(*) >= ${5}`)
+  .addOrderBy(sql`COUNT(*)`, "DESC");
+```
+
+Three copies of `COUNT(*)`. Switch to `COUNT(DISTINCT user_id)` and you edit all three. Miss one and you have a silent bug.
+
+Both of these share a root cause: **SQL expressions are treated as strings rather than values.** If they were values you could assign them to variables, compose them, and have them type-checked. Strings are just strings.
+
+## The idea — expressions as objects
+
+The fix is simple to state. **Make SQL expressions first-class objects.** A column is an object. A comparison is a method on it. The result is another object.
+
+In TypeScript the cleanest way to build this is with `Proxy`, and that's exactly what `qAlias()` returns.
+
+```typescript
+import { qAlias } from "@stingerloom/orm";
+
 const u = qAlias(User, "u");
-qb.where(u.firstName.eq("Alice"));
-//         │         └── operator method on ColumnExpression
-//         └── proxy-intercepted property access → "u.firstName"
+qb.where(u.age.gte(18));
 ```
 
-At runtime there is no `u.firstName` object — the proxy's `get` trap
-creates a `ColumnExpression("u.firstName")` on the fly, `.eq("Alice")`
-wraps it into a deferred `ColumnCondition`, and the query builder resolves
-`"u.firstName"` to `"u"."first_name"` at build time (respecting
-`SnakeNamingStrategy`).
+Reading `u.age` doesn't fetch anything. The proxy's `get` trap intercepts the access and produces an expression object that says "column `age` of alias `u`". Calling `.gte(18)` wraps it in a condition object ("that column is ≥ 18"). These objects accumulate inside the query builder and only turn into SQL at execution time.
 
-JSON columns get a parallel proxy — see
-[JSON Navigation](./query-builder-json.md) for the details.
+```
+u         .age              .gte(18)
+│          │                 │
+Proxy      ColumnExpression  ColumnCondition
+           ("u.age")         (u.age >= 18)
+                             → compiled to:
+                             → "u"."age" >= $1
+                             → the literal 18 is a bound parameter
+```
+
+Naming-strategy translation rides along. Under `snake_case`, `u.firstName` becomes `"u"."first_name"` — the proxy looks up column metadata to know.
+
+JSON columns work the same way, just with a longer path. Those are covered in [JSON Navigation](./query-builder-json.md).
+
+## What changes
+
+Swapping operator strings for methods isn't the only gain. Because expressions are now objects, **you can store them in variables.** The earlier `COUNT(*)` example becomes:
+
+```typescript
+const p = qAlias(Post, "p");
+const count = p.id.count();
+
+await em.createQueryBuilder(Post, "p")
+  .select(["category"])
+  .addSelect(count.as("total"))
+  .groupBy(["p.category"])
+  .having(count.gte(5))
+  .addOrderBy(count.desc())
+  .getRawMany();
+```
+
+One `count` definition, reused in SELECT, HAVING, and ORDER BY. Change the aggregate to `p.id.countDistinct()` and you edit one line. Expression reuse pays off especially in reporting queries, where the same sum, average, or count often needs to appear in several places at once.
 
 ## `alias()` vs. `qAlias()`
 
-Both produce typed column references. Pick based on whether you also want
-operator autocomplete:
+Both produce typed column references, just at different depths.
 
 ```typescript
 import { alias, qAlias } from "@stingerloom/orm";
 
 const u1 = alias(User, "u");
-u1.col("firstName");          // "u.firstName" — property autocomplete only
+u1.col("firstName");          // "u.firstName" — autocompletes the property name
 
 const u2 = qAlias(User, "u");
-u2.firstName.eq("Alice");     // property + operator autocomplete
-u2.col("firstName");          // also works — `.col()` is available on qAlias
+u2.firstName.eq("Alice");     // autocompletes property and operator
+u2.col("firstName");          // qAlias also supports .col()
 ```
 
-You can freely mix styles inside the same query builder call chain.
+You can mix the two styles inside the same chain. Reach for `alias()` when you only need a typed reference; reach for `qAlias()` when you also want to compose conditions.
 
-## Method Overview
+---
 
-Column references from `qAlias()` ultimately compose into four kinds of
-expression:
-
-- **Sorting** — `.asc()` / `.desc()` with a say on where NULL rows land
-- **Aggregates** — `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()` that
-  slot into SELECT and HAVING using the same expression
-- **Combining** — `.and()` / `.or()` / `.not()` on any condition, plus an
-  `Expressions` namespace for explicit grouping
-- **Matching** — `.startsWith()` / `.endsWith()` / `.contains()` that
-  escape LIKE metacharacters before wrapping in wildcards, and
-  `*IgnoreCase` siblings
-
-Everything here keeps the guarantees you've already seen: column
-references resolve through the alias registry (so `u.firstName` still
-becomes `"u"."first_name"` under `SnakeNamingStrategy`) and every
-user-supplied value — including the LIKE escape character — is a bound
-parameter.
+The rest of this page walks through what you can do with those column references. Two guarantees hold throughout: column references resolve through the alias registry (so naming-strategy translation always applies), and every user-supplied value — including LIKE escape characters — is a bound parameter.
 
 ## Ordering — `.asc()` / `.desc()` / `.nullsFirst()` / `.nullsLast()`
 
@@ -200,8 +212,7 @@ aggregates (`u.id.count()`), other scalar expressions (nested
 surface you've already seen, so every derived expression composes.
 
 Static helpers live on the `Expressions` namespace — `Expressions.coalesce`
-and `Expressions.nullif` — mirroring Java QueryDSL for callers who
-prefer the static entry point.
+and `Expressions.nullif` — for callers who prefer the static entry point.
 
 ## Current date/time — `currentDate()` / `currentTime()` / `currentTimestamp()`
 
