@@ -6,6 +6,29 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.19.1] — 2026-04-19
+
+### Fixes
+
+- **`@Column` type override drops inferred length** — When `@Column` explicitly sets a `type`, the previously inferred `length` no longer tags along. Prevents unexpected `VARCHAR(255)` annotations on columns whose type was migrated from one to another.
+- **Composite PK renders as a single table-level `PRIMARY KEY`** — Previously emitted as multiple inline `PRIMARY KEY` column constraints, which MySQL / PostgreSQL / SQLite all reject. Now emitted as one `PRIMARY KEY (col1, col2)` at the table level, consistent across dialects.
+
+### Documentation
+
+- **Query Builder docs split into seven focused pages** — hub plus `joins` / `querydsl` / `json` / `aggregations` / `execution` / `patterns`. The monolithic page is gone; each page stands on its own.
+- **Korean query-builder set (7 pages) rewritten** — replaced the literal translation of the English docs with natural Korean prose. QueryDSL page in particular is restructured mission-first: opens with the two pains of string-based queries (untyped operators, repeated expressions), introduces `qAlias()` as expressions-as-objects, and shows the variable-reuse payoff.
+- **Reader-background assumptions removed** — phrases like "if you've used JPA" / "familiar from Hibernate" / "Java users will recognize" dropped from `inheritance-mapping.md`, `write-buffer.md`, `transactions.md`, `query-builder-joins.md`, and their Korean counterparts. The English QueryDSL opening no longer leans on a JPA `QUser` comparison.
+- **B2B report example in `query-builder-joins.md` (KO)** — the three-way join + aggregate example now shows the generated SQL next to the TypeScript, including how `totalQty` renders in SELECT (aliased) vs HAVING / ORDER BY (re-expressed for portability).
+- **README refreshed** for the 0.19.0 QueryDSL surface, UoW, and MariaDB additions.
+
+### Tests
+
+- **`sql-craft-patterns.test.ts`** — capability boundary audit covering the SQL patterns the builder supports end-to-end.
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.19.0...v0.19.1
+
+---
+
 ## [0.19.0] — 2026-04-18
 
 ### Highlights
