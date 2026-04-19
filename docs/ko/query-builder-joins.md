@@ -231,7 +231,21 @@ const top = await em.createQueryBuilder(Customer, "c")
   .getRawMany();
 ```
 
-포인트는 세 가지입니다. `innerJoin`을 엔티티 클래스로 두 번 이어 쓰기, 집계 표현식을 한 번 정의해 SELECT / HAVING / ORDER BY 세 자리에 재사용하기, `o.createdAt.gte()`처럼 조인 건너의 컬럼도 타입 자동완성으로 필터링하기. 집계 쪽 전체 설명은 [집계 & 서브쿼리](./query-builder-aggregations.md)에 이어집니다.
+나가는 SQL은 이렇게 생겼습니다 (PostgreSQL + `SnakeNamingStrategy` 기준).
+
+```sql
+SELECT "c"."name", SUM("oi"."quantity") AS "totalQty"
+FROM "customer" AS "c"
+INNER JOIN "order" AS "o" ON "o"."customer_id" = "c"."id"
+INNER JOIN "order_item" AS "oi" ON "oi"."order_id" = "o"."id"
+WHERE "o"."created_at" >= $1
+GROUP BY "c"."name"
+HAVING SUM("oi"."quantity") > $2
+ORDER BY SUM("oi"."quantity") DESC
+-- parameters: ["2026-01-01T00:00:00.000Z", 50]
+```
+
+세 군데를 눈여겨볼 만합니다. `totalQty`라는 TypeScript 변수 하나가 SELECT에서는 `SUM(...) AS "totalQty"`로, HAVING과 ORDER BY에서는 별칭이 아닌 `SUM("oi"."quantity")` 표현식 그대로 다시 펼쳐져서 내려가요. 별칭을 재참조하지 않고 표현식을 풀어 쓰는 이유는 이식성 때문입니다 — 일부 DB는 HAVING에서 SELECT 별칭을 허용하지 않거든요. `o.createdAt.gte(new Date("2026-01-01"))`의 Date도 바인딩 파라미터 `$1`로 나가고, `50`은 `$2`로 붙습니다. 집계 쪽 전체 설명은 [집계 & 서브쿼리](./query-builder-aggregations.md)에 이어집니다.
 
 ## 크로스 엔티티 컬럼 해석
 
