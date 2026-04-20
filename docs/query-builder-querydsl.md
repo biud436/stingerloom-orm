@@ -185,7 +185,7 @@ sentinel value (empty string, `-1`, etc.) into a real `NULL`. Both are
 standard SQL, so they compile identically on every dialect.
 
 ```typescript
-import { coalesce, nullif, Expressions, qAlias } from "@stingerloom/orm";
+import { coalesce, nullif, qAlias } from "@stingerloom/orm";
 
 const u = qAlias(User, "u");
 
@@ -214,6 +214,18 @@ surface you've already seen, so every derived expression composes.
 Static helpers live on the `Expressions` namespace — `Expressions.coalesce`
 and `Expressions.nullif` — for callers who prefer the static entry point.
 
+::: tip `Expressions` is a lot to type
+Most examples from here on alias the namespace on import:
+
+```typescript
+import { Expressions as exp } from "@stingerloom/orm";
+```
+
+`exp` has no other meaning in the public API, so the name stays free for
+this purpose. Everything documented as `Expressions.xxx` is also
+available as `exp.xxx`.
+:::
+
 ## Current date/time — `currentDate()` / `currentTime()` / `currentTimestamp()`
 
 Three small standard-SQL helpers that insert the server's clock into
@@ -222,14 +234,14 @@ with everything already shown (`.as()`, `.eq()`, nested inside
 `coalesce`, etc.) and emit the same literal on every dialect.
 
 ```typescript
-import { Expressions, qAlias } from "@stingerloom/orm";
+import { Expressions as exp, qAlias } from "@stingerloom/orm";
 
 const s = qAlias(Session, "s");
 
-qb.where(s.expiresAt.gte(Expressions.currentTimestamp()));
+qb.where(s.expiresAt.gte(exp.currentTimestamp()));
 // WHERE "s"."expires_at" >= CURRENT_TIMESTAMP
 
-qb.select([Expressions.currentDate().as("today")]);
+qb.select([exp.currentDate().as("today")]);
 // SELECT CURRENT_DATE AS "today"
 ```
 
@@ -347,7 +359,7 @@ qb.where(p.views.gt(avgViews));
 correlated-subquery conditions:
 
 ```typescript
-qb.where(Expressions.exists(em.createQueryBuilder(Post, "p")
+qb.where(exp.exists(em.createQueryBuilder(Post, "p")
   .select(["id"])
   .where(sql`"p"."author_id" = "u"."id"`)));
 // WHERE EXISTS (SELECT "id" FROM "post" AS "p"
@@ -369,7 +381,7 @@ optional `otherwise(default)` and call `.end()` to finalize.
 ```typescript
 const u = qAlias(User, "u");
 
-const tier = Expressions.caseBuilder()
+const tier = exp.caseBuilder()
   .when(u.score.gte(90)).then("gold")
   .when(u.score.gte(70)).then("silver")
   .otherwise("bronze")
@@ -385,7 +397,7 @@ qb.select([tier.as("tier")]);
 the subject against each candidate value:
 
 ```typescript
-const weight = Expressions.cases(u.status)
+const weight = exp.cases(u.status)
   .when("active",  1)
   .when("pending", 0)
   .otherwise(-1)
@@ -429,7 +441,7 @@ shortcut when its shape matches exactly.
 const u = qAlias(User, "u");
 
 qb.select([
-  Expressions.iff(u.deletedAt.isNull(), "active", "deleted").as("state"),
+  exp.iff(u.deletedAt.isNull(), "active", "deleted").as("state"),
 ]);
 // SELECT CASE WHEN "u"."deleted_at" IS NULL THEN $1 ELSE $2 END AS "state"
 ```
@@ -443,7 +455,7 @@ string-coerced, so this fits enum / status / role columns best. Omit
 
 ```typescript
 qb.select([
-  Expressions.mapValues(u.status, { active: 1, pending: 0 }, -1).as("w"),
+  exp.mapValues(u.status, { active: 1, pending: 0 }, -1).as("w"),
 ]);
 // SELECT CASE "u"."status" WHEN $1 THEN $2
 //                           WHEN $3 THEN $4
@@ -459,13 +471,13 @@ cohorts and to `">"` for strict descending ladders.
 
 ```typescript
 // Descending >= ladder (default)
-Expressions.buckets(u.score, [
+exp.buckets(u.score, [
   [90, "gold"],
   [70, "silver"],
 ], "bronze");
 
 // Ascending < ladder — age → cohort
-Expressions.buckets(u.age, [
+exp.buckets(u.age, [
   [18, "child"],
   [65, "adult"],
 ], "senior", { op: "<" });
@@ -536,8 +548,8 @@ const e = qAlias(Event, "e");
 qb.select([
   e.startsAt.addDays(7).as("next_week"),
   e.startsAt.addMonths(-1).as("prev_month"),
-  Expressions.dateDiff(e.endsAt, e.startsAt, "day").as("span_days"),
-  Expressions.random().as("r"),
+  exp.dateDiff(e.endsAt, e.startsAt, "day").as("span_days"),
+  exp.random().as("r"),
 ]);
 ```
 
@@ -597,11 +609,11 @@ not runtime-enforced.
 
 ```typescript
 import sql from "sql-template-tag";
-import { Expressions, qAlias } from "@stingerloom/orm";
+import { Expressions as exp, qAlias } from "@stingerloom/orm";
 
 const u = qAlias(User, "u");
 
-const epoch = Expressions.raw<number>(
+const epoch = exp.raw<number>(
   sql`EXTRACT(epoch FROM ${u.col("createdAt")})`,
 );
 
@@ -658,11 +670,11 @@ qb.where(u.role.eq("admin").or(u.role.eq("owner")));
 qb.where(u.deletedAt.isNull().not());      // equivalent to u.deletedAt.isNotNull()
 
 // Static helpers when you need explicit grouping
-import { Expressions } from "@stingerloom/orm";
+import { Expressions as exp } from "@stingerloom/orm";
 
 qb.where(
-  Expressions.or(
-    Expressions.and(u.age.gte(18), u.status.eq("active")),
+  exp.or(
+    exp.and(u.age.gte(18), u.status.eq("active")),
     u.role.eq("admin"),
   ),
 );
@@ -675,7 +687,7 @@ common `ConditionLike` contract, so you can compose across them freely:
 
 ```typescript
 qb.where(
-  Expressions.and(
+  exp.and(
     u.status.eq("active"),
     u.profile.tags.contains("admin"),     // JsonPathCondition
   ),

@@ -120,14 +120,19 @@ export function isLogicalCondition(value: unknown): value is LogicalCondition {
  * Static helpers for building logical compositions and referencing
  * current-date/time expressions.
  *
- * Mirrors Java QueryDSL's `Expressions.*` namespace in spirit.
+ * Mirrors Java QueryDSL's `Expressions.*` namespace in spirit. The name
+ * is a mouthful at call sites, so examples and docs tend to import it
+ * under a short alias — `import { Expressions as exp }` — and call
+ * `exp.and(...)`, `exp.iff(...)`, etc.
  *
  * @example
  * ```ts
+ * import { Expressions as exp, qAlias } from "@stingerloom/orm";
+ *
  * const u = qAlias(User, "u");
- * qb.where(Expressions.and(u.age.gte(18), u.status.eq("active")));
- * qb.where(Expressions.or(u.role.eq("admin"), u.role.eq("owner")));
- * qb.where(Expressions.not(u.deletedAt.isNull()));
+ * qb.where(exp.and(u.age.gte(18), u.status.eq("active")));
+ * qb.where(exp.or(u.role.eq("admin"), u.role.eq("owner")));
+ * qb.where(exp.not(u.deletedAt.isNull()));
  * ```
  */
 export const Expressions = {

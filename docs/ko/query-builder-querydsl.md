@@ -158,6 +158,16 @@ JSON 경로 별칭은 드라이버별 텍스트 추출 연산자(`#>>`, `JSON_UN
 
 ## `CASE WHEN …` — 조건 분기 표현식
 
+::: tip `Expressions`는 이름이 긴 편
+이번 섹션부터 여러 곳에서 쓰이는 `Expressions` 네임스페이스는 import 시 별칭을 걸어서 씁니다.
+
+```typescript
+import { Expressions as exp } from "@stingerloom/orm";
+```
+
+`exp`는 공개 API에서 다른 의미로 쓰이지 않아 자리가 비어 있습니다. 문서에 `Expressions.xxx`로 표기된 것은 모두 `exp.xxx`로도 호출 가능합니다.
+:::
+
 SQL에는 두 종류의 CASE가 있습니다. 각각 전용 빌더를 제공해요.
 
 **Searched CASE** — `caseBuilder()`. 조건을 이어가는 방식입니다. 각 분기는 조건과 결과값 쌍이고, 마지막에 기본값을 `otherwise(...)`로 달고 `.end()`로 마무리합니다.
@@ -165,7 +175,7 @@ SQL에는 두 종류의 CASE가 있습니다. 각각 전용 빌더를 제공해�
 ```typescript
 const u = qAlias(User, "u");
 
-const tier = Expressions.caseBuilder()
+const tier = exp.caseBuilder()
   .when(u.score.gte(90)).then("gold")
   .when(u.score.gte(70)).then("silver")
   .otherwise("bronze")
@@ -180,7 +190,7 @@ qb.select([tier.as("tier")]);
 **Simple CASE** — `cases(subject)`. 값 매칭 스위치 스타일입니다.
 
 ```typescript
-const weight = Expressions.cases(u.status)
+const weight = exp.cases(u.status)
   .when("active",  1)
   .when("pending", 0)
   .otherwise(-1)
@@ -203,7 +213,7 @@ CASE 표현식도 한 번 만들어 두면 여기저기 꽂을 수 있습니다.
 ```typescript
 const u = qAlias(User, "u");
 
-const tier = Expressions.caseBuilder()
+const tier = exp.caseBuilder()
   .when(u.score.gte(90)).then("gold")
   .when(u.score.gte(70)).then("silver")
   .otherwise("bronze")
@@ -211,8 +221,8 @@ const tier = Expressions.caseBuilder()
 
 const golds = await em.createQueryBuilder(User, "u")
   .select(["id", "name"])
-  .addSelect(Expressions.coalesce(tier, u.status, "unknown").as("tier"))
-  .where(Expressions.and(
+  .addSelect(exp.coalesce(tier, u.status, "unknown").as("tier"))
+  .where(exp.and(
     tier.eq("gold"),
     u.role.eq("member"),
   ))
@@ -237,7 +247,7 @@ const golds = await em.createQueryBuilder(User, "u")
 const u = qAlias(User, "u");
 
 qb.select([
-  Expressions.iff(u.deletedAt.isNull(), "active", "deleted").as("state"),
+  exp.iff(u.deletedAt.isNull(), "active", "deleted").as("state"),
 ]);
 // SELECT CASE WHEN "u"."deleted_at" IS NULL THEN ? ELSE ? END AS "state"
 ```
@@ -248,7 +258,7 @@ qb.select([
 
 ```typescript
 qb.select([
-  Expressions.mapValues(u.status, { active: 1, pending: 0 }, -1).as("w"),
+  exp.mapValues(u.status, { active: 1, pending: 0 }, -1).as("w"),
 ]);
 // SELECT CASE "u"."status" WHEN ? THEN ?
 //                           WHEN ? THEN ?
@@ -261,13 +271,13 @@ qb.select([
 
 ```typescript
 // 내림차순 >= 사다리 (기본)
-Expressions.buckets(u.score, [
+exp.buckets(u.score, [
   [90, "gold"],
   [70, "silver"],
 ], "bronze");
 
 // 오름차순 < 사다리 — age → cohort
-Expressions.buckets(u.age, [
+exp.buckets(u.age, [
   [18, "child"],
   [65, "adult"],
 ], "senior", { op: "<" });
@@ -307,14 +317,14 @@ qb.where(coalesce(u.score, 0).gte(50));
 DB 서버의 시계를 어느 자리에든 꽂을 수 있는 표준 SQL 헬퍼 세 가지입니다. 결과는 `ScalarExpression`이라 `.as()`, `.eq()`, `coalesce` 중첩 등 지금까지 본 합성이 전부 그대로 됩니다. 세 드라이버 모두 동일한 리터럴(`CURRENT_DATE` / `CURRENT_TIME` / `CURRENT_TIMESTAMP`)로 나갑니다.
 
 ```typescript
-import { Expressions, qAlias } from "@stingerloom/orm";
+import { Expressions as exp, qAlias } from "@stingerloom/orm";
 
 const s = qAlias(Session, "s");
 
-qb.where(s.expiresAt.gte(Expressions.currentTimestamp()));
+qb.where(s.expiresAt.gte(exp.currentTimestamp()));
 // WHERE "s"."expires_at" >= CURRENT_TIMESTAMP
 
-qb.select([Expressions.currentDate().as("today")]);
+qb.select([exp.currentDate().as("today")]);
 // SELECT CURRENT_DATE AS "today"
 ```
 
@@ -409,7 +419,7 @@ qb.where(p.views.gt(avgViews));
 `Expressions.exists(subQb)` / `Expressions.notExists(subQb)`는 상관 서브쿼리 조건을 만듭니다.
 
 ```typescript
-qb.where(Expressions.exists(em.createQueryBuilder(Post, "p")
+qb.where(exp.exists(em.createQueryBuilder(Post, "p")
   .select(["id"])
   .where(sql`"p"."author_id" = "u"."id"`)));
 // WHERE EXISTS (SELECT "id" FROM "post" AS "p"
@@ -462,8 +472,8 @@ const e = qAlias(Event, "e");
 qb.select([
   e.startsAt.addDays(7).as("next_week"),
   e.startsAt.addMonths(-1).as("prev_month"),
-  Expressions.dateDiff(e.endsAt, e.startsAt, "day").as("span_days"),
-  Expressions.random().as("r"),
+  exp.dateDiff(e.endsAt, e.startsAt, "day").as("span_days"),
+  exp.random().as("r"),
 ]);
 ```
 
@@ -542,11 +552,11 @@ const aboveAvg = await em.createQueryBuilder(Event, "e")
 
 ```typescript
 import sql from "sql-template-tag";
-import { Expressions, qAlias } from "@stingerloom/orm";
+import { Expressions as exp, qAlias } from "@stingerloom/orm";
 
 const u = qAlias(User, "u");
 
-const epoch = Expressions.raw<number>(
+const epoch = exp.raw<number>(
   sql`EXTRACT(epoch FROM ${u.col("createdAt")})`,
 );
 
@@ -597,12 +607,12 @@ qb.where(u.deletedAt.isNull().not());
 그룹을 더 명시적으로 짜고 싶으면 `Expressions` 헬퍼를 쓰세요.
 
 ```typescript
-import { Expressions } from "@stingerloom/orm";
+import { Expressions as exp } from "@stingerloom/orm";
 
 // (active이면서 admin) 이거나, 그냥 owner
 qb.where(
-  Expressions.or(
-    Expressions.and(u.status.eq("active"), u.role.eq("admin")),
+  exp.or(
+    exp.and(u.status.eq("active"), u.role.eq("admin")),
     u.role.eq("owner"),
   ),
 );
@@ -612,7 +622,7 @@ qb.where(
 
 ```typescript
 qb.where(
-  Expressions.and(
+  exp.and(
     u.status.eq("active"),
     u.profile.tags.contains("admin"),   // JSON 경로 조건도 같이 들어감
   ),
