@@ -221,6 +221,60 @@ const golds = await em.createQueryBuilder(User, "u")
 
 같은 CASE를 두 번 적지 않아도 되고, 등급 기준이 바뀌어도 한 군데만 고치면 됩니다.
 
+### 자주 쓰는 CASE 모양용 단축 헬퍼
+
+자주 나오는 세 가지 CASE 모양은 전용 단축 함수로 줄여 쓸 수 있습니다. 분기가 제각각이면 기존 빌더가 낫고, 아래 표의 모양이 정확히 맞는 경우에만 단축 함수를 쓰세요. 출력 SQL은 빌더와 동일합니다.
+
+| 모양 | 단축 | 언제 쓰나 |
+|------|------|-----------|
+| 두 갈래 조건 선택 | `Expressions.iff(cond, a, b)` | 조건 하나로 값 두 개 중 고를 때 (소프트 삭제 플래그, 기능 토글, Y/N 출력 등) |
+| 정적 값 매핑 | `Expressions.mapValues(subject, { k: v }, default?)` | 컬럼 값이 상수에 1:1로 대응할 때 |
+| 임계값 사다리 | `Expressions.buckets(subject, [[t, label], …], default?, { op? })` | 같은 연산자·오름/내림 정렬된 임계값으로 한 숫자 컬럼을 버킷팅할 때 |
+
+#### `Expressions.iff(condition, whenTrue, whenFalse)`
+
+```typescript
+const u = qAlias(User, "u");
+
+qb.select([
+  Expressions.iff(u.deletedAt.isNull(), "active", "deleted").as("state"),
+]);
+// SELECT CASE WHEN "u"."deleted_at" IS NULL THEN ? ELSE ? END AS "state"
+```
+
+#### `Expressions.mapValues(subject, mapping, default?)`
+
+객체 키는 `WHEN` 값으로 파라미터 바인딩됩니다. 키는 문자열로 강제 변환되므로 enum·status·role 같은 문자열 컬럼에 가장 잘 맞습니다. `default`를 생략하면 `ELSE`가 빠지고, 명시적으로 `ELSE NULL`을 쓰려면 `null`을 넘기세요.
+
+```typescript
+qb.select([
+  Expressions.mapValues(u.status, { active: 1, pending: 0 }, -1).as("w"),
+]);
+// SELECT CASE "u"."status" WHEN ? THEN ?
+//                           WHEN ? THEN ?
+//                           ELSE ? END AS "w"
+```
+
+#### `Expressions.buckets(subject, thresholds, default?, { op })`
+
+각 `[threshold, result]` 튜플은 `WHEN subject <op> threshold THEN result` 한 분기로 펼쳐지고, 입력 순서가 그대로 보존됩니다. 기본 연산자는 `">="`(내림차순 임계값). 오름차순 코호트는 `"<"`·`"<="`, 엄격 내림은 `">"`로 바꿔 주세요.
+
+```typescript
+// 내림차순 >= 사다리 (기본)
+Expressions.buckets(u.score, [
+  [90, "gold"],
+  [70, "silver"],
+], "bronze");
+
+// 오름차순 < 사다리 — age → cohort
+Expressions.buckets(u.age, [
+  [18, "child"],
+  [65, "adult"],
+], "senior", { op: "<" });
+```
+
+세 함수 모두 `ScalarExpression`을 돌려주므로, `.as()` · 캐스팅 · 비교 · `coalesce(...)` · `Expressions.and(...)`·`.or(...)` 등 Tier 2/3 전 연산에 그대로 연결됩니다. mapping이나 thresholds가 비어 있으면 즉시 예외가 발생합니다.
+
 ## null 처리 — `coalesce()` / `nullif()`
 
 `coalesce(a, b, c, …)`는 왼쪽에서 오른쪽으로 처음 null이 아닌 값을 돌려줍니다. `nullif(a, b)`는 `a`가 `b`와 같으면 NULL, 다르면 `a`를 돌려주죠. 빈 문자열이나 `-1` 같은 센티넬 값을 진짜 NULL로 바꿔야 할 때 씁니다. 둘 다 표준 SQL이라 드라이버 구분 없이 동일합니다.
@@ -638,6 +692,7 @@ const user = await em.createQueryBuilder(User, "u")
 | 날짜 컴포넌트 | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfYear()`, `.week()` |
 | 서브쿼리 비교 | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | CASE 표현식 | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject)...end()` |
+| CASE 단축 | `Expressions.iff(cond, a, b)`; `Expressions.mapValues(subject, { k: v }, default?)`; `Expressions.buckets(subject, [[t, label], …], default?, { op? })` |
 | 문자열 / 숫자 / 수학 | `.toLowerCase/.toUpperCase/.trim/.length/.substring/.concat/.indexOf/.replace`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
 | 날짜 산술 | `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `Expressions.dateDiff(a, b, unit)`, `Expressions.random()` |
 | 윈도우 함수 | `aggregate.over().partitionBy(...).orderBy(...).rowsBetween(start, end).as("alias")` — `rangeBetween`도 동일 |

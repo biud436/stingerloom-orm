@@ -407,6 +407,75 @@ Misuse-guard: `.when()` after `.otherwise()`, duplicate `.otherwise()`,
 or `.end()` with no branches each throw an explanatory error early,
 rather than producing malformed SQL.
 
+### Shortcuts for common `CASE` shapes
+
+Three shapes show up often enough that the general builder feels
+disproportionately heavy. The shortcuts below each expand to the same
+SQL the builder would produce — they exist only so the callsite reads
+like the intent instead of like scaffolding.
+
+Use the full builder whenever the branches differ in structure. Use a
+shortcut when its shape matches exactly.
+
+| Shape | Shortcut | When to use |
+|-------|----------|-------------|
+| Two-branch ternary | `Expressions.iff(cond, a, b)` | One condition picks between two results (soft-delete flags, feature gates, Y/N output). |
+| Static value mapping | `Expressions.mapValues(subject, { k: v }, default?)` | A column's discrete values map one-to-one to constants. |
+| Threshold ladder | `Expressions.buckets(subject, [[t, label], …], default?, { op? })` | One numeric column bucketed by the same operator and ordered thresholds. |
+
+#### `Expressions.iff(condition, whenTrue, whenFalse)`
+
+```typescript
+const u = qAlias(User, "u");
+
+qb.select([
+  Expressions.iff(u.deletedAt.isNull(), "active", "deleted").as("state"),
+]);
+// SELECT CASE WHEN "u"."deleted_at" IS NULL THEN $1 ELSE $2 END AS "state"
+```
+
+#### `Expressions.mapValues(subject, mapping, default?)`
+
+Object keys become `WHEN` values, bound as parameters. Keys are
+string-coerced, so this fits enum / status / role columns best. Omit
+`default` to skip the `ELSE` branch; pass `null` if you want an explicit
+`ELSE NULL`.
+
+```typescript
+qb.select([
+  Expressions.mapValues(u.status, { active: 1, pending: 0 }, -1).as("w"),
+]);
+// SELECT CASE "u"."status" WHEN $1 THEN $2
+//                           WHEN $3 THEN $4
+//                           ELSE $5 END AS "w"
+```
+
+#### `Expressions.buckets(subject, thresholds, default?, { op })`
+
+Each `[threshold, result]` tuple becomes one `WHEN subject <op>
+threshold THEN result` branch, in the order given. Default operator is
+`">="` (descending thresholds). Switch to `"<"` / `"<="` for ascending
+cohorts and to `">"` for strict descending ladders.
+
+```typescript
+// Descending >= ladder (default)
+Expressions.buckets(u.score, [
+  [90, "gold"],
+  [70, "silver"],
+], "bronze");
+
+// Ascending < ladder — age → cohort
+Expressions.buckets(u.age, [
+  [18, "child"],
+  [65, "adult"],
+], "senior", { op: "<" });
+```
+
+Each shortcut returns a `ScalarExpression`, so the result slots into
+every Tier 2/3 surface — `.as()`, casts, comparisons, `coalesce(...)`,
+`Expressions.and(...)` / `.or(...)`. Empty mappings or thresholds throw
+early.
+
 ## String, numeric & math — JS-idiomatic helpers
 
 Tier 3's string/numeric/math helpers borrow the names already in a
@@ -674,6 +743,7 @@ having to know.
 | Date components       | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfMonth()`, `.dayOfYear()`, `.week()` |
 | Subquery compare      | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | CASE expressions      | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject).when(val, result)...end()` |
+| CASE shortcuts        | `Expressions.iff(cond, a, b)`; `Expressions.mapValues(subject, { k: v }, default?)`; `Expressions.buckets(subject, [[t, label], …], default?, { op? })` |
 | String / numeric / math | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring()`, `.concat()`, `.indexOf()`, `.replace()`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
 | Date arithmetic       | `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `Expressions.dateDiff(a, b, unit)`, `Expressions.random()` |
 | Window functions      | `aggregate.over().partitionBy(...).orderBy(...).rowsBetween(start, end).as("alias")` — `WindowBuilder` chain |

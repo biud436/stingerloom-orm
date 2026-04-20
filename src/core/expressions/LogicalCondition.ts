@@ -20,8 +20,12 @@ import {
 import {
   caseBuilder as caseBuilderFactory,
   cases as casesFactory,
+  iff as iffFactory,
+  mapValues as mapValuesFactory,
+  buckets as bucketsFactory,
   CaseBuilder,
   CaseValueBuilder,
+  type BucketOperator,
 } from "./CaseExpression";
 import {
   dateDiff as dateDiffFactory,
@@ -222,6 +226,64 @@ export const Expressions = {
    */
   cases(subject: unknown): CaseValueBuilder {
     return casesFactory(subject);
+  },
+
+  /**
+   * Shortcut for two-branch `CASE WHEN cond THEN a ELSE b END` — the SQL
+   * equivalent of a ternary. Prefer this over {@link caseBuilder} when
+   * exactly one condition picks between two results (soft delete flags,
+   * feature gates, Y/N formatting).
+   *
+   * @example
+   * ```ts
+   * Expressions.iff(u.deletedAt.isNull(), "active", "deleted")
+   * ```
+   */
+  iff(
+    condition: ConditionLike,
+    whenTrue: unknown,
+    whenFalse: unknown,
+  ): ScalarExpression {
+    return iffFactory(condition, whenTrue, whenFalse);
+  },
+
+  /**
+   * Shortcut for simple `CASE subject WHEN v1 THEN r1 … ELSE d END`
+   * built from an object literal. Prefer this over {@link cases} when
+   * the mapping is a static one-to-one relationship from known values
+   * to constants.
+   *
+   * @example
+   * ```ts
+   * Expressions.mapValues(u.status, { active: 1, pending: 0 }, -1)
+   * ```
+   */
+  mapValues(
+    subject: unknown,
+    mapping: Record<string, unknown>,
+    defaultResult?: unknown,
+  ): ScalarExpression {
+    return mapValuesFactory(subject, mapping, defaultResult);
+  },
+
+  /**
+   * Shortcut for threshold ladders — a searched `CASE` where every
+   * branch compares the same subject to a different threshold with the
+   * same operator (score → tier, latency → bucket, age → cohort).
+   * Branches are emitted in the given order.
+   *
+   * @example
+   * ```ts
+   * Expressions.buckets(u.score, [[90, "gold"], [70, "silver"]], "bronze")
+   * ```
+   */
+  buckets(
+    subject: Parameters<typeof bucketsFactory>[0],
+    thresholds: ReadonlyArray<readonly [unknown, unknown]>,
+    defaultResult?: unknown,
+    options?: { op?: BucketOperator },
+  ): ScalarExpression {
+    return bucketsFactory(subject, thresholds, defaultResult, options);
   },
 
   /**
