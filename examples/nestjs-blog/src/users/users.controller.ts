@@ -40,7 +40,7 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
-  /** findAndCount -- 페이지네이션 */
+  /** findAndCount -- pagination */
   @Get("paginated")
   @ApiOperation({
     summary: "Paginated user list",

@@ -61,11 +61,11 @@ export function Entity(options?: EntityOption): ClassDecorator {
       ? options!.name!
       : camelToSnakeCase(target.name);
 
-    // target 기반 필터링: 이 클래스 및 부모 클래스의 메타데이터를 수집 (상속 지원)
-    // @Column의 target은 prototype, @ManyToOne/@OneToMany/@OneToOne/@ManyToMany의 target은 constructor
+    // Target-based filtering: collect metadata from this class and its ancestors (inheritance support).
+    // @Column target is the prototype; @ManyToOne/@OneToMany/@OneToOne/@ManyToMany targets are constructors.
     const proto = target.prototype;
 
-    // 프로토타입 체인을 순회하여 부모 클래스의 메타데이터도 포함
+    // Walk the prototype chain so ancestor metadata is included
     const protoChain: object[] = [];
     let current = proto;
     while (current && current !== Object.prototype) {

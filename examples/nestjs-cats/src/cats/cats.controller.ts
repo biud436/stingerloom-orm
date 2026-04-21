@@ -33,7 +33,7 @@ import {
 export class CatsController {
   constructor(private readonly catsService: CatsService) {}
 
-  /** POST /cats -- 고양이 생성 (@Transactional, @BeforeInsert 훅 데모) */
+  /** POST /cats -- create a cat (@Transactional, @BeforeInsert hook demo) */
   @Post()
   @ApiOperation({
     summary: "고양이 생성",
@@ -46,7 +46,7 @@ export class CatsController {
     return this.catsService.create(createCatDto);
   }
 
-  /** POST /cats/bulk -- 배치 INSERT (insertMany 데모) */
+  /** POST /cats/bulk -- batch INSERT (insertMany demo) */
   @Post("bulk")
   @ApiOperation({
     summary: "고양이 배치 생성",
@@ -61,7 +61,7 @@ export class CatsController {
     return this.catsService.bulkCreate(dto.cats);
   }
 
-  /** GET /cats -- soft-deleted 제외 목록 (자동 필터 데모) */
+  /** GET /cats -- list excluding soft-deleted (automatic filter demo) */
   @Get()
   @ApiOperation({
     summary: "고양이 목록 조회",
@@ -73,7 +73,7 @@ export class CatsController {
     return this.catsService.findAll();
   }
 
-  /** GET /cats/all -- soft-deleted 포함 전체 목록 (withDeleted 데모) */
+  /** GET /cats/all -- full list including soft-deleted (withDeleted demo) */
   @Get("all")
   @ApiOperation({
     summary: "전체 고양이 목록 조회 (soft-deleted 포함)",
@@ -88,7 +88,7 @@ export class CatsController {
     return this.catsService.findAllIncludeDeleted();
   }
 
-  /** GET /cats/cursor -- 커서 기반 페이지네이션 (findWithCursor 데모) */
+  /** GET /cats/cursor -- cursor-based pagination (findWithCursor demo) */
   @Get("cursor")
   @ApiOperation({
     summary: "커서 기반 페이지네이션",
@@ -124,7 +124,7 @@ export class CatsController {
     );
   }
 
-  /** GET /cats/stats -- 집계 쿼리 (count/avg/min/max/sum 데모) */
+  /** GET /cats/stats -- aggregate query (count/avg/min/max/sum demo) */
   @Get("stats")
   @ApiOperation({
     summary: "고양이 집계 통계",
@@ -182,7 +182,7 @@ export class CatsController {
     return this.catsService.bufferEntityState(id);
   }
 
-  /** GET /cats/:id -- 단건 조회 (@ManyToOne eager 로딩으로 owner 포함) */
+  /** GET /cats/:id -- find one (@ManyToOne eager loading includes owner) */
   @Get(":id")
   @ApiOperation({
     summary: "고양이 단건 조회",
@@ -196,7 +196,7 @@ export class CatsController {
     return this.catsService.findOne(id);
   }
 
-  /** PATCH /cats/:id -- 수정 (@Transactional, @BeforeUpdate 훅 데모) */
+  /** PATCH /cats/:id -- update (@Transactional, @BeforeUpdate hook demo) */
   @Patch(":id")
   @ApiOperation({
     summary: "고양이 수정",
@@ -213,7 +213,7 @@ export class CatsController {
     return this.catsService.update(id, updateCatDto);
   }
 
-  /** DELETE /cats/clear -- 테이블 전체 데이터 삭제 (TRUNCATE) */
+  /** DELETE /cats/clear -- delete all rows (TRUNCATE) */
   @Delete("clear")
   @ApiOperation({
     summary: "고양이 전체 삭제",
@@ -225,7 +225,7 @@ export class CatsController {
     return this.catsService.clear();
   }
 
-  /** DELETE /cats/bulk -- ID 배열로 배치 삭제 (deleteMany 데모) */
+  /** DELETE /cats/bulk -- batch delete by ID array (deleteMany demo) */
   @Delete("bulk")
   @ApiOperation({
     summary: "고양이 배치 삭제",
@@ -240,7 +240,7 @@ export class CatsController {
     return this.catsService.removeMany(dto.ids);
   }
 
-  /** DELETE /cats/:id -- 영구 삭제 */
+  /** DELETE /cats/:id -- hard delete */
   @Delete(":id")
   @ApiOperation({
     summary: "고양이 영구 삭제",
@@ -253,7 +253,7 @@ export class CatsController {
     return this.catsService.remove(id);
   }
 
-  /** PATCH /cats/:id/soft-delete -- Soft Delete (deleted_at 기록, 행 유지) */
+  /** PATCH /cats/:id/soft-delete -- Soft Delete (stamps deleted_at, row retained) */
   @Patch(":id/soft-delete")
   @ApiOperation({
     summary: "고양이 Soft Delete",
@@ -267,7 +267,7 @@ export class CatsController {
     return this.catsService.softRemove(id);
   }
 
-  /** PATCH /cats/:id/restore -- Soft Delete 복원 (deleted_at -> NULL) */
+  /** PATCH /cats/:id/restore -- restore from Soft Delete (deleted_at -> NULL) */
   @Patch(":id/restore")
   @ApiOperation({
     summary: "Soft Delete 복원",

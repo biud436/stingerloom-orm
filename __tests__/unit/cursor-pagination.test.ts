@@ -8,7 +8,7 @@ import {
 } from "../../src/core/CursorPagination";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mock 설정
+// Mock setup
 // ─────────────────────────────────────────────────────────────────────────────
 
 jest.mock("../../src/DatabaseClient", () => {
@@ -45,7 +45,7 @@ jest.mock("../../src/dialects/TransactionSessionManager", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 헬퍼
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 function createTestEntityManager() {
@@ -82,7 +82,7 @@ function makeRows(start: number, count: number) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 커서 유틸리티 단위 테스트
+// Cursor utility unit tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("CursorPagination utilities", () => {
@@ -152,7 +152,7 @@ describe("CursorPagination utilities", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EntityManager.findWithCursor 통합 테스트
+// EntityManager.findWithCursor integration tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("EntityManager.findWithCursor", () => {
@@ -395,7 +395,7 @@ describe("EntityManager.findWithCursor", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// UUID PK 커서 페이지네이션 테스트
+// UUID PK cursor pagination tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 const UuidEntity = class UuidItem {} as any;
@@ -415,7 +415,7 @@ function setupUuidMocks(em: EntityManager): void {
   jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
 }
 
-/** 정렬된 UUID v4 목록 생성 (사전순) */
+/** Build a list of UUID v4 values sorted lexicographically */
 function makeSortedUuids(count: number): string[] {
   const uuids = [
     "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d",
@@ -625,13 +625,13 @@ describe("UUID PK cursor pagination", () => {
   });
 
   it("should handle random UUID v4 values (non-sequential)", async () => {
-    // UUID v4는 랜덤이므로 사전순 정렬 시 삽입 순서와 다를 수 있음
+    // UUID v4 is random, so lexicographic order may differ from insertion order
     const randomUuids = [
       "f47ac10b-58cc-4372-a567-0e02b2c3d479",
       "6ba7b810-9dad-41d9-80b4-00c04fd430c8",
       "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
     ];
-    // DB가 ORDER BY id ASC로 정렬하면 사전순: 6ba... < a0e... < f47...
+    // With ORDER BY id ASC the DB returns lexicographically: 6ba... < a0e... < f47...
     const sorted = [...randomUuids].sort();
     const rows = makeUuidRows(sorted);
 
@@ -648,7 +648,7 @@ describe("UUID PK cursor pagination", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 비숫자형 PK 경고 테스트
+// Non-numeric PK warning tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Non-numeric PK cursor pagination warnings", () => {
@@ -657,7 +657,7 @@ describe("Non-numeric PK cursor pagination warnings", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    // mockQuery에 기본 반환값 설정 — 경고 테스트에서는 쿼리 결과가 중요하지 않음
+    // Set a default mockQuery return — query results don't matter for warning tests
     mockQuery.mockReset();
     mockQuery.mockResolvedValue({ results: [], fields: [] });
     em = createTestEntityManager();
@@ -784,7 +784,7 @@ describe("Non-numeric PK cursor pagination warnings", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BaseRepository.findWithCursor 위임 테스트
+// BaseRepository.findWithCursor delegation tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("BaseRepository.findWithCursor", () => {

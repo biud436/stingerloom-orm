@@ -8,36 +8,36 @@ export const MANY_TO_MANY_TOKEN = Symbol.for("STG_MANY_TO_MANY");
 
 export type JoinTableOption = {
   /**
-   * 중간 테이블(조인 테이블)의 이름입니다.
+   * Name of the intermediate (join) table.
    */
   name: string;
 
   /**
-   * 현재 엔티티의 PK를 참조하는 중간 테이블의 FK 컬럼입니다.
+   * FK column in the join table that references this entity's PK.
    */
   joinColumn: string;
 
   /**
-   * 대상 엔티티의 PK를 참조하는 중간 테이블의 FK 컬럼입니다.
+   * FK column in the join table that references the target entity's PK.
    */
   inverseJoinColumn: string;
 };
 
 export type ManyToManyOption<T = any> = {
   /**
-   * 중간 테이블 정보입니다.
-   * 관계의 소유측(owning side)에서 설정해야 합니다.
+   * Join-table definition.
+   * Must be provided on the owning side of the relation.
    */
   joinTable?: JoinTableOption;
 
   /**
-   * 역방향(inverse side)에서 소유측의 프로퍼티 이름을 가리킵니다.
-   * 타입 추론을 통해 대상 엔티티의 프로퍼티 이름만 허용됩니다.
+   * On the inverse side, the property name on the owning side.
+   * Type inference restricts it to the target entity's property names.
    */
   mappedBy?: Extract<keyof T, string> | (string & {});
 
   /**
-   * 캐스케이드 옵션 (insert, update, delete 또는 true/false)
+   * Cascade option (insert, update, delete or true/false).
    */
   cascade?: CascadeOption;
 };
@@ -47,32 +47,32 @@ export type ManyToManyMetadata<T> = {
   propertyKey: string;
 
   /**
-   * 대상 엔티티를 반환하는 함수입니다.
+   * Function returning the target entity class.
    */
   getRelatedEntity: () => ClazzType<T>;
 
   /**
-   * 중간 테이블 정보 (소유측에서만 설정)
+   * Join-table definition (owning side only).
    */
   joinTable?: JoinTableOption;
 
   /**
-   * 역방향 참조 시 소유측 프로퍼티 이름
+   * Property name on the owning side, used by the inverse side.
    */
   mappedBy?: string;
 
   /**
-   * 캐스케이드 옵션
+   * Cascade option.
    */
   cascade?: CascadeOption;
 };
 
 /**
- * ManyToMany 관계를 설정합니다.
- * 중간 테이블을 통해 두 엔티티 간의 다대다 관계를 표현합니다.
+ * Declares a ManyToMany relation.
+ * Expresses a many-to-many association between two entities via a join table.
  *
  * @example
- * // 소유측 (joinTable 설정)
+ * // Owning side (joinTable specified)
  * @ManyToMany(() => Tag, {
  *   joinTable: {
  *     name: "post_tags",
@@ -83,7 +83,7 @@ export type ManyToManyMetadata<T> = {
  * tags: Tag[];
  *
  * @example
- * // 역방향 (mappedBy 설정)
+ * // Inverse side (mappedBy specified)
  * @ManyToMany(() => Post, { mappedBy: "tags" })
  * posts: Post[];
  */

@@ -23,10 +23,10 @@ describe("findAndCount()", () => {
       { id: 2, name: "Bob", email: "bob@test.com" },
     ];
 
-    // findAndCount는 내부적으로 findInternal + aggregate를 사용합니다.
+    // findAndCount internally uses findInternal + aggregate.
     jest.spyOn(em as any, "findInternal").mockResolvedValue(users as any);
     jest.spyOn((em as any).aggregateHandler, "aggregate").mockResolvedValue(10);
-    // executeInTransaction을 우회하여 세션 없이 콜백 실행
+    // Bypass executeInTransaction to run the callback without a session
     jest.spyOn(em as any, "executeReadOnly").mockImplementation(
       async (fn: any) => fn({}),
     );
@@ -74,7 +74,7 @@ describe("findAndCount()", () => {
     expect(entities).toHaveLength(1);
     expect(count).toBe(100);
     expect(findInternalSpy).toHaveBeenCalledWith(User, findOption, {});
-    // aggregate는 where만 전달됨 (take/limit 무시)
+    // Only `where` is passed to aggregate (take/limit are ignored)
     expect(aggregateSpy).toHaveBeenCalledWith(
       User,
       "COUNT",
@@ -123,7 +123,7 @@ describe("findAndCount()", () => {
 
     await em.findAndCount(User);
 
-    // 두 호출 모두 동일한 세션을 받아야 합니다
+    // Both calls must receive the same session
     expect(findInternalSpy).toHaveBeenCalledWith(
       User,
       {},

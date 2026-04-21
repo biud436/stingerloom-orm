@@ -1,45 +1,45 @@
 /**
- * ORM 에러 코드 열거형입니다.
- * 각 에러 유형에 고유한 코드를 부여하여 프로그래밍 방식으로 에러를 식별할 수 있습니다.
+ * ORM error code enumeration.
+ * Each error type has a unique code so errors can be identified programmatically.
  */
 export enum OrmErrorCode {
-  // 연결 관련
+  // Connection
   CONNECTION_FAILED = "ORM_CONNECTION_FAILED",
   NOT_CONNECTED = "ORM_NOT_CONNECTED",
   UNSUPPORTED_DATABASE = "ORM_UNSUPPORTED_DATABASE",
 
-  // 엔티티 관련
+  // Entity
   ENTITY_NOT_FOUND = "ORM_ENTITY_NOT_FOUND",
   ENTITY_METADATA_NOT_FOUND = "ORM_ENTITY_METADATA_NOT_FOUND",
   PRIMARY_KEY_NOT_FOUND = "ORM_PRIMARY_KEY_NOT_FOUND",
 
-  // 쿼리 관련
+  // Query
   INVALID_QUERY = "ORM_INVALID_QUERY",
   DELETE_WITHOUT_CONDITIONS = "ORM_DELETE_WITHOUT_CONDITIONS",
   QUERY_TIMEOUT = "ORM_QUERY_TIMEOUT",
 
-  // 트랜잭션 관련
+  // Transaction
   TRANSACTION_FAILED = "ORM_TRANSACTION_FAILED",
   TRANSACTION_ROLLBACK_FAILED = "ORM_TRANSACTION_ROLLBACK_FAILED",
 
-  // 잠금 관련
+  // Locking
   ADVISORY_LOCK_FAILED = "ORM_ADVISORY_LOCK_FAILED",
   OPTIMISTIC_LOCK_FAILED = "ORM_OPTIMISTIC_LOCK_FAILED",
 
-  // 유효성 검사
+  // Validation
   VALIDATION_FAILED = "ORM_VALIDATION_FAILED",
 
-  // Savepoint 관련
+  // Savepoint
   INVALID_SAVEPOINT_NAME = "ORM_INVALID_SAVEPOINT_NAME",
 
-  // 제약 조건 위반
+  // Constraint violations
   UNIQUE_VIOLATION = "ORM_UNIQUE_VIOLATION",
   FK_VIOLATION = "ORM_FK_VIOLATION",
 
-  // 지원하지 않는 연산
+  // Unsupported operation
   UNSUPPORTED_OPERATION = "ORM_UNSUPPORTED_OPERATION",
 
-  // 엔티티 글로브
+  // Entity glob
   ENTITY_GLOB_NO_MATCH = "ORM_ENTITY_GLOB_NO_MATCH",
 
   // Prisma import

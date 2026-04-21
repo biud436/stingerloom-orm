@@ -5,12 +5,12 @@ import { ValidationError } from "../errors/ValidationError";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
- * 엔티티 저장 전 유효성 검사를 수행합니다.
+ * Performs validation before persisting an entity.
  */
 export class EntityValidator {
   /**
-   * 엔티티 클래스와 저장할 데이터를 받아 유효성 검사를 수행합니다.
-   * 검사 실패 시 첫 번째 실패 항목에 대한 ValidationError를 throw합니다.
+   * Validates an entity instance against its metadata.
+   * Throws a ValidationError for the first failing constraint.
    */
   static validate<T>(entity: ClazzType<T>, item: Partial<T>): void {
     const validations: ValidationMetadata[] =

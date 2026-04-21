@@ -1,7 +1,7 @@
 import { Logger } from "../utils/Logger";
 
 /**
- * 개별 쿼리 실행 기록.
+ * A single query execution record.
  */
 export interface QueryLogEntry {
   entityName: string;
@@ -11,48 +11,49 @@ export interface QueryLogEntry {
 }
 
 /**
- * QueryTracker 생성 옵션.
+ * Options for creating a QueryTracker.
  */
 export interface QueryTrackerOptions {
-  /** N+1 감지 윈도우 (ms). @default 100 */
+  /** N+1 detection window in milliseconds. @default 100 */
   windowMs?: number;
 
-  /** N+1 감지 임계값. @default 10 */
+  /** N+1 detection threshold. @default 10 */
   threshold?: number;
 
-  /** 이 값(ms)을 초과하는 쿼리에 슬로우 쿼리 경고 출력. null이면 비활성. @default null */
+  /** Emits a slow-query warning for queries exceeding this threshold (ms). null disables. @default null */
   slowQueryMs?: number | null;
 
   /**
-   * 최대 로그 보관 수. 순환 버퍼 방식으로 초과 시 가장 오래된 항목부터 제거됩니다.
-   * 0 또는 Infinity이면 무제한.
+   * Maximum log entries retained. Uses a circular buffer; older entries are evicted first on overflow.
+   * 0 or Infinity means unbounded.
    * @default 1000
    */
   maxLogEntries?: number;
 
   /**
-   * QueryTracker 활성화 여부. false이면 track()이 아무 작업도 하지 않습니다.
-   * 프로덕션 환경에서 오버헤드를 제거하려면 false로 설정하세요.
+   * Whether QueryTracker is enabled. When false, track() is a no-op.
+   * Set to false in production to eliminate overhead.
    * @default true
    */
   enabled?: boolean;
 
   /**
-   * 로그 항목 자동 삭제 TTL (ms). 설정 시 track() 호출마다 이 시간보다 오래된 항목을 제거합니다.
-   * 0 또는 undefined이면 TTL 비활성.
+   * Automatic log-eviction TTL (ms). When set, entries older than this are removed on each track() call.
+   * 0 or undefined disables TTL.
    * @default undefined
    */
   ttlMs?: number;
 }
 
 /**
- * N+1 쿼리 감지 및 슬로우 쿼리 경고를 위한 쿼리 추적기입니다.
+ * Query tracker for N+1 detection and slow-query warnings.
  *
- * 동일 엔티티에 대해 짧은 시간(windowMs) 내 threshold 이상의 쿼리가 실행되면
- * N+1 경고를 발행합니다.
+ * Emits an N+1 warning when the same entity is queried at least `threshold`
+ * times within the `windowMs` window.
  *
- * O(1) 삽입의 순환 버퍼로 maxLogEntries를 초과하면 가장 오래된 항목부터 제거합니다.
- * enabled=false로 프로덕션에서 오버헤드를 완전히 제거할 수 있습니다.
+ * Uses a circular buffer with O(1) inserts; once maxLogEntries is exceeded,
+ * the oldest entries are evicted first. Set enabled=false to eliminate
+ * overhead entirely in production.
  */
 export class QueryTracker {
   // --- Bounded mode: circular buffer (O(1) insert) ---
@@ -74,7 +75,7 @@ export class QueryTracker {
   private readonly ttlMs: number;
   private readonly warned = new Set<string>();
 
-  /** 현재 실행 중인 쿼리 수 (graceful shutdown 대기용). */
+  /** Number of in-flight queries (used to wait during graceful shutdown). */
   private _activeQueryCount = 0;
 
   constructor(options?: QueryTrackerOptions) {
@@ -92,15 +93,15 @@ export class QueryTracker {
   }
 
   /**
-   * 쿼리 실행 기록을 추가하고 N+1 / 슬로우 쿼리 감지를 수행합니다.
-   * enabled=false이면 아무 작업도 하지 않습니다.
+   * Records a query execution and runs N+1 / slow-query detection.
+   * When enabled=false, this is a no-op.
    */
   track(entityName: string, sqlText: string, durationMs: number): void {
     if (!this.enabled) return;
 
     const now = Date.now();
 
-    // TTL 기반 자동 정리
+    // TTL-based eviction
     if (this.ttlMs > 0) {
       this.evictExpired(now);
     }
@@ -125,17 +126,17 @@ export class QueryTracker {
       }
     }
 
-    // 슬로우 쿼리 감지
+    // Slow-query detection
     if (this.slowQueryMs !== null && durationMs > this.slowQueryMs) {
       this.logger.warn(`[SLOW QUERY] ${durationMs}ms: ${sqlText}`);
     }
 
-    // N+1 감지: windowMs 이내의 동일 엔티티 쿼리 수 카운트
+    // N+1 detection: count queries for the same entity within windowMs
     this.detectNPlusOne(entityName, now);
   }
 
   /**
-   * 전체 쿼리 로그를 반환합니다 (시간순, 가장 오래된 항목이 앞).
+   * Return the full query log (chronological, oldest first).
    */
   getLog(): ReadonlyArray<QueryLogEntry> {
     if (this.unbounded) return this.unboundedLog;
@@ -149,21 +150,21 @@ export class QueryTracker {
   }
 
   /**
-   * 현재 실행 중인 쿼리 수를 반환합니다.
+   * Return the number of queries currently in flight.
    */
   get activeQueryCount(): number {
     return this._activeQueryCount;
   }
 
   /**
-   * 쿼리 실행 시작을 기록합니다. (활성 쿼리 카운터 증가)
+   * Record the start of a query (increments the active-query counter).
    */
   beginQuery(): void {
     this._activeQueryCount++;
   }
 
   /**
-   * 쿼리 실행 완료를 기록합니다. (활성 쿼리 카운터 감소)
+   * Record the completion of a query (decrements the active-query counter).
    */
   endQuery(): void {
     if (this._activeQueryCount > 0) {
@@ -172,9 +173,9 @@ export class QueryTracker {
   }
 
   /**
-   * 모든 활성 쿼리가 완료될 때까지 대기합니다.
-   * @param timeoutMs 최대 대기 시간 (ms). 초과 시 resolve됩니다.
-   * @returns 모든 쿼리가 완료되면 true, 타임아웃이면 false.
+   * Wait until every in-flight query completes.
+   * @param timeoutMs maximum wait in milliseconds; resolves when exceeded.
+   * @returns true when all queries finish, false on timeout.
    */
   async waitForQueries(timeoutMs: number): Promise<boolean> {
     if (this._activeQueryCount === 0) return true;
@@ -197,7 +198,7 @@ export class QueryTracker {
   }
 
   /**
-   * 쿼리 로그와 경고 이력을 초기화합니다.
+   * Reset the query log and warning history.
    */
   reset(): void {
     if (this.unbounded) {
@@ -210,7 +211,7 @@ export class QueryTracker {
   }
 
   /**
-   * TTL보다 오래된 로그 항목을 제거합니다. O(k) — k = 제거 대상 수.
+   * Evict log entries older than TTL. O(k) where k = entries evicted.
    */
   private evictExpired(now: number): void {
     const cutoff = now - this.ttlMs;
@@ -220,14 +221,14 @@ export class QueryTracker {
         if (this.unboundedLog[i].timestamp < cutoff) {
           removeCount++;
         } else {
-          break; // 시간순이므로 첫 유효 항목에서 중단
+          break; // Entries are chronological, so stop at the first valid one
         }
       }
       if (removeCount > 0) {
         this.unboundedLog.splice(0, removeCount);
       }
     } else {
-      // Circular buffer: head 포인터만 전진 — O(k)
+      // Circular buffer: only advance the head pointer — O(k)
       while (this._size > 0) {
         const entry = this.buffer[this.head];
         if (entry && entry.timestamp < cutoff) {
@@ -241,21 +242,21 @@ export class QueryTracker {
   }
 
   private detectNPlusOne(entityName: string, now: number): void {
-    // 이미 이 엔티티에 대해 경고를 발행했으면 중복 경고 방지
+    // Suppress duplicates: skip if a warning has already been emitted for this entity
     if (this.warned.has(entityName)) return;
 
     const windowStart = now - this.windowMs;
     let count = 0;
 
     if (this.unbounded) {
-      // 최근 로그를 뒤에서부터 탐색
+      // Scan recent entries from the back
       for (let i = this.unboundedLog.length - 1; i >= 0; i--) {
         const entry = this.unboundedLog[i];
         if (entry.timestamp < windowStart) break;
         if (entry.entityName === entityName) count++;
       }
     } else {
-      // 순환 버퍼: 뒤에서부터 탐색
+      // Circular buffer: scan from the back
       for (let i = this._size - 1; i >= 0; i--) {
         const entry = this.buffer[(this.head + i) % this.maxLogEntries]!;
         if (entry.timestamp < windowStart) break;

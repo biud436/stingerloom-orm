@@ -31,8 +31,8 @@ export class PostgresConnector extends IConnector {
   };
 
   /**
-   * PostgreSQL 식별자 유효성 검증 (alphanumeric, underscore, dollar sign만 허용).
-   * 유효하지 않은 문자가 포함되면 예외를 발생시킵니다.
+   * Validates a PostgreSQL identifier (only alphanumerics, underscores, and dollar signs are allowed).
+   * Throws when the name contains invalid characters.
    */
   private static validateIdentifier(name: string): void {
     if (!/^[a-zA-Z_][a-zA-Z0-9_$-]*$/.test(name)) {
@@ -45,9 +45,9 @@ export class PostgresConnector extends IConnector {
   }
 
   /**
-   * 식별자를 큰따옴표로 감싸서 반환합니다 (PostgreSQL 표준).
-   * 내부에 포함된 `"` 문자는 PostgreSQL 표준인 `""` 으로 이스케이프합니다.
-   * 추가로 strict validation을 수행합니다.
+   * Wraps the identifier in double quotes (PostgreSQL standard) and returns it.
+   * Any embedded `"` character is escaped as `""`, following the PostgreSQL standard.
+   * Also performs strict validation.
    */
   private escapeIdentifier(name: string): string {
     PostgresConnector.validateIdentifier(name);
@@ -71,10 +71,10 @@ export class PostgresConnector extends IConnector {
 
       this.schema = options.schema ?? "public";
 
-      // pool.max > connectionLimit > 기본값(10) 우선순위로 적용
+      // Apply in priority order: pool.max > connectionLimit > default (10)
       const maxConnections = poolOptions?.max ?? options.connectionLimit ?? 10;
 
-      // SSL/TLS 옵션 변환
+      // Convert SSL/TLS options
       const ssl = "ssl" in options ? options.ssl : undefined;
       let sslConfig: any = undefined;
       if (ssl === true) {
@@ -100,8 +100,8 @@ export class PostgresConnector extends IConnector {
       this.validateOnBorrow = poolOptions?.validateOnBorrow ?? false;
       this.pool = pool;
 
-      // 기본 search_path를 설정합니다.
-      // 이후 풀에서 가져오는 모든 커넥션에 적용됩니다.
+      // Set the default search_path.
+      // This is then applied to every connection acquired from the pool.
       const safeSchema = this.escapeIdentifier(this.schema);
       this.pool.on("connect", (client) => {
         client.query(`SET search_path TO ${safeSchema}`);
@@ -134,7 +134,7 @@ export class PostgresConnector extends IConnector {
   }
 
   /**
-   * 풀에서 raw client를 하나 가져옵니다.
+   * Acquires a raw client from the pool.
    */
   private async acquireRawConnection(): Promise<PoolClient> {
     if (!this.pool) {
@@ -145,7 +145,7 @@ export class PostgresConnector extends IConnector {
   }
 
   /**
-   * SELECT 1으로 연결 상태를 확인합니다.
+   * Checks connection liveness with SELECT 1.
    */
   private async pingConnection(client: PoolClient): Promise<boolean> {
     try {
@@ -157,9 +157,9 @@ export class PostgresConnector extends IConnector {
   }
 
   /**
-   * 트랜잭션 처리를 위해 커넥션 풀에서 커넥션을 하나 가져옵니다.
-   * validateOnBorrow가 활성화되면 SELECT 1로 연결 상태를 확인하고,
-   * stale 연결은 폐기 후 새 연결로 교체합니다.
+   * Acquires a connection from the pool for transaction processing.
+   * When validateOnBorrow is enabled, issues SELECT 1 to confirm liveness
+   * and replaces stale connections by discarding them and acquiring a new one.
    */
   async getConnection(): Promise<PoolClient> {
     const client = await this.acquireRawConnection();
@@ -235,8 +235,8 @@ export class PostgresConnector extends IConnector {
         this.logger.info(`Query: ${sql}, # ${JSON.stringify(values)}`);
       }
 
-      // PostgreSQL은 $1, $2 형식의 파라미터를 사용합니다.
-      // sql-template-tag는 ? 를 사용하므로 변환이 필요합니다.
+      // PostgreSQL uses $1, $2 style parameters.
+      // sql-template-tag uses ?, so conversion is required.
       let paramIndex = 0;
       const pgSql = sql.replace(/\?/g, () => `$${++paramIndex}`);
 
@@ -286,7 +286,7 @@ export class PostgresConnector extends IConnector {
     await client.query(safeSql);
   }
 
-  // PostgreSQL 기본 격리 수준 — 동일하면 SET TRANSACTION 생략 (#212)
+  // PostgreSQL default isolation level — skip SET TRANSACTION when it matches (#212)
   private static readonly DEFAULT_ISOLATION: TRANSACTION_ISOLATION_LEVEL = "READ COMMITTED";
 
   async startTransaction(
@@ -300,12 +300,12 @@ export class PostgresConnector extends IConnector {
 
     await client.query("BEGIN");
 
-    // #212: 기본 격리 수준이면 SET TRANSACTION 생략
+    // #212: skip SET TRANSACTION when it matches the default isolation level
     if (level !== PostgresConnector.DEFAULT_ISOLATION) {
       await this.setTransactionIsolationLevel(client, level);
     }
 
-    // #213: 멀티테넌시 — public 스키마면 SET LOCAL 생략
+    // #213: multi-tenancy — skip SET LOCAL when the schema is "public"
     const tenant = MetadataContext.getCurrentTenant();
     const schema = tenant !== "public" ? tenant : this.schema;
     if (schema !== "public") {

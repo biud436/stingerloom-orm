@@ -11,10 +11,10 @@ import { EntityManagerInternals } from "./EntityManagerInternals";
 import { Conditions } from "./Conditions";
 
 /**
- * 관계 서브쿼리 로딩 (OneToMany, ManyToMany, OneToOne) 핸들러.
- * EntityManager에서 위임받아 처리합니다.
+ * Handler for relation sub-query loading (OneToMany, ManyToMany, OneToOne).
+ * Invoked on behalf of EntityManager.
  *
- * 모든 관계 로딩은 배치 쿼리(IN 절)를 사용하여 N+1 문제를 방지합니다.
+ * Every relation load uses a batched IN query to avoid N+1 problems.
  */
 export class RelationLoader {
   constructor(
@@ -23,14 +23,14 @@ export class RelationLoader {
   ) {}
 
   /**
-   * OneToMany 관계를 배치 쿼리로 로드하여 부모 엔티티에 할당합니다.
-   * 모든 부모 ID를 수집하여 단일 IN 쿼리로 자식 엔티티를 가져온 뒤,
-   * FK 값을 기준으로 각 부모에게 분배합니다.
+   * Loads OneToMany relations with a batched query and assigns them to each parent entity.
+   * Collects every parent ID, issues a single IN query to fetch all children,
+   * and distributes them to each parent based on the FK value.
    *
-   * @param entity 부모 엔티티 클래스
-   * @param parentResults 부모 쿼리 결과 (단일 또는 배열)
-   * @param relations 로드할 관계 필드명 배열
-   * @param existingSession 재사용할 기존 세션 (커넥션 풀 절약)
+   * @param entity Parent entity class
+   * @param parentResults Parent query result (single entity or array)
+   * @param relations Names of the relation fields to load
+   * @param existingSession Existing session to reuse (to save connection-pool usage)
    */
   async loadOneToManyRelations<T>(
     entity: ClazzType<T>,
@@ -66,7 +66,7 @@ export class RelationLoader {
       );
       const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
 
-      // 1. 모든 부모 ID를 수집 (null/undefined 제외)
+      // 1. Collect every parent ID (skipping null/undefined)
       const parentIds: any[] = [];
       for (const parent of parents) {
         const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
@@ -82,7 +82,7 @@ export class RelationLoader {
         continue;
       }
 
-      // 2. 배치 쿼리: WHERE fkColumn IN (...parentIds)
+      // 2. Batched query: WHERE fkColumn IN (...parentIds)
       const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
 
       const executeQuery = async (session: TransactionSessionManager) => {
@@ -118,7 +118,7 @@ export class RelationLoader {
 
       const queryResult = await this.ctx.executeInTransaction(executeQuery, existingSession);
 
-      // 3. 결과를 FK 값 기준으로 Map에 분류
+      // 3. Group the results into a Map keyed by FK value
       const childrenByParentId = new Map<any, any[]>();
       const resultTransformer = ResultTransformerFactory.create();
 
@@ -136,7 +136,7 @@ export class RelationLoader {
         }
       }
 
-      // 4. 각 부모에게 해당하는 자식 배열을 할당
+      // 4. Assign the matching child array to each parent
       for (const parent of parents) {
         const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
         (parent as any)[rel.propertyKey] = childrenByParentId.get(parentId) ?? [];
@@ -145,15 +145,15 @@ export class RelationLoader {
   }
 
   /**
-   * ManyToMany 관계를 배치 쿼리로 로드하여 부모 엔티티에 할당합니다.
+   * Loads ManyToMany relations with a batched query and assigns them to each parent entity.
    *
-   * 중간 테이블을 JOIN하여 대상 엔티티를 가져옵니다:
+   * Fetches the target entities by JOIN-ing the join table:
    * SELECT target.*, join_table.joinColumn AS __m2m_fk
    * FROM target
    * INNER JOIN join_table ON target.pk = join_table.inverseJoinColumn
    * WHERE join_table.joinColumn IN (:parentId1, :parentId2, ...)
    *
-   * @param existingSession 재사용할 기존 세션 (커넥션 풀 절약)
+   * @param existingSession Existing session to reuse (to save connection-pool usage)
    */
   async loadManyToManyRelations<T>(
     entity: ClazzType<T>,
@@ -193,7 +193,7 @@ export class RelationLoader {
 
       const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
 
-      // 1. 모든 부모 ID를 수집 (null/undefined 제외)
+      // 1. Collect every parent ID (skipping null/undefined)
       const parentIds: any[] = [];
       for (const parent of parents) {
         const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
@@ -209,7 +209,7 @@ export class RelationLoader {
         continue;
       }
 
-      // 2. 배치 쿼리: joinColumn을 함께 SELECT하여 부모-자식 매핑
+      // 2. Batched query: SELECT the joinColumn as well to map parents to children
       const fkAlias = "__m2m_fk";
 
       const executeQuery = async (session: TransactionSessionManager) => {
@@ -252,7 +252,7 @@ export class RelationLoader {
 
       const queryResult = await this.ctx.executeInTransaction(executeQuery, existingSession);
 
-      // 3. 결과를 FK 값 기준으로 Map에 분류
+      // 3. Group the results into a Map keyed by FK value
       const childrenByParentId = new Map<any, any[]>();
       const resultTransformer = ResultTransformerFactory.create();
 
@@ -275,7 +275,7 @@ export class RelationLoader {
         }
       }
 
-      // 4. 각 부모에게 해당하는 자식 배열을 할당
+      // 4. Assign the matching child array to each parent
       for (const parent of parents) {
         const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
         (parent as any)[rel.propertyKey] = childrenByParentId.get(parentId) ?? [];
@@ -284,12 +284,12 @@ export class RelationLoader {
   }
 
   /**
-   * OneToOne 관계를 배치 쿼리로 로드하여 부모 엔티티에 할당합니다.
-   * Eager JOIN으로 처리되지 않은 OneToOne 관계(inverseSide 등)를 relations 옵션으로 로드합니다.
+   * Loads OneToOne relations with a batched query and assigns them to each parent entity.
+   * Loads OneToOne relations that were not handled by the eager JOIN (e.g. inverseSide) via the relations option.
    *
-   * inverseSide의 경우 배치 IN 쿼리를 사용하여 N+1을 방지합니다.
+   * For the inverse side, uses a batched IN query to avoid N+1 problems.
    *
-   * @param existingSession 재사용할 기존 세션 (커넥션 풀 절약)
+   * @param existingSession Existing session to reuse (to save connection-pool usage)
    */
   async loadOneToOneRelations<T>(
     entity: ClazzType<T>,
@@ -315,7 +315,7 @@ export class RelationLoader {
     for (const rel of oneToOneMeta) {
       if (!relations.includes(rel.propertyKey)) continue;
 
-      // 소유측은 eager JOIN + transformNested에서 이미 매핑됨 → 스킵
+      // The owning side is already mapped by the eager JOIN + transformNested → skip
       if (rel.joinColumn) {
         continue;
       }
@@ -330,7 +330,7 @@ export class RelationLoader {
       if (!relatedPk) continue;
 
       if (rel.inverseSide) {
-        // 역방향: 상대측의 joinColumn으로 부모 PK를 검색 (배치)
+        // Inverse side: search for the parent PK via the other side's joinColumn (batched)
         const relatedOneToOne = this.resolver.resolveOneToOneMetadata(RelatedEntity);
         const ownerRel = relatedOneToOne.find(
           (r) => r.propertyKey === rel.inverseSide && r.joinColumn,
@@ -345,7 +345,7 @@ export class RelationLoader {
 
         const fkColumn = ownerRel.joinColumn;
 
-        // 1. 모든 부모 ID를 수집 (null/undefined 제외)
+        // 1. Collect every parent ID (skipping null/undefined)
         const parentIds: any[] = [];
         for (const parent of parents) {
           const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
@@ -361,7 +361,7 @@ export class RelationLoader {
           continue;
         }
 
-        // 2. 배치 쿼리: WHERE fkColumn IN (...parentIds)
+        // 2. Batched query: WHERE fkColumn IN (...parentIds)
         const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
 
         const executeQuery = async (session: TransactionSessionManager) => {
@@ -397,7 +397,7 @@ export class RelationLoader {
 
         const queryResult = await this.ctx.executeInTransaction(executeQuery, existingSession);
 
-        // 3. 결과를 FK 값 기준으로 Map에 분류 (OneToOne이므로 1:1 매핑)
+        // 3. Group the results into a Map keyed by FK value (1:1 mapping for OneToOne)
         const relatedByParentId = new Map<any, any>();
         const resultTransformer = ResultTransformerFactory.create();
 
@@ -411,7 +411,7 @@ export class RelationLoader {
           }
         }
 
-        // 4. 각 부모에게 해당하는 관련 엔티티를 할당
+        // 4. Assign the matching related entity to each parent
         for (const parent of parents) {
           const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
           (parent as any)[rel.propertyKey] = relatedByParentId.get(parentId) ?? null;

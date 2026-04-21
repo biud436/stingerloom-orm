@@ -42,7 +42,7 @@ export class TagsService {
   }
 
   /**
-   * upsert — name 기준으로 태그를 생성하거나 업데이트합니다.
+   * upsert — creates or updates a tag by name.
    */
   async upsertByName(name: string): Promise<{ message: string }> {
     const tag = new Tag();

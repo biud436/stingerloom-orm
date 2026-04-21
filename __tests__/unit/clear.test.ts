@@ -4,7 +4,7 @@ import { EntityManager } from "../../src/core/EntityManager";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 import { BaseRepository } from "../../src/core/BaseRepository";
 
-// Mock 모듈 설정
+// Module mocks
 jest.mock("../../src/DatabaseClient", () => {
   return {
     DatabaseClient: {

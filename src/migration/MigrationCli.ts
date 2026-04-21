@@ -21,8 +21,8 @@ import { SchemaDialect } from "../core/generators/SchemaGenerator";
 export type MigrationCommand = "migrate:run" | "migrate:rollback" | "migrate:status" | "migrate:generate";
 
 /**
- * 마이그레이션 CLI 진입점.
- * DatabaseClientOptions를 받아 연결 후 MigrationRunner를 실행합니다.
+ * Migration CLI entry point.
+ * Accepts DatabaseClientOptions, connects, and runs the MigrationRunner.
  */
 export interface MigrationGenerateOptions {
   /** Directory to output generated migration files. Default: "./migrations" */
@@ -51,7 +51,7 @@ export class MigrationCli {
   }
 
   /**
-   * DB에 연결하고 MigrationRunner를 초기화합니다.
+   * Connects to the database and initializes the MigrationRunner.
    */
   async connect(): Promise<void> {
     const client = DatabaseClient.getInstance();
@@ -114,14 +114,14 @@ export class MigrationCli {
   }
 
   /**
-   * DB 연결을 종료합니다.
+   * Closes the database connection.
    */
   async close(): Promise<void> {
     await DatabaseClient.getInstance().close();
   }
 
   /**
-   * CLI 명령어를 실행합니다.
+   * Executes a CLI command.
    */
   async execute(command: MigrationCommand): Promise<MigrationResult[] | { executed: string[]; pending: string[] } | { filePath: string; sql: { up: string[]; down: string[] } }> {
     if (!this.runner) {
@@ -146,7 +146,7 @@ export class MigrationCli {
   }
 
   /**
-   * migrate:run — 모든 pending 마이그레이션 실행
+   * migrate:run — run all pending migrations.
    */
   async migrateRun(): Promise<MigrationResult[]> {
     if (!this.runner) {
@@ -171,7 +171,7 @@ export class MigrationCli {
   }
 
   /**
-   * migrate:rollback — 마지막 마이그레이션 rollback
+   * migrate:rollback — roll back the last migration.
    */
   async migrateRollback(): Promise<MigrationResult[]> {
     if (!this.runner) {
@@ -195,8 +195,8 @@ export class MigrationCli {
     return results;
   }
 
-  /**
-   * migrate:status — 실행됨/미실행 목록 출력
+   /**
+   * migrate:status — print executed and pending migration lists.
    */
   async migrateStatus(): Promise<{ executed: string[]; pending: string[] }> {
     if (!this.runner) {

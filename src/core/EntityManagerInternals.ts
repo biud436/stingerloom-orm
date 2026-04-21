@@ -10,10 +10,10 @@ import { ISelectOption } from "../dialects/ISelectOption";
 import { SchemaDialect } from "./generators/SchemaGenerator";
 
 /**
- * EntityManager의 내부 기능을 추출된 핸들러 클래스들에게 노출하는 인터페이스.
- * 순환 참조 방지를 위해 EntityManager 대신 이 인터페이스를 의존합니다.
+ * Interface that exposes EntityManager internals to extracted handler classes.
+ * Handlers depend on this interface rather than EntityManager itself to avoid circular references.
  *
- * @internal 패키지 내부 전용 — 공개 API가 아닙니다.
+ * @internal Package-internal — not a public API.
  */
 export interface EntityManagerInternals {
   wrap(col: string): string;
@@ -47,7 +47,7 @@ export interface EntityManagerInternals {
   resolveSelectColumns<T>(select: ISelectOption<T>): string[];
   markDirty(entity: any): void;
 
-  // RelationLoader 용
+  // For RelationLoader
   findInternal<T>(
     entity: ClazzType<T>,
     opt: FindOption<T>,
@@ -59,7 +59,7 @@ export interface EntityManagerInternals {
     session?: TransactionSessionManager,
   ): Promise<T | null>;
 
-  // CascadeHandler 용
+  // For CascadeHandler
   save<T>(
     entity: ClazzType<T>,
     item: Partial<T>,

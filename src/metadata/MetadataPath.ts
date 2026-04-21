@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
- * 메타데이터 경로를 관리하는 Trie 노드
- * API Route의 Trie와 유사하게 경로 개념을 제공합니다.
+ * Trie node used to manage metadata paths.
+ * Provides a path abstraction similar to API route tries.
  */
 export class MetadataPathNode {
   children: Map<string, MetadataPathNode> = new Map();
@@ -16,8 +16,8 @@ export class MetadataPathNode {
 }
 
 /**
- * 메타데이터 경로 관리자 (Trie 자료구조)
- * 예: "public/users", "tenant_1/users", "tenant_1/schema_v2/posts"
+ * Metadata path manager (trie data structure).
+ * Example paths: "public/users", "tenant_1/users", "tenant_1/schema_v2/posts".
  */
 export class MetadataPath {
   private root: MetadataPathNode;
@@ -27,9 +27,9 @@ export class MetadataPath {
   }
 
   /**
-   * 경로 삽입
-   * @param path 예: "public/users" 또는 "tenant_1/users"
-   * @param value 저장할 메타데이터
+   * Insert a path.
+   * @param path e.g. "public/users" or "tenant_1/users"
+   * @param value metadata to store
    */
   insert(path: string, value: any): void {
     const segments = this.normalizePath(path).split("/");
@@ -52,9 +52,9 @@ export class MetadataPath {
   }
 
   /**
-   * 경로 검색
-   * @param path 경로
-   * @returns 메타데이터 또는 undefined
+   * Look up a path.
+   * @param path the path
+   * @returns the metadata or undefined
    */
   search(path: string): any | undefined {
     const segments = this.normalizePath(path).split("/");
@@ -71,21 +71,21 @@ export class MetadataPath {
   }
 
   /**
-   * 경로가 존재하는지 확인
+   * Check whether a path exists.
    */
   has(path: string): boolean {
     return this.search(path) !== undefined;
   }
 
   /**
-   * 특정 prefix로 시작하는 모든 경로 찾기
-   * @param prefix 예: "public" → "public/users", "public/posts" 등
+   * Find all paths starting with a given prefix.
+   * @param prefix e.g. "public" → "public/users", "public/posts", etc.
    */
   findByPrefix(prefix: string): Array<{ path: string; value: any }> {
     const segments = this.normalizePath(prefix).split("/");
     let currentNode = this.root;
 
-    // prefix까지 이동
+    // Descend to the prefix node
     for (const segment of segments) {
       if (!currentNode.children.has(segment)) {
         return [];
@@ -93,14 +93,14 @@ export class MetadataPath {
       currentNode = currentNode.children.get(segment)!;
     }
 
-    // prefix 이하 모든 경로 수집
+    // Collect every path below the prefix
     const results: Array<{ path: string; value: any }> = [];
     this.collectPaths(currentNode, results);
     return results;
   }
 
   /**
-   * 경로 삭제
+   * Delete a path.
    */
   delete(path: string): boolean {
     const segments = this.normalizePath(path).split("/");
@@ -108,7 +108,7 @@ export class MetadataPath {
   }
 
   /**
-   * 재귀적 경로 삭제
+   * Recursive path deletion.
    */
   private deleteRecursive(
     node: MetadataPathNode,
@@ -145,7 +145,7 @@ export class MetadataPath {
   }
 
   /**
-   * 모든 경로 수집 (DFS)
+   * Collect every path (DFS).
    */
   private collectPaths(
     node: MetadataPathNode,
@@ -164,17 +164,17 @@ export class MetadataPath {
   }
 
   /**
-   * 경로 정규화 (앞뒤 슬래시 제거, 연속 슬래시 제거)
+   * Normalize a path (trim leading/trailing slashes and collapse repeats).
    */
   private normalizePath(path: string): string {
     return path
-      .replace(/^\/+|\/+$/g, "") // 앞뒤 슬래시 제거
-      .replace(/\/+/g, "/") // 연속 슬래시를 하나로
+      .replace(/^\/+|\/+$/g, "") // strip leading/trailing slashes
+      .replace(/\/+/g, "/") // collapse consecutive slashes into one
       .trim();
   }
 
   /**
-   * 모든 경로 목록 반환
+   * Return every registered path.
    */
   getAllPaths(): string[] {
     const results: Array<{ path: string; value: any }> = [];

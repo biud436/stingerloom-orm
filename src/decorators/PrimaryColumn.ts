@@ -1,19 +1,19 @@
 import { ColumnOption, Column } from "./Column";
 
 /**
- * 수동 Primary Key 컬럼을 설정합니다.
- * auto-increment 없이 사용자가 직접 PK 값을 지정하는 컬럼에 사용합니다.
+ * Declares a manual Primary Key column.
+ * Used when the PK value is supplied by the user rather than auto-generated.
  *
- * 여러 컬럼에 @PrimaryColumn을 지정하면 복합 PK (Composite Primary Key)가 됩니다.
+ * Applying @PrimaryColumn to multiple properties creates a composite primary key.
  *
  * @example
- * // 단일 PK
+ * // Single PK
  * class User {
  *   @PrimaryColumn({ type: "varchar", length: 36 })
  *   id!: string;
  * }
  *
- * // 복합 PK
+ * // Composite PK
  * class OrderItem {
  *   @PrimaryColumn()
  *   orderId!: number;

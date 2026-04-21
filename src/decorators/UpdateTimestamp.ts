@@ -5,7 +5,7 @@ import { TimestampOptions } from "./CreateTimestamp";
 export const UPDATE_TIMESTAMP_TOKEN = Symbol.for("STG_UPDATE_TIMESTAMP");
 
 /**
- * INSERT 및 UPDATE 시 자동으로 현재 시각이 설정되는 컬럼을 정의합니다.
+ * Declares a column automatically set to the current time on INSERT and UPDATE.
  *
  * @example
  * @UpdateTimestamp()

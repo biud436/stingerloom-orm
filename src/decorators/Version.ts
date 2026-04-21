@@ -4,11 +4,11 @@ import { Column } from "./Column";
 export const VERSION_TOKEN = Symbol.for("STG_VERSION");
 
 /**
- * 낙관적 락(Optimistic Locking)을 위한 버전 컬럼을 설정합니다.
+ * Declares a version column used for optimistic locking.
  *
- * - INSERT 시 version 값이 자동으로 1로 초기화됩니다.
- * - UPDATE 시 WHERE 절에 현재 version 조건이 추가되고, version이 +1 증가합니다.
- * - 동시 수정이 감지되면 (affectedRows === 0) OptimisticLockError가 발생합니다.
+ * - On INSERT, the version is automatically initialized to 1.
+ * - On UPDATE, the current version is added to the WHERE clause and version is incremented by 1.
+ * - When a concurrent modification is detected (affectedRows === 0), OptimisticLockError is thrown.
  *
  * @example
  * @Version()
@@ -23,7 +23,7 @@ export function Version(): PropertyDecorator {
     );
 
     /**
-     * bigint 핸들러가 아직 없어서 int로 설정합니다.
+     * Using int because a bigint handler is not yet available.
      */
     return Column({
       type: "int",

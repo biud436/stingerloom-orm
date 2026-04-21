@@ -5,7 +5,7 @@ import { Migration, MigrationContext } from "./Migration";
 import { AdvisoryLockError } from "../errors/AdvisoryLockError";
 
 /**
- * 마이그레이션 실행 결과.
+ * Result of a migration execution.
  */
 export interface MigrationResult {
   name: string;
@@ -15,7 +15,7 @@ export interface MigrationResult {
 }
 
 /**
- * __migrations 테이블에 기록되는 행의 형태.
+ * Row shape recorded in the __migrations table.
  */
 export interface MigrationRecord {
   name: string;
@@ -23,21 +23,20 @@ export interface MigrationRecord {
 }
 
 /**
- * MigrationRunner에 주입되는 쿼리 실행 인터페이스.
- * TransactionSessionManager에 의존하지 않고 테스트 가능하도록 추상화.
+ * Query execution interface injected into MigrationRunner.
+ * Abstracted so that tests do not depend on TransactionSessionManager.
  */
 export interface MigrationQueryRunner {
   query: (sql: string) => Promise<any>;
 }
 
 /**
- * 마이그레이션 러너.
- * 미실행 마이그레이션을 순서대로 실행하고 __migrations 테이블에 기록합니다.
- * MySQL/PostgreSQL/SQLite 드라이버 모두 지원합니다.
+ * Migration runner.
+ * Executes pending migrations in order and records them in the __migrations table.
+ * Supports the MySQL, PostgreSQL, and SQLite drivers.
  *
- * 이 클래스는 abstract base class로, dialect별 구체 구현체
- * (MySqlMigrationRunner, PostgresMigrationRunner, SqliteMigrationRunner)를
- * 통해 사용합니다.
+ * This class is an abstract base; use it via dialect-specific subclasses
+ * (MySqlMigrationRunner, PostgresMigrationRunner, SqliteMigrationRunner).
  */
 /**
  * Lifecycle hooks for migration execution.
@@ -90,13 +89,13 @@ export abstract class MigrationRunner {
   }
 
   /**
-   * 식별자를 dialect별 문자로 감싸서 반환합니다.
-   * MySQL: backtick (`), PostgreSQL/SQLite: double-quote (")
+   * Wraps an identifier with the dialect-specific quoting character.
+   * MySQL: backtick (`); PostgreSQL/SQLite: double-quote (").
    */
   protected abstract wrapIdentifier(name: string): string;
 
   /**
-   * 자동 증가 PK 컬럼 정의를 반환합니다.
+   * Returns the auto-increment primary key column definition.
    * MySQL: "INT AUTO_INCREMENT PRIMARY KEY"
    * PostgreSQL: "SERIAL PRIMARY KEY"
    * SQLite: "INTEGER PRIMARY KEY AUTOINCREMENT"
@@ -104,8 +103,8 @@ export abstract class MigrationRunner {
   protected abstract autoIncrementPkDefinition(): string;
 
   /**
-   * __migrations 추적 테이블을 생성합니다.
-   * 이미 존재하면 아무 작업도 하지 않습니다.
+   * Creates the __migrations tracking table.
+   * Does nothing if it already exists.
    */
   async ensureMigrationTable(): Promise<void> {
     const w = (n: string) => this.wrapIdentifier(n);
@@ -119,7 +118,7 @@ export abstract class MigrationRunner {
   }
 
   /**
-   * 이미 실행된 마이그레이션 이름 목록을 조회합니다.
+   * Returns the names of migrations that have already been executed.
    */
   async getExecutedMigrations(): Promise<string[]> {
     const w = (n: string) => this.wrapIdentifier(n);
@@ -128,14 +127,14 @@ export abstract class MigrationRunner {
       `SELECT ${w("name")} FROM ${w(this.tableName)} ORDER BY ${w("id")} ASC`,
     );
 
-    // 드라이버별 결과 형태 정규화
+    // Normalize the driver-specific result shape
     const rows = this.normalizeRows(result);
     return rows.map((row: any) => row.name);
   }
 
   /**
-   * 미실행 마이그레이션을 순서대로 실행합니다.
-   * Advisory lock을 사용하여 동시 실행을 방지합니다.
+   * Executes pending migrations in order.
+   * Uses an advisory lock to prevent concurrent execution.
    */
   async runAll(): Promise<MigrationResult[]> {
     const acquired = await this.driver.acquireAdvisoryLock(
@@ -176,7 +175,7 @@ export abstract class MigrationRunner {
   }
 
   /**
-   * 단일 마이그레이션을 적용합니다.
+   * Applies a single migration.
    */
   async runUp(migration: Migration): Promise<MigrationResult> {
     const context = this.createContext();
@@ -219,7 +218,7 @@ export abstract class MigrationRunner {
   }
 
   /**
-   * 단일 마이그레이션을 되돌립니다.
+   * Reverts a single migration.
    */
   async runDown(migration: Migration): Promise<MigrationResult> {
     const context = this.createContext();
@@ -264,8 +263,8 @@ export abstract class MigrationRunner {
   }
 
   /**
-   * 가장 최근에 실행된 마이그레이션을 되돌립니다.
-   * Advisory lock을 사용하여 동시 실행을 방지합니다.
+   * Reverts the most recently executed migration.
+   * Uses an advisory lock to prevent concurrent execution.
    */
   async revertLast(): Promise<MigrationResult | null> {
     const acquired = await this.driver.acquireAdvisoryLock(
@@ -303,10 +302,10 @@ export abstract class MigrationRunner {
   }
 
   /**
-   * 미실행 마이그레이션을 name 순서대로 실행합니다.
-   * runAll()의 별칭으로, 외부에서 마이그레이션 목록을 전달하여 실행할 수 있습니다.
+   * Executes pending migrations in name order.
+   * Alias for runAll(); accepts an optional external migration list.
    *
-   * @param migrations 실행할 마이그레이션 목록. 생략 시 생성자에서 전달된 전체 목록 사용.
+   * @param migrations migrations to run. If omitted, uses the list passed to the constructor.
    */
   async run(migrations?: Migration[]): Promise<MigrationResult[]> {
     if (migrations) {
@@ -320,10 +319,10 @@ export abstract class MigrationRunner {
   }
 
   /**
-   * 최근 n개의 마이그레이션을 되돌립니다.
-   * Advisory lock을 사용하여 동시 실행을 방지합니다.
+   * Reverts the most recent n migrations.
+   * Uses an advisory lock to prevent concurrent execution.
    *
-   * @param n 되돌릴 마이그레이션 수. 기본값 1.
+   * @param n number of migrations to revert. Defaults to 1.
    */
   async rollback(n: number = 1): Promise<MigrationResult[]> {
     const acquired = await this.driver.acquireAdvisoryLock(
@@ -365,8 +364,8 @@ export abstract class MigrationRunner {
   }
 
   /**
-   * 마이그레이션 상태를 반환합니다.
-   * 실행됨/미실행 목록을 각각 반환합니다.
+   * Returns the migration status.
+   * Reports executed and pending migration lists separately.
    */
   async status(): Promise<{
     executed: string[];
@@ -381,7 +380,7 @@ export abstract class MigrationRunner {
   }
 
   /**
-   * 미실행 마이그레이션 목록을 반환합니다.
+   * Returns the list of pending migrations.
    */
   async getPendingMigrations(): Promise<Migration[]> {
     await this.ensureMigrationTable();
@@ -411,9 +410,9 @@ export abstract class MigrationRunner {
   }
 
   /**
-   * 드라이버별 쿼리 결과를 행 배열로 정규화합니다.
+   * Normalizes driver-specific query results into an array of rows.
    * MySQL: { results: [...], fields: [...] }
-   * PostgreSQL: { rows: [...] } 또는 직접 배열
+   * PostgreSQL: { rows: [...] } or a direct array
    */
   private normalizeRows(result: any): any[] {
     if (!result) return [];

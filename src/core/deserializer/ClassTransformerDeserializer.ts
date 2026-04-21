@@ -4,9 +4,9 @@ import { Deserializer } from "./Deserializer";
 import { MyClassConstructor } from "../MyClassConstructor";
 
 /**
- * class-transformer 기반 역직렬화 구현체입니다.
+ * Deserializer implementation backed by class-transformer.
  *
- * class-transformer가 설치되어 있어야 합니다:
+ * class-transformer must be installed:
  * ```bash
  * npm install class-transformer
  * ```

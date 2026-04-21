@@ -104,12 +104,12 @@ interface QueryRunner {
 }
 
 /**
- * 엔티티 메타데이터와 DB INFORMATION_SCHEMA를 비교하여 스키마 diff를 생성합니다.
+ * Compares entity metadata with the database's INFORMATION_SCHEMA to produce a schema diff.
  */
 export class SchemaDiff {
   /**
-   * 엔티티 메타데이터에서 원하는 스키마를 추출하고
-   * DB INFORMATION_SCHEMA와 비교하여 diff를 반환합니다.
+   * Extracts the desired schema from the entity metadata,
+   * compares it against the database's INFORMATION_SCHEMA, and returns the diff.
    */
   async diff(
     entities: ClazzType<any>[],
@@ -269,7 +269,7 @@ export class SchemaDiff {
       }) as ColumnOption,
     }));
 
-    // @RelationColumn 가상 컬럼 추가 (대응하는 @Column이 없는 경우)
+    // Add @RelationColumn virtual columns (when there is no matching @Column)
     const relationColumns: RelationColumnMetadata[] =
       Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
       Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??

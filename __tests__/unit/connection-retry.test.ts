@@ -5,20 +5,20 @@ import type {
 } from "../../src/core/DatabaseClientOptions";
 
 /**
- * Connection Retry 테스트 (지수 백오프)
+ * Connection retry tests (exponential backoff)
  *
- * DatabaseClient.connect()가 retry 옵션이 있을 때
- * 연결 실패 시 maxAttempts까지 backoffMs * 2^n 대기 후 재시도하는지 검증합니다.
+ * Verifies that when DatabaseClient.connect() has a retry option,
+ * it waits backoffMs * 2^n between attempts up to maxAttempts on failure.
  */
 
-// DatabaseClient는 싱글톤이므로 각 테스트마다 내부 상태를 초기화합니다.
+// DatabaseClient is a singleton, so reset its internal state before each test.
 function resetDatabaseClient() {
   const { DatabaseClient } = require("../../src/DatabaseClient");
   (DatabaseClient as any).instance = undefined;
   return DatabaseClient;
 }
 
-// 실제 커넥터를 모킹합니다.
+// Mock the real connectors.
 jest.mock("../../src/dialects/mysql/MySqlConnector", () => {
   return {
     MySqlConnector: jest.fn().mockImplementation(() => ({
@@ -165,7 +165,7 @@ describe("DatabaseClient.connect() - Connection Retry", () => {
       retry: { maxAttempts: 3, backoffMs: 100 },
     });
 
-    // 첫 번째 시도 실패 후 100ms(100 * 2^0) 대기
+    // Wait 100ms (100 * 2^0) after the first failure
     await jest.advanceTimersByTimeAsync(100);
 
     await connectPromise;
@@ -199,9 +199,9 @@ describe("DatabaseClient.connect() - Connection Retry", () => {
       retry: { maxAttempts: 5, backoffMs: 100 },
     });
 
-    // 첫 번째 실패 후 100ms(100 * 2^0) 대기
+    // Wait 100ms (100 * 2^0) after the first failure
     await jest.advanceTimersByTimeAsync(100);
-    // 두 번째 실패 후 200ms(100 * 2^1) 대기
+    // Wait 200ms (100 * 2^1) after the second failure
     await jest.advanceTimersByTimeAsync(200);
 
     await connectPromise;
@@ -225,7 +225,7 @@ describe("DatabaseClient.connect() - Connection Retry", () => {
 
     const client = DatabaseClient.getInstance();
 
-    // catch를 미리 등록하여 unhandled rejection 방지
+    // Pre-register catch to avoid unhandled rejection
     let caughtError: Error | null = null;
     const connectPromise = client.connect({
       type: "sqlite",
@@ -234,9 +234,9 @@ describe("DatabaseClient.connect() - Connection Retry", () => {
       retry: { maxAttempts: 3, backoffMs: 50 },
     }).catch((e: Error) => { caughtError = e; });
 
-    // 첫 번째 실패 후 50ms(50 * 2^0) 대기
+    // Wait 50ms (50 * 2^0) after the first failure
     await jest.advanceTimersByTimeAsync(50);
-    // 두 번째 실패 후 100ms(50 * 2^1) 대기
+    // Wait 100ms (50 * 2^1) after the second failure
     await jest.advanceTimersByTimeAsync(100);
 
     await connectPromise;

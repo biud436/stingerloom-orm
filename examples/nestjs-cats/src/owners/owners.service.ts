@@ -25,7 +25,7 @@ export class OwnersService implements OnModuleInit {
     const owner = new Owner();
     owner.name = dto.name;
     owner.email = dto.email;
-    // createdAt은 @BeforeInsert 훅에서 자동 설정
+    // createdAt is set automatically in the @BeforeInsert hook
 
     return await this.ownerRepository.save(owner);
   }
@@ -49,7 +49,7 @@ export class OwnersService implements OnModuleInit {
   }
 
   /**
-   * 주인별 고양이 수 통계 — count 활용 데모.
+   * Per-owner cat count statistics — demo using count().
    */
   async count(): Promise<number> {
     return this.ownerRepository.count();

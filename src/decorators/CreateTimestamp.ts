@@ -16,8 +16,8 @@ export interface TimestampOptions {
 }
 
 /**
- * INSERT 시 자동으로 현재 시각이 설정되는 컬럼을 정의합니다.
- * UPDATE 시에는 값이 변경되지 않습니다.
+ * Declares a column automatically set to the current time on INSERT.
+ * Not modified on UPDATE.
  *
  * @example
  * @CreateTimestamp()

@@ -6,7 +6,7 @@ import { EntityManager } from "../../src/core/EntityManager";
 import { ExplainResult } from "../../src/core/ExplainResult";
 import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
 
-// Mock 모듈 설정
+// Module mocks
 jest.mock("../../src/DatabaseClient", () => {
   return {
     DatabaseClient: {
@@ -40,7 +40,7 @@ jest.mock("../../src/dialects/TransactionSessionManager", () => {
   };
 });
 
-// ─── Driver supportsExplain / buildExplainSql 테스트 ──────────────────────
+// ─── Driver supportsExplain / buildExplainSql tests ──────────────────────
 
 describe("Driver supportsExplain() / buildExplainSql()", () => {
   describe("MySqlDriver", () => {
@@ -90,7 +90,7 @@ describe("Driver supportsExplain() / buildExplainSql()", () => {
 
 });
 
-// ─── EntityManager.explain() 테스트 ──────────────────────────────────────
+// ─── EntityManager.explain() tests ──────────────────────────────────────
 
 describe("EntityManager.explain()", () => {
   let em: EntityManager;
@@ -318,7 +318,7 @@ describe("EntityManager.explain()", () => {
   });
 });
 
-// ─── BaseRepository.explain() 위임 테스트 ────────────────────────────────
+// ─── BaseRepository.explain() delegation tests ────────────────────────────────
 
 describe("BaseRepository.explain()", () => {
   it("should delegate to EntityManager.explain()", async () => {

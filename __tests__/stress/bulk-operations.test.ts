@@ -1,12 +1,12 @@
 /**
- * 대량 데이터 스트레스 테스트
+ * Bulk data stress test
  *
- * SQLite in-memory를 사용하여 10,000건 INSERT/DELETE 성능을 측정합니다.
- * STRESS_TEST=true 환경변수 없이는 스킵됩니다.
+ * Uses SQLite in-memory to measure the performance of 10,000 INSERT/DELETE operations.
+ * Skipped unless STRESS_TEST=true is set.
  *
- * - Section A: Raw SQL baseline (connector.query 직접 사용)
- * - Section B: ORM API (EntityManager.save/find/delete 사용)
- * - Section C: Repository 패턴 (BaseRepository 사용)
+ * - Section A: Raw SQL baseline (uses connector.query directly)
+ * - Section B: ORM API (uses EntityManager.save/find/delete)
+ * - Section C: Repository pattern (uses BaseRepository)
  *
  * @example
  *   STRESS_TEST=true pnpm test -- --testPathPattern="stress/bulk"
@@ -254,7 +254,7 @@ describeIf("[Stress] B. ORM API (EntityManager.save/find/delete)", () => {
   }, 60000);
 });
 
-// ── Section C: Repository 패턴 ──────────────────────────────────────
+// ── Section C: Repository pattern ──────────────────────────────────────
 
 describeIf("[Stress] C. Repository 패턴 (BaseRepository)", () => {
   let em: EntityManager;

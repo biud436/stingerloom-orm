@@ -1,6 +1,6 @@
 /**
- * 엔티티의 모든 프로퍼티를 재귀적으로 optional로 만드는 유틸리티 타입입니다.
- * save() / update() 인자 타입으로 사용됩니다.
+ * Utility type that recursively makes all properties of an entity optional.
+ * Used as the argument type for save() / update().
  *
  * @example
  * ```ts

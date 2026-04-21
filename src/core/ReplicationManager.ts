@@ -5,8 +5,8 @@ import {
 } from "../dialects/ReplicationRouter";
 
 /**
- * 복제 라우팅 라이프사이클 캡슐화.
- * ReplicationRouter를 감싸고 초기화/정리/null 체크를 담당합니다.
+ * Encapsulates the replication-routing lifecycle.
+ * Wraps ReplicationRouter and handles initialization, teardown, and null checks.
  */
 export class ReplicationManager {
   private router: ReplicationRouter | null = null;

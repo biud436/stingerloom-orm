@@ -61,8 +61,8 @@ export class CategoriesService {
   }
 
   /**
-   * GROUP BY / HAVING demo - category별 포스트 수 집계.
-   * RawQueryBuilder를 사용하여 GROUP BY + HAVING 쿼리를 실행합니다.
+   * GROUP BY / HAVING demo — aggregates post count per category.
+   * Uses RawQueryBuilder to run a GROUP BY + HAVING query.
    */
   async getStats(): Promise<
     Array<{ name: string; postCount: number }>

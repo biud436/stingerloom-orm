@@ -1,11 +1,11 @@
 /**
- * 동시 트랜잭션 스트레스 테스트
+ * Concurrent transaction stress test
  *
- * SQLite in-memory를 사용하여 여러 동시 트랜잭션 시나리오를 검증합니다.
- * SQLite는 단일 writer이므로 동시성이 제한적이지만,
- * 순차적 트랜잭션의 데이터 무결성을 검증합니다.
+ * Uses SQLite in-memory to verify multiple concurrent transaction scenarios.
+ * SQLite has a single writer so concurrency is limited, but this test
+ * verifies data integrity across sequential transactions.
  *
- * STRESS_TEST=true 환경변수 없이는 스킵됩니다.
+ * Skipped unless STRESS_TEST=true is set.
  *
  * @example
  *   STRESS_TEST=true pnpm test -- --testPathPattern="stress/concurrent"
@@ -79,10 +79,10 @@ describeIf("[Stress] 동시 트랜잭션 테스트", () => {
       );
 
       if (i % 3 === 0) {
-        // 3의 배수는 ROLLBACK
+        // Multiples of 3 → ROLLBACK
         await connector.rollback(db);
       } else {
-        // 나머지는 COMMIT
+        // Otherwise COMMIT
         await connector.commit(db);
         expectedCount++;
       }

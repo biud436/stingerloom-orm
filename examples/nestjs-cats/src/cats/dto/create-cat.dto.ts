@@ -28,7 +28,7 @@ export class CreateCatDto {
   @MaxLength(100)
   breed!: string;
 
-  /** 선택: 주인 ID. 지정 시 owner FK가 설정됩니다. */
+  /** Optional: owner ID. When provided, the owner FK is set. */
   @ApiPropertyOptional({
     description: "주인 ID (선택). 지정 시 owner FK가 설정됩니다.",
     example: 1,

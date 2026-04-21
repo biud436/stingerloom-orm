@@ -10,7 +10,7 @@ export type ColumnMetadata = {
    */
   target: ClazzType<unknown>;
   /**
-   * 원본 TypeScript 프로퍼티 이름입니다.
+   * Original TypeScript property name.
    */
   propertyKey?: string;
   /**

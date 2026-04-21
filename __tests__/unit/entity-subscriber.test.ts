@@ -9,7 +9,7 @@ import {
 } from "../../src/core/EntitySubscriber";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 
-// Mock 모듈 설정
+// Module mocks
 jest.mock("../../src/DatabaseClient", () => {
   return {
     DatabaseClient: {
@@ -43,7 +43,7 @@ jest.mock("../../src/dialects/TransactionSessionManager", () => {
   };
 });
 
-// 테스트용 엔티티 클래스
+// Test entity classes
 class User {
   id!: number;
   name!: string;
@@ -55,7 +55,7 @@ class Post {
   title!: string;
 }
 
-// 메타데이터 모의 객체
+// Metadata mock objects
 const userMetadata = {
   name: "User",
   target: User,

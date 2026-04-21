@@ -6,7 +6,7 @@ import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedCol
 import { COLUMN_TOKEN } from "../../src/decorators/Column";
 
 // ─────────────────────────────────────────────────
-// Test entity: 모든 속성에 @Column이 있되, 하나만 빠진 엔티티
+// Test entity: every property has @Column except one
 // ─────────────────────────────────────────────────
 
 @Entity()
@@ -26,7 +26,7 @@ class Article {
   @Column({ type: "int" })
   viewCount!: number;
 
-  // 이 속성에는 @Column 데코레이터가 없음 — DDL에서 제외되어야 함
+  // This property has no @Column decorator — it should be excluded from DDL
   temporaryNote!: string;
 }
 

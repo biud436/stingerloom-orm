@@ -20,7 +20,7 @@ export class SqliteDataSource implements IDataSource {
   }
 
   async close() {
-    // SQLite는 단일 커넥션이므로 별도의 release가 필요 없습니다.
+    // SQLite uses a single connection, so a separate release is not needed.
     this.connection = undefined;
   }
 

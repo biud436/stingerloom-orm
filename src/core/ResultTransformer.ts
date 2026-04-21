@@ -110,7 +110,7 @@ export class ResultTransformer implements BaseResultTransformer {
   private static PropertySeparator = "_";
 
   /**
-   * 쿼리 결과가 없는 경우를 확인합니다.
+   * Returns true when the query result is empty.
    */
   private hasNoResults(queryResult: QueryResult<any> | undefined): boolean {
     return !queryResult?.results || queryResult.results.length === 0;
@@ -135,7 +135,7 @@ export class ResultTransformer implements BaseResultTransformer {
   }
 
   /**
-   * 엔티티에서 외래키 필드가 아닌 속성을 모두 추출합니다.
+   * Extracts all non-foreign-key properties from an entity.
    */
   private extractBaseEntity<T>(
     entityClass: MyClassConstructor<T>,
@@ -156,35 +156,35 @@ export class ResultTransformer implements BaseResultTransformer {
   }
 
   /**
-   * 빈 엔티티를 생성합니다.
+   * Creates an empty entity.
    */
   private buildNullEntity() {
     return undefined;
   }
 
   /**
-   * 빈 엔티티 컬렉션을 생성합니다.
+   * Creates an empty entity collection.
    */
   private buildEmptyEntities<T>(): T[] {
     return [] as T[];
   }
 
   /**
-   * 외래키 오브젝트를 생성합니다.
+   * Creates a foreign-key object.
    */
   private createForeignObject<T = any>(): ForeignObject<T> {
     return {};
   }
 
   /**
-   * SQL 측 컬럼명을 만듭니다.
+   * Builds the SQL-side column name.
    */
   private addSeparatorToColumnName(columnName: string): string {
     return `${columnName}${ResultTransformer.PropertySeparator}`;
   }
 
   /**
-   * SQL 결과를 단일 엔티티로 변환합니다.
+   * Converts a SQL result into a single entity.
    */
   public toEntity<T>(
     entityClass: MyClassConstructor<T>,
@@ -201,7 +201,7 @@ export class ResultTransformer implements BaseResultTransformer {
   }
 
   /**
-   * SQL 결과를 엔티티 배열로 변환합니다.
+   * Converts a SQL result into an array of entities.
    *
    * Batches the deserializer invocation: `class-transformer` (and other
    * `Deserializer` impls) natively accept an array and amortize per-row
@@ -354,21 +354,21 @@ export class ResultTransformer implements BaseResultTransformer {
   }
 
   /**
-   * 객체를 [키, 값] 쌍의 배열로 변환합니다.
+   * Converts an object into an array of [key, value] pairs.
    */
   private getObjectEntries<T = any, R = [string, unknown]>(obj: any): R[] {
     return Object.entries(obj) as R[];
   }
 
   /**
-   * 외래키 오브젝트에 내용을 채워넣습니다.
+   * Populates a foreign-key object with its contents.
    */
   private fillPropertiesToForeignObject<T>(
     entityClass: MyClassConstructor<T>,
     baseEntity: ForeignObject<any>,
     resultSet: any,
   ) {
-    // 외래키 메타데이터를 가져옵니다.
+    // Fetch the foreign-key metadata.
     const manyToOneMappingMetadata = Reflect.getMetadata(
       MANY_TO_ONE_TOKEN,
       entityClass,
@@ -383,14 +383,14 @@ export class ResultTransformer implements BaseResultTransformer {
         }
       }
 
-      // ManyToOne 관계의 외래키 데이터를 별도 객체로 분리하여 구성
+      // Build a separate object for the foreign-key data of each ManyToOne relation.
       for (const { getMappingEntity, columnName } of manyToOneMappingMetadata) {
         const ForeignClass = getMappingEntity() as ClazzType<T>;
 
         const rows = this.getObjectEntries(resultSet);
         const foreignObject = this.createForeignObject();
 
-        // JOIN 결과에서 해당 외래키 컬럼들만 필터링하여 객체 구성
+        // Filter the foreign-key columns out of the JOIN result to build the object.
         for (const [key, value] of rows) {
           const prefix = this.addSeparatorToColumnName(columnName);
 
@@ -401,7 +401,7 @@ export class ResultTransformer implements BaseResultTransformer {
           }
         }
 
-        // 중첩된 외래키 관계가 있는 경우 재귀적으로 처리
+        // Recursively handle nested foreign-key relations.
         const relatedManyToOneMappings = Reflect.getMetadata(
           MANY_TO_ONE_TOKEN,
           ForeignClass,
@@ -415,14 +415,14 @@ export class ResultTransformer implements BaseResultTransformer {
           );
         }
 
-        // LEFT JOIN으로 매칭되지 않은 경우 모든 값이 null → null 할당
+        // If the LEFT JOIN produced no match, all values are null → assign null.
         baseEntity[columnName] = this.isDeepNull(foreignObject)
           ? null
           : deserializeEntity(ForeignClass, foreignObject);
       }
     }
 
-    // OneToOne 관계 처리 (ManyToOne과 동일한 alias 패턴: propertyKey_columnName)
+    // Handle OneToOne relations (using the same alias pattern as ManyToOne: propertyKey_columnName).
     const oneToOneMappingMetadata = Reflect.getMetadata(
       ONE_TO_ONE_TOKEN,
       entityClass,
@@ -430,7 +430,7 @@ export class ResultTransformer implements BaseResultTransformer {
 
     if (oneToOneMappingMetadata) {
       for (const rel of oneToOneMappingMetadata) {
-        if (!rel.joinColumn) continue; // 소유측만 처리
+        if (!rel.joinColumn) continue; // Owning side only
 
         const propertyKey = rel.propertyKey;
         const RelatedClass = rel.getRelatedEntity() as ClazzType<any>;
@@ -461,7 +461,7 @@ export class ResultTransformer implements BaseResultTransformer {
           );
         }
 
-        // LEFT JOIN으로 매칭되지 않은 경우 null 할당
+        // Assign null when the LEFT JOIN did not match.
         baseEntity[propertyKey] = this.isDeepNull(foreignObject)
           ? null
           : deserializeEntity(RelatedClass, foreignObject);
@@ -489,7 +489,7 @@ export class ResultTransformer implements BaseResultTransformer {
   }
 
   /**
-   * SQL 결과를 엔티티 또는 엔티티 배열로 변환합니다.
+   * Converts a SQL result into either a single entity or an array of entities.
    */
   public transformNested<T>(
     entityClass: MyClassConstructor<T>,

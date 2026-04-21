@@ -29,42 +29,42 @@ function createHookDecorator(event: HookEvent): MethodDecorator {
 }
 
 /**
- * INSERT 전에 호출됩니다 (PK가 없는 신규 엔티티 저장 시).
+ * Invoked before INSERT (when persisting a new entity without a PK).
  */
 export function BeforeInsert(): MethodDecorator {
   return createHookDecorator("beforeInsert");
 }
 
 /**
- * INSERT 후에 호출됩니다.
+ * Invoked after INSERT.
  */
 export function AfterInsert(): MethodDecorator {
   return createHookDecorator("afterInsert");
 }
 
 /**
- * UPDATE 전에 호출됩니다 (PK가 있는 기존 엔티티 저장 시).
+ * Invoked before UPDATE (when persisting an existing entity that has a PK).
  */
 export function BeforeUpdate(): MethodDecorator {
   return createHookDecorator("beforeUpdate");
 }
 
 /**
- * UPDATE 후에 호출됩니다.
+ * Invoked after UPDATE.
  */
 export function AfterUpdate(): MethodDecorator {
   return createHookDecorator("afterUpdate");
 }
 
 /**
- * DELETE 전에 호출됩니다.
+ * Invoked before DELETE.
  */
 export function BeforeDelete(): MethodDecorator {
   return createHookDecorator("beforeDelete");
 }
 
 /**
- * DELETE 후에 호출됩니다.
+ * Invoked after DELETE.
  */
 export function AfterDelete(): MethodDecorator {
   return createHookDecorator("afterDelete");

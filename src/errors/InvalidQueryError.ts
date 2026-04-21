@@ -2,7 +2,7 @@ import { OrmError } from "./OrmError";
 import { OrmErrorCode } from "./OrmErrorCode";
 
 /**
- * 잘못된 쿼리가 실행되려 할 때 발생하는 에러입니다.
+ * Thrown when an invalid query is about to be executed.
  */
 export class InvalidQueryError extends OrmError {
   constructor(message: string, suggestion?: string) {

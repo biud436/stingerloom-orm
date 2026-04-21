@@ -38,8 +38,8 @@ import { InheritanceResolver } from "./InheritanceResolver";
 import { EntityMetadata } from "../decorators/Entity";
 
 /**
- * 앱 시작 시 1회 실행되는 DDL/스키마 동기화 핸들러.
- * 런타임 CRUD와 무관합니다.
+ * DDL / schema synchronization handler that runs once at application start.
+ * It is not involved in runtime CRUD.
  */
 export class SchemaRegistrar {
   private readonly namingStrategy: NamingStrategy;
@@ -65,7 +65,7 @@ export class SchemaRegistrar {
     const isDryRun = syncOption === "dry-run";
     const isSafe = syncOption === "safe";
 
-    // PostgreSQL: 스키마가 존재하지 않으면 자동으로 생성합니다.
+    // PostgreSQL: automatically create the schema if it does not exist.
     if (
       synchronize &&
       !isDryRun &&
@@ -80,7 +80,7 @@ export class SchemaRegistrar {
       }
     }
 
-    // 1패스: 모든 테이블을 먼저 생성합니다 (FK 생성 전에 참조 대상 테이블이 존재해야 함).
+    // Pass 1: create every table first (the referenced tables must exist before FKs are created).
     const entityList: Array<{
       TargetEntity: ClazzType<any>;
       tableName: string;
@@ -96,7 +96,7 @@ export class SchemaRegistrar {
       const metadata = entity.value as EntityScannerMetadata;
       const TargetEntity = metadata.target as ClazzType<any>;
 
-      // Multi-DB: 이 EntityManager에 속하지 않은 엔티티는 건너뜀
+      // Multi-DB: skip entities that do not belong to this EntityManager
       const scopedEntities = this.ctx.getEntities();
       if (scopedEntities.length > 0 && !scopedEntities.includes(TargetEntity)) {
         continue;
@@ -111,7 +111,7 @@ export class SchemaRegistrar {
         throw new EntityMetadataNotFoundError(tableName ?? "Unknown");
       }
 
-      // STI: 자식 엔티티는 자체 테이블을 생성하지 않음 (부모 테이블 공유)
+      // STI: child entities do not create their own table (they share the parent's table).
       if (this.inheritanceResolver.isChildEntity(TargetEntity)) {
         const strategy = this.inheritanceResolver.getStrategy(TargetEntity);
         if (strategy === "SINGLE_TABLE") {
@@ -119,8 +119,8 @@ export class SchemaRegistrar {
         }
       }
 
-      // TPT: 자식 테이블은 고유 컬럼 + PK만 DDL에 포함 (상속 컬럼은 부모 테이블에)
-      // 주의: metadata.columns 원본은 수정하지 않음 (EntityManager가 전체 컬럼 필요)
+      // TPT: child tables only include their own columns + PK in DDL (inherited columns live on the parent).
+      // Note: do not mutate the original metadata.columns — EntityManager needs the full column list.
       let tptDdlColumns: any[] | undefined;
       if (this.inheritanceResolver.isChildEntity(TargetEntity)) {
         const strategy = this.inheritanceResolver.getStrategy(TargetEntity);
@@ -141,12 +141,12 @@ export class SchemaRegistrar {
         }
       }
 
-      // 상속 루트: discriminator 컬럼 추가 + STI 자식 컬럼 병합
+      // Inheritance root: add the discriminator column + merge STI child columns
       if (this.inheritanceResolver.isRootEntity(TargetEntity)) {
         const strategy = this.inheritanceResolver.getStrategy(TargetEntity);
         const entityMeta = Reflect.getMetadata(ENTITY_TOKEN, TargetEntity) as EntityMetadata | undefined;
         if (entityMeta) {
-          // STI/TPT: discriminator 컬럼 추가 (루트 테이블에)
+          // STI/TPT: add the discriminator column (on the root table)
           if (strategy === "SINGLE_TABLE" || strategy === "JOINED") {
             const discCol = entityMeta.discriminatorColumn;
             if (discCol) {
@@ -166,7 +166,7 @@ export class SchemaRegistrar {
             }
           }
 
-          // STI 전용: 자식 엔티티의 고유 컬럼 병합 (nullable 강제)
+          // STI only: merge each child entity's unique columns (forcing them nullable)
           if (strategy === "SINGLE_TABLE") {
             const childEntities = entityMeta.childEntities ?? [];
             const existingColNames = new Set(
@@ -217,7 +217,7 @@ export class SchemaRegistrar {
       entityList.push({ TargetEntity, tableName, metadata, tableExisted });
     }
 
-    // 1.5패스: 이미 존재하는 테이블에 대해 SchemaDiff를 실행하여 컬럼 변경사항을 적용합니다.
+    // Pass 1.5: run SchemaDiff against already-existing tables to apply column changes.
     if (synchronize) {
       const existingEntities = entityList.filter((e) => e.tableExisted);
       if (existingEntities.length > 0) {
@@ -229,13 +229,13 @@ export class SchemaRegistrar {
       }
     }
 
-    // 2패스: 모든 테이블이 생성된 후 FK, 인덱스, 유니크 인덱스를 등록합니다.
+    // Pass 2: after every table is created, register FKs, indexes, and unique indexes.
     if (synchronize && !isDryRun) {
       for (const { TargetEntity, tableName, metadata } of entityList) {
-        // 외래키를 생성합니다.
+        // Create foreign keys.
         await this.registerForeignKeys(TargetEntity, tableName);
 
-        // TPT: 자식 PK → 부모 PK FK 등록
+        // TPT: register a FK from the child PK to the parent PK.
         if (this.inheritanceResolver.isChildEntity(TargetEntity)) {
           const tptStrategy = this.inheritanceResolver.getStrategy(TargetEntity);
           if (tptStrategy === "JOINED") {
@@ -265,7 +265,7 @@ export class SchemaRegistrar {
                     );
                   }
                 } catch {
-                  // SQLite: ALTER TABLE ADD CONSTRAINT 미지원 — FK 생략
+                  // SQLite: ALTER TABLE ADD CONSTRAINT is unsupported — skip the FK.
                   this.logger.warn(
                     `Could not create FK ${fkName} for TPT child table ${tableName} (may be unsupported by dialect)`,
                   );
@@ -275,14 +275,14 @@ export class SchemaRegistrar {
           }
         }
 
-        // 인덱스를 생성합니다.
+        // Create indexes.
         await this.registerIndex(TargetEntity, tableName);
 
-        // 복합 유니크 인덱스를 생성합니다.
+        // Create composite unique indexes.
         await this.registerUniqueIndexes(TargetEntity, tableName);
       }
 
-      // 3패스: ManyToMany 중간 테이블과 FK를 생성합니다.
+      // Pass 3: create ManyToMany join tables and their FKs.
       await this.registerManyToManyJoinTables(
         entityList.map((e) => e.TargetEntity),
       );
@@ -296,7 +296,7 @@ export class SchemaRegistrar {
   }
 
   /**
-   * 이미 존���하는 테이블에 대해 SchemaDiff를 실행하여 엔티티 변경사항을 동기화합니다.
+   * Runs SchemaDiff against already-existing tables to synchronize entity changes.
    */
   private async syncExistingTables(
     existingEntities: ClazzType<any>[],
@@ -327,9 +327,9 @@ export class SchemaRegistrar {
       return;
     }
 
-    // addTables는 이미 1패스에서 처리되므로 무시 (여기서는 기존 테이블만 처리)
+    // addTables was already handled in pass 1, so skip it here (we only process existing tables here).
 
-    // FK 컬럼 수집 (DROP에서 제외하기 위해)
+    // Collect FK columns (so they can be excluded from DROP).
     const fkColumnsPerTable = new Map<string, Set<string>>();
     for (const { TargetEntity, tableName } of entityList) {
       fkColumnsPerTable.set(
@@ -342,7 +342,7 @@ export class SchemaRegistrar {
   }
 
   /**
-   * SchemaDiffResult를 모드에 따라 적용합니다.
+   * Applies a SchemaDiffResult according to the selected mode.
    */
   private async applySchemaDiff(
     diff: SchemaDiffResult,
@@ -357,7 +357,7 @@ export class SchemaRegistrar {
     const isSafe = mode === "safe";
     const isFull = mode === true;
 
-    // 1. ADD COLUMNS (true, safe 모두 실행)
+    // 1. ADD COLUMNS (runs for both true and safe modes)
     for (const col of diff.addColumns) {
       const typeDef = this.buildAddColumnTypeDef(col);
       if (isDryRun) {
@@ -372,11 +372,11 @@ export class SchemaRegistrar {
       }
     }
 
-    // 2. ALTER COLUMNS (true만 실행, safe는 건너뜀)
+    // 2. ALTER COLUMNS (only in true mode; safe is skipped)
     if (isFull || isDryRun) {
       for (const col of diff.alterColumns) {
         const ddl = this.buildAlterColumnDDL(col, dialect);
-        if (!ddl) continue; // SQLite: 미지원
+        if (!ddl) continue; // SQLite: unsupported
         if (isDryRun) {
           this.logger.info(`[dry-run] ${ddl}`);
         } else {
@@ -388,10 +388,10 @@ export class SchemaRegistrar {
       }
     }
 
-    // 3. DROP COLUMNS (true만 실행, safe는 건��뜀)
+    // 3. DROP COLUMNS (only in true mode; safe is skipped)
     if (isFull || isDryRun) {
       for (const col of diff.dropColumns) {
-        // FK 컬럼은 DROP에서 제외 (2패스에서 관리됨)
+        // FK columns are excluded from DROP (they are managed in pass 2).
         const tableFkCols = fkColumnsPerTable.get(col.tableName.toLowerCase());
         if (tableFkCols?.has(col.columnName.toLowerCase())) continue;
 
@@ -408,7 +408,7 @@ export class SchemaRegistrar {
       }
     }
 
-    // 4. RENAME COLUMNS (true만 실행)
+    // 4. RENAME COLUMNS (only in true mode)
     if ((isFull || isDryRun) && diff.renamedColumns) {
       for (const rename of diff.renamedColumns) {
         const ddl = `ALTER TABLE ${this.ctx.wrap(rename.tableName)} RENAME COLUMN ${this.ctx.wrap(rename.oldColumnName)} TO ${this.ctx.wrap(rename.newColumnName)}`;
@@ -425,14 +425,14 @@ export class SchemaRegistrar {
   }
 
   /**
-   * ColumnChange에서 순수 타입 문자열만 생��합니다.
-   * ENUM 값, 길이, precision/scale을 포함합니다.
-   * 예: "VARCHAR(255)", "ENUM('a','b')", "DECIMAL(10,2)"
+   * Produces only the pure type string from a ColumnChange.
+   * Includes ENUM values, length, and precision/scale.
+   * Examples: "VARCHAR(255)", "ENUM('a','b')", "DECIMAL(10,2)".
    */
   private buildColumnTypeExpr(col: ColumnChange): string {
     let type = col.columnType ?? "VARCHAR(255)";
 
-    // ENUM 타입의 경우, enumValues로 값 목록을 포함
+    // For ENUM types, include the value list from enumValues.
     const isENUM = type.toUpperCase().startsWith("ENUM");
     if (isENUM && col.enumValues && col.enumValues.length > 0) {
       const values = col.enumValues
@@ -441,12 +441,12 @@ export class SchemaRegistrar {
       type = `ENUM(${values})`;
     }
 
-    // 길이가 지정되어 있고 타입에 아직 괄호가 없으면 추가
+    // If a length is specified and the type does not yet include parentheses, append it.
     if (col.expectedLength && !type.includes("(")) {
       type = `${type}(${col.expectedLength})`;
     }
 
-    // 정밀도/스케일이 지정되어 있으면 추���
+    // If precision/scale is specified, append it.
     if (col.expectedPrecision && !type.includes("(")) {
       const scale =
         col.expectedScale !== undefined && col.expectedScale !== null
@@ -459,8 +459,8 @@ export class SchemaRegistrar {
   }
 
   /**
-   * ColumnChange에서 ADD COLUMN용 타입 정의 문자열을 생성합니다.
-   * 예: "VARCHAR(255) NULL", "INT NOT NULL DEFAULT 0"
+   * Produces the ADD COLUMN type-definition string from a ColumnChange.
+   * Examples: "VARCHAR(255) NULL", "INT NOT NULL DEFAULT 0".
    *
    * For non-nullable columns being backfilled into existing rows,
    * a type-appropriate default is used (#177):
@@ -497,8 +497,8 @@ export class SchemaRegistrar {
   }
 
   /**
-   * ALTER COLUMN DDL을 다이얼렉트별로 생성합니다.
-   * SQLite는 ALTER COLUMN TYPE을 지원하지 않으므로 null을 반환���니다.
+   * Generates ALTER COLUMN DDL for the appropriate dialect.
+   * Returns null for SQLite, which does not support ALTER COLUMN TYPE.
    */
   private buildAlterColumnDDL(
     col: ColumnChange,
@@ -526,8 +526,8 @@ export class SchemaRegistrar {
   }
 
   /**
-   * 엔티티의 @ManyToOne/@OneToOne 관계에서 FK 조인 컬럼명을 수집합니다.
-   * DROP COLUMN에서 이 컬럼들을 제외하기 위해 사용됩니다.
+   * Collects FK join-column names from the entity's @ManyToOne/@OneToOne relations.
+   * Used to exclude these columns from DROP COLUMN operations.
    */
   private collectForeignKeyColumns(TargetEntity: ClazzType<any>): Set<string> {
     const fkColumns = new Set<string>();
@@ -568,7 +568,7 @@ export class SchemaRegistrar {
   }
 
   /**
-   * @UniqueIndex 데코레이터로 선언된 복합 유니��� 인덱스를 등록��니다.
+   * Registers composite unique indexes declared via the @UniqueIndex decorator.
    */
   async registerUniqueIndexes(TargetEntity: ClazzType<any>, tableName: string) {
     const uniqueIndexes = Reflect.getMetadata(
@@ -598,7 +598,7 @@ export class SchemaRegistrar {
       const indexName =
         uq.name ?? this.namingStrategy.uniqueIndexName(tableName, resolvedColumns);
 
-      // 이미 존재하는지 확인
+      // Check whether it already exists.
       const indexes = (await driver?.getIndexes(tableName)) as any[];
       let isExist = false;
       for (const idx of indexes || []) {
@@ -617,8 +617,8 @@ export class SchemaRegistrar {
   }
 
   /**
-   * ManyToMany 중간 테이블과 FK 제약을 생성합니다.
-   * joinTable 소유측 엔티티만 처리하며, 중복은 Set으로 방지��니다.
+   * Creates ManyToMany join tables and their FK constraints.
+   * Only processes the owning side (the side that declares joinTable); duplicates are prevented via a Set.
    * Join column types are derived from the actual PK types of the referenced entities (#178).
    */
   async registerManyToManyJoinTables(entities: ClazzType<any>[]) {
@@ -640,7 +640,7 @@ export class SchemaRegistrar {
         if (processedTables.has(joinTableName)) continue;
         processedTables.add(joinTableName);
 
-        // 엔티티 테이블 이름 조회 (@Entity name 우선)
+        // Look up the entity's table name (@Entity name takes priority).
         const ownerEntityMeta = Reflect.getMetadata(ENTITY_TOKEN, entity) as
           | { name?: string }
           | undefined;
@@ -653,7 +653,7 @@ export class SchemaRegistrar {
         ) as { name?: string } | undefined;
         const relatedTable = relatedEntityMeta?.name ?? relatedEntity.name;
 
-        // 1. 중간 테이블 생성 (IF NOT EXISTS — 재시작 시 안전)
+        // 1. Create the join table (IF NOT EXISTS — safe across restarts).
         const hasTable = await driver?.hasTable(joinTableName);
         if (!hasTable || (hasTable as any[]).length === 0) {
           const wJoinTable = this.ctx.wrap(joinTableName);
@@ -667,7 +667,7 @@ export class SchemaRegistrar {
           await driver?.executeRaw(ddl);
         }
 
-        // 2. 소유측 PK / 역측 PK 조회
+        // 2. Look up the owning-side and inverse-side PKs.
         const ownerColumns = (Reflect.getMetadata(
           COLUMN_TOKEN,
           entity.prototype,
@@ -680,7 +680,7 @@ export class SchemaRegistrar {
         ) ?? []) as ColumnMetadata[];
         const relatedPk = relatedColumns.find((c) => c.options?.primary)?.name;
 
-        // 3. 소유측 FK 추가
+        // 3. Add the owning-side FK.
         const ownerFkName = this.namingStrategy.foreignKeyName(
           joinTableName,
           joinColumn,
@@ -695,7 +695,7 @@ export class SchemaRegistrar {
           await driver.executeRaw(ddl);
         }
 
-        // 4. 역측 FK 추가
+        // 4. Add the inverse-side FK.
         const relatedFkName = this.namingStrategy.foreignKeyName(
           joinTableName,
           inverseJoinColumn,
@@ -714,24 +714,24 @@ export class SchemaRegistrar {
   }
 
   async registerForeignKeys(TargetEntity: ClazzType<any>, tableName: string) {
-    // 엔티티 매니저를 가지고 옵니다.
+    // Fetch the entity scanner.
     const entityScanner = getScannerInstance(EntityScanner);
     const driver = this.ctx.getDriver();
 
-    // ManyToOne 관계를 레이어 시스템을 통해 가져옵니다.
+    // Look up ManyToOne relations through the layered metadata system.
     const manyToOneItems = this.resolver.resolveManyToOneMetadata(TargetEntity);
 
     const isValidManyToOne = manyToOneItems && manyToOneItems.length > 0;
 
-    // ManyToOne 관계가 존재할 경우, 외래키를 생성합니다.
+    // If any ManyToOne relation exists, create the foreign keys.
     if (isValidManyToOne) {
       for (const manyToOneItem of manyToOneItems) {
-        // createForeignKeyConstraints: false이면 FK 생성 건너뜀
+        // Skip FK creation when createForeignKeyConstraints is false.
         if (manyToOneItem.option?.createForeignKeyConstraints === false) continue;
 
         const { joinColumn } = manyToOneItem;
 
-        // 매핑할 엔티티를 가져옵니다.
+        // Fetch the target entity of the mapping.
         const mappingEntity = manyToOneItem.getMappingEntity();
         if (!mappingEntity) {
           throw new EntityNotFound(mappingEntity);
@@ -749,7 +749,7 @@ export class SchemaRegistrar {
           );
         }
 
-        // references 옵션이 있으면 해당 컬럼, 없으면 PK를 참조
+        // Reference the given column when `references` is provided, otherwise the target PK.
         const mappingTablePrimaryKey = manyToOneItem.references
           ? manyToOneItem.references
           : mappingTableMetadata.columns.find((e: any) => e.options?.primary)
@@ -762,7 +762,7 @@ export class SchemaRegistrar {
         const mappingTableName =
           mappingTableMetadata.name || this.ctx.getNameStrategy(mappingEntity);
 
-        // joinColumn 컬럼이 테이블에 ���으면 먼저 추가합니다.
+        // Add the joinColumn first if the column is missing from the table.
         if (driver) {
           const columnExists = await driver.hasColumn(tableName, joinColumn);
           if (!columnExists) {
@@ -771,7 +771,7 @@ export class SchemaRegistrar {
           }
         }
 
-        // FK 제약이 이미 존재하면 중복 추가를 건���뜁니다.
+        // Skip adding the FK constraint if it already exists.
         if (driver) {
           const fkName = this.namingStrategy.foreignKeyName(
             tableName,
@@ -783,23 +783,23 @@ export class SchemaRegistrar {
         }
 
         await driver?.addForeignKey(
-          // 현재 테이블 이름
+          // Current table name
           tableName,
-          // 현재 테이블의 키 이름
+          // Current table's column name
           joinColumn,
-          // 매핑할 테이블 이름
+          // Target table name
           mappingTableName,
-          // 매핑할 테이블의 기본키
+          // Target table's primary key
           mappingTablePrimaryKey,
         );
       }
     }
 
-    // OneToOne 관계의 소유측(joinColumn이 있는 쪽)에 대해 FK를 생성합니다.
+    // Create FKs for the owning side of each OneToOne relation (the side with joinColumn).
     const oneToOneItems = this.resolver.resolveOneToOneMetadata(TargetEntity);
     for (const oneToOneItem of oneToOneItems) {
       const { joinColumn } = oneToOneItem;
-      if (!joinColumn) continue; // 역방향(inverseSide)은 FK가 없음
+      if (!joinColumn) continue; // Inverse side has no FK.
 
       const RelatedEntity = oneToOneItem.getRelatedEntity();
       if (!RelatedEntity) {
@@ -819,7 +819,7 @@ export class SchemaRegistrar {
         throw new PrimaryKeyNotFoundError(RelatedEntity.name);
       }
 
-      // joinColumn 컬럼이 테이블에 없으면 먼��� 추가합니다.
+      // Add the joinColumn first if the column is missing from the table.
       if (driver) {
         const columnExists = await driver.hasColumn(tableName, joinColumn);
         if (!columnExists) {
@@ -831,7 +831,7 @@ export class SchemaRegistrar {
       const relatedTableName =
         relatedMetadata.name || this.ctx.getNameStrategy(RelatedEntity);
 
-      // FK 제약이 이미 ���재하면 중복 ��가를 건너뜁니다.
+      // Skip adding the FK constraint if it already exists.
       if (driver) {
         const fkName = this.namingStrategy.foreignKeyName(
           tableName,
@@ -852,7 +852,7 @@ export class SchemaRegistrar {
   }
 
   /**
-   * 인덱스를 생성합니다.
+   * Creates indexes.
    * Resolves property keys to actual DB column names (#176).
    */
   async registerIndex(TargetEntity: ClazzType<any>, tableName: string) {
@@ -883,7 +883,7 @@ export class SchemaRegistrar {
 
         let isExist = false;
         for (const idx of indexes || []) {
-          // MySQL은 "Key_name", PostgreSQL은 "Field" (indexname 별칭)를 사용합니다.
+          // MySQL uses "Key_name"; PostgreSQL uses "Field" (aliased from indexname).
           const existingIndexName = idx["Key_name"] ?? idx["Field"];
           if (existingIndexName === indexName) {
             isExist = true;

@@ -19,11 +19,11 @@ import { resolveSqliteCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 
 /**
- * SQLite용 SQL 드라이버 구현체입니다.
- * SQLite의 DDL/DML 구문에 맞게 쿼리를 생성합니다.
+ * SQL driver implementation for SQLite.
+ * Generates queries compatible with SQLite's DDL/DML syntax.
  *
- * SQLite는 스키마 개념이 없으며, 단일 파일 기반 데이터베이스입니다.
- * 식별자 래핑에는 PostgreSQL과 동일하게 큰따옴표를 사용합니다.
+ * SQLite has no schema concept and is a single-file database.
+ * Identifier wrapping uses double quotes, matching PostgreSQL.
  */
 export class SqliteDriver implements ISqlDriver {
   private readonly logger = new Logger("SqliteDriver");
@@ -49,7 +49,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블이 존재하는지 확인합니다.
+   * Checks whether the table exists.
    */
   hasTable(name: string) {
     return this.connector.query(
@@ -88,9 +88,9 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 기본키를 추가합니다.
-   * SQLite에서는 ALTER TABLE로 기본키를 추가할 수 없습니다.
-   * 테이블 재생성이 필요하지만, 인터페이스 호환을 위해 에러를 발생시킵니다.
+   * Adds a primary key to the table.
+   * SQLite does not support adding a primary key via ALTER TABLE.
+   * The table must be recreated; an error is thrown here for interface compatibility.
    */
   addPrimaryKey(_tableName: string, _columnName: string): Promise<any> {
     throw new OrmError(
@@ -100,8 +100,8 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 자동 증가를 추가합니다.
-   * SQLite에서는 INTEGER PRIMARY KEY가 자동으로 AUTOINCREMENT 역할을 합니다.
+   * Adds auto-increment to the table.
+   * In SQLite, INTEGER PRIMARY KEY automatically acts as AUTOINCREMENT.
    */
   addAutoIncrement(_tableName: string, _columnName: string): Promise<any> {
     throw new OrmError(
@@ -111,8 +111,8 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 기본키를 제거합니다.
-   * SQLite에서는 ALTER TABLE로 기본키를 제거할 수 없습니다.
+   * Drops the primary key from the table.
+   * SQLite does not support dropping a primary key via ALTER TABLE.
    */
   dropPrimaryKey(_tableName: string): Promise<any> {
     throw new OrmError(
@@ -122,7 +122,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 유니크 키를 추가합니다.
+   * Adds a unique key to the table.
    */
   addUniqueKey(tableName: string, columnName: string) {
     const indexName = `uq_${tableName}_${columnName}`;
@@ -132,7 +132,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 유니크 키를 제거합니다.
+   * Drops the unique key from the table.
    */
   dropUniqueKey(tableName: string, columnName: string) {
     const indexName = `uq_${tableName}_${columnName}`;
@@ -142,7 +142,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 컬럼을 추가합니다.
+   * Adds a column to the table.
    */
   addColumn(tableName: string, columnName: string, columnType: string) {
     return this.connector.query(
@@ -151,8 +151,8 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 컬럼을 제거합니다.
-   * SQLite 3.35.0+ 에서 DROP COLUMN을 지원합니다.
+   * Drops a column from the table.
+   * DROP COLUMN is supported on SQLite 3.35.0+.
    */
   dropColumn(tableName: string, columnName: string) {
     if (!this.capabilities.supportsDropColumn) {
@@ -168,9 +168,9 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 외래키를 추가합니다.
-   * SQLite에서는 ALTER TABLE로 외래키를 추가할 수 없습니다.
-   * 테이블 생성 시 FOREIGN KEY 절을 포함해야 합니다.
+   * Adds a foreign key.
+   * SQLite does not support adding a foreign key via ALTER TABLE.
+   * Foreign keys must be declared in the FOREIGN KEY clause when the table is created.
    */
   addForeignKey(
     _tableName: string,
@@ -185,8 +185,8 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 외래키 이름을 생성합니다.
-   * SHA1 해시 기반으로 고유한 이름을 생성하여 이름 충돌과 길이 제한을 방지합니다.
+   * Generates a foreign key name.
+   * Produces a unique name based on a SHA1 hash to avoid name collisions and length limits.
    */
   generateForeignKeyName(
     sourceTable: string,
@@ -197,7 +197,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 외래키를 제거합니다.
+   * Drops a foreign key.
    */
   dropForeignKey(_tableName: string, _columnName: string): Promise<any> {
     throw new OrmError(
@@ -207,7 +207,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 인덱스를 추가합니다.
+   * Adds an index.
    */
   addIndex(tableName: string, columnName: string, indexName: string) {
     return this.connector.query(
@@ -216,7 +216,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 인덱스 존재 여부를 확인합니다.
+   * Checks whether the index exists.
    */
   hasIndex(tableName: string, indexName: string) {
     return this.connector.query(
@@ -225,7 +225,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 인덱스를 제거합니다.
+   * Drops an index.
    */
   dropIndex(tableName: string, indexName: string) {
     return this.connector.query(
@@ -234,8 +234,8 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 스키마를 가져옵니다 (PRAGMA table_info 기반).
-   * MySQL 호환 형식(MysqlSchemaInterface)으로 반환합니다.
+   * Retrieves the schema (based on PRAGMA table_info).
+   * Returns a MySQL-compatible shape (MysqlSchemaInterface).
    */
   getSchemas(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
@@ -244,7 +244,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 인덱스를 가져옵니다.
+   * Retrieves the indexes.
    */
   getIndexes(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
@@ -253,7 +253,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 외래키를 가져옵니다.
+   * Retrieves the foreign keys.
    */
   getForeignKeys(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
@@ -262,7 +262,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 기본키를 가져옵니다.
+   * Retrieves the primary keys.
    */
   getPrimaryKeys(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
@@ -271,7 +271,7 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블을 생성합니다.
+   * Creates the table.
    */
   createTable(tableName: string, columns: SchemaOptions[]) {
     const pkColumns = columns.filter(
@@ -304,22 +304,22 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 식별자를 큰따옴표로 감싸서 반환합니다 (SQLite 표준).
-   * 내부에 포함된 `"` 문자는 `""` 으로 이스케이프합니다.
+   * Wraps the identifier in double quotes and returns it (SQLite standard).
+   * Any embedded `"` character is escaped as `""`.
    */
   wrap(name: string): string {
     return `"${name.replace(/"/g, '""')}"`;
   }
 
   /**
-   * SQLite에는 스키마 개념이 없으므로 단순히 wrap()을 호출합니다.
+   * SQLite has no schema concept, so this simply calls wrap().
    */
   wrapQualified(name: string): string {
     return this.wrap(name);
   }
 
   /**
-   * TS 타입으로부터 데이터베이스 컬럼 타입을 추론합니다.
+   * Infers the database column type from the TypeScript type.
    */
   getColumnType(type: any): string {
     switch (type) {
@@ -339,11 +339,11 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * ColumnType을 SQLite 컬럼 타입으로 변환합니다.
+   * Converts a ColumnType to the corresponding SQLite column type.
    *
-   * ## SQLite 타입 매핑
-   * SQLite는 5가지 스토리지 클래스를 가집니다: NULL, INTEGER, REAL, TEXT, BLOB
-   * 타입 친화성(type affinity) 규칙에 따라 적절한 타입을 반환합니다.
+   * ## SQLite type mapping
+   * SQLite has five storage classes: NULL, INTEGER, REAL, TEXT, BLOB.
+   * The appropriate type is returned following SQLite's type affinity rules.
    *
    * | ColumnType | SQLite Type  |
    * |------------|--------------|
@@ -436,7 +436,7 @@ export class SqliteDriver implements ISqlDriver {
     );
   }
 
-  // SQLite는 단일 프로세스이므로 advisory lock은 no-op으로 처리합니다.
+  // SQLite runs in a single process, so advisory locks are treated as no-op.
   async acquireAdvisoryLock(_lockId: string, _timeoutMs?: number): Promise<boolean> {
     return true;
   }
@@ -461,8 +461,8 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 모든 데이터를 제거합니다.
-   * SQLite는 TRUNCATE를 지원하지 않으므로 DELETE FROM을 사용합니다.
+   * Removes all data from the table.
+   * SQLite does not support TRUNCATE, so DELETE FROM is used instead.
    */
   clear(tableName: string) {
     return this.connector.query(
@@ -471,13 +471,13 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
-   * 비관적 잠금을 위한 SQL을 반환합니다.
-   * SQLite는 데이터베이스 수준 잠금을 사용하며 행 단위 잠금을 지원하지 않습니다.
-   * BEGIN EXCLUSIVE 트랜잭션을 통해 잠금을 구현합니다.
-   * FOR UPDATE는 SQLite에서 무시되지만, 호환성을 위해 빈 문자열을 반환하지 않습니다.
+   * Returns the SQL fragment for pessimistic locking.
+   * SQLite uses database-level locking and does not support row-level locks.
+   * Locking is implemented via BEGIN EXCLUSIVE transactions.
+   * FOR UPDATE is ignored by SQLite, but this method does not return an empty string for compatibility.
    */
   getForUpdateNoWait(): string {
-    // SQLite는 행 단위 잠금을 지원하지 않으므로, 빈 문자열 반환
+    // SQLite does not support row-level locking, so return an empty string.
     this.logger.warn(
       "SQLite does not support FOR UPDATE — pessimistic locking is not applied",
     );

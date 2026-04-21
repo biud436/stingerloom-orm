@@ -36,7 +36,7 @@ export class PostsController {
     return this.postsService.create(dto);
   }
 
-  /** upsert -- slug 기준 존재 시 업데이트, 없으면 삽입 */
+  /** upsert -- update if row exists by slug, otherwise insert */
   @Post("upsert")
   @ApiOperation({
     summary: "Upsert a post by slug",
@@ -47,7 +47,7 @@ export class PostsController {
     return this.postsService.upsertBySlug(dto);
   }
 
-  /** findAndCount -- 페이지네이션 (total 포함) */
+  /** findAndCount -- pagination (includes total) */
   @Get("paginated")
   @ApiOperation({
     summary: "Paginated post list",
@@ -83,7 +83,7 @@ export class PostsController {
     return this.postsService.findAllIncludeDeleted();
   }
 
-  /** 커서 기반 페이지네이션 */
+  /** Cursor-based pagination */
   @Get("cursor")
   @ApiOperation({
     summary: "Cursor-based pagination",
@@ -102,7 +102,7 @@ export class PostsController {
     );
   }
 
-  /** Schema Diff -- 엔티티 vs DB 스키마 비교 */
+  /** Schema Diff -- compare entity metadata vs DB schema */
   @Get("schema-diff")
   @ApiOperation({
     summary: "Schema Diff",
@@ -113,7 +113,7 @@ export class PostsController {
     return this.postsService.getSchemaDiff();
   }
 
-  /** Schema Diff Migration 파일 생성 */
+  /** Generate migration file from Schema Diff */
   @Post("schema-diff/generate")
   @ApiOperation({
     summary: "Generate migration from Schema Diff",
@@ -124,7 +124,7 @@ export class PostsController {
     return this.postsService.generateMigration();
   }
 
-  /** explain -- 쿼리 실행 계획 */
+  /** explain -- query execution plan */
   @Get(":id/explain")
   @ApiOperation({
     summary: "Explain query plan",
@@ -190,7 +190,7 @@ export class PostsController {
     return this.postsService.restore(id);
   }
 
-  /** GET /posts/:id/tags -- Post에 연결된 Tag 목록 조회 */
+  /** GET /posts/:id/tags -- list tags associated with a post */
   @Get(":id/tags")
   @ApiOperation({
     summary: "Get tags for a post",
@@ -203,7 +203,7 @@ export class PostsController {
     return this.postsService.getPostTags(id);
   }
 
-  /** POST /posts/:id/tags -- Post에 Tag 추가 (body: { tagId }) */
+  /** POST /posts/:id/tags -- add a Tag to a Post (body: { tagId }) */
   @Post(":id/tags")
   @ApiOperation({
     summary: "Add a tag to a post",
@@ -225,7 +225,7 @@ export class PostsController {
     return this.postsService.addTagToPost(id, tagId);
   }
 
-  /** DELETE /posts/:id/tags/:tagId -- Post에서 Tag 제거 */
+  /** DELETE /posts/:id/tags/:tagId -- remove a Tag from a Post */
   @Delete(":id/tags/:tagId")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

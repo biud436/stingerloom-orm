@@ -2,7 +2,7 @@ import { OrmError } from "./OrmError";
 import { OrmErrorCode } from "./OrmErrorCode";
 
 /**
- * 조건 없이 삭제/업데이트 작업을 시도할 때 발생하는 에러입니다.
+ * Thrown when a delete/update is attempted without conditions.
  */
 export class DeleteWithoutConditionsError extends OrmError {
   constructor(operation: string = "Delete") {

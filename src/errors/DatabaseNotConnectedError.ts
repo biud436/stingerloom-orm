@@ -2,7 +2,7 @@ import { OrmError } from "./OrmError";
 import { OrmErrorCode } from "./OrmErrorCode";
 
 /**
- * 데이터베이스 연결이 되어있지 않을 때 발생하는 에러입니다.
+ * Thrown when an operation is attempted without an active database connection.
  */
 export class DatabaseNotConnectedError extends OrmError {
   constructor() {

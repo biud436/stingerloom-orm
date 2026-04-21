@@ -76,8 +76,8 @@ interface ForeignKeyDef {
 }
 
 /**
- * DDL 생성기입니다. 엔티티 메타데이터를 읽어 CREATE TABLE / DROP TABLE DDL 문자열을 생성합니다.
- * 실제 DB 연결 없이 DDL 문자열만 생성하므로 unit test가 가능합니다.
+ * DDL generator. Reads entity metadata and produces CREATE TABLE / DROP TABLE DDL strings.
+ * It only generates DDL strings without requiring a real DB connection, so it can be unit-tested.
  */
 export class SchemaGenerator {
   private readonly dialect: SchemaDialect;
@@ -101,13 +101,13 @@ export class SchemaGenerator {
   }
 
   /**
-   * 단일 엔티티에 대한 CREATE TABLE DDL을 생성합니다.
+   * Generates the CREATE TABLE DDL for a single entity.
    */
   generateCreateTableDDL<T>(entity: ClazzType<T>): string {
     const tableName = this.getTableName(entity);
     const columns = this.getColumns(entity);
 
-    // 복합 PK 감지: primary 컬럼이 2개 이상이면 복합 PK
+    // Composite PK detection: two or more primary columns means a composite PK.
     const pkColumns = columns.filter((col) => col.options.primary);
     if (pkColumns.length === 0) {
       throw new PrimaryKeyNotFoundError(tableName);
@@ -131,7 +131,7 @@ export class SchemaGenerator {
       );
     }
 
-    // 복합 PK인 경우 PRIMARY KEY (col1, col2, ...) 제약 조건 추가
+    // For a composite PK, append the PRIMARY KEY (col1, col2, ...) constraint.
     if (isCompositePk) {
       const pkDef = `PRIMARY KEY (${pkColumns.map((col) => this.wrapId(col.name)).join(", ")})`;
       columnDefs.push(pkDef);
@@ -147,7 +147,7 @@ export class SchemaGenerator {
   }
 
   /**
-   * 단일 엔티티에 대한 CREATE INDEX DDL 배열을 생성합니다.
+   * Generates the array of CREATE INDEX DDL statements for a single entity.
    * @Index() property decorator stores the TypeScript property key;
    * this method resolves it to the actual DB column name via @Column({ name }) (#176).
    */
@@ -167,7 +167,7 @@ export class SchemaGenerator {
   }
 
   /**
-   * 단일 엔티티에 대한 ALTER TABLE ... ADD FOREIGN KEY DDL 배열을 생성합니다.
+   * Generates the array of ALTER TABLE ... ADD FOREIGN KEY DDL statements for a single entity.
    */
   generateForeignKeyDDL<T>(entity: ClazzType<T>): string[] {
     const tableName = this.getTableName(entity);
@@ -181,7 +181,7 @@ export class SchemaGenerator {
   }
 
   /**
-   * 단일 엔티티에 대한 CREATE UNIQUE INDEX DDL 배열을 생성합니다.
+   * Generates the array of CREATE UNIQUE INDEX DDL statements for a single entity.
    */
   generateUniqueIndexDDL<T>(entity: ClazzType<T>): string[] {
     const tableName = this.getTableName(entity);
@@ -202,7 +202,7 @@ export class SchemaGenerator {
   }
 
   /**
-   * 단일 엔티티에 대한 CREATE INDEX DDL 배열을 생성합니다 (class-level composite indexes).
+   * Generates the array of CREATE INDEX DDL statements for a single entity (class-level composite indexes).
    * Supports advanced options: USING, WHERE, expression, INCLUDE.
    */
   generateCompositeIndexDDL<T>(entity: ClazzType<T>): string[] {
@@ -275,7 +275,7 @@ export class SchemaGenerator {
   }
 
   /**
-   * 단일 엔티티에 대한 FULLTEXT / GIN 인덱스 DDL 배열을 생성합니다.
+   * Generates the array of FULLTEXT / GIN index DDL statements for a single entity.
    *
    * - PostgreSQL: `CREATE INDEX ... USING gin (to_tsvector('lang', col1 || ' ' || col2))`
    * - MySQL: `CREATE FULLTEXT INDEX ... ON table (col1, col2)`
@@ -405,7 +405,7 @@ export class SchemaGenerator {
   }
 
   /**
-   * DROP TABLE DDL을 생성합니다.
+   * Generates a DROP TABLE DDL.
    */
   generateDropTableDDL<T>(entity: ClazzType<T>): string {
     const tableName = this.getTableName(entity);
@@ -413,8 +413,8 @@ export class SchemaGenerator {
   }
 
   /**
-   * ManyToMany 관계의 중간 테이블 CREATE TABLE DDL을 생성합니다.
-   * 소유측(joinTable이 있는 측)만 처리하며, 중복 테이블 이름은 건너뜁니다.
+   * Generates CREATE TABLE DDL for ManyToMany join tables.
+   * Only processes the owning side (the side that declares joinTable); duplicate table names are skipped.
    * Join column types are derived from the actual PK types of the referenced entities (#178).
    */
   generateManyToManyJoinTableDDL(entities: ClazzType<any>[]): string[] {
@@ -459,7 +459,7 @@ export class SchemaGenerator {
   }
 
   /**
-   * ManyToMany 관계의 중간 테이블에 대한 FOREIGN KEY DDL을 생성합니다.
+   * Generates FOREIGN KEY DDL for ManyToMany join tables.
    */
   generateManyToManyForeignKeyDDL(entities: ClazzType<any>[]): string[] {
     const ddls: string[] = [];
@@ -503,7 +503,7 @@ export class SchemaGenerator {
   }
 
   /**
-   * ManyToMany 관계의 중간 테이블 DROP TABLE DDL을 생성합니다.
+   * Generates DROP TABLE DDL for ManyToMany join tables.
    */
   generateManyToManyDropDDL(entities: ClazzType<any>[]): string[] {
     const ddls: string[] = [];
@@ -528,12 +528,12 @@ export class SchemaGenerator {
   }
 
   /**
-   * 여러 엔티티에 대한 CREATE TABLE + INDEX + FK DDL을 생성합니다.
+   * Generates CREATE TABLE + INDEX + FK DDL for multiple entities.
    */
   generateSchemaDDL(entities: ClazzType<any>[]): string[] {
     const ddls: string[] = [];
 
-    // 1. CREATE TABLE (순서대로)
+    // 1. CREATE TABLE (in order)
     for (const entity of entities) {
       ddls.push(this.generateCreateTableDDL(entity));
     }
@@ -563,30 +563,30 @@ export class SchemaGenerator {
       ddls.push(...this.generateUniqueIndexDDL(entity));
     }
 
-    // 4. ADD FOREIGN KEY (테이블 생성 후)
+    // 4. ADD FOREIGN KEY (after tables are created)
     for (const entity of entities) {
       ddls.push(...this.generateForeignKeyDDL(entity));
     }
 
-    // 5. ManyToMany 중간 테이블
+    // 5. ManyToMany join tables
     ddls.push(...this.generateManyToManyJoinTableDDL(entities));
 
-    // 6. ManyToMany 중간 테이블 FK
+    // 6. ManyToMany join table FKs
     ddls.push(...this.generateManyToManyForeignKeyDDL(entities));
 
     return ddls;
   }
 
   /**
-   * 여러 엔티티에 대한 DROP TABLE DDL을 역순으로 생성합니다 (FK 의존성).
+   * Generates DROP TABLE DDL for multiple entities in reverse order (due to FK dependencies).
    */
   generateDropSchemaDDL(entities: ClazzType<any>[]): string[] {
     const ddls: string[] = [];
 
-    // 중간 테이블을 먼저 DROP (FK 의존성)
+    // Drop join tables first (FK dependencies)
     ddls.push(...this.generateManyToManyDropDDL(entities));
 
-    // 엔티티 테이블을 역순으로 DROP
+    // Drop entity tables in reverse order
     ddls.push(...[...entities].reverse().map((e) => this.generateDropTableDDL(e)));
 
     return ddls;
@@ -615,7 +615,7 @@ export class SchemaGenerator {
       }) as ColumnOption,
     }));
 
-    // @RelationColumn 가상 컬럼 추가 (대응하는 @Column이 없는 경우)
+    // Add @RelationColumn virtual columns (when there is no matching @Column)
     const relationColumns: RelationColumnMetadata[] =
       Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
       Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??
@@ -624,9 +624,9 @@ export class SchemaGenerator {
 
     for (const rc of relationColumns) {
       const fkName = rc.name ?? `${rc.propertyKey}Id`;
-      if (existingNames.has(fkName)) continue; // @Column이 이미 선언됨
+      if (existingNames.has(fkName)) continue; // @Column already declared
 
-      // FK 컬럼 타입 결정: option.type → 대상 PK 타입 추론 → fallback "int"
+      // Determine the FK column type: option.type → inferred target PK type → fallback "int"
       const fkType: ColumnType = rc.type ?? this.inferRelatedPkType(entity, rc.propertyKey) ?? "int";
 
       result.push({
@@ -642,11 +642,11 @@ export class SchemaGenerator {
   }
 
   /**
-   * @RelationColumn의 대상 엔티티 PK 타입을 추론합니다.
-   * ManyToOne 또는 OneToOne 메타데이터에서 대상 엔티티를 찾아 PK 타입을 반환합니다.
+   * Infers the PK type of the target entity referenced by @RelationColumn.
+   * Looks up the target entity in either ManyToOne or OneToOne metadata and returns its PK type.
    */
   private inferRelatedPkType<T>(entity: ClazzType<T>, propertyKey: string): ColumnType | null {
-    // ManyToOne에서 대상 엔티티 검색
+    // Look up the target entity in ManyToOne metadata
     const manyToOnes = (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity) ??
       Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity.prototype) ??
       []) as ManyToOneMetadata<any>[];
@@ -656,7 +656,7 @@ export class SchemaGenerator {
       return this.findPrimaryKeyType(relatedEntity);
     }
 
-    // OneToOne에서 대상 엔티티 검색
+    // Look up the target entity in OneToOne metadata
     const oneToOnes = (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) ??
       []) as OneToOneMetadata<any>[];
     const o2o = oneToOnes.find((r) => r.propertyKey === propertyKey);
@@ -758,7 +758,7 @@ export class SchemaGenerator {
       }
     }
 
-    // OneToOne (소유측 — joinColumn이 있는 경우)
+    // OneToOne (owning side — when joinColumn is present)
     const oneToOnes = (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) ??
       []) as OneToOneMetadata<any>[];
 
@@ -822,7 +822,7 @@ export class SchemaGenerator {
   }
 
   /**
-   * 엔티티의 모든 PK 컬럼 이름을 반환합니다.
+   * Returns the names of all PK columns on the given entity.
    */
   findPrimaryKeyColumns<T>(entity: ClazzType<T>): string[] {
     const columns = this.getColumns(entity);
@@ -863,23 +863,23 @@ export class SchemaGenerator {
   }
 
   /**
-   * FK 제약 조건 이름을 해시 기반으로 생성합니다.
-   * SHA1 해시의 앞 8자를 사용하여 고유성을 보장하며,
-   * MySQL 64자 / PostgreSQL 63자 제한을 준수합니다.
+   * Generates a hash-based FK constraint name.
+   * Uses the first 8 characters of a SHA1 hash to guarantee uniqueness
+   * while fitting within MySQL's 64-char and PostgreSQL's 63-char identifier limits.
    *
    * @deprecated Use `NamingStrategy.foreignKeyName()` instead.
    * This static method is kept for backward compatibility with existing driver code.
    *
-   * @param tableName - 소스 테이블 이름
-   * @param column - FK 컬럼 이름
-   * @param refTable - 참조 대상 테이블 이름
-   * @returns 63자 이하의 고유 FK 이름
+   * @param tableName - Source table name
+   * @param column - FK column name
+   * @param refTable - Referenced table name
+   * @returns A unique FK name no longer than 63 characters
    */
   static generateForeignKeyName(tableName: string, column: string, refTable: string): string {
     const raw = `${tableName}_${column}_${refTable}`;
     const hash = crypto.createHash("sha1").update(raw).digest("hex").slice(0, 8);
     const base = `fk_${tableName}_${hash}`;
-    // MySQL 최대 64자, PostgreSQL 최대 63자 → 63자로 통일
+    // MySQL allows up to 64 chars; PostgreSQL up to 63 → standardize on 63
     return base.length > 63 ? `fk_${hash}` : base;
   }
 }

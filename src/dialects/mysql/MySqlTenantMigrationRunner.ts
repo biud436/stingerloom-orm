@@ -8,11 +8,11 @@ import {
 /**
  * MySqlTenantMigrationRunner
  *
- * MySQL은 스키마 기반 멀티테넌시를 지원하지 않습니다.
- * MySQL의 "schema"는 "database"와 동의어이므로, PostgreSQL처럼
- * 하나의 데이터베이스 내에서 스키마를 분리하는 방식이 불가능합니다.
+ * MySQL does not support schema-based multi-tenancy.
+ * In MySQL, "schema" is a synonym for "database", so schemas cannot be
+ * separated within a single database the way PostgreSQL allows.
  *
- * 모든 메서드는 UnsupportedError를 throw합니다.
+ * Every method throws UnsupportedError.
  */
 export class MySqlTenantMigrationRunner implements ITenantMigrationRunner {
   private unsupported(): never {

@@ -6,7 +6,7 @@ import { Entity } from "../../src/decorators/Entity";
 import { ColumnMetadata } from "../../src/scanner/ColumnScanner";
 import { SchemaGenerator } from "../../src/core/generators/SchemaGenerator";
 
-// ─── @PrimaryColumn 데코레이터 단위 테스트 ─────────────────
+// ─── @PrimaryColumn decorator unit tests ─────────────────
 
 describe("@PrimaryColumn 데코레이터", () => {
   it("primary: true, autoIncrement: false 메타데이터가 저장되어야 한다", () => {
@@ -85,7 +85,7 @@ describe("@PrimaryColumn 데코레이터", () => {
   });
 });
 
-// ─── SchemaGenerator 복합 PK DDL 테스트 ─────────────────
+// ─── SchemaGenerator composite PK DDL tests ─────────────────
 
 describe("SchemaGenerator 복합 PK DDL", () => {
   describe("PostgreSQL", () => {
@@ -102,9 +102,9 @@ describe("SchemaGenerator 복합 PK DDL", () => {
       }
 
       const ddl = generator.generateCreateTableDDL(SinglePkEntity);
-      // 인라인 PRIMARY KEY
+      // Inline PRIMARY KEY
       expect(ddl).toContain("PRIMARY KEY");
-      // 테이블 레벨 PRIMARY KEY (col1, col2)는 없어야 함
+      // Should not contain a table-level PRIMARY KEY (col1, col2)
       expect(ddl).not.toMatch(/PRIMARY KEY\s*\(/);
     });
 
@@ -123,12 +123,12 @@ describe("SchemaGenerator 복합 PK DDL", () => {
 
       const ddl = generator.generateCreateTableDDL(CompositePkEntity);
 
-      // 테이블 레벨 PRIMARY KEY 존재
+      // Table-level PRIMARY KEY exists
       expect(ddl).toContain('PRIMARY KEY ("orderId", "productId")');
-      // 개별 컬럼에 인라인 PRIMARY KEY가 없어야 함
+      // Individual columns should not carry an inline PRIMARY KEY
       const orderIdPart = ddl.split(",").find((s) => s.includes('"orderId"'));
       expect(orderIdPart).not.toContain("PRIMARY KEY");
-      // quantity는 PK가 아님
+      // quantity is not a PK
       expect(ddl).toContain('"quantity"');
     });
 
@@ -189,7 +189,7 @@ describe("SchemaGenerator 복합 PK DDL", () => {
   });
 });
 
-// ─── EntityManager 복합 PK 통합 테스트 ─────────────────
+// ─── EntityManager composite PK integration tests ─────────────────
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const mockQuery = jest.fn();
@@ -268,7 +268,7 @@ describe("EntityManager 복합 PK 통합 테스트", () => {
 
       expect(result).toBeDefined();
 
-      // INSERT 쿼리가 호출되었는지 확인
+      // Verify that the INSERT query was called
       const insertCall = mockQuery.mock.calls.find((call: any) => {
         const text = typeof call[0] === "string" ? call[0] : call[0]?.text;
         return text?.includes("INSERT");
@@ -318,7 +318,7 @@ describe("EntityManager 복합 PK 통합 테스트", () => {
         assignedAt: "2026-02-01",
       } as any);
 
-      // INSERT 쿼리가 호출되었는지 확인
+      // Verify that the INSERT query was called
       const insertCall = mockQuery.mock.calls.find((call: any) => {
         const text = typeof call[0] === "string" ? call[0] : call[0]?.text;
         return text?.includes("INSERT");
@@ -326,7 +326,7 @@ describe("EntityManager 복합 PK 통합 테스트", () => {
 
       expect(insertCall).toBeDefined();
 
-      // UPDATE 쿼리는 호출되지 않아야 한다
+      // UPDATE query must not be called
       const updateCall = mockQuery.mock.calls.find((call: any) => {
         const text = typeof call[0] === "string" ? call[0] : call[0]?.text;
         return text?.includes("UPDATE");
@@ -383,7 +383,7 @@ describe("EntityManager 복합 PK 통합 테스트", () => {
   });
 });
 
-// ─── @PrimaryColumn 단일 PK (auto-increment 없음) ─────────
+// ─── @PrimaryColumn single PK (no auto-increment) ─────────
 
 describe("@PrimaryColumn 단일 PK (수동)", () => {
   @Entity()

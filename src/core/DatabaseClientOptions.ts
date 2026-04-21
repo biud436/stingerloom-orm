@@ -7,8 +7,8 @@ import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * Connection pool configuration options.
- * MySQL과 PostgreSQL에서 공통으로 사용됩니다.
- * SQLite는 파일 기반이므로 단일 연결을 유지하며 풀 설정이 무시됩니다.
+ * Shared between MySQL and PostgreSQL.
+ * SQLite is file-based, uses a single connection, and ignores pool settings.
  */
 export interface PoolOptions {
   /**
@@ -88,8 +88,8 @@ interface BaseDatabaseClientOptions {
 
   /**
    * Enable/disable query logging and diagnostics.
-   * - `true`: 기본 쿼리 로깅만 활성화
-   * - `LoggingOptions`: 상세 옵션 (슬로우 쿼리, N+1 감지 등)
+   * - `true`: enable basic query logging only
+   * - `LoggingOptions`: detailed options (slow-query threshold, N+1 detection, etc.)
    */
   logging?: boolean | LoggingOptions;
 
@@ -114,8 +114,8 @@ interface BaseDatabaseClientOptions {
 
   /**
    * PostgreSQL Only: The schema to use.
-   * PostgreSQL은 database → schema → table 3계층 구조를 가집니다.
-   * 지정하지 않으면 기본값 'public'을 사용합니다.
+   * PostgreSQL uses a three-tier structure: database → schema → table.
+   * Defaults to 'public' when not specified.
    */
   schema?: string;
 
@@ -129,21 +129,21 @@ interface BaseDatabaseClientOptions {
 
   /**
    * Connection pool configuration.
-   * MySQL과 PostgreSQL에서 적용됩니다.
-   * SQLite는 파일 기반 단일 연결이므로 이 옵션이 무시됩니다.
+   * Applies to MySQL and PostgreSQL.
+   * SQLite uses a single file-based connection, so this option is ignored.
    */
   pool?: PoolOptions;
 
   /**
    * Connection retry configuration with exponential backoff.
-   * 연결 실패 시 지수 백오프로 재시도합니다.
+   * Retries failed connections using exponential backoff.
    */
   retry?: RetryOptions;
 
   /**
-   * Read replica (읽기/쓰기 분리) 설정.
-   * 설정 시 읽기 쿼리는 slave로, 쓰기 쿼리는 master로 라우팅됩니다.
-   * slave 실패 시 master로 자동 fallback됩니다.
+   * Read replica (read/write split) configuration.
+   * When set, reads route to slaves and writes to the master.
+   * On slave failure, traffic automatically falls back to the master.
    */
   replication?: ReplicationConfig;
 
@@ -254,34 +254,34 @@ export type DatabaseClientOptions =
   | SqliteDatabaseClientOptions;
 
 /**
- * 쿼리 로깅 및 진단 상세 옵션.
+ * Detailed query logging and diagnostics options.
  */
 export interface LoggingOptions {
-  /** 쿼리 SQL 로깅 활성화 */
+  /** Enable SQL query logging. */
   queries?: boolean;
 
-  /** 이 값(ms)을 초과하는 쿼리에 대해 슬로우 쿼리 경고를 출력합니다 */
+  /** Emit a slow-query warning for queries exceeding this threshold (ms). */
   slowQueryMs?: number;
 
-  /** N+1 쿼리 감지 경고를 활성화합니다 */
+  /** Enable N+1 query detection warnings. */
   nPlusOne?: boolean;
 
   /**
-   * QueryTracker 활성화 여부. false이면 쿼리 추적을 완전히 비활성화합니다.
-   * 프로덕션 환경에서 오버헤드를 제거하려면 false로 설정하세요.
-   * @default true (nPlusOne 또는 slowQueryMs 설정 시)
+   * Whether QueryTracker is enabled. When false, query tracking is fully disabled.
+   * Set to false in production to eliminate overhead.
+   * @default true (when nPlusOne or slowQueryMs is set)
    */
   enableQueryTracking?: boolean;
 
   /**
-   * QueryTracker 최대 로그 보관 수. Ring buffer 방식으로 초과 시 가장 오래된 항목부터 제거됩니다.
+   * QueryTracker maximum log entries. Uses a ring buffer; older entries are evicted first on overflow.
    * @default 1000
    */
   maxLogEntries?: number;
 
   /**
-   * QueryTracker 로그 항목 자동 삭제 TTL (ms).
-   * 설정 시 track() 호출마다 이 시간보다 오래된 항목을 제거합니다.
+   * QueryTracker log-eviction TTL (ms).
+   * When set, each track() call removes entries older than this.
    */
   ttlMs?: number;
 }

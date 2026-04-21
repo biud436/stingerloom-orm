@@ -8,14 +8,14 @@ export const ONE_TO_MANY_TOKEN = Symbol.for("STG_ONE_TO_MANY");
 
 export type OneToManyOption<T = any> = {
   /**
-   * 연관관계 소유자(ManyToOne 측)의 프로퍼티 이름입니다.
-   * 타입 추론을 통해 대상 엔티티의 프로퍼티 이름만 허용됩니다.
+   * Property name on the owning side (the ManyToOne side).
+   * Type inference restricts it to the target entity's property names.
    */
   mappedBy: Extract<keyof T, string> | (string & {});
   /**
-   * Cascade 작업 유형입니다.
-   * true이면 모든 cascade(insert, update, delete) 적용.
-   * 배열이면 선택적 적용. 예: ["insert", "delete"]
+   * Cascade operations.
+   * true applies all cascades (insert, update, delete).
+   * An array applies selected cascades, e.g. ["insert", "delete"].
    */
   cascade?: CascadeOption;
 };
@@ -25,24 +25,24 @@ export type OneToManyMetadata<T> = {
   propertyKey: string;
 
   /**
-   * 연관 엔티티를 반환하는 함수입니다.
+   * Function returning the related entity class.
    */
   getRelatedEntity: () => ClazzType<T>;
 
   /**
-   * mappedBy: ManyToOne 측 프로퍼티 이름
+   * mappedBy: property name on the ManyToOne side.
    */
   mappedBy: string;
 
   /**
-   * 정규화된 Cascade 작업 유형 배열
+   * Normalized cascade array.
    */
   cascade?: CascadeOption;
 };
 
 /**
- * OneToMany 관계를 설정합니다.
- * 연관관계에서 역방향(비소유) 엔티티에 설정해야 합니다.
+ * Declares a OneToMany relation.
+ * Must be placed on the inverse (non-owning) side of the relation.
  *
  * @example
  *

@@ -22,7 +22,7 @@ async function bootstrap() {
     //   in: "header",
     //   required: false,
     //   description:
-    //     '테넌트 식별자 (예: "tenant_1", "tenant_2"). 미지정 시 "public" 사용.',
+    //     'Tenant identifier (e.g. "tenant_1", "tenant_2"). Defaults to "public" when unspecified.',
     //   schema: { type: "string", default: "public" },
     // })
     .addSecurity("x-tenant-id", {

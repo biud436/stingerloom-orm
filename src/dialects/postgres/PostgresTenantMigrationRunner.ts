@@ -12,12 +12,12 @@ import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
 /**
  * PostgresTenantMigrationRunner
  *
- * PostgreSQL 스키마 기반 멀티테넌시를 위한 마이그레이션 러너입니다.
- * ORM 시작 시 모든 테넌트 스키마를 자동으로 검사하고,
- * 존재하지 않는 스키마를 원본(기본 public) 스키마 구조를 복제하여 생성합니다.
+ * Migration runner for PostgreSQL schema-based multi-tenancy.
+ * On ORM startup, it inspects every tenant schema and creates any that do not
+ * yet exist by cloning the structure of the source (default "public") schema.
  *
- * `LIKE ... INCLUDING ALL`을 사용하여 컬럼, PK, 인덱스, 제약 조건을 모두 복제합니다.
- * 데이터는 복제하지 않습니다.
+ * `LIKE ... INCLUDING ALL` is used to replicate columns, PKs, indexes, and constraints.
+ * Data is not copied.
  */
 export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
   private readonly provisionedSchemas = new Set<string>();
@@ -132,7 +132,7 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
   }
 
   /**
-   * 엔티티 클래스 또는 문자열에서 테이블명을 추출합니다.
+   * Extracts the table name from an entity class or a string.
    */
   private resolveTableName(item: string | Function): string {
     if (typeof item === "string") return item;
@@ -144,13 +144,13 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
   }
 
   /**
-   * TenantTableFilterOptions에 따라 테이블 목록을 필터링합니다.
+   * Filters the table list according to TenantTableFilterOptions.
    *
-   * 적용 순서:
-   * 1. include → 지정 시 해당 테이블만 후보
-   * 2. includePrefix / includeSuffix → 추가로 좁힘
-   * 3. exclude → 제외
-   * 4. excludePrefix / excludeSuffix → 추가 제외
+   * Application order:
+   * 1. include → keeps only the listed tables when provided
+   * 2. includePrefix / includeSuffix → narrow further
+   * 3. exclude → remove
+   * 4. excludePrefix / excludeSuffix → remove further
    */
   private filterTables(tableNames: string[]): string[] {
     const opts = this.tableFilter;
@@ -158,7 +158,7 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
 
     let result = tableNames;
 
-    // 1. include (빈 배열이면 아무것도 포함하지 않음)
+    // 1. include (an empty array means nothing is included)
     if (opts.include) {
       const includeSet = new Set(
         opts.include.map((item) => this.resolveTableName(item)),

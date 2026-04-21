@@ -1,11 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
- * 메타데이터 레이어
- * Docker의 레이어와 유사하게, 각 레이어는 독립적인 메타데이터를 저장합니다.
+ * Metadata layer.
+ * Similar to Docker layers: each layer stores independent metadata.
  */
 export class MetadataLayer {
-  /** @internal scanner 통합을 위해 protected로 노출 */
+  /** @internal Exposed as protected so scanners can integrate with it. */
   protected metadata: Map<string, any> = new Map();
   private readonly name: string;
   private readonly isReadOnly: boolean;
@@ -18,22 +18,22 @@ export class MetadataLayer {
   }
 
   /**
-   * 레이어 이름 반환
+   * Return the layer name.
    */
   getName(): string {
     return this.name;
   }
 
   /**
-   * 읽기 전용 여부 확인
+   * Whether the layer is read-only.
    */
   isReadOnlyLayer(): boolean {
     return this.isReadOnly;
   }
 
   /**
-   * 메타데이터 설정
-   * 읽기 전용 레이어면 에러 발생
+   * Set metadata.
+   * Throws if the layer is read-only.
    */
   set<T>(key: string, value: T): void {
     if (this.isReadOnly) {
@@ -45,21 +45,21 @@ export class MetadataLayer {
   }
 
   /**
-   * 메타데이터 조회 (현재 레이어에만 한정)
+   * Get metadata (only from the current layer).
    */
   get<T>(key: string): T | undefined {
     return this.metadata.get(key);
   }
 
   /**
-   * 키 존재 여부 확인
+   * Check whether a key exists.
    */
   has(key: string): boolean {
     return this.metadata.has(key);
   }
 
   /**
-   * 메타데이터 삭제 (읽기 전용 레이어면 에러)
+   * Delete metadata (throws on a read-only layer).
    */
   delete(key: string): boolean {
     if (this.isReadOnly) {
@@ -71,36 +71,36 @@ export class MetadataLayer {
   }
 
   /**
-   * 현재 레이어의 모든 키 반환
+   * Return every key in the current layer.
    */
   keys(): string[] {
     return Array.from(this.metadata.keys());
   }
 
   /**
-   * 현재 레이어의 모든 값 반환
+   * Return every value in the current layer.
    */
   values<T>(): T[] {
     return Array.from(this.metadata.values());
   }
 
   /**
-   * 현재 레이어의 모든 엔트리 반환
+   * Return every entry in the current layer.
    */
   entries<T>(): Array<[string, T]> {
     return Array.from(this.metadata.entries());
   }
 
   /**
-   * 레이어 크기 반환
+   * Return the layer size.
    */
   size(): number {
     return this.metadata.size;
   }
 
   /**
-   * 내부 Map 참조를 반환합니다.
-   * MetadataScanner와의 통합을 위해 사용됩니다.
+   * Return the internal Map reference.
+   * Used for integration with MetadataScanner.
    * @internal
    */
   getInternalMap(): Map<string, any> {
@@ -108,7 +108,7 @@ export class MetadataLayer {
   }
 
   /**
-   * 레이어 정보 반환
+   * Return layer info.
    */
   getLayerInfo() {
     return {
@@ -120,8 +120,9 @@ export class MetadataLayer {
   }
 
   /**
-   * 현재 레이어 복제 (새로운 레이어 생성)
-   * structuredClone이 불가능한 값(함수, 클래스 참조 등)은 얕은 복사로 대체합니다.
+   * Clone the current layer into a new layer.
+   * Values that cannot be deep-cloned (functions, class references, etc.)
+   * fall back to a shallow copy.
    */
   clone(newName: string, readOnly = false): MetadataLayer {
     const clonedLayer = new MetadataLayer(newName, readOnly);
@@ -129,7 +130,7 @@ export class MetadataLayer {
       try {
         clonedLayer.metadata.set(key, structuredClone(value));
       } catch {
-        // structuredClone이 실패하면 (함수, 클래스 참조 등) 얕은 복사
+        // structuredClone failed (functions, class references, etc.) — fall back to shallow copy
         clonedLayer.metadata.set(key, { ...value });
       }
     }
@@ -137,7 +138,7 @@ export class MetadataLayer {
   }
 
   /**
-   * 레이어 초기화
+   * Clear the layer.
    */
   clear(): void {
     if (this.isReadOnly) {

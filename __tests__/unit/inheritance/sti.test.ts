@@ -74,7 +74,7 @@ describe("Single Table Inheritance (STI)", () => {
       const parentMeta = Reflect.getMetadata(ENTITY_TOKEN, Payment) as EntityMetadata;
       const childMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
 
-      // STI 자식은 부모 테이블명을 사용해야 함
+      // STI child must reuse the parent's table name
       expect(childMeta.name).toBe(parentMeta.name);
       expect(childMeta.inheritanceRoot).toBe(Payment);
       expect(childMeta.inheritanceStrategy).toBe("SINGLE_TABLE");

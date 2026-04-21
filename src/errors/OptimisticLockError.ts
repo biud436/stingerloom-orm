@@ -2,10 +2,9 @@ import { OrmError } from "./OrmError";
 import { OrmErrorCode } from "./OrmErrorCode";
 
 /**
- * 낙관적 락(Optimistic Locking) 충돌 시 발생하는 에러입니다.
- * UPDATE 쿼리에서 version 조건에 의해 affectedRows === 0이면 throw됩니다.
- *
- * 이는 다른 트랜잭션이 동일한 행을 먼저 수정했음을 의미합니다.
+ * Thrown on an optimistic lock conflict.
+ * An UPDATE with a version predicate throws this when affectedRows === 0,
+ * indicating another transaction already modified the row.
  */
 export class OptimisticLockError extends OrmError {
   constructor(entityName: string, expectedVersion: number) {

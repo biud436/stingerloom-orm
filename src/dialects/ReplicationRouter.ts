@@ -5,7 +5,7 @@ import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { SslOptions } from "../core/DatabaseClientOptions";
 
 /**
- * 단일 DB 노드의 연결 정보
+ * Connection info for a single DB node.
  */
 export interface ReplicationNodeConfig {
   host: string;
@@ -39,13 +39,13 @@ export interface HealthCheckConfig {
 export type ReplicationStrategy = "round-robin" | "random";
 
 /**
- * Replication 설정
+ * Replication configuration.
  */
 export interface ReplicationConfig {
-  /** 쓰기(master) 노드 설정 */
+  /** Write (master) node configuration */
   master: ReplicationNodeConfig;
 
-  /** 읽기(slave) 노드 목록 */
+  /** List of read (slave) nodes */
   slaves: ReplicationNodeConfig[];
 
   /** Health check configuration */
@@ -61,13 +61,13 @@ export interface ReplicationConfig {
 export type HealthCheckFn = (node: ReplicationNodeConfig, query: string) => Promise<void>;
 
 /**
- * 읽기/쓰기 분리를 위한 라우터.
+ * Router for read/write splitting.
  *
- * - 쓰기(INSERT/UPDATE/DELETE): 항상 master
- * - 읽기(SELECT): slave 라운드 로빈, slave 실패 시 master fallback
+ * - Writes (INSERT/UPDATE/DELETE): always routed to master
+ * - Reads (SELECT): round-robin over slaves, falls back to master if a slave fails
  *
- * ReplicationRouter는 연결 자체를 관리하지 않고,
- * 어떤 노드 설정을 사용할지 결정하는 역할만 수행합니다.
+ * ReplicationRouter does not manage connections itself;
+ * it only decides which node configuration to use.
  */
 export class ReplicationRouter {
   private readonly logger = new Logger(ReplicationRouter.name);
@@ -179,18 +179,18 @@ export class ReplicationRouter {
   }
 
   /**
-   * 쓰기용 master 노드 설정을 반환합니다.
+   * Returns the master node configuration for writes.
    */
   getWriteNode(): ReplicationNodeConfig {
     return this.master;
   }
 
   /**
-   * 읽기용 slave 노드 설정을 반환합니다.
-   * 모든 slave가 실패 상태이면 master로 fallback합니다.
+   * Returns a slave node configuration for reads.
+   * Falls back to master if every slave is marked as failed.
    */
   getReadNode(): ReplicationNodeConfig {
-    // 모든 slave가 실패한 경우 master fallback
+    // Fall back to master when all slaves have failed
     if (this.failedSlaves.size >= this.slaves.length) {
       this.logger.warn(
         "All slaves are marked as failed. Falling back to master for reads.",
@@ -230,7 +230,7 @@ export class ReplicationRouter {
   }
 
   /**
-   * slave를 실패 상태로 표시합니다.
+   * Marks a slave as failed.
    */
   markSlaveFailed(node: ReplicationNodeConfig): void {
     const idx = this.slaves.indexOf(node);
@@ -243,7 +243,7 @@ export class ReplicationRouter {
   }
 
   /**
-   * slave의 실패 상태를 복구합니다.
+   * Restores a slave from the failed state.
    */
   markSlaveRecovered(node: ReplicationNodeConfig): void {
     const idx = this.slaves.indexOf(node);
@@ -253,28 +253,28 @@ export class ReplicationRouter {
   }
 
   /**
-   * 모든 slave의 실패 상태를 초기화합니다.
+   * Clears the failed state for every slave.
    */
   resetFailedSlaves(): void {
     this.failedSlaves.clear();
   }
 
   /**
-   * master 노드인지 확인합니다.
+   * Checks whether the given node is the master.
    */
   isMaster(node: ReplicationNodeConfig): boolean {
     return node === this.master;
   }
 
   /**
-   * 현재 slave 수를 반환합니다.
+   * Returns the current slave count.
    */
   get slaveCount(): number {
     return this.slaves.length;
   }
 
   /**
-   * 건강한(실패하지 않은) slave 수를 반환합니다.
+   * Returns the number of healthy (non-failed) slaves.
    */
   get healthySlaveCount(): number {
     return this.slaves.length - this.failedSlaves.size;

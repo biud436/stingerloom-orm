@@ -149,8 +149,8 @@ describe("GROUP BY / HAVING", () => {
 
   describe("SQL injection 방지", () => {
     it("groupBy 컬럼이 escapeIdentifier를 통해 래핑되어야 한다", () => {
-      // RawQueryBuilder는 raw()로 컬럼을 삽입하므로, 호출자가 래핑한 컬럼을 전달해야 함
-      // EntityManager에서는 this.wrap()으로 래핑하여 전달
+      // RawQueryBuilder inserts columns via raw(), so the caller must pre-wrap them
+      // (EntityManager does this via this.wrap())
       const wrappedCol = '`department`';
       const query = RawQueryBuilderFactory.create()
         .select([`${wrappedCol}`, "COUNT(*) AS cnt"])
@@ -171,7 +171,7 @@ describe("GROUP BY / HAVING", () => {
         .having([Conditions.gt("COUNT(*)", 5)])
         .build();
 
-      // 값이 ? 파라미터로 바인딩됨
+      // Values are bound via `?` parameters
       expect(query.sql).toContain("HAVING COUNT(*) > ?");
       expect(query.values).toContain(5);
     });

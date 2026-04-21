@@ -27,7 +27,7 @@ export class PostgresDataSource implements IDataSource {
     try {
       this.connection.release();
     } catch {
-      // 이미 해제된 커넥션인 경우 무시
+      // Ignore if the connection was already released
     }
     this.connection = undefined;
   }
@@ -46,8 +46,8 @@ export class PostgresDataSource implements IDataSource {
     }
 
     await this.connector.rollback(this.connection);
-    // PostgresConnector.rollback() 내부에서 client.release()를 호출하므로
-    // 커넥션 참조를 정리하여 이중 해제를 방지합니다.
+    // PostgresConnector.rollback() calls client.release() internally,
+    // so clear the connection reference to avoid a double release.
     this.connection = undefined;
   }
 
@@ -57,8 +57,8 @@ export class PostgresDataSource implements IDataSource {
     }
 
     await this.connector.commit(this.connection);
-    // PostgresConnector.commit() 내부에서 client.release()를 호출하므로
-    // 커넥션 참조를 정리하여 이중 해제를 방지합니다.
+    // PostgresConnector.commit() calls client.release() internally,
+    // so clear the connection reference to avoid a double release.
     this.connection = undefined;
   }
 

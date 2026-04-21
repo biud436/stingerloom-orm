@@ -246,7 +246,7 @@ describe("Conditions - 추가 테스트", () => {
     it("집계와 조건을 결합한 쿼리를 생성할 수 있어야 함", () => {
       const countCondition = Conditions.gt(Conditions.count("*"), 5);
 
-      // COUNT(*)는 집계 함수이므로 HAVING 절에서 사용
+      // COUNT(*) is an aggregate function, so it belongs in the HAVING clause
       expect(countCondition.sql).toContain("COUNT(*)");
       expect(countCondition.sql).toContain(">");
       expect(countCondition.values).toContain(5);

@@ -14,7 +14,7 @@ class SelectUtils {
     if (!select || typeof select !== "object" || Array.isArray(select))
       return false;
 
-    // 객체의 모든 값이 boolean 타입인지 확인
+    // Check that every value in the object is a boolean
     return Object.values(select).every(
       (value) => typeof value === "boolean" || value === undefined,
     );
@@ -26,7 +26,7 @@ class SelectUtils {
     if (!select || typeof select !== "object" || Array.isArray(select))
       return false;
 
-    // boolean이 아닌 객체 값이 하나라도 있다면 nested select로 간주
+    // If any value is an object (not a boolean), treat it as a nested select
     return Object.values(select).some(
       (value) =>
         typeof value === "object" && value !== null && !Array.isArray(value),

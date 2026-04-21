@@ -1,23 +1,23 @@
 import { AsyncLocalStorage } from "async_hooks";
 
 /**
- * 요청 스코프 메타데이터 컨텍스트
+ * Request-scoped metadata context.
  *
- * AsyncLocalStorage를 사용하여 각 요청(또는 비동기 실행 단위)마다
- * 독립적인 tenantId를 유지합니다.
+ * Uses AsyncLocalStorage to preserve an independent tenantId per request
+ * (or per asynchronous execution unit).
  *
- * NestJS Middleware, Express middleware, 또는 수동 호출을 통해
- * 컨텍스트를 설정할 수 있습니다.
+ * The context can be configured via NestJS middleware, Express middleware,
+ * or explicit manual calls.
  *
  * @example
  * ```ts
- * // Middleware에서 자동 설정
+ * // Automatic setup in middleware
  * MetadataContext.run("tenant_1", async () => {
- *   // 이 블록 안의 모든 메타데이터 조회는 tenant_1 컨텍스트
+ *   // All metadata lookups inside this block run under the tenant_1 context
  *   await entityManager.find(User, { where: { id: 1 } });
  * });
  *
- * // 현재 컨텍스트 조회 (없으면 "public" 반환)
+ * // Look up the current context (returns "public" if none)
  * const tenant = MetadataContext.getCurrentTenant();
  * ```
  */
@@ -25,12 +25,12 @@ export class MetadataContext {
   private static storage = new AsyncLocalStorage<MetadataContextStore>();
 
   /**
-   * 주어진 tenantId 컨텍스트 내에서 콜백을 실행합니다.
-   * 콜백 내부의 모든 비동기 호출에서 동일한 tenantId가 유지됩니다.
+   * Runs the callback under the given tenantId context.
+   * The same tenantId is preserved across all async calls made inside the callback.
    *
-   * @param tenantId 테넌트 식별자 (예: "tenant_1")
-   * @param callback 실행할 비동기 작업
-   * @returns 콜백의 반환값
+   * @param tenantId tenant identifier (e.g. "tenant_1")
+   * @param callback async work to execute
+   * @returns the callback's return value
    */
   static run<T>(
     tenantId: string,
@@ -41,8 +41,8 @@ export class MetadataContext {
   }
 
   /**
-   * 현재 비동기 컨텍스트의 tenantId를 반환합니다.
-   * AsyncLocalStorage에 컨텍스트가 없으면 "public"을 반환합니다.
+   * Returns the tenantId of the current async context.
+   * Returns "public" if no AsyncLocalStorage context is active.
    */
   static getCurrentTenant(): string {
     const store = this.storage.getStore();
@@ -50,7 +50,7 @@ export class MetadataContext {
   }
 
   /**
-   * AsyncLocalStorage 컨텍스트가 활성화되어 있는지 확인합니다.
+   * Whether the AsyncLocalStorage context is active.
    */
   static isActive(): boolean {
     const store = this.storage.getStore();
@@ -59,7 +59,7 @@ export class MetadataContext {
   }
 
   /**
-   * 테스트 등에서 내부 storage를 재생성합니다.
+   * Recreates the internal storage (used in tests, etc.).
    */
   static reset(): void {
     this.storage = new AsyncLocalStorage<MetadataContextStore>();
@@ -67,7 +67,7 @@ export class MetadataContext {
 }
 
 /**
- * AsyncLocalStorage에 저장되는 컨텍스트 데이터
+ * Context data stored in AsyncLocalStorage.
  */
 export interface MetadataContextStore {
   tenantId: string;

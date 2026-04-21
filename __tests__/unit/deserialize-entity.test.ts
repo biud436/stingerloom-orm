@@ -147,7 +147,7 @@ describe("DeserializeEntity", () => {
 
       expect(result).toBeInstanceOf(Post);
       expect(result.title).toBe("Test Post");
-      // list 그룹에는 content가 없으므로 제외될 수 있음
+      // content is not in the "list" group, so it may be excluded
     });
   });
 
@@ -268,7 +268,7 @@ describe("DeserializeEntity", () => {
       const result = deserializeEntity(User, plain);
 
       expect(result).toBeInstanceOf(User);
-      expect(result.id).toBe("123"); // 문자열 그대로 유지
+      expect(result.id).toBe("123"); // Kept as a string
       expect(typeof result.id).toBe("string");
     });
 
@@ -289,7 +289,7 @@ describe("DeserializeEntity", () => {
       const result = deserializeEntity(Post, plain);
 
       expect(result).toBeInstanceOf(Post);
-      expect(typeof result.createdAt).toBe("string"); // 문자열 그대로 유지
+      expect(typeof result.createdAt).toBe("string"); // Kept as a string
     });
   });
 

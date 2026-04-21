@@ -94,7 +94,7 @@ export class PostsService {
   }
 
   /**
-   * upsert — slug 기준으로 존재하면 업데이트, 없으면 삽입.
+   * upsert — updates if a row exists by slug, otherwise inserts.
    */
   async upsertBySlug(dto: CreatePostDto): Promise<{ message: string }> {
     const post = new Post();
@@ -106,23 +106,23 @@ export class PostsService {
   }
 
   /**
-   * explain — 쿼리 실행 계획 조회.
+   * explain — retrieves the query execution plan.
    */
   async explainQuery(id: number): Promise<ExplainResult> {
     return this.postRepository.explain({ where: { id } });
   }
 
   /**
-   * schemaDiff — 현재 엔티티와 DB 스키마 차이 반환.
+   * schemaDiff — returns the diff between current entity metadata and the DB schema.
    */
   async getSchemaDiff(): Promise<object> {
     const diff = new SchemaDiff();
-    // 드라이버/DB 연결 없이 엔티티 메타데이터 기반 DDL만 반환
+    // Return DDL derived from entity metadata only, without a driver/DB connection
     return { message: "SchemaDiff available — connect driver to compare with DB", diff };
   }
 
   /**
-   * generateMigration — Schema Diff 기반 Migration 파일 생성.
+   * generateMigration — generates a Migration file from the Schema Diff.
    */
   async generateMigration(): Promise<{ content: string }> {
     const generator = new SchemaDiffMigrationGenerator();
@@ -134,7 +134,7 @@ export class PostsService {
   }
 
   /**
-   * addTagToPost — 중간 테이블(post_tags)에 (postId, tagId) 행을 삽입합니다.
+   * addTagToPost — inserts a (postId, tagId) row into the join table (post_tags).
    */
   async addTagToPost(
     postId: number,
@@ -148,7 +148,7 @@ export class PostsService {
   }
 
   /**
-   * removeTagFromPost — 중간 테이블에서 (postId, tagId) 행을 삭제합니다.
+   * removeTagFromPost — deletes a (postId, tagId) row from the join table.
    */
   async removeTagFromPost(
     postId: number,
@@ -162,7 +162,7 @@ export class PostsService {
   }
 
   /**
-   * getPostTags — Post의 연결된 Tag 목록을 relations 로딩으로 반환합니다.
+   * getPostTags — returns the Post's associated Tags via relations loading.
    */
   async getPostTags(postId: number): Promise<Tag[]> {
     const result = await this.postRepository.findOne({

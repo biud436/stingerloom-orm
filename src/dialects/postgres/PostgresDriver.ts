@@ -31,12 +31,12 @@ function escapeEnumValue(val: string): string {
 }
 
 /**
- * PostgreSQL용 SQL 드라이버 구현체입니다.
- * PostgreSQL의 DDL/DML 구문에 맞게 쿼리를 생성합니다.
+ * SQL driver implementation for PostgreSQL.
+ * Generates queries compatible with PostgreSQL's DDL/DML syntax.
  *
- * PostgreSQL은 database → schema → table 3계층 구조를 가집니다.
- * MySQL/MariaDB와 달리 하나의 데이터베이스 안에 여러 스키마를 가질 수 있으며,
- * 각 스키마는 독립된 네임스페이스로 동작합니다.
+ * PostgreSQL has a three-level structure: database → schema → table.
+ * Unlike MySQL/MariaDB, a single database can contain multiple schemas,
+ * and each schema acts as an independent namespace.
  */
 export class PostgresDriver implements ISqlDriver {
   private readonly schema: string;
@@ -69,21 +69,21 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   // ──────────────────────────────────────────────
-  // Schema 관리 메서드 (PostgreSQL 전용)
+  // Schema management methods (PostgreSQL only)
   // ──────────────────────────────────────────────
 
   /**
-   * 현재 사용 중인 스키마 이름을 반환합니다.
+   * Returns the name of the schema currently in use.
    */
   getSchema(): string {
     return this.schema;
   }
 
   /**
-   * 지정된 스키마가 존재하는지 확인합니다.
+   * Checks whether the given schema exists.
    *
-   * @param schemaName - 확인할 스키마 이름
-   * @returns 스키마 존재 여부 결과
+   * @param schemaName - name of the schema to check
+   * @returns result indicating whether the schema exists
    */
   hasSchema(schemaName?: string): Promise<any> {
     const name = schemaName ?? this.schema;
@@ -93,10 +93,10 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 새로운 스키마를 생성합니다.
-   * IF NOT EXISTS를 사용하여 이미 존재하는 경우에는 무시합니다.
+   * Creates a new schema.
+   * Uses IF NOT EXISTS to skip creation when the schema already exists.
    *
-   * @param schemaName - 생성할 스키마 이름
+   * @param schemaName - name of the schema to create
    */
   createSchema(schemaName?: string): Promise<any> {
     const name = schemaName ?? this.schema;
@@ -106,11 +106,11 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 스키마를 삭제합니다.
-   * CASCADE 옵션을 사용하여 스키마 내의 모든 오브젝트도 함께 삭제합니다.
+   * Drops a schema.
+   * The CASCADE option also drops every object contained in the schema.
    *
-   * @param schemaName - 삭제할 스키마 이름
-   * @param cascade - true이면 스키마 내 모든 오브젝트도 함께 삭제 (기본값: false)
+   * @param schemaName - name of the schema to drop
+   * @param cascade - if true, drops every object inside the schema as well (default: false)
    */
   dropSchema(schemaName: string, cascade: boolean = false): Promise<any> {
     const suffix = cascade ? " CASCADE" : "";
@@ -120,8 +120,8 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 데이터베이스에 존재하는 모든 사용자 정의 스키마 목록을 반환합니다.
-   * 시스템 스키마(pg_*, information_schema)는 제외됩니다.
+   * Returns every user-defined schema that exists in the database.
+   * System schemas (pg_*, information_schema) are excluded.
    */
   listSchemas(): Promise<any> {
     return this.connector.query(
@@ -133,9 +133,9 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 현재 커넥션의 search_path를 변경합니다.
+   * Changes the current connection's search_path.
    *
-   * @param schemaName - 설정할 스키마 이름
+   * @param schemaName - name of the schema to set
    */
   setSearchPath(schemaName?: string): Promise<any> {
     const name = schemaName ?? this.schema;
@@ -143,9 +143,9 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 스키마 내 모든 테이블 목록을 반환합니다.
+   * Returns every table in the schema.
    *
-   * @param schemaName - 조회할 스키마 이름 (기본값: 현재 스키마)
+   * @param schemaName - name of the schema to query (default: current schema)
    */
   listTables(schemaName?: string): Promise<any> {
     const name = schemaName ?? this.schema;
@@ -155,10 +155,10 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블을 다른 스키마로 이동합니다.
+   * Moves a table to a different schema.
    *
-   * @param tableName - 이동할 테이블 이름
-   * @param targetSchema - 이동할 대상 스키마 이름
+   * @param tableName - name of the table to move
+   * @param targetSchema - name of the destination schema
    */
   moveTableToSchema(tableName: string, targetSchema: string): Promise<any> {
     return this.connector.query(
@@ -167,7 +167,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블이 존재하는지 확인합니다.
+   * Checks whether the table exists.
    */
   hasTable(name: string) {
     return this.connector.query(
@@ -204,7 +204,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 기본키를 추가합니다.
+   * Adds a primary key to the table.
    */
   addPrimaryKey(tableName: string, columnName: string) {
     return this.connector.query(
@@ -213,7 +213,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 자동 증가를 추가합니다.
+   * Adds auto-increment to the table.
    * PostgreSQL 10+: GENERATED ALWAYS AS IDENTITY
    * PostgreSQL < 10: sequence + DEFAULT nextval() fallback
    */
@@ -232,10 +232,11 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 기본키를 제거합니다.
+   * Drops the primary key from the table.
    *
-   * pg_constraint 카탈로그에서 실제 제약조건 이름을 조회한 뒤 제거합니다.
-   * 기본 명명규칙(table_pkey)에 의존하지 않으므로 마이그레이션·명명전략에 안전합니다.
+   * Looks up the actual constraint name in the pg_constraint catalog and then drops it.
+   * Does not rely on the default naming convention (table_pkey), so it is safe across
+   * migrations and custom naming strategies.
    */
   async dropPrimaryKey(tableName: string): Promise<any> {
     const rows: Array<{ conname: string }> = await this.connector.query(
@@ -262,7 +263,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 유니크 키를 추가합니다.
+   * Adds a unique key to the table.
    */
   addUniqueKey(tableName: string, columnName: string) {
     return this.connector.query(
@@ -271,10 +272,11 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 유니크 키를 제거합니다.
+   * Drops the unique key from the table.
    *
-   * pg_constraint 카탈로그에서 해당 컬럼을 포함하는 UNIQUE 제약조건의 실제 이름을
-   * 조회한 뒤 제거합니다. 복합 UNIQUE·커스텀 명명전략에도 올바르게 동작합니다.
+   * Looks up the actual name of the UNIQUE constraint covering the given column in
+   * the pg_constraint catalog and then drops it. Works correctly with composite
+   * UNIQUE constraints and custom naming strategies.
    */
   async dropUniqueKey(tableName: string, columnName: string): Promise<any> {
     const rows: Array<{ conname: string }> = await this.connector.query(
@@ -304,7 +306,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 컬럼을 추가합니다.
+   * Adds a column to the table.
    */
   addColumn(tableName: string, columnName: string, columnType: string) {
     return this.connector.query(
@@ -313,7 +315,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 컬럼을 제거합니다.
+   * Drops a column from the table.
    */
   dropColumn(tableName: string, columnName: string) {
     return this.connector.query(
@@ -322,7 +324,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 외래키를 추가합니다.
+   * Adds a foreign key.
    */
   addForeignKey(
     tableName: string,
@@ -342,8 +344,8 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 외래키 이름을 생성합니다.
-   * SHA1 해시 기반으로 고유한 이름을 생성하여 이름 충돌과 길이 제한을 방지합니다.
+   * Generates a foreign key name.
+   * Produces a unique name based on a SHA1 hash to avoid name collisions and length limits.
    */
   generateForeignKeyName(
     sourceTable: string,
@@ -354,10 +356,11 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 외래키를 제거합니다.
+   * Drops a foreign key.
    *
-   * pg_constraint 카탈로그에서 해당 컬럼을 참조하는 FOREIGN KEY 제약조건의 실제 이름을
-   * 조회한 뒤 제거합니다. FK 제약조건 이름은 컬럼명이 아니므로 카탈로그 조회가 필수입니다.
+   * Looks up the actual name of the FOREIGN KEY constraint referencing the given column in
+   * the pg_constraint catalog and then drops it. Because the FK constraint name is not the
+   * column name, the catalog lookup is required.
    */
   async dropForeignKey(tableName: string, columnName: string): Promise<any> {
     const rows: Array<{ conname: string }> = await this.connector.query(
@@ -387,7 +390,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 인덱스를 추가합니다.
+   * Adds an index.
    */
   addIndex(tableName: string, columnName: string, indexName: string) {
     return this.connector.query(
@@ -396,7 +399,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 인덱스 존재 여부를 확인합니다.
+   * Checks whether the index exists.
    */
   hasIndex(tableName: string, indexName: string) {
     return this.connector.query(
@@ -405,26 +408,26 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 인덱스를 제거합니다.
+   * Drops an index.
    */
   dropIndex(tableName: string, indexName: string) {
-    // PostgreSQL 인덱스는 스키마에 속합니다. schema-qualified 형식으로 명시합니다.
+    // PostgreSQL indexes belong to a schema, so use the schema-qualified form.
     return this.connector.query(
       `DROP INDEX IF EXISTS ${this.wrapQualified(indexName)}`,
     );
   }
 
   // ──────────────────────────────────────────────
-  // Enum 타입 관리 메서드 (PostgreSQL 전용)
+  // Enum type management methods (PostgreSQL only)
   // ──────────────────────────────────────────────
 
   /**
-   * 사용자 정의 ENUM 타입이 존재하는지 확인합니다.
+   * Checks whether a user-defined ENUM type exists.
    *
-   * @param enumName - 확인할 ENUM 타입 이름
+   * @param enumName - name of the ENUM type to check
    */
   hasEnumType(enumName: string): Promise<any> {
-    // pg_namespace join으로 현재 스키마 범위 내에서만 조회합니다.
+    // Restrict the lookup to the current schema by joining pg_namespace.
     return this.connector.query(
       sql`SELECT pg_type.typname
           FROM pg_type
@@ -436,11 +439,11 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 새로운 사용자 정의 ENUM 타입을 생성합니다.
-   * 이미 존재하는 경우에는 생성을 건너뜁니다.
+   * Creates a new user-defined ENUM type.
+   * Skips creation when the type already exists.
    *
-   * @param enumName - 생성할 ENUM 타입 이름
-   * @param values   - ENUM에 포함될 값 목록
+   * @param enumName - name of the ENUM type to create
+   * @param values   - list of values that belong to the ENUM
    *
    * @example
    * await driver.createEnumType("user_role", ["admin", "user", "guest"]);
@@ -491,10 +494,10 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 사용자 정의 ENUM 타입을 삭제합니다.
+   * Drops a user-defined ENUM type.
    *
-   * @param enumName - 삭제할 ENUM 타입 이름
-   * @param cascade  - true이면 해당 ENUM 타입을 참조하는 컬럼도 함께 삭제 (기본값: false)
+   * @param enumName - name of the ENUM type to drop
+   * @param cascade  - if true, also drops any columns that reference the ENUM type (default: false)
    */
   dropEnumType(enumName: string, cascade: boolean = false): Promise<any> {
     const suffix = cascade ? " CASCADE" : "";
@@ -504,21 +507,21 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 기존 ENUM 타입에 새 값을 추가합니다.
-   * PostgreSQL 9.1 이상에서 지원됩니다.
+   * Adds a new value to an existing ENUM type.
+   * Supported on PostgreSQL 9.1 and later.
    *
-   * @param enumName  - 대상 ENUM 타입 이름
-   * @param value     - 추가할 값
-   * @param placement - 삽입 위치 옵션 (선택)
+   * @param enumName  - target ENUM type name
+   * @param value     - value to add
+   * @param placement - optional placement option
    *
    * @example
-   * // 마지막에 추가
+   * // Append at the end
    * await driver.addEnumValue("user_role", "moderator");
    *
-   * // 특정 값 앞에 삽입
+   * // Insert before a specific value
    * await driver.addEnumValue("user_role", "moderator", { before: "guest" });
    *
-   * // 특정 값 뒤에 삽입
+   * // Insert after a specific value
    * await driver.addEnumValue("user_role", "moderator", { after: "user" });
    */
   addEnumValue(
@@ -541,12 +544,12 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * ENUM 타입의 기존 값을 다른 이름으로 변경합니다.
-   * PostgreSQL 10 이상에서 지원됩니다.
+   * Renames an existing value of an ENUM type.
+   * Supported on PostgreSQL 10 and later.
    *
-   * @param enumName - 대상 ENUM 타입 이름
-   * @param oldValue - 변경할 현재 값
-   * @param newValue - 새로운 값
+   * @param enumName - target ENUM type name
+   * @param oldValue - current value to rename
+   * @param newValue - new value
    */
   renameEnumValue(
     enumName: string,
@@ -566,10 +569,10 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * ENUM 타입에 속한 모든 값 목록을 반환합니다.
+   * Returns every value that belongs to an ENUM type.
    *
-   * @param enumName - 조회할 ENUM 타입 이름
-   * @returns `{ enumlabel: string }` 배열
+   * @param enumName - name of the ENUM type to query
+   * @returns array of `{ enumlabel: string }`
    */
   listEnumValues(enumName: string): Promise<{ enumlabel: string }[]> {
     return this.connector.query(
@@ -582,8 +585,8 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 스키마를 가져옵니다 (information_schema 기반).
-   * MySQL 호환 형식(MysqlSchemaInterface)으로 반환합니다.
+   * Retrieves the schema (based on information_schema).
+   * Returns a MySQL-compatible shape (MysqlSchemaInterface).
    */
   getSchemas(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
@@ -613,7 +616,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 인덱스를 가져옵니다.
+   * Retrieves the indexes.
    */
   getIndexes(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
@@ -623,7 +626,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 외래키를 가져옵니다.
+   * Retrieves the foreign keys.
    */
   getForeignKeys(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
@@ -643,7 +646,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 기본키를 가져옵니다.
+   * Retrieves the primary keys.
    */
   getPrimaryKeys(tableName: string): Promise<MysqlSchemaInterface[]> {
     return this.connector.query(
@@ -658,7 +661,7 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블을 생성합니다.
+   * Creates the table.
    */
   createTable(tableName: string, columns: SchemaOptions[]) {
     const pkColumns = columns.filter(
@@ -691,24 +694,24 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 식별자를 큰따옴표로 감싸서 반환합니다 (PostgreSQL 표준).
-   * 내부에 포함된 `"` 문자는 PostgreSQL 표준인 `""` 으로 이스케이프합니다.
+   * Wraps the identifier in double quotes and returns it (PostgreSQL standard).
+   * Any embedded `"` character is escaped as `""`, following the PostgreSQL standard.
    */
   wrap(name: string): string {
     return `"${name.replace(/"/g, '""')}"`;
   }
 
   /**
-   * 식별자를 `"schema"."name"` 형식으로 반환합니다.
-   * search_path에 의존하지 않고 항상 스키마를 명시하므로
-   * 커넥션 풀 재사용·멀티테넌트 환경에서도 안전합니다.
+   * Returns the identifier in `"schema"."name"` form.
+   * The schema is always specified explicitly instead of relying on search_path,
+   * making it safe with connection pool reuse and multi-tenant setups.
    */
   wrapQualified(name: string): string {
     return `${this.wrap(this.schema)}.${this.wrap(name)}`;
   }
 
   /**
-   * TS 타입으로부터 데이터베이스 컬럼 타입을 추론합니다.
+   * Infers the database column type from the TypeScript type.
    */
   getColumnType(type: any): string {
     switch (type) {
@@ -728,15 +731,15 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * ColumnType을 데이터베이스 컬럼 타입으로 변환합니다.
+   * Converts a ColumnType to the corresponding database column type.
    *
-   * ## PostgreSQL 타입 매핑
+   * ## PostgreSQL type mapping
    * | ColumnType | PostgreSQL Type                |
    * |------------|--------------------------------|
    * | varchar    | VARCHAR                        |
    * | int        | INTEGER                        |
    * | number     | INTEGER                        |
-   * | boolean    | BOOLEAN (네이티브)              |
+   * | boolean    | BOOLEAN (native)               |
    * | datetime   | TIMESTAMP                      |
    * | date       | DATE                           |
    * | timestamp  | TIMESTAMP                      |
@@ -749,9 +752,9 @@ export class PostgresDriver implements ISqlDriver {
    * | json       | JSON                           |
    * | jsonb      | JSONB                          |
    * | array      | ARRAY                          |
-   * | enum       | 사용자 정의 ENUM 타입           |
-   *              | (enumName 옵션 → `"enumName"`) |
-   *              | enumName 없을 때 폴백 → TEXT   |
+   * | enum       | user-defined ENUM type         |
+   *              | (enumName option → `"enumName"`) |
+   *              | fallback → TEXT when enumName is missing |
    */
   castType(type: ColumnType): string {
     return this.columnDefBuilder.castType(type);
@@ -898,9 +901,9 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 모든 데이터를 제거합니다 (TRUNCATE ... RESTART IDENTITY CASCADE).
-   * CASCADE: FK 참조 테이블도 함께 truncate합니다.
-   * RESTART IDENTITY: 시퀀스를 초기화합니다.
+   * Removes all data from the table (TRUNCATE ... RESTART IDENTITY CASCADE).
+   * CASCADE: also truncates tables that reference this one via FKs.
+   * RESTART IDENTITY: resets sequences.
    */
   clear(tableName: string) {
     return this.connector.query(
@@ -909,9 +912,9 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
-   * 비관적 잠금을 위한 SQL을 반환합니다.
+   * Returns the SQL fragment for pessimistic locking.
    *
-   * PostgreSQL은 FOR UPDATE NOWAIT를 지원합니다.
+   * PostgreSQL supports FOR UPDATE NOWAIT.
    */
   getForUpdateNoWait(): string {
     return " FOR UPDATE NOWAIT";

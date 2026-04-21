@@ -5,9 +5,9 @@ import {
 } from "../metadata";
 
 /**
- * 멀티테넌트 메타데이터 매니저
+ * Multi-tenant metadata manager.
  *
- * 멀티테넌트 환경에서 각 테넌트별로 독립적인 스키마를 관리할 수 있도록 지원
+ * Enables managing an independent schema per tenant in a multi-tenant setup.
  */
 export class MultiTenantMetadataManager {
   private store: LayeredMetadataStore;
@@ -22,7 +22,7 @@ export class MultiTenantMetadataManager {
   }
 
   /**
-   * 테넌트 전환
+   * Switch to a tenant.
    */
   switchTenant(tenantId: string): void {
     this.currentTenant = tenantId;
@@ -30,7 +30,7 @@ export class MultiTenantMetadataManager {
   }
 
   /**
-   * 새 테넌트 생성 (public 스키마 복사)
+   * Create a new tenant (copies the public schema).
    */
   createTenant(tenantId: string, copyFrom: string = "public"): void {
     try {
@@ -43,7 +43,7 @@ export class MultiTenantMetadataManager {
   }
 
   /**
-   * 테넌트별 엔티티 메타데이터 등록
+   * Register per-tenant entity metadata.
    */
   registerEntity(entityMetadata: any): void {
     const key = this.entityScanner.createUniqueKey();
@@ -54,7 +54,7 @@ export class MultiTenantMetadataManager {
   }
 
   /**
-   * 테넌트별 컬럼 메타데이터 등록
+   * Register per-tenant column metadata.
    */
   registerColumn(columnMetadata: any): void {
     const key = this.columnScanner.createUniqueKey();
@@ -62,21 +62,21 @@ export class MultiTenantMetadataManager {
   }
 
   /**
-   * 현재 테넌트의 모든 엔티티 조회
+   * Return every entity in the current tenant.
    */
   getAllEntities(): any[] {
     return this.entityScanner.allMetadata();
   }
 
   /**
-   * 특정 엔티티 조회 (병합된 뷰)
+   * Look up a single entity from the merged view.
    */
   getEntity(target: any): any | null {
     return this.entityScanner.scan(target);
   }
 
   /**
-   * 테넌트 스키마 병합 (테넌트의 변경사항을 public으로 승격)
+   * Merge a tenant's schema (promote its changes into public).
    */
   promoteTenantSchemaToPublic(tenantId: string): void {
     this.store.mergeLayer(tenantId, "public");
@@ -84,7 +84,7 @@ export class MultiTenantMetadataManager {
   }
 
   /**
-   * 테넌트 삭제
+   * Delete a tenant.
    */
   removeTenant(tenantId: string): void {
     if (tenantId === "public") {
@@ -95,35 +95,35 @@ export class MultiTenantMetadataManager {
   }
 
   /**
-   * 모든 레이어 정보 조회
+   * Return info for every layer.
    */
   getLayersInfo() {
     return this.store.getLayersInfo();
   }
 
   /**
-   * 현재 테넌트 정보
+   * Return the current tenant info.
    */
   getCurrentTenant(): string {
     return this.currentTenant;
   }
 
   /**
-   * EntityScanner 가져오기 (기존 코드 호환)
+   * Return the EntityScanner (legacy API compatibility).
    */
   getEntityScanner(): LayeredEntityScanner {
     return this.entityScanner;
   }
 
   /**
-   * ColumnScanner 가져오기 (기존 코드 호환)
+   * Return the ColumnScanner (legacy API compatibility).
    */
   getColumnScanner(): LayeredColumnScanner {
     return this.columnScanner;
   }
 
   /**
-   * 내부 스토어 가져오기
+   * Return the internal store.
    */
   getStore(): LayeredMetadataStore {
     return this.store;

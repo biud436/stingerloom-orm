@@ -129,9 +129,9 @@ export class Conditions {
   /**
    * Creates an arbitrary raw condition expression.
    *
-   * @warning SQL Injection 위험: 사용자 입력을 직접 전달하지 마세요.
-   * 이 메서드는 내부 또는 신뢰된 리터럴에만 사용해야 합니다.
-   * @deprecated `unsafeRaw()`를 대신 사용하세요 — 위험성을 명시적으로 나타냅니다.
+   * @warning SQL injection risk: never pass user input directly.
+   * Use only with internal or trusted literals.
+   * @deprecated Use `unsafeRaw()` instead — it makes the risk explicit.
    */
   static raw(condition: string): Sql {
     return Conditions.unsafeRaw(condition);
@@ -140,8 +140,8 @@ export class Conditions {
   /**
    * Creates an arbitrary raw condition expression.
    *
-   * @warning SQL Injection 위험: 사용자 입력을 직접 전달하지 마세요.
-   * 이 메서드는 내부 또는 신뢰된 리터럴에만 사용해야 합니다.
+   * @warning SQL injection risk: never pass user input directly.
+   * Use only with internal or trusted literals.
    */
   static unsafeRaw(condition: string): Sql {
     return sql`${raw(condition)}`;
@@ -158,7 +158,7 @@ export class Conditions {
   /**
    * Creates an aggregate function expression.
    *
-   * @throws {Error} 허용되지 않은 집계 함수명이 전달되면 에러를 발생시킵니다.
+   * @throws {Error} Thrown when a disallowed aggregate function name is passed.
    */
   static aggregate(fn: string, column: string): Sql {
     const normalized = fn.trim().toUpperCase();

@@ -2,7 +2,7 @@ import { OrmError } from "./OrmError";
 import { OrmErrorCode } from "./OrmErrorCode";
 
 /**
- * 쿼리 실행 시간이 제한을 초과했을 때 발생하는 에러입니다.
+ * Thrown when query execution exceeds the configured timeout.
  */
 export class QueryTimeoutError extends OrmError {
   constructor(timeoutMs: number) {

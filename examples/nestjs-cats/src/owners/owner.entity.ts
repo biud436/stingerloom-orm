@@ -22,14 +22,14 @@ export class Owner {
   createdAt!: Date;
 
   /**
-   * @OneToMany — 주인은 여러 고양이를 소유할 수 있습니다.
-   * mappedBy: Cat 엔티티의 "owner" 프로퍼티가 소유자(FK 보유 측).
+   * @OneToMany — an owner can own many cats.
+   * mappedBy: the Cat entity's "owner" property is the owning side (holds the FK).
    */
   @OneToMany(() => Cat, { mappedBy: "owner" })
   cats!: Cat[];
 
   /**
-   * @BeforeInsert — INSERT 전 createdAt 자동 설정.
+   * @BeforeInsert — set createdAt automatically before INSERT.
    */
   @BeforeInsert()
   setCreatedAt() {

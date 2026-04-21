@@ -77,11 +77,11 @@ export class TransactionSessionManager extends IQueryEngine {
   }
 
   /**
-   * 지정된 replication 노드에 대한 별도 연결을 생성합니다.
-   * Read Replica 지원을 위해 slave 노드에 직접 연결할 때 사용합니다.
+   * Creates a dedicated connection to the specified replication node.
+   * Used when connecting directly to a slave node for Read Replica support.
    *
-   * @param nodeConfig 연결할 노드의 설정
-   * @throws {DatabaseConnectionFailedError} 연결 실패 시
+   * @param nodeConfig Configuration of the node to connect to
+   * @throws {DatabaseConnectionFailedError} When the connection fails
    */
   public async connectToNode(nodeConfig: ReplicationNodeConfig): Promise<void> {
     let connector: IConnector | undefined;
@@ -100,7 +100,7 @@ export class TransactionSessionManager extends IQueryEngine {
         connector = new MySqlConnector();
       }
 
-      // 노드 설정으로 연결 (원본 옵션의 host/port/username/password/database를 오버라이드)
+      // Connect using the node config (overrides host/port/username/password/database from the original options)
       await connector.connect({
         ...options,
         host: nodeConfig.host,

@@ -1,103 +1,103 @@
 /**
- * 테넌트 프로비저닝 시 복제할 테이블을 필터링하는 옵션.
+ * Options for filtering the tables replicated during tenant provisioning.
  *
- * 필터 적용 순서:
- * 1. `include`가 지정되면 해당 테이블만 후보로 선정 (미지정 시 전체)
- * 2. `includePrefix` / `includeSuffix`가 지정되면 추가로 좁힘
- * 3. `exclude`로 제외할 테이블 제거
- * 4. `excludePrefix` / `excludeSuffix`로 추가 제거
+ * Filter application order:
+ * 1. If `include` is set, only those tables are considered (unset = all tables).
+ * 2. If `includePrefix` / `includeSuffix` is set, narrow further.
+ * 3. Remove tables listed in `exclude`.
+ * 4. Further remove tables matched by `excludePrefix` / `excludeSuffix`.
  */
 export interface TenantTableFilterOptions {
   /**
-   * 복제할 테이블 목록. 엔티티 클래스 또는 테이블명 문자열.
-   * 지정하지 않으면 원본 스키마의 모든 테이블이 후보입니다.
+   * List of tables to replicate. Either entity classes or table-name strings.
+   * If unset, every table in the source schema is a candidate.
    */
   include?: (string | Function)[];
 
   /**
-   * 제외할 테이블 목록. 엔티티 클래스 또는 테이블명 문자열.
+   * List of tables to exclude. Either entity classes or table-name strings.
    */
   exclude?: (string | Function)[];
 
-  /** 이 접두사로 시작하는 테이블만 포함 */
+  /** Include only tables that start with one of these prefixes */
   includePrefix?: string[];
 
-  /** 이 접미사로 끝나는 테이블만 포함 */
+  /** Include only tables that end with one of these suffixes */
   includeSuffix?: string[];
 
-  /** 이 접두사로 시작하는 테이블 제외 */
+  /** Exclude tables that start with one of these prefixes */
   excludePrefix?: string[];
 
-  /** 이 접미사로 끝나는 테이블 제외 */
+  /** Exclude tables that end with one of these suffixes */
   excludeSuffix?: string[];
 }
 
 /**
- * 테넌트 마이그레이션 러너 옵션.
+ * Options for the tenant migration runner.
  */
 export interface TenantMigrationRunnerOptions {
   /**
-   * 테이블 구조를 복제할 원본 스키마/데이터베이스.
-   * PostgreSQL: 기본값 "public"
+   * Source schema/database whose table structure will be replicated.
+   * PostgreSQL default: "public".
    */
   sourceSchema?: string;
 
   /**
-   * 복제할 테이블 필터링 옵션.
-   * 지정하지 않으면 원본 스키마의 모든 테이블을 복제합니다.
+   * Filter options for the tables to replicate.
+   * If unset, every table in the source schema is replicated.
    */
   tables?: TenantTableFilterOptions;
 }
 
 /**
- * syncTenantSchemas()의 반환 결과.
+ * Return result of syncTenantSchemas().
  */
 export interface TenantSyncResult {
-  /** 새로 생성된 테넌트 목록 */
+  /** List of newly created tenants */
   created: string[];
-  /** 이미 존재하여 건너뛴 테넌트 목록 */
+  /** List of tenants that already existed and were skipped */
   skipped: string[];
 }
 
 /**
  * ITenantMigrationRunner
  *
- * 멀티테넌시 환경에서 테넌트별 스키마/데이터베이스를 프로비저닝하기 위한
- * 공통 인터페이스입니다.
+ * Common interface for provisioning per-tenant schemas/databases
+ * in a multi-tenant environment.
  *
- * - PostgreSQL: 스키마 기반 격리 (CREATE SCHEMA + LIKE ... INCLUDING ALL)
- * - MySQL/SQLite: 미지원 (UnsupportedError throw)
+ * - PostgreSQL: schema-based isolation (CREATE SCHEMA + LIKE ... INCLUDING ALL)
+ * - MySQL/SQLite: not supported (throws UnsupportedError)
  */
 export interface ITenantMigrationRunner {
   /**
-   * 데이터베이스에 존재하는 모든 테넌트(스키마/데이터베이스) 목록을 반환합니다.
+   * Returns a list of every tenant (schema/database) that exists in the database.
    */
   discoverSchemas(): Promise<string[]>;
 
   /**
-   * 단일 테넌트를 프로비저닝합니다.
-   * 이미 프로비저닝된 경우 no-op입니다.
+   * Provisions a single tenant.
+   * No-op when the tenant has already been provisioned.
    */
   ensureSchema(tenantId: string): Promise<void>;
 
   /**
-   * 주어진 테넌트 ID 목록에 대해 일괄 프로비저닝합니다.
-   * 이미 존재하는 테넌트는 건너뜁니다.
+   * Provisions the given list of tenant IDs in bulk.
+   * Tenants that already exist are skipped.
    */
   syncTenantSchemas(tenantIds: string[]): Promise<TenantSyncResult>;
 
   /**
-   * 특정 테넌트가 프로비저닝되었는지 확인합니다.
+   * Checks whether a specific tenant has been provisioned.
    */
   isProvisioned(tenantId: string): boolean;
 
   /**
-   * 프로비저닝된 모든 테넌트 이름을 반환합니다.
+   * Returns the names of every provisioned tenant.
    */
   getProvisionedSchemas(): string[];
 
   /**
-   * 내부 프로비저닝 상태를 초기화합니다.
+   * Resets the internal provisioning state.
    */
   reset(): void;
 }

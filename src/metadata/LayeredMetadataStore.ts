@@ -4,29 +4,30 @@ import { MetadataContext } from "./MetadataContext";
 import { MetadataPath } from "./MetadataPath";
 
 /**
- * 계층적 메타데이터 스토어 (Docker OverlayFS 방식)
+ * Hierarchical metadata store (Docker OverlayFS style).
  *
- * Lower Layer (읽기 전용): 기본 스키마 (예: "public")
- * Upper Layers (읽기/쓰기): 테넌트별 수정사항 (예: "tenant_1", "tenant_2")
+ * Lower layer (read-only): base schema (e.g. "public").
+ * Upper layers (read/write): per-tenant modifications (e.g. "tenant_1", "tenant_2").
  *
- * 읽기: 현재 컨텍스트 레이어 → public 레이어 순서로 검색 (다른 테넌트 레이어는 절대 참조하지 않음)
- * 쓰기: 최상위 work 레이어에만 기록 (Copy-on-Write)
+ * Reads: search the current context layer, then fall back to public; other
+ * tenant layers are never consulted.
+ * Writes: Copy-on-Write — only the top-most work layer is modified.
  */
 export class LayeredMetadataStore {
   private layers: MetadataLayer[] = [];
   private pathTrie: MetadataPath;
-  private currentContext: string = "public"; // 기본 컨텍스트
+  private currentContext: string = "public"; // default context
 
   constructor() {
     this.pathTrie = new MetadataPath();
-    // 기본 lower 레이어 생성
+    // Create the default lower layer
     this.addLayer("public", true);
   }
 
   /**
-   * 새로운 레이어 추가
-   * @param name 레이어 이름
-   * @param isReadOnly 읽기 전용 여부
+   * Add a new layer.
+   * @param name layer name
+   * @param isReadOnly whether the layer is read-only
    */
   addLayer(name: string, isReadOnly = false): MetadataLayer {
     const existingLayer = this.layers.find((l) => l.getName() === name);
@@ -40,35 +41,35 @@ export class LayeredMetadataStore {
   }
 
   /**
-   * 레이어 가져오기
+   * Get a layer by name.
    */
   getLayer(name: string): MetadataLayer | undefined {
     return this.layers.find((l) => l.getName() === name);
   }
 
   /**
-   * 현재 컨텍스트 설정 (예: "tenant_1"으로 전환)
+   * Set the current context (e.g. switch to "tenant_1").
    *
-   * @deprecated 프로덕션 코드에서는 `MetadataContext.run(tenantId, callback)` 사용 권장.
-   * `setContext()`는 인스턴스 상태를 변경하므로 동시 요청 환경에서 안전하지 않습니다.
-   * 테스트 코드 전용으로만 사용하세요.
+   * @deprecated In production code, prefer `MetadataContext.run(tenantId, callback)`.
+   * `setContext()` mutates instance state and is not safe under concurrent requests.
+   * Use only from test code.
    */
   setContext(context: string): void {
     this.currentContext = context;
   }
 
   /**
-   * 현재 활성 컨텍스트 가져오기.
-   * AsyncLocalStorage(MetadataContext)가 활성 상태이면 우선 사용하고,
-   * 비활성이면 인스턴스의 currentContext를 반환합니다 (테스트 호환).
+   * Return the currently active context.
+   * Prefers the AsyncLocalStorage-based MetadataContext when active;
+   * otherwise returns the instance's currentContext (for test compatibility).
    */
   getContext(): string {
     return this.resolveContext();
   }
 
   /**
-   * 현재 컨텍스트를 안전하게 결정합니다.
-   * AsyncLocalStorage > 인스턴스 상태 순서로 조회합니다.
+   * Safely resolve the current context.
+   * Priority: AsyncLocalStorage > instance state.
    */
   private resolveContext(): string {
     if (MetadataContext.isActive()) {
@@ -78,14 +79,14 @@ export class LayeredMetadataStore {
   }
 
   /**
-   * 메타데이터 설정 (현재 컨텍스트의 최상위 쓰기 가능 레이어에 저장)
-   * Copy-on-Write 방식
+   * Set metadata (writes to the current context's top-most writable layer).
+   * Uses Copy-on-Write semantics.
    */
   set<T>(key: string, value: T): void {
     const context = this.resolveContext();
     const fullPath = `${context}/${key}`;
 
-    // #148: public 레이어에 직접 쓰기 허용
+    // #148: allow direct writes to the public layer
     if (context === "public") {
       const publicLayer = this.getLayer("public");
       if (publicLayer) {
@@ -95,38 +96,39 @@ export class LayeredMetadataStore {
       }
     }
 
-    // 현재 컨텍스트에 해당하는 쓰기 가능한 레이어 찾기
+    // Find the writable layer for the current context
     let workLayer = this.layers.find(
       (l) => l.getName() === context && !l.isReadOnlyLayer(),
     );
 
-    // 쓰기 가능한 레이어가 없으면 생성
+    // Create a writable layer if none exists
     if (!workLayer) {
       workLayer = this.addLayer(context, false);
     }
 
-    // 레이어에 저장
+    // Store into the layer
     workLayer.set(key, value);
 
-    // Trie에 경로 등록
+    // Register the path in the trie
     this.pathTrie.insert(fullPath, { layer: workLayer.getName(), key, value });
   }
 
   /**
-   * 메타데이터 조회 (병합된 뷰 제공)
-   * 현재 컨텍스트 레이어 → public 레이어 순서로 검색 (다른 테넌트 레이어는 절대 참조하지 않음)
+   * Read metadata from the merged view.
+   * Searches the current context layer, then falls back to public;
+   * other tenant layers are never consulted.
    */
   get<T>(key: string): T | undefined {
     const context = this.resolveContext();
     const fullPath = `${context}/${key}`;
 
-    // 1. Trie에서 현재 컨텍스트 경로 확인
+    // 1. Look up the current context's path in the trie
     const pathData = this.pathTrie.search(fullPath);
     if (pathData) {
       return pathData.value;
     }
 
-    // 2. 현재 컨텍스트 레이어에서만 검색 (다른 테넌트 레이어 절대 참조 안 함)
+    // 2. Search only the current context layer (never other tenant layers)
     const contextLayer = this.getLayer(context);
     if (contextLayer) {
       const value = contextLayer.get<T>(key);
@@ -135,7 +137,7 @@ export class LayeredMetadataStore {
       }
     }
 
-    // 3. public(lower) 레이어 fallback
+    // 3. Fall back to the public (lower) layer
     if (context !== "public") {
       const publicPath = `public/${key}`;
       const publicData = this.pathTrie.search(publicPath);
@@ -153,21 +155,21 @@ export class LayeredMetadataStore {
   }
 
   /**
-   * 메타데이터 존재 여부 확인
+   * Check whether metadata exists.
    */
   has(key: string): boolean {
     return this.get(key) !== undefined;
   }
 
   /**
-   * 특정 컨텍스트의 모든 메타데이터 가져오기 (병합된 뷰)
-   * OverlayFS 방식: public(lower) 레이어 + 대상 컨텍스트(upper) 레이어만 병합
+   * Fetch every metadata entry in a given context as a merged view.
+   * OverlayFS style: merge the public (lower) layer with the target context (upper) layer only.
    */
   getAllInContext<T>(context?: string): Map<string, T> {
     const targetContext = context || this.resolveContext();
     const result = new Map<string, T>();
 
-    // 1. public(lower) 레이어 데이터 수집 (base)
+    // 1. Collect entries from the public (lower) layer as the base
     const publicLayer = this.getLayer("public");
     if (publicLayer) {
       for (const [key, value] of publicLayer.entries<T>()) {
@@ -175,7 +177,7 @@ export class LayeredMetadataStore {
       }
     }
 
-    // 2. 대상 컨텍스트 레이어의 데이터로 덮어쓰기 (Copy-on-Write)
+    // 2. Overlay the target context layer's entries (Copy-on-Write)
     if (targetContext !== "public") {
       const contextLayer = this.getLayer(targetContext);
       if (contextLayer) {
@@ -189,9 +191,9 @@ export class LayeredMetadataStore {
   }
 
   /**
-   * 레이어 복사 (멀티테넌트 환경에서 새 테넌트 생성 시 사용)
-   * @param sourceName 원본 레이어
-   * @param targetName 대상 레이어
+   * Copy a layer (used when creating a new tenant in a multi-tenant setup).
+   * @param sourceName source layer name
+   * @param targetName target layer name
    */
   copyLayer(sourceName: string, targetName: string): MetadataLayer {
     const sourceLayer = this.getLayer(sourceName);
@@ -199,7 +201,7 @@ export class LayeredMetadataStore {
       throw new Error(`Source layer "${sourceName}" not found.`);
     }
 
-    // #141: 대상 레이어 이름 중복 방지
+    // #141: prevent duplicate target layer names
     const existingLayer = this.getLayer(targetName);
     if (existingLayer) {
       throw new Error(`Layer "${targetName}" already exists.`);
@@ -208,7 +210,7 @@ export class LayeredMetadataStore {
     const clonedLayer = sourceLayer.clone(targetName, false);
     this.layers.push(clonedLayer);
 
-    // Trie에도 경로 복사
+    // Copy the paths into the trie as well
     const sourcePaths = this.pathTrie.findByPrefix(sourceName);
     for (const { path, value } of sourcePaths) {
       const newPath = path.replace(sourceName, targetName);
@@ -219,7 +221,7 @@ export class LayeredMetadataStore {
   }
 
   /**
-   * 레이어 병합 (특정 테넌트의 변경사항을 public으로 승격)
+   * Merge a layer (promote a tenant's changes into public).
    */
   mergeLayer(sourceName: string, targetName: string): void {
     const sourceLayer = this.getLayer(sourceName);
@@ -232,10 +234,10 @@ export class LayeredMetadataStore {
       throw new Error(`Target layer "${targetName}" not found.`);
     }
 
-    // #148: public 레이어로의 병합 허용 (getInternalMap 사용)
+    // #148: allow merging into the public layer (via getInternalMap)
     const isTargetReadOnly = targetLayer.isReadOnlyLayer();
 
-    // 소스 레이어의 모든 데이터를 타겟 레이어로 복사 + trie 동기화 (#143)
+    // Copy all source-layer data into the target layer and sync the trie (#143)
     for (const [key, value] of sourceLayer.entries()) {
       if (isTargetReadOnly) {
         targetLayer.getInternalMap().set(key, value);
@@ -248,7 +250,7 @@ export class LayeredMetadataStore {
   }
 
   /**
-   * 레이어 데이터 초기화 + trie 동기화 (#143)
+   * Clear layer data and sync the trie (#143).
    */
   clearLayer(name: string): void {
     const layer = this.getLayer(name);
@@ -256,7 +258,7 @@ export class LayeredMetadataStore {
       throw new Error(`Layer "${name}" not found.`);
     }
     layer.clear();
-    // trie에서도 해당 레이어의 경로 제거
+    // Remove the layer's paths from the trie as well
     const paths = this.pathTrie.findByPrefix(name);
     for (const { path } of paths) {
       this.pathTrie.delete(path);
@@ -264,7 +266,7 @@ export class LayeredMetadataStore {
   }
 
   /**
-   * 레이어 제거
+   * Remove a layer.
    */
   removeLayer(name: string): boolean {
     const index = this.layers.findIndex((l) => l.getName() === name);
@@ -272,14 +274,14 @@ export class LayeredMetadataStore {
       return false;
     }
 
-    // public 레이어는 삭제 불가
+    // The public layer cannot be removed
     if (name === "public") {
       throw new Error('Cannot remove "public" layer.');
     }
 
     this.layers.splice(index, 1);
 
-    // Trie에서도 경로 제거
+    // Remove the paths from the trie as well
     const paths = this.pathTrie.findByPrefix(name);
     for (const { path } of paths) {
       this.pathTrie.delete(path);
@@ -289,14 +291,14 @@ export class LayeredMetadataStore {
   }
 
   /**
-   * 모든 레이어 정보 반환
+   * Return info for every layer.
    */
   getLayersInfo() {
     return this.layers.map((layer) => layer.getLayerInfo());
   }
 
   /**
-   * 특정 경로의 모든 하위 항목 검색
+   * Search for all entries under a given path prefix.
    */
   findByPrefix(prefix: string): Array<{ path: string; value: any }> {
     return this.pathTrie.findByPrefix(`${this.resolveContext()}/${prefix}`);

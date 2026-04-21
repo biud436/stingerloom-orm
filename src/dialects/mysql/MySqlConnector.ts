@@ -50,10 +50,10 @@ export class MySqlConnector extends IConnector {
         pool: poolOptions,
       } = options;
 
-      // pool.max > connectionLimit > 기본값(10) 우선순위로 적용
+      // Apply in priority order: pool.max > connectionLimit > default (10)
       const maxConnections = poolOptions?.max ?? connectionLimit ?? 10;
 
-      // SSL/TLS 옵션 변환
+      // Convert SSL/TLS options
       const ssl = "ssl" in options ? options.ssl : undefined;
       let sslConfig: any = undefined;
       if (ssl === true) {
@@ -106,7 +106,7 @@ export class MySqlConnector extends IConnector {
   }
 
   /**
-   * 풀에서 raw connection을 하나 가져옵니다.
+   * Acquires a raw connection from the pool.
    */
   private acquireRawConnection(): Promise<PoolConnection> {
     if (!this.pool) {
@@ -125,7 +125,7 @@ export class MySqlConnector extends IConnector {
   }
 
   /**
-   * mysql2 네이티브 COM_PING으로 연결 상태를 확인합니다.
+   * Checks connection liveness using the native mysql2 COM_PING.
    */
   private pingConnection(connection: PoolConnection): Promise<boolean> {
     return new Promise((resolve) => {
@@ -136,9 +136,9 @@ export class MySqlConnector extends IConnector {
   }
 
   /**
-   * 트랜잭션 처리를 위해 커넥션 풀에서 커넥션을 하나 가져옵니다.
-   * validateOnBorrow가 활성화되면 ping으로 연결 상태를 확인하고,
-   * stale 연결은 폐기 후 새 연결로 교체합니다.
+   * Acquires a connection from the pool for transaction processing.
+   * When validateOnBorrow is enabled, pings the connection to confirm liveness
+   * and replaces stale connections by discarding them and acquiring a new one.
    */
   async getConnection(): Promise<PoolConnection> {
     const conn = await this.acquireRawConnection();
@@ -271,7 +271,7 @@ export class MySqlConnector extends IConnector {
       }
 
       /**
-       * 커넥션에 설정된 트랜잭션 격리 수준은 해당 커넥션에서 수행되는 모든 트랜잭션에만 적용됨
+       * The isolation level set on a connection applies only to transactions that run on that connection.
        */
       connection.query(safeSql, (error) => {
         if (error) {
@@ -283,7 +283,7 @@ export class MySqlConnector extends IConnector {
     });
   }
 
-  // MySQL 기본 격리 수준 — 동일하면 SET TRANSACTION 생략 (#212)
+  // MySQL default isolation level — skip SET TRANSACTION when it matches (#212)
   private static readonly DEFAULT_ISOLATION: TRANSACTION_ISOLATION_LEVEL = "REPEATABLE READ";
 
   async startTransaction(
@@ -304,7 +304,7 @@ export class MySqlConnector extends IConnector {
         });
       };
 
-      // #212: 기본 격리 수준이면 SET TRANSACTION 생략
+      // #212: skip SET TRANSACTION when it matches the default isolation level
       if (level !== MySqlConnector.DEFAULT_ISOLATION) {
         this.setTransactionIsolationLevel(connection, level)
           .then(beginTx)

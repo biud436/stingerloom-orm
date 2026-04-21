@@ -2,70 +2,70 @@
 import { WhereClause } from "../dialects/FindOption";
 
 /**
- * 커서 기반 페이지네이션 옵션
+ * Cursor-based pagination option.
  *
- * offset 방식 대신 정렬 컬럼의 마지막 값을 커서로 사용하여
- * 대량 데이터셋에서도 일정한 성능을 보장합니다.
+ * Uses the last value of the order-by column as the cursor instead of offsets,
+ * delivering consistent performance even on very large datasets.
  *
- * @template T - 엔티티 타입
+ * @template T - the entity type
  */
 export type CursorPaginationOption<T> = {
   /**
-   * 한 페이지에 가져올 항목 수 (기본값: 20)
+   * Page size (default: 20).
    */
   take?: number;
 
   /**
-   * 이전 페이지의 마지막 커서 (Base64 인코딩)
-   * 첫 페이지 요청 시 생략합니다.
+   * Last cursor from the previous page (Base64-encoded).
+   * Omit when fetching the first page.
    */
   cursor?: string;
 
   /**
-   * 정렬 기준 컬럼 (기본값: 엔티티의 PK)
+   * Order-by column (defaults to the entity's primary key).
    */
   orderBy?: keyof T & string;
 
   /**
-   * 정렬 방향 (기본값: "ASC")
+   * Sort direction (defaults to "ASC").
    */
   direction?: "ASC" | "DESC";
 
   /**
-   * 추가 WHERE 조건
+   * Extra WHERE conditions.
    */
   where?: WhereClause<T>;
 
   /**
-   * Replication 환경에서 강제로 master 노드를 사용하여 읽기 쿼리를 실행합니다.
+   * In a replication setup, forces read queries to use the master node.
    */
   useMaster?: boolean;
 };
 
 /**
- * 커서 기반 페이지네이션 결과
+ * Cursor-based pagination result.
  *
- * @template T - 엔티티 타입
+ * @template T - the entity type
  */
 export type CursorPaginationResult<T> = {
   /**
-   * 현재 페이지의 데이터 배열
+   * Data array for the current page.
    */
   data: T[];
 
   /**
-   * 다음 페이지가 존재하는지 여부
+   * Whether a next page exists.
    */
   hasNextPage: boolean;
 
   /**
-   * 다음 페이지 요청 시 사용할 커서 (Base64 인코딩)
-   * hasNextPage가 false이면 null
+   * Cursor for the next page (Base64-encoded).
+   * null when hasNextPage is false.
    */
   nextCursor: string | null;
 
   /**
-   * 현재 페이지의 항목 수
+   * Number of items on the current page.
    */
   count: number;
 };
@@ -73,7 +73,7 @@ export type CursorPaginationResult<T> = {
 const DEFAULT_PAGE_SIZE = 20;
 
 /**
- * 커서 값을 Base64로 인코딩합니다.
+ * Encode a cursor value as Base64.
  */
 export function encodeCursor(value: unknown): string {
   const payload = JSON.stringify({ v: value });
@@ -81,8 +81,8 @@ export function encodeCursor(value: unknown): string {
 }
 
 /**
- * Base64 커서를 디코딩하여 원래 값으로 복원합니다.
- * 잘못된 커서는 null을 반환합니다.
+ * Decode a Base64 cursor into its original value.
+ * Returns null on invalid input.
  */
 export function decodeCursor(cursor: string): unknown | null {
   try {
@@ -95,7 +95,7 @@ export function decodeCursor(cursor: string): unknown | null {
 }
 
 /**
- * CursorPaginationOption의 take를 정규화합니다.
+ * Normalize the `take` value of CursorPaginationOption.
  */
 export function normalizePageSize(take?: number): number {
   if (take === undefined || take === null || take <= 0) {

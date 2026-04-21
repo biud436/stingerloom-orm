@@ -201,7 +201,7 @@ describe("Advisory Lock", () => {
 
   describe("Driver advisory lock methods", () => {
     it("SQLite acquireAdvisoryLock should always return true (no-op)", async () => {
-      // SQLite는 단일 프로세스이므로 항상 true
+      // SQLite is single-process, so this always returns true
       const { SqliteDriver } = require("../../src/dialects/sqlite/SqliteDriver");
       const mockConnector = {
         query: jest.fn(),

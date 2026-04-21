@@ -4,19 +4,19 @@ import { Deserializer } from "./Deserializer";
 import { MyClassConstructor } from "../MyClassConstructor";
 
 /**
- * 역직렬화 전략을 관리하는 레지스트리 클래스입니다.
+ * Registry that manages the deserialization strategy.
  *
- * 싱글톤 인스턴스를 통해 전역적으로 역직렬화 전략을 설정하고 사용할 수 있으며,
- * 필요 시 별도의 인스턴스를 생성하여 독립적인 전략을 운용할 수도 있습니다.
+ * A singleton instance exposes the strategy globally, and additional independent
+ * instances can be created when a separate strategy is needed.
  *
  * @example
  * ```ts
- * // 전역 싱글톤 사용
+ * // Use the global singleton
  * const registry = DeserializerRegistry.getInstance();
  * registry.setDeserializer(new TypiaDeserializer());
  * const user = registry.deserialize(User, plainObject);
  *
- * // 독립 인스턴스 생성
+ * // Create an independent instance
  * const custom = new DeserializerRegistry(new CustomDeserializer());
  * const result = custom.deserialize(Post, plainPost);
  * ```
@@ -31,8 +31,8 @@ export class DeserializerRegistry {
   }
 
   /**
-   * class-transformer가 설치되어 있으면 ClassTransformerDeserializer,
-   * 없으면 PlainObjectDeserializer를 반환합니다.
+   * Returns ClassTransformerDeserializer when class-transformer is installed,
+   * and PlainObjectDeserializer otherwise.
    */
   private static createDefaultDeserializer(): Deserializer {
     try {
@@ -46,7 +46,7 @@ export class DeserializerRegistry {
   }
 
   /**
-   * 전역 싱글톤 인스턴스를 반환합니다.
+   * Returns the global singleton instance.
    */
   static getInstance(): DeserializerRegistry {
     if (!DeserializerRegistry.instance) {
@@ -56,7 +56,7 @@ export class DeserializerRegistry {
   }
 
   /**
-   * 역직렬화 전략을 교체합니다.
+   * Swap the deserialization strategy.
    *
    * @example
    * ```ts
@@ -74,18 +74,18 @@ export class DeserializerRegistry {
   }
 
   /**
-   * 현재 활성화된 역직렬화 전략을 반환합니다.
+   * Return the currently active deserialization strategy.
    */
   getDeserializer(): Deserializer {
     return this.deserializer;
   }
 
   /**
-   * plain 객체를 클래스 인스턴스로 역직렬화합니다.
+   * Deserialize a plain object into a class instance.
    *
-   * @param cls 대상 클래스 생성자
-   * @param plain 변환할 plain 객체 또는 배열
-   * @param options 역직렬화 옵션
+   * @param cls target class constructor
+   * @param plain plain object or array to convert
+   * @param options deserialization options
    */
   deserialize<T, V extends object>(
     cls: MyClassConstructor<T>,

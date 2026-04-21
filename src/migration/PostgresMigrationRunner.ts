@@ -1,8 +1,8 @@
 import { MigrationRunner } from "./MigrationRunner";
 
 /**
- * PostgreSQL용 마이그레이션 러너.
- * 큰따옴표(") 식별자 래핑과 SERIAL PK를 사용합니다.
+ * Migration runner for PostgreSQL.
+ * Uses double-quote (") identifier wrapping and a SERIAL primary key.
  */
 export class PostgresMigrationRunner extends MigrationRunner {
   protected wrapIdentifier(name: string): string {

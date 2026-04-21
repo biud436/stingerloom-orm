@@ -1,13 +1,13 @@
 /**
- * 멀티테넌시 환경에서 @BeforeInsert 등 생명주기 훅이
- * AsyncLocalStorage 컨텍스트를 올바르게 유지하는지 검증합니다.
+ * Verifies that lifecycle hooks such as @BeforeInsert preserve the
+ * AsyncLocalStorage context in a multi-tenant environment.
  *
- * 검증 항목:
- * 1. 훅 내부에서 MetadataContext.getCurrentTenant()가 올바른 테넌트 반환
- * 2. 동시 실행 시 테넌트 간 컨텍스트 오염 없음
- * 3. EntitySubscriber에서도 테넌트 컨텍스트 유지
- * 4. EntityEventEmitter 리스너에서도 테넌트 컨텍스트 유지
- * 5. item 인스턴스가 테넌트 간 격리
+ * Assertions:
+ * 1. Hooks see the correct tenant via MetadataContext.getCurrentTenant()
+ * 2. Concurrent runs do not leak context between tenants
+ * 3. EntitySubscriber also sees the correct tenant context
+ * 4. EntityEventEmitter listeners also see the correct tenant context
+ * 5. Item instances stay isolated per tenant
  */
 import "reflect-metadata";
 import { MetadataContext } from "../../src/metadata/MetadataContext";
@@ -60,9 +60,9 @@ import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedCol
 import { BeforeInsert, AfterInsert, BeforeUpdate } from "../../src/decorators/Hooks";
 import { EntitySubscriber, InsertEvent } from "../../src/core/EntitySubscriber";
 
-// ─── 테스트용 엔티티 ───
+// ─── Test entities ───
 
-/** 훅 실행 시 MetadataContext를 기록하는 엔티티 */
+/** Entity that records MetadataContext when its hooks run */
 @Entity()
 class TenantUser {
   @PrimaryGeneratedColumn()
@@ -74,7 +74,7 @@ class TenantUser {
   @Column({ type: "boolean" })
   active!: boolean;
 
-  /** 훅이 실행될 때 캡처한 테넌트 ID를 저장 */
+  /** Stores the tenant ID captured when hooks run */
   capturedTenant?: string;
   capturedTenantAfter?: string;
 
@@ -89,7 +89,7 @@ class TenantUser {
   }
 }
 
-// ─── 공통 헬퍼 ───
+// ─── Common helpers ───
 
 function createTestEntityManager(): EntityManager {
   const em = new EntityManager();
@@ -117,7 +117,7 @@ function createTestEntityManager(): EntityManager {
   return em;
 }
 
-// ─── 테스트 ───
+// ─── Tests ───
 
 describe("생명주기 훅 — 멀티테넌시 AsyncLocalStorage 안전성", () => {
   let em: EntityManager;
@@ -130,7 +130,7 @@ describe("생명주기 훅 — 멀티테넌시 AsyncLocalStorage 안전성", () 
   });
 
   // ───────────────────────────────────────────────────────────
-  // 1. 단일 테넌트: 훅 내부에서 올바른 테넌트 ID 확인
+  // 1. Single tenant: verify the hook sees the correct tenant ID
   // ───────────────────────────────────────────────────────────
 
   it("@BeforeInsert 훅 내부에서 getCurrentTenant()가 올바른 테넌트 반환", async () => {
@@ -161,7 +161,7 @@ describe("생명주기 훅 — 멀티테넌시 AsyncLocalStorage 안전성", () 
   });
 
   // ───────────────────────────────────────────────────────────
-  // 2. 동시 실행: 두 테넌트가 동시에 save()해도 오염 없음
+  // 2. Concurrency: two tenants calling save() concurrently stay isolated
   // ───────────────────────────────────────────────────────────
 
   it("Promise.all로 두 테넌트가 동시에 save() — 각자 올바른 테넌트 ID", async () => {
@@ -179,7 +179,7 @@ describe("생명주기 훅 — 멀티테넌시 AsyncLocalStorage 안전성", () 
 
     expect(userA.capturedTenant).toBe("tenant_1");
     expect(userB.capturedTenant).toBe("tenant_2");
-    // 교차 오염 없음
+    // No cross-contamination
     expect(userA.capturedTenant).not.toBe("tenant_2");
     expect(userB.capturedTenant).not.toBe("tenant_1");
   });
@@ -209,7 +209,7 @@ describe("생명주기 훅 — 멀티테넌시 AsyncLocalStorage 안전성", () 
   });
 
   // ───────────────────────────────────────────────────────────
-  // 3. item 인스턴스 격리: 한 테넌트의 훅이 다른 테넌트 item 수정 불가
+  // 3. Item instance isolation: a tenant's hook must not touch another tenant's item
   // ───────────────────────────────────────────────────────────
 
   it("각 테넌트의 item 인스턴스가 독립적", async () => {
@@ -225,15 +225,15 @@ describe("생명주기 훅 — 멀티테넌시 AsyncLocalStorage 안전성", () 
       }),
     ]);
 
-    // 각 item의 name이 변경되지 않았음 (다른 테넌트의 훅이 수정하지 않음)
+    // Each item's name is unchanged (another tenant's hook did not touch it)
     expect(userA.name).toBe("Isolated_A");
     expect(userB.name).toBe("Isolated_B");
-    // 각 item에 캡처된 테넌트가 다름
+    // Each item captures a different tenant
     expect(userA.capturedTenant).not.toBe(userB.capturedTenant);
   });
 
   // ───────────────────────────────────────────────────────────
-  // 4. EntitySubscriber에서도 테넌트 컨텍스트 유지
+  // 4. EntitySubscriber preserves the tenant context
   // ───────────────────────────────────────────────────────────
 
   it("EntitySubscriber.beforeInsert 내부에서 올바른 테넌트 ID", async () => {
@@ -265,7 +265,7 @@ describe("생명주기 훅 — 멀티테넌시 AsyncLocalStorage 안전성", () 
   });
 
   // ───────────────────────────────────────────────────────────
-  // 5. EntityEventEmitter 리스너에서도 테넌트 컨텍스트 유지
+  // 5. EntityEventEmitter listeners preserve the tenant context
   // ───────────────────────────────────────────────────────────
 
   it("em.on('beforeInsert') 리스너 내부에서 올바른 테넌트 ID", async () => {
@@ -290,20 +290,20 @@ describe("생명주기 훅 — 멀티테넌시 AsyncLocalStorage 안전성", () 
   });
 
   // ───────────────────────────────────────────────────────────
-  // 6. 지연(sleep) 포함 동시성: 비동기 대기 중에도 컨텍스트 유지
+  // 6. Concurrency with sleeps: context persists across async waits
   // ───────────────────────────────────────────────────────────
 
   it("훅 내부에서 비동기 대기 후에도 테넌트 컨텍스트 유지", async () => {
     const tenantsDuringDelay: string[] = [];
 
-    // 지연이 있는 BeforeInsert를 시뮬레이션하기 위해 runHooks를 래핑
+    // Wrap runHooks to simulate a BeforeInsert with an async delay
     const originalRunHooks = (em as any).cascadeHandler.runHooks.bind((em as any).cascadeHandler);
     jest.spyOn((em as any).cascadeHandler, "runHooks").mockImplementation(
       async (entity: any, item: any, event: any) => {
-        // 원래 훅 실행
+        // Run the original hooks
         await originalRunHooks(entity, item, event);
         if (event === "beforeInsert") {
-          // 비동기 지연 후에도 컨텍스트가 유지되는지 확인
+          // Verify the context persists even after an async delay
           await new Promise((resolve) => setTimeout(resolve, 10));
           tenantsDuringDelay.push(MetadataContext.getCurrentTenant());
         }
@@ -325,7 +325,7 @@ describe("생명주기 훅 — 멀티테넌시 AsyncLocalStorage 안전성", () 
   });
 
   // ───────────────────────────────────────────────────────────
-  // 7. 중첩 withTenant: 내부 테넌트가 외부를 오염시키지 않음
+  // 7. Nested withTenant: inner context does not leak to the outer scope
   // ───────────────────────────────────────────────────────────
 
   it("중첩 withTenant에서 내부 컨텍스트가 외부를 덮어쓰지 않음", async () => {
@@ -335,12 +335,12 @@ describe("생명주기 훅 — 멀티테넌시 AsyncLocalStorage 안전성", () 
     await em.withTenant("outer_tenant", async (em) => {
       await em.save(TenantUser, outerUser);
 
-      // 내부에서 다른 테넌트로 전환
+      // Switch to a different tenant inside
       await em.withTenant("inner_tenant", async (em) => {
         await em.save(TenantUser, innerUser);
       });
 
-      // 내부 withTenant가 끝난 후 외부 컨텍스트가 복원되는지 확인
+      // Verify the outer context is restored after the inner withTenant exits
       const afterInner = MetadataContext.getCurrentTenant();
       expect(afterInner).toBe("outer_tenant");
     });

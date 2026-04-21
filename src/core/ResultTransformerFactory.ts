@@ -1,11 +1,11 @@
 import { ResultTransformer } from "./ResultTransformer";
 
 /**
- * ResultTransformer 인스턴스를 생성하는 기본 팩토리 클래스입니다.
+ * Default factory class for creating ResultTransformer instances.
  *
- * 특정 데이터베이스에서 사용할 ResultTransformer를 생성할 때 사용합니다.
+ * Used when creating a ResultTransformer for a specific database.
  *
- * 예를 들면, SQLite에서 사용할 ResultTransformer를 생성하려면 다음과 같이 할 수도 있습니다.
+ * For example, this could be overridden to produce a ResultTransformer tailored for SQLite.
  */
 export class ResultTransformerFactory {
   static create() {

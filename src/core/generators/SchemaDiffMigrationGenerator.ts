@@ -27,7 +27,7 @@ function escapeEnumValue(val: string): string {
 }
 
 /**
- * SchemaDiffResult를 받아 Migration TypeScript 파일을 생성합니다.
+ * Generates a Migration TypeScript file from a SchemaDiffResult.
  */
 export class SchemaDiffMigrationGenerator {
   private readonly capabilities?: CommonCapabilities;
@@ -39,7 +39,7 @@ export class SchemaDiffMigrationGenerator {
   }
 
   /**
-   * diff 결과를 받아 Migration TypeScript 파일 내용을 생성합니다.
+   * Generates the contents of a Migration TypeScript file from the diff result.
    */
   generate(diff: SchemaDiffResult, dialect: SchemaDialect): string {
     const timestamp = Date.now();
@@ -78,8 +78,8 @@ export class SchemaDiffMigrationGenerator {
   }
 
   /**
-   * Migration 파일을 디스크에 저장합니다.
-   * 파일명: {outputDir}/{timestamp}_{name}.ts
+   * Writes the migration file to disk.
+   * Filename: {outputDir}/{timestamp}_{name}.ts
    */
   async save(content: string, outputDir: string, name?: string): Promise<string> {
     await mkdir(outputDir, { recursive: true });

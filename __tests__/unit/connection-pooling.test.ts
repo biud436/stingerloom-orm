@@ -5,11 +5,11 @@ import type {
 } from "../../src/core/DatabaseClientOptions";
 
 /**
- * 연결 풀링 최적화 테스트
+ * Connection pooling optimization tests
  *
- * DatabaseClientOptions의 pool 옵션이 각 커넥터에 올바르게 전달되는지,
- * DatabaseClient가 SQLite를 포함한 모든 DB 타입을 지원하는지,
- * TransactionSessionManager가 SQLite를 올바르게 처리하는지 검증합니다.
+ * Verifies that the DatabaseClientOptions.pool option is correctly propagated
+ * to each connector, that DatabaseClient supports all DB types including SQLite,
+ * and that TransactionSessionManager handles SQLite correctly.
  */
 
 describe("DatabaseClientOptions - PoolOptions 인터페이스", () => {
@@ -189,7 +189,7 @@ describe("SqliteConnector - 단일 연결 유지", () => {
     const conn1 = await connector.getConnection();
     const conn2 = await connector.getConnection();
 
-    // SQLite는 단일 연결이므로 동일한 인스턴스를 반환해야 함
+    // SQLite uses a single connection, so the same instance must be returned
     expect(conn1).toBe(conn2);
 
     await connector.close();
@@ -283,11 +283,11 @@ describe("SqliteConnector - 단일 연결 유지", () => {
       entities: [],
     } as DatabaseClientOptions);
 
-    // 외래키 활성화 확인
+    // Verify foreign keys are enabled
     const fkResult = await connector.query("PRAGMA foreign_keys");
     expect(fkResult[0].foreign_keys).toBe(1);
 
-    // WAL 모드는 인메모리 DB에서는 "memory"를 반환함 (파일 기반에서만 "wal")
+    // WAL mode returns "memory" for in-memory DBs (only file-based returns "wal")
     const walResult = await connector.query("PRAGMA journal_mode");
     expect(["wal", "memory"]).toContain(walResult[0].journal_mode);
 

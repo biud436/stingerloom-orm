@@ -2,7 +2,7 @@ import { OrmError } from "./OrmError";
 import { OrmErrorCode } from "./OrmErrorCode";
 
 /**
- * Advisory lock 획득 실패 시 발생하는 에러입니다.
+ * Thrown when acquiring an advisory lock fails.
  */
 export class AdvisoryLockError extends OrmError {
   constructor(message: string) {

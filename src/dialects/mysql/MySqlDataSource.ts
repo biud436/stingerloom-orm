@@ -29,7 +29,7 @@ export class MySqlDataSource implements IDataSource {
     try {
       conn.release();
     } catch {
-      // 이미 해제된 커넥션인 경우 무시
+      // Ignore if the connection was already released
     }
   }
 

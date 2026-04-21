@@ -1,16 +1,16 @@
 /**
- * @Column 기반 FK 자동 감지를 검증합니다.
+ * Verifies @Column-based FK auto-detection.
  *
- * @ManyToOne의 joinColumn이 명시되지 않은 경우,
- * 같은 엔티티에 @Column으로 선언된 {propertyName}Id 프로퍼티의
- * 실제 DB 컬럼명을 FK 컬럼으로 자동 해석합니다.
+ * When @ManyToOne's joinColumn is not specified,
+ * the FK column is auto-resolved from the actual DB column name of the
+ * {propertyName}Id property declared via @Column on the same entity.
  *
- * 시나리오:
+ * Scenarios:
  * 1. @Column({ name: "custom_fk" }) ownerId → FK = "custom_fk"
- * 2. @Column() ownerId (name 생략) → FK = "ownerId"
- * 3. joinColumn 명시 → @Column 무시, joinColumn 우선
- * 4. {propertyName}Id 패턴의 @Column 없음 → joinColumn 미설정
- * 5. OneToOne 관계에서도 동일 동작
+ * 2. @Column() ownerId (name omitted) → FK = "ownerId"
+ * 3. joinColumn specified → @Column ignored, joinColumn wins
+ * 4. No @Column matching the {propertyName}Id pattern → joinColumn unset
+ * 5. Same behavior applies to OneToOne relations
  */
 import "reflect-metadata";
 
@@ -50,7 +50,7 @@ import { ManyToOne } from "../../src/decorators/ManyToOne";
 import { OneToOne } from "../../src/decorators/OneToOne";
 import { OneToMany } from "../../src/decorators/OneToMany";
 
-// --- 테스트 엔티티 ---
+// --- Test entities ---
 
 @Entity()
 class Owner {
@@ -61,7 +61,7 @@ class Owner {
   name!: string;
 }
 
-// 시나리오 1: @Column에 커스텀 name이 있는 경우
+// Scenario 1: @Column has a custom name
 @Entity()
 class PetWithCustomFk {
   @PrimaryGeneratedColumn()
@@ -77,7 +77,7 @@ class PetWithCustomFk {
   owner!: Owner;
 }
 
-// 시나리오 2: @Column에 name 생략 (propertyKey가 그대로 DB 컬럼명)
+// Scenario 2: @Column omits name (propertyKey is used as the DB column name)
 @Entity()
 class PetWithDefaultFk {
   @PrimaryGeneratedColumn()
@@ -90,7 +90,7 @@ class PetWithDefaultFk {
   owner!: Owner;
 }
 
-// 시나리오 3: joinColumn이 명시된 경우 → @Column 무시
+// Scenario 3: joinColumn is specified → @Column is ignored
 @Entity()
 class PetWithExplicitJoinColumn {
   @PrimaryGeneratedColumn()
@@ -103,7 +103,7 @@ class PetWithExplicitJoinColumn {
   owner!: Owner;
 }
 
-// 시나리오 4: {propertyName}Id 패턴의 @Column이 없는 경우
+// Scenario 4: No @Column matching the {propertyName}Id pattern
 @Entity()
 class PetWithoutFkColumn {
   @PrimaryGeneratedColumn()
@@ -113,7 +113,7 @@ class PetWithoutFkColumn {
   owner!: Owner;
 }
 
-// 시나리오 5: OneToOne에서도 동일
+// Scenario 5: Same behavior for OneToOne
 @Entity()
 class Profile {
   @PrimaryGeneratedColumn()

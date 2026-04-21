@@ -2,7 +2,7 @@ import { OrmError } from "./OrmError";
 import { OrmErrorCode } from "./OrmErrorCode";
 
 /**
- * 트랜잭션 처리 중 발생하는 에러입니다.
+ * Thrown when an error occurs during transaction handling.
  */
 export class TransactionError extends OrmError {
   constructor(message: string) {

@@ -31,7 +31,7 @@ function addValidation(
 }
 
 /**
- * 해당 필드가 null/undefined이면 ValidationError를 throw합니다.
+ * Throws ValidationError if the field is null/undefined.
  */
 export function NotNull(): PropertyDecorator {
   return (target, propertyKey) => {
@@ -44,7 +44,7 @@ export function NotNull(): PropertyDecorator {
 }
 
 /**
- * 문자열 필드의 최소 길이를 검사합니다.
+ * Checks the minimum length of a string field.
  */
 export function MinLength(min: number): PropertyDecorator {
   return (target, propertyKey) => {
@@ -58,7 +58,7 @@ export function MinLength(min: number): PropertyDecorator {
 }
 
 /**
- * 문자열 필드의 최대 길이를 검사합니다.
+ * Checks the maximum length of a string field.
  */
 export function MaxLength(max: number): PropertyDecorator {
   return (target, propertyKey) => {
@@ -72,7 +72,7 @@ export function MaxLength(max: number): PropertyDecorator {
 }
 
 /**
- * 숫자 필드의 최솟값을 검사합니다.
+ * Checks the minimum value of a numeric field.
  */
 export function Min(min: number): PropertyDecorator {
   return (target, propertyKey) => {
@@ -86,7 +86,7 @@ export function Min(min: number): PropertyDecorator {
 }
 
 /**
- * 숫자 필드의 최댓값을 검사합니다.
+ * Checks the maximum value of a numeric field.
  */
 export function Max(max: number): PropertyDecorator {
   return (target, propertyKey) => {

@@ -210,7 +210,7 @@ describeIf("[E2E] nestjs-cats API", () => {
           .expect(200);
 
         expect(Array.isArray(second.body.data)).toBe(true);
-        // 두 번째 페이지의 ID는 첫 번째보다 커야 함
+        // The IDs on the second page must be greater than those on the first
         if (second.body.data.length > 0 && first.body.data.length > 0) {
           expect(second.body.data[0].id).toBeGreaterThan(
             first.body.data[first.body.data.length - 1].id,
@@ -420,7 +420,7 @@ describeIf("[E2E] nestjs-cats API", () => {
     });
 
     it("DELETE /cats/bulk — 배치 삭제", async () => {
-      // 남은 고양이 ID 목록 가져오기 (catId 제외 나머지)
+      // Get the list of remaining cat IDs (everything except catId)
       const listRes = await request(server).get("/cats").expect(200);
       const bulkIds = listRes.body
         .filter((c: any) => c.id !== catId)

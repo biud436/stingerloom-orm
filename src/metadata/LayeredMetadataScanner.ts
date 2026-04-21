@@ -3,13 +3,13 @@ import { LayeredMetadataStore } from "./LayeredMetadataStore";
 import { ClazzType } from "../utils";
 
 /**
- * 기존 MetadataScanner를 계층적 스토어와 연동하는 어댑터
+ * Adapter that bridges the legacy MetadataScanner API with the layered store.
  *
- * 기존 코드와의 호환성을 유지하면서 점진적으로 마이그레이션할 수 있도록 설계
+ * Designed to preserve backward compatibility so existing code can migrate incrementally.
  */
 export class LayeredMetadataScanner {
   protected store: LayeredMetadataStore;
-  protected prefix: string; // 스캐너 타입별 prefix (예: "entities", "columns")
+  protected prefix: string; // Per-scanner prefix (e.g. "entities", "columns").
 
   constructor(store: LayeredMetadataStore, prefix: string) {
     this.store = store;
@@ -17,14 +17,14 @@ export class LayeredMetadataScanner {
   }
 
   /**
-   * 유니크 키 생성 (기존 API 호환)
+   * Generate a unique key (legacy API compatibility).
    */
   public createUniqueKey(): string {
     return `${this.prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
   /**
-   * 메타데이터 저장 (현재 컨텍스트의 레이어에 저장)
+   * Store metadata in the current context's layer.
    */
   public set<T>(key: string, value: T): void {
     const fullKey = `${this.prefix}/${key}`;
@@ -32,7 +32,7 @@ export class LayeredMetadataScanner {
   }
 
   /**
-   * 메타데이터 조회 (병합된 뷰에서 검색)
+   * Read metadata from the merged view.
    */
   public get<T>(key: string): T | undefined {
     const fullKey = `${this.prefix}/${key}`;
@@ -40,14 +40,14 @@ export class LayeredMetadataScanner {
   }
 
   /**
-   * 모든 메타데이터 조회 (현재 컨텍스트에서 병합된 결과)
+   * Return every metadata entry merged for the current context.
    */
   public allMetadata<T = any>(): T[] {
     const allData = this.store.getAllInContext<T>();
     const results: T[] = [];
 
     for (const [key, value] of allData.entries()) {
-      // prefix로 시작하는 것만 필터링
+      // Keep only keys starting with the scanner prefix
       if (key.startsWith(this.prefix)) {
         results.push(value);
       }
@@ -57,7 +57,7 @@ export class LayeredMetadataScanner {
   }
 
   /**
-   * 키 존재 여부 확인
+   * Check whether a key exists.
    */
   public has(key: string): boolean {
     const fullKey = `${this.prefix}/${key}`;
@@ -65,7 +65,7 @@ export class LayeredMetadataScanner {
   }
 
   /**
-   * 현재 컨텍스트의 메타데이터 초기화
+   * Clear the current context's metadata.
    */
   public clear(): void {
     const context = this.store.getContext();
@@ -75,7 +75,7 @@ export class LayeredMetadataScanner {
       return;
     }
 
-    // 현재 prefix에 해당하는 키만 삭제
+    // Delete only the keys belonging to the current prefix
     const keysToDelete: string[] = [];
     for (const key of layer.keys()) {
       if (key.startsWith(this.prefix)) {
@@ -89,28 +89,28 @@ export class LayeredMetadataScanner {
   }
 
   /**
-   * 메타데이터 크기 반환
+   * Return the metadata size.
    */
   public get size(): number {
     return this.allMetadata().length;
   }
 
   /**
-   * 컨텍스트 전환 (멀티테넌트 지원)
+   * Switch the current context (multi-tenant support).
    */
   public switchContext(context: string): void {
     this.store.setContext(context);
   }
 
   /**
-   * 현재 컨텍스트 가져오기
+   * Get the current context.
    */
   public getCurrentContext(): string {
     return this.store.getContext();
   }
 
   /**
-   * 레이어 복사 (새 테넌트 생성 시)
+   * Copy the current layer into a new layer (used when creating a new tenant).
    */
   public copyToNewContext(newContext: string): void {
     const currentContext = this.store.getContext();
@@ -119,7 +119,7 @@ export class LayeredMetadataScanner {
 }
 
 /**
- * EntityScanner를 위한 계층적 스캐너
+ * Layered scanner used by EntityScanner.
  */
 export class LayeredEntityScanner extends LayeredMetadataScanner {
   constructor(store: LayeredMetadataStore) {
@@ -127,7 +127,7 @@ export class LayeredEntityScanner extends LayeredMetadataScanner {
   }
 
   /**
-   * 엔티티 스캔 (기존 API 호환)
+   * Scan an entity (legacy API compatibility).
    */
   public scan(target: ClazzType<unknown>): any | null {
     const allEntities = this.allMetadata();
@@ -142,7 +142,7 @@ export class LayeredEntityScanner extends LayeredMetadataScanner {
   }
 
   /**
-   * 모든 엔티티 순회 (기존 API 호환)
+   * Iterate over every entity (legacy API compatibility).
    */
   public *makeEntities(): IterableIterator<any> {
     const entities = this.allMetadata();
@@ -153,7 +153,7 @@ export class LayeredEntityScanner extends LayeredMetadataScanner {
 }
 
 /**
- * ColumnScanner를 위한 계층적 스캐너
+ * Layered scanner used by ColumnScanner.
  */
 export class LayeredColumnScanner extends LayeredMetadataScanner {
   constructor(store: LayeredMetadataStore) {
@@ -161,7 +161,7 @@ export class LayeredColumnScanner extends LayeredMetadataScanner {
   }
 
   /**
-   * 모든 컬럼 순회 (기존 API 호환)
+   * Iterate over every column (legacy API compatibility).
    */
   public *makeColumns(): IterableIterator<any> {
     const columns = this.allMetadata();
@@ -172,7 +172,7 @@ export class LayeredColumnScanner extends LayeredMetadataScanner {
 }
 
 /**
- * ManyToOneScanner를 위한 계층적 스캐너
+ * Layered scanner used by ManyToOneScanner.
  */
 export class LayeredManyToOneScanner extends LayeredMetadataScanner {
   constructor(store: LayeredMetadataStore) {
@@ -180,7 +180,7 @@ export class LayeredManyToOneScanner extends LayeredMetadataScanner {
   }
 
   /**
-   * 관계 스캔 (기존 API 호환)
+   * Scan a relation (legacy API compatibility).
    */
   public scan(target: ClazzType<unknown>): any | null {
     const allRelations = this.allMetadata();
@@ -195,7 +195,7 @@ export class LayeredManyToOneScanner extends LayeredMetadataScanner {
   }
 
   /**
-   * 모든 ManyToOne 관계 순회 (기존 API 호환)
+   * Iterate over every ManyToOne relation (legacy API compatibility).
    */
   public *makeManyToOnes(): IterableIterator<any> {
     const relations = this.allMetadata();

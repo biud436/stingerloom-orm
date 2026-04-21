@@ -31,18 +31,18 @@ import {
 import { MetadataContext } from "../metadata/MetadataContext";
 
 /**
- * 순수 메타데이터 조회 레이어. DB 호출 없음, 부작용 없음.
- * 엔티티/관계 메타데이터를 레이어 시스템 또는 Reflect fallback으로 해석합니다.
+ * Pure metadata lookup layer. No DB calls, no side effects.
+ * Resolves entity/relation metadata via the layered store, with a Reflect fallback.
  */
 export class RelationMetadataResolver {
   private readonly logger = new Logger(RelationMetadataResolver.name);
 
   /**
-   * 엔티티 메타데이터를 레이어 시스템을 통해 조회합니다.
+   * Looks up entity metadata through the layered metadata system.
    *
-   * 조회 우선순위:
-   * 1. EntityScanner.scan() — MetadataLayerRegistry 경유 (멀티테넌트 레이어 지원)
-   * 2. Reflect.getMetadata() — 데코레이터가 클래스에 직접 부착한 정적 메타데이터 (fallback)
+   * Lookup priority:
+   * 1. EntityScanner.scan() — through MetadataLayerRegistry (multi-tenant layer support)
+   * 2. Reflect.getMetadata() — static metadata attached directly to the class by decorators (fallback)
    */
   resolveEntityMetadata<T>(
     entity: ClazzType<T>,
@@ -51,14 +51,14 @@ export class RelationMetadataResolver {
       ? MetadataContext.getCurrentTenant()
       : "public";
 
-    // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
+    // 1. Lookup through the layered metadata system (multi-tenant support)
     const entityScanner = getScannerInstance(EntityScanner);
     const layeredMetadata = entityScanner.scan(entity);
     if (layeredMetadata) {
       return layeredMetadata;
     }
 
-    // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
+    // 2. Reflect fallback (metadata attached directly by decorators — single-tenant compatibility)
     const reflectMetadata = Reflect.getMetadata(ENTITY_TOKEN, entity) as
       | EntityScannerMetadata
       | undefined;
@@ -78,8 +78,7 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * @DeletedAt 데코레이터가 적용된 컬럼 이름을 반환합니다.
-   * 없으면 null을 반환합니다.
+   * Returns the name of the column marked with the @DeletedAt decorator, or null if none.
    */
   getDeletedAtColumn<T>(entity: ClazzType<T>): string | null {
     const column = Reflect.getMetadata(DELETED_AT_TOKEN, entity) as
@@ -89,7 +88,7 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * @CreateTimestamp 데코레이터가 적용된 컬럼 이름을 반환합니다.
+   * Returns the name of the column marked with the @CreateTimestamp decorator.
    */
   getCreateTimestampColumn<T>(entity: ClazzType<T>): string | null {
     const column = Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, entity) as
@@ -99,7 +98,7 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * @UpdateTimestamp 데코레이터가 적용된 컬럼 이름을 반환합니다.
+   * Returns the name of the column marked with the @UpdateTimestamp decorator.
    */
   getUpdateTimestampColumn<T>(entity: ClazzType<T>): string | null {
     const column = Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, entity) as
@@ -109,8 +108,7 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * @Version 데코레이터가 적용된 컬럼 이름을 반환합니다.
-   * 없으면 null을 반환합니다.
+   * Returns the name of the column marked with the @Version decorator, or null if none.
    */
   getVersionColumn<T>(entity: ClazzType<T>): string | null {
     const column = Reflect.getMetadata(VERSION_TOKEN, entity) as
@@ -120,16 +118,16 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * ManyToOne 관계 메타데이터를 레이어 시스템을 통해 조회합니다.
+   * Looks up ManyToOne relation metadata through the layered metadata system.
    *
-   * 조회 우선순위:
-   * 1. ManyToOneScanner — MetadataLayerRegistry 경유 (멀티테넌트 레이어 지원)
-   * 2. Reflect.getMetadata() — 데코레이터가 직접 부착한 정적 메타데이터 (fallback)
+   * Lookup priority:
+   * 1. ManyToOneScanner — through MetadataLayerRegistry (multi-tenant layer support)
+   * 2. Reflect.getMetadata() — static metadata attached directly by decorators (fallback)
    */
   resolveManyToOneMetadata<T>(
     entity: ClazzType<T>,
   ): ManyToOneMetadata<any>[] {
-    // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
+    // 1. Lookup through the layered metadata system (multi-tenant support)
     const manyToOneScanner = getScannerInstance(ManyToOneScanner);
     const allRelations = manyToOneScanner.getByTarget<ManyToOneMetadata<any>>(entity);
 
@@ -137,7 +135,7 @@ export class RelationMetadataResolver {
       return this.resolveJoinColumnsFromColumnMeta(entity, allRelations);
     }
 
-    // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
+    // 2. Reflect fallback (metadata attached directly by decorators — single-tenant compatibility)
     const reflectMetadata =
       (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity) as
         | ManyToOneMetadata<any>[]
@@ -157,33 +155,33 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * ManyToOne 관계의 joinColumn을 자동 해석합니다.
+   * Automatically resolves the joinColumn for a ManyToOne relation.
    *
-   * 해석 우선순위:
-   * 1. @RelationColumn 메타데이터 (name 명시 또는 자동 추론)
-   * 2. @ManyToOne option의 joinColumn이 명시적으로 지정된 경우 → 그대로 사용
-   * 3. 같은 엔티티에 @Column으로 선언된 `{propertyName}Id` 프로퍼티가 있으면
-   *    → 해당 @Column의 실제 DB 컬럼명(name)을 FK 컬럼으로 사용
-   * 4. 모두 없으면 → joinColumn 미설정
+   * Resolution priority:
+   * 1. @RelationColumn metadata (explicit name or automatic inference)
+   * 2. If the @ManyToOne option explicitly specifies joinColumn → use it as-is
+   * 3. If the same entity declares a `{propertyName}Id` property via @Column
+   *    → use that @Column's actual DB column name (name) as the FK column
+   * 4. If none of the above apply → joinColumn remains unset
    */
   resolveJoinColumnsFromColumnMeta(
     entity: ClazzType<any>,
     relations: ManyToOneMetadata<any>[],
   ): ManyToOneMetadata<any>[] {
-    // @RelationColumn 메타데이터 조회
+    // Look up @RelationColumn metadata
     const relationColumns: RelationColumnMetadata[] =
       Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
       Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??
       [];
 
-    // @Column 메타데이터 조회 (property key → column metadata)
+    // Look up @Column metadata (property key → column metadata)
     const columnsMeta: ColumnMetadata[] =
       Reflect.getMetadata(COLUMN_TOKEN, entity) ??
       Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
       [];
 
     return relations.map((rel) => {
-      // 1. @RelationColumn 메타데이터 확인 (최우선)
+      // 1. Check @RelationColumn metadata first (highest priority)
       const relCol = relationColumns.find(
         (rc) => rc.propertyKey === rel.columnName,
       );
@@ -202,10 +200,10 @@ export class RelationMetadataResolver {
         };
       }
 
-      // 2. 이미 option.joinColumn이 명시된 경우 → 그대로
+      // 2. If option.joinColumn is already specified → keep it as-is
       if (rel.joinColumn) return rel;
 
-      // 3. {propertyName}Id 패턴의 @Column 탐색
+      // 3. Search for an @Column matching the `{propertyName}Id` pattern
       if (columnsMeta.length === 0) return rel;
 
       const fkPropertyName = `${rel.columnName}Id`;
@@ -215,7 +213,7 @@ export class RelationMetadataResolver {
 
       if (!matchingColumn) return rel;
 
-      // @Column의 실제 DB 이름 사용 (name이 있으면 name, 없으면 propertyKey)
+      // Use the @Column's actual DB name (name if provided, otherwise propertyKey)
       const resolvedJoinColumn = matchingColumn.name ?? fkPropertyName;
 
       return {
@@ -226,16 +224,16 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * OneToMany 관계 메타데이터를 레이어 시스템을 통해 조회합니다.
+   * Looks up OneToMany relation metadata through the layered metadata system.
    *
-   * 조회 우선순위:
-   * 1. OneToManyScanner — MetadataLayerRegistry 경유 (멀티테넌트 레이어 지원)
-   * 2. Reflect.getMetadata() — 데코레이터가 직접 부착한 정적 메타데이터 (fallback)
+   * Lookup priority:
+   * 1. OneToManyScanner — through MetadataLayerRegistry (multi-tenant layer support)
+   * 2. Reflect.getMetadata() — static metadata attached directly by decorators (fallback)
    */
   resolveOneToManyMetadata<T>(
     entity: ClazzType<T>,
   ): OneToManyMetadata<any>[] {
-    // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
+    // 1. Lookup through the layered metadata system (multi-tenant support)
     const oneToManyScanner = getScannerInstance(OneToManyScanner);
     const allRelations = oneToManyScanner.getByTarget<OneToManyMetadata<any>>(entity);
 
@@ -243,7 +241,7 @@ export class RelationMetadataResolver {
       return allRelations;
     }
 
-    // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
+    // 2. Reflect fallback (metadata attached directly by decorators — single-tenant compatibility)
     const reflectMetadata =
       (Reflect.getMetadata(ONE_TO_MANY_TOKEN, entity) as
         | OneToManyMetadata<any>[]
@@ -263,16 +261,16 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * ManyToMany 관계 메타데이터를 레이어 시스템을 통해 조회합니다.
+   * Looks up ManyToMany relation metadata through the layered metadata system.
    *
-   * 조회 우선순위:
-   * 1. ManyToManyScanner — MetadataLayerRegistry 경유 (멀티테넌트 레이어 지원)
-   * 2. Reflect.getMetadata() — 데코레이터가 직접 부착한 정적 메타데이터 (fallback)
+   * Lookup priority:
+   * 1. ManyToManyScanner — through MetadataLayerRegistry (multi-tenant layer support)
+   * 2. Reflect.getMetadata() — static metadata attached directly by decorators (fallback)
    */
   resolveManyToManyMetadata<T>(
     entity: ClazzType<T>,
   ): ManyToManyMetadata<any>[] {
-    // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
+    // 1. Lookup through the layered metadata system (multi-tenant support)
     const manyToManyScanner = getScannerInstance(ManyToManyScanner);
     const allRelations = manyToManyScanner.getByTarget<ManyToManyMetadata<any>>(entity);
 
@@ -280,7 +278,7 @@ export class RelationMetadataResolver {
       return allRelations;
     }
 
-    // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
+    // 2. Reflect fallback (metadata attached directly by decorators — single-tenant compatibility)
     const reflectMetadata =
       (Reflect.getMetadata(MANY_TO_MANY_TOKEN, entity) as
         | ManyToManyMetadata<any>[]
@@ -300,16 +298,16 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * OneToOne 관계 메타데이터를 레이어 시스템을 통해 조회합니다.
+   * Looks up OneToOne relation metadata through the layered metadata system.
    *
-   * 조회 우선순위:
-   * 1. OneToOneScanner — MetadataLayerRegistry 경유 (멀티테넌트 레이어 지원)
-   * 2. Reflect.getMetadata() — 데코레이터가 직접 부착한 정적 메타데이터 (fallback)
+   * Lookup priority:
+   * 1. OneToOneScanner — through MetadataLayerRegistry (multi-tenant layer support)
+   * 2. Reflect.getMetadata() — static metadata attached directly by decorators (fallback)
    */
   resolveOneToOneMetadata<T>(
     entity: ClazzType<T>,
   ): OneToOneMetadata<any>[] {
-    // 1. 레이어 시스템을 통한 조회 (멀티테넌트 지원)
+    // 1. Lookup through the layered metadata system (multi-tenant support)
     const oneToOneScanner = getScannerInstance(OneToOneScanner);
     const allRelations = oneToOneScanner.getByTarget<OneToOneMetadata<any>>(entity);
 
@@ -320,7 +318,7 @@ export class RelationMetadataResolver {
       );
     }
 
-    // 2. Reflect fallback (데코레이터 직접 부착 — 단일 테넌트 호환)
+    // 2. Reflect fallback (metadata attached directly by decorators — single-tenant compatibility)
     const reflectMetadata =
       (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) as
         | OneToOneMetadata<any>[]
@@ -343,15 +341,15 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * OneToOne 관계의 joinColumn을 자동 해석합니다.
-   * 해석 우선순위는 ManyToOne과 동일:
-   * 1. @RelationColumn > 2. option.joinColumn > 3. {propName}Id @Column
+   * Automatically resolves the joinColumn for a OneToOne relation.
+   * Resolution priority matches ManyToOne:
+   * 1. @RelationColumn > 2. option.joinColumn > 3. `{propName}Id` @Column
    */
   resolveJoinColumnsFromColumnMetaForOneToOne(
     entity: ClazzType<any>,
     relations: OneToOneMetadata<any>[],
   ): OneToOneMetadata<any>[] {
-    // @RelationColumn 메타데이터 조회
+    // Look up @RelationColumn metadata
     const relationColumns: RelationColumnMetadata[] =
       Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
       Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??
@@ -363,7 +361,7 @@ export class RelationMetadataResolver {
       [];
 
     return relations.map((rel) => {
-      // 1. @RelationColumn 메타데이터 확인 (최우선)
+      // 1. Check @RelationColumn metadata first (highest priority)
       const relCol = relationColumns.find(
         (rc) => rc.propertyKey === rel.propertyKey,
       );
@@ -381,10 +379,10 @@ export class RelationMetadataResolver {
         };
       }
 
-      // 2. 이미 option.joinColumn이 명시된 경우 → 그대로
+      // 2. If option.joinColumn is already specified → keep it as-is
       if (rel.joinColumn) return rel;
 
-      // 3. {propertyName}Id 패턴의 @Column 탐색
+      // 3. Search for an @Column matching the `{propertyName}Id` pattern
       if (columnsMeta.length === 0) return rel;
 
       const fkPropertyName = `${rel.propertyKey}Id`;
@@ -404,8 +402,9 @@ export class RelationMetadataResolver {
   }
 
   /**
-   * ManyToMany 관계의 joinTable 정보를 확정합니다.
-   * 소유측(joinTable 있음)이면 그대로, 역방향(mappedBy)이면 상대측에서 joinTable을 가져옵니다.
+   * Finalizes the joinTable information for a ManyToMany relation.
+   * For the owning side (joinTable present), returns it as-is; for the inverse side (mappedBy),
+   * fetches joinTable from the owning side.
    */
   resolveManyToManyJoinTable<T>(rel: ManyToManyMetadata<any>): {
     joinTableName: string;
@@ -420,7 +419,7 @@ export class RelationMetadataResolver {
       };
     }
 
-    // 역방향: mappedBy가 가리키는 소유측에서 joinTable을 가져온다
+    // Inverse side: fetch joinTable from the owning side referenced by mappedBy
     if (rel.mappedBy) {
       const RelatedEntity = rel.getRelatedEntity();
       const relatedManyToMany = this.resolveManyToManyMetadata(RelatedEntity);
@@ -428,7 +427,7 @@ export class RelationMetadataResolver {
         (r) => r.propertyKey === rel.mappedBy && r.joinTable,
       );
       if (ownerRel?.joinTable) {
-        // 역방향이므로 joinColumn과 inverseJoinColumn을 뒤집는다
+        // Inverse side — swap joinColumn and inverseJoinColumn
         return {
           joinTableName: ownerRel.joinTable.name,
           joinColumn: ownerRel.joinTable.inverseJoinColumn,

@@ -8,10 +8,10 @@ import {
 /**
  * SqliteTenantMigrationRunner
  *
- * SQLite는 스키마 기반 멀티테넌시를 지원하지 않습니다.
- * SQLite는 단일 파일 데이터베이스이므로 스키마 분리가 불가능합니다.
+ * SQLite does not support schema-based multi-tenancy.
+ * SQLite is a single-file database, so schema separation is not possible.
  *
- * 모든 메서드는 UnsupportedError를 throw합니다.
+ * Every method throws UnsupportedError.
  */
 export class SqliteTenantMigrationRunner implements ITenantMigrationRunner {
   private unsupported(): never {

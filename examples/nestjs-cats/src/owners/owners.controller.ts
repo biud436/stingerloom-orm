@@ -21,7 +21,7 @@ import { CreateOwnerDto } from "./dto/create-owner.dto";
 export class OwnersController {
   constructor(private readonly ownersService: OwnersService) {}
 
-  /** POST /owners -- 주인 생성 (@Transactional, @BeforeInsert 훅 데모) */
+  /** POST /owners -- create an owner (@Transactional, @BeforeInsert hook demo) */
   @Post()
   @ApiOperation({
     summary: "주인 생성",
@@ -34,7 +34,7 @@ export class OwnersController {
     return this.ownersService.create(dto);
   }
 
-  /** GET /owners -- 주인 목록 (@OneToMany 관계 데모) */
+  /** GET /owners -- list owners (@OneToMany relation demo) */
   @Get()
   @ApiOperation({
     summary: "주인 목록 조회",
@@ -46,7 +46,7 @@ export class OwnersController {
     return this.ownersService.findAll();
   }
 
-  /** GET /owners/count -- 주인 수 집계 */
+  /** GET /owners/count -- aggregate owner count */
   @Get("count")
   @ApiOperation({
     summary: "주인 수 집계",
@@ -57,7 +57,7 @@ export class OwnersController {
     return this.ownersService.count();
   }
 
-  /** GET /owners/:id -- 단건 조회 */
+  /** GET /owners/:id -- find one */
   @Get(":id")
   @ApiOperation({
     summary: "주인 단건 조회",
@@ -70,7 +70,7 @@ export class OwnersController {
     return this.ownersService.findOne(id);
   }
 
-  /** DELETE /owners/:id -- 영구 삭제 */
+  /** DELETE /owners/:id -- hard delete */
   @Delete(":id")
   @ApiOperation({
     summary: "주인 영구 삭제",

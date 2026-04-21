@@ -137,7 +137,7 @@ describe("EntityEventEmitter 단위 테스트", () => {
   });
 });
 
-// ─── EntityManager 이벤트 통합 테스트 ────────────────────────
+// ─── EntityManager event integration tests ────────────────────────
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const mockQuery = jest.fn();

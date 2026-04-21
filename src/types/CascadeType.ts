@@ -1,23 +1,23 @@
 /**
- * Cascade 작업 유형을 정의합니다.
+ * Cascade operation types.
  *
- * - "insert": 부모 엔티티 저장 시 자식 엔티티도 함께 저장
- * - "update": 부모 엔티티 수정 시 자식 엔티티도 함께 수정
- * - "delete": 부모 엔티티 삭제 시 자식 엔티티도 함께 삭제
- * - "remove": "delete"의 별칭 (하위 호환)
+ * - "insert": persist child entities when the parent is saved
+ * - "update": update child entities when the parent is updated
+ * - "delete": delete child entities when the parent is deleted
+ * - "remove": alias for "delete" (backward compatibility)
  */
 export type CascadeType = "insert" | "update" | "delete" | "remove";
 
 /**
- * Cascade 옵션: true이면 모든 cascade 적용, 배열이면 선택적 적용
+ * Cascade option: true applies all cascade types, an array applies selected types.
  */
 export type CascadeOption = boolean | CascadeType[];
 
 /**
- * CascadeOption을 정규화하여 CascadeType 배열로 변환합니다.
+ * Normalizes a CascadeOption into a CascadeType array.
  * - true → ["insert", "update", "delete"]
  * - false / undefined → []
- * - 배열 → 그대로 반환 ("remove"는 "delete"로 정규화)
+ * - array → returned as-is ("remove" is normalized to "delete")
  */
 export function normalizeCascade(
   cascade: CascadeOption | undefined,
@@ -28,8 +28,8 @@ export function normalizeCascade(
 }
 
 /**
- * 주어진 cascade 옵션에 특정 작업이 포함되어 있는지 확인합니다.
- * "remove"와 "delete"를 동일하게 취급합니다.
+ * Checks whether the given cascade option includes a specific operation.
+ * Treats "remove" and "delete" as equivalent.
  */
 export function hasCascade(
   cascade: CascadeOption | undefined,

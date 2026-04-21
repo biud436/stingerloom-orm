@@ -7,7 +7,7 @@ import { EntityScanner } from "../../src/scanner";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// ─── Mock 설정 ────────────────────────────────────────────────
+// ─── Mock setup ────────────────────────────────────────────────
 
 jest.mock("../../src/dialects/TransactionSessionManager");
 jest.mock("../../src/DatabaseClient");
@@ -17,7 +17,7 @@ const MockTransactionSessionManager =
     typeof TransactionSessionManager
   >;
 
-// Product 엔티티 클래스
+// Product entity class
 class Product {
   id!: number;
   name!: string;
@@ -25,7 +25,7 @@ class Product {
   quantity!: number;
 }
 
-// 공통 메타데이터 (Product 엔티티)
+// Common metadata (Product entity)
 const productMetadata = {
   name: "Product",
   target: Product,
@@ -43,7 +43,7 @@ const mockEntityScanner = {
   makeEntities: jest.fn(),
 };
 
-// getScannerInstance가 EntityScanner mock을 반환하도록 mock
+// Mock getScannerInstance so it returns the EntityScanner mock
 jest.mock("../../src/scanner/ScannerContainer", () => ({
   getScannerInstance: (cls: any) => {
     if (cls === EntityScanner) return mockEntityScanner as any;
@@ -92,7 +92,7 @@ describe("Aggregate Queries", () => {
     );
 
     em = new EntityManager();
-    // isMySqlFamily()를 true로 만듦
+    // Force isMySqlFamily() to return true
     Object.defineProperty(em, "client", {
       configurable: true,
       get: () => ({

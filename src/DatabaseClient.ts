@@ -30,16 +30,16 @@ export class DatabaseClient {
   }
 
   /**
-   * 기본(default) 연결의 타입을 반환합니다. (하위 호환)
+   * Returns the type of the default connection (kept for backward compatibility).
    */
   public get type(): string | undefined {
     return this.connectionsType.get("default");
   }
 
   /**
-   * 커넥터를 생성하고 데이터베이스에 연결합니다.
-   * @param options 연결 옵션
-   * @param name 연결 이름 (기본값: 'default')
+   * Creates a connector and connects to the database.
+   * @param options connection options
+   * @param name connection name (default: "default")
    */
   public async connect(
     options: DatabaseClientOptions,
@@ -63,8 +63,8 @@ export class DatabaseClient {
   }
 
   /**
-   * DB 타입에 맞는 커넥터 인스턴스를 동적으로 생성합니다.
-   * 사용하지 않는 드라이버는 로드하지 않습니다.
+   * Dynamically creates a connector instance for the given database type.
+   * Drivers that are not used are not loaded.
    */
   private async createConnector(type: string): Promise<IConnector> {
     switch (type) {
@@ -93,8 +93,8 @@ export class DatabaseClient {
   }
 
   /**
-   * 지수 백오프를 사용하여 연결을 재시도합니다.
-   * 실제 지연: backoffMs * 2^(attempt-1)
+   * Retries the connection with exponential backoff.
+   * Actual delay: backoffMs * 2^(attempt-1).
    */
   private async connectWithRetry(
     connector: IConnector,
@@ -128,8 +128,8 @@ export class DatabaseClient {
   }
 
   /**
-   * 지정된 이름의 연결을 반환합니다.
-   * @param name 연결 이름 (기본값: 'default')
+   * Returns the connection with the given name.
+   * @param name connection name (default: "default")
    */
   public getConnection(name = "default"): IConnector {
     const connector = this.connectors.get(name);
@@ -144,8 +144,8 @@ export class DatabaseClient {
   }
 
   /**
-   * 지정된 이름의 연결 옵션을 반환합니다.
-   * @param name 연결 이름 (기본값: 'default')
+   * Returns the connection options for the given name.
+   * @param name connection name (default: "default")
    */
   public getOptions(name = "default"): DatabaseClientOptions {
     const options = this.connectionsOptions.get(name);
@@ -162,30 +162,30 @@ export class DatabaseClient {
   }
 
   /**
-   * 지정된 이름의 연결 타입(DB 종류)을 반환합니다.
-   * @param name 연결 이름 (기본값: 'default')
+   * Returns the database type of the given connection.
+   * @param name connection name (default: "default")
    */
   public getType(name = "default"): string | undefined {
     return this.connectionsType.get(name);
   }
 
   /**
-   * 등록된 모든 연결 이름 목록을 반환합니다.
+   * Returns the list of registered connection names.
    */
   public getRegisteredNames(): string[] {
     return Array.from(this.connectors.keys());
   }
 
   /**
-   * 특정 연결이 등록되어 있는지 확인합니다.
+   * Checks whether a connection with the given name is registered.
    */
   public hasConnection(name = "default"): boolean {
     return this.connectors.has(name);
   }
 
   /**
-   * 연결을 종료합니다.
-   * @param name 연결 이름. 미지정 시 모든 연결을 종료합니다.
+   * Closes connections.
+   * @param name connection name; when omitted, every connection is closed.
    */
   public async close(name?: string): Promise<void> {
     if (name) {

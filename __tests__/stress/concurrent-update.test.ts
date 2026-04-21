@@ -1,11 +1,11 @@
 /**
- * 동시 UPDATE 경쟁 스트레스 테스트
+ * Concurrent UPDATE race stress test
  *
- * SQLite in-memory를 사용하여 동일 레코드에 대한 순차적 UPDATE 경쟁을 검증합니다.
- * SQLite는 단일 writer이므로 데드락은 발생하지 않지만,
- * UPDATE의 원자성과 최종 값의 정확성을 검증합니다.
+ * Uses SQLite in-memory to verify sequential UPDATE races against the same record.
+ * SQLite has a single writer so no deadlocks occur, but this test verifies
+ * UPDATE atomicity and the correctness of the final value.
  *
- * STRESS_TEST=true 환경변수 없이는 스킵됩니다.
+ * Skipped unless STRESS_TEST=true is set.
  *
  * @example
  *   STRESS_TEST=true pnpm test -- --testPathPattern="stress/concurrent-update"
@@ -48,7 +48,7 @@ describeIf("[Stress] 동시 UPDATE 경쟁 테스트", () => {
   });
 
   it("동일 레코드를 여러 번 UPDATE하면 최종 값이 정확해야 한다", async () => {
-    // 초기 레코드
+    // Initial record
     await connector.query(
       `INSERT INTO "${tableName}" ("id", "counter", "version") VALUES (1, 0, 0)`,
     );
@@ -101,7 +101,7 @@ describeIf("[Stress] 동시 UPDATE 경쟁 테스트", () => {
       `INSERT INTO "${tableName}" ("id", "counter", "version") VALUES (3, 100, 0)`,
     );
 
-    // 트랜잭션 내에서 UPDATE 후 ROLLBACK
+    // UPDATE then ROLLBACK inside a transaction
     const db = await connector.getConnection();
     await connector.startTransaction(db);
     await connector.query(
@@ -113,14 +113,14 @@ describeIf("[Stress] 동시 UPDATE 경쟁 테스트", () => {
     const rows = await connector.query(
       `SELECT * FROM "${tableName}" WHERE "id" = 3`,
     );
-    expect(rows[0].counter).toBe(100); // ROLLBACK이므로 원래 값 유지
+    expect(rows[0].counter).toBe(100); // Rolled back, so the original value is preserved
   }, 10000);
 
   it("여러 레코드에 대한 동시 UPDATE가 올바르게 처리되어야 한다", async () => {
     const RECORD_COUNT = 100;
     const UPDATE_PER_RECORD = 10;
 
-    // 레코드 생성
+    // Create records
     const db = await connector.getConnection();
     await connector.startTransaction(db);
     for (let i = 1; i <= RECORD_COUNT; i++) {
@@ -131,7 +131,7 @@ describeIf("[Stress] 동시 UPDATE 경쟁 테스트", () => {
     }
     await connector.commit(db);
 
-    // 각 레코드를 여러 번 UPDATE
+    // UPDATE each record multiple times
     const start = Date.now();
     for (let u = 0; u < UPDATE_PER_RECORD; u++) {
       for (let r = 1; r <= RECORD_COUNT; r++) {
@@ -146,7 +146,7 @@ describeIf("[Stress] 동시 UPDATE 경쟁 테스트", () => {
       `[Stress] ${RECORD_COUNT * UPDATE_PER_RECORD} UPDATE (${RECORD_COUNT} records x ${UPDATE_PER_RECORD}): ${elapsed}ms`,
     );
 
-    // 모든 레코드의 counter가 UPDATE_PER_RECORD와 일치해야 함
+    // Every record's counter should equal UPDATE_PER_RECORD
     const rows = await connector.query(
       `SELECT "counter" FROM "${tableName}" WHERE "id" > 100`,
     );

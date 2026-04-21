@@ -11,8 +11,8 @@ import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 
 /**
- * 집계 함수 (count/sum/avg/min/max) 핸들러.
- * EntityManager에서 위임받아 처리합니다.
+ * Handler for aggregate functions (count/sum/avg/min/max).
+ * Invoked by EntityManager via delegation.
  */
 export class AggregateQueryHandler {
   constructor(

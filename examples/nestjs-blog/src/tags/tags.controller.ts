@@ -46,7 +46,7 @@ export class TagsController {
     return this.tagsService.count();
   }
 
-  /** upsert -- name 기준 태그 생성/업데이트 */
+  /** upsert -- create or update a tag by name */
   @Post("upsert")
   @ApiOperation({
     summary: "Upsert a tag by name",
@@ -64,7 +64,7 @@ export class TagsController {
     return this.tagsService.upsertByName(name);
   }
 
-  /** findAndCount -- 페이지네이션 */
+  /** findAndCount -- pagination */
   @Get("paginated")
   @ApiOperation({
     summary: "Paginated tag list",

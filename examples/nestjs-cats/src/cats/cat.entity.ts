@@ -39,21 +39,21 @@ export class Cat {
   updatedAt!: Date;
 
   /**
-   * @Version — 낙관적 잠금(Optimistic Locking). 동시 수정 시 충돌 감지.
+   * @Version — Optimistic Locking. Detects conflicts during concurrent updates.
    */
   @Version()
   version!: number;
 
   /**
-   * @DeletedAt — Soft Delete 지원. 실제로 행을 삭제하지 않고 타임스탬프 기록.
-   * find/findOne은 자동으로 deleted_at IS NULL 조건이 추가됨.
+   * @DeletedAt — enables Soft Delete. Records a timestamp instead of actually deleting the row.
+   * find/findOne automatically append a deleted_at IS NULL condition.
    */
   @DeletedAt()
   deletedAt!: Date | null;
 
   /**
-   * @ManyToOne — 고양이는 한 명의 주인에게 속합니다.
-   * eager: true → findOne 시 LEFT JOIN으로 owner를 자동 로드.
+   * @ManyToOne — a cat belongs to exactly one owner.
+   * eager: true → findOne auto-loads owner via LEFT JOIN.
    */
   @ManyToOne(() => Owner, (owner) => owner.cats, {
     eager: true,
@@ -62,13 +62,13 @@ export class Cat {
   owner!: Owner;
 
   /**
-   * FK shorthand — cat.ownerId = 1 로 설정하면
-   * ORM이 owner_id 컬럼에 매핑합니다. @Column 없이 동작.
+   * FK shorthand — when you set cat.ownerId = 1,
+   * the ORM maps it to the owner_id column. Works without a separate @Column.
    */
   ownerId?: number;
 
   /**
-   * @BeforeInsert — INSERT 직전에 createdAt, updatedAt을 자동 설정.
+   * @BeforeInsert — sets createdAt and updatedAt automatically right before INSERT.
    */
   @BeforeInsert()
   setTimestamps() {
@@ -78,7 +78,7 @@ export class Cat {
   }
 
   /**
-   * @BeforeUpdate — UPDATE 직전에 updatedAt을 자동 갱신.
+   * @BeforeUpdate — refreshes updatedAt automatically right before UPDATE.
    */
   @BeforeUpdate()
   updateTimestamp() {
@@ -86,7 +86,7 @@ export class Cat {
   }
 
   /**
-   * @AfterInsert — INSERT 완료 후 로그 출력 (훅 데모).
+   * @AfterInsert — logs after INSERT completes (hook demo).
    */
   @AfterInsert()
   logInsert() {

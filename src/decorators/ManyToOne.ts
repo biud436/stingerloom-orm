@@ -17,32 +17,32 @@ export type SetRelatedEntity<T extends EntityLike> = (
 
 export type ManyToOneOption = {
   /**
-   * 데이터베이스에서 컬럼의 값을 가져올 때, 오브젝트에 매핑되는 컬럼의 타입을 변환할 수 있는 함수입니다.
+   * Function that converts the column value when reading from the database into the entity.
    */
   transform?: <T = any>(raw: unknown) => T;
   /**
-   * FK 컬럼 이름입니다.
-   * @deprecated `@RelationColumn({ name: "..." })` 데코레이터를 대신 사용하세요.
+   * FK column name.
+   * @deprecated Use the `@RelationColumn({ name: "..." })` decorator instead.
    */
   joinColumn?: string;
   /**
-   * 참조 대상 엔티티의 컬럼 이름입니다.
-   * 생략 시 대상 엔티티의 Primary Key를 참조합니다.
+   * Column name on the referenced entity.
+   * Defaults to the target entity's primary key when omitted.
    */
   references?: string;
   /**
-   * true일 경우, find/findOne 시 자동으로 LEFT JOIN을 수행하여 관계 엔티티를 함께 로드합니다.
+   * When true, find/findOne automatically performs a LEFT JOIN to eager-load the related entity.
    */
   eager?: boolean;
   /**
-   * Cascade 작업 유형입니다.
-   * true이면 모든 cascade(insert, update, delete) 적용.
-   * 배열이면 선택적 적용. 예: ["insert", "delete"]
+   * Cascade operations.
+   * true applies all cascades (insert, update, delete).
+   * An array applies selected cascades, e.g. ["insert", "delete"].
    */
   cascade?: CascadeOption;
   /**
-   * true일 경우, 관계 엔티티에 처음 접근할 때 별도 쿼리로 로드합니다 (Proxy 기반 지연 로딩).
-   * eager와 동시에 사용할 수 없습니다. eager가 우선됩니다.
+   * When true, the related entity is loaded with a separate query on first access (Proxy-based lazy loading).
+   * Cannot be combined with eager; eager takes precedence if both are set.
    */
   lazy?: boolean;
   /**
@@ -72,18 +72,18 @@ export type ManyToOneMetadata<T> = {
   joinColumn?: string;
 
   /**
-   * 참조 대상 엔티티의 컬럼 이름입니다.
-   * 생략 시 대상 엔티티의 PK를 참조합니다.
+   * Column name on the referenced entity.
+   * Defaults to the target entity's PK when omitted.
    */
   references?: string;
 
   /**
-   * 연관관계의 엔티티를 가져오는 함수입니다
+   * Function that returns the related entity class.
    */
   getMappingEntity: RetrieveEntity<T>;
 
   /**
-   * 매핑할 엔티티를 가져오는 함수입니다
+   * Function that returns the inverse-side property accessor on the related entity.
    */
   getMappingProperty: SetRelatedEntity<EntityLike>;
 
@@ -91,8 +91,8 @@ export type ManyToOneMetadata<T> = {
 };
 
 /**
- * ManyToOne 관계를 설정합니다.
- * 연관관계에서 주인이 되는 엔티티에 설정해야 합니다.
+ * Declares a ManyToOne relation.
+ * Must be placed on the owning side of the relation.
  *
  * @example
  *

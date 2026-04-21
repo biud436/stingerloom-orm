@@ -4,31 +4,31 @@ import type { QueryResult } from "../types/QueryResult";
 
 export interface BaseResultTransformer {
   /**
-   * SQL 결과를 단일 엔티티로 변환합니다.
+   * Convert SQL results into a single entity.
    */
   toEntity<T>(
     entityClass: MyClassConstructor<T>,
     result: QueryResult<any> | undefined,
   ): T | undefined;
   /**
-   * SQL 결과를 엔티티 배열로 변환합니다.
+   * Convert SQL results into an entity array.
    */
   toEntities<T>(
     entityClass: MyClassConstructor<T>,
     result: QueryResult<any> | undefined,
   ): T[];
   /**
-   * SQL 결과를 엔티티 또는 엔티티 배열로 변환합니다.
-   * 결과가 없으면 undefined를 반환하고,
-   * 결과가 하나면 단일 엔티티를,
-   * 결과가 여러 개면 엔티티 배열을 반환합니다.
+   * Convert SQL results into an entity or an entity array.
+   * Returns undefined when there are no results,
+   * a single entity when there is one,
+   * and an array when there are multiple.
    */
   transform<T>(
     entityClass: MyClassConstructor<T>,
     result: QueryResult<any> | undefined,
   ): T | T[] | undefined;
   /**
-   * SQL 결과를 엔티티 또는 엔티티 배열로 변환합니다.
+   * Convert SQL results into an entity or an entity array.
    */
   transformNested<T>(
     entityClass: MyClassConstructor<T>,

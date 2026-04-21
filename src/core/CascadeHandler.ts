@@ -9,8 +9,8 @@ import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundErr
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
 
 /**
- * 캐스케이드 저장/삭제 + 라이프사이클 훅 핸들러.
- * EntityManager에서 위임받아 처리합니다.
+ * Handler for cascade save/delete operations and lifecycle hooks.
+ * Invoked on behalf of EntityManager.
  */
 export class CascadeHandler {
   constructor(
@@ -19,8 +19,8 @@ export class CascadeHandler {
   ) {}
 
   /**
-   * 엔티티 인스턴스에서 지정된 이벤트의 생명주기 훅을 실행합니다.
-   * @HOOK_TOKEN 메타데이터를 읽어 해당 이벤트의 메서드를 호출합니다.
+   * Runs the lifecycle hooks bound to the given event on the entity instance.
+   * Reads @HOOK_TOKEN metadata and invokes the method registered for that event.
    */
   async runHooks<T>(
     entity: ClazzType<T>,
@@ -42,14 +42,14 @@ export class CascadeHandler {
   }
 
   /**
-   * 변경 감지를 위한 프록시 객체를 생성합니다.
+   * Creates a Proxy that tracks mutations for change detection.
    */
   createProxy<T>(entity: T): T {
     return new Proxy(entity as any, {
       set: (target: any, prop: string, value: any) => {
         target[prop] = value;
 
-        // Set 자료구조에 변경된 엔티티를 추가합니다.
+        // Add the mutated entity to the dirty Set.
         this.ctx.markDirty(target);
         return true;
       },
@@ -57,7 +57,7 @@ export class CascadeHandler {
   }
 
   /**
-   * save 시 cascade: "insert" | "update" 가 설정된 OneToMany 관계의 자식 엔티티를 재귀적으로 저장합니다.
+   * On save, recursively persists child entities of OneToMany relations whose cascade includes "insert" | "update".
    */
   async cascadeSaveOneToMany<T>(
     entity: ClazzType<T>,
@@ -74,14 +74,14 @@ export class CascadeHandler {
 
       const RelatedEntity = rel.getRelatedEntity();
 
-      // cascade: "insert" 또는 "update" 가 포함된 경우에만 처리
+      // Only proceed when cascade includes "insert" or "update".
       if (
         !hasCascade(rel.cascade, "insert") &&
         !hasCascade(rel.cascade, "update")
       )
         continue;
 
-      // ManyToOne 측의 joinColumn 찾기
+      // Find the joinColumn on the ManyToOne side.
       const manyToOneItems = this.resolver.resolveManyToOneMetadata(RelatedEntity);
       const matchingRelation = manyToOneItems.find(
         (m) => m.columnName === rel.mappedBy,
@@ -89,7 +89,7 @@ export class CascadeHandler {
       const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
 
       for (const child of children) {
-        // FK를 부모의 PK로 설정
+        // Set the FK to the parent's PK.
         (child as any)[fkColumn] = savedParentId;
         if (session) {
           await this.ctx.saveWithSession(RelatedEntity, child, session);
@@ -101,7 +101,7 @@ export class CascadeHandler {
   }
 
   /**
-   * save 시 cascade: "insert" | "update" 가 설정된 ManyToOne 관계의 부모 엔티티를 먼저 저장합니다.
+   * On save, persists the parent entity of ManyToOne relations whose cascade includes "insert" | "update" first.
    */
   async cascadeSaveManyToOne<T>(
     entity: ClazzType<T>,
@@ -122,7 +122,7 @@ export class CascadeHandler {
       const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
       const saved = await this.ctx.save(RelatedEntity, relatedValue);
 
-      // 저장된 부모의 PK를 FK 컬럼에 설정
+      // Assign the saved parent's PK to the FK column.
       const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
       if (!relatedMetadata) {
         throw new EntityMetadataNotFoundError(RelatedEntity.name);
@@ -137,8 +137,8 @@ export class CascadeHandler {
   }
 
   /**
-   * delete 시 cascade: "delete" (또는 "remove") 가 설정된 OneToMany 관계의 자식 엔티티를 먼저 삭제합니다.
-   * PK만 SELECT + IN 절 배치 DELETE로 메모리 및 쿼리 최적화.
+   * On delete, first removes child entities of OneToMany relations whose cascade includes "delete" (or "remove").
+   * Optimized by selecting only PKs and issuing a batched DELETE via IN to save memory and query round-trips.
    */
   async cascadeDeleteOneToMany<T>(
     entity: ClazzType<T>,
@@ -151,7 +151,7 @@ export class CascadeHandler {
 
       const RelatedEntity = rel.getRelatedEntity();
 
-      // 삭제 대상 부모를 조회하여 PK를 획득
+      // Query the parents being deleted to collect their PKs.
       const parentMetadata = this.resolver.resolveEntityMetadata(entity);
       if (!parentMetadata) continue;
 
@@ -160,7 +160,7 @@ export class CascadeHandler {
       );
       if (!pk) continue;
 
-      // PK만 SELECT하여 메모리 절약
+      // SELECT only the PK to conserve memory.
       const parents = await this.ctx.find(entity, {
         where: criteria,
         select: { [pk.name!]: true },
@@ -170,21 +170,21 @@ export class CascadeHandler {
 
       const parentArray = Array.isArray(parents) ? parents : [parents];
 
-      // 부모 PK를 수집
+      // Collect parent PKs.
       const parentIds = parentArray
         .map((p: any) => p[pk.propertyKey ?? pk.name!])
         .filter((id: any) => id !== undefined && id !== null);
 
       if (parentIds.length === 0) continue;
 
-      // ManyToOne 측의 FK 컬럼 찾기
+      // Find the FK column on the ManyToOne side.
       const manyToOneItems = this.resolver.resolveManyToOneMetadata(RelatedEntity);
       const matchingRelation = manyToOneItems.find(
         (m) => m.columnName === rel.mappedBy,
       );
       const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
 
-      // IN 절로 한 번에 자식 삭제
+      // Delete all children in a single IN clause.
       if (parentIds.length === 1) {
         await this.ctx.delete(RelatedEntity, {
           [fkColumn]: parentIds[0],

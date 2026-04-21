@@ -4,16 +4,17 @@ import { BaseRepository } from "../../src/core/BaseRepository";
 import { EntityManager } from "../../src/core/EntityManager";
 
 /**
- * Delete 연산 단위 테스트
+ * Delete operation unit tests
  *
- * EntityManager.delete()는 내부적으로 TransactionSessionManager를 사용하여
- * 실제 DB 연결이 필요하므로, SQL 생성 로직과 BaseRepository 위임 패턴을 중심으로 테스트합니다.
+ * EntityManager.delete() internally uses TransactionSessionManager and requires
+ * a real DB connection, so this file focuses on the SQL generation logic and
+ * the BaseRepository delegation pattern.
  */
 describe("Delete Operation", () => {
   describe("DELETE SQL 생성 로직", () => {
     /**
-     * EntityManager.delete()가 내부적으로 생성하는 SQL과 동일한 패턴을
-     * 직접 조합하여 올바른 SQL이 생성되는지 검증합니다.
+     * Verifies that we produce the same SQL pattern as EntityManager.delete()
+     * generates internally, by composing it directly here.
      */
     function buildDeleteSql(
       tableName: string,

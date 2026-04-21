@@ -17,7 +17,7 @@ import {
 } from "../../src/core/CursorPagination";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mock 설정 (EntityManager 테스트 공용)
+// Mock setup (shared by EntityManager tests)
 // ─────────────────────────────────────────────────────────────────────────────
 
 jest.mock("../../src/DatabaseClient", () => {

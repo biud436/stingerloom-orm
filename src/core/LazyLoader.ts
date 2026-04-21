@@ -1,13 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
- * Proxy 기반 지연 로딩 유틸리티.
+ * Proxy-based lazy loading utility.
  *
- * ManyToOne 관계에서 `lazy: true` 옵션이 설정된 필드에 대해,
- * 실제 프로퍼티에 접근할 때까지 DB 쿼리를 지연시킵니다.
+ * For ManyToOne fields configured with `lazy: true`, defers the DB query
+ * until the actual property is accessed.
  *
- * 내부적으로 ES Proxy를 사용하여 프로퍼티 접근을 가로채고,
- * 첫 번째 접근 시 `loadFn`을 호출하여 관계 엔티티를 로드합니다.
+ * Uses an ES Proxy internally to intercept property access and calls
+ * `loadFn` on the first access to load the related entity.
  */
 
 export type LazyLoadFn<T> = () => Promise<T | undefined>;
@@ -15,10 +15,10 @@ export type LazyLoadFn<T> = () => Promise<T | undefined>;
 const LAZY_MARKER = Symbol.for("STG_LAZY_PROXY");
 
 /**
- * 지연 로딩 Proxy를 생성합니다.
+ * Creates a lazy-loading proxy.
  *
- * @param loadFn 관계 엔티티를 로드하는 비동기 함수
- * @returns 프로퍼티 접근 시 자동으로 로드되는 Proxy 객체
+ * @param loadFn async function that loads the related entity
+ * @returns proxy object that loads the entity on property access
  */
 export function createLazyProxy<T extends object>(loadFn: LazyLoadFn<T>): T {
   let loaded = false;
@@ -27,23 +27,23 @@ export function createLazyProxy<T extends object>(loadFn: LazyLoadFn<T>): T {
 
   const handler: ProxyHandler<object> = {
     get(_target, prop, receiver) {
-      // 마커 심볼로 lazy proxy 여부 확인
+      // Identify the lazy proxy by its marker symbol
       if (prop === LAZY_MARKER) {
         return true;
       }
 
-      // then/catch 접근은 트랩하지 않음 (await 시 thenable로 인식되는 것을 방지)
+      // Do not trap then/catch access so the proxy is not treated as thenable under await
       if (prop === "then" || prop === "catch" || prop === "finally") {
         return undefined;
       }
 
-      // 이미 로드되었으면 캐시된 값에서 반환
+      // If already loaded, return from the cached value
       if (loaded) {
         if (cachedValue == null) return undefined;
         return Reflect.get(cachedValue as object, prop, receiver);
       }
 
-      // 로드 중이면 기존 프로미스 반환을 위한 프로미스 체인
+      // If loading is in flight, chain the existing promise
       if (!loadPromise) {
         loadPromise = loadFn().then((result) => {
           loaded = true;
@@ -53,8 +53,8 @@ export function createLazyProxy<T extends object>(loadFn: LazyLoadFn<T>): T {
         });
       }
 
-      // 동기적 접근 시에는 undefined 반환 (비동기 로드가 완료되기 전)
-      // 비동기적으로 사용하려면 load() 호출 후 접근해야 함
+      // Synchronous access returns undefined before the async load completes.
+      // For async usage, call load() and then access the property.
       return undefined;
     },
 
@@ -73,11 +73,11 @@ export function createLazyProxy<T extends object>(loadFn: LazyLoadFn<T>): T {
 }
 
 /**
- * 지연 로딩 Proxy를 로드하고 실제 엔티티를 반환합니다.
+ * Load a lazy proxy and return the resolved entity.
  *
- * @param proxy createLazyProxy로 생성된 Proxy 객체
- * @param loadFn 관계 엔티티를 로드하는 비동기 함수
- * @returns 로드된 관계 엔티티
+ * @param proxy proxy object created by createLazyProxy
+ * @param loadFn async function that loads the related entity
+ * @returns the loaded related entity
  */
 export async function loadLazy<T extends object>(
   loadFn: LazyLoadFn<T>,
@@ -86,7 +86,7 @@ export async function loadLazy<T extends object>(
 }
 
 /**
- * 주어진 객체가 LazyLoader Proxy인지 확인합니다.
+ * Returns true when the given object is a LazyLoader proxy.
  */
 export function isLazyProxy(obj: unknown): boolean {
   if (obj === null || obj === undefined) return false;
@@ -99,11 +99,11 @@ export function isLazyProxy(obj: unknown): boolean {
 }
 
 /**
- * 엔티티의 특정 프로퍼티에 lazy proxy를 주입합니다.
+ * Inject a lazy proxy onto a specific property of an entity.
  *
- * @param entity 대상 엔티티 인스턴스
- * @param propertyName lazy proxy를 설정할 프로퍼티명
- * @param loadFn 관계 엔티티를 로드하는 비동기 함수
+ * @param entity target entity instance
+ * @param propertyName property name to receive the lazy proxy
+ * @param loadFn async function that loads the related entity
  */
 export function injectLazyProxy<T extends object, R extends object>(
   entity: T,
@@ -120,11 +120,11 @@ export function injectLazyProxy<T extends object, R extends object>(
       if (loaded) {
         return cachedValue;
       }
-      // 비동기로 로드 후 캐시
+      // Load asynchronously and cache
       const promise = loadFn().then((result) => {
         loaded = true;
         cachedValue = result;
-        // getter를 실제 값으로 교체
+        // Replace the getter with the resolved value
         Object.defineProperty(entity, propertyName, {
           configurable: true,
           enumerable: true,
@@ -138,7 +138,7 @@ export function injectLazyProxy<T extends object, R extends object>(
     set(value: R) {
       loaded = true;
       cachedValue = value;
-      // setter 호출 시 일반 프로퍼티로 전환
+      // Switch to a plain property once the setter is invoked
       Object.defineProperty(entity, propertyName, {
         configurable: true,
         enumerable: true,

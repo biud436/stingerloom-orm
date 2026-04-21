@@ -8,12 +8,12 @@ import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 /**
  * Connection reuse tests (GitHub Issue #30).
  *
- * 하나의 공개 메서드 호출 내에서 TransactionSessionManager가 1개만 생성되는지 검증합니다.
+ * Verifies that exactly one TransactionSessionManager is created per public method call.
  * - find() + relation loading → 1 session
  * - saveMany() → 1 session
  * - save() (INSERT) + findOneInternal re-read → same session
  * - findAndCount() → 1 session
- * - 에러 시 rollback 동작 검증
+ * - Rollback behavior verified on error
  */
 
 // Mock DatabaseClient
@@ -28,7 +28,7 @@ jest.mock("../../src/DatabaseClient", () => ({
   },
 }));
 
-// Mock TransactionSessionManager — 인스턴스 생성 횟수를 추적합니다.
+// Mock TransactionSessionManager — tracks the number of instances created.
 const mockQuery = jest.fn();
 const mockConnect = jest.fn().mockResolvedValue(undefined);
 const mockStartTransaction = jest.fn().mockResolvedValue(undefined);
@@ -54,7 +54,7 @@ jest.mock("../../src/dialects/TransactionSessionManager", () => {
   };
 });
 
-// 테스트용 엔티티 및 메타데이터
+// Test entities and metadata
 class User {
   id!: number;
   name!: string;
@@ -126,7 +126,7 @@ describe("Connection Reuse (Issue #30)", () => {
   beforeEach(() => {
     MetadataLayerRegistry.reset();
     resetScannerContainer();
-    // mockQuery의 once-queue를 확실히 비우기 위해 mockReset 사용
+    // Use mockReset to ensure mockQuery's once-queue is fully cleared
     mockQuery.mockReset();
     mockConnect.mockReset().mockResolvedValue(undefined);
     mockStartTransaction.mockReset().mockResolvedValue(undefined);
@@ -139,7 +139,7 @@ describe("Connection Reuse (Issue #30)", () => {
 
   describe("find() with relation loading", () => {
     it("should use exactly 1 TransactionSessionManager when loading relations (no transaction)", async () => {
-      // OneToMany 관계 메타데이터 설정
+      // Set up OneToMany relation metadata
       jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([
         {
           propertyName: "posts",
@@ -163,7 +163,7 @@ describe("Connection Reuse (Issue #30)", () => {
 
       await em.find(User, { relations: ["posts"] });
 
-      // 커넥션이 1개만 생성되어야 합니다
+      // Only one connection should be created
       expect(sessionInstanceCount).toBe(1);
       expect(mockConnect).toHaveBeenCalledTimes(1);
       // Read-only: no transaction
@@ -175,9 +175,9 @@ describe("Connection Reuse (Issue #30)", () => {
 
   describe("saveMany()", () => {
     it("should use exactly 1 TransactionSessionManager for multiple saves", async () => {
-      // #214 배치 경로: 단일 multi-row INSERT + 단일 SELECT WHERE pk IN (...)
+      // #214 batch path: single multi-row INSERT + single SELECT WHERE pk IN (...)
       mockQuery
-        // batch INSERT (insertId = 첫 번째 행의 auto_increment)
+        // batch INSERT (insertId = first row's auto_increment)
         .mockResolvedValueOnce({
           results: { insertId: 1, affectedRows: 3 },
           fields: [],
@@ -198,14 +198,14 @@ describe("Connection Reuse (Issue #30)", () => {
         { name: "Charlie", email: "c@test.com" },
       ]);
 
-      // 1개의 세션만 생성되어야 합니다
+      // Only one session should be created
       expect(sessionInstanceCount).toBe(1);
       expect(mockConnect).toHaveBeenCalledTimes(1);
       expect(mockStartTransaction).toHaveBeenCalledTimes(1);
       expect(mockCommit).toHaveBeenCalledTimes(1);
       expect(mockClose).toHaveBeenCalledTimes(1);
 
-      // 배치: INSERT 1회 + SELECT 1회 = 2 쿼리
+      // Batch: 1 INSERT + 1 SELECT = 2 queries
       expect(mockQuery).toHaveBeenCalledTimes(2);
       expect(result).toHaveLength(3);
     });
@@ -228,14 +228,14 @@ describe("Connection Reuse (Issue #30)", () => {
         email: "alice@test.com",
       });
 
-      // save()는 1개의 세션으로 INSERT + 재조회를 모두 수행해야 합니다
+      // save() should perform INSERT + re-read in a single session
       expect(sessionInstanceCount).toBe(1);
       expect(mockConnect).toHaveBeenCalledTimes(1);
       expect(mockStartTransaction).toHaveBeenCalledTimes(1);
       expect(mockCommit).toHaveBeenCalledTimes(1);
       expect(mockClose).toHaveBeenCalledTimes(1);
 
-      // INSERT + SELECT 쿼리가 모두 실행되어야 합니다
+      // Both INSERT and SELECT queries must be executed
       // INSERT(1) + SELECT(1) = 2
       expect(mockQuery).toHaveBeenCalledTimes(2);
     });
@@ -258,7 +258,7 @@ describe("Connection Reuse (Issue #30)", () => {
 
       const [entities, count] = await em.findAndCount(User);
 
-      // 1개의 세션으로 find + count를 모두 실행하되, 트랜잭션 없이
+      // Run both find + count in one session, without a transaction
       expect(sessionInstanceCount).toBe(1);
       expect(mockConnect).toHaveBeenCalledTimes(1);
       expect(mockStartTransaction).not.toHaveBeenCalled();
@@ -286,15 +286,15 @@ describe("Connection Reuse (Issue #30)", () => {
     });
 
     it("should rollback on saveMany error without leaking connections", async () => {
-      // #214 배치 경로: INSERT 실패 시 트랜잭션 롤백
+      // #214 batch path: rollback the transaction when INSERT fails
       mockQuery
-        .mockRejectedValueOnce(new Error("Constraint violation")); // batch INSERT 실패
+        .mockRejectedValueOnce(new Error("Constraint violation")); // batch INSERT fails
 
       await expect(
         em.saveMany(User, [{ name: "Ok" }, { name: "Fail" }]),
       ).rejects.toThrow("Constraint violation");
 
-      // 1개의 세션만 생성, rollback + close 호출됨
+      // One session only; rollback + close should be called
       expect(sessionInstanceCount).toBe(1);
       expect(mockRollback).toHaveBeenCalledTimes(1);
       expect(mockClose).toHaveBeenCalledTimes(1);
@@ -316,12 +316,12 @@ describe("Connection Reuse (Issue #30)", () => {
         close: jest.fn(),
       };
 
-      // findInternal을 직접 호출하여 existingSession 전달 테스트
+      // Call findInternal directly to test passing existingSession
       const result = await (em as any).findInternal(User, {}, existingSession);
 
-      // 새 세션이 생성되지 않아야 합니다
+      // No new session should be created
       expect(sessionInstanceCount).toBe(0);
-      // 기존 세션의 commit/rollback/close가 호출되지 않아야 합니다
+      // The existing session's commit/rollback/close must not be called
       expect(existingSession.commit).not.toHaveBeenCalled();
       expect(existingSession.rollback).not.toHaveBeenCalled();
       expect(existingSession.close).not.toHaveBeenCalled();
@@ -381,7 +381,7 @@ describe("Connection Reuse (Issue #30)", () => {
 
   describe("@Transactional integration", () => {
     it("should reuse session from transactionStorage when @Transactional is active", async () => {
-      // @Transactional이 AsyncLocalStorage에 저장하는 세션을 시뮬레이션
+      // Simulate the session that @Transactional stores in AsyncLocalStorage
       const { transactionStorage } = require("../../src/decorators/Transactional");
       const externalSession = {
         query: jest.fn().mockResolvedValue({
@@ -396,16 +396,16 @@ describe("Connection Reuse (Issue #30)", () => {
         close: jest.fn(),
       };
 
-      // transactionStorage.run()으로 세션을 AsyncLocalStorage에 저장한 상태에서 find() 호출
+      // Call find() while the session is stored in AsyncLocalStorage via transactionStorage.run()
       await transactionStorage.run(externalSession, async () => {
         await em.find(User, {});
       });
 
-      // 새 TransactionSessionManager가 생성되지 않아야 합니다
+      // No new TransactionSessionManager should be created
       expect(sessionInstanceCount).toBe(0);
-      // @Transactional의 세션으로 쿼리가 실행되어야 합니다
+      // Queries must be executed via the @Transactional session
       expect(externalSession.query).toHaveBeenCalled();
-      // 세션의 라이프사이클은 @Transactional이 관리하므로 commit/close 호출 안 됨
+      // The session lifecycle is owned by @Transactional, so commit/close must not be called
       expect(externalSession.commit).not.toHaveBeenCalled();
       expect(externalSession.close).not.toHaveBeenCalled();
     });
@@ -414,22 +414,22 @@ describe("Connection Reuse (Issue #30)", () => {
       const { transactionStorage } = require("../../src/decorators/Transactional");
       const externalSession = {
         query: jest.fn()
-          // 첫 번째 save: INSERT
+          // First save: INSERT
           .mockResolvedValueOnce({
             results: { insertId: 1, affectedRows: 1 },
             fields: [],
           })
-          // 첫 번째 save: findOneInternal re-read
+          // First save: findOneInternal re-read
           .mockResolvedValueOnce({
             results: [{ id: 1, name: "Alice", email: "a@test.com" }],
             fields: [],
           })
-          // 두 번째 save: INSERT
+          // Second save: INSERT
           .mockResolvedValueOnce({
             results: { insertId: 2, affectedRows: 1 },
             fields: [],
           })
-          // 두 번째 save: findOneInternal re-read
+          // Second save: findOneInternal re-read
           .mockResolvedValueOnce({
             results: [{ id: 2, name: "Bob", email: "b@test.com" }],
             fields: [],
@@ -447,7 +447,7 @@ describe("Connection Reuse (Issue #30)", () => {
         await em.save(User, { name: "Bob", email: "b@test.com" });
       });
 
-      // 새 세션이 생성되지 않고 @Transactional 세션을 재사용
+      // No new session is created; the @Transactional session is reused
       expect(sessionInstanceCount).toBe(0);
       expect(externalSession.query).toHaveBeenCalledTimes(4); // INSERT + SELECT × 2
       expect(externalSession.commit).not.toHaveBeenCalled();
@@ -455,7 +455,7 @@ describe("Connection Reuse (Issue #30)", () => {
     });
 
     it("should create new session when no @Transactional and no existingSession (read-only, no tx)", async () => {
-      // transactionStorage에 아무것도 없는 상태
+      // No session in transactionStorage
       mockQuery
         .mockResolvedValueOnce({
           results: [{ id: 1, name: "Alice" }],
@@ -464,7 +464,7 @@ describe("Connection Reuse (Issue #30)", () => {
 
       await em.find(User, {});
 
-      // @Transactional이 없으므로 새 세션이 생성되어야 합니다 (read-only: no tx)
+      // Without @Transactional, a new session is created (read-only: no tx)
       expect(sessionInstanceCount).toBe(1);
       expect(mockConnect).toHaveBeenCalledTimes(1);
       expect(mockStartTransaction).not.toHaveBeenCalled();

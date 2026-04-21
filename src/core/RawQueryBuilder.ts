@@ -18,12 +18,12 @@ export type SubqueryType = "SELECT" | "FROM" | "WHERE" | "HAVING";
 /**
  * @class RawQueryBuilder
  *
- * RawQueryBuilder에는 별칭 지정 기능과 Type Safe하게 자동 완성을 지원하는 기능이 없습니다.
- * 따라서 직접적으로 사용하기보단 타입이 지원되는 래퍼 클래스를 통해 사용하는 것이 좋습니다.
+ * RawQueryBuilder does not provide alias support or type-safe autocomplete.
+ * Prefer using a typed wrapper class rather than RawQueryBuilder directly.
  */
 export class RawQueryBuilder implements BaseRawQueryBuilder {
   protected sqlQuerySegments: Sql[] = [];
-  protected dbType: DatabaseType = "mysql"; // 기본값
+  protected dbType: DatabaseType = "mysql"; // default
   protected isSubquery: boolean = false;
   protected hasWhereClause: boolean = false;
   protected cteClauses: Array<{ name: string; sql: Sql; recursive: boolean }> = [];
@@ -121,7 +121,7 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
       if (typeof table === "string") {
         this.sqlQuerySegments.push(sql`FROM ${raw(table)} AS ${raw(alias)}`);
       } else {
-        // 서브쿼리의 경우 이미 AS가 포함되어 있으므로 별칭만 추가
+        // Subqueries already include the AS clause; only the alias is appended
         this.sqlQuerySegments.push(sql`FROM ${table} ${raw(alias)}`);
       }
     } else {
@@ -323,7 +323,7 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
         );
       }
     } else {
-      // 서브쿼리의 경우, AS가 이미 포함되어 있는지 확인
+      // Check whether a subquery already includes the AS clause
       const tableStr = table.sql;
       if (tableStr.includes(` AS ${alias}`)) {
         this.sqlQuerySegments.push(

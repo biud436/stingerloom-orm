@@ -4,10 +4,10 @@ import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 export type QueryBuilderFactoryFn = () => BaseRawQueryBuilder;
 
 /**
- * RawQueryBuilder 인스턴스를 생성하는 팩토리 클래스입니다.
+ * Factory class for creating RawQueryBuilder instances.
  *
- * setStrategy()로 커스텀 QueryBuilder 전략을 등록하면
- * create()/subquery()가 해당 전략을 사용합니다.
+ * When a custom QueryBuilder strategy is registered via setStrategy(),
+ * create()/subquery() will use that strategy.
  */
 export class RawQueryBuilderFactory {
   private static factory: QueryBuilderFactoryFn = () => RawQueryBuilder.create();

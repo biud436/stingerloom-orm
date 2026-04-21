@@ -166,8 +166,8 @@ function isDeadlockError(e: unknown): boolean {
 }
 
 /**
- * Date를 MySQL/MariaDB 호환 'YYYY-MM-DD HH:MM:SS' 형식으로 변환합니다.
- * ISO 8601 형식은 MariaDB strict mode에서 거부될 수 있습니다.
+ * Converts a Date to the MySQL/MariaDB-compatible 'YYYY-MM-DD HH:MM:SS' format.
+ * ISO 8601 formatting can be rejected by MariaDB strict mode.
  */
 function formatDateTimeForSQL(date: Date): string {
   const pad = (n: number) => n.toString().padStart(2, "0");
@@ -190,14 +190,14 @@ export class EntityManager implements BaseEntityManager {
   private tenantStrategy: TenantQueryStrategy = new SearchPathStrategy();
 
   /**
-   * 이 EntityManager가 사용할 연결 이름.
-   * 멀티 데이터베이스 환경에서 각 EntityManager 인스턴스는 서로 다른 connectionName을 가질 수 있습니다.
-   * 기본값은 'default'.
+   * The connection name this EntityManager uses.
+   * In a multi-database setup each EntityManager instance may have a different connectionName.
+   * Defaults to 'default'.
    */
   private connectionName = "default";
 
   /**
-   * 연결된 DB 타입. connect() 시 캐싱됩니다. (isMySqlFamily/isPostgres 내부 분기용)
+   * The connected DB type, cached at connect() time (used for isMySqlFamily/isPostgres branching).
    */
   private dbType: IDatabaseType | undefined;
 
@@ -215,13 +215,13 @@ export class EntityManager implements BaseEntityManager {
   private readonly _plugins = new Map<string, InstalledPlugin>();
   private _pluginContext: PluginContext | null = null;
 
-  // ── 추출된 핸들러 ──────────────────────────────────────────
+  // ── Extracted handlers ──────────────────────────────────────────
 
   private readonly resolver = new RelationMetadataResolver();
   private readonly inheritanceResolver = new InheritanceResolver();
   private readonly replication = new ReplicationManager();
 
-  /** @internal 추출된 클래스에게 EntityManager 내부 기능을 노출하는 어댑터 */
+  /** @internal Adapter that exposes EntityManager internals to the extracted handler classes. */
   private readonly _ctx: EntityManagerInternals = {
     wrap: (col) => this.wrap(col),
     wrapTable: (tableName) => this.wrapTable(tableName),
@@ -271,7 +271,7 @@ export class EntityManager implements BaseEntityManager {
   private readonly explainHandler = new ExplainQueryHandler(this.resolver, this._ctx);
   private readonly aggregateHandler = new AggregateQueryHandler(this.resolver, this._ctx);
 
-  // ── 라이프사이클 ──────────────────────────────────────────
+  // ── Lifecycle ──────────────────────────────────────────
 
   public async register(
     databaseClientOptions: DatabaseClientOptions,
@@ -354,7 +354,7 @@ export class EntityManager implements BaseEntityManager {
   }
 
   get connection() {
-    // getConnection(name) 지원 여부에 따라 분기 (하위 호환)
+    // Branch on whether getConnection(name) is supported (backward compat)
     const c = this.client as any;
     if (typeof c.getConnection === "function") {
       return c.getConnection(this.connectionName);
@@ -363,7 +363,7 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
-   * 이 EntityManager가 사용하는 연결 이름을 반환합니다.
+   * Returns the connection name this EntityManager uses.
    */
   getConnectionName(): string {
     return this.connectionName;
@@ -386,7 +386,7 @@ export class EntityManager implements BaseEntityManager {
     );
     const { schema, queryTimeout, replication } = databaseClientOptions;
 
-    // getType()이 있으면 사용, 없으면 (레거시 mock) client.type 사용
+    // Use getType() if available, otherwise (legacy mock) fall back to client.type
     const dbType = (
       typeof client.getType === "function"
         ? client.getType(connectionName)
@@ -442,29 +442,29 @@ export class EntityManager implements BaseEntityManager {
       }
     }
 
-    // QueryTracker 초기화 (logging 옵션 기반)
+    // Initialize QueryTracker (based on the logging options)
     this.initQueryTracker(databaseClientOptions);
 
-    // connection-level 쿼리 타임아웃 설정
+    // Configure connection-level query timeout
     const isTimeoutSupported = queryTimeout && queryTimeout > 0;
 
     if (isTimeoutSupported) {
       this.defaultQueryTimeout = queryTimeout;
     }
 
-    // TenantQueryStrategy 초기화
+    // Initialize TenantQueryStrategy
     if (databaseClientOptions.tenantStrategy === "schema_qualified") {
       this.tenantStrategy = new SchemaQualifiedStrategy();
     }
 
-    // ReplicationRouter 초기화
+    // Initialize ReplicationRouter
     if (replication) {
       this.replication.initialize(replication);
     }
   }
 
   /**
-   * 리소스를 정리하고 종료합니다.
+   * Cleans up resources and shuts down.
    */
   public async propagateShutdown(options?: {
     gracefulTimeoutMs?: number;
@@ -475,7 +475,7 @@ export class EntityManager implements BaseEntityManager {
 
     let allQueriesCompleted = true;
 
-    // 1. 진행 중 쿼리 대기
+    // 1. Wait for in-flight queries
     if (gracefulTimeoutMs > 0 && this.queryTracker) {
       const activeCount = this.queryTracker.activeQueryCount;
       if (activeCount > 0) {
@@ -507,20 +507,20 @@ export class EntityManager implements BaseEntityManager {
     this._plugins.clear();
     this._pluginContext = null;
 
-    // 3. 이벤트 리스너 / 구독자 / dirty 엔티티 정리
+    // 3. Clear event listeners / subscribers / dirty entities
     this.removeAllListeners();
     this.subscribers.length = 0;
     this.dirtyEntities.clear();
     this.cursorPkWarned.clear();
 
-    // 4. QueryTracker 정리
+    // 4. Clean up QueryTracker
     this.queryTracker?.reset();
     this.queryTracker = null;
 
-    // 5. ReplicationRouter 정리
+    // 5. Clean up ReplicationRouter
     this.replication.shutdown();
 
-    // 6. 커넥션 풀 종료 (요청 시)
+    // 6. Close the connection pool (when requested)
     if (closeConnections) {
       try {
         await this.client.close(this.connectionName);
@@ -557,7 +557,7 @@ export class EntityManager implements BaseEntityManager {
         this.queryLoggingEnabled = true;
       }
 
-      // enableQueryTracking이 명시적으로 false이면 비활성화
+      // Disable when enableQueryTracking is explicitly set to false
       if (loggingOpts.enableQueryTracking === false) {
         this.queryTracker = null;
         return;
@@ -639,7 +639,7 @@ export class EntityManager implements BaseEntityManager {
     }
   }
 
-  // ── Replication 위임 ──────────────────────────────────────
+  // ── Replication delegation ──────────────────────────────────────
 
   getReadNode(useMaster?: boolean): ReplicationNodeConfig | null {
     return this.replication.getReadNode(useMaster);
@@ -657,7 +657,7 @@ export class EntityManager implements BaseEntityManager {
     return this.replication.getRouter();
   }
 
-  // ── 이벤트 / 구독 ────────────────────────────────────────
+  // ── Events / Subscribers ────────────────────────────────────────
 
   on(event: EntityEventType, listener: EntityEventListener): void {
     this.eventEmitter.on(event, listener);
@@ -870,7 +870,7 @@ export class EntityManager implements BaseEntityManager {
     }
   }
 
-  // ── CRUD: 읽기 ────────────────────────────────────────────
+  // ── CRUD: Read ────────────────────────────────────────────
 
   async findOne<T>(
     entity: ClazzType<T>,
@@ -980,7 +980,7 @@ export class EntityManager implements BaseEntityManager {
         throw new EntityMetadataNotFoundError(entity.name);
       }
 
-      // ── 상속 전략 조기 감지 ──
+      // ── Detect the inheritance strategy early ──
       const inheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
       const isTPTChild = inheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity);
       const isTPTPolymorphic = inheritanceStrategy === "JOINED" && this.inheritanceResolver.isPolymorphicQuery(entity);
@@ -993,7 +993,7 @@ export class EntityManager implements BaseEntityManager {
       const orderByMap: Array<{ column: string; direction: "ASC" | "DESC" }> =
         [];
 
-      // Eager 로드할 ManyToOne 관계를 수집
+      // Collect ManyToOne relations to eager-load
       const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
       const eagerRelations = manyToOneRelations.filter((rel) => {
         const isEager = rel.option?.eager === true;
@@ -1003,7 +1003,7 @@ export class EntityManager implements BaseEntityManager {
         return isEager || isInRelations;
       });
 
-      // Eager 로드할 OneToOne 관계를 수집 (소유측: joinColumn이 있는 쪽)
+      // Collect OneToOne relations to eager-load (owning side — the side with joinColumn)
       const oneToOneRelations = this.resolver.resolveOneToOneMetadata(entity);
       const eagerOneToOneRelations = oneToOneRelations.filter((rel) => {
         if (!rel.joinColumn) return false;
@@ -1023,7 +1023,7 @@ export class EntityManager implements BaseEntityManager {
       // Build property-to-column map once and reuse throughout findInternal
     const propToCol = this.buildPropertyToColumnMap(metadata);
 
-    // TPT 자식: 자식 테이블 컬럼(PK + own)과 부모 컬럼을 분리하여 SELECT 구성
+    // TPT child: build SELECT by separating child-table columns (PK + own) from parent columns
       if (isTPTChild) {
         const root = this.inheritanceResolver.getRoot(entity)!;
         const rootMeta = this.resolver.resolveEntityMetadata(root);
@@ -1038,7 +1038,7 @@ export class EntityManager implements BaseEntityManager {
               .map((c: any) => c.name),
           );
 
-          // 자식 테이블에 실제 존재하는 컬럼: PK + own (부모 전용 컬럼 제외)
+          // Columns that physically exist on the child table: PK + own (excluding parent-only columns)
           for (const col of metadata.columns) {
             const isPk = pkColNames.has(col.name!);
             const isRootOnly = rootColNames.has(col.name!) && !isPk;
@@ -1049,7 +1049,7 @@ export class EntityManager implements BaseEntityManager {
             }
           }
 
-          // 부모 테이블의 비-PK 컬럼
+          // Non-PK columns from the parent table
           for (const col of rootMeta.columns) {
             if (pkColNames.has(col.name)) continue;
             selectMap.push(
@@ -1083,7 +1083,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // TPT 다형성: 모든 자식 테이블의 고유 컬럼을 SELECT에 추가 (접두사 alias)
+      // TPT polymorphic: add each child table's unique columns to SELECT (with a prefix alias)
       if (isTPTPolymorphic) {
         const pk = metadata.columns.find((c: any) => c.options?.primary);
         const children = this.inheritanceResolver
@@ -1102,7 +1102,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // ManyToOne Eager 관계 컬럼을 SELECT에 추가
+      // Add eager ManyToOne relation columns to SELECT
       for (const rel of eagerRelations) {
         const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
         const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
@@ -1117,7 +1117,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // OneToOne Eager 관계 컬럼을 SELECT에 추가
+      // Add eager OneToOne relation columns to SELECT
       for (const rel of eagerOneToOneRelations) {
         const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
         const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
@@ -1132,7 +1132,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // TPT 자식: 컬럼이 부모에 속하면 부모 테이블, 자식이면 자식 테이블로 qualify
+      // TPT child: qualify a column with the parent table if it belongs to the parent, else with the child table
       let tptQualifyColumn: ((dbCol: string) => string) | undefined;
       if (isTPTChild) {
         const tptRoot = this.inheritanceResolver.getRoot(entity)!;
@@ -1170,7 +1170,7 @@ export class EntityManager implements BaseEntityManager {
         }),
       );
 
-      // STI: 자식 엔티티 쿼리 시 discriminator WHERE 조건 추가
+      // STI: when querying a child entity, add a discriminator WHERE condition
       if (inheritanceStrategy === "SINGLE_TABLE" && this.inheritanceResolver.isChildEntity(entity)) {
         const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
         const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
@@ -1182,7 +1182,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // @DeletedAt 컬럼이 있으면 자동으로 WHERE deleted_at IS NULL 조건 추가
+      // If an @DeletedAt column exists, automatically add a WHERE deleted_at IS NULL condition
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
       if (deletedAtColumn && !(findOption as any).withDeleted) {
         if (hasEagerJoins) {
@@ -1204,7 +1204,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // TPC 다형성: UNION ALL 서브쿼리로 FROM 구성
+      // TPC polymorphic: build the FROM clause from a UNION ALL subquery
       if (isTPCPolymorphic) {
         const allEntities = this.inheritanceResolver.getConcreteEntities(entity);
         const allHierarchyCols = this.inheritanceResolver
@@ -1243,7 +1243,7 @@ export class EntityManager implements BaseEntityManager {
         qb.select(selectMap).from(this.wrapTable(tableName));
       }
 
-      // TPT 자식: INNER JOIN 부모 테이블
+      // TPT child: INNER JOIN the parent table
       if (isTPTChild) {
         const root = this.inheritanceResolver.getRoot(entity)!;
         const rootMeta = this.resolver.resolveEntityMetadata(root);
@@ -1261,7 +1261,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // TPT 다형성: LEFT JOIN 모든 자식 테이블
+      // TPT polymorphic: LEFT JOIN every child table
       if (isTPTPolymorphic) {
         const pk = metadata.columns.find((c: any) => c.options?.primary);
         const children = this.inheritanceResolver
@@ -1294,7 +1294,7 @@ export class EntityManager implements BaseEntityManager {
         );
         if (!relatedPk) continue;
 
-        // TPT 자식: FK 컬럼이 부모 테이블에 있으면 부모 테이블로 qualify
+        // TPT child: if the FK column lives on the parent table, qualify it with the parent table
         let fkTableName = tableName;
         if (isTPTChild) {
           const root = this.inheritanceResolver.getRoot(entity)!;
@@ -1388,7 +1388,7 @@ export class EntityManager implements BaseEntityManager {
 
       const resultQuery = qb.build();
 
-      // per-query 또는 connection-level 타임아웃 적용
+      // Apply per-query or connection-level timeout
       const effectiveTimeout = findOption.timeout ?? this.defaultQueryTimeout;
       if (effectiveTimeout && effectiveTimeout > 0 && this.driver) {
         const timeoutSql = this.driver.setQueryTimeout(effectiveTimeout);
@@ -1411,7 +1411,7 @@ export class EntityManager implements BaseEntityManager {
         return undefined;
       }
 
-      // SQLite: INTEGER 0/1 → boolean 역변환
+      // SQLite: convert INTEGER 0/1 back to boolean
       if (this.isSqlite() && results.length > 0) {
         const boolColumns = metadata.columns
           .filter((c: any) => c.options?.type === "boolean")
@@ -1430,7 +1430,7 @@ export class EntityManager implements BaseEntityManager {
       const isEntityArray = results.length > 1;
       let entityResult: EntityResult<T>;
 
-      // STI/TPC: 루트 엔티티 다형성 쿼리 — discriminator로 올바른 서브클래스 인스턴스화
+      // STI/TPC: polymorphic query on the root entity — instantiate the correct subclass via the discriminator
       if (
         (inheritanceStrategy === "SINGLE_TABLE" || isTPCPolymorphic) &&
         this.inheritanceResolver.isPolymorphicQuery(entity) &&
@@ -1452,7 +1452,7 @@ export class EntityManager implements BaseEntityManager {
           entityResult = resultTransformer.toEntity(entity, queryResult);
         }
       } else if (isTPTPolymorphic) {
-        // TPT 다형성: 접두사 기반 자식 컬럼 해석
+        // TPT polymorphic: resolve child columns via their prefixes
         const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
         const discMap = this.inheritanceResolver.buildDiscriminatorMap(entity);
         if (discCol && discMap.size > 0) {
@@ -1485,7 +1485,7 @@ export class EntityManager implements BaseEntityManager {
           queryResult,
         ) as EntityResult<T>;
       } else if (isTPTChild && eagerRelations.length > 0) {
-        // TPT 자식 + ManyToOne eager: transformNested로 relation 역직렬화
+        // TPT child + eager ManyToOne: deserialize the relation through transformNested
         entityResult = resultTransformer.transformNested(
           entity,
           queryResult,
@@ -1496,7 +1496,7 @@ export class EntityManager implements BaseEntityManager {
         entityResult = resultTransformer.toEntity(entity, queryResult);
       }
 
-      // OneToMany / ManyToMany / OneToOne(inverse) 관계 로드
+      // Load OneToMany / ManyToMany / OneToOne(inverse) relations
       if (
         findOption.relations &&
         findOption.relations.length > 0 &&
@@ -1522,7 +1522,7 @@ export class EntityManager implements BaseEntityManager {
         );
       }
 
-      // Lazy ManyToOne 관계에 대해 Proxy 주입
+      // Inject a Proxy for each lazy ManyToOne relation
       const lazyRelations = manyToOneRelations.filter((rel) => {
         return rel.option?.lazy === true && rel.option?.eager !== true;
       });
@@ -1559,7 +1559,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // afterLoad 구독자 이벤트 호출
+      // Notify subscribers of the afterLoad event
       if (entityResult) {
         const loadedEntities = Array.isArray(entityResult) ? entityResult : [entityResult];
         for (const loadedEntity of loadedEntities) {
@@ -1593,7 +1593,7 @@ export class EntityManager implements BaseEntityManager {
       );
     }
 
-    // orderBy를 명시하지 않은 경우 PK 타입을 검사하여 비숫자형이면 경고
+    // When orderBy is not provided, inspect the PK type and warn if it is non-numeric
     if (!option.orderBy && pk) {
       this.warnIfNonSortablePk(entity.name, pk);
     }
@@ -1684,7 +1684,7 @@ export class EntityManager implements BaseEntityManager {
         fields: queryResult.fields,
       });
 
-      // afterLoad 구독자 이벤트 호출
+      // Notify subscribers of the afterLoad event
       for (const loadedEntity of entities) {
         await this.notifySubscribers(entity, "afterLoad", loadedEntity);
       }
@@ -1818,7 +1818,7 @@ export class EntityManager implements BaseEntityManager {
     };
   }
 
-  // ── CRUD: 쓰기 ────────────────────────────────────────────
+  // ── CRUD: Write ────────────────────────────────────────────
 
   async save<T>(
     entity: ClazzType<T>,
@@ -1838,10 +1838,10 @@ export class EntityManager implements BaseEntityManager {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
-    // 유효성 검사
+    // Validation
     EntityValidator.validate(entity, item);
 
-    // Cascade: ManyToOne 관계의 부모 엔티티를 먼저 저장
+    // Cascade: save the parent entity of any ManyToOne relation first
     await this.cascadeHandler.cascadeSaveManyToOne(entity, item);
 
     return this.executeInTransaction(async (session) => {
@@ -1914,7 +1914,7 @@ export class EntityManager implements BaseEntityManager {
           return this.applyWriteTransform(column, rawValue);
         });
 
-        // @CreateTimestamp / @UpdateTimestamp 자동 주입 (INSERT 시)
+        // Auto-inject @CreateTimestamp / @UpdateTimestamp values (on INSERT)
         const now = new Date();
         const nowStr = formatDateTimeForSQL(now);
         const createTsCol = this.resolver.getCreateTimestampColumn(entity);
@@ -1938,7 +1938,7 @@ export class EntityManager implements BaseEntityManager {
           }
         }
 
-        // @Version 컬럼 자동 초기화
+        // Auto-initialize the @Version column
         const versionCol = this.resolver.getVersionColumn(entity);
         if (versionCol) {
           const versionIdx = insertableColumns.findIndex(
@@ -1949,7 +1949,7 @@ export class EntityManager implements BaseEntityManager {
           }
         }
 
-        // UUID PK 자동 생성 (앱사이드)
+        // Auto-generate UUID PKs on the application side
         for (let i = 0; i < insertableColumns.length; i++) {
           const col = insertableColumns[i];
           const strategy = col.options?.generationStrategy;
@@ -1975,7 +1975,7 @@ export class EntityManager implements BaseEntityManager {
           }
         }
 
-        // STI/TPT: discriminator 컬럼 값을 INSERT에 추가 또는 설정
+        // STI/TPT: add or set the discriminator column value on INSERT
         const saveInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
         if (saveInheritanceStrategy === "SINGLE_TABLE" || saveInheritanceStrategy === "JOINED") {
           const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
@@ -1993,7 +1993,7 @@ export class EntityManager implements BaseEntityManager {
           }
         }
 
-        // ManyToOne FK 컬럼 값 추출
+        // Extract FK column values for ManyToOne relations
         const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
         for (const rel of manyToOneRelations) {
           if (!rel.joinColumn) continue;
@@ -2038,7 +2038,7 @@ export class EntityManager implements BaseEntityManager {
           (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
           (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
 
-        // TPT 자식: 부모 먼저 INSERT → 자식 INSERT (동일 PK)
+        // TPT child: INSERT into parent first → INSERT into child (sharing the same PK)
         if (saveInheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
           const root = this.inheritanceResolver.getRoot(entity)!;
           const rootMeta = this.resolver.resolveEntityMetadata(root);
@@ -2050,7 +2050,7 @@ export class EntityManager implements BaseEntityManager {
               pkColumns.map((col: ColumnMetadata) => col.name!),
             );
 
-            // 부모/자식 컬럼-값 분리
+            // Split columns/values into parent and child buckets
             const parentCols: Sql[] = [];
             const parentVals: any[] = [];
             const childCols: Sql[] = [];
@@ -2071,13 +2071,13 @@ export class EntityManager implements BaseEntityManager {
               }
             }
 
-            // discriminator/FK 등 추가된 컬럼은 insertableColumns 범위 밖
+            // Extra appended columns (e.g. discriminator, FK) live outside the insertableColumns range
             for (let i = insertableColumns.length; i < columns.length; i++) {
               parentCols.push(columns[i]);
               parentVals.push(values[i]);
             }
 
-            // 1. 부모 테이블 INSERT
+            // 1. INSERT into the parent table
             const parentTableName = rootMeta.name!;
             const parentReturningSql = useReturning ? raw(` RETURNING *`) : raw("");
             const parentInsertSql = sql`INSERT INTO ${raw(this.wrapTable(parentTableName))}
@@ -2089,7 +2089,7 @@ export class EntityManager implements BaseEntityManager {
               fields: any;
             };
 
-            // PK 값 획득
+            // Obtain the generated PK value
             let generatedPkValue: any;
             if (useReturning && parentResult?.results?.length > 0) {
               generatedPkValue = parentResult.results[0][pk.name!];
@@ -2101,16 +2101,16 @@ export class EntityManager implements BaseEntityManager {
               );
             }
 
-            // 2. 자식 테이블 INSERT (동일 PK 사용)
+            // 2. INSERT into the child table (reusing the same PK)
             if (generatedPkValue != null) {
-              // insertableColumns와 인덱스 매핑으로 PK 위치를 찾음
+              // Find the PK position via its insertableColumns index mapping
               let pkFoundInChild = false;
               for (let ci = 0, ii = 0; ii < insertableColumns.length; ii++) {
                 const col = insertableColumns[ii];
                 const isPk = pkColNames.has(col.name!);
                 const isRoot = rootColNames.has(col.name!);
                 if (isPk || !isRoot) {
-                  // 이 컬럼은 childCols에 존재
+                  // This column exists in childCols
                   if (isPk) {
                     childVals[ci] = generatedPkValue;
                     pkFoundInChild = true;
@@ -2118,7 +2118,7 @@ export class EntityManager implements BaseEntityManager {
                   ci++;
                 }
               }
-              // PK가 childCols에 없으면 추가
+              // If the PK is missing from childCols, add it
               if (!pkFoundInChild) {
                 childCols.unshift(raw(this.wrap(pk.name!)));
                 childVals.unshift(generatedPkValue);
@@ -2132,7 +2132,7 @@ export class EntityManager implements BaseEntityManager {
               await session.query<T>(childInsertSql);
             }
 
-            // 결과 조회
+            // Read the resulting row back
             const pkVal = generatedPkValue ?? primaryKeyValue;
             (item as any)[this.propKey(pk)] = pkVal;
             const result = await this.findOneInternal(
@@ -2210,7 +2210,7 @@ export class EntityManager implements BaseEntityManager {
           return result as T;
         }
 
-        // RETURNING * 지원 드라이버: 반환 행으로 직접 역직렬화 (eager 관계 없을 때)
+        // Drivers that support RETURNING *: deserialize directly from the returned row (when there are no eager relations)
         if (useReturning && queryResult?.results?.length > 0) {
           const returnedRow = queryResult.results[0];
           const cascadeId = returnedRow[pk.name!];
@@ -2233,7 +2233,7 @@ export class EntityManager implements BaseEntityManager {
           return result as T;
         }
 
-        // SQLite: lastInsertRowid로 삽입된 엔티티 조회
+        // SQLite: look up the inserted entity via lastInsertRowid
         if (this.isSqlite()) {
           const sqliteRunResult = queryResult?.results ?? queryResult;
           const findWhere = hasAutoIncrementPk
@@ -2278,7 +2278,7 @@ export class EntityManager implements BaseEntityManager {
         pkColumns.map((col: ColumnMetadata) => col.name!),
       );
       const computedColsForUpdate = this.getComputedColumnNames(entity);
-      // STI: discriminator 컬럼은 UPDATE에서 제외
+      // STI: the discriminator column is excluded from UPDATE
       const updateDiscCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
       const updatableColumns = metadata.columns.filter(
         (column: ColumnMetadata) => {
@@ -2295,7 +2295,7 @@ export class EntityManager implements BaseEntityManager {
         return sql`${raw(this.wrap(column.name!))} = ${value}`;
       });
 
-      // @UpdateTimestamp 자동 주입
+      // Auto-inject @UpdateTimestamp
       const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
       if (updateTsColName) {
         const existingIdx = updatableColumns.findIndex(
@@ -2316,7 +2316,7 @@ export class EntityManager implements BaseEntityManager {
         updatableColumns.map((col: ColumnMetadata) => col.name!),
       );
 
-      // ManyToOne FK 컬럼 값을 UPDATE SET에 추가
+      // Add the ManyToOne FK column values to the UPDATE SET clause
       const updateManyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
       for (const rel of updateManyToOneRelations) {
         if (!rel.joinColumn) continue;
@@ -2385,7 +2385,7 @@ export class EntityManager implements BaseEntityManager {
       const useReturningForUpdate = typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning();
       let updateReturnedRow: any = null;
 
-      // TPT 자식: 부모/자식 테이블 각각 UPDATE
+      // TPT child: UPDATE the parent and child tables separately
       const updateInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
       if (
         updateInheritanceStrategy === "JOINED" &&
@@ -2410,7 +2410,7 @@ export class EntityManager implements BaseEntityManager {
             }
           }
 
-          // @UpdateTimestamp, @Version 등 추가 항목은 부모 테이블에
+          // Extra items (e.g. @UpdateTimestamp, @Version) belong on the parent table
           for (let i = updatableColumns.length; i < updateMap.length; i++) {
             parentUpdateMap.push(updateMap[i]);
           }
@@ -2522,7 +2522,7 @@ export class EntityManager implements BaseEntityManager {
       return [];
     }
 
-    // #214: 배치 INSERT 최적화 시도
+    // #214: attempt the batch INSERT optimization
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (metadata) {
       const pkColumns = metadata.columns.filter(
@@ -2544,7 +2544,7 @@ export class EntityManager implements BaseEntityManager {
         });
 
       if (canBatchInsert) {
-        // 유효성 검사 + ManyToOne cascade (트랜잭션 전)
+        // Validation + ManyToOne cascade (before the transaction)
         for (const item of items) {
           EntityValidator.validate(entity, item);
         }
@@ -2558,7 +2558,7 @@ export class EntityManager implements BaseEntityManager {
       }
     }
 
-    // 폴백: 기존 순차 저장
+    // Fallback: sequential saves
     return this.executeInTransaction(async (session) => {
       const results: InstanceType<ClazzType<T>>[] = [];
       for (const item of items) {
@@ -2570,8 +2570,8 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
-   * #214: 배치 INSERT + 벌크 re-read
-   * N×(INSERT+SELECT) → 1 INSERT + 1 SELECT (또는 PG RETURNING)
+   * #214: Batch INSERT + bulk re-read.
+   * N × (INSERT+SELECT) → 1 INSERT + 1 SELECT (or PG RETURNING).
    */
   private async saveManyBatchInsert<T>(
     entity: ClazzType<T>,
@@ -2592,7 +2592,7 @@ export class EntityManager implements BaseEntityManager {
       } as InsertEvent<T>);
     }
 
-    // 컬럼 준비
+    // Prepare columns
     const computedCols = this.getComputedColumnNames(entity);
     const createTsCol = this.resolver.getCreateTimestampColumn(entity);
     const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
@@ -2603,13 +2603,13 @@ export class EntityManager implements BaseEntityManager {
       (col) => {
         if (computedCols.has(col.name!)) return false;
         if (col.options?.autoIncrement) return false;
-        // PostgreSQL uuid: DB DEFAULT 사용
+        // PostgreSQL uuid: rely on the DB DEFAULT
         if (col.options?.generationStrategy === "uuid" && this.isPostgres()) return false;
         return true;
       },
     );
 
-    // 아이템 전처리: UUID, timestamp, version
+    // Pre-process items: UUID, timestamp, version
     for (const item of items) {
       for (const col of insertableColumns) {
         const strategy = col.options?.generationStrategy;
@@ -2638,7 +2638,7 @@ export class EntityManager implements BaseEntityManager {
       }
     }
 
-    // 컬럼 목록 + FK 컬럼
+    // Column list + FK columns
     const columns = insertableColumns.map((col) =>
       raw(this.wrap(col.name!)),
     );
@@ -2651,7 +2651,7 @@ export class EntityManager implements BaseEntityManager {
       fkColumns.push({ joinColumn: rel.joinColumn, propertyName: rel.columnName, relMeta: rel });
     }
 
-    // VALUES 행 구성
+    // Build the VALUES rows
     const valueRows = items.map((item) => {
       const rowValues = insertableColumns.map((col) => {
         const rawValue = (item as any)[this.propKey(col)];
@@ -2692,16 +2692,16 @@ export class EntityManager implements BaseEntityManager {
     };
     this.trackQuery(entity.name, insertSql.text ?? String(insertSql), Date.now() - queryStart);
 
-    // 결과 수집
+    // Collect results
     let results: InstanceType<ClazzType<T>>[];
 
     if (useReturning && queryResult?.results?.length > 0 && !this.hasEagerRelations(entity)) {
-      // PostgreSQL RETURNING: re-read 없이 직접 역직렬화
+      // PostgreSQL RETURNING: deserialize directly without a re-read
       results = queryResult.results.map(
         (row: any) => deserializeEntity(entity, row) as InstanceType<ClazzType<T>>,
       );
     } else {
-      // PK 값 계산 → 벌크 SELECT WHERE pk IN (...)
+      // Compute PK values → bulk SELECT WHERE pk IN (...)
       let pkValues: any[];
       if (useReturning && queryResult?.results?.length > 0) {
         pkValues = queryResult.results.map((row: any) => row[pk.name!]);
@@ -2713,7 +2713,7 @@ export class EntityManager implements BaseEntityManager {
         const lastId = Number(sqliteRes?.lastInsertRowid);
         pkValues = items.map((_, i) => lastId - items.length + 1 + i);
       } else {
-        // UUID — 클라이언트에서 생성한 PK 사용
+        // UUID — use client-generated PK values
         pkValues = items.map((item) => (item as any)[this.propKey(pk)]);
       }
 
@@ -2875,7 +2875,7 @@ export class EntityManager implements BaseEntityManager {
     });
   }
 
-  // ── CRUD: 삭제 ────────────────────────────────────────────
+  // ── CRUD: Delete ────────────────────────────────────────────
 
   async delete<T>(
     entity: ClazzType<T>,
@@ -2916,7 +2916,7 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // STI: 자식 엔티티 삭제 시 discriminator 조건 추가
+      // STI: when deleting a child entity, add the discriminator condition
       const deleteStrategy = this.inheritanceResolver.getStrategy(entity);
       if (deleteStrategy === "SINGLE_TABLE" && this.inheritanceResolver.isChildEntity(entity)) {
         const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
@@ -2932,16 +2932,16 @@ export class EntityManager implements BaseEntityManager {
 
       const whereSql = join(whereMap, " AND ");
 
-      // TPT: 자식 먼저 삭제 → 부모 삭제
+      // TPT: delete from the child table first, then the parent
       if (deleteStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
         const root = this.inheritanceResolver.getRoot(entity)!;
         const rootMeta = this.resolver.resolveEntityMetadata(root);
         if (rootMeta) {
-          // 1. 자식 테이블 삭제
+          // 1. Delete from the child table
           const childDeleteQuery = sql`DELETE FROM ${raw(this.wrapTable(metadata.name!))} WHERE ${whereSql}`;
           await session.query(childDeleteQuery);
 
-          // 2. 부모 테이블 삭제
+          // 2. Delete from the parent table
           const parentDeleteQuery = sql`DELETE FROM ${raw(this.wrapTable(rootMeta.name!))} WHERE ${whereSql}`;
           const parentResult = (await session.query(parentDeleteQuery)) as {
             results: any;
@@ -3563,7 +3563,7 @@ export class EntityManager implements BaseEntityManager {
     );
   }
 
-  // ── 집계 위임 ─────────────────────────────────────────────
+  // ── Aggregate delegation ─────────────────────────────────────────────
 
   /**
    * Returns true if at least one entity matches the given where clause.
@@ -3677,7 +3677,7 @@ export class EntityManager implements BaseEntityManager {
     return this.aggregateHandler.max(entity, field, where);
   }
 
-  // ── EXPLAIN 위임 ──────────────────────────────────────────
+  // ── EXPLAIN delegation ──────────────────────────────────────
 
   async explain<T>(
     entity: ClazzType<T>,
@@ -3686,7 +3686,7 @@ export class EntityManager implements BaseEntityManager {
     return this.explainHandler.explain(entity, findOption);
   }
 
-  // ── 유틸리티 ──────────────────────────────────────────────
+  // ── Utilities ──────────────────────────────────────────────
 
   private validateCriteriaKeys<T>(
     metadata: { columns: ColumnMetadata[] },
@@ -3825,8 +3825,8 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
-   * 커서 페이지네이션에서 PK가 비숫자형(varchar, char, text 등)일 때
-   * 다이얼렉트별 경고를 한 번만 출력합니다.
+   * In cursor pagination, when the PK is non-numeric (varchar, char, text, etc.),
+   * emits a single dialect-specific warning.
    */
   private warnIfNonSortablePk(entityName: string, pk: ColumnMetadata): void {
     const pkType = pk.options?.type as string | undefined;
@@ -3999,7 +3999,7 @@ export class EntityManager implements BaseEntityManager {
     return columns;
   }
 
-  // ── 기타 ──────────────────────────────────────────────────
+  // ── Miscellaneous ──────────────────────────────────────────────
 
   async query<T = Record<string, unknown>>(
     sqlQuery: string | Sql,
@@ -4189,7 +4189,7 @@ export class EntityManager implements BaseEntityManager {
     return false;
   }
 
-  // ── Public Metadata API (#233) ──────��──────────────────────
+  // ── Public Metadata API (#233) ─────────────────────────────
 
   /**
    * Returns all entity classes registered on this EntityManager.

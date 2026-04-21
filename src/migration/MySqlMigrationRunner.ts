@@ -1,8 +1,8 @@
 import { MigrationRunner } from "./MigrationRunner";
 
 /**
- * MySQL/MariaDB용 마이그레이션 러너.
- * 백틱(`) 식별자 래핑과 AUTO_INCREMENT PK를 사용합니다.
+ * Migration runner for MySQL/MariaDB.
+ * Uses backtick (`) identifier wrapping and an AUTO_INCREMENT primary key.
  */
 export class MySqlMigrationRunner extends MigrationRunner {
   protected wrapIdentifier(name: string): string {

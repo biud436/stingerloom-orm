@@ -1,13 +1,13 @@
 /**
- * ORM Column Accessor 테스트
+ * ORM Column Accessor test
  *
- * 이 테스트는 다양한 ORM 기능들을 검증합니다:
- * - Entity 메타데이터 스캔
- * - Column 데코레이터 및 옵션 확인
- * - PrimaryGeneratedColumn, Index, Version 데코레이터
- * - ManyToOne 관계 매핑
- * - 다양한 컬럼 타입 (varchar, text, int, date, boolean, json 등)
- * - 에러 상황 처리
+ * This test verifies various ORM features:
+ * - Entity metadata scanning
+ * - Column decorator and option handling
+ * - PrimaryGeneratedColumn, Index, Version decorators
+ * - ManyToOne relation mapping
+ * - Various column types (varchar, text, int, date, boolean, json, etc.)
+ * - Error handling
  */
 import {
   Column,
@@ -139,7 +139,7 @@ describe("Column Accessor", () => {
 
   beforeEach(() => {
     entityScanner = getScannerInstance(EntityScanner);
-    // 엔티티들을 스캔하여 메타데이터 생성
+    // Scan entities to build metadata
     [User, Post, Category, Tag, Profile].forEach((entity) =>
       entityScanner.scan(entity),
     );
@@ -203,7 +203,7 @@ describe("Column Accessor", () => {
     expect(metadata).toBeNull();
   });
 
-  // Category 엔티티 테스트
+  // Category entity tests
   describe("Category 엔티티 테스트", () => {
     it("Category의 메타데이터가 있는지 확인한다.", () => {
       const metadata = entityScanner.scan(Category);
@@ -270,7 +270,7 @@ describe("Column Accessor", () => {
     });
   });
 
-  // Tag 엔티티 테스트
+  // Tag entity tests
   describe("Tag 엔티티 테스트", () => {
     it("Tag의 메타데이터가 있는지 확인한다.", () => {
       const metadata = entityScanner.scan(Tag);
@@ -282,8 +282,8 @@ describe("Column Accessor", () => {
     it("Tag에 Version 데코레이터가 적용되었는지 확인한다.", () => {
       const metadata = entityScanner.scan(Tag) as EntityMetadata<Tag>;
 
-      // Version 데코레이터는 내부적으로 Column 데코레이터를 사용하므로
-      // 메타데이터가 존재하는지만 확인
+      // The Version decorator internally uses the Column decorator,
+      // so only verify that the metadata exists
       expect(metadata).toBeDefined();
       expect(metadata?.name).toBe("tag");
     });
@@ -303,7 +303,7 @@ describe("Column Accessor", () => {
     });
   });
 
-  // Profile 엔티티 테스트
+  // Profile entity tests
   describe("Profile 엔티티 테스트", () => {
     it("Profile의 메타데이터가 있는지 확인한다.", () => {
       const metadata = entityScanner.scan(Profile);
@@ -352,7 +352,7 @@ describe("Column Accessor", () => {
     });
   });
 
-  // 컬럼 타입 검증 테스트
+  // Column type validation tests
   describe("컬럼 타입 검증", () => {
     it("다양한 컬럼 타입들이 올바르게 매핑되는지 확인한다.", () => {
       @Entity()
@@ -386,27 +386,27 @@ describe("Column Accessor", () => {
 
       const columnsTyped = columns as unknown as ColumnMetadata[];
 
-      // String 타입 확인
+      // Verify String type
       const stringColumn = columnsTyped.find((c) => c.name === "stringField");
       expect(stringColumn?.options?.type).toBe("varchar");
 
-      // Int 타입 확인
+      // Verify Int type
       const intColumn = columnsTyped.find((c) => c.name === "intField");
       expect(intColumn?.options?.type).toBe("int");
 
-      // Float 타입 확인
+      // Verify Float type
       const floatColumn = columnsTyped.find((c) => c.name === "floatField");
       expect(floatColumn?.options?.type).toBe("float");
 
-      // Boolean 타입 확인
+      // Verify Boolean type
       const boolColumn = columnsTyped.find((c) => c.name === "boolField");
       expect(boolColumn?.options?.type).toBe("boolean");
 
-      // DateTime 타입 확인
+      // Verify DateTime type
       const dateColumn = columnsTyped.find((c) => c.name === "dateField");
       expect(dateColumn?.options?.type).toBe("datetime");
 
-      // JSON 타입 확인
+      // Verify JSON type
       const jsonColumn = columnsTyped.find((c) => c.name === "jsonField");
       expect(jsonColumn?.options?.type).toBe("json");
     });
@@ -436,7 +436,7 @@ describe("Column Accessor", () => {
     });
   });
 
-  // 관계 매핑 테스트
+  // Relation mapping tests
   describe("관계 매핑 테스트", () => {
     it("여러 ManyToOne 관계가 올바르게 매핑되는지 확인한다.", () => {
       @Entity()
@@ -463,7 +463,7 @@ describe("Column Accessor", () => {
         @ManyToOne(() => Category, (entity) => entity.orders, {
           joinColumn: "product_id",
         })
-        product!: Category; // Category를 Product 대신 사용
+        product!: Category; // Use Category in place of Product
       }
 
       [Order].forEach((entity) => entityScanner.scan(entity));
@@ -471,13 +471,13 @@ describe("Column Accessor", () => {
       const metadata = entityScanner.scan(Order) as EntityMetadata<Order>;
       const { manyToOnes } = metadata;
 
-      // User 관계 확인
+      // Verify User relation
       const userColumn = manyToOnes?.find((c) => c.columnName === "user");
       expect(userColumn).toBeDefined();
       expect(userColumn?.getMappingEntity()).toBe(User);
       expect(userColumn?.joinColumn).toBe("user_id");
 
-      // Product 관계 확인
+      // Verify Product relation
       const productColumn = manyToOnes?.find((c) => c.columnName === "product");
       expect(productColumn).toBeDefined();
       expect(productColumn?.getMappingEntity()).toBe(Category);
@@ -506,7 +506,7 @@ describe("Column Accessor", () => {
     });
   });
 
-  // 에러 상황 테스트
+  // Error handling tests
   describe("에러 상황 테스트", () => {
     it("Entity 데코레이터가 없는 클래스는 메타데이터를 찾을 수 없다.", () => {
       class NonEntityClass {

@@ -4,7 +4,7 @@ import sql, { join, raw } from "sql-template-tag";
 import { EntityManager } from "../../src/core/EntityManager";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 
-// Mock 모듈 설정
+// Module mocks
 jest.mock("../../src/DatabaseClient", () => {
   return {
     DatabaseClient: {
@@ -44,11 +44,11 @@ jest.mock("../../src/dialects/TransactionSessionManager", () => {
   };
 });
 
-// EntityManager의 resolveEntityMetadata를 모킹하기 위한 헬퍼
+// Helper for mocking EntityManager.resolveEntityMetadata
 function createTestEntityManager() {
   const em = new EntityManager();
 
-  // driver를 mock으로 설정 (wrap 메서드)
+  // Set driver to a mock (wrap method)
   (em as any).driver = {
     wrap: (name: string) => `\`${name}\``,
   };
@@ -56,7 +56,7 @@ function createTestEntityManager() {
   return em;
 }
 
-// 테스트용 엔티티 메타데이터
+// Test entity metadata
 const userMetadata = {
   name: "User",
   target: class User {},

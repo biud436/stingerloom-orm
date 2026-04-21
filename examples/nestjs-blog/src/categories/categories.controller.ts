@@ -45,7 +45,7 @@ export class CategoriesController {
     return this.categoriesService.count();
   }
 
-  /** GET /categories/stats -- GROUP BY + HAVING demo (카테고리별 포스트 수) */
+  /** GET /categories/stats -- GROUP BY + HAVING demo (post count per category) */
   @Get("stats")
   @ApiOperation({
     summary: "Category stats (GROUP BY + HAVING)",

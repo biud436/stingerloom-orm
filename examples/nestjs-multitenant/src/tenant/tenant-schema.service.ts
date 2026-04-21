@@ -13,13 +13,13 @@ import { Unit } from "../units/unit.entity";
 /**
  * TenantSchemaService
  *
- * ORM의 PostgresTenantMigrationRunner에 위임하여
- * 테넌트 스키마를 프로비저닝합니다.
+ * Delegates to the ORM's PostgresTenantMigrationRunner to
+ * provision tenant schemas.
  *
- * `tables` 옵션으로 복제 대상 테이블을 제한할 수 있습니다.
- * - include: 엔티티 클래스 또는 테이블명으로 복제 대상 지정
- * - exclude: 제외할 테이블 지정
- * - excludePrefix / excludeSuffix: 접두사/접미사 기반 제외
+ * The `tables` option can restrict which tables are replicated.
+ * - include: specify replication targets via entity class or table name
+ * - exclude: specify tables to exclude
+ * - excludePrefix / excludeSuffix: exclude by prefix/suffix
  */
 @Injectable()
 export class TenantSchemaService {

@@ -2,7 +2,7 @@ import { OrmError } from "./OrmError";
 import { OrmErrorCode } from "./OrmErrorCode";
 
 /**
- * 엔티티에 Primary Key 컬럼이 정의되지 않았을 때 발생하는 에러입니다.
+ * Thrown when an entity has no Primary Key column defined.
  */
 export class PrimaryKeyNotFoundError extends OrmError {
   constructor(entityName: string) {

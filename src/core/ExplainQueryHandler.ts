@@ -12,8 +12,8 @@ import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 
 /**
- * EXPLAIN 쿼리 + 다이얼렉트별 파싱 핸들러.
- * EntityManager에서 위임받아 처리합니다.
+ * Handler for EXPLAIN queries and dialect-specific result parsing.
+ * Invoked by EntityManager via delegation.
  */
 export class ExplainQueryHandler {
   constructor(
@@ -154,7 +154,7 @@ export class ExplainQueryHandler {
     const explainPrefix = driver.buildExplainSql("");
     const explainQuery = sql`${raw(explainPrefix)}${selectQuery}`;
 
-    // Replication: EXPLAIN은 읽기 전용이므로 slave로 라우팅
+    // Replication: EXPLAIN is read-only, so route to a replica
     const readNode = this.ctx.getReadNode(findOption.useMaster);
 
     return this.ctx.executeReadOnly(async (session) => {

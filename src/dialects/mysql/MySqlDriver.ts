@@ -45,7 +45,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블이 존재하는지 확인합니다.
+   * Checks whether the table exists.
    */
   hasTable(name: string) {
     return this.connector.query(sql`SHOW TABLES LIKE ${name}`);
@@ -101,7 +101,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 기본키를 추가합니다.
+   * Adds a primary key to the table.
    *
    * @param tableName
    * @param columnName
@@ -113,7 +113,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 자동 증가를 추가합니다.
+   * Adds auto-increment to the table.
    *
    * @param tableName
    * @param columnName
@@ -125,7 +125,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 기본키를 제거합니다.
+   * Drops the primary key from the table.
    *
    * @param tableName
    */
@@ -136,7 +136,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 유니크 키를 추가합니다.
+   * Adds a unique key to the table.
    *
    * @param tableName
    * @param columnName
@@ -148,7 +148,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 유니크 키를 제거합니다.
+   * Drops the unique key from the table.
    *
    * @param tableName
    * @param columnName
@@ -160,7 +160,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블에 컬럼을 추가합니다.
+   * Adds a column to the table.
    * @param tableName
    * @param columnName
    * @param columnType
@@ -172,7 +172,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 컬럼을 제거합니다.
+   * Drops a column from the table.
    *
    * @param tableName
    * @param columnName
@@ -184,8 +184,8 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 외래키를 추가합니다.
-   * TODO: 추후, 사용자 지정 외래키 이름을 지정할 수 있게 해야 합니다.
+   * Adds a foreign key.
+   * TODO: allow user-defined foreign key names later.
    *
    * @param tableName
    * @param columnName
@@ -198,24 +198,24 @@ export class MySqlDriver implements ISqlDriver {
     foreignTableName: string,
     foreignColumnName: string,
   ) {
-    // 외래키 이름을 프레임워크 규칙에 맞게 생성합니다.
-    // 별도의 키 이름이 지정될 수도 있습니다. 이 경우, 사용자가 지정한 이름을 사용해야 합니다.
+    // Generate the foreign key name using the framework convention.
+    // A custom key name may also be provided; in that case, the user-specified name should be used.
     const foreignKeyName = this.generateForeignKeyName(
       tableName,
       foreignTableName,
       columnName,
     );
 
-    // 추후 ON DELETE 와 ON UPDATE 옵션을 지정할 수 있게 해야 합니다.
-    // 현재는 NO ACTION으로 설정되어 있습니다.
+    // We should allow ON DELETE and ON UPDATE options to be specified later.
+    // For now it is set to NO ACTION.
     return this.connector.query(
       `ALTER TABLE ${this.wrap(tableName)} ADD CONSTRAINT ${foreignKeyName} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${this.wrap(foreignTableName)}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
     );
   }
 
   /**
-   * 외래키 이름을 생성합니다.
-   * SHA1 해시 기반으로 고유한 이름을 생성하여 이름 충돌과 길이 제한을 방지합니다.
+   * Generates a foreign key name.
+   * Produces a unique name based on a SHA1 hash to avoid name collisions and length limits.
    *
    * @param sourceTable
    * @param targetTable
@@ -230,7 +230,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 외래키를 제거합니다.
+   * Drops a foreign key.
    *
    * @param tableName
    * @param columnName
@@ -258,7 +258,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 인덱스를 추가합니다.
+   * Adds an index.
    *
    * @param tableName
    * @param columnName
@@ -277,7 +277,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 인덱스를 제거합니다.
+   * Drops an index.
    *
    * @param tableName
    * @param indexName
@@ -289,7 +289,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 스키마를 가져옵니다.
+   * Retrieves the schema.
    *
    * @param tableName
    */
@@ -298,7 +298,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 인덱스를 가져옵니다.
+   * Retrieves the indexes.
    *
    * @param tableName
    */
@@ -307,7 +307,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 외래키를 가져옵니다.
+   * Retrieves the foreign keys.
    *
    * @param tableName
    */
@@ -318,7 +318,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 기본키를 가져옵니다.
+   * Retrieves the primary keys.
    *
    * @param tableName
    */
@@ -329,7 +329,7 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블을 생성합니다.
+   * Creates the table.
    *
    * @param tableName
    * @param columns
@@ -365,14 +365,14 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 백틱으로 감싸지 않은 컬럼 이름을 백틱으로 감싸서 반환합니다.
+   * Returns the column name wrapped in backticks if it is not already.
    */
   wrap(columnName: string) {
     return `\`${columnName.replace(/`/g, "``")}\``;
   }
 
   /**
-   * TS 타입으로부터 데이터베이스 컬럼 타입을 추론합니다.
+   * Infers the database column type from the TypeScript type.
    */
   getColumnType(type: any): string {
     switch (type) {
@@ -392,9 +392,9 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * ColumnType을 데이터베이스 컬럼 타입으로 변환합니다.
+   * Converts a ColumnType to the corresponding database column type.
    *
-   * ## MySQL/MariaDB 타입 매핑
+   * ## MySQL/MariaDB type mapping
    * | ColumnType | MySQL Type                      |
    * |------------|--------------------------------|
    * | varchar    | VARCHAR                        |
@@ -504,8 +504,8 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 테이블의 모든 데이터를 제거합니다 (TRUNCATE TABLE).
-   * 단일 커넥션에서 FOREIGN_KEY_CHECKS를 비활성화/복원하여 커넥션 격리를 보장합니다.
+   * Removes all data from the table (TRUNCATE TABLE).
+   * Disables and restores FOREIGN_KEY_CHECKS on a single connection to guarantee connection isolation.
    */
   async clear(tableName: string) {
     const conn = await this.connector.getConnection();
@@ -525,72 +525,90 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
-   * 비관적 잠금을 위한 SQL을 반환합니다.
+   * Returns the SQL fragment for pessimistic locking.
    *
    * Locking Reads - https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html
    *
-   * ## InnoDB 잠금 읽기
+   * ## InnoDB locking reads
    *
-   * InnoDB에서는 SELECT 문을 사용해 읽을 때, 여러 종류의 잠금을 설정할 수 있습니다. 기본적으로 SELECT 문은 공유 잠금을 얻지 않고 데이터에 접근하지만, 특정 상황에서는 잠금을 명시적으로 설정하는 것이 필요합니다. 이를 통해 트랜잭션이 안전하게 데이터를 읽고 수정할 수 있습니다. InnoDB의 잠금 읽기에는 다음과 같은 주요 유형이 있습니다.
+   * In InnoDB, a SELECT statement can set various kinds of locks when reading. By default SELECT
+   * reads data without acquiring a shared lock, but in certain situations locks must be set
+   * explicitly so that transactions can read and modify data safely. The main types of InnoDB
+   * locking reads are:
    *
    * 1. SELECT ... FOR UPDATE
-   * 이 구문은 데이터를 읽으면서 해당 행에 대해 배타적 잠금을 설정합니다. 다른 트랜잭션이 이 행을 수정하거나 삭제하는 것을 방지하기 위해 사용됩니다. FOR UPDATE는 일반적으로 UPDATE, DELETE 문과 함께 사용되며, 해당 트랜잭션이 완료될 때까지 다른 트랜잭션은 해당 행을 변경할 수 없습니다.
+   * This statement sets an exclusive lock on the rows it reads. It is used to prevent other
+   * transactions from modifying or deleting those rows. FOR UPDATE is commonly used together with
+   * UPDATE or DELETE, and other transactions cannot change the rows until the current transaction
+   * completes.
    *
-   * 예시:
+   * Example:
    *
    * ```sql
    * SELECT * FROM employees WHERE employee_id = 1 FOR UPDATE;
    * ```
    *
-   * 이 구문은 트랜잭션이 종료될 때까지 다른 트랜잭션이 해당 행을 수정하거나 삭제하지 못하게 보장합니다.
+   * This statement guarantees that no other transaction can modify or delete the row until the
+   * transaction ends.
    *
    * 2. SELECT ... LOCK IN SHARE MODE
-   * 이 구문은 행에 대해 공유 잠금을 설정하여 다른 트랜잭션이 해당 행을 수정하거나 삭제하는 것을 방지합니다. 다만 다른 트랜잭션이 동일한 행에 대해 공유 잠금을 획득하고 읽는 것은 가능합니다. 공유 잠금은 주로 참조 무결성을 보장할 때 사용됩니다.
+   * This statement places a shared lock on the rows, preventing other transactions from modifying
+   * or deleting them, while still allowing other transactions to acquire a shared lock and read
+   * the same rows. Shared locks are mainly used to preserve referential integrity.
    *
-   * 예시:
+   * Example:
    *
    * ```sql
    * SELECT * FROM employees WHERE employee_id = 1 LOCK IN SHARE MODE;
    * ```
    *
-   * 이 구문은 다른 트랜잭션이 공유 잠금을 통해 데이터를 읽을 수 있게 하되, 해당 행에 대한 수정이나 삭제는 불가능하게 만듭니다.
-   * 차이점 정리
-   * FOR UPDATE: 선택한 행에 대해 배타적 잠금을 설정하여 다른 트랜잭션이 행을 수정하거나 삭제하는 것을 막음.
-   * LOCK IN SHARE MODE: 선택한 행에 대해 공유 잠금을 설정하여 다른 트랜잭션이 수정하거나 삭제하는 것을 막지만, 읽기는 허용함.
+   * This statement lets other transactions read the rows via a shared lock, but blocks any
+   * modification or deletion of those rows.
    *
-   * 이러한 잠금 읽기는 트랜잭션의 일관성과 무결성을 보장하기 위한 중요한 도구로 사용됩니다.
-   * InnoDB는 잠금을 효율적으로 처리하여 데이터의 안전한 동시 접근을 지원합니다.
+   * Summary of the difference:
+   * FOR UPDATE: acquires an exclusive lock on the selected rows and prevents other transactions
+   * from modifying or deleting them.
+   * LOCK IN SHARE MODE: acquires a shared lock on the selected rows, blocking modification and
+   * deletion by other transactions while still allowing reads.
+   *
+   * These locking reads are an important tool for guaranteeing transactional consistency and
+   * integrity. InnoDB handles locking efficiently, allowing safe concurrent access to data.
    *
    * ## NOWAIT
-   * `NOWAIT`를 사용하는 잠금 읽기는 절대 행 잠금을 획득하기 위해 기다리지 않습니다. 쿼리는 즉시 실행되며, 요청된 행이 잠긴 경우 오류와 함께 실패합니다.
+   * A locking read with `NOWAIT` never waits to acquire a row lock. The query is executed
+   * immediately, and fails with an error if any requested row is locked.
    *
    * ## SKIP LOCKED
-   * `SKIP LOCKED`를 사용하는 잠금 읽기는 행 잠금을 획득하기 위해 절대 기다리지 않습니다. 쿼리는 즉시 실행되며, 잠긴 행을 결과 집합에서 제외합니다.
+   * A locking read with `SKIP LOCKED` also never waits to acquire a row lock. The query is
+   * executed immediately and simply excludes locked rows from the result set.
    *
-   * 트랜잭션 레벨을 SERIALIZABLE로 설정하면,
-   * InnoDB는 autocommit이 비활성화된 경우
-   * 모든 일반 SELECT 문을 암시적으로 `SELECT ... FOR SHARE`로 변환합니다 (공유 잠금, 읽기 전용에서는 유용)
-   * SELECT ... FOR SHARE는 주로 트랜잭션 처리 시 데이터 무결성을 보장하기 위해 사용됩니다.
-   * 트랜잭션이 완료되기 전까지 다른 트랜잭션이 동일한 행을 변경하지 못하게 보장하는 역할을 합니다.
+   * If the transaction isolation level is set to SERIALIZABLE and autocommit is disabled,
+   * InnoDB implicitly converts every plain SELECT into `SELECT ... FOR SHARE` (a shared lock,
+   * useful for read-only transactions).
+   * SELECT ... FOR SHARE is primarily used to preserve data integrity while processing
+   * transactions. It guarantees that no other transaction can change the same rows until the
+   * current transaction completes.
    *
-   * 만약 autocommit이 활성화되어 있으면, SELECT는 자체 트랜잭션으로 간주됩니다.
+   * If autocommit is enabled, a plain SELECT is treated as its own transaction.
    *
    */
   getForUpdateNoWait(): string {
     /**
         FOR SHARE:
-        주로 데이터를 참조하거나 조회하는 작업에서 사용됩니다.
-        데이터를 읽는 동안 그 행이 다른 트랜잭션에 의해 수정되거나 삭제되지 않도록 보호합니다.
-        데이터 수정이 필요하지 않은 상황에서 데이터를 안전하게 읽기 위해 사용됩니다.
+        Used primarily for reference/lookup reads.
+        Protects the rows from being modified or deleted by other transactions while reading.
+        Used to read data safely in situations where no modification is required.
 
         FOR UPDATE:
-        데이터를 수정하려고 할 때 사용됩니다.
-        FOR UPDATE는 데이터를 읽은 후, 그 데이터를 다른 트랜잭션에서 수정하거나 삭제하지 못하게 막아줍니다. 
-        이후, UPDATE나 DELETE 작업을 안전하게 수행할 수 있도록 해줍니다.
-        다른 트랜잭션이 데이터를 수정하려 할 때 충돌을 방지하기 위한 방법입니다.
+        Used when you plan to modify data.
+        After reading the rows, FOR UPDATE prevents other transactions from modifying or deleting
+        them, so that a subsequent UPDATE or DELETE can be performed safely.
+        It is the mechanism for preventing conflicts when other transactions try to modify the same data.
 
-        FOR SHARE: 행을 읽으면서 수정 또는 삭제가 불가능하게 막지만, 다른 트랜잭션에서 해당 행을 읽는 것은 허용.
-        FOR UPDATE: 행을 읽은 후 해당 행에 대해 수정할 의도가 있을 때 사용하며, 다른 트랜잭션에서 읽기 및 수정 모두 차단.
+        FOR SHARE: blocks modification/deletion while reading, but still allows other transactions
+        to read the rows.
+        FOR UPDATE: used when there is an intent to modify the rows after reading, blocking both
+        reads and modifications by other transactions.
         * */
 
     if (!this.isMySqlFamily()) {

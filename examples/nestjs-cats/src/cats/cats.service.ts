@@ -38,7 +38,7 @@ export class CatsService {
       where: {
         id: 1,
       },
-      relations: ["owner"], // @ManyToOne eager 로딩 데모
+      relations: ["owner"], // @ManyToOne eager loading demo
     });
 
     if (!cat) {
@@ -65,8 +65,8 @@ export class CatsService {
   }
 
   /**
-   * @Transactional — 트랜잭션 범위 내에서 고양이를 생성합니다.
-   * 오류 시 자동 ROLLBACK.
+   * @Transactional — create a cat within a transaction scope.
+   * Automatically ROLLBACKs on error.
    */
   @Transactional()
   async create(createCatDto: CreateCatDto): Promise<Cat> {
@@ -82,7 +82,7 @@ export class CatsService {
   }
 
   /**
-   * 여러 고양이를 한 번의 INSERT 쿼리로 일괄 생성합니다 (insertMany).
+   * Bulk-create multiple cats in a single INSERT query (insertMany).
    */
   async bulkCreate(dtos: CreateCatDto[]): Promise<{ affected: number }> {
     const cats = dtos.map((dto) => {
@@ -99,16 +99,16 @@ export class CatsService {
   }
 
   /**
-   * soft-deleted 엔티티 제외한 목록 조회 (기본 동작 — deleted_at IS NULL 자동 필터).
+   * List excluding soft-deleted entities (default behavior — automatic deleted_at IS NULL filter).
    */
   async findAll(): Promise<Cat[]> {
     return await this.catRepository.find({
-      relations: ["owner"], // @ManyToOne eager 로딩 데모
+      relations: ["owner"], // @ManyToOne eager loading demo
     });
   }
 
   /**
-   * withDeleted: true — soft-deleted 엔티티 포함 전체 조회.
+   * withDeleted: true — full list including soft-deleted entities.
    */
   async findAllIncludeDeleted(): Promise<Cat[]> {
     return await this.catRepository.find({ withDeleted: true });
@@ -117,7 +117,7 @@ export class CatsService {
   async findOne(id: number): Promise<Cat> {
     const result = await this.catRepository.findOne({
       where: { id },
-      relations: ["owner"], // @ManyToOne eager 로딩 데모
+      relations: ["owner"], // @ManyToOne eager loading demo
     });
 
     if (!result) {
@@ -134,13 +134,13 @@ export class CatsService {
     if (updateCatDto.name !== undefined) cat.name = updateCatDto.name;
     if (updateCatDto.age !== undefined) cat.age = updateCatDto.age;
     if (updateCatDto.breed !== undefined) cat.breed = updateCatDto.breed;
-    // updatedAt은 @BeforeUpdate 훅에서 자동 갱신됨
+    // updatedAt is refreshed automatically in the @BeforeUpdate hook
 
     return await this.catRepository.save(cat);
   }
 
   /**
-   * 실제 DELETE — 행을 영구 삭제합니다.
+   * Hard DELETE — permanently removes the row.
    */
   async remove(id: number): Promise<void> {
     await this.findOne(id);
@@ -148,8 +148,8 @@ export class CatsService {
   }
 
   /**
-   * Soft Delete — deleted_at을 현재 시각으로 설정. 행은 유지.
-   * find/findOne에서 자동으로 제외됩니다.
+   * Soft Delete — sets deleted_at to the current timestamp. Row is retained.
+   * Automatically excluded from find/findOne.
    */
   async softRemove(id: number): Promise<void> {
     await this.findOne(id);
@@ -157,14 +157,14 @@ export class CatsService {
   }
 
   /**
-   * Restore — soft-deleted 엔티티의 deleted_at을 NULL로 복원.
+   * Restore — resets deleted_at to NULL on a soft-deleted entity.
    */
   async restore(id: number): Promise<void> {
     await this.catRepository.restore({ id });
   }
 
   /**
-   * Aggregate Stats — count / avg / min / max를 한 번에 반환합니다.
+   * Aggregate Stats — returns count / avg / min / max in one shot.
    */
   async stats(): Promise<{
     total: number;
@@ -185,22 +185,22 @@ export class CatsService {
   }
 
   /**
-   * clear — 테이블의 모든 데이터를 제거합니다 (TRUNCATE).
+   * clear — removes all rows from the table (TRUNCATE).
    */
   async clear(): Promise<void> {
     await this.catRepository.clear();
   }
 
   /**
-   * deleteMany — ID 배열로 여러 고양이를 한 번의 쿼리로 삭제합니다.
+   * deleteMany — deletes multiple cats in a single query by ID array.
    */
   async removeMany(ids: number[]): Promise<{ affected: number }> {
     return this.catRepository.deleteMany(ids);
   }
 
   /**
-   * 커서 기반 페이지네이션으로 고양이 목록을 조회합니다.
-   * offset 방식 대신 커서를 사용하여 대량 데이터에서도 일정한 성능을 보장합니다.
+   * List cats via cursor-based pagination.
+   * Uses a cursor instead of offset, ensuring consistent performance even with large datasets.
    */
   async findWithCursor(
     take?: number,

@@ -2,7 +2,7 @@ import { OrmError } from "./OrmError";
 import { OrmErrorCode } from "./OrmErrorCode";
 
 /**
- * 엔티티 메타데이터를 찾을 수 없을 때 발생하는 에러입니다.
+ * Thrown when entity metadata cannot be found.
  */
 export class EntityMetadataNotFoundError extends OrmError {
   constructor(entityName: string) {

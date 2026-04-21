@@ -4,7 +4,7 @@ import type { WhereClause } from "../dialects/FindOption";
 import type { EntityManager } from "./EntityManager";
 
 /**
- * Insert 이벤트에 전달되는 객체입니다.
+ * Object passed to Insert events.
  */
 export interface InsertEvent<T> {
   entity: Partial<T>;
@@ -12,7 +12,7 @@ export interface InsertEvent<T> {
 }
 
 /**
- * Update 이벤트에 전달되는 객체입니다.
+ * Object passed to Update events.
  */
 export interface UpdateEvent<T> {
   entity: Partial<T>;
@@ -20,7 +20,7 @@ export interface UpdateEvent<T> {
 }
 
 /**
- * Delete 이벤트에 전달되는 객체입니다.
+ * Object passed to Delete events.
  */
 export interface DeleteEvent<T> {
   entityClass: new (...args: any[]) => T;
@@ -29,9 +29,9 @@ export interface DeleteEvent<T> {
 }
 
 /**
- * 엔티티 생명주기 이벤트를 구독할 수 있는 Subscriber 인터페이스입니다.
+ * Subscriber interface for entity lifecycle events.
  *
- * `listenTo()`가 반환하는 엔티티 클래스에 해당하는 이벤트만 전달됩니다.
+ * Only events for the entity class returned by `listenTo()` are delivered.
  *
  * @example
  * ```ts
