@@ -1,5 +1,6 @@
 export {
   StinglerloomOrmModule,
+  StinglerloomOrmModule as StingerloomOrmModule,
   makeInjectRepositoryToken,
   getEntityManagerToken,
   STINGERLOOM_ORM_OPTION_TOKEN,
@@ -8,6 +9,7 @@ export {
 export { StingerloomOrmCoreModule } from "./stingerloom-orm-core.module";
 export {
   StinglerloomOrmService,
+  StinglerloomOrmService as StingerloomOrmService,
   STINGERLOOM_ORM_SERVICE_TOKEN,
   getOrmServiceToken,
 } from "./stingerloom-orm.service";
