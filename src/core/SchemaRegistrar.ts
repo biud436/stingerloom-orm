@@ -65,6 +65,19 @@ export class SchemaRegistrar {
     const isDryRun = syncOption === "dry-run";
     const isSafe = syncOption === "safe";
 
+    if (
+      syncOption === true &&
+      process.env.NODE_ENV === "production" &&
+      process.env.STINGERLOOM_ALLOW_SYNC_IN_PROD !== "true"
+    ) {
+      this.logger.warn(
+        "synchronize: true is enabled with NODE_ENV=production. " +
+          "This will run destructive DDL (ADD/ALTER/DROP/RENAME) against the live database and can cause DATA LOSS. " +
+          "Use synchronize: \"safe\" or \"dry-run\" in production, or set synchronize: false and manage schema via migrations. " +
+          "Set STINGERLOOM_ALLOW_SYNC_IN_PROD=true to silence this warning.",
+      );
+    }
+
     // PostgreSQL: automatically create the schema if it does not exist.
     if (
       synchronize &&

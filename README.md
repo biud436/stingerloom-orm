@@ -34,7 +34,19 @@ npm install @stingerloom/orm reflect-metadata
 npm install pg        # or mysql2, better-sqlite3
 ```
 
+Your `tsconfig.json` must enable decorator metadata:
+
+```jsonc
+{
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  }
+}
+```
+
 ```typescript
+import "reflect-metadata";
 import {
   EntityManager, Entity, PrimaryGeneratedColumn, Column, qAlias,
 } from "@stingerloom/orm";
@@ -48,7 +60,16 @@ class Post {
 }
 
 const em = new EntityManager();
-await em.register({ type: "postgres", entities: [Post], synchronize: true, /* ... */ });
+await em.register({
+  type: "postgres",
+  host: "localhost",
+  port: 5432,
+  username: "postgres",
+  password: "postgres",
+  database: "app",
+  entities: [Post],
+  synchronize: true, // disable in production
+});
 
 // CRUD
 const post = await em.save(Post, { title: "Hello World", views: 0, publishedAt: new Date() });
