@@ -114,9 +114,6 @@ importers:
       sql-template-tag:
         specifier: ^4.0.0
         version: 4.1.0
-      typedi:
-        specifier: ^0.10.0
-        version: 0.10.0
     devDependencies:
       '@nestjs/cli':
         specifier: ^10.0.0
@@ -187,9 +184,6 @@ importers:
       rxjs:
         specifier: ^7.8.1
         version: 7.8.2
-      typedi:
-        specifier: ^0.10.0
-        version: 0.10.0
     devDependencies:
       '@nestjs/cli':
         specifier: ^10.0.0
@@ -263,9 +257,6 @@ importers:
       rxjs:
         specifier: ^7.8.1
         version: 7.8.2
-      typedi:
-        specifier: ^0.10.0
-        version: 0.10.0
     devDependencies:
       '@nestjs/cli':
         specifier: ^10.0.0
@@ -319,8 +310,8 @@ importers:
         specifier: ^11.2.6
         version: 11.2.6(@nestjs/common@10.4.22(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@10.4.22)(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)
       '@stingerloom/orm':
-        specifier: workspace:*
-        version: link:../..
+        specifier: ^0.19.1
+        version: 0.19.1(@mrleebo/prisma-ast@0.14.0)(@nestjs/common@10.4.22(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@10.4.22)(better-sqlite3@12.8.0)(class-transformer@0.5.1)(fast-glob@3.3.3)(mysql2@3.16.3)(pg@8.18.0)(reflect-metadata@0.2.2)
       class-transformer:
         specifier: ^0.5.1
         version: 0.5.1
@@ -336,9 +327,6 @@ importers:
       rxjs:
         specifier: ^7.8.1
         version: 7.8.2
-      typedi:
-        specifier: ^0.10.0
-        version: 0.10.0
     devDependencies:
       '@nestjs/cli':
         specifier: ^10.0.0
@@ -521,9 +509,6 @@ importers:
       rxjs:
         specifier: ^7.8.1
         version: 7.8.2
-      typedi:
-        specifier: ^0.10.0
-        version: 0.10.0
     devDependencies:
       '@nestjs/cli':
         specifier: ^10.0.0
@@ -1919,6 +1904,38 @@ packages:
 
   '@sinonjs/fake-timers@13.0.5':
     resolution: {integrity: sha512-36/hTbH2uaWuGVERyC6da9YwGWnzUZXuPro/F2LfsdOsLnCojz/iSH8MxUt/FD2S5XBSVPhmArFUXcpCQ2Hkiw==}
+
+  '@stingerloom/orm@0.19.1':
+    resolution: {integrity: sha512-sZUKDTR7hBms30OSwCBSPWuT7/jfcHNjLAy3XWn8+O4Msuq2Cjoh3aurl14Z3BzA7qUryD/TELf+CE4Mm2o40g==}
+    engines: {node: '>=22.0.0'}
+    hasBin: true
+    peerDependencies:
+      '@mrleebo/prisma-ast': '>=0.12.0'
+      '@nestjs/common': '>=8.0.0'
+      '@nestjs/core': '>=8.0.0'
+      better-sqlite3: '>=9.0.0'
+      class-transformer: '>=0.5.0'
+      fast-glob: '>=3.0.0'
+      mysql2: ^3.0.0
+      pg: ^8.0.0
+      reflect-metadata: '>=0.1.0'
+    peerDependenciesMeta:
+      '@mrleebo/prisma-ast':
+        optional: true
+      '@nestjs/common':
+        optional: true
+      '@nestjs/core':
+        optional: true
+      better-sqlite3:
+        optional: true
+      class-transformer:
+        optional: true
+      fast-glob:
+        optional: true
+      mysql2:
+        optional: true
+      pg:
+        optional: true
 
   '@tokenizer/inflate@0.2.7':
     resolution: {integrity: sha512-MADQgmZT1eKjp06jpI2yozxaU9uVs4GzzgSL+uEq7bVcJ9V1ZXQkeGNql1fsSI0gMy1vhvNTNbUqrx+pZfJVmg==}
@@ -5100,9 +5117,6 @@ packages:
   typedarray@0.0.6:
     resolution: {integrity: sha512-/aCDEGatGvZ2BIk+HmLf4ifCJFwvKFNb9/JeZPMulfgFracn9QFcAf5GO8B/mweUjSoblS5In0cWhqpfs/5PQA==}
 
-  typedi@0.10.0:
-    resolution: {integrity: sha512-v3UJF8xm68BBj6AF4oQML3ikrfK2c9EmZUyLOfShpJuItAqVBHWP/KtpGinkSsIiP6EZyyb6Z3NXyW9dgS9X1w==}
-
   typescript-eslint@8.57.1:
     resolution: {integrity: sha512-fLvZWf+cAGw3tqMCYzGIU6yR8K+Y9NT2z23RwOjlNFF2HwSB3KhdEFI5lSBv8tNmFkkBShSjsCjzx1vahZfISA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
@@ -7021,6 +7035,20 @@ snapshots:
   '@sinonjs/fake-timers@13.0.5':
     dependencies:
       '@sinonjs/commons': 3.0.1
+
+  '@stingerloom/orm@0.19.1(@mrleebo/prisma-ast@0.14.0)(@nestjs/common@10.4.22(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@10.4.22)(better-sqlite3@12.8.0)(class-transformer@0.5.1)(fast-glob@3.3.3)(mysql2@3.16.3)(pg@8.18.0)(reflect-metadata@0.2.2)':
+    dependencies:
+      reflect-metadata: 0.2.2
+      sql-template-tag: 4.1.0
+    optionalDependencies:
+      '@mrleebo/prisma-ast': 0.14.0
+      '@nestjs/common': 10.4.22(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/core': 10.4.22(@nestjs/common@10.4.22(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@10.4.22)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      better-sqlite3: 12.8.0
+      class-transformer: 0.5.1
+      fast-glob: 3.3.3
+      mysql2: 3.16.3
+      pg: 8.18.0
 
   '@tokenizer/inflate@0.2.7':
     dependencies:
@@ -11007,8 +11035,6 @@ snapshots:
       mime-types: 3.0.2
 
   typedarray@0.0.6: {}
-
-  typedi@0.10.0: {}
 
   typescript-eslint@8.57.1(eslint@9.39.4)(typescript@5.9.3):
     dependencies:
