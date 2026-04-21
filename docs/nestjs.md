@@ -15,7 +15,7 @@ The Stingerloom NestJS integration module solves three problems:
 The NestJS integration is available as a subpath export -- no extra package needed.
 
 ```typescript
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 ```
 
 ---
@@ -29,13 +29,13 @@ Call `forRoot()` in your root `AppModule`. This is where the database connection
 ```typescript
 // app.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { CatsModule } from "./cats/cats.module";
 import { Cat } from "./entities/cat.entity";
 
 @Module({
   imports: [
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "mysql",
       host: "localhost",
       port: 3306,
@@ -53,12 +53,12 @@ export class AppModule {}
 
 #### What forRoot() does under the hood
 
-When NestJS processes `StinglerloomOrmModule.forRoot(options)`, four things happen:
+When NestJS processes `StingerloomOrmModule.forRoot(options)`, four things happen:
 
 1. **Creates an EntityManager** -- A new `EntityManager` instance is created.
 2. **Calls `em.register(options)`** -- This connects to the database, scans entities, and optionally synchronizes the schema. This happens inside a NestJS factory provider, so it runs during module initialization.
 3. **Registers the EntityManager as a global provider** -- The `EntityManager` instance is placed into NestJS's DI container under a specific token. Because the module is marked `global: true`, this provider is available to every module in your application without re-importing.
-4. **Creates a StinglerloomOrmService** -- This service wraps the EntityManager and implements NestJS lifecycle hooks: `OnModuleInit` for setup and `OnApplicationShutdown` for calling `propagateShutdown()` to close connections and clean up resources.
+4. **Creates a StingerloomOrmService** -- This service wraps the EntityManager and implements NestJS lifecycle hooks: `OnModuleInit` for setup and `OnApplicationShutdown` for calling `propagateShutdown()` to close connections and clean up resources.
 
 The key insight: `forRoot()` should be called **once** per database connection, in your root module.
 
@@ -67,13 +67,13 @@ The key insight: `forRoot()` should be called **once** per database connection, 
 ```typescript
 // cats.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { Cat } from "../entities/cat.entity";
 import { CatsService } from "./cats.service";
 import { CatsController } from "./cats.controller";
 
 @Module({
-  imports: [StinglerloomOrmModule.forFeature([Cat])],
+  imports: [StingerloomOrmModule.forFeature([Cat])],
   providers: [CatsService],
   controllers: [CatsController],
 })
@@ -82,7 +82,7 @@ export class CatsModule {}
 
 #### What forFeature() does under the hood
 
-When NestJS processes `StinglerloomOrmModule.forFeature([Cat])`, it creates a provider for each entity:
+When NestJS processes `StingerloomOrmModule.forFeature([Cat])`, it creates a provider for each entity:
 
 1. **Generates a unique DI token** for `Cat` -- a Symbol like `Symbol("INJECT_REPOSITORIES_TOKEN_Cat")`. This token is cached in a WeakMap keyed by the entity class, so calling `forFeature([Cat])` in multiple modules always produces the same token.
 2. **Creates a factory provider** that receives the EntityManager (from `forRoot()`) and calls `em.getRepository(Cat)` to get a `BaseRepository<Cat>`.
@@ -181,7 +181,7 @@ export class CatsService {
 
 ## Lifecycle Management
 
-The `StinglerloomOrmService` manages the EntityManager lifecycle automatically through NestJS hooks:
+The `StingerloomOrmService` manages the EntityManager lifecycle automatically through NestJS hooks:
 
 - **OnModuleInit** -- Registers the EntityManager in an internal registry and logs initialization.
 - **OnApplicationShutdown** -- Calls `em.propagateShutdown()` which: closes all database connections, removes event listeners, clears entity subscribers, stops the QueryTracker, and shuts down plugins in reverse order.
@@ -222,7 +222,7 @@ This means `@InjectRepository(Event)` (no connection name) and `@InjectRepositor
 @Module({
   imports: [
     // Default connection (MySQL)
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "mysql",
       host: "localhost",
       database: "main_db",
@@ -231,7 +231,7 @@ This means `@InjectRepository(Event)` (no connection name) and `@InjectRepositor
     }),
 
     // Named connection (PostgreSQL)
-    StinglerloomOrmModule.forRoot(
+    StingerloomOrmModule.forRoot(
       {
         type: "postgres",
         host: "analytics-db.example.com",
@@ -255,7 +255,7 @@ export class AppModule {}
 // analytics.module.ts
 @Module({
   imports: [
-    StinglerloomOrmModule.forFeature([Event, Metric], "analytics"),
+    StingerloomOrmModule.forFeature([Event, Metric], "analytics"),
   ],
   providers: [AnalyticsService],
 })
@@ -290,13 +290,13 @@ Register `EntitySubscriber` instances during module initialization:
 
 ```typescript
 import { Injectable, OnModuleInit, Inject } from "@nestjs/common";
-import { StinglerloomOrmService } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmService } from "@stingerloom/orm/nestjs";
 
 @Injectable()
 export class CatsSubscriberService implements OnModuleInit {
   constructor(
-    @Inject(StinglerloomOrmService)
-    private readonly ormService: StinglerloomOrmService,
+    @Inject(StingerloomOrmService)
+    private readonly ormService: StingerloomOrmService,
   ) {}
 
   onModuleInit() {
@@ -308,13 +308,13 @@ export class CatsSubscriberService implements OnModuleInit {
 
 ---
 
-## StinglerloomOrmService
+## StingerloomOrmService
 
 The service is available for injection and provides direct access to the EntityManager:
 
 ```typescript
-@Inject(StinglerloomOrmService)
-private readonly ormService: StinglerloomOrmService;
+@Inject(StingerloomOrmService)
+private readonly ormService: StingerloomOrmService;
 
 // Access EntityManager
 const em = ormService.getEntityManager();
@@ -331,8 +331,8 @@ Everything is imported from `@stingerloom/orm/nestjs`:
 
 | Export | Description |
 |--------|-------------|
-| `StinglerloomOrmModule` | Main module with `forRoot()` and `forFeature()` |
-| `StinglerloomOrmService` | Service with EntityManager lifecycle management |
+| `StingerloomOrmModule` | Main module with `forRoot()` and `forFeature()` |
+| `StingerloomOrmService` | Service with EntityManager lifecycle management |
 | `InjectRepository` | Decorator for repository injection |
 | `InjectEntityManager` | Decorator for EntityManager injection |
 | `getEntityManagerToken(name?)` | Token helper for manual DI |

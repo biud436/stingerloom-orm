@@ -7,7 +7,7 @@ NestJS E-commerce API demonstrating the **Prisma schema → Stingerloom ORM enti
 1. Define your data model in `prisma/schema.prisma` (standard Prisma format)
 2. Run `pnpm generate` to convert the Prisma schema into Stingerloom ORM entity classes
 3. Generated entities appear in `src/generated/` with full decorator support
-4. Use them in NestJS modules with `StinglerloomOrmModule.forFeature([...])` as usual
+4. Use them in NestJS modules with `StingerloomOrmModule.forFeature([...])` as usual
 
 ## Quick start
 

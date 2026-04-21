@@ -15,16 +15,16 @@ export const STINGERLOOM_ORM_SERVICE_TOKEN = Symbol.for(
 
 export function getOrmServiceToken(
   connectionName = "default",
-): string | typeof StinglerloomOrmService {
-  if (connectionName === "default") return StinglerloomOrmService;
+): string | typeof StingerloomOrmService {
+  if (connectionName === "default") return StingerloomOrmService;
   return `STINGERLOOM_ORM_SERVICE_${connectionName}`;
 }
 
 @Injectable()
-export class StinglerloomOrmService
+export class StingerloomOrmService
   implements OnModuleInit, OnApplicationShutdown
 {
-  private readonly logger = new Logger(StinglerloomOrmService.name);
+  private readonly logger = new Logger(StingerloomOrmService.name);
 
   public static captured = {} as Record<
     typeof STINGERLOOM_ORM_SERVICE_TOKEN,
@@ -32,16 +32,16 @@ export class StinglerloomOrmService
   >;
 
   constructor(private readonly entityManager: EntityManager) {
-    this.logger.info("StinglerloomOrmService initialized");
+    this.logger.info("StingerloomOrmService initialized");
   }
 
   async onModuleInit(): Promise<void> {
-    this.logger.info("StinglerloomOrmService OnModuleInit");
+    this.logger.info("StingerloomOrmService OnModuleInit");
 
     if (
-      !StinglerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN]
+      !StingerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN]
     ) {
-      this.logger.warn("StinglerloomOrmModule.forRoot() was not called");
+      this.logger.warn("StingerloomOrmModule.forRoot() was not called");
       return;
     }
 

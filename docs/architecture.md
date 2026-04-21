@@ -236,9 +236,9 @@ The NestJS module follows the familiar `forRoot` / `forFeature` pattern:
 For applications that talk to multiple databases, pass a `connectionName`:
 
 ```typescript
-StinglerloomOrmModule.forRoot(mysqlOptions)                // "default"
-StinglerloomOrmModule.forRoot(pgOptions, "analytics")      // named
-StinglerloomOrmModule.forFeature([Event], "analytics")     // binds to "analytics"
+StingerloomOrmModule.forRoot(mysqlOptions)                // "default"
+StingerloomOrmModule.forRoot(pgOptions, "analytics")      // named
+StingerloomOrmModule.forFeature([Event], "analytics")     // binds to "analytics"
 
 // In a service:
 @InjectRepository(Event, "analytics") private readonly eventRepo: BaseRepository<Event>

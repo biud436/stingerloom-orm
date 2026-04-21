@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { bufferPlugin } from "@stingerloom/orm";
 import { CatsModule } from "./cats/cats.module";
 import { OwnersModule } from "./owners/owners.module";
@@ -10,7 +10,7 @@ import { OwnersModule } from "./owners/owners.module";
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "mysql",
       host: process.env.DB_HOST || "localhost",
       port: parseInt(process.env.DB_PORT || "3306"),

@@ -113,7 +113,7 @@ const { EntityManager } = require("@stingerloom/orm");
 Subpath exports are also dual:
 
 ```typescript
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { PrismaImporter } from "@stingerloom/orm/prisma-import";
 import { EntityManager } from "@stingerloom/orm/core";       // core only
 import { PostgresDriver } from "@stingerloom/orm/postgres";   // single dialect
@@ -405,18 +405,18 @@ yarn add @stingerloom/orm reflect-metadata
 
 ### Root Module Registration
 
-Use `StinglerloomOrmModule.forRoot()` to initialize the database connection, and `StinglerloomOrmModule.forFeature()` to register entity repositories.
+Use `StingerloomOrmModule.forRoot()` to initialize the database connection, and `StingerloomOrmModule.forFeature()` to register entity repositories.
 
 ```typescript
 // app.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { User } from "./user.entity";
 import { UsersModule } from "./users/users.module";
 
 @Module({
   imports: [
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "postgres",
       host: "localhost",
       port: 5432,
@@ -437,12 +437,12 @@ export class AppModule {}
 ```typescript
 // users/users.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { User } from "./user.entity";
 import { UsersService } from "./users.service";
 
 @Module({
-  imports: [StinglerloomOrmModule.forFeature([User])],
+  imports: [StingerloomOrmModule.forFeature([User])],
   providers: [UsersService],
   exports: [UsersService],
 })
@@ -487,14 +487,14 @@ Pass a `connectionName` to `forRoot()` and `forFeature()` to use multiple databa
 ```typescript
 // app.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { User } from "./user.entity";
 import { Event } from "./event.entity";
 
 @Module({
   imports: [
     // Default connection (MySQL)
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "mysql",
       host: "localhost",
       port: 3306,
@@ -504,7 +504,7 @@ import { Event } from "./event.entity";
       entities: [User],
     }),
     // Named connection (PostgreSQL)
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "postgres",
       host: "localhost",
       port: 5432,
@@ -525,7 +525,7 @@ Specify the connectionName in feature modules:
 ```typescript
 // analytics/analytics.module.ts
 @Module({
-  imports: [StinglerloomOrmModule.forFeature([Event], "analytics")],
+  imports: [StingerloomOrmModule.forFeature([Event], "analytics")],
   providers: [AnalyticsService],
 })
 export class AnalyticsModule {}

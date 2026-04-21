@@ -15,7 +15,7 @@ Stingerloom NestJS 통합 모듈은 세 가지 문제를 해결해요:
 NestJS 통합은 subpath export로 제공돼요. 별도 패키지 설치가 필요 없어요.
 
 ```typescript
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 ```
 
 ---
@@ -29,13 +29,13 @@ import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
 ```typescript
 // app.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { CatsModule } from "./cats/cats.module";
 import { Cat } from "./entities/cat.entity";
 
 @Module({
   imports: [
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "mysql",
       host: "localhost",
       port: 3306,
@@ -53,12 +53,12 @@ export class AppModule {}
 
 #### forRoot() 내부 동작
 
-`StinglerloomOrmModule.forRoot(options)`이 처리될 때 네 가지 일이 일어나요:
+`StingerloomOrmModule.forRoot(options)`이 처리될 때 네 가지 일이 일어나요:
 
 1. **EntityManager 생성** -- 새 `EntityManager` 인스턴스를 만들어요.
 2. **`em.register(options)` 호출** -- DB에 연결하고, 엔티티를 스캔하고, 옵션에 따라 스키마를 동기화해요. NestJS factory provider 안에서 실행되기 때문에 모듈 초기화 시점에 동작해요.
 3. **EntityManager를 global provider로 등록** -- NestJS DI 컨테이너에 특정 토큰으로 등록돼요. `global: true`로 설정되어 있어서, 다른 모듈에서 다시 import하지 않아도 어디서든 사용할 수 있어요.
-4. **StinglerloomOrmService 생성** -- EntityManager를 감싸고, NestJS 라이프사이클 훅을 구현해요: `OnModuleInit`으로 초기화하고 `OnApplicationShutdown`으로 `propagateShutdown()`을 호출해서 연결을 정리해요.
+4. **StingerloomOrmService 생성** -- EntityManager를 감싸고, NestJS 라이프사이클 훅을 구현해요: `OnModuleInit`으로 초기화하고 `OnApplicationShutdown`으로 `propagateShutdown()`을 호출해서 연결을 정리해요.
 
 핵심 포인트: `forRoot()`는 DB 연결당 **한 번만** 루트 모듈에서 호출해야 해요.
 
@@ -67,13 +67,13 @@ export class AppModule {}
 ```typescript
 // cats.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { Cat } from "../entities/cat.entity";
 import { CatsService } from "./cats.service";
 import { CatsController } from "./cats.controller";
 
 @Module({
-  imports: [StinglerloomOrmModule.forFeature([Cat])],
+  imports: [StingerloomOrmModule.forFeature([Cat])],
   providers: [CatsService],
   controllers: [CatsController],
 })
@@ -82,7 +82,7 @@ export class CatsModule {}
 
 #### forFeature() 내부 동작
 
-`StinglerloomOrmModule.forFeature([Cat])`이 처리되면 각 엔티티에 대해 provider를 만들어요:
+`StingerloomOrmModule.forFeature([Cat])`이 처리되면 각 엔티티에 대해 provider를 만들어요:
 
 1. **고유 DI 토큰 생성** -- `Symbol("INJECT_REPOSITORIES_TOKEN_Cat")` 같은 Symbol이에요. 엔티티 클래스를 키로 하는 WeakMap에 캐시되기 때문에, 여러 모듈에서 `forFeature([Cat])`을 호출해도 항상 같은 토큰을 사용해요.
 2. **factory provider 생성** -- `forRoot()`에서 등록된 EntityManager를 받아서 `em.getRepository(Cat)`으로 `BaseRepository<Cat>`을 가져와요.
@@ -181,7 +181,7 @@ export class CatsService {
 
 ## Lifecycle Management
 
-`StinglerloomOrmService`가 NestJS 훅을 통해 EntityManager 라이프사이클을 자동으로 관리해요:
+`StingerloomOrmService`가 NestJS 훅을 통해 EntityManager 라이프사이클을 자동으로 관리해요:
 
 - **OnModuleInit** -- EntityManager를 내부 레지스트리에 등록하고 초기화 로그를 남겨요.
 - **OnApplicationShutdown** -- `em.propagateShutdown()`을 호출해서 DB 연결 종료, 이벤트 리스너 제거, 엔티티 subscriber 정리, QueryTracker 중지, 플러그인 역순 종료를 수행해요.
@@ -222,7 +222,7 @@ DI 프레임워크에서의 문제: 서비스가 `BaseRepository<Event>`를 요�
 @Module({
   imports: [
     // Default connection (MySQL)
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "mysql",
       host: "localhost",
       database: "main_db",
@@ -231,7 +231,7 @@ DI 프레임워크에서의 문제: 서비스가 `BaseRepository<Event>`를 요�
     }),
 
     // Named connection (PostgreSQL)
-    StinglerloomOrmModule.forRoot(
+    StingerloomOrmModule.forRoot(
       {
         type: "postgres",
         host: "analytics-db.example.com",
@@ -255,7 +255,7 @@ export class AppModule {}
 // analytics.module.ts
 @Module({
   imports: [
-    StinglerloomOrmModule.forFeature([Event, Metric], "analytics"),
+    StingerloomOrmModule.forFeature([Event, Metric], "analytics"),
   ],
   providers: [AnalyticsService],
 })
@@ -290,13 +290,13 @@ connection name을 생략하면 항상 `"default"` 연결을 사용해요. 기�
 
 ```typescript
 import { Injectable, OnModuleInit, Inject } from "@nestjs/common";
-import { StinglerloomOrmService } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmService } from "@stingerloom/orm/nestjs";
 
 @Injectable()
 export class CatsSubscriberService implements OnModuleInit {
   constructor(
-    @Inject(StinglerloomOrmService)
-    private readonly ormService: StinglerloomOrmService,
+    @Inject(StingerloomOrmService)
+    private readonly ormService: StingerloomOrmService,
   ) {}
 
   onModuleInit() {
@@ -308,13 +308,13 @@ export class CatsSubscriberService implements OnModuleInit {
 
 ---
 
-## StinglerloomOrmService
+## StingerloomOrmService
 
 이 서비스를 주입해서 EntityManager에 직접 접근할 수 있어요:
 
 ```typescript
-@Inject(StinglerloomOrmService)
-private readonly ormService: StinglerloomOrmService;
+@Inject(StingerloomOrmService)
+private readonly ormService: StingerloomOrmService;
 
 // Access EntityManager
 const em = ormService.getEntityManager();
@@ -331,8 +331,8 @@ const repo = ormService.getRepository(User);
 
 | Export | Description |
 |--------|-------------|
-| `StinglerloomOrmModule` | `forRoot()`과 `forFeature()`를 제공하는 메인 모듈 |
-| `StinglerloomOrmService` | EntityManager 라이프사이클을 관리하는 서비스 |
+| `StingerloomOrmModule` | `forRoot()`과 `forFeature()`를 제공하는 메인 모듈 |
+| `StingerloomOrmService` | EntityManager 라이프사이클을 관리하는 서비스 |
 | `InjectRepository` | Repository 주입 데코레이터 |
 | `InjectEntityManager` | EntityManager 주입 데코레이터 |
 | `getEntityManagerToken(name?)` | 수동 DI용 토큰 헬퍼 |

@@ -3,13 +3,13 @@ import { EntityManager } from "../../src/core/EntityManager";
 import {
   makeInjectRepositoryToken,
   getEntityManagerToken,
-  StinglerloomOrmModule,
+  StingerloomOrmModule,
   INJECT_REPOSITORIES_TOKEN,
 } from "../../src/integration/nestjs/stingerloom-orm.module";
 import { StingerloomOrmCoreModule } from "../../src/integration/nestjs/stingerloom-orm-core.module";
 import {
   getOrmServiceToken,
-  StinglerloomOrmService,
+  StingerloomOrmService,
 } from "../../src/integration/nestjs/stingerloom-orm.service";
 
 class User {}
@@ -37,9 +37,9 @@ describe("NestJS Multi-DB Support", () => {
   });
 
   describe("getOrmServiceToken", () => {
-    it("should return StinglerloomOrmService class for default connection", () => {
-      expect(getOrmServiceToken()).toBe(StinglerloomOrmService);
-      expect(getOrmServiceToken("default")).toBe(StinglerloomOrmService);
+    it("should return StingerloomOrmService class for default connection", () => {
+      expect(getOrmServiceToken()).toBe(StingerloomOrmService);
+      expect(getOrmServiceToken("default")).toBe(StingerloomOrmService);
     });
 
     it("should return string token for named connection", () => {
@@ -129,9 +129,9 @@ describe("NestJS Multi-DB Support", () => {
     });
   });
 
-  describe("StinglerloomOrmModule.forRoot", () => {
+  describe("StingerloomOrmModule.forRoot", () => {
     it("should use class tokens for default connection (backward compat)", () => {
-      const mod = StinglerloomOrmModule.forRoot({
+      const mod = StingerloomOrmModule.forRoot({
         type: "mysql",
         host: "localhost",
         port: 3306,
@@ -145,13 +145,13 @@ describe("NestJS Multi-DB Support", () => {
         provide: unknown;
         inject: unknown[];
       };
-      expect(serviceProvider.provide).toBe(StinglerloomOrmService);
+      expect(serviceProvider.provide).toBe(StingerloomOrmService);
       expect(serviceProvider.inject).toContain(EntityManager);
-      expect(mod.exports).toContain(StinglerloomOrmService);
+      expect(mod.exports).toContain(StingerloomOrmService);
     });
 
     it("should use string tokens for named connection", () => {
-      const mod = StinglerloomOrmModule.forRoot(
+      const mod = StingerloomOrmModule.forRoot(
         {
           type: "postgres",
           host: "localhost",
@@ -178,9 +178,9 @@ describe("NestJS Multi-DB Support", () => {
     });
   });
 
-  describe("StinglerloomOrmModule.forFeature", () => {
+  describe("StingerloomOrmModule.forFeature", () => {
     it("should inject from default EntityManager when no connectionName", () => {
-      const mod = StinglerloomOrmModule.forFeature([User, Post]);
+      const mod = StingerloomOrmModule.forFeature([User, Post]);
 
       const providers = mod.providers as Array<{
         provide: symbol;
@@ -193,7 +193,7 @@ describe("NestJS Multi-DB Support", () => {
     });
 
     it("should inject from named EntityManager for named connection", () => {
-      const mod = StinglerloomOrmModule.forFeature([Event], "analytics");
+      const mod = StingerloomOrmModule.forFeature([Event], "analytics");
 
       const providers = mod.providers as Array<{
         provide: symbol;

@@ -3,7 +3,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@stingerloom/orm"><img src="https://img.shields.io/npm/v/@stingerloom/orm" alt="npm version" /></a>
-  <a href="https://github.com/biud436/stingerloom-orm/actions"><img src="https://img.shields.io/badge/tests-5%2C041%20passed-brightgreen" alt="tests" /></a>
+  <a href="https://github.com/biud436/stingerloom-orm/actions"><img src="https://img.shields.io/badge/tests-5%2C191%20passed-brightgreen" alt="tests" /></a>
   <a href="https://github.com/biud436/stingerloom-orm/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license" /></a>
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" alt="TypeScript strict" />
 </p>
@@ -20,7 +20,7 @@
 ## Why Stingerloom?
 
 - **Decorator-first** — Define entities, relations, hooks, and validation with TypeScript decorators. Column types are inferred automatically.
-- **Typed QueryDSL via Proxy, no codegen** — `qAlias(Entity, "u")` gives you IDE autocomplete on every column. Chain `.eq / .gt / .like / .in`, aggregates (`.count() / .sum() / .avg()`), CAST, date components, window functions, CASE/WHEN, subqueries, and JSON-path navigation — all returning type-safe expressions that compose freely across `where() / having() / select()`.
+- **Typed QueryDSL via Proxy, no codegen** — `qAlias(Entity, "u")` gives you IDE autocomplete on every column. Chain `.eq / .gt / .like / .in`, aggregates (`.count() / .sum() / .avg()`), CAST, date components, window functions, CASE/WHEN (plus `iff` / `mapValues` / `buckets` shortcuts), subqueries, and JSON-path navigation — all returning type-safe expressions that compose freely across `where() / having() / select()`. Import the namespace as `{ Expressions as exp }` to keep call sites short.
 - **Unit of Work plugin** — Identity Map, dirty checking, cascade, batch flush, lazy proxies, and pessimistic locking via `em.extend(bufferPlugin())`. Single-level cache skips round-trips for repeated PK lookups.
 - **Multi-tenancy built in** — Layered metadata system (inspired by Docker OverlayFS) with `AsyncLocalStorage`-based context isolation. Zero cross-tenant leakage by design.
 - **Three databases, one API** — MySQL (incl. MariaDB-specific optimizations), PostgreSQL, and SQLite share the same EntityManager interface. Switch drivers without rewriting queries.
@@ -86,7 +86,7 @@ const trending = await em.createQueryBuilder(Post, "p")
 | **Validation** | `@NotNull`, `@MinLength`, `@MaxLength`, `@Min`, `@Max`, Zod / Valibot schemas via `qb.selectSchema(schema)` |
 | **Schema definition** | Decorators or decorator-free `EntitySchema`; Prisma schema import |
 | **Infrastructure** | Connection pooling, read replicas, retry with backoff, per-query timeout, graceful shutdown, SSL/TLS, AsyncIterable streaming (`stream()`), MariaDB native UUID + `INSERT … RETURNING` |
-| **NestJS** | `StinglerloomOrmModule.forRoot / forFeature`, `@InjectRepository`, `@InjectEntityManager`, multi-DB named connections |
+| **NestJS** | `StingerloomOrmModule.forRoot / forFeature`, `@InjectRepository`, `@InjectEntityManager`, multi-DB named connections |
 
 ## Database Support
 

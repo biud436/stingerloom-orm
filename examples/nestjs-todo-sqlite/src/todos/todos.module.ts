@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
-import { StinglerloomOrmModule } from '@stingerloom/orm/nestjs';
+import { StingerloomOrmModule } from '@stingerloom/orm/nestjs';
 import { TodosController } from './todos.controller';
 import { TodosService } from './todos.service';
 import { Todo } from './todo.entity';
 
 @Module({
-  imports: [StinglerloomOrmModule.forFeature([Todo])],
+  imports: [StingerloomOrmModule.forFeature([Todo])],
   controllers: [TodosController],
   providers: [TodosService],
 })

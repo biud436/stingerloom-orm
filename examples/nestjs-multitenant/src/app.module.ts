@@ -1,6 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { TenantModule } from "./tenant/tenant.module";
 import { UsersModule } from "./users/users.module";
 import { PostsModule } from "./posts/posts.module";
@@ -21,7 +21,7 @@ import { UnitsController } from "./units/units.controller";
       defaultTenant: "public",
       routes: [UsersController, PostsController, UnitsController],
     }),
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "postgres",
       host: process.env.DB_HOST || "localhost",
       port: parseInt(process.env.DB_PORT || "5432"),

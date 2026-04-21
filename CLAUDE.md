@@ -47,7 +47,7 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker O
 │   ├── introspection/          # IntrospectionGenerator, EntityCodeBuilder, TypeMapper
 │   ├── schema/                 # EntitySchema (데코레이터 없는 엔티티 정의)
 │   ├── integration/
-│   │   ├── nestjs/             # StinglerloomOrmModule, @InjectRepository, @InjectEntityManager
+│   │   ├── nestjs/             # StingerloomOrmModule, @InjectRepository, @InjectEntityManager
 │   │   └── prisma-import/      # PrismaImporter, TypeMapper, RelationResolver
 │   ├── types/                  # ColumnType, CascadeType, ReferentialAction, DeepPartial 등
 │   ├── utils/                  # Logger, ReflectManager, uuid-v7, camelToSnakeCase 등
@@ -275,7 +275,7 @@ pnpm start          # NestJS 서버 시작
 - 트랜잭션 (@Transactional, 격리 수준, Savepoint, 데드락 재시도)
 - MySQL / PostgreSQL / SQLite 드라이버
 - PostgreSQL ENUM 타입 + ENUM 값 동기화, 스키마 한정 식별자
-- NestJS 통합 (StinglerloomOrmModule, @InjectRepository, @InjectEntityManager, multi-DB connectionName)
+- NestJS 통합 (StingerloomOrmModule, @InjectRepository, @InjectEntityManager, multi-DB connectionName)
 - 마이그레이션 시스템 + CLI (`npx stingerloom migrate:run|rollback|status|generate`)
 - 연결 풀링 (PoolOptions), Connection Leak Detection
 - Schema Generation (syncSchema/DDL) + Synchronize true/safe/dry-run 모드
@@ -329,7 +329,7 @@ pnpm start          # NestJS 서버 시작
 - assertTenantContext() 테넌트 컨텍스트 경고
 
 ### 현재 안정성 상태 (v0.14.0, 2026-04-09 기준)
-- **테스트:** 4,271 passed, 19 skipped, 0 failures (199 suites) — 유닛 3,403 + 통합 868
+- **테스트:** 5,191 passed, 65 skipped, 0 failures — 유닛 3,992 (19 skipped) + SQLite 331 + MySQL 411 (17 skipped) + PostgreSQL 457 (29 skipped) (2026-04-21 기준)
 - **예제:** 4개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-multitenant, nestjs-todo) 타입 체크 통과
 - **보안:** SQL Injection 취약점 수정 완료, 전 드라이버 감사 완료
 - **격리:** 테넌트 간 메타데이터 유출 차단, AsyncLocalStorage 동시성 안전 확보

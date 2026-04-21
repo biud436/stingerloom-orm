@@ -1,35 +1,35 @@
 import "reflect-metadata";
 import {
-  StinglerloomOrmService,
+  StingerloomOrmService,
   STINGERLOOM_ORM_SERVICE_TOKEN,
   getOrmServiceToken,
 } from "../../src/integration/nestjs/stingerloom-orm.service";
 
-describe("StinglerloomOrmService", () => {
-  let service: StinglerloomOrmService;
+describe("StingerloomOrmService", () => {
+  let service: StingerloomOrmService;
   let mockEntityManager: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    StinglerloomOrmService.captured = {} as any;
+    StingerloomOrmService.captured = {} as any;
 
     mockEntityManager = {
       propagateShutdown: jest.fn().mockResolvedValue(undefined),
       getRepository: jest.fn().mockReturnValue({ find: jest.fn() }),
     };
 
-    service = new StinglerloomOrmService(mockEntityManager);
+    service = new StingerloomOrmService(mockEntityManager);
   });
 
   describe("getOrmServiceToken()", () => {
-    it("should return StinglerloomOrmService class for default connection", () => {
+    it("should return StingerloomOrmService class for default connection", () => {
       const token = getOrmServiceToken();
-      expect(token).toBe(StinglerloomOrmService);
+      expect(token).toBe(StingerloomOrmService);
     });
 
-    it("should return StinglerloomOrmService class for explicit 'default'", () => {
+    it("should return StingerloomOrmService class for explicit 'default'", () => {
       const token = getOrmServiceToken("default");
-      expect(token).toBe(StinglerloomOrmService);
+      expect(token).toBe(StingerloomOrmService);
     });
 
     it("should return named string token for non-default connection", () => {
@@ -58,7 +58,7 @@ describe("StinglerloomOrmService", () => {
     });
 
     it("should initialize when forRoot was called", async () => {
-      StinglerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN] = true;
+      StingerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN] = true;
 
       await service.onModuleInit();
       // Should complete without error
@@ -82,7 +82,7 @@ describe("StinglerloomOrmService", () => {
     });
 
     it("should throw when entity manager is not initialized", () => {
-      const badService = new StinglerloomOrmService(null as any);
+      const badService = new StingerloomOrmService(null as any);
       class User {}
       expect(() => badService.getRepository(User)).toThrow(
         /EntityManager not initialized/,
@@ -97,7 +97,7 @@ describe("StinglerloomOrmService", () => {
     });
 
     it("should throw when entity manager is not initialized", () => {
-      const badService = new StinglerloomOrmService(null as any);
+      const badService = new StingerloomOrmService(null as any);
       expect(() => badService.getEntityManager()).toThrow(
         /EntityManager not initialized/,
       );

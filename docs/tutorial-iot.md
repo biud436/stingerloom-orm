@@ -168,7 +168,7 @@ Make sure your `tsconfig.json` has these two flags:
 ```typescript
 // src/app.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { RedisModule } from "@nestjs-modules/ioredis";
 import { Device } from "./entities/device.entity";
 import { User } from "./entities/user.entity";
@@ -179,7 +179,7 @@ import { DailyStats } from "./entities/daily-stats.entity";
 
 @Module({
   imports: [
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "postgres",
       host: process.env.DB_HOST || "localhost",
       port: parseInt(process.env.DB_PORT || "5432"),
@@ -846,7 +846,7 @@ Add `TenantModule` to your `AppModule` imports:
 @Module({
   imports: [
     TenantModule,
-    StinglerloomOrmModule.forRoot({ /* ... same as Step 1 ... */ }),
+    StingerloomOrmModule.forRoot({ /* ... same as Step 1 ... */ }),
     // ...
   ],
 })
@@ -951,7 +951,7 @@ Now we get to the core of the application: receiving temperature data from devic
 ```typescript
 // src/readings/readings.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
 import { AlertRule } from "../entities/alert-rule.entity";
 import { Alert } from "../entities/alert.entity";
@@ -960,7 +960,7 @@ import { ReadingsController } from "./readings.controller";
 
 @Module({
   imports: [
-    StinglerloomOrmModule.forFeature([TemperatureReading, AlertRule, Alert]),
+    StingerloomOrmModule.forFeature([TemperatureReading, AlertRule, Alert]),
   ],
   controllers: [ReadingsController],
   providers: [ReadingsService],

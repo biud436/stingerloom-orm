@@ -1,6 +1,6 @@
 import { DynamicModule, Module } from "@nestjs/common";
 import {
-  StinglerloomOrmService,
+  StingerloomOrmService,
   STINGERLOOM_ORM_SERVICE_TOKEN,
   getOrmServiceToken,
 } from "./stingerloom-orm.service";
@@ -45,7 +45,7 @@ export function makeInjectRepositoryToken(
 }
 
 @Module({})
-export class StinglerloomOrmModule {
+export class StingerloomOrmModule {
   static forFeature(
     entities: ClazzType<unknown>[],
     connectionName = "default",
@@ -60,7 +60,7 @@ export class StinglerloomOrmModule {
     }));
 
     return {
-      module: StinglerloomOrmModule,
+      module: StingerloomOrmModule,
       providers: [...providers],
       exports: providers,
     };
@@ -73,21 +73,21 @@ export class StinglerloomOrmModule {
     Reflect.defineMetadata(
       STINGERLOOM_ORM_OPTION_TOKEN,
       options,
-      StinglerloomOrmModule,
+      StingerloomOrmModule,
     );
 
-    StinglerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN] = true;
+    StingerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN] = true;
 
     const emToken = getEntityManagerToken(connectionName);
     const serviceToken = getOrmServiceToken(connectionName);
 
     return {
-      module: StinglerloomOrmModule,
+      module: StingerloomOrmModule,
       imports: [StingerloomOrmCoreModule.forRoot(options, connectionName)],
       providers: [
         {
           provide: serviceToken,
-          useFactory: (em: EntityManager) => new StinglerloomOrmService(em),
+          useFactory: (em: EntityManager) => new StingerloomOrmService(em),
           inject: [emToken],
         },
       ],

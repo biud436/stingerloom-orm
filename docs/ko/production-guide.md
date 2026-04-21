@@ -464,7 +464,7 @@ import {
 import { EntityManager } from "@stingerloom/orm";
 
 @Injectable()
-export class StinglerloomOrmService
+export class StingerloomOrmService
   implements OnModuleInit, OnApplicationShutdown
 {
   constructor(private readonly entityManager: EntityManager) {}
@@ -674,12 +674,12 @@ NestJS 프로덕션 환경에서 권장하는 전체 설정 예제예요.
 ```typescript
 // app.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { User, Post, Comment } from "./entities";
 
 @Module({
   imports: [
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "postgres",
       host: process.env.DB_HOST!,
       port: parseInt(process.env.DB_PORT ?? "5432"),

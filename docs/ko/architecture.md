@@ -236,9 +236,9 @@ NestJS 모듈은 익숙한 `forRoot` / `forFeature` 패턴을 따라요:
 여러 데이터베이스에 접속하는 앱이라면, `connectionName`을 전달하면 돼요:
 
 ```typescript
-StinglerloomOrmModule.forRoot(mysqlOptions)                // "default"
-StinglerloomOrmModule.forRoot(pgOptions, "analytics")      // named
-StinglerloomOrmModule.forFeature([Event], "analytics")     // binds to "analytics"
+StingerloomOrmModule.forRoot(mysqlOptions)                // "default"
+StingerloomOrmModule.forRoot(pgOptions, "analytics")      // named
+StingerloomOrmModule.forFeature([Event], "analytics")     // binds to "analytics"
 
 // In a service:
 @InjectRepository(Event, "analytics") private readonly eventRepo: BaseRepository<Event>

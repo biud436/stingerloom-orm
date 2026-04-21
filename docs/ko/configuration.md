@@ -451,8 +451,8 @@ NestJS 통합 모듈은 named connection을 기본 지원해요. `forRoot()`와 
 // app.module.ts
 @Module({
   imports: [
-    StinglerloomOrmModule.forRoot(mysqlOptions),                  // "default"
-    StinglerloomOrmModule.forRoot(postgresOptions, "analytics"),  // named
+    StingerloomOrmModule.forRoot(mysqlOptions),                  // "default"
+    StingerloomOrmModule.forRoot(postgresOptions, "analytics"),  // named
     UsersModule,
     AnalyticsModule,
   ],
@@ -461,7 +461,7 @@ export class AppModule {}
 
 // analytics.module.ts
 @Module({
-  imports: [StinglerloomOrmModule.forFeature([Event], "analytics")],
+  imports: [StingerloomOrmModule.forFeature([Event], "analytics")],
 })
 export class AnalyticsModule {}
 

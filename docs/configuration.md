@@ -451,8 +451,8 @@ The NestJS integration module supports named connections natively. Pass a connec
 // app.module.ts
 @Module({
   imports: [
-    StinglerloomOrmModule.forRoot(mysqlOptions),                  // "default"
-    StinglerloomOrmModule.forRoot(postgresOptions, "analytics"),  // named
+    StingerloomOrmModule.forRoot(mysqlOptions),                  // "default"
+    StingerloomOrmModule.forRoot(postgresOptions, "analytics"),  // named
     UsersModule,
     AnalyticsModule,
   ],
@@ -461,7 +461,7 @@ export class AppModule {}
 
 // analytics.module.ts
 @Module({
-  imports: [StinglerloomOrmModule.forFeature([Event], "analytics")],
+  imports: [StingerloomOrmModule.forFeature([Event], "analytics")],
 })
 export class AnalyticsModule {}
 

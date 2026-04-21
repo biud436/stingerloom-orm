@@ -290,7 +290,7 @@ exp.buckets(u.age, [
 `coalesce(a, b, c, …)`는 왼쪽에서 오른쪽으로 처음 null이 아닌 값을 돌려줍니다. `nullif(a, b)`는 `a`가 `b`와 같으면 NULL, 다르면 `a`를 돌려주죠. 빈 문자열이나 `-1` 같은 센티넬 값을 진짜 NULL로 바꿔야 할 때 씁니다. 둘 다 표준 SQL이라 드라이버 구분 없이 동일합니다.
 
 ```typescript
-import { coalesce, nullif, Expressions, qAlias } from "@stingerloom/orm";
+import { coalesce, nullif, qAlias } from "@stingerloom/orm";
 
 const u = qAlias(User, "u");
 

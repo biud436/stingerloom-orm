@@ -113,7 +113,7 @@ const { EntityManager } = require("@stingerloom/orm");
 Subpath export도 동일:
 
 ```typescript
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { PrismaImporter } from "@stingerloom/orm/prisma-import";
 import { EntityManager } from "@stingerloom/orm/core";       // 코어만
 import { PostgresDriver } from "@stingerloom/orm/postgres";   // 단일 드라이버
@@ -401,18 +401,18 @@ yarn add @stingerloom/orm reflect-metadata
 
 ### 루트 모듈 등록
 
-`StinglerloomOrmModule.forRoot()`로 데이터베이스 연결을 초기화하고, `StinglerloomOrmModule.forFeature()`로 엔티티 리포지토리를 등록해요.
+`StingerloomOrmModule.forRoot()`로 데이터베이스 연결을 초기화하고, `StingerloomOrmModule.forFeature()`로 엔티티 리포지토리를 등록해요.
 
 ```typescript
 // app.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { User } from "./user.entity";
 import { UsersModule } from "./users/users.module";
 
 @Module({
   imports: [
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "postgres",
       host: "localhost",
       port: 5432,
@@ -433,12 +433,12 @@ export class AppModule {}
 ```typescript
 // users/users.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { User } from "./user.entity";
 import { UsersService } from "./users.service";
 
 @Module({
-  imports: [StinglerloomOrmModule.forFeature([User])],
+  imports: [StingerloomOrmModule.forFeature([User])],
   providers: [UsersService],
   exports: [UsersService],
 })
@@ -483,14 +483,14 @@ export class UsersService {
 ```typescript
 // app.module.ts
 import { Module } from "@nestjs/common";
-import { StinglerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { User } from "./user.entity";
 import { Event } from "./event.entity";
 
 @Module({
   imports: [
     // 기본 연결 (MySQL)
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "mysql",
       host: "localhost",
       port: 3306,
@@ -500,7 +500,7 @@ import { Event } from "./event.entity";
       entities: [User],
     }),
     // Named 연결 (PostgreSQL)
-    StinglerloomOrmModule.forRoot({
+    StingerloomOrmModule.forRoot({
       type: "postgres",
       host: "localhost",
       port: 5432,
@@ -521,7 +521,7 @@ export class AppModule {}
 ```typescript
 // analytics/analytics.module.ts
 @Module({
-  imports: [StinglerloomOrmModule.forFeature([Event], "analytics")],
+  imports: [StingerloomOrmModule.forFeature([Event], "analytics")],
   providers: [AnalyticsService],
 })
 export class AnalyticsModule {}

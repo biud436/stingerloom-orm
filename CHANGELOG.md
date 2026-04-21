@@ -6,6 +6,30 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.19.2] — 2026-04-20
+
+### Added
+
+- **`Expressions.iff(cond, whenTrue, whenFalse)`** — two-branch ternary CASE. Picks between two results on a single boolean condition (soft-delete flags, feature gates, Y/N output).
+- **`Expressions.mapValues(subject, mapping, default?)`** — static value mapping. Object keys become `WHEN` values bound as parameters; keys are string-coerced so enum / status / role columns fit cleanly. Omit `default` to skip `ELSE`; pass `null` for an explicit `ELSE NULL`.
+- **`Expressions.buckets(subject, thresholds, default?, { op? })`** — threshold ladder. Each `[threshold, result]` tuple becomes one `WHEN subject <op> threshold THEN result` branch, in the order given. Default operator is `">="` (descending thresholds); switch to `"<"` / `"<="` for ascending cohorts and `">"` for strict descending ladders.
+
+Each shortcut is a thin wrapper over the existing `caseBuilder` / `cases` builders — SQL emission, parameter binding, and dialect behavior match exactly, and every shortcut returns a `ScalarExpression` so the result slots into `.as()`, casts, comparisons, `coalesce(...)`, and logical composition. Empty mappings or thresholds throw early. The existing `caseBuilder` / `cases` APIs are untouched — reach for a shortcut only when its shape matches exactly.
+
+### Documentation
+
+- **`Expressions as exp` alias convention** — both `docs/query-builder-querydsl.md` (EN) and `docs/ko/query-builder-querydsl.md` (KO) now open the CASE section with a `::: tip` block introducing `import { Expressions as exp } from "@stingerloom/orm"`. All code examples downstream use `exp.xxx`; prose, headers, and the cheat-sheet tables keep the canonical `Expressions.*` names so lookup against the API stays one-to-one. The `Expressions` namespace JSDoc shows the `as exp` pattern in its primary example.
+- **"Shortcuts for common CASE shapes" subsection** — new subsection in both locales, with a three-row shape / shortcut / when-to-use table, worked examples per shortcut, and a cheat-sheet row under "CASE shortcuts" / "CASE 단축" linking back to the full surface.
+- **`docs/ko/query-builder-querydsl.md` `coalesce` / `nullif` example import cleanup** — the import line in the null-handling section no longer references `Expressions`, matching the EN counterpart and the code block's actual usage.
+
+### Tests
+
+- **`__tests__/unit/qdsl-case-shortcuts.test.ts`** — 23 unit tests covering SQL emission, parameter binding, `ELSE` omission, key-order preservation, MySQL dialect rendering, column / scalar composition, and misuse errors (empty mapping, empty thresholds).
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.19.1...v0.19.2
+
+---
+
 ## [0.19.1] — 2026-04-19
 
 ### Fixes
@@ -727,7 +751,7 @@ Some ideas considered during design review were deliberately left out because Ty
 ### Added
 
 - **NestJS integration module** (`@stingerloom/orm/nestjs`)
-  - `StinglerloomOrmModule` — `forRoot()` / `forFeature()`
+  - `StingerloomOrmModule` — `forRoot()` / `forFeature()`
   - `InjectRepository` — NestJS repository injection decorator
   - `typesVersions` for `moduleResolution: "node"` compatibility
   - Removed 16 duplicate files across 4 examples (-729 lines)
