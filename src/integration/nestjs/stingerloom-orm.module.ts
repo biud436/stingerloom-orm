@@ -7,7 +7,10 @@ import {
 import { EntityManager } from "../../core/EntityManager";
 import type { ClazzType } from "../../utils/types";
 import type { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
-import { StingerloomOrmCoreModule } from "./stingerloom-orm-core.module";
+import {
+  StingerloomOrmCoreModule,
+  type StingerloomOrmModuleAsyncOptions,
+} from "./stingerloom-orm-core.module";
 
 export const STINGERLOOM_ORM_OPTION_TOKEN = Symbol.for(
   "STINGERLOOM_ORM_OPTION_TOKEN",
@@ -84,6 +87,31 @@ export class StingerloomOrmModule {
     return {
       module: StingerloomOrmModule,
       imports: [StingerloomOrmCoreModule.forRoot(options, connectionName)],
+      providers: [
+        {
+          provide: serviceToken,
+          useFactory: (em: EntityManager) => new StingerloomOrmService(em),
+          inject: [emToken],
+        },
+      ],
+      exports: [serviceToken, StingerloomOrmCoreModule],
+      global: true,
+    };
+  }
+
+  static forRootAsync(
+    asyncOptions: StingerloomOrmModuleAsyncOptions,
+  ): DynamicModule {
+    const connectionName = asyncOptions.connectionName ?? "default";
+
+    StingerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN] = true;
+
+    const emToken = getEntityManagerToken(connectionName);
+    const serviceToken = getOrmServiceToken(connectionName);
+
+    return {
+      module: StingerloomOrmModule,
+      imports: [StingerloomOrmCoreModule.forRootAsync(asyncOptions)],
       providers: [
         {
           provide: serviceToken,

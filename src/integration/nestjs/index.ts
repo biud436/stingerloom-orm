@@ -5,7 +5,14 @@ export {
   STINGERLOOM_ORM_OPTION_TOKEN,
   INJECT_REPOSITORIES_TOKEN,
 } from "./stingerloom-orm.module";
-export { StingerloomOrmCoreModule } from "./stingerloom-orm-core.module";
+export {
+  StingerloomOrmCoreModule,
+  getOrmOptionsToken,
+} from "./stingerloom-orm-core.module";
+export type {
+  StingerloomOrmOptionsFactory,
+  StingerloomOrmModuleAsyncOptions,
+} from "./stingerloom-orm-core.module";
 export {
   StingerloomOrmService,
   STINGERLOOM_ORM_SERVICE_TOKEN,
