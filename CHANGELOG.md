@@ -6,15 +6,44 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
-## [0.19.2] — 2026-04-20
+## [0.19.2] — 2026-04-22
+
+### Highlights
+
+- **NestJS `StingerloomOrmModule.forRootAsync()`** — resolve `DatabaseClientOptions` from `ConfigService` or any DI provider. Supports `useFactory` (with `inject` + `imports`), `useClass`, and `useExisting`. Per-connection options token keeps multi-DB setups isolated.
+- **QueryDSL CASE shortcuts** — three thin wrappers over `caseBuilder` / `cases` for the three most common CASE shapes: `iff`, `mapValues`, `buckets`.
+- **NestJS typo fix (#261, #267)** — `StingerloomOrmModule` / `StingerloomOrmService` are now the canonical names. The misspelled `Stinglerloom*` identifiers have been removed across src, tests, 6 example projects, and the EN+KO docs.
 
 ### Added
 
+#### NestJS
+
+- **`StingerloomOrmModule.forRootAsync(asyncOptions)`** and **`StingerloomOrmCoreModule.forRootAsync(asyncOptions)`** — standard NestJS async module pattern with three wiring forms:
+  - `useFactory(...args) => options` + `inject: [ConfigService, ...]` + `imports: [ConfigModule, ...]`
+  - `useClass: MyOrmOptionsFactory` (factory class registered automatically)
+  - `useExisting: MyOrmOptionsFactory` (reuses an externally-registered factory)
+  - `connectionName` for named connections, matching `forRoot()`'s multi-DB semantics
+- **`StingerloomOrmOptionsFactory` / `StingerloomOrmModuleAsyncOptions` interfaces** + **`getOrmOptionsToken(connectionName?)`** helper, exported from `@stingerloom/orm/nestjs`.
+
+#### Query Builder
+
+- **`SelectQueryBuilder.streamBatch()`** — AsyncGenerator yielding `TResult[]` windows, complementing the existing row-by-row `stream()`. Mirrors the `stream()` / `streamBatch()` pair already on `EntityManager` and `BaseRepository` so naming carries across all three API levels.
 - **`Expressions.iff(cond, whenTrue, whenFalse)`** — two-branch ternary CASE. Picks between two results on a single boolean condition (soft-delete flags, feature gates, Y/N output).
 - **`Expressions.mapValues(subject, mapping, default?)`** — static value mapping. Object keys become `WHEN` values bound as parameters; keys are string-coerced so enum / status / role columns fit cleanly. Omit `default` to skip `ELSE`; pass `null` for an explicit `ELSE NULL`.
 - **`Expressions.buckets(subject, thresholds, default?, { op? })`** — threshold ladder. Each `[threshold, result]` tuple becomes one `WHEN subject <op> threshold THEN result` branch, in the order given. Default operator is `">="` (descending thresholds); switch to `"<"` / `"<="` for ascending cohorts and `">"` for strict descending ladders.
 
-Each shortcut is a thin wrapper over the existing `caseBuilder` / `cases` builders — SQL emission, parameter binding, and dialect behavior match exactly, and every shortcut returns a `ScalarExpression` so the result slots into `.as()`, casts, comparisons, `coalesce(...)`, and logical composition. Empty mappings or thresholds throw early. The existing `caseBuilder` / `cases` APIs are untouched — reach for a shortcut only when its shape matches exactly.
+Each CASE shortcut is a thin wrapper over the existing `caseBuilder` / `cases` builders — SQL emission, parameter binding, and dialect behavior match exactly, and every shortcut returns a `ScalarExpression` so the result slots into `.as()`, casts, comparisons, `coalesce(...)`, and logical composition. Empty mappings or thresholds throw early. The existing `caseBuilder` / `cases` APIs are untouched — reach for a shortcut only when its shape matches exactly.
+
+### Changed
+
+- **NestJS: `Stinglerloom*` → `Stingerloom*` (#261)** — the misspelled `StinglerloomOrmModule` / `StinglerloomOrmService` class, token-helper references, and every call site have been renamed to match the package name. 43 files touched across src, tests, 6 example projects, and the EN+KO docs. The short-lived backwards-compat aliases added in PR #267 are removed. If you depended on the old spelling, import the canonical names instead.
+
+### Fixed
+
+- **#262 README Quick Start is actually runnable** — added the `tsconfig` decorator flags note, the `reflect-metadata` import, and the complete connection fields (`host` / `port` / `username` / `password` / `database`) so the snippet works as-is.
+- **#263 nestjs-todo example pins `@stingerloom/orm` to `^0.19.1`** instead of `workspace:*`, so the example actually exercises the published npm package.
+- **#264 dead `typedi` dependency removed** from 5 example `package.json` files (`nestjs-cats`, `nestjs-blog`, `nestjs-todo`, `nestjs-multitenant`, `prisma-import-demo`); the ORM no longer depends on `typedi`.
+- **#265 `synchronize: true` under `NODE_ENV=production` now warns** — `SchemaRegistrar.registerEntities()` emits a visible warning. Silenceable via `STINGERLOOM_ALLOW_SYNC_IN_PROD=true`. Adds 5 regression tests.
 
 ### Documentation
 
@@ -22,9 +51,16 @@ Each shortcut is a thin wrapper over the existing `caseBuilder` / `cases` builde
 - **"Shortcuts for common CASE shapes" subsection** — new subsection in both locales, with a three-row shape / shortcut / when-to-use table, worked examples per shortcut, and a cheat-sheet row under "CASE shortcuts" / "CASE 단축" linking back to the full surface.
 - **`docs/ko/query-builder-querydsl.md` `coalesce` / `nullif` example import cleanup** — the import line in the null-handling section no longer references `Expressions`, matching the EN counterpart and the code block's actual usage.
 
+### Chore
+
+- **Korean → English comment translation** — ~450+ inline, block, and JSDoc comments translated into idiomatic technical English across `src/` (errors, types, utils, scanner, decorators, migration, metadata, core, dialects, `DatabaseClient`) and `examples/` (`nestjs-cats`, `nestjs-blog`, `nestjs-multitenant`). Comment contexts only — error messages and other string literals were intentionally left untouched. No logic changes; `tsc --noEmit` clean.
+- **README badge synced to live CI status** (#266) — replaces the stale hardcoded `5,041 passed` with a live GitHub Actions status badge; CLAUDE.md test count refreshed to `5,191 passed` (unit 3,992 + SQLite 331 + MySQL 411 + PostgreSQL 457).
+
 ### Tests
 
-- **`__tests__/unit/qdsl-case-shortcuts.test.ts`** — 23 unit tests covering SQL emission, parameter binding, `ELSE` omission, key-order preservation, MySQL dialect rendering, column / scalar composition, and misuse errors (empty mapping, empty thresholds).
+- **`__tests__/unit/qdsl-case-shortcuts.test.ts`** — 23 unit tests covering CASE-shortcut SQL emission, parameter binding, `ELSE` omission, key-order preservation, MySQL dialect rendering, column / scalar composition, and misuse errors (empty mapping, empty thresholds).
+- **`__tests__/unit/nestjs-multi-db.test.ts`** — 10 new tests for `forRootAsync` wiring: `useFactory` (+ `inject`), `useClass`, `useExisting`, named connections via `connectionName`, async options resolution, and the no-form-provided error path.
+- **`#265` regression suite** — 5 new tests covering the `synchronize: true` + `NODE_ENV=production` warning and the `STINGERLOOM_ALLOW_SYNC_IN_PROD` opt-out.
 
 **Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.19.1...v0.19.2
 
