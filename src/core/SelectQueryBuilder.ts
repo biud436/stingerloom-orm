@@ -3697,6 +3697,35 @@ export class SelectQueryBuilder<T, TResult = T> {
     }
   }
 
+  /**
+   * Stream results as arrays (windows) via LIMIT/OFFSET — each yielded value
+   * is a full batch of up to `batchSize` rows. Complements {@link stream},
+   * which yields rows one at a time.
+   *
+   * Matches the `stream`/`streamBatch` pair on `EntityManager` and
+   * `BaseRepository` for naming consistency.
+   *
+   * @param batchSize Number of rows per window (default: 1000)
+   */
+  async *streamBatch(batchSize = 1000): AsyncGenerator<TResult[], void, undefined> {
+    const effectiveBatchSize = Math.max(batchSize, 1);
+    let currentOffset = 0;
+
+    while (true) {
+      const cloned = this.clone();
+      cloned.offsetValue = currentOffset;
+      cloned.limitValue = effectiveBatchSize;
+
+      const batch = await cloned.getPartialMany();
+      if (batch.length === 0) break;
+
+      yield batch;
+
+      if (batch.length < effectiveBatchSize) break;
+      currentOffset += effectiveBatchSize;
+    }
+  }
+
   // ── EXECUTION: Utility ─────────────────────────────────
 
   /**

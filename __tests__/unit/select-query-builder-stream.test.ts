@@ -139,3 +139,110 @@ describe("SelectQueryBuilder.stream()", () => {
     expect(results).toHaveLength(999);
   });
 });
+
+describe("SelectQueryBuilder.streamBatch()", () => {
+  it("should yield full batch arrays across multiple windows", async () => {
+    const batch1 = [{ id: 1, name: "a" }, { id: 2, name: "b" }];
+    const batch2 = [{ id: 3, name: "c" }];
+    const em = createMockEm([batch1, batch2]);
+
+    const qb = new SelectQueryBuilder(Item, "i", em);
+    const windows: any[][] = [];
+    for await (const page of qb.streamBatch(2)) {
+      windows.push(page);
+    }
+
+    expect(windows).toHaveLength(2);
+    expect(windows[0]).toEqual(batch1);
+    expect(windows[1]).toEqual(batch2);
+  });
+
+  it("should stop when an empty batch is returned", async () => {
+    const em = createMockEm([[]]);
+    const qb = new SelectQueryBuilder(Item, "i", em);
+
+    const windows: any[][] = [];
+    for await (const page of qb.streamBatch(10)) {
+      windows.push(page);
+    }
+
+    expect(windows).toHaveLength(0);
+  });
+
+  it("should stop when batch is smaller than batchSize", async () => {
+    const batch1 = [{ id: 1 }, { id: 2 }, { id: 3 }];
+    const em = createMockEm([batch1]);
+
+    const qb = new SelectQueryBuilder(Item, "i", em);
+    const windows: any[][] = [];
+    for await (const page of qb.streamBatch(5)) {
+      windows.push(page);
+    }
+
+    expect(windows).toHaveLength(1);
+    expect(windows[0]).toHaveLength(3);
+  });
+
+  it("should handle exact batch size boundary with trailing empty batch", async () => {
+    const batch1 = [{ id: 1 }, { id: 2 }];
+    const batch2 = [{ id: 3 }, { id: 4 }];
+    const batch3: any[] = [];
+    const em = createMockEm([batch1, batch2, batch3]);
+
+    const qb = new SelectQueryBuilder(Item, "i", em);
+    const windows: any[][] = [];
+    for await (const page of qb.streamBatch(2)) {
+      windows.push(page);
+    }
+
+    expect(windows).toHaveLength(2);
+    expect(windows.flat()).toHaveLength(4);
+  });
+
+  it("should enforce minimum batchSize of 1", async () => {
+    const batch1 = [{ id: 1 }];
+    const em = createMockEm([batch1]);
+
+    const qb = new SelectQueryBuilder(Item, "i", em);
+    const windows: any[][] = [];
+    for await (const page of qb.streamBatch(0)) {
+      windows.push(page);
+    }
+
+    expect(windows).toHaveLength(1);
+    expect(windows[0]).toHaveLength(1);
+  });
+
+  it("should not mutate the original query builder state", async () => {
+    const em = createMockEm([[{ id: 1 }]]);
+    const qb = new SelectQueryBuilder(Item, "i", em);
+    qb.where("name", "test");
+    qb.limit(100);
+
+    const originalLimit = (qb as any).limitValue;
+    const originalOffset = (qb as any).offsetValue;
+
+    for await (const _ of qb.streamBatch(10)) {
+      // consume
+    }
+
+    expect((qb as any).limitValue).toBe(originalLimit);
+    expect((qb as any).offsetValue).toBe(originalOffset);
+  });
+
+  it("should release resources when consumer breaks early", async () => {
+    const batch1 = [{ id: 1 }, { id: 2 }];
+    const batch2 = [{ id: 3 }, { id: 4 }];
+    const em = createMockEm([batch1, batch2]);
+
+    const qb = new SelectQueryBuilder(Item, "i", em);
+    const windows: any[][] = [];
+    for await (const page of qb.streamBatch(2)) {
+      windows.push(page);
+      break;
+    }
+
+    expect(windows).toHaveLength(1);
+    expect(windows[0]).toEqual(batch1);
+  });
+});
