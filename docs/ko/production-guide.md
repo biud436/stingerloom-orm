@@ -383,6 +383,42 @@ const longRunning = processlist.filter((p) => p.Time > 30);
 console.log("Running for 30+ seconds:", longRunning.length);
 ```
 
+### 내장 Leak Detector (`leakDetectionThresholdMs`)
+
+모든 드라이버는 커넥션 풀에 **`ConnectionLeakDetector`** 를 연결해요. 체크아웃된 커넥션이 `pool.leakDetectionThresholdMs`보다 오래 점유되면 ORM이 경고를 남겨서 어느 호출 경로가 반환을 잊었는지 추적할 수 있어요. DB별로 설정하세요:
+
+```typescript
+await em.register({
+  // ...
+  pool: {
+    max: 20,
+    acquireTimeoutMs: 5000,
+    idleTimeoutMs: 10000,
+    leakDetectionThresholdMs: 30000, // 기본값 — 30초 초과 시 경고
+  },
+});
+```
+
+**로그에 남는 내용:**
+
+```
+[ConnectionLeakDetector] Potential connection leak detected: connection held
+for 31250ms (threshold: 30000ms). Consider releasing it.
+```
+
+Detector는 백그라운드 타이머(`thresholdMs / 2`, 최소 5초)에서 추적 커넥션을 스캔하고, 스캔마다 임계값 초과 커넥션당 1건의 경고를 발행해요. 타이머는 `unref()` 처리되어 있어서 프로세스 종료를 막지 않아요.
+
+**튜닝 가이드:**
+
+| 시나리오 | 권장 임계값 |
+|---|---|
+| 일반 OLTP 워크로드 (<1초 쿼리) | `10000` (10초) — 누수를 빠르게 포착 |
+| 리포팅 쿼리 혼합 | `30000` (30초, 기본값) |
+| 백그라운드 잡 / 대용량 배치 임포트 | `120000` (2분) 이상 |
+| **비활성화** (단기 스크립트 등) | `0` |
+
+Detector는 **관찰 전용** 이에요 — 누수된 커넥션을 강제로 반환하지 않아요. 트랜잭션이 COMMIT 중일 수 있기 때문이죠. `queryTimeout`(아래)과 함께 쓰면, DB 수준 취소가 결국 멈춘 statement를 닫고 그 결과 커넥션도 해제돼요.
+
 ### Slow Query를 통한 커넥션 누수 감지
 
 트랜잭션을 열고 닫지 않으면 커넥션이 풀에 반환되지 않아서 풀이 고갈돼요. `queryTimeout`으로 장시간 실행되는 쿼리를 자동 종료할 수 있어요.

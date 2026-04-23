@@ -155,6 +155,8 @@ em.getLog(); // typed as string[]
 | `ctx.wrapTable(tableName)` | 테이블명 quote (schema prefix 포함) | `wrap()`과 같지만 schema 한정 이름을 처리해요 (예: PostgreSQL의 `"public"."user"`). |
 | `ctx.executeInTransaction(fn)` | 트랜잭션 안에서 콜백 실행 | 여러 SQL 문을 원자적으로 실행해야 할 때. 성공 시 commit, 에러 시 rollback돼요. |
 | `ctx.executeReadOnly(fn)` | 읽기 전용 트랜잭션에서 콜백 실행 | 읽기만 할 때 DB에 최적화 신호를 보내고 싶을 때 (read-replica 환경에서 replica를 사용해요). |
+| `ctx.getEntityMetadata(cls)` | 엔티티 클래스의 구조적 메타데이터 | 유저 엔티티의 컬럼, 관계, PK, 인덱스, 테이블명을 검사해야 할 때 — 예를 들어 엔티티별 감사 테이블을 발행하거나 스키마 문서를 생성할 때. 등록되지 않은 클래스는 `null`을 반환해요. |
+| `ctx.registerPlaceholder(name)` | 플러그인이 추가할 메서드 이름 사전 선언 | 메서드가 실제 설치되기 *전* 에 해결 가능해야 할 때 (순환 의존, 타입 플레이스홀더 API 등). 이름을 예약하면 다른 플러그인이 덮어쓰는 것도 막아요. |
 
 ---
 
@@ -269,6 +271,36 @@ interface QueryInfo {
 ```
 
 `beforeQuery`에서 수정된 `QueryInfo`를 반환하면 쿼리를 변환할 수 있어요. `afterQuery`는 결과와 실행 시간(ms)을 받아서 슬로우 쿼리 경고나 메트릭 수집에 활용할 수 있어요.
+
+### 트랜잭션 훅 -- beforeTransaction / afterTransaction
+
+per-query 훅 외에도 플러그인은 트랜잭션 경계를 관찰할 수 있어요. 이 훅들은 `executeInTransaction()` / `@Transactional` 스코프당 한 번씩 발생해요 — 내부 statement마다가 **아니에요**.
+
+```typescript
+const txAudit: StingerloomPlugin = {
+  name: "tx-audit",
+  beforeTransaction(isolationLevel) {
+    console.log(`[TX] BEGIN (isolation=${isolationLevel ?? "default"})`);
+  },
+  afterTransaction(committed) {
+    console.log(`[TX] ${committed ? "COMMIT" : "ROLLBACK"}`);
+  },
+  install() { /* 추가 API 없음 */ },
+};
+```
+
+| 훅 | 시그니처 | 발생 시점 |
+|---|---|---|
+| `beforeTransaction` | `(isolationLevel?: string) => void` | `BEGIN`/`START TRANSACTION` 직전. `isolationLevel`은 트랜잭션 옵션에 전달된 문자열(`"READ COMMITTED"` 등) 또는 DB 기본값인 경우 `undefined`. |
+| `afterTransaction` | `(committed: boolean) => void` | `COMMIT`(true) 또는 `ROLLBACK`(false) 반환 후. |
+
+### 훅 에러 처리
+
+- `beforeQuery`는 쿼리 경로에서 **동기적으로 await** 돼요. throw하면 쿼리가 중단되고 에러가 호출자로 전파돼요.
+- `afterQuery`, `beforeTransaction`, `afterTransaction`은 **관찰 전용** 이에요. 여기서 발생한 예외는 내부적으로 catch되어 `Logger.warn()`으로 로깅돼요. 오작동하는 감사 플러그인이 트랜잭션을 죽일 수 없어요.
+- `shutdown()`은 `propagateShutdown()` 중 **역순 설치 순서** 로 실행돼요. 여기서 발생한 에러는 캡처되어 리포트되지만 다른 플러그인의 정리를 막지는 않아요.
+
+각 훅은 idempotent하게, side-effect에 관대하게 설계하세요 — 재시도 쿼리(데드락 재시도)나 ORM 내부 쿼리(스키마 introspection, 테넌트 프로비저닝)에서도 발생할 수 있어요.
 
 ---
 

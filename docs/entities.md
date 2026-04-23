@@ -665,6 +665,103 @@ CREATE INDEX "idx_active_user_email" ON "user" ("email") INCLUDE ("name") WHERE 
 
 This creates a compact, high-performance index that covers only active users and includes the name column for index-only scans.
 
+## JSON Path Indexes (@JsonIndex)
+
+### Why @JsonIndex Exists
+
+A `jsonb` column without an index requires a sequential scan for every query — even `WHERE data @> '{"tags":["typescript"]}'` on a million-row table. PostgreSQL supports **expression indexes** over JSON paths (`CREATE INDEX ... USING GIN ((data->'tags') jsonb_path_ops)`), but writing them by hand ties your migration SQL to a specific path and opclass that drifts from the entity.
+
+`@JsonIndex` declares the index on the property so the schema generator emits the correct DDL, and QueryDSL path operations (`u.profile.tags.contains(...)`) line up with a path your DB can actually use.
+
+### How It Works
+
+```typescript
+import { Entity, PrimaryGeneratedColumn, Column, JsonIndex } from "@stingerloom/orm";
+
+@Entity()
+class User {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  // GIN index on a sub-path for @> / ? queries
+  @Column({ type: "jsonb" })
+  @JsonIndex({ path: "tags", using: "gin", opclass: "jsonb_path_ops" })
+  profile!: { tags: string[]; contact: { email: string } };
+}
+```
+
+**PostgreSQL DDL:**
+
+```sql
+CREATE INDEX "idx_user_profile_tags_gin"
+  ON "user" USING gin ((profile -> 'tags') jsonb_path_ops);
+```
+
+### Option Reference
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `path` | `string?` | *(whole column)* | Dot-bracket path inside the column: `"tags"`, `"contact.email"`, `"tags[0]"`. Omit to index the whole column. |
+| `using` | `"gin" \| "btree"` | `"gin"` | `gin` for containment (`@>`) / key-existence (`?`); `btree` for leaf scalar paths (equality / range). |
+| `opclass` | `"jsonb_ops" \| "jsonb_path_ops"` | `"jsonb_ops"` | `jsonb_path_ops` is smaller & faster when the index only serves `@>`. Ignored for `btree`. |
+| `where` | `string?` | — | Partial-index `WHERE` clause (raw SQL). The caller is responsible for identifier wrapping and parameter safety. |
+| `name` | `string?` | *auto* | Override the index name. Auto-generated via `NamingStrategy.jsonIndexName()`. |
+
+### Patterns
+
+**Whole-column GIN** — covers every `@>` / `?` / `?&` query under the column, at the cost of a larger index:
+
+```typescript
+@Column({ type: "jsonb" })
+@JsonIndex({ using: "gin" })
+profile!: UserProfile;
+```
+
+**Leaf btree on a text path** — for equality/range on a single scalar leaf:
+
+```typescript
+@Column({ type: "jsonb" })
+@JsonIndex({ path: "contact.email", using: "btree" })
+profile!: UserProfile;
+```
+
+Emits `CREATE INDEX ... ON "user" (((profile #>> '{contact,email}')))`.
+
+**Partial index** — skip rows that will never match:
+
+```typescript
+@Column({ type: "jsonb" })
+@JsonIndex({
+  path: "tags",
+  using: "gin",
+  opclass: "jsonb_path_ops",
+  where: `"deleted_at" IS NULL`,
+})
+profile!: UserProfile;
+```
+
+### Dialect Behavior
+
+| Driver | Behavior |
+|---|---|
+| **PostgreSQL** | Emits `CREATE INDEX ... USING gin ((col -> 'path') [jsonb_path_ops])` for GIN; `((col #>> '{path}'))` for btree. |
+| **MySQL** | **No DDL is emitted.** MySQL 8 supports functional JSON indexes only via virtual generated columns — a structural schema change beyond an index declaration. A warning is logged at DDL generation. Create the generated column + index manually if you need one. |
+| **SQLite** | **No DDL is emitted.** SQLite has no GIN equivalent. |
+
+### Pairing with QueryDSL
+
+QueryDSL's JSON operators compile to the same path expression your index was built on, so the planner can use it:
+
+```typescript
+const users = await qb
+  .qWhere((u) => u.profile.tags.contains("typescript"))
+  .getMany();
+// PostgreSQL: WHERE profile -> 'tags' @> '"typescript"'::jsonb
+// Uses: idx_user_profile_tags_gin
+```
+
+See [Query Builder — JSON Path Operators](/query-builder-json) for the full operator catalog.
+
 ## Optimistic Locking (@Version)
 
 ### Why Optimistic Locking Exists

@@ -684,6 +684,103 @@ CREATE INDEX "idx_active_user_email" ON "user" ("email") INCLUDE ("name") WHERE 
 
 이건 활성 사용자만 커버하고 인덱스 전용 스캔을 위해 name 컬럼을 포함하는 컴팩트하고 고성능인 인덱스를 생성해요.
 
+## JSON 경로 인덱스 (@JsonIndex)
+
+### @JsonIndex가 존재하는 이유
+
+인덱스 없는 `jsonb` 컬럼은 `WHERE data @> '{"tags":["typescript"]}'` 같은 쿼리도 순차 스캔을 요구해요 — 100만 행짜리 테이블에서도 마찬가지예요. PostgreSQL은 JSON 경로에 대한 **표현식 인덱스**(`CREATE INDEX ... USING GIN ((data->'tags') jsonb_path_ops)`)를 지원하지만, 이걸 수동으로 작성하면 마이그레이션 SQL이 특정 경로/opclass에 묶여 엔티티와 드리프트해요.
+
+`@JsonIndex`는 해당 인덱스를 프로퍼티에 선언해서 스키마 생성기가 올바른 DDL을 발행하도록 해요. 그리고 QueryDSL 경로 연산(`u.profile.tags.contains(...)`)이 DB가 실제로 사용할 수 있는 경로와 정렬되도록 해줘요.
+
+### 동작 방식
+
+```typescript
+import { Entity, PrimaryGeneratedColumn, Column, JsonIndex } from "@stingerloom/orm";
+
+@Entity()
+class User {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  // @> / ? 쿼리를 위한 서브패스 GIN 인덱스
+  @Column({ type: "jsonb" })
+  @JsonIndex({ path: "tags", using: "gin", opclass: "jsonb_path_ops" })
+  profile!: { tags: string[]; contact: { email: string } };
+}
+```
+
+**PostgreSQL DDL:**
+
+```sql
+CREATE INDEX "idx_user_profile_tags_gin"
+  ON "user" USING gin ((profile -> 'tags') jsonb_path_ops);
+```
+
+### 옵션 레퍼런스
+
+| 옵션 | 타입 | 기본값 | 설명 |
+|---|---|---|---|
+| `path` | `string?` | *(전체 컬럼)* | 컬럼 내 dot-bracket 경로: `"tags"`, `"contact.email"`, `"tags[0]"`. 생략하면 전체 컬럼에 인덱스. |
+| `using` | `"gin" \| "btree"` | `"gin"` | `gin`은 containment(`@>`)/key-existence(`?`)용. `btree`는 리프 스칼라 경로의 동등/범위 비교용. |
+| `opclass` | `"jsonb_ops" \| "jsonb_path_ops"` | `"jsonb_ops"` | `jsonb_path_ops`는 `@>` 전용이고 인덱스가 더 작고 빨라요. `btree`에는 무시. |
+| `where` | `string?` | — | 부분 인덱스 `WHERE` 절(raw SQL). 식별자 래핑과 파라미터 안전성은 호출자 책임이에요. |
+| `name` | `string?` | *자동* | 인덱스 이름 오버라이드. 기본적으로 `NamingStrategy.jsonIndexName()`으로 자동 생성. |
+
+### 패턴
+
+**전체 컬럼 GIN** — 해당 컬럼의 모든 `@>` / `?` / `?&` 쿼리를 커버하지만, 인덱스가 더 커요:
+
+```typescript
+@Column({ type: "jsonb" })
+@JsonIndex({ using: "gin" })
+profile!: UserProfile;
+```
+
+**텍스트 경로에 리프 btree** — 단일 스칼라 리프에 대한 동등/범위 쿼리용:
+
+```typescript
+@Column({ type: "jsonb" })
+@JsonIndex({ path: "contact.email", using: "btree" })
+profile!: UserProfile;
+```
+
+`CREATE INDEX ... ON "user" (((profile #>> '{contact,email}')))`를 발행해요.
+
+**부분 인덱스** — 매칭되지 않을 행은 건너뛰기:
+
+```typescript
+@Column({ type: "jsonb" })
+@JsonIndex({
+  path: "tags",
+  using: "gin",
+  opclass: "jsonb_path_ops",
+  where: `"deleted_at" IS NULL`,
+})
+profile!: UserProfile;
+```
+
+### 다이얼렉트 동작
+
+| 드라이버 | 동작 |
+|---|---|
+| **PostgreSQL** | GIN은 `CREATE INDEX ... USING gin ((col -> 'path') [jsonb_path_ops])`, btree는 `((col #>> '{path}'))`를 발행. |
+| **MySQL** | **DDL을 발행하지 않아요.** MySQL 8은 JSON 함수형 인덱스를 가상 생성 컬럼을 통해서만 지원하는데, 이건 인덱스 선언 범위를 넘는 구조적 스키마 변경이에요. DDL 생성 시점에 경고가 남아요. 필요하다면 생성 컬럼 + 인덱스를 수동 작성하세요. |
+| **SQLite** | **DDL을 발행하지 않아요.** SQLite엔 GIN 대응이 없어요. |
+
+### QueryDSL과 페어링
+
+QueryDSL의 JSON 연산자는 인덱스를 빌드한 경로 표현식과 동일한 SQL로 컴파일되어 플래너가 인덱스를 사용할 수 있어요:
+
+```typescript
+const users = await qb
+  .qWhere((u) => u.profile.tags.contains("typescript"))
+  .getMany();
+// PostgreSQL: WHERE profile -> 'tags' @> '"typescript"'::jsonb
+// 사용 인덱스: idx_user_profile_tags_gin
+```
+
+전체 연산자 카탈로그는 [Query Builder — JSON 경로 연산자](/ko/query-builder-json)를 참고하세요.
+
 ## 낙관적 잠금 (@Version)
 
 ### 낙관적 잠금이 존재하는 이유

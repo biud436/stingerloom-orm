@@ -155,6 +155,8 @@ The `install()` function receives a `PluginContext` with controlled access to En
 | `ctx.wrapTable(tableName)` | Quote a table name (with schema prefix) | Same as `wrap()` but handles schema-qualified names (e.g., `"public"."user"` in PostgreSQL). |
 | `ctx.executeInTransaction(fn)` | Run a callback in a transaction | When your plugin needs to execute multiple SQL statements atomically. The transaction is committed on success, rolled back on error. |
 | `ctx.executeReadOnly(fn)` | Run a callback in a read-only transaction | When your plugin only reads data and you want to signal that to the database for optimization (and use replicas in a read-replica setup). |
+| `ctx.getEntityMetadata(cls)` | Structured metadata for an entity class | When your plugin needs to inspect columns, relations, PK, indexes, or table name of a user entity — e.g. to emit a per-entity audit table or generate schema documentation. Returns `null` for unregistered classes. |
+| `ctx.registerPlaceholder(name)` | Declare a method name the plugin will add | When your plugin adds methods that need to be resolvable *before* they are actually installed (for circular-dependency scenarios or typed placeholder APIs). Reserving the name also prevents other plugins from clobbering it. |
 
 ---
 
@@ -275,6 +277,36 @@ interface QueryInfo {
 3. **afterQuery** fires with the original query info, the raw driver result, and the execution time in milliseconds.
 
 Hooks fire for **all** registered plugins in installation order. Each plugin's `beforeQuery` runs before the next, so a chain of plugins can compose transformations.
+
+### Transaction Hooks -- beforeTransaction / afterTransaction
+
+In addition to per-query hooks, plugins may observe transaction boundaries. These fire once per `executeInTransaction()` / `@Transactional` scope — **not** per statement inside.
+
+```typescript
+const txAudit: StingerloomPlugin = {
+  name: "tx-audit",
+  beforeTransaction(isolationLevel) {
+    console.log(`[TX] BEGIN (isolation=${isolationLevel ?? "default"})`);
+  },
+  afterTransaction(committed) {
+    console.log(`[TX] ${committed ? "COMMIT" : "ROLLBACK"}`);
+  },
+  install() { /* no extra API */ },
+};
+```
+
+| Hook | Signature | When it fires |
+|---|---|---|
+| `beforeTransaction` | `(isolationLevel?: string) => void` | Immediately before `BEGIN`/`START TRANSACTION`. `isolationLevel` is the string passed to the transaction options (`"READ COMMITTED"`, etc.) or `undefined` for the DB default. |
+| `afterTransaction` | `(committed: boolean) => void` | After `COMMIT` (truthy) or `ROLLBACK` (falsy) returns. |
+
+### Hook Error Handling
+
+- `beforeQuery` **is awaited synchronously** in the query path. If it throws, the query is aborted and the error bubbles to the caller.
+- `afterQuery`, `beforeTransaction`, and `afterTransaction` are **observational**. Exceptions raised from them are caught internally and logged via `Logger.warn()`, so a misbehaving audit plugin cannot kill a transaction.
+- A plugin's `shutdown()` runs in **reverse installation order** during `propagateShutdown()`; errors there are captured and reported but do not prevent other plugins from cleaning up.
+
+Design each hook to be idempotent and side-effect-tolerant — they may fire for retried queries (deadlock retry) and for queries the ORM emits internally (schema introspection, tenant provisioning).
 
 ---
 

@@ -487,6 +487,127 @@ connection name을 생략하면 `"default"`가 사용돼요. 멀티 DB를 안 �
 
 ---
 
+## Naming Strategy
+
+`namingStrategy` 옵션은 TypeScript 클래스/프로퍼티명으로부터 DB 식별자(테이블명, 컬럼명, FK/인덱스명)를 파생하는 방식을 제어해요. 전략을 지정하지 않으면 ORM은 `DefaultNamingStrategy`를 사용해요 — 컬럼명은 원본 그대로 유지하고, FK 이름은 SHA1 해시로 파생해요.
+
+### 내장: `SnakeNamingStrategy`
+
+`camelCase` 프로퍼티명을 `snake_case` DB 컬럼으로 변환해요 — 대부분의 PostgreSQL/MySQL 코드베이스 관례예요.
+
+```typescript
+import { SnakeNamingStrategy } from "@stingerloom/orm";
+
+await em.register({
+  type: "postgres",
+  // ...
+  namingStrategy: new SnakeNamingStrategy(),
+});
+```
+
+이 전략을 쓰면:
+
+| TypeScript | 데이터베이스 |
+|---|---|
+| `class UserProfile` | `user_profile` |
+| `firstName: string` | `first_name` |
+| `@ManyToOne(() => Author) author!: Author` | FK 컬럼 `author_id` |
+
+변환은 엔티티 등록 **및** 결과 역직렬화(DB 컬럼 → 엔티티 프로퍼티) 시점에 적용되므로, 코드에서 `snake_case`를 다룰 일이 없어요.
+
+### 커스텀 전략 구현
+
+기존 스키마가 어느 관례에도 맞지 않거나, 조직 고유의 FK/인덱스 접두사가 필요할 때 `NamingStrategy` 인터페이스를 구현하세요. 인터페이스는 ORM이 생성하는 모든 식별자를 커버해요:
+
+```typescript
+import { NamingStrategy } from "@stingerloom/orm";
+
+class UppercaseNamingStrategy implements NamingStrategy {
+  tableName(className: string): string {
+    // Users → USERS
+    return className.toUpperCase() + "S";
+  }
+
+  columnName(propertyName: string): string {
+    // firstName → FIRST_NAME
+    return propertyName.replace(/([A-Z])/g, "_$1").toUpperCase();
+  }
+
+  joinColumnName(propertyName: string, referencedColumnName: string): string {
+    // author + id → AUTHOR_ID
+    return `${propertyName.toUpperCase()}_${referencedColumnName.toUpperCase()}`;
+  }
+
+  foreignKeyName(table: string, column: string, referencedTable: string): string {
+    return `FK_${table}_${column}_${referencedTable}`.slice(0, 63);
+  }
+
+  uniqueIndexName(table: string, columns: string[]): string {
+    return `UQ_${table}_${columns.join("_")}`;
+  }
+
+  indexName(table: string, column: string): string {
+    return `IX_${table}_${column}`;
+  }
+
+  compositeIndexName(table: string, columns: string[]): string {
+    return `IX_${table}_${columns.join("_")}`;
+  }
+
+  jsonIndexName(
+    table: string,
+    column: string,
+    pathSegments: ReadonlyArray<string | number>,
+    using: "gin" | "btree",
+  ): string {
+    const path = pathSegments.length ? `_${pathSegments.join("_")}` : "";
+    return `IX_JSON_${table}_${column}${path}_${using}`;
+  }
+}
+
+await em.register({
+  // ...
+  namingStrategy: new UppercaseNamingStrategy(),
+});
+```
+
+### 메서드 레퍼런스
+
+| 메서드 | 호출되는 곳 | 목적 |
+|---|---|---|
+| `tableName(className)` | 엔티티 등록 | 명시적 `name` 없는 `@Entity()`의 기본 테이블명. |
+| `columnName(propertyName)` | 컬럼 등록 | 명시적 `name` 없는 `@Column()`의 기본 DB 컬럼명. |
+| `joinColumnName(propertyName, refPk)` | `@ManyToOne`/`@OneToOne` | 명시적 `joinColumn` 옵션 없을 때의 FK 컬럼명. |
+| `foreignKeyName(table, column, refTable)` | DDL 생성 | `CONSTRAINT ... FOREIGN KEY` 절의 이름. PostgreSQL 제약 때문에 63자 이내 유지. |
+| `uniqueIndexName(table, columns)` | `@UniqueIndex` | 복합 고유 인덱스 이름. |
+| `indexName(table, column)` | 프로퍼티 수준 `@Index` | 단일 컬럼 인덱스 이름. |
+| `compositeIndexName(table, columns)` | 클래스 수준 `@Index` | 다중 컬럼 인덱스 이름. |
+| `jsonIndexName(table, column, path, using)` | `@JsonIndex` | JSON 경로 표현식 인덱스 이름(PostgreSQL). |
+
+### `DefaultNamingStrategy` 상속
+
+한두 메서드만 재정의하고 싶을 때는 내장 전략을 상속하세요:
+
+```typescript
+import { DefaultNamingStrategy } from "@stingerloom/orm";
+
+class PrefixedFKStrategy extends DefaultNamingStrategy {
+  foreignKeyName(table: string, column: string, refTable: string): string {
+    return `fk_${table}__${refTable}__${column}`.slice(0, 63);
+  }
+}
+```
+
+재정의한 메서드만 바뀌고, 나머지 식별자는 기본 관례를 계속 따라요.
+
+### 주의사항
+
+- **Naming strategy는 등록 시점에 적용돼요.** 이미 운영 중인 테이블의 전략을 바꾸려면 코드 변경이 아니라 마이그레이션이 필요해요.
+- **식별자 길이가 중요해요.** PostgreSQL은 식별자를 63바이트에서 자름. `DefaultNamingStrategy`는 이를 지키기 위한 해시 폴백 경로가 있어요 — 커스텀 전략에서도 이를 복제하지 않으면 마이그레이션이 제약을 조용히 리네임할 수 있어요.
+- **전략은 제약 drop SQL을 제어하지 않아요.** 이름만 생성할 뿐이라, 테이블이 존재하는 상태에서 전략을 바꾸면 기존 제약은 마이그레이션 전까지 원래 이름을 유지해요.
+
+---
+
 ## 전체 옵션 레퍼런스
 
 ```typescript

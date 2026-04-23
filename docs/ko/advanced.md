@@ -538,6 +538,65 @@ const data = driver.getTableData("users"); // [{ id: 1, name: "Alice" }, ...]
 console.log(driver.getExecutedQueries());  // SQL 이력
 ```
 
+### 커스텀 Deserializer 전략
+
+드라이버가 raw row를 돌려주면, ORM은 **`Deserializer`** 전략으로 클래스 인스턴스로 변환해요. 기본적으로는 `class-transformer`가 설치되어 있을 때 `ClassTransformerDeserializer`를, 없으면 의존성 없는 `PlainObjectDeserializer`로 폴백해요. 다른 검증 라이브러리(typia, superstruct 등)를 쓰거나 핫 패스에서 데코레이터를 우회하고 싶을 때 전략을 바꾸세요.
+
+```typescript
+import {
+  DeserializerRegistry,
+  type Deserializer,
+} from "@stingerloom/orm";
+
+// 1. 인터페이스 구현
+const fastAssignDeserializer: Deserializer = {
+  deserialize(cls, plain) {
+    if (Array.isArray(plain)) {
+      return plain.map((p) => Object.assign(new cls(), p)) as any;
+    }
+    return Object.assign(new cls(), plain);
+  },
+};
+
+// 2a. 전역 싱글톤 교체 (프로세스 내 모든 EntityManager에 영향)
+DeserializerRegistry.getInstance().setDeserializer(fastAssignDeserializer);
+
+// 2b. 또는 특정 호출 사이트만 바꾸고 싶을 때 스코프 레지스트리 생성
+const scoped = new DeserializerRegistry(fastAssignDeserializer);
+const user = scoped.deserialize(User, rawRow);
+```
+
+`Deserializer` 인터페이스는 메서드가 하나뿐이에요:
+
+```typescript
+interface Deserializer {
+  deserialize<T, V extends object>(
+    cls: MyClassConstructor<T>,
+    plain: V | V[],
+    options?: DeserializeOptions,
+  ): T;
+}
+```
+
+`DeserializeOptions`는 일반적인 class-transformer 플래그를 미러링해요. 구현체에서 무시하거나 존중하면 돼요:
+
+| 옵션 | 용도 |
+|---|---|
+| `excludeExtraneousValues` | 클래스에 없는 프로퍼티 드롭. |
+| `groups` | 특정 그룹의 프로퍼티만 노출(class-transformer `@Expose({ groups })`). |
+| `version` | class-transformer `@Expose({ since, until })` 버전 게이팅. |
+| `enableCircularCheck` | 변환 중 순환 참조 감지. |
+| `exposeDefaultValues` | 클래스 기본값만 가진 프로퍼티도 발행. |
+| `exposeUnsetProperties` | 데코레이터 없는 프로퍼티도 발행(완전 투명성용). |
+
+**교체 타이밍:**
+
+- **성능 크리티컬 패스** — 단순 read-only row에서 `PlainObjectDeserializer`는 class-transformer보다 약 3-5배 빨라요. `@Type(() => …)` 중첩 변환이 없는 엔티티라면 기본 폴백만으로도 충분해요.
+- **대체 검증기(typia, zod, valibot)** — 검증기의 parse 함수를 `deserialize()`에서 래핑하면 검증 + 인스턴스 생성을 한 번에 처리할 수 있어요.
+- **커스텀 필드 마스킹** — class-transformer 데코레이터 없이 그룹 기반 마스킹 구현(`options.groups`를 직접 해석).
+
+ORM은 `ResultTransformer`에서 등록된 deserializer를 호출하므로, 교체는 모든 `find()`, `findOne()`, 쿼리 빌더 `getMany()`, 관계 로드에 즉시 반영돼요.
+
 ## 다음 단계
 
 - [Query Builder](./query-builder.md) -- Type-safe SelectQueryBuilder

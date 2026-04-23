@@ -538,6 +538,65 @@ const data = driver.getTableData("users"); // [{ id: 1, name: "Alice" }, ...]
 console.log(driver.getExecutedQueries());  // SQL history
 ```
 
+### Custom Deserializer Strategy
+
+After the driver returns raw rows, the ORM converts them into class instances through a **`Deserializer`** strategy. By default Stingerloom uses `ClassTransformerDeserializer` when `class-transformer` is installed and falls back to the zero-dependency `PlainObjectDeserializer` otherwise. Swap the strategy when you want to use a different validation library (e.g. typia, superstruct) or bypass decorators entirely in hot paths.
+
+```typescript
+import {
+  DeserializerRegistry,
+  type Deserializer,
+} from "@stingerloom/orm";
+
+// 1. Implement the interface
+const fastAssignDeserializer: Deserializer = {
+  deserialize(cls, plain) {
+    if (Array.isArray(plain)) {
+      return plain.map((p) => Object.assign(new cls(), p)) as any;
+    }
+    return Object.assign(new cls(), plain);
+  },
+};
+
+// 2a. Swap the global singleton (affects every EntityManager in the process)
+DeserializerRegistry.getInstance().setDeserializer(fastAssignDeserializer);
+
+// 2b. Or construct a scoped registry when you only want to change one call site
+const scoped = new DeserializerRegistry(fastAssignDeserializer);
+const user = scoped.deserialize(User, rawRow);
+```
+
+The `Deserializer` interface has a single method:
+
+```typescript
+interface Deserializer {
+  deserialize<T, V extends object>(
+    cls: MyClassConstructor<T>,
+    plain: V | V[],
+    options?: DeserializeOptions,
+  ): T;
+}
+```
+
+`DeserializeOptions` mirrors the common class-transformer flags so your implementation can ignore or honor them:
+
+| Option | Purpose |
+|---|---|
+| `excludeExtraneousValues` | Drop properties that do not exist on the class. |
+| `groups` | Expose only properties in these groups (class-transformer `@Expose({ groups })`). |
+| `version` | Version gating for class-transformer `@Expose({ since, until })`. |
+| `enableCircularCheck` | Detect circular references during conversion. |
+| `exposeDefaultValues` | Emit properties whose only value is the class's default. |
+| `exposeUnsetProperties` | Emit undecorated properties (for full transparency). |
+
+**When to swap:**
+
+- **Performance critical paths** — `PlainObjectDeserializer` is ~3-5x faster than class-transformer for simple read-only rows. If your entity has no `@Type(() => …)` nested conversions, the default fallback is already enough.
+- **Alternative validators (typia, zod, valibot)** — wrap the validator's parse function inside `deserialize()` to get validation + instance construction in one pass.
+- **Custom field masking** — implement group-based masking without class-transformer decorators (honor `options.groups` yourself).
+
+The ORM calls the registered deserializer from `ResultTransformer`, so the swap takes effect on every `find()`, `findOne()`, query builder `getMany()`, and relation load.
+
 ## Next Steps
 
 - [Query Builder](./query-builder.md) -- Type-safe SelectQueryBuilder

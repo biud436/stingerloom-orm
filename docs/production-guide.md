@@ -383,6 +383,42 @@ const longRunning = processlist.filter((p) => p.Time > 30);
 console.log("Running for 30+ seconds:", longRunning.length);
 ```
 
+### Built-in Leak Detector (`leakDetectionThresholdMs`)
+
+Every driver wires a **`ConnectionLeakDetector`** onto its connection pool. When a checked-out connection is held longer than `pool.leakDetectionThresholdMs`, the ORM logs a warning so you can trace which call path forgot to release it. Configure it per database:
+
+```typescript
+await em.register({
+  // ...
+  pool: {
+    max: 20,
+    acquireTimeoutMs: 5000,
+    idleTimeoutMs: 10000,
+    leakDetectionThresholdMs: 30000, // default — warn after 30s
+  },
+});
+```
+
+**What gets logged:**
+
+```
+[ConnectionLeakDetector] Potential connection leak detected: connection held
+for 31250ms (threshold: 30000ms). Consider releasing it.
+```
+
+The detector scans tracked connections on a background timer (`thresholdMs / 2`, min 5s) and emits one warning per over-threshold connection per scan. The timer is `unref()`'d so it never blocks process shutdown.
+
+**Tuning guidance:**
+
+| Scenario | Recommended threshold |
+|---|---|
+| Typical OLTP workload (<1s queries) | `10000` (10s) — catches leaks fast |
+| Mixed workload with reporting queries | `30000` (30s, default) |
+| Background jobs / large batch imports | `120000` (2min) or higher |
+| **Disable** (e.g. in short-lived scripts) | `0` |
+
+The detector is **observational only** — it does not forcibly release leaked connections, because the transaction may be mid-COMMIT. Pair it with `queryTimeout` (below) so the DB-level cancellation eventually closes the hung statement, which then releases the connection.
+
 ### Detecting Connection Leaks via Slow Queries
 
 If a transaction is opened but never closed, the connection is not returned to the pool, causing pool exhaustion. Use `queryTimeout` to automatically terminate long-running queries.

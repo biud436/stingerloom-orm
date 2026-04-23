@@ -487,6 +487,127 @@ Token helper functions are also available for advanced DI scenarios:
 
 ---
 
+## Naming Strategy
+
+The `namingStrategy` option controls how the ORM derives database identifiers (table names, column names, FK/index names) from your TypeScript class and property names. Without a strategy, the ORM uses `DefaultNamingStrategy`, which preserves column names verbatim and derives FK names via SHA1 hashing.
+
+### Built-in: `SnakeNamingStrategy`
+
+Converts `camelCase` property names into `snake_case` database columns — the convention in most PostgreSQL/MySQL codebases.
+
+```typescript
+import { SnakeNamingStrategy } from "@stingerloom/orm";
+
+await em.register({
+  type: "postgres",
+  // ...
+  namingStrategy: new SnakeNamingStrategy(),
+});
+```
+
+With this strategy:
+
+| TypeScript | Database |
+|---|---|
+| `class UserProfile` | `user_profile` |
+| `firstName: string` | `first_name` |
+| `@ManyToOne(() => Author) author!: Author` | FK column `author_id` |
+
+The transformation is applied during entity registration **and** during result deserialization (DB column → entity property), so your code never touches `snake_case`.
+
+### Implementing a Custom Strategy
+
+Implement the `NamingStrategy` interface when you have a pre-existing schema that does not match either convention, or when you need organization-specific FK/index prefixes. The interface covers every identifier the ORM generates:
+
+```typescript
+import { NamingStrategy } from "@stingerloom/orm";
+
+class UppercaseNamingStrategy implements NamingStrategy {
+  tableName(className: string): string {
+    // Users → USERS
+    return className.toUpperCase() + "S";
+  }
+
+  columnName(propertyName: string): string {
+    // firstName → FIRST_NAME
+    return propertyName.replace(/([A-Z])/g, "_$1").toUpperCase();
+  }
+
+  joinColumnName(propertyName: string, referencedColumnName: string): string {
+    // author + id → AUTHOR_ID
+    return `${propertyName.toUpperCase()}_${referencedColumnName.toUpperCase()}`;
+  }
+
+  foreignKeyName(table: string, column: string, referencedTable: string): string {
+    return `FK_${table}_${column}_${referencedTable}`.slice(0, 63);
+  }
+
+  uniqueIndexName(table: string, columns: string[]): string {
+    return `UQ_${table}_${columns.join("_")}`;
+  }
+
+  indexName(table: string, column: string): string {
+    return `IX_${table}_${column}`;
+  }
+
+  compositeIndexName(table: string, columns: string[]): string {
+    return `IX_${table}_${columns.join("_")}`;
+  }
+
+  jsonIndexName(
+    table: string,
+    column: string,
+    pathSegments: ReadonlyArray<string | number>,
+    using: "gin" | "btree",
+  ): string {
+    const path = pathSegments.length ? `_${pathSegments.join("_")}` : "";
+    return `IX_JSON_${table}_${column}${path}_${using}`;
+  }
+}
+
+await em.register({
+  // ...
+  namingStrategy: new UppercaseNamingStrategy(),
+});
+```
+
+### Method Reference
+
+| Method | Called from | Purpose |
+|---|---|---|
+| `tableName(className)` | Entity registration | Default table name for `@Entity()` without an explicit `name`. |
+| `columnName(propertyName)` | Column registration | Default DB column name for `@Column()` without an explicit `name`. |
+| `joinColumnName(propertyName, refPk)` | `@ManyToOne`/`@OneToOne` | FK column name when no explicit `joinColumn` option is given. |
+| `foreignKeyName(table, column, refTable)` | DDL generation | Name for the `CONSTRAINT ... FOREIGN KEY` clause. Keep ≤ 63 chars for PostgreSQL. |
+| `uniqueIndexName(table, columns)` | `@UniqueIndex` | Name for unique composite indexes. |
+| `indexName(table, column)` | `@Index` on property | Name for a single-column index. |
+| `compositeIndexName(table, columns)` | `@Index` on class | Name for a multi-column index. |
+| `jsonIndexName(table, column, path, using)` | `@JsonIndex` | Name for a JSON path expression index (PostgreSQL). |
+
+### Subclassing `DefaultNamingStrategy`
+
+Extend the built-in strategy when you only need to override one or two methods:
+
+```typescript
+import { DefaultNamingStrategy } from "@stingerloom/orm";
+
+class PrefixedFKStrategy extends DefaultNamingStrategy {
+  foreignKeyName(table: string, column: string, refTable: string): string {
+    return `fk_${table}__${refTable}__${column}`.slice(0, 63);
+  }
+}
+```
+
+Only the overridden method changes; all other identifiers continue to use the default convention.
+
+### Gotchas
+
+- **Naming strategy is applied at registration time.** Changing the strategy on an already-live table requires a migration, not a code change.
+- **Identifier length matters.** PostgreSQL truncates identifiers at 63 bytes. `DefaultNamingStrategy` has a hash-fallback path to stay within that limit — replicate it in your custom strategy or your migration will silently rename constraints.
+- **The strategy does not control constraint-drop SQL.** It only produces names; if you change strategies after tables exist, old constraints keep their original names until you migrate them.
+
+---
+
 ## Full Options Reference
 
 ```typescript
