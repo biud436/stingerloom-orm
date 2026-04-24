@@ -12,7 +12,7 @@ There are three common approaches:
 2. **Shared database, separate schemas** — one DB, but each tenant gets its own namespace (schema). Good balance of isolation and efficiency.
 3. **Shared everything** — one DB, one schema, a `tenant_id` column on every table. Cheapest but risky — a missing WHERE clause leaks data.
 
-Stingerloom ORM supports approach **#2** (schema-based isolation on PostgreSQL) through a **layered metadata system**, and provides the context machinery for approach **#3** as well.
+Stingerloom ORM supports approach **#2** (schema-based isolation on PostgreSQL) through a **layered metadata system**, and approach **#3** (a shared schema with an auto-managed `tenant_id` column that works on every dialect).
 
 ---
 
@@ -412,8 +412,180 @@ import {
   TenantQueryStrategy,
   SearchPathStrategy,
   SchemaQualifiedStrategy,
+  TenantColumnStrategy,
 } from "@stingerloom/orm";
 ```
+
+---
+
+## Strategy 3: `tenant_column` (All Dialects)
+
+Schema-based isolation needs PostgreSQL. If your app runs on MySQL or SQLite, or you expect to onboard thousands of tenants where one schema per tenant becomes a catalog and migration problem, there's a third option: keep every tenant's rows in the same tables and tell them apart with a discriminator column.
+
+This is approach **#3** from the introduction — shared DB, shared schema, a `tenant_id` column on every tenant-scoped table. Traditionally it's dangerous, because one forgotten `WHERE tenant_id = ?` leaks another tenant's rows. Stingerloom makes it safe by injecting the predicate automatically on every read / update / delete and validating it on every insert, with an explicit escape hatch for the admin cases where cross-tenant access is intentional.
+
+### When to choose it over `schema_qualified`
+
+| Aspect | `schema_qualified` (Strategy 2) | `tenant_column` (Strategy 3) |
+|---|---|---|
+| Dialect support | PostgreSQL only | MySQL, PostgreSQL, SQLite |
+| Onboarding a new tenant | `CREATE SCHEMA` + `CREATE TABLE (LIKE …)` for every table | Nothing — first INSERT populates `tenant_id` |
+| Schema changes | Must apply to every tenant schema | Apply once; all tenants see it immediately |
+| `pg_catalog` footprint | N tables × M tenants | N tables total |
+| Typical tenant count | 10s to low hundreds | Thousands and up |
+| Isolation boundary | PostgreSQL schema (enforced by DB) | ORM-enforced WHERE clauses |
+| Raw SQL safety | `search_path` or qualified name already scopes | **You must include the predicate manually** |
+
+`schema_qualified` gives harder isolation at the database level — a raw `SELECT * FROM user` in the wrong context queries the wrong schema, not another tenant's data. `tenant_column` trades that hard boundary for a single shared schema that scales to thousands of tenants without DDL churn per tenant.
+
+### Enabling the strategy
+
+```typescript
+await em.register({
+  type: "mysql",            // or "postgres" / "sqlite"
+  // ...
+  entities: [User, Post, Invoice],
+  synchronize: true,
+  tenantStrategy: "tenant_column",
+  tenantColumnName: "tenant_id",   // optional — "tenant_id" is the default
+  tenantColumnType: "varchar",     // optional — "varchar" | "uuid" | "int" | "bigint"
+  tenantColumnLength: 64,          // optional — only used for varchar
+});
+```
+
+### What happens automatically
+
+With `tenantStrategy: "tenant_column"` the ORM applies four behaviors to every entity without any per-entity code:
+
+1. **DDL injection.** `SchemaRegistrar` adds `tenant_id VARCHAR(64) NOT NULL` (or the configured type) to every table. You don't declare the column on your entity class.
+2. **INSERT auto-fill + validation.** `save()` / `saveMany()` / `insertMany()` / `upsert()` / `batchUpsert()` populate `tenant_id` from `MetadataContext.getCurrentTenant()`. Inserting with no active tenant context throws `MISSING_TENANT_CONTEXT`; inserting with an explicit `tenant_id` that disagrees with the context throws `TENANT_MISMATCH`.
+3. **WHERE injection on reads.** `find()`, `findOne()`, `findByPK()`, `findAndCount()`, `findWithCursor()`, `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`, and `SelectQueryBuilder.getMany()` / `getCount()` / `exists()` all append `AND tenant_id = ?`. Eager joins and relation loaders inherit the same predicate.
+4. **WHERE injection on writes.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()` also get `AND tenant_id = ?`, so a forgotten tenant context can't drop another tenant's rows.
+
+```typescript
+@Entity()
+class Post {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() title!: string;
+}
+
+// Table DDL becomes:
+//   CREATE TABLE post (
+//     id INTEGER PRIMARY KEY AUTO_INCREMENT,
+//     title VARCHAR(255) NOT NULL,
+//     tenant_id VARCHAR(64) NOT NULL          ← auto-injected
+//   )
+
+await MetadataContext.run("acme", async () => {
+  await em.save(Post, { title: "Hello" });
+  // → INSERT INTO post (title, tenant_id) VALUES ('Hello', 'acme')
+
+  const posts = await em.find(Post);
+  // → SELECT ... FROM post WHERE tenant_id = 'acme'
+
+  await em.delete(Post, { id: 42 });
+  // → DELETE FROM post WHERE id = 42 AND tenant_id = 'acme'
+});
+```
+
+### Reading the tenant value with `@TenantColumn`
+
+Declaring `@TenantColumn` is **optional**. The column is managed by the ORM whether you declare it or not. Declare it only when your application code needs to read the tenant id off an entity instance — audit logs, admin dashboards, cross-tenant exports:
+
+```typescript
+import { TenantColumn } from "@stingerloom/orm";
+
+@Entity()
+class AuditLog {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() action!: string;
+  @TenantColumn() tenantId!: string;   // now log.tenantId is readable
+}
+```
+
+If you assign a value to a `@TenantColumn` property on `save()`, it must match the current context — the ORM throws `TENANT_MISMATCH` otherwise. You can't forge a tenant by setting the property manually.
+
+### Excluding an entity with `@NonTenantEntity`
+
+Some tables are inherently global — the `Tenant` table itself, system configuration, shared lookup tables (countries, currencies, feature flags). Mark them with `@NonTenantEntity()` and the ORM leaves them alone: no DDL column, no WHERE injection, no INSERT validation.
+
+```typescript
+import { NonTenantEntity } from "@stingerloom/orm";
+
+@Entity()
+@NonTenantEntity()
+class Tenant {
+  @PrimaryColumn() id!: string;
+  @Column() name!: string;
+}
+
+@Entity()
+@NonTenantEntity()
+class Country {
+  @PrimaryColumn() code!: string;
+  @Column() name!: string;
+}
+```
+
+An eager join from a tenant-scoped entity into a `@NonTenantEntity` target is safe — the ORM skips the tenant predicate on the non-tenant side automatically.
+
+### Escape hatch: `runUnscoped()`
+
+Sometimes you legitimately need to query across every tenant — a billing report, a nightly background job, a data export. Wrap that code in `MetadataContext.runUnscoped()` and the WHERE injection is skipped:
+
+```typescript
+import { MetadataContext } from "@stingerloom/orm";
+
+await MetadataContext.runUnscoped(async () => {
+  const allPosts = await em.find(Post);
+  // → SELECT ... FROM post           ← no tenant filter
+});
+```
+
+`runUnscoped()` affects **reads only**. INSERTs still require a tenant context — `runUnscoped()` inside a surrounding `run("acme", …)` inserts into `acme`; outside any `run()` it throws `MISSING_TENANT_CONTEXT` because there's nothing to fill. This asymmetry is deliberate: admin reads are safe, admin writes without tenant attribution are not.
+
+### Per-query opt-out
+
+`runUnscoped()` is context-wide. If you only need to bypass the filter for one specific query, use the per-query opt-out:
+
+```typescript
+// FindOption
+await em.find(Post, { withoutTenantScope: true });
+
+// SelectQueryBuilder
+await em.createQueryBuilder(Post, "p")
+  .withoutTenantScope()
+  .getMany();
+```
+
+Only reads accept the per-query flag. `updateMany` / `deleteMany` / `softDelete` / `restore` intentionally do not — an accidental cross-tenant write should require an explicit `runUnscoped()` block, not a flag that could be flipped on in a one-line refactor.
+
+### Raw SQL warnings
+
+The ORM injects the tenant predicate on queries it builds. If you call `em.query("SELECT * FROM post")` directly, Stingerloom can't rewrite your SQL — you're responsible for the `WHERE` clause. Under an active tenant context, the first time each call-site invokes `em.query()` the ORM logs:
+
+```
+[multi-tenancy] em.query() called under tenant="acme" — raw SQL bypasses
+tenant predicate injection. Add "AND tenant_id = ?" to the query, or wrap
+the call in MetadataContext.runUnscoped() to acknowledge cross-tenant scope.
+    at MyService.rawReport (src/my-service.ts:42:23)
+```
+
+The warning deduplicates by call-site, so a hot loop logs once, not thousands of times. Silence it either by including `AND tenant_id = ?` in your SQL explicitly, or by wrapping intentional cross-tenant reads in `runUnscoped()`.
+
+### First-level cache isolation
+
+Stingerloom's Identity Map (WriteBuffer) prefixes its cache keys with the current tenant under this strategy, so `em.findByPK(Post, 1)` in tenant "acme" never serves a cached row from tenant "globex". Inside `runUnscoped()` the identity cache is skipped entirely, because a bare PK is ambiguous when you're reading across tenants.
+
+### Why Stingerloom does not support RLS
+
+PostgreSQL Row-Level Security (`CREATE POLICY`) is sometimes proposed as a safer version of the `tenant_column` approach — the database enforces the predicate instead of the ORM. Stingerloom intentionally does not support RLS:
+
+- **PostgreSQL only.** That defeats the main reason to pick `tenant_column` in the first place (dialect portability).
+- **Planner pitfalls.** RLS predicates not marked `STABLE` / `LEAKPROOF` can bypass indexes and invalidate plan caches in ways that are hard to diagnose after the fact.
+- **Scope creep.** `CREATE POLICY` is DDL the ORM would have to own end-to-end — policy generation, diffing, migration — doubling the surface area of the schema subsystem for a single-dialect feature.
+
+If you need database-enforced row-level isolation on PostgreSQL, apply RLS policies alongside Stingerloom at the DBA layer — but don't expect the ORM to manage them.
 
 ---
 

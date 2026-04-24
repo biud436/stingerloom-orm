@@ -12,7 +12,7 @@ SaaS 제품을 만든다고 생각해 보세요. 수백 개의 회사가 사용�
 2. **DB 공유, 스키마 분리** — DB는 하나지만 테넌트마다 별도 네임스페이스(스키마)를 사용해요. 격리와 효율의 균형이 좋아요.
 3. **전부 공유** — DB 하나, 스키마 하나, 모든 테이블에 `tenant_id` 컬럼. 가장 저렴하지만 WHERE 절 하나 빠지면 데이터가 유출돼요.
 
-Stingerloom ORM은 **레이어드 메타데이터 시스템**을 통해 **#2** (PostgreSQL 스키마 기반 격리)를 지원하고, **#3** 방식에 필요한 컨텍스트 기반 인프라도 제공해요.
+Stingerloom ORM은 **레이어드 메타데이터 시스템**을 통해 **#2** (PostgreSQL 스키마 기반 격리)를 지원하고, **#3** (모든 다이얼렉트에서 동작하는 자동 관리형 `tenant_id` 컬럼을 사용한 공유 스키마) 방식도 지원해요.
 
 ---
 
@@ -412,8 +412,180 @@ import {
   TenantQueryStrategy,
   SearchPathStrategy,
   SchemaQualifiedStrategy,
+  TenantColumnStrategy,
 } from "@stingerloom/orm";
 ```
+
+---
+
+## 전략 3: `tenant_column` (모든 다이얼렉트 지원)
+
+스키마 기반 격리는 PostgreSQL이 필요해요. 앱이 MySQL이나 SQLite에서 돌아가거나, 테넌트 수가 수천 개로 불어나서 테넌트당 스키마 하나씩 만드는 게 카탈로그와 마이그레이션 부담이 되기 시작한다면, 세 번째 옵션이 있어요 — 모든 테넌트의 행을 같은 테이블에 넣고 디스크리미네이터 컬럼으로 구분하는 방식이에요.
+
+처음에 소개한 **#3** 접근이에요 — DB 하나, 스키마 하나, 테넌트 범위 테이블마다 `tenant_id` 컬럼. 전통적으로 이 방식은 위험해요. `WHERE tenant_id = ?` 하나 빠뜨리면 다른 테넌트 데이터가 누출되니까요. Stingerloom은 이걸 안전하게 만들어요 — 모든 read / update / delete에 predicate를 자동으로 주입하고, 모든 insert에서 이를 검증하고, 의도적인 크로스 테넌트 접근이 필요한 관리자 케이스에는 명시적인 탈출구를 제공해요.
+
+### 언제 `schema_qualified` 대신 선택해야 하나요?
+
+| 항목 | `schema_qualified` (전략 2) | `tenant_column` (전략 3) |
+|---|---|---|
+| 다이얼렉트 지원 | PostgreSQL만 | MySQL, PostgreSQL, SQLite |
+| 새 테넌트 온보딩 | 모든 테이블마다 `CREATE SCHEMA` + `CREATE TABLE (LIKE …)` | 없음 — 첫 INSERT가 `tenant_id` 를 채움 |
+| 스키마 변경 | 모든 테넌트 스키마에 각각 적용 | 한 번 적용하면 모든 테넌트가 즉시 반영 |
+| `pg_catalog` 부하 | N 테이블 × M 테넌트 | 전체 N 테이블 |
+| 일반적인 테넌트 수 | 수십 ~ 수백 개 | 수천 개 이상 |
+| 격리 경계 | PostgreSQL 스키마 (DB 수준 강제) | ORM이 강제하는 WHERE 절 |
+| Raw SQL 안전성 | `search_path` 나 qualified 이름으로 이미 스코프됨 | **수동으로 predicate를 포함해야 함** |
+
+`schema_qualified` 는 DB 수준의 더 강한 격리를 제공해요. 잘못된 컨텍스트에서 raw `SELECT * FROM user` 를 실행하면 다른 테넌트의 데이터가 아니라 잘못된 스키마를 조회하게 돼요. `tenant_column` 은 그런 강한 경계를 내주는 대신, 테넌트당 DDL 없이 수천 개의 테넌트로 확장되는 단일 공유 스키마를 얻어요.
+
+### 전략 활성화
+
+```typescript
+await em.register({
+  type: "mysql",            // "postgres" / "sqlite" 도 가능
+  // ...
+  entities: [User, Post, Invoice],
+  synchronize: true,
+  tenantStrategy: "tenant_column",
+  tenantColumnName: "tenant_id",   // optional — "tenant_id" is the default
+  tenantColumnType: "varchar",     // optional — "varchar" | "uuid" | "int" | "bigint"
+  tenantColumnLength: 64,          // optional — varchar 에만 적용
+});
+```
+
+### 자동으로 일어나는 일
+
+`tenantStrategy: "tenant_column"` 을 설정하면, 엔티티별 코드 없이도 ORM이 모든 엔티티에 네 가지 동작을 적용해요:
+
+1. **DDL 주입.** `SchemaRegistrar` 가 모든 테이블에 `tenant_id VARCHAR(64) NOT NULL` (또는 설정된 타입)을 추가해요. 엔티티 클래스에 컬럼을 선언할 필요가 없어요.
+2. **INSERT 자동 채움 + 검증.** `save()` / `saveMany()` / `insertMany()` / `upsert()` / `batchUpsert()` 가 `MetadataContext.getCurrentTenant()` 값으로 `tenant_id` 를 채워요. 테넌트 컨텍스트 없이 INSERT 하면 `MISSING_TENANT_CONTEXT` 를 던지고, 컨텍스트와 다른 `tenant_id` 를 명시적으로 넘기면 `TENANT_MISMATCH` 를 던져요.
+3. **read WHERE 주입.** `find()`, `findOne()`, `findByPK()`, `findAndCount()`, `findWithCursor()`, `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`, 그리고 `SelectQueryBuilder.getMany()` / `getCount()` / `exists()` 에 `AND tenant_id = ?` 가 자동으로 붙어요. Eager JOIN 과 relation loader 도 같은 predicate 를 상속해요.
+4. **write WHERE 주입.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()` 도 `AND tenant_id = ?` 를 받으니까, 테넌트 컨텍스트를 깜빡해도 다른 테넌트의 행을 지우지 못해요.
+
+```typescript
+@Entity()
+class Post {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() title!: string;
+}
+
+// 생성되는 테이블 DDL:
+//   CREATE TABLE post (
+//     id INTEGER PRIMARY KEY AUTO_INCREMENT,
+//     title VARCHAR(255) NOT NULL,
+//     tenant_id VARCHAR(64) NOT NULL          ← 자동 주입
+//   )
+
+await MetadataContext.run("acme", async () => {
+  await em.save(Post, { title: "Hello" });
+  // → INSERT INTO post (title, tenant_id) VALUES ('Hello', 'acme')
+
+  const posts = await em.find(Post);
+  // → SELECT ... FROM post WHERE tenant_id = 'acme'
+
+  await em.delete(Post, { id: 42 });
+  // → DELETE FROM post WHERE id = 42 AND tenant_id = 'acme'
+});
+```
+
+### `@TenantColumn` 으로 테넌트 값 읽기
+
+`@TenantColumn` 선언은 **선택 사항**이에요. 선언하든 안 하든 컬럼은 ORM이 관리해요. 애플리케이션 코드에서 엔티티 인스턴스로부터 테넌트 id 를 읽어야 할 때만 선언하세요 — 감사 로그, 관리자 대시보드, 크로스 테넌트 익스포트 같은 경우:
+
+```typescript
+import { TenantColumn } from "@stingerloom/orm";
+
+@Entity()
+class AuditLog {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() action!: string;
+  @TenantColumn() tenantId!: string;   // 이제 log.tenantId 로 읽을 수 있음
+}
+```
+
+`save()` 할 때 `@TenantColumn` 프로퍼티에 값을 할당하면, 현재 컨텍스트와 반드시 일치해야 해요 — 아니면 ORM 이 `TENANT_MISMATCH` 를 던져요. 프로퍼티를 수동으로 세팅해서 테넌트를 위조할 수 없어요.
+
+### `@NonTenantEntity` 로 엔티티 제외
+
+일부 테이블은 본질적으로 전역이에요 — `Tenant` 테이블 자체, 시스템 설정, 공유 룩업 테이블 (국가, 통화, 피처 플래그). 이런 엔티티에는 `@NonTenantEntity()` 를 붙이면 ORM 이 건드리지 않아요: DDL 컬럼 없음, WHERE 주입 없음, INSERT 검증 없음.
+
+```typescript
+import { NonTenantEntity } from "@stingerloom/orm";
+
+@Entity()
+@NonTenantEntity()
+class Tenant {
+  @PrimaryColumn() id!: string;
+  @Column() name!: string;
+}
+
+@Entity()
+@NonTenantEntity()
+class Country {
+  @PrimaryColumn() code!: string;
+  @Column() name!: string;
+}
+```
+
+테넌트 범위 엔티티에서 `@NonTenantEntity` 타겟으로 eager JOIN 해도 안전해요 — ORM 이 non-tenant 쪽의 tenant predicate 를 자동으로 skip 해요.
+
+### 탈출구: `runUnscoped()`
+
+진짜로 모든 테넌트를 가로질러 조회해야 할 때도 있어요 — 청구 리포트, 야간 배치 작업, 데이터 익스포트. 그런 코드는 `MetadataContext.runUnscoped()` 로 감싸면 WHERE 주입이 skip 돼요:
+
+```typescript
+import { MetadataContext } from "@stingerloom/orm";
+
+await MetadataContext.runUnscoped(async () => {
+  const allPosts = await em.find(Post);
+  // → SELECT ... FROM post           ← tenant 필터 없음
+});
+```
+
+`runUnscoped()` 는 **read 에만** 적용돼요. INSERT 는 여전히 테넌트 컨텍스트를 요구해요 — `run("acme", …)` 블록 안에서 호출한 `runUnscoped()` 는 `acme` 로 INSERT 하고, 모든 `run()` 바깥에서 호출하면 채울 값이 없으니까 `MISSING_TENANT_CONTEXT` 를 던져요. 이 비대칭은 의도적이에요 — 관리자 read 는 안전하지만, 테넌트 귀속 없는 관리자 write 는 안전하지 않으니까요.
+
+### 쿼리 단위 opt-out
+
+`runUnscoped()` 는 컨텍스트 전체에 적용돼요. 특정 쿼리 하나만 필터를 우회해야 한다면 쿼리 단위 opt-out 을 사용하세요:
+
+```typescript
+// FindOption
+await em.find(Post, { withoutTenantScope: true });
+
+// SelectQueryBuilder
+await em.createQueryBuilder(Post, "p")
+  .withoutTenantScope()
+  .getMany();
+```
+
+쿼리 단위 플래그는 read 에만 적용돼요. `updateMany` / `deleteMany` / `softDelete` / `restore` 는 **의도적으로** 지원하지 않아요 — 실수로 다른 테넌트 데이터를 수정하는 경우를 방지하려면, 한 줄짜리 리팩터링으로 켤 수 있는 플래그가 아니라 명시적인 `runUnscoped()` 블록이 필요해요.
+
+### Raw SQL 경고
+
+ORM 이 빌드한 쿼리에는 tenant predicate 를 주입해요. 하지만 `em.query("SELECT * FROM post")` 를 직접 호출하면 Stingerloom 이 SQL 을 재작성할 수 없어요 — `WHERE` 절은 개발자가 직접 책임져야 해요. 활성 테넌트 컨텍스트 하에서 각 호출 지점이 `em.query()` 를 처음 실행할 때 ORM 이 이런 경고를 남겨요:
+
+```
+[multi-tenancy] em.query() called under tenant="acme" — raw SQL bypasses
+tenant predicate injection. Add "AND tenant_id = ?" to the query, or wrap
+the call in MetadataContext.runUnscoped() to acknowledge cross-tenant scope.
+    at MyService.rawReport (src/my-service.ts:42:23)
+```
+
+경고는 호출 지점 단위로 중복 제거되니까 뜨거운 루프에서도 수천 번이 아니라 한 번만 찍혀요. 경고를 없애려면 SQL 에 `AND tenant_id = ?` 를 명시적으로 포함하거나, 의도적인 크로스 테넌트 read 라면 `runUnscoped()` 로 감싸면 돼요.
+
+### 1차 캐시 격리
+
+Stingerloom 의 Identity Map (WriteBuffer) 은 이 전략에서 캐시 키에 현재 테넌트를 프리픽스로 붙여요. 그래서 테넌트 "acme" 에서 `em.findByPK(Post, 1)` 을 해도, 테넌트 "globex" 의 캐시된 행을 절대 돌려주지 않아요. `runUnscoped()` 내부에서는 identity 캐시를 아예 skip 해요 — 테넌트를 가로질러 읽는 상황에서는 bare PK 가 모호하니까요.
+
+### Stingerloom 이 RLS 를 지원하지 않는 이유
+
+PostgreSQL Row-Level Security (`CREATE POLICY`) 가 `tenant_column` 의 더 안전한 버전으로 종종 제안돼요 — ORM 대신 DB 가 predicate 를 강제한다는 이유로요. Stingerloom 은 의도적으로 RLS 를 지원하지 않아요:
+
+- **PostgreSQL 전용.** `tenant_column` 을 고른 주된 이유(다이얼렉트 이식성)를 스스로 무효화해요.
+- **플래너 함정.** `STABLE` / `LEAKPROOF` 로 표시되지 않은 RLS predicate 는 인덱스를 우회하고 plan cache 를 무효화할 수 있어요. 사후 진단이 어려운 문제예요.
+- **범위 폭증.** `CREATE POLICY` 는 ORM 이 처음부터 끝까지 소유해야 하는 DDL 이에요 — 정책 생성, diff, 마이그레이션 — 단일 다이얼렉트 기능을 위해 스키마 서브시스템의 표면적을 두 배로 키우게 돼요.
+
+PostgreSQL 에서 DB 수준 행 격리가 필요하다면, Stingerloom 과 별도로 DBA 레이어에서 RLS 정책을 적용하세요 — ORM 이 이를 관리할 거라고 기대하지는 마시고요.
 
 ---
 
