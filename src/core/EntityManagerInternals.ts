@@ -58,6 +58,21 @@ export interface EntityManagerInternals {
     length?: number;
   } | null;
 
+  /**
+   * Builds a `tenant_id = ?` WHERE predicate for the given entity under the
+   * `"tenant_column"` strategy, or null when no filter should be applied
+   * (strategy inactive, `@NonTenantEntity`, unscoped context, or "public"
+   * tenant). Extracted handlers call this to keep read/write paths tenant-
+   * symmetric without re-implementing the resolution rules.
+   *
+   * @param entity             Entity class
+   * @param tableAliasOrName   When provided, qualifies the column (for JOINs).
+   */
+  buildTenantWhereClause<T>(
+    entity: ClazzType<T>,
+    tableAliasOrName?: string,
+  ): import("sql-template-tag").Sql | null;
+
   // For RelationLoader
   findInternal<T>(
     entity: ClazzType<T>,

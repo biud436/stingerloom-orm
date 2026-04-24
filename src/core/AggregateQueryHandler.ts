@@ -49,6 +49,14 @@ export class AggregateQueryHandler {
         dialect: this.ctx.getDialect(),
       });
 
+      // Tenant scoping under the "tenant_column" strategy. Kept consistent
+      // with findInternal so exists()/count()/sum()/avg()/min()/max() never
+      // leak rows across tenants.
+      const tenantPredicate = this.ctx.buildTenantWhereClause(entity);
+      if (tenantPredicate) {
+        whereMap.push(tenantPredicate);
+      }
+
       let queryStr: Sql;
       if (whereMap.length > 0) {
         const whereSql = join(whereMap, " AND ");

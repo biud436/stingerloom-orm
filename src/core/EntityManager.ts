@@ -274,6 +274,7 @@ export class EntityManager implements BaseEntityManager {
     find: (e, o) => this.find(e, o),
     delete: (e, c) => this.delete(e, c),
     getTenantColumnConfig: () => this.tenantColumnConfig,
+    buildTenantWhereClause: (e, alias) => this.buildTenantWhereClause(e, alias),
   };
 
   private readonly cascadeHandler = new CascadeHandler(this.resolver, this._ctx);
@@ -1668,6 +1669,13 @@ export class EntityManager implements BaseEntityManager {
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
       if (deletedAtColumn) {
         whereMap.push(Conditions.isNull(this.wrap(deletedAtColumn)));
+      }
+
+      // Tenant scoping under the "tenant_column" strategy. Applied before the
+      // cursor clause so the final WHERE is `tenant = ? AND cursor_col > ?`.
+      const tenantPredicate = this.buildTenantWhereClause(entity);
+      if (tenantPredicate) {
+        whereMap.push(tenantPredicate);
       }
 
       if (cursorValue !== null) {
@@ -3095,7 +3103,13 @@ export class EntityManager implements BaseEntityManager {
         ", ",
       );
 
-      const deleteQuery = sql`DELETE FROM ${raw(this.wrapTable(metadata.name!))} WHERE ${raw(this.wrap(pk.name!))} IN (${placeholders})`;
+      // Tenant scoping — PKs may collide across tenants (e.g. autoIncrement
+      // resets per schema), so `deleteMany([1, 2])` under tenant A must not
+      // affect tenant B's rows with the same IDs.
+      const tenantDeleteManyWhere = this.buildTenantWhereClause(entity);
+      const deleteQuery = tenantDeleteManyWhere
+        ? sql`DELETE FROM ${raw(this.wrapTable(metadata.name!))} WHERE ${raw(this.wrap(pk.name!))} IN (${placeholders}) AND ${tenantDeleteManyWhere}`
+        : sql`DELETE FROM ${raw(this.wrapTable(metadata.name!))} WHERE ${raw(this.wrap(pk.name!))} IN (${placeholders})`;
 
       const queryResult = (await session.query(deleteQuery)) as {
         results: any;
@@ -3197,6 +3211,14 @@ export class EntityManager implements BaseEntityManager {
         propertyToColumn: this.buildPropertyToColumnMap(metadata),
       });
 
+      // Tenant scoping — intersected with the user's WHERE so an updateMany
+      // can never cross tenant boundaries. The empty-criteria guard above
+      // runs on user input only; tenant predicate is appended here.
+      const tenantUpdateWhere = this.buildTenantWhereClause(entity);
+      if (tenantUpdateWhere) {
+        whereMap.push(tenantUpdateWhere);
+      }
+
       const updateSql = sql`UPDATE ${raw(this.wrapTable(metadata.name!))} SET ${join(setMap, ", ")} WHERE ${join(whereMap, " AND ")}`;
 
       const queryStart = Date.now();
@@ -3262,6 +3284,13 @@ export class EntityManager implements BaseEntityManager {
         throw new DeleteWithoutConditionsError("Soft delete");
       }
 
+      // Tenant scoping — added after the empty-criteria guard so the user
+      // still needs to specify a target, and the tenant filter narrows it.
+      const tenantSoftDeleteWhere = this.buildTenantWhereClause(entity);
+      if (tenantSoftDeleteWhere) {
+        whereMap.push(tenantSoftDeleteWhere);
+      }
+
       const whereSql = join(whereMap, " AND ");
 
       const nowExpr = this.isSqlite() ? raw("datetime('now')") : raw("NOW()");
@@ -3321,6 +3350,13 @@ export class EntityManager implements BaseEntityManager {
 
       if (whereMap.length === 0) {
         throw new DeleteWithoutConditionsError("Restore");
+      }
+
+      // Tenant scoping — symmetrical with softDelete so restore can only
+      // bring back rows belonging to the active tenant.
+      const tenantRestoreWhere = this.buildTenantWhereClause(entity);
+      if (tenantRestoreWhere) {
+        whereMap.push(tenantRestoreWhere);
       }
 
       const whereSql = join(whereMap, " AND ");
