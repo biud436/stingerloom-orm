@@ -66,4 +66,8 @@ export enum OrmErrorCode {
 
   // Configuration
   INVALID_CONFIG = "ORM_INVALID_CONFIG",
+
+  // Multi-tenancy
+  MISSING_TENANT_CONTEXT = "ORM_MISSING_TENANT_CONTEXT",
+  TENANT_MISMATCH = "ORM_TENANT_MISMATCH",
 }

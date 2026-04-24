@@ -78,6 +78,7 @@ import {
   TenantQueryStrategy,
   SearchPathStrategy,
   SchemaQualifiedStrategy,
+  TenantColumnStrategy,
 } from "./TenantQueryStrategy";
 import {
   StingerloomPlugin,
@@ -93,6 +94,10 @@ import { InheritanceResolver } from "./InheritanceResolver";
 import { CREATE_TIMESTAMP_TOKEN } from "../decorators/CreateTimestamp";
 import { UPDATE_TIMESTAMP_TOKEN } from "../decorators/UpdateTimestamp";
 import { DELETED_AT_TOKEN } from "../decorators/DeletedAt";
+import {
+  getTenantColumnMetadata,
+  isNonTenantEntity,
+} from "../decorators/TenantColumn";
 import { VERSION_TOKEN } from "../decorators/Version";
 import { deserializeEntity } from "./deserializer/DeserializeEntity";
 import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
@@ -188,6 +193,11 @@ export class EntityManager implements BaseEntityManager {
   private defaultQueryTimeout: number | undefined;
   private queryLoggingEnabled = false;
   private tenantStrategy: TenantQueryStrategy = new SearchPathStrategy();
+  private tenantColumnConfig: {
+    name: string;
+    type: "varchar" | "uuid" | "int" | "bigint";
+    length?: number;
+  } | null = null;
 
   /**
    * The connection name this EntityManager uses.
@@ -263,6 +273,7 @@ export class EntityManager implements BaseEntityManager {
     saveWithSession: (e, i, s) => this.saveInternal(e, i, s),
     find: (e, o) => this.find(e, o),
     delete: (e, c) => this.delete(e, c),
+    getTenantColumnConfig: () => this.tenantColumnConfig,
   };
 
   private readonly cascadeHandler = new CascadeHandler(this.resolver, this._ctx);
@@ -455,6 +466,19 @@ export class EntityManager implements BaseEntityManager {
     // Initialize TenantQueryStrategy
     if (databaseClientOptions.tenantStrategy === "schema_qualified") {
       this.tenantStrategy = new SchemaQualifiedStrategy();
+    } else if (databaseClientOptions.tenantStrategy === "tenant_column") {
+      this.tenantStrategy = new TenantColumnStrategy(
+        databaseClientOptions.tenantColumnName ?? "tenant_id",
+      );
+      this.tenantColumnConfig = {
+        name: databaseClientOptions.tenantColumnName ?? "tenant_id",
+        type: databaseClientOptions.tenantColumnType ?? "varchar",
+        length:
+          databaseClientOptions.tenantColumnType == null ||
+          databaseClientOptions.tenantColumnType === "varchar"
+            ? databaseClientOptions.tenantColumnLength ?? 64
+            : undefined,
+      };
     }
 
     // Initialize ReplicationRouter
@@ -1196,6 +1220,15 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      // Tenant scoping under the "tenant_column" strategy.
+      const tenantPredicate = this.buildTenantWhereClause(
+        entity,
+        hasEagerJoins ? tableName : undefined,
+      );
+      if (tenantPredicate) {
+        whereMap.push(tenantPredicate);
+      }
+
       for (const key in orderBy) {
         const value = orderBy[key];
         if (value) {
@@ -1891,6 +1924,8 @@ export class EntityManager implements BaseEntityManager {
           entity: item,
           manager: this,
         } as InsertEvent<T>);
+
+        this.applyTenantColumnOnInsert(entity, item);
 
         const computedCols = this.getComputedColumnNames(entity);
         const insertableColumns = metadata.columns.filter(
@@ -2592,6 +2627,13 @@ export class EntityManager implements BaseEntityManager {
       } as InsertEvent<T>);
     }
 
+    // Apply tenant column after user hooks (hooks may want to inspect state)
+    if (this.tenantColumnConfig) {
+      for (const item of items) {
+        this.applyTenantColumnOnInsert(entity, item);
+      }
+    }
+
     // Prepare columns
     const computedCols = this.getComputedColumnNames(entity);
     const createTsCol = this.resolver.getCreateTimestampColumn(entity);
@@ -2765,6 +2807,12 @@ export class EntityManager implements BaseEntityManager {
     }
 
     return this.executeInTransaction(async (session) => {
+      if (this.tenantColumnConfig) {
+        for (const item of items) {
+          this.applyTenantColumnOnInsert(entity, item);
+        }
+      }
+
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
       const timestampTypes = new Set(["datetime", "timestamp", "date"]);
       const timestampColumns = metadata.columns.filter(
@@ -2926,8 +2974,19 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
+      // Empty-criteria guard MUST run before we append the tenant predicate —
+      // otherwise tenant scoping alone would satisfy the check and permit a
+      // "delete all my rows" call. DeleteWithoutConditionsError catches that
+      // class of bug and must stay gated on user-supplied criteria only.
       if (whereMap.length === 0) {
         throw new DeleteWithoutConditionsError("Delete");
+      }
+
+      // Tenant scoping is added after the guard so a delete with a user
+      // criteria is safely intersected with the tenant filter.
+      const tenantDeleteWhere = this.buildTenantWhereClause(entity);
+      if (tenantDeleteWhere) {
+        whereMap.push(tenantDeleteWhere);
       }
 
       const whereSql = join(whereMap, " AND ");
@@ -3304,6 +3363,8 @@ export class EntityManager implements BaseEntityManager {
       );
     }
 
+    this.applyTenantColumnOnInsert(entity, data);
+
     const pkColumns = metadata.columns
       .filter((col: ColumnMetadata) => col.options?.primary)
       .map((col: ColumnMetadata) => col.name!);
@@ -3440,6 +3501,12 @@ export class EntityManager implements BaseEntityManager {
         OrmErrorCode.NOT_CONNECTED,
         "Driver is not initialized. Call connect() first.",
       );
+    }
+
+    if (this.tenantColumnConfig) {
+      for (const item of items) {
+        this.applyTenantColumnOnInsert(entity, item);
+      }
     }
 
     const pkColumns = metadata.columns
@@ -3767,6 +3834,141 @@ export class EntityManager implements BaseEntityManager {
     return this.tenantStrategy.qualifyTable(tableName, tenant, (n) =>
       this.wrap(n),
     );
+  }
+
+  /**
+   * Returns tenant-column strategy configuration when active, otherwise null.
+   * Used by DDL generators, query builders, and insert/update code paths.
+   */
+  public getTenantColumnConfig(): {
+    name: string;
+    type: "varchar" | "uuid" | "int" | "bigint";
+    length?: number;
+  } | null {
+    return this.tenantColumnConfig;
+  }
+
+  /**
+   * Returns the active TenantQueryStrategy — exposed for advanced use cases
+   * (custom query builders, testing, observability).
+   */
+  public getTenantStrategy(): TenantQueryStrategy {
+    return this.tenantStrategy;
+  }
+
+  /**
+   * Returns true when the entity is tenant-scoped under the current strategy.
+   * False when tenant_column strategy is inactive or the entity is
+   * `@NonTenantEntity()`.
+   */
+  private isTenantScopedEntity<T>(entity: ClazzType<T>): boolean {
+    return this.tenantColumnConfig !== null && !isNonTenantEntity(entity);
+  }
+
+  /**
+   * Returns a `tenant = ?` predicate for inclusion in WHERE, or null when no
+   * filter should be applied. Consolidates the "should I scope this query?"
+   * logic in one place so the read/write paths stay symmetrical.
+   *
+   * Returns null when:
+   *   - strategy is not `"tenant_column"`
+   *   - entity is `@NonTenantEntity()`
+   *   - the current context is unscoped (`MetadataContext.runUnscoped`)
+   *   - the current tenant is `"public"` (no tenant context active)
+   *
+   * The `"public"` case is intentional: reads against the public context are
+   * unfiltered so admin/bootstrapping code continues to work. Write paths
+   * disallow `"public"` via `applyTenantColumnOnInsert` instead.
+   *
+   * @param entity         Entity class
+   * @param tableAliasOrName  When provided, qualifies the column (for JOINs).
+   */
+  private buildTenantWhereClause<T>(
+    entity: ClazzType<T>,
+    tableAliasOrName?: string,
+  ): Sql | null {
+    const config = this.tenantColumnConfig;
+    if (!config) return null;
+    if (isNonTenantEntity(entity)) return null;
+    if (MetadataContext.isUnscoped()) return null;
+    const tenant = MetadataContext.getCurrentTenant();
+    if (tenant === "public") return null;
+
+    const columnName = this.resolveTenantColumnName(entity);
+    const col = tableAliasOrName
+      ? `${this.wrap(tableAliasOrName)}.${this.wrap(columnName)}`
+      : this.wrap(columnName);
+    return Conditions.equals(col, tenant);
+  }
+
+  /**
+   * Resolves the DB column name used by the tenant discriminator for this
+   * entity. Honors an explicit `@TenantColumn({ name })` override, else the
+   * user's property key (e.g. `tenantId`), else the global config default.
+   */
+  private resolveTenantColumnName<T>(entity: ClazzType<T>): string {
+    const userDeclared = getTenantColumnMetadata(entity);
+    if (userDeclared) {
+      return userDeclared.name ?? userDeclared.propertyKey;
+    }
+    return this.tenantColumnConfig!.name;
+  }
+
+  /**
+   * Applies tenant-column strategy to an item before INSERT:
+   *   - Populates the tenant column from `MetadataContext` when missing.
+   *   - Throws `MISSING_TENANT_CONTEXT` when no tenant is active on a
+   *     tenant-scoped entity.
+   *   - Throws `TENANT_MISMATCH` when the caller supplied a tenant value that
+   *     disagrees with the current context (fail-loud; silent-replace would
+   *     hide bugs).
+   *
+   * No-op when the strategy is not `"tenant_column"` or the entity is
+   * `@NonTenantEntity()`.
+   */
+  private applyTenantColumnOnInsert<T>(
+    entity: ClazzType<T>,
+    item: Partial<T>,
+  ): void {
+    const config = this.tenantColumnConfig;
+    if (!config) return;
+    if (isNonTenantEntity(entity)) return;
+
+    const tenant = MetadataContext.getCurrentTenant();
+    if (tenant === "public") {
+      throw new OrmError(
+        OrmErrorCode.MISSING_TENANT_CONTEXT,
+        `Cannot INSERT into tenant-scoped entity '${entity.name}' without an active tenant context. ` +
+          `Wrap the call in MetadataContext.run("<tenant>", ...), or mark the entity with @NonTenantEntity() ` +
+          `if it is intentionally global.`,
+      );
+    }
+
+    // Determine where to write the tenant value:
+    //   - If the user declared @TenantColumn, use the property key they chose.
+    //   - Otherwise the column was implicitly injected; fall back to the column name.
+    const userDeclared = getTenantColumnMetadata(entity);
+    const propKey = userDeclared?.propertyKey ?? config.name;
+    const colName = userDeclared?.name ?? config.name;
+
+    const supplied =
+      (item as any)[propKey] !== undefined
+        ? (item as any)[propKey]
+        : (item as any)[colName];
+
+    if (supplied !== undefined && supplied !== null && supplied !== tenant) {
+      throw new OrmError(
+        OrmErrorCode.TENANT_MISMATCH,
+        `Tenant mismatch on INSERT into '${entity.name}': supplied tenant='${supplied}' ` +
+          `but MetadataContext tenant='${tenant}'. The supplied value is rejected to catch bugs early. ` +
+          `Omit the tenant field so the ORM can auto-fill it, or run inside the matching context.`,
+      );
+    }
+
+    (item as any)[propKey] = tenant;
+    if (propKey !== colName) {
+      (item as any)[colName] = tenant;
+    }
   }
 
   private getComputedColumnNames<T>(entity: ClazzType<T>): Set<string> {

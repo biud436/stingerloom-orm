@@ -47,6 +47,17 @@ export interface EntityManagerInternals {
   resolveSelectColumns<T>(select: ISelectOption<T>): string[];
   markDirty(entity: any): void;
 
+  /**
+   * Tenant-column strategy configuration. Returns null when strategy is not
+   * `"tenant_column"`. Used by SchemaRegistrar to auto-inject the tenant column
+   * into DDL and by query-building paths to inject WHERE predicates.
+   */
+  getTenantColumnConfig(): {
+    name: string;
+    type: "varchar" | "uuid" | "int" | "bigint";
+    length?: number;
+  } | null;
+
   // For RelationLoader
   findInternal<T>(
     entity: ClazzType<T>,

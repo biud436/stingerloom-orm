@@ -36,6 +36,10 @@ import {
 } from "./generators/SchemaDiff";
 import { InheritanceResolver } from "./InheritanceResolver";
 import { EntityMetadata } from "../decorators/Entity";
+import {
+  getTenantColumnMetadata,
+  isNonTenantEntity,
+} from "../decorators/TenantColumn";
 
 /**
  * DDL / schema synchronization handler that runs once at application start.
@@ -201,6 +205,65 @@ export class SchemaRegistrar {
                 }
               }
             }
+          }
+        }
+      }
+
+      // Auto-inject tenant column when the "tenant_column" strategy is active.
+      // Skip:
+      //   - entities marked @NonTenantEntity (inherently global tables)
+      //   - entities that already declared @TenantColumn (user-owned property)
+      //   - columns already named the same as the tenant column (defensive)
+      //   - STI child entities (they share the parent's table; column lives on root)
+      const tenantColumnConfig = this.ctx.getTenantColumnConfig();
+      if (
+        tenantColumnConfig &&
+        !isNonTenantEntity(TargetEntity) &&
+        !getTenantColumnMetadata(TargetEntity) &&
+        !this.inheritanceResolver.isChildEntity(TargetEntity)
+      ) {
+        const tenantColName = tenantColumnConfig.name;
+        const alreadyHas = metadata.columns.some(
+          (col: any) =>
+            col.name === tenantColName || col.propertyKey === tenantColName,
+        );
+        if (!alreadyHas) {
+          const injected: any = {
+            name: tenantColName,
+            propertyKey: tenantColName,
+            options: {
+              type: tenantColumnConfig.type,
+              length: tenantColumnConfig.length,
+              nullable: false,
+            },
+          };
+          metadata.columns.push(injected);
+          // Also append to the Reflect metadata so downstream readers
+          // (EntityManager INSERT path, SchemaDiff) see the column.
+          const reflectCols = (Reflect.getMetadata(
+            COLUMN_TOKEN,
+            TargetEntity.prototype,
+          ) ?? []) as ColumnMetadata[];
+          const reflectHas = reflectCols.some(
+            (c: any) =>
+              c.name === tenantColName || c.propertyKey === tenantColName,
+          );
+          if (!reflectHas) {
+            reflectCols.push({
+              target: TargetEntity.prototype,
+              propertyKey: tenantColName,
+              name: tenantColName,
+              options: {
+                type: tenantColumnConfig.type,
+                length: tenantColumnConfig.length,
+                nullable: false,
+              },
+            } as any);
+            Reflect.defineMetadata(
+              COLUMN_TOKEN,
+              reflectCols,
+              TargetEntity.prototype,
+            );
           }
         }
       }
