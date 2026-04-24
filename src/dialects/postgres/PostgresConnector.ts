@@ -19,6 +19,7 @@ export class PostgresConnector extends IConnector {
   pool?: Pool;
   private isDebug = false;
   private schema = "public";
+  private tenantStrategy: DatabaseClientOptions["tenantStrategy"];
   private validateOnBorrow = false;
   private readonly logger = new Logger("PostgresConnector");
   private _dbVersion: DbVersion = DbVersion.UNKNOWN;
@@ -70,6 +71,7 @@ export class PostgresConnector extends IConnector {
       const { host, username, password, database, port, logging, pool: poolOptions } = options;
 
       this.schema = options.schema ?? "public";
+      this.tenantStrategy = options.tenantStrategy;
 
       // Apply in priority order: pool.max > connectionLimit > default (10)
       const maxConnections = poolOptions?.max ?? options.connectionLimit ?? 10;
@@ -305,12 +307,18 @@ export class PostgresConnector extends IConnector {
       await this.setTransactionIsolationLevel(client, level);
     }
 
-    // #213: multi-tenancy — skip SET LOCAL when the schema is "public"
-    const tenant = MetadataContext.getCurrentTenant();
-    const schema = tenant !== "public" ? tenant : this.schema;
-    if (schema !== "public") {
-      const safeSchema = this.escapeIdentifier(schema);
-      await client.query(`SET LOCAL search_path TO ${safeSchema}`);
+    // #213: multi-tenancy — skip SET LOCAL when the schema is "public".
+    // Also skip for the "tenant_column" strategy: there the tenant identifier
+    // is a column value, not a schema name, so switching search_path would
+    // point PG at a non-existent schema and every query would fail with
+    // "relation does not exist".
+    if (this.tenantStrategy !== "tenant_column") {
+      const tenant = MetadataContext.getCurrentTenant();
+      const schema = tenant !== "public" ? tenant : this.schema;
+      if (schema !== "public") {
+        const safeSchema = this.escapeIdentifier(schema);
+        await client.query(`SET LOCAL search_path TO ${safeSchema}`);
+      }
     }
   }
 

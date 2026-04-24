@@ -154,16 +154,36 @@ interface BaseDatabaseClientOptions {
   namingStrategy?: NamingStrategy;
 
   /**
-   * Multi-tenant query strategy for PostgreSQL.
-   * - "search_path" (default): Uses SET LOCAL search_path inside a transaction for tenant reads.
-   *   Safe for all cases but requires 5 round-trips per tenant read.
-   * - "schema_qualified": Uses schema-qualified table names (e.g. "tenant_a"."users").
-   *   Allows single-round-trip tenant reads without transactions.
-   *
-   * This option only affects PostgreSQL tenant reads. Non-tenant reads, writes,
-   * MySQL, and SQLite are unaffected.
+   * Multi-tenant query strategy.
+   * - "search_path" (default): PostgreSQL `SET LOCAL search_path` inside a transaction.
+   *   Safe but 5 round-trips per tenant read. PostgreSQL only.
+   * - "schema_qualified": PostgreSQL schema-qualified table names (e.g. `"tenant_a"."users"`).
+   *   Single-round-trip reads without a transaction. PostgreSQL only.
+   * - "tenant_column": Adds a `tenant_id` discriminator column to every entity.
+   *   ORM auto-injects `WHERE tenant_id = ?` on read/update/delete and auto-fills
+   *   it on INSERT from `MetadataContext`. Works on all dialects (MySQL, PostgreSQL,
+   *   SQLite). See `tenantColumnName` / `tenantColumnType` / `tenantColumnLength`
+   *   to customize, and `@NonTenantEntity()` to exclude specific entities.
    */
-  tenantStrategy?: "search_path" | "schema_qualified";
+  tenantStrategy?: "search_path" | "schema_qualified" | "tenant_column";
+
+  /**
+   * Column name for the `"tenant_column"` strategy. Ignored by other strategies.
+   * @default "tenant_id"
+   */
+  tenantColumnName?: string;
+
+  /**
+   * Column type for the `"tenant_column"` strategy. Ignored by other strategies.
+   * @default "varchar"
+   */
+  tenantColumnType?: "varchar" | "uuid" | "int" | "bigint";
+
+  /**
+   * Length for varchar tenant column. Ignored for non-varchar types or other strategies.
+   * @default 64
+   */
+  tenantColumnLength?: number;
 
   /**
    * Plugins to install on the EntityManager after registration.

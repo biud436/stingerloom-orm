@@ -1,10 +1,18 @@
+import { MetadataContext } from "../metadata/MetadataContext";
+
 /**
- * Strategy pattern for multi-tenant query table qualification.
+ * Strategy pattern for multi-tenant query handling.
  *
- * - SearchPathStrategy (default): Uses SET LOCAL search_path inside a transaction.
- *   Safe for all cases but requires 5 round-trips for tenant reads.
- * - SchemaQualifiedStrategy: Uses schema-qualified table names (e.g. "tenant_a"."users").
- *   Allows single-round-trip tenant reads without transactions.
+ * Three built-in strategies:
+ *
+ * - **SearchPathStrategy** (default): PostgreSQL `SET LOCAL search_path` inside a
+ *   transaction. Safe for all cases but requires ~5 round-trips per tenant read.
+ * - **SchemaQualifiedStrategy**: Schema-qualified table names (e.g.
+ *   `"tenant_a"."users"`). Single-round-trip reads without transactions.
+ *   PostgreSQL-only.
+ * - **TenantColumnStrategy**: Discriminator column on every tenant-scoped entity.
+ *   Works on all dialects. Requires composite indexes and `@NonTenantEntity()`
+ *   opt-outs for global tables.
  */
 export interface TenantQueryStrategy {
   /** Whether tenant reads require a transaction (for SET LOCAL search_path). */
@@ -21,12 +29,28 @@ export interface TenantQueryStrategy {
     tenant: string,
     wrap: (s: string) => string,
   ): string;
+
+  /**
+   * Build a `WHERE tenant = ?` predicate for tenant-scoped queries.
+   * Returns `null` when no predicate should be injected — either because the
+   * strategy uses a different isolation mechanism (search_path,
+   * schema_qualified) or because the current context is "public" or unscoped.
+   *
+   * @param tableAlias Optional alias to qualify the column (for JOINed queries)
+   * @param wrap Driver-specific identifier wrapping function
+   */
+  buildTenantPredicate?(
+    tableAlias: string | null,
+    wrap: (s: string) => string,
+  ): { sql: string; param: string } | null;
+
+  /**
+   * Returns the column name the strategy uses, if any.
+   * Only `TenantColumnStrategy` implements this; other strategies return null.
+   */
+  getTenantColumnName?(): string | null;
 }
 
-/**
- * Default strategy: relies on SET LOCAL search_path inside a transaction.
- * Table names are wrapped without schema qualification.
- */
 export class SearchPathStrategy implements TenantQueryStrategy {
   needsTransactionForTenantRead(): boolean {
     return true;
@@ -41,10 +65,6 @@ export class SearchPathStrategy implements TenantQueryStrategy {
   }
 }
 
-/**
- * Schema-qualified strategy: prefixes table names with the tenant schema.
- * Eliminates the need for transactions on tenant reads (1 round-trip).
- */
 export class SchemaQualifiedStrategy implements TenantQueryStrategy {
   needsTransactionForTenantRead(): boolean {
     return false;
@@ -58,5 +78,55 @@ export class SchemaQualifiedStrategy implements TenantQueryStrategy {
     return tenant !== "public"
       ? `${wrap(tenant)}.${wrap(tableName)}`
       : wrap(tableName);
+  }
+}
+
+/**
+ * Discriminator-column strategy.
+ *
+ * Adds a tenant column (default `tenant_id`) to every tenant-scoped entity's
+ * DDL, auto-fills it on INSERT, and injects `WHERE tenant_id = ?` on SELECT /
+ * UPDATE / DELETE. Tenant isolation is enforced in application-generated SQL
+ * rather than by the database, so raw SQL bypasses the filter — callers of
+ * `em.query()` must apply the predicate themselves.
+ *
+ * Works uniformly across MySQL, PostgreSQL, and SQLite.
+ */
+export class TenantColumnStrategy implements TenantQueryStrategy {
+  constructor(
+    private readonly columnName: string = "tenant_id",
+  ) {}
+
+  needsTransactionForTenantRead(): boolean {
+    return false;
+  }
+
+  qualifyTable(
+    tableName: string,
+    _tenant: string,
+    wrap: (s: string) => string,
+  ): string {
+    return wrap(tableName);
+  }
+
+  buildTenantPredicate(
+    tableAlias: string | null,
+    wrap: (s: string) => string,
+  ): { sql: string; param: string } | null {
+    if (MetadataContext.isUnscoped()) {
+      return null;
+    }
+    const tenant = MetadataContext.getCurrentTenant();
+    if (tenant === "public") {
+      return null;
+    }
+    const qualified = tableAlias
+      ? `${wrap(tableAlias)}.${wrap(this.columnName)}`
+      : wrap(this.columnName);
+    return { sql: `${qualified} = ?`, param: tenant };
+  }
+
+  getTenantColumnName(): string {
+    return this.columnName;
   }
 }

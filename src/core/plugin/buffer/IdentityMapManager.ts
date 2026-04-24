@@ -4,8 +4,13 @@ import { COLUMN_TOKEN } from "../../../decorators/Column";
 import { VERSION_TOKEN } from "../../../decorators/Version";
 import { CREATE_TIMESTAMP_TOKEN } from "../../../decorators/CreateTimestamp";
 import { UPDATE_TIMESTAMP_TOKEN } from "../../../decorators/UpdateTimestamp";
+import {
+  getTenantColumnMetadata,
+  isNonTenantEntity,
+} from "../../../decorators/TenantColumn";
 import { ColumnMetadata } from "../../../scanner/ColumnScanner";
 import { FindOption } from "../../../dialects/FindOption";
+import { MetadataContext } from "../../../metadata/MetadataContext";
 import { PluginContext } from "../PluginContext";
 import { EntityState } from "./EntityUnitState";
 import type { TrackedEntry } from "./BufferEntry";
@@ -172,6 +177,13 @@ export class IdentityMapManager {
   /**
    * Build a unique identity key for an entity instance based on class name + PK values.
    * Throws if any PK column is null/undefined.
+   *
+   * When the `"tenant_column"` strategy is active the key is prefixed with the
+   * tenant (e.g. `"acme|User:id=1"`) so that the same PK value belonging to
+   * different tenants cannot collide in the Identity Map. The prefix is read
+   * from the instance's tenant column value when available, falling back to
+   * the current `MetadataContext` tenant. `@NonTenantEntity` classes are
+   * unprefixed.
    */
   buildIdentityKey(
     entityClass: ClazzType<any>,
@@ -189,7 +201,53 @@ export class IdentityMapManager {
       }
       return `${pk}=${value}`;
     }).join(",");
-    return `${entityClass.name}:${pkParts}`;
+    const prefix = this.resolveTenantPrefixFromInstance(entityClass, instance);
+    return `${prefix}${entityClass.name}:${pkParts}`;
+  }
+
+  /**
+   * Compute the `"<tenant>|"` key prefix for an entity instance.
+   *
+   * Returns "" when the tenant_column strategy is inactive or the entity is
+   * `@NonTenantEntity`. Uses the instance's own tenant column value when
+   * populated (so `runUnscoped()` loads from multiple tenants stay distinct)
+   * and falls back to the current `MetadataContext` tenant otherwise.
+   */
+  private resolveTenantPrefixFromInstance(
+    entityClass: ClazzType<any>,
+    instance: EntityInstance,
+  ): string {
+    const config = this.ctx.em.getTenantColumnConfig?.() ?? null;
+    if (config === null) return "";
+    if (isNonTenantEntity(entityClass)) return "";
+
+    const userDeclared = getTenantColumnMetadata(entityClass);
+    const colName = userDeclared?.name ?? userDeclared?.propertyKey ?? config.name;
+    const propertyKey = userDeclared?.propertyKey ?? config.name;
+
+    const raw = instance[colName] ?? instance[propertyKey];
+    if (raw !== undefined && raw !== null) {
+      return `${String(raw)}|`;
+    }
+    return `${MetadataContext.getCurrentTenant()}|`;
+  }
+
+  /**
+   * Compute the `"<tenant>|"` key prefix for a context-only lookup (no
+   * instance available yet — e.g. first-level cache probing).
+   *
+   * Returns `null` when the cache should be skipped entirely: under
+   * `runUnscoped()` a single lookup might resolve to any tenant, so reusing
+   * a cached reference would be unsafe.
+   */
+  private resolveTenantPrefixFromContext(
+    entityClass: ClazzType<any>,
+  ): string | null {
+    const config = this.ctx.em.getTenantColumnConfig?.() ?? null;
+    if (config === null) return "";
+    if (isNonTenantEntity(entityClass)) return "";
+    if (MetadataContext.isUnscoped()) return null;
+    return `${MetadataContext.getCurrentTenant()}|`;
   }
 
   /**
@@ -310,10 +368,15 @@ export class IdentityMapManager {
       if (!this.isLiteralScalar(whereObj[pk])) return null;
     }
 
+    // Skip first-level cache entirely in unscoped mode — a PK lookup may
+    // resolve to a different tenant than the one whose entry is cached.
+    const tenantPrefix = this.resolveTenantPrefixFromContext(entityClass);
+    if (tenantPrefix === null) return null;
+
     const pkParts = pkColumns
       .map((pk) => `${pk}=${whereObj[pk]}`)
       .join(",");
-    return `${entityClass.name}:${pkParts}`;
+    return `${tenantPrefix}${entityClass.name}:${pkParts}`;
   }
 
   private isLiteralScalar(value: unknown): boolean {

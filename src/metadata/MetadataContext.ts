@@ -36,8 +36,39 @@ export class MetadataContext {
     tenantId: string,
     callback: () => T | Promise<T>,
   ): T | Promise<T> {
-    const store: MetadataContextStore = { tenantId };
+    const store: MetadataContextStore = { tenantId, unscoped: false };
     return this.storage.run(store, callback);
+  }
+
+  /**
+   * Runs the callback in an **unscoped** mode — the `"tenant_column"` strategy
+   * will skip its automatic `WHERE tenant_id = ?` injection, letting the query
+   * see rows from every tenant.
+   *
+   * Use this for administrative tasks: cross-tenant dashboards, background jobs
+   * that must touch every tenant, migrations. Regular request handlers should
+   * **never** call this.
+   *
+   * INSERT is still scoped to the surrounding `MetadataContext.run()` tenant,
+   * if any. `runUnscoped()` called outside any `run()` block will reject
+   * INSERTs on tenant-scoped entities because there is no tenant to populate.
+   */
+  static runUnscoped<T>(callback: () => T | Promise<T>): T | Promise<T> {
+    const current = this.storage.getStore();
+    const store: MetadataContextStore = {
+      tenantId: current?.tenantId ?? "public",
+      unscoped: true,
+    };
+    return this.storage.run(store, callback);
+  }
+
+  /**
+   * Whether the current context is in unscoped mode.
+   * The `"tenant_column"` strategy uses this to decide whether to skip
+   * predicate injection.
+   */
+  static isUnscoped(): boolean {
+    return this.storage.getStore()?.unscoped === true;
   }
 
   /**
@@ -71,4 +102,9 @@ export class MetadataContext {
  */
 export interface MetadataContextStore {
   tenantId: string;
+  /**
+   * When true, tenant-scoped SELECT/UPDATE/DELETE skip the `WHERE tenant_id`
+   * filter injected by the `"tenant_column"` strategy. INSERTs are unaffected.
+   */
+  unscoped?: boolean;
 }

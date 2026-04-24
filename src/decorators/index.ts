@@ -25,3 +25,4 @@ export * from "./RelationColumn";
 export * from "./Inheritance";
 export * from "./DiscriminatorColumn";
 export * from "./DiscriminatorValue";
+export * from "./TenantColumn";

@@ -47,6 +47,32 @@ export interface EntityManagerInternals {
   resolveSelectColumns<T>(select: ISelectOption<T>): string[];
   markDirty(entity: any): void;
 
+  /**
+   * Tenant-column strategy configuration. Returns null when strategy is not
+   * `"tenant_column"`. Used by SchemaRegistrar to auto-inject the tenant column
+   * into DDL and by query-building paths to inject WHERE predicates.
+   */
+  getTenantColumnConfig(): {
+    name: string;
+    type: "varchar" | "uuid" | "int" | "bigint";
+    length?: number;
+  } | null;
+
+  /**
+   * Builds a `tenant_id = ?` WHERE predicate for the given entity under the
+   * `"tenant_column"` strategy, or null when no filter should be applied
+   * (strategy inactive, `@NonTenantEntity`, unscoped context, or "public"
+   * tenant). Extracted handlers call this to keep read/write paths tenant-
+   * symmetric without re-implementing the resolution rules.
+   *
+   * @param entity             Entity class
+   * @param tableAliasOrName   When provided, qualifies the column (for JOINs).
+   */
+  buildTenantWhereClause<T>(
+    entity: ClazzType<T>,
+    tableAliasOrName?: string,
+  ): import("sql-template-tag").Sql | null;
+
   // For RelationLoader
   findInternal<T>(
     entity: ClazzType<T>,

@@ -46,6 +46,8 @@ function createMockCtx(
     saveWithSession: jest.fn(),
     find: jest.fn(),
     delete: jest.fn(),
+    getTenantColumnConfig: jest.fn().mockReturnValue(null),
+    buildTenantWhereClause: jest.fn().mockReturnValue(null),
     ...overrides,
   } as unknown as EntityManagerInternals;
 }
