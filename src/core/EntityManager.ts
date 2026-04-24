@@ -189,6 +189,7 @@ export class EntityManager implements BaseEntityManager {
   private readonly eventEmitter = new EntityEventEmitter();
   private readonly subscribers: EntitySubscriber<any>[] = [];
   private readonly cursorPkWarned = new Set<string>();
+  private readonly rawQueryTenantWarned = new Set<string>();
   private queryTracker: QueryTracker | null = null;
   private defaultQueryTimeout: number | undefined;
   private queryLoggingEnabled = false;
@@ -537,6 +538,7 @@ export class EntityManager implements BaseEntityManager {
     this.subscribers.length = 0;
     this.dirtyEntities.clear();
     this.cursorPkWarned.clear();
+    this.rawQueryTenantWarned.clear();
 
     // 4. Clean up QueryTracker
     this.queryTracker?.reset();
@@ -1221,13 +1223,16 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // Tenant scoping under the "tenant_column" strategy.
-      const tenantPredicate = this.buildTenantWhereClause(
-        entity,
-        hasEagerJoins ? tableName : undefined,
-      );
-      if (tenantPredicate) {
-        whereMap.push(tenantPredicate);
+      // Tenant scoping under the "tenant_column" strategy. Skipped when the
+      // caller explicitly opts out via `findOption.withoutTenantScope`.
+      if (!findOption.withoutTenantScope) {
+        const tenantPredicate = this.buildTenantWhereClause(
+          entity,
+          hasEagerJoins ? tableName : undefined,
+        );
+        if (tenantPredicate) {
+          whereMap.push(tenantPredicate);
+        }
       }
 
       for (const key in orderBy) {
@@ -1673,9 +1678,11 @@ export class EntityManager implements BaseEntityManager {
 
       // Tenant scoping under the "tenant_column" strategy. Applied before the
       // cursor clause so the final WHERE is `tenant = ? AND cursor_col > ?`.
-      const tenantPredicate = this.buildTenantWhereClause(entity);
-      if (tenantPredicate) {
-        whereMap.push(tenantPredicate);
+      if (!option.withoutTenantScope) {
+        const tenantPredicate = this.buildTenantWhereClause(entity);
+        if (tenantPredicate) {
+          whereMap.push(tenantPredicate);
+        }
       }
 
       if (cursorValue !== null) {
@@ -4243,6 +4250,7 @@ export class EntityManager implements BaseEntityManager {
     sqlQuery: string | Sql,
     params?: unknown[],
   ): Promise<T[]> {
+    this.warnIfRawQueryBypassesTenant();
     return this.executeInTransaction(async (session) => {
       let queryResult: any;
       if (typeof sqlQuery === "string") {
@@ -4409,6 +4417,62 @@ export class EntityManager implements BaseEntityManager {
 
   getDriver(): ISqlDriver | undefined {
     return this.driver;
+  }
+
+  /**
+   * Emit a one-time-per-call-site warning when `em.query()` is invoked under
+   * an active tenant context while the `"tenant_column"` strategy is in use.
+   *
+   * Raw SQL bypasses the automatic `WHERE tenant_id = ?` injection that the
+   * strategy applies to `find()` / query builders / relation loaders, so a
+   * hand-written query can silently return or mutate rows belonging to other
+   * tenants. The warning is suppressed when:
+   *
+   * - the strategy is not `tenant_column` (other strategies scope at the
+   *   connection/schema level, so raw SQL is still safe)
+   * - no tenant context is active (bootstrap/admin path)
+   * - the current context is in `runUnscoped()` mode (user opted in)
+   * - the caller is an internal ORM frame (SelectQueryBuilder, RelationLoader,
+   *   RawPipeline, etc. — those builders already inject the predicate before
+   *   reaching `em.query()`)
+   */
+  private warnIfRawQueryBypassesTenant(): void {
+    if (this.tenantColumnConfig === null) return;
+    if (!MetadataContext.isActive()) return;
+    if (MetadataContext.isUnscoped()) return;
+    const tenant = MetadataContext.getCurrentTenant();
+    if (tenant === "public") return;
+
+    const stack = new Error().stack;
+    if (!stack) return;
+
+    const lines = stack.split("\n");
+    let callerFrame: string | undefined;
+    for (let i = 1; i < lines.length; i++) {
+      const frame = lines[i];
+      // Skip frames from this file and node internals
+      if (frame.includes("EntityManager.ts")) continue;
+      if (frame.includes("EntityManager.js")) continue;
+      if (frame.includes("node:internal")) continue;
+      // Skip frames from internal ORM code — those callers either run under
+      // a tenant-aware builder or are part of the scoping machinery itself.
+      if (/stingerloom-orm[/\\](src|dist)[/\\]/.test(frame)) continue;
+      if (/node_modules[/\\]@stingerloom[/\\]orm[/\\]/.test(frame)) continue;
+      callerFrame = frame.trim();
+      break;
+    }
+    if (!callerFrame) return;
+
+    if (this.rawQueryTenantWarned.has(callerFrame)) return;
+    this.rawQueryTenantWarned.add(callerFrame);
+
+    this.logger.warn(
+      `[multi-tenancy] em.query() called under tenant="${tenant}" — raw SQL ` +
+        `bypasses automatic WHERE ${this.tenantColumnConfig.name} injection. ` +
+        `Filter by the tenant column manually, or wrap the call in ` +
+        `MetadataContext.runUnscoped() when cross-tenant access is intended. ` +
+        `Call site: ${callerFrame}`,
+    );
   }
 
   /**

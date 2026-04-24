@@ -112,6 +112,8 @@ function createMockCtx(): jest.Mocked<EntityManagerInternals> {
     saveWithSession: jest.fn(),
     find: jest.fn(),
     delete: jest.fn(),
+    getTenantColumnConfig: jest.fn().mockReturnValue(null),
+    buildTenantWhereClause: jest.fn().mockReturnValue(null),
   } as any;
 }
 

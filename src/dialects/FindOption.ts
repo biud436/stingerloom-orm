@@ -292,4 +292,15 @@ export type FindOption<T> = {
    * Removes duplicate rows from the result set.
    */
   distinct?: boolean;
+
+  /**
+   * Under the `"tenant_column"` multi-tenancy strategy, this query skips the
+   * automatic `tenant_id = <currentTenant>` predicate injection. Use for
+   * admin / cross-tenant reads. Equivalent to wrapping the call in
+   * `MetadataContext.runUnscoped()` but scoped to a single call.
+   *
+   * Does **not** affect eager-loaded relations — those still scope by tenant.
+   * For context-wide opt-out use `MetadataContext.runUnscoped`.
+   */
+  withoutTenantScope?: boolean;
 };

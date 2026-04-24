@@ -40,6 +40,12 @@ export type CursorPaginationOption<T> = {
    * In a replication setup, forces read queries to use the master node.
    */
   useMaster?: boolean;
+
+  /**
+   * Skip tenant-column scoping under the `"tenant_column"` strategy.
+   * See `FindOption.withoutTenantScope` for details.
+   */
+  withoutTenantScope?: boolean;
 };
 
 /**

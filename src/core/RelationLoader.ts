@@ -100,6 +100,13 @@ export class RelationLoader {
           whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
         }
 
+        // Tenant scoping under the "tenant_column" strategy. The batched child
+        // query is a bare SELECT with no JOINs, so the predicate is unqualified.
+        const tenantPredicate = this.ctx.buildTenantWhereClause(RelatedEntity);
+        if (tenantPredicate) {
+          whereConditions.push(tenantPredicate);
+        }
+
         qb.select(selectCols)
           .from(this.ctx.wrapTable(relatedTableName))
           .where(whereConditions);
@@ -224,10 +231,23 @@ export class RelationLoader {
 
         const joinCondition = sql`${raw(this.ctx.wrap(relatedTableName))}.${raw(this.ctx.wrap(relatedPk.name!))} = ${raw(this.ctx.wrap(joinInfo.joinTableName))}.${raw(this.ctx.wrap(joinInfo.inverseJoinColumn))}`;
 
-        const whereCondition = Conditions.in(
-          `${this.ctx.wrap(joinInfo.joinTableName)}.${this.ctx.wrap(joinInfo.joinColumn)}`,
-          parentIds,
+        const whereConditions: Sql[] = [
+          Conditions.in(
+            `${this.ctx.wrap(joinInfo.joinTableName)}.${this.ctx.wrap(joinInfo.joinColumn)}`,
+            parentIds,
+          ),
+        ];
+
+        // Tenant scoping for the related entity. Qualify by the related table
+        // name because the query JOINs a second table (the join table) — an
+        // unqualified predicate would be ambiguous.
+        const tenantPredicate = this.ctx.buildTenantWhereClause(
+          RelatedEntity,
+          relatedTableName,
         );
+        if (tenantPredicate) {
+          whereConditions.push(tenantPredicate);
+        }
 
         qb.select(selectCols)
           .from(this.ctx.wrapTable(relatedTableName))
@@ -236,7 +256,7 @@ export class RelationLoader {
             this.ctx.wrap(joinInfo.joinTableName),
             joinCondition,
           )
-          .where([whereCondition]);
+          .where(whereConditions);
 
         const resultQuery = qb.build();
         const subQueryStart = Date.now();
@@ -377,6 +397,12 @@ export class RelationLoader {
           const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
           if (deletedAtColumn) {
             whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
+          }
+
+          // Tenant scoping under the "tenant_column" strategy.
+          const tenantPredicate = this.ctx.buildTenantWhereClause(RelatedEntity);
+          if (tenantPredicate) {
+            whereConditions.push(tenantPredicate);
           }
 
           qb.select(selectCols)

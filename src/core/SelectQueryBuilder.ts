@@ -1194,6 +1194,7 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected offsetValue: number | undefined;
   protected lockClause: string | undefined;
   protected withDeletedFlag = false;
+  protected withoutTenantScopeFlag = false;
   protected extraSegments: Sql[] = [];
   protected rowValidator: RowValidator<any> | undefined;
   protected arrayValidatorFn: ArrayValidator<any> | undefined;
@@ -2471,9 +2472,12 @@ export class SelectQueryBuilder<T, TResult = T> {
     });
     subQb.dialectExpression = this.dialectExpression;
     subQb.withDeletedFlag = true; // subqueries don't auto-filter soft deletes
+    subQb.withoutTenantScopeFlag = this.withoutTenantScopeFlag;
 
     subQb.whereClauses.push(Conditions.compareColumns(innerRef, "=", outerRef));
     if (fn) fn(subQb);
+
+    this.appendTenantPredicate(subQb.whereClauses, RelatedEntity, innerAlias);
 
     const innerWhere = subQb.whereClauses.length > 0
       ? sql`WHERE ${join(subQb.whereClauses, " AND ")}`
@@ -2525,9 +2529,12 @@ export class SelectQueryBuilder<T, TResult = T> {
     });
     subQb.dialectExpression = this.dialectExpression;
     subQb.withDeletedFlag = true;
+    subQb.withoutTenantScopeFlag = this.withoutTenantScopeFlag;
 
     subQb.whereClauses.push(Conditions.compareColumns(innerRef, "=", outerRef));
     if (fn) fn(subQb);
+
+    this.appendTenantPredicate(subQb.whereClauses, RelatedEntity, innerAlias);
 
     const innerWhere = subQb.whereClauses.length > 0
       ? sql`WHERE ${join(subQb.whereClauses, " AND ")}`
@@ -2570,9 +2577,12 @@ export class SelectQueryBuilder<T, TResult = T> {
     });
     subQb.dialectExpression = this.dialectExpression;
     subQb.withDeletedFlag = true;
+    subQb.withoutTenantScopeFlag = this.withoutTenantScopeFlag;
 
     subQb.whereClauses.push(Conditions.compareColumns(innerRef, "=", outerRef));
     if (fn) fn(subQb);
+
+    this.appendTenantPredicate(subQb.whereClauses, RelatedEntity, innerAlias);
 
     const innerWhere = subQb.whereClauses.length > 0
       ? sql`WHERE ${join(subQb.whereClauses, " AND ")}`
@@ -2826,6 +2836,23 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   withDeleted(): this {
     this.withDeletedFlag = true;
+    return this;
+  }
+
+  /**
+   * Disable the automatic tenant predicate injection under the
+   * `"tenant_column"` multi-tenancy strategy.
+   *
+   * By default, queries built against tenant-scoped entities are filtered by
+   * `tenant_id = <currentTenant>`. Call this opt-out when you genuinely need
+   * cross-tenant visibility (admin dashboards, background jobs, data migration).
+   *
+   * No-op when the strategy is not `"tenant_column"` or the entity is
+   * `@NonTenantEntity()`. For context-wide opt-out use
+   * `MetadataContext.runUnscoped()`.
+   */
+  withoutTenantScope(): this {
+    this.withoutTenantScopeFlag = true;
     return this;
   }
 
@@ -3401,6 +3428,10 @@ export class SelectQueryBuilder<T, TResult = T> {
       }
     }
 
+    // Tenant scoping under the "tenant_column" strategy. Qualify by the
+    // main-table alias so the predicate works in the presence of JOINs.
+    this.appendTenantPredicate(effectiveWhere, this.entity, this.alias);
+
     // WHERE
     qb.where(effectiveWhere);
 
@@ -3768,6 +3799,8 @@ export class SelectQueryBuilder<T, TResult = T> {
       }
     }
 
+    this.appendTenantPredicate(countWhere, this.entity, this.alias);
+
     qb.where(countWhere);
 
     if (this.groupByCols.length > 0) {
@@ -3824,6 +3857,8 @@ export class SelectQueryBuilder<T, TResult = T> {
       }
     }
 
+    this.appendTenantPredicate(existsWhere, this.entity, this.alias);
+
     qb.where(existsWhere);
     qb.limit(1);
 
@@ -3857,6 +3892,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.offsetValue = this.offsetValue;
     cloned.lockClause = this.lockClause;
     cloned.withDeletedFlag = this.withDeletedFlag;
+    cloned.withoutTenantScopeFlag = this.withoutTenantScopeFlag;
     cloned.extraSegments = [...this.extraSegments];
     cloned.rowValidator = this.rowValidator;
     cloned.arrayValidatorFn = this.arrayValidatorFn;
@@ -3886,6 +3922,26 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   // ── Private ─────────────────────────────────────────────
+
+  /**
+   * Append the `tenant_id = <current>` predicate to a WHERE-clause accumulator
+   * under the `"tenant_column"` strategy. No-op when:
+   *   - strategy is not `"tenant_column"`
+   *   - the entity is `@NonTenantEntity()`
+   *   - the current context is unscoped (`MetadataContext.runUnscoped`)
+   *   - this builder has opted out via `withoutTenantScope()`
+   */
+  protected appendTenantPredicate(
+    whereAccumulator: Sql[],
+    entity: ClazzType<any>,
+    alias: string,
+  ): void {
+    if (this.withoutTenantScopeFlag) return;
+    const internals = (this.em as any)._ctx;
+    if (!internals?.buildTenantWhereClause) return;
+    const predicate = internals.buildTenantWhereClause(entity, alias);
+    if (predicate) whereAccumulator.push(predicate);
+  }
 
   /**
    * Validate that all required (non-nullable) columns are included in
