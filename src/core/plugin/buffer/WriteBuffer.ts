@@ -519,6 +519,90 @@ export class WriteBuffer {
   }
 
   /**
+   * Detach a tracked entity by class + primary key, without needing the
+   * instance reference. Useful when only a PK is available (e.g. from an
+   * external API request).
+   *
+   * Looks up the instance in the Identity Map and delegates to `detach()`.
+   * If no matching instance is tracked, this is a no-op (idempotent).
+   *
+   * Cascade behavior follows the same rules as `detach(instance)`.
+   *
+   * @param entityClass — the entity class
+   * @param pk — scalar PK value, or an object for composite PKs
+   */
+  detachByPk<T>(entityClass: ClazzType<T>, pk: any): this {
+    this.idMap.validateEntity(entityClass);
+    const { pkColumns } = this.idMap.getColumnInfo(entityClass);
+
+    // Build a probe instance to compute the identity key.
+    // Mirrors the PK normalization in getReference().
+    const probe = new (entityClass as any)();
+    if (pkColumns.length === 1 && (typeof pk !== "object" || pk === null || pk instanceof Date)) {
+      probe[pkColumns[0]] = pk;
+    } else if (typeof pk === "object" && pk !== null) {
+      for (const [k, v] of Object.entries(pk)) {
+        probe[k] = v;
+      }
+    }
+
+    let key: string;
+    try {
+      key = this.idMap.buildIdentityKey(entityClass as ClazzType<any>, probe, pkColumns);
+    } catch {
+      // PK columns missing → nothing to detach
+      return this;
+    }
+
+    const existing = this.idMap.identityMap.get(key);
+    if (existing) {
+      return this.detach(existing);
+    }
+
+    if (this.options.logging) this.log("detachByPk → no-op (not tracked)", { entity: entityClass.name, key });
+    return this;
+  }
+
+  /**
+   * Detach every tracked entity and pending persist-queue instance,
+   * transitioning each to `EntityState.DETACHED` and clearing the
+   * Identity Map.
+   *
+   * Pending persist-queue entries are removed (their queued INSERTs
+   * are cancelled). Other queues — `delete`, `bulkUpdate`, `bulkDelete`
+   * and legacy `save`/`delete` queues — are left intact, since they
+   * operate on classes/criteria rather than tracked instances. Use
+   * `clear()` for a full reset.
+   */
+  detachAll(): this {
+    const detachedInstances: any[] = [];
+
+    // Snapshot persist-queue instances, then clear the queue
+    for (const entry of this.persistQueue) {
+      detachedInstances.push(entry.instance);
+    }
+    this.persistQueue.length = 0;
+
+    // Snapshot tracked instances, then clear tracking + identity map
+    for (const instance of this.trackedEntries.keys()) {
+      detachedInstances.push(instance);
+    }
+    this.trackedEntries.clear();
+    this.idMap.identityMap.clear();
+
+    // Transition each to DETACHED
+    for (const instance of detachedInstances) {
+      this.idMap.stateMap.set(instance, EntityState.DETACHED);
+    }
+
+    if (this.options.logging) {
+      this.log("detachAll", { count: detachedInstances.length });
+    }
+
+    return this;
+  }
+
+  /**
    * Merge a detached instance into the buffer.
    * When cascade is enabled, propagates merge to related entities.
    */

@@ -507,6 +507,23 @@ buf.detach(user);    // remove from tracking — CASCADE to related entities
 
 Use `untrack()` when you want to stop tracking one specific entity. Use `detach()` when you want to stop tracking an entity and everything connected to it.
 
+### detachByPk / detachAll
+
+Variants for when you don't hold the instance reference, or want to detach everything at once.
+
+```typescript
+// Detach by PK — handy when you only have an ID from an external request
+buf.detachByPk(User, 7);
+buf.detachByPk(OrderItem, { orderId: 1, productId: 42 }); // composite PK
+
+// Detach every tracked entity in one call
+buf.detachAll();
+```
+
+`detachByPk()` looks up the instance in the Identity Map and delegates to `detach()`. If nothing matches, it is a no-op.
+
+`detachAll()` clears every tracked entity plus the pending `persist` queue, transitioning each instance to `DETACHED`. Class/criteria-based queues (`delete`, `bulkUpdate`, `bulkDelete`, `save`) are left untouched — call `clear()` to wipe queues as well.
+
 ### merge
 
 Re-attach a detached entity. If a tracked instance with the same PK exists, the detached values are copied into the existing tracked instance:

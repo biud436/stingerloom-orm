@@ -2230,6 +2230,116 @@ describe("Buffer Plugin", () => {
     });
   });
 
+  // ── detachByPk() ───────────────────────────────────────────────
+
+  describe("detachByPk()", () => {
+    it("should detach a tracked entity by class + scalar PK", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 7, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      expect(mut.tracked()).toHaveLength(1);
+
+      mut.detachByPk(User, 7);
+
+      expect(mut.tracked()).toHaveLength(0);
+      expect(mut.getState(user)).toBe(EntityState.DETACHED);
+    });
+
+    it("should be a no-op when nothing matches the PK", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+
+      mut.detachByPk(User, 999); // not tracked
+
+      expect(mut.tracked()).toHaveLength(1);
+      expect(mut.getState(user)).toBe(EntityState.MANAGED);
+    });
+
+    it("should free the identity slot so the same PK can be re-tracked", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user1);
+      mut.detachByPk(User, 1);
+
+      const user2 = Object.assign(new User(), { id: 1, name: "Bob", email: "b@c.d" });
+      mut.track(user2); // should not throw — slot freed
+
+      expect(mut.tracked()).toEqual([user2]);
+    });
+  });
+
+  // ── detachAll() ────────────────────────────────────────────────
+
+  describe("detachAll()", () => {
+    it("should detach every tracked entity and clear the identity map", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const u1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const u2 = Object.assign(new User(), { id: 2, name: "Bob", email: "b@c.d" });
+      mut.track(u1);
+      mut.track(u2);
+      expect(mut.size().tracked).toBe(2);
+      expect(mut.size().identityMap).toBe(2);
+
+      mut.detachAll();
+
+      expect(mut.size().tracked).toBe(0);
+      expect(mut.size().identityMap).toBe(0);
+      expect(mut.getState(u1)).toBe(EntityState.DETACHED);
+      expect(mut.getState(u2)).toBe(EntityState.DETACHED);
+    });
+
+    it("should cancel pending persist-queue inserts", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const draft = new User();
+      draft.name = "Draft";
+      draft.email = "d@b.c";
+      mut.persist(draft);
+      expect(mut.size().persists).toBe(1);
+
+      mut.detachAll();
+
+      expect(mut.size().persists).toBe(0);
+      expect(mut.getState(draft)).toBe(EntityState.DETACHED);
+    });
+
+    it("should leave bulk and legacy queues intact (use clear() for full reset)", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      mut.updateMany(User, { where: { id: 1 }, set: { name: "x" } });
+      mut.deleteMany(User, { id: 2 });
+      mut.save(User, { name: "Legacy", email: "l@b.c" });
+      mut.delete(User, { id: 99 });
+
+      mut.detachAll();
+
+      const sz = mut.size();
+      expect(sz.bulkUpdates).toBe(1);
+      expect(sz.bulkDeletes).toBe(1);
+      expect(sz.inserts).toBe(1);
+      expect(sz.deletes).toBe(1);
+    });
+
+    it("should be idempotent when nothing is tracked", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      expect(() => mut.detachAll()).not.toThrow();
+      expect(mut.size().tracked).toBe(0);
+    });
+  });
+
   // ── Phase 4: merge() ──────────────────────────────────────────
 
   describe("merge()", () => {

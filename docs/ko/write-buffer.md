@@ -506,6 +506,23 @@ buf.detach(user);    // remove from tracking — CASCADE to related entities
 
 특정 엔티티 하나만 추적을 중단하려면 `untrack()`을, 엔티티와 연결된 모든 것의 추적을 중단하려면 `detach()`를 사용해요.
 
+### detachByPk / detachAll
+
+인스턴스 레퍼런스를 들고 있지 않을 때, 또는 한꺼번에 떼고 싶을 때 쓰는 변형이에요.
+
+```typescript
+// PK만으로 떼기 — 외부 API에서 ID만 받아온 경우 유용해요
+buf.detachByPk(User, 7);
+buf.detachByPk(OrderItem, { orderId: 1, productId: 42 }); // 복합 PK
+
+// 추적 중인 모든 엔티티를 한 번에 떼기
+buf.detachAll();
+```
+
+`detachByPk()`는 Identity Map에서 같은 PK를 가진 인스턴스를 찾아 `detach()`로 위임해요. 매칭되는 게 없으면 no-op 이라서 안전해요.
+
+`detachAll()`은 추적 중인 모든 엔티티 + 대기 중인 `persist` 큐를 한 번에 비우고, 각 인스턴스를 `DETACHED` 상태로 전환해요. `delete` / `bulkUpdate` / `bulkDelete` / `save` 같은 클래스/조건 기반 큐는 그대로 두기 때문에, 큐까지 통째로 비우려면 `clear()`를 쓰세요.
+
 ### merge
 
 detach된 엔티티를 다시 연결해요. 같은 PK의 추적 인스턴스가 이미 있으면, detach된 값이 기존 인스턴스에 복사돼요:
