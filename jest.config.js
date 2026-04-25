@@ -27,9 +27,16 @@ module.exports = {
   // Module file extensions
   moduleFileExtensions: ["js", "ts", "json", "node"],
 
-  // Transform TypeScript files
+  // Transform TypeScript files. Point ts-jest at __tests__/tsconfig.json
+  // so jest globals (`describe`, `it`, `expect`, etc.) resolve via the
+  // `types: ["jest", "node"]` declared there. The root tsconfig only
+  // includes src/**/* — TS 6 stopped auto-loading every @types package
+  // when the include glob excludes the test directory.
   transform: {
-    "^.+\\.ts$": "ts-jest",
+    "^.+\\.ts$": [
+      "ts-jest",
+      { tsconfig: "<rootDir>/__tests__/tsconfig.json" },
+    ],
   },
 
   // Module name mapper for absolute imports
