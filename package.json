@@ -222,7 +222,7 @@
     "@mrleebo/prisma-ast": "^0.14.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
-    "@nestjs/testing": "^10.4.22",
+    "@nestjs/testing": "^11.0.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/jest": "^29.5.4",
     "@types/node": "^20.4.8",

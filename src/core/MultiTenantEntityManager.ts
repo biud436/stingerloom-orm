@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { AsyncLocalStorage } from "async_hooks";
 import { ClazzType } from "../utils/types";
 import { Logger } from "../utils/Logger";
 import { OrmError } from "../errors/OrmError";
@@ -73,6 +74,13 @@ export class MultiTenantEntityManager {
   private publicBehavior: "default" | "throw" = "default";
   private installedPlugins: StingerloomPlugin<any>[] = [];
   /**
+   * The DatabaseClient connection name under which the admin/public EM was
+   * registered. Captured so multiple MTEM instances (e.g. NestJS named
+   * connections) can each own their own admin pool without colliding on
+   * a hard-coded "default" name. See `register()`.
+   */
+  private adminConnectionName = "default";
+  /**
    * Listeners and subscribers registered via `on()` / `addSubscriber()` are
    * broadcast to every per-tenant EntityManager — both currently resolved
    * tenants and any future tenants resolved on-demand. Stored here so
@@ -88,16 +96,26 @@ export class MultiTenantEntityManager {
    * Captured tenant id for the current transaction (set by `transaction()`).
    * Used by `pickEm()` to detect cross-tenant transaction attempts.
    */
-  private static readonly txTenantStorage =
-    new (require("async_hooks").AsyncLocalStorage)() as InstanceType<
-      typeof import("async_hooks").AsyncLocalStorage<{ tenantId: string }>
-    >;
+  private static readonly txTenantStorage = new AsyncLocalStorage<{
+    tenantId: string;
+  }>();
 
   /**
    * Initialize the manager. The `options` describe the **default DB**
    * (admin / public catalog) plus tenant routing config.
+   *
+   * @param connectionName  DatabaseClient name for the admin/public pool.
+   *   Defaults to `"default"` so single-MTEM setups stay backward compatible.
+   *   Multi-MTEM (e.g. NestJS named connections) MUST pass a unique name
+   *   per instance to avoid stomping each other's admin connector — this
+   *   maps to a per-instance `${connectionName}__admin` for non-default
+   *   names so the admin pool does not collide with any plain
+   *   `EntityManager` registered under the same logical name.
    */
-  async register(options: DatabaseClientOptions): Promise<void> {
+  async register(
+    options: DatabaseClientOptions,
+    connectionName = "default",
+  ): Promise<void> {
     if (options.tenantStrategy !== "database") {
       throw new OrmError(
         OrmErrorCode.INVALID_CONFIG,
@@ -115,9 +133,13 @@ export class MultiTenantEntityManager {
 
     this.publicBehavior = options.publicTenantBehavior ?? "default";
 
-    // Register the default (admin/public) EM. Use a stable connection name
-    // that does not collide with router-provisioned ones.
-    await this.defaultEm.register(options, "default");
+    // Pick an admin connection name that does not collide with router-
+    // provisioned tenant pools or with plain @InjectEntityManager()-style
+    // connections registered under the same logical name. We special-case
+    // "default" so single-MTEM apps keep the historical name.
+    this.adminConnectionName =
+      connectionName === "default" ? "default" : `${connectionName}__admin`;
+    await this.defaultEm.register(options, this.adminConnectionName);
 
     this.router = new TenantConnectionRouter({
       map: options.tenantDatabaseMap,

@@ -217,16 +217,16 @@ export class TenantConnectionRouter {
         // Fresh pool — register() handles connect + synchronize.
         await em.register(provisionOptions!, connectionName);
       } else {
-        // Connection already exists; just re-use entities from caller and
-        // skip schema sync (caller is expected to have done it).
-        await em.register(
-          {
-            ...provisionOptions!,
-            synchronize: false,
-            entities: this.opts.entities,
-          },
-          connectionName,
-        );
+        // Connection already exists in DatabaseClient (the caller registered
+        // it). Use attach() so we do NOT call client.connect() again — that
+        // would create a brand-new connector and overwrite the existing one
+        // in DatabaseClient's map without closing it, leaking the original
+        // pool. Schema sync is owned by whoever first registered the
+        // connection.
+        await em.attach(connectionName, {
+          entities: this.opts.entities,
+          tenantStrategy: "database",
+        });
       }
     });
 
