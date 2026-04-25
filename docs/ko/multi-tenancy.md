@@ -685,10 +685,10 @@ await em.register({
 
 ### Public 컨텍스트 동작
 
-쿼리가 어떤 `MetadataContext.run()` 블록 **밖에서** MTEM 에 도달하면 정책이 필요해요:
+쿼리가 어떤 `MetadataContext.run()` 블록 **밖에서** `MultiTenantEntityManager` 에 도달하면 정책이 필요해요:
 
 ```typescript
-publicTenantBehavior: "default"   // (기본값) admin / public EM 으로 라우팅
+publicTenantBehavior: "default"   // (기본값) admin / public EntityManager 로 라우팅
 publicTenantBehavior: "throw"     // MISSING_TENANT_CONTEXT 로 거부
 ```
 
@@ -770,7 +770,7 @@ class UserService {
 }
 ```
 
-`@InjectEntityManager()` 도 그대로 동작해요. `tenantStrategy: "database"` 에서는 MTEM 이 보유한 **admin / public** EM 으로 해석되어 global 테이블 조작에 적합해요.
+`@InjectEntityManager()` 도 그대로 동작해요. `tenantStrategy: "database"` 에서는 `MultiTenantEntityManager` 가 보유한 **admin / public** `EntityManager` 로 해석되어 global 테이블 조작에 적합해요.
 
 ### Connection pool 예산
 

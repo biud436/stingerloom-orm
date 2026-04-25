@@ -685,10 +685,10 @@ await em.register({
 
 ### Public-context behavior
 
-When a query reaches the MTEM **outside** any `MetadataContext.run()` block, the strategy needs a policy:
+When a query reaches the `MultiTenantEntityManager` **outside** any `MetadataContext.run()` block, the strategy needs a policy:
 
 ```typescript
-publicTenantBehavior: "default"   // (default) route to the admin/public EM
+publicTenantBehavior: "default"   // (default) route to the admin/public EntityManager
 publicTenantBehavior: "throw"     // reject the call with MISSING_TENANT_CONTEXT
 ```
 
@@ -770,7 +770,7 @@ class UserService {
 }
 ```
 
-`@InjectEntityManager()` continues to work — under `tenantStrategy: "database"` it resolves to the **admin / public** EM held by the MTEM, suitable for global tables.
+`@InjectEntityManager()` continues to work — under `tenantStrategy: "database"` it resolves to the **admin / public** `EntityManager` held by the `MultiTenantEntityManager`, suitable for global tables.
 
 ### Connection pool budget
 
