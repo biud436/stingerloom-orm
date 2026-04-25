@@ -6,13 +6,18 @@ SaaS 제품을 만든다고 생각해 보세요. 수백 개의 회사가 사용�
 
 하지만 A 회사는 **절대** B 회사의 데이터를 볼 수 없어야 해요. API 응답에서도, DB 쿼리에서도, 버그로 인한 우연한 노출도 안 돼요. 이게 바로 **멀티테넌시**예요 — 하나의 애플리케이션에 여러 고객(테넌트)을 격리하는 거예요.
 
-일반적으로 세 가지 접근 방식이 있어요:
+일반적으로 네 가지 접근 방식이 있어요:
 
-1. **DB 분리** — 테넌트마다 별도 DB. 단순하지만 운영 비용이 높아요.
+1. **DB 분리** — 테넌트마다 별도의 물리 DB. 격리는 가장 강하지만 운영 비용이 가장 높아요.
 2. **DB 공유, 스키마 분리** — DB는 하나지만 테넌트마다 별도 네임스페이스(스키마)를 사용해요. 격리와 효율의 균형이 좋아요.
 3. **전부 공유** — DB 하나, 스키마 하나, 모든 테이블에 `tenant_id` 컬럼. 가장 저렴하지만 WHERE 절 하나 빠지면 데이터가 유출돼요.
+4. **DB 분리 + 라우팅 레이어** — #1 과 형태는 같지만 ORM이 `MetadataContext` 기반으로 매 요청을 알맞은 풀에 자동 라우팅해 줘요.
 
-Stingerloom ORM은 **레이어드 메타데이터 시스템**을 통해 **#2** (PostgreSQL 스키마 기반 격리)를 지원하고, **#3** (모든 다이얼렉트에서 동작하는 자동 관리형 `tenant_id` 컬럼을 사용한 공유 스키마) 방식도 지원해요.
+Stingerloom ORM은 네 가지 모두 지원해요:
+
+- **#2 (스키마 기반)** — `search_path` / `schema_qualified` 전략 (PostgreSQL 전용), **레이어드 메타데이터 시스템** 위에서 동작.
+- **#3 (컬럼 기반)** — `tenant_column` 전략 (모든 다이얼렉트).
+- **#1 / #4 (DB 기반)** — `database` 전략 + `MultiTenantEntityManager` (모든 다이얼렉트).
 
 ---
 
@@ -312,7 +317,22 @@ export class TenantProvisioningService implements OnModuleInit {
 
 ## 테넌트 쿼리 전략
 
-테넌트 컨텍스트 안에서 쿼리가 실행되면, ORM이 올바른 스키마로 라우팅해야 해요. 두 가지 전략이 있고, 선택에 따라 성능이 달라져요.
+테넌트 컨텍스트 안에서 쿼리가 실행되면, ORM이 올바른 곳 — 스키마, 컬럼 predicate, 또는 물리 데이터베이스 — 으로 라우팅해야 해요. 네 가지 전략이 있고, 선택에 따라 성능 / 격리 강도 / 운영 비용이 달라져요.
+
+### 한눈에 보기
+
+| 항목 | `search_path` | `schema_qualified` | `tenant_column` | `database` |
+|---|---|---|---|---|
+| Dialect 지원 | PostgreSQL 전용 | PostgreSQL 전용 | 전 dialect (MySQL/PG/SQLite) | 전 dialect |
+| 격리 수준 | 스키마 | 스키마 | row (predicate) | **물리 DB** |
+| read 라운드 트립 | ~5 (BEGIN/SET LOCAL/...) | 1 | 1 | 1 |
+| Connection pool | 1개 공유 | 1개 공유 | 1개 공유 | **N개 (테넌트마다)** |
+| 신규 테넌트 비용 | `CREATE SCHEMA` | `CREATE SCHEMA` | 무료 | **`CREATE DATABASE`** |
+| Cross-tenant join | OK (같은 DB) | OK (같은 DB) | OK (`tenant_id` 필터) | 불가능 (다른 DB) |
+| 지원 테넌트 수 | 100~1k | 100~1k | 1k+ | ~50 (pool 예산) |
+| 지리 / 컴플라이언스 분리 | 미지원 | 미지원 | 미지원 | 지원 |
+| 테넌트별 백업/복구 | DB 단위 | DB 단위 | DB 단위 | **간단** |
+| 운영 복잡도 | 낮음 | 낮음 | 가장 낮음 | **가장 높음** |
 
 ### "라운드 트립"이란?
 
@@ -589,6 +609,183 @@ PostgreSQL 에서 DB 수준 행 격리가 필요하다면, Stingerloom 과 별�
 
 ---
 
+## 전략 4: `database` (모든 다이얼렉트, 물리 격리)
+
+`tenantStrategy: "database"` 는 테넌트마다 **자기 만의 물리 데이터베이스** 를 줘요. 자체 pool, 자체 DDL, 자체 백업 파일. ORM 은 `MultiTenantEntityManager` 라는 얇은 proxy 를 노출해요. 이 proxy 는 매 호출마다 `MetadataContext.getCurrentTenant()` 를 보고 알맞은 테넌트 EntityManager 로 위임해요. 내부적으로는 `DatabaseClient` 가 이미 multi-DB 용으로 사용하는 named-connection 메커니즘 위에서 동작 — 쿼리 엔진을 깊게 다시 쓰는 게 아니에요.
+
+### 언제 선택하나요
+
+다음 중 하나라도 해당되면 database 전략이 적합해요:
+
+- **컴플라이언스** — GDPR data residency, HIPAA enterprise tier, KISA 등 물리 분리가 강제되는 경우.
+- **지리적 분산** — 테넌트마다 다른 region 의 DB 호스트 (예: APAC 테넌트는 서울, EU 테넌트는 프랑크푸르트).
+- **테넌트별 백업/복구 SLA** — `pg_dump tenant_acme` 한 번에 한 테넌트 데이터만 떨어지길 원하는 경우.
+- **소수 (~50 이하) 의 큰 enterprise 테넌트** — free tier 수천 명에는 부적합.
+
+free tier 가 수천 개인 SaaS 시나리오에서는 `tenant_column` 이 운영 비용이 훨씬 낮아요. 엄격한 격리가 추가 pool, 추가 배포, 추가 마이그레이션 비용을 정당화할 때만 `database` 를 선택하세요.
+
+### 전략 활성화
+
+```typescript
+import { MultiTenantEntityManager, MetadataContext } from "@stingerloom/orm";
+
+const em = new MultiTenantEntityManager();
+
+await em.register({
+  type: "postgres",
+  database: "app_admin",          // 공유 admin / public DB
+  username: "postgres",
+  password: "postgres",
+  host: "localhost",
+  port: 5432,
+  entities: [User, Post],
+  synchronize: true,
+  tenantStrategy: "database",
+  tenantDatabaseResolver: (tenantId) => ({
+    type: "postgres",
+    database: `app_${tenantId}`,  // 테넌트마다 물리 DB
+    username: "postgres",
+    password: "postgres",
+    host: "localhost",
+    port: 5432,
+    entities: [User, Post],
+    synchronize: true,
+  }),
+});
+
+await MetadataContext.run("acme", () => em.find(User));   // → app_acme DB
+await MetadataContext.run("globex", () => em.find(User)); // → app_globex DB
+```
+
+같은 옵션이 MySQL, SQLite 에서도 동작해요. 테넌트별 `type` / `host` 만 바꿔 주세요.
+
+### Resolver vs. 정적 map
+
+테넌트와 물리 DB 의 매핑을 router 에 알려주는 두 가지 방식이 있어요:
+
+- **`tenantDatabaseResolver: (tenantId) => DatabaseClientOptions | string`** — 테넌트 첫 사용 시 한 번 호출돼요. 전체 옵션 객체를 반환하면 router 가 새 pool 을 자동 프로비저닝하고, 문자열을 반환하면 `DatabaseClient.connect()` 로 미리 등록해 둔 named connection 을 사용해요. 실패는 캐시되지 않아요 — 재시도 시 resolver 가 다시 호출돼요.
+- **`tenantDatabaseMap: Record<string, string>`** — 정적 매핑 dictionary. 모든 테넌트가 배포 시점에 알려져 있을 때 유용해요. resolver 보다 먼저 검사돼요.
+
+둘 다 동시에 사용할 수 있어요. 같은 테넌트에 대한 항목이 양쪽에 있으면 map 이 이겨요.
+
+### Eager 프로비저닝
+
+lazy 해석은 개발 환경에서는 괜찮지만, 프로덕션 트래픽이 첫 요청에서 cold-start 비용을 내면 안 돼요:
+
+```typescript
+await em.register({
+  // ...
+  tenantStrategy: "database",
+  tenantDatabaseResolver: (tenantId) => ({ /* ... */ }),
+  eagerProvisionTenants: ["acme", "globex"],   // register() 시점에 해석
+});
+```
+
+`eagerProvisionTenants` 는 `register()` 가 반환되기 전에 listed 테넌트의 resolver 를 실행하고 `synchronize` 까지 마쳐요. 시작 헬스 체크와 함께 쓰세요.
+
+### Public 컨텍스트 동작
+
+쿼리가 어떤 `MetadataContext.run()` 블록 **밖에서** MTEM 에 도달하면 정책이 필요해요:
+
+```typescript
+publicTenantBehavior: "default"   // (기본값) admin / public EM 으로 라우팅
+publicTenantBehavior: "throw"     // MISSING_TENANT_CONTEXT 로 거부
+```
+
+모든 요청에 테넌트가 *반드시* 설정되어야 하는 HTTP 서비스에서는 `"throw"` 를 추천해요. 컨텍스트 누락이 silent admin DB 쓰기 대신 fail-fast 버그가 돼요.
+
+### Cross-tenant 트랜잭션은 금지돼요
+
+SQL 트랜잭션은 단일 connection 에 묶이고, connection 은 단일 물리 DB 에 묶여요. 따라서 트랜잭션 도중 테넌트를 바꾸면 atomicity 를 보장할 방법이 없어요:
+
+```typescript
+await MetadataContext.run("acme", async () => {
+  await em.transaction(async () => {
+    await em.save(User, { name: "alice" });
+
+    await MetadataContext.run("globex", async () => {
+      // OrmErrorCode.CROSS_TENANT_TRANSACTION 으로 throw
+      await em.save(User, { name: "carol" });
+    });
+  });
+});
+```
+
+두 테넌트에 atomic 하게 써야 하는 상황이라면 사실 multi-tenant 문제가 아니라 distributed-transaction 문제예요. 애플리케이션 레이어에서 saga / outbox 패턴을 쓰세요.
+
+### 관리 작업: `forEachTenant`
+
+대시보드, 감사, 마이그레이션처럼 모든 테넌트에 대해 작업해야 할 때:
+
+```typescript
+const counts = await em.forEachTenant(async (tenantEm, tenantId) => ({
+  tenantId,
+  total: await tenantEm.count(User),
+}));
+// → [{ tenantId: "acme", value: { tenantId: "acme", total: 142 } }, ...]
+```
+
+세 가지 모드를 지원해요:
+
+- `"all"` (기본) — `Promise.all`, 첫 실패에서 throw.
+- `"settled"` — `Promise.allSettled`, 테넌트별 `{ value }` 또는 `{ error }` 반환.
+- `"sequential"` — 한 번에 한 테넌트씩 순차 실행. 공유 인프라에 부담을 주지 않으려는 경우 유용해요.
+
+`forEachTenant` 는 router 가 이미 해석한 테넌트만 순회해요. lazy-only 테넌트는 먼저 한 번 touch 하거나 eager 프로비저닝 해두어야 해요.
+
+### NestJS 통합
+
+```typescript
+import { Module, Injectable } from "@nestjs/common";
+import {
+  StingerloomOrmModule,
+  InjectMultiTenantEntityManager,
+  MultiTenantEntityManager,
+} from "@stingerloom/orm/nestjs";
+
+@Module({
+  imports: [
+    StingerloomOrmModule.forRoot({
+      type: "postgres",
+      database: "app_admin",
+      // ...
+      tenantStrategy: "database",
+      tenantDatabaseResolver: (id) => ({ /* ... */ }),
+    }),
+  ],
+})
+class AppModule {}
+
+@Injectable()
+class UserService {
+  constructor(
+    @InjectMultiTenantEntityManager()
+    private readonly em: MultiTenantEntityManager,
+  ) {}
+
+  async listUsers() {
+    // 미들웨어가 테넌트 컨텍스트를 채워주면 알맞은 DB 로 라우팅돼요.
+    return this.em.find(User);
+  }
+}
+```
+
+`@InjectEntityManager()` 도 그대로 동작해요. `tenantStrategy: "database"` 에서는 MTEM 이 보유한 **admin / public** EM 으로 해석되어 global 테이블 조작에 적합해요.
+
+### Connection pool 예산
+
+물리 격리의 단점은 connection pool 의 *증식* 이에요. 테넌트 50개 × `pool.max: 10` 이면 DB 서버에 connection 500개를 요구하게 되는데, PostgreSQL 의 기본 `max_connections` 는 100 이에요. 보수적인 기본값:
+
+- 테넌트당 `pool.max` 를 작게 (예: 5).
+- `tenantConnectionTtlMs` 로 idle 한 테넌트 pool 을 비우고 필요할 때 재사용.
+- `DatabaseClient.getInstance().getRegisteredNames().length` 모니터링 — 예상보다 늘어나는 시점을 잡아주세요.
+
+### Raw SQL 은 안전해요 (경고 없음)
+
+격리가 connection 레벨에서 강제되기 때문에, `em.query("SELECT * FROM user")` 는 항상 현재 테넌트의 DB 만 봐요. `tenant_column` 의 raw SQL 경고는 이 전략에서는 발생하지 않아요 — 우회할 `WHERE tenant_id = ?` 자체가 없기 때문이에요.
+
+---
+
 ## LayeredMetadata 직접 사용
 
 대부분의 애플리케이션에서는 `MetadataContext.run()`과 스키마 기반 격리만으로 충분해요. 하지만 레이어드 메타데이터 시스템은 더 저수준의 프리미티브로, 특정 테넌트에 다른 테이블 이름이나 컬럼 설정을 주는 것 같은 고급 시나리오에 직접 사용할 수 있어요.
@@ -618,9 +815,9 @@ ORM이 `User`의 테이블 이름을 조회할 때:
 
 ```
 getAllInContext("acme_corp")
-  → public layer ∪ acme_corp layer ✓
-  → globex layer is excluded ✗
-  → initech layer is excluded ✗
+  → public layer + acme_corp layer  (포함)
+  → globex layer                    (제외)
+  → initech layer                   (제외)
 ```
 
 ---

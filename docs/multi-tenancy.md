@@ -330,7 +330,7 @@ When a query runs inside a tenant context, the ORM needs to route it to the corr
 | New tenant cost | `CREATE SCHEMA` | `CREATE SCHEMA` | free | **`CREATE DATABASE`** |
 | Cross-tenant joins | OK (same DB) | OK (same DB) | OK (filter by `tenant_id`) | impossible (different DB) |
 | Tenants supported | ~100–1k | ~100–1k | 1k+ | ~50 (pool budget) |
-| Geo / compliance separation | ❌ | ❌ | ❌ | ✅ |
+| Geo / compliance separation | No | No | No | Yes |
 | Per-tenant backup/restore | DB-level | DB-level | DB-level | **trivial** |
 | Operational complexity | low | low | lowest | **highest** |
 
@@ -815,9 +815,9 @@ When the ORM looks up the table name for `User`:
 
 ```
 getAllInContext("acme_corp")
-  → public layer ∪ acme_corp layer ✓
-  → globex layer is excluded ✗
-  → initech layer is excluded ✗
+  → public layer + acme_corp layer  (included)
+  → globex layer                    (excluded)
+  → initech layer                   (excluded)
 ```
 
 ---
