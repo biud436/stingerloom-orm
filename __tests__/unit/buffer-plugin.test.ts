@@ -1310,6 +1310,100 @@ describe("Buffer Plugin", () => {
       expect(mut.size().persists).toBe(1);
     });
 
+    // ── Same-ID semantics ───────────────────────────────────────
+
+    it("persist() with two different instances sharing the same PK should throw Identity conflict", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const u1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const u2 = Object.assign(new User(), { id: 1, name: "Bob", email: "b@c.d" });
+
+      mut.persist(u1); // delegates to track() since PK is set
+      expect(() => mut.persist(u2)).toThrow(/Identity conflict/);
+
+      // u1 remains the canonical tracked instance
+      expect(mut.tracked()).toEqual([u1]);
+    });
+
+    it("persist() should queue distinct no-PK instances independently (each INSERT separately)", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const u1 = new User();
+      u1.name = "Alice";
+      u1.email = "a@b.c";
+      const u2 = new User();
+      u2.name = "Alice"; // same data, different object
+      u2.email = "a@b.c";
+
+      mut.persist(u1);
+      mut.persist(u2);
+
+      expect(mut.size().persists).toBe(2);
+      expect(mut.getState(u1)).toBe(EntityState.NEW);
+      expect(mut.getState(u2)).toBe(EntityState.NEW);
+    });
+
+    it("re-persist after flush should be idempotent (already MANAGED, no extra INSERT)", async () => {
+      const em = createExtendedEm(User);
+      jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
+      const saveSpy = jest.spyOn(em, "save").mockImplementation(async (_e: any, data: any) => ({
+        ...data, id: 7,
+      }));
+
+      const mut = em.buffer();
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      mut.persist(user);
+      await mut.flush();
+      expect(saveSpy).toHaveBeenCalledTimes(1);
+      expect(user.id).toBe(7);
+      expect(mut.getState(user)).toBe(EntityState.MANAGED);
+
+      // Same instance, now has PK from flush — should route to track() and be a no-op
+      mut.persist(user);
+
+      expect(mut.size().persists).toBe(0);
+      expect(mut.tracked()).toEqual([user]);
+
+      // No new flush work scheduled — instance is clean (just snapshotted)
+      const result = await mut.flush();
+      expect(result).toEqual({ updates: 0, inserts: 0, deletes: 0 });
+      expect(saveSpy).toHaveBeenCalledTimes(1); // still 1, no extra INSERT
+    });
+
+    it("untrack() then persist() with a different instance of the same PK should succeed", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const u1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const u2 = Object.assign(new User(), { id: 1, name: "Bob", email: "b@c.d" });
+
+      mut.persist(u1);
+      mut.untrack(u1);
+      expect(() => mut.persist(u2)).not.toThrow();
+
+      expect(mut.tracked()).toEqual([u2]);
+    });
+
+    it("detachByPk() then persist() with a different instance of the same PK should succeed", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const u1 = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      const u2 = Object.assign(new User(), { id: 1, name: "Bob", email: "b@c.d" });
+
+      mut.persist(u1);
+      mut.detachByPk(User, 1);
+      expect(() => mut.persist(u2)).not.toThrow();
+
+      expect(mut.tracked()).toEqual([u2]);
+      expect(mut.getState(u1)).toBe(EntityState.DETACHED);
+    });
+
     it("should throw for non-entity class", () => {
       class NotAnEntity { x = 1; }
       const em = createExtendedEm(User);
