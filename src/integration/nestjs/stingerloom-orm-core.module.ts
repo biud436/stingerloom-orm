@@ -6,8 +6,10 @@ import {
   Type,
 } from "@nestjs/common";
 import { EntityManager } from "../../core/EntityManager";
+import { MultiTenantEntityManager } from "../../core/MultiTenantEntityManager";
 import type { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { getEntityManagerToken } from "./stingerloom-orm.module";
+import { getMultiTenantEntityManagerToken } from "./inject-multi-tenant-entity-manager.decorator";
 
 export interface StingerloomOrmOptionsFactory {
   createStingerloomOrmOptions():
@@ -42,6 +44,36 @@ export class StingerloomOrmCoreModule {
     connectionName = "default",
   ): DynamicModule {
     const emToken = getEntityManagerToken(connectionName);
+    const isDatabaseStrategy = options.tenantStrategy === "database";
+    const mtemToken = getMultiTenantEntityManagerToken(connectionName);
+
+    if (isDatabaseStrategy) {
+      // One MTEM instance is the source of truth; the plain EntityManager
+      // token resolves to its admin/public EM so existing @InjectEntityManager
+      // call sites keep working for global tables. Pass the Nest connectionName
+      // to mtem.register() so multiple MTEM instances (named connections) get
+      // distinct admin pools and don't stomp each other's "default" connector.
+      const mtemProvider: Provider = {
+        provide: mtemToken,
+        useFactory: async () => {
+          const mtem = new MultiTenantEntityManager();
+          await mtem.register(options, connectionName);
+          return mtem;
+        },
+      };
+      const emProvider: Provider = {
+        provide: emToken,
+        useFactory: (mtem: MultiTenantEntityManager) =>
+          mtem.getDefaultEntityManager(),
+        inject: [mtemToken],
+      };
+      return {
+        module: StingerloomOrmCoreModule,
+        providers: [mtemProvider, emProvider],
+        exports: [emToken, mtemToken],
+      };
+    }
+
     return {
       module: StingerloomOrmCoreModule,
       providers: [
@@ -63,6 +95,7 @@ export class StingerloomOrmCoreModule {
   ): DynamicModule {
     const connectionName = asyncOptions.connectionName ?? "default";
     const emToken = getEntityManagerToken(connectionName);
+    const mtemToken = getMultiTenantEntityManagerToken(connectionName);
     const optionsToken = getOrmOptionsToken(connectionName);
 
     const asyncProviders = StingerloomOrmCoreModule.createAsyncProviders(
@@ -70,22 +103,59 @@ export class StingerloomOrmCoreModule {
       optionsToken,
     );
 
+    // The async path can't read tenantStrategy at module-construction time,
+    // so we always provide the MTEM token. When the resolved options don't
+    // request the database strategy we still provide a value, but it's a
+    // Proxy sentinel that throws on any access — that way an accidental
+    // `@InjectMultiTenantEntityManager()` on a non-database-strategy
+    // connection fails with a clear, actionable error at first use instead
+    // of a confusing `Cannot read properties of undefined`.
+    const mtemProvider: Provider = {
+      provide: mtemToken,
+      useFactory: async (options: DatabaseClientOptions) => {
+        if (options.tenantStrategy !== "database") {
+          return makeMtemMisuseSentinel(connectionName);
+        }
+        const mtem = new MultiTenantEntityManager();
+        await mtem.register(options, connectionName);
+        return mtem;
+      },
+      inject: [optionsToken],
+    };
+
     return {
       module: StingerloomOrmCoreModule,
       imports: asyncOptions.imports ?? [],
       providers: [
         ...asyncProviders,
+        mtemProvider,
         {
           provide: emToken,
-          useFactory: async (options: DatabaseClientOptions) => {
+          useFactory: async (
+            options: DatabaseClientOptions,
+            mtem?: MultiTenantEntityManager,
+          ) => {
+            if (options.tenantStrategy === "database") {
+              // Strategy is "database" — every query MUST go through MTEM.
+              // A missing MTEM here means our module wiring is broken; fall
+              // through to a plain EntityManager would silently route every
+              // tenant query to the admin DB, which is exactly the kind of
+              // wiring bug we want to surface immediately.
+              if (!mtem || isMtemMisuseSentinel(mtem)) {
+                throw new Error(
+                  `[StingerloomOrmModule] MultiTenantEntityManager provider is required when tenantStrategy is "database" (connection "${connectionName}"). This usually indicates broken module wiring.`,
+                );
+              }
+              return mtem.getDefaultEntityManager();
+            }
             const em = new EntityManager();
             await em.register(options, connectionName);
             return em;
           },
-          inject: [optionsToken],
+          inject: [optionsToken, mtemToken],
         },
       ],
-      exports: [emToken],
+      exports: [emToken, mtemToken],
     };
   }
 
@@ -133,5 +203,44 @@ export class StingerloomOrmCoreModule {
     throw new Error(
       "StingerloomOrmModule.forRootAsync() requires one of useFactory, useClass, or useExisting",
     );
+  }
+}
+
+const MTEM_MISUSE_SENTINEL = Symbol.for(
+  "stingerloom.mtem.misuse-sentinel",
+);
+
+/**
+ * Returns a `MultiTenantEntityManager`-shaped Proxy whose every property
+ * access throws a clear error explaining that MTEM is only available when
+ * `tenantStrategy: "database"`. Used by `forRootAsync` so the MTEM token is
+ * always provided (Nest can't conditionally omit a token at module-construction
+ * time when the options come from an async factory), but accidental use of
+ * `@InjectMultiTenantEntityManager()` on a non-database connection fails fast
+ * with an actionable message instead of `Cannot read properties of undefined`.
+ */
+function makeMtemMisuseSentinel(
+  connectionName: string,
+): MultiTenantEntityManager {
+  const error = new Error(
+    `[StingerloomOrmModule] @InjectMultiTenantEntityManager() is only available when tenantStrategy is "database" (connection "${connectionName}"). Either pass tenantStrategy: "database" in your options factory, or remove the @InjectMultiTenantEntityManager() injection from this connection.`,
+  );
+  return new Proxy({} as MultiTenantEntityManager, {
+    get(_target, prop) {
+      if (prop === MTEM_MISUSE_SENTINEL) return true;
+      throw error;
+    },
+    set() {
+      throw error;
+    },
+  });
+}
+
+function isMtemMisuseSentinel(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  try {
+    return (value as Record<symbol, unknown>)[MTEM_MISUSE_SENTINEL] === true;
+  } catch {
+    return false;
   }
 }

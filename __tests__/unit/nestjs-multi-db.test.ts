@@ -11,6 +11,7 @@ import {
   getOrmOptionsToken,
   type StingerloomOrmOptionsFactory,
 } from "../../src/integration/nestjs/stingerloom-orm-core.module";
+import { getMultiTenantEntityManagerToken } from "../../src/integration/nestjs/inject-multi-tenant-entity-manager.decorator";
 import type { DatabaseClientOptions } from "../../src/core/DatabaseClientOptions";
 import {
   getOrmServiceToken,
@@ -226,7 +227,16 @@ describe("NestJS Multi-DB Support", () => {
 
       expect(optsProvider).toBeDefined();
       expect(optsProvider.inject).toEqual([ConfigService]);
-      expect(emProvider.inject).toEqual(["STINGERLOOM_ORM_OPTIONS"]);
+      // EM provider must inject (in this exact order) the options token plus
+      // the MultiTenantEntityManager token. The MTEM value is a misuse-
+      // sentinel when tenantStrategy != "database", but the wiring contract
+      // — both tokens, in this order — has to hold either way. Testing only
+      // the first element would let an accidental drop of the MTEM token
+      // through, which is exactly the regression Copilot caught.
+      expect(emProvider.inject).toEqual([
+        "STINGERLOOM_ORM_OPTIONS",
+        getMultiTenantEntityManagerToken(),
+      ]);
       expect(mod.exports).toContain(EntityManager);
     });
 
@@ -245,7 +255,12 @@ describe("NestJS Multi-DB Support", () => {
       )!;
 
       expect(emProvider).toBeDefined();
-      expect(emProvider.inject).toEqual(["STINGERLOOM_ORM_OPTIONS_analytics"]);
+      // Same wiring contract as the default-connection test, scoped to the
+      // analytics connection name.
+      expect(emProvider.inject).toEqual([
+        "STINGERLOOM_ORM_OPTIONS_analytics",
+        getMultiTenantEntityManagerToken("analytics"),
+      ]);
       expect(mod.exports).toContain("STINGERLOOM_ENTITY_MANAGER_analytics");
     });
 

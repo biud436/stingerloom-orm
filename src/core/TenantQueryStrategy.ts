@@ -3,7 +3,7 @@ import { MetadataContext } from "../metadata/MetadataContext";
 /**
  * Strategy pattern for multi-tenant query handling.
  *
- * Three built-in strategies:
+ * Four built-in strategies:
  *
  * - **SearchPathStrategy** (default): PostgreSQL `SET LOCAL search_path` inside a
  *   transaction. Safe for all cases but requires ~5 round-trips per tenant read.
@@ -13,6 +13,10 @@ import { MetadataContext } from "../metadata/MetadataContext";
  * - **TenantColumnStrategy**: Discriminator column on every tenant-scoped entity.
  *   Works on all dialects. Requires composite indexes and `@NonTenantEntity()`
  *   opt-outs for global tables.
+ * - **DatabaseStrategy**: Physical database-per-tenant. The router layer
+ *   selects a different connection pool per tenant; this strategy class is a
+ *   no-op marker — it does not modify queries because isolation is enforced
+ *   at the connection level, not in SQL.
  */
 export interface TenantQueryStrategy {
   /** Whether tenant reads require a transaction (for SET LOCAL search_path). */
@@ -128,5 +132,35 @@ export class TenantColumnStrategy implements TenantQueryStrategy {
 
   getTenantColumnName(): string {
     return this.columnName;
+  }
+}
+
+/**
+ * Database-per-tenant strategy.
+ *
+ * Each tenant maps to its own physical database connection (pool). The
+ * `MultiTenantEntityManager` proxy resolves the current tenant from
+ * `MetadataContext` and dispatches queries to the matching `EntityManager`,
+ * each of which is bound to its own pool via the existing named-connection
+ * mechanism in `DatabaseClient`.
+ *
+ * Because isolation is enforced at the connection level, no SQL-level
+ * predicates are injected and table names are not qualified.
+ */
+export class DatabaseStrategy implements TenantQueryStrategy {
+  needsTransactionForTenantRead(): boolean {
+    return false;
+  }
+
+  qualifyTable(
+    tableName: string,
+    _tenant: string,
+    wrap: (s: string) => string,
+  ): string {
+    return wrap(tableName);
+  }
+
+  buildTenantPredicate(): null {
+    return null;
   }
 }

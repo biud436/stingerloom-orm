@@ -308,11 +308,14 @@ export class PostgresConnector extends IConnector {
     }
 
     // #213: multi-tenancy — skip SET LOCAL when the schema is "public".
-    // Also skip for the "tenant_column" strategy: there the tenant identifier
-    // is a column value, not a schema name, so switching search_path would
-    // point PG at a non-existent schema and every query would fail with
-    // "relation does not exist".
-    if (this.tenantStrategy !== "tenant_column") {
+    // The "tenant_column" and "database" strategies do not encode the tenant
+    // in a schema name, so SET LOCAL search_path would either point PG at a
+    // non-existent schema ("tenant_column") or override a per-pool schema
+    // that the user already configured ("database").
+    const schemaScopedStrategy =
+      this.tenantStrategy !== "tenant_column" &&
+      this.tenantStrategy !== "database";
+    if (schemaScopedStrategy) {
       const tenant = MetadataContext.getCurrentTenant();
       const schema = tenant !== "public" ? tenant : this.schema;
       if (schema !== "public") {

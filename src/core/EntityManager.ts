@@ -79,6 +79,7 @@ import {
   SearchPathStrategy,
   SchemaQualifiedStrategy,
   TenantColumnStrategy,
+  DatabaseStrategy,
 } from "./TenantQueryStrategy";
 import {
   StingerloomPlugin,
@@ -393,10 +394,86 @@ export class EntityManager implements BaseEntityManager {
     this._entities = resolvedEntities as ClazzType<any>[];
 
     const client = this.client as any;
-    const connector = await client.connect(
-      databaseClientOptions,
-      connectionName,
-    );
+    await client.connect(databaseClientOptions, connectionName);
+
+    await this.initializeFromConnection(databaseClientOptions, connectionName);
+  }
+
+  /**
+   * Reuse a connection that has already been registered with `DatabaseClient`
+   * (typically by another `EntityManager` or by `DatabaseClient.connect()`
+   * directly), and bring this `EntityManager` instance online against it
+   * **without opening a new pool**.
+   *
+   * This is the safe path for the `tenantStrategy: "database"` router when a
+   * `tenantDatabaseResolver` returns an already-registered connection name as
+   * a string: calling `register()` (which calls `connect()` → `client.connect()`)
+   * would instead create a brand-new connector and overwrite the existing one
+   * in `DatabaseClient`'s map without closing it, leaking the previous pool.
+   *
+   * Schema sync is intentionally NOT run here — the caller that originally
+   * registered the connection is expected to own the schema. Naming strategy
+   * and per-EM entity registration are still applied so this EM behaves the
+   * same as one created via `register()`.
+   */
+  public async attach(
+    connectionName: string,
+    overrides?: Partial<DatabaseClientOptions>,
+  ) {
+    const client = this.client as any;
+    if (typeof client.hasConnection === "function" && !client.hasConnection(connectionName)) {
+      throw new OrmError(
+        OrmErrorCode.NOT_CONNECTED,
+        `Cannot attach EntityManager: no DatabaseClient connection registered under '${connectionName}'.`,
+        `Register the connection first (e.g. DatabaseClient.getInstance().connect(opts, '${connectionName}')) before calling attach().`,
+      );
+    }
+
+    this.connectionName = connectionName;
+    const baseOptions = client.getOptions(connectionName) as DatabaseClientOptions;
+    // Spread collapses the discriminated union (postgres/mysql/sqlite share
+    // most fields but `type` is per-variant), so we cast back. The runtime
+    // shape is guaranteed because we only override fields that are valid on
+    // every variant.
+    const effective = {
+      ...baseOptions,
+      ...overrides,
+      // Schema sync is owned by whoever first registered the connection;
+      // disable it here so a second attach() never tries to re-DDL.
+      synchronize: false,
+    } as DatabaseClientOptions;
+
+    if (effective.namingStrategy) {
+      this.schemaRegistrar = new SchemaRegistrar(
+        this.resolver,
+        this._ctx,
+        effective.namingStrategy,
+      );
+    }
+
+    const resolvedEntities = await resolveEntityGlobs(effective.entities ?? []);
+    this._entities = resolvedEntities as ClazzType<any>[];
+
+    await this.initializeFromConnection(effective, connectionName);
+    this.applyNamingStrategy(effective.namingStrategy);
+    // synchronize: false ensures registerEntities() runs metadata setup
+    // without firing any DDL — same per-EM state as register(), just no
+    // schema mutation.
+    await this.schemaRegistrar.registerEntities();
+  }
+
+  /**
+   * Shared post-`client.connect()` setup: pick driver/dataSource for the
+   * connector that DatabaseClient now holds under `connectionName`, then
+   * configure QueryTracker / query timeout / tenant strategy / replication.
+   * Used by both `connect()` (fresh pool) and `attach()` (reuse pool).
+   */
+  private async initializeFromConnection(
+    databaseClientOptions: DatabaseClientOptions,
+    connectionName: string,
+  ): Promise<void> {
+    const client = this.client as any;
+    const connector = client.getConnection(connectionName);
     const { schema, queryTimeout, replication } = databaseClientOptions;
 
     // Use getType() if available, otherwise (legacy mock) fall back to client.type
@@ -481,6 +558,8 @@ export class EntityManager implements BaseEntityManager {
             ? databaseClientOptions.tenantColumnLength ?? 64
             : undefined,
       };
+    } else if (databaseClientOptions.tenantStrategy === "database") {
+      this.tenantStrategy = new DatabaseStrategy();
     }
 
     // Initialize ReplicationRouter

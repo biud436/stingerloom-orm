@@ -164,8 +164,17 @@ interface BaseDatabaseClientOptions {
    *   it on INSERT from `MetadataContext`. Works on all dialects (MySQL, PostgreSQL,
    *   SQLite). See `tenantColumnName` / `tenantColumnType` / `tenantColumnLength`
    *   to customize, and `@NonTenantEntity()` to exclude specific entities.
+   * - "database": Physical database-per-tenant. Use `MultiTenantEntityManager`
+   *   together with `tenantDatabaseResolver` or `tenantDatabaseMap` to route
+   *   each request to its own connection pool. Works on all dialects. Trades
+   *   higher operational cost (one pool per tenant) for the strongest
+   *   isolation, geo-distribution, and per-tenant backup/restore.
    */
-  tenantStrategy?: "search_path" | "schema_qualified" | "tenant_column";
+  tenantStrategy?:
+    | "search_path"
+    | "schema_qualified"
+    | "tenant_column"
+    | "database";
 
   /**
    * Column name for the `"tenant_column"` strategy. Ignored by other strategies.
@@ -184,6 +193,63 @@ interface BaseDatabaseClientOptions {
    * @default 64
    */
   tenantColumnLength?: number;
+
+  /**
+   * Resolver for the `"database"` tenant strategy.
+   *
+   * Called by `TenantConnectionRouter` the first time a tenant id is seen.
+   * Return value:
+   * - `string`: name of a connection that has already been registered with
+   *   `DatabaseClient.connect(opts, name)`.
+   * - `DatabaseClientOptions`: full options for a brand-new pool. The router
+   *   will call `DatabaseClient.connect()` and `EntityManager.register()`
+   *   automatically. The `entities` field of the returned options is ignored —
+   *   the router reuses the entities passed to the parent `register()` call
+   *   to keep schemas in sync.
+   *
+   * Mutually compatible with `tenantDatabaseMap` (the map is checked first;
+   * the resolver is the fallback).
+   */
+  tenantDatabaseResolver?: (
+    tenantId: string,
+  ) =>
+    | string
+    | DatabaseClientOptions
+    | Promise<string | DatabaseClientOptions>;
+
+  /**
+   * Static tenant→connection mapping for the `"database"` tenant strategy.
+   * Use for known-at-boot tenant lists. Each connection name listed here must
+   * have been registered with `DatabaseClient.connect(opts, name)` before any
+   * query runs under that tenant context.
+   */
+  tenantDatabaseMap?: Record<string, string>;
+
+  /**
+   * Tenants that should be eagerly provisioned at `register()` time for the
+   * `"database"` strategy. Each tenant id is resolved through
+   * `tenantDatabaseResolver` (or `tenantDatabaseMap`) and synchronously
+   * connected + synchronized so no first-request latency hits production.
+   */
+  eagerProvisionTenants?: string[];
+
+  /**
+   * Behavior when a query is issued outside any `MetadataContext.run()` block
+   * under the `"database"` strategy.
+   * - "default" (default): use the EntityManager that was passed to
+   *   `MultiTenantEntityManager.register()` (admin / public DB).
+   * - "throw": reject with `MISSING_TENANT_CONTEXT`. Use this in
+   *   per-request HTTP services to catch routing bugs early.
+   */
+  publicTenantBehavior?: "default" | "throw";
+
+  /**
+   * Idle TTL (ms) for tenant pools under the `"database"` strategy. After this
+   * many milliseconds without a query, the pool is closed and removed from the
+   * router. Subsequent queries re-resolve through the resolver.
+   * Set to 0 (default) to disable idle eviction.
+   */
+  tenantConnectionTtlMs?: number;
 
   /**
    * Plugins to install on the EntityManager after registration.

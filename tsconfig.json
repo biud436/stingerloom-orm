@@ -27,7 +27,8 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node",
+    "moduleResolution": "node10",
+    "ignoreDeprecations": "6.0",
     "allowSyntheticDefaultImports": true
   },
   "include": ["src/**/*"],
