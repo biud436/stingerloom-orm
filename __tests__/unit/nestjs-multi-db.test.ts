@@ -226,7 +226,10 @@ describe("NestJS Multi-DB Support", () => {
 
       expect(optsProvider).toBeDefined();
       expect(optsProvider.inject).toEqual([ConfigService]);
-      expect(emProvider.inject).toEqual(["STINGERLOOM_ORM_OPTIONS"]);
+      // EM provider injects both the options token (always) and the
+      // MultiTenantEntityManager token (only used when tenantStrategy is
+      // "database" — otherwise the value is undefined and ignored).
+      expect(emProvider.inject?.[0]).toBe("STINGERLOOM_ORM_OPTIONS");
       expect(mod.exports).toContain(EntityManager);
     });
 
@@ -245,7 +248,7 @@ describe("NestJS Multi-DB Support", () => {
       )!;
 
       expect(emProvider).toBeDefined();
-      expect(emProvider.inject).toEqual(["STINGERLOOM_ORM_OPTIONS_analytics"]);
+      expect(emProvider.inject?.[0]).toBe("STINGERLOOM_ORM_OPTIONS_analytics");
       expect(mod.exports).toContain("STINGERLOOM_ENTITY_MANAGER_analytics");
     });
 

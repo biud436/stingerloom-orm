@@ -20,3 +20,7 @@ export {
 } from "./stingerloom-orm.service";
 export { InjectRepository } from "./inject-repository.decorator";
 export { InjectEntityManager } from "./inject-entity-manager.decorator";
+export {
+  InjectMultiTenantEntityManager,
+  getMultiTenantEntityManagerToken,
+} from "./inject-multi-tenant-entity-manager.decorator";

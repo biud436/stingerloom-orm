@@ -79,6 +79,7 @@ import {
   SearchPathStrategy,
   SchemaQualifiedStrategy,
   TenantColumnStrategy,
+  DatabaseStrategy,
 } from "./TenantQueryStrategy";
 import {
   StingerloomPlugin,
@@ -481,6 +482,8 @@ export class EntityManager implements BaseEntityManager {
             ? databaseClientOptions.tenantColumnLength ?? 64
             : undefined,
       };
+    } else if (databaseClientOptions.tenantStrategy === "database") {
+      this.tenantStrategy = new DatabaseStrategy();
     }
 
     // Initialize ReplicationRouter

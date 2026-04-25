@@ -6,13 +6,18 @@ Imagine you're building a SaaS product — a project management tool used by hun
 
 But Company A must **never** see Company B's data. Not in API responses, not in database queries, not even by accident through a bug. This is **multi-tenancy**: one application, many isolated customers (tenants).
 
-There are three common approaches:
+There are four common approaches:
 
-1. **Separate databases** — one DB per tenant. Simple but expensive to operate.
+1. **Separate databases** — one DB per tenant. Strongest isolation, highest operational cost.
 2. **Shared database, separate schemas** — one DB, but each tenant gets its own namespace (schema). Good balance of isolation and efficiency.
 3. **Shared everything** — one DB, one schema, a `tenant_id` column on every table. Cheapest but risky — a missing WHERE clause leaks data.
+4. **Database-per-tenant with a routing layer** — same shape as #1, but the ORM transparently routes each request to the right pool based on `MetadataContext`.
 
-Stingerloom ORM supports approach **#2** (schema-based isolation on PostgreSQL) through a **layered metadata system**, and approach **#3** (a shared schema with an auto-managed `tenant_id` column that works on every dialect).
+Stingerloom ORM supports all four:
+
+- **#2 (schema-based)** via the `search_path` and `schema_qualified` strategies (PostgreSQL only) on top of a **layered metadata system**.
+- **#3 (column-based)** via the `tenant_column` strategy (every dialect).
+- **#1 / #4 (database-based)** via the `database` strategy and `MultiTenantEntityManager` (every dialect).
 
 ---
 
@@ -312,7 +317,22 @@ Schema-based multi-tenancy is currently only supported on PostgreSQL. MySQL does
 
 ## Tenant Query Strategy
 
-When a query runs inside a tenant context, the ORM needs to route it to the correct schema. There are two strategies for this, and the choice affects performance.
+When a query runs inside a tenant context, the ORM needs to route it to the correct place — schema, column predicate, or physical database. There are four strategies and the choice affects performance, isolation, and operational cost.
+
+### At a glance
+
+| Aspect | `search_path` | `schema_qualified` | `tenant_column` | `database` |
+|---|---|---|---|---|
+| Dialect support | PostgreSQL only | PostgreSQL only | All (MySQL/PG/SQLite) | All |
+| Isolation level | schema | schema | row (predicate) | **physical DB** |
+| Round-trips per read | ~5 (BEGIN/SET LOCAL/...) | 1 | 1 | 1 |
+| Connection pools | 1 shared | 1 shared | 1 shared | **N (one per tenant)** |
+| New tenant cost | `CREATE SCHEMA` | `CREATE SCHEMA` | free | **`CREATE DATABASE`** |
+| Cross-tenant joins | OK (same DB) | OK (same DB) | OK (filter by `tenant_id`) | impossible (different DB) |
+| Tenants supported | ~100–1k | ~100–1k | 1k+ | ~50 (pool budget) |
+| Geo / compliance separation | ❌ | ❌ | ❌ | ✅ |
+| Per-tenant backup/restore | DB-level | DB-level | DB-level | **trivial** |
+| Operational complexity | low | low | lowest | **highest** |
 
 ### What is a "round-trip"?
 
@@ -586,6 +606,183 @@ PostgreSQL Row-Level Security (`CREATE POLICY`) is sometimes proposed as a safer
 - **Scope creep.** `CREATE POLICY` is DDL the ORM would have to own end-to-end — policy generation, diffing, migration — doubling the surface area of the schema subsystem for a single-dialect feature.
 
 If you need database-enforced row-level isolation on PostgreSQL, apply RLS policies alongside Stingerloom at the DBA layer — but don't expect the ORM to manage them.
+
+---
+
+## Strategy 4: `database` (All Dialects, Physical Isolation)
+
+`tenantStrategy: "database"` gives every tenant its own physical database — its own pool, its own DDL, its own backup file. The ORM exposes this through `MultiTenantEntityManager`, a thin proxy that resolves `MetadataContext.getCurrentTenant()` on every call and delegates to the matching tenant `EntityManager`. Internally each tenant lives behind the same named-connection mechanism `DatabaseClient` already uses for multi-DB setups — the strategy is **not** a deep query-engine rewrite.
+
+### When to choose it
+
+Pick the database strategy when at least one of these is true:
+
+- **Compliance** — GDPR data residency, HIPAA enterprise tier, KISA, etc. require physical separation.
+- **Geographic distribution** — different tenants live on different DB hosts (e.g. APAC tenants on Seoul, EU tenants on Frankfurt).
+- **Per-tenant backup/restore SLAs** — `pg_dump tenant_acme` should produce one tenant's data and nothing else.
+- **A small number of high-value tenants** — typically ≤50 enterprise customers, not thousands of free-tier accounts.
+
+For SaaS scenarios with thousands of cheap tenants, `tenant_column` is dramatically cheaper to operate. Use `database` only when the strict isolation pays for the extra pools, deployments, and migrations.
+
+### Enabling the strategy
+
+```typescript
+import { MultiTenantEntityManager, MetadataContext } from "@stingerloom/orm";
+
+const em = new MultiTenantEntityManager();
+
+await em.register({
+  type: "postgres",
+  database: "app_admin",          // shared "admin" / "public" DB
+  username: "postgres",
+  password: "postgres",
+  host: "localhost",
+  port: 5432,
+  entities: [User, Post],
+  synchronize: true,
+  tenantStrategy: "database",
+  tenantDatabaseResolver: (tenantId) => ({
+    type: "postgres",
+    database: `app_${tenantId}`,  // one physical DB per tenant
+    username: "postgres",
+    password: "postgres",
+    host: "localhost",
+    port: 5432,
+    entities: [User, Post],
+    synchronize: true,
+  }),
+});
+
+await MetadataContext.run("acme", () => em.find(User));   // → app_acme DB
+await MetadataContext.run("globex", () => em.find(User)); // → app_globex DB
+```
+
+The same options work on MySQL and SQLite — only the per-tenant `type` / `host` need to change.
+
+### Resolver vs. static map
+
+There are two ways to tell the router which physical DB belongs to which tenant:
+
+- **`tenantDatabaseResolver: (tenantId) => DatabaseClientOptions | string`** — called once per tenant on first use. Return a full options object to provision a brand-new pool, or a string naming a connection you already registered with `DatabaseClient.connect()`. Failures are not cached; a retry calls the resolver again.
+- **`tenantDatabaseMap: Record<string, string>`** — a static dictionary checked before the resolver runs, useful when every tenant is known at deploy time.
+
+Both are accepted simultaneously; the map wins if both have an entry for the same tenant.
+
+### Eager provisioning
+
+Lazy resolution is fine for development, but production traffic should not pay the cold-start cost on the first request:
+
+```typescript
+await em.register({
+  // ...
+  tenantStrategy: "database",
+  tenantDatabaseResolver: (tenantId) => ({ /* ... */ }),
+  eagerProvisionTenants: ["acme", "globex"],   // resolved at register() time
+});
+```
+
+`eagerProvisionTenants` runs the resolver and `synchronize` for every listed tenant before `register()` returns. Pair it with a startup health check.
+
+### Public-context behavior
+
+When a query reaches the MTEM **outside** any `MetadataContext.run()` block, the strategy needs a policy:
+
+```typescript
+publicTenantBehavior: "default"   // (default) route to the admin/public EM
+publicTenantBehavior: "throw"     // reject the call with MISSING_TENANT_CONTEXT
+```
+
+Use `"throw"` in HTTP services where every request *must* set a tenant — a missing context becomes a fast-failing bug instead of a silent admin-DB write.
+
+### Cross-tenant transactions are forbidden
+
+A SQL transaction is bound to a single connection, which is bound to a single physical database. Switching tenants mid-transaction therefore can't preserve atomicity:
+
+```typescript
+await MetadataContext.run("acme", async () => {
+  await em.transaction(async () => {
+    await em.save(User, { name: "alice" });
+
+    await MetadataContext.run("globex", async () => {
+      // ↑ throws OrmErrorCode.CROSS_TENANT_TRANSACTION
+      await em.save(User, { name: "carol" });
+    });
+  });
+});
+```
+
+If you genuinely need to write to two tenants atomically, you don't have a multi-tenant problem — you have a distributed-transaction problem. Use saga / outbox patterns at the application layer instead.
+
+### Admin fan-out: `forEachTenant`
+
+For dashboards, audits, and migrations you'll want to operate on every tenant:
+
+```typescript
+const counts = await em.forEachTenant(async (tenantEm, tenantId) => ({
+  tenantId,
+  total: await tenantEm.count(User),
+}));
+// → [{ tenantId: "acme", value: { tenantId: "acme", total: 142 } }, ...]
+```
+
+Three modes are supported:
+
+- `"all"` (default) — `Promise.all`, fail-fast on the first rejection.
+- `"settled"` — `Promise.allSettled`, returns per-tenant `{ value }` or `{ error }`.
+- `"sequential"` — one tenant at a time. Useful when you don't want to overwhelm shared infrastructure.
+
+`forEachTenant` only iterates tenants the router has already resolved. Lazy-only tenants need to be touched (or eagerly provisioned) first.
+
+### NestJS integration
+
+```typescript
+import { Module, Injectable } from "@nestjs/common";
+import {
+  StingerloomOrmModule,
+  InjectMultiTenantEntityManager,
+  MultiTenantEntityManager,
+} from "@stingerloom/orm/nestjs";
+
+@Module({
+  imports: [
+    StingerloomOrmModule.forRoot({
+      type: "postgres",
+      database: "app_admin",
+      // ...
+      tenantStrategy: "database",
+      tenantDatabaseResolver: (id) => ({ /* ... */ }),
+    }),
+  ],
+})
+class AppModule {}
+
+@Injectable()
+class UserService {
+  constructor(
+    @InjectMultiTenantEntityManager()
+    private readonly em: MultiTenantEntityManager,
+  ) {}
+
+  async listUsers() {
+    // Tenant context is populated by middleware → routed to the right DB.
+    return this.em.find(User);
+  }
+}
+```
+
+`@InjectEntityManager()` continues to work — under `tenantStrategy: "database"` it resolves to the **admin / public** EM held by the MTEM, suitable for global tables.
+
+### Connection pool budget
+
+The flip side of physical isolation is connection pool *multiplication*. With 50 tenants × `pool.max: 10`, you're asking the database server for 500 connections — PostgreSQL's default `max_connections` is 100. Defensive defaults:
+
+- Set `pool.max` per tenant to a low number (e.g. 5).
+- Set `tenantConnectionTtlMs` to evict idle tenant pools and recycle them on demand.
+- Monitor `DatabaseClient.getInstance().getRegisteredNames().length` so you notice when the population grows past expectations.
+
+### Raw SQL is safe (no warning)
+
+Because isolation is enforced at the connection level, `em.query("SELECT * FROM user")` only ever sees the current tenant's database. The `tenant_column` raw-SQL warning does not fire under this strategy — there's no `WHERE tenant_id = ?` to bypass.
 
 ---
 

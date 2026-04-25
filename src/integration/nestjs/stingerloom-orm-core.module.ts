@@ -6,8 +6,10 @@ import {
   Type,
 } from "@nestjs/common";
 import { EntityManager } from "../../core/EntityManager";
+import { MultiTenantEntityManager } from "../../core/MultiTenantEntityManager";
 import type { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { getEntityManagerToken } from "./stingerloom-orm.module";
+import { getMultiTenantEntityManagerToken } from "./inject-multi-tenant-entity-manager.decorator";
 
 export interface StingerloomOrmOptionsFactory {
   createStingerloomOrmOptions():
@@ -42,6 +44,34 @@ export class StingerloomOrmCoreModule {
     connectionName = "default",
   ): DynamicModule {
     const emToken = getEntityManagerToken(connectionName);
+    const isDatabaseStrategy = options.tenantStrategy === "database";
+    const mtemToken = getMultiTenantEntityManagerToken(connectionName);
+
+    if (isDatabaseStrategy) {
+      // One MTEM instance is the source of truth; the plain EntityManager
+      // token resolves to its admin/public EM so existing @InjectEntityManager
+      // call sites keep working for global tables.
+      const mtemProvider: Provider = {
+        provide: mtemToken,
+        useFactory: async () => {
+          const mtem = new MultiTenantEntityManager();
+          await mtem.register(options);
+          return mtem;
+        },
+      };
+      const emProvider: Provider = {
+        provide: emToken,
+        useFactory: (mtem: MultiTenantEntityManager) =>
+          mtem.getDefaultEntityManager(),
+        inject: [mtemToken],
+      };
+      return {
+        module: StingerloomOrmCoreModule,
+        providers: [mtemProvider, emProvider],
+        exports: [emToken, mtemToken],
+      };
+    }
+
     return {
       module: StingerloomOrmCoreModule,
       providers: [
@@ -63,6 +93,7 @@ export class StingerloomOrmCoreModule {
   ): DynamicModule {
     const connectionName = asyncOptions.connectionName ?? "default";
     const emToken = getEntityManagerToken(connectionName);
+    const mtemToken = getMultiTenantEntityManagerToken(connectionName);
     const optionsToken = getOrmOptionsToken(connectionName);
 
     const asyncProviders = StingerloomOrmCoreModule.createAsyncProviders(
@@ -70,22 +101,48 @@ export class StingerloomOrmCoreModule {
       optionsToken,
     );
 
+    // The async path can't read tenantStrategy at module-construction time,
+    // so we always provide the MTEM token as a lazy factory that no-ops when
+    // the resolved options don't request the database strategy.
+    const mtemProvider: Provider = {
+      provide: mtemToken,
+      useFactory: async (options: DatabaseClientOptions) => {
+        if (options.tenantStrategy !== "database") {
+          // Provide undefined so accidental @InjectMultiTenantEntityManager
+          // usage on a non-database-strategy connection fails fast at
+          // module-init rather than at first query.
+          return undefined;
+        }
+        const mtem = new MultiTenantEntityManager();
+        await mtem.register(options);
+        return mtem;
+      },
+      inject: [optionsToken],
+    };
+
     return {
       module: StingerloomOrmCoreModule,
       imports: asyncOptions.imports ?? [],
       providers: [
         ...asyncProviders,
+        mtemProvider,
         {
           provide: emToken,
-          useFactory: async (options: DatabaseClientOptions) => {
+          useFactory: async (
+            options: DatabaseClientOptions,
+            mtem?: MultiTenantEntityManager,
+          ) => {
+            if (options.tenantStrategy === "database" && mtem) {
+              return mtem.getDefaultEntityManager();
+            }
             const em = new EntityManager();
             await em.register(options, connectionName);
             return em;
           },
-          inject: [optionsToken],
+          inject: [optionsToken, mtemToken],
         },
       ],
-      exports: [emToken],
+      exports: [emToken, mtemToken],
     };
   }
 
