@@ -6,6 +6,75 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.20.0] — 2026-04-26
+
+### Highlights
+
+- **Two new multi-tenancy strategies** — `tenant_column` (discriminator column, works on every dialect) and `database` (physical DB-per-tenant via `MultiTenantEntityManager`). Combined with the existing PostgreSQL `search_path` and `schema_qualified` strategies, the ORM now ships all four mainstream isolation models out of the box.
+- **`MultiTenantEntityManager`** — new proxy that resolves `MetadataContext.getCurrentTenant()` on every call and delegates to a per-tenant `EntityManager`, each bound to its own pool through the existing named-connection mechanism. Static `tenantDatabaseMap` and lazy `tenantDatabaseResolver` (with in-flight dedupe) are both supported.
+- **`WriteBuffer.detachByPk()` / `detachAll()`** — ergonomic detach for the two cases the existing `detach(instance)` couldn't cover: detaching when only a PK is in hand, and resetting all tracked state without wiping the queues.
+- **TypeScript 6.0** — upgraded from `^5.6.2` to `^6.0.3`. `moduleResolution: "node"` deprecation silenced via the new `ignoreDeprecations: "6.0"` option.
+
+### Added
+
+#### Multi-tenancy — `tenant_column` strategy (PR #268)
+
+Discriminator-column multi-tenancy that works uniformly across MySQL, PostgreSQL, and SQLite. With `tenantStrategy: "tenant_column"`, the ORM auto-adds a `tenant_id` column to every entity's DDL, populates it on INSERT from `MetadataContext`, and throws when the caller's context is missing or mismatched.
+
+- **`@TenantColumn` / `@NonTenantEntity` decorators** — Hibernate `@TenantId`-style. `@NonTenantEntity` opts an entity (lookup tables, audit logs) out of the auto-injected predicate.
+- **`MetadataContext.runUnscoped()`** — escape hatch for cross-tenant admin tasks. Runs the callback with no tenant in context; the predicate-injection path skips the WHERE-clause append and the IdentityMap skips the 1st-level cache so PK lookups can't return another tenant's row.
+- **DDL auto-injection** — `SchemaRegistrar` adds the discriminator column and a `(tenant_id, ...)` composite index without entity changes.
+- **Write-path scoping** — `save / saveMany / insertMany / upsert / batchUpsert` populate the tenant column from context and reject `TENANT_MISMATCH` writes.
+- **Read/write predicate injection across every entry point** — `find / findOne / findWithCursor / count / exists / sum / avg / min / max`, `updateMany`, `softDelete`, `restore`, `deleteMany`, plus `SelectQueryBuilder` (`toSql / getCount / exists`, M2O / O2M / O2O subqueries) and batched `RelationLoader` queries for OneToMany / ManyToMany / inverse OneToOne.
+- **Per-call opt-out** — `qb.withoutTenantScope()` chainable builder, `FindOption.withoutTenantScope`, `CursorPaginationOption.withoutTenantScope`.
+- **Raw-query safety net** — `EntityManager.query()` emits a call-site-deduped warning when raw SQL runs under an active tenant context.
+- **Buffer / Identity Map isolation** — `IdentityMapManager` keys are prefixed with the tenant (`"<tenant>|Class:pk=..."`) so PK lookups can't cross tenants.
+
+#### Multi-tenancy — `tenant_strategy: "database"` (PR #269)
+
+Physical database-per-tenant with full multi-pool routing.
+
+- **`MultiTenantEntityManager`** — new proxy class. Full CRUD / transaction / query-builder / repository delegation, broadcast for events / subscribers / plugins, cross-tenant transaction guard via `AsyncLocalStorage`.
+- **`TenantConnectionRouter`** — owns `Map<tenantId, EntityManager>`, idle-TTL eviction, pre-warm / release. Concurrent first-resolves of the same tenant share a single resolver call.
+- **`DatabaseStrategy`** — no-op tenant strategy class; isolation is enforced at the pool layer for this mode.
+- **`EntityManager.attach(connectionName, overrides?)`** — reuses an existing `DatabaseClient` connection without re-calling `client.connect()`. Used by `TenantConnectionRouter` in the resolver-returned-string branch to avoid pool leaks where `DatabaseClient.connect()` would overwrite the existing connector without closing it. Common post-connect setup extracted into `initializeFromConnection()` and shared with `connect()`.
+- **NestJS integration** — `@InjectMultiTenantEntityManager()` decorator + auto-wired provider; `@InjectEntityManager()` continues to work and resolves to the admin / public EM under this strategy. `forRoot` / `forRootAsync` pass `connectionName` into `mtem.register` so Nest named connections stay isolated. Misuse paths fail fast: the MTEM provider returns a sentinel Proxy when `tenantStrategy != "database"`, and the EM provider throws when the strategy is `"database"` but MTEM is missing.
+- **Per-MTEM admin-pool naming** — admin connection name is `"default"` (default MTEM) or `"<name>__admin"` (named), so multiple MTEMs coexist without stomping each other's `"default"` connector in `DatabaseClient`.
+- **PostgresConnector dialect guard** — `SET LOCAL search_path` is now skipped for `tenantStrategy: "database"` and `"tenant_column"` (the tenant value is a column / DB, not a schema).
+
+#### WriteBuffer
+
+- **`WriteBuffer.detachByPk(class, pk)`** — looks up the Identity Map and delegates to `detach()`. Supports scalar and composite PKs, idempotent on miss.
+- **`WriteBuffer.detachAll()`** — detaches every tracked entity and cancels the pending persist queue, transitioning each to `DETACHED`. Class- / criteria-level queues (`delete / bulkUpdate / bulkDelete / save`) are preserved; `clear()` remains the full-reset escape hatch.
+
+### Changed
+
+- **TypeScript devDep `^5.6.2` → `^6.0.3`** — `moduleResolution: "node"` is deprecated in TS 6.0 and slated for removal in TS 7.0. Both `tsconfig.json` and `__tests__/tsconfig.json` switch to the explicit `"node10"` form plus `ignoreDeprecations: "6.0"`. `jest.config.js` now points `ts-jest` at `__tests__/tsconfig.json` so the test config's `types: ["jest", "node"]` still resolves under TS 6's stricter `@types` auto-loading. Migrating to `"node16"` / `"nodenext"` / `"bundler"` (the long-term TS 7 options) is intentionally **not** part of this release — that path forces explicit `.js` extensions on every relative import in the dual CJS/ESM build.
+
+### Documentation
+
+- **`docs/multi-tenancy.md` + `docs/ko/multi-tenancy.md`** — rewritten with a 4-strategy comparison table (`search_path` / `schema_qualified` / `tenant_column` / `database`), full sections per strategy, decision-tree guidance, and `MTEM` / `EM` abbreviations expanded to `MultiTenantEntityManager` / `EntityManager` for readability. Korean tone pass smooths the prose; emoji markers dropped in favor of plain-text labels.
+- **Five previously undocumented features documented** in both `docs/` (EN) and `docs/ko/` (KO) trees:
+  - `entities.md` — `@JsonIndex` decorator: `path` / `using` / `opclass` / `where` options, dialect behavior, QueryDSL pairing.
+  - `advanced.md` — Custom Deserializer strategy: `DeserializerRegistry` API, `DeserializeOptions` reference, swap scenarios.
+  - `production-guide.md` — built-in `ConnectionLeakDetector`: `leakDetectionThresholdMs` tuning table, observational-only note.
+  - `plugins.md` — `PluginContext.getEntityMetadata` / `registerPlaceholder`, `beforeTransaction` / `afterTransaction` hooks, hook error-handling semantics.
+  - `configuration.md` — NamingStrategy guide: `SnakeNamingStrategy` usage, custom strategy template, method reference, identifier-length gotchas.
+- **`docs/write-buffer.md` + `docs/ko/write-buffer.md`** — new untrack/detach section covering `detachByPk` and `detachAll`.
+
+### Tests
+
+- **`__tests__/integration/tenant-column.test.ts` + `sqlite/tenant-column.test.ts`** — 39 integration tests across SQLite + MySQL + PostgreSQL (13/dialect): DDL round-trip, CRUD isolation, cross-tenant PK scoping, `MISSING_TENANT_CONTEXT` / `TENANT_MISMATCH` INSERT errors, `@NonTenantEntity` passthrough, `runUnscoped()` escape, eager-load propagation, `em.query()` warning, AsyncLocalStorage concurrency.
+- **`__tests__/unit/tenant-column-*.test.ts`** — 55 unit tests across decorator, strategy, DDL, INSERT, queries (16 cross-tenant isolation cases on each scoped path), QueryBuilder, RelationLoader, raw-query warning, and IdentityMap buffer isolation.
+- **`__tests__/integration/tenant-database.test.ts` + `sqlite/tenant-database.test.ts`** — 32 integration tests across SQLite (12) + MySQL (10) + PostgreSQL (10). MTEM lifecycle, per-tenant EM caching, idle eviction, cross-tenant transaction guard.
+- **`__tests__/unit/multi-tenant-entity-manager.test.ts` + `tenant-connection-router.test.ts` + `nestjs-multi-tenant-entity-manager.test.ts`** — 26 new unit tests covering MTEM proxy delegation, router internals, and Nest DI wiring.
+- **`__tests__/integration/tenant-database-config-injection.test.ts`** — 2 SQLite-backed integration tests verifying `forRootAsync` with `inject: [FakeConfigService]` flows ConfigService values into the resolver closure, and that the resolver fires exactly once per tenant.
+- **`__tests__/unit/buffer-plugin.test.ts`** — 17 new tests covering `detachByPk` / `detachAll` and `persist()` same-ID semantics (Identity conflict throw, distinct no-PK queueing, post-flush re-persist no-op, slot-free after `untrack` / `detachByPk`).
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.19.2...v0.20.0
+
+---
+
 ## [0.19.2] — 2026-04-22
 
 ### Highlights
