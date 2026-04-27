@@ -36,6 +36,9 @@ import {
   ManyToManyMetadata,
 } from "../../decorators/ManyToMany";
 import { ColumnMetadata } from "../../scanner/ColumnScanner";
+import { escapeSqlLiteral } from "../../utils/escapeSqlLiteral";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import {
   RELATION_COLUMN_TOKEN,
   RelationColumnMetadata,
@@ -291,7 +294,12 @@ export class SchemaGenerator {
         ft.name ?? `fts_${tableName}_${ft.columns.join("_")}`;
 
       if (this.dialect === "postgres") {
-        const lang = ft.language ?? "english";
+        // #285: validate + escape the text-search configuration name so it
+        // can't break out of the SQL literal. Postgres `regconfig` values
+        // are identifier-shaped (letters/digits/underscore), so reject
+        // anything outside that grammar before applying defense-in-depth
+        // escaping.
+        const lang = sanitizeFullTextLanguage(ft.language ?? "english");
         const expr = ft.columns.length === 1
           ? `to_tsvector('${lang}', ${this.wrapId(ft.columns[0])})`
           : `to_tsvector('${lang}', ${ft.columns.map((c) => this.wrapId(c)).join(" || ' ' || ")})`;
@@ -882,4 +890,22 @@ export class SchemaGenerator {
     // MySQL allows up to 64 chars; PostgreSQL up to 63 → standardize on 63
     return base.length > 63 ? `fk_${hash}` : base;
   }
+}
+
+// #285: PostgreSQL regconfig identifiers are letters/digits/underscore. Reject
+// anything outside that grammar so a malicious `language` option cannot break
+// out of the to_tsvector literal at startup. Defense-in-depth escape applied
+// even on the validated path, since the value is interpolated into a literal.
+const FULLTEXT_LANGUAGE_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+function sanitizeFullTextLanguage(value: string): string {
+  if (!FULLTEXT_LANGUAGE_PATTERN.test(value)) {
+    throw new OrmError(
+      OrmErrorCode.VALIDATION_ERROR,
+      `Invalid @FullTextIndex language: "${value}". Expected a PostgreSQL ` +
+        `text-search configuration identifier (letters, digits, underscore).`,
+      "Use a valid regconfig name such as 'english', 'simple', 'korean'.",
+    );
+  }
+  return escapeSqlLiteral(value);
 }

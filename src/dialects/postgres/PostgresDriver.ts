@@ -18,17 +18,11 @@ import { DbVersion } from "../DbVersion";
 import { PostgresCapabilities } from "../DialectCapabilities";
 import { resolvePostgresCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
+import { escapeSqlLiteral } from "../../utils/escapeSqlLiteral";
 
-/**
- * Escape an enum value for safe interpolation into DDL strings.
- * Rejects null bytes and escapes backslashes + single quotes.
- */
-function escapeEnumValue(val: string): string {
-  if (val.includes('\0')) {
-    throw new OrmError(OrmErrorCode.VALIDATION_ERROR, `Enum value contains null byte`);
-  }
-  return val.replace(/\\/g, '\\\\').replace(/'/g, "''");
-}
+// Backwards-compatible alias — now delegates to the shared helper used by
+// SchemaRegistrar (#286) and SchemaGenerator (#285).
+const escapeEnumValue = escapeSqlLiteral;
 
 /**
  * SQL driver implementation for PostgreSQL.

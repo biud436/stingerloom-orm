@@ -45,10 +45,14 @@ export class PostgresDataSource implements IDataSource {
       throw new PostgresConnectionError();
     }
 
-    await this.connector.rollback(this.connection);
-    // PostgresConnector.rollback() calls client.release() internally,
-    // so clear the connection reference to avoid a double release.
-    this.connection = undefined;
+    try {
+      await this.connector.rollback(this.connection);
+    } finally {
+      // PostgresConnector.rollback() always releases the client (destructively
+      // on failure), so clear the reference even when the connector throws —
+      // otherwise a later close() would attempt a double release.
+      this.connection = undefined;
+    }
   }
 
   async commit() {
@@ -56,10 +60,13 @@ export class PostgresDataSource implements IDataSource {
       throw new PostgresConnectionError();
     }
 
-    await this.connector.commit(this.connection);
-    // PostgresConnector.commit() calls client.release() internally,
-    // so clear the connection reference to avoid a double release.
-    this.connection = undefined;
+    try {
+      await this.connector.commit(this.connection);
+    } finally {
+      // PostgresConnector.commit() always releases the client (destructively
+      // on failure), so clear the reference even when the connector throws.
+      this.connection = undefined;
+    }
   }
 
   async query(sql: string | Sql) {

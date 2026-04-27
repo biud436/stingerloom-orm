@@ -149,29 +149,21 @@ export class SqliteConnector extends IConnector {
 
   private executeRaw(db: Database.Database, sql: string, values?: any[]): any {
     const sanitized = this.sanitizeValues(values);
-    const trimmed = sql.trimStart().toUpperCase();
+    const stmt = db.prepare(sql);
 
-    // Statements that return rows: SELECT / PRAGMA / EXPLAIN / WITH (CTE)
-    if (
-      trimmed.startsWith("SELECT") ||
-      trimmed.startsWith("PRAGMA") ||
-      trimmed.startsWith("EXPLAIN") ||
-      trimmed.startsWith("WITH")
-    ) {
-      const stmt = db.prepare(sql);
+    // better-sqlite3 exposes `Statement.reader: boolean` — true iff the
+    // statement returns rows. Branch on that flag instead of parsing SQL
+    // text, which misclassifies leading comments and CTE-prefixed writes
+    // (#287).
+    if (stmt.reader) {
       return sanitized && sanitized.length > 0
         ? stmt.all(...sanitized)
         : stmt.all();
     }
 
-    // Non-query statements: INSERT / UPDATE / DELETE / CREATE / ALTER / DROP
-    const stmt = db.prepare(sql);
-    const result =
-      sanitized && sanitized.length > 0
-        ? stmt.run(...sanitized)
-        : stmt.run();
-
-    return result;
+    return sanitized && sanitized.length > 0
+      ? stmt.run(...sanitized)
+      : stmt.run();
   }
 
   async close(): Promise<void> {

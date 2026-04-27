@@ -40,6 +40,7 @@ import {
   getTenantColumnMetadata,
   isNonTenantEntity,
 } from "../decorators/TenantColumn";
+import { escapeSqlLiteral } from "../utils/escapeSqlLiteral";
 
 /**
  * DDL / schema synchronization handler that runs once at application start.
@@ -509,10 +510,13 @@ export class SchemaRegistrar {
     let type = col.columnType ?? "VARCHAR(255)";
 
     // For ENUM types, include the value list from enumValues.
+    // #286: escape backslashes too, not just single quotes — under MySQL's
+    // default `NO_BACKSLASH_ESCAPES = OFF` mode a trailing `\` will swallow
+    // the closing `'` and let the next value continue as raw DDL.
     const isENUM = type.toUpperCase().startsWith("ENUM");
     if (isENUM && col.enumValues && col.enumValues.length > 0) {
       const values = col.enumValues
-        .map((v: string) => `'${v.replace(/'/g, "''")}'`)
+        .map((v: string) => `'${escapeSqlLiteral(v)}'`)
         .join(",");
       type = `ENUM(${values})`;
     }
@@ -839,10 +843,12 @@ export class SchemaRegistrar {
           mappingTableMetadata.name || this.ctx.getNameStrategy(mappingEntity);
 
         // Add the joinColumn first if the column is missing from the table.
+        // Derive the FK column type from the referenced entity's PK type so
+        // UUID/varchar/bigint PKs aren't silently coerced to INT (#284).
         if (driver) {
           const columnExists = await driver.hasColumn(tableName, joinColumn);
           if (!columnExists) {
-            const fkColumnType = driver.castType("int") + " NULL";
+            const fkColumnType = this.resolvePkColumnType(mappingEntity) + " NULL";
             await driver.addColumn(tableName, joinColumn, fkColumnType);
           }
         }
@@ -896,10 +902,12 @@ export class SchemaRegistrar {
       }
 
       // Add the joinColumn first if the column is missing from the table.
+      // Derive the FK column type from the referenced entity's PK type so
+      // UUID/varchar/bigint PKs aren't silently coerced to INT (#284).
       if (driver) {
         const columnExists = await driver.hasColumn(tableName, joinColumn);
         if (!columnExists) {
-          const fkColumnType = driver.castType("int") + " NULL";
+          const fkColumnType = this.resolvePkColumnType(RelatedEntity) + " NULL";
           await driver.addColumn(tableName, joinColumn, fkColumnType);
         }
       }

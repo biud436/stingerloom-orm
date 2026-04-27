@@ -72,6 +72,17 @@ export class SqliteDriver implements ISqlDriver {
       stmt.raw(true);
     }
 
+    // better-sqlite3 throws if stmt.all() is called on a non-row-returning
+    // statement (e.g. CTE-prefixed UPDATE/DELETE without RETURNING). Branch
+    // on stmt.reader so writes route to stmt.run() (#287).
+    if (!stmt.reader) {
+      const result =
+        sanitized && sanitized.length > 0
+          ? stmt.run(...sanitized)
+          : stmt.run();
+      return [result] as any;
+    }
+
     return sanitized && sanitized.length > 0
       ? stmt.all(...sanitized)
       : stmt.all();

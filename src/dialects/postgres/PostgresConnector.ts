@@ -331,8 +331,15 @@ export class PostgresConnector extends IConnector {
       throw new ConnectionNotFound();
     }
 
-    await client.query("ROLLBACK");
-    client.release();
+    try {
+      await client.query("ROLLBACK");
+      client.release();
+    } catch (rollbackError) {
+      // ROLLBACK itself failed — txn state unknown, destroy the client
+      // so it is not returned to the pool.
+      client.release(true);
+      throw rollbackError;
+    }
   }
 
   async commit(connection: any): Promise<void> {
@@ -343,12 +350,16 @@ export class PostgresConnector extends IConnector {
 
     try {
       await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
       client.release();
-      throw error;
+    } catch (commitError) {
+      try {
+        await client.query("ROLLBACK");
+        client.release();
+      } catch {
+        // Recovery ROLLBACK also failed — destructively release exactly once
+        client.release(true);
+      }
+      throw commitError;
     }
-
-    client.release();
   }
 }

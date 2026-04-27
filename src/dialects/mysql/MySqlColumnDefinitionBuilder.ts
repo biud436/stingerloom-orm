@@ -2,6 +2,7 @@ import { ColumnOption, ColumnType } from "../../decorators/Column";
 import { ColumnDefContext } from "../ColumnDefinitionBuilder";
 import { BaseColumnDefinitionBuilder } from "../BaseColumnDefinitionBuilder";
 import { Exception } from "../../errors";
+import { escapeSqlLiteral } from "../../utils/escapeSqlLiteral";
 import { ALL_MYSQL } from "../DialectCapabilities";
 import type { MySqlCapabilities, CommonCapabilities } from "../DialectCapabilities";
 import type { DialectName } from "../../core/ColumnTypeRegistry";
@@ -99,8 +100,11 @@ export class MySqlColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
       option.enumValues &&
       option.enumValues.length > 0
     ) {
+      // #286: escape backslashes too, not just single quotes — under MySQL's
+      // default `NO_BACKSLASH_ESCAPES = OFF` mode a trailing `\` swallows the
+      // closing `'` and lets the next value continue as raw DDL.
       const values = option.enumValues
-        .map((v: string) => `'${v.replace(/'/g, "''")}'`)
+        .map((v: string) => `'${escapeSqlLiteral(v)}'`)
         .join(",");
       return `ENUM(${values})`;
     }
