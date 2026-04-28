@@ -4246,7 +4246,6 @@ export class EntityManager implements BaseEntityManager {
       throw e;
     } finally {
       this.txDirtyEntities.delete(session);
-      this.dirtyEntities.clear();
       try {
         await session.close();
       } catch (closeError) {

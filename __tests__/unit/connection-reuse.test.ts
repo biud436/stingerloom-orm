@@ -473,8 +473,8 @@ describe("Connection Reuse (Issue #30)", () => {
     });
   });
 
-  describe("dirtyEntities cleanup after transaction (Issue #97)", () => {
-    it("should clear dirtyEntities after successful commit", async () => {
+  describe("dirtyEntities cleanup after transaction (Issue #97 / #278)", () => {
+    it("does not wipe shared dirtyEntities Set on commit (#278)", async () => {
       mockQuery
         .mockResolvedValueOnce({
           results: { insertId: 1, affectedRows: 1 },
@@ -486,31 +486,33 @@ describe("Connection Reuse (Issue #30)", () => {
         }); // re-read
 
       const dirtyEntities = (em as any).dirtyEntities as Set<any>;
-      // Simulate entities marked dirty during cascade
-      dirtyEntities.add({ id: 99 });
-      dirtyEntities.add({ id: 100 });
-      expect(dirtyEntities.size).toBe(2);
+      // Pre-existing non-tx writers (other request, other code path)
+      const survivor1 = { id: 99 };
+      const survivor2 = { id: 100 };
+      dirtyEntities.add(survivor1);
+      dirtyEntities.add(survivor2);
 
       await em.save(User, { name: "Alice", email: "a@test.com" });
 
-      // dirtyEntities should be cleared after transaction completes
-      expect(dirtyEntities.size).toBe(0);
+      // Concurrent non-tx state must survive a tx commit (#278).
+      expect(dirtyEntities.has(survivor1)).toBe(true);
+      expect(dirtyEntities.has(survivor2)).toBe(true);
     });
 
-    it("should clear dirtyEntities after rollback on error", async () => {
+    it("does not wipe shared dirtyEntities Set on rollback (#278)", async () => {
       mockQuery
         .mockRejectedValueOnce(new Error("Constraint violation")); // INSERT fails
 
       const dirtyEntities = (em as any).dirtyEntities as Set<any>;
-      dirtyEntities.add({ id: 99 });
-      expect(dirtyEntities.size).toBe(1);
+      const survivor = { id: 99 };
+      dirtyEntities.add(survivor);
 
       await expect(
         em.save(User, { name: "Fail", email: "fail@test.com" }),
       ).rejects.toThrow("Constraint violation");
 
-      // dirtyEntities should still be cleared even on rollback
-      expect(dirtyEntities.size).toBe(0);
+      // Shared Set is untouched on rollback too.
+      expect(dirtyEntities.has(survivor)).toBe(true);
     });
 
     it("should not clear dirtyEntities for reused session (nested transaction)", async () => {
