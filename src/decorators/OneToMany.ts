@@ -75,6 +75,6 @@ export function OneToMany<T>(
     );
 
     const uniqueKey = scanner.createUniqueKey();
-    scanner.set<OneToManyMetadata<T>>(uniqueKey, metadata);
+    scanner.setOnPublic<OneToManyMetadata<T>>(uniqueKey, metadata);
   };
 }

@@ -115,6 +115,6 @@ export function ManyToMany<T>(
     );
 
     const uniqueKey = scanner.createUniqueKey();
-    scanner.set<ManyToManyMetadata<T>>(uniqueKey, metadata);
+    scanner.setOnPublic<ManyToManyMetadata<T>>(uniqueKey, metadata);
   };
 }

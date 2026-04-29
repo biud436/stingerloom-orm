@@ -147,7 +147,7 @@ export class EntitySchemaRegistrar {
 
       // Store in Scanner (same as @Column)
       const uniqueKey = columnScanner.createUniqueKey();
-      columnScanner.set<ColumnMetadata>(uniqueKey, metadata);
+      columnScanner.setOnPublic<ColumnMetadata>(uniqueKey, metadata);
     }
   }
 
@@ -208,7 +208,7 @@ export class EntitySchemaRegistrar {
     Reflect.defineMetadata(MANY_TO_ONE_TOKEN, [...existing, metadata], cls);
 
     const uniqueKey = scanner.createUniqueKey();
-    scanner.set<ManyToOneMetadata<any>>(uniqueKey, metadata);
+    scanner.setOnPublic<ManyToOneMetadata<any>>(uniqueKey, metadata);
   }
 
   private static registerOneToMany(
@@ -230,7 +230,7 @@ export class EntitySchemaRegistrar {
     Reflect.defineMetadata(ONE_TO_MANY_TOKEN, [...existing, metadata], cls);
 
     const uniqueKey = scanner.createUniqueKey();
-    scanner.set<OneToManyMetadata<any>>(uniqueKey, metadata);
+    scanner.setOnPublic<OneToManyMetadata<any>>(uniqueKey, metadata);
   }
 
   private static registerOneToOne(
@@ -261,7 +261,7 @@ export class EntitySchemaRegistrar {
     Reflect.defineMetadata(ONE_TO_ONE_TOKEN, [...existing, metadata], cls);
 
     const uniqueKey = scanner.createUniqueKey();
-    scanner.set<OneToOneMetadata<any>>(uniqueKey, metadata);
+    scanner.setOnPublic<OneToOneMetadata<any>>(uniqueKey, metadata);
   }
 
   private static registerManyToMany(
@@ -284,7 +284,7 @@ export class EntitySchemaRegistrar {
     Reflect.defineMetadata(MANY_TO_MANY_TOKEN, [...existing, metadata], cls);
 
     const uniqueKey = scanner.createUniqueKey();
-    scanner.set<ManyToManyMetadata<any>>(uniqueKey, metadata);
+    scanner.setOnPublic<ManyToManyMetadata<any>>(uniqueKey, metadata);
   }
 
   static registerSpecialTokens<T>(options: EntitySchemaOptions<T>): void {
@@ -587,7 +587,7 @@ export class EntitySchemaRegistrar {
 
     // Scanner key: use class name (unique per class) to avoid STI key collision
     const scannerKey = createEntityKey(camelToSnakeCase(cls.name));
-    scanner.set(scannerKey, metadata);
+    scanner.setOnPublic(scannerKey, metadata);
     Reflect.defineMetadata(ENTITY_TOKEN, metadata, cls);
   }
 }

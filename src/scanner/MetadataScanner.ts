@@ -84,6 +84,17 @@ export class MetadataLayerRegistry {
     return layer;
   }
 
+  /**
+   * The shared "public" layer. Always exists (created in the constructor).
+   *
+   * Decorator-time metadata is class-definition-time data and must always
+   * live here regardless of any active MetadataContext.run() tenant — see
+   * MetadataScanner.setOnPublic and issue #280.
+   */
+  getPublicLayer(): MetadataLayer {
+    return this.layers.get("public")!;
+  }
+
   addLayer(name: string, readOnly = false): MetadataLayer {
     if (this.layers.has(name)) {
       throw new Error(`Layer "${name}" already exists.`);
@@ -300,6 +311,26 @@ export class MetadataScanner {
   public set<T>(key: string, value: T): void {
     this.registry.getCurrentLayer().set(this.prefixKey(key), value);
     this.registry.markDirty(this.registry.getContext());
+  }
+
+  /**
+   * Store metadata on the shared "public" layer regardless of the active
+   * MetadataContext.
+   *
+   * Decorator-time metadata (`@Entity`, `@Column`, `@ManyToOne`, ...) is
+   * class-definition-time data and must always live on `"public"` so it is
+   * visible to every tenant. If a class is decorated inside
+   * `MetadataContext.run("acme", ...)` — e.g. from `IntrospectionGenerator`
+   * or a runtime entity factory invoked under a request handler — a plain
+   * `set()` would silently route the metadata to the `"acme"` layer, leaving
+   * other tenants unable to load the entity. See issue #280.
+   *
+   * Tenant-specific overrides (Copy-on-Write deltas) should continue to use
+   * `set()` while the tenant context is active.
+   */
+  public setOnPublic<T>(key: string, value: T): void {
+    this.registry.getPublicLayer().set(this.prefixKey(key), value);
+    this.registry.markDirty("public");
   }
 
   /**

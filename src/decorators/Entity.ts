@@ -191,7 +191,7 @@ export function Entity(options?: EntityOption): ClassDecorator {
     // Scanner key must be unique per class — use the class's own name,
     // NOT the table name (which may be shared in STI hierarchies).
     const scannerKey = createEntityKey(camelToSnakeCase(target.name));
-    scanner.set(scannerKey, metadata);
+    scanner.setOnPublic(scannerKey, metadata);
 
     Reflect.defineMetadata(ENTITY_TOKEN, metadata, target);
   };

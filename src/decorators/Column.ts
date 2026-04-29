@@ -272,6 +272,6 @@ export function Column(option?: ColumnOption): PropertyDecorator {
     const scanner = getScannerInstance(ColumnScanner);
     const uniqueKey = scanner.createUniqueKey();
 
-    scanner.set<ColumnMetadata>(uniqueKey, metadata);
+    scanner.setOnPublic<ColumnMetadata>(uniqueKey, metadata);
   };
 }

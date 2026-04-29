@@ -123,6 +123,6 @@ export function OneToOne<T>(
     );
 
     const uniqueKey = scanner.createUniqueKey();
-    scanner.set<OneToOneMetadata<T>>(uniqueKey, metadata);
+    scanner.setOnPublic<OneToOneMetadata<T>>(uniqueKey, metadata);
   };
 }

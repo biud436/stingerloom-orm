@@ -138,6 +138,6 @@ export function ManyToOne<T extends EntityLike>(
     );
 
     const uniqueKey = scanner.createUniqueKey();
-    scanner.set<ManyToOneMetadata<T>>(uniqueKey, metadata);
+    scanner.setOnPublic<ManyToOneMetadata<T>>(uniqueKey, metadata);
   };
 }
