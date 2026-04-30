@@ -149,6 +149,119 @@ describe("MultiTenantEntityManager", () => {
     expect(byTenant).toEqual({ acme: 2, globex: 1 });
   });
 
+  // ────────────────────────────────────────────────────────────
+  // forEachTenant modes (#298)
+  //
+  // The happy-path test above only covers default `mode: "all"`. Production
+  // admin fan-out reaches `settled` the moment one tenant is degraded, and
+  // `includeDefault` is the only way to fold the admin DB into the result —
+  // both untested before #298.
+  // ────────────────────────────────────────────────────────────
+  describe("forEachTenant modes (#298)", () => {
+    async function bootMtem() {
+      const mtem = new MultiTenantEntityManager();
+      await mtem.register({
+        ...sqliteOpts(),
+        tenantDatabaseResolver: () => sqliteOpts(),
+      });
+      // Resolve two tenants so getAll() has entries.
+      await MetadataContext.run("acme", () => mtem.save(UserE, { name: "a" }));
+      await MetadataContext.run("globex", () => mtem.save(UserE, { name: "g" }));
+      return mtem;
+    }
+
+    it("mode: 'settled' captures per-tenant errors without rejecting the whole call", async () => {
+      const mtem = await bootMtem();
+      const result = await mtem.forEachTenant(
+        async (_em, tenantId) => {
+          if (tenantId === "acme") throw new Error("acme is offline");
+          return tenantId;
+        },
+        { mode: "settled" },
+      );
+
+      const byTenant = Object.fromEntries(
+        result.map((r) => [r.tenantId, r]),
+      );
+      expect(byTenant.acme.error).toBeInstanceOf(Error);
+      expect((byTenant.acme.error as Error).message).toContain("acme is offline");
+      expect(byTenant.acme.value).toBeUndefined();
+      expect(byTenant.globex.value).toBe("globex");
+      expect(byTenant.globex.error).toBeUndefined();
+    });
+
+    it("mode: 'sequential' runs in order and rejects on the first error without invoking later tenants", async () => {
+      const mtem = await bootMtem();
+      const visited: string[] = [];
+
+      // Pick the order off getAll() so the assertion stays valid no matter
+      // how the router orders its internal Map iteration.
+      const router = (mtem as any).router;
+      const order = router.getAll().map((t: any) => t.tenantId) as string[];
+      const firstTenant = order[0];
+
+      let caught: unknown;
+      try {
+        await mtem.forEachTenant(
+          async (_em, tenantId) => {
+            visited.push(tenantId);
+            if (tenantId === firstTenant) throw new Error("first failed");
+            return tenantId;
+          },
+          { mode: "sequential" },
+        );
+      } catch (e) {
+        caught = e;
+      }
+
+      expect((caught as Error).message).toBe("first failed");
+      // Only the first tenant ran — the throw aborted before later tenants.
+      expect(visited).toEqual([firstTenant]);
+    });
+
+    it("mode: 'all' (default) rejects the whole Promise.all on the first error", async () => {
+      const mtem = await bootMtem();
+      let caught: unknown;
+      try {
+        await mtem.forEachTenant(async (_em, tenantId) => {
+          if (tenantId === "globex") throw new Error("globex down");
+          return tenantId;
+        });
+      } catch (e) {
+        caught = e;
+      }
+      expect((caught as Error).message).toBe("globex down");
+    });
+
+    it("includeDefault: true prepends a '__default__' entry pointing at the admin EM", async () => {
+      const mtem = await bootMtem();
+      const result = await mtem.forEachTenant(
+        async (em, tenantId) => ({ tenantId, isDefault: em === mtem.getDefaultEntityManager() }),
+        { includeDefault: true, mode: "settled" },
+      );
+
+      const byTenant = Object.fromEntries(result.map((r) => [r.tenantId, r]));
+      expect(byTenant.__default__).toBeDefined();
+      expect((byTenant.__default__.value as any).isDefault).toBe(true);
+      // Per-tenant entries do NOT receive the admin EM.
+      expect((byTenant.acme.value as any).isDefault).toBe(false);
+      expect((byTenant.globex.value as any).isDefault).toBe(false);
+    });
+
+    it("rejects with OrmError(NOT_CONNECTED) before register() has been called", async () => {
+      const mtem = new MultiTenantEntityManager();
+      let caught: unknown;
+      try {
+        await mtem.forEachTenant(async () => "noop");
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(OrmError);
+      expect((caught as OrmError).code).toBe(OrmErrorCode.NOT_CONNECTED);
+      expect((caught as OrmError).message).toMatch(/register\(\)/);
+    });
+  });
+
   it("transaction throws CROSS_TENANT_TRANSACTION if context shifts mid-tx", async () => {
     const em = new MultiTenantEntityManager();
     await em.register({

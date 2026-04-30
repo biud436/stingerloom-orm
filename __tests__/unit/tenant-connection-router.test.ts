@@ -169,4 +169,138 @@ describe("TenantConnectionRouter", () => {
     // All non-[A-Za-z0-9_] characters become underscores.
     expect(em.getConnectionName()).toMatch(/^foo_bar__weird___stg_tenant_/);
   });
+
+  // ────────────────────────────────────────────────────────────
+  // idleTtlMs eviction + individual release() — #296
+  //
+  // Pre-#296 nothing exercised the setTimeout-based eviction path or the
+  // single-tenant release branch (which has a non-trivial ownedByRouter
+  // gate that decides whether to actually drop the user's pool). Eviction
+  // bugs (timer not unref'd, sliding TTL broken, release leaks user pools)
+  // are exactly the kind of thing that won't surface until production.
+  // ────────────────────────────────────────────────────────────
+  describe("idleTtlMs eviction & release(tenantId) (#296)", () => {
+    it("evicts a router-owned tenant after idleTtlMs elapses", async () => {
+      jest.useFakeTimers();
+      try {
+        const router = new TenantConnectionRouter({
+          resolver: async () => sqliteOpts(),
+          entities: [RtUserEntity],
+          idleTtlMs: 50,
+        });
+
+        const em = await router.resolve("evict-me");
+        const connectionName = em.getConnectionName();
+        expect(DatabaseClient.getInstance().hasConnection(connectionName)).toBe(true);
+
+        // Advance past the TTL — this fires the eviction timer which calls
+        // release() asynchronously. runAllTimersAsync flushes the timer and
+        // awaits the resulting microtasks.
+        await jest.runAllTimersAsync();
+
+        // Router state cleared and the underlying pool closed.
+        expect(router.getResolvedTenants()).not.toContain("evict-me");
+        expect(DatabaseClient.getInstance().hasConnection(connectionName)).toBe(false);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("idleTtlMs <= 0 means no eviction timer is ever scheduled", async () => {
+      const router = new TenantConnectionRouter({
+        resolver: async () => sqliteOpts(),
+        entities: [RtUserEntity],
+        idleTtlMs: 0,
+      });
+
+      await router.resolve("forever");
+      const entry = (router as any).entries.get("forever");
+      expect(entry).toBeDefined();
+      // No timer means no GC pressure and nothing to keep the loop alive.
+      expect(entry.evictTimer).toBeUndefined();
+    });
+
+    it("eviction timer is unref'd so it cannot keep the event loop alive", async () => {
+      const router = new TenantConnectionRouter({
+        resolver: async () => sqliteOpts(),
+        entities: [RtUserEntity],
+        idleTtlMs: 60_000,
+      });
+      try {
+        await router.resolve("acme");
+        const entry = (router as any).entries.get("acme");
+        expect(entry.evictTimer).toBeDefined();
+        // Node Timer's `_idlePrev`/`_destroyed` are internal. The contract we
+        // care about is that `unref()` was called, which leaves a property we
+        // can probe across Node versions: a successfully unref'd timer
+        // exposes `hasRef()` returning false.
+        if (typeof entry.evictTimer.hasRef === "function") {
+          expect(entry.evictTimer.hasRef()).toBe(false);
+        }
+      } finally {
+        await router.releaseAll();
+      }
+    });
+
+    it("release(tenantId) closes the pool for a router-owned entry", async () => {
+      const router = new TenantConnectionRouter({
+        resolver: async () => sqliteOpts(),
+        entities: [RtUserEntity],
+      });
+
+      const em = await router.resolve("solo");
+      const connectionName = em.getConnectionName();
+      expect(DatabaseClient.getInstance().hasConnection(connectionName)).toBe(true);
+
+      await router.release("solo");
+
+      expect(router.getResolvedTenants()).not.toContain("solo");
+      expect(DatabaseClient.getInstance().hasConnection(connectionName)).toBe(false);
+    });
+
+    it("release(tenantId) leaves the underlying pool intact for a user-owned entry", async () => {
+      const client = DatabaseClient.getInstance();
+      // User pre-registered this connection. The router must NOT close it on
+      // release() — only the router's reference to it should be dropped.
+      await client.connect(sqliteOpts(), "user_pool");
+
+      const router = new TenantConnectionRouter({
+        map: { acme: "user_pool" },
+        entities: [RtUserEntity],
+      });
+
+      await router.resolve("acme");
+      expect(router.getResolvedTenants()).toContain("acme");
+
+      await router.release("acme");
+
+      expect(router.getResolvedTenants()).not.toContain("acme");
+      // The user's connection is still alive — they own its lifecycle.
+      expect(client.hasConnection("user_pool")).toBe(true);
+    });
+
+    it("release() on an unknown tenantId is a no-op (does not throw)", async () => {
+      const router = new TenantConnectionRouter({
+        resolver: async () => sqliteOpts(),
+        entities: [RtUserEntity],
+      });
+      await expect(router.release("never-resolved")).resolves.toBeUndefined();
+    });
+
+    it("prewarm(tenantId) provisions a pool eagerly without a MetadataContext.run() wrapper", async () => {
+      // This guarantees eagerProvisionTenants in MultiTenantEntityManager
+      // can do its thing during register() — outside any tenant context.
+      const router = new TenantConnectionRouter({
+        resolver: async () => sqliteOpts(),
+        entities: [RtUserEntity],
+      });
+
+      const em = await router.prewarm("eager");
+      expect(em).toBeDefined();
+      expect(router.getResolvedTenants()).toContain("eager");
+      // Subsequent resolve hits the cache.
+      const same = await router.resolve("eager");
+      expect(same).toBe(em);
+    });
+  });
 });

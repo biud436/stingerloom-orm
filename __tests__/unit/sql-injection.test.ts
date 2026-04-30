@@ -1,7 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { MySqlDriver } from "../../src/dialects/mysql/MySqlDriver";
 import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
+import { PostgresConnector } from "../../src/dialects/postgres/PostgresConnector";
 import { Conditions } from "../../src/core/Conditions";
+import { OrmError } from "../../src/errors/OrmError";
+import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 
 /**
  * SQL Injection 방지 테스트
@@ -334,5 +337,70 @@ describe("PostgresDriver - castType", () => {
 
   it("should map enum to USER-DEFINED (matches information_schema introspection)", () => {
     expect(driver.castType("enum")).toBe("USER-DEFINED");
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// #297 — PostgresConnector.validateIdentifier regex
+//
+// Commit 9571d2e relaxed the validator to accept hyphens (real-world tenant
+// names like `tenant-acme`) but shipped without a test. This locks the
+// surface: hyphens accepted, but only as non-leading characters; classic
+// injection vectors still rejected.
+// ────────────────────────────────────────────────────────────
+describe("PostgresConnector.validateIdentifier (#297)", () => {
+  // Private static — invoke through the typed any-cast so we exercise the
+  // exact method that escapeIdentifier delegates to.
+  const validate = (PostgresConnector as any).validateIdentifier as (
+    name: string,
+  ) => void;
+
+  it("accepts hyphenated tenant names like 'tenant-acme'", () => {
+    expect(() => validate("tenant-acme")).not.toThrow();
+  });
+
+  it("accepts underscores, dollar signs, and digits in non-leading positions", () => {
+    expect(() => validate("user_table$2")).not.toThrow();
+    expect(() => validate("_private")).not.toThrow();
+    expect(() => validate("a1$_-x")).not.toThrow();
+  });
+
+  it("rejects a leading hyphen — hyphens cannot start an identifier", () => {
+    let caught: unknown;
+    try {
+      validate("-leading");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(OrmError);
+    expect((caught as OrmError).code).toBe(OrmErrorCode.INVALID_QUERY);
+    expect((caught as OrmError).message).toContain("-leading");
+  });
+
+  it("rejects classic injection vectors (semicolon, whitespace, quote)", () => {
+    expect(() => validate("drop;table")).toThrow(OrmError);
+    expect(() => validate("a b")).toThrow(OrmError);
+    expect(() => validate('a"b')).toThrow(OrmError);
+    expect(() => validate("a' OR 1=1 --")).toThrow(OrmError);
+  });
+
+  it("rejects a leading digit — identifiers must start with letter or underscore", () => {
+    expect(() => validate("1table")).toThrow(OrmError);
+  });
+
+  it("error message hints at the accepted character set including hyphens", () => {
+    let caught: unknown;
+    try {
+      validate("bad name");
+    } catch (e) {
+      caught = e;
+    }
+    // The hint must mention hyphens — that is the v9571d2e contract; if a
+    // future revert drops "hyphen" from the message users won't know what
+    // changed.
+    const msg = `${(caught as OrmError).message} ${
+      ((caught as OrmError) as any).suggestion ?? ""
+    }`;
+    expect(msg.toLowerCase()).toContain("hyphen");
   });
 });
