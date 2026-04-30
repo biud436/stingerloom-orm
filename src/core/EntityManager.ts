@@ -209,6 +209,14 @@ export class EntityManager implements BaseEntityManager {
   private connectionName = "default";
 
   /**
+   * True once `attach()` has bound this EM to a pre-existing DatabaseClient
+   * connection. Forces `_ctx.getSynchronize()` to return `false` regardless
+   * of the stored options, so an attached EM can never re-DDL — the original
+   * registering EM owns the schema (#294).
+   */
+  private isAttached = false;
+
+  /**
    * The connected DB type, cached at connect() time (used for isMySqlFamily/isPostgres branching).
    */
   private dbType: IDatabaseType | undefined;
@@ -241,7 +249,11 @@ export class EntityManager implements BaseEntityManager {
     isPostgres: () => this.isPostgres(),
     getDriver: () => this.driver,
     getEntities: () => this._entities,
-    getSynchronize: () => this.client.getOptions(this.connectionName).synchronize ?? false as boolean | "safe" | "dry-run",
+    getSynchronize: () =>
+      this.isAttached
+        ? false
+        : (this.client.getOptions(this.connectionName).synchronize ??
+            false) as boolean | "safe" | "dry-run",
     getDialect: () => {
       if (this.isMySqlFamily()) return "mysql" as const;
       if (this.isPostgres()) return "postgres" as const;
@@ -430,6 +442,7 @@ export class EntityManager implements BaseEntityManager {
     }
 
     this.connectionName = connectionName;
+    this.isAttached = true;
     const baseOptions = client.getOptions(connectionName) as DatabaseClientOptions;
     // Spread collapses the discriminated union (postgres/mysql/sqlite share
     // most fields but `type` is per-variant), so we cast back. The runtime

@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { EntityManager } from "../../src/core/EntityManager";
+import { MultiTenantEntityManager } from "../../src/core/MultiTenantEntityManager";
 import {
   makeInjectRepositoryToken,
   getEntityManagerToken,
@@ -341,6 +342,223 @@ describe("NestJS Multi-DB Support", () => {
 
       const resolved = await optsProvider.useFactory!();
       expect(resolved).toBe(sampleOptions);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // forRootAsync MTEM sentinel runtime behavior (#295)
+  //
+  // The static wiring tests above only assert the inject array shape — they
+  // never invoke useFactory. The misuse-sentinel Proxy and the EM-requires-MTEM
+  // throw are exactly the kind of regressions that pass shape checks while
+  // silently breaking runtime behavior (e.g. someone swaps Reflect.get and
+  // forgets the set trap, accidental @InjectMultiTenantEntityManager() on a
+  // non-database connection silently returns an empty object). These tests
+  // exercise both useFactory paths so removing either guard fails the suite.
+  // ────────────────────────────────────────────────────────────
+  describe("forRootAsync MTEM sentinel runtime behavior (#295)", () => {
+    /**
+     * Pulls the MTEM and EM useFactory functions plus the MTEM token out of
+     * a freshly-built module so each test runs against an isolated wiring.
+     */
+    function buildModule(connectionName?: string) {
+      const sample: DatabaseClientOptions = {
+        type: "mysql",
+        host: "localhost",
+        port: 3306,
+        database: "test",
+        username: "root",
+        password: "",
+        entities: [],
+      };
+      const mod = StingerloomOrmCoreModule.forRootAsync({
+        useFactory: () => sample,
+        connectionName,
+      });
+      const providers = mod.providers as Array<{
+        provide: unknown;
+        useFactory?: (...args: unknown[]) => unknown;
+        inject?: unknown[];
+      }>;
+      const mtemToken = getMultiTenantEntityManagerToken(connectionName);
+      const emToken = connectionName && connectionName !== "default"
+        ? `STINGERLOOM_ENTITY_MANAGER_${connectionName}`
+        : EntityManager;
+      const mtemProvider = providers.find((p) => p.provide === mtemToken)!;
+      const emProvider = providers.find((p) => p.provide === emToken)!;
+      return {
+        mtemFactory: mtemProvider.useFactory! as (
+          options: DatabaseClientOptions,
+        ) => Promise<unknown>,
+        emFactory: emProvider.useFactory! as (
+          options: DatabaseClientOptions,
+          mtem?: unknown,
+        ) => Promise<unknown>,
+      };
+    }
+
+    it("MTEM useFactory returns a sentinel proxy when tenantStrategy is not 'database'", async () => {
+      const { mtemFactory } = buildModule("analytics");
+      const sentinel = await mtemFactory({
+        type: "mysql",
+        host: "localhost",
+        port: 3306,
+        database: "test",
+        username: "root",
+        password: "",
+        entities: [],
+        // tenantStrategy intentionally absent — equivalent to a non-database
+        // connection that should never receive @InjectMultiTenantEntityManager().
+      });
+
+      // Every property access throws an actionable error mentioning the
+      // connection name. Hitting `Cannot read properties of undefined` here
+      // would mean the sentinel guard regressed.
+      expect(() => (sentinel as any).query()).toThrow(/analytics/);
+      expect(() => (sentinel as any).register()).toThrow(
+        /tenantStrategy is "database"/,
+      );
+      expect(() => {
+        (sentinel as any).foo = 1;
+      }).toThrow(/analytics/);
+    });
+
+    it("MTEM useFactory builds a real MultiTenantEntityManager under tenantStrategy: 'database'", async () => {
+      const { mtemFactory } = buildModule();
+
+      // Mock register() so we don't open a real pool — the unit-level
+      // contract is "factory constructs MTEM and runs register()", nothing
+      // beyond that.
+      const registerSpy = jest
+        .spyOn(MultiTenantEntityManager.prototype, "register")
+        .mockResolvedValue(undefined as unknown as void);
+
+      try {
+        const mtem = await mtemFactory({
+          type: "mysql",
+          host: "localhost",
+          port: 3306,
+          database: "admin",
+          username: "root",
+          password: "",
+          entities: [],
+          tenantStrategy: "database",
+          tenantDatabaseResolver: () => "tenant-db",
+        });
+        expect(mtem).toBeInstanceOf(MultiTenantEntityManager);
+        expect(registerSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        registerSpy.mockRestore();
+      }
+    });
+
+    it("EM useFactory throws when tenantStrategy='database' but the MTEM is a sentinel", async () => {
+      const { mtemFactory, emFactory } = buildModule();
+      const sentinel = await mtemFactory({
+        type: "mysql",
+        host: "localhost",
+        port: 3306,
+        database: "test",
+        username: "root",
+        password: "",
+        entities: [],
+      });
+
+      await expect(
+        emFactory(
+          {
+            type: "mysql",
+            host: "localhost",
+            port: 3306,
+            database: "admin",
+            username: "root",
+            password: "",
+            entities: [],
+            tenantStrategy: "database",
+          },
+          sentinel,
+        ),
+      ).rejects.toThrow(/MultiTenantEntityManager provider is required/);
+    });
+
+    it("EM useFactory throws when tenantStrategy='database' but the MTEM is undefined", async () => {
+      const { emFactory } = buildModule();
+
+      await expect(
+        emFactory(
+          {
+            type: "mysql",
+            host: "localhost",
+            port: 3306,
+            database: "admin",
+            username: "root",
+            password: "",
+            entities: [],
+            tenantStrategy: "database",
+          },
+          undefined,
+        ),
+      ).rejects.toThrow(/MultiTenantEntityManager provider is required/);
+    });
+
+    it("EM useFactory ignores the sentinel and returns a fresh EntityManager when tenantStrategy is not 'database'", async () => {
+      const { mtemFactory, emFactory } = buildModule("misuse");
+      const sentinel = await mtemFactory({
+        type: "mysql",
+        host: "localhost",
+        port: 3306,
+        database: "test",
+        username: "root",
+        password: "",
+        entities: [],
+      });
+
+      const registerSpy = jest
+        .spyOn(EntityManager.prototype, "register")
+        .mockResolvedValue(undefined as unknown as void);
+
+      try {
+        const em = await emFactory(
+          {
+            type: "mysql",
+            host: "localhost",
+            port: 3306,
+            database: "test",
+            username: "root",
+            password: "",
+            entities: [],
+            // tenantStrategy intentionally absent — sentinel must be ignored.
+          },
+          sentinel,
+        );
+        expect(em).toBeInstanceOf(EntityManager);
+        expect(registerSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        registerSpy.mockRestore();
+      }
+    });
+
+    it("sentinel symbol round-trips: real MTEM, sentinel, null all return the right truth value", async () => {
+      const { mtemFactory } = buildModule("rt");
+      const sentinel = await mtemFactory({
+        type: "mysql",
+        host: "localhost",
+        port: 3306,
+        database: "test",
+        username: "root",
+        password: "",
+        entities: [],
+      });
+      const real = new MultiTenantEntityManager();
+      const symbolKey = Symbol.for("stingerloom.mtem.misuse-sentinel");
+
+      // The sentinel exposes the marker symbol as `true`; a real MTEM does not.
+      expect((sentinel as Record<symbol, unknown>)[symbolKey]).toBe(true);
+      expect((real as unknown as Record<symbol, unknown>)[symbolKey]).toBeUndefined();
+
+      // The internal `isMtemMisuseSentinel` helper is exercised by the EM
+      // factory tests above — its `null`/`undefined` robustness is also
+      // implicit there (the "MTEM is undefined" case).
     });
   });
 

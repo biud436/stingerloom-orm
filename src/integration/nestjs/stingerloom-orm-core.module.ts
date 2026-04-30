@@ -228,6 +228,16 @@ function makeMtemMisuseSentinel(
   return new Proxy({} as MultiTenantEntityManager, {
     get(_target, prop) {
       if (prop === MTEM_MISUSE_SENTINEL) return true;
+      // The MTEM useFactory is `async`, so its `return makeMtemMisuseSentinel(...)`
+      // unwraps through `Promise.resolve(value)` which probes `.then` on the
+      // resolved value. A throwing `.then` would crash module bootstrap before
+      // anyone ever tried to inject MTEM. We have to expose those Promise-ish
+      // properties as `undefined` (i.e. "not a thenable") so the sentinel can
+      // safely flow through the async factory and still throw at first real
+      // injection use.
+      if (prop === "then" || prop === "catch" || prop === "finally") {
+        return undefined;
+      }
       throw error;
     },
     set() {
