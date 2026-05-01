@@ -71,6 +71,53 @@ describe("StingerloomOrmService", () => {
 
       expect(mockEntityManager.propagateShutdown).toHaveBeenCalled();
     });
+
+    it("should reset captured flag so subsequent modules detect missing forRoot()", async () => {
+      StingerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN] = true;
+
+      await service.onApplicationShutdown();
+
+      expect(
+        StingerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN],
+      ).toBe(false);
+    });
+
+    it("should reset captured flag even if propagateShutdown throws", async () => {
+      StingerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN] = true;
+      mockEntityManager.propagateShutdown.mockRejectedValueOnce(
+        new Error("connection already closed"),
+      );
+
+      await expect(service.onApplicationShutdown()).rejects.toThrow(
+        /connection already closed/,
+      );
+
+      expect(
+        StingerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN],
+      ).toBe(false);
+    });
+
+    it("should call propagateShutdown on every recreated service across module reloads", async () => {
+      const shutdowns: jest.Mock[] = [];
+
+      for (let i = 0; i < 5; i++) {
+        const propagate = jest.fn().mockResolvedValue(undefined);
+        shutdowns.push(propagate);
+        const em: any = { propagateShutdown: propagate, getRepository: jest.fn() };
+        const svc = new StingerloomOrmService(em);
+        StingerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN] = true;
+        await svc.onModuleInit();
+        await svc.onApplicationShutdown();
+
+        expect(
+          StingerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN],
+        ).toBe(false);
+      }
+
+      for (const p of shutdowns) {
+        expect(p).toHaveBeenCalledTimes(1);
+      }
+    });
   });
 
   describe("getRepository()", () => {
