@@ -277,16 +277,24 @@ interface TransactionOptions {
 }
 ```
 
-### SelectQueryBuilder\<T\>
+### SelectQueryBuilder\<T, TResult\>
 
-[Usage ->](./query-builder.md)
+[Usage ->](./query-builder.md) ·
+[Patterns ->](./query-builder-patterns.md) ·
+[QueryDSL ->](./query-builder-querydsl.md) ·
+[Execution ->](./query-builder-execution.md)
 
 ```typescript
 // Created via em.createQueryBuilder(Entity, "alias")
-class SelectQueryBuilder<T> {
+class SelectQueryBuilder<T, TResult = T> {
+  // ── SELECT ─────────────────────────────────────────────
   select(columns: (keyof T & string)[] | "*"): this;
   addSelect(expr: Sql | string, alias?: string): this;
   setDistinct(value?: boolean): this;
+  withCount(relation: string, alias?: string,
+            fn?: (sub: SelectQueryBuilder<any>) => void): this;
+
+  // ── WHERE ──────────────────────────────────────────────
   where(condition: Sql): this;
   where(column: keyof T & string, value: any): this;
   where(column: keyof T & string, operator: string, value: any): this;
@@ -298,6 +306,20 @@ class SelectQueryBuilder<T> {
   whereNotNull(column: keyof T & string): this;
   whereBetween(column: keyof T & string, min: any, max: any): this;
   whereLike(column: keyof T & string, pattern: string): this;
+
+  // Relation-aware EXISTS/NOT EXISTS sub-queries.
+  whereHas(relation: string,
+           fn?: (sub: SelectQueryBuilder<any>) => void): this;
+  whereNotHas(relation: string,
+              fn?: (sub: SelectQueryBuilder<any>) => void): this;
+
+  // IN (subquery) helpers — accepts a built SelectQueryBuilder.
+  whereInSubquery(column: keyof T & string,
+                  sub: SelectQueryBuilder<any>): this;
+  whereNotInSubquery(column: keyof T & string,
+                     sub: SelectQueryBuilder<any>): this;
+
+  // ── JOIN / GROUP / ORDER ───────────────────────────────
   leftJoin(table: string, alias: string, condition: Sql | string): this;
   innerJoin(table: string, alias: string, condition: Sql | string): this;
   rightJoin(table: string, alias: string, condition: Sql | string): this;
@@ -309,6 +331,8 @@ class SelectQueryBuilder<T> {
   offset(count: number): this;
   skip(count: number): this;
   take(count: number): this;
+
+  // ── LOCKS / HINTS ──────────────────────────────────────
   forUpdate(): this;
   forUpdateNowait(): this;
   forUpdateSkipLocked(): this;
@@ -318,21 +342,67 @@ class SelectQueryBuilder<T> {
   useIndex(indexName: string): this;           // MySQL
   forceIndex(indexName: string): this;         // MySQL
   ignoreIndex(indexName: string): this;        // MySQL
-  hint(hintText: string): this;               // PostgreSQL (pg_hint_plan)
+  hint(hintText: string): this;                // PostgreSQL (pg_hint_plan)
   withDeleted(): this;
   appendSql(fragment: Sql): this;
+
+  // ── COMPOSITION ────────────────────────────────────────
+  // Conditional branch — only applies `fn` when condition is truthy.
+  when(condition: boolean | (() => boolean),
+       fn: (qb: this) => void,
+       elseFn?: (qb: this) => void): this;
+  // Apply a reusable transform — fn returns the (possibly mutated) qb.
+  pipe(fn: (qb: this) => this): this;
+  // Apply a named scope declared as `static scopes` on the entity class.
+  applyScope(name: string): this;
+
+  // ── VALIDATION ─────────────────────────────────────────
   validate(validator: RowValidator<TResult>): this;
   validateArray(validator: ArrayValidator<TResult>): this;
+
+  // ── COMPILATION & SUB-USE ──────────────────────────────
   toSql(): Sql;
   getSql(): { text: string; values: any[] };
+  asSubquery(alias: string): Sql;
+
+  // Pre-compile with named placeholders — re-executable without rebuilding.
+  prepare<P extends Record<string, unknown> = Record<string, unknown>>():
+    CompiledQuery<TResult, P>;
+  preparePartial<P extends Record<string, unknown> = Record<string, unknown>>():
+    CompiledQuery<TResult, P>;
+
+  // ── EXECUTION: class instances ─────────────────────────
   getMany(): Promise<TResult[]>;
   getOne(): Promise<TResult | null>;
   getOneOrFail(): Promise<TResult>;           // Throws EntityNotFoundError
   getCount(): Promise<number>;
-  getManyAndCount(): Promise<[T[], number]>;
+  getManyAndCount(): Promise<[TResult[], number]>;
   exists(): Promise<boolean>;
-  asSubquery(alias: string): Sql;
+
+  // ── EXECUTION: typed plain objects (no deserialization) ─
+  getPartialMany(): Promise<TResult[]>;
+  getPartialOne(): Promise<TResult | null>;
+  getPartialManyAndCount(): Promise<[TResult[], number]>;
+
+  // ── EXECUTION: untyped plain objects ───────────────────
+  getRawMany(): Promise<Record<string, unknown>[]>;
+  getRawOne(): Promise<Record<string, unknown> | null>;
 }
+```
+
+**Module helper — `qAlias`**
+
+`qAlias()` is exported alongside `SelectQueryBuilder`. It returns a typed
+proxy used by [QueryDSL expressions](./query-builder-querydsl.md) so column
+references survive renames at compile time:
+
+```typescript
+import { qAlias } from "@stingerloom/orm";
+
+function qAlias<T>(entity: Class<T>, name: string): QEntity<T>;
+
+const u = qAlias(User, "u");
+qb.where(u.email, "alice@example.com");
 ```
 
 ### RawQueryBuilder — Set Operations, CTE, Window Functions

@@ -277,16 +277,24 @@ interface TransactionOptions {
 }
 ```
 
-### SelectQueryBuilder\<T\>
+### SelectQueryBuilder\<T, TResult\>
 
-[사용법 ->](./query-builder.md)
+[사용법 ->](./query-builder.md) ·
+[패턴 ->](./query-builder-patterns.md) ·
+[QueryDSL ->](./query-builder-querydsl.md) ·
+[실행 ->](./query-builder-execution.md)
 
 ```typescript
-// Created via em.createQueryBuilder(Entity, "alias")
-class SelectQueryBuilder<T> {
+// em.createQueryBuilder(Entity, "alias")로 생성
+class SelectQueryBuilder<T, TResult = T> {
+  // ── SELECT ─────────────────────────────────────────────
   select(columns: (keyof T & string)[] | "*"): this;
   addSelect(expr: Sql | string, alias?: string): this;
   setDistinct(value?: boolean): this;
+  withCount(relation: string, alias?: string,
+            fn?: (sub: SelectQueryBuilder<any>) => void): this;
+
+  // ── WHERE ──────────────────────────────────────────────
   where(condition: Sql): this;
   where(column: keyof T & string, value: any): this;
   where(column: keyof T & string, operator: string, value: any): this;
@@ -298,6 +306,20 @@ class SelectQueryBuilder<T> {
   whereNotNull(column: keyof T & string): this;
   whereBetween(column: keyof T & string, min: any, max: any): this;
   whereLike(column: keyof T & string, pattern: string): this;
+
+  // 관계 기반 EXISTS / NOT EXISTS 서브쿼리.
+  whereHas(relation: string,
+           fn?: (sub: SelectQueryBuilder<any>) => void): this;
+  whereNotHas(relation: string,
+              fn?: (sub: SelectQueryBuilder<any>) => void): this;
+
+  // IN (서브쿼리) — 빌드된 SelectQueryBuilder를 받습니다.
+  whereInSubquery(column: keyof T & string,
+                  sub: SelectQueryBuilder<any>): this;
+  whereNotInSubquery(column: keyof T & string,
+                     sub: SelectQueryBuilder<any>): this;
+
+  // ── JOIN / GROUP / ORDER ───────────────────────────────
   leftJoin(table: string, alias: string, condition: Sql | string): this;
   innerJoin(table: string, alias: string, condition: Sql | string): this;
   rightJoin(table: string, alias: string, condition: Sql | string): this;
@@ -309,6 +331,8 @@ class SelectQueryBuilder<T> {
   offset(count: number): this;
   skip(count: number): this;
   take(count: number): this;
+
+  // ── LOCK / HINT ────────────────────────────────────────
   forUpdate(): this;
   forUpdateNowait(): this;
   forUpdateSkipLocked(): this;
@@ -318,21 +342,67 @@ class SelectQueryBuilder<T> {
   useIndex(indexName: string): this;           // MySQL
   forceIndex(indexName: string): this;         // MySQL
   ignoreIndex(indexName: string): this;        // MySQL
-  hint(hintText: string): this;               // PostgreSQL (pg_hint_plan)
+  hint(hintText: string): this;                // PostgreSQL (pg_hint_plan)
   withDeleted(): this;
   appendSql(fragment: Sql): this;
+
+  // ── 합성 (Composition) ─────────────────────────────────
+  // 조건부 분기 — condition이 truthy일 때만 fn 적용.
+  when(condition: boolean | (() => boolean),
+       fn: (qb: this) => void,
+       elseFn?: (qb: this) => void): this;
+  // 재사용 가능한 변환 적용 — fn은 (변형된) qb를 반환.
+  pipe(fn: (qb: this) => this): this;
+  // 엔티티 클래스의 `static scopes`에 선언된 명명 스코프 적용.
+  applyScope(name: string): this;
+
+  // ── 검증 (Validation) ──────────────────────────────────
   validate(validator: RowValidator<TResult>): this;
   validateArray(validator: ArrayValidator<TResult>): this;
+
+  // ── 컴파일 & 서브쿼리 ──────────────────────────────────
   toSql(): Sql;
   getSql(): { text: string; values: any[] };
+  asSubquery(alias: string): Sql;
+
+  // 명명 플레이스홀더로 사전 컴파일 — 재빌드 없이 재실행 가능.
+  prepare<P extends Record<string, unknown> = Record<string, unknown>>():
+    CompiledQuery<TResult, P>;
+  preparePartial<P extends Record<string, unknown> = Record<string, unknown>>():
+    CompiledQuery<TResult, P>;
+
+  // ── 실행: 클래스 인스턴스 ──────────────────────────────
   getMany(): Promise<TResult[]>;
   getOne(): Promise<TResult | null>;
   getOneOrFail(): Promise<TResult>;           // EntityNotFoundError 발생
   getCount(): Promise<number>;
-  getManyAndCount(): Promise<[T[], number]>;
+  getManyAndCount(): Promise<[TResult[], number]>;
   exists(): Promise<boolean>;
-  asSubquery(alias: string): Sql;
+
+  // ── 실행: 타입이 있는 plain 객체 (역직렬화 없음) ───────
+  getPartialMany(): Promise<TResult[]>;
+  getPartialOne(): Promise<TResult | null>;
+  getPartialManyAndCount(): Promise<[TResult[], number]>;
+
+  // ── 실행: untyped plain 객체 ──────────────────────────
+  getRawMany(): Promise<Record<string, unknown>[]>;
+  getRawOne(): Promise<Record<string, unknown> | null>;
 }
+```
+
+**모듈 헬퍼 — `qAlias`**
+
+`qAlias()`는 `SelectQueryBuilder`와 함께 export됩니다.
+[QueryDSL 표현식](./query-builder-querydsl.md)에서 사용되는 타입 프록시를
+반환해 컬럼 참조가 컴파일 타임 리네임에서도 안전하게 살아남도록 합니다:
+
+```typescript
+import { qAlias } from "@stingerloom/orm";
+
+function qAlias<T>(entity: Class<T>, name: string): QEntity<T>;
+
+const u = qAlias(User, "u");
+qb.where(u.email, "alice@example.com");
 ```
 
 ### RawQueryBuilder -- Set Operations, CTE, Window Functions
