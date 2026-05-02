@@ -965,6 +965,7 @@ type RelationSchemaDef =
 | `WhereClause<T>` | `{ [P in keyof T]?: T[P] }` -- 타입 안전한 WHERE 조건 |
 | `FindCondition<T>` | **Deprecated** -- `WhereClause<T>`를 사용해 주세요 |
 | `RawQueryBuilderFactory` | Query builder 팩토리 |
-| `LayeredMetadataStore` | 레이어드 메타데이터 |
+| `MetadataLayerRegistry` | 데코레이터 시점의 canonical 레이어드 메타데이터 레지스트리 (싱글턴) |
 | `MetadataContext` | AsyncLocalStorage 기반 테넌트 컨텍스트 |
+| `LayeredMetadataStore` | **Deprecated** -- 호환용 facade. EntityManager에 연결되지 않음 (issue #277) |
 | `Logger` | 내부 로깅 유틸리티 |

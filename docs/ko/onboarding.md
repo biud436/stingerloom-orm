@@ -169,9 +169,9 @@ Docker OverlayFS와 같은 개념으로 동작해요.
 | File | Role |
 |------|------|
 | `src/metadata/MetadataContext.ts` | AsyncLocalStorage 기반 request-scoped context |
-| `src/metadata/LayeredMetadataStore.ts` | Layer 기반 metadata store |
 | `src/metadata/MetadataLayer.ts` | 개별 layer (key-value Map) |
-| `src/scanner/MetadataScanner.ts` | MetadataLayerRegistry를 사용하는 Scanner 기반 클래스 |
+| `src/scanner/MetadataScanner.ts` | Scanner 기반 클래스 + `MetadataLayerRegistry` (데코레이터 시점 canonical store) |
+| `src/metadata/LayeredMetadataStore.ts` | @deprecated 호환용 facade — issue #277 |
 
 ### Driver Abstraction
 
@@ -650,8 +650,8 @@ cd ../nestjs-multitenant && pnpm install && npx tsc --noEmit
 | `src/core/EntityManager.ts` | CRUD, 관계 로딩, 트랜잭션 -- ORM의 중심 |
 | `src/dialects/SqlDriver.ts` | `ISqlDriver` 인터페이스 정의 |
 | `src/metadata/MetadataContext.ts` | AsyncLocalStorage 기반 tenant context |
-| `src/scanner/MetadataScanner.ts` | MetadataLayerRegistry를 사용하는 Scanner 기반 클래스 |
-| `src/metadata/LayeredMetadataStore.ts` | Trie 기반 layered metadata store |
+| `src/scanner/MetadataScanner.ts` | `MetadataLayerRegistry` -- 데코레이터 시점의 canonical metadata store |
+| `src/metadata/LayeredMetadataStore.ts` | @deprecated trie 기반 facade (issue #277) |
 | `src/decorators/Entity.ts` | `@Entity()` decorator -- 엔티티 메타데이터 스냅샷 |
 | `src/decorators/Column.ts` | `@Column()` decorator -- 컬럼 메타데이터 + 타입 추론 |
 | `src/DatabaseClient.ts` | DB 연결 싱글톤 (named connections 지원) |

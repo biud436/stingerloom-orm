@@ -8,6 +8,14 @@ import {
  * Multi-tenant metadata manager.
  *
  * Enables managing an independent schema per tenant in a multi-tenant setup.
+ *
+ * @deprecated This manager is built on top of {@link LayeredMetadataStore},
+ * which is **not** the registry that decorators write to. Calling
+ * `registerEntity`/`registerColumn` on this manager mutates a private store
+ * that the EntityManager never reads, producing silent no-ops. The canonical
+ * multi-tenant entry points are `MetadataLayerRegistry.getInstance()` for
+ * layer/cache management and `MetadataContext.run(tenantId, callback)` for
+ * request-scoped tenant switching. See issue #277.
  */
 export class MultiTenantMetadataManager {
   private store: LayeredMetadataStore;

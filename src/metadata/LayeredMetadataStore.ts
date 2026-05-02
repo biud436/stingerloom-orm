@@ -12,6 +12,15 @@ import { MetadataPath } from "./MetadataPath";
  * Reads: search the current context layer, then fall back to public; other
  * tenant layers are never consulted.
  * Writes: Copy-on-Write — only the top-most work layer is modified.
+ *
+ * @deprecated This class is **not wired into the decorator pipeline**.
+ * Decorators (`@Entity`, `@Column`, …) write to `MetadataLayerRegistry`
+ * (`src/scanner/MetadataScanner.ts`), which is the canonical source of truth
+ * for the EntityManager. Mutations made to a `LayeredMetadataStore` instance
+ * are never observed by the runtime. Prefer `MetadataLayerRegistry.getInstance()`
+ * together with `MetadataContext.run(tenantId, callback)`. This class is kept
+ * for backward-compat tests only and may be removed in a future release.
+ * See issue #277.
  */
 export class LayeredMetadataStore {
   private layers: MetadataLayer[] = [];

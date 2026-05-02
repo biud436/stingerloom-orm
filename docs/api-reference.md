@@ -965,6 +965,7 @@ type RelationSchemaDef =
 | `WhereClause<T>` | `{ [P in keyof T]?: T[P] }` — typed WHERE conditions |
 | `FindCondition<T>` | **Deprecated** — use `WhereClause<T>` instead |
 | `RawQueryBuilderFactory` | Query builder factory |
-| `LayeredMetadataStore` | Layered metadata |
+| `MetadataLayerRegistry` | Decorator-time canonical layered-metadata registry (singleton) |
 | `MetadataContext` | AsyncLocalStorage-based tenant context |
+| `LayeredMetadataStore` | **Deprecated** — back-compat facade, not wired into the EntityManager (issue #277) |
 | `Logger` | Internal logging utility |

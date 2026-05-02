@@ -6,6 +6,12 @@ import { ClazzType } from "../utils";
  * Adapter that bridges the legacy MetadataScanner API with the layered store.
  *
  * Designed to preserve backward compatibility so existing code can migrate incrementally.
+ *
+ * @deprecated Wraps {@link LayeredMetadataStore}, which is **not** the
+ * decorator-time registry. The canonical scanner base class is
+ * `MetadataScanner` in `src/scanner/MetadataScanner.ts`, which reads from
+ * `MetadataLayerRegistry`. New code should not extend or instantiate this
+ * class. See issue #277.
  */
 export class LayeredMetadataScanner {
   protected store: LayeredMetadataStore;
@@ -120,6 +126,8 @@ export class LayeredMetadataScanner {
 
 /**
  * Layered scanner used by EntityScanner.
+ *
+ * @deprecated Not wired into the decorator pipeline. See {@link LayeredMetadataScanner}.
  */
 export class LayeredEntityScanner extends LayeredMetadataScanner {
   constructor(store: LayeredMetadataStore) {
@@ -154,6 +162,8 @@ export class LayeredEntityScanner extends LayeredMetadataScanner {
 
 /**
  * Layered scanner used by ColumnScanner.
+ *
+ * @deprecated Not wired into the decorator pipeline. See {@link LayeredMetadataScanner}.
  */
 export class LayeredColumnScanner extends LayeredMetadataScanner {
   constructor(store: LayeredMetadataStore) {
@@ -173,6 +183,8 @@ export class LayeredColumnScanner extends LayeredMetadataScanner {
 
 /**
  * Layered scanner used by ManyToOneScanner.
+ *
+ * @deprecated Not wired into the decorator pipeline. See {@link LayeredMetadataScanner}.
  */
 export class LayeredManyToOneScanner extends LayeredMetadataScanner {
   constructor(store: LayeredMetadataStore) {

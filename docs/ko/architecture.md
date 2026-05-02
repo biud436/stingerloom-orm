@@ -274,11 +274,12 @@ src/
 │   ├── mysql/                     MySQL driver
 │   ├── postgres/                  PostgreSQL driver + TenantMigrationRunner
 │   └── sqlite/                    SQLite driver
-├── metadata/              Layered metadata system (multi-tenancy core)
-│   ├── LayeredMetadataStore.ts    Layer merging (public + tenant)
+├── metadata/              Layered metadata primitives + deprecated facades
 │   ├── MetadataContext.ts         AsyncLocalStorage-based tenant scoping
-│   └── MetadataLayer.ts           Individual layer storage
-├── scanner/               Reads decorators -> builds metadata registry
+│   ├── MetadataLayer.ts           Individual layer storage
+│   └── LayeredMetadataStore.ts    @deprecated facade (issue #277)
+├── scanner/               Decorator pipeline; `MetadataLayerRegistry` lives here
+│   └── MetadataScanner.ts         Decorator-time registry (canonical)
 ├── migration/             MigrationRunner + CLI (`npx stingerloom`)
 ├── schema/                Decorator-free EntitySchema API
 ├── integration/           NestJS module, Prisma importer

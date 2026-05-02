@@ -169,9 +169,9 @@ Works on the same concept as Docker's OverlayFS.
 | File | Role |
 |------|------|
 | `src/metadata/MetadataContext.ts` | AsyncLocalStorage-based request-scoped context |
-| `src/metadata/LayeredMetadataStore.ts` | Layer-based metadata store |
 | `src/metadata/MetadataLayer.ts` | Individual layer (key-value Map) |
-| `src/scanner/MetadataScanner.ts` | Scanner base class using MetadataLayerRegistry |
+| `src/scanner/MetadataScanner.ts` | Scanner base class + `MetadataLayerRegistry` (decorator-time canonical store) |
+| `src/metadata/LayeredMetadataStore.ts` | @deprecated facade — kept for back-compat only (issue #277) |
 
 ### Driver Abstraction
 
@@ -650,8 +650,8 @@ cd ../nestjs-multitenant && pnpm install && npx tsc --noEmit
 | `src/core/EntityManager.ts` | CRUD, relation loading, transactions — the center of the ORM |
 | `src/dialects/SqlDriver.ts` | `ISqlDriver` interface definition |
 | `src/metadata/MetadataContext.ts` | AsyncLocalStorage-based tenant context |
-| `src/scanner/MetadataScanner.ts` | Scanner base class using MetadataLayerRegistry |
-| `src/metadata/LayeredMetadataStore.ts` | Trie-based layered metadata store |
+| `src/scanner/MetadataScanner.ts` | `MetadataLayerRegistry` — the decorator-time canonical metadata store |
+| `src/metadata/LayeredMetadataStore.ts` | @deprecated trie-based facade (issue #277) |
 | `src/decorators/Entity.ts` | `@Entity()` decorator — entity metadata snapshot |
 | `src/decorators/Column.ts` | `@Column()` decorator — column metadata + type inference |
 | `src/DatabaseClient.ts` | DB connection singleton (named connections support) |

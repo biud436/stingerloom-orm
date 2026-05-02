@@ -790,18 +790,21 @@ class UserService {
 
 대부분의 애플리케이션에서는 `MetadataContext.run()`과 스키마 기반 격리만으로 충분합니다. 하지만 레이어드 메타데이터 시스템은 더 저수준의 프리미티브로, 특정 테넌트에 다른 테이블 이름이나 컬럼 설정을 주는 것 같은 고급 시나리오에 직접 사용할 수 있어요.
 
+데코레이터 시점의 레지스트리는 `MetadataLayerRegistry`(`src/scanner/MetadataScanner.ts`)이며 싱글턴입니다. 모든 `@Entity`/`@Column`/`@ManyToOne` 데코레이터는 이 싱글턴의 `"public"` 레이어에 메타데이터를 기록하고, 모든 읽기도 이 싱글턴을 거칩니다. 특정 테넌트에 메타데이터를 덮어쓰려면 이 싱글턴에 레이어를 추가하고 `MetadataContext.run()`으로 컨텍스트를 전환하세요.
+
 ```typescript
-import { LayeredMetadataStore } from "@stingerloom/orm";
+import { MetadataLayerRegistry, MetadataContext } from "@stingerloom/orm";
 
-const store = new LayeredMetadataStore();
+const registry = MetadataLayerRegistry.getInstance();
 
-// Create a tenant layer
-store.addLayer("enterprise", false);  // false = writable
+// 테넌트 레이어 생성 (쓰기 가능)
+registry.addLayer("enterprise", false);
 
-// Override metadata for this specific tenant
-store.setContext("enterprise");
-store.set("User", {
-  tableName: "enterprise_users",  // this tenant uses a different table name
+// 요청 스코프 안에서 이 테넌트의 메타데이터를 덮어쓰기
+await MetadataContext.run("enterprise", async () => {
+  registry.getCurrentLayer().set("entities/User", {
+    tableName: "enterprise_users", // 이 테넌트는 다른 테이블명을 사용
+  });
 });
 ```
 
@@ -809,12 +812,18 @@ ORM이 `User`의 테이블 이름을 조회할 때:
 - "enterprise" 컨텍스트에서 → 테넌트 레이어에서 `"enterprise_users"` 발견
 - 다른 컨텍스트에서 → public 레이어로 폴백 → `"user"` (기본값)
 
+> **주의.** `LayeredMetadataStore`/`LayeredMetadataScanner`/
+> `MultiTenantMetadataManager`도 패키지에서 export되지만, 하위 호환성을 위해
+> 남겨둔 더미일 뿐 EntityManager 파이프라인에는 연결되어 있지 않습니다.
+> 이들에 대한 변경은 런타임에 무시됩니다. 항상 `MetadataLayerRegistry`를
+> 사용하세요. 자세한 내용은 issue #277 참고.
+
 ### 격리 보장
 
-`getAllInContext("acme_corp")`는 **public 레이어**와 **acme_corp 레이어**만 병합합니다. 다른 테넌트 레이어의 데이터는 절대 포함하지 않습니다. 여러 테넌트가 동시에 활성화되어 있어도 크로스 테넌트 메타데이터 유출이 방지됩니다.
+`MetadataLayerRegistry.resolveAll()`은 **public 레이어**와 **현재 활성 컨텍스트**의 레이어만 병합합니다. 다른 테넌트 레이어의 데이터는 절대 포함하지 않습니다. 여러 테넌트가 동시에 활성화되어 있어도 크로스 테넌트 메타데이터 유출이 방지됩니다.
 
 ```
-getAllInContext("acme_corp")
+MetadataContext.run("acme_corp", ...) 안에서 resolveAll() 호출 시
   → public layer + acme_corp layer  (포함)
   → globex layer                    (제외)
   → initech layer                   (제외)
