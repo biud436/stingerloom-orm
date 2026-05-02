@@ -21,14 +21,30 @@ export class User {
 
 ```typescript
 // main.ts
+import "reflect-metadata";
+import { EntityManager } from "@stingerloom/orm";
+import { User } from "./user.entity";
+
 const em = new EntityManager();
-await em.register({ type: "postgres", /* ... */ entities: [User], synchronize: true });
+await em.register({
+  type: "postgres",
+  host: "localhost",
+  port: 5432,
+  username: "postgres",
+  password: "postgres",
+  database: "app",
+  entities: [User],
+  synchronize: true, // disable in production
+});
 
 // Create
 const user = await em.save(User, { name: "John Doe", email: "john@example.com" });
 
 // Read
 const users = await em.find(User, { where: { name: "John Doe" } });
+
+// Always release pool/listeners on shutdown
+await em.propagateShutdown();
 ```
 
 That's all there is to Stingerloom ORM. Define your classes, connect, and use.
