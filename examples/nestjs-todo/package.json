@@ -1,7 +1,7 @@
 {
   "name": "nestjs-todo",
   "version": "0.0.1",
-  "description": "NestJS Todo API — npm-published @stingerloom/orm verification",
+  "description": "NestJS minimal CRUD example for @stingerloom/orm",
   "private": true,
   "license": "MIT",
   "scripts": {
