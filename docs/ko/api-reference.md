@@ -880,6 +880,152 @@ function createMockRepository<T>(entity: ClazzType<T>, overrides?: MockMethods<T
 class InMemoryDriver implements Partial<ISqlDriver>;
 ```
 
+## 도구 (Tooling)
+
+### Seeder / SeederRunner
+
+[사용법 ->](./seeding.md)
+
+`src/seeding/`에서 재내보내집니다. 추상 클래스 `Seeder`를 상속한 클래스를
+`SeederRunner`와 짝지어 데이터베이스를 재현 가능한 픽스처나 프로덕션 기본값으로
+채웁니다. 실행 이력은 `__seeds` 테이블에 추적되어 각 시더는 환경당 한 번만
+실행됩니다.
+
+```typescript
+interface SeederContext {
+  em: EntityManager;
+}
+
+abstract class Seeder {
+  readonly name: string;                       // 기본값은 constructor.name
+  abstract run(ctx: SeederContext): Promise<void>;
+  revert?(ctx: SeederContext): Promise<void>;  // 선택, revertLast()에서 호출
+}
+
+interface SeederResult {
+  name: string;
+  direction: "run" | "revert";
+  success: boolean;
+  error?: string;
+}
+
+interface SeederRunnerOptions {
+  trackExecution?: boolean;  // 기본값: true
+  tableName?: string;        // 기본값: "__seeds"
+}
+
+interface SeederQueryRunner {
+  query: (sql: string) => Promise<any>;
+}
+
+class SeederRunner {
+  constructor(
+    seeders: Seeder[],
+    em: EntityManager,
+    queryRunner: SeederQueryRunner,
+    options?: SeederRunnerOptions,
+  );
+  ensureSeedTable(): Promise<void>;
+  runAll(): Promise<SeederResult[]>;
+  runOne(seeder: Seeder): Promise<SeederResult>;
+  revertLast(): Promise<SeederResult | null>;
+  status(): Promise<{ executed: string[]; pending: string[] }>;
+  getExecutedSeeds(): Promise<string[]>;
+}
+```
+
+### IntrospectionGenerator
+
+[사용법 ->](./introspection.md)
+
+`src/introspection/`에서 재내보내집니다. `INFORMATION_SCHEMA`(PostgreSQL은
+카탈로그)를 읽어 발견된 테이블에 대한 데코레이터 기반 엔티티 소스 코드를
+생성합니다.
+
+```typescript
+type IntrospectionDialect = "mysql" | "postgres";
+
+interface GeneratedEntity {
+  tableName: string;
+  className: string;
+  code: string;
+  fileName: string;
+}
+
+interface IntrospectionGeneratorOptions {
+  schema?: string;                                  // 기본값: "public" (PostgreSQL)
+  excludeTables?: string[];
+  includeTables?: string[];                         // 설정 시, 이 테이블들만 생성
+  codeBuilderOptions?: EntityCodeBuilderOptions;    // 예: { importPath: "../orm" }
+}
+
+interface IntrospectionQueryFn {
+  (sql: string | import("sql-template-tag").Sql): Promise<any>;
+}
+
+class IntrospectionGenerator {
+  constructor(
+    queryFn: IntrospectionQueryFn,
+    dialect: IntrospectionDialect,
+    options?: IntrospectionGeneratorOptions,
+  );
+  generate(): Promise<GeneratedEntity[]>;
+  discoverTables(): Promise<string[]>;
+  getColumns(table: string): Promise<DbColumn[]>;
+  getPrimaryKeys(table: string): Promise<string[]>;
+  getForeignKeys(table: string): Promise<DbForeignKey[]>;
+}
+
+// 하위 레벨 헬퍼 (역시 재내보내짐)
+class EntityCodeBuilder {
+  constructor(options?: EntityCodeBuilderOptions);
+  build(tableName: string, columns: DbColumn[],
+        pks: string[], fks: DbForeignKey[],
+        dialect: IntrospectionDialect): string;
+  tableNameToClassName(tableName: string): string;
+}
+
+class IntrospectionTypeMapper {
+  toColumnType(dbType: string, dialect: IntrospectionDialect): ColumnType;
+  toTsType(columnType: ColumnType): string;
+}
+```
+
+### PrismaImporter
+
+[사용법 ->](./prisma-import.md)
+
+`src/integration/prisma-import/`에서 재내보내집니다. `schema.prisma` 파일을
+데코레이터 기반 엔티티 파일로 변환합니다. `stingerloom-prisma-import` CLI
+바이너리로도 제공됩니다. 피어 의존성으로 `@mrleebo/prisma-ast`가 필요합니다.
+
+```typescript
+interface PrismaImportOptions {
+  schemaPath: string;
+  outputDir: string;
+  force?: boolean;                                  // 기존 파일 덮어쓰기
+  provider?: "postgresql" | "mysql" | "sqlite";     // 감지된 프로바이더 강제 지정
+}
+
+interface PrismaImportResult {
+  written: string[];
+  skipped: string[];
+  warnings: string[];
+  files: Map<string, string>;                       // 파일명 → 소스
+}
+
+class PrismaImporter {
+  // 파싱 후 디스크에 작성.
+  import(options: PrismaImportOptions): Promise<PrismaImportResult>;
+  // 파싱 후 생성 소스를 Map으로 반환 (디스크 I/O 없음).
+  generate(source: string, provider?: string): Map<string, string>;
+}
+```
+
+이 모듈은 `PrismaParser`, `PrismaSchemaAnalyzer`, `RelationResolver`,
+`TypeMapper`, `FileWriter` 같은 하위 레벨 빌딩 블록도 재내보내어 커스텀
+파이프라인을 구성할 수 있게 해 줍니다.
+
 ## Errors
 
 모든 ORM 에러는 `OrmError`를 상속하고, `suggestion` 필드에 해결 힌트가 포함될 수 있어요. 문서를 찾아보지 않아도 문제를 진단할 수 있어요:

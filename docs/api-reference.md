@@ -880,6 +880,153 @@ function createMockRepository<T>(entity: ClazzType<T>, overrides?: MockMethods<T
 class InMemoryDriver implements Partial<ISqlDriver>;
 ```
 
+## Tooling
+
+### Seeder / SeederRunner
+
+[Usage ->](./seeding.md)
+
+Re-exported from `src/seeding/`. Pair an abstract `Seeder` subclass with
+`SeederRunner` to populate the database with reproducible fixtures or
+production-ready defaults. Execution is tracked in a `__seeds` table so each
+seeder runs at most once per environment.
+
+```typescript
+interface SeederContext {
+  em: EntityManager;
+}
+
+abstract class Seeder {
+  readonly name: string;                       // defaults to constructor.name
+  abstract run(ctx: SeederContext): Promise<void>;
+  revert?(ctx: SeederContext): Promise<void>;  // optional, called by revertLast()
+}
+
+interface SeederResult {
+  name: string;
+  direction: "run" | "revert";
+  success: boolean;
+  error?: string;
+}
+
+interface SeederRunnerOptions {
+  trackExecution?: boolean;  // default: true
+  tableName?: string;        // default: "__seeds"
+}
+
+interface SeederQueryRunner {
+  query: (sql: string) => Promise<any>;
+}
+
+class SeederRunner {
+  constructor(
+    seeders: Seeder[],
+    em: EntityManager,
+    queryRunner: SeederQueryRunner,
+    options?: SeederRunnerOptions,
+  );
+  ensureSeedTable(): Promise<void>;
+  runAll(): Promise<SeederResult[]>;
+  runOne(seeder: Seeder): Promise<SeederResult>;
+  revertLast(): Promise<SeederResult | null>;
+  status(): Promise<{ executed: string[]; pending: string[] }>;
+  getExecutedSeeds(): Promise<string[]>;
+}
+```
+
+### IntrospectionGenerator
+
+[Usage ->](./introspection.md)
+
+Re-exported from `src/introspection/`. Reads `INFORMATION_SCHEMA` (or the
+PostgreSQL catalog) and produces decorator-based entity source code for the
+discovered tables.
+
+```typescript
+type IntrospectionDialect = "mysql" | "postgres";
+
+interface GeneratedEntity {
+  tableName: string;
+  className: string;
+  code: string;
+  fileName: string;
+}
+
+interface IntrospectionGeneratorOptions {
+  schema?: string;                                  // default: "public" (PostgreSQL)
+  excludeTables?: string[];
+  includeTables?: string[];                         // if set, only these are emitted
+  codeBuilderOptions?: EntityCodeBuilderOptions;    // e.g. { importPath: "../orm" }
+}
+
+interface IntrospectionQueryFn {
+  (sql: string | import("sql-template-tag").Sql): Promise<any>;
+}
+
+class IntrospectionGenerator {
+  constructor(
+    queryFn: IntrospectionQueryFn,
+    dialect: IntrospectionDialect,
+    options?: IntrospectionGeneratorOptions,
+  );
+  generate(): Promise<GeneratedEntity[]>;
+  discoverTables(): Promise<string[]>;
+  getColumns(table: string): Promise<DbColumn[]>;
+  getPrimaryKeys(table: string): Promise<string[]>;
+  getForeignKeys(table: string): Promise<DbForeignKey[]>;
+}
+
+// Lower-level helpers (also re-exported)
+class EntityCodeBuilder {
+  constructor(options?: EntityCodeBuilderOptions);
+  build(tableName: string, columns: DbColumn[],
+        pks: string[], fks: DbForeignKey[],
+        dialect: IntrospectionDialect): string;
+  tableNameToClassName(tableName: string): string;
+}
+
+class IntrospectionTypeMapper {
+  toColumnType(dbType: string, dialect: IntrospectionDialect): ColumnType;
+  toTsType(columnType: ColumnType): string;
+}
+```
+
+### PrismaImporter
+
+[Usage ->](./prisma-import.md)
+
+Re-exported from `src/integration/prisma-import/`. Converts a `schema.prisma`
+file into decorator-based entity files. Also available as the
+`stingerloom-prisma-import` CLI binary. Requires `@mrleebo/prisma-ast` as a
+peer dependency.
+
+```typescript
+interface PrismaImportOptions {
+  schemaPath: string;
+  outputDir: string;
+  force?: boolean;                                  // overwrite existing files
+  provider?: "postgresql" | "mysql" | "sqlite";     // override detected provider
+}
+
+interface PrismaImportResult {
+  written: string[];
+  skipped: string[];
+  warnings: string[];
+  files: Map<string, string>;                       // filename → source
+}
+
+class PrismaImporter {
+  // Parse + write to disk.
+  import(options: PrismaImportOptions): Promise<PrismaImportResult>;
+  // Parse + return generated source as a Map (no disk I/O).
+  generate(source: string, provider?: string): Map<string, string>;
+}
+```
+
+The module also re-exports the lower-level building blocks (`PrismaParser`,
+`PrismaSchemaAnalyzer`, `RelationResolver`, `TypeMapper`, `FileWriter`) for
+custom pipelines.
+
 ## Errors
 
 All ORM errors extend `OrmError`, which includes an optional `suggestion` field with an actionable fix hint. This helps you diagnose problems without consulting documentation:
