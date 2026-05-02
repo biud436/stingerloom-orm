@@ -2,6 +2,7 @@
 import { MetadataLayer } from "./MetadataLayer";
 import { MetadataContext } from "./MetadataContext";
 import { MetadataPath } from "./MetadataPath";
+import { warnLegacyContextMutator } from "./legacyContextWarning";
 
 /**
  * Hierarchical metadata store (Docker OverlayFS style).
@@ -61,9 +62,11 @@ export class LayeredMetadataStore {
    *
    * @deprecated In production code, prefer `MetadataContext.run(tenantId, callback)`.
    * `setContext()` mutates instance state and is not safe under concurrent requests.
-   * Use only from test code.
+   * Use only from test code. Calls fire a one-shot warning unless
+   * `STINGERLOOM_SUPPRESS_LEGACY_CONTEXT_WARN=1`.
    */
   setContext(context: string): void {
+    warnLegacyContextMutator("LayeredMetadataStore.setContext");
     this.currentContext = context;
   }
 

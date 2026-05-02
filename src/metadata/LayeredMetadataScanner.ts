@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { LayeredMetadataStore } from "./LayeredMetadataStore";
 import { ClazzType } from "../utils";
+import { warnLegacyContextMutator } from "./legacyContextWarning";
 
 /**
  * Adapter that bridges the legacy MetadataScanner API with the layered store.
@@ -103,8 +104,16 @@ export class LayeredMetadataScanner {
 
   /**
    * Switch the current context (multi-tenant support).
+   *
+   * @deprecated Forwards to the deprecated
+   * {@link LayeredMetadataStore.setContext} and shares its concurrency
+   * caveats (mutates instance state; not safe under concurrent requests).
+   * Drive context switching through
+   * {@link MetadataContext.run | `MetadataContext.run(tenantId, callback)`}
+   * instead.
    */
   public switchContext(context: string): void {
+    warnLegacyContextMutator("LayeredMetadataScanner.switchContext");
     this.store.setContext(context);
   }
 

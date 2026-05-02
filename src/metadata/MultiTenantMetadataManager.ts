@@ -3,6 +3,7 @@ import {
   LayeredEntityScanner,
   LayeredColumnScanner,
 } from "../metadata";
+import { warnLegacyContextMutator } from "./legacyContextWarning";
 
 /**
  * Multi-tenant metadata manager.
@@ -31,8 +32,17 @@ export class MultiTenantMetadataManager {
 
   /**
    * Switch to a tenant.
+   *
+   * @deprecated Forwards to {@link LayeredMetadataStore.setContext}, which
+   * mutates instance state and is not safe under concurrent requests. The
+   * canonical path is
+   * {@link MetadataContext.run | `MetadataContext.run(tenantId, callback)`} —
+   * it scopes the switch to the current async caller via AsyncLocalStorage.
+   * Calls fire a one-shot warning unless
+   * `STINGERLOOM_SUPPRESS_LEGACY_CONTEXT_WARN=1`.
    */
   switchTenant(tenantId: string): void {
+    warnLegacyContextMutator("MultiTenantMetadataManager.switchTenant");
     this.currentTenant = tenantId;
     this.store.setContext(tenantId);
   }

@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { MetadataLayer } from "../metadata/MetadataLayer";
 import { MetadataContext } from "../metadata/MetadataContext";
+import { warnLegacyContextMutator } from "../metadata/legacyContextWarning";
 
 /**
  * Global LayeredMetadataStore registry.
@@ -66,7 +67,20 @@ export class MetadataLayerRegistry {
     return this.currentContext;
   }
 
+  /**
+   * @deprecated In production code, prefer
+   * {@link MetadataContext.run | `MetadataContext.run(tenantId, callback)`}.
+   * `setContext()` mutates a process-global field and is not safe under
+   * concurrent requests — a misplaced call permanently routes every async
+   * caller to the wrong tenant layer until the next mutation.
+   *
+   * Kept exposed because the test suite drives layer behaviour directly
+   * through the registry; production callers should instead let
+   * `MetadataContext.run` win via the AsyncLocalStorage path inside
+   * {@link getContext}.
+   */
   setContext(context: string): void {
+    warnLegacyContextMutator("MetadataLayerRegistry.setContext");
     this.currentContext = context;
     // Automatically create the layer if it does not exist
     if (!this.layers.has(context)) {
@@ -486,8 +500,16 @@ export class MetadataScanner {
 
   /**
    * Switch the current context.
+   *
+   * @deprecated Forwards to the deprecated
+   * {@link MetadataLayerRegistry.setContext} and carries the same concurrency
+   * caveats. Wrap your work in
+   * {@link MetadataContext.run | `MetadataContext.run(tenantId, callback)`}
+   * so the switch is scoped to the current async caller. Calls fire a
+   * one-shot warning unless `STINGERLOOM_SUPPRESS_LEGACY_CONTEXT_WARN=1`.
    */
   public switchContext(context: string): void {
+    warnLegacyContextMutator("MetadataScanner.switchContext");
     this.registry.setContext(context);
   }
 
