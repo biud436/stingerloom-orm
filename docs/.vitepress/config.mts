@@ -78,6 +78,15 @@ function sidebarEn() {
       items: [
         { text: "Migrations", link: "/migrations" },
         { text: "Migration CLI", link: "/cli" },
+        { text: "Seeding", link: "/seeding" },
+      ],
+    },
+    {
+      text: "Tools",
+      collapsed: false,
+      items: [
+        { text: "Introspection", link: "/introspection" },
+        { text: "Prisma Import", link: "/prisma-import" },
       ],
     },
     {
@@ -198,6 +207,15 @@ function sidebarKo() {
       items: [
         { text: "마이그레이션", link: "/ko/migrations" },
         { text: "마이그레이션 CLI", link: "/ko/cli" },
+        { text: "시딩", link: "/ko/seeding" },
+      ],
+    },
+    {
+      text: "도구",
+      collapsed: false,
+      items: [
+        { text: "인트로스펙션", link: "/ko/introspection" },
+        { text: "Prisma Import", link: "/ko/prisma-import" },
       ],
     },
     {
@@ -236,6 +254,7 @@ function sidebarKo() {
       items: [
         { text: "API 레퍼런스", link: "/ko/api-reference" },
         { text: "아키텍처", link: "/ko/architecture" },
+        { text: "트러블슈팅", link: "/ko/troubleshooting" },
         { text: "프로덕션 가이드", link: "/ko/production-guide" },
         { text: "기여자 가이드", link: "/ko/onboarding" },
       ],
