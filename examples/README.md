@@ -40,7 +40,7 @@ Advanced blog API demonstrating features not covered in nestjs-cats:
 - **`SchemaDiffMigrationGenerator`** — Auto-generate migration files (`POST /posts/schema-diff/generate`)
 - **`findWithCursor()`** — Cursor-based pagination (`GET /posts/cursor`)
 - **`@UniqueIndex`** — Composite unique indexes on User.email, User.username, Post.slug, Tag.name
-- **`@DeletedAt` + `@Version`** — Soft Delete + Optimistic Locking
+- **`@DeletedAt`** — Soft Delete with restore endpoint
 - **4 entities**: User, Post, Tag, Category (OneToMany, ManyToOne, ManyToMany relations)
 
 **Endpoints**:
