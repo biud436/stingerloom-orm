@@ -446,12 +446,20 @@ interface ColumnOption {
 ### ColumnType
 
 ```typescript
-type ColumnType =
+type KnownColumnType =
   | "varchar" | "char" | "int" | "number" | "float" | "double" | "bigint"
   | "boolean" | "datetime" | "timestamp" | "timestamptz" | "date"
-  | "text" | "longtext" | "blob"
+  | "text" | "longtext" | "blob" | "uuid"
   | "json" | "jsonb" | "enum" | "array";
+
+// ColumnTypeRegistry로 등록된 커스텀 타입은 string으로도 허용됩니다.
+type ColumnType = KnownColumnType | (string & {});
 ```
+
+20개의 내장 `KnownColumnType` 값은 자동 완성으로 제공됩니다. 그 외에도
+[`ColumnTypeRegistry`](#columntyperegistry)에 등록된 임의 문자열
+(예: `"geometry"`, `"vector"`)도 허용되며, 다이얼렉트별 DDL은 등록된
+정의에서 해석됩니다.
 
 ### Relation Options
 

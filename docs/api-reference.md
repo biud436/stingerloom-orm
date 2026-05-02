@@ -446,12 +446,20 @@ interface ColumnOption {
 ### ColumnType
 
 ```typescript
-type ColumnType =
+type KnownColumnType =
   | "varchar" | "char" | "int" | "number" | "float" | "double" | "bigint"
   | "boolean" | "datetime" | "timestamp" | "timestamptz" | "date"
-  | "text" | "longtext" | "blob"
+  | "text" | "longtext" | "blob" | "uuid"
   | "json" | "jsonb" | "enum" | "array";
+
+// Custom types registered via ColumnTypeRegistry are also accepted as string.
+type ColumnType = KnownColumnType | (string & {});
 ```
+
+The 20 built-in `KnownColumnType` values are autocomplete-friendly. Beyond
+those, any string registered with [`ColumnTypeRegistry`](#columntyperegistry)
+(e.g. `"geometry"`, `"vector"`) is accepted, and the dialect-specific DDL is
+resolved from the registered definition.
 
 ### Relation Options
 
