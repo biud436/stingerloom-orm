@@ -23,6 +23,13 @@ export class MetadataLayerRegistry {
   private resolveAllCache: Map<string, Map<string, any>> = new Map();
   private dirtyContexts: Set<string> = new Set(["public"]);
 
+  // Scanner instances whose per-instance caches (lastResolvedMap /
+  // targetIndexMap) must be invalidated when a tenant layer is removed (#279).
+  // Plain Set is fine because scanner instances live for the process lifetime
+  // — singletons via `ScannerContainer`. Tests reset both via reset() and
+  // resetScannerContainer(), so neither side leaks across tests.
+  private scanners: Set<MetadataScanner> = new Set();
+
   private constructor() {
     // Default lower layer (writable — decorators need to record metadata into it)
     this.layers.set("public", new MetadataLayer("public", false));
@@ -118,12 +125,39 @@ export class MetadataLayerRegistry {
 
   /**
    * Remove a layer.
+   *
+   * Also invalidates per-scanner caches (`lastResolvedMap` /
+   * `targetIndexMap`). Without this, a scanner can keep references to the
+   * removed tenant's entity classes via its merged-map snapshot until the
+   * next call from a different context triggers a rebuild — see issue #279.
    */
   removeLayer(name: string): boolean {
     if (name === "public") throw new Error('Cannot remove "public" layer.');
     this.resolveAllCache.delete(name);
     this.dirtyContexts.delete(name);
-    return this.layers.delete(name);
+    const removed = this.layers.delete(name);
+    if (removed) this.invalidateScannerCaches();
+    return removed;
+  }
+
+  /**
+   * Register a scanner so its local caches can be invalidated when a layer
+   * is removed. Idempotent.
+   */
+  registerScanner(scanner: MetadataScanner): void {
+    this.scanners.add(scanner);
+  }
+
+  /**
+   * Clear `lastResolvedMap` / `targetIndexMap` on every registered scanner.
+   * Forces the next `getByTarget()` call to rebuild against the post-removal
+   * merged view, releasing references to entity classes that belonged to the
+   * dropped layer.
+   */
+  invalidateScannerCaches(): void {
+    for (const scanner of this.scanners) {
+      scanner.invalidateLocalCache();
+    }
   }
 
   /**
@@ -251,12 +285,19 @@ export class MetadataScanner {
 
   constructor(scannerPrefix = "") {
     this.scannerPrefix = scannerPrefix;
+    // Self-register so removeLayer() can drop our per-instance caches (#279).
+    MetadataLayerRegistry.getInstance().registerScanner(this);
   }
 
   // ── LayerRegistry access ────────────────────────────────
 
   protected get registry(): MetadataLayerRegistry {
-    return MetadataLayerRegistry.getInstance();
+    const reg = MetadataLayerRegistry.getInstance();
+    // Lazy re-registration covers the case where the registry singleton was
+    // recreated (e.g. MetadataLayerRegistry.reset() in tests) without also
+    // recreating scanner instances. Idempotent; cheap Set.add on the hot path.
+    reg.registerScanner(this);
+    return reg;
   }
 
   /**
@@ -403,6 +444,16 @@ export class MetadataScanner {
 
   private lastResolvedMap: Map<string, any> | null = null;
   private targetIndexMap: Map<Function, any[]> = new Map();
+
+  /**
+   * Drop this scanner's local caches. Called by
+   * `MetadataLayerRegistry.removeLayer()` so references to entity classes
+   * from a removed tenant don't survive past the layer drop (#279).
+   */
+  public invalidateLocalCache(): void {
+    this.lastResolvedMap = null;
+    this.targetIndexMap.clear();
+  }
 
   /**
    * O(1) lookup by entity class (target).

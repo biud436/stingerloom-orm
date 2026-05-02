@@ -5,6 +5,7 @@ import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { Logger } from "../utils/Logger";
 import { ClazzType } from "../utils/types";
 import { MetadataContext } from "../metadata/MetadataContext";
+import { MetadataLayerRegistry } from "../scanner/MetadataScanner";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { EntityManager } from "./EntityManager";
 
@@ -136,6 +137,12 @@ export class TenantConnectionRouter {
    * If the tenant was registered with a name the router did not own (i.e.
    * the user pre-registered it via `DatabaseClient.connect`), the pool is
    * left intact and only the router entry is dropped.
+   *
+   * Also drops the tenant's metadata layer (if one was created under
+   * `tenantId`) so per-scanner caches stop holding entity-class references
+   * for the offboarded tenant — see issue #279. Safe no-op if no such layer
+   * exists, which is the common case for the "database" strategy where
+   * decorator metadata lives on the public layer.
    */
   async release(tenantId: string): Promise<void> {
     const entry = this.entries.get(tenantId);
@@ -150,6 +157,21 @@ export class TenantConnectionRouter {
           `Error releasing tenant pool '${tenantId}': ${(err as Error).message}`,
         );
       }
+    }
+    try {
+      const registry = MetadataLayerRegistry.getInstance();
+      if (registry.getLayer(tenantId)) {
+        registry.removeLayer(tenantId);
+      } else {
+        // No tenant layer ever existed (typical for "database" strategy),
+        // but per-scanner caches may still hold references through a
+        // resolveAll() snapshot that ran while this tenant was active.
+        registry.invalidateScannerCaches();
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Error invalidating metadata for tenant '${tenantId}': ${(err as Error).message}`,
+      );
     }
   }
 
