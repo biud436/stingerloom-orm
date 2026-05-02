@@ -1,98 +1,99 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# NestJS Todo (SQLite) — Stingerloom ORM Example
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A minimal NestJS Todo API showcasing Stingerloom ORM running on SQLite via
+`better-sqlite3`. Because the database is a single file, this example needs
+no external server — clone, install, run.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Why this example?
 
-## Description
+- **No DB server.** SQLite runs in-process — perfect for first-time setup,
+  CI smoke tests, or learning the ORM without provisioning anything.
+- **Soft delete on a tiny surface.** The `Todo` entity uses `@DeletedAt` so
+  you can see how `delete()` produces a 404 on subsequent reads without
+  having to wire up a full blog domain.
+- **Same NestJS module wiring as the other examples.** Drop `type: 'sqlite'`
+  in front of any `nestjs-todo` config and you have a runnable app.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Prerequisites
 
-## Project setup
+- Node.js 18+
+- pnpm
 
-```bash
-$ pnpm install
-```
+> The peer dep `better-sqlite3` is installed automatically via this example's
+> `package.json`. The root ORM build is **not** required when consuming the
+> published `@stingerloom/orm` package; it **is** required when developing
+> against the workspace (which is how this example is wired by default).
 
-## Compile and run the project
+## Quick Start
 
 ```bash
-# development
-$ pnpm run start
+# 1. Build the ORM (only needed when running from the monorepo)
+cd /path/to/stingerloom-orm
+pnpm build
 
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+# 2. Install + start
+cd examples/nestjs-todo-sqlite
+pnpm install
+pnpm start         # or pnpm start:dev for watch mode
 ```
 
-## Run tests
+The API is now live at `http://localhost:3000`. A SQLite file (`todo.db` by
+default) is created next to the process working directory.
+
+## Endpoints
+
+`Todo` schema: `id` (auto), `title`, `description?`, `completed` (default
+`false`), `createdAt`, `updatedAt`, `deletedAt` (soft-delete sentinel).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/todos` | Create a todo (`{ title, description? }`) |
+| GET | `/todos` | List todos (excludes soft-deleted) |
+| GET | `/todos/:id` | Get one — 404 if absent or soft-deleted |
+| PATCH | `/todos/:id` | Update fields (e.g. `{ completed: true }`) |
+| DELETE | `/todos/:id` | **Soft** delete — subsequent `GET` returns 404 |
+
+## Configuration
+
+The app reads a single env var:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_PATH` | `todo.db` | Path to the SQLite file (relative or absolute) |
+
+In-memory mode is also supported by setting `DB_PATH=:memory:`. Each process
+restart will start with an empty database.
+
+## Tests
+
+E2E tests are in `test/app.e2e-spec.ts` and exercise the full create →
+update → soft-delete → 404 flow. Because SQLite runs in-process, no
+`INTEGRATION_TEST` flag is required:
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+pnpm test:e2e
 ```
 
-## Deployment
+## How it wires up
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+```ts
+// src/app.module.ts
+StingerloomOrmModule.forRoot({
+  type: 'sqlite',
+  database: process.env.DB_PATH || 'todo.db',
+  entities: [Todo],
+  synchronize: true,
+  logging: true,
+});
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+`synchronize: true` recreates the schema from `Todo` on every boot — fine
+for an example, but switch to `'safe'` (or migrations) before running
+against a database you care about.
 
-## Resources
+## Going further
 
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- For multi-DB support, see [examples/nestjs-multitenant](../nestjs-multitenant).
+- For a richer NestJS surface (relations, M2M, upsert, cursor pagination),
+  see [examples/nestjs-blog](../nestjs-blog).
+- For the same Todo domain on MySQL, see [examples/nestjs-todo](../nestjs-todo).
