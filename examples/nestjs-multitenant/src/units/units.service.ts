@@ -43,7 +43,7 @@ export class UnitsService implements OnModuleInit {
     const unit = qAlias(Unit, "u");
 
     const items = await this.unitRepository
-      .createQueryBuilder("u")
+      .createQueryBuilder(unit)
       .where(unit.active.isNull())
       .orWhere(unit.active.eq(false))
       .getMany();
