@@ -6,6 +6,71 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.20.3] — 2026-05-03
+
+Stability and hardening release on top of v0.20.0. No new public APIs; the version number lands on `.3` because two earlier publish attempts (`0.20.1`, `0.20.2`) were superseded before reaching npm. Key items below.
+
+### Highlights
+
+- **Multi-tenant correctness fixes** — decorator-time metadata writes now route to the public layer (#280), scanner caches drop with their tenant layer (#279), and the shared `dirtyEntities` Set is no longer wiped by per-transaction cleanup on a NestJS singleton EM (#278). All three were silent regressions where one tenant or transaction could observe state belonging to another.
+- **Connection lifecycle hardening** — Postgres commit/rollback wraps `client.query` in try/catch and destructively releases on rollback failure so pool clients are never leaked (#283); `EntityManager.attach()` now actually honors its `synchronize: false` override (#294, #295).
+- **DDL injection / pool surface audited** — five high/medium dialect issues fixed in one pass: FK column type derivation (#284), SQLite write classifier (#287), FullText regconfig validation (#285), ENUM literal escaping under `NO_BACKSLASH_ESCAPES=OFF` (#286), and the Postgres pool leak above (#283).
+- **Legacy context mutators deprecated** — `MetadataLayerRegistry.setContext`, `MetadataScanner.switchContext`, `LayeredMetadataScanner.switchContext`, `MultiTenantMetadataManager.switchTenant`, and `LayeredMetadataStore.setContext` now emit a one-shot warning per process and carry `@deprecated` JSDoc pointing at `MetadataContext.run(tenantId, callback)` (#282).
+- **`.d.ts` files now ship JSDoc** — `removeComments: true` was stripping every public-API description from the published declarations; consumers had no IDE hover text. Fixed.
+
+### Fixed
+
+#### Metadata / multi-tenancy
+
+- **Decorator-time writes leak into tenant layers (#280)** — `@Entity` / `@Column` / `@ManyToOne` / `@OneToMany` / `@OneToOne` / `@ManyToMany` all wrote through `MetadataScanner.set()`, which routed to whichever layer the active `MetadataContext.run()` pointed at. Class declarations evaluated inside a tenant context (introspection generator, runtime entity factories, dynamic Prisma imports, per-tenant test fixtures) silently landed on the tenant layer; other tenants then could not load the entity, and per-tenant schema diff diverged. New `MetadataLayerRegistry.getPublicLayer()` and `MetadataScanner.setOnPublic()` always target `"public"` and dirty every cached merged view; tenant Copy-on-Write callers continue to use `scanner.set()`.
+- **Scanner caches outlive their tenant layer (#279)** — `MetadataLayerRegistry.removeLayer()` dropped the layer and its `resolveAllCache` entry, but per-instance caches inside every `MetadataScanner` (`lastResolvedMap` + `targetIndexMap`) kept the stale merged map alive. In a long-running multi-tenant workload this leaked entity-class references for every offboarded tenant, multiplied across each scanner singleton. Scanners now self-register with the registry; both `removeLayer()` and `TenantConnectionRouter.release()` invalidate the per-instance caches so references die with the layer.
+
+#### EntityManager / NestJS
+
+- **Shared `dirtyEntities` wiped by tx cleanup (#278)** — `executeInTransaction()`'s finally block was clearing the instance-wide `dirtyEntities` Set, destroying dirty-state belonging to other in-flight transactions and to non-tx writers on a shared (NestJS singleton) `EntityManager`. Tx-scoped state already lives in the per-session `txDirtyEntities` WeakMap, so the only correct cleanup is `txDirtyEntities.delete(session)`.
+- **`attach()` synchronize gate (#294, #295)** — `effective.synchronize = false` was set on the local options object but `_ctx.getSynchronize()` always read from `client.getOptions(connectionName).synchronize`, so the override never reached `SchemaRegistrar.registerEntities()`'s DDL gate. An attached EM whose original registration had `synchronize: true` would still re-fire DDL. New per-EM `isAttached` flag forces `getSynchronize()` to return false for attached EMs.
+- **`forRootAsync` MTEM sentinel proxy thenable-safe (#294, #295)** — the misuse-sentinel Proxy's `get` trap threw on every property access including `.then`. Because the MTEM `useFactory` is `async`, its `return makeMtemMisuseSentinel(...)` unwrapped through `Promise.resolve(value)`, which probes `.then` on the resolved value — that probe threw and crashed module bootstrap before anyone tried to inject MTEM. `then` / `catch` / `finally` now return undefined so the sentinel flows through the async factory and only throws on first real injection use.
+- **NestJS module shutdown cleanup (#281)** — removes the module-scoped `globalRegistry` Map, which only had writers and no readers — it pinned every onboarded `EntityManager` for the life of the process. `StingerloomOrmService.captured` is now reset in `onApplicationShutdown` (under `finally`, so a failing `propagateShutdown` still clears it) so subsequent independent modules correctly re-trigger the "forRoot was not called" warning instead of silently inheriting the prior module's flag.
+
+#### Dialects (PR ae67a31, batched fix for #283–#287)
+
+- **Postgres pool leak on commit/rollback (#283)** — commit/rollback now wrap `client.query` in try/catch and destructively `release(true)` on rollback failure so pool clients are never leaked. `PostgresDataSource` clears the connection ref in `finally` so connector exceptions cannot leave a stale handle for `close()` to double-release.
+- **FK column type hardcoded to INT (#284)** — `SchemaRegistrar.registerForeignKeys` now derives auto-added M2O / O2O FK column types from `resolvePkColumnType(entity)` instead of a hardcoded `INT`, fixing UUID / varchar / bigint parents.
+- **SQLite write classifier confused by leading comments / CTEs (#287)** — `SqliteConnector.executeRaw` and `SqliteDriver.queryWithOptions` branch on better-sqlite3's `Statement.reader` instead of prefix-string parsing, so leading comments and CTE-prefixed writes route correctly.
+- **FullText DDL injection vector (#285)** — `SchemaGenerator.generateFullTextIndexDDL` validates the `@FullTextIndex` `language` option against the `regconfig` identifier grammar and routes it through a new shared escape helper, blocking the `to_tsvector('lang', ...)` injection vector.
+- **ENUM literal break-out under `NO_BACKSLASH_ESCAPES=OFF` (#286)** — ENUM literals in `SchemaRegistrar.buildColumnTypeExpr` and `MySqlColumnDefinitionBuilder.resolveEnumType` now escape backslashes and reject null bytes. `PostgresDriver.escapeEnumValue` is now an alias of the shared helper so all three call sites stay consistent.
+
+### Changed
+
+- **Legacy context mutators warn + `@deprecated` (#282)** — `MetadataLayerRegistry.setContext`, `MetadataScanner.switchContext`, `LayeredMetadataScanner.switchContext`, `MultiTenantMetadataManager.switchTenant`, and `LayeredMetadataStore.setContext` flip a process-global context field that AsyncLocalStorage-based `MetadataContext.run` is meant to supersede. New `legacyContextWarning` helper fires once per `method` per process, suppresses itself under Jest (`JEST_WORKER_ID`), and respects `STINGERLOOM_SUPPRESS_LEGACY_CONTEXT_WARN=1`. `@deprecated` JSDoc on all five entry points points callers at `MetadataContext.run(tenantId, callback)`.
+- **Layered-metadata facade methods marked `@deprecated`** (#277) — surfaces the same migration path on the unused public facade methods.
+
+### Build
+
+- **`tsconfig.json`: `removeComments: false`** — preserves JSDoc in emitted `.d.ts`. Without this, package consumers got no IDE hover / IntelliSense for public classes and methods.
+- **Examples toolchain alignment** (#293) — jest / ts-jest versions across `examples/*` unified; `pnpm-lock.yaml` refreshed.
+
+### Documentation
+
+- **API reference completeness** — list all 20 `ColumnType` values plus the `(string & {})` custom-type widening (#273); expand `SelectQueryBuilder` reference with `whereHas` / `whereNotHas`, `when` / `pipe`, `applyScope`, `whereInSubquery` / `whereNotInSubquery`, `prepare` / `preparePartial`, `withCount`, `getPartialMany` / `getPartialManyAndCount` / `getRawMany` / `getRawOne`, fix `getManyAndCount` return type to `Promise<[TResult[], number]>`, declare class as `SelectQueryBuilder<T, TResult = T>`, document the `qAlias()` helper (#274); new top-level "Tooling" section covering `Seeder` / `IntrospectionGenerator` / `PrismaImporter` (#275).
+- **README quickstart** (#276) — copy-paste runnable end-to-end snippet plus a Korean mirror.
+- **Korean translations** (#271, #272) — `seeding`, `introspection`, `prisma-import`, `troubleshooting`.
+- **Examples documentation** — `nestjs-cats` README + remove orphan `dummy-cats.json` (#292); add the four missing example projects to the docs index (#291); align `nestjs-todo` package description (#290); drop unimplemented `@Version` claim from `nestjs-blog` READMEs (#289); replace boilerplate Nest CLI README in `nestjs-todo-sqlite` (#288).
+
+### Tests
+
+- **45 new unit tests across 4 files** for the dialect fix batch (postgres pool leak, FK column type, SQLite classifier, SQL literal escape).
+- **Decorator public-layer routing** — new `decorator-public-layer-routing.test.ts` covers all six relation/column/entity decorators, cross-tenant fallback visibility, cache invalidation reach, and a guard that `scanner.set()` still respects the current context for explicit tenant overrides (#280).
+- **`EntityManager.attach()`** — new `entity-manager-attach.test.ts` (5 cases) covers connector reuse, the `synchronize=true` override invalidation, the `NOT_CONNECTED` throw path, `namingStrategy` override application, and pool-sharing across multiple attached EMs (#294, #295).
+- **NestJS multi-DB sentinel** — new describe block in `nestjs-multi-db.test.ts` (6 cases) exercises both `useFactory` functions: MTEM sentinel return, real MTEM construction, EM throw on sentinel/undefined under `database` strategy, EM ignoring sentinel under non-`database` strategy, symbol round-trip (#294, #295).
+- **Multi-tenancy / transactions coverage gap closure** — 24 new tests across 5 files for `TenantConnectionRouter` eviction (#296), PostgreSQL identifier validator regex (#297), `forEachTenant` modes (#298), `transaction()` rollback-failure combined `OrmError` (#299), and concurrent tenant routing in `pickEm()` under 20 parallel `MetadataContext.run` envelopes (#300).
+- **Cross-feature multi-tenancy coverage** — `tenant_column` + `tenant_database` interaction matrix (#270).
+- **Deeply nested AsyncLocalStorage semantics** — 7 nested-context cases on `MetadataContext.run()` (3/4-level chains, unscoped mixing, throw recovery, concurrent chains, microtask/timer boundaries) plus a standalone `async-local-storage.test.ts` exercising raw `node:async_hooks` behavior (region isolation, cross-region resource sharing, closure leaks, `.then()` / timer frame inheritance, lost-update under shared state, `exit()` semantics).
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.20.0...v0.20.3
+
+---
+
 ## [0.20.0] — 2026-04-26
 
 ### Highlights
