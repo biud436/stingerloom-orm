@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
+import { ConfigModule, ConfigService } from "@nestjs/config";
 import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { TenantModule } from "./tenant/tenant.module";
 import { UsersModule } from "./users/users.module";
@@ -21,18 +21,22 @@ import { UnitsController } from "./units/units.controller";
       defaultTenant: "public",
       routes: [UsersController, PostsController, UnitsController],
     }),
-    StingerloomOrmModule.forRoot({
-      type: "postgres",
-      host: process.env.DB_HOST || "localhost",
-      port: parseInt(process.env.DB_PORT || "5432"),
-      username: process.env.DB_USER || "postgres",
-      password: process.env.DB_PASSWORD || "postgres",
-      database: process.env.DB_NAME || "multi_tenancy_db2",
-      entities: [User, Post, Unit],
-      synchronize: true,
-      logging: true,
-      namingStrategy: new SnakeNamingStrategy(),
-      tenantStrategy: "schema_qualified",
+    StingerloomOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: "postgres",
+        host: config.get<string>("DB_HOST", "localhost"),
+        port: parseInt(config.get<string>("DB_PORT", "5432"), 10),
+        username: config.get<string>("DB_USER", "postgres"),
+        password: config.get<string>("DB_PASSWORD", "postgres"),
+        database: config.get<string>("DB_NAME", "multi_tenancy_db2"),
+        entities: [User, Post, Unit],
+        synchronize: true,
+        logging: true,
+        namingStrategy: new SnakeNamingStrategy(),
+        tenantStrategy: "schema_qualified",
+      }),
     }),
     UsersModule,
     PostsModule,
