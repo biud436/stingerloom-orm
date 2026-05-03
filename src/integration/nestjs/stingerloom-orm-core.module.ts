@@ -211,13 +211,26 @@ const MTEM_MISUSE_SENTINEL = Symbol.for(
 );
 
 /**
- * Returns a `MultiTenantEntityManager`-shaped Proxy whose every property
- * access throws a clear error explaining that MTEM is only available when
- * `tenantStrategy: "database"`. Used by `forRootAsync` so the MTEM token is
- * always provided (Nest can't conditionally omit a token at module-construction
- * time when the options come from an async factory), but accidental use of
- * `@InjectMultiTenantEntityManager()` on a non-database connection fails fast
- * with an actionable message instead of `Cannot read properties of undefined`.
+ * Returns a misuse sentinel that mirrors `MultiTenantEntityManager`'s
+ * public API but where every method throws a clear error explaining that
+ * MTEM is only available when `tenantStrategy: "database"`. Used by
+ * `forRootAsync` so the MTEM token can always be provided (Nest can't
+ * conditionally omit a token at module-construction time when the options
+ * come from an async factory), but accidental use of
+ * `@InjectMultiTenantEntityManager()` on a non-database connection fails
+ * fast with an actionable message at the first real call instead of a
+ * confusing `Cannot read properties of undefined`.
+ *
+ * Why a plain object rather than a `Proxy`: NestJS dispatches a lot of
+ * generic property probes against every resolved provider value
+ * (lifecycle-hook detection like `instance.onModuleInit`, `util.inspect`,
+ * `instanceof` checks, the dependency-graph inspector, etc.). A throwing
+ * Proxy `get` trap turns those benign probes into bootstrap crashes the
+ * moment the MTEM token is resolved — which `forRootAsync` does
+ * unconditionally because `emToken` injects it. Materializing the
+ * sentinel as a plain object means unknown properties read as a normal
+ * `undefined` (so probes pass through), while the known MTEM methods
+ * still throw the actionable misuse error when actually called.
  */
 function makeMtemMisuseSentinel(
   connectionName: string,
@@ -225,25 +238,19 @@ function makeMtemMisuseSentinel(
   const error = new Error(
     `[StingerloomOrmModule] @InjectMultiTenantEntityManager() is only available when tenantStrategy is "database" (connection "${connectionName}"). Either pass tenantStrategy: "database" in your options factory, or remove the @InjectMultiTenantEntityManager() injection from this connection.`,
   );
-  return new Proxy({} as MultiTenantEntityManager, {
-    get(_target, prop) {
-      if (prop === MTEM_MISUSE_SENTINEL) return true;
-      // The MTEM useFactory is `async`, so its `return makeMtemMisuseSentinel(...)`
-      // unwraps through `Promise.resolve(value)` which probes `.then` on the
-      // resolved value. A throwing `.then` would crash module bootstrap before
-      // anyone ever tried to inject MTEM. We have to expose those Promise-ish
-      // properties as `undefined` (i.e. "not a thenable") so the sentinel can
-      // safely flow through the async factory and still throw at first real
-      // injection use.
-      if (prop === "then" || prop === "catch" || prop === "finally") {
-        return undefined;
-      }
-      throw error;
-    },
-    set() {
-      throw error;
-    },
-  });
+  const throwingMethod = (): never => {
+    throw error;
+  };
+  const sentinel: Record<string | symbol, unknown> = {
+    [MTEM_MISUSE_SENTINEL]: true,
+  };
+  for (const key of Object.getOwnPropertyNames(
+    MultiTenantEntityManager.prototype,
+  )) {
+    if (key === "constructor") continue;
+    sentinel[key] = throwingMethod;
+  }
+  return sentinel as unknown as MultiTenantEntityManager;
 }
 
 function isMtemMisuseSentinel(value: unknown): boolean {

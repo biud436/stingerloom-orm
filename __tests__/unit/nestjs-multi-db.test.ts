@@ -411,16 +411,61 @@ describe("NestJS Multi-DB Support", () => {
         // connection that should never receive @InjectMultiTenantEntityManager().
       });
 
-      // Every property access throws an actionable error mentioning the
-      // connection name. Hitting `Cannot read properties of undefined` here
-      // would mean the sentinel guard regressed.
+      // Calling any of MTEM's real public methods on the sentinel throws
+      // an actionable error mentioning the connection name. Hitting a
+      // generic `undefined is not a function` here would mean the misuse
+      // guard regressed and the user lost the helpful message.
       expect(() => (sentinel as any).query()).toThrow(/analytics/);
       expect(() => (sentinel as any).register()).toThrow(
         /tenantStrategy is "database"/,
       );
-      expect(() => {
-        (sentinel as any).foo = 1;
-      }).toThrow(/analytics/);
+      // Arbitrary property access (which framework introspection does
+      // unconditionally on every resolved provider value) must NOT throw —
+      // it's not user code calling MTEM, so it has to flow through as a
+      // normal `undefined` so module bootstrap can complete.
+      expect(() => (sentinel as any).somethingThatIsNotMtemAtAll).not.toThrow();
+      expect((sentinel as any).somethingThatIsNotMtemAtAll).toBeUndefined();
+    });
+
+    it("MTEM sentinel does not throw on framework / runtime symbol probes", () => {
+      // Regression: NestJS lifecycle-hook detection, util.inspect, and Node
+      // 23's `using`-style resource management probe well-known symbols on
+      // every resolved provider instance. Throwing on those probes crashed
+      // module bootstrap on connections that intentionally don't use the
+      // database strategy (the misuse error fired before any user code ever
+      // accessed MTEM). Symbol-keyed access must therefore return `undefined`
+      // and only string-keyed access (real method calls) should trigger the
+      // guard.
+      const { mtemFactory } = buildModule("symbol-probe");
+      return mtemFactory({
+        type: "mysql",
+        host: "localhost",
+        port: 3306,
+        database: "test",
+        username: "root",
+        password: "",
+        entities: [],
+      }).then((sentinel) => {
+        const probes: (symbol | undefined)[] = [
+          Symbol.toPrimitive,
+          Symbol.toStringTag,
+          Symbol.iterator,
+          Symbol.asyncIterator,
+          Symbol.hasInstance,
+          (Symbol as unknown as { dispose?: symbol }).dispose,
+          (Symbol as unknown as { asyncDispose?: symbol }).asyncDispose,
+          Symbol.for("nodejs.util.inspect.custom"),
+        ];
+        for (const probe of probes) {
+          if (probe === undefined) continue;
+          expect(() =>
+            (sentinel as unknown as Record<symbol, unknown>)[probe],
+          ).not.toThrow();
+          expect(
+            (sentinel as unknown as Record<symbol, unknown>)[probe],
+          ).toBeUndefined();
+        }
+      });
     });
 
     it("MTEM useFactory builds a real MultiTenantEntityManager under tenantStrategy: 'database'", async () => {
