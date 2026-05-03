@@ -263,7 +263,9 @@ const cache = new Map<DialectName, DialectExpression>();
  *
  * Follows the same factory pattern as `createColumnDefinitionBuilder()`.
  */
-export function createDialectExpression(dialect: DialectName): DialectExpression {
+export function createDialectExpression(
+  dialect: DialectName,
+): DialectExpression {
   let expr = cache.get(dialect);
   if (!expr) {
     switch (dialect) {

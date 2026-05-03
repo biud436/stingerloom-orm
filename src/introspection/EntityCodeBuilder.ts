@@ -83,7 +83,10 @@ export class EntityCodeBuilder {
       if (fkColumnSet.has(col.column_name)) continue;
 
       const isPk = pks.includes(col.column_name);
-      const columnType = IntrospectionTypeMapper.toColumnType(col.data_type, dialect);
+      const columnType = IntrospectionTypeMapper.toColumnType(
+        col.data_type,
+        dialect,
+      );
       const tsType = IntrospectionTypeMapper.toTsType(columnType);
 
       if (isPk) {
@@ -136,7 +139,9 @@ export class EntityCodeBuilder {
     // Emit imports for referenced entity classes (FK targets)
     for (const refClass of Array.from(referencedClasses).sort()) {
       const refFileName = this.classNameToFileName(refClass);
-      lines.push(`import { ${refClass} } from "./${refFileName.replace(/\.ts$/, "")}";`);
+      lines.push(
+        `import { ${refClass} } from "./${refFileName.replace(/\.ts$/, "")}";`,
+      );
     }
 
     lines.push("");
@@ -162,7 +167,11 @@ export class EntityCodeBuilder {
     let singular = tableName;
     if (singular.endsWith("ies")) {
       singular = singular.slice(0, -3) + "y";
-    } else if (singular.endsWith("ses") || singular.endsWith("xes") || singular.endsWith("zes")) {
+    } else if (
+      singular.endsWith("ses") ||
+      singular.endsWith("xes") ||
+      singular.endsWith("zes")
+    ) {
       singular = singular.slice(0, -2);
     } else if (singular.endsWith("s") && !singular.endsWith("ss")) {
       singular = singular.slice(0, -1);
@@ -181,7 +190,9 @@ export class EntityCodeBuilder {
     const parts = columnName.split("_");
     return parts
       .map((part, i) =>
-        i === 0 ? part.toLowerCase() : part.charAt(0).toUpperCase() + part.slice(1).toLowerCase(),
+        i === 0
+          ? part.toLowerCase()
+          : part.charAt(0).toUpperCase() + part.slice(1).toLowerCase(),
       )
       .join("");
   }
@@ -207,7 +218,10 @@ export class EntityCodeBuilder {
     }
 
     const defaultVal = (col.column_default ?? "").toLowerCase();
-    if (defaultVal.includes("nextval") || defaultVal.includes("auto_increment")) {
+    if (
+      defaultVal.includes("nextval") ||
+      defaultVal.includes("auto_increment")
+    ) {
       return true;
     }
 
