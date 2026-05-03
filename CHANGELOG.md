@@ -6,6 +6,22 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.20.4] — 2026-05-03
+
+Single-fix follow-up to v0.20.3. The thenable-safe patch shipped for #294/#295 turned out to be insufficient: NestJS dispatches generic property probes (lifecycle-hook detection, `util.inspect`, the dependency-graph inspector) against every resolved provider value, and the misuse-sentinel Proxy's throwing `get` trap turned those benign probes into bootstrap crashes the moment the MTEM token was resolved — which `forRootAsync` does unconditionally because `emToken` injects it. Surfaced on Node 23 against `examples/nestjs-multitenant` after switching to `forRootAsync`.
+
+### Fixed
+
+- **`forRootAsync` MTEM sentinel no longer crashes module bootstrap (follow-up to #294/#295)** — `makeMtemMisuseSentinel` is now a plain object that mirrors `MultiTenantEntityManager`'s public methods rather than a `Proxy`. Unknown property reads flow through as `undefined` so framework probes pass cleanly; real MTEM method calls still throw the actionable misuse error pointing at `tenantStrategy: "database"`.
+
+### Tests
+
+- New regression case in `nestjs-multi-db.test.ts` covering well-known symbol probes (`Symbol.toPrimitive`, `Symbol.toStringTag`, `Symbol.iterator`, `Symbol.asyncIterator`, `Symbol.hasInstance`, Node 23's `Symbol.dispose` / `Symbol.asyncDispose`, `nodejs.util.inspect.custom`) and arbitrary string-keyed reads on the sentinel.
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.20.3...v0.20.4
+
+---
+
 ## [0.20.3] — 2026-05-03
 
 Stability and hardening release on top of v0.20.0. No new public APIs; the version number lands on `.3` because two earlier publish attempts (`0.20.1`, `0.20.2`) were superseded before reaching npm. Key items below.
