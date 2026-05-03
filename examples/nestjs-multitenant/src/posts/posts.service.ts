@@ -20,8 +20,14 @@ export class PostsService implements OnModuleInit {
     const post = new Post();
     post.title = dto.title;
     post.content = dto.content;
-    if (dto.published !== undefined) post.published = dto.published;
-    if (dto.authorId) post.authorId = dto.authorId;
+
+    if (dto.published !== undefined) {
+      post.published = dto.published;
+    }
+
+    if (dto.authorId) {
+      post.authorId = dto.authorId;
+    }
 
     return await this.postRepository.save(post);
   }
@@ -32,16 +38,27 @@ export class PostsService implements OnModuleInit {
 
   async findOne(id: number): Promise<Post> {
     const result = await this.postRepository.findOne({ where: { id } });
-    if (!result) throw new NotFoundException(`Post with ID ${id} not found`);
+
+    if (!result) {
+      throw new NotFoundException(`Post with ID ${id} not found`);
+    }
+
     return result;
   }
 
   async update(id: number, dto: UpdatePostDto): Promise<Post> {
     const post = await this.findOne(id);
 
-    if (dto.title !== undefined) post.title = dto.title;
-    if (dto.content !== undefined) post.content = dto.content;
-    if (dto.published !== undefined) post.published = dto.published;
+    if (dto.title !== undefined) {
+      post.title = dto.title;
+    }
+
+    if (dto.content !== undefined) {
+      post.content = dto.content;
+    }
+    if (dto.published !== undefined) {
+      post.published = dto.published;
+    }
 
     return await this.postRepository.save(post);
   }
