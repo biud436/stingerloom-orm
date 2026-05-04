@@ -1,0 +1,60 @@
+import { Controller, Get, Param, ParseIntPipe, Query } from "@nestjs/common";
+import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { AnalyticsService } from "./analytics.service";
+
+@ApiTags("Analytics")
+@Controller("analytics")
+export class AnalyticsController {
+  constructor(private readonly service: AnalyticsService) {}
+
+  @Get("issues/:id/tree")
+  @ApiOperation({
+    summary: "Recursive subissue tree",
+    description: "Walks parent_id chain via WITH RECURSIVE. Returns one row per descendant ordered by tree path.",
+  })
+  tree(
+    @Param("id", ParseIntPipe) id: number,
+    @Query("maxDepth") maxDepth?: string,
+  ) {
+    return this.service.issueTree(id, maxDepth ? Number(maxDepth) : 10);
+  }
+
+  @Get("sprints/:id/burndown")
+  @ApiOperation({
+    summary: "Sprint burndown by day",
+    description: "Window function (SUM OVER ORDER BY day) gives running cumulative completion and remaining estimate.",
+  })
+  burndown(@Param("id", ParseIntPipe) id: number) {
+    return this.service.sprintBurndown(id);
+  }
+
+  @Get("projects/:id/throughput")
+  @ApiOperation({
+    summary: "Assignee throughput ranking",
+    description: "ROW_NUMBER OVER (ORDER BY completedCount DESC, avgCycleHours ASC) ranks assignees in the project.",
+  })
+  throughput(
+    @Param("id", ParseIntPipe) id: number,
+    @Query("days") days?: string,
+  ) {
+    return this.service.assigneeThroughput(id, days ? Number(days) : 30);
+  }
+
+  @Get("issues/:id/time-in-status")
+  @ApiOperation({
+    summary: "Time spent in each status",
+    description: "LAG/LEAD over activity_log STATUS_CHANGED rows. Reads payload->>'to' for the entered status.",
+  })
+  timeInStatus(@Param("id", ParseIntPipe) id: number) {
+    return this.service.timeInStatus(id);
+  }
+
+  @Get("projects/:id/lead-time")
+  @ApiOperation({ summary: "Average lead time per week" })
+  leadTime(
+    @Param("id", ParseIntPipe) id: number,
+    @Query("days") days?: string,
+  ) {
+    return this.service.leadTimeByWeek(id, days ? Number(days) : 60);
+  }
+}
