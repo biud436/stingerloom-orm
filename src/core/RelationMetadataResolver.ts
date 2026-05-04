@@ -402,6 +402,38 @@ export class RelationMetadataResolver {
   }
 
   /**
+   * FK backing-property mappings for `qAlias` / property→column resolution.
+   *
+   * Given an entity with `@ManyToOne workspace + @RelationColumn({ name: "workspace_id" })`,
+   * Stingerloom's convention is to expose the FK value through a sibling
+   * `workspaceId` property. The DDL/INSERT path knows about that column
+   * because it goes through `resolveManyToOneMetadata()`, but
+   * `buildPropertyToColumnMap()` only iterated `@Column` metadata — so
+   * `qAlias(Entity).workspaceId.eq(...)` rendered as `entity.workspaceId`
+   * (camelCase) and the database rejected the unknown column.
+   *
+   * This helper closes the gap by listing every `{relationProp}Id` →
+   * `joinColumn` pair derived from M2O / O2O relations.
+   */
+  collectFkPropertyMappings<T>(entity: ClazzType<T>): Map<string, string> {
+    const map = new Map<string, string>();
+
+    for (const rel of this.resolveManyToOneMetadata(entity)) {
+      if (rel.joinColumn) {
+        map.set(`${rel.columnName}Id`, rel.joinColumn);
+      }
+    }
+
+    for (const rel of this.resolveOneToOneMetadata(entity)) {
+      if (rel.joinColumn) {
+        map.set(`${rel.propertyKey}Id`, rel.joinColumn);
+      }
+    }
+
+    return map;
+  }
+
+  /**
    * Finalizes the joinTable information for a ManyToMany relation.
    * For the owning side (joinTable present), returns it as-is; for the inverse side (mappedBy),
    * fetches joinTable from the owning side.

@@ -1530,14 +1530,30 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Build a property-to-column map from entity metadata.
    * Duplicates EntityManager.buildPropertyToColumnMap logic to avoid
    * depending on its private visibility.
+   *
+   * Folds in `@ManyToOne`/`@OneToOne` FK backing-property mappings
+   * (e.g. `workspaceId` → `workspace_id`) when the metadata carries an
+   * entity reference, so `qAlias(Entity).fkProp` resolves correctly.
    */
   protected buildPropertyToColumnMapFromMetadata(
-    metadata: { columns: ColumnMetadata[] },
+    metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
   ): Map<string, string> {
     const map = new Map<string, string>();
     for (const col of metadata.columns) {
       const prop = col.propertyKey ?? col.name!;
       map.set(prop, col.name!);
+    }
+    const resolver = (this.em as any).resolver as
+      | RelationMetadataResolver
+      | undefined;
+    if (
+      metadata.target &&
+      typeof resolver?.collectFkPropertyMappings === "function"
+    ) {
+      const fkMap = resolver.collectFkPropertyMappings(metadata.target);
+      for (const [prop, col] of fkMap) {
+        if (!map.has(prop)) map.set(prop, col);
+      }
     }
     return map;
   }

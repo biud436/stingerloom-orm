@@ -3938,12 +3938,34 @@ export class EntityManager implements BaseEntityManager {
   /**
    * Builds a Map from TypeScript property names to DB column names
    * for NamingStrategy-aware WHERE/SELECT/ORDER resolution.
+   *
+   * `@Column` properties are read from `metadata.columns`.
+   * `@ManyToOne` / `@OneToOne` FK backing properties (e.g. `workspaceId`
+   * for a `workspace!: Workspace` relation) are folded in via
+   * `resolver.collectFkPropertyMappings()` so that `qAlias(Entity).fkProp`
+   * resolves to the snake_case FK column. Without this, FK access
+   * through qAlias rendered the camelCase property name verbatim and the
+   * database rejected it.
    */
-  private buildPropertyToColumnMap(metadata: { columns: ColumnMetadata[] }): Map<string, string> {
+  private buildPropertyToColumnMap(metadata: {
+    target?: ClazzType<any>;
+    columns: ColumnMetadata[];
+  }): Map<string, string> {
     const map = new Map<string, string>();
     for (const col of metadata.columns) {
       const prop = col.propertyKey ?? col.name!;
       map.set(prop, col.name!);
+    }
+    // Resolver may be a partial mock in some tests, so guard the call.
+    if (
+      metadata.target &&
+      typeof this.resolver?.collectFkPropertyMappings === "function"
+    ) {
+      const fkMap = this.resolver.collectFkPropertyMappings(metadata.target);
+      for (const [prop, col] of fkMap) {
+        // Explicit @Column on the same property wins (already in map).
+        if (!map.has(prop)) map.set(prop, col);
+      }
     }
     return map;
   }
