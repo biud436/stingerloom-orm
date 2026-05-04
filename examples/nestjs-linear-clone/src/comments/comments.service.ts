@@ -3,6 +3,7 @@ import {
   BaseRepository,
   EntityManager,
   Transactional,
+  qAlias,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Comment } from "./comment.entity";
@@ -39,10 +40,11 @@ export class CommentsService {
   }
 
   findByIssue(issueId: number): Promise<Comment[]> {
+    const c = qAlias(Comment, "c");
     return this.em
-      .createQueryBuilder(Comment, "c")
-      .where("c.issue_id", issueId)
-      .orderBy({ createdAt: "ASC" } as any)
+      .createQueryBuilder(c)
+      .where(c.issueId.eq(issueId))
+      .orderBy(c.createdAt.asc())
       .getMany();
   }
 

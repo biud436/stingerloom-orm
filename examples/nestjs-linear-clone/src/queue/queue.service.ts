@@ -1,9 +1,10 @@
 import { Injectable, Inject, BadRequestException } from "@nestjs/common";
 import {
   EntityManager,
+  Expressions as exp,
   Transactional,
+  qAlias,
   sql,
-  raw,
 } from "@stingerloom/orm";
 import { Issue } from "../issues/issue.entity";
 import { ActivityService } from "../activity/activity.service";
@@ -52,9 +53,9 @@ export class QueueService {
       throw new BadRequestException("workerId must be 1-64 chars [a-zA-Z0-9-]");
     }
 
-    const candidateId = this.isPostgres()
-      ? await this.lockNextPostgres(projectId)
-      : await this.lockNextMysql(workerId, projectId);
+    const candidateId = this.em.getDriver().isMySqlFamily()
+      ? await this.lockNextMysql(workerId, projectId)
+      : await this.lockNextPostgres(projectId);
     if (candidateId === null) return null;
 
     const claimed = await this.markClaimed(candidateId, workerId);
@@ -86,11 +87,11 @@ export class QueueService {
   }
 
   /**
-   * Operational stat counters per project. Conditional aggregates require
-   * dialect-specific date math AND multiple parameter bindings in a single
-   * SELECT list; SelectQueryBuilder's addSelect path does not currently
-   * thread bindings cleanly across multiple `${...}` fragments, so we use
-   * `em.query(sql\`…\`)` directly for this one read-only summary.
+   * Operational stat counters per project. Each number is its own typed
+   * `getCount()` over the same `qAlias(Issue)` predicate set — four small
+   * queries running in parallel are cheaper to read than one `SUM(CASE
+   * WHEN …)` and stay portable across dialects without dipping into raw
+   * SQL.
    */
   async stats(projectId: number): Promise<{
     backlog: number;
@@ -98,84 +99,47 @@ export class QueueService {
     activelyClaimed: number;
     expiredClaim: number;
   }> {
-    const cutoff = this.leaseCutoffSql();
-    const isPg = this.isPostgres();
-    const wrap = isPg
-      ? (n: string) => `"${n}"`
-      : (n: string) => `\`${n}\``;
-    const issue = wrap("issue");
-    const status = wrap("status");
-    const claimedAt = wrap("claimedAt");
-    const projectCol = wrap("project_id");
-    const assigneeCol = wrap("assignee_id");
-    const deletedAt = wrap("deletedAt");
+    const i = qAlias(Issue, "i");
+    const cutoff = exp.currentTimestamp().addMinutes(-LEASE_MINUTES);
 
-    const rows = await this.em.query<Record<string, unknown>>(sql`
-      SELECT
-        SUM(CASE WHEN ${raw(status)} = ${ISSUE_STATUS.BACKLOG} THEN 1 ELSE 0 END) AS backlog,
-        SUM(CASE WHEN ${raw(status)} = ${ISSUE_STATUS.TODO}    THEN 1 ELSE 0 END) AS todo,
-        SUM(CASE WHEN ${raw(claimedAt)} IS NOT NULL AND ${raw(claimedAt)} >= ${cutoff} THEN 1 ELSE 0 END) AS active_claim,
-        SUM(CASE WHEN ${raw(claimedAt)} IS NOT NULL AND ${raw(claimedAt)} <  ${cutoff} THEN 1 ELSE 0 END) AS expired_claim
-      FROM ${raw(issue)}
-      WHERE ${raw(projectCol)} = ${projectId}
-        AND ${raw(assigneeCol)} IS NULL
-        AND ${raw(deletedAt)} IS NULL
-    `);
+    const baseFilter = () =>
+      this.em
+        .createQueryBuilder(i)
+        .where(i.projectId.eq(projectId))
+        .andWhere(i.assigneeId.isNull());
 
-    const r = (rows[0] ?? {}) as Record<string, unknown>;
-    return {
-      backlog: Number(r.backlog ?? 0),
-      todo: Number(r.todo ?? 0),
-      activelyClaimed: Number(r.active_claim ?? 0),
-      expiredClaim: Number(r.expired_claim ?? 0),
-    };
+    const [backlog, todo, activelyClaimed, expiredClaim] = await Promise.all([
+      baseFilter().andWhere(i.status.eq(ISSUE_STATUS.BACKLOG)).getCount(),
+      baseFilter().andWhere(i.status.eq(ISSUE_STATUS.TODO)).getCount(),
+      baseFilter()
+        .andWhere(i.claimedAt.isNotNull())
+        .andWhere(i.claimedAt.gte(cutoff))
+        .getCount(),
+      baseFilter()
+        .andWhere(i.claimedAt.isNotNull())
+        .andWhere(i.claimedAt.lt(cutoff))
+        .getCount(),
+    ]);
+
+    return { backlog, todo, activelyClaimed, expiredClaim };
   }
 
   // ── internals ──────────────────────────────────────────
 
-  private isPostgres(): boolean {
-    return this.em
-      .getDriver()
-      .constructor.name.toLowerCase()
-      .includes("postgres");
-  }
-
-  /**
-   * Quote-aware column reference. Translates `i.status` → `\`i\`.\`status\``
-   * (MySQL) or `"i"."status"` (PostgreSQL).
-   */
-  private col(ref: string): string {
-    const isPg = this.isPostgres();
-    const quote = (s: string) => (isPg ? `"${s}"` : `\`${s}\``);
-    return ref
-      .split(".")
-      .map((p) => quote(p))
-      .join(".");
-  }
-
-  private leaseCutoffSql() {
-    return this.isPostgres()
-      ? sql`(NOW() - INTERVAL '${raw(String(LEASE_MINUTES))} minutes')`
-      : sql`DATE_SUB(NOW(), INTERVAL ${LEASE_MINUTES} MINUTE)`;
-  }
-
   /** PostgreSQL claim — SelectQueryBuilder + FOR UPDATE SKIP LOCKED. */
   private async lockNextPostgres(projectId: number): Promise<number | null> {
-    const cutoff = this.leaseCutoffSql();
+    const i = qAlias(Issue, "i");
+    const cutoff = exp.currentTimestamp().addMinutes(-LEASE_MINUTES);
 
     const candidate = await this.em
-      .createQueryBuilder(Issue, "i")
-      .where("i.project_id", projectId)
-      .andWhere(
-        sql`${raw(this.col("i.status"))} IN (${ISSUE_STATUS.BACKLOG}, ${ISSUE_STATUS.TODO})`,
-      )
-      .andWhere("i.assignee_id", null)
-      .andWhere(
-        sql`(${raw(this.col("i.claimedAt"))} IS NULL OR ${raw(this.col("i.claimedAt"))} < ${cutoff})`,
-      )
-      .andWhere("i.deletedAt", null)
-      .orderBy({ priority: "ASC" } as any)
-      .addOrderBy("number", "ASC")
+      .createQueryBuilder(i)
+      .where(i.projectId.eq(projectId))
+      .andWhere(i.status.in([ISSUE_STATUS.BACKLOG, ISSUE_STATUS.TODO]))
+      .andWhere(i.assigneeId.isNull())
+      .andWhere(exp.or(i.claimedAt.isNull(), i.claimedAt.lt(cutoff)))
+      .andWhere(i.deletedAt.isNull())
+      .orderBy(i.priority.asc())
+      .addOrderBy(i.number.asc())
       .limit(1)
       .forUpdateSkipLocked()
       .getOne();
@@ -184,10 +148,11 @@ export class QueueService {
   }
 
   /**
-   * MariaDB/MySQL claim — atomic UPDATE with sentinel tag, then SELECT to
-   * recover the row id. The sentinel survives only for the duration of
-   * `claimNext` (we immediately overwrite it with the real workerId in
-   * `markClaimed`).
+   * MariaDB/MySQL claim — atomic UPDATE with sentinel tag, then a typed
+   * read-back to recover the row id. The `UPDATE ... ORDER BY ... LIMIT 1`
+   * shape is MySQL-specific and `updateMany()` does not expose ORDER BY +
+   * LIMIT, so this one-liner stays as a parameterized `sql` template.
+   * Identifiers are MySQL-only here, so backticks are acceptable.
    */
   private async lockNextMysql(
     workerId: string,
@@ -196,7 +161,7 @@ export class QueueService {
     const sentinel = `__pending:${workerId}:${Date.now()}-${Math.floor(
       Math.random() * 1e9,
     )}`;
-    const cutoff = this.leaseCutoffSql();
+    const cutoff = sql`DATE_SUB(NOW(), INTERVAL ${LEASE_MINUTES} MINUTE)`;
 
     const result = await this.em.query(
       sql`UPDATE \`issue\`
@@ -213,9 +178,10 @@ export class QueueService {
       (result as unknown as { affectedRows?: number }).affectedRows ?? 0;
     if (affected === 0) return null;
 
+    const i = qAlias(Issue, "i");
     const tagged = await this.em
-      .createQueryBuilder(Issue, "i")
-      .where("i.claimedBy", sentinel)
+      .createQueryBuilder(i)
+      .where(i.claimedBy.eq(sentinel))
       .limit(1)
       .getOne();
     return tagged?.id ?? null;
@@ -237,9 +203,10 @@ export class QueueService {
     );
     if (updated.affected === 0) return null;
 
+    const i = qAlias(Issue, "i");
     const row = await this.em
-      .createQueryBuilder(Issue, "i")
-      .where("i.id", issueId)
+      .createQueryBuilder(i)
+      .where(i.id.eq(issueId))
       .getOne();
     if (!row) return null;
 

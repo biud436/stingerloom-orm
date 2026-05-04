@@ -8,7 +8,7 @@ import {
   BaseRepository,
   EntityManager,
   Transactional,
-  sql,
+  qAlias,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Project } from "./project.entity";
@@ -25,32 +25,38 @@ export class ProjectsService {
 
   @Transactional()
   async create(dto: CreateProjectDto): Promise<Project> {
+    const p = qAlias(Project, "p");
     const dup = await this.em
-      .createQueryBuilder(Project, "p")
-      .where("p.workspace_id", dto.workspaceId)
-      .andWhere("p.key", dto.key)
+      .createQueryBuilder(p)
+      .where(p.workspaceId.eq(dto.workspaceId))
+      .andWhere(p.key.eq(dto.key))
       .getOne();
+
     if (dup) {
       throw new ConflictException(
         `Project key ${dto.key} already exists in workspace ${dto.workspaceId}`,
       );
     }
 
-    const p = new Project();
-    p.workspaceId = dto.workspaceId;
-    p.name = dto.name;
-    p.key = dto.key;
-    if (dto.description) p.description = dto.description;
+    const project = new Project();
+    project.workspaceId = dto.workspaceId;
+    project.name = dto.name;
+    project.key = dto.key;
+    if (dto.description) project.description = dto.description;
     if (dto.customFieldSchema) {
-      p.customFieldSchema = JSON.stringify(dto.customFieldSchema) as any;
+      project.customFieldSchema = JSON.stringify(dto.customFieldSchema) as any;
     }
-    return this.repo.save(p);
+    return this.repo.save(project);
   }
 
   findAll(workspaceId?: number): Promise<Project[]> {
-    const qb = this.em.createQueryBuilder(Project, "p");
-    if (workspaceId !== undefined) qb.where("p.workspace_id", workspaceId);
-    return qb.getMany();
+    const p = qAlias(Project, "p");
+    return this.em
+      .createQueryBuilder(p)
+      .when(workspaceId !== undefined, (qb) =>
+        qb.where(p.workspaceId.eq(workspaceId!)),
+      )
+      .getMany();
   }
 
   async findOne(id: number): Promise<Project> {
@@ -77,36 +83,21 @@ export class ProjectsService {
 
   /**
    * Atomic per-project counter increment used to assign issue numbers.
-   *
-   * MySQL/MariaDB do not return the post-increment value in a single
-   * statement (PostgreSQL has `RETURNING`), so we do `UPDATE … SET col = col + 1`
-   * and then read the column back. The whole pair lives inside the calling
-   * transaction (callers wrap in @Transactional), guaranteeing atomicity.
+   * `forUpdate()` locks the row, then `save()` writes the bumped counter —
+   * concurrent `nextIssueNumber()` calls serialize on the row lock, so
+   * each one sees a fresh value. Callers wrap this in `@Transactional`,
+   * which is required for the lock to span the read/write pair.
    */
   async nextIssueNumber(projectId: number): Promise<number> {
-    const isPg = this.em
-      .getDriver()
-      .constructor.name.toLowerCase()
-      .includes("postgres");
+    const p = qAlias(Project, "p");
+    const project = await this.em
+      .createQueryBuilder(p)
+      .where(p.id.eq(projectId))
+      .forUpdate()
+      .getOneOrFail();
 
-    if (isPg) {
-      const rows = await this.em.query<{ next: number }>(
-        sql`UPDATE "project"
-              SET "issueCounter" = "issueCounter" + 1
-            WHERE "id" = ${projectId}
-        RETURNING "issueCounter" AS next`,
-      );
-      return Number(rows[0]?.next ?? 0);
-    }
-
-    await this.em.query(
-      sql`UPDATE \`project\`
-             SET \`issueCounter\` = \`issueCounter\` + 1
-           WHERE \`id\` = ${projectId}`,
-    );
-    const rows = await this.em.query<{ next: number }>(
-      sql`SELECT \`issueCounter\` AS next FROM \`project\` WHERE \`id\` = ${projectId}`,
-    );
-    return Number(rows[0]?.next ?? 0);
+    project.issueCounter = (project.issueCounter ?? 0) + 1;
+    await this.em.save(Project, project);
+    return project.issueCounter;
   }
 }

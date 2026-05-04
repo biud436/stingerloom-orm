@@ -3,6 +3,7 @@ import {
   BaseRepository,
   EntityManager,
   Transactional,
+  qAlias,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Sprint } from "./sprint.entity";
@@ -32,9 +33,13 @@ export class SprintsService {
   }
 
   findAll(projectId?: number): Promise<Sprint[]> {
-    const qb = this.em.createQueryBuilder(Sprint, "s");
-    if (projectId !== undefined) qb.where("s.project_id", projectId);
-    return qb.getMany();
+    const s = qAlias(Sprint, "s");
+    return this.em
+      .createQueryBuilder(s)
+      .when(projectId !== undefined, (qb) =>
+        qb.where(s.projectId.eq(projectId!)),
+      )
+      .getMany();
   }
 
   async findOne(id: number): Promise<Sprint> {

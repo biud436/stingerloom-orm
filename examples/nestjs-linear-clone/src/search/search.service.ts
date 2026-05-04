@@ -1,5 +1,12 @@
 import { Injectable, Inject } from "@nestjs/common";
-import { EntityManager, sql, raw, Sql } from "@stingerloom/orm";
+import {
+  EntityManager,
+  qAlias,
+  sql,
+  raw,
+  Sql,
+} from "@stingerloom/orm";
+import { Issue } from "../issues/issue.entity";
 import { detectDialect, q } from "../analytics/sql-helpers";
 
 export interface IssueSearchHit {
@@ -35,6 +42,9 @@ export class SearchService {
    *                  index built in `SearchModule.onModuleInit`.
    *
    * Hits from issues and comments are merged with `UNION ALL` and ranked.
+   * The dialect-specific FT operators don't have ORM counterparts, so this
+   * one stays on `RawQueryBuilder`-style `sql` templates — the rest of the
+   * service goes through the typed builder.
    */
   async fullTextIssues(
     queryText: string,
@@ -71,11 +81,7 @@ export class SearchService {
       ? sql`ts_rank(to_tsvector('english', c.${raw(body)}), plainto_tsquery('english', ${queryText}))`
       : sql`MATCH(c.${raw(body)}) AGAINST (${queryText} IN NATURAL LANGUAGE MODE)`;
 
-    const projectFilterIssue =
-      projectId !== undefined
-        ? sql`AND i.${raw(projectCol)} = ${projectId}`
-        : sql``;
-    const projectFilterComment =
+    const projectFilter =
       projectId !== undefined
         ? sql`AND i.${raw(projectCol)} = ${projectId}`
         : sql``;
@@ -98,7 +104,7 @@ export class SearchService {
         FROM ${raw(issue)} i
         WHERE ${issueMatch}
           AND i.${raw(deletedAt)} IS NULL
-          ${projectFilterIssue}
+          ${projectFilter}
         UNION ALL
         SELECT
           i.${raw(id)},
@@ -113,7 +119,7 @@ export class SearchService {
         WHERE ${commentMatch}
           AND c.${raw(deletedAt)} IS NULL
           AND i.${raw(deletedAt)} IS NULL
-          ${projectFilterComment}
+          ${projectFilter}
       ) hits
       ORDER BY rank DESC
       LIMIT ${limit}
@@ -132,9 +138,15 @@ export class SearchService {
   }
 
   /**
-   * Filter issues by a JSON `customFields` key/value pair. Identifier
-   * pattern check happens in the controller before we get here, so it is
-   * safe to splice `key` into a JSON path literal.
+   * Filter issues by a JSON `customFields` key/value pair.
+   *
+   * `qAlias(Issue).customFields.path(key)` compiles to the right JSON
+   * path expression on every dialect — `#>>` on PostgreSQL,
+   * `JSON_UNQUOTE(JSON_EXTRACT(...))` on MySQL, `json_extract` on
+   * SQLite — with `key` bound as a parameter, so callers don't have to
+   * branch on dialect or worry about JSON path injection. Reusing the
+   * same `pathExpr` in SELECT and WHERE keeps the projection and filter
+   * in lock-step.
    */
   async byCustomField(
     projectId: number,
@@ -142,37 +154,19 @@ export class SearchService {
     value: string,
     limit = 50,
   ): Promise<CustomFieldHit[]> {
-    const dialect = detectDialect(this.em);
-    const isPg = dialect === "postgres";
-    const issue = q("issue", dialect);
-    const id = q("id", dialect);
-    const number = q("number", dialect);
-    const title = q("title", dialect);
-    const status = q("status", dialect);
-    const projectCol = q("project_id", dialect);
-    const customFields = q("customFields", dialect);
-    const deletedAt = q("deletedAt", dialect);
+    const i = qAlias(Issue, "i");
+    const pathExpr = i.customFields.path(key);
 
-    const path = `$.${key}`;
-    const extract = isPg
-      ? sql`${raw(customFields)}->>${key}`
-      : sql`JSON_UNQUOTE(JSON_EXTRACT(${raw(customFields)}, ${path}))`;
+    const rows = await this.em
+      .createQueryBuilder(i)
+      .select(["id", "number", "title", "status"])
+      .addSelect(pathExpr.as("customFieldValue"))
+      .where(i.projectId.eq(projectId))
+      .andWhere(pathExpr.eq(value))
+      .andWhere(i.deletedAt.isNull())
+      .limit(limit)
+      .getRawMany();
 
-    const finalSql: Sql = sql`
-      SELECT
-        ${raw(id)}        AS ${raw(id)},
-        ${raw(number)}    AS ${raw(number)},
-        ${raw(title)}     AS ${raw(title)},
-        ${raw(status)}    AS ${raw(status)},
-        ${extract}        AS ${raw(q("customFieldValue", dialect))}
-      FROM ${raw(issue)}
-      WHERE ${raw(projectCol)} = ${projectId}
-        AND ${extract} = ${value}
-        AND ${raw(deletedAt)} IS NULL
-      LIMIT ${limit}
-    `;
-
-    const rows = await this.em.query<Record<string, unknown>>(finalSql);
     return rows.map((r) => ({
       id: Number(r.id),
       number: Number(r.number),

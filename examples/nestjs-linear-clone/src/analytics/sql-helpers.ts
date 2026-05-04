@@ -3,8 +3,7 @@ import { EntityManager } from "@stingerloom/orm";
 export type Dialect = "mysql" | "postgres";
 
 export function detectDialect(em: EntityManager): Dialect {
-  const driverName = em.getDriver().constructor.name.toLowerCase();
-  return driverName.includes("postgres") ? "postgres" : "mysql";
+  return em.getDriver().isMySqlFamily() ? "mysql" : "postgres";
 }
 
 /**

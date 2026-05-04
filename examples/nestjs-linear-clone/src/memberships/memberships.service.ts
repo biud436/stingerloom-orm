@@ -29,12 +29,12 @@ export class MembershipsService {
 
   @Transactional()
   async invite(dto: CreateMembershipDto): Promise<Membership> {
-    const memberShip = qAlias(Membership, "m");
+    const m = qAlias(Membership, "m");
 
     const existing = await this.em
-      .createQueryBuilder(memberShip)
-      .where(memberShip.workspaceId.eq(dto.workspaceId))
-      .andWhere(memberShip.userId.eq(dto.userId))
+      .createQueryBuilder(m)
+      .where(m.workspaceId.eq(dto.workspaceId))
+      .andWhere(m.userId.eq(dto.userId))
       .getOne();
 
     if (existing) {
@@ -43,31 +43,36 @@ export class MembershipsService {
       );
     }
 
-    const m = new Membership();
-    m.workspaceId = dto.workspaceId;
-    m.userId = dto.userId;
-    m.role = dto.role;
+    const membership = new Membership();
+    membership.workspaceId = dto.workspaceId;
+    membership.userId = dto.userId;
+    membership.role = dto.role;
 
-    return this.repo.save(m);
+    return this.repo.save(membership);
   }
 
   byWorkspace(workspaceId: number): Promise<Membership[]> {
-    const memberShip = qAlias(Membership, "m");
+    const m = qAlias(Membership, "m");
 
     return this.em
-      .createQueryBuilder(memberShip)
+      .createQueryBuilder(m)
       .leftJoinRelationAndSelect("user", "u")
-      .where(memberShip.workspaceId.eq(workspaceId))
+      .where(m.workspaceId.eq(workspaceId))
       .getMany();
   }
 
   byUser(userId: number): Promise<Membership[]> {
-    const memberShip = qAlias(Membership, "m");
+    const m = qAlias(Membership, "m");
 
+    // `leftJoinRelationAndSelect` reads the `@ManyToOne workspace` relation
+    // metadata to derive the JOIN ON clause and alias automatically — no
+    // qAlias is needed for the joined side. Use the typed `leftJoin(Entity,
+    // alias, fn)` form when you want a `qAlias()` reference for the joined
+    // entity's columns in WHERE / SELECT.
     return this.em
-      .createQueryBuilder(memberShip)
-      .leftJoinRelationAndSelect("workspace", "w") // qAlias를 못쓰는 것 같다.
-      .where(memberShip.userId.eq(userId))
+      .createQueryBuilder(m)
+      .leftJoinRelationAndSelect("workspace", "w")
+      .where(m.userId.eq(userId))
       .getMany();
   }
 

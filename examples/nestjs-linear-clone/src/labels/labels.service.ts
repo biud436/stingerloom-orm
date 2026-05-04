@@ -8,6 +8,7 @@ import {
   BaseRepository,
   EntityManager,
   Transactional,
+  qAlias,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Label } from "./label.entity";
@@ -24,27 +25,32 @@ export class LabelsService {
 
   @Transactional()
   async create(dto: CreateLabelDto): Promise<Label> {
+    const l = qAlias(Label, "l");
     const dup = await this.em
-      .createQueryBuilder(Label, "l")
-      .where("l.project_id", dto.projectId)
-      .andWhere("l.name", dto.name)
+      .createQueryBuilder(l)
+      .where(l.projectId.eq(dto.projectId))
+      .andWhere(l.name.eq(dto.name))
       .getOne();
     if (dup) {
       throw new ConflictException(
         `Label "${dto.name}" already exists in project ${dto.projectId}`,
       );
     }
-    const l = new Label();
-    l.projectId = dto.projectId;
-    l.name = dto.name;
-    if (dto.color) l.color = dto.color;
-    return this.repo.save(l);
+    const label = new Label();
+    label.projectId = dto.projectId;
+    label.name = dto.name;
+    if (dto.color) label.color = dto.color;
+    return this.repo.save(label);
   }
 
   findAll(projectId?: number): Promise<Label[]> {
-    const qb = this.em.createQueryBuilder(Label, "l");
-    if (projectId !== undefined) qb.where("l.project_id", projectId);
-    return qb.getMany();
+    const l = qAlias(Label, "l");
+    return this.em
+      .createQueryBuilder(l)
+      .when(projectId !== undefined, (qb) =>
+        qb.where(l.projectId.eq(projectId!)),
+      )
+      .getMany();
   }
 
   async findOne(id: number): Promise<Label> {

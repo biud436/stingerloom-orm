@@ -10,6 +10,7 @@ import {
   Transactional,
   CursorPaginationResult,
   OptimisticLockError,
+  qAlias,
   sql,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
@@ -96,15 +97,18 @@ export class IssuesService {
   }
 
   /**
-   * SelectQueryBuilder is the right tool here: the property→column map
-   * established by `createQueryBuilder(Issue, "i")` already knows that
-   * `Issue.projectId` lives in the `project_id` FK column, so we don't
-   * need ad-hoc snake_case casts.
+   * SelectQueryBuilder + qAlias: `i.projectId` resolves to the `project_id`
+   * FK column through entity metadata, so the filter stays type-safe and
+   * dialect-portable without ad-hoc snake_case casts.
    */
   findAll(projectId?: number): Promise<Issue[]> {
-    const qb = this.em.createQueryBuilder(Issue, "i");
-    if (projectId !== undefined) qb.where("i.project_id", projectId);
-    return qb.getMany();
+    const i = qAlias(Issue, "i");
+    return this.em
+      .createQueryBuilder(i)
+      .when(projectId !== undefined, (qb) =>
+        qb.where(i.projectId.eq(projectId!)),
+      )
+      .getMany();
   }
 
   async findOne(id: number): Promise<Issue> {
@@ -266,9 +270,11 @@ export class IssuesService {
   }
 
   /**
-   * M2M join-table I/O. The ORM has no first-class "attach a join row" API,
-   * so we issue dialect-flavored idempotent INSERTs via the parameterized
-   * `sql` template. Logged in the activity trail.
+   * M2M join-table I/O. The ORM treats join tables as pure relational
+   * bridges (see docs/relations.md → "Managing Join Table Data"), so we
+   * issue idempotent INSERT / DELETE via `em.query()`. The dialect
+   * branch picks `ON CONFLICT DO NOTHING` (PostgreSQL) vs `INSERT IGNORE`
+   * (MySQL) — the only piece that genuinely has no portable spelling.
    */
   async addLabel(
     issueId: number,
@@ -303,23 +309,15 @@ export class IssuesService {
   }
 
   private attachLabelSql(issueId: number, labelId: number) {
-    const isPg = this.em
-      .getDriver()
-      .constructor.name.toLowerCase()
-      .includes("postgres");
-    return isPg
-      ? sql`INSERT INTO "issue_labels" ("issue_id", "label_id") VALUES (${issueId}, ${labelId}) ON CONFLICT DO NOTHING`
-      : sql`INSERT IGNORE INTO \`issue_labels\` (\`issue_id\`, \`label_id\`) VALUES (${issueId}, ${labelId})`;
+    return this.em.getDriver().isMySqlFamily()
+      ? sql`INSERT IGNORE INTO \`issue_labels\` (\`issue_id\`, \`label_id\`) VALUES (${issueId}, ${labelId})`
+      : sql`INSERT INTO "issue_labels" ("issue_id", "label_id") VALUES (${issueId}, ${labelId}) ON CONFLICT DO NOTHING`;
   }
 
   private detachLabelSql(issueId: number, labelId: number) {
-    const isPg = this.em
-      .getDriver()
-      .constructor.name.toLowerCase()
-      .includes("postgres");
-    return isPg
-      ? sql`DELETE FROM "issue_labels" WHERE "issue_id" = ${issueId} AND "label_id" = ${labelId}`
-      : sql`DELETE FROM \`issue_labels\` WHERE \`issue_id\` = ${issueId} AND \`label_id\` = ${labelId}`;
+    return this.em.getDriver().isMySqlFamily()
+      ? sql`DELETE FROM \`issue_labels\` WHERE \`issue_id\` = ${issueId} AND \`label_id\` = ${labelId}`
+      : sql`DELETE FROM "issue_labels" WHERE "issue_id" = ${issueId} AND "label_id" = ${labelId}`;
   }
 
   /**
@@ -327,9 +325,10 @@ export class IssuesService {
    * lives in the Analytics module's `WITH RECURSIVE` query.
    */
   childrenOf(issueId: number): Promise<Issue[]> {
+    const i = qAlias(Issue, "i");
     return this.em
-      .createQueryBuilder(Issue, "i")
-      .where("i.parent_id", issueId)
+      .createQueryBuilder(i)
+      .where(i.parentId.eq(issueId))
       .getMany();
   }
 }
