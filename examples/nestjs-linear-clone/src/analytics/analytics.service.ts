@@ -5,14 +5,7 @@ import {
   sql,
   raw,
 } from "@stingerloom/orm";
-import {
-  detectDialect,
-  q,
-  dayOf,
-  hoursBetween,
-  nowMinusDays,
-  weekOf,
-} from "./sql-helpers";
+import { detectDialect, dsl } from "./sql-helpers";
 import { ISSUE_STATUS } from "../common/enums";
 
 export interface IssueTreeRow {
@@ -71,64 +64,61 @@ export class AnalyticsService {
    * UNION-ALL body.
    */
   async issueTree(rootIssueId: number, maxDepth = 10): Promise<IssueTreeRow[]> {
-    const dialect = detectDialect(this.em);
-    const issue = q("issue", dialect);
-    const id = q("id", dialect);
-    const parentId = q("parent_id", dialect);
-    const deletedAt = q("deletedAt", dialect);
-    const path = q("path", dialect);
-    const depth = q("depth", dialect);
-
-    const castText = dialect === "postgres" ? "TEXT" : "CHAR(255)";
+    const D = dsl(detectDialect(this.em));
+    const { Q, q, tbl } = D;
+    const r = tbl("r");
+    const c = tbl("c");
+    const t = tbl("t");
+    const castText = D.dialect === "postgres" ? "TEXT" : "CHAR(255)";
     const childPath =
-      dialect === "postgres"
-        ? `t.${path} || '/' || CAST(c.${id} AS TEXT)`
-        : `CONCAT(t.${path}, '/', CAST(c.${id} AS CHAR(255)))`;
+      D.dialect === "postgres"
+        ? sql`${t.path} || '/' || CAST(${c.id} AS TEXT)`
+        : sql`CONCAT(${t.path}, '/', CAST(${c.id} AS CHAR(255)))`;
 
     const treeBody = sql`
       SELECT
-        r.${raw(id)}        AS ${raw(id)},
-        r.${raw(parentId)}  AS ${raw(q("parentId", dialect))},
-        r.${raw(q("number", dialect))} AS ${raw(q("number", dialect))},
-        r.${raw(q("title", dialect))}  AS ${raw(q("title", dialect))},
-        r.${raw(q("status", dialect))} AS ${raw(q("status", dialect))},
-        0                                                AS ${raw(depth)},
-        CAST(r.${raw(id)} AS ${raw(castText)})           AS ${raw(path)}
-      FROM ${raw(issue)} r
-      WHERE r.${raw(id)} = ${rootIssueId}
-        AND r.${raw(deletedAt)} IS NULL
+        ${r.as("id")},
+        ${r.as("parent_id", "parentId")},
+        ${r.as("number")},
+        ${r.as("title")},
+        ${r.as("status")},
+        0 AS ${Q("depth")},
+        CAST(${r.id} AS ${raw(castText)}) AS ${Q("path")}
+      FROM ${Q("issue")} r
+      WHERE ${r.id} = ${rootIssueId}
+        AND ${r.deletedAt} IS NULL
       UNION ALL
       SELECT
-        c.${raw(id)},
-        c.${raw(parentId)},
-        c.${raw(q("number", dialect))},
-        c.${raw(q("title", dialect))},
-        c.${raw(q("status", dialect))},
-        t.${raw(depth)} + 1,
-        ${raw(childPath)}
-      FROM ${raw(issue)} c
-      INNER JOIN issue_tree t ON c.${raw(parentId)} = t.${raw(id)}
-      WHERE c.${raw(deletedAt)} IS NULL
-        AND t.${raw(depth)} < ${maxDepth}
+        ${c.id},
+        ${c.parent_id},
+        ${c.number},
+        ${c.title},
+        ${c.status},
+        ${t.depth} + 1,
+        ${childPath}
+      FROM ${Q("issue")} c
+      INNER JOIN issue_tree t ON ${c.parent_id} = ${t.id}
+      WHERE ${c.deletedAt} IS NULL
+        AND ${t.depth} < ${maxDepth}
     `;
 
     const built = RawQueryBuilder.create()
-      .setDatabaseType(dialect === "postgres" ? "postgresql" : "mysql")
+      .setDatabaseType(D.dialect === "postgres" ? "postgresql" : "mysql")
       .withRecursive("issue_tree", treeBody)
       .select("*")
       .from("issue_tree")
-      .orderBy([{ column: path, direction: "ASC" }])
+      .orderBy([{ column: q("path"), direction: "ASC" }])
       .build();
 
     const rows = await this.em.query<Record<string, unknown>>(built);
-    return rows.map((r) => ({
-      id: Number(r.id),
-      parentId: r.parentId === null ? null : Number(r.parentId),
-      number: Number(r.number),
-      title: String(r.title),
-      status: String(r.status),
-      depth: Number(r.depth),
-      path: String(r.path),
+    return rows.map((row) => ({
+      id: Number(row.id),
+      parentId: row.parentId === null ? null : Number(row.parentId),
+      number: Number(row.number),
+      title: String(row.title),
+      status: String(row.status),
+      depth: Number(row.depth),
+      path: String(row.path),
     }));
   }
 
@@ -141,37 +131,33 @@ export class AnalyticsService {
    *   remainingEstimate    sprint total estimate − running completed estimate
    */
   async sprintBurndown(sprintId: number): Promise<BurndownRow[]> {
-    const dialect = detectDialect(this.em);
-    const issue = q("issue", dialect);
-    const sprintCol = q("sprint_id", dialect);
-    const completedAt = q("completedAt", dialect);
-    const estimate = q("estimate", dialect);
-    const status = q("status", dialect);
-    const deletedAt = q("deletedAt", dialect);
-    const truncDay = dayOf(`i.${completedAt}`, dialect);
+    const D = dsl(detectDialect(this.em));
+    const { Q, tbl, dayOf } = D;
+    const i = tbl("i");
+    const truncDay = dayOf(i.completedAt);
 
     const sprintTotalCte = sql`
-      SELECT COALESCE(SUM(${raw(estimate)}), 0) AS total_estimate
-      FROM ${raw(issue)}
-      WHERE ${raw(sprintCol)} = ${sprintId}
-        AND ${raw(deletedAt)} IS NULL
+      SELECT COALESCE(SUM(${Q("estimate")}), 0) AS total_estimate
+      FROM ${Q("issue")}
+      WHERE ${Q("sprint_id")} = ${sprintId}
+        AND ${Q("deletedAt")} IS NULL
     `;
 
     const dailyCte = sql`
       SELECT
-        ${raw(truncDay)}                          AS day,
-        COUNT(*)                                  AS completed_count,
-        COALESCE(SUM(i.${raw(estimate)}), 0)      AS completed_estimate
-      FROM ${raw(issue)} i
-      WHERE i.${raw(sprintCol)} = ${sprintId}
-        AND i.${raw(deletedAt)} IS NULL
-        AND i.${raw(status)} = ${ISSUE_STATUS.DONE}
-        AND i.${raw(completedAt)} IS NOT NULL
-      GROUP BY ${raw(truncDay)}
+        ${truncDay}                          AS day,
+        COUNT(*)                             AS completed_count,
+        COALESCE(SUM(${i.estimate}), 0)      AS completed_estimate
+      FROM ${Q("issue")} i
+      WHERE ${i.sprint_id} = ${sprintId}
+        AND ${i.deletedAt} IS NULL
+        AND ${i.status} = ${ISSUE_STATUS.DONE}
+        AND ${i.completedAt} IS NOT NULL
+      GROUP BY ${truncDay}
     `;
 
     const built = RawQueryBuilder.create()
-      .setDatabaseType(dialect === "postgres" ? "postgresql" : "mysql")
+      .setDatabaseType(D.dialect === "postgres" ? "postgresql" : "mysql")
       .with("sprint_total", sprintTotalCte)
       .with("daily", dailyCte)
       .build();
@@ -180,23 +166,23 @@ export class AnalyticsService {
       ${built}
       SELECT
         day                                                                              AS day,
-        completed_count                                                                  AS ${raw(q("completedThatDay", dialect))},
-        SUM(completed_count) OVER (ORDER BY day)                                         AS ${raw(q("cumulativeCompleted", dialect))},
+        completed_count                                                                  AS ${Q("completedThatDay")},
+        SUM(completed_count) OVER (ORDER BY day)                                         AS ${Q("cumulativeCompleted")},
         (SELECT total_estimate FROM sprint_total)
-          - SUM(completed_estimate) OVER (ORDER BY day)                                  AS ${raw(q("remainingEstimate", dialect))}
+          - SUM(completed_estimate) OVER (ORDER BY day)                                  AS ${Q("remainingEstimate")}
       FROM daily
       ORDER BY day
     `;
 
     const rows = await this.em.query<Record<string, unknown>>(final);
-    return rows.map((r) => ({
+    return rows.map((row) => ({
       day:
-        r.day instanceof Date
-          ? r.day.toISOString().slice(0, 10)
-          : String(r.day),
-      completedThatDay: Number(r.completedThatDay),
-      cumulativeCompleted: Number(r.cumulativeCompleted),
-      remainingEstimate: Number(r.remainingEstimate ?? 0),
+        row.day instanceof Date
+          ? row.day.toISOString().slice(0, 10)
+          : String(row.day),
+      completedThatDay: Number(row.completedThatDay),
+      cumulativeCompleted: Number(row.cumulativeCompleted),
+      remainingEstimate: Number(row.remainingEstimate ?? 0),
     }));
   }
 
@@ -210,30 +196,23 @@ export class AnalyticsService {
     projectId: number,
     windowDays = 30,
   ): Promise<ThroughputRow[]> {
-    const dialect = detectDialect(this.em);
-    const issue = q("issue", dialect);
-    const userTbl = q("user", dialect);
-    const projectCol = q("project_id", dialect);
-    const assigneeCol = q("assignee_id", dialect);
-    const completedAt = q("completedAt", dialect);
-    const createdAt = q("createdAt", dialect);
-    const status = q("status", dialect);
-    const deletedAt = q("deletedAt", dialect);
-    const id = q("id", dialect);
-    const name = q("name", dialect);
-    const cycle = hoursBetween(`i.${createdAt}`, `i.${completedAt}`, dialect);
-    const cutoff = nowMinusDays(windowDays, dialect);
+    const D = dsl(detectDialect(this.em));
+    const { Q, tbl, hoursBetween, nowMinusDays } = D;
+    const i = tbl("i");
+    const u = tbl("u");
+    const cycle = hoursBetween(i.createdAt, i.completedAt);
+    const cutoff = nowMinusDays(windowDays);
 
     const closedCte = sql`
       SELECT
-        i.${raw(assigneeCol)} AS assignee_id,
-        ${raw(cycle)}         AS cycle_hours
-      FROM ${raw(issue)} i
-      WHERE i.${raw(projectCol)} = ${projectId}
-        AND i.${raw(deletedAt)} IS NULL
-        AND i.${raw(status)} = ${ISSUE_STATUS.DONE}
-        AND i.${raw(completedAt)} IS NOT NULL
-        AND i.${raw(completedAt)} >= ${raw(cutoff)}
+        ${i.assignee_id} AS assignee_id,
+        ${cycle}         AS cycle_hours
+      FROM ${Q("issue")} i
+      WHERE ${i.project_id} = ${projectId}
+        AND ${i.deletedAt} IS NULL
+        AND ${i.status} = ${ISSUE_STATUS.DONE}
+        AND ${i.completedAt} IS NOT NULL
+        AND ${i.completedAt} >= ${cutoff}
     `;
 
     const statsCte = sql`
@@ -246,7 +225,7 @@ export class AnalyticsService {
     `;
 
     const ctes = RawQueryBuilder.create()
-      .setDatabaseType(dialect === "postgres" ? "postgresql" : "mysql")
+      .setDatabaseType(D.dialect === "postgres" ? "postgresql" : "mysql")
       .with("closed", closedCte)
       .with("stats", statsCte)
       .build();
@@ -254,27 +233,27 @@ export class AnalyticsService {
     const final = sql`
       ${ctes}
       SELECT
-        s.assignee_id                                                            AS ${raw(q("assigneeId", dialect))},
-        u.${raw(name)}                                                           AS ${raw(q("assigneeName", dialect))},
-        s.completed_count                                                        AS ${raw(q("completedCount", dialect))},
-        s.avg_cycle_hours                                                        AS ${raw(q("averageCycleHours", dialect))},
+        s.assignee_id                                                            AS ${Q("assigneeId")},
+        ${u.name}                                                                AS ${Q("assigneeName")},
+        s.completed_count                                                        AS ${Q("completedCount")},
+        s.avg_cycle_hours                                                        AS ${Q("averageCycleHours")},
         ROW_NUMBER() OVER (ORDER BY s.completed_count DESC, s.avg_cycle_hours ASC)
-                                                                                 AS ${raw(q("rankInProject", dialect))}
+                                                                                 AS ${Q("rankInProject")}
       FROM stats s
-      LEFT JOIN ${raw(userTbl)} u ON u.${raw(id)} = s.assignee_id
-      ORDER BY ${raw(q("rankInProject", dialect))}
+      LEFT JOIN ${Q("user")} u ON ${u.id} = s.assignee_id
+      ORDER BY ${Q("rankInProject")}
     `;
 
     const rows = await this.em.query<Record<string, unknown>>(final);
-    return rows.map((r) => ({
-      assigneeId: r.assigneeId === null ? null : Number(r.assigneeId),
-      assigneeName: r.assigneeName ? String(r.assigneeName) : null,
-      completedCount: Number(r.completedCount),
+    return rows.map((row) => ({
+      assigneeId: row.assigneeId === null ? null : Number(row.assigneeId),
+      assigneeName: row.assigneeName ? String(row.assigneeName) : null,
+      completedCount: Number(row.completedCount),
       averageCycleHours:
-        r.averageCycleHours === null
+        row.averageCycleHours === null
           ? 0
-          : Number(Number(r.averageCycleHours).toFixed(2)),
-      rankInProject: Number(r.rankInProject),
+          : Number(Number(row.averageCycleHours).toFixed(2)),
+      rankInProject: Number(row.rankInProject),
     }));
   }
 
@@ -287,55 +266,51 @@ export class AnalyticsService {
    * status using dialect-specific JSON path operators.
    */
   async timeInStatus(issueId: number): Promise<TimeInStatusRow[]> {
-    const dialect = detectDialect(this.em);
-    const log = q("activity_log", dialect);
-    const issueIdCol = q("issueId", dialect);
-    const action = q("action", dialect);
-    const payload = q("payload", dialect);
-    const createdAt = q("createdAt", dialect);
+    const D = dsl(detectDialect(this.em));
+    const { Q } = D;
 
     const enteredStatus =
-      dialect === "postgres"
-        ? sql`${raw(payload)}->>'to'`
-        : sql`JSON_UNQUOTE(JSON_EXTRACT(${raw(payload)}, '$.to'))`;
+      D.dialect === "postgres"
+        ? sql`${Q("payload")}->>'to'`
+        : sql`JSON_UNQUOTE(JSON_EXTRACT(${Q("payload")}, '$.to'))`;
 
     const hoursDiff =
-      dialect === "postgres"
-        ? sql`EXTRACT(EPOCH FROM (LEAD(${raw(createdAt)}) OVER w - ${raw(createdAt)})) / 3600.0`
-        : sql`TIMESTAMPDIFF(SECOND, ${raw(createdAt)}, LEAD(${raw(createdAt)}) OVER w) / 3600.0`;
+      D.dialect === "postgres"
+        ? sql`EXTRACT(EPOCH FROM (LEAD(${Q("createdAt")}) OVER w - ${Q("createdAt")})) / 3600.0`
+        : sql`TIMESTAMPDIFF(SECOND, ${Q("createdAt")}, LEAD(${Q("createdAt")}) OVER w) / 3600.0`;
 
     const final = sql`
       SELECT
-        ${raw(issueIdCol)}                            AS ${raw(q("issueId", dialect))},
-        ${enteredStatus}                              AS ${raw(q("status", dialect))},
-        ${raw(createdAt)}                             AS ${raw(q("enteredAt", dialect))},
-        LEAD(${raw(createdAt)}) OVER w                AS ${raw(q("leftAt", dialect))},
-        ${hoursDiff}                                  AS ${raw(q("hoursInStatus", dialect))}
-      FROM ${raw(log)}
-      WHERE ${raw(issueIdCol)} = ${issueId}
-        AND ${raw(action)} = ${"STATUS_CHANGED"}
-      WINDOW w AS (PARTITION BY ${raw(issueIdCol)} ORDER BY ${raw(createdAt)})
-      ORDER BY ${raw(createdAt)}
+        ${Q("issueId")}                               AS ${Q("issueId")},
+        ${enteredStatus}                              AS ${Q("status")},
+        ${Q("createdAt")}                             AS ${Q("enteredAt")},
+        LEAD(${Q("createdAt")}) OVER w                AS ${Q("leftAt")},
+        ${hoursDiff}                                  AS ${Q("hoursInStatus")}
+      FROM ${Q("activity_log")}
+      WHERE ${Q("issueId")} = ${issueId}
+        AND ${Q("action")} = ${"STATUS_CHANGED"}
+      WINDOW w AS (PARTITION BY ${Q("issueId")} ORDER BY ${Q("createdAt")})
+      ORDER BY ${Q("createdAt")}
     `;
 
     const rows = await this.em.query<Record<string, unknown>>(final);
-    return rows.map((r) => ({
-      issueId: Number(r.issueId),
-      status: String(r.status),
+    return rows.map((row) => ({
+      issueId: Number(row.issueId),
+      status: String(row.status),
       enteredAt:
-        r.enteredAt instanceof Date
-          ? r.enteredAt.toISOString()
-          : String(r.enteredAt),
+        row.enteredAt instanceof Date
+          ? row.enteredAt.toISOString()
+          : String(row.enteredAt),
       leftAt:
-        r.leftAt === null
+        row.leftAt === null
           ? null
-          : r.leftAt instanceof Date
-            ? r.leftAt.toISOString()
-            : String(r.leftAt),
+          : row.leftAt instanceof Date
+            ? row.leftAt.toISOString()
+            : String(row.leftAt),
       hoursInStatus:
-        r.hoursInStatus === null
+        row.hoursInStatus === null
           ? null
-          : Number(Number(r.hoursInStatus).toFixed(2)),
+          : Number(Number(row.hoursInStatus).toFixed(2)),
     }));
   }
 
@@ -345,40 +320,35 @@ export class AnalyticsService {
     projectId: number,
     windowDays = 60,
   ): Promise<LeadTimeRow[]> {
-    const dialect = detectDialect(this.em);
-    const issue = q("issue", dialect);
-    const projectCol = q("project_id", dialect);
-    const completedAt = q("completedAt", dialect);
-    const createdAt = q("createdAt", dialect);
-    const status = q("status", dialect);
-    const deletedAt = q("deletedAt", dialect);
-    const week = weekOf(completedAt, dialect);
-    const cutoff = nowMinusDays(windowDays, dialect);
-    const cycle = hoursBetween(createdAt, completedAt, dialect);
+    const D = dsl(detectDialect(this.em));
+    const { Q, weekOf, hoursBetween, nowMinusDays } = D;
+    const week = weekOf(Q("completedAt"));
+    const cutoff = nowMinusDays(windowDays);
+    const cycle = hoursBetween(Q("createdAt"), Q("completedAt"));
 
     const final = sql`
       SELECT
-        ${raw(week)}                       AS ${raw(q("weekStart", dialect))},
-        AVG(${raw(cycle)})                 AS ${raw(q("leadTimeHours", dialect))},
-        COUNT(*)                           AS ${raw(q("closedCount", dialect))}
-      FROM ${raw(issue)}
-      WHERE ${raw(projectCol)} = ${projectId}
-        AND ${raw(status)} = ${ISSUE_STATUS.DONE}
-        AND ${raw(completedAt)} IS NOT NULL
-        AND ${raw(completedAt)} >= ${raw(cutoff)}
-        AND ${raw(deletedAt)} IS NULL
-      GROUP BY ${raw(week)}
-      ORDER BY ${raw(week)}
+        ${week}                       AS ${Q("weekStart")},
+        AVG(${cycle})                 AS ${Q("leadTimeHours")},
+        COUNT(*)                      AS ${Q("closedCount")}
+      FROM ${Q("issue")}
+      WHERE ${Q("project_id")} = ${projectId}
+        AND ${Q("status")} = ${ISSUE_STATUS.DONE}
+        AND ${Q("completedAt")} IS NOT NULL
+        AND ${Q("completedAt")} >= ${cutoff}
+        AND ${Q("deletedAt")} IS NULL
+      GROUP BY ${week}
+      ORDER BY ${week}
     `;
 
     const rows = await this.em.query<Record<string, unknown>>(final);
-    return rows.map((r) => ({
+    return rows.map((row) => ({
       weekStart:
-        r.weekStart instanceof Date
-          ? r.weekStart.toISOString().slice(0, 10)
-          : String(r.weekStart),
-      leadTimeHours: Number(Number(r.leadTimeHours ?? 0).toFixed(2)),
-      closedCount: Number(r.closedCount),
+        row.weekStart instanceof Date
+          ? row.weekStart.toISOString().slice(0, 10)
+          : String(row.weekStart),
+      leadTimeHours: Number(Number(row.leadTimeHours ?? 0).toFixed(2)),
+      closedCount: Number(row.closedCount),
     }));
   }
 }
