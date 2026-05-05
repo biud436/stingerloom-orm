@@ -256,6 +256,55 @@ describe("EntitySubscriber", () => {
       const event: UpdateEvent<User> = beforeUpdateSpy.mock.calls[0][0];
       expect(event.manager).toBe(em);
     });
+
+    it("populates databaseEntity with the row state captured before the UPDATE", async () => {
+      const beforeUpdateSpy = jest.fn();
+      const afterUpdateSpy = jest.fn();
+
+      // findOneInternal is called twice: once before the UPDATE (to capture
+      // databaseEntity) and once after (to return the saved row). Mock both.
+      const oldRow = { id: 1, name: "Original", email: "orig@test.com" };
+      const newRow = { id: 1, name: "Updated", email: "orig@test.com" };
+      (em as any).findOneInternal
+        .mockResolvedValueOnce(oldRow) // pre-update snapshot
+        .mockResolvedValueOnce(newRow); // post-update read
+
+      em.addSubscriber({
+        listenTo: () => User,
+        beforeUpdate: beforeUpdateSpy,
+        afterUpdate: afterUpdateSpy,
+      });
+
+      await em.save(User, { id: 1, name: "Updated" } as any);
+
+      const before: UpdateEvent<User> = beforeUpdateSpy.mock.calls[0][0];
+      const after: UpdateEvent<User> = afterUpdateSpy.mock.calls[0][0];
+
+      expect(before.databaseEntity).toEqual(oldRow);
+      expect(before.entity).toMatchObject({ id: 1, name: "Updated" });
+      // The same snapshot is passed to afterUpdate so post-commit consumers
+      // (e.g. webhook fan-out) can also diff against it.
+      expect(after.databaseEntity).toEqual(oldRow);
+    });
+
+    it("skips the databaseEntity pre-read when no subscriber wants it", async () => {
+      // Insert path is triggered by absence of PK, but here we want UPDATE
+      // path with NO matching subscriber. Add a subscriber for a *different*
+      // entity so the registry isn't empty — this proves the optimization is
+      // entity-scoped, not "any subscriber present".
+      em.addSubscriber({
+        listenTo: () => Post,
+        beforeUpdate: jest.fn(),
+      });
+
+      const findOneSpy = (em as any).findOneInternal as jest.Mock;
+      findOneSpy.mockClear();
+
+      await em.save(User, { id: 1, name: "Updated" } as any);
+
+      // Only the post-update read happens; the pre-read is skipped.
+      expect(findOneSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("delete() subscriber notifications", () => {
@@ -505,12 +554,18 @@ describe("EntitySubscriber", () => {
       expect(event.manager).toBe(em);
     });
 
-    it("UpdateEvent should have entity and manager", () => {
+    it("UpdateEvent should have entity, databaseEntity, and manager", () => {
       const event: UpdateEvent<User> = {
         entity: { id: 1, name: "Updated", email: "a@b.com" },
+        databaseEntity: {
+          id: 1,
+          name: "Original",
+          email: "a@b.com",
+        } as User,
         manager: em,
       };
       expect(event.entity.name).toBe("Updated");
+      expect(event.databaseEntity?.name).toBe("Original");
       expect(event.manager).toBe(em);
     });
 

@@ -390,14 +390,16 @@ describe("EntitySubscriber interface edge cases", () => {
     expect(event.manager).toBe(mockManager);
   });
 
-  it("UpdateEvent should carry partial entity data", () => {
+  it("UpdateEvent should carry partial entity data and a databaseEntity snapshot", () => {
     const mockManager = {} as any;
     const event: UpdateEvent<User> = {
       entity: { name: "Updated" },
+      databaseEntity: { id: 1, name: "Original" } as User,
       manager: mockManager,
     };
     expect(event.entity.name).toBe("Updated");
     expect((event.entity as any).id).toBeUndefined();
+    expect(event.databaseEntity?.name).toBe("Original");
   });
 
   it("DeleteEvent should carry entityClass constructor and criteria", () => {

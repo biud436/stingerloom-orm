@@ -980,6 +980,23 @@ export class EntityManager implements BaseEntityManager {
     }
   }
 
+  /**
+   * True iff any registered subscriber for `entityClass` implements `method`.
+   * Used to skip the `databaseEntity` pre-read on entities where no
+   * subscriber actually wants the snapshot.
+   */
+  private hasSubscriberFor<T>(
+    entityClass: new (...args: any[]) => T,
+    method: keyof EntitySubscriber<T>,
+  ): boolean {
+    for (const sub of this.subscribers) {
+      if (sub.listenTo() === entityClass && typeof sub[method] === "function") {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private async notifyTransactionSubscribers(
     method: keyof EntitySubscriber<any>,
   ): Promise<void> {
@@ -2421,10 +2438,27 @@ export class EntityManager implements BaseEntityManager {
       }
 
       // UPDATE path
+      //
+      // Pre-read the database state when any subscriber wants it (for diff
+      // audits, change-detection cache invalidation, etc.). Skipping the
+      // SELECT when no subscriber listens keeps the cost of save() unchanged
+      // for entities that don't opt in.
+      const wantsDatabaseEntity =
+        this.hasSubscriberFor(entity, "beforeUpdate") ||
+        this.hasSubscriberFor(entity, "afterUpdate");
+      const databaseEntity: T | null = wantsDatabaseEntity
+        ? ((await this.findOneInternal(
+            entity,
+            { where: buildPkFindWhere() } as any,
+            session,
+          )) as T | null)
+        : null;
+
       await this.cascadeHandler.runHooks(entity, item, "beforeUpdate");
       await this.eventEmitter.emit("beforeUpdate", { entity, data: item });
       await this.notifySubscribers(entity, "beforeUpdate", {
         entity: item,
+        databaseEntity,
         manager: this,
       } as UpdateEvent<T>);
 
@@ -2597,6 +2631,7 @@ export class EntityManager implements BaseEntityManager {
           });
           await this.notifySubscribers(entity, "afterUpdate", {
             entity: item,
+            databaseEntity,
             manager: this,
           } as UpdateEvent<T>);
 
@@ -2654,6 +2689,7 @@ export class EntityManager implements BaseEntityManager {
       await this.eventEmitter.emit("afterUpdate", { entity, data: item });
       await this.notifySubscribers(entity, "afterUpdate", {
         entity: item,
+        databaseEntity,
         manager: this,
       } as UpdateEvent<T>);
 

@@ -13,9 +13,25 @@ export interface InsertEvent<T> {
 
 /**
  * Object passed to Update events.
+ *
+ * `databaseEntity` is the snapshot of the row as it exists in the database
+ * BEFORE the pending UPDATE is applied. Subscribers can diff it against
+ * `entity` to compute column-level before/after deltas without issuing an
+ * extra SELECT — the typical use case is a diff-based audit log.
+ *
+ * The pre-read is only performed when at least one subscriber for this
+ * entity class implements `beforeUpdate` or `afterUpdate`, so saves on
+ * entities without subscribers pay no extra cost. `databaseEntity` is
+ * `null` when:
+ *   - no subscriber requested it (no pre-read happened),
+ *   - the row could not be located by primary key (e.g. concurrent delete),
+ *   - the save was issued through a code path that does not support pre-reads
+ *     (currently only `EntityManager.save()` populates this; raw
+ *     `UpdateQueryBuilder.execute()` does not).
  */
 export interface UpdateEvent<T> {
   entity: Partial<T>;
+  databaseEntity: T | null;
   manager: EntityManager;
 }
 
