@@ -1,6 +1,7 @@
 import {
   Entity,
   Column,
+  ComputedColumn,
   PrimaryGeneratedColumn,
   ManyToOne,
   ManyToMany,
@@ -110,6 +111,17 @@ export class Issue {
 
   @Column({ type: "datetime", nullable: true })
   completedAt!: Date | null;
+
+  // Dialect-aware expression chosen at module load (TIMESTAMPDIFF on MySQL, EXTRACT/EPOCH on Postgres). Default DB_TYPE is mysql.
+  @ComputedColumn({
+    expression:
+      (process.env.DB_TYPE ?? "mysql") === "postgres"
+        ? `(CASE WHEN deleted_at IS NULL AND completed_at IS NOT NULL THEN EXTRACT(EPOCH FROM (completed_at - created_at)) / 3600 ELSE NULL END)`
+        : `(CASE WHEN deleted_at IS NULL AND completed_at IS NOT NULL THEN TIMESTAMPDIFF(HOUR, created_at, completed_at) ELSE NULL END)`,
+    type: "int",
+    nullable: true,
+  })
+  cycleTimeHours?: number;
 
   @DeletedAt()
   deletedAt!: Date | null;

@@ -6,12 +6,16 @@ import { IssuesController } from "./issues.controller";
 import { IssueAuditSubscriber } from "./issue-audit.subscriber";
 import { ActivityModule } from "../activity/activity.module";
 import { ProjectsModule } from "../projects/projects.module";
+import { WorkflowsModule } from "../workflows/workflows.module";
+import { WebhooksModule } from "../webhooks/webhooks.module";
 
 @Module({
   imports: [
     StingerloomOrmModule.forFeature([Issue]),
     ActivityModule,
     forwardRef(() => ProjectsModule),
+    forwardRef(() => WorkflowsModule),
+    forwardRef(() => WebhooksModule),
   ],
   controllers: [IssuesController],
   providers: [IssuesService, IssueAuditSubscriber],

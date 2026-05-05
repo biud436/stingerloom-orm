@@ -12,6 +12,8 @@ import { AppModule } from "./app.module";
 import { JwtAuthGuard } from "./common/auth/jwt-auth.guard";
 import { AllExceptionsFilter } from "./common/exceptions/all-exceptions.filter";
 import { EtagInterceptor } from "./common/concurrency/etag.interceptor";
+import { TenantContextInterceptor } from "./common/tenant/tenant-context.interceptor";
+import { IdempotencyInterceptor } from "./common/idempotency/idempotency.interceptor";
 
 async function bootstrap() {
   // bufferLogs: true queues early Nest bootstrap logs until pino is wired
@@ -45,11 +47,16 @@ async function bootstrap() {
   // Order matters: ClassSerializerInterceptor runs first to strip `@Exclude`
   // fields (e.g. User.passwordHash); EtagInterceptor then sees the final
   // response shape, picks `version` for the ETag, and may short-circuit GET
-  // to 304 on If-None-Match.
+  // to 304 on If-None-Match. TenantContextInterceptor is registered LAST so
+  // its `next.handle()` invokes the controller — that places the controller
+  // call (and every async hop after it) inside the
+  // `MetadataContext.run(workspaceId, …)` frame opened by the interceptor.
   const reflector = app.get(Reflector);
   app.useGlobalInterceptors(
     new ClassSerializerInterceptor(reflector),
     new EtagInterceptor(),
+    app.get(IdempotencyInterceptor),
+    app.get(TenantContextInterceptor),
   );
 
   // Global JWT guard — every endpoint is protected unless decorated `@Public()`.

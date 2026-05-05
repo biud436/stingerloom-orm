@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   Inject,
+  forwardRef,
 } from "@nestjs/common";
 import {
   BaseRepository,
@@ -24,11 +25,15 @@ import {
 } from "./dto/issue.dto";
 import { ProjectsService } from "../projects/projects.service";
 import { ActivityService } from "../activity/activity.service";
+import { WorkflowsService } from "../workflows/workflows.service";
+import { WebhooksService } from "../webhooks/webhooks.service";
+import { Membership } from "../memberships/membership.entity";
 import { applyPatch, pickDefined } from "../../common/dto-helpers";
 import {
   ACTIVITY_ACTION,
   ISSUE_STATUS,
   IssueStatus,
+  MembershipRole,
   TERMINAL_STATUSES,
 } from "../../common/enums";
 
@@ -52,6 +57,10 @@ export class IssuesService {
     private readonly em: EntityManager,
     private readonly projects: ProjectsService,
     private readonly activity: ActivityService,
+    @Inject(forwardRef(() => WorkflowsService))
+    private readonly workflows: WorkflowsService,
+    @Inject(forwardRef(() => WebhooksService))
+    private readonly webhooks: WebhooksService,
   ) {}
 
   @Transactional()
@@ -80,10 +89,11 @@ export class IssuesService {
     );
 
     const saved = await this.repo.save(issue);
+    const workspaceId = await this.workspaceIdForProject(saved.projectId!);
 
     await this.activity.log({
       issueId: saved.id,
-      workspaceId: await this.workspaceIdForProject(saved.projectId!),
+      workspaceId,
       actorUserId,
       action: ACTIVITY_ACTION.ISSUE_CREATED,
       payload: {
@@ -92,6 +102,19 @@ export class IssuesService {
         priority: saved.priority,
       },
     });
+
+    if (workspaceId != null) {
+      await this.webhooks.emit(workspaceId, "issue.created", {
+        id: saved.id,
+        projectId: saved.projectId,
+        number: saved.number,
+        title: saved.title,
+        status: saved.status,
+        priority: saved.priority,
+        reporterId: saved.reporterId ?? null,
+        assigneeId: saved.assigneeId ?? null,
+      });
+    }
 
     return saved;
   }
@@ -161,8 +184,7 @@ export class IssuesService {
     dto: UpdateIssueDto,
     actorUserId: number,
   ): Promise<Issue> {
-    void actorUserId; // actor is read by IssueAuditSubscriber from RequestContext
-
+    // actorUserId drives the workflow role lookup below; IssueAuditSubscriber separately reads it from RequestContext.
     const before = await this.findOne(id);
 
     // Drive `@Version` from the caller's expected version. If a concurrent
@@ -175,6 +197,18 @@ export class IssuesService {
     const previousStatus = before.status as IssueStatus;
     applyPatch(before, pickDefined(dto, PATCHABLE_KEYS) as Partial<Issue>);
 
+    // Workflow gate. The patched `before` is passed so requiredFields reads the would-be state.
+    if (dto.status && dto.status !== previousStatus && before.projectId != null) {
+      const role = await this.lookupActorRole(before.projectId, actorUserId);
+      await this.workflows.assertTransition(
+        before.projectId,
+        previousStatus,
+        dto.status,
+        role,
+        before as unknown as Record<string, unknown>,
+      );
+    }
+
     if (
       dto.status &&
       TERMINAL_STATUSES.includes(dto.status) &&
@@ -183,7 +217,45 @@ export class IssuesService {
       before.completedAt = new Date();
     }
 
-    return this.repo.save(before);
+    const saved = await this.repo.save(before);
+
+    // Webhook fan-out happens INSIDE this @Transactional frame so the
+    // outbox row commits atomically with the issue update — if the UPDATE
+    // rolls back (optimistic-lock conflict, etc.) no event is ever emitted.
+    if (saved.projectId != null) {
+      const workspaceId = await this.workspaceIdForProject(saved.projectId);
+      if (workspaceId != null) {
+        await this.webhooks.emit(workspaceId, "issue.updated", {
+          id: saved.id,
+          projectId: saved.projectId,
+          number: saved.number,
+          title: saved.title,
+          status: saved.status,
+          priority: saved.priority,
+          assigneeId: saved.assigneeId ?? null,
+          version: saved.version,
+        });
+      }
+    }
+
+    return saved;
+  }
+
+  // Look up the actor's role on the project's workspace; null when no membership (any role-gated transition fails).
+  private async lookupActorRole(
+    projectId: number,
+    actorUserId: number,
+  ): Promise<MembershipRole | null> {
+    const project = await this.projects.findOne(projectId);
+    if (project.workspaceId == null) return null;
+    const m = qAlias(Membership, "m");
+    const row = await this.em
+      .createQueryBuilder(m)
+      .where(m.workspaceId.eq(project.workspaceId))
+      .andWhere(m.userId.eq(actorUserId))
+      .limit(1)
+      .getOne();
+    return (row?.role as MembershipRole | undefined) ?? null;
   }
 
   /** Set or clear the assignee — convenience wrapper that bumps version. */

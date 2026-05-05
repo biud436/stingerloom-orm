@@ -12,6 +12,8 @@ import { AppModule } from "../../src/app.module";
 import { JwtAuthGuard } from "../../src/common/auth/jwt-auth.guard";
 import { AllExceptionsFilter } from "../../src/common/exceptions/all-exceptions.filter";
 import { EtagInterceptor } from "../../src/common/concurrency/etag.interceptor";
+import { TenantContextInterceptor } from "../../src/common/tenant/tenant-context.interceptor";
+import { IdempotencyInterceptor } from "../../src/common/idempotency/idempotency.interceptor";
 
 export const integrationDescribe = process.env.INTEGRATION_TEST
   ? describe
@@ -59,6 +61,8 @@ export async function bootApp(): Promise<BootedApp> {
   app.useGlobalInterceptors(
     new ClassSerializerInterceptor(reflector),
     new EtagInterceptor(),
+    app.get(IdempotencyInterceptor),
+    app.get(TenantContextInterceptor),
   );
   app.useGlobalGuards(new JwtAuthGuard(app.get(JwtService), reflector));
 

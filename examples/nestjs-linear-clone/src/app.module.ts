@@ -16,10 +16,17 @@ import { SprintsModule } from "./modules/sprints/sprints.module";
 import { IssuesModule } from "./modules/issues/issues.module";
 import { LabelsModule } from "./modules/labels/labels.module";
 import { CommentsModule } from "./modules/comments/comments.module";
+import { LinksModule } from "./modules/links/links.module";
 import { ActivityModule } from "./modules/activity/activity.module";
 import { AnalyticsModule } from "./modules/analytics/analytics.module";
 import { SearchModule } from "./modules/search/search.module";
 import { QueueModule } from "./modules/queue/queue.module";
+import { SavedFiltersModule } from "./modules/saved-filters/saved-filters.module";
+import { WorkflowsModule } from "./modules/workflows/workflows.module";
+import { TenantModule } from "./common/tenant/tenant.module";
+import { NotificationsModule } from "./modules/notifications/notifications.module";
+import { WebhooksModule } from "./modules/webhooks/webhooks.module";
+import { IdempotencyModule } from "./common/idempotency/idempotency.module";
 
 @Module({
   imports: [
@@ -85,10 +92,17 @@ import { QueueModule } from "./modules/queue/queue.module";
     IssuesModule,
     LabelsModule,
     CommentsModule,
+    LinksModule,
     ActivityModule,
     AnalyticsModule,
     SearchModule,
     QueueModule,
+    SavedFiltersModule,
+    WorkflowsModule,
+    TenantModule,
+    NotificationsModule,
+    WebhooksModule,
+    IdempotencyModule,
   ],
   providers: [
     {
