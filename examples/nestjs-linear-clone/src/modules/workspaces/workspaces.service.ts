@@ -3,12 +3,16 @@ import { BaseRepository, Transactional } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Workspace } from "./workspace.entity";
 import { CreateWorkspaceDto, UpdateWorkspaceDto } from "./dto/workspace.dto";
+import { Membership } from "../memberships/membership.entity";
+import { MEMBERSHIP_ROLE } from "../../common/enums";
 
 @Injectable()
 export class WorkspacesService {
   constructor(
     @InjectRepository(Workspace)
     private readonly repo: BaseRepository<Workspace>,
+    @InjectRepository(Membership)
+    private readonly memberships: BaseRepository<Membership>,
   ) {}
 
   @Transactional()
@@ -20,6 +24,22 @@ export class WorkspacesService {
     w.name = dto.name;
     w.slug = dto.slug;
     return this.repo.save(w);
+  }
+
+  /**
+   * Create a workspace and atomically enroll the caller as OWNER. Without
+   * this both-or-nothing step, the very next request from the creator would
+   * be rejected by `WorkspaceMemberGuard` because no membership row exists.
+   */
+  @Transactional()
+  async createWithOwner(dto: CreateWorkspaceDto, userId: number): Promise<Workspace> {
+    const w = await this.create(dto);
+    const m = new Membership();
+    m.workspaceId = w.id;
+    m.userId = userId;
+    m.role = MEMBERSHIP_ROLE.OWNER;
+    await this.memberships.save(m);
+    return w;
   }
 
   findAll(): Promise<Workspace[]> {

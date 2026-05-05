@@ -10,18 +10,23 @@ import {
   Query,
   HttpCode,
 } from "@nestjs/common";
-import { ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { CommentsService } from "./comments.service";
 import { CreateCommentDto, UpdateCommentDto } from "./dto/comment.dto";
+import { CurrentUserId } from "../../common/auth/current-user.decorator";
 
 @ApiTags("Comments")
+@ApiBearerAuth()
 @Controller("comments")
 export class CommentsController {
   constructor(private readonly service: CommentsService) {}
 
   @Post()
-  create(@Body() dto: CreateCommentDto) {
-    return this.service.create(dto);
+  create(
+    @Body() dto: CreateCommentDto,
+    @CurrentUserId() userId: number,
+  ) {
+    return this.service.create(dto, userId);
   }
 
   @Get()

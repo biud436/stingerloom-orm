@@ -116,13 +116,74 @@ Each worker receives **distinct** issues without blocking on the other.
 ## e2e tests
 
 ```bash
+# Standard suite (auth-aware)
 INTEGRATION_TEST=true pnpm test:e2e
+
+# Concurrency stress (50-worker SKIP LOCKED, 50-writer @Version conflict,
+# soft-delete + restore + ManyToMany interaction)
+INTEGRATION_TEST=true STRESS=true pnpm test:stress
 ```
 
 Tests rely on a live database — set `DB_TYPE` / `DB_HOST` / `DB_NAME` env vars
-or use the provided `.env`. The suite covers CRUD, M2M label assignment,
-optimistic-lock conflict, recursive subissue tree, sprint burndown shape, FTS
-result ranking, JSON custom-field filtering, and concurrent SKIP LOCKED claims.
+or use the provided `.env`. Tests issue JWTs through `POST /auth/dev-token`
+(gated by `AUTH_ALLOW_DEV_TOKEN=true`, which the test harness sets automatically).
+
+## Production hardening (v2)
+
+This example was upgraded from "ORM demo" to a production-shaped app:
+
+- **JWT auth** (`@nestjs/jwt`, bcrypt-hashed passwords) protecting every
+  endpoint by default — `@Public()` opts out (auth, health).
+- **Workspace scoping** via `@WorkspaceScoped({ from: "project" | "issue" |
+  "param" })` — every cross-tenant write/read is membership-checked.
+- **Per-request `AsyncLocalStorage`** carrying `{ requestId, userId,
+  workspaceId }` so services and ORM subscribers share a coherent view of
+  the caller without prop drilling.
+- **Global exception filter** mapping `OptimisticLockError` → 409,
+  `EntityNotFoundError` → 404, FK / unique violations → 422, query
+  timeouts → 504, into a stable `{ status, code, message, requestId }`
+  envelope. No raw stacks on the wire.
+- **Joi env validation** with secret hardening — production refuses to boot
+  without `DB_PASSWORD` and a 32-char `JWT_SECRET`.
+- **Helmet + CORS allow-list + `@nestjs/throttler`** with per-environment
+  rate limits.
+- **Structured `RequestId` propagation** (`X-Request-Id` echoed on every
+  response, threaded into log lines and error envelopes).
+- **JSON column transformers** centralising the MySQL-text vs PostgreSQL-
+  jsonb asymmetry — service code passes plain objects, no manual
+  `JSON.stringify` casts.
+- **Crash-recoverable queue sentinel**: pending tags are reclaimable after
+  30s instead of holding the row for the full 5-minute lease.
+- **`@Transactional` on `softRemove` / `restore`** with `affected`-row 404
+  signalling, closing the read-then-write TOCTOU window.
+- **Optimistic lock simplified**: drop the redundant manual version pre-check
+  that opened a TOCTOU between `findOne` and `save`; rely on the ORM's
+  `UPDATE … WHERE version = ?` clause.
+- **Missing FK indexes added**: `comments.author_id`,
+  `activity_log.actor_user_id + created_at`, `memberships.user_id` single
+  column for `byUser` lookups.
+- **Health & readiness probes** (`/healthz`, `/readyz`) plus
+  `propagateShutdown()` on `SIGTERM` to drain the connection pool cleanly.
+
+## ORM bug surfaced + fixed
+
+The previous version of `IssuesService.findOne` deliberately omitted
+`assignee` / `reporter` / `sprint` / `parent` from the loaded relations and
+left a comment explaining that joining the `user` table twice tripped
+MariaDB's "Not unique table/alias" error. That was a real Stingerloom
+RelationLoader defect: every eager `ManyToOne` JOIN used the *table name* as
+the alias, so two relations to `User` produced two `LEFT JOIN user AS user`
+clauses.
+
+Fix shipped in this branch (`src/core/EntityManager.ts`): each eager
+`ManyToOne` / `OneToOne` JOIN now uses the relation's *property name* as
+the alias — `LEFT JOIN user AS assignee`, `LEFT JOIN user AS reporter`. The
+SELECT side already aliased columns by `${rel.columnName}_${col.name}`, so
+the change was only in the JOIN target alias and the matching ON clause.
+
+The regression is locked in by `test/issues-relations.e2e-spec.ts`, which
+loads `["labels","assignee","reporter","sprint","parent"]` from the same
+`Issue` row.
 
 ## Why this isn't in `nestjs-blog`
 

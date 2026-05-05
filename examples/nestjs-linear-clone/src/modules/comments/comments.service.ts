@@ -22,21 +22,17 @@ export class CommentsService {
   ) {}
 
   @Transactional()
-  async create(dto: CreateCommentDto): Promise<Comment> {
+  async create(dto: CreateCommentDto, actorUserId: number): Promise<Comment> {
     const c = new Comment();
-
     c.issueId = dto.issueId;
-
-    if (dto.authorId !== undefined) {
-      c.authorId = dto.authorId;
-    }
-
+    // Author is always the authenticated caller — DTO no longer carries it.
+    c.authorId = actorUserId;
     c.body = dto.body;
     const saved = await this.repo.save(c);
 
     await this.activity.log({
       issueId: dto.issueId,
-      actorUserId: dto.authorId ?? null,
+      actorUserId,
       action: ACTIVITY_ACTION.COMMENTED,
       payload: { commentId: saved.id },
     });
@@ -69,8 +65,11 @@ export class CommentsService {
     return this.repo.save(c);
   }
 
+  @Transactional()
   async softRemove(id: number): Promise<void> {
-    await this.findOne(id);
-    await this.repo.softDelete({ id });
+    const result = await this.repo.softDelete({ id });
+    if (result.affected === 0) {
+      throw new NotFoundException(`Comment ${id} not found`);
+    }
   }
 }

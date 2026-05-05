@@ -9,9 +9,8 @@ import {
   ParseIntPipe,
   Query,
   HttpCode,
-  Headers,
 } from "@nestjs/common";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { IssuesService } from "./issues.service";
 import {
   CreateIssueDto,
@@ -19,16 +18,20 @@ import {
   AssignLabelDto,
   AssignAssigneeDto,
 } from "./dto/issue.dto";
+import { CurrentUserId } from "../../common/auth/current-user.decorator";
+import { WorkspaceScoped } from "../../common/auth/workspace.decorators";
 
 @ApiTags("Issues")
+@ApiBearerAuth()
 @Controller("issues")
 export class IssuesController {
   constructor(private readonly service: IssuesService) {}
 
   @Post()
+  @WorkspaceScoped({ from: "project" })
   @ApiOperation({ summary: "Create issue (auto-assigns per-project number)" })
-  create(@Body() dto: CreateIssueDto) {
-    return this.service.create(dto);
+  create(@Body() dto: CreateIssueDto, @CurrentUserId() userId: number) {
+    return this.service.create(dto, userId);
   }
 
   @Get()
@@ -46,64 +49,72 @@ export class IssuesController {
   }
 
   @Get(":id")
+  @WorkspaceScoped({ from: "issue" })
   one(@Param("id", ParseIntPipe) id: number) {
     return this.service.findOne(id);
   }
 
   @Get(":id/children")
+  @WorkspaceScoped({ from: "issue" })
   @ApiOperation({ summary: "Direct subissues" })
   children(@Param("id", ParseIntPipe) id: number) {
     return this.service.childrenOf(id);
   }
 
   @Patch(":id")
+  @WorkspaceScoped({ from: "issue" })
   @ApiOperation({
     summary: "Update issue with optimistic locking; returns 409 on stale version",
   })
   update(
     @Param("id", ParseIntPipe) id: number,
     @Body() dto: UpdateIssueDto,
-    @Headers("x-actor-user-id") actor?: string,
+    @CurrentUserId() userId: number,
   ) {
-    return this.service.update(id, dto, actor ? Number(actor) : undefined);
+    return this.service.update(id, dto, userId);
   }
 
   @Patch(":id/assignee")
+  @WorkspaceScoped({ from: "issue" })
   @ApiOperation({ summary: "Set or clear the assignee" })
   assign(
     @Param("id", ParseIntPipe) id: number,
     @Body() dto: AssignAssigneeDto,
-    @Headers("x-actor-user-id") actor?: string,
+    @CurrentUserId() userId: number,
   ) {
-    return this.service.assign(id, dto, actor ? Number(actor) : undefined);
+    return this.service.assign(id, dto, userId);
   }
 
   @Post(":id/labels")
+  @WorkspaceScoped({ from: "issue" })
   addLabel(
     @Param("id", ParseIntPipe) id: number,
     @Body() dto: AssignLabelDto,
-    @Headers("x-actor-user-id") actor?: string,
+    @CurrentUserId() userId: number,
   ) {
-    return this.service.addLabel(id, dto, actor ? Number(actor) : undefined);
+    return this.service.addLabel(id, dto, userId);
   }
 
   @Delete(":id/labels/:labelId")
+  @WorkspaceScoped({ from: "issue" })
   @HttpCode(204)
   removeLabel(
     @Param("id", ParseIntPipe) id: number,
     @Param("labelId", ParseIntPipe) labelId: number,
-    @Headers("x-actor-user-id") actor?: string,
+    @CurrentUserId() userId: number,
   ) {
-    return this.service.removeLabel(id, labelId, actor ? Number(actor) : undefined);
+    return this.service.removeLabel(id, labelId, userId);
   }
 
   @Delete(":id")
+  @WorkspaceScoped({ from: "issue" })
   @HttpCode(204)
   remove(@Param("id", ParseIntPipe) id: number) {
     return this.service.softRemove(id);
   }
 
   @Post(":id/restore")
+  @WorkspaceScoped({ from: "issue" })
   @HttpCode(204)
   restore(@Param("id", ParseIntPipe) id: number) {
     return this.service.restore(id);

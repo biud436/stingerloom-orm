@@ -22,6 +22,11 @@ export interface ClaimedIssue {
 }
 
 const LEASE_MINUTES = 5;
+/** A sentinel rolls forward fast — it only exists during the few ms between
+ *  `lockNextMysql` and `markClaimed`. If a worker crashes mid-flight, this
+ *  is how long the row stays parked before another worker can pick it up. */
+const SENTINEL_TIMEOUT_SECONDS = 30;
+const SENTINEL_PREFIX = "__pending:";
 
 /**
  * Worker queue backed by a single `issue` table.
@@ -159,17 +164,29 @@ export class QueueService {
    * read-back to recover the row id. Uses the dialect-aware
    * `createUpdateBuilder()` which emits native `UPDATE … ORDER BY … LIMIT n`
    * on MySQL/MariaDB.
+   *
+   * Crash-recovery clause: `claimedBy LIKE '__pending:%' AND claimedAt < cutoff`
+   * also reclaims sentinel rows whose worker crashed between
+   * `lockNextMysql` and `markClaimed`. Without it, a crashed worker would
+   * permanently park a row under its sentinel tag because the lease cutoff
+   * only matches *real* claims.
    */
   private async lockNextMysql(
     workerId: string,
     projectId: number,
   ): Promise<number | null> {
-    const sentinel = `__pending:${workerId}:${Date.now()}-${Math.floor(
+    const sentinel = `${SENTINEL_PREFIX}${workerId}:${Date.now()}-${Math.floor(
       Math.random() * 1e9,
     )}`;
-    const cutoff = exp.currentTimestamp().addMinutes(-LEASE_MINUTES);
+    const leaseCutoff = exp.currentTimestamp().addMinutes(-LEASE_MINUTES);
+    const sentinelCutoff = exp
+      .currentTimestamp()
+      .addSeconds(-SENTINEL_TIMEOUT_SECONDS);
     const i = qAlias(Issue, "i");
 
+    // Eligible rows: never claimed, OR a real claim whose lease expired,
+    // OR a sentinel from a worker that crashed before promoting it (these
+    // get a much shorter timeout — see SENTINEL_TIMEOUT_SECONDS).
     const { affected } = await this.repo
       .createUpdateBuilder(i)
       .set({ claimedBy: sentinel })
@@ -177,7 +194,19 @@ export class QueueService {
       .where(i.projectId.eq(projectId))
       .andWhere(i.status.in([ISSUE_STATUS.BACKLOG, ISSUE_STATUS.TODO]))
       .andWhere(i.assigneeId.isNull())
-      .andWhere(exp.or(i.claimedBy.isNull(), i.claimedAt.lt(cutoff)))
+      .andWhere(
+        exp.or(
+          i.claimedBy.isNull(),
+          exp.and(
+            i.claimedBy.like(`${SENTINEL_PREFIX}%`),
+            i.claimedAt.lt(sentinelCutoff),
+          ),
+          exp.and(
+            i.claimedBy.notLike(`${SENTINEL_PREFIX}%`),
+            i.claimedAt.lt(leaseCutoff),
+          ),
+        ),
+      )
       .andWhere(i.deletedAt.isNull())
       .orderBy(i.priority.asc())
       .addOrderBy(i.number.asc())

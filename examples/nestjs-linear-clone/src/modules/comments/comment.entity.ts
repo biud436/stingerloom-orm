@@ -14,7 +14,8 @@ import { Issue } from "../issues/issue.entity";
 import { User } from "../users/user.entity";
 
 @Entity()
-@Index(["issue_id"])
+@Index(["issue_id", "created_at"])
+@Index(["author_id"])
 @FullTextIndex(["body"])
 export class Comment {
   @PrimaryGeneratedColumn()

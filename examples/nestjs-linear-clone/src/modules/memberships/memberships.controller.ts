@@ -10,16 +10,19 @@ import {
   HttpCode,
   Query,
 } from "@nestjs/common";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { MembershipsService } from "./memberships.service";
 import { CreateMembershipDto, UpdateMembershipRoleDto } from "./dto/membership.dto";
+import { WorkspaceScoped } from "../../common/auth/workspace.decorators";
 
 @ApiTags("Memberships")
+@ApiBearerAuth()
 @Controller("memberships")
 export class MembershipsController {
   constructor(private readonly service: MembershipsService) {}
 
   @Post()
+  @WorkspaceScoped({ from: "param", name: "workspaceId" })
   @ApiOperation({ summary: "Invite a user to a workspace with a role" })
   invite(@Body() dto: CreateMembershipDto) {
     return this.service.invite(dto);

@@ -35,8 +35,8 @@ export class ProjectsService {
     project.name = dto.name;
     project.key = dto.key;
     if (dto.description) project.description = dto.description;
-    if (dto.customFieldSchema) {
-      project.customFieldSchema = JSON.stringify(dto.customFieldSchema) as any;
+    if (dto.customFieldSchema !== undefined) {
+      project.customFieldSchema = dto.customFieldSchema;
     }
     return this.repo.save(project);
   }
@@ -63,7 +63,7 @@ export class ProjectsService {
     if (dto.name !== undefined) p.name = dto.name;
     if (dto.description !== undefined) p.description = dto.description;
     if (dto.customFieldSchema !== undefined) {
-      p.customFieldSchema = JSON.stringify(dto.customFieldSchema) as any;
+      p.customFieldSchema = dto.customFieldSchema;
     }
     return this.repo.save(p);
   }

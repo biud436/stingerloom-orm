@@ -13,6 +13,7 @@ import { Workspace } from "../workspaces/workspace.entity";
 import { Issue } from "../issues/issue.entity";
 import { Sprint } from "../sprints/sprint.entity";
 import { Label } from "../labels/label.entity";
+import { jsonColumn } from "../../common/transformers/json.transformer";
 
 /**
  * customFieldSchema example:
@@ -45,7 +46,11 @@ export class Project {
   @Column({ type: "text", nullable: true })
   description!: string;
 
-  @Column({ type: "json", nullable: true })
+  @Column({
+    type: "json",
+    nullable: true,
+    transformer: jsonColumn<Record<string, unknown>>(),
+  })
   customFieldSchema!: Record<string, unknown> | null;
 
   @Column({ type: "int", nullable: true })

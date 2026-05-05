@@ -7,6 +7,7 @@ import {
   BeforeInsert,
   BeforeUpdate,
 } from "@stingerloom/orm";
+import { Exclude } from "class-transformer";
 import { Membership } from "../memberships/membership.entity";
 import { Issue } from "../issues/issue.entity";
 import { Comment } from "../comments/comment.entity";
@@ -25,6 +26,16 @@ export class User {
 
   @Column({ nullable: true })
   avatarUrl!: string;
+
+  /**
+   * bcrypt hash of the user's password. Nullable so seed data and
+   * pre-existing rows survive — `AuthService.login` rejects when null.
+   * `@Exclude()` keeps it out of every controller response that runs
+   * through `ClassSerializerInterceptor` (registered globally in main.ts).
+   */
+  @Exclude()
+  @Column({ length: 100, nullable: true })
+  passwordHash!: string | null;
 
   @Column({ type: "datetime", nullable: true })
   createdAt!: Date;

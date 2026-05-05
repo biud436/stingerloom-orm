@@ -69,11 +69,6 @@ export class CreateIssueDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsInt()
-  reporterId?: number;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsInt()
   parentId?: number;
 
   @ApiProperty({ required: false, description: "JSON shaped per project's customFieldSchema" })

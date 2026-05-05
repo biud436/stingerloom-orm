@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
+import * as bcrypt from "bcryptjs";
 import { AppModule } from "../app.module";
 import { WorkspacesService } from "../modules/workspaces/workspaces.service";
 import { UsersService } from "../modules/users/users.service";
@@ -15,10 +16,18 @@ import {
   ISSUE_STATUS,
   ISSUE_PRIORITY,
 } from "./enums";
+import { BaseRepository } from "@stingerloom/orm";
+import { makeInjectRepositoryToken } from "@stingerloom/orm/nestjs";
+import { User } from "../modules/users/user.entity";
+
+const SEED_PASSWORD = "alice-bob-chris-dana";
 
 /**
  * Populates a coherent dataset so analytics endpoints return non-empty data.
  * Idempotent: existing slugs/keys/emails are reused, conflicts are swallowed.
+ *
+ * Every seeded user has the same bcrypted password (`SEED_PASSWORD`) so the
+ * test suite and curl examples can `POST /auth/login` to get a JWT.
  */
 async function seed(): Promise<void> {
   const app = await NestFactory.createApplicationContext(AppModule, {
@@ -33,6 +42,7 @@ async function seed(): Promise<void> {
   const labels = app.get(LabelsService);
   const issues = app.get(IssuesService);
   const comments = app.get(CommentsService);
+  const usersRepo = app.get<BaseRepository<User>>(makeInjectRepositoryToken(User));
 
   const safe = async <T>(fn: () => Promise<T>, fallback: () => Promise<T>): Promise<T> => {
     try {
@@ -53,29 +63,37 @@ async function seed(): Promise<void> {
     { email: "chris@acme.test", name: "Chris Choi" },
     { email: "dana@acme.test", name: "Dana Kim" },
   ];
-  const userRows = await Promise.all(
-    userInputs.map(async (u) =>
-      safe(
-        () => users.create(u),
-        async () => {
-          const all = await users.findAll();
-          return all.find((x) => x.email === u.email)!;
-        },
-      ),
-    ),
-  );
 
-  for (const u of userRows) {
+  const passwordHash = await bcrypt.hash(SEED_PASSWORD, 10);
+  const userRows: User[] = [];
+  for (const u of userInputs) {
+    const created = await safe(
+      () => users.create(u),
+      async () => {
+        const all = await users.findAll();
+        return all.find((x) => x.email === u.email)!;
+      },
+    );
+    if (!created.passwordHash) {
+      created.passwordHash = passwordHash;
+      await usersRepo.save(created);
+    }
+    userRows.push(created);
+  }
+
+  // First user is OWNER, rest MEMBER.
+  for (let i = 0; i < userRows.length; i++) {
+    const role = i === 0 ? MEMBERSHIP_ROLE.OWNER : MEMBERSHIP_ROLE.MEMBER;
     await safe(
       () =>
         memberships.invite({
           workspaceId: ws.id,
-          userId: u.id,
-          role: MEMBERSHIP_ROLE.MEMBER,
+          userId: userRows[i].id,
+          role,
         }),
       async () => {
         const list = await memberships.byWorkspace(ws.id);
-        return list.find((m) => m.userId === u.id)!;
+        return list.find((m) => m.userId === userRows[i].id)!;
       },
     );
   }
@@ -120,7 +138,6 @@ async function seed(): Promise<void> {
     ),
   );
 
-  // Seed root-level issues, then a couple of subissues for the recursive tree demo.
   const titles = [
     "Login latency spike during deploys",
     "Race condition in token refresh",
@@ -140,92 +157,117 @@ async function seed(): Promise<void> {
     const reporter = userRows[i % userRows.length];
     const assignee = i % 3 === 0 ? null : userRows[(i + 1) % userRows.length];
 
-    const issue = await issues.create({
-      projectId: project.id,
-      title,
-      description: `Auto-seeded issue. Owner ${assignee?.name ?? "unassigned"}.`,
-      status:
-        i % 4 === 0
-          ? ISSUE_STATUS.DONE
-          : i % 3 === 0
-            ? ISSUE_STATUS.IN_PROGRESS
-            : i % 2 === 0
-              ? ISSUE_STATUS.TODO
-              : ISSUE_STATUS.BACKLOG,
-      priority:
-        i % 5 === 0
-          ? ISSUE_PRIORITY.URGENT
-          : i % 3 === 0
-            ? ISSUE_PRIORITY.HIGH
-            : ISSUE_PRIORITY.MEDIUM,
-      estimate: 1 + (i % 5),
-      sprintId: i < 5 ? sprint.id : undefined,
-      assigneeId: assignee?.id,
-      reporterId: reporter.id,
-      customFields:
-        i % 2 === 0
-          ? { severity: i % 3 === 0 ? "S0" : "S2", customer: "BigCorp" }
-          : { severity: "S3", customer: "AcmeRetail" },
-    });
+    const issue = await issues.create(
+      {
+        projectId: project.id,
+        title,
+        description: `Auto-seeded issue. Owner ${assignee?.name ?? "unassigned"}.`,
+        status:
+          i % 4 === 0
+            ? ISSUE_STATUS.DONE
+            : i % 3 === 0
+              ? ISSUE_STATUS.IN_PROGRESS
+              : i % 2 === 0
+                ? ISSUE_STATUS.TODO
+                : ISSUE_STATUS.BACKLOG,
+        priority:
+          i % 5 === 0
+            ? ISSUE_PRIORITY.URGENT
+            : i % 3 === 0
+              ? ISSUE_PRIORITY.HIGH
+              : ISSUE_PRIORITY.MEDIUM,
+        estimate: 1 + (i % 5),
+        sprintId: i < 5 ? sprint.id : undefined,
+        assigneeId: assignee?.id,
+        customFields:
+          i % 2 === 0
+            ? { severity: i % 3 === 0 ? "S0" : "S2", customer: "BigCorp" }
+            : { severity: "S3", customer: "AcmeRetail" },
+      },
+      reporter.id,
+    );
     created.push(issue);
 
     if (i < 4) {
-      await comments.create({
-        issueId: issue.id,
-        authorId: reporter.id,
-        body: `First triage notes for "${title}". Looks reproducible on staging.`,
-      });
+      await comments.create(
+        {
+          issueId: issue.id,
+          body: `First triage notes for "${title}". Looks reproducible on staging.`,
+        },
+        reporter.id,
+      );
     }
 
     if (i % 3 === 0 && i > 0) {
-      await issues.addLabel(issue.id, { labelId: labelRows[i % labelRows.length].id });
+      await issues.addLabel(
+        issue.id,
+        { labelId: labelRows[i % labelRows.length].id },
+        reporter.id,
+      );
     }
   }
 
   // Build a small subissue tree under the first issue
   const root = created[0];
-  const subA = await issues.create({
-    projectId: project.id,
-    title: "Investigate connection pool sizing",
-    parentId: root.id,
-    status: ISSUE_STATUS.IN_PROGRESS,
-    priority: ISSUE_PRIORITY.HIGH,
-    estimate: 3,
-    reporterId: userRows[0].id,
-  });
-  const subB = await issues.create({
-    projectId: project.id,
-    title: "Add circuit breaker to auth service",
-    parentId: root.id,
-    status: ISSUE_STATUS.TODO,
-    priority: ISSUE_PRIORITY.MEDIUM,
-    estimate: 5,
-    reporterId: userRows[1].id,
-  });
-  await issues.create({
-    projectId: project.id,
-    title: "Tune connection idle-timeout in pool",
-    parentId: subA.id,
-    status: ISSUE_STATUS.TODO,
-    priority: ISSUE_PRIORITY.LOW,
-    estimate: 2,
-    reporterId: userRows[2].id,
-  });
-  await issues.create({
-    projectId: project.id,
-    title: "Add metrics for circuit breaker trips",
-    parentId: subB.id,
-    status: ISSUE_STATUS.BACKLOG,
-    priority: ISSUE_PRIORITY.LOW,
-    estimate: 2,
-    reporterId: userRows[3].id,
-  });
+  const subA = await issues.create(
+    {
+      projectId: project.id,
+      title: "Investigate connection pool sizing",
+      parentId: root.id,
+      status: ISSUE_STATUS.IN_PROGRESS,
+      priority: ISSUE_PRIORITY.HIGH,
+      estimate: 3,
+    },
+    userRows[0].id,
+  );
+  const subB = await issues.create(
+    {
+      projectId: project.id,
+      title: "Add circuit breaker to auth service",
+      parentId: root.id,
+      status: ISSUE_STATUS.TODO,
+      priority: ISSUE_PRIORITY.MEDIUM,
+      estimate: 5,
+    },
+    userRows[1].id,
+  );
+  await issues.create(
+    {
+      projectId: project.id,
+      title: "Tune connection idle-timeout in pool",
+      parentId: subA.id,
+      status: ISSUE_STATUS.TODO,
+      priority: ISSUE_PRIORITY.LOW,
+      estimate: 2,
+    },
+    userRows[2].id,
+  );
+  await issues.create(
+    {
+      projectId: project.id,
+      title: "Add metrics for circuit breaker trips",
+      parentId: subB.id,
+      status: ISSUE_STATUS.BACKLOG,
+      priority: ISSUE_PRIORITY.LOW,
+      estimate: 2,
+    },
+    userRows[3].id,
+  );
 
-  console.log("Seed complete. Workspace=%d, Project=%d, Issues=%d", ws.id, project.id, created.length + 4);
+  // eslint-disable-next-line no-console
+  console.log(
+    "Seed complete. Workspace=%d Project=%d Issues=%d. Login: %s / %s",
+    ws.id,
+    project.id,
+    created.length + 4,
+    userRows[0].email,
+    SEED_PASSWORD,
+  );
   await app.close();
 }
 
 seed().catch((err) => {
+  // eslint-disable-next-line no-console
   console.error(err);
   process.exit(1);
 });

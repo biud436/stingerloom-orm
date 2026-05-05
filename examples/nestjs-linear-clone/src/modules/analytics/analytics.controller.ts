@@ -1,13 +1,16 @@
 import { Controller, Get, Param, ParseIntPipe, Query } from "@nestjs/common";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { AnalyticsService } from "./analytics.service";
+import { WorkspaceScoped } from "../../common/auth/workspace.decorators";
 
 @ApiTags("Analytics")
+@ApiBearerAuth()
 @Controller("analytics")
 export class AnalyticsController {
   constructor(private readonly service: AnalyticsService) {}
 
   @Get("issues/:id/tree")
+  @WorkspaceScoped({ from: "issue" })
   @ApiOperation({
     summary: "Recursive subissue tree",
     description: "Walks parent_id chain via WITH RECURSIVE. Returns one row per descendant ordered by tree path.",
@@ -29,6 +32,7 @@ export class AnalyticsController {
   }
 
   @Get("projects/:id/throughput")
+  @WorkspaceScoped({ from: "project" })
   @ApiOperation({
     summary: "Assignee throughput ranking",
     description: "ROW_NUMBER OVER (ORDER BY completedCount DESC, avgCycleHours ASC) ranks assignees in the project.",
@@ -41,6 +45,7 @@ export class AnalyticsController {
   }
 
   @Get("issues/:id/time-in-status")
+  @WorkspaceScoped({ from: "issue" })
   @ApiOperation({
     summary: "Time spent in each status",
     description: "LAG/LEAD over activity_log STATUS_CHANGED rows. Reads payload->>'to' for the entered status.",
@@ -50,6 +55,7 @@ export class AnalyticsController {
   }
 
   @Get("projects/:id/lead-time")
+  @WorkspaceScoped({ from: "project" })
   @ApiOperation({ summary: "Average lead time per week" })
   leadTime(
     @Param("id", ParseIntPipe) id: number,

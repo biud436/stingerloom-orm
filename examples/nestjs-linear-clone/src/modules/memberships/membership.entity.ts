@@ -5,6 +5,7 @@ import {
   ManyToOne,
   RelationColumn,
   UniqueIndex,
+  Index,
   BeforeInsert,
 } from "@stingerloom/orm";
 import { Workspace } from "../workspaces/workspace.entity";
@@ -13,6 +14,7 @@ import { MembershipRole } from "../../common/enums";
 
 @Entity()
 @UniqueIndex(["workspace_id", "user_id"])
+@Index(["user_id"])
 export class Membership {
   @PrimaryGeneratedColumn()
   id!: number;

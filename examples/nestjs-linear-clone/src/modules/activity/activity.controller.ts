@@ -1,13 +1,16 @@
 import { Controller, Get, Param, ParseIntPipe, Query } from "@nestjs/common";
-import { ApiTags, ApiOperation } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { ActivityService } from "./activity.service";
+import { WorkspaceScoped } from "../../common/auth/workspace.decorators";
 
 @ApiTags("Activity")
+@ApiBearerAuth()
 @Controller("activity")
 export class ActivityController {
   constructor(private readonly service: ActivityService) {}
 
   @Get("issues/:id")
+  @WorkspaceScoped({ from: "issue" })
   @ApiOperation({ summary: "Recent activity for an issue (newest first)" })
   byIssue(
     @Param("id", ParseIntPipe) id: number,
@@ -17,6 +20,7 @@ export class ActivityController {
   }
 
   @Get("workspaces/:id")
+  @WorkspaceScoped({ from: "param", name: "id" })
   @ApiOperation({ summary: "Recent activity for a workspace" })
   byWorkspace(
     @Param("id", ParseIntPipe) id: number,
