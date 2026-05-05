@@ -44,7 +44,9 @@ export class SprintsService {
 
   async findOne(id: number): Promise<Sprint> {
     const s = await this.repo.findOne({ where: { id } });
-    if (!s) throw new NotFoundException(`Sprint ${id} not found`);
+    if (!s) {
+      throw new NotFoundException(`Sprint ${id} not found`);
+    }
     return s;
   }
 
@@ -52,8 +54,12 @@ export class SprintsService {
   async update(id: number, dto: UpdateSprintDto): Promise<Sprint> {
     const s = await this.findOne(id);
     applyPatch(s, pickDefined(dto, SPRINT_PATCH_KEYS) as unknown as Partial<Sprint>);
-    if (dto.startDate !== undefined) s.startDate = new Date(dto.startDate);
-    if (dto.endDate !== undefined) s.endDate = new Date(dto.endDate);
+    if (dto.startDate !== undefined) {
+      s.startDate = new Date(dto.startDate);
+    }
+    if (dto.endDate !== undefined) {
+      s.endDate = new Date(dto.endDate);
+    }
     return this.repo.save(s);
   }
 
