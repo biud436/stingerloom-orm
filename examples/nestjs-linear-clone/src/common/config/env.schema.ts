@@ -45,12 +45,15 @@ export const envValidationSchema = Joi.object({
   JWT_EXPIRES_IN: Joi.string().default("1h"),
 
   // Schema sync — only in non-prod, opt-in via env
+  // Default in non-prod is "safe": create missing tables on first boot but
+  // never alter or drop them. Production stays "false" — DDL is owned by
+  // checked-in migrations (`pnpm migrate:run`).
   ORM_SYNC: Joi.string()
     .valid("true", "false", "safe", "dry-run")
     .when("NODE_ENV", {
       is: "production",
       then: Joi.string().valid("false").default("false"),
-      otherwise: Joi.string().default("true"),
+      otherwise: Joi.string().default("safe"),
     }),
 
   // Dev-only token mint

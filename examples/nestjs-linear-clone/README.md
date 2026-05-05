@@ -53,7 +53,9 @@ pnpm install
 cp .env.example .env
 # edit .env if needed; set DB_TYPE=postgres for PostgreSQL
 
-# Boot — synchronize: true creates the schema on first run.
+# Boot — ORM_SYNC=safe (default) creates missing tables on first run.
+# Once you start tracking schema changes, switch to ORM_SYNC=false and
+# use `pnpm migrate:run` (see "Schema and migrations" below).
 pnpm start:dev
 
 # Populate sample data (workspace, users, project, sprint, ~14 issues with a 4-deep tree)
@@ -62,6 +64,31 @@ pnpm seed
 # Open Swagger UI
 open http://localhost:3000/api-docs
 ```
+
+## Schema and migrations
+
+`ORM_SYNC=safe` (default in dev) creates missing tables on boot but never
+alters or drops them. Once a project starts tracking schema changes,
+production stays on `ORM_SYNC=false` and the change track lives in
+checked-in migrations:
+
+```bash
+# generate a migration file from the diff between entity definitions and the live DB
+pnpm migrate:generate -- --name add-watcher-feature
+
+# apply pending migrations
+pnpm migrate:run
+
+# what's applied vs what's pending?
+pnpm migrate:status
+
+# undo the latest
+pnpm migrate:rollback
+```
+
+See [`migrations/README.md`](./migrations/README.md) for the full bootstrap
+flow (capturing the baseline, wiring generated files into
+`stingerloom.config.ts`, and the limitations of automatic diff generation).
 
 ## Try the advanced endpoints
 
