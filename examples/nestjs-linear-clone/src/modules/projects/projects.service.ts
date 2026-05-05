@@ -3,7 +3,12 @@ import {
   NotFoundException,
   ConflictException,
 } from "@nestjs/common";
-import { BaseRepository, Transactional, qAlias } from "@stingerloom/orm";
+import {
+  BaseRepository,
+  Transactional,
+  qAlias,
+  CursorPaginationResult,
+} from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Project } from "./project.entity";
 import { CreateProjectDto, UpdateProjectDto } from "./dto/project.dto";
@@ -41,14 +46,30 @@ export class ProjectsService {
     return this.repo.save(project);
   }
 
-  findAll(workspaceId?: number): Promise<Project[]> {
+  findAll(workspaceId?: number, limit = 50): Promise<Project[]> {
     const p = qAlias(Project, "p");
     return this.repo
       .createQueryBuilder(p)
       .when(workspaceId !== undefined, (qb) =>
         qb.where(p.workspaceId.eq(workspaceId!)),
       )
+      .orderBy(p.id.asc())
+      .take(Math.min(limit, 100))
       .getMany();
+  }
+
+  findWithCursor(
+    workspaceId: number | undefined,
+    take = 20,
+    cursor?: string,
+  ): Promise<CursorPaginationResult<Project>> {
+    return this.repo.findWithCursor({
+      take,
+      cursor,
+      orderBy: "id",
+      direction: "ASC",
+      where: workspaceId !== undefined ? { workspaceId } : undefined,
+    });
   }
 
   async findOne(id: number): Promise<Project> {

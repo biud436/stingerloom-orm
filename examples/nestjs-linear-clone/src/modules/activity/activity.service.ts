@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { BaseRepository } from "@stingerloom/orm";
+import { BaseRepository, CursorPaginationResult } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { ActivityLog } from "./activity-log.entity";
 import { ActivityAction } from "../../common/enums";
@@ -53,6 +53,41 @@ export class ActivityService {
       where: { actorUserId },
       orderBy: { createdAt: "DESC" },
       take: limit,
+    });
+  }
+
+  /**
+   * Cursor pagination over the activity feed. Walks newest-first by `id`
+   * (monotonically increasing) instead of `createdAt` so the walk stays
+   * stable across mid-second clock collisions and is unaffected by edits to
+   * row payloads — appended rows always sort to the front, never displace
+   * existing pages.
+   */
+  forIssueCursor(
+    issueId: number,
+    take = 20,
+    cursor?: string,
+  ): Promise<CursorPaginationResult<ActivityLog>> {
+    return this.repo.findWithCursor({
+      take,
+      cursor,
+      orderBy: "id",
+      direction: "DESC",
+      where: { issueId },
+    });
+  }
+
+  forWorkspaceCursor(
+    workspaceId: number,
+    take = 20,
+    cursor?: string,
+  ): Promise<CursorPaginationResult<ActivityLog>> {
+    return this.repo.findWithCursor({
+      take,
+      cursor,
+      orderBy: "id",
+      direction: "DESC",
+      where: { workspaceId },
     });
   }
 }

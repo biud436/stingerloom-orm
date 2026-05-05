@@ -10,10 +10,11 @@ import {
   Query,
   HttpCode,
 } from "@nestjs/common";
-import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { CommentsService } from "./comments.service";
 import { CreateCommentDto, UpdateCommentDto } from "./dto/comment.dto";
 import { CurrentUserId } from "../../common/auth/current-user.decorator";
+import { CursorQueryDto } from "../../common/dto/cursor.dto";
 
 @ApiTags("Comments")
 @ApiBearerAuth()
@@ -30,8 +31,24 @@ export class CommentsController {
   }
 
   @Get()
-  byIssue(@Query("issueId", ParseIntPipe) issueId: number) {
-    return this.service.findByIssue(issueId);
+  @ApiOperation({
+    summary:
+      "Comments for an issue (capped at 100; use /comments/cursor for paginated walk)",
+  })
+  byIssue(
+    @Query("issueId", ParseIntPipe) issueId: number,
+    @Query("limit") limit?: string,
+  ) {
+    return this.service.findByIssue(issueId, limit ? Number(limit) : undefined);
+  }
+
+  @Get("cursor")
+  @ApiOperation({ summary: "Cursor-paginated comments for an issue (stable ascending by id)" })
+  cursor(
+    @Query("issueId", ParseIntPipe) issueId: number,
+    @Query() q: CursorQueryDto,
+  ) {
+    return this.service.findByIssueCursor(issueId, q.take ?? 20, q.cursor);
   }
 
   @Patch(":id")

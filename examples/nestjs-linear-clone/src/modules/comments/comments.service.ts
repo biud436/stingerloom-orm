@@ -4,6 +4,7 @@ import {
   EntityManager,
   Transactional,
   qAlias,
+  CursorPaginationResult,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Comment } from "./comment.entity";
@@ -40,13 +41,33 @@ export class CommentsService {
     return saved;
   }
 
-  findByIssue(issueId: number): Promise<Comment[]> {
+  findByIssue(issueId: number, limit = 100): Promise<Comment[]> {
     const c = qAlias(Comment, "c");
     return this.em
       .createQueryBuilder(c)
       .where(c.issueId.eq(issueId))
       .orderBy(c.createdAt.asc())
+      .take(Math.min(limit, 200))
       .getMany();
+  }
+
+  /**
+   * Cursor pagination over an issue's comments. Stable across edits because
+   * `id` is monotonically increasing — even if a comment body is updated, its
+   * place in the cursor walk does not move.
+   */
+  findByIssueCursor(
+    issueId: number,
+    take = 20,
+    cursor?: string,
+  ): Promise<CursorPaginationResult<Comment>> {
+    return this.repo.findWithCursor({
+      take,
+      cursor,
+      orderBy: "id",
+      direction: "ASC",
+      where: { issueId },
+    });
   }
 
   async findOne(id: number): Promise<Comment> {

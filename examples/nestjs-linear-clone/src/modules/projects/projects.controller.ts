@@ -14,6 +14,7 @@ import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { ProjectsService } from "./projects.service";
 import { CreateProjectDto, UpdateProjectDto } from "./dto/project.dto";
 import { WorkspaceScoped } from "../../common/auth/workspace.decorators";
+import { CursorQueryDto } from "../../common/dto/cursor.dto";
 
 @ApiTags("Projects")
 @ApiBearerAuth()
@@ -28,9 +29,31 @@ export class ProjectsController {
   }
 
   @Get()
-  @ApiOperation({ summary: "List projects (optionally filtered by workspaceId)" })
-  list(@Query("workspaceId") workspaceId?: string) {
-    return this.service.findAll(workspaceId ? Number(workspaceId) : undefined);
+  @ApiOperation({
+    summary:
+      "List projects (capped at 50; optionally filtered by workspaceId). Use /projects/cursor for full pagination.",
+  })
+  list(
+    @Query("workspaceId") workspaceId?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.service.findAll(
+      workspaceId ? Number(workspaceId) : undefined,
+      limit ? Number(limit) : undefined,
+    );
+  }
+
+  @Get("cursor")
+  @ApiOperation({ summary: "Cursor-paginated project list" })
+  cursor(
+    @Query() q: CursorQueryDto,
+    @Query("workspaceId") workspaceId?: string,
+  ) {
+    return this.service.findWithCursor(
+      workspaceId ? Number(workspaceId) : undefined,
+      q.take ?? 20,
+      q.cursor,
+    );
   }
 
   @Get(":id")

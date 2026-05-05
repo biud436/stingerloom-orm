@@ -1,8 +1,11 @@
 import { Injectable, NotFoundException, ConflictException } from "@nestjs/common";
-import { BaseRepository, Transactional } from "@stingerloom/orm";
+import { BaseRepository, Transactional, CursorPaginationResult } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { User } from "./user.entity";
 import { CreateUserDto, UpdateUserDto } from "./dto/user.dto";
+
+const DEFAULT_LIST_LIMIT = 50;
+const MAX_LIST_LIMIT = 100;
 
 @Injectable()
 export class UsersService {
@@ -23,8 +26,24 @@ export class UsersService {
     return this.repo.save(u);
   }
 
-  findAll(): Promise<User[]> {
-    return this.repo.find();
+  /** Capped at MAX_LIST_LIMIT so the endpoint cannot return an unbounded result set. */
+  findAll(limit = DEFAULT_LIST_LIMIT): Promise<User[]> {
+    return this.repo.find({
+      take: Math.min(limit, MAX_LIST_LIMIT),
+      orderBy: { id: "ASC" },
+    });
+  }
+
+  findWithCursor(
+    take = 20,
+    cursor?: string,
+  ): Promise<CursorPaginationResult<User>> {
+    return this.repo.findWithCursor({
+      take,
+      cursor,
+      orderBy: "id",
+      direction: "ASC",
+    });
   }
 
   async findOne(id: number): Promise<User> {
