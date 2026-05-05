@@ -6,7 +6,7 @@ import { DatabaseClient } from "../DatabaseClient";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
-import { FindOption, LockMode, UpdateData, WhereClause } from "../dialects/FindOption";
+import { FindOption, LockMode, UpdateData, UpdateManyOptions, WhereClause } from "../dialects/FindOption";
 import { resolveWhereClause } from "./WhereResolver";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
@@ -107,6 +107,7 @@ import type { RawPipeline, RawPipelineOptions } from "./plugin/raw-pipeline/RawP
 import { createDialectExpression } from "../dialects/DialectExpression";
 import { SelectQueryBuilder, isEntityRef } from "./SelectQueryBuilder";
 import type { EntityRef } from "./SelectQueryBuilder";
+import { UpdateQueryBuilder } from "./UpdateQueryBuilder";
 import { CompiledQuery, p as createPlaceholder, PlaceholderMarker } from "./CompiledQuery";
 
 // ── Public Metadata View Types (#233) ────────────────────
@@ -3246,30 +3247,55 @@ export class EntityManager implements BaseEntityManager {
   /**
    * Updates multiple entities matching the WHERE condition with the given data.
    *
+   * Supports `orderBy` + `limit` for capped, ordered updates (e.g. atomic
+   * worker-claim queues). On MySQL/MariaDB this emits native
+   * `UPDATE … ORDER BY … LIMIT n`; on PostgreSQL / SQLite it rewrites to
+   * `UPDATE … WHERE pk IN (SELECT pk FROM … ORDER BY … LIMIT n)` since those
+   * dialects don't accept ORDER BY / LIMIT directly on UPDATE.
+   *
    * @param entity The entity class.
    * @param data The partial data to set on matching rows.
-   * @param options Options with `where` clause to filter rows.
+   * @param options `where` (required) plus optional `orderBy` and `limit`.
    * @returns The number of affected rows.
    *
    * @example
    * ```ts
    * const result = await em.updateMany(User, { active: true }, { where: { status: 'pending' } });
    * console.log(result.affected); // 42
+   *
+   * // Capped, ordered claim — atomic on InnoDB
+   * await em.updateMany(
+   *   Issue,
+   *   { claimedBy: workerId },
+   *   {
+   *     where: { status: 'TODO' },
+   *     orderBy: { priority: 'ASC', number: 'ASC' },
+   *     limit: 1,
+   *   },
+   * );
    * ```
    */
   async updateMany<T>(
     entity: ClazzType<T>,
     data: UpdateData<T>,
-    options: { where: WhereClause<T> },
+    options: UpdateManyOptions<T>,
   ): Promise<{ affected: number }> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
-    const { where } = options;
+    const { where, orderBy, limit } = options;
     if (!where || Object.keys(where).length === 0) {
       throw new DeleteWithoutConditionsError("Update");
+    }
+
+    if (limit !== undefined) {
+      if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 0) {
+        throw new InvalidQueryError(
+          `updateMany limit must be a non-negative integer, got ${String(limit)}`,
+        );
+      }
     }
 
     this.validateCriteriaKeys(metadata, data as WhereClause<T>, entity.name);
@@ -3307,7 +3333,7 @@ export class EntityManager implements BaseEntityManager {
         wrapColumn: (n) => this.wrap(n),
         dialect: this._ctx.getDialect(),
         dialectExpression: createDialectExpression(this._ctx.getDialect()),
-        propertyToColumn: this.buildPropertyToColumnMap(metadata),
+        propertyToColumn: updatePropToCol,
       });
 
       // Tenant scoping — intersected with the user's WHERE so an updateMany
@@ -3318,7 +3344,16 @@ export class EntityManager implements BaseEntityManager {
         whereMap.push(tenantUpdateWhere);
       }
 
-      const updateSql = sql`UPDATE ${raw(this.wrapTable(metadata.name!))} SET ${join(setMap, ", ")} WHERE ${join(whereMap, " AND ")}`;
+      const orderBySql = this.buildUpdateOrderBy(orderBy, updatePropToCol);
+
+      const updateSql = this.buildUpdateSql(
+        metadata,
+        entity.name,
+        setMap,
+        whereMap,
+        orderBySql,
+        limit,
+      );
 
       const queryStart = Date.now();
       this.beginTrackQuery();
@@ -3342,6 +3377,247 @@ export class EntityManager implements BaseEntityManager {
 
       return { affected };
     });
+  }
+
+  /**
+   * Create an `UpdateQueryBuilder` for the given entity (or `qAlias`).
+   *
+   * Provides a fluent UPDATE DSL with `.set / .where / .orderBy / .limit /
+   * .execute()` that mirrors the qAlias-based predicate style used by
+   * `createQueryBuilder()` for SELECT.
+   *
+   * @example
+   * ```ts
+   * const i = qAlias(Issue, "i");
+   * await em.createUpdateBuilder(i)
+   *   .set({ claimedBy: workerId, claimedAt: sql`NOW()` })
+   *   .where(i.projectId.eq(projectId))
+   *   .andWhere(i.status.in([BACKLOG, TODO]))
+   *   .orderBy(i.priority.asc())
+   *   .limit(1)
+   *   .execute();
+   * ```
+   */
+  createUpdateBuilder<T>(entity: ClazzType<T>, alias?: string): UpdateQueryBuilder<T>;
+  createUpdateBuilder<T>(ref: EntityRef<T>): UpdateQueryBuilder<T>;
+  createUpdateBuilder<T>(
+    entityOrRef: ClazzType<T> | EntityRef<T>,
+    alias?: string,
+  ): UpdateQueryBuilder<T> {
+    let entity: ClazzType<T>;
+    let aliasName: string;
+    if (isEntityRef(entityOrRef)) {
+      entity = entityOrRef._entity;
+      aliasName = entityOrRef._alias;
+    } else {
+      entity = entityOrRef;
+      aliasName = alias ?? entity.name;
+    }
+    const meta = this.resolver.resolveEntityMetadata(entity);
+    if (!meta) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+    const propMap = this.buildPropertyToColumnMap(meta);
+    const dialectExpr = createDialectExpression(this._ctx.getDialect());
+    return new UpdateQueryBuilder<T>(this, entity, aliasName, propMap, dialectExpr);
+  }
+
+  /**
+   * @internal Used by `UpdateQueryBuilder.build()` — builds the UPDATE SQL
+   * with tenant scoping omitted (build-time only). Execution paths add
+   * tenant scoping via `executeBuilderUpdate`.
+   */
+  buildBuilderUpdateSql<T>(
+    entity: ClazzType<T>,
+    setMap: Sql[],
+    whereConditions: Sql[],
+    orderBySql: Sql | undefined,
+    limit: number | undefined,
+  ): Sql {
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+    if (whereConditions.length === 0) {
+      throw new DeleteWithoutConditionsError("Update");
+    }
+    return this.buildUpdateSql(
+      metadata,
+      entity.name,
+      setMap,
+      whereConditions,
+      orderBySql,
+      limit,
+    );
+  }
+
+  /**
+   * @internal Used by `UpdateQueryBuilder.execute()` — runs the UPDATE
+   * inside the EM transaction wrapper, with tenant scoping and
+   * `@UpdateTimestamp` injection applied just like `updateMany`.
+   */
+  async executeBuilderUpdate<T>(
+    entity: ClazzType<T>,
+    setEntries: Sql[],
+    whereConditions: Sql[],
+    orderBySql: Sql | undefined,
+    limit: number | undefined,
+  ): Promise<{ affected: number }> {
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+    if (whereConditions.length === 0) {
+      throw new DeleteWithoutConditionsError("Update");
+    }
+    if (limit !== undefined) {
+      if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 0) {
+        throw new InvalidQueryError(
+          `UpdateQueryBuilder.limit must be a non-negative integer, got ${String(limit)}`,
+        );
+      }
+    }
+
+    return this.executeInTransaction(async (session) => {
+      let mergedSetMap = setEntries;
+
+      // @UpdateTimestamp auto-inject (same logic as updateMany)
+      const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
+      if (updateTsColName) {
+        const wrappedTs = this.wrap(updateTsColName);
+        const hasExplicit = setEntries.some((s) =>
+          s.text?.includes(wrappedTs),
+        );
+        if (!hasExplicit) {
+          mergedSetMap = [
+            ...setEntries,
+            sql`${raw(wrappedTs)} = ${formatDateTimeForSQL(new Date())}`,
+          ];
+        }
+      }
+
+      if (mergedSetMap.length === 0) {
+        return { affected: 0 };
+      }
+
+      const whereMap = [...whereConditions];
+      const tenantWhere = this.buildTenantWhereClause(entity);
+      if (tenantWhere) {
+        whereMap.push(tenantWhere);
+      }
+
+      const updateSql = this.buildUpdateSql(
+        metadata,
+        entity.name,
+        mergedSetMap,
+        whereMap,
+        orderBySql,
+        limit,
+      );
+
+      const queryStart = Date.now();
+      this.beginTrackQuery();
+      const queryResult = (await session.query(updateSql)) as {
+        results: any;
+        fields: any;
+        rowCount?: number;
+      };
+      this.trackQuery(
+        entity.name,
+        updateSql.text ?? String(updateSql),
+        Date.now() - queryStart,
+      );
+
+      let affected = 0;
+      if (this.isMySqlFamily()) {
+        affected = queryResult?.results?.affectedRows ?? 0;
+      } else {
+        affected = queryResult?.rowCount ?? 0;
+      }
+      return { affected };
+    });
+  }
+
+  /**
+   * Builds the ORDER BY fragment for an UPDATE statement.
+   * Direction is sanitized to ASC/DESC; column names go through the
+   * property→column map and the driver's identifier wrap.
+   */
+  private buildUpdateOrderBy(
+    orderBy: { [k: string]: "ASC" | "DESC" } | undefined,
+    propertyToColumn: Map<string, string>,
+  ): Sql | undefined {
+    if (!orderBy) return undefined;
+    const entries = Object.entries(orderBy);
+    if (entries.length === 0) return undefined;
+
+    const items: Sql[] = [];
+    for (const [prop, dir] of entries) {
+      const dbCol = propertyToColumn.get(prop) ?? prop;
+      const direction =
+        typeof dir === "string" && dir.toUpperCase() === "DESC"
+          ? "DESC"
+          : "ASC";
+      items.push(sql`${raw(this.wrap(dbCol))} ${raw(direction)}`);
+    }
+    return sql`ORDER BY ${join(items, ", ")}`;
+  }
+
+  /**
+   * Builds the final UPDATE SQL, dialect-aware:
+   *
+   * - MySQL/MariaDB: native `UPDATE … SET … WHERE … [ORDER BY …] [LIMIT n]`.
+   * - PostgreSQL / SQLite: when `orderBy` or `limit` is set, rewrites to
+   *   `UPDATE t SET … WHERE pk IN (SELECT pk FROM t WHERE … [ORDER BY …] [LIMIT n])`,
+   *   because those dialects don't accept ORDER BY / LIMIT directly on UPDATE.
+   *   Composite-PK entities can't take that path and throw an
+   *   `UNSUPPORTED_OPERATION` error; the caller can fall back to a custom
+   *   subquery via `createUpdateBuilder` (or stay on MySQL).
+   */
+  private buildUpdateSql(
+    metadata: any,
+    entityName: string,
+    setMap: Sql[],
+    whereMap: Sql[],
+    orderBySql: Sql | undefined,
+    limit: number | undefined,
+  ): Sql {
+    const tableSql = raw(this.wrapTable(metadata.name!));
+    const setSql = join(setMap, ", ");
+    const whereSql = join(whereMap, " AND ");
+    const limitSql =
+      limit !== undefined ? sql` LIMIT ${raw(String(limit))}` : sql``;
+    const orderPart = orderBySql ? sql` ${orderBySql}` : sql``;
+
+    if (this.isMySqlFamily()) {
+      return sql`UPDATE ${tableSql} SET ${setSql} WHERE ${whereSql}${orderPart}${limitSql}`;
+    }
+
+    if (orderBySql === undefined && limit === undefined) {
+      return sql`UPDATE ${tableSql} SET ${setSql} WHERE ${whereSql}`;
+    }
+
+    // PostgreSQL / SQLite — subquery rewrite via PK
+    const pkColumns = metadata.columns.filter(
+      (c: any) => c.options?.primary,
+    );
+    if (pkColumns.length === 0) {
+      throw new OrmError(
+        OrmErrorCode.PRIMARY_KEY_NOT_FOUND,
+        `updateMany() with orderBy/limit requires a primary key on "${entityName}" (this dialect needs a subquery rewrite).`,
+        `Add @PrimaryColumn / @PrimaryGeneratedColumn to "${entityName}" or run on MySQL/MariaDB.`,
+      );
+    }
+    if (pkColumns.length > 1) {
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        `updateMany() with orderBy/limit on composite-PK entity "${entityName}" is not supported on PostgreSQL/SQLite.`,
+        `Use createUpdateBuilder() with a manually scoped subquery, or run the update on MySQL/MariaDB which supports UPDATE … ORDER BY … LIMIT natively.`,
+      );
+    }
+    const pkWrapped = raw(this.wrap(pkColumns[0].name!));
+    const subquery = sql`SELECT ${pkWrapped} FROM ${tableSql} WHERE ${whereSql}${orderPart}${limitSql}`;
+    return sql`UPDATE ${tableSql} SET ${setSql} WHERE ${pkWrapped} IN (${subquery})`;
   }
 
   async softDelete<T>(

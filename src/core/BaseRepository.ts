@@ -1,10 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../utils";
-import { FindOption, UpdateData, WhereClause } from "../dialects/FindOption";
+import {
+  FindOption,
+  UpdateData,
+  UpdateManyOptions,
+  WhereClause,
+} from "../dialects/FindOption";
 import { EntityManager } from "./EntityManager";
 import { DeleteResult } from "../types/DeleteResult";
 import { SelectQueryBuilder, isEntityRef } from "./SelectQueryBuilder";
 import type { EntityRef } from "./SelectQueryBuilder";
+import { UpdateQueryBuilder } from "./UpdateQueryBuilder";
 import {
   CursorPaginationOption,
   CursorPaginationResult,
@@ -300,13 +306,16 @@ export class BaseRepository<T> {
   /**
    * Updates multiple entities matching the WHERE condition with the given data.
    *
+   * Supports `orderBy` + `limit` for capped, ordered updates. See
+   * `EntityManager.updateMany` for dialect-specific behavior.
+   *
    * @param data The partial data to set on matching rows.
-   * @param options Options with `where` clause to filter rows.
+   * @param options `where` (required) plus optional `orderBy` and `limit`.
    * @returns The number of affected rows.
    */
   async updateMany(
     data: UpdateData<T>,
-    options: { where: WhereClause<T> },
+    options: UpdateManyOptions<T>,
   ): Promise<{ affected: number }> {
     return await this.em.updateMany<T>(this.entity, data, options);
   }
@@ -374,5 +383,36 @@ export class BaseRepository<T> {
       return this.em.createQueryBuilder<T>(aliasOrRef);
     }
     return this.em.createQueryBuilder<T>(this.entity, aliasOrRef);
+  }
+
+  /**
+   * Creates a type-safe `UpdateQueryBuilder` for this entity. Mirrors the
+   * SELECT-side `createQueryBuilder` so a service that already has the
+   * repository injected does not need to also inject `EntityManager` to
+   * issue `UPDATE … ORDER BY … LIMIT n` queries.
+   *
+   * @param aliasOrRef Either a string alias (e.g. `"i"`) or a `qAlias()` ref.
+   * @returns A new `UpdateQueryBuilder<T>` bound to this repository's entity.
+   *
+   * @example
+   * ```ts
+   * const i = qAlias(Issue, "i");
+   * await issueRepo.createUpdateBuilder(i)
+   *   .set({ claimedBy: workerId })
+   *   .where(i.status.eq("TODO"))
+   *   .orderBy(i.priority.asc())
+   *   .limit(1)
+   *   .execute();
+   * ```
+   */
+  createUpdateBuilder(alias?: string): UpdateQueryBuilder<T>;
+  createUpdateBuilder(ref: EntityRef<T>): UpdateQueryBuilder<T>;
+  createUpdateBuilder(
+    aliasOrRef?: string | EntityRef<T>,
+  ): UpdateQueryBuilder<T> {
+    if (aliasOrRef !== undefined && isEntityRef(aliasOrRef)) {
+      return this.em.createUpdateBuilder<T>(aliasOrRef);
+    }
+    return this.em.createUpdateBuilder<T>(this.entity, aliasOrRef as string | undefined);
   }
 }

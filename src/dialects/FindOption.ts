@@ -166,6 +166,35 @@ export type UpdateData<T> = {
 };
 
 /**
+ * Options for `updateMany`.
+ *
+ * - `where`: required filter — empty WHERE is rejected to prevent table-wide updates.
+ * - `orderBy`: optional sort applied before `limit`. Required when `limit` is set.
+ * - `limit`: optional row cap. On MySQL/MariaDB it emits native
+ *   `UPDATE … ORDER BY … LIMIT n`; on PostgreSQL / SQLite it rewrites to
+ *   `UPDATE … WHERE pk IN (SELECT pk FROM … ORDER BY … LIMIT n)`. Composite-PK
+ *   entities are not supported by the rewrite path and throw a typed error.
+ *
+ * @example
+ * ```ts
+ * em.updateMany(
+ *   Issue,
+ *   { claimedBy: workerId, claimedAt: sql`NOW()` },
+ *   {
+ *     where: { projectId, status: { in: [BACKLOG, TODO] } },
+ *     orderBy: { priority: "ASC", number: "ASC" },
+ *     limit: 1,
+ *   },
+ * );
+ * ```
+ */
+export type UpdateManyOptions<T> = {
+  where: WhereClause<T>;
+  orderBy?: IOrderBy<Partial<T>>;
+  limit?: number;
+};
+
+/**
  * Represents the options that can be used to find entities in the ORM.
  *
  * @template T - The type of the entity.
