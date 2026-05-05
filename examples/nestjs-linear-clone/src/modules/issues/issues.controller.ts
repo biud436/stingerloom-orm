@@ -9,7 +9,10 @@ import {
   ParseIntPipe,
   Query,
   HttpCode,
+  Req,
+  BadRequestException,
 } from "@nestjs/common";
+import { Request } from "express";
 import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { IssuesService } from "./issues.service";
 import {
@@ -20,6 +23,7 @@ import {
 } from "./dto/issue.dto";
 import { CurrentUserId } from "../../common/auth/current-user.decorator";
 import { WorkspaceScoped } from "../../common/auth/workspace.decorators";
+import { assertIfMatch } from "../../common/concurrency/etag.interceptor";
 
 @ApiTags("Issues")
 @ApiBearerAuth()
@@ -64,13 +68,33 @@ export class IssuesController {
   @Patch(":id")
   @WorkspaceScoped({ from: "issue" })
   @ApiOperation({
-    summary: "Update issue with optimistic locking; returns 409 on stale version",
+    summary:
+      "Update issue with optimistic locking. Anchor the expected version via " +
+      "either body.expectedVersion or `If-Match: W/\"<n>\"` header. " +
+      "Stale → 412 (If-Match path) or 409 (body path); current ETag is on " +
+      "the GET response.",
   })
-  update(
+  async update(
     @Param("id", ParseIntPipe) id: number,
     @Body() dto: UpdateIssueDto,
     @CurrentUserId() userId: number,
+    @Req() req: Request,
   ) {
+    // If the caller supplied If-Match, fetch the current row, validate the
+    // header against its version (raises 412 on stale), and use the parsed
+    // version as the lock anchor. Body-supplied expectedVersion remains the
+    // fallback so REST and the legacy body-driven path coexist.
+    const ifMatchHeader = req.header("if-match");
+    if (ifMatchHeader) {
+      const current = await this.service.findOne(id);
+      const v = assertIfMatch(req, current.version);
+      // assertIfMatch returned non-null because the header was present.
+      dto.expectedVersion = v ?? current.version;
+    } else if (dto.expectedVersion === undefined) {
+      throw new BadRequestException(
+        "expectedVersion is required when no If-Match header is supplied",
+      );
+    }
     return this.service.update(id, dto, userId);
   }
 

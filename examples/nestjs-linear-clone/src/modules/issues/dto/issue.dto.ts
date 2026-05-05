@@ -78,9 +78,21 @@ export class CreateIssueDto {
 }
 
 export class UpdateIssueDto {
-  @ApiProperty({ description: "Current version (optimistic lock)", example: 3 })
+  /**
+   * Optimistic-lock anchor. Either pass it here or send an
+   * `If-Match: W/"<version>"` request header — the header wins when both
+   * are present so REST-native concurrency works without changing the
+   * body shape.
+   */
+  @ApiProperty({
+    description:
+      "Current version (optimistic lock). Optional when the request carries an If-Match header.",
+    example: 3,
+    required: false,
+  })
+  @IsOptional()
   @IsInt()
-  expectedVersion!: number;
+  expectedVersion?: number;
 
   @ApiProperty({ required: false })
   @IsOptional()

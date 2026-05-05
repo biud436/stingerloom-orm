@@ -11,6 +11,7 @@ import { EntityManager } from "@stingerloom/orm";
 import { AppModule } from "./app.module";
 import { JwtAuthGuard } from "./common/auth/jwt-auth.guard";
 import { AllExceptionsFilter } from "./common/exceptions/all-exceptions.filter";
+import { EtagInterceptor } from "./common/concurrency/etag.interceptor";
 
 async function bootstrap() {
   // bufferLogs: true queues early Nest bootstrap logs until pino is wired
@@ -41,9 +42,15 @@ async function bootstrap() {
   );
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // Strips `@Exclude()` properties (e.g. `User.passwordHash`) from responses.
+  // Order matters: ClassSerializerInterceptor runs first to strip `@Exclude`
+  // fields (e.g. User.passwordHash); EtagInterceptor then sees the final
+  // response shape, picks `version` for the ETag, and may short-circuit GET
+  // to 304 on If-None-Match.
   const reflector = app.get(Reflector);
-  app.useGlobalInterceptors(new ClassSerializerInterceptor(reflector));
+  app.useGlobalInterceptors(
+    new ClassSerializerInterceptor(reflector),
+    new EtagInterceptor(),
+  );
 
   // Global JWT guard — every endpoint is protected unless decorated `@Public()`.
   app.useGlobalGuards(new JwtAuthGuard(app.get(JwtService), reflector));

@@ -167,7 +167,10 @@ export class IssuesService {
 
     // Drive `@Version` from the caller's expected version. If a concurrent
     // writer has bumped the row, repo.save() will throw OptimisticLockError.
-    before.version = dto.expectedVersion;
+    // The controller guarantees expectedVersion is set (from body or
+    // If-Match), so the `?? before.version` fallback only runs in legacy
+    // direct-service callers.
+    before.version = dto.expectedVersion ?? before.version;
 
     const previousStatus = before.status as IssueStatus;
     applyPatch(before, pickDefined(dto, PATCHABLE_KEYS) as Partial<Issue>);

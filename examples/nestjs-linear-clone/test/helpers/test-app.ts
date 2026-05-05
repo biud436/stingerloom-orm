@@ -11,6 +11,7 @@ import { EntityManager, sql } from "@stingerloom/orm";
 import { AppModule } from "../../src/app.module";
 import { JwtAuthGuard } from "../../src/common/auth/jwt-auth.guard";
 import { AllExceptionsFilter } from "../../src/common/exceptions/all-exceptions.filter";
+import { EtagInterceptor } from "../../src/common/concurrency/etag.interceptor";
 
 export const integrationDescribe = process.env.INTEGRATION_TEST
   ? describe
@@ -55,7 +56,10 @@ export async function bootApp(): Promise<BootedApp> {
   );
   app.useGlobalFilters(new AllExceptionsFilter());
   const reflector = app.get(Reflector);
-  app.useGlobalInterceptors(new ClassSerializerInterceptor(reflector));
+  app.useGlobalInterceptors(
+    new ClassSerializerInterceptor(reflector),
+    new EtagInterceptor(),
+  );
   app.useGlobalGuards(new JwtAuthGuard(app.get(JwtService), reflector));
 
   await app.init();
