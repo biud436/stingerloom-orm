@@ -18,6 +18,10 @@ import {
   UniqueIndexMetadata,
 } from "../decorators/UniqueIndex";
 import {
+  FULLTEXT_INDEX_TOKEN,
+  FullTextIndexMetadata,
+} from "../decorators/FullTextIndex";
+import {
   ENTITY_TOKEN,
   MANY_TO_MANY_TOKEN,
   ManyToManyMetadata,
@@ -357,6 +361,9 @@ export class SchemaRegistrar {
 
         // Create composite unique indexes.
         await this.registerUniqueIndexes(TargetEntity, tableName);
+
+        // Create FULLTEXT (MySQL) / GIN+to_tsvector (PostgreSQL) indexes.
+        await this.registerFullTextIndexes(TargetEntity, tableName);
       }
 
       // Pass 3: create ManyToMany join tables and their FKs.
@@ -978,6 +985,63 @@ export class SchemaRegistrar {
         if (!isExist) {
           await driver?.addIndex(tableName, columnName, indexName);
         }
+      }
+    }
+  }
+
+  /**
+   * Creates FULLTEXT (MySQL) / GIN + to_tsvector (PostgreSQL) indexes
+   * declared via the class-level @FullTextIndex decorator. SQLite is
+   * skipped because the dialect has no equivalent index family.
+   *
+   * Idempotent: existing indexes (matched by name) are left alone, so
+   * the pass is safe to re-run on every startup. The DDL itself is
+   * produced by SchemaGenerator so the synchronize and migration
+   * code paths stay in lockstep.
+   */
+  async registerFullTextIndexes(
+    TargetEntity: ClazzType<any>,
+    tableName: string,
+  ) {
+    if (this.ctx.getDialect() === "sqlite") return;
+
+    const ftIndexes = Reflect.getMetadata(
+      FULLTEXT_INDEX_TOKEN,
+      TargetEntity,
+    ) as FullTextIndexMetadata[] | undefined;
+    if (!ftIndexes || ftIndexes.length === 0) return;
+
+    const driver = this.ctx.getDriver();
+    if (!driver) return;
+
+    const generator = new SchemaGenerator({
+      dialect: this.ctx.getDialect(),
+      schema: this.ctx.getSchema(),
+      namingStrategy: this.namingStrategy,
+    });
+    const ddls = generator.generateFullTextIndexDDL(TargetEntity);
+
+    // Names parallel to ddls (same iteration order as the metadata array).
+    const indexNames = ftIndexes.map(
+      (ft) => ft.name ?? `fts_${tableName}_${ft.columns.join("_")}`,
+    );
+
+    const existingIndexes = (await driver.getIndexes(tableName)) as any[];
+    const existingNames = new Set<string>();
+    for (const idx of existingIndexes ?? []) {
+      const n = idx["Key_name"] ?? idx["Field"] ?? idx["name"];
+      if (typeof n === "string") existingNames.add(n);
+    }
+
+    for (let i = 0; i < ddls.length; i++) {
+      const indexName = indexNames[i];
+      if (existingNames.has(indexName)) continue;
+      try {
+        await driver.executeRaw(ddls[i]);
+      } catch (err) {
+        this.logger.warn(
+          `Could not create full-text index ${indexName} on ${tableName}: ${err}`,
+        );
       }
     }
   }
