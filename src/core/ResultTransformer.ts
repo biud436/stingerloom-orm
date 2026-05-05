@@ -373,12 +373,22 @@ export class ResultTransformer implements BaseResultTransformer {
 
   /**
    * Populates a foreign-key object with its contents.
+   *
+   * `visited` tracks entity classes already in the current recursion chain
+   * so self-referencing relations (e.g. `Issue.parent → Issue`) and cycles
+   * (`A → B → A`) terminate. The relation is still attached, but its nested
+   * ManyToOne/OneToOne fan-out stops at the cycle boundary — the SELECT
+   * only joins one level deep anyway, so deeper expansion would yield empty
+   * objects regardless.
    */
   private fillPropertiesToForeignObject<T>(
     entityClass: MyClassConstructor<T>,
     baseEntity: ForeignObject<any>,
     resultSet: any,
+    visited: Set<Function> = new Set(),
   ) {
+    visited.add(entityClass as unknown as Function);
+
     // Fetch the foreign-key metadata.
     const manyToOneMappingMetadata = Reflect.getMetadata(
       MANY_TO_ONE_TOKEN,
@@ -418,11 +428,15 @@ export class ResultTransformer implements BaseResultTransformer {
           ForeignClass,
         ) as ManyToOneMetadata<any>[];
 
-        if (relatedManyToOneMappings) {
+        if (
+          relatedManyToOneMappings &&
+          !visited.has(ForeignClass as unknown as Function)
+        ) {
           this.fillPropertiesToForeignObject(
             ForeignClass,
             foreignObject,
             resultSet,
+            visited,
           );
         }
 
@@ -464,11 +478,15 @@ export class ResultTransformer implements BaseResultTransformer {
           RelatedClass,
         ) as ManyToOneMetadata<any>[];
 
-        if (relatedManyToOneMappings) {
+        if (
+          relatedManyToOneMappings &&
+          !visited.has(RelatedClass as unknown as Function)
+        ) {
           this.fillPropertiesToForeignObject(
             RelatedClass,
             foreignObject,
             foreignObject,
+            visited,
           );
         }
 
