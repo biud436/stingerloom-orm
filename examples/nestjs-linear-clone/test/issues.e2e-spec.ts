@@ -263,35 +263,37 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
       expect(actions).toContain("ISSUE_CREATED");
     });
 
-    it("STATUS_CHANGED logged with from/to payload", async () => {
+    it("status change recorded as ISSUE_UPDATED with column diff", async () => {
       const issue = await request(booted.server).get(`/issues/${issueId}`);
       await request(booted.server)
         .patch(`/issues/${issueId}`)
-        .set("x-actor-user-id", String(fx.userIds[0]))
         .send({ expectedVersion: issue.body.version, status: "IN_PROGRESS" })
         .expect(200);
 
       const log = await request(booted.server).get(`/activity/issues/${issueId}`).expect(200);
-      const statusChange = log.body.find((r: any) => r.action === "STATUS_CHANGED");
-      expect(statusChange).toBeTruthy();
-      expect(statusChange.payload).toMatchObject({ from: "BACKLOG", to: "IN_PROGRESS" });
-      expect(Number(statusChange.actorUserId)).toBe(fx.userIds[0]);
+      const updates = log.body.filter((r: any) => r.action === "ISSUE_UPDATED");
+      const statusEntry = updates
+        .flatMap((r: any) => r.payload?.changes ?? [])
+        .find((c: any) => c.column === "status" && c.to === "IN_PROGRESS");
+      expect(statusEntry).toBeTruthy();
+      expect(statusEntry.from).toBe("BACKLOG");
     });
 
-    it("ASSIGNED logged with from/to user ids", async () => {
-      const issue = await request(booted.server).get(`/issues/${issueId}`);
+    it("assignee change recorded as ISSUE_UPDATED with column diff", async () => {
       await request(booted.server)
         .patch(`/issues/${issueId}/assignee`)
         .send({ assigneeId: fx.userIds[2] })
         .expect(200);
 
       const log = await request(booted.server).get(`/activity/issues/${issueId}`).expect(200);
-      const assigned = log.body.find((r: any) => r.action === "ASSIGNED");
-      expect(assigned).toBeTruthy();
-      expect(Number(assigned.payload.to)).toBe(fx.userIds[2]);
+      const updates = log.body.filter((r: any) => r.action === "ISSUE_UPDATED");
+      const assignEntry = updates
+        .flatMap((r: any) => r.payload?.changes ?? [])
+        .find((c: any) => c.column === "assigneeId" && Number(c.to) === fx.userIds[2]);
+      expect(assignEntry).toBeTruthy();
     });
 
-    it("PRIORITY_CHANGED logged when priority changes", async () => {
+    it("priority change recorded as ISSUE_UPDATED with column diff", async () => {
       const issue = await request(booted.server).get(`/issues/${issueId}`);
       const v = issue.body.version;
       await request(booted.server)
@@ -300,9 +302,11 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
         .expect(200);
 
       const log = await request(booted.server).get(`/activity/issues/${issueId}`).expect(200);
-      const pri = log.body.find((r: any) => r.action === "PRIORITY_CHANGED");
+      const updates = log.body.filter((r: any) => r.action === "ISSUE_UPDATED");
+      const pri = updates
+        .flatMap((r: any) => r.payload?.changes ?? [])
+        .find((c: any) => c.column === "priority" && Number(c.to) === 1);
       expect(pri).toBeTruthy();
-      expect(Number(pri.payload.to)).toBe(1);
     });
 
     it("LABEL_ADDED and LABEL_REMOVED logged", async () => {

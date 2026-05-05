@@ -262,17 +262,32 @@ export class AnalyticsService {
   /**
    * Reconstruct one row per status transition for an issue, with the
    * duration the issue spent in each status before the next transition.
-   * The query reads the JSON `payload` column to extract the entered
-   * status using dialect-specific JSON path operators.
+   *
+   * Reads the diff-shaped audit rows produced by `IssueAuditSubscriber`:
+   * `payload = { changes: [{ column, from, to }, …] }`. Postgres uses the
+   * `jsonb_path_query_first` operator over the changes array; MySQL uses
+   * `JSON_UNQUOTE(JSON_SEARCH(...))` against the column entries. Rows whose
+   * payload doesn't contain a status change are filtered out by the WHERE
+   * clause's NOT NULL test.
    */
   async timeInStatus(issueId: number): Promise<TimeInStatusRow[]> {
     const D = dsl(detectDialect(this.em));
     const { Q } = D;
 
+    // Extract the `to` value of the change record where column='status'.
     const enteredStatus =
       D.dialect === "postgres"
-        ? sql`${Q("payload")}->>'to'`
-        : sql`JSON_UNQUOTE(JSON_EXTRACT(${Q("payload")}, '$.to'))`;
+        ? sql`(jsonb_path_query_first(${Q("payload")}::jsonb, '$.changes[*] ? (@.column == "status").to'))::text`
+        : sql`JSON_UNQUOTE(
+            JSON_EXTRACT(
+              ${Q("payload")},
+              REPLACE(
+                JSON_UNQUOTE(JSON_SEARCH(${Q("payload")}, 'one', 'status', NULL, '$.changes[*].column')),
+                '.column',
+                '.to'
+              )
+            )
+          )`;
 
     const hoursDiff =
       D.dialect === "postgres"
@@ -280,23 +295,28 @@ export class AnalyticsService {
         : sql`TIMESTAMPDIFF(SECOND, ${Q("createdAt")}, LEAD(${Q("createdAt")}) OVER w) / 3600.0`;
 
     const final = sql`
-      SELECT
-        ${Q("issueId")}                               AS ${Q("issueId")},
-        ${enteredStatus}                              AS ${Q("status")},
-        ${Q("createdAt")}                             AS ${Q("enteredAt")},
-        LEAD(${Q("createdAt")}) OVER w                AS ${Q("leftAt")},
-        ${hoursDiff}                                  AS ${Q("hoursInStatus")}
-      FROM ${Q("activity_log")}
-      WHERE ${Q("issueId")} = ${issueId}
-        AND ${Q("action")} = ${"STATUS_CHANGED"}
-      WINDOW w AS (PARTITION BY ${Q("issueId")} ORDER BY ${Q("createdAt")})
-      ORDER BY ${Q("createdAt")}
+      SELECT * FROM (
+        SELECT
+          ${Q("issueId")}                               AS ${Q("issueId")},
+          ${enteredStatus}                              AS ${Q("status")},
+          ${Q("createdAt")}                             AS ${Q("enteredAt")},
+          LEAD(${Q("createdAt")}) OVER w                AS ${Q("leftAt")},
+          ${hoursDiff}                                  AS ${Q("hoursInStatus")}
+        FROM ${Q("activity_log")}
+        WHERE ${Q("issueId")} = ${issueId}
+          AND ${Q("action")} = ${"ISSUE_UPDATED"}
+        WINDOW w AS (PARTITION BY ${Q("issueId")} ORDER BY ${Q("createdAt")})
+      ) t
+      WHERE ${Q("status")} IS NOT NULL
+      ORDER BY ${Q("enteredAt")}
     `;
 
     const rows = await this.em.query<Record<string, unknown>>(final);
     return rows.map((row) => ({
       issueId: Number(row.issueId),
-      status: String(row.status),
+      // Postgres `jsonb_path_query_first` returns the JSON-quoted form
+      // ("DONE"); strip the surrounding quotes if present.
+      status: this.unquoteStatus(row.status),
       enteredAt:
         row.enteredAt instanceof Date
           ? row.enteredAt.toISOString()
@@ -312,6 +332,15 @@ export class AnalyticsService {
           ? null
           : Number(Number(row.hoursInStatus).toFixed(2)),
     }));
+  }
+
+  private unquoteStatus(raw: unknown): string {
+    if (raw === null || raw === undefined) return "";
+    const s = String(raw);
+    if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+      return s.slice(1, -1);
+    }
+    return s;
   }
 
   // ── Group-by + window: weekly lead time ─────────────────

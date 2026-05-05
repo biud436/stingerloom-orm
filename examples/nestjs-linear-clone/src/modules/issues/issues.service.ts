@@ -148,10 +148,10 @@ export class IssuesService {
    * detection (`UPDATE … WHERE version = ?`). A stale expected version
    * surfaces as `OptimisticLockError`, mapped to 409 by the global filter.
    *
-   * The previous version did a manual `before.version !== dto.expectedVersion`
-   * pre-check; that opened a TOCTOU window between the read and the write
-   * (two concurrent writers could both pass the check) so the manual guard
-   * was redundant *and* less correct than the ORM's clause.
+   * Column-level transition logging is no longer hand-rolled here: the
+   * `IssueAuditSubscriber` reads `event.databaseEntity` inside `beforeUpdate`
+   * and writes a single `ISSUE_UPDATED` ActivityLog row whose payload is the
+   * full diff. This service is left with one job: apply the patch.
    */
   @Transactional()
   async update(
@@ -159,80 +159,26 @@ export class IssuesService {
     dto: UpdateIssueDto,
     actorUserId: number,
   ): Promise<Issue> {
-    const before = await this.findOne(id);
+    void actorUserId; // actor is read by IssueAuditSubscriber from RequestContext
 
-    const beforeSnap = {
-      status: before.status,
-      priority: before.priority,
-      assigneeId: before.assigneeId ?? null,
-    };
+    const before = await this.findOne(id);
 
     // Drive `@Version` from the caller's expected version. If a concurrent
     // writer has bumped the row, repo.save() will throw OptimisticLockError.
     before.version = dto.expectedVersion;
 
+    const previousStatus = before.status as IssueStatus;
     applyPatch(before, pickDefined(dto, PATCHABLE_KEYS) as Partial<Issue>);
 
     if (
       dto.status &&
       TERMINAL_STATUSES.includes(dto.status) &&
-      !TERMINAL_STATUSES.includes(beforeSnap.status as IssueStatus)
+      !TERMINAL_STATUSES.includes(previousStatus)
     ) {
       before.completedAt = new Date();
     }
 
-    const saved = await this.repo.save(before);
-
-    await this.logTransitions(id, beforeSnap, dto, actorUserId);
-    return saved;
-  }
-
-  private async logTransitions(
-    issueId: number,
-    before: { status: string; priority: number; assigneeId: number | null },
-    dto: UpdateIssueDto,
-    actorUserId: number,
-  ): Promise<void> {
-    const transitions: Array<Promise<unknown>> = [];
-
-    if (dto.status && dto.status !== before.status) {
-      transitions.push(
-        this.activity.log({
-          issueId,
-          actorUserId,
-          action: ACTIVITY_ACTION.STATUS_CHANGED,
-          payload: { from: before.status, to: dto.status },
-        }),
-      );
-    }
-    if (dto.priority !== undefined && dto.priority !== before.priority) {
-      transitions.push(
-        this.activity.log({
-          issueId,
-          actorUserId,
-          action: ACTIVITY_ACTION.PRIORITY_CHANGED,
-          payload: { from: before.priority, to: dto.priority },
-        }),
-      );
-    }
-    if (
-      dto.assigneeId !== undefined &&
-      dto.assigneeId !== before.assigneeId
-    ) {
-      transitions.push(
-        this.activity.log({
-          issueId,
-          actorUserId,
-          action:
-            dto.assigneeId === null
-              ? ACTIVITY_ACTION.UNASSIGNED
-              : ACTIVITY_ACTION.ASSIGNED,
-          payload: { from: before.assigneeId, to: dto.assigneeId },
-        }),
-      );
-    }
-
-    await Promise.all(transitions);
+    return this.repo.save(before);
   }
 
   /** Set or clear the assignee — convenience wrapper that bumps version. */

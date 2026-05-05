@@ -47,18 +47,18 @@ export type SprintStatus = (typeof SPRINT_STATUS)[keyof typeof SPRINT_STATUS];
 
 export const ACTIVITY_ACTION = {
   ISSUE_CREATED: "ISSUE_CREATED",
+  /**
+   * Single envelope for all column-level Issue updates. Payload shape:
+   * `{ changes: [{ column, from, to }, …], requestId }`.
+   * Emitted by IssueAuditSubscriber.beforeUpdate via the ORM's
+   * `event.databaseEntity` snapshot.
+   */
   ISSUE_UPDATED: "ISSUE_UPDATED",
-  STATUS_CHANGED: "STATUS_CHANGED",
-  ASSIGNED: "ASSIGNED",
-  UNASSIGNED: "UNASSIGNED",
-  PRIORITY_CHANGED: "PRIORITY_CHANGED",
   COMMENTED: "COMMENTED",
   LABEL_ADDED: "LABEL_ADDED",
   LABEL_REMOVED: "LABEL_REMOVED",
   CLAIMED: "CLAIMED",
   RELEASED: "RELEASED",
-  CLOSED: "CLOSED",
-  REOPENED: "REOPENED",
 } as const;
 
 export type ActivityAction =
