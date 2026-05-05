@@ -27,6 +27,7 @@ combining conditions. Each deeper topic has its own page:
 | `GROUP BY`, `HAVING`, subqueries, `DISTINCT`, CTE | [Aggregations & Subqueries](./query-builder-aggregations.md) |
 | Pagination, locking, index hints, `validate()`, execution tiers, `prepare()` | [Execution & Results](./query-builder-execution.md) |
 | `when()`, `pipe()`, `whereHas()`, `withCount()`, scopes | [Patterns & Productivity](./query-builder-patterns.md) |
+| `UPDATE … ORDER BY … LIMIT` via `createUpdateBuilder` | [UpdateQueryBuilder](#updatequerybuilder--type-safe-update--order-by--limit) |
 | UNION, recursive CTE, window functions — `RawQueryBuilder` | [Raw SQL & CTE](./raw-sql.md) |
 
 ---
@@ -214,6 +215,164 @@ the JOINs page.
   `pipe()`, `whereHas()`, `withCount()`, scopes
 - **[Raw SQL & CTE](./raw-sql.md)** — the `RawQueryBuilder` for UNION,
   recursive CTE, window functions, DISTINCT ON
+
+---
+
+## UpdateQueryBuilder — Type-Safe `UPDATE … ORDER BY … LIMIT`
+
+`em.updateMany()` covers the everyday case: "update every row that matches
+this WHERE." But some patterns need more — capping the number of rows
+touched, ordering them deterministically before the cap kicks in, or
+expressing predicates with the same `qAlias()` DSL you use for SELECT.
+That is what `createUpdateBuilder()` is for.
+
+The motivating example is a worker-claim queue: many workers race to
+grab the next pending job, and you need an atomic "update at most one
+row, ordered by priority." On MySQL/MariaDB this is one statement
+(`UPDATE … ORDER BY … LIMIT 1`). Without a builder, you would drop to
+`em.query(sql\`UPDATE …\`)` and lose entity awareness.
+
+### Creating the Builder
+
+Two equivalent forms — both return an `UpdateQueryBuilder<T>`:
+
+```typescript
+import { qAlias } from "@stingerloom/orm";
+import sql from "sql-template-tag";
+
+// Form 1 — entity class + optional alias
+const builder = em.createUpdateBuilder(Issue, "i");
+
+// Form 2 — qAlias() ref (lets you reuse the same `i` in WHERE/ORDER BY)
+const i = qAlias(Issue, "i");
+const builder2 = em.createUpdateBuilder(i);
+```
+
+A repository-bound shorthand is also available — same shape, no need
+to also inject `EntityManager` if you already hold the repository:
+
+```typescript
+await issueRepo
+  .createUpdateBuilder(i)
+  .set({ claimedBy: workerId })
+  .where(i.status.eq("TODO"))
+  .orderBy(i.priority.asc())
+  .limit(1)
+  .execute();
+```
+
+### A Worker-Claim Example
+
+```typescript
+const i = qAlias(Issue, "i");
+
+const { affected } = await em
+  .createUpdateBuilder(i)
+  .set({ claimedBy: workerId })
+  .setRaw("claimedAt", sql`NOW()`)
+  .where(i.projectId.eq(projectId))
+  .andWhere(i.status.in(["BACKLOG", "TODO"]))
+  .andWhere(i.assigneeId.isNull())
+  .orderBy(i.priority.asc())
+  .addOrderBy(i.number.asc())
+  .limit(1)
+  .execute();
+// affected = 0 or 1 — atomic on InnoDB
+```
+
+`set()` accepts a typed object (`UpdateData<T>`) where each value is
+either a literal column value or a `Sql` expression. Multiple `.set()`
+calls accumulate; later writes win per column. `setRaw()` is the escape
+hatch for a single column whose right-hand side must be raw SQL —
+useful for `NOW()`, `view_count + 1`, and similar.
+
+WHERE accepts everything the SELECT side accepts: `qAlias()`
+expressions (`i.status.eq(...)`, `i.priority.lt(...)`), composable
+helpers (`exp.or(...)`, `exp.and(...)`), and raw `sql\`...\`` templates.
+`where()` resets, `andWhere()` / `orWhere()` chain. `orderBy()` /
+`addOrderBy()` accept either a `qAlias()` order expression
+(`i.priority.asc()`) or a `(propertyKey, "ASC" | "DESC")` pair.
+
+### Dialect Behavior
+
+`UPDATE … ORDER BY … LIMIT` is not portable SQL. The builder hides the
+difference, but it helps to know what runs:
+
+| Dialect | What gets emitted |
+|---------|-------------------|
+| **MySQL / MariaDB** | Native `UPDATE t SET … WHERE … ORDER BY … LIMIT n` |
+| **PostgreSQL / SQLite** | Rewritten to `UPDATE t SET … WHERE pk IN (SELECT pk FROM t WHERE … ORDER BY … LIMIT n)` |
+
+The PostgreSQL/SQLite rewrite is automatic when `orderBy()` or
+`limit()` is used. It requires a single-column primary key —
+composite-PK entities throw an `UNSUPPORTED_OPERATION` error on this
+path. If you must order-and-limit on a composite-PK entity outside
+MySQL, write the subquery manually with `RawQueryBuilder` (or stay on
+MySQL/MariaDB, which supports the native syntax).
+
+When neither `orderBy()` nor `limit()` is set, all dialects emit the
+plain `UPDATE t SET … WHERE …` and the builder is a typed alternative
+to `em.updateMany()`.
+
+### Behavior Shared with `updateMany`
+
+`execute()` runs inside the EntityManager transaction wrapper, so:
+
+- **Tenant scoping** is intersected with your WHERE — an
+  `UpdateQueryBuilder` cannot leak across tenants.
+- **`@UpdateTimestamp`** is auto-injected if you didn't set it
+  explicitly.
+- **`@Version` / optimistic locking** is *not* applied here. This is
+  bulk DML, not a single-entity save — like `em.updateMany()`,
+  version-stamped writes belong on `em.save(entity)`.
+
+### `build()` and `toSql()` — Inspect Without Executing
+
+Both return the parameterized SQL — useful for tests, logging, or
+debugging. Tenant scoping is *not* applied here (it's added at execute
+time), so the text won't include the tenant predicate.
+
+```typescript
+const { text, values } = em
+  .createUpdateBuilder(i)
+  .set({ claimedBy: "w" })
+  .where(i.projectId.eq(42))
+  .orderBy(i.priority.desc())
+  .limit(5)
+  .toSql();
+// text:  "UPDATE `issue` SET `claimedBy` = ? WHERE … ORDER BY `priority` DESC LIMIT 5"
+// values: ["w", 42]
+```
+
+### WriteBuffer (Unit-of-Work) Interaction
+
+`UpdateQueryBuilder.execute()` is bulk DML — it runs *immediately* and
+bypasses the buffer's Identity Map and dirty-tracking, exactly like
+`em.updateMany()`, `em.delete()`, and `em.softDelete()` already do.
+This is by design: the buffer doesn't intercept direct EM calls.
+
+Two practical consequences when you mix the two:
+
+- **If you've tracked an entity that the builder updates,** the
+  buffer's snapshot is now stale. Call `buf.refresh(instance)` to
+  reload from the database, or flush before the bulk update so your
+  changes aren't overwritten.
+- **For buffered bulk updates,** use `buf.updateMany()` — it queues
+  the UPDATE for flush time and syncs every tracked instance that
+  matches the WHERE clause. Note that `buf.updateMany()` is the
+  simple `WHERE col = val` form; `ORDER BY` / `LIMIT` are not
+  supported through the buffer, so worker-claim patterns still go
+  through `em.createUpdateBuilder()` directly.
+
+### Errors You Can Hit
+
+- `INVALID_QUERY` — `execute()` called without any `.set()`, or
+  `.limit(n)` called with a non-integer / negative `n`.
+- `DELETE_WITHOUT_CONDITIONS` (reused for UPDATE) — `execute()` called
+  with no WHERE conditions. Updating every row in a table is a
+  footgun; if you really want it, add a tautological WHERE.
+- `UNSUPPORTED_OPERATION` — composite-PK entity used with
+  `orderBy()` / `limit()` on PostgreSQL or SQLite.
 
 ---
 
