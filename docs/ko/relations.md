@@ -257,6 +257,33 @@ authorId!: number;          // 직접 FK 접근: post.authorId = 5
 author!: User;
 ```
 
+### 커스텀 FK 프로퍼티 이름 (fkProperty)
+
+Stingerloom의 `qAlias()`를 비롯한 프로퍼티→컬럼 리졸버는 관계 `workspace`의 형제 FK 프로퍼티가 `workspaceId`라는 컨벤션을 따라요. 다른 ORM에서 포팅하는 등 커스텀 FK 프로퍼티 이름이 필요하면 관계 데코레이터에 `fkProperty`를 전달해서 조인 컬럼에 매핑하세요.
+
+```typescript
+@Entity()
+export class Member {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  // 커스텀 FK 프로퍼티 이름 — {relProp}Id 컨벤션을 따르지 않음
+  @ManyToOne(() => Workspace, (w) => w.members, { fkProperty: "wsId" })
+  @RelationColumn({ name: "workspace_id" })
+  workspace!: Workspace;
+
+  wsId?: number; // 베어 백킹 프로퍼티 — @Column 불필요
+}
+
+// qAlias(Member).wsId.eq(...)가 이제 "workspace_id"로 해석돼요
+const m = qAlias(Member, "m");
+qb.where(m.wsId.eq(42));
+```
+
+`fkProperty`가 없으면 `qAlias(Member).wsId.eq(42)`는 SQL에서 `m.wsId`로 렌더링되어 DB가 알 수 없는 컬럼이라며 거부해요. 컨벤션 경로(`workspaceId`)는 영향을 받지 않고 명시적 오버라이드와 함께 동작해요.
+
+`fkProperty`는 `@OneToOne`에서도 사용할 수 있어요. 컨벤션 이름(`{relProp}Id`)과 명시적 `fkProperty`가 함께 있으면 둘 다 같은 조인 컬럼으로 매핑돼요.
+
 ### PK가 아닌 컬럼 참조 (references)
 
 기본적으로 FK는 대상 엔티티의 PK를 참조해요. PK가 아닌 컬럼을 참조하려면 `references` 옵션을 사용하면 돼요.

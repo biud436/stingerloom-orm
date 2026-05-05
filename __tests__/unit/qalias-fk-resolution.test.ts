@@ -132,3 +132,80 @@ describe("qAlias FK property resolution", () => {
     expect(map.get("profileId")).toBe("profile_id");
   });
 });
+
+describe("qAlias FK property resolution — explicit fkProperty (#301)", () => {
+  @Entity()
+  class Tenant {
+    @PrimaryGeneratedColumn()
+    id!: number;
+  }
+
+  @Entity()
+  class CustomFkOwner {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    // Custom FK property name — does NOT follow the {relProp}Id convention.
+    // Without `fkProperty`, qAlias(...).wsId would render the camelCase prop
+    // verbatim and the database would reject it. With it, the resolver folds
+    // wsId → workspace_id into the property map.
+    @ManyToOne(() => Tenant, (t: Tenant) => t.id, { fkProperty: "wsId" })
+    @RelationColumn({ name: "workspace_id" })
+    workspace!: Tenant;
+
+    wsId?: number;
+  }
+
+  function createQb(): SelectQueryBuilder<CustomFkOwner> {
+    const resolver = new RelationMetadataResolver();
+    function wrap(col: string) {
+      return `"${col.replace(/"/g, '""')}"`;
+    }
+    const em = {
+      wrap,
+      wrapTable: (t: string) => wrap(t),
+      resolver,
+      _ctx: {
+        isMySqlFamily: () => false,
+        isPostgres: () => true,
+        isSqlite: () => false,
+        getDialect: () => "postgresql",
+      },
+    } as unknown as EntityManager;
+
+    const qb = new SelectQueryBuilder<CustomFkOwner>(CustomFkOwner, "o", em);
+    const meta = resolver.resolveEntityMetadata(CustomFkOwner);
+    const map = new Map<string, string>();
+    if (meta) {
+      for (const c of meta.columns) {
+        map.set((c as any).propertyKey ?? c.name!, c.name!);
+      }
+    }
+    const fk = resolver.collectFkPropertyMappings(CustomFkOwner);
+    for (const [prop, col] of fk) {
+      if (!map.has(prop)) map.set(prop, col);
+    }
+    qb.setPropertyToColumnMap(map);
+    qb.setDialectExpression(createDialectExpression("postgres"));
+    return qb;
+  }
+
+  it("resolves an explicit fkProperty to the join column", () => {
+    const o = qAlias(CustomFkOwner, "o");
+    const qb = createQb();
+
+    const built = qb.where(o.wsId.eq(99)).toSql();
+    expect(built.text).toMatch(/"o"\."workspace_id" = \$\d+/);
+    expect(built.values).toContain(99);
+  });
+
+  it("collectFkPropertyMappings exposes both the convention and explicit fkProperty", () => {
+    const resolver = new RelationMetadataResolver();
+    const map = resolver.collectFkPropertyMappings(CustomFkOwner);
+
+    // Convention: workspaceId → workspace_id (always present)
+    expect(map.get("workspaceId")).toBe("workspace_id");
+    // Explicit override: wsId → workspace_id
+    expect(map.get("wsId")).toBe("workspace_id");
+  });
+});

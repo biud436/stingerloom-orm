@@ -412,22 +412,28 @@ export class RelationMetadataResolver {
    * `qAlias(Entity).workspaceId.eq(...)` rendered as `entity.workspaceId`
    * (camelCase) and the database rejected the unknown column.
    *
-   * This helper closes the gap by listing every `{relationProp}Id` →
-   * `joinColumn` pair derived from M2O / O2O relations.
+   * This helper closes the gap by listing FK property → join column pairs.
+   * Two sources are merged, with explicit overrides winning over the convention:
+   *
+   * 1. The convention `{relationProp}Id` (e.g. `workspaceId` for relation `workspace`).
+   * 2. An explicit `option.fkProperty` from `@ManyToOne` / `@OneToOne` for users
+   *    who don't follow the convention (e.g. `wsId`, `authorRef`). #301
    */
   collectFkPropertyMappings<T>(entity: ClazzType<T>): Map<string, string> {
     const map = new Map<string, string>();
 
     for (const rel of this.resolveManyToOneMetadata(entity)) {
-      if (rel.joinColumn) {
-        map.set(`${rel.columnName}Id`, rel.joinColumn);
-      }
+      if (!rel.joinColumn) continue;
+      map.set(`${rel.columnName}Id`, rel.joinColumn);
+      const fkProperty = rel.option?.fkProperty;
+      if (fkProperty) map.set(fkProperty, rel.joinColumn);
     }
 
     for (const rel of this.resolveOneToOneMetadata(entity)) {
-      if (rel.joinColumn) {
-        map.set(`${rel.propertyKey}Id`, rel.joinColumn);
-      }
+      if (!rel.joinColumn) continue;
+      map.set(`${rel.propertyKey}Id`, rel.joinColumn);
+      const fkProperty = rel.option?.fkProperty;
+      if (fkProperty) map.set(fkProperty, rel.joinColumn);
     }
 
     return map;

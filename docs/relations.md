@@ -257,6 +257,33 @@ authorId!: number;          // Direct FK access: post.authorId = 5
 author!: User;
 ```
 
+### Custom FK Property Names (fkProperty)
+
+Stingerloom's `qAlias()` and other property→column resolvers follow the convention that a relation `workspace` has a sibling FK property named `workspaceId`. When you need a custom FK property name (e.g. when porting from another ORM), pass `fkProperty` on the relation decorator so the resolvers map it to the underlying join column.
+
+```typescript
+@Entity()
+export class Member {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  // Custom FK property name — does not follow the {relProp}Id convention.
+  @ManyToOne(() => Workspace, (w) => w.members, { fkProperty: "wsId" })
+  @RelationColumn({ name: "workspace_id" })
+  workspace!: Workspace;
+
+  wsId?: number; // bare backing property — no @Column needed
+}
+
+// qAlias(Member).wsId.eq(...) now resolves to "workspace_id"
+const m = qAlias(Member, "m");
+qb.where(m.wsId.eq(42));
+```
+
+Without `fkProperty`, `qAlias(Member).wsId.eq(42)` would render as `m.wsId` in SQL and the database would reject the unknown column. The convention path (`workspaceId`) is unaffected and continues to work alongside the explicit override.
+
+`fkProperty` is also available on `@OneToOne`. When both the convention name (`{relProp}Id`) and an explicit `fkProperty` are present, both map to the same join column.
+
 ### Referencing Non-PK Columns (references)
 
 By default, FKs reference the target entity's PK. To reference a column other than the PK, use the `references` option.

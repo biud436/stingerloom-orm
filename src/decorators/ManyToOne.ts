@@ -61,6 +61,26 @@ export type ManyToOneOption = {
    * @default true
    */
   createForeignKeyConstraints?: boolean;
+
+  /**
+   * TypeScript property name that backs this relation's FK value.
+   *
+   * Stingerloom's convention is `{relationProp}Id` (e.g. relation `workspace`
+   * → FK property `workspaceId`). Set `fkProperty` when the FK lives on a
+   * differently-named property (e.g. `wsId`, `authorRef`) so that
+   * `qAlias(Entity).<prop>` and other property→column resolvers map to the
+   * underlying join column.
+   *
+   * @example
+   * ```ts
+   * @ManyToOne(() => Workspace, w => w.members, { fkProperty: "wsId" })
+   * @RelationColumn({ name: "workspace_id" })
+   * workspace!: Workspace;
+   *
+   * // qAlias(Member).wsId.eq(...) now resolves to "workspace_id"
+   * ```
+   */
+  fkProperty?: string;
 };
 
 export type ManyToOneMetadata<T> = {

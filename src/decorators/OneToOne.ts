@@ -48,6 +48,23 @@ export type OneToOneOption<T = any> = {
    * @default true
    */
   createForeignKeyConstraints?: boolean;
+
+  /**
+   * TypeScript property name that backs this relation's FK value.
+   *
+   * Stingerloom's convention is `{relationProp}Id` (e.g. relation `profile`
+   * → FK property `profileId`). Set `fkProperty` when the FK lives on a
+   * differently-named property so `qAlias(Entity).<prop>` resolves to the
+   * underlying join column.
+   *
+   * @example
+   * ```ts
+   * @OneToOne(() => Profile, { fkProperty: "profilePk" })
+   * @RelationColumn({ name: "profile_id" })
+   * profile!: Profile;
+   * ```
+   */
+  fkProperty?: string;
 };
 
 export type OneToOneMetadata<T> = {
