@@ -1222,32 +1222,39 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // Add eager ManyToOne relation columns to SELECT
+      // Add eager ManyToOne relation columns to SELECT.
+      //
+      // Each relation gets its own table alias (`rel.columnName` — the
+      // property name like "assignee" / "reporter") so that two relations
+      // pointing at the same entity (e.g. Issue → assignee + reporter, both
+      // → User) emit `LEFT JOIN user AS assignee` and `LEFT JOIN user AS
+      // reporter` instead of two `LEFT JOIN user AS user`. The latter
+      // tripped MariaDB's "Not unique table/alias" error.
       for (const rel of eagerRelations) {
         const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
         const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
         if (!relatedMetadata) continue;
 
-        const relatedName = relatedMetadata.name || RelatedEntity.name;
+        const relAlias = rel.columnName;
         for (const col of relatedMetadata.columns) {
           const alias = `${rel.columnName}_${col.name}`;
           selectMap.push(
-            `${this.wrap(relatedName)}.${this.wrap(col.name!)} AS ${this.wrap(alias)}`,
+            `${this.wrap(relAlias)}.${this.wrap(col.name!)} AS ${this.wrap(alias)}`,
           );
         }
       }
 
-      // Add eager OneToOne relation columns to SELECT
+      // Add eager OneToOne relation columns to SELECT — same per-property alias.
       for (const rel of eagerOneToOneRelations) {
         const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
         const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
         if (!relatedMetadata) continue;
 
-        const relatedName = relatedMetadata.name || RelatedEntity.name;
+        const relAlias = rel.propertyKey;
         for (const col of relatedMetadata.columns) {
           const alias = `${rel.propertyKey}_${col.name}`;
           selectMap.push(
-            `${this.wrap(relatedName)}.${this.wrap(col.name!)} AS ${this.wrap(alias)}`,
+            `${this.wrap(relAlias)}.${this.wrap(col.name!)} AS ${this.wrap(alias)}`,
           );
         }
       }
@@ -1439,10 +1446,14 @@ export class EntityManager implements BaseEntityManager {
           }
         }
 
-        const joinCondition = sql`${raw(this.wrap(fkTableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relatedTableName))}.${raw(this.wrap(relatedPk.name!))}`;
+        // Use the property name as the JOIN alias so multiple relations to
+        // the same target entity (e.g. assignee + reporter → User) get
+        // distinct aliases.
+        const relAlias = rel.columnName;
+        const joinCondition = sql`${raw(this.wrap(fkTableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relAlias))}.${raw(this.wrap(relatedPk.name!))}`;
         qb.leftJoin(
           this.wrapTable(relatedTableName),
-          this.wrap(relatedTableName),
+          this.wrap(relAlias),
           joinCondition,
         );
       }
@@ -1461,10 +1472,11 @@ export class EntityManager implements BaseEntityManager {
         );
         if (!relatedPk) continue;
 
-        const joinCondition = sql`${raw(this.wrap(tableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relatedTableName))}.${raw(this.wrap(relatedPk.name!))}`;
+        const relAlias = rel.propertyKey;
+        const joinCondition = sql`${raw(this.wrap(tableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relAlias))}.${raw(this.wrap(relatedPk.name!))}`;
         qb.leftJoin(
           this.wrapTable(relatedTableName),
-          this.wrap(relatedTableName),
+          this.wrap(relAlias),
           joinCondition,
         );
       }
