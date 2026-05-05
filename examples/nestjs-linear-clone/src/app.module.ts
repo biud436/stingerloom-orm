@@ -27,6 +27,7 @@ import { TenantModule } from "./common/tenant/tenant.module";
 import { NotificationsModule } from "./modules/notifications/notifications.module";
 import { WebhooksModule } from "./modules/webhooks/webhooks.module";
 import { IdempotencyModule } from "./common/idempotency/idempotency.module";
+import { BulkOperationsModule } from "./modules/bulk-operations/bulk-operations.module";
 
 @Module({
   imports: [
@@ -103,6 +104,7 @@ import { IdempotencyModule } from "./common/idempotency/idempotency.module";
     NotificationsModule,
     WebhooksModule,
     IdempotencyModule,
+    BulkOperationsModule,
   ],
   providers: [
     {
