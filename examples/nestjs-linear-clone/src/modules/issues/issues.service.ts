@@ -10,7 +10,9 @@ import {
   Transactional,
   CursorPaginationResult,
   qAlias,
+  raw,
   sql,
+  join,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Issue } from "./issue.entity";
@@ -215,6 +217,104 @@ export class IssuesService {
     if (result.affected === 0) {
       throw new NotFoundException(`Issue ${id} not found or not deleted`);
     }
+  }
+
+  /**
+   * "Trash" view — soft-deleted issues for a project, newest-deletion
+   * first. Bypasses the auto `deletedAt IS NULL` filter via the query
+   * builder's `.withDeleted()` and adds a `deletedAt IS NOT NULL` predicate
+   * so live rows do not bleed into the trash.
+   */
+  findTrash(projectId: number, limit = 50): Promise<Issue[]> {
+    const i = qAlias(Issue, "i");
+    return this.em
+      .createQueryBuilder(i)
+      .withDeleted()
+      .where(i.projectId.eq(projectId))
+      .andWhere(i.deletedAt.isNotNull())
+      .orderBy(i.deletedAt.desc())
+      .take(Math.min(limit, 200))
+      .getMany();
+  }
+
+  /**
+   * Restore an issue and (when `cascade=true`) re-attach its soft-deleted
+   * descendant subtree atomically. The descendant set is computed inline
+   * via a recursive CTE so a deeply nested trash subtree resurrects in one
+   * round-trip.
+   *
+   * Idempotent — if the issue (and, with cascade, every descendant) is
+   * already active, the UPDATE simply touches zero rows.
+   */
+  @Transactional()
+  async restoreWithCascade(
+    id: number,
+    cascade: boolean,
+  ): Promise<{ restored: number; ids: number[] }> {
+    if (!cascade) {
+      // Single-row restore — short-circuit (idempotent: zero affected when
+      // the row was never deleted, so we don't 404 in that case).
+      const before = await this.em.findOne(Issue, {
+        where: { id },
+        withDeleted: true,
+      });
+      if (!before) {
+        throw new NotFoundException(`Issue ${id} not found`);
+      }
+      const result = await this.repo.restore({ id });
+      return { restored: result.affected ?? 0, ids: result.affected ? [id] : [] };
+    }
+
+    // 1. confirm the issue exists (active or trashed). 404 only when truly missing.
+    const root = await this.em.findOne(Issue, {
+      where: { id },
+      withDeleted: true,
+    });
+    if (!root) {
+      throw new NotFoundException(`Issue ${id} not found`);
+    }
+
+    // 2. walk the soft-deleted descendant tree starting at `id`. Includes
+    //    the root only if it is itself soft-deleted; descendants are added
+    //    only when their parent is also in the deleted set, matching the
+    //    semantic "restore everything that was trashed together".
+    const wrap = (col: string) => this.em.wrap(col);
+    const issueTbl = wrap("issue");
+    const idCol = wrap("id");
+    const parentCol = wrap("parent_id");
+    const deletedCol = wrap("deleted_at");
+
+    const descendants = await this.em.query<{ id: number }>(sql`
+      WITH RECURSIVE deleted_tree(${raw(idCol)}) AS (
+        SELECT ${raw(idCol)} FROM ${raw(issueTbl)}
+          WHERE ${raw(idCol)} = ${id} AND ${raw(deletedCol)} IS NOT NULL
+        UNION ALL
+        SELECT c.${raw(idCol)} FROM ${raw(issueTbl)} c
+          INNER JOIN deleted_tree p ON c.${raw(parentCol)} = p.${raw(idCol)}
+          WHERE c.${raw(deletedCol)} IS NOT NULL
+      )
+      SELECT ${raw(idCol)} FROM deleted_tree
+    `);
+
+    const idsToRestore = descendants.map((r) => Number(r.id));
+    if (idsToRestore.length === 0) {
+      // Already-active root, no soft-deleted descendants — idempotent no-op.
+      return { restored: 0, ids: [] };
+    }
+
+    // 3. clear deletedAt on the whole set in one UPDATE. `join()` from
+    //    sql-template-tag expands the id array into N parameter
+    //    placeholders so the driver picks `?` (mysql2) vs `$n` (pg).
+    const idList = join(
+      idsToRestore.map((v) => sql`${v}`),
+      ", ",
+    );
+    await this.em.query(sql`
+      UPDATE ${raw(issueTbl)}
+         SET ${raw(deletedCol)} = NULL
+       WHERE ${raw(idCol)} IN (${idList})
+    `);
+    return { restored: idsToRestore.length, ids: idsToRestore };
   }
 
   /**

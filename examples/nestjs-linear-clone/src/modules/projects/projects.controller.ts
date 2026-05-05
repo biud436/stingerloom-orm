@@ -9,18 +9,25 @@ import {
   ParseIntPipe,
   Query,
   HttpCode,
+  Inject,
+  forwardRef,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { ProjectsService } from "./projects.service";
 import { CreateProjectDto, UpdateProjectDto } from "./dto/project.dto";
 import { WorkspaceScoped } from "../../common/auth/workspace.decorators";
 import { CursorQueryDto } from "../../common/dto/cursor.dto";
+import { IssuesService } from "../issues/issues.service";
 
 @ApiTags("Projects")
 @ApiBearerAuth()
 @Controller("projects")
 export class ProjectsController {
-  constructor(private readonly service: ProjectsService) {}
+  constructor(
+    private readonly service: ProjectsService,
+    @Inject(forwardRef(() => IssuesService))
+    private readonly issues: IssuesService,
+  ) {}
 
   @Post()
   @WorkspaceScoped({ from: "param", name: "workspaceId" })
@@ -60,6 +67,20 @@ export class ProjectsController {
   @WorkspaceScoped({ from: "project" })
   one(@Param("id", ParseIntPipe) id: number) {
     return this.service.findOne(id);
+  }
+
+  @Get(":id/trash")
+  @WorkspaceScoped({ from: "project" })
+  @ApiOperation({
+    summary:
+      "Soft-deleted issues for this project (newest deletion first). " +
+      "Bypasses the auto deletedAt IS NULL filter via QueryBuilder.withDeleted().",
+  })
+  trash(
+    @Param("id", ParseIntPipe) id: number,
+    @Query("limit") limit?: string,
+  ) {
+    return this.issues.findTrash(id, limit ? Number(limit) : undefined);
   }
 
   @Patch(":id")

@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
 import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { Issue } from "./issue.entity";
 import { IssuesService } from "./issues.service";
@@ -11,7 +11,7 @@ import { ProjectsModule } from "../projects/projects.module";
   imports: [
     StingerloomOrmModule.forFeature([Issue]),
     ActivityModule,
-    ProjectsModule,
+    forwardRef(() => ProjectsModule),
   ],
   controllers: [IssuesController],
   providers: [IssuesService, IssueAuditSubscriber],

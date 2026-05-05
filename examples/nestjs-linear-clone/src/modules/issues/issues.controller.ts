@@ -115,8 +115,15 @@ export class IssuesController {
 
   @Post(":id/restore")
   @WorkspaceScoped({ from: "issue" })
-  @HttpCode(204)
-  restore(@Param("id", ParseIntPipe) id: number) {
-    return this.service.restore(id);
+  @ApiOperation({
+    summary:
+      "Restore a soft-deleted issue. Pass `?cascade=1` to also restore the soft-deleted descendant subtree.",
+  })
+  restore(
+    @Param("id", ParseIntPipe) id: number,
+    @Query("cascade") cascade?: string,
+  ) {
+    const wantCascade = cascade === "1" || cascade === "true";
+    return this.service.restoreWithCascade(id, wantCascade);
   }
 }
