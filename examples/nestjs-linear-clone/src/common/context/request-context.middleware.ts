@@ -4,9 +4,15 @@ import { Request, Response, NextFunction } from "express";
 import { RequestContext, RequestContextStore } from "./request-context";
 
 /**
- * First middleware in the chain. Mints (or trusts) a `requestId`, opens an
- * AsyncLocalStorage frame for this request, and exposes the id on the
- * response as `X-Request-Id` so clients can correlate.
+ * Opens an AsyncLocalStorage frame for the request so any service / ORM
+ * subscriber can read the caller's identity later without threading it
+ * through every method signature.
+ *
+ * `requestId` is sourced from pino-http's `genReqId` (set on `req.id` by
+ * the LoggerModule pino middleware), so logger output and ALS context share
+ * a single id. Falls back to the inbound `x-request-id` header or a fresh
+ * UUID for code paths that bypass pino-http (e.g. tests that mount the
+ * middleware in isolation).
  *
  * Identity (`userId`, `workspaceId`) starts as `null` and is filled in by
  * downstream guards.
@@ -14,10 +20,18 @@ import { RequestContext, RequestContextStore } from "./request-context";
 @Injectable()
 export class RequestContextMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction): void {
+    const fromPino = (req as Request & { id?: string }).id;
     const inbound = req.header("x-request-id");
-    const requestId = inbound && /^[a-zA-Z0-9-]{1,64}$/.test(inbound) ? inbound : randomUUID();
+    const requestId =
+      typeof fromPino === "string" && fromPino.length > 0
+        ? fromPino
+        : inbound && /^[a-zA-Z0-9-]{1,64}$/.test(inbound)
+          ? inbound
+          : randomUUID();
 
-    res.setHeader("X-Request-Id", requestId);
+    if (!res.getHeader("X-Request-Id")) {
+      res.setHeader("X-Request-Id", requestId);
+    }
 
     const ctx: RequestContext = {
       requestId,

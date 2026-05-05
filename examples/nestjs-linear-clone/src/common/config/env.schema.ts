@@ -27,6 +27,12 @@ export const envValidationSchema = Joi.object({
     }),
   DB_NAME: Joi.string().min(1).default("linear_clone"),
   DB_LOGGING: Joi.boolean().truthy("true").falsy("false").default(false),
+  DB_SLOW_QUERY_MS: Joi.number().integer().min(1).default(200),
+
+  // Logging
+  LOG_LEVEL: Joi.string()
+    .valid("trace", "debug", "info", "warn", "error", "fatal", "silent")
+    .default("info"),
 
   // JWT
   JWT_SECRET: Joi.string()

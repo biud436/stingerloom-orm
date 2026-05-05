@@ -1,10 +1,11 @@
 import "reflect-metadata";
 
 import { NestFactory, Reflector } from "@nestjs/core";
-import { ValidationPipe, Logger, ClassSerializerInterceptor } from "@nestjs/common";
+import { ValidationPipe, ClassSerializerInterceptor } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { JwtService } from "@nestjs/jwt";
+import { Logger } from "nestjs-pino";
 import helmet from "helmet";
 import { EntityManager } from "@stingerloom/orm";
 import { AppModule } from "./app.module";
@@ -12,9 +13,13 @@ import { JwtAuthGuard } from "./common/auth/jwt-auth.guard";
 import { AllExceptionsFilter } from "./common/exceptions/all-exceptions.filter";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: false });
+  // bufferLogs: true queues early Nest bootstrap logs until pino is wired
+  // up, so the very first lines aren't dropped or written via console.log.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const config = app.get(ConfigService);
-  const logger = new Logger("Bootstrap");
+  const logger = app.get(Logger);
+  app.useLogger(logger);
+  app.flushLogs();
 
   app.use(helmet());
 

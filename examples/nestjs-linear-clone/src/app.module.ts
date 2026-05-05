@@ -5,6 +5,7 @@ import { APP_GUARD } from "@nestjs/core";
 import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { envValidationSchema } from "./common/config/env.schema";
 import { RequestContextMiddleware } from "./common/context/request-context.middleware";
+import { ObservabilityModule } from "./common/observability/observability.module";
 import { AuthModule } from "./common/auth/auth.module";
 import { HealthModule } from "./modules/health/health.module";
 import { WorkspacesModule } from "./modules/workspaces/workspaces.module";
@@ -27,6 +28,7 @@ import { QueueModule } from "./modules/queue/queue.module";
       validationSchema: envValidationSchema,
       validationOptions: { abortEarly: true },
     }),
+    ObservabilityModule,
     StingerloomOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -51,7 +53,15 @@ import { QueueModule } from "./modules/queue/queue.module";
                 : sync === "dry-run"
                   ? "dry-run"
                   : true,
-          logging: config.get<boolean>("DB_LOGGING", false),
+          // Enable QueryTracker so QueryTrackerBridge can re-emit slow-query
+          // and N+1 events as structured pino lines. Defaults are env-tunable
+          // so production deployments can dial them per-environment.
+          logging: {
+            queries: config.get<boolean>("DB_LOGGING", false),
+            slowQueryMs: config.get<number>("DB_SLOW_QUERY_MS", 200),
+            nPlusOne: true,
+            enableQueryTracking: true,
+          },
         };
       },
     }),
