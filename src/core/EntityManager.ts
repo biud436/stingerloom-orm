@@ -634,6 +634,7 @@ export class EntityManager implements BaseEntityManager {
     this.rawQueryTenantWarned.clear();
 
     // 4. Clean up QueryTracker
+    this.queryTracker?.removeAllListeners();
     this.queryTracker?.reset();
     this.queryTracker = null;
 

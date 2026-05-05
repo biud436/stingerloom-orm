@@ -206,6 +206,99 @@ describe("QueryTracker", () => {
     });
   });
 
+  describe("events: on / off / once", () => {
+    it("emits 'slowQuery' for queries crossing slowQueryMs", () => {
+      const slowTracker = new QueryTracker({ slowQueryMs: 100 });
+      const calls: QueryLogEntry[] = [];
+
+      slowTracker.on("slowQuery", (entry) => calls.push(entry));
+
+      slowTracker.track("User", "SELECT * FROM user", 50);
+      slowTracker.track("User", "SELECT * FROM user", 150);
+      slowTracker.track("User", "SELECT * FROM user", 250);
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0].durationMs).toBe(150);
+      expect(calls[1].durationMs).toBe(250);
+    });
+
+    it("does not emit 'slowQuery' when slowQueryMs is null", () => {
+      const fn = jest.fn();
+      tracker.on("slowQuery", fn);
+      tracker.track("User", "SELECT * FROM user", 5000);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    it("emits 'nPlusOne' once with chronological samples when threshold is crossed", () => {
+      const calls: { entityName: string; samples: QueryLogEntry[] }[] = [];
+      tracker.on("nPlusOne", (entityName, samples) =>
+        calls.push({ entityName, samples }),
+      );
+
+      for (let i = 0; i < 10; i++) {
+        tracker.track("Cat", `SELECT * FROM cat WHERE id = ${i}`, 1);
+      }
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].entityName).toBe("Cat");
+      expect(calls[0].samples.length).toBeGreaterThanOrEqual(10);
+      // Samples should be chronological (oldest first)
+      for (let i = 1; i < calls[0].samples.length; i++) {
+        expect(calls[0].samples[i].timestamp).toBeGreaterThanOrEqual(
+          calls[0].samples[i - 1].timestamp,
+        );
+      }
+    });
+
+    it("off() unregisters a listener", () => {
+      const fn = jest.fn();
+      tracker.on("slowQuery", fn);
+      tracker.off("slowQuery", fn);
+
+      const slow = new QueryTracker({ slowQueryMs: 10 });
+      slow.on("slowQuery", fn);
+      slow.off("slowQuery", fn);
+      slow.track("User", "SELECT 1", 50);
+
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    it("once() fires exactly once and then unregisters", () => {
+      const slow = new QueryTracker({ slowQueryMs: 10 });
+      const fn = jest.fn();
+      slow.once("slowQuery", fn);
+      slow.track("User", "SELECT 1", 50);
+      slow.track("User", "SELECT 2", 50);
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it("listener exception does not break the tracker or other listeners", () => {
+      const slow = new QueryTracker({ slowQueryMs: 10 });
+      const sibling = jest.fn();
+      slow.on("slowQuery", () => {
+        throw new Error("boom");
+      });
+      slow.on("slowQuery", sibling);
+      expect(() => slow.track("User", "SELECT 1", 50)).not.toThrow();
+      expect(sibling).toHaveBeenCalledTimes(1);
+    });
+
+    it("removeAllListeners() drops every subscriber", () => {
+      const slow = new QueryTracker({ slowQueryMs: 10 });
+      const a = jest.fn();
+      const b = jest.fn();
+      slow.on("slowQuery", a);
+      slow.on("nPlusOne", b);
+      slow.removeAllListeners();
+      slow.track("User", "SELECT 1", 50);
+      for (let i = 0; i < 10; i++) {
+        slow.track("Cat", `SELECT * FROM cat WHERE id = ${i}`, 1);
+      }
+      expect(a).not.toHaveBeenCalled();
+      expect(b).not.toHaveBeenCalled();
+    });
+  });
+
   describe("slow query detection", () => {
     it("should warn on slow queries when slowQueryMs is set", () => {
       const slowTracker = new QueryTracker({ slowQueryMs: 100 });

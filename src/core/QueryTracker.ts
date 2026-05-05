@@ -11,6 +11,17 @@ export interface QueryLogEntry {
 }
 
 /**
+ * Typed event map for QueryTracker subscribers.
+ *
+ * - `slowQuery` fires once per query whose duration crosses `slowQueryMs`.
+ * - `nPlusOne` fires once per entity per warning, with the matching window samples.
+ */
+export interface QueryTrackerEvents {
+  slowQuery: (entry: QueryLogEntry) => void;
+  nPlusOne: (entityName: string, samples: QueryLogEntry[]) => void;
+}
+
+/**
  * Options for creating a QueryTracker.
  */
 export interface QueryTrackerOptions {
@@ -78,6 +89,10 @@ export class QueryTracker {
   /** Number of in-flight queries (used to wait during graceful shutdown). */
   private _activeQueryCount = 0;
 
+  private readonly listeners: {
+    [K in keyof QueryTrackerEvents]?: QueryTrackerEvents[K][];
+  } = {};
+
   constructor(options?: QueryTrackerOptions) {
     this.windowMs = options?.windowMs ?? 100;
     this.threshold = options?.threshold ?? 10;
@@ -129,10 +144,90 @@ export class QueryTracker {
     // Slow-query detection
     if (this.slowQueryMs !== null && durationMs > this.slowQueryMs) {
       this.logger.warn(`[SLOW QUERY] ${durationMs}ms: ${sqlText}`);
+      this.emit("slowQuery", entry);
     }
 
     // N+1 detection: count queries for the same entity within windowMs
     this.detectNPlusOne(entityName, now);
+  }
+
+  /**
+   * Subscribe to a tracker event.
+   *
+   * @example
+   *   tracker.on("slowQuery", (entry) => log.warn({ db: entry }, "slow"));
+   *   tracker.on("nPlusOne", (entity, samples) => log.warn({ entity, samples }));
+   */
+  on<K extends keyof QueryTrackerEvents>(
+    event: K,
+    listener: QueryTrackerEvents[K],
+  ): this {
+    const arr = (this.listeners[event] ??= []) as QueryTrackerEvents[K][];
+    arr.push(listener);
+    return this;
+  }
+
+  /**
+   * Remove a previously-registered listener. No-op when the listener was not registered.
+   */
+  off<K extends keyof QueryTrackerEvents>(
+    event: K,
+    listener: QueryTrackerEvents[K],
+  ): this {
+    const arr = this.listeners[event] as QueryTrackerEvents[K][] | undefined;
+    if (!arr) return this;
+    const idx = arr.indexOf(listener);
+    if (idx >= 0) arr.splice(idx, 1);
+    return this;
+  }
+
+  /**
+   * Subscribe to a single firing of an event, then auto-unregister.
+   */
+  once<K extends keyof QueryTrackerEvents>(
+    event: K,
+    listener: QueryTrackerEvents[K],
+  ): this {
+    const wrapper = ((...args: unknown[]) => {
+      this.off(event, wrapper as QueryTrackerEvents[K]);
+      (listener as (...a: unknown[]) => void)(...args);
+    }) as QueryTrackerEvents[K];
+    return this.on(event, wrapper);
+  }
+
+  /**
+   * Drop every subscriber on every event (or a single event when supplied).
+   * Used by EntityManager.shutdown() to clear references.
+   */
+  removeAllListeners<K extends keyof QueryTrackerEvents>(event?: K): this {
+    if (event) {
+      delete this.listeners[event];
+    } else {
+      for (const key of Object.keys(this.listeners) as (keyof QueryTrackerEvents)[]) {
+        delete this.listeners[key];
+      }
+    }
+    return this;
+  }
+
+  private emit<K extends keyof QueryTrackerEvents>(
+    event: K,
+    ...args: Parameters<QueryTrackerEvents[K]>
+  ): void {
+    const arr = this.listeners[event] as QueryTrackerEvents[K][] | undefined;
+    if (!arr || arr.length === 0) return;
+    // Iterate over a copy so a listener can off() itself without skipping siblings.
+    for (const listener of arr.slice()) {
+      try {
+        (listener as (...a: unknown[]) => void)(...args);
+      } catch (err) {
+        this.logger.warn(
+          `QueryTracker '${event}' listener threw: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
   }
 
   /**
@@ -246,29 +341,32 @@ export class QueryTracker {
     if (this.warned.has(entityName)) return;
 
     const windowStart = now - this.windowMs;
-    let count = 0;
+    const samples: QueryLogEntry[] = [];
 
     if (this.unbounded) {
       // Scan recent entries from the back
       for (let i = this.unboundedLog.length - 1; i >= 0; i--) {
         const entry = this.unboundedLog[i];
         if (entry.timestamp < windowStart) break;
-        if (entry.entityName === entityName) count++;
+        if (entry.entityName === entityName) samples.push(entry);
       }
     } else {
       // Circular buffer: scan from the back
       for (let i = this._size - 1; i >= 0; i--) {
         const entry = this.buffer[(this.head + i) % this.maxLogEntries]!;
         if (entry.timestamp < windowStart) break;
-        if (entry.entityName === entityName) count++;
+        if (entry.entityName === entityName) samples.push(entry);
       }
     }
 
-    if (count >= this.threshold) {
+    if (samples.length >= this.threshold) {
       this.logger.warn(
-        `[N+1 WARNING] Entity "${entityName}" queried ${count}+ times in ${this.windowMs}ms. Consider using eager loading or relations option.`,
+        `[N+1 WARNING] Entity "${entityName}" queried ${samples.length}+ times in ${this.windowMs}ms. Consider using eager loading or relations option.`,
       );
       this.warned.add(entityName);
+      // Reverse so samples are chronological (oldest first), matching getLog().
+      samples.reverse();
+      this.emit("nPlusOne", entityName, samples);
     }
   }
 }
