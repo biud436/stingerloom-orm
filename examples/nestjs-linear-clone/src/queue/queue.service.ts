@@ -1,11 +1,13 @@
 import { Injectable, Inject, BadRequestException } from "@nestjs/common";
 import {
+  BaseRepository,
   EntityManager,
   Expressions as exp,
   Transactional,
   qAlias,
   sql,
 } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Issue } from "../issues/issue.entity";
 import { ActivityService } from "../activity/activity.service";
 import { ACTIVITY_ACTION, ISSUE_STATUS } from "../common/enums";
@@ -28,17 +30,23 @@ const LEASE_MINUTES = 5;
  *
  * - PostgreSQL — `SelectQueryBuilder.forUpdateSkipLocked()` followed by an
  *   in-place UPDATE. SKIP LOCKED behaves consistently here.
- * - MariaDB / MySQL — `UPDATE … ORDER BY priority, number LIMIT 1` is
- *   atomic on InnoDB; a per-call sentinel is written into `claimedBy`
- *   first and read back to identify the row. We tried `SELECT FOR UPDATE
- *   SKIP LOCKED LIMIT 1` first and observed empty results under
+ * - MariaDB / MySQL — `UPDATE … ORDER BY priority, number LIMIT 1` via
+ *   `createUpdateBuilder()`. A per-call sentinel is written into `claimedBy`
+ *   first, then read back to identify the chosen row. `SELECT FOR UPDATE
+ *   SKIP LOCKED LIMIT 1` was tried first and returned empty under
  *   contention on MariaDB 11.x's filesort path, so the sentinel pattern
  *   is the portable workaround. (See README "Concurrency demo" for the
  *   live test that exercises this.)
+ *
+ * Entity-scoped queries flow through the repository (`this.repo`); the
+ * `EntityManager` is kept on the side only for the global dialect probe
+ * (`em.getDriver().isMySqlFamily()`) used to branch claim strategy.
  */
 @Injectable()
 export class QueueService {
   constructor(
+    @InjectRepository(Issue)
+    private readonly repo: BaseRepository<Issue>,
     @Inject(EntityManager)
     private readonly em: EntityManager,
     private readonly activity: ActivityService,
@@ -71,8 +79,7 @@ export class QueueService {
 
   @Transactional()
   async release(workerId: string, issueId: number): Promise<boolean> {
-    const result = await this.em.updateMany(
-      Issue,
+    const result = await this.repo.updateMany(
       { claimedBy: null, claimedAt: null } as any,
       { where: { id: issueId, claimedBy: workerId } as any },
     );
@@ -103,7 +110,7 @@ export class QueueService {
     const cutoff = exp.currentTimestamp().addMinutes(-LEASE_MINUTES);
 
     const baseFilter = () =>
-      this.em
+      this.repo
         .createQueryBuilder(i)
         .where(i.projectId.eq(projectId))
         .andWhere(i.assigneeId.isNull());
@@ -131,7 +138,7 @@ export class QueueService {
     const i = qAlias(Issue, "i");
     const cutoff = exp.currentTimestamp().addMinutes(-LEASE_MINUTES);
 
-    const candidate = await this.em
+    const candidate = await this.repo
       .createQueryBuilder(i)
       .where(i.projectId.eq(projectId))
       .andWhere(i.status.in([ISSUE_STATUS.BACKLOG, ISSUE_STATUS.TODO]))
@@ -149,10 +156,9 @@ export class QueueService {
 
   /**
    * MariaDB/MySQL claim — atomic UPDATE with sentinel tag, then a typed
-   * read-back to recover the row id. The `UPDATE ... ORDER BY ... LIMIT 1`
-   * shape is MySQL-specific and `updateMany()` does not expose ORDER BY +
-   * LIMIT, so this one-liner stays as a parameterized `sql` template.
-   * Identifiers are MySQL-only here, so backticks are acceptable.
+   * read-back to recover the row id. Uses the dialect-aware
+   * `createUpdateBuilder()` which emits native `UPDATE … ORDER BY … LIMIT n`
+   * on MySQL/MariaDB.
    */
   private async lockNextMysql(
     workerId: string,
@@ -161,25 +167,25 @@ export class QueueService {
     const sentinel = `__pending:${workerId}:${Date.now()}-${Math.floor(
       Math.random() * 1e9,
     )}`;
-    const cutoff = sql`DATE_SUB(NOW(), INTERVAL ${LEASE_MINUTES} MINUTE)`;
+    const cutoff = exp.currentTimestamp().addMinutes(-LEASE_MINUTES);
+    const i = qAlias(Issue, "i");
 
-    const result = await this.em.query(
-      sql`UPDATE \`issue\`
-             SET \`claimedBy\` = ${sentinel}, \`claimedAt\` = NOW()
-           WHERE \`project_id\` = ${projectId}
-             AND \`status\` IN (${ISSUE_STATUS.BACKLOG}, ${ISSUE_STATUS.TODO})
-             AND \`assignee_id\` IS NULL
-             AND (\`claimedBy\` IS NULL OR \`claimedAt\` < ${cutoff})
-             AND \`deletedAt\` IS NULL
-        ORDER BY \`priority\` ASC, \`number\` ASC
-           LIMIT 1`,
-    );
-    const affected =
-      (result as unknown as { affectedRows?: number }).affectedRows ?? 0;
+    const { affected } = await this.repo
+      .createUpdateBuilder(i)
+      .set({ claimedBy: sentinel })
+      .setRaw("claimedAt", sql`NOW()`)
+      .where(i.projectId.eq(projectId))
+      .andWhere(i.status.in([ISSUE_STATUS.BACKLOG, ISSUE_STATUS.TODO]))
+      .andWhere(i.assigneeId.isNull())
+      .andWhere(exp.or(i.claimedBy.isNull(), i.claimedAt.lt(cutoff)))
+      .andWhere(i.deletedAt.isNull())
+      .orderBy(i.priority.asc())
+      .addOrderBy(i.number.asc())
+      .limit(1)
+      .execute();
     if (affected === 0) return null;
 
-    const i = qAlias(Issue, "i");
-    const tagged = await this.em
+    const tagged = await this.repo
       .createQueryBuilder(i)
       .where(i.claimedBy.eq(sentinel))
       .limit(1)
@@ -196,15 +202,14 @@ export class QueueService {
     issueId: number,
     workerId: string,
   ): Promise<ClaimedIssue | null> {
-    const updated = await this.em.updateMany(
-      Issue,
+    const updated = await this.repo.updateMany(
       { claimedBy: workerId, claimedAt: new Date() } as any,
       { where: { id: issueId } as any },
     );
     if (updated.affected === 0) return null;
 
     const i = qAlias(Issue, "i");
-    const row = await this.em
+    const row = await this.repo
       .createQueryBuilder(i)
       .where(i.id.eq(issueId))
       .getOne();

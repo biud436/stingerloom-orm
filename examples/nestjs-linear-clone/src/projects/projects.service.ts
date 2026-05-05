@@ -2,14 +2,8 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  Inject,
 } from "@nestjs/common";
-import {
-  BaseRepository,
-  EntityManager,
-  Transactional,
-  qAlias,
-} from "@stingerloom/orm";
+import { BaseRepository, Transactional, qAlias } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Project } from "./project.entity";
 import { CreateProjectDto, UpdateProjectDto } from "./dto/project.dto";
@@ -19,14 +13,12 @@ export class ProjectsService {
   constructor(
     @InjectRepository(Project)
     private readonly repo: BaseRepository<Project>,
-    @Inject(EntityManager)
-    private readonly em: EntityManager,
   ) {}
 
   @Transactional()
   async create(dto: CreateProjectDto): Promise<Project> {
     const p = qAlias(Project, "p");
-    const dup = await this.em
+    const dup = await this.repo
       .createQueryBuilder(p)
       .where(p.workspaceId.eq(dto.workspaceId))
       .andWhere(p.key.eq(dto.key))
@@ -51,7 +43,7 @@ export class ProjectsService {
 
   findAll(workspaceId?: number): Promise<Project[]> {
     const p = qAlias(Project, "p");
-    return this.em
+    return this.repo
       .createQueryBuilder(p)
       .when(workspaceId !== undefined, (qb) =>
         qb.where(p.workspaceId.eq(workspaceId!)),
@@ -90,14 +82,14 @@ export class ProjectsService {
    */
   async nextIssueNumber(projectId: number): Promise<number> {
     const p = qAlias(Project, "p");
-    const project = await this.em
+    const project = await this.repo
       .createQueryBuilder(p)
       .where(p.id.eq(projectId))
       .forUpdate()
       .getOneOrFail();
 
     project.issueCounter = (project.issueCounter ?? 0) + 1;
-    await this.em.save(Project, project);
+    await this.repo.save(project);
     return project.issueCounter;
   }
 }
