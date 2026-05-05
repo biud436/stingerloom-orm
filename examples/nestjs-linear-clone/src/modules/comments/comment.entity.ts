@@ -16,6 +16,7 @@ import { User } from "../users/user.entity";
 @Entity()
 @Index(["issue_id", "created_at"])
 @Index(["author_id"])
+@Index(["issue_id", "parent_comment_id"])
 @FullTextIndex(["body"])
 export class Comment {
   @PrimaryGeneratedColumn()
@@ -32,6 +33,12 @@ export class Comment {
   author!: User | null;
 
   authorId?: number | null;
+
+  @ManyToOne(() => Comment, () => undefined)
+  @RelationColumn({ name: "parent_comment_id", nullable: true })
+  parent!: Comment | null;
+
+  parentCommentId?: number | null;
 
   @Column({ type: "text" })
   body!: string;
