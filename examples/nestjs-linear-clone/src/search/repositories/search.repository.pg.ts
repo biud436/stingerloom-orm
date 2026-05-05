@@ -1,8 +1,5 @@
-import { sql, raw, Sql } from "@stingerloom/orm";
+import { sql, Sql, Conditions } from "@stingerloom/orm";
 import { SearchRepository, IssueSearchHit } from "./search.repository.abstract";
-import { q } from "../../analytics/sql-helpers";
-
-const QUOTE = (name: string) => q(name, "postgres");
 
 export class PostgresSearchRepository extends SearchRepository {
   async fullTextIssues(
@@ -10,56 +7,51 @@ export class PostgresSearchRepository extends SearchRepository {
     projectId?: number,
     limit = 20,
   ): Promise<IssueSearchHit[]> {
-    const issue = QUOTE("issue");
-    const comment = QUOTE("comment");
-    const id = QUOTE("id");
-    const number = QUOTE("number");
-    const title = QUOTE("title");
-    const status = QUOTE("status");
-    const description = QUOTE("description");
-    const body = QUOTE("body");
-    const projectCol = QUOTE("project_id");
-    const issueIdCol = QUOTE("issue_id");
-    const deletedAt = QUOTE("deletedAt");
+    // Predicate: emits `to_tsvector(...) @@ plainto_tsquery(...)` with the
+    // multi-column COALESCE concat composed by the helper. Used in WHERE.
+    const issueMatch = Conditions.fullTextSearch(
+      ["i.title", "i.description"],
+      queryText,
+      "postgres",
+    );
+    const commentMatch = Conditions.fullTextSearch("c.body", queryText, "postgres");
 
-    const issueMatch = sql`to_tsvector('english', COALESCE(i.${raw(title)}, '') || ' ' || COALESCE(i.${raw(description)}, '')) @@ plainto_tsquery('english', ${queryText})`;
-    const issueRank = sql`ts_rank(to_tsvector('english', COALESCE(i.${raw(title)}, '') || ' ' || COALESCE(i.${raw(description)}, '')), plainto_tsquery('english', ${queryText}))`;
-    const commentMatch = sql`to_tsvector('english', c.${raw(body)}) @@ plainto_tsquery('english', ${queryText})`;
-    const commentRank = sql`ts_rank(to_tsvector('english', c.${raw(body)}), plainto_tsquery('english', ${queryText}))`;
+    // Rank: PG separates predicate (`@@`) from scoring (`ts_rank`), so the
+    // rank expression is hand-written. MySQL reuses MATCH...AGAINST for both.
+    const issueRank = sql`ts_rank(
+      to_tsvector('english', COALESCE(i.title, '') || ' ' || COALESCE(i.description, '')),
+      plainto_tsquery('english', ${queryText})
+    )`;
+    const commentRank = sql`ts_rank(
+      to_tsvector('english', c.body),
+      plainto_tsquery('english', ${queryText})
+    )`;
 
     const projectFilter =
-      projectId !== undefined
-        ? sql`AND i.${raw(projectCol)} = ${projectId}`
-        : sql``;
+      projectId !== undefined ? sql`AND i.project_id = ${projectId}` : sql``;
 
     const finalSql: Sql = sql`
       SELECT * FROM (
         SELECT
-          i.${raw(id)}            AS ${raw(id)},
-          i.${raw(number)}        AS ${raw(number)},
-          i.${raw(title)}         AS ${raw(title)},
-          i.${raw(status)}        AS ${raw(status)},
-          ${"issue"}              AS source,
-          COALESCE(LEFT(i.${raw(description)}, 200), '') AS snippet,
-          ${issueRank}            AS rank
-        FROM ${raw(issue)} i
+          i.id, i.number, i.title, i.status,
+          'issue' AS source,
+          COALESCE(LEFT(i.description, 200), '') AS snippet,
+          ${issueRank} AS rank
+        FROM issue i
         WHERE ${issueMatch}
-          AND i.${raw(deletedAt)} IS NULL
+          AND i."deletedAt" IS NULL
           ${projectFilter}
         UNION ALL
         SELECT
-          i.${raw(id)},
-          i.${raw(number)},
-          i.${raw(title)},
-          i.${raw(status)},
-          ${"comment"},
-          LEFT(c.${raw(body)}, 200),
+          i.id, i.number, i.title, i.status,
+          'comment',
+          LEFT(c.body, 200),
           ${commentRank}
-        FROM ${raw(comment)} c
-        JOIN ${raw(issue)} i ON i.${raw(id)} = c.${raw(issueIdCol)}
+        FROM comment c
+        JOIN issue i ON i.id = c.issue_id
         WHERE ${commentMatch}
-          AND c.${raw(deletedAt)} IS NULL
-          AND i.${raw(deletedAt)} IS NULL
+          AND c."deletedAt" IS NULL
+          AND i."deletedAt" IS NULL
           ${projectFilter}
       ) hits
       ORDER BY rank DESC
