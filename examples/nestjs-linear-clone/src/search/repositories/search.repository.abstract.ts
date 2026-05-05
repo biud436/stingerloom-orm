@@ -30,21 +30,15 @@ export abstract class SearchRepository {
   /**
    * Full-text search over issue title/description and comment body.
    * Implementations issue `MATCH ... AGAINST` (MySQL) or
-   * `to_tsvector ... @@ plainto_tsquery` (PostgreSQL).
+   * `to_tsvector ... @@ plainto_tsquery` (PostgreSQL). The backing
+   * FULLTEXT / GIN indexes are declared on the entities via
+   * `@FullTextIndex` and created automatically during synchronize.
    */
   abstract fullTextIssues(
     queryText: string,
     projectId?: number,
     limit?: number,
   ): Promise<IssueSearchHit[]>;
-
-  /**
-   * Idempotent install of the FULLTEXT (MySQL) / GIN (PostgreSQL)
-   * indexes that back `fullTextIssues`. Called from `SearchModule`'s
-   * `onModuleInit` because `SchemaRegistrar.synchronize()` does not
-   * currently emit DDL for `@FullTextIndex` columns.
-   */
-  abstract ensureFullTextIndexes(): Promise<void>;
 
   /**
    * Filter issues by a JSON `customFields` key/value pair. Lives on the

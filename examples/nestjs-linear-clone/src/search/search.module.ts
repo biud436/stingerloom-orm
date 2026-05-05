@@ -1,4 +1,4 @@
-import { Module, OnModuleInit } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { EntityManager } from "@stingerloom/orm";
 import { SearchService } from "./search.service";
 import { SearchController } from "./search.controller";
@@ -9,7 +9,10 @@ import { PostgresSearchRepository } from "./repositories/search.repository.pg";
 /**
  * The dialect choice happens once, here. Downstream code (service,
  * controller) talks to the abstract `SearchRepository` and stays
- * unaware of which engine is underneath.
+ * unaware of which engine is underneath. The FULLTEXT (MySQL) /
+ * GIN (PostgreSQL) indexes that back full-text search are declared
+ * with `@FullTextIndex` on Issue / Comment and created automatically
+ * by `SchemaRegistrar.synchronize()` on startup.
  */
 @Module({
   controllers: [SearchController],
@@ -26,16 +29,4 @@ import { PostgresSearchRepository } from "./repositories/search.repository.pg";
   ],
   exports: [SearchService],
 })
-export class SearchModule implements OnModuleInit {
-  constructor(private readonly repo: SearchRepository) {}
-
-  /**
-   * SchemaRegistrar.synchronize() does not currently emit DDL for
-   * @FullTextIndex columns, so the repository installs the
-   * FULLTEXT (MySQL) / GIN (PostgreSQL) indexes here once the ORM
-   * finishes its first sync. Idempotent.
-   */
-  async onModuleInit(): Promise<void> {
-    await this.repo.ensureFullTextIndexes();
-  }
-}
+export class SearchModule {}

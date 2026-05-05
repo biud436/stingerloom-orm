@@ -75,34 +75,4 @@ export class MySqlSearchRepository extends SearchRepository {
       rank: Number(r.rank ?? 0),
     }));
   }
-
-  async ensureFullTextIndexes(): Promise<void> {
-    const checks: Array<{ table: string; index: string; cols: string[] }> = [
-      { table: "issue", index: "ft_issue_title_desc", cols: ["title", "description"] },
-      { table: "comment", index: "ft_comment_body", cols: ["body"] },
-    ];
-
-    for (const { table, index, cols } of checks) {
-      const rows = await this.em.query<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM information_schema.STATISTICS
-         WHERE TABLE_SCHEMA = DATABASE()
-           AND TABLE_NAME = ?
-           AND INDEX_NAME = ?`,
-        [table, index],
-      );
-      if (Number(rows[0]?.count ?? 0) > 0) continue;
-
-      const colList = cols.map((c) => `\`${c}\``).join(", ");
-      try {
-        await this.em.query(
-          `ALTER TABLE \`${table}\` ADD FULLTEXT INDEX \`${index}\` (${colList})`,
-        );
-      } catch (err) {
-        // The table may not exist yet on a fresh database before
-        // synchronize ran; that path is an integration-test edge case.
-        // eslint-disable-next-line no-console
-        console.warn(`[SearchRepository:mysql] Could not create FULLTEXT ${index}: ${err}`);
-      }
-    }
-  }
 }

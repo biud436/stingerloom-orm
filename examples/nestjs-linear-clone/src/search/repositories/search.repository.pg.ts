@@ -77,21 +77,4 @@ export class PostgresSearchRepository extends SearchRepository {
       rank: Number(r.rank ?? 0),
     }));
   }
-
-  async ensureFullTextIndexes(): Promise<void> {
-    const stmts = [
-      `CREATE INDEX IF NOT EXISTS ft_issue_title_desc ON ${QUOTE("issue")}
-         USING GIN (to_tsvector('english', COALESCE(${QUOTE("title")}, '') || ' ' || COALESCE(${QUOTE("description")}, '')))`,
-      `CREATE INDEX IF NOT EXISTS ft_comment_body ON ${QUOTE("comment")}
-         USING GIN (to_tsvector('english', ${QUOTE("body")}))`,
-    ];
-    for (const stmt of stmts) {
-      try {
-        await this.em.query(stmt);
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn(`[SearchRepository:pg] Could not create GIN index: ${err}`);
-      }
-    }
-  }
 }
