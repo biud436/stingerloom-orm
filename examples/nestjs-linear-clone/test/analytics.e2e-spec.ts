@@ -1,8 +1,8 @@
-import * as request from "supertest";
 import {
   bootApp,
   shutdownApp,
   integrationDescribe,
+  authedAgent,
   BootedApp,
 } from "./helpers/test-app";
 import {
@@ -15,6 +15,7 @@ import {
 integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-in-status", () => {
   let booted: BootedApp;
   let fx: BaseFixture;
+  let api: ReturnType<typeof authedAgent>;
   let sprintId: number;
 
   // Tree fixtures
@@ -30,6 +31,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
   beforeAll(async () => {
     booted = await bootApp();
     fx = await createBaseFixture(booted.server);
+    api = authedAgent(booted.server, fx.ownerToken);
     sprintId = await createSprint(booted.server, fx.projectId);
 
     // Build a 4-level tree:
@@ -95,15 +97,15 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     // Transition some issues through statuses so STATUS_CHANGED logs accumulate
     // and the throughput / burndown queries see completed work.
     for (const id of [rootId, aId, bId]) {
-      const cur = await request(booted.server).get(`/issues/${id}`);
+      const cur = await api.get(`/issues/${id}`);
       const v0 = cur.body.version;
 
-      const r1 = await request(booted.server)
+      const r1 = await api
         .patch(`/issues/${id}`)
         .send({ expectedVersion: v0, status: "IN_PROGRESS" })
         .expect(200);
 
-      const r2 = await request(booted.server)
+      const r2 = await api
         .patch(`/issues/${id}`)
         .send({ expectedVersion: r1.body.version, status: "DONE" })
         .expect(200);
@@ -122,7 +124,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
   // ────────────────────────────────────────────────
   describe("Recursive CTE issue tree", () => {
     it("returns the root + 4 descendants ordered by path", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/issues/${rootId}/tree`)
         .expect(200);
 
@@ -135,7 +137,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     });
 
     it("depth values match each node's level", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/issues/${rootId}/tree`)
         .expect(200);
 
@@ -148,7 +150,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     });
 
     it("path values reflect ancestor chain", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/issues/${rootId}/tree`)
         .expect(200);
 
@@ -160,7 +162,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     });
 
     it("maxDepth=1 returns root + direct children only", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/issues/${rootId}/tree`)
         .query({ maxDepth: 1 })
         .expect(200);
@@ -173,9 +175,9 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     });
 
     it("excludes soft-deleted descendants", async () => {
-      await request(booted.server).delete(`/issues/${aChildId}`).expect(204);
+      await api.delete(`/issues/${aChildId}`).expect(204);
 
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/issues/${rootId}/tree`)
         .expect(200);
 
@@ -184,11 +186,11 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
       expect(ids).toContain(bChildId);
 
       // Restore for downstream tests
-      await request(booted.server).post(`/issues/${aChildId}/restore`).expect(204);
+      await api.post(`/issues/${aChildId}/restore`).expect(204);
     });
 
     it("starts at the requested non-root id", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/issues/${aId}/tree`)
         .expect(200);
 
@@ -205,7 +207,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
   // ────────────────────────────────────────────────
   describe("Sprint burndown (window function)", () => {
     it("returns row shape matching {day, completedThatDay, cumulativeCompleted, remainingEstimate}", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/sprints/${sprintId}/burndown`)
         .expect(200);
 
@@ -221,7 +223,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     });
 
     it("cumulativeCompleted is non-decreasing", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/sprints/${sprintId}/burndown`)
         .expect(200);
 
@@ -233,7 +235,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     });
 
     it("the final cumulativeCompleted equals total completed in sprint", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/sprints/${sprintId}/burndown`)
         .expect(200);
 
@@ -247,7 +249,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
   // ────────────────────────────────────────────────
   describe("Assignee throughput (ROW_NUMBER OVER)", () => {
     it("returns rows for completed issues, ranked starting at 1", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/projects/${fx.projectId}/throughput`)
         .query({ days: 365 })
         .expect(200);
@@ -258,7 +260,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     });
 
     it("rankInProject is strictly increasing", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/projects/${fx.projectId}/throughput`)
         .query({ days: 365 })
         .expect(200);
@@ -271,7 +273,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     });
 
     it("assignees with no completed issues do not appear", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/projects/${fx.projectId}/throughput`)
         .query({ days: 365 })
         .expect(200);
@@ -282,7 +284,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     });
 
     it("includes averageCycleHours as a non-negative number", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/projects/${fx.projectId}/throughput`)
         .query({ days: 365 })
         .expect(200);
@@ -300,7 +302,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
   describe("Time in status (LAG/LEAD over activity_log)", () => {
     it("returns one row per STATUS_CHANGED entry", async () => {
       // rootId went BACKLOG → IN_PROGRESS → DONE so we expect 2 transitions.
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/issues/${rootId}/time-in-status`)
         .expect(200);
 
@@ -309,7 +311,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     });
 
     it("each row has issueId and status fields", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/issues/${rootId}/time-in-status`)
         .expect(200);
 
@@ -321,7 +323,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
     });
 
     it("the latest entry has leftAt = null and hoursInStatus = null", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/issues/${rootId}/time-in-status`)
         .expect(200);
 
@@ -336,7 +338,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
         title: "Never transitioned",
       });
 
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/issues/${fresh.id}/time-in-status`)
         .expect(200);
 
@@ -349,7 +351,7 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
   // ────────────────────────────────────────────────
   describe("Weekly lead time", () => {
     it("returns rows aggregating completed issues per week", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/analytics/projects/${fx.projectId}/lead-time`)
         .query({ days: 365 })
         .expect(200);

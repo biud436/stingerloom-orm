@@ -1,8 +1,8 @@
-import * as request from "supertest";
 import {
   bootApp,
   shutdownApp,
   integrationDescribe,
+  authedAgent,
   BootedApp,
 } from "./helpers/test-app";
 import { createBaseFixture, createIssue, BaseFixture } from "./helpers/fixtures";
@@ -24,10 +24,12 @@ const STRESS_DESCRIBE = process.env.STRESS === "true" ? describe : describe.skip
 integrationDescribe("Queue — concurrency stress (STRESS=true)", () => {
   let booted: BootedApp;
   let fx: BaseFixture;
+  let api: ReturnType<typeof authedAgent>;
 
   beforeAll(async () => {
     booted = await bootApp();
     fx = await createBaseFixture(booted.server);
+    api = authedAgent(booted.server, fx.ownerToken);
   }, 120_000);
 
   afterAll(async () => {
@@ -48,9 +50,8 @@ integrationDescribe("Queue — concurrency stress (STRESS=true)", () => {
       }
 
       const claimers = Array.from({ length: N }, (_, i) =>
-        request(booted.server)
+        api
           .post("/queue/claim")
-          .set("Authorization", `Bearer ${fx.ownerToken}`)
           .send({ workerId: `worker-${i}`, projectId: fx.projectId }),
       );
       const responses = await Promise.all(claimers);
@@ -73,9 +74,8 @@ integrationDescribe("Queue — concurrency stress (STRESS=true)", () => {
 
       const N = 50;
       const writers = Array.from({ length: N }, (_, i) =>
-        request(booted.server)
+        api
           .patch(`/issues/${issue.id}`)
-          .set("Authorization", `Bearer ${fx.ownerToken}`)
           .send({
             expectedVersion: issue.version,
             title: `concurrent-${i}`,
@@ -97,31 +97,26 @@ integrationDescribe("Queue — concurrency stress (STRESS=true)", () => {
         title: "restore-with-labels",
       });
 
-      const label = await request(booted.server)
+      const label = await api
         .post("/labels")
-        .set("Authorization", `Bearer ${fx.ownerToken}`)
         .send({ projectId: fx.projectId, name: "stress-label" })
         .expect(201);
 
-      await request(booted.server)
+      await api
         .post(`/issues/${issue.id}/labels`)
-        .set("Authorization", `Bearer ${fx.ownerToken}`)
         .send({ labelId: label.body.id })
         .expect(201);
 
-      await request(booted.server)
+      await api
         .delete(`/issues/${issue.id}`)
-        .set("Authorization", `Bearer ${fx.ownerToken}`)
         .expect(204);
 
-      await request(booted.server)
+      await api
         .post(`/issues/${issue.id}/restore`)
-        .set("Authorization", `Bearer ${fx.ownerToken}`)
         .expect(204);
 
-      const restored = await request(booted.server)
+      const restored = await api
         .get(`/issues/${issue.id}`)
-        .set("Authorization", `Bearer ${fx.ownerToken}`)
         .expect(200);
 
       const labelIds = (restored.body.labels ?? []).map(

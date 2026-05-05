@@ -1,8 +1,8 @@
-import * as request from "supertest";
 import {
   bootApp,
   shutdownApp,
   integrationDescribe,
+  authedAgent,
   BootedApp,
 } from "./helpers/test-app";
 import {
@@ -14,6 +14,7 @@ import {
 integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => {
   let booted: BootedApp;
   let fx: BaseFixture;
+  let api: ReturnType<typeof authedAgent>;
 
   /**
    * Seed N claimable issues. Eligible = status BACKLOG/TODO + assigneeId NULL +
@@ -36,6 +37,7 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
   beforeAll(async () => {
     booted = await bootApp();
     fx = await createBaseFixture(booted.server);
+    api = authedAgent(booted.server, fx.ownerToken);
   }, 60000);
 
   afterAll(async () => {
@@ -47,7 +49,7 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
   // ────────────────────────────────────────────────
   describe("Empty queue", () => {
     it("returns null body when no claimable issue exists", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .post("/queue/claim")
         .send({ workerId: "empty-w", projectId: fx.projectId })
         .expect(201);
@@ -62,7 +64,7 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
     it("claims an issue and stamps claimedBy / claimedAt", async () => {
       const [target] = await seedClaimable(1);
 
-      const res = await request(booted.server)
+      const res = await api
         .post("/queue/claim")
         .send({ workerId: "solo-1", projectId: fx.projectId })
         .expect(201);
@@ -75,12 +77,12 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
     it("logs CLAIMED in the activity log for the claimed issue", async () => {
       const [target] = await seedClaimable(1);
 
-      await request(booted.server)
+      await api
         .post("/queue/claim")
         .send({ workerId: "solo-2", projectId: fx.projectId })
         .expect(201);
 
-      const log = await request(booted.server)
+      const log = await api
         .get(`/activity/issues/${target}`)
         .expect(200);
       const claimed = log.body.find((r: any) => r.action === "CLAIMED");
@@ -102,14 +104,14 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
         priority: 1,
       });
 
-      const res = await request(booted.server)
+      const res = await api
         .post("/queue/claim")
         .send({ workerId: "ord", projectId: fx.projectId })
         .expect(201);
 
       expect(res.body.id).toBe(highPri.id);
       // Drain: also claim the low-pri one to keep the table clean
-      const res2 = await request(booted.server)
+      const res2 = await api
         .post("/queue/claim")
         .send({ workerId: "ord", projectId: fx.projectId })
         .expect(201);
@@ -126,7 +128,7 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
 
       const claims = await Promise.all(
         ["w1", "w2", "w3", "w4"].map((id) =>
-          request(booted.server)
+          api
             .post("/queue/claim")
             .send({ workerId: id, projectId: fx.projectId }),
         ),
@@ -147,7 +149,7 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
     it("when only N rows are available, N+1 workers leaves the last with null", async () => {
       // Drain remaining
       while (true) {
-        const r = await request(booted.server)
+        const r = await api
           .post("/queue/claim")
           .send({ workerId: "drain", projectId: fx.projectId });
         if (!r.body || !r.body.id) break;
@@ -157,7 +159,7 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
 
       const res = await Promise.all(
         ["x1", "x2", "x3"].map((id) =>
-          request(booted.server)
+          api
             .post("/queue/claim")
             .send({ workerId: id, projectId: fx.projectId }),
         ),
@@ -176,13 +178,13 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
   describe("Release", () => {
     it("releases a claim made by the same worker", async () => {
       const [target] = await seedClaimable(1);
-      const claim = await request(booted.server)
+      const claim = await api
         .post("/queue/claim")
         .send({ workerId: "rel-1", projectId: fx.projectId })
         .expect(201);
       expect(claim.body.id).toBe(target);
 
-      const released = await request(booted.server)
+      const released = await api
         .post(`/queue/release/${target}`)
         .send({ workerId: "rel-1" })
         .expect(201);
@@ -191,12 +193,12 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
 
     it("returns false when the worker is not the claimer", async () => {
       const [target] = await seedClaimable(1);
-      await request(booted.server)
+      await api
         .post("/queue/claim")
         .send({ workerId: "rel-owner", projectId: fx.projectId })
         .expect(201);
 
-      const fail = await request(booted.server)
+      const fail = await api
         .post(`/queue/release/${target}`)
         .send({ workerId: "imposter" })
         .expect(201);
@@ -205,16 +207,16 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
 
     it("a released issue becomes immediately claimable again", async () => {
       const [target] = await seedClaimable(1);
-      await request(booted.server)
+      await api
         .post("/queue/claim")
         .send({ workerId: "round-trip", projectId: fx.projectId })
         .expect(201);
-      await request(booted.server)
+      await api
         .post(`/queue/release/${target}`)
         .send({ workerId: "round-trip" })
         .expect(201);
 
-      const next = await request(booted.server)
+      const next = await api
         .post("/queue/claim")
         .send({ workerId: "second", projectId: fx.projectId })
         .expect(201);
@@ -228,7 +230,7 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
   // ────────────────────────────────────────────────
   describe("Stats", () => {
     it("returns counts {backlog, todo, activelyClaimed, expiredClaim}", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get(`/queue/stats/${fx.projectId}`)
         .expect(200);
 
@@ -241,20 +243,20 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
     it("backlog count drops by N after claiming N issues", async () => {
       await seedClaimable(3);
 
-      const before = await request(booted.server)
+      const before = await api
         .get(`/queue/stats/${fx.projectId}`)
         .expect(200);
 
-      await request(booted.server)
+      await api
         .post("/queue/claim")
         .send({ workerId: "stats-w", projectId: fx.projectId })
         .expect(201);
-      await request(booted.server)
+      await api
         .post("/queue/claim")
         .send({ workerId: "stats-w", projectId: fx.projectId })
         .expect(201);
 
-      const after = await request(booted.server)
+      const after = await api
         .get(`/queue/stats/${fx.projectId}`)
         .expect(200);
 
@@ -270,14 +272,14 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
   // ────────────────────────────────────────────────
   describe("Validation", () => {
     it("rejects workerId with disallowed characters", async () => {
-      await request(booted.server)
+      await api
         .post("/queue/claim")
         .send({ workerId: "bad worker!", projectId: fx.projectId })
         .expect(400);
     });
 
     it("rejects missing projectId", async () => {
-      await request(booted.server)
+      await api
         .post("/queue/claim")
         .send({ workerId: "ok" })
         .expect(400);

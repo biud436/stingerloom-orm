@@ -1,8 +1,8 @@
-import * as request from "supertest";
 import {
   bootApp,
   shutdownApp,
   integrationDescribe,
+  authedAgent,
   BootedApp,
 } from "./helpers/test-app";
 import { createBaseFixture, createIssue, BaseFixture } from "./helpers/fixtures";
@@ -23,10 +23,12 @@ import { createBaseFixture, createIssue, BaseFixture } from "./helpers/fixtures"
 integrationDescribe("Issues — relations: multi-FK to same target (regression)", () => {
   let booted: BootedApp;
   let fx: BaseFixture;
+  let api: ReturnType<typeof authedAgent>;
 
   beforeAll(async () => {
     booted = await bootApp();
     fx = await createBaseFixture(booted.server);
+    api = authedAgent(booted.server, fx.ownerToken);
   }, 60_000);
 
   afterAll(async () => {
@@ -34,17 +36,14 @@ integrationDescribe("Issues — relations: multi-FK to same target (regression)"
   });
 
   it("loads assignee + reporter + sprint + parent simultaneously", async () => {
-    const auth = `Bearer ${fx.ownerToken}`;
-
     // Create a parent issue, then a child whose assignee != reporter.
     const parent = await createIssue(booted.server, {
       projectId: fx.projectId,
       title: "Parent epic",
     });
 
-    const issue = await request(booted.server)
+    const issue = await api
       .post("/issues")
-      .set("Authorization", auth)
       .send({
         projectId: fx.projectId,
         title: "Child issue with distinct assignee + reporter",
@@ -56,9 +55,8 @@ integrationDescribe("Issues — relations: multi-FK to same target (regression)"
     // GET /issues/:id triggers `findOne` which loads
     // ["labels","assignee","reporter","sprint","parent"]. Without the
     // RelationLoader fix this query fails on MariaDB.
-    const r = await request(booted.server)
+    const r = await api
       .get(`/issues/${issue.body.id}`)
-      .set("Authorization", auth)
       .expect(200);
 
     expect(r.body.id).toBe(issue.body.id);

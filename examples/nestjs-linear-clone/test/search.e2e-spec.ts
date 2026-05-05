@@ -1,8 +1,8 @@
-import * as request from "supertest";
 import {
   bootApp,
   shutdownApp,
   integrationDescribe,
+  authedAgent,
   BootedApp,
 } from "./helpers/test-app";
 import {
@@ -14,6 +14,7 @@ import {
 integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
   let booted: BootedApp;
   let fx: BaseFixture;
+  let api: ReturnType<typeof authedAgent>;
 
   // Issue ids by topic
   let connectionPoolId: number;
@@ -24,6 +25,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
   beforeAll(async () => {
     booted = await bootApp();
     fx = await createBaseFixture(booted.server);
+    api = authedAgent(booted.server, fx.ownerToken);
 
     const seed = [
       {
@@ -65,7 +67,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
     s0SeverityId = connectionPoolId; // first issue carries severity=S0
 
     // Add a comment so the FTS UNION ALL also has comment hits
-    await request(booted.server)
+    await api
       .post("/comments")
       .send({
         issueId: oauthCallbackId,
@@ -87,18 +89,18 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
   // ────────────────────────────────────────────────
   describe("Full-text search", () => {
     it("rejects too-short query strings", async () => {
-      await request(booted.server)
+      await api
         .get("/search/issues")
         .query({ q: "a" })
         .expect(400);
     });
 
     it("rejects missing q", async () => {
-      await request(booted.server).get("/search/issues").expect(400);
+      await api.get("/search/issues").expect(400);
     });
 
     it("finds issues by title keyword", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get("/search/issues")
         .query({ q: "connection", projectId: fx.projectId, limit: 50 })
         .expect(200);
@@ -109,7 +111,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
     });
 
     it("returns rank as a number on each hit", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get("/search/issues")
         .query({ q: "connection", projectId: fx.projectId, limit: 50 })
         .expect(200);
@@ -122,7 +124,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
     });
 
     it("rank ordering is non-increasing", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get("/search/issues")
         .query({ q: "connection", projectId: fx.projectId, limit: 50 })
         .expect(200);
@@ -133,7 +135,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
     });
 
     it("includes comment-source hits via UNION ALL", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get("/search/issues")
         .query({ q: "deployment", projectId: fx.projectId, limit: 50 })
         .expect(200);
@@ -144,7 +146,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
 
     it("respects projectId filter", async () => {
       // Create a second project + issue with the same keyword
-      const projB = await request(booted.server)
+      const projB = await api
         .post("/projects")
         .send({
           workspaceId: fx.workspaceId,
@@ -160,7 +162,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
 
       await new Promise((r) => setTimeout(r, 1000));
 
-      const inA = await request(booted.server)
+      const inA = await api
         .get("/search/issues")
         .query({ q: "connection", projectId: fx.projectId, limit: 50 })
         .expect(200);
@@ -170,7 +172,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
     });
 
     it("applies limit cap", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get("/search/issues")
         .query({ q: "connection", projectId: fx.projectId, limit: 1 })
         .expect(200);
@@ -184,7 +186,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
   // ────────────────────────────────────────────────
   describe("JSON custom field filter", () => {
     it("returns issues with the matching severity value", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get("/search/by-custom-field")
         .query({ projectId: fx.projectId, key: "severity", value: "S0" })
         .expect(200);
@@ -200,7 +202,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
     });
 
     it("returns multiple matches when many issues share the value", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get("/search/by-custom-field")
         .query({ projectId: fx.projectId, key: "severity", value: "S2" })
         .expect(200);
@@ -209,7 +211,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
     });
 
     it("returns empty array on a value with no matches", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .get("/search/by-custom-field")
         .query({ projectId: fx.projectId, key: "severity", value: "DOES-NOT-EXIST" })
         .expect(200);
@@ -226,7 +228,7 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
         `'; DROP TABLE issue; --`,
       ];
       for (const key of tries) {
-        await request(booted.server)
+        await api
           .get("/search/by-custom-field")
           .query({ projectId: fx.projectId, key, value: "S0" })
           .expect(400);
@@ -234,11 +236,11 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
     });
 
     it("requires all of projectId/key/value", async () => {
-      await request(booted.server)
+      await api
         .get("/search/by-custom-field")
         .query({ projectId: fx.projectId, key: "severity" })
         .expect(400);
-      await request(booted.server)
+      await api
         .get("/search/by-custom-field")
         .query({ projectId: fx.projectId, value: "S0" })
         .expect(400);

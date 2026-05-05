@@ -1,8 +1,8 @@
-import * as request from "supertest";
 import {
   bootApp,
   shutdownApp,
   integrationDescribe,
+  authedAgent,
   BootedApp,
 } from "./helpers/test-app";
 import {
@@ -15,12 +15,14 @@ import {
 integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, soft delete, audit log", () => {
   let booted: BootedApp;
   let fx: BaseFixture;
+  let api: ReturnType<typeof authedAgent>;
   let labelBugId: number;
   let labelPerfId: number;
 
   beforeAll(async () => {
     booted = await bootApp();
     fx = await createBaseFixture(booted.server);
+    api = authedAgent(booted.server, fx.ownerToken);
     labelBugId = await createLabel(booted.server, fx.projectId, "bug");
     labelPerfId = await createLabel(booted.server, fx.projectId, "perf");
   }, 60000);
@@ -91,7 +93,7 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
     });
 
     it("first update with the current version succeeds", async () => {
-      const res = await request(booted.server)
+      const res = await api
         .patch(`/issues/${issueId}`)
         .send({ expectedVersion: initialVersion, title: "Renamed" })
         .expect(200);
@@ -100,21 +102,21 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
     });
 
     it("a second update reusing the original version returns 409", async () => {
-      await request(booted.server)
+      await api
         .patch(`/issues/${issueId}`)
         .send({ expectedVersion: initialVersion, title: "Should fail" })
         .expect(409);
     });
 
     it("two concurrent updates → exactly one succeeds and one returns 409", async () => {
-      const fresh = await request(booted.server).get(`/issues/${issueId}`).expect(200);
+      const fresh = await api.get(`/issues/${issueId}`).expect(200);
       const v = fresh.body.version;
 
       const [a, b] = await Promise.all([
-        request(booted.server)
+        api
           .patch(`/issues/${issueId}`)
           .send({ expectedVersion: v, status: "TODO" }),
-        request(booted.server)
+        api
           .patch(`/issues/${issueId}`)
           .send({ expectedVersion: v, status: "IN_PROGRESS" }),
       ]);
@@ -124,16 +126,16 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
     });
 
     it("version monotonically increments on each successful update", async () => {
-      const fetched = await request(booted.server).get(`/issues/${issueId}`);
+      const fetched = await api.get(`/issues/${issueId}`);
       const v0 = fetched.body.version;
 
-      const r1 = await request(booted.server)
+      const r1 = await api
         .patch(`/issues/${issueId}`)
         .send({ expectedVersion: v0, priority: 1 })
         .expect(200);
       expect(r1.body.version).toBe(v0 + 1);
 
-      const r2 = await request(booted.server)
+      const r2 = await api
         .patch(`/issues/${issueId}`)
         .send({ expectedVersion: r1.body.version, priority: 2 })
         .expect(200);
@@ -156,45 +158,45 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
     });
 
     it("attaches a label", async () => {
-      await request(booted.server)
+      await api
         .post(`/issues/${issueId}/labels`)
         .send({ labelId: labelBugId })
         .expect(201);
 
-      const issue = await request(booted.server).get(`/issues/${issueId}`).expect(200);
+      const issue = await api.get(`/issues/${issueId}`).expect(200);
       const labelIds = (issue.body.labels ?? []).map((l: any) => l.id);
       expect(labelIds).toContain(labelBugId);
     });
 
     it("attaching the same label twice is idempotent (no duplicate row)", async () => {
-      await request(booted.server)
+      await api
         .post(`/issues/${issueId}/labels`)
         .send({ labelId: labelBugId })
         .expect(201);
 
-      const issue = await request(booted.server).get(`/issues/${issueId}`).expect(200);
+      const issue = await api.get(`/issues/${issueId}`).expect(200);
       const labelIds = (issue.body.labels ?? []).map((l: any) => l.id);
       const occurrences = labelIds.filter((id: number) => id === labelBugId).length;
       expect(occurrences).toBe(1);
     });
 
     it("attaches a second label", async () => {
-      await request(booted.server)
+      await api
         .post(`/issues/${issueId}/labels`)
         .send({ labelId: labelPerfId })
         .expect(201);
 
-      const issue = await request(booted.server).get(`/issues/${issueId}`).expect(200);
+      const issue = await api.get(`/issues/${issueId}`).expect(200);
       const labelIds = (issue.body.labels ?? []).map((l: any) => l.id);
       expect(labelIds).toEqual(expect.arrayContaining([labelBugId, labelPerfId]));
     });
 
     it("removes a label", async () => {
-      await request(booted.server)
+      await api
         .delete(`/issues/${issueId}/labels/${labelBugId}`)
         .expect(204);
 
-      const issue = await request(booted.server).get(`/issues/${issueId}`).expect(200);
+      const issue = await api.get(`/issues/${issueId}`).expect(200);
       const labelIds = (issue.body.labels ?? []).map((l: any) => l.id);
       expect(labelIds).not.toContain(labelBugId);
       expect(labelIds).toContain(labelPerfId);
@@ -216,13 +218,13 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
     });
 
     it("soft-delete returns 204 and 404 on subsequent GET", async () => {
-      await request(booted.server).delete(`/issues/${issueId}`).expect(204);
-      await request(booted.server).get(`/issues/${issueId}`).expect(404);
+      await api.delete(`/issues/${issueId}`).expect(204);
+      await api.get(`/issues/${issueId}`).expect(404);
     });
 
     it("restore brings the row back", async () => {
-      await request(booted.server).post(`/issues/${issueId}/restore`).expect(204);
-      const r = await request(booted.server).get(`/issues/${issueId}`).expect(200);
+      await api.post(`/issues/${issueId}/restore`).expect(204);
+      const r = await api.get(`/issues/${issueId}`).expect(200);
       expect(r.body.id).toBe(issueId);
     });
   });
@@ -232,7 +234,7 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
   // ────────────────────────────────────────────────
   describe("Cursor pagination", () => {
     it("returns a cursor and respects take", async () => {
-      const r = await request(booted.server)
+      const r = await api
         .get("/issues/cursor")
         .query({ take: 3 })
         .expect(200);
@@ -258,19 +260,19 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
     });
 
     it("ISSUE_CREATED is logged at creation", async () => {
-      const log = await request(booted.server).get(`/activity/issues/${issueId}`).expect(200);
+      const log = await api.get(`/activity/issues/${issueId}`).expect(200);
       const actions = log.body.map((r: any) => r.action);
       expect(actions).toContain("ISSUE_CREATED");
     });
 
     it("status change recorded as ISSUE_UPDATED with column diff", async () => {
-      const issue = await request(booted.server).get(`/issues/${issueId}`);
-      await request(booted.server)
+      const issue = await api.get(`/issues/${issueId}`);
+      await api
         .patch(`/issues/${issueId}`)
         .send({ expectedVersion: issue.body.version, status: "IN_PROGRESS" })
         .expect(200);
 
-      const log = await request(booted.server).get(`/activity/issues/${issueId}`).expect(200);
+      const log = await api.get(`/activity/issues/${issueId}`).expect(200);
       const updates = log.body.filter((r: any) => r.action === "ISSUE_UPDATED");
       const statusEntry = updates
         .flatMap((r: any) => r.payload?.changes ?? [])
@@ -280,12 +282,12 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
     });
 
     it("assignee change recorded as ISSUE_UPDATED with column diff", async () => {
-      await request(booted.server)
+      await api
         .patch(`/issues/${issueId}/assignee`)
         .send({ assigneeId: fx.userIds[2] })
         .expect(200);
 
-      const log = await request(booted.server).get(`/activity/issues/${issueId}`).expect(200);
+      const log = await api.get(`/activity/issues/${issueId}`).expect(200);
       const updates = log.body.filter((r: any) => r.action === "ISSUE_UPDATED");
       const assignEntry = updates
         .flatMap((r: any) => r.payload?.changes ?? [])
@@ -294,14 +296,14 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
     });
 
     it("priority change recorded as ISSUE_UPDATED with column diff", async () => {
-      const issue = await request(booted.server).get(`/issues/${issueId}`);
+      const issue = await api.get(`/issues/${issueId}`);
       const v = issue.body.version;
-      await request(booted.server)
+      await api
         .patch(`/issues/${issueId}`)
         .send({ expectedVersion: v, priority: 1 })
         .expect(200);
 
-      const log = await request(booted.server).get(`/activity/issues/${issueId}`).expect(200);
+      const log = await api.get(`/activity/issues/${issueId}`).expect(200);
       const updates = log.body.filter((r: any) => r.action === "ISSUE_UPDATED");
       const pri = updates
         .flatMap((r: any) => r.payload?.changes ?? [])
@@ -310,21 +312,21 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
     });
 
     it("LABEL_ADDED and LABEL_REMOVED logged", async () => {
-      await request(booted.server)
+      await api
         .post(`/issues/${issueId}/labels`)
         .send({ labelId: labelBugId })
         .expect(201);
-      await request(booted.server)
+      await api
         .delete(`/issues/${issueId}/labels/${labelBugId}`)
         .expect(204);
 
-      const log = await request(booted.server).get(`/activity/issues/${issueId}`).expect(200);
+      const log = await api.get(`/activity/issues/${issueId}`).expect(200);
       const actions = log.body.map((r: any) => r.action);
       expect(actions).toEqual(expect.arrayContaining(["LABEL_ADDED", "LABEL_REMOVED"]));
     });
 
     it("COMMENTED logged when a comment is created", async () => {
-      await request(booted.server)
+      await api
         .post("/comments")
         .send({
           issueId,
@@ -333,13 +335,13 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
         })
         .expect(201);
 
-      const log = await request(booted.server).get(`/activity/issues/${issueId}`).expect(200);
+      const log = await api.get(`/activity/issues/${issueId}`).expect(200);
       const c = log.body.find((r: any) => r.action === "COMMENTED");
       expect(c).toBeTruthy();
     });
 
     it("workspace audit feed contains issue events", async () => {
-      const log = await request(booted.server)
+      const log = await api
         .get(`/activity/workspaces/${fx.workspaceId}`)
         .query({ limit: 200 })
         .expect(200);
