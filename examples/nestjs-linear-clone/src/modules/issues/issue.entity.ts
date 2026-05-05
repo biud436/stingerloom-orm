@@ -19,7 +19,7 @@ import { Sprint } from "../sprints/sprint.entity";
 import { User } from "../users/user.entity";
 import { Label } from "../labels/label.entity";
 import { Comment } from "../comments/comment.entity";
-import { IssueStatus, IssuePriority, ISSUE_STATUS } from "../common/enums";
+import { IssueStatus, IssuePriority, ISSUE_STATUS } from "../../common/enums";
 
 /**
  * Self-referencing parent column powers the recursive subissue tree.

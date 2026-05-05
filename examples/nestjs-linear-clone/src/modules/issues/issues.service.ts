@@ -23,13 +23,13 @@ import {
 } from "./dto/issue.dto";
 import { ProjectsService } from "../projects/projects.service";
 import { ActivityService } from "../activity/activity.service";
-import { applyPatch, pickDefined } from "../common/dto-helpers";
+import { applyPatch, pickDefined } from "../../common/dto-helpers";
 import {
   ACTIVITY_ACTION,
   ISSUE_STATUS,
   IssueStatus,
   TERMINAL_STATUSES,
-} from "../common/enums";
+} from "../../common/enums";
 
 const PATCHABLE_KEYS = [
   "title",

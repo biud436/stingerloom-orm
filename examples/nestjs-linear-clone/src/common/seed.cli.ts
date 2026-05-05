@@ -1,14 +1,14 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "../app.module";
-import { WorkspacesService } from "../workspaces/workspaces.service";
-import { UsersService } from "../users/users.service";
-import { MembershipsService } from "../memberships/memberships.service";
-import { ProjectsService } from "../projects/projects.service";
-import { SprintsService } from "../sprints/sprints.service";
-import { LabelsService } from "../labels/labels.service";
-import { IssuesService } from "../issues/issues.service";
-import { CommentsService } from "../comments/comments.service";
+import { WorkspacesService } from "../modules/workspaces/workspaces.service";
+import { UsersService } from "../modules/users/users.service";
+import { MembershipsService } from "../modules/memberships/memberships.service";
+import { ProjectsService } from "../modules/projects/projects.service";
+import { SprintsService } from "../modules/sprints/sprints.service";
+import { LabelsService } from "../modules/labels/labels.service";
+import { IssuesService } from "../modules/issues/issues.service";
+import { CommentsService } from "../modules/comments/comments.service";
 import {
   MEMBERSHIP_ROLE,
   SPRINT_STATUS,

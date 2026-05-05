@@ -9,7 +9,7 @@ import {
 } from "@stingerloom/orm";
 import { Workspace } from "../workspaces/workspace.entity";
 import { User } from "../users/user.entity";
-import { MembershipRole } from "../common/enums";
+import { MembershipRole } from "../../common/enums";
 
 @Entity()
 @UniqueIndex(["workspace_id", "user_id"])

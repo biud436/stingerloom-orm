@@ -6,7 +6,7 @@ import {
   raw,
 } from "@stingerloom/orm";
 import { detectDialect, dsl } from "./sql-helpers";
-import { ISSUE_STATUS } from "../common/enums";
+import { ISSUE_STATUS } from "../../common/enums";
 
 export interface IssueTreeRow {
   id: number;

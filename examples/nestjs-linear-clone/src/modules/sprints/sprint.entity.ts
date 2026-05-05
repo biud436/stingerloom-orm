@@ -11,7 +11,7 @@ import {
 } from "@stingerloom/orm";
 import { Project } from "../projects/project.entity";
 import { Issue } from "../issues/issue.entity";
-import { SprintStatus } from "../common/enums";
+import { SprintStatus } from "../../common/enums";
 
 @Entity()
 @Index(["project_id", "status"])

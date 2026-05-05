@@ -8,7 +8,7 @@ import {
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Sprint } from "./sprint.entity";
 import { CreateSprintDto, UpdateSprintDto } from "./dto/sprint.dto";
-import { applyPatch, pickDefined } from "../common/dto-helpers";
+import { applyPatch, pickDefined } from "../../common/dto-helpers";
 
 const SPRINT_PATCH_KEYS = ["name", "status"] as const;
 

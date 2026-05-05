@@ -15,7 +15,7 @@ import {
   ISSUE_PRIORITY,
   IssueStatus,
   IssuePriority,
-} from "../../common/enums";
+} from "../../../common/enums";
 
 export class CreateIssueDto {
   @ApiProperty({ example: 1 })

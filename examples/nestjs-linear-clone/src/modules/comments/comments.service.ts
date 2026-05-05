@@ -9,7 +9,7 @@ import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Comment } from "./comment.entity";
 import { CreateCommentDto, UpdateCommentDto } from "./dto/comment.dto";
 import { ActivityService } from "../activity/activity.service";
-import { ACTIVITY_ACTION } from "../common/enums";
+import { ACTIVITY_ACTION } from "../../common/enums";
 
 @Injectable()
 export class CommentsService {

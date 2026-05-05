@@ -5,7 +5,7 @@ import {
   Index,
   BeforeInsert,
 } from "@stingerloom/orm";
-import { ActivityAction } from "../common/enums";
+import { ActivityAction } from "../../common/enums";
 
 /**
  * Append-only audit log. Rows are inserted by ActivitySubscriber whenever

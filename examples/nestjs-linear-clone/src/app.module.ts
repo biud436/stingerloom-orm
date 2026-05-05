@@ -1,18 +1,18 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
-import { WorkspacesModule } from "./workspaces/workspaces.module";
-import { UsersModule } from "./users/users.module";
-import { MembershipsModule } from "./memberships/memberships.module";
-import { ProjectsModule } from "./projects/projects.module";
-import { SprintsModule } from "./sprints/sprints.module";
-import { IssuesModule } from "./issues/issues.module";
-import { LabelsModule } from "./labels/labels.module";
-import { CommentsModule } from "./comments/comments.module";
-import { ActivityModule } from "./activity/activity.module";
-import { AnalyticsModule } from "./analytics/analytics.module";
-import { SearchModule } from "./search/search.module";
-import { QueueModule } from "./queue/queue.module";
+import { WorkspacesModule } from "./modules/workspaces/workspaces.module";
+import { UsersModule } from "./modules/users/users.module";
+import { MembershipsModule } from "./modules/memberships/memberships.module";
+import { ProjectsModule } from "./modules/projects/projects.module";
+import { SprintsModule } from "./modules/sprints/sprints.module";
+import { IssuesModule } from "./modules/issues/issues.module";
+import { LabelsModule } from "./modules/labels/labels.module";
+import { CommentsModule } from "./modules/comments/comments.module";
+import { ActivityModule } from "./modules/activity/activity.module";
+import { AnalyticsModule } from "./modules/analytics/analytics.module";
+import { SearchModule } from "./modules/search/search.module";
+import { QueueModule } from "./modules/queue/queue.module";
 
 const dbType = (process.env.DB_TYPE ?? "mysql") as "mysql" | "postgres";
 

@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { BaseRepository } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { ActivityLog } from "./activity-log.entity";
-import { ActivityAction } from "../common/enums";
+import { ActivityAction } from "../../common/enums";
 
 @Injectable()
 export class ActivityService {

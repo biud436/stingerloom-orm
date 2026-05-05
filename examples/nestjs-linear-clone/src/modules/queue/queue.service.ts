@@ -10,7 +10,7 @@ import {
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Issue } from "../issues/issue.entity";
 import { ActivityService } from "../activity/activity.service";
-import { ACTIVITY_ACTION, ISSUE_STATUS } from "../common/enums";
+import { ACTIVITY_ACTION, ISSUE_STATUS } from "../../common/enums";
 
 export interface ClaimedIssue {
   id: number;

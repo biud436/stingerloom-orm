@@ -6,7 +6,7 @@ import {
   IsIn,
   IsDateString,
 } from "class-validator";
-import { SPRINT_STATUS, SprintStatus } from "../../common/enums";
+import { SPRINT_STATUS, SprintStatus } from "../../../common/enums";
 
 export class CreateSprintDto {
   @ApiProperty({ example: 1 })

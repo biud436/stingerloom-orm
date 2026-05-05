@@ -1,6 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { IsInt, IsIn } from "class-validator";
-import { MEMBERSHIP_ROLE, MembershipRole } from "../../common/enums";
+import { MEMBERSHIP_ROLE, MembershipRole } from "../../../common/enums";
 
 export class CreateMembershipDto {
   @ApiProperty({ example: 1 })
