@@ -113,8 +113,8 @@ describe("ColumnTypeRegistry", () => {
 
     const transformer = registry.getTransformer("geometry");
     expect(transformer).toBeDefined();
-    expect(transformer!.to("hello")).toBe("to:hello");
-    expect(transformer!.from("world")).toBe("from:world");
+    expect(transformer!.to!("hello")).toBe("to:hello");
+    expect(transformer!.from!("world")).toBe("from:world");
   });
 
   it("should return undefined transformer for type without transformer", () => {

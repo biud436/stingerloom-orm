@@ -66,6 +66,11 @@ export type ColumnType = KnownColumnType | (string & {});
  * - `to`: transforms the entity value before writing to the database (INSERT/UPDATE).
  * - `from`: transforms the raw database value when reading into the entity.
  *
+ * Both directions are optional: supplying only one side keeps the other on
+ * the type's default behavior. For `type: "json" | "jsonb"`, the default
+ * round-trip stringifies on write and parses on read so users can assign
+ * plain JS values directly.
+ *
  * @example
  * ```ts
  * @Column({
@@ -79,8 +84,8 @@ export type ColumnType = KnownColumnType | (string & {});
  * ```
  */
 export interface ColumnTransformer {
-  to: (entityValue: any) => any;
-  from: (dbValue: any) => any;
+  to?: (entityValue: any) => any;
+  from?: (dbValue: any) => any;
 }
 
 export interface ColumnOption {

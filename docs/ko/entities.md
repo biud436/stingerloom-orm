@@ -237,6 +237,27 @@ settings!: Record<string, unknown> | null;
 
 `json`과 `jsonb`의 차이는 PostgreSQL에서 중요해요: `jsonb`는 분해된 바이너리 형식으로 저장되어 입력은 느리지만 쿼리는 훨씬 빨라요. JSON 내부를 쿼리해야 하는 경우(예: `WHERE settings->>'theme' = 'dark'`), `jsonb`를 사용하세요.
 
+#### 자동 stringify / parse
+
+`type: "json" | "jsonb"` 컬럼에 명시적인 `transformer`가 없으면 Stingerloom이 양방향 기본 변환을 자동으로 설치해요:
+
+- **쓰기**: 객체/배열 등은 드라이버에 도달하기 전에 `JSON.stringify`로 직렬화돼요. 이미 직렬화된 문자열은 그대로 통과해서 수동으로 stringify하던 레거시 코드가 이중 인코딩되지 않아요. `null`과 `undefined`는 그대로 보존돼요.
+- **읽기**: 드라이버가 문자열을 반환하면(mysql2, better-sqlite3) `JSON.parse`로 복원해요. 이미 객체로 반환되는 값(PostgreSQL `jsonb`)은 그대로 통과해요. 깨진 레거시 행은 한 번만 경고를 남기고 원본 문자열을 반환해서 `find()`가 죽지 않아요.
+
+덕분에 일반 JS 값을 그대로 대입할 수 있어요:
+
+```typescript
+issue.customFields = { priority: "high", labels: ["bug"] };
+await em.save(Issue, issue);
+
+const loaded = await em.findOne(Issue, { where: { id } });
+loaded.customFields.priority; // "high" — 이미 객체, 드라이버 무관
+```
+
+명시적인 `transformer`는 해당 방향의 기본을 덮어써요. `to`만 또는 `from`만 부분 지정하면 빠진 방향은 기본 동작이 그대로 적용돼요.
+
+> **마이그레이션 메모** — 기존에 `JSON.stringify(value) as any`처럼 수동 직렬화하던 코드는 그대로 동작해요(문자열은 통과). 준비되면 수동 stringify를 제거해도 같은 값이 저장돼요.
+
 ### 값 변환
 
 DB에서 읽은 값을 TypeScript 객체로 매핑할 때 변환 함수를 적용할 수 있어요. MySQL의 `TINYINT(1)`처럼 불리언이 숫자로 저장되는 경우에 유용해요.

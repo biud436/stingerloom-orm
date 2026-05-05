@@ -15,6 +15,7 @@ import {
 import { ClazzType } from "../utils";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
 import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
+import { isJsonColumnType, makeDefaultJsonColumnRead } from "./JsonColumnTransformer";
 
 export type ForeignObject<T = any> = { [key: string]: T };
 
@@ -61,6 +62,7 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
   // Build transform list
   const transformColumns: Array<{ key: string; from: (raw: any) => any }> = [];
   const registry = ColumnTypeRegistry.getInstance();
+  const entityName = (entityClass as { name?: string }).name ?? "Entity";
   for (const col of columns) {
     const key = col.propertyKey ?? col.name;
     if (!key) continue;
@@ -73,6 +75,15 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
       const regTransformer = registry.getTransformer(col.options.type);
       if (regTransformer?.from) {
         transformColumns.push({ key, from: regTransformer.from });
+      } else if (isJsonColumnType(col.options.type)) {
+        // Default JSON round-trip: parse string payloads on read.
+        // mysql2 / better-sqlite3 surface JSON columns as strings, while pg
+        // jsonb already returns parsed values; the helper short-circuits the
+        // non-string branch so it is a no-op for pg.
+        transformColumns.push({
+          key,
+          from: makeDefaultJsonColumnRead(entityName, key),
+        });
       }
     }
   }

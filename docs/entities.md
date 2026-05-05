@@ -234,6 +234,27 @@ settings!: Record<string, unknown> | null;
 
 The difference between `json` and `jsonb` matters in PostgreSQL: `jsonb` is stored in a decomposed binary format, which is slower to input but significantly faster to query. If you need to query inside the JSON (e.g., `WHERE settings->>'theme' = 'dark'`), prefer `jsonb`.
 
+#### Automatic stringify / parse
+
+Stingerloom installs a default round-trip on `type: "json" | "jsonb"` columns when no explicit `transformer` is provided:
+
+- **Write**: a non-string value is `JSON.stringify`ed before reaching the driver. Strings pass through unchanged so legacy code that already serializes manually does not double-encode. `null` and `undefined` are preserved.
+- **Read**: a string returned by the driver (mysql2, better-sqlite3) is `JSON.parse`d. Already-parsed values (PostgreSQL `jsonb`) pass through. A malformed legacy row logs a single warning and yields the raw string instead of throwing.
+
+This means you can assign plain JS values directly:
+
+```typescript
+issue.customFields = { priority: "high", labels: ["bug"] };
+await em.save(Issue, issue);
+
+const loaded = await em.findOne(Issue, { where: { id } });
+loaded.customFields.priority; // "high" — already an object, dialect-agnostic
+```
+
+Supplying any explicit `transformer` overrides the default for that side; partial transformers (only `to` or only `from`) compose with the default for the missing direction.
+
+> **Migration note** — if you previously did `JSON.stringify(value) as any` before assigning to a JSON column, it still works (strings pass through). Drop the manual stringify when you're ready; both paths produce the same persisted value.
+
 ### Value Transform
 
 You can apply a transform function when mapping values read from the DB to TypeScript objects. This is useful when booleans are stored as numbers, like MySQL's `TINYINT(1)`.

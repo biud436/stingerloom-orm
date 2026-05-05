@@ -45,6 +45,7 @@ import {
 } from "./EntitySubscriber";
 import { QueryTracker, QueryLogEntry } from "./QueryTracker";
 import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
+import { defaultJsonColumnWrite, isJsonColumnType } from "./JsonColumnTransformer";
 import { LoggingOptions } from "./DatabaseClientOptions";
 import {
   CursorPaginationOption,
@@ -4248,14 +4249,22 @@ export class EntityManager implements BaseEntityManager {
 
   /**
    * Applies the column's write transformer (to) to the raw value.
-   * Checks explicit column.transformer first, then falls back to the
-   * ColumnTypeRegistry for custom column types.
+   *
+   * Precedence: explicit `column.transformer.to` → ColumnTypeRegistry → default
+   * JSON round-trip for `type: "json" | "jsonb"`. The JSON default lets users
+   * assign plain JS values without the `JSON.stringify(...) as any` boilerplate;
+   * mysql2 rejects native objects on JSON columns, so the stringify step is
+   * mandatory for that driver. PostgreSQL accepts both strings and objects on
+   * jsonb, so the same path is safe there.
    */
   private applyWriteTransform(col: ColumnMetadata, rawValue: any): any {
     if (col.transformer?.to) return col.transformer.to(rawValue);
     if (col.options?.type) {
       const regTo = ColumnTypeRegistry.getInstance().getTransformer(col.options.type)?.to;
       if (regTo) return regTo(rawValue);
+      if (isJsonColumnType(col.options.type)) {
+        return defaultJsonColumnWrite(rawValue);
+      }
     }
     return rawValue;
   }

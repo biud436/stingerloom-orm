@@ -20,7 +20,6 @@ import { User } from "../users/user.entity";
 import { Label } from "../labels/label.entity";
 import { Comment } from "../comments/comment.entity";
 import { IssueStatus, IssuePriority, ISSUE_STATUS } from "../../common/enums";
-import { jsonColumn } from "../../common/transformers/json.transformer";
 
 /**
  * Self-referencing parent column powers the recursive subissue tree.
@@ -91,11 +90,7 @@ export class Issue {
   @OneToMany(() => Issue, { mappedBy: "parent" })
   children!: Issue[];
 
-  @Column({
-    type: "json",
-    nullable: true,
-    transformer: jsonColumn<Record<string, unknown>>(),
-  })
+  @Column({ type: "json", nullable: true })
   customFields!: Record<string, unknown> | null;
 
   @Column({ length: 64, nullable: true })

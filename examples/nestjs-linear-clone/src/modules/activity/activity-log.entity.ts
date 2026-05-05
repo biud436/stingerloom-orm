@@ -6,7 +6,6 @@ import {
   BeforeInsert,
 } from "@stingerloom/orm";
 import { ActivityAction } from "../../common/enums";
-import { jsonColumn } from "../../common/transformers/json.transformer";
 
 /**
  * Append-only audit log. Rows are inserted by the issue/comment/queue
@@ -41,11 +40,7 @@ export class ActivityLog {
   @Column({ length: 32 })
   action!: ActivityAction;
 
-  @Column({
-    type: "json",
-    nullable: true,
-    transformer: jsonColumn<Record<string, unknown>>(),
-  })
+  @Column({ type: "json", nullable: true })
   payload!: Record<string, unknown> | null;
 
   @Column({ type: "datetime", nullable: true })
