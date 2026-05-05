@@ -50,7 +50,10 @@ export class CommentsService {
 
   async findOne(id: number): Promise<Comment> {
     const c = await this.repo.findOne({ where: { id } });
-    if (!c) throw new NotFoundException(`Comment ${id} not found`);
+    if (!c) {
+      throw new NotFoundException(`Comment ${id} not found`);
+    }
+
     return c;
   }
 
