@@ -1,4 +1,4 @@
-import sql, { raw } from "sql-template-tag";
+import sql, { raw, join } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
 import type {
   CastKind,
@@ -6,6 +6,7 @@ import type {
   DateAddUnit,
   DateComponent,
   DialectExpression,
+  FullTextSearchOptions,
 } from "../DialectExpression";
 
 /**
@@ -53,8 +54,19 @@ export class MySqlExpression implements DialectExpression {
     return sql`LOWER(${raw(column)}) LIKE LOWER(${pattern}) ESCAPE ${"\\"}`;
   }
 
-  fullTextSearch(column: string, query: string, _language?: string): Sql {
-    return sql`MATCH(${raw(column)}) AGAINST(${query} IN BOOLEAN MODE)`;
+  fullTextSearch(
+    columns: string | readonly string[],
+    query: string,
+    optionsOrLanguage?: string | FullTextSearchOptions,
+  ): Sql {
+    const cols = Array.isArray(columns) ? columns : [columns as string];
+    const opts: FullTextSearchOptions =
+      typeof optionsOrLanguage === "string" || optionsOrLanguage === undefined
+        ? {}
+        : optionsOrLanguage;
+    const modeKw = opts.mode === "natural" ? "NATURAL LANGUAGE" : "BOOLEAN";
+    const colList = join(cols.map((c) => sql`${raw(c)}`), ", ");
+    return sql`MATCH(${colList}) AGAINST(${query} IN ${raw(modeKw)} MODE)`;
   }
 
   jsonExtract(

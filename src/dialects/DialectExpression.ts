@@ -65,13 +65,23 @@ export interface DialectExpression {
   /**
    * Full-text search condition.
    *
-   * - PostgreSQL: `to_tsvector('lang', column) @@ plainto_tsquery('lang', query)`
-   * - MySQL: `MATCH(column) AGAINST(query IN BOOLEAN MODE)`
-   * - SQLite: throws (unsupported)
+   * - PostgreSQL: `to_tsvector('lang', col) @@ plainto_tsquery('lang', query)`.
+   *   Multi-column form composes `COALESCE(c1, '') || ' ' || COALESCE(c2, '')`
+   *   inside the tsvector so a single GIN expression index can serve the predicate.
+   * - MySQL: `MATCH(c1, c2) AGAINST(query IN <mode> MODE)` — `boolean` (default)
+   *   or `natural` (natural language).
+   * - SQLite: throws (use FTS5 virtual tables with raw queries).
    *
-   * @param language - Text search config (PostgreSQL only, default: "english").
+   * @param columns - One already-escaped column identifier or an array of them.
+   * @param query - The search query string (parameterized).
+   * @param optionsOrLanguage - Either an options object or, for back-compat, a
+   *                            PostgreSQL text search config string.
    */
-  fullTextSearch(column: string, query: string, language?: string): Sql;
+  fullTextSearch(
+    columns: string | readonly string[],
+    query: string,
+    optionsOrLanguage?: string | FullTextSearchOptions,
+  ): Sql;
 
   /**
    * Extract a value at a JSON path inside a `json`/`jsonb` column.
@@ -211,6 +221,20 @@ export interface DialectExpression {
    * - `week`: engine-dependent week-of-year.
    */
   dateComponent(value: Sql, component: DateComponent): Sql;
+}
+
+/**
+ * Options for {@link DialectExpression.fullTextSearch}.
+ *
+ * `language` applies to PostgreSQL only (text search config, default
+ * `"english"`). `mode` applies to MySQL only and selects between
+ * `IN BOOLEAN MODE` (default) and `IN NATURAL LANGUAGE MODE`.
+ */
+export interface FullTextSearchOptions {
+  /** PostgreSQL text search configuration. Default: `"english"`. */
+  language?: string;
+  /** MySQL match mode. Default: `"boolean"`. */
+  mode?: "natural" | "boolean";
 }
 
 /**

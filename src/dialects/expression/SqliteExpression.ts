@@ -6,6 +6,7 @@ import type {
   DateAddUnit,
   DateComponent,
   DialectExpression,
+  FullTextSearchOptions,
 } from "../DialectExpression";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -33,7 +34,11 @@ export class SqliteExpression implements DialectExpression {
     return sql`LOWER(${raw(column)}) LIKE LOWER(${pattern}) ESCAPE ${"\\"}`;
   }
 
-  fullTextSearch(_column: string, _query: string, _language?: string): Sql {
+  fullTextSearch(
+    _columns: string | readonly string[],
+    _query: string,
+    _optionsOrLanguage?: string | FullTextSearchOptions,
+  ): Sql {
     throw new OrmError(
       OrmErrorCode.UNSUPPORTED_DATABASE,
       "Full-text search via the query builder is not supported for SQLite. " +

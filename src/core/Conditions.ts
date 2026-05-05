@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import sql, { Sql, join, raw } from "sql-template-tag";
+import type { FullTextSearchOptions } from "../dialects/DialectExpression";
 
 export class Conditions {
   /**
@@ -308,26 +309,48 @@ export class Conditions {
   /**
    * Creates a full-text search condition.
    *
-   * - MySQL: `MATCH(column) AGAINST(query IN BOOLEAN MODE)`
-   * - PostgreSQL (default): `to_tsvector('lang', column) @@ plainto_tsquery('lang', query)`
+   * - MySQL: `MATCH(c1, c2, ...) AGAINST(query IN <mode> MODE)`. `mode` is
+   *   `boolean` (default) or `natural`.
+   * - PostgreSQL (default): single column emits
+   *   `to_tsvector('lang', col) @@ plainto_tsquery('lang', query)`; multi-column
+   *   composes `COALESCE(c1, '') || ' ' || COALESCE(c2, '')` inside the tsvector.
    *
-   * @param column - Already-escaped column identifier.
+   * The fourth argument accepts either the legacy positional language string
+   * or an options object with `{ language?, mode? }`.
+   *
+   * @param columns - One already-escaped column identifier or an array of them.
    * @param query - The search query string (parameterized).
    * @param dialect - "mysql" | "postgres" | "sqlite" (default: "postgres").
-   * @param language - PostgreSQL text search config (default: "english").
+   * @param optionsOrLanguage - Options object or, for back-compat, a PG language string.
    */
   static fullTextSearch(
-    column: string,
+    columns: string | readonly string[],
     query: string,
     dialect?: string,
-    language?: string,
+    optionsOrLanguage?: string | FullTextSearchOptions,
   ): Sql {
+    const cols = Array.isArray(columns) ? columns : [columns as string];
+    const opts: FullTextSearchOptions =
+      typeof optionsOrLanguage === "string"
+        ? { language: optionsOrLanguage }
+        : (optionsOrLanguage ?? {});
+
     if (dialect === "mysql") {
-      return sql`MATCH(${raw(column)}) AGAINST(${query} IN BOOLEAN MODE)`;
+      const modeKw = opts.mode === "natural" ? "NATURAL LANGUAGE" : "BOOLEAN";
+      const colList = join(cols.map((c) => sql`${raw(c)}`), ", ");
+      return sql`MATCH(${colList}) AGAINST(${query} IN ${raw(modeKw)} MODE)`;
     }
     // PostgreSQL default
-    const lang = language ?? "english";
-    return sql`to_tsvector(${lang}, ${raw(column)}) @@ plainto_tsquery(${lang}, ${query})`;
+    const lang = opts.language ?? "english";
+    if (cols.length === 1) {
+      return sql`to_tsvector(${lang}, ${raw(cols[0])}) @@ plainto_tsquery(${lang}, ${query})`;
+    }
+    const parts = cols.map((c) => sql`COALESCE(${raw(c)}, '')`);
+    let concat: Sql = parts[0];
+    for (let i = 1; i < parts.length; i++) {
+      concat = sql`${concat} || ' ' || ${parts[i]}`;
+    }
+    return sql`to_tsvector(${lang}, ${concat}) @@ plainto_tsquery(${lang}, ${query})`;
   }
 
   /**

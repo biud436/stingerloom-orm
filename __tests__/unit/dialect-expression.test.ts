@@ -42,6 +42,22 @@ describe("DialectExpression", () => {
       expect(result.values).toContain("korean");
       expect(result.values).not.toContain("english");
     });
+
+    it("fullTextSearch accepts options object with language", () => {
+      const result = expr.fullTextSearch('"content"', "test", { language: "korean" });
+      expect(result.values).toContain("korean");
+    });
+
+    it("fullTextSearch composes multiple columns via COALESCE", () => {
+      const result = expr.fullTextSearch(
+        ['i."title"', 'i."description"'],
+        "hello",
+      );
+      expect(result.sql).toBe(
+        "to_tsvector(?, COALESCE(i.\"title\", '') || ' ' || COALESCE(i.\"description\", '')) @@ plainto_tsquery(?, ?)",
+      );
+      expect(result.values).toEqual(["english", "english", "hello"]);
+    });
   });
 
   describe("MySqlExpression", () => {
@@ -64,6 +80,22 @@ describe("DialectExpression", () => {
       expect(result.sql).toContain("AGAINST");
       expect(result.sql).toContain("BOOLEAN MODE");
       expect(result.values).toContain("hello world");
+    });
+
+    it("fullTextSearch supports natural language mode", () => {
+      const result = expr.fullTextSearch("`title`", "hello", { mode: "natural" });
+      expect(result.sql).toBe("MATCH(`title`) AGAINST(? IN NATURAL LANGUAGE MODE)");
+    });
+
+    it("fullTextSearch accepts multiple columns", () => {
+      const result = expr.fullTextSearch(
+        ["i.`title`", "i.`body`"],
+        "hello",
+        { mode: "natural" },
+      );
+      expect(result.sql).toBe(
+        "MATCH(i.`title`, i.`body`) AGAINST(? IN NATURAL LANGUAGE MODE)",
+      );
     });
   });
 

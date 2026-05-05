@@ -6,6 +6,7 @@ import type {
   DateAddUnit,
   DateComponent,
   DialectExpression,
+  FullTextSearchOptions,
 } from "../DialectExpression";
 
 export class PostgresExpression implements DialectExpression {
@@ -19,9 +20,28 @@ export class PostgresExpression implements DialectExpression {
     return sql`${raw(column)} ILIKE ${pattern} ESCAPE ${"\\"}`;
   }
 
-  fullTextSearch(column: string, query: string, language?: string): Sql {
-    const lang = language ?? "english";
-    return sql`to_tsvector(${lang}, ${raw(column)}) @@ plainto_tsquery(${lang}, ${query})`;
+  fullTextSearch(
+    columns: string | readonly string[],
+    query: string,
+    optionsOrLanguage?: string | FullTextSearchOptions,
+  ): Sql {
+    const cols = Array.isArray(columns) ? columns : [columns as string];
+    const opts: FullTextSearchOptions =
+      typeof optionsOrLanguage === "string"
+        ? { language: optionsOrLanguage }
+        : (optionsOrLanguage ?? {});
+    const lang = opts.language ?? "english";
+    // Single-column path stays bare so an existing GIN index on
+    // `to_tsvector('lang', col)` continues to match.
+    if (cols.length === 1) {
+      return sql`to_tsvector(${lang}, ${raw(cols[0])}) @@ plainto_tsquery(${lang}, ${query})`;
+    }
+    const parts = cols.map((c) => sql`COALESCE(${raw(c)}, '')`);
+    let concat: Sql = parts[0];
+    for (let i = 1; i < parts.length; i++) {
+      concat = sql`${concat} || ' ' || ${parts[i]}`;
+    }
+    return sql`to_tsvector(${lang}, ${concat}) @@ plainto_tsquery(${lang}, ${query})`;
   }
 
   /**

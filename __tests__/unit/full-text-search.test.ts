@@ -119,6 +119,62 @@ describe("Full-text search", () => {
       expect(result.sql).toContain("to_tsvector");
       expect(result.sql).toContain("plainto_tsquery");
     });
+
+    it("should accept MySQL natural language mode via options", () => {
+      const result = Conditions.fullTextSearch(
+        "`title`",
+        "hello",
+        "mysql",
+        { mode: "natural" },
+      );
+      expect(result.sql).toBe("MATCH(`title`) AGAINST(? IN NATURAL LANGUAGE MODE)");
+      expect(result.values).toEqual(["hello"]);
+    });
+
+    it("should accept boolean mode explicitly via options", () => {
+      const result = Conditions.fullTextSearch(
+        "`title`",
+        "hello",
+        "mysql",
+        { mode: "boolean" },
+      );
+      expect(result.sql).toBe("MATCH(`title`) AGAINST(? IN BOOLEAN MODE)");
+    });
+
+    it("should generate MySQL MATCH over multiple columns", () => {
+      const result = Conditions.fullTextSearch(
+        ["i.`title`", "i.`description`"],
+        "hello",
+        "mysql",
+        { mode: "natural" },
+      );
+      expect(result.sql).toBe(
+        "MATCH(i.`title`, i.`description`) AGAINST(? IN NATURAL LANGUAGE MODE)",
+      );
+      expect(result.values).toEqual(["hello"]);
+    });
+
+    it("should accept PG language via options object", () => {
+      const result = Conditions.fullTextSearch(
+        '"title"',
+        "bonjour",
+        "postgres",
+        { language: "french" },
+      );
+      expect(result.values).toEqual(["french", "french", "bonjour"]);
+    });
+
+    it("should compose PG tsvector across multiple columns", () => {
+      const result = Conditions.fullTextSearch(
+        ['i."title"', 'i."description"'],
+        "hello",
+        "postgres",
+      );
+      expect(result.sql).toBe(
+        "to_tsvector(?, COALESCE(i.\"title\", '') || ' ' || COALESCE(i.\"description\", '')) @@ plainto_tsquery(?, ?)",
+      );
+      expect(result.values).toEqual(["english", "english", "hello"]);
+    });
   });
 
   describe("WhereResolver search operator", () => {
