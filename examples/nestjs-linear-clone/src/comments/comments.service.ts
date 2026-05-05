@@ -24,8 +24,13 @@ export class CommentsService {
   @Transactional()
   async create(dto: CreateCommentDto): Promise<Comment> {
     const c = new Comment();
+
     c.issueId = dto.issueId;
-    if (dto.authorId !== undefined) c.authorId = dto.authorId;
+
+    if (dto.authorId !== undefined) {
+      c.authorId = dto.authorId;
+    }
+
     c.body = dto.body;
     const saved = await this.repo.save(c);
 
