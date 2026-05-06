@@ -19,10 +19,9 @@
 
 ## Why Stingerloom?
 
-- **Decorator-first** — Define entities, relations, hooks, and validation with TypeScript decorators. Column types are inferred automatically.
+- **Multi-tenancy built in** — Layered metadata system (inspired by Docker OverlayFS) with `AsyncLocalStorage`-based context isolation. Zero cross-tenant leakage by design.
 - **Typed QueryDSL via Proxy, no codegen** — `qAlias(Entity, "u")` gives you IDE autocomplete on every column. Chain `.eq / .gt / .like / .in`, aggregates (`.count() / .sum() / .avg()`), CAST, date components, window functions, CASE/WHEN (plus `iff` / `mapValues` / `buckets` shortcuts), subqueries, and JSON-path navigation — all returning type-safe expressions that compose freely across `where() / having() / select()`. Import the namespace as `{ Expressions as exp }` to keep call sites short.
 - **Unit of Work plugin** — Identity Map, dirty checking, cascade, batch flush, lazy proxies, and pessimistic locking via `em.extend(bufferPlugin())`. Single-level cache skips round-trips for repeated PK lookups.
-- **Multi-tenancy built in** — Layered metadata system (inspired by Docker OverlayFS) with `AsyncLocalStorage`-based context isolation. Zero cross-tenant leakage by design.
 - **Three databases, one API** — MySQL (incl. MariaDB-specific optimizations), PostgreSQL, and SQLite share the same EntityManager interface. Switch drivers without rewriting queries.
 - **Schema Diff migrations** — Compare live database state against entity metadata and auto-generate migration code. Supports `true / "safe" / "dry-run"` synchronize modes.
 - **NestJS-ready** — First-party module with `@InjectRepository`, `@InjectEntityManager`, and multi-DB named connections.
