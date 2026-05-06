@@ -6,6 +6,59 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.21.0] — 2026-05-06
+
+DX-focused minor release. Most of these landed while building the `nestjs-linear-clone` reference example; each one removes a place where users previously had to drop to `em.query(...)`, `as any` casts, or hand-rolled column transformers because the ORM had a gap. No breaking changes.
+
+### Highlights
+
+- **Portable M2M / idempotent insert APIs** — `EntityManager.attachRelation` / `detachRelation` (mirrored on `BaseRepository.relation()`) and `insertIgnore` so `@ManyToMany` join-table writes and composite-PK upserts no longer need raw `INSERT IGNORE` / `ON CONFLICT DO NOTHING` per-dialect branching (#322).
+- **qAlias dynamic accessors + custom FK property names** — `i.field(name)` / `i.jsonField(name)` for runtime-selected columns; new `fkProperty` option on `@ManyToOne` / `@OneToOne` lets the resolver map non-conventional FK backing properties (`wsId`, `authorRef`, etc.) without declaring a duplicate `@Column`.
+- **JSON column round-trip default** — `@Column({ type: "json" | "jsonb" })` now installs a defensive `JSON.stringify` / `JSON.parse` transformer when none is supplied. Removes the boilerplate every project ended up writing to make mysql2 / better-sqlite3 / mariadb behave consistently on JSON columns.
+- **`UPDATE … ORDER BY … LIMIT` via `updateMany` + `UpdateQueryBuilder`** (#303) — capped ordered updates for worker-claim queues and similar patterns. MySQL/MariaDB emit native syntax; PostgreSQL/SQLite rewrite to `UPDATE … WHERE pk IN (SELECT pk FROM … ORDER BY … LIMIT n)`. Composite-PK entities throw a typed error on the rewrite path.
+- **`@FullTextIndex` synchronize support** — the decorator finally takes effect at runtime sync, not just under `migrate:generate`; multi-column + boolean/natural `mode` support added to `Conditions.fullTextSearch` / `DialectExpression.fullTextSearch`.
+- **EntitySubscriber pre-image** — `UpdateEvent<T>` carries a `databaseEntity: T | null` snapshot read inside the same transaction, so audit subscribers can compute column-level diffs without a second `SELECT` (#305).
+- **QueryTracker event emitter** — typed `on / off / once` API for `slowQuery` and `nPlusOne` events so structured loggers (pino, OpenTelemetry, Datadog) can subscribe without scraping the internal Logger (#306).
+
+### Added
+
+#### Core APIs
+
+- **`EntityManager.attachRelation(parent, relation, child)` / `detachRelation(...)`** — dialect-portable `@ManyToMany` join-table writes covering both owning and `mappedBy` sides. Mirrored on `BaseRepository.relation(name).add(child)` / `.remove(child)` (#322).
+- **`EntityManager.insertIgnore(Entity, rows)`** + `BaseRepository.insertIgnore` — emits `INSERT IGNORE` (MySQL) / `INSERT … ON CONFLICT DO NOTHING` (PostgreSQL / SQLite) for idempotent composite-PK inserts (#322).
+- **`BaseRepository.createUpdateBuilder()`** — services that already inject the repository no longer need a second `EntityManager` injection just to issue capped updates (#303).
+- **`EntityManager.updateMany(Entity, where, set, options)` + `UpdateQueryBuilder`** — `.where()` / `.orderBy()` / `.limit()` builder for capped ordered updates (#303).
+- **`fkProperty` option on `@ManyToOne` / `@OneToOne`** — register a custom FK backing property name so `qAlias()` resolves it to the join column. Convention `{relProp}Id` mapping continues to work alongside.
+- **qAlias dynamic-field accessors** — `i.field(name)` / `i.jsonField(name)` for runtime-selected columns, removing `as unknown as Record<string, any>` casts in saved-filter compilers and similar patterns (#322).
+- **QueryTracker event emitter** — `tracker.on("slowQuery", entry => …)` / `tracker.on("nPlusOne", (entity, samples) => …)`. Listener exceptions are caught and warned so a bad subscriber cannot silence others or break tracking. `EntityManager.shutdown()` drops listeners alongside the existing reset (#306).
+- **`UpdateEvent.databaseEntity`** — pre-read snapshot exposed to `beforeUpdate` subscribers; the SELECT is skipped when no subscriber for the entity declares interest (#305).
+- **`fullTextSearch` multi-column + mode** — `Conditions.fullTextSearch([c1, c2], term, { language, mode })`. MySQL emits `MATCH(c1, c2) AGAINST(? IN BOOLEAN|NATURAL MODE)`; PostgreSQL composes `COALESCE(c1, '') || ' ' || COALESCE(c2, '')` inside `to_tsvector`. Single-column path stays bare so existing GIN expression indexes keep matching. Legacy positional `language` string remains accepted.
+- **`@FullTextIndex` runtime DDL** — `SchemaRegistrar.synchronize()` now calls `registerFullTextIndexes()` in the Pass-2 index loop (MySQL `CREATE FULLTEXT INDEX`, PostgreSQL `CREATE INDEX … USING gin (to_tsvector(...))`); SQLite skipped. DDL strings flow through `SchemaGenerator.generateFullTextIndexDDL` so synchronize and migration paths stay in lockstep.
+
+#### Default JSON column transformer
+
+- `@Column({ type: "json" | "jsonb" })` installs a built-in round-trip transformer when none is supplied: writes `JSON.stringify` objects/arrays/primitives (passes `null` / `undefined` / pre-stringified strings); reads `JSON.parse` strings back. Explicit `transformer` continues to win.
+
+### Fixed
+
+- **Eager M2O / O2O joins to the same target collide on the same alias** (#2974f75) — two relations on one entity to the same target (e.g. `Issue.assignee` + `Issue.reporter` → `User`) used the table name as the JOIN alias and tripped MariaDB `ER_NONUNIQ_TABLE`. Aliases now derive from `rel.columnName` / `rel.propertyKey`.
+- **`qAlias(Entity).workspaceId.eq(…)` rendered as the camelCase property name** (#721e500) — `buildPropertyToColumnMap()` only walked `@Column` metadata, so FK backing properties (the `{relProp}Id` sibling of `@ManyToOne` / `@OneToOne`) were absent and the database rejected the unknown column. New `RelationMetadataResolver.collectFkPropertyMappings(entity)` is folded into both `EntityManager.buildPropertyToColumnMap` and `SelectQueryBuilder.buildPropertyToColumnMapFromMetadata`. Explicit `@Column` mappings still win — the fold-in only fills missing entries.
+- **`ResultTransformer` FK population on self-referencing relations / cycles** (#59c339e) — hardened to handle entities that reference themselves (e.g. `Issue.parent: Issue`) and graphs with cycles without infinite recursion.
+
+### Documentation
+
+- **`createUpdateBuilder` reference (en + ko)** — query-builder docs now cover the new repository entry point alongside `createQueryBuilder`.
+- **`fkProperty` example** — `@ManyToOne` / `@OneToOne` docs include the custom FK backing property pattern in both languages.
+
+### Tests
+
+- **13 new unit/integration tests** across the qAlias / M2M / insert-ignore feature batch (#322).
+- **`qalias-fk-resolution.test.ts`** — regression coverage for `qAlias` FK property resolution: M2O + `@RelationColumn`, O2O `joinColumn`, `@Column` non-shadowing of FK mapping, and direct `collectFkPropertyMappings` API behavior.
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.20.4...v0.21.0
+
+---
+
 ## [0.20.4] — 2026-05-03
 
 Single-fix follow-up to v0.20.3. The thenable-safe patch shipped for #294/#295 turned out to be insufficient: NestJS dispatches generic property probes (lifecycle-hook detection, `util.inspect`, the dependency-graph inspector) against every resolved provider value, and the misuse-sentinel Proxy's throwing `get` trap turned those benign probes into bootstrap crashes the moment the MTEM token was resolved — which `forRootAsync` does unconditionally because `emToken` injects it. Surfaced on Node 23 against `examples/nestjs-multitenant` after switching to `forRootAsync`.
