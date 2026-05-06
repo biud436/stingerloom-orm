@@ -33,22 +33,27 @@ npm install @stingerloom/orm reflect-metadata
 npm install pg        # or mysql2, better-sqlite3
 ```
 
-Your `tsconfig.json` must enable decorator metadata:
+`tsconfig.json` — decorator metadata must be on:
 
 ```jsonc
-{
-  "compilerOptions": {
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
-  }
-}
+{ "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true } }
 ```
+
+### 1. Define entities
 
 ```typescript
 import "reflect-metadata";
 import {
-  EntityManager, Entity, PrimaryGeneratedColumn, Column, qAlias,
+  Entity, PrimaryGeneratedColumn, Column,
+  ManyToOne, OneToMany, RelationColumn,
 } from "@stingerloom/orm";
+
+@Entity()
+class Author {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() name!: string;
+  @OneToMany(() => Post, p => p.author) posts!: Post[];
+}
 
 @Entity()
 class Post {
@@ -56,40 +61,84 @@ class Post {
   @Column() title!: string;
   @Column({ type: "int" }) views!: number;
   @Column({ type: "datetime" }) publishedAt!: Date;
+
+  @ManyToOne(() => Author, a => a.posts)
+  @RelationColumn({ name: "author_id" })
+  author!: Author;
+  authorId?: number;
 }
+```
+
+### 2. Connect — same API across MySQL, PostgreSQL, and SQLite
+
+```typescript
+import { EntityManager, bufferPlugin } from "@stingerloom/orm";
 
 const em = new EntityManager();
 await em.register({
-  type: "postgres",
-  host: "localhost",
-  port: 5432,
-  username: "postgres",
-  password: "postgres",
-  database: "app",
-  entities: [Post],
-  synchronize: true, // disable in production
+  type: "postgres",          // or "mysql" / "sqlite" — query code stays identical
+  host: "localhost", port: 5432,
+  username: "postgres", password: "postgres", database: "app",
+  entities: [Author, Post],
+  synchronize: true,         // disable in production; use migrations instead
 });
 
-// CRUD
-const post = await em.save(Post, { title: "Hello World", views: 0, publishedAt: new Date() });
-const found = await em.findOne(Post, { where: { id: post.id } });
+em.extend(bufferPlugin());   // enable Identity Map + dirty checking
+```
 
-// Typed QueryDSL — IDE autocomplete on every column
+### 3. Typed QueryDSL with JOIN — IDE autocomplete, no codegen, no string columns
+
+```typescript
+import { qAlias } from "@stingerloom/orm";
+
 const p = qAlias(Post, "p");
+const a = qAlias(Author, "a");
 
-const trending = await em.createQueryBuilder(Post, "p")
+const trending = await em.createQueryBuilder(p)
+  .innerJoinRelation("author", "a")    // FK derived from @ManyToOne metadata — no ON clause needed
   .select([
     p.title.as("title"),
+    a.name.as("author"),
     p.views.as("views"),
     p.publishedAt.year().as("yr"),
   ])
   .where(p.title.containsIgnoreCase("typescript"))
   .andWhere(p.views.gt(100))
+  .andWhere(a.name.startsWith("J"))
   .orderBy(p.views.desc())
   .getRawMany();
 ```
 
-> See the [Getting Started guide](https://biud436.github.io/stingerloom-orm/getting-started) for full setup instructions.
+Every reference to `p.title`, `a.name`, `p.publishedAt.year()`, etc. is resolved against the entity at compile time — typo a column name and TypeScript fails the build. `innerJoinRelation` reads the FK from the `@ManyToOne` metadata so you never write the join condition by hand.
+
+### 4. Unit of Work — Identity Map + dirty checking
+
+```typescript
+const buf = em.buffer();
+
+const p1 = await buf.findOne(Post, { where: { id: 1 } });
+const p2 = await buf.findOne(Post, { where: { id: 1 } });
+console.log(p1 === p2);   // true — second lookup hits the Identity Map, no extra SELECT
+
+p1!.views = 500;
+await buf.flush();        // BEGIN → single UPDATE with only the dirty column → COMMIT
+```
+
+### 5. Multi-tenancy — `AsyncLocalStorage`-scoped, zero leakage
+
+```typescript
+import { MetadataContext } from "@stingerloom/orm";
+
+await MetadataContext.run("tenant_a", async () => {
+  const posts = await em.find(Post);
+  // every metadata lookup inside this frame resolves through tenant_a's
+  // overlay layer first, then falls through to the public layer
+});
+```
+
+A NestJS interceptor or Express middleware wraps the per-request handler in `MetadataContext.run(tenantId, …)` — concurrent requests for different tenants stay isolated by AsyncLocalStorage with no shared mutable state.
+
+> See the [Getting Started guide](https://biud436.github.io/stingerloom-orm/getting-started) for full setup, and the [`nestjs-multitenant`](./examples/nestjs-multitenant) / [`nestjs-linear-clone`](./examples/nestjs-linear-clone) examples for production-shaped tenant wiring.
 
 ## Features
 
