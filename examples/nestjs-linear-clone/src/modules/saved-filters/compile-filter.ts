@@ -167,14 +167,14 @@ function leafToCondition(
   i: ReturnType<typeof qAlias<Issue>>,
 ): ConditionLike {
   if (leaf.op === "jsonEq") {
-    let json = (i as unknown as Record<string, any>)[leaf.field];
+    let json = i.jsonField(leaf.field);
     for (const seg of leaf.path) {
       json = json[seg];
     }
     return json.eq(leaf.value);
   }
 
-  const col = (i as unknown as Record<string, any>)[leaf.field];
+  const col = i.field(leaf.field);
 
   switch (leaf.op) {
     case "eq":

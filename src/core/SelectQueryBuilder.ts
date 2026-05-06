@@ -822,7 +822,39 @@ export type QEntity<T> = {
     : T[K] extends object
       ? JsonPathExpression
       : ColumnExpression;
-} & EntityRef<T>;
+} & EntityRef<T> & QEntityDynamicAccess;
+
+/**
+ * Dynamic field access for `qAlias()` proxies. Use these when the column
+ * name is only known at runtime (e.g. user-supplied filter DSLs). Always
+ * pass values from a server-side allowlist — these methods do not validate
+ * the name themselves.
+ */
+export interface QEntityDynamicAccess {
+  /**
+   * Type-erased dynamic column accessor. Returns a {@link ColumnExpression}
+   * for the given property name without requiring the call site to cast
+   * through `unknown` / `Record<string, any>`.
+   *
+   * Use after allowlist validation when the column name is dynamic:
+   *
+   * ```ts
+   * const i = qAlias(Issue, "i");
+   * if (!ALLOWED_FIELDS.has(name)) throw new Error("…");
+   * i.field(name).eq(value);
+   * ```
+   */
+  field(name: string): ColumnExpression;
+  /**
+   * Type-erased dynamic JSON column accessor. Returns a
+   * {@link JsonPathExpression} for the given JSON-typed property name.
+   *
+   * Only valid for columns declared with `@Column({ type: "json" | "jsonb" })`.
+   * If the column is not registered as JSON, calls fall back to a
+   * `ColumnExpression`-style proxy without dialect-aware path operators.
+   */
+  jsonField(name: string): JsonPathExpression;
+}
 
 /**
  * @internal Collect a map of TypeScript property keys → JSON column metadata
@@ -927,6 +959,34 @@ export function qAlias<T>(entity: ClazzType<T>, name: string): QEntity<T> {
       if (prop === "_entity") return entity;
       if (prop === "col") {
         return (column: string) => `${name}.${column}`;
+      }
+      if (prop === "field") {
+        return (column: string): ColumnExpression => {
+          const m = jsonMeta!.get(column);
+          // jsonField() is the dialect-aware accessor for JSON columns;
+          // field() always returns a plain ColumnExpression so dynamic
+          // call sites can compare a JSON column for equality, IS NULL,
+          // etc. without a path traversal.
+          if (m) return new ColumnExpression(`${name}.${column}`);
+          return new ColumnExpression(`${name}.${column}`);
+        };
+      }
+      if (prop === "jsonField") {
+        return (column: string): JsonPathExpression => {
+          const m = jsonMeta!.get(column);
+          if (m) {
+            return makeJsonPathExpression(`${name}.${column}`, [], m);
+          }
+          // Column was not registered as JSON. Fall back to a JSON
+          // expression with a default `json` dbType so callers still
+          // get a usable path-traversal API; downstream dialect rendering
+          // will surface a clearer error if the column is not actually
+          // JSON-typed in the database.
+          return makeJsonPathExpression(`${name}.${column}`, [], {
+            dbType: "json",
+            nullable: true,
+          });
+        };
       }
       if (prop === "toString" || prop === "valueOf") {
         return () => name;

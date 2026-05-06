@@ -393,11 +393,9 @@ export class IssuesService {
   }
 
   /**
-   * M2M join-table I/O. The ORM treats join tables as pure relational
-   * bridges (see docs/relations.md → "Managing Join Table Data"), so we
-   * issue idempotent INSERT / DELETE via `em.query()`. The dialect
-   * branch picks `ON CONFLICT DO NOTHING` (PostgreSQL) vs `INSERT IGNORE`
-   * (MySQL) — the only piece that genuinely has no portable spelling.
+   * M2M join-table I/O. Uses the dialect-portable `repo.relation()` helper
+   * so the call site stays the same on MySQL/MariaDB and PostgreSQL —
+   * the ORM picks `INSERT IGNORE` vs `ON CONFLICT DO NOTHING` internally.
    */
   @Transactional()
   async addLabel(
@@ -406,7 +404,7 @@ export class IssuesService {
     actorUserId: number,
   ): Promise<{ message: string }> {
     await this.findOne(issueId);
-    await this.em.query(this.attachLabelSql(issueId, dto.labelId));
+    await this.repo.relation(issueId, "labels").add(dto.labelId);
     await this.activity.log({
       issueId,
       actorUserId,
@@ -423,7 +421,7 @@ export class IssuesService {
     actorUserId: number,
   ): Promise<{ message: string }> {
     await this.findOne(issueId);
-    await this.em.query(this.detachLabelSql(issueId, labelId));
+    await this.repo.relation(issueId, "labels").remove(labelId);
     await this.activity.log({
       issueId,
       actorUserId,
@@ -431,18 +429,6 @@ export class IssuesService {
       payload: { labelId },
     });
     return { message: `Label ${labelId} removed from issue ${issueId}` };
-  }
-
-  private attachLabelSql(issueId: number, labelId: number) {
-    return this.em.getDriver().isMySqlFamily()
-      ? sql`INSERT IGNORE INTO \`issue_labels\` (\`issue_id\`, \`label_id\`) VALUES (${issueId}, ${labelId})`
-      : sql`INSERT INTO "issue_labels" ("issue_id", "label_id") VALUES (${issueId}, ${labelId}) ON CONFLICT DO NOTHING`;
-  }
-
-  private detachLabelSql(issueId: number, labelId: number) {
-    return this.em.getDriver().isMySqlFamily()
-      ? sql`DELETE FROM \`issue_labels\` WHERE \`issue_id\` = ${issueId} AND \`label_id\` = ${labelId}`
-      : sql`DELETE FROM "issue_labels" WHERE "issue_id" = ${issueId} AND "label_id" = ${labelId}`;
   }
 
   childrenOf(issueId: number): Promise<Issue[]> {

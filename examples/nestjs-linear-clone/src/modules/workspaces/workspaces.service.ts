@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, ConflictException } from "@nestjs/common";
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  ForbiddenException,
+} from "@nestjs/common";
 import { BaseRepository, Transactional } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Workspace } from "./workspace.entity";
@@ -68,5 +73,39 @@ export class WorkspacesService {
   async remove(id: number): Promise<void> {
     await this.findOne(id);
     await this.repo.delete({ id });
+  }
+
+  /**
+   * Lists every workspace the user is a member of, eager-loading the
+   * workspace row in one round-trip.
+   */
+  async listForUser(userId: number): Promise<Workspace[]> {
+    const rows = await this.memberships.find({
+      where: { userId },
+      relations: ["workspace"],
+    });
+    return rows
+      .map((r) => (r as Membership & { workspace?: Workspace }).workspace)
+      .filter((w): w is Workspace => Boolean(w));
+  }
+
+  /**
+   * Owner-only delete. Throws `ForbiddenException` if the user is not the
+   * workspace OWNER. Hides the membership lookup behind the service so
+   * controllers don't reach into the ORM directly.
+   */
+  @Transactional()
+  async removeAsOwner(id: number, userId: number): Promise<void> {
+    const owner = await this.memberships.findOne({
+      where: {
+        workspaceId: id,
+        userId,
+        role: MEMBERSHIP_ROLE.OWNER,
+      },
+    });
+    if (!owner) {
+      throw new ForbiddenException("Only OWNER can delete the workspace");
+    }
+    await this.remove(id);
   }
 }

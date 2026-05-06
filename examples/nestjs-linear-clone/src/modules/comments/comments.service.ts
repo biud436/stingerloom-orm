@@ -45,6 +45,8 @@ export class CommentsService {
     private readonly repo: BaseRepository<Comment>,
     @InjectRepository(CommentRevision)
     private readonly revisionRepo: BaseRepository<CommentRevision>,
+    @InjectRepository(Reaction)
+    private readonly reactionRepo: BaseRepository<Reaction>,
     @Inject(EntityManager)
     private readonly em: EntityManager,
     private readonly activity: ActivityService,
@@ -244,8 +246,9 @@ export class CommentsService {
 
   /**
    * Idempotent reaction insert. The composite PK (commentId, userId, emoji)
-   * absorbs duplicates — Postgres uses `ON CONFLICT DO NOTHING`, MySQL uses
-   * `INSERT IGNORE`. Both spellings turn a re-add into a zero-row no-op.
+   * absorbs duplicates — `repo.insertIgnore()` picks `INSERT IGNORE`
+   * (MySQL/MariaDB) vs `ON CONFLICT DO NOTHING` (PostgreSQL/SQLite)
+   * internally so the call site stays portable.
    */
   @Transactional()
   async addReaction(
@@ -254,7 +257,12 @@ export class CommentsService {
     userId: number,
   ): Promise<{ message: string }> {
     await this.findOne(commentId);
-    await this.em.query(this.insertReactionSql(commentId, userId, dto.emoji));
+    await this.reactionRepo.insertIgnore({
+      commentId,
+      userId,
+      emoji: dto.emoji,
+      createdAt: new Date(),
+    });
     return {
       message: `Reaction ${dto.emoji} added to comment ${commentId}`,
     };
@@ -267,7 +275,7 @@ export class CommentsService {
     userId: number,
   ): Promise<void> {
     await this.findOne(commentId);
-    await this.em.query(this.deleteReactionSql(commentId, userId, emoji));
+    await this.reactionRepo.delete({ commentId, userId, emoji });
   }
 
   /**
@@ -326,28 +334,6 @@ export class CommentsService {
   }
 
   // ── helpers ─────────────────────────────────────────────────
-
-  private insertReactionSql(commentId: number, userId: number, emoji: string) {
-    const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-    return this.em.getDriver().isMySqlFamily()
-      ? sql`INSERT IGNORE INTO \`reaction\` (\`comment_id\`, \`user_id\`, \`emoji\`, \`createdAt\`)
-            VALUES (${commentId}, ${userId}, ${emoji}, ${now})`
-      : sql`INSERT INTO "reaction" ("comment_id", "user_id", "emoji", "createdAt")
-            VALUES (${commentId}, ${userId}, ${emoji}, ${now})
-            ON CONFLICT DO NOTHING`;
-  }
-
-  private deleteReactionSql(commentId: number, userId: number, emoji: string) {
-    return this.em.getDriver().isMySqlFamily()
-      ? sql`DELETE FROM \`reaction\`
-             WHERE \`comment_id\` = ${commentId}
-               AND \`user_id\` = ${userId}
-               AND \`emoji\` = ${emoji}`
-      : sql`DELETE FROM "reaction"
-             WHERE "comment_id" = ${commentId}
-               AND "user_id" = ${userId}
-               AND "emoji" = ${emoji}`;
-  }
 
   private normalizeUserIds(value: unknown): number[] {
     if (value === null || value === undefined) return [];

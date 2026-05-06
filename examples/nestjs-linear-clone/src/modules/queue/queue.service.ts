@@ -85,8 +85,8 @@ export class QueueService {
   @Transactional()
   async release(workerId: string, issueId: number): Promise<boolean> {
     const result = await this.repo.updateMany(
-      { claimedBy: null, claimedAt: null } as any,
-      { where: { id: issueId, claimedBy: workerId } as any },
+      { claimedBy: null, claimedAt: null },
+      { where: { id: issueId, claimedBy: workerId } },
     );
     if (result.affected > 0) {
       await this.activity.log({
@@ -232,8 +232,8 @@ export class QueueService {
     workerId: string,
   ): Promise<ClaimedIssue | null> {
     const updated = await this.repo.updateMany(
-      { claimedBy: workerId, claimedAt: new Date() } as any,
-      { where: { id: issueId } as any },
+      { claimedBy: workerId, claimedAt: new Date() },
+      { where: { id: issueId } },
     );
     if (updated.affected === 0) return null;
 

@@ -22,6 +22,25 @@ import {
 import { ExplainResult } from "./ExplainResult";
 
 /**
+ * Handle returned by {@link BaseRepository.relation} for mutating a single
+ * owner's slice of a M2M join table. Both methods are idempotent across
+ * supported dialects.
+ */
+export interface RelationHandle<T> {
+  /**
+   * Insert the (owner, related) pair into the join table. Defaults to
+   * `ignoreExisting: true` so re-attaching is a zero-row no-op rather
+   * than a duplicate-key error.
+   */
+  add(
+    relatedId: unknown,
+    options?: { ignoreExisting?: boolean },
+  ): Promise<{ affected: number }>;
+  /** Remove the (owner, related) pair. No-op if absent. */
+  remove(relatedId: unknown): Promise<{ affected: number }>;
+}
+
+/**
  * BaseRepository class provides basic CRUD operations for an entity.
  *
  * @template T The type of the entity.
@@ -335,6 +354,20 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Idempotent insert: writes the row if it does not collide on the
+   * primary key (or `conflictColumns`), otherwise no-op.
+   *
+   * Dialect-portable wrapper over `INSERT IGNORE` (MySQL/MariaDB) and
+   * `INSERT … ON CONFLICT DO NOTHING` (PostgreSQL/SQLite).
+   */
+  async insertIgnore(
+    data: Partial<T>,
+    conflictColumns?: string[],
+  ): Promise<{ affected: number }> {
+    return await this.em.insertIgnore<T>(this.entity, data, conflictColumns);
+  }
+
+  /**
    * Batch upsert: inserts or updates multiple entities in a single query.
    * Uses multi-row VALUES with ON CONFLICT / ON DUPLICATE KEY UPDATE.
    *
@@ -346,6 +379,40 @@ export class BaseRepository<T> {
     conflictColumns?: string[],
   ): Promise<void> {
     return await this.em.batchUpsert<T>(this.entity, items, conflictColumns);
+  }
+
+  /**
+   * Returns a typed handle for mutating a M2M join table on this entity.
+   *
+   * Removes the need to hand-roll dialect-specific `INSERT IGNORE` /
+   * `ON CONFLICT DO NOTHING` SQL when adding/removing rows in the join
+   * table — the helper picks the right spelling per dialect.
+   *
+   * @example
+   * ```ts
+   * const r = issueRepo.relation(issueId, "labels");
+   * await r.add(labelId);          // idempotent: no error if pair exists
+   * await r.remove(labelId);       // idempotent: no error if pair missing
+   * ```
+   */
+  relation(ownerId: unknown, propertyKey: keyof T & string): RelationHandle<T> {
+    return {
+      add: (relatedId, options) =>
+        this.em.attachRelation<T>(
+          this.entity,
+          ownerId,
+          propertyKey,
+          relatedId,
+          options,
+        ),
+      remove: (relatedId) =>
+        this.em.detachRelation<T>(
+          this.entity,
+          ownerId,
+          propertyKey,
+          relatedId,
+        ),
+    };
   }
 
   /**

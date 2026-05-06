@@ -3892,6 +3892,127 @@ export class EntityManager implements BaseEntityManager {
     });
   }
 
+  /**
+   * Idempotent insert: writes the row if it does not already conflict on
+   * the primary key (or `conflictColumns`), and silently skips otherwise.
+   *
+   * Dialect-portable: emits `INSERT IGNORE` on MySQL/MariaDB and
+   * `INSERT … ON CONFLICT DO NOTHING` on PostgreSQL/SQLite. Useful for
+   * composite-PK "join" entities (reaction, audit-style rows) where
+   * application code wants a "POST is idempotent" semantic without
+   * hand-rolling dialect SQL.
+   *
+   * @returns `{ affected }` — 1 if a new row was inserted, 0 if a
+   * matching row already existed.
+   */
+  async insertIgnore<T>(
+    entity: ClazzType<T>,
+    data: Partial<T>,
+    conflictColumns?: string[],
+  ): Promise<{ affected: number }> {
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    if (!this.driver) {
+      throw new OrmError(
+        OrmErrorCode.NOT_CONNECTED,
+        "Driver is not initialized. Call connect() first.",
+      );
+    }
+
+    this.applyTenantColumnOnInsert(entity, data);
+
+    const pkColumns = metadata.columns
+      .filter((col: ColumnMetadata) => col.options?.primary)
+      .map((col: ColumnMetadata) => col.name!);
+
+    const resolvedConflictColumns = conflictColumns ?? pkColumns;
+    if (resolvedConflictColumns.length === 0) {
+      throw new PrimaryKeyNotFoundError(entity.name);
+    }
+
+    const computedColsIgnore = this.getComputedColumnNames(entity);
+    const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
+      if (computedColsIgnore.has(col.name!)) return false;
+      const value = (data as any)[this.propKey(col)];
+      if (
+        col.options?.autoIncrement &&
+        (value === null || value === undefined)
+      ) {
+        return false;
+      }
+      return value !== undefined;
+    });
+
+    if (insertableColumns.length === 0) {
+      return { affected: 0 };
+    }
+
+    const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
+      this.wrap(col.name!),
+    );
+    const wrappedConflict = resolvedConflictColumns.map((name) =>
+      this.wrap(name),
+    );
+    const tableName = this.wrapTable(metadata.name!);
+
+    return this.executeInTransaction(async (session) => {
+      const columnValues = insertableColumns.map((col: ColumnMetadata) => {
+        const rawValue = (data as any)[this.propKey(col)];
+        return this.applyWriteTransform(col, rawValue);
+      });
+
+      const insertSql = this.buildInsertIgnoreQuery(
+        tableName,
+        wrappedColumns,
+        columnValues,
+        wrappedConflict,
+      );
+
+      const queryResult: any = await session.query(insertSql);
+      const affected = this.isMySqlFamily()
+        ? (queryResult?.results?.affectedRows ?? 0)
+        : (queryResult?.rowCount ?? 0);
+      return { affected };
+    });
+  }
+
+  private buildInsertIgnoreQuery(
+    tableName: string,
+    columns: string[],
+    values: any[],
+    conflictColumns: string[],
+  ): Sql {
+    const columnList = join(
+      columns.map((c) => raw(c)),
+      ", ",
+    );
+    const valueList = join(values, ", ");
+
+    if (this.isMySqlFamily()) {
+      return sql`INSERT IGNORE INTO ${raw(tableName)} (${columnList}) VALUES (${valueList})`;
+    }
+
+    const conflictList = join(
+      conflictColumns.map((c) => raw(c)),
+      ", ",
+    );
+    if (this.isPostgres()) {
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO NOTHING`;
+    }
+
+    if ((this.dbType ?? (this.client as any).type) === "sqlite") {
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO NOTHING`;
+    }
+
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_DATABASE,
+      `Unsupported database type for insertIgnore: ${this.dbType}`,
+    );
+  }
+
   private buildUpsertQuery(
     tableName: string,
     columns: string[],
@@ -4089,6 +4210,153 @@ export class EntityManager implements BaseEntityManager {
       OrmErrorCode.UNSUPPORTED_DATABASE,
       `Unsupported database type for upsert: ${this.dbType}`,
     );
+  }
+
+  // ── ManyToMany join-table mutation helpers ─────────────────────────
+
+  /**
+   * Insert a row into the M2M join table linking `ownerId` (on `entity`) to
+   * `relatedId` (on the related side of `propertyKey`).
+   *
+   * Dialect-portable: emits `INSERT IGNORE` on MySQL/MariaDB and
+   * `INSERT … ON CONFLICT DO NOTHING` on PostgreSQL/SQLite when
+   * `ignoreExisting: true` (the default), so re-attaching an existing pair
+   * is a zero-row no-op rather than a duplicate-key error.
+   *
+   * Works for both owning-side relations (declared with `joinTable`) and
+   * inverse-side relations (declared with `mappedBy`); the join table is
+   * looked up from the owning side either way.
+   *
+   * @returns `{ affected }` — 1 if a new row was inserted, 0 if the pair
+   * already existed (with `ignoreExisting: true`).
+   */
+  async attachRelation<T>(
+    entity: ClazzType<T>,
+    ownerId: unknown,
+    propertyKey: keyof T & string,
+    relatedId: unknown,
+    options: { ignoreExisting?: boolean } = {},
+  ): Promise<{ affected: number }> {
+    const ignoreExisting = options.ignoreExisting !== false;
+    const join = this.resolveJoinTableForRelation(entity, propertyKey);
+
+    const tableName = this.wrapTable(join.tableName);
+    const ownerCol = this.wrap(join.ownerColumn);
+    const relatedCol = this.wrap(join.relatedColumn);
+
+    return this.executeInTransaction(async (session) => {
+      const insertSql = ignoreExisting
+        ? this.buildInsertIgnoreJoinTableSql(
+            tableName,
+            ownerCol,
+            relatedCol,
+            ownerId,
+            relatedId,
+          )
+        : sql`INSERT INTO ${raw(tableName)} (${raw(ownerCol)}, ${raw(relatedCol)}) VALUES (${ownerId as any}, ${relatedId as any})`;
+      const queryResult: any = await session.query(insertSql);
+      const affected = this.isMySqlFamily()
+        ? (queryResult?.results?.affectedRows ?? 0)
+        : (queryResult?.rowCount ?? 0);
+      return { affected };
+    });
+  }
+
+  /**
+   * Delete the row in the M2M join table linking `ownerId` to `relatedId`.
+   * Idempotent — deleting a non-existent pair returns `{ affected: 0 }`.
+   */
+  async detachRelation<T>(
+    entity: ClazzType<T>,
+    ownerId: unknown,
+    propertyKey: keyof T & string,
+    relatedId: unknown,
+  ): Promise<{ affected: number }> {
+    const join = this.resolveJoinTableForRelation(entity, propertyKey);
+
+    const tableName = this.wrapTable(join.tableName);
+    const ownerCol = this.wrap(join.ownerColumn);
+    const relatedCol = this.wrap(join.relatedColumn);
+
+    return this.executeInTransaction(async (session) => {
+      const deleteSql = sql`DELETE FROM ${raw(tableName)} WHERE ${raw(ownerCol)} = ${ownerId as any} AND ${raw(relatedCol)} = ${relatedId as any}`;
+      const queryResult: any = await session.query(deleteSql);
+      const affected = this.isMySqlFamily()
+        ? (queryResult?.results?.affectedRows ?? 0)
+        : (queryResult?.rowCount ?? 0);
+      return { affected };
+    });
+  }
+
+  /**
+   * @internal Resolve the join-table descriptor for a M2M property,
+   * normalizing owning-side (`joinTable`) and inverse-side (`mappedBy`)
+   * declarations to the same shape: `{ tableName, ownerColumn, relatedColumn }`,
+   * where `ownerColumn` is the FK back to `entity` and `relatedColumn`
+   * points at the other side.
+   */
+  private resolveJoinTableForRelation<T>(
+    entity: ClazzType<T>,
+    propertyKey: keyof T & string,
+  ): { tableName: string; ownerColumn: string; relatedColumn: string } {
+    const relations = this.resolver.resolveManyToManyMetadata(entity);
+    const meta = relations.find((r) => r.propertyKey === propertyKey);
+    if (!meta) {
+      throw new InvalidQueryError(
+        `attachRelation/detachRelation: "${entity.name}.${propertyKey}" is not a @ManyToMany relation`,
+      );
+    }
+
+    if (meta.joinTable) {
+      return {
+        tableName: meta.joinTable.name,
+        ownerColumn: meta.joinTable.joinColumn,
+        relatedColumn: meta.joinTable.inverseJoinColumn,
+      };
+    }
+
+    if (meta.mappedBy) {
+      const inverseEntity = meta.getRelatedEntity() as ClazzType<any>;
+      const inverseRelations =
+        this.resolver.resolveManyToManyMetadata(inverseEntity);
+      const owning = inverseRelations.find(
+        (r) => r.propertyKey === meta.mappedBy && r.joinTable,
+      );
+      if (!owning?.joinTable) {
+        throw new InvalidQueryError(
+          `attachRelation/detachRelation: "${entity.name}.${propertyKey}" is the inverse side of a @ManyToMany but the owning side "${inverseEntity.name}.${meta.mappedBy}" does not declare \`joinTable\``,
+        );
+      }
+      // The owning side names the columns from its own perspective; from
+      // the inverse side, the FK back to `entity` is `inverseJoinColumn`.
+      return {
+        tableName: owning.joinTable.name,
+        ownerColumn: owning.joinTable.inverseJoinColumn,
+        relatedColumn: owning.joinTable.joinColumn,
+      };
+    }
+
+    throw new InvalidQueryError(
+      `attachRelation/detachRelation: "${entity.name}.${propertyKey}" has no \`joinTable\` or \`mappedBy\` configured`,
+    );
+  }
+
+  /**
+   * @internal Build a dialect-portable "insert if missing" against a join
+   * table. `tableName`, `ownerCol`, `relatedCol` are already wrapped.
+   */
+  private buildInsertIgnoreJoinTableSql(
+    tableName: string,
+    ownerCol: string,
+    relatedCol: string,
+    ownerId: unknown,
+    relatedId: unknown,
+  ): Sql {
+    if (this.isMySqlFamily()) {
+      return sql`INSERT IGNORE INTO ${raw(tableName)} (${raw(ownerCol)}, ${raw(relatedCol)}) VALUES (${ownerId as any}, ${relatedId as any})`;
+    }
+    // PostgreSQL + SQLite both support ON CONFLICT DO NOTHING.
+    return sql`INSERT INTO ${raw(tableName)} (${raw(ownerCol)}, ${raw(relatedCol)}) VALUES (${ownerId as any}, ${relatedId as any}) ON CONFLICT DO NOTHING`;
   }
 
   // ── Aggregate delegation ─────────────────────────────────────────────
