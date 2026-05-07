@@ -452,7 +452,17 @@ export class SchemaRegistrar {
         this.logger.info(
           `[sync] Adding column ${col.tableName}.${col.columnName} (${typeDef})`,
         );
-        await driver.addColumn(col.tableName, col.columnName, typeDef);
+        try {
+          await driver.addColumn(col.tableName, col.columnName, typeDef);
+        } catch (err) {
+          // Don't abort the entire diff on a single column failure — a
+          // type-incompatible column rename or a NOT NULL add against a
+          // populated column should be surfaced and skipped, not crash the
+          // remaining add/alter ops.
+          this.logger.warn(
+            `[sync] Failed to add column ${col.tableName}.${col.columnName}: ${err instanceof Error ? err.message : err}`,
+          );
+        }
       }
     }
 
@@ -698,7 +708,17 @@ export class SchemaRegistrar {
       }
 
       if (!isExist) {
-        await driver?.addCompositeUniqueIndex(tableName, resolvedColumns, indexName);
+        try {
+          await driver?.addCompositeUniqueIndex(tableName, resolvedColumns, indexName);
+        } catch (err) {
+          // A schema-drift state (e.g. snake/camel column rename mid-flight)
+          // can leave a UniqueIndex pointing at a column that doesn't exist
+          // yet. Log and continue so a single broken constraint doesn't
+          // kill app boot — registerFullTextIndexes uses the same pattern.
+          this.logger.warn(
+            `Could not create unique index ${indexName} on ${tableName}(${resolvedColumns.join(", ")}): ${err instanceof Error ? err.message : err}`,
+          );
+        }
       }
     }
   }
@@ -983,7 +1003,16 @@ export class SchemaRegistrar {
         }
 
         if (!isExist) {
-          await driver?.addIndex(tableName, columnName, indexName);
+          try {
+            await driver?.addIndex(tableName, columnName, indexName);
+          } catch (err) {
+            // Same schema-drift tolerance as registerUniqueIndexes /
+            // registerFullTextIndexes: a missing column is a deployment
+            // problem to surface, not a reason to abort boot.
+            this.logger.warn(
+              `Could not create index ${indexName} on ${tableName}(${columnName}): ${err instanceof Error ? err.message : err}`,
+            );
+          }
         }
       }
     }

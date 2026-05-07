@@ -12,6 +12,10 @@ import {
   ONE_TO_ONE_TOKEN,
   OneToOneMetadata,
 } from "../decorators";
+import {
+  RELATION_COLUMN_TOKEN,
+  RelationColumnMetadata,
+} from "../decorators/RelationColumn";
 import { ClazzType } from "../utils";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
 import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
@@ -56,6 +60,28 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
     if (col.name && col.propertyKey && col.name !== col.propertyKey) {
       if (!remapMap) remapMap = new Map();
       remapMap.set(col.name, col.propertyKey);
+    }
+  }
+
+  // Also remap RelationColumn-managed FK columns (e.g. `user_id` →
+  // `userId`). The convention is `${relationProperty}Id` for the shadow
+  // accessor, so a `@RelationColumn({ name: "user_id" })` on a `user`
+  // relation surfaces as `userId` on the entity. Without this, responses
+  // built from saved entities under SnakeNamingStrategy leak the raw
+  // `user_id` key out to the API.
+  const relationColumns: RelationColumnMetadata[] | undefined =
+    Reflect.getMetadata(RELATION_COLUMN_TOKEN, entityClass) ??
+    Reflect.getMetadata(RELATION_COLUMN_TOKEN, entityClass.prototype);
+  if (relationColumns) {
+    for (const rel of relationColumns) {
+      if (!rel.name || !rel.propertyKey) continue;
+      const shadow = `${rel.propertyKey}Id`;
+      if (rel.name === shadow) continue;
+      if (!remapMap) remapMap = new Map();
+      // Don't clobber an explicit @Column remap entry.
+      if (!remapMap.has(rel.name)) {
+        remapMap.set(rel.name, shadow);
+      }
     }
   }
 
