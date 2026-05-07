@@ -29,6 +29,9 @@ import { NotificationsModule } from "./modules/notifications/notifications.modul
 import { WebhooksModule } from "./modules/webhooks/webhooks.module";
 import { IdempotencyModule } from "./common/idempotency/idempotency.module";
 import { BulkOperationsModule } from "./modules/bulk-operations/bulk-operations.module";
+import { WorkLogsModule } from "./modules/work-logs/work-logs.module";
+import { AttachmentsModule } from "./modules/attachments/attachments.module";
+import { ImportExportModule } from "./modules/import-export/import-export.module";
 
 @Module({
   imports: [
@@ -113,6 +116,9 @@ import { BulkOperationsModule } from "./modules/bulk-operations/bulk-operations.
     WebhooksModule,
     IdempotencyModule,
     BulkOperationsModule,
+    WorkLogsModule,
+    AttachmentsModule,
+    ImportExportModule,
   ],
   providers: [
     {

@@ -63,4 +63,18 @@ export class AnalyticsController {
   ) {
     return this.service.leadTimeByWeek(id, days ? Number(days) : 60);
   }
+
+  @Get("projects/:id/cycle-time-percentiles")
+  @WorkspaceScoped({ from: "project" })
+  @ApiOperation({
+    summary: "Cycle-time percentiles (P50/P75/P95)",
+    description:
+      "PostgreSQL: percentile_cont WITHIN GROUP. MySQL: ROW_NUMBER+CEIL(N*p) emulation.",
+  })
+  cycleTimePercentiles(
+    @Param("id", ParseIntPipe) id: number,
+    @Query("days") days?: string,
+  ) {
+    return this.service.cycleTimePercentiles(id, days ? Number(days) : 60);
+  }
 }
