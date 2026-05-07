@@ -32,7 +32,7 @@ export class MySqlSearchRepository extends SearchRepository {
           ${issueMatch} AS rank
         FROM issue i
         WHERE ${issueMatch}
-          AND i.deletedAt IS NULL
+          AND i.deleted_at IS NULL
           ${projectFilter}
         UNION ALL
         SELECT
@@ -43,8 +43,8 @@ export class MySqlSearchRepository extends SearchRepository {
         FROM comment c
         JOIN issue i ON i.id = c.issue_id
         WHERE ${commentMatch}
-          AND c.deletedAt IS NULL
-          AND i.deletedAt IS NULL
+          AND c.deleted_at IS NULL
+          AND i.deleted_at IS NULL
           ${projectFilter}
       ) hits
       ORDER BY rank DESC

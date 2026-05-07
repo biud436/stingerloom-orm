@@ -140,7 +140,7 @@ export class AnalyticsService {
       SELECT COALESCE(SUM(${Q("estimate")}), 0) AS total_estimate
       FROM ${Q("issue")}
       WHERE ${Q("sprint_id")} = ${sprintId}
-        AND ${Q("deletedAt")} IS NULL
+        AND ${Q("deleted_at")} IS NULL
     `;
 
     const dailyCte = sql`
@@ -291,21 +291,21 @@ export class AnalyticsService {
 
     const hoursDiff =
       D.dialect === "postgres"
-        ? sql`EXTRACT(EPOCH FROM (LEAD(${Q("createdAt")}) OVER w - ${Q("createdAt")})) / 3600.0`
-        : sql`TIMESTAMPDIFF(SECOND, ${Q("createdAt")}, LEAD(${Q("createdAt")}) OVER w) / 3600.0`;
+        ? sql`EXTRACT(EPOCH FROM (LEAD(${Q("created_at")}) OVER w - ${Q("created_at")})) / 3600.0`
+        : sql`TIMESTAMPDIFF(SECOND, ${Q("created_at")}, LEAD(${Q("created_at")}) OVER w) / 3600.0`;
 
     const final = sql`
       SELECT * FROM (
         SELECT
-          ${Q("issueId")}                               AS ${Q("issueId")},
+          ${Q("issue_id")}                              AS ${Q("issueId")},
           ${enteredStatus}                              AS ${Q("status")},
-          ${Q("createdAt")}                             AS ${Q("enteredAt")},
-          LEAD(${Q("createdAt")}) OVER w                AS ${Q("leftAt")},
+          ${Q("created_at")}                            AS ${Q("enteredAt")},
+          LEAD(${Q("created_at")}) OVER w               AS ${Q("leftAt")},
           ${hoursDiff}                                  AS ${Q("hoursInStatus")}
         FROM ${Q("activity_log")}
-        WHERE ${Q("issueId")} = ${issueId}
+        WHERE ${Q("issue_id")} = ${issueId}
           AND ${Q("action")} = ${"ISSUE_UPDATED"}
-        WINDOW w AS (PARTITION BY ${Q("issueId")} ORDER BY ${Q("createdAt")})
+        WINDOW w AS (PARTITION BY ${Q("issue_id")} ORDER BY ${Q("created_at")})
       ) t
       WHERE ${Q("status")} IS NOT NULL
       ORDER BY ${Q("enteredAt")}
@@ -351,9 +351,9 @@ export class AnalyticsService {
   ): Promise<LeadTimeRow[]> {
     const D = dsl(detectDialect(this.em));
     const { Q, weekOf, hoursBetween, nowMinusDays } = D;
-    const week = weekOf(Q("completedAt"));
+    const week = weekOf(Q("completed_at"));
     const cutoff = nowMinusDays(windowDays);
-    const cycle = hoursBetween(Q("createdAt"), Q("completedAt"));
+    const cycle = hoursBetween(Q("created_at"), Q("completed_at"));
 
     const final = sql`
       SELECT
@@ -363,9 +363,9 @@ export class AnalyticsService {
       FROM ${Q("issue")}
       WHERE ${Q("project_id")} = ${projectId}
         AND ${Q("status")} = ${ISSUE_STATUS.DONE}
-        AND ${Q("completedAt")} IS NOT NULL
-        AND ${Q("completedAt")} >= ${cutoff}
-        AND ${Q("deletedAt")} IS NULL
+        AND ${Q("completed_at")} IS NOT NULL
+        AND ${Q("completed_at")} >= ${cutoff}
+        AND ${Q("deleted_at")} IS NULL
       GROUP BY ${week}
       ORDER BY ${week}
     `;

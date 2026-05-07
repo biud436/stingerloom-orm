@@ -17,6 +17,7 @@ import { SqliteMigrationRunner } from "./SqliteMigrationRunner";
 import { SchemaDiff } from "../core/generators/SchemaDiff";
 import { SchemaDiffMigrationGenerator } from "../core/generators/SchemaDiffMigrationGenerator";
 import { SchemaDialect } from "../core/generators/SchemaGenerator";
+import { EntityManager } from "../core/EntityManager";
 
 export type MigrationCommand = "migrate:run" | "migrate:rollback" | "migrate:status" | "migrate:generate";
 
@@ -228,6 +229,12 @@ export class MigrationCli {
     }
 
     const entities = (this.options.entities ?? []) as Array<new (...args: any[]) => any>;
+    // Resolve table/column names through the same naming strategy the runtime
+    // EntityManager applies. Without this, an app booted with
+    // SnakeNamingStrategy would have snake_case columns in the DB while the
+    // diff sees camelCase property names on the entities, generating spurious
+    // DROP/ADD migrations.
+    EntityManager.applyNamingStrategyToEntities(entities, this.options.namingStrategy);
     const dbType = this.options.type;
     const dialect: SchemaDialect =
       dbType === "mysql" || dbType === "mariadb" ? "mysql"

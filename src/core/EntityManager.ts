@@ -327,9 +327,29 @@ export class EntityManager implements BaseEntityManager {
   }
 
   private applyNamingStrategy(strategy?: NamingStrategy): void {
+    EntityManager.applyNamingStrategyToEntities(this._entities, strategy);
+  }
+
+  /**
+   * Resolve table and column names on the supplied entities through
+   * `strategy`, mutating their decorator metadata in place.
+   *
+   * Exposed for tools that work with entity metadata outside an active
+   * `EntityManager` — most importantly the migration CLI, which needs the
+   * same naming applied so `migrate:generate` does not diff camelCase
+   * property names against snake_case DB columns.
+   *
+   * Idempotent: re-running with the same strategy is a no-op because the
+   * `nameExplicit` flag is preserved and column names are already
+   * snake-cased on the second pass.
+   */
+  static applyNamingStrategyToEntities(
+    entities: Iterable<ClazzType<any>>,
+    strategy?: NamingStrategy,
+  ): void {
     const ns = strategy ?? new DefaultNamingStrategy();
 
-    for (const entity of this._entities) {
+    for (const entity of entities) {
       const meta = Reflect.getMetadata(ENTITY_TOKEN, entity) as EntityMetadata | undefined;
       if (!meta) continue;
 

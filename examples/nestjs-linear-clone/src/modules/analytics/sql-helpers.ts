@@ -1,4 +1,4 @@
-import { EntityManager, raw } from "@stingerloom/orm";
+import { EntityManager, camelToSnakeCase, raw } from "@stingerloom/orm";
 import sql, { Sql } from "sql-template-tag";
 
 export type Dialect = "mysql" | "postgres";
@@ -46,16 +46,27 @@ const RESERVED_TBL_PROPS = new Set([
   "valueOf",
 ]);
 
+/**
+ * Translate the JS-side property name (e.g. `createdAt`) to the snake_case
+ * column the SnakeNamingStrategy produced at registration time. Idempotent
+ * on already-snake_case input (`created_at` → `created_at`).
+ */
+function colName(prop: string): string {
+  return camelToSnakeCase(prop);
+}
+
 function makeTableRef(alias: string, Q: (name: string) => Sql): TableRef {
   return new Proxy({} as TableRef, {
     get(_target, prop) {
       if (typeof prop !== "string") return undefined;
       if (prop === "as") {
+        // `col` is the DB column to project (snake-cased); `asName` is the
+        // outbound alias the consumer reads (kept verbatim, usually camelCase).
         return (col: string, asName?: string) =>
-          sql`${raw(alias)}.${Q(col)} AS ${Q(asName ?? col)}`;
+          sql`${raw(alias)}.${Q(colName(col))} AS ${Q(asName ?? col)}`;
       }
       if (RESERVED_TBL_PROPS.has(prop)) return undefined;
-      return sql`${raw(alias)}.${Q(prop)}`;
+      return sql`${raw(alias)}.${Q(colName(prop))}`;
     },
   });
 }
