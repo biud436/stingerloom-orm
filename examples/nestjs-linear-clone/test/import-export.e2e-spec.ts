@@ -71,7 +71,8 @@ integrationDescribe("[E2E] Import / Export — CSV insertMany + workspace JSON s
       // Pull the current max issue number first; the chunked path must
       // produce strictly increasing numbers above this baseline.
       const before = await api
-        .get(`/projects/${fx.projectId}/issues`)
+        .get(`/issues`)
+        .query({ projectId: fx.projectId })
         .expect(200);
       const baselineMax = Math.max(
         0,
@@ -90,8 +91,8 @@ integrationDescribe("[E2E] Import / Export — CSV insertMany + workspace JSON s
       expect(r.body.inserted).toBe(250);
 
       const after = await api
-        .get(`/projects/${fx.projectId}/issues`)
-        .query({ limit: 500 })
+        .get(`/issues`)
+        .query({ projectId: fx.projectId, limit: 500 })
         .expect(200);
       const nums = (after.body as Array<{ number: number }>)
         .map((i) => i.number)
@@ -117,8 +118,8 @@ integrationDescribe("[E2E] Import / Export — CSV insertMany + workspace JSON s
       expect(r.body.inserted).toBe(1);
 
       const all = await api
-        .get(`/projects/${fx.projectId}/issues`)
-        .query({ limit: 500 })
+        .get(`/issues`)
+        .query({ projectId: fx.projectId, limit: 500 })
         .expect(200);
       const weird = (all.body as Array<{ title: string; status: string }>).find(
         (i) => i.title === "Weird status",
