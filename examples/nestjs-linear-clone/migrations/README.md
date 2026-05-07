@@ -1,32 +1,35 @@
 # Migrations
 
-Production schema changes for nestjs-linear-clone live here. The bootstrap flow:
+Production schema changes for nestjs-linear-clone live here. There is one frozen
+baseline migration (`*-baseline-schema.ts`) plus any subsequent diff migrations
+generated as the schema evolves.
 
 ## First boot (clean DB)
 
+The baseline is checked in and ready to apply — no DB connection is required to
+generate it. Just point `.env` at a fresh database and run:
+
 ```bash
-# 1. point .env at a fresh DB
 cp .env.example .env  # adjust DB_HOST/DB_USER/DB_PASSWORD/DB_NAME
-
-# 2. let Stingerloom create the initial tables once
-ORM_SYNC=safe pnpm start         # tables created from entity definitions
-# ctrl-c after the app reports "Linear Clone API: http://localhost:3000"
-
-# 3. switch the env to migrations-only and capture the baseline
-ORM_SYNC=false pnpm migrate:generate -- --name initial-schema
-# emits ./migrations/<timestamp>-initial-schema.ts
-
-# 4. wire the generated migration into stingerloom.config.ts:
-#    import InitialSchema from "./migrations/<timestamp>-initial-schema";
-#    migrations: [new InitialSchema()],
-
-# 5. mark the existing schema as already-applied so the runner does not try
-#    to re-create the same tables. The simplest way is to truncate the DB
-#    and run migrate:run from a clean state:
-#      pnpm migrate:run
-#    or, on a DB you cannot wipe, manually insert a row into the
-#    stingerloom_migrations table for the baseline filename.
+ORM_SYNC=false pnpm migrate:run
 ```
+
+That creates every table, index, and FK from the baseline migration. The app
+will boot against migrations-only afterward (`ORM_SYNC=false`).
+
+## Regenerating the baseline
+
+If you fork this example and want a clean baseline against your own entity set:
+
+```bash
+pnpm migrate:baseline
+# rewrites migrations/<timestamp>-baseline-schema.ts using SchemaGenerator —
+# no DB needed; both MySQL and Postgres DDL are baked into one file.
+```
+
+Then update `stingerloom.config.ts` to import the new file and replace the
+`migrations` array entry. **This is a destructive operation** — only do it
+before any non-baseline migrations have shipped.
 
 ## Iterative changes (after the baseline)
 

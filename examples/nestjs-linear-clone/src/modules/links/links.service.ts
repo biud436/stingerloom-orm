@@ -201,7 +201,7 @@ export class LinksService {
         GROUP BY id
       ) m
       INNER JOIN ${Q("issue")} i ON i.${Q("id")} = m.id
-      WHERE i.${Q("deletedAt")} IS NULL
+      WHERE i.${Q("deleted_at")} IS NULL
       ORDER BY m.min_depth ASC, i.${Q("id")} ASC
     `;
 

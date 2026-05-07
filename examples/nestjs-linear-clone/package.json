@@ -15,6 +15,7 @@
     "migrate:rollback": "stingerloom migrate:rollback --config stingerloom.config.ts",
     "migrate:status": "stingerloom migrate:status --config stingerloom.config.ts",
     "migrate:generate": "stingerloom migrate:generate --config stingerloom.config.ts --output ./migrations",
+    "migrate:baseline": "ts-node -r tsconfig-paths/register scripts/generate-baseline.ts",
     "test": "jest --config jest-e2e.json --forceExit --detectOpenHandles",
     "test:e2e": "jest --config jest-e2e.json --forceExit --detectOpenHandles",
     "test:stress": "STRESS=true jest --config jest-e2e.json --forceExit --detectOpenHandles --testPathPattern=stress",

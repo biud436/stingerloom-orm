@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 import { APP_GUARD } from "@nestjs/core";
 import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
+import { SnakeNamingStrategy } from "@stingerloom/orm";
 import { envValidationSchema } from "./common/config/env.schema";
 import { RequestContextMiddleware } from "./common/context/request-context.middleware";
 import { ObservabilityModule } from "./common/observability/observability.module";
@@ -53,6 +54,13 @@ import { BulkOperationsModule } from "./modules/bulk-operations/bulk-operations.
           password: config.get<string>("DB_PASSWORD"),
           database: config.get<string>("DB_NAME"),
           entities: [__dirname + "/**/*.entity{.ts,.js}"],
+          // Unify all entity column / table identifiers under snake_case.
+          // Entities are written in camelCase (TS-idiomatic) and the strategy
+          // resolves them to snake_case at registration time, so raw-SQL
+          // identifiers in services / migrations refer to e.g. `created_at`,
+          // not `createdAt`. Required for case-sensitive collations (Postgres,
+          // Linux MySQL).
+          namingStrategy: new SnakeNamingStrategy(),
           synchronize:
             sync === "false"
               ? false
