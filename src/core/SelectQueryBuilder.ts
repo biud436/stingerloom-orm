@@ -9,6 +9,7 @@ import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { EntityNotFoundError } from "../errors/EntityNotFoundError";
 import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
+import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import { CompiledQuery } from "./CompiledQuery";
 import { COLUMN_TOKEN } from "../decorators/Column";
 import { InheritanceResolver } from "./InheritanceResolver";
@@ -3600,10 +3601,14 @@ export class SelectQueryBuilder<T, TResult = T> {
       return this.applyValidation(this.deserializePolymorphic(rows));
     }
 
-    const registry = DeserializerRegistry.getInstance();
-    const entities = rows.map((row: any) =>
-      registry.deserialize(this.entity, row),
-    );
+    // Run rows through ResultTransformer so that NamingStrategy reverse-
+    // mapping (e.g. SnakeNamingStrategy: `issue_counter` → `issueCounter`)
+    // and column transformers fire. Calling the deserializer directly here
+    // skipped both, so qAlias-driven queries returned entities with the raw
+    // DB column names — `(project.issueCounter ?? 0) + 1` then always
+    // collapsed to `1` because the property was actually `issue_counter`.
+    const transformer = ResultTransformerFactory.create();
+    const entities = transformer.toEntities(this.entity, { results: rows });
 
     return this.applyValidation(entities);
   }

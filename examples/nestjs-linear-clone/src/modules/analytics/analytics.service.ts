@@ -47,6 +47,13 @@ export interface LeadTimeRow {
   closedCount: number;
 }
 
+export interface CycleTimePercentilesRow {
+  p50: number;
+  p75: number;
+  p95: number;
+  sampleSize: number;
+}
+
 @Injectable()
 export class AnalyticsService {
   constructor(
@@ -379,5 +386,91 @@ export class AnalyticsService {
       leadTimeHours: Number(Number(row.leadTimeHours ?? 0).toFixed(2)),
       closedCount: Number(row.closedCount),
     }));
+  }
+
+  // ── Cycle-time percentiles (PG percentile_cont, MySQL emulation) ──
+
+  /**
+   * Distribution percentiles (P50/P75/P95) of issue cycle time, in hours,
+   * within a recent window. Pushes the dialect-portability story:
+   *   - PostgreSQL has the SQL-standard `percentile_cont(p) WITHIN GROUP
+   *     (ORDER BY x)` ordered-set aggregate.
+   *   - MySQL has no native percentile_cont, so we emulate it with a
+   *     window function over the sorted cycle-time series and pick the
+   *     row whose row-number matches `CEIL(N * p)`.
+   */
+  async cycleTimePercentiles(
+    projectId: number,
+    windowDays = 60,
+  ): Promise<CycleTimePercentilesRow> {
+    const D = dsl(detectDialect(this.em));
+    const { Q, hoursBetween, nowMinusDays } = D;
+    const cycle = hoursBetween(Q("created_at"), Q("completed_at"));
+    const cutoff = nowMinusDays(windowDays);
+
+    if (D.dialect === "postgres") {
+      const final = sql`
+        SELECT
+          percentile_cont(0.50) WITHIN GROUP (ORDER BY ${cycle}) AS ${Q("p50")},
+          percentile_cont(0.75) WITHIN GROUP (ORDER BY ${cycle}) AS ${Q("p75")},
+          percentile_cont(0.95) WITHIN GROUP (ORDER BY ${cycle}) AS ${Q("p95")},
+          COUNT(*)                                               AS ${Q("sampleSize")}
+        FROM ${Q("issue")}
+        WHERE ${Q("project_id")} = ${projectId}
+          AND ${Q("status")} = ${ISSUE_STATUS.DONE}
+          AND ${Q("completed_at")} IS NOT NULL
+          AND ${Q("completed_at")} >= ${cutoff}
+          AND ${Q("deleted_at")} IS NULL
+      `;
+      const rows = await this.em.query<Record<string, unknown>>(final);
+      return this.toPercentileRow(rows[0]);
+    }
+
+    // MySQL emulation: rank the closed cycle-times then pick the row whose
+    // ordinal matches CEIL(N * p). NTILE() doesn't quite fit because we'd
+    // still need a positional pick within each tile; ROW_NUMBER + a CASE
+    // is more direct and reads cleaner.
+    const cyclesCte = sql`
+      SELECT
+        ${cycle} AS hours,
+        ROW_NUMBER() OVER (ORDER BY ${cycle}) AS rn
+      FROM ${Q("issue")}
+      WHERE ${Q("project_id")} = ${projectId}
+        AND ${Q("status")} = ${ISSUE_STATUS.DONE}
+        AND ${Q("completed_at")} IS NOT NULL
+        AND ${Q("completed_at")} >= ${cutoff}
+        AND ${Q("deleted_at")} IS NULL
+    `;
+    const ctes = RawQueryBuilder.create()
+      .setDatabaseType("mysql")
+      .with("cycles", cyclesCte)
+      .build();
+    const final = sql`
+      ${ctes}
+      SELECT
+        MAX(CASE WHEN rn = GREATEST(1, CEIL(total * 0.50)) THEN hours END) AS ${Q("p50")},
+        MAX(CASE WHEN rn = GREATEST(1, CEIL(total * 0.75)) THEN hours END) AS ${Q("p75")},
+        MAX(CASE WHEN rn = GREATEST(1, CEIL(total * 0.95)) THEN hours END) AS ${Q("p95")},
+        total                                                              AS ${Q("sampleSize")}
+      FROM (
+        SELECT hours, rn, COUNT(*) OVER () AS total FROM cycles
+      ) c
+      GROUP BY total
+    `;
+    const rows = await this.em.query<Record<string, unknown>>(final);
+    return this.toPercentileRow(rows[0]);
+  }
+
+  private toPercentileRow(
+    row: Record<string, unknown> | undefined,
+  ): CycleTimePercentilesRow {
+    const num = (v: unknown): number =>
+      v === null || v === undefined ? 0 : Number(Number(v).toFixed(2));
+    return {
+      p50: num(row?.p50),
+      p75: num(row?.p75),
+      p95: num(row?.p95),
+      sampleSize: row?.sampleSize === undefined ? 0 : Number(row.sampleSize),
+    };
   }
 }
