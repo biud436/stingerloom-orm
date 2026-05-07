@@ -24,7 +24,14 @@
  * `pnpm migrate:generate` (which diffs against the live DB).
  */
 import "reflect-metadata";
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import {
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+} from "node:fs";
 import { resolve, join } from "node:path";
 import { config as loadEnv } from "dotenv";
 import {
@@ -100,6 +107,89 @@ function ddlArray(ddls: string[]): string {
   return ddls.map((d) => `      \`${escape(d)}\``).join(",\n");
 }
 
+/**
+ * Find the most recent existing baseline file (if any) and extract the four
+ * DDL arrays so a follow-up run with the *other* dialect can preserve them.
+ *
+ * Without this, two runs with different DB_TYPE values produce two different
+ * baseline files, each populated for only one dialect — and the second run
+ * leaves the file system with two competing baselines. Folding both dialects
+ * into one file keeps the migration history single-rooted.
+ */
+function loadExistingArrays(): {
+  mysqlUp: string[];
+  mysqlDown: string[];
+  pgUp: string[];
+  pgDown: string[];
+  filePath: string | null;
+} {
+  const empty = {
+    mysqlUp: [] as string[],
+    mysqlDown: [] as string[],
+    pgUp: [] as string[],
+    pgDown: [] as string[],
+    filePath: null as string | null,
+  };
+  if (!existsSync(OUTPUT_DIR)) return empty;
+  const files = readdirSync(OUTPUT_DIR)
+    .filter((f) => /^\d+-baseline-schema\.ts$/.test(f))
+    .sort();
+  const latest = files[files.length - 1];
+  if (!latest) return empty;
+  const filePath = join(OUTPUT_DIR, latest);
+  const text = readFileSync(filePath, "utf8");
+
+  const extract = (name: string): string[] => {
+    const re = new RegExp(
+      `const\\s+${name}:\\s*string\\[\\]\\s*=\\s*\\[([\\s\\S]*?)\\];`,
+    );
+    const m = text.match(re);
+    if (!m) return [];
+    const body = m[1];
+    const items: string[] = [];
+    let i = 0;
+    while (i < body.length) {
+      while (i < body.length && body[i] !== "`") i++;
+      if (i >= body.length) break;
+      i++;
+      let raw = "";
+      while (i < body.length) {
+        const ch = body[i];
+        if (ch === "\\" && i + 1 < body.length) {
+          const next = body[i + 1];
+          if (next === "`") {
+            raw += "`";
+          } else if (next === "\\") {
+            raw += "\\";
+          } else if (next === "$") {
+            raw += "$";
+          } else {
+            raw += ch + next;
+          }
+          i += 2;
+          continue;
+        }
+        if (ch === "`") {
+          i++;
+          break;
+        }
+        raw += ch;
+        i++;
+      }
+      items.push(raw);
+    }
+    return items;
+  };
+
+  return {
+    mysqlUp: extract("MYSQL_UP"),
+    mysqlDown: extract("MYSQL_DOWN"),
+    pgUp: extract("POSTGRES_UP"),
+    pgDown: extract("POSTGRES_DOWN"),
+    filePath,
+  };
+}
+
 function main(): void {
   const entities = ENTITIES as Array<new () => unknown>;
 
@@ -122,10 +212,14 @@ function main(): void {
   const activeUp = sg.generateSchemaDDL(entities);
   const activeDown = sg.generateDropSchemaDDL(entities);
 
-  const mysqlUp = activeDialect === "mysql" ? activeUp : [];
-  const mysqlDown = activeDialect === "mysql" ? activeDown : [];
-  const pgUp = activeDialect === "postgres" ? activeUp : [];
-  const pgDown = activeDialect === "postgres" ? activeDown : [];
+  // Preserve the *other* dialect's arrays from the most recent baseline so
+  // running this script twice (once per DB_TYPE) yields a single file with
+  // both dialects populated. The previous baseline is unlinked at the end.
+  const existing = loadExistingArrays();
+  const mysqlUp = activeDialect === "mysql" ? activeUp : existing.mysqlUp;
+  const mysqlDown = activeDialect === "mysql" ? activeDown : existing.mysqlDown;
+  const pgUp = activeDialect === "postgres" ? activeUp : existing.pgUp;
+  const pgDown = activeDialect === "postgres" ? activeDown : existing.pgDown;
 
   if (!existsSync(OUTPUT_DIR)) mkdirSync(OUTPUT_DIR, { recursive: true });
 
@@ -179,21 +273,29 @@ export class ${className} extends Migration {
 `;
 
   writeFileSync(filePath, body, "utf8");
+
+  // Drop the previous baseline only after the new file is on disk and only if
+  // it is a different file — re-running with the same timestamp would unlink
+  // the file we just wrote.
+  if (existing.filePath && existing.filePath !== filePath) {
+    unlinkSync(existing.filePath);
+  }
+
   // eslint-disable-next-line no-console
   console.log(`Wrote ${filePath}`);
   // eslint-disable-next-line no-console
   console.log(
     `Active dialect (${activeDialect}): ${activeUp.length} up / ${activeDown.length} down statements.`,
   );
-  if (activeDialect === "mysql") {
+  // eslint-disable-next-line no-console
+  console.log(
+    `Carried forward — MySQL: ${mysqlUp.length}/${mysqlDown.length}, Postgres: ${pgUp.length}/${pgDown.length}.`,
+  );
+  if (mysqlUp.length === 0 || pgUp.length === 0) {
+    const missing = mysqlUp.length === 0 ? "mysql" : "postgres";
     // eslint-disable-next-line no-console
     console.log(
-      "  Postgres arrays are empty. Re-run with DB_TYPE=postgres to fill them in if you target both dialects.",
-    );
-  } else {
-    // eslint-disable-next-line no-console
-    console.log(
-      "  MySQL arrays are empty. Re-run with DB_TYPE=mysql to fill them in if you target both dialects.",
+      `  ${missing.toUpperCase()} arrays still empty — re-run with DB_TYPE=${missing} to fill them in.`,
     );
   }
   // eslint-disable-next-line no-console

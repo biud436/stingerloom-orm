@@ -25,7 +25,7 @@ import { WebhookEndpoint } from "./src/modules/webhooks/webhook-endpoint.entity"
 import { WebhookDelivery } from "./src/modules/webhooks/webhook-delivery.entity";
 import { BulkOperation } from "./src/modules/bulk-operations/bulk-operation.entity";
 import { IdempotencyKey } from "./src/common/idempotency/idempotency-key.entity";
-import { BaselineSchema_20260507131052 } from "./migrations/20260507131052-baseline-schema";
+import { BaselineSchema_20260507133946 } from "./migrations/20260507133946-baseline-schema";
 
 // Load .env so DB_* match the running app. .env.local wins when present.
 loadEnv({ path: resolve(__dirname, ".env.local") });
@@ -87,7 +87,7 @@ const config = {
   //   1. Edit entities under src/.
   //   2. Run `pnpm migrate:generate` against a DB at the prior migration's state.
   //   3. Append the new migration class to this array.
-  migrations: [new BaselineSchema_20260507131052()],
+  migrations: [new BaselineSchema_20260507133946()],
 };
 
 export default config;
