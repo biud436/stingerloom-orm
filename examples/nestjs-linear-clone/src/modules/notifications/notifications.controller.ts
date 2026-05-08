@@ -71,6 +71,16 @@ export class NotificationsController {
     return { count };
   }
 
+  // Define the static "read-all" route *before* the parameterized
+  // "inbox/:id/read" route — Nest matches in declaration order, and
+  // otherwise PATCH /inbox/read-all gets routed to "inbox/:id/read"
+  // with id="read-all", which ParseIntPipe rejects as 400.
+  @Patch("inbox/read-all")
+  @ApiOperation({ summary: "Mark every unread notification as read" })
+  markAllRead(@CurrentUserId() userId: number) {
+    return this.service.markAllRead(userId);
+  }
+
   @Patch("inbox/:id/read")
   @ApiOperation({ summary: "Mark a single notification as read" })
   markRead(
@@ -78,11 +88,5 @@ export class NotificationsController {
     @CurrentUserId() userId: number,
   ) {
     return this.service.markRead(id, userId);
-  }
-
-  @Patch("inbox/read-all")
-  @ApiOperation({ summary: "Mark every unread notification as read" })
-  markAllRead(@CurrentUserId() userId: number) {
-    return this.service.markAllRead(userId);
   }
 }
