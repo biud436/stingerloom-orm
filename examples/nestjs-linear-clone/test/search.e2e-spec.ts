@@ -59,7 +59,6 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
         title: s.title,
         description: s.description,
         customFields: s.custom,
-        reporterId: fx.userIds[0],
       });
       ids.push(r.id);
     }
@@ -71,7 +70,6 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
       .post("/comments")
       .send({
         issueId: oauthCallbackId,
-        authorId: fx.userIds[1],
         body: "Reproduced during deployment with intermittent connection failures.",
       })
       .expect(201);
