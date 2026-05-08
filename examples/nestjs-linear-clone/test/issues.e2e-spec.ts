@@ -112,13 +112,15 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
       const fresh = await api.get(`/issues/${issueId}`).expect(200);
       const v = fresh.body.version;
 
+      // Use title (a non-workflow field) so both branches are independently
+      // valid — the only reason one fails is the optimistic-lock race.
       const [a, b] = await Promise.all([
         api
           .patch(`/issues/${issueId}`)
-          .send({ expectedVersion: v, status: "TODO" }),
+          .send({ expectedVersion: v, title: "Concurrent A" }),
         api
           .patch(`/issues/${issueId}`)
-          .send({ expectedVersion: v, status: "IN_PROGRESS" }),
+          .send({ expectedVersion: v, title: "Concurrent B" }),
       ]);
 
       const statuses = [a.status, b.status].sort((x, y) => x - y);
@@ -254,7 +256,6 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
       const r = await createIssue(booted.server, {
         projectId: fx.projectId,
         title: "Audit subject",
-        reporterId: fx.userIds[0],
       });
       issueId = r.id;
     });
@@ -267,16 +268,17 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
 
     it("status change recorded as ISSUE_UPDATED with column diff", async () => {
       const issue = await api.get(`/issues/${issueId}`);
+      // BACKLOG → TODO is the first valid step in the default workflow.
       await api
         .patch(`/issues/${issueId}`)
-        .send({ expectedVersion: issue.body.version, status: "IN_PROGRESS" })
+        .send({ expectedVersion: issue.body.version, status: "TODO" })
         .expect(200);
 
       const log = await api.get(`/activity/issues/${issueId}`).expect(200);
       const updates = log.body.filter((r: any) => r.action === "ISSUE_UPDATED");
       const statusEntry = updates
         .flatMap((r: any) => r.payload?.changes ?? [])
-        .find((c: any) => c.column === "status" && c.to === "IN_PROGRESS");
+        .find((c: any) => c.column === "status" && c.to === "TODO");
       expect(statusEntry).toBeTruthy();
       expect(statusEntry.from).toBe("BACKLOG");
     });
@@ -330,7 +332,6 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
         .post("/comments")
         .send({
           issueId,
-          authorId: fx.userIds[1],
           body: "Reproduced on staging at commit deadbeef.",
         })
         .expect(201);

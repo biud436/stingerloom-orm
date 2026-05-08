@@ -44,7 +44,6 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
       projectId: fx.projectId,
       title: "Tree root",
       sprintId,
-      reporterId: fx.userIds[0],
       assigneeId: fx.userIds[0],
       estimate: 5,
     });
@@ -55,7 +54,6 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
       title: "Branch A",
       parentId: rootId,
       sprintId,
-      reporterId: fx.userIds[1],
       assigneeId: fx.userIds[1],
       estimate: 3,
     });
@@ -66,7 +64,6 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
       title: "Branch B",
       parentId: rootId,
       sprintId,
-      reporterId: fx.userIds[1],
       assigneeId: fx.userIds[2],
       estimate: 4,
     });
@@ -77,7 +74,6 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
       title: "A's child",
       parentId: aId,
       sprintId,
-      reporterId: fx.userIds[2],
       assigneeId: fx.userIds[1],
       estimate: 2,
     });
@@ -88,30 +84,26 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
       title: "B's child",
       parentId: bId,
       sprintId,
-      reporterId: fx.userIds[3],
       assigneeId: fx.userIds[2],
       estimate: 2,
     });
     bChildId = bChild.id;
 
     // Transition some issues through statuses so STATUS_CHANGED logs accumulate
-    // and the throughput / burndown queries see completed work.
+    // and the throughput / burndown queries see completed work. Walk the
+    // default workflow chain BACKLOG → TODO → IN_PROGRESS → IN_REVIEW → DONE
+    // because the workflow guard now rejects skip transitions.
     for (const id of [rootId, aId, bId]) {
       const cur = await api.get(`/issues/${id}`);
-      const v0 = cur.body.version;
-
-      const r1 = await api
-        .patch(`/issues/${id}`)
-        .send({ expectedVersion: v0, status: "IN_PROGRESS" })
-        .expect(200);
-
-      const r2 = await api
-        .patch(`/issues/${id}`)
-        .send({ expectedVersion: r1.body.version, status: "DONE" })
-        .expect(200);
-
+      let version = cur.body.version;
+      for (const status of ["TODO", "IN_PROGRESS", "IN_REVIEW", "DONE"]) {
+        const r = await api
+          .patch(`/issues/${id}`)
+          .send({ expectedVersion: version, status })
+          .expect(200);
+        version = r.body.version;
+      }
       completedIssueIds.push(id);
-      expect(r2.body.completedAt).toBeTruthy();
     }
   }, 90000);
 
@@ -301,13 +293,14 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
   // ────────────────────────────────────────────────
   describe("Time in status (LAG/LEAD over activity_log)", () => {
     it("returns one row per STATUS_CHANGED entry", async () => {
-      // rootId went BACKLOG → IN_PROGRESS → DONE so we expect 2 transitions.
+      // rootId walked BACKLOG → TODO → IN_PROGRESS → IN_REVIEW → DONE so we
+      // expect 4 transitions (the workflow guard now requires the full chain).
       const res = await api
         .get(`/analytics/issues/${rootId}/time-in-status`)
         .expect(200);
 
       expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBe(2);
+      expect(res.body.length).toBe(4);
     });
 
     it("each row has issueId and status fields", async () => {

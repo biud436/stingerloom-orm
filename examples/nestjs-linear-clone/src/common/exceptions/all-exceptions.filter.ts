@@ -84,16 +84,32 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (exception instanceof HttpException) {
       const body = exception.getResponse();
-      const message =
-        typeof body === "string"
-          ? body
-          : ((body as { message?: string | string[] })?.message ?? exception.message);
+      const status = exception.getStatus();
+      if (typeof body === "object" && body !== null) {
+        const obj = body as Record<string, unknown>;
+        const rawMessage = (obj.message ?? exception.message) as
+          | string
+          | string[];
+        const message = Array.isArray(rawMessage)
+          ? rawMessage.join(", ")
+          : rawMessage;
+        // Lift custom fields (code, currentVersion, …) from the throw body
+        // onto the envelope so callers can switch on stable codes and read
+        // protocol-specific fields without unwrapping a `details` blob.
+        return {
+          ...base,
+          ...obj,
+          status,
+          code:
+            typeof obj.code === "string" ? obj.code : this.codeFromHttp(exception),
+          message,
+        };
+      }
       return {
         ...base,
-        status: exception.getStatus(),
+        status,
         code: this.codeFromHttp(exception),
-        message: Array.isArray(message) ? message.join(", ") : message,
-        details: typeof body === "object" ? body : undefined,
+        message: typeof body === "string" ? body : exception.message,
       };
     }
 

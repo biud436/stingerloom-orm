@@ -36,7 +36,7 @@ export class Comment {
 
   @ManyToOne(() => Comment, () => undefined)
   @RelationColumn({ name: "parent_comment_id", nullable: true })
-  parent!: Comment | null;
+  parentComment!: Comment | null;
 
   parentCommentId?: number | null;
 

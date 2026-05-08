@@ -47,8 +47,13 @@ export class EtagInterceptor implements NestInterceptor {
         if (req.method === "GET") {
           const inm = req.header("if-none-match");
           if (inm && etagsMatch(inm, etag)) {
+            // Set 304 and drop the body. Express ignores response bodies on
+            // 304 per RFC 7232, so returning `undefined` lets Nest's response
+            // handler call res.send(undefined) without colliding with
+            // res.end() (which previously caused
+            // "Cannot set headers after they are sent" via the exception
+            // filter on the second write).
             res.status(HttpStatus.NOT_MODIFIED);
-            res.end();
             return undefined;
           }
         }

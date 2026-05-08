@@ -9,9 +9,9 @@ import {
 } from "@nestjs/common";
 import { Request, Response } from "express";
 import { Observable, from, of } from "rxjs";
-import { mergeMap, tap, catchError } from "rxjs/operators";
+import { mergeMap, catchError } from "rxjs/operators";
 import { createHash } from "node:crypto";
-import { BaseRepository, EntityManager, raw, sql } from "@stingerloom/orm";
+import { EntityManager, raw, sql } from "@stingerloom/orm";
 import { IdempotencyKey } from "./idempotency-key.entity";
 
 const HEADER = "idempotency-key";
@@ -105,23 +105,23 @@ export class IdempotencyInterceptor implements NestInterceptor {
           return of(existing.response);
         }
 
-        // Newly claimed — run the handler and persist the response.
+        // Newly claimed — run the handler and persist the response. We
+        // await `persistResult` *before* the response is emitted so a
+        // sequential replay never races the in_flight row out of its
+        // post-handler UPDATE.
         return next.handle().pipe(
-          tap({
-            next: (body) => {
-              const status = res.statusCode || HttpStatus.OK;
-              this.persistResult(headerVal, status, body).catch(() => undefined);
-            },
+          mergeMap(async (body) => {
+            const status = res.statusCode || HttpStatus.OK;
+            await this.persistResult(headerVal, status, body);
+            return body;
           }),
-          catchError((err) => {
-            // Persist a generic terminal failure response so re-runs don't
-            // inadvertently retry a 4xx as a fresh request. We do NOT replay
-            // the original error body — non-2xx errors flow through the
-            // normal exception filter on the first call.
+          catchError(async (err) => {
             const failBody = { error: true, message: (err as Error)?.message };
-            this.persistResult(headerVal, HttpStatus.INTERNAL_SERVER_ERROR, failBody).catch(
-              () => undefined,
-            );
+            await this.persistResult(
+              headerVal,
+              HttpStatus.INTERNAL_SERVER_ERROR,
+              failBody,
+            ).catch(() => undefined);
             throw err;
           }),
         );
@@ -179,13 +179,26 @@ export class IdempotencyInterceptor implements NestInterceptor {
     httpStatus: number,
     response: unknown,
   ): Promise<void> {
-    const repo = this.em.getRepository(IdempotencyKey);
-    const row = await repo.findOne({ where: { key } });
-    if (!row) return;
-    row.status = "completed";
-    row.httpStatus = httpStatus;
-    row.response = response ?? null;
-    await repo.save(row);
+    // The row was just INSERTed by tryClaim — use UPDATE rather than
+    // repo.save() because save() on an entity with @PrimaryColumn (manual
+    // PK) always falls through to INSERT and trips ER_DUP_ENTRY here.
+    const wrap = (n: string) => this.em.wrap(n);
+    const tbl = wrap("idempotency_key");
+    const cKey = wrap("key");
+    const cStatus = wrap("status");
+    const cHttp = wrap("http_status");
+    const cResponse = wrap("response");
+    const responseJson =
+      response === undefined || response === null
+        ? null
+        : JSON.stringify(response);
+    await this.em.query(sql`
+      UPDATE ${raw(tbl)}
+         SET ${raw(cStatus)} = ${"completed"},
+             ${raw(cHttp)} = ${httpStatus},
+             ${raw(cResponse)} = ${responseJson}
+       WHERE ${raw(cKey)} = ${key}
+    `);
   }
 }
 
