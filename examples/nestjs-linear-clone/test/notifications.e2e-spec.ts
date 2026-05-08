@@ -157,13 +157,14 @@ integrationDescribe("[E2E] Notifications — watchers, @mentions, status-change 
   // Status-change fan-out via Issue.beforeUpdate (databaseEntity diff)
   // ────────────────────────────────────────────────
   describe("Status-change fan-out", () => {
-    it("status BACKLOG → IN_PROGRESS pings every watcher (bob)", async () => {
+    it("status BACKLOG → TODO pings every watcher (bob)", async () => {
+      // BACKLOG → TODO is the first valid step in the default workflow chain.
       const fresh = await alice.get(`/issues/${issueId}`).expect(200);
       issueVersion = fresh.body.version;
 
       await alice
         .patch(`/issues/${issueId}`)
-        .send({ expectedVersion: issueVersion, status: "IN_PROGRESS" })
+        .send({ expectedVersion: issueVersion, status: "TODO" })
         .expect(200);
 
       const inbox = await bob.get("/inbox").expect(200);
@@ -172,7 +173,7 @@ integrationDescribe("[E2E] Notifications — watchers, @mentions, status-change 
           n.kind === "status_change" &&
           n.sourceIssueId === issueId &&
           n.payload?.from === "BACKLOG" &&
-          n.payload?.to === "IN_PROGRESS",
+          n.payload?.to === "TODO",
       );
       expect(statusChanges.length).toBe(1);
     });
@@ -212,7 +213,7 @@ integrationDescribe("[E2E] Notifications — watchers, @mentions, status-change 
     });
 
     it("read-all zeroes the unread count", async () => {
-      const r = await chris.patch("/inbox/read-all").expect(200);
+      const r = await chris.patch("/inbox-read-all").expect(200);
       expect(r.body.marked).toBeGreaterThanOrEqual(0);
 
       const after = await chris.get("/inbox/unread-count").expect(200);
@@ -244,12 +245,15 @@ integrationDescribe("[E2E] Notifications — watchers, @mentions, status-change 
     it("after unwatch, status-change no longer pings the (former) watcher", async () => {
       await bob.delete(`/issues/${issueId}/watch`).expect(204);
 
+      // Walk the workflow forward; the issue is at TODO from the
+      // earlier "status BACKLOG → TODO" test. TODO → IN_PROGRESS is the
+      // next valid step.
       const fresh = await alice.get(`/issues/${issueId}`).expect(200);
       const v = fresh.body.version;
 
       await alice
         .patch(`/issues/${issueId}`)
-        .send({ expectedVersion: v, status: "DONE" })
+        .send({ expectedVersion: v, status: "IN_PROGRESS" })
         .expect(200);
 
       const inbox = await bob.get("/inbox").expect(200);
@@ -257,7 +261,7 @@ integrationDescribe("[E2E] Notifications — watchers, @mentions, status-change 
         (n: { kind: string; sourceIssueId: number; payload: any }) =>
           n.kind === "status_change" &&
           n.sourceIssueId === issueId &&
-          n.payload?.to === "DONE",
+          n.payload?.to === "IN_PROGRESS",
       );
       expect(newStatusChanges.length).toBe(0);
     });
