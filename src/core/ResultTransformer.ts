@@ -184,10 +184,19 @@ export class ResultTransformer implements BaseResultTransformer {
     const enties = Object.entries(row);
 
     for (const [key, value] of enties) {
+      // A row key with a remap entry is a base column on this entity (e.g.
+      // snake_case @Column like `created_at` → `createdAt`, or
+      // @RelationColumn FK like `project_id` → `projectId`). Underscore
+      // does not imply "joined relation column" in that case — only keys
+      // with no remap entry are candidates for the foreign-object handler.
+      const remapped = remapMap?.get(key);
+      if (remapped !== undefined) {
+        baseEntity[remapped] = value;
+        continue;
+      }
       const isUnderScored = key.includes(ResultTransformer.PropertySeparator);
       if (!isUnderScored) {
-        const propKey = remapMap?.get(key) ?? key;
-        baseEntity[propKey] = value;
+        baseEntity[key] = value;
       }
     }
   }

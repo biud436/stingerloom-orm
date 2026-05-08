@@ -1229,15 +1229,35 @@ export class EntityManager implements BaseEntityManager {
           selectMap.push(...selectedColumns.map((col) => this.wrap(col)));
         }
       } else {
+        // Build the full physical column set: @Column items + @RelationColumn-
+        // derived FK columns (joinColumn) that have no matching @Column. Without
+        // the FK columns the entity's shadow `${rel}Id` accessor stays
+        // undefined after findOne, even though INSERT/UPDATE persist them.
+        const allColNames = metadata.columns
+          .map((c: any) => c.name as string | undefined)
+          .filter((n): n is string => !!n);
+        const seen = new Set<string>(allColNames);
+        for (const rel of manyToOneRelations) {
+          if (rel.joinColumn && !seen.has(rel.joinColumn)) {
+            allColNames.push(rel.joinColumn);
+            seen.add(rel.joinColumn);
+          }
+        }
+        for (const rel of oneToOneRelations) {
+          if (rel.joinColumn && !seen.has(rel.joinColumn)) {
+            allColNames.push(rel.joinColumn);
+            seen.add(rel.joinColumn);
+          }
+        }
         if (hasEagerJoins) {
           selectMap.push(
-            ...metadata.columns.map(
-              (column) => `${this.wrap(tableName)}.${this.wrap(column.name!)}`,
+            ...allColNames.map(
+              (name) => `${this.wrap(tableName)}.${this.wrap(name)}`,
             ),
           );
         } else {
           selectMap.push(
-            ...metadata.columns.map((column) => this.wrap(column.name!)),
+            ...allColNames.map((name) => this.wrap(name)),
           );
         }
       }
@@ -1804,9 +1824,28 @@ export class EntityManager implements BaseEntityManager {
       const tableName = metadata.name!;
       const qb = RawQueryBuilderFactory.create();
 
-      const selectMap = metadata.columns.map((column) =>
-        this.wrap(column.name!),
-      );
+      // Same FK-column merge as findInternal: include @RelationColumn-derived
+      // FK columns that have no matching @Column, otherwise the cursor result
+      // rows lack `${rel}Id` accessors after deserialization.
+      const allColNames = metadata.columns
+        .map((c: any) => c.name as string | undefined)
+        .filter((n): n is string => !!n);
+      const seenCols = new Set<string>(allColNames);
+      const cursorManyToOnes = this.resolver.resolveManyToOneMetadata(entity);
+      const cursorOneToOnes = this.resolver.resolveOneToOneMetadata(entity);
+      for (const rel of cursorManyToOnes) {
+        if (rel.joinColumn && !seenCols.has(rel.joinColumn)) {
+          allColNames.push(rel.joinColumn);
+          seenCols.add(rel.joinColumn);
+        }
+      }
+      for (const rel of cursorOneToOnes) {
+        if (rel.joinColumn && !seenCols.has(rel.joinColumn)) {
+          allColNames.push(rel.joinColumn);
+          seenCols.add(rel.joinColumn);
+        }
+      }
+      const selectMap = allColNames.map((name) => this.wrap(name));
 
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.wrap(n),
