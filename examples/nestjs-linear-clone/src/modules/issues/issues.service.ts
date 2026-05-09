@@ -8,11 +8,11 @@ import {
 import {
   BaseRepository,
   EntityManager,
+  RawQueryBuilder,
   Transactional,
   CursorPaginationResult,
   qAlias,
   sql,
-  join,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Issue } from "./issue.entity";
@@ -353,18 +353,28 @@ export class IssuesService {
     //    only when their parent is also in the deleted set, matching the
     //    semantic "restore everything that was trashed together".
     const I = this.em.ref(Issue);
+    const Ic = this.em.ref(Issue, "c");
+    const p = this.em.aliasRef("p");
+    const dialect = this.em.getDriver().isMySqlFamily() ? "mysql" : "postgresql";
 
-    const descendants = await this.em.query<{ id: number }>(sql`
-      WITH RECURSIVE deleted_tree(${I.id}) AS (
-        SELECT ${I.id} FROM ${I}
-          WHERE ${I.id} = ${id} AND ${I.deletedAt} IS NOT NULL
-        UNION ALL
-        SELECT c.${I.id} FROM ${I} c
-          INNER JOIN deleted_tree p ON c.${I.parentId} = p.${I.id}
-          WHERE c.${I.deletedAt} IS NOT NULL
+    const cteQuery = RawQueryBuilder.create()
+      .setDatabaseType(dialect)
+      .withRecursive("deleted_tree", (qb) =>
+        qb
+          .selectFragments([I.id])
+          .from(I)
+          .where([sql`${I.id} = ${id}`, sql`${I.deletedAt} IS NOT NULL`])
+          .unionAll()
+          .selectFragments([Ic.id])
+          .from(Ic)
+          .innerJoin("deleted_tree", "p", sql`${Ic.parentId} = ${p.id}`)
+          .where([sql`${Ic.deletedAt} IS NOT NULL`]),
       )
-      SELECT ${I.id} FROM deleted_tree
-    `);
+      .select(["id"])
+      .from("deleted_tree")
+      .build();
+
+    const descendants = await this.em.query<{ id: number }>(cteQuery);
 
     const idsToRestore = descendants.map((r) => Number(r.id));
     if (idsToRestore.length === 0) {
@@ -372,18 +382,11 @@ export class IssuesService {
       return { restored: 0, ids: [] };
     }
 
-    // 3. clear deletedAt on the whole set in one UPDATE. `join()` from
-    //    sql-template-tag expands the id array into N parameter
-    //    placeholders so the driver picks `?` (mysql2) vs `$n` (pg).
-    const idList = join(
-      idsToRestore.map((v) => sql`${v}`),
-      ", ",
-    );
-    await this.em.query(sql`
-      UPDATE ${I}
-         SET ${I.deletedAt} = NULL
-       WHERE ${I.id} IN (${idList})
-    `);
+    // 3. clear deletedAt on the whole set. repo.restore({ id: number[] })
+    //    expands to `WHERE id IN (…)` internally and folds in tenant
+    //    scoping — symmetric with softDelete so we can't accidentally
+    //    revive rows from another tenant.
+    await this.repo.restore({ id: idsToRestore });
     return { restored: idsToRestore.length, ids: idsToRestore };
   }
 
