@@ -10,6 +10,7 @@ import {
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { WorkLog } from "./work-log.entity";
 import { Issue } from "../issues/issue.entity";
+import { Sprint } from "../sprints/sprint.entity";
 import { CreateWorkLogDto, UpdateWorkLogDto } from "./dto/work-log.dto";
 import { applyPatch, pickDefined } from "../../common/dto-helpers";
 import { detectDialect, dsl } from "../analytics/sql-helpers";
@@ -102,15 +103,16 @@ export class WorkLogsService {
   ): Promise<DailyHoursRow[]> {
     const D = dsl(detectDialect(this.em));
     const { Q, dayOf, nowMinusDays } = D;
-    const day = dayOf(Q("logged_at"));
+    const W = this.em.ref(WorkLog);
+    const day = dayOf(W.loggedAt);
     const cutoff = nowMinusDays(sinceDays);
     const final = sql`
       SELECT
         ${day}                  AS ${Q("day")},
-        SUM(${Q("hours")})      AS ${Q("hours")}
-      FROM ${Q("work_log")}
-      WHERE ${Q("user_id")} = ${userId}
-        AND ${Q("logged_at")} >= ${cutoff}
+        SUM(${W.hours})         AS ${Q("hours")}
+      FROM ${W}
+      WHERE ${W.userId} = ${userId}
+        AND ${W.loggedAt} >= ${cutoff}
       GROUP BY ${day}
       ORDER BY ${day}
     `;
@@ -142,6 +144,9 @@ export class WorkLogsService {
   ): Promise<SprintVelocityRow[]> {
     const D = dsl(detectDialect(this.em));
     const { Q } = D;
+    const S = this.em.ref(Sprint, "s");
+    const I = this.em.ref(Issue, "i");
+    const W = this.em.ref(WorkLog, "w");
 
     // ROWS BETWEEN N PRECEDING — N is a literal, not a parameter, because
     // window-frame bounds must be compile-time constants on both engines.
@@ -149,20 +154,20 @@ export class WorkLogsService {
 
     const final = sql`
       SELECT
-        s.${Q("id")}                                                          AS ${Q("sprintId")},
-        s.${Q("name")}                                                        AS ${Q("sprintName")},
-        s.${Q("start_date")}                                                  AS ${Q("startDate")},
-        COALESCE(SUM(w.${Q("hours")}), 0)                                     AS ${Q("completedHours")},
-        AVG(COALESCE(SUM(w.${Q("hours")}), 0)) OVER (
-          ORDER BY (s.${Q("start_date")} IS NULL), s.${Q("start_date")}, s.${Q("id")}
+        ${S.id}                                                               AS ${Q("sprintId")},
+        ${S.name}                                                             AS ${Q("sprintName")},
+        ${S.startDate}                                                        AS ${Q("startDate")},
+        COALESCE(SUM(${W.hours}), 0)                                          AS ${Q("completedHours")},
+        AVG(COALESCE(SUM(${W.hours}), 0)) OVER (
+          ORDER BY (${S.startDate} IS NULL), ${S.startDate}, ${S.id}
           ROWS BETWEEN ${raw(String(window))} PRECEDING AND CURRENT ROW
         )                                                                     AS ${Q("rollingAverageHours")}
-      FROM ${Q("sprint")} s
-      LEFT JOIN ${Q("issue")} i ON i.${Q("sprint_id")} = s.${Q("id")} AND i.${Q("deleted_at")} IS NULL
-      LEFT JOIN ${Q("work_log")} w ON w.${Q("issue_id")} = i.${Q("id")}
-      WHERE s.${Q("project_id")} = ${projectId}
-      GROUP BY s.${Q("id")}, s.${Q("name")}, s.${Q("start_date")}
-      ORDER BY (s.${Q("start_date")} IS NULL), s.${Q("start_date")}, s.${Q("id")}
+      FROM ${S}
+      LEFT JOIN ${I} ON ${I.sprintId} = ${S.id} AND ${I.deletedAt} IS NULL
+      LEFT JOIN ${W} ON ${W.issueId} = ${I.id}
+      WHERE ${S.projectId} = ${projectId}
+      GROUP BY ${S.id}, ${S.name}, ${S.startDate}
+      ORDER BY (${S.startDate} IS NULL), ${S.startDate}, ${S.id}
     `;
 
     const rows = await this.em.query<Record<string, unknown>>(final);

@@ -1,4 +1,4 @@
-import { EntityManager, camelToSnakeCase, raw } from "@stingerloom/orm";
+import { EntityManager, raw } from "@stingerloom/orm";
 import sql, { Sql } from "sql-template-tag";
 
 export type Dialect = "mysql" | "postgres";
@@ -11,6 +11,10 @@ export function detectDialect(em: EntityManager): Dialect {
  * Quote an identifier as a plain string. Used at boundaries that take
  * `string` (e.g. `RawQueryBuilder.orderBy({ column })`) or for static
  * SQL fragments built outside a `sql\`\`` template.
+ *
+ * Entity-bound column refs should use `em.ref(Entity).<prop>` instead.
+ * `q()` is here for ad-hoc identifier quoting (CTE column names,
+ * window aliases, projection labels) that don't map onto a real entity.
  */
 export function q(name: string, dialect: Dialect): string {
   return dialect === "postgres"
@@ -29,52 +33,14 @@ export function ph(index: number, dialect: Dialect): string {
 }
 
 /**
- * Aliased table reference. Property access resolves to a qualified
- * column ref (e.g. `r.id` → `` r.`id` ``); call `.as(col, asName?)` to
- * project with an `AS alias` clause.
- */
-export type TableRef = Record<string, Sql> & {
-  as(col: string, asName?: string): Sql;
-};
-
-const RESERVED_TBL_PROPS = new Set([
-  "as",
-  "then",
-  "constructor",
-  "toJSON",
-  "toString",
-  "valueOf",
-]);
-
-/**
- * Translate the JS-side property name (e.g. `createdAt`) to the snake_case
- * column the SnakeNamingStrategy produced at registration time. Idempotent
- * on already-snake_case input (`created_at` → `created_at`).
- */
-function colName(prop: string): string {
-  return camelToSnakeCase(prop);
-}
-
-function makeTableRef(alias: string, Q: (name: string) => Sql): TableRef {
-  return new Proxy({} as TableRef, {
-    get(_target, prop) {
-      if (typeof prop !== "string") return undefined;
-      if (prop === "as") {
-        // `col` is the DB column to project (snake-cased); `asName` is the
-        // outbound alias the consumer reads (kept verbatim, usually camelCase).
-        return (col: string, asName?: string) =>
-          sql`${raw(alias)}.${Q(colName(col))} AS ${Q(asName ?? col)}`;
-      }
-      if (RESERVED_TBL_PROPS.has(prop)) return undefined;
-      return sql`${raw(alias)}.${Q(colName(prop))}`;
-    },
-  });
-}
-
-/**
  * Bundle of dialect-bound helpers for one query. Created once per
  * method via `dsl(detectDialect(em))` so that every helper inside the
  * query body is dialect-free at the call site.
+ *
+ * For column identifiers on a known entity, prefer `em.ref(Entity)` /
+ * `em.ref(Entity, alias)` which honors NamingStrategy and FK metadata.
+ * `dsl()` is for the dialect-portable date / interval / placeholder
+ * helpers that aren't entity-bound.
  */
 export function dsl(dialect: Dialect) {
   const Q = quoter(dialect);
@@ -103,7 +69,6 @@ export function dsl(dialect: Dialect) {
     dialect,
     Q,
     q: (name: string) => q(name, dialect),
-    tbl: (alias: string): TableRef => makeTableRef(alias, Q),
     dayOf,
     weekOf,
     hoursBetween,

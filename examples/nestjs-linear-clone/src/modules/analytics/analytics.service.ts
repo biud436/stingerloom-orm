@@ -6,6 +6,9 @@ import {
   raw,
 } from "@stingerloom/orm";
 import { detectDialect, dsl } from "./sql-helpers";
+import { Issue } from "../issues/issue.entity";
+import { User } from "../users/user.entity";
+import { ActivityLog } from "../activity/activity-log.entity";
 import { ISSUE_STATUS } from "../../common/enums";
 
 export interface IssueTreeRow {
@@ -72,41 +75,44 @@ export class AnalyticsService {
    */
   async issueTree(rootIssueId: number, maxDepth = 10): Promise<IssueTreeRow[]> {
     const D = dsl(detectDialect(this.em));
-    const { Q, q, tbl } = D;
-    const r = tbl("r");
-    const c = tbl("c");
-    const t = tbl("t");
+    const { Q, q } = D;
+    const r = this.em.ref(Issue, "r");
+    const c = this.em.ref(Issue, "c");
+    // `t` is the recursive CTE alias; depth/path are CTE-only columns.
+    const tDepth = sql`t.${Q("depth")}`;
+    const tPath = sql`t.${Q("path")}`;
+    const tId = sql`t.${Q("id")}`;
     const castText = D.dialect === "postgres" ? "TEXT" : "CHAR(255)";
     const childPath =
       D.dialect === "postgres"
-        ? sql`${t.path} || '/' || CAST(${c.id} AS TEXT)`
-        : sql`CONCAT(${t.path}, '/', CAST(${c.id} AS CHAR(255)))`;
+        ? sql`${tPath} || '/' || CAST(${c.id} AS TEXT)`
+        : sql`CONCAT(${tPath}, '/', CAST(${c.id} AS CHAR(255)))`;
 
     const treeBody = sql`
       SELECT
         ${r.as("id")},
-        ${r.as("parent_id", "parentId")},
+        ${r.as("parentId")},
         ${r.as("number")},
         ${r.as("title")},
         ${r.as("status")},
         0 AS ${Q("depth")},
         CAST(${r.id} AS ${raw(castText)}) AS ${Q("path")}
-      FROM ${Q("issue")} r
+      FROM ${r}
       WHERE ${r.id} = ${rootIssueId}
         AND ${r.deletedAt} IS NULL
       UNION ALL
       SELECT
         ${c.id},
-        ${c.parent_id},
+        ${c.parentId},
         ${c.number},
         ${c.title},
         ${c.status},
-        ${t.depth} + 1,
+        ${tDepth} + 1,
         ${childPath}
-      FROM ${Q("issue")} c
-      INNER JOIN issue_tree t ON ${c.parent_id} = ${t.id}
+      FROM ${c}
+      INNER JOIN issue_tree t ON ${c.parentId} = ${tId}
       WHERE ${c.deletedAt} IS NULL
-        AND ${t.depth} < ${maxDepth}
+        AND ${tDepth} < ${maxDepth}
     `;
 
     const built = RawQueryBuilder.create()
@@ -139,27 +145,28 @@ export class AnalyticsService {
    */
   async sprintBurndown(sprintId: number): Promise<BurndownRow[]> {
     const D = dsl(detectDialect(this.em));
-    const { Q, tbl, dayOf } = D;
-    const i = tbl("i");
-    const truncDay = dayOf(i.completedAt);
+    const { Q, dayOf } = D;
+    const I = this.em.ref(Issue);
+    const Ia = this.em.ref(Issue, "i");
+    const truncDay = dayOf(Ia.completedAt);
 
     const sprintTotalCte = sql`
-      SELECT COALESCE(SUM(${Q("estimate")}), 0) AS total_estimate
-      FROM ${Q("issue")}
-      WHERE ${Q("sprint_id")} = ${sprintId}
-        AND ${Q("deleted_at")} IS NULL
+      SELECT COALESCE(SUM(${I.estimate}), 0) AS total_estimate
+      FROM ${I}
+      WHERE ${I.sprintId} = ${sprintId}
+        AND ${I.deletedAt} IS NULL
     `;
 
     const dailyCte = sql`
       SELECT
         ${truncDay}                          AS day,
         COUNT(*)                             AS completed_count,
-        COALESCE(SUM(${i.estimate}), 0)      AS completed_estimate
-      FROM ${Q("issue")} i
-      WHERE ${i.sprint_id} = ${sprintId}
-        AND ${i.deletedAt} IS NULL
-        AND ${i.status} = ${ISSUE_STATUS.DONE}
-        AND ${i.completedAt} IS NOT NULL
+        COALESCE(SUM(${Ia.estimate}), 0)     AS completed_estimate
+      FROM ${Ia}
+      WHERE ${Ia.sprintId} = ${sprintId}
+        AND ${Ia.deletedAt} IS NULL
+        AND ${Ia.status} = ${ISSUE_STATUS.DONE}
+        AND ${Ia.completedAt} IS NOT NULL
       GROUP BY ${truncDay}
     `;
 
@@ -204,22 +211,22 @@ export class AnalyticsService {
     windowDays = 30,
   ): Promise<ThroughputRow[]> {
     const D = dsl(detectDialect(this.em));
-    const { Q, tbl, hoursBetween, nowMinusDays } = D;
-    const i = tbl("i");
-    const u = tbl("u");
-    const cycle = hoursBetween(i.createdAt, i.completedAt);
+    const { Q, hoursBetween, nowMinusDays } = D;
+    const I = this.em.ref(Issue, "i");
+    const U = this.em.ref(User, "u");
+    const cycle = hoursBetween(I.createdAt, I.completedAt);
     const cutoff = nowMinusDays(windowDays);
 
     const closedCte = sql`
       SELECT
-        ${i.assignee_id} AS assignee_id,
-        ${cycle}         AS cycle_hours
-      FROM ${Q("issue")} i
-      WHERE ${i.project_id} = ${projectId}
-        AND ${i.deletedAt} IS NULL
-        AND ${i.status} = ${ISSUE_STATUS.DONE}
-        AND ${i.completedAt} IS NOT NULL
-        AND ${i.completedAt} >= ${cutoff}
+        ${I.assigneeId} AS assignee_id,
+        ${cycle}        AS cycle_hours
+      FROM ${I}
+      WHERE ${I.projectId} = ${projectId}
+        AND ${I.deletedAt} IS NULL
+        AND ${I.status} = ${ISSUE_STATUS.DONE}
+        AND ${I.completedAt} IS NOT NULL
+        AND ${I.completedAt} >= ${cutoff}
     `;
 
     const statsCte = sql`
@@ -241,13 +248,13 @@ export class AnalyticsService {
       ${ctes}
       SELECT
         s.assignee_id                                                            AS ${Q("assigneeId")},
-        ${u.name}                                                                AS ${Q("assigneeName")},
+        ${U.name}                                                                AS ${Q("assigneeName")},
         s.completed_count                                                        AS ${Q("completedCount")},
         s.avg_cycle_hours                                                        AS ${Q("averageCycleHours")},
         ROW_NUMBER() OVER (ORDER BY s.completed_count DESC, s.avg_cycle_hours ASC)
                                                                                  AS ${Q("rankInProject")}
       FROM stats s
-      LEFT JOIN ${Q("user")} u ON ${u.id} = s.assignee_id
+      LEFT JOIN ${U} ON ${U.id} = s.assignee_id
       ORDER BY ${Q("rankInProject")}
     `;
 
@@ -280,16 +287,17 @@ export class AnalyticsService {
   async timeInStatus(issueId: number): Promise<TimeInStatusRow[]> {
     const D = dsl(detectDialect(this.em));
     const { Q } = D;
+    const A = this.em.ref(ActivityLog);
 
     // Extract the `to` value of the change record where column='status'.
     const enteredStatus =
       D.dialect === "postgres"
-        ? sql`(jsonb_path_query_first(${Q("payload")}::jsonb, '$.changes[*] ? (@.column == "status").to'))::text`
+        ? sql`(jsonb_path_query_first(${A.payload}::jsonb, '$.changes[*] ? (@.column == "status").to'))::text`
         : sql`JSON_UNQUOTE(
             JSON_EXTRACT(
-              ${Q("payload")},
+              ${A.payload},
               REPLACE(
-                JSON_UNQUOTE(JSON_SEARCH(${Q("payload")}, 'one', 'status', NULL, '$.changes[*].column')),
+                JSON_UNQUOTE(JSON_SEARCH(${A.payload}, 'one', 'status', NULL, '$.changes[*].column')),
                 '.column',
                 '.to'
               )
@@ -298,21 +306,21 @@ export class AnalyticsService {
 
     const hoursDiff =
       D.dialect === "postgres"
-        ? sql`EXTRACT(EPOCH FROM (LEAD(${Q("created_at")}) OVER w - ${Q("created_at")})) / 3600.0`
-        : sql`TIMESTAMPDIFF(SECOND, ${Q("created_at")}, LEAD(${Q("created_at")}) OVER w) / 3600.0`;
+        ? sql`EXTRACT(EPOCH FROM (LEAD(${A.createdAt}) OVER w - ${A.createdAt})) / 3600.0`
+        : sql`TIMESTAMPDIFF(SECOND, ${A.createdAt}, LEAD(${A.createdAt}) OVER w) / 3600.0`;
 
     const final = sql`
       SELECT * FROM (
         SELECT
-          ${Q("issue_id")}                              AS ${Q("issueId")},
+          ${A.issueId}                                  AS ${Q("issueId")},
           ${enteredStatus}                              AS ${Q("status")},
-          ${Q("created_at")}                            AS ${Q("enteredAt")},
-          LEAD(${Q("created_at")}) OVER w               AS ${Q("leftAt")},
+          ${A.createdAt}                                AS ${Q("enteredAt")},
+          LEAD(${A.createdAt}) OVER w                   AS ${Q("leftAt")},
           ${hoursDiff}                                  AS ${Q("hoursInStatus")}
-        FROM ${Q("activity_log")}
-        WHERE ${Q("issue_id")} = ${issueId}
-          AND ${Q("action")} = ${"ISSUE_UPDATED"}
-        WINDOW w AS (PARTITION BY ${Q("issue_id")} ORDER BY ${Q("created_at")})
+        FROM ${A}
+        WHERE ${A.issueId} = ${issueId}
+          AND ${A.action} = ${"ISSUE_UPDATED"}
+        WINDOW w AS (PARTITION BY ${A.issueId} ORDER BY ${A.createdAt})
       ) t
       WHERE ${Q("status")} IS NOT NULL
       ORDER BY ${Q("enteredAt")}
@@ -358,21 +366,22 @@ export class AnalyticsService {
   ): Promise<LeadTimeRow[]> {
     const D = dsl(detectDialect(this.em));
     const { Q, weekOf, hoursBetween, nowMinusDays } = D;
-    const week = weekOf(Q("completed_at"));
+    const I = this.em.ref(Issue);
+    const week = weekOf(I.completedAt);
     const cutoff = nowMinusDays(windowDays);
-    const cycle = hoursBetween(Q("created_at"), Q("completed_at"));
+    const cycle = hoursBetween(I.createdAt, I.completedAt);
 
     const final = sql`
       SELECT
         ${week}                       AS ${Q("weekStart")},
         AVG(${cycle})                 AS ${Q("leadTimeHours")},
         COUNT(*)                      AS ${Q("closedCount")}
-      FROM ${Q("issue")}
-      WHERE ${Q("project_id")} = ${projectId}
-        AND ${Q("status")} = ${ISSUE_STATUS.DONE}
-        AND ${Q("completed_at")} IS NOT NULL
-        AND ${Q("completed_at")} >= ${cutoff}
-        AND ${Q("deleted_at")} IS NULL
+      FROM ${I}
+      WHERE ${I.projectId} = ${projectId}
+        AND ${I.status} = ${ISSUE_STATUS.DONE}
+        AND ${I.completedAt} IS NOT NULL
+        AND ${I.completedAt} >= ${cutoff}
+        AND ${I.deletedAt} IS NULL
       GROUP BY ${week}
       ORDER BY ${week}
     `;
@@ -405,7 +414,8 @@ export class AnalyticsService {
   ): Promise<CycleTimePercentilesRow> {
     const D = dsl(detectDialect(this.em));
     const { Q, hoursBetween, nowMinusDays } = D;
-    const cycle = hoursBetween(Q("created_at"), Q("completed_at"));
+    const I = this.em.ref(Issue);
+    const cycle = hoursBetween(I.createdAt, I.completedAt);
     const cutoff = nowMinusDays(windowDays);
 
     if (D.dialect === "postgres") {
@@ -415,12 +425,12 @@ export class AnalyticsService {
           percentile_cont(0.75) WITHIN GROUP (ORDER BY ${cycle}) AS ${Q("p75")},
           percentile_cont(0.95) WITHIN GROUP (ORDER BY ${cycle}) AS ${Q("p95")},
           COUNT(*)                                               AS ${Q("sampleSize")}
-        FROM ${Q("issue")}
-        WHERE ${Q("project_id")} = ${projectId}
-          AND ${Q("status")} = ${ISSUE_STATUS.DONE}
-          AND ${Q("completed_at")} IS NOT NULL
-          AND ${Q("completed_at")} >= ${cutoff}
-          AND ${Q("deleted_at")} IS NULL
+        FROM ${I}
+        WHERE ${I.projectId} = ${projectId}
+          AND ${I.status} = ${ISSUE_STATUS.DONE}
+          AND ${I.completedAt} IS NOT NULL
+          AND ${I.completedAt} >= ${cutoff}
+          AND ${I.deletedAt} IS NULL
       `;
       const rows = await this.em.query<Record<string, unknown>>(final);
       return this.toPercentileRow(rows[0]);
@@ -434,12 +444,12 @@ export class AnalyticsService {
       SELECT
         ${cycle} AS hours,
         ROW_NUMBER() OVER (ORDER BY ${cycle}) AS rn
-      FROM ${Q("issue")}
-      WHERE ${Q("project_id")} = ${projectId}
-        AND ${Q("status")} = ${ISSUE_STATUS.DONE}
-        AND ${Q("completed_at")} IS NOT NULL
-        AND ${Q("completed_at")} >= ${cutoff}
-        AND ${Q("deleted_at")} IS NULL
+      FROM ${I}
+      WHERE ${I.projectId} = ${projectId}
+        AND ${I.status} = ${ISSUE_STATUS.DONE}
+        AND ${I.completedAt} IS NOT NULL
+        AND ${I.completedAt} >= ${cutoff}
+        AND ${I.deletedAt} IS NULL
     `;
     const ctes = RawQueryBuilder.create()
       .setDatabaseType("mysql")

@@ -141,41 +141,45 @@ export class CommentsService {
     await this.findOne(rootId);
 
     const D = dsl(detectDialect(this.em));
-    const { Q, tbl } = D;
-    const r = tbl("r");
-    const c = tbl("c");
-    const t = tbl("t");
+    const { Q } = D;
+    const r = this.em.ref(Comment, "r");
+    const c = this.em.ref(Comment, "c");
+    // `t` is the recursive CTE alias; depth/path are CTE-only columns that
+    // aren't on Comment, so we reference them as alias-prefixed Q() fragments.
+    const tDepth = sql`t.${Q("depth")}`;
+    const tPath = sql`t.${Q("path")}`;
+    const tId = sql`t.${Q("id")}`;
     const castText = D.dialect === "postgres" ? "TEXT" : "CHAR(255)";
     const childPath =
       D.dialect === "postgres"
-        ? sql`${t.path} || '/' || CAST(${c.id} AS TEXT)`
-        : sql`CONCAT(${t.path}, '/', CAST(${c.id} AS CHAR(255)))`;
+        ? sql`${tPath} || '/' || CAST(${c.id} AS TEXT)`
+        : sql`CONCAT(${tPath}, '/', CAST(${c.id} AS CHAR(255)))`;
 
     const treeBody = sql`
       SELECT
         ${r.as("id")},
-        ${r.as("parent_comment_id", "parentCommentId")},
+        ${r.as("parentCommentId")},
         ${r.as("body")},
-        ${r.as("author_id", "authorId")},
+        ${r.as("authorId")},
         ${r.as("createdAt")},
         0 AS ${Q("depth")},
         CAST(${r.id} AS ${raw(castText)}) AS ${Q("path")}
-      FROM ${Q("comment")} r
+      FROM ${r}
       WHERE ${r.id} = ${rootId}
         AND ${r.deletedAt} IS NULL
       UNION ALL
       SELECT
         ${c.id},
-        ${c.parent_comment_id},
+        ${c.parentCommentId},
         ${c.body},
-        ${c.author_id},
+        ${c.authorId},
         ${c.createdAt},
-        ${t.depth} + 1,
+        ${tDepth} + 1,
         ${childPath}
-      FROM ${Q("comment")} c
-      INNER JOIN comment_thread t ON ${c.parent_comment_id} = ${t.id}
+      FROM ${c}
+      INNER JOIN comment_thread t ON ${c.parentCommentId} = ${tId}
       WHERE ${c.deletedAt} IS NULL
-        AND ${t.depth} < ${maxDepth}
+        AND ${tDepth} < ${maxDepth}
     `;
 
     const built = RawQueryBuilder.create()

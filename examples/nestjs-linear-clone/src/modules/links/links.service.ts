@@ -14,6 +14,7 @@ import {
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { IssueLink, IssueLinkType } from "./link.entity";
+import { Issue } from "../issues/issue.entity";
 import { CreateLinkDto, IssueLinkRow } from "./dto/link.dto";
 import { detectDialect, dsl } from "../analytics/sql-helpers";
 
@@ -89,18 +90,19 @@ export class LinksService {
     targetId: number,
   ): Promise<boolean> {
     const D = dsl(detectDialect(this.em));
-    const { Q } = D;
+    const L = this.em.ref(IssueLink);
+    const Lj = this.em.ref(IssueLink, "l");
 
     const reachBody = sql`
-      SELECT ${Q("target_issue_id")} AS id
-      FROM ${Q("issue_link")}
-      WHERE ${Q("source_issue_id")} = ${targetId}
-        AND ${Q("type")} = ${"blocks"}
+      SELECT ${L.targetIssueId} AS id
+      FROM ${L}
+      WHERE ${L.sourceIssueId} = ${targetId}
+        AND ${L.type} = ${"blocks"}
       UNION ALL
-      SELECT l.${Q("target_issue_id")}
-      FROM ${Q("issue_link")} l
-      INNER JOIN reach r ON l.${Q("source_issue_id")} = r.id
-      WHERE l.${Q("type")} = ${"blocks"}
+      SELECT ${Lj.targetIssueId}
+      FROM ${Lj}
+      INNER JOIN reach r ON ${Lj.sourceIssueId} = r.id
+      WHERE ${Lj.type} = ${"blocks"}
     `;
 
     const built = RawQueryBuilder.create()
@@ -158,25 +160,27 @@ export class LinksService {
     direction: "forward" | "reverse",
   ): Promise<IssueLinkRow[]> {
     const D = dsl(detectDialect(this.em));
-    const { Q } = D;
+    const L = this.em.ref(IssueLink);
+    const Lj = this.em.ref(IssueLink, "l");
+    const I = this.em.ref(Issue, "i");
 
     // Forward: source = current.id  → walk_to = target_issue_id
     // Reverse: target = current.id  → walk_to = source_issue_id
-    const seedFromCol = direction === "forward" ? "source_issue_id" : "target_issue_id";
-    const seedToCol = direction === "forward" ? "target_issue_id" : "source_issue_id";
-    const stepJoinCol = direction === "forward" ? "source_issue_id" : "target_issue_id";
-    const stepProjectCol = direction === "forward" ? "target_issue_id" : "source_issue_id";
+    const seedFromKey = direction === "forward" ? "sourceIssueId" : "targetIssueId";
+    const seedToKey = direction === "forward" ? "targetIssueId" : "sourceIssueId";
+    const stepJoinKey = direction === "forward" ? "sourceIssueId" : "targetIssueId";
+    const stepProjectKey = direction === "forward" ? "targetIssueId" : "sourceIssueId";
 
     const walkBody = sql`
-      SELECT ${Q(seedToCol)} AS id, 1 AS depth
-      FROM ${Q("issue_link")}
-      WHERE ${Q(seedFromCol)} = ${startId}
-        AND ${Q("type")} = ${"blocks"}
+      SELECT ${L[seedToKey]} AS id, 1 AS depth
+      FROM ${L}
+      WHERE ${L[seedFromKey]} = ${startId}
+        AND ${L.type} = ${"blocks"}
       UNION ALL
-      SELECT l.${Q(stepProjectCol)}, w.depth + 1
-      FROM ${Q("issue_link")} l
-      INNER JOIN walk w ON l.${Q(stepJoinCol)} = w.id
-      WHERE l.${Q("type")} = ${"blocks"}
+      SELECT ${Lj[stepProjectKey]}, w.depth + 1
+      FROM ${Lj}
+      INNER JOIN walk w ON ${Lj[stepJoinKey]} = w.id
+      WHERE ${Lj.type} = ${"blocks"}
         AND w.depth < 64
     `;
 
@@ -190,19 +194,19 @@ export class LinksService {
     const final = sql`
       ${built}
       SELECT
-        i.${Q("id")}      AS id,
-        i.${Q("number")}  AS ${Q("number")},
-        i.${Q("title")}   AS title,
-        i.${Q("status")}  AS status,
+        ${I.id}           AS id,
+        ${I.number}       AS ${D.Q("number")},
+        ${I.title}        AS title,
+        ${I.status}       AS status,
         m.min_depth       AS depth
       FROM (
         SELECT id, MIN(depth) AS min_depth
         FROM walk
         GROUP BY id
       ) m
-      INNER JOIN ${Q("issue")} i ON i.${Q("id")} = m.id
-      WHERE i.${Q("deleted_at")} IS NULL
-      ORDER BY m.min_depth ASC, i.${Q("id")} ASC
+      INNER JOIN ${I} ON ${I.id} = m.id
+      WHERE ${I.deletedAt} IS NULL
+      ORDER BY m.min_depth ASC, ${I.id} ASC
     `;
 
     const rows = await this.em.query<Record<string, unknown>>(final);
