@@ -145,7 +145,11 @@ export const FILTER_OPERATOR_KEYS = new Set([
  * ```
  */
 export type WhereClause<T> = {
-  [K in keyof T]?: T[K] | FieldFilter<T[K]> | Sql | null;
+  // T[K][] is the bare-array shorthand for `IN (…)` — the runtime
+  // resolver, plus softDelete/restore's bespoke iterator, both
+  // accept it. Document the typed `{ in: [...] }` form via FieldFilter
+  // for full find()/findOne() coverage.
+  [K in keyof T]?: T[K] | T[K][] | FieldFilter<T[K]> | Sql | null;
 } & {
   OR?: WhereClause<T>[];
   AND?: WhereClause<T>[];
