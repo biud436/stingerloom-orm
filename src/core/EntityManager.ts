@@ -92,7 +92,7 @@ import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { DefaultNamingStrategy, NamingStrategy } from "./generators/NamingStrategy";
 import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
 import { COLUMN_TOKEN } from "../decorators/Column";
-import { createEntitySqlRef, SqlRef } from "./SqlRef";
+import { createAliasRef, createEntitySqlRef, AliasRef, SqlRef } from "./SqlRef";
 import { InheritanceResolver } from "./InheritanceResolver";
 import { CREATE_TIMESTAMP_TOKEN } from "../decorators/CreateTimestamp";
 import { UPDATE_TIMESTAMP_TOKEN } from "../decorators/UpdateTimestamp";
@@ -4670,6 +4670,19 @@ export class EntityManager implements BaseEntityManager {
       },
       alias,
     );
+  }
+
+  /**
+   * Alias-only sibling of `ref()` for CTE / derived-table column refs that
+   * have no entity to bind. `${aliasRef}` → bare alias name; `${aliasRef.col}`
+   * → `alias."col"` with `camelToSnakeCase` applied to the property name.
+   *
+   * Use for recursive-CTE-only columns like `depth` / `path` that are
+   * synthesized inside the CTE body. For entity tables, prefer
+   * `em.ref(Entity, alias)`.
+   */
+  aliasRef(alias: string): AliasRef {
+    return createAliasRef(alias, (n) => this.wrap(n));
   }
 
   /**

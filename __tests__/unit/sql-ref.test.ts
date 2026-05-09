@@ -7,7 +7,11 @@ import {
   ManyToOne,
   RelationColumn,
 } from "../../src/decorators";
-import { createEntitySqlRef, SqlRef } from "../../src/core/SqlRef";
+import {
+  createAliasRef,
+  createEntitySqlRef,
+  SqlRef,
+} from "../../src/core/SqlRef";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { EntityManager } from "../../src/core/EntityManager";
 import { SnakeNamingStrategy } from "../../src/core/generators/SnakeNamingStrategy";
@@ -242,6 +246,44 @@ describe("SqlRef — em.ref(Entity) sql tag helper", () => {
       const I = makeRef(Issue, "pg");
       const q = sql`SELECT ${I.id} FROM ${I}`;
       expect(q.sql).toBe(`SELECT "id" FROM "issue"`);
+    });
+  });
+
+  describe("aliasRef — non-entity CTE refs", () => {
+    test("interpolating the ref renders the bare alias name (unquoted)", () => {
+      const t = createAliasRef("t", pgWrap);
+      const q = sql`INNER JOIN issue_tree ${t} ON 1=1`;
+      expect(q.sql).toBe(`INNER JOIN issue_tree t ON 1=1`);
+    });
+
+    test("property access yields alias-qualified wrapped column", () => {
+      const t = createAliasRef("t", pgWrap);
+      const q = sql`SELECT ${t.depth} FROM cte ${t}`;
+      expect(q.sql).toBe(`SELECT t."depth" FROM cte t`);
+    });
+
+    test("camelCase property names are snake-cased", () => {
+      const t = createAliasRef("t", pgWrap);
+      const q = sql`SELECT ${t.parentCommentId} FROM cte ${t}`;
+      expect(q.sql).toBe(`SELECT t."parent_comment_id" FROM cte t`);
+    });
+
+    test("composes inside a recursive CTE body for CTE-only cols", () => {
+      const t = createAliasRef("t", pgWrap);
+      const q = sql`WHERE ${t.depth} < ${5} AND ${t.path} LIKE 'a/%'`;
+      expect(q.sql).toBe(`WHERE t."depth" < ? AND t."path" LIKE 'a/%'`);
+      expect(q.values).toEqual([5]);
+    });
+
+    test("works with MySQL backticks", () => {
+      const t = createAliasRef("t", mysqlWrap);
+      const q = sql`SELECT ${t.depth} FROM cte ${t}`;
+      expect(q.sql).toBe("SELECT t.`depth` FROM cte t");
+    });
+
+    test("ref is recognized as Sql by sql-template-tag", () => {
+      const t = createAliasRef("t", pgWrap);
+      expect(t instanceof Sql).toBe(true);
     });
   });
 });

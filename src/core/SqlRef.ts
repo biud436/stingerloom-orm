@@ -89,6 +89,44 @@ function buildColumnMap(
 }
 
 /**
+ * Alias-only reference for CTEs, derived tables, and other constructs
+ * that have no entity to bind against.
+ *
+ * - `${ref}`     → bare alias name (e.g. `t`), unquoted
+ * - `${ref.col}` → `alias."col"` — property name is run through
+ *   `camelToSnakeCase` and then wrapped with the dialect quoter
+ *
+ * Use this for recursive-CTE column refs that don't correspond to an
+ * entity (e.g. a `depth` or `path` synthesized inside the CTE body).
+ * For entity-bound aliases, use `em.ref(Entity, alias)`.
+ */
+export type AliasRef = Sql & {
+  readonly [col: string]: Sql;
+};
+
+/**
+ * Internal factory. Most callers should use `EntityManager.aliasRef()`.
+ */
+export function createAliasRef(
+  alias: string,
+  wrap: (name: string) => string,
+): AliasRef {
+  const aliasSql = raw(alias);
+  return new Proxy(aliasSql, {
+    get(target, prop, receiver) {
+      if (SQL_PASSTHROUGH.has(prop)) {
+        return Reflect.get(target, prop, receiver);
+      }
+      if (typeof prop !== "string") {
+        return Reflect.get(target, prop, receiver);
+      }
+      const dbCol = camelToSnakeCase(prop);
+      return raw(`${alias}.${wrap(dbCol)}`);
+    },
+  }) as unknown as AliasRef;
+}
+
+/**
  * Internal factory. Most callers should use `EntityManager.ref()` instead,
  * which wires the wrap/wrapTable helpers and the FK-property resolver
  * automatically.
