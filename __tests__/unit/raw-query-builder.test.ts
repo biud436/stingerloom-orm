@@ -2,6 +2,7 @@ import { Conditions } from "../../src/core/Conditions";
 import { RawQueryBuilderFactory } from "../../src/core/RawQueryBuilderFactory";
 import { RawQueryBuilder } from "../../src/core/RawQueryBuilder";
 import { OrmError } from "../../src/errors/OrmError";
+import sql from "sql-template-tag";
 
 describe("RawQueryBuilder", () => {
   describe("select", () => {
@@ -564,6 +565,43 @@ describe("RawQueryBuilder", () => {
       expect(query.sql).toBe(
         "WITH RECURSIVE tree AS (SELECT id, name, parent_id FROM categories WHERE parent_id IS NULL) SELECT * FROM tree",
       );
+    });
+
+    // Recursive CTE body composed via the builder rather than a raw
+    // sql`SELECT … UNION ALL SELECT …` literal. Confirms that the
+    // seed/step pattern users typically hand-write *can* be expressed
+    // through the callback-based API end-to-end.
+    it("should generate WITH RECURSIVE with seed UNION ALL step body", () => {
+      const query = RawQueryBuilderFactory.create()
+        .withRecursive("tree", (qb) =>
+          qb
+            .select(["id", "parent_id", "0 AS depth"])
+            .from("issue")
+            .where([Conditions.equals("id", 1)])
+            .unionAll()
+            .selectFragments([
+              sql`c.id`,
+              sql`c.parent_id`,
+              sql`t.depth + 1`,
+            ])
+            .from("issue", "c")
+            .innerJoin("tree", "t", sql`c.parent_id = t.id`)
+            .where([sql`t.depth < ${10}`]),
+        )
+        .select("*")
+        .from("tree")
+        .build();
+
+      expect(query.sql).toBe(
+        "WITH RECURSIVE tree AS (" +
+          "SELECT id, parent_id, 0 AS depth FROM issue WHERE id = ? " +
+          "UNION ALL " +
+          "SELECT c.id, c.parent_id, t.depth + 1 FROM issue AS c " +
+          "INNER JOIN tree AS t ON c.parent_id = t.id " +
+          "WHERE t.depth < ?" +
+          ") SELECT * FROM tree",
+      );
+      expect(query.values).toEqual([1, 10]);
     });
   });
 

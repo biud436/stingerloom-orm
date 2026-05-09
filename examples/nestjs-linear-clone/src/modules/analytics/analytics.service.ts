@@ -86,36 +86,40 @@ export class AnalyticsService {
         ? sql`${t.path} || '/' || CAST(${c.id} AS TEXT)`
         : sql`CONCAT(${t.path}, '/', CAST(${c.id} AS CHAR(255)))`;
 
-    const treeBody = sql`
-      SELECT
-        ${r.as("id")},
-        ${r.as("parentId")},
-        ${r.as("number")},
-        ${r.as("title")},
-        ${r.as("status")},
-        0 AS ${Q("depth")},
-        CAST(${r.id} AS ${raw(castText)}) AS ${Q("path")}
-      FROM ${r}
-      WHERE ${r.id} = ${rootIssueId}
-        AND ${r.deletedAt} IS NULL
-      UNION ALL
-      SELECT
-        ${c.id},
-        ${c.parentId},
-        ${c.number},
-        ${c.title},
-        ${c.status},
-        ${t.depth} + 1,
-        ${childPath}
-      FROM ${c}
-      INNER JOIN issue_tree ${t} ON ${c.parentId} = ${t.id}
-      WHERE ${c.deletedAt} IS NULL
-        AND ${t.depth} < ${maxDepth}
-    `;
-
+    // Recursive-CTE body composed via RawQueryBuilder rather than a
+    // hand-rolled `sql\`SELECT … UNION ALL SELECT …\`` literal. This
+    // exercises the builder's withRecursive(callback) + selectFragments
+    // + unionAll path end-to-end and demonstrates that the gap between
+    // raw and the builder for this shape was ergonomic, not structural.
     const built = RawQueryBuilder.create()
       .setDatabaseType(D.dialect === "postgres" ? "postgresql" : "mysql")
-      .withRecursive("issue_tree", treeBody)
+      .withRecursive("issue_tree", (qb) =>
+        qb
+          .selectFragments([
+            r.as("id"),
+            r.as("parentId"),
+            r.as("number"),
+            r.as("title"),
+            r.as("status"),
+            sql`0 AS ${Q("depth")}`,
+            sql`CAST(${r.id} AS ${raw(castText)}) AS ${Q("path")}`,
+          ])
+          .from(r)
+          .where([sql`${r.id} = ${rootIssueId}`, sql`${r.deletedAt} IS NULL`])
+          .unionAll()
+          .selectFragments([
+            c.id,
+            c.parentId,
+            c.number,
+            c.title,
+            c.status,
+            sql`${t.depth} + 1`,
+            childPath,
+          ])
+          .from(c)
+          .innerJoin("issue_tree", "t", sql`${c.parentId} = ${t.id}`)
+          .where([sql`${c.deletedAt} IS NULL`, sql`${t.depth} < ${maxDepth}`]),
+      )
       .select("*")
       .from("issue_tree")
       .orderBy([{ column: q("path"), direction: "ASC" }])
