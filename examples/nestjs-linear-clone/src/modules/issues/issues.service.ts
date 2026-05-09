@@ -11,7 +11,6 @@ import {
   Transactional,
   CursorPaginationResult,
   qAlias,
-  raw,
   sql,
   join,
 } from "@stingerloom/orm";
@@ -353,22 +352,18 @@ export class IssuesService {
     //    the root only if it is itself soft-deleted; descendants are added
     //    only when their parent is also in the deleted set, matching the
     //    semantic "restore everything that was trashed together".
-    const wrap = (col: string) => this.em.wrap(col);
-    const issueTbl = wrap("issue");
-    const idCol = wrap("id");
-    const parentCol = wrap("parent_id");
-    const deletedCol = wrap("deleted_at");
+    const I = this.em.ref(Issue);
 
     const descendants = await this.em.query<{ id: number }>(sql`
-      WITH RECURSIVE deleted_tree(${raw(idCol)}) AS (
-        SELECT ${raw(idCol)} FROM ${raw(issueTbl)}
-          WHERE ${raw(idCol)} = ${id} AND ${raw(deletedCol)} IS NOT NULL
+      WITH RECURSIVE deleted_tree(${I.id}) AS (
+        SELECT ${I.id} FROM ${I}
+          WHERE ${I.id} = ${id} AND ${I.deletedAt} IS NOT NULL
         UNION ALL
-        SELECT c.${raw(idCol)} FROM ${raw(issueTbl)} c
-          INNER JOIN deleted_tree p ON c.${raw(parentCol)} = p.${raw(idCol)}
-          WHERE c.${raw(deletedCol)} IS NOT NULL
+        SELECT c.${I.id} FROM ${I} c
+          INNER JOIN deleted_tree p ON c.${I.parentId} = p.${I.id}
+          WHERE c.${I.deletedAt} IS NOT NULL
       )
-      SELECT ${raw(idCol)} FROM deleted_tree
+      SELECT ${I.id} FROM deleted_tree
     `);
 
     const idsToRestore = descendants.map((r) => Number(r.id));
@@ -385,9 +380,9 @@ export class IssuesService {
       ", ",
     );
     await this.em.query(sql`
-      UPDATE ${raw(issueTbl)}
-         SET ${raw(deletedCol)} = NULL
-       WHERE ${raw(idCol)} IN (${idList})
+      UPDATE ${I}
+         SET ${I.deletedAt} = NULL
+       WHERE ${I.id} IN (${idList})
     `);
     return { restored: idsToRestore.length, ids: idsToRestore };
   }

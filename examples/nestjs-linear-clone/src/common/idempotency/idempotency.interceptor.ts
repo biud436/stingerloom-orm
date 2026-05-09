@@ -11,7 +11,7 @@ import { Request, Response } from "express";
 import { Observable, from, of } from "rxjs";
 import { mergeMap, catchError } from "rxjs/operators";
 import { createHash } from "node:crypto";
-import { EntityManager, raw, sql } from "@stingerloom/orm";
+import { EntityManager, sql } from "@stingerloom/orm";
 import { IdempotencyKey } from "./idempotency-key.entity";
 
 const HEADER = "idempotency-key";
@@ -153,18 +153,11 @@ export class IdempotencyInterceptor implements NestInterceptor {
     const expiresSql = fmt(expiresAt);
 
     const isMysql = this.em.getDriver().isMySqlFamily();
-    const wrap = (n: string) => this.em.wrap(n);
-    const tbl = wrap("idempotency_key");
-    const cKey = wrap("key");
-    const cUserId = wrap("user_id");
-    const cReqHash = wrap("request_hash");
-    const cStatus = wrap("status");
-    const cExpires = wrap("expires_at");
-    const cCreated = wrap("created_at");
+    const I = this.em.ref(IdempotencyKey);
 
     const insertSql = isMysql
-      ? sql`INSERT IGNORE INTO ${raw(tbl)} (${raw(cKey)}, ${raw(cUserId)}, ${raw(cReqHash)}, ${raw(cStatus)}, ${raw(cExpires)}, ${raw(cCreated)}) VALUES (${key}, ${userId}, ${requestHash}, ${"in_flight"}, ${expiresSql}, ${nowSql})`
-      : sql`INSERT INTO ${raw(tbl)} (${raw(cKey)}, ${raw(cUserId)}, ${raw(cReqHash)}, ${raw(cStatus)}, ${raw(cExpires)}, ${raw(cCreated)}) VALUES (${key}, ${userId}, ${requestHash}, ${"in_flight"}, ${expiresSql}::timestamp, ${nowSql}::timestamp) ON CONFLICT (${raw(cKey)}) DO NOTHING`;
+      ? sql`INSERT IGNORE INTO ${I} (${I.key}, ${I.userId}, ${I.requestHash}, ${I.status}, ${I.expiresAt}, ${I.createdAt}) VALUES (${key}, ${userId}, ${requestHash}, ${"in_flight"}, ${expiresSql}, ${nowSql})`
+      : sql`INSERT INTO ${I} (${I.key}, ${I.userId}, ${I.requestHash}, ${I.status}, ${I.expiresAt}, ${I.createdAt}) VALUES (${key}, ${userId}, ${requestHash}, ${"in_flight"}, ${expiresSql}::timestamp, ${nowSql}::timestamp) ON CONFLICT (${I.key}) DO NOTHING`;
 
     const result = await this.em.query<unknown>(insertSql);
     const affected = readAffected(result);
@@ -182,22 +175,17 @@ export class IdempotencyInterceptor implements NestInterceptor {
     // The row was just INSERTed by tryClaim — use UPDATE rather than
     // repo.save() because save() on an entity with @PrimaryColumn (manual
     // PK) always falls through to INSERT and trips ER_DUP_ENTRY here.
-    const wrap = (n: string) => this.em.wrap(n);
-    const tbl = wrap("idempotency_key");
-    const cKey = wrap("key");
-    const cStatus = wrap("status");
-    const cHttp = wrap("http_status");
-    const cResponse = wrap("response");
+    const I = this.em.ref(IdempotencyKey);
     const responseJson =
       response === undefined || response === null
         ? null
         : JSON.stringify(response);
     await this.em.query(sql`
-      UPDATE ${raw(tbl)}
-         SET ${raw(cStatus)} = ${"completed"},
-             ${raw(cHttp)} = ${httpStatus},
-             ${raw(cResponse)} = ${responseJson}
-       WHERE ${raw(cKey)} = ${key}
+      UPDATE ${I}
+         SET ${I.status} = ${"completed"},
+             ${I.httpStatus} = ${httpStatus},
+             ${I.response} = ${responseJson}
+       WHERE ${I.key} = ${key}
     `);
   }
 }

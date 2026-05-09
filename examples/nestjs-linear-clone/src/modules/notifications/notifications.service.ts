@@ -5,7 +5,6 @@ import {
   Transactional,
   CursorPaginationResult,
   qAlias,
-  raw,
   sql,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
@@ -108,15 +107,12 @@ export class NotificationsService {
     // accessors (`userId`) aren't visible in its property-to-column resolver
     // — the where clause throws "Unknown column userId". Use a raw UPDATE
     // until the ORM treats RelationColumn FKs as queryable columns.
-    const wrap = (n: string) => this.em.wrap(n);
-    const tbl = wrap("notification");
-    const cReadAt = wrap("read_at");
-    const cUserId = wrap("user_id");
+    const N = this.em.ref(Notification);
     const result = await this.em.query<unknown>(sql`
-      UPDATE ${raw(tbl)}
-         SET ${raw(cReadAt)} = NOW()
-       WHERE ${raw(cUserId)} = ${userId}
-         AND ${raw(cReadAt)} IS NULL
+      UPDATE ${N}
+         SET ${N.readAt} = NOW()
+       WHERE ${N.userId} = ${userId}
+         AND ${N.readAt} IS NULL
     `);
     const marked =
       (result as { affectedRows?: number; rowCount?: number; affected?: number } | null)
