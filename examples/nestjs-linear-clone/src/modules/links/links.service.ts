@@ -92,6 +92,7 @@ export class LinksService {
     const D = dsl(detectDialect(this.em));
     const L = this.em.ref(IssueLink);
     const Lj = this.em.ref(IssueLink, "l");
+    const r = this.em.aliasRef("r");
 
     const reachBody = sql`
       SELECT ${L.targetIssueId} AS id
@@ -101,7 +102,7 @@ export class LinksService {
       UNION ALL
       SELECT ${Lj.targetIssueId}
       FROM ${Lj}
-      INNER JOIN reach r ON ${Lj.sourceIssueId} = r.id
+      INNER JOIN reach ${r} ON ${Lj.sourceIssueId} = ${r.id}
       WHERE ${Lj.type} = ${"blocks"}
     `;
 
@@ -163,6 +164,7 @@ export class LinksService {
     const L = this.em.ref(IssueLink);
     const Lj = this.em.ref(IssueLink, "l");
     const I = this.em.ref(Issue, "i");
+    const w = this.em.aliasRef("w");
 
     // Forward: source = current.id  → walk_to = target_issue_id
     // Reverse: target = current.id  → walk_to = source_issue_id
@@ -177,11 +179,11 @@ export class LinksService {
       WHERE ${L[seedFromKey]} = ${startId}
         AND ${L.type} = ${"blocks"}
       UNION ALL
-      SELECT ${Lj[stepProjectKey]}, w.depth + 1
+      SELECT ${Lj[stepProjectKey]}, ${w.depth} + 1
       FROM ${Lj}
-      INNER JOIN walk w ON ${Lj[stepJoinKey]} = w.id
+      INNER JOIN walk ${w} ON ${Lj[stepJoinKey]} = ${w.id}
       WHERE ${Lj.type} = ${"blocks"}
-        AND w.depth < 64
+        AND ${w.depth} < 64
     `;
 
     const built = RawQueryBuilder.create()
@@ -191,6 +193,7 @@ export class LinksService {
 
     // Collapse duplicate paths (a node reachable via multiple chains) by
     // keeping the shortest depth, then join the issue table for display data.
+    const m = this.em.aliasRef("m");
     const final = sql`
       ${built}
       SELECT
@@ -198,15 +201,15 @@ export class LinksService {
         ${I.number}       AS ${D.Q("number")},
         ${I.title}        AS title,
         ${I.status}       AS status,
-        m.min_depth       AS depth
+        ${m.minDepth}     AS depth
       FROM (
         SELECT id, MIN(depth) AS min_depth
         FROM walk
         GROUP BY id
-      ) m
-      INNER JOIN ${I} ON ${I.id} = m.id
+      ) ${m}
+      INNER JOIN ${I} ON ${I.id} = ${m.id}
       WHERE ${I.deletedAt} IS NULL
-      ORDER BY m.min_depth ASC, ${I.id} ASC
+      ORDER BY ${m.minDepth} ASC, ${I.id} ASC
     `;
 
     const rows = await this.em.query<Record<string, unknown>>(final);

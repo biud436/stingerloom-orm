@@ -79,14 +79,12 @@ export class AnalyticsService {
     const r = this.em.ref(Issue, "r");
     const c = this.em.ref(Issue, "c");
     // `t` is the recursive CTE alias; depth/path are CTE-only columns.
-    const tDepth = sql`t.${Q("depth")}`;
-    const tPath = sql`t.${Q("path")}`;
-    const tId = sql`t.${Q("id")}`;
+    const t = this.em.aliasRef("t");
     const castText = D.dialect === "postgres" ? "TEXT" : "CHAR(255)";
     const childPath =
       D.dialect === "postgres"
-        ? sql`${tPath} || '/' || CAST(${c.id} AS TEXT)`
-        : sql`CONCAT(${tPath}, '/', CAST(${c.id} AS CHAR(255)))`;
+        ? sql`${t.path} || '/' || CAST(${c.id} AS TEXT)`
+        : sql`CONCAT(${t.path}, '/', CAST(${c.id} AS CHAR(255)))`;
 
     const treeBody = sql`
       SELECT
@@ -107,12 +105,12 @@ export class AnalyticsService {
         ${c.number},
         ${c.title},
         ${c.status},
-        ${tDepth} + 1,
+        ${t.depth} + 1,
         ${childPath}
       FROM ${c}
-      INNER JOIN issue_tree t ON ${c.parentId} = ${tId}
+      INNER JOIN issue_tree ${t} ON ${c.parentId} = ${t.id}
       WHERE ${c.deletedAt} IS NULL
-        AND ${tDepth} < ${maxDepth}
+        AND ${t.depth} < ${maxDepth}
     `;
 
     const built = RawQueryBuilder.create()
@@ -229,13 +227,15 @@ export class AnalyticsService {
         AND ${I.completedAt} >= ${cutoff}
     `;
 
+    const c = this.em.aliasRef("c");
+    const s = this.em.aliasRef("s");
     const statsCte = sql`
       SELECT
-        c.assignee_id,
-        COUNT(*)              AS completed_count,
-        AVG(c.cycle_hours)    AS avg_cycle_hours
-      FROM closed c
-      GROUP BY c.assignee_id
+        ${c.assigneeId},
+        COUNT(*)                AS completed_count,
+        AVG(${c.cycleHours})    AS avg_cycle_hours
+      FROM closed ${c}
+      GROUP BY ${c.assigneeId}
     `;
 
     const ctes = RawQueryBuilder.create()
@@ -247,14 +247,14 @@ export class AnalyticsService {
     const final = sql`
       ${ctes}
       SELECT
-        s.assignee_id                                                            AS ${Q("assigneeId")},
+        ${s.assigneeId}                                                          AS ${Q("assigneeId")},
         ${U.name}                                                                AS ${Q("assigneeName")},
-        s.completed_count                                                        AS ${Q("completedCount")},
-        s.avg_cycle_hours                                                        AS ${Q("averageCycleHours")},
-        ROW_NUMBER() OVER (ORDER BY s.completed_count DESC, s.avg_cycle_hours ASC)
+        ${s.completedCount}                                                      AS ${Q("completedCount")},
+        ${s.avgCycleHours}                                                       AS ${Q("averageCycleHours")},
+        ROW_NUMBER() OVER (ORDER BY ${s.completedCount} DESC, ${s.avgCycleHours} ASC)
                                                                                  AS ${Q("rankInProject")}
-      FROM stats s
-      LEFT JOIN ${U} ON ${U.id} = s.assignee_id
+      FROM stats ${s}
+      LEFT JOIN ${U} ON ${U.id} = ${s.assigneeId}
       ORDER BY ${Q("rankInProject")}
     `;
 

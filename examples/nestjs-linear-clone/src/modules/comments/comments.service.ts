@@ -145,15 +145,13 @@ export class CommentsService {
     const r = this.em.ref(Comment, "r");
     const c = this.em.ref(Comment, "c");
     // `t` is the recursive CTE alias; depth/path are CTE-only columns that
-    // aren't on Comment, so we reference them as alias-prefixed Q() fragments.
-    const tDepth = sql`t.${Q("depth")}`;
-    const tPath = sql`t.${Q("path")}`;
-    const tId = sql`t.${Q("id")}`;
+    // aren't on Comment, so we reach for em.aliasRef() instead of em.ref().
+    const t = this.em.aliasRef("t");
     const castText = D.dialect === "postgres" ? "TEXT" : "CHAR(255)";
     const childPath =
       D.dialect === "postgres"
-        ? sql`${tPath} || '/' || CAST(${c.id} AS TEXT)`
-        : sql`CONCAT(${tPath}, '/', CAST(${c.id} AS CHAR(255)))`;
+        ? sql`${t.path} || '/' || CAST(${c.id} AS TEXT)`
+        : sql`CONCAT(${t.path}, '/', CAST(${c.id} AS CHAR(255)))`;
 
     const treeBody = sql`
       SELECT
@@ -174,12 +172,12 @@ export class CommentsService {
         ${c.body},
         ${c.authorId},
         ${c.createdAt},
-        ${tDepth} + 1,
+        ${t.depth} + 1,
         ${childPath}
       FROM ${c}
-      INNER JOIN comment_thread t ON ${c.parentCommentId} = ${tId}
+      INNER JOIN comment_thread ${t} ON ${c.parentCommentId} = ${t.id}
       WHERE ${c.deletedAt} IS NULL
-        AND ${tDepth} < ${maxDepth}
+        AND ${t.depth} < ${maxDepth}
     `;
 
     const built = RawQueryBuilder.create()
