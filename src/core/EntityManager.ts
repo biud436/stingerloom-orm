@@ -92,6 +92,7 @@ import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { DefaultNamingStrategy, NamingStrategy } from "./generators/NamingStrategy";
 import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
 import { COLUMN_TOKEN } from "../decorators/Column";
+import { createEntitySqlRef, SqlRef } from "./SqlRef";
 import { InheritanceResolver } from "./InheritanceResolver";
 import { CREATE_TIMESTAMP_TOKEN } from "../decorators/CreateTimestamp";
 import { UPDATE_TIMESTAMP_TOKEN } from "../decorators/UpdateTimestamp";
@@ -4639,6 +4640,25 @@ export class EntityManager implements BaseEntityManager {
       return `"${columnName.replace(/"/g, '""')}"`;
     }
     return `\`${columnName.replace(/`/g, "``")}\``;
+  }
+
+  /**
+   * Typed entity reference for use inside `sql\`\`` templates. The proxy
+   * itself interpolates as the wrapped (tenant-aware) table name, while
+   * property access (`Issue.id`) yields the bare wrapped column. Use
+   * `.as(prop, asName?)` for `"col" AS "alias"` projections.
+   *
+   * Replaces hand-rolled `wrap()` + `raw()` boilerplate inside raw queries.
+   */
+  ref<T>(entity: ClazzType<T>): SqlRef<T> {
+    return createEntitySqlRef<T>(entity, {
+      wrap: (n) => this.wrap(n),
+      wrapTable: (n) => this.wrapTable(n),
+      collectFkPropertyMappings:
+        typeof this.resolver?.collectFkPropertyMappings === "function"
+          ? (e) => this.resolver.collectFkPropertyMappings(e)
+          : undefined,
+    });
   }
 
   /**
