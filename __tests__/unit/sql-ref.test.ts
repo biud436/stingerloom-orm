@@ -41,14 +41,19 @@ function mysqlWrap(name: string): string {
 function makeRef<T>(
   entity: new (...a: any[]) => T,
   dialect: "pg" | "mysql" = "pg",
+  alias?: string,
 ): SqlRef<T> {
   const resolver = new RelationMetadataResolver();
   const wrap = dialect === "pg" ? pgWrap : mysqlWrap;
-  return createEntitySqlRef<T>(entity as any, {
-    wrap,
-    wrapTable: (n) => wrap(n),
-    collectFkPropertyMappings: (e) => resolver.collectFkPropertyMappings(e),
-  });
+  return createEntitySqlRef<T>(
+    entity as any,
+    {
+      wrap,
+      wrapTable: (n) => wrap(n),
+      collectFkPropertyMappings: (e) => resolver.collectFkPropertyMappings(e),
+    },
+    alias,
+  );
 }
 
 // Mirror production: SnakeNamingStrategy rewrites column names from camelCase
@@ -177,5 +182,66 @@ describe("SqlRef — em.ref(Entity) sql tag helper", () => {
     expect(q.sql).toBe(
       `UPDATE "issue" SET "deleted_at" = NULL WHERE "id" IN (?,?,?)`,
     );
+  });
+
+  describe("with alias — em.ref(Entity, alias)", () => {
+    test("table interpolation emits `\"table\" AS alias`", () => {
+      const I = makeRef(Issue, "pg", "i");
+      const q = sql`SELECT 1 FROM ${I}`;
+      expect(q.sql).toBe(`SELECT 1 FROM "issue" AS i`);
+    });
+
+    test("column refs are alias-qualified", () => {
+      const I = makeRef(Issue, "pg", "i");
+      const q = sql`SELECT ${I.id}, ${I.deletedAt} FROM ${I}`;
+      expect(q.sql).toBe(
+        `SELECT i."id", i."deleted_at" FROM "issue" AS i`,
+      );
+    });
+
+    test(".as() emits alias-qualified projection", () => {
+      const I = makeRef(Issue, "pg", "i");
+      const q = sql`SELECT ${I.as("deletedAt")}, ${I.as("id", "issue_id")} FROM ${I}`;
+      expect(q.sql).toBe(
+        `SELECT i."deleted_at" AS "deletedAt", i."id" AS "issue_id" FROM "issue" AS i`,
+      );
+    });
+
+    test("FK backing property is alias-qualified", () => {
+      const I = makeRef(Issue, "pg", "c");
+      const q = sql`WHERE ${I.parentId} = ${42}`;
+      expect(q.sql).toBe(`WHERE c."parent_id" = ?`);
+      expect(q.values).toEqual([42]);
+    });
+
+    test("self-join with two aliases composes cleanly", () => {
+      const c = makeRef(Issue, "pg", "c");
+      const p = makeRef(Issue, "pg", "p");
+      const q = sql`
+        SELECT ${c.id}, ${p.id}
+        FROM ${c}
+        INNER JOIN ${p} ON ${c.parentId} = ${p.id}
+        WHERE ${c.deletedAt} IS NULL
+      `;
+      const flat = q.sql.replace(/\s+/g, " ").trim();
+      expect(flat).toBe(
+        `SELECT c."id", p."id" ` +
+          `FROM "issue" AS c ` +
+          `INNER JOIN "issue" AS p ON c."parent_id" = p."id" ` +
+          `WHERE c."deleted_at" IS NULL`,
+      );
+    });
+
+    test("alias works with MySQL backticks", () => {
+      const I = makeRef(Issue, "mysql", "i");
+      const q = sql`SELECT ${I.id} FROM ${I}`;
+      expect(q.sql).toBe("SELECT i.`id` FROM `issue` AS i");
+    });
+
+    test("no alias still produces the bare-column form (backward compat)", () => {
+      const I = makeRef(Issue, "pg");
+      const q = sql`SELECT ${I.id} FROM ${I}`;
+      expect(q.sql).toBe(`SELECT "id" FROM "issue"`);
+    });
   });
 });

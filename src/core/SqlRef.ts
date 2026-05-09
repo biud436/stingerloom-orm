@@ -9,20 +9,27 @@ import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundErr
 /**
  * Typed reference to an entity for use inside `sql\`\`` templates.
  *
- * Interpolating the ref itself (`${Issue}`) renders the wrapped (and,
- * for PostgreSQL, tenant-qualified) table identifier. Property access
- * (`${Issue.id}`) renders the bare wrapped column identifier — never
- * with a table prefix, so callers stay free to add `c.` aliases
- * literally in the SQL when disambiguation is needed.
+ * **Without alias** — `em.ref(Issue)`:
+ *   - `${ref}`        → `"issue"`
+ *   - `${ref.id}`     → `"id"`               (bare column)
+ *   - `${ref.as("deletedAt")}` → `"deleted_at" AS "deletedAt"`
  *
- * `.as(prop, asName?)` produces `"col" AS "asName"` for SELECT lists.
+ * **With alias** — `em.ref(Issue, "i")`:
+ *   - `${ref}`        → `"issue" AS i`        (suitable for FROM/JOIN)
+ *   - `${ref.id}`     → `i."id"`              (alias-qualified column)
+ *   - `${ref.as("deletedAt")}` → `i."deleted_at" AS "deletedAt"`
+ *
+ * The alias is passed verbatim — it is the caller's responsibility to
+ * use a valid SQL identifier. Quote/escape if you need exotic chars.
  */
 export type SqlRef<T> = Sql & {
   [K in keyof T as T[K] extends Function ? never : K]: Sql;
 } & {
   /**
-   * Project a column with an outbound alias: `"col" AS "asName"`.
-   * Defaults to the property's own name when `asName` is omitted.
+   * Project a column with an outbound alias.
+   *
+   * Without alias: `"col" AS "asName"`. With alias: `"a"."col" AS "asName"`.
+   * `asName` defaults to the property name when omitted.
    */
   as<K extends Exclude<keyof T, "as">>(prop: K, asName?: string): Sql;
 };
@@ -89,6 +96,7 @@ function buildColumnMap(
 export function createEntitySqlRef<T>(
   entity: ClazzType<T>,
   deps: SqlRefDeps,
+  alias?: string,
 ): SqlRef<T> {
   const meta = Reflect.getMetadata(ENTITY_TOKEN, entity) as
     | EntityMetadata
@@ -98,11 +106,15 @@ export function createEntitySqlRef<T>(
   }
 
   const colMap = buildColumnMap(entity as ClazzType<unknown>, deps);
-  const tableSql = raw(deps.wrapTable(meta.name));
+  const tableName = deps.wrapTable(meta.name);
+  // With an alias, ${ref} declares the table-and-alias for FROM/JOIN.
+  // Aliases are emitted unquoted, matching standard `tbl AS a` convention.
+  const tableSql = raw(alias ? `${tableName} AS ${alias}` : tableName);
 
   const resolveColumn = (prop: string): string => {
     const dbCol = colMap.get(prop) ?? camelToSnakeCase(prop);
-    return deps.wrap(dbCol);
+    const wrapped = deps.wrap(dbCol);
+    return alias ? `${alias}.${wrapped}` : wrapped;
   };
 
   return new Proxy(tableSql, {
@@ -115,9 +127,9 @@ export function createEntitySqlRef<T>(
       }
       if (prop === "as") {
         return (col: string, asName?: string): Sql => {
-          const wrappedCol = resolveColumn(col);
+          const qualified = resolveColumn(col);
           const out = deps.wrap(asName ?? col);
-          return raw(`${wrappedCol} AS ${out}`);
+          return raw(`${qualified} AS ${out}`);
         };
       }
       return raw(resolveColumn(prop));

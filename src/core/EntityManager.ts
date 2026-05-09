@@ -4643,22 +4643,33 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
-   * Typed entity reference for use inside `sql\`\`` templates. The proxy
-   * itself interpolates as the wrapped (tenant-aware) table name, while
-   * property access (`Issue.id`) yields the bare wrapped column. Use
-   * `.as(prop, asName?)` for `"col" AS "alias"` projections.
+   * Typed entity reference for use inside `sql\`\`` templates. Replaces
+   * hand-rolled `wrap()` + `raw()` boilerplate inside raw queries.
    *
-   * Replaces hand-rolled `wrap()` + `raw()` boilerplate inside raw queries.
+   * **No alias** (`em.ref(Issue)`):
+   * - `${ref}` → `"issue"` — drop into FROM, INSERT, UPDATE
+   * - `${ref.id}` → `"id"` — bare wrapped column
+   *
+   * **With alias** (`em.ref(Issue, "i")`):
+   * - `${ref}` → `"issue" AS i` — declares table+alias in one shot
+   * - `${ref.id}` → `i."id"` — alias-qualified column
+   *
+   * `.as(prop, asName?)` emits `"col" AS "asName"` (or alias-qualified
+   * variant). Multiple refs with different aliases compose for self-joins.
    */
-  ref<T>(entity: ClazzType<T>): SqlRef<T> {
-    return createEntitySqlRef<T>(entity, {
-      wrap: (n) => this.wrap(n),
-      wrapTable: (n) => this.wrapTable(n),
-      collectFkPropertyMappings:
-        typeof this.resolver?.collectFkPropertyMappings === "function"
-          ? (e) => this.resolver.collectFkPropertyMappings(e)
-          : undefined,
-    });
+  ref<T>(entity: ClazzType<T>, alias?: string): SqlRef<T> {
+    return createEntitySqlRef<T>(
+      entity,
+      {
+        wrap: (n) => this.wrap(n),
+        wrapTable: (n) => this.wrapTable(n),
+        collectFkPropertyMappings:
+          typeof this.resolver?.collectFkPropertyMappings === "function"
+            ? (e) => this.resolver.collectFkPropertyMappings(e)
+            : undefined,
+      },
+      alias,
+    );
   }
 
   /**
