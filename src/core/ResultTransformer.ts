@@ -64,18 +64,41 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
   }
 
   // Also remap RelationColumn-managed FK columns (e.g. `user_id` →
-  // `userId`). The convention is `${relationProperty}Id` for the shadow
-  // accessor, so a `@RelationColumn({ name: "user_id" })` on a `user`
-  // relation surfaces as `userId` on the entity. Without this, responses
-  // built from saved entities under SnakeNamingStrategy leak the raw
-  // `user_id` key out to the API.
+  // `userId`). The default shadow is `${relationProperty}Id`; entities
+  // that don't follow that convention can override via `@ManyToOne(...,
+  // { fkProperty })` / `@OneToOne(..., { fkProperty })`. Without this,
+  // responses built from saved entities under SnakeNamingStrategy leak
+  // the raw `user_id` key out to the API.
   const relationColumns: RelationColumnMetadata[] | undefined =
     Reflect.getMetadata(RELATION_COLUMN_TOKEN, entityClass) ??
     Reflect.getMetadata(RELATION_COLUMN_TOKEN, entityClass.prototype);
   if (relationColumns) {
+    const m2oRelations: ManyToOneMetadata<any>[] | undefined =
+      Reflect.getMetadata(MANY_TO_ONE_TOKEN, entityClass) ??
+      Reflect.getMetadata(MANY_TO_ONE_TOKEN, entityClass.prototype);
+    const o2oRelations: OneToOneMetadata<any>[] | undefined =
+      Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) ??
+      Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass.prototype);
+
+    const fkPropertyByRelationProp = new Map<string, string>();
+    if (m2oRelations) {
+      for (const r of m2oRelations) {
+        const fk = r.option?.fkProperty;
+        if (fk) fkPropertyByRelationProp.set(r.columnName, fk);
+      }
+    }
+    if (o2oRelations) {
+      for (const r of o2oRelations) {
+        const fk = r.option?.fkProperty;
+        if (fk) fkPropertyByRelationProp.set(r.propertyKey, fk);
+      }
+    }
+
     for (const rel of relationColumns) {
       if (!rel.name || !rel.propertyKey) continue;
-      const shadow = `${rel.propertyKey}Id`;
+      const shadow =
+        fkPropertyByRelationProp.get(rel.propertyKey) ??
+        `${rel.propertyKey}Id`;
       if (rel.name === shadow) continue;
       if (!remapMap) remapMap = new Map();
       // Don't clobber an explicit @Column remap entry.
@@ -110,6 +133,11 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
           key,
           from: makeDefaultJsonColumnRead(entityName, key),
         });
+      } else if (col.options.type === "boolean") {
+        // MySQL/SQLite store booleans as 0/1 TINYINT; normalize to a real
+        // JS boolean on read. PostgreSQL returns true/false already, in
+        // which case Boolean() is the identity.
+        transformColumns.push({ key, from: (raw) => Boolean(raw) });
       }
     }
   }

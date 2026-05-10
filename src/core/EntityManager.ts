@@ -2232,7 +2232,13 @@ export class EntityManager implements BaseEntityManager {
         for (const rel of manyToOneRelations) {
           if (!rel.joinColumn) continue;
           const relatedValue = (item as any)[rel.columnName];
-          const idPropValue = (item as any)[`${rel.columnName}Id`];
+          // Shadow-accessor fallback: prefer the convention `${rel}Id`, then
+          // honor an explicit `option.fkProperty` for entities that follow a
+          // different naming (mirrors `collectFkPropertyMappings` on reads).
+          let idPropValue = (item as any)[`${rel.columnName}Id`];
+          if (idPropValue === undefined && rel.option?.fkProperty) {
+            idPropValue = (item as any)[rel.option.fkProperty];
+          }
 
           const existingIdx = insertableColumns.findIndex(
             (col: ColumnMetadata) => col.name === rel.joinColumn,
@@ -2572,23 +2578,35 @@ export class EntityManager implements BaseEntityManager {
       for (const rel of updateManyToOneRelations) {
         if (!rel.joinColumn) continue;
         const relatedValue = (item as any)[rel.columnName];
+        // Shadow-accessor fallback (mirrors INSERT path): when the relation
+        // object isn't set, look for the FK on the conventional `${rel}Id`
+        // shadow, then on an explicit `option.fkProperty`.
+        let shadowValue: any = (item as any)[`${rel.columnName}Id`];
+        if (shadowValue === undefined && rel.option?.fkProperty) {
+          shadowValue = (item as any)[rel.option.fkProperty];
+        }
 
-        if (relatedValue === undefined) continue;
+        if (relatedValue === undefined && shadowValue === undefined) continue;
 
         const alreadyInSet = updatedColumnNames.has(rel.joinColumn);
-
-        if (relatedValue === null) {
+        const setClause = (value: any) => {
           if (alreadyInSet) {
             const existingIdx = updatableColumns.findIndex(
               (col: ColumnMetadata) => col.name === rel.joinColumn,
             );
             updateMap[existingIdx] =
-              sql`${raw(this.wrap(rel.joinColumn))} = ${null}`;
+              sql`${raw(this.wrap(rel.joinColumn!))} = ${value}`;
           } else {
-            updateMap.push(sql`${raw(this.wrap(rel.joinColumn))} = ${null}`);
-            updatedColumnNames.add(rel.joinColumn);
+            updateMap.push(
+              sql`${raw(this.wrap(rel.joinColumn!))} = ${value}`,
+            );
+            updatedColumnNames.add(rel.joinColumn!);
           }
-        } else if (typeof relatedValue === "object") {
+        };
+
+        if (relatedValue === null) {
+          setClause(null);
+        } else if (relatedValue && typeof relatedValue === "object") {
           const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
           const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
           if (relatedMeta) {
@@ -2598,21 +2616,14 @@ export class EntityManager implements BaseEntityManager {
             if (relatedPk) {
               const fkValue = relatedValue[this.propKey(relatedPk)];
               if (fkValue !== undefined && fkValue !== null) {
-                if (alreadyInSet) {
-                  const existingIdx = updatableColumns.findIndex(
-                    (col: ColumnMetadata) => col.name === rel.joinColumn,
-                  );
-                  updateMap[existingIdx] =
-                    sql`${raw(this.wrap(rel.joinColumn))} = ${fkValue}`;
-                } else {
-                  updateMap.push(
-                    sql`${raw(this.wrap(rel.joinColumn))} = ${fkValue}`,
-                  );
-                  updatedColumnNames.add(rel.joinColumn);
-                }
+                setClause(fkValue);
               }
             }
           }
+        } else if (shadowValue !== undefined) {
+          // Fall back to the shadow accessor when no relation object was set.
+          // `null` clears the FK; numeric/string values set it directly.
+          setClause(shadowValue);
         }
       }
 
