@@ -35,6 +35,63 @@ const users = await em.query(query);
 
 RawQueryBuilder의 `where()` 메서드는 조건의 **배열**을 받아서 AND로 결합해요. 값은 항상 `sql-template-tag`를 통해 파라미터 바인딩되며, 절대 SQL 문자열에 직접 연결되지 않아요.
 
+## 타입 참조 (Typed References)
+
+`'"users"."id"'` 같은 따옴표 문자열을 직접 손으로 적는 건 금방 지저분해지고, 컬럼 이름을 한 번 바꾸면 문자열이 조용히 깨져요. 두 헬퍼는 엔티티 클래스(또는 alias 이름)로부터 `sql` 태그와 호환되는 프록시를 반환해서, dialect에 맞는 SQL 조각을 자동으로 만들어 줘요. 같은 코드가 PostgreSQL, MySQL, SQLite에서 그대로 동작해요.
+
+### `em.ref(Entity, alias?)` -- 엔티티 바인딩
+
+```typescript
+import sql from "sql-template-tag";
+
+const U = em.ref(User, "u");
+
+const query = em.createQueryBuilder()
+  .selectFragments([U.id, U.email])
+  .from(U)
+  .where([sql`${U.isActive} = ${true}`])
+  .build();
+// PostgreSQL: SELECT u."id", u."email" FROM "user" AS u WHERE u."is_active" = ?
+// MySQL:      SELECT u.`id`, u.`email` FROM `user` AS u WHERE u.`is_active` = ?
+```
+
+| 보간 | alias `"u"` 있음 | alias 없음 |
+|------|-----------------|-----------|
+| `${ref}` | `"user" AS u` (FROM/JOIN에 바로 사용) | `"user"` |
+| `${ref.id}` | `u."id"` | `"id"` |
+| `${ref.as("createdAt")}` | `u."created_at" AS "createdAt"` | `"created_at" AS "createdAt"` |
+
+프로퍼티 이름은 먼저 `@Column` 메타데이터로 해석돼요 (이름을 바꿔도 SQL이 따라가요). 그다음 관계의 FK backing 프로퍼티 (`parent!: Issue` 관계의 `parentId`는 `@Column` 없이도 FK 컬럼으로 해석돼요), 마지막으로 `camelToSnakeCase` fallback이 적용돼요. 멀티테넌트 테이블 wrapping도 자동으로 적용돼요.
+
+서로 다른 alias를 가진 ref들은 self-join에 그대로 조합할 수 있어요:
+
+```typescript
+const E = em.ref(Employee, "e");
+const M = em.ref(Employee, "m");
+
+sql`
+  SELECT ${E.name}, ${M.as("name", "managerName")}
+  FROM ${E}
+  INNER JOIN ${M} ON ${E.managerId} = ${M.id}
+`;
+```
+
+### `em.aliasRef(name)` -- alias 전용
+
+엔티티에 묶을 수 없는 CTE, derived table, 그 외의 구문에는 이걸 써요:
+
+```typescript
+const t = em.aliasRef("t");
+sql`SELECT ${t.minDepth} FROM cte ${t}`;
+// PostgreSQL: SELECT t."min_depth" FROM cte t
+// MySQL:      SELECT t.`min_depth` FROM cte t
+```
+
+- `${ref}` -> 따옴표 없는 bare alias 이름 (`t`) -- `INNER JOIN cte t`에 그대로 들어가요
+- `${ref.col}` -> `alias."col"`, `camelToSnakeCase` 적용 + dialect 따옴표
+
+엔티티 테이블에는 `em.ref()`를, CTE 본문 안에서만 존재하는 컬럼 (`depth`, `path` 등)이나 엔티티가 뒷받침하지 않는 CTE / derived table에 조인할 때는 `em.aliasRef()`를 써요.
+
 ## WHERE, JOIN, Subquery
 
 RawQueryBuilder는 SelectQueryBuilder와 동일한 WHERE 헬퍼를 제공해요 -- `andWhere()`, `orWhere()`, `whereIn()`, `whereNull()`, `whereBetween()` 등. 차이점은 컬럼명이 타입 안전하지 않은 raw 문자열이라는 거예요.
@@ -159,29 +216,37 @@ const users = await em.query(query);
 
 조직도, 카테고리 트리, 스레드 댓글처럼 본질적으로 계층적인 데이터가 있어요. **Recursive CTE**를 사용하면 레벨마다 쿼리를 보내는 대신 하나의 쿼리로 계층 구조를 탐색할 수 있어요.
 
-`employees` 테이블에서 각 직원이 매니저를 가리키는 `manager_id`를 가진다고 가정해 볼게요. CEO부터 시작하는 전체 조직 트리를 가져오려면:
+`Employee` 엔티티에서 각 직원이 매니저를 가리키는 `managerId`를 가진다고 가정해 볼게요. CEO부터 시작하는 전체 조직 트리를 가져오려면, 엔티티 컬럼은 `em.ref()`로, CTE 안에서만 존재하는 합성 `depth` 컬럼은 `em.aliasRef()`로 CTE 본문을 조립해요:
 
 ```typescript
+import sql from "sql-template-tag";
+
+const E = em.ref(Employee);            // base case -- alias 불필요
+const Ec = em.ref(Employee, "e");      // recursive step -- self-join용 alias
+const ot = em.aliasRef("ot");          // CTE alias; `depth`는 CTE 안에만 존재
+
 const query = em.createQueryBuilder()
   .withRecursive("org_tree", sql`
-    SELECT "id", "name", "manager_id", 1 AS depth
-    FROM "employees"
-    WHERE "manager_id" IS NULL
+    SELECT ${E.id}, ${E.name}, ${E.managerId}, 1 AS depth
+    FROM ${E}
+    WHERE ${E.managerId} IS NULL
 
     UNION ALL
 
-    SELECT "e"."id", "e"."name", "e"."manager_id", "ot"."depth" + 1
-    FROM "employees" "e"
-    INNER JOIN "org_tree" "ot" ON "e"."manager_id" = "ot"."id"
+    SELECT ${Ec.id}, ${Ec.name}, ${Ec.managerId}, ${ot.depth} + 1
+    FROM ${Ec}
+    INNER JOIN org_tree ${ot} ON ${Ec.managerId} = ${ot.id}
   `)
-  .select(["*"])
-  .from(sql`org_tree`)
-  .orderBy([{ column: '"depth"', direction: "ASC" }])
+  .select("*")
+  .from("org_tree")
+  .orderBy([{ column: "depth", direction: "ASC" }])
   .build();
 
 const orgChart = await em.query(query);
 // [{ id: 1, name: "CEO", depth: 1 }, { id: 2, name: "VP Eng", depth: 2 }, ...]
 ```
+
+dialect 따옴표는 자동으로 골라져요. PostgreSQL은 `"id"`, MySQL은 `` `id` ``로 나가고, `${ot}`는 따옴표 없는 bare alias `ot`로 렌더링돼서 `INNER JOIN org_tree ot`가 모든 지원 DB에서 파싱돼요. TypeScript에서 `Employee.managerId`를 리네임하면 SQL에도 그대로 반영돼요.
 
 Recursive CTE는 `UNION ALL`로 결합된 두 부분으로 구성돼요:
 1. **Base case** -- 시작 행 (매니저가 없는 직원 = CEO)

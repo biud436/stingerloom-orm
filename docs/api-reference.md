@@ -98,6 +98,8 @@ for await (const batch of em.streamBatch(User, {}, 500)) {
 |--------|-----------|-------------|
 | `createQueryBuilder` | `(): BaseRawQueryBuilder` | Create a RawQueryBuilder (free-form SQL) |
 | `createQueryBuilder` | `<T>(entity, alias): SelectQueryBuilder<T>` | Create a type-safe SelectQueryBuilder |
+| `ref` | `<T>(entity: Class<T>, alias?: string): SqlRef<T>` | Typed `sql`-tag proxy for an entity (`${ref}` -> `"table" AS alias`, `${ref.col}` -> alias-qualified column). [Usage ->](./raw-sql.md#typed-references) |
+| `aliasRef` | `(alias: string): AliasRef` | Alias-only sibling of `ref()` for CTE / derived-table column refs. `${ref}` -> bare alias, `${ref.col}` -> `alias."col"` with `camelToSnakeCase`. |
 
 ### Plugin System
 

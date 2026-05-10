@@ -98,6 +98,8 @@ for await (const batch of em.streamBatch(User, {}, 500)) {
 |--------|-----------|------|
 | `createQueryBuilder` | `(): BaseRawQueryBuilder` | RawQueryBuilder 생성 (자유 형식 SQL) |
 | `createQueryBuilder` | `<T>(entity, alias): SelectQueryBuilder<T>` | 타입 안전한 SelectQueryBuilder 생성 |
+| `ref` | `<T>(entity: Class<T>, alias?: string): SqlRef<T>` | 엔티티에 대한 타입 안전 `sql`-tag 프록시 (`${ref}` -> `"table" AS alias`, `${ref.col}` -> alias 한정 컬럼). [사용법 ->](./raw-sql.md#타입-참조-typed-references) |
+| `aliasRef` | `(alias: string): AliasRef` | `ref()`의 alias 전용 형제 헬퍼. CTE / derived-table 컬럼 참조에 사용. `${ref}` -> bare alias, `${ref.col}` -> `alias."col"` (`camelToSnakeCase` 적용) |
 
 ### Plugin System
 

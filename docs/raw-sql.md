@@ -35,6 +35,63 @@ const users = await em.query(query);
 
 The `where()` method in RawQueryBuilder takes an **array** of conditions (joined with AND). Values are always parameter-bound via `sql-template-tag` -- never concatenated into the SQL string.
 
+## Typed References
+
+Hand-quoting `'"users"."id"'` everywhere is noisy and brittle -- a column rename and your strings are silently wrong. Two helpers return `sql`-tag-compatible proxies that produce dialect-correct SQL fragments from your entity classes (or a bare alias name), so the same code runs unchanged on PostgreSQL, MySQL, and SQLite.
+
+### `em.ref(Entity, alias?)` -- entity-bound
+
+```typescript
+import sql from "sql-template-tag";
+
+const U = em.ref(User, "u");
+
+const query = em.createQueryBuilder()
+  .selectFragments([U.id, U.email])
+  .from(U)
+  .where([sql`${U.isActive} = ${true}`])
+  .build();
+// PostgreSQL: SELECT u."id", u."email" FROM "user" AS u WHERE u."is_active" = ?
+// MySQL:      SELECT u.`id`, u.`email` FROM `user` AS u WHERE u.`is_active` = ?
+```
+
+| Interpolation | With alias `"u"` | Without alias |
+|---------------|------------------|---------------|
+| `${ref}` | `"user" AS u` (FROM/JOIN-ready) | `"user"` |
+| `${ref.id}` | `u."id"` | `"id"` |
+| `${ref.as("createdAt")}` | `u."created_at" AS "createdAt"` | `"created_at" AS "createdAt"` |
+
+Property names are resolved through `@Column` metadata first (so renames stay in sync), then through FK backing properties from relations (`parentId` of a `parent!: Issue` relation resolves to the FK column without an explicit `@Column`), and finally fall back to `camelToSnakeCase`. Tenant-aware table wrapping is applied automatically.
+
+Multiple refs with different aliases compose for self-joins:
+
+```typescript
+const E = em.ref(Employee, "e");
+const M = em.ref(Employee, "m");
+
+sql`
+  SELECT ${E.name}, ${M.as("name", "managerName")}
+  FROM ${E}
+  INNER JOIN ${M} ON ${E.managerId} = ${M.id}
+`;
+```
+
+### `em.aliasRef(name)` -- alias-only
+
+For CTEs, derived tables, and any other construct without an entity to bind:
+
+```typescript
+const t = em.aliasRef("t");
+sql`SELECT ${t.minDepth} FROM cte ${t}`;
+// PostgreSQL: SELECT t."min_depth" FROM cte t
+// MySQL:      SELECT t.`min_depth` FROM cte t
+```
+
+- `${ref}` -> bare alias name (`t`), unquoted -- exactly what `INNER JOIN cte t` wants
+- `${ref.col}` -> `alias."col"`, with `camelToSnakeCase` and dialect quoting
+
+Use `em.ref()` for entity tables; reach for `em.aliasRef()` when the column only exists inside the CTE body (`depth`, `path`, …) or you're joining to a CTE / derived table whose shape isn't backed by an entity.
+
 ## WHERE, JOIN, and Subqueries
 
 RawQueryBuilder has the same WHERE helpers as SelectQueryBuilder -- `andWhere()`, `orWhere()`, `whereIn()`, `whereNull()`, `whereBetween()`, etc. The difference is that column names are raw strings, not type-safe.
@@ -159,29 +216,37 @@ The `with()` method takes a name and either a `Sql` object or a callback that re
 
 Some data is naturally hierarchical -- org charts, category trees, threaded comments. A **recursive CTE** lets you traverse these hierarchies in a single query, instead of making one query per level.
 
-Suppose you have an `employees` table where each employee has a `manager_id` pointing to their manager. To get the entire org tree starting from the CEO:
+Suppose you have an `Employee` entity where each employee has a `managerId` pointing to their manager. To get the entire org tree starting from the CEO, compose the CTE body with `em.ref()` for the entity columns and `em.aliasRef()` for the synthetic `depth` column that only exists inside the CTE:
 
 ```typescript
+import sql from "sql-template-tag";
+
+const E = em.ref(Employee);            // base case -- no alias needed
+const Ec = em.ref(Employee, "e");      // recursive step -- alias for self-join
+const ot = em.aliasRef("ot");          // CTE alias; `depth` lives only in the CTE
+
 const query = em.createQueryBuilder()
   .withRecursive("org_tree", sql`
-    SELECT "id", "name", "manager_id", 1 AS depth
-    FROM "employees"
-    WHERE "manager_id" IS NULL
+    SELECT ${E.id}, ${E.name}, ${E.managerId}, 1 AS depth
+    FROM ${E}
+    WHERE ${E.managerId} IS NULL
 
     UNION ALL
 
-    SELECT "e"."id", "e"."name", "e"."manager_id", "ot"."depth" + 1
-    FROM "employees" "e"
-    INNER JOIN "org_tree" "ot" ON "e"."manager_id" = "ot"."id"
+    SELECT ${Ec.id}, ${Ec.name}, ${Ec.managerId}, ${ot.depth} + 1
+    FROM ${Ec}
+    INNER JOIN org_tree ${ot} ON ${Ec.managerId} = ${ot.id}
   `)
-  .select(["*"])
-  .from(sql`org_tree`)
-  .orderBy([{ column: '"depth"', direction: "ASC" }])
+  .select("*")
+  .from("org_tree")
+  .orderBy([{ column: "depth", direction: "ASC" }])
   .build();
 
 const orgChart = await em.query(query);
 // [{ id: 1, name: "CEO", depth: 1 }, { id: 2, name: "VP Eng", depth: 2 }, ...]
 ```
+
+The dialect quoting is picked automatically: PostgreSQL gets `"id"`, MySQL gets `` `id` ``, and `${ot}` renders as the bare alias `ot` so `INNER JOIN org_tree ot` parses on every supported database. Renaming `Employee.managerId` in TypeScript propagates straight into the SQL.
 
 The recursive CTE has two parts joined by `UNION ALL`:
 1. **Base case** -- the starting rows (employees with no manager = the CEO)
