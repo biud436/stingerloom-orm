@@ -19,13 +19,13 @@ export class IssueLink {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Issue, () => undefined)
+  @ManyToOne(() => Issue, () => undefined, { fkProperty: "sourceIssueId" })
   @RelationColumn({ name: "source_issue_id" })
   source!: Issue;
 
   sourceIssueId?: number;
 
-  @ManyToOne(() => Issue, () => undefined)
+  @ManyToOne(() => Issue, () => undefined, { fkProperty: "targetIssueId" })
   @RelationColumn({ name: "target_issue_id" })
   target!: Issue;
 

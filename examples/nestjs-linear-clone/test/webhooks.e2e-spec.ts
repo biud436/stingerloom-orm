@@ -155,6 +155,24 @@ integrationDescribe("[E2E] Webhooks — outbox + worker + retry", () => {
     beforeAll(async () => {
       mock500 = await startMockReceiver();
       mock500.setHandler(() => 500);
+
+      // Isolate this test from the success endpoints registered earlier in
+      // the file: deactivate them so the only delivery the worker claims for
+      // this issue update is the one bound to the 500-returning mock. Without
+      // this, `delivered` reflects the success endpoints and the failing
+      // delivery's failure outcome would have to be teased apart from the
+      // batch counts.
+      const existing = await api
+        .get(`/webhooks/endpoints`)
+        .query({ workspaceId: fx.workspaceId })
+        .expect(200);
+      for (const ep of existing.body as Array<{ id: number }>) {
+        await api
+          .patch(`/webhooks/endpoints/${ep.id}`)
+          .send({ isActive: false })
+          .expect(200);
+      }
+
       const ep = await api
         .post("/webhooks/endpoints")
         .send({
