@@ -364,4 +364,33 @@ integrationDescribe("[E2E] Analytics — recursive CTE, window functions, time-i
       }
     });
   });
+
+  // ────────────────────────────────────────────────
+  // Cycle-time percentiles
+  //   PG path uses Expressions.percentileCont via SelectQueryBuilder;
+  //   MySQL path falls back to the CTE + ROW_NUMBER emulation.
+  // ────────────────────────────────────────────────
+  describe("Cycle-time percentiles", () => {
+    it("returns {p50, p75, p95, sampleSize} with monotonic percentiles", async () => {
+      const res = await api
+        .get(`/analytics/projects/${fx.projectId}/cycle-time-percentiles`)
+        .query({ days: 365 })
+        .expect(200);
+
+      expect(res.body).toEqual(
+        expect.objectContaining({
+          p50: expect.any(Number),
+          p75: expect.any(Number),
+          p95: expect.any(Number),
+          sampleSize: expect.any(Number),
+        }),
+      );
+
+      expect(res.body.sampleSize).toBe(completedIssueIds.length);
+      // Percentiles must be non-negative and non-decreasing.
+      expect(res.body.p50).toBeGreaterThanOrEqual(0);
+      expect(res.body.p75).toBeGreaterThanOrEqual(res.body.p50);
+      expect(res.body.p95).toBeGreaterThanOrEqual(res.body.p75);
+    });
+  });
 });
