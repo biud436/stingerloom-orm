@@ -8,6 +8,7 @@ import type {
   DialectExpression,
 } from "../../dialects/DialectExpression";
 import { AliasedExpression } from "./AliasedExpression";
+import { OrderExpression } from "./OrderExpression";
 
 /**
  * Renderer contract for a scalar SQL expression — produces one `Sql`
@@ -259,6 +260,31 @@ export class ScalarExpression {
   }
   sqrt(): ScalarExpression {
     return buildStringFn("SQRT", this.renderer);
+  }
+
+  // ── Ordering helpers — use the scalar expression as ORDER BY ──
+
+  /** Sort by this scalar expression ascending. */
+  asc(): OrderExpression {
+    const renderer = this.renderer;
+    return new OrderExpression(
+      "",
+      "ASC",
+      undefined,
+      true,
+      (resolveColumn, dialect) => renderer(resolveColumn, dialect),
+    );
+  }
+  /** Sort by this scalar expression descending. */
+  desc(): OrderExpression {
+    const renderer = this.renderer;
+    return new OrderExpression(
+      "",
+      "DESC",
+      undefined,
+      true,
+      (resolveColumn, dialect) => renderer(resolveColumn, dialect),
+    );
   }
 
   // ── Date arithmetic (Tier 3) ───────────────────────────

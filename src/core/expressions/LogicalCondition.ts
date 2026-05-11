@@ -2,7 +2,12 @@
 import sql, { Sql, join } from "sql-template-tag";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
-import { registerLogicalComposer } from "./AggregateExpression";
+import {
+  AggregateExpression,
+  registerLogicalComposer,
+  aggregateOver,
+  type AggregateFunc,
+} from "./AggregateExpression";
 import { registerScalarLogicalComposer } from "./ScalarExpression";
 import { coalesce, nullif } from "./NullishExpression";
 import {
@@ -29,10 +34,35 @@ import {
 } from "./CaseExpression";
 import {
   dateDiff as dateDiffFactory,
+  dateTrunc as dateTruncFactory,
   random as randomFactory,
 } from "./DateArithmeticExpression";
 import { raw as rawFactory } from "./RawExpression";
-import type { DateAddUnit } from "../../dialects/DialectExpression";
+import {
+  percentileCont as percentileContFactory,
+  percentileDisc as percentileDiscFactory,
+  mode as modeFactory,
+  OrderedSetAggregateExpression,
+  type OrderedSetOrderByTarget,
+} from "./OrderedSetAggregateExpression";
+import {
+  rowNumber as rowNumberFactory,
+  rank as rankFactory,
+  denseRank as denseRankFactory,
+  ntile as ntileFactory,
+  percentRank as percentRankFactory,
+  cumeDist as cumeDistFactory,
+  lag as lagFactory,
+  lead as leadFactory,
+  firstValue as firstValueFactory,
+  lastValue as lastValueFactory,
+  nthValue as nthValueFactory,
+} from "./WindowFunctions";
+import type { WindowBuilder } from "./WindowExpression";
+import type {
+  DateAddUnit,
+  DateTruncUnit,
+} from "../../dialects/DialectExpression";
 
 export type LogicalOperator = "AND" | "OR" | "NOT";
 
@@ -301,6 +331,78 @@ export const Expressions = {
   },
 
   /**
+   * `dateTrunc(value, unit)` — truncate a date/timestamp to the start of
+   * the given calendar `unit`. `week` follows the ISO-Monday convention
+   * on every dialect so cross-engine callers see the same week-start
+   * date.
+   *
+   * @example
+   * ```ts
+   * const i = qAlias(Issue, "i");
+   * qb.select([
+   *   Expressions.dateTrunc(i.completedAt, "week").as("weekStart"),
+   *   i.id.count().as("closedCount"),
+   * ]).groupBy(["weekStart"]);
+   * ```
+   */
+  dateTrunc(value: unknown, unit: DateTruncUnit): ScalarExpression {
+    return dateTruncFactory(value, unit);
+  },
+
+  /**
+   * `AVG(arg)` over an arbitrary expression — column, scalar expression,
+   * or `"alias.prop"` string. Mirror of {@link ColumnExpression.avg} for
+   * cases where the aggregate's argument is a derived expression rather
+   * than a single column reference (e.g. `AVG(EXTRACT(epoch FROM (a-b))/3600)`).
+   *
+   * @example
+   * ```ts
+   * const cycleHours = Expressions.dateDiff(i.completedAt, i.createdAt, "second")
+   *   .floatValue().div(3600);
+   * qb.select([Expressions.avg(cycleHours).as("avgHours")]);
+   * ```
+   */
+  avg(arg: unknown): AggregateExpression {
+    return aggregateOver("AVG", arg, { defaultAlias: "avg_expr" });
+  },
+
+  /** `SUM(arg)` over an arbitrary expression. See {@link avg}. */
+  sum(arg: unknown): AggregateExpression {
+    return aggregateOver("SUM", arg, { defaultAlias: "sum_expr" });
+  },
+
+  /** `MIN(arg)` over an arbitrary expression. See {@link avg}. */
+  min(arg: unknown): AggregateExpression {
+    return aggregateOver("MIN", arg, { defaultAlias: "min_expr" });
+  },
+
+  /** `MAX(arg)` over an arbitrary expression. See {@link avg}. */
+  max(arg: unknown): AggregateExpression {
+    return aggregateOver("MAX", arg, { defaultAlias: "max_expr" });
+  },
+
+  /** `COUNT(arg)` over an arbitrary expression — pass `"*"` for `COUNT(*)`. */
+  count(arg: unknown = "*"): AggregateExpression {
+    return aggregateOver("COUNT", arg, { defaultAlias: "count_expr" });
+  },
+
+  /**
+   * Build an arbitrary `<FUNC>(arg)` aggregate using an arbitrary expression.
+   * Escape hatch when you need DISTINCT alongside a derived argument:
+   *
+   * ```ts
+   * Expressions.aggregate("COUNT", u.email, { distinct: true })
+   * ```
+   */
+  aggregate(
+    func: AggregateFunc,
+    arg: unknown,
+    options?: { distinct?: boolean; defaultAlias?: string },
+  ): AggregateExpression {
+    return aggregateOver(func, arg, options);
+  },
+
+  /**
    * `RANDOM()` / `RAND()` — dialect-native pseudo-random scalar.
    * Commonly used as `qb.orderBy(Expressions.random().asc())` for
    * random sampling, though the order expression wiring lives in a
@@ -329,6 +431,137 @@ export const Expressions = {
    */
   raw<T = unknown>(fragment: import("sql-template-tag").Sql): ScalarExpression {
     return rawFactory<T>(fragment);
+  },
+
+  /**
+   * `percentile_cont(p) WITHIN GROUP (ORDER BY orderBy)` — continuous
+   * percentile with linear interpolation between adjacent samples.
+   *
+   * **PostgreSQL only.** MySQL and SQLite have no native ordered-set
+   * aggregate; on those dialects the renderer throws
+   * `OrmError(UNSUPPORTED_OPERATION)`. Emulate on MySQL via a CTE +
+   * `ROW_NUMBER() OVER (ORDER BY x)` and pick the row where
+   * `rn = CEIL(N * fraction)`.
+   *
+   * @example
+   * ```ts
+   * const i = qAlias(Issue, "i");
+   * const cycle = Expressions.dateDiff(i.completedAt, i.createdAt, "second")
+   *   .div(3600);
+   *
+   * qb.select([
+   *   Expressions.percentileCont(0.5, cycle).as("p50"),
+   *   Expressions.percentileCont(0.95, cycle).as("p95"),
+   * ]);
+   * ```
+   */
+  percentileCont(
+    p: number,
+    orderBy: OrderedSetOrderByTarget,
+  ): OrderedSetAggregateExpression {
+    return percentileContFactory(p, orderBy);
+  },
+
+  /**
+   * `percentile_disc(p) WITHIN GROUP (ORDER BY orderBy)` — discrete
+   * percentile; returns the first input value whose cumulative
+   * distribution is >= `p`.
+   *
+   * **PostgreSQL only.** See {@link percentileCont} for dialect notes.
+   */
+  percentileDisc(
+    p: number,
+    orderBy: OrderedSetOrderByTarget,
+  ): OrderedSetAggregateExpression {
+    return percentileDiscFactory(p, orderBy);
+  },
+
+  /**
+   * `mode() WITHIN GROUP (ORDER BY orderBy)` — most-frequent value among
+   * the non-null inputs; ties broken by the ordering.
+   *
+   * **PostgreSQL only.** See {@link percentileCont} for dialect notes.
+   */
+  mode(
+    orderBy: OrderedSetOrderByTarget,
+  ): OrderedSetAggregateExpression {
+    return modeFactory(orderBy);
+  },
+
+  // ── Ranking window functions ───────────────────────────
+
+  /**
+   * `ROW_NUMBER() OVER (…)` — sequential row number within each partition,
+   * starting at 1. Returns a {@link WindowBuilder} so callers can chain
+   * `.partitionBy(...)`, `.orderBy(...)`, `.rowsBetween(...)` before
+   * finalizing with `.as(alias)`.
+   */
+  rowNumber(): WindowBuilder {
+    return rowNumberFactory();
+  },
+
+  /** `RANK() OVER (…)` — ties share a rank; next rank skips duplicates. */
+  rank(): WindowBuilder {
+    return rankFactory();
+  },
+
+  /** `DENSE_RANK() OVER (…)` — like {@link rank} but no gaps after ties. */
+  denseRank(): WindowBuilder {
+    return denseRankFactory();
+  },
+
+  /** `NTILE(n) OVER (…)` — split partition into `n` ordered buckets (1..n). */
+  ntile(n: number): WindowBuilder {
+    return ntileFactory(n);
+  },
+
+  /** `PERCENT_RANK() OVER (…)` — `(rank-1) / (rows-1)`, in `[0, 1]`. */
+  percentRank(): WindowBuilder {
+    return percentRankFactory();
+  },
+
+  /** `CUME_DIST() OVER (…)` — cumulative distribution; `≤ current_value` ratio. */
+  cumeDist(): WindowBuilder {
+    return cumeDistFactory();
+  },
+
+  // ── Positional / offset window functions ──────────────
+
+  /**
+   * `LAG(expr [, offset [, default]]) OVER (…)` — value `offset` rows
+   * before the current row. `default` is returned when the offset would
+   * cross the partition boundary.
+   *
+   * @example
+   * ```ts
+   * Expressions.lag(a.createdAt).over()
+   *   .partitionBy(a.issueId)
+   *   .orderBy(a.createdAt.asc())
+   *   .as("prev_change_at");
+   * ```
+   */
+  lag(expr: unknown, offset?: number, defaultValue?: unknown): WindowBuilder {
+    return lagFactory(expr, offset, defaultValue);
+  },
+
+  /** `LEAD(expr [, offset [, default]]) OVER (…)` — see {@link lag}. */
+  lead(expr: unknown, offset?: number, defaultValue?: unknown): WindowBuilder {
+    return leadFactory(expr, offset, defaultValue);
+  },
+
+  /** `FIRST_VALUE(expr) OVER (…)` — value at the first row of the window frame. */
+  firstValue(expr: unknown): WindowBuilder {
+    return firstValueFactory(expr);
+  },
+
+  /** `LAST_VALUE(expr) OVER (…)` — value at the last row of the window frame. */
+  lastValue(expr: unknown): WindowBuilder {
+    return lastValueFactory(expr);
+  },
+
+  /** `NTH_VALUE(expr, n) OVER (…)` — value at the n-th row (1-indexed). */
+  nthValue(expr: unknown, n: number): WindowBuilder {
+    return nthValueFactory(expr, n);
   },
 } as const;
 

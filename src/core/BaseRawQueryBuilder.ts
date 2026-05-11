@@ -143,10 +143,10 @@ export interface BaseRawQueryBuilder {
 
   /**
    * Specifies the GROUP BY clause for the query.
-   * @param columns - An array of column names to group by.
-   * @returns The current instance of the query builder.
+   * @param columns - Column names or parameterized {@link Sql} fragments
+   *                  whose bindings must survive query assembly.
    */
-  groupBy(columns: string[]): BaseRawQueryBuilder;
+  groupBy(columns: Array<string | Sql>): BaseRawQueryBuilder;
 
   /**
    * Adds conditions to the HAVING clause of the query.

@@ -8,24 +8,47 @@ import { ScalarExpression } from "./ScalarExpression";
 import { AliasedExpression } from "./AliasedExpression";
 
 /**
- * Fluent builder for an `<aggregate> OVER (…)` expression — partition,
- * ordering, and frame clause composed incrementally.
+ * Renderer for the *head* of a window expression — the function call
+ * before `OVER (…)`. For an aggregate window like `SUM(x) OVER (…)` the
+ * head is `SUM(x)`; for a pure ranking window like `ROW_NUMBER() OVER (…)`
+ * the head is `ROW_NUMBER()`. Centralizing this lets {@link WindowBuilder}
+ * compose `OVER (…)` once and serve both shapes.
+ */
+export type WindowHeadRenderer = (
+  resolveColumn: ColumnResolver,
+  dialect?: DialectExpression,
+) => Sql;
+
+/**
+ * Fluent builder for a `<head> OVER (…)` window expression — partition,
+ * ordering, and frame composed incrementally.
  *
- * Returned by {@link AggregateExpression.over}. Terminal methods
- * (`toScalar`, `as`) convert it to a {@link ScalarExpression} /
- * {@link AliasedExpression} for use in SELECT.
+ * Two construction paths feed this:
+ * 1. **Aggregate-as-window**, via `AggregateExpression.over()`. The head
+ *    is the aggregate's rendered `FUNC(col)` fragment.
+ * 2. **Pure window function**, via factories like `rowNumber()`, `lag(...)`,
+ *    `firstValue(...)`. The head is a plain function call (no GROUP BY
+ *    implication).
+ *
+ * Terminal methods (`toScalar`, `as`) finalize the chain into a
+ * {@link ScalarExpression} / {@link AliasedExpression} for SELECT.
  *
  * @example
  * ```ts
  * const u = qAlias(User, "u");
  *
- * qb.select([
- *   u.score.sum().over()
- *     .partitionBy(u.teamId)
- *     .orderBy(u.createdAt.desc())
- *     .rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")
- *     .as("running_total"),
- * ]);
+ * // Aggregate-as-window
+ * u.score.sum().over()
+ *   .partitionBy(u.teamId)
+ *   .orderBy(u.createdAt.desc())
+ *   .rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")
+ *   .as("running_total");
+ *
+ * // Pure window function
+ * Expressions.rowNumber().over()
+ *   .partitionBy(u.teamId)
+ *   .orderBy(u.score.desc())
+ *   .as("rank");
  * ```
  */
 export class WindowBuilder {
@@ -33,12 +56,29 @@ export class WindowBuilder {
   private orderings: OrderExpression[] = [];
   private frame: string | undefined;
 
-  constructor(private readonly aggregate: AggregateExpression) {}
+  /**
+   * Construct directly via {@link AggregateExpression.over} (legacy
+   * aggregate-window path) or {@link WindowBuilder.from} (any head
+   * renderer). Both flow into the same `<head> OVER (…)` pipeline.
+   */
+  constructor(
+    private readonly headRendererOrAggregate:
+      | WindowHeadRenderer
+      | AggregateExpression,
+  ) {}
+
+  /**
+   * Construct a `WindowBuilder` from any head SQL renderer — used by
+   * non-aggregate window factories (`rowNumber()`, `lag()`, …).
+   */
+  static from(head: WindowHeadRenderer): WindowBuilder {
+    return new WindowBuilder(head);
+  }
 
   /**
    * Add one or more PARTITION BY columns. Accepts entity-aware
-   * `ColumnExpression`s (from `qAlias(Entity, "u").col`) or raw
-   * `"alias.prop"` strings.
+   * `ColumnExpression`s (from `qAlias(Entity, "u").col`), scalar
+   * expressions, or raw `"alias.prop"` strings.
    */
   partitionBy(...cols: Array<unknown>): this {
     this.partitions.push(...cols);
@@ -47,8 +87,8 @@ export class WindowBuilder {
 
   /**
    * Add ORDER BY within the window frame. Accepts `OrderExpression`
-   * instances (`u.createdAt.desc()`) — use `addOrderBy`-style fluency
-   * on the column expression to construct them.
+   * instances (`u.createdAt.desc()`) — use `.asc()` / `.desc()` on the
+   * column expression to construct them.
    */
   orderBy(...orders: OrderExpression[]): this {
     this.orderings.push(...orders);
@@ -86,12 +126,12 @@ export class WindowBuilder {
     return this.toScalar().as(alias);
   }
 
-  /** @internal Build the final `FUNC(col) OVER (…)` fragment. */
+  /** @internal Build the final `<head> OVER (…)` fragment. */
   private render(
     resolveColumn: ColumnResolver,
     dialect?: DialectExpression,
   ): Sql {
-    const aggSql = this.aggregate.renderFunction(resolveColumn);
+    const headSql = this.renderHead(resolveColumn, dialect);
 
     const clauses: Sql[] = [];
     if (this.partitions.length > 0) {
@@ -102,7 +142,7 @@ export class WindowBuilder {
     }
     if (this.orderings.length > 0) {
       const ordSqls = this.orderings.map((o) =>
-        renderOrderFragment(o, resolveColumn),
+        renderOrderFragment(o, resolveColumn, dialect),
       );
       clauses.push(sql`ORDER BY ${join(ordSqls, ", ")}`);
     }
@@ -111,9 +151,21 @@ export class WindowBuilder {
     }
 
     if (clauses.length === 0) {
-      return sql`${aggSql} OVER ()`;
+      return sql`${headSql} OVER ()`;
     }
-    return sql`${aggSql} OVER (${join(clauses, " ")})`;
+    return sql`${headSql} OVER (${join(clauses, " ")})`;
+  }
+
+  /** @internal Render the function-call portion before `OVER (…)`. */
+  private renderHead(
+    resolveColumn: ColumnResolver,
+    dialect?: DialectExpression,
+  ): Sql {
+    const head = this.headRendererOrAggregate;
+    if (typeof head === "function") {
+      return head(resolveColumn, dialect);
+    }
+    return (head as AggregateExpression).renderFunction(resolveColumn, dialect);
   }
 }
 
@@ -153,11 +205,16 @@ function renderPartitionArg(
 function renderOrderFragment(
   order: OrderExpression,
   resolveColumn: ColumnResolver,
+  dialect?: DialectExpression,
 ): Sql {
-  // Aggregate-sourced OrderExpression carries already-rendered SQL via
-  // its internal bookkeeping; for window ORDER BY we only support the
-  // column-reference form (most common) to keep frame semantics
-  // predictable. Callers needing aggregate-in-window should open a
-  // follow-up.
+  if (order.renderer) {
+    // Aggregate / scalar-sourced order — defer to the expression's own
+    // renderer so the function call (or derived SQL) appears verbatim.
+    const colSql = order.renderer(resolveColumn, dialect);
+    return sql`${colSql} ${raw(order.direction)}`;
+  }
+  if (order.isRaw) {
+    return sql`${raw(order.ref)} ${raw(order.direction)}`;
+  }
   return sql`${raw(resolveColumn(order.ref))} ${raw(order.direction)}`;
 }

@@ -1,7 +1,20 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import sql, { Sql, raw, join } from "sql-template-tag";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
+import type { DialectExpression } from "../../dialects/DialectExpression";
 import { OrderExpression } from "./OrderExpression";
+
+/**
+ * Renderer for an aggregate's *argument* expression. Used when the
+ * aggregate wraps something other than a single column reference —
+ * e.g. `AVG(EXTRACT(EPOCH FROM (a - b)) / 3600)`. The query builder
+ * calls this at build time with the same resolver / dialect that the
+ * surrounding SELECT clause uses.
+ */
+export type AggregateArgRenderer = (
+  resolveColumn: ColumnResolver,
+  dialect?: DialectExpression,
+) => Sql;
 
 /**
  * Supported aggregate functions. Kept in sync with
@@ -41,6 +54,14 @@ export class AggregateExpression {
     readonly distinct: boolean,
     /** User-provided alias via `.as("name")`. Undefined until set. */
     readonly alias: string | undefined,
+    /**
+     * Optional renderer for the aggregate's argument. When set, the
+     * aggregate wraps the rendered fragment instead of resolving `ref`
+     * as a single column — used by `Expressions.avg(scalarExpr)` etc.
+     * `ref` is still consulted for {@link getAlias} so callers can
+     * supply a stable default key.
+     */
+    readonly argRenderer?: AggregateArgRenderer,
   ) {}
 
   /**
@@ -48,7 +69,13 @@ export class AggregateExpression {
    * Required for `getRawMany()` callers that expect predictable keys.
    */
   as(alias: string): AggregateExpression {
-    return new AggregateExpression(this.ref, this.func, this.distinct, alias);
+    return new AggregateExpression(
+      this.ref,
+      this.func,
+      this.distinct,
+      alias,
+      this.argRenderer,
+    );
   }
 
   /**
@@ -67,10 +94,19 @@ export class AggregateExpression {
   }
 
   /** Build the SQL fragment for this aggregate (no AS clause). */
-  renderFunction(resolveColumn: ColumnResolver): Sql {
-    // COUNT(*) support: skip resolution when ref is literal "*".
-    const inner =
-      this.ref === "*" ? raw("*") : raw(resolveColumn(this.ref));
+  renderFunction(
+    resolveColumn: ColumnResolver,
+    dialect?: DialectExpression,
+  ): Sql {
+    let inner: Sql;
+    if (this.argRenderer) {
+      inner = this.argRenderer(resolveColumn, dialect);
+    } else if (this.ref === "*") {
+      // COUNT(*) support: skip resolution when ref is literal "*".
+      inner = sql`${raw("*")}`;
+    } else {
+      inner = sql`${raw(resolveColumn(this.ref))}`;
+    }
     if (this.distinct) {
       return sql`${raw(this.func)}(DISTINCT ${inner})`;
     }
@@ -104,13 +140,22 @@ export class AggregateExpression {
   // ── Ordering helpers — use the aggregate as an ORDER BY target ──
 
   asc(): OrderExpression {
-    // Aggregates have already-rendered SQL — defer rendering by passing the
-    // ref marker through with `isRaw=false` so SelectQueryBuilder can build
-    // the full expression. A cleaner split lives in the integration path.
-    return new OrderExpression(this.ref, "ASC");
+    return new OrderExpression(
+      this.ref,
+      "ASC",
+      undefined,
+      false,
+      (resolveColumn, dialect) => this.renderFunction(resolveColumn, dialect),
+    );
   }
   desc(): OrderExpression {
-    return new OrderExpression(this.ref, "DESC");
+    return new OrderExpression(
+      this.ref,
+      "DESC",
+      undefined,
+      false,
+      (resolveColumn, dialect) => this.renderFunction(resolveColumn, dialect),
+    );
   }
 
   // ── Window function (Tier 3) ──────────────────────────
@@ -141,6 +186,68 @@ export class AggregateExpression {
 // AggregateExpression can freely construct WindowBuilder without
 // forming a compile-time cycle.
 import { WindowBuilder } from "./WindowExpression";
+
+/**
+ * Build an aggregate over an arbitrary scalar/column-style expression.
+ *
+ * Use when the aggregate's argument is not a single column reference —
+ * e.g. `AVG(EXTRACT(EPOCH FROM (a - b)) / 3600)`, `SUM(CASE WHEN …)`.
+ * The `arg` may be a {@link ScalarExpression}, a {@link ColumnExpression},
+ * or a `"alias.prop"` string.
+ *
+ * @example
+ * ```ts
+ * const i = qAlias(Issue, "i");
+ * const cycleHours = Expressions.dateDiff(i.completedAt, i.createdAt, "second")
+ *   .floatValue()
+ *   .div(3600);
+ * qb.select([Expressions.aggregate("AVG", cycleHours).as("avgHours")]);
+ * ```
+ */
+export function aggregateOver(
+  func: AggregateFunc,
+  arg: unknown,
+  options: { distinct?: boolean; defaultAlias?: string } = {},
+): AggregateExpression {
+  const distinct = options.distinct === true;
+  const defaultAlias = options.defaultAlias ?? `expr`;
+  return new AggregateExpression(
+    defaultAlias,
+    func,
+    distinct,
+    undefined,
+    (resolveColumn, dialect) =>
+      renderAggregateArg(arg, resolveColumn, dialect),
+  );
+}
+
+/** @internal Render an aggregate argument — scalar / column / "alias.col" string. */
+function renderAggregateArg(
+  arg: unknown,
+  resolveColumn: ColumnResolver,
+  dialect: DialectExpression | undefined,
+): Sql {
+  if (
+    arg !== null &&
+    typeof arg === "object" &&
+    (arg as { __isScalarExpression?: unknown }).__isScalarExpression === true
+  ) {
+    return (arg as {
+      renderer: (r: ColumnResolver, d?: DialectExpression) => Sql;
+    }).renderer(resolveColumn, dialect);
+  }
+  if (
+    arg !== null &&
+    typeof arg === "object" &&
+    (arg as { __isColumnExpression?: unknown }).__isColumnExpression === true
+  ) {
+    return sql`${raw(resolveColumn((arg as { toString(): string }).toString()))}`;
+  }
+  if (typeof arg === "string") {
+    return sql`${raw(resolveColumn(arg))}`;
+  }
+  return sql`${arg as any}`;
+}
 
 /**
  * Type guard — true if `value` is an {@link AggregateExpression}.

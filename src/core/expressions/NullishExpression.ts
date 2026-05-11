@@ -46,7 +46,7 @@ export function renderNullishArg(
     return sql`${raw(resolveColumn((arg as { toString(): string }).toString()))}`;
   }
   if (isAggregateExpression(arg)) {
-    return (arg as AggregateExpression).renderFunction(resolveColumn);
+    return (arg as AggregateExpression).renderFunction(resolveColumn, dialect);
   }
   if (isScalarExpression(arg)) {
     return (arg as ScalarExpression).renderer(resolveColumn, dialect);

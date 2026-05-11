@@ -1,6 +1,7 @@
 import sql, { Sql, raw } from "sql-template-tag";
 import type {
   DateAddUnit,
+  DateTruncUnit,
   DialectExpression,
 } from "../../dialects/DialectExpression";
 import type { ColumnResolver } from "./ConditionLike";
@@ -32,6 +33,10 @@ function renderDateArg(
     (arg as { __isColumnExpression?: unknown }).__isColumnExpression === true
   ) {
     return sql`${raw(resolveColumn((arg as { toString(): string }).toString()))}`;
+  }
+  if (typeof arg === "string" && arg.includes(".")) {
+    // Treat "alias.col" strings as column refs (e.g. "i.completedAt").
+    return sql`${raw(resolveColumn(arg))}`;
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return sql`${arg as any}`;
@@ -86,6 +91,47 @@ export function dateDiff(
     const aSql = renderDateArg(a, resolveColumn, dialect);
     const bSql = renderDateArg(b, resolveColumn, dialect);
     return dialect.dateDiff(aSql, bSql, unit);
+  });
+}
+
+/**
+ * `dateTrunc(value, unit)` — truncate a date/timestamp to the start of
+ * the calendar `unit`. Returns a {@link ScalarExpression} whose runtime
+ * SQL is rendered by the active dialect:
+ *
+ * - PostgreSQL: `date_trunc('<unit>', value)` with the unit as a bound
+ *   parameter.
+ * - MySQL: explicit per-unit equivalents (`DATE(value)`,
+ *   `DATE_FORMAT(value, '%Y-%m-01')`, …) — `week` is ISO-Monday-aligned
+ *   so the result matches PostgreSQL semantics.
+ * - SQLite: `date(value, 'start of …')` / strftime equivalents,
+ *   ISO-Monday week.
+ *
+ * Returns a date/timestamp value (engine-specific) — callers needing a
+ * stable text form should chain `.stringValue()` or format explicitly.
+ *
+ * @example
+ * ```ts
+ * const i = qAlias(Issue, "i");
+ * qb.select([
+ *   Expressions.dateTrunc(i.completedAt, "week").as("weekStart"),
+ *   i.id.count().as("closedCount"),
+ * ]).groupBy(["weekStart"]);
+ * ```
+ */
+export function dateTrunc(
+  value: unknown,
+  unit: DateTruncUnit,
+): ScalarExpression {
+  return new ScalarExpression((resolveColumn, dialect) => {
+    if (!dialect) {
+      throw new Error(
+        "dateTrunc() requires a DialectExpression. Ensure the query builder " +
+          "was created via EntityManager.createQueryBuilder().",
+      );
+    }
+    const inner = renderDateArg(value, resolveColumn, dialect);
+    return dialect.dateTrunc(inner, unit);
   });
 }
 

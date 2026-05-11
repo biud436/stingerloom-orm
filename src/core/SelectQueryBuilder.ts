@@ -1235,15 +1235,27 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected selectColumns: string[] | "*" = "*";
   protected distinct = false;
   protected whereClauses: Sql[] = [];
+  /**
+   * ORDER BY entries. `column` is a string when the source was a
+   * resolved column reference / pre-rendered identifier; it's a
+   * parameterized {@link Sql} when the source was a
+   * {@link ScalarExpression} carrying bound parameters (e.g.
+   * `Expressions.dateTrunc(col, "week")`).
+   */
   protected orderByClauses: Array<{
-    column: string;
+    column: string | Sql;
     direction: "ASC" | "DESC";
     /** Optional NULLS FIRST/LAST position (Postgres/SQLite native; emulated on MySQL). */
     nulls?: "FIRST" | "LAST";
     /** When true, `column` is a pre-rendered SQL fragment — bypass resolver. */
     isRaw?: boolean;
   }> = [];
-  protected groupByCols: string[] = [];
+  /**
+   * GROUP BY entries. Stored as parameterized {@link Sql} so derived
+   * expressions (e.g. `Expressions.dateTrunc(col, "week")`) keep their
+   * bindings instead of being inlined as strings.
+   */
+  protected groupByCols: Sql[] = [];
   protected havingClauses: Sql[] = [];
   protected joinClauses: Array<{
     type: "LEFT" | "INNER" | "RIGHT";
@@ -1675,18 +1687,28 @@ export class SelectQueryBuilder<T, TResult = T> {
       return this.selectAliased([columns]);
     }
     if (isAggregateExpression(columns)) {
+      // Aggregates with a custom argument renderer can carry bound
+      // parameters (e.g. `AVG(scalarExpr)`), so they must travel through
+      // the parameterized path to preserve those values.
+      if ((columns as AggregateExpression).argRenderer) {
+        return this.selectAliased([columns]);
+      }
       return this.selectAggregates([columns]);
     }
     if (Array.isArray(columns) && columns.length > 0) {
       const first = columns[0];
       if (isAliasedExpression(first) || isAggregateExpression(first)) {
-        // Any aliased entry forces the parameterized-fragment path so
-        // JSON extract bindings survive; a homogeneous aggregate array
-        // keeps the cheaper string path.
-        const hasAliased = (columns as unknown[]).some((c) =>
-          isAliasedExpression(c),
+        // Any aliased entry — or any aggregate with a parameterized arg
+        // renderer — forces the parameterized-fragment path so bindings
+        // survive; a homogeneous list of plain column aggregates keeps
+        // the cheaper string path.
+        const needsParamPath = (columns as unknown[]).some(
+          (c) =>
+            isAliasedExpression(c) ||
+            (isAggregateExpression(c) &&
+              (c as AggregateExpression).argRenderer !== undefined),
         );
-        if (hasAliased) {
+        if (needsParamPath) {
           return this.selectAliased(
             columns as Array<AliasedExpression | AggregateExpression>,
           );
@@ -1719,7 +1741,10 @@ export class SelectQueryBuilder<T, TResult = T> {
     const fragments: string[] = [];
     for (const agg of aggregates) {
       const resolvedAlias = agg.alias ?? agg.getAlias();
-      const fn = agg.renderFunction((ref) => this.resolveColumn(ref));
+      const fn = agg.renderFunction(
+        (ref) => this.resolveColumn(ref),
+        this.dialectExpression,
+      );
       fragments.push(`${fn.sql} AS ${this.em.wrap(resolvedAlias)}`);
     }
     this.selectColumns = fragments;
@@ -1750,7 +1775,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         fragments.push(sql`${inner} AS ${raw(this.em.wrap(p.alias))}`);
       } else if (isAggregateExpression(p)) {
         const resolvedAlias = p.alias ?? p.getAlias();
-        const fn = p.renderFunction(resolver);
+        const fn = p.renderFunction(resolver, this.dialectExpression);
         fragments.push(sql`${fn} AS ${raw(this.em.wrap(resolvedAlias))}`);
       }
     }
@@ -1807,10 +1832,22 @@ export class SelectQueryBuilder<T, TResult = T> {
       return this;
     }
     if (isAggregateExpression(expr)) {
-      // Aggregate SQL has no bound parameters (func name + qualified col),
-      // so funneling through selectColumns as a plain string is safe and
-      // gives consistent ordering with other SELECT fragments.
       const resolvedAlias = expr.alias ?? alias ?? expr.getAlias();
+      // Aggregates with an argRenderer can carry bound parameters
+      // (e.g. AVG(scalarExpr)); route those through the parameterized
+      // selectExpressions list so the bindings survive. Plain column
+      // aggregates have no parameters and stay on the cheap stringified
+      // path.
+      if ((expr as AggregateExpression).argRenderer) {
+        const inner = expr.renderFunction(
+          (ref) => this.resolveColumn(ref),
+          this.dialectExpression,
+        );
+        this.selectExpressions.push(
+          sql`${inner} AS ${raw(this.em.wrap(resolvedAlias))}`,
+        );
+        return this;
+      }
       const fn = expr.renderFunction((ref) => this.resolveColumn(ref));
       const fragment = `${fn.sql} AS ${this.em.wrap(resolvedAlias)}`;
       if (this.selectColumns === "*") {
@@ -2704,20 +2741,38 @@ export class SelectQueryBuilder<T, TResult = T> {
 
   /**
    * Add a single ORDER BY clause. Supports `"alias.property"` notation,
-   * or an {@link OrderExpression} from `col.asc()/.desc().nullsLast()`.
+   * an {@link OrderExpression} from `col.asc()/.desc().nullsLast()`, or
+   * a {@link ScalarExpression} carrying parameter bindings (e.g.
+   * `Expressions.dateTrunc(col, "week")`).
    */
   addOrderBy(expr: OrderExpression): this;
+  addOrderBy(expr: ScalarExpression, direction: "ASC" | "DESC"): this;
   addOrderBy(column: ColumnOf<T>, direction: "ASC" | "DESC"): this;
   addOrderBy(column: string, direction: "ASC" | "DESC"): this;
   addOrderBy(
-    columnOrExpr: string | OrderExpression,
+    columnOrExpr: string | OrderExpression | ScalarExpression,
     direction?: "ASC" | "DESC",
   ): this {
     if (isOrderExpression(columnOrExpr)) {
       return this.pushOrderExpression(columnOrExpr);
     }
+    if (
+      columnOrExpr !== null &&
+      typeof columnOrExpr === "object" &&
+      (columnOrExpr as { __isScalarExpression?: unknown }).__isScalarExpression === true
+    ) {
+      const rendered = (columnOrExpr as ScalarExpression).renderer(
+        (ref) => this.resolveColumn(ref),
+        this.dialectExpression,
+      );
+      this.orderByClauses.push({
+        column: rendered,
+        direction: direction!,
+      });
+      return this;
+    }
     this.orderByClauses.push({
-      column: this.resolveColumn(columnOrExpr),
+      column: this.resolveColumn(columnOrExpr as string),
       direction: direction!,
     });
     return this;
@@ -2729,7 +2784,17 @@ export class SelectQueryBuilder<T, TResult = T> {
    * entry on `orderByClauses`.
    */
   private pushOrderExpression(expr: OrderExpression): this {
-    const column = expr.isRaw ? expr.ref : this.resolveColumn(expr.ref);
+    let column: string | Sql;
+    if (expr.renderer) {
+      column = expr.renderer(
+        (ref) => this.resolveColumn(ref),
+        this.dialectExpression,
+      );
+    } else if (expr.isRaw) {
+      column = expr.ref;
+    } else {
+      column = this.resolveColumn(expr.ref);
+    }
     this.orderByClauses.push({
       column,
       direction: expr.direction,
@@ -2740,13 +2805,48 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
-   * Set GROUP BY columns. Supports `"alias.property"` notation.
+   * Set GROUP BY columns. Supports `"alias.property"` notation,
+   * raw `Sql` fragments (their bindings are preserved), and
+   * {@link ScalarExpression} / {@link ColumnExpression} instances —
+   * convenient when grouping by the same derived expression used in
+   * SELECT (e.g. `Expressions.dateTrunc(col, "week")`).
    */
   groupBy(columns: ColumnOf<T>[]): this;
   groupBy(columns: string[]): this;
-  groupBy(columns: string[]): this {
-    this.groupByCols = columns.map((c) => this.resolveColumn(c));
+  groupBy(
+    columns: Array<string | Sql | ColumnExpression | ScalarExpression>,
+  ): this;
+  groupBy(
+    columns: Array<string | Sql | ColumnExpression | ScalarExpression>,
+  ): this {
+    this.groupByCols = columns.map((c) =>
+      this.renderGroupByEntry(c as unknown),
+    );
     return this;
+  }
+
+  /** @internal Translate one GROUP BY entry into a parameterized Sql fragment. */
+  private renderGroupByEntry(entry: unknown): Sql {
+    if (typeof entry === "string") {
+      return sql`${raw(this.resolveColumn(entry))}`;
+    }
+    if (entry !== null && typeof entry === "object") {
+      if ((entry as { __isScalarExpression?: unknown }).__isScalarExpression === true) {
+        return (entry as {
+          renderer: (r: ColumnResolver, d?: any) => Sql;
+        }).renderer((ref) => this.resolveColumn(ref), this.dialectExpression);
+      }
+      if ((entry as { __isColumnExpression?: unknown }).__isColumnExpression === true) {
+        return sql`${raw(this.resolveColumn((entry as { toString(): string }).toString()))}`;
+      }
+      if (typeof (entry as { sql?: unknown }).sql === "string") {
+        return entry as Sql;
+      }
+    }
+    throw new OrmError(
+      OrmErrorCode.INVALID_QUERY,
+      `groupBy: unsupported entry of type ${typeof entry}`,
+    );
   }
 
   /**
@@ -4132,7 +4232,10 @@ export class SelectQueryBuilder<T, TResult = T> {
           `Invalid ORDER BY direction: ${dir}`,
         );
       }
-      const colSql = raw(entry.column);
+      // `column` may be a string (pre-resolved identifier or fragment) or a
+      // parameterized `Sql` (ScalarExpression-sourced — bindings preserved).
+      const colSql: Sql =
+        typeof entry.column === "string" ? sql`${raw(entry.column)}` : entry.column;
 
       if (!entry.nulls) {
         return sql`${colSql} ${raw(dir)}`;

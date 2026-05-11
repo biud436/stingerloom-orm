@@ -16,12 +16,27 @@ export type OrderDirection = "ASC" | "DESC";
  */
 export type NullsPosition = "FIRST" | "LAST";
 
+import type { Sql } from "sql-template-tag";
+import type { ColumnResolver } from "./ConditionLike";
+import type { DialectExpression } from "../../dialects/DialectExpression";
+
+/**
+ * Deferred SQL renderer for an OrderExpression's column slot — used by
+ * aggregate / scalar order targets that need full dialect + resolver
+ * context to render their function call.
+ */
+export type OrderExpressionRenderer = (
+  resolveColumn: ColumnResolver,
+  dialect?: DialectExpression,
+) => Sql;
+
 /**
  * A deferred ORDER BY specification carrying a column reference, direction,
  * and optional NULLS position.
  *
- * Produced by `ColumnExpression.asc()/.desc()` and `AggregateExpression.asc()/.desc()`.
- * The query builder resolves `ref` through its alias registry at build time.
+ * Produced by `ColumnExpression.asc()/.desc()`, `AggregateExpression.asc()/.desc()`,
+ * and `ScalarExpression.asc()/.desc()`. The query builder resolves the
+ * reference through its alias registry at build time.
  *
  * @example
  * ```ts
@@ -41,19 +56,38 @@ export class OrderExpression {
     /**
      * When true, `ref` is already a fully-qualified SQL fragment
      * (e.g. `COUNT("u"."id")`) and must NOT be passed through the
-     * query builder's column resolver. Set by AggregateExpression.
+     * query builder's column resolver.
      */
     readonly isRaw: boolean = false,
+    /**
+     * Optional dialect-aware renderer. When present, the SELECT/window
+     * builder calls this to produce the column-slot SQL (used by
+     * aggregate / scalar expressions whose rendering needs the live
+     * dialect handle). Takes precedence over `ref` / `isRaw`.
+     */
+    readonly renderer?: OrderExpressionRenderer,
   ) {}
 
   /** Place NULL rows before non-NULL rows in the sort order. */
   nullsFirst(): OrderExpression {
-    return new OrderExpression(this.ref, this.direction, "FIRST", this.isRaw);
+    return new OrderExpression(
+      this.ref,
+      this.direction,
+      "FIRST",
+      this.isRaw,
+      this.renderer,
+    );
   }
 
   /** Place NULL rows after non-NULL rows in the sort order. */
   nullsLast(): OrderExpression {
-    return new OrderExpression(this.ref, this.direction, "LAST", this.isRaw);
+    return new OrderExpression(
+      this.ref,
+      this.direction,
+      "LAST",
+      this.isRaw,
+      this.renderer,
+    );
   }
 }
 

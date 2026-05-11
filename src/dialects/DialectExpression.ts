@@ -198,6 +198,23 @@ export interface DialectExpression {
   random(): Sql;
 
   /**
+   * Truncate a date/timestamp to the start of the requested calendar
+   * unit — analogous to PostgreSQL's `date_trunc('week', ts)`.
+   *
+   * Engine mapping:
+   * - PostgreSQL: `date_trunc('<unit>', value)` (ISO week starts Monday).
+   * - MySQL: explicit equivalents — `DATE(value)` for day,
+   *   `DATE(DATE_SUB(value, INTERVAL WEEKDAY(value) DAY))` for week
+   *   (ISO-Monday-aligned), `DATE_FORMAT(value, '%Y-%m-01')` for month,
+   *   etc.
+   * - SQLite: `date(value, 'start of <unit>')` / strftime equivalents.
+   *
+   * Returns the truncated value as a date or timestamp (engine-specific —
+   * callers that need a stable text form should cast or format explicitly).
+   */
+  dateTrunc(value: Sql, unit: DateTruncUnit): Sql;
+
+  /**
    * Render a date/time component extraction on `value` — e.g.
    * `YEAR(col)` (MySQL), `EXTRACT(YEAR FROM col)` (PostgreSQL),
    * `CAST(strftime('%Y', col) AS INTEGER)` (SQLite).
@@ -278,6 +295,21 @@ export type DateComponent =
   | "dayOfMonth"
   | "dayOfYear"
   | "week";
+
+/**
+ * Truncation granularities for {@link DialectExpression.dateTrunc}. `week`
+ * follows the ISO convention (Monday). Sub-second units are not supported —
+ * engine support is too fragmented to make a portable promise.
+ */
+export type DateTruncUnit =
+  | "year"
+  | "quarter"
+  | "month"
+  | "week"
+  | "day"
+  | "hour"
+  | "minute"
+  | "second";
 
 /** Singleton cache — implementations are stateless. */
 const cache = new Map<DialectName, DialectExpression>();

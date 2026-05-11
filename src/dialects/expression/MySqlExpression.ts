@@ -5,6 +5,7 @@ import type {
   ColumnJsonMeta,
   DateAddUnit,
   DateComponent,
+  DateTruncUnit,
   DialectExpression,
   FullTextSearchOptions,
 } from "../DialectExpression";
@@ -164,6 +165,31 @@ export class MySqlExpression implements DialectExpression {
 
   random(): Sql {
     return sql`RAND()`;
+  }
+
+  dateTrunc(value: Sql, unit: DateTruncUnit): Sql {
+    // MySQL has no native `date_trunc`, so each unit gets its own
+    // explicit form. The `week` form matches PostgreSQL's ISO-Monday
+    // semantics so cross-dialect callers get the same week-start date.
+    switch (unit) {
+      case "year":
+        return sql`DATE_FORMAT(${value}, '%Y-01-01')`;
+      case "quarter":
+        return sql`DATE_ADD(MAKEDATE(YEAR(${value}), 1), INTERVAL (QUARTER(${value}) - 1) QUARTER)`;
+      case "month":
+        return sql`DATE_FORMAT(${value}, '%Y-%m-01')`;
+      case "week":
+        // WEEKDAY: Monday = 0 .. Sunday = 6.
+        return sql`DATE(DATE_SUB(${value}, INTERVAL WEEKDAY(${value}) DAY))`;
+      case "day":
+        return sql`DATE(${value})`;
+      case "hour":
+        return sql`DATE_FORMAT(${value}, '%Y-%m-%d %H:00:00')`;
+      case "minute":
+        return sql`DATE_FORMAT(${value}, '%Y-%m-%d %H:%i:00')`;
+      case "second":
+        return sql`DATE_FORMAT(${value}, '%Y-%m-%d %H:%i:%s')`;
+    }
   }
 
   dateComponent(value: Sql, component: DateComponent): Sql {

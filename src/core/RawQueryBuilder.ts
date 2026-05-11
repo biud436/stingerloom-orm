@@ -340,12 +340,18 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
 
   /**
    * Specifies the GROUP BY clause for the query.
-   * @param columns - An array of column names to group by.
-   * @returns The current instance of the query builder.
+   *
+   * Accepts plain column-name strings (back-compat) or parameterized
+   * {@link Sql} fragments — the latter is used by `SelectQueryBuilder`
+   * when grouping by derived expressions whose bindings must survive.
+   *
+   * @param columns - Column names or parameterized SQL fragments to group by.
    */
-  groupBy(columns: string[]): RawQueryBuilder {
+  groupBy(columns: Array<string | Sql>): RawQueryBuilder {
     if (columns.length === 0) return this;
-    const columnSqls = columns.map((col) => sql`${raw(col)}`);
+    const columnSqls = columns.map((col) =>
+      typeof col === "string" ? sql`${raw(col)}` : col,
+    );
     this.sqlQuerySegments.push(sql`GROUP BY ${join(columnSqls, ", ")}`);
     return this;
   }

@@ -5,6 +5,7 @@ import type {
   ColumnJsonMeta,
   DateAddUnit,
   DateComponent,
+  DateTruncUnit,
   DialectExpression,
   FullTextSearchOptions,
 } from "../DialectExpression";
@@ -155,6 +156,34 @@ export class SqliteExpression implements DialectExpression {
 
   random(): Sql {
     return sql`RANDOM()`;
+  }
+
+  dateTrunc(value: Sql, unit: DateTruncUnit): Sql {
+    // SQLite has no `date_trunc`, but `date()` + the `start of …` /
+    // `weekday 0` modifiers cover the common cases. Quarter falls back
+    // to month-of-quarter math via strftime.
+    switch (unit) {
+      case "year":
+        return sql`date(${value}, 'start of year')`;
+      case "quarter":
+        // Truncate to the first day of the quarter: start of year + 3 * floor((month-1)/3) months.
+        return sql`date(${value}, 'start of year', '+' || ((CAST(strftime('%m', ${value}) AS INTEGER) - 1) / 3 * 3) || ' months')`;
+      case "month":
+        return sql`date(${value}, 'start of month')`;
+      case "week":
+        // ISO week starts Monday. SQLite's `%w` is 0=Sunday..6=Saturday,
+        // so `(w + 6) % 7` gives the 0-based weekday with Monday=0;
+        // subtract that many days to land on Monday.
+        return sql`date(${value}, '-' || ((CAST(strftime('%w', ${value}) AS INTEGER) + 6) % 7) || ' days')`;
+      case "day":
+        return sql`date(${value}, 'start of day')`;
+      case "hour":
+        return sql`strftime('%Y-%m-%d %H:00:00', ${value})`;
+      case "minute":
+        return sql`strftime('%Y-%m-%d %H:%M:00', ${value})`;
+      case "second":
+        return sql`strftime('%Y-%m-%d %H:%M:%S', ${value})`;
+    }
   }
 
   dateComponent(value: Sql, component: DateComponent): Sql {

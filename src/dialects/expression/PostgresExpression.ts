@@ -5,6 +5,7 @@ import type {
   ColumnJsonMeta,
   DateAddUnit,
   DateComponent,
+  DateTruncUnit,
   DialectExpression,
   FullTextSearchOptions,
 } from "../DialectExpression";
@@ -281,6 +282,12 @@ export class PostgresExpression implements DialectExpression {
 
   random(): Sql {
     return sql`RANDOM()`;
+  }
+
+  dateTrunc(value: Sql, unit: DateTruncUnit): Sql {
+    // `date_trunc` accepts the unit only as a string literal — bind it
+    // as a parameter so PostgreSQL handles the quoting.
+    return sql`date_trunc(${unit}, ${value})`;
   }
 
   dateComponent(value: Sql, component: DateComponent): Sql {
