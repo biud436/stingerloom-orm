@@ -69,6 +69,14 @@ export class IssueAuditSubscriber
 
     const actor = RequestContextStore.get();
 
+    // Pull out the status transition (if any) into typed columns. This is
+    // the same information the JSON `changes` payload carries, but
+    // analytics queries can read a portable string column with LAG/LEAD
+    // instead of vendor-specific JSON-path predicates.
+    const statusChange = changes.find((c) => c.column === "status");
+    const statusFrom = statusChange ? (statusChange.from as string | null) : null;
+    const statusTo = statusChange ? (statusChange.to as string | null) : null;
+
     await this.activity.log({
       issueId: before.id,
       workspaceId: actor?.workspaceId ?? null,
@@ -78,6 +86,8 @@ export class IssueAuditSubscriber
         changes,
         requestId: actor?.requestId ?? null,
       },
+      statusFrom,
+      statusTo,
     });
   }
 

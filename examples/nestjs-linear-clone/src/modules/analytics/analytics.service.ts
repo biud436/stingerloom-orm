@@ -7,7 +7,7 @@ import {
   sql,
   raw,
 } from "@stingerloom/orm";
-import { detectDialect, dsl } from "./sql-helpers";
+import { detectDialect } from "./sql-helpers";
 import { Issue } from "../issues/issue.entity";
 import { User } from "../users/user.entity";
 import { ActivityLog } from "../activity/activity-log.entity";
@@ -76,25 +76,22 @@ export class AnalyticsService {
    * UNION-ALL body.
    */
   async issueTree(rootIssueId: number, maxDepth = 10): Promise<IssueTreeRow[]> {
-    const D = dsl(detectDialect(this.em));
-    const { Q, q } = D;
+    const isMySql = this.em.getDriver()!.isMySqlFamily();
+    // Only point in this method that genuinely depends on dialect: PG's
+    // recursive-CTE column-type inference picks `TEXT` from the anchor,
+    // MySQL picks the anchor's exact `CHAR(N)`. `CONCAT(...)` is portable
+    // (PG ≥ 9.1 and MySQL both expose it with identical semantics), so
+    // the recursive step doesn't need a branch.
+    const castText = isMySql ? "CHAR(255)" : "TEXT";
+
     const r = this.em.ref(Issue, "r");
     const c = this.em.ref(Issue, "c");
     // `t` is the recursive CTE alias; depth/path are CTE-only columns.
     const t = this.em.aliasRef("t");
-    const castText = D.dialect === "postgres" ? "TEXT" : "CHAR(255)";
-    const childPath =
-      D.dialect === "postgres"
-        ? sql`${t.path} || '/' || CAST(${c.id} AS TEXT)`
-        : sql`CONCAT(${t.path}, '/', CAST(${c.id} AS CHAR(255)))`;
+    const Q = (name: string) => raw(this.em.wrap(name));
 
-    // Recursive-CTE body composed via RawQueryBuilder rather than a
-    // hand-rolled `sql\`SELECT … UNION ALL SELECT …\`` literal. This
-    // exercises the builder's withRecursive(callback) + selectFragments
-    // + unionAll path end-to-end and demonstrates that the gap between
-    // raw and the builder for this shape was ergonomic, not structural.
     const built = RawQueryBuilder.create()
-      .setDatabaseType(D.dialect === "postgres" ? "postgresql" : "mysql")
+      .setDatabaseType(isMySql ? "mysql" : "postgresql")
       .withRecursive("issue_tree", (qb) =>
         qb
           .selectFragments([
@@ -116,7 +113,7 @@ export class AnalyticsService {
             c.title,
             c.status,
             sql`${t.depth} + 1`,
-            childPath,
+            sql`CONCAT(${t.path}, '/', CAST(${c.id} AS ${raw(castText)}))`,
           ])
           .from(c)
           .innerJoin("issue_tree", "t", sql`${c.parentId} = ${t.id}`)
@@ -124,7 +121,7 @@ export class AnalyticsService {
       )
       .select("*")
       .from("issue_tree")
-      .orderBy([{ column: q("path"), direction: "ASC" }])
+      .orderBy([{ column: this.em.wrap("path"), direction: "ASC" }])
       .build();
 
     const rows = await this.em.query<Record<string, unknown>>(built);
@@ -288,35 +285,20 @@ export class AnalyticsService {
    * payload doesn't contain a status change are filtered out by the WHERE
    * clause's NOT NULL test.
    */
+  /**
+   * Status timeline for an issue: one row per status transition, with the
+   * hours the issue spent in each status before the next change.
+   *
+   * Pure DSL — no JSON path, no dialect branching, no raw SQL. Works the
+   * same on PostgreSQL, MySQL, and SQLite because the source data is the
+   * typed `statusTo` / `statusFrom` columns on `activity_log` (populated
+   * by `IssueAuditSubscriber` when a status change is diffed). The
+   * underlying JSON `payload` still records the full change set for the
+   * human-readable feed; this query just reads the denormalized columns.
+   */
   async timeInStatus(issueId: number): Promise<TimeInStatusRow[]> {
-    const dialectName = detectDialect(this.em);
     const a = qAlias(ActivityLog, "a");
-    const A = this.em.ref(ActivityLog, "a");
 
-    // Dialect-specific JSON-path filter: "find the changes[] entry where
-    // column='status' and return its `to` value". The ORM's portable JSON
-    // accessor (`a.payload.changes[].to`) cannot express a *predicate*
-    // over array elements yet, so this remains an `Expressions.raw`
-    // escape. The bound payload column refs flow through normally.
-    const enteredStatus = Expressions.raw<string>(
-      dialectName === "postgres"
-        ? sql`(jsonb_path_query_first(${A.payload}::jsonb, '$.changes[*] ? (@.column == "status").to'))::text`
-        : sql`JSON_UNQUOTE(
-            JSON_EXTRACT(
-              ${A.payload},
-              REPLACE(
-                JSON_UNQUOTE(JSON_SEARCH(${A.payload}, 'one', 'status', NULL, '$.changes[*].column')),
-                '.column',
-                '.to'
-              )
-            )
-          )`,
-    );
-
-    // LEAD(createdAt) OVER (PARTITION BY issueId ORDER BY createdAt) —
-    // entirely DSL-driven via `Expressions.lead(...).partitionBy(...).orderBy(...)`.
-    // The window head + frame compose into the SELECT alongside the
-    // entered-status JSON extract and the cycle-time `dateDiff` scalar.
     const leftAt = Expressions.lead(a.createdAt)
       .partitionBy(a.issueId)
       .orderBy(a.createdAt.asc())
@@ -326,43 +308,23 @@ export class AnalyticsService {
       .floatValue()
       .div(3600);
 
-    // We need the LEAD-derived `leftAt` to span every ISSUE_UPDATED row
-    // (so non-status-change rows still close out the prior status'
-    // duration). Filtering on `status IS NOT NULL` must therefore happen
-    // *after* the window evaluates, so we build the windowed SELECT with
-    // SQB and wrap it in a small outer `SELECT * FROM (…) WHERE … ORDER BY …`.
-    // No SQL identifiers leak in — only previously-resolved fragments.
-    const inner = this.em
+    const rows = await this.em
       .createQueryBuilder(ActivityLog, "a")
       .select([
         a.issueId.as("issueId"),
-        enteredStatus.as("status"),
+        a.statusTo.as("status"),
         a.createdAt.as("enteredAt"),
         leftAt.as("leftAt"),
         hoursInStatus.as("hoursInStatus"),
       ])
       .where(a.issueId.eq(issueId))
-      .andWhere(a.action.eq("ISSUE_UPDATED"))
-      .toSql();
+      .andWhere(a.statusTo.isNotNull())
+      .addOrderBy(a.createdAt, "ASC")
+      .getRawMany();
 
-    const statusIdent = this.em.getDriver()!.isMySqlFamily()
-      ? raw("`status`")
-      : raw(`"status"`);
-    const enteredAtIdent = this.em.getDriver()!.isMySqlFamily()
-      ? raw("`enteredAt`")
-      : raw(`"enteredAt"`);
-    const final = sql`
-      SELECT * FROM (${inner}) t
-      WHERE ${statusIdent} IS NOT NULL
-      ORDER BY ${enteredAtIdent}
-    `;
-
-    const rows = await this.em.query<Record<string, unknown>>(final);
     return rows.map((row) => ({
       issueId: Number(row.issueId),
-      // Postgres `jsonb_path_query_first` returns the JSON-quoted form
-      // ("DONE"); strip the surrounding quotes if present.
-      status: this.unquoteStatus(row.status),
+      status: row.status === null || row.status === undefined ? "" : String(row.status),
       enteredAt:
         row.enteredAt instanceof Date
           ? row.enteredAt.toISOString()
@@ -378,15 +340,6 @@ export class AnalyticsService {
           ? null
           : Number(Number(row.hoursInStatus).toFixed(2)),
     }));
-  }
-
-  private unquoteStatus(raw: unknown): string {
-    if (raw === null || raw === undefined) return "";
-    const s = String(raw);
-    if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
-      return s.slice(1, -1);
-    }
-    return s;
   }
 
   // ── Group-by + window: weekly lead time ─────────────────
@@ -521,11 +474,14 @@ export class AnalyticsService {
     projectId: number,
     windowDays: number,
   ): Promise<CycleTimePercentilesRow> {
-    const D = dsl(detectDialect(this.em));
-    const { Q, hoursBetween, nowMinusDays } = D;
+    // This path is MySQL-only by construction (PG branches earlier into
+    // the ORM-native `Expressions.percentileCont` query), so the SQL
+    // fragments are intentionally MySQL-flavoured. No `dsl()` indirection
+    // is needed — keep the dialect-specific shape next to its sole caller.
+    const Q = (name: string) => raw(this.em.wrap(name));
     const I = this.em.ref(Issue);
-    const cycle = hoursBetween(I.createdAt, I.completedAt);
-    const cutoff = nowMinusDays(windowDays);
+    const cycle = sql`TIMESTAMPDIFF(SECOND, ${I.createdAt}, ${I.completedAt}) / 3600.0`;
+    const cutoff = sql`DATE_SUB(NOW(), INTERVAL ${windowDays} DAY)`;
 
     const cyclesCte = sql`
       SELECT

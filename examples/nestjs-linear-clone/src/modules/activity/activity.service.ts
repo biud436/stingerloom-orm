@@ -22,6 +22,8 @@ export class ActivityService {
     actorUserId?: number | null;
     action: ActivityAction;
     payload?: Record<string, unknown> | null;
+    statusFrom?: string | null;
+    statusTo?: string | null;
   }): Promise<ActivityLog> {
     const row = new ActivityLog();
     row.issueId = input.issueId;
@@ -29,6 +31,8 @@ export class ActivityService {
     row.actorUserId = input.actorUserId ?? null;
     row.action = input.action;
     row.payload = input.payload ?? null;
+    row.statusFrom = input.statusFrom ?? null;
+    row.statusTo = input.statusTo ?? null;
     return this.repo.save(row);
   }
 

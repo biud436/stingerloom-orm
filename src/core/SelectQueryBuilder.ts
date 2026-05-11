@@ -2747,10 +2747,11 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   addOrderBy(expr: OrderExpression): this;
   addOrderBy(expr: ScalarExpression, direction: "ASC" | "DESC"): this;
+  addOrderBy(column: ColumnExpression, direction: "ASC" | "DESC"): this;
   addOrderBy(column: ColumnOf<T>, direction: "ASC" | "DESC"): this;
   addOrderBy(column: string, direction: "ASC" | "DESC"): this;
   addOrderBy(
-    columnOrExpr: string | OrderExpression | ScalarExpression,
+    columnOrExpr: string | OrderExpression | ScalarExpression | ColumnExpression,
     direction?: "ASC" | "DESC",
   ): this {
     if (isOrderExpression(columnOrExpr)) {
@@ -2767,6 +2768,19 @@ export class SelectQueryBuilder<T, TResult = T> {
       );
       this.orderByClauses.push({
         column: rendered,
+        direction: direction!,
+      });
+      return this;
+    }
+    if (
+      columnOrExpr !== null &&
+      typeof columnOrExpr === "object" &&
+      (columnOrExpr as { __isColumnExpression?: unknown }).__isColumnExpression === true
+    ) {
+      this.orderByClauses.push({
+        column: this.resolveColumn(
+          (columnOrExpr as { toString(): string }).toString(),
+        ),
         direction: direction!,
       });
       return this;
