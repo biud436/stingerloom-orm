@@ -324,7 +324,10 @@ export class AnalyticsService {
 
     return rows.map((row) => ({
       issueId: Number(row.issueId),
-      status: row.status === null || row.status === undefined ? "" : String(row.status),
+      status:
+        row.status === null || row.status === undefined
+          ? ""
+          : String(row.status),
       enteredAt:
         row.enteredAt instanceof Date
           ? row.enteredAt.toISOString()
@@ -464,53 +467,70 @@ export class AnalyticsService {
   }
 
   /**
-   * MySQL emulation. Kept as raw-CTE SQL because `percentile_cont` requires
-   * whole-query rewriting on engines without the ordered-set aggregate, and
-   * a single expression-level helper cannot express that shape. Identifiers
-   * and the percentile fractions are still parameter-bound through
-   * `sql-template-tag`.
+   * MySQL emulation. The CTE body — issue-row filter, cycle-hour
+   * derivation, and `ROW_NUMBER() OVER (ORDER BY cycle)` — is fully
+   * expressed through the typed DSL: `cycleHours` flows once and is
+   * reused both as the projected `hours` and as the window's ORDER BY
+   * key. Only the outer scaffolding (WITH, the FROM-subquery that adds
+   * `COUNT(*) OVER ()`, and the `MAX(CASE WHEN rn = GREATEST(1,
+   * CEIL(total * p)))` percentile-row picker) is raw, because those
+   * three pieces have no entity behind them: `cycles` is a CTE alias,
+   * `SelectQueryBuilder` cannot drive a FROM-subquery, and there is no
+   * helper for the GREATEST/CEIL percentile-pick on a derived alias.
    */
   private async cycleTimePercentilesMySqlEmulation(
     projectId: number,
     windowDays: number,
   ): Promise<CycleTimePercentilesRow> {
-    // This path is MySQL-only by construction (PG branches earlier into
-    // the ORM-native `Expressions.percentileCont` query), so the SQL
-    // fragments are intentionally MySQL-flavoured. No `dsl()` indirection
-    // is needed — keep the dialect-specific shape next to its sole caller.
-    const Q = (name: string) => raw(this.em.wrap(name));
-    const I = this.em.ref(Issue);
-    const cycle = sql`TIMESTAMPDIFF(SECOND, ${I.createdAt}, ${I.completedAt}) / 3600.0`;
-    const cutoff = sql`DATE_SUB(NOW(), INTERVAL ${windowDays} DAY)`;
+    const i = qAlias(Issue, "i");
+    const cycleHours = Expressions.dateDiff(
+      i.completedAt,
+      i.createdAt,
+      "second",
+    )
+      .floatValue()
+      .div(3600);
+    const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
 
-    const cyclesCte = sql`
-      SELECT
-        ${cycle} AS hours,
-        ROW_NUMBER() OVER (ORDER BY ${cycle}) AS rn
-      FROM ${I}
-      WHERE ${I.projectId} = ${projectId}
-        AND ${I.status} = ${ISSUE_STATUS.DONE}
-        AND ${I.completedAt} IS NOT NULL
-        AND ${I.completedAt} >= ${cutoff}
-        AND ${I.deletedAt} IS NULL
-    `;
-    const ctes = RawQueryBuilder.create()
+    // CTE body — typed query builder owns the entire shape: projection,
+    // ROW_NUMBER ordering by a derived scalar, and parameter-bound
+    // filters. The same `cycleHours` expression is referenced twice and
+    // the dialect rendering for `dateDiff` is honored in both spots.
+    const cyclesCte = this.em
+      .createQueryBuilder(Issue, "i")
+      .select([
+        cycleHours.as("hours"),
+        Expressions.rowNumber().orderBy(cycleHours.asc()).as("rn"),
+      ])
+      .where(i.projectId.eq(projectId))
+      .andWhere(i.status.eq(ISSUE_STATUS.DONE))
+      .andWhere(i.completedAt.isNotNull())
+      .andWhere(i.completedAt.gte(cutoff))
+      .andWhere(i.deletedAt.isNull())
+      .toSql();
+
+    const c = this.em.aliasRef("c");
+    const Q = (name: string) => raw(this.em.wrap(name));
+    const pick = (p: number) =>
+      sql`MAX(CASE WHEN ${c.rn} = GREATEST(1, CEIL(${c.total} * ${p})) THEN ${c.hours} END)`;
+
+    const built = RawQueryBuilder.create()
       .setDatabaseType("mysql")
       .with("cycles", cyclesCte)
+      .selectFragments([
+        sql`${pick(0.5)} AS ${Q("p50")}`,
+        sql`${pick(0.75)} AS ${Q("p75")}`,
+        sql`${pick(0.95)} AS ${Q("p95")}`,
+        sql`${c.total} AS ${Q("sampleSize")}`,
+      ])
+      .from(
+        sql`(SELECT hours, rn, COUNT(*) OVER () AS total FROM cycles)`,
+        "c",
+      )
+      .groupBy([c.total])
       .build();
-    const final = sql`
-      ${ctes}
-      SELECT
-        MAX(CASE WHEN rn = GREATEST(1, CEIL(total * 0.50)) THEN hours END) AS ${Q("p50")},
-        MAX(CASE WHEN rn = GREATEST(1, CEIL(total * 0.75)) THEN hours END) AS ${Q("p75")},
-        MAX(CASE WHEN rn = GREATEST(1, CEIL(total * 0.95)) THEN hours END) AS ${Q("p95")},
-        total                                                              AS ${Q("sampleSize")}
-      FROM (
-        SELECT hours, rn, COUNT(*) OVER () AS total FROM cycles
-      ) c
-      GROUP BY total
-    `;
-    const rows = await this.em.query<Record<string, unknown>>(final);
+
+    const rows = await this.em.query<Record<string, unknown>>(built);
     return this.toPercentileRow(rows[0]);
   }
 
