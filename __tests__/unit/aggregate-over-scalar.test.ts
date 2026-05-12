@@ -41,6 +41,17 @@ describe("aggregateOver / Expressions.{avg,sum,min,max,count}", () => {
     expect(rendered.sql).toBe("COUNT(*)");
   });
 
+  // Regression: SelectQueryBuilder's resolveColumn qualifies bare names
+  // with the entity alias (`*` → `i."*"`), which MySQL rejected with
+  // "Unknown column 'i.*' in 'SELECT'". The wildcard must short-circuit
+  // the resolver and emit verbatim regardless of dialect.
+  it("count('*') ignores an aliasing resolver", () => {
+    const aliasing = (ref: string): string =>
+      ref === "*" ? `"i"."*"` : `"i"."${ref}"`;
+    const rendered = Expressions.count("*").renderFunction(aliasing, pg);
+    expect(rendered.sql).toBe("COUNT(*)");
+  });
+
   it("max takes any expression", () => {
     const cycle = Expressions.dateDiff(
       new ColumnExpression("i.completedAt"),

@@ -244,6 +244,13 @@ function renderAggregateArg(
     return sql`${raw(resolveColumn((arg as { toString(): string }).toString()))}`;
   }
   if (typeof arg === "string") {
+    // `"*"` is a wildcard, not a column reference — emit it verbatim so
+    // `Expressions.count("*")` renders `COUNT(*)` instead of being routed
+    // through the alias-aware resolver (which would qualify it as
+    // `alias."*"` and produce an "unknown column" error).
+    if (arg === "*") {
+      return sql`*`;
+    }
     return sql`${raw(resolveColumn(arg))}`;
   }
   return sql`${arg as any}`;
