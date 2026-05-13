@@ -1,11 +1,17 @@
-import { Injectable, Inject } from "@nestjs/common";
+import {
+  Injectable,
+  Inject,
+  NotImplementedException,
+} from "@nestjs/common";
 import {
   EntityManager,
   Expressions,
   RawQueryBuilder,
+  Sql,
+  SqliteDriver,
   qAlias,
-  sql,
   raw,
+  sql,
 } from "@stingerloom/orm";
 import { detectDialect } from "./sql-helpers";
 import { Issue } from "../issues/issue.entity";
@@ -76,19 +82,26 @@ export class AnalyticsService {
    * UNION-ALL body.
    */
   async issueTree(rootIssueId: number, maxDepth = 10): Promise<IssueTreeRow[]> {
-    const isMySql = this.em.getDriver()!.isMySqlFamily();
-    // Only point in this method that genuinely depends on dialect: PG's
-    // recursive-CTE column-type inference picks `TEXT` from the anchor,
-    // MySQL picks the anchor's exact `CHAR(N)`. `CONCAT(...)` is portable
-    // (PG ≥ 9.1 and MySQL both expose it with identical semantics), so
-    // the recursive step doesn't need a branch.
-    const castText = isMySql ? "CHAR(255)" : "TEXT";
+    const dialect = detectDialect(this.em);
+    const isMySql = dialect === "mysql";
+    // Recursive-CTE column type for the synthesized `path`: MySQL fixes the
+    // recursive column type from the anchor, so we need an explicit width
+    // big enough for `maxDepth` zero-padded segments (10 chars + '/'). PG
+    // picks TEXT from the anchor and grows freely. `CONCAT` is portable
+    // between PG (≥9.1) and MySQL with identical semantics.
+    //
+    // `path` segments are zero-padded with LPAD so ORDER BY path produces a
+    // depth-first preorder by id rather than the lexicographic order that
+    // would put id=10 ahead of id=2.
+    const castText = isMySql ? "VARCHAR(4000)" : "TEXT";
 
     const r = this.em.ref(Issue, "r");
     const c = this.em.ref(Issue, "c");
     // `t` is the recursive CTE alias; depth/path are CTE-only columns.
     const t = this.em.aliasRef("t");
     const Q = (name: string) => raw(this.em.wrap(name));
+    const padded = (idSql: Sql) =>
+      sql`LPAD(CAST(${idSql} AS ${raw(castText)}), 10, '0')`;
 
     const built = RawQueryBuilder.create()
       .setDatabaseType(isMySql ? "mysql" : "postgresql")
@@ -101,7 +114,7 @@ export class AnalyticsService {
             r.as("title"),
             r.as("status"),
             sql`0 AS ${Q("depth")}`,
-            sql`CAST(${r.id} AS ${raw(castText)}) AS ${Q("path")}`,
+            sql`CAST(${padded(r.id)} AS ${raw(castText)}) AS ${Q("path")}`,
           ])
           .from(r)
           .where([sql`${r.id} = ${rootIssueId}`, sql`${r.deletedAt} IS NULL`])
@@ -113,7 +126,7 @@ export class AnalyticsService {
             c.title,
             c.status,
             sql`${t.depth} + 1`,
-            sql`CONCAT(${t.path}, '/', CAST(${c.id} AS ${raw(castText)}))`,
+            sql`CONCAT(${t.path}, '/', ${padded(c.id)})`,
           ])
           .from(c)
           .innerJoin("issue_tree", "t", sql`${c.parentId} = ${t.id}`)
@@ -125,6 +138,13 @@ export class AnalyticsService {
       .build();
 
     const rows = await this.em.query<Record<string, unknown>>(built);
+    // Strip LPAD zeros so consumers see a human-readable `1/2/3` path.
+    // Sort ordering was already locked in by the DB on the padded form.
+    const unpadPath = (raw: string) =>
+      raw
+        .split("/")
+        .map((segment) => String(Number(segment)))
+        .join("/");
     return rows.map((row) => ({
       id: Number(row.id),
       parentId: row.parentId === null ? null : Number(row.parentId),
@@ -132,7 +152,7 @@ export class AnalyticsService {
       title: String(row.title),
       status: String(row.status),
       depth: Number(row.depth),
-      path: String(row.path),
+      path: unpadPath(String(row.path)),
     }));
   }
 
@@ -256,7 +276,10 @@ export class AnalyticsService {
       .andWhere(i.status.eq(ISSUE_STATUS.DONE))
       .andWhere(i.completedAt.isNotNull())
       .andWhere(i.completedAt.gte(cutoff))
-      .groupBy([i.assigneeId, u.name])
+      // Group by `u.id` (PK) so two users with the same `name` stay
+      // separate groups; including `u.name` in the key keeps PG's
+      // strict GROUP BY happy when the column is projected.
+      .groupBy([i.assigneeId, u.id, u.name])
       .addOrderBy(rankInProject.toScalar(), "ASC")
       .getRawMany();
 
@@ -274,17 +297,6 @@ export class AnalyticsService {
 
   // ── LAG/LEAD over activity_log: time-in-status ──────────
 
-  /**
-   * Reconstruct one row per status transition for an issue, with the
-   * duration the issue spent in each status before the next transition.
-   *
-   * Reads the diff-shaped audit rows produced by `IssueAuditSubscriber`:
-   * `payload = { changes: [{ column, from, to }, …] }`. Postgres uses the
-   * `jsonb_path_query_first` operator over the changes array; MySQL uses
-   * `JSON_UNQUOTE(JSON_SEARCH(...))` against the column entries. Rows whose
-   * payload doesn't contain a status change are filtered out by the WHERE
-   * clause's NOT NULL test.
-   */
   /**
    * Status timeline for an issue: one row per status transition, with the
    * hours the issue spent in each status before the next change.
@@ -421,6 +433,14 @@ export class AnalyticsService {
     projectId: number,
     windowDays = 60,
   ): Promise<CycleTimePercentilesRow> {
+    // `detectDialect` is a 2-way mysql/postgres switch — SQLite would
+    // silently fall into the PG branch and then explode at runtime on
+    // `percentile_cont`. Fail loudly with a 501 instead.
+    if (this.em.getDriver() instanceof SqliteDriver) {
+      throw new NotImplementedException(
+        "cycleTimePercentiles is only available on PostgreSQL and MySQL.",
+      );
+    }
     if (detectDialect(this.em) === "postgres") {
       return this.cycleTimePercentilesPg(projectId, windowDays);
     }
