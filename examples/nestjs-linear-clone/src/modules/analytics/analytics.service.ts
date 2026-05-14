@@ -487,16 +487,18 @@ export class AnalyticsService {
   }
 
   /**
-   * MySQL emulation. The CTE body — issue-row filter, cycle-hour
-   * derivation, and `ROW_NUMBER() OVER (ORDER BY cycle)` — is fully
-   * expressed through the typed DSL: `cycleHours` flows once and is
-   * reused both as the projected `hours` and as the window's ORDER BY
-   * key. Only the outer scaffolding (WITH, the FROM-subquery that adds
-   * `COUNT(*) OVER ()`, and the `MAX(CASE WHEN rn = GREATEST(1,
-   * CEIL(total * p)))` percentile-row picker) is raw, because those
-   * three pieces have no entity behind them: `cycles` is a CTE alias,
-   * `SelectQueryBuilder` cannot drive a FROM-subquery, and there is no
-   * helper for the GREATEST/CEIL percentile-pick on a derived alias.
+   * MySQL emulation of `percentile_cont`. MySQL has no ordered-set
+   * aggregate, so the standard stand-in is: rank every cycle-time with
+   * `ROW_NUMBER() OVER (ORDER BY cycle)`, then pick the row at
+   * `rn = CEIL(total * p)` for each percentile `p`.
+   *
+   * The CTE is fully typed — the projection, the `ROW_NUMBER` ordering,
+   * and `COUNT(*) OVER ()` for the sample size all come from the query
+   * builder. Carrying `total` inside the CTE lets the outer query read
+   * `cycles` directly, with no interposed FROM-subquery. Only the
+   * percentile-row picker stays raw: `cycles` is a CTE alias with no
+   * entity behind it, and there is no DSL helper for the
+   * `MAX(CASE WHEN rn = CEIL(total * p) …)` shape.
    */
   private async cycleTimePercentilesMySqlEmulation(
     projectId: number,
@@ -512,15 +514,17 @@ export class AnalyticsService {
       .div(3600);
     const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
 
-    // CTE body — typed query builder owns the entire shape: projection,
-    // ROW_NUMBER ordering by a derived scalar, and parameter-bound
-    // filters. The same `cycleHours` expression is referenced twice and
-    // the dialect rendering for `dateDiff` is honored in both spots.
+    // CTE — one row per completed issue: its cycle time, its 1-based
+    // rank by ascending cycle time, and the total sample size. All three
+    // columns come from the typed builder; `COUNT(*) OVER ()` copies the
+    // sample size onto every row so the outer query never needs a
+    // derived table to recompute it.
     const cyclesCte = this.em
       .createQueryBuilder(Issue, "i")
       .select([
         cycleHours.as("hours"),
         Expressions.rowNumber().orderBy(cycleHours.asc()).as("rn"),
+        Expressions.count("*").over().as("total"),
       ])
       .where(i.projectId.eq(projectId))
       .andWhere(i.status.eq(ISSUE_STATUS.DONE))
@@ -529,10 +533,14 @@ export class AnalyticsService {
       .andWhere(i.deletedAt.isNull())
       .toSql();
 
-    const c = this.em.aliasRef("c");
+    // Outer query — for each percentile `p`, pick the cycle-time of the
+    // row at `rn = CEIL(total * p)`. `cycles` is grouped by `total` only
+    // returns rows when the CTE is non-empty, so `total >= 1` and
+    // `CEIL(total * p) >= 1` for every `p` here — no floor needed.
+    const c = this.em.aliasRef("cycles");
     const Q = (name: string) => raw(this.em.wrap(name));
     const pick = (p: number) =>
-      sql`MAX(CASE WHEN ${c.rn} = GREATEST(1, CEIL(${c.total} * ${p})) THEN ${c.hours} END)`;
+      sql`MAX(CASE WHEN ${c.rn} = CEIL(${c.total} * ${p}) THEN ${c.hours} END)`;
 
     const built = RawQueryBuilder.create()
       .setDatabaseType("mysql")
@@ -543,10 +551,7 @@ export class AnalyticsService {
         sql`${pick(0.95)} AS ${Q("p95")}`,
         sql`${c.total} AS ${Q("sampleSize")}`,
       ])
-      .from(
-        sql`(SELECT hours, rn, COUNT(*) OVER () AS total FROM cycles)`,
-        "c",
-      )
+      .from("cycles")
       .groupBy([c.total])
       .build();
 
