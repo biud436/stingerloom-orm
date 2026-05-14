@@ -6,6 +6,61 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.22.0] — 2026-05-14
+
+Raw-SQL ergonomics overhaul plus a large analytical-expression expansion. Both batches were shaken out while building the `nestjs-linear-clone` reference example — every addition removes a place where the example previously had to hand-roll `wrap()` + `raw()`, drop to `em.query(...)`, or `as any` past a type gap. No breaking changes.
+
+### Highlights
+
+- **`em.ref()` / `em.aliasRef()` — typed entity proxies for `sql`` templates** — `em.ref(Issue)` interpolates as the tenant-aware wrapped table name and resolves property access to the bare wrapped column; `em.ref(Issue, "i")` adds alias-qualified columns for FROM / JOIN and self-joins; `em.aliasRef("cte")` covers CTE / derived-table columns that have no entity behind them. Replaces the hand-rolled `wrap()` + `raw()` boilerplate that every raw-SQL call site used to repeat (#326).
+- **Window functions** — pure window-function factories `Expressions.rowNumber / rank / denseRank / ntile / percentRank / cumeDist` and positional `lag / lead / firstValue / lastValue / nthValue`, all composing `.partitionBy(...)` / `.orderBy(...)` / `.rowsBetween(...)` before `.as(alias)`.
+- **Ordered-set aggregates** — `Expressions.percentileCont / percentileDisc / mode` render the SQL-standard `… WITHIN GROUP (ORDER BY …)` form. PostgreSQL-native; MySQL / SQLite throw `OrmError(UNSUPPORTED_OPERATION)` with emulation guidance.
+- **`Expressions.dateTrunc(value, unit)`** — dialect-portable date truncation with ISO-Monday week parity across PostgreSQL `date_trunc`, MySQL per-unit forms, and SQLite `date()` / `strftime`.
+- **Aggregates over arbitrary expressions** — `Expressions.avg / sum / min / max / count / aggregate(scalarExpr)` so an aggregate can wrap a derived scalar (e.g. `AVG(EXTRACT(epoch FROM (a - b)) / 3600)`) with bindings preserved.
+- **Schema-sync resilience** — a single failing `ALTER` or index DDL during `synchronize()` no longer aborts app boot; it logs a warning and continues, matching the pattern `registerFullTextIndexes` already used.
+
+### Added
+
+#### Raw-SQL entity references (#326)
+
+- **`EntityManager.ref(Entity)`** — `SqlRef<T>` Proxy for use inside `sql`` templates. `${ref}` → wrapped tenant-aware table name; `${ref.id}` → bare wrapped column; `${ref.as(prop, asName?)}` → `"col" AS "alias"`. Property lookup honors `@Column` metadata and FK backing properties from relations, falling back to `camelToSnakeCase` for unknowns. The Proxy targets a real `Sql` instance so `instanceof Sql` and `sql-template-tag` internals pass through.
+- **`EntityManager.ref(Entity, alias)`** — optional second arg names the table alias: `${ref}` → `"table" AS alias` (FROM / JOIN-ready), `${ref.col}` → `alias."col"`, `${ref.as(p, n?)}` → `alias."col" AS "n"`. Multiple refs with different aliases compose for self-joins. No-alias behavior unchanged.
+- **`EntityManager.aliasRef(name)`** — sibling helper for CTE / derived-table column refs with no entity behind them. `${ref}` → bare unquoted alias; `${ref.minDepth}` → `t."min_depth"`. For recursive-CTE-only columns, derived-table aliases, and generic `INNER JOIN cte_name w ON …` patterns.
+
+#### Analytical expressions
+
+- **Window functions** — `Expressions.rowNumber / rank / denseRank / ntile(n) / percentRank / cumeDist` and `lag / lead(expr, offset?, default?) / firstValue / lastValue / nthValue(expr, n)`, returning a `WindowBuilder` for `.partitionBy()` / `.orderBy()` / `.rowsBetween()` / `.rangeBetween()`.
+- **Ordered-set aggregates** — `Expressions.percentileCont(p, orderBy)` / `percentileDisc(p, orderBy)` / `mode(orderBy)` via the new `OrderedSetAggregateExpression`.
+- **`Expressions.dateTrunc(value, unit)`** — truncate a date / timestamp to the start of a calendar unit, dialect-portable.
+- **Aggregate-over-expression** — `AggregateExpression` carries an optional `argRenderer`, so `Expressions.{avg,sum,min,max,count,aggregate}(scalarExpr)` route a derived argument through the parameterized SELECT path with bindings intact.
+- **`ScalarExpression` / `AggregateExpression` `.asc()` / `.desc()`** now carry a dialect-aware renderer, so they emit the full function call inside both window `OVER (ORDER BY …)` and top-level `ORDER BY`.
+- **`SelectQueryBuilder.groupBy([...])`** accepts `Sql` / `ScalarExpression` / `ColumnExpression` with bindings preserved; **`addOrderBy`** gains a `ScalarExpression` overload.
+
+### Fixed
+
+- **`Expressions.count("*")` rendered `COUNT(`i`.`*`)`** (#f39dc08) — the wildcard was routed through the `SelectQueryBuilder` column resolver, which qualified it with the entity alias and produced SQL MySQL rejects as `Unknown column 'i.*'`. `"*"` is now short-circuited in `renderAggregateArg` and emitted verbatim regardless of dialect or alias context.
+- **`@ManyToOne` / `@OneToOne` `fkProperty` ignored on INSERT / UPDATE** (#6ad3b5a) — entities naming their FK shadow accessor non-conventionally (e.g. `sourceIssueId` for `source: Issue`) silently left the FK column `NULL` even after explicit assignment. Both write paths now honor `fkProperty` as a fallback, and `ResultTransformer`'s FK column → property remap consults it too so reads surface the FK on the right key. Also adds a built-in `boolean` column transformer so MySQL / SQLite `TINYINT` 0/1 normalizes to a real JS boolean.
+- **`@RelationColumn` FK columns not hydrated on `findOne` / `findWithCursor`** (#e265fb1) — the SELECT projection listed only `@Column`-decorated columns, so a `@RelationColumn`-derived FK was never returned and the shadow accessor stayed `undefined` after read. Relation FK columns (ManyToOne + OneToOne owning side) are now appended to the projection. `ResultTransformer.extractBaseEntity` complemented the bug by skipping every underscored key as a join alias — under `SnakeNamingStrategy` that also dropped base columns like `created_at`; underscored keys with a known remap entry are now treated as base columns.
+- **`SelectQueryBuilder.getMany()` bypassed `ResultTransformer`** (#fb8c6e2) — `qAlias`-driven queries returned entities with raw DB column names under `SnakeNamingStrategy` (`issue_counter` instead of `issueCounter`). `getMany()` now routes through `ResultTransformer.toEntities` like `EntityManager.find` does; the snake→camel remap also extends to `@RelationColumn`-managed FKs.
+- **`SchemaRegistrar.synchronize()` aborted app boot on a single failing DDL** (#fb8c6e2) — `applySchemaDiff` / `registerIndex` / `registerUniqueIndexes` now wrap each statement in try/catch + warn, so schema drift surfaces as a warning instead of killing startup.
+- **`WhereClause<T>` rejected bare-array IN-shorthand** (#1ab28d6) — the runtime already accepts `{ id: [1, 2, 3] }` as `WHERE id IN (1, 2, 3)` (used by `softDelete` / `restore`), but the type forced callers to cast `as any`. Pure type widening — no behavioral change.
+
+### Documentation
+
+- **`em.ref()` / `em.aliasRef()` raw-SQL guide** — documented in the raw-SQL docs (EN + KO).
+
+### Tests
+
+- **13 unit tests** for `em.ref()` alias mode and `em.aliasRef()` — alias rendering, alias-qualified columns, `.as()` projection, FK backing properties, self-join composition, MySQL backticks, recursive-CTE composition, `instanceof Sql`, and no-alias backward compatibility (#326).
+
+### Reference example
+
+- **`nestjs-linear-clone` phase-1 completion** — work logs, cycle-time percentiles, attachments, import / export. The analytics service was rewritten end-to-end on the ORM DSL (recursive-CTE issue tree, sprint burndown, assignee throughput, time-in-status via LAG/LEAD, weekly lead time, cycle-time percentiles), and the e2e suites are green.
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.21.0...v0.22.0
+
+---
+
 ## [0.21.0] — 2026-05-06
 
 DX-focused minor release. Most of these landed while building the `nestjs-linear-clone` reference example; each one removes a place where users previously had to drop to `em.query(...)`, `as any` casts, or hand-rolled column transformers because the ORM had a gap. No breaking changes.
