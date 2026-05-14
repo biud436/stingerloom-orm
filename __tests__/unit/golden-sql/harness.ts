@@ -159,3 +159,54 @@ export function runGoldenMatrix(
     }
   });
 }
+
+/**
+ * One golden case for a query *builder* (`SelectQueryBuilder` /
+ * `RawQueryBuilder`). Unlike a {@link GoldenCase}, the builder bakes its
+ * dialect in at construction time, so `build` receives the target dialect
+ * and is expected to return the already-compiled `{ text, values }`.
+ */
+export interface BuilderGoldenCase {
+  name: string;
+  build: (dialect: DialectName) => { text: string; values: unknown[] };
+  postgres: Expectation;
+  mysql: Expectation;
+  sqlite: Expectation;
+}
+
+/**
+ * Matrix runner for query-builder golden cases. `build(dialect)` constructs
+ * a dialect-bound builder and returns its compiled SQL; a `{ throws }`
+ * expectation asserts the builder rejects the dialect with the given
+ * `OrmErrorCode`.
+ */
+export function runBuilderGoldenMatrix(
+  suite: string,
+  cases: readonly BuilderGoldenCase[],
+): void {
+  describe(suite, () => {
+    for (const testCase of cases) {
+      describe(testCase.name, () => {
+        for (const dialect of DIALECTS) {
+          const expectation = testCase[dialect];
+          it(`renders for ${dialect}`, () => {
+            if ("throws" in expectation) {
+              let caught: unknown;
+              try {
+                testCase.build(dialect);
+              } catch (error) {
+                caught = error;
+              }
+              expect(caught).toBeInstanceOf(OrmError);
+              expect((caught as OrmError).code).toBe(expectation.throws);
+              return;
+            }
+            const { text, values } = testCase.build(dialect);
+            expect(text).toBe(expectation.text);
+            expect(values).toEqual(expectation.values);
+          });
+        }
+      });
+    }
+  });
+}
