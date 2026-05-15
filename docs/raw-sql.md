@@ -33,9 +33,11 @@ The rule of thumb: **start at rung 1 and climb only when the rung above genuinel
 | `em.ref(Entity)` | Bare table reference (`"issue"`); columns as `${ref.id}` -> `"id"` | Yes -- dialect-quoted | N/A | Resolves `@Column` rename, FK backing properties, snake_case. Auto-applies tenant table wrapping. |
 | `em.ref(Entity, alias)` | FROM/JOIN-ready table+alias (`"issue" AS i`); columns as `${ref.id}` -> `i."id"` | Yes -- dialect-quoted | N/A | Composes for self-joins by passing the same `Entity` with different aliases. |
 | `em.aliasRef(name)` | Alias-only columns for CTE / derived tables (`${ref.depth}` -> `t."depth"`) | Yes -- dialect-quoted | N/A | Use when the column lives only in the CTE body (no entity to bind). |
+| `em.refs(...specs)` | Bulk variant returning a typed tuple of `ref()` / `aliasRef()` results -- one line for self-joins / multi-CTE blocks | Inherited from `ref` / `aliasRef` | N/A | Specs: `Entity`, `[Entity, alias] as const`, or `"alias"`. |
 | `sql\`…\`` (from `sql-template-tag`) | Compose SQL fragments with auto-parameterized values | -- | **Yes** -- every `${value}` becomes a placeholder | Re-exported from `@stingerloom/orm` for convenience. |
 | `raw(str)` (from `sql-template-tag`) | Splice a string literally into the SQL (no quoting, no binding) | **No** | **No** | **Never interpolate user input through `raw()`.** Reserve for known-safe identifier strings you already trust. |
-| `em.query(sqlOrText, params?)` | Execute the resulting query against the active connection | -- | Yes when passed an `Sql` object or `(text, params)` tuple | Returns the driver's raw rows; no NamingStrategy reverse-mapping or hydration. |
+| `em.query\`…\`` (tagged form) | Shorthand for short raw queries: `${Entity}` auto-resolves to `em.ref(Entity)`, other `${value}` interpolations are bound | Yes for `${Entity}` only -- column names inside the template are plain text | **Yes** -- every non-Entity `${value}` becomes a placeholder | Skips the explicit `ref()` boilerplate. Column-name typos are not caught at compile time -- drop down to `em.ref(Entity).column` when column safety matters. |
+| `em.query(sqlOrText, params?)` | Execute a pre-built `Sql` fragment, or a raw string with positional binds | -- | Yes when passed an `Sql` object or `(text, params)` tuple | Returns the driver's raw rows; no NamingStrategy reverse-mapping or hydration. |
 
 #### The safety contract
 
@@ -213,6 +215,54 @@ sql`SELECT ${t.minDepth} FROM cte ${t}`;
 - `${ref.col}` -> `alias."col"`, with `camelToSnakeCase` and dialect quoting
 
 Use `em.ref()` for entity tables; reach for `em.aliasRef()` when the column only exists inside the CTE body (`depth`, `path`, …) or you're joining to a CTE / derived table whose shape isn't backed by an entity.
+
+### `em.refs(...specs)` -- bulk variant
+
+When a single query needs three or four refs (typical for a recursive CTE that self-joins the entity to itself and references a CTE alias), declaring each one on its own line is repetitive. `em.refs(...)` accepts the same shapes as `ref()` / `aliasRef()` and returns a typed tuple:
+
+```typescript
+const [I, Ic, p] = em.refs(Issue, [Issue, "c"] as const, "p");
+
+// Equivalent to:
+//   const I  = em.ref(Issue);
+//   const Ic = em.ref(Issue, "c");
+//   const p  = em.aliasRef("p");
+```
+
+Spec shapes:
+
+- `Entity` -> `em.ref(Entity)` (`SqlRef<Entity>`)
+- `[Entity, "alias"] as const` -> `em.ref(Entity, "alias")` (`SqlRef<Entity>`)
+- `"alias"` -> `em.aliasRef("alias")` (`AliasRef`)
+
+The `as const` on the tuple form is required so TypeScript narrows the alias to a literal string and propagates the right element type into the destructuring.
+
+### `em.query\`…\`` -- tagged shorthand for short raw queries
+
+For one-off raw queries where building the explicit ref is more boilerplate than it's worth, `em.query` accepts a tagged template:
+
+```typescript
+const rows = await em.query<{ count: string }>`
+  SELECT COUNT(*) AS count FROM ${Issue} WHERE status = ${"open"}
+`;
+```
+
+Inside the template:
+
+- `${Entity}` (a class with `@Entity()`) is resolved to `em.ref(Entity)` -- table name is wrapped, snake-cased, and tenant-qualified for you.
+- `${ref}` / `${ref.col}` / nested `sql\`…\``  fragments pass through unchanged.
+- Every other `${value}` is bound as a prepared-statement parameter.
+
+**Trade-off.** Column names inside the template (e.g. `status` above) are **plain text**. A typo there surfaces at runtime as a SQL error, not at compile time. When that matters, drop down one rung to `em.ref(Entity).column`, where the property is checked against the entity's properties:
+
+```typescript
+const r = em.ref(Issue);
+const rows = await em.query<{ count: string }>`
+  SELECT COUNT(*) AS count FROM ${r} WHERE ${r.status} = ${"open"}
+`;
+```
+
+The tagged form is intentionally a shorthand for rung 4 -- it does not replace `RawQueryBuilder` at rung 3 when you need composable WHERE / JOIN / CTE assembly. NamingStrategy reverse-mapping and result hydration still do not apply (you receive raw driver rows).
 
 ## WHERE, JOIN, and Subqueries
 

@@ -352,9 +352,7 @@ export class IssuesService {
     //    the root only if it is itself soft-deleted; descendants are added
     //    only when their parent is also in the deleted set, matching the
     //    semantic "restore everything that was trashed together".
-    const I = this.em.ref(Issue);
-    const Ic = this.em.ref(Issue, "c");
-    const p = this.em.aliasRef("p");
+    const [I, Ic, p] = this.em.refs(Issue, [Issue, "c"] as const, "p");
     const dialect = this.em.getDriver().isMySqlFamily() ? "mysql" : "postgresql";
 
     const cteQuery = RawQueryBuilder.create()

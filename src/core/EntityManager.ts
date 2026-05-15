@@ -112,6 +112,33 @@ import type { EntityRef } from "./SelectQueryBuilder";
 import { UpdateQueryBuilder } from "./UpdateQueryBuilder";
 import { CompiledQuery, p as createPlaceholder, PlaceholderMarker } from "./CompiledQuery";
 
+// ── refs() helper types ───────────────────────────────────
+
+/**
+ * Argument shape accepted by `em.refs(...)`.
+ *
+ * - `Entity`            — resolves to `em.ref(Entity)`        (`SqlRef<Entity>`)
+ * - `[Entity, "alias"]` — resolves to `em.ref(Entity, alias)` (`SqlRef<Entity>`)
+ * - `"alias"`           — resolves to `em.aliasRef("alias")`  (`AliasRef`)
+ */
+export type RefSpec<T = unknown> =
+  | ClazzType<T>
+  | readonly [ClazzType<T>, string]
+  | string;
+
+type ResolveRef<S> = S extends string
+  ? AliasRef
+  : S extends readonly [ClazzType<infer U>, string]
+    ? SqlRef<U>
+    : S extends ClazzType<infer U>
+      ? SqlRef<U>
+      : never;
+
+/** Tuple-typed return for `em.refs(...)` — preserves per-position types. */
+export type RefTuple<T extends readonly RefSpec[]> = {
+  -readonly [K in keyof T]: ResolveRef<T[K]>;
+};
+
 // ── Public Metadata View Types (#233) ────────────────────
 
 export interface EntityMetadataView {
@@ -172,6 +199,17 @@ function isDeadlockError(e: unknown): boolean {
   // SQLite: SQLITE_BUSY
   if (err.code === "SQLITE_BUSY" || err.message?.includes("database is locked")) return true;
   return false;
+}
+
+/**
+ * Distinguishes a tagged-template invocation from a plain string / array
+ * argument. The runtime hands tag functions a frozen array with a `raw`
+ * sibling array — that's the contract we test for.
+ */
+function isTemplateStringsArray(v: unknown): v is TemplateStringsArray {
+  if (!Array.isArray(v)) return false;
+  const raw = (v as unknown as { raw?: unknown }).raw;
+  return Array.isArray(raw);
 }
 
 /**
@@ -4697,6 +4735,40 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * Bulk variant of `ref()` / `aliasRef()` that returns a typed tuple.
+   * Lets multi-ref CTE / self-join blocks declare every reference on one
+   * line instead of N separate statements.
+   *
+   * Each spec resolves as:
+   * - `Entity`              → `em.ref(Entity)`            → `SqlRef<Entity>`
+   * - `[Entity, "alias"]`   → `em.ref(Entity, "alias")`   → `SqlRef<Entity>`
+   * - `"alias"`             → `em.aliasRef("alias")`      → `AliasRef`
+   *
+   * @example
+   * ```ts
+   * const [I, Ic, p] = em.refs(Issue, [Issue, "c"], "p");
+   * // equivalent to:
+   * //   const I  = em.ref(Issue);
+   * //   const Ic = em.ref(Issue, "c");
+   * //   const p  = em.aliasRef("p");
+   * ```
+   */
+  refs<const T extends readonly RefSpec[]>(...specs: T): RefTuple<T> {
+    return specs.map((spec) => {
+      if (typeof spec === "string") {
+        return this.aliasRef(spec);
+      }
+      if (Array.isArray(spec)) {
+        return this.ref(
+          spec[0] as ClazzType<unknown>,
+          spec[1] as string,
+        );
+      }
+      return this.ref(spec as ClazzType<unknown>);
+    }) as RefTuple<T>;
+  }
+
+  /**
    * Wrap a table name with optional schema qualification for multi-tenant queries.
    * Uses the configured TenantQueryStrategy to determine whether to prefix with tenant schema.
    */
@@ -5075,29 +5147,63 @@ export class EntityManager implements BaseEntityManager {
 
   // ── Miscellaneous ──────────────────────────────────────────────
 
+  /**
+   * Tagged-template form. `${...}` interpolations resolve as:
+   * - Entity class (`Issue`)        → `em.ref(Issue)` — table identifier
+   *   with the active tenant schema qualifier and snake_case mapping
+   * - `SqlRef` / `AliasRef` / `Sql` → fragment, inlined as-is
+   * - everything else               → bound as a prepared-statement parameter
+   *
+   * @example
+   * ```ts
+   * await em.query<Issue>`
+   *   SELECT * FROM ${Issue} WHERE id = ${id}
+   * `;
+   * ```
+   *
+   * **Trade-off:** column names inside the template (e.g. `id` above) are
+   * plain text. Typos surface at runtime as SQL errors — they are not
+   * caught by the compiler. When column-level safety matters, drop down
+   * to `em.ref(Entity).column` (which is type-checked against the
+   * entity's properties).
+   */
+  async query<T = Record<string, unknown>>(
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ): Promise<T[]>;
+  /** Pre-built `Sql` fragment or raw string with optional positional binds. */
   async query<T = Record<string, unknown>>(
     sqlQuery: string | Sql,
     params?: unknown[],
+  ): Promise<T[]>;
+  async query<T = Record<string, unknown>>(
+    sqlOrStrings: string | Sql | TemplateStringsArray,
+    ...rest: unknown[]
   ): Promise<T[]> {
+    if (isTemplateStringsArray(sqlOrStrings)) {
+      const fragment = this.composeTaggedSql(sqlOrStrings, rest);
+      return this.runRawQuery<T>(fragment);
+    }
+    const params = rest[0] as unknown[] | undefined;
+    if (typeof sqlOrStrings === "string" && params && params.length > 0) {
+      const parameterizedSql = {
+        text: sqlOrStrings,
+        sql: sqlOrStrings,
+        values: params,
+        strings: [sqlOrStrings],
+      } as unknown as Sql;
+      return this.runRawQuery<T>(parameterizedSql);
+    }
+    return this.runRawQuery<T>(sqlOrStrings);
+  }
+
+  private async runRawQuery<T>(sqlQuery: string | Sql): Promise<T[]> {
     this.warnIfRawQueryBypassesTenant();
     return this.executeInTransaction(async (session) => {
-      let queryResult: any;
-      if (typeof sqlQuery === "string") {
-        if (params && params.length > 0) {
-          const parameterizedSql = {
-            text: sqlQuery,
-            sql: sqlQuery,
-            values: params,
-            strings: [sqlQuery],
-          } as unknown as Sql;
-          queryResult = await session.query(parameterizedSql);
-        } else {
-          queryResult = await session.query(sqlQuery);
-        }
-      } else {
-        queryResult = await session.query(sqlQuery);
-      }
-
+      const queryResult: any =
+        typeof sqlQuery === "string"
+          ? await session.query(sqlQuery)
+          : await session.query(sqlQuery);
       if (queryResult?.results) {
         return (queryResult.results as T[]) ?? [];
       }
@@ -5106,6 +5212,22 @@ export class EntityManager implements BaseEntityManager {
       }
       return [];
     });
+  }
+
+  private composeTaggedSql(
+    strings: TemplateStringsArray,
+    values: unknown[],
+  ): Sql {
+    const converted = values.map((v) => {
+      if (
+        typeof v === "function" &&
+        Reflect.getMetadata(ENTITY_TOKEN, v) !== undefined
+      ) {
+        return this.ref(v as ClazzType<unknown>);
+      }
+      return v;
+    });
+    return sql(strings, ...(converted as Parameters<typeof sql>[1][]));
   }
 
   /**

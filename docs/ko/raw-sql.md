@@ -33,9 +33,11 @@ Raw SQL 표면은 의도적으로 계층화되어 있어요. 쿼리가 까다로
 | `em.ref(Entity)` | bare 테이블 참조 (`"issue"`); `${ref.id}` -> `"id"` | O (dialect 따옴표) | 해당 없음 | `@Column` 리네임, FK backing 프로퍼티, snake_case 자동 해석. 멀티테넌트 테이블 wrapping 자동 적용. |
 | `em.ref(Entity, alias)` | FROM/JOIN용 테이블+alias (`"issue" AS i`); `${ref.id}` -> `i."id"` | O (dialect 따옴표) | 해당 없음 | 동일 엔티티에 다른 alias를 줘서 self-join 구성 가능. |
 | `em.aliasRef(name)` | CTE / derived table용 alias 전용 컬럼 (`${ref.depth}` -> `t."depth"`) | O (dialect 따옴표) | 해당 없음 | CTE 본문에만 존재하는 컬럼(엔티티가 없는 경우) 사용. |
+| `em.refs(...specs)` | `ref()` / `aliasRef()`를 한 줄로 묶어 타입드 튜플 반환 -- self-join / 멀티 CTE 블록 보일러플레이트 제거 | `ref` / `aliasRef`에서 상속 | 해당 없음 | spec: `Entity`, `[Entity, alias] as const`, `"alias"`. |
 | `sql\`…\`` (`sql-template-tag`) | SQL 조각 조합, 값 자동 파라미터화 | -- | **O** -- 모든 `${value}`가 placeholder | `@stingerloom/orm`에서 편의상 re-export. |
 | `raw(str)` (`sql-template-tag`) | 문자열을 SQL에 그대로 splice (quoting/binding 없음) | **X** | **X** | **사용자 입력을 `raw()`로 보간하지 마세요.** 이미 신뢰하는 식별자 문자열에만 사용. |
-| `em.query(sqlOrText, params?)` | 활성 커넥션에서 쿼리 실행 | -- | `Sql` 객체 또는 `(text, params)` 튜플일 때 O | 드라이버의 raw 행 반환; NamingStrategy 역매핑이나 hydration 없음. |
+| `em.query\`…\`` (tagged form) | 짧은 raw 쿼리용 shortcut: `${Entity}`는 `em.ref(Entity)`로 자동 해석, 그 외 `${value}`는 바인딩 | `${Entity}`만 O -- 템플릿 안의 컬럼명은 평문 | **O** -- Entity가 아닌 모든 `${value}`가 placeholder | 명시적 `ref()` 보일러플레이트 제거. 컬럼명 typo는 컴파일 시 잡히지 않음 -- 컬럼 안전성이 필요하면 `em.ref(Entity).column`으로 한 단 내려가세요. |
+| `em.query(sqlOrText, params?)` | 사전 빌드된 `Sql` 조각 또는 raw 문자열 + 위치 바인드 실행 | -- | `Sql` 객체 또는 `(text, params)` 튜플일 때 O | 드라이버의 raw 행 반환; NamingStrategy 역매핑이나 hydration 없음. |
 
 #### 안전 계약(safety contract)
 
@@ -213,6 +215,54 @@ sql`SELECT ${t.minDepth} FROM cte ${t}`;
 - `${ref.col}` -> `alias."col"`, `camelToSnakeCase` 적용 + dialect 따옴표
 
 엔티티 테이블에는 `em.ref()`를, CTE 본문 안에서만 존재하는 컬럼 (`depth`, `path` 등)이나 엔티티가 뒷받침하지 않는 CTE / derived table에 조인할 때는 `em.aliasRef()`를 써요.
+
+### `em.refs(...specs)` -- 일괄 변형
+
+한 쿼리가 ref 서너 개를 한 번에 필요로 할 때 (재귀 CTE에서 엔티티를 자기 자신과 self-join하면서 CTE alias도 참조하는 전형적인 경우) 매번 한 줄씩 선언하는 건 반복적이에요. `em.refs(...)`는 `ref()` / `aliasRef()`와 같은 형태를 받아 타입드 튜플을 반환해요:
+
+```typescript
+const [I, Ic, p] = em.refs(Issue, [Issue, "c"] as const, "p");
+
+// 다음과 같음:
+//   const I  = em.ref(Issue);
+//   const Ic = em.ref(Issue, "c");
+//   const p  = em.aliasRef("p");
+```
+
+spec 형태:
+
+- `Entity` -> `em.ref(Entity)` (`SqlRef<Entity>`)
+- `[Entity, "alias"] as const` -> `em.ref(Entity, "alias")` (`SqlRef<Entity>`)
+- `"alias"` -> `em.aliasRef("alias")` (`AliasRef`)
+
+튜플 형태에 `as const`가 필요한 이유는 TypeScript가 alias를 literal string으로 좁히고 destructuring에 올바른 element 타입을 전파하도록 하기 위해서예요.
+
+### `em.query\`…\`` -- 짧은 raw 쿼리용 tagged shortcut
+
+명시적 ref를 만드는 게 보일러플레이트인 일회성 raw 쿼리에서, `em.query`는 tagged template을 받아요:
+
+```typescript
+const rows = await em.query<{ count: string }>`
+  SELECT COUNT(*) AS count FROM ${Issue} WHERE status = ${"open"}
+`;
+```
+
+템플릿 안에서:
+
+- `${Entity}` (`@Entity()`가 붙은 클래스)는 `em.ref(Entity)`로 해석돼요 -- 테이블명이 wrap되고, snake_case가 적용되고, 테넌트 한정도 자동으로 붙어요.
+- `${ref}` / `${ref.col}` / 중첩된 `sql\`…\``  조각은 그대로 통과해요.
+- 그 외 모든 `${value}`는 prepared statement 파라미터로 바인딩돼요.
+
+**Trade-off.** 템플릿 안의 컬럼명(위 예제의 `status`)은 **평문**이에요. 거기서 typo가 나면 컴파일이 아닌 런타임 SQL 에러로 드러나요. 그게 중요하면 한 단 내려가서 `em.ref(Entity).column`을 쓰세요. 거기서는 프로퍼티가 엔티티 속성과 대조 검증돼요:
+
+```typescript
+const r = em.ref(Issue);
+const rows = await em.query<{ count: string }>`
+  SELECT COUNT(*) AS count FROM ${r} WHERE ${r.status} = ${"open"}
+`;
+```
+
+tagged form은 의도적으로 4단계의 shortcut이에요 -- composable한 WHERE / JOIN / CTE 조립이 필요한 3단계의 `RawQueryBuilder`를 대체하지 않아요. NamingStrategy 역매핑과 결과 hydration도 여전히 적용되지 않아요(드라이버의 raw 행을 그대로 받아요).
 
 ## WHERE, JOIN, Subquery
 
