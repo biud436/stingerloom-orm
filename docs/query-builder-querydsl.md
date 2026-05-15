@@ -764,6 +764,29 @@ having to know.
 | Schema-inferred rows  | `qb.selectSchema(zodSchema)` — narrows `TResult` to `z.infer<schema>` and validates rows at runtime |
 | Logical composition   | `ColumnCondition.and/.or/.not`, `Expressions.and`, `Expressions.or`, `Expressions.not`          |
 
+## Dialect support matrix
+
+When an expression has no equivalent on the active dialect, the renderer throws an `OrmError(OrmErrorCode.UNSUPPORTED_OPERATION)` with a message that names the feature, the failing dialect, *why* it is unsupported, and a concrete *alternative* (an emulation sketch or escape-hatch pointer). Use this matrix to plan around dialect gaps before you hit the throw.
+
+| Expression | PostgreSQL | MySQL | SQLite | Notes |
+|------------|------------|-------|--------|-------|
+| Aggregates (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | Native | Native | Native | — |
+| `coalesce` / `nullif` | Native | Native | Native | — |
+| Window functions (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | Native | Native (8.0+) | Native (3.25+) | — |
+| `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregates | Native (`WITHIN GROUP`) | **Unsupported** — throws `UNSUPPORTED_OPERATION` | **Unsupported** — throws `UNSUPPORTED_OPERATION` | MySQL: emulate with CTE + `ROW_NUMBER() OVER (ORDER BY x)` and pick `rn = CEIL(N * p)`. See [the cookbook recipe](./cookbook.md#cycle-time-percentile-report). |
+| `dateTrunc` (year/quarter/month/week/day/hour/minute/second) | Native `DATE_TRUNC` | Per-unit equivalents (`DATE`, `DATE_FORMAT`, ISO-Monday `WEEKDAY` math) | `date(..., 'start of …')` / `strftime` | All three dialects produce ISO-Monday weeks. |
+| `dateDiff(a, b, unit)` — year / month | Calendar-aware via `age()` | Calendar-aware via `TIMESTAMPDIFF(YEAR/MONTH, ...)` | Approximation: julianday / 365.25 (year), / 30.4375 (month) | SQLite values are approximate by ~0.07% over a typical decade. |
+| `dateDiff(a, b, unit)` — day / hour / minute / second | Epoch seconds via `EXTRACT(EPOCH ...)` | `TIMESTAMPDIFF(...)` | `julianday()` * factor | Exact on all three. |
+| `dateAdd(value, n, unit)` | `value + INTERVAL 'N unit'` | `DATE_ADD(value, INTERVAL N unit)` | `datetime(value, '+N unit')` modifier | — |
+| `random()` | `random()` returns `[0, 1)` | `RAND()` returns `[0, 1)` | `RANDOM()` returns 64-bit signed integer | SQLite callers should normalize to `[0, 1)` if they need a fraction. |
+| Full-text search (`Expressions.fullTextSearch`) | `to_tsvector / @@` (tsvector pipeline) | `MATCH() AGAINST(...)` (FULLTEXT index required) | **Unsupported via DSL** — throws `UNSUPPORTED_DATABASE` | SQLite: use FTS5 virtual tables with `em.query()`. |
+| `jsonContains` — object/array value | Native `@>` containment | Native `JSON_CONTAINS` | **Unsupported for objects/arrays** — throws `UNSUPPORTED_DATABASE` | SQLite supports scalar equality at a path — use `metadata.profile.role.eq('admin')` or raw SQL. |
+| `jsonExtract` / `jsonHasKey` / `jsonArrayLength` / `jsonTypeOf` | Native (`->`, `?`, `jsonb_array_length`, `jsonb_typeof`) | Native (`JSON_EXTRACT`, `JSON_CONTAINS_PATH`, `JSON_LENGTH`, `JSON_TYPE`) | Native (`json_extract`, `json_array_length`, `json_type`) | — |
+| `ilike` (case-insensitive LIKE) | Native `ILIKE` | `LIKE` is case-insensitive by default on `*_ci` collations; `LOWER()` fallback for `*_bin` | `LIKE` is ASCII-insensitive; non-ASCII unicode requires the ICU extension | — |
+| Numeric / string helpers (`.abs`, `.floor`, `.ceil`, `.round`, `.length`, `.substring`, `.trim`, …) | Native | Native | Native | — |
+
+When you hit an `UNSUPPORTED_OPERATION`, the error's `suggestion` field carries the single-line emulation/alternative hint suitable for direct UI display. The full message also includes a `See: docs/...` pointer to the relevant section of the docs.
+
 ## Next Steps
 
 - [JSON Navigation](./query-builder-json.md) — the same proxy extended for
@@ -772,4 +795,7 @@ having to know.
   column references
 - [Aggregations & Subqueries](./query-builder-aggregations.md) — GROUP BY,
   HAVING, scalar and derived subqueries
+- [Analytical Query Cookbook](./cookbook.md) — recipes built around the
+  expressions above (window functions, percentiles with MySQL emulation,
+  recursive CTEs)
 - [Query Builder Overview](./query-builder.md) — basics and overall map

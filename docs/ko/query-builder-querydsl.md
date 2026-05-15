@@ -714,9 +714,33 @@ const user = await em.createQueryBuilder(User, "u")
 | 안전한 prefix/suffix/포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프) |
 | 대소문자 무시 매칭 | 위 이름 뒤에 `IgnoreCase`, 그리고 `.equalsIgnoreCase`, `.likeIgnoreCase` |
 
+## Dialect 지원 매트릭스
+
+표현식이 활성 dialect에서 대응되는 형태가 없으면 렌더러가 `OrmError(OrmErrorCode.UNSUPPORTED_OPERATION)`을 던져요. 메시지에는 기능 이름, 실패한 dialect, *왜* 미지원인지, 그리고 구체적인 *대안*(에뮬레이션 스케치나 escape hatch 안내)이 함께 들어가요. 던지기 전에 dialect 갭을 미리 파악하려면 아래 매트릭스를 참고하세요.
+
+| 표현식 | PostgreSQL | MySQL | SQLite | 비고 |
+|--------|------------|-------|--------|------|
+| 집계 (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | 네이티브 | 네이티브 | 네이티브 | — |
+| `coalesce` / `nullif` | 네이티브 | 네이티브 | 네이티브 | — |
+| Window 함수 (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | 네이티브 | 네이티브 (8.0+) | 네이티브 (3.25+) | — |
+| `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregate | 네이티브 (`WITHIN GROUP`) | **미지원** — `UNSUPPORTED_OPERATION` throw | **미지원** — `UNSUPPORTED_OPERATION` throw | MySQL: CTE + `ROW_NUMBER() OVER (ORDER BY x)`로 에뮬, `rn = CEIL(N * p)` 행을 픽. [cookbook 레시피](./cookbook.md#cycle-time-percentile-report) 참고. |
+| `dateTrunc` (year/quarter/month/week/day/hour/minute/second) | 네이티브 `DATE_TRUNC` | 단위별 등가 (`DATE`, `DATE_FORMAT`, ISO 월요일 `WEEKDAY` 계산) | `date(..., 'start of …')` / `strftime` | 세 dialect 모두 ISO 월요일 기준 주를 만들어요. |
+| `dateDiff(a, b, unit)` — year / month | `age()` 기반 calendar-aware | `TIMESTAMPDIFF(YEAR/MONTH, ...)` calendar-aware | 근사: julianday / 365.25 (year), / 30.4375 (month) | SQLite는 10년 기준 약 ~0.07% 오차. |
+| `dateDiff(a, b, unit)` — day / hour / minute / second | `EXTRACT(EPOCH ...)` 기반 epoch 초 | `TIMESTAMPDIFF(...)` | `julianday()` × factor | 세 dialect 모두 정확. |
+| `dateAdd(value, n, unit)` | `value + INTERVAL 'N unit'` | `DATE_ADD(value, INTERVAL N unit)` | `datetime(value, '+N unit')` 수식자 | — |
+| `random()` | `random()` `[0, 1)` 반환 | `RAND()` `[0, 1)` 반환 | `RANDOM()` 64-bit signed integer 반환 | SQLite 사용자는 `[0, 1)`이 필요하면 직접 normalize. |
+| Full-text search (`Expressions.fullTextSearch`) | `to_tsvector / @@` (tsvector 파이프라인) | `MATCH() AGAINST(...)` (FULLTEXT 인덱스 필요) | **DSL 미지원** — `UNSUPPORTED_DATABASE` throw | SQLite는 FTS5 가상 테이블 + `em.query()`. |
+| `jsonContains` — object/array 값 | 네이티브 `@>` containment | 네이티브 `JSON_CONTAINS` | **object/array 미지원** — `UNSUPPORTED_DATABASE` throw | SQLite는 path scalar equality 지원 — `metadata.profile.role.eq('admin')` 형태나 raw SQL 사용. |
+| `jsonExtract` / `jsonHasKey` / `jsonArrayLength` / `jsonTypeOf` | 네이티브 (`->`, `?`, `jsonb_array_length`, `jsonb_typeof`) | 네이티브 (`JSON_EXTRACT`, `JSON_CONTAINS_PATH`, `JSON_LENGTH`, `JSON_TYPE`) | 네이티브 (`json_extract`, `json_array_length`, `json_type`) | — |
+| `ilike` (case-insensitive LIKE) | 네이티브 `ILIKE` | `*_ci` collation에서는 기본 `LIKE`가 case-insensitive, `*_bin`은 `LOWER()` fallback | `LIKE`는 ASCII만 case-insensitive, non-ASCII 유니코드는 ICU 확장 필요 | — |
+| 숫자 / 문자열 헬퍼 (`.abs`, `.floor`, `.ceil`, `.round`, `.length`, `.substring`, `.trim`, …) | 네이티브 | 네이티브 | 네이티브 | — |
+
+`UNSUPPORTED_OPERATION`이 발생하면 에러의 `suggestion` 필드에 한 줄짜리 에뮬레이션/대안 힌트가 담겨 있어 UI에 그대로 표시하기 좋아요. 전체 메시지에는 관련 문서 섹션을 가리키는 `See: docs/...` 포인터도 포함돼요.
+
 ## 다음 단계
 
 - [JSON 컬럼 탐색](./query-builder-json.md) — 같은 프록시를 `json` / `jsonb` 컬럼으로 확장한 모습
 - [JOIN](./query-builder-joins.md) — 타입드 컬럼 참조로 여러 엔티티를 오가는 쿼리
 - [집계 & 서브쿼리](./query-builder-aggregations.md) — GROUP BY / HAVING / 스칼라 · 파생 서브쿼리
 - [Query Builder 개요](./query-builder.md) — 기본 사용법과 전체 지도
+- [분석 쿼리 Cookbook](./cookbook.md) — 위 표현식들로 만든 실전 레시피 (window function, MySQL 에뮬레이션 percentile, recursive CTE)

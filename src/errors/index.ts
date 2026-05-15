@@ -15,3 +15,4 @@ export * from "./QueryTimeoutError";
 export * from "./AdvisoryLockError";
 export * from "./OptimisticLockError";
 export * from "./UnsupportedFeatureError";
+export * from "./UnsupportedExpressionError";

@@ -9,6 +9,8 @@ import type {
   DialectExpression,
   FullTextSearchOptions,
 } from "../DialectExpression";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
 export class PostgresExpression implements DialectExpression {
   readonly dialect = "postgres" as const;
@@ -326,7 +328,15 @@ function secondsPerUnit(unit: DateAddUnit): number {
     case "second":
       return 1;
     default:
-      throw new Error(`Unsupported unit for seconds-based diff: ${unit}`);
+      // Should only fire for "year" / "month" callers that fall through to
+      // this helper instead of the dedicated month/year branches above.
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        `dateDiff(unit=${unit as string}) cannot be emulated as a fixed-seconds-per-unit ` +
+          "computation on PostgreSQL — month/year length is variable. Use the dedicated " +
+          "'year' or 'month' branch in PostgresExpression.dateDiff, or pre-compute the " +
+          "interval and CAST yourself.",
+      );
   }
 }
 

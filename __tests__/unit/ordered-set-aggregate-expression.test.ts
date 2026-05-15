@@ -122,7 +122,7 @@ describe("OrderedSetAggregateExpression", () => {
   });
 
   describe("dialect support gates", () => {
-    it("throws UNSUPPORTED_OPERATION on MySQL", () => {
+    it("throws UNSUPPORTED_OPERATION on MySQL with a CTE/ROW_NUMBER emulation hint", () => {
       const expr = percentileCont(0.5, "i.cycle");
       try {
         expr.render(resolvePg, mysql);
@@ -130,13 +130,37 @@ describe("OrderedSetAggregateExpression", () => {
       } catch (e) {
         expect(e).toBeInstanceOf(OrmError);
         expect((e as OrmError).code).toBe(OrmErrorCode.UNSUPPORTED_OPERATION);
-        expect((e as OrmError).message).toMatch(/PostgreSQL/);
+        const msg = (e as OrmError).message;
+        // Helper-built shape: names the feature, the failing dialect, why,
+        // a concrete alternative (CTE + ROW_NUMBER emulation), and a docs
+        // pointer. Pinning these substrings keeps the error contract
+        // testable without depending on exact wording.
+        expect(msg).toMatch(/percentile_cont/);
+        expect(msg).toMatch(/mysql/);
+        expect(msg).toMatch(/PostgreSQL/);
+        expect(msg).toMatch(/CTE/);
+        expect(msg).toMatch(/ROW_NUMBER/);
+        expect(msg).toMatch(/Alternative:/);
+        expect(msg).toMatch(/See: docs\//);
+        // The `suggestion` field carries the alternative as a single-line
+        // hint suitable for direct surfacing in error UIs.
+        expect((e as OrmError).suggestion).toMatch(/CTE/);
       }
     });
 
     it("throws UNSUPPORTED_OPERATION on SQLite", () => {
       const expr = percentileCont(0.5, "i.cycle");
-      expect(() => expr.render(resolvePg, sqlite)).toThrow(OrmError);
+      try {
+        expr.render(resolvePg, sqlite);
+        fail("expected throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(OrmError);
+        expect((e as OrmError).code).toBe(OrmErrorCode.UNSUPPORTED_OPERATION);
+        // SQLite has no emulation path; the message should still point at
+        // PostgreSQL and the docs.
+        expect((e as OrmError).message).toMatch(/PostgreSQL/);
+        expect((e as OrmError).message).toMatch(/sqlite/);
+      }
     });
 
     it("throws when no dialect is provided", () => {

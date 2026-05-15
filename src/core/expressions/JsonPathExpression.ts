@@ -6,6 +6,18 @@ import type {
 } from "../../dialects/DialectExpression";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import { AliasedExpression } from "./AliasedExpression";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
+
+function jsonPathDialectRequired(feature: string): OrmError {
+  return new OrmError(
+    OrmErrorCode.INVALID_QUERY,
+    `${feature} requires a DialectExpression. Ensure the query builder was ` +
+      "created via EntityManager.createQueryBuilder() — JSON path operators " +
+      "render different SQL per dialect (`->>`, JSON_EXTRACT, json_extract), so a " +
+      "builder without a dialect cannot pick the right form.",
+  );
+}
 
 /**
  * A segment of a JSON navigation path.
@@ -78,10 +90,7 @@ export class JsonPathCondition implements ConditionLike {
     dialectExpression?: DialectExpression,
   ): Sql {
     if (!dialectExpression) {
-      throw new Error(
-        "JsonPathCondition.resolve() requires a DialectExpression. " +
-          "Ensure the query builder was created via EntityManager.createQueryBuilder().",
-      );
+      throw jsonPathDialectRequired("JsonPathCondition.resolve()");
     }
     const column = resolveColumn(this.ref);
     const m = this.meta;
@@ -350,10 +359,7 @@ class JsonPathExpressionBase {
     const meta = this._meta;
     return new AliasedExpression(alias, (resolveColumn, dialect) => {
       if (!dialect) {
-        throw new Error(
-          "JsonPathExpression.as() requires a DialectExpression. " +
-            "Ensure the query builder was created via EntityManager.createQueryBuilder().",
-        );
+        throw jsonPathDialectRequired("JsonPathExpression.as()");
       }
       return dialect.jsonExtract(resolveColumn(ref), path, true, meta);
     });

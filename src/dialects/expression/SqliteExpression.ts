@@ -221,7 +221,16 @@ function juliandayFactor(unit: DateAddUnit): number {
     case "second":
       return 86400;
     default:
-      throw new Error(`Unsupported unit for julianday diff: ${unit}`);
+      // Year/month go through the dedicated branches in `dateDiff`; this
+      // helper is only reached for fixed-length units. Any other unit means
+      // the caller asked for something julianday can't express directly.
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        `dateDiff(unit=${unit as string}) cannot be expressed as a julianday-factor ` +
+          "computation on SQLite — month/year are not fixed-length. Use the dedicated " +
+          "'year'/'month' branch in SqliteExpression.dateDiff, or compute the interval " +
+          "yourself with strftime().",
+      );
   }
 }
 

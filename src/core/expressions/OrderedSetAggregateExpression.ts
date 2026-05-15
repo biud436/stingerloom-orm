@@ -4,6 +4,7 @@ import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
+import { unsupportedExpression } from "../../errors/UnsupportedExpressionError";
 import { AliasedExpression } from "./AliasedExpression";
 
 /**
@@ -164,13 +165,22 @@ export class OrderedSetAggregateExpression {
       );
     }
     if (dialect.dialect !== "postgres") {
-      throw new OrmError(
-        OrmErrorCode.UNSUPPORTED_OPERATION,
-        `${this.funcName}() ordered-set aggregate (WITHIN GROUP) is only ` +
-          `supported on PostgreSQL. Current dialect: ${dialect.dialect}. ` +
-          `Emulate on MySQL with a CTE + ROW_NUMBER() OVER (ORDER BY x) and ` +
-          `pick the row where rn = CEIL(N * fraction).`,
-      );
+      const isMySql = dialect.dialect === "mysql";
+      throw unsupportedExpression({
+        feature: `${this.funcName}() WITHIN GROUP (ordered-set aggregate)`,
+        dialect: dialect.dialect,
+        why:
+          dialect.dialect === "sqlite"
+            ? "SQLite has no ordered-set aggregates; only PostgreSQL implements the SQL-standard WITHIN GROUP form."
+            : "MySQL does not implement the SQL-standard ordered-set aggregate (WITHIN GROUP); only PostgreSQL exposes percentile_cont / percentile_disc / mode natively.",
+        alternative: isMySql
+          ? "Emulate on MySQL with a CTE: ROW_NUMBER() OVER (ORDER BY x) attaches a rank to each value, then pick the row at rn = CEIL(N * fraction) in the outer query. See docs/cookbook.md#cycle-time-percentile-report for a worked example. Or run this query on PostgreSQL."
+          : "Run the query on PostgreSQL, or use raw SQL via em.query() and compute the percentile in application code.",
+        approximate: isMySql
+          ? "Histogram bucketing on the same column gives a coarser percentile without WINDOW support."
+          : undefined,
+        docs: "docs/cookbook.md#cycle-time-percentile-report",
+      });
     }
 
     const orderSql = renderOrderTarget(

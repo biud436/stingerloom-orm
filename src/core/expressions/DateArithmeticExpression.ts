@@ -7,6 +7,18 @@ import type {
 import type { ColumnResolver } from "./ConditionLike";
 import { ScalarExpression } from "./ScalarExpression";
 import type { InnerRenderer } from "./StringExpression";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
+
+function dialectRequired(feature: string): OrmError {
+  return new OrmError(
+    OrmErrorCode.INVALID_QUERY,
+    `${feature} requires a DialectExpression. Ensure the query builder was ` +
+      "created via EntityManager.createQueryBuilder() — the dialect is propagated " +
+      "from the active EntityManager, so a builder constructed in isolation has no " +
+      "way to render dialect-specific SQL.",
+  );
+}
 
 /**
  * @internal Render any argument usable as a date source — column /
@@ -53,10 +65,7 @@ export function buildDateAdd(
 ): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
     if (!dialect) {
-      throw new Error(
-        "Date add expressions require a DialectExpression. Ensure the query " +
-          "builder was created via EntityManager.createQueryBuilder().",
-      );
+      throw dialectRequired("Date add expressions");
     }
     const value = inner(resolveColumn, dialect);
     return dialect.dateAdd(value, n, unit);
@@ -83,10 +92,7 @@ export function dateDiff(
 ): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
     if (!dialect) {
-      throw new Error(
-        "dateDiff() requires a DialectExpression. Ensure the query builder " +
-          "was created via EntityManager.createQueryBuilder().",
-      );
+      throw dialectRequired("dateDiff()");
     }
     const aSql = renderDateArg(a, resolveColumn, dialect);
     const bSql = renderDateArg(b, resolveColumn, dialect);
@@ -125,10 +131,7 @@ export function dateTrunc(
 ): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
     if (!dialect) {
-      throw new Error(
-        "dateTrunc() requires a DialectExpression. Ensure the query builder " +
-          "was created via EntityManager.createQueryBuilder().",
-      );
+      throw dialectRequired("dateTrunc()");
     }
     const inner = renderDateArg(value, resolveColumn, dialect);
     return dialect.dateTrunc(inner, unit);
@@ -143,10 +146,7 @@ export function dateTrunc(
 export function random(): ScalarExpression {
   return new ScalarExpression((_resolveColumn, dialect) => {
     if (!dialect) {
-      throw new Error(
-        "random() requires a DialectExpression. Ensure the query builder was " +
-          "created via EntityManager.createQueryBuilder().",
-      );
+      throw dialectRequired("random()");
     }
     return dialect.random();
   });
