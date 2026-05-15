@@ -85,6 +85,76 @@ const caseCases: GoldenCase[] = [
       values: ["active", "deleted"],
     },
   },
+  {
+    name: "caseBuilder — searched CASE with .when().then().otherwise().end()",
+    build: () =>
+      Expressions.caseBuilder()
+        .when(new ColumnExpression("u.score").gte(90))
+        .then("gold")
+        .when(new ColumnExpression("u.score").gte(70))
+        .then("silver")
+        .otherwise("bronze")
+        .end(),
+    postgres: {
+      text:
+        'CASE WHEN "u"."score" >= ? THEN ? WHEN "u"."score" >= ? THEN ? ' +
+        "ELSE ? END",
+      values: [90, "gold", 70, "silver", "bronze"],
+    },
+    mysql: {
+      text:
+        "CASE WHEN `u`.`score` >= ? THEN ? WHEN `u`.`score` >= ? THEN ? " +
+        "ELSE ? END",
+      values: [90, "gold", 70, "silver", "bronze"],
+    },
+    sqlite: {
+      text:
+        'CASE WHEN "u"."score" >= ? THEN ? WHEN "u"."score" >= ? THEN ? ' +
+        "ELSE ? END",
+      values: [90, "gold", 70, "silver", "bronze"],
+    },
+  },
+  {
+    name: "caseBuilder — searched CASE without ELSE branch",
+    build: () =>
+      Expressions.caseBuilder()
+        .when(new ColumnExpression("u.role").eq("admin"))
+        .then(1)
+        .end(),
+    postgres: {
+      text: 'CASE WHEN "u"."role" = ? THEN ? END',
+      values: ["admin", 1],
+    },
+    mysql: {
+      text: "CASE WHEN `u`.`role` = ? THEN ? END",
+      values: ["admin", 1],
+    },
+    sqlite: {
+      text: 'CASE WHEN "u"."role" = ? THEN ? END',
+      values: ["admin", 1],
+    },
+  },
+  {
+    name: "cases(subject) — simple CASE with subject + value branches",
+    build: () =>
+      Expressions.cases(new ColumnExpression("u.status"))
+        .when("active", 1)
+        .when("pending", 0)
+        .otherwise(-1)
+        .end(),
+    postgres: {
+      text: 'CASE "u"."status" WHEN ? THEN ? WHEN ? THEN ? ELSE ? END',
+      values: ["active", 1, "pending", 0, -1],
+    },
+    mysql: {
+      text: "CASE `u`.`status` WHEN ? THEN ? WHEN ? THEN ? ELSE ? END",
+      values: ["active", 1, "pending", 0, -1],
+    },
+    sqlite: {
+      text: 'CASE "u"."status" WHEN ? THEN ? WHEN ? THEN ? ELSE ? END',
+      values: ["active", 1, "pending", 0, -1],
+    },
+  },
 ];
 
 const dateCases: GoldenCase[] = [
@@ -177,6 +247,45 @@ const dateCases: GoldenCase[] = [
       values: [],
     },
   },
+  {
+    name: "addDays(7) — INTERVAL / DATE_ADD / datetime-modifier divergence",
+    build: () => new ColumnExpression("i.createdAt").addDays(7),
+    postgres: {
+      text: `("i"."createdAt" + (? * INTERVAL '1 day'))`,
+      values: [7],
+    },
+    mysql: {
+      text: "DATE_ADD(`i`.`createdAt`, INTERVAL ? DAY)",
+      values: [7],
+    },
+    sqlite: {
+      text: 'datetime("i"."createdAt", ?)',
+      values: ["+7 days"],
+    },
+  },
+  {
+    name: "addMonths(-3) — negative interval handled symmetrically",
+    build: () => new ColumnExpression("i.createdAt").addMonths(-3),
+    postgres: {
+      text: `("i"."createdAt" + (? * INTERVAL '1 month'))`,
+      values: [-3],
+    },
+    mysql: {
+      text: "DATE_ADD(`i`.`createdAt`, INTERVAL ? MONTH)",
+      values: [-3],
+    },
+    sqlite: {
+      text: 'datetime("i"."createdAt", ?)',
+      values: ["-3 months"],
+    },
+  },
+  {
+    name: "random() — RANDOM / RAND / RANDOM divergence",
+    build: () => Expressions.random(),
+    postgres: { text: "RANDOM()", values: [] },
+    mysql: { text: "RAND()", values: [] },
+    sqlite: { text: "RANDOM()", values: [] },
+  },
 ];
 
 const castAndNullishCases: GoldenCase[] = [
@@ -243,6 +352,70 @@ const castAndNullishCases: GoldenCase[] = [
     sqlite: {
       text: 'CAST(COALESCE("u"."nickname", "u"."name", ?) AS TEXT)',
       values: ["anonymous"],
+    },
+  },
+  {
+    name: "CAST(... AS <long>) — BIGINT / SIGNED / INTEGER",
+    build: () => new ColumnExpression("u.score").longValue(),
+    postgres: {
+      text: 'CAST("u"."score" AS BIGINT)',
+      values: [],
+    },
+    mysql: {
+      text: "CAST(`u`.`score` AS SIGNED)",
+      values: [],
+    },
+    sqlite: {
+      text: 'CAST("u"."score" AS INTEGER)',
+      values: [],
+    },
+  },
+  {
+    name: "CAST(... AS <float>) — REAL / DECIMAL / REAL",
+    build: () => new ColumnExpression("u.score").floatValue(),
+    postgres: {
+      text: 'CAST("u"."score" AS REAL)',
+      values: [],
+    },
+    mysql: {
+      text: "CAST(`u`.`score` AS DECIMAL)",
+      values: [],
+    },
+    sqlite: {
+      text: 'CAST("u"."score" AS REAL)',
+      values: [],
+    },
+  },
+  {
+    name: "CAST(... AS <boolean>) — BOOLEAN / UNSIGNED / INTEGER",
+    build: () => new ColumnExpression("u.score").booleanValue(),
+    postgres: {
+      text: 'CAST("u"."score" AS BOOLEAN)',
+      values: [],
+    },
+    mysql: {
+      text: "CAST(`u`.`score` AS UNSIGNED)",
+      values: [],
+    },
+    sqlite: {
+      text: 'CAST("u"."score" AS INTEGER)',
+      values: [],
+    },
+  },
+  {
+    name: "CAST(... AS <bigint>) — BIGINT / SIGNED / INTEGER (alias of long)",
+    build: () => new ColumnExpression("u.balance").bigintValue(),
+    postgres: {
+      text: 'CAST("u"."balance" AS BIGINT)',
+      values: [],
+    },
+    mysql: {
+      text: "CAST(`u`.`balance` AS SIGNED)",
+      values: [],
+    },
+    sqlite: {
+      text: 'CAST("u"."balance" AS INTEGER)',
+      values: [],
     },
   },
 ];

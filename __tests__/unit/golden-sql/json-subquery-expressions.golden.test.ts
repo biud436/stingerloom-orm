@@ -2,6 +2,7 @@ import "reflect-metadata";
 import sql, { type Sql } from "sql-template-tag";
 import { Expressions } from "../../../src/core/expressions/LogicalCondition";
 import { makeJsonPathExpression } from "../../../src/core/expressions/JsonPathExpression";
+import { OrmErrorCode } from "../../../src/errors/OrmErrorCode";
 import { runGoldenMatrix, type GoldenCase } from "./harness";
 
 /**
@@ -113,6 +114,63 @@ const jsonCases: GoldenCase[] = [
       text: 'json_extract("u"."profile", ?) IS NULL',
       values: ["$.deletedAt"],
     },
+  },
+  {
+    name: "jsonContains scalar — @> jsonb / JSON_CONTAINS / json_extract = on SQLite",
+    build: () =>
+      makeJsonPathExpression("u.profile", []).path("role").contains("admin"),
+    postgres: {
+      // Default meta (no dbType) treats the column as json — multi-segment
+      // form parenthesizes the navigated expression before applying @>.
+      text: '("u"."profile" #> ARRAY[?]::text[]) @> ?::jsonb',
+      values: ["role", '"admin"'],
+    },
+    mysql: {
+      text: "JSON_CONTAINS(`u`.`profile`, ?, ?)",
+      // MySQL JSON_CONTAINS(target, candidate, path) — candidate is the
+      // JSON-stringified value.
+      values: ['"admin"', "$.role"],
+    },
+    sqlite: {
+      // SQLite has no containment; scalar values degrade to equality.
+      text: 'json_extract("u"."profile", ?) = ?',
+      values: ["$.role", "admin"],
+    },
+  },
+  {
+    name: "jsonTypeOf — jsonb_typeof / JSON_TYPE / json_type",
+    build: () =>
+      makeJsonPathExpression("u.profile", []).path("settings").typeOf().eq("object"),
+    postgres: {
+      // Single-segment path takes the arrow-step fast path (-> 'settings')
+      // instead of #>/ARRAY navigation; jsonb_typeof wraps the result.
+      text: 'jsonb_typeof("u"."profile" -> ?) = ?',
+      values: ["settings", "object"],
+    },
+    mysql: {
+      text: "JSON_TYPE(JSON_EXTRACT(`u`.`profile`, ?)) = ?",
+      values: ["$.settings", "object"],
+    },
+    sqlite: {
+      text: 'json_type("u"."profile", ?) = ?',
+      values: ["$.settings", "object"],
+    },
+  },
+  {
+    name: "jsonContains object — supported on PG/MySQL, rejected on SQLite",
+    build: () =>
+      makeJsonPathExpression("u.profile", [])
+        .path("address")
+        .contains({ city: "Seoul" }),
+    postgres: {
+      text: '("u"."profile" #> ARRAY[?]::text[]) @> ?::jsonb',
+      values: ["address", '{"city":"Seoul"}'],
+    },
+    mysql: {
+      text: "JSON_CONTAINS(`u`.`profile`, ?, ?)",
+      values: ['{"city":"Seoul"}', "$.address"],
+    },
+    sqlite: { throws: OrmErrorCode.UNSUPPORTED_DATABASE },
   },
 ];
 
