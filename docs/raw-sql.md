@@ -13,6 +13,128 @@ For these cases, `RawQueryBuilder` gives you the full power of SQL while still p
 
 The trade-off is clear: you lose the type-safe `keyof T` auto-completion, but you gain the full expressive power of SQL. Table and column names must be quoted manually (`"double quotes"` for PostgreSQL, `` `backticks` `` for MySQL), though the ORM auto-detects the database type when you create the builder via `em.createQueryBuilder()`.
 
+## Choosing an Escape Hatch
+
+The raw-SQL surface is intentionally layered. As a query gets more exotic, you climb one rung at a time -- never further than the query actually demands. Each rung trades a little structure (type-safety, auto-mapping) for a little more expressive power.
+
+| Rung | When to use it | Tool |
+|------|----------------|------|
+| 1. **Most structured** | Standard CRUD, filtering, joins on declared relations | `SelectQueryBuilder` (`em.createQueryBuilder(Entity, alias)`) |
+| 2. Analytical / structured SQL | Window functions, percentile, aggregates, CASE, JSON paths -- still type-aware via entity columns | Expressions DSL (`Expressions.*` -- see [QueryDSL](./query-builder-querydsl.md)) |
+| 3. SQL the DSL can't model, but still entity-aware | CTE, `WITH RECURSIVE`, vendor-specific operators, multi-builder composition referencing entity columns | `sql` template + `em.ref()` / `em.aliasRef()` + `RawQueryBuilder` |
+| 4. **Fully raw** | One-off vendor SQL, dynamic identifiers the DSL cannot represent, system catalogs, `EXPLAIN ANALYZE`, anything that has no entity model | `em.query(sql, params)` |
+
+The rule of thumb: **start at rung 1 and climb only when the rung above genuinely can't express the query.** Dropping straight to `em.query()` loses parameter binding ergonomics, NamingStrategy reverse-mapping, and dialect quoting -- all of which you have to rebuild by hand.
+
+### Per-tool reference
+
+| Tool | Purpose | Identifier escaping | Value binding | Notes |
+|------|---------|---------------------|---------------|-------|
+| `em.ref(Entity)` | Bare table reference (`"issue"`); columns as `${ref.id}` -> `"id"` | Yes -- dialect-quoted | N/A | Resolves `@Column` rename, FK backing properties, snake_case. Auto-applies tenant table wrapping. |
+| `em.ref(Entity, alias)` | FROM/JOIN-ready table+alias (`"issue" AS i`); columns as `${ref.id}` -> `i."id"` | Yes -- dialect-quoted | N/A | Composes for self-joins by passing the same `Entity` with different aliases. |
+| `em.aliasRef(name)` | Alias-only columns for CTE / derived tables (`${ref.depth}` -> `t."depth"`) | Yes -- dialect-quoted | N/A | Use when the column lives only in the CTE body (no entity to bind). |
+| `sql\`…\`` (from `sql-template-tag`) | Compose SQL fragments with auto-parameterized values | -- | **Yes** -- every `${value}` becomes a placeholder | Re-exported from `@stingerloom/orm` for convenience. |
+| `raw(str)` (from `sql-template-tag`) | Splice a string literally into the SQL (no quoting, no binding) | **No** | **No** | **Never interpolate user input through `raw()`.** Reserve for known-safe identifier strings you already trust. |
+| `em.query(sqlOrText, params?)` | Execute the resulting query against the active connection | -- | Yes when passed an `Sql` object or `(text, params)` tuple | Returns the driver's raw rows; no NamingStrategy reverse-mapping or hydration. |
+
+#### The safety contract
+
+- `em.ref()` and `em.aliasRef()` route every identifier through the active driver's `wrap()` -- you cannot accidentally emit unquoted SQL through them.
+- `sql\`…\`` binds every `${value}` as a parameter. Templating a user string here is **safe**.
+- `raw(str)` is a verbatim splice. **Treat it like writing the SQL by hand.** If the string came from a user, route it through your own allowlist (e.g. validate `column ∈ knownColumns`) before passing it to `raw()`.
+- `em.query(text, params)` binds `params` but does no escaping of `text`. The same rule applies: only interpolate values, never identifiers, into the text.
+
+### Worked example -- climbing the rungs
+
+A realistic scenario: a posts-and-users blog, escalating from "list active users" to "rank users by published-post count within their role, top 3 per role."
+
+#### Rung 1 -- `SelectQueryBuilder`
+
+List active users sorted by name. Everything `keyof T`-typed, no SQL written.
+
+```typescript
+const users = await em
+  .createQueryBuilder(User, "u")
+  .where({ isActive: true })
+  .orderBy("u.name", "ASC")
+  .limit(50)
+  .getMany();
+```
+
+#### Rung 2 -- Expressions DSL
+
+Same listing, now grouped by `role` with a published-post count per row. Still entity-aware -- the joined relation and the aggregate are both expressed against entity columns.
+
+```typescript
+import { Expressions as E } from "@stingerloom/orm";
+
+const rows = await em
+  .createQueryBuilder(User, "u")
+  .leftJoin("u.posts", "p", { isPublished: true })
+  .selectFragments([
+    "u.role",
+    E.count("p.id").as("postCount"),
+  ])
+  .where({ isActive: true })
+  .groupBy("u.role")
+  .getRawMany<{ role: string; postCount: number }>();
+```
+
+`Expressions.count` and friends render per-dialect SQL while keeping the entity property path -- `p.id` resolves through `@Column` / NamingStrategy without you spelling out `"p"."id"`.
+
+#### Rung 3 -- `sql` template + `em.ref()`
+
+The DSL can't express "top 3 per role" cleanly without a window function over a derived table. We need a CTE that ranks users within their role, then filters to rank <= 3 -- but the CTE still references real entity columns (`User.id`, `User.role`), so we use `em.ref()`/`em.aliasRef()` and stay rename-safe.
+
+```typescript
+import sql from "sql-template-tag";
+
+const U = em.ref(User, "u");
+const P = em.ref(Post, "p");
+const r = em.aliasRef("r");                      // CTE alias; `postCount` / `rank` live in the CTE
+
+const query = em.createQueryBuilder()
+  .with("ranked", sql`
+    SELECT
+      ${U.id},
+      ${U.role},
+      ${U.name},
+      COUNT(${P.id}) AS post_count,
+      ROW_NUMBER() OVER (
+        PARTITION BY ${U.role}
+        ORDER BY COUNT(${P.id}) DESC
+      ) AS rank
+    FROM ${U}
+    LEFT JOIN ${P} ON ${P.authorId} = ${U.id} AND ${P.isPublished} = ${true}
+    WHERE ${U.isActive} = ${true}
+    GROUP BY ${U.id}, ${U.role}, ${U.name}
+  `)
+  .select([`${r.role}`, `${r.name}`, `${r.postCount}`])
+  .from(sql`ranked ${r}`)
+  .where([sql`${r.rank} <= ${3}`])
+  .orderBy([{ column: `${r.role}`, direction: "ASC" }, { column: `${r.rank}`, direction: "ASC" }])
+  .build();
+
+const top3PerRole = await em.query<{ role: string; name: string; postCount: number }>(query);
+```
+
+Renaming `User.role` in TypeScript propagates straight into both the CTE body and the outer query. The dialect quoting -- `"role"` vs `` `role` `` -- is selected automatically.
+
+#### Rung 4 -- `em.query()` (fully raw)
+
+The DSL has no model for `EXPLAIN ANALYZE` against the previous query, nor for dynamically targeting different statistic views per dialect. Drop to `em.query()` and write the SQL by hand -- values still parameter-bound, identifiers hand-written.
+
+```typescript
+import sql from "sql-template-tag";
+
+const plan = await em.query(sql`
+  EXPLAIN ANALYZE
+  SELECT count(*) FROM "posts" WHERE "is_published" = ${true}
+`);
+```
+
+If the table/column names are user-supplied at this rung, **validate them against an allowlist before splicing** -- there is no automatic escaping at this layer.
+
 ## Getting Started
 
 Create a RawQueryBuilder with `em.createQueryBuilder()` (no arguments), chain methods, and call `build()` to get the SQL. Then execute it with `em.query()`.
@@ -345,6 +467,8 @@ qb.selectDistinctOn(['"department"'], ['"id"', '"name"', '"salary"'])
 `DISTINCT ON` is a PostgreSQL extension that returns one row per distinct value in the specified column(s). It's like GROUP BY but lets you pick which row to keep (determined by ORDER BY).
 
 ## Choosing Between the Two Builders
+
+This is the narrower form of the [escape-hatch ladder](#choosing-an-escape-hatch) above -- a direct head-to-head between the two builders.
 
 | Question | SelectQueryBuilder | RawQueryBuilder |
 |----------|-------------------|----------------|

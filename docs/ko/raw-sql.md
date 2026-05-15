@@ -13,6 +13,128 @@ ORM의 `find()`, `save()`, `SelectQueryBuilder`로 대부분의 쿼리를 처리
 
 트레이드오프는 명확해요. 타입 안전한 `keyof T` 자동완성은 잃지만, SQL의 모든 표현력을 얻게 돼요. 테이블명과 컬럼명은 수동으로 따옴표 처리해야 해요 (PostgreSQL은 `"double quotes"`, MySQL은 `` `backticks` ``). 다만 `em.createQueryBuilder()`로 빌더를 생성하면 ORM이 DB 타입을 자동 감지해요.
 
+## 탈출구(escape hatch) 선택하기
+
+Raw SQL 표면은 의도적으로 계층화되어 있어요. 쿼리가 까다로워질수록 한 칸씩 위로 올라가되, 쿼리가 요구하는 만큼만 올라가는 게 원칙이에요. 각 단계는 약간의 구조(타입 안전성, 자동 매핑)를 표현력과 맞바꿔요.
+
+| 단계 | 사용 시점 | 도구 |
+|------|----------|------|
+| 1. **가장 구조화** | 표준 CRUD, 필터링, 선언된 관계 기반 조인 | `SelectQueryBuilder` (`em.createQueryBuilder(Entity, alias)`) |
+| 2. 분석/구조화 SQL | Window function, percentile, aggregate, CASE, JSON 경로 -- 엔티티 컬럼 기반 타입 인지 유지 | Expressions DSL (`Expressions.*` -- [QueryDSL](./query-builder-querydsl.md) 참고) |
+| 3. DSL이 표현 못하지만 엔티티 인지는 유지 | CTE, `WITH RECURSIVE`, 벤더 특화 연산자, 엔티티 컬럼을 참조하는 멀티 빌더 조합 | `sql` 템플릿 + `em.ref()` / `em.aliasRef()` + `RawQueryBuilder` |
+| 4. **완전 raw** | 일회성 벤더 SQL, DSL이 표현 못하는 동적 식별자, 시스템 카탈로그, `EXPLAIN ANALYZE`, 엔티티 모델이 없는 모든 것 | `em.query(sql, params)` |
+
+원칙: **1단계에서 시작해서 위 단계가 정말로 표현 못 할 때만 올라간다.** 곧바로 `em.query()`로 내려가면 파라미터 바인딩 편의, NamingStrategy 역매핑, dialect quoting을 잃고 모두 손으로 다시 짜야 해요.
+
+### 도구별 레퍼런스
+
+| 도구 | 목적 | 식별자 escape | 값 바인딩 | 비고 |
+|------|------|---------------|----------|------|
+| `em.ref(Entity)` | bare 테이블 참조 (`"issue"`); `${ref.id}` -> `"id"` | O (dialect 따옴표) | 해당 없음 | `@Column` 리네임, FK backing 프로퍼티, snake_case 자동 해석. 멀티테넌트 테이블 wrapping 자동 적용. |
+| `em.ref(Entity, alias)` | FROM/JOIN용 테이블+alias (`"issue" AS i`); `${ref.id}` -> `i."id"` | O (dialect 따옴표) | 해당 없음 | 동일 엔티티에 다른 alias를 줘서 self-join 구성 가능. |
+| `em.aliasRef(name)` | CTE / derived table용 alias 전용 컬럼 (`${ref.depth}` -> `t."depth"`) | O (dialect 따옴표) | 해당 없음 | CTE 본문에만 존재하는 컬럼(엔티티가 없는 경우) 사용. |
+| `sql\`…\`` (`sql-template-tag`) | SQL 조각 조합, 값 자동 파라미터화 | -- | **O** -- 모든 `${value}`가 placeholder | `@stingerloom/orm`에서 편의상 re-export. |
+| `raw(str)` (`sql-template-tag`) | 문자열을 SQL에 그대로 splice (quoting/binding 없음) | **X** | **X** | **사용자 입력을 `raw()`로 보간하지 마세요.** 이미 신뢰하는 식별자 문자열에만 사용. |
+| `em.query(sqlOrText, params?)` | 활성 커넥션에서 쿼리 실행 | -- | `Sql` 객체 또는 `(text, params)` 튜플일 때 O | 드라이버의 raw 행 반환; NamingStrategy 역매핑이나 hydration 없음. |
+
+#### 안전 계약(safety contract)
+
+- `em.ref()`와 `em.aliasRef()`는 모든 식별자를 활성 드라이버의 `wrap()`을 거치게 해요 -- 실수로 따옴표 없는 SQL이 나갈 수 없어요.
+- `sql\`…\``는 모든 `${value}`를 파라미터로 바인딩해요. 사용자 문자열을 여기 보간하는 건 **안전**해요.
+- `raw(str)`는 문자열을 그대로 splice해요. **SQL을 손으로 쓰는 것과 동일**하다고 봐야 해요. 문자열이 사용자 입력이라면, `raw()`에 넘기기 전에 직접 allowlist 검증(예: `column ∈ knownColumns`)을 거치게 하세요.
+- `em.query(text, params)`는 `params`를 바인딩하지만 `text`는 escape하지 않아요. 같은 원칙: text에는 **값이 아닌 식별자**를 절대 보간하지 마세요.
+
+### 단계 올라가는 예제
+
+실전 시나리오: 게시글-사용자 블로그에서 "활성 사용자 목록"부터 "역할별로 발행된 게시글 수 기준 상위 3명 랭킹"까지 점진적으로 올라가요.
+
+#### 1단계 -- `SelectQueryBuilder`
+
+활성 사용자를 이름 순으로 정렬해서 가져와요. 모두 `keyof T`로 타입 안전, SQL 한 줄도 안 써요.
+
+```typescript
+const users = await em
+  .createQueryBuilder(User, "u")
+  .where({ isActive: true })
+  .orderBy("u.name", "ASC")
+  .limit(50)
+  .getMany();
+```
+
+#### 2단계 -- Expressions DSL
+
+같은 목록을 `role`로 그룹화하고, 행마다 발행된 게시글 수를 붙여요. 엔티티 인지는 여전히 유지 -- 조인된 관계와 집계 모두 엔티티 컬럼으로 표현돼요.
+
+```typescript
+import { Expressions as E } from "@stingerloom/orm";
+
+const rows = await em
+  .createQueryBuilder(User, "u")
+  .leftJoin("u.posts", "p", { isPublished: true })
+  .selectFragments([
+    "u.role",
+    E.count("p.id").as("postCount"),
+  ])
+  .where({ isActive: true })
+  .groupBy("u.role")
+  .getRawMany<{ role: string; postCount: number }>();
+```
+
+`Expressions.count`는 dialect별 SQL을 렌더링하면서 엔티티 프로퍼티 경로를 유지해요 -- `p.id`는 `@Column` / NamingStrategy를 통해 자동으로 해석돼서 `"p"."id"`를 직접 쓸 필요가 없어요.
+
+#### 3단계 -- `sql` 템플릿 + `em.ref()`
+
+"역할별 상위 3명"은 derived table 위의 window function 없이 DSL로 깔끔하게 표현하기 어려워요. 역할 내에서 사용자를 랭킹하는 CTE를 만들고, rank <= 3으로 필터링해야 해요 -- 그런데 CTE는 여전히 실제 엔티티 컬럼(`User.id`, `User.role`)을 참조하므로 `em.ref()`/`em.aliasRef()`를 써서 rename-safe하게 유지해요.
+
+```typescript
+import sql from "sql-template-tag";
+
+const U = em.ref(User, "u");
+const P = em.ref(Post, "p");
+const r = em.aliasRef("r");                      // CTE alias; `postCount` / `rank`는 CTE 내부에만 존재
+
+const query = em.createQueryBuilder()
+  .with("ranked", sql`
+    SELECT
+      ${U.id},
+      ${U.role},
+      ${U.name},
+      COUNT(${P.id}) AS post_count,
+      ROW_NUMBER() OVER (
+        PARTITION BY ${U.role}
+        ORDER BY COUNT(${P.id}) DESC
+      ) AS rank
+    FROM ${U}
+    LEFT JOIN ${P} ON ${P.authorId} = ${U.id} AND ${P.isPublished} = ${true}
+    WHERE ${U.isActive} = ${true}
+    GROUP BY ${U.id}, ${U.role}, ${U.name}
+  `)
+  .select([`${r.role}`, `${r.name}`, `${r.postCount}`])
+  .from(sql`ranked ${r}`)
+  .where([sql`${r.rank} <= ${3}`])
+  .orderBy([{ column: `${r.role}`, direction: "ASC" }, { column: `${r.rank}`, direction: "ASC" }])
+  .build();
+
+const top3PerRole = await em.query<{ role: string; name: string; postCount: number }>(query);
+```
+
+TypeScript에서 `User.role`을 리네임하면 CTE 본문과 outer 쿼리 양쪽에 그대로 반영돼요. dialect 따옴표 -- `"role"` vs `` `role` `` -- 도 자동 선택돼요.
+
+#### 4단계 -- `em.query()` (완전 raw)
+
+위 쿼리에 대한 `EXPLAIN ANALYZE`나 dialect별로 다른 통계 뷰를 동적으로 가리키는 작업은 DSL에 모델이 없어요. `em.query()`로 떨어져서 SQL을 손으로 써요 -- 값은 여전히 파라미터 바인딩되지만 식별자는 손으로 작성해요.
+
+```typescript
+import sql from "sql-template-tag";
+
+const plan = await em.query(sql`
+  EXPLAIN ANALYZE
+  SELECT count(*) FROM "posts" WHERE "is_published" = ${true}
+`);
+```
+
+이 단계에서 테이블/컬럼 이름이 사용자 입력에서 온다면, **반드시 allowlist로 검증한 뒤** 보간하세요 -- 이 계층에서는 자동 escape가 없어요.
+
 ## 시작하기
 
 `em.createQueryBuilder()` (인자 없이)로 RawQueryBuilder를 생성하고, 메서드를 체이닝한 후 `build()`를 호출해서 SQL을 얻어요. 그다음 `em.query()`로 실행하면 돼요.
@@ -345,6 +467,8 @@ qb.selectDistinctOn(['"department"'], ['"id"', '"name"', '"salary"'])
 `DISTINCT ON`은 PostgreSQL 전용 확장으로 지정된 컬럼의 고유 값마다 하나의 행만 반환해요. GROUP BY와 비슷하지만 어떤 행을 유지할지 선택할 수 있어요 (ORDER BY로 결정).
 
 ## 두 빌더 중 선택하기
+
+위의 [탈출구(escape hatch) 선택하기](#탈출구-escape-hatch-선택하기) 사다리에서 SelectQueryBuilder ↔ RawQueryBuilder 두 항목만 떼어 좁힌 비교예요.
 
 | 질문 | SelectQueryBuilder | RawQueryBuilder |
 |------|-------------------|----------------|
