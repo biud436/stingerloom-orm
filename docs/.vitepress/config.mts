@@ -120,6 +120,13 @@ function sidebarEn() {
       ],
     },
     {
+      text: "Cookbook",
+      collapsed: false,
+      items: [
+        { text: "Analytical Query Recipes", link: "/cookbook" },
+      ],
+    },
+    {
       text: "Reference",
       collapsed: true,
       items: [
@@ -246,6 +253,13 @@ function sidebarKo() {
       collapsed: false,
       items: [
         { text: "IoT 스마트 온도계", link: "/ko/tutorial-iot" },
+      ],
+    },
+    {
+      text: "Cookbook",
+      collapsed: false,
+      items: [
+        { text: "분석 쿼리 레시피", link: "/ko/cookbook" },
       ],
     },
     {
