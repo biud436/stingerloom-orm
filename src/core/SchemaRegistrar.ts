@@ -45,6 +45,9 @@ import {
   isNonTenantEntity,
 } from "../decorators/TenantColumn";
 import { escapeSqlLiteral } from "../utils/escapeSqlLiteral";
+import { SynchronizePolicy } from "./DatabaseClientOptions";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * DDL / schema synchronization handler that runs once at application start.
@@ -55,6 +58,20 @@ export class SchemaRegistrar {
   private readonly logger = new Logger(SchemaRegistrar.name);
   private readonly inheritanceResolver = new InheritanceResolver();
 
+  /**
+   * Active policy for the in-flight registerEntities() call.
+   * Set at the top of registerEntities() and consulted by the helper DDL
+   * paths (registerForeignKeys / registerIndex / registerUniqueIndexes /
+   * registerFullTextIndexes / registerManyToManyJoinTables) so they all
+   * honor continueOnError and logDDL without explicit threading.
+   */
+  private activePolicy: SynchronizePolicy = {
+    mode: false,
+    continueOnError: true,
+    failOnDestructiveChange: false,
+    logDDL: false,
+  };
+
   constructor(
     private readonly resolver: RelationMetadataResolver,
     private readonly ctx: EntityManagerInternals,
@@ -63,14 +80,115 @@ export class SchemaRegistrar {
     this.namingStrategy = namingStrategy ?? new DefaultNamingStrategy();
   }
 
+  /**
+   * Reads the normalized synchronize policy from the EntityManager.
+   * Falls back to bare `getSynchronize()` if the host predates the policy
+   * surface — keeps third-party EM impls working.
+   */
+  private resolveSyncPolicy(): SynchronizePolicy {
+    const ctx = this.ctx as EntityManagerInternals & {
+      getSynchronizePolicy?: () => SynchronizePolicy;
+    };
+    if (typeof ctx.getSynchronizePolicy === "function") {
+      return ctx.getSynchronizePolicy();
+    }
+    const mode = ctx.getSynchronize() ?? false;
+    return {
+      mode: mode as SynchronizePolicy["mode"],
+      continueOnError: true,
+      failOnDestructiveChange: false,
+      logDDL: false,
+    };
+  }
+
+  /**
+   * Single funnel for DDL-execution failures. Honors `policy.continueOnError`:
+   *   - `true`  (default): logs a warning and continues — matches legacy.
+   *   - `false`: rethrows as an OrmError so registerEntities() aborts boot.
+   */
+  private handleDdlError(
+    err: unknown,
+    context: string,
+    policy: SynchronizePolicy,
+  ): void {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (policy.continueOnError) {
+      this.logger.warn(`[sync] ${context}: ${msg}`);
+      return;
+    }
+    throw new OrmError(
+      OrmErrorCode.SCHEMA_SYNC_FAILED,
+      `[sync] ${context}: ${msg}`,
+      "synchronize.continueOnError is false — fix the failing DDL or re-enable continueOnError to downgrade DDL failures to warnings.",
+    );
+  }
+
+  /**
+   * Throws an OrmError when a destructive operation is requested while
+   * `policy.failOnDestructiveChange` is set. The thrown error names the
+   * specific operation so operators can decide whether to override.
+   */
+  private assertDestructiveAllowed(
+    op: "DROP COLUMN" | "DROP TABLE" | "ALTER COLUMN (narrowing)",
+    target: string,
+    policy: SynchronizePolicy,
+  ): void {
+    if (!policy.failOnDestructiveChange) return;
+    throw new OrmError(
+      OrmErrorCode.SCHEMA_SYNC_DESTRUCTIVE_CHANGE,
+      `[sync] Refusing destructive ${op} on ${target} — synchronize.failOnDestructiveChange is true.`,
+      `Set synchronize.failOnDestructiveChange to false to allow ${op}, or write an explicit migration for this change.`,
+    );
+  }
+
+  /**
+   * Best-effort narrowing detector for ALTER COLUMN TYPE.
+   * Returns true when the destination type is strictly smaller / lossy than
+   * the current type. Conservative on purpose — only flags well-known cases
+   * (text-family → numeric, larger varchar → smaller varchar, etc.).
+   */
+  private isNarrowingAlter(col: ColumnChange): boolean {
+    const cur = (col.currentType ?? "").toUpperCase();
+    const next = (col.columnType ?? "").toUpperCase();
+    if (!cur || !next) return false;
+
+    const isTextLike = (t: string) =>
+      /^(VARCHAR|TEXT|CHAR|LONGTEXT|MEDIUMTEXT|TINYTEXT|ENUM|JSON|JSONB|UUID)/.test(
+        t,
+      );
+    const isNumeric = (t: string) =>
+      /^(INT|BIGINT|FLOAT|DOUBLE|DECIMAL|NUMERIC|REAL|SMALLINT|TINYINT|SERIAL|INTEGER|MEDIUMINT|BOOL|BOOLEAN)/.test(
+        t,
+      );
+    const isDateLike = (t: string) =>
+      /^(DATE|TIME|TIMESTAMP|DATETIME)/.test(t);
+
+    if (isTextLike(cur) && isNumeric(next)) return true;
+    if (isDateLike(cur) && isNumeric(next)) return true;
+    if (isTextLike(cur) && isDateLike(next)) return true;
+
+    // varchar(255) → varchar(64): the actual length is captured separately on
+    // the ColumnChange. Only flag a true shrink — equal/grow are safe.
+    if (
+      typeof col.expectedLength === "number" &&
+      typeof col.actualLength === "number" &&
+      col.expectedLength < col.actualLength
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   async registerEntities() {
     const entityScanner = getScannerInstance(EntityScanner);
     const entities = entityScanner.makeEntities();
 
     let entity: IteratorResult<EntityScannerMetadata>;
 
-    const syncOption = this.ctx.getSynchronize();
-    const synchronize = !!syncOption; // truthy for true, 'safe', 'dry-run'
+    const policy = this.resolveSyncPolicy();
+    this.activePolicy = policy;
+    const syncOption = policy.mode;
+    const synchronize = syncOption !== false;
     const isDryRun = syncOption === "dry-run";
     const isSafe = syncOption === "safe";
 
@@ -290,7 +408,19 @@ export class SchemaRegistrar {
           if (isDryRun) {
             this.logger.info(`[dry-run] Would CREATE TABLE ${tableName}`);
           } else {
-            await driver?.createTable(tableName, tptDdlColumns ?? metadata.columns);
+            this.logDdl(`[sync] CREATE TABLE ${tableName}`, policy);
+            try {
+              await driver?.createTable(
+                tableName,
+                tptDdlColumns ?? metadata.columns,
+              );
+            } catch (err) {
+              this.handleDdlError(
+                err,
+                `Failed to create table ${tableName}`,
+                policy,
+              );
+            }
           }
         }
       }
@@ -305,7 +435,7 @@ export class SchemaRegistrar {
         await this.syncExistingTables(
           existingEntities.map((e) => e.TargetEntity),
           entityList,
-          syncOption,
+          policy,
         );
       }
     }
@@ -345,10 +475,12 @@ export class SchemaRegistrar {
                       rootPk.name!,
                     );
                   }
-                } catch {
+                } catch (err) {
                   // SQLite: ALTER TABLE ADD CONSTRAINT is unsupported — skip the FK.
-                  this.logger.warn(
+                  this.handleDdlError(
+                    err,
                     `Could not create FK ${fkName} for TPT child table ${tableName} (may be unsupported by dialect)`,
+                    this.activePolicy,
                   );
                 }
               }
@@ -385,7 +517,7 @@ export class SchemaRegistrar {
   private async syncExistingTables(
     existingEntities: ClazzType<any>[],
     entityList: Array<{ TargetEntity: ClazzType<any>; tableName: string }>,
-    syncOption: boolean | "safe" | "dry-run",
+    policy: SynchronizePolicy,
   ): Promise<void> {
     const connection = this.ctx.getConnection();
     if (!connection) return;
@@ -405,9 +537,7 @@ export class SchemaRegistrar {
         schema,
       );
     } catch (err) {
-      this.logger.warn(
-        `[sync] SchemaDiff failed, skipping ALTER operations: ${err}`,
-      );
+      this.handleDdlError(err, "SchemaDiff failed, skipping ALTER operations", policy);
       return;
     }
 
@@ -422,21 +552,22 @@ export class SchemaRegistrar {
       );
     }
 
-    await this.applySchemaDiff(diff, fkColumnsPerTable, syncOption, dialect);
+    await this.applySchemaDiff(diff, fkColumnsPerTable, policy, dialect);
   }
 
   /**
-   * Applies a SchemaDiffResult according to the selected mode.
+   * Applies a SchemaDiffResult according to the selected policy.
    */
   private async applySchemaDiff(
     diff: SchemaDiffResult,
     fkColumnsPerTable: Map<string, Set<string>>,
-    mode: boolean | "safe" | "dry-run",
+    policy: SynchronizePolicy,
     dialect: SchemaDialect,
   ): Promise<void> {
     const driver = this.ctx.getDriver();
     if (!driver) return;
 
+    const mode = policy.mode;
     const isDryRun = mode === "dry-run";
     const isSafe = mode === "safe";
     const isFull = mode === true;
@@ -455,12 +586,15 @@ export class SchemaRegistrar {
         try {
           await driver.addColumn(col.tableName, col.columnName, typeDef);
         } catch (err) {
-          // Don't abort the entire diff on a single column failure — a
-          // type-incompatible column rename or a NOT NULL add against a
-          // populated column should be surfaced and skipped, not crash the
-          // remaining add/alter ops.
-          this.logger.warn(
-            `[sync] Failed to add column ${col.tableName}.${col.columnName}: ${err instanceof Error ? err.message : err}`,
+          // Don't abort the entire diff on a single column failure when
+          // continueOnError is true — a type-incompatible column rename or a
+          // NOT NULL add against a populated column should be surfaced and
+          // skipped, not crash the remaining add/alter ops. When
+          // continueOnError is false, handleDdlError() rethrows.
+          this.handleDdlError(
+            err,
+            `Failed to add column ${col.tableName}.${col.columnName}`,
+            policy,
           );
         }
       }
@@ -471,13 +605,29 @@ export class SchemaRegistrar {
       for (const col of diff.alterColumns) {
         const ddl = this.buildAlterColumnDDL(col, dialect);
         if (!ddl) continue; // SQLite: unsupported
+        if (this.isNarrowingAlter(col)) {
+          this.assertDestructiveAllowed(
+            "ALTER COLUMN (narrowing)",
+            `${col.tableName}.${col.columnName} (${col.currentType} → ${col.columnType})`,
+            policy,
+          );
+        }
         if (isDryRun) {
           this.logger.info(`[dry-run] ${ddl}`);
         } else {
           this.logger.warn(
             `[sync] Altering column ${col.tableName}.${col.columnName}: ${col.currentType} → ${col.columnType}`,
           );
-          await driver.executeRaw(ddl);
+          this.logDdl(`[sync] ${ddl}`, policy);
+          try {
+            await driver.executeRaw(ddl);
+          } catch (err) {
+            this.handleDdlError(
+              err,
+              `Failed to alter column ${col.tableName}.${col.columnName}`,
+              policy,
+            );
+          }
         }
       }
     }
@@ -489,6 +639,12 @@ export class SchemaRegistrar {
         const tableFkCols = fkColumnsPerTable.get(col.tableName.toLowerCase());
         if (tableFkCols?.has(col.columnName.toLowerCase())) continue;
 
+        this.assertDestructiveAllowed(
+          "DROP COLUMN",
+          `${col.tableName}.${col.columnName}`,
+          policy,
+        );
+
         if (isDryRun) {
           this.logger.info(
             `[dry-run] ALTER TABLE ${col.tableName} DROP COLUMN ${col.columnName}`,
@@ -497,7 +653,19 @@ export class SchemaRegistrar {
           this.logger.warn(
             `[sync] Dropping column ${col.tableName}.${col.columnName}`,
           );
-          await driver.dropColumn(col.tableName, col.columnName);
+          this.logDdl(
+            `[sync] ALTER TABLE ${col.tableName} DROP COLUMN ${col.columnName}`,
+            policy,
+          );
+          try {
+            await driver.dropColumn(col.tableName, col.columnName);
+          } catch (err) {
+            this.handleDdlError(
+              err,
+              `Failed to drop column ${col.tableName}.${col.columnName}`,
+              policy,
+            );
+          }
         }
       }
     }
@@ -512,9 +680,29 @@ export class SchemaRegistrar {
           this.logger.warn(
             `[sync] Renaming column ${rename.tableName}.${rename.oldColumnName} → ${rename.newColumnName}`,
           );
-          await driver.executeRaw(ddl);
+          this.logDdl(`[sync] ${ddl}`, policy);
+          try {
+            await driver.executeRaw(ddl);
+          } catch (err) {
+            this.handleDdlError(
+              err,
+              `Failed to rename column ${rename.tableName}.${rename.oldColumnName} → ${rename.newColumnName}`,
+              policy,
+            );
+          }
         }
       }
+    }
+  }
+
+  /**
+   * Emits a DDL log entry at info level when `policy.logDDL` is true.
+   * The default mode is silent so existing tests that count info-level
+   * statements are unaffected.
+   */
+  private logDdl(message: string, policy: SynchronizePolicy): void {
+    if (policy.logDDL) {
+      this.logger.info(message);
     }
   }
 
@@ -715,8 +903,10 @@ export class SchemaRegistrar {
           // can leave a UniqueIndex pointing at a column that doesn't exist
           // yet. Log and continue so a single broken constraint doesn't
           // kill app boot — registerFullTextIndexes uses the same pattern.
-          this.logger.warn(
-            `Could not create unique index ${indexName} on ${tableName}(${resolvedColumns.join(", ")}): ${err instanceof Error ? err.message : err}`,
+          this.handleDdlError(
+            err,
+            `Could not create unique index ${indexName} on ${tableName}(${resolvedColumns.join(", ")})`,
+            this.activePolicy,
           );
         }
       }
@@ -1009,8 +1199,10 @@ export class SchemaRegistrar {
             // Same schema-drift tolerance as registerUniqueIndexes /
             // registerFullTextIndexes: a missing column is a deployment
             // problem to surface, not a reason to abort boot.
-            this.logger.warn(
-              `Could not create index ${indexName} on ${tableName}(${columnName}): ${err instanceof Error ? err.message : err}`,
+            this.handleDdlError(
+              err,
+              `Could not create index ${indexName} on ${tableName}(${columnName})`,
+              this.activePolicy,
             );
           }
         }
@@ -1065,11 +1257,14 @@ export class SchemaRegistrar {
     for (let i = 0; i < ddls.length; i++) {
       const indexName = indexNames[i];
       if (existingNames.has(indexName)) continue;
+      this.logDdl(`[sync] ${ddls[i]}`, this.activePolicy);
       try {
         await driver.executeRaw(ddls[i]);
       } catch (err) {
-        this.logger.warn(
-          `Could not create full-text index ${indexName} on ${tableName}: ${err}`,
+        this.handleDdlError(
+          err,
+          `Could not create full-text index ${indexName} on ${tableName}`,
+          this.activePolicy,
         );
       }
     }

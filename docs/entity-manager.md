@@ -89,6 +89,36 @@ ALTER TABLE `user` ADD `avatar` VARCHAR(255) NULL;
 Use `synchronize: true` only in development. It can drop columns in production. Use [migrations](./migrations.md) for production schema management.
 :::
 
+### synchronize options object
+
+The bare forms above couple three independent concerns: resilience, destructive-change safety, and DDL visibility. Pass an object instead to opt into them individually:
+
+```ts
+synchronize: {
+  mode: "safe",                  // base mode (true | "safe" | "dry-run")
+  continueOnError: false,         // abort registerEntities() on first DDL failure
+  failOnDestructiveChange: true,  // throw before DROP COLUMN / narrowing ALTER
+  logDDL: true,                   // log every emitted DDL statement
+}
+```
+
+| Flag | Default | Effect when set |
+|------|---------|----------------|
+| `mode` | required | Base mode — same semantics as the bare form. |
+| `continueOnError` | `true` | When `false`, a failing DDL statement throws `OrmError(SCHEMA_SYNC_FAILED)` and aborts boot instead of being downgraded to a warning. |
+| `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN, DROP TABLE, and narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`) throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing. |
+| `logDDL` | `false` | When `true`, every emitted DDL statement is logged at info level (CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX, etc.). |
+
+The bare forms (`true`, `"safe"`, `"dry-run"`, `false`) keep working unchanged — they normalize to the same defaults above. A typical production profile is:
+
+```ts
+synchronize: {
+  mode: "safe",
+  continueOnError: false,
+  failOnDestructiveChange: true,
+}
+```
+
 ### Named connections (multi-DB)
 
 You can run multiple databases simultaneously by passing a connection name as the second argument:

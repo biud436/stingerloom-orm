@@ -8,6 +8,7 @@ import { DeleteResult } from "../types/DeleteResult";
 import { EntityResult } from "../types/EntityResult";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { SchemaDialect } from "./generators/SchemaGenerator";
+import { SynchronizePolicy } from "./DatabaseClientOptions";
 
 /**
  * Interface that exposes EntityManager internals to extracted handler classes.
@@ -23,6 +24,12 @@ export interface EntityManagerInternals {
   isSqlite?(): boolean;
   getDriver(): ISqlDriver | undefined;
   getSynchronize(): boolean | "safe" | "dry-run";
+  /**
+   * Normalized synchronize policy. Always reflects the final, defaults-applied
+   * shape regardless of whether the user passed a bare value or an options
+   * object. Returns mode=false for an attached EM (#294) or unset config.
+   */
+  getSynchronizePolicy(): SynchronizePolicy;
   getDialect(): SchemaDialect;
   getSchema(): string | undefined;
   getConnection(): { query: (sql: any) => Promise<any> } | undefined;

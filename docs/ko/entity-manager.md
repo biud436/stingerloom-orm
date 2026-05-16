@@ -87,6 +87,36 @@ ALTER TABLE `user` ADD `avatar` VARCHAR(255) NULL;
 `synchronize: true`는 개발 환경에서만 사용하세요. 프로덕션에서는 컬럼이 삭제될 수 있어요. 프로덕션 스키마 관리에는 [마이그레이션](./migrations.md)을 사용하세요.
 :::
 
+### synchronize 옵션 객체
+
+위의 단일 값은 **복원력**, **파괴적 변경 안전성**, **DDL 가시성**이라는 세 가지 별개의 관심사를 하나의 enum에 묶어 둔 형태예요. 객체 형태로 넘기면 각각을 따로 제어할 수 있습니다.
+
+```ts
+synchronize: {
+  mode: "safe",                  // 기본 모드 (true | "safe" | "dry-run")
+  continueOnError: false,         // 첫 DDL 실패에서 registerEntities() 중단
+  failOnDestructiveChange: true,  // DROP COLUMN / 좁히는 ALTER 직전에 throw
+  logDDL: true,                   // 발생하는 모든 DDL을 info 레벨로 로그 출력
+}
+```
+
+| 플래그 | 기본값 | 설정 시 동작 |
+|--------|--------|------------|
+| `mode` | 필수 | 기본 모드 — 단일 값 폼과 의미가 동일해요. |
+| `continueOnError` | `true` | `false`이면 DDL 실패가 warn으로 격하되지 않고 `OrmError(SCHEMA_SYNC_FAILED)`로 throw 되어 부팅을 중단시킵니다. |
+| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN, DROP TABLE, 좁히는 ALTER(예: `varchar(255) → int`, `varchar(255) → varchar(64)`)가 실행 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`로 throw 됩니다. |
+| `logDDL` | `false` | `true`이면 발생하는 모든 DDL(CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX 등)을 info 레벨로 로그 출력합니다. |
+
+단일 값 폼(`true`, `"safe"`, `"dry-run"`, `false`)은 그대로 유지되어 — 동일한 기본값으로 정규화돼요. 프로덕션 권장 프로파일은 다음과 같습니다.
+
+```ts
+synchronize: {
+  mode: "safe",
+  continueOnError: false,
+  failOnDestructiveChange: true,
+}
+```
+
 ### Named connections (멀티 DB)
 
 두 번째 인자로 연결 이름을 넘기면 여러 데이터베이스를 동시에 사용할 수 있어요:

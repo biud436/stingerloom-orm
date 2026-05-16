@@ -95,6 +95,31 @@ await em.register({
 
 > **경고:** `synchronize: true`는 개발 환경에서만 사용하세요. 프로덕션에서는 [마이그레이션](./migrations.md)을 사용하세요.
 
+### 옵션 객체 폼
+
+위의 네 가지 단일 값은 *복원력*, *파괴적 변경 안전성*, *DDL 가시성*이라는 세 가지 별개의 관심사를 하나의 enum에 묶어 둔 형태예요. 객체로 넘기면 각각을 따로 제어할 수 있어요.
+
+```typescript
+await em.register({
+  // ...
+  synchronize: {
+    mode: "safe",                  // 기본 모드 (true | "safe" | "dry-run")
+    continueOnError: false,         // 첫 DDL 실패에서 registerEntities() 중단
+    failOnDestructiveChange: true,  // DROP COLUMN / 좁히는 ALTER 직전에 throw
+    logDDL: true,                   // 발생하는 모든 DDL을 info 레벨로 로그 출력
+  },
+});
+```
+
+| 플래그 | 기본값 | 동작 |
+|--------|--------|------|
+| `mode` | 필수 | 기본 모드 — 단일 값 폼과 동일한 의미예요. |
+| `continueOnError` | `true` | `false`이면 DDL 실패가 warn으로 격하되지 않고 `OrmError(SCHEMA_SYNC_FAILED)`로 throw 돼요. 반쯤 마이그레이션된 스키마를 로그로만 찾기보다는 부팅을 명시적으로 실패시키고 싶을 때 사용하세요. |
+| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN, DROP TABLE, 좁히는 ALTER(예: `varchar(255) → int`, `varchar(255) → varchar(64)`)가 실행 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`로 throw 돼요. 프로덕션 안전망으로 유용해요. |
+| `logDDL` | `false` | `true`이면 발생하는 모든 DDL(CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX 등)을 info 레벨로 로그 출력해요. `"dry-run"`과 함께 쓰면 가시성이 확보돼요. |
+
+단일 값 폼(`true`, `"safe"`, `"dry-run"`, `false`)도 그대로 동작하며, 동일한 기본값으로 정규화되므로 마이그레이션이 필요 없어요.
+
 ---
 
 ## 커넥션 풀링

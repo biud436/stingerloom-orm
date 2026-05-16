@@ -142,7 +142,20 @@ type ColumnType = "varchar" | "int" | "number" | "float" | "double" | "bigint"
 | `"dry-run"` | 로그만 | 로그만 | 로그만 | 로그만 | 로그만 |
 | `false` | X | X | X | X | X |
 
-관련 파일: `src/core/SchemaRegistrar.ts` (`applySchemaDiff()`), `src/core/generators/SchemaDiff.ts`
+**옵션 객체 폼** (Issue #331): 단일 값에 묶여 있던 *복원력 / 파괴적 변경 안전성 / DDL 가시성* 세 관심사를 분리.
+```ts
+synchronize: {
+  mode: true | "safe" | "dry-run",
+  continueOnError: boolean,        // false → DDL 실패 시 부팅 중단 (default: true)
+  failOnDestructiveChange: boolean, // true → DROP / 좁히는 ALTER throw (default: false)
+  logDDL: boolean,                  // true → 모든 DDL을 info 로그 (default: false)
+}
+```
+- 단일 값 폼(`true`, `"safe"`, `"dry-run"`, `false`)은 backward-compatible — 위 기본값으로 정규화됨
+- 정규화: `normalizeSynchronizePolicy()` → `SynchronizePolicy` (싱글 truth)
+- 에러 코드: `OrmErrorCode.SCHEMA_SYNC_FAILED`, `SCHEMA_SYNC_DESTRUCTIVE_CHANGE`
+
+관련 파일: `src/core/SchemaRegistrar.ts` (`applySchemaDiff()`, `handleDdlError()`, `assertDestructiveAllowed()`), `src/core/DatabaseClientOptions.ts` (`SynchronizeOption`, `normalizeSynchronizePolicy()`), `src/core/generators/SchemaDiff.ts`
 
 ### 6. NamingStrategy
 

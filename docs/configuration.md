@@ -95,6 +95,31 @@ Same scenario again. The ORM prints the DDL to your console -- `ALTER TABLE user
 
 > **Warning:** Only use `synchronize: true` in development environments. In production, use [migrations](./migrations.md) instead.
 
+### Options object form
+
+The four bare values above couple three independent concerns: *resilience*, *destructive-change safety*, and *DDL visibility*. Pass an object to control them individually:
+
+```typescript
+await em.register({
+  // ...
+  synchronize: {
+    mode: "safe",                  // base mode (true | "safe" | "dry-run")
+    continueOnError: false,         // abort registerEntities() on first DDL failure
+    failOnDestructiveChange: true,  // throw before DROP COLUMN / narrowing ALTER
+    logDDL: true,                   // log every emitted DDL statement
+  },
+});
+```
+
+| Flag | Default | What it does |
+|------|---------|--------------|
+| `mode` | required | Base mode — same as the bare-form values. |
+| `continueOnError` | `true` | When `false`, the first DDL failure throws `OrmError(SCHEMA_SYNC_FAILED)` instead of degrading to a warning. Use this when you'd rather see boot fail loudly than discover a half-migrated schema in the logs. |
+| `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN, DROP TABLE, and narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`) throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing — useful as a production tripwire. |
+| `logDDL` | `false` | When `true`, every emitted DDL is logged at info level (CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX, etc.). Pairs well with `"dry-run"` for full visibility. |
+
+The bare forms (`true`, `"safe"`, `"dry-run"`, `false`) still work and normalize to the same defaults above — no migration is required.
+
 ---
 
 ## Connection Pooling

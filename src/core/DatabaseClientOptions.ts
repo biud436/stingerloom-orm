@@ -79,12 +79,26 @@ interface BaseDatabaseClientOptions {
 
   /**
    * Enable/disable schema synchronization.
+   *
+   * Accepts either a bare form or an options object that separates the three
+   * independent concerns coupled into the bare form:
+   *
+   * Bare forms (kept for backward compatibility):
    * - `true`: Full synchronization — creates tables, adds/drops columns as needed.
    * - `'safe'`: Safe mode — creates tables and adds columns, but never drops columns or tables.
    * - `'dry-run'`: Preview mode — logs DDL statements that would be executed without applying them.
    * - `false` (default): No synchronization.
+   *
+   * Options-object form (`SynchronizeOptions`):
+   * - `mode` — the bare-form behavior above (`true | "safe" | "dry-run"`).
+   * - `continueOnError` — when `false`, a failing DDL statement aborts `registerEntities()`
+   *    instead of degrading to a warning. Default `true` (legacy behavior).
+   * - `failOnDestructiveChange` — when `true`, throws before running DROP COLUMN /
+   *    DROP TABLE / narrowing ALTER (e.g. `varchar(255) → int`). Default `false`.
+   * - `logDDL` — when `true`, logs every emitted DDL statement at info level.
+   *    Default `false`.
    */
-  synchronize?: boolean | "safe" | "dry-run";
+  synchronize?: SynchronizeOption;
 
   /**
    * Enable/disable query logging and diagnostics.
@@ -492,6 +506,112 @@ export function validateDatabaseClientOptions(
       "Check your DatabaseClientOptions and fix the listed issues.",
     );
   }
+}
+
+/**
+ * Bare-form synchronize values (legacy shape).
+ */
+export type SynchronizeMode = boolean | "safe" | "dry-run";
+
+/**
+ * Options-object form of the `synchronize` field. Separates the resilience,
+ * destructive-change safety, and DDL visibility concerns that the bare form
+ * coupled together.
+ */
+export interface SynchronizeOptions {
+  /**
+   * The base synchronization mode.
+   * - `true`: Full sync (create / add / alter / drop / rename).
+   * - `"safe"`: Create tables and add columns only — never drop/alter/rename.
+   * - `"dry-run"`: Log DDL that would run, but never execute.
+   */
+  mode: true | "safe" | "dry-run";
+
+  /**
+   * When `false`, the first DDL failure aborts `registerEntities()` by
+   * rethrowing the error. When `true`, failures are downgraded to warnings and
+   * registration continues — matches the historical behavior.
+   * @default true
+   */
+  continueOnError?: boolean;
+
+  /**
+   * When `true`, destructive operations throw before executing:
+   * DROP COLUMN, DROP TABLE, and narrowing ALTER (e.g. `varchar(255) → int`).
+   * Use this to opt production into a hard failure instead of silently
+   * applying destructive DDL.
+   * @default false
+   */
+  failOnDestructiveChange?: boolean;
+
+  /**
+   * When `true`, every emitted DDL statement is logged at info level — even
+   * statements that succeed silently today (add column, create index, etc.).
+   * @default false
+   */
+  logDDL?: boolean;
+}
+
+/**
+ * Union of every accepted value for the `synchronize` option.
+ */
+export type SynchronizeOption = SynchronizeMode | SynchronizeOptions;
+
+/**
+ * Internal normalized representation. Every code path inside the ORM should
+ * consume this shape instead of branching on the original union — the
+ * normalizer in `normalizeSynchronizePolicy()` is the single point of truth.
+ */
+export interface SynchronizePolicy {
+  /**
+   * `false` means no synchronization runs at all (registrar exits early).
+   * Otherwise carries the active mode.
+   */
+  mode: false | true | "safe" | "dry-run";
+  continueOnError: boolean;
+  failOnDestructiveChange: boolean;
+  logDDL: boolean;
+}
+
+/**
+ * Maps an arbitrary `synchronize` value to the normalized policy.
+ *
+ * Defaults applied for the bare forms preserve the historical behavior:
+ *   - `continueOnError: true` (existing try/catch-warn semantics)
+ *   - `failOnDestructiveChange: false` (drops just ran)
+ *   - `logDDL: false` (only some paths logged)
+ *
+ * When an options object is passed, omitted flags fall back to the same
+ * historical defaults so callers only opt into the new behavior they want.
+ */
+export function normalizeSynchronizePolicy(
+  value: SynchronizeOption | undefined,
+): SynchronizePolicy {
+  if (value === undefined || value === false) {
+    return {
+      mode: false,
+      continueOnError: true,
+      failOnDestructiveChange: false,
+      logDDL: false,
+    };
+  }
+
+  if (value === true || value === "safe" || value === "dry-run") {
+    return {
+      mode: value,
+      continueOnError: true,
+      failOnDestructiveChange: false,
+      logDDL: false,
+    };
+  }
+
+  // Options-object form
+  return {
+    mode: value.mode,
+    continueOnError: value.continueOnError ?? true,
+    failOnDestructiveChange: value.failOnDestructiveChange ?? false,
+    logDDL: value.logDDL ?? false,
+  };
 }
 
 /**

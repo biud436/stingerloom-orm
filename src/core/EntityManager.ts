@@ -20,7 +20,11 @@ import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { Conditions } from "./Conditions";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
-import { DatabaseClientOptions, validateDatabaseClientOptions } from "./DatabaseClientOptions";
+import {
+  DatabaseClientOptions,
+  normalizeSynchronizePolicy,
+  validateDatabaseClientOptions,
+} from "./DatabaseClientOptions";
 import { MetadataContext } from "../metadata/MetadataContext";
 import { injectLazyProxy } from "./LazyLoader";
 import { EntityValidator } from "./EntityValidator";
@@ -290,11 +294,21 @@ export class EntityManager implements BaseEntityManager {
     isPostgres: () => this.isPostgres(),
     getDriver: () => this.driver,
     getEntities: () => this._entities,
-    getSynchronize: () =>
+    getSynchronize: () => {
+      if (this.isAttached) return false;
+      const raw = this.client.getOptions(this.connectionName).synchronize;
+      // Surface the underlying mode for legacy callers; the policy form is
+      // exposed via getSynchronizePolicy().
+      if (raw === undefined || raw === false) return false;
+      if (raw === true || raw === "safe" || raw === "dry-run") return raw;
+      return raw.mode;
+    },
+    getSynchronizePolicy: () =>
       this.isAttached
-        ? false
-        : (this.client.getOptions(this.connectionName).synchronize ??
-            false) as boolean | "safe" | "dry-run",
+        ? normalizeSynchronizePolicy(false)
+        : normalizeSynchronizePolicy(
+            this.client.getOptions(this.connectionName).synchronize,
+          ),
     getDialect: () => {
       if (this.isMySqlFamily()) return "mysql" as const;
       if (this.isPostgres()) return "postgres" as const;
