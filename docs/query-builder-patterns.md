@@ -78,7 +78,7 @@ function withPagination<T>(page: number, size: number) {
 }
 
 function withActiveFilter<T>(qb: SelectQueryBuilder<T>) {
-  return qb.where("deletedAt", "IS NULL", null);
+  return qb.where("deletedAt", null);
 }
 
 // Compose them
@@ -141,10 +141,12 @@ const users = await em
   .withCount("posts", "activeCount", (sub) =>
     sub.where("status", "published") // only count published posts
   )
-  .orderBy({ posts_count: "DESC" } as any)
+  .appendSql(sql`ORDER BY "posts_count" DESC`)
   .getRawMany();
 // SELECT "u".*, (SELECT COUNT(*) FROM post ...) AS "posts_count", ...
 ```
+
+The count alias is added to the SELECT list, not the entity — so `orderBy({ posts_count: "DESC" })` would qualify it as `"u"."posts_count"` (a column that doesn't exist) and the database would reject the query. Reach for `appendSql(sql\`ORDER BY "alias" ...\`)` instead.
 
 ### `loadRelation()` — Quick Relation Loading
 
@@ -249,6 +251,22 @@ const users = await repo
 Scopes compose with all other builder methods — `where()`, `when()`, `pipe()`, `whereHas()`, etc. They're just functions that receive the query builder.
 
 Calling `applyScope()` with a non-existent name throws an `OrmError` listing the available scopes.
+
+## Cloning a Base Query — `clone()`
+
+When several variants share a base query, build it once and `clone()` per branch:
+
+```typescript
+const base = em
+  .createQueryBuilder(Order, "o")
+  .where("isArchived", false)
+  .leftJoinAndSelect("customer", "c");
+
+const recent = await base.clone().where("createdAt", ">=", thirtyDaysAgo).getMany();
+const flagged = await base.clone().where("flagged", true).getMany();
+```
+
+`clone()` is a **shallow copy** — arrays (`whereClauses`, `joinClauses`, ...) are duplicated, but the alias registry and the property/column maps are shared by reference. Mutating column metadata on the clone is not safe; chaining additional `where`/`join`/`select` calls is.
 
 ## Next Steps
 

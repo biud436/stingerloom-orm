@@ -33,9 +33,11 @@ await em.createQueryBuilder(Post, "p")
   .addSelect(sql`COUNT(*)`, "postCount")
   .groupBy(["p.category"])
   .having(sql`COUNT(*) >= ${5}`)            // ← 반복
-  .addOrderBy("postCount", "DESC")
+  .appendSql(sql`ORDER BY "postCount" DESC`)
   .getRawMany();
 ```
+
+`addOrderBy("postCount", "DESC")`는 키를 FROM 별칭으로 한정해서 `"p"."postCount"`가 됩니다. SELECT 리스트에만 존재하는 별칭이라 DB가 거부하죠. SELECT 별칭으로 정렬하려면 `appendSql(sql\`ORDER BY "alias" ...\`)`로 한 단계 내려갑니다 — 별칭이 그대로 살아남습니다.
 
 둘 다 지원하긴 합니다. 다만 동일한 집계를 여러 자리에서 쓴다면 `qAlias()` 쪽이 유리해요. 기준을 바꿀 때 한 군데만 고치면 되니까요. `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()`, `.countDistinct()` 전부 같은 방식으로 쓰고, 전체 연산자는 [QueryDSL 집계](./query-builder-querydsl.md#집계-count-sum-avg-min-max)에 정리돼 있습니다.
 
@@ -99,7 +101,7 @@ const authorStats = await em
 
 ### WHERE IN 서브쿼리
 
-`Conditions.inSubquery()`를 쓰거나, 다른 빌더에서 만든 `Sql` 객체를 그대로 넘깁니다.
+타입드 단축은 `whereInSubquery(column, subBuilder)`입니다 — [패턴 & 생산성](./query-builder-patterns.md#whereinsubquery--wherenotinsubquery)에서 사용 예제를 확인하세요. 서브쿼리가 `SelectQueryBuilder`로 표현되지 않을 때(예: raw 소스에서 이미 `Sql` 조각을 받은 경우)에만 `Conditions.inSubquery()`로 내려갑니다.
 
 ```typescript
 import sql from "sql-template-tag";
@@ -163,7 +165,7 @@ const qb = em.createQueryBuilder();
 const results = await em.query(
   qb
     .select(['"sub"."authorId"', '"sub"."cnt"'])
-    .from(inner.asSubquery("sub").sql)
+    .from(inner.asSubquery("sub"))
     .where([sql`"sub"."cnt" >= ${3}`])
     .build()
 );

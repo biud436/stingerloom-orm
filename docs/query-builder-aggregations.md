@@ -76,10 +76,12 @@ const authorStats = await em
   .addSelect(sql`AVG("p"."likeCount")`, "avgLikes")
   .groupBy([u.col("name")])
   .having(sql`COUNT(*) >= ${3}`)
-  .addOrderBy("postCount", "DESC")
+  .appendSql(sql`ORDER BY "postCount" DESC`)
   .getRawMany();
 // [{ name: "Alice", postCount: 12, avgLikes: 45.3 }, ...]
 ```
+
+`addOrderBy("postCount", "DESC")` would qualify the key as `"p"."postCount"` (the FROM alias), which is not a real column on `Post`. To order by a `SELECT`-list alias, drop down to `appendSql(sql\`ORDER BY "alias" ...\`)` — the alias survives because no qualification is applied.
 
 ## Subqueries
 
@@ -87,7 +89,7 @@ The query builder supports subqueries in WHERE, SELECT, and FROM clauses. While 
 
 ### WHERE IN Subquery
 
-Use `Conditions.inSubquery()` or pass a built `Sql` object from another query builder:
+The typed shortcut is `whereInSubquery(column, subBuilder)` — see [Patterns & Productivity](./query-builder-patterns.md#whereinsubquery--wherenotinsubquery) for a worked example. Reach for `Conditions.inSubquery()` only when the subquery isn't expressible as a `SelectQueryBuilder` (e.g. you already have a `Sql` fragment from a raw source):
 
 ```typescript
 import sql from "sql-template-tag";
@@ -112,17 +114,17 @@ Use `Conditions.exists()` or `Conditions.notExists()` for correlated subqueries:
 
 ```typescript
 // Find authors who have at least one published post
-const posts = await em
-  .createQueryBuilder(Post, "p")
-  .where("authorId", sql`"a"."id"`)
-  .where("status", "published")
-  .toSql();
-
 const authors = await em
   .createQueryBuilder(User, "a")
-  .where(Conditions.exists(sql`(SELECT 1 FROM "post" "p" WHERE "p"."author_id" = "a"."id" AND "p"."status" = ${"published"})`))
+  .where(Conditions.exists(sql`
+    SELECT 1 FROM "post" "p"
+    WHERE "p"."author_id" = "a"."id"
+      AND "p"."status" = ${"published"}
+  `))
   .getMany();
 ```
+
+Prefer [`whereHas()`](./query-builder-patterns.md#wherehas--wherenothas--filter-by-relation-existence) over hand-built `EXISTS` when the correlation maps to a relation — it derives the join condition from decorator metadata.
 
 ### Scalar Subquery in SELECT
 
@@ -157,7 +159,7 @@ const qb = em.createQueryBuilder();
 const results = await em.query(
   qb
     .select(['"sub"."authorId"', '"sub"."cnt"'])
-    .from(inner.asSubquery("sub").sql)
+    .from(inner.asSubquery("sub"))
     .where([sql`"sub"."cnt" >= ${3}`])
     .build()
 );

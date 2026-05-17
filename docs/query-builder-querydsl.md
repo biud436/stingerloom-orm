@@ -87,6 +87,31 @@ u2.col("firstName");          // qAlias also supports .col()
 
 You can mix the two styles inside the same chain. Reach for `alias()` when you only need a typed reference; reach for `qAlias()` when you also want to compose conditions.
 
+### Dynamic column access — `.field()` / `.jsonField()`
+
+`qAlias()`'s static accessors require literal property names. When the column comes from user input (a sort key, a filter field selected in the UI), use the dynamic accessors instead:
+
+```typescript
+import { qAlias } from "@stingerloom/orm";
+
+const ALLOWED_SORT = new Set(["id", "createdAt", "priority"]);
+
+function buildIssueQuery(sortField: string) {
+  if (!ALLOWED_SORT.has(sortField)) throw new Error("invalid sort");
+
+  const i = qAlias(Issue, "i");
+  return em
+    .createQueryBuilder(Issue, "i")
+    .where(i.status.eq("open"))
+    .orderBy(i.field(sortField).desc());
+}
+```
+
+- `field(name)` returns a `ColumnExpression` for any column on the entity. Use after **server-side allowlist validation** — the accessor itself does not check the name.
+- `jsonField(name)` returns a `JsonPathExpression` for `@Column({ type: "json" | "jsonb" })` columns; falls back to a plain column proxy if the column isn't registered as JSON.
+
+Both bypass TypeScript's keyof-narrowing for the property name, so the safety guarantee is yours to maintain.
+
 ---
 
 The rest of this page walks through what you can do with those column references. Two guarantees hold throughout: column references resolve through the alias registry (so naming-strategy translation always applies), and every user-supplied value — including LIKE escape characters — is a bound parameter.

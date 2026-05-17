@@ -87,6 +87,31 @@ u2.col("firstName");           // qAlias도 .col() 지원
 
 한 쿼리 안에서 두 스타일을 섞어 써도 아무 문제 없습니다. 가벼운 참조만 필요할 땐 `alias()`, 조건식까지 만들 땐 `qAlias()` — 이렇게 선택하면 됩니다.
 
+### 동적 컬럼 접근 — `.field()` / `.jsonField()`
+
+`qAlias()`의 정적 접근자는 컬럼 이름이 리터럴이어야 합니다. UI에서 선택된 정렬 키나 필터 필드처럼 컬럼 이름이 사용자 입력에서 온다면, 동적 접근자를 쓰세요.
+
+```typescript
+import { qAlias } from "@stingerloom/orm";
+
+const ALLOWED_SORT = new Set(["id", "createdAt", "priority"]);
+
+function buildIssueQuery(sortField: string) {
+  if (!ALLOWED_SORT.has(sortField)) throw new Error("invalid sort");
+
+  const i = qAlias(Issue, "i");
+  return em
+    .createQueryBuilder(Issue, "i")
+    .where(i.status.eq("open"))
+    .orderBy(i.field(sortField).desc());
+}
+```
+
+- `field(name)` — 엔티티의 어떤 컬럼이든 `ColumnExpression`을 돌려줍니다. **서버 측 allowlist 검증을 마친 뒤에만** 호출하세요. 접근자 자체는 이름을 검사하지 않습니다.
+- `jsonField(name)` — `@Column({ type: "json" | "jsonb" })` 컬럼용 `JsonPathExpression`을 돌려줍니다. JSON으로 등록되지 않은 컬럼이면 일반 컬럼 프록시로 폴백합니다.
+
+둘 다 컬럼 이름에 대한 TypeScript의 keyof 좁힘을 우회하므로, 안전성을 지키는 책임은 호출 측에 있습니다.
+
 ---
 
 여기서부터는 `qAlias()`가 돌려주는 컬럼 참조로 할 수 있는 것들을 하나씩 정리합니다. 모든 예제는 동일한 두 가지 약속을 지킵니다. 컬럼 참조는 별칭 레지스트리를 통해 해석되고, 사용자 값은 전부 파라미터 바인딩으로 들어갑니다.

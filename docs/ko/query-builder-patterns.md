@@ -74,7 +74,7 @@ function withPagination<T>(page: number, size: number) {
 }
 
 function withActiveFilter<T>(qb: SelectQueryBuilder<T>) {
-  return qb.where("deletedAt", "IS NULL", null);
+  return qb.where("deletedAt", null);
 }
 
 // 합성해서 사용
@@ -139,19 +139,12 @@ const users = await em
   .withCount("posts", "activeCount", (sub) =>
     sub.where("status", "published") // published만 카운트
   )
-  .orderBy({ posts_count: "DESC" } as any)
+  .appendSql(sql`ORDER BY "posts_count" DESC`)
   .getRawMany();
 // SELECT "u".*, (SELECT COUNT(*) FROM post ...) AS "posts_count", ...
 ```
 
-`orderBy`의 `as any`가 신경 쓰이는 데는 이유가 있습니다. `posts_count`는 엔티티 프로퍼티가 아니라 런타임에 붙는 파생 컬럼이라 `keyof User` 자동완성 대상이 아니거든요. `withCount` 결과로 정렬하려면 `as any`를 달거나, 아래처럼 raw 정렬 + `getRawMany()` 조합이 타입 측면에서 더 깔끔합니다.
-
-```typescript
-import sql from "sql-template-tag";
-
-qb.withCount("posts")
-  .addOrderBy(sql`"posts_count"`, "DESC");
-```
+카운트 별칭은 SELECT 리스트에만 존재하는 컬럼이라 엔티티 프로퍼티가 아닙니다. `orderBy({ posts_count: "DESC" })`로 정렬하려 하면 키가 FROM 별칭으로 한정돼서 `"u"."posts_count"`가 되고, 존재하지 않는 컬럼이라 DB가 쿼리를 거부합니다. `appendSql(sql\`ORDER BY "alias" ...\`)`로 한 단계 내려가야 별칭이 그대로 살아남습니다.
 
 ### `loadRelation()` — 간결한 관계 로딩
 
@@ -288,6 +281,22 @@ async function claimNext(): Promise<Job | null> {
 ```
 
 트랜잭션 안에서 실행해야 잠금이 의미가 있습니다. 잠금 옵션의 드라이버 호환성은 [실행 & 결과 → NOWAIT과 SKIP LOCKED](./query-builder-execution.md#nowait과-skip-locked)를 보세요.
+
+## 베이스 쿼리 복제 — `clone()`
+
+같은 베이스 쿼리에서 가지가 여러 갈래로 뻗는다면, 한 번 만들어 두고 갈래마다 `clone()`을 씁니다.
+
+```typescript
+const base = em
+  .createQueryBuilder(Order, "o")
+  .where("isArchived", false)
+  .leftJoinAndSelect("customer", "c");
+
+const recent = await base.clone().where("createdAt", ">=", thirtyDaysAgo).getMany();
+const flagged = await base.clone().where("flagged", true).getMany();
+```
+
+`clone()`은 **얕은 복제**입니다. 배열들(`whereClauses`, `joinClauses` 등)은 새로 만들지만, 별칭 레지스트리와 프로퍼티/컬럼 맵은 참조 공유입니다. 복제본에 `where`/`join`/`select`를 더 체이닝하는 건 안전하지만, 컬럼 메타데이터 자체를 수정하지는 마세요.
 
 ## 다음 단계
 

@@ -100,7 +100,9 @@ All four combinations are available:
 | `forShareSkipLocked()` | `FOR SHARE SKIP LOCKED` |
 
 ::: warning
-NOWAIT and SKIP LOCKED require MySQL 8.0+ or PostgreSQL 9.5+. SQLite does not support pessimistic locking and throws `UNSUPPORTED_DATABASE`.
+NOWAIT and SKIP LOCKED require MySQL 8.0+ or PostgreSQL 9.5+.
+
+SQLite does not support row-level locking — its concurrency model is database-level (`BEGIN EXCLUSIVE`). The query builder appends `FOR UPDATE` to the SQL regardless of dialect, so calling these methods against SQLite produces a syntax error at execution time. Gate the call on the dialect (`em.getDriver().isSqlite()` / `isMySqlFamily()`) when you need portable code.
 :::
 
 ## Index Hints
@@ -124,6 +126,8 @@ Three MySQL index hint types are available:
 | `forceIndex(name)` | `FORCE INDEX (name)` | Force the planner to use this index |
 | `ignoreIndex(name)` | `IGNORE INDEX (name)` | Tell the planner to skip this index |
 
+On non-MySQL drivers these calls are accepted but **silently dropped** from the emitted SQL — there is no warning. Wrap them in a dialect check (`em.getDriver().isMySqlFamily()`) if you ship to multiple dialects from the same code path.
+
 For PostgreSQL, use the `hint()` method to add [pg_hint_plan](https://pg-hint-plan.readthedocs.io/) style hints:
 
 ```typescript
@@ -142,6 +146,49 @@ If your entity has a `@DeletedAt` column, the query builder automatically exclud
 ```typescript
 qb.withDeleted();
 ```
+
+## Tenant Scope Opt-Out
+
+Under the `tenant_column` multi-tenancy strategy, every query built against a tenant-scoped entity is filtered by `tenant_id = <currentTenant>` automatically. The opt-out is per-query:
+
+```typescript
+const allTenantUsers = await em
+  .createQueryBuilder(User, "u")
+  .withoutTenantScope()
+  .getMany();
+// SELECT ... FROM "user" "u"  (no tenant predicate)
+```
+
+This is the right escape hatch for admin dashboards, background reconciliation jobs, and data migrations that genuinely need cross-tenant visibility. No-op when the strategy is not `tenant_column` or the entity is `@NonTenantEntity()`. For a context-wide opt-out, use `MetadataContext.runUnscoped()` instead.
+
+## Escape Hatches
+
+When the typed surface doesn't reach where you need to go, two methods drop you down to raw SQL without leaving the builder:
+
+```typescript
+qb
+  .where("status", "active")
+  .appendSql(sql`ORDER BY "posts_count" DESC NULLS LAST`)
+  .getRawMany();
+```
+
+- `appendSql(fragment)` splices a `Sql` fragment at the end of the assembled query. Useful for clauses the typed surface doesn't have (e.g. ordering by a `SELECT`-list alias, custom `WINDOW` definitions).
+- `asSubquery(alias)` returns the builder as a `Sql` that can be passed to `RawQueryBuilder.from()` or `Conditions.exists()` — parameter bindings are preserved.
+
+## `getCount()` / `exists()` — Selection State is Ignored
+
+These methods rebuild the SELECT from scratch (`SELECT COUNT(*) ...` and `SELECT 1 ... LIMIT 1`). They reuse your `WHERE`, `JOIN`, `GROUP BY`, and `HAVING` clauses, but anything added via `addSelect()`, `withCount()`, or `addSelectSubquery()` is silently discarded:
+
+```typescript
+const total = await em
+  .createQueryBuilder(User, "u")
+  .where("isActive", true)
+  .addSelect(sql`COUNT(*)`, "extra")  // discarded by getCount()
+  .getCount();
+// SELECT COUNT(*) AS "count" FROM "user" "u" WHERE "isActive" = true
+```
+
+This is the intended behavior — but if you're chaining `.getCount()` onto a builder used elsewhere with `addSelect`, don't expect the projection to participate in the count.
 
 ## Result Validation — validate()
 

@@ -102,7 +102,9 @@ const job = await em
 | `forShareSkipLocked()` | `FOR SHARE SKIP LOCKED` |
 
 ::: warning
-NOWAIT과 SKIP LOCKED는 MySQL 8.0 이상 또는 PostgreSQL 9.5 이상이 필요해요. SQLite는 비관적 잠금 자체를 지원하지 않아 `UNSUPPORTED_DATABASE` 에러가 발생합니다.
+NOWAIT과 SKIP LOCKED는 MySQL 8.0 이상 또는 PostgreSQL 9.5 이상이 필요해요.
+
+SQLite는 행 단위 잠금이 없습니다 — 동시성 모델이 DB 단위 (`BEGIN EXCLUSIVE`)예요. 쿼리 빌더는 다이얼렉트와 무관하게 SQL에 `FOR UPDATE`를 그대로 붙이므로, SQLite에 대고 잠금 메서드를 호출하면 실행 시점에 구문 오류가 납니다. 다이얼렉트 무관 코드라면 `em.getDriver().isSqlite()` / `isMySqlFamily()`로 분기해 주세요.
 :::
 
 ## 인덱스 힌트
@@ -125,6 +127,8 @@ MySQL에는 세 종류의 힌트가 있습니다.
 | `useIndex(name)` | `USE INDEX (name)` | 옵티마이저에 인덱스 제안 |
 | `forceIndex(name)` | `FORCE INDEX (name)` | 특정 인덱스 사용 강제 |
 | `ignoreIndex(name)` | `IGNORE INDEX (name)` | 특정 인덱스 제외 |
+
+MySQL 외 드라이버에서는 호출이 받아들여지긴 하지만 **경고 없이 SQL에서 빠집니다**. 같은 코드가 여러 다이얼렉트에 배포된다면 `em.getDriver().isMySqlFamily()`로 가드하세요.
 
 PostgreSQL에서는 `hint()` 메서드로 [pg_hint_plan](https://pg-hint-plan.readthedocs.io/) 스타일 힌트를 넣을 수 있습니다. 여러 번 호출하면 누적돼 하나의 `/*+ ... */` 블록으로 합쳐져요.
 
@@ -149,6 +153,49 @@ const orders = await em
 ```typescript
 qb.withDeleted();
 ```
+
+## 테넌트 스코프 우회 — `withoutTenantScope()`
+
+`tenant_column` 멀티테넌시 전략에서는 테넌트 스코프 엔티티에 대한 모든 빌더 쿼리에 `tenant_id = <현재 테넌트>` 조건이 자동으로 붙습니다. 쿼리 단위로 우회하려면:
+
+```typescript
+const allTenantUsers = await em
+  .createQueryBuilder(User, "u")
+  .withoutTenantScope()
+  .getMany();
+// SELECT ... FROM "user" "u"  (테넌트 조건 없음)
+```
+
+관리자 대시보드, 백그라운드 재조정 잡, 데이터 마이그레이션처럼 테넌트 경계를 가로지르는 작업에 쓰는 정식 escape hatch입니다. 전략이 `tenant_column`이 아니거나 엔티티가 `@NonTenantEntity()`면 no-op이에요. 컨텍스트 전체를 우회하려면 `MetadataContext.runUnscoped()`를 쓰세요.
+
+## Escape Hatch
+
+타입드 표면이 닿지 않는 곳이 있을 때, 빌더를 떠나지 않고도 raw SQL로 내려가는 두 가지 메서드가 있습니다.
+
+```typescript
+qb
+  .where("status", "active")
+  .appendSql(sql`ORDER BY "posts_count" DESC NULLS LAST`)
+  .getRawMany();
+```
+
+- `appendSql(fragment)` — 조립된 쿼리 끝에 `Sql` 조각을 끼워 넣습니다. 타입드 표면이 못 다루는 절(예: SELECT 별칭 정렬, 커스텀 `WINDOW` 정의)에 유용해요.
+- `asSubquery(alias)` — 빌더를 `Sql`로 바꿔서 `RawQueryBuilder.from()`이나 `Conditions.exists()`에 넘길 수 있게 합니다. 파라미터 바인딩이 보존됩니다.
+
+## `getCount()` / `exists()` — 선택 상태는 무시됨
+
+이 두 메서드는 SELECT를 처음부터 다시 짭니다 (`SELECT COUNT(*) ...`, `SELECT 1 ... LIMIT 1`). `WHERE`, `JOIN`, `GROUP BY`, `HAVING`은 재활용하지만, `addSelect()` / `withCount()` / `addSelectSubquery()`로 더한 모든 것은 조용히 버립니다.
+
+```typescript
+const total = await em
+  .createQueryBuilder(User, "u")
+  .where("isActive", true)
+  .addSelect(sql`COUNT(*)`, "extra")  // getCount()에서는 버려짐
+  .getCount();
+// SELECT COUNT(*) AS "count" FROM "user" "u" WHERE "isActive" = true
+```
+
+의도된 동작이지만, 다른 곳에서 `addSelect`가 붙은 빌더에 `.getCount()`를 체이닝한다면 프로젝션이 카운트에 반영될 거라 기대하지 마세요.
 
 ## 결과 검증 — `validate()`
 
