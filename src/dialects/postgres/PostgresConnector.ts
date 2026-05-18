@@ -23,6 +23,7 @@ export class PostgresConnector extends IConnector {
   private validateOnBorrow = false;
   private readonly logger = new Logger("PostgresConnector");
   private _dbVersion: DbVersion = DbVersion.UNKNOWN;
+  private warnedInvalidTenantIds = new Set<string>();
 
   private static readonly ISOLATION_LEVEL_SQL: Record<string, string> = {
     "READ UNCOMMITTED": "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED",
@@ -35,8 +36,14 @@ export class PostgresConnector extends IConnector {
    * Validates a PostgreSQL identifier (only alphanumerics, underscores, and dollar signs are allowed).
    * Throws when the name contains invalid characters.
    */
+  private static readonly IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_$-]*$/;
+
+  private static isValidIdentifier(name: string): boolean {
+    return PostgresConnector.IDENTIFIER_PATTERN.test(name);
+  }
+
   private static validateIdentifier(name: string): void {
-    if (!/^[a-zA-Z_][a-zA-Z0-9_$-]*$/.test(name)) {
+    if (!PostgresConnector.isValidIdentifier(name)) {
       throw new OrmError(
         OrmErrorCode.INVALID_QUERY,
         `Invalid identifier: "${name}". Only alphanumeric characters, underscores, hyphens, and dollar signs are allowed.`,
@@ -319,8 +326,28 @@ export class PostgresConnector extends IConnector {
       const tenant = MetadataContext.getCurrentTenant();
       const schema = tenant !== "public" ? tenant : this.schema;
       if (schema !== "public") {
-        const safeSchema = this.escapeIdentifier(schema);
-        await client.query(`SET LOCAL search_path TO ${safeSchema}`);
+        // The default search_path strategy treats the active MetadataContext
+        // tenant as a PG schema name. When apps open MetadataContext.run()
+        // frames with non-schema markers (e.g. a numeric workspace id used
+        // purely for app-side context propagation), the SET LOCAL would
+        // crash every transaction. Skip the switch and warn once so users
+        // who *did* intend schema isolation notice the misconfiguration.
+        if (!PostgresConnector.isValidIdentifier(schema)) {
+          if (!this.warnedInvalidTenantIds.has(schema)) {
+            this.warnedInvalidTenantIds.add(schema);
+            this.logger.warn(
+              `MetadataContext tenant "${schema}" is not a valid PostgreSQL ` +
+                `identifier — skipping SET LOCAL search_path. If you intended ` +
+                `schema-based isolation, set tenantStrategy:"schema_qualified" ` +
+                `or use a schema-name tenant marker. If you use MetadataContext ` +
+                `only for app-side context, set tenantStrategy:"tenant_column" ` +
+                `to silence this warning.`,
+            );
+          }
+        } else {
+          const safeSchema = this.escapeIdentifier(schema);
+          await client.query(`SET LOCAL search_path TO ${safeSchema}`);
+        }
       }
     }
   }
