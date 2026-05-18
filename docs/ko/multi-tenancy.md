@@ -375,6 +375,26 @@ App                                    PostgreSQL
 
 **단점:** 모든 테넌트 읽기에 트랜잭션 래핑이 필요해서 지연이 추가됩니다.
 
+#### 테넌트 마커는 유효한 PG 식별자여야 합니다
+
+`search_path`가 기본 전략이기 때문에, `MetadataContext.run(<value>)`에 넘긴 값이 그대로 PostgreSQL 스키마 이름으로 사용됩니다 (`SET LOCAL search_path TO "<value>"`). 즉 마커는 유효한 PG 식별자여야 합니다 — 알파벳·숫자·언더스코어·하이픈·`$`만 허용되며, 시작 문자는 알파벳 또는 언더스코어여야 합니다.
+
+식별자 검증을 통과하지 못하는 값(예: `"12345"` 같은 순수 숫자 workspace id)을 넘기면, 커넥터는 모든 트랜잭션을 중단하는 대신 `SET LOCAL`을 **skip하고** 유니크한 invalid 마커당 한 번씩 경고를 남깁니다:
+
+```
+WARN [PostgresConnector] MetadataContext tenant "12345" is not a valid
+PostgreSQL identifier — skipping SET LOCAL search_path. If you intended
+schema-based isolation, set tenantStrategy:"schema_qualified" or use a
+schema-name tenant marker. If you use MetadataContext only for app-side
+context, set tenantStrategy:"tenant_column" to silence this warning.
+```
+
+세 가지 해결 경로가 있습니다:
+
+1. **스키마 이름 형태의 마커로 바꿉니다.** 숫자 id를 prefix와 함께 감싸서 동일한 문자열을 스키마 이름으로도 사용하세요: `MetadataContext.run(\`tenant_${workspaceId}\`, ...)`.
+2. **`schema_qualified`로 전환합니다.** 동일한 격리 모델이지만 `SET LOCAL` 라운드 트립이 없고, 마커에 대한 식별자 규칙은 동일하게 적용됩니다.
+3. **`tenant_column`(또는 `database`)으로 전환합니다.** `MetadataContext.run()`을 순전히 앱 컨텍스트 마커로만 사용하고 있다면 — 즉 활성 workspace를 subscriber·감사 로그·row-level guard에 노출하기 위해 열고 있고 실제 격리는 컬럼 레벨에서 강제하고 있다면 — 그 의도를 전략으로 명시하세요. 그러면 커넥터는 더 이상 `search_path`를 건드리지 않습니다.
+
 ### 전략 2: `"schema_qualified"`
 
 search_path를 변경하는 대신, 테이블 이름 앞에 스키마 이름을 직접 붙이는 방식입니다:

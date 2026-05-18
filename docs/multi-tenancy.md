@@ -375,6 +375,26 @@ That's 4 round-trips for a single tenant read (connect + BEGIN + SET LOCAL + SEL
 
 **Cons:** Every tenant read requires a transaction wrapper, adding latency.
 
+#### Tenant marker must be a valid PG identifier
+
+Because `search_path` is the default strategy, the value you pass to `MetadataContext.run(<value>)` is used directly as a PostgreSQL schema name in `SET LOCAL search_path TO "<value>"`. That means the marker must be a valid PG identifier — letters, digits, underscores, hyphens, or `$`, starting with a letter or underscore.
+
+If you pass a value that fails the identifier check (e.g. a bare numeric workspace id like `"12345"`), the connector **skips** the `SET LOCAL` and logs one warning per unique invalid marker, rather than aborting every transaction:
+
+```
+WARN [PostgresConnector] MetadataContext tenant "12345" is not a valid
+PostgreSQL identifier — skipping SET LOCAL search_path. If you intended
+schema-based isolation, set tenantStrategy:"schema_qualified" or use a
+schema-name tenant marker. If you use MetadataContext only for app-side
+context, set tenantStrategy:"tenant_column" to silence this warning.
+```
+
+You have three ways to address it:
+
+1. **Use a schema-name marker.** Wrap the numeric id with a prefix you also use as the schema name: `MetadataContext.run(\`tenant_${workspaceId}\`, ...)`.
+2. **Switch to `schema_qualified`.** Same isolation model, no `SET LOCAL` round-trip, same identifier rule on the marker.
+3. **Switch to `tenant_column` (or `database`).** If you are opening `MetadataContext.run()` purely as an app-side context marker — to make the active workspace visible to subscribers, audit logs, or row-level guards — and isolation is enforced at the column level, declare that explicitly. The connector then never touches `search_path`.
+
 ### Strategy 2: `"schema_qualified"`
 
 Instead of changing the search_path, this strategy prefixes table names directly with the schema name:
