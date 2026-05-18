@@ -50,7 +50,7 @@ export class PostgresSearchRepository extends SearchRepository {
         FROM comment c
         JOIN issue i ON i.id = c.issue_id
         WHERE ${commentMatch}
-          AND c."deletedAt" IS NULL
+          AND c."deleted_at" IS NULL
           AND i."deleted_at" IS NULL
           ${projectFilter}
       ) hits
