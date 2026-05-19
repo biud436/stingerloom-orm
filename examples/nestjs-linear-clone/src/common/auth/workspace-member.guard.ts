@@ -12,15 +12,23 @@ import { Membership } from "../../modules/memberships/membership.entity";
 import { RequestContextStore } from "../context/request-context";
 import { Project } from "../../modules/projects/project.entity";
 import { Issue } from "../../modules/issues/issue.entity";
+import { Sprint } from "../../modules/sprints/sprint.entity";
+import { Label } from "../../modules/labels/label.entity";
 
 export const WORKSPACE_PARAM = "workspace:param";
 export const WORKSPACE_RESOLVE = "workspace:resolve";
 
 /**
  * Strategy for locating the workspace id when only a child resource id is on
- * the URL. The example wires `issue` and `project`; extend as needed.
+ * the URL. The example wires `issue`, `project`, `sprint`, and `label`; extend
+ * as needed by adding a branch to {@link WorkspaceMemberGuard.resolveWorkspaceId}.
  */
-export type WorkspaceResolver = "explicit" | "viaProject" | "viaIssue";
+export type WorkspaceResolver =
+  | "explicit"
+  | "viaProject"
+  | "viaIssue"
+  | "viaSprint"
+  | "viaLabel";
 
 /**
  * Apply on a controller or handler to enforce that the authenticated user is
@@ -52,13 +60,28 @@ export class WorkspaceMemberGuard implements CanActivate {
     );
 
     const req = ctx.switchToHttp().getRequest();
-    const workspaceId = await this.resolveWorkspaceId(req, resolver ?? "explicit", ctx);
-    if (workspaceId === null) {
-      // No workspaceId on the request and no resolver — let it through; the
-      // handler clearly didn't intend to be workspace-scoped.
+    const resolved = await this.resolveWorkspaceId(req, resolver ?? "explicit", ctx);
+
+    if (resolved === "no-identifier") {
+      // The handler opted into workspace scoping (the decorator wired this
+      // guard) but the request didn't carry the identifier needed to resolve
+      // a workspace — e.g. `GET /projects` with no ?workspaceId. Fail closed:
+      // silently letting through was the original cross-tenant leak (#335).
+      throw new ForbiddenException(
+        "Workspace cannot be resolved for this request",
+      );
+    }
+
+    if (resolved === "resource-missing") {
+      // The identifier was structurally valid but no such row exists. Let
+      // the handler run so it returns the canonical 404 (or whatever it
+      // chooses to do); the guard has nothing to enforce against a row
+      // that doesn't exist, and surfacing 403 here would mask 404 and
+      // make legitimate "not found" probes hard to debug.
       return true;
     }
 
+    const workspaceId = resolved;
     const m = qAlias(Membership, "m");
     const membership = await this.em
       .createQueryBuilder(m)
@@ -86,7 +109,7 @@ export class WorkspaceMemberGuard implements CanActivate {
     },
     resolver: WorkspaceResolver,
     ctx: ExecutionContext,
-  ): Promise<number | null> {
+  ): Promise<number | "no-identifier" | "resource-missing"> {
     const paramName =
       this.reflector.getAllAndOverride<string>(WORKSPACE_PARAM, [
         ctx.getHandler(),
@@ -99,47 +122,90 @@ export class WorkspaceMemberGuard implements CanActivate {
       (req.query?.[paramName] as string | undefined);
 
     if (resolver === "explicit") {
-      if (explicit === undefined || explicit === null || explicit === "") return null;
+      if (explicit === undefined || explicit === null || explicit === "") {
+        return "no-identifier";
+      }
       const id = Number(explicit);
-      if (!Number.isFinite(id)) return null;
+      if (!Number.isFinite(id)) return "no-identifier";
       return id;
     }
 
     if (resolver === "viaProject") {
-      const projectId = Number(
-        req.params?.projectId ?? req.params?.id ?? req.body?.projectId,
-      );
-      if (!Number.isFinite(projectId)) return null;
-      const p = qAlias(Project, "p");
-      const row = await this.em
-        .createQueryBuilder(p)
-        .where(p.id.eq(projectId))
-        .limit(1)
-        .getOne();
-      return row?.workspaceId ?? null;
+      // Accept the projectId from any of: a dedicated :projectId path param,
+      // a generic :id (the projects detail routes), the request body
+      // (creation flows), or the query string (filtered list endpoints).
+      const raw =
+        req.params?.projectId ??
+        req.params?.id ??
+        req.body?.projectId ??
+        req.query?.projectId;
+      const projectId = Number(raw);
+      if (raw === undefined || !Number.isFinite(projectId)) return "no-identifier";
+      const ws = await this.workspaceOfProject(projectId);
+      return ws ?? "resource-missing";
     }
 
     if (resolver === "viaIssue") {
-      const issueId = Number(req.params?.issueId ?? req.params?.id ?? req.body?.issueId);
-      if (!Number.isFinite(issueId)) return null;
+      const raw = req.params?.issueId ?? req.params?.id ?? req.body?.issueId;
+      const issueId = Number(raw);
+      if (raw === undefined || !Number.isFinite(issueId)) return "no-identifier";
       const i = qAlias(Issue, "i");
       // Two-step lookup keeps the guard out of any join-builder edge cases
       // and reads from the issue.projectId FK + project.workspaceId path.
+      // `withDeleted()` is intentional: a soft-deleted issue still belongs
+      // to its workspace, so the guard resolves correctly for the restore
+      // endpoint and for GET-after-soft-delete (which 404s in the handler).
       const issue = await this.em
         .createQueryBuilder(i)
+        .withDeleted()
         .where(i.id.eq(issueId))
         .limit(1)
         .getOne();
-      if (!issue?.projectId) return null;
-      const p = qAlias(Project, "p");
-      const project = await this.em
-        .createQueryBuilder(p)
-        .where(p.id.eq(issue.projectId))
-        .limit(1)
-        .getOne();
-      return project?.workspaceId ?? null;
+      if (!issue?.projectId) return "resource-missing";
+      const ws = await this.workspaceOfProject(issue.projectId);
+      return ws ?? "resource-missing";
     }
 
-    return null;
+    if (resolver === "viaSprint") {
+      const raw = req.params?.sprintId ?? req.params?.id;
+      const sprintId = Number(raw);
+      if (raw === undefined || !Number.isFinite(sprintId)) return "no-identifier";
+      const s = qAlias(Sprint, "s");
+      const sprint = await this.em
+        .createQueryBuilder(s)
+        .where(s.id.eq(sprintId))
+        .limit(1)
+        .getOne();
+      if (!sprint?.projectId) return "resource-missing";
+      const ws = await this.workspaceOfProject(sprint.projectId);
+      return ws ?? "resource-missing";
+    }
+
+    if (resolver === "viaLabel") {
+      const raw = req.params?.labelId ?? req.params?.id;
+      const labelId = Number(raw);
+      if (raw === undefined || !Number.isFinite(labelId)) return "no-identifier";
+      const l = qAlias(Label, "l");
+      const label = await this.em
+        .createQueryBuilder(l)
+        .where(l.id.eq(labelId))
+        .limit(1)
+        .getOne();
+      if (!label?.projectId) return "resource-missing";
+      const ws = await this.workspaceOfProject(label.projectId);
+      return ws ?? "resource-missing";
+    }
+
+    return "no-identifier";
+  }
+
+  private async workspaceOfProject(projectId: number): Promise<number | null> {
+    const p = qAlias(Project, "p");
+    const row = await this.em
+      .createQueryBuilder(p)
+      .where(p.id.eq(projectId))
+      .limit(1)
+      .getOne();
+    return row?.workspaceId ?? null;
   }
 }

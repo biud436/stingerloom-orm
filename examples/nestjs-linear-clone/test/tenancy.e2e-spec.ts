@@ -20,6 +20,9 @@ interface TenantWorld {
   rootId: number;
   midId: number;
   leafId: number;
+  /** Sprint and label seeded inside this tenant's project. */
+  sprintId: number;
+  labelId: number;
 }
 
 /**
@@ -97,6 +100,24 @@ async function provisionTenant(
     })
     .expect(201);
 
+  const sprint = await request(server)
+    .post("/sprints")
+    .set("Authorization", `Bearer ${ownerToken}`)
+    .send({
+      projectId: proj.body.id,
+      name: `${label} sprint`,
+      status: "ACTIVE",
+      startDate: new Date().toISOString().slice(0, 10),
+      endDate: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
+    })
+    .expect(201);
+
+  const lbl = await request(server)
+    .post("/labels")
+    .set("Authorization", `Bearer ${ownerToken}`)
+    .send({ projectId: proj.body.id, name: `${label}-bug` })
+    .expect(201);
+
   return {
     workspaceId: ws.body.id,
     ownerId,
@@ -105,6 +126,8 @@ async function provisionTenant(
     rootId: root.body.id,
     midId: mid.body.id,
     leafId: leaf.body.id,
+    sprintId: sprint.body.id,
+    labelId: lbl.body.id,
   };
 }
 
@@ -249,6 +272,132 @@ integrationDescribe("[E2E] Multi-tenancy — MetadataContext frame + cross-tenan
       expect(byId.get(acme.rootId)?.depth).toBe(0);
       expect(byId.get(acme.midId)?.depth).toBe(1);
       expect(byId.get(acme.leafId)?.depth).toBe(2);
+    });
+  });
+
+  // ────────────────────────────────────────────────
+  // #335 — Workspace scoping on Sprints / Labels / Projects controllers
+  // ────────────────────────────────────────────────
+  describe("Cross-tenant Sprints CRUD", () => {
+    it("alice (acme) cannot GET a globex sprint by id", async () => {
+      const res = await acmeApi.get(`/sprints/${globex.sprintId}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("alice (acme) cannot PATCH a globex sprint", async () => {
+      const res = await acmeApi
+        .patch(`/sprints/${globex.sprintId}`)
+        .send({ name: "stolen sprint" });
+      expect(res.status).toBe(403);
+    });
+
+    it("alice (acme) cannot DELETE a globex sprint", async () => {
+      const res = await acmeApi.delete(`/sprints/${globex.sprintId}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("alice (acme) cannot create a sprint targeting a globex project", async () => {
+      const res = await acmeApi.post("/sprints").send({
+        projectId: globex.projectId,
+        name: "spillover sprint",
+        status: "ACTIVE",
+        startDate: "2026-01-01",
+        endDate: "2026-01-14",
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it("GET /sprints without projectId is rejected (no leak)", async () => {
+      const res = await acmeApi.get("/sprints");
+      expect(res.status).toBe(403);
+    });
+
+    it("alice can list her own project's sprints", async () => {
+      const res = await acmeApi
+        .get("/sprints")
+        .query({ projectId: acme.projectId })
+        .expect(200);
+      const ids = (res.body as { id: number }[]).map((r) => r.id);
+      expect(ids).toContain(acme.sprintId);
+      expect(ids).not.toContain(globex.sprintId);
+    });
+  });
+
+  describe("Cross-tenant Labels CRUD", () => {
+    it("alice (acme) cannot GET a globex label by id", async () => {
+      const res = await acmeApi.get(`/labels/${globex.labelId}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("alice (acme) cannot DELETE a globex label", async () => {
+      const res = await acmeApi.delete(`/labels/${globex.labelId}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("alice (acme) cannot create a label inside a globex project", async () => {
+      const res = await acmeApi
+        .post("/labels")
+        .send({ projectId: globex.projectId, name: "spillover-label" });
+      expect(res.status).toBe(403);
+    });
+
+    it("GET /labels without projectId is rejected (no leak)", async () => {
+      const res = await acmeApi.get("/labels");
+      expect(res.status).toBe(403);
+    });
+  });
+
+  describe("Cross-tenant Projects CRUD", () => {
+    it("alice (acme) cannot GET a globex project detail", async () => {
+      const res = await acmeApi.get(`/projects/${globex.projectId}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("alice (acme) cannot PATCH a globex project", async () => {
+      const res = await acmeApi
+        .patch(`/projects/${globex.projectId}`)
+        .send({ name: "stolen project" });
+      expect(res.status).toBe(403);
+    });
+
+    it("alice (acme) cannot DELETE a globex project", async () => {
+      const res = await acmeApi.delete(`/projects/${globex.projectId}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("GET /projects without workspaceId is rejected (no leak)", async () => {
+      const res = await acmeApi.get("/projects");
+      expect(res.status).toBe(403);
+    });
+
+    it("GET /projects?workspaceId=<globex> is rejected for an acme member", async () => {
+      const res = await acmeApi
+        .get("/projects")
+        .query({ workspaceId: globex.workspaceId });
+      expect(res.status).toBe(403);
+    });
+
+    it("alice can list her own workspace projects", async () => {
+      const res = await acmeApi
+        .get("/projects")
+        .query({ workspaceId: acme.workspaceId })
+        .expect(200);
+      const ids = (res.body as { id: number }[]).map((r) => r.id);
+      expect(ids).toContain(acme.projectId);
+      expect(ids).not.toContain(globex.projectId);
+    });
+
+    it("GET /projects/cursor enforces workspace membership", async () => {
+      const ok = await acmeApi
+        .get("/projects/cursor")
+        .query({ workspaceId: acme.workspaceId })
+        .expect(200);
+      expect(Array.isArray(ok.body.data)).toBe(true);
+
+      const denied = await acmeApi
+        .get("/projects/cursor")
+        .query({ workspaceId: globex.workspaceId });
+      expect(denied.status).toBe(403);
     });
   });
 });

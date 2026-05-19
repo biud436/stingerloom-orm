@@ -21,9 +21,15 @@ import {
  *
  *   // /issues/:id/...  → looks up the issue's project's workspace
  *   @WorkspaceScoped({ from: 'issue' })
+ *
+ *   // /sprints/:id/...  → looks up the sprint's project's workspace
+ *   @WorkspaceScoped({ from: 'sprint' })
+ *
+ *   // /labels/:id/...  → looks up the label's project's workspace
+ *   @WorkspaceScoped({ from: 'label' })
  */
 export function WorkspaceScoped(opts: {
-  from: "param" | "body" | "query" | "project" | "issue";
+  from: "param" | "body" | "query" | "project" | "issue" | "sprint" | "label";
   name?: string;
 }) {
   const resolver: WorkspaceResolver =
@@ -31,7 +37,11 @@ export function WorkspaceScoped(opts: {
       ? "viaProject"
       : opts.from === "issue"
         ? "viaIssue"
-        : "explicit";
+        : opts.from === "sprint"
+          ? "viaSprint"
+          : opts.from === "label"
+            ? "viaLabel"
+            : "explicit";
   const decorators = [
     UseGuards(JwtAuthGuard, WorkspaceMemberGuard),
     SetMetadata(WORKSPACE_RESOLVE, resolver),

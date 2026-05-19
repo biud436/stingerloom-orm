@@ -36,28 +36,30 @@ export class ProjectsController {
   }
 
   @Get()
+  @WorkspaceScoped({ from: "param", name: "workspaceId" })
   @ApiOperation({
     summary:
-      "List projects (capped at 50; optionally filtered by workspaceId). Use /projects/cursor for full pagination.",
+      "List projects in a workspace (capped at 50). workspaceId is required — membership is enforced. Use /projects/cursor for full pagination.",
   })
   list(
-    @Query("workspaceId") workspaceId?: string,
+    @Query("workspaceId") workspaceId: string,
     @Query("limit") limit?: string,
   ) {
     return this.service.findAll(
-      workspaceId ? Number(workspaceId) : undefined,
+      Number(workspaceId),
       limit ? Number(limit) : undefined,
     );
   }
 
   @Get("cursor")
-  @ApiOperation({ summary: "Cursor-paginated project list" })
+  @WorkspaceScoped({ from: "param", name: "workspaceId" })
+  @ApiOperation({ summary: "Cursor-paginated project list (workspaceId required)" })
   cursor(
     @Query() q: CursorQueryDto,
-    @Query("workspaceId") workspaceId?: string,
+    @Query("workspaceId") workspaceId: string,
   ) {
     return this.service.findWithCursor(
-      workspaceId ? Number(workspaceId) : undefined,
+      Number(workspaceId),
       q.take ?? 20,
       q.cursor,
     );
