@@ -472,6 +472,59 @@ describe("IntrospectionGenerator", () => {
       expect(columns[0].column_name).toBe("id");
       expect(columns[1].character_maximum_length).toBe(100);
     });
+
+    it("should select EXTRA as extra for MySQL so AUTO_INCREMENT PKs become @PrimaryGeneratedColumn", async () => {
+      // Regression for #346: MySQL getColumns previously omitted EXTRA, so
+      // isGeneratedPrimaryKey() never saw "auto_increment" and emitted
+      // @PrimaryColumn() instead of @PrimaryGeneratedColumn().
+      const seenSqlTexts: string[] = [];
+      const mockQueryFn = jest.fn(async (sqlInput: any) => {
+        const sqlText = typeof sqlInput === "string"
+          ? sqlInput
+          : (sqlInput.text ?? sqlInput.sql ?? "");
+        seenSqlTexts.push(sqlText);
+
+        if (sqlText.includes("information_schema.TABLES")) {
+          return [{ table_name: "post" }];
+        }
+        if (sqlText.includes("information_schema.COLUMNS")) {
+          return [
+            {
+              column_name: "id",
+              data_type: "int",
+              is_nullable: "NO",
+              column_default: null,
+              extra: "auto_increment",
+            },
+            {
+              column_name: "title",
+              data_type: "varchar",
+              is_nullable: "NO",
+              character_maximum_length: 255,
+              column_default: null,
+              extra: "",
+            },
+          ];
+        }
+        if (sqlText.includes("KEY_COLUMN_USAGE") && sqlText.includes("PRIMARY")) {
+          return [{ column_name: "id" }];
+        }
+        return [];
+      });
+
+      const generator = new IntrospectionGenerator(mockQueryFn, "mysql");
+      const entities = await generator.generate();
+
+      const columnsSql = seenSqlTexts.find((s) =>
+        s.includes("information_schema.COLUMNS"),
+      );
+      expect(columnsSql).toBeDefined();
+      expect(columnsSql).toMatch(/EXTRA\s+as\s+extra/i);
+
+      expect(entities).toHaveLength(1);
+      expect(entities[0].code).toContain("@PrimaryGeneratedColumn()");
+      expect(entities[0].code).not.toContain("@PrimaryColumn()");
+    });
   });
 
   describe("getPrimaryKeys()", () => {
