@@ -54,6 +54,16 @@ export const ACTIVITY_ACTION = {
    * `event.databaseEntity` snapshot.
    */
   ISSUE_UPDATED: "ISSUE_UPDATED",
+  /**
+   * Soft-delete and restore of an Issue. Emitted by IssuesService inside the
+   * same `@Transactional` frame as the UPDATE, so the audit row commits or
+   * rolls back atomically with the `deletedAt` state change. A cascade
+   * restore writes one `ISSUE_RESTORED` row per affected id; those rows
+   * carry `payload: { cascade: true, rootId }` tying the subtree to the
+   * triggering operation.
+   */
+  ISSUE_DELETED: "ISSUE_DELETED",
+  ISSUE_RESTORED: "ISSUE_RESTORED",
   COMMENTED: "COMMENTED",
   LABEL_ADDED: "LABEL_ADDED",
   LABEL_REMOVED: "LABEL_REMOVED",

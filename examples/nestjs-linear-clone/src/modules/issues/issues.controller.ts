@@ -133,8 +133,11 @@ export class IssuesController {
   @Delete(":id")
   @WorkspaceScoped({ from: "issue" })
   @HttpCode(204)
-  remove(@Param("id", ParseIntPipe) id: number) {
-    return this.service.softRemove(id);
+  remove(
+    @Param("id", ParseIntPipe) id: number,
+    @CurrentUserId() userId: number,
+  ) {
+    return this.service.softRemove(id, userId);
   }
 
   @Post(":id/restore")
@@ -146,9 +149,10 @@ export class IssuesController {
   })
   async restore(
     @Param("id", ParseIntPipe) id: number,
+    @CurrentUserId() userId: number,
     @Query("cascade") cascade?: string,
   ): Promise<void> {
     const wantCascade = cascade === "1" || cascade === "true";
-    await this.service.restoreWithCascade(id, wantCascade);
+    await this.service.restoreWithCascade(id, wantCascade, userId);
   }
 }

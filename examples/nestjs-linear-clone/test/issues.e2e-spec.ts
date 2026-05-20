@@ -224,10 +224,73 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
       await api.get(`/issues/${issueId}`).expect(404);
     });
 
+    it("soft-delete writes an ISSUE_DELETED audit row", async () => {
+      // The activity feed resolves through the `viaIssue` guard, which uses
+      // `withDeleted()` — so a trashed issue's audit trail stays readable.
+      const log = await api.get(`/activity/issues/${issueId}`).expect(200);
+      const actions = log.body.map((r: any) => r.action);
+      expect(actions).toContain("ISSUE_DELETED");
+    });
+
     it("restore brings the row back", async () => {
       await api.post(`/issues/${issueId}/restore`).expect(204);
       const r = await api.get(`/issues/${issueId}`).expect(200);
       expect(r.body.id).toBe(issueId);
+    });
+
+    it("restore writes an ISSUE_RESTORED audit row", async () => {
+      const log = await api.get(`/activity/issues/${issueId}`).expect(200);
+      const actions = log.body.map((r: any) => r.action);
+      expect(actions).toContain("ISSUE_RESTORED");
+    });
+  });
+
+  // ────────────────────────────────────────────────
+  // Cascade restore — one audit row per restored id
+  // ────────────────────────────────────────────────
+  describe("Cascade restore audit trail", () => {
+    let parentId: number;
+    let childId: number;
+
+    beforeAll(async () => {
+      const parent = await createIssue(booted.server, {
+        projectId: fx.projectId,
+        title: "Cascade-restore parent",
+      });
+      parentId = parent.id;
+      const child = await createIssue(booted.server, {
+        projectId: fx.projectId,
+        title: "Cascade-restore child",
+        parentId: parent.id,
+      });
+      childId = child.id;
+
+      // Trash the whole subtree so restoreWithCascade's recursive CTE has a
+      // soft-deleted parent + descendant to resurrect together.
+      await api.delete(`/issues/${childId}`).expect(204);
+      await api.delete(`/issues/${parentId}`).expect(204);
+    });
+
+    it("cascade restore writes one ISSUE_RESTORED row per restored id", async () => {
+      await api
+        .post(`/issues/${parentId}/restore`)
+        .query({ cascade: 1 })
+        .expect(204);
+
+      // Each restored issue's own feed carries its ISSUE_RESTORED row.
+      for (const id of [parentId, childId]) {
+        const log = await api.get(`/activity/issues/${id}`).expect(200);
+        const restored = log.body.filter(
+          (r: any) => r.action === "ISSUE_RESTORED",
+        );
+        expect(restored.length).toBeGreaterThanOrEqual(1);
+        const cascadeRow = restored.find(
+          (r: any) => r.payload?.cascade === true,
+        );
+        expect(cascadeRow).toBeTruthy();
+        // Every row in the subtree points back to the operation's root.
+        expect(cascadeRow.payload.rootId).toBe(parentId);
+      }
     });
   });
 

@@ -278,19 +278,33 @@ export class IssuesService {
    * pattern had.
    */
   @Transactional()
-  async softRemove(id: number): Promise<void> {
+  async softRemove(id: number, actorUserId: number): Promise<void> {
     const result = await this.repo.softDelete({ id });
     if (result.affected === 0) {
       throw new NotFoundException(`Issue ${id} not found`);
     }
+    // The audit row is written after the UPDATE but inside the same
+    // `@Transactional` frame — it commits atomically with the soft-delete,
+    // and a rolled-back delete leaves no phantom log entry. The `affected`
+    // guard above means we only log a real state change, never a no-op.
+    await this.activity.log({
+      issueId: id,
+      actorUserId,
+      action: ACTIVITY_ACTION.ISSUE_DELETED,
+    });
   }
 
   @Transactional()
-  async restore(id: number): Promise<void> {
+  async restore(id: number, actorUserId: number): Promise<void> {
     const result = await this.repo.restore({ id });
     if (result.affected === 0) {
       throw new NotFoundException(`Issue ${id} not found or not deleted`);
     }
+    await this.activity.log({
+      issueId: id,
+      actorUserId,
+      action: ACTIVITY_ACTION.ISSUE_RESTORED,
+    });
   }
 
   /**
@@ -324,6 +338,7 @@ export class IssuesService {
   async restoreWithCascade(
     id: number,
     cascade: boolean,
+    actorUserId: number,
   ): Promise<{ restored: number; ids: number[] }> {
     if (!cascade) {
       // Single-row restore — short-circuit (idempotent: zero affected when
@@ -336,7 +351,17 @@ export class IssuesService {
         throw new NotFoundException(`Issue ${id} not found`);
       }
       const result = await this.repo.restore({ id });
-      return { restored: result.affected ?? 0, ids: result.affected ? [id] : [] };
+      const affected = result.affected ?? 0;
+      // Only log an actual restore — an already-active issue touches zero
+      // rows (idempotent no-op) and must not leave a phantom audit entry.
+      if (affected > 0) {
+        await this.activity.log({
+          issueId: id,
+          actorUserId,
+          action: ACTIVITY_ACTION.ISSUE_RESTORED,
+        });
+      }
+      return { restored: affected, ids: affected ? [id] : [] };
     }
 
     // 1. confirm the issue exists (active or trashed). 404 only when truly missing.
@@ -385,6 +410,21 @@ export class IssuesService {
     //    scoping — symmetric with softDelete so we can't accidentally
     //    revive rows from another tenant.
     await this.repo.restore({ id: idsToRestore });
+
+    // 4. one audit row per restored id — each issue's own activity feed
+    //    (`GET /activity/issues/:id`) then shows the restore, matching the
+    //    per-issue granularity of every other ActivityLog row. `rootId`
+    //    ties the whole subtree back to the triggering operation. Written
+    //    sequentially so the inserts stay ordered on the shared
+    //    transaction connection.
+    for (const restoredId of idsToRestore) {
+      await this.activity.log({
+        issueId: restoredId,
+        actorUserId,
+        action: ACTIVITY_ACTION.ISSUE_RESTORED,
+        payload: { cascade: true, rootId: id },
+      });
+    }
     return { restored: idsToRestore.length, ids: idsToRestore };
   }
 
