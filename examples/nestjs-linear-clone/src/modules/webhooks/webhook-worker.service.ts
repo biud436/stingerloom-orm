@@ -95,8 +95,8 @@ export class WebhookDeliveryWorker {
 
     for (const id of ids) {
       await this.deliveries.updateMany(
-        { state: "in_flight", lastAttemptedAt: new Date() } as any,
-        { where: { id } as any },
+        { state: "in_flight", lastAttemptedAt: new Date() },
+        { where: { id } },
       );
     }
     return ids;
@@ -147,8 +147,8 @@ export class WebhookDeliveryWorker {
     const ids = tagged.map((t) => t.id);
     for (const id of ids) {
       await this.deliveries.updateMany(
-        { state: "in_flight", lastError: null } as any,
-        { where: { id } as any },
+        { state: "in_flight", lastError: null },
+        { where: { id } },
       );
     }
     return ids;
