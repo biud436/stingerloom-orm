@@ -1194,6 +1194,65 @@ total!: number;
 
 > **힌트** 계산 컬럼은 PostgreSQL 12+, MySQL 5.7+, SQLite에서 지원돼요. `@ComputedColumn` 데코레이터는 선택적으로 `type`, `length`, `nullable` 옵션을 받아요. `type`을 생략하면 데이터베이스가 표현식에서 타입을 추론해요.
 
+#### 다이얼렉트 독립 표현식 (빌더 형식)
+
+문자열 `expression`은 DDL에 그대로 삽입되므로, 대상 데이터베이스에서 이미 유효한 SQL이어야 해요. `price * quantity` 같은 이식 가능한 산술 연산에는 문제없지만, 날짜 연산은 엔진마다 크게 달라요 -- MySQL은 "두 타임스탬프 사이의 시간"을 `TIMESTAMPDIFF(HOUR, a, b)`로 쓰지만, PostgreSQL은 `EXTRACT(EPOCH FROM (b - a)) / 3600`이 필요해요. 한쪽을 하드코딩하면 엔티티가 특정 데이터베이스에 묶이고, `process.env.DB_TYPE`로 분기하면 엔티티가 런타임 설정에 결합돼요 -- 게다가 한 프로세스가 두 데이터베이스에 동시에 연결하는 순간 깨져요.
+
+대신 **빌더 함수**를 넘기세요. 표현식 컨텍스트 `e`를 받아 이식 가능한 표현식을 반환하면, Stingerloom이 연결마다 한 번씩 다이얼렉트에 맞는 SQL로 컴파일해요:
+
+```typescript
+@Entity()
+export class Issue {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "datetime", nullable: true })
+  createdAt!: Date;
+
+  @Column({ type: "datetime", nullable: true })
+  completedAt!: Date | null;
+
+  // 정의 하나 -> MySQL, PostgreSQL, SQLite에서 각각 올바른 DDL.
+  @ComputedColumn({
+    expression: (e) =>
+      e.dateDiff(e.col("completed_at"), e.col("created_at"), "hour"),
+    type: "int",
+    nullable: true,
+  })
+  cycleTimeHours?: number;
+}
+```
+
+**MySQL DDL:**
+
+```sql
+`cycleTimeHours` INT GENERATED ALWAYS AS (TIMESTAMPDIFF(HOUR, `created_at`, `completed_at`)) VIRTUAL
+```
+
+**PostgreSQL DDL:**
+
+```sql
+"cycleTimeHours" INTEGER GENERATED ALWAYS AS (EXTRACT(EPOCH FROM ("completed_at" - "created_at")) / 3600) VIRTUAL
+```
+
+컨텍스트 `e`는 Expressions DSL 전체 -- `e.iff`, `e.caseBuilder`, `e.coalesce`, `e.dateDiff` 등 -- 와 함께, 같은 테이블의 다른 컬럼을 데이터베이스 컬럼명으로 참조하는 `e.col(name)`을 제공해요. 분기 로직은 `e.iff`로 감싸면 이식 가능한 `CASE`가 돼요:
+
+```typescript
+@ComputedColumn({
+  expression: (e) =>
+    e.iff(
+      e.col("deleted_at").isNull().and(e.col("completed_at").isNotNull()),
+      e.dateDiff(e.col("completed_at"), e.col("created_at"), "hour"),
+      null,
+    ),
+  type: "int",
+  nullable: true,
+})
+cycleTimeHours?: number;
+```
+
+생성 컬럼 표현식은 바인드 파라미터를 가질 수 없으므로, 빌더 안의 모든 상수(위의 `null`, 숫자 임계값, 문자열 라벨)는 SQL 리터럴로 인라인돼요. 문자열 형식은 그대로 동작하니, 표현식이 다이얼렉트별 SQL을 필요로 할 때마다 빌더를 사용하세요.
+
 ## 라이프사이클 훅
 
 ### 라이프사이클 훅이 존재하는 이유

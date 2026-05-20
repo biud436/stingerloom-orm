@@ -112,12 +112,17 @@ export class Issue {
   @Column({ type: "datetime", nullable: true })
   completedAt!: Date | null;
 
-  // Dialect-aware expression chosen at module load (TIMESTAMPDIFF on MySQL, EXTRACT/EPOCH on Postgres). Default DB_TYPE is mysql.
+  // Cycle time in hours — a dialect-portable computed column. The builder
+  // form compiles to TIMESTAMPDIFF on MySQL and EXTRACT(EPOCH …) on
+  // PostgreSQL from a single definition, so the entity carries no knowledge
+  // of the runtime DB choice (no process.env.DB_TYPE read at module load).
   @ComputedColumn({
-    expression:
-      (process.env.DB_TYPE ?? "mysql") === "postgres"
-        ? `(CASE WHEN deleted_at IS NULL AND completed_at IS NOT NULL THEN EXTRACT(EPOCH FROM (completed_at - created_at)) / 3600 ELSE NULL END)`
-        : `(CASE WHEN deleted_at IS NULL AND completed_at IS NOT NULL THEN TIMESTAMPDIFF(HOUR, created_at, completed_at) ELSE NULL END)`,
+    expression: (e) =>
+      e.iff(
+        e.col("deleted_at").isNull().and(e.col("completed_at").isNotNull()),
+        e.dateDiff(e.col("completed_at"), e.col("created_at"), "hour"),
+        null,
+      ),
     type: "int",
     nullable: true,
   })

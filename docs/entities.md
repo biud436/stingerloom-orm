@@ -1159,6 +1159,65 @@ total!: number;
 
 > **Hint** Computed columns are supported on PostgreSQL 12+, MySQL 5.7+, and SQLite. The `@ComputedColumn` decorator accepts optional `type`, `length`, and `nullable` options. If `type` is omitted, the database infers the type from the expression.
 
+#### Dialect-portable expressions (builder form)
+
+A literal `expression` string is embedded into the DDL verbatim, so it must already be valid SQL for the target database. That is fine for portable arithmetic like `price * quantity`, but date math diverges sharply between engines -- MySQL spells "hours between two timestamps" `TIMESTAMPDIFF(HOUR, a, b)`, while PostgreSQL needs `EXTRACT(EPOCH FROM (b - a)) / 3600`. Hard-coding one locks the entity to a single database, and branching on `process.env.DB_TYPE` couples the entity to runtime configuration -- it also breaks the moment one process connects to two databases at once.
+
+Pass a **builder function** instead of a string. It receives an expression context `e` and returns a portable expression that Stingerloom compiles to dialect-correct SQL once per connection:
+
+```typescript
+@Entity()
+export class Issue {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "datetime", nullable: true })
+  createdAt!: Date;
+
+  @Column({ type: "datetime", nullable: true })
+  completedAt!: Date | null;
+
+  // One definition -> correct DDL on MySQL, PostgreSQL, and SQLite.
+  @ComputedColumn({
+    expression: (e) =>
+      e.dateDiff(e.col("completed_at"), e.col("created_at"), "hour"),
+    type: "int",
+    nullable: true,
+  })
+  cycleTimeHours?: number;
+}
+```
+
+**MySQL DDL:**
+
+```sql
+`cycleTimeHours` INT GENERATED ALWAYS AS (TIMESTAMPDIFF(HOUR, `created_at`, `completed_at`)) VIRTUAL
+```
+
+**PostgreSQL DDL:**
+
+```sql
+"cycleTimeHours" INTEGER GENERATED ALWAYS AS (EXTRACT(EPOCH FROM ("completed_at" - "created_at")) / 3600) VIRTUAL
+```
+
+The context `e` exposes the full Expressions DSL -- `e.iff`, `e.caseBuilder`, `e.coalesce`, `e.dateDiff`, and the rest -- plus `e.col(name)` to reference a sibling column by its database column name. Wrap branching logic in `e.iff` for a portable `CASE`:
+
+```typescript
+@ComputedColumn({
+  expression: (e) =>
+    e.iff(
+      e.col("deleted_at").isNull().and(e.col("completed_at").isNotNull()),
+      e.dateDiff(e.col("completed_at"), e.col("created_at"), "hour"),
+      null,
+    ),
+  type: "int",
+  nullable: true,
+})
+cycleTimeHours?: number;
+```
+
+Generated-column expressions cannot carry bind parameters, so any constant in the builder (the `null` above, a numeric threshold, a string label) is inlined as a SQL literal. The literal-string form keeps working unchanged -- reach for the builder whenever an expression would otherwise need per-dialect SQL.
+
 ## Lifecycle Hooks
 
 ### Why Lifecycle Hooks Exist

@@ -46,6 +46,8 @@ import {
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../../decorators/ComputedColumn";
+import { renderComputedColumnExpression } from "../expressions/ComputedColumnExpression";
+import type { ColumnResolver } from "../expressions/ConditionLike";
 import {
   ColumnDefinitionBuilder,
   createColumnDefinitionBuilder,
@@ -129,8 +131,9 @@ export class SchemaGenerator {
       const length = cc.options.length ? `(${cc.options.length})` : "";
       const nullable = cc.options.nullable === false ? " NOT NULL" : "";
       const storedOrVirtual = cc.options.stored ? "STORED" : "VIRTUAL";
+      const expression = this.resolveComputedExpression(cc);
       columnDefs.push(
-        `${this.wrapId(cc.name)} ${colType}${length}${nullable} GENERATED ALWAYS AS (${cc.options.expression}) ${storedOrVirtual}`,
+        `${this.wrapId(cc.name)} ${colType}${length}${nullable} GENERATED ALWAYS AS (${expression}) ${storedOrVirtual}`,
       );
     }
 
@@ -687,6 +690,28 @@ export class SchemaGenerator {
    * Builds a map from TypeScript property keys to actual DB column names.
    * Used to resolve @Index() property decorator names to the correct column (#176).
    */
+  /**
+   * Resolve a computed column's expression to a literal SQL string.
+   *
+   * The literal-string form is embedded verbatim. The builder form is
+   * invoked with this generator's dialect, so one definition yields
+   * dialect-correct DDL on every driver — and because the builder runs per
+   * generator (each connection has its own), it is multi-DB safe: nothing is
+   * cached back onto the shared decorator metadata.
+   */
+  private resolveComputedExpression(cc: ComputedColumnMetadata): string {
+    const expression = cc.options.expression;
+    if (typeof expression === "string") {
+      return expression;
+    }
+    const resolveColumn: ColumnResolver = (name) => this.wrapId(name);
+    return renderComputedColumnExpression(
+      expression,
+      this.dialect,
+      resolveColumn,
+    );
+  }
+
   private buildPropertyToColumnMap<T>(entity: ClazzType<T>): Map<string, string> {
     const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
       []) as ColumnMetadata[];

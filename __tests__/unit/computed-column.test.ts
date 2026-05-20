@@ -128,3 +128,172 @@ describe("@ComputedColumn (#131)", () => {
     });
   });
 });
+
+/**
+ * Builder-form `@ComputedColumn` (#336) — a dialect-portable expression
+ * builder replaces hand-written, `process.env`-branched SQL strings. One
+ * entity definition must render dialect-correct DDL on every driver.
+ */
+describe("@ComputedColumn expression builder (#336)", () => {
+  // Mirrors examples/nestjs-linear-clone Issue.cycleTimeHours — the exact
+  // shape the issue calls out: a CASE guarding a cross-dialect dateDiff.
+  @Entity()
+  class CycleIssue {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column({ type: "datetime", nullable: true })
+    createdAt!: Date;
+
+    @Column({ type: "datetime", nullable: true })
+    completedAt!: Date | null;
+
+    @Column({ type: "datetime", nullable: true })
+    deletedAt!: Date | null;
+
+    @ComputedColumn({
+      expression: (e) =>
+        e.iff(
+          e.col("deleted_at").isNull().and(e.col("completed_at").isNotNull()),
+          e.dateDiff(e.col("completed_at"), e.col("created_at"), "hour"),
+          null,
+        ),
+      type: "int",
+      nullable: true,
+    })
+    cycleTimeHours?: number;
+  }
+
+  it("renders MySQL TIMESTAMPDIFF from the builder form", () => {
+    const ddl = new SchemaGenerator({ dialect: "mysql" }).generateCreateTableDDL(
+      CycleIssue,
+    );
+    expect(ddl).toContain("GENERATED ALWAYS AS");
+    expect(ddl).toContain("TIMESTAMPDIFF");
+    expect(ddl).not.toContain("EXTRACT");
+    // null result of the ELSE branch is inlined as a SQL literal, not a `?`.
+    expect(ddl).toContain("ELSE NULL END");
+    expect(ddl).not.toContain("?");
+  });
+
+  it("renders PostgreSQL EXTRACT from the SAME entity definition", () => {
+    const ddl = new SchemaGenerator({
+      dialect: "postgres",
+    }).generateCreateTableDDL(CycleIssue);
+    expect(ddl).toContain("GENERATED ALWAYS AS");
+    expect(ddl).toContain("EXTRACT");
+    expect(ddl).not.toContain("TIMESTAMPDIFF");
+    expect(ddl).not.toContain("?");
+  });
+
+  it("wraps e.col() references in dialect-correct identifier quotes", () => {
+    const mysql = new SchemaGenerator({ dialect: "mysql" }).generateCreateTableDDL(
+      CycleIssue,
+    );
+    const postgres = new SchemaGenerator({
+      dialect: "postgres",
+    }).generateCreateTableDDL(CycleIssue);
+    expect(mysql).toContain("`completed_at`");
+    expect(postgres).toContain('"completed_at"');
+  });
+
+  it("keeps the literal-string form working unchanged (backward compatible)", () => {
+    @Entity()
+    class LiteralForm {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "int" })
+      price!: number;
+
+      @ComputedColumn({ expression: "price * 2", type: "int" })
+      doubled!: number;
+    }
+
+    const ddl = new SchemaGenerator({ dialect: "mysql" }).generateCreateTableDDL(
+      LiteralForm,
+    );
+    expect(ddl).toContain("GENERATED ALWAYS AS (price * 2) VIRTUAL");
+  });
+
+  it("inlines string and numeric constants as SQL literals", () => {
+    @Entity()
+    class Labelled {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "int" })
+      score!: number;
+
+      @ComputedColumn({
+        expression: (e) =>
+          e.iff(e.col("score").gte(50), "pass", "fail"),
+        type: "varchar",
+        length: 8,
+      })
+      grade!: string;
+    }
+
+    const ddl = new SchemaGenerator({ dialect: "postgres" }).generateCreateTableDDL(
+      Labelled,
+    );
+    expect(ddl).toContain("THEN 'pass'");
+    expect(ddl).toContain("ELSE 'fail'");
+    expect(ddl).toContain("50");
+  });
+
+  it("accepts a builder that returns a boolean ConditionLike", () => {
+    @Entity()
+    class FlagRow {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "int" })
+      stock!: number;
+
+      @ComputedColumn({
+        expression: (e) => e.col("stock").gt(0),
+        type: "boolean",
+      })
+      inStock!: boolean;
+    }
+
+    const ddl = new SchemaGenerator({ dialect: "postgres" }).generateCreateTableDDL(
+      FlagRow,
+    );
+    expect(ddl).toContain('"stock" > 0');
+  });
+
+  it("warns when a literal string mixes MySQL and PostgreSQL functions", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      class Mixed {
+        @ComputedColumn({
+          expression:
+            "CASE WHEN x THEN TIMESTAMPDIFF(HOUR, a, b) ELSE EXTRACT(EPOCH FROM c) END",
+          type: "int",
+        })
+        bad!: number;
+      }
+      void Mixed;
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain("builder form");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not warn for a single-dialect literal string", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      class Fine {
+        @ComputedColumn({ expression: "a + b", type: "int" })
+        ok!: number;
+      }
+      void Fine;
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
