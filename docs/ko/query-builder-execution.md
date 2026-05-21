@@ -375,14 +375,29 @@ const users = await em
 
 역직렬화도, 필수 컬럼 검증도 하지 않습니다. `select(["id", "name"])`를 쓰면 반환 타입이 `Pick<T, "id" | "name">[]`로 좁혀져요 — 선택하지 않은 컬럼에 접근하면 컴파일 에러입니다. `em.save()`에는 넘기지 마세요.
 
-**Raw — 타입 없는 plain object:**
+**Raw — plain object + 선택적 값 변환:**
 
 | 메서드 | 반환 | 설명 |
 |--------|------|------|
-| `getRawMany()` | `Record<string, unknown>[]` | 타입 없는 plain object |
-| `getRawOne()` | `Record<string, unknown> \| null` | 단일 plain object 또는 null |
+| `getRawMany<T>(options?)` | `T[]` | plain object (타입 인자 없으면 `Record<string, unknown>`) |
+| `getRawOne<T>(options?)` | `T \| null` | 단일 plain object 또는 null |
 
-엔티티에 없는 계산 컬럼(예: `addSelect(sql`COUNT(*)`, "cnt")`)이 결과에 섞일 때 씁니다. 타입 정보도 역직렬화도 없습니다.
+엔티티에 없는 계산 컬럼(예: `addSelect(sql`COUNT(*)`, "cnt")`)이 결과에 섞일 때 씁니다. 역직렬화는 없습니다.
+
+#### 값 변환 — `coerce`
+
+드라이버는 raw 결과를 dialect별로 다른 형태로 내려줍니다. `mysql2` 는 `BIGINT` / `DECIMAL`(그리고 `SUM` / `AVG` 집계 결과)을 문자열로, `pg` 는 `NUMERIC` / `bigint` 를 문자열로, 날짜는 드라이버 옵션에 따라 `Date` 또는 문자열로 surface 합니다. `coerce` 옵션은 컬럼별로 원하는 primitive 를 선언해 ORM 이 값을 정규화하게 합니다 — 호출처에서 `Number(row.x)` 를 손으로 적을 필요가 없습니다.
+
+```typescript
+const rows = await qb
+  .select([day.as("day"), completed.as("completedCount"), est.as("estimate")])
+  .getRawMany<{ day: Date; completedCount: number; estimate: number }>({
+    coerce: { day: "date", completedCount: "number", estimate: "number" },
+  });
+// rows[0].completedCount 는 진짜 number, rows[0].day 는 진짜 Date
+```
+
+지원하는 타입 태그: `"number"`, `"bigint"`, `"string"`, `"date"`, `"json"`, `"boolean"`. `null` / `undefined` 는 그대로 통과하고, `coerce` 에 없는 컬럼은 드라이버 원본 값을 유지합니다. `getRawOne()` 도 같은 옵션을 받습니다.
 
 **유틸 (결과 모양 변경 없음):**
 

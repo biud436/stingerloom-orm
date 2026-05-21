@@ -354,14 +354,29 @@ These always deserialize rows into entity class instances. `instanceof` works, c
 
 No deserialization, no required-column validation. When `select(["id", "name"])` is used, the return type narrows to `Pick<T, "id" | "name">[]` — accessing unselected columns is a compile error. Do not pass results to `em.save()`.
 
-**Raw — untyped plain objects:**
+**Raw — plain objects with optional value coercion:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `getRawMany()` | `Record<string, unknown>[]` | Untyped plain objects |
-| `getRawOne()` | `Record<string, unknown> \| null` | Single untyped object or null |
+| `getRawMany<T>(options?)` | `T[]` | Plain objects (`Record<string, unknown>` when no type parameter) |
+| `getRawOne<T>(options?)` | `T \| null` | Single plain object or null |
 
-Use when the result includes computed columns not in the entity (e.g. `addSelect(sql`COUNT(*)`, "cnt")`). No type information, no deserialization.
+Use when the result includes computed columns not in the entity (e.g. `addSelect(sql`COUNT(*)`, "cnt")`). No deserialization.
+
+#### Value coercion — `coerce`
+
+Drivers surface raw results in dialect-dependent shapes: `mysql2` returns `BIGINT` / `DECIMAL` (and `SUM` / `AVG` aggregates) as strings, `pg` returns `NUMERIC` / `bigint` as strings, and dates arrive as `Date` or string depending on driver options. The `coerce` option declares the intended primitive per column so the ORM normalizes the value — no hand-written `Number(row.x)` blocks at the call site.
+
+```typescript
+const rows = await qb
+  .select([day.as("day"), completed.as("completedCount"), est.as("estimate")])
+  .getRawMany<{ day: Date; completedCount: number; estimate: number }>({
+    coerce: { day: "date", completedCount: "number", estimate: "number" },
+  });
+// rows[0].completedCount is a real number, rows[0].day is a real Date
+```
+
+Supported type tags: `"number"`, `"bigint"`, `"string"`, `"date"`, `"json"`, `"boolean"`. `null` / `undefined` pass through untouched, and columns not listed in `coerce` keep the driver's native value. `getRawOne()` accepts the same option.
 
 **Utility (unchanged):**
 

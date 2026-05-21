@@ -11,6 +11,7 @@ import { EntityNotFoundError } from "../errors/EntityNotFoundError";
 import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import { CompiledQuery } from "./CompiledQuery";
+import { coerceRows, type RawResultOptions } from "./RawValueCoercion";
 import { COLUMN_TOKEN } from "../decorators/Column";
 import { InheritanceResolver } from "./InheritanceResolver";
 import {
@@ -3871,26 +3872,53 @@ export class SelectQueryBuilder<T, TResult = T> {
   // ── EXECUTION: Raw (untyped plain objects) ─────────────
 
   /**
-   * Execute the query and return untyped plain objects.
+   * Execute the query and return plain objects.
    *
    * Use when the result includes columns not in the entity definition
    * (e.g. `addSelect(sql\`COUNT(*)\`, "cnt")`). No deserialization,
-   * no validation, no type narrowing.
+   * no validation.
+   *
+   * Pass a type parameter to declare the row shape, and an optional
+   * `coerce` map to normalize driver-native values — `mysql2` returns
+   * `BIGINT` / `DECIMAL` as strings, `pg` returns `NUMERIC` as strings,
+   * dates arrive as `Date` or string depending on driver options. The
+   * coerce step removes the hand-written `Number(row.x)` boilerplate
+   * that aggregate / analytics call sites otherwise accumulate.
+   *
+   * @example
+   * ```ts
+   * const rows = await qb
+   *   .select([day.as("day"), count.as("completedCount")])
+   *   .getRawMany<{ day: Date; completedCount: number }>({
+   *     coerce: { day: "date", completedCount: "number" },
+   *   });
+   * ```
    */
-  async getRawMany(): Promise<Record<string, unknown>[]> {
+  async getRawMany<T = Record<string, unknown>>(
+    options?: RawResultOptions<T>,
+  ): Promise<T[]> {
     const built = this.toSql();
-    return this.em.query<Record<string, unknown>>(built);
+    const rows = await this.em.query<Record<string, unknown>>(built);
+    if (options?.coerce) {
+      return coerceRows<T>(rows, options.coerce);
+    }
+    return rows as unknown as T[];
   }
 
   /**
-   * Execute the query and return a single untyped plain object or null.
+   * Execute the query and return a single plain object or null.
    * Automatically adds LIMIT 1 if not already set.
+   *
+   * Accepts the same type parameter and `coerce` option as
+   * {@link getRawMany}.
    */
-  async getRawOne(): Promise<Record<string, unknown> | null> {
+  async getRawOne<T = Record<string, unknown>>(
+    options?: RawResultOptions<T>,
+  ): Promise<T | null> {
     if (this.limitValue === undefined) {
       this.limitValue = 1;
     }
-    const results = await this.getRawMany();
+    const results = await this.getRawMany<T>(options);
     return results.length > 0 ? results[0] : null;
   }
 
