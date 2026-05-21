@@ -181,8 +181,10 @@ export class AnalyticsService {
       ])
       .where(i.sprintId.eq(sprintId))
       .andWhere(i.deletedAt.isNull())
-      .getRawOne();
-    const totalEstimate = Number(totalRow?.totalEstimate ?? 0);
+      .getRawOne<{ totalEstimate: number }>({
+        coerce: { totalEstimate: "number" },
+      });
+    const totalEstimate = totalRow?.totalEstimate ?? 0;
 
     // Step 2 — daily aggregates over completed issues, grouped + ordered
     // by `dateTrunc(completedAt, 'day')`. The dialect-aware day truncation
@@ -203,7 +205,17 @@ export class AnalyticsService {
       .andWhere(i.completedAt.isNotNull())
       .groupBy([day])
       .addOrderBy(day, "ASC")
-      .getRawMany();
+      .getRawMany<{
+        day: Date;
+        completedCount: number;
+        completedEstimate: number;
+      }>({
+        coerce: {
+          day: "date",
+          completedCount: "number",
+          completedEstimate: "number",
+        },
+      });
 
     // Step 3 — running totals + remaining estimate are derived in JS;
     // the row counts here are bounded by sprint length (~30 days) so
@@ -212,14 +224,11 @@ export class AnalyticsService {
     let cumulativeCompleted = 0;
     let cumulativeEstimate = 0;
     return dailyRows.map((row) => {
-      cumulativeCompleted += Number(row.completedCount);
-      cumulativeEstimate += Number(row.completedEstimate);
+      cumulativeCompleted += row.completedCount;
+      cumulativeEstimate += row.completedEstimate;
       return {
-        day:
-          row.day instanceof Date
-            ? row.day.toISOString().slice(0, 10)
-            : String(row.day),
-        completedThatDay: Number(row.completedCount),
+        day: row.day.toISOString().slice(0, 10),
+        completedThatDay: row.completedCount,
         cumulativeCompleted,
         remainingEstimate: totalEstimate - cumulativeEstimate,
       };
@@ -281,17 +290,31 @@ export class AnalyticsService {
       // strict GROUP BY happy when the column is projected.
       .groupBy([i.assigneeId, u.id, u.name])
       .addOrderBy(rankInProject.toScalar(), "ASC")
-      .getRawMany();
+      .getRawMany<{
+        assigneeId: number | null;
+        assigneeName: string | null;
+        completedCount: number;
+        averageCycleHours: number | null;
+        rankInProject: number;
+      }>({
+        coerce: {
+          assigneeId: "number",
+          assigneeName: "string",
+          completedCount: "number",
+          averageCycleHours: "number",
+          rankInProject: "number",
+        },
+      });
 
     return rows.map((row) => ({
-      assigneeId: row.assigneeId === null ? null : Number(row.assigneeId),
-      assigneeName: row.assigneeName ? String(row.assigneeName) : null,
-      completedCount: Number(row.completedCount),
+      assigneeId: row.assigneeId,
+      assigneeName: row.assigneeName,
+      completedCount: row.completedCount,
       averageCycleHours:
         row.averageCycleHours === null
           ? 0
-          : Number(Number(row.averageCycleHours).toFixed(2)),
-      rankInProject: Number(row.rankInProject),
+          : Number(row.averageCycleHours.toFixed(2)),
+      rankInProject: row.rankInProject,
     }));
   }
 
@@ -332,28 +355,31 @@ export class AnalyticsService {
       .where(a.issueId.eq(issueId))
       .andWhere(a.statusTo.isNotNull())
       .addOrderBy(a.createdAt, "ASC")
-      .getRawMany();
+      .getRawMany<{
+        issueId: number;
+        status: string | null;
+        enteredAt: Date;
+        leftAt: Date | null;
+        hoursInStatus: number | null;
+      }>({
+        coerce: {
+          issueId: "number",
+          status: "string",
+          enteredAt: "date",
+          leftAt: "date",
+          hoursInStatus: "number",
+        },
+      });
 
     return rows.map((row) => ({
-      issueId: Number(row.issueId),
-      status:
-        row.status === null || row.status === undefined
-          ? ""
-          : String(row.status),
-      enteredAt:
-        row.enteredAt instanceof Date
-          ? row.enteredAt.toISOString()
-          : String(row.enteredAt),
-      leftAt:
-        row.leftAt === null
-          ? null
-          : row.leftAt instanceof Date
-            ? row.leftAt.toISOString()
-            : String(row.leftAt),
+      issueId: row.issueId,
+      status: row.status ?? "",
+      enteredAt: row.enteredAt.toISOString(),
+      leftAt: row.leftAt === null ? null : row.leftAt.toISOString(),
       hoursInStatus:
         row.hoursInStatus === null
           ? null
-          : Number(Number(row.hoursInStatus).toFixed(2)),
+          : Number(row.hoursInStatus.toFixed(2)),
     }));
   }
 
@@ -396,15 +422,22 @@ export class AnalyticsService {
       .andWhere(i.deletedAt.isNull())
       .groupBy([week])
       .addOrderBy(week, "ASC")
-      .getRawMany();
+      .getRawMany<{
+        weekStart: Date;
+        leadTimeHours: number | null;
+        closedCount: number;
+      }>({
+        coerce: {
+          weekStart: "date",
+          leadTimeHours: "number",
+          closedCount: "number",
+        },
+      });
 
     return rows.map((row) => ({
-      weekStart:
-        row.weekStart instanceof Date
-          ? row.weekStart.toISOString().slice(0, 10)
-          : String(row.weekStart),
-      leadTimeHours: Number(Number(row.leadTimeHours ?? 0).toFixed(2)),
-      closedCount: Number(row.closedCount),
+      weekStart: row.weekStart.toISOString().slice(0, 10),
+      leadTimeHours: Number((row.leadTimeHours ?? 0).toFixed(2)),
+      closedCount: row.closedCount,
     }));
   }
 
@@ -481,7 +514,16 @@ export class AnalyticsService {
       .andWhere(i.completedAt.isNotNull())
       .andWhere(i.completedAt.gte(cutoff))
       .andWhere(i.deletedAt.isNull())
-      .getRawOne();
+      .getRawOne<{ p50: number; p75: number; p95: number; sampleSize: number }>(
+        {
+          coerce: {
+            p50: "number",
+            p75: "number",
+            p95: "number",
+            sampleSize: "number",
+          },
+        },
+      );
 
     return this.toPercentileRow(row ?? undefined);
   }
