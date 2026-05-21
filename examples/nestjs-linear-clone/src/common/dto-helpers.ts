@@ -9,10 +9,13 @@
  *                                   keys whose value isn't `undefined`.
  *                                   When `keys` is omitted every own enumerable
  *                                   key on `obj` is considered.
- *   - `applyPatch(target, patch, transforms?)`
- *     — mutate `target` with the keys from `patch`, optionally running each
- *       value through a per-key transformer first (e.g. `JSON.stringify` for
- *       JSON columns).
+ *   - `applyPatch(target, patch)` — mutate `target` with the keys from `patch`,
+ *                                   skipping `undefined` values.
+ *
+ * JSON columns no longer need a per-key transformer here: a column declared
+ * `@Column({ type: "json" | "jsonb" })` auto-serializes plain objects on write
+ * and parses them back on read, so service code assigns
+ * `entity.customFields = { ... }` directly — no `JSON.stringify` plumbing.
  */
 
 export function pickDefined<T extends object>(
@@ -28,34 +31,21 @@ export function pickDefined<T extends object>(
   return out;
 }
 
-export type Transformer<T, K extends keyof T = keyof T> = (
-  value: NonNullable<T[K]>,
-) => unknown;
-
-export type Transformers<T> = {
-  [K in keyof T]?: Transformer<T, K>;
-};
-
 /**
- * Mutate `target` with values from `patch`, applying per-key transformers
- * before assignment. Keys whose source value is `undefined` are left
- * untouched on `target`.
+ * Mutate `target` with values from `patch`. Keys whose source value is
+ * `undefined` are left untouched on `target`.
  *
  * @example
- *   applyPatch(issue, dto, { customFields: JSON.stringify });
+ *   applyPatch(issue, pickDefined(dto, PATCHABLE_KEYS));
  */
 export function applyPatch<T extends object, P extends Partial<T>>(
   target: T,
   patch: P,
-  transforms?: Transformers<T>,
 ): T {
   for (const k in patch) {
     const value = patch[k];
     if (value === undefined) continue;
-    const transform = transforms?.[k as unknown as keyof T];
-    (target as any)[k] = transform
-      ? transform(value as NonNullable<T[keyof T]>)
-      : value;
+    (target as any)[k] = value;
   }
   return target;
 }
