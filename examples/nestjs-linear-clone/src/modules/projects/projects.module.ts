@@ -1,4 +1,4 @@
-import { Module, forwardRef } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 import { Project } from "./project.entity";
 import { ProjectsService } from "./projects.service";
@@ -9,9 +9,10 @@ import { IssuesModule } from "../issues/issues.module";
   imports: [
     StingerloomOrmModule.forFeature([Project]),
     // Lets ProjectsController expose `/projects/:id/trash` (which delegates
-    // to IssuesService.findTrash). IssuesModule already imports
-    // ProjectsModule (for ProjectsService), so the back-edge needs forwardRef.
-    forwardRef(() => IssuesModule),
+    // to IssuesService.findTrash). IssuesModule depends on the issue-number
+    // counter via ProjectNumberingModule, not ProjectsModule, so this edge
+    // is one-way — a plain import, no forwardRef.
+    IssuesModule,
   ],
   controllers: [ProjectsController],
   providers: [ProjectsService],
