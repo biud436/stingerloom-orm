@@ -15,7 +15,7 @@ import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { WorkflowDefinition } from "./workflow-definition.entity";
 import { WorkflowTransition } from "./workflow-transition.entity";
 import { CreateTransitionDto } from "./dto/workflow.dto";
-import { ProjectsService } from "../projects/projects.service";
+import { Project } from "../projects/project.entity";
 import {
   ISSUE_STATUS,
   IssueStatus,
@@ -107,7 +107,6 @@ export class WorkflowsService {
     private readonly transitions: BaseRepository<WorkflowTransition>,
     @Inject(EntityManager)
     private readonly em: EntityManager,
-    private readonly projects: ProjectsService,
   ) {}
 
   // Get or atomically seed the default chain. Concurrent first-time readers race on the unique(project_id) index; loser re-reads.
@@ -116,7 +115,15 @@ export class WorkflowsService {
     definition: WorkflowDefinition;
     transitions: WorkflowTransition[];
   }> {
-    await this.projects.findOne(projectId);
+    // Confirm the project exists (404 otherwise) without depending on
+    // ProjectsService — a direct EntityManager read keeps WorkflowsModule
+    // off the Issues ↔ Projects cycle, so it needs no forwardRef.
+    const project = await this.em.findOne(Project, {
+      where: { id: projectId },
+    });
+    if (!project) {
+      throw new NotFoundException(`Project ${projectId} not found`);
+    }
     let def = await this.defs.findOne({ where: { projectId } });
     if (!def) {
       try {

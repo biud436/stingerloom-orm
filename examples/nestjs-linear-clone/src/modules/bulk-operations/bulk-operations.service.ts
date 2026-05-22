@@ -1,7 +1,6 @@
 import {
   Injectable,
   Inject,
-  forwardRef,
   ConflictException,
   NotFoundException,
 } from "@nestjs/common";
@@ -24,7 +23,6 @@ export class BulkOperationsService {
     private readonly repo: BaseRepository<BulkOperation>,
     @Inject(EntityManager)
     private readonly em: EntityManager,
-    @Inject(forwardRef(() => IssuesService))
     private readonly issues: IssuesService,
   ) {}
 

@@ -12,7 +12,7 @@ import { Issue } from "../issues/issue.entity";
 import { Comment } from "../comments/comment.entity";
 import { Sprint } from "../sprints/sprint.entity";
 import { Label } from "../labels/label.entity";
-import { ProjectsService } from "../projects/projects.service";
+import { ProjectNumberingService } from "../projects/project-numbering.service";
 import { parseIssueCsv } from "./csv";
 import { ISSUE_STATUS, IssueStatus, IssuePriority } from "../../common/enums";
 
@@ -58,7 +58,7 @@ export class ImportExportService {
     private readonly issueRepo: BaseRepository<Issue>,
     @Inject(EntityManager)
     private readonly em: EntityManager,
-    private readonly projects: ProjectsService,
+    private readonly projectNumbering: ProjectNumberingService,
   ) {}
 
   /**
@@ -121,7 +121,7 @@ export class ImportExportService {
       // Sequential per-project number assignment via the row-locked counter.
       // Inside the same @Transactional frame the counter increments survive
       // commit-or-rollback together with the inserted issue rows.
-      const number = await this.projects.nextIssueNumber(projectId);
+      const number = await this.projectNumbering.nextIssueNumber(projectId);
       rows.push({
         projectId,
         number,

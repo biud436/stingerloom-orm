@@ -9,8 +9,6 @@ import {
   ParseIntPipe,
   Query,
   HttpCode,
-  Inject,
-  forwardRef,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { ProjectsService } from "./projects.service";
@@ -25,7 +23,6 @@ import { IssuesService } from "../issues/issues.service";
 export class ProjectsController {
   constructor(
     private readonly service: ProjectsService,
-    @Inject(forwardRef(() => IssuesService))
     private readonly issues: IssuesService,
   ) {}
 

@@ -3,7 +3,6 @@ import {
   NotFoundException,
   ConflictException,
   Inject,
-  forwardRef,
 } from "@nestjs/common";
 import {
   BaseRepository,
@@ -22,7 +21,8 @@ import {
   AssignLabelDto,
   AssignAssigneeDto,
 } from "./dto/issue.dto";
-import { ProjectsService } from "../projects/projects.service";
+import { Project } from "../projects/project.entity";
+import { ProjectNumberingService } from "../projects/project-numbering.service";
 import { ActivityService } from "../activity/activity.service";
 import { WorkflowsService } from "../workflows/workflows.service";
 import { WebhooksService } from "../webhooks/webhooks.service";
@@ -54,17 +54,15 @@ export class IssuesService {
     private readonly repo: BaseRepository<Issue>,
     @Inject(EntityManager)
     private readonly em: EntityManager,
-    private readonly projects: ProjectsService,
+    private readonly projectNumbering: ProjectNumberingService,
     private readonly activity: ActivityService,
-    @Inject(forwardRef(() => WorkflowsService))
     private readonly workflows: WorkflowsService,
-    @Inject(forwardRef(() => WebhooksService))
     private readonly webhooks: WebhooksService,
   ) {}
 
   @Transactional()
   async create(dto: CreateIssueDto, actorUserId: number): Promise<Issue> {
-    const number = await this.projects.nextIssueNumber(dto.projectId);
+    const number = await this.projectNumbering.nextIssueNumber(dto.projectId);
 
     const issue = new Issue();
     issue.projectId = dto.projectId;
@@ -245,8 +243,10 @@ export class IssuesService {
     projectId: number,
     actorUserId: number,
   ): Promise<MembershipRole | null> {
-    const project = await this.projects.findOne(projectId);
-    if (project.workspaceId == null) return null;
+    const project = await this.em.findOne(Project, {
+      where: { id: projectId },
+    });
+    if (project?.workspaceId == null) return null;
     const m = qAlias(Membership, "m");
     const row = await this.em
       .createQueryBuilder(m)
@@ -476,7 +476,9 @@ export class IssuesService {
   }
 
   private async workspaceIdForProject(projectId: number): Promise<number | null> {
-    const project = await this.projects.findOne(projectId);
-    return project.workspaceId ?? null;
+    const project = await this.em.findOne(Project, {
+      where: { id: projectId },
+    });
+    return project?.workspaceId ?? null;
   }
 }

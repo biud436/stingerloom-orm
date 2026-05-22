@@ -6,14 +6,14 @@ import { Issue } from "../issues/issue.entity";
 import { Comment } from "../comments/comment.entity";
 import { Sprint } from "../sprints/sprint.entity";
 import { Label } from "../labels/label.entity";
-import { ProjectsModule } from "../projects/projects.module";
+import { ProjectNumberingModule } from "../projects/project-numbering.module";
 import { ImportExportService } from "./import-export.service";
 import { ImportExportController } from "./import-export.controller";
 
 @Module({
   imports: [
     StingerloomOrmModule.forFeature([Workspace, Project, Issue, Comment, Sprint, Label]),
-    ProjectsModule,
+    ProjectNumberingModule,
   ],
   controllers: [ImportExportController],
   providers: [ImportExportService],
