@@ -940,12 +940,14 @@ class SeederRunner {
 
 [Usage ->](./introspection.md)
 
-Re-exported from `src/introspection/`. Reads `INFORMATION_SCHEMA` (or the
-PostgreSQL catalog) and produces decorator-based entity source code for the
-discovered tables.
+Re-exported from `src/introspection/`. Reads `INFORMATION_SCHEMA` (PostgreSQL
+catalog or SQLite `PRAGMA`s) and produces decorator-based entity source code
+for the discovered tables. Output is round-trip stable: applying the
+generated entities back to a fresh schema and re-introspecting reproduces
+the same files.
 
 ```typescript
-type IntrospectionDialect = "mysql" | "postgres";
+type IntrospectionDialect = "mysql" | "postgres" | "sqlite";
 
 interface GeneratedEntity {
   tableName: string;
@@ -976,20 +978,52 @@ class IntrospectionGenerator {
   getColumns(table: string): Promise<DbColumn[]>;
   getPrimaryKeys(table: string): Promise<string[]>;
   getForeignKeys(table: string): Promise<DbForeignKey[]>;
+  getIndexes(table: string): Promise<DbIndex[]>;
 }
+
+// Convenience wrapper — connects via DatabaseClient, writes files to disk.
+// Also drives the `npx stingerloom introspect` CLI command.
+interface IntrospectionCliOptions {
+  outputDir?: string;             // default: "./entities"
+  schema?: string;
+  includeTables?: string[];
+  excludeTables?: string[];
+  codeBuilderOptions?: EntityCodeBuilderOptions;
+  dryRun?: boolean;
+}
+
+interface IntrospectionCliResult {
+  writtenFiles: string[];
+  entities: GeneratedEntity[];
+}
+
+function runIntrospect(
+  dbOptions: DatabaseClientOptions,
+  cliOptions?: IntrospectionCliOptions,
+): Promise<IntrospectionCliResult>;
 
 // Lower-level helpers (also re-exported)
 class EntityCodeBuilder {
   constructor(options?: EntityCodeBuilderOptions);
   build(tableName: string, columns: DbColumn[],
         pks: string[], fks: DbForeignKey[],
-        dialect: IntrospectionDialect): string;
+        dialect: IntrospectionDialect,
+        indexes?: DbIndex[]): string;
   tableNameToClassName(tableName: string): string;
+  classNameToFileName(className: string): string;
 }
 
 class IntrospectionTypeMapper {
-  toColumnType(dbType: string, dialect: IntrospectionDialect): ColumnType;
+  // `columnTypeFull` lets MySQL distinguish TINYINT(1)→boolean from
+  // wider widths→int. Optional for backwards compatibility.
+  toColumnType(
+    dbType: string,
+    dialect: IntrospectionDialect,
+    columnTypeFull?: string,
+  ): ColumnType;
   toTsType(columnType: ColumnType): string;
+  parseSqliteWidth(declaredType: string): number | null;
+  parseSqlitePrecisionScale(declaredType: string): { precision: number; scale: number } | null;
 }
 ```
 

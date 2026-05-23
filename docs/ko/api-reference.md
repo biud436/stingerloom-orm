@@ -940,12 +940,13 @@ class SeederRunner {
 
 [사용법 ->](./introspection.md)
 
-`src/introspection/`에서 재내보내집니다. `INFORMATION_SCHEMA`(PostgreSQL은
-카탈로그)를 읽어 발견된 테이블에 대한 데코레이터 기반 엔티티 소스 코드를
-생성합니다.
+`src/introspection/`에서 재내보내집니다. `INFORMATION_SCHEMA`(PostgreSQL 카탈로그
+또는 SQLite `PRAGMA`)를 읽어 발견된 테이블에 대한 데코레이터 기반 엔티티 소스
+코드를 생성합니다. 출력은 라운드 트립이 안정적이라 — 생성된 엔티티를 빈
+스키마에 다시 적용한 뒤 인트로스펙트해도 동일한 파일이 나옵니다.
 
 ```typescript
-type IntrospectionDialect = "mysql" | "postgres";
+type IntrospectionDialect = "mysql" | "postgres" | "sqlite";
 
 interface GeneratedEntity {
   tableName: string;
@@ -976,20 +977,52 @@ class IntrospectionGenerator {
   getColumns(table: string): Promise<DbColumn[]>;
   getPrimaryKeys(table: string): Promise<string[]>;
   getForeignKeys(table: string): Promise<DbForeignKey[]>;
+  getIndexes(table: string): Promise<DbIndex[]>;
 }
+
+// 편의 래퍼 — DatabaseClient로 접속해 파일을 디스크에 기록합니다.
+// `npx stingerloom introspect` CLI 명령의 백엔드이기도 합니다.
+interface IntrospectionCliOptions {
+  outputDir?: string;             // 기본값: "./entities"
+  schema?: string;
+  includeTables?: string[];
+  excludeTables?: string[];
+  codeBuilderOptions?: EntityCodeBuilderOptions;
+  dryRun?: boolean;
+}
+
+interface IntrospectionCliResult {
+  writtenFiles: string[];
+  entities: GeneratedEntity[];
+}
+
+function runIntrospect(
+  dbOptions: DatabaseClientOptions,
+  cliOptions?: IntrospectionCliOptions,
+): Promise<IntrospectionCliResult>;
 
 // 하위 레벨 헬퍼 (역시 재내보내짐)
 class EntityCodeBuilder {
   constructor(options?: EntityCodeBuilderOptions);
   build(tableName: string, columns: DbColumn[],
         pks: string[], fks: DbForeignKey[],
-        dialect: IntrospectionDialect): string;
+        dialect: IntrospectionDialect,
+        indexes?: DbIndex[]): string;
   tableNameToClassName(tableName: string): string;
+  classNameToFileName(className: string): string;
 }
 
 class IntrospectionTypeMapper {
-  toColumnType(dbType: string, dialect: IntrospectionDialect): ColumnType;
+  // `columnTypeFull`을 넘기면 MySQL TINYINT(1)→boolean과 더 넓은 폭→int를
+  // 구분합니다. 후방 호환을 위해 선택 인자입니다.
+  toColumnType(
+    dbType: string,
+    dialect: IntrospectionDialect,
+    columnTypeFull?: string,
+  ): ColumnType;
   toTsType(columnType: ColumnType): string;
+  parseSqliteWidth(declaredType: string): number | null;
+  parseSqlitePrecisionScale(declaredType: string): { precision: number; scale: number } | null;
 }
 ```
 
