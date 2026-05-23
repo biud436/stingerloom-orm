@@ -65,7 +65,9 @@ describe("[Integration] Introspection CLI (SQLite file-backed)", () => {
     expect(usersCode).toContain("@Entity(");
     expect(usersCode).toContain("@PrimaryGeneratedColumn()");
     expect(usersCode).toContain('@Column({ type: "varchar", length: 255 })');
-    expect(usersCode).toContain("@CreateTimestamp()");
+    // DB column is `created_at`; property is camelCased to `createdAt`, so
+    // the introspector emits `name: "created_at"` for round-trip stability.
+    expect(usersCode).toContain('@CreateTimestamp({ name: "created_at" })');
     expect(usersCode).toContain('@UniqueIndex(["email"], "uq_users_email")');
 
     const postsFile = result.writtenFiles.find((p) => p.endsWith("post.entity.ts"))!;
