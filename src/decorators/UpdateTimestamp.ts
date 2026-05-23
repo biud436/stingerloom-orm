@@ -26,6 +26,7 @@ export function UpdateTimestamp(options?: TimestampOptions): PropertyDecorator {
     return Column({
       type: options?.type ?? "datetime",
       nullable: false,
+      ...(options?.name ? { name: options.name } : {}),
     })(target, propertyKey);
   };
 }

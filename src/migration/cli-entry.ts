@@ -2,13 +2,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
- * Stingerloom ORM Migration CLI
+ * Stingerloom ORM CLI
  *
  * Usage:
  *   npx stingerloom migrate:run        — Run all pending migrations
  *   npx stingerloom migrate:rollback   — Rollback the last migration
  *   npx stingerloom migrate:status     — Show migration status
  *   npx stingerloom migrate:generate   — Generate migration from schema diff
+ *   npx stingerloom introspect         — Generate entity files from an existing schema
  *
  * Config file: stingerloom.config.ts / stingerloom.config.js / ormconfig.ts / ormconfig.js
  */
@@ -17,12 +18,16 @@ import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { MigrationCli, MigrationCommand } from "./MigrationCli";
 import { Migration } from "./Migration";
+import { runIntrospect } from "../introspection/IntrospectionCli";
 
-const VALID_COMMANDS: MigrationCommand[] = [
+type CliCommand = MigrationCommand | "introspect";
+
+const VALID_COMMANDS: CliCommand[] = [
   "migrate:run",
   "migrate:rollback",
   "migrate:status",
   "migrate:generate",
+  "introspect",
 ];
 
 const CONFIG_FILE_NAMES = [
@@ -34,7 +39,7 @@ const CONFIG_FILE_NAMES = [
 
 function printUsage(): void {
   console.log(`
-Stingerloom ORM — Migration CLI
+Stingerloom ORM — CLI
 
 Usage:
   stingerloom <command> [options]
@@ -44,11 +49,22 @@ Commands:
   migrate:rollback    Rollback the last migration
   migrate:status      Show executed and pending migrations
   migrate:generate    Generate migration file from schema diff
+  introspect          Generate entity files from an existing database schema
 
-Options:
+Options (migration commands):
   --config <path>     Path to config file (default: auto-detect)
   --output <dir>      Output directory for generated migrations (default: ./migrations)
   --name <suffix>     Migration name suffix for generated file
+
+Options (introspect):
+  --config <path>     Path to config file (default: auto-detect)
+  --output <dir>      Output directory for generated entities (default: ./entities)
+  --schema <name>     PostgreSQL schema to introspect (default: public)
+  --include <list>    Comma-separated whitelist of tables to generate
+  --exclude <list>    Comma-separated blacklist of tables to skip
+  --import-path <p>   Import path for ORM decorators (default: @stingerloom/orm)
+  --dry-run           Don't write files; report what would be generated
+
   --help              Show this help message
 
 Config file (auto-detected):
@@ -61,6 +77,11 @@ function parseArgs(argv: string[]): {
   config?: string;
   output?: string;
   name?: string;
+  schema?: string;
+  include?: string;
+  exclude?: string;
+  importPath?: string;
+  dryRun?: boolean;
   help: boolean;
 } {
   const result: any = { help: false };
@@ -76,6 +97,16 @@ function parseArgs(argv: string[]): {
       result.output = args[++i];
     } else if (arg === "--name" && i + 1 < args.length) {
       result.name = args[++i];
+    } else if (arg === "--schema" && i + 1 < args.length) {
+      result.schema = args[++i];
+    } else if (arg === "--include" && i + 1 < args.length) {
+      result.include = args[++i];
+    } else if (arg === "--exclude" && i + 1 < args.length) {
+      result.exclude = args[++i];
+    } else if (arg === "--import-path" && i + 1 < args.length) {
+      result.importPath = args[++i];
+    } else if (arg === "--dry-run") {
+      result.dryRun = true;
     } else if (!arg.startsWith("--") && !result.command) {
       result.command = arg;
     }
@@ -136,18 +167,49 @@ async function main(): Promise<void> {
     process.exit(parsed.help ? 0 : 1);
   }
 
-  if (!VALID_COMMANDS.includes(parsed.command as MigrationCommand)) {
+  if (!VALID_COMMANDS.includes(parsed.command as CliCommand)) {
     console.error(
       `Unknown command: "${parsed.command}"\nValid commands: ${VALID_COMMANDS.join(", ")}`,
     );
     process.exit(1);
   }
 
-  const command = parsed.command as MigrationCommand;
+  const command = parsed.command as CliCommand;
   const config = await loadConfig(parsed.config);
+  const dbOptions = config.database ?? config;
+
+  if (command === "introspect") {
+    try {
+      const result = await runIntrospect(dbOptions, {
+        outputDir: parsed.output,
+        schema: parsed.schema,
+        includeTables: parsed.include
+          ? parsed.include.split(",").map((s) => s.trim()).filter(Boolean)
+          : undefined,
+        excludeTables: parsed.exclude
+          ? parsed.exclude.split(",").map((s) => s.trim()).filter(Boolean)
+          : undefined,
+        codeBuilderOptions: parsed.importPath
+          ? { importPath: parsed.importPath }
+          : undefined,
+        dryRun: parsed.dryRun,
+      });
+      if (parsed.dryRun) {
+        console.log(`Would generate ${result.entities.length} entity files:`);
+        for (const entity of result.entities) {
+          console.log(`  - ${entity.fileName}  (${entity.tableName} → ${entity.className})`);
+        }
+      } else {
+        console.log(`Wrote ${result.writtenFiles.length} entity files.`);
+      }
+      return;
+    } catch (err: any) {
+      console.error(`Introspection failed: ${err.message}`);
+      process.exit(1);
+    }
+  }
 
   const migrations: Migration[] = config.migrations ?? [];
-  const dbOptions = config.database ?? config;
 
   const cli = new MigrationCli(migrations, dbOptions);
 
@@ -160,7 +222,7 @@ async function main(): Promise<void> {
 
   try {
     await cli.connect();
-    await cli.execute(command);
+    await cli.execute(command as MigrationCommand);
   } catch (err: any) {
     console.error(`Migration failed: ${err.message}`);
     if (err.suggestion) {

@@ -13,6 +13,12 @@ export type TimestampColumnType =
 export interface TimestampOptions {
   /** Column type override. Defaults to `"datetime"`. */
   type?: TimestampColumnType;
+  /**
+   * Explicit DB column name. Defaults to the decorated property name. Use
+   * when the underlying column doesn't match the property's camelCase name
+   * (e.g. `created_at` vs `createdAt`).
+   */
+  name?: string;
 }
 
 /**
@@ -38,6 +44,7 @@ export function CreateTimestamp(options?: TimestampOptions): PropertyDecorator {
     return Column({
       type: options?.type ?? "datetime",
       nullable: false,
+      ...(options?.name ? { name: options.name } : {}),
     })(target, propertyKey);
   };
 }

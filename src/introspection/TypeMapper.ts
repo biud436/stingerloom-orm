@@ -3,7 +3,7 @@ import { ColumnType } from "../decorators/Column";
 /**
  * Supported dialect for introspection type mapping.
  */
-export type IntrospectionDialect = "mysql" | "postgres";
+export type IntrospectionDialect = "mysql" | "postgres" | "sqlite";
 
 /**
  * Reverse mapping from database-native column types to ORM ColumnType.
@@ -62,6 +62,53 @@ export class IntrospectionTypeMapper {
     "USER-DEFINED": "enum",
   };
 
+  private static readonly sqliteMap: Record<string, ColumnType> = {
+    // SQLite has flexible typing — the declared type drives the affinity.
+    // Numeric types
+    INTEGER: "int",
+    INT: "int",
+    "INT2": "int",
+    "INT4": "int",
+    "INT8": "bigint",
+    MEDIUMINT: "int",
+    SMALLINT: "int",
+    TINYINT: "int",
+    BIGINT: "bigint",
+    "UNSIGNED BIG INT": "bigint",
+    REAL: "float",
+    FLOAT: "float",
+    DOUBLE: "double",
+    "DOUBLE PRECISION": "double",
+    NUMERIC: "double",
+    DECIMAL: "double",
+
+    // Boolean (SQLite stores as 0/1 INTEGER but the declared type "BOOLEAN"
+    // is honored)
+    BOOLEAN: "boolean",
+    BOOL: "boolean",
+
+    // String types
+    TEXT: "text",
+    CLOB: "longtext",
+    CHARACTER: "char",
+    CHAR: "char",
+    "NATIVE CHARACTER": "char",
+    VARCHAR: "varchar",
+    "VARYING CHARACTER": "varchar",
+    NVARCHAR: "varchar",
+
+    // Date/time
+    DATETIME: "datetime",
+    TIMESTAMP: "timestamp",
+    DATE: "date",
+
+    // JSON (declared type; SQLite stores as text)
+    JSON: "json",
+
+    // Binary
+    BLOB: "blob",
+  };
+
   private static readonly mysqlMap: Record<string, ColumnType> = {
     // Numeric types
     INT: "int",
@@ -109,12 +156,71 @@ export class IntrospectionTypeMapper {
    *
    * @param dbType - The raw database type string (e.g. "VARCHAR", "INTEGER")
    * @param dialect - The database dialect ("mysql" or "postgres")
+   * @param columnTypeFull - Optional full column type with width/length, e.g.
+   *   "tinyint(1)", "tinyint(4) unsigned", "varchar(255)". Used to refine
+   *   MySQL TINYINT detection: only TINYINT(1) is treated as boolean; wider
+   *   TINYINT(N) widths are treated as small integers.
    * @returns The mapped ColumnType, or "varchar" as a fallback for unknown types
    */
-  static toColumnType(dbType: string, dialect: IntrospectionDialect): ColumnType {
+  static toColumnType(
+    dbType: string,
+    dialect: IntrospectionDialect,
+    columnTypeFull?: string,
+  ): ColumnType {
     const normalized = dbType.toUpperCase().trim();
+
+    if (dialect === "sqlite") {
+      // SQLite reports declared types verbatim; strip parens like
+      // `VARCHAR(255)` → `VARCHAR` so the map lookup still works.
+      const stripped = normalized.replace(/\s*\([^)]*\)/, "").trim();
+      return this.sqliteMap[stripped] ?? "varchar";
+    }
+
+    if (dialect === "mysql" && normalized === "TINYINT") {
+      // TINYINT(1) is the conventional MySQL boolean. Wider widths
+      // (TINYINT(3), TINYINT(4) unsigned, etc.) are small integers. When
+      // the full column type isn't available, fall back to the legacy
+      // mapping (boolean) for backwards compatibility.
+      const full = (columnTypeFull ?? "").toLowerCase();
+      if (!full) return "boolean";
+      const widthMatch = full.match(/tinyint\((\d+)\)/);
+      const width = widthMatch ? Number(widthMatch[1]) : null;
+      if (width === 1) return "boolean";
+      return "int";
+    }
+
     const map = dialect === "mysql" ? this.mysqlMap : this.postgresMap;
     return map[normalized] ?? "varchar";
+  }
+
+  /**
+   * Parse a SQLite declared type's parenthesized width, e.g. `VARCHAR(255)`
+   * → `255` or `DECIMAL(10,2)` → `10`. Returns `null` when there is no
+   * width or the width isn't a positive integer.
+   */
+  static parseSqliteWidth(declaredType: string | null | undefined): number | null {
+    if (!declaredType) return null;
+    const match = declaredType.match(/\((\d+)(?:\s*,\s*\d+)?\)/);
+    if (!match) return null;
+    const n = Number(match[1]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  /**
+   * Parse a SQLite declared type's `(precision, scale)`, e.g. `DECIMAL(10,2)`
+   * → `{ precision: 10, scale: 2 }`. Returns `null` when there are no
+   * comma-separated numeric arguments.
+   */
+  static parseSqlitePrecisionScale(
+    declaredType: string | null | undefined,
+  ): { precision: number; scale: number } | null {
+    if (!declaredType) return null;
+    const match = declaredType.match(/\((\d+)\s*,\s*(\d+)\)/);
+    if (!match) return null;
+    const precision = Number(match[1]);
+    const scale = Number(match[2]);
+    if (!Number.isFinite(precision) || !Number.isFinite(scale)) return null;
+    return { precision, scale };
   }
 
   /**

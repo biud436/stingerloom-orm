@@ -29,6 +29,7 @@ export function DeletedAt(options?: TimestampOptions): PropertyDecorator {
     return Column({
       type: options?.type ?? "datetime",
       nullable: true,
+      ...(options?.name ? { name: options.name } : {}),
     })(target, propertyKey);
   };
 }
