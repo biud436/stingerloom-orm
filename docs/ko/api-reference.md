@@ -47,8 +47,18 @@ const em = new EntityManager();
 | Method | Signature | 설명 |
 |--------|-----------|------|
 | `insertMany` | `<T>(entity, items[]): Promise<{ affected: number }>` | 다건 INSERT |
+| `insertIgnore` | `<T>(entity, rows[]): Promise<void>` | 멱등 INSERT — `INSERT IGNORE`(MySQL) / `INSERT … ON CONFLICT DO NOTHING`(PostgreSQL / SQLite) |
 | `saveMany` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | 다건 INSERT/UPDATE |
 | `deleteMany` | `<T>(entity, ids[]): Promise<DeleteResult>` | 다건 삭제 |
+
+### Relation Batch Writes
+
+`@ManyToMany` 조인 테이블에 대한 방언-호환 쓰기. owning 측과 `mappedBy` 측을 모두 커버해요. `BaseRepository.relation(name).add(child)` / `.remove(child)`로도 동일하게 호출할 수 있어요.
+
+| Method | Signature | 설명 |
+|--------|-----------|------|
+| `attachRelation` | `<T, U>(parent: T, relation: keyof T & string, child: U): Promise<void>` | 조인 테이블에 행 추가 (내부적으로 `insertIgnore` 사용) |
+| `detachRelation` | `<T, U>(parent: T, relation: keyof T & string, child: U): Promise<void>` | 조인 테이블에서 행 제거 |
 
 ### Aggregation
 
@@ -133,7 +143,13 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
+`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `updateMany` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
+
+**Repository 전용 헬퍼:**
+
+| Method | Signature | 설명 |
+|--------|-----------|------|
+| `relation` | `(name: keyof T & string)` → `{ add(child), remove(child) }` | `@ManyToMany` 조인 테이블에 대한 `attachRelation` / `detachRelation` 슈가 |
 
 서브클래스에서 사용 가능한 protected 필드: `entity` (엔티티 클래스)와 `em` (EntityManager 인스턴스).
 
@@ -386,10 +402,16 @@ class SelectQueryBuilder<T, TResult = T> {
   getPartialOne(): Promise<TResult | null>;
   getPartialManyAndCount(): Promise<[TResult[], number]>;
 
-  // ── 실행: untyped plain 객체 ──────────────────────────
-  getRawMany(): Promise<Record<string, unknown>[]>;
-  getRawOne(): Promise<Record<string, unknown> | null>;
+  // ── 실행: untyped 또는 coerce된 plain 객체 ────────────
+  // `T`로 행 모양을 선언해요. 선택적인 `coerce` 맵으로
+  // 드라이버 네이티브 문자열 값(mysql2 BIGINT/DECIMAL,
+  // pg NUMERIC, 날짜 컬럼)을 숫자/Date로 직접 매핑할 수 있어요.
+  getRawMany<T = Record<string, unknown>>(options?: RawResultOptions<T>): Promise<T[]>;
+  getRawOne<T = Record<string, unknown>>(options?: RawResultOptions<T>): Promise<T | null>;
 }
+
+// RawResultOptions<T> — 키별 coercion 맵.
+//   coerce: { [K in keyof T]?: "number" | "bigint" | "boolean" | "date" | (raw: unknown) => T[K] }
 ```
 
 **모듈 헬퍼 — `qAlias`**
@@ -406,6 +428,30 @@ function qAlias<T>(entity: Class<T>, name: string): QEntity<T>;
 const u = qAlias(User, "u");
 qb.where(u.email, "alice@example.com");
 ```
+
+`qAlias()`는 런타임에 컬럼명이 정해지는 케이스(저장된 필터 컴파일러, 동적 컬럼 DSL)를 위해 `i.field(name)` / `i.jsonField(name)` 동적 액세서도 제공해요. 또한 `@ManyToOne` / `@OneToOne`의 `fkProperty` 옵션을 사용하면 관용적이지 않은 FK 백업 속성 이름도 별도의 `@Column` 중복 없이 리졸버에 알릴 수 있어요.
+
+### Expressions (QueryDSL 헬퍼)
+
+`Expressions` 네임스페이스(보통 `as exp`로 alias)는 `select()`, `where()`, `groupBy()`, `orderBy()`, `having()` 안에서 사용하는 방언-호환 scalar / aggregate / 분석 헬퍼를 묶어 둔 곳이에요. 각 헬퍼는 파라미터 바인딩을 끝까지 보존하는 합성 가능한 `ScalarExpression` / `AggregateExpression` / `WindowBuilder`를 반환해요.
+
+전체 표면 — [QueryDSL 가이드](./query-builder-querydsl.md)를 참고해주세요. 빠른 요약:
+
+| Family | Members |
+|--------|---------|
+| Null 처리 | `coalesce(a, b, …)`, `nullif(a, b)` |
+| Cast | `.stringValue / intValue / longValue / bigintValue / floatValue / booleanValue` (column 또는 scalar) |
+| Date / time | `currentDate / currentTime / currentTimestamp`, `dateTrunc(value, unit)`, `dateDiff(a, b, unit)`, `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `.year / month / day / hour / minute / second / dayOfWeek / dayOfMonth / dayOfYear / week` |
+| Aggregate | `count(arg)`, `sum / avg / min / max / aggregate(scalarExpr)` (`ColumnExpression`에서도 체이닝 가능) |
+| Ordered-set aggregate *(PostgreSQL 네이티브; MySQL / SQLite는 `UNSUPPORTED_OPERATION` 발생)* | `percentileCont(p, orderBy)`, `percentileDisc(p, orderBy)`, `mode(orderBy)` |
+| Window 함수 | `rowNumber / rank / denseRank / ntile(n) / percentRank / cumeDist`, 위치 기반 `lag / lead(expr, offset?, default?) / firstValue / lastValue / nthValue(expr, n)`. 전부 `.partitionBy(...)` / `.orderBy(...)` / `.rowsBetween(...)` / `.rangeBetween(...)` 후 `.as(alias)`로 마감하는 `WindowBuilder`를 반환해요. |
+| CASE | `caseBuilder()`, `cases(subject)`, 그리고 단축형 `iff(cond, a, b)`, `mapValues(subject, {…}, default?)`, `buckets(subject, [[t, r], …], default?)` |
+| 서브쿼리 | `exists(subQb)`, `notExists(subQb)`, column `.in(subQb) / .notIn(subQb) / .eq(subQb)` … |
+| 논리 | `and(...)`, `or(...)`, `not(cond)` over `ConditionLike` (column / JSON-path / aggregate / scalar) |
+| 문자열 | `.toLowerCase / toUpperCase / trim / length / substring(s, e?) / concat(...args) / indexOf(needle) / replace(from, to)`, LIKE-safe `.startsWith / endsWith / contains` (`*IgnoreCase` 형제) |
+| 산술 / 수학 | `.add / sub / mul / div / mod / neg / abs / floor / ceil / round(digits?) / sqrt`, `random()` |
+| 전문 검색 | `Conditions.fullTextSearch(columns, term, { language?, mode? })` — MySQL `MATCH … AGAINST`, PostgreSQL `to_tsvector @@ to_tsquery` |
+| 탈출구 | ``Expressions.raw<T>(sql`…`)``, `qb.selectSchema(zodSchema)` (Zod / Valibot / Effect — `TResult` 좁히기) |
 
 ### RawQueryBuilder -- Set Operations, CTE, Window Functions
 

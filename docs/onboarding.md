@@ -12,9 +12,9 @@
 
 | Tool | Minimum Version | Notes |
 |------|----------------|-------|
-| Node.js | >=16 | See the `engines` field in `package.json` |
+| Node.js | >=22 | LTS; see the `engines` field in `package.json` |
 | pnpm | >=8 | Project package manager |
-| TypeScript | >=5.6 | Included in `devDependencies` |
+| TypeScript | >=6.0 | Included in `devDependencies` |
 | Docker | Latest stable | For integration test MySQL/PostgreSQL |
 
 ### Clone and Build
@@ -26,7 +26,7 @@ pnpm install
 pnpm build          # Generate dist/ — required before running examples
 ```
 
-`pnpm build` runs `rimraf dist && tsc`. Since the ORM is not yet published on npm, `examples/` projects reference the local build output (`dist/`).
+`pnpm build` produces both CJS (`dist/`) and ESM (`dist/esm/`) bundles. The package is published on npm as [`@stingerloom/orm`](https://www.npmjs.com/package/@stingerloom/orm); the `examples/` projects under this repo reference the local build output so changes you make in `src/` are picked up immediately by `pnpm --filter examples/* …` without a republish.
 
 ### Database Setup with Docker
 
@@ -61,15 +61,18 @@ pnpm test -- --testPathPattern="schema-diff"
 INTEGRATION_TEST=true pnpm test -- --testPathPattern="integration"
 ```
 
-Unit tests consist of 131 files with 2,978+ cases. Integration tests (40 files, 868+ cases across MySQL, PostgreSQL, and SQLite) are automatically skipped without the `INTEGRATION_TEST=true` environment variable.
+The full suite is currently ~5,200 cases (unit + SQLite + MySQL + PostgreSQL, single-digit skips, 0 failures). Integration tests (MySQL/PostgreSQL) are automatically skipped without the `INTEGRATION_TEST=true` environment variable; SQLite integration runs in-memory and is always included.
 
 ### Running Examples
 
 ```bash
 pnpm build                              # Must build first
-cd examples/nestjs-cats && pnpm install && pnpm start
-# or
-cd examples/nestjs-blog && pnpm install && pnpm start
+cd examples/nestjs-cats && pnpm install && pnpm start          # minimal CRUD
+cd examples/nestjs-blog && pnpm install && pnpm start          # M2M, soft delete, upsert
+cd examples/nestjs-multitenant && pnpm install && pnpm start   # PostgreSQL schema-per-tenant
+cd examples/nestjs-todo && pnpm install && pnpm start          # minimal NestJS + MySQL
+cd examples/nestjs-todo-sqlite && pnpm install && pnpm start   # SQLite (in-memory)
+cd examples/nestjs-linear-clone && pnpm install && pnpm start  # full reference app (recursive-CTE, analytics, multi-tenancy)
 ```
 
 ---
@@ -619,6 +622,9 @@ pnpm build
 cd examples/nestjs-cats && pnpm install && npx tsc --noEmit
 cd ../nestjs-blog && pnpm install && npx tsc --noEmit
 cd ../nestjs-multitenant && pnpm install && npx tsc --noEmit
+cd ../nestjs-todo && pnpm install && npx tsc --noEmit
+cd ../nestjs-todo-sqlite && pnpm install && npx tsc --noEmit
+cd ../nestjs-linear-clone && pnpm install && npx tsc --noEmit
 ```
 
 ---

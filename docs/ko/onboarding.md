@@ -12,9 +12,9 @@
 
 | Tool | Minimum Version | Notes |
 |------|----------------|-------|
-| Node.js | >=16 | `package.json`의 `engines` 필드 참고 |
+| Node.js | >=22 | LTS; `package.json`의 `engines` 필드 참고 |
 | pnpm | >=8 | 프로젝트 패키지 매니저 |
-| TypeScript | >=5.6 | `devDependencies`에 포함돼 있어요 |
+| TypeScript | >=6.0 | `devDependencies`에 포함돼 있어요 |
 | Docker | Latest stable | 통합 테스트용 MySQL/PostgreSQL |
 
 ### Clone & Build
@@ -26,7 +26,7 @@ pnpm install
 pnpm build          # Generate dist/ — required before running examples
 ```
 
-`pnpm build`는 `rimraf dist && tsc`를 실행해요. ORM이 아직 npm에 배포되지 않았기 때문에, `examples/` 프로젝트는 로컬 빌드 결과물(`dist/`)을 참조해요.
+`pnpm build`는 CJS(`dist/`)와 ESM(`dist/esm/`) 번들을 함께 생성해요. 패키지는 npm에 [`@stingerloom/orm`](https://www.npmjs.com/package/@stingerloom/orm)으로 배포돼 있어요. 이 리포 안의 `examples/` 프로젝트는 로컬 빌드 결과물(`dist/`)을 참조하므로, `src/`에서 수정한 내용이 별도 배포 없이 즉시 예제에 반영돼요.
 
 ### Docker로 데이터베이스 설정
 
@@ -61,15 +61,18 @@ pnpm test -- --testPathPattern="schema-diff"
 INTEGRATION_TEST=true pnpm test -- --testPathPattern="integration"
 ```
 
-유닛 테스트는 131개 파일에 2,978개 이상의 케이스로 구성돼 있어요. 통합 테스트는 40개 파일에 868개 이상의 케이스(MySQL, PostgreSQL, SQLite)이며, `INTEGRATION_TEST=true` 환경변수가 없으면 자동으로 건너뛰어요.
+전체 테스트는 현재 약 5,200개 케이스(unit + SQLite + MySQL + PostgreSQL, 스킵 한 자릿수, 0 failures) 규모예요. MySQL/PostgreSQL 통합 테스트는 `INTEGRATION_TEST=true` 환경변수가 없으면 자동으로 건너뛰고, SQLite 통합 테스트는 in-memory로 동작하므로 항상 같이 실행돼요.
 
 ### 예제 실행
 
 ```bash
-pnpm build                              # Must build first
-cd examples/nestjs-cats && pnpm install && pnpm start
-# or
-cd examples/nestjs-blog && pnpm install && pnpm start
+pnpm build                              # 먼저 빌드해야 해요
+cd examples/nestjs-cats && pnpm install && pnpm start          # 최소 CRUD
+cd examples/nestjs-blog && pnpm install && pnpm start          # M2M, soft delete, upsert
+cd examples/nestjs-multitenant && pnpm install && pnpm start   # PostgreSQL 스키마별 테넌트
+cd examples/nestjs-todo && pnpm install && pnpm start          # 최소 NestJS + MySQL
+cd examples/nestjs-todo-sqlite && pnpm install && pnpm start   # SQLite (in-memory)
+cd examples/nestjs-linear-clone && pnpm install && pnpm start  # 풀 레퍼런스 앱 (재귀 CTE, 분석, 멀티테넌시)
 ```
 
 ---
@@ -619,6 +622,9 @@ pnpm build
 cd examples/nestjs-cats && pnpm install && npx tsc --noEmit
 cd ../nestjs-blog && pnpm install && npx tsc --noEmit
 cd ../nestjs-multitenant && pnpm install && npx tsc --noEmit
+cd ../nestjs-todo && pnpm install && npx tsc --noEmit
+cd ../nestjs-todo-sqlite && pnpm install && npx tsc --noEmit
+cd ../nestjs-linear-clone && pnpm install && npx tsc --noEmit
 ```
 
 ---

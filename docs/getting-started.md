@@ -556,7 +556,7 @@ export class AnalyticsService {
 
 > When connectionName is omitted, it defaults to `"default"`, so existing single-DB code works without any changes.
 
-> **Hint** Complete NestJS examples are included in the `examples/nestjs-cats/`, `examples/nestjs-blog/`, and `examples/nestjs-multitenant/` directories.
+> **Hint** Complete NestJS examples are included under `examples/`: `nestjs-cats` (basic CRUD + EntitySubscriber), `nestjs-blog` (M2M, soft delete, upsert, 59 e2e tests), `nestjs-multitenant` (PostgreSQL schema-per-tenant), `nestjs-todo` (minimal CRUD), `nestjs-todo-sqlite` (SQLite), and `nestjs-linear-clone` (full reference app — recursive-CTE issue trees, workflow state machine, analytics, workspace-isolated multi-tenancy).
 
 ## Next Steps
 

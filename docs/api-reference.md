@@ -47,8 +47,18 @@ const em = new EntityManager();
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `insertMany` | `<T>(entity, items[]): Promise<{ affected: number }>` | Multi-row INSERT |
+| `insertIgnore` | `<T>(entity, rows[]): Promise<void>` | Idempotent INSERT — `INSERT IGNORE` (MySQL) / `INSERT … ON CONFLICT DO NOTHING` (PostgreSQL / SQLite) |
 | `saveMany` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | Multi-row INSERT/UPDATE |
 | `deleteMany` | `<T>(entity, ids[]): Promise<DeleteResult>` | Multi-row delete |
+
+### Relation Batch Writes
+
+Dialect-portable `@ManyToMany` join-table writes covering both owning and `mappedBy` sides. Mirrored on `BaseRepository.relation(name)` as `.add(child)` / `.remove(child)`.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `attachRelation` | `<T, U>(parent: T, relation: keyof T & string, child: U): Promise<void>` | Insert a row into the join table (idempotent via `insertIgnore`) |
+| `detachRelation` | `<T, U>(parent: T, relation: keyof T & string, child: U): Promise<void>` | Remove a row from the join table |
 
 ### Aggregation
 
@@ -133,7 +143,13 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder` — Uses the same API as EntityManager without specifying the entity.
+`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `updateMany` — uses the same API as EntityManager without specifying the entity.
+
+**Repository-only helpers:**
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `relation` | `(name: keyof T & string)` returns `{ add(child), remove(child) }` | Sugar over `attachRelation` / `detachRelation` for `@ManyToMany` join-table writes |
 
 Protected fields available for subclasses: `entity` (the entity class) and `em` (the EntityManager instance).
 
@@ -386,10 +402,16 @@ class SelectQueryBuilder<T, TResult = T> {
   getPartialOne(): Promise<TResult | null>;
   getPartialManyAndCount(): Promise<[TResult[], number]>;
 
-  // ── EXECUTION: untyped plain objects ───────────────────
-  getRawMany(): Promise<Record<string, unknown>[]>;
-  getRawOne(): Promise<Record<string, unknown> | null>;
+  // ── EXECUTION: untyped or coerced plain objects ────────
+  // `T` declares the row shape. Optional `coerce` map normalizes
+  // driver-native string values (mysql2 BIGINT/DECIMAL, pg NUMERIC,
+  // date columns) to numbers / Dates without hand-written wrappers.
+  getRawMany<T = Record<string, unknown>>(options?: RawResultOptions<T>): Promise<T[]>;
+  getRawOne<T = Record<string, unknown>>(options?: RawResultOptions<T>): Promise<T | null>;
 }
+
+// RawResultOptions<T> — per-key coercion map.
+//   coerce: { [K in keyof T]?: "number" | "bigint" | "boolean" | "date" | (raw: unknown) => T[K] }
 ```
 
 **Module helper — `qAlias`**
@@ -406,6 +428,30 @@ function qAlias<T>(entity: Class<T>, name: string): QEntity<T>;
 const u = qAlias(User, "u");
 qb.where(u.email, "alice@example.com");
 ```
+
+`qAlias()` also exposes runtime-dynamic accessors `i.field(name)` and `i.jsonField(name)` for columns selected by string at call time (saved-filter compilers, dynamic column DSLs), and `fkProperty` on `@ManyToOne` / `@OneToOne` lets the resolver map non-conventional FK backing properties without a duplicate `@Column`.
+
+### Expressions (QueryDSL helpers)
+
+The `Expressions` namespace (commonly aliased `as exp`) groups dialect-portable scalar / aggregate / analytical helpers used inside `select()`, `where()`, `groupBy()`, `orderBy()`, and `having()`. Each helper returns a composable `ScalarExpression` / `AggregateExpression` / `WindowBuilder` carrying its parameter bindings end-to-end.
+
+Full surface — see [QueryDSL guide](./query-builder-querydsl.md). Quick map:
+
+| Family | Members |
+|--------|---------|
+| Null handling | `coalesce(a, b, …)`, `nullif(a, b)` |
+| Casts | `.stringValue / intValue / longValue / bigintValue / floatValue / booleanValue` (column or scalar) |
+| Date / time | `currentDate / currentTime / currentTimestamp`, `dateTrunc(value, unit)`, `dateDiff(a, b, unit)`, `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `.year / month / day / hour / minute / second / dayOfWeek / dayOfMonth / dayOfYear / week` |
+| Aggregates | `count(arg)`, `sum / avg / min / max / aggregate(scalarExpr)` (also chainable from `ColumnExpression`) |
+| Ordered-set aggregates *(PostgreSQL-native; MySQL / SQLite throw `UNSUPPORTED_OPERATION`)* | `percentileCont(p, orderBy)`, `percentileDisc(p, orderBy)`, `mode(orderBy)` |
+| Window functions | `rowNumber / rank / denseRank / ntile(n) / percentRank / cumeDist`, positional `lag / lead(expr, offset?, default?) / firstValue / lastValue / nthValue(expr, n)`. All return a `WindowBuilder` accepting `.partitionBy(...)` / `.orderBy(...)` / `.rowsBetween(...)` / `.rangeBetween(...)` before `.as(alias)`. |
+| CASE | `caseBuilder()`, `cases(subject)`, plus shortcuts `iff(cond, a, b)`, `mapValues(subject, {…}, default?)`, `buckets(subject, [[t, r], …], default?)` |
+| Subqueries | `exists(subQb)`, `notExists(subQb)`, column `.in(subQb) / .notIn(subQb) / .eq(subQb)` … |
+| Logical | `and(...)`, `or(...)`, `not(cond)` over `ConditionLike` (column / JSON-path / aggregate / scalar) |
+| Strings | `.toLowerCase / toUpperCase / trim / length / substring(s, e?) / concat(...args) / indexOf(needle) / replace(from, to)`, LIKE-safe `.startsWith / endsWith / contains` (`*IgnoreCase` siblings) |
+| Arithmetic / math | `.add / sub / mul / div / mod / neg / abs / floor / ceil / round(digits?) / sqrt`, `random()` |
+| Full-text | `Conditions.fullTextSearch(columns, term, { language?, mode? })` — MySQL `MATCH … AGAINST`, PostgreSQL `to_tsvector @@ to_tsquery` |
+| Escape hatches | ``Expressions.raw<T>(sql`…`)``, `qb.selectSchema(zodSchema)` (Zod / Valibot / Effect — narrows `TResult`) |
 
 ### RawQueryBuilder — Set Operations, CTE, Window Functions
 

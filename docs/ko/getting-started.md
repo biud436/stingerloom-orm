@@ -552,7 +552,7 @@ export class AnalyticsService {
 
 > connectionName을 생략하면 기본값 `"default"`가 사용되므로, 기존 단일 DB 코드는 변경 없이 계속 동작해요.
 
-> **힌트** 완전한 NestJS 예제는 `examples/nestjs-cats/`, `examples/nestjs-blog/`, `examples/nestjs-multitenant/` 디렉토리에 있어요.
+> **힌트** 완전한 NestJS 예제는 `examples/` 아래에 있어요: `nestjs-cats`(기본 CRUD + EntitySubscriber), `nestjs-blog`(M2M, soft delete, upsert, 59개 e2e 테스트), `nestjs-multitenant`(PostgreSQL 스키마별 테넌트), `nestjs-todo`(최소 CRUD), `nestjs-todo-sqlite`(SQLite), 그리고 `nestjs-linear-clone`(풀 레퍼런스 앱 — 재귀 CTE 이슈 트리, 워크플로 상태 머신, 분석, 워크스페이스별 멀티테넌시).
 
 ## 다음 단계
 
