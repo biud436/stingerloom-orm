@@ -295,6 +295,126 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
   });
 
   // ────────────────────────────────────────────────
+  // Trash view via GET /projects/:id/trash — exercises
+  // IssuesService.findTrash() and the withDeleted() query
+  // builder hook. Locks in #341 coverage.
+  // ────────────────────────────────────────────────
+  describe("Trash list (findTrash)", () => {
+    let trashedId: number;
+    let liveId: number;
+
+    beforeAll(async () => {
+      const live = await createIssue(booted.server, {
+        projectId: fx.projectId,
+        title: "Trash-test: live issue",
+      });
+      liveId = live.id;
+
+      const trashed = await createIssue(booted.server, {
+        projectId: fx.projectId,
+        title: "Trash-test: soft-deleted issue",
+      });
+      trashedId = trashed.id;
+      await api.delete(`/issues/${trashedId}`).expect(204);
+    });
+
+    it("GET /projects/:id/trash lists soft-deleted issues for the project", async () => {
+      const r = await api.get(`/projects/${fx.projectId}/trash`).expect(200);
+      expect(Array.isArray(r.body)).toBe(true);
+
+      const ids = r.body.map((row: any) => row.id);
+      expect(ids).toContain(trashedId);
+      // Live (un-deleted) rows must never bleed into the trash view.
+      expect(ids).not.toContain(liveId);
+
+      const trashedRow = r.body.find((row: any) => row.id === trashedId);
+      expect(trashedRow.deletedAt).toBeTruthy();
+    });
+
+    it("rows leave the trash list once they are restored", async () => {
+      await api.post(`/issues/${trashedId}/restore`).expect(204);
+
+      const r = await api.get(`/projects/${fx.projectId}/trash`).expect(200);
+      const ids = r.body.map((row: any) => row.id);
+      expect(ids).not.toContain(trashedId);
+    });
+  });
+
+  // ────────────────────────────────────────────────
+  // 3-deep cascade restore — restoreWithCascade walks
+  // the soft-deleted descendant subtree via a recursive
+  // CTE. Existing tests cover the 2-deep case; #341 asks
+  // for an explicit 3-deep proof.
+  // ────────────────────────────────────────────────
+  describe("Cascade restore — 3-deep subtree", () => {
+    let grandparentId: number;
+    let parentId: number;
+    let childId: number;
+
+    beforeAll(async () => {
+      const grandparent = await createIssue(booted.server, {
+        projectId: fx.projectId,
+        title: "3-deep grandparent",
+      });
+      grandparentId = grandparent.id;
+
+      const parent = await createIssue(booted.server, {
+        projectId: fx.projectId,
+        title: "3-deep parent",
+        parentId: grandparentId,
+      });
+      parentId = parent.id;
+
+      const child = await createIssue(booted.server, {
+        projectId: fx.projectId,
+        title: "3-deep child",
+        parentId: parentId,
+      });
+      childId = child.id;
+
+      // Trash the whole subtree bottom-up so every node has deletedAt set.
+      // The recursive CTE in restoreWithCascade only walks rows whose parent
+      // is also in the deleted set, matching the "restore everything that
+      // was trashed together" semantic — so all three must be soft-deleted.
+      await api.delete(`/issues/${childId}`).expect(204);
+      await api.delete(`/issues/${parentId}`).expect(204);
+      await api.delete(`/issues/${grandparentId}`).expect(204);
+    });
+
+    it("restores the full 3-level subtree in one call", async () => {
+      // Sanity-check: every node currently surfaces as 404 (soft-deleted).
+      for (const id of [grandparentId, parentId, childId]) {
+        await api.get(`/issues/${id}`).expect(404);
+      }
+
+      await api
+        .post(`/issues/${grandparentId}/restore`)
+        .query({ cascade: 1 })
+        .expect(204);
+
+      // Every node in the subtree is live again.
+      for (const id of [grandparentId, parentId, childId]) {
+        const r = await api.get(`/issues/${id}`).expect(200);
+        expect(r.body.id).toBe(id);
+        expect(r.body.deletedAt).toBeFalsy();
+      }
+    });
+
+    it("a follow-up cascade restore on the already-active root is a no-op (idempotent)", async () => {
+      // Second call must not throw or duplicate audit rows from new restores —
+      // the recursive CTE finds no soft-deleted descendants, so nothing changes.
+      await api
+        .post(`/issues/${grandparentId}/restore`)
+        .query({ cascade: 1 })
+        .expect(204);
+
+      for (const id of [grandparentId, parentId, childId]) {
+        await api.get(`/issues/${id}`).expect(200);
+      }
+    });
+  });
+
+  // ────────────────────────────────────────────────
   // Cursor pagination
   // ────────────────────────────────────────────────
   describe("Cursor pagination", () => {

@@ -177,6 +177,88 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
 
       expect(res.body.length).toBeLessThanOrEqual(1);
     });
+
+    // ──────────────────────────────────────────────────────────
+    // Comment-only FTS regression for #333 — the previous PG path
+    // hit a snake/camel mismatch on `c.deleted_at` / `c.deletedAt`,
+    // so the comment branch silently returned no rows. The two
+    // tests below exercise the branch independently of the issue
+    // text by seeding a token that lives *only* in a comment body.
+    // If the comment branch breaks again, this fails the suite.
+    // ──────────────────────────────────────────────────────────
+    describe("Regression: comment-only matches (#333)", () => {
+      let isolatedIssueId: number;
+      const isolatedToken = `xyzzyplugh${Date.now().toString(36)}`;
+
+      beforeAll(async () => {
+        const r = await createIssue(booted.server, {
+          projectId: fx.projectId,
+          title: "Comment-only host issue",
+          description: "Plain text with no special token.",
+        });
+        isolatedIssueId = r.id;
+
+        await api
+          .post("/comments")
+          .send({ issueId: isolatedIssueId, body: `${isolatedToken} reproduction notes` })
+          .expect(201);
+
+        // Let MySQL FULLTEXT / PG GIN indexes settle before querying.
+        await new Promise((r) => setTimeout(r, 1500));
+      }, 60000);
+
+      it("returns exactly the comment hit when the token only exists in the comment body", async () => {
+        const res = await api
+          .get("/search/issues")
+          .query({ q: isolatedToken, projectId: fx.projectId, limit: 50 })
+          .expect(200);
+
+        const commentHits = res.body.filter((r: any) => r.source === "comment");
+        expect(commentHits.length).toBeGreaterThanOrEqual(1);
+        // The hit's `id` is the parent issue id — verify the join survives the snake/camel boundary.
+        expect(commentHits.map((r: any) => r.id)).toContain(isolatedIssueId);
+        // And no issue-source rows match, since the token only lives in the comment.
+        const issueHits = res.body.filter((r: any) => r.source === "issue");
+        expect(issueHits).toEqual([]);
+      });
+
+      it("snippet on the comment hit echoes the comment body, not the issue description", async () => {
+        const res = await api
+          .get("/search/issues")
+          .query({ q: isolatedToken, projectId: fx.projectId, limit: 50 })
+          .expect(200);
+
+        const hit = res.body.find((r: any) => r.source === "comment");
+        expect(hit).toBeTruthy();
+        expect(String(hit.snippet)).toContain(isolatedToken);
+      });
+
+      it("excludes hits whose comment is soft-deleted (c.deleted_at IS NULL guard)", async () => {
+        // Seed a second issue with the same token in a comment, then soft-delete that comment.
+        const host = await createIssue(booted.server, {
+          projectId: fx.projectId,
+          title: "Soft-deleted comment host",
+        });
+        const c = await api
+          .post("/comments")
+          .send({ issueId: host.id, body: `${isolatedToken} from soft-deleted comment` })
+          .expect(201);
+
+        await api.delete(`/comments/${c.body.id}`).expect(204);
+
+        await new Promise((r) => setTimeout(r, 1000));
+
+        const res = await api
+          .get("/search/issues")
+          .query({ q: isolatedToken, projectId: fx.projectId, limit: 50 })
+          .expect(200);
+
+        const ids = res.body
+          .filter((r: any) => r.source === "comment")
+          .map((r: any) => r.id);
+        expect(ids).not.toContain(host.id);
+      });
+    });
   });
 
   // ────────────────────────────────────────────────
