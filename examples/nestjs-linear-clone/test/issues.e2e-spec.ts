@@ -534,4 +534,68 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
       expect(Array.isArray(log.body)).toBe(true);
     });
   });
+
+  // ────────────────────────────────────────────────
+  // Query-count regression — internal callers should not eager-load relations.
+  //
+  // Pre-fix, IssuesService.update/assign/addLabel/removeLabel went through the
+  // full `findOne()` which eager-loads labels (M2M → separate SELECT-IN on
+  // `issue_labels`) plus four JOINs (assignee, reporter, sprint, parent).
+  // Now they go through `findOneCore()` / `repo.exists()`, so none of those
+  // side-load queries should fire on the internal paths.
+  // ────────────────────────────────────────────────
+  describe("Query count — internal callers skip the 5-relation eager load", () => {
+    let issueId: number;
+    const labelsSideLoadPattern = /from\s+["`]?(label|issue_labels)["`]?/i;
+
+    beforeAll(async () => {
+      const r = await createIssue(booted.server, {
+        projectId: fx.projectId,
+        title: "Query-count subject",
+        status: "BACKLOG",
+        priority: 3,
+      });
+      issueId = r.id;
+    });
+
+    it("PATCH /issues/:id does not issue the labels M2M SELECT-IN", async () => {
+      const tracker = booted.em.getQueryTracker();
+      expect(tracker).not.toBeNull();
+      const current = await api.get(`/issues/${issueId}`).expect(200);
+      const before = tracker!.getLog().length;
+      await api
+        .patch(`/issues/${issueId}`)
+        .send({ expectedVersion: current.body.version, title: "Renamed for perf" })
+        .expect(200);
+      const issued = tracker!.getLog().slice(before);
+      const sideLoad = issued.find((e) => labelsSideLoadPattern.test(e.sql));
+      expect(sideLoad).toBeUndefined();
+    });
+
+    it("POST /issues/:id/labels gates existence without loading the row's relations", async () => {
+      const tracker = booted.em.getQueryTracker();
+      const before = tracker!.getLog().length;
+      await api
+        .post(`/issues/${issueId}/labels`)
+        .send({ labelId: labelPerfId })
+        .expect(201);
+      const issued = tracker!.getLog().slice(before);
+      // The existence gate is now `exists({ id })` (single COUNT/SELECT 1),
+      // followed by the join-table INSERT and an audit row — no row hydration
+      // and no labels side-load.
+      const sideLoad = issued.find((e) => /\bfrom\s+["`]?label["`]?\b/i.test(e.sql));
+      expect(sideLoad).toBeUndefined();
+    });
+
+    it("DELETE /issues/:id/labels/:labelId gates existence without loading the row's relations", async () => {
+      const tracker = booted.em.getQueryTracker();
+      const before = tracker!.getLog().length;
+      await api
+        .delete(`/issues/${issueId}/labels/${labelPerfId}`)
+        .expect(204);
+      const issued = tracker!.getLog().slice(before);
+      const sideLoad = issued.find((e) => /\bfrom\s+["`]?label["`]?\b/i.test(e.sql));
+      expect(sideLoad).toBeUndefined();
+    });
+  });
 });

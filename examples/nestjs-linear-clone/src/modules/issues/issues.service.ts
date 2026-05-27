@@ -151,6 +151,16 @@ export class IssuesService {
     return issue;
   }
 
+  // Slim variant for service-internal callers that only need the row itself
+  // (version, projectId, status, …). The public `findOne` keeps loading the
+  // five UI-render relations; switching internal call sites here avoids
+  // paying for 5 LEFT JOINs + the labels SELECT-IN on every update/assign.
+  private async findOneCore(id: number): Promise<Issue> {
+    const issue = await this.repo.findOne({ where: { id } });
+    if (!issue) throw new NotFoundException(`Issue ${id} not found`);
+    return issue;
+  }
+
   /** Cursor pagination over issues. Used by the activity feed. */
   findWithCursor(
     take = 20,
@@ -182,7 +192,10 @@ export class IssuesService {
     actorUserId: number,
   ): Promise<Issue> {
     // actorUserId drives the workflow role lookup below; IssueAuditSubscriber separately reads it from RequestContext.
-    const before = await this.findOne(id);
+    // `findOneCore` skips the 5-relation eager load — the audit subscriber
+    // reads its own `event.databaseEntity` snapshot for the diff and `save()`
+    // does not consult the joined collections.
+    const before = await this.findOneCore(id);
 
     // Drive `@Version` from the caller's expected version. If a concurrent
     // writer has bumped the row, repo.save() will throw OptimisticLockError.
@@ -264,7 +277,7 @@ export class IssuesService {
     dto: AssignAssigneeDto,
     actorUserId: number,
   ): Promise<Issue> {
-    const issue = await this.findOne(id);
+    const issue = await this.findOneCore(id);
     return this.update(
       id,
       { expectedVersion: issue.version, assigneeId: dto.assigneeId },
@@ -439,7 +452,9 @@ export class IssuesService {
     dto: AssignLabelDto,
     actorUserId: number,
   ): Promise<{ message: string }> {
-    await this.findOne(issueId);
+    if (!(await this.repo.exists({ id: issueId }))) {
+      throw new NotFoundException(`Issue ${issueId} not found`);
+    }
     await this.repo.relation(issueId, "labels").add(dto.labelId);
     await this.activity.log({
       issueId,
@@ -456,7 +471,9 @@ export class IssuesService {
     labelId: number,
     actorUserId: number,
   ): Promise<{ message: string }> {
-    await this.findOne(issueId);
+    if (!(await this.repo.exists({ id: issueId }))) {
+      throw new NotFoundException(`Issue ${issueId} not found`);
+    }
     await this.repo.relation(issueId, "labels").remove(labelId);
     await this.activity.log({
       issueId,
