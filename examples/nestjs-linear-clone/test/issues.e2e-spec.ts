@@ -243,6 +243,31 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
       const actions = log.body.map((r: any) => r.action);
       expect(actions).toContain("ISSUE_RESTORED");
     });
+
+    // Issue #344 — restore() and restoreWithCascade() must share the same
+    // contract for an already-live row. A client that toggles `?cascade=true`
+    // between calls must get the same status code.
+    it("restore on an already-live row is idempotent (no-op) under both cascade modes", async () => {
+      const beforeLog = await api
+        .get(`/activity/issues/${issueId}`)
+        .expect(200);
+      const restoredBefore = beforeLog.body.filter(
+        (r: any) => r.action === "ISSUE_RESTORED",
+      ).length;
+
+      await api.post(`/issues/${issueId}/restore`).expect(204);
+      await api
+        .post(`/issues/${issueId}/restore`)
+        .query({ cascade: 1 })
+        .expect(204);
+
+      // Neither no-op call should have written an audit row.
+      const afterLog = await api.get(`/activity/issues/${issueId}`).expect(200);
+      const restoredAfter = afterLog.body.filter(
+        (r: any) => r.action === "ISSUE_RESTORED",
+      ).length;
+      expect(restoredAfter).toBe(restoredBefore);
+    });
   });
 
   // ────────────────────────────────────────────────

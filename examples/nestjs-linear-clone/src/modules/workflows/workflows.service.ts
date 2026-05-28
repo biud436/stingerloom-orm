@@ -210,12 +210,15 @@ export class WorkflowsService {
   }
 
   // Validate a transition; throws 422 WorkflowViolationException with structured `{ code, rule, ... }` payload. Locks the definition row so concurrent rule edits serialize.
-  async assertTransition(
+  // `patchedIssue` is generic so callers can pass typed entity instances (Issue, etc.)
+  // without casting — `requiredFields` is `string[]`, so dynamic key access widens to
+  // `Record<string, unknown>` only at the read site.
+  async assertTransition<T extends object>(
     projectId: number,
     fromState: IssueStatus,
     toState: IssueStatus,
     userRole: MembershipRole | null | undefined,
-    patchedIssue: Record<string, unknown>,
+    patchedIssue: T,
   ): Promise<void> {
     if (fromState === toState) return;
 
@@ -258,8 +261,9 @@ export class WorkflowsService {
     }
 
     if (rule.requiredFields && rule.requiredFields.length > 0) {
+      const row = patchedIssue as Record<string, unknown>;
       const missing = rule.requiredFields.filter((field) => {
-        const v = patchedIssue[field];
+        const v = row[field];
         return v === undefined || v === null || v === "";
       });
       if (missing.length > 0) {

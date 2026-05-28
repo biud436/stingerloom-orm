@@ -215,7 +215,7 @@ export class IssuesService {
         previousStatus,
         dto.status,
         role,
-        before as unknown as Record<string, unknown>,
+        before,
       );
     }
 
@@ -307,17 +307,16 @@ export class IssuesService {
     });
   }
 
+  /**
+   * Single-row restore. Delegates to {@link restoreWithCascade} (cascade=false)
+   * so both call paths share one idempotency contract: 404 only when the row is
+   * truly missing; restoring an already-live row is a no-op (zero affected,
+   * no audit row written). Previously this method 404'd on already-live input,
+   * which diverged from `?cascade=true` — see issue #344.
+   */
   @Transactional()
   async restore(id: number, actorUserId: number): Promise<void> {
-    const result = await this.repo.restore({ id });
-    if (result.affected === 0) {
-      throw new NotFoundException(`Issue ${id} not found or not deleted`);
-    }
-    await this.activity.log({
-      issueId: id,
-      actorUserId,
-      action: ACTIVITY_ACTION.ISSUE_RESTORED,
-    });
+    await this.restoreWithCascade(id, false, actorUserId);
   }
 
   /**
@@ -354,8 +353,14 @@ export class IssuesService {
     actorUserId: number,
   ): Promise<{ restored: number; ids: number[] }> {
     if (!cascade) {
-      // Single-row restore — short-circuit (idempotent: zero affected when
-      // the row was never deleted, so we don't 404 in that case).
+      // Single-row restore. Idempotent: 404 only when the row is truly
+      // missing; already-live rows short-circuit with `{ restored: 0 }` so
+      // a retry never writes a phantom audit entry.
+      //
+      // We can't rely on `result.affected` to detect the no-op — MariaDB /
+      // mysql2 report "matched" not "changed" for UPDATE, so re-setting
+      // `deleted_at = NULL` on a live row still reports affected=1.
+      // The `withDeleted` lookup is the authoritative signal.
       const before = await this.em.findOne(Issue, {
         where: { id },
         withDeleted: true,
@@ -363,18 +368,16 @@ export class IssuesService {
       if (!before) {
         throw new NotFoundException(`Issue ${id} not found`);
       }
-      const result = await this.repo.restore({ id });
-      const affected = result.affected ?? 0;
-      // Only log an actual restore — an already-active issue touches zero
-      // rows (idempotent no-op) and must not leave a phantom audit entry.
-      if (affected > 0) {
-        await this.activity.log({
-          issueId: id,
-          actorUserId,
-          action: ACTIVITY_ACTION.ISSUE_RESTORED,
-        });
+      if (before.deletedAt == null) {
+        return { restored: 0, ids: [] };
       }
-      return { restored: affected, ids: affected ? [id] : [] };
+      await this.repo.restore({ id });
+      await this.activity.log({
+        issueId: id,
+        actorUserId,
+        action: ACTIVITY_ACTION.ISSUE_RESTORED,
+      });
+      return { restored: 1, ids: [id] };
     }
 
     // 1. confirm the issue exists (active or trashed). 404 only when truly missing.
