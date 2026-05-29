@@ -18,8 +18,8 @@ do not exercise.
 | JSON custom-field key/value queries | `search.service.ts` `byCustomField()` |
 | `FOR UPDATE SKIP LOCKED` worker queue | `queue.service.ts` `claimNext()` |
 | Optimistic locking via `@Version` (409 on stale) | `issues.service.ts` `update()` |
-| Soft delete (`@DeletedAt`) + restore | `issues.service.ts` `softRemove()`/`restore()` |
-| ManyToMany via direct join-table SQL (driver-aware) | `issues.service.ts` `addLabel()`/`removeLabel()` |
+| Soft delete (`@DeletedAt`) + restore, audit-logged via `ActivityLog` | `issues.service.ts` `softRemove()`/`restore()` |
+| ManyToMany via dialect-aware `repo.relation().add()`/`remove()` | `issues.service.ts` `addLabel()`/`removeLabel()` |
 | Audit log driven by service-side hook calls | `activity.service.ts` |
 | Cursor pagination | `issues.service.ts` `findWithCursor()` |
 | Dialect-portable raw SQL (MySQL + PostgreSQL) | `analytics/sql-helpers.ts` |
@@ -176,13 +176,19 @@ This example was upgraded from "ORM demo" to a production-shaped app:
   rate limits.
 - **Structured `RequestId` propagation** (`X-Request-Id` echoed on every
   response, threaded into log lines and error envelopes).
-- **JSON column transformers** centralising the MySQL-text vs PostgreSQL-
-  jsonb asymmetry — service code passes plain objects, no manual
-  `JSON.stringify` casts.
+- **Automatic JSON column handling** — a `@Column({ type: "json" })` column
+  serializes plain objects on write and parses them back on read, so the ORM
+  bridges the MySQL-text vs PostgreSQL-jsonb asymmetry. Service code assigns
+  `entity.customFields = { ... }` directly with no manual `JSON.stringify`
+  casts (`src/modules/issues/issue.entity.ts` `customFields`).
 - **Crash-recoverable queue sentinel**: pending tags are reclaimable after
   30s instead of holding the row for the full 5-minute lease.
-- **`@Transactional` on `softRemove` / `restore`** with `affected`-row 404
-  signalling, closing the read-then-write TOCTOU window.
+- **`@Transactional` on `softRemove` / `restore`** with an audit row written
+  inside the same frame, so the `ActivityLog` entry commits atomically with the
+  state change. `softRemove` uses the soft-delete `affected` count for its 404,
+  closing the read-then-write TOCTOU window; `restore` uses a `withDeleted`
+  existence check (MariaDB reports "matched" not "changed", so `affected`
+  cannot distinguish a no-op) and is idempotent on already-live rows.
 - **Optimistic lock simplified**: drop the redundant manual version pre-check
   that opened a TOCTOU between `findOne` and `save`; rely on the ORM's
   `UPDATE … WHERE version = ?` clause.
