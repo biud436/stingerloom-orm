@@ -344,6 +344,7 @@ export class EntityManager implements BaseEntityManager {
     delete: (e, c) => this.delete(e, c),
     getTenantColumnConfig: () => this.tenantColumnConfig,
     buildTenantWhereClause: (e, alias) => this.buildTenantWhereClause(e, alias),
+    buildPropertyToColumnMap: (m) => this.buildPropertyToColumnMap(m),
   };
 
   private readonly cascadeHandler = new CascadeHandler(this.resolver, this._ctx);
@@ -1996,7 +1997,7 @@ export class EntityManager implements BaseEntityManager {
     const readNode = this.getReadNode(findOption.useMaster);
     return this.executeReadOnly(async (session) => {
       const entities = await this.findInternal<T>(entity, findOption, session);
-      const totalCount = await this.aggregateHandler.aggregate<T>(entity, "COUNT", "*", findOption.where, session);
+      const totalCount = await this.aggregateHandler.aggregate<T>(entity, "COUNT", "*", findOption.where, session, findOption.withDeleted);
 
       return [entities as unknown as T[], totalCount];
     }, { readNodeOverride: readNode, timeout: findOption.timeout });
@@ -4490,8 +4491,9 @@ export class EntityManager implements BaseEntityManager {
   async exists<T>(
     entity: ClazzType<T>,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<boolean> {
-    const c = await this.aggregateHandler.count(entity, where);
+    const c = await this.aggregateHandler.count(entity, where, withDeleted);
     return c > 0;
   }
 
@@ -4560,40 +4562,45 @@ export class EntityManager implements BaseEntityManager {
   async count<T>(
     entity: ClazzType<T>,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.count(entity, where);
+    return this.aggregateHandler.count(entity, where, withDeleted);
   }
 
   async sum<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.sum(entity, field, where);
+    return this.aggregateHandler.sum(entity, field, where, withDeleted);
   }
 
   async avg<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.avg(entity, field, where);
+    return this.aggregateHandler.avg(entity, field, where, withDeleted);
   }
 
   async min<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.min(entity, field, where);
+    return this.aggregateHandler.min(entity, field, where, withDeleted);
   }
 
   async max<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.max(entity, field, where);
+    return this.aggregateHandler.max(entity, field, where, withDeleted);
   }
 
   // ── EXPLAIN delegation ──────────────────────────────────────
@@ -4608,14 +4615,25 @@ export class EntityManager implements BaseEntityManager {
   // ── Utilities ──────────────────────────────────────────────
 
   private validateCriteriaKeys<T>(
-    metadata: { columns: ColumnMetadata[] },
+    metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
     criteria: WhereClause<T>,
     entityName: string,
   ): void {
+    // Derive the valid key set from the SAME source the SQL builder uses
+    // (buildPropertyToColumnMap), so the guard accepts every key the builder
+    // can resolve and the two can never drift. This includes @Column property
+    // and DB names plus @ManyToOne/@OneToOne FK shadow properties (e.g.
+    // `userId` → `user_id`); without the FK entries, filtering a bulk
+    // update/delete by a relation FK threw "Unknown column" even though the
+    // builder resolves it fine (#353).
     const validNames = new Set<string>();
     for (const col of metadata.columns) {
       if (col.propertyKey) validNames.add(col.propertyKey);
       if (col.name) validNames.add(col.name);
+    }
+    for (const [prop, col] of this.buildPropertyToColumnMap(metadata)) {
+      validNames.add(prop);
+      if (col) validNames.add(col);
     }
     for (const key of Object.keys(criteria as object)) {
       const value = (criteria as any)[key];

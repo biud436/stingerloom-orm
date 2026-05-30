@@ -182,6 +182,57 @@ describe("[Integration] SQLite: Soft Delete", () => {
     expect(names).toContain("Recoverable");
   });
 
+  // ── #351: aggregate paths must honor @DeletedAt like find() ──────────
+  it("count() should exclude soft-deleted rows by default (#351)", async () => {
+    const repo = conn.em.getRepository(SdEntity);
+    await repo.save({ name: "Live1", age: 20 });
+    await repo.save({ name: "Live2", age: 21 });
+    const trashed = await repo.save({ name: "Trashed", age: 22 });
+    await repo.softDelete({ id: trashed.id } as any);
+
+    expect(await conn.em.count(SdEntity)).toBe(2);
+  });
+
+  it("count() with withDeleted=true should include soft-deleted rows (#351)", async () => {
+    const repo = conn.em.getRepository(SdEntity);
+    await repo.save({ name: "Live1", age: 20 });
+    const trashed = await repo.save({ name: "Trashed", age: 22 });
+    await repo.softDelete({ id: trashed.id } as any);
+
+    expect(await conn.em.count(SdEntity, undefined, true)).toBe(2);
+  });
+
+  it("exists() should not see a soft-deleted row by default (#351)", async () => {
+    const repo = conn.em.getRepository(SdEntity);
+    const trashed = await repo.save({ name: "Ghost", age: 99 });
+    await repo.softDelete({ id: trashed.id } as any);
+
+    expect(await conn.em.exists(SdEntity, { id: trashed.id } as any)).toBe(false);
+    expect(
+      await conn.em.exists(SdEntity, { id: trashed.id } as any, true),
+    ).toBe(true);
+  });
+
+  it("findAndCount() should return a consistent [rows, count] tuple (#351)", async () => {
+    const repo = conn.em.getRepository(SdEntity);
+    await repo.save({ name: "Live1", age: 20 });
+    await repo.save({ name: "Live2", age: 21 });
+    const trashed = await repo.save({ name: "Trashed", age: 22 });
+    await repo.softDelete({ id: trashed.id } as any);
+
+    const [rows, total] = await conn.em.findAndCount(SdEntity, {});
+    // The bug: rows excluded the trashed row but count included it (3),
+    // so rows.length (2) !== total (3). They must agree.
+    expect(rows.length).toBe(2);
+    expect(total).toBe(2);
+
+    const [allRows, allTotal] = await conn.em.findAndCount(SdEntity, {
+      withDeleted: true,
+    } as any);
+    expect(allRows.length).toBe(3);
+    expect(allTotal).toBe(3);
+  });
+
   it("restore() should make entity visible again in find()", async () => {
     const repo = conn.em.getRepository(SdEntity);
     const saved = await repo.save({ name: "Restorable", age: 40 });

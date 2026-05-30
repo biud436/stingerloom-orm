@@ -265,6 +265,42 @@ describe("[Integration] SQLite In-Memory: ManyToOne / OneToMany", () => {
     expect(parents[0].children.length).toBe(3);
     expect(parents[1].children.length).toBe(1);
   });
+
+  // #353: updateMany/delete may filter by the @ManyToOne FK shadow property
+  // (parentId → parentFk). Before the fix, validateCriteriaKeys rejected it as
+  // `Unknown column "parentId"` even though the SQL builder resolves it.
+  // (SQLite reports affected=0, so we assert data state instead of the count.)
+  it("updateMany() can filter by the @ManyToOne FK shadow property (#353)", async () => {
+    const { em } = conn;
+
+    const p = await em.save(ParentClass, { name: "FkUpd" });
+    await em.save(ChildClass, { title: "before", parentFk: p.id });
+    await em.save(ChildClass, { title: "before", parentFk: p.id });
+
+    await em.updateMany(
+      ChildClass,
+      { title: "after" } as any,
+      { where: { parentId: p.id } as any },
+    );
+
+    const rows = await em.find(ChildClass, { where: { parentFk: p.id } as any });
+    expect(rows.length).toBe(2);
+    expect(rows.every((r: any) => r.title === "after")).toBe(true);
+  });
+
+  it("delete() can filter by the @ManyToOne FK shadow property (#353)", async () => {
+    const { em } = conn;
+
+    const p = await em.save(ParentClass, { name: "FkDel" });
+    await em.save(ChildClass, { title: "doomed", parentFk: p.id });
+
+    await em.delete(ChildClass, { parentId: p.id } as any);
+
+    const remaining = await em.find(ChildClass, {
+      where: { parentFk: p.id } as any,
+    });
+    expect(remaining.length).toBe(0);
+  });
 });
 
 // ─────────────────────────────────────────────────────────

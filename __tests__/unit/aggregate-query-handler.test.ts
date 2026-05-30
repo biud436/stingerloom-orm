@@ -48,6 +48,13 @@ function createMockCtx(
     delete: jest.fn(),
     getTenantColumnConfig: jest.fn().mockReturnValue(null),
     buildTenantWhereClause: jest.fn().mockReturnValue(null),
+    buildPropertyToColumnMap: jest.fn((m: any) => {
+      const map = new Map<string, string>();
+      for (const c of m?.columns ?? []) {
+        map.set(c.propertyKey ?? c.name, c.name);
+      }
+      return map;
+    }),
     ...overrides,
   } as unknown as EntityManagerInternals;
 }
@@ -317,18 +324,48 @@ describe("AggregateQueryHandler convenience methods", () => {
     aggregateSpy.mockRestore();
   });
 
+  // aggregate() signature is (entity, fn, field, where, existingSession, withDeleted).
+  // Convenience methods never pass a session, so existingSession is undefined and
+  // withDeleted lands in the 6th slot.
   it("count() should delegate to aggregate() with COUNT and *", async () => {
     const result = await handler.count(Product);
 
     expect(result).toBe(42);
-    expect(aggregateSpy).toHaveBeenCalledWith(Product, "COUNT", "*", undefined);
+    expect(aggregateSpy).toHaveBeenCalledWith(
+      Product,
+      "COUNT",
+      "*",
+      undefined,
+      undefined,
+      undefined,
+    );
   });
 
   it("count() should pass where clause", async () => {
     const where = { price: 100 } as any;
     await handler.count(Product, where);
 
-    expect(aggregateSpy).toHaveBeenCalledWith(Product, "COUNT", "*", where);
+    expect(aggregateSpy).toHaveBeenCalledWith(
+      Product,
+      "COUNT",
+      "*",
+      where,
+      undefined,
+      undefined,
+    );
+  });
+
+  it("count() should forward withDeleted opt-in", async () => {
+    await handler.count(Product, undefined, true);
+
+    expect(aggregateSpy).toHaveBeenCalledWith(
+      Product,
+      "COUNT",
+      "*",
+      undefined,
+      undefined,
+      true,
+    );
   });
 
   it("sum() should delegate to aggregate() with SUM and field", async () => {
@@ -340,14 +377,23 @@ describe("AggregateQueryHandler convenience methods", () => {
       "SUM",
       "price",
       undefined,
+      undefined,
+      undefined,
     );
   });
 
-  it("sum() should pass where clause", async () => {
+  it("sum() should pass where clause and withDeleted", async () => {
     const where = { quantity: 10 } as any;
-    await handler.sum(Product, "price", where);
+    await handler.sum(Product, "price", where, true);
 
-    expect(aggregateSpy).toHaveBeenCalledWith(Product, "SUM", "price", where);
+    expect(aggregateSpy).toHaveBeenCalledWith(
+      Product,
+      "SUM",
+      "price",
+      where,
+      undefined,
+      true,
+    );
   });
 
   it("avg() should delegate to aggregate() with AVG and field", async () => {
@@ -359,6 +405,8 @@ describe("AggregateQueryHandler convenience methods", () => {
       "AVG",
       "price",
       undefined,
+      undefined,
+      undefined,
     );
   });
 
@@ -366,7 +414,14 @@ describe("AggregateQueryHandler convenience methods", () => {
     const where = { id: 1 } as any;
     await handler.avg(Product, "price", where);
 
-    expect(aggregateSpy).toHaveBeenCalledWith(Product, "AVG", "price", where);
+    expect(aggregateSpy).toHaveBeenCalledWith(
+      Product,
+      "AVG",
+      "price",
+      where,
+      undefined,
+      undefined,
+    );
   });
 
   it("min() should delegate to aggregate() with MIN and field", async () => {
@@ -378,6 +433,8 @@ describe("AggregateQueryHandler convenience methods", () => {
       "MIN",
       "price",
       undefined,
+      undefined,
+      undefined,
     );
   });
 
@@ -385,7 +442,14 @@ describe("AggregateQueryHandler convenience methods", () => {
     const where = { id: 5 } as any;
     await handler.min(Product, "price", where);
 
-    expect(aggregateSpy).toHaveBeenCalledWith(Product, "MIN", "price", where);
+    expect(aggregateSpy).toHaveBeenCalledWith(
+      Product,
+      "MIN",
+      "price",
+      where,
+      undefined,
+      undefined,
+    );
   });
 
   it("max() should delegate to aggregate() with MAX and field", async () => {
@@ -397,6 +461,8 @@ describe("AggregateQueryHandler convenience methods", () => {
       "MAX",
       "price",
       undefined,
+      undefined,
+      undefined,
     );
   });
 
@@ -404,6 +470,148 @@ describe("AggregateQueryHandler convenience methods", () => {
     const where = { quantity: 100 } as any;
     await handler.max(Product, "price", where);
 
-    expect(aggregateSpy).toHaveBeenCalledWith(Product, "MAX", "price", where);
+    expect(aggregateSpy).toHaveBeenCalledWith(
+      Product,
+      "MAX",
+      "price",
+      where,
+      undefined,
+      undefined,
+    );
+  });
+});
+
+// ==========================================================================
+// describe: soft-delete (@DeletedAt) filtering — regression for #351
+// ==========================================================================
+describe("AggregateQueryHandler @DeletedAt filtering (#351)", () => {
+  let ctx: EntityManagerInternals;
+  let resolver: RelationMetadataResolver;
+  let handler: AggregateQueryHandler;
+
+  function captureSql(): { getText: () => string } {
+    const box: { text: string } = { text: "" };
+    (ctx.executeReadOnly as jest.Mock).mockImplementation(async (fn: any) => {
+      const mockSession = {
+        query: jest.fn().mockImplementation((q: any) => {
+          box.text = q.text || q.sql || String(q);
+          return Promise.resolve({ results: [{ result: 7 }], fields: [] });
+        }),
+      };
+      return fn(mockSession);
+    });
+    return { getText: () => box.text };
+  }
+
+  beforeEach(() => {
+    ctx = createMockCtx();
+    // Entity declares a soft-delete column "deleted_at".
+    resolver = createMockResolver({
+      getDeletedAtColumn: jest.fn().mockReturnValue("deleted_at"),
+    });
+    (resolver.resolveEntityMetadata as jest.Mock).mockReturnValue(
+      productMetadata,
+    );
+    handler = new AggregateQueryHandler(resolver, ctx);
+  });
+
+  it("excludes soft-deleted rows by default (adds deleted_at IS NULL)", async () => {
+    const cap = captureSql();
+    await handler.aggregate(Product, "COUNT", "*");
+    expect(cap.getText()).toContain("`deleted_at` IS NULL");
+  });
+
+  it("excludes soft-deleted rows even when a where clause is present", async () => {
+    const cap = captureSql();
+    await handler.aggregate(Product, "COUNT", "*", { price: 100 } as any);
+    const sql = cap.getText();
+    expect(sql).toContain("WHERE");
+    expect(sql).toContain("`deleted_at` IS NULL");
+  });
+
+  it("includes soft-deleted rows when withDeleted=true", async () => {
+    const cap = captureSql();
+    await handler.aggregate(Product, "COUNT", "*", undefined, undefined, true);
+    expect(cap.getText()).not.toContain("deleted_at");
+  });
+
+  it("count() excludes soft-deleted rows by default", async () => {
+    const cap = captureSql();
+    await handler.count(Product);
+    expect(cap.getText()).toContain("`deleted_at` IS NULL");
+  });
+
+  it("count() with withDeleted=true includes soft-deleted rows", async () => {
+    const cap = captureSql();
+    await handler.count(Product, undefined, true);
+    expect(cap.getText()).not.toContain("deleted_at");
+  });
+
+  it("does not add the filter when the entity has no @DeletedAt column", async () => {
+    (resolver.getDeletedAtColumn as jest.Mock).mockReturnValue(null);
+    const cap = captureSql();
+    await handler.aggregate(Product, "COUNT", "*");
+    expect(cap.getText()).not.toContain("deleted_at");
+  });
+});
+
+// ==========================================================================
+// describe: NamingStrategy column mapping — regression for #352
+// ==========================================================================
+describe("AggregateQueryHandler NamingStrategy mapping (#352)", () => {
+  class Author {
+    id!: number;
+    firstName!: string;
+    postCount!: number;
+  }
+  const snakeMetadata = {
+    name: "author",
+    target: Author,
+    columns: [
+      { propertyKey: "id", name: "id", options: { primary: true } },
+      { propertyKey: "firstName", name: "first_name", options: {} },
+      { propertyKey: "postCount", name: "post_count", options: {} },
+    ],
+  };
+
+  let ctx: EntityManagerInternals;
+  let resolver: RelationMetadataResolver;
+  let handler: AggregateQueryHandler;
+
+  function captureSql(): { getText: () => string } {
+    const box: { text: string } = { text: "" };
+    (ctx.executeReadOnly as jest.Mock).mockImplementation(async (fn: any) => {
+      const mockSession = {
+        query: jest.fn().mockImplementation((q: any) => {
+          box.text = q.text || q.sql || String(q);
+          return Promise.resolve({ results: [{ result: 3 }], fields: [] });
+        }),
+      };
+      return fn(mockSession);
+    });
+    return { getText: () => box.text };
+  }
+
+  beforeEach(() => {
+    ctx = createMockCtx();
+    resolver = createMockResolver();
+    (resolver.resolveEntityMetadata as jest.Mock).mockReturnValue(snakeMetadata);
+    handler = new AggregateQueryHandler(resolver, ctx);
+  });
+
+  it("maps a camelCase where key to its snake_case column", async () => {
+    const cap = captureSql();
+    await handler.aggregate(Author, "COUNT", "*", { firstName: "Ada" } as any);
+    const sql = cap.getText();
+    expect(sql).toContain("`first_name`");
+    expect(sql).not.toContain("firstName");
+  });
+
+  it("maps a camelCase aggregate field to its snake_case column", async () => {
+    const cap = captureSql();
+    await handler.aggregate(Author, "SUM", "postCount");
+    const sql = cap.getText();
+    expect(sql).toContain("SUM(`post_count`)");
+    expect(sql).not.toContain("postCount");
   });
 });
