@@ -246,8 +246,8 @@ export class BaseRepository<T> {
   /**
    * Returns true if at least one entity matches the given where clause.
    */
-  async exists(where?: WhereClause<T>): Promise<boolean> {
-    return await this.em.exists<T>(this.entity, where);
+  async exists(where?: WhereClause<T>, withDeleted?: boolean): Promise<boolean> {
+    return await this.em.exists<T>(this.entity, where, withDeleted);
   }
 
   /**
@@ -268,8 +268,8 @@ export class BaseRepository<T> {
   /**
    * Returns the count of entities matching the given conditions.
    */
-  async count(where?: WhereClause<T>): Promise<number> {
-    return await this.em.count<T>(this.entity, where);
+  async count(where?: WhereClause<T>, withDeleted?: boolean): Promise<number> {
+    return await this.em.count<T>(this.entity, where, withDeleted);
   }
 
   /**
@@ -278,8 +278,9 @@ export class BaseRepository<T> {
   async sum(
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return await this.em.sum<T>(this.entity, field, where);
+    return await this.em.sum<T>(this.entity, field, where, withDeleted);
   }
 
   /**
@@ -288,8 +289,9 @@ export class BaseRepository<T> {
   async avg(
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return await this.em.avg<T>(this.entity, field, where);
+    return await this.em.avg<T>(this.entity, field, where, withDeleted);
   }
 
   /**
@@ -298,8 +300,9 @@ export class BaseRepository<T> {
   async min(
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return await this.em.min<T>(this.entity, field, where);
+    return await this.em.min<T>(this.entity, field, where, withDeleted);
   }
 
   /**
@@ -308,8 +311,9 @@ export class BaseRepository<T> {
   async max(
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return await this.em.max<T>(this.entity, field, where);
+    return await this.em.max<T>(this.entity, field, where, withDeleted);
   }
 
   /**

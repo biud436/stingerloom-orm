@@ -1996,7 +1996,7 @@ export class EntityManager implements BaseEntityManager {
     const readNode = this.getReadNode(findOption.useMaster);
     return this.executeReadOnly(async (session) => {
       const entities = await this.findInternal<T>(entity, findOption, session);
-      const totalCount = await this.aggregateHandler.aggregate<T>(entity, "COUNT", "*", findOption.where, session);
+      const totalCount = await this.aggregateHandler.aggregate<T>(entity, "COUNT", "*", findOption.where, session, findOption.withDeleted);
 
       return [entities as unknown as T[], totalCount];
     }, { readNodeOverride: readNode, timeout: findOption.timeout });
@@ -4490,8 +4490,9 @@ export class EntityManager implements BaseEntityManager {
   async exists<T>(
     entity: ClazzType<T>,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<boolean> {
-    const c = await this.aggregateHandler.count(entity, where);
+    const c = await this.aggregateHandler.count(entity, where, withDeleted);
     return c > 0;
   }
 
@@ -4560,40 +4561,45 @@ export class EntityManager implements BaseEntityManager {
   async count<T>(
     entity: ClazzType<T>,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.count(entity, where);
+    return this.aggregateHandler.count(entity, where, withDeleted);
   }
 
   async sum<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.sum(entity, field, where);
+    return this.aggregateHandler.sum(entity, field, where, withDeleted);
   }
 
   async avg<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.avg(entity, field, where);
+    return this.aggregateHandler.avg(entity, field, where, withDeleted);
   }
 
   async min<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.min(entity, field, where);
+    return this.aggregateHandler.min(entity, field, where, withDeleted);
   }
 
   async max<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.max(entity, field, where);
+    return this.aggregateHandler.max(entity, field, where, withDeleted);
   }
 
   // ── EXPLAIN delegation ──────────────────────────────────────

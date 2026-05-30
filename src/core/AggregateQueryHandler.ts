@@ -26,6 +26,7 @@ export class AggregateQueryHandler {
     field: string,
     where?: WhereClause<T> | WhereClause<T>[],
     existingSession?: TransactionSessionManager,
+    withDeleted?: boolean,
   ): Promise<number> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
@@ -48,6 +49,16 @@ export class AggregateQueryHandler {
         wrapColumn: (n) => this.ctx.wrap(n),
         dialect: this.ctx.getDialect(),
       });
+
+      // If an @DeletedAt column exists, exclude soft-deleted rows by default,
+      // mirroring findInternal so count()/exists()/sum()/avg()/min()/max() —
+      // and therefore findAndCount() — never count trashed rows. Callers opt
+      // back in via `withDeleted: true`. The aggregate query is never joined,
+      // so the unqualified column form is correct.
+      const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
+      if (deletedAtColumn && !withDeleted) {
+        whereMap.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
+      }
 
       // Tenant scoping under the "tenant_column" strategy. Kept consistent
       // with findInternal so exists()/count()/sum()/avg()/min()/max() never
@@ -81,39 +92,44 @@ export class AggregateQueryHandler {
   async count<T>(
     entity: ClazzType<T>,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregate(entity, "COUNT", "*", where);
+    return this.aggregate(entity, "COUNT", "*", where, undefined, withDeleted);
   }
 
   async sum<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregate(entity, "SUM", field, where);
+    return this.aggregate(entity, "SUM", field, where, undefined, withDeleted);
   }
 
   async avg<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregate(entity, "AVG", field, where);
+    return this.aggregate(entity, "AVG", field, where, undefined, withDeleted);
   }
 
   async min<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregate(entity, "MIN", field, where);
+    return this.aggregate(entity, "MIN", field, where, undefined, withDeleted);
   }
 
   async max<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
+    withDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregate(entity, "MAX", field, where);
+    return this.aggregate(entity, "MAX", field, where, undefined, withDeleted);
   }
 }

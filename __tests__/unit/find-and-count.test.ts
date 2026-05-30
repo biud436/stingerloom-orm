@@ -54,7 +54,14 @@ describe("findAndCount()", () => {
     await em.findAndCount(User, { where });
 
     expect(findInternalSpy).toHaveBeenCalledWith(User, { where }, {});
-    expect(aggregateSpy).toHaveBeenCalledWith(User, "COUNT", "*", where, {});
+    expect(aggregateSpy).toHaveBeenCalledWith(
+      User,
+      "COUNT",
+      "*",
+      where,
+      {},
+      undefined,
+    );
   });
 
   it("take/limit 옵션이 findInternal()에만 영향을 미치고 aggregate()에는 영향을 주지 않아야 한다", async () => {
@@ -81,6 +88,7 @@ describe("findAndCount()", () => {
       "*",
       findOption.where,
       {},
+      undefined,
     );
   });
 
@@ -106,6 +114,7 @@ describe("findAndCount()", () => {
       "*",
       undefined,
       {},
+      undefined,
     );
   });
 
@@ -135,6 +144,34 @@ describe("findAndCount()", () => {
       "*",
       undefined,
       mockSession,
+      undefined,
+    );
+  });
+
+  it("withDeleted 옵션을 aggregate()에 전달해 [rows, count] 일관성을 유지해야 한다 (#351)", async () => {
+    const findInternalSpy = jest
+      .spyOn(em as any, "findInternal")
+      .mockResolvedValue([] as any);
+    const aggregateSpy = jest
+      .spyOn((em as any).aggregateHandler, "aggregate")
+      .mockResolvedValue(0);
+    jest.spyOn(em as any, "executeReadOnly").mockImplementation(
+      async (fn: any) => fn({}),
+    );
+
+    const findOption = { where: { name: "Alice" } as any, withDeleted: true };
+    await em.findAndCount(User, findOption);
+
+    // The count half must honor the same withDeleted flag as the rows half,
+    // otherwise findAndCount returns an inconsistent [rows, count] tuple.
+    expect(findInternalSpy).toHaveBeenCalledWith(User, findOption, {});
+    expect(aggregateSpy).toHaveBeenCalledWith(
+      User,
+      "COUNT",
+      "*",
+      findOption.where,
+      {},
+      true,
     );
   });
 
