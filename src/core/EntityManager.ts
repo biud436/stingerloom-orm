@@ -4615,14 +4615,25 @@ export class EntityManager implements BaseEntityManager {
   // ── Utilities ──────────────────────────────────────────────
 
   private validateCriteriaKeys<T>(
-    metadata: { columns: ColumnMetadata[] },
+    metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
     criteria: WhereClause<T>,
     entityName: string,
   ): void {
+    // Derive the valid key set from the SAME source the SQL builder uses
+    // (buildPropertyToColumnMap), so the guard accepts every key the builder
+    // can resolve and the two can never drift. This includes @Column property
+    // and DB names plus @ManyToOne/@OneToOne FK shadow properties (e.g.
+    // `userId` → `user_id`); without the FK entries, filtering a bulk
+    // update/delete by a relation FK threw "Unknown column" even though the
+    // builder resolves it fine (#353).
     const validNames = new Set<string>();
     for (const col of metadata.columns) {
       if (col.propertyKey) validNames.add(col.propertyKey);
       if (col.name) validNames.add(col.name);
+    }
+    for (const [prop, col] of this.buildPropertyToColumnMap(metadata)) {
+      validNames.add(prop);
+      if (col) validNames.add(col);
     }
     for (const key of Object.keys(criteria as object)) {
       const value = (criteria as any)[key];

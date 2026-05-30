@@ -5,7 +5,6 @@ import {
   Transactional,
   CursorPaginationResult,
   qAlias,
-  sql,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Notification, NotificationKind } from "./notification.entity";
@@ -103,23 +102,15 @@ export class NotificationsService {
 
   @Transactional()
   async markAllRead(userId: number): Promise<{ marked: number }> {
-    // Bypass repo.updateMany() because @RelationColumn-derived FK shadow
-    // accessors (`userId`) aren't visible in its property-to-column resolver
-    // — the where clause throws "Unknown column userId". Use a raw UPDATE
-    // until the ORM treats RelationColumn FKs as queryable columns.
-    const N = this.em.ref(Notification);
-    const result = await this.em.query<unknown>(sql`
-      UPDATE ${N}
-         SET ${N.readAt} = NOW()
-       WHERE ${N.userId} = ${userId}
-         AND ${N.readAt} IS NULL
-    `);
-    const marked =
-      (result as { affectedRows?: number; rowCount?: number; affected?: number } | null)
-        ?.affectedRows ??
-      (result as { rowCount?: number } | null)?.rowCount ??
-      0;
-    return { marked };
+    // `userId` is the @RelationColumn FK shadow property (→ user_id); the
+    // typed updateMany() now accepts it directly (stingerloom #353), so no
+    // raw-SQL escape hatch is needed.
+    const { affected } = await this.em.updateMany(
+      Notification,
+      { readAt: new Date() },
+      { where: { userId, readAt: { isNull: true } } },
+    );
+    return { marked: affected };
   }
 
   // ── Emission (called by the EntitySubscriber) ───────────────
