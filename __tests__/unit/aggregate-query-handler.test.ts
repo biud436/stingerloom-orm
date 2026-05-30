@@ -48,6 +48,13 @@ function createMockCtx(
     delete: jest.fn(),
     getTenantColumnConfig: jest.fn().mockReturnValue(null),
     buildTenantWhereClause: jest.fn().mockReturnValue(null),
+    buildPropertyToColumnMap: jest.fn((m: any) => {
+      const map = new Map<string, string>();
+      for (const c of m?.columns ?? []) {
+        map.set(c.propertyKey ?? c.name, c.name);
+      }
+      return map;
+    }),
     ...overrides,
   } as unknown as EntityManagerInternals;
 }
@@ -545,5 +552,66 @@ describe("AggregateQueryHandler @DeletedAt filtering (#351)", () => {
     const cap = captureSql();
     await handler.aggregate(Product, "COUNT", "*");
     expect(cap.getText()).not.toContain("deleted_at");
+  });
+});
+
+// ==========================================================================
+// describe: NamingStrategy column mapping — regression for #352
+// ==========================================================================
+describe("AggregateQueryHandler NamingStrategy mapping (#352)", () => {
+  class Author {
+    id!: number;
+    firstName!: string;
+    postCount!: number;
+  }
+  const snakeMetadata = {
+    name: "author",
+    target: Author,
+    columns: [
+      { propertyKey: "id", name: "id", options: { primary: true } },
+      { propertyKey: "firstName", name: "first_name", options: {} },
+      { propertyKey: "postCount", name: "post_count", options: {} },
+    ],
+  };
+
+  let ctx: EntityManagerInternals;
+  let resolver: RelationMetadataResolver;
+  let handler: AggregateQueryHandler;
+
+  function captureSql(): { getText: () => string } {
+    const box: { text: string } = { text: "" };
+    (ctx.executeReadOnly as jest.Mock).mockImplementation(async (fn: any) => {
+      const mockSession = {
+        query: jest.fn().mockImplementation((q: any) => {
+          box.text = q.text || q.sql || String(q);
+          return Promise.resolve({ results: [{ result: 3 }], fields: [] });
+        }),
+      };
+      return fn(mockSession);
+    });
+    return { getText: () => box.text };
+  }
+
+  beforeEach(() => {
+    ctx = createMockCtx();
+    resolver = createMockResolver();
+    (resolver.resolveEntityMetadata as jest.Mock).mockReturnValue(snakeMetadata);
+    handler = new AggregateQueryHandler(resolver, ctx);
+  });
+
+  it("maps a camelCase where key to its snake_case column", async () => {
+    const cap = captureSql();
+    await handler.aggregate(Author, "COUNT", "*", { firstName: "Ada" } as any);
+    const sql = cap.getText();
+    expect(sql).toContain("`first_name`");
+    expect(sql).not.toContain("firstName");
+  });
+
+  it("maps a camelCase aggregate field to its snake_case column", async () => {
+    const cap = captureSql();
+    await handler.aggregate(Author, "SUM", "postCount");
+    const sql = cap.getText();
+    expect(sql).toContain("SUM(`post_count`)");
+    expect(sql).not.toContain("postCount");
   });
 });

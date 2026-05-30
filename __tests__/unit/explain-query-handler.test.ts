@@ -89,6 +89,13 @@ function createMockCtx(overrides: Partial<EntityManagerInternals> = {}): jest.Mo
     saveWithSession: jest.fn(),
     find: jest.fn(),
     delete: jest.fn(),
+    buildPropertyToColumnMap: jest.fn((m: any) => {
+      const map = new Map<string, string>();
+      for (const c of m?.columns ?? []) {
+        map.set(c.propertyKey ?? c.name, c.name);
+      }
+      return map;
+    }),
     ...overrides,
   } as any;
 }

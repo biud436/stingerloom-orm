@@ -344,6 +344,7 @@ export class EntityManager implements BaseEntityManager {
     delete: (e, c) => this.delete(e, c),
     getTenantColumnConfig: () => this.tenantColumnConfig,
     buildTenantWhereClause: (e, alias) => this.buildTenantWhereClause(e, alias),
+    buildPropertyToColumnMap: (m) => this.buildPropertyToColumnMap(m),
   };
 
   private readonly cascadeHandler = new CascadeHandler(this.resolver, this._ctx);

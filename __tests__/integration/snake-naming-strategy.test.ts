@@ -307,6 +307,58 @@ describeIf("[Integration] SnakeNamingStrategy", () => {
     expect(remaining).toHaveLength(0);
   });
 
+  // ── Aggregate / explain WHERE under NamingStrategy (#352) ──
+
+  it("should count() with camelCase property in where clause", async () => {
+    const em = conn.em as any;
+
+    await em.save(AuthorEntity, { firstName: "Cnt", lastName: "Same", postCount: 1 });
+    await em.save(AuthorEntity, { firstName: "Cnt", lastName: "Same", postCount: 2 });
+    await em.save(AuthorEntity, { firstName: "Other", lastName: "Same", postCount: 3 });
+
+    // Before the fix this threw "unknown column firstName" because the
+    // aggregate WHERE bypassed the property→column map.
+    const n = await em.count(AuthorEntity, { firstName: "Cnt" });
+    expect(n).toBe(2);
+  });
+
+  it("should sum()/avg() a camelCase numeric field with camelCase where", async () => {
+    const em = conn.em as any;
+
+    await em.save(AuthorEntity, { firstName: "Agg", lastName: "Z", postCount: 10 });
+    await em.save(AuthorEntity, { firstName: "Agg", lastName: "Z", postCount: 30 });
+
+    // Both the aggregate field (postCount) and the where key must resolve
+    // to snake_case columns.
+    const total = await em.sum(AuthorEntity, "postCount", { firstName: "Agg" });
+    expect(total).toBe(40);
+
+    const mean = await em.avg(AuthorEntity, "postCount", { firstName: "Agg" });
+    expect(mean).toBe(20);
+  });
+
+  it("should exists() with camelCase property in where clause", async () => {
+    const em = conn.em as any;
+
+    await em.save(AuthorEntity, { firstName: "ExistsMe", lastName: "Q", postCount: 5 });
+
+    expect(await em.exists(AuthorEntity, { firstName: "ExistsMe" })).toBe(true);
+    expect(await em.exists(AuthorEntity, { firstName: "NoOne" })).toBe(false);
+  });
+
+  it("should explain() a query whose where uses a camelCase property", async () => {
+    const em = conn.em as any;
+
+    await em.save(AuthorEntity, { firstName: "Explained", lastName: "E", postCount: 1 });
+
+    // Must not throw "unknown column firstName"; the plan references the
+    // snake_case column.
+    const plan = await em.explain(AuthorEntity, {
+      where: { firstName: "Explained" },
+    });
+    expect(plan).toBeDefined();
+  });
+
   // ── Explicit name preserved ────────────────────────
 
   it("should read/write explicit @Column({ name }) correctly", async () => {

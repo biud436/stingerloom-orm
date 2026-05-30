@@ -47,7 +47,10 @@ const mockEntityScanner = {
 jest.mock("../../src/scanner/ScannerContainer", () => ({
   getScannerInstance: (cls: any) => {
     if (cls === EntityScanner) return mockEntityScanner as any;
-    return {} as any;
+    // Relation scanners (ManyToOne/OneToOne/...) are reached via
+    // buildPropertyToColumnMap → collectFkPropertyMappings. Product declares no
+    // relations, so getByTarget() returns no relation metadata.
+    return { getByTarget: () => [] } as any;
   },
   resetScannerContainer: jest.fn(),
 }));

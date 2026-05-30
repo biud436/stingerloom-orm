@@ -5,6 +5,7 @@ import { TransactionSessionManager } from "../dialects/TransactionSessionManager
 import sql, { Sql, join, raw } from "sql-template-tag";
 import { Conditions } from "./Conditions";
 import { resolveWhereClause } from "./WhereResolver";
+import { createDialectExpression } from "../dialects/DialectExpression";
 import { QueryResult } from "../types/QueryResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
@@ -41,13 +42,19 @@ export class AggregateQueryHandler {
 
     return executor(async (session) => {
       const tableName = metadata.name!;
-      const selectExpr = raw(
-        `${fn}(${field === "*" ? "*" : this.ctx.wrap(field)})`,
-      );
+
+      // Resolve property names to DB columns exactly like findInternal so the
+      // aggregate field and WHERE honor a NamingStrategy and FK shadow props.
+      const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+      const mappedField =
+        field === "*" ? "*" : this.ctx.wrap(propToCol.get(field) ?? field);
+      const selectExpr = raw(`${fn}(${mappedField})`);
 
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.ctx.wrap(n),
         dialect: this.ctx.getDialect(),
+        dialectExpression: createDialectExpression(this.ctx.getDialect()),
+        propertyToColumn: propToCol,
       });
 
       // If an @DeletedAt column exists, exclude soft-deleted rows by default,

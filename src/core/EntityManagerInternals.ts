@@ -9,6 +9,7 @@ import { EntityResult } from "../types/EntityResult";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { SchemaDialect } from "./generators/SchemaGenerator";
 import { SynchronizePolicy } from "./DatabaseClientOptions";
+import { ColumnMetadata } from "../scanner";
 
 /**
  * Interface that exposes EntityManager internals to extracted handler classes.
@@ -53,6 +54,18 @@ export interface EntityManagerInternals {
   getNameStrategy<T>(clazz: ClazzType<T>): string;
   resolveSelectColumns<T>(select: ISelectOption<T>): string[];
   markDirty(entity: any): void;
+
+  /**
+   * Builds the TypeScript-property → DB-column map for an entity, including
+   * `@ManyToOne`/`@OneToOne` FK shadow properties (e.g. `workspaceId` →
+   * `workspace_id`). Extracted handlers use this so their WHERE/field
+   * resolution matches `findInternal` under a `NamingStrategy`; without it,
+   * aggregate()/explain() emit raw camelCase property names verbatim.
+   */
+  buildPropertyToColumnMap(metadata: {
+    target?: ClazzType<any>;
+    columns: ColumnMetadata[];
+  }): Map<string, string>;
 
   /**
    * Tenant-column strategy configuration. Returns null when strategy is not

@@ -4,6 +4,7 @@ import { FindOption } from "../dialects/FindOption";
 import sql, { Sql, raw } from "sql-template-tag";
 import { Conditions } from "./Conditions";
 import { resolveWhereClause } from "./WhereResolver";
+import { createDialectExpression } from "../dialects/DialectExpression";
 import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { ExplainResult } from "./ExplainResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
@@ -94,12 +95,18 @@ export class ExplainQueryHandler {
       }
     }
 
+    // Map property names to DB columns (incl. FK shadow props) like
+    // findInternal, so a NamingStrategy WHERE resolves correctly.
+    const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+
     whereMap.push(
       ...resolveWhereClause(where, {
         wrapColumn: (n) => this.ctx.wrap(n),
         qualified: hasEagerJoins,
         tableName: hasEagerJoins ? tableName : undefined,
         dialect: this.ctx.getDialect(),
+        dialectExpression: createDialectExpression(this.ctx.getDialect()),
+        propertyToColumn: propToCol,
       }),
     );
 
