@@ -3194,6 +3194,44 @@ describe("Buffer Plugin", () => {
 
       expect(() => buf.getReference(Ghost as any, 1)).toThrow(/not a registered entity/);
     });
+
+    it("findOne() after getReference() hydrates the stub from the DB (#365)", async () => {
+      const em = createExtendedEm(User);
+      const findOneSpy = jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 5, name: "Alice", email: "a@b.c" }),
+      );
+
+      const buf = em.buffer();
+
+      // Reference stub first — PK-only, non-PK fields undefined.
+      const ref = buf.getReference(User, 5);
+      expect((ref as any).name).toBeUndefined();
+
+      // findOne must NOT return the stub from the cache; it must query the DB
+      // and hydrate the same instance in place.
+      const loaded = await buf.findOne(User, { where: { id: 5 } as any });
+
+      expect(findOneSpy).toHaveBeenCalledTimes(1);   // DB was queried (not a cache hit)
+      expect(loaded).toBe(ref);                       // identity preserved
+      expect((loaded as any).name).toBe("Alice");     // stub hydrated
+      expect((ref as any).name).toBe("Alice");        // same instance, now populated
+    });
+
+    it("a second findOne() after hydration is served from the cache (#365)", async () => {
+      const em = createExtendedEm(User);
+      const findOneSpy = jest.spyOn(em, "findOne").mockResolvedValue(
+        Object.assign(new User(), { id: 9, name: "Bob", email: "b@b.c" }),
+      );
+
+      const buf = em.buffer();
+      buf.getReference(User, 9);
+
+      await buf.findOne(User, { where: { id: 9 } as any });   // hydrates → 1 DB call
+      const again = await buf.findOne(User, { where: { id: 9 } as any }); // cache hit
+
+      expect(findOneSpy).toHaveBeenCalledTimes(1);
+      expect((again as any).name).toBe("Bob");
+    });
   });
 
   describe("lazy relation proxies", () => {
