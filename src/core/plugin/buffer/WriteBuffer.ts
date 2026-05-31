@@ -41,6 +41,10 @@ import type { EntityManager } from "../../EntityManager";
  */
 export class WriteBuffer {
   private readonly trackedEntries = new Map<any, TrackedEntry>();
+  // PK-only stubs created by getReference(): registered in the identity map but
+  // NOT yet hydrated. findOne() must treat a stub as a cache miss and load it
+  // from the DB (then hydrate it in place) instead of returning the stub.
+  private readonly referenceStubs = new WeakSet<object>();
   private readonly insertQueue: InsertEntry[] = [];
   private readonly deleteQueue: DeleteEntry[] = [];
   private readonly persistQueue: PersistEntry[] = [];
@@ -190,7 +194,9 @@ export class WriteBuffer {
       const cacheKey = this.idMap.tryBuildCacheKey(entity, option);
       if (cacheKey !== null) {
         const cached = this.idMap.identityMap.get(cacheKey);
-        if (cached) {
+        // A reference stub (getReference) is PK-only and not hydrated, so it is
+        // NOT a valid cache hit — fall through to the DB load, which hydrates it.
+        if (cached && !this.referenceStubs.has(cached)) {
           this.idMap.touch(cacheKey);
           await this.autoFlushIfNeeded();
           if (this.options.logging) {
@@ -277,9 +283,12 @@ export class WriteBuffer {
       return existing as T;
     }
 
-    // Register in identity map (not snapshot-tracked — reference only)
+    // Register in identity map (not snapshot-tracked — reference only).
+    // Mark it as a reference stub so a later findOne() hydrates it from the DB
+    // rather than returning the PK-only instance from the first-level cache.
     this.idMap.identityMap.set(key, instance);
     this.idMap.stateMap.set(instance, EntityState.MANAGED);
+    this.referenceStubs.add(instance);
     this.idMap.evictIfNeeded();
 
     // Inject lazy proxies for relation properties
@@ -1221,12 +1230,38 @@ export class WriteBuffer {
     const existing = this.idMap.identityMap.get(key);
     if (existing) {
       this.idMap.touch(key);
+      // If the mapped instance is an unhydrated getReference() stub, populate
+      // it in place from the freshly loaded row and promote it to a fully
+      // tracked entity — preserving identity for any FK references already
+      // pointing at the stub.
+      if (existing !== instance && this.referenceStubs.has(existing)) {
+        this.hydrateReference(entityClass, existing, instance);
+      }
       return existing;
     }
 
     this.track(instance);
     this.lazyInjector.injectLazyRelations(instance, entityClass);
     return instance;
+  }
+
+  /**
+   * Copies the column values from a freshly loaded row into an existing
+   * getReference() stub, clears its reference mark, and snapshot-tracks it so
+   * subsequent dirty-checking works. Relation properties keep their lazy
+   * proxies (only column values are copied).
+   */
+  private hydrateReference(
+    entityClass: ClazzType<any>,
+    stub: any,
+    loaded: any,
+  ): void {
+    const { columnNames } = this.idMap.getColumnInfo(entityClass);
+    for (const col of columnNames) {
+      stub[col] = loaded[col];
+    }
+    this.referenceStubs.delete(stub);
+    this.track(stub);
   }
 
   /**

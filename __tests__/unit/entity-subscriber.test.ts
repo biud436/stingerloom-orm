@@ -158,6 +158,15 @@ describe("EntitySubscriber", () => {
       em.addSubscriber(sub2);
       expect((em as any).subscribers).toHaveLength(2);
     });
+
+    it("should be idempotent — registering the same instance twice keeps one (#366)", () => {
+      const sub: EntitySubscriber<User> = { listenTo: () => User };
+
+      em.addSubscriber(sub);
+      em.addSubscriber(sub);
+
+      expect((em as any).subscribers).toHaveLength(1);
+    });
   });
 
   describe("save() — Insert path subscriber notifications", () => {
@@ -183,6 +192,22 @@ describe("EntitySubscriber", () => {
       const event: InsertEvent<User> = beforeInsertSpy.mock.calls[0][0];
       expect(event.entity).toEqual({ name: "Alice", email: "alice@test.com" });
       expect(event.manager).toBe(em);
+    });
+
+    it("should fire a re-registered subscriber only once per event (#366)", async () => {
+      const afterInsertSpy = jest.fn();
+      const sub: EntitySubscriber<User> = {
+        listenTo: () => User,
+        afterInsert: afterInsertSpy,
+      };
+
+      // Simulate a module re-init double-registering against the singleton EM.
+      em.addSubscriber(sub);
+      em.addSubscriber(sub);
+
+      await em.save(User, { name: "Dup", email: "dup@test.com" });
+
+      expect(afterInsertSpy).toHaveBeenCalledTimes(1);
     });
 
     it("should call afterInsert on matching subscriber", async () => {
