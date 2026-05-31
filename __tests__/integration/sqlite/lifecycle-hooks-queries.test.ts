@@ -364,6 +364,22 @@ describe("[Integration] SQLite: Complex Queries", () => {
     expect((results[2] as any).age).toBe(28);
   });
 
+  it("limit [offset, 0] should return an empty array (#364)", async () => {
+    // An explicit count of 0 means "no rows" (LIMIT 0); the validator permits
+    // it. Previously the count was silently rewritten to 1.
+    const none = await conn.em.find(QEntity, {
+      orderBy: { age: "ASC" } as any,
+      limit: [0, 0],
+    });
+    expect(none).toEqual([]);
+
+    const noneOffset = await conn.em.find(QEntity, {
+      orderBy: { age: "ASC" } as any,
+      limit: [5, 0],
+    });
+    expect(noneOffset).toEqual([]);
+  });
+
   // ─── orderBy ──────────────────────────────────────────
 
   it("orderBy ASC should sort in ascending order", async () => {

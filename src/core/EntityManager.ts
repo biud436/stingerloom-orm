@@ -1614,7 +1614,9 @@ export class EntityManager implements BaseEntityManager {
 
       if (Array.isArray(limit)) {
         const [offset, count] = limit;
-        const effectiveCount = (take && take > 0) ? take : (count === 0 ? 1 : count);
+        // An explicit count of 0 means "no rows" (LIMIT 0); the validator
+        // permits it. Only a positive `take` overrides the tuple's count.
+        const effectiveCount = (take && take > 0) ? take : count;
         if (this.isMySqlFamily()) qb.setDatabaseType("mysql");
         qb.limit([offset, effectiveCount]);
       } else if (skip !== undefined || (take !== undefined && !limit)) {

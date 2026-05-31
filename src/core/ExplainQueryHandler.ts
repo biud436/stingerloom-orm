@@ -142,7 +142,7 @@ export class ExplainQueryHandler {
       let [offset, count] = limit;
       if (offset < 0) offset = 0;
       if (count < 0) count = 0;
-      if (count === 0) count = 1;
+      // An explicit count of 0 means LIMIT 0; only a positive `take` overrides it.
       if (take && take > 0) count = take;
       qb.limit([offset, count]);
     } else if (skip !== undefined || (take !== undefined && !limit)) {
