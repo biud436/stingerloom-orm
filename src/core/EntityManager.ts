@@ -868,6 +868,12 @@ export class EntityManager implements BaseEntityManager {
   }
 
   addSubscriber(subscriber: EntitySubscriber<any>): void {
+    // Idempotent registration: the same subscriber instance must not fire
+    // twice. NestJS subscribers self-register in onModuleInit against the
+    // singleton EntityManager, so a module re-init (test re-bootstrap, HMR,
+    // or sharing one connection across modules) would otherwise double-register
+    // and emit duplicate notifications/audit rows.
+    if (this.subscribers.includes(subscriber)) return;
     this.subscribers.push(subscriber);
   }
 
