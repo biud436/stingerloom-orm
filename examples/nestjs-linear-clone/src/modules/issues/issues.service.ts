@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
   Inject,
 } from "@nestjs/common";
 import {
@@ -121,13 +122,19 @@ export class IssuesService {
    * FK column through entity metadata, so the filter stays type-safe and
    * dialect-portable without ad-hoc snake_case casts.
    */
-  findAll(projectId?: number): Promise<Issue[]> {
+  findAll(projectId?: number, limit?: number): Promise<Issue[]> {
+    // Bound every list, even the project-scoped one, so a single tenant with a
+    // huge backlog can't dump unboundedly. Default 100, hard ceiling 500. The
+    // HTTP route additionally requires (and membership-checks) `projectId` via
+    // @WorkspaceScoped — see #357.
+    const take = Math.min(Math.max(1, limit ?? 100), 500);
     const i = qAlias(Issue, "i");
     return this.em
       .createQueryBuilder(i)
       .when(projectId !== undefined, (qb) =>
         qb.where(i.projectId.eq(projectId!)),
       )
+      .take(take)
       .getMany();
   }
 
@@ -161,8 +168,13 @@ export class IssuesService {
     return issue;
   }
 
-  /** Cursor pagination over issues. Used by the activity feed. */
+  /**
+   * Cursor pagination over a project's issues. `projectId` is required and
+   * the HTTP route membership-checks it via @WorkspaceScoped, so the walk is
+   * confined to one tenant's project rather than the whole issues table (#357).
+   */
   findWithCursor(
+    projectId: number,
     take = 20,
     cursor?: string,
   ): Promise<CursorPaginationResult<Issue>> {
@@ -171,6 +183,7 @@ export class IssuesService {
       cursor,
       orderBy: "id",
       direction: "DESC",
+      where: { projectId },
     });
   }
 
@@ -207,14 +220,28 @@ export class IssuesService {
     const previousStatus = before.status as IssueStatus;
     applyPatch(before, pickDefined(dto, PATCHABLE_KEYS) as Partial<Issue>);
 
+    // Membership gate for EVERY patch, not just status transitions. The
+    // PATCH /issues/:id route already enforces this via @WorkspaceScoped, but
+    // the bulk route loops update() with no per-request guard — so this is the
+    // authoritative cross-tenant check for non-status edits (title/priority/
+    // assignee/…) too. See #355.
+    let actorRole: MembershipRole | null = null;
+    if (before.projectId != null) {
+      actorRole = await this.lookupActorRole(before.projectId, actorUserId);
+      if (actorRole == null) {
+        throw new ForbiddenException(
+          `User ${actorUserId} is not a member of this issue's workspace`,
+        );
+      }
+    }
+
     // Workflow gate. The patched `before` is passed so requiredFields reads the would-be state.
     if (dto.status && dto.status !== previousStatus && before.projectId != null) {
-      const role = await this.lookupActorRole(before.projectId, actorUserId);
       await this.workflows.assertTransition(
         before.projectId,
         previousStatus,
         dto.status,
-        role,
+        actorRole,
         before,
       );
     }
@@ -268,6 +295,41 @@ export class IssuesService {
       .limit(1)
       .getOne();
     return (row?.role as MembershipRole | undefined) ?? null;
+  }
+
+  /**
+   * Pre-flight guard for the bulk route, which has no per-request
+   * @WorkspaceScoped (its id set can span projects). Throws 403 if the actor
+   * is not a member of the workspace owning ANY targeted issue that actually
+   * exists. Missing ids are NOT a tenancy violation — they fall through to the
+   * per-row `not_found` outcome in the bulk loop. See #355.
+   */
+  async assertActorMayEditIssues(
+    issueIds: number[],
+    actorUserId: number,
+  ): Promise<void> {
+    if (issueIds.length === 0) return;
+    const uniqueIds = [...new Set(issueIds)];
+    const i = qAlias(Issue, "i");
+    const rows = await this.em
+      .createQueryBuilder(i)
+      .where(i.id.in(uniqueIds))
+      .getMany();
+    const projectIds = [
+      ...new Set(
+        rows
+          .map((r) => r.projectId)
+          .filter((p): p is number => p != null),
+      ),
+    ];
+    for (const projectId of projectIds) {
+      const role = await this.lookupActorRole(projectId, actorUserId);
+      if (role == null) {
+        throw new ForbiddenException(
+          "You are not a member of the workspace owning one or more targeted issues",
+        );
+      }
+    }
   }
 
   /** Set or clear the assignee — convenience wrapper that bumps version. */

@@ -39,17 +39,36 @@ export class IssuesController {
   }
 
   @Get()
-  list(@Query("projectId") projectId?: string) {
-    return this.service.findAll(projectId ? Number(projectId) : undefined);
+  @WorkspaceScoped({ from: "project" })
+  @ApiOperation({
+    summary:
+      "List issues for a project. `projectId` is required and membership-checked " +
+      "(the guard rejects a foreign project with 403); results are capped (default 100, max 500).",
+  })
+  list(
+    @Query("projectId", ParseIntPipe) projectId: number,
+    @Query("limit") limit?: string,
+  ) {
+    return this.service.findAll(projectId, limit ? Number(limit) : undefined);
   }
 
   @Get("cursor")
-  @ApiOperation({ summary: "Cursor-paginated issue feed" })
+  @WorkspaceScoped({ from: "project" })
+  @ApiOperation({
+    summary:
+      "Cursor-paginated issue feed for a project. `projectId` is required and " +
+      "membership-checked so the cursor walk cannot enumerate other tenants.",
+  })
   cursor(
+    @Query("projectId", ParseIntPipe) projectId: number,
     @Query("take") take?: string,
     @Query("cursor") cursor?: string,
   ) {
-    return this.service.findWithCursor(take ? Number(take) : 20, cursor);
+    return this.service.findWithCursor(
+      projectId,
+      take ? Number(take) : 20,
+      cursor,
+    );
   }
 
   @Get(":id")

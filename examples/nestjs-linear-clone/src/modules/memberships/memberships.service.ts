@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
   Inject,
 } from "@nestjs/common";
 import {
@@ -17,6 +18,8 @@ import {
   UpdateMembershipRoleDto,
 } from "./dto/membership.dto";
 import { User } from "../users/user.entity";
+import { RequestContextStore } from "../../common/context/request-context";
+import { MEMBERSHIP_ROLE, MembershipRole } from "../../common/enums";
 
 @Injectable()
 export class MembershipsService {
@@ -86,11 +89,21 @@ export class MembershipsService {
       throw new NotFoundException(`Membership ${id} not found`);
     }
 
+    // @WorkspaceScoped proves the actor is *a* member of this workspace; the
+    // role gate stops a GUEST/MEMBER from escalating anyone (incl. themselves).
+    await this.assertActorIsAdmin(m.workspaceId!);
+
+    // Don't strand a workspace with zero OWNERs by demoting the last one.
+    if (m.role === MEMBERSHIP_ROLE.OWNER && dto.role !== MEMBERSHIP_ROLE.OWNER) {
+      await this.assertNotLastOwner(m.workspaceId!, m.id!);
+    }
+
     m.role = dto.role;
 
     return this.repo.save(m);
   }
 
+  @Transactional()
   async revoke(id: number): Promise<void> {
     const m = await this.repo.findOne({ where: { id } });
 
@@ -98,6 +111,62 @@ export class MembershipsService {
       throw new NotFoundException(`Membership ${id} not found`);
     }
 
+    await this.assertActorIsAdmin(m.workspaceId!);
+
+    if (m.role === MEMBERSHIP_ROLE.OWNER) {
+      await this.assertNotLastOwner(m.workspaceId!, m.id!);
+    }
+
     await this.repo.delete({ id });
+  }
+
+  // ── role / ownership guards ─────────────────────────────────
+
+  /**
+   * Require the authenticated actor to hold ADMIN or OWNER in the target
+   * workspace. The @WorkspaceScoped guard already verified the actor is *a*
+   * member there and stamped `RequestContext.userId`; this adds the role gate
+   * that membership alone does not provide.
+   */
+  private async assertActorIsAdmin(workspaceId: number): Promise<void> {
+    const actorUserId = RequestContextStore.get()?.userId;
+    if (!actorUserId) {
+      throw new ForbiddenException("Authentication required");
+    }
+    const m = qAlias(Membership, "m");
+    const row = await this.em
+      .createQueryBuilder(m)
+      .where(m.workspaceId.eq(workspaceId))
+      .andWhere(m.userId.eq(actorUserId))
+      .limit(1)
+      .getOne();
+    const role = row?.role as MembershipRole | undefined;
+    if (role !== MEMBERSHIP_ROLE.OWNER && role !== MEMBERSHIP_ROLE.ADMIN) {
+      throw new ForbiddenException(
+        "Only an ADMIN or OWNER may change roles or revoke members",
+      );
+    }
+  }
+
+  /**
+   * Block an operation that would leave `workspaceId` with no OWNER. Counts the
+   * OWNER memberships other than the one being demoted/revoked.
+   */
+  private async assertNotLastOwner(
+    workspaceId: number,
+    excludingMembershipId: number,
+  ): Promise<void> {
+    const m = qAlias(Membership, "m");
+    const owners = await this.em
+      .createQueryBuilder(m)
+      .where(m.workspaceId.eq(workspaceId))
+      .andWhere(m.role.eq(MEMBERSHIP_ROLE.OWNER))
+      .getMany();
+    const remaining = owners.filter((o) => o.id !== excludingMembershipId);
+    if (remaining.length === 0) {
+      throw new ConflictException(
+        "Cannot remove or demote the last OWNER of the workspace",
+      );
+    }
   }
 }

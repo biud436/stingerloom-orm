@@ -446,7 +446,7 @@ integrationDescribe("[E2E] Issues — CRUD, numbering, optimistic lock, M2M, sof
     it("returns a cursor and respects take", async () => {
       const r = await api
         .get("/issues/cursor")
-        .query({ take: 3 })
+        .query({ take: 3, projectId: fx.projectId })
         .expect(200);
       expect(r.body).toHaveProperty("data");
       expect(Array.isArray(r.body.data)).toBe(true);

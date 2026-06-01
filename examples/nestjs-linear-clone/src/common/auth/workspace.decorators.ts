@@ -27,21 +27,40 @@ import {
  *
  *   // /labels/:id/...  → looks up the label's project's workspace
  *   @WorkspaceScoped({ from: 'label' })
+ *
+ *   // /comments/:id/... or ?issueId= → comment → issue → workspace
+ *   @WorkspaceScoped({ from: 'comment' })
+ *
+ *   // /work-logs/:id/...  → work log → issue → workspace
+ *   @WorkspaceScoped({ from: 'workLog' })
+ *
+ *   // /memberships/:id/...  → reads the membership row's workspace
+ *   @WorkspaceScoped({ from: 'membership' })
  */
 export function WorkspaceScoped(opts: {
-  from: "param" | "body" | "query" | "project" | "issue" | "sprint" | "label";
+  from:
+    | "param"
+    | "body"
+    | "query"
+    | "project"
+    | "issue"
+    | "sprint"
+    | "label"
+    | "comment"
+    | "workLog"
+    | "membership";
   name?: string;
 }) {
-  const resolver: WorkspaceResolver =
-    opts.from === "project"
-      ? "viaProject"
-      : opts.from === "issue"
-        ? "viaIssue"
-        : opts.from === "sprint"
-          ? "viaSprint"
-          : opts.from === "label"
-            ? "viaLabel"
-            : "explicit";
+  const resolverByFrom: Record<string, WorkspaceResolver> = {
+    project: "viaProject",
+    issue: "viaIssue",
+    sprint: "viaSprint",
+    label: "viaLabel",
+    comment: "viaComment",
+    workLog: "viaWorkLog",
+    membership: "viaMembership",
+  };
+  const resolver: WorkspaceResolver = resolverByFrom[opts.from] ?? "explicit";
   const decorators = [
     UseGuards(JwtAuthGuard, WorkspaceMemberGuard),
     SetMetadata(WORKSPACE_RESOLVE, resolver),

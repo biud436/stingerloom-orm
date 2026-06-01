@@ -19,9 +19,15 @@ import {
 } from "./dto/comment.dto";
 import { CurrentUserId } from "../../common/auth/current-user.decorator";
 import { CursorQueryDto } from "../../common/dto/cursor.dto";
+import { WorkspaceScoped } from "../../common/auth/workspace.decorators";
 
 @ApiTags("Comments")
 @ApiBearerAuth()
+// Every route is workspace-scoped: detail routes (/comments/:id/...) resolve the
+// workspace through the comment → issue chain, while the issue-scoped routes
+// (POST /comments, GET /comments[/cursor]?issueId=) resolve via issueId. Without
+// this a comment id (or a foreign issueId) was a cross-tenant IDOR — see #355.
+@WorkspaceScoped({ from: "comment" })
 @Controller("comments")
 export class CommentsController {
   constructor(private readonly service: CommentsService) {}

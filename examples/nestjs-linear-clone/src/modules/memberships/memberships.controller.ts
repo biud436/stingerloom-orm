@@ -40,7 +40,12 @@ export class MembershipsController {
   }
 
   @Patch(":id/role")
-  @ApiOperation({ summary: "Change a member's role" })
+  @WorkspaceScoped({ from: "membership" })
+  @ApiOperation({
+    summary:
+      "Change a member's role. Requires the actor to be an ADMIN/OWNER of the " +
+      "same workspace; the last OWNER cannot be demoted.",
+  })
   changeRole(
     @Param("id", ParseIntPipe) id: number,
     @Body() dto: UpdateMembershipRoleDto,
@@ -49,8 +54,13 @@ export class MembershipsController {
   }
 
   @Delete(":id")
+  @WorkspaceScoped({ from: "membership" })
   @HttpCode(204)
-  @ApiOperation({ summary: "Revoke membership" })
+  @ApiOperation({
+    summary:
+      "Revoke membership. Requires the actor to be an ADMIN/OWNER of the same " +
+      "workspace; the last OWNER cannot be revoked.",
+  })
   revoke(@Param("id", ParseIntPipe) id: number) {
     return this.service.revoke(id);
   }

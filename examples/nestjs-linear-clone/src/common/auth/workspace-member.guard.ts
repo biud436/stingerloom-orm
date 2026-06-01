@@ -14,6 +14,8 @@ import { Project } from "../../modules/projects/project.entity";
 import { Issue } from "../../modules/issues/issue.entity";
 import { Sprint } from "../../modules/sprints/sprint.entity";
 import { Label } from "../../modules/labels/label.entity";
+import { Comment } from "../../modules/comments/comment.entity";
+import { WorkLog } from "../../modules/work-logs/work-log.entity";
 
 export const WORKSPACE_PARAM = "workspace:param";
 export const WORKSPACE_RESOLVE = "workspace:resolve";
@@ -28,7 +30,10 @@ export type WorkspaceResolver =
   | "viaProject"
   | "viaIssue"
   | "viaSprint"
-  | "viaLabel";
+  | "viaLabel"
+  | "viaComment"
+  | "viaWorkLog"
+  | "viaMembership";
 
 /**
  * Apply on a controller or handler to enforce that the authenticated user is
@@ -149,21 +154,64 @@ export class WorkspaceMemberGuard implements CanActivate {
       const raw = req.params?.issueId ?? req.params?.id ?? req.body?.issueId;
       const issueId = Number(raw);
       if (raw === undefined || !Number.isFinite(issueId)) return "no-identifier";
-      const i = qAlias(Issue, "i");
-      // Two-step lookup keeps the guard out of any join-builder edge cases
-      // and reads from the issue.projectId FK + project.workspaceId path.
-      // `withDeleted()` is intentional: a soft-deleted issue still belongs
-      // to its workspace, so the guard resolves correctly for the restore
-      // endpoint and for GET-after-soft-delete (which 404s in the handler).
-      const issue = await this.em
-        .createQueryBuilder(i)
-        .withDeleted()
-        .where(i.id.eq(issueId))
+      return this.workspaceOfIssue(issueId);
+    }
+
+    if (resolver === "viaComment") {
+      // Two shapes share this resolver:
+      //   /comments/:id/...        → comment row → its issue → workspace
+      //   POST /comments, GET /comments[/cursor]?issueId= → issueId in
+      //                              body/query → issue → workspace
+      const commentIdRaw = req.params?.id;
+      if (commentIdRaw !== undefined) {
+        const commentId = Number(commentIdRaw);
+        if (!Number.isFinite(commentId)) return "no-identifier";
+        const c = qAlias(Comment, "c");
+        // withDeleted: a soft-removed comment still belongs to its workspace,
+        // so revisions/thread on a trashed comment resolve correctly.
+        const comment = await this.em
+          .createQueryBuilder(c)
+          .withDeleted()
+          .where(c.id.eq(commentId))
+          .limit(1)
+          .getOne();
+        if (!comment?.issueId) return "resource-missing";
+        return this.workspaceOfIssue(comment.issueId);
+      }
+      const raw = req.body?.issueId ?? req.query?.issueId;
+      const issueId = Number(raw);
+      if (raw === undefined || !Number.isFinite(issueId)) return "no-identifier";
+      return this.workspaceOfIssue(issueId);
+    }
+
+    if (resolver === "viaWorkLog") {
+      const raw = req.params?.id;
+      const workLogId = Number(raw);
+      if (raw === undefined || !Number.isFinite(workLogId)) return "no-identifier";
+      const w = qAlias(WorkLog, "w");
+      const log = await this.em
+        .createQueryBuilder(w)
+        .where(w.id.eq(workLogId))
         .limit(1)
         .getOne();
-      if (!issue?.projectId) return "resource-missing";
-      const ws = await this.workspaceOfProject(issue.projectId);
-      return ws ?? "resource-missing";
+      if (!log?.issueId) return "resource-missing";
+      return this.workspaceOfIssue(log.issueId);
+    }
+
+    if (resolver === "viaMembership") {
+      const raw = req.params?.id;
+      const membershipId = Number(raw);
+      if (raw === undefined || !Number.isFinite(membershipId)) {
+        return "no-identifier";
+      }
+      const m = qAlias(Membership, "m");
+      const row = await this.em
+        .createQueryBuilder(m)
+        .where(m.id.eq(membershipId))
+        .limit(1)
+        .getOne();
+      if (row?.workspaceId == null) return "resource-missing";
+      return row.workspaceId;
     }
 
     if (resolver === "viaSprint") {
@@ -207,5 +255,27 @@ export class WorkspaceMemberGuard implements CanActivate {
       .limit(1)
       .getOne();
     return row?.workspaceId ?? null;
+  }
+
+  /**
+   * Resolve the workspace an issue belongs to via its project. `withDeleted()`
+   * is intentional: a soft-deleted issue still belongs to its workspace, so the
+   * guard resolves correctly for restore / GET-after-soft-delete (which 404s in
+   * the handler). Returns `"resource-missing"` when the issue or its project is
+   * gone so the caller can let the handler emit the canonical 404.
+   */
+  private async workspaceOfIssue(
+    issueId: number,
+  ): Promise<number | "resource-missing"> {
+    const i = qAlias(Issue, "i");
+    const issue = await this.em
+      .createQueryBuilder(i)
+      .withDeleted()
+      .where(i.id.eq(issueId))
+      .limit(1)
+      .getOne();
+    if (!issue?.projectId) return "resource-missing";
+    const ws = await this.workspaceOfProject(issue.projectId);
+    return ws ?? "resource-missing";
   }
 }

@@ -3,6 +3,7 @@ import {
   Inject,
   ConflictException,
   NotFoundException,
+  ForbiddenException,
 } from "@nestjs/common";
 import {
   BaseRepository,
@@ -46,6 +47,14 @@ export class BulkOperationsService {
         `ids.length (${dto.ids.length}) must match expectedVersions.length (${dto.expectedVersions.length})`,
       );
     }
+
+    // Cross-tenant pre-flight (#355): this route has no per-request
+    // @WorkspaceScoped because its id set can span projects, so reject the
+    // whole batch with 403 if any targeted (existing) issue lives in a
+    // workspace the actor is not a member of. Missing ids surface per-row as
+    // not_found below. `IssuesService.update` re-checks membership per row as a
+    // defense-in-depth backstop.
+    await this.issues.assertActorMayEditIssues(dto.ids, actorUserId);
 
     const requestHash = this.hashRequest(dto);
     const finalKey =
@@ -112,6 +121,12 @@ export class BulkOperationsService {
       return { id, status: "conflict" };
     }
     if (err instanceof NotFoundException) {
+      return { id, status: "not_found" };
+    }
+    // A non-member reaching update() (the pre-flight should have already 403'd
+    // the batch) is treated as not_found — indistinguishable from a missing row
+    // so we never disclose the existence of another tenant's issue. #355
+    if (err instanceof ForbiddenException) {
       return { id, status: "not_found" };
     }
     const msg = err instanceof Error ? err.message : String(err);

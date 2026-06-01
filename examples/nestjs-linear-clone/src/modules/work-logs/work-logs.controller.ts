@@ -50,12 +50,14 @@ export class WorkLogsController {
   }
 
   @Get("work-logs/:id")
+  @WorkspaceScoped({ from: "workLog" })
   @ApiOperation({ summary: "Get a single work log entry" })
   findOne(@Param("id", ParseIntPipe) id: number) {
     return this.service.findOne(id);
   }
 
   @Patch("work-logs/:id")
+  @WorkspaceScoped({ from: "workLog" })
   @ApiOperation({ summary: "Update a work log entry" })
   update(
     @Param("id", ParseIntPipe) id: number,
@@ -65,6 +67,7 @@ export class WorkLogsController {
   }
 
   @Delete("work-logs/:id")
+  @WorkspaceScoped({ from: "workLog" })
   @HttpCode(204)
   @ApiOperation({ summary: "Delete a work log entry" })
   remove(@Param("id", ParseIntPipe) id: number) {
