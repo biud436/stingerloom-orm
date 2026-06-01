@@ -7,6 +7,8 @@ import {
   Injectable,
   NestInterceptor,
 } from "@nestjs/common";
+import { HTTP_CODE_METADATA } from "@nestjs/common/constants";
+import { Reflector } from "@nestjs/core";
 import { Request, Response } from "express";
 import { Observable, from, of } from "rxjs";
 import { mergeMap, catchError } from "rxjs/operators";
@@ -18,6 +20,26 @@ const HEADER = "idempotency-key";
 const KEY_REGEX = /^[a-zA-Z0-9_\-]{1,128}$/;
 const TTL_HOURS = 24;
 const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
+/**
+ * How long a freshly-claimed `in_flight` row is considered "owned" by its
+ * writer. A retry that arrives within this window while the row is still
+ * `in_flight` is treated as a genuinely-concurrent duplicate → 409.
+ *
+ * Past the window the claim is assumed STALE — the original writer crashed
+ * after committing its business transaction but before persisting the result
+ * (issue #361). Without a lease such a row would 409 every retry until the 24h
+ * TTL sweep. A stale claim is therefore RE-CLAIMABLE: the next caller atomically
+ * re-leases it and re-runs the handler.
+ *
+ * Tunable via `IDEMPOTENCY_LEASE_MS` (default 2 minutes) — long enough to
+ * outlast any realistic in-progress handler, short enough that a crash recovers
+ * quickly.
+ */
+const LEASE_MS = (() => {
+  const raw = Number(process.env.IDEMPOTENCY_LEASE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 2 * 60 * 1000;
+})();
 
 /**
  * Stripe-style idempotency interceptor.
@@ -50,6 +72,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
   constructor(
     @Inject(EntityManager)
     private readonly em: EntityManager,
+    private readonly reflector: Reflector,
   ) {}
 
   intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -109,10 +132,21 @@ export class IdempotencyInterceptor implements NestInterceptor {
         // await `persistResult` *before* the response is emitted so a
         // sequential replay never races the in_flight row out of its
         // post-handler UPDATE.
+        //
+        // The status we persist is the route's DECLARED status, resolved from
+        // the handler metadata — NOT `res.statusCode`. Nest applies the
+        // @HttpCode / method-default status in RouterResponseController.apply()
+        // AFTER this RxJS pipeline resolves, so reading `res.statusCode` here
+        // would always observe the stale default 200 and a 201/204 route would
+        // replay as 200 (issue #362).
+        // On the first call Nest stamps the status itself (via @HttpCode /
+        // method default) — we only need to PERSIST that same status so the
+        // later replay (which short-circuits Nest's status logic) can re-emit
+        // it. We resolve it the same way Nest will, before the handler runs.
+        const declaredStatus = this.resolveDeclaredStatus(ctx, req.method);
         return next.handle().pipe(
           mergeMap(async (body) => {
-            const status = res.statusCode || HttpStatus.OK;
-            await this.persistResult(headerVal, status, body);
+            await this.persistResult(headerVal, declaredStatus, body);
             return body;
           }),
           catchError(async (err) => {
@@ -130,9 +164,26 @@ export class IdempotencyInterceptor implements NestInterceptor {
   }
 
   /**
-   * Try to INSERT a fresh in_flight row. Returns `null` when the row was
-   * inserted (caller is the first writer), or the existing row if the key
-   * already exists.
+   * Resolve the status the route INTENDS to return, independent of the
+   * Express response object (which Nest has not stamped yet at interceptor
+   * time). Precedence:
+   *   1. An explicit `@HttpCode(n)` on the handler (`HTTP_CODE_METADATA`).
+   *   2. Nest's method default — POST → 201, everything else → 200.
+   */
+  private resolveDeclaredStatus(ctx: ExecutionContext, method: string): number {
+    const explicit = this.reflector.get<number | undefined>(
+      HTTP_CODE_METADATA,
+      ctx.getHandler(),
+    );
+    if (typeof explicit === "number") return explicit;
+    return method === "POST" ? HttpStatus.CREATED : HttpStatus.OK;
+  }
+
+  /**
+   * Try to INSERT a fresh in_flight row. Returns `null` when the caller is the
+   * first/owning writer (a fresh row was inserted, OR a STALE in_flight row was
+   * atomically re-leased to us), or the existing row if the key is already
+   * owned by a live request / completed.
    *
    * We keep this dialect-aware since PG and MySQL differ on the
    * "insert-or-skip" spelling and we need to RETURN the row either way.
@@ -164,7 +215,54 @@ export class IdempotencyInterceptor implements NestInterceptor {
     if (affected === 1) return null;
 
     // Row already existed — read it back.
-    return repo.findOne({ where: { key } });
+    const existing = await repo.findOne({ where: { key } });
+    if (!existing) {
+      // Race: the row vanished between the failed INSERT and this SELECT
+      // (e.g. a concurrent TTL sweep). Treat as "could not claim" — surfaces
+      // as a transient 409 the client can retry.
+      return existing;
+    }
+
+    // A stranded `in_flight` claim (issue #361): the row is still in_flight
+    // but its lease has expired, meaning the original writer never reached
+    // persistResult. Atomically re-lease it to THIS caller so the handler can
+    // re-run instead of 409-ing until the 24h TTL.
+    //
+    // The UPDATE is the concurrency gate: it matches ONLY a row that is still
+    // in_flight AND still older than the lease (created_at < leaseFloor). Two
+    // concurrent retries both attempting the re-claim therefore race on the
+    // same conditional UPDATE — exactly one bumps created_at past the floor,
+    // so only it sees affected === 1 and proceeds; the loser's UPDATE matches
+    // nothing and it falls through to the in_flight 409.
+    if (existing.status === "in_flight" && this.isStale(existing.createdAt, now)) {
+      const leaseFloor = fmt(new Date(now.getTime() - LEASE_MS));
+      const reclaimSql = isMysql
+        ? sql`UPDATE ${I} SET ${I.createdAt} = ${nowSql}, ${I.requestHash} = ${requestHash}, ${I.userId} = ${userId} WHERE ${I.key} = ${key} AND ${I.status} = ${"in_flight"} AND ${I.createdAt} < ${leaseFloor}`
+        : sql`UPDATE ${I} SET ${I.createdAt} = ${nowSql}::timestamp, ${I.requestHash} = ${requestHash}, ${I.userId} = ${userId} WHERE ${I.key} = ${key} AND ${I.status} = ${"in_flight"} AND ${I.createdAt} < ${leaseFloor}::timestamp`;
+      const reclaimResult = await this.em.query<unknown>(reclaimSql);
+      if (readAffected(reclaimResult) === 1) {
+        // We won the re-lease — act as the owning writer.
+        return null;
+      }
+      // Lost the race to a concurrent re-claimer; re-read so the caller sees
+      // the live state (fresh in_flight → 409, or completed → replay).
+      return repo.findOne({ where: { key } });
+    }
+
+    return existing;
+  }
+
+  /**
+   * A claim is stale when its `createdAt` is older than the lease window. A
+   * missing/unparseable timestamp is treated as stale (fail-open toward
+   * recovery) so a malformed row can never strand a key forever.
+   */
+  private isStale(createdAt: Date | string | null, now: Date): boolean {
+    if (createdAt == null) return true;
+    const created =
+      createdAt instanceof Date ? createdAt.getTime() : Date.parse(String(createdAt));
+    if (!Number.isFinite(created)) return true;
+    return now.getTime() - created >= LEASE_MS;
   }
 
   private async persistResult(
