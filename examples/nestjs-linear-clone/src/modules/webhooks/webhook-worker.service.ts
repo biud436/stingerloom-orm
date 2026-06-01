@@ -11,17 +11,37 @@ import {
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { WebhookDelivery } from "./webhook-delivery.entity";
 import { WebhookEndpoint } from "./webhook-endpoint.entity";
+import { assertSafeWebhookUrl } from "./ssrf-guard";
 
 const MAX_ATTEMPTS = 5;
 const REQUEST_TIMEOUT_MS = 5_000;
 const SENTINEL_TIMEOUT_SECONDS = 30;
 const SENTINEL_PREFIX = "__claim:";
 
+/**
+ * Lease window for a claimed (`in_flight`) delivery. A worker that claims a row
+ * has this long to drive it to `delivered`/`failed` before the reaper assumes
+ * the worker crashed and re-queues the row. Sized comfortably above the
+ * per-request timeout so a slow-but-alive delivery is never reaped mid-flight.
+ */
+const LEASE_TIMEOUT_SECONDS = 60;
+
+/**
+ * Hard cap on how many times the reaper will rescue the same row from a crashed
+ * worker. Past this, a perpetually-stranded ("poison") row is parked in
+ * `failed` rather than being reclaimed forever.
+ */
+const MAX_RECLAIMS = MAX_ATTEMPTS;
+
 export interface TickResult {
   claimed: number;
   delivered: number;
   failed: number;
   permanentlyFailed: number;
+  /** in_flight rows re-queued to pending after their lease expired. */
+  reclaimed: number;
+  /** stranded rows that hit the reclaim cap and were parked in `failed`. */
+  reclaimFailed: number;
 }
 
 /**
@@ -55,6 +75,10 @@ export class WebhookDeliveryWorker {
   ) {}
 
   async tick(batchSize = 16): Promise<TickResult> {
+    // Reap first: re-queue rows whose lease expired (worker crashed mid-flight)
+    // so they become claimable again in this very tick.
+    const { reclaimed, reclaimFailed } = await this.reapStale(batchSize);
+
     const claimed = await this.claimBatch(batchSize);
     let delivered = 0;
     let failed = 0;
@@ -67,7 +91,92 @@ export class WebhookDeliveryWorker {
       else failed++;
     }
 
-    return { claimed: claimed.length, delivered, failed, permanentlyFailed };
+    return {
+      claimed: claimed.length,
+      delivered,
+      failed,
+      permanentlyFailed,
+      reclaimed,
+      reclaimFailed,
+    };
+  }
+
+  // ── reaper ─────────────────────────────────────────────
+
+  /**
+   * Lease-based reaper for stranded `in_flight` rows.
+   *
+   * A delivery is flipped to `in_flight` at claim time and only leaves that
+   * state when `deliverOne` marks it delivered/failed. If the worker process
+   * dies in between, the row is orphaned forever. This step finds `in_flight`
+   * rows whose `last_attempted_at` (the claim timestamp) is older than the
+   * lease window and, treating the dead claim as a failed attempt:
+   *
+   *   - re-queues them to `pending` for immediate re-claim (the expired lease
+   *     already served as the wait), OR
+   *   - parks them in `failed` once they have been reclaimed `MAX_RECLAIMS`
+   *     times, so a poison row that strands every worker eventually terminates
+   *     instead of looping.
+   *
+   * Reclaim is dialect-agnostic: it operates purely on `state`/`last_attempted_at`
+   * and works identically on the Postgres and MySQL claim paths.
+   */
+  @Transactional()
+  private async reapStale(
+    batchSize: number,
+  ): Promise<{ reclaimed: number; reclaimFailed: number }> {
+    const d = qAlias(WebhookDelivery, "d");
+    const leaseCutoff = exp
+      .currentTimestamp()
+      .addSeconds(-LEASE_TIMEOUT_SECONDS);
+
+    const stale = await this.deliveries
+      .createQueryBuilder(d)
+      .where(d.state.eq("in_flight"))
+      .andWhere(d.lastAttemptedAt.lt(leaseCutoff))
+      .orderBy(d.lastAttemptedAt.asc())
+      .limit(batchSize)
+      .getMany();
+
+    let reclaimed = 0;
+    let reclaimFailed = 0;
+    const now = new Date();
+
+    for (const row of stale) {
+      // The lost claim counts as a spent attempt.
+      const attemptCount = row.attemptCount + 1;
+      if (attemptCount >= MAX_RECLAIMS) {
+        await this.deliveries.updateMany(
+          {
+            state: "failed",
+            attemptCount,
+            lastAttemptedAt: now,
+            nextAttemptAt: null,
+            lastError: "lease expired (worker crashed) — reclaim cap reached",
+          },
+          { where: { id: row.id } },
+        );
+        reclaimFailed++;
+      } else {
+        await this.deliveries.updateMany(
+          {
+            state: "pending",
+            attemptCount,
+            lastAttemptedAt: now,
+            // Re-queue for immediate claim: the expired lease already served as
+            // the wait, so a crashed-worker reclaim retries promptly rather than
+            // sitting out a fresh exponential backoff (which is for app-level
+            // failures via markFailed, not lost claims).
+            nextAttemptAt: now,
+            lastError: "lease expired (worker crashed) — re-queued",
+          },
+          { where: { id: row.id } },
+        );
+        reclaimed++;
+      }
+    }
+
+    return { reclaimed, reclaimFailed };
   }
 
   // ── claim ──────────────────────────────────────────────
@@ -172,6 +281,19 @@ export class WebhookDeliveryWorker {
 
     const body = JSON.stringify({ event: d.eventType, payload: d.payload });
     const signature = createHmac("sha256", ep.secret).update(body).digest("hex");
+
+    // DNS-rebind defense: re-resolve and range-check the endpoint host
+    // immediately before the request. A URL that passed validation at write
+    // time could now resolve to a private/loopback IP; refuse to fetch it.
+    // A blocked endpoint is treated as a permanent failure (it will never be
+    // safely deliverable until the operator changes the URL).
+    try {
+      await assertSafeWebhookUrl(ep.url);
+    } catch (err) {
+      const reason = `blocked by SSRF guard: ${(err as Error)?.message ?? "unsafe URL"}`;
+      await this.markFailed(d, reason, true);
+      return "failed-permanent";
+    }
 
     let ok = false;
     let errMessage: string | null = null;

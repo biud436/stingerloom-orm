@@ -53,6 +53,11 @@ export class WebhooksController {
   }
 
   @Patch("endpoints/:id")
+  @WorkspaceScoped({ from: "body", name: "workspaceId" })
+  @ApiOperation({
+    summary:
+      "Update a webhook endpoint (requires workspaceId in the body for workspace scoping)",
+  })
   update(
     @Param("id", ParseIntPipe) id: number,
     @Body() dto: UpdateWebhookEndpointDto,

@@ -2,8 +2,9 @@ import {
   Injectable,
   Inject,
   NotFoundException,
+  ForbiddenException,
 } from "@nestjs/common";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   BaseRepository,
   EntityManager,
@@ -17,6 +18,7 @@ import {
   CreateWebhookEndpointDto,
   UpdateWebhookEndpointDto,
 } from "./dto/webhook.dto";
+import { assertSafeWebhookUrl } from "./ssrf-guard";
 
 /**
  * Outbox-pattern webhook publisher.
@@ -41,6 +43,7 @@ export class WebhooksService {
 
   @Transactional()
   async createEndpoint(dto: CreateWebhookEndpointDto): Promise<WebhookEndpoint> {
+    await assertSafeWebhookUrl(dto.url);
     const ep = new WebhookEndpoint();
     ep.workspaceId = dto.workspaceId;
     ep.url = dto.url;
@@ -71,7 +74,19 @@ export class WebhooksService {
     dto: UpdateWebhookEndpointDto,
   ): Promise<WebhookEndpoint> {
     const ep = await this.findEndpoint(id);
-    if (dto.url !== undefined) ep.url = dto.url;
+    // Cross-tenant guard: the WorkspaceMemberGuard only proves the caller is a
+    // member of `dto.workspaceId`; it does NOT prove the endpoint belongs to
+    // that workspace. Pin the two together so a member of workspace B cannot
+    // patch an endpoint owned by workspace A by passing their own workspace id.
+    if (ep.workspaceId !== dto.workspaceId) {
+      throw new ForbiddenException(
+        "Webhook endpoint does not belong to the specified workspace",
+      );
+    }
+    if (dto.url !== undefined) {
+      await assertSafeWebhookUrl(dto.url);
+      ep.url = dto.url;
+    }
     if (dto.secret !== undefined) ep.secret = dto.secret;
     if (dto.events !== undefined) ep.events = dto.events;
     if (dto.isActive !== undefined) ep.isActive = dto.isActive;
@@ -123,7 +138,7 @@ export class WebhooksService {
       row.nextAttemptAt = now;
       row.lastAttemptedAt = null;
       row.lastError = null;
-      row.idempotencyKey = makeDeliveryKey(workspaceId, ep.id, eventType, payload);
+      row.idempotencyKey = makeDeliveryKey(ep.id, eventType, payload);
       try {
         await this.deliveries.save(row);
         inserted++;
@@ -152,22 +167,55 @@ export class WebhooksService {
 }
 
 /**
- * Stable digest of (workspace, endpoint, event, payload, monotonic salt). The
- * salt makes two distinct emits of the same logical payload distinguishable —
- * we only want UNIQUE-collision on a true retry of the *same* outbox row.
+ * DETERMINISTIC digest of the *logical event identity* — `(endpoint, event
+ * type, source entity id, version/revision marker)`. There is no time- or
+ * UUID-based salt: re-emitting the SAME logical event (e.g. a retried,
+ * partially-committed transaction that fires `emit()` again) produces the SAME
+ * key, so the `@UniqueIndex(["idempotency_key"])` on `WebhookDelivery` drops
+ * the duplicate INSERT and the worker fires exactly once.
+ *
+ * Logical identity is read off the emitted `payload`:
+ *   - `payload.id`      → the source entity that the event is about (issue id).
+ *   - `payload.version` → a monotonic per-entity revision marker. For
+ *                         `issue.updated` this is the issue's `@Version`, so two
+ *                         genuinely-different updates of the same issue (v3 vs
+ *                         v4) get distinct keys and BOTH fire, while a retry of
+ *                         the same update (same version) collides and de-dupes.
+ *                         For events without a version (e.g. `issue.created`,
+ *                         which is a once-per-entity event) the marker is empty
+ *                         and the `(endpoint, event, id)` triple is the
+ *                         identity — re-emitting a create collides, as intended.
+ *
+ * `endpointId` is included so fan-out to N endpoints yields N distinct rows
+ * (each endpoint must receive its own delivery), but two distinct logical
+ * events never collide because the entity id + version differ.
  */
 function makeDeliveryKey(
-  workspaceId: number,
   endpointId: number,
   eventType: string,
   payload: Record<string, unknown>,
 ): string {
-  const salt = `${Date.now()}-${randomUUID()}`;
-  const json = JSON.stringify(payload);
+  const entityId = stableScalar(payload.id);
+  const version = stableScalar(payload.version);
   return createHash("sha256")
-    .update(`${workspaceId}|${endpointId}|${eventType}|${json}|${salt}`)
+    .update(`${endpointId}|${eventType}|${entityId}|${version}`)
     .digest("hex")
     .slice(0, 64);
+}
+
+/** Render a payload field into a stable string component of the digest. */
+function stableScalar(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return String(value);
+  }
+  // Defensive: a non-scalar id/version is unexpected, but hash its JSON so the
+  // key stays deterministic rather than throwing inside the outbox write.
+  return JSON.stringify(value);
 }
 
 function isUniqueViolation(err: unknown): boolean {

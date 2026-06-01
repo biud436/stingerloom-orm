@@ -44,6 +44,17 @@ export class CreateWebhookEndpointDto {
 }
 
 export class UpdateWebhookEndpointDto {
+  @ApiProperty({
+    example: 1,
+    description:
+      "Workspace the endpoint belongs to. Required for workspace-scope " +
+      "authorization — the caller must be a member, and it must match the " +
+      "endpoint's own workspace (cross-tenant patches are rejected). The " +
+      "endpoint's workspace itself is immutable; this field is auth-only.",
+  })
+  @IsInt()
+  workspaceId!: number;
+
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
