@@ -1569,7 +1569,17 @@ export class EntityManager implements BaseEntityManager {
         // the same target entity (e.g. assignee + reporter → User) get
         // distinct aliases.
         const relAlias = rel.columnName;
-        const joinCondition = sql`${raw(this.wrap(fkTableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relAlias))}.${raw(this.wrap(relatedPk.name!))}`;
+        let joinCondition = sql`${raw(this.wrap(fkTableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relAlias))}.${raw(this.wrap(relatedPk.name!))}`;
+
+        // Keep eager and lazy soft-delete semantics in sync: a soft-deleted
+        // target should surface as a null relation, not silently leak in.
+        // Putting the predicate in the ON clause (not WHERE) preserves the
+        // parent row. Skipped under `withDeleted` so trashed rows are included.
+        const relatedDeletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
+        if (relatedDeletedAt && !(findOption as any).withDeleted) {
+          joinCondition = sql`${joinCondition} AND ${raw(this.wrap(relAlias))}.${raw(this.wrap(relatedDeletedAt))} IS NULL`;
+        }
+
         qb.leftJoin(
           this.wrapTable(relatedTableName),
           this.wrap(relAlias),
@@ -1592,7 +1602,15 @@ export class EntityManager implements BaseEntityManager {
         if (!relatedPk) continue;
 
         const relAlias = rel.propertyKey;
-        const joinCondition = sql`${raw(this.wrap(tableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relAlias))}.${raw(this.wrap(relatedPk.name!))}`;
+        let joinCondition = sql`${raw(this.wrap(tableName))}.${raw(this.wrap(joinColumn))} = ${raw(this.wrap(relAlias))}.${raw(this.wrap(relatedPk.name!))}`;
+
+        // Mirror the ManyToOne eager join: filter soft-deleted counterparts in
+        // the ON clause so the parent row survives, unless `withDeleted` is set.
+        const relatedDeletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
+        if (relatedDeletedAt && !(findOption as any).withDeleted) {
+          joinCondition = sql`${joinCondition} AND ${raw(this.wrap(relAlias))}.${raw(this.wrap(relatedDeletedAt))} IS NULL`;
+        }
+
         qb.leftJoin(
           this.wrapTable(relatedTableName),
           this.wrap(relAlias),
@@ -1772,18 +1790,21 @@ export class EntityManager implements BaseEntityManager {
           entityResult as T | T[],
           findOption.relations,
           session,
+          findOption.withDeleted,
         );
         await this.relationLoader.loadManyToManyRelations(
           entity,
           entityResult as T | T[],
           findOption.relations,
           session,
+          findOption.withDeleted,
         );
         await this.relationLoader.loadOneToOneRelations(
           entity,
           entityResult as T | T[],
           findOption.relations,
           session,
+          findOption.withDeleted,
         );
       }
 
@@ -1814,9 +1835,11 @@ export class EntityManager implements BaseEntityManager {
             if (!relatedPk) continue;
 
             const em = this;
+            const proxyWithDeleted = findOption.withDeleted;
             injectLazyProxy(item as any, rel.columnName, async () => {
               const result = await em.findOne(RelatedEntity, {
                 where: { [this.propKey(relatedPk)]: fkValue } as any,
+                withDeleted: proxyWithDeleted,
               });
               return result as any;
             });

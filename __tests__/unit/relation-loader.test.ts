@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { RelationLoader } from "../../src/core/RelationLoader";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { EntityManagerInternals } from "../../src/core/EntityManagerInternals";
+import { Conditions } from "../../src/core/Conditions";
 
 // Mock RawQueryBuilderFactory / ResultTransformerFactory
 jest.mock("../../src/core/RawQueryBuilderFactory", () => ({
@@ -765,6 +766,119 @@ describe("RelationLoader", () => {
 
       // No PK in related entity → no query executed
       expect(ctx.executeInTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── withDeleted propagation (Issue #363) ──────────────────────
+
+  describe("withDeleted propagation (Issue #363)", () => {
+    let isNullSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      isNullSpy = jest.spyOn(Conditions, "isNull");
+    });
+
+    afterEach(() => {
+      isNullSpy.mockRestore();
+    });
+
+    it("loadOneToManyRelations: default adds the deletedAt predicate, withDeleted skips it", async () => {
+      resolver.resolveOneToManyMetadata.mockReturnValue([
+        { propertyKey: "children", getRelatedEntity: () => Child, mappedBy: "parentId" },
+      ] as any);
+      resolver.resolveEntityMetadata.mockImplementation((e: any) =>
+        e === Parent ? (parentMetadata as any) : (childMetadata as any),
+      );
+      resolver.resolveManyToOneMetadata.mockReturnValue([]);
+      resolver.getDeletedAtColumn.mockReturnValue("deletedAt");
+
+      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
+      ctx.executeInTransaction.mockImplementation(async (fn: any) => fn(mockSession));
+
+      // default (withDeleted not set) → predicate applied
+      await loader.loadOneToManyRelations(Parent, { id: 1 } as Parent, ["children"]);
+      expect(isNullSpy).toHaveBeenCalledWith('"deletedAt"');
+
+      // withDeleted: true → predicate skipped
+      isNullSpy.mockClear();
+      await loader.loadOneToManyRelations(
+        Parent,
+        { id: 1 } as Parent,
+        ["children"],
+        undefined,
+        true,
+      );
+      expect(isNullSpy).not.toHaveBeenCalled();
+    });
+
+    it("loadManyToManyRelations: default adds a qualified deletedAt predicate, withDeleted skips it", async () => {
+      resolver.resolveManyToManyMetadata.mockReturnValue([
+        { propertyKey: "tags", getRelatedEntity: () => Tag },
+      ] as any);
+      resolver.resolveEntityMetadata.mockImplementation((e: any) =>
+        e === Parent ? (parentMetadata as any) : (tagMetadata as any),
+      );
+      resolver.resolveManyToManyJoinTable.mockReturnValue({
+        joinTableName: "parent_tags",
+        joinColumn: "parent_id",
+        inverseJoinColumn: "tag_id",
+      });
+      resolver.getDeletedAtColumn.mockReturnValue("deletedAt");
+
+      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
+      ctx.executeInTransaction.mockImplementation(async (fn: any) => fn(mockSession));
+
+      // default → qualified predicate ("tags"."deletedAt")
+      await loader.loadManyToManyRelations(Parent, { id: 1 } as Parent, ["tags"]);
+      expect(isNullSpy).toHaveBeenCalledWith('"tags"."deletedAt"');
+
+      // withDeleted: true → predicate skipped
+      isNullSpy.mockClear();
+      await loader.loadManyToManyRelations(
+        Parent,
+        { id: 1 } as Parent,
+        ["tags"],
+        undefined,
+        true,
+      );
+      expect(isNullSpy).not.toHaveBeenCalled();
+    });
+
+    it("loadOneToOneRelations (inverse): default adds the deletedAt predicate, withDeleted skips it", async () => {
+      resolver.resolveOneToOneMetadata.mockImplementation((e: any) =>
+        e === Parent
+          ? ([
+              {
+                propertyKey: "profile",
+                getRelatedEntity: () => Profile,
+                joinColumn: undefined,
+                inverseSide: "user",
+              },
+            ] as any)
+          : ([{ propertyKey: "user", joinColumn: "userId" }] as any),
+      );
+      resolver.resolveEntityMetadata.mockImplementation((e: any) =>
+        e === Parent ? (parentMetadata as any) : (profileMetadata as any),
+      );
+      resolver.getDeletedAtColumn.mockReturnValue("deletedAt");
+
+      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
+      ctx.executeInTransaction.mockImplementation(async (fn: any) => fn(mockSession));
+
+      // default → predicate applied
+      await loader.loadOneToOneRelations(Parent, { id: 1 } as Parent, ["profile"]);
+      expect(isNullSpy).toHaveBeenCalledWith('"deletedAt"');
+
+      // withDeleted: true → predicate skipped
+      isNullSpy.mockClear();
+      await loader.loadOneToOneRelations(
+        Parent,
+        { id: 1 } as Parent,
+        ["profile"],
+        undefined,
+        true,
+      );
+      expect(isNullSpy).not.toHaveBeenCalled();
     });
   });
 });

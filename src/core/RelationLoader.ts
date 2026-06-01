@@ -31,12 +31,16 @@ export class RelationLoader {
    * @param parentResults Parent query result (single entity or array)
    * @param relations Names of the relation fields to load
    * @param existingSession Existing session to reuse (to save connection-pool usage)
+   * @param withDeleted When true, include soft-deleted children (skip the
+   *        `deletedAt IS NULL` predicate) so relation loads match the top-level
+   *        `withDeleted` query.
    */
   async loadOneToManyRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
     relations: string[],
     existingSession?: TransactionSessionManager,
+    withDeleted?: boolean,
   ): Promise<void> {
     const oneToManyMeta = this.resolver.resolveOneToManyMetadata(entity);
     if (oneToManyMeta.length === 0) return;
@@ -96,7 +100,7 @@ export class RelationLoader {
         ];
 
         const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
-        if (deletedAtColumn) {
+        if (deletedAtColumn && !withDeleted) {
           whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
         }
 
@@ -161,12 +165,15 @@ export class RelationLoader {
    * WHERE join_table.joinColumn IN (:parentId1, :parentId2, ...)
    *
    * @param existingSession Existing session to reuse (to save connection-pool usage)
+   * @param withDeleted When true, include soft-deleted targets (skip the
+   *        `deletedAt IS NULL` predicate).
    */
   async loadManyToManyRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
     relations: string[],
     existingSession?: TransactionSessionManager,
+    withDeleted?: boolean,
   ): Promise<void> {
     const manyToManyMeta = this.resolver.resolveManyToManyMetadata(entity);
     if (manyToManyMeta.length === 0) return;
@@ -237,6 +244,18 @@ export class RelationLoader {
             parentIds,
           ),
         ];
+
+        // Soft-delete scoping for the target entity. Qualify by the related
+        // table name because the query JOINs a second table (the join table) —
+        // an unqualified predicate would be ambiguous.
+        const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
+        if (deletedAtColumn && !withDeleted) {
+          whereConditions.push(
+            Conditions.isNull(
+              `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(deletedAtColumn)}`,
+            ),
+          );
+        }
 
         // Tenant scoping for the related entity. Qualify by the related table
         // name because the query JOINs a second table (the join table) — an
@@ -310,12 +329,15 @@ export class RelationLoader {
    * For the inverse side, uses a batched IN query to avoid N+1 problems.
    *
    * @param existingSession Existing session to reuse (to save connection-pool usage)
+   * @param withDeleted When true, include a soft-deleted counterpart (skip the
+   *        `deletedAt IS NULL` predicate).
    */
   async loadOneToOneRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
     relations: string[],
     existingSession?: TransactionSessionManager,
+    withDeleted?: boolean,
   ): Promise<void> {
     const oneToOneMeta = this.resolver.resolveOneToOneMetadata(entity);
     if (oneToOneMeta.length === 0) return;
@@ -395,7 +417,7 @@ export class RelationLoader {
           ];
 
           const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
-          if (deletedAtColumn) {
+          if (deletedAtColumn && !withDeleted) {
             whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
           }
 
