@@ -190,6 +190,21 @@ WHERE "name" = $1 AND "status" = $2
 
 This is the foundation. Everything else below builds on it.
 
+### Shorthand: findBy / findOneBy
+
+When all you need is a `where` — no `select`, `orderBy`, `relations`, or pagination — the `{ where: ... }` wrapper is pure ceremony. `findBy` and `findOneBy` take the filter directly, mirroring the filter-first shape of `delete` and `update`:
+
+```typescript
+// these two are equivalent
+const a = await em.find(User, { where: { status: "active" } });
+const b = await em.findBy(User, { status: "active" });
+
+// single record
+const user = await em.findOneBy(User, { id: 1 });
+```
+
+They delegate to `find` / `findOne`, so the where object accepts the exact same operators (and an array means `OR`). Reach for the full `find` / `findOne` form the moment you need anything beyond the filter.
+
 ### Comparison Operators
 
 Equality isn't always enough. "Find users older than 18" needs a `>` comparison. Instead of passing a plain value, pass an **operator object**:

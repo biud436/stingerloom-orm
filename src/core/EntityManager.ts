@@ -1099,6 +1099,28 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * Retrieves a single entity matching `where`.
+   *
+   * Filter-first shorthand for `findOne(entity, { where })` — drops the
+   * options-object ceremony for the common "find by these fields" case,
+   * matching the filter-first shape of `delete`/`update`. For relations,
+   * ordering, pagination, locking, etc., use {@link findOne} with a full
+   * `FindOption`.
+   *
+   * @example
+   * ```ts
+   * const user = await em.findOneBy(User, { id: 1 });
+   * const active = await em.findOneBy(User, { email, status: "active" });
+   * ```
+   */
+  async findOneBy<T>(
+    entity: ClazzType<T>,
+    where: WhereClause<T> | WhereClause<T>[],
+  ): Promise<T | null> {
+    return this.findOne(entity, { where });
+  }
+
+  /**
    * Retrieves a single entity matching the given options.
    * Throws `EntityNotFoundError` if no entity is found.
    *
@@ -1141,6 +1163,24 @@ export class EntityManager implements BaseEntityManager {
     if (result === undefined || result === null) return [];
     if (Array.isArray(result)) return result as T[];
     return [result as T];
+  }
+
+  /**
+   * Retrieves all entities matching `where`.
+   *
+   * Filter-first shorthand for `find(entity, { where })`. For relations,
+   * ordering, pagination, etc., use {@link find} with a full `FindOption`.
+   *
+   * @example
+   * ```ts
+   * const admins = await em.findBy(User, { role: "admin" });
+   * ```
+   */
+  async findBy<T>(
+    entity: ClazzType<T>,
+    where: WhereClause<T> | WhereClause<T>[],
+  ): Promise<T[]> {
+    return this.find(entity, { where });
   }
 
   private async findInternal<T>(

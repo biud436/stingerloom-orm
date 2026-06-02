@@ -190,6 +190,21 @@ WHERE "name" = $1 AND "status" = $2
 
 이게 기본이에요. 아래의 모든 내용은 이 위에 쌓여가요.
 
+### 단축형: findBy / findOneBy
+
+`where`만 필요하고 `select`·`orderBy`·`relations`·페이지네이션이 없을 땐, `{ where: ... }` 래핑은 군더더기예요. `findBy`와 `findOneBy`는 필터를 바로 받아요 -- `delete`·`update`와 동일한 필터 우선 모양이에요:
+
+```typescript
+// 아래 둘은 동일해요
+const a = await em.find(User, { where: { status: "active" } });
+const b = await em.findBy(User, { status: "active" });
+
+// 단건
+const user = await em.findOneBy(User, { id: 1 });
+```
+
+내부적으로 `find` / `findOne`에 위임하므로 where 객체는 동일한 연산자를 그대로 받고(배열은 `OR`), 필터 외의 것이 필요해지는 순간 전체 `find` / `findOne` 형태로 가면 돼요.
+
 ### 비교 연산자
 
 동등 비교만으로는 부족할 때가 있어요. "18세보다 나이 많은 사용자 찾기"에는 `>` 비교가 필요해요. 일반 값 대신 **연산자 객체**를 전달하면 돼요:

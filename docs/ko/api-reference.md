@@ -27,7 +27,9 @@ const em = new EntityManager();
 | Method | Signature | 설명 |
 |--------|-----------|------|
 | `find` | `<T>(entity, option?): Promise<T[]>` | 목록 조회 |
+| `findBy` | `<T>(entity, where): Promise<T[]>` | 필터 우선 목록 조회 (`find({ where })`의 단축형) |
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | 단건 조회 |
+| `findOneBy` | `<T>(entity, where): Promise<T \| null>` | 필터 우선 단건 조회 (`findOne({ where })`의 단축형) |
 | `findOneOrFail` | `<T>(entity, option): Promise<T>` | 단건 조회 (없으면 `EntityNotFoundError` 발생) |
 | `exists` | `<T>(entity, option?): Promise<boolean>` | 매칭되는 레코드 존재 여부 |
 | `findByPK` | `<T>(entity, pk): Promise<T \| null>` | 기본 키로 조회 |
@@ -144,7 +146,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
+`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
 
 **Repository 전용 헬퍼:**
 

@@ -586,6 +586,59 @@ describe("[Integration] SQLite: Batch Operations", () => {
     const items = Array.isArray(found) ? found : found ? [found] : [];
     expect(items.every((r: any) => r.age !== 0)).toBe(true);
   });
+
+  // ─── findBy() / findOneBy() filter-first reads ──────────
+
+  it("em.findOneBy() returns the single matching row", async () => {
+    const repo = conn.em.getRepository(BatchEntity);
+    await repo.insertMany([
+      { name: "Solo", age: 30 },
+      { name: "Other", age: 31 },
+    ]);
+
+    const row = await conn.em.findOneBy(BatchEntity, { name: "Solo" } as any);
+    expect(row).not.toBeNull();
+    expect((row as any).name).toBe("Solo");
+    expect((row as any).age).toBe(30);
+  });
+
+  it("em.findBy() returns all rows matching the filter", async () => {
+    const repo = conn.em.getRepository(BatchEntity);
+    await repo.insertMany([
+      { name: "Dup", age: 1 },
+      { name: "Dup", age: 2 },
+      { name: "Unique", age: 3 },
+    ]);
+
+    const rows = await conn.em.findBy(BatchEntity, { name: "Dup" } as any);
+    expect(rows.length).toBe(2);
+    expect(rows.every((r: any) => r.name === "Dup")).toBe(true);
+  });
+
+  it("repo.findBy() / findOneBy() delegate end-to-end", async () => {
+    const repo = conn.em.getRepository(BatchEntity);
+    await repo.insertMany([
+      { name: "R1", age: 10 },
+      { name: "R2", age: 20 },
+    ]);
+
+    const one = await repo.findOneBy({ name: "R2" } as any);
+    expect((one as any).age).toBe(20);
+
+    const all = await repo.findBy({ age: 10 } as any);
+    expect(all.length).toBe(1);
+    expect((all[0] as any).name).toBe("R1");
+  });
+
+  it("em.findOneBy() returns null when nothing matches", async () => {
+    const repo = conn.em.getRepository(BatchEntity);
+    await repo.insertMany([{ name: "Present", age: 1 }]);
+
+    const row = await conn.em.findOneBy(BatchEntity, {
+      name: "Absent",
+    } as any);
+    expect(row).toBeNull();
+  });
 });
 
 // ─────────────────────────────────────────────────────────

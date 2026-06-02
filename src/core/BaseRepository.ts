@@ -79,6 +79,17 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Retrieves all entities matching `where`. Filter-first shorthand for
+   * `find({ where })`. See {@link EntityManager.findBy}.
+   *
+   * @param where The filter selecting rows.
+   * @returns A promise that resolves to the matching entities.
+   */
+  async findBy(where: WhereClause<T> | WhereClause<T>[]): Promise<T[]> {
+    return await this.em.findBy<T>(this.entity, where);
+  }
+
+  /**
    * Retrieves a single entity with the specified conditions.
    *
    * @param findOption Specifies the conditions for the entity to be retrieved.
@@ -86,6 +97,17 @@ export class BaseRepository<T> {
    */
   async findOne(findOption: FindOption<T>): Promise<T | null> {
     return await this.em.findOne<T>(this.entity, findOption);
+  }
+
+  /**
+   * Retrieves a single entity matching `where`. Filter-first shorthand for
+   * `findOne({ where })`. See {@link EntityManager.findOneBy}.
+   *
+   * @param where The filter selecting the row.
+   * @returns A promise that resolves to the matching entity or `null`.
+   */
+  async findOneBy(where: WhereClause<T> | WhereClause<T>[]): Promise<T | null> {
+    return await this.em.findOneBy<T>(this.entity, where);
   }
 
   /**

@@ -27,7 +27,9 @@ const em = new EntityManager();
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `find` | `<T>(entity, option?): Promise<T[]>` | List query |
+| `findBy` | `<T>(entity, where): Promise<T[]>` | Filter-first list query (sugar over `find({ where })`) |
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | Single record query |
+| `findOneBy` | `<T>(entity, where): Promise<T \| null>` | Filter-first single query (sugar over `findOne({ where })`) |
 | `findOneOrFail` | `<T>(entity, option): Promise<T>` | Single record query (throws `EntityNotFoundError`) |
 | `exists` | `<T>(entity, where?: WhereClause<T>): Promise<boolean>` | Check if any matching record exists |
 | `findByPK` | `<T>(entity, id: unknown): Promise<T \| null>` | Find by primary key value |
@@ -144,7 +146,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany` — uses the same API as EntityManager without specifying the entity.
+`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany` — uses the same API as EntityManager without specifying the entity.
 
 **Repository-only helpers:**
 
