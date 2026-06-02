@@ -531,6 +531,61 @@ describe("[Integration] SQLite: Batch Operations", () => {
     const count = await repo.count();
     expect(count).toBe(0);
   });
+
+  // ─── update() single-call sugar ─────────────────────────
+  // `update(where, data)` is the filter-first sugar over `updateMany`.
+  // SQLite reports `affected: 0` (see file header), so we assert data state.
+
+  it("em.update() changes the matching row", async () => {
+    const repo = conn.em.getRepository(BatchEntity);
+    const saved = await repo.save({ name: "Origin", age: 41 });
+
+    await conn.em.update(
+      BatchEntity,
+      { id: saved.id } as any,
+      { name: "Renamed", age: 42 } as any,
+    );
+
+    const after = await repo.findOne({ where: { id: saved.id } });
+    const row = Array.isArray(after) ? after[0] : after;
+    expect(row.name).toBe("Renamed");
+    expect(row.age).toBe(42);
+  });
+
+  it("repo.update() updates only rows matching the filter", async () => {
+    const repo = conn.em.getRepository(BatchEntity);
+    await repo.insertMany([
+      { name: "Keep", age: 10 },
+      { name: "Target", age: 20 },
+      { name: "Target", age: 21 },
+    ]);
+
+    await repo.update({ name: "Target" } as any, { age: 99 } as any);
+
+    const found = await repo.find();
+    const items = Array.isArray(found) ? found : found ? [found] : [];
+    const keep = items.find((r: any) => r.name === "Keep");
+    const targets = items.filter((r: any) => r.name === "Target");
+    expect(keep.age).toBe(10);
+    expect(targets.every((r: any) => r.age === 99)).toBe(true);
+  });
+
+  it("em.update() rejects an empty WHERE (no table-wide update)", async () => {
+    const repo = conn.em.getRepository(BatchEntity);
+    await repo.insertMany([
+      { name: "A", age: 1 },
+      { name: "B", age: 2 },
+    ]);
+
+    await expect(
+      conn.em.update(BatchEntity, {} as any, { age: 0 } as any),
+    ).rejects.toThrow();
+
+    // Untouched.
+    const found = await repo.find();
+    const items = Array.isArray(found) ? found : found ? [found] : [];
+    expect(items.every((r: any) => r.age !== 0)).toBe(true);
+  });
 });
 
 // ─────────────────────────────────────────────────────────

@@ -327,6 +327,23 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Updates rows matching `where` with `data`.
+   *
+   * Ergonomic single-call form of {@link updateMany} with the filter first —
+   * mirroring `delete(criteria)`. See {@link EntityManager.update}.
+   *
+   * @param where The filter selecting rows to update (required, non-empty).
+   * @param data The partial data to set on matching rows.
+   * @returns `{ affected }` — the number of rows updated.
+   */
+  async update(
+    where: WhereClause<T>,
+    data: UpdateData<T>,
+  ): Promise<{ affected: number }> {
+    return await this.em.update<T>(this.entity, where, data);
+  }
+
+  /**
    * Updates multiple entities matching the WHERE condition with the given data.
    *
    * Supports `orderBy` + `limit` for capped, ordered updates. See

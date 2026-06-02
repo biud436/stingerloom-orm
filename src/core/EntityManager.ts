@@ -3450,6 +3450,39 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * Updates rows matching `where` with `data`.
+   *
+   * Ergonomic single-call form of {@link updateMany}: the filter is the
+   * **second positional argument** — mirroring `delete(entity, criteria)` —
+   * instead of being nested under an options object. This keeps the "filter
+   * the rows to mutate" mental model consistent across `update` and `delete`.
+   *
+   * Delegates to {@link updateMany}, so it inherits the same empty-WHERE guard
+   * (a table-wide update is rejected), tenant scoping, `@UpdateTimestamp`
+   * auto-injection, NamingStrategy column mapping, and raw-`Sql` SET-expression
+   * support. For ordered/capped updates (`orderBy` + `limit`), use
+   * {@link updateMany} directly.
+   *
+   * @param entity The entity class.
+   * @param where The filter selecting rows to update (required, non-empty).
+   * @param data The partial data to set on matching rows.
+   * @returns `{ affected }` — the number of rows updated.
+   *
+   * @example
+   * ```ts
+   * await em.update(User, { id: 1 }, { name: "Alice" });
+   * await em.update(Post, { id: 1 }, { viewCount: sql`view_count + 1` });
+   * ```
+   */
+  async update<T>(
+    entity: ClazzType<T>,
+    where: WhereClause<T>,
+    data: UpdateData<T>,
+  ): Promise<{ affected: number }> {
+    return this.updateMany(entity, data, { where });
+  }
+
+  /**
    * Updates multiple entities matching the WHERE condition with the given data.
    *
    * Supports `orderBy` + `limit` for capped, ordered updates (e.g. atomic

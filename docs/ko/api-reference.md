@@ -40,6 +40,7 @@ const em = new EntityManager();
 | `restore` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete 복원 |
 | `upsert` | `<T>(entity, data, conflictColumns?): Promise<void>` | INSERT ... ON CONFLICT |
 | `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<void>` | 다건 upsert |
+| `update` | `<T>(entity, where, data): Promise<{ affected: number }>` | 필터 우선 UPDATE (`updateMany`의 단축형, `delete`와 동일한 인자 순서) |
 | `updateMany` | `<T>(entity, data: UpdateData<T>, options): Promise<{ affected: number }>` | 조건별 일괄 UPDATE (SQL 표현식 지원) |
 
 ### Batch
@@ -143,7 +144,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `updateMany` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
+`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
 
 **Repository 전용 헬퍼:**
 

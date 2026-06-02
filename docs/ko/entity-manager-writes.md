@@ -112,6 +112,26 @@ await em.delete(User, { isActive: false });
 
 ---
 
+## 조건부 수정 -- update()
+
+### update()가 필요한 이유
+
+`updateMany()`는 강력하지만, "필터에 맞는 행을 바꾼다"는 가장 흔한 경우엔 장황해요. 필터를 옵션 객체(`{ where: ... }`) 안에 넣어야 해서, 필터가 그냥 두 번째 인자인 `delete(entity, criteria)`와 모양이 달라요. `update()`는 그 간극을 메우는 **필터 우선** 단축형이에요:
+
+```typescript
+// update(entity, where, data) -- 필터가 delete()처럼 두 번째 인자
+await em.update(User, { id: 1 }, { name: "Alice" });
+
+// raw SQL 표현식도 그대로 SET 절로 전달돼요
+await em.update(Post, { id: 1 }, { viewCount: sql`view_count + 1` });
+```
+
+내부적으로 `updateMany()`에 위임하므로 모든 안전장치를 그대로 상속해요: 빈 `WHERE` 가드(테이블 전체 수정 거부), 테넌트 스코핑, `@UpdateTimestamp` 자동 주입, NamingStrategy 컬럼 매핑, `Sql` 표현식 지원까지요. 반환값도 동일하게 `{ affected }`예요.
+
+정렬·개수 제한 수정(`orderBy` + `limit`)이 필요할 때만 `updateMany()`를 직접 쓰면 돼요. 그 외에는 `update()`가 더 짧고 일관된 호출이에요. 리포지토리에서도 `repo.update(where, data)`로 쓸 수 있어요.
+
+---
+
 ## 일괄 수정 -- updateMany()
 
 ### updateMany()가 필요한 이유

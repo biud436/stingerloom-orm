@@ -40,6 +40,7 @@ const em = new EntityManager();
 | `restore` | `<T>(entity, criteria): Promise<DeleteResult>` | Restore Soft Delete |
 | `upsert` | `<T>(entity, data, conflictColumns?): Promise<void>` | INSERT ... ON CONFLICT |
 | `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<void>` | Multi-row upsert |
+| `update` | `<T>(entity, where, data): Promise<{ affected: number }>` | Filter-first UPDATE (sugar over `updateMany`, mirrors `delete`) |
 | `updateMany` | `<T>(entity, data: UpdateData<T>, options): Promise<{ affected: number }>` | Bulk UPDATE (supports SQL expressions) |
 
 ### Batch
@@ -143,7 +144,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `updateMany` — uses the same API as EntityManager without specifying the entity.
+`find`, `findOne`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany` — uses the same API as EntityManager without specifying the entity.
 
 **Repository-only helpers:**
 

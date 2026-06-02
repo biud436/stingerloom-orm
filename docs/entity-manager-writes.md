@@ -112,6 +112,26 @@ await em.delete(User, { isActive: false });
 
 ---
 
+## Targeted Update -- update()
+
+### Why update() exists
+
+`updateMany()` is powerful but verbose for the common case: change the rows matching a filter. It nests the filter under an options object (`{ where: ... }`), which reads differently from `delete(entity, criteria)` where the filter is just the second argument. `update()` is the filter-first sugar that closes that gap:
+
+```typescript
+// update(entity, where, data) -- the filter is the 2nd arg, just like delete()
+await em.update(User, { id: 1 }, { name: "Alice" });
+
+// raw SQL expressions work too (forwarded straight to the SET clause)
+await em.update(Post, { id: 1 }, { viewCount: sql`view_count + 1` });
+```
+
+It delegates to `updateMany()`, so it inherits every safeguard: the empty-`WHERE` guard (a table-wide update is rejected), tenant scoping, `@UpdateTimestamp` auto-injection, NamingStrategy column mapping, and `Sql` expression support. The return shape is identical -- `{ affected }`.
+
+Reach for `updateMany()` directly only when you need an ordered/capped update (`orderBy` + `limit`). For everything else, `update()` is the shorter, more consistent call. It is available on repositories as well: `repo.update(where, data)`.
+
+---
+
 ## Bulk Update -- updateMany()
 
 ### Why updateMany() exists
