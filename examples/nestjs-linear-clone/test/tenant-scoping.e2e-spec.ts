@@ -311,4 +311,93 @@ integrationDescribe("[E2E] Cross-tenant scoping (#355/#356/#357)", () => {
         .expect(200);
     });
   });
+
+  // ── Issue links cannot cross tenants (IDOR write + closure read leak) ──
+  describe("Issue links are workspace-scoped", () => {
+    it("alice cannot link her issue to a globex issue (blocks) → 404", async () => {
+      await aliceApi
+        .post(`/issues/${acmeIssueId}/links`)
+        .send({ targetId: globexIssueId, type: "blocks" })
+        .expect(404);
+    });
+
+    it("the blockedBy orientation is rejected too → 404", async () => {
+      await aliceApi
+        .post(`/issues/${acmeIssueId}/links`)
+        .send({ targetId: globexIssueId, type: "blockedBy" })
+        .expect(404);
+    });
+
+    it("the globex issue never leaks through the dependents closure", async () => {
+      const dep = await aliceApi
+        .get(`/issues/${acmeIssueId}/dependents`)
+        .expect(200);
+      const ids = (dep.body as Array<{ id: number }>).map((r) => r.id);
+      expect(ids).not.toContain(globexIssueId);
+    });
+
+    it("alice can still link two of her own (same-workspace) issues → 201", async () => {
+      const target = await createIssue(
+        booted.server,
+        {
+          projectId: acme.projectId,
+          title: "same-ws link target",
+          status: "BACKLOG",
+        },
+        acme.ownerToken,
+      );
+      await aliceApi
+        .post(`/issues/${acmeIssueId}/links`)
+        .send({ targetId: target.id, type: "relatesTo" })
+        .expect(201);
+    });
+  });
+
+  // ── @mention notifications cannot cross tenants ───────────────
+  describe("@mention notifications are workspace-scoped", () => {
+    let acmeBobHandle: string;
+    let globexOwnerHandle: string;
+
+    beforeAll(async () => {
+      // `/users` is global; map id → email local-part (the mention handle).
+      const usersRes = await aliceApi
+        .get("/users")
+        .query({ limit: 100 })
+        .expect(200);
+      const handleOf = new Map<number, string>(
+        (usersRes.body as Array<{ id: number; email: string }>).map((u) => [
+          u.id,
+          u.email.split("@")[0],
+        ]),
+      );
+      acmeBobHandle = handleOf.get(acme.userIds[1])!;
+      globexOwnerHandle = handleOf.get(globex.ownerId)!;
+    });
+
+    it("an acme comment pings a mentioned acme member but never a globex-only user", async () => {
+      await aliceApi
+        .post("/comments")
+        .send({
+          issueId: acmeIssueId,
+          body: `@${acmeBobHandle} and @${globexOwnerHandle} please look`,
+        })
+        .expect(201);
+
+      // In-workspace mention reaches acme bob.
+      const bobInbox = await bobApi.get("/inbox").expect(200);
+      const bobMentions = bobInbox.body.data.filter(
+        (n: { kind: string; sourceIssueId: number }) =>
+          n.kind === "mention" && n.sourceIssueId === acmeIssueId,
+      );
+      expect(bobMentions.length).toBe(1);
+
+      // The globex owner — not a member of acme — must receive nothing.
+      const globexInbox = await globexApi.get("/inbox").expect(200);
+      const leaked = globexInbox.body.data.filter(
+        (n: { kind: string; sourceIssueId: number }) =>
+          n.kind === "mention" && n.sourceIssueId === acmeIssueId,
+      );
+      expect(leaked.length).toBe(0);
+    });
+  });
 });

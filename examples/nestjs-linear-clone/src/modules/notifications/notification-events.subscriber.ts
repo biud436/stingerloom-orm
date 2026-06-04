@@ -8,6 +8,8 @@ import {
 } from "@stingerloom/orm";
 import { Comment } from "../comments/comment.entity";
 import { Issue } from "../issues/issue.entity";
+import { Project } from "../projects/project.entity";
+import { Membership } from "../memberships/membership.entity";
 import { User } from "../users/user.entity";
 import { IssueWatcher } from "./issue-watcher.entity";
 import { NotificationsService } from "./notifications.service";
@@ -50,9 +52,29 @@ export class CommentMentionSubscriber
     const handles = extractMentions(c.body);
     if (handles.length === 0) return;
 
+    // Scope @mention resolution to members of the issue's workspace. The
+    // previous lookup selected the ENTIRE global `user` table and matched the
+    // email local-part of any user anywhere, so a mention in workspace A could
+    // notify — and leak the issue's id to — a user who only belongs to
+    // workspace B. Resolve the workspace (issue → project) and restrict the
+    // candidate set to its members before the local-part match.
+    const workspaceId = await this.workspaceIdForIssue(c.issueId);
+    if (workspaceId == null) return;
+
+    const m = qAlias(Membership, "m");
+    const memberships = await this.em
+      .createQueryBuilder(m)
+      .where(m.workspaceId.eq(workspaceId))
+      .getMany();
+    const memberIds = memberships
+      .map((row) => row.userId)
+      .filter((id): id is number => typeof id === "number");
+    if (memberIds.length === 0) return;
+
     const u = qAlias(User, "u");
     const users = await this.em
       .createQueryBuilder(u)
+      .where(u.id.in(memberIds))
       .getMany();
     // Match handle == email local-part (case-insensitive). Done in JS so we
     // don't need a DB-portable LOWER(SPLIT_PART) expression for this example.
@@ -73,6 +95,19 @@ export class CommentMentionSubscriber
       })),
       actor,
     );
+  }
+
+  /**
+   * Resolve the workspace owning an issue via its project. Returns null when
+   * the issue or its project is missing, in which case no mention is emitted.
+   */
+  private async workspaceIdForIssue(issueId: number): Promise<number | null> {
+    const issue = await this.em.findOne(Issue, { where: { id: issueId } });
+    if (issue?.projectId == null) return null;
+    const project = await this.em.findOne(Project, {
+      where: { id: issue.projectId },
+    });
+    return project?.workspaceId ?? null;
   }
 }
 

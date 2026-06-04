@@ -15,6 +15,7 @@ import {
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { IssueLink, IssueLinkType } from "./link.entity";
 import { Issue } from "../issues/issue.entity";
+import { Project } from "../projects/project.entity";
 import { CreateLinkDto, IssueLinkRow } from "./dto/link.dto";
 import { detectDialect, dsl } from "../analytics/sql-helpers";
 
@@ -58,6 +59,28 @@ export class LinksService {
       );
     }
 
+    // Cross-tenant guard. The controller's `@WorkspaceScoped({ from: "issue" })`
+    // resolves the workspace from the SOURCE issue (`:id`) only and never
+    // inspects the body's `targetId` (validated as a bare positive int). Without
+    // this check a member of workspace A could link their own issue to an
+    // arbitrary issue id in workspace B, then read that foreign issue's
+    // number/title/status back through the (workspace-unscoped) dependents /
+    // blockers closure walk — a cross-tenant read primitive. Require both
+    // endpoints to live in the SAME workspace; since the actor is already a
+    // proven member of the source's workspace, equality transitively grants
+    // membership of the target's. A foreign — or missing — target is reported
+    // as 404 so we never disclose its existence (mirrors the bulk route's
+    // "treat cross-tenant as not_found" stance, #355).
+    const sourceWorkspaceId = await this.workspaceIdForIssue(sourceIssueId);
+    const targetWorkspaceId = await this.workspaceIdForIssue(targetId);
+    if (
+      sourceWorkspaceId == null ||
+      targetWorkspaceId == null ||
+      sourceWorkspaceId !== targetWorkspaceId
+    ) {
+      throw new NotFoundException(`Issue ${targetId} not found`);
+    }
+
     const canon = canonicalize(sourceIssueId, targetId, type);
 
     if (canon.type === "blocks") {
@@ -79,6 +102,25 @@ export class LinksService {
     link.type = canon.type;
     link.createdBy = actorUserId;
     return this.repo.save(link);
+  }
+
+  /**
+   * Resolve the workspace owning an issue via its project. Returns null when
+   * the issue or its project no longer exists, which callers treat as
+   * "not found / cross-tenant". `withDeleted` mirrors the membership guard's
+   * `workspaceOfIssue` so a soft-deleted (but same-tenant) issue still resolves
+   * to its workspace rather than silently flipping to a 404.
+   */
+  private async workspaceIdForIssue(issueId: number): Promise<number | null> {
+    const issue = await this.em.findOne(Issue, {
+      where: { id: issueId },
+      withDeleted: true,
+    });
+    if (issue?.projectId == null) return null;
+    const project = await this.em.findOne(Project, {
+      where: { id: issue.projectId },
+    });
+    return project?.workspaceId ?? null;
   }
 
   /**
@@ -156,6 +198,11 @@ export class LinksService {
     return this.walk(targetIssueId, "reverse");
   }
 
+  // The closure walk joins the `issue` table with no workspace predicate, which
+  // is safe ONLY because `create()` enforces that every `blocks` edge connects
+  // two issues in the same workspace. The connected component reachable from
+  // `startId` (an issue the caller is a proven member of, via the controller
+  // guard) therefore stays entirely within that one workspace.
   private async walk(
     startId: number,
     direction: "forward" | "reverse",
