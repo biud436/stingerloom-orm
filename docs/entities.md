@@ -1505,6 +1505,10 @@ TypeScript decorators rely on the `emitDecoratorMetadata` compiler option, which
 
 `EntitySchema` registers the same metadata as the decorator-based approach, so the rest of the ORM (EntityManager, SchemaGenerator, etc.) works identically. Both approaches can coexist in the same project.
 
+::: tip Every decorator has a decorator-free form
+This section covers the common cases. For the **complete** decorator → `EntitySchema` / programmatic map — including computed columns, full-text & JSON indexes, FK columns, bidirectional transformers, UUID strategies, advanced composite indexes, tenant columns, and transactions — see the [Decorator-Free Guide](./decorator-free.md).
+:::
+
 ### Basic Usage
 
 ```typescript

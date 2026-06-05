@@ -1558,6 +1558,10 @@ TypeScript 데코레이터는 `emitDecoratorMetadata` 컴파일러 옵션에 의
 
 `EntitySchema`는 데코레이터 기반 접근 방식과 동일한 메타데이터를 등록하므로, 나머지 ORM(EntityManager, SchemaGenerator 등)은 동일하게 동작해요. 두 접근 방식은 같은 프로젝트에서 공존할 수 있어요.
 
+::: tip 모든 데코레이터에는 데코레이터 없는 형태가 있어요
+이 섹션은 일반적인 경우를 다뤄요. 계산 컬럼, 전문/JSON 인덱스, FK 컬럼, 양방향 트랜스포머, UUID 전략, 고급 복합 인덱스, 테넌트 컬럼, 트랜잭션까지 포함한 **전체** 데코레이터 → `EntitySchema` / 프로그래밍 매핑은 [데코레이터 없이 사용하기](./decorator-free.md)를 참고하세요.
+:::
+
 ### 기본 사용법
 
 ```typescript

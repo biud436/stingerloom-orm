@@ -295,6 +295,11 @@ interface TransactionOptions {
   retryOnDeadlock?: boolean;  // Enable deadlock retry (default: false)
   maxRetries?: number;        // Maximum retries (default: 3)
   retryDelayMs?: number;      // Delay between retries in ms (default: 100)
+
+  // @Transactional과의 동등성 (데코레이터 없는 형태) — ./decorator-free.md 참고
+  isolationLevel?: TRANSACTION_ISOLATION_LEVEL;  // @Transactional("SERIALIZABLE")
+  propagation?: TransactionPropagation;          // REQUIRED | REQUIRES_NEW | NESTED
+  connectionName?: string;                       // 멀티 DB 대상 연결
 }
 ```
 
@@ -1181,7 +1186,7 @@ enum OrmErrorCode {
 
 ## EntitySchema (Decorator-Free Entity Definition)
 
-[사용법 ->](./entities.md#defining-entities-without-decorators-entityschema)
+[사용법 ->](./entities.md#데코레이터-없이-엔티티-정의하기-entityschema) · [데코레이터 → 대안 전체 매핑 ->](./decorator-free.md)
 
 ```typescript
 import { EntitySchema, EntitySchemaOptions, ColumnSchemaDef } from "@stingerloom/orm";
@@ -1196,9 +1201,12 @@ interface EntitySchemaOptions<T> {
   target: ClazzType<T>;                                    // 엔티티 클래스
   tableName?: string;                                      // 테이블 이름 (기본: 클래스명 snake_case)
   columns: { [K in keyof T]?: ColumnSchemaDef };           // 컬럼 정의
+  computedColumns?: { [K in keyof T]?: ComputedColumnOption };  // @ComputedColumn 대응
   relations?: { [K in keyof T]?: RelationSchemaDef };      // 관계 정의
   uniqueIndexes?: { columns: string[]; name?: string }[];  // 복합 고유 인덱스
-  indexes?: { columns: string[]; name?: string }[];        // 복합 비고유 인덱스
+  indexes?: { columns: string[]; name?: string; options?: AdvancedIndexOptions }[];  // 복합 비고유 인덱스
+  fullTextIndexes?: { columns: string[]; name?: string; language?: string }[];  // @FullTextIndex 대응
+  nonTenant?: boolean;                                     // @NonTenantEntity 대응
   hooks?: Partial<Record<HookEvent, Extract<keyof T, string>>>;  // 라이프사이클 훅
 
   // 상속 매핑 (@Inheritance, @DiscriminatorColumn, @DiscriminatorValue 대체)
@@ -1233,7 +1241,11 @@ interface ColumnSchemaDef {
   enumValues?: string[];
   enumName?: string;
   name?: string;
-  transform?: (raw: unknown) => any;
+  transform?: (raw: unknown) => any;          // @deprecated — transformer 사용
+  transformer?: ColumnTransformer;            // @Column({ transformer }) — 양방향
+  generationStrategy?: "increment" | "uuid" | "uuid-v7";  // @PrimaryGeneratedColumn(strategy)
+  jsonIndex?: JsonIndexOptions;               // 이 컬럼의 @JsonIndex()
+  tenant?: boolean;                           // @TenantColumn() — 테넌트 구분 컬럼 표시
 
   // Special column flags
   index?: boolean;              // Equivalent to @Index()
@@ -1257,11 +1269,13 @@ interface ValidationDef {
 
 ```typescript
 type RelationSchemaDef =
-  | { kind: "manyToOne"; target: () => ClazzType; joinColumn?: string; references?: string; eager?: boolean; cascade?: CascadeOption; lazy?: boolean }
+  | { kind: "manyToOne"; target: () => ClazzType; joinColumn?: string; references?: string; eager?: boolean; cascade?: CascadeOption; lazy?: boolean; relationColumn?: RelationColumnOption }
   | { kind: "oneToMany"; target: () => ClazzType; mappedBy: string; cascade?: CascadeOption }
-  | { kind: "oneToOne"; target: () => ClazzType; joinColumn?: string; inverseSide?: string; eager?: boolean; cascade?: CascadeOption }
+  | { kind: "oneToOne"; target: () => ClazzType; joinColumn?: string; inverseSide?: string; eager?: boolean; cascade?: CascadeOption; relationColumn?: RelationColumnOption }
   | { kind: "manyToMany"; target: () => ClazzType; joinTable?: JoinTableOption; mappedBy?: string };
 ```
+
+> `relationColumn`은 명시적 FK 컬럼 메타데이터(`name`, `type`, `nullable`, `referencedColumn`)를 담습니다 — `@RelationColumn()` 대응. [데코레이터 없이 사용하기](./decorator-free.md#외래-키-컬럼-relationcolumn)를 참고하세요.
 
 ## Utilities
 

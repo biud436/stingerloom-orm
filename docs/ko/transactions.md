@@ -124,7 +124,21 @@ const result = await em.transaction(async (txEm) => {
 - 클래스 메서드에 어노테이션을 달고 싶으면 `@Transactional()`을 쓰세요.
 - 인라인/함수형 사용, 스크립트, 일회성 작업에는 `em.transaction()`을 쓰세요.
 
-두 방식은 서로 교환 가능해요.
+두 방식은 서로 교환 가능해요. 두 번째 인자는 데코레이터가 받는 `isolationLevel`, `propagation`, `connectionName` 옵션을 **동일하게** 받으므로(여기에 선택적 데드락 재시도까지), 데코레이터가 꼭 필요한 경우는 없어요:
+
+```typescript
+import { TransactionPropagation } from "@stingerloom/orm";
+
+await em.transaction(async (txEm) => {
+  /* ... */
+}, {
+  isolationLevel: "SERIALIZABLE",                      // @Transactional("SERIALIZABLE")
+  propagation: TransactionPropagation.REQUIRES_NEW,    // @Transactional({ propagation })
+  connectionName: "reporting",                         // @Transactional({ connectionName })
+});
+```
+
+전체 옵션 레퍼런스는 [데코레이터 없이 사용하기](./decorator-free.md#transactional-없이-트랜잭션)를 참고하세요.
 
 ---
 
@@ -336,10 +350,15 @@ interface TransactionOptions {
   retryOnDeadlock?: boolean;  // Enable deadlock retry (default: false)
   maxRetries?: number;        // Maximum retries (default: 3)
   retryDelayMs?: number;      // Delay between retries in ms (default: 100)
+
+  // @Transactional과의 동등성 (데코레이터 없는 형태)
+  isolationLevel?: TRANSACTION_ISOLATION_LEVEL;  // 예: "SERIALIZABLE"
+  propagation?: TransactionPropagation;          // REQUIRED | REQUIRES_NEW | NESTED
+  connectionName?: string;                       // 멀티 DB 대상 연결
 }
 ```
 
-> 데드락 재시도는 `em.transaction()`에서만 쓸 수 있어요. `@Transactional()` 데코레이터는 지원하지 않아요 -- 데드락이 발생할 가능성이 높은 작업(재고 차감, 카운터 증가 등)에는 `em.transaction()`을 쓰세요.
+> 데드락 재시도는 `em.transaction()`에서만 쓸 수 있어요. `@Transactional()` 데코레이터는 지원하지 않아요 -- 데드락이 발생할 가능성이 높은 작업(재고 차감, 카운터 증가 등)에는 `em.transaction()`을 쓰세요. 그 외 모든 `@Transactional` 옵션(격리 수준, 전파, 연결)은 `em.transaction()`에서도 쓸 수 있으므로, 데코레이터가 꼭 필요한 경우는 없어요.
 
 ---
 

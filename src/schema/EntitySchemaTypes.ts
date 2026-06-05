@@ -1,5 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { ColumnType, KnownColumnType } from "../decorators/Column";
+import { ColumnType, ColumnTransformer, KnownColumnType } from "../decorators/Column";
+import { GenerationStrategy } from "../decorators/PrimaryGeneratedColumn";
+import { ComputedColumnOption } from "../decorators/ComputedColumn";
+import { JsonIndexOptions } from "../decorators/JsonIndex";
+import { AdvancedIndexOptions } from "../decorators/Indexer";
+import { RelationColumnOption } from "../decorators/RelationColumn";
 import { CascadeOption } from "../types/CascadeType";
 import { ReferentialAction } from "../types/ReferentialAction";
 import { JoinTableOption } from "../decorators/ManyToMany";
@@ -34,7 +39,40 @@ export interface ColumnSchemaDef {
   enumValues?: string[];
   enumName?: string;
   name?: string;
+
+  /**
+   * One-way read transform (DB → entity).
+   * @deprecated Use `transformer` for bidirectional transforms — mirrors
+   * the deprecation on `@Column({ transform })`.
+   */
   transform?: (raw: unknown) => any;
+
+  /**
+   * Bidirectional value transformer applied on read (`from`) and write (`to`).
+   * Decorator-free equivalent of `@Column({ transformer })`.
+   */
+  transformer?: ColumnTransformer;
+
+  /**
+   * Primary-key generation strategy. Decorator-free equivalent of
+   * `@PrimaryGeneratedColumn("uuid" | "uuid-v7" | "increment")`.
+   * Pair with `primary: true`.
+   */
+  generationStrategy?: GenerationStrategy;
+
+  /**
+   * Declares a JSON/JSONB expression index over this column (or a path inside
+   * it). Decorator-free equivalent of `@JsonIndex(...)`. Pair with
+   * `type: "jsonb"`.
+   */
+  jsonIndex?: JsonIndexOptions;
+
+  /**
+   * Marks this column as the tenant discriminator. Decorator-free equivalent
+   * of `@TenantColumn()`. Only meaningful when `tenantStrategy: "tenant_column"`
+   * is configured globally.
+   */
+  tenant?: boolean;
 
   // Special column flags (replace dedicated decorators)
   index?: boolean;
@@ -68,6 +106,13 @@ export interface ManyToOneRelationDef {
   onDelete?: ReferentialAction;
   onUpdate?: ReferentialAction;
   createForeignKeyConstraints?: boolean;
+
+  /**
+   * FK column metadata (name, type, nullable, referencedColumn).
+   * Decorator-free equivalent of pairing `@RelationColumn(...)` with the
+   * relation. Use when you need explicit control over the foreign-key column.
+   */
+  relationColumn?: RelationColumnOption;
 }
 
 export interface OneToManyRelationDef {
@@ -87,6 +132,13 @@ export interface OneToOneRelationDef {
   onDelete?: ReferentialAction;
   onUpdate?: ReferentialAction;
   createForeignKeyConstraints?: boolean;
+
+  /**
+   * FK column metadata (name, type, nullable, referencedColumn).
+   * Decorator-free equivalent of pairing `@RelationColumn(...)` with the
+   * owning side of the relation.
+   */
+  relationColumn?: RelationColumnOption;
 }
 
 export interface ManyToManyRelationDef {
@@ -124,9 +176,42 @@ export interface EntitySchemaOptions<T> {
   target: ClazzType<T>;
   tableName?: string;
   columns: { [K in keyof T]?: ColumnSchemaDef };
+
+  /**
+   * Database-level generated/computed columns. Decorator-free equivalent of
+   * `@ComputedColumn(...)`. Keep these out of `columns` — they are excluded
+   * from INSERT/UPDATE and rendered as `GENERATED ALWAYS AS (...)`.
+   *
+   * @example
+   * ```ts
+   * new EntitySchema<User>({
+   *   target: User,
+   *   columns: { firstName: { type: "varchar" }, lastName: { type: "varchar" } },
+   *   computedColumns: {
+   *     fullName: { expression: "first_name || ' ' || last_name", stored: true, type: "varchar" },
+   *   },
+   * });
+   * ```
+   */
+  computedColumns?: { [K in keyof T]?: ComputedColumnOption };
+
   relations?: { [K in keyof T]?: RelationSchemaDef };
   uniqueIndexes?: { columns: string[]; name?: string }[];
-  indexes?: { columns: string[]; name?: string }[];
+  indexes?: { columns: string[]; name?: string; options?: AdvancedIndexOptions }[];
+
+  /**
+   * Full-text search indexes. Decorator-free equivalent of `@FullTextIndex(...)`.
+   * PostgreSQL → GIN `to_tsvector`, MySQL → `FULLTEXT`, SQLite → no-op.
+   */
+  fullTextIndexes?: { columns: string[]; name?: string; language?: string }[];
+
+  /**
+   * Excludes this entity from the `"tenant_column"` strategy. Decorator-free
+   * equivalent of `@NonTenantEntity()`. Use for inherently global entities
+   * (the tenants table, system config, shared reference data).
+   */
+  nonTenant?: boolean;
+
   hooks?: Partial<Record<HookEvent, Extract<keyof T, string>>>;
 
   /**

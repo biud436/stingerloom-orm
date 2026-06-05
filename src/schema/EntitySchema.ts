@@ -40,11 +40,12 @@ export class EntitySchema<T> {
     this.options = options;
 
     // Registration order matters:
-    // Inheritance → Column → Relation → Special → Index → Hook → Validation → Entity (last)
+    // Inheritance → Column → Computed → Relation → Special → Index → Hook → Validation → Entity (last)
     // Inheritance tokens must be set before registerEntity() reads them.
     // Entity decorator collects ColumnScanner snapshots, so columns must be registered first.
     EntitySchemaRegistrar.registerInheritance(options);
     EntitySchemaRegistrar.registerColumns(options);
+    EntitySchemaRegistrar.registerComputedColumns(options);
     EntitySchemaRegistrar.registerRelations(options);
     EntitySchemaRegistrar.registerSpecialTokens(options);
     EntitySchemaRegistrar.registerIndexes(options);

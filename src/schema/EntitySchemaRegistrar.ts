@@ -27,6 +27,15 @@ import { VALIDATION_TOKEN, ValidationMetadata } from "../decorators/Validation";
 import { INHERITANCE_TOKEN, InheritanceStrategy } from "../decorators/Inheritance";
 import { DISCRIMINATOR_COLUMN_TOKEN } from "../decorators/DiscriminatorColumn";
 import { DISCRIMINATOR_VALUE_TOKEN } from "../decorators/DiscriminatorValue";
+import { ComputedColumn } from "../decorators/ComputedColumn";
+import { FullTextIndex } from "../decorators/FullTextIndex";
+import { JsonIndex } from "../decorators/JsonIndex";
+import { RelationColumn } from "../decorators/RelationColumn";
+import {
+  TENANT_COLUMN_TOKEN,
+  TenantColumnMetadata,
+  NonTenantEntity,
+} from "../decorators/TenantColumn";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
 import { ClazzType } from "../utils/types";
 import {
@@ -109,7 +118,9 @@ function resolveColumnOption(
     scale: def.scale,
     enumValues: def.enumValues,
     enumName: def.enumName,
+    generationStrategy: def.generationStrategy,
     transform: def.transform as any,
+    transformer: def.transformer,
   };
 }
 
@@ -139,6 +150,7 @@ export class EntitySchemaRegistrar {
         options: resolvedOption,
         type: designType,
         transform: resolvedOption.transform as any,
+        transformer: resolvedOption.transformer,
       };
 
       // Store in Reflect (same as @Column)
@@ -180,9 +192,14 @@ export class EntitySchemaRegistrar {
   private static registerManyToOne(
     cls: ClazzType,
     propertyKey: string,
-    def: { kind: "manyToOne"; target: () => ClazzType; joinColumn?: string; references?: string; eager?: boolean; cascade?: any; lazy?: boolean; onDelete?: any; onUpdate?: any; createForeignKeyConstraints?: boolean },
+    def: { kind: "manyToOne"; target: () => ClazzType; joinColumn?: string; references?: string; eager?: boolean; cascade?: any; lazy?: boolean; onDelete?: any; onUpdate?: any; createForeignKeyConstraints?: boolean; relationColumn?: any },
   ): void {
     const scanner = getScannerInstance(ManyToOneScanner);
+
+    // @RelationColumn equivalent — explicit FK column metadata.
+    if (def.relationColumn) {
+      RelationColumn(def.relationColumn)(cls.prototype, propertyKey);
+    }
 
     const metadata: ManyToOneMetadata<any> = {
       target: cls,
@@ -236,9 +253,14 @@ export class EntitySchemaRegistrar {
   private static registerOneToOne(
     cls: ClazzType,
     propertyKey: string,
-    def: { kind: "oneToOne"; target: () => ClazzType; joinColumn?: string; inverseSide?: string; eager?: boolean; cascade?: any; onDelete?: any; onUpdate?: any; createForeignKeyConstraints?: boolean },
+    def: { kind: "oneToOne"; target: () => ClazzType; joinColumn?: string; inverseSide?: string; eager?: boolean; cascade?: any; onDelete?: any; onUpdate?: any; createForeignKeyConstraints?: boolean; relationColumn?: any },
   ): void {
     const scanner = getScannerInstance(OneToOneScanner);
+
+    // @RelationColumn equivalent — explicit FK column metadata.
+    if (def.relationColumn) {
+      RelationColumn(def.relationColumn)(cls.prototype, propertyKey);
+    }
 
     const metadata: OneToOneMetadata<any> = {
       target: cls,
@@ -305,6 +327,37 @@ export class EntitySchemaRegistrar {
       if (def.deletedAt) {
         Reflect.defineMetadata(DELETED_AT_TOKEN, key, cls);
       }
+      // @TenantColumn equivalent — marks the column readable as the tenant
+      // discriminator. The column itself is already declared in `columns`.
+      if (def.tenant) {
+        const metadata: TenantColumnMetadata = {
+          propertyKey: key,
+          name: def.name,
+          type: (def.type ?? "varchar") as KnownColumnType,
+          length: def.length,
+        };
+        Reflect.defineMetadata(TENANT_COLUMN_TOKEN, metadata, cls);
+      }
+    }
+
+    // @NonTenantEntity equivalent — opt this entity out of tenant scoping.
+    if (options.nonTenant) {
+      NonTenantEntity()(cls as any);
+    }
+  }
+
+  /**
+   * Registers `@ComputedColumn` equivalents. Stored on the prototype under
+   * COMPUTED_COLUMN_TOKEN — the same location the decorator uses — so
+   * SchemaGenerator and EntityManager pick them up transparently.
+   */
+  static registerComputedColumns<T>(options: EntitySchemaOptions<T>): void {
+    if (!options.computedColumns) return;
+
+    const proto = options.target.prototype;
+    for (const [key, opt] of Object.entries(options.computedColumns)) {
+      if (!opt) continue;
+      ComputedColumn(opt as any)(proto, key);
     }
   }
 
@@ -325,6 +378,10 @@ export class EntitySchemaRegistrar {
           proto,
         );
       }
+      // @JsonIndex equivalent — JSON/JSONB expression index on this column.
+      if (def.jsonIndex) {
+        JsonIndex(def.jsonIndex)(proto, key);
+      }
     }
 
     // Composite unique indexes
@@ -338,15 +395,31 @@ export class EntitySchemaRegistrar {
       );
     }
 
-    // Composite non-unique indexes
+    // Composite non-unique indexes (advanced options preserved)
     if (options.indexes) {
       const existing: CompositeIndexMetadata[] =
         Reflect.getMetadata(COMPOSITE_INDEX_TOKEN, cls) ?? [];
       Reflect.defineMetadata(
         COMPOSITE_INDEX_TOKEN,
-        [...existing, ...options.indexes.map((idx) => ({ columns: idx.columns, name: idx.name }))],
+        [
+          ...existing,
+          ...options.indexes.map((idx) => ({
+            columns: idx.columns,
+            name: idx.name ?? idx.options?.name,
+            options: idx.options,
+          })),
+        ],
         cls,
       );
+    }
+
+    // @FullTextIndex equivalent
+    if (options.fullTextIndexes) {
+      for (const ft of options.fullTextIndexes) {
+        FullTextIndex(ft.columns, { name: ft.name, language: ft.language })(
+          cls as any,
+        );
+      }
     }
   }
 

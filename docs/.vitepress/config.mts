@@ -29,6 +29,7 @@ function sidebarEn() {
           ],
         },
         { text: "Transactions", link: "/transactions" },
+        { text: "Decorator-Free Guide", link: "/decorator-free" },
       ],
     },
     {
@@ -165,6 +166,7 @@ function sidebarKo() {
           ],
         },
         { text: "트랜잭션", link: "/ko/transactions" },
+        { text: "데코레이터 없이 사용하기", link: "/ko/decorator-free" },
       ],
     },
     {

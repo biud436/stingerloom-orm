@@ -124,7 +124,21 @@ The generated SQL is identical to the decorator example above. The difference is
 - Use `@Transactional()` when you want to annotate a class method.
 - Use `em.transaction()` for inline/functional usage, scripts, or one-off operations.
 
-They are interchangeable.
+They are interchangeable. The second argument accepts the **same** `isolationLevel`, `propagation`, and `connectionName` options the decorator does (plus optional deadlock retry), so nothing requires the decorator:
+
+```typescript
+import { TransactionPropagation } from "@stingerloom/orm";
+
+await em.transaction(async (txEm) => {
+  /* ... */
+}, {
+  isolationLevel: "SERIALIZABLE",                      // @Transactional("SERIALIZABLE")
+  propagation: TransactionPropagation.REQUIRES_NEW,    // @Transactional({ propagation })
+  connectionName: "reporting",                         // @Transactional({ connectionName })
+});
+```
+
+See the [Decorator-Free Guide](./decorator-free.md#transactions-without-transactional) for the complete option reference.
 
 ---
 
@@ -336,10 +350,15 @@ interface TransactionOptions {
   retryOnDeadlock?: boolean;  // Enable deadlock retry (default: false)
   maxRetries?: number;        // Maximum retries (default: 3)
   retryDelayMs?: number;      // Delay between retries in ms (default: 100)
+
+  // Decorator-free parity with @Transactional
+  isolationLevel?: TRANSACTION_ISOLATION_LEVEL;  // e.g. "SERIALIZABLE"
+  propagation?: TransactionPropagation;          // REQUIRED | REQUIRES_NEW | NESTED
+  connectionName?: string;                       // multi-DB target connection
 }
 ```
 
-> Deadlock retry is only available with `em.transaction()`. The `@Transactional()` decorator does not support it -- use `em.transaction()` for operations where deadlocks are likely (e.g., inventory deduction, counter increments).
+> Deadlock retry is only available with `em.transaction()`. The `@Transactional()` decorator does not support it -- use `em.transaction()` for operations where deadlocks are likely (e.g., inventory deduction, counter increments). Every *other* `@Transactional` option (isolation level, propagation, connection) is available on `em.transaction()` too, so the decorator is never required.
 
 ---
 

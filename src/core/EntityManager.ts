@@ -68,7 +68,11 @@ import {
   ReplicationRouter,
   ReplicationNodeConfig,
 } from "../dialects/ReplicationRouter";
-import { transactionStorage } from "../decorators/Transactional";
+import {
+  transactionStorage,
+  TransactionPropagation,
+} from "../decorators/Transactional";
+import { TRANSACTION_ISOLATION_LEVEL } from "../dialects/IsolationLevel";
 
 // Extracted handler classes
 import { EntityManagerInternals } from "./EntityManagerInternals";
@@ -176,7 +180,11 @@ export interface RelationMetadataView {
 }
 
 /**
- * Transaction options for configurable retry behavior.
+ * Transaction options for `em.transaction()`.
+ *
+ * The first three control deadlock retry behavior. The latter three bring the
+ * programmatic API to parity with the `@Transactional` decorator so the
+ * decorator is never the *only* way to set them.
  */
 export interface TransactionOptions {
   /** If true, automatically retry the transaction on deadlock. */
@@ -185,6 +193,32 @@ export interface TransactionOptions {
   maxRetries?: number;
   /** Delay between retries in milliseconds (default: 100). */
   retryDelayMs?: number;
+  /**
+   * Transaction isolation level (default: driver default, "READ COMMITTED").
+   * Decorator-free equivalent of `@Transactional("SERIALIZABLE")`.
+   */
+  isolationLevel?: TRANSACTION_ISOLATION_LEVEL;
+  /**
+   * Propagation strategy (default: REQUIRED). Decorator-free equivalent of
+   * `@Transactional({ propagation })`.
+   * - REQUIRED: join the active transaction if present, else start one.
+   * - REQUIRES_NEW: always start a fresh, independent transaction.
+   * - NESTED: create a savepoint inside the active transaction.
+   */
+  propagation?: TransactionPropagation;
+  /**
+   * Named connection to run the transaction on (multi-DB).
+   * Decorator-free equivalent of `@Transactional({ connectionName })`.
+   */
+  connectionName?: string;
+}
+
+/** @internal Per-transaction overrides threaded into executeInTransaction. */
+interface ExecuteTransactionOptions {
+  isolationLevel?: TRANSACTION_ISOLATION_LEVEL;
+  connectionName?: string;
+  /** When true, ignore any ambient session and always open a new transaction. */
+  forceNew?: boolean;
 }
 
 /**
@@ -232,6 +266,8 @@ export class EntityManager implements BaseEntityManager {
   private dataSource?: IDataSource;
   private dirtyEntities: Set<InstanceType<ClazzType<any>>> = new Set();
   private txDirtyEntities: WeakMap<TransactionSessionManager, Set<InstanceType<ClazzType<any>>>> = new WeakMap();
+  /** Monotonic counter for NESTED-propagation savepoint names in transaction(). */
+  private txSavepointCounter = 0;
   private readonly eventEmitter = new EntityEventEmitter();
   private readonly subscribers: EntitySubscriber<any>[] = [];
   private readonly cursorPkWarned = new Set<string>();
@@ -5160,8 +5196,11 @@ export class EntityManager implements BaseEntityManager {
     fn: (session: TransactionSessionManager) => Promise<R>,
     existingSession?: TransactionSessionManager,
     readNodeOverride?: ReplicationNodeConfig | null,
+    txOptions?: ExecuteTransactionOptions,
   ): Promise<R> {
-    const reusable = existingSession ?? transactionStorage.getStore();
+    const reusable = txOptions?.forceNew
+      ? undefined
+      : (existingSession ?? transactionStorage.getStore());
     if (reusable) {
       return fn(reusable);
     }
@@ -5171,11 +5210,11 @@ export class EntityManager implements BaseEntityManager {
       if (readNodeOverride) {
         await session.connectToNode(readNodeOverride);
       } else {
-        await session.connect(this.connectionName);
+        await session.connect(txOptions?.connectionName ?? this.connectionName);
       }
       await this.notifyTransactionSubscribers("beforeTransactionStart");
       this.notifyPluginBeforeTransaction();
-      await session.startTransaction();
+      await session.startTransaction(txOptions?.isolationLevel);
 
       await this.notifyTransactionSubscribers("afterTransactionStart");
 
@@ -5372,7 +5411,12 @@ export class EntityManager implements BaseEntityManager {
    *
    * All EntityManager operations inside the callback share the same transaction.
    *
+   * This is the programmatic, decorator-free counterpart to `@Transactional`.
+   * It accepts the same `isolationLevel`, `propagation`, and `connectionName`
+   * options the decorator does, plus optional deadlock retry.
+   *
    * @param callback A function that receives this EntityManager and performs DB operations.
+   * @param options Isolation level, propagation, connection, and retry behavior.
    * @returns The return value of the callback.
    *
    * @example
@@ -5381,7 +5425,7 @@ export class EntityManager implements BaseEntityManager {
    *   await txEm.save(User, { name: "Alice" });
    *   await txEm.save(Post, { title: "Hello", authorId: 1 });
    *   return "done";
-   * });
+   * }, { isolationLevel: "SERIALIZABLE", propagation: TransactionPropagation.REQUIRES_NEW });
    * ```
    */
   async transaction<R>(
@@ -5390,13 +5434,45 @@ export class EntityManager implements BaseEntityManager {
   ): Promise<R> {
     const maxRetries = options?.retryOnDeadlock ? (options.maxRetries ?? 3) : 0;
     const retryDelayMs = options?.retryDelayMs ?? 100;
+    const propagation = options?.propagation ?? TransactionPropagation.REQUIRED;
+    const isolationLevel = options?.isolationLevel;
+    const connectionName = options?.connectionName;
+
+    // ── NESTED: savepoint within the ambient transaction ──────────────
+    // Mirrors @Transactional's NESTED branch. Only failures inside the
+    // callback roll back to the savepoint; the outer transaction continues.
+    const ambient = transactionStorage.getStore();
+    if (propagation === TransactionPropagation.NESTED && ambient) {
+      const savepointName = `sp_em_${++this.txSavepointCounter}`;
+      await ambient.savepoint(savepointName);
+      try {
+        return await transactionStorage.run(ambient, () => callback(this));
+      } catch (e) {
+        await ambient.rollbackTo(savepointName);
+        throw e;
+      }
+    }
+
+    // REQUIRES_NEW always opens a fresh, independent transaction even when one
+    // is already active. REQUIRED (default) reuses the ambient one if present.
+    const forceNew = propagation === TransactionPropagation.REQUIRES_NEW;
+    const txOptions: ExecuteTransactionOptions = {
+      isolationLevel,
+      connectionName,
+      forceNew,
+    };
 
     let lastError: unknown;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        return await this.executeInTransaction(async (session) => {
-          return transactionStorage.run(session, () => callback(this));
-        });
+        return await this.executeInTransaction(
+          async (session) => {
+            return transactionStorage.run(session, () => callback(this));
+          },
+          undefined,
+          undefined,
+          txOptions,
+        );
       } catch (e: unknown) {
         lastError = e;
         if (attempt < maxRetries && isDeadlockError(e)) {

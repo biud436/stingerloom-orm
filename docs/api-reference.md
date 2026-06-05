@@ -295,6 +295,11 @@ interface TransactionOptions {
   retryOnDeadlock?: boolean;  // Enable deadlock retry (default: false)
   maxRetries?: number;        // Maximum retries (default: 3)
   retryDelayMs?: number;      // Delay between retries in ms (default: 100)
+
+  // Parity with @Transactional (decorator-free) — see ./decorator-free.md
+  isolationLevel?: TRANSACTION_ISOLATION_LEVEL;  // @Transactional("SERIALIZABLE")
+  propagation?: TransactionPropagation;          // REQUIRED | REQUIRES_NEW | NESTED
+  connectionName?: string;                       // multi-DB target connection
 }
 ```
 
@@ -1183,7 +1188,7 @@ enum OrmErrorCode {
 
 ## EntitySchema (Decorator-Free Entity Definition)
 
-[Usage ->](./entities.md#defining-entities-without-decorators-entityschema)
+[Usage ->](./entities.md#defining-entities-without-decorators-entityschema) · [Full decorator → alternative map ->](./decorator-free.md)
 
 ```typescript
 import { EntitySchema, EntitySchemaOptions, ColumnSchemaDef } from "@stingerloom/orm";
@@ -1198,9 +1203,12 @@ interface EntitySchemaOptions<T> {
   target: ClazzType<T>;                                    // Entity class
   tableName?: string;                                      // Table name (defaults to snake_case of class name)
   columns: { [K in keyof T]?: ColumnSchemaDef };           // Column definitions
+  computedColumns?: { [K in keyof T]?: ComputedColumnOption };  // @ComputedColumn equivalents
   relations?: { [K in keyof T]?: RelationSchemaDef };      // Relation definitions
   uniqueIndexes?: { columns: string[]; name?: string }[];  // Composite unique indexes
-  indexes?: { columns: string[]; name?: string }[];        // Composite non-unique indexes
+  indexes?: { columns: string[]; name?: string; options?: AdvancedIndexOptions }[];  // Composite non-unique indexes
+  fullTextIndexes?: { columns: string[]; name?: string; language?: string }[];  // @FullTextIndex equivalents
+  nonTenant?: boolean;                                     // @NonTenantEntity equivalent
   hooks?: Partial<Record<HookEvent, Extract<keyof T, string>>>;  // Lifecycle hooks
 
   // Inheritance mapping (replaces @Inheritance, @DiscriminatorColumn, @DiscriminatorValue)
@@ -1235,7 +1243,11 @@ interface ColumnSchemaDef {
   enumValues?: string[];
   enumName?: string;
   name?: string;
-  transform?: (raw: unknown) => any;
+  transform?: (raw: unknown) => any;          // @deprecated — use transformer
+  transformer?: ColumnTransformer;            // @Column({ transformer }) — bidirectional
+  generationStrategy?: "increment" | "uuid" | "uuid-v7";  // @PrimaryGeneratedColumn(strategy)
+  jsonIndex?: JsonIndexOptions;               // @JsonIndex() on this column
+  tenant?: boolean;                           // @TenantColumn() — marks the tenant discriminator
 
   // Special column flags
   index?: boolean;              // Equivalent to @Index()
@@ -1259,11 +1271,13 @@ interface ValidationDef {
 
 ```typescript
 type RelationSchemaDef =
-  | { kind: "manyToOne"; target: () => ClazzType; joinColumn?: string; references?: string; eager?: boolean; cascade?: CascadeOption; lazy?: boolean }
+  | { kind: "manyToOne"; target: () => ClazzType; joinColumn?: string; references?: string; eager?: boolean; cascade?: CascadeOption; lazy?: boolean; relationColumn?: RelationColumnOption }
   | { kind: "oneToMany"; target: () => ClazzType; mappedBy: string; cascade?: CascadeOption }
-  | { kind: "oneToOne"; target: () => ClazzType; joinColumn?: string; inverseSide?: string; eager?: boolean; cascade?: CascadeOption }
+  | { kind: "oneToOne"; target: () => ClazzType; joinColumn?: string; inverseSide?: string; eager?: boolean; cascade?: CascadeOption; relationColumn?: RelationColumnOption }
   | { kind: "manyToMany"; target: () => ClazzType; joinTable?: JoinTableOption; mappedBy?: string };
 ```
+
+> `relationColumn` carries explicit FK column metadata (`name`, `type`, `nullable`, `referencedColumn`) — the `@RelationColumn()` equivalent. See the [Decorator-Free Guide](./decorator-free.md#foreign-key-columns-relationcolumn).
 
 ## Utilities
 
