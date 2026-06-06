@@ -278,11 +278,15 @@ integrationDescribe("[E2E] Queue — FOR UPDATE SKIP LOCKED auto-assign", () => 
         .expect(400);
     });
 
-    it("rejects missing projectId", async () => {
+    it("rejects missing projectId (fail closed — workspace cannot be resolved)", async () => {
+      // The queue routes are now @WorkspaceScoped({ from: "project" }); the
+      // membership guard runs before DTO validation, so a request without a
+      // projectId cannot resolve a workspace and is rejected 403 (fail closed),
+      // mirroring the `GET /issues` no-projectId behaviour.
       await api
         .post("/queue/claim")
         .send({ workerId: "ok" })
-        .expect(400);
+        .expect(403);
     });
   });
 });

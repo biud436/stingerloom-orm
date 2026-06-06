@@ -27,6 +27,28 @@ const ISSUE_FIELD_ALLOWLIST = new Set<string>([
 
 const JSON_FIELDS = new Set<string>(["customFields"]);
 
+/**
+ * Allow-list of comparison operators. Validated BEFORE compilation so an
+ * unrecognised `op` (the AST is user-supplied JSON) is rejected with a 400
+ * rather than silently producing an `undefined` condition that drops the
+ * predicate — which, combined with a missing scope, would widen the result set.
+ */
+const ALLOWED_OPS = new Set<string>([
+  "eq",
+  "ne",
+  "lt",
+  "le",
+  "gt",
+  "ge",
+  "in",
+  "any",
+  "isNull",
+  "isNotNull",
+  "like",
+  "me",
+  "jsonEq",
+]);
+
 const MAX_DEPTH = 5;
 const MAX_LEAVES = 50;
 
@@ -120,6 +142,12 @@ export function validateFilter(def: SavedFilterDefinition): void {
 }
 
 function validateLeaf(leaf: FilterOp): void {
+  if (!ALLOWED_OPS.has(leaf.op)) {
+    throw new BadRequestException({
+      code: "UNKNOWN_OP",
+      message: `Operator "${leaf.op}" is not allowed in saved filters`,
+    });
+  }
   if (leaf.op === "jsonEq") {
     if (!JSON_FIELDS.has(leaf.field)) {
       throw new BadRequestException({

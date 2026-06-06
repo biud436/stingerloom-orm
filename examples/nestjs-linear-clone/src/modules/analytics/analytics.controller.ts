@@ -23,6 +23,7 @@ export class AnalyticsController {
   }
 
   @Get("sprints/:id/burndown")
+  @WorkspaceScoped({ from: "sprint" })
   @ApiOperation({
     summary: "Sprint burndown by day",
     description: "Window function (SUM OVER ORDER BY day) gives running cumulative completion and remaining estimate.",

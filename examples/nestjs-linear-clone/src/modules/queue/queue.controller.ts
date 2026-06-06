@@ -7,10 +7,11 @@ import {
   ParseIntPipe,
   Query,
 } from "@nestjs/common";
-import { ApiTags, ApiOperation, ApiBody, ApiQuery } from "@nestjs/swagger";
+import { ApiTags, ApiOperation, ApiBody, ApiQuery, ApiBearerAuth } from "@nestjs/swagger";
 import { IsString, IsInt, Matches } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
 import { QueueService } from "./queue.service";
+import { WorkspaceScoped } from "../../common/auth/workspace.decorators";
 
 class ClaimDto {
   @ApiProperty({ example: "worker-1" })
@@ -31,11 +32,13 @@ class ReleaseDto {
 }
 
 @ApiTags("Queue")
+@ApiBearerAuth()
 @Controller("queue")
 export class QueueController {
   constructor(private readonly service: QueueService) {}
 
   @Post("claim")
+  @WorkspaceScoped({ from: "project" })
   @ApiOperation({
     summary: "Claim the next available issue (FOR UPDATE SKIP LOCKED)",
     description:
@@ -47,6 +50,7 @@ export class QueueController {
   }
 
   @Post("release/:issueId")
+  @WorkspaceScoped({ from: "issue" })
   @ApiOperation({ summary: "Release a previously claimed issue" })
   @ApiBody({ type: ReleaseDto })
   async release(
@@ -58,6 +62,7 @@ export class QueueController {
   }
 
   @Get("stats/:projectId")
+  @WorkspaceScoped({ from: "project" })
   @ApiOperation({ summary: "Queue depth and lease state per project" })
   @ApiQuery({ name: "projectId", required: true })
   stats(@Param("projectId", ParseIntPipe) projectId: number) {

@@ -16,6 +16,13 @@ import { Sprint } from "../../modules/sprints/sprint.entity";
 import { Label } from "../../modules/labels/label.entity";
 import { Comment } from "../../modules/comments/comment.entity";
 import { WorkLog } from "../../modules/work-logs/work-log.entity";
+import { WebhookEndpoint } from "../../modules/webhooks/webhook-endpoint.entity";
+import { WebhookDelivery } from "../../modules/webhooks/webhook-delivery.entity";
+import {
+  Attachment,
+  ATTACHMENT_OWNER,
+} from "../../modules/attachments/attachment.entity";
+import { SavedFilter } from "../../modules/saved-filters/saved-filter.entity";
 
 export const WORKSPACE_PARAM = "workspace:param";
 export const WORKSPACE_RESOLVE = "workspace:resolve";
@@ -33,7 +40,11 @@ export type WorkspaceResolver =
   | "viaLabel"
   | "viaComment"
   | "viaWorkLog"
-  | "viaMembership";
+  | "viaMembership"
+  | "viaWebhookEndpoint"
+  | "viaWebhookDelivery"
+  | "viaAttachment"
+  | "viaSavedFilter";
 
 /**
  * Apply on a controller or handler to enforce that the authenticated user is
@@ -244,7 +255,96 @@ export class WorkspaceMemberGuard implements CanActivate {
       return ws ?? "resource-missing";
     }
 
+    if (resolver === "viaWebhookEndpoint") {
+      // /webhooks/endpoints/:id → endpoint row → its workspace.
+      const raw = req.params?.id;
+      const endpointId = Number(raw);
+      if (raw === undefined || !Number.isFinite(endpointId)) {
+        return "no-identifier";
+      }
+      const ws = await this.workspaceOfWebhookEndpoint(endpointId);
+      return ws ?? "resource-missing";
+    }
+
+    if (resolver === "viaWebhookDelivery") {
+      // /webhooks/deliveries/:id/... → delivery → endpoint → workspace.
+      const raw = req.params?.id;
+      const deliveryId = Number(raw);
+      if (raw === undefined || !Number.isFinite(deliveryId)) {
+        return "no-identifier";
+      }
+      const d = qAlias(WebhookDelivery, "d");
+      const delivery = await this.em
+        .createQueryBuilder(d)
+        .where(d.id.eq(deliveryId))
+        .limit(1)
+        .getOne();
+      if (delivery?.endpointId == null) return "resource-missing";
+      const ws = await this.workspaceOfWebhookEndpoint(delivery.endpointId);
+      return ws ?? "resource-missing";
+    }
+
+    if (resolver === "viaAttachment") {
+      // /attachments/:id → polymorphic owner (issue|comment) → workspace.
+      const raw = req.params?.id;
+      const attachmentId = Number(raw);
+      if (raw === undefined || !Number.isFinite(attachmentId)) {
+        return "no-identifier";
+      }
+      const a = qAlias(Attachment, "a");
+      const att = await this.em
+        .createQueryBuilder(a)
+        .where(a.id.eq(attachmentId))
+        .limit(1)
+        .getOne();
+      if (!att) return "resource-missing";
+      if (att.ownerType === ATTACHMENT_OWNER.ISSUE) {
+        return this.workspaceOfIssue(att.ownerId);
+      }
+      if (att.ownerType === ATTACHMENT_OWNER.COMMENT) {
+        const c = qAlias(Comment, "c");
+        const comment = await this.em
+          .createQueryBuilder(c)
+          .withDeleted()
+          .where(c.id.eq(att.ownerId))
+          .limit(1)
+          .getOne();
+        if (!comment?.issueId) return "resource-missing";
+        return this.workspaceOfIssue(comment.issueId);
+      }
+      return "resource-missing";
+    }
+
+    if (resolver === "viaSavedFilter") {
+      // /saved-filters/:id/... → saved filter row → its workspace.
+      const raw = req.params?.id;
+      const filterId = Number(raw);
+      if (raw === undefined || !Number.isFinite(filterId)) {
+        return "no-identifier";
+      }
+      const f = qAlias(SavedFilter, "f");
+      const filter = await this.em
+        .createQueryBuilder(f)
+        .where(f.id.eq(filterId))
+        .limit(1)
+        .getOne();
+      if (filter?.workspaceId == null) return "resource-missing";
+      return filter.workspaceId;
+    }
+
     return "no-identifier";
+  }
+
+  private async workspaceOfWebhookEndpoint(
+    endpointId: number,
+  ): Promise<number | null> {
+    const e = qAlias(WebhookEndpoint, "e");
+    const ep = await this.em
+      .createQueryBuilder(e)
+      .where(e.id.eq(endpointId))
+      .limit(1)
+      .getOne();
+    return ep?.workspaceId ?? null;
   }
 
   private async workspaceOfProject(projectId: number): Promise<number | null> {

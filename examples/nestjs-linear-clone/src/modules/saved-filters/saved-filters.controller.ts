@@ -40,22 +40,30 @@ export class SavedFiltersController {
   }
 
   @Get()
-  list() {
-    return this.service.findAll();
+  @ApiOperation({
+    summary:
+      "List saved filters across the workspaces the caller is a member of. " +
+      "Filters in workspaces the caller does not belong to are never returned.",
+  })
+  list(@CurrentUserId() userId: number) {
+    return this.service.findAll(userId);
   }
 
   @Get(":id")
+  @WorkspaceScoped({ from: "savedFilter" })
   one(@Param("id", ParseIntPipe) id: number) {
     return this.service.findOne(id);
   }
 
   @Delete(":id")
+  @WorkspaceScoped({ from: "savedFilter" })
   @HttpCode(204)
   remove(@Param("id", ParseIntPipe) id: number) {
     return this.service.remove(id);
   }
 
   @Get(":id/run")
+  @WorkspaceScoped({ from: "savedFilter" })
   @ApiOperation({
     summary:
       "Run a saved filter against issues. `op: \"me\"` is bound to the " +

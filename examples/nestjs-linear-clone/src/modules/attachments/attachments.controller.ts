@@ -44,6 +44,7 @@ export class AttachmentsController {
   // ── Comment-owned attachments ───────────────────
 
   @Post("comments/:id/attachments")
+  @WorkspaceScoped({ from: "comment" })
   @ApiOperation({ summary: "Attach a file to a comment" })
   attachToComment(
     @Param("id", ParseIntPipe) commentId: number,
@@ -59,6 +60,7 @@ export class AttachmentsController {
   }
 
   @Get("comments/:id/attachments")
+  @WorkspaceScoped({ from: "comment" })
   @ApiOperation({ summary: "List attachments on a comment" })
   listCommentAttachments(@Param("id", ParseIntPipe) commentId: number) {
     return this.service.listByOwner(ATTACHMENT_OWNER.COMMENT, commentId);
@@ -67,12 +69,14 @@ export class AttachmentsController {
   // ── Generic attachment ops ──────────────────────
 
   @Get("attachments/:id")
+  @WorkspaceScoped({ from: "attachment" })
   @ApiOperation({ summary: "Get a single attachment" })
   findOne(@Param("id", ParseIntPipe) id: number) {
     return this.service.findOne(id);
   }
 
   @Delete("attachments/:id")
+  @WorkspaceScoped({ from: "attachment" })
   @HttpCode(204)
   @ApiOperation({ summary: "Delete an attachment" })
   remove(@Param("id", ParseIntPipe) id: number) {

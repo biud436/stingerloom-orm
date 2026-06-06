@@ -1,5 +1,7 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
 import { createHmac } from "node:crypto";
+import * as http from "node:http";
+import * as https from "node:https";
 import {
   BaseRepository,
   EntityManager,
@@ -11,7 +13,7 @@ import {
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { WebhookDelivery } from "./webhook-delivery.entity";
 import { WebhookEndpoint } from "./webhook-endpoint.entity";
-import { assertSafeWebhookUrl } from "./ssrf-guard";
+import { assertSafeWebhookUrl, SafeWebhookUrl } from "./ssrf-guard";
 
 const MAX_ATTEMPTS = 5;
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -287,8 +289,9 @@ export class WebhookDeliveryWorker {
     // time could now resolve to a private/loopback IP; refuse to fetch it.
     // A blocked endpoint is treated as a permanent failure (it will never be
     // safely deliverable until the operator changes the URL).
+    let safe: SafeWebhookUrl;
     try {
-      await assertSafeWebhookUrl(ep.url);
+      safe = await assertSafeWebhookUrl(ep.url);
     } catch (err) {
       const reason = `blocked by SSRF guard: ${(err as Error)?.message ?? "unsafe URL"}`;
       await this.markFailed(d, reason, true);
@@ -298,8 +301,13 @@ export class WebhookDeliveryWorker {
     let ok = false;
     let errMessage: string | null = null;
     try {
-      const res = await fetchWithTimeout(
-        ep.url,
+      // Pin the connection to the IP the guard just validated. This closes the
+      // TOCTOU between the guard's DNS lookup and the request's own resolution:
+      // we connect by IP literal (no second lookup) and never follow redirects,
+      // so a malicious endpoint cannot rebind DNS or 3xx-bounce us at an
+      // internal target after passing validation.
+      const res = await postWebhookSigned(
+        safe,
         {
           method: "POST",
           headers: {
@@ -363,17 +371,61 @@ function backoffDate(attempt: number): Date {
   return new Date(Date.now() + seconds * 1000);
 }
 
-async function fetchWithTimeout(
-  url: string,
+/**
+ * POST a webhook body to the *validated, pinned* IP.
+ *
+ * The endpoint host was resolved and range-checked by {@link assertSafeWebhookUrl},
+ * which returns the IP to connect to. We dial that IP literal directly (so the
+ * OS performs no second DNS lookup that an attacker could rebind) while keeping:
+ *
+ *   - `Host` header = the original `host:port`, so virtual-hosted receivers
+ *     still route correctly, and
+ *   - `servername` (TLS SNI) = the original hostname, so certificate validation
+ *     is performed against the name the operator configured, not the bare IP.
+ *
+ * Redirects are deliberately NOT followed: a 3xx is surfaced as a non-2xx
+ * status and treated as a delivery failure. Following a redirect would re-open
+ * the SSRF hole (a public endpoint could `302` the worker at `169.254.169.254`
+ * or `localhost`), so webhook delivery — like every hardened sender — stops at
+ * the first response.
+ */
+function postWebhookSigned(
+  safe: SafeWebhookUrl,
   init: { method: string; headers: Record<string, string>; body: string },
   timeoutMs: number,
 ): Promise<{ status: number }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    return { status: res.status };
-  } finally {
-    clearTimeout(timer);
-  }
+  const isHttps = safe.url.protocol === "https:";
+  const port = safe.url.port
+    ? Number(safe.url.port)
+    : isHttps
+      ? 443
+      : 80;
+
+  const options: https.RequestOptions = {
+    host: safe.ip, // pin to the validated IP — no re-resolution
+    port,
+    family: safe.family,
+    servername: isHttps ? safe.url.hostname : undefined,
+    path: `${safe.url.pathname}${safe.url.search}`,
+    method: init.method,
+    headers: { ...init.headers, Host: safe.url.host },
+    timeout: timeoutMs,
+  };
+
+  return new Promise((resolve, reject) => {
+    const handler = (res: http.IncomingMessage) => {
+      // Drain the body — we only need the status line — and never follow 3xx.
+      res.resume();
+      resolve({ status: res.statusCode ?? 0 });
+    };
+    const req = isHttps
+      ? https.request(options, handler)
+      : http.request(options, handler);
+    req.on("timeout", () => {
+      req.destroy(new Error(`request timed out after ${timeoutMs}ms`));
+    });
+    req.on("error", reject);
+    req.write(init.body);
+    req.end();
+  });
 }

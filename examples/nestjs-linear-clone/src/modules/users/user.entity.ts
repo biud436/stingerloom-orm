@@ -30,10 +30,15 @@ export class User {
   /**
    * bcrypt hash of the user's password. Nullable so seed data and
    * pre-existing rows survive — `AuthService.login` rejects when null.
-   * `@Exclude()` keeps it out of every controller response that runs
-   * through `ClassSerializerInterceptor` (registered globally in main.ts).
+   *
+   * `@Exclude({ toPlainOnly: true })` keeps it out of every controller response
+   * (the global `ClassSerializerInterceptor` runs instanceToPlain) WITHOUT
+   * stripping it on load: the ORM deserializes DB rows via plainToClass, so a
+   * plain `@Exclude()` would also drop the column when loading the entity and
+   * `AuthService.login`'s `bcrypt.compare(password, user.passwordHash)` would
+   * always see `undefined` (every password login would 401).
    */
-  @Exclude()
+  @Exclude({ toPlainOnly: true })
   @Column({ length: 100, nullable: true })
   passwordHash!: string | null;
 

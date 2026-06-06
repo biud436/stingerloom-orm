@@ -8,6 +8,7 @@ import {
   UniqueIndex,
   BeforeInsert,
 } from "@stingerloom/orm";
+import { Exclude } from "class-transformer";
 import { Workspace } from "../workspaces/workspace.entity";
 
 /**
@@ -34,6 +35,16 @@ export class WebhookEndpoint {
   @Column({ length: 512 })
   url!: string;
 
+  /**
+   * HMAC signing key. `@Exclude({ toPlainOnly: true })` keeps it out of every
+   * serialized controller response (the global `ClassSerializerInterceptor`
+   * runs instanceToPlain and honours it) — otherwise any endpoint returning the
+   * entity would leak the secret a receiver uses to verify
+   * `X-Webhook-Signature`. `toPlainOnly` is required: the ORM deserializes DB
+   * rows via plainToClass, so a plain `@Exclude()` would also strip the column
+   * on load and the delivery worker's `createHmac(secret)` would get undefined.
+   */
+  @Exclude({ toPlainOnly: true })
   @Column({ length: 64 })
   secret!: string;
 

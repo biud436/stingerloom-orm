@@ -48,7 +48,11 @@ export function WorkspaceScoped(opts: {
     | "label"
     | "comment"
     | "workLog"
-    | "membership";
+    | "membership"
+    | "webhookEndpoint"
+    | "webhookDelivery"
+    | "attachment"
+    | "savedFilter";
   name?: string;
 }) {
   const resolverByFrom: Record<string, WorkspaceResolver> = {
@@ -59,6 +63,10 @@ export function WorkspaceScoped(opts: {
     comment: "viaComment",
     workLog: "viaWorkLog",
     membership: "viaMembership",
+    webhookEndpoint: "viaWebhookEndpoint",
+    webhookDelivery: "viaWebhookDelivery",
+    attachment: "viaAttachment",
+    savedFilter: "viaSavedFilter",
   };
   const resolver: WorkspaceResolver = resolverByFrom[opts.from] ?? "explicit";
   const decorators = [

@@ -89,12 +89,15 @@ integrationDescribe("[E2E] Search — full-text + JSON custom field", () => {
     it("rejects too-short query strings", async () => {
       await api
         .get("/search/issues")
-        .query({ q: "a" })
+        .query({ q: "a", projectId: fx.projectId })
         .expect(400);
     });
 
     it("rejects missing q", async () => {
-      await api.get("/search/issues").expect(400);
+      await api
+        .get("/search/issues")
+        .query({ projectId: fx.projectId })
+        .expect(400);
     });
 
     it("finds issues by title keyword", async () => {

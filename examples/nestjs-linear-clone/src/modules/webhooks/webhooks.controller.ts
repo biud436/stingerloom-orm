@@ -10,6 +10,7 @@ import {
   Query,
   HttpCode,
   BadRequestException,
+  ForbiddenException,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { WebhooksService } from "./webhooks.service";
@@ -48,6 +49,7 @@ export class WebhooksController {
   }
 
   @Get("endpoints/:id")
+  @WorkspaceScoped({ from: "webhookEndpoint" })
   one(@Param("id", ParseIntPipe) id: number) {
     return this.service.findEndpoint(id);
   }
@@ -66,6 +68,7 @@ export class WebhooksController {
   }
 
   @Delete("endpoints/:id")
+  @WorkspaceScoped({ from: "webhookEndpoint" })
   @HttpCode(204)
   remove(@Param("id", ParseIntPipe) id: number) {
     return this.service.deleteEndpoint(id);
@@ -74,6 +77,7 @@ export class WebhooksController {
   // ── Delivery actions ────────────────────────────────────
 
   @Post("deliveries/:id/replay")
+  @WorkspaceScoped({ from: "webhookDelivery" })
   @ApiOperation({
     summary: "Re-queue a delivery (resets state to pending, attempt counter preserved)",
   })
@@ -86,6 +90,18 @@ export class WebhooksController {
     summary: "Manually run the delivery worker once (also used by tests)",
   })
   tick(@Query("batch") batch?: string) {
+    // `_tick` drives the GLOBAL delivery worker (every workspace's outbox), so
+    // it cannot be workspace-scoped. In production the worker is driven by a
+    // scheduler, not an HTTP route — letting any authenticated user pump it is
+    // an availability/abuse vector. Gate it behind a non-production default
+    // (tests run with NODE_ENV=test) or an explicit operator opt-in.
+    const isProd = process.env.NODE_ENV === "production";
+    const manualAllowed = process.env.WEBHOOK_ALLOW_MANUAL_TICK === "true";
+    if (isProd && !manualAllowed) {
+      throw new ForbiddenException(
+        "Manual webhook tick is disabled; the worker runs on a schedule",
+      );
+    }
     const size = batch ? Math.max(1, Math.min(Number(batch), 64)) : 16;
     return this.worker.tick(size);
   }

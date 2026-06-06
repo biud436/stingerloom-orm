@@ -9,11 +9,13 @@ import {
   ParseIntPipe,
   Query,
   HttpCode,
+  ForbiddenException,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { UsersService } from "./users.service";
 import { CreateUserDto, UpdateUserDto } from "./dto/user.dto";
 import { CursorQueryDto } from "../../common/dto/cursor.dto";
+import { CurrentUserId } from "../../common/auth/current-user.decorator";
 
 @ApiTags("Users")
 @Controller("users")
@@ -43,13 +45,28 @@ export class UsersController {
   }
 
   @Patch(":id")
-  update(@Param("id", ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
+  @ApiOperation({ summary: "Update your own profile (self only)" })
+  update(
+    @CurrentUserId() actorId: number,
+    @Param("id", ParseIntPipe) id: number,
+    @Body() dto: UpdateUserDto,
+  ) {
+    // Users are a global directory, so there is no workspace to scope against.
+    // Object-level authorization here is self-only: without it any authed user
+    // could rename or delete any account by id.
+    if (id !== actorId) {
+      throw new ForbiddenException("You may only update your own profile");
+    }
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
   @HttpCode(204)
-  remove(@Param("id", ParseIntPipe) id: number) {
+  @ApiOperation({ summary: "Delete your own account (self only)" })
+  remove(@CurrentUserId() actorId: number, @Param("id", ParseIntPipe) id: number) {
+    if (id !== actorId) {
+      throw new ForbiddenException("You may only delete your own account");
+    }
     return this.service.remove(id);
   }
 }

@@ -1,3 +1,9 @@
+// 127.0.0.1 is allowlisted so the SSRF guard permits the loopback webhook
+// targets the cross-tenant tests register below — only endpoint CRUD *scoping*
+// is exercised here, deliveries are never driven.
+process.env.WEBHOOK_ALLOWED_HOSTS = "127.0.0.1";
+process.env.WEBHOOK_ALLOW_HTTP = "true";
+
 import {
   bootApp,
   shutdownApp,
@@ -8,6 +14,7 @@ import {
 import {
   createBaseFixture,
   createIssue,
+  createSprint,
   BaseFixture,
 } from "./helpers/fixtures";
 
@@ -398,6 +405,202 @@ integrationDescribe("[E2E] Cross-tenant scoping (#355/#356/#357)", () => {
           n.kind === "mention" && n.sourceIssueId === acmeIssueId,
       );
       expect(leaked.length).toBe(0);
+    });
+  });
+
+  // ── Remaining cross-tenant + authorization holes (webhooks / saved-filters
+  //    / search / analytics / queue / attachments / users / memberships) ─────
+  describe("Remaining cross-tenant + authorization holes are closed", () => {
+    let globexEndpointId: number;
+    let acmeFilterId: number;
+    let globexFilterId: number;
+    let globexSprintId: number;
+    let globexAttachmentId: number;
+    let danaApi: ReturnType<typeof authedAgent>; // acme MEMBER, untouched by #356
+
+    beforeAll(async () => {
+      danaApi = authedAgent(booted.server, acme.userTokens[3]);
+
+      const gEp = await globexApi
+        .post("/webhooks/endpoints")
+        .send({
+          workspaceId: globex.workspaceId,
+          url: "http://127.0.0.1/globex-hook",
+          secret: "globex-webhook-secret-1234",
+          events: ["issue.updated"],
+        })
+        .expect(201);
+      globexEndpointId = gEp.body.id;
+
+      const gf = await globexApi
+        .post("/saved-filters")
+        .send({
+          workspaceId: globex.workspaceId,
+          name: "globex backlog",
+          definition: { field: "status", op: "eq", value: "BACKLOG" },
+        })
+        .expect(201);
+      globexFilterId = gf.body.id;
+      const af = await aliceApi
+        .post("/saved-filters")
+        .send({
+          workspaceId: acme.workspaceId,
+          name: "acme backlog",
+          definition: { field: "status", op: "eq", value: "BACKLOG" },
+        })
+        .expect(201);
+      acmeFilterId = af.body.id;
+
+      globexSprintId = await createSprint(
+        booted.server,
+        globex.projectId,
+        7,
+        globex.ownerToken,
+      );
+      const ga = await globexApi
+        .post(`/issues/${globexIssueId}/attachments`)
+        .send({
+          filename: "globex-secret.pdf",
+          contentType: "application/pdf",
+          sizeBytes: 42,
+          storageUrl: "s3://globex/secret.pdf",
+        })
+        .expect(201);
+      globexAttachmentId = ga.body.id;
+    }, 60000);
+
+    it("webhook endpoint responses never serialize the signing secret", async () => {
+      const created = await globexApi
+        .post("/webhooks/endpoints")
+        .send({
+          workspaceId: globex.workspaceId,
+          url: "http://127.0.0.1/globex-hook-2",
+          secret: "another-secret-12345678",
+          events: ["issue.updated"],
+        })
+        .expect(201);
+      expect(created.body.secret).toBeUndefined();
+
+      const fetched = await globexApi
+        .get(`/webhooks/endpoints/${created.body.id}`)
+        .expect(200);
+      expect(fetched.body.secret).toBeUndefined();
+    });
+
+    it("alice cannot read or delete a globex webhook endpoint → 403", async () => {
+      await aliceApi.get(`/webhooks/endpoints/${globexEndpointId}`).expect(403);
+      await aliceApi.delete(`/webhooks/endpoints/${globexEndpointId}`).expect(403);
+    });
+
+    it("alice cannot read, run, or delete a globex saved filter → 403", async () => {
+      await aliceApi.get(`/saved-filters/${globexFilterId}`).expect(403);
+      await aliceApi.get(`/saved-filters/${globexFilterId}/run`).expect(403);
+      await aliceApi.delete(`/saved-filters/${globexFilterId}`).expect(403);
+    });
+
+    it("GET /saved-filters lists only the caller's own workspaces", async () => {
+      const res = await aliceApi.get("/saved-filters").expect(200);
+      const ids = (res.body as Array<{ id: number }>).map((r) => r.id);
+      expect(ids).toContain(acmeFilterId);
+      expect(ids).not.toContain(globexFilterId);
+    });
+
+    it("running an acme saved filter never returns globex issues", async () => {
+      const res = await aliceApi
+        .get(`/saved-filters/${acmeFilterId}/run`)
+        .expect(200);
+      const ids = (res.body.data as Array<{ id: number }>).map((r) => r.id);
+      expect(ids).not.toContain(globexIssueId);
+    });
+
+    it("alice cannot full-text search a globex project → 403", async () => {
+      await aliceApi
+        .get("/search/issues")
+        .query({ q: "secret", projectId: globex.projectId })
+        .expect(403);
+    });
+
+    it("alice can full-text search her own project → 200", async () => {
+      await aliceApi
+        .get("/search/issues")
+        .query({ q: "acme", projectId: acme.projectId })
+        .expect(200);
+    });
+
+    it("alice cannot read a globex sprint burndown → 403", async () => {
+      await aliceApi
+        .get(`/analytics/sprints/${globexSprintId}/burndown`)
+        .expect(403);
+    });
+
+    it("alice cannot claim or stat a globex project queue → 403", async () => {
+      await aliceApi
+        .post("/queue/claim")
+        .send({ workerId: "intruder", projectId: globex.projectId })
+        .expect(403);
+      await aliceApi.get(`/queue/stats/${globex.projectId}`).expect(403);
+    });
+
+    it("alice cannot read or delete a globex attachment → 403", async () => {
+      await aliceApi.get(`/attachments/${globexAttachmentId}`).expect(403);
+      await aliceApi.delete(`/attachments/${globexAttachmentId}`).expect(403);
+    });
+
+    it("alice cannot list or attach to a globex comment → 403", async () => {
+      await aliceApi.get(`/comments/${globexCommentId}/attachments`).expect(403);
+      await aliceApi
+        .post(`/comments/${globexCommentId}/attachments`)
+        .send({
+          filename: "x.pdf",
+          contentType: "application/pdf",
+          sizeBytes: 1,
+          storageUrl: "s3://x/x.pdf",
+        })
+        .expect(403);
+    });
+
+    it("alice cannot modify or delete another user's account → 403", async () => {
+      await aliceApi
+        .patch(`/users/${acme.userIds[1]}`)
+        .send({ name: "hijacked" })
+        .expect(403);
+      await aliceApi.delete(`/users/${globex.ownerId}`).expect(403);
+    });
+
+    it("alice can update her own profile → 200", async () => {
+      await aliceApi
+        .patch(`/users/${acme.ownerId}`)
+        .send({ name: "Alice Updated" })
+        .expect(200);
+    });
+
+    it("alice cannot enumerate a globex roster or another user's memberships → 403", async () => {
+      await aliceApi
+        .get("/memberships")
+        .query({ workspaceId: globex.workspaceId })
+        .expect(403);
+      await aliceApi
+        .get("/memberships")
+        .query({ userId: globex.ownerId })
+        .expect(403);
+    });
+
+    it("a plain acme MEMBER cannot invite anyone as OWNER (privilege escalation) → 403", async () => {
+      const suffix = `sock${Date.now().toString(36)}`;
+      const reg = await aliceApi
+        .post("/auth/register")
+        .send({
+          email: `${suffix}@acme.test`,
+          name: suffix,
+          password: "fixture-password-123",
+        })
+        .expect(201);
+      const sockId = reg.body.user.id as number;
+
+      await danaApi
+        .post("/memberships")
+        .send({ workspaceId: acme.workspaceId, userId: sockId, role: "OWNER" })
+        .expect(403);
     });
   });
 });

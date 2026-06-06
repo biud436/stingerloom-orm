@@ -13,6 +13,8 @@ import {
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Issue } from "../issues/issue.entity";
+import { Project } from "../projects/project.entity";
+import { Membership } from "../memberships/membership.entity";
 import { RequestContextStore } from "../../common/context/request-context";
 import { CreateSavedFilterDto } from "./dto/saved-filter.dto";
 import { SavedFilter } from "./saved-filter.entity";
@@ -44,10 +46,27 @@ export class SavedFiltersService {
     return this.repo.save(filter);
   }
 
-  findAll(): Promise<SavedFilter[]> {
+  /**
+   * List saved filters scoped to the workspaces the caller is a member of.
+   * Without this scope `GET /saved-filters` enumerated every tenant's filters
+   * (names, owner ids, and the full predicate AST). Returns `[]` when the user
+   * belongs to no workspace.
+   */
+  async findAll(userId: number): Promise<SavedFilter[]> {
+    const m = qAlias(Membership, "m");
+    const memberships = await this.em
+      .createQueryBuilder(m)
+      .where(m.userId.eq(userId))
+      .getMany();
+    const workspaceIds = memberships
+      .map((row) => row.workspaceId)
+      .filter((id): id is number => id != null);
+    if (workspaceIds.length === 0) return [];
+
     const f = qAlias(SavedFilter, "f");
     return this.em
       .createQueryBuilder(f)
+      .where(f.workspaceId.in(workspaceIds))
       .orderBy(f.id.desc())
       .getMany();
   }
@@ -82,10 +101,20 @@ export class SavedFiltersService {
     const ctx = RequestContextStore.require();
     const scope = compileFilter(filter.definition, { userId: ctx.userId });
 
+    // Tenant boundary: the compiled predicate (built from the user's AST over
+    // the Issue allowlist) carries NO workspace constraint, so it would match
+    // issues across every tenant. Pin the run to the projects owned by the
+    // filter's workspace — even if the filter body sets a foreign `projectId`,
+    // the AND with this set keeps results inside the filter's tenant.
+    const projectIds = await this.workspaceProjectIds(filter.workspaceId!);
     const i = qAlias(Issue, "i");
+    if (projectIds.length === 0) {
+      return { data: [], hasNextPage: false, nextCursor: null, count: 0 };
+    }
     let qb = this.em
       .createQueryBuilder(i)
       .pipe(scope)
+      .andWhere(i.projectId.in(projectIds))
       .orderBy(i.id.asc())
       .take(take + 1);
 
@@ -105,6 +134,18 @@ export class SavedFiltersService {
         hasNextPage && last !== undefined ? encodeCursor(last.id) : null,
       count: data.length,
     };
+  }
+
+  /** Project ids that belong to a workspace — the tenant fence for `run`. */
+  private async workspaceProjectIds(workspaceId: number): Promise<number[]> {
+    const p = qAlias(Project, "p");
+    const projects = await this.em
+      .createQueryBuilder(p)
+      .where(p.workspaceId.eq(workspaceId))
+      .getMany();
+    return projects
+      .map((row) => row.id)
+      .filter((id): id is number => id != null);
   }
 }
 

@@ -32,6 +32,12 @@ export class MembershipsService {
 
   @Transactional()
   async invite(dto: CreateMembershipDto): Promise<Membership> {
+    // @WorkspaceScoped proves the actor is *a* member of dto.workspaceId; it
+    // does NOT prove they may grant roles. Without this gate any GUEST/MEMBER
+    // could POST a membership with role OWNER (for themselves or a sock-puppet)
+    // and take over the workspace. Require ADMIN/OWNER, mirroring updateRole.
+    await this.assertActorIsAdmin(dto.workspaceId);
+
     const m = qAlias(Membership, "m");
 
     const existing = await this.em
@@ -54,7 +60,12 @@ export class MembershipsService {
     return this.repo.save(membership);
   }
 
-  byWorkspace(workspaceId: number): Promise<Membership[]> {
+  async byWorkspace(workspaceId: number): Promise<Membership[]> {
+    // Only members of the workspace may enumerate its roster (which joins User
+    // and exposes names/emails). Without this check any authenticated user
+    // could dump any workspace's members by guessing the id.
+    await this.assertActorIsMember(workspaceId);
+
     const m = qAlias(Membership, "m");
 
     return this.em
@@ -128,6 +139,30 @@ export class MembershipsService {
    * member there and stamped `RequestContext.userId`; this adds the role gate
    * that membership alone does not provide.
    */
+  /**
+   * Require the authenticated actor to be a member (any role) of the workspace.
+   * Used to gate roster reads — membership alone is enough to see the member
+   * list, but a non-member must not.
+   */
+  private async assertActorIsMember(workspaceId: number): Promise<void> {
+    const actorUserId = RequestContextStore.get()?.userId;
+    if (!actorUserId) {
+      throw new ForbiddenException("Authentication required");
+    }
+    const m = qAlias(Membership, "m");
+    const row = await this.em
+      .createQueryBuilder(m)
+      .where(m.workspaceId.eq(workspaceId))
+      .andWhere(m.userId.eq(actorUserId))
+      .limit(1)
+      .getOne();
+    if (!row) {
+      throw new ForbiddenException(
+        `User is not a member of workspace ${workspaceId}`,
+      );
+    }
+  }
+
   private async assertActorIsAdmin(workspaceId: number): Promise<void> {
     const actorUserId = RequestContextStore.get()?.userId;
     if (!actorUserId) {
