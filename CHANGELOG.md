@@ -6,6 +6,74 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [0.23.0] — 2026-06-07
+
+Decorator-free entity definitions, filter-first read/write shorthands, and a more explicit `synchronize` policy, plus a batch of correctness fixes shaken out of the `nestjs-linear-clone` reference example (soft-delete/aggregate parity, subscriber idempotency, relation hydration). Backward compatible — the single-value `synchronize` form and every existing decorator API keep working.
+
+### Highlights
+
+- **Decorator-free entity schemas** — every decorator-only feature now has a programmatic `EntitySchema` equivalent (columns, relations, indexes, hooks, timestamps, computed columns), so entities can be defined without `experimentalDecorators` / `emitDecoratorMetadata`.
+- **Filter-first EntityManager shorthands** — `em.findBy(Entity, where)` / `em.findOneBy(Entity, where)` reads and `em.update(Entity, where, data)` writes, so the common "match by criteria" path no longer needs a full options object or a loaded entity.
+- **`synchronize` policy as an options object (#331)** — `synchronize: { mode, continueOnError, failOnDestructiveChange, logDDL }` separates three concerns that were fused into one value: boot resilience, destructive-change safety, and DDL visibility. The single-value form (`true | "safe" | "dry-run" | false`) normalizes to the same policy, so existing configs are unchanged.
+- **Typed `getRawMany()` / `getRawOne()` coercion (#348)** — opt-in per-column coercion so raw rows land as numbers / booleans / dates instead of driver-native strings.
+- **`@ComputedColumn` dialect-portable expression builder (#336)** — define a computed column once with the expression builder; it compiles to `TIMESTAMPDIFF` on MySQL, `EXTRACT(EPOCH …)` on PostgreSQL, etc., with no `process.env.DB_TYPE` read in the entity.
+- **Introspection: SQLite + CLI, round-trip stability** — DB → entity generation gains SQLite support and a CLI path, with name-preserving timestamps and index round-trip stability.
+
+### Added
+
+#### Core APIs
+
+- **`EntityManager.findBy(Entity, where)` / `findOneBy(Entity, where)`** — filter-first read shorthands over `find` / `findOne`.
+- **`EntityManager.update(Entity, where, data)`** — filter-first update that matches by criteria instead of requiring a loaded entity.
+- **`EntityManager.refs(...)` bulk helper + tagged `em.query\`\`` shorthand** — multi-entity `SqlRef` construction and a tagged-template form of `em.query` for raw-SQL call sites.
+- **Typed coercion for `getRawMany()` / `getRawOne()` (#348)** — declare per-column target types so raw projections are coerced from driver strings.
+
+#### Decorator-free schema definition
+
+- **`EntitySchema`** — a programmatic alternative covering every decorator-only feature (`@Column`, relations, `@Index` / `@UniqueIndex` / `@FullTextIndex`, `@Version`, create/update timestamps, `@DeletedAt`, `@ComputedColumn`, lifecycle hooks).
+
+#### Schema synchronize (#331)
+
+- **`synchronize` options object** — `{ mode: true | "safe" | "dry-run", continueOnError, failOnDestructiveChange, logDDL }`, normalized by `normalizeSynchronizePolicy()`. New error codes `OrmErrorCode.SCHEMA_SYNC_FAILED` and `SCHEMA_SYNC_DESTRUCTIVE_CHANGE`.
+
+#### Computed columns (#336)
+
+- **`@ComputedColumn({ expression })`** accepts a dialect-portable expression builder (date diffs, conditionals, column refs) instead of a raw SQL string.
+
+#### Errors
+
+- **`unsupportedExpression()`** — uniform `OrmError(UNSUPPORTED_OPERATION)` shape across dialect throws, with consistent emulation guidance.
+
+### Fixed
+
+- **`withDeleted()` not propagated into relation loads** (#363) — eager and lazy relation loads now honor the root query's soft-delete scope, so a parent and its relations no longer disagree on whether trashed rows are visible.
+- **`getReference()` stub leaked through `findOne`** (#365) — a first-level-cache hit on a `getReference()` PK-only stub now hydrates the full row on `findOne` instead of returning the bare-PK instance.
+- **`addSubscriber` double-fired** (#366) — subscriber registration is idempotent, so re-initialization no longer produces duplicate notifications / audit rows.
+- **`limit [offset, 0]` returned 1 row** (#364) — a zero count is honored as `LIMIT 0` instead of falling through to a single row.
+- **Aggregates ignored `@DeletedAt`** (#351) — `count` / `sum` / `avg` / `min` / `max` / `exists` / `findAndCount` now exclude soft-deleted rows, so `findAndCount` returns a consistent `[rows, count]`.
+- **NamingStrategy + dialect operators skipped in aggregate / `explain` WHERE** (#352) — those WHERE clauses now apply the configured `NamingStrategy` column mapping and dialect operators like the rest of the query surface.
+- **`@RelationColumn` FK shadow props rejected in `updateMany` / `delete` criteria** (#353) — FK shadow accessors are accepted in update / delete WHERE.
+- **MySQL introspection missed `AUTO_INCREMENT`** (#346) — `getColumns` includes `EXTRA`, so auto-increment PKs are generated as `@PrimaryGeneratedColumn`.
+- **PostgreSQL `SET LOCAL search_path` on an invalid tenant marker** (#345) — skipped when the `MetadataContext` tenant is not a valid identifier, with a regression test.
+
+### Documentation
+
+- Raw-SQL escape-hatch decision ladder + per-tool reference; analytical-query cookbook recipes lifted from `nestjs-linear-clone`; query-builder source-vs-docs drift audit (6 broken examples fixed); introspection guide rewrite (SQLite, CLI, round-trip, indexes); onboarding / api-reference / getting-started refresh.
+
+### Tests
+
+- **Golden-SQL suites** — pin the exact rendered SQL per dialect for expression classes, `SelectQueryBuilder` full statements, `RawQueryBuilder` CTE / window / set-operations, and `castBuiltinType` / `wrapIdentifier`. Plus a dense `ResultTransformer` hydration regression suite and a JSON-column round-trip integration test.
+
+### Reference example (`nestjs-linear-clone`)
+
+- **Cross-tenant authorization hardening** — closed cross-tenant IDOR on comments / work-logs / bulk / issues / memberships (#335 and follow-ups), issue links + `@mention` notification leaks, and a final sweep over the remaining holes: webhook endpoint / signing-secret exposure, SSRF connection pinning, saved-filter / search / analytics / queue / attachment scoping, membership-invite privilege escalation, and self-only user mutations.
+- **Webhook outbox hardening** — SSRF egress validation, deterministic dedupe key, and a lease-based `in_flight` reaper; idempotency claims made leaseable and status-correct.
+- **Misc** — ActivityLog rows for soft-delete / restore (#334), `ProjectNumberingService` extraction to break a module cycle (#349), `findOne` split so internal callers skip the 5-relation eager load, and added Sprint / Label / Project e2e + comment FTS + trash / cascade coverage (#341).
+
+**Full Changelog**: https://github.com/biud436/stingerloom-orm/compare/v0.22.0...v0.23.0
+
+---
+
 ## [0.22.0] — 2026-05-14
 
 Raw-SQL ergonomics overhaul plus a large analytical-expression expansion. Both batches were shaken out while building the `nestjs-linear-clone` reference example — every addition removes a place where the example previously had to hand-roll `wrap()` + `raw()`, drop to `em.query(...)`, or `as any` past a type gap. No breaking changes.
