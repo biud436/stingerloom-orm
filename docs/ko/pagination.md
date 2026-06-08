@@ -88,6 +88,48 @@ LIMIT 10 OFFSET 0
 SELECT COUNT(*) FROM "post"
 ```
 
+### paginate() -- 페이지 데이터와 메타데이터를 한 번에
+
+`findAndCount()`는 `[rows, total]` 튜플만 돌려줍니다. 총 개수에 더해 파생된 페이지
+메타데이터(`totalPages`, `hasNextPage` 등)까지 원할 때는, 쿼리 빌더의 `paginate()`가
+1-based `page`/`pageSize`로부터 envelope 전체를 돌려줘요. 쿼리를 (조인, `qAlias` 조건,
+서브쿼리 등) 빌더로 조립하는 경우에 특히 잘 맞습니다.
+
+```typescript
+const result = await em
+  .createQueryBuilder(Post, "p")
+  .where("p.isPublished", true)
+  .orderBy({ createdAt: "DESC" })
+  .paginate({ page: 2, pageSize: 10 });
+
+result.data;            // 2페이지의 Post[]
+result.total;           // 235
+result.page;            // 2
+result.pageSize;        // 10
+result.totalPages;      // 24
+result.hasNextPage;     // true
+result.hasPreviousPage; // true
+```
+
+`page`/`pageSize`는 `findWithPage()`와 동일하게 정규화되고(0 이하 → 1, 소수 → 내림;
+기본값 `page` 1 / `pageSize` 20), `paginate()`는 빌더를 복제하므로 원본 인스턴스에는
+LIMIT/OFFSET이 남지 않아 다시 페이징할 수 있어요. 특정 컬럼만 뽑는 목록 화면
+(`select(["id", "title"])`)에서는 엔티티 인스턴스 대신 plain `Pick<T, K>` 객체를
+돌려주는 `paginatePartial()`을 쓰세요.
+
+반환 형태는 `em.findWithPage()`와 동일하므로, `FindOption`에서 시작하느냐 빌더에서
+시작하느냐에 따라 둘을 바꿔 쓸 수 있습니다:
+
+```typescript
+// FindOption 기반 — 동일한 PagePaginationResult 형태
+const result = await em.findWithPage(Post, {
+  where: { isPublished: true },
+  orderBy: { createdAt: "DESC" },
+  page: 2,
+  pageSize: 10,
+});
+```
+
 ### Offset Pagination을 쓰면 좋은 경우
 
 - 사용자가 5페이지나 50페이지로 직접 이동해야 할 때

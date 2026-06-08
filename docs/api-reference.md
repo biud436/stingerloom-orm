@@ -403,12 +403,16 @@ class SelectQueryBuilder<T, TResult = T> {
   getOneOrFail(): Promise<TResult>;           // Throws EntityNotFoundError
   getCount(): Promise<number>;
   getManyAndCount(): Promise<[TResult[], number]>;
+  paginate(opts?: { page?: number; pageSize?: number }):
+    Promise<PagePaginationResult<TResult>>;
   exists(): Promise<boolean>;
 
   // ── EXECUTION: typed plain objects (no deserialization) ─
   getPartialMany(): Promise<TResult[]>;
   getPartialOne(): Promise<TResult | null>;
   getPartialManyAndCount(): Promise<[TResult[], number]>;
+  paginatePartial(opts?: { page?: number; pageSize?: number }):
+    Promise<PagePaginationResult<TResult>>;
 
   // ── EXECUTION: untyped or coerced plain objects ────────
   // `T` declares the row shape. Optional `coerce` map normalizes

@@ -403,12 +403,16 @@ class SelectQueryBuilder<T, TResult = T> {
   getOneOrFail(): Promise<TResult>;           // EntityNotFoundError 발생
   getCount(): Promise<number>;
   getManyAndCount(): Promise<[TResult[], number]>;
+  paginate(opts?: { page?: number; pageSize?: number }):
+    Promise<PagePaginationResult<TResult>>;
   exists(): Promise<boolean>;
 
   // ── 실행: 타입이 있는 plain 객체 (역직렬화 없음) ───────
   getPartialMany(): Promise<TResult[]>;
   getPartialOne(): Promise<TResult | null>;
   getPartialManyAndCount(): Promise<[TResult[], number]>;
+  paginatePartial(opts?: { page?: number; pageSize?: number }):
+    Promise<PagePaginationResult<TResult>>;
 
   // ── 실행: untyped 또는 coerce된 plain 객체 ────────────
   // `T`로 행 모양을 선언해요. 선택적인 `coerce` 맵으로

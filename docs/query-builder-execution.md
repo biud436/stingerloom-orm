@@ -36,6 +36,52 @@ console.log(users.length); // up to 10
 console.log(total);        // e.g. 235
 ```
 
+### `paginate()` — page data plus metadata
+
+`getManyAndCount()` hands back a bare `[rows, total]` tuple, leaving every
+endpoint to compute `totalPages` / `hasNextPage` by hand. `paginate()` is the
+query-builder counterpart to [`em.findWithPage()`](./pagination.md): pass a
+1-based `page` and a `pageSize` and it returns the page together with the full
+pagination envelope.
+
+```typescript
+const result = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoin(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .where("p.status", "published")
+  .orderBy({ createdAt: "DESC" })
+  .paginate({ page: 2, pageSize: 10 });
+
+result.data;           // Post[] for page 2 (class instances)
+result.total;          // total matching rows — ignores LIMIT/OFFSET
+result.page;           // 2
+result.pageSize;       // 10
+result.totalPages;     // Math.ceil(total / pageSize)
+result.hasNextPage;    // page < totalPages
+result.hasPreviousPage;// page > 1
+```
+
+`page`/`pageSize` are normalized exactly like `findWithPage()` — non-positive or
+fractional values are coerced (defaults: `page` 1, `pageSize` 20). Any
+`limit`/`offset`/`skip`/`take` previously set on the builder is overridden by the
+page window, and the source builder is **not** mutated — a clone carries the
+LIMIT/OFFSET, so the same instance can be paged again or reused.
+
+For projected list views, use `paginatePartial()` — it mirrors `paginate()` but
+returns plain `Pick<T, K>` objects via `getPartialMany()`, so a partial
+`select()` that omits required columns is allowed (whereas `paginate()`, built on
+`getMany()`, would reject it):
+
+```typescript
+const page = await em
+  .createQueryBuilder(Post, "p")
+  .select(["id", "title"])
+  .orderBy({ id: "DESC" })
+  .paginatePartial({ page: 1, pageSize: 20 });
+
+page.data; // Pick<Post, "id" | "title">[] — plain objects, not entities
+```
+
 > For cursor-based pagination, streaming, and the full pagination
 > strategy guide, see [Pagination & Streaming](./pagination.md).
 
@@ -341,6 +387,7 @@ You've built the query — now you need to run it. The query builder provides th
 | `getOne()` | `T \| null` | Single class instance or null (auto-adds LIMIT 1) |
 | `getOneOrFail()` | `T` | Single class instance (throws `EntityNotFoundError` if not found) |
 | `getManyAndCount()` | `[T[], number]` | Class instances + total count in parallel |
+| `paginate(opts?)` | `PagePaginationResult<T>` | One offset page (class instances) + pagination metadata |
 
 These always deserialize rows into entity class instances. `instanceof` works, class methods are available, results can be passed to `em.save()`. When `select()` is used with specific columns, non-nullable columns must be included — otherwise an `OrmError` is thrown.
 
@@ -351,6 +398,7 @@ These always deserialize rows into entity class instances. `instanceof` works, c
 | `getPartialMany()` | `TResult[]` | Plain objects with `Pick<T, K>` narrowing |
 | `getPartialOne()` | `TResult \| null` | Single plain object or null |
 | `getPartialManyAndCount()` | `[TResult[], number]` | Plain objects + total count |
+| `paginatePartial(opts?)` | `PagePaginationResult<TResult>` | One offset page (plain objects) + pagination metadata |
 
 No deserialization, no required-column validation. When `select(["id", "name"])` is used, the return type narrows to `Pick<T, "id" | "name">[]` — accessing unselected columns is a compile error. Do not pass results to `em.save()`.
 

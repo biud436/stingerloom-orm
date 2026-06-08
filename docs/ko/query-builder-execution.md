@@ -32,6 +32,50 @@ console.log(users.length); // 최대 10
 console.log(total);        // 예: 235
 ```
 
+### `paginate()` — 페이지 데이터와 메타데이터를 한 번에
+
+`getManyAndCount()`는 `[rows, total]` 튜플만 돌려주기 때문에 `totalPages`나
+`hasNextPage` 같은 값은 매번 직접 계산해야 합니다. `paginate()`는
+[`em.findWithPage()`](./pagination.md)의 쿼리 빌더 버전으로, 1-based `page`와
+`pageSize`를 넘기면 페이지 데이터와 함께 페이지네이션 메타데이터 전체를 돌려줍니다.
+
+```typescript
+const result = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoin(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .where("p.status", "published")
+  .orderBy({ createdAt: "DESC" })
+  .paginate({ page: 2, pageSize: 10 });
+
+result.data;            // 2페이지의 Post[] (클래스 인스턴스)
+result.total;           // 전체 일치 행 수 — LIMIT/OFFSET 무시
+result.page;            // 2
+result.pageSize;        // 10
+result.totalPages;      // Math.ceil(total / pageSize)
+result.hasNextPage;     // page < totalPages
+result.hasPreviousPage; // page > 1
+```
+
+`page`/`pageSize`는 `findWithPage()`와 동일하게 정규화됩니다 — 0 이하나 소수 값은
+보정됩니다(기본값: `page` 1, `pageSize` 20). 빌더에 미리 설정한
+`limit`/`offset`/`skip`/`take`는 페이지 윈도우로 덮어쓰이며, 원본 빌더는 **변경되지
+않습니다** — LIMIT/OFFSET은 복제본에 적용되므로 같은 인스턴스를 다시 페이징하거나
+재사용할 수 있어요.
+
+특정 컬럼만 뽑는 목록 화면에서는 `paginatePartial()`을 쓰세요. `paginate()`와 동일하지만
+`getPartialMany()`를 통해 plain `Pick<T, K>` 객체를 돌려주므로, 필수 컬럼을 빠뜨린
+부분 `select()`도 허용됩니다(`getMany()` 기반인 `paginate()`는 거부합니다).
+
+```typescript
+const page = await em
+  .createQueryBuilder(Post, "p")
+  .select(["id", "title"])
+  .orderBy({ id: "DESC" })
+  .paginatePartial({ page: 1, pageSize: 20 });
+
+page.data; // Pick<Post, "id" | "title">[] — 엔티티가 아닌 plain object
+```
+
 > 커서 기반 페이지네이션, 스트리밍, 전략 선택 가이드는 [페이지네이션 & 스트리밍](./pagination.md)에 있습니다.
 
 ## 비관적 잠금
@@ -362,6 +406,7 @@ const users = await em
 | `getOne()` | `T \| null` | 단일 인스턴스 또는 null (자동으로 `LIMIT 1`) |
 | `getOneOrFail()` | `T` | 단일 인스턴스 (결과 없으면 `EntityNotFoundError`) |
 | `getManyAndCount()` | `[T[], number]` | 인스턴스 배열 + 총 개수 병렬 실행 |
+| `paginate(opts?)` | `PagePaginationResult<T>` | 오프셋 한 페이지(인스턴스) + 페이지네이션 메타데이터 |
 
 행을 항상 엔티티 클래스 인스턴스로 역직렬화합니다. `instanceof`가 동작하고, 클래스 메서드를 쓸 수 있고, `em.save()`에 그대로 넘길 수 있어요. `select()`로 일부 컬럼을 고르는 경우에는 not-null 컬럼이 반드시 포함돼야 합니다 — 아니면 `OrmError`를 던져요.
 
@@ -372,6 +417,7 @@ const users = await em
 | `getPartialMany()` | `TResult[]` | `Pick<T, K>`로 좁혀진 plain object |
 | `getPartialOne()` | `TResult \| null` | 단일 plain object 또는 null |
 | `getPartialManyAndCount()` | `[TResult[], number]` | plain object 배열 + 총 개수 |
+| `paginatePartial(opts?)` | `PagePaginationResult<TResult>` | 오프셋 한 페이지(plain object) + 페이지네이션 메타데이터 |
 
 역직렬화도, 필수 컬럼 검증도 하지 않습니다. `select(["id", "name"])`를 쓰면 반환 타입이 `Pick<T, "id" | "name">[]`로 좁혀져요 — 선택하지 않은 컬럼에 접근하면 컴파일 에러입니다. `em.save()`에는 넘기지 마세요.
 

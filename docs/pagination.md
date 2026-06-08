@@ -88,6 +88,50 @@ LIMIT 10 OFFSET 0
 SELECT COUNT(*) FROM "post"
 ```
 
+### paginate() -- Page Data Plus Metadata
+
+`findAndCount()` returns a bare `[rows, total]` tuple. When you want the count
+*and* the derived page metadata (`totalPages`, `hasNextPage`, …), the query
+builder's `paginate()` returns the whole envelope from a 1-based `page` /
+`pageSize`. This is the natural fit when the query is assembled through the
+builder (joins, `qAlias` conditions, subqueries) rather than a plain `FindOption`.
+
+```typescript
+const result = await em
+  .createQueryBuilder(Post, "p")
+  .where("p.isPublished", true)
+  .orderBy({ createdAt: "DESC" })
+  .paginate({ page: 2, pageSize: 10 });
+
+result.data;            // Post[] for page 2
+result.total;           // 235
+result.page;            // 2
+result.pageSize;        // 10
+result.totalPages;      // 24
+result.hasNextPage;     // true
+result.hasPreviousPage; // true
+```
+
+`page`/`pageSize` are normalized the same way as `findWithPage()` (non-positive →
+1, fractional → floored; defaults `page` 1 / `pageSize` 20), and `paginate()`
+clones the builder so the source instance keeps no LIMIT/OFFSET and can be paged
+again. For projected list views (`select(["id", "title"])`) use
+`paginatePartial()`, which returns plain `Pick<T, K>` objects instead of entity
+instances.
+
+The shape is identical to `em.findWithPage()`, so the two are interchangeable
+depending on whether you start from a `FindOption` or a builder:
+
+```typescript
+// FindOption-based — same PagePaginationResult shape
+const result = await em.findWithPage(Post, {
+  where: { isPublished: true },
+  orderBy: { createdAt: "DESC" },
+  page: 2,
+  pageSize: 10,
+});
+```
+
 ### When to Use Offset Pagination
 
 - Users need to jump to page 5 or page 50 directly

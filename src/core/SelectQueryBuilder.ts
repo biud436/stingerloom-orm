@@ -11,6 +11,11 @@ import { EntityNotFoundError } from "../errors/EntityNotFoundError";
 import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import { CompiledQuery } from "./CompiledQuery";
+import {
+  normalizePage,
+  normalizePageSize,
+  type PagePaginationResult,
+} from "./PagePagination";
 import { coerceRows, type RawResultOptions } from "./RawValueCoercion";
 import { COLUMN_TOKEN } from "../decorators/Column";
 import { InheritanceResolver } from "./InheritanceResolver";
@@ -3826,6 +3831,116 @@ export class SelectQueryBuilder<T, TResult = T> {
       this.getCount(),
     ]);
     return [results, count];
+  }
+
+  /**
+   * Execute the query as an offset-based page and return the page data
+   * together with pagination metadata (`total`, `totalPages`,
+   * `hasNextPage`, `hasPreviousPage`).
+   *
+   * This is the query-builder counterpart to `EntityManager.findWithPage()`
+   * — use it when the query was assembled through the builder (joins,
+   * `qAlias` conditions, subqueries, …) instead of a plain `FindOption`.
+   * It removes the repeated `getManyAndCount()` + `Math.ceil()` boilerplate
+   * that every paginated endpoint otherwise hand-rolls.
+   *
+   * `page` is 1-based and `pageSize` defaults to 20; both are normalized
+   * the same way as `findWithPage()` (non-positive / fractional values are
+   * coerced to a sane value). Any `limit`/`offset`/`skip`/`take` previously
+   * set on the builder is overridden by `page`/`pageSize`. The builder
+   * itself is not mutated — a clone carries the LIMIT/OFFSET — so the same
+   * instance can be paged again or reused for a different query.
+   *
+   * @example
+   * ```ts
+   * const result = await em
+   *   .createQueryBuilder(Post, "p")
+   *   .leftJoin(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+   *   .where("p.status", "published")
+   *   .orderBy({ createdAt: "DESC" })
+   *   .paginate({ page: 2, pageSize: 10 });
+   *
+   * result.data;          // Post[] for page 2
+   * result.total;         // total matching rows (ignores LIMIT/OFFSET)
+   * result.totalPages;    // Math.ceil(total / pageSize)
+   * result.hasNextPage;   // page < totalPages
+   * ```
+   */
+  async paginate(
+    options: { page?: number; pageSize?: number } = {},
+  ): Promise<PagePaginationResult<TResult>> {
+    const page = normalizePage(options.page);
+    const pageSize = normalizePageSize(options.pageSize);
+    const offset = (page - 1) * pageSize;
+
+    const paged = this.clone();
+    paged.offsetValue = offset;
+    paged.limitValue = pageSize;
+
+    // Run the count and the page sequentially rather than via
+    // getManyAndCount()'s Promise.all: SQLite has a single connection and
+    // cannot hold two concurrent transactions, so parallel reads would
+    // throw "cannot start a transaction within a transaction" there.
+    const total = await paged.getCount();
+    const data = await paged.getMany();
+    return this.buildPage(data, total, page, pageSize);
+  }
+
+  /**
+   * Offset-pagination variant of {@link paginate} that returns plain
+   * objects via {@link getPartialMany} instead of deserialized entity
+   * instances.
+   *
+   * Use this for projected list views (`select(["id", "title"])`) where
+   * the page data does not need to be a class instance — `paginate()`
+   * uses `getMany()`, which rejects partial selects that omit required
+   * columns, whereas this method allows them. Mirrors the
+   * `getManyAndCount()` / `getPartialManyAndCount()` pairing.
+   *
+   * @example
+   * ```ts
+   * const page = await em
+   *   .createQueryBuilder(Post, "p")
+   *   .select(["id", "title"])
+   *   .orderBy({ id: "DESC" })
+   *   .paginatePartial({ page: 1, pageSize: 20 });
+   *
+   * page.data; // Pick<Post, "id" | "title">[] — plain objects, not entities
+   * ```
+   */
+  async paginatePartial(
+    options: { page?: number; pageSize?: number } = {},
+  ): Promise<PagePaginationResult<TResult>> {
+    const page = normalizePage(options.page);
+    const pageSize = normalizePageSize(options.pageSize);
+    const offset = (page - 1) * pageSize;
+
+    const paged = this.clone();
+    paged.offsetValue = offset;
+    paged.limitValue = pageSize;
+
+    const total = await paged.getCount();
+    const data = await paged.getPartialMany();
+    return this.buildPage(data, total, page, pageSize);
+  }
+
+  /** @internal Assemble the page-pagination metadata envelope. */
+  private buildPage(
+    data: TResult[],
+    total: number,
+    page: number,
+    pageSize: number,
+  ): PagePaginationResult<TResult> {
+    const totalPages = Math.ceil(total / pageSize);
+    return {
+      data,
+      total,
+      page,
+      pageSize,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1,
+    };
   }
 
   // ── EXECUTION: Partial (typed plain objects) ───────────
