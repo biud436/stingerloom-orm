@@ -322,10 +322,11 @@ class SelectQueryBuilder<T, TResult = T> {
 
   // ── WHERE ──────────────────────────────────────────────
   where(condition: Sql): this;
+  where(clause: WhereClause<T> | WhereClause<T>[]): this; // find()-style filter object
   where(column: keyof T & string, value: any): this;
   where(column: keyof T & string, operator: string, value: any): this;
-  andWhere(...): this;
-  orWhere(...): this;
+  andWhere(...): this;  // same overloads as where(), incl. WhereClause
+  orWhere(...): this;   // same overloads as where(), incl. WhereClause
   whereIn(column: keyof T & string, values: any[]): this;
   whereNotIn(column: keyof T & string, values: any[]): this;
   whereNull(column: keyof T & string): this;

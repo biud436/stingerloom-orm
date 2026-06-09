@@ -322,10 +322,11 @@ class SelectQueryBuilder<T, TResult = T> {
 
   // ── WHERE ──────────────────────────────────────────────
   where(condition: Sql): this;
+  where(clause: WhereClause<T> | WhereClause<T>[]): this; // find() 스타일 필터 객체
   where(column: keyof T & string, value: any): this;
   where(column: keyof T & string, operator: string, value: any): this;
-  andWhere(...): this;
-  orWhere(...): this;
+  andWhere(...): this;  // where()와 동일한 오버로드 (WhereClause 포함)
+  orWhere(...): this;   // where()와 동일한 오버로드 (WhereClause 포함)
   whereIn(column: keyof T & string, values: any[]): this;
   whereNotIn(column: keyof T & string, values: any[]): this;
   whereNull(column: keyof T & string): this;

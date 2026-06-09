@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import sql, { Sql, raw, join } from "sql-template-tag";
 import { Conditions } from "./Conditions";
+import { resolveWhereClause, type WhereResolverOptions } from "./WhereResolver";
+import type { WhereClause } from "../dialects/FindOption";
 import { EntityManager } from "./EntityManager";
 import { ClazzType } from "../utils/types";
 import { RawQueryBuilder } from "./RawQueryBuilder";
@@ -1606,6 +1608,87 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
+   * @internal Build the {@link WhereResolverOptions} used to translate a
+   * Prisma-style {@link WhereClause} object into qualified SQL conditions —
+   * the same resolver `EntityManager.find()` uses. Columns are qualified
+   * with the builder's main alias (so `{ status: "active" }` becomes
+   * `"u"."status" = ?`), property names map through the NamingStrategy via
+   * `col()`, and the dialect / dialect-expression strategy are threaded so
+   * `ilike` / `search` operators render correctly.
+   */
+  private whereClauseResolverOptions(): WhereResolverOptions {
+    const ctx = (this.em as any)._ctx;
+    const dialect: "mysql" | "postgres" | "sqlite" = ctx?.isMySqlFamily?.()
+      ? "mysql"
+      : ctx?.isSqlite?.()
+        ? "sqlite"
+        : "postgres";
+    return {
+      wrapColumn: (name: string) => this.em.wrap(name),
+      qualified: true,
+      // col() handles property→column mapping, main-alias qualification,
+      // and TPT parent-column routing in one step.
+      qualifyColumn: (dbColumnName: string) => this.col(dbColumnName),
+      dialect,
+      dialectExpression: this.dialectExpression,
+    };
+  }
+
+  /**
+   * @internal Runtime guard: is `value` a plain `WhereClause` object (or
+   * array of them) rather than a `Sql`, a QueryDSL condition/expression,
+   * an `EntityRef`, or a subquery builder? Used by `where()`/`andWhere()`/
+   * `orWhere()` to route the filter-object overload without colliding with
+   * the existing condition overloads.
+   */
+  private isPlainWhereClause(
+    value: unknown,
+  ): value is WhereClause<T> | WhereClause<T>[] {
+    if (value === null || typeof value !== "object") return false;
+    if (Array.isArray(value)) {
+      // OR-group form: only treat as a where-clause array when every
+      // element is itself a plain object (not e.g. a list of Sql fragments).
+      return value.every(
+        (el) =>
+          el !== null && typeof el === "object" && this.isPlainWhereClause(el),
+      );
+    }
+    const o = value as Record<string, unknown>;
+    if ("sql" in o && "values" in o) return false; // Sql
+    if (
+      o.__isCondition ||
+      o.__isColumnExpression ||
+      o.__isScalarExpression ||
+      o.__isAggregateExpression
+    ) {
+      return false; // QueryDSL condition / expression
+    }
+    if (typeof o._alias === "string" && typeof o._entity === "function") {
+      return false; // EntityRef / QEntity proxy
+    }
+    if (typeof (o as { toSql?: unknown }).toSql === "function") {
+      return false; // subquery-like builder
+    }
+    return true;
+  }
+
+  /**
+   * @internal Resolve a `WhereClause` object/array into a single combined
+   * `Sql` condition (keys AND-ed; array elements OR-ed), or `null` when the
+   * clause is empty (`{}` / `[]`) so callers can skip pushing a no-op.
+   */
+  private whereClauseToSql(
+    clause: WhereClause<T> | WhereClause<T>[],
+  ): Sql | null {
+    const resolved = resolveWhereClause<T>(
+      clause,
+      this.whereClauseResolverOptions(),
+    );
+    if (resolved.length === 0) return null;
+    return resolved.length === 1 ? resolved[0] : Conditions.and(resolved);
+  }
+
+  /**
    * Build a property-to-column map from entity metadata.
    * Duplicates EntityManager.buildPropertyToColumnMap logic to avoid
    * depending on its private visibility.
@@ -1897,17 +1980,27 @@ export class SelectQueryBuilder<T, TResult = T> {
   where(condition: AggregateCondition): this;
   where(condition: LogicalCondition): this;
   where(condition: ConditionLike): this;
+  where(clause: WhereClause<T> | WhereClause<T>[]): this;
   where(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   where(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   where(column: string, value: any): this;
   where(column: string, operator: WhereOperator, value: any): this;
   where(
-    columnOrCondition: string | Sql | ConditionLike,
+    columnOrCondition: string | Sql | ConditionLike | WhereClause<T> | WhereClause<T>[],
     operatorOrValue?: any,
     value?: any,
   ): this {
+    if (
+      operatorOrValue === undefined &&
+      value === undefined &&
+      this.isPlainWhereClause(columnOrCondition)
+    ) {
+      const cond = this.whereClauseToSql(columnOrCondition);
+      if (cond) this.whereClauses.push(cond);
+      return this;
+    }
     this.whereClauses.push(
-      this.resolveCondition(columnOrCondition, operatorOrValue, value),
+      this.resolveCondition(columnOrCondition as any, operatorOrValue, value),
     );
     return this;
   }
@@ -1921,17 +2014,27 @@ export class SelectQueryBuilder<T, TResult = T> {
   andWhere(condition: AggregateCondition): this;
   andWhere(condition: LogicalCondition): this;
   andWhere(condition: ConditionLike): this;
+  andWhere(clause: WhereClause<T> | WhereClause<T>[]): this;
   andWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   andWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   andWhere(column: string, value: any): this;
   andWhere(column: string, operator: WhereOperator, value: any): this;
   andWhere(
-    columnOrCondition: string | Sql | ConditionLike,
+    columnOrCondition: string | Sql | ConditionLike | WhereClause<T> | WhereClause<T>[],
     operatorOrValue?: any,
     value?: any,
   ): this {
+    if (
+      operatorOrValue === undefined &&
+      value === undefined &&
+      this.isPlainWhereClause(columnOrCondition)
+    ) {
+      const cond = this.whereClauseToSql(columnOrCondition);
+      if (cond) this.whereClauses.push(cond);
+      return this;
+    }
     this.whereClauses.push(
-      this.resolveCondition(columnOrCondition, operatorOrValue, value),
+      this.resolveCondition(columnOrCondition as any, operatorOrValue, value),
     );
     return this;
   }
@@ -1945,20 +2048,32 @@ export class SelectQueryBuilder<T, TResult = T> {
   orWhere(condition: AggregateCondition): this;
   orWhere(condition: LogicalCondition): this;
   orWhere(condition: ConditionLike): this;
+  orWhere(clause: WhereClause<T> | WhereClause<T>[]): this;
   orWhere(column: ColumnOf<T>, value: T[ColumnOf<T>] | Sql | null): this;
   orWhere(column: ColumnOf<T>, operator: WhereOperator, value: any): this;
   orWhere(column: string, value: any): this;
   orWhere(column: string, operator: WhereOperator, value: any): this;
   orWhere(
-    columnOrCondition: string | Sql | ConditionLike,
+    columnOrCondition: string | Sql | ConditionLike | WhereClause<T> | WhereClause<T>[],
     operatorOrValue?: any,
     value?: any,
   ): this {
-    const cond = this.resolveCondition(
-      columnOrCondition,
-      operatorOrValue,
-      value,
-    );
+    let cond: Sql | null;
+    if (
+      operatorOrValue === undefined &&
+      value === undefined &&
+      this.isPlainWhereClause(columnOrCondition)
+    ) {
+      cond = this.whereClauseToSql(columnOrCondition);
+      // Empty clause ({} / []) — nothing to OR in.
+      if (!cond) return this;
+    } else {
+      cond = this.resolveCondition(
+        columnOrCondition as any,
+        operatorOrValue,
+        value,
+      );
+    }
     if (this.whereClauses.length === 0) {
       this.whereClauses.push(cond);
     } else {

@@ -102,7 +102,7 @@ const users = await em
 
 ### WHERE — 행 거르기
 
-`where()`는 조건 복잡도에 맞춰 세 가지 스타일을 받습니다.
+`where()`는 조건 복잡도에 맞춰 네 가지 스타일을 받습니다.
 
 **Equals** — 가장 단순한 형태. 컬럼과 값만 넘기면 됩니다.
 
@@ -130,7 +130,37 @@ import sql from "sql-template-tag";
 qb.where(sql`"u"."score" > ${90}`);
 ```
 
-세 스타일 모두 타입이 안전합니다. 컬럼명(`"age"`, `"status"`)이 `keyof User`에서 자동완성되고, 오타는 컴파일 에러로 잡힙니다.
+**필터 객체** — `em.find({ where })`에서 쓰던 Prisma 스타일 `WhereClause` 객체를 그대로
+넘깁니다. `find()`와 쿼리 빌더 사이에서 필터를 튜플로 다시 쓰지 않고 재사용할 수 있어요.
+키는 AND로 묶이고, 값은 리터럴·연산자 객체(`{ gte, lt, in, contains, … }`)·`null`(→ `IS NULL`)·
+배열(→ `IN`)이 될 수 있습니다. `OR` / `AND` / `NOT` 조합자도 동작하며, 클래스 배열을 넘기면
+그룹들이 OR로 묶입니다.
+
+```typescript
+qb.where({
+  status: "active",
+  age: { gte: 18, lt: 65 },
+  role: { in: ["admin", "editor"] },
+  name: { contains: "ali" },          // LIKE '%ali%' (와일드카드 이스케이프됨)
+  OR: [{ role: "owner" }, { score: { gte: 90 } }],
+});
+// WHERE "u"."status" = $1 AND ("u"."age" >= $2 AND "u"."age" < $3)
+//   AND "u"."role" IN ($4, $5) AND "u"."name" LIKE $6
+//   AND ("u"."role" = $7 OR "u"."score" >= $8)
+
+// 배열 형태 → 그룹들을 OR로 결합
+qb.where([
+  { status: "active", role: "admin" },
+  { score: { gte: 90 } },
+]);
+// WHERE (("u"."status" = $1 AND "u"."role" = $2) OR "u"."score" >= $3)
+```
+
+`andWhere()` / `orWhere()`도 같은 필터 객체를 받고, 튜플 / Raw SQL 형태와 자유롭게 섞입니다.
+컬럼은 빌더의 alias로 한정되고 `NamingStrategy`로 매핑돼요 — `find()`와 동일합니다.
+
+컬럼명 형태는 모두 타입이 안전합니다. `"age"` / `"status"`가 `keyof User`에서 자동완성되고,
+필터 객체의 키도 엔티티 기준으로 검사되므로 오타는 컴파일 에러로 잡힙니다.
 
 ### 조건 엮기 — AND와 OR
 

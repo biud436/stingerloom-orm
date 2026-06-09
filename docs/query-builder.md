@@ -108,7 +108,7 @@ The `"u"` in `createQueryBuilder(User, "u")` is a **table alias**. It's the shor
 
 ### WHERE — Filtering Rows
 
-The `where()` method supports three styles, depending on the complexity of your condition.
+The `where()` method supports four styles, depending on the complexity of your condition.
 
 **Equals** — the simplest form. Pass a column name and a value.
 
@@ -136,7 +136,40 @@ import sql from "sql-template-tag";
 qb.where(sql`"u"."score" > ${90}`);
 ```
 
-All three styles are type-safe — the column name (`"age"`, `"status"`) auto-completes from `keyof User`. A typo becomes a compile error.
+**Filter object** — pass the same Prisma-style `WhereClause` object you use with
+`em.find({ where })`. This lets you reuse filters between `find()` and the query
+builder without rewriting them as tuples. Keys are AND-ed; values may be literals,
+operator objects (`{ gte, lt, in, contains, … }`), `null` (→ `IS NULL`), or arrays
+(→ `IN`). The `OR` / `AND` / `NOT` combinators work too, and an array of clauses is
+OR-ed together.
+
+```typescript
+qb.where({
+  status: "active",
+  age: { gte: 18, lt: 65 },
+  role: { in: ["admin", "editor"] },
+  name: { contains: "ali" },          // LIKE '%ali%' (wildcards escaped)
+  OR: [{ role: "owner" }, { score: { gte: 90 } }],
+});
+// WHERE "u"."status" = $1 AND ("u"."age" >= $2 AND "u"."age" < $3)
+//   AND "u"."role" IN ($4, $5) AND "u"."name" LIKE $6
+//   AND ("u"."role" = $7 OR "u"."score" >= $8)
+
+// Array form → groups OR-ed together
+qb.where([
+  { status: "active", role: "admin" },
+  { score: { gte: 90 } },
+]);
+// WHERE (("u"."status" = $1 AND "u"."role" = $2) OR "u"."score" >= $3)
+```
+
+`andWhere()` and `orWhere()` accept the same filter object, and it composes freely
+with the tuple / raw-SQL forms. Columns are qualified with the builder's alias and
+mapped through your `NamingStrategy`, identical to `find()`.
+
+The column-name forms are type-safe — `"age"` / `"status"` auto-complete from
+`keyof User`, and filter-object keys are checked against the entity, so a typo
+becomes a compile error.
 
 ### Combining Conditions — AND, OR
 
