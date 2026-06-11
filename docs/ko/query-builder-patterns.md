@@ -218,6 +218,43 @@ const posts = await em
 // SELECT "p".*, (SELECT ... LIMIT 1) AS "latestComment" FROM ...
 ```
 
+### 상관 서브쿼리 — `(outer) => subQb` 팩토리
+
+`addSelectSubquery()`, `whereExistsSubquery()`, `whereNotExistsSubquery()`는 **팩토리** `(outer) => subQb`도 받습니다. `outer("alias.prop")` 리졸버는 외부 쿼리 컬럼의 escape된 식별자를 `Sql` 조각으로 돌려줘요. 덕분에 서브쿼리가 타입드 표면을 통해 외부 행을 참조할 수 있고 — `sql` 문자열에 다이얼렉트별 식별자를 손으로 박는 대신 — 상관 조건 안에서도 NamingStrategy와 `@Column({ name })` 매핑이 그대로 동작합니다.
+
+```typescript
+import sql from "sql-template-tag";
+
+// 중첩 집합 트리에서 노드별 하위 게시글 수
+const nodes = await em
+  .createQueryBuilder(Category, "node")
+  .addSelectSubquery(
+    (outer) =>
+      em.createQueryBuilder(Post, "p")
+        .selectRaw(["COUNT(*)"])
+        .innerJoin(Category, "a", (j) => j.on("p.categoryId", "=", "a.id"))
+        .where(sql`${outer("a.lft")} BETWEEN ${outer("node.lft")} AND ${outer("node.rgt")}`),
+    "postCount",
+  )
+  .getRawMany();
+// outer("node.lft")는 외부 행 컬럼의 escape된 식별자로 렌더링됩니다
+// (예: "node"."lft" — @Column({ name: "LFT_NO" })라면 "node"."LFT_NO")
+```
+
+같은 팩토리가 `EXISTS`에도 통합니다.
+
+```typescript
+const usersWithBigOrders = await em
+  .createQueryBuilder(User, "u")
+  .whereExistsSubquery((outer) =>
+    em.createQueryBuilder(Order, "o")
+      .select(["id"])
+      .where(sql`"o"."user_id" = ${outer("u.id")}`)
+      .where("total", ">=", 100),
+  )
+  .getMany();
+```
+
 ## Scope — 이름 붙은 쿼리 조각
 
 엔티티에 static 프로퍼티로 스코프를 정의할 수 있습니다.

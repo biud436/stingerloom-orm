@@ -3,6 +3,7 @@ import sql, { Sql, raw, join } from "sql-template-tag";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import { OrderExpression } from "./OrderExpression";
+import { ScalarExpression } from "./ScalarExpression";
 
 /**
  * Renderer for an aggregate's *argument* expression. Used when the
@@ -135,6 +136,41 @@ export class AggregateExpression {
   }
   between(min: any, max: any): AggregateCondition {
     return new AggregateCondition(this, "BETWEEN", [min, max]);
+  }
+
+  // ── Scalar bridge (#372) — arithmetic on aggregate results ──
+
+  /**
+   * Convert this aggregate into a {@link ScalarExpression} so the full
+   * scalar DSL (arithmetic, CAST, ordering helpers) composes on top of
+   * the aggregate result.
+   *
+   * @example
+   * ```ts
+   * e.count("node.name").toScalar().sub(1)   // COUNT(node.name) - 1
+   * ```
+   */
+  toScalar(): ScalarExpression {
+    return new ScalarExpression((resolveColumn, dialect) =>
+      this.renderFunction(resolveColumn, dialect),
+    );
+  }
+
+  /** `agg + right` — shorthand for `.toScalar().add(right)`. */
+  add(right: unknown): ScalarExpression {
+    return this.toScalar().add(right);
+  }
+  /** `agg - right` — e.g. `COUNT(node.name) - 1 AS depth` in nested-set queries. */
+  sub(right: unknown): ScalarExpression {
+    return this.toScalar().sub(right);
+  }
+  /** `agg * right` — shorthand for `.toScalar().mul(right)`. */
+  mul(right: unknown): ScalarExpression {
+    return this.toScalar().mul(right);
+  }
+  /** `agg / right` — shorthand for `.toScalar().div(right)`. */
+  div(right: unknown): ScalarExpression {
+    return this.toScalar().div(right);
   }
 
   // ── Ordering helpers — use the aggregate as an ORDER BY target ──

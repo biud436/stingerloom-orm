@@ -159,6 +159,26 @@ qb.leftJoin(User, "u", (join) =>
 );
 ```
 
+### Range-Containment ON — `onBetween()`
+
+For range-containment self-joins (nested sets, interval trees), `onBetween(ref, lowRef, highRef)` compares a column against two other **column references**, and `onValBetween(ref, low, high)` takes literal bounds that are bound as parameters:
+
+```typescript
+// SELECT ... FROM category node JOIN category parent
+//   ON node.lft BETWEEN parent.lft AND parent.rgt
+const tree = await em
+  .createQueryBuilder(Category, "node")
+  .innerJoin(Category, "parent", (j) =>
+    j.onBetween("node.lft", "parent.lft", "parent.rgt"),
+  )
+  .getRawMany();
+
+// Literal bounds — parameter-bound
+qb.innerJoin(Category, "sub", (j) => j.onValBetween("sub.lft", 1, 42));
+```
+
+`andOnBetween()` chains an additional range condition with AND semantics. All three resolve their references through the alias registry, so NamingStrategy and `@Column({ name })` mappings apply.
+
 ## Relation-Based Joins (Automatic ON)
 
 If your entities have `@ManyToOne` / `@OneToMany` / `@OneToOne` decorators, you can skip the ON condition entirely. The ORM derives it from the relation metadata.
@@ -191,20 +211,15 @@ const users = await em
 
 ## JoinAndSelect — Join + Auto SELECT
 
-When you want to include all columns from the joined entity in the result, use the `*AndSelect` variants. This is equivalent to doing a join + manually selecting every column — but in one call.
+When you want to include all columns from the joined entity in the result, use the `*AndSelect` variants. This is equivalent to doing a join + manually selecting every column — but in one call, and entity reads hydrate the joined columns into the relation property:
 
 ```typescript
-// Before: manual join + selectRaw
-qb.leftJoin(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
-  .selectRaw(["p.id", "p.title", "u.id", "u.name", "u.email"]);
-
-// After: joinAndSelect does it automatically
-const results = await em
+const posts = await em
   .createQueryBuilder(Post, "p")
-  .leftJoinAndSelect(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .leftJoinRelationAndSelect("author", "u")
   .where("p.status", "published")
-  .getRawMany();
-// [{ id: 1, title: "...", id: 1, name: "Alice", email: "..." }, ...]
+  .getMany();
+// [Post { id: 1, title: "...", author: User { id: 7, name: "Alice" } }, ...]
 ```
 
 All `*AndSelect` variants:
@@ -216,14 +231,45 @@ All `*AndSelect` variants:
 | `leftJoinRelationAndSelect(property, alias)` | Relation LEFT JOIN + auto SELECT |
 | `innerJoinRelationAndSelect(property, alias)` | Relation INNER JOIN + auto SELECT |
 
-Relation-based example:
+### How columns are selected
+
+Every joined column is selected with an `alias_column` AS-alias (`` `u`.`id` AS `u_id` ``), and the root `alias.*` is expanded into explicit `alias_column`-aliased columns (`p_id`, `p_title`, …) at the same time. Because every column carries a unique prefix, a joined column can never clobber a same-named root column — both tables having an `id` is no longer a problem.
+
+### getMany() / getOne() — relation hydration
+
+Entity reads hydrate the prefixed columns back into the relation property:
+
+- `@ManyToOne` / `@OneToOne` — the joined row becomes a **nested object**; a LEFT JOIN miss becomes `null`.
+- `@OneToMany` — root rows are **deduped and grouped by primary key**, and the joined rows collect into an array; a miss yields an empty array `[]`.
 
 ```typescript
-const results = await em
-  .createQueryBuilder(Post, "p")
-  .leftJoinRelationAndSelect("author", "u")
-  .getRawMany();
+const users = await em
+  .createQueryBuilder(User, "u")
+  .leftJoinRelationAndSelect("posts", "p")
+  .getMany();
+// [User { id: 1, posts: [Post {...}, Post {...}] }, User { id: 2, posts: [] }]
+// — one User per group of joined rows, not one per row
 ```
+
+### getRawMany() — prefixed keys
+
+Raw reads expose the prefixes directly: the joined columns arrive as `u_id`, `u_username`, …, and the root columns as `p_id`, `p_title`, … when the root `*` was expanded.
+
+```typescript
+const rows = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoinAndSelect(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .getRawMany();
+// [{ p_id: 1, p_title: "...", u_id: 7, u_name: "Alice", ... }]
+```
+
+::: warning Behavioral change
+If you previously combined `getRawMany()` with `*AndSelect`, update your key access — joined (and expanded root) columns are now prefixed instead of flat. The flat form silently dropped same-named columns; the prefixed form keeps every value.
+:::
+
+### Entity-based joins and relation matching
+
+`leftJoinAndSelect(Entity, alias, on)` automatically matches the joined entity to a relation property on the root when one exists, so hydration works exactly as above even without `*RelationAndSelect`. If no relation matches, the columns are still alias-prefixed (no clobbering), but nothing is nested — read them via `getRawMany()`.
 
 ## String-Based Joins (Raw)
 

@@ -257,6 +257,19 @@ EntitySubscriber supports a wider set of events than global listeners, including
 
 All methods are optional -- implement only the ones you need.
 
+### The afterLoad Guarantee
+
+`afterLoad` fires for **every read path that returns entities** -- this is a guarantee you can build on:
+
+| Read path | Fires `afterLoad`? |
+|-----------|--------------------|
+| `find()` / `findOne()` | Yes |
+| Cursor pagination (`findWithCursor()`) | Yes |
+| Query builder `getMany()` / `getOne()` / `getManyAndCount()` / `paginate()` | Yes (entity results) |
+| `getRawMany()` / `getPartialMany()` | No -- raw and partial reads never fire it |
+
+If your subscriber decrypts a field or computes a derived value in `afterLoad`, you can rely on it running no matter how the entity was loaded -- switching a service from `find()` to a query builder does not silently skip the hook. Conversely, raw and partial projections are guaranteed to stay untouched.
+
 ### Concrete Use Cases
 
 **Cache invalidation:**

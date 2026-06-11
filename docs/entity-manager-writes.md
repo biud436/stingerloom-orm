@@ -82,6 +82,67 @@ The tradeoff is clear: `saveMany()` sends one query per item (slower for pure in
 
 ---
 
+## undefined vs null on INSERT -- Letting DB Defaults Apply
+
+### Why the distinction matters
+
+`save()` and `saveMany()` treat `undefined` as "**not provided**" (the same semantics as TypeORM and knex): a column whose entity value is `undefined` is **omitted from the INSERT column list**, so the database-side `DEFAULT` clause -- including `@Column({ default })` -- applies. An explicit `null` is different: the column is included and writes `NULL`.
+
+```typescript
+@Entity()
+class Article {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() title!: string;
+  @Column({ default: "draft" }) status!: string;
+  @Column({ nullable: true }) summary?: string;
+}
+
+const a = await em.save(Article, { title: "Hello" });
+// INSERT INTO "article" ("title") VALUES ($1)
+// -> "status" omitted, DB DEFAULT 'draft' applies
+a.status; // "draft"
+
+await em.save(Article, { title: "Hello", summary: null });
+// INSERT INTO "article" ("title", "summary") VALUES ($1, $2)
+// -> "summary" is included and explicitly writes NULL
+```
+
+Auto-populated columns are the exception: `@CreateTimestamp`, `@UpdateTimestamp`, `@Version`, and client-side UUID generation strategies are still included and injected even when their entity value is `undefined`.
+
+If every column ends up omitted, the ORM emits the dialect's all-defaults INSERT form:
+
+```sql
+-- MySQL / MariaDB
+INSERT INTO `t` () VALUES ()
+
+-- PostgreSQL / SQLite
+INSERT INTO "t" DEFAULT VALUES
+```
+
+For `saveMany()` batch inserts, all rows share one column set in the multi-row `VALUES` list. A column is omitted only when **no item in the batch** provides it; in mixed batches (some items provide the column, some don't), the column stays in the list and missing rows bind `NULL`.
+
+---
+
+## RETURNING Rows Map Back to Property Names
+
+On RETURNING-capable drivers (PostgreSQL, MariaDB 10.5+), the entity returned by `save()` is built from the `RETURNING *` row. That row is now routed through the ResultTransformer, so DB column names are mapped back to **entity property keys** -- covering `@Column({ name })` and NamingStrategy mappings like `SnakeNamingStrategy` -- and column transformer `from` functions are applied on the way out.
+
+```typescript
+@Entity()
+class Category {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column({ name: "LFT_NO" }) left!: number;
+}
+
+const saved = await em.save(Category, { left: 1 });
+saved.left;             // 1 -- property key, as declared on the class
+(saved as any).LFT_NO;  // undefined -- raw DB key no longer leaks through
+```
+
+Previously the returned object exposed raw DB keys (e.g. `LFT_NO` instead of `left`). The mapping applies to INSERT RETURNING, UPDATE RETURNING, and `saveMany()` batch RETURNING alike.
+
+---
+
 ## Batch Delete -- deleteMany()
 
 ### Why deleteMany() over multiple delete() calls?
@@ -109,6 +170,23 @@ If you need to delete by a condition rather than by PKs, use `delete()` with a W
 await em.delete(User, { isActive: false });
 ```
 :::
+
+### Operator criteria in delete() / softDelete() / restore()
+
+The criteria object is not limited to equality. `delete()`, `softDelete()`, and `restore()` accept the same find-style operator objects as `where` in reads -- `{ between: [a, b] }`, `{ gt }`, `{ gte }`, `{ lt }`, `{ lte }`, `{ in }`, `{ like }`, and the rest -- plus `null` for `IS NULL`. They are resolved by the same WhereResolver as the read paths (`updateMany()` already supported this).
+
+```typescript
+// Delete an entire nested-set subtree in one statement
+await em.delete(Category, { lft: { between: [node.lft, node.rgt] } });
+
+// Soft-delete stale drafts
+await em.softDelete(Post, { status: "draft", updatedAt: { lt: cutoff } });
+
+// null -> IS NULL
+await em.delete(Session, { userId: null });
+```
+
+Empty criteria still throw `DeleteWithoutConditionsError` -- the table-wide guard is unchanged.
 
 ---
 

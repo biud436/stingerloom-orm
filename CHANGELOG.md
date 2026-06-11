@@ -6,7 +6,23 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
-## [0.23.0] - 2026-06-07
+## [Unreleased]
+
+Insert/save correctness fixes and query-builder expressiveness distilled from the blog-api-server TypeORM migration (#368-#372). One behavioral note: `*AndSelect` + `getRawMany()` now returns `alias_column`-prefixed keys (the SELECT list is fully aliased to prevent column clobbering).
+
+### Added
+
+- **`JoinOnBuilder.onBetween()` / `andOnBetween()` / `onValBetween()` (#372)** - first-class range-containment ON conditions for nested-set / interval self-joins (`node.lft BETWEEN parent.lft AND parent.rgt`).
+- **Expression-builder `addSelect()` (#372)** - `qb.addSelect((e) => e.count("node.name").sub(1), "depth")` reuses the dialect-portable `@ComputedColumn` expression context for ad-hoc SELECT arithmetic; `AggregateExpression` gains `.toScalar()` / `.add()` / `.sub()` / `.mul()` / `.div()`.
+- **Correlated subquery factories (#372)** - `addSelectSubquery`, `whereExistsSubquery`, and `whereNotExistsSubquery` accept `(outer) => subQb`, where `outer("alias.prop")` resolves an outer-query column to its escaped identifier for typed correlation.
+- **Operator-object criteria on writes (#372)** - `delete()` / `softDelete()` / `restore()` accept find-style filter objects (`{ between: [a, b] }`, `{ gt }`, `{ lte }`, ...) and `null` (IS NULL) via the same resolver as reads; `updateMany` already did.
+- **QueryBuilder `afterLoad` parity (#371)** - `EntitySubscriber.afterLoad` now fires for `getMany()` / `getOne()` / `getManyAndCount()` / `paginate()` entity results, matching `find` / `findOne` / cursor pagination. Raw and partial reads stay raw.
+
+### Fixed
+
+- **`save()`/`saveMany()` wrote explicit NULL for unspecified columns (#368)** - columns whose value is `undefined` are omitted from the INSERT column list, so DB-side `DEFAULT` and `@Column({ default })` finally apply (TypeORM/knex semantics: `undefined` = not provided, `null` = explicit NULL). `@CreateTimestamp` / `@UpdateTimestamp` / `@Version` / client-side UUID injection is unchanged, and an all-omitted insert renders `() VALUES ()` (MySQL family) or `DEFAULT VALUES` (PostgreSQL/SQLite).
+- **`save()` RETURNING rows exposed raw DB column keys (#369)** - INSERT/UPDATE/batch RETURNING rows are routed through `ResultTransformer`, so the returned entity carries property keys (`@Column({ name })`, NamingStrategy) and column transformer `from` values; save-back of a returned entity no longer NULLs out custom-named columns.
+- **`*AndSelect` joined columns clobbered the root entity (#370)** - joined and root columns are SELECTed with `alias_column` aliases, and `getMany()` / `getOne()` hydrate the joined segment into the relation property: ManyToOne/OneToOne nest an object (or `null` on LEFT JOIN miss), OneToMany groups into a PK-deduped array. Previously duplicate column names let the joined entity overwrite root PKs/timestamps and the relation property stayed `undefined`.
 
 Decorator-free entity definitions, filter-first read/write shorthands, and a more explicit `synchronize` policy, plus a batch of correctness fixes shaken out of the `nestjs-linear-clone` reference example (soft-delete/aggregate parity, subscriber idempotency, relation hydration). Backward compatible - the single-value `synchronize` form and every existing decorator API keep working.
 

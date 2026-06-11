@@ -110,7 +110,6 @@ import {
   isNonTenantEntity,
 } from "../decorators/TenantColumn";
 import { VERSION_TOKEN } from "../decorators/Version";
-import { deserializeEntity } from "./deserializer/DeserializeEntity";
 import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
 import type { BufferPluginOptions } from "./plugin/buffer/BufferPreview";
 import type { RawPipeline, RawPipelineOptions } from "./plugin/raw-pipeline/RawPipeline";
@@ -1095,6 +1094,26 @@ export class EntityManager implements BaseEntityManager {
       if (sub.listenTo() === entityClass && typeof sub[method] === "function") {
         await (sub[method] as Function)(arg);
       }
+    }
+  }
+
+  /**
+   * #371: fires `afterLoad` subscribers for entities loaded outside the
+   * find/findOne paths (SelectQueryBuilder getMany/getOne entity results).
+   * Mirrors the find-path notification: one call per entity, keyed by the
+   * requested entity class. Raw/partial reads must not call this.
+   *
+   * @internal
+   */
+  async emitAfterLoad<T>(
+    entityClass: ClazzType<T>,
+    entities: T | T[] | null | undefined,
+  ): Promise<void> {
+    if (!entities) return;
+    const list = Array.isArray(entities) ? entities : [entities];
+    for (const loadedEntity of list) {
+      if (loadedEntity == null) continue;
+      await this.notifySubscribers(entityClass as any, "afterLoad", loadedEntity);
     }
   }
 
@@ -2287,12 +2306,33 @@ export class EntityManager implements BaseEntityManager {
         this.applyTenantColumnOnInsert(entity, item);
 
         const computedCols = this.getComputedColumnNames(entity);
+        // Resolved before the filter: these columns are auto-populated below
+        // (timestamps, version, client-side UUID PKs), so they must survive
+        // the undefined-value omission even when the entity has no value yet.
+        const createTsCol = this.resolver.getCreateTimestampColumn(entity);
+        const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
+        const versionCol = this.resolver.getVersionColumn(entity);
         const insertableColumns = metadata.columns.filter(
           (column: ColumnMetadata) => {
             if (computedCols.has(column.name!)) return false;
             const isAutoIncrement = column.options?.autoIncrement;
             const value = (item as any)[this.propKey(column)];
             if (isAutoIncrement && (value === null || value === undefined)) {
+              return false;
+            }
+            if (value === undefined) {
+              const strategy = column.options?.generationStrategy;
+              if (strategy === "uuid" || strategy === "uuid-v7") return true;
+              if (
+                column.name === createTsCol ||
+                column.name === updateTsCol ||
+                column.name === versionCol
+              ) {
+                return true;
+              }
+              // #368: undefined means "not provided" — omit the column so the
+              // DB-side DEFAULT (and @Column({ default })) applies. An explicit
+              // null still writes NULL.
               return false;
             }
             return true;
@@ -2311,7 +2351,6 @@ export class EntityManager implements BaseEntityManager {
         // Auto-inject @CreateTimestamp / @UpdateTimestamp values (on INSERT)
         const now = new Date();
         const nowStr = formatDateTimeForSQL(now);
-        const createTsCol = this.resolver.getCreateTimestampColumn(entity);
         if (createTsCol) {
           const idx = insertableColumns.findIndex(
             (col: ColumnMetadata) => col.name === createTsCol,
@@ -2321,7 +2360,6 @@ export class EntityManager implements BaseEntityManager {
             values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : (existing ?? nowStr);
           }
         }
-        const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
         if (updateTsCol) {
           const idx = insertableColumns.findIndex(
             (col: ColumnMetadata) => col.name === updateTsCol,
@@ -2333,7 +2371,6 @@ export class EntityManager implements BaseEntityManager {
         }
 
         // Auto-initialize the @Version column
-        const versionCol = this.resolver.getVersionColumn(entity);
         if (versionCol) {
           const versionIdx = insertableColumns.findIndex(
             (col: ColumnMetadata) => col.name === versionCol,
@@ -2564,11 +2601,18 @@ export class EntityManager implements BaseEntityManager {
           ? raw(` RETURNING *`)
           : raw("");
 
-        const insertSql = sql`
+        // With every column omitted (all values undefined), `() VALUES ()` is
+        // only valid on the MySQL family — PostgreSQL/SQLite need DEFAULT VALUES.
+        const insertSql =
+          columns.length > 0
+            ? sql`
                         INSERT INTO ${raw(this.wrapTable(metadata.name!))}
                         (${join(columns, ", ")})
                         VALUES (${join(values, ", ")})${returningSql}
-                    `;
+                    `
+            : sql`INSERT INTO ${raw(this.wrapTable(metadata.name!))} ${raw(
+                this.isMySqlFamily() ? "() VALUES ()" : "DEFAULT VALUES",
+              )}${returningSql}`;
         const saveQueryStart = Date.now();
         this.beginTrackQuery();
         const queryResult = (await session.query<T>(insertSql)) as {
@@ -2624,7 +2668,13 @@ export class EntityManager implements BaseEntityManager {
 
           const hasEagerRelations = this.hasEagerRelations(entity);
           if (!hasEagerRelations) {
-            return deserializeEntity(entity, returnedRow) as T;
+            // #369: route the RETURNING row through ResultTransformer so DB
+            // column names map back to property keys (explicit @Column({name})
+            // and NamingStrategy) and column transformers apply on read.
+            return ResultTransformerFactory.create().toEntity(entity, {
+              results: [returnedRow],
+              fields: [],
+            } as any) as T;
           }
           const findWhere = buildPkFindWhere(returnedRow);
           const result = await this.findOneInternal(entity, {
@@ -2927,7 +2977,11 @@ export class EntityManager implements BaseEntityManager {
       } as UpdateEvent<T>);
 
       if (updateReturnedRow && !this.hasEagerRelations(entity)) {
-        return deserializeEntity(entity, updateReturnedRow) as T;
+        // #369: same column→property mapping as the INSERT RETURNING path.
+        return ResultTransformerFactory.create().toEntity(entity, {
+          results: [updateReturnedRow],
+          fields: [],
+        } as any) as T;
       }
 
       const result = await this.findOneInternal(entity, {
@@ -3036,7 +3090,21 @@ export class EntityManager implements BaseEntityManager {
         if (col.options?.autoIncrement) return false;
         // PostgreSQL uuid: rely on the DB DEFAULT
         if (col.options?.generationStrategy === "uuid" && this.isPostgres()) return false;
-        return true;
+        const strategy = col.options?.generationStrategy;
+        if (strategy === "uuid" || strategy === "uuid-v7") return true;
+        if (
+          col.name === createTsCol ||
+          col.name === updateTsCol ||
+          col.name === versionCol
+        ) {
+          return true;
+        }
+        // #368: omit a column no item provides so the DB DEFAULT applies.
+        // Mixed batches (some items provide it, some don't) keep a shared
+        // column set, so missing rows still bind NULL there.
+        return items.some(
+          (item) => (item as any)[this.propKey(col)] !== undefined,
+        );
       },
     );
 
@@ -3127,10 +3195,12 @@ export class EntityManager implements BaseEntityManager {
     let results: InstanceType<ClazzType<T>>[];
 
     if (useReturning && queryResult?.results?.length > 0 && !this.hasEagerRelations(entity)) {
-      // PostgreSQL RETURNING: deserialize directly without a re-read
-      results = queryResult.results.map(
-        (row: any) => deserializeEntity(entity, row) as InstanceType<ClazzType<T>>,
-      );
+      // PostgreSQL RETURNING: deserialize directly without a re-read.
+      // #369: ResultTransformer maps DB column names → property keys.
+      results = ResultTransformerFactory.create().toEntities(entity, {
+        results: queryResult.results,
+        fields: [],
+      } as any) as InstanceType<ClazzType<T>>[];
     } else {
       // Compute PK values → bulk SELECT WHERE pk IN (...)
       let pkValues: any[];
@@ -3339,19 +3409,15 @@ export class EntityManager implements BaseEntityManager {
       await this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria);
 
       const deletePropToCol = this.buildPropertyToColumnMap(metadata);
-      const whereMap: Sql[] = [];
-      for (const key in criteria) {
-        const value = (criteria as any)[key];
-        if (value !== undefined && value !== null) {
-          const dbCol = deletePropToCol.get(key) ?? key;
-          const col = this.wrap(dbCol);
-          whereMap.push(
-            Array.isArray(value)
-              ? Conditions.in(col, value)
-              : Conditions.equals(col, value),
-          );
-        }
-      }
+      // #372: write criteria accept find-style operator objects
+      // ({ between: [a, b] }, { gt }, { lte }, ...), arrays (IN) and
+      // null (IS NULL) via the same resolver as the read paths.
+      const whereMap: Sql[] = resolveWhereClause(criteria, {
+        wrapColumn: (n) => this.wrap(n),
+        dialect: this._ctx.getDialect(),
+        dialectExpression: createDialectExpression(this._ctx.getDialect()),
+        propertyToColumn: deletePropToCol,
+      });
 
       // STI: when deleting a child entity, add the discriminator condition
       const deleteStrategy = this.inheritanceResolver.getStrategy(entity);
@@ -3955,19 +4021,13 @@ export class EntityManager implements BaseEntityManager {
 
     return this.executeInTransaction(async (session) => {
       const sdPropToCol = this.buildPropertyToColumnMap(metadata);
-      const whereMap: Sql[] = [];
-      for (const key in criteria) {
-        const value = (criteria as any)[key];
-        if (value !== undefined && value !== null) {
-          const dbCol = sdPropToCol.get(key) ?? key;
-          const col = this.wrap(dbCol);
-          whereMap.push(
-            Array.isArray(value)
-              ? Conditions.in(col, value)
-              : Conditions.equals(col, value),
-          );
-        }
-      }
+      // #372: operator-object criteria — same resolver as the read paths.
+      const whereMap: Sql[] = resolveWhereClause(criteria, {
+        wrapColumn: (n) => this.wrap(n),
+        dialect: this._ctx.getDialect(),
+        dialectExpression: createDialectExpression(this._ctx.getDialect()),
+        propertyToColumn: sdPropToCol,
+      });
 
       if (whereMap.length === 0) {
         throw new DeleteWithoutConditionsError("Soft delete");
@@ -4023,19 +4083,13 @@ export class EntityManager implements BaseEntityManager {
 
     return this.executeInTransaction(async (session) => {
       const restorePropToCol = this.buildPropertyToColumnMap(metadata);
-      const whereMap: Sql[] = [];
-      for (const key in criteria) {
-        const value = (criteria as any)[key];
-        if (value !== undefined && value !== null) {
-          const dbCol = restorePropToCol.get(key) ?? key;
-          const col = this.wrap(dbCol);
-          whereMap.push(
-            Array.isArray(value)
-              ? Conditions.in(col, value)
-              : Conditions.equals(col, value),
-          );
-        }
-      }
+      // #372: operator-object criteria — same resolver as the read paths.
+      const whereMap: Sql[] = resolveWhereClause(criteria, {
+        wrapColumn: (n) => this.wrap(n),
+        dialect: this._ctx.getDialect(),
+        dialectExpression: createDialectExpression(this._ctx.getDialect()),
+        propertyToColumn: restorePropToCol,
+      });
 
       if (whereMap.length === 0) {
         throw new DeleteWithoutConditionsError("Restore");

@@ -255,6 +255,19 @@ EntitySubscriber는 global listener보다 더 많은 이벤트를 지원해요. 
 
 모든 메서드는 선택 사항이에요 -- 필요한 것만 구현하면 돼요.
 
+### afterLoad 보장
+
+`afterLoad`는 **엔티티를 반환하는 모든 조회 경로**에서 발화돼요 -- 믿고 설계해도 되는 보장이에요:
+
+| 조회 경로 | `afterLoad` 발화? |
+|-----------|------------------|
+| `find()` / `findOne()` | 예 |
+| 커서 페이지네이션 (`findWithCursor()`) | 예 |
+| 쿼리 빌더 `getMany()` / `getOne()` / `getManyAndCount()` / `paginate()` | 예 (엔티티 결과만) |
+| `getRawMany()` / `getPartialMany()` | 아니요 -- raw/partial 조회는 절대 발화하지 않아요 |
+
+구독자가 `afterLoad`에서 필드를 복호화하거나 파생 값을 계산한다면, 엔티티가 어떤 경로로 로드됐든 훅이 실행된다고 믿어도 돼요. 서비스를 `find()`에서 쿼리 빌더로 바꿔도 훅이 조용히 빠지지 않아요. 반대로 raw/partial 프로젝션은 손대지 않는 것도 보장돼요.
+
 ### 활용 예시
 
 **캐시 무효화:**

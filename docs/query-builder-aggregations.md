@@ -83,6 +83,25 @@ const authorStats = await em
 
 `addOrderBy("postCount", "DESC")` would qualify the key as `"p"."postCount"` (the FROM alias), which is not a real column on `Post`. To order by a `SELECT`-list alias, drop down to `appendSql(sql\`ORDER BY "alias" ...\`)` — the alias survives because no qualification is applied.
 
+### Expression-Builder addSelect()
+
+`addSelect()` also accepts a callback. The callback receives the same dialect-portable `e` context as `@ComputedColumn({ expression })` — `e.col("alias.prop")`, `e.iff(...)`, `e.count()` / `e.sum()` / `e.avg()` / `e.min()` / `e.max()`, plus the full `ScalarExpression` arithmetic chain (`add` / `sub` / `mul` / `div` / `floor` / …). No raw SQL, and the rendered output is correct on every dialect:
+
+```typescript
+// COUNT(node.name) - 1 AS depth — nested-set depth without raw SQL
+qb.addSelect((e) => e.count("node.name").sub(1), "depth");
+
+// (c.rgt - (c.lft + 1)) / 2 AS children
+qb.addSelect(
+  (e) => e.col("c.rgt").sub(e.col("c.lft").add(1)).div(2).floor(),
+  "children",
+);
+```
+
+A scalar result **requires** the alias argument — `addSelect((e) => ..., "alias")` — and throws `INVALID_QUERY` without one. Aggregates can take the alias argument or finish with `.as("alias")`.
+
+This composes because `AggregateExpression` supports arithmetic directly: `.toScalar()` bridges an aggregate into a `ScalarExpression`, and `.add()` / `.sub()` / `.mul()` / `.div()` are shorthands for `.toScalar().add(...)` and friends. The same surface is available on `qAlias()` aggregates, so `p.id.count().sub(1)` works too.
+
 ## Subqueries
 
 The query builder supports subqueries in WHERE, SELECT, and FROM clauses. While `find()` can't express subqueries at all, the query builder makes them straightforward.

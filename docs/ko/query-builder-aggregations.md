@@ -95,6 +95,25 @@ const authorStats = await em
 // [{ name: "Alice", postCount: 12, avgLikes: 45.3 }, ...]
 ```
 
+### 표현식 빌더 addSelect()
+
+`addSelect()`는 콜백도 받습니다. 콜백은 `@ComputedColumn({ expression })`과 동일한, 다이얼렉트 이식성이 보장되는 `e` 컨텍스트를 받아요 — `e.col("alias.prop")`, `e.iff(...)`, `e.count()` / `e.sum()` / `e.avg()` / `e.min()` / `e.max()`, 그리고 `ScalarExpression`의 전체 산술 체인(`add` / `sub` / `mul` / `div` / `floor` / …)까지. raw SQL 없이도 어느 다이얼렉트에서든 올바른 SQL이 렌더링됩니다.
+
+```typescript
+// COUNT(node.name) - 1 AS depth — raw SQL 없는 중첩 집합 깊이 계산
+qb.addSelect((e) => e.count("node.name").sub(1), "depth");
+
+// (c.rgt - (c.lft + 1)) / 2 AS children
+qb.addSelect(
+  (e) => e.col("c.rgt").sub(e.col("c.lft").add(1)).div(2).floor(),
+  "children",
+);
+```
+
+스칼라 결과는 별칭 인자가 **필수**입니다 — `addSelect((e) => ..., "alias")` — 없으면 `INVALID_QUERY`를 던져요. 집계는 별칭 인자를 쓰거나 `.as("alias")`로 마무리하면 됩니다.
+
+이 조합이 가능한 건 `AggregateExpression`이 산술을 직접 지원하게 됐기 때문입니다. `.toScalar()`가 집계를 `ScalarExpression`으로 이어 주고, `.add()` / `.sub()` / `.mul()` / `.div()`는 `.toScalar().add(...)`의 단축형이에요. 같은 표면이 `qAlias()` 집계에도 열려 있으니 `p.id.count().sub(1)`도 그대로 동작합니다.
+
 ## 서브쿼리
 
 쿼리 빌더는 WHERE, SELECT, FROM 어느 자리에든 서브쿼리를 넣을 수 있습니다. `find()`로는 불가능한 영역이지만, 빌더에서는 간단해요.

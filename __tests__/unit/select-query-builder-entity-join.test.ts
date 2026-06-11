@@ -739,13 +739,15 @@ describe("SelectQueryBuilder — Entity-Aware Joins", () => {
       );
       const { text } = qb.getSql();
 
-      // Main entity columns should be present
-      expect(text).toContain("`a`.*");
-      // Joined entity columns should be individually selected
-      expect(text).toContain("`au`.`id`");
-      expect(text).toContain("`au`.`firstName`");
-      expect(text).toContain("`au`.`lastName`");
-      expect(text).toContain("`au`.`age`");
+      // #370: Main entity `*` is expanded into alias-prefixed columns so
+      // joined columns can never clobber root columns in the row object
+      expect(text).toContain("`a`.`id` AS `a_id`");
+      expect(text).toContain("`a`.`title` AS `a_title`");
+      // Joined entity columns are selected with alias prefixes
+      expect(text).toContain("`au`.`id` AS `au_id`");
+      expect(text).toContain("`au`.`firstName` AS `au_firstName`");
+      expect(text).toContain("`au`.`lastName` AS `au_lastName`");
+      expect(text).toContain("`au`.`age` AS `au_age`");
       // JOIN itself
       expect(text).toContain("LEFT JOIN `author` AS `au`");
     });

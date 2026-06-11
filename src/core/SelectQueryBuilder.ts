@@ -47,7 +47,11 @@ import {
   AliasedExpression,
   isAliasedExpression,
 } from "./expressions/AliasedExpression";
-import { ScalarExpression } from "./expressions/ScalarExpression";
+import { ScalarExpression, isScalarExpression } from "./expressions/ScalarExpression";
+import {
+  getExpressionContext,
+  type SelectExpressionContext,
+} from "./expressions/ComputedColumnExpression";
 import { coalesce as coalesceFn } from "./expressions/NullishExpression";
 import { buildCastScalar } from "./expressions/CastExpression";
 import { buildDateComponentFromRef } from "./expressions/DateComponentExpression";
@@ -148,6 +152,49 @@ export class JoinOnBuilder {
     return this;
   }
 
+  /**
+   * Add an ON condition asserting `ref BETWEEN lowRef AND highRef`, where
+   * all three arguments are column references. This is the dominant join
+   * shape for range-containment self-joins (nested sets, interval trees):
+   *
+   * @example
+   * ```ts
+   * // SELECT ... FROM category node JOIN category parent
+   * //   ON node.lft BETWEEN parent.lft AND parent.rgt
+   * qb.innerJoin(Category, "parent", (j) =>
+   *   j.onBetween("node.lft", "parent.lft", "parent.rgt"),
+   * )
+   * ```
+   */
+  onBetween(ref: string, lowRef: string, highRef: string): this {
+    const col = this.columnResolver(ref);
+    const low = this.columnResolver(lowRef);
+    const high = this.columnResolver(highRef);
+    this.conditions.push(
+      sql`${raw(col)} BETWEEN ${raw(low)} AND ${raw(high)}`,
+    );
+    return this;
+  }
+
+  /**
+   * Alias for `onBetween()` — additional range condition with AND semantics.
+   */
+  andOnBetween(ref: string, lowRef: string, highRef: string): this {
+    return this.onBetween(ref, lowRef, highRef);
+  }
+
+  /**
+   * Literal-value variant of {@link onBetween}: `ref BETWEEN low AND high`
+   * with `low`/`high` bound as parameters.
+   *
+   * @example join.onValBetween("node.lft", 1, 42)
+   */
+  onValBetween(ref: string, low: any, high: any): this {
+    const col = this.columnResolver(ref);
+    this.conditions.push(sql`${raw(col)} BETWEEN ${low} AND ${high}`);
+    return this;
+  }
+
   /** @internal Build the combined ON condition. */
   build(): Sql {
     if (this.conditions.length === 0) {
@@ -160,6 +207,22 @@ export class JoinOnBuilder {
     return Conditions.and(this.conditions);
   }
 }
+
+/**
+ * #372: resolver handed to correlated-subquery factories. Maps an outer
+ * `"alias.property"` reference to its escaped identifier as a `Sql`
+ * fragment (e.g. `outer("node.lft")` → `` `node`.`LFT_NO` ``), so a
+ * subquery can reference the outer row through the typed surface.
+ */
+export type OuterRefResolver = (ref: string) => Sql;
+
+/**
+ * A subquery argument: either a pre-built builder, or a factory receiving
+ * an {@link OuterRefResolver} for correlated subqueries (#372).
+ */
+export type SubqueryInput =
+  | SelectQueryBuilder<any, any>
+  | ((outer: OuterRefResolver) => SelectQueryBuilder<any, any>);
 
 /**
  * A typed reference to an aliased entity, providing auto-complete for column names.
@@ -1314,6 +1377,26 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   protected selectExpressions: Sql[] = [];
 
+  /**
+   * #370: joined-entity selections registered by the *AndSelect methods.
+   * Each entry drives result nesting in getMany()/getOne(): the row segment
+   * whose keys carry the `${alias}_` prefix hydrates into `property` on the
+   * entity bound to `sourceAlias`. `property` is null when the join target
+   * could not be matched to a relation (plain entity joins without a
+   * corresponding @ManyToOne/@OneToOne/@OneToMany) — those columns are
+   * stripped from the root entity but stay available via getRawMany().
+   */
+  protected joinedSelections: Array<{
+    alias: string;
+    sourceAlias: string;
+    property: string | null;
+    kind: "many-to-one" | "one-to-one" | "one-to-many";
+    entity: ClazzType<any>;
+  }> = [];
+
+  /** #370: true once the root `alias.*` has been expanded to `alias_col`-aliased columns. */
+  protected rootSelectExpanded = false;
+
   // ── Inheritance state ──────────────────────────────────
   protected inheritanceStrategy: InheritanceStrategy | null = null;
   protected isInheritanceChild = false;
@@ -1902,11 +1985,65 @@ export class SelectQueryBuilder<T, TResult = T> {
 
   addSelect(expr: AggregateExpression): this;
   addSelect(expr: AliasedExpression): this;
+  /**
+   * #372: expression-builder form. The callback receives the same
+   * dialect-portable `e` context as `@ComputedColumn({ expression })` —
+   * `e.col("alias.prop")`, `e.count(...)`, `e.iff(...)`, arithmetic — so
+   * `COUNT(node.name) - 1 AS depth`-style projections need no raw SQL.
+   *
+   * @example
+   * ```ts
+   * qb.addSelect((e) => e.count("node.name").sub(1), "depth")
+   * qb.addSelect((e) => e.col("c.rgt").sub(e.col("c.lft").add(1)).div(2).floor(), "children")
+   * ```
+   */
+  addSelect(
+    builder: (
+      e: SelectExpressionContext,
+    ) => ScalarExpression | AggregateExpression | AliasedExpression,
+    alias?: string,
+  ): this;
   addSelect(expr: Sql | string, alias?: string): this;
   addSelect(
-    expr: Sql | string | AggregateExpression | AliasedExpression,
+    expr:
+      | Sql
+      | string
+      | AggregateExpression
+      | AliasedExpression
+      | ((
+          e: SelectExpressionContext,
+        ) => ScalarExpression | AggregateExpression | AliasedExpression),
     alias?: string,
   ): this {
+    if (typeof expr === "function") {
+      const result = expr(getExpressionContext());
+      if (isScalarExpression(result)) {
+        if (!alias) {
+          throw new OrmError(
+            OrmErrorCode.INVALID_QUERY,
+            "addSelect(builder) with a scalar expression requires an alias: " +
+              'addSelect((e) => ..., "alias") or return e.expr(...).as("alias").',
+          );
+        }
+        const inner = result.renderer(
+          (ref) => this.resolveColumn(ref),
+          this.dialectExpression,
+        );
+        this.selectExpressions.push(
+          sql`${inner} AS ${raw(this.em.wrap(alias))}`,
+        );
+        return this;
+      }
+      if (isAliasedExpression(result)) return this.addSelect(result);
+      if (isAggregateExpression(result)) {
+        return this.addSelect(alias ? result.as(alias) : result);
+      }
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        "addSelect(builder) must return an expression built from the provided " +
+          "context — e.col(...), e.count(...), e.iff(...), or .as(alias) thereof.",
+      );
+    }
     if (isAliasedExpression(expr)) {
       // Route through `selectExpressions` so JSON path bindings survive;
       // these fragments are appended to the existing SELECT list at
@@ -2359,32 +2496,135 @@ export class SelectQueryBuilder<T, TResult = T> {
     });
 
     if (andSelect) {
-      this.appendJoinedColumnsToSelect(alias, propToCol);
+      // Plain entity join: try to match the joined entity to a relation on
+      // the root so getMany()/getOne() can nest it; null when unmatched.
+      const relInfo = this.resolveRelationToEntity(this.entity, entity);
+      this.appendJoinedColumnsToSelect(alias, propToCol, {
+        sourceAlias: this.alias,
+        property: relInfo?.property ?? null,
+        kind: relInfo?.kind ?? "many-to-one",
+        entity,
+      });
     }
 
     return this;
   }
 
   /**
+   * #370: find the relation property on `sourceEntity` whose target is
+   * `joinedEntity`. Used by entity-based *AndSelect joins (which carry no
+   * relation property of their own) to locate the nesting target.
+   */
+  protected resolveRelationToEntity(
+    sourceEntity: ClazzType<any>,
+    joinedEntity: ClazzType<any>,
+  ): {
+    property: string;
+    kind: "many-to-one" | "one-to-one" | "one-to-many";
+  } | null {
+    const resolver = (this.em as any).resolver as RelationMetadataResolver;
+    if (!resolver) return null;
+
+    const m2o = resolver
+      .resolveManyToOneMetadata(sourceEntity)
+      .find((r: any) => r.getMappingEntity?.() === joinedEntity);
+    if (m2o) return { property: (m2o as any).columnName, kind: "many-to-one" };
+
+    const o2o = resolver
+      .resolveOneToOneMetadata(sourceEntity)
+      .find(
+        (r: any) =>
+          (r.getRelatedEntity ?? r.getMappingEntity)?.() === joinedEntity,
+      );
+    if (o2o) return { property: (o2o as any).propertyKey, kind: "one-to-one" };
+
+    const o2m = resolver
+      .resolveOneToManyMetadata(sourceEntity)
+      .find((r: any) => r.getRelatedEntity?.() === joinedEntity);
+    if (o2m) return { property: (o2m as any).propertyKey, kind: "one-to-many" };
+
+    return null;
+  }
+
+  /**
    * Append all columns from a joined entity to the SELECT clause.
    * Used by *AndSelect methods.
+   *
+   * #370: every joined column is aliased as `alias_column`
+   * (`` `u`.`id` AS `u_id` ``) so joined values can never clobber
+   * same-named root columns when the driver objectifies rows. When a
+   * `selection` descriptor is supplied, the columns also hydrate into the
+   * relation property on getMany()/getOne() entity results.
    */
   protected appendJoinedColumnsToSelect(
     alias: string,
     propToCol: Map<string, string>,
+    selection?: {
+      sourceAlias: string;
+      property: string | null;
+      kind: "many-to-one" | "one-to-one" | "one-to-many";
+      entity: ClazzType<any>;
+    },
   ): void {
     const cols: string[] = [];
+    const seen = new Set<string>();
     for (const [, dbCol] of propToCol) {
-      cols.push(`${this.em.wrap(alias)}.${this.em.wrap(dbCol)}`);
+      if (seen.has(dbCol)) continue;
+      seen.add(dbCol);
+      cols.push(
+        `${this.em.wrap(alias)}.${this.em.wrap(dbCol)} AS ${this.em.wrap(`${alias}_${dbCol}`)}`,
+      );
     }
     if (cols.length === 0) return;
 
     if (this.selectColumns === "*") {
       // Expand main entity's * to explicit columns, then append joined
-      this.selectColumns = [`${this.em.wrap(this.alias)}.*`, ...cols];
+      this.selectColumns = [...this.expandRootSelectColumns(), ...cols];
     } else {
       (this.selectColumns as string[]).push(...cols);
     }
+
+    if (selection) {
+      this.joinedSelections.push({ alias, ...selection });
+    }
+  }
+
+  /**
+   * #370: expand the root `alias.*` into explicit `alias_col`-aliased
+   * columns so root and joined columns can never collide in the row object
+   * (e.g. a root FK `user_id` vs. a joined `` `user`.`id` AS `user_id` ``).
+   * Falls back to plain `alias.*` for inheritance queries, whose SELECT
+   * assembly manages its own column lists.
+   */
+  private expandRootSelectColumns(): string[] {
+    const star = [`${this.em.wrap(this.alias)}.*`];
+    if (
+      this.isPolymorphicQuery ||
+      this.tptSelectColumns ||
+      this.tptPolymorphicSelectColumns?.length ||
+      this.tpcFromSql
+    ) {
+      return star;
+    }
+    const resolver = (this.em as any).resolver as
+      | RelationMetadataResolver
+      | undefined;
+    const rootMeta = resolver?.resolveEntityMetadata?.(this.entity);
+    if (!rootMeta) return star;
+
+    const propToCol = this.buildPropertyToColumnMapFromMetadata(rootMeta);
+    const cols: string[] = [];
+    const seen = new Set<string>();
+    for (const [, dbCol] of propToCol) {
+      if (seen.has(dbCol)) continue;
+      seen.add(dbCol);
+      cols.push(
+        `${this.em.wrap(this.alias)}.${this.em.wrap(dbCol)} AS ${this.em.wrap(`${this.alias}_${dbCol}`)}`,
+      );
+    }
+    if (cols.length === 0) return star;
+    this.rootSelectExpanded = true;
+    return cols;
   }
 
   protected addRelationJoin(
@@ -2485,7 +2725,13 @@ export class SelectQueryBuilder<T, TResult = T> {
     const condition = Conditions.compareColumns(left, "=", right);
 
     this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
-    if (andSelect) this.appendJoinedColumnsToSelect(alias, propToCol);
+    if (andSelect)
+      this.appendJoinedColumnsToSelect(alias, propToCol, {
+        sourceAlias,
+        property: rel.columnName,
+        kind: "many-to-one",
+        entity: RelatedEntity,
+      });
     return this;
   }
 
@@ -2537,7 +2783,13 @@ export class SelectQueryBuilder<T, TResult = T> {
     const condition = Conditions.compareColumns(left, "=", right);
 
     this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
-    if (andSelect) this.appendJoinedColumnsToSelect(alias, propToCol);
+    if (andSelect)
+      this.appendJoinedColumnsToSelect(alias, propToCol, {
+        sourceAlias,
+        property: rel.propertyKey,
+        kind: "one-to-many",
+        entity: RelatedEntity,
+      });
     return this;
   }
 
@@ -2577,7 +2829,13 @@ export class SelectQueryBuilder<T, TResult = T> {
     const condition = Conditions.compareColumns(left, "=", right);
 
     this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
-    if (andSelect) this.appendJoinedColumnsToSelect(alias, propToCol);
+    if (andSelect)
+      this.appendJoinedColumnsToSelect(alias, propToCol, {
+        sourceAlias,
+        property: rel.propertyKey,
+        kind: "one-to-one",
+        entity: RelatedEntity,
+      });
     return this;
   }
 
@@ -3551,8 +3809,8 @@ export class SelectQueryBuilder<T, TResult = T> {
    *   .getMany();
    * ```
    */
-  whereExistsSubquery(subQb: SelectQueryBuilder<any, any>): this {
-    const subSql = subQb.toSql();
+  whereExistsSubquery(subQb: SubqueryInput): this {
+    const subSql = this.resolveSubquery(subQb).toSql();
     this.whereClauses.push(Conditions.exists(sql`(${subSql})`));
     return this;
   }
@@ -3560,8 +3818,8 @@ export class SelectQueryBuilder<T, TResult = T> {
   /**
    * Add `WHERE NOT EXISTS (subquery)`.
    */
-  whereNotExistsSubquery(subQb: SelectQueryBuilder<any, any>): this {
-    const subSql = subQb.toSql();
+  whereNotExistsSubquery(subQb: SubqueryInput): this {
+    const subSql = this.resolveSubquery(subQb).toSql();
     this.whereClauses.push(Conditions.notExists(sql`(${subSql})`));
     return this;
   }
@@ -3569,28 +3827,52 @@ export class SelectQueryBuilder<T, TResult = T> {
   /**
    * Add a scalar subquery to the SELECT clause.
    *
+   * Accepts either a pre-built sub-builder, or — for **correlated**
+   * subqueries — a factory that receives an `outer` resolver (#372). The
+   * resolver maps an outer `"alias.property"` reference to its escaped
+   * identifier (`Sql` fragment), so the subquery can reference the outer
+   * row without hand-writing dialect-specific identifiers.
+   *
    * @example
    * ```ts
+   * // Plain subquery (uncorrelated)
    * const latestComment = em.createQueryBuilder(Comment, "c")
    *   .select(["content"])
    *   .where(sql`"c"."post_id" = "p"."id"`)
    *   .orderBy({ createdAt: "DESC" })
    *   .limit(1);
+   * qb.addSelectSubquery(latestComment, "latestComment");
    *
-   * const posts = await em.createQueryBuilder(Post, "p")
-   *   .addSelectSubquery(latestComment, "latestComment")
-   *   .getRawMany();
+   * // Correlated subquery — per-node descendant post count (nested set)
+   * em.createQueryBuilder(Category, "node")
+   *   .addSelectSubquery(
+   *     (outer) =>
+   *       em.createQueryBuilder(Post, "p")
+   *         .selectRaw(["COUNT(*)"])
+   *         .innerJoin(Category, "a", (j) => j.on("p.categoryId", "=", "a.id"))
+   *         .where(sql`${outer("a.lft")} BETWEEN ${outer("node.lft")} AND ${outer("node.rgt")}`),
+   *     "postCount",
+   *   );
    * ```
    */
-  addSelectSubquery(
-    subQb: SelectQueryBuilder<any, any>,
-    alias: string,
-  ): this {
-    const subSql = subQb.toSql();
+  addSelectSubquery(subQb: SubqueryInput, alias: string): this {
+    const subSql = this.resolveSubquery(subQb).toSql();
     this.selectExpressions.push(
       sql`(${subSql}) AS ${raw(this.em.wrap(alias))}`,
     );
     return this;
+  }
+
+  /**
+   * #372: resolve a {@link SubqueryInput} — invoke factories with an
+   * `outer` resolver bound to this builder's alias registry, so the
+   * subquery can embed escaped outer-column references.
+   */
+  protected resolveSubquery(input: SubqueryInput): SelectQueryBuilder<any, any> {
+    if (typeof input === "function") {
+      return input((ref: string) => raw(this.resolveColumn(ref)));
+    }
+    return input;
   }
 
   // ── SCOPES ─────────────────────────────────────────────
@@ -3828,24 +4110,186 @@ export class SelectQueryBuilder<T, TResult = T> {
     const built = this.toSql();
     const rows = await this.em.query<any>(built);
 
+    let entities: TResult[];
+
     // Polymorphic deserialization: instantiate correct subclass per row
     if (this.isPolymorphicQuery && this.discriminatorMap?.size) {
-      if (this.inheritanceStrategy === "JOINED" && this.tptChildPrefixMap) {
-        return this.applyValidation(this.deserializeTPTPolymorphic(rows));
-      }
-      return this.applyValidation(this.deserializePolymorphic(rows));
+      entities =
+        this.inheritanceStrategy === "JOINED" && this.tptChildPrefixMap
+          ? this.applyValidation(this.deserializeTPTPolymorphic(rows))
+          : this.applyValidation(this.deserializePolymorphic(rows));
+    } else if (this.joinedSelections.length > 0) {
+      // #370: *AndSelect joins — split alias-prefixed columns per join,
+      // hydrate them into the relation property, and dedupe/group roots.
+      entities = this.applyValidation(this.transformJoinedEntityRows(rows));
+    } else {
+      // Run rows through ResultTransformer so that NamingStrategy reverse-
+      // mapping (e.g. SnakeNamingStrategy: `issue_counter` → `issueCounter`)
+      // and column transformers fire. Calling the deserializer directly here
+      // skipped both, so qAlias-driven queries returned entities with the raw
+      // DB column names — `(project.issueCounter ?? 0) + 1` then always
+      // collapsed to `1` because the property was actually `issue_counter`.
+      const transformer = ResultTransformerFactory.create();
+      entities = this.applyValidation(
+        transformer.toEntities(this.entity, { results: rows }),
+      );
     }
 
-    // Run rows through ResultTransformer so that NamingStrategy reverse-
-    // mapping (e.g. SnakeNamingStrategy: `issue_counter` → `issueCounter`)
-    // and column transformers fire. Calling the deserializer directly here
-    // skipped both, so qAlias-driven queries returned entities with the raw
-    // DB column names — `(project.issueCounter ?? 0) + 1` then always
-    // collapsed to `1` because the property was actually `issue_counter`.
-    const transformer = ResultTransformerFactory.create();
-    const entities = transformer.toEntities(this.entity, { results: rows });
+    // #371: afterLoad parity with find/findOne — entity-typed reads fire
+    // subscribers; raw/partial reads stay raw.
+    await this.notifyAfterLoad(entities);
+    return entities;
+  }
 
-    return this.applyValidation(entities);
+  /**
+   * #371: fire `afterLoad` subscribers for entity results, mirroring the
+   * find/findOne paths. No-op when the EntityManager does not expose the
+   * hook (plain mocks) or there are no entities.
+   */
+  protected async notifyAfterLoad(entities: TResult[]): Promise<void> {
+    if (!entities?.length) return;
+    const emit = (this.em as any).emitAfterLoad;
+    if (typeof emit !== "function") return;
+    await emit.call(this.em, this.entity, entities);
+  }
+
+  /**
+   * #370: entity transformation for *AndSelect queries.
+   *
+   * Each row is partitioned by alias prefix (longest prefix first, so
+   * overlapping aliases split deterministically): `${rootAlias}_*` columns
+   * (when the root `*` was expanded) plus unmatched keys form the root row;
+   * `${joinAlias}_*` columns form one sub-row per joined selection. Roots
+   * are deduped by PK so OneToMany joins group into arrays instead of
+   * duplicating the root entity; LEFT JOIN misses become `null` (to-one)
+   * or are skipped (to-many).
+   */
+  protected transformJoinedEntityRows(rows: any[]): TResult[] {
+    const transformer = ResultTransformerFactory.create();
+    const resolver = (this.em as any).resolver as RelationMetadataResolver;
+    const rootMeta = resolver?.resolveEntityMetadata?.(this.entity);
+    const pkNamesOf = (entity: ClazzType<any>): string[] => {
+      const meta = resolver?.resolveEntityMetadata?.(entity);
+      return (meta?.columns ?? [])
+        .filter((c: ColumnMetadata) => c.options?.primary)
+        .map((c: ColumnMetadata) => c.name!);
+    };
+    const rootPkCols = rootMeta ? pkNamesOf(this.entity) : [];
+    const joinedPkCols = new Map<string, string[]>();
+    for (const sel of this.joinedSelections) {
+      joinedPkCols.set(sel.alias, pkNamesOf(sel.entity));
+    }
+
+    // Longest-prefix-first matching keeps overlapping aliases unambiguous
+    // (e.g. join aliases `user` and `user_profile`).
+    const prefixes: Array<{ prefix: string; alias: string | null }> =
+      this.joinedSelections.map((s) => ({ prefix: `${s.alias}_`, alias: s.alias }));
+    if (this.rootSelectExpanded) {
+      prefixes.push({ prefix: `${this.alias}_`, alias: null });
+    }
+    prefixes.sort((a, b) => b.prefix.length - a.prefix.length);
+
+    const toEntity = (entity: ClazzType<any>, row: any) =>
+      transformer.toEntity(entity, { results: [row], fields: [] } as any);
+    const isAllNull = (row: any) =>
+      !row || Object.values(row).every((v) => v === null || v === undefined);
+    const pkKeyOf = (pkCols: string[], row: any): string | null => {
+      if (pkCols.length === 0) return null;
+      const vals = pkCols.map((c) => row?.[c]);
+      if (vals.some((v) => v === null || v === undefined)) return null;
+      return vals.map((v) => String(v)).join("");
+    };
+
+    const ordered: any[] = [];
+    const rootsByKey = new Map<string, any>();
+    // Cross-row instance registry: `${parentKey}/${alias}[:${childPk}]` →
+    // hydrated entity. Lets deeper joins attach to the same instance the
+    // earlier row created (OneToMany grouping, nested *AndSelect chains).
+    const instanceRegistry = new Map<string, any>();
+    let syntheticRootSeq = 0;
+
+    for (const row of rows) {
+      // 1. Partition the row by alias prefix.
+      const parts = new Map<string | null, any>();
+      for (const key of Object.keys(row)) {
+        let target: string | null | undefined;
+        let stripped = key;
+        for (const { prefix, alias } of prefixes) {
+          if (key.startsWith(prefix)) {
+            target = alias;
+            stripped = key.substring(prefix.length);
+            break;
+          }
+        }
+        if (target === undefined) {
+          // Unmatched key — root column (explicit select / extra expressions)
+          target = null;
+        }
+        let part = parts.get(target ?? null);
+        if (!part) {
+          part = {};
+          parts.set(target ?? null, part);
+        }
+        part[stripped] = row[key];
+      }
+
+      // 2. Dedup the root by PK; synthesize a unique key when unavailable.
+      const rootRow = parts.get(null) ?? {};
+      const rootKey =
+        pkKeyOf(rootPkCols, rootRow) ?? `row:${syntheticRootSeq++}`;
+      let rootInst = rootsByKey.get(rootKey);
+      if (!rootInst) {
+        rootInst = toEntity(this.entity, rootRow);
+        rootsByKey.set(rootKey, rootInst);
+        ordered.push(rootInst);
+      }
+
+      // 3. Hydrate joined selections, attaching each to its parent.
+      const aliasInstances = new Map<string, any>([[this.alias, rootInst]]);
+      const aliasKeys = new Map<string, string>([[this.alias, rootKey]]);
+
+      for (const sel of this.joinedSelections) {
+        const parentInst = aliasInstances.get(sel.sourceAlias);
+        const parentKey = aliasKeys.get(sel.sourceAlias);
+        if (!parentInst || !sel.property) continue;
+
+        const subRow = parts.get(sel.alias);
+        if (sel.kind === "one-to-many") {
+          if (!Array.isArray(parentInst[sel.property])) {
+            parentInst[sel.property] = [];
+          }
+          if (isAllNull(subRow)) continue;
+          const childPk = pkKeyOf(joinedPkCols.get(sel.alias) ?? [], subRow);
+          const childKey = `${parentKey}/${sel.alias}:${childPk ?? `${ordered.length}:${parentInst[sel.property].length}`}`;
+          let childInst = instanceRegistry.get(childKey);
+          if (!childInst) {
+            childInst = toEntity(sel.entity, subRow);
+            instanceRegistry.set(childKey, childInst);
+            parentInst[sel.property].push(childInst);
+          }
+          aliasInstances.set(sel.alias, childInst);
+          aliasKeys.set(sel.alias, childKey);
+        } else {
+          if (isAllNull(subRow)) {
+            if (parentInst[sel.property] === undefined) {
+              parentInst[sel.property] = null;
+            }
+            continue;
+          }
+          const childKey = `${parentKey}/${sel.alias}`;
+          let childInst = instanceRegistry.get(childKey);
+          if (!childInst) {
+            childInst = toEntity(sel.entity, subRow);
+            instanceRegistry.set(childKey, childInst);
+          }
+          parentInst[sel.property] = childInst;
+          aliasInstances.set(sel.alias, childInst);
+          aliasKeys.set(sel.alias, childKey);
+        }
+      }
+    }
+
+    return ordered as TResult[];
   }
 
   /**
@@ -4356,6 +4800,8 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.dialectExpression = this.dialectExpression;
     cloned.aliasRegistry = new Map(this.aliasRegistry);
     cloned.selectExpressions = [...this.selectExpressions];
+    cloned.joinedSelections = [...this.joinedSelections];
+    cloned.rootSelectExpanded = this.rootSelectExpanded;
     cloned.aliasedSelectList = this.aliasedSelectList
       ? [...this.aliasedSelectList]
       : null;

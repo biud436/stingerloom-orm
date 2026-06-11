@@ -75,6 +75,19 @@ function getContext(): ComputedColumnExpressionContext {
 }
 
 /**
+ * #372: the same `e` context, reused by `SelectQueryBuilder.addSelect((e) =>
+ * ...)` for ad-hoc dialect-portable SELECT expressions. `e.col(ref)` accepts
+ * `"alias.property"` references there — identifier resolution is deferred to
+ * the query builder's own column resolver at render time.
+ */
+export type SelectExpressionContext = ComputedColumnExpressionContext;
+
+/** @see SelectExpressionContext */
+export function getExpressionContext(): SelectExpressionContext {
+  return getContext();
+}
+
+/**
  * Render a `@ComputedColumn` expression builder into a literal SQL string
  * suitable for embedding in a `GENERATED ALWAYS AS (...)` DDL clause.
  *

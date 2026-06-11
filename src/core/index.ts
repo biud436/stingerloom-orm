@@ -60,3 +60,7 @@ export * from "./expressions/WindowExpression";
 export * from "./expressions/WindowFunctions";
 export * from "./expressions/RawExpression";
 export * from "./expressions/likeEscape";
+export {
+  getExpressionContext,
+  type SelectExpressionContext,
+} from "./expressions/ComputedColumnExpression";

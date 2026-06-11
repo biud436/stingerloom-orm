@@ -82,6 +82,67 @@ COMMIT
 
 ---
 
+## INSERT에서 undefined vs null -- DB 기본값 살리기
+
+### 왜 구분이 중요할까요?
+
+`save()`와 `saveMany()`는 `undefined`를 "**값을 안 줬다**"로 해석해요 (TypeORM/knex와 같은 의미론이에요). 엔티티 값이 `undefined`인 컬럼은 **INSERT 컬럼 목록에서 빠지고**, 그 자리는 DB 쪽 `DEFAULT` 절 -- `@Column({ default })` 포함 -- 이 채워요. 명시적인 `null`은 달라요: 컬럼이 포함되고 `NULL`이 기록돼요.
+
+```typescript
+@Entity()
+class Article {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() title!: string;
+  @Column({ default: "draft" }) status!: string;
+  @Column({ nullable: true }) summary?: string;
+}
+
+const a = await em.save(Article, { title: "Hello" });
+// INSERT INTO "article" ("title") VALUES ($1)
+// -> "status"는 생략되고 DB DEFAULT 'draft'가 적용됨
+a.status; // "draft"
+
+await em.save(Article, { title: "Hello", summary: null });
+// INSERT INTO "article" ("title", "summary") VALUES ($1, $2)
+// -> "summary"는 포함되고 명시적으로 NULL을 기록
+```
+
+자동 주입 컬럼은 예외예요. `@CreateTimestamp`, `@UpdateTimestamp`, `@Version`, 클라이언트 측 UUID 생성 전략은 값이 `undefined`라도 여전히 포함되고 자동으로 채워져요.
+
+모든 컬럼이 생략되면 ORM은 다이얼렉트별 "전부 기본값" INSERT 폼을 내보내요:
+
+```sql
+-- MySQL / MariaDB
+INSERT INTO `t` () VALUES ()
+
+-- PostgreSQL / SQLite
+INSERT INTO "t" DEFAULT VALUES
+```
+
+`saveMany()` 배치 삽입에서는 멀티 행 `VALUES`가 컬럼 목록 하나를 공유해요. 그래서 컬럼은 **배치의 어떤 항목도 값을 주지 않았을 때만** 생략돼요. 일부 항목만 값을 준 혼합 배치에서는 컬럼이 목록에 남고, 값이 없는 행에는 `NULL`이 바인딩돼요.
+
+---
+
+## RETURNING 결과는 프로퍼티 이름으로 돌아와요
+
+RETURNING을 지원하는 드라이버(PostgreSQL, MariaDB 10.5+)에서 `save()`의 반환 엔티티는 `RETURNING *` 행으로 만들어져요. 이제 이 행이 ResultTransformer를 거치면서 DB 컬럼명이 **엔티티 프로퍼티 키**로 역매핑돼요 -- `@Column({ name })`과 `SnakeNamingStrategy` 같은 NamingStrategy 매핑을 모두 포함해서요. 컬럼 트랜스포머의 `from`도 함께 적용돼요.
+
+```typescript
+@Entity()
+class Category {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column({ name: "LFT_NO" }) left!: number;
+}
+
+const saved = await em.save(Category, { left: 1 });
+saved.left;             // 1 -- 클래스에 선언한 프로퍼티 키 그대로
+(saved as any).LFT_NO;  // undefined -- raw DB 키가 더 이상 새어 나오지 않음
+```
+
+이전에는 반환 객체가 raw DB 키(예: `left` 대신 `LFT_NO`)를 그대로 노출했어요. 이 매핑은 INSERT RETURNING, UPDATE RETURNING, `saveMany()` 배치 RETURNING에 모두 적용돼요.
+
+---
+
 ## 배치 삭제 -- deleteMany()
 
 ### 왜 delete()를 여러 번 호출하는 대신 deleteMany()를 쓸까요?
@@ -109,6 +170,23 @@ PK가 아닌 조건으로 삭제하려면 WHERE 절과 함께 `delete()`를 사�
 await em.delete(User, { isActive: false });
 ```
 :::
+
+### delete() / softDelete() / restore()의 연산자 조건
+
+criteria 객체는 동등 비교에 묶여 있지 않아요. `delete()`, `softDelete()`, `restore()`는 조회의 `where`와 똑같은 find 스타일 연산자 객체 -- `{ between: [a, b] }`, `{ gt }`, `{ gte }`, `{ lt }`, `{ lte }`, `{ in }`, `{ like }` 등 -- 를 받고, `null`은 `IS NULL`로 해석돼요. 조회 경로와 동일한 WhereResolver가 처리해요 (`updateMany()`는 원래부터 지원했어요).
+
+```typescript
+// 중첩 집합(nested set) 서브트리 전체를 문장 하나로 삭제
+await em.delete(Category, { lft: { between: [node.lft, node.rgt] } });
+
+// 오래된 초안 소프트 삭제
+await em.softDelete(Post, { status: "draft", updatedAt: { lt: cutoff } });
+
+// null -> IS NULL
+await em.delete(Session, { userId: null });
+```
+
+빈 criteria는 여전히 `DeleteWithoutConditionsError`를 던져요 -- 테이블 전체 삭제를 막는 가드는 그대로예요.
 
 ---
 

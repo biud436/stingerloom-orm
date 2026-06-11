@@ -216,6 +216,43 @@ const posts = await em
 // SELECT "p".*, (SELECT ... LIMIT 1) AS "latestComment" FROM ...
 ```
 
+### Correlated Subqueries — the `(outer) => subQb` Factory
+
+`addSelectSubquery()`, `whereExistsSubquery()`, and `whereNotExistsSubquery()` also accept a **factory** `(outer) => subQb`. The `outer("alias.prop")` resolver returns the escaped identifier of an outer-query column as a `Sql` fragment, so the subquery can reference the outer row through the typed surface — NamingStrategy and `@Column({ name })` mappings keep working inside the correlation, instead of hand-writing dialect-specific identifiers in a `sql` string:
+
+```typescript
+import sql from "sql-template-tag";
+
+// Per-node descendant post count over a nested-set tree
+const nodes = await em
+  .createQueryBuilder(Category, "node")
+  .addSelectSubquery(
+    (outer) =>
+      em.createQueryBuilder(Post, "p")
+        .selectRaw(["COUNT(*)"])
+        .innerJoin(Category, "a", (j) => j.on("p.categoryId", "=", "a.id"))
+        .where(sql`${outer("a.lft")} BETWEEN ${outer("node.lft")} AND ${outer("node.rgt")}`),
+    "postCount",
+  )
+  .getRawMany();
+// outer("node.lft") renders as the escaped column of the outer row
+// (e.g. "node"."lft" — or "node"."LFT_NO" with @Column({ name: "LFT_NO" }))
+```
+
+The same factory works for `EXISTS`:
+
+```typescript
+const usersWithBigOrders = await em
+  .createQueryBuilder(User, "u")
+  .whereExistsSubquery((outer) =>
+    em.createQueryBuilder(Order, "o")
+      .select(["id"])
+      .where(sql`"o"."user_id" = ${outer("u.id")}`)
+      .where("total", ">=", 100),
+  )
+  .getMany();
+```
+
 ## Scopes — Reusable Query Fragments
 
 Define named scopes as a static property on your entity:

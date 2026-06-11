@@ -115,6 +115,26 @@ qb.leftJoin(User, "u", (join) =>
 );
 ```
 
+### 범위 포함 ON — `onBetween()`
+
+범위 포함(range containment) 셀프 조인 — 중첩 집합(nested set), 인터벌 트리 — 에서는 `onBetween(ref, lowRef, highRef)`가 컬럼을 다른 두 **컬럼 참조** 사이와 비교합니다. `onValBetween(ref, low, high)`는 리터럴 경계값을 받아 파라미터로 바인딩해요.
+
+```typescript
+// SELECT ... FROM category node JOIN category parent
+//   ON node.lft BETWEEN parent.lft AND parent.rgt
+const tree = await em
+  .createQueryBuilder(Category, "node")
+  .innerJoin(Category, "parent", (j) =>
+    j.onBetween("node.lft", "parent.lft", "parent.rgt"),
+  )
+  .getRawMany();
+
+// 리터럴 경계 — 파라미터 바인딩
+qb.innerJoin(Category, "sub", (j) => j.onValBetween("sub.lft", 1, 42));
+```
+
+`andOnBetween()`은 AND 의미론으로 범위 조건을 하나 더 잇습니다. 세 메서드 모두 별칭 레지스트리를 통해 참조를 해석하므로 NamingStrategy와 `@Column({ name })` 매핑이 그대로 적용돼요.
+
 ## 관계 기반 조인 (ON 자동 생성)
 
 `@ManyToOne` / `@OneToMany` / `@OneToOne`이 걸려 있다면 ON 조건을 생략해도 됩니다. 관계 메타데이터에서 ORM이 알아서 만들어요.
@@ -147,19 +167,15 @@ const users = await em
 
 ## JoinAndSelect — 조인과 SELECT를 한 번에
 
-조인된 엔티티의 모든 컬럼을 결과에 포함시키고 싶을 때는 `*AndSelect` 변형이 있습니다. 조인 + SELECT 반복 작업을 하나로 줄여 줘요.
+조인된 엔티티의 모든 컬럼을 결과에 포함시키고 싶을 때는 `*AndSelect` 변형이 있습니다. 조인 + SELECT 반복 작업을 하나로 줄여 주고, 엔티티 조회에서는 조인된 컬럼이 관계 프로퍼티로 하이드레이션됩니다.
 
 ```typescript
-// 수동: join + selectRaw
-qb.leftJoin(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
-  .selectRaw(["p.id", "p.title", "u.id", "u.name", "u.email"]);
-
-// 자동: joinAndSelect
-const results = await em
+const posts = await em
   .createQueryBuilder(Post, "p")
-  .leftJoinAndSelect(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .leftJoinRelationAndSelect("author", "u")
   .where("p.status", "published")
-  .getRawMany();
+  .getMany();
+// [Post { id: 1, title: "...", author: User { id: 7, name: "Alice" } }, ...]
 ```
 
 `*AndSelect` 변형은 네 가지입니다.
@@ -171,14 +187,45 @@ const results = await em
 | `leftJoinRelationAndSelect(property, alias)` | 관계 기반 LEFT JOIN + 자동 SELECT |
 | `innerJoinRelationAndSelect(property, alias)` | 관계 기반 INNER JOIN + 자동 SELECT |
 
-관계 기반 예제:
+### 컬럼이 선택되는 방식
+
+조인된 모든 컬럼은 `alias_column` AS 별칭으로 선택됩니다 (`` `u`.`id` AS `u_id` ``). 동시에 루트의 `alias.*`도 `alias_column` 형태의 명시적 컬럼들(`p_id`, `p_title`, …)로 펼쳐져요. 모든 컬럼이 고유한 접두사를 달고 있으니, 조인된 컬럼이 같은 이름의 루트 컬럼을 덮어쓰는 일이 원천적으로 불가능합니다 — 양쪽 테이블에 `id`가 있어도 문제없어요.
+
+### getMany() / getOne() — 관계 하이드레이션
+
+엔티티 조회는 접두사 컬럼들을 관계 프로퍼티로 다시 조립합니다.
+
+- `@ManyToOne` / `@OneToOne` — 조인된 행이 **중첩 객체**가 됩니다. LEFT JOIN에서 매칭이 없으면 `null`이에요.
+- `@OneToMany` — 루트 행을 **PK 기준으로 중복 제거·그룹화**하고, 조인된 행들을 배열로 모읍니다. 매칭이 없으면 빈 배열 `[]`이에요.
 
 ```typescript
-const results = await em
-  .createQueryBuilder(Post, "p")
-  .leftJoinRelationAndSelect("author", "u")
-  .getRawMany();
+const users = await em
+  .createQueryBuilder(User, "u")
+  .leftJoinRelationAndSelect("posts", "p")
+  .getMany();
+// [User { id: 1, posts: [Post {...}, Post {...}] }, User { id: 2, posts: [] }]
+// — 조인된 행마다 하나가 아니라, 행 그룹당 User 하나
 ```
+
+### getRawMany() — 접두사 키
+
+raw 조회는 접두사를 그대로 노출합니다. 조인된 컬럼은 `u_id`, `u_username`, … 으로, 루트 `*`가 펼쳐졌다면 루트 컬럼도 `p_id`, `p_title`, … 으로 도착해요.
+
+```typescript
+const rows = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoinAndSelect(User, "u", (j) => j.on("p.authorId", "=", "u.id"))
+  .getRawMany();
+// [{ p_id: 1, p_title: "...", u_id: 7, u_name: "Alice", ... }]
+```
+
+::: warning 동작 변경
+기존에 `getRawMany()`를 `*AndSelect`와 함께 쓰고 있었다면 키 접근을 업데이트하세요 — 조인된 컬럼(그리고 펼쳐진 루트 컬럼)은 이제 평평한 키가 아니라 접두사 키입니다. 평평한 형태는 같은 이름의 컬럼을 조용히 잃어버렸지만, 접두사 형태는 모든 값을 보존해요.
+:::
+
+### 엔티티 기반 조인의 관계 매칭
+
+`leftJoinAndSelect(Entity, alias, on)`은 루트 엔티티에 조인 대상과 연결된 관계 프로퍼티가 있으면 자동으로 매칭합니다. 매칭되면 `*RelationAndSelect` 없이도 위와 동일하게 하이드레이션돼요. 매칭되는 관계가 없으면 컬럼은 여전히 별칭 접두사를 달지만(덮어쓰기 없음) 중첩은 일어나지 않으니 `getRawMany()`로 읽으세요.
 
 ## 문자열 기반 조인 (raw)
 
