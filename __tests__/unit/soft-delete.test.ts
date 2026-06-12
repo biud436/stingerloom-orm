@@ -161,6 +161,27 @@ describe("EntityManager soft delete", () => {
       expect(result.affected).toBe(1);
     });
 
+    it("이미 soft-delete된 행을 다시 스탬프하지 않도록 WHERE에 deleted_at IS NULL을 추가해야 함", async () => {
+      mockQuery.mockResolvedValue({
+        results: [], rowCount: 1,
+        fields: [],
+      });
+
+      await em.softDelete(Article, { id: 1 } as any);
+
+      const updateCall = mockQuery.mock.calls.find((call: any[]) => {
+        const sqlObj = call[0];
+        const sqlText =
+          typeof sqlObj === "string" ? sqlObj : sqlObj?.sql || sqlObj?.text || "";
+        return sqlText.includes("UPDATE");
+      });
+
+      const sqlObj = updateCall![0];
+      const sqlText = sqlObj?.sql || sqlObj?.text || "";
+      // The active-only predicate must be intersected with the user criteria.
+      expect(sqlText).toMatch(/"deletedAt"\s+IS\s+NULL/);
+    });
+
     it("@DeletedAt 컬럼이 없는 엔티티에 softDelete()를 호출하면 에러를 던져야 함", async () => {
       await expect(
         em.softDelete(Comment, { id: 1 } as any),
@@ -199,6 +220,27 @@ describe("EntityManager soft delete", () => {
       expect(sqlText).toMatch(/SET\s+"deletedAt"\s*=\s*NULL/);
       expect(sqlText).toMatch(/WHERE/);
       expect(result.affected).toBe(2);
+    });
+
+    it("활성 행을 건드리지 않도록 WHERE에 deleted_at IS NOT NULL을 추가해야 함", async () => {
+      mockQuery.mockResolvedValue({
+        results: [], rowCount: 1,
+        fields: [],
+      });
+
+      await em.restore(Article, { id: 1 } as any);
+
+      const updateCall = mockQuery.mock.calls.find((call: any[]) => {
+        const sqlObj = call[0];
+        const sqlText =
+          typeof sqlObj === "string" ? sqlObj : sqlObj?.sql || sqlObj?.text || "";
+        return sqlText.includes("UPDATE");
+      });
+
+      const sqlObj = updateCall![0];
+      const sqlText = sqlObj?.sql || sqlObj?.text || "";
+      // Only revive rows that are actually deleted.
+      expect(sqlText).toMatch(/"deletedAt"\s+IS\s+NOT\s+NULL/);
     });
 
     it("@DeletedAt 컬럼이 없는 엔티티에 restore()를 호출하면 에러를 던져야 함", async () => {

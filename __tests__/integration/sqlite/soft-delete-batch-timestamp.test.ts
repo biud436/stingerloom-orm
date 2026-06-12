@@ -315,6 +315,55 @@ describe("[Integration] SQLite: Soft Delete", () => {
     expect(items[0].name).toBe("Different");
   });
 
+  // ── opposite-state predicates: softDelete/restore only touch the right rows ──
+  it("re-soft-deleting a broader set preserves an already-deleted row's timestamp", async () => {
+    const repo = conn.em.getRepository(SdEntity);
+    const a = await repo.save({ name: "Dup", age: 88 });
+    const b = await repo.save({ name: "Dup", age: 88 });
+
+    const connector = DatabaseClient.getInstance().getConnection();
+    // Simulate A having been soft-deleted earlier with a known sentinel value.
+    await connector.query(
+      `UPDATE "${tableName}" SET "deletedAt" = '2020-01-01 00:00:00' WHERE "id" = ${a.id}`,
+    );
+
+    // Broader soft delete matching BOTH the already-deleted A and the active B.
+    await repo.softDelete({ name: "Dup" } as any);
+
+    const rows = await connector.query(
+      `SELECT "id", "deletedAt" FROM "${tableName}" WHERE "name" = 'Dup' ORDER BY "id"`,
+    );
+    const rowA = rows.find((r: any) => r.id === a.id);
+    const rowB = rows.find((r: any) => r.id === b.id);
+
+    // A keeps its original timestamp — it was already deleted, so the
+    // deleted_at IS NULL predicate excludes it from the restamp.
+    expect(rowA.deletedAt).toBe("2020-01-01 00:00:00");
+    // B is newly soft-deleted (was active, so it WAS stamped).
+    expect(rowB.deletedAt).not.toBeNull();
+    expect(rowB.deletedAt).not.toBe("2020-01-01 00:00:00");
+  });
+
+  it("restore() revives a mixed active/deleted set, leaving every row visible", async () => {
+    const repo = conn.em.getRepository(SdEntity);
+    const active = await repo.save({ name: "Mix", age: 99 });
+    const deleted = await repo.save({ name: "Mix", age: 99 });
+
+    await repo.softDelete({ id: deleted.id } as any);
+
+    // Criteria matches both the active and the soft-deleted row. The
+    // deleted_at IS NOT NULL predicate (asserted at the SQL level in the unit
+    // suite — SQLite cannot report `affected`) means only the deleted row is
+    // written, and the full set ends up visible.
+    await repo.restore({ name: "Mix" } as any);
+
+    const found = await repo.find();
+    const items = Array.isArray(found) ? found : found ? [found] : [];
+    const ids = items.map((i: any) => i.id);
+    expect(ids).toContain(active.id);
+    expect(ids).toContain(deleted.id);
+  });
+
   // ── findWithCursor() must honor withDeleted like find() ──────────────
   it("findWithCursor() excludes soft-deleted rows by default", async () => {
     const repo = conn.em.getRepository(SdEntity);

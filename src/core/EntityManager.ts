@@ -4089,6 +4089,11 @@ export class EntityManager implements BaseEntityManager {
         whereMap.push(tenantSoftDeleteWhere);
       }
 
+      // Only stamp rows that are still active. Re-soft-deleting an already
+      // trashed row would overwrite its original deleted_at timestamp, and
+      // `affected` should report newly-deleted rows only.
+      whereMap.push(Conditions.isNull(this.wrap(deletedAtColumn)));
+
       const whereSql = join(whereMap, " AND ");
 
       const nowExpr = this.isSqlite() ? raw("datetime('now')") : raw("NOW()");
@@ -4150,6 +4155,11 @@ export class EntityManager implements BaseEntityManager {
       if (tenantRestoreWhere) {
         whereMap.push(tenantRestoreWhere);
       }
+
+      // Only revive rows that are actually soft-deleted. Restoring an active
+      // row is a pointless write and inflates `affected` with rows that were
+      // never deleted.
+      whereMap.push(Conditions.isNotNull(this.wrap(deletedAtColumn)));
 
       const whereSql = join(whereMap, " AND ");
 
