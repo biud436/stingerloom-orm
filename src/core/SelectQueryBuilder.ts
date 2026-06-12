@@ -4657,18 +4657,49 @@ export class SelectQueryBuilder<T, TResult = T> {
   // ── EXECUTION: Utility ─────────────────────────────────
 
   /**
-   * Execute a COUNT(*) query with the same WHERE/JOIN conditions.
+   * @internal Does this builder carry a to-many (`one-to-many`) joined
+   * selection registered by an `*AndSelect` method? Such joins multiply root
+   * rows, which changes both COUNT and LIMIT/OFFSET semantics — a plain
+   * `COUNT(*)` overcounts, and a row-level LIMIT can truncate a root's
+   * children at the page boundary.
    */
-  async getCount(): Promise<number> {
+  protected hasToManyJoinedSelection(): boolean {
+    return this.joinedSelections.some((s) => s.kind === "one-to-many");
+  }
+
+  /**
+   * @internal Resolve the root entity's primary-key columns from metadata.
+   * Returns one `{ name, propertyKey }` entry per PK column (composite PKs
+   * yield several). `name` is the DB column — used for raw-row keying and SQL
+   * identifiers; `propertyKey` is the entity property — used to read hydrated
+   * instances. Empty when metadata is unavailable. PK membership matches the
+   * grouping in {@link transformJoinedEntityRows} (`options.primary`).
+   */
+  protected resolveRootPkColumns(): Array<{ name: string; propertyKey: string }> {
+    const resolver = (this.em as any).resolver as
+      | RelationMetadataResolver
+      | undefined;
+    const meta = resolver?.resolveEntityMetadata?.(this.entity);
+    if (!meta) return [];
+    const pks: Array<{ name: string; propertyKey: string }> = [];
+    for (const c of (meta.columns ?? []) as ColumnMetadata[]) {
+      if (!c.options?.primary) continue;
+      const name = c.name;
+      if (typeof name !== "string" || name.length === 0) continue;
+      pks.push({ name, propertyKey: (c.propertyKey as string) ?? name });
+    }
+    return pks;
+  }
+
+  /**
+   * @internal Apply the shared FROM + JOIN + WHERE (soft-delete auto-filter +
+   * tenant predicate) source to a count/distinct-style {@link RawQueryBuilder}.
+   * Re-derives the same row source as {@link toSql} without mutating shared
+   * state. The caller owns the SELECT clause (issued before) and any
+   * GROUP BY / HAVING (issued after).
+   */
+  private applyCountSource(qb: RawQueryBuilder): void {
     const tableName = this.resolveTableName();
-    const qb = RawQueryBuilderFactory.create() as RawQueryBuilder;
-
-    const internals = (this.em as any)._ctx;
-    if (internals.isMySqlFamily()) qb.setDatabaseType("mysql");
-    else if (internals.isSqlite?.()) qb.setDatabaseType("sqlite");
-    else qb.setDatabaseType("postgresql");
-
-    qb.select(["COUNT(*) AS count"]);
 
     // TPC polymorphic: FROM UNION ALL subquery
     if (this.tpcFromSql) {
@@ -4699,6 +4730,64 @@ export class SelectQueryBuilder<T, TResult = T> {
     this.appendTenantPredicate(countWhere, this.entity, this.alias);
 
     qb.where(countWhere);
+  }
+
+  /**
+   * Execute a COUNT query with the same WHERE/JOIN conditions.
+   *
+   * When a to-many (`one-to-many`) `*AndSelect` join is present, the JOIN
+   * multiplies root rows, so a plain `COUNT(*)` over the joined row set
+   * overcounts. In that case — and only when there is no GROUP BY / HAVING —
+   * the count is taken over distinct root entities via a
+   * `COUNT(*) FROM (SELECT DISTINCT <root pk> ...) ` wrapper, which is portable
+   * across MySQL / PostgreSQL / SQLite and composite-PK safe. Hand-written
+   * joins added through `leftJoin()/innerJoin()` without a joined selection
+   * keep the plain `COUNT(*)` behavior (the caller may genuinely want the
+   * multiplied row count), and GROUP BY queries keep their existing per-group
+   * COUNT semantics.
+   */
+  async getCount(): Promise<number> {
+    const internals = (this.em as any)._ctx;
+    const dbType = internals.isMySqlFamily()
+      ? "mysql"
+      : internals.isSqlite?.()
+        ? "sqlite"
+        : "postgresql";
+
+    // Distinct-root count: only when a to-many joined selection multiplies
+    // rows and the query carries no GROUP BY / HAVING (those keep their
+    // existing per-group semantics) and the root PK is resolvable.
+    if (
+      this.groupByCols.length === 0 &&
+      this.havingClauses.length === 0 &&
+      this.hasToManyJoinedSelection()
+    ) {
+      const rootPkCols = this.resolveRootPkColumns();
+      if (rootPkCols.length > 0) {
+        const refs = rootPkCols.map(
+          (c) => `${this.em.wrap(this.alias)}.${this.em.wrap(c.name)}`,
+        );
+        const inner = RawQueryBuilderFactory.create() as RawQueryBuilder;
+        inner.setDatabaseType(dbType);
+        inner.selectDistinct(refs);
+        this.applyCountSource(inner);
+
+        const outer = RawQueryBuilderFactory.create() as RawQueryBuilder;
+        outer.setDatabaseType(dbType);
+        outer.select(["COUNT(*) AS count"]);
+        outer.from(sql`(${inner.build()})`, `AS ${this.em.wrap("count_src")}`);
+
+        const built = outer.build();
+        const rows = await this.em.query<{ count: string | number }>(built);
+        if (rows.length === 0) return 0;
+        return Number(rows[0].count);
+      }
+    }
+
+    const qb = RawQueryBuilderFactory.create() as RawQueryBuilder;
+    qb.setDatabaseType(dbType);
+    qb.select(["COUNT(*) AS count"]);
+    this.applyCountSource(qb);
 
     if (this.groupByCols.length > 0) {
       qb.groupBy(this.groupByCols);
