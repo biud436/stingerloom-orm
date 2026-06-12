@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, raw, join } from "sql-template-tag";
+import sql, { Sql, raw, join, type RawValue } from "sql-template-tag";
 import { Conditions } from "./Conditions";
 import { resolveWhereClause, type WhereResolverOptions } from "./WhereResolver";
 import type { WhereClause } from "../dialects/FindOption";
@@ -80,6 +80,7 @@ import {
   buildSqrt,
 } from "./expressions/NumericExpression";
 import { buildDateAdd } from "./expressions/DateArithmeticExpression";
+import { Logger } from "../utils/Logger";
 import type {
   CastKind,
   DateAddUnit,
@@ -4107,6 +4108,23 @@ export class SelectQueryBuilder<T, TResult = T> {
   async getMany(): Promise<TResult[]> {
     this.validateRequiredColumns();
 
+    // Two-phase root pagination: when a to-many *AndSelect join is combined
+    // with LIMIT/OFFSET, the window would otherwise apply to the JOIN-
+    // multiplied rows and silently truncate a root's children at the page
+    // boundary. Resolve the page of distinct roots first, then hydrate them
+    // fully (see fetchRootPage). Falls back to the single-phase path (with a
+    // debug warning) when the root PK is unresolvable.
+    if (
+      this.hasToManyJoinedSelection() &&
+      (this.limitValue !== undefined || this.offsetValue !== undefined)
+    ) {
+      const pkCols = this.resolveRootPkColumns();
+      if (pkCols.length > 0) {
+        return this.fetchRootPage(pkCols, "entity");
+      }
+      this.warnUnresolvableRootPage();
+    }
+
     const built = this.toSql();
     const rows = await this.em.query<any>(built);
 
@@ -4410,6 +4428,13 @@ export class SelectQueryBuilder<T, TResult = T> {
    * itself is not mutated — a clone carries the LIMIT/OFFSET — so the same
    * instance can be paged again or reused for a different query.
    *
+   * When the builder carries a to-many `*AndSelect` join (e.g.
+   * `leftJoinRelationAndSelect("comments", ...)`), `total` counts distinct
+   * root entities and the page is computed over distinct roots — `getCount()`
+   * and `getMany()` apply two-phase root pagination, so a page never truncates
+   * a root's children at the boundary nor reports the JOIN-multiplied row
+   * count.
+   *
    * @example
    * ```ts
    * const result = await em
@@ -4515,6 +4540,21 @@ export class SelectQueryBuilder<T, TResult = T> {
    * preventing access to unselected columns at compile time.
    */
   async getPartialMany(): Promise<TResult[]> {
+    // Two-phase root pagination, partial variant: same root-windowing concern
+    // as getMany() (see there), but rows stay as plain projected objects. The
+    // page's roots are selected first, then their (flat) rows are returned in
+    // page order without truncating any root's children at the boundary.
+    if (
+      this.hasToManyJoinedSelection() &&
+      (this.limitValue !== undefined || this.offsetValue !== undefined)
+    ) {
+      const pkCols = this.resolveRootPkColumns();
+      if (pkCols.length > 0) {
+        return this.fetchRootPage(pkCols, "partial");
+      }
+      this.warnUnresolvableRootPage();
+    }
+
     const built = this.toSql();
     const rows = await this.em.query<any>(built);
     return this.applyValidation(rows);
@@ -4800,6 +4840,200 @@ export class SelectQueryBuilder<T, TResult = T> {
     const rows = await this.em.query<{ count: string | number }>(built);
     if (rows.length === 0) return 0;
     return Number(rows[0].count);
+  }
+
+  /**
+   * @internal Two-phase root pagination (TypeORM-style) for queries that carry
+   * a to-many `*AndSelect` join plus LIMIT/OFFSET.
+   *
+   * Phase 1 selects the page of distinct root primary keys honoring the
+   * builder's FROM/JOIN/WHERE/ORDER BY + LIMIT/OFFSET, so the window picks
+   * whole roots rather than JOIN-multiplied rows. Phase 2 re-runs the full
+   * `*AndSelect` query filtered by `root.pk IN (<page>)` WITHOUT LIMIT/OFFSET,
+   * hydrates as usual (full child arrays), then reorders the roots to match
+   * the phase-1 page order.
+   *
+   * @param mode `"entity"` hydrates via getMany() (grouped roots); `"partial"`
+   *             returns plain projected rows via getPartialMany().
+   */
+  private async fetchRootPage(
+    pkCols: Array<{ name: string; propertyKey: string }>,
+    mode: "entity" | "partial",
+  ): Promise<TResult[]> {
+    const offset = this.offsetValue ?? 0;
+    const limit =
+      typeof this.limitValue === "number" ? this.limitValue : undefined;
+
+    // Phase 1: page of distinct root PKs in ORDER BY order.
+    const pkRows = await this.queryRootPkPage(pkCols, offset, limit);
+    if (pkRows.length === 0) return [];
+
+    // Phase 2: full query filtered to the page's roots, unpaged. The clone has
+    // no LIMIT/OFFSET, so its getMany()/getPartialMany() does not re-enter the
+    // two-phase path.
+    const phase2 = this.clone();
+    phase2.offsetValue = undefined;
+    phase2.limitValue = undefined;
+    phase2.whereClauses = [
+      ...phase2.whereClauses,
+      this.buildRootPkInCondition(pkCols, pkRows),
+    ];
+    const data =
+      mode === "entity"
+        ? await phase2.getMany()
+        : await phase2.getPartialMany();
+
+    return this.reorderByPkPage(data, pkCols, pkRows, mode);
+  }
+
+  /**
+   * @internal Build and run the phase-1 query: a `SELECT DISTINCT <root pk>`
+   * over the same FROM/JOIN/WHERE/ORDER BY as the main query, windowed by
+   * LIMIT/OFFSET. Returns the raw PK rows (keyed by DB column name).
+   *
+   * PostgreSQL requires every ORDER BY expression to appear in the
+   * `SELECT DISTINCT` list, so the (string) order-by column expressions are
+   * appended to the select list, deduplicated. Order-by entries backed by a
+   * parameterized `Sql` expression (e.g. an aggregate/scalar expression) are
+   * not added and may be rejected by PostgreSQL — such orderings are uncommon
+   * for to-many root pages.
+   */
+  private async queryRootPkPage(
+    pkCols: Array<{ name: string; propertyKey: string }>,
+    offset: number,
+    limit: number | undefined,
+  ): Promise<Array<Record<string, unknown>>> {
+    const internals = (this.em as any)._ctx;
+    const isMySql = internals.isMySqlFamily();
+    const dbType = isMySql
+      ? "mysql"
+      : internals.isSqlite?.()
+        ? "sqlite"
+        : "postgresql";
+
+    const qb = RawQueryBuilderFactory.create() as RawQueryBuilder;
+    qb.setDatabaseType(dbType);
+
+    const refs = pkCols.map(
+      (c) => `${this.em.wrap(this.alias)}.${this.em.wrap(c.name)}`,
+    );
+    const selectExprs = [...refs];
+    const seen = new Set(refs);
+    for (const entry of this.orderByClauses) {
+      if (typeof entry.column === "string" && !seen.has(entry.column)) {
+        seen.add(entry.column);
+        selectExprs.push(entry.column);
+      }
+    }
+    qb.selectDistinct(selectExprs);
+    this.applyCountSource(qb);
+
+    if (this.orderByClauses.length > 0) {
+      qb.appendSql(this.renderOrderBy(isMySql));
+    }
+
+    if (limit !== undefined) {
+      qb.limit([offset, limit]);
+    } else if (offset > 0) {
+      // MySQL requires LIMIT alongside OFFSET.
+      if (isMySql) qb.limit([offset, Number.MAX_SAFE_INTEGER]);
+      else qb.offset(offset);
+    }
+
+    return this.em.query<Record<string, unknown>>(qb.build());
+  }
+
+  /**
+   * @internal Build the `root.pk IN (<page>)` predicate for phase 2. Uses a
+   * scalar IN list for single-column PKs and a row-value tuple IN list for
+   * composite PKs (`(a, b) IN ((1,2), (3,4))`) — supported by MySQL,
+   * PostgreSQL, and SQLite.
+   */
+  private buildRootPkInCondition(
+    pkCols: Array<{ name: string; propertyKey: string }>,
+    pkRows: Array<Record<string, unknown>>,
+  ): Sql {
+    const refs = pkCols.map(
+      (c) => `${this.em.wrap(this.alias)}.${this.em.wrap(c.name)}`,
+    );
+    if (pkCols.length === 1) {
+      const values = pkRows.map((r) => r[pkCols[0].name]);
+      return Conditions.in(refs[0], values);
+    }
+    const lhs = join(
+      refs.map((r) => raw(r)),
+      ", ",
+    );
+    const tuples = pkRows.map(
+      (r) =>
+        sql`(${join(
+          pkCols.map((c) => sql`${r[c.name] as RawValue}`),
+          ", ",
+        )})`,
+    );
+    return sql`(${lhs}) IN (${join(tuples, ", ")})`;
+  }
+
+  /**
+   * @internal Reorder phase-2 results to match the phase-1 page order, keying
+   * each result by its root PK. Entity results are keyed by entity property
+   * (hydrated instances); partial rows are keyed by the aliased root PK column
+   * (`${alias}_${pk}`, falling back to the bare column). Multiple rows that map
+   * to the same root (partial mode) are kept together and emitted in page
+   * order.
+   */
+  private reorderByPkPage(
+    data: TResult[],
+    pkCols: Array<{ name: string; propertyKey: string }>,
+    pkRows: Array<Record<string, unknown>>,
+    mode: "entity" | "partial",
+  ): TResult[] {
+    const SEP = "\u0000";
+    const rowKey = (r: Record<string, unknown>): string =>
+      pkCols.map((c) => String(r[c.name])).join(SEP);
+    const dataKey = (e: any): string =>
+      mode === "entity"
+        ? pkCols.map((c) => String(e?.[c.propertyKey])).join(SEP)
+        : pkCols
+            .map((c) => {
+              const aliased = e?.[`${this.alias}_${c.name}`];
+              return String(aliased !== undefined ? aliased : e?.[c.name]);
+            })
+            .join(SEP);
+
+    const groups = new Map<string, TResult[]>();
+    for (const e of data) {
+      const k = dataKey(e);
+      const g = groups.get(k);
+      if (g) g.push(e);
+      else groups.set(k, [e]);
+    }
+
+    const ordered: TResult[] = [];
+    for (const r of pkRows) {
+      const k = rowKey(r);
+      const g = groups.get(k);
+      if (g) {
+        ordered.push(...g);
+        groups.delete(k);
+      }
+    }
+    return ordered;
+  }
+
+  /**
+   * @internal Emit a debug-level warning when LIMIT/OFFSET is combined with a
+   * to-many `*AndSelect` join but the root primary key cannot be resolved, so
+   * two-phase root pagination is skipped and the page may truncate a root's
+   * children at the boundary.
+   */
+  private warnUnresolvableRootPage(): void {
+    new Logger("SelectQueryBuilder").debug(
+      `LIMIT/OFFSET combined with a to-many *AndSelect join on ` +
+        `${this.entity.name}, but the root primary key could not be resolved. ` +
+        `The page is computed over JOIN-multiplied rows and may truncate a ` +
+        `root's children at the page boundary.`,
+    );
   }
 
   /**
