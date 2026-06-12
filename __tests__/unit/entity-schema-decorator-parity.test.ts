@@ -31,7 +31,43 @@ import {
 import {
   COMPOSITE_INDEX_TOKEN,
   CompositeIndexMetadata,
+  INDEX_TOKEN,
+  IndexMetadata,
+  Index,
 } from "../../src/decorators/Indexer";
+import {
+  UNIQUE_INDEX_TOKEN,
+  UniqueIndexMetadata,
+  UniqueIndex,
+} from "../../src/decorators/UniqueIndex";
+import { VERSION_TOKEN, Version } from "../../src/decorators/Version";
+import {
+  CREATE_TIMESTAMP_TOKEN,
+  CreateTimestamp,
+} from "../../src/decorators/CreateTimestamp";
+import {
+  UPDATE_TIMESTAMP_TOKEN,
+  UpdateTimestamp,
+} from "../../src/decorators/UpdateTimestamp";
+import { DELETED_AT_TOKEN, DeletedAt } from "../../src/decorators/DeletedAt";
+import {
+  HOOK_TOKEN,
+  HookMetadata,
+  BeforeInsert,
+  AfterUpdate,
+} from "../../src/decorators/Hooks";
+import {
+  VALIDATION_TOKEN,
+  ValidationMetadata,
+  NotNull,
+  MinLength,
+} from "../../src/decorators/Validation";
+import {
+  MANY_TO_MANY_TOKEN,
+  ManyToManyMetadata,
+  ManyToMany,
+} from "../../src/decorators/ManyToMany";
+import { PrimaryColumn } from "../../src/decorators/PrimaryColumn";
 import {
   EntityScanner,
   ColumnScanner,
@@ -391,5 +427,321 @@ describe("EntitySchema — composite index advanced options", () => {
     expect(idx[0].options!.where).toBe("active = true");
     expect(idx[0].options!.using).toBe("btree");
     expect(idx[0].options!.include).toEqual(["id"]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// @Version  →  columns[x].version
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("EntitySchema — version (decorator-free @Version)", () => {
+  it("registers VERSION_TOKEN at the same location as @Version", () => {
+    // Decorator reference
+    const Decorated = freshClass("VersionDecorated");
+    Reflect.defineMetadata("design:type", Number, Decorated.prototype, "version");
+    Version()(Decorated.prototype, "version");
+    const ref = Reflect.getMetadata(VERSION_TOKEN, Decorated);
+
+    // EntitySchema equivalent
+    const SchemaBased = freshClass("VersionSchema");
+    new EntitySchema<any>({
+      target: SchemaBased,
+      columns: {
+        id: { type: "int", primary: true, autoIncrement: true },
+        version: { type: "int", version: true },
+      },
+    });
+    const got = Reflect.getMetadata(VERSION_TOKEN, SchemaBased);
+
+    expect(ref).toBe("version");
+    expect(got).toBe(ref);
+
+    // The version column itself remains a regular column on both sides.
+    const cols: ColumnMetadata[] = Reflect.getMetadata(
+      COLUMN_TOKEN,
+      SchemaBased.prototype,
+    );
+    expect(cols.map((c) => c.propertyKey)).toContain("version");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// @CreateTimestamp / @UpdateTimestamp / @DeletedAt  →  column flags
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("EntitySchema — timestamp & soft-delete flags", () => {
+  it("createTimestamp flag matches @CreateTimestamp (CREATE_TIMESTAMP_TOKEN)", () => {
+    const Decorated = freshClass("CtDecorated");
+    Reflect.defineMetadata("design:type", Date, Decorated.prototype, "createdAt");
+    CreateTimestamp()(Decorated.prototype, "createdAt");
+    const ref = Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, Decorated);
+
+    const SchemaBased = freshClass("CtSchema");
+    new EntitySchema<any>({
+      target: SchemaBased,
+      columns: {
+        id: { type: "int", primary: true, autoIncrement: true },
+        createdAt: { type: "datetime", createTimestamp: true },
+      },
+    });
+    const got = Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, SchemaBased);
+
+    expect(ref).toBe("createdAt");
+    expect(got).toBe(ref);
+  });
+
+  it("updateTimestamp flag matches @UpdateTimestamp (UPDATE_TIMESTAMP_TOKEN)", () => {
+    const Decorated = freshClass("UtDecorated");
+    Reflect.defineMetadata("design:type", Date, Decorated.prototype, "updatedAt");
+    UpdateTimestamp()(Decorated.prototype, "updatedAt");
+    const ref = Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, Decorated);
+
+    const SchemaBased = freshClass("UtSchema");
+    new EntitySchema<any>({
+      target: SchemaBased,
+      columns: {
+        id: { type: "int", primary: true, autoIncrement: true },
+        updatedAt: { type: "datetime", updateTimestamp: true },
+      },
+    });
+    const got = Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, SchemaBased);
+
+    expect(ref).toBe("updatedAt");
+    expect(got).toBe(ref);
+  });
+
+  it("deletedAt flag matches @DeletedAt (DELETED_AT_TOKEN)", () => {
+    const Decorated = freshClass("DaDecorated");
+    Reflect.defineMetadata("design:type", Date, Decorated.prototype, "deletedAt");
+    DeletedAt()(Decorated.prototype, "deletedAt");
+    const ref = Reflect.getMetadata(DELETED_AT_TOKEN, Decorated);
+
+    const SchemaBased = freshClass("DaSchema");
+    new EntitySchema<any>({
+      target: SchemaBased,
+      columns: {
+        id: { type: "int", primary: true, autoIncrement: true },
+        deletedAt: { type: "datetime", nullable: true, deletedAt: true },
+      },
+    });
+    const got = Reflect.getMetadata(DELETED_AT_TOKEN, SchemaBased);
+
+    expect(ref).toBe("deletedAt");
+    expect(got).toBe(ref);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// @Index (property-level)  →  columns[x].index
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("EntitySchema — index flag (decorator-free @Index)", () => {
+  it("registers INDEX_TOKEN on the prototype like @Index", () => {
+    const Decorated = freshClass("IdxDecorated");
+    Reflect.defineMetadata("design:type", String, Decorated.prototype, "email");
+    Index()(Decorated.prototype, "email");
+    const ref: IndexMetadata[] = Reflect.getMetadata(
+      INDEX_TOKEN,
+      Decorated.prototype,
+    );
+
+    const SchemaBased = freshClass("IdxSchema");
+    new EntitySchema<any>({
+      target: SchemaBased,
+      columns: {
+        id: { type: "int", primary: true, autoIncrement: true },
+        email: { type: "varchar", index: true },
+      },
+    });
+    const got: IndexMetadata[] = Reflect.getMetadata(
+      INDEX_TOKEN,
+      SchemaBased.prototype,
+    );
+
+    expect(ref).toHaveLength(1);
+    expect(ref[0].name).toBe("email");
+    expect(got).toHaveLength(1);
+    expect(got[0].name).toBe(ref[0].name);
+    expect(got[0].type).toBe(ref[0].type);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// @UniqueIndex  →  uniqueIndexes
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("EntitySchema — uniqueIndexes (decorator-free @UniqueIndex)", () => {
+  it("registers UNIQUE_INDEX_TOKEN identically to @UniqueIndex", () => {
+    const Decorated = freshClass("UqDecorated");
+    UniqueIndex(["email", "tenantId"], "uq_email_tenant")(Decorated as any);
+    const ref: UniqueIndexMetadata[] = Reflect.getMetadata(
+      UNIQUE_INDEX_TOKEN,
+      Decorated,
+    );
+
+    const SchemaBased = freshClass("UqSchema");
+    new EntitySchema<any>({
+      target: SchemaBased,
+      columns: {
+        id: { type: "int", primary: true, autoIncrement: true },
+        email: { type: "varchar" },
+        tenantId: { type: "varchar" },
+      },
+      uniqueIndexes: [
+        { columns: ["email", "tenantId"], name: "uq_email_tenant" },
+      ],
+    });
+    const got: UniqueIndexMetadata[] = Reflect.getMetadata(
+      UNIQUE_INDEX_TOKEN,
+      SchemaBased,
+    );
+
+    expect(got).toEqual(ref);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// @Hooks (lifecycle)  →  hooks
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("EntitySchema — hooks (decorator-free @BeforeInsert/@AfterUpdate)", () => {
+  it("registers HOOK_TOKEN entries matching the lifecycle decorators", () => {
+    const Decorated = freshClass("HookDecorated");
+    (BeforeInsert() as any)(Decorated.prototype, "onCreate");
+    (AfterUpdate() as any)(Decorated.prototype, "onChange");
+    const ref: HookMetadata[] = Reflect.getMetadata(HOOK_TOKEN, Decorated);
+
+    const SchemaBased = freshClass("HookSchema");
+    new EntitySchema<any>({
+      target: SchemaBased,
+      columns: { id: { type: "int", primary: true, autoIncrement: true } },
+      hooks: { beforeInsert: "onCreate", afterUpdate: "onChange" },
+    });
+    const got: HookMetadata[] = Reflect.getMetadata(HOOK_TOKEN, SchemaBased);
+
+    // Compare as sets — decorator order vs object key order may differ.
+    const sortByEvent = (a: HookMetadata, b: HookMetadata) =>
+      a.event.localeCompare(b.event);
+    expect([...got].sort(sortByEvent)).toEqual([...ref].sort(sortByEvent));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// @Validation  →  columns[x].validation
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("EntitySchema — validation (decorator-free @NotNull/@MinLength)", () => {
+  it("registers VALIDATION_TOKEN with the same constraints/values", () => {
+    const Decorated = freshClass("ValDecorated");
+    NotNull()(Decorated.prototype, "name");
+    MinLength(3)(Decorated.prototype, "name");
+    const ref: ValidationMetadata[] = Reflect.getMetadata(
+      VALIDATION_TOKEN,
+      Decorated,
+    );
+
+    const SchemaBased = freshClass("ValSchema");
+    new EntitySchema<any>({
+      target: SchemaBased,
+      columns: {
+        id: { type: "int", primary: true, autoIncrement: true },
+        name: {
+          type: "varchar",
+          validation: [{ constraint: "notNull" }, { constraint: "minLength", value: 3 }],
+        },
+      },
+    });
+    const got: ValidationMetadata[] = Reflect.getMetadata(
+      VALIDATION_TOKEN,
+      SchemaBased,
+    );
+
+    // Compare the runtime-visible shape (propertyKey/constraint/value). The
+    // auto-generated `message` text is intentionally decorator-vs-schema
+    // specific and not part of the enforced behavior.
+    const shape = (v: ValidationMetadata) => ({
+      propertyKey: v.propertyKey,
+      constraint: v.constraint,
+      value: v.value,
+    });
+    expect(got.map(shape)).toEqual(ref.map(shape));
+    // Each entry still carries a non-empty message on both sides.
+    expect(got.every((v) => typeof v.message === "string" && v.message.length > 0)).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// @PrimaryColumn (composite)  →  multiple primary columns
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("EntitySchema — composite primary key (decorator-free @PrimaryColumn pair)", () => {
+  it("marks multiple columns primary like a @PrimaryColumn pair", () => {
+    const Decorated = freshClass("PkDecorated");
+    Reflect.defineMetadata("design:type", Number, Decorated.prototype, "orderId");
+    Reflect.defineMetadata("design:type", Number, Decorated.prototype, "productId");
+    PrimaryColumn()(Decorated.prototype, "orderId");
+    PrimaryColumn()(Decorated.prototype, "productId");
+    const refCols: ColumnMetadata[] = Reflect.getMetadata(
+      COLUMN_TOKEN,
+      Decorated.prototype,
+    );
+    const refPrimary = refCols
+      .filter((c) => c.options?.primary)
+      .map((c) => c.propertyKey)
+      .sort();
+
+    const SchemaBased = freshClass("PkSchema");
+    new EntitySchema<any>({
+      target: SchemaBased,
+      columns: {
+        orderId: { type: "int", primary: true },
+        productId: { type: "int", primary: true },
+      },
+    });
+    const gotCols: ColumnMetadata[] = Reflect.getMetadata(
+      COLUMN_TOKEN,
+      SchemaBased.prototype,
+    );
+    const gotPrimary = gotCols
+      .filter((c) => c.options?.primary)
+      .map((c) => c.propertyKey)
+      .sort();
+
+    expect(refPrimary).toEqual(["orderId", "productId"]);
+    expect(gotPrimary).toEqual(refPrimary);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// @ManyToMany with custom joinTable  →  relations[x] manyToMany
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("EntitySchema — manyToMany with custom joinTable", () => {
+  it("registers MANY_TO_MANY_TOKEN with the same joinTable option", () => {
+    const Tag = freshClass("Tag");
+    const joinTable = {
+      name: "post_tags",
+      joinColumn: "post_id",
+      inverseJoinColumn: "tag_id",
+    };
+
+    const Decorated = freshClass("M2mDecorated");
+    ManyToMany(() => Tag, { joinTable })(Decorated.prototype, "tags");
+    const ref: ManyToManyMetadata<any>[] = Reflect.getMetadata(
+      MANY_TO_MANY_TOKEN,
+      Decorated,
+    );
+
+    const SchemaBased = freshClass("M2mSchema");
+    new EntitySchema<any>({
+      target: SchemaBased,
+      columns: { id: { type: "int", primary: true, autoIncrement: true } },
+      relations: {
+        tags: { kind: "manyToMany", target: () => Tag, joinTable },
+      },
+    });
+    const got: ManyToManyMetadata<any>[] = Reflect.getMetadata(
+      MANY_TO_MANY_TOKEN,
+      SchemaBased,
+    );
+
+    expect(ref).toHaveLength(1);
+    expect(got).toHaveLength(1);
+    expect(got[0].propertyKey).toBe(ref[0].propertyKey);
+    expect(got[0].joinTable).toEqual(ref[0].joinTable);
+    expect(got[0].joinTable).toEqual(joinTable);
+    expect(got[0].getRelatedEntity()).toBe(Tag);
   });
 });
