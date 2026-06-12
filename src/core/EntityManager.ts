@@ -3758,6 +3758,19 @@ export class EntityManager implements BaseEntityManager {
         return { affected: 0 };
       }
 
+      // @Version: optimistic-lock counter. Criteria-based updates must bump it
+      // exactly like save() does, or a later save() holding a now-stale version
+      // would slip past the lock undetected. Skip when the caller sets the
+      // version property explicitly. getVersionColumn returns the PROPERTY key,
+      // so map it to the DB column the same way the SET keys above are mapped.
+      const versionProp = this.resolver.getVersionColumn(entity);
+      if (versionProp && (data as any)[versionProp] === undefined) {
+        const versionCol = this.wrap(
+          updatePropToCol.get(versionProp) ?? versionProp,
+        );
+        setMap.push(sql`${raw(versionCol)} = ${raw(versionCol)} + 1`);
+      }
+
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.wrap(n),
         dialect: this._ctx.getDialect(),
