@@ -804,3 +804,95 @@ describe("[Integration] SQLite: Create/Update Timestamps", () => {
     expect(found.updatedAt).toBeDefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────
+// 4. #373: all-default batch INSERT (every column omitted)
+// ─────────────────────────────────────────────────────────
+
+describe("[Integration] SQLite: all-default batch INSERT (#373)", () => {
+  let conn: TestConnectionResult;
+  let DefEntity: new () => any;
+  let tableName: string;
+
+  beforeAll(async () => {
+    tableName = shortTableName("alldef");
+
+    conn = await createTestConnection(
+      {
+        type: "sqlite",
+        database: ":memory:",
+        synchronize: false,
+        logging: false,
+      },
+      () => {
+        clearScanners();
+
+        const DC = class {} as any;
+        Object.defineProperty(DC, "name", { value: tableName });
+
+        // id
+        Reflect.defineMetadata("design:type", Number, DC.prototype, "id");
+        PrimaryGeneratedColumn()(DC.prototype, "id");
+
+        // status -- has a DB-side default; omitting it must fall back to DEFAULT
+        Reflect.defineMetadata("design:type", String, DC.prototype, "status");
+        Column({ type: "varchar", default: "pending" })(DC.prototype, "status");
+
+        // priority -- another defaulted column
+        Reflect.defineMetadata("design:type", Number, DC.prototype, "priority");
+        Column({ type: "int", default: 0 })(DC.prototype, "priority");
+
+        Entity()(DC);
+        DefEntity = DC;
+        return { entities: [DC] };
+      },
+    );
+
+    // Manual CREATE TABLE with DB-side defaults
+    const connector = DatabaseClient.getInstance().getConnection();
+    await connector.query(`
+      CREATE TABLE IF NOT EXISTS "${tableName}" (
+        "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+        "status" TEXT NOT NULL DEFAULT 'pending',
+        "priority" INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+  });
+
+  afterAll(async () => {
+    await conn.cleanup();
+  });
+
+  beforeEach(async () => {
+    const connector = DatabaseClient.getInstance().getConnection();
+    await connector.query(`DELETE FROM "${tableName}"`);
+  });
+
+  it("saveMany with two empty objects inserts both rows, assigns PKs, and applies defaults", async () => {
+    const results = await conn.em.saveMany(DefEntity, [{}, {}] as any);
+
+    expect(results.length).toBe(2);
+
+    const ids = results.map((r: any) => r.id);
+    expect(ids[0]).toBeGreaterThan(0);
+    expect(ids[1]).toBeGreaterThan(0);
+    // Per-row inserts must yield distinct, exact rowids.
+    expect(ids[0]).not.toBe(ids[1]);
+
+    for (const row of results) {
+      expect((row as any).status).toBe("pending");
+      expect((row as any).priority).toBe(0);
+    }
+
+    // Confirm the rows are actually persisted with their defaults.
+    const connector = DatabaseClient.getInstance().getConnection();
+    const persisted = await connector.query(
+      `SELECT "id", "status", "priority" FROM "${tableName}" ORDER BY "id"`,
+    );
+    expect(persisted.length).toBe(2);
+    expect(persisted[0].status).toBe("pending");
+    expect(persisted[0].priority).toBe(0);
+    expect(persisted[1].status).toBe("pending");
+    expect(persisted[1].priority).toBe(0);
+  });
+});

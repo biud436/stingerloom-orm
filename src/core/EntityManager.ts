@@ -3150,46 +3150,90 @@ export class EntityManager implements BaseEntityManager {
       fkColumns.push({ joinColumn: rel.joinColumn, propertyName: rel.columnName, relMeta: rel });
     }
 
-    // Build the VALUES rows
-    const valueRows = items.map((item) => {
-      const rowValues = insertableColumns.map((col) => {
-        const rawValue = (item as any)[this.propKey(col)];
-        const transformed = this.applyWriteTransform(col, rawValue);
-        if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
-        return transformed;
-      });
-      for (const fk of fkColumns) {
-        const relatedValue = (item as any)[fk.propertyName];
-        const idPropValue = (item as any)[`${fk.propertyName}Id`];
-        if (relatedValue === null) {
-          rowValues.push(null);
-        } else if (relatedValue && typeof relatedValue === "object") {
-          const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<any>;
-          const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-          const relatedPk = relatedMeta?.columns.find((c: any) => c.options?.primary);
-          rowValues.push(relatedPk ? relatedValue[this.propKey(relatedPk)] ?? null : null);
-        } else if (idPropValue != null) {
-          rowValues.push(idPropValue);
-        } else {
-          rowValues.push(null);
-        }
+    // #373: all insertable columns omitted for every item and no FK columns.
+    // `() VALUES (), ()` is valid only on the MySQL family, and sql-template-tag's
+    // join() rejects empty arrays, so the all-default case is built per dialect.
+    const allDefaultRow = columns.length === 0;
+
+    // Build the VALUES rows (column-bearing path only; all-default handled below).
+    const valueRows: Sql[] = allDefaultRow
+      ? []
+      : items.map((item) => {
+          const rowValues = insertableColumns.map((col) => {
+            const rawValue = (item as any)[this.propKey(col)];
+            const transformed = this.applyWriteTransform(col, rawValue);
+            if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
+            return transformed;
+          });
+          for (const fk of fkColumns) {
+            const relatedValue = (item as any)[fk.propertyName];
+            const idPropValue = (item as any)[`${fk.propertyName}Id`];
+            if (relatedValue === null) {
+              rowValues.push(null);
+            } else if (relatedValue && typeof relatedValue === "object") {
+              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<any>;
+              const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
+              const relatedPk = relatedMeta?.columns.find((c: any) => c.options?.primary);
+              rowValues.push(relatedPk ? relatedValue[this.propKey(relatedPk)] ?? null : null);
+            } else if (idPropValue != null) {
+              rowValues.push(idPropValue);
+            } else {
+              rowValues.push(null);
+            }
+          }
+          return sql`(${join(rowValues, ", ")})`;
+        });
+
+    if (allDefaultRow && this.isPostgres()) {
+      // PostgreSQL has no `() VALUES ()` and `DEFAULT VALUES` is single-row only,
+      // so name the PK and emit the DEFAULT keyword per row to keep the multi-row
+      // form valid: INSERT INTO "t" ("id") VALUES (DEFAULT), (DEFAULT) RETURNING *.
+      columns.push(raw(this.wrap(pk.name!)));
+      for (let i = 0; i < items.length; i++) {
+        valueRows.push(sql`(${raw("DEFAULT")})`);
       }
-      return sql`(${join(rowValues, ", ")})`;
-    });
+    }
 
     // INSERT SQL (PostgreSQL all versions, MariaDB 10.5+: RETURNING *)
     const useReturning =
       (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
       (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
     const returningSql = useReturning ? raw(` RETURNING *`) : raw("");
-    const insertSql = sql`INSERT INTO ${raw(this.wrapTable(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}${returningSql}`;
+    let insertSql: Sql;
+    if (allDefaultRow && this.isMySqlFamily()) {
+      // MySQL/MariaDB accept the empty multi-row form `() VALUES (), ()`.
+      const emptyRows = items.map(() => "()").join(", ");
+      insertSql = sql`INSERT INTO ${raw(this.wrapTable(metadata.name!))} ${raw(`() VALUES ${emptyRows}`)}${returningSql}`;
+    } else if (allDefaultRow && this.isSqlite()) {
+      // Single-row `DEFAULT VALUES`, executed once per item below.
+      insertSql = sql`INSERT INTO ${raw(this.wrapTable(metadata.name!))} ${raw("DEFAULT VALUES")}`;
+    } else {
+      insertSql = sql`INSERT INTO ${raw(this.wrapTable(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}${returningSql}`;
+    }
 
     this.beginTrackQuery();
     const queryStart = Date.now();
-    const queryResult = (await session.query(insertSql)) as {
-      results: any; fields: any; rowCount?: number;
-    };
-    this.trackQuery(entity.name, insertSql.text ?? String(insertSql), Date.now() - queryStart);
+    let queryResult: { results: any; fields: any; rowCount?: number };
+    // Exact rowids from per-row SQLite all-default inserts (see below).
+    let sqliteDefaultRowIds: number[] | null = null;
+    if (allDefaultRow && this.isSqlite()) {
+      // SQLite has no DEFAULT keyword inside VALUES, so run the single-row
+      // `DEFAULT VALUES` statement once per item in this session and keep each
+      // rowid for exact PK assignment.
+      sqliteDefaultRowIds = [];
+      for (let i = 0; i < items.length; i++) {
+        const res = (await session.query(insertSql)) as { results: any };
+        const sqliteRes = res?.results ?? res;
+        sqliteDefaultRowIds.push(Number(sqliteRes?.lastInsertRowid));
+      }
+      this.trackQuery(entity.name, insertSql.text ?? String(insertSql), Date.now() - queryStart);
+      queryResult = { results: [], fields: [] };
+    } else {
+      queryResult = (await session.query(insertSql)) as {
+        results: any; fields: any; rowCount?: number;
+      };
+      this.trackQuery(entity.name, insertSql.text ?? String(insertSql), Date.now() - queryStart);
+    }
 
     // Collect results
     let results: InstanceType<ClazzType<T>>[];
@@ -3210,9 +3254,14 @@ export class EntityManager implements BaseEntityManager {
         const firstId = queryResult?.results?.insertId;
         pkValues = items.map((_, i) => firstId + i);
       } else if (this.isSqlite() && hasAutoIncrementPk) {
-        const sqliteRes = queryResult?.results ?? queryResult;
-        const lastId = Number(sqliteRes?.lastInsertRowid);
-        pkValues = items.map((_, i) => lastId - items.length + 1 + i);
+        if (sqliteDefaultRowIds) {
+          // Per-row all-default inserts already captured exact rowids.
+          pkValues = sqliteDefaultRowIds;
+        } else {
+          const sqliteRes = queryResult?.results ?? queryResult;
+          const lastId = Number(sqliteRes?.lastInsertRowid);
+          pkValues = items.map((_, i) => lastId - items.length + 1 + i);
+        }
       } else {
         // UUID — use client-generated PK values
         pkValues = items.map((item) => (item as any)[this.propKey(pk)]);

@@ -328,3 +328,124 @@ describe("saveMany() batch INSERT — 어떤 아이템도 제공하지 않는 �
     expect(insertSql).toContain("`group_id`");
   });
 });
+
+/**
+ * Issue #373: saveMany()의 모든 아이템에서 모든 insertable 컬럼이 생략되고 FK
+ * 컬럼도 없는 경우, batch INSERT가 `() VALUES (), ()` 형태가 됩니다. 이는
+ * MySQL 계열에서만 유효하며, PostgreSQL/SQLite는 다이얼렉트별 all-default
+ * 형태가 필요합니다.
+ */
+describe("saveMany() batch INSERT — 모든 컬럼 생략 엣지 케이스 (#373)", () => {
+  @Entity({ name: "pk_only373" })
+  class PkOnly373 {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column({ type: "varchar", nullable: true })
+    note!: string;
+  }
+
+  const pkOnlyMetadata = {
+    name: "pk_only373",
+    target: PkOnly373,
+    columns: [
+      { name: "id", propertyKey: "id", options: { primary: true, autoIncrement: true } },
+      { name: "note", propertyKey: "note", options: { nullable: true } },
+    ],
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("MySQL: 모든 컬럼이 undefined인 batch는 () VALUES (), () 형태여야 한다", async () => {
+    const em = createTestEntityManager();
+    setupMocks(em, pkOnlyMetadata);
+    mockQuery.mockResolvedValue({ results: { insertId: 1 }, fields: [] });
+
+    await em.saveMany(PkOnly373, [{}, {}] as any);
+
+    const insertCall = findInsertCall();
+    expect(insertCall).toBeDefined();
+    const insertSql = getSqlText(insertCall!).replace(/\s+/g, " ");
+    expect(insertSql).toContain("() VALUES (), ()");
+    expect(insertSql).not.toContain("DEFAULT");
+  });
+
+  it("PostgreSQL: 모든 컬럼이 undefined인 batch는 PK + DEFAULT 행으로 RETURNING 해야 한다", async () => {
+    const em = new EntityManager();
+    (em as any).driver = {
+      wrap: (name: string) => `"${name}"`,
+      supportsExplain: () => false,
+      supportsReturning: () => true,
+    };
+    (em as any).dbType = "postgres";
+    setupMocks(em, pkOnlyMetadata);
+    mockQuery.mockResolvedValue({
+      results: [
+        { id: 1, note: null },
+        { id: 2, note: null },
+      ],
+      fields: [],
+    });
+
+    const results = await em.saveMany(PkOnly373, [{}, {}] as any);
+
+    const insertCall = findInsertCall();
+    expect(insertCall).toBeDefined();
+    const insertSql = getSqlText(insertCall!).replace(/\s+/g, " ");
+    expect(insertSql).toContain(`("id")`);
+    expect(insertSql).toContain("VALUES (DEFAULT), (DEFAULT)");
+    expect(insertSql).toContain("RETURNING");
+    expect(insertSql).not.toContain("() VALUES");
+    expect(results.length).toBe(2);
+  });
+
+  it("SQLite: 모든 컬럼이 undefined인 batch는 행마다 DEFAULT VALUES로 폴백하고 PK를 정확히 매핑해야 한다", async () => {
+    const em = new EntityManager();
+    (em as any).driver = {
+      wrap: (name: string) => `"${name}"`,
+      supportsExplain: () => false,
+      supportsReturning: () => false,
+      supportsInsertReturning: () => false,
+    };
+    (em as any).dbType = "sqlite";
+    setupMocks(em, pkOnlyMetadata);
+
+    let insertCount = 0;
+    mockQuery.mockImplementation((q: any) => {
+      const text = q?.text ?? q?.sql ?? String(q);
+      if (text.includes("DEFAULT VALUES")) {
+        insertCount += 1;
+        // Per-row rowids 10, 11.
+        return Promise.resolve({
+          results: { lastInsertRowid: 9 + insertCount, changes: 1 },
+        });
+      }
+      // Bulk SELECT WHERE id IN (10, 11)
+      return Promise.resolve({
+        results: [
+          { id: 10, note: null },
+          { id: 11, note: null },
+        ],
+        fields: [],
+      });
+    });
+
+    const results = await em.saveMany(PkOnly373, [{}, {}] as any);
+
+    const defaultInsertCalls = mockQuery.mock.calls.filter((call: any[]) =>
+      getSqlText(call).includes("DEFAULT VALUES"),
+    );
+    expect(defaultInsertCalls.length).toBe(2);
+    for (const call of defaultInsertCalls) {
+      const text = getSqlText(call).replace(/\s+/g, " ");
+      expect(text).toContain("DEFAULT VALUES");
+      expect(text).not.toContain("() VALUES");
+      expect(text).not.toContain("(DEFAULT)");
+    }
+    // PK assignment must come from the exact per-row rowids.
+    expect(results.length).toBe(2);
+    expect(results.map((r: any) => r.id).sort()).toEqual([10, 11]);
+  });
+});
