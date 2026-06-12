@@ -2035,7 +2035,7 @@ export class EntityManager implements BaseEntityManager {
       });
 
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
-      if (deletedAtColumn) {
+      if (deletedAtColumn && !option.withDeleted) {
         whereMap.push(Conditions.isNull(this.wrap(deletedAtColumn)));
       }
 

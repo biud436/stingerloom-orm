@@ -395,6 +395,56 @@ describe("EntityManager.findWithCursor", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Soft-delete (withDeleted) filtering tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("EntityManager.findWithCursor — soft-delete withDeleted", () => {
+  let em: EntityManager;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    em = createTestEntityManager();
+    jest
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
+      .mockReturnValue(itemMetadata);
+    // Entity has an @DeletedAt column.
+    jest
+      .spyOn((em as any).resolver, "getDeletedAtColumn")
+      .mockReturnValue("deletedAt");
+  });
+
+  it("should add `deletedAt IS NULL` by default", async () => {
+    mockQuery.mockResolvedValueOnce({ results: makeRows(1, 2), fields: [] });
+
+    await em.findWithCursor(ItemEntity, { take: 5 });
+
+    const sqlCall = mockQuery.mock.calls[0][0];
+    const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
+    expect(sqlText).toContain("`deletedAt` IS NULL");
+  });
+
+  it("should omit the `IS NULL` filter when withDeleted is true", async () => {
+    mockQuery.mockResolvedValueOnce({ results: makeRows(1, 2), fields: [] });
+
+    await em.findWithCursor(ItemEntity, { take: 5, withDeleted: true });
+
+    const sqlCall = mockQuery.mock.calls[0][0];
+    const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
+    expect(sqlText).not.toContain("`deletedAt` IS NULL");
+  });
+
+  it("should still apply the filter when withDeleted is false", async () => {
+    mockQuery.mockResolvedValueOnce({ results: makeRows(1, 2), fields: [] });
+
+    await em.findWithCursor(ItemEntity, { take: 5, withDeleted: false });
+
+    const sqlCall = mockQuery.mock.calls[0][0];
+    const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
+    expect(sqlText).toContain("`deletedAt` IS NULL");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // UUID PK cursor pagination tests
 // ─────────────────────────────────────────────────────────────────────────────
 

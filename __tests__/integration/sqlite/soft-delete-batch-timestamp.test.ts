@@ -314,6 +314,42 @@ describe("[Integration] SQLite: Soft Delete", () => {
     expect(items.length).toBe(1);
     expect(items[0].name).toBe("Different");
   });
+
+  // ── findWithCursor() must honor withDeleted like find() ──────────────
+  it("findWithCursor() excludes soft-deleted rows by default", async () => {
+    const repo = conn.em.getRepository(SdEntity);
+    await repo.save({ name: "CursorLive1", age: 20 });
+    const trashed = await repo.save({ name: "CursorTrashed", age: 21 });
+    await repo.save({ name: "CursorLive2", age: 22 });
+    await repo.softDelete({ id: trashed.id } as any);
+
+    const page = await conn.em.findWithCursor(SdEntity, { take: 10 });
+
+    const names = page.data.map((i: any) => i.name);
+    expect(names).toContain("CursorLive1");
+    expect(names).toContain("CursorLive2");
+    expect(names).not.toContain("CursorTrashed");
+    expect(page.count).toBe(2);
+  });
+
+  it("findWithCursor() with withDeleted=true includes soft-deleted rows", async () => {
+    const repo = conn.em.getRepository(SdEntity);
+    await repo.save({ name: "CursorLive1", age: 20 });
+    const trashed = await repo.save({ name: "CursorTrashed", age: 21 });
+    await repo.save({ name: "CursorLive2", age: 22 });
+    await repo.softDelete({ id: trashed.id } as any);
+
+    const page = await conn.em.findWithCursor(SdEntity, {
+      take: 10,
+      withDeleted: true,
+    });
+
+    const names = page.data.map((i: any) => i.name);
+    expect(names).toContain("CursorLive1");
+    expect(names).toContain("CursorLive2");
+    expect(names).toContain("CursorTrashed");
+    expect(page.count).toBe(3);
+  });
 });
 
 // ─────────────────────────────────────────────────────────

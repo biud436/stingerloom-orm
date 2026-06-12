@@ -37,6 +37,13 @@ export type CursorPaginationOption<T> = {
   where?: WhereClause<T>;
 
   /**
+   * If true, includes soft-deleted entities (@DeletedAt) in the results.
+   * By default, soft-deleted entities are excluded from cursor pagination,
+   * matching the behavior of find() and findWithPage().
+   */
+  withDeleted?: boolean;
+
+  /**
    * In a replication setup, forces read queries to use the master node.
    */
   useMaster?: boolean;
