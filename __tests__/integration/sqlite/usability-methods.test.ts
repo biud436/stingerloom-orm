@@ -64,6 +64,7 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
     verifiedAt: number | null;
   };
   let Book: new () => { id: number; title: string; authorId: number };
+  let BatchReturn: new () => { id: number; label: string; seq: number };
 
   beforeAll(async () => {
     conn = await createTestConnection(
@@ -126,6 +127,16 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
           @Column({ type: "int" }) authorId!: number;
         }
 
+        // Dedicated write target for insertManyAndReturn: auto-increment PK +
+        // two distinguishing non-PK columns (label / seq) so input order can be
+        // asserted independently of the generated id.
+        @Entity({ name: "um_batch_return" })
+        class BatchReturnEntity {
+          @PrimaryGeneratedColumn() id!: number;
+          @Column() label!: string;
+          @Column({ type: "int" }) seq!: number;
+        }
+
         AggOrder = AggOrderEntity;
         CursorRow = CursorRowEntity;
         UpsertTarget = UpsertTargetEntity;
@@ -133,6 +144,7 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
         Article = ArticleEntity;
         Author = AuthorEntity;
         Book = BookEntity;
+        BatchReturn = BatchReturnEntity;
 
         return {
           entities: [
@@ -143,6 +155,7 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
             ArticleEntity,
             AuthorEntity,
             BookEntity,
+            BatchReturnEntity,
           ],
         };
       },
@@ -632,6 +645,73 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
       expect(page.data).toHaveLength(3);
       expect(page.data.map((r: any) => r.id)).toEqual([1, 2, 3]);
       expect(page.hasNextPage).toBe(true);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // EntityManager.insertManyAndReturn — multi-row INSERT ... RETURNING *
+  // On SQLite (3.35+, via better-sqlite3) RETURNING brings the generated PKs
+  // back without a re-read; this proves real PKs are populated, in input order.
+  // ───────────────────────────────────────────────────────────────────────
+  describe("EntityManager.insertManyAndReturn", () => {
+    it("returns inserted entities with real generated PKs, in input order, persisted", async () => {
+      const items = [
+        { label: "alpha", seq: 100 },
+        { label: "beta", seq: 200 },
+        { label: "gamma", seq: 300 },
+      ];
+
+      const inserted: any[] = await conn.em.insertManyAndReturn(
+        BatchReturn,
+        items,
+      );
+
+      // 1) length matches input
+      expect(inserted).toHaveLength(3);
+
+      // 2) every element carries a real, defined, integer PK > 0
+      for (const row of inserted) {
+        expect(row.id).toBeDefined();
+        expect(typeof row.id).toBe("number");
+        expect(Number.isInteger(row.id)).toBe(true);
+        expect(row.id).toBeGreaterThan(0);
+      }
+
+      // 3) PKs are unique AND strictly increasing across the batch
+      const ids = inserted.map((r) => r.id as number);
+      expect(new Set(ids).size).toBe(3);
+      for (let i = 1; i < ids.length; i++) {
+        expect(ids[i]).toBeGreaterThan(ids[i - 1]);
+      }
+
+      // 4) input ORDER preserved — element i corresponds to input i, asserted on
+      //    the distinguishing non-PK columns (label + seq), not the PK.
+      expect(inserted.map((r) => r.label)).toEqual(["alpha", "beta", "gamma"]);
+      expect(inserted.map((r) => r.seq)).toEqual([100, 200, 300]);
+
+      // 5) rows are actually persisted — findByPK round-trips each one with the
+      //    same generated PK and column values.
+      for (const row of inserted) {
+        const found: any = await conn.em.findByPK(BatchReturn, row.id);
+        expect(found).not.toBeNull();
+        expect(found.id).toBe(row.id);
+        expect(found.label).toBe(row.label);
+        expect(found.seq).toBe(row.seq);
+      }
+
+      // 6) cross-check via find(): the same three ids exist and map to labels.
+      const all: any[] = await conn.em.find(BatchReturn, {
+        orderBy: { id: "ASC" } as any,
+      });
+      const byId = new Map(all.map((r) => [r.id, r.label]));
+      for (const row of inserted) {
+        expect(byId.get(row.id)).toBe(row.label);
+      }
+    });
+
+    it("returns an empty array for an empty input (no SQL executed)", async () => {
+      const inserted = await conn.em.insertManyAndReturn(BatchReturn, []);
+      expect(inserted).toEqual([]);
     });
   });
 });
