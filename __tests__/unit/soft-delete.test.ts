@@ -324,6 +324,102 @@ describe("EntityManager soft delete", () => {
     });
   });
 
+  describe("onlyDeleted option", () => {
+    // Pulls the SELECT sql text out of the mock query calls, mirroring the
+    // extraction the find() auto-filter tests above use.
+    const selectSql = (): string => {
+      const selectCall = mockQuery.mock.calls.find((call: any[]) => {
+        const sqlObj = call[0];
+        const sqlText =
+          typeof sqlObj === "string" ? sqlObj : sqlObj?.sql || sqlObj?.text || "";
+        return sqlText.includes("SELECT");
+      });
+      expect(selectCall).toBeDefined();
+      const sqlObj = selectCall![0];
+      return sqlObj?.sql || sqlObj?.text || "";
+    };
+
+    it("onlyDeleted: true이면 deleted_at IS NOT NULL 조건을 생성하고 IS NULL은 생성하지 않아야 함", async () => {
+      mockQuery.mockResolvedValue({
+        results: [{ id: 2, title: "Trashed", deletedAt: "2026-01-01" }],
+        fields: [],
+      });
+
+      await em.find(Article, { onlyDeleted: true });
+
+      const sqlText = selectSql();
+      expect(sqlText).toMatch(/"deletedAt"\s+IS\s+NOT\s+NULL/);
+      expect(sqlText).not.toMatch(/"deletedAt"\s+IS\s+NULL/);
+    });
+
+    it("onlyDeleted는 withDeleted보다 우선해야 함 (둘 다 true면 IS NOT NULL)", async () => {
+      mockQuery.mockResolvedValue({
+        results: [{ id: 2, title: "Trashed", deletedAt: "2026-01-01" }],
+        fields: [],
+      });
+
+      await em.find(Article, { onlyDeleted: true, withDeleted: true });
+
+      const sqlText = selectSql();
+      expect(sqlText).toMatch(/"deletedAt"\s+IS\s+NOT\s+NULL/);
+      expect(sqlText).not.toMatch(/"deletedAt"\s+IS\s+NULL/);
+    });
+
+    it("onlyDeleted는 사용자 where와 AND로 결합되어야 함", async () => {
+      mockQuery.mockResolvedValue({
+        results: [{ id: 2, title: "Trashed", deletedAt: "2026-01-01" }],
+        fields: [],
+      });
+
+      await em.find(Article, { where: { title: "Trashed" }, onlyDeleted: true });
+
+      const sqlText = selectSql();
+      // Both the caller predicate and the only-deleted predicate must survive.
+      expect(sqlText).toMatch(/"title"/);
+      expect(sqlText).toMatch(/"deletedAt"\s+IS\s+NOT\s+NULL/);
+      expect(sqlText).toMatch(/AND/i);
+    });
+
+    it("findOne()도 onlyDeleted를 존중해야 함", async () => {
+      mockQuery.mockResolvedValue({
+        results: [{ id: 2, title: "Trashed", deletedAt: "2026-01-01" }],
+        fields: [],
+      });
+
+      await em.findOne(Article, { where: { id: 2 }, onlyDeleted: true });
+
+      const sqlText = selectSql();
+      expect(sqlText).toMatch(/"deletedAt"\s+IS\s+NOT\s+NULL/);
+      expect(sqlText).not.toMatch(/"deletedAt"\s+IS\s+NULL/);
+    });
+
+    it("@DeletedAt 컬럼이 없는 엔티티에 onlyDeleted는 no-op이어야 함", async () => {
+      mockQuery.mockResolvedValue({
+        results: [{ id: 1, body: "Hello" }],
+        fields: [],
+      });
+
+      await em.find(Comment, { onlyDeleted: true });
+
+      const sqlText = selectSql();
+      expect(sqlText).not.toMatch(/IS\s+NOT\s+NULL/);
+      expect(sqlText).not.toMatch(/IS\s+NULL/);
+    });
+
+    it("onlyDeleted가 없으면 기존 동작(IS NULL)이 유지되어야 함 (회귀)", async () => {
+      mockQuery.mockResolvedValue({
+        results: [{ id: 1, title: "Live", deletedAt: null }],
+        fields: [],
+      });
+
+      await em.find(Article, { where: { title: "Live" } });
+
+      const sqlText = selectSql();
+      expect(sqlText).toMatch(/"deletedAt"\s+IS\s+NULL/);
+      expect(sqlText).not.toMatch(/IS\s+NOT\s+NULL/);
+    });
+  });
+
   describe("BaseRepository softDelete/restore delegation", () => {
     it("BaseRepository.softDelete()가 EntityManager.softDelete()를 호출해야 함", async () => {
       const repo = em.getRepository(Article);

@@ -1523,17 +1523,23 @@ export class EntityManager implements BaseEntityManager {
         }
       }
 
-      // If an @DeletedAt column exists, automatically add a WHERE deleted_at IS NULL condition
+      // Soft-delete predicate injection for entities carrying a @DeletedAt column.
+      // - onlyDeleted: emit `<col> IS NOT NULL` so the read returns exclusively
+      //   trashed rows. Takes precedence over withDeleted when both are set.
+      // - withDeleted: emit no soft-delete predicate (live + trashed rows).
+      // - default: emit `<col> IS NULL` so trashed rows are hidden.
+      // The column is resolved + escaped via the same wrap()/Conditions helpers
+      // the default IS NULL injection uses; for entities without a @DeletedAt
+      // column this whole block is skipped (onlyDeleted is a silent no-op).
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
-      if (deletedAtColumn && !(findOption as any).withDeleted) {
-        if (hasEagerJoins) {
-          whereMap.push(
-            Conditions.isNull(
-              `${this.wrap(tableName)}.${this.wrap(deletedAtColumn)}`,
-            ),
-          );
-        } else {
-          whereMap.push(Conditions.isNull(this.wrap(deletedAtColumn)));
+      if (deletedAtColumn) {
+        const deletedAtRef = hasEagerJoins
+          ? `${this.wrap(tableName)}.${this.wrap(deletedAtColumn)}`
+          : this.wrap(deletedAtColumn);
+        if (findOption.onlyDeleted) {
+          whereMap.push(Conditions.isNotNull(deletedAtRef));
+        } else if (!findOption.withDeleted) {
+          whereMap.push(Conditions.isNull(deletedAtRef));
         }
       }
 

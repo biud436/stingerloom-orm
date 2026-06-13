@@ -299,6 +299,21 @@ export type FindOption<T> = {
   withDeleted?: boolean;
 
   /**
+   * If true, returns ONLY soft-deleted entities (@DeletedAt) — i.e. rows where
+   * the deleted-at column IS NOT NULL. Useful for "trash"/recovery and audit
+   * views that need to list exclusively the soft-deleted records.
+   *
+   * Notes:
+   * - Takes precedence over `withDeleted` when both are set: `onlyDeleted: true`
+   *   restricts the result to trashed rows regardless of `withDeleted`.
+   * - If the entity has no @DeletedAt column this is a silent no-op (no extra
+   *   predicate is emitted), matching the behavior of `withDeleted`.
+   * - Combines with the caller's own `where` via AND, so it filters the trash
+   *   within the provided conditions (e.g. a specific tenant).
+   */
+  onlyDeleted?: boolean;
+
+  /**
    * Per-query timeout in milliseconds.
    * Overrides the connection-level queryTimeout from DatabaseClientOptions.
    * Uses driver-specific SET statements before executing the query.
