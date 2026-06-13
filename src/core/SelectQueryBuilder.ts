@@ -81,6 +81,9 @@ import {
 } from "./expressions/NumericExpression";
 import { buildDateAdd } from "./expressions/DateArithmeticExpression";
 import { Logger } from "../utils/Logger";
+import { ExplainResult } from "./ExplainResult";
+import { ExplainQueryHandler } from "./ExplainQueryHandler";
+import { InvalidQueryError } from "../errors/InvalidQueryError";
 import type {
   CastKind,
   DateAddUnit,
@@ -4843,6 +4846,79 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
+   * @internal Run a scalar aggregate (SUM / AVG / MIN / MAX) over the
+   * builder's current FROM / JOIN / WHERE row source. Reuses
+   * {@link applyCountSource} so the soft-delete auto-filter and tenant
+   * predicate match {@link getCount}. GROUP BY / HAVING / ORDER BY and
+   * LIMIT / OFFSET are intentionally omitted because the result is a single
+   * scalar. Mirrors `EntityManager`'s aggregate semantics: a `NULL` / empty
+   * result coerces to `0`, and driver-native numeric strings (e.g. a
+   * PostgreSQL `NUMERIC`) are normalized to a JS `number`.
+   */
+  private async aggregateScalar(
+    fn: "SUM" | "AVG" | "MIN" | "MAX",
+    column: ColumnOf<T>,
+  ): Promise<number> {
+    const internals = (this.em as any)._ctx;
+    const dbType = internals.isMySqlFamily()
+      ? "mysql"
+      : internals.isSqlite?.()
+        ? "sqlite"
+        : "postgresql";
+
+    const qb = RawQueryBuilderFactory.create() as RawQueryBuilder;
+    qb.setDatabaseType(dbType);
+    // resolveColumn() maps property -> DB column and escapes the identifier
+    // with the driver's wrap helper, so no raw column text is concatenated.
+    qb.select([
+      `${fn}(${this.resolveColumn(column)}) AS ${this.em.wrap("result")}`,
+    ]);
+    this.applyCountSource(qb);
+
+    const built = qb.build();
+    const rows = await this.em.query<{ result: string | number | null }>(built);
+    if (rows.length === 0) return 0;
+    const value = rows[0].result;
+    return value === null || value === undefined ? 0 : Number(value);
+  }
+
+  /**
+   * Execute a `SUM(<column>)` over the same FROM / JOIN / WHERE conditions
+   * as the built query (soft-delete and tenant scoping included). Returns
+   * `0` when no rows match, matching `EntityManager.sum()`.
+   */
+  async getSum(column: ColumnOf<T>): Promise<number> {
+    return this.aggregateScalar("SUM", column);
+  }
+
+  /**
+   * Execute an `AVG(<column>)` over the same FROM / JOIN / WHERE conditions
+   * as the built query. Returns `0` when no rows match, matching
+   * `EntityManager.avg()`.
+   */
+  async getAvg(column: ColumnOf<T>): Promise<number> {
+    return this.aggregateScalar("AVG", column);
+  }
+
+  /**
+   * Execute a `MIN(<column>)` over the same FROM / JOIN / WHERE conditions
+   * as the built query. Returns `0` when no rows match, matching
+   * `EntityManager.min()`.
+   */
+  async getMin(column: ColumnOf<T>): Promise<number> {
+    return this.aggregateScalar("MIN", column);
+  }
+
+  /**
+   * Execute a `MAX(<column>)` over the same FROM / JOIN / WHERE conditions
+   * as the built query. Returns `0` when no rows match, matching
+   * `EntityManager.max()`.
+   */
+  async getMax(column: ColumnOf<T>): Promise<number> {
+    return this.aggregateScalar("MAX", column);
+  }
+
+  /**
    * @internal Two-phase root pagination (TypeORM-style) for queries that carry
    * a to-many `*AndSelect` join plus LIMIT/OFFSET.
    *
@@ -5085,6 +5161,49 @@ export class SelectQueryBuilder<T, TResult = T> {
     const built = qb.build();
     const rows = await this.em.query<Record<string, unknown>>(built);
     return rows.length > 0;
+  }
+
+  /**
+   * Check if any rows match the conditions — the `get`-prefixed terminal
+   * alias of {@link exists}, kept consistent with the other `get*` terminals
+   * (`getMany` / `getCount` / ...) and `EntityManager.exists()`. Uses the same
+   * efficient `SELECT 1 ... LIMIT 1` form.
+   */
+  async getExists(): Promise<boolean> {
+    return this.exists();
+  }
+
+  /**
+   * Return the query plan for the built SELECT, mirroring
+   * `EntityManager.explain()`'s {@link ExplainResult} shape. The plan is
+   * computed for the exact query produced by {@link toSql} (WHERE / JOIN /
+   * ORDER BY / LIMIT included), prefixed with the driver's `EXPLAIN` syntax
+   * and parsed by the dialect-aware {@link ExplainQueryHandler}.
+   *
+   * @throws InvalidQueryError when the active driver does not support EXPLAIN.
+   */
+  async explain(): Promise<ExplainResult> {
+    const internals = (this.em as any)._ctx;
+    const driver = internals.getDriver?.();
+    if (!driver || !driver.supportsExplain()) {
+      throw new InvalidQueryError(
+        "EXPLAIN is not supported by the current database driver.",
+        "Use MySQL or PostgreSQL driver which support EXPLAIN queries.",
+      );
+    }
+
+    const built = this.toSql();
+    const explainPrefix = driver.buildExplainSql("");
+    const explainQuery = sql`${raw(explainPrefix)}${built}`;
+    const rawRows = await this.em.query<Record<string, unknown>>(explainQuery);
+
+    // Reuse the dialect-aware parser EntityManager.explain() relies on so the
+    // ExplainResult shape (rows/type/possibleKeys/key/cost) stays identical.
+    const handler = new ExplainQueryHandler(
+      (this.em as any).resolver,
+      internals,
+    );
+    return handler.parseExplainResult(rawRows ?? []);
   }
 
   /**
