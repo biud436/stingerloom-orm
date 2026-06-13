@@ -288,6 +288,31 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Loads multiple entities by primary key and returns them as a `Map` keyed
+   * by each entity's primary-key value, for O(1) lookup. Unlike
+   * {@link findByPKs} (whose result order the database does not guarantee),
+   * the map lets callers reassemble results in input order and detect misses
+   * via `map.has(id)`.
+   *
+   * Single-column PKs are keyed by the raw PK value; composite PKs are keyed by
+   * a stable `"prop1=value1,prop2=value2"` string in declared column order.
+   * Only found entities appear in the map. See
+   * {@link EntityManager.findByPKsMap} for details.
+   *
+   * @example
+   * ```ts
+   * const map = await repo.findByPKsMap([1, 2, 99]);
+   * map.has(99); // false — not found
+   * map.get(1);  // entity instance
+   * ```
+   */
+  async findByPKsMap(
+    ids: unknown[],
+  ): Promise<Map<string | number | bigint, T>> {
+    return await this.em.findByPKsMap<T>(this.entity, ids);
+  }
+
+  /**
    * Returns the count of entities matching the given conditions.
    */
   async count(where?: WhereClause<T>, withDeleted?: boolean): Promise<number> {

@@ -4868,6 +4868,89 @@ export class EntityManager implements BaseEntityManager {
     return this.find<T>(entity, { where });
   }
 
+  /**
+   * Loads multiple entities by primary key and returns them as a `Map` keyed
+   * by each entity's primary-key value, for O(1) lookup. This solves the
+   * classic batch-load / data-loader problem: `findByPKs()` returns a `T[]`
+   * whose order the database does NOT guarantee matches the input `ids`, and
+   * offers no way to look an entity up by its key. With the map, callers can
+   * reliably reassemble results in input order and detect missing ids via
+   * `map.has(id)`.
+   *
+   * Rows are loaded through {@link findByPKs} (no extra query is issued), so
+   * tenant scoping, soft-delete filtering and naming-strategy mapping behave
+   * identically.
+   *
+   * Key strategy:
+   * - SINGLE-column PK: the map is keyed by the raw PK value the entity holds
+   *   (number / string / bigint) — the same value you would pass to
+   *   {@link findByPK}.
+   * - COMPOSITE PK: an object cannot be used as a `Map` key (JS Maps compare
+   *   objects by reference), so the key is a stable string of the PK columns in
+   *   declared order, in the form `"prop1=value1,prop2=value2"`. This mirrors
+   *   the Identity Map key format used by `IdentityMapManager.buildIdentityKey`.
+   *   Build the same string yourself to look an entry up, or prefer the plain
+   *   array returned by {@link findByPKs} when composite keys are unwieldy.
+   *
+   * Only entities that were actually found appear in the map — missing ids
+   * simply have no entry.
+   *
+   * @example
+   * ```ts
+   * const ids = [1, 2, 99];
+   * const map = await em.findByPKsMap(User, ids);
+   * map.has(1);          // true
+   * map.get(1);          // User instance
+   * map.has(99);         // false — id 99 was not found
+   * map.size;            // 2 (number of rows found, not ids requested)
+   * // Reassemble in input order, with misses as null:
+   * const ordered = ids.map((id) => map.get(id) ?? null);
+   *
+   * // Composite PK (declared order: tenantId, then userId):
+   * const m = await em.findByPKsMap(Membership, [{ tenantId: "acme", userId: 7 }]);
+   * m.get("tenantId=acme,userId=7"); // Membership instance
+   * ```
+   */
+  async findByPKsMap<T>(
+    entity: ClazzType<T>,
+    ids: unknown[],
+  ): Promise<Map<string | number | bigint, T>> {
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) throw new EntityMetadataNotFoundError(entity.name);
+    const pkColumns = metadata.columns.filter(
+      (col: ColumnMetadata) => col.options?.primary,
+    );
+    if (pkColumns.length === 0) {
+      throw new InvalidQueryError(
+        `Entity "${metadata.name}" has no primary key.`,
+        "Add @PrimaryGeneratedColumn() or @PrimaryColumn() to your entity.",
+      );
+    }
+
+    const rows = await this.findByPKs<T>(entity, ids);
+    const result = new Map<string | number | bigint, T>();
+
+    if (pkColumns.length === 1) {
+      const prop = this.propKey(pkColumns[0]);
+      for (const row of rows) {
+        const key = (row as any)[prop] as string | number | bigint;
+        result.set(key, row);
+      }
+      return result;
+    }
+
+    // Composite PK: build a stable string key from the PK columns in declared
+    // order, matching IdentityMapManager.buildIdentityKey's "prop=value" form.
+    const props = pkColumns.map((col) => this.propKey(col));
+    for (const row of rows) {
+      const key = props
+        .map((prop) => `${prop}=${(row as any)[prop]}`)
+        .join(",");
+      result.set(key, row);
+    }
+    return result;
+  }
+
   async count<T>(
     entity: ClazzType<T>,
     where?: WhereClause<T>,
