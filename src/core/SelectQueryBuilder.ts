@@ -4473,6 +4473,76 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
+   * Execute the query (via {@link getMany}) and index every row into a `Map`
+   * keyed by the value of `keyColumn`, giving O(1) lookup by that column —
+   * the query-builder counterpart to Laravel's `keyBy()`.
+   *
+   * This is a terminal like {@link getMany}, so it inherits everything the
+   * built query already carries — WHERE / JOIN / ORDER BY / LIMIT / OFFSET,
+   * the soft-delete auto-filter and tenant scoping — for free; it merely
+   * re-indexes the rows `getMany()` returns and never issues its own SQL.
+   *
+   * **Last-wins on duplicate keys:** when two rows share the same `keyColumn`
+   * value, the later row (in result order) overwrites the earlier one, so the
+   * Map holds at most one row per key. Use a unique column (e.g. the primary
+   * key) when a strict 1:1 mapping is required.
+   *
+   * The Map value is the element type of `getMany()` (`TResult`) and the key
+   * is typed as `T[K]` — the column's value type on the entity. `K` is
+   * constrained to a real column of `T` the same way {@link getSum} /
+   * `select()` constrain their column argument, so a typo is a compile error.
+   *
+   * @example
+   * ```ts
+   * const byId = await em
+   *   .createQueryBuilder(User, "u")
+   *   .where("u.status", "active")
+   *   .getMap("id");
+   * byId.get(5); // the active User with id 5, or undefined
+   * ```
+   */
+  async getMap<K extends ColumnOf<T>>(
+    keyColumn: K,
+  ): Promise<Map<T[K], TResult>> {
+    const rows = await this.getMany();
+    const map = new Map<T[K], TResult>();
+    for (const row of rows) {
+      // `row` is a TResult (possibly a `select()` projection of T); the key
+      // column is always a column of T, so read it through a T view. No SQL
+      // is issued here — getMany() already executed the query.
+      const key = (row as unknown as T)[keyColumn];
+      map.set(key, row);
+    }
+    return map;
+  }
+
+  /**
+   * Execute the query (via {@link getMany}) and return a flat array of just
+   * `column`'s value from every row, preserving result order — the
+   * query-builder counterpart to Laravel's `pluck()`. Handy for collecting a
+   * single column (e.g. a list of ids to feed a later `IN (...)`).
+   *
+   * Like {@link getMap} this is a terminal that delegates to {@link getMany},
+   * so WHERE / JOIN / ORDER BY / LIMIT / soft-delete / tenant scoping all
+   * apply and no additional SQL is built. Each element is typed as the
+   * column's value type (`T[K]`), with `K` constrained to a real column of
+   * `T`, so an empty result set yields `[]`.
+   *
+   * @example
+   * ```ts
+   * const ids = await em
+   *   .createQueryBuilder(User, "u")
+   *   .where("u.status", "active")
+   *   .pluck("id"); // number[]
+   * ```
+   */
+  async pluck<K extends ColumnOf<T>>(column: K): Promise<Array<T[K]>> {
+    const rows = await this.getMany();
+    // `column` is a column of T; read it through a T view of each TResult row.
+    return rows.map((row) => (row as unknown as T)[column]);
+  }
+
+  /**
    * Execute the query as an offset-based page and return the page data
    * together with pagination metadata (`total`, `totalPages`,
    * `hasNextPage`, `hasPreviousPage`).
