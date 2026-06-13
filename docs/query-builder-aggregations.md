@@ -222,6 +222,36 @@ full autocomplete on the inner query:
 See [Patterns & Productivity](./query-builder-patterns.md#subquery-integration)
 for the full set.
 
+## Scalar Aggregate Terminals
+
+When you need a single aggregate value over a query's WHERE / JOIN constraints, the terminal methods `getSum()`, `getAvg()`, `getMin()`, and `getMax()` spare you from writing a raw `addSelect(sql`SUM(...)`, "s").getRawOne()` block. They reuse the builder's FROM / JOIN / WHERE / soft-delete / tenant scope and ignore any LIMIT / OFFSET / ORDER BY already set.
+
+```typescript
+const qb = em
+  .createQueryBuilder(Order, "o")
+  .leftJoin(User, "u", (j) => j.on("o.userId", "=", "u.id"))
+  .where("u.country", "KR")
+  .where("o.status", "completed");
+
+const total   = await qb.getSum("amount");   // SUM(o.amount)
+const average = await qb.getAvg("amount");   // AVG(o.amount)
+const lowest  = await qb.getMin("amount");   // MIN(o.amount)
+const highest = await qb.getMax("amount");   // MAX(o.amount)
+```
+
+All four return `Promise<number>`. When no rows match — or the column is `NULL` for every matching row — the result coerces to `0`, mirroring `EntityManager.sum()` / `avg()` / `min()` / `max()`.
+
+The `column` argument is constrained to `ColumnOf<T>` (a camelCase property name on the root entity), so typos are caught at compile time.
+
+| Method | SQL | Returns |
+|--------|-----|---------|
+| `getSum(column)` | `SELECT SUM(col) FROM ...` | `Promise<number>` — 0 on empty |
+| `getAvg(column)` | `SELECT AVG(col) FROM ...` | `Promise<number>` — 0 on empty |
+| `getMin(column)` | `SELECT MIN(col) FROM ...` | `Promise<number>` — 0 on empty |
+| `getMax(column)` | `SELECT MAX(col) FROM ...` | `Promise<number>` — 0 on empty |
+
+These work well alongside `getCount()` when you need multiple aggregate scalars from the same scope without an extra GROUP BY.
+
 ## DISTINCT
 
 When you want unique rows only, enable DISTINCT.

@@ -435,6 +435,12 @@ const user = await em.findByPK(User, 1);        // User | null
 // Find multiple by primary keys
 const users = await em.findByPKs(User, [1, 2, 3]); // User[]
 
+// Same batch load, but returned as a Map for O(1) lookup
+const map = await em.findByPKsMap(User, [1, 2, 99]);
+map.has(1);   // true  — id 1 was found
+map.get(1);   // User instance
+map.has(99);  // false — id 99 was not found
+
 // Check if any matching record exists (takes WhereClause directly)
 const hasAdmin = await em.exists(User, { role: "admin" }); // boolean
 ```

@@ -34,14 +34,15 @@ const em = new EntityManager();
 | `exists` | `<T>(entity, option?): Promise<boolean>` | 매칭되는 레코드 존재 여부 |
 | `findByPK` | `<T>(entity, pk): Promise<T \| null>` | 기본 키로 조회 |
 | `findByPKs` | `<T>(entity, pks[]): Promise<T[]>` | 여러 기본 키로 조회 |
+| `findByPKsMap` | `<T>(entity, ids: unknown[]): Promise<Map<string \| number \| bigint, T>>` | 배치 조회 후 Map 반환 — O(1) 조회; 복합 PK는 `"col1=v1,col2=v2"` 문자열 키 |
 | `findAndCount` | `<T>(entity, option?): Promise<[T[], number]>` | 목록 + 전체 개수 |
 | `findWithCursor` | `<T>(entity, option?): Promise<CursorPaginationResult<T>>` | 커서 페이지네이션 |
 | `save` | `<T>(entity, item): Promise<InstanceType<ClazzType<T>>>` | INSERT 또는 UPDATE |
 | `delete` | `<T>(entity, criteria): Promise<DeleteResult>` | 영구 삭제 |
 | `softDelete` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete |
 | `restore` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete 복원 |
-| `upsert` | `<T>(entity, data, conflictColumns?): Promise<void>` | INSERT ... ON CONFLICT |
-| `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<void>` | 다건 upsert |
+| `upsert` | `<T>(entity, data, conflictColumns?): Promise<{ affected: number }>` | INSERT ... ON CONFLICT; MySQL은 INSERT 1, UPDATE 2 반환 |
+| `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<{ affected: number }>` | 다건 upsert; MySQL caveat 동일 적용 |
 | `update` | `<T>(entity, where, data): Promise<{ affected: number }>` | 필터 우선 UPDATE (`updateMany`의 단축형, `delete`와 동일한 인자 순서) |
 | `updateMany` | `<T>(entity, data: UpdateData<T>, options): Promise<{ affected: number }>` | 조건별 일괄 UPDATE (SQL 표현식 지원) |
 
@@ -229,6 +230,7 @@ interface FindOption<T> {
   having?: Sql[];
   relations?: (keyof T)[];
   withDeleted?: boolean;
+  onlyDeleted?: boolean;         // Soft delete된 행만 반환 (withDeleted보다 우선)
   distinct?: boolean;            // SELECT DISTINCT
   timeout?: number;
   useMaster?: boolean;
@@ -407,6 +409,12 @@ class SelectQueryBuilder<T, TResult = T> {
   paginate(opts?: { page?: number; pageSize?: number }):
     Promise<PagePaginationResult<TResult>>;
   exists(): Promise<boolean>;
+  getExists(): Promise<boolean>;              // exists() 별칭
+  getSum(column: ColumnOf<T>): Promise<number>;   // SUM — 빈 결과 시 0
+  getAvg(column: ColumnOf<T>): Promise<number>;   // AVG — 빈 결과 시 0
+  getMin(column: ColumnOf<T>): Promise<number>;   // MIN — 빈 결과 시 0
+  getMax(column: ColumnOf<T>): Promise<number>;   // MAX — 빈 결과 시 0
+  explain(): Promise<ExplainResult>;          // 쿼리 플랜 (MySQL / PostgreSQL만 지원)
 
   // ── 실행: 타입이 있는 plain 객체 (역직렬화 없음) ───────
   getPartialMany(): Promise<TResult[]>;

@@ -420,6 +420,31 @@ WHERE "post_tags"."postId" = $1
 
 select, distinct, 잠금, 페이지네이션, 집계에 대한 자세한 내용은 [Querying & Pagination](./entity-manager-querying.md)을 참고해 주세요.
 
+### 편의 메서드 -- findByPK(), findByPKs(), findByPKsMap(), exists()
+
+흔한 조회 패턴에서 `{ where: { id: ... } }`를 직접 쓰는 수고를 줄여 주는 단축 메서드들이에요:
+
+```typescript
+// 기본 키로 단건 조회
+const user = await em.findByPK(User, 1);        // User | null
+
+// 기본 키 여러 개로 배치 조회
+const users = await em.findByPKs(User, [1, 2, 3]); // User[]
+
+// 동일한 배치 조회이지만 Map으로 반환 — O(1) 조회
+const map = await em.findByPKsMap(User, [1, 2, 99]);
+map.has(1);   // true  — id 1이 존재
+map.get(1);   // User 인스턴스
+map.has(99);  // false — id 99는 없음
+
+// 매칭 레코드 존재 여부 (WhereClause 직접 받음)
+const hasAdmin = await em.exists(User, { role: "admin" }); // boolean
+```
+
+`findByPKsMap()`은 `findByPKs()`가 반환하는 `T[]`의 순서 보장이 필요하거나, 누락된 id를 `map.has(id)`로 바로 감지해야 할 때 씁니다. 단일 PK 엔티티는 raw 값(number / string / bigint)이 키가 되고, 복합 PK 엔티티는 `"col1=v1,col2=v2"` 형태의 문자열이 키가 됩니다.
+
+`exists()`는 전체 행을 가져오는 대신 `SELECT 1 ... LIMIT 1`을 생성하므로 `find()` + length 비교보다 효율적이에요.
+
 ---
 
 ## 삭제하기 -- delete()

@@ -445,12 +445,38 @@ const rows = await qb
 
 지원하는 타입 태그: `"number"`, `"bigint"`, `"string"`, `"date"`, `"json"`, `"boolean"`. `null` / `undefined` 는 그대로 통과하고, `coerce` 에 없는 컬럼은 드라이버 원본 값을 유지합니다. `getRawOne()` 도 같은 옵션을 받습니다.
 
-**유틸 (결과 모양 변경 없음):**
+**유틸 — 집계 및 분석:**
 
 | 메서드 | 반환 | 설명 |
 |--------|------|------|
-| `getCount()` | `number` | 같은 WHERE/JOIN으로 `COUNT(*)` |
-| `exists()` | `boolean` | 매칭 행이 있는지 여부 |
+| `getCount()` | `number` | 같은 WHERE/JOIN으로 `COUNT(*)`; LIMIT/OFFSET 무시 |
+| `exists()` | `boolean` | 매칭 행이 있는지 여부 (`SELECT 1 ... LIMIT 1` 사용) |
+| `getExists()` | `boolean` | `exists()`의 별칭 — 다른 `get*` 터미널과 이름 규칙 통일 |
+| `getSum(column)` | `number` | 같은 범위에서 `SUM(column)`; 빈 결과 시 0 |
+| `getAvg(column)` | `number` | 같은 범위에서 `AVG(column)`; 빈 결과 시 0 |
+| `getMin(column)` | `number` | 같은 범위에서 `MIN(column)`; 빈 결과 시 0 |
+| `getMax(column)` | `number` | 같은 범위에서 `MAX(column)`; 빈 결과 시 0 |
+| `explain()` | `ExplainResult` | 빌드된 SELECT의 쿼리 플랜 (MySQL / PostgreSQL만 지원) |
+
+모든 집계 터미널(`getSum`, `getAvg`, `getMin`, `getMax`, `getCount`)은 SELECT 절을 처음부터 재작성합니다. 따라서 `addSelect()` 투영은 무시되고, WHERE / JOIN / GROUP BY / HAVING / soft-delete / 테넌트 범위만 유지됩니다.
+
+`explain()`은 `EntityManager.explain()`과 동일한 방식으로 동작합니다. 빌드된 SQL에 드라이버의 `EXPLAIN` 구문을 붙이고 동일한 `ExplainResult` 형태(`rows`, `type`, `possibleKeys`, `key`, `cost`)를 반환해요. SQLite는 `EXPLAIN`을 지원하지 않으므로 호출하면 `InvalidQueryError`를 던집니다.
+
+```typescript
+// 존재 여부 확인 — get* 스타일
+const hasExpired = await em
+  .createQueryBuilder(Session, "s")
+  .where("expiresAt", { lt: new Date() })
+  .getExists();  // .exists()와 동일
+
+// 쿼리 플랜
+const plan = await em
+  .createQueryBuilder(Order, "o")
+  .where("status", "pending")
+  .explain();
+console.log(plan.rows);      // 예상 행 수
+console.log(plan.key);       // 선택된 인덱스
+```
 
 **어떤 걸 쓸지.** 기본값은 `getMany()`. 컴파일 타임 narrowing이 필요한 읽기 전용 DTO에는 `getPartialMany()`. `addSelect`나 계산 컬럼이 섞인 쿼리에는 `getRawMany()`.
 

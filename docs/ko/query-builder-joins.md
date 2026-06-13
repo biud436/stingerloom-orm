@@ -115,6 +115,39 @@ qb.leftJoin(User, "u", (join) =>
 );
 ```
 
+### Null 및 IN 조건 — `onNull()`, `onNotNull()`, `onIn()`
+
+세 가지 `JoinOnBuilder` 메서드를 쓰면 빌더를 벗어나지 않고 JOIN 범위를 더 좁힐 수 있습니다.
+
+| 메서드 | SQL 조각 | 비고 |
+|--------|---------|------|
+| `onNull(ref)` | `ref IS NULL` | 매칭이 없는 행을 거르는 안티-조인에 유용 |
+| `onNotNull(ref)` | `ref IS NOT NULL` | 조인 대상 측에 null이 아닌 값을 요구 |
+| `onIn(ref, values)` | `ref IN (?, ?, ...)` | 값은 파라미터 바인딩 (직접 연결 없음); 빈 배열은 `1 = 0` 방출 |
+
+세 메서드 모두 `on()` / `andOn()` / `onVal()`과 AND 의미론으로 이어집니다. `ref` 인자는 `on()`과 동일한 `"alias.property"` 문자열 해석 방식을 따르므로 NamingStrategy와 `@Column({ name })` 매핑이 그대로 적용돼요.
+
+```typescript
+// 활성 상태이고 이메일 인증된 사용자만 조인
+const posts = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoin(User, "u", (j) =>
+    j.on("p.authorId", "=", "u.id")
+     .onNotNull("u.verifiedAt")                // u.verified_at IS NOT NULL
+     .onIn("u.role", ["admin", "editor"]),     // u.role IN (?, ?)
+  )
+  .getMany();
+
+// soft-delete되지 않은 작성자가 없는 게시물 찾기
+const orphaned = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoin(User, "u", (j) =>
+    j.on("p.authorId", "=", "u.id")
+     .onNull("u.deletedAt"),   // u.deleted_at IS NULL
+  )
+  .getMany();
+```
+
 ### 범위 포함 ON — `onBetween()`
 
 범위 포함(range containment) 셀프 조인 — 중첩 집합(nested set), 인터벌 트리 — 에서는 `onBetween(ref, lowRef, highRef)`가 컬럼을 다른 두 **컬럼 참조** 사이와 비교합니다. `onValBetween(ref, low, high)`는 리터럴 경계값을 받아 파라미터로 바인딩해요.

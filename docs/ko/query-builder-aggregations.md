@@ -225,6 +225,36 @@ const results = await em.query(
 
 전체 세트는 [편의 패턴](./query-builder-patterns.md#subquery-통합)에서 다룹니다.
 
+## 스칼라 집계 터미널
+
+쿼리의 WHERE / JOIN 범위 안에서 단일 집계 값이 필요할 때, `getSum()`, `getAvg()`, `getMin()`, `getMax()` 터미널 메서드를 쓰면 `addSelect(sql\`SUM(...)\`, "s").getRawOne()` 블록을 직접 작성하지 않아도 됩니다. 빌더의 FROM / JOIN / WHERE / soft-delete / 테넌트 범위를 그대로 재사용하며, 이미 설정된 LIMIT / OFFSET / ORDER BY는 무시합니다.
+
+```typescript
+const qb = em
+  .createQueryBuilder(Order, "o")
+  .leftJoin(User, "u", (j) => j.on("o.userId", "=", "u.id"))
+  .where("u.country", "KR")
+  .where("o.status", "completed");
+
+const total   = await qb.getSum("amount");   // SUM(o.amount)
+const average = await qb.getAvg("amount");   // AVG(o.amount)
+const lowest  = await qb.getMin("amount");   // MIN(o.amount)
+const highest = await qb.getMax("amount");   // MAX(o.amount)
+```
+
+네 메서드 모두 `Promise<number>`를 반환합니다. 매칭 행이 없거나 해당 컬럼이 모두 `NULL`인 경우 결과는 `0`으로 변환됩니다. `EntityManager.sum()` / `avg()` / `min()` / `max()`와 동일한 동작이에요.
+
+`column` 인자는 루트 엔티티의 camelCase 프로퍼티 이름으로 제한된 `ColumnOf<T>` 타입이라 오타는 컴파일 에러로 잡힙니다.
+
+| 메서드 | SQL | 반환 |
+|--------|-----|------|
+| `getSum(column)` | `SELECT SUM(col) FROM ...` | `Promise<number>` — 빈 결과 시 0 |
+| `getAvg(column)` | `SELECT AVG(col) FROM ...` | `Promise<number>` — 빈 결과 시 0 |
+| `getMin(column)` | `SELECT MIN(col) FROM ...` | `Promise<number>` — 빈 결과 시 0 |
+| `getMax(column)` | `SELECT MAX(col) FROM ...` | `Promise<number>` — 빈 결과 시 0 |
+
+추가 GROUP BY 없이 동일 범위에서 여러 집계 스칼라가 필요할 때 `getCount()`와 함께 자연스럽게 조합할 수 있습니다.
+
 ## DISTINCT
 
 중복 없는 행만 받고 싶을 때는 DISTINCT를 활성화합니다.

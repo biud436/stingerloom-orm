@@ -159,6 +159,39 @@ qb.leftJoin(User, "u", (join) =>
 );
 ```
 
+### Null and IN conditions — `onNull()`, `onNotNull()`, `onIn()`
+
+Three more `JoinOnBuilder` methods let you narrow the JOIN without leaving the builder:
+
+| Method | SQL fragment | Notes |
+|--------|-------------|-------|
+| `onNull(ref)` | `ref IS NULL` | Useful for anti-joins or filtering only unmatched rows |
+| `onNotNull(ref)` | `ref IS NOT NULL` | Require a non-null value on the joined side |
+| `onIn(ref, values)` | `ref IN (?, ?, ...)` | Values are parameter-bound, never concatenated; an empty array emits `1 = 0` (matches nothing) |
+
+All three chain with AND semantics alongside `on()` / `andOn()` / `onVal()`. The `ref` argument follows the same `"alias.property"` string resolution as `on()`, so NamingStrategy and `@Column({ name })` mappings apply.
+
+```typescript
+// Only join active, verified users
+const posts = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoin(User, "u", (j) =>
+    j.on("p.authorId", "=", "u.id")
+     .onNotNull("u.verifiedAt")   // u.verified_at IS NOT NULL
+     .onIn("u.role", ["admin", "editor"]),  // u.role IN (?, ?)
+  )
+  .getMany();
+
+// Left join to find posts with no matching soft-deleted author
+const orphaned = await em
+  .createQueryBuilder(Post, "p")
+  .leftJoin(User, "u", (j) =>
+    j.on("p.authorId", "=", "u.id")
+     .onNull("u.deletedAt"),   // u.deleted_at IS NULL
+  )
+  .getMany();
+```
+
 ### Range-Containment ON — `onBetween()`
 
 For range-containment self-joins (nested sets, interval trees), `onBetween(ref, lowRef, highRef)` compares a column against two other **column references**, and `onValBetween(ref, low, high)` takes literal bounds that are bound as parameters:

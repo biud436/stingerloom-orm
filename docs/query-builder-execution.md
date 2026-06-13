@@ -426,12 +426,38 @@ const rows = await qb
 
 Supported type tags: `"number"`, `"bigint"`, `"string"`, `"date"`, `"json"`, `"boolean"`. `null` / `undefined` pass through untouched, and columns not listed in `coerce` keep the driver's native value. `getRawOne()` accepts the same option.
 
-**Utility (unchanged):**
+**Utility — aggregates and inspection:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `getCount()` | `number` | COUNT(*) with the same WHERE/JOIN |
-| `exists()` | `boolean` | Whether any rows match |
+| `getCount()` | `number` | `COUNT(*)` with the same WHERE/JOIN; ignores LIMIT/OFFSET |
+| `exists()` | `boolean` | Whether any rows match (uses `SELECT 1 ... LIMIT 1`) |
+| `getExists()` | `boolean` | Alias of `exists()` — consistent with the other `get*` terminals |
+| `getSum(column)` | `number` | `SUM(column)` over the same scope; 0 on empty |
+| `getAvg(column)` | `number` | `AVG(column)` over the same scope; 0 on empty |
+| `getMin(column)` | `number` | `MIN(column)` over the same scope; 0 on empty |
+| `getMax(column)` | `number` | `MAX(column)` over the same scope; 0 on empty |
+| `explain()` | `ExplainResult` | Query plan for the built SELECT (MySQL / PostgreSQL only) |
+
+All aggregate terminals (`getSum`, `getAvg`, `getMin`, `getMax`, `getCount`) rebuild the SELECT clause from scratch, so `addSelect()` projections are ignored — only the WHERE / JOIN / GROUP BY / HAVING / soft-delete / tenant scope carry over.
+
+`explain()` mirrors `EntityManager.explain()` — it prefixes the built SQL with the driver's `EXPLAIN` syntax and returns the same `ExplainResult` shape (`rows`, `type`, `possibleKeys`, `key`, `cost`). Throws `InvalidQueryError` when called against SQLite, which does not support `EXPLAIN`.
+
+```typescript
+// Existence check — get* style
+const hasExpired = await em
+  .createQueryBuilder(Session, "s")
+  .where("expiresAt", { lt: new Date() })
+  .getExists();  // same as .exists()
+
+// Query plan
+const plan = await em
+  .createQueryBuilder(Order, "o")
+  .where("status", "pending")
+  .explain();
+console.log(plan.rows);      // estimated rows
+console.log(plan.key);       // index chosen
+```
 
 **Which to use?** Default to `getMany()`. Use `getPartialMany()` for read-only DTOs where you want compile-time narrowing. Use `getRawMany()` for queries with `addSelect` or computed columns.
 

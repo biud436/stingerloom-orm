@@ -405,6 +405,27 @@ ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `loginCount` = VALUES(`loginCou
 
 세 번째 인자(옵션)로 충돌 컬럼을 지정해요. 생략하면 기본 키가 사용돼요.
 
+### 반환값 — `{ affected: number }`
+
+`upsert()`와 `batchUpsert()` 모두 `Promise<{ affected: number }>`를 반환합니다.
+
+```typescript
+const result = await em.upsert(User, { id: 1, name: "Alice" });
+console.log(result.affected); // MySQL: INSERT면 1, UPDATE면 2 / PostgreSQL·SQLite: 1
+```
+
+`affected` 값은 **드라이버 원본 그대로** 반환됩니다 — 정규화 없음.
+
+| 드라이버 | INSERT | UPDATE | 변경 없음 |
+|---------|--------|--------|---------|
+| MySQL | 1 | 2 | 0 |
+| PostgreSQL | 1 | 1 | 1 |
+| SQLite | 1 | 1 | 1 |
+
+MySQL은 `ON DUPLICATE KEY UPDATE`의 `affectedRows`를 씁니다. 내부적으로 행을 삭제하고 재삽입하는 방식이라 update를 2로 세어요. PostgreSQL과 SQLite는 insert·update 모두 1을 반환합니다. 변경 여부만 알면 충분하다면 `result.affected > 0`으로 판단하면 돼요.
+
+`batchUpsert()`는 `items` 배열이 비어 있으면 `{ affected: 0 }`을 반환합니다.
+
 리포지토리에서는 `userRepo.batchUpsert(items, conflictColumns)`로 동일하게 사용할 수 있어요.
 
 ---

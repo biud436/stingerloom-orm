@@ -34,14 +34,15 @@ const em = new EntityManager();
 | `exists` | `<T>(entity, where?: WhereClause<T>): Promise<boolean>` | Check if any matching record exists |
 | `findByPK` | `<T>(entity, id: unknown): Promise<T \| null>` | Find by primary key value |
 | `findByPKs` | `<T>(entity, ids: unknown[]): Promise<T[]>` | Find by multiple primary key values |
+| `findByPKsMap` | `<T>(entity, ids: unknown[]): Promise<Map<string \| number \| bigint, T>>` | Batch load returning a `Map` keyed by PK for O(1) lookup; composite PKs use `"col1=v1,col2=v2"` string keys |
 | `findAndCount` | `<T>(entity, option?): Promise<[T[], number]>` | List + total count |
 | `findWithCursor` | `<T>(entity, option?): Promise<CursorPaginationResult<T>>` | Cursor pagination |
 | `save` | `<T>(entity, item): Promise<InstanceType<ClazzType<T>>>` | INSERT or UPDATE |
 | `delete` | `<T>(entity, criteria): Promise<DeleteResult>` | Permanent delete |
 | `softDelete` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete |
 | `restore` | `<T>(entity, criteria): Promise<DeleteResult>` | Restore Soft Delete |
-| `upsert` | `<T>(entity, data, conflictColumns?): Promise<void>` | INSERT ... ON CONFLICT |
-| `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<void>` | Multi-row upsert |
+| `upsert` | `<T>(entity, data, conflictColumns?): Promise<{ affected: number }>` | INSERT ... ON CONFLICT; MySQL returns 1 (insert) or 2 (update) |
+| `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<{ affected: number }>` | Multi-row upsert; same MySQL caveat applies |
 | `update` | `<T>(entity, where, data): Promise<{ affected: number }>` | Filter-first UPDATE (sugar over `updateMany`, mirrors `delete`) |
 | `updateMany` | `<T>(entity, data: UpdateData<T>, options): Promise<{ affected: number }>` | Bulk UPDATE (supports SQL expressions) |
 
@@ -229,6 +230,7 @@ interface FindOption<T> {
   having?: Sql[];
   relations?: (keyof T)[];
   withDeleted?: boolean;
+  onlyDeleted?: boolean;         // Return ONLY soft-deleted rows (precedence over withDeleted)
   distinct?: boolean;            // SELECT DISTINCT
   timeout?: number;
   useMaster?: boolean;
@@ -407,6 +409,12 @@ class SelectQueryBuilder<T, TResult = T> {
   paginate(opts?: { page?: number; pageSize?: number }):
     Promise<PagePaginationResult<TResult>>;
   exists(): Promise<boolean>;
+  getExists(): Promise<boolean>;              // Alias of exists()
+  getSum(column: ColumnOf<T>): Promise<number>;   // SUM — 0 on empty/NULL
+  getAvg(column: ColumnOf<T>): Promise<number>;   // AVG — 0 on empty/NULL
+  getMin(column: ColumnOf<T>): Promise<number>;   // MIN — 0 on empty/NULL
+  getMax(column: ColumnOf<T>): Promise<number>;   // MAX — 0 on empty/NULL
+  explain(): Promise<ExplainResult>;          // Query plan (MySQL / PostgreSQL only)
 
   // ── EXECUTION: typed plain objects (no deserialization) ─
   getPartialMany(): Promise<TResult[]>;

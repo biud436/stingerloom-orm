@@ -405,6 +405,27 @@ ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `loginCount` = VALUES(`loginCou
 
 The optional third argument specifies the conflict columns. If omitted, the primary key is used.
 
+### Return value — `{ affected: number }`
+
+Both `upsert()` and `batchUpsert()` return `Promise<{ affected: number }>`.
+
+```typescript
+const result = await em.upsert(User, { id: 1, name: "Alice" });
+console.log(result.affected); // 1 (insert) or 2 (update) on MySQL, 1 on PostgreSQL/SQLite
+```
+
+The `affected` count is **driver-reported as-is** — not normalized:
+
+| Driver | INSERT | UPDATE | Unchanged row |
+|--------|--------|--------|---------------|
+| MySQL | 1 | 2 | 0 |
+| PostgreSQL | 1 | 1 | 1 |
+| SQLite | 1 | 1 | 1 |
+
+MySQL uses `affectedRows` from `ON DUPLICATE KEY UPDATE`, which counts inserts as 1 and updates as 2 (it internally deletes + re-inserts the row). PostgreSQL and SQLite report 1 for both. If you only need to know whether anything changed, compare `result.affected > 0`.
+
+`batchUpsert()` returns `{ affected: 0 }` when the `items` array is empty.
+
 The repository equivalent is `userRepo.batchUpsert(items, conflictColumns)`.
 
 ---

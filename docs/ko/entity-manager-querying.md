@@ -809,7 +809,32 @@ SELECT * FROM "post"
 -- deletedAt 필터 없음
 ```
 
-`find()`, `findOne()`, `findAndCount()`, `findWithCursor()`, `findWithPage()`, `stream()` 모두에서 동작해요.
+Soft delete된 레코드**만** 반환하려면 — 복구 화면이나 감사(audit) 뷰처럼 삭제된 행만 나열해야 하는 경우 — `onlyDeleted: true`를 씁니다:
+
+```typescript
+const trashedPosts = await em.find(Post, {
+  onlyDeleted: true,
+});
+```
+
+```sql
+SELECT * FROM "post"
+WHERE "deletedAt" IS NOT NULL
+```
+
+`onlyDeleted`는 `withDeleted`보다 우선합니다. 둘을 동시에 설정하면 `onlyDeleted`가 이깁니다. 또한 `where` 조건과 AND로 결합하므로 다른 필터와 함께 쓸 수 있어요:
+
+```typescript
+// 특정 작성자의 삭제된 게시물만
+const trashedByAlice = await em.find(Post, {
+  where: { authorId: 42 },
+  onlyDeleted: true,
+});
+```
+
+`@DeletedAt` 컬럼이 없는 엔티티에서는 `onlyDeleted`가 조용히 무시됩니다 — `withDeleted`와 동일한 동작이에요.
+
+`find()`, `findOne()`, `findBy()`, `findOneBy()`, `findOneOrFail()`, `findAndCount()`(개수 포함), `findWithCursor()`, `findWithPage()`, `stream()` 모두에서 동작합니다.
 
 ---
 
@@ -1340,7 +1365,8 @@ WHERE "email" = $1
 | `distinct` | `boolean` | SELECT DISTINCT |
 | `groupBy` | `string[]` | GROUP BY 컬럼 |
 | `having` | `Sql[]` | HAVING 조건 (groupBy 필수) |
-| `withDeleted` | `boolean` | Soft delete된 레코드 포함 |
+| `withDeleted` | `boolean` | Soft delete된 레코드 포함 (live + 삭제 행) |
+| `onlyDeleted` | `boolean` | Soft delete된 레코드**만** 반환; `withDeleted`보다 우선; `@DeletedAt` 없으면 무시 |
 | `lock` | `LockMode` | 비관적 잠금 (트랜잭션 필수) |
 | `timeout` | `number` | 쿼리 타임아웃 (밀리초) |
 | `useMaster` | `boolean` | Read replica 사용 시 마스터에서 읽기 강제 |

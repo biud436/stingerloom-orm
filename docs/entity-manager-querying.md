@@ -809,7 +809,32 @@ SELECT * FROM "post"
 -- no deletedAt filter added
 ```
 
-This works with `find()`, `findOne()`, `findAndCount()`, `findWithCursor()`, `findWithPage()`, and `stream()`.
+To return **only** soft-deleted records — for example, a recovery or audit view that exclusively lists trashed rows — use `onlyDeleted: true`:
+
+```typescript
+const trashedPosts = await em.find(Post, {
+  onlyDeleted: true,
+});
+```
+
+```sql
+SELECT * FROM "post"
+WHERE "deletedAt" IS NOT NULL
+```
+
+`onlyDeleted` takes precedence over `withDeleted` when both are set. It ANDs with any `where` conditions you provide, so you can combine it with other filters:
+
+```typescript
+// Only trashed posts by a specific author
+const trashedByAlice = await em.find(Post, {
+  where: { authorId: 42 },
+  onlyDeleted: true,
+});
+```
+
+For entities without a `@DeletedAt` column, `onlyDeleted` is a silent no-op — no extra predicate is added, matching the behavior of `withDeleted`.
+
+Both options work with `find()`, `findOne()`, `findBy()`, `findOneBy()`, `findOneOrFail()`, `findAndCount()` (including its count), `findWithCursor()`, `findWithPage()`, and `stream()`.
 
 ---
 
@@ -1340,7 +1365,8 @@ Here's every option you can pass to `find()`, in one table:
 | `distinct` | `boolean` | SELECT DISTINCT |
 | `groupBy` | `string[]` | GROUP BY columns |
 | `having` | `Sql[]` | HAVING conditions (requires groupBy) |
-| `withDeleted` | `boolean` | Include soft-deleted records |
+| `withDeleted` | `boolean` | Include soft-deleted records (live + trashed) |
+| `onlyDeleted` | `boolean` | Return ONLY soft-deleted records; takes precedence over `withDeleted`; no-op for entities without `@DeletedAt` |
 | `lock` | `LockMode` | Pessimistic locking (requires transaction) |
 | `timeout` | `number` | Query timeout in milliseconds |
 | `useMaster` | `boolean` | Force read from master (when using read replicas) |
