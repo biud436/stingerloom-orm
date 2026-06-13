@@ -112,7 +112,16 @@ export class SqliteConnector extends IConnector {
 
       const raw = this.executeRaw(db, rawSql);
       if (connection) {
-        return { results: raw, fields: null } as T;
+        // Mirror PostgresConnector's top-level `rowCount` so EntityManager's
+        // affected-rows extraction (`... : queryResult.rowCount ?? 0`) works on
+        // SQLite. better-sqlite3 reports write counts via `run().changes`; reads
+        // return a row array. `results` keeps the raw shape (changes /
+        // lastInsertRowid) for callers that need the inserted row id.
+        return {
+          results: raw,
+          fields: null,
+          rowCount: Array.isArray(raw) ? raw.length : (raw?.changes ?? 0),
+        } as T;
       }
       return raw as T;
     } else {
@@ -124,7 +133,16 @@ export class SqliteConnector extends IConnector {
 
       const raw = this.executeRaw(db, sql, values);
       if (connection) {
-        return { results: raw, fields: null } as T;
+        // Mirror PostgresConnector's top-level `rowCount` so EntityManager's
+        // affected-rows extraction (`... : queryResult.rowCount ?? 0`) works on
+        // SQLite. better-sqlite3 reports write counts via `run().changes`; reads
+        // return a row array. `results` keeps the raw shape (changes /
+        // lastInsertRowid) for callers that need the inserted row id.
+        return {
+          results: raw,
+          fields: null,
+          rowCount: Array.isArray(raw) ? raw.length : (raw?.changes ?? 0),
+        } as T;
       }
       return raw as T;
     }
