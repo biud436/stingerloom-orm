@@ -3470,6 +3470,189 @@ export class EntityManager implements BaseEntityManager {
     });
   }
 
+  /**
+   * Inserts multiple entities with a single multi-row INSERT and returns the
+   * inserted entity instances, in input order, with generated primary keys and
+   * database-default columns populated via the `RETURNING` clause.
+   *
+   * Unlike {@link insertMany} — which only reports an affected-row count and
+   * forces a follow-up re-read to obtain generated PKs / DB defaults — this
+   * method deserializes the `RETURNING *` rows directly back into entities, so
+   * no extra query is required.
+   *
+   * Requires `INSERT ... RETURNING` support: PostgreSQL (all versions),
+   * SQLite 3.35+, and MariaDB 10.5+. MySQL does not support RETURNING and will
+   * throw an {@link OrmError} with {@link OrmErrorCode.UNSUPPORTED_DATABASE}
+   * before any SQL is built; use {@link saveMany} there instead.
+   *
+   * @param entity The entity class.
+   * @param items The partial entities to insert.
+   * @returns The inserted entity instances, in input order.
+   */
+  async insertManyAndReturn<T>(
+    entity: ClazzType<T>,
+    items: Partial<T>[],
+  ): Promise<InstanceType<ClazzType<T>>[]> {
+    if (items.length === 0) {
+      return [];
+    }
+
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    if (!this.driver) {
+      throw new OrmError(
+        OrmErrorCode.NOT_CONNECTED,
+        "Driver is not initialized. Call connect() first.",
+      );
+    }
+
+    // Fail fast (before building any SQL) when the dialect cannot return rows
+    // from an INSERT, so MySQL produces a clear, predictable error. Prefer the
+    // INSERT-specific capability (MariaDB supports INSERT RETURNING without full
+    // RETURNING) and fall back to the generic flag for drivers that do not
+    // distinguish the two.
+    const supportsInsertReturning =
+      (typeof this.driver.supportsInsertReturning === "function" &&
+        this.driver.supportsInsertReturning()) ||
+      (typeof this.driver.supportsReturning === "function" &&
+        this.driver.supportsReturning());
+    if (!supportsInsertReturning) {
+      const dialect = this.dbType ?? "this database";
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_DATABASE,
+        `insertManyAndReturn() requires INSERT ... RETURNING, unsupported by ${dialect}. ` +
+          `Use saveMany() to insert and return entities one row at a time.`,
+      );
+    }
+
+    return this.executeInTransaction(async (session) => {
+      if (this.tenantColumnConfig) {
+        for (const item of items) {
+          this.applyTenantColumnOnInsert(entity, item);
+        }
+      }
+
+      const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
+      const timestampTypes = new Set(["datetime", "timestamp", "date"]);
+      const timestampColumns = metadata.columns.filter(
+        (col: ColumnMetadata) =>
+          col.options?.type &&
+          timestampTypes.has(col.options.type) &&
+          col.name !== deletedAtColumn,
+      );
+      if (timestampColumns.length > 0) {
+        const now = new Date();
+        for (const item of items) {
+          for (const col of timestampColumns) {
+            if ((item as any)[this.propKey(col)] == null) {
+              (item as any)[this.propKey(col)] = now;
+            }
+          }
+        }
+      }
+
+      const versionCol = this.resolver.getVersionColumn(entity);
+      if (versionCol) {
+        for (const item of items) {
+          if ((item as any)[versionCol] == null) {
+            (item as any)[versionCol] = 1;
+          }
+        }
+      }
+
+      const computedColsMany = this.getComputedColumnNames(entity);
+      const insertableColumns = metadata.columns.filter(
+        (column: ColumnMetadata) => {
+          if (computedColsMany.has(column.name!)) return false;
+          const isAutoIncrement = column.options?.autoIncrement;
+          if (!isAutoIncrement) return true;
+          return items.every(
+            (item) =>
+              (item as any)[this.propKey(column)] !== null &&
+              (item as any)[this.propKey(column)] !== undefined,
+          );
+        },
+      );
+
+      const columns = insertableColumns.map((column) =>
+        raw(this.wrap(column.name!)),
+      );
+
+      const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
+      const fkColumns: { joinColumn: string; propertyName: string; relMeta: any }[] = [];
+      for (const rel of manyToOneRelations) {
+        if (!rel.joinColumn) continue;
+        const alreadyIncluded = insertableColumns.some(
+          (col: ColumnMetadata) => col.name === rel.joinColumn,
+        );
+        if (!alreadyIncluded) {
+          columns.push(raw(this.wrap(rel.joinColumn)));
+          fkColumns.push({
+            joinColumn: rel.joinColumn,
+            propertyName: rel.columnName,
+            relMeta: rel,
+          });
+        }
+      }
+
+      const valueRows = items.map((item) => {
+        const rowValues = insertableColumns.map(
+          (column: ColumnMetadata) => (item as any)[this.propKey(column)],
+        );
+        for (const fk of fkColumns) {
+          const relatedValue = (item as any)[fk.propertyName];
+          const idPropValue = (item as any)[`${fk.propertyName}Id`];
+
+          if (relatedValue != null) {
+            if (typeof relatedValue === "object") {
+              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<any>;
+              const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
+              const relatedPk = relatedMeta?.columns.find(
+                (col: any) => col.options?.primary,
+              );
+              rowValues.push(relatedPk ? relatedValue[this.propKey(relatedPk)] ?? null : null);
+            } else {
+              rowValues.push(relatedValue);
+            }
+          } else if (idPropValue != null) {
+            rowValues.push(idPropValue);
+          } else {
+            rowValues.push(null);
+          }
+        }
+        return sql`(${join(rowValues, ", ")})`;
+      });
+
+      // Same multi-row INSERT as insertMany(), with RETURNING * appended so the
+      // generated PKs and DB defaults come back without a re-read. RETURNING *
+      // is the portable form across PostgreSQL and SQLite; no driver exposes a
+      // column-list returning helper, so it is emitted directly here.
+      const queryStr = sql`INSERT INTO ${raw(this.wrapTable(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")} RETURNING *`;
+
+      const queryResult = (await session.query(queryStr)) as {
+        results: any;
+        fields: any;
+        rowCount?: number;
+      };
+
+      // PostgreSQL / SQLite (better-sqlite3 .all() on a RETURNING statement)
+      // both surface the rows under `results`, in insertion (input) order.
+      // #369: route them through ResultTransformer so DB column names map back
+      // to property keys (explicit @Column({ name }) + NamingStrategy) and
+      // column transformers apply on read — the same path find() uses.
+      const rows = Array.isArray(queryResult?.results)
+        ? queryResult.results
+        : [];
+      return ResultTransformerFactory.create().toEntities(entity, {
+        results: rows,
+        fields: [],
+      } as any) as InstanceType<ClazzType<T>>[];
+    });
+  }
+
   // ── CRUD: Delete ────────────────────────────────────────────
 
   async delete<T>(

@@ -270,6 +270,24 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Inserts multiple entities with a single multi-row INSERT and returns the
+   * inserted entity instances, in input order, with generated primary keys and
+   * database-default columns populated via the `RETURNING` clause.
+   *
+   * Requires `INSERT ... RETURNING` support: PostgreSQL (all versions),
+   * SQLite 3.35+, and MariaDB 10.5+. Throws on MySQL, which has no RETURNING;
+   * use {@link saveMany} there instead.
+   *
+   * @param items The partial entities to be inserted.
+   * @returns The inserted entity instances, in input order.
+   */
+  async insertManyAndReturn(
+    items: Partial<T>[],
+  ): Promise<InstanceType<ClazzType<T>>[]> {
+    return await this.em.insertManyAndReturn<T>(this.entity, items);
+  }
+
+  /**
    * Deletes multiple entities by their primary key values using a single query.
    *
    * @param ids The primary key values of entities to delete.
