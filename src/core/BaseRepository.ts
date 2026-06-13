@@ -90,6 +90,27 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Retrieves a flat array of a single column's values across matching rows.
+   * Convenience over `find(...).map(row => row[column])`. See
+   * {@link EntityManager.pluck}.
+   *
+   * @param column The property whose values should be collected.
+   * @param where Optional filter selecting rows (defaults to every row).
+   * @returns A promise resolving to the column values in row order.
+   *
+   * @example
+   * ```ts
+   * const ids = await repo.pluck("id", { active: true });
+   * ```
+   */
+  async pluck<K extends keyof T & string>(
+    column: K,
+    where?: WhereClause<T> | WhereClause<T>[],
+  ): Promise<T[K][]> {
+    return await this.em.pluck<T, K>(this.entity, column, where);
+  }
+
+  /**
    * Retrieves a single entity with the specified conditions.
    *
    * @param findOption Specifies the conditions for the entity to be retrieved.

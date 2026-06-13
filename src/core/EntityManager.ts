@@ -1238,6 +1238,39 @@ export class EntityManager implements BaseEntityManager {
     return this.find(entity, { where });
   }
 
+  /**
+   * Retrieves a flat array of a single column's values across matching rows.
+   *
+   * Convenience over `find(...).map(row => row[column])` for the common
+   * "give me all the ids / emails" case. Internally reuses {@link find} with a
+   * `select` restricted to `column`, so tenant scoping, soft-delete filtering,
+   * and naming-strategy column mapping all apply automatically. Row order
+   * matches what `find` returns.
+   *
+   * @param entity The entity class to query.
+   * @param column The property whose values should be collected.
+   * @param where Optional filter selecting rows (defaults to every row).
+   * @returns A promise resolving to the column values in row order.
+   *
+   * @example
+   * ```ts
+   * const ids = await em.pluck(User, "id", { active: true });
+   * // -> [1, 2, 3]
+   * ```
+   */
+  async pluck<T, K extends keyof T & string>(
+    entity: ClazzType<T>,
+    column: K,
+    where?: WhereClause<T> | WhereClause<T>[],
+  ): Promise<T[K][]> {
+    const findOption: FindOption<T> = { select: [column] };
+    if (where !== undefined) {
+      findOption.where = where;
+    }
+    const rows = await this.find(entity, findOption);
+    return rows.map((row) => row[column]);
+  }
+
   private async findInternal<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
