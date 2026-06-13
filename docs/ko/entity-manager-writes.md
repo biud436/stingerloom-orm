@@ -40,7 +40,68 @@ VALUES (?, ?), (?, ?), (?, ?)
 - **단일 SQL 문**으로 실행돼요 -- `save()` 루프보다 훨씬 효율적이에요.
 - `@CreateTimestamp`, `@UpdateTimestamp` 컬럼이 자동으로 주입돼요.
 - `@Version` 컬럼은 각 행마다 `1`로 초기화돼요.
-- `{ affected: number }`를 반환해요 -- 생성된 PK가 필요하면 `saveMany()`를 사용하세요.
+- `{ affected: number }`를 반환해요 -- 삽입된 행을 돌려받아야 한다면 `insertManyAndReturn()`(PostgreSQL / SQLite) 또는 `saveMany()`(전 다이얼렉트)를 사용하세요.
+
+---
+
+## 배치 삽입 후 반환 -- insertManyAndReturn()
+
+### insertManyAndReturn()가 필요한 이유
+
+`insertMany()`는 빠르지만 `{ affected: number }`만 반환해요. 삽입된 행의 생성된 PK, 타임스탬프, DB 기본값이 채워진 엔티티 인스턴스가 필요하면서도 멀티 행 INSERT의 단일 문 효율을 그대로 유지하고 싶을 때 `insertManyAndReturn()`을 사용하세요.
+
+내부적으로 ORM은 `INSERT INTO ... VALUES (...), (...), (...) RETURNING *` 문 하나를 실행하고, 결과 행을 ResultTransformer를 통해 역매핑해요. 컬럼 별칭과 NamingStrategy 매핑이 결과에 적용돼요.
+
+```typescript
+const users = await em.insertManyAndReturn(User, [
+  { name: "Alice", email: "alice@example.com" },
+  { name: "Bob", email: "bob@example.com" },
+]);
+// users[0].id => 1  (DB가 생성한 PK)
+// users[1].id => 2
+```
+
+ORM이 생성하는 SQL은 이래요:
+
+```sql
+-- PostgreSQL
+INSERT INTO "user" ("name", "email")
+VALUES ($1, $2), ($3, $4)
+RETURNING *
+-- Parameters: ['Alice', 'alice@example.com', 'Bob', 'bob@example.com']
+
+-- SQLite 3.35+
+INSERT INTO "user" ("name", "email")
+VALUES (?, ?), (?, ?)
+RETURNING *
+-- Parameters: ['Alice', 'alice@example.com', 'Bob', 'bob@example.com']
+```
+
+주요 특징:
+- **단일 SQL 문**으로 실행돼요 -- `insertMany()`와 동일한 효율이에요.
+- 결과 엔티티 인스턴스를 **입력 순서대로** 반환해요.
+- `@CreateTimestamp`, `@UpdateTimestamp`, `@Version` 컬럼이 INSERT 전에 자동으로 주입돼요.
+- `items`가 비어 있으면 DB를 전혀 건드리지 않고 즉시 `[]`를 반환해요.
+
+**다이얼렉트 지원.** `insertManyAndReturn()`은 `INSERT ... RETURNING`이 필요해요. PostgreSQL과 SQLite 3.35+ 이상에서 사용할 수 있어요. MySQL에서 호출하면 `OrmError` (`UNSUPPORTED_DATABASE`)가 발생해요. MySQL에서는 `saveMany()`를 사용하세요.
+
+```typescript
+// MySQL에서는 OrmError (UNSUPPORTED_DATABASE) 발생
+// await em.insertManyAndReturn(User, [{ name: "Alice" }]); // MySQL에서 사용 금지
+
+// MySQL에서는 saveMany() 사용:
+const users = await em.saveMany(User, [{ name: "Alice" }]);
+```
+
+### 배치 INSERT 방법 선택 가이드
+
+| 메서드 | 지원 다이얼렉트 | SQL 문 수 | 반환값 |
+|--------|----------------|-----------|--------|
+| `insertMany()` | 전체 | 1 | `{ affected: number }` |
+| `insertManyAndReturn()` | PostgreSQL, SQLite 3.35+ | 1 | 엔티티 인스턴스 배열 |
+| `saveMany()` | 전체 | N (행당 1개) | 엔티티 인스턴스 배열 |
+
+행을 돌려받을 필요가 없고 MySQL도 지원해야 한다면 `insertMany()`를 쓰세요. 행을 돌려받아야 하고 PostgreSQL 또는 SQLite를 대상으로 한다면 `insertManyAndReturn()`을 쓰세요. MySQL에서 행을 돌려받아야 하거나, 새 엔티티와 기존 엔티티가 섞인 배치(행마다 INSERT vs UPDATE)를 처리해야 한다면 `saveMany()`를 쓰세요.
 
 ---
 

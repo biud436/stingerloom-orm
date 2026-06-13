@@ -270,7 +270,7 @@ class UsersService {
 }
 ```
 
-BaseRepository는 EntityManager의 거의 모든 메서드를 지원해요: `find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `insertMany`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `stream`, `createQueryBuilder`.
+BaseRepository는 EntityManager의 거의 모든 메서드를 지원해요: `find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `saveMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `stream`, `createQueryBuilder`.
 
 ```typescript
 // Streaming via repository

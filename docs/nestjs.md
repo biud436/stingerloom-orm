@@ -145,7 +145,7 @@ In NestJS, constructor injection works by matching parameter types to DI tokens.
 
 Under the hood, `@InjectRepository(Cat)` is equivalent to `@Inject(Symbol("INJECT_REPOSITORIES_TOKEN_Cat"))`. The decorator exists so you do not have to manage tokens manually.
 
-`BaseRepository` provides: `find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `insertMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `stream`, `createQueryBuilder`, and more.
+`BaseRepository` provides: `find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `stream`, `createQueryBuilder`, and more.
 
 ### @InjectEntityManager(connectionName?)
 

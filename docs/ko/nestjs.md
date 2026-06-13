@@ -145,7 +145,7 @@ NestJS에서 생성자 주입은 파라미터 타입을 DI 토큰과 매칭시�
 
 내부적으로 `@InjectRepository(Cat)`은 `@Inject(Symbol("INJECT_REPOSITORIES_TOKEN_Cat"))`과 동일해요. 토큰을 수동으로 관리하지 않아도 되도록 데코레이터가 존재하는 거예요.
 
-`BaseRepository`가 제공하는 메서드: `find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `insertMany`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `stream`, `createQueryBuilder` 등.
+`BaseRepository`가 제공하는 메서드: `find`, `findOne`, `findWithCursor`, `findAndCount`, `save`, `delete`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `deleteMany`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `stream`, `createQueryBuilder` 등.
 
 ### @InjectEntityManager(connectionName?)
 

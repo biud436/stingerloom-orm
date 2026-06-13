@@ -54,6 +54,7 @@ const em = new EntityManager();
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `insertMany` | `<T>(entity, items[]): Promise<{ affected: number }>` | Multi-row INSERT |
+| `insertManyAndReturn` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | Multi-row `INSERT … RETURNING *` — returns hydrated instances in input order; PostgreSQL and SQLite 3.35+ only; throws `OrmError (UNSUPPORTED_DATABASE)` on MySQL |
 | `insertIgnore` | `<T>(entity, rows[]): Promise<void>` | Idempotent INSERT — `INSERT IGNORE` (MySQL) / `INSERT … ON CONFLICT DO NOTHING` (PostgreSQL / SQLite) |
 | `saveMany` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | Multi-row INSERT/UPDATE |
 | `deleteMany` | `<T>(entity, ids[]): Promise<DeleteResult>` | Multi-row delete |
@@ -150,7 +151,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` — uses the same API as EntityManager without specifying the entity.
+`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` — uses the same API as EntityManager without specifying the entity.
 
 **Repository-only helpers:**
 
