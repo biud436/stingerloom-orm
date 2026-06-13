@@ -4448,13 +4448,21 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
-   * Execute the query and return both class instances and total count.
+   * Execute the query and return both the page of class instances and the
+   * total row count — the query-builder counterpart to
+   * `EntityManager.findAndCount()`. `rows` is exactly what {@link getMany}
+   * returns (respecting LIMIT/OFFSET) while `total` is exactly what
+   * {@link getCount} returns (ignoring LIMIT/OFFSET but still honoring
+   * WHERE / JOIN / soft-delete / tenant scoping via {@link applyCountSource}).
+   *
+   * The two queries run sequentially rather than via `Promise.all`, mirroring
+   * {@link paginate}: SQLite has a single connection and cannot hold two
+   * concurrent transactions, so parallel reads would throw "cannot start a
+   * transaction within a transaction" there.
    */
   async getManyAndCount(): Promise<[TResult[], number]> {
-    const [results, count] = await Promise.all([
-      this.getMany(),
-      this.getCount(),
-    ]);
+    const results = await this.getMany();
+    const count = await this.getCount();
     return [results, count];
   }
 
@@ -4509,10 +4517,10 @@ export class SelectQueryBuilder<T, TResult = T> {
     paged.offsetValue = offset;
     paged.limitValue = pageSize;
 
-    // Run the count and the page sequentially rather than via
-    // getManyAndCount()'s Promise.all: SQLite has a single connection and
-    // cannot hold two concurrent transactions, so parallel reads would
-    // throw "cannot start a transaction within a transaction" there.
+    // Run the count and the page sequentially (as getManyAndCount() does):
+    // SQLite has a single connection and cannot hold two concurrent
+    // transactions, so parallel reads would throw "cannot start a
+    // transaction within a transaction" there.
     const total = await paged.getCount();
     const data = await paged.getMany();
     return this.buildPage(data, total, page, pageSize);
@@ -4621,13 +4629,14 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
-   * Execute the query and return both plain objects and total count.
+   * Execute the query and return both the page of plain objects and the
+   * total count. Like {@link getManyAndCount} but returns plain projected
+   * objects via {@link getPartialMany}. Runs sequentially (mirroring
+   * {@link paginatePartial}) to stay safe on SQLite's single connection.
    */
   async getPartialManyAndCount(): Promise<[TResult[], number]> {
-    const [results, count] = await Promise.all([
-      this.getPartialMany(),
-      this.getCount(),
-    ]);
+    const results = await this.getPartialMany();
+    const count = await this.getCount();
     return [results, count];
   }
 

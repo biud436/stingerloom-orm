@@ -955,6 +955,39 @@ describe("SelectQueryBuilder", () => {
         expect(results[0]).toBeInstanceOf(User);
         expect(count).toBe(1);
       });
+
+      it("total reflects the full filtered set and ignores LIMIT/OFFSET", async () => {
+        // The mock distinguishes the data query (entity rows) from the COUNT
+        // query so we can assert that `total` is the real COUNT result (50),
+        // not the size of the LIMIT-bounded data page (2). This pins the
+        // findAndCount() semantics: rows respect LIMIT/OFFSET, total does not.
+        const dataRows = [
+          { id: 1, name: "Alice", email: "a@t.com", age: 30, status: "active", createdAt: new Date() },
+          { id: 2, name: "Bob", email: "b@t.com", age: 25, status: "active", createdAt: new Date() },
+        ];
+        const sqlText = (arg: any): string =>
+          typeof arg === "string" ? arg : String(arg?.sql ?? arg?.text ?? "");
+        const em = {
+          wrap: (c: string) => `\`${c}\``,
+          wrapTable: (c: string) => `\`${c}\``,
+          resolver: new RelationMetadataResolver(),
+          _ctx: { isMySqlFamily: () => true, isPostgres: () => false },
+          async query<TRow>(built: any): Promise<TRow[]> {
+            return (/COUNT\(\*\)/i.test(sqlText(built))
+              ? [{ count: 50 }]
+              : dataRows) as TRow[];
+          },
+        } as unknown as EntityManager;
+
+        const qb = new SelectQueryBuilder(User, "u", em).limit(2).offset(10);
+        const [rows, total] = await qb.getManyAndCount();
+
+        expect(rows).toHaveLength(2);
+        expect(rows[0]).toBeInstanceOf(User);
+        expect(rows.map((r) => r.id)).toEqual([1, 2]);
+        // Total comes from the COUNT query, unaffected by LIMIT 2 / OFFSET 10.
+        expect(total).toBe(50);
+      });
     });
 
     describe("getPartialMany() — typed plain objects", () => {
