@@ -459,6 +459,29 @@ You've built the query — now you need to run it. The query builder provides th
 | `getOneOrFail()` | `T` | Single class instance (throws `EntityNotFoundError` if not found) |
 | `getManyAndCount()` | `[T[], number]` | Class instances + total count in parallel |
 | `paginate(opts?)` | `PagePaginationResult<T>` | One offset page (class instances) + pagination metadata |
+| `getMap(keyColumn)` | `Map<T[K], TResult>` | Run `getMany()` and index results into a `Map` keyed by `keyColumn`; last row wins on duplicate keys |
+| `pluck(column)` | `T[K][]` | Run `getMany()` and return a flat array of one column's values; row order preserved |
+
+Both `getMap()` and `pluck()` are thin terminals over `getMany()` — they run exactly one query, respecting every WHERE / JOIN / ORDER BY / LIMIT / soft-delete / tenant-scope clause already on the builder.
+
+```typescript
+// getMap — O(1) lookup by a column
+const byId = await em
+  .createQueryBuilder(User, "u")
+  .where("isActive", true)
+  .getMap("id");
+
+byId.get(5);        // the active User with id 5, or undefined
+byId.has(99);       // false if no active user has id 99
+
+// pluck — flat array of one column's values
+const emails = await em
+  .createQueryBuilder(User, "u")
+  .where("isActive", true)
+  .orderBy({ createdAt: "ASC" })
+  .pluck("email");
+// -> ["alice@example.com", "bob@example.com", ...]
+```
 
 These always deserialize rows into entity class instances. `instanceof` works, class methods are available, results can be passed to `em.save()`. When `select()` is used with specific columns, non-nullable columns must be included — otherwise an `OrmError` is thrown.
 

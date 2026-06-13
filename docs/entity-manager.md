@@ -424,7 +424,7 @@ WHERE "post_tags"."postId" = $1
 
 For a deeper look at select, distinct, locking, pagination, and aggregates, see [Querying & Pagination](./entity-manager-querying.md).
 
-### Convenience methods -- findByPK(), findByPKs(), exists()
+### Convenience methods -- findByPK(), findByPKs(), exists(), pluck()
 
 For common lookup patterns, these shortcuts avoid writing `{ where: { id: ... } }` by hand:
 
@@ -446,6 +446,25 @@ const hasAdmin = await em.exists(User, { role: "admin" }); // boolean
 ```
 
 `exists()` is more efficient than `find()` + length check because it generates `SELECT 1 ... LIMIT 1` instead of fetching full rows.
+
+`pluck()` retrieves a flat array of one column's values across matching rows — a concise alternative to `find()` followed by `.map(row => row[column])`:
+
+```typescript
+// Flat list of ids for active users
+const ids = await em.pluck(User, "id", { active: true });
+// -> [1, 2, 3]
+
+// All published post titles — no where clause fetches every row
+const titles = await em.pluck(Post, "title");
+```
+
+Internally `pluck()` calls `find()` with a single-column `select`, so tenant scoping, soft-delete filtering, and the naming strategy all apply automatically. Row order matches what `find()` returns. The third argument (`where`) is optional; omitting it selects all rows.
+
+On `BaseRepository`, omit the entity class argument:
+
+```typescript
+const ids = await userRepo.pluck("id", { active: true });
+```
 
 ---
 

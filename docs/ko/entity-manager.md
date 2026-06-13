@@ -420,7 +420,7 @@ WHERE "post_tags"."postId" = $1
 
 select, distinct, 잠금, 페이지네이션, 집계에 대한 자세한 내용은 [Querying & Pagination](./entity-manager-querying.md)을 참고해 주세요.
 
-### 편의 메서드 -- findByPK(), findByPKs(), findByPKsMap(), exists()
+### 편의 메서드 -- findByPK(), findByPKs(), findByPKsMap(), exists(), pluck()
 
 흔한 조회 패턴에서 `{ where: { id: ... } }`를 직접 쓰는 수고를 줄여 주는 단축 메서드들이에요:
 
@@ -444,6 +444,25 @@ const hasAdmin = await em.exists(User, { role: "admin" }); // boolean
 `findByPKsMap()`은 `findByPKs()`가 반환하는 `T[]`의 순서 보장이 필요하거나, 누락된 id를 `map.has(id)`로 바로 감지해야 할 때 씁니다. 단일 PK 엔티티는 raw 값(number / string / bigint)이 키가 되고, 복합 PK 엔티티는 `"col1=v1,col2=v2"` 형태의 문자열이 키가 됩니다.
 
 `exists()`는 전체 행을 가져오는 대신 `SELECT 1 ... LIMIT 1`을 생성하므로 `find()` + length 비교보다 효율적이에요.
+
+`pluck()`은 매칭 행에서 특정 컬럼 값만 모아 flat 배열로 돌려줍니다 — `find()` 후 `.map(row => row[column])`을 쓰는 것보다 간결해요:
+
+```typescript
+// 활성 유저의 id 목록
+const ids = await em.pluck(User, "id", { active: true });
+// -> [1, 2, 3]
+
+// 게시된 포스트 제목 전체 — where 생략 시 전체 행 선택
+const titles = await em.pluck(Post, "title");
+```
+
+내부적으로 `pluck()`은 단일 컬럼 `select`를 포함해 `find()`를 호출합니다. 따라서 테넌트 범위, soft-delete 필터링, 네이밍 전략이 모두 자동으로 적용돼요. 반환 순서는 `find()`와 동일합니다. 세 번째 인자(`where`)는 선택 사항이며, 생략 시 모든 행을 선택합니다.
+
+`BaseRepository`에서는 엔티티 클래스 인자를 생략하고 호출해요:
+
+```typescript
+const ids = await userRepo.pluck("id", { active: true });
+```
 
 ---
 

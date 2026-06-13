@@ -35,6 +35,7 @@ const em = new EntityManager();
 | `findByPK` | `<T>(entity, id: unknown): Promise<T \| null>` | Find by primary key value |
 | `findByPKs` | `<T>(entity, ids: unknown[]): Promise<T[]>` | Find by multiple primary key values |
 | `findByPKsMap` | `<T>(entity, ids: unknown[]): Promise<Map<string \| number \| bigint, T>>` | Batch load returning a `Map` keyed by PK for O(1) lookup; composite PKs use `"col1=v1,col2=v2"` string keys |
+| `pluck` | `<T, K extends keyof T & string>(entity, column: K, where?): Promise<T[K][]>` | Flat array of one column's values for matching rows; reuses `find()` so tenant scope / soft-delete / naming strategy apply |
 | `findAndCount` | `<T>(entity, option?): Promise<[T[], number]>` | List + total count |
 | `findWithCursor` | `<T>(entity, option?): Promise<CursorPaginationResult<T>>` | Cursor pagination |
 | `save` | `<T>(entity, item): Promise<InstanceType<ClazzType<T>>>` | INSERT or UPDATE |
@@ -149,7 +150,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` — uses the same API as EntityManager without specifying the entity.
+`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` — uses the same API as EntityManager without specifying the entity.
 
 **Repository-only helpers:**
 
@@ -412,6 +413,8 @@ class SelectQueryBuilder<T, TResult = T> {
     Promise<PagePaginationResult<TResult>>;
   getCursor(option?: CursorPaginationOption<T>):
     Promise<CursorPaginationResult<TResult>>;  // Keyset pagination; side-effect-free clone
+  getMap<K extends ColumnOf<T>>(keyColumn: K): Promise<Map<T[K], TResult>>;  // Index getMany() results by keyColumn; last row wins on duplicate keys
+  pluck<K extends ColumnOf<T>>(column: K): Promise<Array<T[K]>>;             // Flat array of one column's values; delegates to getMany()
   exists(): Promise<boolean>;
   getExists(): Promise<boolean>;              // Alias of exists()
   getSum(column: ColumnOf<T>): Promise<number>;   // SUM — 0 on empty/NULL

@@ -478,6 +478,29 @@ const users = await em
 | `getOneOrFail()` | `T` | 단일 인스턴스 (결과 없으면 `EntityNotFoundError`) |
 | `getManyAndCount()` | `[T[], number]` | 인스턴스 배열 + 총 개수 병렬 실행 |
 | `paginate(opts?)` | `PagePaginationResult<T>` | 오프셋 한 페이지(인스턴스) + 페이지네이션 메타데이터 |
+| `getMap(keyColumn)` | `Map<T[K], TResult>` | `getMany()`를 실행하고 결과를 `keyColumn` 기준 Map으로 인덱싱; 중복 키는 마지막 행이 남음 |
+| `pluck(column)` | `T[K][]` | `getMany()`를 실행하고 특정 컬럼 값만 flat 배열로 반환; 행 순서 보존 |
+
+`getMap()`과 `pluck()` 모두 `getMany()` 위에서 동작하는 얇은 터미널입니다 — WHERE / JOIN / ORDER BY / LIMIT / soft-delete / 테넌트 범위를 그대로 존중하면서 쿼리를 단 한 번만 실행해요.
+
+```typescript
+// getMap — 컬럼 기준 O(1) 조회
+const byId = await em
+  .createQueryBuilder(User, "u")
+  .where("isActive", true)
+  .getMap("id");
+
+byId.get(5);        // id가 5인 활성 유저, 없으면 undefined
+byId.has(99);       // 해당 id의 활성 유저가 없으면 false
+
+// pluck — 특정 컬럼 값만 flat 배열로
+const emails = await em
+  .createQueryBuilder(User, "u")
+  .where("isActive", true)
+  .orderBy({ createdAt: "ASC" })
+  .pluck("email");
+// -> ["alice@example.com", "bob@example.com", ...]
+```
 
 행을 항상 엔티티 클래스 인스턴스로 역직렬화합니다. `instanceof`가 동작하고, 클래스 메서드를 쓸 수 있고, `em.save()`에 그대로 넘길 수 있어요. `select()`로 일부 컬럼을 고르는 경우에는 not-null 컬럼이 반드시 포함돼야 합니다 — 아니면 `OrmError`를 던져요.
 

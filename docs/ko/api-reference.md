@@ -35,6 +35,7 @@ const em = new EntityManager();
 | `findByPK` | `<T>(entity, pk): Promise<T \| null>` | 기본 키로 조회 |
 | `findByPKs` | `<T>(entity, pks[]): Promise<T[]>` | 여러 기본 키로 조회 |
 | `findByPKsMap` | `<T>(entity, ids: unknown[]): Promise<Map<string \| number \| bigint, T>>` | 배치 조회 후 Map 반환 — O(1) 조회; 복합 PK는 `"col1=v1,col2=v2"` 문자열 키 |
+| `pluck` | `<T, K extends keyof T & string>(entity, column: K, where?): Promise<T[K][]>` | 매칭 행의 특정 컬럼 값을 flat 배열로 반환; `find()`를 재사용하므로 테넌트 범위 / soft-delete / 네이밍 전략 자동 적용 |
 | `findAndCount` | `<T>(entity, option?): Promise<[T[], number]>` | 목록 + 전체 개수 |
 | `findWithCursor` | `<T>(entity, option?): Promise<CursorPaginationResult<T>>` | 커서 페이지네이션 |
 | `save` | `<T>(entity, item): Promise<InstanceType<ClazzType<T>>>` | INSERT 또는 UPDATE |
@@ -149,7 +150,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
+`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
 
 **Repository 전용 헬퍼:**
 
@@ -412,6 +413,8 @@ class SelectQueryBuilder<T, TResult = T> {
     Promise<PagePaginationResult<TResult>>;
   getCursor(option?: CursorPaginationOption<T>):
     Promise<CursorPaginationResult<TResult>>;  // 키셋 페이지네이션; 복제본에서 동작 (부수효과 없음)
+  getMap<K extends ColumnOf<T>>(keyColumn: K): Promise<Map<T[K], TResult>>;  // getMany() 결과를 keyColumn 기준 Map으로 인덱싱; 중복 키는 마지막 행이 남음
+  pluck<K extends ColumnOf<T>>(column: K): Promise<Array<T[K]>>;             // 특정 컬럼 값만 flat 배열로; getMany()에 위임
   exists(): Promise<boolean>;
   getExists(): Promise<boolean>;              // exists() 별칭
   getSum(column: ColumnOf<T>): Promise<number>;   // SUM — 빈 결과 시 0
