@@ -4680,10 +4680,17 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Side-effect-free on `this`: all mutation happens on a {@link clone}, so the
    * source builder can be reused or paged again afterward.
    *
-   * Like `findWithCursor()`, NULL rows that have not yet been visited are kept
-   * in the window (`NULLs sort last in ASC / first in DESC`), `hasNextPage` is
-   * detected by over-fetching one extra row (`take + 1`), and `nextCursor` is
-   * `encodeCursor(<last row's sort value>)` — or `null` on the final page.
+   * Like `findWithCursor()`, `hasNextPage` is detected by over-fetching one
+   * extra row (`take + 1`), and `nextCursor` is `encodeCursor(<last row's sort
+   * value>)` — or `null` on the final page.
+   *
+   * IMPORTANT — use a NON-NULL sort column (the PK or a `NOT NULL` timestamp).
+   * The keyset keeps not-yet-visited NULL rows in the window, which assumes the
+   * PostgreSQL ordering `NULLs last in ASC / first in DESC`. MySQL and SQLite
+   * sort NULLs the opposite way, so paging a NULLABLE sort column can repeat the
+   * NULL rows across pages on those engines. This caveat is shared with
+   * `findWithCursor`; keyset pagination is only well-defined over a strictly
+   * ordered, non-null column.
    *
    * Scope: single-column keyset only (one `orderBy` column, matching
    * `findWithCursor`). The cursor value is read from the deserialized entity
@@ -5518,7 +5525,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     if (!driver || !driver.supportsExplain()) {
       throw new InvalidQueryError(
         "EXPLAIN is not supported by the current database driver.",
-        "Use MySQL or PostgreSQL driver which support EXPLAIN queries.",
+        "Use a driver that supports EXPLAIN (MySQL, PostgreSQL, or SQLite).",
       );
     }
 
