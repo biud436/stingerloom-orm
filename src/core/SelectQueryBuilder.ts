@@ -199,6 +199,51 @@ export class JoinOnBuilder {
     return this;
   }
 
+  /**
+   * Add an ON condition asserting `ref IS NULL`. The reference is resolved
+   * through the alias registry, just like {@link on}.
+   *
+   * @example join.on("p.userId", "=", "u.id").onNull("u.deletedAt")
+   */
+  onNull(ref: string): this {
+    const col = this.columnResolver(ref);
+    this.conditions.push(Conditions.isNull(col));
+    return this;
+  }
+
+  /**
+   * Add an ON condition asserting `ref IS NOT NULL`.
+   *
+   * @example join.on("p.userId", "=", "u.id").onNotNull("u.verifiedAt")
+   */
+  onNotNull(ref: string): this {
+    const col = this.columnResolver(ref);
+    this.conditions.push(Conditions.isNotNull(col));
+    return this;
+  }
+
+  /**
+   * Add an ON condition asserting `ref IN (...)`. The `values` are USER
+   * VALUES and are bound as parameters (never concatenated into SQL); the
+   * bound params flow through {@link build} into the assembled JOIN SQL via
+   * the same `Sql` channel used by {@link onVal}.
+   *
+   * An empty `values` array emits a matches-nothing predicate (`1 = 0`)
+   * rather than the syntactically invalid `IN ()`, mirroring how the WHERE
+   * builder handles empty `in` arrays.
+   *
+   * @example join.on("p.userId", "=", "u.id").onIn("u.role", ["admin", "editor"])
+   */
+  onIn(ref: string, values: unknown[]): this {
+    const col = this.columnResolver(ref);
+    if (values.length === 0) {
+      this.conditions.push(sql`1 = 0`);
+      return this;
+    }
+    this.conditions.push(Conditions.in(col, values as any[]));
+    return this;
+  }
+
   /** @internal Build the combined ON condition. */
   build(): Sql {
     if (this.conditions.length === 0) {

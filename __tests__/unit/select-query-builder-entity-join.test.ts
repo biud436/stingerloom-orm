@@ -258,6 +258,117 @@ describe("SelectQueryBuilder — Entity-Aware Joins", () => {
     });
   });
 
+  describe("JoinOnBuilder — onNull / onNotNull", () => {
+    it("should emit IS NULL for onNull, accumulating with AND after on()", () => {
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", "au.id").onNull("au.firstName"),
+      );
+      const { text } = qb.getSql();
+
+      expect(text).toContain("`a`.`authorId` = `au`.`id`");
+      expect(text).toContain("`au`.`firstName` IS NULL");
+      // AND order: comparison first, then null check
+      expect(text).toMatch(
+        /`a`\.`authorId` = `au`\.`id` AND `au`\.`firstName` IS NULL/,
+      );
+    });
+
+    it("should emit IS NOT NULL for onNotNull", () => {
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", "au.id").onNotNull("au.lastName"),
+      );
+      const { text } = qb.getSql();
+
+      expect(text).toContain("`au`.`lastName` IS NOT NULL");
+    });
+
+    it("should resolve PostgreSQL identifiers for onNotNull", () => {
+      const { qb } = createQb(Article, "a", "postgresql");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", "au.id").onNotNull("au.lastName"),
+      );
+      const { text } = qb.getSql();
+
+      expect(text).toContain('"au"."lastName" IS NOT NULL');
+    });
+  });
+
+  describe("JoinOnBuilder — onIn", () => {
+    it("should emit IN with bound parameters (not concatenated)", () => {
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", "au.id").onIn("au.id", [1, 2, 3]),
+      );
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("`au`.`id` IN");
+      // Values bound as placeholders, not inlined.
+      expect(text).toContain("?");
+      expect(values).toContain(1);
+      expect(values).toContain(2);
+      expect(values).toContain(3);
+    });
+
+    it("should emit a matches-nothing predicate for an empty values array", () => {
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", "au.id").onIn("au.id", []),
+      );
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("1 = 0");
+      expect(text).not.toContain("IN ()");
+      // No values were bound for the empty IN.
+      expect(values).not.toContain(undefined);
+    });
+
+    it("should accumulate onIn with AND after on()", () => {
+      const { qb } = createQb(Article, "a");
+      qb.leftJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", "au.id").onIn("au.age", [18, 21]),
+      );
+      const { text } = qb.getSql();
+
+      expect(text).toMatch(/`a`\.`authorId` = `au`\.`id` AND `au`\.`age` IN/);
+    });
+  });
+
+  describe("JoinOnBuilder — onNull/onIn keep builder non-empty", () => {
+    it("should not throw 'JOIN ON condition is empty' when only onNull is used", () => {
+      const { qb } = createQb(Article, "a");
+      expect(() =>
+        qb.leftJoin(Author, "au", (j) => j.onNull("au.firstName")),
+      ).not.toThrow();
+      const { text } = qb.getSql();
+      expect(text).toContain("`au`.`firstName` IS NULL");
+    });
+
+    it("should not throw when only onIn (empty) is used", () => {
+      const { qb } = createQb(Article, "a");
+      expect(() =>
+        qb.leftJoin(Author, "au", (j) => j.onIn("au.id", [])),
+      ).not.toThrow();
+      const { text } = qb.getSql();
+      expect(text).toContain("1 = 0");
+    });
+  });
+
+  describe("JoinOnBuilder — chaining onNotNull with on()", () => {
+    it("should yield 'a = b AND c IS NOT NULL' in order", () => {
+      const { qb } = createQb(Article, "a");
+      qb.innerJoin(Author, "au", (j) =>
+        j.on("a.authorId", "=", "au.id").onNotNull("au.firstName"),
+      );
+      const { text } = qb.getSql();
+
+      expect(text).toMatch(
+        /`a`\.`authorId` = `au`\.`id` AND `au`\.`firstName` IS NOT NULL/,
+      );
+    });
+  });
+
   // ── Relation-based JOIN ──
 
   describe("leftJoinRelation — ManyToOne", () => {
