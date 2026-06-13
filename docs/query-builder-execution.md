@@ -85,6 +85,77 @@ page.data; // Pick<Post, "id" | "title">[] — plain objects, not entities
 > For cursor-based pagination, streaming, and the full pagination
 > strategy guide, see [Pagination & Streaming](./pagination.md).
 
+### `getCursor()` — cursor (keyset) pagination on the builder
+
+`getCursor()` is the query-builder counterpart to [`em.findWithCursor()`](./pagination.md#cursor-based-pagination). It applies keyset pagination to the query already assembled on the builder -- WHERE clauses, JOINs, soft-delete filtering, and tenant scoping all carry through -- and returns a `CursorPaginationResult`.
+
+```typescript
+interface CursorPaginationOption<T> {
+  take?:      number;               // Page size (default: 20)
+  cursor?:    string;               // Opaque cursor from the previous page (omit for first page)
+  orderBy?:   keyof T & string;     // Sort column — entity property name (default: entity PK)
+  direction?: "ASC" | "DESC";       // Sort direction (default: "ASC")
+}
+
+interface CursorPaginationResult<T> {
+  data:        T[];
+  hasNextPage: boolean;
+  nextCursor:  string | null;  // Base64-encoded; null when hasNextPage is false
+  count:       number;         // Items on the current page (not the total)
+}
+```
+
+**Basic example — first and subsequent pages:**
+
+```typescript
+// First page
+const first = await em
+  .createQueryBuilder(Post, "p")
+  .where("p.status", "published")
+  .getCursor({ take: 20, orderBy: "id", direction: "ASC" });
+
+first.data;        // Post[] — up to 20 rows
+first.hasNextPage; // true when a 21st row was found
+first.nextCursor;  // opaque Base64 string to pass on the next call
+first.count;       // items returned on this page (at most 20)
+
+// Next page — pass the cursor back, same builder otherwise
+if (first.hasNextPage) {
+  const second = await em
+    .createQueryBuilder(Post, "p")
+    .where("p.status", "published")
+    .getCursor({ take: 20, cursor: first.nextCursor! });
+}
+```
+
+**Loop until all pages are consumed:**
+
+```typescript
+let cursor: string | undefined;
+
+do {
+  const page = await em
+    .createQueryBuilder(Post, "p")
+    .where("p.status", "published")
+    .orderBy({ createdAt: "DESC" })
+    .getCursor({ take: 50, cursor, orderBy: "id" });
+
+  await process(page.data);
+  cursor = page.nextCursor ?? undefined;
+} while (page.hasNextPage);
+```
+
+**Key behaviors:**
+
+- **Side-effect-free** -- `getCursor()` operates on an internal clone of the builder. The original instance is not mutated and can be reused or paged again.
+- **Keyset predicate ANDed in** -- the cursor value is appended as `AND <col> > ?` (ASC) or `AND <col> < ?` (DESC) via the same `andWhere()` path as the rest of the builder's clauses. NULL rows not yet visited are included.
+- **Single sort column** -- `orderBy` must be one entity property name. Any `orderBy()` already on the builder acts as a secondary tiebreaker.
+- **NULL-safe** -- keyset conditions use `OR col IS NULL` for the first unvisited page when the sort column is nullable, matching `findWithCursor()` behavior.
+- **Invalid cursor throws** -- a non-null cursor string that cannot be decoded throws `InvalidQueryError`. Always use the `nextCursor` value returned by a previous `getCursor()` call unchanged.
+- **`orderBy` defaults to the entity PK** -- when omitted, `getCursor()` resolves the entity's primary key column automatically, matching `findWithCursor()`.
+
+> Prefer `getCursor()` over `paginate()` for large tables or real-time feeds where offset-based pagination slows down at depth. Use `paginate()` when the user needs random page access or a total count.
+
 ## Pessimistic Locking
 
 In high-concurrency scenarios, you sometimes need to lock rows while reading them to prevent other transactions from modifying them.

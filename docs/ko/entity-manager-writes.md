@@ -303,6 +303,85 @@ await em.updateMany(Product,
 
 ---
 
+## 원자적 증감 -- increment() / decrement()
+
+### 왜 필요할까요?
+
+`update()`와 `updateMany()` 모두 raw SQL 표현식으로 카운터를 증가시킬 수 있어요:
+
+```typescript
+import sql from "sql-template-tag";
+await em.update(Post, { id: 1 }, { viewCount: sql`view_count + 1` });
+```
+
+동작은 하지만 `sql-template-tag`를 임포트하고, 실제 DB 컬럼명을 알아야 하고, 올바른 SQL 표현식을 직접 써야 해요. `increment()`는 안전한 단축형이에요: 엔티티 속성명을 올바르게 이스케이프된 컬럼으로 변환하고, `by`를 파라미터로 바인딩하며(문자열 연결 없음), `update()`에 위임하므로 모든 안전장치를 그대로 가져와요.
+
+### 사용법
+
+```typescript
+// viewCount에 1 더하기 (by 기본값 1)
+await em.increment(Post, { id: 1 }, "viewCount");
+
+// balance에 50 더하기
+await em.increment(Wallet, { userId: 7 }, "balance", 50);
+
+// stock에서 1 빼기
+await em.decrement(Product, { id: 9 }, "stock");
+
+// balance에서 100 빼기
+await em.decrement(Wallet, { userId: 7 }, "balance", 100);
+```
+
+각 호출은 단일 `UPDATE` 문을 발행해요:
+
+```sql
+-- PostgreSQL (viewCount += 1)
+UPDATE "post"
+SET "viewCount" = "viewCount" + $1, "updatedAt" = $2, "version" = "version" + 1
+WHERE "id" = $3
+-- Parameters: [1, '2026-06-13 10:00:00', 1]
+
+-- MySQL (stock -= 1)
+UPDATE `product`
+SET `stock` = `stock` - ?, `updatedAt` = ?
+WHERE `id` = ?
+-- Parameters: [1, '2026-06-13 10:00:00', 9]
+```
+
+### 시그니처
+
+```typescript
+// EntityManager
+em.increment<T>(entity: Class<T>, where: WhereClause<T>, column: keyof T & string, by?: number): Promise<{ affected: number }>
+em.decrement<T>(entity: Class<T>, where: WhereClause<T>, column: keyof T & string, by?: number): Promise<{ affected: number }>
+
+// BaseRepository (엔티티가 이미 바인딩됨 -- 첫 인자 없음)
+repo.increment(where: WhereClause<T>, column: keyof T & string, by?: number): Promise<{ affected: number }>
+repo.decrement(where: WhereClause<T>, column: keyof T & string, by?: number): Promise<{ affected: number }>
+```
+
+### 동작 방식
+
+- **원자적** -- 델타가 데이터베이스에서 `SET col = col + ?` 형태로 적용돼요. 두 개의 동시 호출도 올바른 합산 결과를 냅니다. 읽기-수정-쓰기 레이스 컨디션이 없어요.
+- **`update()`에 위임** -- 빈 `WHERE` 가드(`where`가 비어 있으면 `DeleteWithoutConditionsError` 발생), 테넌트 스코핑, NamingStrategy 컬럼 매핑, `@UpdateTimestamp` 자동 주입을 모두 상속해요. 엔티티에 `@Version` 낙관적 잠금 컬럼이 있으면 같은 문에서 함께 증가시켜요.
+- **`by` 기본값은 `1`** -- `0`, `NaN`, `Infinity` 또는 유한하지 않은 숫자를 전달하면 `InvalidQueryError`를 던져요.
+- **`{ affected }` 반환** -- 데이터베이스 드라이버가 보고한 수정 행 수예요.
+
+### 리포지토리 단축형
+
+```typescript
+const postRepo = em.getRepository(Post);
+
+// em.increment(Post, { id: 1 }, "viewCount")와 동일
+await postRepo.increment({ id: 1 }, "viewCount");
+
+const productRepo = em.getRepository(Product);
+// em.decrement(Product, { id: 9 }, "stock")와 동일
+await productRepo.decrement({ id: 9 }, "stock");
+```
+
+---
+
 ## Upsert -- 삽입 또는 수정
 
 ### 왜 upsert가 필요할까요?

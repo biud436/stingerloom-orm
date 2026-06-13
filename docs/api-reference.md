@@ -45,6 +45,8 @@ const em = new EntityManager();
 | `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<{ affected: number }>` | Multi-row upsert; same MySQL caveat applies |
 | `update` | `<T>(entity, where, data): Promise<{ affected: number }>` | Filter-first UPDATE (sugar over `updateMany`, mirrors `delete`) |
 | `updateMany` | `<T>(entity, data: UpdateData<T>, options): Promise<{ affected: number }>` | Bulk UPDATE (supports SQL expressions) |
+| `increment` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | Atomically add `by` (default `1`) to a numeric column via `SET col = col + ?`; inherits `update()` safeguards |
+| `decrement` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | Atomically subtract `by` (default `1`) from a numeric column; counterpart of `increment` |
 
 ### Batch
 
@@ -147,7 +149,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany` — uses the same API as EntityManager without specifying the entity.
+`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` — uses the same API as EntityManager without specifying the entity.
 
 **Repository-only helpers:**
 
@@ -408,6 +410,8 @@ class SelectQueryBuilder<T, TResult = T> {
   getManyAndCount(): Promise<[TResult[], number]>;
   paginate(opts?: { page?: number; pageSize?: number }):
     Promise<PagePaginationResult<TResult>>;
+  getCursor(option?: CursorPaginationOption<T>):
+    Promise<CursorPaginationResult<TResult>>;  // Keyset pagination; side-effect-free clone
   exists(): Promise<boolean>;
   getExists(): Promise<boolean>;              // Alias of exists()
   getSum(column: ColumnOf<T>): Promise<number>;   // SUM — 0 on empty/NULL

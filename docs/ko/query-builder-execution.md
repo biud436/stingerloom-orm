@@ -78,6 +78,77 @@ page.data; // Pick<Post, "id" | "title">[] — 엔티티가 아닌 plain object
 
 > 커서 기반 페이지네이션, 스트리밍, 전략 선택 가이드는 [페이지네이션 & 스트리밍](./pagination.md)에 있습니다.
 
+### `getCursor()` — 빌더에서 커서(키셋) 페이지네이션
+
+`getCursor()`는 [`em.findWithCursor()`](./pagination.md#cursor-기반-페이지네이션)의 쿼리 빌더 버전이에요. 빌더에 이미 조립된 쿼리(WHERE 절, JOIN, soft-delete 필터링, 테넌트 스코핑)에 키셋 페이지네이션을 적용하고, `CursorPaginationResult`를 반환해요.
+
+```typescript
+interface CursorPaginationOption<T> {
+  take?:      number;               // 페이지 크기 (기본값: 20)
+  cursor?:    string;               // 이전 페이지의 cursor (첫 페이지는 생략)
+  orderBy?:   keyof T & string;     // 정렬 컬럼 — 엔티티 속성명 (기본값: 엔티티 PK)
+  direction?: "ASC" | "DESC";       // 정렬 방향 (기본값: "ASC")
+}
+
+interface CursorPaginationResult<T> {
+  data:        T[];
+  hasNextPage: boolean;
+  nextCursor:  string | null;  // Base64 인코딩됨; hasNextPage가 false면 null
+  count:       number;         // 현재 페이지 항목 수 (전체 수가 아님)
+}
+```
+
+**기본 예제 -- 첫 페이지와 다음 페이지:**
+
+```typescript
+// 첫 페이지
+const first = await em
+  .createQueryBuilder(Post, "p")
+  .where("p.status", "published")
+  .getCursor({ take: 20, orderBy: "id", direction: "ASC" });
+
+first.data;        // Post[] — 최대 20개 행
+first.hasNextPage; // 21번째 행이 존재하면 true
+first.nextCursor;  // 다음 호출에 그대로 전달할 불투명한 Base64 문자열
+first.count;       // 현재 페이지 반환 항목 수 (최대 20)
+
+// 다음 페이지 -- cursor만 넘기고 나머지 빌더는 동일하게 유지
+if (first.hasNextPage) {
+  const second = await em
+    .createQueryBuilder(Post, "p")
+    .where("p.status", "published")
+    .getCursor({ take: 20, cursor: first.nextCursor! });
+}
+```
+
+**전체 페이지를 순환하는 루프:**
+
+```typescript
+let cursor: string | undefined;
+
+do {
+  const page = await em
+    .createQueryBuilder(Post, "p")
+    .where("p.status", "published")
+    .orderBy({ createdAt: "DESC" })
+    .getCursor({ take: 50, cursor, orderBy: "id" });
+
+  await process(page.data);
+  cursor = page.nextCursor ?? undefined;
+} while (page.hasNextPage);
+```
+
+**주요 동작:**
+
+- **부수효과 없음** -- `getCursor()`는 빌더의 내부 복제본에서 동작해요. 원본 인스턴스는 변경되지 않으며 재사용하거나 다시 페이징할 수 있어요.
+- **키셋 조건 AND 결합** -- cursor 값은 빌더 나머지 절과 동일한 `andWhere()` 경로를 통해 `AND <col> > ?`(ASC) 또는 `AND <col> < ?`(DESC)로 추가돼요. 아직 방문하지 않은 NULL 행도 포함돼요.
+- **정렬 컬럼 하나** -- `orderBy`는 엔티티 속성명 하나여야 해요. 빌더에 이미 있는 `orderBy()`는 보조 정렬 기준이 됩니다.
+- **NULL 안전** -- 정렬 컬럼이 nullable일 때 첫 미방문 페이지의 키셋 조건에 `OR col IS NULL`을 포함해요. `findWithCursor()`와 동일한 동작이에요.
+- **잘못된 cursor는 예외** -- null이 아닌 cursor 문자열인데 디코딩에 실패하면 `InvalidQueryError`를 던져요. 항상 이전 `getCursor()` 호출이 반환한 `nextCursor` 값을 그대로 사용하세요.
+- **`orderBy` 기본값은 엔티티 PK** -- 생략하면 `getCursor()`가 엔티티의 PK 컬럼을 자동으로 찾아요. `findWithCursor()`와 같은 방식이에요.
+
+> 대용량 테이블이나 오프셋 기반 페이지네이션이 깊어질수록 느려지는 실시간 피드에는 `getCursor()`를 쓰세요. 사용자가 임의 페이지로 이동하거나 전체 수가 필요하면 `paginate()`를 쓰면 됩니다.
+
 ## 비관적 잠금
 
 동시성이 높은 상황에서는 읽은 뒤 다른 트랜잭션이 수정하지 못하도록 행을 잠가야 할 때가 있어요.

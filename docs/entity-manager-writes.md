@@ -303,6 +303,85 @@ The parameter order is `(Entity, setData, { where })` -- not `(Entity, where, se
 
 ---
 
+## Atomic Increment and Decrement -- increment() / decrement()
+
+### Why these exist
+
+Both `update()` and `updateMany()` can increment a counter via a raw SQL expression:
+
+```typescript
+import sql from "sql-template-tag";
+await em.update(Post, { id: 1 }, { viewCount: sql`view_count + 1` });
+```
+
+That works, but it requires importing `sql-template-tag`, knowing the actual DB column name, and writing the correct SQL fragment. `increment()` is the safe shorthand: it resolves the entity property to the correctly escaped column, binds `by` as a parameter (no string concatenation), and delegates to `update()` so every safeguard comes along for free.
+
+### Usage
+
+```typescript
+// Add 1 to viewCount for the matching row (by defaults to 1)
+await em.increment(Post, { id: 1 }, "viewCount");
+
+// Add 50 to balance
+await em.increment(Wallet, { userId: 7 }, "balance", 50);
+
+// Subtract 1 from stock
+await em.decrement(Product, { id: 9 }, "stock");
+
+// Subtract 100 from balance
+await em.decrement(Wallet, { userId: 7 }, "balance", 100);
+```
+
+Each call emits a single `UPDATE` statement:
+
+```sql
+-- PostgreSQL (viewCount += 1)
+UPDATE "post"
+SET "viewCount" = "viewCount" + $1, "updatedAt" = $2, "version" = "version" + 1
+WHERE "id" = $3
+-- Parameters: [1, '2026-06-13 10:00:00', 1]
+
+-- MySQL (stock -= 1)
+UPDATE `product`
+SET `stock` = `stock` - ?, `updatedAt` = ?
+WHERE `id` = ?
+-- Parameters: [1, '2026-06-13 10:00:00', 9]
+```
+
+### Signatures
+
+```typescript
+// EntityManager
+em.increment<T>(entity: Class<T>, where: WhereClause<T>, column: keyof T & string, by?: number): Promise<{ affected: number }>
+em.decrement<T>(entity: Class<T>, where: WhereClause<T>, column: keyof T & string, by?: number): Promise<{ affected: number }>
+
+// BaseRepository (entity already bound -- no first argument)
+repo.increment(where: WhereClause<T>, column: keyof T & string, by?: number): Promise<{ affected: number }>
+repo.decrement(where: WhereClause<T>, column: keyof T & string, by?: number): Promise<{ affected: number }>
+```
+
+### Behavior
+
+- **Atomic** -- the delta is applied as `SET col = col + ?` in the database. Two concurrent callers produce the correct combined result; there is no read-modify-write race.
+- **Delegates to `update()`** -- inherits the empty-`WHERE` guard (throws `DeleteWithoutConditionsError` when `where` is empty or matches zero columns), tenant scoping, NamingStrategy column mapping, and `@UpdateTimestamp` auto-injection. The `@Version` optimistic-lock column is also bumped in the same statement when present.
+- **`by` defaults to `1`** -- passing `0`, `NaN`, `Infinity`, or a non-finite number throws `InvalidQueryError`.
+- **Returns `{ affected }`** -- the row count reported by the database driver.
+
+### Repository shorthand
+
+```typescript
+const postRepo = em.getRepository(Post);
+
+// Equivalent to em.increment(Post, { id: 1 }, "viewCount")
+await postRepo.increment({ id: 1 }, "viewCount");
+
+const productRepo = em.getRepository(Product);
+// Equivalent to em.decrement(Product, { id: 9 }, "stock")
+await productRepo.decrement({ id: 9 }, "stock");
+```
+
+---
+
 ## Upsert -- Insert or Update
 
 ### Why upsert?

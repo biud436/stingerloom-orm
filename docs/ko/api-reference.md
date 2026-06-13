@@ -45,6 +45,8 @@ const em = new EntityManager();
 | `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<{ affected: number }>` | 다건 upsert; MySQL caveat 동일 적용 |
 | `update` | `<T>(entity, where, data): Promise<{ affected: number }>` | 필터 우선 UPDATE (`updateMany`의 단축형, `delete`와 동일한 인자 순서) |
 | `updateMany` | `<T>(entity, data: UpdateData<T>, options): Promise<{ affected: number }>` | 조건별 일괄 UPDATE (SQL 표현식 지원) |
+| `increment` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | `SET col = col + ?`로 숫자 컬럼에 `by`(기본값 `1`)를 원자적으로 더함; `update()` 안전장치 상속 |
+| `decrement` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | 숫자 컬럼에서 `by`(기본값 `1`)를 원자적으로 뺌; `increment`의 역연산 |
 
 ### Batch
 
@@ -147,7 +149,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
+`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
 
 **Repository 전용 헬퍼:**
 
@@ -408,6 +410,8 @@ class SelectQueryBuilder<T, TResult = T> {
   getManyAndCount(): Promise<[TResult[], number]>;
   paginate(opts?: { page?: number; pageSize?: number }):
     Promise<PagePaginationResult<TResult>>;
+  getCursor(option?: CursorPaginationOption<T>):
+    Promise<CursorPaginationResult<TResult>>;  // 키셋 페이지네이션; 복제본에서 동작 (부수효과 없음)
   exists(): Promise<boolean>;
   getExists(): Promise<boolean>;              // exists() 별칭
   getSum(column: ColumnOf<T>): Promise<number>;   // SUM — 빈 결과 시 0
