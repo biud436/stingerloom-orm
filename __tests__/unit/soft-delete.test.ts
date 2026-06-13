@@ -418,6 +418,34 @@ describe("EntityManager soft delete", () => {
       expect(sqlText).toMatch(/"deletedAt"\s+IS\s+NULL/);
       expect(sqlText).not.toMatch(/IS\s+NOT\s+NULL/);
     });
+
+    it("findAndCount()의 count도 onlyDeleted를 반영해 trash만 세야 함", async () => {
+      // Both the data SELECT and the COUNT(*) SELECT read this mock; `result`
+      // feeds the aggregate count, the rest feeds the data deserialization.
+      mockQuery.mockResolvedValue({
+        results: [
+          { id: 2, title: "Trashed", deletedAt: "2026-01-01", result: 1 },
+        ],
+        fields: [],
+      });
+
+      await em.findAndCount(Article, { onlyDeleted: true });
+
+      // The COUNT(*) query must restrict to trashed rows so the count stays
+      // consistent with the onlyDeleted data set instead of counting live rows.
+      const countCall = mockQuery.mock.calls.find((call: any[]) => {
+        const sqlObj = call[0];
+        const sqlText =
+          typeof sqlObj === "string"
+            ? sqlObj
+            : sqlObj?.sql || sqlObj?.text || "";
+        return /COUNT/i.test(sqlText);
+      });
+      expect(countCall).toBeDefined();
+      const countSql = countCall![0]?.sql || countCall![0]?.text || "";
+      expect(countSql).toMatch(/"deletedAt"\s+IS\s+NOT\s+NULL/);
+      expect(countSql).not.toMatch(/"deletedAt"\s+IS\s+NULL/);
+    });
   });
 
   describe("BaseRepository softDelete/restore delegation", () => {

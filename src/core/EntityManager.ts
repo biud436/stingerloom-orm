@@ -2129,7 +2129,7 @@ export class EntityManager implements BaseEntityManager {
     const readNode = this.getReadNode(findOption.useMaster);
     return this.executeReadOnly(async (session) => {
       const entities = await this.findInternal<T>(entity, findOption, session);
-      const totalCount = await this.aggregateHandler.aggregate<T>(entity, "COUNT", "*", findOption.where, session, findOption.withDeleted);
+      const totalCount = await this.aggregateHandler.aggregate<T>(entity, "COUNT", "*", findOption.where, session, findOption.withDeleted, findOption.onlyDeleted);
 
       return [entities as unknown as T[], totalCount];
     }, { readNodeOverride: readNode, timeout: findOption.timeout });

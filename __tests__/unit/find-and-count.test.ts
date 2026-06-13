@@ -61,6 +61,7 @@ describe("findAndCount()", () => {
       where,
       {},
       undefined,
+      undefined,
     );
   });
 
@@ -89,6 +90,7 @@ describe("findAndCount()", () => {
       findOption.where,
       {},
       undefined,
+      undefined,
     );
   });
 
@@ -114,6 +116,7 @@ describe("findAndCount()", () => {
       "*",
       undefined,
       {},
+      undefined,
       undefined,
     );
   });
@@ -145,6 +148,7 @@ describe("findAndCount()", () => {
       undefined,
       mockSession,
       undefined,
+      undefined,
     );
   });
 
@@ -172,6 +176,7 @@ describe("findAndCount()", () => {
       findOption.where,
       {},
       true,
+      undefined,
     );
   });
 

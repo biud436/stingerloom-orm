@@ -28,6 +28,7 @@ export class AggregateQueryHandler {
     where?: WhereClause<T> | WhereClause<T>[],
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
@@ -60,11 +61,18 @@ export class AggregateQueryHandler {
       // If an @DeletedAt column exists, exclude soft-deleted rows by default,
       // mirroring findInternal so count()/exists()/sum()/avg()/min()/max() —
       // and therefore findAndCount() — never count trashed rows. Callers opt
-      // back in via `withDeleted: true`. The aggregate query is never joined,
-      // so the unqualified column form is correct.
+      // back in via `withDeleted: true`, or restrict to the trash via
+      // `onlyDeleted: true` (which appends IS NOT NULL and takes precedence over
+      // withDeleted, keeping the count consistent with findInternal's data set).
+      // The aggregate query is never joined, so the unqualified column form is
+      // correct.
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
-      if (deletedAtColumn && !withDeleted) {
-        whereMap.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
+      if (deletedAtColumn) {
+        if (onlyDeleted) {
+          whereMap.push(Conditions.isNotNull(this.ctx.wrap(deletedAtColumn)));
+        } else if (!withDeleted) {
+          whereMap.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
+        }
       }
 
       // Tenant scoping under the "tenant_column" strategy. Kept consistent
