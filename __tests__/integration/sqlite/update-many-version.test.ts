@@ -91,6 +91,30 @@ describe("[Integration] SQLite: updateMany() @Version increment", () => {
     ).rejects.toBeInstanceOf(OptimisticLockError);
   });
 
+  it("save() update carrying the CURRENT version succeeds (no false optimistic-lock)", async () => {
+    // Regression for the SqliteConnector rowCount fix: the @Version save path
+    // throws OptimisticLockError when the UPDATE matches 0 rows (affected === 0).
+    // Before SQLite exposed rowCount, affected was ALWAYS 0, so even a correct
+    // version threw. Insert (version 1), then save() an update carrying the
+    // current version 1 — it must SUCCEED and bump the version to 2.
+    const doc: any = await conn.em.save(Doc, { title: "fresh" });
+    expect(doc.version).toBe(1);
+
+    const updated: any = await conn.em.save(Doc, {
+      id: doc.id,
+      title: "fresh-2",
+      version: 1,
+    } as any);
+    expect(updated).toBeDefined();
+
+    const connector = DatabaseClient.getInstance().getConnection();
+    const rows = await connector.query(
+      `SELECT "version", "title" FROM "${tableName}" WHERE "id" = ${doc.id}`,
+    );
+    expect(rows[0].version).toBe(2);
+    expect(rows[0].title).toBe("fresh-2");
+  });
+
   it("updateMany() bumps the version for every matched row", async () => {
     const a: any = await conn.em.save(Doc, { title: "batch" });
     const b: any = await conn.em.save(Doc, { title: "batch" });
