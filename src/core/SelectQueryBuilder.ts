@@ -5154,6 +5154,48 @@ export class SelectQueryBuilder<T, TResult = T> {
         ? "sqlite"
         : "postgresql";
 
+    // Distinct-root aggregate: when a to-many `*AndSelect` join multiplies
+    // root rows and the query carries no GROUP BY / HAVING, a plain
+    // `<FN>(col)` over the joined row set counts each root's value once per
+    // joined child, inflating SUM/AVG (and breaking MIN/MAX dedup). Mirror
+    // getCount()'s distinct-root wrapper: aggregate the ROOT column over a
+    // `SELECT DISTINCT <root pk>, <col> AS agg_val` subquery so each root
+    // contributes its value exactly once.
+    if (
+      this.groupByCols.length === 0 &&
+      this.havingClauses.length === 0 &&
+      this.hasToManyJoinedSelection()
+    ) {
+      const rootPkCols = this.resolveRootPkColumns();
+      if (rootPkCols.length > 0) {
+        const refs = rootPkCols.map(
+          (c) => `${this.em.wrap(this.alias)}.${this.em.wrap(c.name)}`,
+        );
+        const inner = RawQueryBuilderFactory.create() as RawQueryBuilder;
+        inner.setDatabaseType(dbType);
+        inner.selectDistinct([
+          ...refs,
+          `${this.resolveColumn(column)} AS ${this.em.wrap("agg_val")}`,
+        ]);
+        this.applyCountSource(inner);
+
+        const outer = RawQueryBuilderFactory.create() as RawQueryBuilder;
+        outer.setDatabaseType(dbType);
+        outer.select([
+          `${fn}(${this.em.wrap("agg_val")}) AS ${this.em.wrap("result")}`,
+        ]);
+        outer.from(sql`(${inner.build()})`, `AS ${this.em.wrap("agg_src")}`);
+
+        const built = outer.build();
+        const rows = await this.em.query<{ result: string | number | null }>(
+          built,
+        );
+        if (rows.length === 0) return 0;
+        const value = rows[0].result;
+        return value === null || value === undefined ? 0 : Number(value);
+      }
+    }
+
     const qb = RawQueryBuilderFactory.create() as RawQueryBuilder;
     qb.setDatabaseType(dbType);
     // resolveColumn() maps property -> DB column and escapes the identifier

@@ -38,9 +38,15 @@ import {
   PrimaryGeneratedColumn,
   Version,
   DeletedAt,
+  OneToMany,
+  ManyToOne,
 } from "../../../src";
 import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
-import { ColumnScanner } from "../../../src/scanner";
+import {
+  ColumnScanner,
+  ManyToOneScanner,
+  OneToManyScanner,
+} from "../../../src/scanner";
 
 describe("[Integration] SQLite In-Memory: usability methods", () => {
   let conn: TestConnectionResult;
@@ -65,6 +71,11 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
   };
   let Book: new () => { id: number; title: string; authorId: number };
   let BatchReturn: new () => { id: number; label: string; seq: number };
+  // Parent/child pair for the to-many aggregate test: a one-to-many join
+  // multiplies the parent row, so a naive aggregate over the joined row set is
+  // inflated. The distinct-root subquery must de-inflate it.
+  let AggParent: new () => { id: number; amount: number };
+  let AggChild: new () => { id: number; parentId: number };
 
   beforeAll(async () => {
     conn = await createTestConnection(
@@ -76,6 +87,8 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
       },
       () => {
         getScannerInstance(ColumnScanner).clear();
+        getScannerInstance(ManyToOneScanner).clear();
+        getScannerInstance(OneToManyScanner).clear();
 
         @Entity({ name: "um_agg_order" })
         class AggOrderEntity {
@@ -137,6 +150,33 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
           @Column({ type: "int" }) seq!: number;
         }
 
+        // One-to-many pair: AggParent --< AggChild (FK parentId). A
+        // leftJoinRelationAndSelect("children") multiplies the parent row by
+        // its child count, so a naive SUM(amount) over the joined rows would be
+        // inflated.
+        @Entity({ name: "um_agg_parent" })
+        class AggParentEntity {
+          @PrimaryGeneratedColumn() id!: number;
+          @Column({ type: "int" }) amount!: number;
+          @OneToMany(() => AggChildEntity, { mappedBy: "parent" })
+          children!: AggChildEntity[];
+        }
+
+        @Entity({ name: "um_agg_child" })
+        class AggChildEntity {
+          @PrimaryGeneratedColumn() id!: number;
+          @Column({ type: "int" }) parentId!: number;
+          @ManyToOne(
+            () => AggParentEntity,
+            (e: any) => e.parent,
+            // SQLite cannot ALTER TABLE ADD FOREIGN KEY (synchronize: true), and
+            // the DB-level FK is irrelevant to the join — the relation metadata
+            // alone resolves leftJoinRelationAndSelect.
+            { joinColumn: "parentId", createForeignKeyConstraints: false },
+          )
+          parent!: AggParentEntity | null;
+        }
+
         AggOrder = AggOrderEntity;
         CursorRow = CursorRowEntity;
         UpsertTarget = UpsertTargetEntity;
@@ -145,6 +185,8 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
         Author = AuthorEntity;
         Book = BookEntity;
         BatchReturn = BatchReturnEntity;
+        AggParent = AggParentEntity;
+        AggChild = AggChildEntity;
 
         return {
           entities: [
@@ -156,6 +198,8 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
             AuthorEntity,
             BookEntity,
             BatchReturnEntity,
+            AggParentEntity,
+            AggChildEntity,
           ],
         };
       },
@@ -205,6 +249,14 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
     await em.save(Book, { title: "b2", authorId: a2.id }); // editor / unverified
     await em.save(Book, { title: "b3", authorId: a3.id }); // viewer / verified
     await em.save(Book, { title: "b4", authorId: a1.id }); // admin / verified
+
+    // ── AggParent / AggChild seed: one parent (amount=100) with 3 children ──
+    // A leftJoinRelationAndSelect("children") multiplies this single parent row
+    // into 3 joined rows.
+    const parent: any = await em.save(AggParent, { amount: 100 });
+    for (let i = 1; i <= 3; i++) {
+      await em.save(AggChild, { parentId: parent.id });
+    }
   });
 
   afterAll(async () => {
@@ -267,6 +319,54 @@ describe("[Integration] SQLite In-Memory: usability methods", () => {
       expect(plan).toBeDefined();
       expect(Array.isArray(plan.raw)).toBe(true);
       expect(plan.raw.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Scalar aggregate terminals over a to-many *AndSelect join
+  // ───────────────────────────────────────────────────────────────────────
+  describe("aggregate terminals over a to-many join", () => {
+    // The parent (amount=100) has 3 children, so leftJoinRelationAndSelect
+    // multiplies it into 3 joined rows. A naive SUM(amount) over those rows
+    // would return 300; the distinct-root subquery must return 100.
+    it("getSum() counts each root's value once (100, not 300)", async () => {
+      const sum = await conn.em
+        .createQueryBuilder(AggParent, "p")
+        .leftJoinRelationAndSelect("children", "c")
+        .getSum("amount");
+
+      expect(sum).toBe(100); // NOT 300 (3× inflation by the to-many join)
+    });
+
+    it("getCount() over the same join agrees on 1 distinct root", async () => {
+      const count = await conn.em
+        .createQueryBuilder(AggParent, "p")
+        .leftJoinRelationAndSelect("children", "c")
+        .getCount();
+
+      expect(count).toBe(1); // 1 parent, not 3 joined rows
+    });
+
+    it("getAvg()/getMax() are also de-inflated by the distinct-root subquery", async () => {
+      const avg = await conn.em
+        .createQueryBuilder(AggParent, "p")
+        .leftJoinRelationAndSelect("children", "c")
+        .getAvg("amount");
+      const max = await conn.em
+        .createQueryBuilder(AggParent, "p")
+        .leftJoinRelationAndSelect("children", "c")
+        .getMax("amount");
+
+      expect(avg).toBe(100); // 100/1 distinct root, not 300/3
+      expect(max).toBe(100);
+    });
+
+    it("without a to-many join the plain aggregate is unchanged", async () => {
+      const sum = await conn.em
+        .createQueryBuilder(AggParent, "p")
+        .getSum("amount");
+
+      expect(sum).toBe(100);
     });
   });
 

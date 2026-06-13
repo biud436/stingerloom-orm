@@ -24,6 +24,8 @@ import {
   PrimaryGeneratedColumn,
   Column,
   DeletedAt,
+  OneToMany,
+  ManyToOne,
 } from "../../src/decorators";
 import { EntityManager } from "../../src/core/EntityManager";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
@@ -50,6 +52,33 @@ class AggSoft {
 
   @DeletedAt()
   deletedAt!: Date | null;
+}
+
+@Entity()
+class AggParent {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "int" })
+  amount!: number;
+
+  @OneToMany(() => AggChild, { mappedBy: "parent" })
+  children!: AggChild[];
+}
+
+@Entity()
+class AggChild {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "int", nullable: true })
+  parentId!: number | null;
+
+  @ManyToOne(
+    () => AggParent,
+    (e: any) => e.parent,
+  )
+  parent!: AggParent | null;
 }
 
 interface MockOptions {
@@ -205,6 +234,66 @@ describe("SelectQueryBuilder scalar aggregate terminals", () => {
     await qb.getSum("amount");
 
     expect((qb as any).whereClauses.length).toBe(before);
+  });
+});
+
+describe("SelectQueryBuilder scalar aggregates under a to-many *AndSelect join", () => {
+  it("uses the plain direct form when no to-many joined selection is present (regression)", async () => {
+    const em = createMockEm({ rows: [{ result: 100 }] });
+    const qb = new SelectQueryBuilder<AggParent>(AggParent, "p", em);
+
+    const total = await qb.getSum("amount");
+
+    expect(total).toBe(100);
+    const sqlText = em.__calls[0];
+    // Direct path: plain SUM over the root, no distinct-root subquery wrapper.
+    expect(sqlText).toContain("SUM(`p`.`amount`)");
+    expect(sqlText).toContain("AS `result`");
+    expect(sqlText).not.toContain("SELECT DISTINCT");
+    expect(sqlText).not.toMatch(/FROM \(SELECT DISTINCT/);
+  });
+
+  it("wraps a SELECT DISTINCT root subquery so getSum is not inflated by joined children", async () => {
+    // The to-many join multiplies root rows; the mock returns the de-inflated
+    // result (100) the distinct-root subquery is meant to produce.
+    const em = createMockEm({ rows: [{ result: 100 }] });
+    const qb = new SelectQueryBuilder<AggParent>(AggParent, "p", em);
+    qb.leftJoinRelationAndSelect("children", "c");
+
+    const total = await qb.getSum("amount");
+
+    expect(total).toBe(100);
+    const sqlText = em.__calls[0];
+    // Outer aggregate wraps the distinct-root subquery.
+    expect(sqlText).toContain("SUM(`agg_val`)");
+    expect(sqlText).toContain("AS `result`");
+    expect(sqlText).toMatch(/FROM \(SELECT DISTINCT/);
+    // Inner subquery selects DISTINCT root pk plus the aggregated column.
+    expect(sqlText).toContain("SELECT DISTINCT `p`.`id`");
+    expect(sqlText).toContain("`p`.`amount` AS `agg_val`");
+    // The join is preserved inside the subquery.
+    expect(sqlText).toContain("LEFT JOIN");
+    // Outer source alias.
+    expect(sqlText).toContain("AS `agg_src`");
+  });
+
+  it("applies the distinct-root wrapper to getMin/getMax/getAvg as well", async () => {
+    for (const [method, fn] of [
+      ["getMin", "MIN"],
+      ["getMax", "MAX"],
+      ["getAvg", "AVG"],
+    ] as const) {
+      const em = createMockEm({ rows: [{ result: 5 }] });
+      const qb = new SelectQueryBuilder<AggParent>(AggParent, "p", em);
+      qb.leftJoinRelationAndSelect("children", "c");
+
+      const value = await (qb as any)[method]("amount");
+
+      expect(value).toBe(5);
+      const sqlText = em.__calls[0];
+      expect(sqlText).toContain(`${fn}(\`agg_val\`)`);
+      expect(sqlText).toMatch(/FROM \(SELECT DISTINCT/);
+    }
   });
 });
 
