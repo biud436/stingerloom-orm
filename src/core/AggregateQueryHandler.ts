@@ -104,47 +104,117 @@ export class AggregateQueryHandler {
     });
   }
 
+  /**
+   * When `onlyDeleted` is true, counts ONLY soft-deleted rows (@DeletedAt
+   * IS NOT NULL). It takes precedence over `withDeleted` and is a silent no-op
+   * for entities without an @DeletedAt column.
+   */
   async count<T>(
     entity: ClazzType<T>,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregate(entity, "COUNT", "*", where, undefined, withDeleted);
+    return this.aggregate(
+      entity,
+      "COUNT",
+      "*",
+      where,
+      undefined,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
+  /**
+   * When `onlyDeleted` is true, sums over ONLY soft-deleted rows (@DeletedAt
+   * IS NOT NULL). It takes precedence over `withDeleted` and is a silent no-op
+   * for entities without an @DeletedAt column.
+   */
   async sum<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregate(entity, "SUM", field, where, undefined, withDeleted);
+    return this.aggregate(
+      entity,
+      "SUM",
+      field,
+      where,
+      undefined,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
+  /**
+   * When `onlyDeleted` is true, averages over ONLY soft-deleted rows (@DeletedAt
+   * IS NOT NULL). It takes precedence over `withDeleted` and is a silent no-op
+   * for entities without an @DeletedAt column.
+   */
   async avg<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregate(entity, "AVG", field, where, undefined, withDeleted);
+    return this.aggregate(
+      entity,
+      "AVG",
+      field,
+      where,
+      undefined,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
+  /**
+   * When `onlyDeleted` is true, takes the minimum over ONLY soft-deleted rows
+   * (@DeletedAt IS NOT NULL). It takes precedence over `withDeleted` and is a
+   * silent no-op for entities without an @DeletedAt column.
+   */
   async min<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregate(entity, "MIN", field, where, undefined, withDeleted);
+    return this.aggregate(
+      entity,
+      "MIN",
+      field,
+      where,
+      undefined,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
+  /**
+   * When `onlyDeleted` is true, takes the maximum over ONLY soft-deleted rows
+   * (@DeletedAt IS NOT NULL). It takes precedence over `withDeleted` and is a
+   * silent no-op for entities without an @DeletedAt column.
+   */
   async max<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregate(entity, "MAX", field, where, undefined, withDeleted);
+    return this.aggregate(
+      entity,
+      "MAX",
+      field,
+      where,
+      undefined,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 }

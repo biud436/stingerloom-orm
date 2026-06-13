@@ -5122,13 +5122,23 @@ export class EntityManager implements BaseEntityManager {
 
   /**
    * Returns true if at least one entity matches the given where clause.
+   *
+   * When `onlyDeleted` is true, checks existence among ONLY soft-deleted rows
+   * (@DeletedAt IS NOT NULL). It takes precedence over `withDeleted` and is a
+   * silent no-op for entities without an @DeletedAt column.
    */
   async exists<T>(
     entity: ClazzType<T>,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<boolean> {
-    const c = await this.aggregateHandler.count(entity, where, withDeleted);
+    const c = await this.aggregateHandler.count(
+      entity,
+      where,
+      withDeleted,
+      onlyDeleted,
+    );
     return c > 0;
   }
 
@@ -5277,48 +5287,116 @@ export class EntityManager implements BaseEntityManager {
     return result;
   }
 
+  /**
+   * Returns the count of entities matching the given conditions.
+   *
+   * When `onlyDeleted` is true, counts ONLY soft-deleted rows (@DeletedAt
+   * IS NOT NULL). It takes precedence over `withDeleted` and is a silent no-op
+   * for entities without an @DeletedAt column.
+   */
   async count<T>(
     entity: ClazzType<T>,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.count(entity, where, withDeleted);
+    return this.aggregateHandler.count(entity, where, withDeleted, onlyDeleted);
   }
 
+  /**
+   * Returns the sum of a numeric field for entities matching the given
+   * conditions.
+   *
+   * When `onlyDeleted` is true, sums over ONLY soft-deleted rows (@DeletedAt
+   * IS NOT NULL). It takes precedence over `withDeleted` and is a silent no-op
+   * for entities without an @DeletedAt column.
+   */
   async sum<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.sum(entity, field, where, withDeleted);
+    return this.aggregateHandler.sum(
+      entity,
+      field,
+      where,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
+  /**
+   * Returns the average of a numeric field for entities matching the given
+   * conditions.
+   *
+   * When `onlyDeleted` is true, averages over ONLY soft-deleted rows (@DeletedAt
+   * IS NOT NULL). It takes precedence over `withDeleted` and is a silent no-op
+   * for entities without an @DeletedAt column.
+   */
   async avg<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.avg(entity, field, where, withDeleted);
+    return this.aggregateHandler.avg(
+      entity,
+      field,
+      where,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
+  /**
+   * Returns the minimum value of a field for entities matching the given
+   * conditions.
+   *
+   * When `onlyDeleted` is true, takes the minimum over ONLY soft-deleted rows
+   * (@DeletedAt IS NOT NULL). It takes precedence over `withDeleted` and is a
+   * silent no-op for entities without an @DeletedAt column.
+   */
   async min<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.min(entity, field, where, withDeleted);
+    return this.aggregateHandler.min(
+      entity,
+      field,
+      where,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
+  /**
+   * Returns the maximum value of a field for entities matching the given
+   * conditions.
+   *
+   * When `onlyDeleted` is true, takes the maximum over ONLY soft-deleted rows
+   * (@DeletedAt IS NOT NULL). It takes precedence over `withDeleted` and is a
+   * silent no-op for entities without an @DeletedAt column.
+   */
   async max<T>(
     entity: ClazzType<T>,
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return this.aggregateHandler.max(entity, field, where, withDeleted);
+    return this.aggregateHandler.max(
+      entity,
+      field,
+      where,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
   // ── EXPLAIN delegation ──────────────────────────────────────

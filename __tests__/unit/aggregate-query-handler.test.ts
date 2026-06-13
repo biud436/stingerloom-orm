@@ -338,6 +338,7 @@ describe("AggregateQueryHandler convenience methods", () => {
       undefined,
       undefined,
       undefined,
+      undefined,
     );
   });
 
@@ -350,6 +351,7 @@ describe("AggregateQueryHandler convenience methods", () => {
       "COUNT",
       "*",
       where,
+      undefined,
       undefined,
       undefined,
     );
@@ -365,6 +367,7 @@ describe("AggregateQueryHandler convenience methods", () => {
       undefined,
       undefined,
       true,
+      undefined,
     );
   });
 
@@ -376,6 +379,7 @@ describe("AggregateQueryHandler convenience methods", () => {
       Product,
       "SUM",
       "price",
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -393,6 +397,7 @@ describe("AggregateQueryHandler convenience methods", () => {
       where,
       undefined,
       true,
+      undefined,
     );
   });
 
@@ -404,6 +409,7 @@ describe("AggregateQueryHandler convenience methods", () => {
       Product,
       "AVG",
       "price",
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -421,6 +427,7 @@ describe("AggregateQueryHandler convenience methods", () => {
       where,
       undefined,
       undefined,
+      undefined,
     );
   });
 
@@ -432,6 +439,7 @@ describe("AggregateQueryHandler convenience methods", () => {
       Product,
       "MIN",
       "price",
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -449,6 +457,7 @@ describe("AggregateQueryHandler convenience methods", () => {
       where,
       undefined,
       undefined,
+      undefined,
     );
   });
 
@@ -460,6 +469,7 @@ describe("AggregateQueryHandler convenience methods", () => {
       Product,
       "MAX",
       "price",
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -475,6 +485,7 @@ describe("AggregateQueryHandler convenience methods", () => {
       "MAX",
       "price",
       where,
+      undefined,
       undefined,
       undefined,
     );

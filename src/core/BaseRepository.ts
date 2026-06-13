@@ -306,9 +306,22 @@ export class BaseRepository<T> {
 
   /**
    * Returns true if at least one entity matches the given where clause.
+   *
+   * When `onlyDeleted` is true, checks existence among ONLY soft-deleted rows
+   * (@DeletedAt IS NOT NULL). It takes precedence over `withDeleted` and is a
+   * silent no-op for entities without an @DeletedAt column.
    */
-  async exists(where?: WhereClause<T>, withDeleted?: boolean): Promise<boolean> {
-    return await this.em.exists<T>(this.entity, where, withDeleted);
+  async exists(
+    where?: WhereClause<T>,
+    withDeleted?: boolean,
+    onlyDeleted?: boolean,
+  ): Promise<boolean> {
+    return await this.em.exists<T>(
+      this.entity,
+      where,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
   /**
@@ -353,53 +366,105 @@ export class BaseRepository<T> {
 
   /**
    * Returns the count of entities matching the given conditions.
+   *
+   * When `onlyDeleted` is true, counts ONLY soft-deleted rows (@DeletedAt
+   * IS NOT NULL). It takes precedence over `withDeleted` and is a silent no-op
+   * for entities without an @DeletedAt column.
    */
-  async count(where?: WhereClause<T>, withDeleted?: boolean): Promise<number> {
-    return await this.em.count<T>(this.entity, where, withDeleted);
+  async count(
+    where?: WhereClause<T>,
+    withDeleted?: boolean,
+    onlyDeleted?: boolean,
+  ): Promise<number> {
+    return await this.em.count<T>(this.entity, where, withDeleted, onlyDeleted);
   }
 
   /**
    * Returns the sum of a numeric field for entities matching the given conditions.
+   *
+   * When `onlyDeleted` is true, sums over ONLY soft-deleted rows (@DeletedAt
+   * IS NOT NULL). It takes precedence over `withDeleted` and is a silent no-op
+   * for entities without an @DeletedAt column.
    */
   async sum(
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return await this.em.sum<T>(this.entity, field, where, withDeleted);
+    return await this.em.sum<T>(
+      this.entity,
+      field,
+      where,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
   /**
    * Returns the average of a numeric field for entities matching the given conditions.
+   *
+   * When `onlyDeleted` is true, averages over ONLY soft-deleted rows (@DeletedAt
+   * IS NOT NULL). It takes precedence over `withDeleted` and is a silent no-op
+   * for entities without an @DeletedAt column.
    */
   async avg(
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return await this.em.avg<T>(this.entity, field, where, withDeleted);
+    return await this.em.avg<T>(
+      this.entity,
+      field,
+      where,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
   /**
    * Returns the minimum value of a field for entities matching the given conditions.
+   *
+   * When `onlyDeleted` is true, takes the minimum over ONLY soft-deleted rows
+   * (@DeletedAt IS NOT NULL). It takes precedence over `withDeleted` and is a
+   * silent no-op for entities without an @DeletedAt column.
    */
   async min(
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return await this.em.min<T>(this.entity, field, where, withDeleted);
+    return await this.em.min<T>(
+      this.entity,
+      field,
+      where,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
   /**
    * Returns the maximum value of a field for entities matching the given conditions.
+   *
+   * When `onlyDeleted` is true, takes the maximum over ONLY soft-deleted rows
+   * (@DeletedAt IS NOT NULL). It takes precedence over `withDeleted` and is a
+   * silent no-op for entities without an @DeletedAt column.
    */
   async max(
     field: keyof T & string,
     where?: WhereClause<T>,
     withDeleted?: boolean,
+    onlyDeleted?: boolean,
   ): Promise<number> {
-    return await this.em.max<T>(this.entity, field, where, withDeleted);
+    return await this.em.max<T>(
+      this.entity,
+      field,
+      where,
+      withDeleted,
+      onlyDeleted,
+    );
   }
 
   /**
