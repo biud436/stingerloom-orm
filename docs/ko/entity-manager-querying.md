@@ -834,7 +834,7 @@ const trashedByAlice = await em.find(Post, {
 
 `@DeletedAt` 컬럼이 없는 엔티티에서는 `onlyDeleted`가 조용히 무시됩니다 — `withDeleted`와 동일한 동작이에요.
 
-`find()`, `findOne()`, `findBy()`, `findOneBy()`, `findOneOrFail()`, `findAndCount()`(개수 포함), `findWithCursor()`, `findWithPage()`, `stream()` 모두에서 동작합니다.
+`find()`, `findOne()`, `findBy()`, `findOneBy()`, `findOneOrFail()`, `findAndCount()`(개수 포함), `findWithCursor()`, `findWithPage()`, `stream()`, 그리고 집계 함수 `count()`, `sum()`, `avg()`, `min()`, `max()`, `exists()` 모두에서 동작합니다.
 
 ---
 
@@ -1288,6 +1288,28 @@ const [total, avgAge, minAge, maxAge] = await Promise.all([
 ```
 
 네 개 쿼리를 데이터베이스에 동시에 보내서 하나가 끝나기를 기다렸다가 다음을 시작하는 것보다 빨라요.
+
+### Soft-delete 인식
+
+`count()`, `sum()`, `avg()`, `min()`, `max()`, `exists()` 모든 집계 함수는 `FindOption`의 soft-delete 플래그와 동일한 두 개의 선택적 후행 파라미터를 받아요:
+
+```typescript
+// 삭제된 사용자만 카운트 (onlyDeleted가 withDeleted보다 우선)
+const trashed = await em.count(User, undefined, false, true);
+
+// 삭제된 주문의 매출 합계
+const lostRevenue = await em.sum(Order, "amount", undefined, false, true);
+
+// 특정 작성자의 삭제된 게시물이 존재하는지 확인
+const hasTrashed = await em.exists(Post, { authorId: 42 }, false, true);
+```
+
+| 파라미터 | 타입 | 기본값 | 동작 |
+|---------|------|--------|------|
+| `withDeleted` | `boolean` | `false` | live 행과 soft-deleted 행을 모두 집계에 포함 |
+| `onlyDeleted` | `boolean` | `false` | soft-deleted 행만 대상으로 제한(`@DeletedAt IS NOT NULL`); `withDeleted`보다 우선 |
+
+`@DeletedAt` 컬럼이 없는 엔티티에서는 `onlyDeleted`가 조용히 무시돼요. `find()`와 같은 읽기 API에서의 동작은 [Soft Delete](#soft-delete) 섹션을 참고하세요.
 
 ---
 

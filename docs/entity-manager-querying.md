@@ -834,7 +834,7 @@ const trashedByAlice = await em.find(Post, {
 
 For entities without a `@DeletedAt` column, `onlyDeleted` is a silent no-op — no extra predicate is added, matching the behavior of `withDeleted`.
 
-Both options work with `find()`, `findOne()`, `findBy()`, `findOneBy()`, `findOneOrFail()`, `findAndCount()` (including its count), `findWithCursor()`, `findWithPage()`, and `stream()`.
+Both options work with `find()`, `findOne()`, `findBy()`, `findOneBy()`, `findOneOrFail()`, `findAndCount()` (including its count), `findWithCursor()`, `findWithPage()`, `stream()`, and the aggregate functions `count()`, `sum()`, `avg()`, `min()`, `max()`, and `exists()`.
 
 ---
 
@@ -1288,6 +1288,28 @@ const [total, avgAge, minAge, maxAge] = await Promise.all([
 ```
 
 This sends all four queries to the database at the same time instead of waiting for each one to finish before starting the next.
+
+### Soft-delete awareness
+
+All aggregate functions — `count()`, `sum()`, `avg()`, `min()`, `max()`, and `exists()` — accept two optional trailing parameters that mirror the `FindOption` soft-delete flags:
+
+```typescript
+// Count ONLY trashed users (onlyDeleted takes precedence over withDeleted)
+const trashed = await em.count(User, undefined, false, true);
+
+// Sum revenue of soft-deleted orders only
+const lostRevenue = await em.sum(Order, "amount", undefined, false, true);
+
+// Check whether any trashed post exists for a given author
+const hasTrashed = await em.exists(Post, { authorId: 42 }, false, true);
+```
+
+| Parameter | Type | Default | Effect |
+|-----------|------|---------|--------|
+| `withDeleted` | `boolean` | `false` | Include both live and soft-deleted rows in the aggregate |
+| `onlyDeleted` | `boolean` | `false` | Restrict to soft-deleted rows only (`@DeletedAt IS NOT NULL`); takes precedence over `withDeleted` |
+
+`onlyDeleted` is a silent no-op for entities without a `@DeletedAt` column. See [Soft Delete](#soft-delete) for the read-side equivalents in `find()` and friends.
 
 ---
 

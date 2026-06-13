@@ -31,7 +31,7 @@ const em = new EntityManager();
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | Single record query |
 | `findOneBy` | `<T>(entity, where): Promise<T \| null>` | Filter-first single query (sugar over `findOne({ where })`) |
 | `findOneOrFail` | `<T>(entity, option): Promise<T>` | Single record query (throws `EntityNotFoundError`) |
-| `exists` | `<T>(entity, where?: WhereClause<T>): Promise<boolean>` | Check if any matching record exists |
+| `exists` | `<T>(entity, where?, withDeleted?, onlyDeleted?): Promise<boolean>` | Check if any matching record exists |
 | `findByPK` | `<T>(entity, id: unknown): Promise<T \| null>` | Find by primary key value |
 | `findByPKs` | `<T>(entity, ids: unknown[]): Promise<T[]>` | Find by multiple primary key values |
 | `findByPKsMap` | `<T>(entity, ids: unknown[]): Promise<Map<string \| number \| bigint, T>>` | Batch load returning a `Map` keyed by PK for O(1) lookup; composite PKs use `"col1=v1,col2=v2"` string keys |
@@ -72,11 +72,11 @@ Dialect-portable `@ManyToMany` join-table writes covering both owning and `mappe
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `count` | `<T>(entity, where?): Promise<number>` | Count |
-| `sum` | `<T>(entity, field, where?): Promise<number>` | Sum |
-| `avg` | `<T>(entity, field, where?): Promise<number>` | Average |
-| `min` | `<T>(entity, field, where?): Promise<number>` | Minimum |
-| `max` | `<T>(entity, field, where?): Promise<number>` | Maximum |
+| `count` | `<T>(entity, where?, withDeleted?, onlyDeleted?): Promise<number>` | Count |
+| `sum` | `<T>(entity, field, where?, withDeleted?, onlyDeleted?): Promise<number>` | Sum |
+| `avg` | `<T>(entity, field, where?, withDeleted?, onlyDeleted?): Promise<number>` | Average |
+| `min` | `<T>(entity, field, where?, withDeleted?, onlyDeleted?): Promise<number>` | Minimum |
+| `max` | `<T>(entity, field, where?, withDeleted?, onlyDeleted?): Promise<number>` | Maximum |
 
 ### Streaming
 

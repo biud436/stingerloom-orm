@@ -31,7 +31,7 @@ const em = new EntityManager();
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | 단건 조회 |
 | `findOneBy` | `<T>(entity, where): Promise<T \| null>` | 필터 우선 단건 조회 (`findOne({ where })`의 단축형) |
 | `findOneOrFail` | `<T>(entity, option): Promise<T>` | 단건 조회 (없으면 `EntityNotFoundError` 발생) |
-| `exists` | `<T>(entity, option?): Promise<boolean>` | 매칭되는 레코드 존재 여부 |
+| `exists` | `<T>(entity, where?, withDeleted?, onlyDeleted?): Promise<boolean>` | 매칭되는 레코드 존재 여부 |
 | `findByPK` | `<T>(entity, pk): Promise<T \| null>` | 기본 키로 조회 |
 | `findByPKs` | `<T>(entity, pks[]): Promise<T[]>` | 여러 기본 키로 조회 |
 | `findByPKsMap` | `<T>(entity, ids: unknown[]): Promise<Map<string \| number \| bigint, T>>` | 배치 조회 후 Map 반환 — O(1) 조회; 복합 PK는 `"col1=v1,col2=v2"` 문자열 키 |
@@ -72,11 +72,11 @@ const em = new EntityManager();
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
-| `count` | `<T>(entity, where?): Promise<number>` | 개수 |
-| `sum` | `<T>(entity, field, where?): Promise<number>` | 합계 |
-| `avg` | `<T>(entity, field, where?): Promise<number>` | 평균 |
-| `min` | `<T>(entity, field, where?): Promise<number>` | 최솟값 |
-| `max` | `<T>(entity, field, where?): Promise<number>` | 최댓값 |
+| `count` | `<T>(entity, where?, withDeleted?, onlyDeleted?): Promise<number>` | 개수 |
+| `sum` | `<T>(entity, field, where?, withDeleted?, onlyDeleted?): Promise<number>` | 합계 |
+| `avg` | `<T>(entity, field, where?, withDeleted?, onlyDeleted?): Promise<number>` | 평균 |
+| `min` | `<T>(entity, field, where?, withDeleted?, onlyDeleted?): Promise<number>` | 최솟값 |
+| `max` | `<T>(entity, field, where?, withDeleted?, onlyDeleted?): Promise<number>` | 최댓값 |
 
 ### Streaming
 
