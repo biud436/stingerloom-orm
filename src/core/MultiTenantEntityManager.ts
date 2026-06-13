@@ -358,7 +358,7 @@ export class MultiTenantEntityManager {
     entity: ClazzType<T>,
     data: Partial<T>,
     conflictColumns?: string[],
-  ): Promise<void> {
+  ): Promise<{ affected: number }> {
     return (await this.pickEm()).upsert(entity, data as any, conflictColumns);
   }
 
@@ -366,7 +366,7 @@ export class MultiTenantEntityManager {
     entity: ClazzType<T>,
     items: Partial<T>[],
     conflictColumns?: string[],
-  ): Promise<void> {
+  ): Promise<{ affected: number }> {
     return (await this.pickEm()).batchUpsert(entity, items as any, conflictColumns);
   }
 

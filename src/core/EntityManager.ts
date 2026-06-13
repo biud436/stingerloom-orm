@@ -4197,11 +4197,28 @@ export class EntityManager implements BaseEntityManager {
 
   // ── Upsert ────────────────────────────────────────────────
 
+  /**
+   * Inserts a row, or updates the existing row when it conflicts on the
+   * primary key (or `conflictColumns`).
+   *
+   * Dialect-portable: emits `INSERT … ON DUPLICATE KEY UPDATE` on
+   * MySQL/MariaDB and `INSERT … ON CONFLICT … DO UPDATE` on
+   * PostgreSQL/SQLite.
+   *
+   * @returns `{ affected }` — the driver-reported affected-row count.
+   *
+   * MySQL caveat: for `INSERT … ON DUPLICATE KEY UPDATE`, MySQL reports
+   * `affectedRows` as 1 when a new row is inserted, 2 when an existing row
+   * is updated, and 0 when the existing row's values are unchanged. This
+   * count is returned as-is (not normalized), so callers should not treat
+   * it as a literal row count on MySQL. PostgreSQL/SQLite report 1 for
+   * both insert and update.
+   */
   async upsert<T>(
     entity: ClazzType<T>,
     data: Partial<T>,
     conflictColumns?: string[],
-  ): Promise<void> {
+  ): Promise<{ affected: number }> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
       throw new EntityMetadataNotFoundError(entity.name);
@@ -4240,7 +4257,7 @@ export class EntityManager implements BaseEntityManager {
     });
 
     if (insertableColumns.length === 0) {
-      return;
+      return { affected: 0 };
     }
 
     const conflictSet = new Set(resolvedConflictColumns);
@@ -4259,10 +4276,10 @@ export class EntityManager implements BaseEntityManager {
     const tableName = this.wrapTable(metadata.name!);
 
     if (wrappedUpdate.length === 0) {
-      return;
+      return { affected: 0 };
     }
 
-    await this.executeInTransaction(async (session) => {
+    return this.executeInTransaction(async (session) => {
       const columnValues = insertableColumns.map(
         (col: ColumnMetadata) => {
           const rawValue = (data as any)[this.propKey(col)];
@@ -4278,7 +4295,11 @@ export class EntityManager implements BaseEntityManager {
         wrappedUpdate,
       );
 
-      await session.query(upsertSql);
+      const queryResult: any = await session.query(upsertSql);
+      const affected = this.isMySqlFamily()
+        ? (queryResult?.results?.affectedRows ?? 0)
+        : (queryResult?.rowCount ?? 0);
+      return { affected };
     });
   }
 
@@ -4454,13 +4475,25 @@ export class EntityManager implements BaseEntityManager {
 
   // ── Batch Upsert ──────────────────────────────────────────
 
+  /**
+   * Inserts or updates multiple rows in a single multi-row VALUES statement,
+   * conflicting on the primary key (or `conflictColumns`).
+   *
+   * Dialect-portable: emits `INSERT … ON DUPLICATE KEY UPDATE` on
+   * MySQL/MariaDB and `INSERT … ON CONFLICT … DO UPDATE` on
+   * PostgreSQL/SQLite.
+   *
+   * @returns `{ affected }` — the driver-reported affected-row count (0 when
+   * `items` is empty). See {@link upsert} for the MySQL `affectedRows`
+   * caveat (1 per insert, 2 per update); the count is returned as-is.
+   */
   async batchUpsert<T>(
     entity: ClazzType<T>,
     items: Partial<T>[],
     conflictColumns?: string[],
-  ): Promise<void> {
+  ): Promise<{ affected: number }> {
     if (items.length === 0) {
-      return;
+      return { affected: 0 };
     }
 
     const metadata = this.resolver.resolveEntityMetadata(entity);
@@ -4510,7 +4543,7 @@ export class EntityManager implements BaseEntityManager {
     });
 
     if (insertableColumns.length === 0) {
-      return;
+      return { affected: 0 };
     }
 
     const updateColumnNames = insertableColumns
@@ -4518,7 +4551,7 @@ export class EntityManager implements BaseEntityManager {
       .filter((name) => !conflictSet.has(name));
 
     if (updateColumnNames.length === 0) {
-      return;
+      return { affected: 0 };
     }
 
     const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
@@ -4530,7 +4563,7 @@ export class EntityManager implements BaseEntityManager {
     const wrappedUpdate = updateColumnNames.map((name) => this.wrap(name));
     const tableName = this.wrapTable(metadata.name!);
 
-    await this.executeInTransaction(async (session) => {
+    return this.executeInTransaction(async (session) => {
       const valueRows = items.map((item) => {
         const rowValues = insertableColumns.map((col: ColumnMetadata) => {
           const rawValue = (item as any)[this.propKey(col)];
@@ -4549,7 +4582,11 @@ export class EntityManager implements BaseEntityManager {
         wrappedUpdate,
       );
 
-      await session.query(upsertSql);
+      const queryResult: any = await session.query(upsertSql);
+      const affected = this.isMySqlFamily()
+        ? (queryResult?.results?.affectedRows ?? 0)
+        : (queryResult?.rowCount ?? 0);
+      return { affected };
     });
   }
 

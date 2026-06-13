@@ -388,11 +388,14 @@ export class BaseRepository<T> {
    *
    * @param data The partial entity data to upsert.
    * @param conflictColumns The columns to detect conflicts on.
+   * @returns `{ affected }` — the driver-reported affected-row count. See
+   * {@link EntityManager.upsert} for the MySQL `affectedRows` caveat
+   * (1 per insert, 2 per update); the count is returned as-is.
    */
   async upsert(
     data: Partial<T>,
     conflictColumns?: string[],
-  ): Promise<void> {
+  ): Promise<{ affected: number }> {
     return await this.em.upsert<T>(this.entity, data, conflictColumns);
   }
 
@@ -416,11 +419,14 @@ export class BaseRepository<T> {
    *
    * @param items The array of partial entity data to upsert.
    * @param conflictColumns The columns to detect conflicts on.
+   * @returns `{ affected }` — the driver-reported affected-row count (0 when
+   * `items` is empty). See {@link EntityManager.upsert} for the MySQL
+   * `affectedRows` caveat; the count is returned as-is.
    */
   async batchUpsert(
     items: Partial<T>[],
     conflictColumns?: string[],
-  ): Promise<void> {
+  ): Promise<{ affected: number }> {
     return await this.em.batchUpsert<T>(this.entity, items, conflictColumns);
   }
 

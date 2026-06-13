@@ -615,3 +615,174 @@ describe("BaseRepository.batchUpsert()", () => {
     );
   });
 });
+
+// ─────────────────────────────────────────────
+// Affected-rows return shape ({ affected })
+// ─────────────────────────────────────────────
+describe("upsert/batchUpsert affected-rows result", () => {
+  let em: EntityManager;
+
+  beforeEach(() => {
+    MetadataLayerRegistry.reset();
+    resetScannerContainer();
+    jest.clearAllMocks();
+  });
+
+  describe("upsert()", () => {
+    it("should return MySQL affectedRows as-is (2 for an updated row)", async () => {
+      em = createEntityManagerWithDriver("mysql");
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
+      // MySQL reports affectedRows=2 when an existing row is updated.
+      mockQuery.mockResolvedValueOnce({ results: { affectedRows: 2 }, fields: {} });
+
+      const result = await em.upsert(UserEntity, {
+        id: 1,
+        email: "test@test.com",
+        name: "Test",
+      });
+
+      expect(result).toEqual({ affected: 2 });
+    });
+
+    it("should default to { affected: 0 } when MySQL reports no affectedRows", async () => {
+      em = createEntityManagerWithDriver("mysql");
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
+      // Default mock resolves { results: {}, fields: {} } → affectedRows undefined.
+
+      const result = await em.upsert(UserEntity, {
+        id: 1,
+        email: "test@test.com",
+        name: "Test",
+      });
+
+      expect(result).toEqual({ affected: 0 });
+    });
+
+    it("should read rowCount on PostgreSQL", async () => {
+      em = createEntityManagerWithDriver("postgres");
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+      mockQuery.mockResolvedValueOnce({ rowCount: 1 });
+
+      const result = await em.upsert(ProductEntity, {
+        sku: "ABC123",
+        name: "Widget",
+        price: 9.99,
+      });
+
+      expect(result).toEqual({ affected: 1 });
+    });
+
+    it("should read rowCount on SQLite", async () => {
+      em = createEntityManagerWithDriver("sqlite");
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+      mockQuery.mockResolvedValueOnce({ rowCount: 1 });
+
+      const result = await em.upsert(ProductEntity, {
+        sku: "ABC123",
+        name: "Widget",
+        price: 9.99,
+      });
+
+      expect(result).toEqual({ affected: 1 });
+    });
+
+    it("should return { affected: 0 } without querying when no insertable columns", async () => {
+      em = createEntityManagerWithDriver("mysql");
+      const emptyMeta = {
+        name: "Empty",
+        target: class Empty {},
+        columns: [{ name: "id", options: { primary: true, autoIncrement: true } }],
+      };
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(emptyMeta);
+
+      const result = await em.upsert(emptyMeta.target, {});
+
+      expect(result).toEqual({ affected: 0 });
+      expect(mockConnect).not.toHaveBeenCalled();
+    });
+
+    it("should return { affected: 0 } without querying when no update columns", async () => {
+      em = createEntityManagerWithDriver("mysql");
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+
+      // sku is the only provided column and is also the conflict column.
+      const result = await em.upsert(ProductEntity, { sku: "ONLY" }, ["sku"]);
+
+      expect(result).toEqual({ affected: 0 });
+      expect(mockConnect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("batchUpsert()", () => {
+    it("should return MySQL affectedRows as-is", async () => {
+      em = createEntityManagerWithDriver("mysql");
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
+      mockQuery.mockResolvedValueOnce({ results: { affectedRows: 4 }, fields: {} });
+
+      const result = await em.batchUpsert(UserEntity, [
+        { id: 1, email: "a@test.com", name: "A" },
+        { id: 2, email: "b@test.com", name: "B" },
+      ]);
+
+      expect(result).toEqual({ affected: 4 });
+    });
+
+    it("should read rowCount on PostgreSQL", async () => {
+      em = createEntityManagerWithDriver("postgres");
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+      mockQuery.mockResolvedValueOnce({ rowCount: 2 });
+
+      const result = await em.batchUpsert(ProductEntity, [
+        { sku: "A1", name: "Widget A", price: 9.99 },
+        { sku: "B2", name: "Widget B", price: 19.99 },
+      ]);
+
+      expect(result).toEqual({ affected: 2 });
+    });
+
+    it("should return { affected: 0 } without querying for an empty array", async () => {
+      em = createEntityManagerWithDriver("mysql");
+
+      const result = await em.batchUpsert(UserEntity, []);
+
+      expect(result).toEqual({ affected: 0 });
+      expect(mockConnect).not.toHaveBeenCalled();
+    });
+
+    it("should return { affected: 0 } without querying when no update columns", async () => {
+      em = createEntityManagerWithDriver("mysql");
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+
+      const result = await em.batchUpsert(ProductEntity, [{ sku: "ONLY" }], ["sku"]);
+
+      expect(result).toEqual({ affected: 0 });
+      expect(mockConnect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("BaseRepository delegation", () => {
+    it("upsert() should return the EntityManager result", async () => {
+      const mockEm = {
+        upsert: jest.fn().mockResolvedValue({ affected: 1 }),
+      } as any;
+      const { BaseRepository } = require("../../src/core/BaseRepository");
+      const repo = new BaseRepository(UserEntity, mockEm);
+
+      const result = await repo.upsert({ id: 1, email: "repo@test.com" });
+
+      expect(result).toEqual({ affected: 1 });
+    });
+
+    it("batchUpsert() should return the EntityManager result", async () => {
+      const mockEm = {
+        batchUpsert: jest.fn().mockResolvedValue({ affected: 3 }),
+      } as any;
+      const { BaseRepository } = require("../../src/core/BaseRepository");
+      const repo = new BaseRepository(UserEntity, mockEm);
+
+      const result = await repo.batchUpsert([{ id: 1 }, { id: 2 }, { id: 3 }]);
+
+      expect(result).toEqual({ affected: 3 });
+    });
+  });
+});
