@@ -408,6 +408,54 @@ export class BaseRepository<T> {
   }
 
   /**
+   * Atomically adds `by` to a numeric `column` for rows matching `where`.
+   *
+   * Emits `UPDATE … SET <col> = <col> + ? WHERE …`, so concurrent callers
+   * can't lose updates (no read-modify-write race). See
+   * {@link EntityManager.increment}.
+   *
+   * @param where The filter selecting rows to mutate (required, non-empty).
+   * @param column The numeric entity property to increment.
+   * @param by The amount to add (a finite number, default `1`).
+   * @returns `{ affected }` — the number of rows updated.
+   *
+   * @example
+   * ```ts
+   * await postRepo.increment({ id: 1 }, "viewCount");
+   * ```
+   */
+  async increment(
+    where: WhereClause<T>,
+    column: keyof T & string,
+    by: number = 1,
+  ): Promise<{ affected: number }> {
+    return await this.em.increment<T>(this.entity, where, column, by);
+  }
+
+  /**
+   * Atomically subtracts `by` from a numeric `column` for rows matching
+   * `where`. The counterpart of {@link increment}. See
+   * {@link EntityManager.decrement}.
+   *
+   * @param where The filter selecting rows to mutate (required, non-empty).
+   * @param column The numeric entity property to decrement.
+   * @param by The amount to subtract (a finite number, default `1`).
+   * @returns `{ affected }` — the number of rows updated.
+   *
+   * @example
+   * ```ts
+   * await productRepo.decrement({ id: 9 }, "stock");
+   * ```
+   */
+  async decrement(
+    where: WhereClause<T>,
+    column: keyof T & string,
+    by: number = 1,
+  ): Promise<{ affected: number }> {
+    return await this.em.decrement<T>(this.entity, where, column, by);
+  }
+
+  /**
    * Inserts or updates an entity based on conflict columns (UPSERT).
    * If conflictColumns is not provided, primary key columns are used.
    *

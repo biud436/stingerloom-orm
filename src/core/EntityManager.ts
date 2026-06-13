@@ -3828,6 +3828,116 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
+   * Atomically adds `by` to a numeric `column` for every row matching `where`.
+   *
+   * Emits `UPDATE … SET <col> = <col> + ? WHERE …` so the delta is applied
+   * **in the database**, never via a read-modify-write round trip. Concurrent
+   * callers therefore can't clobber each other's updates — two simultaneous
+   * `increment(Post, { id: 1 }, "viewCount")` calls produce `+2`, not `+1`.
+   *
+   * Filter-first argument order mirrors {@link update}/{@link delete}. The call
+   * delegates to {@link update}, so it inherits the same empty-WHERE guard,
+   * tenant scoping, soft-delete semantics, NamingStrategy column mapping, and
+   * `@Version` optimistic-lock auto-increment (the version column is bumped in
+   * the very same statement).
+   *
+   * @param entity The entity class.
+   * @param where The filter selecting rows to mutate (required, non-empty).
+   * @param column The numeric entity property to increment.
+   * @param by The amount to add (a finite number, default `1`).
+   * @returns `{ affected }` — the number of rows updated.
+   *
+   * @example
+   * ```ts
+   * await em.increment(Post, { id: 1 }, "viewCount");      // viewCount += 1
+   * await em.increment(Wallet, { userId: 7 }, "balance", 50); // balance += 50
+   * ```
+   */
+  async increment<T>(
+    entity: ClazzType<T>,
+    where: WhereClause<T>,
+    column: keyof T & string,
+    by: number = 1,
+  ): Promise<{ affected: number }> {
+    return this.applyNumericDelta(entity, where, column, by, "+");
+  }
+
+  /**
+   * Atomically subtracts `by` from a numeric `column` for every row matching
+   * `where`. The arithmetic counterpart of {@link increment}.
+   *
+   * Emits `UPDATE … SET <col> = <col> - ? WHERE …`, so the decrement is applied
+   * atomically in the database with no read-modify-write race. Delegates to
+   * {@link update}, inheriting tenant scoping, soft-delete semantics, and the
+   * `@Version` optimistic-lock bump exactly like {@link increment}.
+   *
+   * @param entity The entity class.
+   * @param where The filter selecting rows to mutate (required, non-empty).
+   * @param column The numeric entity property to decrement.
+   * @param by The amount to subtract (a finite number, default `1`).
+   * @returns `{ affected }` — the number of rows updated.
+   *
+   * @example
+   * ```ts
+   * await em.decrement(Product, { id: 9 }, "stock");          // stock -= 1
+   * await em.decrement(Wallet, { userId: 7 }, "balance", 50); // balance -= 50
+   * ```
+   */
+  async decrement<T>(
+    entity: ClazzType<T>,
+    where: WhereClause<T>,
+    column: keyof T & string,
+    by: number = 1,
+  ): Promise<{ affected: number }> {
+    return this.applyNumericDelta(entity, where, column, by, "-");
+  }
+
+  /**
+   * Shared implementation behind {@link increment} / {@link decrement}.
+   *
+   * Resolves `column` to its DB column (NamingStrategy-aware) and escapes it so
+   * the right-hand side references the real column — `<col> = <col> + ?` — then
+   * binds `by` as a parameter via `sql-template-tag` (never string-concatenated)
+   * and delegates to {@link update} for the actual statement.
+   */
+  private async applyNumericDelta<T>(
+    entity: ClazzType<T>,
+    where: WhereClause<T>,
+    column: keyof T & string,
+    by: number,
+    operator: "+" | "-",
+  ): Promise<{ affected: number }> {
+    if (typeof by !== "number" || !Number.isFinite(by)) {
+      throw new InvalidQueryError(
+        `increment/decrement amount must be a finite number, got ${String(by)}`,
+      );
+    }
+
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    // Map the entity property to its escaped DB column for the RHS reference.
+    // update() maps the LHS key the same way, so both sides stay consistent.
+    const propToCol = this.buildPropertyToColumnMap(metadata);
+    const wrappedColumn = this.wrap(propToCol.get(column) ?? column);
+
+    const expression =
+      operator === "+"
+        ? sql`${raw(wrappedColumn)} + ${by}`
+        : sql`${raw(wrappedColumn)} - ${by}`;
+
+    // Build the SET map as { [property]: <Sql expression> }. update() accepts
+    // raw Sql values and renders them as the SET right-hand side verbatim,
+    // while still applying the @Version auto-increment for versioned entities.
+    const data: UpdateData<T> = {};
+    (data as Record<string, Sql>)[column] = expression;
+
+    return this.update(entity, where, data);
+  }
+
+  /**
    * Create an `UpdateQueryBuilder` for the given entity (or `qAlias`).
    *
    * Provides a fluent UPDATE DSL with `.set / .where / .orderBy / .limit /
