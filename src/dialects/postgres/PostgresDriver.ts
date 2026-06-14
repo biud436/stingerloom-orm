@@ -835,9 +835,11 @@ export class PostgresDriver implements ISqlDriver {
         client,
       );
 
-      const timeoutValue = `${Math.floor(timeoutMs)}ms`;
+      // PostgreSQL does not accept bind parameters in SET, so the timeout must
+      // be interpolated as a literal (mirrors setQueryTimeout()).
+      const timeoutValue = `${Math.max(0, Math.floor(timeoutMs))}ms`;
       await this.connector.query(
-        sql`SET statement_timeout = ${timeoutValue}`,
+        `SET statement_timeout = '${timeoutValue}'`,
         client,
       );
 
@@ -850,11 +852,15 @@ export class PostgresDriver implements ISqlDriver {
       } catch {
         return false;
       } finally {
-        // Restore original timeout on the same connection
+        // Restore original timeout on the same connection. The value comes from
+        // SHOW statement_timeout (Postgres-controlled), but escape quotes
+        // defensively before interpolating it as a literal.
         const rows = Array.isArray(savedTimeout) ? savedTimeout : savedTimeout?.rows ?? [];
-        const original = rows.length > 0 ? rows[0]?.statement_timeout ?? "0" : "0";
+        const original = String(
+          rows.length > 0 ? rows[0]?.statement_timeout ?? "0" : "0",
+        ).replace(/'/g, "''");
         await this.connector.query(
-          sql`SET statement_timeout = ${original}`,
+          `SET statement_timeout = '${original}'`,
           client,
         );
       }

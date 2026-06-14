@@ -46,8 +46,15 @@ export class MySqlDataSource implements IDataSource {
       throw new MySqlConnectionError();
     }
 
-    await this.connector.rollback(this.connection);
-    this.connection = undefined;
+    // Clear the ref in `finally`: the connector may already have
+    // released/destroyed the connection while handling a rollback error, so a
+    // later close() must not release it a second time (double-release can hand
+    // the same physical connection to two callers).
+    try {
+      await this.connector.rollback(this.connection);
+    } finally {
+      this.connection = undefined;
+    }
   }
 
   async commit() {
@@ -55,8 +62,13 @@ export class MySqlDataSource implements IDataSource {
       throw new MySqlConnectionError();
     }
 
-    await this.connector.commit(this.connection);
-    this.connection = undefined;
+    // See rollback(): the connector may release the connection while recovering
+    // from a commit error, so always drop our ref to avoid a double-release.
+    try {
+      await this.connector.commit(this.connection);
+    } finally {
+      this.connection = undefined;
+    }
   }
 
   async query(sql: string) {
