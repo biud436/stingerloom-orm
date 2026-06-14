@@ -317,4 +317,33 @@ describe("Conditions - 추가 테스트", () => {
       expect(condition.values).toEqual([longString]);
     });
   });
+
+  describe("빈 배열 IN/NOT IN 가드", () => {
+    it("in은 빈 배열에 대해 throw 없이 1 = 0 (매칭 없음)을 생성해야 함", () => {
+      let condition!: ReturnType<typeof Conditions.in>;
+      expect(() => {
+        condition = Conditions.in("status", []);
+      }).not.toThrow();
+
+      expect(condition.sql).toBe("1 = 0");
+      expect(condition.values).toEqual([]);
+    });
+
+    it("notIn은 빈 배열에 대해 throw 없이 1 = 1 (전체 매칭)을 생성해야 함", () => {
+      let condition!: ReturnType<typeof Conditions.notIn>;
+      expect(() => {
+        condition = Conditions.notIn("status", []);
+      }).not.toThrow();
+
+      expect(condition.sql).toBe("1 = 1");
+      expect(condition.values).toEqual([]);
+    });
+
+    it("비어있지 않은 배열은 기존 IN/NOT IN 동작을 유지해야 함", () => {
+      expect(Conditions.in("status", ["a"]).sql).toBe("status IN (?)");
+      expect(Conditions.notIn("status", ["a", "b"]).sql).toBe(
+        "status NOT IN (?, ?)",
+      );
+    });
+  });
 });

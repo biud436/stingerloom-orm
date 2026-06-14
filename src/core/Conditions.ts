@@ -19,8 +19,14 @@ export class Conditions {
 
   /**
    * Creates a condition that checks if a column matches one of the specified values.
+   *
+   * An empty `values` array is a logical "matches nothing", so we emit `1 = 0`
+   * instead of forwarding it to `join([])`, which throws a `TypeError`.
    */
   static in(column: string, values: any[]): Sql {
+    if (values.length === 0) {
+      return sql`1 = 0`;
+    }
     return sql`${raw(column)} IN (${join(
       values.map((v) => sql`${v}`),
       ", ",
@@ -29,8 +35,14 @@ export class Conditions {
 
   /**
    * Creates a condition that checks if a column does not match any of the specified values.
+   *
+   * An empty `values` array excludes nothing, so we emit `1 = 1` instead of
+   * forwarding it to `join([])`, which throws a `TypeError`.
    */
   static notIn(column: string, values: any[]): Sql {
+    if (values.length === 0) {
+      return sql`1 = 1`;
+    }
     return sql`${raw(column)} NOT IN (${join(
       values.map((v) => sql`${v}`),
       ", ",

@@ -1277,6 +1277,13 @@ export class WhereGroupBuilder<T> {
       } else {
         this.conditions.push(sql`${raw(col)} ${raw(op)} ${value}`);
       }
+    } else if (valueOrOperator === null) {
+      // where(col, null) means IS NULL — `col = NULL` is always UNKNOWN.
+      this.conditions.push(Conditions.isNull(col));
+    } else if (Array.isArray(valueOrOperator)) {
+      // where(col, [...]) is shorthand for an IN list, matching the top-level
+      // builder's resolveCondition behavior.
+      this.conditions.push(Conditions.in(col, valueOrOperator));
     } else {
       this.conditions.push(Conditions.equals(col, valueOrOperator));
     }

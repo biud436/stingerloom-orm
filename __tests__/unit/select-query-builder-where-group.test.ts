@@ -251,6 +251,29 @@ describe("SelectQueryBuilder — andWhereGroup / orWhereGroup", () => {
       expect(text).toContain("LIKE");
       expect(values).toContain("%John%");
     });
+
+    it("should emit IS NULL for where(col, null) — not `col = NULL`", () => {
+      const { qb } = createQb(User, "u");
+      qb.where("status", "active").andWhereGroup((g) =>
+        g.where("email", null),
+      );
+      const { text } = qb.getSql();
+
+      expect(text).toContain("`u`.`email` IS NULL");
+      expect(text).not.toMatch(/`u`\.`email`\s*=\s*\?/);
+    });
+
+    it("should emit IN for where(col, array) shorthand", () => {
+      const { qb } = createQb(User, "u");
+      qb.where("status", "active").andWhereGroup((g) =>
+        g.where("role", ["admin", "moderator"]),
+      );
+      const { text, values } = qb.getSql();
+
+      expect(text).toContain("`u`.`role` IN");
+      expect(values).toContain("admin");
+      expect(values).toContain("moderator");
+    });
   });
 
   describe("chaining", () => {
