@@ -39,6 +39,37 @@ describe("findAndCount()", () => {
     expect(result[1]).toBe(10);
   });
 
+  it("findInternal()이 단일 객체(정확히 1행 매칭)를 반환해도 배열로 정규화해야 한다", async () => {
+    // findInternal returns a single entity (not an array) when exactly one row
+    // matches. findAndCount must still hand back a T[] so callers can map/length it.
+    const single = { id: 1, name: "OnlyOne", email: "only@test.com" };
+    jest.spyOn(em as any, "findInternal").mockResolvedValue(single as any);
+    jest.spyOn((em as any).aggregateHandler, "aggregate").mockResolvedValue(1);
+    jest.spyOn(em as any, "executeReadOnly").mockImplementation(
+      async (fn: any) => fn({}),
+    );
+
+    const [rows, count] = await em.findAndCount(User);
+
+    expect(Array.isArray(rows)).toBe(true);
+    expect(rows).toEqual([single]);
+    expect(rows).toHaveLength(1);
+    expect(count).toBe(1);
+  });
+
+  it("findInternal()이 null/undefined를 반환하면 빈 배열로 정규화해야 한다", async () => {
+    jest.spyOn(em as any, "findInternal").mockResolvedValue(null as any);
+    jest.spyOn((em as any).aggregateHandler, "aggregate").mockResolvedValue(0);
+    jest.spyOn(em as any, "executeReadOnly").mockImplementation(
+      async (fn: any) => fn({}),
+    );
+
+    const [rows, count] = await em.findAndCount(User);
+
+    expect(rows).toEqual([]);
+    expect(count).toBe(0);
+  });
+
   it("where 조건을 findInternal()와 aggregate() 모두에 전달해야 한다", async () => {
     const findInternalSpy = jest
       .spyOn(em as any, "findInternal")

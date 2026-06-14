@@ -2161,10 +2161,14 @@ export class EntityManager implements BaseEntityManager {
   ): Promise<[T[], number]> {
     const readNode = this.getReadNode(findOption.useMaster);
     return this.executeReadOnly(async (session) => {
-      const entities = await this.findInternal<T>(entity, findOption, session);
+      const result = await this.findInternal<T>(entity, findOption, session);
       const totalCount = await this.aggregateHandler.aggregate<T>(entity, "COUNT", "*", findOption.where, session, findOption.withDeleted, findOption.onlyDeleted);
 
-      return [entities as unknown as T[], totalCount];
+      // findInternal returns a single entity (not an array) when exactly one
+      // row matches, so normalize before handing back a [T[], number] tuple.
+      const entities =
+        result == null ? [] : Array.isArray(result) ? result : [result];
+      return [entities as T[], totalCount];
     }, { readNodeOverride: readNode, timeout: findOption.timeout });
   }
 
@@ -2395,7 +2399,9 @@ export class EntityManager implements BaseEntityManager {
             (col: ColumnMetadata) => col.name === createTsCol,
           );
           if (idx >= 0) {
-            const existing = (item as any)[createTsCol];
+            // Read via the property key — createTsCol is the DB column name after
+            // the naming strategy, so item[createTsCol] would miss a user value.
+            const existing = (item as any)[this.propKey(insertableColumns[idx])];
             values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : (existing ?? nowStr);
           }
         }
@@ -2404,7 +2410,7 @@ export class EntityManager implements BaseEntityManager {
             (col: ColumnMetadata) => col.name === updateTsCol,
           );
           if (idx >= 0) {
-            const existing = (item as any)[updateTsCol];
+            const existing = (item as any)[this.propKey(insertableColumns[idx])];
             values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : (existing ?? nowStr);
           }
         }
@@ -2879,8 +2885,18 @@ export class EntityManager implements BaseEntityManager {
       const pkWhereClauses = buildPkWhere();
 
       // @Version: Optimistic Locking
-      const currentVersion = versionColName
-        ? (item as any)[versionColName]
+      // `versionColName` is the DB column name (applyNamingStrategyToEntities
+      // rewrites the @Version token to the resolved column name), so read the
+      // current value through the matching column's property key — not the
+      // column name — otherwise the stale-version WHERE guard is silently
+      // dropped whenever the property and column names differ.
+      const versionColumn = versionColName
+        ? metadata.columns.find(
+            (c: ColumnMetadata) => c.name === versionColName,
+          )
+        : undefined;
+      const currentVersion = versionColumn
+        ? (item as any)[this.propKey(versionColumn)]
         : undefined;
       if (versionColName) {
         updateMap.push(

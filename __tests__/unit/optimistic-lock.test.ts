@@ -8,6 +8,7 @@ import { Version, VERSION_TOKEN } from "../../src/decorators/Version";
 import { OptimisticLockError } from "../../src/errors/OptimisticLockError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 import { SchemaGenerator } from "../../src/core/generators/SchemaGenerator";
+import { SnakeNamingStrategy } from "../../src/core/generators/SnakeNamingStrategy";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 
 // ─────────────────────────────────────────────────
@@ -289,6 +290,65 @@ describe("Optimistic Locking (@Version)", () => {
       expect(sqlText).toMatch(/`version`\s*=/);
 
       // 파라미터에 currentVersion(3)이 포함되어야 함
+      const sqlValues = sqlObj?.values ?? [];
+      expect(sqlValues).toContain(3);
+    });
+
+    it("버전 프로퍼티명 != 컬럼명일 때도 version WHERE 조건이 포함되어야 함 (네이밍 전략)", async () => {
+      // Under SnakeNamingStrategy the @Version token is rewritten from the
+      // property key ("revisionNumber") to the DB COLUMN name
+      // ("revision_number"). The save path must still read the current value via
+      // the property key, otherwise the optimistic-lock WHERE guard is silently
+      // dropped (regression: stale writes slip past the lock).
+      @Entity()
+      class SnakeVersionUser {
+        @PrimaryGeneratedColumn()
+        id!: number;
+
+        @Column({ type: "varchar", length: 255 })
+        name!: string;
+
+        @Version()
+        @Column({ type: "int" })
+        revisionNumber!: number;
+      }
+
+      EntityManager.applyNamingStrategyToEntities(
+        [SnakeVersionUser],
+        new SnakeNamingStrategy(),
+      );
+
+      mockQuery.mockResolvedValue({
+        results: { affectedRows: 1 },
+        fields: {},
+      });
+
+      const em = createMySqlEntityManager(versionedUserMetadata);
+
+      await em.save(SnakeVersionUser, {
+        id: 1,
+        name: "Renamed Updated",
+        revisionNumber: 3,
+      } as any);
+
+      const updateCall = mockQuery.mock.calls.find((call: any) => {
+        const sqlText =
+          typeof call[0] === "string" ? call[0] : call[0]?.text ?? "";
+        return sqlText.includes("UPDATE");
+      });
+
+      expect(updateCall).toBeDefined();
+      const sqlObj = updateCall![0];
+      const sqlText = typeof sqlObj === "string" ? sqlObj : sqlObj?.text ?? "";
+
+      // SET bumps the renamed column, and the WHERE guard references it too.
+      expect(sqlText).toMatch(
+        /`revision_number`\s*=\s*`revision_number`\s*\+\s*1/,
+      );
+      expect(sqlText).toMatch(/`revision_number`\s*=/);
+      // The version column must not also be written as a plain SET assignment.
+      expect(sqlText).not.toMatch(/`revisionNumber`/);
+
       const sqlValues = sqlObj?.values ?? [];
       expect(sqlValues).toContain(3);
     });
