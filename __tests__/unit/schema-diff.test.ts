@@ -40,6 +40,16 @@ class DiffPost {
   body!: string;
 }
 
+@Entity()
+class DiffEvent {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  // Single-word property so the column name is unambiguous without a naming strategy.
+  @Column({ type: "timestamptz" })
+  ts!: Date;
+}
+
 // ─────────────────────────────────────────────────
 // Mock query runner
 // ─────────────────────────────────────────────────
@@ -186,6 +196,77 @@ describe("SchemaDiff", () => {
       expect(result.alterColumns[0].columnName).toBe("name");
       expect(result.alterColumns[0].columnType).toBe("VARCHAR");
       expect(result.alterColumns[0].currentType).toBe("text");
+    });
+  });
+
+  describe("diff() — alterColumns carry declared nullability", () => {
+    it("MySQL: a NOT NULL column alter carries nullable=false (MODIFY must keep NOT NULL)", async () => {
+      const runner = createMockQueryRunner({
+        diff_user: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          // entity: VARCHAR NOT NULL, DB has TEXT → type alter
+          { column_name: "name", data_type: "text", is_nullable: "NO" },
+          { column_name: "age", data_type: "int", is_nullable: "NO" },
+          { column_name: "active", data_type: "tinyint", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([DiffUser], runner, "mysql");
+      const nameAlter = result.alterColumns.find((c) => c.columnName === "name");
+      expect(nameAlter).toBeDefined();
+      // Regression: previously undefined → MODIFY COLUMN emitted NULL, dropping NOT NULL.
+      expect(nameAlter!.nullable).toBe(false);
+    });
+
+    it("a nullable column alter carries nullable=true", async () => {
+      const runner = createMockQueryRunner({
+        diff_post: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          { column_name: "title", data_type: "varchar", is_nullable: "NO" },
+          // entity: TEXT nullable:true, DB has VARCHAR → type alter
+          { column_name: "body", data_type: "varchar", is_nullable: "YES" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([DiffPost], runner, "mysql");
+      const bodyAlter = result.alterColumns.find((c) => c.columnName === "body");
+      expect(bodyAlter).toBeDefined();
+      expect(bodyAlter!.nullable).toBe(true);
+    });
+  });
+
+  describe("diff() — timestamptz handling", () => {
+    it("MySQL: timestamptz matches a DATETIME column (no spurious/invalid ALTER)", async () => {
+      const runner = createMockQueryRunner({
+        diff_event: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          { column_name: "ts", data_type: "datetime", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([DiffEvent], runner, "mysql");
+      expect(result.alterColumns).toHaveLength(0);
+    });
+
+    it("PostgreSQL: timestamptz matches a 'timestamp with time zone' column", async () => {
+      const runner = createMockQueryRunner({
+        diff_event: [
+          { column_name: "id", data_type: "integer", is_nullable: "NO" },
+          {
+            column_name: "ts",
+            data_type: "timestamp with time zone",
+            is_nullable: "NO",
+          },
+        ],
+      });
+
+      const result = await schemaDiff.diff(
+        [DiffEvent],
+        runner,
+        "postgres",
+        "public",
+      );
+      expect(result.alterColumns).toHaveLength(0);
     });
   });
 

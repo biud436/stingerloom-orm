@@ -191,6 +191,9 @@ export class SchemaDiff {
               columnName: colName,
               columnType: expectedType,
               currentType: dbCol.data_type,
+              // Carry the declared nullability — MySQL's MODIFY COLUMN restates
+              // the whole definition, so omitting this silently drops NOT NULL.
+              nullable: col.options?.nullable ?? false,
               enumValues: col.options?.enumValues,
             });
           } else if (!this.lengthsMatch(col.options, dbCol)) {
@@ -200,6 +203,7 @@ export class SchemaDiff {
               columnName: colName,
               columnType: expectedType,
               currentType: dbCol.data_type,
+              nullable: col.options?.nullable ?? false,
               expectedLength: col.options?.length ?? null,
               actualLength: dbCol.character_maximum_length ?? null,
               expectedPrecision: col.options?.precision ?? null,
@@ -429,6 +433,10 @@ export class SchemaDiff {
         return "TINYINT";
       case "datetime":
         return "DATETIME";
+      case "timestamptz":
+        // MySQL has no TZ-aware type; the column builder maps it to DATETIME,
+        // so the diff must compare against DATETIME (not the invalid TIMESTAMPTZ).
+        return "DATETIME";
       case "date":
         return "DATE";
       case "timestamp":
@@ -471,6 +479,10 @@ export class SchemaDiff {
       case "datetime":
       case "timestamp":
         return "TIMESTAMP WITHOUT TIME ZONE";
+      case "timestamptz":
+        // information_schema reports a TIMESTAMPTZ column as this canonical form;
+        // match it so the diff doesn't emit a spurious ALTER on every sync.
+        return "TIMESTAMP WITH TIME ZONE";
       case "date":
         return "DATE";
       case "float":
@@ -576,6 +588,8 @@ export class SchemaDiff {
         "TIMESTAMP",
       ],
       TIMESTAMP: ["TIMESTAMP", "TIMESTAMP WITHOUT TIME ZONE"],
+      "TIMESTAMP WITH TIME ZONE": ["TIMESTAMP WITH TIME ZONE", "TIMESTAMPTZ"],
+      TIMESTAMPTZ: ["TIMESTAMPTZ", "TIMESTAMP WITH TIME ZONE"],
       DECIMAL: ["DECIMAL", "NUMERIC"],
       NUMERIC: ["NUMERIC", "DECIMAL"],
       BLOB: ["BLOB", "BYTEA"],
