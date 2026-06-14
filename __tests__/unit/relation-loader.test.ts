@@ -239,9 +239,11 @@ describe("RelationLoader", () => {
 
       const mockSession = {
         query: jest.fn().mockResolvedValue({
+          // The loader selects the FK under the "__stg_o2m_fk" alias and groups
+          // from the raw row, so the simulated driver result carries it too.
           results: [
-            { id: 10, parentId: 1 },
-            { id: 11, parentId: 1 },
+            { id: 10, parentId: 1, __stg_o2m_fk: 1 },
+            { id: 11, parentId: 1, __stg_o2m_fk: 1 },
           ],
         }),
       };
@@ -267,9 +269,9 @@ describe("RelationLoader", () => {
       const mockSession = {
         query: jest.fn().mockResolvedValue({
           results: [
-            { id: 10, parentId: 1 },
-            { id: 11, parentId: 2 },
-            { id: 12, parentId: 1 },
+            { id: 10, parentId: 1, __stg_o2m_fk: 1 },
+            { id: 11, parentId: 2, __stg_o2m_fk: 2 },
+            { id: 12, parentId: 1, __stg_o2m_fk: 1 },
           ],
         }),
       };
@@ -281,6 +283,36 @@ describe("RelationLoader", () => {
 
       expect(parent1.children).toHaveLength(2);
       expect(parent2.children).toHaveLength(1);
+    });
+
+    it("groups children when the FK is provided only via the alias (e.g. @RelationColumn, no @Column)", async () => {
+      // Regression: the FK can be declared via @RelationColumn without a backing
+      // @Column, so it is not hydrated onto the child entity. Grouping must read
+      // the FK from the raw row's "__stg_o2m_fk" alias, not from the entity.
+      resolver.resolveOneToManyMetadata.mockReturnValue([
+        { propertyKey: "children", getRelatedEntity: () => Child, mappedBy: "parentId" },
+      ] as any);
+      resolver.resolveEntityMetadata
+        .mockReturnValueOnce(parentMetadata as any)
+        .mockReturnValueOnce(childMetadata as any);
+      resolver.resolveManyToOneMetadata.mockReturnValue([]);
+
+      const mockSession = {
+        query: jest.fn().mockResolvedValue({
+          // No `parentId` property on the row — the FK appears only under the alias.
+          results: [
+            { id: 10, __stg_o2m_fk: 1 },
+            { id: 11, __stg_o2m_fk: 1 },
+          ],
+        }),
+      };
+      ctx.executeInTransaction.mockImplementation(async (fn: any) => fn(mockSession));
+
+      const parent = { id: 1, name: "Alice" } as Parent;
+      await loader.loadOneToManyRelations(Parent, parent, ["children"]);
+
+      expect(parent.children).toHaveLength(2);
+      expect(parent.children![0].id).toBe(10);
     });
 
     it("should assign empty array to parent with no children", async () => {
@@ -632,7 +664,9 @@ describe("RelationLoader", () => {
 
       const mockSession = {
         query: jest.fn().mockResolvedValue({
-          results: [{ id: 50, userId: 1 }],
+          // The inverse-side loader selects the owner FK under "__stg_o2o_fk"
+          // and groups from the raw row.
+          results: [{ id: 50, userId: 1, __stg_o2o_fk: 1 }],
         }),
       };
       ctx.executeInTransaction.mockImplementation(async (fn: any) => fn(mockSession));
@@ -703,8 +737,8 @@ describe("RelationLoader", () => {
       const mockSession = {
         query: jest.fn().mockResolvedValue({
           results: [
-            { id: 50, userId: 1 },
-            { id: 51, userId: 2 },
+            { id: 50, userId: 1, __stg_o2o_fk: 1 },
+            { id: 51, userId: 2, __stg_o2o_fk: 2 },
           ],
         }),
       };

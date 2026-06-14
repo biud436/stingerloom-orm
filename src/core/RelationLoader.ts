@@ -69,6 +69,11 @@ export class RelationLoader {
         (m) => m.columnName === rel.mappedBy,
       );
       const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
+      // The FK may be declared via @RelationColumn only (no backing @Column),
+      // so it is not guaranteed to appear in relatedMetadata.columns. Select it
+      // under a stable alias and read it from the RAW row when grouping — the
+      // hydrated entity is keyed by property names, not DB column names.
+      const fkAlias = "__stg_o2m_fk";
 
       // 1. Collect every parent ID (skipping null/undefined)
       const parentIds: any[] = [];
@@ -93,6 +98,9 @@ export class RelationLoader {
         const qb = RawQueryBuilderFactory.create();
         const selectCols = relatedMetadata.columns.map((col: any) =>
           this.ctx.wrap(col.name!),
+        );
+        selectCols.push(
+          `${this.ctx.wrap(fkColumn)} AS ${this.ctx.wrap(fkAlias)}`,
         );
 
         const whereConditions: Sql[] = [
@@ -134,16 +142,29 @@ export class RelationLoader {
       const resultTransformer = ResultTransformerFactory.create();
 
       if (queryResult.results && queryResult.results.length > 0) {
-        const allChildren = resultTransformer.toEntities(RelatedEntity, queryResult);
-        for (const child of allChildren) {
-          const fkValue = (child as any)[fkColumn];
+        const rows = queryResult.results as any[];
+        // Strip the FK alias before hydration, then bulk-deserialize. The query
+        // has no JOINs, so toEntities() is 1:1 and order-preserving with rows —
+        // letting us read each child's FK from the raw row by index.
+        const entityRows = rows.map((row) => {
+          const copy = { ...row };
+          delete copy[fkAlias];
+          return copy;
+        });
+        const allChildren = resultTransformer.toEntities(RelatedEntity, {
+          ...queryResult,
+          results: entityRows,
+        } as QueryResult);
+
+        for (let i = 0; i < allChildren.length; i++) {
+          const fkValue = rows[i][fkAlias];
           if (fkValue === undefined || fkValue === null) continue;
           let group = childrenByParentId.get(fkValue);
           if (!group) {
             group = [];
             childrenByParentId.set(fkValue, group);
           }
-          group.push(child);
+          group.push(allChildren[i]);
         }
       }
 
@@ -386,6 +407,11 @@ export class RelationLoader {
         }
 
         const fkColumn = ownerRel.joinColumn;
+        // The owning side's FK may be declared via @RelationColumn only, so it
+        // is not guaranteed to be in relatedMetadata.columns. Select it under a
+        // stable alias and read it from the RAW row (the hydrated entity is
+        // keyed by property names, not DB column names).
+        const fkAlias = "__stg_o2o_fk";
 
         // 1. Collect every parent ID (skipping null/undefined)
         const parentIds: any[] = [];
@@ -410,6 +436,9 @@ export class RelationLoader {
           const qb = RawQueryBuilderFactory.create();
           const selectCols = relatedMetadata.columns.map((col: any) =>
             this.ctx.wrap(col.name!),
+          );
+          selectCols.push(
+            `${this.ctx.wrap(fkColumn)} AS ${this.ctx.wrap(fkAlias)}`,
           );
 
           const whereConditions: Sql[] = [
@@ -450,10 +479,17 @@ export class RelationLoader {
         const resultTransformer = ResultTransformerFactory.create();
 
         if (queryResult.results && queryResult.results.length > 0) {
-          const allRelated = resultTransformer.toEntities(RelatedEntity, queryResult);
-          for (const related of allRelated) {
-            const fkValue = (related as any)[fkColumn];
-            if (fkValue !== undefined && fkValue !== null) {
+          for (const row of queryResult.results) {
+            const fkValue = (row as any)[fkAlias];
+            if (fkValue === undefined || fkValue === null) continue;
+
+            const entityRow = { ...row };
+            delete (entityRow as any)[fkAlias];
+            const [related] = resultTransformer.toEntities(RelatedEntity, {
+              results: [entityRow],
+            } as QueryResult);
+
+            if (related !== undefined) {
               relatedByParentId.set(fkValue, related);
             }
           }
