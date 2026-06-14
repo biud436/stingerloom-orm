@@ -504,9 +504,19 @@ export class ResultTransformer implements BaseResultTransformer {
         }
 
         // If the LEFT JOIN produced no match, all values are null → assign null.
+        // Reverse-map the prefix-stripped DB column names to the related
+        // entity's property keys (so a NamingStrategy / @Column({name}) on the
+        // FK side hydrates correctly), then apply that entity's read transforms
+        // (boolean/json/custom) — the eager-join path skipped both before.
         baseEntity[columnName] = this.isDeepNull(foreignObject)
           ? null
-          : deserializeEntity(ForeignClass, foreignObject);
+          : this.applyColumnTransforms(
+              ForeignClass,
+              deserializeEntity(
+                ForeignClass,
+                remapRowToPropertyKeys(ForeignClass, foreignObject),
+              ),
+            );
       }
     }
 
@@ -553,10 +563,17 @@ export class ResultTransformer implements BaseResultTransformer {
           );
         }
 
-        // Assign null when the LEFT JOIN did not match.
+        // Assign null when the LEFT JOIN did not match. Reverse-map + apply
+        // read transforms for the related entity (see the ManyToOne branch).
         baseEntity[propertyKey] = this.isDeepNull(foreignObject)
           ? null
-          : deserializeEntity(RelatedClass, foreignObject);
+          : this.applyColumnTransforms(
+              RelatedClass,
+              deserializeEntity(
+                RelatedClass,
+                remapRowToPropertyKeys(RelatedClass, foreignObject),
+              ),
+            );
       }
     }
 
@@ -605,7 +622,9 @@ export class ResultTransformer implements BaseResultTransformer {
         row,
       );
 
-      return finalEntity;
+      // The eager-join path must apply the root entity's read transforms too —
+      // the non-eager toEntity/toEntities paths already do this.
+      return this.applyColumnTransforms(entityClass, finalEntity);
     });
 
     const isSingleResult = transformedResults.length === 1;

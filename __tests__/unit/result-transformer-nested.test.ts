@@ -135,3 +135,67 @@ describe("#117: isDeepNull handles nested all-null objects", () => {
     expect(result.profile.department).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────
+// Eager-join path: root + nested read transforms and reverse-mapping
+// ─────────────────────────────────────────────────
+
+@Entity()
+class OrgX {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  // DB column name differs from the property key → exercises reverse-mapping.
+  @Column({ type: "varchar", length: 100, name: "org_name" })
+  orgName!: string;
+
+  @Column({ type: "boolean" })
+  active!: boolean;
+}
+
+@Entity()
+class MemberX {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "boolean" })
+  verified!: boolean;
+
+  @ManyToOne(() => OrgX, (o) => o.id, { joinColumn: "org_id", eager: true })
+  org!: OrgX;
+}
+
+describe("transformNested applies read transforms + reverse-mapping (eager join)", () => {
+  it("transforms the root boolean and the nested relation's boolean, and remaps its snake_case column", () => {
+    const transformer = new ResultTransformer();
+
+    // mysql2 / better-sqlite3 surface booleans as 0/1; the eager JOIN aliases
+    // the related columns as `${relationProp}_${dbColumnName}`.
+    const queryResult = {
+      results: [
+        {
+          id: 1,
+          verified: 0,
+          org_id: 100,
+          org_org_name: "Acme",
+          org_active: 1,
+        },
+      ],
+    };
+
+    const result = transformer.transformNested(MemberX, queryResult) as any;
+
+    // Root boolean coerced from 0 → false (was previously left as a raw 0).
+    expect(typeof result.verified).toBe("boolean");
+    expect(result.verified).toBe(false);
+
+    // Nested relation: snake_case DB column reverse-mapped to the property key…
+    expect(result.org).not.toBeNull();
+    expect(result.org.orgName).toBe("Acme");
+    expect((result.org as any).org_name).toBeUndefined();
+
+    // …and its boolean transformed from 1 → true.
+    expect(typeof result.org.active).toBe("boolean");
+    expect(result.org.active).toBe(true);
+  });
+});
