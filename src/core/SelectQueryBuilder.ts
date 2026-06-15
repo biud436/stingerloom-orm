@@ -4397,8 +4397,10 @@ export class SelectQueryBuilder<T, TResult = T> {
     const discMap = this.discriminatorMap;
     const strategy = this.inheritanceStrategy;
     const tptMap = this.tptChildPrefixMap;
+    const hasJoinedSelections = this.joinedSelections.length > 0;
     const deserializePoly = this.deserializePolymorphic.bind(this);
     const deserializeTPT = this.deserializeTPTPolymorphic.bind(this);
+    const transformJoined = this.transformJoinedEntityRows.bind(this);
     const applyVal = this.applyValidation.bind(this);
 
     const deserialize = (rows: any[]): TResult[] => {
@@ -4408,9 +4410,18 @@ export class SelectQueryBuilder<T, TResult = T> {
         }
         return applyVal(deserializePoly(rows));
       }
-      const registry = DeserializerRegistry.getInstance();
-      const entities = rows.map((row: any) => registry.deserialize(entity, row));
-      return applyVal(entities);
+      if (hasJoinedSelections) {
+        // Mirror getMany(): *AndSelect joins hydrate alias-prefixed columns
+        // into relation properties and dedupe/group roots.
+        return applyVal(transformJoined(rows));
+      }
+      // Mirror getMany(): run rows through ResultTransformer so NamingStrategy
+      // reverse-mapping (e.g. `issue_counter` → `issueCounter`) and column
+      // transformers (boolean 0/1 → bool, JSON parse, custom `from()`) fire.
+      // Calling the deserializer directly here skipped both, so prepared
+      // queries leaked raw DB column names and untransformed values.
+      const transformer = ResultTransformerFactory.create();
+      return applyVal(transformer.toEntities(entity, { results: rows }));
     };
 
     return new CompiledQuery<TResult, P>(

@@ -26,6 +26,18 @@ class User {
   age!: number;
 }
 
+@Entity()
+class Account {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "varchar", name: "full_name" })
+  fullName!: string;
+
+  @Column({ type: "boolean", name: "is_active" })
+  isActive!: boolean;
+}
+
 function createMockEm(captured: { sql?: Sql; calls: number } = { calls: 0 }) {
   const resolver = new RelationMetadataResolver();
   const wrap = (col: string) => `\`${col.replace(/`/g, "``")}\``;
@@ -179,6 +191,60 @@ describe("SelectQueryBuilder.prepare()", () => {
     qb.limit(5);
 
     expect(compiled.sql).toBe(firstSql);
+  });
+});
+
+describe("SelectQueryBuilder.prepare() — deserialization parity with getMany()", () => {
+  // A prepared query must run rows through the same ResultTransformer pipeline
+  // as getMany(): NamingStrategy reverse mapping (`is_active` → `isActive`) and
+  // column transformers (boolean 0/1 → bool). Previously prepare() called the
+  // deserializer directly and skipped both, leaking raw DB column names.
+  function createMockEmReturning(rows: any[]) {
+    const resolver = new RelationMetadataResolver();
+    const wrap = (col: string) => `\`${col.replace(/`/g, "``")}\``;
+    return {
+      wrap,
+      wrapTable: (t: string) => wrap(t),
+      resolver,
+      _ctx: {
+        isMySqlFamily: () => true,
+        isPostgres: () => false,
+        isSqlite: () => false,
+      },
+      async query<T>(_query: Sql): Promise<T[]> {
+        return rows.map((r) => ({ ...r })) as T[];
+      },
+    } as unknown as EntityManager;
+  }
+
+  it("applies NamingStrategy reverse mapping and column transformers", async () => {
+    const rows = [{ id: 1, full_name: "Ann", is_active: 1 }];
+    const compiled = new SelectQueryBuilder(Account, "a", createMockEmReturning(rows)).prepare();
+    const [row] = await compiled.execute();
+
+    expect(row).toMatchObject({ id: 1, fullName: "Ann", isActive: true });
+    // raw DB column names must not leak through
+    expect((row as any).full_name).toBeUndefined();
+    expect((row as any).is_active).toBeUndefined();
+  });
+
+  it("produces the same entities as getMany() for identical rows", async () => {
+    const rows = [{ id: 2, full_name: "Bob", is_active: 0 }];
+    const fromGetMany = await new SelectQueryBuilder(
+      Account,
+      "a",
+      createMockEmReturning(rows),
+    ).getMany();
+    const fromPrepare = await new SelectQueryBuilder(
+      Account,
+      "a",
+      createMockEmReturning(rows),
+    )
+      .prepare()
+      .execute();
+
+    expect(fromPrepare).toEqual(fromGetMany);
+    expect((fromPrepare[0] as any).isActive).toBe(false);
   });
 });
 
