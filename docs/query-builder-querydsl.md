@@ -167,6 +167,43 @@ that plays two roles:
 Aggregates also participate in ORDER BY via `.asc()` / `.desc()`, mirroring
 the ColumnExpression surface.
 
+## Conditional aggregates — `.filter(...)` / `countIf` / `sumIf`
+
+`.filter(condition)` restricts an aggregate to the rows matching a
+predicate, so several differently-scoped aggregates share one `GROUP BY`
+pass instead of separate queries:
+
+```typescript
+const u = qAlias(User, "u");
+
+await em.createQueryBuilder(User, "u")
+  .select([
+    u.id.count().as("total"),
+    u.id.count().filter(u.status.eq("active")).as("active"),
+    u.id.countIf(u.status.eq("churned")).as("churned"),  // shorthand
+    u.amount.sumIf(u.type.eq("refund")).as("refunds"),    // shorthand
+  ])
+  .getRawMany();
+```
+
+`countIf(cond)` and `sumIf(cond)` are shorthands for
+`.count().filter(cond)` and `.sum().filter(cond)`. The predicate is any
+`ConditionLike` — a column comparison, a `.and()` / `.or()` composition,
+or a JSON-path condition — so the full WHERE-side DSL is reusable here.
+
+The clause is dialect-portable:
+
+- **PostgreSQL / SQLite** emit the SQL-standard
+  `COUNT("u"."id") FILTER (WHERE "u"."status" = $1)`.
+- **MySQL** has no `FILTER` clause, so it is rewritten to the equivalent
+  conditional aggregate `COUNT(CASE WHEN \`u\`.\`status\` = ? THEN \`u\`.\`id\` END)`.
+  `COUNT(*)` substitutes a literal `1` inside the `CASE` (a bare `*` is not
+  a valid `CASE` result).
+
+Both forms agree on NULL semantics: `COUNT` returns `0` and
+`SUM` / `AVG` / `MIN` / `MAX` return `NULL` when no row matches. A filtered
+aggregate also works in `having()` (`u.id.countIf(...).gt(10)`).
+
 ## SELECT aliases — `.as("name")` on any projectable expression
 
 `.as("alias")` works on every expression that can appear in SELECT —
@@ -773,6 +810,7 @@ having to know.
 | String (case-insens.) | `.equalsIgnoreCase`, `.likeIgnoreCase`, `.startsWithIgnoreCase`, `.endsWithIgnoreCase`, `.containsIgnoreCase` |
 | Ordering              | `.asc()`, `.desc()`, `.nullsFirst()`, `.nullsLast()`                                            |
 | Aggregates            | `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()` — each with `.as(alias)` and `.eq/.neq/.gt/.gte/.lt/.lte/.between` |
+| Conditional aggregates | `aggregate.filter(condition)`, `.countIf(condition)`, `.sumIf(condition)` — `FILTER (WHERE …)` (PG/SQLite) / `CASE` rewrite (MySQL) |
 | SELECT alias          | `.as("name")` on columns, JSON path extracts, and aggregates — produces `AliasedExpression` |
 | Null handling         | `coalesce(…)`, `nullif(a, b)`, `col.coalesce(…)`, `Expressions.coalesce`, `Expressions.nullif` |
 | Current date / time   | `currentDate()`, `currentTime()`, `currentTimestamp()` — also on `Expressions`                 |
@@ -796,6 +834,7 @@ When an expression has no equivalent on the active dialect, the renderer throws 
 | Expression | PostgreSQL | MySQL | SQLite | Notes |
 |------------|------------|-------|--------|-------|
 | Aggregates (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | Native | Native | Native | — |
+| Conditional aggregates (`.filter()`, `countIf`, `sumIf`) | Native `FILTER (WHERE …)` | Rewritten to `FUNC(CASE WHEN … THEN … END)` | Native `FILTER (WHERE …)` (3.30+) | `COUNT(*)` becomes `COUNT(CASE WHEN … THEN 1 END)` on MySQL. NULL semantics match across dialects. |
 | `coalesce` / `nullif` | Native | Native | Native | — |
 | Window functions (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | Native | Native (8.0+) | Native (3.25+) | — |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregates | Native (`WITHIN GROUP`) | **Unsupported** — throws `UNSUPPORTED_OPERATION` | **Unsupported** — throws `UNSUPPORTED_OPERATION` | MySQL: emulate with CTE + `ROW_NUMBER() OVER (ORDER BY x)` and pick `rn = CEIL(N * p)`. See [the cookbook recipe](./cookbook.md#cycle-time-percentile-report). |

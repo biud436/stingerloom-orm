@@ -238,6 +238,40 @@ export interface DialectExpression {
    * - `week`: engine-dependent week-of-year.
    */
   dateComponent(value: Sql, component: DateComponent): Sql;
+
+  /**
+   * Render an aggregate with a `FILTER (WHERE …)` clause — restrict which
+   * rows an aggregate sees without a surrounding `GROUP BY` rewrite.
+   *
+   * - PostgreSQL / SQLite: native `FUNC(arg) FILTER (WHERE condition)`.
+   * - MySQL: no native `FILTER`, so it is rewritten to the equivalent
+   *   `FUNC(CASE WHEN condition THEN arg END)`. `COUNT(*)` substitutes the
+   *   literal `1` for the argument because `*` is not a valid `CASE` result.
+   *
+   * Both forms agree on NULL semantics: `COUNT` returns `0` and `SUM` /
+   * `AVG` / `MIN` / `MAX` return `NULL` when no row matches the predicate.
+   *
+   * @param opts - The aggregate pieces plus the already-resolved predicate.
+   */
+  aggregateFilter(opts: AggregateFilterOptions): Sql;
+}
+
+/**
+ * Inputs to {@link DialectExpression.aggregateFilter}. The query layer
+ * resolves the aggregate argument and the predicate to `Sql` fragments
+ * before handing them over so dialects only decide the surrounding syntax.
+ */
+export interface AggregateFilterOptions {
+  /** Aggregate function name, e.g. `"COUNT"` / `"SUM"`. */
+  func: string;
+  /** Rendered aggregate argument (a column, scalar expression, or `*`). */
+  arg: Sql;
+  /** True when the argument is the `*` wildcard (`COUNT(*)`). */
+  isStar: boolean;
+  /** Whether the aggregate is `DISTINCT`. */
+  distinct: boolean;
+  /** Already-resolved `WHERE` predicate fragment (carries bound values). */
+  condition: Sql;
 }
 
 /**

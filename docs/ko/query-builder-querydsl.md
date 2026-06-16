@@ -160,6 +160,32 @@ SELECT에 넣을 때 `.as("total")`을 권장합니다. 생략하면 `agg_count_
 
 중복을 빼고 세고 싶으면 `.countDistinct()`를 씁니다. `COUNT(DISTINCT u.role)`로 나갑니다.
 
+## 조건부 집계 — `.filter(...)` / `countIf` / `sumIf`
+
+`.filter(condition)`은 집계를 조건에 맞는 행으로만 한정합니다. 범위가 다른 여러 집계를 쿼리 하나의 `GROUP BY` 한 번으로 묶을 수 있어, 상태별로 따로 조회할 필요가 없습니다.
+
+```typescript
+const u = qAlias(User, "u");
+
+await em.createQueryBuilder(User, "u")
+  .select([
+    u.id.count().as("total"),
+    u.id.count().filter(u.status.eq("active")).as("active"),
+    u.id.countIf(u.status.eq("churned")).as("churned"),  // 단축형
+    u.amount.sumIf(u.type.eq("refund")).as("refunds"),    // 단축형
+  ])
+  .getRawMany();
+```
+
+`countIf(cond)` / `sumIf(cond)`는 각각 `.count().filter(cond)` / `.sum().filter(cond)`의 단축형입니다. 조건에는 컬럼 비교, `.and()` / `.or()` 합성, JSON 경로 조건 등 모든 `ConditionLike`를 그대로 쓸 수 있어, WHERE에서 쓰던 DSL을 재사용합니다.
+
+이 절은 드라이버별로 자동 변환됩니다.
+
+- **PostgreSQL / SQLite**: 표준 SQL인 `COUNT("u"."id") FILTER (WHERE "u"."status" = $1)`을 그대로 냅니다.
+- **MySQL**: `FILTER` 절이 없으므로 동등한 조건부 집계 `COUNT(CASE WHEN \`u\`.\`status\` = ? THEN \`u\`.\`id\` END)`로 변환합니다. `COUNT(*)`는 `CASE` 안에서 리터럴 `1`로 치환됩니다(`*`는 `CASE` 결과로 쓸 수 없음).
+
+두 형태 모두 NULL 의미가 같습니다. 일치하는 행이 없으면 `COUNT`는 `0`, `SUM` / `AVG` / `MIN` / `MAX`는 `NULL`을 돌려줍니다. 필터가 걸린 집계는 `having()`에서도 동작합니다(`u.id.countIf(...).gt(10)`).
+
 ## SELECT 별칭 — `.as("name")`
 
 일반 컬럼, JSON 경로, 집계 어디에든 `.as("name")`을 붙일 수 있습니다. 결과는 `AliasedExpression`이고, SELECT 자리에서만 의미가 있어요. `where()`나 `having()`에는 넘길 수 없도록 타입으로 막혀 있습니다.
@@ -720,6 +746,7 @@ const user = await em.createQueryBuilder(User, "u")
 | null 위치 지정 | 위에 이어서 `.nullsFirst()` / `.nullsLast()` |
 | 값 집계 | `.count()`, `.countDistinct()`, `.sum()`, `.avg()`, `.min()`, `.max()` |
 | 집계 결과로 필터 | 집계 뒤에 `.gt(10)`, `.eq(0)`, `.between(1, 100)` 등 평소대로 |
+| 조건부 집계 | `aggregate.filter(condition)`, `.countIf(condition)`, `.sumIf(condition)` — `FILTER (WHERE …)` (PG/SQLite) / `CASE` 변환 (MySQL) |
 | SELECT 별칭 | `.as("name")` — 컬럼 / JSON 경로 / 집계 어디에든. `AliasedExpression` 반환 |
 | null fallback | `coalesce(...)`, `col.coalesce(...)`, `nullif(a, b)` — 처음 non-null 값 / 일치 시 NULL |
 | 현재 시각 | `currentDate()`, `currentTime()`, `currentTimestamp()` — `Expressions`에도 동일 |
@@ -746,6 +773,7 @@ const user = await em.createQueryBuilder(User, "u")
 | 표현식 | PostgreSQL | MySQL | SQLite | 비고 |
 |--------|------------|-------|--------|------|
 | 집계 (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | 네이티브 | 네이티브 | 네이티브 | — |
+| 조건부 집계 (`.filter()`, `countIf`, `sumIf`) | 네이티브 `FILTER (WHERE …)` | `FUNC(CASE WHEN … THEN … END)`로 변환 | 네이티브 `FILTER (WHERE …)` (3.30+) | MySQL에서 `COUNT(*)`는 `COUNT(CASE WHEN … THEN 1 END)`. NULL 의미는 dialect 간 동일. |
 | `coalesce` / `nullif` | 네이티브 | 네이티브 | 네이티브 | — |
 | Window 함수 (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | 네이티브 | 네이티브 (8.0+) | 네이티브 (3.25+) | — |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregate | 네이티브 (`WITHIN GROUP`) | **미지원** — `UNSUPPORTED_OPERATION` throw | **미지원** — `UNSUPPORTED_OPERATION` throw | MySQL: CTE + `ROW_NUMBER() OVER (ORDER BY x)`로 에뮬, `rn = CEIL(N * p)` 행을 픽. [cookbook 레시피](./cookbook.md#cycle-time-percentile-report) 참고. |

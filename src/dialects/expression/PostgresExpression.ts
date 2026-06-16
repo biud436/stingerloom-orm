@@ -1,6 +1,7 @@
 import sql, { raw, join } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
 import type {
+  AggregateFilterOptions,
   CastKind,
   ColumnJsonMeta,
   DateAddUnit,
@@ -297,6 +298,13 @@ export class PostgresExpression implements DialectExpression {
     // downstream comparisons stay on integer arithmetic.
     const field = pgExtractField(component);
     return sql`CAST(EXTRACT(${raw(field)} FROM ${value}) AS INTEGER)`;
+  }
+
+  aggregateFilter(opts: AggregateFilterOptions): Sql {
+    // PostgreSQL supports the SQL-standard FILTER clause natively.
+    const { func, arg, distinct, condition } = opts;
+    const body = distinct ? sql`DISTINCT ${arg}` : arg;
+    return sql`${raw(func)}(${body}) FILTER (WHERE ${condition})`;
   }
 }
 

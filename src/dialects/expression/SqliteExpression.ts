@@ -1,6 +1,7 @@
 import sql, { raw } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
 import type {
+  AggregateFilterOptions,
   CastKind,
   ColumnJsonMeta,
   DateAddUnit,
@@ -189,6 +190,13 @@ export class SqliteExpression implements DialectExpression {
   dateComponent(value: Sql, component: DateComponent): Sql {
     const format = sqliteStrftimeFormat(component);
     return sql`CAST(strftime(${format}, ${value}) AS INTEGER)`;
+  }
+
+  aggregateFilter(opts: AggregateFilterOptions): Sql {
+    // SQLite (>= 3.30) supports the SQL-standard FILTER clause natively.
+    const { func, arg, distinct, condition } = opts;
+    const body = distinct ? sql`DISTINCT ${arg}` : arg;
+    return sql`${raw(func)}(${body}) FILTER (WHERE ${condition})`;
   }
 }
 
