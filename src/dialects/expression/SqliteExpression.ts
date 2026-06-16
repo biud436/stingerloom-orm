@@ -3,6 +3,7 @@ import type { Sql } from "sql-template-tag";
 import { inlineFlagPrefix } from "../../core/expressions/RegexPattern";
 import type {
   AggregateFilterOptions,
+  ArrayOperator,
   CastKind,
   ColumnJsonMeta,
   DateAddUnit,
@@ -206,6 +207,19 @@ export class SqliteExpression implements DialectExpression {
     // a `regexp` UDF that runs the pattern (inline `(?ims)` prefix included)
     // through a JS RegExp.
     return sql`${column} REGEXP ${inlineFlagPrefix(flags) + pattern}`;
+  }
+
+  arrayPredicate(
+    _column: Sql,
+    _operator: ArrayOperator,
+    _values: unknown[],
+  ): Sql {
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_DATABASE,
+      "Array operators (@>, &&, <@) are PostgreSQL-only — SQLite has no array " +
+        "column type. Model the data as a JSON array and use the JSON path " +
+        "DSL (e.g. col.contains(...)), or a junction table.",
+    );
   }
 }
 

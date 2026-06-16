@@ -1,7 +1,8 @@
 import sql, { raw, join } from "sql-template-tag";
-import type { Sql } from "sql-template-tag";
+import type { Sql, RawValue } from "sql-template-tag";
 import type {
   AggregateFilterOptions,
+  ArrayOperator,
   CastKind,
   ColumnJsonMeta,
   DateAddUnit,
@@ -312,6 +313,21 @@ export class PostgresExpression implements DialectExpression {
   regexMatch(column: Sql, pattern: string, flags: RegexMatchFlags): Sql {
     // PostgreSQL ARE: `~` matches, inline `(?ims)` options handled natively.
     return sql`${column} ~ ${inlineFlagPrefix(flags) + pattern}`;
+  }
+
+  arrayPredicate(
+    column: Sql,
+    operator: ArrayOperator,
+    values: unknown[],
+  ): Sql {
+    // Bind the array as one parameter — node-postgres serializes a JS array
+    // to a PG array literal, and PostgreSQL infers the element type from the
+    // column, so there is no ARRAY[...] construction or empty-array cast.
+    const op =
+      operator === "contains" ? "@>" : operator === "overlaps" ? "&&" : "<@";
+    // The whole array is one bound parameter (not expanded) — node-postgres
+    // serializes it to a PG array literal.
+    return sql`${column} ${raw(op)} ${values as unknown as RawValue}`;
   }
 }
 

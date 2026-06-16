@@ -259,6 +259,23 @@ export interface DialectExpression {
   regexMatch(column: Sql, pattern: string, flags: RegexMatchFlags): Sql;
 
   /**
+   * Array predicate for an array-typed column — the {@link ArrayOperator}
+   * selects PostgreSQL's `@>` (contains), `&&` (overlaps), or `<@` (contained
+   * by). The value array is bound as a single parameter so node-postgres
+   * serializes it to a typed array literal and PostgreSQL infers the element
+   * type from the column (no `ARRAY[...]` construction or empty-array cast).
+   *
+   * - PostgreSQL: `column @>/&&/<@ $1`.
+   * - MySQL / SQLite: no array column type — throws
+   *   `OrmError(UNSUPPORTED_DATABASE)`.
+   *
+   * @param column - Already-rendered column identifier fragment.
+   * @param operator - Which array operator to emit.
+   * @param values - The value array (bound as one parameter).
+   */
+  arrayPredicate(column: Sql, operator: ArrayOperator, values: unknown[]): Sql;
+
+  /**
    * Render an aggregate with a `FILTER (WHERE …)` clause — restrict which
    * rows an aggregate sees without a surrounding `GROUP BY` rewrite.
    *
@@ -291,6 +308,12 @@ export interface RegexMatchFlags {
   readonly multiline: boolean;
   readonly dotAll: boolean;
 }
+
+/**
+ * PostgreSQL array operators passed to {@link DialectExpression.arrayPredicate}:
+ * `contains` (`@>`), `overlaps` (`&&`), `containedBy` (`<@`).
+ */
+export type ArrayOperator = "contains" | "overlaps" | "containedBy";
 
 export interface AggregateFilterOptions {
   /** Aggregate function name, e.g. `"COUNT"` / `"SUM"`. */
