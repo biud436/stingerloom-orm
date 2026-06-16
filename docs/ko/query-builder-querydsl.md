@@ -807,6 +807,23 @@ qb.where(a.body.matchAgainst("spam").not());
 
 `options.language`는 PostgreSQL 전용, `options.mode`는 MySQL 전용이라 각 dialect는 상대 옵션을 무시합니다. 다중 컬럼 매칭은 `Conditions.fullTextSearch([c1, c2], query, options)`를 쓰세요. `.and()` / `.or()` / `.not()`로 합성됩니다.
 
+## 배열 연산자 (PostgreSQL) — `.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`
+
+PostgreSQL `array` 컬럼용 연산자로, JSON 경로 DSL과 대칭입니다. 세 가지 배열 포함 연산을 제공합니다.
+
+```typescript
+const u = qAlias(User, "u");
+
+qb.where(u.tags.arrayContains(["admin", "beta"]));     // tags @> $1   (전부 포함)
+qb.where(u.tags.arrayOverlaps(["vip", "pro"]));        // tags && $1   (하나라도 겹침)
+qb.where(u.tags.arrayContainedBy(allowedTags));        // tags <@ $1   (부분집합)
+qb.where(u.tags.arrayContains(["admin"]).not());       // NOT (...)
+```
+
+값 배열은 **단일 파라미터**로 바인딩됩니다. node-postgres가 이를 PostgreSQL 배열 리터럴로 직렬화하고 엔진이 컬럼에서 원소 타입을 추론하므로, `ARRAY[...]` 구성이나 빈 배열 캐스트가 필요 없습니다. 결과 `ColumnCondition`은 `.and()` / `.or()` / `.not()`로 합성됩니다.
+
+**PostgreSQL 전용**입니다. MySQL과 SQLite는 네이티브 배열 컬럼 타입이 없어 `OrmError(UNSUPPORTED_DATABASE)`를 던지며, 데이터를 JSON 배열(→ JSON 경로 DSL)이나 정션 테이블로 모델링하라는 안내를 제공합니다. 엔티티 속성이 원시 배열(`string[]`, `number[]` 등)로 타입된 `qAlias()` 컬럼에서 이 메서드들이 노출되고, 객체 배열은 JSON 경로 표현식으로 매핑됩니다.
+
 ## 한눈에 보기
 
 | 하고 싶은 일 | 메서드 |
@@ -825,6 +842,7 @@ qb.where(a.body.matchAgainst("spam").not());
 | Row-value 튜플 | `Expressions.tuple(c1, c2, …).in(rows)` / `.notIn(rows)` / `.eq(row)` — 복합 PK 비교 |
 | 정규식 매칭 | `.matches(pattern)` — 문자열 또는 `RegExp`(`i`/`m`/`s` 플래그); `.not()`으로 부정. PG `~`, MySQL/SQLite `REGEXP` |
 | 전문 검색 | `.matchAgainst(query, { language?, mode? })` — PG `to_tsvector @@ plainto_tsquery`, MySQL `MATCH … AGAINST`, SQLite throw |
+| 배열 연산자 (PG) | `.arrayContains(vals)` `@>`, `.arrayOverlaps(vals)` `&&`, `.arrayContainedBy(vals)` `<@` — PostgreSQL 전용 |
 | CASE 표현식 | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject)...end()` |
 | CASE 단축 | `Expressions.iff(cond, a, b)`; `Expressions.mapValues(subject, { k: v }, default?)`; `Expressions.buckets(subject, [[t, label], …], default?, { op? })` |
 | 문자열 / 숫자 / 수학 | `.toLowerCase/.toUpperCase/.trim/.length/.substring/.concat/.indexOf/.replace`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
@@ -848,6 +866,7 @@ qb.where(a.body.matchAgainst("spam").not());
 | 조건부 집계 (`.filter()`, `countIf`, `sumIf`) | 네이티브 `FILTER (WHERE …)` | `FUNC(CASE WHEN … THEN … END)`로 변환 | 네이티브 `FILTER (WHERE …)` (3.30+) | MySQL에서 `COUNT(*)`는 `COUNT(CASE WHEN … THEN 1 END)`. NULL 의미는 dialect 간 동일. |
 | Row-value 튜플 (`Expressions.tuple().in/notIn/eq`) | 네이티브 | 네이티브 | 네이티브 (3.15+) | 식별자 따옴표 외에는 dialect 간 SQL 동일. |
 | 정규식 매칭 (`.matches()`) | 네이티브 `~` (ARE) | 네이티브 `REGEXP` (ICU, **기본 대소문자 무시**) | 커넥터가 등록한 `regexp` UDF 경유 `REGEXP` | 패턴은 파라미터 바인딩. `i` 플래그는 이식성 있음, `m`/`s`는 엔진별. MySQL 대소문자 구분은 바이너리 콜레이션 필요. |
+| 배열 연산자 (`.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`) | 네이티브 `@>` / `&&` / `<@` | **미지원** — `UNSUPPORTED_DATABASE` throw | **미지원** — `UNSUPPORTED_DATABASE` throw | MySQL/SQLite는 네이티브 배열 타입 없음 — JSON 배열(JSON 경로 DSL)이나 정션 테이블로 모델링. 값 배열은 단일 파라미터 바인딩. |
 | `coalesce` / `nullif` | 네이티브 | 네이티브 | 네이티브 | — |
 | Window 함수 (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | 네이티브 | 네이티브 (8.0+) | 네이티브 (3.25+) | — |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregate | 네이티브 (`WITHIN GROUP`) | **미지원** — `UNSUPPORTED_OPERATION` throw | **미지원** — `UNSUPPORTED_OPERATION` throw | MySQL: CTE + `ROW_NUMBER() OVER (ORDER BY x)`로 에뮬, `rn = CEIL(N * p)` 행을 픽. [cookbook 레시피](./cookbook.md#cycle-time-percentile-report) 참고. |

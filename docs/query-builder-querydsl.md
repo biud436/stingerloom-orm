@@ -904,6 +904,33 @@ each dialect ignores the other's option. For multi-column matching use
 `Conditions.fullTextSearch([c1, c2], query, options)`. Compose with
 `.and()` / `.or()` / `.not()` like any other condition.
 
+## Array operators (PostgreSQL) — `.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`
+
+For PostgreSQL `array` columns, the symmetric counterpart of the JSON-path
+DSL — the three array containment operators:
+
+```typescript
+const u = qAlias(User, "u");
+
+qb.where(u.tags.arrayContains(["admin", "beta"]));     // tags @> $1   (has ALL)
+qb.where(u.tags.arrayOverlaps(["vip", "pro"]));        // tags && $1   (has ANY)
+qb.where(u.tags.arrayContainedBy(allowedTags));        // tags <@ $1   (subset of)
+qb.where(u.tags.arrayContains(["admin"]).not());       // NOT (...)
+```
+
+The value array is bound as a **single parameter** — node-postgres
+serializes it to a PostgreSQL array literal and the engine infers the
+element type from the column, so there is no `ARRAY[...]` construction and
+empty arrays need no cast. The resulting `ColumnCondition` composes through
+`.and()` / `.or()` / `.not()`.
+
+These are **PostgreSQL-only**: MySQL and SQLite have no native array column
+type, so the renderers throw `OrmError(UNSUPPORTED_DATABASE)` with guidance
+to model the data as a JSON array (and use the JSON-path DSL) or a junction
+table. A `qAlias()` column whose entity property is typed as a primitive
+array (`string[]`, `number[]`, …) exposes these methods; object arrays map
+to the JSON-path expression instead.
+
 ## Method Summary
 
 | Category              | Methods                                                                                         |
@@ -922,6 +949,7 @@ each dialect ignores the other's option. For multi-column matching use
 | Row-value tuples      | `Expressions.tuple(c1, c2, …).in(rows)` / `.notIn(rows)` / `.eq(row)` — composite-PK comparison |
 | Regular expressions   | `.matches(pattern)` — string or `RegExp` (`i`/`m`/`s` flags); `.not()` to negate. PG `~`, MySQL/SQLite `REGEXP` |
 | Full-text search      | `.matchAgainst(query, { language?, mode? })` — PG `to_tsvector @@ plainto_tsquery`, MySQL `MATCH … AGAINST`, SQLite throws |
+| Array operators (PG)  | `.arrayContains(vals)` `@>`, `.arrayOverlaps(vals)` `&&`, `.arrayContainedBy(vals)` `<@` — PostgreSQL-only |
 | CASE expressions      | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject).when(val, result)...end()` |
 | CASE shortcuts        | `Expressions.iff(cond, a, b)`; `Expressions.mapValues(subject, { k: v }, default?)`; `Expressions.buckets(subject, [[t, label], …], default?, { op? })` |
 | String / numeric / math | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring()`, `.concat()`, `.indexOf()`, `.replace()`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
@@ -942,6 +970,7 @@ When an expression has no equivalent on the active dialect, the renderer throws 
 | Conditional aggregates (`.filter()`, `countIf`, `sumIf`) | Native `FILTER (WHERE …)` | Rewritten to `FUNC(CASE WHEN … THEN … END)` | Native `FILTER (WHERE …)` (3.30+) | `COUNT(*)` becomes `COUNT(CASE WHEN … THEN 1 END)` on MySQL. NULL semantics match across dialects. |
 | Row-value tuples (`Expressions.tuple().in/notIn/eq`) | Native | Native | Native (3.15+) | Identical SQL across dialects except identifier quoting. |
 | Regex match (`.matches()`) | Native `~` (ARE) | Native `REGEXP` (ICU, **case-insensitive by default**) | `REGEXP` via connector-registered `regexp` UDF | Pattern is bound as a parameter. `i` flag portable; `m`/`s` engine-specific. MySQL needs a binary collation for case-sensitive matching. |
+| Array operators (`.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`) | Native `@>` / `&&` / `<@` | **Unsupported** — throws `UNSUPPORTED_DATABASE` | **Unsupported** — throws `UNSUPPORTED_DATABASE` | No native array column type on MySQL/SQLite — model as a JSON array (JSON-path DSL) or junction table. Value array bound as one parameter. |
 | `coalesce` / `nullif` | Native | Native | Native | — |
 | Window functions (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | Native | Native (8.0+) | Native (3.25+) | — |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregates | Native (`WITHIN GROUP`) | **Unsupported** — throws `UNSUPPORTED_OPERATION` | **Unsupported** — throws `UNSUPPORTED_OPERATION` | MySQL: emulate with CTE + `ROW_NUMBER() OVER (ORDER BY x)` and pick `rn = CEIL(N * p)`. See [the cookbook recipe](./cookbook.md#cycle-time-percentile-report). |

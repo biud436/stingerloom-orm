@@ -96,6 +96,7 @@ import { ExplainResult } from "./ExplainResult";
 import { ExplainQueryHandler } from "./ExplainQueryHandler";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import type {
+  ArrayOperator,
   CastKind,
   DateAddUnit,
   DateComponent,
@@ -717,6 +718,63 @@ export class ColumnExpression {
     });
   }
 
+  /**
+   * PostgreSQL array containment — `column @> ARRAY[...]`: true when this
+   * array column contains **all** of `values`. The symmetric counterpart of
+   * the JSON-path `.contains()`.
+   *
+   * PostgreSQL-only; MySQL/SQLite throw `OrmError(UNSUPPORTED_DATABASE)` (no
+   * native array column type). The value array is bound as a single
+   * parameter. Negate with `.not()`.
+   *
+   * @example
+   * ```ts
+   * const u = qAlias(User, "u");
+   * qb.where(u.tags.arrayContains(["admin", "beta"]));   // tags @> $1
+   * ```
+   */
+  arrayContains(values: unknown[]): ColumnCondition {
+    return this.arrayPredicate("contains", values);
+  }
+
+  /**
+   * PostgreSQL array overlap — `column && ARRAY[...]`: true when this array
+   * column shares **at least one** element with `values`. PostgreSQL-only.
+   */
+  arrayOverlaps(values: unknown[]): ColumnCondition {
+    return this.arrayPredicate("overlaps", values);
+  }
+
+  /**
+   * PostgreSQL array containment (reversed) — `column <@ ARRAY[...]`: true
+   * when **every** element of this array column appears in `values`.
+   * PostgreSQL-only.
+   */
+  arrayContainedBy(values: unknown[]): ColumnCondition {
+    return this.arrayPredicate("containedBy", values);
+  }
+
+  private arrayPredicate(
+    operator: ArrayOperator,
+    values: unknown[],
+  ): ColumnCondition {
+    return new ColumnCondition(
+      this.ref,
+      "_ARRAY",
+      values,
+      (qualified, dialect) => {
+        if (!dialect) {
+          throw new OrmError(
+            OrmErrorCode.INVALID_QUERY,
+            "Array operators need a dialect-bound query builder. Use them " +
+              "inside em.createQueryBuilder(...).",
+          );
+        }
+        return dialect.arrayPredicate(raw(qualified), operator, values);
+      },
+    );
+  }
+
   // ── Ordering helpers (Tier 1) ──────────────────────────
 
   /** Ascending ORDER BY on this column. */
@@ -1059,9 +1117,22 @@ export type QEntity<T> = {
     | null
     | undefined
     ? ColumnExpression
-    : T[K] extends object
-      ? JsonPathExpression
-      : ColumnExpression;
+    : // Primitive-element arrays are PostgreSQL `type: "array"` columns —
+      // map them to ColumnExpression (which carries arrayContains / overlaps
+      // / containedBy), matching the runtime proxy that returns a plain
+      // ColumnExpression for any non-json/jsonb column. Arrays of objects
+      // (JSONB documents) fall through to the JSON-path expression below.
+      NonNullable<T[K]> extends readonly (
+          | string
+          | number
+          | boolean
+          | bigint
+          | Date
+        )[]
+      ? ColumnExpression
+      : T[K] extends object
+        ? JsonPathExpression
+        : ColumnExpression;
 } & EntityRef<T> & QEntityDynamicAccess;
 
 /**

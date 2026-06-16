@@ -2,6 +2,7 @@ import sql, { raw, join } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
 import type {
   AggregateFilterOptions,
+  ArrayOperator,
   CastKind,
   ColumnJsonMeta,
   DateAddUnit,
@@ -11,6 +12,8 @@ import type {
   FullTextSearchOptions,
   RegexMatchFlags,
 } from "../DialectExpression";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { inlineFlagPrefix } from "../../core/expressions/RegexPattern";
 
 /**
@@ -217,6 +220,19 @@ export class MySqlExpression implements DialectExpression {
   regexMatch(column: Sql, pattern: string, flags: RegexMatchFlags): Sql {
     // MySQL 8 / MariaDB 10.0.5+ ICU regex: `REGEXP`, inline `(?ims)` honored.
     return sql`${column} REGEXP ${inlineFlagPrefix(flags) + pattern}`;
+  }
+
+  arrayPredicate(
+    _column: Sql,
+    _operator: ArrayOperator,
+    _values: unknown[],
+  ): Sql {
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_DATABASE,
+      "Array operators (@>, &&, <@) are PostgreSQL-only — MySQL has no array " +
+        "column type. Model the data as a JSON array and use the JSON path " +
+        "DSL (e.g. col.contains(...)), or a junction table.",
+    );
   }
 }
 
