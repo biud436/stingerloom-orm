@@ -872,6 +872,38 @@ Engine notes:
   `regexp` UDF on connect that runs patterns through JS `RegExp`. A hostile
   pattern can cause ReDoS, so validate user-supplied patterns before use.
 
+## Full-text search — `.matchAgainst(query, options?)`
+
+`.matchAgainst()` is the `qAlias()` counterpart of `find({ search })` —
+a full-text predicate over a single column, with the query bound as a
+parameter:
+
+```typescript
+const a = qAlias(Article, "a");
+
+qb.where(a.body.matchAgainst("typescript orm"));
+// PostgreSQL:  to_tsvector($1, "a"."body") @@ plainto_tsquery($2, $3)
+// MySQL:       MATCH(`a`.`body`) AGAINST(? IN BOOLEAN MODE)
+// SQLite:      throws OrmError(UNSUPPORTED_DATABASE)
+
+qb.where(a.body.matchAgainst("orm", { mode: "natural" }));   // MySQL mode
+qb.where(a.body.matchAgainst("bonjour", { language: "french" })); // PG config
+qb.where(a.body.matchAgainst("spam").not());
+```
+
+- **PostgreSQL**: `to_tsvector(language, col) @@ plainto_tsquery(language, query)`
+  (`options.language`, default `"english"`).
+- **MySQL**: `MATCH(col) AGAINST(query IN BOOLEAN|NATURAL LANGUAGE MODE)`
+  (`options.mode`, default `"boolean"`) — the column needs a `FULLTEXT`
+  index.
+- **SQLite**: throws `OrmError(UNSUPPORTED_DATABASE)`; use FTS5 virtual
+  tables with `em.query()`.
+
+`options.language` is PostgreSQL-only and `options.mode` is MySQL-only —
+each dialect ignores the other's option. For multi-column matching use
+`Conditions.fullTextSearch([c1, c2], query, options)`. Compose with
+`.and()` / `.or()` / `.not()` like any other condition.
+
 ## Method Summary
 
 | Category              | Methods                                                                                         |
@@ -889,6 +921,7 @@ Engine notes:
 | Subquery compare      | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | Row-value tuples      | `Expressions.tuple(c1, c2, …).in(rows)` / `.notIn(rows)` / `.eq(row)` — composite-PK comparison |
 | Regular expressions   | `.matches(pattern)` — string or `RegExp` (`i`/`m`/`s` flags); `.not()` to negate. PG `~`, MySQL/SQLite `REGEXP` |
+| Full-text search      | `.matchAgainst(query, { language?, mode? })` — PG `to_tsvector @@ plainto_tsquery`, MySQL `MATCH … AGAINST`, SQLite throws |
 | CASE expressions      | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject).when(val, result)...end()` |
 | CASE shortcuts        | `Expressions.iff(cond, a, b)`; `Expressions.mapValues(subject, { k: v }, default?)`; `Expressions.buckets(subject, [[t, label], …], default?, { op? })` |
 | String / numeric / math | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring()`, `.concat()`, `.indexOf()`, `.replace()`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
@@ -917,7 +950,7 @@ When an expression has no equivalent on the active dialect, the renderer throws 
 | `dateDiff(a, b, unit)` — day / hour / minute / second | Epoch seconds via `EXTRACT(EPOCH ...)` | `TIMESTAMPDIFF(...)` | `julianday()` * factor | Exact on all three. |
 | `dateAdd(value, n, unit)` | `value + INTERVAL 'N unit'` | `DATE_ADD(value, INTERVAL N unit)` | `datetime(value, '+N unit')` modifier | — |
 | `random()` | `random()` returns `[0, 1)` | `RAND()` returns `[0, 1)` | `RANDOM()` returns 64-bit signed integer | SQLite callers should normalize to `[0, 1)` if they need a fraction. |
-| Full-text search (`Expressions.fullTextSearch`) | `to_tsvector / @@` (tsvector pipeline) | `MATCH() AGAINST(...)` (FULLTEXT index required) | **Unsupported via DSL** — throws `UNSUPPORTED_DATABASE` | SQLite: use FTS5 virtual tables with `em.query()`. |
+| Full-text search (`.matchAgainst()` / `Conditions.fullTextSearch`) | `to_tsvector / @@` (tsvector pipeline) | `MATCH() AGAINST(...)` (FULLTEXT index required) | **Unsupported via DSL** — throws `UNSUPPORTED_DATABASE` | SQLite: use FTS5 virtual tables with `em.query()`. |
 | `jsonContains` — object/array value | Native `@>` containment | Native `JSON_CONTAINS` | **Unsupported for objects/arrays** — throws `UNSUPPORTED_DATABASE` | SQLite supports scalar equality at a path — use `metadata.profile.role.eq('admin')` or raw SQL. |
 | `jsonExtract` / `jsonHasKey` / `jsonArrayLength` / `jsonTypeOf` | Native (`->`, `?`, `jsonb_array_length`, `jsonb_typeof`) | Native (`JSON_EXTRACT`, `JSON_CONTAINS_PATH`, `JSON_LENGTH`, `JSON_TYPE`) | Native (`json_extract`, `json_array_length`, `json_type`) | — |
 | `ilike` (case-insensitive LIKE) | Native `ILIKE` | `LIKE` is case-insensitive by default on `*_ci` collations; `LOWER()` fallback for `*_bin` | `LIKE` is ASCII-insensitive; non-ASCII unicode requires the ICU extension | — |

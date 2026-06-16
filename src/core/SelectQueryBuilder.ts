@@ -99,6 +99,7 @@ import type {
   CastKind,
   DateAddUnit,
   DateComponent,
+  FullTextSearchOptions,
 } from "../dialects/DialectExpression";
 import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
@@ -677,6 +678,43 @@ export class ColumnExpression {
         return sql`${col} REGEXP ${inlineFlagPrefix(flags) + resolved.pattern}`;
       },
     );
+  }
+
+  /**
+   * Full-text search predicate over this (single) column — the `qAlias()`
+   * counterpart of `find({ search })` / `Conditions.fullTextSearch`.
+   *
+   * - PostgreSQL: `to_tsvector(lang, col) @@ plainto_tsquery(lang, query)`
+   *   (`options.language`, default `"english"`).
+   * - MySQL: `MATCH(col) AGAINST(query IN BOOLEAN|NATURAL LANGUAGE MODE)`
+   *   (`options.mode`, default `"boolean"`; a `FULLTEXT` index is required).
+   * - SQLite: throws `OrmError(UNSUPPORTED_DATABASE)` — use FTS5 virtual
+   *   tables with `em.query()`.
+   *
+   * The query string is bound as a parameter. Negate with `.not()` and
+   * compose with `.and()` / `.or()`. For multi-column matching use
+   * `Conditions.fullTextSearch([c1, c2], query, options)`.
+   *
+   * @example
+   * ```ts
+   * const a = qAlias(Article, "a");
+   * qb.where(a.body.matchAgainst("typescript orm", { mode: "boolean" }));
+   * ```
+   */
+  matchAgainst(
+    query: string,
+    options?: FullTextSearchOptions,
+  ): ColumnCondition {
+    return new ColumnCondition(this.ref, "_FTS", query, (qualified, dialect) => {
+      if (!dialect) {
+        throw new OrmError(
+          OrmErrorCode.INVALID_QUERY,
+          "matchAgainst() needs a dialect-bound query builder — it has no " +
+            "dialect-agnostic form. Use it inside em.createQueryBuilder(...).",
+        );
+      }
+      return dialect.fullTextSearch(qualified, query, options);
+    });
   }
 
   // ── Ordering helpers (Tier 1) ──────────────────────────
