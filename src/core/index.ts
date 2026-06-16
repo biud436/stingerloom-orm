@@ -39,28 +39,4 @@ export * from "./WhereResolver";
 export * from "./ColumnTypeRegistry";
 export * from "./InheritanceResolver";
 export * from "./CompiledQuery";
-export * from "./expressions/JsonPathExpression";
-export * from "./expressions/ConditionLike";
-export * from "./expressions/OrderExpression";
-export * from "./expressions/AggregateExpression";
-export * from "./expressions/OrderedSetAggregateExpression";
-export * from "./expressions/LogicalCondition";
-export * from "./expressions/AliasedExpression";
-export * from "./expressions/ScalarExpression";
-export * from "./expressions/NullishExpression";
-export * from "./expressions/TemporalExpression";
-export * from "./expressions/CastExpression";
-export * from "./expressions/DateComponentExpression";
-export * from "./expressions/SubqueryExpression";
-export * from "./expressions/CaseExpression";
-export * from "./expressions/StringExpression";
-export * from "./expressions/NumericExpression";
-export * from "./expressions/DateArithmeticExpression";
-export * from "./expressions/WindowExpression";
-export * from "./expressions/WindowFunctions";
-export * from "./expressions/RawExpression";
-export * from "./expressions/likeEscape";
-export {
-  getExpressionContext,
-  type SelectExpressionContext,
-} from "./expressions/ComputedColumnExpression";
+export * from "./expressions";
