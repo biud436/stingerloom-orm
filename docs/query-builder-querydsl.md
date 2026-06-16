@@ -432,6 +432,38 @@ qb.where(exp.exists(em.createQueryBuilder(Post, "p")
 rather than wrapping in a redundant `NOT (…)`, keeping output SQL
 clean.
 
+## Row-value tuples — `Expressions.tuple(...).in(...)` / `.notIn(...)` / `.eq(...)`
+
+`Expressions.tuple(c1, c2, …)` builds a SQL row value `(c1, c2, …)` so
+several columns are compared at once — the natural fit for composite-PK
+lookups. Instead of unrolling `(a = ? AND b = ?) OR (a = ? AND b = ?)`,
+write a single `(a, b) IN ((?, ?), (?, ?))`:
+
+```typescript
+const m = qAlias(Membership, "m");
+
+qb.where(
+  Expressions.tuple(m.tenantId, m.userId).in([
+    [1, "alice"],
+    [1, "bob"],
+    [2, "carol"],
+  ]),
+);
+// WHERE ("m"."tenantId", "m"."userId") IN ((?, ?), (?, ?), (?, ?))
+
+qb.where(Expressions.tuple(m.tenantId, m.userId).eq([1, "alice"]));
+// WHERE ("m"."tenantId", "m"."userId") = (?, ?)
+```
+
+`.notIn(rows)` negates the membership. Every value row must match the
+column count — a mismatch throws `OrmError(INVALID_QUERY)`. An empty
+`.in([])` degenerates to a match-nothing `1 = 0` and `.notIn([])` to an
+exclude-nothing `1 = 1`, mirroring the scalar `IN` guard. Row-value
+comparison is native on PostgreSQL, MySQL, and SQLite (≥ 3.15), so the
+emitted SQL is identical across dialects bar identifier quoting. Columns
+accept `qAlias()` expressions or `"alias.prop"` strings, and the resulting
+`TupleCondition` composes through `Expressions.and` / `.or` / `.not`.
+
 ## `CASE WHEN … THEN …` — `Expressions.caseBuilder()` / `Expressions.cases(...)`
 
 Two fluent builders cover the two forms SQL supports:
@@ -817,6 +849,7 @@ having to know.
 | Type casts            | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` — dialect-specific type names |
 | Date components       | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfMonth()`, `.dayOfYear()`, `.week()` |
 | Subquery compare      | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
+| Row-value tuples      | `Expressions.tuple(c1, c2, …).in(rows)` / `.notIn(rows)` / `.eq(row)` — composite-PK comparison |
 | CASE expressions      | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject).when(val, result)...end()` |
 | CASE shortcuts        | `Expressions.iff(cond, a, b)`; `Expressions.mapValues(subject, { k: v }, default?)`; `Expressions.buckets(subject, [[t, label], …], default?, { op? })` |
 | String / numeric / math | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring()`, `.concat()`, `.indexOf()`, `.replace()`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
@@ -835,6 +868,7 @@ When an expression has no equivalent on the active dialect, the renderer throws 
 |------------|------------|-------|--------|-------|
 | Aggregates (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | Native | Native | Native | — |
 | Conditional aggregates (`.filter()`, `countIf`, `sumIf`) | Native `FILTER (WHERE …)` | Rewritten to `FUNC(CASE WHEN … THEN … END)` | Native `FILTER (WHERE …)` (3.30+) | `COUNT(*)` becomes `COUNT(CASE WHEN … THEN 1 END)` on MySQL. NULL semantics match across dialects. |
+| Row-value tuples (`Expressions.tuple().in/notIn/eq`) | Native | Native | Native (3.15+) | Identical SQL across dialects except identifier quoting. |
 | `coalesce` / `nullif` | Native | Native | Native | — |
 | Window functions (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | Native | Native (8.0+) | Native (3.25+) | — |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregates | Native (`WITHIN GROUP`) | **Unsupported** — throws `UNSUPPORTED_OPERATION` | **Unsupported** — throws `UNSUPPORTED_OPERATION` | MySQL: emulate with CTE + `ROW_NUMBER() OVER (ORDER BY x)` and pick `rn = CEIL(N * p)`. See [the cookbook recipe](./cookbook.md#cycle-time-percentile-report). |

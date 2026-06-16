@@ -30,6 +30,7 @@ export * from "./DateArithmeticExpression";
 export * from "./WindowExpression";
 export * from "./WindowFunctions";
 export * from "./RawExpression";
+export * from "./TupleExpression";
 export * from "./likeEscape";
 export {
   getExpressionContext,

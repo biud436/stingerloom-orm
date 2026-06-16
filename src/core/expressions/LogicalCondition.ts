@@ -39,6 +39,11 @@ import {
 } from "./DateArithmeticExpression";
 import { raw as rawFactory } from "./RawExpression";
 import {
+  tuple as tupleFactory,
+  TupleExpression,
+  type TupleColumn,
+} from "./TupleExpression";
+import {
   percentileCont as percentileContFactory,
   percentileDisc as percentileDiscFactory,
   mode as modeFactory,
@@ -185,6 +190,20 @@ export const Expressions = {
    */
   not(cond: ConditionLike): LogicalCondition {
     return new LogicalCondition("NOT", [cond]);
+  },
+
+  /**
+   * Row-value (tuple) constructor — `(c1, c2, …)` — for comparing several
+   * columns at once. The natural fit for composite-PK lookups.
+   *
+   * @example
+   * ```ts
+   * Expressions.tuple(u.tenantId, u.userId).in([[1, "alice"], [2, "bob"]])
+   * // (tenant_id, user_id) IN ((?, ?), (?, ?))
+   * ```
+   */
+  tuple(...columns: TupleColumn[]): TupleExpression {
+    return tupleFactory(...columns);
   },
 
   /**

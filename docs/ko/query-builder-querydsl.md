@@ -479,6 +479,28 @@ qb.where(exp.exists(em.createQueryBuilder(Post, "p")
 
 `ExistsCondition.not()`은 전체를 `NOT (…)`으로 감싸지 않고 내부의 `EXISTS` ↔ `NOT EXISTS` 플래그만 뒤집습니다. SQL이 깔끔하게 나와요.
 
+## Row-value 튜플 — `Expressions.tuple(...).in(...)` / `.notIn(...)` / `.eq(...)`
+
+`Expressions.tuple(c1, c2, …)`는 SQL row value `(c1, c2, …)`를 만들어 여러 컬럼을 한 번에 비교합니다. 복합 PK 조회에 딱 맞아요. `(a = ? AND b = ?) OR (a = ? AND b = ?)`로 풀어 쓰는 대신 `(a, b) IN ((?, ?), (?, ?))` 하나로 표현합니다.
+
+```typescript
+const m = qAlias(Membership, "m");
+
+qb.where(
+  Expressions.tuple(m.tenantId, m.userId).in([
+    [1, "alice"],
+    [1, "bob"],
+    [2, "carol"],
+  ]),
+);
+// WHERE ("m"."tenantId", "m"."userId") IN ((?, ?), (?, ?), (?, ?))
+
+qb.where(Expressions.tuple(m.tenantId, m.userId).eq([1, "alice"]));
+// WHERE ("m"."tenantId", "m"."userId") = (?, ?)
+```
+
+`.notIn(rows)`은 부정입니다. 모든 값 행은 컬럼 개수와 일치해야 하며, 어긋나면 `OrmError(INVALID_QUERY)`를 던집니다. 빈 `.in([])`은 "아무것도 매칭 안 함"인 `1 = 0`으로, `.notIn([])`은 "아무것도 제외 안 함"인 `1 = 1`로 축약돼 스칼라 `IN` 가드와 동일하게 동작합니다. Row-value 비교는 PostgreSQL · MySQL · SQLite(≥ 3.15) 모두 네이티브라, 식별자 따옴표만 빼면 SQL이 dialect 간 동일합니다. 컬럼에는 `qAlias()` 표현식이나 `"alias.prop"` 문자열을 쓸 수 있고, 결과 `TupleCondition`은 `Expressions.and` / `.or` / `.not`로 합성됩니다.
+
 ## 문자열 / 숫자 / 수학 — JS와 같은 이름
 
 문자열·숫자·수학 헬퍼는 자바스크립트 개발자 손에 이미 익은 이름(`String.prototype`, 산술 연산자, `Math.*`)을 그대로 노출합니다. 결과는 전부 `ScalarExpression`이라 `.as()` / 캐스팅 / coalesce / 비교 / 논리 결합에 바로 이어집니다.
@@ -753,6 +775,7 @@ const user = await em.createQueryBuilder(User, "u")
 | 타입 변환 | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` |
 | 날짜 컴포넌트 | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfYear()`, `.week()` |
 | 서브쿼리 비교 | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
+| Row-value 튜플 | `Expressions.tuple(c1, c2, …).in(rows)` / `.notIn(rows)` / `.eq(row)` — 복합 PK 비교 |
 | CASE 표현식 | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject)...end()` |
 | CASE 단축 | `Expressions.iff(cond, a, b)`; `Expressions.mapValues(subject, { k: v }, default?)`; `Expressions.buckets(subject, [[t, label], …], default?, { op? })` |
 | 문자열 / 숫자 / 수학 | `.toLowerCase/.toUpperCase/.trim/.length/.substring/.concat/.indexOf/.replace`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
@@ -774,6 +797,7 @@ const user = await em.createQueryBuilder(User, "u")
 |--------|------------|-------|--------|------|
 | 집계 (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | 네이티브 | 네이티브 | 네이티브 | — |
 | 조건부 집계 (`.filter()`, `countIf`, `sumIf`) | 네이티브 `FILTER (WHERE …)` | `FUNC(CASE WHEN … THEN … END)`로 변환 | 네이티브 `FILTER (WHERE …)` (3.30+) | MySQL에서 `COUNT(*)`는 `COUNT(CASE WHEN … THEN 1 END)`. NULL 의미는 dialect 간 동일. |
+| Row-value 튜플 (`Expressions.tuple().in/notIn/eq`) | 네이티브 | 네이티브 | 네이티브 (3.15+) | 식별자 따옴표 외에는 dialect 간 SQL 동일. |
 | `coalesce` / `nullif` | 네이티브 | 네이티브 | 네이티브 | — |
 | Window 함수 (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | 네이티브 | 네이티브 (8.0+) | 네이티브 (3.25+) | — |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregate | 네이티브 (`WITHIN GROUP`) | **미지원** — `UNSUPPORTED_OPERATION` throw | **미지원** — `UNSUPPORTED_OPERATION` throw | MySQL: CTE + `ROW_NUMBER() OVER (ORDER BY x)`로 에뮬, `rn = CEIL(N * p)` 행을 픽. [cookbook 레시피](./cookbook.md#cycle-time-percentile-report) 참고. |
