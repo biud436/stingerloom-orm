@@ -784,6 +784,29 @@ qb.where(u.slug.matches(/^[a-z0-9-]+$/).not());
 - **MySQL `REGEXP`는 비-바이너리 콜레이션에서 기본적으로 대소문자를 구분하지 않습니다.** 따라서 플래그 없는 `.matches("^a")`도 MySQL에서는 `A...`에 매칭됩니다. MySQL에서 대소문자를 구분하려면 바이너리 콜레이션을 쓰세요. PostgreSQL `~`와 SQLite UDF는 `i` 플래그가 없으면 대소문자를 구분합니다.
 - **SQLite**에는 내장 정규식 엔진이 없어, 연결 시 커넥터가 `regexp` UDF를 등록해 JS `RegExp`로 실행합니다. 악의적 패턴은 ReDoS를 유발할 수 있으니 사용자 입력 패턴은 검증 후 사용하세요.
 
+## 전문 검색 — `.matchAgainst(query, options?)`
+
+`.matchAgainst()`는 `find({ search })`의 `qAlias()` 짝으로, 단일 컬럼 전문 검색 조건을 만듭니다. query는 파라미터로 바인딩됩니다.
+
+```typescript
+const a = qAlias(Article, "a");
+
+qb.where(a.body.matchAgainst("typescript orm"));
+// PostgreSQL:  to_tsvector($1, "a"."body") @@ plainto_tsquery($2, $3)
+// MySQL:       MATCH(`a`.`body`) AGAINST(? IN BOOLEAN MODE)
+// SQLite:      OrmError(UNSUPPORTED_DATABASE) throw
+
+qb.where(a.body.matchAgainst("orm", { mode: "natural" }));        // MySQL 모드
+qb.where(a.body.matchAgainst("bonjour", { language: "french" })); // PG config
+qb.where(a.body.matchAgainst("spam").not());
+```
+
+- **PostgreSQL**: `to_tsvector(language, col) @@ plainto_tsquery(language, query)` (`options.language`, 기본 `"english"`).
+- **MySQL**: `MATCH(col) AGAINST(query IN BOOLEAN|NATURAL LANGUAGE MODE)` (`options.mode`, 기본 `"boolean"`) — 컬럼에 `FULLTEXT` 인덱스 필요.
+- **SQLite**: `OrmError(UNSUPPORTED_DATABASE)`를 던집니다. FTS5 가상 테이블 + `em.query()`를 사용하세요.
+
+`options.language`는 PostgreSQL 전용, `options.mode`는 MySQL 전용이라 각 dialect는 상대 옵션을 무시합니다. 다중 컬럼 매칭은 `Conditions.fullTextSearch([c1, c2], query, options)`를 쓰세요. `.and()` / `.or()` / `.not()`로 합성됩니다.
+
 ## 한눈에 보기
 
 | 하고 싶은 일 | 메서드 |
@@ -801,6 +824,7 @@ qb.where(u.slug.matches(/^[a-z0-9-]+$/).not());
 | 서브쿼리 비교 | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | Row-value 튜플 | `Expressions.tuple(c1, c2, …).in(rows)` / `.notIn(rows)` / `.eq(row)` — 복합 PK 비교 |
 | 정규식 매칭 | `.matches(pattern)` — 문자열 또는 `RegExp`(`i`/`m`/`s` 플래그); `.not()`으로 부정. PG `~`, MySQL/SQLite `REGEXP` |
+| 전문 검색 | `.matchAgainst(query, { language?, mode? })` — PG `to_tsvector @@ plainto_tsquery`, MySQL `MATCH … AGAINST`, SQLite throw |
 | CASE 표현식 | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject)...end()` |
 | CASE 단축 | `Expressions.iff(cond, a, b)`; `Expressions.mapValues(subject, { k: v }, default?)`; `Expressions.buckets(subject, [[t, label], …], default?, { op? })` |
 | 문자열 / 숫자 / 수학 | `.toLowerCase/.toUpperCase/.trim/.length/.substring/.concat/.indexOf/.replace`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
@@ -832,7 +856,7 @@ qb.where(u.slug.matches(/^[a-z0-9-]+$/).not());
 | `dateDiff(a, b, unit)` — day / hour / minute / second | `EXTRACT(EPOCH ...)` 기반 epoch 초 | `TIMESTAMPDIFF(...)` | `julianday()` × factor | 세 dialect 모두 정확. |
 | `dateAdd(value, n, unit)` | `value + INTERVAL 'N unit'` | `DATE_ADD(value, INTERVAL N unit)` | `datetime(value, '+N unit')` 수식자 | — |
 | `random()` | `random()` `[0, 1)` 반환 | `RAND()` `[0, 1)` 반환 | `RANDOM()` 64-bit signed integer 반환 | SQLite 사용자는 `[0, 1)`이 필요하면 직접 normalize. |
-| Full-text search (`Expressions.fullTextSearch`) | `to_tsvector / @@` (tsvector 파이프라인) | `MATCH() AGAINST(...)` (FULLTEXT 인덱스 필요) | **DSL 미지원** — `UNSUPPORTED_DATABASE` throw | SQLite는 FTS5 가상 테이블 + `em.query()`. |
+| Full-text search (`.matchAgainst()` / `Conditions.fullTextSearch`) | `to_tsvector / @@` (tsvector 파이프라인) | `MATCH() AGAINST(...)` (FULLTEXT 인덱스 필요) | **DSL 미지원** — `UNSUPPORTED_DATABASE` throw | SQLite는 FTS5 가상 테이블 + `em.query()`. |
 | `jsonContains` — object/array 값 | 네이티브 `@>` containment | 네이티브 `JSON_CONTAINS` | **object/array 미지원** — `UNSUPPORTED_DATABASE` throw | SQLite는 path scalar equality 지원 — `metadata.profile.role.eq('admin')` 형태나 raw SQL 사용. |
 | `jsonExtract` / `jsonHasKey` / `jsonArrayLength` / `jsonTypeOf` | 네이티브 (`->`, `?`, `jsonb_array_length`, `jsonb_typeof`) | 네이티브 (`JSON_EXTRACT`, `JSON_CONTAINS_PATH`, `JSON_LENGTH`, `JSON_TYPE`) | 네이티브 (`json_extract`, `json_array_length`, `json_type`) | — |
 | `ilike` (case-insensitive LIKE) | 네이티브 `ILIKE` | `*_ci` collation에서는 기본 `LIKE`가 case-insensitive, `*_bin`은 `LOWER()` fallback | `LIKE`는 ASCII만 case-insensitive, non-ASCII 유니코드는 ICU 확장 필요 | — |
