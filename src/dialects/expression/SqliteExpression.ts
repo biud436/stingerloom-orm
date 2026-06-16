@@ -1,5 +1,6 @@
 import sql, { raw } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
+import { inlineFlagPrefix } from "../../core/expressions/RegexPattern";
 import type {
   AggregateFilterOptions,
   CastKind,
@@ -9,6 +10,7 @@ import type {
   DateTruncUnit,
   DialectExpression,
   FullTextSearchOptions,
+  RegexMatchFlags,
 } from "../DialectExpression";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -197,6 +199,13 @@ export class SqliteExpression implements DialectExpression {
     const { func, arg, distinct, condition } = opts;
     const body = distinct ? sql`DISTINCT ${arg}` : arg;
     return sql`${raw(func)}(${body}) FILTER (WHERE ${condition})`;
+  }
+
+  regexMatch(column: Sql, pattern: string, flags: RegexMatchFlags): Sql {
+    // SQLite reserves REGEXP but ships no engine — SqliteConnector registers
+    // a `regexp` UDF that runs the pattern (inline `(?ims)` prefix included)
+    // through a JS RegExp.
+    return sql`${column} REGEXP ${inlineFlagPrefix(flags) + pattern}`;
   }
 }
 

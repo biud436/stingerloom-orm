@@ -9,7 +9,9 @@ import type {
   DateTruncUnit,
   DialectExpression,
   FullTextSearchOptions,
+  RegexMatchFlags,
 } from "../DialectExpression";
+import { inlineFlagPrefix } from "../../core/expressions/RegexPattern";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
@@ -305,6 +307,11 @@ export class PostgresExpression implements DialectExpression {
     const { func, arg, distinct, condition } = opts;
     const body = distinct ? sql`DISTINCT ${arg}` : arg;
     return sql`${raw(func)}(${body}) FILTER (WHERE ${condition})`;
+  }
+
+  regexMatch(column: Sql, pattern: string, flags: RegexMatchFlags): Sql {
+    // PostgreSQL ARE: `~` matches, inline `(?ims)` options handled natively.
+    return sql`${column} ~ ${inlineFlagPrefix(flags) + pattern}`;
   }
 }
 

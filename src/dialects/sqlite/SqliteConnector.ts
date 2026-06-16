@@ -11,6 +11,7 @@ import { SqliteConnection } from "./SqliteConnection";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DbVersion } from "../DbVersion";
+import { parseInlineFlags } from "../../core/expressions/RegexPattern";
 
 /**
  * SQLite connector implementation.
@@ -47,6 +48,10 @@ export class SqliteConnector extends IConnector {
       this.db.pragma("journal_mode = WAL");
       // Enable foreign key constraints
       this.db.pragma("foreign_keys = ON");
+      // Register the `regexp` UDF so `col REGEXP pattern` (emitted by
+      // `ColumnExpression.matches()`) works — better-sqlite3 reserves the
+      // operator but ships no engine. SQLite invokes `regexp(pattern, value)`.
+      this.registerRegexpFunction();
 
       // Detect SQLite version
       try {
@@ -67,6 +72,33 @@ export class SqliteConnector extends IConnector {
         "Check that the database path is valid and writable",
       );
     }
+  }
+
+  /**
+   * Register the `regexp(pattern, value)` scalar UDF backing the `REGEXP`
+   * operator. The pattern may carry a leading inline-flag group (`"(?i)"`),
+   * which {@link parseInlineFlags} maps to JS `RegExp` flags. Compiled
+   * patterns are memoized per connection so a `WHERE col REGEXP ?` scan does
+   * not recompile the `RegExp` for every row.
+   */
+  private registerRegexpFunction(): void {
+    if (!this.db) return;
+    const cache = new Map<string, RegExp>();
+    this.db.function(
+      "regexp",
+      { deterministic: true },
+      (pattern: unknown, value: unknown): number => {
+        if (value === null || value === undefined) return 0;
+        const key = String(pattern);
+        let re = cache.get(key);
+        if (!re) {
+          const { source, jsFlags } = parseInlineFlags(key);
+          re = new RegExp(source, jsFlags);
+          cache.set(key, re);
+        }
+        return re.test(String(value)) ? 1 : 0;
+      },
+    );
   }
 
   override getVersion(): DbVersion {

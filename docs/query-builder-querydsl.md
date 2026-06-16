@@ -834,6 +834,44 @@ elsewhere — so `utf8mb4_bin` collation on MySQL and the ASCII-only
 default LIKE on SQLite both produce the right answer without the caller
 having to know.
 
+## Regular expressions — `.matches(pattern)`
+
+`.matches()` builds a regex predicate. The argument is a raw pattern
+string or a JS `RegExp`; the pattern is always **bound as a parameter**, so
+there is no SQL-injection surface:
+
+```typescript
+const u = qAlias(User, "u");
+
+qb.where(u.email.matches("^[^@]+@example\\.com$"));
+// PostgreSQL:  "u"."email" ~ $1
+// MySQL:       `u`.`email` REGEXP ?
+// SQLite:      "u"."email" REGEXP ?      (served by the `regexp` UDF)
+
+qb.where(u.title.matches(/typescript/i));   // case-insensitive
+qb.where(u.slug.matches(/^[a-z0-9-]+$/).not());
+```
+
+A `RegExp`'s `i` / `m` / `s` flags are carried as an inline `(?ims)` option
+group prepended to the bound pattern — PostgreSQL ARE and MySQL/MariaDB ICU
+honor it natively, and the SQLite `regexp` UDF parses it back into JS
+`RegExp` flags. `g` / `u` / `y` are meaningless for a predicate and ignored.
+Negate with `.not()`, and compose with `.and()` / `.or()`.
+
+Engine notes:
+
+- **`i` (case-insensitive) is portable; `m` / `s` carry engine-specific
+  newline semantics** — pin behavior with a golden/integration test if you
+  depend on multiline or dotAll.
+- **MySQL `REGEXP` is case-insensitive by default** on non-binary
+  collations, so an *un*-flagged `.matches("^a")` already matches `A...`
+  there. Use a binary collation (or rely on the documented behavior) if you
+  need case sensitivity on MySQL. PostgreSQL `~` and the SQLite UDF are
+  case-sensitive unless the `i` flag is set.
+- **SQLite** has no built-in regex engine; the connector registers a
+  `regexp` UDF on connect that runs patterns through JS `RegExp`. A hostile
+  pattern can cause ReDoS, so validate user-supplied patterns before use.
+
 ## Method Summary
 
 | Category              | Methods                                                                                         |
@@ -850,6 +888,7 @@ having to know.
 | Date components       | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfMonth()`, `.dayOfYear()`, `.week()` |
 | Subquery compare      | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | Row-value tuples      | `Expressions.tuple(c1, c2, …).in(rows)` / `.notIn(rows)` / `.eq(row)` — composite-PK comparison |
+| Regular expressions   | `.matches(pattern)` — string or `RegExp` (`i`/`m`/`s` flags); `.not()` to negate. PG `~`, MySQL/SQLite `REGEXP` |
 | CASE expressions      | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject).when(val, result)...end()` |
 | CASE shortcuts        | `Expressions.iff(cond, a, b)`; `Expressions.mapValues(subject, { k: v }, default?)`; `Expressions.buckets(subject, [[t, label], …], default?, { op? })` |
 | String / numeric / math | `.toLowerCase()`, `.toUpperCase()`, `.trim()`, `.length()`, `.substring()`, `.concat()`, `.indexOf()`, `.replace()`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
@@ -869,6 +908,7 @@ When an expression has no equivalent on the active dialect, the renderer throws 
 | Aggregates (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | Native | Native | Native | — |
 | Conditional aggregates (`.filter()`, `countIf`, `sumIf`) | Native `FILTER (WHERE …)` | Rewritten to `FUNC(CASE WHEN … THEN … END)` | Native `FILTER (WHERE …)` (3.30+) | `COUNT(*)` becomes `COUNT(CASE WHEN … THEN 1 END)` on MySQL. NULL semantics match across dialects. |
 | Row-value tuples (`Expressions.tuple().in/notIn/eq`) | Native | Native | Native (3.15+) | Identical SQL across dialects except identifier quoting. |
+| Regex match (`.matches()`) | Native `~` (ARE) | Native `REGEXP` (ICU, **case-insensitive by default**) | `REGEXP` via connector-registered `regexp` UDF | Pattern is bound as a parameter. `i` flag portable; `m`/`s` engine-specific. MySQL needs a binary collation for case-sensitive matching. |
 | `coalesce` / `nullif` | Native | Native | Native | — |
 | Window functions (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | Native | Native (8.0+) | Native (3.25+) | — |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregates | Native (`WITHIN GROUP`) | **Unsupported** — throws `UNSUPPORTED_OPERATION` | **Unsupported** — throws `UNSUPPORTED_OPERATION` | MySQL: emulate with CTE + `ROW_NUMBER() OVER (ORDER BY x)` and pick `rn = CEIL(N * p)`. See [the cookbook recipe](./cookbook.md#cycle-time-percentile-report). |
