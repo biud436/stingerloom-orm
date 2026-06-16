@@ -63,6 +63,13 @@ export class AggregateExpression {
      * supply a stable default key.
      */
     readonly argRenderer?: AggregateArgRenderer,
+    /**
+     * Optional `FILTER (WHERE …)` predicate. When set, the aggregate only
+     * sees rows matching the condition — rendered natively on
+     * PostgreSQL/SQLite and rewritten to `FUNC(CASE WHEN … THEN … END)` on
+     * MySQL. Set via {@link filter}.
+     */
+    readonly filterCondition?: ConditionLike,
   ) {}
 
   /**
@@ -76,6 +83,38 @@ export class AggregateExpression {
       this.distinct,
       alias,
       this.argRenderer,
+      this.filterCondition,
+    );
+  }
+
+  /**
+   * Restrict this aggregate to rows matching `condition` via a SQL
+   * `FILTER (WHERE …)` clause.
+   *
+   * Lets several differently-scoped aggregates share one `GROUP BY` pass
+   * instead of separate queries — e.g. count active and churned users in a
+   * single scan. PostgreSQL/SQLite emit native `FILTER`; MySQL is rewritten
+   * to the equivalent `FUNC(CASE WHEN condition THEN arg END)`.
+   *
+   * @example
+   * ```ts
+   * const u = qAlias(User, "u");
+   * qb.select([
+   *   u.id.count().filter(u.status.eq("active")).as("active"),
+   *   u.id.count().filter(u.status.eq("churned")).as("churned"),
+   * ]);
+   * // PG/SQLite: COUNT("u"."id") FILTER (WHERE "u"."status" = $1) AS "active", …
+   * // MySQL:     COUNT(CASE WHEN `u`.`status` = ? THEN `u`.`id` END) AS `active`, …
+   * ```
+   */
+  filter(condition: ConditionLike): AggregateExpression {
+    return new AggregateExpression(
+      this.ref,
+      this.func,
+      this.distinct,
+      this.alias,
+      this.argRenderer,
+      condition,
     );
   }
 
@@ -108,6 +147,29 @@ export class AggregateExpression {
     } else {
       inner = sql`${raw(resolveColumn(this.ref))}`;
     }
+
+    if (this.filterCondition) {
+      const condition = this.filterCondition.resolve(resolveColumn, dialect);
+      if (dialect) {
+        return dialect.aggregateFilter({
+          func: this.func,
+          arg: inner,
+          // Detect the `*` wildcard from the rendered argument so both the
+          // direct (`ref === "*"`) and `Expressions.count("*")` (argRenderer)
+          // paths are recognized — MySQL must substitute `1` inside the CASE.
+          isStar: inner.sql.trim() === "*",
+          distinct: this.distinct,
+          condition,
+        });
+      }
+      // No dialect supplied (e.g. a HAVING comparison resolved without one):
+      // fall back to the SQL-standard FILTER form (PostgreSQL/SQLite).
+      if (this.distinct) {
+        return sql`${raw(this.func)}(DISTINCT ${inner}) FILTER (WHERE ${condition})`;
+      }
+      return sql`${raw(this.func)}(${inner}) FILTER (WHERE ${condition})`;
+    }
+
     if (this.distinct) {
       return sql`${raw(this.func)}(DISTINCT ${inner})`;
     }
@@ -323,8 +385,8 @@ export class AggregateCondition implements ConditionLike {
     readonly value: any,
   ) {}
 
-  resolve(resolveColumn: ColumnResolver): Sql {
-    const fn = this.aggregate.renderFunction(resolveColumn);
+  resolve(resolveColumn: ColumnResolver, dialect?: DialectExpression): Sql {
+    const fn = this.aggregate.renderFunction(resolveColumn, dialect);
     const op = this.operator;
 
     if (op === "BETWEEN") {

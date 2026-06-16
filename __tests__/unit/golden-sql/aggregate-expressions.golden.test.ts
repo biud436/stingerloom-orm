@@ -117,5 +117,135 @@ const orderedSetCases: GoldenCase[] = [
   },
 ];
 
+/**
+ * Aggregate `FILTER (WHERE …)` — native on PostgreSQL/SQLite, rewritten to
+ * `FUNC(CASE WHEN … THEN … END)` on MySQL. `COUNT(*)` substitutes a literal
+ * `1` inside the MySQL CASE because `*` is not a valid CASE result.
+ */
+const filterCases: GoldenCase[] = [
+  {
+    name: "COUNT(*) FILTER (WHERE …) — wildcard becomes 1 on MySQL",
+    build: () =>
+      Expressions.count("*").filter(
+        new ColumnExpression("u.status").eq("active"),
+      ),
+    postgres: {
+      text: 'COUNT(*) FILTER (WHERE "u"."status" = ?)',
+      values: ["active"],
+    },
+    mysql: {
+      text: "COUNT(CASE WHEN `u`.`status` = ? THEN 1 END)",
+      values: ["active"],
+    },
+    sqlite: {
+      text: 'COUNT(*) FILTER (WHERE "u"."status" = ?)',
+      values: ["active"],
+    },
+  },
+  {
+    name: "SUM(column) FILTER (WHERE …)",
+    build: () =>
+      new ColumnExpression("o.amount")
+        .sum()
+        .filter(new ColumnExpression("o.type").eq("refund")),
+    postgres: {
+      text: 'SUM("o"."amount") FILTER (WHERE "o"."type" = ?)',
+      values: ["refund"],
+    },
+    mysql: {
+      text: "SUM(CASE WHEN `o`.`type` = ? THEN `o`.`amount` END)",
+      values: ["refund"],
+    },
+    sqlite: {
+      text: 'SUM("o"."amount") FILTER (WHERE "o"."type" = ?)',
+      values: ["refund"],
+    },
+  },
+  {
+    name: "countIf(condition) shorthand — COUNT(column) FILTER",
+    build: () =>
+      new ColumnExpression("u.id").countIf(
+        new ColumnExpression("u.verified").eq(true),
+      ),
+    postgres: {
+      text: 'COUNT("u"."id") FILTER (WHERE "u"."verified" = ?)',
+      values: [true],
+    },
+    mysql: {
+      text: "COUNT(CASE WHEN `u`.`verified` = ? THEN `u`.`id` END)",
+      values: [true],
+    },
+    sqlite: {
+      text: 'COUNT("u"."id") FILTER (WHERE "u"."verified" = ?)',
+      values: [true],
+    },
+  },
+  {
+    name: "sumIf(condition) shorthand — SUM(column) FILTER",
+    build: () =>
+      new ColumnExpression("o.amount").sumIf(
+        new ColumnExpression("o.status").eq("paid"),
+      ),
+    postgres: {
+      text: 'SUM("o"."amount") FILTER (WHERE "o"."status" = ?)',
+      values: ["paid"],
+    },
+    mysql: {
+      text: "SUM(CASE WHEN `o`.`status` = ? THEN `o`.`amount` END)",
+      values: ["paid"],
+    },
+    sqlite: {
+      text: 'SUM("o"."amount") FILTER (WHERE "o"."status" = ?)',
+      values: ["paid"],
+    },
+  },
+  {
+    name: "COUNT(DISTINCT column) FILTER — DISTINCT inside the CASE on MySQL",
+    build: () =>
+      new ColumnExpression("u.email")
+        .countDistinct()
+        .filter(new ColumnExpression("u.status").eq("active")),
+    postgres: {
+      text: 'COUNT(DISTINCT "u"."email") FILTER (WHERE "u"."status" = ?)',
+      values: ["active"],
+    },
+    mysql: {
+      text: "COUNT(DISTINCT CASE WHEN `u`.`status` = ? THEN `u`.`email` END)",
+      values: ["active"],
+    },
+    sqlite: {
+      text: 'COUNT(DISTINCT "u"."email") FILTER (WHERE "u"."status" = ?)',
+      values: ["active"],
+    },
+  },
+  {
+    name: "FILTER with a composed AND predicate",
+    build: () =>
+      new ColumnExpression("u.id")
+        .count()
+        .filter(
+          new ColumnExpression("u.status")
+            .eq("active")
+            .and(new ColumnExpression("u.age").gte(18)),
+        ),
+    postgres: {
+      text:
+        'COUNT("u"."id") FILTER (WHERE ("u"."status" = ? AND "u"."age" >= ?))',
+      values: ["active", 18],
+    },
+    mysql: {
+      text:
+        "COUNT(CASE WHEN (`u`.`status` = ? AND `u`.`age` >= ?) THEN `u`.`id` END)",
+      values: ["active", 18],
+    },
+    sqlite: {
+      text:
+        'COUNT("u"."id") FILTER (WHERE ("u"."status" = ? AND "u"."age" >= ?))',
+      values: ["active", 18],
+    },
+  },
+];
+
 runGoldenMatrix("golden-sql / aggregate expressions", aggregateCases);
 runGoldenMatrix("golden-sql / ordered-set aggregate expressions", orderedSetCases);
+runGoldenMatrix("golden-sql / aggregate FILTER (WHERE …)", filterCases);

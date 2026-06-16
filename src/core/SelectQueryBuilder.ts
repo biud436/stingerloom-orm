@@ -928,6 +928,34 @@ export class ColumnExpression {
     return new AggregateExpression(this.ref, "MAX", false, undefined);
   }
 
+  /**
+   * `COUNT(column) FILTER (WHERE condition)` — count only the rows matching
+   * `condition`. Shorthand for `.count().filter(condition)`.
+   *
+   * @example
+   * ```ts
+   * const u = qAlias(User, "u");
+   * qb.select([u.id.countIf(u.status.eq("active")).as("active")]);
+   * ```
+   */
+  countIf(condition: ConditionLike): AggregateExpression {
+    return this.count().filter(condition);
+  }
+
+  /**
+   * `SUM(column) FILTER (WHERE condition)` — sum `column` over only the rows
+   * matching `condition`. Shorthand for `.sum().filter(condition)`.
+   *
+   * @example
+   * ```ts
+   * const o = qAlias(Order, "o");
+   * qb.select([o.amount.sumIf(o.type.eq("refund")).as("refunds")]);
+   * ```
+   */
+  sumIf(condition: ConditionLike): AggregateExpression {
+    return this.sum().filter(condition);
+  }
+
   /** Returns the `"alias.property"` string (for interop with `col()`-style API). */
   toString(): string { return this.ref; }
 }
@@ -1921,10 +1949,10 @@ export class SelectQueryBuilder<T, TResult = T> {
       return this.selectAliased([columns]);
     }
     if (isAggregateExpression(columns)) {
-      // Aggregates with a custom argument renderer can carry bound
-      // parameters (e.g. `AVG(scalarExpr)`), so they must travel through
-      // the parameterized path to preserve those values.
-      if ((columns as AggregateExpression).argRenderer) {
+      // Aggregates that carry bound parameters — a custom argument renderer
+      // (`AVG(scalarExpr)`) or a `FILTER (WHERE …)` predicate — must travel
+      // through the parameterized path so those values survive.
+      if (this.aggregateNeedsParamPath(columns as AggregateExpression)) {
         return this.selectAliased([columns]);
       }
       return this.selectAggregates([columns]);
@@ -1940,7 +1968,7 @@ export class SelectQueryBuilder<T, TResult = T> {
           (c) =>
             isAliasedExpression(c) ||
             (isAggregateExpression(c) &&
-              (c as AggregateExpression).argRenderer !== undefined),
+              this.aggregateNeedsParamPath(c as AggregateExpression)),
         );
         if (needsParamPath) {
           return this.selectAliased(
@@ -1963,13 +1991,28 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
+   * @internal True when an aggregate must travel through the parameterized
+   * SELECT path instead of the cheap stringified one.
+   *
+   * The stringified path drops bound values and the dialect, which is fine
+   * for a plain `COUNT(col)` but not for an aggregate that embeds parameters:
+   * a custom argument renderer (`AVG(scalarExpr)`) or a `FILTER (WHERE …)`
+   * predicate. Both carry bindings that the string path would silently lose.
+   */
+  private aggregateNeedsParamPath(agg: AggregateExpression): boolean {
+    return agg.argRenderer !== undefined || agg.filterCondition !== undefined;
+  }
+
+  /**
    * @internal Replace the SELECT clause with aggregate-only projections.
    *
    * Aggregates render as pure raw SQL (func name + qualified column, no
    * bound parameters), so it's safe to stringify them and funnel through
    * `selectColumns` — the same path as plain columns. Keeping them there
    * avoids the `selectExpressions` merge machinery which requires a
-   * non-empty column list to attach to.
+   * non-empty column list to attach to. Aggregates that carry bindings
+   * (see {@link aggregateNeedsParamPath}) are routed elsewhere before
+   * reaching here.
    */
   private selectAggregates(aggregates: AggregateExpression[]): this {
     const fragments: string[] = [];
@@ -2121,12 +2164,12 @@ export class SelectQueryBuilder<T, TResult = T> {
     }
     if (isAggregateExpression(expr)) {
       const resolvedAlias = expr.alias ?? alias ?? expr.getAlias();
-      // Aggregates with an argRenderer can carry bound parameters
-      // (e.g. AVG(scalarExpr)); route those through the parameterized
-      // selectExpressions list so the bindings survive. Plain column
-      // aggregates have no parameters and stay on the cheap stringified
-      // path.
-      if ((expr as AggregateExpression).argRenderer) {
+      // Aggregates that carry bound parameters — a custom argRenderer
+      // (`AVG(scalarExpr)`) or a `FILTER (WHERE …)` predicate — route through
+      // the parameterized selectExpressions list so the bindings survive.
+      // Plain column aggregates have no parameters and stay on the cheap
+      // stringified path.
+      if (this.aggregateNeedsParamPath(expr as AggregateExpression)) {
         const inner = expr.renderFunction(
           (ref) => this.resolveColumn(ref),
           this.dialectExpression,

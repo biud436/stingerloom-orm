@@ -4,6 +4,7 @@ dist/
 .DS_Store
 *.tsbuildinfo
 coverage/
+.prisma-parse-*.js
 .env
 .env.local
 .env.test

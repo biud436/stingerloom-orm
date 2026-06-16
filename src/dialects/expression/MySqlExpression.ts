@@ -1,6 +1,7 @@
 import sql, { raw, join } from "sql-template-tag";
 import type { Sql } from "sql-template-tag";
 import type {
+  AggregateFilterOptions,
   CastKind,
   ColumnJsonMeta,
   DateAddUnit,
@@ -195,6 +196,20 @@ export class MySqlExpression implements DialectExpression {
   dateComponent(value: Sql, component: DateComponent): Sql {
     const fn = mysqlDateFunction(component);
     return sql`${raw(fn)}(${value})`;
+  }
+
+  aggregateFilter(opts: AggregateFilterOptions): Sql {
+    // MySQL has no FILTER clause — rewrite to the equivalent conditional
+    // aggregate `FUNC(CASE WHEN condition THEN arg END)`. The CASE yields
+    // NULL for non-matching rows, which every aggregate ignores, so the
+    // result matches PostgreSQL/SQLite FILTER semantics. `COUNT(*)` has no
+    // column argument, so substitute the literal `1` (a bare `*` is not a
+    // valid CASE result expression).
+    const { func, arg, isStar, distinct, condition } = opts;
+    const caseArg = isStar ? sql`1` : arg;
+    const caseExpr = sql`CASE WHEN ${condition} THEN ${caseArg} END`;
+    const body = distinct ? sql`DISTINCT ${caseExpr}` : caseExpr;
+    return sql`${raw(func)}(${body})`;
   }
 }
 
