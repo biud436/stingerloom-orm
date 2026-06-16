@@ -240,6 +240,25 @@ export interface DialectExpression {
   dateComponent(value: Sql, component: DateComponent): Sql;
 
   /**
+   * Render a regular-expression match predicate `column ~/REGEXP pattern`.
+   *
+   * - PostgreSQL: `column ~ pattern` (ARE; inline `(?i)` etc. honored).
+   * - MySQL/MariaDB: `column REGEXP pattern` (ICU; inline `(?i)` honored).
+   * - SQLite: `column REGEXP pattern`, served by the `regexp` UDF that the
+   *   SQLite connector registers (better-sqlite3 reserves the operator but
+   *   ships no implementation).
+   *
+   * Flags are encoded as an inline `(?ims)` prefix on the bound pattern (see
+   * `inlineFlagPrefix` in core/expressions/RegexPattern), so the value stays
+   * a single parameter with no injection surface.
+   *
+   * @param column - Already-rendered column identifier fragment.
+   * @param pattern - Regex source (without flags; flags arrive separately).
+   * @param flags - Portable case-insensitive / multiline / dotAll flags.
+   */
+  regexMatch(column: Sql, pattern: string, flags: RegexMatchFlags): Sql;
+
+  /**
    * Render an aggregate with a `FILTER (WHERE …)` clause — restrict which
    * rows an aggregate sees without a surrounding `GROUP BY` rewrite.
    *
@@ -261,6 +280,18 @@ export interface DialectExpression {
  * resolves the aggregate argument and the predicate to `Sql` fragments
  * before handing them over so dialects only decide the surrounding syntax.
  */
+/**
+ * Portable regex flags passed to {@link DialectExpression.regexMatch}. Mirrors
+ * the JS `RegExp` flags that map cleanly to SQL engines. `caseInsensitive`
+ * is consistent everywhere; `multiline` / `dotAll` carry engine-specific
+ * newline semantics.
+ */
+export interface RegexMatchFlags {
+  readonly caseInsensitive: boolean;
+  readonly multiline: boolean;
+  readonly dotAll: boolean;
+}
+
 export interface AggregateFilterOptions {
   /** Aggregate function name, e.g. `"COUNT"` / `"SUM"`. */
   func: string;

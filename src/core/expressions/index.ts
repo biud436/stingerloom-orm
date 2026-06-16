@@ -31,6 +31,7 @@ export * from "./WindowExpression";
 export * from "./WindowFunctions";
 export * from "./RawExpression";
 export * from "./TupleExpression";
+export * from "./RegexPattern";
 export * from "./likeEscape";
 export {
   getExpressionContext,

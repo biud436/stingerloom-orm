@@ -9,7 +9,9 @@ import type {
   DateTruncUnit,
   DialectExpression,
   FullTextSearchOptions,
+  RegexMatchFlags,
 } from "../DialectExpression";
+import { inlineFlagPrefix } from "../../core/expressions/RegexPattern";
 
 /**
  * Serialize a JSON path into MySQL/SQLite syntax: `$.a.b[0].c`.
@@ -210,6 +212,11 @@ export class MySqlExpression implements DialectExpression {
     const caseExpr = sql`CASE WHEN ${condition} THEN ${caseArg} END`;
     const body = distinct ? sql`DISTINCT ${caseExpr}` : caseExpr;
     return sql`${raw(func)}(${body})`;
+  }
+
+  regexMatch(column: Sql, pattern: string, flags: RegexMatchFlags): Sql {
+    // MySQL 8 / MariaDB 10.0.5+ ICU regex: `REGEXP`, inline `(?ims)` honored.
+    return sql`${column} REGEXP ${inlineFlagPrefix(flags) + pattern}`;
   }
 }
 

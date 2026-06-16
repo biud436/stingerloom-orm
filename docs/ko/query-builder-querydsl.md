@@ -760,6 +760,30 @@ const user = await em.createQueryBuilder(User, "u")
   .getOne();
 ```
 
+## 정규식 — `.matches(pattern)`
+
+`.matches()`는 정규식 조건을 만듭니다. 인자는 패턴 문자열 또는 JS `RegExp`이며, 패턴은 항상 **파라미터로 바인딩**되므로 SQL 인젝션 표면이 없습니다.
+
+```typescript
+const u = qAlias(User, "u");
+
+qb.where(u.email.matches("^[^@]+@example\\.com$"));
+// PostgreSQL:  "u"."email" ~ $1
+// MySQL:       `u`.`email` REGEXP ?
+// SQLite:      "u"."email" REGEXP ?      (`regexp` UDF가 처리)
+
+qb.where(u.title.matches(/typescript/i));   // 대소문자 무시
+qb.where(u.slug.matches(/^[a-z0-9-]+$/).not());
+```
+
+`RegExp`의 `i` / `m` / `s` 플래그는 바인딩 패턴 앞에 인라인 `(?ims)` 옵션 그룹으로 붙습니다. PostgreSQL ARE와 MySQL/MariaDB ICU는 이를 네이티브로 해석하고, SQLite `regexp` UDF는 이를 JS `RegExp` 플래그로 되돌립니다. `g` / `u` / `y`는 조건식에서 의미가 없어 무시됩니다. `.not()`으로 부정하고 `.and()` / `.or()`로 합성합니다.
+
+엔진별 주의:
+
+- **`i`(대소문자 무시)는 이식성이 있지만 `m` / `s`는 엔진별 개행 의미가 다릅니다** — multiline/dotAll에 의존한다면 골든/통합 테스트로 동작을 고정하세요.
+- **MySQL `REGEXP`는 비-바이너리 콜레이션에서 기본적으로 대소문자를 구분하지 않습니다.** 따라서 플래그 없는 `.matches("^a")`도 MySQL에서는 `A...`에 매칭됩니다. MySQL에서 대소문자를 구분하려면 바이너리 콜레이션을 쓰세요. PostgreSQL `~`와 SQLite UDF는 `i` 플래그가 없으면 대소문자를 구분합니다.
+- **SQLite**에는 내장 정규식 엔진이 없어, 연결 시 커넥터가 `regexp` UDF를 등록해 JS `RegExp`로 실행합니다. 악의적 패턴은 ReDoS를 유발할 수 있으니 사용자 입력 패턴은 검증 후 사용하세요.
+
 ## 한눈에 보기
 
 | 하고 싶은 일 | 메서드 |
@@ -776,6 +800,7 @@ const user = await em.createQueryBuilder(User, "u")
 | 날짜 컴포넌트 | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfYear()`, `.week()` |
 | 서브쿼리 비교 | `.in(subQb)`, `.notIn(subQb)`, `.eq/.neq/.gt/.gte/.lt/.lte(subQb)`, `Expressions.exists`, `Expressions.notExists` |
 | Row-value 튜플 | `Expressions.tuple(c1, c2, …).in(rows)` / `.notIn(rows)` / `.eq(row)` — 복합 PK 비교 |
+| 정규식 매칭 | `.matches(pattern)` — 문자열 또는 `RegExp`(`i`/`m`/`s` 플래그); `.not()`으로 부정. PG `~`, MySQL/SQLite `REGEXP` |
 | CASE 표현식 | `Expressions.caseBuilder().when(...).then(...).otherwise(...).end()`; `Expressions.cases(subject)...end()` |
 | CASE 단축 | `Expressions.iff(cond, a, b)`; `Expressions.mapValues(subject, { k: v }, default?)`; `Expressions.buckets(subject, [[t, label], …], default?, { op? })` |
 | 문자열 / 숫자 / 수학 | `.toLowerCase/.toUpperCase/.trim/.length/.substring/.concat/.indexOf/.replace`, `.add/.sub/.mul/.div/.mod/.neg`, `.abs/.floor/.ceil/.round/.sqrt` |
@@ -798,6 +823,7 @@ const user = await em.createQueryBuilder(User, "u")
 | 집계 (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | 네이티브 | 네이티브 | 네이티브 | — |
 | 조건부 집계 (`.filter()`, `countIf`, `sumIf`) | 네이티브 `FILTER (WHERE …)` | `FUNC(CASE WHEN … THEN … END)`로 변환 | 네이티브 `FILTER (WHERE …)` (3.30+) | MySQL에서 `COUNT(*)`는 `COUNT(CASE WHEN … THEN 1 END)`. NULL 의미는 dialect 간 동일. |
 | Row-value 튜플 (`Expressions.tuple().in/notIn/eq`) | 네이티브 | 네이티브 | 네이티브 (3.15+) | 식별자 따옴표 외에는 dialect 간 SQL 동일. |
+| 정규식 매칭 (`.matches()`) | 네이티브 `~` (ARE) | 네이티브 `REGEXP` (ICU, **기본 대소문자 무시**) | 커넥터가 등록한 `regexp` UDF 경유 `REGEXP` | 패턴은 파라미터 바인딩. `i` 플래그는 이식성 있음, `m`/`s`는 엔진별. MySQL 대소문자 구분은 바이너리 콜레이션 필요. |
 | `coalesce` / `nullif` | 네이티브 | 네이티브 | 네이티브 | — |
 | Window 함수 (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | 네이티브 | 네이티브 (8.0+) | 네이티브 (3.25+) | — |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregate | 네이티브 (`WITHIN GROUP`) | **미지원** — `UNSUPPORTED_OPERATION` throw | **미지원** — `UNSUPPORTED_OPERATION` throw | MySQL: CTE + `ROW_NUMBER() OVER (ORDER BY x)`로 에뮬, `rn = CEIL(N * p)` 행을 픽. [cookbook 레시피](./cookbook.md#cycle-time-percentile-report) 참고. |

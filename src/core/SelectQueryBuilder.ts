@@ -50,6 +50,11 @@ import {
 } from "./expressions/LogicalCondition";
 import { escapeLikeValue } from "./expressions/likeEscape";
 import {
+  resolveRegex,
+  inlineFlagPrefix,
+  type RegexInput,
+} from "./expressions/RegexPattern";
+import {
   AliasedExpression,
   isAliasedExpression,
 } from "./expressions/AliasedExpression";
@@ -628,6 +633,48 @@ export class ColumnExpression {
         // No dialect available (detached expression) — fall back to a
         // collation-agnostic LOWER() comparison that works everywhere.
         return sql`LOWER(${raw(qualified)}) LIKE LOWER(${pattern}) ESCAPE ${"\\"}`;
+      },
+    );
+  }
+
+  /**
+   * Regular-expression match — `column ~ pattern` (PostgreSQL) /
+   * `column REGEXP pattern` (MySQL/SQLite). Accepts a raw pattern string or a
+   * JS `RegExp`; the `RegExp` `i` / `m` / `s` flags are carried as an inline
+   * `(?ims)` option group on the bound pattern (no injection surface).
+   *
+   * `i` (case-insensitive) is portable; `m` / `s` carry engine-specific
+   * newline semantics. SQLite is served by the connector's `regexp` UDF.
+   * Negate with `.not()`.
+   *
+   * @example
+   * ```ts
+   * const u = qAlias(User, "u");
+   * qb.where(u.email.matches("^[^@]+@example\\.com$"));
+   * qb.where(u.title.matches(/typescript/i));
+   * qb.where(u.slug.matches(/^[a-z0-9-]+$/).not());
+   * ```
+   */
+  matches(pattern: RegexInput): ColumnCondition {
+    const resolved = resolveRegex(pattern);
+    const flags = {
+      caseInsensitive: resolved.caseInsensitive,
+      multiline: resolved.multiline,
+      dotAll: resolved.dotAll,
+    };
+    return new ColumnCondition(
+      this.ref,
+      "_REGEX",
+      resolved.pattern,
+      (qualified, dialect) => {
+        const col = raw(qualified);
+        if (dialect) {
+          return dialect.regexMatch(col, resolved.pattern, flags);
+        }
+        // No dialect available (detached expression) — emit the portable
+        // REGEXP form (PostgreSQL would need `~`, but a detached expression
+        // is not bound to a dialect).
+        return sql`${col} REGEXP ${inlineFlagPrefix(flags) + resolved.pattern}`;
       },
     );
   }
