@@ -94,7 +94,7 @@ describe("EntityManager.saveMany()", () => {
 
   it("should call saveInternal() for each item", async () => {
     const saveInternalSpy = jest
-      .spyOn(em as any, "saveInternal")
+      .spyOn((em as any).writeExecutor, "saveInternal")
       .mockResolvedValueOnce({ id: 1, name: "Alice", email: "a@test.com" } as any)
       .mockResolvedValueOnce({ id: 2, name: "Bob", email: "b@test.com" } as any);
 
@@ -123,7 +123,7 @@ describe("EntityManager.saveMany()", () => {
 
   it("should handle a single item", async () => {
     const saveInternalSpy = jest
-      .spyOn(em as any, "saveInternal")
+      .spyOn((em as any).writeExecutor, "saveInternal")
       .mockResolvedValueOnce({ id: 1, name: "Solo" } as any);
 
     const result = await em.saveMany(userMetadata.target, [{ name: "Solo" }]);
@@ -135,7 +135,7 @@ describe("EntityManager.saveMany()", () => {
 
   it("should propagate errors from saveInternal()", async () => {
     jest
-      .spyOn(em as any, "saveInternal")
+      .spyOn((em as any).writeExecutor, "saveInternal")
       .mockResolvedValueOnce({ id: 1, name: "Ok" } as any)
       .mockRejectedValueOnce(new Error("DB connection lost"));
 
@@ -153,7 +153,7 @@ describe("EntityManager.saveMany()", () => {
       email: `user${i}@test.com`,
     }));
 
-    const saveInternalSpy = jest.spyOn(em as any, "saveInternal");
+    const saveInternalSpy = jest.spyOn((em as any).writeExecutor, "saveInternal");
     for (let i = 0; i < 10; i++) {
       saveInternalSpy.mockResolvedValueOnce({
         id: i + 1,
