@@ -1,12 +1,21 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import type { EntityManager } from "./EntityManager";
+import type { RelationMetadataResolver } from "./RelationMetadataResolver";
+import type { CascadeHandler } from "./CascadeHandler";
+import type { InheritanceResolver } from "./InheritanceResolver";
+import type { EntityEventEmitter } from "./EntityEventEmitter";
+import type { RelationLoader } from "./RelationLoader";
+import type { AggregateQueryHandler } from "./AggregateQueryHandler";
 import { ClazzType } from "../utils";
 import { ISqlDriver } from "../dialects/SqlDriver";
+import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
-import { FindOption, WhereClause } from "../dialects/FindOption";
+import { FindOption, LockMode, WhereClause } from "../dialects/FindOption";
 import { ReplicationNodeConfig } from "../dialects/ReplicationRouter";
 import { DeleteResult } from "../types/DeleteResult";
 import { EntityResult } from "../types/EntityResult";
 import { ISelectOption } from "../dialects/ISelectOption";
+import { EntitySubscriber } from "./EntitySubscriber";
 import { SchemaDialect } from "./generators/SchemaGenerator";
 import { SynchronizePolicy } from "./DatabaseClientOptions";
 import { ColumnMetadata } from "../scanner";
@@ -22,8 +31,25 @@ export interface EntityManagerInternals {
   wrapTable(tableName: string): string;
   isMySqlFamily(): boolean;
   isPostgres(): boolean;
-  isSqlite?(): boolean;
+  isSqlite(): boolean;
+  /** Raw connected DB type (may be undefined before connect()); used in DML error messages. */
+  getDbType(): IDatabaseType | undefined;
   getDriver(): ISqlDriver | undefined;
+  /** The owning EntityManager facade — used to populate `manager` on lifecycle events. */
+  getManager(): EntityManager;
+  // ── Live collaborator accessors (read at call time so test-time
+  //    reassignment of `em.resolver` etc. is honored by extracted executors) ──
+  getResolver(): RelationMetadataResolver;
+  getCascadeHandler(): CascadeHandler;
+  getInheritanceResolver(): InheritanceResolver;
+  getEventEmitter(): EntityEventEmitter;
+  getRelationLoader(): RelationLoader;
+  getAggregateHandler(): AggregateQueryHandler;
+  getDefaultQueryTimeout(): number | undefined;
+  /** Warns once (per entity) when cursor pagination runs on a non-sortable PK. */
+  warnIfNonSortablePk(entityName: string, pk: ColumnMetadata): void;
+  /** Dialect-specific row-lock suffix (FOR UPDATE / FOR SHARE / NOWAIT / SKIP LOCKED). */
+  resolveLockSuffix(lock: LockMode): string;
   getSynchronize(): boolean | "safe" | "dry-run";
   /**
    * Normalized synchronize policy. Always reflects the final, defaults-applied
@@ -54,6 +80,35 @@ export interface EntityManagerInternals {
   getNameStrategy<T>(clazz: ClazzType<T>): string;
   resolveSelectColumns<T>(select: ISelectOption<T>): string[];
   markDirty(entity: any): void;
+
+  // ── Shared write-path helpers (used by WriteExecutor) ──────
+  /** Resolves an entity property key from column metadata (propertyKey ?? name). */
+  propKey(col: { propertyKey?: string; name?: string }): string;
+  /** Applies the column's write transformer / JSON serialization to a raw value. */
+  applyWriteTransform(col: ColumnMetadata, rawValue: any): any;
+  /** Auto-injects the tenant-column value on INSERT under the "tenant_column" strategy. */
+  applyTenantColumnOnInsert<T>(entity: ClazzType<T>, item: Partial<T>): void;
+  /** Returns the set of @ComputedColumn names for an entity. */
+  getComputedColumnNames<T>(entity: ClazzType<T>): Set<string>;
+  /** Validates WHERE-criteria keys against the entity's known property/column set. */
+  validateCriteriaKeys<T>(
+    metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
+    criteria: WhereClause<T>,
+    entityName: string,
+  ): void;
+  /** True if the entity has any eager-loaded @ManyToOne/@OneToOne relation. */
+  hasEagerRelations<T>(entity: ClazzType<T>): boolean;
+  /** True if a registered EntitySubscriber implements the given lifecycle method for the entity. */
+  hasSubscriberFor<T>(
+    entityClass: new (...args: any[]) => T,
+    method: keyof EntitySubscriber<T>,
+  ): boolean;
+  /** Dispatches a lifecycle event to all registered EntitySubscriber instances. */
+  notifySubscribers<T>(
+    entityClass: new (...args: any[]) => T,
+    method: keyof EntitySubscriber<T>,
+    arg?: any,
+  ): Promise<void>;
 
   /**
    * Builds the TypeScript-property → DB-column map for an entity, including
@@ -119,6 +174,14 @@ export interface EntityManagerInternals {
     entity: ClazzType<T>,
     findOption: FindOption<T>,
   ): Promise<T[]>;
+  findOne<T>(
+    entity: ClazzType<T>,
+    findOption: FindOption<T>,
+  ): Promise<T | null>;
+  findAndCount<T>(
+    entity: ClazzType<T>,
+    findOption: FindOption<T>,
+  ): Promise<[T[], number]>;
   delete<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
