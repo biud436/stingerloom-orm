@@ -388,19 +388,43 @@ export class AggregateCondition implements ConditionLike {
   resolve(resolveColumn: ColumnResolver, dialect?: DialectExpression): Sql {
     const fn = this.aggregate.renderFunction(resolveColumn, dialect);
     const op = this.operator;
+    // Unwrap an expression operand on the right-hand side so a HAVING
+    // clause can relate two aggregates (`SUM(revenue) > SUM(cost)`) or
+    // compare an aggregate against a grouped column. Plain primitives
+    // stay bound as parameters.
+    const rhs = (v: unknown): Sql => {
+      if (v !== null && typeof v === "object") {
+        const marker = v as Record<string, unknown>;
+        if (marker.__isAggregateExpression === true) {
+          return (v as AggregateExpression).renderFunction(
+            resolveColumn,
+            dialect,
+          );
+        }
+        if (marker.__isScalarExpression === true) {
+          return (v as ScalarExpression).renderer(resolveColumn, dialect);
+        }
+        if (marker.__isColumnExpression === true) {
+          return sql`${raw(
+            resolveColumn((v as { toString(): string }).toString()),
+          )}`;
+        }
+      }
+      return sql`${v as any}`;
+    };
 
     if (op === "BETWEEN") {
       const [min, max] = this.value as [any, any];
-      return sql`${fn} BETWEEN ${min} AND ${max}`;
+      return sql`${fn} BETWEEN ${rhs(min)} AND ${rhs(max)}`;
     }
 
     if (Array.isArray(this.value) && (op === "IN" || op === "NOT IN")) {
       const values = this.value as any[];
-      const placeholders = values.map((v) => sql`${v}`);
+      const placeholders = values.map((v) => rhs(v));
       return sql`${fn} ${raw(op)} (${join(placeholders, ", ")})`;
     }
 
-    return sql`${fn} ${raw(op)} ${this.value}`;
+    return sql`${fn} ${raw(op)} ${rhs(this.value)}`;
   }
 
   /** Compose with another condition using AND (LogicalCondition). */

@@ -116,6 +116,49 @@ Both bypass TypeScript's keyof-narrowing for the property name, so the safety gu
 
 The rest of this page walks through what you can do with those column references. Two guarantees hold throughout: column references resolve through the alias registry (so naming-strategy translation always applies), and every user-supplied value — including LIKE escape characters — is a bound parameter.
 
+## Comparing against another column or expression
+
+Comparison methods accept more than literals. When the right-hand side is
+another `ColumnExpression` — or any derived `ScalarExpression` — it is
+spliced in as a **column reference**, not bound as a parameter. This is how
+you express predicates that relate two columns of the same row:
+
+```typescript
+const o = qAlias(Order, "o");
+
+qb.where(o.price.gt(o.cost));
+// WHERE "o"."price" > "o"."cost"
+
+qb.where(o.startDate.lt(o.endDate));
+// WHERE "o"."start_date" < "o"."end_date"
+
+qb.where(o.price.between(o.floorPrice, o.ceilingPrice));
+// WHERE "o"."price" BETWEEN "o"."floor_price" AND "o"."ceiling_price"
+```
+
+The same holds the other way round — a derived scalar can be compared
+against a column, so arithmetic and column references mix freely:
+
+```typescript
+qb.where(o.price.mul(2).gt(o.cost));
+// WHERE ("o"."price" * $1) > "o"."cost"   -- $1 = 2
+
+qb.where(o.price.coalesce(0).gte(o.minimum));
+// WHERE COALESCE("o"."price", $1) >= "o"."minimum"
+```
+
+`IN` lists may mix columns and literals; only the literals are bound:
+
+```typescript
+qb.where(o.status.in([o.previousStatus, "draft"]));
+// WHERE "o"."status" IN ("o"."previous_status", $1)   -- $1 = "draft"
+```
+
+Plain JavaScript values keep their parameter binding — `o.price.gt(50)`
+still emits `> $1`. Only expression operands (columns, scalars, aggregates)
+are inlined, and those resolve through the alias registry, so naming-strategy
+translation still applies and there is no injection surface.
+
 ## Ordering — `.asc()` / `.desc()` / `.nullsFirst()` / `.nullsLast()`
 
 ```typescript
@@ -162,7 +205,9 @@ that plays two roles:
 2. **In HAVING / WHERE.** Calling `.eq`, `.neq`, `.gt`, `.gte`, `.lt`,
    `.lte`, or `.between` on the aggregate produces an
    `AggregateCondition`, which can be passed to `having()`, `where()`,
-   or `andWhere()`.
+   or `andWhere()`. The right-hand side may be another aggregate or a
+   grouped column — `o.revenue.sum().gt(o.cost.sum())` emits
+   `HAVING SUM("o"."revenue") > SUM("o"."cost")` with nothing bound.
 
 Aggregates also participate in ORDER BY via `.asc()` / `.desc()`, mirroring
 the ColumnExpression surface.
@@ -307,10 +352,11 @@ qb.select([exp.currentDate().as("today")]);
 // SELECT CURRENT_DATE AS "today"
 ```
 
-`ColumnExpression` comparison methods now transparently unwrap a
-`ScalarExpression` operand — so `u.createdAt.lte(currentTimestamp())`
-emits an inline `CURRENT_TIMESTAMP` rather than binding the expression
-as a parameter.
+Comparison methods transparently unwrap a `ScalarExpression` operand — so
+`u.createdAt.lte(currentTimestamp())` emits an inline `CURRENT_TIMESTAMP`
+rather than binding the expression as a parameter. The same unwrapping
+applies to column operands (see [Comparing against another column or
+expression](#comparing-against-another-column-or-expression)).
 
 ## Type casts — `.stringValue()` / `.intValue()` / `.longValue()` / `.floatValue()` / `.booleanValue()`
 

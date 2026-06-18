@@ -483,22 +483,27 @@ export class ScalarCondition implements ConditionLike {
   resolve(resolveColumn: ColumnResolver, dialect?: DialectExpression): Sql {
     const expr = this.expression.renderer(resolveColumn, dialect);
     const op = this.operator;
+    // Unwrap any column / scalar expression on the right-hand side so
+    // `u.price.mul(2).gt(u.cost)` compares against the column reference
+    // instead of binding the expression object as a parameter. Plain
+    // primitives still flow through `sql` as bound parameters.
+    const rhs = (v: unknown) => renderArg(v, resolveColumn, dialect);
 
     if (op === "IS NULL") return sql`${expr} IS NULL`;
     if (op === "IS NOT NULL") return sql`${expr} IS NOT NULL`;
     if (op === "BETWEEN") {
       const [min, max] = this.value as [any, any];
-      return sql`${expr} BETWEEN ${min} AND ${max}`;
+      return sql`${expr} BETWEEN ${rhs(min)} AND ${rhs(max)}`;
     }
     if (op === "IN" || op === "NOT IN") {
       const values = (this.value as any[]) ?? [];
       if (values.length === 0) {
         return op === "IN" ? sql`1 = 0` : sql`1 = 1`;
       }
-      const placeholders = values.map((v) => sql`${v}`);
+      const placeholders = values.map((v) => rhs(v));
       return sql`${expr} ${raw(op)} (${join(placeholders, ", ")})`;
     }
-    return sql`${expr} ${raw(op)} ${this.value as any}`;
+    return sql`${expr} ${raw(op)} ${rhs(this.value)}`;
   }
 
   /** Compose with another condition using AND. */
