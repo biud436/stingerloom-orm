@@ -116,6 +116,42 @@ function buildIssueQuery(sortField: string) {
 
 여기서부터는 `qAlias()`가 돌려주는 컬럼 참조로 할 수 있는 것들을 하나씩 정리합니다. 모든 예제는 동일한 두 가지 약속을 지킵니다. 컬럼 참조는 별칭 레지스트리를 통해 해석되고, 사용자 값은 전부 파라미터 바인딩으로 들어갑니다.
 
+## 다른 컬럼·표현식과 비교하기
+
+비교 메서드는 리터럴만 받는 게 아닙니다. 오른쪽 피연산자가 또 다른 `ColumnExpression`이거나 거기서 파생된 `ScalarExpression`이면, 파라미터로 바인딩되지 않고 **컬럼 참조**로 그대로 삽입됩니다. 한 행의 두 컬럼을 서로 비교하는 조건을 이렇게 표현합니다.
+
+```typescript
+const o = qAlias(Order, "o");
+
+qb.where(o.price.gt(o.cost));
+// WHERE "o"."price" > "o"."cost"
+
+qb.where(o.startDate.lt(o.endDate));
+// WHERE "o"."start_date" < "o"."end_date"
+
+qb.where(o.price.between(o.floorPrice, o.ceilingPrice));
+// WHERE "o"."price" BETWEEN "o"."floor_price" AND "o"."ceiling_price"
+```
+
+반대 방향도 마찬가지입니다. 파생 스칼라를 컬럼과 비교할 수 있어서 산술과 컬럼 참조를 자유롭게 섞을 수 있습니다.
+
+```typescript
+qb.where(o.price.mul(2).gt(o.cost));
+// WHERE ("o"."price" * $1) > "o"."cost"   -- $1 = 2
+
+qb.where(o.price.coalesce(0).gte(o.minimum));
+// WHERE COALESCE("o"."price", $1) >= "o"."minimum"
+```
+
+`IN` 목록에는 컬럼과 리터럴을 섞을 수 있고, 리터럴만 바인딩됩니다.
+
+```typescript
+qb.where(o.status.in([o.previousStatus, "draft"]));
+// WHERE "o"."status" IN ("o"."previous_status", $1)   -- $1 = "draft"
+```
+
+평범한 JavaScript 값은 그대로 파라미터 바인딩을 유지합니다. `o.price.gt(50)`은 여전히 `> $1`을 냅니다. 표현식 피연산자(컬럼, 스칼라, 집계)만 인라인되며, 이들은 별칭 레지스트리를 통해 해석되므로 네이밍 전략 변환이 그대로 적용되고 인젝션 위험도 없습니다.
+
 ## 정렬 — `.asc()` / `.desc()` / `.nullsFirst()` / `.nullsLast()`
 
 정렬 방향을 메서드로 씁니다.
@@ -154,7 +190,7 @@ await em.createQueryBuilder(User, "u")
   .getRawMany();
 ```
 
-핵심은 `const total = u.id.count()`로 만든 표현식을 **SELECT에도 넣고 HAVING 조건으로도 그대로 쓴다**는 점입니다. 같은 COUNT를 두 번 적지 않아도 돼요. 비교 메서드는 조건을 쓸 때와 똑같이 `.eq`, `.gt`, `.lt`, `.between` 전부 달려 있습니다.
+핵심은 `const total = u.id.count()`로 만든 표현식을 **SELECT에도 넣고 HAVING 조건으로도 그대로 쓴다**는 점입니다. 같은 COUNT를 두 번 적지 않아도 돼요. 비교 메서드는 조건을 쓸 때와 똑같이 `.eq`, `.gt`, `.lt`, `.between` 전부 달려 있습니다. 오른쪽 피연산자로 또 다른 집계나 그룹 컬럼을 넘길 수도 있어서 `o.revenue.sum().gt(o.cost.sum())`은 바인딩 없이 `HAVING SUM("o"."revenue") > SUM("o"."cost")`를 냅니다.
 
 SELECT에 넣을 때 `.as("total")`을 권장합니다. 생략하면 `agg_count_id` 같은 이름이 자동으로 붙는데, `getRawMany()`로 꺼낼 때 키 이름이 헷갈리기 쉬워요.
 
@@ -379,7 +415,7 @@ qb.select([exp.currentDate().as("today")]);
 // SELECT CURRENT_DATE AS "today"
 ```
 
-비교 메서드에 스칼라 표현식을 넘기면 파라미터 바인딩이 아니라 SQL 안에 직접 삽입됩니다. 그래서 `u.createdAt.lte(currentTimestamp())`처럼 써도 바인딩이 아니라 `CURRENT_TIMESTAMP` 그대로 쿼리에 박혀요.
+비교 메서드에 스칼라 표현식을 넘기면 파라미터 바인딩이 아니라 SQL 안에 직접 삽입됩니다. 그래서 `u.createdAt.lte(currentTimestamp())`처럼 써도 바인딩이 아니라 `CURRENT_TIMESTAMP` 그대로 쿼리에 박혀요. 컬럼 피연산자에도 똑같이 적용됩니다([다른 컬럼·표현식과 비교하기](#다른-컬럼표현식과-비교하기) 참고).
 
 ## 타입 변환 — `.stringValue()` / `.intValue()` / `.longValue()` / `.floatValue()` / `.booleanValue()`
 

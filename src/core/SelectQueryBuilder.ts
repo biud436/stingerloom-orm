@@ -416,6 +416,16 @@ export class ColumnCondition implements ConditionLike {
     if (
       value !== null &&
       typeof value === "object" &&
+      (value as { __isColumnExpression?: unknown }).__isColumnExpression === true
+    ) {
+      // Another DSL column (e.g. `o.price.gt(o.cost)`) — splice its
+      // qualified identifier so it is compared as a column reference,
+      // not bound as a parameter object.
+      return raw(resolveColumn((value as { toString(): string }).toString()));
+    }
+    if (
+      value !== null &&
+      typeof value === "object" &&
       typeof (value as { toSql?: unknown }).toSql === "function" &&
       typeof (value as { getSql?: unknown }).getSql === "function"
     ) {
@@ -463,13 +473,23 @@ export class ColumnCondition implements ConditionLike {
           const sub = (this.value as { toSql(): Sql }).toSql();
           return sql`${raw(qualified)} IN (${sub})`;
         }
-        return Conditions.in(qualified, value as unknown[]);
+        return Conditions.in(
+          qualified,
+          (this.value as unknown[]).map((v) =>
+            this.resolveValue(v, resolveColumn, dialect),
+          ),
+        );
       case "NOT IN":
         if (this.value !== null && this.isSubqueryLike(this.value)) {
           const sub = (this.value as { toSql(): Sql }).toSql();
           return sql`${raw(qualified)} NOT IN (${sub})`;
         }
-        return Conditions.notIn(qualified, value as unknown[]);
+        return Conditions.notIn(
+          qualified,
+          (this.value as unknown[]).map((v) =>
+            this.resolveValue(v, resolveColumn, dialect),
+          ),
+        );
       case "IS NULL":
         return Conditions.isNull(qualified);
       case "IS NOT NULL":
