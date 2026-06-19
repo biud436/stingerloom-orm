@@ -188,7 +188,7 @@ export class Cat {
 1. `@RelationColumn`이 프로퍼티에 부착된 경우 -> `name` 사용 (생략 시 `{propertyName}Id` 추론)
 2. `@ManyToOne`의 `joinColumn` 옵션이 지정된 경우 -> 그대로 사용
 3. 같은 엔티티에 `{propertyName}Id`인 `@Column`이 선언된 경우 -> 해당 `@Column`의 DB 컬럼명 사용
-4. 위 모두 없는 경우 -> `{propertyName}Id` 규칙으로 폴백
+4. 위 모두 없는 경우 -> FK 컬럼을 **해석할 수 없어요**. `@ManyToOne`은 항상 소유(owning) 측이므로, 이 경우 INSERT/UPDATE에서 FK가 **저장되지 않고** 관계도 로드할 수 없어요. 경고 로그가 출력되니 `@RelationColumn({ name: "..." })`(또는 `{propertyName}Id` `@Column`)을 추가해 해결하세요.
 
 `@Column`을 선언하면 엔티티에서 FK 값을 직접 읽고 쓸 수 있다는 장점도 있어요.
 

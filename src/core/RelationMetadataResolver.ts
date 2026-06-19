@@ -38,6 +38,14 @@ export class RelationMetadataResolver {
   private readonly logger = new Logger(RelationMetadataResolver.name);
 
   /**
+   * Dedup keys (`${entity}.${property}`) for @ManyToOne relations whose
+   * foreign-key column could not be resolved. Keeps the
+   * "FK will not be persisted" warning to one emission per relation instead
+   * of one per query, since the resolver is not memoized.
+   */
+  private readonly warnedUnresolvedManyToOneFk = new Set<string>();
+
+  /**
    * Looks up entity metadata through the layered metadata system.
    *
    * Lookup priority:
@@ -204,23 +212,48 @@ export class RelationMetadataResolver {
       if (rel.joinColumn) return rel;
 
       // 3. Search for an @Column matching the `{propertyName}Id` pattern
-      if (columnsMeta.length === 0) return rel;
-
       const fkPropertyName = `${rel.columnName}Id`;
       const matchingColumn = columnsMeta.find(
         (col: ColumnMetadata) => col.propertyKey === fkPropertyName,
       );
 
-      if (!matchingColumn) return rel;
+      if (matchingColumn) {
+        // Use the @Column's actual DB name (name if provided, otherwise propertyKey)
+        return {
+          ...rel,
+          joinColumn: matchingColumn.name ?? fkPropertyName,
+        };
+      }
 
-      // Use the @Column's actual DB name (name if provided, otherwise propertyKey)
-      const resolvedJoinColumn = matchingColumn.name ?? fkPropertyName;
-
-      return {
-        ...rel,
-        joinColumn: resolvedJoinColumn,
-      };
+      // 4. None of the above resolved an FK column. A @ManyToOne is always the
+      //    owning side, so an unresolved joinColumn means the FK is silently
+      //    dropped on insert/update and the relation cannot be loaded — warn so
+      //    the misconfiguration is visible instead of corrupting data quietly.
+      this.warnUnresolvedManyToOneFk(entity, rel.columnName, fkPropertyName);
+      return rel;
     });
+  }
+
+  /**
+   * Emit a one-time warning that a @ManyToOne relation has no resolvable
+   * foreign-key column. Deduplicated per `entity.property` so a misconfigured
+   * relation on a hot entity does not flood the log on every query.
+   */
+  private warnUnresolvedManyToOneFk(
+    entity: ClazzType<any>,
+    property: string,
+    fkPropertyName: string,
+  ): void {
+    const key = `${entity.name}.${property}`;
+    if (this.warnedUnresolvedManyToOneFk.has(key)) return;
+    this.warnedUnresolvedManyToOneFk.add(key);
+    this.logger.warn(
+      `@ManyToOne '${property}' on ${entity.name} has no resolvable foreign-key ` +
+        `column: no @RelationColumn, no 'joinColumn' option, and no '${fkPropertyName}' ` +
+        `@Column was found. The FK will NOT be persisted on insert/update and the ` +
+        `relation cannot be loaded. Add @RelationColumn({ name: "..." }) to the ` +
+        `'${property}' property (or declare a '${fkPropertyName}' @Column).`,
+    );
   }
 
   /**
