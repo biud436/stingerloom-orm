@@ -188,7 +188,7 @@ The resolution priority is as follows.
 1. If `@RelationColumn` is attached to the property -> use its `name` (or infer `{propertyName}Id` if omitted)
 2. If `@ManyToOne`'s `joinColumn` option is specified -> use as-is
 3. If a `@Column` with `{propertyName}Id` is declared on the same entity -> use that `@Column`'s DB column name
-4. If none of the above -> fallback to `{propertyName}Id` convention
+4. If none of the above -> the FK column **cannot be resolved**. A `@ManyToOne` is always the owning side, so this means the FK is **not persisted** on insert/update and the relation cannot be loaded. A warning is logged; add `@RelationColumn({ name: "..." })` (or a `{propertyName}Id` `@Column`) to fix it.
 
 Declaring a `@Column` also has the advantage of being able to directly read and write FK values on the entity.
 
