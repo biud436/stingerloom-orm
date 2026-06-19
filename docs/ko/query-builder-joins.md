@@ -65,6 +65,13 @@ const posts = await em
 | `.isNotNull()` | `IS NOT NULL` | `u.email.isNotNull()` |
 | `.between(min, max)` | `BETWEEN ? AND ?` | `u.age.between(18, 65)` |
 
+`.eq()`와 `.neq()`는 피연산자를 정규화해서 항상 올바른 SQL을 만들어 줍니다.
+`null`은 `IS NULL` / `IS NOT NULL`로 바뀌고(항상 UNKNOWN이 되는 `= NULL`을
+절대 만들지 않습니다), 배열은 `IN (...)` / `NOT IN (...)`으로 바뀝니다. 즉
+`u.deletedAt.neq(null)`은 `IS NOT NULL`을, `u.role.neq(["a", "b"])`는
+`NOT IN (?, ?)`을 생성합니다. 명시적 연산자 형태인 `where(col, "!=", null)` /
+`where(col, "=", null)`에도 동일한 변환이 적용됩니다.
+
 전체 목록(집계 / CASE / 윈도우 / 날짜 등)은 [QueryDSL 표현식](./query-builder-querydsl.md)에 있어요.
 
 `qAlias()`는 `alias()`의 `.col()`도 지원하니 두 스타일을 섞어 써도 됩니다.

@@ -83,6 +83,13 @@ The full operator reference lives on the
 | `.isNotNull()` | `IS NOT NULL` | `u.email.isNotNull()` |
 | `.between(min, max)` | `BETWEEN ? AND ?` | `u.age.between(18, 65)` |
 
+`.eq()` and `.neq()` normalize their operand so the generated SQL is always
+sound: a `null` becomes `IS NULL` / `IS NOT NULL` (never `= NULL`, which always
+yields UNKNOWN), and an array becomes `IN (...)` / `NOT IN (...)`. So
+`u.deletedAt.neq(null)` emits `IS NOT NULL` and `u.role.neq(["a", "b"])` emits
+`NOT IN (?, ?)`. The same rewrite applies to the explicit
+`where(col, "!=", null)` / `where(col, "=", null)` operator form.
+
 Each method returns a `ColumnCondition` that the query builder resolves
 through its alias registry — SnakeNamingStrategy is fully supported.
 

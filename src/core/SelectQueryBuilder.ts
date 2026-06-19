@@ -455,6 +455,8 @@ export class ColumnCondition implements ConditionLike {
         return Conditions.equals(qualified, value);
       case "!=":
       case "<>":
+        if (value === null) return Conditions.isNotNull(qualified);
+        if (Array.isArray(value)) return Conditions.notIn(qualified, value);
         return Conditions.notEquals(qualified, value);
       case ">":
         return Conditions.gt(qualified, value);
@@ -6049,9 +6051,13 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     switch (normalizedOp) {
       case "=":
+        // `col = NULL` is always UNKNOWN; rewrite to IS NULL so the explicit
+        // operator form matches the two-arg `where(col, null)` shorthand.
+        if (value === null) return Conditions.isNull(qualified);
         return Conditions.equals(qualified, value);
       case "!=":
       case "<>":
+        if (value === null) return Conditions.isNotNull(qualified);
         return Conditions.notEquals(qualified, value);
       case ">":
         return Conditions.gt(qualified, value);
