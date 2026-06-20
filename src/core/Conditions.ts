@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import sql, { Sql, join, raw } from "sql-template-tag";
 import type { FullTextSearchOptions } from "../dialects/DialectExpression";
+import { InvalidQueryError } from "../errors/InvalidQueryError";
 
 export class Conditions {
   /**
@@ -144,17 +145,6 @@ export class Conditions {
    *
    * @warning SQL injection risk: never pass user input directly.
    * Use only with internal or trusted literals.
-   * @deprecated Use `unsafeRaw()` instead — it makes the risk explicit.
-   */
-  static raw(condition: string): Sql {
-    return Conditions.unsafeRaw(condition);
-  }
-
-  /**
-   * Creates an arbitrary raw condition expression.
-   *
-   * @warning SQL injection risk: never pass user input directly.
-   * Use only with internal or trusted literals.
    */
   static unsafeRaw(condition: string): Sql {
     return sql`${raw(condition)}`;
@@ -176,7 +166,7 @@ export class Conditions {
   static aggregate(fn: string, column: string): Sql {
     const normalized = fn.trim().toUpperCase();
     if (!Conditions.ALLOWED_AGGREGATES.includes(normalized)) {
-      throw new Error(
+      throw new InvalidQueryError(
         `Unsupported aggregate function: "${fn}". Allowed: ${Conditions.ALLOWED_AGGREGATES.join(", ")}`,
       );
     }
@@ -286,7 +276,7 @@ export class Conditions {
   private static validateOperator(operator: string): void {
     const normalized = operator.trim().toUpperCase();
     if (!Conditions.ALLOWED_OPERATORS.includes(normalized)) {
-      throw new Error(
+      throw new InvalidQueryError(
         `Invalid operator: "${operator}". Allowed operators: ${Conditions.ALLOWED_OPERATORS.join(", ")}`,
       );
     }
@@ -295,7 +285,7 @@ export class Conditions {
   private static validateSubqueryOperator(operator: string): void {
     const normalized = operator.trim().toUpperCase();
     if (!Conditions.SUBQUERY_OPERATORS.includes(normalized)) {
-      throw new Error(
+      throw new InvalidQueryError(
         `Invalid operator for subquery comparison: "${operator}". Allowed operators: ${Conditions.SUBQUERY_OPERATORS.join(", ")}`,
       );
     }
@@ -304,7 +294,7 @@ export class Conditions {
   private static validateBinaryOperator(operator: string): void {
     const normalized = operator.trim().toUpperCase();
     if (!Conditions.BINARY_OPERATORS.includes(normalized)) {
-      throw new Error(
+      throw new InvalidQueryError(
         `Invalid operator for column comparison: "${operator}". Allowed operators: ${Conditions.BINARY_OPERATORS.join(", ")}`,
       );
     }

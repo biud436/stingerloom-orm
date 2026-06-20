@@ -16,24 +16,6 @@ import { MyClassConstructor } from "../MyClassConstructor";
 const registry = DeserializerRegistry.getInstance();
 
 /**
- * Swap the deserialization strategy.
- *
- * @deprecated Use DeserializerRegistry.getInstance().setDeserializer() instead.
- */
-export function setDeserializer(deserializer: Deserializer): void {
-  registry.setDeserializer(deserializer);
-}
-
-/**
- * Return the currently active deserialization strategy.
- *
- * @deprecated Use DeserializerRegistry.getInstance().getDeserializer() instead.
- */
-export function getDeserializer(): Deserializer {
-  return registry.getDeserializer();
-}
-
-/**
  * Deserialize a plain object into a class instance.
  *
  * Internally delegates to the DeserializerRegistry singleton's strategy.

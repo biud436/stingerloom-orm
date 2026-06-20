@@ -36,6 +36,9 @@ export class ReplicationManager {
 
   shutdown(): void {
     if (this.router) {
+      // Stop the health-check interval before dropping the reference, otherwise
+      // the timer can never be cleared once the router is unreachable.
+      this.router.stopHealthCheck();
       this.router.resetFailedSlaves();
       this.router = null;
     }

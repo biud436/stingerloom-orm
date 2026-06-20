@@ -644,7 +644,7 @@ interface DatabaseClientOptions {
   password: string;
   database: string;
   entities: AnyEntity[];
-  synchronize?: boolean | "safe" | "dry-run";  // 스키마 동기화 모드 (기본값: false)
+  synchronize?: boolean | "safe" | "dry-run" | SynchronizeOptions;  // 모드, 또는 객체 { mode, continueOnError, failOnDestructiveChange, logDDL } (기본값: false)
   schema?: string;               // PostgreSQL 스키마 (기본값: "public")
   charset?: string;              // MySQL 문자셋
   datesStrings?: boolean;        // MySQL 날짜를 문자열로 반환
@@ -654,7 +654,7 @@ interface DatabaseClientOptions {
   logging?: boolean | LoggingOptions;  // 쿼리 로깅
   replication?: ReplicationConfig;     // Read Replica 설정
   namingStrategy?: NamingStrategy;     // 커스텀 FK/인덱스 네이밍 전략
-  tenantStrategy?: "search_path" | "schema_qualified"; // PG 테넌트 쿼리 전략 (기본값: "search_path")
+  tenantStrategy?: "search_path" | "schema_qualified" | "tenant_column" | "database"; // 테넌트 격리 전략 (기본값: "search_path")
   plugins?: StingerloomPlugin[];       // register() 시 자동 설치할 플러그인
 }
 ```

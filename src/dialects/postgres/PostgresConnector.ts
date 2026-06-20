@@ -284,7 +284,10 @@ export class PostgresConnector extends IConnector {
 
     const safeSql = PostgresConnector.ISOLATION_LEVEL_SQL[level];
     if (!safeSql) {
-      throw new Error(`Invalid isolation level: ${level}`);
+      throw new OrmError(
+        OrmErrorCode.INVALID_CONFIG,
+        `Invalid isolation level: ${level}`,
+      );
     }
 
     const client = connection as PoolClient;

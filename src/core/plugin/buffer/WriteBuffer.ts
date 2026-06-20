@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../../../utils";
+import { Logger } from "../../../utils/Logger";
 import { FindOption } from "../../../dialects/FindOption";
 import { PluginContext } from "../PluginContext";
 import { TrackedEntry, InsertEntry, DeleteEntry, PersistEntry } from "./BufferEntry";
@@ -40,6 +41,7 @@ import type { EntityManager } from "../../EntityManager";
  * - LazyRelationInjector: lazy proxy injection for all relation types
  */
 export class WriteBuffer {
+  private static readonly logger = new Logger("WriteBuffer");
   private readonly trackedEntries = new Map<any, TrackedEntry>();
   // PK-only stubs created by getReference(): registered in the identity map but
   // NOT yet hydrated. findOne() must treat a stub as a cache miss and load it
@@ -1325,10 +1327,9 @@ export class WriteBuffer {
     }
   }
 
-  /** Structured console log for buffer lifecycle events. */
+  /** Structured log for buffer lifecycle events, routed through {@link Logger}. */
   private log(action: string, detail?: Record<string, any>): void {
-    const ts = new Date().toISOString();
     const extra = detail ? " " + JSON.stringify(detail) : "";
-    console.log(`${ts} [WriteBuffer] ${action}${extra}`);
+    WriteBuffer.logger.info(`${action}${extra}`);
   }
 }

@@ -227,7 +227,10 @@ describe("propagateShutdown() resource cleanup", () => {
       reset: jest.fn(),
       removeAllListeners: jest.fn(),
     };
-    (em as any).replication["router"] = { resetFailedSlaves: jest.fn() };
+    (em as any).replication["router"] = {
+      resetFailedSlaves: jest.fn(),
+      stopHealthCheck: jest.fn(),
+    };
 
     // Call propagateShutdown
     await em.propagateShutdown();

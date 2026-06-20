@@ -832,12 +832,6 @@ ORM이 `User`의 테이블 이름을 조회할 때:
 - "enterprise" 컨텍스트에서 → 테넌트 레이어에서 `"enterprise_users"` 발견
 - 다른 컨텍스트에서 → public 레이어로 폴백 → `"user"` (기본값)
 
-> **주의.** `LayeredMetadataStore`/`LayeredMetadataScanner`/
-> `MultiTenantMetadataManager`도 패키지에서 export되지만, 하위 호환성을 위해
-> 남겨둔 더미일 뿐 EntityManager 파이프라인에는 연결되어 있지 않습니다.
-> 이들에 대한 변경은 런타임에 무시됩니다. 항상 `MetadataLayerRegistry`를
-> 사용하세요. 자세한 내용은 issue #277 참고.
-
 ### 격리 보장
 
 `MetadataLayerRegistry.resolveAll()`은 **public 레이어**와 **현재 활성 컨텍스트**의 레이어만 병합합니다. 다른 테넌트 레이어의 데이터는 절대 포함하지 않습니다. 여러 테넌트가 동시에 활성화되어 있어도 크로스 테넌트 메타데이터 유출이 방지됩니다.

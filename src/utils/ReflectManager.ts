@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Type } from "./types";
 import { ENTITY_TOKEN } from "../decorators/Entity";
-import { ENTITY_METADATA_TOKEN } from "../decorators/InjectEntityManager";
 
 /**
  * Utility class for managing reflection metadata
@@ -60,12 +59,5 @@ export class ReflectManager {
       return false;
     }
     return Reflect.getMetadata(ENTITY_TOKEN, target) !== undefined;
-  }
-
-  /**
-   * Check if target is an entity manager
-   */
-  public static isEntityManager(target: any): boolean {
-    return Reflect.getMetadata(ENTITY_METADATA_TOKEN, target) !== undefined;
   }
 }

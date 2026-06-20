@@ -832,12 +832,6 @@ When the ORM looks up the table name for `User`:
 - In the "enterprise" context → finds `"enterprise_users"` in the tenant layer
 - In any other context → falls back to the public layer → `"user"` (the default)
 
-> **Heads-up.** `LayeredMetadataStore`/`LayeredMetadataScanner`/
-> `MultiTenantMetadataManager` are also exported from the package, but they
-> are kept for backward compatibility only and are **not** wired into the
-> EntityManager. Mutations made through them are silent no-ops at runtime.
-> Use `MetadataLayerRegistry` instead. See issue #277.
-
 ### Isolation guarantee
 
 `MetadataLayerRegistry.resolveAll()` merges only the **public layer** and the **currently active context** layer. It never includes data from other tenant layers. This prevents cross-tenant metadata leakage even if multiple tenants are active simultaneously.

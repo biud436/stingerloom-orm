@@ -2,7 +2,8 @@
  * Stingerloom ORM - A standalone, framework-agnostic TypeScript ORM
  *
  * This ORM can be used with any Node.js framework or standalone.
- * It provides a clean, type-safe API for working with MySQL databases.
+ * It provides a clean, type-safe API for working with MySQL, PostgreSQL,
+ * and SQLite databases.
  */
 
 // Ensure reflect-metadata is loaded before any decorator usage

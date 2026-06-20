@@ -6,6 +6,8 @@ import {
 import { EntityManager } from "../../core/EntityManager";
 import { Logger } from "../../utils/Logger";
 import type { ClazzType } from "../../utils/types";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
 export const STINGERLOOM_ORM_SERVICE_TOKEN = Symbol.for(
   "STINGERLOOM_ORM_SERVICE_TOKEN",
@@ -61,7 +63,8 @@ export class StingerloomOrmService
 
   getRepository<T>(entity: ClazzType<T>) {
     if (!this.entityManager) {
-      throw new Error(
+      throw new OrmError(
+        OrmErrorCode.NOT_CONNECTED,
         "EntityManager not initialized. Database connection may not be ready.",
       );
     }
@@ -70,7 +73,8 @@ export class StingerloomOrmService
 
   getEntityManager(): EntityManager {
     if (!this.entityManager) {
-      throw new Error(
+      throw new OrmError(
+        OrmErrorCode.NOT_CONNECTED,
         "EntityManager not initialized. Database connection may not be ready.",
       );
     }

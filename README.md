@@ -183,7 +183,8 @@ Example projects are included in [`examples/`](./examples):
 |---------|-------------|
 | [nestjs-cats](./examples/nestjs-cats) | CRUD, relations, soft delete, cursor pagination, `EntitySubscriber` |
 | [nestjs-blog](./examples/nestjs-blog) | ManyToMany, upsert, 59 e2e tests (Users / Posts / Tags / Categories) |
-| [nestjs-todo](./examples/nestjs-todo) | Minimal CRUD — uses the published npm package |
+| [nestjs-linear-clone](./examples/nestjs-linear-clone) | Linear/Jira-style issue tracker — production-grade SQL patterns (CTEs, window functions, complex queries) |
+| [nestjs-todo](./examples/nestjs-todo) | Minimal CRUD — bare-minimum entity + repository setup |
 | [nestjs-todo-sqlite](./examples/nestjs-todo-sqlite) | Minimal CRUD on SQLite via `better-sqlite3` |
 | [nestjs-multitenant](./examples/nestjs-multitenant) | PostgreSQL schema-based tenant isolation with `TenantMigrationRunner` |
 | [prisma-import-demo](./examples/prisma-import-demo) | Generate Stingerloom entities from an existing Prisma schema |

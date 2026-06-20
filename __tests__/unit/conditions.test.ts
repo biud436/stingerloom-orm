@@ -128,16 +128,16 @@ describe("Conditions - 추가 테스트", () => {
     });
   });
 
-  describe("raw 조건", () => {
-    it("raw는 임의의 SQL 조건을 생성해야 함 (deprecated, unsafeRaw으로 위임)", () => {
-      const condition = Conditions.raw("DATE(created_at) = CURDATE()");
+  describe("unsafeRaw 조건", () => {
+    it("unsafeRaw는 임의의 SQL 조건을 생성해야 함", () => {
+      const condition = Conditions.unsafeRaw("DATE(created_at) = CURDATE()");
 
       expect(condition.sql).toBe("DATE(created_at) = CURDATE()");
       expect(condition.values).toEqual([]);
     });
 
-    it("raw는 복잡한 SQL 표현식을 처리해야 함", () => {
-      const condition = Conditions.raw(
+    it("unsafeRaw는 복잡한 SQL 표현식을 처리해야 함", () => {
+      const condition = Conditions.unsafeRaw(
         "CONCAT(first_name, ' ', last_name) LIKE '%John%'",
       );
 
