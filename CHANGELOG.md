@@ -10,6 +10,32 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 Insert/save correctness fixes and query-builder expressiveness distilled from the blog-api-server TypeORM migration (#368-#372). One behavioral note: `*AndSelect` + `getRawMany()` now returns `alias_column`-prefixed keys (the SELECT list is fully aliased to prevent column clobbering).
 
+### v1.0 release prep — public API cleanup, typed errors, doc accuracy (#382)
+
+Major-version cleanup of the public surface ahead of v1.0. **Breaking:** deprecated exports that were silent no-ops or had direct replacements are removed. Load-bearing deprecated APIs (`joinColumn` option, `EntityResult<T>`, `connectionLimit`, `ISqlDriver.generateForeignKeyName()`) are intentionally kept for a later release. Verified: `tsc`/`pnpm build` clean, full unit suite + MySQL/PostgreSQL/SQLite integration green.
+
+#### Removed (Breaking)
+
+- **Layered-metadata facades** — `LayeredMetadataStore`, `LayeredMetadataScanner` (with `LayeredEntityScanner` / `LayeredColumnScanner` / `LayeredManyToOneScanner`), and `MultiTenantMetadataManager`. These were never wired into the decorator pipeline, so mutations through them were silent no-ops. Use `MetadataLayerRegistry.getInstance()` together with `MetadataContext.run(tenantId, callback)`.
+- **Core `InjectRepository` / `InjectEntityManager`** (plus `getRepositoryToken`, `ENTITY_METADATA_TOKEN`, and the now-unused `ReflectManager.isEntityManager()`) — dead no-op decorators that shadowed the working ones by name. Import the canonical decorators from `@stingerloom/orm/nestjs`.
+- **`ALL_CAPABILITIES`** — unused; use the dialect-specific `ALL_MYSQL` / `ALL_POSTGRES` / `ALL_SQLITE`.
+- **`Conditions.raw()`** — use `Conditions.unsafeRaw()`, which names the SQL-injection risk explicitly.
+- **Standalone `setDeserializer()` / `getDeserializer()`** — use `DeserializerRegistry.getInstance().setDeserializer()` / `.getDeserializer()`. `deserializeEntity()` is unchanged.
+
+#### Changed (Breaking)
+
+- **QueryDSL bare `raw` export renamed to `rawExpr`** to resolve a name collision: at the package root `raw` resolved to `sql-template-tag`'s `raw`, while `@stingerloom/orm/core`'s `raw` was the DSL helper, so the same identifier meant two different things depending on the entry point. The namespaced `Expressions.raw(...)` is unchanged.
+
+#### Fixed
+
+- **Typed errors on user-facing paths** — transaction isolation-level validation, NestJS service init (`getRepository`/`getEntityManager` before connect), `SeederRunner`, `getRawMany()` coercion, and `Conditions` operator validation now throw `OrmError` with an `OrmErrorCode` instead of a plain `Error`.
+- **Replication health-check timer leak** — `ReplicationManager.shutdown()` now stops the health-check interval before dropping the router, and the interval is `.unref()`'d so it never keeps the Node process alive.
+- **Library diagnostics routed through `Logger`** — the `@ComputedColumn` dual-dialect warning and `WriteBuffer` lifecycle logging no longer write to `console` directly, so a custom `Logger.setOutput()` sink captures them.
+
+#### Documentation
+
+- Removed the non-existent `FindCondition<T>` from the API reference, corrected the `synchronize` (object form) and `tenantStrategy` (four values) types, added the `nestjs-linear-clone` example, and wired `advanced.md` into the sidebar — English and Korean in sync.
+
 ### Added
 
 - **PostgreSQL array operators — `ColumnExpression.arrayContains` / `arrayOverlaps` / `arrayContainedBy` (QueryDSL Tier 5)** - the array counterpart of the JSON-path DSL: `u.tags.arrayContains(["admin", "beta"])` → `tags @> $1`, `.arrayOverlaps(...)` → `&&`, `.arrayContainedBy(...)` → `<@`. The value array is bound as a single parameter (node-postgres serializes it; the engine infers the element type from the column, so no `ARRAY[...]` construction or empty-array cast). PostgreSQL-only — MySQL/SQLite throw `OrmError(UNSUPPORTED_DATABASE)`. `QEntity<T>` now maps primitive-element array properties (`string[]`, `number[]`, …) to `ColumnExpression` so the methods are typed; object arrays still map to the JSON-path expression. Composes through `.and()` / `.or()` / `.not()`.
