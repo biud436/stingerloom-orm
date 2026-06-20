@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ColumnType } from "./Column";
+import { Logger } from "../utils/Logger";
 import type { ComputedColumnExpressionBuilder } from "../core/expressions/ComputedColumnExpression";
+
+const logger = new Logger("ComputedColumn");
 
 export type { ComputedColumnExpressionBuilder };
 export type { ComputedColumnExpressionContext } from "../core/expressions/ComputedColumnExpression";
@@ -66,8 +69,8 @@ function warnIfDualDialectLiteral(key: string, expression: unknown): void {
   const hasMysql = /TIMESTAMPDIFF/i.test(expression);
   const hasPostgres = /EXTRACT\s*\(\s*EPOCH/i.test(expression);
   if (hasMysql && hasPostgres) {
-    console.warn(
-      `[stingerloom] @ComputedColumn on "${key}": the literal expression ` +
+    logger.warn(
+      `@ComputedColumn on "${key}": the literal expression ` +
         "mixes MySQL (TIMESTAMPDIFF) and PostgreSQL (EXTRACT(EPOCH …)) " +
         "function names. Use the builder form — expression: (e) => … — so a " +
         "single definition renders dialect-correct DDL on every driver.",

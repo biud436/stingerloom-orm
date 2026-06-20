@@ -132,12 +132,6 @@ export const ALL_SQLITE: Readonly<SqliteCapabilities> = Object.freeze({
   supportsSqliteRenameColumn: true,
 });
 
-/**
- * @deprecated Use dialect-specific constants (ALL_MYSQL, ALL_POSTGRES, ALL_SQLITE).
- * Kept for backward compatibility with code that doesn't know its dialect.
- */
-export const ALL_CAPABILITIES: Readonly<CommonCapabilities> = ALL_COMMON;
-
 // ─── Generic resolver ──────────────────────────────────────────────
 
 import { DbVersion } from "./DbVersion";

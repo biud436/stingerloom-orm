@@ -644,7 +644,7 @@ interface DatabaseClientOptions {
   password: string;
   database: string;
   entities: AnyEntity[];
-  synchronize?: boolean | "safe" | "dry-run";  // Schema sync mode (default: false)
+  synchronize?: boolean | "safe" | "dry-run" | SynchronizeOptions;  // mode, or object { mode, continueOnError, failOnDestructiveChange, logDDL } (default: false)
   schema?: string;               // PostgreSQL schema (default: "public")
   charset?: string;              // MySQL charset
   datesStrings?: boolean;        // Return MySQL dates as strings
@@ -654,7 +654,7 @@ interface DatabaseClientOptions {
   logging?: boolean | LoggingOptions;  // Query logging
   replication?: ReplicationConfig;     // Read Replica settings
   namingStrategy?: NamingStrategy;     // Custom FK/index naming strategy
-  tenantStrategy?: "search_path" | "schema_qualified"; // PG tenant query strategy (default: "search_path")
+  tenantStrategy?: "search_path" | "schema_qualified" | "tenant_column" | "database"; // tenant isolation strategy (default: "search_path")
   plugins?: StingerloomPlugin[];       // Auto-install plugins on register()
 }
 ```

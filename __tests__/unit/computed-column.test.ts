@@ -5,6 +5,7 @@ import { Entity } from "../../src/decorators/Entity";
 import { Column } from "../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
 import { ComputedColumn, COMPUTED_COLUMN_TOKEN } from "../../src/decorators/ComputedColumn";
+import { Logger } from "../../src/utils/Logger";
 
 describe("@ComputedColumn (#131)", () => {
   describe("decorator metadata", () => {
@@ -265,7 +266,8 @@ describe("@ComputedColumn expression builder (#336)", () => {
   });
 
   it("warns when a literal string mixes MySQL and PostgreSQL functions", () => {
-    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const messages: string[] = [];
+    Logger.setOutput((msg) => messages.push(msg));
     try {
       class Mixed {
         @ComputedColumn({
@@ -276,24 +278,25 @@ describe("@ComputedColumn expression builder (#336)", () => {
         bad!: number;
       }
       void Mixed;
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain("builder form");
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toContain("builder form");
     } finally {
-      warn.mockRestore();
+      Logger.reset();
     }
   });
 
   it("does not warn for a single-dialect literal string", () => {
-    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const messages: string[] = [];
+    Logger.setOutput((msg) => messages.push(msg));
     try {
       class Fine {
         @ComputedColumn({ expression: "a + b", type: "int" })
         ok!: number;
       }
       void Fine;
-      expect(warn).not.toHaveBeenCalled();
+      expect(messages).toHaveLength(0);
     } finally {
-      warn.mockRestore();
+      Logger.reset();
     }
   });
 });

@@ -5,7 +5,7 @@ import { MetadataContext } from "../metadata/MetadataContext";
 import { warnLegacyContextMutator } from "../metadata/legacyContextWarning";
 
 /**
- * Global LayeredMetadataStore registry.
+ * Global metadata layer registry.
  *
  * A central layer manager shared by all MetadataScanner instances.
  * Writes go to the "public" layer by default; context switching supports multi-tenancy.

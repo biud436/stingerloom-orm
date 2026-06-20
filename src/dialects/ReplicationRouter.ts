@@ -119,6 +119,8 @@ export class ReplicationRouter {
     this.healthCheckTimer = setInterval(() => {
       void this.runHealthChecks();
     }, intervalMs);
+    // Don't let the health-check timer keep the Node process alive on its own.
+    this.healthCheckTimer.unref?.();
   }
 
   /**

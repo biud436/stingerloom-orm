@@ -37,7 +37,7 @@ import {
   dateTrunc as dateTruncFactory,
   random as randomFactory,
 } from "./DateArithmeticExpression";
-import { raw as rawFactory } from "./RawExpression";
+import { rawExpr as rawFactory } from "./RawExpression";
 import {
   tuple as tupleFactory,
   TupleExpression,

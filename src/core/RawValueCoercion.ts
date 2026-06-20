@@ -12,6 +12,9 @@
  * `Number(row.x)` / `row.d instanceof Date ? … : …` blocks.
  */
 
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
+
 /** Primitive type tag for a single coerced column. */
 export type CoerceType =
   | "number"
@@ -106,7 +109,8 @@ export function coerceRow<T>(
     try {
       out[key] = coerceValue(out[key], type);
     } catch (err) {
-      throw new Error(
+      throw new OrmError(
+        OrmErrorCode.QUERY_ERROR,
         `getRawMany: failed to coerce column "${key}" to "${type}" ` +
           `(value: ${String(out[key])}): ` +
           (err instanceof Error ? err.message : String(err)),

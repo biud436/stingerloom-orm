@@ -233,14 +233,14 @@ describe("Conditions - operator 화이트리스트 검증", () => {
 
   describe("compareSubquery - 동일한 화이트리스트 적용", () => {
     it("should allow valid operator with subquery", () => {
-      const subquery = Conditions.raw("(SELECT 1)");
+      const subquery = Conditions.unsafeRaw("(SELECT 1)");
       expect(() => {
         Conditions.compareSubquery("col", "=", subquery);
       }).not.toThrow();
     });
 
     it("should reject malicious operator with subquery", () => {
-      const subquery = Conditions.raw("(SELECT 1)");
+      const subquery = Conditions.unsafeRaw("(SELECT 1)");
       expect(() => {
         Conditions.compareSubquery(
           "col",

@@ -94,6 +94,7 @@ function sidebarEn() {
       text: "Advanced",
       collapsed: false,
       items: [
+        { text: "Advanced Features Overview", link: "/advanced" },
         { text: "Multi-Tenancy", link: "/multi-tenancy" },
         { text: "Events & Subscribers", link: "/events" },
         { text: "Logging & Diagnostics", link: "/logging" },
@@ -231,6 +232,7 @@ function sidebarKo() {
       text: "고급",
       collapsed: false,
       items: [
+        { text: "고급 기능 모음", link: "/ko/advanced" },
         { text: "멀티테넌시", link: "/ko/multi-tenancy" },
         { text: "이벤트 & 구독자", link: "/ko/events" },
         { text: "로깅 & 진단", link: "/ko/logging" },

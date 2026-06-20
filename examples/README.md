@@ -10,6 +10,7 @@ This directory contains example projects demonstrating how to use Stingerloom OR
 | [nestjs-todo](./nestjs-todo) | MySQL | Minimal CRUD baseline |
 | [nestjs-cats](./nestjs-cats) | MySQL | Full module wiring + EntitySubscriber + cursor pagination |
 | [nestjs-blog](./nestjs-blog) | MySQL | Relations (M2M), upsert, soft delete, schema diff, EXPLAIN |
+| [nestjs-linear-clone](./nestjs-linear-clone) | PostgreSQL | Issue tracker — production-grade SQL (CTEs, window functions, complex queries) |
 | [nestjs-multitenant](./nestjs-multitenant) | PostgreSQL | Schema-per-tenant + AsyncLocalStorage middleware |
 | [prisma-import-demo](./prisma-import-demo) | MySQL | Prisma schema → Stingerloom entity codegen |
 

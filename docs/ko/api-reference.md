@@ -666,7 +666,7 @@ interface DatabaseClientOptions {
   password: string;
   database: string;
   entities: AnyEntity[];
-  synchronize?: boolean | "safe" | "dry-run";
+  synchronize?: boolean | "safe" | "dry-run" | SynchronizeOptions; // 객체 폼: { mode, continueOnError, failOnDestructiveChange, logDDL }
   schema?: string;
   charset?: string;
   datesStrings?: boolean;
@@ -1305,10 +1305,8 @@ type RelationSchemaDef =
 | `ClazzType<T>` | `new (...args: any[]) => T` |
 | `EntityResult<T>` | **Deprecated** -- `T \| T[]`였지만, `find()`는 `T[]`, `save()`는 `T`로 대체됐어요 |
 | `DeepPartial<T>` | Deep partial 타입 |
-| `WhereClause<T>` | `{ [P in keyof T]?: T[P] }` -- 타입 안전한 WHERE 조건 |
-| `FindCondition<T>` | **Deprecated** -- `WhereClause<T>`를 사용해 주세요 |
+| `WhereClause<T>` | 타입 안전한 WHERE 조건 -- 컬럼 동등 비교에 더해 연산자(`gt`, `in`, `like`, …)와 `AND` / `OR` / `NOT` 지원 |
 | `RawQueryBuilderFactory` | Query builder 팩토리 |
 | `MetadataLayerRegistry` | 데코레이터 시점의 canonical 레이어드 메타데이터 레지스트리 (싱글턴) |
 | `MetadataContext` | AsyncLocalStorage 기반 테넌트 컨텍스트 |
-| `LayeredMetadataStore` | **Deprecated** -- 호환용 facade. EntityManager에 연결되지 않음 (issue #277) |
 | `Logger` | 내부 로깅 유틸리티 |

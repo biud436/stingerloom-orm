@@ -262,7 +262,10 @@ export class MySqlConnector extends IConnector {
 
     const safeSql = MySqlConnector.ISOLATION_LEVEL_SQL[level];
     if (!safeSql) {
-      throw new Error(`Invalid isolation level: ${level}`);
+      throw new OrmError(
+        OrmErrorCode.INVALID_CONFIG,
+        `Invalid isolation level: ${level}`,
+      );
     }
 
     return new Promise((resolve, reject) => {

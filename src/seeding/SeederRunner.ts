@@ -2,6 +2,9 @@
 import { EntityManager } from "../core/EntityManager";
 import { Seeder, SeederContext } from "./Seeder";
 import { Logger } from "../utils";
+import { AdvisoryLockError } from "../errors/AdvisoryLockError";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * Result of a single seeder execution.
@@ -131,7 +134,7 @@ export class SeederRunner {
     if (this.trackExecution && driver?.acquireAdvisoryLock) {
       lockAcquired = await driver.acquireAdvisoryLock(lockId, 10000);
       if (!lockAcquired) {
-        throw new Error(
+        throw new AdvisoryLockError(
           `Failed to acquire seed lock "${lockId}". Another seeder may be running.`,
         );
       }
@@ -282,7 +285,10 @@ export class SeederRunner {
   private isMySql(): boolean {
     const driver = this.em.getDriver();
     if (!driver) {
-      throw new Error("SeederRunner: EntityManager has no driver connected.");
+      throw new OrmError(
+        OrmErrorCode.NOT_CONNECTED,
+        "SeederRunner: EntityManager has no driver connected.",
+      );
     }
     return driver.isMySqlFamily();
   }

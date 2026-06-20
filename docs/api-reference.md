@@ -666,7 +666,7 @@ interface DatabaseClientOptions {
   password: string;
   database: string;
   entities: AnyEntity[];
-  synchronize?: boolean | "safe" | "dry-run";
+  synchronize?: boolean | "safe" | "dry-run" | SynchronizeOptions; // object form: { mode, continueOnError, failOnDestructiveChange, logDDL }
   schema?: string;
   charset?: string;
   datesStrings?: boolean;
@@ -1307,10 +1307,8 @@ type RelationSchemaDef =
 | `ClazzType<T>` | `new (...args: any[]) => T` |
 | `EntityResult<T>` | **Deprecated** — was `T \| T[]`, replaced by `T[]` for `find()` and `T` for `save()` |
 | `DeepPartial<T>` | Deep partial type |
-| `WhereClause<T>` | `{ [P in keyof T]?: T[P] }` — typed WHERE conditions |
-| `FindCondition<T>` | **Deprecated** — use `WhereClause<T>` instead |
+| `WhereClause<T>` | Typed WHERE conditions — column equality plus operators (`gt`, `in`, `like`, …) and `AND` / `OR` / `NOT` |
 | `RawQueryBuilderFactory` | Query builder factory |
 | `MetadataLayerRegistry` | Decorator-time canonical layered-metadata registry (singleton) |
 | `MetadataContext` | AsyncLocalStorage-based tenant context |
-| `LayeredMetadataStore` | **Deprecated** — back-compat facade, not wired into the EntityManager (issue #277) |
 | `Logger` | Internal logging utility |

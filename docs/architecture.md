@@ -274,10 +274,9 @@ src/
 │   ├── mysql/                     MySQL driver
 │   ├── postgres/                  PostgreSQL driver + TenantMigrationRunner
 │   └── sqlite/                    SQLite driver
-├── metadata/              Layered metadata primitives + deprecated facades
+├── metadata/              Layered metadata primitives
 │   ├── MetadataContext.ts         AsyncLocalStorage-based tenant scoping
-│   ├── MetadataLayer.ts           Individual layer storage
-│   └── LayeredMetadataStore.ts    @deprecated facade (issue #277)
+│   └── MetadataLayer.ts           Individual layer storage
 ├── scanner/               Decorator pipeline; `MetadataLayerRegistry` lives here
 │   └── MetadataScanner.ts         Decorator-time registry (canonical)
 ├── migration/             MigrationRunner + CLI (`npx stingerloom`)

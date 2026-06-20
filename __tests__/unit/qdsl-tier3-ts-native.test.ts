@@ -6,7 +6,7 @@ import { EntityManager } from "../../src/core/EntityManager";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { createDialectExpression } from "../../src/dialects/DialectExpression";
 import { Expressions } from "../../src/core/expressions/LogicalCondition";
-import { raw } from "../../src/core/expressions/RawExpression";
+import { rawExpr as raw } from "../../src/core/expressions/RawExpression";
 import { isScalarExpression } from "../../src/core/expressions/ScalarExpression";
 
 @Entity()

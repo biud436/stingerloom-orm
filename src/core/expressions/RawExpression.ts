@@ -35,6 +35,6 @@ import { ScalarExpression } from "./ScalarExpression";
  * ```
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function raw<_T = unknown>(fragment: Sql): ScalarExpression {
+export function rawExpr<_T = unknown>(fragment: Sql): ScalarExpression {
   return new ScalarExpression(() => fragment);
 }

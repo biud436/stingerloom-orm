@@ -1,7 +1,6 @@
 export * from "./Column";
 export * from "./Entity";
 export * from "./CustomColumn";
-export * from "./InjectEntityManager";
 export * from "./PrimaryGeneratedColumn";
 export * from "./PrimaryColumn";
 export * from "./Indexer";
@@ -17,7 +16,6 @@ export * from "./Validation";
 export * from "./Transactional";
 export * from "./OneToOne";
 export * from "./UniqueIndex";
-export * from "./InjectRepository";
 export * from "./ComputedColumn";
 export * from "./FullTextIndex";
 export * from "./JsonIndex";
