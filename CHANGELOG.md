@@ -8,7 +8,7 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ## [1.0.0] — 2026-06-20
 
-Insert/save correctness fixes and query-builder expressiveness distilled from the blog-api-server TypeORM migration (#368-#372). One behavioral note: `*AndSelect` + `getRawMany()` now returns `alias_column`-prefixed keys (the SELECT list is fully aliased to prevent column clobbering).
+Insert/save correctness fixes and query-builder expressiveness (#368-#372). One behavioral note: `*AndSelect` + `getRawMany()` now returns `alias_column`-prefixed keys (the SELECT list is fully aliased to prevent column clobbering).
 
 ### v1.0 release prep — public API cleanup, typed errors, doc accuracy (#382)
 
