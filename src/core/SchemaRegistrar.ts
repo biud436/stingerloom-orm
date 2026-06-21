@@ -1099,6 +1099,9 @@ export class SchemaRegistrar {
     for (const oneToOneItem of oneToOneItems) {
       const { joinColumn } = oneToOneItem;
       if (!joinColumn) continue; // Inverse side has no FK.
+      // Skip FK creation when createForeignKeyConstraints is false, mirroring
+      // the ManyToOne path above and SchemaGenerator.getForeignKeys().
+      if (oneToOneItem.option?.createForeignKeyConstraints === false) continue;
 
       const RelatedEntity = oneToOneItem.getRelatedEntity();
       if (!RelatedEntity) {

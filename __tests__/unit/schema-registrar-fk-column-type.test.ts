@@ -153,20 +153,20 @@ function makeO2OResolver(items: any[]): RelationMetadataResolver {
   } as unknown as RelationMetadataResolver;
 }
 
-function m2oItem(parent: any, joinColumn: string) {
+function m2oItem(parent: any, joinColumn: string, option: any = {}) {
   return {
     joinColumn,
     getMappingEntity: () => parent,
-    option: {},
+    option,
     references: undefined,
   };
 }
 
-function o2oItem(parent: any, joinColumn: string) {
+function o2oItem(parent: any, joinColumn: string, option: any = {}) {
   return {
     joinColumn,
     getRelatedEntity: () => parent,
-    option: {},
+    option,
   };
 }
 
@@ -273,5 +273,61 @@ describe("SchemaRegistrar.registerForeignKeys — M2O/O2O FK column type (#284)"
 
     expect(calls.addColumn).toHaveLength(1);
     expect(calls.addColumn[0].type).toBe("INT NULL");
+  });
+});
+
+// ──────────────────────────────────────────────
+// createForeignKeyConstraints: false — runtime ALTER path
+// (SchemaGenerator path is covered in referential-actions.test.ts; this
+//  guards the SchemaRegistrar.registerForeignKeys ALTER-based path, where
+//  the O2O branch previously ignored the flag.)
+// ──────────────────────────────────────────────
+
+describe("SchemaRegistrar.registerForeignKeys — createForeignKeyConstraints: false", () => {
+  it("skips the FK constraint and column for a ManyToOne when the flag is false", async () => {
+    const { driver, calls } = makeDriver();
+    const registrar = new SchemaRegistrar(
+      makeM2OResolver([
+        m2oItem(IntPkParent, "parent_id", {
+          createForeignKeyConstraints: false,
+        }),
+      ]),
+      makeCtx(driver),
+    );
+
+    await registrar.registerForeignKeys(IntChild, "int_child");
+
+    expect(calls.addForeignKey).toHaveLength(0);
+    expect(calls.addColumn).toHaveLength(0);
+  });
+
+  it("skips the FK constraint and column for a OneToOne owning side when the flag is false", async () => {
+    const { driver, calls } = makeDriver();
+    const registrar = new SchemaRegistrar(
+      makeO2OResolver([
+        o2oItem(IntPkParent, "profile_id", {
+          createForeignKeyConstraints: false,
+        }),
+      ]),
+      makeCtx(driver),
+    );
+
+    await registrar.registerForeignKeys(O2OChild, "o2o_child");
+
+    expect(calls.addForeignKey).toHaveLength(0);
+    expect(calls.addColumn).toHaveLength(0);
+  });
+
+  it("still creates the FK constraint for a OneToOne owning side when the flag is unset", async () => {
+    const { driver, calls } = makeDriver();
+    const registrar = new SchemaRegistrar(
+      makeO2OResolver([o2oItem(IntPkParent, "profile_id")]),
+      makeCtx(driver),
+    );
+
+    await registrar.registerForeignKeys(O2OChild, "o2o_child");
+
+    expect(calls.addForeignKey).toHaveLength(1);
+    expect(calls.addForeignKey[0].col).toBe("profile_id");
   });
 });

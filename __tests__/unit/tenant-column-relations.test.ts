@@ -187,11 +187,12 @@ describe("RelationLoader under tenant_column strategy", () => {
 
   // ── OneToOne inverse ─────────────────────────────────────────────────
 
-  // NOTE: OneToOne FK creation in SchemaRegistrar does not honor
-  // `createForeignKeyConstraints: false` at the time of writing, and SQLite
-  // cannot ALTER TABLE ADD FOREIGN KEY. Skip under SQLite; Phase 8 MySQL/PG
-  // integration tests cover inverse OneToOne tenant-scoping.
-  xdescribe("OneToOne (inverse) batched load", () => {
+  // OneToOne FK creation in SchemaRegistrar now honors
+  // `createForeignKeyConstraints: false`, so the owning Profile entity below
+  // declares its `accountId` column explicitly and no ALTER TABLE ADD FOREIGN
+  // KEY is attempted — which lets this run under SQLite. Phase 8 MySQL/PG
+  // integration tests still cover inverse OneToOne tenant-scoping with real FKs.
+  describe("OneToOne (inverse) batched load", () => {
     @Entity()
     class Account {
       @PrimaryGeneratedColumn() id!: number;
