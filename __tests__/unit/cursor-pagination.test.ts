@@ -698,6 +698,104 @@ describe("UUID PK cursor pagination", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NamingStrategy (property key -> DB column) mapping for orderBy
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SnakeEntity = class Article {} as any;
+
+// propertyKey (camelCase) differs from the DB column name (snake_case), as
+// produced by SnakeNamingStrategy.
+const snakeMetadata = {
+  name: "article",
+  target: SnakeEntity,
+  columns: [
+    { name: "id", propertyKey: "id", options: { primary: true, autoIncrement: true } },
+    { name: "title", propertyKey: "title", options: {} },
+    { name: "created_at", propertyKey: "createdAt", options: {} },
+  ],
+};
+
+function setupSnakeMocks(em: EntityManager): void {
+  jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(snakeMetadata);
+  jest.spyOn((em as any).resolver, "getDeletedAtColumn").mockReturnValue(null);
+}
+
+describe("findWithCursor — orderBy property->column mapping (SnakeNamingStrategy)", () => {
+  let em: EntityManager;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    em = createTestEntityManager();
+    setupSnakeMocks(em);
+  });
+
+  it("should map a camelCase orderBy property key to its snake_case column in ORDER BY", async () => {
+    const rows = [
+      { id: 1, title: "a", created_at: "2024-01-01" },
+      { id: 2, title: "b", created_at: "2024-01-02" },
+    ];
+    mockQuery.mockResolvedValueOnce({ results: rows, fields: [] });
+
+    await em.findWithCursor(SnakeEntity, { take: 5, orderBy: "createdAt" as any });
+
+    const sqlCall = mockQuery.mock.calls[0][0];
+    const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
+    // ORDER BY must reference the DB column, not the entity property key.
+    expect(sqlText).toContain("`created_at`");
+    expect(sqlText).not.toContain("`createdAt`");
+  });
+
+  it("should reference the snake_case column in the cursor WHERE clause", async () => {
+    const cursor = encodeCursor("2024-01-01");
+    const rows = [{ id: 2, title: "b", created_at: "2024-01-02" }];
+    mockQuery.mockResolvedValueOnce({ results: rows, fields: [] });
+
+    await em.findWithCursor(SnakeEntity, {
+      take: 5,
+      cursor,
+      orderBy: "createdAt" as any,
+    });
+
+    const sqlCall = mockQuery.mock.calls[0][0];
+    const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
+    expect(sqlText).toContain("`created_at`");
+    expect(sqlText).toContain(">");
+  });
+
+  it("should encode nextCursor from the mapped column value (not undefined)", async () => {
+    // take=2 -> fetch 3 -> hasNextPage, last page item's created_at is the cursor
+    const rows = [
+      { id: 1, title: "a", created_at: "2024-01-01" },
+      { id: 2, title: "b", created_at: "2024-01-02" },
+      { id: 3, title: "c", created_at: "2024-01-03" },
+    ];
+    mockQuery.mockResolvedValueOnce({ results: rows, fields: [] });
+
+    const result = await em.findWithCursor(SnakeEntity, {
+      take: 2,
+      orderBy: "createdAt" as any,
+    });
+
+    expect(result.hasNextPage).toBe(true);
+    // Last item of the page (index 1) has created_at "2024-01-02".
+    expect(result.nextCursor).toBe(encodeCursor("2024-01-02"));
+    // Regression guard: a missing mapping would encode `undefined`.
+    expect(result.nextCursor).not.toBe(encodeCursor(undefined));
+  });
+
+  it("should still default to the PK column when orderBy is omitted", async () => {
+    const rows = [{ id: 1, title: "a", created_at: "2024-01-01" }];
+    mockQuery.mockResolvedValueOnce({ results: rows, fields: [] });
+
+    await em.findWithCursor(SnakeEntity, { take: 5 });
+
+    const sqlCall = mockQuery.mock.calls[0][0];
+    const sqlText = sqlCall.sql ?? sqlCall.text ?? String(sqlCall);
+    expect(sqlText).toContain("`id`");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Non-numeric PK warning tests
 // ─────────────────────────────────────────────────────────────────────────────
 

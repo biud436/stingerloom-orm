@@ -909,11 +909,18 @@ export class ReadExecutor {
       }
       const selectMap = allColNames.map((name) => this.ctx.wrap(name));
 
+      // Map the orderBy property key to its DB column name so cursor pagination
+      // honors the naming strategy (e.g. SnakeNamingStrategy maps `createdAt`
+      // -> `created_at`). Mirrors the find() orderBy mapping. The default value
+      // is already a column name (pk.name), so it passes through unchanged.
+      const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+      const dbOrderByColumn = propToCol.get(orderByColumn) ?? orderByColumn;
+
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.ctx.wrap(n),
         dialect: this.ctx.getDialect(),
         dialectExpression: createDialectExpression(this.ctx.getDialect()),
-        propertyToColumn: this.ctx.buildPropertyToColumnMap(metadata),
+        propertyToColumn: propToCol,
       });
 
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
@@ -934,14 +941,14 @@ export class ReadExecutor {
         if (direction === "ASC") {
           // Include NULL rows that haven't been seen yet (NULLs sort last in ASC)
           whereMap.push(Conditions.or([
-            Conditions.gt(this.ctx.wrap(orderByColumn), cursorValue),
-            Conditions.isNull(this.ctx.wrap(orderByColumn)),
+            Conditions.gt(this.ctx.wrap(dbOrderByColumn), cursorValue),
+            Conditions.isNull(this.ctx.wrap(dbOrderByColumn)),
           ]));
         } else {
           // Include NULL rows that haven't been seen yet (NULLs sort first in DESC)
           whereMap.push(Conditions.or([
-            Conditions.lt(this.ctx.wrap(orderByColumn), cursorValue),
-            Conditions.isNull(this.ctx.wrap(orderByColumn)),
+            Conditions.lt(this.ctx.wrap(dbOrderByColumn), cursorValue),
+            Conditions.isNull(this.ctx.wrap(dbOrderByColumn)),
           ]));
         }
       }
@@ -949,7 +956,7 @@ export class ReadExecutor {
       qb.select(selectMap)
         .from(this.ctx.wrapTable(tableName))
         .where(whereMap)
-        .orderBy([{ column: this.ctx.wrap(orderByColumn), direction }]);
+        .orderBy([{ column: this.ctx.wrap(dbOrderByColumn), direction }]);
 
       qb.limit(pageSize + 1);
 
@@ -985,7 +992,8 @@ export class ReadExecutor {
       let nextCursor: string | null = null;
       if (hasNextPage && pageResults.length > 0) {
         const lastItem = pageResults[pageResults.length - 1];
-        const lastValue = lastItem[orderByColumn];
+        // Raw rows are keyed by DB column name, so read with the mapped column.
+        const lastValue = lastItem[dbOrderByColumn];
         nextCursor = encodeCursor(lastValue);
       }
 
