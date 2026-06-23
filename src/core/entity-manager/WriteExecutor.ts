@@ -1249,9 +1249,16 @@ export class WriteExecutor {
       }
 
       const valueRows = items.map((item) => {
-        const rowValues = insertableColumns.map(
-          (column: ColumnMetadata) => (item as any)[this.ctx.propKey(column)],
-        );
+        const rowValues = insertableColumns.map((column: ColumnMetadata) => {
+          // Mirror saveManyBatchInsert: write transformers (@Column transformer.to,
+          // registered ColumnType transformers, and the mandatory JSON stringify)
+          // must run on this path too, otherwise JSON/transformer columns are bound
+          // raw while reads still apply transformer.from.
+          const rawValue = (item as any)[this.ctx.propKey(column)];
+          const transformed = this.ctx.applyWriteTransform(column, rawValue);
+          if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
+          return transformed;
+        });
         for (const fk of fkColumns) {
           const relatedValue = (item as any)[fk.propertyName];
           const idPropValue = (item as any)[`${fk.propertyName}Id`];
@@ -1405,9 +1412,16 @@ export class WriteExecutor {
       }
 
       const valueRows = items.map((item) => {
-        const rowValues = insertableColumns.map(
-          (column: ColumnMetadata) => (item as any)[this.ctx.propKey(column)],
-        );
+        const rowValues = insertableColumns.map((column: ColumnMetadata) => {
+          // Mirror saveManyBatchInsert: write transformers (@Column transformer.to,
+          // registered ColumnType transformers, and the mandatory JSON stringify)
+          // must run on this path too, otherwise JSON/transformer columns are bound
+          // raw while reads still apply transformer.from.
+          const rawValue = (item as any)[this.ctx.propKey(column)];
+          const transformed = this.ctx.applyWriteTransform(column, rawValue);
+          if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
+          return transformed;
+        });
         for (const fk of fkColumns) {
           const relatedValue = (item as any)[fk.propertyName];
           const idPropValue = (item as any)[`${fk.propertyName}Id`];
