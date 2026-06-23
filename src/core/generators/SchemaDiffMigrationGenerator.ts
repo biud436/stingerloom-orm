@@ -129,7 +129,7 @@ export class SchemaDiffMigrationGenerator {
 
     // Alter columns
     for (const col of diff.alterColumns) {
-      const typeStr = col.columnType ?? "VARCHAR(255)";
+      const typeStr = this.renderColumnType(col, dialect);
       if (dialect === "sqlite") {
         // SQLite cannot alter column types — skip in SQL
       } else if (dialect === "mysql") {
@@ -254,7 +254,7 @@ export class SchemaDiffMigrationGenerator {
 
     // Alter columns (type change)
     for (const col of diff.alterColumns) {
-      const typeStr = col.columnType ?? "VARCHAR(255)";
+      const typeStr = this.renderColumnType(col, dialect);
       if (dialect === "sqlite") {
         stmts.push(
           `// TODO: SQLite does not support ALTER COLUMN TYPE for ${this.escapeId(col.tableName, dialect)}.${this.escapeId(col.columnName, dialect)} (${col.currentType} -> ${typeStr}). Recreate the table instead.`,
@@ -472,7 +472,31 @@ export class SchemaDiffMigrationGenerator {
   }
 
   private renderColumnType(col: ColumnChange, _dialect: SchemaDialect): string {
-    return col.columnType ?? "VARCHAR(255)";
+    let type = col.columnType ?? "VARCHAR(255)";
+
+    // castType emits bare types (e.g. "VARCHAR", "DECIMAL"), so the declared
+    // length/precision/scale must be reattached here — otherwise the generated
+    // ALTER/ADD becomes "... VARCHAR" (MySQL 1064) and DECIMAL loses its scale.
+    if (type.toUpperCase().startsWith("ENUM") && col.enumValues?.length) {
+      const values = col.enumValues
+        .map((v) => `'${escapeEnumValue(v)}'`)
+        .join(",");
+      type = `ENUM(${values})`;
+    }
+
+    if (!type.includes("(")) {
+      if (col.expectedLength) {
+        type = `${type}(${col.expectedLength})`;
+      } else if (col.expectedPrecision) {
+        const scale =
+          col.expectedScale !== undefined && col.expectedScale !== null
+            ? `,${col.expectedScale}`
+            : "";
+        type = `${type}(${col.expectedPrecision}${scale})`;
+      }
+    }
+
+    return type;
   }
 
   /**

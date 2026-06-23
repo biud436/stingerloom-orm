@@ -797,10 +797,17 @@ export class ReadExecutor {
 
         for (const rel of lazyRelations) {
           const joinColumn = rel.joinColumn ?? rel.columnName;
+          // ResultTransformer remaps an @RelationColumn / snake_case FK column
+          // onto its shadow property (e.g. user_id -> userId), so the hydrated
+          // entity carries the FK value under the shadow, not under joinColumn.
+          // Read the shadow first, then fall back to the raw join column for
+          // plain @ManyToOne entities whose FK stays under the DB column name.
+          const fkShadow = rel.option?.fkProperty ?? `${rel.columnName}Id`;
           const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
 
           for (const item of entities) {
-            const fkValue = (item as any)[joinColumn];
+            const fkValue =
+              (item as any)[fkShadow] ?? (item as any)[joinColumn];
             if (fkValue === undefined || fkValue === null) continue;
 
             const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);

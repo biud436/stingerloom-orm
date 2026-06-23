@@ -65,6 +65,33 @@ describe("RawQueryBuilder", () => {
       expect(query.sql).toBe("SELECT * FROM users");
       expect(query.values).toEqual([]);
     });
+
+    it("빈 where([]) 다음의 whereNull은 dangling AND가 아닌 WHERE를 열어야 함", () => {
+      // Regression: where([]) used to mark hasWhereClause=true without
+      // emitting a WHERE, so the next smart predicate produced
+      // "... FROM users AND deleted_at IS NULL" (syntax error).
+      const query = RawQueryBuilderFactory.create()
+        .select("*")
+        .from("users")
+        .where([])
+        .whereNull("deleted_at")
+        .build();
+
+      expect(query.sql).toBe("SELECT * FROM users WHERE deleted_at IS NULL");
+      expect(query.values).toEqual([]);
+    });
+
+    it("빈 where([]) 다음의 whereIn은 WHERE를 열어야 함", () => {
+      const query = RawQueryBuilderFactory.create()
+        .select("*")
+        .from("users")
+        .where([])
+        .whereIn("id", [1, 2])
+        .build();
+
+      expect(query.sql).toBe("SELECT * FROM users WHERE id IN (?, ?)");
+      expect(query.values).toEqual([1, 2]);
+    });
   });
 
   describe("orderBy", () => {

@@ -194,6 +194,16 @@ export class SchemaDiff {
               // Carry the declared nullability — MySQL's MODIFY COLUMN restates
               // the whole definition, so omitting this silently drops NOT NULL.
               nullable: col.options?.nullable ?? false,
+              // Carry length/precision/scale too: castType emits a bare type
+              // (e.g. "VARCHAR", "DECIMAL"), so without these the generated
+              // ALTER becomes "MODIFY ... VARCHAR" — a MySQL 1064 syntax error
+              // — and DECIMAL would silently lose its precision/scale.
+              expectedLength: col.options?.length ?? null,
+              actualLength: dbCol.character_maximum_length ?? null,
+              expectedPrecision: col.options?.precision ?? null,
+              actualPrecision: dbCol.numeric_precision ?? null,
+              expectedScale: col.options?.scale ?? null,
+              actualScale: dbCol.numeric_scale ?? null,
               enumValues: col.options?.enumValues,
             });
           } else if (!this.lengthsMatch(col.options, dbCol)) {
