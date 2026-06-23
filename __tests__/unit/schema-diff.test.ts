@@ -235,6 +235,31 @@ describe("SchemaDiff", () => {
     });
   });
 
+  describe("diff() — type-change alter carries length/precision", () => {
+    it("MySQL: int→varchar type change carries expectedLength so DDL is VARCHAR(255)", async () => {
+      const runner = createMockQueryRunner({
+        diff_user: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          // entity: VARCHAR(255), DB has INT → type alter
+          { column_name: "name", data_type: "int", is_nullable: "NO" },
+          { column_name: "age", data_type: "int", is_nullable: "NO" },
+          { column_name: "active", data_type: "tinyint", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([DiffUser], runner, "mysql");
+      const nameAlter = result.alterColumns.find((c) => c.columnName === "name");
+      expect(nameAlter).toBeDefined();
+      expect(nameAlter!.columnType).toBe("VARCHAR");
+      // Regression: previously omitted → DDL emitted bare "VARCHAR" (MySQL 1064).
+      expect(nameAlter!.expectedLength).toBe(255);
+
+      // End-to-end: the generated migration must include the length.
+      const content = new SchemaDiffMigrationGenerator().generate(result, "mysql");
+      expect(content).toContain("VARCHAR(255)");
+    });
+  });
+
   describe("diff() — timestamptz handling", () => {
     it("MySQL: timestamptz matches a DATETIME column (no spurious/invalid ALTER)", async () => {
       const runner = createMockQueryRunner({
