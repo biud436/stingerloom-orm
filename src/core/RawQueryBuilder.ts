@@ -139,8 +139,9 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    */
   where(conditions: Sql[]): RawQueryBuilder {
     if (conditions.length === 0) {
-      // No conditions: skip WHERE clause entirely (matches all rows)
-      this.hasWhereClause = true;
+      // No conditions: skip the WHERE clause entirely (matches all rows).
+      // Leave hasWhereClause false so a subsequent whereIn/whereNull/etc.
+      // opens a fresh WHERE rather than emitting a dangling "AND".
       return this;
     }
     this.sqlQuerySegments.push(sql`WHERE ${join(conditions, " AND ")}`);
