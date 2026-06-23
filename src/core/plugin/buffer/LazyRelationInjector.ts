@@ -64,9 +64,12 @@ export class LazyRelationInjector {
       // Skip if already loaded (not undefined)
       if (instance[rel.columnName] !== undefined) continue;
 
-      // FK column: explicit joinColumn or fallback to columnName
-      const fkProp = rel.joinColumn ?? rel.columnName;
-      const fkValue = instance[fkProp];
+      // FK value: a hydrated entity stores an @RelationColumn / snake_case FK
+      // under its shadow property (e.g. user_id -> userId), so read the shadow
+      // first and fall back to the raw join column for plain @ManyToOne FKs.
+      const fkShadow = rel.option?.fkProperty ?? `${rel.columnName}Id`;
+      const fkColumn = rel.joinColumn ?? rel.columnName;
+      const fkValue = instance[fkShadow] ?? instance[fkColumn];
       if (fkValue === undefined || fkValue === null) continue;
 
       const RelatedEntity = rel.getMappingEntity() as any as ClazzType<any>;
