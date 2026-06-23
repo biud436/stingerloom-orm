@@ -1187,8 +1187,13 @@ export class SchemaRegistrar {
 
         let isExist = false;
         for (const idx of indexes || []) {
-          // MySQL uses "Key_name"; PostgreSQL uses "Field" (aliased from indexname).
-          const existingIndexName = idx["Key_name"] ?? idx["Field"];
+          // MySQL uses "Key_name"; PostgreSQL uses "Field" (aliased from
+          // indexname); SQLite's PRAGMA index_list exposes it as "name".
+          // Without the "name" fallback the existence check never matches on
+          // SQLite, so addIndex (CREATE INDEX, no IF NOT EXISTS) re-runs every
+          // boot and throws "index already exists" on the second start.
+          const existingIndexName =
+            idx["Key_name"] ?? idx["Field"] ?? idx["name"];
           if (existingIndexName === indexName) {
             isExist = true;
             break;
