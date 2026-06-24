@@ -128,13 +128,15 @@ describe("OrderedSetAggregate × SelectQueryBuilder integration", () => {
   it("rejects the same builder shape on MySQL with UNSUPPORTED_OPERATION", () => {
     const qb = createQb("mysql");
     const i = qAlias(Issue, "i");
-    // The AliasedExpression renderer runs eagerly inside select() so the
-    // dialect guard fires at projection-binding time, not at build time.
+    // `select([...])` projections are rendered at build time (deferred) so a
+    // projection may reference a JOIN alias registered after the select()
+    // call. The dialect guard therefore fires when the SQL is assembled,
+    // not at projection-binding time — select() itself does not throw.
+    qb.select([Expressions.percentileCont(0.5, i.id).as("p50")]);
+    expect(() => qb.getSql()).toThrow(OrmError);
     try {
-      qb.select([Expressions.percentileCont(0.5, i.id).as("p50")]);
-      fail("expected throw");
+      qb.getSql();
     } catch (e) {
-      expect(e).toBeInstanceOf(OrmError);
       expect((e as OrmError).code).toBe(OrmErrorCode.UNSUPPORTED_OPERATION);
       expect((e as OrmError).message).toMatch(/PostgreSQL/);
     }

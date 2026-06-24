@@ -223,7 +223,9 @@ const posts = await em
 `addSelectSubquery()`, `whereExistsSubquery()`, `whereNotExistsSubquery()`는 **팩토리** `(outer) => subQb`도 받습니다. `outer("alias.prop")` 리졸버는 외부 쿼리 컬럼의 escape된 식별자를 `Sql` 조각으로 돌려줘요. 덕분에 서브쿼리가 타입드 표면을 통해 외부 행을 참조할 수 있고 — `sql` 문자열에 다이얼렉트별 식별자를 손으로 박는 대신 — 상관 조건 안에서도 NamingStrategy와 `@Column({ name })` 매핑이 그대로 동작합니다.
 
 ```typescript
-import sql from "sql-template-tag";
+import { qAlias } from "@stingerloom/orm";
+
+const a = qAlias(Category, "a");
 
 // 중첩 집합 트리에서 노드별 하위 게시글 수
 const nodes = await em
@@ -233,12 +235,58 @@ const nodes = await em
       em.createQueryBuilder(Post, "p")
         .selectRaw(["COUNT(*)"])
         .innerJoin(Category, "a", (j) => j.on("p.categoryId", "=", "a.id"))
-        .where(sql`${outer("a.lft")} BETWEEN ${outer("node.lft")} AND ${outer("node.rgt")}`),
+        // `a.lft`는 서브쿼리 자신의 alias 레지스트리(그 `a` 조인)로 풀려서
+        // NamingStrategy / @Column({ name }) 매핑이 적용됩니다. `node.lft` /
+        // `node.rgt`는 외부 행에서 `outer()`로 가져옵니다 — 양쪽 모두 타입드.
+        .where(a.lft.between(outer("node.lft"), outer("node.rgt"))),
     "postCount",
   )
   .getRawMany();
-// outer("node.lft")는 외부 행 컬럼의 escape된 식별자로 렌더링됩니다
-// (예: "node"."lft" — @Column({ name: "LFT_NO" })라면 "node"."LFT_NO")
+// → (SELECT COUNT(*) FROM "post" AS "p" INNER JOIN "category" AS "a"
+//      ON "p"."category_id" = "a"."CTGR_SQ"
+//    WHERE "a"."LFT_NO" BETWEEN "node"."LFT_NO" AND "node"."RGT_NO") AS "postCount"
+```
+
+`outer()`는 `Sql` 조각을 돌려주므로 `.between()`(및 모든 조건 값)에 바로 꽂힙니다 — `sql` 템플릿이 필요 없어요. `outer()`는 **외부 행** 컬럼에만 쓰고, 서브쿼리 자신의 alias는 그 서브쿼리의 `qAlias`로 푸세요. 그래야 각 쪽이 올바른 레지스트리를 통해 매핑됩니다.
+
+### 중첩 집합 트리 — depth와 breadcrumb를 raw SQL 없이
+
+같은 `onBetween()` self-join에 SELECT 절의 집계 산술을 더하면, 고전적인 중첩 집합의 "depth = 조상 수 − 1" 쿼리를 타입드 빌더로 표현할 수 있습니다.
+
+```typescript
+const node = qAlias(Category, "node");
+
+// 모든 노드의 depth: COUNT(조상) - 1, 노드별 그룹화
+const tree = await em
+  .createQueryBuilder(Category, "node")
+  .select([
+    node.id.as("id"),
+    node.name.as("name"),
+    node.name.count().sub(1).as("depth"), // COUNT("node"."CTGR_NM") - 1
+  ])
+  .innerJoin(Category, "parent", (j) =>
+    j.onBetween("node.left", "parent.left", "parent.right"),
+  )
+  .groupBy(["node.left"])
+  .addOrderBy("node.left", "ASC")
+  .getRawMany();
+```
+
+breadcrumb 경로는 그 역 — **조상**(`parent`) 이름을 select 합니다. 조인된 alias를 참조하는 프로젝션은 빌드 시점에 해석되므로, `parent`를 등록하는 `innerJoin`보다 `select([parent.name.as(...)])`가 먼저 와도 됩니다.
+
+```typescript
+const parent = qAlias(Category, "parent");
+
+const crumbs = await em
+  .createQueryBuilder(Category, "node")
+  .select([parent.name.as("name")])
+  .innerJoin(Category, "parent", (j) =>
+    j.onBetween("node.left", "parent.left", "parent.right"),
+  )
+  .where(node.name.eq("A1"))
+  .addOrderBy("parent.left", "ASC")
+  .getRawMany();
+// crumbs.map((r) => r.name).join(" > ") → "Root > A > A1"
 ```
 
 같은 팩토리가 `EXISTS`에도 통합니다.

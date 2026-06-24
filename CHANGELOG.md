@@ -6,6 +6,15 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [Unreleased]
+
+Query-builder fixes that let nested-set / self-join tree queries (the shape that previously forced `em.query` raw SQL) be written entirely through the typed builder. Both were surfaced porting a real Category service off raw SQL. Verified: full unit suite + SQLite integration green.
+
+### Fixed
+
+- **`select([alias.col.as(...)])` now resolves a JOIN alias referenced before the join is registered.** Aliased projections are rendered at build time instead of eagerly at `select()` call time, so a forward reference such as `select([parent.name.as("name")]).innerJoin(Category, "parent", ...)` resolves `parent.name` to its real column (`parent.CTGR_NM`) instead of leaving it unqualified. Select order no longer changes the generated SQL. (One internal behavioral note: a dialect guard on an unsupported aggregate — e.g. `percentile_cont` on MySQL — now fires when the SQL is assembled, not at the `select()` call.)
+- **`selectRaw([...])` passes raw SQL expressions through untouched.** A token is alias-qualified only when it is a bare column reference (`prop` or `alias.prop`); expressions like `COUNT(*)`, `MAX(p.views)`, or `1` are emitted verbatim instead of being mangled into `"alias"."COUNT(*)"`. This makes `selectRaw(["COUNT(*)"])` usable inside `addSelectSubquery()` correlated subqueries.
+
 ## [1.0.0] — 2026-06-20
 
 Insert/save correctness fixes and query-builder expressiveness (#368-#372). One behavioral note: `*AndSelect` + `getRawMany()` now returns `alias_column`-prefixed keys (the SELECT list is fully aliased to prevent column clobbering).
