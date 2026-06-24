@@ -1612,14 +1612,25 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected arrayValidatorFn: ArrayValidator<any> | undefined;
   protected selectedPropertyKeys: string[] | null = null;
   /**
-   * Parameterized SELECT list built from {@link AliasedExpression}s.
+   * Deferred SELECT projections built from {@link AliasedExpression}s /
+   * {@link AggregateExpression}s via `select([...])`.
    *
-   * When non-null, this takes precedence over both {@link selectColumns}
-   * and {@link selectExpressions} in the build path — the SELECT segment
-   * is emitted via `RawQueryBuilder.selectFragments()` so bound values
-   * (e.g. JSON path literals on MySQL) are preserved through execution.
+   * Stored unresolved and rendered at build time (see
+   * {@link renderAliasedProjections}) rather than eagerly at `select()` call
+   * time. Deferral lets a projection reference a JOIN alias that is
+   * registered *after* the `select()` call — e.g. a nested-set self-join
+   * where `select([parent.name.as(...)])` precedes
+   * `innerJoin(Category, "parent", ...)`. Eager resolution left such columns
+   * unqualified (`parent.name` instead of `parent.CTGR_NM`).
+   *
+   * When non-null, this takes precedence over both {@link selectColumns} and
+   * {@link selectExpressions} in the build path — the SELECT segment is
+   * emitted via `RawQueryBuilder.selectFragments()` so bound values (e.g.
+   * JSON path literals on MySQL) are preserved through execution.
    */
-  protected aliasedSelectList: Sql[] | null = null;
+  protected aliasedProjections:
+    | Array<AliasedExpression | AggregateExpression>
+    | null = null;
   protected indexHints: Array<{
     type: "USE" | "FORCE" | "IGNORE";
     indexName: string;
@@ -2159,11 +2170,11 @@ export class SelectQueryBuilder<T, TResult = T> {
     if (columns === "*") {
       this.selectColumns = "*";
       this.selectedPropertyKeys = null;
-      this.aliasedSelectList = null;
+      this.aliasedProjections = null;
     } else {
       this.selectColumns = (columns as string[]).map((c) => this.col(c));
       this.selectedPropertyKeys = columns as string[];
-      this.aliasedSelectList = null;
+      this.aliasedProjections = null;
     }
     return this as any;
   }
@@ -2204,27 +2215,44 @@ export class SelectQueryBuilder<T, TResult = T> {
     }
     this.selectColumns = fragments;
     this.selectedPropertyKeys = null;
-    this.aliasedSelectList = null;
+    this.aliasedProjections = null;
     return this;
   }
 
   /**
-   * @internal Replace the SELECT clause with parameterized alias
-   * fragments.
+   * @internal Record a parameterized alias projection for deferred rendering.
    *
    * Used when the projection contains an {@link AliasedExpression} —
-   * JSON path extractions encode path literals as bound parameters, so
-   * the list is rendered as a `Sql[]` (preserving those values) and
-   * handed to {@link RawQueryBuilder.selectFragments} at build time.
-   * Aggregates mixed in are rendered alongside so callers can freely
-   * combine `count().as()` with `col.as()`.
+   * JSON path extractions encode path literals as bound parameters, so the
+   * list is rendered as a `Sql[]` (preserving those values) at build time and
+   * handed to {@link RawQueryBuilder.selectFragments}. Aggregates mixed in are
+   * rendered alongside so callers can freely combine `count().as()` with
+   * `col.as()`.
+   *
+   * Projections are stored unresolved and resolved in
+   * {@link renderAliasedProjections} at build time — see
+   * {@link aliasedProjections} for why deferral matters (forward references
+   * to JOIN aliases registered after this call).
    */
   private selectAliased(
     projections: Array<AliasedExpression | AggregateExpression>,
   ): this {
+    this.aliasedProjections = projections;
+    this.selectColumns = "*";
+    this.selectedPropertyKeys = null;
+    return this;
+  }
+
+  /**
+   * @internal Render the deferred {@link aliasedProjections} into SELECT
+   * fragments. Called at build time (`toSql()`), after every JOIN alias has
+   * been registered, so projections referencing a later-joined alias resolve
+   * to the correct qualified column.
+   */
+  private renderAliasedProjections(): Sql[] {
     const fragments: Sql[] = [];
     const resolver: ColumnResolver = (ref) => this.resolveColumn(ref);
-    for (const p of projections) {
+    for (const p of this.aliasedProjections ?? []) {
       if (isAliasedExpression(p)) {
         const inner = p.renderer(resolver, this.dialectExpression);
         fragments.push(sql`${inner} AS ${raw(this.em.wrap(p.alias))}`);
@@ -2234,10 +2262,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         fragments.push(sql`${fn} AS ${raw(this.em.wrap(resolvedAlias))}`);
       }
     }
-    this.aliasedSelectList = fragments;
-    this.selectColumns = "*";
-    this.selectedPropertyKeys = null;
-    return this;
+    return fragments;
   }
 
   /**
@@ -2261,9 +2286,26 @@ export class SelectQueryBuilder<T, TResult = T> {
    * ```
    */
   selectRaw(columns: string[]): this {
-    this.selectColumns = columns.map((c) => this.resolveColumn(c));
+    this.selectColumns = columns.map((c) => this.resolveRawSelectColumn(c));
     this.selectedPropertyKeys = null;
     return this;
+  }
+
+  /**
+   * @internal Resolve one `selectRaw()` token.
+   *
+   * A token is alias-resolved (property → DB column, alias qualification)
+   * only when it is a *bare column reference* — `property` or
+   * `alias.property`. Anything carrying SQL syntax (function calls like
+   * `COUNT(*)`, operators, `*`, whitespace, quotes) is a raw expression the
+   * caller wrote deliberately and passes through untouched. Routing such
+   * expressions through {@link resolveColumn} previously mangled them into
+   * `"alias"."COUNT(*)"`-style garbage.
+   */
+  private resolveRawSelectColumn(token: string): string {
+    const isBareColumnRef =
+      /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/.test(token.trim());
+    return isBareColumnRef ? this.resolveColumn(token) : token;
   }
 
   addSelect(expr: AggregateExpression): this;
@@ -4221,11 +4263,12 @@ export class SelectQueryBuilder<T, TResult = T> {
     else qb.setDatabaseType("postgresql");
 
     // SELECT — inheritance-aware
-    if (this.aliasedSelectList !== null) {
+    if (this.aliasedProjections !== null) {
       // Aliased-expression projection (may carry bound params for JSON
       // extract); bypass the string-based select() path to keep values
-      // attached to their placeholders.
-      qb.selectFragments(this.aliasedSelectList, this.distinct);
+      // attached to their placeholders. Resolved here (not at select() call
+      // time) so projections may reference JOIN aliases registered later.
+      qb.selectFragments(this.renderAliasedProjections(), this.distinct);
     } else if (this.selectColumns === "*") {
       // TPT child: use explicit column list from both tables
       if (this.tptSelectColumns) {
@@ -5820,8 +5863,8 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.selectExpressions = [...this.selectExpressions];
     cloned.joinedSelections = [...this.joinedSelections];
     cloned.rootSelectExpanded = this.rootSelectExpanded;
-    cloned.aliasedSelectList = this.aliasedSelectList
-      ? [...this.aliasedSelectList]
+    cloned.aliasedProjections = this.aliasedProjections
+      ? [...this.aliasedProjections]
       : null;
     // Inheritance state
     cloned.inheritanceStrategy = this.inheritanceStrategy;

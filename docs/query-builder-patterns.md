@@ -221,7 +221,9 @@ const posts = await em
 `addSelectSubquery()`, `whereExistsSubquery()`, and `whereNotExistsSubquery()` also accept a **factory** `(outer) => subQb`. The `outer("alias.prop")` resolver returns the escaped identifier of an outer-query column as a `Sql` fragment, so the subquery can reference the outer row through the typed surface — NamingStrategy and `@Column({ name })` mappings keep working inside the correlation, instead of hand-writing dialect-specific identifiers in a `sql` string:
 
 ```typescript
-import sql from "sql-template-tag";
+import { qAlias } from "@stingerloom/orm";
+
+const a = qAlias(Category, "a");
 
 // Per-node descendant post count over a nested-set tree
 const nodes = await em
@@ -231,12 +233,67 @@ const nodes = await em
       em.createQueryBuilder(Post, "p")
         .selectRaw(["COUNT(*)"])
         .innerJoin(Category, "a", (j) => j.on("p.categoryId", "=", "a.id"))
-        .where(sql`${outer("a.lft")} BETWEEN ${outer("node.lft")} AND ${outer("node.rgt")}`),
+        // `a.lft` resolves through the subquery's OWN alias registry (its
+        // `a` join), so its NamingStrategy / @Column({ name }) mapping
+        // applies. `node.lft` / `node.rgt` come from the OUTER row via
+        // `outer()`. Both sides stay typed — no hand-written identifiers.
+        .where(a.lft.between(outer("node.lft"), outer("node.rgt"))),
     "postCount",
   )
   .getRawMany();
-// outer("node.lft") renders as the escaped column of the outer row
-// (e.g. "node"."lft" — or "node"."LFT_NO" with @Column({ name: "LFT_NO" }))
+// → (SELECT COUNT(*) FROM "post" AS "p" INNER JOIN "category" AS "a"
+//      ON "p"."category_id" = "a"."CTGR_SQ"
+//    WHERE "a"."LFT_NO" BETWEEN "node"."LFT_NO" AND "node"."RGT_NO") AS "postCount"
+```
+
+`outer()` returns a `Sql` fragment, so it slots into `.between()` (and any
+condition value) directly — no `sql` template needed. Reserve `outer()` for
+**outer-row** columns; resolve the subquery's own aliases through that
+subquery's `qAlias`, so each side maps through the correct registry.
+
+### Nested-Set Tree — Depth and Breadcrumbs Without Raw SQL
+
+The same `onBetween()` self-join, combined with aggregate arithmetic in the
+SELECT list, expresses the classic nested-set "depth = ancestor count − 1"
+query through the typed builder:
+
+```typescript
+const node = qAlias(Category, "node");
+
+// depth of every node: COUNT(ancestors) - 1, grouped by the node
+const tree = await em
+  .createQueryBuilder(Category, "node")
+  .select([
+    node.id.as("id"),
+    node.name.as("name"),
+    node.name.count().sub(1).as("depth"), // COUNT("node"."CTGR_NM") - 1
+  ])
+  .innerJoin(Category, "parent", (j) =>
+    j.onBetween("node.left", "parent.left", "parent.right"),
+  )
+  .groupBy(["node.left"])
+  .addOrderBy("node.left", "ASC")
+  .getRawMany();
+```
+
+A breadcrumb path is the inverse — select the **ancestor** (`parent`) names.
+Projections referencing a joined alias resolve at build time, so the
+`select([parent.name.as(...)])` may appear before the `innerJoin` that
+registers `parent`:
+
+```typescript
+const parent = qAlias(Category, "parent");
+
+const crumbs = await em
+  .createQueryBuilder(Category, "node")
+  .select([parent.name.as("name")])
+  .innerJoin(Category, "parent", (j) =>
+    j.onBetween("node.left", "parent.left", "parent.right"),
+  )
+  .where(node.name.eq("A1"))
+  .addOrderBy("parent.left", "ASC")
+  .getRawMany();
+// crumbs.map((r) => r.name).join(" > ") → "Root > A > A1"
 ```
 
 The same factory works for `EXISTS`:
