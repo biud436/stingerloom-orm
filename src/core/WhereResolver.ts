@@ -41,10 +41,22 @@ function resolveFilterObject(
   for (const [op, val] of Object.entries(filter)) {
     switch (op) {
       case "eq":
-        clauses.push(Conditions.equals(column, val));
+        // `eq: null` must become `IS NULL` — `col = NULL` is always UNKNOWN in
+        // SQL's three-valued logic and silently matches nothing. Mirrors the
+        // top-level `field: null` shorthand and `not: null` → IS NOT NULL.
+        clauses.push(
+          val === null
+            ? Conditions.isNull(column)
+            : Conditions.equals(column, val),
+        );
         break;
       case "ne":
-        clauses.push(Conditions.notEquals(column, val));
+        // `ne: null` must become `IS NOT NULL` for the same reason.
+        clauses.push(
+          val === null
+            ? Conditions.isNotNull(column)
+            : Conditions.notEquals(column, val),
+        );
         break;
       case "gt":
         clauses.push(Conditions.gt(column, val));
