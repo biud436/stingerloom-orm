@@ -140,6 +140,20 @@ describe("WhereResolver", () => {
       expect(result.values).toContain("deleted");
     });
 
+    it("eq: null → IS NULL (not `= NULL`)", () => {
+      const result = resolveSingle({ bio: { eq: null } as any });
+      expect(result.sql).toContain("`bio` IS NULL");
+      expect(result.sql).not.toContain("=");
+      expect(result.values).toHaveLength(0);
+    });
+
+    it("ne: null → IS NOT NULL (not `!= NULL`)", () => {
+      const result = resolveSingle({ bio: { ne: null } as any });
+      expect(result.sql).toContain("`bio` IS NOT NULL");
+      expect(result.sql).not.toContain("!=");
+      expect(result.values).toHaveLength(0);
+    });
+
     it("compound: gt + lte on same field", () => {
       const result = resolveSingle({ age: { gt: 18, lte: 65 } });
       expect(result.sql).toContain("`age` >");
