@@ -233,6 +233,54 @@ describe("SchemaDiff", () => {
       expect(bodyAlter).toBeDefined();
       expect(bodyAlter!.nullable).toBe(true);
     });
+
+    it("MySQL: generated MODIFY COLUMN keeps NOT NULL on a type alter (file + dryRun)", async () => {
+      const runner = createMockQueryRunner({
+        diff_user: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          // entity: VARCHAR(255) NOT NULL, DB has TEXT → type alter
+          { column_name: "name", data_type: "text", is_nullable: "NO" },
+          { column_name: "age", data_type: "int", is_nullable: "NO" },
+          { column_name: "active", data_type: "tinyint", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([DiffUser], runner, "mysql");
+      const gen = new SchemaDiffMigrationGenerator();
+
+      // File-content path (buildUpStatements): the MODIFY must keep NOT NULL.
+      const content = gen.generate(result, "mysql");
+      expect(content).toContain("MODIFY COLUMN");
+      expect(content).toContain("NOT NULL");
+
+      // Raw-SQL path (buildUpSql via dryRun): same.
+      const modifyLine = gen
+        .dryRun(result, "mysql")
+        .up.find((s) => s.includes("MODIFY COLUMN") && s.includes("name"));
+      expect(modifyLine).toBeDefined();
+      // Regression: previously emitted bare "... VARCHAR(255)" → dropped NOT NULL.
+      expect(modifyLine).toMatch(/VARCHAR\(255\) NOT NULL/);
+    });
+
+    it("MySQL: generated MODIFY COLUMN emits NULL (not NOT NULL) on a nullable type alter", async () => {
+      const runner = createMockQueryRunner({
+        diff_post: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          { column_name: "title", data_type: "varchar", is_nullable: "NO" },
+          // entity: TEXT nullable:true, DB has VARCHAR → type alter
+          { column_name: "body", data_type: "varchar", is_nullable: "YES" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([DiffPost], runner, "mysql");
+      const modifyLine = new SchemaDiffMigrationGenerator()
+        .dryRun(result, "mysql")
+        .up.find((s) => s.includes("MODIFY COLUMN") && s.includes("body"));
+
+      expect(modifyLine).toBeDefined();
+      expect(modifyLine).not.toContain("NOT NULL");
+      expect(modifyLine).toMatch(/TEXT NULL/);
+    });
   });
 
   describe("diff() — type-change alter carries length/precision", () => {
