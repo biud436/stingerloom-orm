@@ -133,8 +133,13 @@ export class SchemaDiffMigrationGenerator {
       if (dialect === "sqlite") {
         // SQLite cannot alter column types — skip in SQL
       } else if (dialect === "mysql") {
+        // MySQL MODIFY COLUMN restates the whole column definition, so the
+        // declared nullability must be reattached — otherwise altering a
+        // NOT NULL column's type silently drops NOT NULL (mirrors the live
+        // SchemaRegistrar.buildAlterColumnDDL path).
+        const nullability = col.nullable === false ? " NOT NULL" : " NULL";
         sqls.push(
-          `ALTER TABLE ${this.escapeId(col.tableName, dialect)} MODIFY COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr}`,
+          `ALTER TABLE ${this.escapeId(col.tableName, dialect)} MODIFY COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr}${nullability}`,
         );
       } else {
         sqls.push(
@@ -260,9 +265,14 @@ export class SchemaDiffMigrationGenerator {
           `// TODO: SQLite does not support ALTER COLUMN TYPE for ${this.escapeId(col.tableName, dialect)}.${this.escapeId(col.columnName, dialect)} (${col.currentType} -> ${typeStr}). Recreate the table instead.`,
         );
       } else if (dialect === "mysql") {
+        // MySQL MODIFY COLUMN restates the whole column definition, so the
+        // declared nullability must be reattached — otherwise altering a
+        // NOT NULL column's type silently drops NOT NULL (mirrors the live
+        // SchemaRegistrar.buildAlterColumnDDL path).
+        const nullability = col.nullable === false ? " NOT NULL" : " NULL";
         stmts.push(
           this.wrapSqlInQuery(
-            `ALTER TABLE ${this.escapeId(col.tableName, dialect)} MODIFY COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr}`,
+            `ALTER TABLE ${this.escapeId(col.tableName, dialect)} MODIFY COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr}${nullability}`,
           ),
         );
       } else {
