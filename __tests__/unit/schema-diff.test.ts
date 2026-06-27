@@ -308,6 +308,191 @@ describe("SchemaDiff", () => {
     });
   });
 
+  describe("diff() — nullability-only alter detection", () => {
+    // name: VARCHAR(255) NOT NULL in the entity. DB has the same type but is
+    // NULLABLE → a tightening (nullable → NOT NULL) nullability-only alter.
+    it("MySQL: detects a tightening (NULL → NOT NULL) nullability-only change", async () => {
+      const runner = createMockQueryRunner({
+        diff_user: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          {
+            column_name: "name",
+            data_type: "varchar",
+            character_maximum_length: 255,
+            is_nullable: "YES",
+          },
+          { column_name: "age", data_type: "int", is_nullable: "NO" },
+          { column_name: "active", data_type: "tinyint", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([DiffUser], runner, "mysql");
+      expect(result.alterColumns).toHaveLength(1);
+      const nameAlter = result.alterColumns[0];
+      expect(nameAlter.columnName).toBe("name");
+      expect(nameAlter.nullable).toBe(false);
+      expect(nameAlter.currentNullable).toBe(true);
+      // type & length are unchanged — only the nullability flips.
+      expect(nameAlter.typeChanged).toBe(false);
+    });
+
+    // body: TEXT nullable:true in the entity. DB has the same type but is NOT
+    // NULL → a loosening (NOT NULL → nullable) nullability-only alter.
+    it("PostgreSQL: detects a loosening (NOT NULL → NULL) nullability-only change", async () => {
+      const runner = createMockQueryRunner({
+        diff_post: [
+          { column_name: "id", data_type: "integer", is_nullable: "NO" },
+          {
+            column_name: "title",
+            data_type: "varchar",
+            character_maximum_length: 255,
+            is_nullable: "NO",
+          },
+          { column_name: "body", data_type: "text", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff(
+        [DiffPost],
+        runner,
+        "postgres",
+        "public",
+      );
+      expect(result.alterColumns).toHaveLength(1);
+      const bodyAlter = result.alterColumns[0];
+      expect(bodyAlter.columnName).toBe("body");
+      expect(bodyAlter.nullable).toBe(true);
+      expect(bodyAlter.currentNullable).toBe(false);
+      expect(bodyAlter.typeChanged).toBe(false);
+    });
+
+    it("does NOT flag a primary-key column whose DB nullability differs (SQLite quirk-safe)", async () => {
+      // SQLite reports `INTEGER PRIMARY KEY` as notnull=0 / is_nullable="YES".
+      // The PK's nullability is structurally fixed, so it must never produce an
+      // alter even when the DB disagrees with the entity.
+      const runner = createMockQueryRunner({
+        diff_user: [
+          { column_name: "id", data_type: "int", is_nullable: "YES" },
+          {
+            column_name: "name",
+            data_type: "varchar",
+            character_maximum_length: 255,
+            is_nullable: "NO",
+          },
+          { column_name: "age", data_type: "int", is_nullable: "NO" },
+          { column_name: "active", data_type: "tinyint", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([DiffUser], runner, "mysql");
+      expect(
+        result.alterColumns.some((c) => c.columnName === "id"),
+      ).toBe(false);
+    });
+
+    it("does NOT alter when nullability already matches", async () => {
+      const runner = createMockQueryRunner({
+        diff_user: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          {
+            column_name: "name",
+            data_type: "varchar",
+            character_maximum_length: 255,
+            is_nullable: "NO",
+          },
+          { column_name: "age", data_type: "int", is_nullable: "NO" },
+          { column_name: "active", data_type: "tinyint", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([DiffUser], runner, "mysql");
+      expect(result.alterColumns).toHaveLength(0);
+    });
+  });
+
+  describe("generator — nullability-only ALTER SQL", () => {
+    const tighten: SchemaDiffResult = {
+      addTables: [],
+      dropTables: [],
+      addColumns: [],
+      dropColumns: [],
+      alterColumns: [
+        {
+          tableName: "users",
+          columnName: "name",
+          columnType: "VARCHAR",
+          currentType: "varchar",
+          nullable: false,
+          currentNullable: true,
+          typeChanged: false,
+          expectedLength: 255,
+        },
+      ],
+    };
+
+    it("PostgreSQL: emits SET NOT NULL and NOT a TYPE rewrite", () => {
+      const { up } = new SchemaDiffMigrationGenerator().dryRun(tighten, "postgres");
+      expect(up).toHaveLength(1);
+      expect(up[0]).toContain("SET NOT NULL");
+      expect(up[0]).not.toContain("TYPE");
+    });
+
+    it("PostgreSQL: down reverses SET NOT NULL with DROP NOT NULL", () => {
+      const { down } = new SchemaDiffMigrationGenerator().dryRun(tighten, "postgres");
+      expect(down).toHaveLength(1);
+      expect(down[0]).toContain("DROP NOT NULL");
+    });
+
+    it("PostgreSQL: a loosening change emits DROP NOT NULL", () => {
+      const loosen: SchemaDiffResult = {
+        ...tighten,
+        alterColumns: [
+          {
+            ...tighten.alterColumns[0],
+            nullable: true,
+            currentNullable: false,
+          },
+        ],
+      };
+      const { up } = new SchemaDiffMigrationGenerator().dryRun(loosen, "postgres");
+      expect(up[0]).toContain("DROP NOT NULL");
+    });
+
+    it("MySQL: restates the column via MODIFY COLUMN ... NOT NULL", () => {
+      const { up } = new SchemaDiffMigrationGenerator().dryRun(tighten, "mysql");
+      expect(up).toHaveLength(1);
+      expect(up[0]).toContain("MODIFY COLUMN");
+      expect(up[0]).toContain("VARCHAR(255)");
+      expect(up[0]).toContain("NOT NULL");
+    });
+
+    it("SQLite: emits a nullability-specific TODO comment (no crash)", () => {
+      const content = new SchemaDiffMigrationGenerator().generate(tighten, "sqlite");
+      expect(content).toContain("does not support altering column nullability");
+    });
+
+    it("PostgreSQL: a combined type + nullability change emits both actions", () => {
+      const combined: SchemaDiffResult = {
+        ...tighten,
+        alterColumns: [
+          {
+            tableName: "users",
+            columnName: "name",
+            columnType: "TEXT",
+            currentType: "varchar",
+            nullable: false,
+            currentNullable: true,
+            // typeChanged omitted → defaults to a real type alter
+            expectedLength: null,
+          },
+        ],
+      };
+      const { up } = new SchemaDiffMigrationGenerator().dryRun(combined, "postgres");
+      expect(up.some((s) => s.includes("TYPE TEXT"))).toBe(true);
+      expect(up.some((s) => s.includes("SET NOT NULL"))).toBe(true);
+    });
+  });
+
   describe("diff() — timestamptz handling", () => {
     it("MySQL: timestamptz matches a DATETIME column (no spurious/invalid ALTER)", async () => {
       const runner = createMockQueryRunner({
@@ -1089,7 +1274,10 @@ describe("SchemaDiff — Phase 2 improvements", () => {
       const runner = createMockQueryRunner({
         json_entity: [
           { column_name: "id", data_type: "integer", is_nullable: "NO" },
-          { column_name: "data", data_type: "json", is_nullable: "NO" },
+          // `data!: any` infers nullable:true (design:type Object), so the
+          // column the ORM creates is NULLABLE — the fixture must match, else a
+          // (correct) nullability-only alter would be reported.
+          { column_name: "data", data_type: "json", is_nullable: "YES" },
         ],
       });
 

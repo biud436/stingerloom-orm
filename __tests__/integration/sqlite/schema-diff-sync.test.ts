@@ -290,6 +290,33 @@ function createEntityWithBooleanType(): new () => any {
   return DynClass;
 }
 
+/**
+ * Nullability-only change: `name` flips from NOT NULL (V1) to nullable, with
+ * the type/length unchanged.
+ */
+function createEntityWithNullableName(): new () => any {
+  getScannerInstance(ColumnScanner).clear();
+
+  const DynClass = class {} as any;
+  Object.defineProperty(DynClass, "name", {
+    value: TABLE_NAME,
+    writable: false,
+  });
+
+  Reflect.defineMetadata("design:type", Number, DynClass.prototype, "id");
+  PrimaryGeneratedColumn()(DynClass.prototype, "id");
+
+  // name: NOT NULL (V1) → nullable (same inferred varchar/255 type)
+  Reflect.defineMetadata("design:type", String, DynClass.prototype, "name");
+  Column({ nullable: true })(DynClass.prototype, "name");
+
+  Reflect.defineMetadata("design:type", Number, DynClass.prototype, "age");
+  Column({ type: "int" })(DynClass.prototype, "age");
+
+  Entity()(DynClass);
+  return DynClass;
+}
+
 // ─────────────────────────────────────────────────────────
 // Test suite
 // ─────────────────────────────────────────────────────────
@@ -553,6 +580,42 @@ describe("[Integration] SQLite In-Memory: SchemaDiff 동기화 후 감지 검증
       );
       expect(emailCol).toBeDefined();
       expect(emailCol!.nullable).toBe(true);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // Nullability-only change detection (against a real SQLite schema)
+  // ─────────────────────────────────────────────────────────
+
+  describe("Nullability-only change detection", () => {
+    it("should detect a NOT NULL → nullable change as a nullability-only alter", async () => {
+      const nullableName = createEntityWithNullableName();
+      const result = await schemaDiff.diff(
+        [nullableName],
+        queryRunner,
+        "sqlite",
+      );
+
+      const nameChange = result.alterColumns.find(
+        (c) => c.columnName === "name",
+      );
+      expect(nameChange).toBeDefined();
+      expect(nameChange!.nullable).toBe(true);
+      expect(nameChange!.currentNullable).toBe(false);
+      // type/length unchanged — this is a pure nullability drift.
+      expect(nameChange!.typeChanged).toBe(false);
+    });
+
+    it("should NOT flag the INTEGER PRIMARY KEY (SQLite reports notnull=0)", async () => {
+      // SQLite's `INTEGER PRIMARY KEY` is reported as nullable; the PK must be
+      // excluded from nullability diffing so the baseline never drifts.
+      const nullableName = createEntityWithNullableName();
+      const result = await schemaDiff.diff(
+        [nullableName],
+        queryRunner,
+        "sqlite",
+      );
+      expect(result.alterColumns.some((c) => c.columnName === "id")).toBe(false);
     });
   });
 });

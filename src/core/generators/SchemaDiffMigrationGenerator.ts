@@ -127,25 +127,9 @@ export class SchemaDiffMigrationGenerator {
       );
     }
 
-    // Alter columns
+    // Alter columns (type and/or nullability; SQLite cannot alter — skipped)
     for (const col of diff.alterColumns) {
-      const typeStr = this.renderColumnType(col, dialect);
-      if (dialect === "sqlite") {
-        // SQLite cannot alter column types — skip in SQL
-      } else if (dialect === "mysql") {
-        // MySQL MODIFY COLUMN restates the whole column definition, so the
-        // declared nullability must be reattached — otherwise altering a
-        // NOT NULL column's type silently drops NOT NULL (mirrors the live
-        // SchemaRegistrar.buildAlterColumnDDL path).
-        const nullability = col.nullable === false ? " NOT NULL" : " NULL";
-        sqls.push(
-          `ALTER TABLE ${this.escapeId(col.tableName, dialect)} MODIFY COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr}${nullability}`,
-        );
-      } else {
-        sqls.push(
-          `ALTER TABLE ${this.escapeId(col.tableName, dialect)} ALTER COLUMN ${this.escapeId(col.columnName, dialect)} TYPE ${typeStr}`,
-        );
-      }
+      sqls.push(...this.alterColumnUpSql(col, dialect));
     }
 
     // Rename columns
@@ -179,18 +163,9 @@ export class SchemaDiffMigrationGenerator {
       );
     }
 
-    // Reverse of alter columns
+    // Reverse of alter columns — restore previous type and nullability
     for (const col of diff.alterColumns) {
-      const typeStr = col.currentType ?? "VARCHAR(255)";
-      if (dialect === "mysql") {
-        sqls.push(
-          `ALTER TABLE ${this.escapeId(col.tableName, dialect)} MODIFY COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr}`,
-        );
-      } else if (dialect !== "sqlite") {
-        sqls.push(
-          `ALTER TABLE ${this.escapeId(col.tableName, dialect)} ALTER COLUMN ${this.escapeId(col.columnName, dialect)} TYPE ${typeStr}`,
-        );
-      }
+      sqls.push(...this.alterColumnDownSql(col, dialect));
     }
 
     // Reverse of renames
@@ -257,30 +232,19 @@ export class SchemaDiffMigrationGenerator {
       );
     }
 
-    // Alter columns (type change)
+    // Alter columns (type and/or nullability)
     for (const col of diff.alterColumns) {
-      const typeStr = this.renderColumnType(col, dialect);
       if (dialect === "sqlite") {
+        const where = `${this.escapeId(col.tableName, dialect)}.${this.escapeId(col.columnName, dialect)}`;
         stmts.push(
-          `// TODO: SQLite does not support ALTER COLUMN TYPE for ${this.escapeId(col.tableName, dialect)}.${this.escapeId(col.columnName, dialect)} (${col.currentType} -> ${typeStr}). Recreate the table instead.`,
+          col.typeChanged === false
+            ? `// TODO: SQLite does not support altering column nullability for ${where}. Recreate the table instead.`
+            : `// TODO: SQLite does not support ALTER COLUMN TYPE for ${where} (${col.currentType} -> ${this.renderColumnType(col, dialect)}). Recreate the table instead.`,
         );
-      } else if (dialect === "mysql") {
-        // MySQL MODIFY COLUMN restates the whole column definition, so the
-        // declared nullability must be reattached — otherwise altering a
-        // NOT NULL column's type silently drops NOT NULL (mirrors the live
-        // SchemaRegistrar.buildAlterColumnDDL path).
-        const nullability = col.nullable === false ? " NOT NULL" : " NULL";
-        stmts.push(
-          this.wrapSqlInQuery(
-            `ALTER TABLE ${this.escapeId(col.tableName, dialect)} MODIFY COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr}${nullability}`,
-          ),
-        );
-      } else {
-        stmts.push(
-          this.wrapSqlInQuery(
-            `ALTER TABLE ${this.escapeId(col.tableName, dialect)} ALTER COLUMN ${this.escapeId(col.columnName, dialect)} TYPE ${typeStr}`,
-          ),
-        );
+        continue;
+      }
+      for (const s of this.alterColumnUpSql(col, dialect)) {
+        stmts.push(this.wrapSqlInQuery(s));
       }
     }
 
@@ -332,21 +296,10 @@ export class SchemaDiffMigrationGenerator {
       );
     }
 
-    // Reverse of alter columns — restore old type
+    // Reverse of alter columns — restore previous type and nullability
     for (const col of diff.alterColumns) {
-      const typeStr = col.currentType ?? "VARCHAR(255)";
-      if (dialect === "mysql") {
-        stmts.push(
-          this.wrapSqlInQuery(
-            `ALTER TABLE ${this.escapeId(col.tableName, dialect)} MODIFY COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr}`,
-          ),
-        );
-      } else if (dialect !== "sqlite") {
-        stmts.push(
-          this.wrapSqlInQuery(
-            `ALTER TABLE ${this.escapeId(col.tableName, dialect)} ALTER COLUMN ${this.escapeId(col.columnName, dialect)} TYPE ${typeStr}`,
-          ),
-        );
+      for (const s of this.alterColumnDownSql(col, dialect)) {
+        stmts.push(this.wrapSqlInQuery(s));
       }
     }
 
@@ -507,6 +460,94 @@ export class SchemaDiffMigrationGenerator {
     }
 
     return type;
+  }
+
+  /**
+   * Forward (up) ALTER statement(s) for a single column change. Returns raw SQL
+   * (no `await query(...)` wrapper); SQLite returns `[]` since it cannot alter
+   * columns (callers emit their own skip/comment). On PostgreSQL a TYPE change
+   * and a nullability change are independent actions — a nullability-only
+   * change (`typeChanged === false`) skips the TYPE rewrite, which would force
+   * an unnecessary full table rewrite. MySQL restates the whole column via
+   * MODIFY COLUMN, which carries type and nullability together.
+   */
+  private alterColumnUpSql(col: ColumnChange, dialect: SchemaDialect): string[] {
+    if (dialect === "sqlite") return [];
+    const table = this.escapeId(col.tableName, dialect);
+    const column = this.escapeId(col.columnName, dialect);
+
+    if (dialect === "mysql") {
+      const typeStr = this.renderColumnType(col, dialect);
+      const nullability = col.nullable === false ? " NOT NULL" : " NULL";
+      return [`ALTER TABLE ${table} MODIFY COLUMN ${column} ${typeStr}${nullability}`];
+    }
+
+    // PostgreSQL
+    const out: string[] = [];
+    if (col.typeChanged !== false) {
+      const typeStr = this.renderColumnType(col, dialect);
+      out.push(`ALTER TABLE ${table} ALTER COLUMN ${column} TYPE ${typeStr}`);
+    }
+    const targetNullable = col.nullable !== false;
+    if (
+      col.currentNullable !== undefined &&
+      col.currentNullable !== targetNullable
+    ) {
+      out.push(
+        targetNullable
+          ? `ALTER TABLE ${table} ALTER COLUMN ${column} DROP NOT NULL`
+          : `ALTER TABLE ${table} ALTER COLUMN ${column} SET NOT NULL`,
+      );
+    }
+    return out;
+  }
+
+  /**
+   * Reverse (down) ALTER statement(s) restoring the previous DB state of a
+   * single column change. SQLite returns `[]`. The previous nullability is
+   * reattached when known (`currentNullable`), so a nullability change round-
+   * trips cleanly.
+   */
+  private alterColumnDownSql(col: ColumnChange, dialect: SchemaDialect): string[] {
+    if (dialect === "sqlite") return [];
+    const table = this.escapeId(col.tableName, dialect);
+    const column = this.escapeId(col.columnName, dialect);
+
+    if (dialect === "mysql") {
+      // For a nullability-only change the type is unchanged (restate the
+      // declared type with length); for a type change restore the previous
+      // type. Reattach the previous nullability when known.
+      const typeStr =
+        col.typeChanged === false
+          ? this.renderColumnType(col, dialect)
+          : (col.currentType ?? "VARCHAR(255)");
+      const nullability =
+        col.currentNullable === true
+          ? " NULL"
+          : col.currentNullable === false
+            ? " NOT NULL"
+            : "";
+      return [`ALTER TABLE ${table} MODIFY COLUMN ${column} ${typeStr}${nullability}`];
+    }
+
+    // PostgreSQL
+    const out: string[] = [];
+    if (col.typeChanged !== false) {
+      const typeStr = col.currentType ?? "VARCHAR(255)";
+      out.push(`ALTER TABLE ${table} ALTER COLUMN ${column} TYPE ${typeStr}`);
+    }
+    const targetNullable = col.nullable !== false;
+    if (
+      col.currentNullable !== undefined &&
+      col.currentNullable !== targetNullable
+    ) {
+      out.push(
+        col.currentNullable
+          ? `ALTER TABLE ${table} ALTER COLUMN ${column} DROP NOT NULL`
+          : `ALTER TABLE ${table} ALTER COLUMN ${column} SET NOT NULL`,
+      );
+    }
+    return out;
   }
 
   /**
