@@ -148,6 +148,13 @@ export class SchemaRegistrar {
    * (text-family → numeric, larger varchar → smaller varchar, etc.).
    */
   private isNarrowingAlter(col: ColumnChange): boolean {
+    // Tightening a column to NOT NULL is destructive: it fails outright when any
+    // existing row holds NULL. Gate it behind failOnDestructiveChange like the
+    // other narrowing cases.
+    if (col.currentNullable === true && col.nullable === false) {
+      return true;
+    }
+
     const cur = (col.currentType ?? "").toUpperCase();
     const next = (col.columnType ?? "").toUpperCase();
     if (!cur || !next) return false;
@@ -612,11 +619,15 @@ export class SchemaRegistrar {
             policy,
           );
         }
+        const change =
+          col.typeChanged === false
+            ? `nullability ${col.currentNullable ? "NULL" : "NOT NULL"} → ${col.nullable === false ? "NOT NULL" : "NULL"}`
+            : `${col.currentType} → ${col.columnType}`;
         if (isDryRun) {
           this.logger.info(`[dry-run] ${ddl}`);
         } else {
           this.logger.warn(
-            `[sync] Altering column ${col.tableName}.${col.columnName}: ${col.currentType} → ${col.columnType}`,
+            `[sync] Altering column ${col.tableName}.${col.columnName}: ${change}`,
           );
           this.logDdl(`[sync] ${ddl}`, policy);
           try {
@@ -794,20 +805,40 @@ export class SchemaRegistrar {
     const columnName = this.ctx.wrap(col.columnName);
 
     if (dialect === "sqlite") {
-      this.logger.warn(
-        `[sync] SQLite does not support ALTER COLUMN TYPE for ${col.tableName}.${col.columnName} ` +
-          `(${col.currentType} → ${typeExpr}). Skipping.`,
-      );
+      const what =
+        col.typeChanged === false
+          ? `column nullability for ${col.tableName}.${col.columnName}`
+          : `ALTER COLUMN TYPE for ${col.tableName}.${col.columnName} (${col.currentType} → ${typeExpr})`;
+      this.logger.warn(`[sync] SQLite does not support ${what}. Skipping.`);
       return null;
     }
 
     if (dialect === "mysql") {
+      // MODIFY COLUMN restates the whole definition, so it carries both the
+      // type and the declared nullability — covering a type change, a
+      // nullability-only change, or both at once.
       const nullable = col.nullable === false ? "NOT NULL" : "NULL";
       return `ALTER TABLE ${tableName} MODIFY COLUMN ${columnName} ${typeExpr} ${nullable}`;
     }
 
-    // PostgreSQL
-    return `ALTER TABLE ${tableName} ALTER COLUMN ${columnName} TYPE ${typeExpr}`;
+    // PostgreSQL: TYPE and nullability are independent ALTER actions and a
+    // single ALTER TABLE may carry both. A nullability-only change
+    // (typeChanged === false) skips the TYPE rewrite — `ALTER COLUMN ... TYPE`
+    // forces a full table rewrite even when the type is unchanged.
+    const actions: string[] = [];
+    if (col.typeChanged !== false) {
+      actions.push(`ALTER COLUMN ${columnName} TYPE ${typeExpr}`);
+    }
+    const targetNullable = col.nullable !== false;
+    if (col.currentNullable !== undefined && col.currentNullable !== targetNullable) {
+      actions.push(
+        targetNullable
+          ? `ALTER COLUMN ${columnName} DROP NOT NULL`
+          : `ALTER COLUMN ${columnName} SET NOT NULL`,
+      );
+    }
+    if (actions.length === 0) return null;
+    return `ALTER TABLE ${tableName} ${actions.join(", ")}`;
   }
 
   /**

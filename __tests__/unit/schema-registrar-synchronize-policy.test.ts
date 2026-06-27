@@ -256,6 +256,65 @@ describe("SchemaRegistrar: synchronize policy", () => {
       await expect(callApplyDiff(policy, diff)).resolves.toBeUndefined();
     });
 
+    it("throws on a tightening nullability ALTER (NULL → NOT NULL) when failOnDestructiveChange=true", async () => {
+      const diff = {
+        addTables: [],
+        dropTables: [],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [
+          {
+            tableName: "t",
+            columnName: "email",
+            columnType: "VARCHAR",
+            currentType: "varchar",
+            nullable: false,
+            currentNullable: true,
+            typeChanged: false,
+            expectedLength: 255,
+          },
+        ],
+      };
+      const policy: SynchronizePolicy = {
+        mode: true,
+        continueOnError: true,
+        failOnDestructiveChange: true,
+        logDDL: false,
+      };
+
+      await expect(callApplyDiff(policy, diff)).rejects.toMatchObject({
+        code: OrmErrorCode.SCHEMA_SYNC_DESTRUCTIVE_CHANGE,
+      });
+    });
+
+    it("does not throw on a loosening nullability ALTER (NOT NULL → NULL)", async () => {
+      const diff = {
+        addTables: [],
+        dropTables: [],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [
+          {
+            tableName: "t",
+            columnName: "bio",
+            columnType: "TEXT",
+            currentType: "text",
+            nullable: true,
+            currentNullable: false,
+            typeChanged: false,
+          },
+        ],
+      };
+      const policy: SynchronizePolicy = {
+        mode: true,
+        continueOnError: true,
+        failOnDestructiveChange: true,
+        logDDL: false,
+      };
+
+      await expect(callApplyDiff(policy, diff)).resolves.toBeUndefined();
+    });
+
     it("does not throw on DROP COLUMN when failOnDestructiveChange=false (default)", async () => {
       const diff = {
         addTables: [],
@@ -274,6 +333,80 @@ describe("SchemaRegistrar: synchronize policy", () => {
       };
 
       await expect(callApplyDiff(policy, diff)).resolves.toBeUndefined();
+    });
+  });
+
+  describe("buildAlterColumnDDL — nullability (PostgreSQL)", () => {
+    function buildDDL(col: any, dialect: "postgres" | "mysql" = "postgres"): string | null {
+      const policy: SynchronizePolicy = {
+        mode: true,
+        continueOnError: true,
+        failOnDestructiveChange: false,
+        logDDL: false,
+      };
+      const registrar = new SchemaRegistrar(
+        {} as RelationMetadataResolver,
+        makeCtxWithPolicy(policy),
+      );
+      return (registrar as any).buildAlterColumnDDL(col, dialect);
+    }
+
+    it("emits SET NOT NULL without a TYPE rewrite for a nullability-only tighten", () => {
+      const ddl = buildDDL({
+        tableName: "t",
+        columnName: "email",
+        columnType: "VARCHAR",
+        currentType: "varchar",
+        nullable: false,
+        currentNullable: true,
+        typeChanged: false,
+        expectedLength: 255,
+      });
+      expect(ddl).toContain("SET NOT NULL");
+      expect(ddl).not.toContain("TYPE");
+    });
+
+    it("emits DROP NOT NULL for a nullability-only loosen", () => {
+      const ddl = buildDDL({
+        tableName: "t",
+        columnName: "bio",
+        columnType: "TEXT",
+        currentType: "text",
+        nullable: true,
+        currentNullable: false,
+        typeChanged: false,
+      });
+      expect(ddl).toContain("DROP NOT NULL");
+    });
+
+    it("combines a TYPE rewrite and a nullability action in a single ALTER TABLE", () => {
+      const ddl = buildDDL({
+        tableName: "t",
+        columnName: "email",
+        columnType: "TEXT",
+        currentType: "varchar",
+        nullable: false,
+        currentNullable: true,
+        // typeChanged omitted → real type alter
+      });
+      expect(ddl).toContain("TYPE TEXT");
+      expect(ddl).toContain("SET NOT NULL");
+      // a single statement, not two
+      expect((ddl ?? "").match(/ALTER TABLE/g)).toHaveLength(1);
+    });
+
+    it("returns null when neither type nor nullability changed", () => {
+      const ddl = buildDDL({
+        tableName: "t",
+        columnName: "name",
+        columnType: "VARCHAR",
+        currentType: "varchar",
+        nullable: false,
+        currentNullable: false,
+        typeChanged: false,
+        expectedLength: 255,
+      });
+      expect(ddl).toBeNull();
     });
   });
 

@@ -30,6 +30,20 @@ export interface ColumnChange {
   columnType?: string;
   currentType?: string;
   nullable?: boolean;
+  /**
+   * The DB column's current nullability (`is_nullable = "YES"`). Set on
+   * alterColumns so the ALTER generators can (a) emit a PostgreSQL
+   * `SET/DROP NOT NULL` action and (b) reverse it in a `down` migration.
+   * Undefined on add/drop paths and on hand-built diffs (backward compatible).
+   */
+  currentNullable?: boolean;
+  /**
+   * `false` when the alter carries ONLY a nullability change (type and length
+   * are unchanged) — generators then skip the `TYPE` rewrite, which on
+   * PostgreSQL would force an unnecessary, possibly expensive, table rewrite.
+   * Treated as a type/length alter when omitted (backward compatible).
+   */
+  typeChanged?: boolean;
   expectedLength?: number | null;
   actualLength?: number | null;
   expectedPrecision?: number | null;
@@ -185,6 +199,15 @@ export class SchemaDiff {
           );
           const actualType = dbCol.data_type.toUpperCase();
 
+          // Expected nullability mirrors the CREATE path exactly
+          // (BaseColumnDefinitionBuilder: `option.nullable ? NULL : NOT NULL`),
+          // so a schema freshly created by this ORM never reports a spurious
+          // nullability diff. `is_nullable` is normalized to "YES"/"NO" across
+          // all three dialects by getDbColumns().
+          const expectedNullable = col.options?.nullable ?? false;
+          const dbNullable =
+            (dbCol.is_nullable ?? "").toString().toUpperCase() === "YES";
+
           if (!this.typesMatch(expectedType, actualType, dialect)) {
             result.alterColumns.push({
               tableName,
@@ -193,7 +216,8 @@ export class SchemaDiff {
               currentType: dbCol.data_type,
               // Carry the declared nullability — MySQL's MODIFY COLUMN restates
               // the whole definition, so omitting this silently drops NOT NULL.
-              nullable: col.options?.nullable ?? false,
+              nullable: expectedNullable,
+              currentNullable: dbNullable,
               // Carry length/precision/scale too: castType emits a bare type
               // (e.g. "VARCHAR", "DECIMAL"), so without these the generated
               // ALTER becomes "MODIFY ... VARCHAR" — a MySQL 1064 syntax error
@@ -213,7 +237,35 @@ export class SchemaDiff {
               columnName: colName,
               columnType: expectedType,
               currentType: dbCol.data_type,
-              nullable: col.options?.nullable ?? false,
+              nullable: expectedNullable,
+              currentNullable: dbNullable,
+              expectedLength: col.options?.length ?? null,
+              actualLength: dbCol.character_maximum_length ?? null,
+              expectedPrecision: col.options?.precision ?? null,
+              actualPrecision: dbCol.numeric_precision ?? null,
+              expectedScale: col.options?.scale ?? null,
+              actualScale: dbCol.numeric_scale ?? null,
+              enumValues: col.options?.enumValues,
+            });
+          } else if (
+            expectedNullable !== dbNullable &&
+            !col.options?.primary
+          ) {
+            // Type and length match, but nullability drifted — emit a
+            // nullability-only alter. Primary-key columns are skipped: their
+            // nullability is structurally fixed and dialect-quirky (SQLite's
+            // `INTEGER PRIMARY KEY` reports notnull=0 / is_nullable="YES").
+            // `typeChanged: false` tells the generators to skip the TYPE rewrite
+            // and emit only `SET/DROP NOT NULL` (Postgres) or restate the column
+            // via `MODIFY COLUMN` (MySQL).
+            result.alterColumns.push({
+              tableName,
+              columnName: colName,
+              columnType: expectedType,
+              currentType: dbCol.data_type,
+              nullable: expectedNullable,
+              currentNullable: dbNullable,
+              typeChanged: false,
               expectedLength: col.options?.length ?? null,
               actualLength: dbCol.character_maximum_length ?? null,
               expectedPrecision: col.options?.precision ?? null,
