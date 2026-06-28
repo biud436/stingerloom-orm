@@ -996,8 +996,16 @@ export class WriteExecutor {
           (item as any)[this.ctx.propKey(col)] = now;
         }
       }
-      if (versionCol && (item as any)[versionCol] == null) {
-        (item as any)[versionCol] = 1;
+      if (versionCol) {
+        // `versionCol` is the DB column name (applyNamingStrategyToEntities
+        // rewrites VERSION_TOKEN to the resolved column name), but VALUES bind
+        // from the property key below — so initialize via propKey, mirroring the
+        // @CreateTimestamp/@UpdateTimestamp handling above. Setting item[colName]
+        // here would write a bogus property and leave the version NULL.
+        const versionColumn = insertableColumns.find((c) => c.name === versionCol);
+        if (versionColumn && (item as any)[this.ctx.propKey(versionColumn)] == null) {
+          (item as any)[this.ctx.propKey(versionColumn)] = 1;
+        }
       }
     }
 
@@ -1206,9 +1214,16 @@ export class WriteExecutor {
 
       const versionCol = this.resolver.getVersionColumn(entity);
       if (versionCol) {
-        for (const item of items) {
-          if ((item as any)[versionCol] == null) {
-            (item as any)[versionCol] = 1;
+        // `versionCol` is the resolved DB column name; the value binding reads
+        // the property key, so initialize via propKey (not the column name) or
+        // the version lands as NULL under a transforming naming strategy.
+        const versionColumn = metadata.columns.find((c) => c.name === versionCol);
+        if (versionColumn) {
+          const versionProp = this.ctx.propKey(versionColumn);
+          for (const item of items) {
+            if ((item as any)[versionProp] == null) {
+              (item as any)[versionProp] = 1;
+            }
           }
         }
       }
@@ -1369,9 +1384,16 @@ export class WriteExecutor {
 
       const versionCol = this.resolver.getVersionColumn(entity);
       if (versionCol) {
-        for (const item of items) {
-          if ((item as any)[versionCol] == null) {
-            (item as any)[versionCol] = 1;
+        // `versionCol` is the resolved DB column name; the value binding reads
+        // the property key, so initialize via propKey (not the column name) or
+        // the version lands as NULL under a transforming naming strategy.
+        const versionColumn = metadata.columns.find((c) => c.name === versionCol);
+        if (versionColumn) {
+          const versionProp = this.ctx.propKey(versionColumn);
+          for (const item of items) {
+            if ((item as any)[versionProp] == null) {
+              (item as any)[versionProp] = 1;
+            }
           }
         }
       }
