@@ -5029,6 +5029,13 @@ export class SelectQueryBuilder<T, TResult = T> {
     // Operate on a clone so the source builder is untouched (as paginate() does).
     const paged = this.clone();
 
+    // Honor the `withDeleted` option so soft-deleted rows can be included,
+    // matching ReadExecutor.findWithCursor. A prior `.withDeleted()` on the
+    // builder is preserved by clone(); this also lets the option request it.
+    if (option.withDeleted) {
+      paged.withDeleted();
+    }
+
     // Append the keyset predicate, ANDed with the builder's existing WHERE /
     // JOIN / soft-delete / tenant clauses via the same andWhere() path. NULL
     // rows that have not been visited yet are included, matching findWithCursor.
