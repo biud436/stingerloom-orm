@@ -147,6 +147,10 @@ export class EntitySchemaRegistrar {
         target: proto,
         propertyKey: key,
         name: resolvedOption.name || key,
+        // Mirror @Column: when the user provides an explicit name, mark it so
+        // applyNamingStrategyToEntities() preserves it instead of re-deriving
+        // the DB column name from the property key (#name-drift).
+        nameExplicit: !!def.name,
         options: resolvedOption,
         type: designType,
         transform: resolvedOption.transform as any,

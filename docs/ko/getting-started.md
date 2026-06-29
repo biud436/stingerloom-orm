@@ -129,7 +129,9 @@ npm install class-transformer   # 선택사항, 고급 역직렬화용
 
 ## 2단계: TypeScript 설정
 
-`tsconfig.json`에 데코레이터 옵션을 켜요.
+엔티티를 **코드 우선 빌더**(`defineEntity`, 3단계에서 보여줄게요)로 정의한다면 특별한 컴파일러 옵션이 필요 없어요 — 건너뛰어도 돼요.
+
+**데코레이터** 스타일(`@Entity`, `@Column`)은 `tsconfig.json`에 다음이 필요해요:
 
 ```json
 // tsconfig.json
@@ -148,54 +150,71 @@ npm install class-transformer   # 선택사항, 고급 역직렬화용
 - `emitDecoratorMetadata` -- 컴파일러에게 `reflect-metadata`가 런타임에 읽을 수 있는 타입 정보를 출력하라고 지시해요. ORM이 `name: string`을 `VARCHAR` 컬럼으로 매핑할 수 있는 게 이 옵션 덕분이에요.
 - `strictPropertyInitialization` -- 보통 TypeScript는 클래스 프로퍼티가 생성자에서 할당되지 않으면 경고해요. 엔티티 프로퍼티는 생성자가 아니라 ORM이 채워주기 때문에, 모든 프로퍼티에 `!:`를 붙이지 않으려면 이 체크를 꺼야 해요.
 
+> 코드 우선 빌더는 이 중 어느 것도 필요 없어요 — 컬럼 타입을 스스로 들고 다니고 데코레이터를 쓰지 않거든요. 그래도 진입점에서 `reflect-metadata`는 한 번 import해야 해요(ORM 코어가 런타임에 사용해요).
+
 ## 3단계: 엔티티 정의
 
-**엔티티**(Entity)는 데이터베이스 테이블에 대응하는 TypeScript 클래스예요. 클래스의 인스턴스 하나가 테이블의 행 하나를 나타내요. 간단한 User 엔티티를 만들어 볼게요.
+**엔티티**(Entity)는 데이터베이스 테이블을 나타내고, 각 행이 하나의 레코드예요. 엔티티를 정의하는 권장 방식은 **코드 우선 빌더 API** — `defineEntity`와 `t` 필드 빌더를 쓰는 거예요. 선언을 하나만 작성하면 엔티티의 TypeScript 타입이 거기서 추론돼요.
 
 ```typescript
 // user.entity.ts
+import { defineEntity, t, InferEntity } from "@stingerloom/orm";
+
+export const User = defineEntity("users", {
+  id:    t.int().primary().generated(),
+  name:  t.varchar(255),
+  email: t.varchar(255),
+});
+
+export type User = InferEntity<typeof User>;
+// { id: number; name: string; email: string }
+```
+
+각 부분이 하는 일:
+
+- `defineEntity("users", { … })` -- `users`라는 이름의 테이블을 정의해요. 반환된 `User`는 ORM이 엔티티를 기대하는 모든 곳(`em.findOne(User, …)`)에서 쓰는 실제 클래스예요.
+- `t.int().primary().generated()` -- 값을 데이터베이스가 자동 생성하는 기본 키(MySQL: auto-increment, PostgreSQL: `SERIAL`).
+- `t.varchar(255)` -- `VARCHAR(255)` 컬럼. 빌더가 SQL 타입과 추론된 TypeScript 타입(`string`)을 동시에 고정하므로, 둘이 절대 어긋날 수 없어요.
+- `InferEntity<typeof User>` -- 스키마에서 행 타입을 복원해요. 별도 인터페이스도, 코드 생성도 없어요.
+
+::: tip 데코레이터가 더 좋다면?
+클래스-데코레이터 스타일이 좋다면(또는 NestJS를 쓰고 있다면), 같은 엔티티를 `@Entity` / `@Column`으로도 표현할 수 있고, 동일한 메타데이터를 생성해요:
+
+```typescript
 import { Entity, PrimaryGeneratedColumn, Column } from "@stingerloom/orm";
 
 @Entity()
 export class User {
-  @PrimaryGeneratedColumn()
-  id!: number;
-
-  @Column()
-  name!: string;
-
-  @Column()
-  email!: string;
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() name!: string;
+  @Column() email!: string;
 }
 ```
 
-각 데코레이터가 하는 일:
+데코레이터 경로는 2단계의 `experimentalDecorators`와 `emitDecoratorMetadata` 컴파일러 옵션이 필요하지만, 위의 코드 우선 빌더는 필요 없어요. 두 스타일은 같은 프로젝트에서 함께 동작해요 — [엔티티 정의하기](./define-entity.md)와 [엔티티 & 컬럼 (데코레이터)](./entities.md)를 참고하세요.
+:::
 
-- `@Entity()` -- ORM에게 "이 클래스는 DB 테이블이야"라고 알려줘요. 테이블명은 기본적으로 소문자 클래스명(`user`)이에요.
-- `@PrimaryGeneratedColumn()` -- 이 컬럼이 PK이고, 값은 DB가 자동 생성해요 (MySQL: auto-increment, PostgreSQL: `SERIAL`).
-- `@Column()` -- 일반 컬럼. ORM이 TypeScript 타입에서 SQL 타입을 자동 추론해요: `string` → `VARCHAR(255)`, `number` → `INTEGER`, `boolean` → `BOOLEAN`.
-
-`synchronize: true` 시 ORM이 생성하는 DDL:
+`synchronize: true`로 설정하면(다음 단계) ORM이 이 DDL을 생성해서 실행해요:
 
 ```sql
 -- PostgreSQL
-CREATE TABLE "user" (
+CREATE TABLE "users" (
   "id" SERIAL PRIMARY KEY,
   "name" VARCHAR(255),
   "email" VARCHAR(255)
 );
 
 -- MySQL
-CREATE TABLE `user` (
+CREATE TABLE `users` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `name` VARCHAR(255),
   `email` VARCHAR(255)
 );
 ```
 
-PostgreSQL은 `"큰따옴표"`, MySQL은 `` `백틱` ``으로 식별자를 래핑해요. ORM이 `type`에 따라 자동 처리해요.
+식별자 래핑 차이를 주목해 주세요: PostgreSQL은 `"큰따옴표"`, MySQL은 `` `백틱` ``을 써요. ORM이 `type` 설정에 따라 자동으로 처리해요.
 
-> **참고** [엔티티](./entities.md) 문서에서 더 자세한 내용을 볼 수 있어요.
+> **힌트** 엔티티 정의에 대해 더 알아보려면 [엔티티 정의하기](./define-entity.md)(코드 우선)와 [엔티티 & 컬럼](./entities.md)(데코레이터)을 참고하세요.
 
 ## 4단계: 데이터베이스 연결
 

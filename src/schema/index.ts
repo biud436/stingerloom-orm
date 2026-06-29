@@ -1,3 +1,5 @@
 export * from "./EntitySchema";
 export * from "./EntitySchemaTypes";
 export * from "./EntitySchemaRegistrar";
+export * from "./builders";
+export * from "./defineEntity";

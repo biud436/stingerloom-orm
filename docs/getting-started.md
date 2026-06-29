@@ -129,7 +129,9 @@ npm install class-transformer   # optional, for advanced deserialization
 
 ## Step 2: TypeScript Configuration
 
-Enable decorator-related options in your `tsconfig.json`.
+If you define entities with the **code-first builder** (`defineEntity`, shown in Step 3), no special compiler options are required — skip ahead.
+
+The **decorator** style (`@Entity`, `@Column`) needs the following in your `tsconfig.json`:
 
 ```json
 // tsconfig.json
@@ -148,45 +150,62 @@ Here is what each option does:
 - `emitDecoratorMetadata` -- Tells the compiler to emit type information that `reflect-metadata` can read at runtime. This is how the ORM knows that `name: string` should become a `VARCHAR` column.
 - `strictPropertyInitialization` -- Normally, TypeScript complains if a class property is not assigned in the constructor. Entity properties are populated by the ORM, not the constructor, so we disable this check to avoid needing `!:` on every property.
 
+> The code-first builder needs none of these — it carries the column types itself and uses no decorators. You still import `reflect-metadata` once at your entry point (the ORM core uses it at runtime).
+
 ## Step 3: Define an Entity
 
-An **Entity** is a TypeScript class that represents a database table. Each instance of the class represents one row. Let's create a simple user entity.
+An **Entity** represents a database table; each row is one record. The recommended way to define one is the **code-first builder API** — `defineEntity` with the `t` field builders. You write a single declaration and the entity's TypeScript type is inferred from it.
 
 ```typescript
 // user.entity.ts
+import { defineEntity, t, InferEntity } from "@stingerloom/orm";
+
+export const User = defineEntity("users", {
+  id:    t.int().primary().generated(),
+  name:  t.varchar(255),
+  email: t.varchar(255),
+});
+
+export type User = InferEntity<typeof User>;
+// { id: number; name: string; email: string }
+```
+
+What each part does:
+
+- `defineEntity("users", { … })` -- Defines a table named `users`. The returned `User` is a real class you use everywhere the ORM expects an entity (`em.findOne(User, …)`).
+- `t.int().primary().generated()` -- A primary key whose value the database auto-generates (auto-increment for MySQL, `SERIAL` for PostgreSQL).
+- `t.varchar(255)` -- A `VARCHAR(255)` column. The builder fixes both the SQL type and the inferred TypeScript type (`string`), so the two can never drift.
+- `InferEntity<typeof User>` -- Recovers the row type from the schema. No separate interface, no codegen.
+
+::: tip Prefer decorators?
+If you like the class-and-decorator style (or you're on NestJS), the same entity is also expressible with `@Entity` / `@Column`, which produce identical metadata:
+
+```typescript
 import { Entity, PrimaryGeneratedColumn, Column } from "@stingerloom/orm";
 
 @Entity()
 export class User {
-  @PrimaryGeneratedColumn()
-  id!: number;
-
-  @Column()
-  name!: string;
-
-  @Column()
-  email!: string;
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() name!: string;
+  @Column() email!: string;
 }
 ```
 
-What each decorator does:
-
-- `@Entity()` -- Tells the ORM: "this class maps to a database table." The table name defaults to the lowercased class name (`user`).
-- `@PrimaryGeneratedColumn()` -- This column is the primary key, and the database auto-generates its value (auto-increment for MySQL, `SERIAL` for PostgreSQL).
-- `@Column()` -- A regular column. The ORM infers the SQL type from the TypeScript type: `string` becomes `VARCHAR(255)`, `number` becomes `INTEGER`, `boolean` becomes `BOOLEAN`.
+The decorator path requires the `experimentalDecorators` and `emitDecoratorMetadata` compiler options from Step 2; the code-first builder above does not. Both styles interoperate in the same project — see [Defining Entities](./define-entity.md) and [Entities & Columns (Decorators)](./entities.md).
+:::
 
 When `synchronize: true` is set (next step), the ORM generates this DDL and executes it:
 
 ```sql
 -- PostgreSQL
-CREATE TABLE "user" (
+CREATE TABLE "users" (
   "id" SERIAL PRIMARY KEY,
   "name" VARCHAR(255),
   "email" VARCHAR(255)
 );
 
 -- MySQL
-CREATE TABLE `user` (
+CREATE TABLE `users` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `name` VARCHAR(255),
   `email` VARCHAR(255)
@@ -195,7 +214,7 @@ CREATE TABLE `user` (
 
 Notice the identifier wrapping difference: PostgreSQL uses `"double quotes"`, MySQL uses `` `backticks` ``. The ORM handles this automatically based on your `type` setting.
 
-> **Hint** To learn more about entities, refer to the [Entities](./entities.md) documentation.
+> **Hint** To learn more about defining entities, see [Defining Entities](./define-entity.md) (code-first) and [Entities & Columns](./entities.md) (decorators).
 
 ## Step 4: Connect to the Database
 
