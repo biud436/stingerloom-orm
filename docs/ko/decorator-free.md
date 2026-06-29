@@ -10,11 +10,15 @@ Stingerloom은 데코레이터와 **완전히 동일한 메타데이터**를 등
 
 | 관심사 | 데코레이터 | 데코레이터 없는 대안 |
 | --- | --- | --- |
-| 엔티티 / 컬럼 / 관계 / 인덱스 / 훅 / 상속 정의 | `@Entity`, `@Column`, `@ManyToOne`, … | [`EntitySchema`](#entityschema-엔티티-정의) |
+| 엔티티 / 컬럼 / 관계 / 인덱스 / 훅 / 상속 정의 | `@Entity`, `@Column`, `@ManyToOne`, … | **[`defineEntity` + `t`](./define-entity.md)** (권장) — 또는 더 낮은 수준의 [`EntitySchema`](#entityschema-엔티티-정의) |
 | 작업 단위를 트랜잭션으로 감싸기 | `@Transactional` | [`em.transaction()`](#transactional-없이-트랜잭션) |
 | NestJS 의존성 주입 | `@InjectRepository`, `@InjectEntityManager` | [순수 프로바이더 / `em.getRepository()`](#데코레이터-없이-nestjs-주입) |
 
-데코레이터 기반 엔티티와 `EntitySchema` 기반 엔티티는 동일한 메타데이터를 생성하므로, 한 프로젝트에서 **둘을 섞어 써도** ORM의 나머지 부분(EntityManager, SchemaGenerator, QueryBuilder, WriteBuffer)은 차이를 구분하지 못합니다.
+::: tip `defineEntity`로 시작하세요
+새 코드에는 플루언트 빌더 API — [**엔티티 정의하기**](./define-entity.md) — 를 선호하세요. 이 API는 스키마에서 엔티티 타입을 추론하므로(`InferEntity`) 클래스도, 별도의 인터페이스도 작성하지 않습니다. 아래에서 다루는 `EntitySchema` 형식은 이 빌더가 그 위에 세워진 더 낮은 수준의 객체 리터럴 API입니다. 완전한 수동 제어가 필요하거나 데코레이터를 일대일로 매핑할 때 사용하세요.
+:::
+
+데코레이터 기반, `defineEntity` 기반, `EntitySchema` 기반 엔티티는 모두 동일한 메타데이터를 생성하므로, 한 프로젝트에서 **셋을 섞어 써도** ORM의 나머지 부분(EntityManager, SchemaGenerator, QueryBuilder, WriteBuffer)은 차이를 구분하지 못합니다.
 
 ## 전체 매핑 표
 

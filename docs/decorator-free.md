@@ -6,15 +6,19 @@ Every feature in Stingerloom can be used **without decorators**. This page is th
 
 TypeScript decorators rely on the `emitDecoratorMetadata` compiler option. Some toolchains (esbuild, SWC, the TypeScript 5 *standard* decorators, Vite's default transformer) do not emit that metadata, so a decorator-based entity silently loses its column types. Beyond tooling, many teams prefer to keep domain classes free of framework annotations — the "plain class" philosophy.
 
-Stingerloom solves both with two APIs that register the **exact same metadata** the decorators do:
+Stingerloom solves both with APIs that register the **exact same metadata** the decorators do:
 
 | Concern | Decorator | Decorator-free alternative |
 | --- | --- | --- |
-| Entity / column / relation / index / hook / inheritance definition | `@Entity`, `@Column`, `@ManyToOne`, … | [`EntitySchema`](#entityschema-entity-definition) |
+| Entity / column / relation / index / hook / inheritance definition | `@Entity`, `@Column`, `@ManyToOne`, … | **[`defineEntity` + `t`](./define-entity.md)** (recommended) — or the lower-level [`EntitySchema`](#entityschema-entity-definition) |
 | Wrapping a unit of work in a transaction | `@Transactional` | [`em.transaction()`](#transactions-without-transactional) |
 | NestJS dependency injection | `@InjectRepository`, `@InjectEntityManager` | [Plain providers / `em.getRepository()`](#nestjs-injection-without-decorators) |
 
-Decorator-based and `EntitySchema`-based entities produce identical metadata, so you can **mix both** in the same project and the rest of the ORM (EntityManager, SchemaGenerator, QueryBuilder, WriteBuffer) cannot tell the difference.
+::: tip Start with `defineEntity`
+For new code, prefer the fluent builder API — [**Defining Entities**](./define-entity.md) — which infers the entity type from the schema (`InferEntity`) so you write neither a class nor a parallel interface. The `EntitySchema` form documented below is the lower-level object-literal API the builder is built on; reach for it when you want full manual control or are mapping a decorator one-to-one.
+:::
+
+Decorator-based, `defineEntity`-based, and `EntitySchema`-based entities all produce identical metadata, so you can **mix them** in the same project and the rest of the ORM (EntityManager, SchemaGenerator, QueryBuilder, WriteBuffer) cannot tell the difference.
 
 ## Full Mapping Table
 

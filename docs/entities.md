@@ -1,6 +1,10 @@
-# Entities
+# Entities & Columns (Decorators)
 
 An **Entity** is a TypeScript class that represents a database table. Each entity class corresponds to one table, and the class properties become the table's columns.
+
+::: tip Prefer a code-first style?
+This page covers the **decorator** API (`@Entity`, `@Column`, …). If you'd rather skip decorators and have the entity type inferred from the schema, see [**Defining Entities**](./define-entity.md) — the `defineEntity` builder. Both styles produce identical metadata and interoperate freely.
+:::
 
 But before we write code, let's understand the problem an entity solves.
 

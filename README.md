@@ -41,6 +41,34 @@ npm install pg        # or mysql2, better-sqlite3
 
 ### 1. Define entities
 
+Code-first with the `defineEntity` builder — the entity type is inferred from the schema (`InferEntity`), so you write neither a class nor a parallel interface, and you need no `experimentalDecorators` / `emitDecoratorMetadata` / codegen:
+
+```typescript
+import "reflect-metadata";
+import { defineEntity, t, InferEntity } from "@stingerloom/orm";
+
+export const Author = defineEntity("authors", {
+  id:    t.int().primary().generated(),
+  name:  t.varchar(255),
+  posts: t.oneToMany(() => Post, "author"),
+});
+
+export const Post = defineEntity("posts", {
+  id:          t.int().primary().generated(),
+  title:       t.varchar(255),
+  views:       t.int().default(0),
+  publishedAt: t.datetime().name("published_at"),
+  authorId:    t.int().nullable().name("author_id"),
+  author:      t.manyToOne(() => Author, { joinColumn: "author_id" }),
+});
+
+export type Author = InferEntity<typeof Author>; // { id: number; name: string; posts?: Post[] }
+export type Post = InferEntity<typeof Post>;      // { id; title; views; publishedAt; authorId: number | null; author? }
+```
+
+<details>
+<summary>Prefer decorators? The identical model with <code>@Entity</code> / <code>@Column</code></summary>
+
 ```typescript
 import "reflect-metadata";
 import {
@@ -69,6 +97,9 @@ class Post {
 }
 ```
 
+Both styles register identical metadata and interoperate in the same project.
+</details>
+
 ### 2. Connect — same API across MySQL, PostgreSQL, and SQLite
 
 ```typescript
@@ -95,7 +126,7 @@ const p = qAlias(Post, "p");
 const a = qAlias(Author, "a");
 
 const trending = await em.createQueryBuilder(p)
-  .innerJoinRelation("author", "a")    // FK derived from @ManyToOne metadata — no ON clause needed
+  .innerJoinRelation("author", "a")    // FK derived from relation metadata — no ON clause needed
   .select([
     p.title.as("title"),
     a.name.as("author"),
@@ -109,7 +140,7 @@ const trending = await em.createQueryBuilder(p)
   .getRawMany();
 ```
 
-Every reference to `p.title`, `a.name`, `p.publishedAt.year()`, etc. is resolved against the entity at compile time — typo a column name and TypeScript fails the build. `innerJoinRelation` reads the FK from the `@ManyToOne` metadata so you never write the join condition by hand.
+Every reference to `p.title`, `a.name`, `p.publishedAt.year()`, etc. is resolved against the entity at compile time — typo a column name and TypeScript fails the build. `innerJoinRelation` reads the FK from the relation metadata so you never write the join condition by hand.
 
 ### 4. Unit of Work — Identity Map + dirty checking
 
@@ -144,7 +175,7 @@ A NestJS interceptor or Express middleware wraps the per-request handler in `Met
 
 | Category | Highlights |
 |----------|------------|
-| **Modeling** | `@Entity`, `@Column`, `@ManyToOne`, `@OneToMany`, `@ManyToMany`, `@OneToOne`, eager/lazy loading, inheritance mapping (STI / TPT / TPC), UUID columns with UUIDv7 |
+| **Modeling** | Code-first `defineEntity` + `t` builders with `InferEntity` type inference (or `@Entity`, `@Column`, `@ManyToOne`, `@OneToMany`, `@ManyToMany`, `@OneToOne`), eager/lazy loading, inheritance mapping (STI / TPT / TPC), UUID columns with UUIDv7 |
 | **Querying** | `find`, `findOne`, `findWithCursor`, `findAndCount`, SelectQueryBuilder with JOIN / GROUP BY / HAVING; `qAlias()` typed expression chain — string / numeric / math helpers, CAST, date arithmetic + components, window functions, `CASE WHEN`, subquery operators, JSON-path navigation, raw SQL escape hatches |
 | **Mutations** | `save`, `update`, `delete`, `softDelete`, `restore`, `upsert`, `batchUpsert`, `streamBatch`, batch operations |
 | **Transactions** | `@Transactional` decorator, manual BEGIN / COMMIT / ROLLBACK, savepoints, isolation levels, deadlock retry, `NOWAIT` / `SKIP LOCKED` |

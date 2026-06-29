@@ -16,7 +16,8 @@ function sidebarEn() {
     {
       text: "Essentials",
       items: [
-        { text: "Entities & Columns", link: "/entities" },
+        { text: "Defining Entities", link: "/define-entity" },
+        { text: "Entities & Columns (Decorators)", link: "/entities" },
         { text: "Relations", link: "/relations" },
         {
           text: "Inheritance Mapping",
@@ -29,7 +30,7 @@ function sidebarEn() {
           ],
         },
         { text: "Transactions", link: "/transactions" },
-        { text: "Decorator-Free Guide", link: "/decorator-free" },
+        { text: "Decorator-Free Reference", link: "/decorator-free" },
       ],
     },
     {
@@ -154,7 +155,8 @@ function sidebarKo() {
     {
       text: "기본 개념",
       items: [
-        { text: "엔티티 & 컬럼", link: "/ko/entities" },
+        { text: "엔티티 정의", link: "/ko/define-entity" },
+        { text: "엔티티 & 컬럼 (데코레이터)", link: "/ko/entities" },
         { text: "관계", link: "/ko/relations" },
         {
           text: "상속 매핑",
