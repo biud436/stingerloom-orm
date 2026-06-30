@@ -110,4 +110,71 @@ describe("[Integration] SQLite: defineEntity builder e2e", () => {
       await (accEm as unknown as { destroy?: () => Promise<void> }).destroy?.();
     }
   });
+
+  it("fires a decorator-free lifecycle hook on a saved instance", async () => {
+    const Article = defineEntity(
+      "dee_articles",
+      {
+        id: t.int().primary().generated(),
+        title: t.varchar(200),
+        slug: t.varchar(200).nullable(),
+      },
+      {
+        hooks: {
+          beforeInsert(e) {
+            if (!e.slug) {
+              e.slug = e.title.toLowerCase().replace(/\s+/g, "-");
+            }
+          },
+        },
+      },
+    );
+    const artEm = await createTestEntityManager({ entities: [Article] });
+    try {
+      // The constructor accepts a partial → the instance carries the hook.
+      const saved = await artEm.save(Article, new Article({ title: "Hello World" }));
+      expect(saved.slug).toBe("hello-world");
+
+      const found = await artEm.findOne(Article, { where: { id: saved.id } });
+      expect(found!.slug).toBe("hello-world");
+    } finally {
+      await (artEm as unknown as { destroy?: () => Promise<void> }).destroy?.();
+    }
+  });
+
+  it("excludes a t.computed() column from the INSERT column list", async () => {
+    // Computed columns are rendered into DDL by the migration generator
+    // (SchemaGenerator), not the runtime `synchronize` path — same as the
+    // decorator `@ComputedColumn`. Here we verify the write-path contract:
+    // `save()` never writes the computed column (doing so would error), so a
+    // plain table standing in for the generated one accepts the INSERT.
+    const Person = defineEntity("dee_people", {
+      id: t.int().primary().generated(),
+      firstName: t.varchar(80).name("first_name"),
+      lastName: t.varchar(80).name("last_name"),
+      fullName: t.computed<string>("first_name || ' ' || last_name", {
+        stored: true,
+        type: "varchar",
+        nullable: true,
+      }),
+    });
+    const pplEm = await createTestEntityManager({ entities: [Person] });
+    try {
+      const saved = await pplEm.save(Person, {
+        firstName: "Ada",
+        lastName: "Lovelace",
+      } as Partial<InferEntity<typeof Person>>);
+      expect(saved.id).toBeGreaterThan(0);
+
+      // The computed column is not a stored column, so it is absent from DDL
+      // here, and the INSERT succeeded precisely because it was excluded.
+      const rows = (await pplEm.query(
+        "SELECT first_name, last_name FROM dee_people WHERE id = ?",
+        [saved.id],
+      )) as Array<{ first_name: string; last_name: string }>;
+      expect(rows[0]).toEqual({ first_name: "Ada", last_name: "Lovelace" });
+    } finally {
+      await (pplEm as unknown as { destroy?: () => Promise<void> }).destroy?.();
+    }
+  });
 });

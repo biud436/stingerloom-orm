@@ -13,6 +13,12 @@ import { VERSION_TOKEN } from "../../src/decorators/Version";
 import { CREATE_TIMESTAMP_TOKEN } from "../../src/decorators/CreateTimestamp";
 import { UPDATE_TIMESTAMP_TOKEN } from "../../src/decorators/UpdateTimestamp";
 import { DELETED_AT_TOKEN } from "../../src/decorators/DeletedAt";
+import { HOOK_TOKEN, HookMetadata } from "../../src/decorators/Hooks";
+import {
+  COMPUTED_COLUMN_TOKEN,
+  ComputedColumnMetadata,
+} from "../../src/decorators/ComputedColumn";
+import { SchemaGenerator } from "../../src/core/generators/SchemaGenerator";
 import { ReflectManager } from "../../src/utils/ReflectManager";
 import {
   EntityScanner,
@@ -328,6 +334,150 @@ describe("defineEntity — computed columns", () => {
     expect(columns.map((c) => c.propertyKey)).toEqual(
       expect.arrayContaining(["id", "firstName", "lastName"]),
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5b. Lifecycle hooks (decorator-free)
+// ═══════════════════════════════════════════════════════════════════════════
+describe("defineEntity — lifecycle hooks", () => {
+  it("attaches an inline hook function and registers HOOK_TOKEN", () => {
+    const Article = defineEntity(
+      "de_hook_article",
+      {
+        id: t.int().primary().generated(),
+        title: t.varchar(200),
+        slug: t.varchar(200).nullable(),
+      },
+      {
+        hooks: {
+          beforeInsert(e) {
+            if (!e.slug) {
+              e.slug = e.title.toLowerCase().replace(/\s+/g, "-");
+            }
+          },
+        },
+      },
+    );
+
+    const hooks: HookMetadata[] = Reflect.getMetadata(HOOK_TOKEN, Article);
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0].event).toBe("beforeInsert");
+
+    // The resolved hook is a real, callable method on the prototype.
+    const method = (Article.prototype as any)[hooks[0].methodName];
+    expect(typeof method).toBe("function");
+  });
+
+  it("fires the hook (as runHooks does) on an instance built from the constructor", () => {
+    const Article = defineEntity(
+      "de_hook_fire",
+      {
+        id: t.int().primary().generated(),
+        title: t.varchar(200),
+        slug: t.varchar(200).nullable(),
+      },
+      {
+        hooks: {
+          beforeInsert(e) {
+            e.slug = e.title.toLowerCase().replace(/\s+/g, "-");
+          },
+        },
+      },
+    );
+
+    const hooks: HookMetadata[] = Reflect.getMetadata(HOOK_TOKEN, Article);
+    const instance: any = new Article({ title: "Hello World" });
+    // Mirror CascadeHandler.runHooks: method.call(item, item).
+    instance[hooks[0].methodName].call(instance, instance);
+    expect(instance.slug).toBe("hello-world");
+  });
+
+  it("supports a string handler naming a prototype method", () => {
+    const Base = defineEntity(
+      "de_hook_string",
+      { id: t.int().primary().generated() },
+      { hooks: { afterInsert: "log" } },
+    );
+    (Base.prototype as any).log = function log() {
+      return "ok";
+    };
+
+    const hooks: HookMetadata[] = Reflect.getMetadata(HOOK_TOKEN, Base);
+    expect(hooks).toEqual([{ methodName: "log", event: "afterInsert" }]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5c. Constructor initializer
+// ═══════════════════════════════════════════════════════════════════════════
+describe("defineEntity — constructor initializer", () => {
+  it("copies a partial initializer onto the instance", () => {
+    const User = defineEntity("de_ctor_user", {
+      id: t.int().primary().generated(),
+      name: t.varchar(120),
+    });
+
+    const u: any = new User({ id: 7, name: "Ada" });
+    expect(u.id).toBe(7);
+    expect(u.name).toBe("Ada");
+    expect(u).toBeInstanceOf(User);
+  });
+
+  it("still constructs with no arguments", () => {
+    const User = defineEntity("de_ctor_empty", {
+      id: t.int().primary().generated(),
+    });
+    expect(() => new User()).not.toThrow();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5d. Computed column options pass-through
+// ═══════════════════════════════════════════════════════════════════════════
+describe("defineEntity — computed column options", () => {
+  it("forwards stored / type / length / nullable to the computed metadata", () => {
+    const Person = defineEntity("de_computed_opts", {
+      id: t.int().primary().generated(),
+      firstName: t.varchar(80).name("first_name"),
+      lastName: t.varchar(80).name("last_name"),
+      fullName: t.computed<string>("first_name || ' ' || last_name", {
+        stored: true,
+        type: "varchar",
+        length: 511,
+        nullable: true,
+      }),
+    });
+
+    const computed: ComputedColumnMetadata[] = Reflect.getMetadata(
+      COMPUTED_COLUMN_TOKEN,
+      Person.prototype,
+    );
+    const full = computed.find((c) => c.propertyKey === "fullName")!;
+    expect(full.options.stored).toBe(true);
+    expect(full.options.type).toBe("varchar");
+    expect(full.options.length).toBe(511);
+    expect(full.options.nullable).toBe(true);
+  });
+
+  it("renders the same GENERATED ALWAYS AS DDL the decorator produces", () => {
+    const Person = defineEntity("de_computed_ddl", {
+      id: t.int().primary().generated(),
+      firstName: t.varchar(80).name("first_name"),
+      lastName: t.varchar(80).name("last_name"),
+      fullName: t.computed<string>("first_name || ' ' || last_name", {
+        stored: true,
+        type: "varchar",
+        length: 511,
+      }),
+    });
+
+    const ddl = new SchemaGenerator({ dialect: "postgres" }).generateCreateTableDDL(
+      Person,
+    );
+    expect(ddl).toContain("GENERATED ALWAYS AS");
+    expect(ddl).toContain("first_name || ' ' || last_name");
+    expect(ddl).toContain("STORED");
   });
 });
 
