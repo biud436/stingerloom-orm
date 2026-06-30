@@ -36,7 +36,11 @@ export class CascadeHandler {
       if (hook.event !== event) continue;
       const method = (item as any)[hook.methodName];
       if (typeof method === "function") {
-        await method.call(item);
+        // Pass `item` both as `this` and as the first argument. Decorator hook
+        // methods read `this` and ignore the extra arg; decorator-free hook
+        // functions (defineEntity `hooks: { beforeInsert: (e) => … }`) can take
+        // the entity as a parameter instead of relying on `this`.
+        await method.call(item, item);
       }
     }
   }

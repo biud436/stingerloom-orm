@@ -329,7 +329,12 @@ export const t = {
   // ── computed ─────────────────────────────────────────────────────────────
   computed: <T = unknown>(
     expression: ComputedColumnOption["expression"],
-    options?: { stored?: boolean; type?: ColumnType },
+    options?: {
+      stored?: boolean;
+      type?: ColumnType;
+      length?: number;
+      nullable?: boolean;
+    },
   ) => new ComputedBuilder<T>({ expression, ...options }),
 };
 
