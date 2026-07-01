@@ -25,6 +25,23 @@ import { escapeSqlLiteral } from "../../utils/escapeSqlLiteral";
 const escapeEnumValue = escapeSqlLiteral;
 
 /**
+ * Renders a value as a PostgreSQL escape-string literal (`E'...'`).
+ *
+ * `escapeSqlLiteral` doubles backslashes (`\` → `\\`) to stop a trailing
+ * backslash from swallowing the closing quote. That escaping is only correct
+ * when the literal is interpreted with escape-string semantics. In a plain
+ * `'...'` literal under the default `standard_conforming_strings = on`, a
+ * backslash is a literal character, so the doubled backslash would be stored
+ * verbatim — corrupting any ENUM value that contains a `\`. Wrapping the
+ * escaped value in `E'...'` forces escape-string semantics regardless of the
+ * server's `standard_conforming_strings` setting, keeping the value correct
+ * (GUC on) and injection-safe (GUC off).
+ */
+function pgStringLiteral(value: string): string {
+  return `E'${escapeEnumValue(value)}'`;
+}
+
+/**
  * SQL driver implementation for PostgreSQL.
  * Generates queries compatible with PostgreSQL's DDL/DML syntax.
  *
@@ -459,9 +476,8 @@ export class PostgresDriver implements ISqlDriver {
 
       for (const val of values) {
         if (!existingValues.has(val)) {
-          const escaped = escapeEnumValue(val);
           await this.connector.query(
-            `ALTER TYPE ${this.wrapQualified(enumName)} ADD VALUE IF NOT EXISTS '${escaped}'`,
+            `ALTER TYPE ${this.wrapQualified(enumName)} ADD VALUE IF NOT EXISTS ${pgStringLiteral(val)}`,
           );
         }
       }
@@ -479,7 +495,7 @@ export class PostgresDriver implements ISqlDriver {
     }
 
     const escapedValues = values
-      .map((v) => `'${escapeEnumValue(v)}'`)
+      .map((v) => pgStringLiteral(v))
       .join(", ");
 
     return this.connector.query(
@@ -523,13 +539,13 @@ export class PostgresDriver implements ISqlDriver {
     value: string,
     placement?: { before?: string; after?: string },
   ): Promise<any> {
-    const escaped = `'${escapeEnumValue(value)}'`;
+    const escaped = pgStringLiteral(value);
     let suffix = "";
 
     if (placement?.before) {
-      suffix = ` BEFORE '${escapeEnumValue(placement.before)}'`;
+      suffix = ` BEFORE ${pgStringLiteral(placement.before)}`;
     } else if (placement?.after) {
-      suffix = ` AFTER '${escapeEnumValue(placement.after)}'`;
+      suffix = ` AFTER ${pgStringLiteral(placement.after)}`;
     }
 
     return this.connector.query(
@@ -558,7 +574,7 @@ export class PostgresDriver implements ISqlDriver {
       );
     }
     return this.connector.query(
-      `ALTER TYPE ${this.wrapQualified(enumName)} RENAME VALUE '${escapeEnumValue(oldValue)}' TO '${escapeEnumValue(newValue)}'`,
+      `ALTER TYPE ${this.wrapQualified(enumName)} RENAME VALUE ${pgStringLiteral(oldValue)} TO ${pgStringLiteral(newValue)}`,
     );
   }
 
