@@ -426,6 +426,13 @@ export function validateDatabaseClientOptions(
     options.type === "mariadb" ||
     options.type === "postgres"
   ) {
+    // An empty database name is never valid for a server database. The generic
+    // `database` check above intentionally accepts "" (SQLite treats it as an
+    // anonymous temporary database), so reject it explicitly here.
+    if (options.database === "") {
+      errors.push(`'database' must not be empty for ${options.type}.`);
+    }
+
     if (!options.host) {
       errors.push(`'host' is required for ${options.type}.`);
     } else if (typeof options.host !== "string") {
