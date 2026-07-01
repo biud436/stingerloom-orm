@@ -252,7 +252,7 @@ describe("SchemaDiffMigrationGenerator — ENUM DDL generation", () => {
     };
 
     const { up } = generator.dryRun(diff, "postgres");
-    expect(up[0]).toBe(`CREATE TYPE "user_role" AS ENUM ('admin', 'user', 'guest')`);
+    expect(up[0]).toBe(`CREATE TYPE "user_role" AS ENUM (E'admin', E'user', E'guest')`);
   });
 
   it("should generate ALTER TYPE ADD VALUE IF NOT EXISTS for updated enums", () => {
@@ -273,8 +273,36 @@ describe("SchemaDiffMigrationGenerator — ENUM DDL generation", () => {
     };
 
     const { up } = generator.dryRun(diff, "postgres");
-    expect(up).toContain(`ALTER TYPE "user_role" ADD VALUE IF NOT EXISTS 'moderator'`);
-    expect(up).toContain(`ALTER TYPE "user_role" ADD VALUE IF NOT EXISTS 'editor'`);
+    expect(up).toContain(`ALTER TYPE "user_role" ADD VALUE IF NOT EXISTS E'moderator'`);
+    expect(up).toContain(`ALTER TYPE "user_role" ADD VALUE IF NOT EXISTS E'editor'`);
+  });
+
+  it("should emit E'' escape-string literals so backslashes are not corrupted", () => {
+    // Under the default `standard_conforming_strings = on`, a plain '...'
+    // literal treats a backslash as a literal character, so the doubled
+    // backslash produced by escapeEnumValue would be stored verbatim. The E''
+    // prefix forces escape-string semantics, so E'a\\b' denotes the value
+    // `a\b` regardless of the server setting.
+    const diff = {
+      addTables: [],
+      dropTables: [],
+      addColumns: [],
+      dropColumns: [],
+      alterColumns: [],
+      enumChanges: [
+        {
+          enumName: "path_kind",
+          addValues: ["a\\b", "quote's"],
+          removeValues: [],
+          isNew: true,
+        },
+      ],
+    };
+
+    const { up } = generator.dryRun(diff, "postgres");
+    expect(up[0]).toBe(
+      `CREATE TYPE "path_kind" AS ENUM (E'a\\\\b', E'quote''s')`,
+    );
   });
 
   it("should generate a warning comment for removed enum values", () => {

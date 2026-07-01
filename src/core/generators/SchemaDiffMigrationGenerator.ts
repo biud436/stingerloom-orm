@@ -27,6 +27,21 @@ function escapeEnumValue(val: string): string {
 }
 
 /**
+ * Renders a value as a PostgreSQL escape-string literal (`E'...'`).
+ *
+ * escapeEnumValue doubles backslashes to keep the literal closed, which is
+ * only correct under escape-string semantics. In a plain `'...'` literal with
+ * the default `standard_conforming_strings = on`, a backslash is literal, so
+ * the doubled backslash would be stored verbatim and corrupt any enum value
+ * containing a `\`. The `E'...'` prefix forces escape-string semantics
+ * regardless of the server setting. Postgres-only (MySQL inline `ENUM(...)`
+ * keeps the plain `'...'` form).
+ */
+function pgEnumLiteral(val: string): string {
+  return `E'${escapeEnumValue(val)}'`;
+}
+
+/**
  * Generates a Migration TypeScript file from a SchemaDiffResult.
  */
 export class SchemaDiffMigrationGenerator {
@@ -350,15 +365,14 @@ export class SchemaDiffMigrationGenerator {
 
     if (ec.isNew) {
       const valuesList = ec.addValues
-        .map((v) => `'${escapeEnumValue(v)}'`)
+        .map((v) => pgEnumLiteral(v))
         .join(", ");
       sqls.push(`CREATE TYPE ${escapedName} AS ENUM (${valuesList})`);
     } else {
       // Add new values with IF NOT EXISTS
       for (const val of ec.addValues) {
-        const escapedVal = escapeEnumValue(val);
         sqls.push(
-          `ALTER TYPE ${escapedName} ADD VALUE IF NOT EXISTS '${escapedVal}'`,
+          `ALTER TYPE ${escapedName} ADD VALUE IF NOT EXISTS ${pgEnumLiteral(val)}`,
         );
       }
       // Removed values: PostgreSQL cannot remove enum values — emit a warning comment
