@@ -346,7 +346,7 @@ pnpm start          # NestJS 서버 시작
 - assertTenantContext() 테넌트 컨텍스트 경고
 
 ### 현재 안정성 상태 (v1.0.0, 2026-07-02 기준)
-- **테스트:** 6,370 passed, 36 skipped, 0 failures — 유닛 5,312 (20 skipped) + SQLite 521 + PostgreSQL 537 (16 skipped) (2026-07-02 검증; MySQL은 서버 부재로 미실행, 직전 검증 411 passed / 17 skipped)
+- **테스트:** 6,836 passed, 36 skipped, 0 failures — 유닛 5,316 (20 skipped) + SQLite 521 + PostgreSQL 537 (16 skipped) + MySQL/MariaDB 462 (2026-07-02 검증, MySQL은 192.168.35.227:3306 원격 MariaDB)
 - **예제:** 7개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-linear-clone, nestjs-multitenant, nestjs-todo, nestjs-todo-sqlite, prisma-import-demo) 타입 체크 통과 (2026-07-02 검증)
 - **보안:** SQL Injection 취약점 수정 완료, 전 드라이버 감사 완료
 - **격리:** 테넌트 간 메타데이터 유출 차단, AsyncLocalStorage 동시성 안전 확보
