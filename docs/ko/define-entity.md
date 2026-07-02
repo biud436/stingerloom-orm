@@ -733,10 +733,13 @@ export type Post = InferEntity<typeof Post>;     // author?: Author; tags?: Tag[
 ```typescript
 author: t.manyToOne(() => Author, {
   joinColumn: "author_id",
+  references: "id",            // FK가 가리키는 대상 컬럼 (기본값: 대상의 PK)
   eager: true,                 // 항상 LEFT JOIN 하고 채움
+  lazy: false,                 // true = 프로퍼티 첫 접근 시 Proxy 기반 지연 로딩
   cascade: ["insert", "update"],
   onDelete: "CASCADE",         // FK ON DELETE 동작
   onUpdate: "RESTRICT",
+  createForeignKeyConstraints: true, // false = 관계는 유지하되 FK DDL은 생략
   relationColumn: {            // 명시적 FK 컬럼 메타데이터 (@RelationColumn 식)
     name: "author_id",
     type: "bigint",
@@ -745,6 +748,13 @@ author: t.manyToOne(() => Author, {
   },
 }),
 ```
+
+몇 가지는 짚고 넘어갈게요:
+
+- `references`는 FK가 대상의 기본 키가 아닌 다른 컬럼(예: `uuid` 컬럼)을 가리키게 해요 — 같은 이름의 데코레이터 옵션과 동일해요.
+- `lazy: true`는 eager JOIN 대신 Proxy 기반 지연 로딩으로 바꿔요: 프로퍼티에 처음 접근하는 순간 쿼리가 실행되죠. `eager`와 `lazy`는 동시에 쓸 수 없고, 둘 다 설정하면 `eager`가 우선해요.
+- `createForeignKeyConstraints: false`는 논리적 관계(로딩, 캐스케이드)는 유지하되 생성되는 DDL에서 FK 제약만 생략해요 — 크로스 데이터베이스 참조나 제약 검사가 부담스러운 쓰기 집약 테이블에 유용해요.
+- `oneToOne`은 추가로 `inverseSide` — 되돌아 가리키는 대상 엔티티의 프로퍼티 이름 — 를 받아서 관계를 양방향으로 탐색할 수 있게 해요. `@OneToOne`의 `inverseSide`와 같아요.
 
 `oneToMany`는 역방향 프로퍼티 이름을 필수 두 번째 인자(위의 `"author"` — `Post`의 `manyToOne` 필드)로 받고, 선택적 `{ cascade }`도 받아요. `manyToMany`는 `{ joinTable, mappedBy, cascade }`를 받고요. 조인 테이블은 소유측에 선언하면 조인 테이블 DDL이 자동 생성돼요. 로딩 전략과 캐스케이드의 개념 설명은 [관계](./relations.md)를 참고하세요.
 

@@ -733,10 +733,13 @@ A `manyToOne` / owning `oneToOne` needs its foreign-key column declared as a rea
 ```typescript
 author: t.manyToOne(() => Author, {
   joinColumn: "author_id",
+  references: "id",            // target column the FK points at (default: the target's PK)
   eager: true,                 // always LEFT JOIN and hydrate
+  lazy: false,                 // true = Proxy-based loading on first property access
   cascade: ["insert", "update"],
   onDelete: "CASCADE",         // FK ON DELETE action
   onUpdate: "RESTRICT",
+  createForeignKeyConstraints: true, // false = keep the relation, skip the FK DDL
   relationColumn: {            // explicit FK column metadata (a la @RelationColumn)
     name: "author_id",
     type: "bigint",
@@ -745,6 +748,13 @@ author: t.manyToOne(() => Author, {
   },
 }),
 ```
+
+A few of these deserve a note:
+
+- `references` points the FK at a column other than the target's primary key (e.g. a `uuid` column) — same as the decorator option of the same name.
+- `lazy: true` replaces the eager JOIN with Proxy-based deferred loading: the query runs the moment the property is first accessed. `eager` and `lazy` are mutually exclusive; if both are set, `eager` wins.
+- `createForeignKeyConstraints: false` keeps the logical relation (loading, cascades) but omits the FK constraint from generated DDL — useful for cross-database references or write-heavy tables where constraint checks are too expensive.
+- `oneToOne` additionally accepts `inverseSide` — the property name on the target entity that points back — to make the relation navigable from both sides, mirroring `@OneToOne`'s `inverseSide`.
 
 `oneToMany` takes the inverse-side property name as its required second argument (`"author"` above — the `manyToOne` field on `Post`) plus an optional `{ cascade }`. `manyToMany` takes `{ joinTable, mappedBy, cascade }`; declare the join table on the owning side, and the join-table DDL is generated for you. See [Relations](./relations.md) for the conceptual guide to loading strategies and cascades.
 
