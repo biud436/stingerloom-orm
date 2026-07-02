@@ -10,7 +10,7 @@ import {
 import { OneToOneScanner } from "../scanner/OneToOneScanner";
 import { createEntityKey } from "../utils/scanner";
 import { camelToSnakeCase } from "../utils/camelToSnakeCase";
-import { COLUMN_TOKEN, ColumnType, KnownColumnType, ResolvedColumnOption } from "../decorators/Column";
+import { COLUMN_TOKEN, ColumnType, KnownColumnType, ResolvedColumnOption, inferColumnDefaults } from "../decorators/Column";
 import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
 import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../decorators/ManyToOne";
 import { ONE_TO_MANY_TOKEN, OneToManyMetadata } from "../decorators/OneToMany";
@@ -88,28 +88,19 @@ function resolveColumnOption(
 ): ResolvedColumnOption {
   const designType = columnTypeToDesignType(def.type);
 
-  // Base defaults from type
-  let length = 0;
-  let nullable = false;
-  switch (designType) {
-    case String:
-      length = 255;
-      break;
-    case Number:
-      length = 11;
-      break;
-    case Boolean:
-      length = 1;
-      break;
-    case Buffer:
-      nullable = true;
-      break;
+  // Mirror @Column: take the design-type defaults, but discard the inferred
+  // length when the explicit column type differs from the inferred one —
+  // String's varchar(255) is invalid for text/uuid/enum/..., and a phantom
+  // length makes MySQL SchemaDiff emit (narrowing) ALTERs on every boot.
+  const defaults = inferColumnDefaults(designType);
+  if (def.type !== defaults.type && def.length === undefined) {
+    (defaults as { length?: number }).length = undefined;
   }
 
   return {
     type: def.type,
-    length: def.length ?? length,
-    nullable: def.nullable ?? nullable,
+    length: (def.length ?? defaults.length) as number,
+    nullable: def.nullable ?? defaults.nullable,
     name: def.name ?? propertyKey,
     primary: def.primary,
     autoIncrement: def.autoIncrement,
@@ -207,7 +198,12 @@ export class EntitySchemaRegistrar {
 
     const metadata: ManyToOneMetadata<any> = {
       target: cls,
-      type: def.target() as any,
+      // Resolved lazily: the thunk exists so forward/circular references are
+      // legal at module load time — @ManyToOne never calls it at decoration
+      // time either. Eager evaluation here throws (TDZ) or captures undefined.
+      get type() {
+        return def.target() as any;
+      },
       columnName: propertyKey,
       joinColumn: def.joinColumn,
       references: def.references,
@@ -604,43 +600,24 @@ export class EntitySchemaRegistrar {
       }
     }
 
-    // Filter metadata by target — use prototype chain for inheritance column collection
-    const isInheritanceEntity = !!(inheritanceRoot || inheritanceStrategy);
+    // Filter metadata by target — walk the prototype/constructor chains like
+    // @Entity does, so columns and relations declared on (decorated) ancestor
+    // classes are included even without an explicit `inheritance` option.
     const columns = columnScanner
       .allMetadata<ColumnMetadata>()
-      .filter((c) =>
-        isInheritanceEntity
-          ? protoChain.includes(c.target as object)
-          : c.target === proto,
-      );
+      .filter((c) => protoChain.includes(c.target as object));
     const manyToOnes = manyToOneScanner
       .allMetadata<ManyToOneMetadata<unknown>>()
-      .filter((m) =>
-        isInheritanceEntity
-          ? constructorChain.includes(m.target as Function)
-          : (m.target as Function) === cls,
-      );
+      .filter((m) => constructorChain.includes(m.target as Function));
     const oneToManys = oneToManyScanner
       .allMetadata<OneToManyMetadata<unknown>>()
-      .filter((m) =>
-        isInheritanceEntity
-          ? constructorChain.includes(m.target as Function)
-          : (m.target as Function) === cls,
-      );
+      .filter((m) => constructorChain.includes(m.target as Function));
     const oneToOnes = oneToOneScanner
       .allMetadata<OneToOneMetadata<unknown>>()
-      .filter((m) =>
-        isInheritanceEntity
-          ? constructorChain.includes(m.target as Function)
-          : (m.target as Function) === cls,
-      );
+      .filter((m) => constructorChain.includes(m.target as Function));
     const manyToManys = manyToManyScanner
       .allMetadata<ManyToManyMetadata<unknown>>()
-      .filter((m) =>
-        isInheritanceEntity
-          ? constructorChain.includes(m.target as Function)
-          : (m.target as Function) === cls,
-      );
+      .filter((m) => constructorChain.includes(m.target as Function));
 
     const entityOption = options.tableName ? { name: options.tableName } : undefined;
 
