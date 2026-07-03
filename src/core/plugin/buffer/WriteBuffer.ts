@@ -447,7 +447,10 @@ export class WriteBuffer {
       return v !== undefined && v !== null;
     });
 
-    if (hasPk) return this.track(instance);
+    if (hasPk) {
+      this.cancelQueuedDelete(entityClass, instance, pkColumns);
+      return this.track(instance);
+    }
 
     // Idempotent — same reference
     if (this.persistQueue.some(e => e.instance === instance)) return this;
@@ -466,6 +469,17 @@ export class WriteBuffer {
     this.idMap.validateEntity(entityClass);
     const { pkColumns } = this.idMap.getColumnInfo(entityClass);
 
+    // If in persistQueue → cancel INSERT, no DELETE needed.
+    // Checked before PK validation so a NEW entity whose PK has not been
+    // generated yet can still be removed (the pending INSERT is cancelled).
+    const idx = this.persistQueue.findIndex(e => e.instance === instance);
+    if (idx !== -1) {
+      this.persistQueue.splice(idx, 1);
+      if (this.trackedEntries.has(instance)) this.untrack(instance);
+      this.idMap.stateMap.set(instance, EntityState.DETACHED);
+      return this;
+    }
+
     // Build criteria from PK
     const criteria: Record<string, any> = {};
     for (const pk of pkColumns) {
@@ -481,18 +495,34 @@ export class WriteBuffer {
     // Untrack if tracked
     if (this.trackedEntries.has(instance)) this.untrack(instance);
 
-    // If in persistQueue → cancel INSERT, no DELETE needed
-    const idx = this.persistQueue.findIndex(e => e.instance === instance);
-    if (idx !== -1) {
-      this.persistQueue.splice(idx, 1);
-      this.idMap.stateMap.set(instance, EntityState.DETACHED);
-      return this;
-    }
-
     this.deleteQueue.push({ entity: entityClass, criteria });
     this.idMap.stateMap.set(instance, EntityState.REMOVED);
     if (this.options.logging) this.log("remove (queued DELETE)", { entity: entityClass.name, criteria });
     return this;
+  }
+
+  /**
+   * Cancel pending DELETEs queued for the same entity + PK.
+   * persist() after remove() re-manages the entity instead of deleting it
+   * (Hibernate semantics: persisting a removed entity cancels the removal).
+   * Only exact PK-shaped criteria are cancelled — criteria deletes queued
+   * via delete() with non-PK shapes are left untouched.
+   */
+  private cancelQueuedDelete(
+    entityClass: ClazzType<any>,
+    instance: any,
+    pkColumns: string[],
+  ): void {
+    for (let i = this.deleteQueue.length - 1; i >= 0; i--) {
+      const e = this.deleteQueue[i];
+      if (
+        e.entity === entityClass &&
+        Object.keys(e.criteria).length === pkColumns.length &&
+        pkColumns.every(pk => e.criteria[pk] === instance[pk])
+      ) {
+        this.deleteQueue.splice(i, 1);
+      }
+    }
   }
 
   /**
@@ -653,7 +683,7 @@ export class WriteBuffer {
     this.track(instance);
 
     // Cascade merge
-    if (this.options.cascade) {
+    if (this.options.cascade.merge) {
       this.cascade.propagateToRelations(instance, entityClass, (child) => {
         try { this.merge(child, seen); } catch (err) {
           // Only swallow "not registered" errors

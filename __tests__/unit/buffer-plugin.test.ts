@@ -1578,6 +1578,53 @@ describe("Buffer Plugin", () => {
       expect(mut.size().deletes).toBe(0); // no DELETE queued
     });
 
+    it("should cancel pending INSERT when removing a NEW entity without PK", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = new User();
+      user.name = "Alice";
+      user.email = "a@b.c";
+
+      mut.persist(user);
+      expect(mut.size().persists).toBe(1);
+
+      // PK not generated yet — remove() must cancel the INSERT, not throw
+      mut.remove(user);
+
+      expect(mut.size().persists).toBe(0);
+      expect(mut.size().deletes).toBe(0);
+      expect(mut.getState(user)).toBe(EntityState.DETACHED);
+    });
+
+    it("persist() after remove() should cancel the queued DELETE", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.track(user);
+      mut.remove(user);
+      expect(mut.size().deletes).toBe(1);
+      expect(mut.getState(user)).toBe(EntityState.REMOVED);
+
+      mut.persist(user);
+
+      expect(mut.size().deletes).toBe(0); // removal cancelled
+      expect(mut.getState(user)).toBe(EntityState.MANAGED);
+      expect(mut.tracked()).toContain(user);
+    });
+
+    it("persist() should not cancel criteria DELETEs with non-PK shapes", () => {
+      const em = createExtendedEm(User);
+      const mut = em.buffer();
+
+      mut.delete(User, { name: "Alice" });
+      const user = Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" });
+      mut.persist(user);
+
+      expect(mut.size().deletes).toBe(1);
+    });
+
     it("should throw when PK is missing", () => {
       const em = createExtendedEm(User);
       const mut = em.buffer();
@@ -2845,6 +2892,20 @@ describe("Buffer Plugin", () => {
       // Tracked comment should have updated body
       const trackedComment = mut.tracked().find((t: any) => t.constructor === Comment);
       expect(trackedComment.body).toBe("updated");
+    });
+
+    it("merge should NOT cascade to children when cascade.merge is false (untracked path)", () => {
+      const em = createExtendedEm(Post, Comment);
+      const mut = em.buffer({ cascade: { merge: false } });
+
+      const comment = Object.assign(new Comment(), { id: 1, body: "hi", postId: 1 });
+      const post = Object.assign(new Post(), { id: 1, title: "Hello", comments: [comment] });
+
+      // post is not tracked → merge takes the track-as-new path
+      mut.merge(post);
+
+      expect(mut.tracked()).toContain(post);
+      expect(mut.tracked()).not.toContain(comment);
     });
 
     it("refresh should cascade to tracked children", async () => {
