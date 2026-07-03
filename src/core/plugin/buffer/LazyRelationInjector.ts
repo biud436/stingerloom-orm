@@ -226,23 +226,30 @@ export class LazyRelationInjector {
   ): void {
     let loaded = false;
     let cachedValue: any[] | undefined;
+    let loadPromise: Promise<any[] | undefined> | null = null;
 
     Object.defineProperty(instance, propertyKey, {
       configurable: true,
       enumerable: true,
       get: () => {
         if (loaded) return cachedValue;
-        const promise = this.ctx.em.find(ChildEntity, { where: where as any })
-          .then((results) => {
-            cachedValue = results.map((r) => this.resolveIdentity(ChildEntity, r));
-            loaded = true;
-            Object.defineProperty(instance, propertyKey, {
-              configurable: true, enumerable: true, writable: true,
-              value: cachedValue,
+        // Reuse the in-flight load so concurrent accesses issue one query
+        if (!loadPromise) {
+          loadPromise = this.ctx.em.find(ChildEntity, { where: where as any })
+            .then((results) => {
+              loadPromise = null;
+              // A setter may have run while the load was in flight — keep its value
+              if (loaded) return cachedValue;
+              cachedValue = results.map((r) => this.resolveIdentity(ChildEntity, r));
+              loaded = true;
+              Object.defineProperty(instance, propertyKey, {
+                configurable: true, enumerable: true, writable: true,
+                value: cachedValue,
+              });
+              return cachedValue;
             });
-            return cachedValue;
-          });
-        return promise;
+        }
+        return loadPromise;
       },
       set: (value: any) => {
         loaded = true;
@@ -271,12 +278,14 @@ export class LazyRelationInjector {
   ): void {
     let loaded = false;
     let cachedValue: any[] | undefined;
+    let loadPromise: Promise<any[]> | null = null;
 
     Object.defineProperty(instance, propertyKey, {
       configurable: true,
       enumerable: true,
       get: () => {
         if (loaded) return cachedValue;
+        if (loadPromise) return loadPromise;
 
         const relatedPkCols = this.idMap.getColumnInfo(RelatedEntity).pkColumns;
         if (relatedPkCols.length !== 1) {
@@ -290,12 +299,14 @@ export class LazyRelationInjector {
         const wrappedInverseCol = this.ctx.wrap(inverseJoinColumn);
         const relatedPk = relatedPkCols[0];
 
-        const promise = this.ctx.em.query(
+        loadPromise = this.ctx.em.query(
           `SELECT ${wrappedInverseCol} FROM ${wrappedTable} WHERE ${wrappedJoinCol} = ?`,
           [parentPk],
         ).then(async (rows: any[]) => {
           const ids = rows.map((r: any) => r[inverseJoinColumn]);
           if (ids.length === 0) {
+            loadPromise = null;
+            if (loaded) return cachedValue ?? [];
             cachedValue = [];
             loaded = true;
             Object.defineProperty(instance, propertyKey, {
@@ -310,6 +321,9 @@ export class LazyRelationInjector {
           });
           const resolvedResults = results.map((r) => this.resolveIdentity(RelatedEntity, r));
 
+          loadPromise = null;
+          // A setter may have run while the load was in flight — keep its value
+          if (loaded) return cachedValue ?? [];
           cachedValue = resolvedResults;
           loaded = true;
           Object.defineProperty(instance, propertyKey, {
@@ -317,7 +331,7 @@ export class LazyRelationInjector {
           });
           return resolvedResults;
         });
-        return promise;
+        return loadPromise;
       },
       set: (value: any) => {
         loaded = true;

@@ -351,6 +351,42 @@ describe("injectLazyProxy", () => {
     expect(loadFn).toHaveBeenCalledTimes(1);
   });
 
+  it("should call loadFn only once for concurrent accesses before resolution", async () => {
+    const entity: any = { id: 1, user_id: 10 };
+    const user = { id: 10, name: "Ivan" };
+    const loadFn = jest.fn(
+      () => new Promise((resolve) => setTimeout(() => resolve(user), 10)),
+    );
+
+    injectLazyProxy(entity, "user", loadFn as any);
+
+    // Two accesses BEFORE the first load resolves must share one in-flight load
+    const p1 = entity.user;
+    const p2 = entity.user;
+    expect(p1).toBe(p2);
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toBe(r2);
+    expect(loadFn).toHaveBeenCalledTimes(1);
+    expect(entity.user).toEqual(user);
+  });
+
+  it("should keep a directly-set value even if it races an in-flight load", async () => {
+    const entity: any = { id: 1, user_id: 10 };
+    const dbUser = { id: 10, name: "FromDB" };
+    const loadFn = jest.fn(
+      () => new Promise((resolve) => setTimeout(() => resolve(dbUser), 10)),
+    );
+
+    injectLazyProxy(entity, "user", loadFn as any);
+
+    const pending = entity.user; // starts the load
+    entity.user = { id: 10, name: "Assigned" }; // setter wins the race
+
+    await pending;
+    expect(entity.user).toEqual({ id: 10, name: "Assigned" });
+  });
+
   it("should handle loadFn returning undefined", async () => {
     const entity: any = { id: 1, user_id: 10 };
     const loadFn = jest.fn().mockResolvedValue(undefined);

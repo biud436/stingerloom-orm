@@ -112,6 +112,7 @@ export function injectLazyProxy<T extends object, R extends object>(
 ): void {
   let loaded = false;
   let cachedValue: R | undefined;
+  let loadPromise: Promise<R | undefined> | null = null;
 
   Object.defineProperty(entity, propertyName, {
     configurable: true,
@@ -120,20 +121,25 @@ export function injectLazyProxy<T extends object, R extends object>(
       if (loaded) {
         return cachedValue;
       }
-      // Load asynchronously and cache
-      const promise = loadFn().then((result) => {
-        loaded = true;
-        cachedValue = result;
-        // Replace the getter with the resolved value
-        Object.defineProperty(entity, propertyName, {
-          configurable: true,
-          enumerable: true,
-          writable: true,
-          value: result,
+      // Reuse the in-flight load so concurrent accesses issue one query
+      if (!loadPromise) {
+        loadPromise = loadFn().then((result) => {
+          loadPromise = null;
+          // A setter may have run while the load was in flight — keep its value
+          if (loaded) return cachedValue;
+          loaded = true;
+          cachedValue = result;
+          // Replace the getter with the resolved value
+          Object.defineProperty(entity, propertyName, {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: result,
+          });
+          return result;
         });
-        return result;
-      });
-      return promise;
+      }
+      return loadPromise;
     },
     set(value: R) {
       loaded = true;
