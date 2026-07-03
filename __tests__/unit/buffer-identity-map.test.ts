@@ -445,8 +445,52 @@ describe("IdentityMapManager", () => {
       mgr.stateMap.set(u2, "MANAGED");
 
       mgr.evictIfNeeded();
-      expect(mgr.stateMap.get(u1)).toBe("DETACHED");
+      // Evicted entries are DELETED from stateMap (not set to DETACHED) so the
+      // strong Map does not retain every instance forever. WriteBuffer.getState()
+      // falls back to DETACHED for absent keys, preserving observable semantics.
+      expect(mgr.stateMap.has(u1)).toBe(false);
       expect(mgr.stateMap.get(u2)).toBe("MANAGED");
+    });
+
+    it("stateMap should not grow past evictions (memory bound)", () => {
+      mgr.setMaxSize(2);
+      const tracked = new Map<any, any>();
+      mgr.setTrackedEntries(tracked, { snapshot: () => ({}) });
+
+      for (let i = 1; i <= 50; i++) {
+        const u = Object.assign(new User(), { id: i, name: `U${i}`, email: `u${i}@x` });
+        const key = mgr.buildIdentityKey(User, u, ["id"]);
+        mgr.identityMap.set(key, u);
+        mgr.stateMap.set(u, "MANAGED");
+        mgr.evictIfNeeded();
+      }
+
+      expect(mgr.identityMap.size).toBe(2);
+      expect(mgr.stateMap.size).toBe(2);
+    });
+  });
+
+  describe("tryBuildCacheKey guards", () => {
+    let mgr: IdentityMapManager;
+
+    beforeEach(() => {
+      mgr = new IdentityMapManager(mockCtx);
+    });
+
+    it("should return a key for a plain PK equality lookup", () => {
+      expect(mgr.tryBuildCacheKey(User, { where: { id: 1 } } as any)).not.toBeNull();
+    });
+
+    it("should bypass the cache for onlyDeleted lookups", () => {
+      expect(
+        mgr.tryBuildCacheKey(User, { where: { id: 1 }, onlyDeleted: true } as any),
+      ).toBeNull();
+    });
+
+    it("should bypass the cache for withoutTenantScope lookups", () => {
+      expect(
+        mgr.tryBuildCacheKey(User, { where: { id: 1 }, withoutTenantScope: true } as any),
+      ).toBeNull();
     });
   });
 });

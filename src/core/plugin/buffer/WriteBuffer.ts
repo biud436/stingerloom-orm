@@ -476,7 +476,7 @@ export class WriteBuffer {
     if (idx !== -1) {
       this.persistQueue.splice(idx, 1);
       if (this.trackedEntries.has(instance)) this.untrack(instance);
-      this.idMap.stateMap.set(instance, EntityState.DETACHED);
+      this.idMap.stateMap.delete(instance);
       return this;
     }
 
@@ -546,7 +546,7 @@ export class WriteBuffer {
       this.trackedEntries.delete(instance);
     }
 
-    this.idMap.stateMap.set(instance, EntityState.DETACHED);
+    this.idMap.stateMap.delete(instance);
 
     // Cascade detach
     if (this.options.cascade.detach) {
@@ -633,7 +633,7 @@ export class WriteBuffer {
 
     // Transition each to DETACHED
     for (const instance of detachedInstances) {
-      this.idMap.stateMap.set(instance, EntityState.DETACHED);
+      this.idMap.stateMap.delete(instance);
     }
 
     if (this.options.logging) {
@@ -776,7 +776,7 @@ export class WriteBuffer {
       if (this.options.logging) this.log("untrack", { entity: entry.entity.name, key });
     }
     this.trackedEntries.delete(instance);
-    this.idMap.stateMap.set(instance, EntityState.DETACHED);
+    this.idMap.stateMap.delete(instance);
     return this;
   }
 

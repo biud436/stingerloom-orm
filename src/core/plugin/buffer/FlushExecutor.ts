@@ -13,7 +13,6 @@ import {
   ResolvedBufferOptions,
 } from "./BufferPreview";
 import { BufferStrategy } from "./BufferStrategy";
-import { EntityState } from "./EntityUnitState";
 import { IdentityMapManager, EntityInstance, ColumnValueMap } from "./IdentityMapManager";
 import { CascadeProcessor } from "./CascadeProcessor";
 import type { EntityManager } from "../../EntityManager";
@@ -418,7 +417,7 @@ export class FlushExecutor {
         this.idMap.identityMap.delete(key);
       }
       trackedEntries.delete(instance);
-      this.idMap.stateMap.set(instance, EntityState.DETACHED);
+      this.idMap.stateMap.delete(instance);
     }
   }
 

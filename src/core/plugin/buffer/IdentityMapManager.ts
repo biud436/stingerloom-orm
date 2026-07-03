@@ -113,9 +113,12 @@ export class IdentityMapManager {
       const instance = this.identityMap.get(key);
       this.identityMap.delete(key);
       if (instance !== undefined) {
-        // Remove from trackedEntries if present (reference-only entries won't be there)
+        // Remove from trackedEntries if present (reference-only entries won't be there).
+        // stateMap entry is deleted, not set to DETACHED — getState() falls back to
+        // DETACHED for absent keys, and a strong Map entry would retain the instance
+        // forever, defeating maxIdentityMapSize as a memory bound.
         this.trackedEntries?.delete(instance);
-        this.stateMap.set(instance, EntityState.DETACHED);
+        this.stateMap.delete(instance);
       }
     }
   }
@@ -346,6 +349,8 @@ export class IdentityMapManager {
       option.distinct ||
       option.useMaster ||
       option.withDeleted ||
+      option.onlyDeleted ||
+      option.withoutTenantScope ||
       option.timeout != null
     ) {
       return null;
