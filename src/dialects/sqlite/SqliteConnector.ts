@@ -26,6 +26,21 @@ export class SqliteConnector extends IConnector {
   private readonly logger = new Logger("SqliteConnector");
   private _dbVersion: DbVersion = DbVersion.UNKNOWN;
 
+  /**
+   * Per-database prepared-statement LRU cache. The ORM emits identical
+   * parameterized SQL strings over and over (point reads, batch writes), and
+   * `db.prepare()` re-parses the SQL each call — a measurable share of
+   * per-query CPU. SQLite's prepare_v2 machinery re-compiles a cached
+   * statement automatically when the schema changes underneath it, so DDL
+   * does not invalidate the cache; a statement whose table was dropped fails
+   * on execution with the same error a fresh `prepare()` would raise.
+   */
+  private readonly stmtCaches = new WeakMap<
+    Database.Database,
+    Map<string, Database.Statement>
+  >();
+  private static readonly STMT_CACHE_MAX = 128;
+
   async connect(options: DatabaseClientOptions): Promise<void> {
     try {
       let DatabaseConstructor: typeof Database;
@@ -197,9 +212,41 @@ export class SqliteConnector extends IConnector {
     });
   }
 
+  /**
+   * Returns a prepared statement for `sql`, reusing a cached one when
+   * available. Entries are evicted least-recently-used beyond
+   * {@link STMT_CACHE_MAX} so uniquely-named DDL (e.g. per-test tables)
+   * cannot grow the cache without bound.
+   */
+  private prepareCached(
+    db: Database.Database,
+    sql: string,
+  ): Database.Statement {
+    let cache = this.stmtCaches.get(db);
+    if (!cache) {
+      cache = new Map();
+      this.stmtCaches.set(db, cache);
+    }
+
+    let stmt = cache.get(sql);
+    if (stmt) {
+      // Refresh recency: Map iteration order doubles as the LRU order.
+      cache.delete(sql);
+      cache.set(sql, stmt);
+      return stmt;
+    }
+
+    stmt = db.prepare(sql);
+    cache.set(sql, stmt);
+    if (cache.size > SqliteConnector.STMT_CACHE_MAX) {
+      cache.delete(cache.keys().next().value!);
+    }
+    return stmt;
+  }
+
   private executeRaw(db: Database.Database, sql: string, values?: any[]): any {
     const sanitized = this.sanitizeValues(values);
-    const stmt = db.prepare(sql);
+    const stmt = this.prepareCached(db, sql);
 
     // better-sqlite3 exposes `Statement.reader: boolean` — true iff the
     // statement returns rows. Branch on that flag instead of parsing SQL
