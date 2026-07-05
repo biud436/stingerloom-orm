@@ -6,7 +6,7 @@ import type { InheritanceResolver } from "./InheritanceResolver";
 import type { EntityEventEmitter } from "./EntityEventEmitter";
 import type { RelationLoader } from "./RelationLoader";
 import type { AggregateQueryHandler } from "./AggregateQueryHandler";
-import { ClazzType } from "../utils";
+import { ClazzType, Logger } from "../utils";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
@@ -19,6 +19,8 @@ import { EntitySubscriber } from "./EntitySubscriber";
 import { SchemaDialect } from "./generators/SchemaGenerator";
 import { SynchronizePolicy } from "./DatabaseClientOptions";
 import { ColumnMetadata } from "../scanner";
+import type { TenantQueryStrategy } from "./TenantQueryStrategy";
+import type { ExecuteTransactionOptions } from "./entity-manager/types";
 
 /**
  * Interface that exposes EntityManager internals to extracted handler classes.
@@ -37,6 +39,12 @@ export interface EntityManagerInternals {
   getDriver(): ISqlDriver | undefined;
   /** The owning EntityManager facade — used to populate `manager` on lifecycle events. */
   getManager(): EntityManager;
+  /**
+   * The EntityManager's own Logger instance. Extracted engines MUST log
+   * user-observable warnings through this (not a Logger of their own) so
+   * `jest.spyOn((em as any).logger, "warn")` keeps observing them.
+   */
+  getLogger(): Logger;
   // ── Live collaborator accessors (read at call time so test-time
   //    reassignment of `em.resolver` etc. is honored by extracted executors) ──
   getResolver(): RelationMetadataResolver;
@@ -64,6 +72,7 @@ export interface EntityManagerInternals {
     fn: (session: TransactionSessionManager) => Promise<R>,
     existingSession?: TransactionSessionManager,
     readNodeOverride?: ReplicationNodeConfig | null,
+    txOptions?: ExecuteTransactionOptions,
   ): Promise<R>;
   executeReadOnly<R>(
     fn: (session: TransactionSessionManager) => Promise<R>,
@@ -75,6 +84,22 @@ export interface EntityManagerInternals {
   ): Promise<R>;
   beginTrackQuery(): void;
   trackQuery(entityName: string, sql: string, ms: number): void;
+
+  // ── Transaction-engine bridge (used by TransactionRunner) ──────
+  /** The connection name this EM uses — read live (tests reassign `em.connectionName`). */
+  getConnectionName(): string;
+  /** The active TenantQueryStrategy — read live (tests reassign `em.tenantStrategy`). */
+  getTenantStrategy(): TenantQueryStrategy;
+  /** Fires a transaction-level lifecycle method on every registered EntitySubscriber. */
+  notifyTransactionSubscribers(method: keyof EntitySubscriber<any>): Promise<void>;
+  /** Notifies installed plugins before a transaction starts. */
+  notifyPluginBeforeTransaction(isolationLevel?: string): void;
+  /** Notifies installed plugins after a transaction commits/rolls back. */
+  notifyPluginAfterTransaction(committed: boolean): void;
+  /** Drops the per-session dirty-entity set once its transaction ends. */
+  clearTxDirtyEntities(session: TransactionSessionManager): void;
+  /** Warns once per call site when raw SQL bypasses tenant-column scoping. */
+  warnIfRawQueryBypassesTenant(): void;
   getReadNode(useMaster?: boolean): ReplicationNodeConfig | null;
   getEntities(): ClazzType<any>[];
   getNameStrategy<T>(clazz: ClazzType<T>): string;

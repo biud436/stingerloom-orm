@@ -10,7 +10,7 @@ import { FindOption, LockMode, UpdateData, UpdateManyOptions, WhereClause } from
 import { resolveWhereClause } from "./WhereResolver";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
-import sql, { Sql, join, raw } from "sql-template-tag";
+import { Sql } from "sql-template-tag";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
 import { QueryResult } from "../types/QueryResult";
@@ -18,7 +18,6 @@ import { EntityResult } from "../types/EntityResult";
 import { DeleteResult } from "../types/DeleteResult";
 import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
-import { Conditions } from "./Conditions";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import {
   DatabaseClientOptions,
@@ -68,11 +67,7 @@ import {
   ReplicationRouter,
   ReplicationNodeConfig,
 } from "../dialects/ReplicationRouter";
-import {
-  transactionStorage,
-  TransactionPropagation,
-} from "../decorators/Transactional";
-import { TRANSACTION_ISOLATION_LEVEL } from "../dialects/IsolationLevel";
+import { transactionStorage } from "../decorators/Transactional";
 
 // Extracted handler classes
 import { EntityManagerInternals } from "./EntityManagerInternals";
@@ -83,17 +78,8 @@ import { RelationLoader } from "./RelationLoader";
 import { SchemaRegistrar } from "./SchemaRegistrar";
 import { ExplainQueryHandler } from "./ExplainQueryHandler";
 import { AggregateQueryHandler } from "./AggregateQueryHandler";
-import {
-  TenantQueryStrategy,
-  SearchPathStrategy,
-  SchemaQualifiedStrategy,
-  TenantColumnStrategy,
-  DatabaseStrategy,
-} from "./TenantQueryStrategy";
-import {
-  StingerloomPlugin,
-  InstalledPlugin,
-} from "./plugin/StingerloomPlugin";
+import { TenantQueryStrategy } from "./TenantQueryStrategy";
+import { StingerloomPlugin } from "./plugin/StingerloomPlugin";
 import { PluginContext } from "./plugin/PluginContext";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
@@ -105,10 +91,6 @@ import { InheritanceResolver } from "./InheritanceResolver";
 import { CREATE_TIMESTAMP_TOKEN } from "../decorators/CreateTimestamp";
 import { UPDATE_TIMESTAMP_TOKEN } from "../decorators/UpdateTimestamp";
 import { DELETED_AT_TOKEN } from "../decorators/DeletedAt";
-import {
-  getTenantColumnMetadata,
-  isNonTenantEntity,
-} from "../decorators/TenantColumn";
 import { VERSION_TOKEN } from "../decorators/Version";
 import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
 import type { BufferPluginOptions } from "./plugin/buffer/BufferPreview";
@@ -122,6 +104,12 @@ import { DmlSqlBuilder } from "./entity-manager/DmlSqlBuilder";
 import { WriteExecutor } from "./entity-manager/WriteExecutor";
 import { ReadExecutor } from "./entity-manager/ReadExecutor";
 import { RelationExecutor } from "./entity-manager/RelationExecutor";
+import { MetadataViewFactory } from "./entity-manager/MetadataViewFactory";
+import { TenantScopeManager } from "./entity-manager/TenantScopeManager";
+import { SubscriberRegistry } from "./entity-manager/SubscriberRegistry";
+import { PluginManager } from "./entity-manager/PluginManager";
+import { TransactionRunner } from "./entity-manager/TransactionRunner";
+import { RawQueryRunner } from "./entity-manager/RawQueryRunner";
 
 // ── Extracted types & internal utilities (entity-manager/) ──
 import type {
@@ -133,11 +121,6 @@ import type {
   TransactionOptions,
   ExecuteTransactionOptions,
 } from "./entity-manager/types";
-import {
-  isDeadlockError,
-  isTemplateStringsArray,
-  formatDateTimeForSQL,
-} from "./entity-manager/internal-utils";
 
 // Re-export the public types so `export * from "./core"` keeps the public API
 // surface byte-identical after the move into entity-manager/types.ts.
@@ -157,21 +140,22 @@ export class EntityManager implements BaseEntityManager {
   private dataSource?: IDataSource;
   private dirtyEntities: Set<InstanceType<ClazzType<any>>> = new Set();
   private txDirtyEntities: WeakMap<TransactionSessionManager, Set<InstanceType<ClazzType<any>>>> = new WeakMap();
-  /** Monotonic counter for NESTED-propagation savepoint names in transaction(). */
-  private txSavepointCounter = 0;
   private readonly eventEmitter = new EntityEventEmitter();
-  private readonly subscribers: EntitySubscriber<any>[] = [];
+  private readonly subscriberRegistry = new SubscriberRegistry();
   private readonly cursorPkWarned = new Set<string>();
-  private readonly rawQueryTenantWarned = new Set<string>();
+
+  /**
+   * Live view of the registered subscribers (state moved into
+   * SubscriberRegistry). Kept as an instance accessor because tests read
+   * `em.subscribers` directly; it returns the registry's own array instance,
+   * so mutations (`length = 0`) stay in sync.
+   */
+  private get subscribers(): EntitySubscriber<any>[] {
+    return this.subscriberRegistry.subscribers;
+  }
   private queryTracker: QueryTracker | null = null;
   private defaultQueryTimeout: number | undefined;
   private queryLoggingEnabled = false;
-  private tenantStrategy: TenantQueryStrategy = new SearchPathStrategy();
-  private tenantColumnConfig: {
-    name: string;
-    type: "varchar" | "uuid" | "int" | "bigint";
-    length?: number;
-  } | null = null;
 
   /**
    * The connection name this EntityManager uses.
@@ -204,8 +188,6 @@ export class EntityManager implements BaseEntityManager {
   static registerPluginPlaceholder(name: string): void {
     EntityManager.PLUGIN_PLACEHOLDERS.add(name);
   }
-  private readonly _plugins = new Map<string, InstalledPlugin>();
-  private _pluginContext: PluginContext | null = null;
 
   // ── Extracted handlers ──────────────────────────────────────────
 
@@ -223,6 +205,7 @@ export class EntityManager implements BaseEntityManager {
     getDbType: () => this.dbType,
     getDriver: () => this.driver,
     getManager: () => this,
+    getLogger: () => this.logger,
     getResolver: () => this.resolver,
     getCascadeHandler: () => this.cascadeHandler,
     getInheritanceResolver: () => this.inheritanceResolver,
@@ -255,10 +238,19 @@ export class EntityManager implements BaseEntityManager {
     },
     getSchema: () => this.client.getOptions(this.connectionName).schema,
     getConnection: () => this.connection,
-    executeInTransaction: (fn, s, r) => this.executeInTransaction(fn, s, r),
+    executeInTransaction: (fn, s, r, o) => this.executeInTransaction(fn, s, r, o),
     executeReadOnly: (fn, opts) => this.executeReadOnly(fn, opts),
     beginTrackQuery: () => this.beginTrackQuery(),
     trackQuery: (e, s, m) => this.trackQuery(e, s, m),
+    getConnectionName: () => this.connectionName,
+    getTenantStrategy: () => this.tenantScope.strategy,
+    notifyTransactionSubscribers: (m) => this.notifyTransactionSubscribers(m),
+    notifyPluginBeforeTransaction: (iso) => this.notifyPluginBeforeTransaction(iso),
+    notifyPluginAfterTransaction: (c) => this.notifyPluginAfterTransaction(c),
+    clearTxDirtyEntities: (s) => {
+      this.txDirtyEntities.delete(s);
+    },
+    warnIfRawQueryBypassesTenant: () => this.warnIfRawQueryBypassesTenant(),
     getReadNode: (u) => this.getReadNode(u),
     getNameStrategy: (c) => this.getNameStrategy(c),
     resolveSelectColumns: (s) => this.resolveSelectColumns(s),
@@ -305,6 +297,50 @@ export class EntityManager implements BaseEntityManager {
   private readonly writeExecutor = new WriteExecutor(this._ctx);
   private readonly readExecutor = new ReadExecutor(this._ctx);
   private readonly relationExecutor = new RelationExecutor(this._ctx);
+  private readonly metadataViewFactory = new MetadataViewFactory(this._ctx);
+  private readonly tenantScope = new TenantScopeManager(this._ctx);
+  private readonly transactionRunner = new TransactionRunner(this._ctx);
+  private readonly rawQueryRunner = new RawQueryRunner(this._ctx);
+  private readonly pluginManager = new PluginManager(this._ctx, {
+    isPlaceholder: (name) => EntityManager.PLUGIN_PLACEHOLDERS.has(name),
+    reservedMemberNames: () =>
+      Object.getOwnPropertyNames(EntityManager.prototype),
+    registerPlaceholder: (name) =>
+      EntityManager.registerPluginPlaceholder(name),
+  });
+
+  // ── Live tenant-state accessors ─────────────────────────────────
+  // State moved into TenantScopeManager; these stay as instance accessors
+  // because tests reassign `em.tenantStrategy` and read `em.rawQueryTenantWarned`
+  // directly on the EntityManager.
+
+  private get tenantStrategy(): TenantQueryStrategy {
+    return this.tenantScope.strategy;
+  }
+
+  private set tenantStrategy(strategy: TenantQueryStrategy) {
+    this.tenantScope.strategy = strategy;
+  }
+
+  private get rawQueryTenantWarned(): Set<string> {
+    return this.tenantScope.rawQueryWarnedCallSites;
+  }
+
+  private get tenantColumnConfig(): {
+    name: string;
+    type: "varchar" | "uuid" | "int" | "bigint";
+    length?: number;
+  } | null {
+    return this.tenantScope.columnConfig;
+  }
+
+  private set tenantColumnConfig(config: {
+    name: string;
+    type: "varchar" | "uuid" | "int" | "bigint";
+    length?: number;
+  } | null) {
+    this.tenantScope.columnConfig = config;
+  }
 
   // ── Lifecycle ──────────────────────────────────────────
 
@@ -585,24 +621,7 @@ export class EntityManager implements BaseEntityManager {
     }
 
     // Initialize TenantQueryStrategy
-    if (databaseClientOptions.tenantStrategy === "schema_qualified") {
-      this.tenantStrategy = new SchemaQualifiedStrategy();
-    } else if (databaseClientOptions.tenantStrategy === "tenant_column") {
-      this.tenantStrategy = new TenantColumnStrategy(
-        databaseClientOptions.tenantColumnName ?? "tenant_id",
-      );
-      this.tenantColumnConfig = {
-        name: databaseClientOptions.tenantColumnName ?? "tenant_id",
-        type: databaseClientOptions.tenantColumnType ?? "varchar",
-        length:
-          databaseClientOptions.tenantColumnType == null ||
-          databaseClientOptions.tenantColumnType === "varchar"
-            ? databaseClientOptions.tenantColumnLength ?? 64
-            : undefined,
-      };
-    } else if (databaseClientOptions.tenantStrategy === "database") {
-      this.tenantStrategy = new DatabaseStrategy();
-    }
+    this.tenantScope.configure(databaseClientOptions);
 
     // Initialize ReplicationRouter
     if (replication) {
@@ -639,20 +658,7 @@ export class EntityManager implements BaseEntityManager {
     }
 
     // 2. Plugin shutdown (reverse installation order — LIFO)
-    const pluginEntries = [...this._plugins.values()].reverse();
-    for (const { plugin } of pluginEntries) {
-      if (plugin.shutdown) {
-        try {
-          await plugin.shutdown();
-        } catch (err) {
-          this.logger.warn(
-            `[Shutdown] Plugin "${plugin.name}" shutdown error: ${err}`,
-          );
-        }
-      }
-    }
-    this._plugins.clear();
-    this._pluginContext = null;
+    await this.pluginManager.shutdownAll();
 
     // 3. Clear event listeners / subscribers / dirty entities
     this.removeAllListeners();
@@ -751,41 +757,22 @@ export class EntityManager implements BaseEntityManager {
 
   /** @internal Notify installed plugins before a query executes. */
   notifyPluginBeforeQuery(queryInfo: import("./plugin/StingerloomPlugin").QueryInfo): import("./plugin/StingerloomPlugin").QueryInfo {
-    let info = queryInfo;
-    for (const { plugin } of this._plugins.values()) {
-      if (plugin.beforeQuery) {
-        const result = plugin.beforeQuery(info);
-        if (result) info = result;
-      }
-    }
-    return info;
+    return this.pluginManager.notifyBeforeQuery(queryInfo);
   }
 
   /** @internal Notify installed plugins after a query executes. */
   notifyPluginAfterQuery(queryInfo: import("./plugin/StingerloomPlugin").QueryInfo, result: any, durationMs: number): void {
-    for (const { plugin } of this._plugins.values()) {
-      if (plugin.afterQuery) {
-        plugin.afterQuery(queryInfo, result, durationMs);
-      }
-    }
+    this.pluginManager.notifyAfterQuery(queryInfo, result, durationMs);
   }
 
   /** @internal Notify installed plugins before a transaction. */
   private notifyPluginBeforeTransaction(isolationLevel?: string): void {
-    for (const { plugin } of this._plugins.values()) {
-      if (plugin.beforeTransaction) {
-        plugin.beforeTransaction(isolationLevel);
-      }
-    }
+    this.pluginManager.notifyBeforeTransaction(isolationLevel);
   }
 
   /** @internal Notify installed plugins after a transaction. */
   private notifyPluginAfterTransaction(committed: boolean): void {
-    for (const { plugin } of this._plugins.values()) {
-      if (plugin.afterTransaction) {
-        plugin.afterTransaction(committed);
-      }
-    }
+    this.pluginManager.notifyAfterTransaction(committed);
   }
 
   // ── Replication delegation ──────────────────────────────────────
@@ -821,20 +808,11 @@ export class EntityManager implements BaseEntityManager {
   }
 
   addSubscriber(subscriber: EntitySubscriber<any>): void {
-    // Idempotent registration: the same subscriber instance must not fire
-    // twice. NestJS subscribers self-register in onModuleInit against the
-    // singleton EntityManager, so a module re-init (test re-bootstrap, HMR,
-    // or sharing one connection across modules) would otherwise double-register
-    // and emit duplicate notifications/audit rows.
-    if (this.subscribers.includes(subscriber)) return;
-    this.subscribers.push(subscriber);
+    this.subscriberRegistry.add(subscriber);
   }
 
   removeSubscriber(subscriber: EntitySubscriber<any>): void {
-    const idx = this.subscribers.indexOf(subscriber);
-    if (idx !== -1) {
-      this.subscribers.splice(idx, 1);
-    }
+    this.subscriberRegistry.remove(subscriber);
   }
 
   // ── Plugin System ──────────────────────────────────────────
@@ -848,54 +826,7 @@ export class EntityManager implements BaseEntityManager {
   extend<TApi extends Record<string, any>>(
     plugin: StingerloomPlugin<TApi>,
   ): this & TApi {
-    // Idempotent: skip if already installed
-    if (this._plugins.has(plugin.name)) {
-      return this as this & TApi;
-    }
-
-    // Check dependencies
-    if (plugin.dependencies) {
-      for (const dep of plugin.dependencies) {
-        if (!this._plugins.has(dep)) {
-          throw new OrmError(
-            OrmErrorCode.PLUGIN_DEPENDENCY_MISSING,
-            `Plugin "${plugin.name}" requires "${dep}" to be installed first`,
-            `Call em.extend(${dep}Plugin) before em.extend(${plugin.name}Plugin)`,
-          );
-        }
-      }
-    }
-
-    // Create context (lazy singleton)
-    const ctx = this.getPluginContext();
-
-    // Install
-    const api = (plugin.install(ctx) ?? {}) as Record<string, any>;
-
-    // Check for conflicts with existing properties
-    const reserved = new Set(Object.getOwnPropertyNames(EntityManager.prototype));
-    for (const key of Object.keys(api)) {
-      // Allow plugins to override placeholder stubs (e.g. mutate())
-      if (EntityManager.PLUGIN_PLACEHOLDERS.has(key)) {
-        continue;
-      }
-      if (key in this || reserved.has(key)) {
-        throw new OrmError(
-          OrmErrorCode.PLUGIN_CONFLICT,
-          `Plugin "${plugin.name}" method "${key}" conflicts with an existing EntityManager member`,
-          `Rename the "${key}" method in the plugin's install() return object`,
-        );
-      }
-    }
-
-    // Mix API methods into this instance
-    for (const [key, value] of Object.entries(api)) {
-      (this as any)[key] = value;
-    }
-
-    // Store
-    this._plugins.set(plugin.name, { plugin, api });
-
+    this.pluginManager.extend(plugin);
     return this as this & TApi;
   }
 
@@ -923,7 +854,7 @@ export class EntityManager implements BaseEntityManager {
    * Check if a plugin with the given name is installed.
    */
   hasPlugin(name: string): boolean {
-    return this._plugins.has(name);
+    return this.pluginManager.has(name);
   }
 
   /**
@@ -931,8 +862,7 @@ export class EntityManager implements BaseEntityManager {
    * Returns undefined if the plugin is not installed.
    */
   getPluginApi<T = unknown>(name: string): T | undefined {
-    const installed = this._plugins.get(name);
-    return installed ? (installed.api as T) : undefined;
+    return this.pluginManager.getApi<T>(name);
   }
 
   /**
@@ -968,51 +898,24 @@ export class EntityManager implements BaseEntityManager {
 
   /**
    * Create or return the cached PluginContext for this EntityManager.
+   * Engine delegator — implementation lives in {@link PluginManager}; kept on
+   * the facade because tests call `(em as any).getPluginContext()`.
    */
   private getPluginContext(): PluginContext {
-    if (!this._pluginContext) {
-      const self = this;
-      this._pluginContext = {
-        get em() {
-          return self;
-        },
-        get driver() {
-          return self.driver;
-        },
-        get events() {
-          return self.eventEmitter;
-        },
-        get connectionName() {
-          return self.connectionName;
-        },
-        addSubscriber: (s) => this.addSubscriber(s),
-        removeSubscriber: (s) => this.removeSubscriber(s),
-        getEntities: () => this._entities,
-        getPlugin: <T = unknown>(name: string) => this.getPluginApi<T>(name),
-        isMySqlFamily: () => this.isMySqlFamily(),
-        isPostgres: () => this.isPostgres(),
-        isSqlite: () => this.isSqlite(),
-        wrap: (id) => this.wrap(id),
-        wrapTable: (t) => this.wrapTable(t),
-        executeInTransaction: (fn) => this.executeInTransaction(fn),
-        executeReadOnly: (fn) => this.executeReadOnly(fn),
-        getEntityMetadata: (entity) => this.getEntityMetadata(entity),
-        registerPlaceholder: (name) => EntityManager.registerPluginPlaceholder(name),
-      };
-    }
-    return this._pluginContext;
+    return this.pluginManager.getContext();
   }
 
+  /**
+   * Engine delegator — implementation lives in {@link SubscriberRegistry}.
+   * Kept on the facade so `_ctx` routing and instance-level reassignment
+   * (`(em as any).notifySubscribers = ...`) keep working.
+   */
   private async notifySubscribers<T>(
     entityClass: new (...args: any[]) => T,
     method: keyof EntitySubscriber<T>,
     arg?: any,
   ): Promise<void> {
-    for (const sub of this.subscribers) {
-      if (sub.listenTo() === entityClass && typeof sub[method] === "function") {
-        await (sub[method] as Function)(arg);
-      }
-    }
+    return this.subscriberRegistry.notify(entityClass, method, arg);
   }
 
   /**
@@ -1027,39 +930,26 @@ export class EntityManager implements BaseEntityManager {
     entityClass: ClazzType<T>,
     entities: T | T[] | null | undefined,
   ): Promise<void> {
-    if (!entities) return;
-    const list = Array.isArray(entities) ? entities : [entities];
-    for (const loadedEntity of list) {
-      if (loadedEntity == null) continue;
-      await this.notifySubscribers(entityClass as any, "afterLoad", loadedEntity);
-    }
+    return this.subscriberRegistry.emitAfterLoad(
+      entityClass,
+      entities,
+      (e, m, a) => this.notifySubscribers(e, m, a),
+    );
   }
 
-  /**
-   * True iff any registered subscriber for `entityClass` implements `method`.
-   * Used to skip the `databaseEntity` pre-read on entities where no
-   * subscriber actually wants the snapshot.
-   */
+  /** Engine delegator — implementation lives in {@link SubscriberRegistry}. */
   private hasSubscriberFor<T>(
     entityClass: new (...args: any[]) => T,
     method: keyof EntitySubscriber<T>,
   ): boolean {
-    for (const sub of this.subscribers) {
-      if (sub.listenTo() === entityClass && typeof sub[method] === "function") {
-        return true;
-      }
-    }
-    return false;
+    return this.subscriberRegistry.hasSubscriberFor(entityClass, method);
   }
 
+  /** Engine delegator — implementation lives in {@link SubscriberRegistry}. */
   private async notifyTransactionSubscribers(
     method: keyof EntitySubscriber<any>,
   ): Promise<void> {
-    for (const sub of this.subscribers) {
-      if (typeof sub[method] === "function") {
-        await (sub[method] as Function)();
-      }
-    }
+    return this.subscriberRegistry.notifyTransaction(method);
   }
 
   // ── CRUD: Read ────────────────────────────────────────────
@@ -2088,12 +1978,7 @@ export class EntityManager implements BaseEntityManager {
    * Uses the configured TenantQueryStrategy to determine whether to prefix with tenant schema.
    */
   wrapTable(tableName: string): string {
-    const tenant = this.isPostgres()
-      ? MetadataContext.getCurrentTenant()
-      : "public";
-    return this.tenantStrategy.qualifyTable(tableName, tenant, (n) =>
-      this.wrap(n),
-    );
+    return this.tenantScope.wrapTable(tableName);
   }
 
   /**
@@ -2105,7 +1990,7 @@ export class EntityManager implements BaseEntityManager {
     type: "varchar" | "uuid" | "int" | "bigint";
     length?: number;
   } | null {
-    return this.tenantColumnConfig;
+    return this.tenantScope.columnConfig;
   }
 
   /**
@@ -2113,122 +1998,26 @@ export class EntityManager implements BaseEntityManager {
    * (custom query builders, testing, observability).
    */
   public getTenantStrategy(): TenantQueryStrategy {
-    return this.tenantStrategy;
+    return this.tenantScope.strategy;
   }
 
   /**
-   * Returns true when the entity is tenant-scoped under the current strategy.
-   * False when tenant_column strategy is inactive or the entity is
-   * `@NonTenantEntity()`.
-   */
-  private isTenantScopedEntity<T>(entity: ClazzType<T>): boolean {
-    return this.tenantColumnConfig !== null && !isNonTenantEntity(entity);
-  }
-
-  /**
-   * Returns a `tenant = ?` predicate for inclusion in WHERE, or null when no
-   * filter should be applied. Consolidates the "should I scope this query?"
-   * logic in one place so the read/write paths stay symmetrical.
-   *
-   * Returns null when:
-   *   - strategy is not `"tenant_column"`
-   *   - entity is `@NonTenantEntity()`
-   *   - the current context is unscoped (`MetadataContext.runUnscoped`)
-   *   - the current tenant is `"public"` (no tenant context active)
-   *
-   * The `"public"` case is intentional: reads against the public context are
-   * unfiltered so admin/bootstrapping code continues to work. Write paths
-   * disallow `"public"` via `applyTenantColumnOnInsert` instead.
-   *
-   * @param entity         Entity class
-   * @param tableAliasOrName  When provided, qualifies the column (for JOINs).
+   * Engine delegator — implementation lives in {@link TenantScopeManager}.
+   * Kept on the facade so `_ctx` routing and internal callers stay interceptable.
    */
   private buildTenantWhereClause<T>(
     entity: ClazzType<T>,
     tableAliasOrName?: string,
   ): Sql | null {
-    const config = this.tenantColumnConfig;
-    if (!config) return null;
-    if (isNonTenantEntity(entity)) return null;
-    if (MetadataContext.isUnscoped()) return null;
-    const tenant = MetadataContext.getCurrentTenant();
-    if (tenant === "public") return null;
-
-    const columnName = this.resolveTenantColumnName(entity);
-    const col = tableAliasOrName
-      ? `${this.wrap(tableAliasOrName)}.${this.wrap(columnName)}`
-      : this.wrap(columnName);
-    return Conditions.equals(col, tenant);
+    return this.tenantScope.buildTenantWhereClause(entity, tableAliasOrName);
   }
 
-  /**
-   * Resolves the DB column name used by the tenant discriminator for this
-   * entity. Honors an explicit `@TenantColumn({ name })` override, else the
-   * user's property key (e.g. `tenantId`), else the global config default.
-   */
-  private resolveTenantColumnName<T>(entity: ClazzType<T>): string {
-    const userDeclared = getTenantColumnMetadata(entity);
-    if (userDeclared) {
-      return userDeclared.name ?? userDeclared.propertyKey;
-    }
-    return this.tenantColumnConfig!.name;
-  }
-
-  /**
-   * Applies tenant-column strategy to an item before INSERT:
-   *   - Populates the tenant column from `MetadataContext` when missing.
-   *   - Throws `MISSING_TENANT_CONTEXT` when no tenant is active on a
-   *     tenant-scoped entity.
-   *   - Throws `TENANT_MISMATCH` when the caller supplied a tenant value that
-   *     disagrees with the current context (fail-loud; silent-replace would
-   *     hide bugs).
-   *
-   * No-op when the strategy is not `"tenant_column"` or the entity is
-   * `@NonTenantEntity()`.
-   */
+  /** Engine delegator — implementation lives in {@link TenantScopeManager}. */
   private applyTenantColumnOnInsert<T>(
     entity: ClazzType<T>,
     item: Partial<T>,
   ): void {
-    const config = this.tenantColumnConfig;
-    if (!config) return;
-    if (isNonTenantEntity(entity)) return;
-
-    const tenant = MetadataContext.getCurrentTenant();
-    if (tenant === "public") {
-      throw new OrmError(
-        OrmErrorCode.MISSING_TENANT_CONTEXT,
-        `Cannot INSERT into tenant-scoped entity '${entity.name}' without an active tenant context. ` +
-          `Wrap the call in MetadataContext.run("<tenant>", ...), or mark the entity with @NonTenantEntity() ` +
-          `if it is intentionally global.`,
-      );
-    }
-
-    // Determine where to write the tenant value:
-    //   - If the user declared @TenantColumn, use the property key they chose.
-    //   - Otherwise the column was implicitly injected; fall back to the column name.
-    const userDeclared = getTenantColumnMetadata(entity);
-    const propKey = userDeclared?.propertyKey ?? config.name;
-    const colName = userDeclared?.name ?? config.name;
-
-    const supplied =
-      (item as any)[propKey] !== undefined
-        ? (item as any)[propKey]
-        : (item as any)[colName];
-
-    if (supplied !== undefined && supplied !== null && supplied !== tenant) {
-      throw new OrmError(
-        OrmErrorCode.TENANT_MISMATCH,
-        `Tenant mismatch on INSERT into '${entity.name}': supplied tenant='${supplied}' ` +
-          `but MetadataContext tenant='${tenant}'. The supplied value is rejected to catch bugs early. ` +
-          `Omit the tenant field so the ORM can auto-fill it, or run inside the matching context.`,
-      );
-    }
-
-    (item as any)[propKey] = tenant;
-    if (propKey !== colName) {
-      (item as any)[colName] = tenant;
-    }
+    this.tenantScope.applyTenantColumnOnInsert(entity, item);
   }
 
   private getComputedColumnNames<T>(entity: ClazzType<T>): Set<string> {
@@ -2336,66 +2125,26 @@ export class EntityManager implements BaseEntityManager {
     }
   }
 
+  /**
+   * Engine delegator — implementation lives in {@link TransactionRunner}.
+   * Kept on the facade so `_ctx` / `PluginContext` routing and test spies
+   * keep intercepting on the EntityManager.
+   */
   private async executeInTransaction<R>(
     fn: (session: TransactionSessionManager) => Promise<R>,
     existingSession?: TransactionSessionManager,
     readNodeOverride?: ReplicationNodeConfig | null,
     txOptions?: ExecuteTransactionOptions,
   ): Promise<R> {
-    const reusable = txOptions?.forceNew
-      ? undefined
-      : (existingSession ?? transactionStorage.getStore());
-    if (reusable) {
-      return fn(reusable);
-    }
-
-    const session = new TransactionSessionManager();
-    try {
-      if (readNodeOverride) {
-        await session.connectToNode(readNodeOverride);
-      } else {
-        await session.connect(txOptions?.connectionName ?? this.connectionName);
-      }
-      await this.notifyTransactionSubscribers("beforeTransactionStart");
-      this.notifyPluginBeforeTransaction();
-      await session.startTransaction(txOptions?.isolationLevel);
-
-      await this.notifyTransactionSubscribers("afterTransactionStart");
-
-      const result = await fn(session);
-      await this.notifyTransactionSubscribers("beforeTransactionCommit");
-      await session.commit();
-      this.notifyPluginAfterTransaction(true);
-      await this.notifyTransactionSubscribers("afterTransactionCommit");
-      return result;
-    } catch (e: unknown) {
-      try {
-        await this.notifyTransactionSubscribers("beforeTransactionRollback");
-        await session.rollback();
-        this.notifyPluginAfterTransaction(false);
-        await this.notifyTransactionSubscribers("afterTransactionRollback");
-      } catch (rollbackError) {
-        this.logger.error(`Failed to rollback transaction: ${rollbackError}`);
-        const original = e instanceof Error ? e : new Error(String(e));
-        const combined = new OrmError(
-          OrmErrorCode.TRANSACTION_ROLLBACK_FAILED,
-          `Transaction failed and rollback also failed: ${original.message}`,
-        );
-        (combined as any).cause = original;
-        (combined as any).rollbackError = rollbackError;
-        throw combined;
-      }
-      throw e;
-    } finally {
-      this.txDirtyEntities.delete(session);
-      try {
-        await session.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close transaction: ${closeError}`);
-      }
-    }
+    return this.transactionRunner.executeInTransaction(
+      fn,
+      existingSession,
+      readNodeOverride,
+      txOptions,
+    );
   }
 
+  /** Engine delegator — implementation lives in {@link TransactionRunner}. */
   private async executeReadOnly<R>(
     fn: (session: TransactionSessionManager) => Promise<R>,
     options?: {
@@ -2404,50 +2153,7 @@ export class EntityManager implements BaseEntityManager {
       timeout?: number;
     },
   ): Promise<R> {
-    const { existingSession, readNodeOverride, timeout } = options ?? {};
-
-    // 1. Reuse existing session (@Transactional or nested call)
-    const reusable = existingSession ?? transactionStorage.getStore();
-    if (reusable) {
-      return fn(reusable);
-    }
-
-    // 2. PostgreSQL tenant or timeout → need transaction for SET LOCAL
-    const tenant = this.isPostgres()
-      ? MetadataContext.getCurrentTenant()
-      : "public";
-    const needsTxForTenant =
-      this.isPostgres() &&
-      tenant !== "public" &&
-      this.tenantStrategy.needsTransactionForTenantRead();
-    if (this.isPostgres() && (needsTxForTenant || (timeout && timeout > 0))) {
-      return this.executeInTransaction(fn, existingSession, readNodeOverride);
-    }
-
-    // 3. Lightweight read-only path (no BEGIN/COMMIT)
-    const session = new TransactionSessionManager();
-    try {
-      if (readNodeOverride) {
-        await session.connectToNode(readNodeOverride);
-      } else {
-        await session.connect(this.connectionName);
-      }
-
-      // MySQL timeout (SET SESSION — no transaction needed)
-      if (timeout && timeout > 0 && this.driver && this.isMySqlFamily()) {
-        const timeoutSql = this.driver.setQueryTimeout(timeout);
-        await session.query(timeoutSql);
-      }
-
-      const result = await fn(session);
-      return result;
-    } finally {
-      try {
-        await session.close();
-      } catch (closeError) {
-        this.logger.error(`Failed to close read-only session: ${closeError}`);
-      }
-    }
+    return this.transactionRunner.executeReadOnly(fn, options);
   }
 
   private resolveSelectColumns<T>(select: ISelectOption<T>): string[] {
@@ -2499,54 +2205,7 @@ export class EntityManager implements BaseEntityManager {
     sqlOrStrings: string | Sql | TemplateStringsArray,
     ...rest: unknown[]
   ): Promise<T[]> {
-    if (isTemplateStringsArray(sqlOrStrings)) {
-      const fragment = this.composeTaggedSql(sqlOrStrings, rest);
-      return this.runRawQuery<T>(fragment);
-    }
-    const params = rest[0] as unknown[] | undefined;
-    if (typeof sqlOrStrings === "string" && params && params.length > 0) {
-      const parameterizedSql = {
-        text: sqlOrStrings,
-        sql: sqlOrStrings,
-        values: params,
-        strings: [sqlOrStrings],
-      } as unknown as Sql;
-      return this.runRawQuery<T>(parameterizedSql);
-    }
-    return this.runRawQuery<T>(sqlOrStrings);
-  }
-
-  private async runRawQuery<T>(sqlQuery: string | Sql): Promise<T[]> {
-    this.warnIfRawQueryBypassesTenant();
-    return this.executeInTransaction(async (session) => {
-      const queryResult: any =
-        typeof sqlQuery === "string"
-          ? await session.query(sqlQuery)
-          : await session.query(sqlQuery);
-      if (queryResult?.results) {
-        return (queryResult.results as T[]) ?? [];
-      }
-      if (Array.isArray(queryResult)) {
-        return queryResult as T[];
-      }
-      return [];
-    });
-  }
-
-  private composeTaggedSql(
-    strings: TemplateStringsArray,
-    values: unknown[],
-  ): Sql {
-    const converted = values.map((v) => {
-      if (
-        typeof v === "function" &&
-        Reflect.getMetadata(ENTITY_TOKEN, v) !== undefined
-      ) {
-        return this.ref(v as ClazzType<unknown>);
-      }
-      return v;
-    });
-    return sql(strings, ...(converted as Parameters<typeof sql>[1][]));
+    return this.rawQueryRunner.query<T>(sqlOrStrings, rest);
   }
 
   /**
@@ -2576,60 +2235,10 @@ export class EntityManager implements BaseEntityManager {
     callback: (em: this) => Promise<R>,
     options?: TransactionOptions,
   ): Promise<R> {
-    const maxRetries = options?.retryOnDeadlock ? (options.maxRetries ?? 3) : 0;
-    const retryDelayMs = options?.retryDelayMs ?? 100;
-    const propagation = options?.propagation ?? TransactionPropagation.REQUIRED;
-    const isolationLevel = options?.isolationLevel;
-    const connectionName = options?.connectionName;
-
-    // ── NESTED: savepoint within the ambient transaction ──────────────
-    // Mirrors @Transactional's NESTED branch. Only failures inside the
-    // callback roll back to the savepoint; the outer transaction continues.
-    const ambient = transactionStorage.getStore();
-    if (propagation === TransactionPropagation.NESTED && ambient) {
-      const savepointName = `sp_em_${++this.txSavepointCounter}`;
-      await ambient.savepoint(savepointName);
-      try {
-        return await transactionStorage.run(ambient, () => callback(this));
-      } catch (e) {
-        await ambient.rollbackTo(savepointName);
-        throw e;
-      }
-    }
-
-    // REQUIRES_NEW always opens a fresh, independent transaction even when one
-    // is already active. REQUIRED (default) reuses the ambient one if present.
-    const forceNew = propagation === TransactionPropagation.REQUIRES_NEW;
-    const txOptions: ExecuteTransactionOptions = {
-      isolationLevel,
-      connectionName,
-      forceNew,
-    };
-
-    let lastError: unknown;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        return await this.executeInTransaction(
-          async (session) => {
-            return transactionStorage.run(session, () => callback(this));
-          },
-          undefined,
-          undefined,
-          txOptions,
-        );
-      } catch (e: unknown) {
-        lastError = e;
-        if (attempt < maxRetries && isDeadlockError(e)) {
-          this.logger.warn(
-            `Deadlock detected (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${retryDelayMs}ms...`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-          continue;
-        }
-        throw e;
-      }
-    }
-    throw lastError;
+    return this.transactionRunner.transaction(
+      callback as (em: EntityManager) => Promise<R>,
+      options,
+    );
   }
 
   getRepository<T>(entity: ClazzType<T>) {
@@ -2726,60 +2335,9 @@ export class EntityManager implements BaseEntityManager {
     return this.driver;
   }
 
-  /**
-   * Emit a one-time-per-call-site warning when `em.query()` is invoked under
-   * an active tenant context while the `"tenant_column"` strategy is in use.
-   *
-   * Raw SQL bypasses the automatic `WHERE tenant_id = ?` injection that the
-   * strategy applies to `find()` / query builders / relation loaders, so a
-   * hand-written query can silently return or mutate rows belonging to other
-   * tenants. The warning is suppressed when:
-   *
-   * - the strategy is not `tenant_column` (other strategies scope at the
-   *   connection/schema level, so raw SQL is still safe)
-   * - no tenant context is active (bootstrap/admin path)
-   * - the current context is in `runUnscoped()` mode (user opted in)
-   * - the caller is an internal ORM frame (SelectQueryBuilder, RelationLoader,
-   *   RawPipeline, etc. — those builders already inject the predicate before
-   *   reaching `em.query()`)
-   */
+  /** Engine delegator — implementation lives in {@link TenantScopeManager}. */
   private warnIfRawQueryBypassesTenant(): void {
-    if (this.tenantColumnConfig === null) return;
-    if (!MetadataContext.isActive()) return;
-    if (MetadataContext.isUnscoped()) return;
-    const tenant = MetadataContext.getCurrentTenant();
-    if (tenant === "public") return;
-
-    const stack = new Error().stack;
-    if (!stack) return;
-
-    const lines = stack.split("\n");
-    let callerFrame: string | undefined;
-    for (let i = 1; i < lines.length; i++) {
-      const frame = lines[i];
-      // Skip frames from this file and node internals
-      if (frame.includes("EntityManager.ts")) continue;
-      if (frame.includes("EntityManager.js")) continue;
-      if (frame.includes("node:internal")) continue;
-      // Skip frames from internal ORM code — those callers either run under
-      // a tenant-aware builder or are part of the scoping machinery itself.
-      if (/stingerloom-orm[/\\](src|dist)[/\\]/.test(frame)) continue;
-      if (/node_modules[/\\]@stingerloom[/\\]orm[/\\]/.test(frame)) continue;
-      callerFrame = frame.trim();
-      break;
-    }
-    if (!callerFrame) return;
-
-    if (this.rawQueryTenantWarned.has(callerFrame)) return;
-    this.rawQueryTenantWarned.add(callerFrame);
-
-    this.logger.warn(
-      `[multi-tenancy] em.query() called under tenant="${tenant}" — raw SQL ` +
-        `bypasses automatic WHERE ${this.tenantColumnConfig.name} injection. ` +
-        `Filter by the tenant column manually, or wrap the call in ` +
-        `MetadataContext.runUnscoped() when cross-tenant access is intended. ` +
-        `Call site: ${callerFrame}`,
-    );
+    this.tenantScope.warnIfRawQueryBypassesTenant();
   }
 
   /**
@@ -2788,14 +2346,7 @@ export class EntityManager implements BaseEntityManager {
    * @returns true if tenant context is active, false if falling back to "public"
    */
   assertTenantContext(): boolean {
-    if (MetadataContext.isActive()) {
-      return true;
-    }
-    this.logger.warn(
-      `[multi-tenancy] No tenant context active — query will use "public" schema. ` +
-        `Wrap your code in MetadataContext.run(tenantId, callback).`,
-    );
-    return false;
+    return this.tenantScope.assertTenantContext();
   }
 
   // ── Public Metadata API (#233) ─────────────────────────────
@@ -2812,90 +2363,21 @@ export class EntityManager implements BaseEntityManager {
    * table name, columns, relations, indexes, timestamps, etc.
    */
   getEntityMetadata<T>(entity: ClazzType<T>): EntityMetadataView | null {
-    const meta = this.resolver.resolveEntityMetadata(entity);
-    if (!meta) return null;
-
-    const columns = this.getColumnMetadata(entity);
-    const relations = this.getRelationMetadata(entity);
-
-    return {
-      tableName: meta.name || entity.name,
-      columns,
-      relations,
-      indexes: meta.indexes ?? [],
-      deletedAtColumn: this.resolver.getDeletedAtColumn(entity),
-      createTimestampColumn: this.resolver.getCreateTimestampColumn(entity),
-      updateTimestampColumn: this.resolver.getUpdateTimestampColumn(entity),
-      versionColumn: this.resolver.getVersionColumn(entity),
-    };
+    return this.metadataViewFactory.getEntityMetadata(entity);
   }
 
   /**
    * Returns column metadata for the given entity class.
    */
   getColumnMetadata<T>(entity: ClazzType<T>): ColumnMetadataView[] {
-    const meta = this.resolver.resolveEntityMetadata(entity);
-    if (!meta) return [];
-
-    return (meta.columns ?? []).map((col: any) => ({
-      propertyKey: col.propertyKey ?? col.name,
-      columnName: col.name ?? col.propertyKey,
-      type: col.options?.type ?? col.type,
-      nullable: col.options?.nullable ?? false,
-      primary: col.options?.primary ?? false,
-      unique: col.options?.unique ?? false,
-      default: col.options?.default,
-      length: col.options?.length,
-    }));
+    return this.metadataViewFactory.getColumnMetadata(entity);
   }
 
   /**
    * Returns relation metadata for the given entity class.
    */
   getRelationMetadata<T>(entity: ClazzType<T>): RelationMetadataView[] {
-    const results: RelationMetadataView[] = [];
-
-    for (const rel of this.resolver.resolveManyToOneMetadata(entity)) {
-      results.push({
-        type: "ManyToOne",
-        propertyKey: rel.columnName,
-        target: rel.getMappingEntity(),
-        joinColumn: rel.joinColumn ?? null,
-        eager: rel.option?.eager ?? false,
-      });
-    }
-
-    for (const rel of this.resolver.resolveOneToManyMetadata(entity)) {
-      results.push({
-        type: "OneToMany",
-        propertyKey: rel.propertyKey,
-        target: rel.getRelatedEntity(),
-        joinColumn: null,
-        eager: false,
-      });
-    }
-
-    for (const rel of this.resolver.resolveManyToManyMetadata(entity)) {
-      results.push({
-        type: "ManyToMany",
-        propertyKey: rel.propertyKey,
-        target: rel.getRelatedEntity(),
-        joinColumn: null,
-        eager: false,
-      });
-    }
-
-    for (const rel of this.resolver.resolveOneToOneMetadata(entity)) {
-      results.push({
-        type: "OneToOne",
-        propertyKey: rel.propertyKey,
-        target: rel.getRelatedEntity(),
-        joinColumn: rel.joinColumn ?? null,
-        eager: rel.option?.eager ?? false,
-      });
-    }
-
-    return results;
+    return this.metadataViewFactory.getRelationMetadata(entity);
   }
 }
 
