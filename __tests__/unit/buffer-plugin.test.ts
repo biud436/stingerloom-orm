@@ -3952,10 +3952,13 @@ describe("Buffer Plugin", () => {
   // ── Bulk DML ────────────────────────────────────────────────────
 
   describe("bulk DML", () => {
-    it("updateMany should queue and execute during flush", async () => {
+    it("updateMany should queue and delegate to em.update during flush", async () => {
       const em = createExtendedEm(User);
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+      // Bulk UPDATE now delegates to the canonical EntityManager.update path
+      // (operator WHERE, NamingStrategy, tenant scoping) instead of hand-rolled
+      // `col = ?` SQL executed via em.query.
+      const updateSpy = jest.spyOn(em, "update").mockResolvedValue({ affected: 1 });
 
       const buf = em.buffer();
       buf.updateMany(User, { where: { email: "a@b.c" }, set: { name: "Updated" } });
@@ -3964,16 +3967,17 @@ describe("Buffer Plugin", () => {
 
       const result = await buf.flush();
       expect(result.updates).toBe(1);
-      expect(querySpy).toHaveBeenCalledWith(
-        expect.stringContaining("UPDATE"),
-        expect.arrayContaining(["Updated", "a@b.c"]),
+      expect(updateSpy).toHaveBeenCalledWith(
+        User,
+        { email: "a@b.c" },
+        { name: "Updated" },
       );
     });
 
-    it("deleteMany should queue and execute during flush", async () => {
+    it("deleteMany should queue and delegate to em.delete during flush", async () => {
       const em = createExtendedEm(User);
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      const querySpy = jest.spyOn(em, "query").mockResolvedValue([]);
+      const deleteSpy = jest.spyOn(em, "delete").mockResolvedValue(undefined as any);
 
       const buf = em.buffer();
       buf.deleteMany(User, { email: "a@b.c" });
@@ -3982,10 +3986,7 @@ describe("Buffer Plugin", () => {
 
       const result = await buf.flush();
       expect(result.deletes).toBe(1);
-      expect(querySpy).toHaveBeenCalledWith(
-        expect.stringContaining("DELETE"),
-        expect.arrayContaining(["a@b.c"]),
-      );
+      expect(deleteSpy).toHaveBeenCalledWith(User, { email: "a@b.c" });
     });
 
     it("bulk queues should be included in preview", () => {
@@ -4232,7 +4233,7 @@ describe("Buffer Plugin", () => {
         Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
       );
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      jest.spyOn(em, "query").mockResolvedValue([]);
+      jest.spyOn(em, "update").mockResolvedValue({ affected: 1 });
 
       const buf = em.buffer();
       const user = await buf.findOne(User, { where: { id: 1 } as any });
@@ -4255,7 +4256,7 @@ describe("Buffer Plugin", () => {
         Object.assign(new User(), { id: 1, name: "Alice", email: "a@b.c" }),
       );
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      jest.spyOn(em, "query").mockResolvedValue([]);
+      jest.spyOn(em, "delete").mockResolvedValue(undefined as any);
 
       const buf = em.buffer();
       await buf.findOne(User, { where: { id: 1 } as any });
@@ -4278,7 +4279,7 @@ describe("Buffer Plugin", () => {
         Object.assign(new User(), { id: 2, name: "Bob", email: "b@b.c" }),
       );
       jest.spyOn(em, "transaction").mockImplementation(async (cb) => cb(em as any));
-      jest.spyOn(em, "query").mockResolvedValue([]);
+      jest.spyOn(em, "update").mockResolvedValue({ affected: 1 });
 
       const buf = em.buffer();
       const user1 = await buf.findOne(User, { where: { id: 1 } as any });

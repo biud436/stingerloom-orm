@@ -325,64 +325,55 @@ export class FlushExecutor {
 
   /**
    * Execute a bulk UPDATE statement.
+   *
+   * Delegates to `EntityManager.update`, the single canonical write path, so
+   * operator WHERE clauses (`{ age: { gte: 18 } }`), NamingStrategy column
+   * mapping (camelCase property → snake_case column), tenant scoping, and
+   * `@UpdateTimestamp` injection are all handled uniformly. The previous
+   * hand-rolled `col = ?` builder bound operator objects directly as `?`
+   * parameters (broken SQL) and used the property name as the column name
+   * (ignoring the NamingStrategy).
    */
   async executeBulkUpdate(
     txEm: EntityManager,
     entry: BulkUpdateEntry,
   ): Promise<void> {
-    const entityMeta = Reflect.getMetadata(ENTITY_TOKEN, entry.entity);
-    const tableName = entityMeta?.name || entry.entity.name;
-    const wrappedTable = this.ctx.wrapTable(tableName);
-
-    const setClauses: string[] = [];
-    const params: any[] = [];
-
-    for (const [col, val] of Object.entries(entry.set)) {
-      setClauses.push(`${this.ctx.wrap(col)} = ?`);
-      params.push(val);
-    }
-
-    const whereClauses: string[] = [];
-    for (const [col, val] of Object.entries(entry.where)) {
-      whereClauses.push(`${this.ctx.wrap(col)} = ?`);
-      params.push(val);
-    }
-
-    const sql = `UPDATE ${wrappedTable} SET ${setClauses.join(", ")} WHERE ${whereClauses.join(" AND ")}`;
-    await txEm.query(sql, params);
+    await txEm.update(entry.entity, entry.where as any, entry.set as any);
   }
 
   /**
    * Execute a bulk DELETE statement.
+   *
+   * Delegates to `EntityManager.delete` for the same reasons as
+   * {@link executeBulkUpdate}: operator WHERE support, NamingStrategy column
+   * mapping, and tenant scoping via the canonical write path.
    */
   async executeBulkDelete(
     txEm: EntityManager,
     entry: BulkDeleteEntry,
   ): Promise<void> {
-    const entityMeta = Reflect.getMetadata(ENTITY_TOKEN, entry.entity);
-    const tableName = entityMeta?.name || entry.entity.name;
-    const wrappedTable = this.ctx.wrapTable(tableName);
-
-    const whereClauses: string[] = [];
-    const params: any[] = [];
-
-    for (const [col, val] of Object.entries(entry.where)) {
-      whereClauses.push(`${this.ctx.wrap(col)} = ?`);
-      params.push(val);
-    }
-
-    const sql = `DELETE FROM ${wrappedTable} WHERE ${whereClauses.join(" AND ")}`;
-    await txEm.query(sql, params);
+    await txEm.delete(entry.entity, entry.where as any);
   }
 
   /**
-   * After a bulk UPDATE, sync tracked in-memory instances that match
-   * the WHERE clause: apply SET values and re-snapshot.
+   * After a bulk UPDATE, reconcile the in-memory identity map with the DB.
+   *
+   * For a plain equality WHERE + plain scalar SET, matchesWhere() reproduces
+   * the DB's row selection exactly, so matching instances are synced in place
+   * (apply SET values + re-snapshot). For an operator/combinator WHERE (or a
+   * raw-`Sql` SET value) the row selection is resolved by the database and
+   * cannot be reproduced faithfully in memory — so every tracked instance of
+   * this entity is conservatively detached, forcing the next read to reload
+   * fresh instead of serving a stale identity-map hit.
    */
   syncTrackedAfterBulkUpdate(
     entry: BulkUpdateEntry,
     trackedEntries: Map<EntityInstance, TrackedEntry>,
   ): void {
+    if (!this.idMap.isPureEqualityWhere(entry.where) || !this.idMap.isPlainSetData(entry.set)) {
+      this.detachAllTrackedOfEntity(entry.entity, trackedEntries);
+      return;
+    }
     for (const tracked of trackedEntries.values()) {
       if (tracked.entity !== entry.entity) continue;
       if (!this.idMap.matchesWhere(tracked.instance, entry.where)) continue;
@@ -394,15 +385,21 @@ export class FlushExecutor {
   }
 
   /**
-   * After a bulk DELETE, evict tracked instances that match the WHERE clause
-   * from identityMap, trackedEntries, and stateMap.
+   * After a bulk DELETE, evict tracked instances whose rows were removed.
    *
-   * Fixed: builds identity key BEFORE deleting from trackedEntries (was O(n) bug).
+   * A plain equality WHERE evicts exactly the matching tracked instances; an
+   * operator/combinator WHERE conservatively detaches every tracked instance of
+   * this entity (the DB decided which rows were deleted, and keeping any stale
+   * identity-map entry risks a later phantom cache hit).
    */
   evictTrackedAfterBulkDelete(
     entry: BulkDeleteEntry,
     trackedEntries: Map<EntityInstance, TrackedEntry>,
   ): void {
+    if (!this.idMap.isPureEqualityWhere(entry.where)) {
+      this.detachAllTrackedOfEntity(entry.entity, trackedEntries);
+      return;
+    }
     const toEvict: EntityInstance[] = [];
     for (const tracked of trackedEntries.values()) {
       if (tracked.entity !== entry.entity) continue;
@@ -410,14 +407,25 @@ export class FlushExecutor {
       toEvict.push(tracked.instance);
     }
     for (const instance of toEvict) {
-      // Build identity key BEFORE deleting from trackedEntries (fix: was O(n) scan)
-      const tracked = trackedEntries.get(instance);
-      if (tracked) {
-        const key = this.idMap.buildIdentityKey(tracked.entity, instance, tracked.pkColumns);
-        this.idMap.identityMap.delete(key);
-      }
-      trackedEntries.delete(instance);
-      this.idMap.stateMap.delete(instance);
+      this.idMap.detachTracked(instance, trackedEntries);
+    }
+  }
+
+  /**
+   * Detach every tracked instance of a given entity class — used to
+   * conservatively invalidate the identity map after a bulk op whose WHERE
+   * clause cannot be matched precisely in memory.
+   */
+  private detachAllTrackedOfEntity(
+    entity: ClazzType<any>,
+    trackedEntries: Map<EntityInstance, TrackedEntry>,
+  ): void {
+    const toDetach: EntityInstance[] = [];
+    for (const tracked of trackedEntries.values()) {
+      if (tracked.entity === entity) toDetach.push(tracked.instance);
+    }
+    for (const instance of toDetach) {
+      this.idMap.detachTracked(instance, trackedEntries);
     }
   }
 

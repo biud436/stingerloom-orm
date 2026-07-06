@@ -318,12 +318,74 @@ export class IdentityMapManager {
 
   /**
    * Check if an entity instance matches a simple WHERE clause (equality check).
+   *
+   * Only meaningful for a plain equality map — guard with
+   * {@link isPureEqualityWhere} before calling for a WHERE that may contain
+   * operator objects or AND/OR/NOT combinators.
    */
   matchesWhere(instance: EntityInstance, where: ColumnValueMap): boolean {
     for (const [col, val] of Object.entries(where)) {
       if (instance[col] !== val) return false;
     }
     return true;
+  }
+
+  /**
+   * True iff `where` is a plain `{ col: scalar }` equality map that
+   * {@link matchesWhere} can evaluate exactly against an in-memory instance —
+   * no operator objects (`{ gte: 18 }`), arrays, or AND/OR/NOT combinators.
+   *
+   * Used to decide, after a bulk UPDATE/DELETE, whether the in-memory identity
+   * map can be synced precisely or must be conservatively invalidated (an
+   * operator WHERE is resolved by the database, and reproducing its exact row
+   * selection in memory risks diverging from the real result).
+   */
+  isPureEqualityWhere(where: ColumnValueMap): boolean {
+    for (const [key, val] of Object.entries(where)) {
+      if (key === "OR" || key === "AND" || key === "NOT") return false;
+      if (!this.isComparableScalar(val)) return false;
+    }
+    return true;
+  }
+
+  /**
+   * True iff every SET value is a plain scalar safe to assign onto an in-memory
+   * instance — excludes raw `Sql` expressions and other objects whose resulting
+   * value is only known after the database evaluates them.
+   */
+  isPlainSetData(set: ColumnValueMap): boolean {
+    for (const val of Object.values(set)) {
+      if (val === null || val === undefined) continue;
+      const t = typeof val;
+      if (t === "string" || t === "number" || t === "boolean" || t === "bigint") continue;
+      if (val instanceof Date) continue;
+      return false;
+    }
+    return true;
+  }
+
+  private isComparableScalar(val: unknown): boolean {
+    if (val === null) return true;
+    const t = typeof val;
+    return t === "string" || t === "number" || t === "boolean" || t === "bigint";
+  }
+
+  /**
+   * Remove a tracked instance from the identity map, tracked entries, and state
+   * map. The identity key is computed from the entry's own pkColumns before the
+   * entry is deleted, so this stays O(1) (no scan of the identity map).
+   */
+  detachTracked(
+    instance: EntityInstance,
+    trackedEntries: Map<EntityInstance, TrackedEntry>,
+  ): void {
+    const entry = trackedEntries.get(instance);
+    if (entry) {
+      const key = this.buildIdentityKey(entry.entity, instance, entry.pkColumns);
+      this.identityMap.delete(key);
+      trackedEntries.delete(instance);
+    }
+    this.stateMap.delete(instance);
   }
 
   /**
