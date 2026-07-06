@@ -217,6 +217,13 @@ export class WriteBuffer {
       if (this.options.logging) this.log("findOne → null", { entity: entity.name });
       return null;
     }
+    // Non-canonical reads (partial select / soft-deleted / unscoped) must not
+    // create a NEW identity-map entry — a partial or trashed row would poison
+    // later canonical PK lookups. Return the already-tracked canonical instance
+    // if one exists, otherwise the raw row untracked.
+    if (!this.isCanonicalReadOption(option)) {
+      return this.mapThroughExisting(entity, result) as T;
+    }
     const tracked = this.resolveIdentity(entity, result) as T;
     if (this.options.logging) {
       const { pkColumns } = this.idMap.getColumnInfo(entity);
@@ -241,10 +248,14 @@ export class WriteBuffer {
   ): Promise<T[]> {
     await this.autoFlushIfNeeded();
     const results = await this.ctx.em.find(entity, option);
-    return results.map((item) => {
-      const tracked = this.resolveIdentity(entity, item) as T;
-      return tracked;
-    });
+    // Non-canonical reads (partial select / soft-deleted / unscoped) map
+    // through the identity map without creating new entries — see findOne().
+    const canonical = this.isCanonicalReadOption(option);
+    return results.map((item) =>
+      canonical
+        ? (this.resolveIdentity(entity, item) as T)
+        : (this.mapThroughExisting(entity, item) as T),
+    );
   }
 
   /**
@@ -977,6 +988,13 @@ export class WriteBuffer {
     const bulkUpdatesCopy = [...this.bulkUpdateQueue];
     const bulkDeletesCopy = [...this.bulkDeleteQueue];
 
+    // Snapshot the pre-flush column values of every instance flush may mutate,
+    // so a mid-flush failure (the whole transaction rolls back) can restore
+    // them. Otherwise a persisted instance keeps a PK / an incremented @Version
+    // / a timestamp for a row that no longer exists — ghost state that also
+    // triggers a spurious OptimisticLockError on retry.
+    const preFlushState = this.capturePreFlushColumnState(persistsCopy);
+
     try {
       const flushFn = async (txEm: EntityManager) => {
         const visited = new Set<any>();
@@ -1167,6 +1185,11 @@ export class WriteBuffer {
       return result;
     } catch (error) {
       if (this.options.logging) this.log("flush → FAILED (queues restored)", { error: (error as Error).message });
+      // Undo the in-place mutations flush applied to instances before it failed
+      // (PK write-back, @Version bump, timestamps). The DB rolled the whole
+      // transaction back, so restoring the pre-flush column values leaves each
+      // instance exactly as the user left it — ready for a clean retry.
+      this.restorePreFlushColumnState(preFlushState);
       // On failure, restore queues so the user can retry
       this.insertQueue.length = 0;
       this.insertQueue.push(...insertsCopy);
@@ -1183,6 +1206,50 @@ export class WriteBuffer {
   }
 
   // ── Private helpers ──────────────────────────────────────────
+
+  /**
+   * Snapshot the current column values of every instance a flush may mutate:
+   * all persist-queue instances (PK write-back) and all tracked instances
+   * (write-back / @Version bump / timestamps on UPDATE). Returns a map from
+   * instance → its pre-flush column values, used by
+   * {@link restorePreFlushColumnState} to undo those mutations if the flush
+   * transaction rolls back.
+   *
+   * Note: cascade-inserted CHILD instances loaded/created outside these two
+   * sets are not captured here — restoring their PKs after a failed cascade
+   * flush is a deeper concern tracked separately.
+   */
+  private capturePreFlushColumnState(
+    persists: PersistEntry[],
+  ): Map<any, Record<string, any>> {
+    const state = new Map<any, Record<string, any>>();
+    const record = (instance: any, columnNames: string[]): void => {
+      if (state.has(instance)) return;
+      const snap: Record<string, any> = {};
+      for (const col of columnNames) snap[col] = instance[col];
+      state.set(instance, snap);
+    };
+    for (const entry of persists) record(entry.instance, entry.columnNames);
+    for (const entry of this.trackedEntries.values()) {
+      record(entry.instance, entry.columnNames);
+    }
+    return state;
+  }
+
+  /**
+   * Restore instances to the column values captured by
+   * {@link capturePreFlushColumnState}, undoing flush's in-place mutations
+   * after a rolled-back transaction.
+   */
+  private restorePreFlushColumnState(
+    state: Map<any, Record<string, any>>,
+  ): void {
+    for (const [instance, snap] of state) {
+      for (const col of Object.keys(snap)) {
+        instance[col] = snap[col];
+      }
+    }
+  }
 
   /**
    * Validate all dirty tracked entities and persist queue entries
@@ -1253,6 +1320,43 @@ export class WriteBuffer {
     if (instance[versionCol] === oldVersion) {
       instance[versionCol] = (oldVersion as number) + 1;
     }
+  }
+
+  /**
+   * A read is "canonical" when its result faithfully represents the full,
+   * live row: all columns loaded, soft-deleted rows excluded, and the active
+   * tenant scope applied. Only canonical reads may populate the identity map;
+   * partial (`select`), soft-delete-inclusive (`withDeleted` / `onlyDeleted`),
+   * and unscoped (`withoutTenantScope`) reads must not, or they would poison
+   * later PK lookups with a downgraded instance.
+   */
+  private isCanonicalReadOption(option: FindOption<any>): boolean {
+    return !(
+      option.select ||
+      option.withDeleted ||
+      option.onlyDeleted ||
+      option.withoutTenantScope
+    );
+  }
+
+  /**
+   * Return the already-tracked canonical instance for a freshly loaded row if
+   * one exists (preserving object identity), otherwise the row as-is — without
+   * ever inserting a new identity-map entry. Used for non-canonical reads.
+   */
+  private mapThroughExisting(entityClass: ClazzType<any>, instance: any): any {
+    try {
+      const { pkColumns } = this.idMap.getColumnInfo(entityClass);
+      const key = this.idMap.buildIdentityKey(entityClass, instance, pkColumns);
+      const existing = this.idMap.identityMap.get(key);
+      if (existing && !this.referenceStubs.has(existing)) {
+        this.idMap.touch(key);
+        return existing;
+      }
+    } catch {
+      // PK column missing (e.g. a `select` that omits the PK) → nothing to map.
+    }
+    return instance;
   }
 
   private resolveIdentity(entityClass: ClazzType<any>, instance: any): any {
