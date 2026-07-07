@@ -459,8 +459,20 @@ export class WriteBuffer {
     });
 
     if (hasPk) {
-      this.cancelQueuedDelete(entityClass, instance, pkColumns);
-      return this.track(instance);
+      // A DB-generated PK (auto-increment / uuid) is only present once the row
+      // exists, so a present value means the entity was loaded → track it as
+      // managed. An APPLICATION-ASSIGNED PK (@PrimaryColumn / natural key) is
+      // always set on a brand-new entity, so its presence tells us nothing about
+      // whether the row exists: only treat it as managed if the buffer already
+      // knows the instance (tracked, or MANAGED from a prior flush). Otherwise
+      // it is a new entity that must be INSERTed — falling through to the queue.
+      const alreadyKnown =
+        this.trackedEntries.has(instance) ||
+        this.idMap.stateMap.get(instance) === EntityState.MANAGED;
+      if (this.idMap.hasGeneratedPk(entityClass) || alreadyKnown) {
+        this.cancelQueuedDelete(entityClass, instance, pkColumns);
+        return this.track(instance);
+      }
     }
 
     // Idempotent — same reference
