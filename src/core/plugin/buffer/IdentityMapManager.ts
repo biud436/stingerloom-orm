@@ -178,6 +178,30 @@ export class IdentityMapManager {
   }
 
   /**
+   * Whether the entity's primary key is entirely DB-generated
+   * (auto-increment or a `generationStrategy` such as uuid / uuid-v7).
+   *
+   * When true, a present PK value reliably means the row already exists in the
+   * database (it was loaded, not constructed), so persist() can treat it as
+   * managed. When false, at least one PK column is application-assigned
+   * (@PrimaryColumn / natural key), and a present PK does NOT imply the row
+   * exists — a brand-new entity always carries its assigned PK.
+   *
+   * Returns false for keyless entities (no PK columns).
+   */
+  hasGeneratedPk(entityClass: ClazzType<any>): boolean {
+    const columns: ColumnMetadata[] =
+      Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
+    const pkColumns = columns.filter((c) => c.options?.primary);
+    if (pkColumns.length === 0) return false;
+    return pkColumns.every(
+      (c) =>
+        c.options?.autoIncrement === true ||
+        c.options?.generationStrategy != null,
+    );
+  }
+
+  /**
    * Build a unique identity key for an entity instance based on class name + PK values.
    * Throws if any PK column is null/undefined.
    *
