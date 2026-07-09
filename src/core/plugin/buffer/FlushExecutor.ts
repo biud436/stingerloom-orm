@@ -159,7 +159,7 @@ export class FlushExecutor {
           }
           result.inserts++;
           visited.add(entry.instance);
-          await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result);
+          await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result, true);
         }
         continue;
       }
@@ -216,7 +216,7 @@ export class FlushExecutor {
       result.inserts += entries.length;
       for (const entry of entries) {
         visited.add(entry.instance);
-        await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result);
+        await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result, true);
       }
     }
   }
@@ -396,14 +396,34 @@ export class FlushExecutor {
     entry: BulkDeleteEntry,
     trackedEntries: Map<EntityInstance, TrackedEntry>,
   ): void {
-    if (!this.idMap.isPureEqualityWhere(entry.where)) {
-      this.detachAllTrackedOfEntity(entry.entity, trackedEntries);
+    this.evictTrackedMatching(entry.entity, entry.where, trackedEntries);
+  }
+
+  /**
+   * Evict the Identity-Map entries a DELETE of `entity` WHERE `where` removed.
+   *
+   * A plain equality WHERE evicts exactly the matching tracked instances; an
+   * operator/combinator WHERE conservatively detaches every tracked instance of
+   * this entity (the DB decided which rows were deleted, and keeping a stale
+   * identity-map entry risks a later phantom cache hit of a deleted row).
+   *
+   * Shared by the bulk-DELETE path and the regular queued-DELETE path
+   * (`buf.delete(entity, criteria)` and cascade deletes) so both keep the
+   * first-level cache consistent with the database.
+   */
+  evictTrackedMatching(
+    entity: ClazzType<any>,
+    where: ColumnValueMap,
+    trackedEntries: Map<EntityInstance, TrackedEntry>,
+  ): void {
+    if (!this.idMap.isPureEqualityWhere(where)) {
+      this.detachAllTrackedOfEntity(entity, trackedEntries);
       return;
     }
     const toEvict: EntityInstance[] = [];
     for (const tracked of trackedEntries.values()) {
-      if (tracked.entity !== entry.entity) continue;
-      if (!this.idMap.matchesWhere(tracked.instance, entry.where)) continue;
+      if (tracked.entity !== entity) continue;
+      if (!this.idMap.matchesWhere(tracked.instance, where)) continue;
       toEvict.push(tracked.instance);
     }
     for (const instance of toEvict) {

@@ -3,6 +3,8 @@ import { ClazzType } from "../../../utils";
 import { ONE_TO_MANY_TOKEN, OneToManyMetadata } from "../../../decorators/OneToMany";
 import { MANY_TO_MANY_TOKEN, ManyToManyMetadata } from "../../../decorators/ManyToMany";
 import { MANY_TO_ONE_TOKEN } from "../../../decorators/ManyToOne";
+import { RELATION_COLUMN_TOKEN, RelationColumnMetadata } from "../../../decorators/RelationColumn";
+import { COLUMN_TOKEN } from "../../../decorators/Column";
 
 /**
  * Snapshot of a collection (O2M or M2M array) at track() time.
@@ -118,17 +120,99 @@ export function diffCollection(
 }
 
 /**
- * Resolve the FK column name on the child entity for a given @OneToMany relation.
+ * Resolve the child entity's foreign-key DB column name for a @OneToMany
+ * relation, mirroring RelationMetadataResolver.resolveManyToOneMetadata so that
+ * query paths (lazy load, cascade-delete criteria) target the real column.
+ *
+ * Resolution order for the inverse @ManyToOne (matched by `mappedBy`):
+ *   1. @RelationColumn({ name }) → its name (or `${prop}Id` when omitted)
+ *   2. deprecated @ManyToOne({ joinColumn }) option
+ *   3. a backing @Column named `${prop}Id` → its DB name
+ *   4. fallback: the relation property name (legacy column-name == property key)
+ *
+ * NOTE: this returns the DB column, suitable for WHERE/criteria. To WRITE the FK
+ * on a cascade-inserted child (which goes through em.save, not a raw column),
+ * use {@link resolveFkWriteKeys} — save reads the shadow accessor, not the raw
+ * column.
+ *
  * Exported for reuse by CascadeProcessor and LazyRelationInjector.
  */
 export function resolveFkColumn(
   rel: OneToManyMetadata<any>,
   ChildEntity: ClazzType<any>,
 ): string {
+  const mappedBy = rel.mappedBy;
+
+  // 1. @RelationColumn wins (may declare an FK with no backing @Column).
+  const relationColumns: RelationColumnMetadata[] =
+    Reflect.getMetadata(RELATION_COLUMN_TOKEN, ChildEntity) ?? [];
+  const relCol = relationColumns.find((rc) => rc.propertyKey === mappedBy);
+  if (relCol) return relCol.name ?? `${mappedBy}Id`;
+
+  // 2. Deprecated joinColumn option.
   const manyToOneMeta: any[] =
     Reflect.getMetadata(MANY_TO_ONE_TOKEN, ChildEntity) ?? [];
-  const match = manyToOneMeta.find(
-    (m: any) => m.columnName === rel.mappedBy,
-  );
-  return match?.joinColumn ?? rel.mappedBy;
+  const match = manyToOneMeta.find((m: any) => m.columnName === mappedBy);
+  if (match?.joinColumn) return match.joinColumn;
+
+  // 3. Backing @Column following the `${prop}Id` convention.
+  const columnsMeta: any[] =
+    Reflect.getMetadata(COLUMN_TOKEN, ChildEntity) ?? [];
+  const fkProp = `${mappedBy}Id`;
+  const colMatch = columnsMeta.find((c: any) => c.propertyKey === fkProp);
+  if (colMatch) return colMatch.name ?? fkProp;
+
+  // 4. Legacy fallback.
+  return mappedBy;
+}
+
+/**
+ * FK write targets for setting a cascade-inserted child's foreign key.
+ *
+ * em.save resolves a @ManyToOne FK from (in order) the relation object, the
+ * shadow accessor `${prop}Id`, or an explicit `option.fkProperty` — never from
+ * the raw join-column DB name. So a cascade insert must write the shadow (and
+ * fkProperty), not just the raw column, or the FK is silently dropped when the
+ * FK is declared via @RelationColumn with no backing @Column.
+ * Mirrors CascadeHandler.cascadeSaveOneToMany.
+ */
+export interface FkWriteKeys {
+  /** Legacy raw target: joinColumn option, else the relation property name. */
+  fkColumn: string;
+  /** Shadow accessor `${manyToOneProp}Id` — the key em.save actually reads. */
+  shadowKey: string;
+  /** Explicit @ManyToOne({ fkProperty }) backing property, when configured. */
+  fkPropertyKey?: string;
+}
+
+/**
+ * Resolve the FK write targets for the inverse @ManyToOne of a @OneToMany
+ * relation (matched by `mappedBy`).
+ */
+export function resolveFkWriteKeys(
+  mappedBy: string,
+  ChildEntity: ClazzType<any>,
+): FkWriteKeys {
+  const manyToOneMeta: any[] =
+    Reflect.getMetadata(MANY_TO_ONE_TOKEN, ChildEntity) ?? [];
+  const match = manyToOneMeta.find((m: any) => m.columnName === mappedBy);
+  return {
+    fkColumn: match?.joinColumn ?? mappedBy,
+    shadowKey: `${match?.columnName ?? mappedBy}Id`,
+    fkPropertyKey: match?.option?.fkProperty,
+  };
+}
+
+/**
+ * Write a resolved parent PK to every FK target of a cascade-inserted child so
+ * the FK survives em.save regardless of how it is declared.
+ */
+export function assignFkValue(
+  target: any,
+  keys: FkWriteKeys,
+  value: any,
+): void {
+  target[keys.fkColumn] = value;
+  target[keys.shadowKey] = value;
+  if (keys.fkPropertyKey) target[keys.fkPropertyKey] = value;
 }

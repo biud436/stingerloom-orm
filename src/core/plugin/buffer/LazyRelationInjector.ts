@@ -19,6 +19,12 @@ import type { ManyToManyMetadata } from "../../../decorators/ManyToMany";
 export type ResolveIdentityFn = (entityClass: ClazzType<any>, instance: EntityInstance) => EntityInstance;
 
 /**
+ * Callback fired when a lazy O2M/M2M collection proxy first materializes,
+ * so the buffer can capture the loaded items as a change-tracking baseline.
+ */
+export type CollectionMaterializedFn = (instance: EntityInstance, propertyKey: string) => void;
+
+/**
  * Injects lazy-loading proxies on unloaded relation properties.
  *
  * When a proxied property is accessed:
@@ -32,15 +38,18 @@ export class LazyRelationInjector {
   private readonly ctx: PluginContext;
   private readonly idMap: IdentityMapManager;
   private readonly resolveIdentity: ResolveIdentityFn;
+  private readonly onCollectionMaterialized?: CollectionMaterializedFn;
 
   constructor(
     ctx: PluginContext,
     idMap: IdentityMapManager,
     resolveIdentity: ResolveIdentityFn,
+    onCollectionMaterialized?: CollectionMaterializedFn,
   ) {
     this.ctx = ctx;
     this.idMap = idMap;
     this.resolveIdentity = resolveIdentity;
+    this.onCollectionMaterialized = onCollectionMaterialized;
   }
 
   /**
@@ -246,6 +255,7 @@ export class LazyRelationInjector {
                 configurable: true, enumerable: true, writable: true,
                 value: cachedValue,
               });
+              this.onCollectionMaterialized?.(instance, propertyKey);
               return cachedValue;
             });
         }
@@ -312,6 +322,7 @@ export class LazyRelationInjector {
             Object.defineProperty(instance, propertyKey, {
               configurable: true, enumerable: true, writable: true, value: [],
             });
+            this.onCollectionMaterialized?.(instance, propertyKey);
             return [];
           }
 
@@ -329,6 +340,7 @@ export class LazyRelationInjector {
           Object.defineProperty(instance, propertyKey, {
             configurable: true, enumerable: true, writable: true, value: resolvedResults,
           });
+          this.onCollectionMaterialized?.(instance, propertyKey);
           return resolvedResults;
         });
         return loadPromise;

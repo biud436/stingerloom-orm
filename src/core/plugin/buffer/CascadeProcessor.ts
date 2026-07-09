@@ -8,9 +8,20 @@ import { PluginContext } from "../PluginContext";
 import { TrackedEntry, DeleteEntry } from "./BufferEntry";
 import { BufferFlushResult, BufferPluginOptions, ResolvedBufferOptions } from "./BufferPreview";
 import { CollectionDiff } from "./CollectionTracker";
-import { resolveFkColumn } from "./CollectionTracker";
+import { resolveFkColumn, resolveFkWriteKeys, assignFkValue } from "./CollectionTracker";
 import { IdentityMapManager, EntityInstance, ColumnValueMap } from "./IdentityMapManager";
 import type { EntityManager } from "../../EntityManager";
+
+/**
+ * Children added to some tracked parent's O2M collection during a flush,
+ * indexed by instance identity and by PK (per child entity name). Used to spare
+ * reparented children from orphan removal — a child moved from parent A to
+ * parent B appears in A.removed AND B.added, and must not be deleted.
+ */
+export interface ReparentedChildren {
+  instances: Set<EntityInstance>;
+  pks: Map<string, Set<any>>;
+}
 
 /**
  * Handles cascade insert/update/delete propagation for WriteBuffer.
@@ -35,6 +46,12 @@ export class CascadeProcessor {
 
   /**
    * Process cascade insert/update for @OneToMany, @OneToOne, and @ManyToMany relations.
+   *
+   * @param isNewParent — true when `instance` was just INSERTed (persist path).
+   *   A new parent's collections have no snapshot baseline (it was never
+   *   tracked), so the collection-diff flush step never writes its M2M pivot
+   *   rows. When set, this method links every M2M child here instead. Cascade
+   *   recursion always sets it (cascaded children are freshly saved).
    */
   async processCascadeInsertUpdate(
     txEm: EntityManager,
@@ -42,6 +59,7 @@ export class CascadeProcessor {
     instance: EntityInstance,
     visited: Set<EntityInstance>,
     result: BufferFlushResult,
+    isNewParent = false,
   ): Promise<void> {
     if (!this.options.cascade.persist) return;
 
@@ -56,21 +74,21 @@ export class CascadeProcessor {
       if (!Array.isArray(children) || children.length === 0) continue;
 
       const ChildEntity = rel.getRelatedEntity();
-      const fkColumn = resolveFkColumn(rel, ChildEntity);
+      const fkKeys = resolveFkWriteKeys(rel.mappedBy, ChildEntity);
       const parentPk = this.idMap.getParentPkValue(instance, entityClass);
 
       for (const child of children) {
         if (visited.has(child)) continue;
         visited.add(child);
 
-        child[fkColumn] = parentPk;
+        assignFkValue(child, fkKeys, parentPk);
 
         const childInfo = this.idMap.getColumnInfo(ChildEntity);
         const childData: ColumnValueMap = {};
         for (const col of childInfo.columnNames) {
           if (child[col] !== undefined) childData[col] = child[col];
         }
-        childData[fkColumn] = parentPk;
+        assignFkValue(childData, fkKeys, parentPk);
 
         const savedChild = await txEm.save(ChildEntity, childData);
         if (savedChild) {
@@ -81,7 +99,7 @@ export class CascadeProcessor {
         }
         result.inserts++;
 
-        await this.processCascadeInsertUpdate(txEm, ChildEntity, child, visited, result);
+        await this.processCascadeInsertUpdate(txEm, ChildEntity, child, visited, result, true);
       }
     }
 
@@ -117,9 +135,28 @@ export class CascadeProcessor {
       if (rel.joinColumn) {
         const relatedPk = this.idMap.getParentPkValue(related, RelatedEntity);
         instance[rel.joinColumn] = relatedPk;
+
+        // The parent row was already written (INSERT on the persist path /
+        // UPDATE on the dirty-tracked path) BEFORE this cascade ran, with the
+        // FK still null or stale — the related entity did not have a PK yet.
+        // Persist the now-resolved FK to the parent row with a targeted UPDATE
+        // so it is not silently lost.
+        const parentInfo = this.idMap.getColumnInfo(entityClass);
+        const parentPkValue = this.idMap.getParentPkValue(instance, entityClass);
+        if (
+          parentInfo.pkColumns.length === 1 &&
+          parentPkValue != null &&
+          relatedPk != null
+        ) {
+          await txEm.update(
+            entityClass,
+            { [parentInfo.pkColumns[0]]: parentPkValue } as any,
+            { [rel.joinColumn]: relatedPk } as any,
+          );
+        }
       }
 
-      await this.processCascadeInsertUpdate(txEm, RelatedEntity, related, visited, result);
+      await this.processCascadeInsertUpdate(txEm, RelatedEntity, related, visited, result, true);
     }
 
     // @ManyToMany cascade persist (owning side - has joinTable, no mappedBy)
@@ -160,7 +197,41 @@ export class CascadeProcessor {
           result.inserts++;
         }
       }
+
+      // A NEW parent's collection has no snapshot baseline (it was never
+      // tracked), so the collection-diff flush step never writes its pivot
+      // rows. Link every child here — all of them are "added" relative to an
+      // empty original set. Existing (tracked) parents are handled by
+      // processManyToManyCollectionDiff instead, so skip them to avoid
+      // double-inserting.
+      if (isNewParent && this.options.manyToManySync && rel.joinTable) {
+        const parentPk = this.idMap.getParentPkValue(instance, entityClass);
+        if (parentPk != null && relatedPkColumns.length === 1) {
+          for (const child of children) {
+            const childPk = child[relatedPkColumns[0]];
+            if (childPk == null) continue;
+            await this.insertPivotRow(txEm, rel.joinTable, parentPk, childPk);
+            result.inserts++;
+          }
+        }
+      }
     }
+  }
+
+  /**
+   * Insert a single M2M pivot (join table) row linking a parent PK to a child PK.
+   */
+  private async insertPivotRow(
+    txEm: EntityManager,
+    joinTable: { name: string; joinColumn: string; inverseJoinColumn: string },
+    parentPk: any,
+    childPk: any,
+  ): Promise<void> {
+    const wrappedTable = this.ctx.wrapTable(joinTable.name);
+    const wrappedJoinCol = this.ctx.wrap(joinTable.joinColumn);
+    const wrappedInverseCol = this.ctx.wrap(joinTable.inverseJoinColumn);
+    const sql = `INSERT INTO ${wrappedTable} (${wrappedJoinCol}, ${wrappedInverseCol}) VALUES (?, ?)`;
+    await txEm.query(sql, [parentPk, childPk]);
   }
 
   /**
@@ -172,19 +243,21 @@ export class CascadeProcessor {
     diff: CollectionDiff,
     visited: Set<EntityInstance>,
     result: BufferFlushResult,
+    reparented?: ReparentedChildren,
   ): Promise<void> {
     const { snapshot } = diff;
     const parentPk = this.idMap.getParentPkValue(parentEntry.instance, parentEntry.entity);
 
     // Added children - cascade insert if cascade includes insert
     if (this.options.cascade.persist && hasCascade(snapshot.cascade, "insert")) {
+      const fkKeys = snapshot.mappedBy
+        ? resolveFkWriteKeys(snapshot.mappedBy, snapshot.relatedEntity)
+        : undefined;
       for (const child of diff.added) {
         if (visited.has(child)) continue;
         visited.add(child);
 
-        if (snapshot.fkColumn) {
-          child[snapshot.fkColumn] = parentPk;
-        }
+        if (fkKeys) assignFkValue(child, fkKeys, parentPk);
 
         const ChildEntity = snapshot.relatedEntity;
         const childInfo = this.idMap.getColumnInfo(ChildEntity);
@@ -192,9 +265,7 @@ export class CascadeProcessor {
         for (const col of childInfo.columnNames) {
           if (child[col] !== undefined) childData[col] = child[col];
         }
-        if (snapshot.fkColumn) {
-          childData[snapshot.fkColumn] = parentPk;
-        }
+        if (fkKeys) assignFkValue(childData, fkKeys, parentPk);
 
         const saved = await txEm.save(ChildEntity, childData);
         if (saved) {
@@ -211,16 +282,30 @@ export class CascadeProcessor {
     if (this.options.orphanRemoval) {
       const ChildEntity = snapshot.relatedEntity;
       const childInfo = this.idMap.getColumnInfo(ChildEntity);
+      const reparentedPks = reparented?.pks.get(ChildEntity.name);
       for (const child of diff.removed) {
+        // A child re-added to another tracked parent was reparented, not
+        // orphaned — deleting it would destroy a row that still has an owner.
+        if (reparented?.instances.has(child)) continue;
+
         const criteria: ColumnValueMap = {};
         for (const pk of childInfo.pkColumns) {
           const v = child[pk];
           if (v !== undefined && v !== null) criteria[pk] = v;
         }
-        if (Object.keys(criteria).length > 0) {
-          await txEm.delete(ChildEntity, criteria);
-          result.deletes++;
+        if (Object.keys(criteria).length === 0) continue;
+
+        // Same row moved as a fresh instance (reloaded) — match by PK too.
+        if (
+          reparentedPks &&
+          childInfo.pkColumns.length === 1 &&
+          reparentedPks.has(criteria[childInfo.pkColumns[0]])
+        ) {
+          continue;
         }
+
+        await txEm.delete(ChildEntity, criteria);
+        result.deletes++;
       }
     }
   }
@@ -251,8 +336,7 @@ export class CascadeProcessor {
     for (const child of diff.added) {
       const childPk = childPkColumns.length === 1 ? child[childPkColumns[0]] : null;
       if (childPk == null) continue;
-      const sql = `INSERT INTO ${wrappedTable} (${wrappedJoinCol}, ${wrappedInverseCol}) VALUES (?, ?)`;
-      await txEm.query(sql, [parentPk, childPk]);
+      await this.insertPivotRow(txEm, snapshot.joinTable, parentPk, childPk);
       result.inserts++;
     }
 

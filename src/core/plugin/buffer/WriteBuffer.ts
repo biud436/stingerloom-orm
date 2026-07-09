@@ -16,13 +16,23 @@ import { BufferStrategy, SnapshotStrategy } from "./BufferStrategy";
 import { EntityState } from "./EntityUnitState";
 import { sortForInsert, sortForDelete, buildTopologicalIndexMap, sortByIndex } from "./DependencyGraph";
 import { snapshotCollections, diffCollection } from "./CollectionTracker";
+import type { CollectionSnapshot, CollectionDiff } from "./CollectionTracker";
 import { createPersistentCollection } from "./PersistentCollection";
 import { IdentityMapManager } from "./IdentityMapManager";
 import { CascadeProcessor } from "./CascadeProcessor";
+import type { ReparentedChildren } from "./CascadeProcessor";
 import { FlushExecutor } from "./FlushExecutor";
 import { EntityValidator } from "../../EntityValidator";
 import { LazyRelationInjector } from "./LazyRelationInjector";
 import type { EntityManager } from "../../EntityManager";
+
+/**
+ * Sentinel snapshot value used by merge() to force a detached instance's
+ * defined columns to diff as changed. It is a unique Symbol, so `deepEquals`
+ * never reports it equal to a real column value — guaranteeing an UPDATE of
+ * exactly the columns the detached instance carries.
+ */
+const MERGE_DIRTY_SENTINEL = Symbol("stingerloom.buffer.mergeDirty");
 
 /**
  * WriteBuffer — buffers entity writes and flushes them in a single transaction.
@@ -114,7 +124,35 @@ export class WriteBuffer {
     );
     this.lazyInjector = new LazyRelationInjector(
       ctx, this.idMap, this.resolveIdentity.bind(this),
+      this.captureLoadedCollectionSnapshot.bind(this),
     );
+  }
+
+  /**
+   * Capture a collection's baseline snapshot the moment its lazy proxy
+   * materializes.
+   *
+   * track() snapshots collections eagerly, but it runs BEFORE lazy proxies are
+   * injected — so an unloaded (proxy) O2M/M2M collection has no snapshot
+   * baseline. Without one, the flush collection-diff step skips the property
+   * entirely and a later add/remove on the loaded collection is silently
+   * dropped. Recording the baseline here (from the freshly loaded items) lets
+   * the diff detect those mutations.
+   */
+  private captureLoadedCollectionSnapshot(instance: any, propertyKey: string): void {
+    const entry = this.trackedEntries.get(instance);
+    if (!entry) return;
+    // The property now holds the loaded array, so snapshotCollections captures
+    // exactly the loaded items as the originalItems baseline.
+    const snaps = snapshotCollections(instance, entry.entity);
+    const match = snaps.find((s) => s.propertyKey === propertyKey);
+    if (!match) return;
+    const existing = entry.collectionSnapshots ?? [];
+    // Only fill the gap left by a lazy load — never clobber a baseline already
+    // captured for this property (e.g. an eagerly-loaded collection).
+    if (existing.some((s) => s.propertyKey === propertyKey)) return;
+    existing.push(match);
+    entry.collectionSnapshots = existing;
   }
 
   // ── Entity State ─────────────────────────────────────────────
@@ -679,6 +717,7 @@ export class WriteBuffer {
     this.idMap.validateEntity(entityClass);
     const { columnNames, pkColumns } = this.idMap.getColumnInfo(entityClass);
 
+    let mergedIntoExisting = false;
     try {
       const key = this.idMap.buildIdentityKey(entityClass, instance, pkColumns);
       const existing = this.idMap.identityMap.get(key);
@@ -686,24 +725,28 @@ export class WriteBuffer {
         for (const col of columnNames) {
           if (instance[col] !== undefined) existing[col] = instance[col];
         }
-        // Cascade merge
-        if (this.options.cascade.merge) {
-          this.cascade.propagateToRelations(instance, entityClass, (child) => {
-            try { this.merge(child, seen); } catch (err) {
-              // Only swallow "not registered" errors
-              if (err instanceof Error && /not.*registered|no.*entity|table.*not/i.test(err.message)) return;
-              throw err;
-            }
-          });
-        }
-        return this;
+        mergedIntoExisting = true;
       }
     } catch (err) {
       // PK missing → track as new; only swallow identity key errors
       if (!(err instanceof Error && /PK column/.test(err.message))) throw err;
     }
 
-    this.track(instance);
+    if (!mergedIntoExisting) {
+      // Not in the identity map. A full PK means this is a DETACHED entity
+      // representing an existing row, so its columns must be written back on
+      // flush — plain track() snapshots the current values and yields a zero
+      // diff, silently dropping the detached edits. Track it with a
+      // forced-dirty baseline so exactly the columns it carries are UPDATEd.
+      const hasFullPk =
+        pkColumns.length > 0 &&
+        pkColumns.every((pk) => instance[pk] !== undefined && instance[pk] !== null);
+      if (hasFullPk && !this.trackedEntries.has(instance)) {
+        this.trackAsMergedDetached(instance, entityClass, columnNames, pkColumns);
+      } else {
+        this.track(instance);
+      }
+    }
 
     // Cascade merge
     if (this.options.cascade.merge) {
@@ -717,6 +760,37 @@ export class WriteBuffer {
     }
 
     return this;
+  }
+
+  /**
+   * Track a detached instance for merge() so that every column it actually
+   * defines is written back on flush.
+   *
+   * A normal track() snapshots the instance's current values, so the flush
+   * dirty-check finds no difference and the detached edits are lost. Here the
+   * snapshot is seeded with {@link MERGE_DIRTY_SENTINEL} for each defined
+   * non-PK column, which never equals a real value — forcing those columns
+   * dirty. Columns the caller left undefined keep an undefined baseline and are
+   * not touched, so unset columns are never accidentally nulled out.
+   */
+  private trackAsMergedDetached(
+    instance: any,
+    entityClass: ClazzType<any>,
+    columnNames: string[],
+    pkColumns: string[],
+  ): void {
+    this.track(instance);
+    const entry = this.trackedEntries.get(instance);
+    if (!entry) return;
+    const forced: Record<string, any> = {};
+    for (const col of columnNames) {
+      if (pkColumns.includes(col)) {
+        forced[col] = instance[col];
+      } else {
+        forced[col] = instance[col] === undefined ? undefined : MERGE_DIRTY_SENTINEL;
+      }
+    }
+    entry.snapshot = forced;
   }
 
   /**
@@ -1080,7 +1154,7 @@ export class WriteBuffer {
             result.inserts++;
             visited.add(entry.instance);
             await this.flushExec.emitFlushEvent("postInsert", entry.entity, entry.instance);
-            await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result);
+            await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result, true);
           }
         }
 
@@ -1091,16 +1165,40 @@ export class WriteBuffer {
         }
 
         // 4. Collection diffs (O2M orphan removal + M2M pivot sync)
+        // First pass: compute every diff and collect the children ADDED to any
+        // parent's O2M collection (by identity and PK). A child moved from
+        // parent A to B lands in A.removed AND B.added — it was reparented, not
+        // orphaned, so orphan removal below must spare it.
+        const reparented: ReparentedChildren = { instances: new Set(), pks: new Map() };
+        const pendingDiffs: Array<{ entry: TrackedEntry; colSnap: CollectionSnapshot; diff: CollectionDiff }> = [];
         for (const entry of sortedTracked) {
           if (!entry.collectionSnapshots) continue;
           for (const colSnap of entry.collectionSnapshots) {
             const diff = diffCollection(entry.instance, colSnap);
             if (!diff) continue;
+            pendingDiffs.push({ entry, colSnap, diff });
             if (colSnap.relationType === "oneToMany") {
-              await this.cascade.processOneToManyCollectionDiff(txEm, entry, diff, visited, result);
-            } else if (colSnap.relationType === "manyToMany") {
-              await this.cascade.processManyToManyCollectionDiff(txEm, entry, diff, result);
+              const childPks = this.idMap.getColumnInfo(colSnap.relatedEntity).pkColumns;
+              for (const child of diff.added) {
+                reparented.instances.add(child);
+                if (childPks.length === 1) {
+                  const pk = child[childPks[0]];
+                  if (pk != null) {
+                    const name = colSnap.relatedEntity.name;
+                    let set = reparented.pks.get(name);
+                    if (!set) { set = new Set(); reparented.pks.set(name, set); }
+                    set.add(pk);
+                  }
+                }
+              }
             }
+          }
+        }
+        for (const { entry, colSnap, diff } of pendingDiffs) {
+          if (colSnap.relationType === "oneToMany") {
+            await this.cascade.processOneToManyCollectionDiff(txEm, entry, diff, visited, result, reparented);
+          } else if (colSnap.relationType === "manyToMany") {
+            await this.cascade.processManyToManyCollectionDiff(txEm, entry, diff, result);
           }
         }
 
@@ -1121,6 +1219,10 @@ export class WriteBuffer {
           await this.flushExec.emitFlushEvent("preDelete", del.entity, undefined, undefined, del.criteria);
           await txEm.delete(del.entity, del.criteria);
           result.deletes++;
+          // Keep the first-level cache honest: a criteria delete (or cascade
+          // delete) must not leave a matching tracked instance behind, or a
+          // later PK findOne would return the just-deleted row from cache.
+          this.flushExec.evictTrackedMatching(del.entity, del.criteria, this.trackedEntries);
           await this.flushExec.emitFlushEvent("postDelete", del.entity, undefined, undefined, del.criteria);
         }
 

@@ -2776,6 +2776,12 @@ describe("Buffer Plugin", () => {
         ...data,
         id: data.id ?? insertId++,
       }));
+      // The owning-side FK is persisted to the already-inserted parent row via
+      // a targeted UPDATE (the parent was INSERTed before the related entity
+      // had a PK).
+      const updateSpy = jest
+        .spyOn(em, "update")
+        .mockResolvedValue({ affected: 1 } as any);
 
       const mut = em.buffer();
 
@@ -2792,6 +2798,13 @@ describe("Buffer Plugin", () => {
       // Parent + profile cascade insert
       expect(result.inserts).toBe(2);
       expect(profile.id).toBeDefined();
+      // FK resolved on the instance AND written back to the parent row.
+      expect((user as any).profileId).toBe(profile.id);
+      expect(updateSpy).toHaveBeenCalledWith(
+        UserWithProfile,
+        { id: (user as any).id },
+        { profileId: profile.id },
+      );
     });
   });
 
