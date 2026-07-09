@@ -160,7 +160,18 @@ export class IdentityMapManager {
   }
 
   /**
-   * Get column names and PK column names for an entity class.
+   * Get the entity's column **property keys** and PK property keys.
+   *
+   * These are PROPERTY names (e.g. "fullName"), NOT DB column names. Every
+   * buffer consumer uses them to read/write instance fields, snapshot for
+   * dirty-checking, build identity keys, or hand data to `em.save`/`em.update`
+   * (which map property → column themselves). Under a NamingStrategy the
+   * @Column metadata's `name` becomes the snake_case DB column (e.g.
+   * "full_name") which the instance never carries — reading `instance[name]`
+   * yielded `undefined`, silently dropping renamed columns and throwing on a
+   * camelCase PK. For raw SQL identifiers (the opt-in batch paths) use
+   * {@link getColumnBindings} instead, which pairs each property with its DB
+   * column.
    */
   getColumnInfo(entityClass: ClazzType<any>): {
     columnNames: string[];
@@ -169,12 +180,42 @@ export class IdentityMapManager {
     const columns: ColumnMetadata[] =
       Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
 
-    const columnNames = columns.map((c) => c.name ?? c.propertyKey!);
+    const columnNames = columns.map((c) => c.propertyKey ?? c.name!);
     const pkColumns = columns
       .filter((c) => c.options?.primary)
-      .map((c) => c.name ?? c.propertyKey!);
+      .map((c) => c.propertyKey ?? c.name!);
 
     return { columnNames, pkColumns };
+  }
+
+  /**
+   * Get property-key → DB-column-name bindings for an entity.
+   *
+   * Used by the raw-SQL batch INSERT/UPDATE paths, which must READ instance
+   * values by property key but EMIT the DB column name (NamingStrategy- and
+   * @Column({ name })-aware) as the SQL identifier.
+   */
+  getColumnBindings(entityClass: ClazzType<any>): {
+    prop: string;
+    column: string;
+  }[] {
+    const columns: ColumnMetadata[] =
+      Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
+    return columns.map((c) => ({
+      prop: c.propertyKey ?? c.name!,
+      column: c.name ?? c.propertyKey!,
+    }));
+  }
+
+  /**
+   * Resolve a single property key to its DB column name (NamingStrategy- and
+   * @Column({ name })-aware). Falls back to the property key when unknown.
+   */
+  resolveColumnName(entityClass: ClazzType<any>, prop: string): string {
+    const columns: ColumnMetadata[] =
+      Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
+    const match = columns.find((c) => (c.propertyKey ?? c.name!) === prop);
+    return match?.name ?? prop;
   }
 
   /**

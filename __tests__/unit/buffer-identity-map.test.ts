@@ -147,11 +147,25 @@ describe("IdentityMapManager", () => {
       expect(info.columnNames).toEqual(["orderId", "productId", "quantity"]);
     });
 
-    it("should use name field from metadata (not propertyKey) when available", () => {
+    it("should return the property key, not the DB column name, so instance access works", () => {
       const info = mgr.getColumnInfo(Profile);
-      // The metadata has name: "full_name" for the fullName property
-      expect(info.columnNames).toContain("full_name");
+      // Profile.fullName maps to DB column "full_name". getColumnInfo must
+      // return the PROPERTY key — the buffer reads instance.fullName and hands
+      // data to em.save (which maps property → column). Returning the DB name
+      // made instance["full_name"] undefined, silently dropping the column and
+      // throwing on a camelCase PK.
+      expect(info.columnNames).toContain("fullName");
+      expect(info.columnNames).not.toContain("full_name");
       expect(info.columnNames).toContain("id");
+    });
+
+    it("getColumnBindings() pairs each property key with its DB column name", () => {
+      const bindings = mgr.getColumnBindings(Profile);
+      const full = bindings.find((b) => b.prop === "fullName");
+      expect(full).toBeDefined();
+      // The property is "fullName"; the raw-SQL (batch) paths must emit the DB
+      // column "full_name" as the identifier.
+      expect(full!.column).toBe("full_name");
     });
 
     it("should return empty arrays when no COLUMN_TOKEN metadata exists", () => {

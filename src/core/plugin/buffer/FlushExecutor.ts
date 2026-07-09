@@ -169,46 +169,52 @@ export class FlushExecutor {
       const tableName = entityMeta?.name || entityClass.name;
       const wrappedTable = this.ctx.wrapTable(tableName);
 
-      // Determine non-PK columns that have values
-      const nonPkCols = entries[0].columnNames.filter(
+      // Non-PK columns to insert. columnNames/pkColumns are PROPERTY keys; map
+      // each to its DB column for the SQL identifier (NamingStrategy-aware) while
+      // reading values off the instance by property key.
+      const colMap = new Map(
+        this.idMap.getColumnBindings(entityClass).map(b => [b.prop, b.column]),
+      );
+      const nonPkProps = entries[0].columnNames.filter(
         c => !entries[0].pkColumns.includes(c),
       );
-      const wrappedCols = nonPkCols.map(c => this.ctx.wrap(c));
+      const wrappedCols = nonPkProps.map(p => this.ctx.wrap(colMap.get(p) ?? p));
 
       // Build parameter placeholders and values
       const params: any[] = [];
       const rowPlaceholders: string[] = [];
       for (const entry of entries) {
-        const placeholders = nonPkCols.map(() => "?");
+        const placeholders = nonPkProps.map(() => "?");
         rowPlaceholders.push(`(${placeholders.join(", ")})`);
-        for (const col of nonPkCols) {
-          params.push(entry.instance[col] ?? null);
+        for (const prop of nonPkProps) {
+          params.push(entry.instance[prop] ?? null);
         }
       }
 
       const sql = `INSERT INTO ${wrappedTable} (${wrappedCols.join(", ")}) VALUES ${rowPlaceholders.join(", ")}`;
 
+      const pkProp = entries[0].pkColumns[0];
+      const pkColumn = colMap.get(pkProp) ?? pkProp;
       if (this.ctx.isPostgres()) {
-        // PostgreSQL: add RETURNING pkCol
-        const pkCol = entries[0].pkColumns[0];
-        const returningSql = `${sql} RETURNING ${this.ctx.wrap(pkCol)}`;
+        // PostgreSQL: RETURNING the PK DB column; the returned row is keyed by
+        // the DB column name, so read it there and write it to the property.
+        const returningSql = `${sql} RETURNING ${this.ctx.wrap(pkColumn)}`;
         const rows = await txEm.query(returningSql, params);
         if (Array.isArray(rows)) {
           for (let i = 0; i < entries.length && i < rows.length; i++) {
-            entries[i].instance[pkCol] = (rows[i] as any)[pkCol];
+            entries[i].instance[pkProp] = (rows[i] as any)[pkColumn];
           }
         }
       } else {
         // MySQL: LAST_INSERT_ID() returns first auto-increment of batch
         const queryResult = await txEm.query(sql, params);
-        const pkCol = entries[0].pkColumns[0];
         // Try to extract insertId from query result
         const insertId =
           (queryResult as any)?.insertId ??
           (Array.isArray(queryResult) && (queryResult[0] as any)?.insertId);
         if (typeof insertId === "number" && insertId > 0) {
           for (let i = 0; i < entries.length; i++) {
-            entries[i].instance[pkCol] = insertId + i;
+            entries[i].instance[pkProp] = insertId + i;
           }
         }
       }
@@ -277,14 +283,20 @@ export class FlushExecutor {
         continue;
       }
 
-      // Build batch UPDATE with CASE WHEN
+      // Build batch UPDATE with CASE WHEN. columnNames/pkColumns/diff keys are
+      // PROPERTY keys; map each to its DB column for the SQL identifier
+      // (NamingStrategy-aware) while reading values off the instance/diff by
+      // property key.
       const entityMeta = Reflect.getMetadata(ENTITY_TOKEN, entityClass);
       const tableName = entityMeta?.name || entityClass.name;
       const wrappedTable = this.ctx.wrapTable(tableName);
-      const pkCol = items[0].entry.pkColumns[0];
-      const wrappedPk = this.ctx.wrap(pkCol);
+      const colMap = new Map(
+        this.idMap.getColumnBindings(entityClass).map(b => [b.prop, b.column]),
+      );
+      const pkProp = items[0].entry.pkColumns[0];
+      const wrappedPk = this.ctx.wrap(colMap.get(pkProp) ?? pkProp);
 
-      // Collect all changed columns across all items
+      // Collect all changed columns (property keys) across all items
       const changedCols = new Set<string>();
       for (const { diff } of items) {
         for (const col of Object.keys(diff)) changedCols.add(col);
@@ -294,12 +306,12 @@ export class FlushExecutor {
       const params: any[] = [];
 
       for (const col of changedCols) {
-        const wrappedCol = this.ctx.wrap(col);
+        const wrappedCol = this.ctx.wrap(colMap.get(col) ?? col);
         const cases: string[] = [];
         for (const { entry, diff } of items) {
           if (col in diff) {
             cases.push(`WHEN ${wrappedPk} = ? THEN ?`);
-            params.push(entry.instance[pkCol], diff[col]);
+            params.push(entry.instance[pkProp], diff[col]);
           }
         }
         if (cases.length > 0) {
@@ -308,7 +320,7 @@ export class FlushExecutor {
       }
 
       // WHERE pk IN (...)
-      const pkValues = items.map(({ entry }) => entry.instance[pkCol]);
+      const pkValues = items.map(({ entry }) => entry.instance[pkProp]);
       const placeholders = pkValues.map(() => "?").join(", ");
       params.push(...pkValues);
 
