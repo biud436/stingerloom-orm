@@ -466,6 +466,43 @@ On `BaseRepository`, omit the entity class argument:
 const ids = await userRepo.pluck("id", { active: true });
 ```
 
+### Constructing entities -- create(), merge(), preload()
+
+These helpers build or prepare entity instances **in memory**. They persist nothing on their own — there is no hidden unit of work or change tracking — so the immediate-execution model is unchanged. When you are ready to write, hand the result to `save()`.
+
+`create()` turns a plain object into a real class instance, identical to one returned by `find()`: instance methods, getters, `@Exclude`, and column transformers all apply. Unlike `save()`, it issues no SQL.
+
+```typescript
+const user = em.create(User, { name: "Alice", email });
+user.activate();              // instance methods work
+await em.save(User, user);    // persist when ready
+
+// Build many at once
+const users = em.create(User, [{ name: "A" }, { name: "B" }]);
+```
+
+`merge()` layers one or more partial patches onto an existing instance and returns it. Nested plain objects / relations merge recursively; arrays, `Date`s, and `Buffer`s replace as a unit; `undefined` values are skipped so they never null out an existing field (pass an explicit `null` to clear one).
+
+```typescript
+em.merge(user, { name: "New name" }, { status: "active" });
+```
+
+`preload()` is the read-modify-write shortcut: it loads the row identified by the primary key(s) in the patch, merges the remaining fields onto the loaded instance, and returns it ready for `save()`. Columns you did not mention keep their database values. It returns `undefined` when the patch has no complete primary key or no row matches (mirroring TypeORM), so a partial-update endpoint can distinguish "not found" from "updated".
+
+```typescript
+// PATCH /users/1  { name: "New name" }
+const patched = await em.preload(User, { id: 1, name: "New name" });
+if (!patched) throw new NotFoundException();
+await em.save(User, patched); // email, role, ... untouched columns preserved
+```
+
+On `BaseRepository`, omit the entity class argument:
+
+```typescript
+const draft = userRepo.create({ name: "Alice" });
+const patched = await userRepo.preload({ id: 1, name: "New name" });
+```
+
 ---
 
 ## Deleting -- delete()

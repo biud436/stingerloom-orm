@@ -464,6 +464,43 @@ const titles = await em.pluck(Post, "title");
 const ids = await userRepo.pluck("id", { active: true });
 ```
 
+### 엔티티 구성 -- create(), merge(), preload()
+
+이 헬퍼들은 엔티티 인스턴스를 **메모리에서** 만들거나 준비합니다. 스스로 저장하지 않으며, 숨은 Unit of Work나 변경 추적도 없어서 즉시 실행 모델은 그대로예요. 쓸 준비가 되면 결과를 `save()`에 넘기면 됩니다.
+
+`create()`는 평범한 객체를 실제 클래스 인스턴스로 바꿔줍니다. `find()`가 돌려주는 것과 동일해서 인스턴스 메서드, 게터, `@Exclude`, 컬럼 트랜스포머가 모두 적용돼요. `save()`와 달리 SQL은 전혀 나가지 않습니다.
+
+```typescript
+const user = em.create(User, { name: "Alice", email });
+user.activate();              // 인스턴스 메서드 동작
+await em.save(User, user);    // 준비되면 저장
+
+// 한 번에 여러 개 생성
+const users = em.create(User, [{ name: "A" }, { name: "B" }]);
+```
+
+`merge()`는 기존 인스턴스 위에 부분 패치를 하나 이상 덮고 그 인스턴스를 반환합니다. 중첩된 일반 객체나 관계는 재귀적으로 병합하고, 배열·`Date`·`Buffer`는 통째로 교체하며, `undefined` 값은 건너뛰어 기존 필드를 지우지 않아요(비우려면 명시적으로 `null`을 넘깁니다).
+
+```typescript
+em.merge(user, { name: "New name" }, { status: "active" });
+```
+
+`preload()`는 read-modify-write를 위한 지름길입니다. 패치의 기본 키로 행을 로드한 뒤 나머지 필드를 로드된 인스턴스에 병합해서 `save()`에 바로 쓸 수 있게 돌려줘요. 지정하지 않은 컬럼은 DB 값을 그대로 유지합니다. 완전한 기본 키가 없거나 매칭 행이 없으면 `undefined`를 반환하므로(TypeORM과 동일), 부분 수정 엔드포인트가 "없음"과 "수정됨"을 구분할 수 있습니다.
+
+```typescript
+// PATCH /users/1  { name: "New name" }
+const patched = await em.preload(User, { id: 1, name: "New name" });
+if (!patched) throw new NotFoundException();
+await em.save(User, patched); // email, role 등 언급 안 한 컬럼은 보존
+```
+
+`BaseRepository`에서는 엔티티 클래스 인자를 생략합니다:
+
+```typescript
+const draft = userRepo.create({ name: "Alice" });
+const patched = await userRepo.preload({ id: 1, name: "New name" });
+```
+
 ---
 
 ## 삭제하기 -- delete()
