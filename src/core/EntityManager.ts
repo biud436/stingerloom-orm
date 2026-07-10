@@ -104,6 +104,8 @@ import { DmlSqlBuilder } from "./entity-manager/DmlSqlBuilder";
 import { WriteExecutor } from "./entity-manager/WriteExecutor";
 import { ReadExecutor } from "./entity-manager/ReadExecutor";
 import { RelationExecutor } from "./entity-manager/RelationExecutor";
+import { EntityFactory } from "./entity-manager/EntityFactory";
+import { DeepPartial } from "../types/DeepPartial";
 import { MetadataViewFactory } from "./entity-manager/MetadataViewFactory";
 import { TenantScopeManager } from "./entity-manager/TenantScopeManager";
 import { SubscriberRegistry } from "./entity-manager/SubscriberRegistry";
@@ -297,6 +299,7 @@ export class EntityManager implements BaseEntityManager {
   private readonly writeExecutor = new WriteExecutor(this._ctx);
   private readonly readExecutor = new ReadExecutor(this._ctx);
   private readonly relationExecutor = new RelationExecutor(this._ctx);
+  private readonly entityFactory = new EntityFactory(this._ctx);
   private readonly metadataViewFactory = new MetadataViewFactory(this._ctx);
   private readonly tenantScope = new TenantScopeManager(this._ctx);
   private readonly transactionRunner = new TransactionRunner(this._ctx);
@@ -1023,6 +1026,30 @@ export class EntityManager implements BaseEntityManager {
     return result;
   }
 
+  /**
+   * Filter-first counterpart of {@link findOneOrFail}: retrieves the single
+   * entity matching `where` and throws `EntityNotFoundError` if none is found.
+   *
+   * Completes the read grid — `findOneBy` is to `findOne` what
+   * `findOneByOrFail` is to `findOneOrFail`, dropping the options-object
+   * ceremony for the common "get this row or blow up" case.
+   *
+   * @example
+   * ```ts
+   * const user = await em.findOneByOrFail(User, { id: 1 });
+   * ```
+   */
+  async findOneByOrFail<T>(
+    entity: ClazzType<T>,
+    where: WhereClause<T> | WhereClause<T>[],
+  ): Promise<T> {
+    const result = await this.findOneBy(entity, where);
+    if (result === null || result === undefined) {
+      throw new EntityNotFoundError(entity.name);
+    }
+    return result;
+  }
+
   async find<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
@@ -1160,6 +1187,83 @@ export class EntityManager implements BaseEntityManager {
     option: PagePaginationOption<T> = {},
   ): Promise<PagePaginationResult<T>> {
     return this.readExecutor.findWithPage(entity, option);
+  }
+
+  // ── Entity construction (no persistence) ────────────────────
+
+  /**
+   * Builds a hydrated entity instance from a plain object **without touching
+   * the database**. The result is a real class instance — indistinguishable
+   * from one returned by `find` — so class methods, getters, `@Exclude`, and
+   * column transformers all apply. Nothing is persisted and no lifecycle hooks
+   * run; hand the instance to {@link save} when you want it written.
+   *
+   * Pass an array to build many instances at once.
+   *
+   * @example
+   * ```ts
+   * const user = em.create(User, { name: "Alice", email });
+   * user.activate();               // instance methods work
+   * await em.save(User, user);     // persist when ready
+   *
+   * const users = em.create(User, [{ name: "A" }, { name: "B" }]);
+   * ```
+   */
+  create<T>(entity: ClazzType<T>): InstanceType<ClazzType<T>>;
+  create<T>(
+    entity: ClazzType<T>,
+    data: DeepPartial<T>,
+  ): InstanceType<ClazzType<T>>;
+  create<T>(
+    entity: ClazzType<T>,
+    data: DeepPartial<T>[],
+  ): InstanceType<ClazzType<T>>[];
+  create<T>(
+    entity: ClazzType<T>,
+    data?: DeepPartial<T> | DeepPartial<T>[],
+  ): InstanceType<ClazzType<T>> | InstanceType<ClazzType<T>>[] {
+    return this.entityFactory.create(entity, data as DeepPartial<T>);
+  }
+
+  /**
+   * Merges one or more partial patches into an existing entity instance,
+   * mutating and returning `target`. Nested plain objects / relations are
+   * merged recursively; arrays, `Date`s, and `Buffer`s replace wholesale.
+   * `undefined` values are skipped so they never null out an existing field.
+   *
+   * Purely in-memory — no query, no persistence. Combine with {@link save} to
+   * write the result.
+   *
+   * @example
+   * ```ts
+   * em.merge(user, { name: "New" }, { status: "active" });
+   * ```
+   */
+  merge<T>(target: T, ...sources: DeepPartial<T>[]): T {
+    return this.entityFactory.merge(target, ...sources);
+  }
+
+  /**
+   * Loads the row identified by the primary key(s) in `partial`, merges the
+   * remaining fields of `partial` onto it, and returns the hydrated instance —
+   * ready to hand to {@link save} for a read-modify-write update.
+   *
+   * Returns `undefined` when `partial` lacks a complete primary key or no row
+   * matches (mirrors TypeORM). The returned instance is detached: there is no
+   * change tracking, so the merge is applied immediately and persists only
+   * when you call {@link save}.
+   *
+   * @example
+   * ```ts
+   * const patched = await em.preload(User, { id: 1, name: "New name" });
+   * if (patched) await em.save(User, patched);
+   * ```
+   */
+  async preload<T>(
+    entity: ClazzType<T>,
+    partial: DeepPartial<T>,
+  ): Promise<InstanceType<ClazzType<T>> | undefined> {
+    return this.entityFactory.preload(entity, partial);
   }
 
   // ── CRUD: Write ────────────────────────────────────────────

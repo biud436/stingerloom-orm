@@ -31,6 +31,7 @@ const em = new EntityManager();
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | 단건 조회 |
 | `findOneBy` | `<T>(entity, where): Promise<T \| null>` | 필터 우선 단건 조회 (`findOne({ where })`의 단축형) |
 | `findOneOrFail` | `<T>(entity, option): Promise<T>` | 단건 조회 (없으면 `EntityNotFoundError` 발생) |
+| `findOneByOrFail` | `<T>(entity, where): Promise<T>` | 필터 우선 단건 조회 (없으면 `EntityNotFoundError` 발생); `findOneBy` + `findOneOrFail` 조합 |
 | `exists` | `<T>(entity, where?, withDeleted?, onlyDeleted?): Promise<boolean>` | 매칭되는 레코드 존재 여부 |
 | `findByPK` | `<T>(entity, pk): Promise<T \| null>` | 기본 키로 조회 |
 | `findByPKs` | `<T>(entity, pks[]): Promise<T[]>` | 여러 기본 키로 조회 |
@@ -48,6 +49,16 @@ const em = new EntityManager();
 | `updateMany` | `<T>(entity, data: UpdateData<T>, options): Promise<{ affected: number }>` | 조건별 일괄 UPDATE (SQL 표현식 지원) |
 | `increment` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | `SET col = col + ?`로 숫자 컬럼에 `by`(기본값 `1`)를 원자적으로 더함; `update()` 안전장치 상속 |
 | `decrement` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | 숫자 컬럼에서 `by`(기본값 `1`)를 원자적으로 뺌; `increment`의 역연산 |
+
+### 구성 (저장 없음)
+
+숨은 Unit of Work 없이 엔티티 인스턴스를 만들거나 준비하는 헬퍼입니다. 결과를 `save()`에 넘기면 저장됩니다.
+
+| 메서드 | 시그니처 | 설명 |
+|--------|-----------|-------------|
+| `create` | `<T>(entity, data?): InstanceType<ClazzType<T>>` | 평범한 객체로부터 하이드레이트된 인스턴스를 만들되 저장은 안 함; 실제 클래스 인스턴스(메서드/게터/트랜스포머 적용). 배열을 넘기면 여러 개 생성 |
+| `merge` | `<T>(target, ...sources): T` | 기존 인스턴스에 부분 패치를 병합하고 그 인스턴스를 반환; 중첩 객체는 재귀 병합, 배열/`Date`/`Buffer`는 통째로 교체, `undefined`는 건너뜀. 메모리 내 연산만 |
+| `preload` | `<T>(entity, partial): Promise<InstanceType<ClazzType<T>> \| undefined>` | `partial`의 PK로 행을 로드한 뒤 나머지를 병합해 반환 — read-modify-write `save()`에 바로 사용. 완전한 PK가 없거나 매칭 행이 없으면 `undefined` (TypeORM과 동일) |
 
 ### Batch
 
@@ -151,7 +162,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
+`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findOneByOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `create`, `merge`, `preload`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
 
 **Repository 전용 헬퍼:**
 

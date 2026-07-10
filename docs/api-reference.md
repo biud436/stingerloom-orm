@@ -31,6 +31,7 @@ const em = new EntityManager();
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | Single record query |
 | `findOneBy` | `<T>(entity, where): Promise<T \| null>` | Filter-first single query (sugar over `findOne({ where })`) |
 | `findOneOrFail` | `<T>(entity, option): Promise<T>` | Single record query (throws `EntityNotFoundError`) |
+| `findOneByOrFail` | `<T>(entity, where): Promise<T>` | Filter-first single query (throws `EntityNotFoundError`); mirrors `findOneBy` + `findOneOrFail` |
 | `exists` | `<T>(entity, where?, withDeleted?, onlyDeleted?): Promise<boolean>` | Check if any matching record exists |
 | `findByPK` | `<T>(entity, id: unknown): Promise<T \| null>` | Find by primary key value |
 | `findByPKs` | `<T>(entity, ids: unknown[]): Promise<T[]>` | Find by multiple primary key values |
@@ -48,6 +49,16 @@ const em = new EntityManager();
 | `updateMany` | `<T>(entity, data: UpdateData<T>, options): Promise<{ affected: number }>` | Bulk UPDATE (supports SQL expressions) |
 | `increment` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | Atomically add `by` (default `1`) to a numeric column via `SET col = col + ?`; inherits `update()` safeguards |
 | `decrement` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | Atomically subtract `by` (default `1`) from a numeric column; counterpart of `increment` |
+
+### Construction (no persistence)
+
+These helpers build or prepare entity instances without a hidden unit of work — hand the result to `save()` to persist.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `create` | `<T>(entity, data?): InstanceType<ClazzType<T>>` | Build a hydrated instance from a plain object without persisting; real class instance (methods / getters / transformers apply). Pass an array to build many |
+| `merge` | `<T>(target, ...sources): T` | Merge partial patches into an existing instance and return it; nested objects merge recursively, arrays / `Date` / `Buffer` replace, `undefined` is skipped. In-memory only |
+| `preload` | `<T>(entity, partial): Promise<InstanceType<ClazzType<T>> \| undefined>` | Load the row by the PK(s) in `partial`, merge the rest onto it, and return it — ready for a read-modify-write `save()`. `undefined` when no complete PK or no matching row (mirrors TypeORM) |
 
 ### Batch
 
@@ -151,7 +162,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` — uses the same API as EntityManager without specifying the entity.
+`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findOneByOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `create`, `merge`, `preload`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` — uses the same API as EntityManager without specifying the entity.
 
 **Repository-only helpers:**
 

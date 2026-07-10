@@ -7,6 +7,7 @@ import {
   WhereClause,
 } from "../dialects/FindOption";
 import { EntityManager } from "./EntityManager";
+import { DeepPartial } from "../types/DeepPartial";
 import { DeleteResult } from "../types/DeleteResult";
 import { SelectQueryBuilder, isEntityRef } from "./SelectQueryBuilder";
 import type { EntityRef } from "./SelectQueryBuilder";
@@ -66,6 +67,55 @@ export class BaseRepository<T> {
    */
   async save(item: Partial<T>): Promise<InstanceType<ClazzType<T>>> {
     return await this.em.save<T>(this.entity, item);
+  }
+
+  /**
+   * Builds a hydrated entity instance from a plain object without persisting.
+   * Pass an array to build many. See {@link EntityManager.create}.
+   *
+   * @example
+   * ```ts
+   * const user = repo.create({ name: "Alice" });
+   * await repo.save(user);
+   * ```
+   */
+  create(): InstanceType<ClazzType<T>>;
+  create(data: DeepPartial<T>): InstanceType<ClazzType<T>>;
+  create(data: DeepPartial<T>[]): InstanceType<ClazzType<T>>[];
+  create(
+    data?: DeepPartial<T> | DeepPartial<T>[],
+  ): InstanceType<ClazzType<T>> | InstanceType<ClazzType<T>>[] {
+    return this.em.create<T>(this.entity, data as DeepPartial<T>);
+  }
+
+  /**
+   * Merges partial patches into an existing entity instance and returns it.
+   * Purely in-memory. See {@link EntityManager.merge}.
+   *
+   * @example
+   * ```ts
+   * repo.merge(user, { name: "New" }, { status: "active" });
+   * ```
+   */
+  merge(target: T, ...sources: DeepPartial<T>[]): T {
+    return this.em.merge<T>(target, ...sources);
+  }
+
+  /**
+   * Loads the row identified by the primary key(s) in `partial`, merges the
+   * rest of `partial` onto it, and returns the instance — or `undefined` if no
+   * complete PK is present or no row matches. See {@link EntityManager.preload}.
+   *
+   * @example
+   * ```ts
+   * const patched = await repo.preload({ id: 1, name: "New name" });
+   * if (patched) await repo.save(patched);
+   * ```
+   */
+  async preload(
+    partial: DeepPartial<T>,
+  ): Promise<InstanceType<ClazzType<T>> | undefined> {
+    return this.em.preload<T>(this.entity, partial);
   }
 
   /**
@@ -140,6 +190,19 @@ export class BaseRepository<T> {
    */
   async findOneOrFail(findOption: FindOption<T>): Promise<T> {
     return await this.em.findOneOrFail<T>(this.entity, findOption);
+  }
+
+  /**
+   * Retrieves a single entity matching `where` or throws EntityNotFoundError.
+   * Filter-first shorthand for `findOneOrFail({ where })`. See
+   * {@link EntityManager.findOneByOrFail}.
+   *
+   * @param where The filter selecting the row.
+   * @returns A promise that resolves to the found entity.
+   * @throws EntityNotFoundError if no entity matches.
+   */
+  async findOneByOrFail(where: WhereClause<T> | WhereClause<T>[]): Promise<T> {
+    return await this.em.findOneByOrFail<T>(this.entity, where);
   }
 
   /**
