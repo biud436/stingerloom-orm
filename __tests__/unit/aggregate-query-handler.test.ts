@@ -48,6 +48,9 @@ function createMockCtx(
     delete: jest.fn(),
     getTenantColumnConfig: jest.fn().mockReturnValue(null),
     buildTenantWhereClause: jest.fn().mockReturnValue(null),
+    getInheritanceResolver: jest.fn().mockReturnValue({
+      getSingleTableChildDiscriminator: jest.fn().mockReturnValue(null),
+    }),
     buildPropertyToColumnMap: jest.fn((m: any) => {
       const map = new Map<string, string>();
       for (const c of m?.columns ?? []) {

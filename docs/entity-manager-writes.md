@@ -319,6 +319,34 @@ WHERE "isActive" = $4
 
 Notice the `"updatedAt"` column in the SET clause -- the ORM automatically injects `@UpdateTimestamp` columns, even in bulk updates.
 
+### Soft-deleted rows are skipped by default
+
+When the entity has a `@DeletedAt` column, `updateMany()` (and the `update()` / `increment()` / `decrement()` helpers that delegate to it) only touches **live** rows -- it appends `"deletedAt" IS NULL` to the `WHERE`, exactly like `find()`. A bulk update never silently rewrites data on a logically-deleted row.
+
+Pass `withDeleted: true` to include trashed rows:
+
+```typescript
+// Default: trashed rows are left untouched
+await em.updateMany(User, { plan: "free" }, { where: { plan: "pro" } });
+
+// Opt in: also update soft-deleted rows
+await em.updateMany(
+  User,
+  { plan: "free" },
+  { where: { plan: "pro" }, withDeleted: true },
+);
+```
+
+```sql
+-- Default -- PostgreSQL
+UPDATE "user" SET "plan" = $1 WHERE "plan" = $2 AND "deletedAt" IS NULL
+
+-- withDeleted: true -- the soft-delete predicate is omitted
+UPDATE "user" SET "plan" = $1 WHERE "plan" = $2
+```
+
+For Single-Table-Inheritance child classes, `updateMany()` also appends the discriminator predicate, so updating `updateMany(CreditCardPayment, …)` never touches sibling subtypes sharing the table -- the same rule `find()` and `delete()` follow.
+
 ### SQL expressions in updateMany
 
 Sometimes you need computed updates -- incrementing a counter, appending to a string, or using database functions. `updateMany` accepts raw SQL expressions via `sql-template-tag` as column values:

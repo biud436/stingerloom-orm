@@ -132,10 +132,16 @@ em.removeAllListeners();
 |-------|----------|
 | `beforeInsert` | INSERT 전 |
 | `afterInsert` | INSERT 후 |
-| `beforeUpdate` | UPDATE 전 |
-| `afterUpdate` | UPDATE 후 |
+| `beforeUpdate` | UPDATE 전 (행 단위 `save()`와 일괄 `updateMany()`) |
+| `afterUpdate` | UPDATE 후 (행 단위 `save()`와 일괄 `updateMany()`) |
 | `beforeDelete` | DELETE 전 |
 | `afterDelete` | DELETE 후 |
+| `beforeSoftDelete` | `softDelete()` 전 |
+| `afterSoftDelete` | `softDelete()` 후 |
+| `beforeRestore` | `restore()` 전 |
+| `afterRestore` | `restore()` 후 |
+
+soft-delete·restore 이벤트는 delete 이벤트와 똑같은 criteria 기반 페이로드(`{ entity, data }`, 여기서 `data`는 WHERE criteria)를 넘겨줍니다. `updateMany()`는 이 global 채널로 엔티티 클래스와 SET 페이로드를 담아 `beforeUpdate` / `afterUpdate`를 발화해요.
 
 ### 언제 Global Listener를 쓸까?
 
@@ -246,6 +252,10 @@ EntitySubscriber는 global listener보다 더 많은 이벤트를 지원해요. 
 | `afterUpdate(event)` | UPDATE 후 | 캐시 무효화, 구독자 알림 |
 | `beforeDelete(event)` | DELETE 전 | 권한 확인, 보호된 삭제 방지 |
 | `afterDelete(event)` | DELETE 후 | 파일 정리, 검색 인덱스 제거 |
+| `beforeSoftDelete(event)` | `softDelete()` 전 | soft-delete 가드, 상태 스냅샷 |
+| `afterSoftDelete(event)` | `softDelete()` 후 | 아카이빙 전파, 알림 |
+| `beforeRestore(event)` | `restore()` 전 | 복원 가드 |
+| `afterRestore(event)` | `restore()` 후 | 재인덱싱, 캐시 재준비 |
 | `beforeTransactionStart()` | BEGIN 전 | 진단, 로깅 |
 | `afterTransactionStart()` | BEGIN 후 | 진단, 로깅 |
 | `beforeTransactionCommit()` | COMMIT 전 | 최종 유효성 검사, 사이드 이펙트 일괄 처리 |
@@ -253,7 +263,7 @@ EntitySubscriber는 global listener보다 더 많은 이벤트를 지원해요. 
 | `beforeTransactionRollback()` | ROLLBACK 전 | 로깅 |
 | `afterTransactionRollback()` | ROLLBACK 후 | 정리, 알림 |
 
-모든 메서드는 선택 사항이에요 -- 필요한 것만 구현하면 돼요.
+모든 메서드는 선택 사항이에요 -- 필요한 것만 구현하면 돼요. `beforeSoftDelete` / `afterSoftDelete` / `beforeRestore` / `afterRestore`는 `beforeDelete` / `afterDelete`와 같은 criteria 기반 `DeleteEvent`(`{ entityClass, criteria, manager }`)를 받아요. 단일 행이 아니라 일괄 `WHERE`를 대상으로 실행되기 때문입니다.
 
 ### afterLoad 보장
 

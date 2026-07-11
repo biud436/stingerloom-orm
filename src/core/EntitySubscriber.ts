@@ -75,6 +75,20 @@ export interface EntitySubscriber<T = any> {
   beforeDelete?(event: DeleteEvent<T>): void | Promise<void>;
   afterDelete?(event: DeleteEvent<T>): void | Promise<void>;
 
+  /**
+   * Soft-delete / restore events. Like {@link beforeDelete}/{@link afterDelete}
+   * these are criteria-based bulk operations, so they carry a
+   * {@link DeleteEvent} (the target `entityClass` + `criteria`) rather than a
+   * hydrated entity instance. They fire on `EntityManager.softDelete()` /
+   * `restore()` only — the per-row `@DeletedAt` stamp applied by a plain
+   * `save()`/`delete()` still goes through the insert/update/delete events.
+   */
+  beforeSoftDelete?(event: DeleteEvent<T>): void | Promise<void>;
+  afterSoftDelete?(event: DeleteEvent<T>): void | Promise<void>;
+
+  beforeRestore?(event: DeleteEvent<T>): void | Promise<void>;
+  afterRestore?(event: DeleteEvent<T>): void | Promise<void>;
+
   beforeTransactionStart?(): void | Promise<void>;
   afterTransactionStart?(): void | Promise<void>;
 

@@ -319,6 +319,34 @@ WHERE "isActive" = $4
 
 SET 절에 `"updatedAt"` 컬럼이 자동으로 포함된 게 보이죠 -- ORM이 일괄 수정에서도 `@UpdateTimestamp` 컬럼을 자동 주입해요.
 
+### soft-delete된 행은 기본적으로 제외됩니다
+
+엔티티에 `@DeletedAt` 컬럼이 있으면 `updateMany()`는 (그리고 여기에 위임하는 `update()` / `increment()` / `decrement()`도) **살아 있는** 행만 건드립니다. `find()`와 똑같이 `WHERE`에 `"deletedAt" IS NULL`을 덧붙이므로, 일괄 수정이 논리적으로 삭제된 행의 데이터를 몰래 되살리는 일이 없어요.
+
+trash된 행까지 포함하려면 `withDeleted: true`를 넘깁니다.
+
+```typescript
+// 기본: trash된 행은 그대로 둡니다
+await em.updateMany(User, { plan: "free" }, { where: { plan: "pro" } });
+
+// 명시적 opt-in: soft-delete된 행도 수정합니다
+await em.updateMany(
+  User,
+  { plan: "free" },
+  { where: { plan: "pro" }, withDeleted: true },
+);
+```
+
+```sql
+-- 기본 -- PostgreSQL
+UPDATE "user" SET "plan" = $1 WHERE "plan" = $2 AND "deletedAt" IS NULL
+
+-- withDeleted: true -- soft-delete 술어가 빠집니다
+UPDATE "user" SET "plan" = $1 WHERE "plan" = $2
+```
+
+단일 테이블 상속(STI) 자식 클래스라면 `updateMany()`가 discriminator 술어까지 덧붙이므로, `updateMany(CreditCardPayment, …)`가 같은 테이블을 공유하는 형제 타입을 건드리지 않아요 -- `find()`·`delete()`가 따르는 규칙 그대로입니다.
+
 ### updateMany에서 SQL 표현식 사용
 
 가끔 계산된 업데이트가 필요할 때가 있어요 -- 카운터 증가, 문자열 추가, 데이터베이스 함수 사용 등. `updateMany`는 `sql-template-tag`를 통해 raw SQL 표현식을 컬럼 값으로 받을 수 있어요:

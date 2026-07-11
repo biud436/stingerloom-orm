@@ -193,5 +193,26 @@ describe.each(drivers)(
         expect(found == null).toBe(true);
       }
     });
+
+    // ── STI aggregate parity (#403) ───────────────────────
+
+    it("count() honors the discriminator exactly like find() (#403)", async () => {
+      // Before #403, count()/aggregate() skipped the STI discriminator and
+      // counted sibling subtypes, so a child-class count over-reported vs the
+      // rows find() actually returned. Assert count == find().length per class,
+      // independent of the absolute row counts left by earlier tests.
+      const len = (r: any) => (Array.isArray(r) ? r.length : r ? 1 : 0);
+
+      const ccCount = await conn.em.count(CreditCardPayment);
+      const btCount = await conn.em.count(BankTransferPayment);
+      const rootCount = await conn.em.count(Payment);
+
+      expect(ccCount).toBe(len(await conn.em.find(CreditCardPayment, {})));
+      expect(btCount).toBe(len(await conn.em.find(BankTransferPayment, {})));
+      // Root query is polymorphic — no discriminator filter — so it counts all.
+      expect(rootCount).toBe(len(await conn.em.find(Payment, {})));
+      // The child counts must never exceed the polymorphic total.
+      expect(ccCount + btCount).toBeLessThanOrEqual(rootCount);
+    });
   },
 );

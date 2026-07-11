@@ -233,6 +233,8 @@ async function getPosts(req: Request, res: Response) {
 
 > **Hint** Cursor pagination requires an ordered, unique column (typically the primary key). It does not support jumping to arbitrary pages -- the client must paginate forward sequentially.
 
+`findWithCursor()` applies the same filters as `find()`: soft-deleted rows are excluded unless you pass `withDeleted: true`, and paging a Single-Table-Inheritance child class returns only that subtype's rows (the discriminator predicate is added automatically).
+
 ## Streaming
 
 When processing millions of rows, loading them all into memory at once is impractical. `stream()` returns an `AsyncGenerator` that fetches rows in configurable batches -- you process one entity at a time without holding the entire result set in memory.

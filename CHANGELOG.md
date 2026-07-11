@@ -12,6 +12,12 @@ Query-builder fixes that let nested-set / self-join tree queries (the shape that
 
 ### Fixed
 
+- **Core write-path parity — soft-delete filter, lifecycle events, STI discriminator (#403).** Three correctness gaps in the immediate-execution write path:
+  - `updateMany()` (and the `update()` / `increment()` / `decrement()` helpers routed through it) now skips soft-deleted rows by default, appending `deletedAt IS NULL` like `find()` does. Opt back in with the new `UpdateManyOptions.withDeleted`. Previously a bulk update silently rewrote logically-deleted rows.
+  - `updateMany()`, `softDelete()`, and `restore()` now carry the Single-Table-Inheritance discriminator predicate, so operating on a child class never touches sibling subtypes sharing the table. `findWithCursor()` and the aggregate handler (`count`/`sum`/`avg`/`min`/`max`) gained the same filter — a child-class `count()` no longer over-reports by counting siblings that `find()` excludes.
+  - New lifecycle events `beforeSoftDelete` / `afterSoftDelete` / `beforeRestore` / `afterRestore` (both the `em.on()` global channel and `EntitySubscriber`), mirroring the criteria-based delete events. `updateMany()` now fires `beforeUpdate` / `afterUpdate` on the global channel.
+
+  Verified: full unit suite + SQLite integration + real PostgreSQL + real MySQL/MariaDB green, dual build clean.
 - **`select([alias.col.as(...)])` now resolves a JOIN alias referenced before the join is registered.** Aliased projections are rendered at build time instead of eagerly at `select()` call time, so a forward reference such as `select([parent.name.as("name")]).innerJoin(Category, "parent", ...)` resolves `parent.name` to its real column (`parent.CTGR_NM`) instead of leaving it unqualified. Select order no longer changes the generated SQL. (One internal behavioral note: a dialect guard on an unsupported aggregate — e.g. `percentile_cont` on MySQL — now fires when the SQL is assembled, not at the `select()` call.)
 - **`selectRaw([...])` passes raw SQL expressions through untouched.** A token is alias-qualified only when it is a bare column reference (`prop` or `alias.prop`); expressions like `COUNT(*)`, `MAX(p.views)`, or `1` are emitted verbatim instead of being mangled into `"alias"."COUNT(*)"`. This makes `selectRaw(["COUNT(*)"])` usable inside `addSelectSubquery()` correlated subqueries.
 

@@ -178,6 +178,11 @@ export type UpdateData<T> = {
  *   `UPDATE … ORDER BY … LIMIT n`; on PostgreSQL / SQLite it rewrites to
  *   `UPDATE … WHERE pk IN (SELECT pk FROM … ORDER BY … LIMIT n)`. Composite-PK
  *   entities are not supported by the rewrite path and throw a typed error.
+ * - `withDeleted`: opt back into updating soft-deleted rows. By default
+ *   `updateMany` (and the `update`/`increment`/`decrement` helpers that route
+ *   through it) skip rows whose `@DeletedAt` column is set, mirroring `find()`.
+ *   Set `true` to also touch trashed rows. No effect on entities without a
+ *   `@DeletedAt` column.
  *
  * @example
  * ```ts
@@ -196,6 +201,7 @@ export type UpdateManyOptions<T> = {
   where: WhereClause<T>;
   orderBy?: IOrderBy<Partial<T>>;
   limit?: number;
+  withDeleted?: boolean;
 };
 
 /**

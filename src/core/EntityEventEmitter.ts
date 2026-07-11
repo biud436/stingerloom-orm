@@ -10,7 +10,11 @@ export type EntityEventType =
   | "beforeUpdate"
   | "afterUpdate"
   | "beforeDelete"
-  | "afterDelete";
+  | "afterDelete"
+  | "beforeSoftDelete"
+  | "afterSoftDelete"
+  | "beforeRestore"
+  | "afterRestore";
 
 /**
  * Payload passed to event listeners.

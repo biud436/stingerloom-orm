@@ -935,6 +935,17 @@ export class ReadExecutor {
         whereMap.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
       }
 
+      // STI: cursor pagination on a child class must page only that subtype's
+      // rows — findInternal already applies this discriminator filter, and
+      // findWithCursor hits the single table directly, so mirror it here.
+      const cursorSti =
+        this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+      if (cursorSti) {
+        whereMap.push(
+          Conditions.equals(this.ctx.wrap(cursorSti.columnName), cursorSti.value),
+        );
+      }
+
       // Tenant scoping under the "tenant_column" strategy. Applied before the
       // cursor clause so the final WHERE is `tenant = ? AND cursor_col > ?`.
       if (!option.withoutTenantScope) {

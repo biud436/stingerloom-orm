@@ -131,6 +131,28 @@ export class InheritanceResolver {
   }
 
   /**
+   * Returns the discriminator predicate parts for a Single-Table-Inheritance
+   * *child* entity, or `null` when no predicate is needed (entity is not STI,
+   * is the root, or lacks a discriminator column/value).
+   *
+   * Bulk write/read paths that hit the STI table directly (updateMany,
+   * softDelete, restore, findWithCursor, aggregates) must AND this predicate
+   * into their WHERE so they only touch/count rows of the requested subtype —
+   * exactly like `find()` and `delete()` already do. The caller wraps
+   * `columnName` and binds `value` through its own escaping helpers.
+   */
+  getSingleTableChildDiscriminator(
+    entity: ClazzType<any>,
+  ): { columnName: string; value: string } | null {
+    if (this.getStrategy(entity) !== "SINGLE_TABLE") return null;
+    if (!this.isChildEntity(entity)) return null;
+    const discCol = this.getDiscriminatorColumn(entity);
+    const discVal = this.getDiscriminatorValue(entity);
+    if (!discCol || !discVal) return null;
+    return { columnName: discCol.name, value: discVal };
+  }
+
+  /**
    * Returns true if the entity is the root of an inheritance hierarchy.
    */
   isRootEntity(entity: ClazzType<any>): boolean {

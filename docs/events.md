@@ -134,10 +134,16 @@ em.removeAllListeners();
 |-------|--------|
 | `beforeInsert` | Before INSERT |
 | `afterInsert` | After INSERT |
-| `beforeUpdate` | Before UPDATE |
-| `afterUpdate` | After UPDATE |
+| `beforeUpdate` | Before UPDATE (per-row `save()` and bulk `updateMany()`) |
+| `afterUpdate` | After UPDATE (per-row `save()` and bulk `updateMany()`) |
 | `beforeDelete` | Before DELETE |
 | `afterDelete` | After DELETE |
+| `beforeSoftDelete` | Before `softDelete()` |
+| `afterSoftDelete` | After `softDelete()` |
+| `beforeRestore` | Before `restore()` |
+| `afterRestore` | After `restore()` |
+
+The soft-delete and restore events carry the same criteria-based payload as the delete events (`{ entity, data }`, where `data` is the WHERE criteria). `updateMany()` fires `beforeUpdate` / `afterUpdate` on this global channel with the entity class and the SET payload.
 
 ### When to Use Global Listeners
 
@@ -248,6 +254,10 @@ EntitySubscriber supports a wider set of events than global listeners, including
 | `afterUpdate(event)` | After UPDATE | Invalidate cache, notify subscribers |
 | `beforeDelete(event)` | Before DELETE | Check permissions, prevent protected deletions |
 | `afterDelete(event)` | After DELETE | Clean up files, remove from search index |
+| `beforeSoftDelete(event)` | Before `softDelete()` | Guard soft-deletes, snapshot state |
+| `afterSoftDelete(event)` | After `softDelete()` | Cascade archival, notify |
+| `beforeRestore(event)` | Before `restore()` | Guard restores |
+| `afterRestore(event)` | After `restore()` | Re-index, re-warm caches |
 | `beforeTransactionStart()` | Before BEGIN | Diagnostics, logging |
 | `afterTransactionStart()` | After BEGIN | Diagnostics, logging |
 | `beforeTransactionCommit()` | Before COMMIT | Final validation, batch side effects |
@@ -255,7 +265,7 @@ EntitySubscriber supports a wider set of events than global listeners, including
 | `beforeTransactionRollback()` | Before ROLLBACK | Logging |
 | `afterTransactionRollback()` | After ROLLBACK | Cleanup, alerting |
 
-All methods are optional -- implement only the ones you need.
+All methods are optional -- implement only the ones you need. `beforeSoftDelete` / `afterSoftDelete` / `beforeRestore` / `afterRestore` receive a `DeleteEvent` (`{ entityClass, criteria, manager }`), the same criteria-based shape as `beforeDelete` / `afterDelete`, because they run against a bulk `WHERE` rather than a single hydrated row.
 
 ### The afterLoad Guarantee
 

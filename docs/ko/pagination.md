@@ -231,6 +231,8 @@ async function getPosts(req: Request, res: Response) {
 
 > **Hint** Cursor pagination은 정렬된 고유 컬럼(보통 primary key)이 필요해요. 임의 페이지로 점프하는 건 지원하지 않아요 -- 클라이언트가 순차적으로 앞으로만 이동해야 해요.
 
+`findWithCursor()`는 `find()`와 동일한 필터를 적용합니다. `withDeleted: true`를 넘기지 않으면 soft-delete된 행은 제외되고, 단일 테이블 상속(STI) 자식 클래스를 페이징하면 discriminator 술어가 자동으로 붙어 해당 서브타입 행만 반환돼요.
+
 ## Streaming
 
 수백만 행을 처리할 때, 전부 메모리에 올리는 건 비현실적이에요. `stream()`은 설정 가능한 배치 크기로 행을 가져오는 `AsyncGenerator`를 반환해요 -- 전체 결과셋을 메모리에 들고 있지 않으면서 엔티티를 하나씩 처리할 수 있어요.

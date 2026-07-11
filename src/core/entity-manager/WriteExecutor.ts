@@ -1792,6 +1792,25 @@ export class WriteExecutor {
         whereMap.push(tenantUpdateWhere);
       }
 
+      // STI: a criteria-based updateMany on a child class must touch only that
+      // subtype's rows, never siblings sharing the single table — mirrors the
+      // discriminator filter delete()/find() already apply.
+      const updateSti =
+        this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+      if (updateSti) {
+        whereMap.push(
+          Conditions.equals(this.ctx.wrap(updateSti.columnName), updateSti.value),
+        );
+      }
+
+      // Soft-delete: skip trashed rows by default (parity with find()), so a
+      // bulk update never resurrects data on a logically-deleted row. Callers
+      // opt back in with `withDeleted: true`. No-op without a @DeletedAt column.
+      const updateDeletedAt = this.resolver.getDeletedAtColumn(entity);
+      if (updateDeletedAt && !options.withDeleted) {
+        whereMap.push(Conditions.isNull(this.ctx.wrap(updateDeletedAt)));
+      }
+
       const orderBySql = this.dmlSqlBuilder.buildUpdateOrderBy(orderBy, updatePropToCol);
 
       const updateSql = this.dmlSqlBuilder.buildUpdateSql(
@@ -1802,6 +1821,17 @@ export class WriteExecutor {
         orderBySql,
         limit,
       );
+
+      // Criteria-based update events. Mirrors delete()'s eventEmitter channel:
+      // listeners registered via `em.on("beforeUpdate"/"afterUpdate")` receive
+      // the entity class + the SET payload. The EntitySubscriber UpdateEvent
+      // channel stays save()-only because it contracts a single hydrated row
+      // plus a `databaseEntity` snapshot, neither of which exists for a bulk
+      // criteria update.
+      await this.eventEmitter.emit("beforeUpdate", {
+        entity,
+        data: data as Record<string, unknown>,
+      });
 
       const queryStart = Date.now();
       this.ctx.beginTrackQuery();
@@ -1822,6 +1852,11 @@ export class WriteExecutor {
       } else {
         affected = queryResult?.rowCount ?? 0;
       }
+
+      await this.eventEmitter.emit("afterUpdate", {
+        entity,
+        data: data as Record<string, unknown>,
+      });
 
       return { affected };
     });
@@ -2016,6 +2051,16 @@ export class WriteExecutor {
     this.ctx.validateCriteriaKeys(metadata, criteria, entity.name);
 
     return this.ctx.executeInTransaction(async (session) => {
+      // Criteria-based soft-delete events. Symmetrical with delete()'s
+      // before/afterDelete: both fire the eventEmitter channel and the
+      // EntitySubscriber channel with a DeleteEvent (entityClass + criteria).
+      await this.eventEmitter.emit("beforeSoftDelete", { entity, data: criteria });
+      await this.ctx.notifySubscribers(entity, "beforeSoftDelete", {
+        entityClass: entity,
+        criteria,
+        manager: this.ctx.getManager(),
+      } as DeleteEvent<T>);
+
       const sdPropToCol = this.ctx.buildPropertyToColumnMap(metadata);
       // #372: operator-object criteria — same resolver as the read paths.
       const whereMap: Sql[] = resolveWhereClause(criteria, {
@@ -2034,6 +2079,18 @@ export class WriteExecutor {
       const tenantSoftDeleteWhere = this.ctx.buildTenantWhereClause(entity);
       if (tenantSoftDeleteWhere) {
         whereMap.push(tenantSoftDeleteWhere);
+      }
+
+      // STI: only trash rows of the requested subtype (mirrors delete()).
+      const softDeleteSti =
+        this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+      if (softDeleteSti) {
+        whereMap.push(
+          Conditions.equals(
+            this.ctx.wrap(softDeleteSti.columnName),
+            softDeleteSti.value,
+          ),
+        );
       }
 
       // Only stamp rows that are still active. Re-soft-deleting an already
@@ -2059,6 +2116,13 @@ export class WriteExecutor {
         affected = queryResult?.rowCount ?? 0;
       }
 
+      await this.eventEmitter.emit("afterSoftDelete", { entity, data: criteria });
+      await this.ctx.notifySubscribers(entity, "afterSoftDelete", {
+        entityClass: entity,
+        criteria,
+        manager: this.ctx.getManager(),
+      } as DeleteEvent<T>);
+
       return { affected };
     });
   }
@@ -2083,6 +2147,14 @@ export class WriteExecutor {
     this.ctx.validateCriteriaKeys(metadata, criteria, entity.name);
 
     return this.ctx.executeInTransaction(async (session) => {
+      // Criteria-based restore events — symmetrical with softDelete's.
+      await this.eventEmitter.emit("beforeRestore", { entity, data: criteria });
+      await this.ctx.notifySubscribers(entity, "beforeRestore", {
+        entityClass: entity,
+        criteria,
+        manager: this.ctx.getManager(),
+      } as DeleteEvent<T>);
+
       const restorePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
       // #372: operator-object criteria — same resolver as the read paths.
       const whereMap: Sql[] = resolveWhereClause(criteria, {
@@ -2101,6 +2173,15 @@ export class WriteExecutor {
       const tenantRestoreWhere = this.ctx.buildTenantWhereClause(entity);
       if (tenantRestoreWhere) {
         whereMap.push(tenantRestoreWhere);
+      }
+
+      // STI: only revive rows of the requested subtype (mirrors delete()).
+      const restoreSti =
+        this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+      if (restoreSti) {
+        whereMap.push(
+          Conditions.equals(this.ctx.wrap(restoreSti.columnName), restoreSti.value),
+        );
       }
 
       // Only revive rows that are actually soft-deleted. Restoring an active
@@ -2124,6 +2205,13 @@ export class WriteExecutor {
       } else {
         affected = queryResult?.rowCount ?? 0;
       }
+
+      await this.eventEmitter.emit("afterRestore", { entity, data: criteria });
+      await this.ctx.notifySubscribers(entity, "afterRestore", {
+        entityClass: entity,
+        criteria,
+        manager: this.ctx.getManager(),
+      } as DeleteEvent<T>);
 
       return { affected };
     });

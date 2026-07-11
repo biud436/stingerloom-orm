@@ -324,6 +324,90 @@ describe.each(drivers)("[Integration] $label: Soft Delete (@DeletedAt)", ({ type
     });
   });
 
+  // ─── 쓰기 경로 패리티 (#403) ────────────────────────────────────────────────
+
+  describe("updateMany soft-delete 필터 (#403)", () => {
+    it("기본적으로 soft-delete된 행은 updateMany 대상에서 제외된다", async () => {
+      const live = await repo.save({ name: "live", age: 1 });
+      const trashed = await repo.save({ name: "trashed", age: 1 });
+      await repo.softDelete({ id: trashed.id } as any);
+
+      await repo.updateMany({ age: 99 }, { where: { age: 1 } } as any);
+
+      const liveRow = await repo.findOne({ where: { id: live.id } });
+      const trashedRow = await repo.findOne({
+        where: { id: trashed.id },
+        withDeleted: true,
+      } as any);
+      const liveItem = Array.isArray(liveRow) ? liveRow[0] : liveRow;
+      const trashedItem = Array.isArray(trashedRow) ? trashedRow[0] : trashedRow;
+
+      expect(liveItem.age).toBe(99);
+      expect(trashedItem.age).toBe(1);
+    });
+
+    it("withDeleted: true면 soft-delete된 행도 updateMany된다", async () => {
+      const live = await repo.save({ name: "live", age: 1 });
+      const trashed = await repo.save({ name: "trashed", age: 1 });
+      await repo.softDelete({ id: trashed.id } as any);
+
+      await repo.updateMany(
+        { age: 99 },
+        { where: { age: 1 }, withDeleted: true } as any,
+      );
+
+      const trashedRow = await repo.findOne({
+        where: { id: trashed.id },
+        withDeleted: true,
+      } as any);
+      const trashedItem = Array.isArray(trashedRow) ? trashedRow[0] : trashedRow;
+      expect(trashedItem.age).toBe(99);
+    });
+  });
+
+  describe("softDelete/restore 라이프사이클 이벤트 (#403)", () => {
+    it("softDelete가 beforeSoftDelete/afterSoftDelete를 발화한다", async () => {
+      const saved = await repo.save({ name: "ev", age: 1 });
+      const order: string[] = [];
+      const before = () => {
+        order.push("before");
+      };
+      const after = () => {
+        order.push("after");
+      };
+      em.on("beforeSoftDelete", before);
+      em.on("afterSoftDelete", after);
+      try {
+        await repo.softDelete({ id: saved.id } as any);
+      } finally {
+        em.off("beforeSoftDelete", before);
+        em.off("afterSoftDelete", after);
+      }
+      expect(order).toEqual(["before", "after"]);
+    });
+
+    it("restore가 beforeRestore/afterRestore를 발화한다", async () => {
+      const saved = await repo.save({ name: "ev", age: 1 });
+      await repo.softDelete({ id: saved.id } as any);
+      const order: string[] = [];
+      const before = () => {
+        order.push("before");
+      };
+      const after = () => {
+        order.push("after");
+      };
+      em.on("beforeRestore", before);
+      em.on("afterRestore", after);
+      try {
+        await repo.restore({ id: saved.id } as any);
+      } finally {
+        em.off("beforeRestore", before);
+        em.off("afterRestore", after);
+      }
+      expect(order).toEqual(["before", "after"]);
+    });
+  });
+
   // ─── Error Cases ──────────────────────────────────────────────────────────
 
   describe("에러 케이스", () => {

@@ -75,6 +75,22 @@ export class AggregateQueryHandler {
         }
       }
 
+      // STI: count/sum/avg/min/max over a child class must aggregate only that
+      // subtype's rows. find() already filters by the discriminator, so an
+      // unfiltered aggregate would contradict the data set findAndCount() pairs
+      // it with (count included siblings while the rows did not).
+      const aggregateSti = this.ctx
+        .getInheritanceResolver()
+        .getSingleTableChildDiscriminator(entity);
+      if (aggregateSti) {
+        whereMap.push(
+          Conditions.equals(
+            this.ctx.wrap(aggregateSti.columnName),
+            aggregateSti.value,
+          ),
+        );
+      }
+
       // Tenant scoping under the "tenant_column" strategy. Kept consistent
       // with findInternal so exists()/count()/sum()/avg()/min()/max() never
       // leak rows across tenants.
