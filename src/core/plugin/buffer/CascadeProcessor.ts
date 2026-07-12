@@ -3,12 +3,18 @@ import { ClazzType } from "../../../utils";
 import { ONE_TO_MANY_TOKEN, OneToManyMetadata } from "../../../decorators/OneToMany";
 import { ONE_TO_ONE_TOKEN } from "../../../decorators/OneToOne";
 import { MANY_TO_MANY_TOKEN } from "../../../decorators/ManyToMany";
+import { MANY_TO_ONE_TOKEN } from "../../../decorators/ManyToOne";
 import { hasCascade } from "../../../types/CascadeType";
 import { PluginContext } from "../PluginContext";
 import { TrackedEntry, DeleteEntry } from "./BufferEntry";
 import { BufferFlushResult, BufferPluginOptions, ResolvedBufferOptions } from "./BufferPreview";
 import { CollectionDiff } from "./CollectionTracker";
-import { resolveFkColumn, resolveFkWriteKeys, assignFkValue } from "./CollectionTracker";
+import {
+  resolveFkColumn,
+  resolveFkWriteKeys,
+  assignFkValue,
+  readLoadedRelationValue,
+} from "./CollectionTracker";
 import { IdentityMapManager, EntityInstance, ColumnValueMap } from "./IdentityMapManager";
 import type { EntityManager } from "../../EntityManager";
 
@@ -378,11 +384,23 @@ export class CascadeProcessor {
       const ChildEntity = rel.getRelatedEntity();
       const fkColumn = resolveFkColumn(rel, ChildEntity);
       const { pkColumns: parentPks } = this.idMap.getColumnInfo(entityClass);
+      if (parentPks.length === 0) continue;
 
-      // Build child criteria from parent PK
+      // The child FK references a single parent column: the inverse
+      // @ManyToOne's `references` option when set, else the parent's FIRST PK
+      // column (mirroring core CascadeHandler.cascadeDeleteOneToMany). A
+      // composite-PK parent cascades through that referenced column — it was
+      // previously skipped outright (`parentPks.length === 1` gate), leaving
+      // child rows and stale identity-map entries behind.
+      const m2oMeta: any[] =
+        Reflect.getMetadata(MANY_TO_ONE_TOKEN, ChildEntity) ?? [];
+      const inverse = m2oMeta.find((m: any) => m.columnName === rel.mappedBy);
+      const referencedCol = inverse?.references ?? parentPks[0];
+
+      // Build child criteria from the referenced parent column value
       const childCriteria: ColumnValueMap = {};
-      if (parentPks.length === 1) {
-        childCriteria[fkColumn] = criteria[parentPks[0]];
+      if (criteria[referencedCol] != null) {
+        childCriteria[fkColumn] = criteria[referencedCol];
       }
 
       if (Object.keys(childCriteria).length > 0 && childCriteria[fkColumn] != null) {
@@ -428,6 +446,48 @@ export class CascadeProcessor {
           await this.collectCascadeDeletes(txEm, RelatedEntity, relCriteria, out, visited);
           out.push({ entity: RelatedEntity, criteria: relCriteria });
         }
+      }
+    }
+  }
+
+  /**
+   * Invoke `cb` for every related instance reachable through LOADED relation
+   * values — the same relations the cascade write paths mutate (O2M, O2O,
+   * M2M owning side). Unlike {@link propagateToRelations}, unloaded lazy
+   * proxies and in-flight loads are skipped and never triggered, so this is
+   * safe to run outside a query context. Used to widen the pre-flush rollback
+   * snapshot to cascade-reachable children.
+   */
+  forEachLoadedRelated(
+    instance: EntityInstance,
+    entityClass: ClazzType<any>,
+    cb: (child: EntityInstance) => void,
+  ): void {
+    const o2mMeta: OneToManyMetadata<any>[] =
+      Reflect.getMetadata(ONE_TO_MANY_TOKEN, entityClass) ?? [];
+    for (const rel of o2mMeta) {
+      const children = readLoadedRelationValue(instance, rel.propertyKey);
+      if (!Array.isArray(children)) continue;
+      for (const child of children) {
+        if (child !== null && typeof child === "object") cb(child);
+      }
+    }
+
+    const o2oMeta: any[] =
+      Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) ?? [];
+    for (const rel of o2oMeta) {
+      const related = readLoadedRelationValue(instance, rel.propertyKey);
+      if (related !== undefined && !Array.isArray(related)) cb(related);
+    }
+
+    const m2mMeta: any[] =
+      Reflect.getMetadata(MANY_TO_MANY_TOKEN, entityClass) ?? [];
+    for (const rel of m2mMeta) {
+      if (rel.mappedBy || !rel.joinTable) continue;
+      const children = readLoadedRelationValue(instance, rel.propertyKey);
+      if (!Array.isArray(children)) continue;
+      for (const child of children) {
+        if (child !== null && typeof child === "object") cb(child);
       }
     }
   }

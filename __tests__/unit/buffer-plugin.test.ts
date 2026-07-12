@@ -3671,19 +3671,30 @@ describe("Buffer Plugin", () => {
         }], RefPost);
 
         const em = createExtendedEm(RefPost, RefAuthor);
-        // getReference doesn't touch DB, but the lazy proxy will
-        jest.spyOn(em, "findOne").mockResolvedValue(
-          Object.assign(new RefAuthor(), { id: 7, name: "Charlie" }),
-        );
+        // getReference doesn't touch DB, but the hydrate-first proxy will:
+        // first access loads the stub's own row (to get the FK), then the target.
+        jest.spyOn(em, "findOne").mockImplementation(async (entity: any) => {
+          if (entity === RefPost) {
+            return Object.assign(new RefPost(), { id: 1, title: "T", authorId: 7 }) as any;
+          }
+          if (entity === RefAuthor) {
+            return Object.assign(new RefAuthor(), { id: 7, name: "Charlie" }) as any;
+          }
+          return null as any;
+        });
 
         const buf = em.buffer();
 
-        // Create reference — author is not loaded but authorId is not set either
-        // so no M2O proxy will fire (no FK value)
+        // Create reference — a PK-only stub has no FK value, but the M2O proxy
+        // must still be injected: it hydrates the stub's row on first access
+        // and chains into the relation load.
         const ref = buf.getReference(RefPost, 1);
         expect((ref as any).id).toBe(1);
-        // author property — no FK value, so undefined
-        expect((ref as any).author).toBeUndefined();
+        const author = await (ref as any).author;
+        expect(author).toBeInstanceOf(RefAuthor);
+        expect(author.name).toBe("Charlie");
+        // Hydration filled the stub's own columns along the way.
+        expect((ref as any).authorId).toBe(7);
       });
 
       it("should allow setting value on lazy proxy property", async () => {

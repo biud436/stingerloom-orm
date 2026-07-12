@@ -12,11 +12,15 @@ import {
   ResolvedBufferOptions,
   resolveCascadeOptions,
 } from "./BufferPreview";
-import { BufferStrategy, SnapshotStrategy } from "./BufferStrategy";
+import { BufferStrategy, SnapshotStrategy, deepEquals } from "./BufferStrategy";
 import { EntityState } from "./EntityUnitState";
 import { sortForInsert, sortForDelete, buildTopologicalIndexMap, sortByIndex } from "./DependencyGraph";
-import { snapshotCollections, diffCollection } from "./CollectionTracker";
+import { snapshotCollections, diffCollection, readLoadedRelationValue } from "./CollectionTracker";
 import type { CollectionSnapshot, CollectionDiff } from "./CollectionTracker";
+import { MANY_TO_ONE_TOKEN } from "../../../decorators/ManyToOne";
+import { ONE_TO_MANY_TOKEN } from "../../../decorators/OneToMany";
+import { ONE_TO_ONE_TOKEN } from "../../../decorators/OneToOne";
+import { MANY_TO_MANY_TOKEN } from "../../../decorators/ManyToMany";
 import { createPersistentCollection } from "./PersistentCollection";
 import { IdentityMapManager } from "./IdentityMapManager";
 import { CascadeProcessor } from "./CascadeProcessor";
@@ -236,7 +240,10 @@ export class WriteBuffer {
         const cached = this.idMap.identityMap.get(cacheKey);
         // A reference stub (getReference) is PK-only and not hydrated, so it is
         // NOT a valid cache hit — fall through to the DB load, which hydrates it.
-        if (cached && !this.referenceStubs.has(cached)) {
+        // The instanceof guard covers STI/TPT root-keyed entries: a sibling-type
+        // PK lookup must go to the DB (whose discriminator filter answers it),
+        // never serve the cached instance of another subtype.
+        if (cached && !this.referenceStubs.has(cached) && cached instanceof entity) {
           this.idMap.touch(cacheKey);
           await this.autoFlushIfNeeded();
           if (this.options.logging) {
@@ -309,8 +316,12 @@ export class WriteBuffer {
    * If an entity with the same PK is already in the Identity Map,
    * returns the existing tracked instance.
    *
-   * Relation properties are initialized as lazy proxies — accessing them
-   * triggers a DB query and registers the loaded entities in this buffer.
+   * The stub is snapshot-tracked with a PK-only baseline, so columns written
+   * on it are detected as dirty and flushed as a targeted UPDATE. Relation
+   * properties are initialized as lazy proxies — accessing them triggers a DB
+   * query and registers the loaded entities in this buffer; FK-dependent
+   * relations (@ManyToOne / owning @OneToOne) hydrate the stub's own row
+   * first, then load the target.
    */
   getReference<T>(entityClass: ClazzType<T>, pk: any): T {
     this.idMap.validateEntity(entityClass);
@@ -330,20 +341,41 @@ export class WriteBuffer {
     const key = this.idMap.buildIdentityKey(entityClass, instance, pkColumns);
     const existing = this.idMap.identityMap.get(key);
     if (existing) {
+      // Root-keyed inheritance entries may hold a different subtype than the
+      // requested class — surface that instead of returning a type lie.
+      // Either direction of the hierarchy is fine (a root-class stub can
+      // serve a subclass reference and vice versa).
+      if (
+        !(existing instanceof entityClass) &&
+        !((entityClass as any).prototype instanceof (existing as any).constructor)
+      ) {
+        throw new Error(
+          `Identity conflict: the row (${key}) is already tracked as ` +
+          `"${(existing as any).constructor?.name}", not "${entityClass.name}".`,
+        );
+      }
       this.idMap.touch(key);
       return existing as T;
     }
 
-    // Register in identity map (not snapshot-tracked — reference only).
-    // Mark it as a reference stub so a later findOne() hydrates it from the DB
-    // rather than returning the PK-only instance from the first-level cache.
-    this.idMap.identityMap.set(key, instance);
-    this.idMap.stateMap.set(instance, EntityState.MANAGED);
+    // Snapshot-track the stub with a PK-only baseline: exactly the columns
+    // the caller writes on it diff as dirty, so stub writes flush as a
+    // targeted UPDATE instead of being silently dropped. Mark it as a
+    // reference stub so a later findOne() hydrates it from the DB rather
+    // than returning the PK-only instance from the first-level cache.
+    this.track(instance);
     this.referenceStubs.add(instance);
-    this.idMap.evictIfNeeded();
 
-    // Inject lazy proxies for relation properties
-    this.lazyInjector.injectLazyRelations(instance, entityClass);
+    // Inject lazy proxies for relation properties. The stub carries no FK
+    // values, so FK-dependent relations hydrate the stub's own row on first
+    // access (which also re-baselines the tracked snapshot).
+    const hydrateStub = async (): Promise<void> => {
+      if (!this.referenceStubs.has(instance)) return; // already hydrated
+      const where = this.idMap.buildPkWhere(instance, pkColumns);
+      const loaded = await this.ctx.em.findOne(entityClass, { where: where as any });
+      if (loaded) this.resolveIdentity(entityClass, loaded);
+    };
+    this.lazyInjector.injectLazyRelations(instance, entityClass, hydrateStub);
 
     return instance as T;
   }
@@ -1323,29 +1355,35 @@ export class WriteBuffer {
 
   /**
    * Snapshot the current column values of every instance a flush may mutate:
-   * all persist-queue instances (PK write-back) and all tracked instances
-   * (write-back / @Version bump / timestamps on UPDATE). Returns a map from
-   * instance → its pre-flush column values, used by
+   * all persist-queue instances (PK write-back), all tracked instances
+   * (write-back / @Version bump / timestamps on UPDATE), and every instance
+   * reachable from those roots through LOADED relation values — cascade
+   * inserts mutate children in place too (generated PK, FK columns,
+   * timestamps). Unloaded lazy proxies are never triggered by the walk.
+   *
+   * Returns a map from instance → its pre-flush column values, used by
    * {@link restorePreFlushColumnState} to undo those mutations if the flush
    * transaction rolls back.
-   *
-   * Note: cascade-inserted CHILD instances loaded/created outside these two
-   * sets are not captured here — restoring their PKs after a failed cascade
-   * flush is a deeper concern tracked separately.
    */
   private capturePreFlushColumnState(
     persists: PersistEntry[],
   ): Map<any, Record<string, any>> {
     const state = new Map<any, Record<string, any>>();
-    const record = (instance: any, columnNames: string[]): void => {
-      if (state.has(instance)) return;
+    const record = (instance: any): void => {
+      if (instance === null || typeof instance !== "object" || state.has(instance)) return;
+      const ctor = instance.constructor as ClazzType<any>;
+      if (typeof ctor !== "function" || (ctor as unknown) === Object) return;
+      const { columnNames } = this.idMap.getColumnInfo(ctor);
+      if (columnNames.length === 0) return;
       const snap: Record<string, any> = {};
       for (const col of columnNames) snap[col] = instance[col];
       state.set(instance, snap);
+      // Recurse into cascade-reachable children (loaded relations only).
+      this.cascade.forEachLoadedRelated(instance, ctor, record);
     };
-    for (const entry of persists) record(entry.instance, entry.columnNames);
+    for (const entry of persists) record(entry.instance);
     for (const entry of this.trackedEntries.values()) {
-      record(entry.instance, entry.columnNames);
+      record(entry.instance);
     }
     return state;
   }
@@ -1474,11 +1512,45 @@ export class WriteBuffer {
   }
 
   private resolveIdentity(entityClass: ClazzType<any>, instance: any): any {
-    const { pkColumns } = this.idMap.getColumnInfo(entityClass);
-    const key = this.idMap.buildIdentityKey(entityClass, instance, pkColumns);
+    return this.resolveIdentityGraph(entityClass, instance, new Map());
+  }
+
+  /**
+   * Identity-resolve a freshly loaded instance AND its eagerly loaded
+   * relation graph.
+   *
+   * Every loaded M2O / O2O / O2M / M2M child is resolved through the identity
+   * map — registered, snapshot-tracked, and given lazy proxies for its own
+   * unloaded relations — so a later edit on an eager-loaded child is detected
+   * as dirty. On an identity-map hit, the freshly fetched relation values are
+   * attached to the canonical instance when it does not have them loaded yet
+   * (a hit must not discard relations the caller explicitly fetched).
+   *
+   * The `resolved` map carries fresh → canonical mappings across the walk so
+   * cyclic graphs (child back-references) terminate and duplicate fresh
+   * instances of one row collapse to a single canonical instance.
+   */
+  private resolveIdentityGraph(
+    entityClass: ClazzType<any>,
+    instance: any,
+    resolved: Map<any, any>,
+  ): any {
+    const prior = resolved.get(instance);
+    if (prior !== undefined) return prior;
+
+    let key: string;
+    try {
+      const { pkColumns } = this.idMap.getColumnInfo(entityClass);
+      key = this.idMap.buildIdentityKey(entityClass, instance, pkColumns);
+    } catch {
+      // No usable PK (e.g. a partially selected child) — leave it untouched.
+      resolved.set(instance, instance);
+      return instance;
+    }
 
     const existing = this.idMap.identityMap.get(key);
     if (existing) {
+      resolved.set(instance, existing);
       this.idMap.touch(key);
       // If the mapped instance is an unhydrated getReference() stub, populate
       // it in place from the freshly loaded row and promote it to a fully
@@ -1487,19 +1559,130 @@ export class WriteBuffer {
       if (existing !== instance && this.referenceStubs.has(existing)) {
         this.hydrateReference(entityClass, existing, instance);
       }
+      this.resolveLoadedRelations(entityClass, instance, existing, resolved);
       return existing;
     }
 
+    // Pre-claim the identity slot BEFORE walking children, so a back-reference
+    // to this same row deeper in the graph resolves to THIS instance instead
+    // of tracking a duplicate (identity conflict).
+    resolved.set(instance, instance);
+    this.idMap.identityMap.set(key, instance);
+    this.idMap.stateMap.set(instance, EntityState.MANAGED);
+    this.resolveLoadedRelations(entityClass, instance, instance, resolved);
+    // Track AFTER the children were swapped for canonical instances, so the
+    // collection baseline snapshots exactly what the instance now holds.
     this.track(instance);
     this.lazyInjector.injectLazyRelations(instance, entityClass);
     return instance;
   }
 
   /**
+   * Walk the LOADED relation values of a freshly loaded instance. Every child
+   * is identity-resolved recursively; when the canonical root differs from
+   * the fresh one (identity-map hit), freshly fetched relation values are
+   * attached to the canonical instance if it lacks them. Unloaded lazy
+   * proxies and in-flight loads are never triggered.
+   */
+  private resolveLoadedRelations(
+    entityClass: ClazzType<any>,
+    fresh: any,
+    canonical: any,
+    resolved: Map<any, any>,
+  ): void {
+    const ctor = fresh?.constructor;
+    const cls = (typeof ctor === "function" && ctor !== Object
+      ? ctor
+      : entityClass) as ClazzType<any>;
+
+    const m2oMeta: any[] = Reflect.getMetadata(MANY_TO_ONE_TOKEN, cls) ?? [];
+    for (const rel of m2oMeta) {
+      this.resolveSingleRelation(fresh, canonical, rel.columnName, rel.getMappingEntity?.(), resolved);
+    }
+    const o2oMeta: any[] = Reflect.getMetadata(ONE_TO_ONE_TOKEN, cls) ?? [];
+    for (const rel of o2oMeta) {
+      this.resolveSingleRelation(fresh, canonical, rel.propertyKey, rel.getRelatedEntity?.(), resolved);
+    }
+    const o2mMeta: any[] = Reflect.getMetadata(ONE_TO_MANY_TOKEN, cls) ?? [];
+    for (const rel of o2mMeta) {
+      this.resolveCollectionRelation(fresh, canonical, rel.propertyKey, rel.getRelatedEntity?.(), resolved);
+    }
+    const m2mMeta: any[] = Reflect.getMetadata(MANY_TO_MANY_TOKEN, cls) ?? [];
+    for (const rel of m2mMeta) {
+      this.resolveCollectionRelation(fresh, canonical, rel.propertyKey, rel.getRelatedEntity?.(), resolved);
+    }
+  }
+
+  private resolveSingleRelation(
+    fresh: any,
+    canonical: any,
+    prop: string,
+    RelatedEntity: ClazzType<any> | undefined,
+    resolved: Map<any, any>,
+  ): void {
+    if (!RelatedEntity) return;
+    try { this.idMap.validateEntity(RelatedEntity); } catch { return; }
+    const val = readLoadedRelationValue(fresh, prop);
+    if (val === undefined || Array.isArray(val)) return;
+    const child = this.resolveIdentityGraph(RelatedEntity, val, resolved);
+    if (canonical === fresh) {
+      if (child !== val) fresh[prop] = child;
+    } else {
+      this.attachFreshRelation(canonical, prop, child, false);
+    }
+  }
+
+  private resolveCollectionRelation(
+    fresh: any,
+    canonical: any,
+    prop: string,
+    RelatedEntity: ClazzType<any> | undefined,
+    resolved: Map<any, any>,
+  ): void {
+    if (!RelatedEntity) return;
+    try { this.idMap.validateEntity(RelatedEntity); } catch { return; }
+    const arr = readLoadedRelationValue(fresh, prop);
+    if (!Array.isArray(arr)) return;
+    const out = arr.map((item) =>
+      item !== null && typeof item === "object"
+        ? this.resolveIdentityGraph(RelatedEntity, item, resolved)
+        : item,
+    );
+    if (canonical === fresh) {
+      // Swap elements in place so the array identity the caller holds stays valid.
+      for (let i = 0; i < out.length; i++) arr[i] = out[i];
+    } else {
+      this.attachFreshRelation(canonical, prop, out, true);
+    }
+  }
+
+  /**
+   * Attach a freshly loaded relation value to a canonical (identity-map hit)
+   * instance — but ONLY when it does not already have that relation loaded. A
+   * loaded value on the canonical instance may carry user edits and always
+   * wins. Assigning through an unmaterialized lazy proxy's setter materializes
+   * it; a just-materialized collection then gets its change-tracking baseline.
+   */
+  private attachFreshRelation(
+    canonical: any,
+    prop: string,
+    value: any,
+    isCollection: boolean,
+  ): void {
+    const desc = Object.getOwnPropertyDescriptor(canonical, prop);
+    if (desc && "value" in desc && desc.value !== undefined) return;
+    canonical[prop] = value;
+    if (isCollection) this.captureLoadedCollectionSnapshot(canonical, prop);
+  }
+
+  /**
    * Copies the column values from a freshly loaded row into an existing
-   * getReference() stub, clears its reference mark, and snapshot-tracks it so
-   * subsequent dirty-checking works. Relation properties keep their lazy
-   * proxies (only column values are copied).
+   * getReference() stub and clears its reference mark. Columns the caller
+   * wrote on the stub BEFORE hydration (they differ from the PK-only tracked
+   * baseline) are kept — they are pending user state — while the tracked
+   * snapshot is re-baselined against the DB row, so exactly those writes stay
+   * dirty and flush as an UPDATE. Relation properties keep their lazy proxies
+   * (only column values are copied).
    */
   private hydrateReference(
     entityClass: ClazzType<any>,
@@ -1507,11 +1690,18 @@ export class WriteBuffer {
     loaded: any,
   ): void {
     const { columnNames } = this.idMap.getColumnInfo(entityClass);
+    const entry = this.trackedEntries.get(stub);
     for (const col of columnNames) {
-      stub[col] = loaded[col];
+      const userWrote =
+        entry !== undefined && !deepEquals(stub[col], entry.snapshot[col]);
+      if (!userWrote) stub[col] = loaded[col];
     }
     this.referenceStubs.delete(stub);
-    this.track(stub);
+    if (entry) {
+      entry.snapshot = this.strategy.snapshot(loaded, entry.columnNames);
+    } else {
+      this.track(stub);
+    }
   }
 
   /**

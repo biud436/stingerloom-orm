@@ -5,6 +5,7 @@ import { MANY_TO_MANY_TOKEN, ManyToManyMetadata } from "../../../decorators/Many
 import { MANY_TO_ONE_TOKEN } from "../../../decorators/ManyToOne";
 import { RELATION_COLUMN_TOKEN, RelationColumnMetadata } from "../../../decorators/RelationColumn";
 import { COLUMN_TOKEN } from "../../../decorators/Column";
+import { isLazyProxy } from "../../LazyLoader";
 
 /**
  * Snapshot of a collection (O2M or M2M array) at track() time.
@@ -31,6 +32,25 @@ export interface CollectionDiff {
   added: any[];
   removed: any[];
   snapshot: CollectionSnapshot;
+}
+
+/**
+ * Read a relation property's LOADED value without ever triggering a lazy
+ * load. Returns `undefined` for: an absent property, an accessor-based lazy
+ * proxy (own get/set descriptor), an in-flight load Promise, a LazyLoader
+ * proxy object, and scalar values (a legacy relation property holding a raw
+ * FK is not a loaded relation).
+ */
+export function readLoadedRelationValue(instance: any, propertyKey: string): any {
+  if (instance === null || typeof instance !== "object") return undefined;
+  const desc = Object.getOwnPropertyDescriptor(instance, propertyKey);
+  if (!desc || !("value" in desc)) return undefined;
+  const val = desc.value;
+  if (val === null || typeof val !== "object") return undefined;
+  if (val instanceof Date) return undefined;
+  if (typeof (val as { then?: unknown }).then === "function") return undefined;
+  if (isLazyProxy(val)) return undefined;
+  return val;
 }
 
 /**
@@ -156,8 +176,12 @@ export function resolveFkColumn(
   if (match?.joinColumn) return match.joinColumn;
 
   // 3. Backing @Column following the `${prop}Id` convention.
+  // COLUMN_TOKEN lives on the PROTOTYPE (property decorator), unlike the
+  // relation tokens which live on the constructor — reading it off the
+  // constructor silently skipped this step and fell through to the legacy
+  // property-name fallback, producing broken `WHERE "relationProp" = ?` SQL.
   const columnsMeta: any[] =
-    Reflect.getMetadata(COLUMN_TOKEN, ChildEntity) ?? [];
+    Reflect.getMetadata(COLUMN_TOKEN, ChildEntity.prototype) ?? [];
   const fkProp = `${mappedBy}Id`;
   const colMatch = columnsMeta.find((c: any) => c.propertyKey === fkProp);
   if (colMatch) return colMatch.name ?? fkProp;

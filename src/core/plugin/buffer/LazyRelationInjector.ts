@@ -54,18 +54,32 @@ export class LazyRelationInjector {
 
   /**
    * Inject lazy-loading proxies on all relation properties of an instance.
+   *
+   * @param hydrateStub — provided for a PK-only getReference() stub. A stub
+   *   carries no FK values, so FK-dependent relations (@ManyToOne / owning
+   *   @OneToOne) cannot resolve their target eagerly; with this callback the
+   *   proxy hydrates the stub's own row first, then chains into the normal
+   *   relation load. Without it, FK-less properties are simply skipped.
    */
-  injectLazyRelations(instance: EntityInstance, entityClass: ClazzType<any>): void {
-    this.injectLazyManyToOne(instance, entityClass);
+  injectLazyRelations(
+    instance: EntityInstance,
+    entityClass: ClazzType<any>,
+    hydrateStub?: () => Promise<void>,
+  ): void {
+    this.injectLazyManyToOne(instance, entityClass, hydrateStub);
     this.injectLazyOneToMany(instance, entityClass);
-    this.injectLazyOneToOne(instance, entityClass);
+    this.injectLazyOneToOne(instance, entityClass, hydrateStub);
     this.injectLazyManyToMany(instance, entityClass);
   }
 
   /**
    * @ManyToOne lazy: access `instance.author` -> loads Author by FK value.
    */
-  private injectLazyManyToOne(instance: EntityInstance, entityClass: ClazzType<any>): void {
+  private injectLazyManyToOne(
+    instance: EntityInstance,
+    entityClass: ClazzType<any>,
+    hydrateStub?: () => Promise<void>,
+  ): void {
     const meta: ManyToOneMetadata<any>[] =
       Reflect.getMetadata(MANY_TO_ONE_TOKEN, entityClass) ?? [];
 
@@ -79,7 +93,9 @@ export class LazyRelationInjector {
       const fkShadow = rel.option?.fkProperty ?? `${rel.columnName}Id`;
       const fkColumn = rel.joinColumn ?? rel.columnName;
       const fkValue = instance[fkShadow] ?? instance[fkColumn];
-      if (fkValue === undefined || fkValue === null) continue;
+      // A PK-only stub has no FK yet — inject anyway when it can hydrate
+      // itself on first access.
+      if ((fkValue === undefined || fkValue === null) && !hydrateStub) continue;
 
       const RelatedEntity = rel.getMappingEntity() as any as ClazzType<any>;
       try { this.idMap.validateEntity(RelatedEntity); } catch { continue; }
@@ -88,9 +104,25 @@ export class LazyRelationInjector {
       const refColumn = rel.references ?? (relatedPkCols.length === 1 ? relatedPkCols[0] : null);
       if (!refColumn) continue;
 
+      // Inside the loader the proxy is already installed on rel.columnName —
+      // when the legacy fallback makes fkColumn that same property, reading it
+      // would re-enter the getter and recurse infinitely. Only the shadow (and
+      // a genuinely distinct fkColumn) may be read after injection.
+      const readFk = (): any => {
+        const shadow = instance[fkShadow];
+        if (shadow !== undefined && shadow !== null) return shadow;
+        return fkColumn !== rel.columnName ? instance[fkColumn] : undefined;
+      };
+
       injectLazyProxy(instance, rel.columnName, async () => {
+        let fk = fkValue ?? readFk();
+        if ((fk === undefined || fk === null) && hydrateStub) {
+          await hydrateStub();
+          fk = readFk();
+        }
+        if (fk === undefined || fk === null) return undefined;
         const result = await this.ctx.em.findOne(RelatedEntity, {
-          where: { [refColumn]: fkValue } as any,
+          where: { [refColumn]: fk } as any,
         });
         if (result) return this.resolveIdentity(RelatedEntity, result);
         return undefined;
@@ -124,7 +156,11 @@ export class LazyRelationInjector {
   /**
    * @OneToOne lazy: access `instance.profile` -> loads Profile by FK or inverse lookup.
    */
-  private injectLazyOneToOne(instance: EntityInstance, entityClass: ClazzType<any>): void {
+  private injectLazyOneToOne(
+    instance: EntityInstance,
+    entityClass: ClazzType<any>,
+    hydrateStub?: () => Promise<void>,
+  ): void {
     const meta: OneToOneMetadata<any>[] =
       Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) ?? [];
 
@@ -136,15 +172,24 @@ export class LazyRelationInjector {
 
       if (rel.joinColumn) {
         // Owning side - FK column on this entity
-        const fkValue = instance[rel.joinColumn];
-        if (fkValue === undefined || fkValue === null) continue;
+        const joinColumn = rel.joinColumn;
+        const fkValue = instance[joinColumn];
+        // A PK-only stub has no FK yet — inject anyway when it can hydrate
+        // itself on first access.
+        if ((fkValue === undefined || fkValue === null) && !hydrateStub) continue;
 
         const relatedPkCols = this.idMap.getColumnInfo(RelatedEntity).pkColumns;
         if (relatedPkCols.length !== 1) continue;
 
         injectLazyProxy(instance, rel.propertyKey, async () => {
+          let fk = instance[joinColumn];
+          if ((fk === undefined || fk === null) && hydrateStub) {
+            await hydrateStub();
+            fk = instance[joinColumn];
+          }
+          if (fk === undefined || fk === null) return undefined;
           const result = await this.ctx.em.findOne(RelatedEntity, {
-            where: { [relatedPkCols[0]]: fkValue } as any,
+            where: { [relatedPkCols[0]]: fk } as any,
           });
           if (result) return this.resolveIdentity(RelatedEntity, result);
           return undefined;

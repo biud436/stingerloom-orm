@@ -11,6 +11,7 @@ import {
 import { ColumnMetadata } from "../../../scanner/ColumnScanner";
 import { FindOption } from "../../../dialects/FindOption";
 import { MetadataContext } from "../../../metadata/MetadataContext";
+import { InheritanceResolver } from "../../InheritanceResolver";
 import { PluginContext } from "../PluginContext";
 import { EntityState } from "./EntityUnitState";
 import type { TrackedEntry } from "./BufferEntry";
@@ -39,6 +40,7 @@ export class IdentityMapManager {
   readonly identityMap = new Map<string, EntityInstance>();
   readonly stateMap = new Map<EntityInstance, string>();
   private readonly ctx: PluginContext;
+  private readonly inheritance = new InheritanceResolver();
   private _maxSize: number | undefined;
   /**
    * External reference to the WriteBuffer's trackedEntries map.
@@ -243,8 +245,42 @@ export class IdentityMapManager {
   }
 
   /**
+   * Resolve the class whose NAME keys an entity in the identity map.
+   *
+   * The instance's concrete constructor is preferred over the class the
+   * caller queried with — a polymorphic (root-class) query hydrates subclass
+   * instances, and the key must be the same regardless of which side computed
+   * it. On top of that:
+   *
+   * - SINGLE_TABLE / JOINED hierarchies share one PK space (one table / a
+   *   shared root table), so the ROOT class keys the whole hierarchy — the
+   *   same row loaded via the root and via the subclass is one identity.
+   * - TABLE_PER_CLASS has an independent PK sequence per concrete table, so
+   *   the concrete class keys it (root-keying would collide sibling rows).
+   */
+  resolveIdentityKeyClass(
+    entityClass: ClazzType<any>,
+    instance?: EntityInstance,
+  ): ClazzType<any> {
+    let cls = entityClass;
+    const ctor = instance?.constructor;
+    if (typeof ctor === "function" && ctor !== Object) {
+      cls = ctor as ClazzType<any>;
+    }
+    const strategy = this.inheritance.getStrategy(cls);
+    if (strategy === "SINGLE_TABLE" || strategy === "JOINED") {
+      return this.inheritance.getRoot(cls) ?? cls;
+    }
+    return cls;
+  }
+
+  /**
    * Build a unique identity key for an entity instance based on class name + PK values.
    * Throws if any PK column is null/undefined.
+   *
+   * The keying class is resolved via {@link resolveIdentityKeyClass}, so an
+   * STI/TPT row is keyed identically whether it was looked up through the
+   * hierarchy root or tracked from its concrete `instance.constructor`.
    *
    * When the `"tenant_column"` strategy is active the key is prefixed with the
    * tenant (e.g. `"acme|User:id=1"`) so that the same PK value belonging to
@@ -269,8 +305,9 @@ export class IdentityMapManager {
       }
       return `${pk}=${value}`;
     }).join(",");
+    const keyClass = this.resolveIdentityKeyClass(entityClass, instance);
     const prefix = this.resolveTenantPrefixFromInstance(entityClass, instance);
-    return `${prefix}${entityClass.name}:${pkParts}`;
+    return `${prefix}${keyClass.name}:${pkParts}`;
   }
 
   /**
@@ -508,7 +545,12 @@ export class IdentityMapManager {
     const pkParts = pkColumns
       .map((pk) => `${pk}=${whereObj[pk]}`)
       .join(",");
-    return `${tenantPrefix}${entityClass.name}:${pkParts}`;
+    // Key by the same class buildIdentityKey uses (STI/TPT root), so a
+    // root-class cache probe hits an entry tracked from a subclass instance.
+    // The caller must still `instanceof`-guard the hit — a root-keyed entry
+    // may be a different subtype than the one being queried.
+    const keyClass = this.resolveIdentityKeyClass(entityClass);
+    return `${tenantPrefix}${keyClass.name}:${pkParts}`;
   }
 
   private isLiteralScalar(value: unknown): boolean {

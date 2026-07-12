@@ -228,7 +228,25 @@ INSERT INTO "post" ("title", "authorId") VALUES ($1, $2)
 -- No SELECT for user — we just needed the ID
 ```
 
-If you later call `buf.findOne(User, { where: { id: 5 } })`, it returns the same reference that `getReference()` created — the Identity Map guarantees this.
+If you later call `buf.findOne(User, { where: { id: 5 } })`, it returns the same reference that `getReference()` created — the Identity Map guarantees this. The `findOne()` still hits the database and hydrates the reference in place: untouched columns are filled from the loaded row, while columns you already wrote on the reference stay dirty and win on flush.
+
+Two more behaviors make a reference usable directly, without loading the full entity first:
+
+- **Writes to a reference flush as an UPDATE.** The reference is snapshot-tracked with a PK-only baseline, so exactly the columns you set on it are detected as dirty:
+
+  ```typescript
+  const post = buf.getReference(Post, 10);
+  post.title = "Patched";
+  await buf.flush();
+  // UPDATE "post" SET "title" = $1 WHERE "id" = $2 — no SELECT first
+  ```
+
+- **Relation properties work.** They are initialized as lazy proxies. `@OneToMany` / `@ManyToMany` / inverse `@OneToOne` load directly from the reference's PK. `@ManyToOne` and owning-side `@OneToOne` need the FK value the PK-only reference does not carry yet, so their first access hydrates the reference's own row, then loads the target:
+
+  ```typescript
+  const post = buf.getReference(Post, 10);
+  const author = await post.author; // SELECT the post row (FK), then the author row
+  ```
 
 ### track — Manually register an entity
 

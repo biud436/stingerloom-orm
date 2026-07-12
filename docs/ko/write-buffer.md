@@ -227,7 +227,25 @@ INSERT INTO "post" ("title", "authorId") VALUES ($1, $2)
 -- No SELECT for user — we just needed the ID
 ```
 
-나중에 `buf.findOne(User, { where: { id: 5 } })`를 호출하면, `getReference()`가 만든 것과 같은 참조를 반환해요 -- Identity Map이 보장해요.
+나중에 `buf.findOne(User, { where: { id: 5 } })`를 호출하면, `getReference()`가 만든 것과 같은 참조를 반환해요 -- Identity Map이 보장해요. 이때 `findOne()`은 여전히 데이터베이스를 조회해서 참조를 그 자리에서 하이드레이션합니다. 건드리지 않은 컬럼은 로드된 행 값으로 채워지고, 참조에 이미 써 둔 값은 dirty 상태를 유지해서 flush 때 그대로 반영됩니다.
+
+전체 엔티티를 로드하지 않고도 참조를 바로 쓸 수 있도록, 두 가지 동작이 더 있어요.
+
+- **참조에 쓴 값은 UPDATE로 flush됩니다.** 참조는 PK만 있는 baseline으로 스냅샷 추적되므로, 설정한 컬럼만 정확히 dirty로 감지됩니다:
+
+  ```typescript
+  const post = buf.getReference(Post, 10);
+  post.title = "Patched";
+  await buf.flush();
+  // UPDATE "post" SET "title" = $1 WHERE "id" = $2 — SELECT 없이 바로
+  ```
+
+- **관계 프로퍼티도 동작합니다.** 관계는 lazy 프록시로 초기화돼요. `@OneToMany` / `@ManyToMany` / inverse `@OneToOne`은 참조의 PK로 바로 로드합니다. `@ManyToOne`과 owning `@OneToOne`은 PK만 있는 참조에 아직 없는 FK 값이 필요하므로, 첫 접근 때 참조 자신의 행을 먼저 하이드레이션한 뒤 대상을 로드합니다:
+
+  ```typescript
+  const post = buf.getReference(Post, 10);
+  const author = await post.author; // post 행(FK) 조회 → author 행 조회
+  ```
 
 ### track -- 엔티티 수동 등록
 
