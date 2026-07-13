@@ -398,24 +398,55 @@ export class IdentityMapManager {
   }
 
   /**
-   * Get the @Version column name for an entity class, or null if none.
+   * Get the @Version PROPERTY key for an entity class, or null if none.
+   *
+   * The token metadata holds the propertyKey as decorated, but
+   * `applyNamingStrategyToEntities` rewrites it to the DB column name (e.g.
+   * "row_version") for the SQL builders. Buffer code reads/writes INSTANCE
+   * fields, so the value is mapped back to the property key here — otherwise
+   * `instance["row_version"]` misses and the @Version fallback increment /
+   * timestamp write lands on a stray property.
    */
   getVersionColumn(entityClass: ClazzType<any>): string | null {
-    return Reflect.getMetadata(VERSION_TOKEN, entityClass) ?? null;
+    return this.resolveTokenPropertyKey(entityClass, VERSION_TOKEN);
   }
 
   /**
-   * Get the @CreateTimestamp column name for an entity class, or null if none.
+   * Get the @CreateTimestamp PROPERTY key for an entity class, or null if
+   * none. See {@link getVersionColumn} for the NamingStrategy mapping.
    */
   getCreateTimestampColumn(entityClass: ClazzType<any>): string | null {
-    return Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, entityClass) ?? null;
+    return this.resolveTokenPropertyKey(entityClass, CREATE_TIMESTAMP_TOKEN);
   }
 
   /**
-   * Get the @UpdateTimestamp column name for an entity class, or null if none.
+   * Get the @UpdateTimestamp PROPERTY key for an entity class, or null if
+   * none. See {@link getVersionColumn} for the NamingStrategy mapping.
    */
   getUpdateTimestampColumn(entityClass: ClazzType<any>): string | null {
-    return Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, entityClass) ?? null;
+    return this.resolveTokenPropertyKey(entityClass, UPDATE_TIMESTAMP_TOKEN);
+  }
+
+  /**
+   * Resolve a version/timestamp token value to the entity's property key.
+   * The token holds either the propertyKey (no naming strategy / no rename)
+   * or the DB column name (rewritten by `applyNamingStrategyToEntities` and
+   * by explicit `@Column({ name })`). Property-key matches take precedence
+   * over DB-name matches so a sibling column whose DB name shadows another
+   * property cannot misroute the lookup.
+   */
+  private resolveTokenPropertyKey(
+    entityClass: ClazzType<any>,
+    token: symbol,
+  ): string | null {
+    const value = Reflect.getMetadata(token, entityClass) as string | undefined;
+    if (!value) return null;
+    const columns: ColumnMetadata[] =
+      Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
+    const byProp = columns.find((c) => c.propertyKey === value);
+    if (byProp) return byProp.propertyKey!;
+    const byName = columns.find((c) => c.name === value);
+    return byName?.propertyKey ?? value;
   }
 
   /**

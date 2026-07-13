@@ -11,11 +11,16 @@ import {
   BulkUpdateEntry, BulkDeleteEntry,
   ResolvedBufferOptions,
   resolveCascadeOptions,
+  buildSavePreviewEntry,
 } from "./BufferPreview";
 import { BufferStrategy, SnapshotStrategy, deepEquals } from "./BufferStrategy";
 import { EntityState } from "./EntityUnitState";
 import { sortForInsert, sortForDelete, buildTopologicalIndexMap, sortByIndex } from "./DependencyGraph";
-import { snapshotCollections, diffCollection, readLoadedRelationValue } from "./CollectionTracker";
+import {
+  snapshotCollections, diffCollection, readLoadedRelationValue,
+  resolveFkWriteKeys, assignFkValue,
+} from "./CollectionTracker";
+import { hasCascade } from "../../../types/CascadeType";
 import type { CollectionSnapshot, CollectionDiff } from "./CollectionTracker";
 import { MANY_TO_ONE_TOKEN } from "../../../decorators/ManyToOne";
 import { ONE_TO_MANY_TOKEN } from "../../../decorators/OneToMany";
@@ -28,6 +33,7 @@ import type { ReparentedChildren } from "./CascadeProcessor";
 import { FlushExecutor } from "./FlushExecutor";
 import { EntityValidator } from "../../EntityValidator";
 import { LazyRelationInjector } from "./LazyRelationInjector";
+import { transactionStorage } from "../../../decorators/Transactional";
 import type { EntityManager } from "../../EntityManager";
 
 /**
@@ -943,13 +949,39 @@ export class WriteBuffer {
   }
 
   /**
-   * Preview the operations that will be executed on flush, in execution order.
+   * Preview the operations flush() will execute, in execution order:
+   * updates → persists (with cascade-persist children) → legacy inserts →
+   * collection diffs (O2M cascade writes, orphan removals, M2M pivot sync) →
+   * deletes → bulk updates → bulk deletes.
+   *
+   * Mirrors flush()'s eligibility rules: read-only entries and — under
+   * `ChangeTrackingPolicy.DEFERRED_EXPLICIT` — entries not marked dirty are
+   * excluded from updates AND collection-diff processing, exactly as flush
+   * excludes them. Orphan-removal entries spare reparented children with the
+   * same identity/PK matching flush applies.
+   *
+   * Known gaps versus the actual flush (DB state is not consulted; see the
+   * write-buffer guide):
+   * - Cascade DELETE expansion (children of a queued delete discovered via
+   *   DB queries) is not listed — only the queued delete itself appears.
+   * - DB-generated PKs do not exist yet, so FK / pivot values derived from
+   *   them are omitted from entry data (the operations are still listed),
+   *   and the owning-side O2O FK fix-up UPDATE is not listed.
+   * - Cascade re-saves of children of dirty TRACKED parents are not listed.
    */
   preview(): BufferPreviewEntry[] {
     const entries: BufferPreviewEntry[] = [];
+    const visited = new Set<any>();
+    const indexMap = buildTopologicalIndexMap(this.ctx.getEntities());
 
-    // Updates (dirty tracked entities)
-    for (const entry of this.trackedEntries.values()) {
+    // 1. Updates — same eligibility filter + topological order as flush
+    const eligible = sortByIndex(
+      [...this.trackedEntries.values()].filter(
+        (e) => !e.readOnly && this.shouldDirtyCheck(e),
+      ),
+      indexMap,
+    );
+    for (const entry of eligible) {
       const diff = this.strategy.diff(
         entry.instance,
         entry.snapshot,
@@ -963,11 +995,13 @@ export class WriteBuffer {
           where: this.idMap.buildPkWhere(entry.instance, entry.pkColumns),
           data: diff,
         });
+        visited.add(entry.instance);
       }
     }
 
-    // Persists (instance-based inserts)
-    for (const entry of this.persistQueue) {
+    // 2. Persists (instance-based inserts) + their cascade-persist children
+    const sortedPersists = sortByIndex([...this.persistQueue], indexMap);
+    for (const entry of sortedPersists) {
       const data: Record<string, any> = {};
       for (const col of entry.columnNames) {
         if (entry.instance[col] !== undefined) data[col] = entry.instance[col];
@@ -977,9 +1011,11 @@ export class WriteBuffer {
         entity: entry.entity.name,
         data,
       });
+      visited.add(entry.instance);
+      this.cascade.collectCascadePreviewInserts(entry.entity, entry.instance, visited, entries);
     }
 
-    // Legacy inserts (plain object)
+    // 3. Legacy inserts (plain object)
     for (const insert of this.insertQueue) {
       entries.push({
         action: "insert",
@@ -988,8 +1024,84 @@ export class WriteBuffer {
       });
     }
 
-    // Deletes
-    for (const del of this.deleteQueue) {
+    // 4. Collection diffs — same two-pass reparent handling as flush
+    const { reparented, pendingDiffs } = this.collectCollectionDiffs(eligible);
+    for (const { entry, colSnap, diff } of pendingDiffs) {
+      if (colSnap.relationType === "oneToMany") {
+        const childInfo = this.idMap.getColumnInfo(colSnap.relatedEntity);
+        const parentPk = this.idMap.getParentPkValue(entry.instance, entry.entity);
+
+        if (this.options.cascade.persist && hasCascade(colSnap.cascade, "insert")) {
+          const fkKeys = colSnap.mappedBy
+            ? resolveFkWriteKeys(colSnap.mappedBy, colSnap.relatedEntity)
+            : undefined;
+          for (const child of diff.added) {
+            if (visited.has(child)) continue;
+            visited.add(child);
+            const childData: Record<string, any> = {};
+            for (const col of childInfo.columnNames) {
+              if (child[col] !== undefined) childData[col] = child[col];
+            }
+            if (fkKeys && parentPk != null) assignFkValue(childData, fkKeys, parentPk);
+            entries.push(
+              buildSavePreviewEntry(colSnap.relatedEntity.name, childData, childInfo.pkColumns),
+            );
+          }
+        }
+
+        if (this.options.orphanRemoval) {
+          const reparentedPks = reparented.pks.get(colSnap.relatedEntity.name);
+          for (const child of diff.removed) {
+            if (reparented.instances.has(child)) continue;
+            const criteria: Record<string, any> = {};
+            for (const pk of childInfo.pkColumns) {
+              const v = child[pk];
+              if (v !== undefined && v !== null) criteria[pk] = v;
+            }
+            if (Object.keys(criteria).length === 0) continue;
+            if (
+              reparentedPks &&
+              childInfo.pkColumns.length === 1 &&
+              reparentedPks.has(criteria[childInfo.pkColumns[0]])
+            ) {
+              continue;
+            }
+            entries.push({
+              action: "delete",
+              entity: colSnap.relatedEntity.name,
+              criteria,
+            });
+          }
+        }
+      } else if (colSnap.relationType === "manyToMany") {
+        if (!this.options.manyToManySync || !colSnap.joinTable) continue;
+        const { name: pivotName, joinColumn, inverseJoinColumn } = colSnap.joinTable;
+        const parentPk = this.idMap.getParentPkValue(entry.instance, entry.entity);
+        const childPkColumns = this.idMap.getColumnInfo(colSnap.relatedEntity).pkColumns;
+        for (const child of diff.added) {
+          const childPk = childPkColumns.length === 1 ? child[childPkColumns[0]] : null;
+          if (childPk == null) continue;
+          entries.push({
+            action: "insert",
+            entity: pivotName,
+            data: { [joinColumn]: parentPk, [inverseJoinColumn]: childPk },
+          });
+        }
+        for (const child of diff.removed) {
+          const childPk = childPkColumns.length === 1 ? child[childPkColumns[0]] : null;
+          if (childPk == null) continue;
+          entries.push({
+            action: "delete",
+            entity: pivotName,
+            criteria: { [joinColumn]: parentPk, [inverseJoinColumn]: childPk },
+          });
+        }
+      }
+    }
+
+    // 5. Deletes (reverse topological order, matching flush)
+    const sortedDeletes = sortByIndex([...this.deleteQueue], indexMap, true);
+    for (const del of sortedDeletes) {
       entries.push({
         action: "delete",
         entity: del.entity.name,
@@ -997,7 +1109,7 @@ export class WriteBuffer {
       });
     }
 
-    // Bulk updates
+    // 6. Bulk updates
     for (const bu of this.bulkUpdateQueue) {
       entries.push({
         action: "bulkUpdate",
@@ -1007,7 +1119,7 @@ export class WriteBuffer {
       });
     }
 
-    // Bulk deletes
+    // 7. Bulk deletes
     for (const bd of this.bulkDeleteQueue) {
       entries.push({
         action: "bulkDelete",
@@ -1017,6 +1129,46 @@ export class WriteBuffer {
     }
 
     return entries;
+  }
+
+  /**
+   * First pass of collection-diff processing, shared by flush() and
+   * preview(): compute every collection diff for the given (already
+   * eligibility-filtered) tracked entries, and collect the children ADDED to
+   * any parent's O2M collection — by identity and by PK — so orphan removal
+   * can spare reparented children (a child moved from parent A to B lands in
+   * A.removed AND B.added).
+   */
+  private collectCollectionDiffs(trackedList: TrackedEntry[]): {
+    reparented: ReparentedChildren;
+    pendingDiffs: Array<{ entry: TrackedEntry; colSnap: CollectionSnapshot; diff: CollectionDiff }>;
+  } {
+    const reparented: ReparentedChildren = { instances: new Set(), pks: new Map() };
+    const pendingDiffs: Array<{ entry: TrackedEntry; colSnap: CollectionSnapshot; diff: CollectionDiff }> = [];
+    for (const entry of trackedList) {
+      if (!entry.collectionSnapshots) continue;
+      for (const colSnap of entry.collectionSnapshots) {
+        const diff = diffCollection(entry.instance, colSnap);
+        if (!diff) continue;
+        pendingDiffs.push({ entry, colSnap, diff });
+        if (colSnap.relationType === "oneToMany") {
+          const childPks = this.idMap.getColumnInfo(colSnap.relatedEntity).pkColumns;
+          for (const child of diff.added) {
+            reparented.instances.add(child);
+            if (childPks.length === 1) {
+              const pk = child[childPks[0]];
+              if (pk != null) {
+                const name = colSnap.relatedEntity.name;
+                let set = reparented.pks.get(name);
+                if (!set) { set = new Set(); reparented.pks.set(name, set); }
+                set.add(pk);
+              }
+            }
+          }
+        }
+      }
+    }
+    return { reparented, pendingDiffs };
   }
 
   /**
@@ -1153,9 +1305,9 @@ export class WriteBuffer {
               }
               // @Version: ensure version is incremented on the instance
               // (MySQL without RETURNING may not return the new value)
-              this.ensureVersionIncrement(entry.entity, entry.instance, entry.snapshot);
+              this.flushExec.ensureVersionIncrement(entry.entity, entry.instance, entry.snapshot);
               // @UpdateTimestamp: ensure timestamp is set on the instance
-              this.ensureTimestamps(entry.entity, entry.instance, false);
+              this.flushExec.ensureTimestamps(entry.entity, entry.instance, false);
               result.updates++;
               visited.add(entry.instance);
               await this.flushExec.emitFlushEvent("postUpdate", entry.entity, entry.instance, diff);
@@ -1182,7 +1334,7 @@ export class WriteBuffer {
               }
             }
             // @CreateTimestamp / @UpdateTimestamp: ensure timestamps on the instance
-            this.ensureTimestamps(entry.entity, entry.instance, true);
+            this.flushExec.ensureTimestamps(entry.entity, entry.instance, true);
             result.inserts++;
             visited.add(entry.instance);
             await this.flushExec.emitFlushEvent("postInsert", entry.entity, entry.instance);
@@ -1197,35 +1349,10 @@ export class WriteBuffer {
         }
 
         // 4. Collection diffs (O2M orphan removal + M2M pivot sync)
-        // First pass: compute every diff and collect the children ADDED to any
-        // parent's O2M collection (by identity and PK). A child moved from
-        // parent A to B lands in A.removed AND B.added — it was reparented, not
-        // orphaned, so orphan removal below must spare it.
-        const reparented: ReparentedChildren = { instances: new Set(), pks: new Map() };
-        const pendingDiffs: Array<{ entry: TrackedEntry; colSnap: CollectionSnapshot; diff: CollectionDiff }> = [];
-        for (const entry of sortedTracked) {
-          if (!entry.collectionSnapshots) continue;
-          for (const colSnap of entry.collectionSnapshots) {
-            const diff = diffCollection(entry.instance, colSnap);
-            if (!diff) continue;
-            pendingDiffs.push({ entry, colSnap, diff });
-            if (colSnap.relationType === "oneToMany") {
-              const childPks = this.idMap.getColumnInfo(colSnap.relatedEntity).pkColumns;
-              for (const child of diff.added) {
-                reparented.instances.add(child);
-                if (childPks.length === 1) {
-                  const pk = child[childPks[0]];
-                  if (pk != null) {
-                    const name = colSnap.relatedEntity.name;
-                    let set = reparented.pks.get(name);
-                    if (!set) { set = new Set(); reparented.pks.set(name, set); }
-                    set.add(pk);
-                  }
-                }
-              }
-            }
-          }
-        }
+        // First pass (shared with preview()): compute every diff and collect
+        // the children ADDED to any parent's O2M collection, so orphan
+        // removal below spares reparented children.
+        const { reparented, pendingDiffs } = this.collectCollectionDiffs(sortedTracked);
         for (const { entry, colSnap, diff } of pendingDiffs) {
           if (colSnap.relationType === "oneToMany") {
             await this.cascade.processOneToManyCollectionDiff(txEm, entry, diff, visited, result, reparented);
@@ -1273,7 +1400,23 @@ export class WriteBuffer {
         }
       };
 
-      // Both nested and top-level flush run inside em.transaction().
+      // Both nested and top-level flush run inside em.transaction(). With an
+      // ambient transaction (the caller wrapped the workflow in
+      // em.transaction()), REQUIRED propagation joins it — so a nested
+      // buffer's SAVEPOINT really is a savepoint inside the caller's
+      // transaction, and a later rollback of that transaction undoes this
+      // flush too. WITHOUT an ambient transaction, this flush opens and
+      // commits its own transaction: the SAVEPOINT spans nothing beyond it,
+      // and no parent rollback can ever reclaim the committed work.
+      if (this.parent && !transactionStorage.getStore()) {
+        WriteBuffer.logger.warn(
+          "Nested buffer flush() called outside an enclosing transaction: " +
+          "this flush commits immediately and independently, so its SAVEPOINT " +
+          "gives no partial-rollback protection and a later parent rollback " +
+          "will NOT undo this work. Wrap the whole workflow in " +
+          "em.transaction(async () => { ... }) for real savepoint semantics.",
+        );
+      }
       await em.transaction(async (txEm) => {
         if (this.parent) {
           const spName = `sp_nested_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1426,51 +1569,6 @@ export class WriteBuffer {
     // Persist queue (inserts)
     for (const entry of this.persistQueue) {
       EntityValidator.validate(entry.entity, entry.instance);
-    }
-  }
-
-  /**
-   * Ensure @CreateTimestamp is set on INSERT and @UpdateTimestamp is set on INSERT/UPDATE.
-   * EntityManager.save() handles the SQL, but the returned object may not contain
-   * the timestamp (MySQL without RETURNING). This ensures the instance has correct values.
-   */
-  private ensureTimestamps(
-    entityClass: ClazzType<any>,
-    instance: any,
-    isInsert: boolean,
-  ): void {
-    const now = new Date();
-    if (isInsert) {
-      const createCol = this.idMap.getCreateTimestampColumn(entityClass);
-      if (createCol && (instance[createCol] === undefined || instance[createCol] === null)) {
-        instance[createCol] = now;
-      }
-    }
-    const updateCol = this.idMap.getUpdateTimestampColumn(entityClass);
-    if (updateCol) {
-      // Always update — EntityManager.save() sets this on both INSERT and UPDATE
-      instance[updateCol] = now;
-    }
-  }
-
-  /**
-   * Ensure @Version column is incremented on the instance after a successful UPDATE.
-   * MySQL (no RETURNING) may not return the new version, so we manually increment
-   * if the value is still the same as the snapshot (pre-update value).
-   */
-  private ensureVersionIncrement(
-    entityClass: ClazzType<any>,
-    instance: any,
-    snapshot: Record<string, any>,
-  ): void {
-    const versionCol = this.idMap.getVersionColumn(entityClass);
-    if (!versionCol) return;
-    const oldVersion = snapshot[versionCol];
-    if (oldVersion === undefined || oldVersion === null) return;
-    // If the instance still has the old version (RETURNING didn't update it),
-    // manually increment — we know the DB did `version = version + 1`.
-    if (instance[versionCol] === oldVersion) {
-      instance[versionCol] = (oldVersion as number) + 1;
     }
   }
 

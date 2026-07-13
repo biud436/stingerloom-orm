@@ -420,6 +420,14 @@ const preview = buf.preview();
 // ]
 ```
 
+`preview()` mirrors `flush()`'s rules: entries appear in execution order, read-only entities and (under `DEFERRED_EXPLICIT` change tracking) entities never marked dirty are excluded, and it covers collection changes too — cascade INSERTs of children added to `@OneToMany` arrays, orphan-removal DELETEs (sparing reparented children), `@ManyToMany` pivot-table INSERT/DELETEs, and the cascade-persist children of `persist()`ed instances. It never mutates your entities.
+
+Because `preview()` does not touch the database, three things it cannot know are omitted:
+
+- **Cascade DELETE expansion.** Children of a queued delete are discovered via DB queries at flush time; only the queued delete itself is listed.
+- **DB-generated PK values.** FK and pivot values derived from not-yet-generated PKs are missing from the entry data (the operations are still listed), and the owning-side `@OneToOne` FK fix-up UPDATE is not listed.
+- **Cascade re-saves** of children of dirty tracked parents are not listed.
+
 ### size — Queue status
 
 Check how much work is pending:

@@ -419,6 +419,14 @@ const preview = buf.preview();
 // ]
 ```
 
+`preview()`는 `flush()`의 규칙을 그대로 따릅니다. 항목은 실행 순서대로 나열되고, read-only 엔티티와 (`DEFERRED_EXPLICIT` 변경 추적에서) dirty로 표시되지 않은 엔티티는 제외되며, 컬렉션 변경도 포함해요 — `@OneToMany` 배열에 추가된 자식의 cascade INSERT, orphan removal DELETE(재부모화된 자식은 제외), `@ManyToMany` 피벗 테이블 INSERT/DELETE, `persist()`된 인스턴스의 cascade 자식까지 전부요. 엔티티를 절대 변형하지 않습니다.
+
+`preview()`는 DB를 조회하지 않으므로, flush 시점에만 알 수 있는 세 가지는 빠집니다:
+
+- **Cascade DELETE 확장.** 큐에 쌓인 delete의 자식은 flush 시점에 DB 쿼리로 찾아내므로, 큐의 delete 항목만 나열돼요.
+- **DB 생성 PK 값.** 아직 생성되지 않은 PK에서 파생되는 FK/피벗 값은 entry data에 없고(연산 자체는 나열됩니다), owning-side `@OneToOne`의 FK 보정 UPDATE도 나열되지 않아요.
+- **dirty 추적 부모의 자식 cascade 재저장**은 나열되지 않습니다.
+
 ### size -- 대기열 상태
 
 대기 중인 작업량을 확인해요:

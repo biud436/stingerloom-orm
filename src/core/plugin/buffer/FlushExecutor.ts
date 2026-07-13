@@ -86,15 +86,13 @@ export class FlushExecutor {
     entries: PersistEntry[],
     now: Date,
   ): void {
-    const versionCol = Reflect.getMetadata(VERSION_TOKEN, entityClass) as
-      | string
-      | undefined;
-    const createCol = Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, entityClass) as
-      | string
-      | undefined;
-    const updateCol = Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, entityClass) as
-      | string
-      | undefined;
+    // Resolve through IdentityMapManager, which maps the token value back to
+    // the PROPERTY key — after a NamingStrategy the raw token holds the DB
+    // column name (e.g. "updated_at"), and writing that onto the instance
+    // would leave the real property unset (NULL in the multi-row INSERT).
+    const versionCol = this.idMap.getVersionColumn(entityClass);
+    const createCol = this.idMap.getCreateTimestampColumn(entityClass);
+    const updateCol = this.idMap.getUpdateTimestampColumn(entityClass);
     if (!versionCol && !createCol && !updateCol) return;
 
     for (const entry of entries) {
@@ -108,6 +106,55 @@ export class FlushExecutor {
       if (versionCol && (inst[versionCol] === undefined || inst[versionCol] === null)) {
         inst[versionCol] = 1;
       }
+    }
+  }
+
+  /**
+   * Ensure @CreateTimestamp is set on INSERT and @UpdateTimestamp is set on
+   * INSERT/UPDATE. `EntityManager.save()` handles the SQL, but the returned
+   * object may not contain the timestamp (MySQL without RETURNING) — this
+   * keeps the INSTANCE consistent regardless of driver. Shared by the
+   * per-row flush path (via WriteBuffer) and the batched fallback paths.
+   */
+  ensureTimestamps(
+    entityClass: ClazzType<any>,
+    instance: EntityInstance,
+    isInsert: boolean,
+  ): void {
+    const now = new Date();
+    if (isInsert) {
+      const createCol = this.idMap.getCreateTimestampColumn(entityClass);
+      if (createCol && (instance[createCol] === undefined || instance[createCol] === null)) {
+        instance[createCol] = now;
+      }
+    }
+    const updateCol = this.idMap.getUpdateTimestampColumn(entityClass);
+    if (updateCol) {
+      // Always update — EntityManager.save() sets this on both INSERT and UPDATE
+      instance[updateCol] = now;
+    }
+  }
+
+  /**
+   * Ensure the @Version column is incremented on the instance after a
+   * successful UPDATE. MySQL (no RETURNING) may not return the new version,
+   * so manually increment when the value still equals the pre-update
+   * snapshot. Shared by the per-row flush path (via WriteBuffer) and the
+   * batched UPDATE fallback.
+   */
+  ensureVersionIncrement(
+    entityClass: ClazzType<any>,
+    instance: EntityInstance,
+    snapshot: Record<string, any>,
+  ): void {
+    const versionCol = this.idMap.getVersionColumn(entityClass);
+    if (!versionCol) return;
+    const oldVersion = snapshot[versionCol];
+    if (oldVersion === undefined || oldVersion === null) return;
+    // If the instance still has the old version (RETURNING didn't update it),
+    // manually increment — we know the DB did `version = version + 1`.
+    if (instance[versionCol] === oldVersion) {
+      instance[versionCol] = (oldVersion as number) + 1;
     }
   }
 
@@ -149,6 +196,7 @@ export class FlushExecutor {
       // just injected above.
       if (entries.length === 1 || entries[0].pkColumns.length > 1 || this.ctx.isSqlite?.()) {
         for (const entry of entries) {
+          await this.emitFlushEvent("preInsert", entry.entity, entry.instance);
           const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
           const saved = await txEm.save(entry.entity, saveData);
           if (saved) {
@@ -159,6 +207,7 @@ export class FlushExecutor {
           }
           result.inserts++;
           visited.add(entry.instance);
+          await this.emitFlushEvent("postInsert", entry.entity, entry.instance);
           await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result, true);
         }
         continue;
@@ -179,6 +228,13 @@ export class FlushExecutor {
         c => !entries[0].pkColumns.includes(c),
       );
       const wrappedCols = nonPkProps.map(p => this.ctx.wrap(colMap.get(p) ?? p));
+
+      // Emit preInsert BEFORE reading values off the instances — a listener
+      // may mutate the entity (audit fields etc.), and the per-row path
+      // persists such mutations because it fires the event before save().
+      for (const entry of entries) {
+        await this.emitFlushEvent("preInsert", entry.entity, entry.instance);
+      }
 
       // Build parameter placeholders and values
       const params: any[] = [];
@@ -222,6 +278,7 @@ export class FlushExecutor {
       result.inserts += entries.length;
       for (const entry of entries) {
         visited.add(entry.instance);
+        await this.emitFlushEvent("postInsert", entry.entity, entry.instance);
         await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result, true);
       }
     }
@@ -267,7 +324,8 @@ export class FlushExecutor {
     for (const [entityClass, items] of groups) {
       // Fallback to individual save for: single item, composite PK, or entities with version/timestamp (#163)
       if (items.length === 1 || items[0].entry.pkColumns.length > 1 || this.hasOrmManagedFields(entityClass)) {
-        for (const { entry } of items) {
+        for (const { entry, diff } of items) {
+          await this.emitFlushEvent("preUpdate", entry.entity, entry.instance, diff);
           const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
           const updated = await txEm.save(entry.entity, saveData);
           if (updated) {
@@ -276,8 +334,15 @@ export class FlushExecutor {
               if (freshValue !== undefined) entry.instance[col] = freshValue;
             }
           }
+          // Keep the instance's @Version / @UpdateTimestamp consistent with
+          // the row the save just wrote (MySQL without RETURNING does not
+          // report them back) — parity with the per-row flush path, which
+          // runs the same sync after every dirty UPDATE.
+          this.ensureVersionIncrement(entry.entity, entry.instance, entry.snapshot);
+          this.ensureTimestamps(entry.entity, entry.instance, false);
           result.updates++;
           visited.add(entry.instance);
+          await this.emitFlushEvent("postUpdate", entry.entity, entry.instance, diff);
           await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result);
         }
         continue;
@@ -295,6 +360,20 @@ export class FlushExecutor {
       );
       const pkProp = items[0].entry.pkColumns[0];
       const wrappedPk = this.ctx.wrap(colMap.get(pkProp) ?? pkProp);
+
+      // Emit preUpdate BEFORE building the SQL, then recompute each diff so
+      // listener mutations ride along — the per-row path fires the event
+      // before save(), which reads the (possibly mutated) instance.
+      for (const item of items) {
+        await this.emitFlushEvent("preUpdate", item.entry.entity, item.entry.instance, item.diff);
+        const recomputed = this.strategy.diff(
+          item.entry.instance,
+          item.entry.snapshot,
+          item.entry.columnNames,
+          item.entry.pkColumns,
+        );
+        if (recomputed) item.diff = recomputed;
+      }
 
       // Collect all changed columns (property keys) across all items
       const changedCols = new Set<string>();
@@ -328,8 +407,9 @@ export class FlushExecutor {
       await txEm.query(sql, params);
 
       result.updates += items.length;
-      for (const { entry } of items) {
+      for (const { entry, diff } of items) {
         visited.add(entry.instance);
+        await this.emitFlushEvent("postUpdate", entry.entity, entry.instance, diff);
         await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result);
       }
     }

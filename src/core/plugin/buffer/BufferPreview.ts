@@ -12,6 +12,27 @@ export type BufferPreviewEntry =
   | { action: "bulkDelete"; entity: string; where: Record<string, any> };
 
 /**
+ * Build the preview entry for a cascade `em.save()` call: save() UPDATEs when
+ * the data carries a full PK and INSERTs otherwise, so the preview mirrors
+ * that decision instead of labeling every cascade write an "insert".
+ */
+export function buildSavePreviewEntry(
+  entityName: string,
+  data: Record<string, any>,
+  pkColumns: string[],
+): BufferPreviewEntry {
+  const hasFullPk =
+    pkColumns.length > 0 &&
+    pkColumns.every((pk) => data[pk] !== undefined && data[pk] !== null);
+  if (hasFullPk) {
+    const where: Record<string, any> = {};
+    for (const pk of pkColumns) where[pk] = data[pk];
+    return { action: "update", entity: entityName, where, data };
+  }
+  return { action: "insert", entity: entityName, data };
+}
+
+/**
  * Typed changeset returned by computeChanges().
  */
 export interface BufferChangeset {
@@ -48,12 +69,19 @@ export enum ChangeTrackingPolicy {
  * Controls when the WriteBuffer automatically flushes pending changes.
  *
  * - AUTO: Flush before find/findOne queries if there is pending work.
- * - COMMIT: Only flush on explicit `flush()` calls.
- * - MANUAL: Same as COMMIT — never auto-flush.
+ * - MANUAL: Never auto-flush — only explicit `flush()` calls. (default)
+ * - COMMIT: Deprecated alias of MANUAL. The buffer is not bound to a
+ *   transaction lifecycle (each flush opens or joins a transaction on its
+ *   own), so JPA-style "flush at transaction commit" cannot be honored —
+ *   this mode has always behaved exactly like MANUAL.
  * - ALWAYS: Flush before every find/findOne, even without pending work detection.
  */
 export enum FlushMode {
   AUTO = "AUTO",
+  /**
+   * @deprecated Alias of {@link FlushMode.MANUAL} — behaves identically.
+   * Use MANUAL; COMMIT never implemented flush-at-transaction-commit.
+   */
   COMMIT = "COMMIT",
   MANUAL = "MANUAL",
   ALWAYS = "ALWAYS",
