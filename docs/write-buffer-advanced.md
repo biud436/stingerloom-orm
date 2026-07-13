@@ -307,6 +307,8 @@ buf.onFlushEvent("postInsert", (event) => {
 | `preDelete` | Before each DELETE | `{ entity, criteria }` — `criteria` = WHERE conditions |
 | `postDelete` | After each DELETE | `{ entity, criteria }` |
 
+Events fire on the batch paths too: with `batchInsert` / `batchUpdate` enabled, each entity in a multi-row INSERT or CASE WHEN UPDATE still gets its own `preInsert`/`postInsert` or `preUpdate`/`postUpdate` pair. `preInsert`/`preUpdate` fire before the batch statement is built, so listener mutations are persisted — the same contract as the per-row path.
+
 ### Example: Audit logging
 
 ```typescript
@@ -413,7 +415,7 @@ em.extend(bufferPlugin({ flushMode: FlushMode.AUTO }));
 |------|----------|-------------|
 | `MANUAL` | Never auto-flush. You call `flush()` explicitly. | Full control, best performance. You decide when to hit the DB. |
 | `AUTO` | Auto-flush before `find()`/`findOne()` if there is pending work. | Queries always reflect pending changes. Slight overhead per query. |
-| `COMMIT` | Same as `MANUAL`. | Alias for clarity in some codebases. |
+| `COMMIT` | Deprecated alias of `MANUAL` — behaves identically. | Do not use in new code. The buffer is not bound to a transaction lifecycle, so JPA-style "flush at commit" cannot be honored. |
 | `ALWAYS` | Auto-flush before every query, even if no pending work is detected. | Debugging only — ensures DB and buffer are always in sync. |
 
 ### Example: AUTO mode
@@ -489,30 +491,34 @@ await buf.flush();  // If ONE product fails, ALL 100 are rolled back!
 
 A nested buffer wraps its operations in a `SAVEPOINT`, which is a "checkpoint" within a transaction. If the nested buffer fails, only its operations are rolled back — the parent buffer's work is preserved.
 
+A savepoint only exists *inside* a transaction, so the whole workflow must run within `em.transaction()`. Every `flush()` — parent or nested — joins that ambient transaction instead of opening its own:
+
 ```typescript
-const buf = em.buffer();
+await em.transaction(async () => {
+  const buf = em.buffer();
 
-for (const row of csvRows) {
-  const nested = buf.beginNested();
-  try {
-    nested.save(Product, toProduct(row));
-    await nested.flush();
-    // → SAVEPOINT sp_nested_xxx → INSERT → (success: keep)
-  } catch {
-    // → ROLLBACK TO SAVEPOINT sp_nested_xxx
-    // Only THIS product's INSERT is undone
-    console.log(`Skipped invalid row: ${row.name}`);
+  for (const row of csvRows) {
+    const nested = buf.beginNested();
+    try {
+      nested.save(Product, toProduct(row));
+      await nested.flush();
+      // → SAVEPOINT sp_nested_xxx → INSERT → (success: keep)
+    } catch {
+      // → ROLLBACK TO SAVEPOINT sp_nested_xxx
+      // Only THIS product's INSERT is undone
+      console.log(`Skipped invalid row: ${row.name}`);
+    }
   }
-}
 
-// Parent buffer's operations are unaffected
-await buf.flush();
+  // Parent buffer's operations are unaffected
+  await buf.flush();
+});
 ```
 
 Here's the SQL timeline:
 
 ```sql
-BEGIN;                                   -- parent transaction
+BEGIN;                                   -- em.transaction()
 
 SAVEPOINT sp_nested_1709234567_a3f2;     -- nested buffer 1
 INSERT INTO "product" ...;               -- success
@@ -528,6 +534,10 @@ INSERT INTO "product" ...;               -- success
 
 COMMIT;                                  -- products 1 and 3 saved, product 2 skipped
 ```
+
+If the enclosing `em.transaction()` itself fails after a nested flush succeeded, its rollback reclaims the nested work too — the savepoint is genuinely part of the outer transaction.
+
+**Do not skip the `em.transaction()` wrapper.** Without it, every `flush()` opens and commits its own transaction. A nested buffer's SAVEPOINT then spans nothing beyond its own flush: the work commits immediately and independently, and rolling back the "parent" later cannot reclaim it. The buffer logs a warning when a nested `flush()` runs outside an enclosing transaction.
 
 ### When to use nested buffers
 

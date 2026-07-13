@@ -7,7 +7,13 @@ import { MANY_TO_ONE_TOKEN } from "../../../decorators/ManyToOne";
 import { hasCascade } from "../../../types/CascadeType";
 import { PluginContext } from "../PluginContext";
 import { TrackedEntry, DeleteEntry } from "./BufferEntry";
-import { BufferFlushResult, BufferPluginOptions, ResolvedBufferOptions } from "./BufferPreview";
+import {
+  BufferFlushResult,
+  BufferPluginOptions,
+  BufferPreviewEntry,
+  ResolvedBufferOptions,
+  buildSavePreviewEntry,
+} from "./BufferPreview";
 import { CollectionDiff } from "./CollectionTracker";
 import {
   resolveFkColumn,
@@ -353,6 +359,116 @@ export class CascadeProcessor {
       const sql = `DELETE FROM ${wrappedTable} WHERE ${wrappedJoinCol} = ? AND ${wrappedInverseCol} = ?`;
       await txEm.query(sql, [parentPk, childPk]);
       result.deletes++;
+    }
+  }
+
+  /**
+   * Enumerate — WITHOUT touching the database or mutating any instance — the
+   * cascade-persist operations {@link processCascadeInsertUpdate} will execute
+   * for a newly persisted instance: O2M children (FK included when the parent
+   * PK is already known), a cascaded O2O related entity, new (PK-less) M2M
+   * children, and M2M pivot rows. Mirrors that method's traversal and gating;
+   * used by `WriteBuffer.preview()`.
+   *
+   * Known preview gaps (values only resolvable at flush time):
+   * - DB-generated PKs are unknown, so FK / pivot values derived from them
+   *   are omitted from the entry data (the operations are still listed).
+   * - The owning-side O2O FK fix-up UPDATE on the parent row is not listed.
+   */
+  collectCascadePreviewInserts(
+    entityClass: ClazzType<any>,
+    instance: EntityInstance,
+    visited: Set<EntityInstance>,
+    entries: BufferPreviewEntry[],
+  ): void {
+    if (!this.options.cascade.persist) return;
+
+    // @OneToMany cascade
+    const oneToManyMeta: OneToManyMetadata<any>[] =
+      Reflect.getMetadata(ONE_TO_MANY_TOKEN, entityClass) ?? [];
+    for (const rel of oneToManyMeta) {
+      if (!hasCascade(rel.cascade, "insert") && !hasCascade(rel.cascade, "update")) continue;
+      const children = readLoadedRelationValue(instance, rel.propertyKey);
+      if (!Array.isArray(children) || children.length === 0) continue;
+
+      const ChildEntity = rel.getRelatedEntity();
+      const fkKeys = resolveFkWriteKeys(rel.mappedBy, ChildEntity);
+      const parentPk = this.idMap.getParentPkValue(instance, entityClass);
+      const childInfo = this.idMap.getColumnInfo(ChildEntity);
+
+      for (const child of children) {
+        if (visited.has(child)) continue;
+        visited.add(child);
+        const childData: ColumnValueMap = {};
+        for (const col of childInfo.columnNames) {
+          if (child[col] !== undefined) childData[col] = child[col];
+        }
+        if (parentPk != null) assignFkValue(childData, fkKeys, parentPk);
+        entries.push(buildSavePreviewEntry(ChildEntity.name, childData, childInfo.pkColumns));
+        this.collectCascadePreviewInserts(ChildEntity, child, visited, entries);
+      }
+    }
+
+    // @OneToOne cascade (owning side)
+    const oneToOneMeta: any[] =
+      Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) ?? [];
+    for (const rel of oneToOneMeta) {
+      const cascade = rel.option?.cascade;
+      if (!hasCascade(cascade, "insert") && !hasCascade(cascade, "update")) continue;
+      const related = readLoadedRelationValue(instance, rel.propertyKey);
+      if (!related || Array.isArray(related) || visited.has(related)) continue;
+      visited.add(related);
+
+      const RelatedEntity = rel.getRelatedEntity();
+      const relatedInfo = this.idMap.getColumnInfo(RelatedEntity);
+      const relatedData: ColumnValueMap = {};
+      for (const col of relatedInfo.columnNames) {
+        if (related[col] !== undefined) relatedData[col] = related[col];
+      }
+      entries.push(buildSavePreviewEntry(RelatedEntity.name, relatedData, relatedInfo.pkColumns));
+      this.collectCascadePreviewInserts(RelatedEntity, related, visited, entries);
+    }
+
+    // @ManyToMany cascade persist + pivot rows (owning side)
+    const manyToManyMeta: any[] =
+      Reflect.getMetadata(MANY_TO_MANY_TOKEN, entityClass) ?? [];
+    for (const rel of manyToManyMeta) {
+      if (rel.mappedBy || !rel.joinTable) continue;
+      const children = readLoadedRelationValue(instance, rel.propertyKey);
+      if (!Array.isArray(children) || children.length === 0) continue;
+
+      const RelatedEntity = rel.getRelatedEntity();
+      const relatedInfo = this.idMap.getColumnInfo(RelatedEntity);
+      const relatedPkColumns = relatedInfo.pkColumns;
+      const parentPk = this.idMap.getParentPkValue(instance, entityClass);
+
+      for (const child of children) {
+        const hasPk = relatedPkColumns.every((pk: string) => {
+          const v = child[pk];
+          return v !== undefined && v !== null;
+        });
+        if (!hasPk && !visited.has(child)) {
+          visited.add(child);
+          const childData: ColumnValueMap = {};
+          for (const col of relatedInfo.columnNames) {
+            if (child[col] !== undefined) childData[col] = child[col];
+          }
+          entries.push({ action: "insert", entity: RelatedEntity.name, data: childData });
+        }
+      }
+
+      // Every child of a NEW parent gets a pivot row on flush (all have PKs
+      // by then — cascade persist just assigned them). List one pivot INSERT
+      // per child, carrying whichever PK values are already known.
+      if (this.options.manyToManySync && relatedPkColumns.length === 1) {
+        for (const child of children) {
+          const data: ColumnValueMap = {};
+          if (parentPk != null) data[rel.joinTable.joinColumn] = parentPk;
+          const childPk = child[relatedPkColumns[0]];
+          if (childPk != null) data[rel.joinTable.inverseJoinColumn] = childPk;
+          entries.push({ action: "insert", entity: rel.joinTable.name, data });
+        }
+      }
     }
   }
 

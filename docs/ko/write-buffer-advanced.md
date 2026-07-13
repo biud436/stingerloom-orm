@@ -307,6 +307,8 @@ buf.onFlushEvent("postInsert", (event) => {
 | `preDelete` | 각 DELETE 전 | `{ entity, criteria }` — `criteria` = WHERE 조건 |
 | `postDelete` | 각 DELETE 후 | `{ entity, criteria }` |
 
+이벤트는 배치 경로에서도 발화합니다. `batchInsert` / `batchUpdate`를 켜도 멀티로우 INSERT나 CASE WHEN UPDATE에 포함된 엔티티마다 `preInsert`/`postInsert`, `preUpdate`/`postUpdate` 쌍이 각각 실행돼요. `preInsert`/`preUpdate`는 배치 SQL을 만들기 전에 발화하므로, 리스너에서 엔티티를 수정하면 그대로 반영됩니다 — per-row 경로와 같은 계약이에요.
+
 ### 예시: 감사 로그
 
 ```typescript
@@ -413,7 +415,7 @@ em.extend(bufferPlugin({ flushMode: FlushMode.AUTO }));
 |------|------|-----------|
 | `MANUAL` | 자동 flush 없음. 직접 `flush()`를 호출해요. | 완전한 제어, 최고의 성능. DB 접근 타이밍을 직접 결정해요. |
 | `AUTO` | 대기 중인 작업이 있으면 `find()`/`findOne()` 전에 자동 flush해요. | 쿼리가 항상 대기 중인 변경을 반영해요. 쿼리당 약간의 오버헤드가 있어요. |
-| `COMMIT` | `MANUAL`과 동일해요. | 일부 코드베이스에서 명시적 표현을 위한 별칭이에요. |
+| `COMMIT` | `MANUAL`의 deprecated 별칭 — 동작이 완전히 같습니다. | 새 코드에서는 사용하지 마세요. 버퍼는 트랜잭션 생명주기에 묶여 있지 않아 JPA식 "커밋 시점 flush"를 구현할 수 없어요. |
 | `ALWAYS` | 대기 작업 유무와 관계없이 모든 쿼리 전에 자동 flush해요. | 디버깅 전용 — DB와 버퍼가 항상 동기화돼요. |
 
 ### 예시: AUTO mode
@@ -489,30 +491,34 @@ await buf.flush();  // If ONE product fails, ALL 100 are rolled back!
 
 중첩 버퍼는 연산을 `SAVEPOINT`로 감싸요. SAVEPOINT는 트랜잭션 내의 "체크포인트"예요. 중첩 버퍼가 실패하면 그 연산만 롤백되고 — 부모 버퍼의 작업은 보존돼요.
 
+SAVEPOINT는 트랜잭션 *안*에서만 존재하므로, 전체 워크플로우를 `em.transaction()`으로 감싸야 합니다. 부모든 중첩이든 모든 `flush()`는 자체 트랜잭션을 여는 대신 이 바깥 트랜잭션에 합류해요:
+
 ```typescript
-const buf = em.buffer();
+await em.transaction(async () => {
+  const buf = em.buffer();
 
-for (const row of csvRows) {
-  const nested = buf.beginNested();
-  try {
-    nested.save(Product, toProduct(row));
-    await nested.flush();
-    // → SAVEPOINT sp_nested_xxx → INSERT → (success: keep)
-  } catch {
-    // → ROLLBACK TO SAVEPOINT sp_nested_xxx
-    // Only THIS product's INSERT is undone
-    console.log(`Skipped invalid row: ${row.name}`);
+  for (const row of csvRows) {
+    const nested = buf.beginNested();
+    try {
+      nested.save(Product, toProduct(row));
+      await nested.flush();
+      // → SAVEPOINT sp_nested_xxx → INSERT → (success: keep)
+    } catch {
+      // → ROLLBACK TO SAVEPOINT sp_nested_xxx
+      // Only THIS product's INSERT is undone
+      console.log(`Skipped invalid row: ${row.name}`);
+    }
   }
-}
 
-// Parent buffer's operations are unaffected
-await buf.flush();
+  // Parent buffer's operations are unaffected
+  await buf.flush();
+});
 ```
 
 SQL 타임라인은 이렇게 돼요:
 
 ```sql
-BEGIN;                                   -- parent transaction
+BEGIN;                                   -- em.transaction()
 
 SAVEPOINT sp_nested_1709234567_a3f2;     -- nested buffer 1
 INSERT INTO "product" ...;               -- success
@@ -528,6 +534,10 @@ INSERT INTO "product" ...;               -- success
 
 COMMIT;                                  -- products 1 and 3 saved, product 2 skipped
 ```
+
+중첩 flush가 성공한 뒤에 바깥 `em.transaction()` 자체가 실패하면, 그 롤백이 중첩 작업까지 되돌립니다 — SAVEPOINT가 정말로 바깥 트랜잭션의 일부이기 때문이에요.
+
+**`em.transaction()` 래핑을 생략하면 안 됩니다.** 래핑이 없으면 모든 `flush()`가 각자 트랜잭션을 열고 즉시 커밋해요. 중첩 버퍼의 SAVEPOINT는 자기 flush 범위를 벗어나지 못하므로, 작업이 곧바로 독립 커밋되고 나중에 "부모"를 롤백해도 되돌릴 수 없습니다. 중첩 `flush()`가 바깥 트랜잭션 없이 실행되면 버퍼가 경고 로그를 남깁니다.
 
 ### 중첩 버퍼를 사용하면 좋은 경우
 
