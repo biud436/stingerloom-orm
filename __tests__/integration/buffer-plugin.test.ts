@@ -324,6 +324,44 @@ describe.each(drivers)("[Integration] $label: Buffer Plugin", ({ type, options }
   });
 
   // ═══════════════════════════════════════════════════════════════
+  // Batch INSERT (multi-row SQL path)
+  // ═══════════════════════════════════════════════════════════════
+
+  describe("batchInsert (multi-row INSERT)", () => {
+    // Backfills the unit test "should batch INSERT multiple entities of same
+    // type (MySQL)", which mocks query → { insertId: 10 } and asserts the
+    // sequential `insertId + i` writeback in memory only (issue #404). Here
+    // the multi-row SQL runs for real: on MySQL the PKs come from
+    // LAST_INSERT_ID() arithmetic, on PostgreSQL from RETURNING order — an
+    // off-by-one or reversed writeback would attach the WRONG row to each
+    // instance, which the per-id row lookup below catches.
+    it("writes back a correct, distinct PK to each persisted instance", async () => {
+      const buf: WriteBuffer = (em as any).buffer({ batchInsert: true });
+      const make = (name: string, age: number) =>
+        Object.assign(Object.create(testEntity.EntityClass.prototype), { name, age });
+      const u1 = make("batch-a", 1);
+      const u2 = make("batch-b", 2);
+      const u3 = make("batch-c", 3);
+
+      buf.persist(u1).persist(u2).persist(u3);
+      const result = await buf.flush();
+      expect(result.inserts).toBe(3);
+
+      const ids = [u1.id, u2.id, u3.id];
+      expect(ids.every((id) => typeof id === "number" && id > 0)).toBe(true);
+      expect(new Set(ids).size).toBe(3);
+
+      // Each instance's PK must point at ITS OWN row.
+      for (const inst of [u1, u2, u3]) {
+        const row = await findById(inst.id);
+        expect(row).not.toBeNull();
+        expect(row.name).toBe(inst.name);
+        expect(row.age).toBe(inst.age);
+      }
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
   // DELETE: delete() queue
   // ═══════════════════════════════════════════════════════════════
 
