@@ -257,3 +257,84 @@ export function createCascadeRelationEntities(
 
   return { ParentClass, ChildClass, parentTableName, childTableName };
 }
+
+/**
+ * cascade DELETE 검증용 엔티티 쌍 (#414).
+ *
+ * `createCascadeRelationEntities`와 동일한 구조에 더해:
+ * - OneToMany cascade: true (delete 포함)
+ * - 부모에 다중-부모 criteria 매칭용 `grp` 컬럼
+ */
+export function createCascadeDeleteTestEntities(
+  _baseName = "cascade_del",
+): RelatedEntitiesResult {
+  // cdp=cascade-delete parent, cdc=cascade-delete child
+  const parentTableName = shortTableName("cdp");
+  const childTableName = shortTableName("cdc");
+
+  clearRelationScanners();
+
+  // ── Parent ──────────────────────────────────────────────────────────────
+  const ParentClass = class {} as any;
+  Object.defineProperty(ParentClass, "name", {
+    value: parentTableName,
+    writable: false,
+  });
+
+  Reflect.defineMetadata("design:type", Number, ParentClass.prototype, "id");
+  PrimaryGeneratedColumn()(ParentClass.prototype, "id");
+
+  Reflect.defineMetadata("design:type", String, ParentClass.prototype, "name");
+  Column()(ParentClass.prototype, "name");
+
+  Reflect.defineMetadata("design:type", String, ParentClass.prototype, "grp");
+  Column()(ParentClass.prototype, "grp");
+
+  Reflect.defineMetadata(
+    "design:type",
+    Array,
+    ParentClass.prototype,
+    "children",
+  );
+  OneToMany(() => ChildClass, { mappedBy: "parent", cascade: true })(
+    ParentClass.prototype,
+    "children",
+  );
+
+  Entity()(ParentClass);
+
+  // ── Child ───────────────────────────────────────────────────────────────
+  const ChildClass = class {} as any;
+  Object.defineProperty(ChildClass, "name", {
+    value: childTableName,
+    writable: false,
+  });
+
+  Reflect.defineMetadata("design:type", Number, ChildClass.prototype, "id");
+  PrimaryGeneratedColumn()(ChildClass.prototype, "id");
+
+  Reflect.defineMetadata("design:type", String, ChildClass.prototype, "title");
+  Column()(ChildClass.prototype, "title");
+
+  Reflect.defineMetadata(
+    "design:type",
+    Number,
+    ChildClass.prototype,
+    "parentFk",
+  );
+  Column({ type: "int", nullable: true })(ChildClass.prototype, "parentFk");
+
+  Reflect.defineMetadata(
+    "design:type",
+    ParentClass,
+    ChildClass.prototype,
+    "parent",
+  );
+  ManyToOne(() => ParentClass, (e: any) => e.parent, {
+    joinColumn: "parentFk",
+  })(ChildClass.prototype, "parent");
+
+  Entity()(ChildClass);
+
+  return { ParentClass, ChildClass, parentTableName, childTableName };
+}
