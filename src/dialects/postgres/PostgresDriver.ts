@@ -336,21 +336,23 @@ export class PostgresDriver implements ISqlDriver {
 
   /**
    * Adds a foreign key.
+   *
+   * @param constraintName Optional user/NamingStrategy-defined constraint
+   *   name; defaults to the hash-based framework convention.
    */
   addForeignKey(
     tableName: string,
     columnName: string,
     foreignTableName: string,
     foreignColumnName: string,
+    constraintName?: string,
   ) {
-    const foreignKeyName = this.generateForeignKeyName(
-      tableName,
-      foreignTableName,
-      columnName,
-    );
+    const foreignKeyName =
+      constraintName ??
+      this.generateForeignKeyName(tableName, foreignTableName, columnName);
 
     return this.connector.query(
-      `ALTER TABLE ${this.wrapQualified(tableName)} ADD CONSTRAINT ${foreignKeyName} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${this.wrapQualified(foreignTableName)}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} ADD CONSTRAINT ${this.wrap(foreignKeyName)} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${this.wrapQualified(foreignTableName)}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
     );
   }
 

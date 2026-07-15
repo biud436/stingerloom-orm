@@ -92,6 +92,9 @@ export interface ISqlDriver<T = any> {
    * @param columnName - The name of the column to set as a foreign key.
    * @param foreignTableName - The name of the referenced table.
    * @param foreignColumnName - The name of the referenced column.
+   * @param constraintName - Optional constraint name (e.g. from
+   *   `NamingStrategy.foreignKeyName()`); when omitted the driver falls back
+   *   to its hash-based `generateForeignKeyName()`.
    * @returns A promise that resolves when the operation is complete.
    */
   addForeignKey(
@@ -99,6 +102,7 @@ export interface ISqlDriver<T = any> {
     columnName: string,
     foreignTableName: string,
     foreignColumnName: string,
+    constraintName?: string,
   ): Promise<T>;
 
   /**

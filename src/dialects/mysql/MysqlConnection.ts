@@ -1,5 +1,6 @@
 import type { PoolConnection } from "mysql2";
 import { IConnection } from "../IConnection";
+import { readInternalFlag } from "../connection-liveness";
 
 /**
  * MySQL IConnection implementation wrapping a mysql2 PoolConnection.
@@ -24,7 +25,7 @@ export class MysqlConnection implements IConnection<PoolConnection> {
 
   isAlive(): boolean {
     if (this.released) return false;
-    // mysql2 PoolConnection exposes a `destroyed` property
-    return !(this.raw as unknown as { destroyed?: boolean }).destroyed;
+    // Undocumented mysql2 internal — probed via connection-liveness.ts only.
+    return !readInternalFlag(this.raw, "destroyed");
   }
 }

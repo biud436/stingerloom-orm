@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { IConnection } from "../IConnection";
+import { readInternalFlag } from "../connection-liveness";
 
 /**
  * PostgreSQL IConnection implementation wrapping a pg PoolClient.
@@ -24,7 +25,7 @@ export class PostgresConnection implements IConnection<PoolClient> {
 
   isAlive(): boolean {
     if (this.released) return false;
-    // pg PoolClient has an internal _ending flag when released
-    return !(this.raw as unknown as { _ending?: boolean })._ending;
+    // Undocumented pg internal — probed via connection-liveness.ts only.
+    return !readInternalFlag(this.raw, "_ending");
   }
 }
