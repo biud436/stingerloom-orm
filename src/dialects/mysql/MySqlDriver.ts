@@ -185,31 +185,29 @@ export class MySqlDriver implements ISqlDriver {
 
   /**
    * Adds a foreign key.
-   * TODO: allow user-defined foreign key names later.
    *
    * @param tableName
    * @param columnName
    * @param foreignTableName
    * @param foreignColumnName
+   * @param constraintName Optional user/NamingStrategy-defined constraint
+   *   name; defaults to the hash-based framework convention.
    */
   addForeignKey(
     tableName: string,
     columnName: string,
     foreignTableName: string,
     foreignColumnName: string,
+    constraintName?: string,
   ) {
-    // Generate the foreign key name using the framework convention.
-    // A custom key name may also be provided; in that case, the user-specified name should be used.
-    const foreignKeyName = this.generateForeignKeyName(
-      tableName,
-      foreignTableName,
-      columnName,
-    );
+    const foreignKeyName =
+      constraintName ??
+      this.generateForeignKeyName(tableName, foreignTableName, columnName);
 
     // We should allow ON DELETE and ON UPDATE options to be specified later.
     // For now it is set to NO ACTION.
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} ADD CONSTRAINT ${foreignKeyName} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${this.wrap(foreignTableName)}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
+      `ALTER TABLE ${this.wrap(tableName)} ADD CONSTRAINT ${this.wrap(foreignKeyName)} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${this.wrap(foreignTableName)}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
     );
   }
 

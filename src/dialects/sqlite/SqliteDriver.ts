@@ -188,6 +188,7 @@ export class SqliteDriver implements ISqlDriver {
     _columnName: string,
     _foreignTableName: string,
     _foreignColumnName: string,
+    _constraintName?: string,
   ): Promise<any> {
     throw new OrmError(
       OrmErrorCode.UNSUPPORTED_OPERATION,

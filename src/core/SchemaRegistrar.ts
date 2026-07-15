@@ -480,6 +480,7 @@ export class SchemaRegistrar {
                       pk.name!,
                       rootTableName,
                       rootPk.name!,
+                      fkName,
                     );
                   }
                 } catch (err) {
@@ -1101,14 +1102,16 @@ export class SchemaRegistrar {
           }
         }
 
-        // Skip adding the FK constraint if it already exists.
+        // The NamingStrategy name is both checked for existence AND passed to
+        // addForeignKey — a custom strategy previously only affected the
+        // check while the DDL fell back to the hash-based name (#411).
+        const m2oFkName = this.namingStrategy.foreignKeyName(
+          tableName,
+          joinColumn,
+          mappingTableName,
+        );
         if (driver) {
-          const fkName = this.namingStrategy.foreignKeyName(
-            tableName,
-            joinColumn,
-            mappingTableName,
-          );
-          const fkExists = await driver.hasForeignKey(tableName, fkName);
+          const fkExists = await driver.hasForeignKey(tableName, m2oFkName);
           if (fkExists) continue;
         }
 
@@ -1121,6 +1124,7 @@ export class SchemaRegistrar {
           mappingTableName,
           // Target table's primary key
           mappingTablePrimaryKey,
+          m2oFkName,
         );
       }
     }
@@ -1166,14 +1170,15 @@ export class SchemaRegistrar {
       const relatedTableName =
         relatedMetadata.name || this.ctx.getNameStrategy(RelatedEntity);
 
-      // Skip adding the FK constraint if it already exists.
+      // Same as the ManyToOne path: check and create under the SAME
+      // NamingStrategy-derived constraint name (#411).
+      const o2oFkName = this.namingStrategy.foreignKeyName(
+        tableName,
+        joinColumn,
+        relatedTableName,
+      );
       if (driver) {
-        const fkName = this.namingStrategy.foreignKeyName(
-          tableName,
-          joinColumn,
-          relatedTableName,
-        );
-        const fkExists = await driver.hasForeignKey(tableName, fkName);
+        const fkExists = await driver.hasForeignKey(tableName, o2oFkName);
         if (fkExists) continue;
       }
 
@@ -1182,6 +1187,7 @@ export class SchemaRegistrar {
         joinColumn,
         relatedTableName,
         relatedPrimaryKey,
+        o2oFkName,
       );
     }
   }

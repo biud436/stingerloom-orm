@@ -4372,7 +4372,7 @@ describe("Buffer Plugin", () => {
 
       const result = topologicalSort([CycleX, CycleY]);
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Dependency cycle detected"),
+        expect.stringContaining("Circular FK dependency"),
       );
       // Fallback: returns original order
       expect(result).toEqual([CycleX, CycleY]);
