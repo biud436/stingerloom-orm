@@ -30,6 +30,7 @@ import {
 import { EntityManagerInternals } from "../EntityManagerInternals";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
 import { CascadeHandler } from "../CascadeHandler";
+import { transactionStorage } from "../../decorators/Transactional";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DefaultNamingStrategy, NamingStrategy } from "../generators/NamingStrategy";
@@ -98,10 +99,17 @@ export class WriteExecutor {
     // Validation
     EntityValidator.validate(entity, item);
 
-    // Cascade: save the parent entity of any ManyToOne relation first
-    await this.cascadeHandler.cascadeSaveManyToOne(entity, item);
-
     return this.ctx.executeInTransaction(async (session) => {
+      // Cascade: save the parent entity of any ManyToOne relation first.
+      // Same session-escape shape as the delete path (#414): the handler
+      // saves through the public ctx.save, so publish this session via ALS
+      // for it to join — otherwise the parent commits in its own transaction
+      // (and nested-BEGINs SQLite when saveInternal runs under an existing
+      // session, e.g. the saveMany fallback or an O2M cascade child).
+      await transactionStorage.run(session, () =>
+        this.cascadeHandler.cascadeSaveManyToOne(entity, item),
+      );
+
       const pkColumns = metadata.columns.filter(
         (column: ColumnMetadata) => column.options?.primary,
       );
@@ -886,15 +894,18 @@ export class WriteExecutor {
         });
 
       if (canBatchInsert) {
-        // Validation + ManyToOne cascade (before the transaction)
         for (const item of items) {
           EntityValidator.validate(entity, item);
         }
-        for (const item of items) {
-          await this.cascadeHandler.cascadeSaveManyToOne(entity, item);
-        }
 
         return this.ctx.executeInTransaction(async (session) => {
+          // ManyToOne cascade joins this transaction via ALS (#414) so the
+          // cascade-saved parents roll back together with the batch INSERT.
+          await transactionStorage.run(session, async () => {
+            for (const item of items) {
+              await this.cascadeHandler.cascadeSaveManyToOne(entity, item);
+            }
+          });
           return this.saveManyBatchInsert(entity, pk, items, session);
         });
       }
@@ -1516,8 +1527,15 @@ export class WriteExecutor {
         manager: this.ctx.getManager(),
       } as DeleteEvent<T>);
 
-      // cascade remove
-      await this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria);
+      // cascade remove — the handler issues the child deletes (and the
+      // parent-PK SELECT) through the public ctx.delete/ctx.find, which only
+      // join an ambient ALS session. Publish this transaction's session so
+      // they reuse it instead of opening a second one: a nested BEGIN crashes
+      // SQLite's single shared connection, and on pooled drivers the children
+      // would commit independently of the parent delete (#414).
+      await transactionStorage.run(session, () =>
+        this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria),
+      );
 
       const deletePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
       // #372: write criteria accept find-style operator objects
