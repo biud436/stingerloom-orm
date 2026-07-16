@@ -35,7 +35,7 @@
 
 ## 2. Test Scenarios Not Yet Automated
 
-These are items from the P1-P3 scenarios in `docs/manual-testing-guide.md` that lack integration tests.
+These are items from the P1-P3 scenarios in `internal/manual-testing-guide.md` that lack integration tests.
 
 ### P1 — Recommended to Automate Before Release
 

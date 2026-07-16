@@ -23,3 +23,5 @@ docker-compose.yml
 analysis-2026-04-11.md
 plans/
 introspect-output/
+# Internal analysis document (local-only, not committed)
+internal/competitive-analysis.md

@@ -33,6 +33,10 @@ npm install @stingerloom/orm reflect-metadata
 npm install pg        # or mysql2, better-sqlite3
 ```
 
+Any package manager works for consuming the library (`npm` / `pnpm` / `yarn`).
+The bundled [example projects](#examples) are a different story — they are pnpm
+workspace packages, so run them with `pnpm` (see below).
+
 `tsconfig.json` — decorator metadata must be on:
 
 ```jsonc
@@ -208,7 +212,15 @@ A NestJS interceptor or Express middleware wraps the per-request handler in `Met
 
 ## Examples
 
-Example projects are included in [`examples/`](./examples):
+Example projects are included in [`examples/`](./examples). They depend on the
+ORM via `workspace:*`, so use pnpm and build the ORM first:
+
+```bash
+pnpm build                  # from the repository root
+cd examples/nestjs-todo     # or any other example
+pnpm install
+pnpm start
+```
 
 | Project | Description |
 |---------|-------------|

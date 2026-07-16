@@ -645,8 +645,8 @@ cd ../nestjs-linear-clone && pnpm install && npx tsc --noEmit
 | [Advanced Features](./advanced.md) | N+1 detection, events, cursor pagination | When modifying QueryTracker, EventEmitter |
 | [Multi-Tenancy](./multi-tenancy.md) | Layered metadata, schema isolation | When modifying multi-tenancy features |
 | [API Reference](./api-reference.md) | Method signature list | When checking public API |
-| [Manual Testing Guide](./manual-testing-guide.md) | Manual integration test execution | When setting up integration test environments |
-| [Pre-Release Checklist](./pre-release-checklist.md) | Pre-release verification items | When preparing version releases |
+| Manual Testing Guide (`internal/manual-testing-guide.md`, repository only) | Manual integration test execution | When setting up integration test environments |
+| Pre-Release Checklist (`internal/pre-release-checklist.md`, repository only) | Pre-release verification items | When preparing version releases |
 
 ### Key Source File Quick Reference
 
