@@ -645,8 +645,8 @@ cd ../nestjs-linear-clone && pnpm install && npx tsc --noEmit
 | [Advanced Features](./advanced.md) | N+1 감지, 이벤트, 커서 페이지네이션 | QueryTracker, EventEmitter를 수정할 때 |
 | [Multi-Tenancy](./multi-tenancy.md) | Layered metadata, 스키마 격리 | 멀티테넌시 기능을 수정할 때 |
 | [API Reference](./api-reference.md) | 메서드 시그니처 목록 | public API를 확인할 때 |
-| [Manual Testing Guide](../manual-testing-guide.md) (EN) | 수동 통합 테스트 실행 | 통합 테스트 환경을 설정할 때 |
-| [Pre-Release Checklist](../pre-release-checklist.md) (EN) | 릴리스 전 확인 항목 | 버전 릴리스를 준비할 때 |
+| Manual Testing Guide (`internal/manual-testing-guide.md`, 저장소 전용, EN) | 수동 통합 테스트 실행 | 통합 테스트 환경을 설정할 때 |
+| Pre-Release Checklist (`internal/pre-release-checklist.md`, 저장소 전용, EN) | 릴리스 전 확인 항목 | 버전 릴리스를 준비할 때 |
 
 ### 주요 소스 파일 빠른 참조
 

@@ -14,6 +14,25 @@ This directory contains example projects demonstrating how to use Stingerloom OR
 | [nestjs-multitenant](./nestjs-multitenant) | PostgreSQL | Schema-per-tenant + AsyncLocalStorage middleware |
 | [prisma-import-demo](./prisma-import-demo) | MySQL | Prisma schema → Stingerloom entity codegen |
 
+## Conventions
+
+All examples follow the same setup and script conventions:
+
+- **pnpm workspace.** Every example depends on the ORM via `workspace:*`, so
+  use pnpm (not npm/yarn) and build the ORM first: `pnpm build` at the
+  repository root, then `pnpm install` inside the example.
+- **Scripts.** Every example provides `build`, `start`, `start:dev`, `test`,
+  and `test:e2e`. The examples ship e2e suites only, so `pnpm test` is an
+  alias of `pnpm test:e2e`.
+- **Jest e2e config location.** Most examples keep it at `test/jest-e2e.json`;
+  `nestjs-blog`, `nestjs-linear-clone`, and `nestjs-multitenant` keep it at
+  the package root as `jest-e2e.json`. The `test` / `test:e2e` scripts always
+  point at the right file, so just run them.
+- **Database access.** Examples other than `nestjs-todo-sqlite` need a
+  reachable MySQL or PostgreSQL server (connection via env vars — see each
+  example's README). Suites that hit a real server are additionally gated
+  behind `INTEGRATION_TEST=true` where noted.
+
 ---
 
 ### [nestjs-todo-sqlite](./nestjs-todo-sqlite)
