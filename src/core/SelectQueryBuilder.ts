@@ -121,6 +121,12 @@ import {
   type QEntity,
   type QEntityDynamicAccess,
 } from "./query-builder/alias/qAlias";
+import { WhereGroupBuilder } from "./query-builder/where-group/WhereGroupBuilder";
+import type {
+  RowValidator,
+  ArrayValidator,
+  WhereOperator,
+} from "./query-builder/types";
 
 /**
  * Entry in the alias registry: maps a table alias to its entity metadata.
@@ -160,53 +166,14 @@ export { ColumnExpression };
 export { qAlias, __clearQAliasCache };
 export type { QEntity, QEntityDynamicAccess };
 
-/**
- * Validator function that can be attached to a SelectQueryBuilder.
- *
- * Called on each row returned by getMany()/getOne(). If it throws,
- * the entire query result is rejected with the validation error.
- *
- * Supports three patterns:
- * 1. **Plain function**: `(row: TResult) => TResult` — validate and return
- * 2. **Zod-style**: any object with a `.parse(data)` method
- * 3. **Array-level**: `(rows: TResult[]) => TResult[]` via `validateArray()`
- */
-export type RowValidator<TResult> =
-  | ((row: TResult) => TResult)
-  | { parse(data: unknown): TResult };
-
-/**
- * Array-level validator: validates the entire result array at once.
- */
-export type ArrayValidator<TResult> =
-  | ((rows: TResult[]) => TResult[])
-  | { parse(data: unknown): TResult[] };
+export { WhereGroupBuilder };
+export type { RowValidator, ArrayValidator, WhereOperator };
 
 /**
  * Type-safe column reference: entity property keys (string keys only).
  */
 type ColumnOf<T> = keyof T & string;
 
-/**
- * Allowed comparison operators for type-safe WHERE conditions.
- * Using any other string literal will produce a compile-time error.
- */
-export type WhereOperator =
-  | "="
-  | "!="
-  | "<>"
-  | "<"
-  | ">"
-  | "<="
-  | ">="
-  | "LIKE"
-  | "NOT LIKE"
-  | "ILIKE"
-  | "IN"
-  | "NOT IN"
-  | "IS NULL"
-  | "IS NOT NULL"
-  | "BETWEEN";
 
 /**
  * Type-safe order-by specification.
@@ -215,137 +182,6 @@ type OrderBySpec<T> = {
   [K in ColumnOf<T>]?: "ASC" | "DESC";
 };
 
-/**
- * Lightweight builder for collecting WHERE conditions into an isolated group.
- *
- * Used by `andWhereGroup()` / `orWhereGroup()` to create parenthesized
- * condition groups: `(a = 1 AND b = 2) OR (c = 3 AND d = 4)`.
- *
- * @example
- * ```ts
- * qb.where("status", "active")
- *   .orWhereGroup(g => g
- *     .where("role", "admin")
- *     .where("verified", true)
- *   )
- * // WHERE "status" = 'active' OR ("role" = 'admin' AND "verified" = true)
- * ```
- */
-export class WhereGroupBuilder<T> {
-  private conditions: Sql[] = [];
-
-  constructor(
-    private readonly columnResolver: (ref: string) => string,
-    private readonly wrapFn: (id: string) => string,
-    /**
-     * Dialect expression strategy, forwarded so group conditions that
-     * contain JSON paths or case-insensitive LIKE get resolved correctly.
-     * Optional because some call sites (legacy tests, unit fixtures)
-     * construct groups without a live EntityManager.
-     */
-    private readonly dialectExpression?: DialectExpression,
-  ) {}
-
-  where(condition: Sql): this;
-  where(condition: ConditionLike): this;
-  where(column: keyof T & string, value: any): this;
-  where(column: keyof T & string, operator: WhereOperator, value: any): this;
-  where(column: string, value: any): this;
-  where(column: string, operator: WhereOperator, value: any): this;
-  where(
-    columnOrCondition: string | Sql | ConditionLike,
-    valueOrOperator?: any,
-    value?: any,
-  ): this {
-    if (isConditionLike(columnOrCondition)) {
-      this.conditions.push(
-        columnOrCondition.resolve(
-          (ref) => this.columnResolver(ref),
-          this.dialectExpression,
-        ),
-      );
-      return this;
-    }
-    if (typeof columnOrCondition === "object" && "sql" in columnOrCondition) {
-      this.conditions.push(columnOrCondition as Sql);
-      return this;
-    }
-    const col = this.columnResolver(columnOrCondition as string);
-    if (value !== undefined) {
-      const op = (valueOrOperator as string).trim().toUpperCase();
-      if (op === "IS NULL") {
-        this.conditions.push(Conditions.isNull(col));
-      } else if (op === "IS NOT NULL") {
-        this.conditions.push(Conditions.isNotNull(col));
-      } else if (op === "IN") {
-        this.conditions.push(Conditions.in(col, value as any[]));
-      } else if (op === "NOT IN") {
-        this.conditions.push(Conditions.notIn(col, value as any[]));
-      } else if (op === "BETWEEN") {
-        const [min, max] = value as [any, any];
-        this.conditions.push(Conditions.between(col, min, max));
-      } else if (op === "LIKE") {
-        this.conditions.push(Conditions.like(col, value));
-      } else if (op === "NOT LIKE") {
-        this.conditions.push(Conditions.notLike(col, value));
-      } else {
-        this.conditions.push(sql`${raw(col)} ${raw(op)} ${value}`);
-      }
-    } else if (valueOrOperator === null) {
-      // where(col, null) means IS NULL — `col = NULL` is always UNKNOWN.
-      this.conditions.push(Conditions.isNull(col));
-    } else if (Array.isArray(valueOrOperator)) {
-      // where(col, [...]) is shorthand for an IN list, matching the top-level
-      // builder's resolveCondition behavior.
-      this.conditions.push(Conditions.in(col, valueOrOperator));
-    } else {
-      this.conditions.push(Conditions.equals(col, valueOrOperator));
-    }
-    return this;
-  }
-
-  whereIn(column: string, values: any[]): this {
-    this.conditions.push(Conditions.in(this.columnResolver(column), values));
-    return this;
-  }
-
-  whereNotIn(column: string, values: any[]): this {
-    this.conditions.push(Conditions.notIn(this.columnResolver(column), values));
-    return this;
-  }
-
-  whereNull(column: string): this {
-    this.conditions.push(Conditions.isNull(this.columnResolver(column)));
-    return this;
-  }
-
-  whereNotNull(column: string): this {
-    this.conditions.push(Conditions.isNotNull(this.columnResolver(column)));
-    return this;
-  }
-
-  whereBetween(column: string, min: any, max: any): this {
-    this.conditions.push(Conditions.between(this.columnResolver(column), min, max));
-    return this;
-  }
-
-  whereLike(column: string, pattern: string): this {
-    this.conditions.push(Conditions.like(this.columnResolver(column), pattern));
-    return this;
-  }
-
-  /** @internal Build the grouped condition wrapped in parentheses. */
-  build(): Sql {
-    if (this.conditions.length === 0) {
-      throw new OrmError(
-        OrmErrorCode.INVALID_QUERY,
-        "WHERE group is empty. Add at least one condition inside the group.",
-      );
-    }
-    if (this.conditions.length === 1) return this.conditions[0];
-    return Conditions.and(this.conditions);
-  }
-}
 
 /**
  * A type-safe, fluent query builder derived from a repository entity type.
