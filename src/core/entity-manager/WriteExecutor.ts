@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { randomUUID } from "node:crypto";
 import { ClazzType, Logger, resolveEntityGlobs, generateUUIDv7 } from "../../utils";
 import { ColumnMetadata } from "../../scanner";
@@ -6,7 +5,7 @@ import { ISqlDriver } from "../../dialects/SqlDriver";
 import { TransactionSessionManager } from "../../dialects/TransactionSessionManager";
 import { FindOption, LockMode, UpdateData, UpdateManyOptions, WhereClause } from "../../dialects/FindOption";
 import { resolveWhereClause } from "../WhereResolver";
-import sql, { Sql, join, raw } from "sql-template-tag";
+import sql, { Sql, join, raw, type RawValue } from "sql-template-tag";
 import { DeleteResult } from "../../types/DeleteResult";
 import { Conditions } from "../Conditions";
 import { ResultTransformerFactory } from "../ResultTransformerFactory";
@@ -28,6 +27,7 @@ import {
   DeleteEvent,
 } from "../EntitySubscriber";
 import { EntityManagerInternals } from "../EntityManagerInternals";
+import type { ManyToOneMetadata } from "../../decorators/ManyToOne";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
 import { CascadeHandler } from "../CascadeHandler";
 import { transactionStorage } from "../../decorators/Transactional";
@@ -43,6 +43,27 @@ import {
   isTemplateStringsArray,
   formatDateTimeForSQL,
 } from "./internal-utils";
+import {
+  bindParam,
+  bindParams,
+  fieldsOf,
+  okPacket,
+  resultRows,
+  sqliteRunResult,
+  whereByProps,
+  type DriverExecResult,
+  type DriverRow,
+} from "./entity-access";
+
+/**
+ * A ManyToOne FK appended to a multi-row INSERT's column list, paired with the
+ * relation metadata needed to resolve each row's value.
+ */
+interface FkColumnBinding {
+  joinColumn: string;
+  propertyName: string;
+  relMeta: ManyToOneMetadata<unknown>;
+}
 
 /**
  * Executes all write operations (INSERT / UPDATE / DELETE / UPSERT) for
@@ -124,29 +145,30 @@ export class WriteExecutor {
           col.options?.generationStrategy === "uuid" ||
           col.options?.generationStrategy === "uuid-v7",
       );
-      const primaryKeyValue = pk ? (item as any)[this.ctx.propKey(pk)] : undefined;
+      const itemFields = fieldsOf(item);
+      const primaryKeyValue = pk ? itemFields[this.ctx.propKey(pk)] : undefined;
 
       const isInsert = hasGeneratedPk
         ? !primaryKeyValue
         : true;
 
-      const buildPkWhere = (pkValues?: Record<string, any>) => {
+      const buildPkWhere = (pkValues?: DriverRow) => {
         return pkColumns.map((col: ColumnMetadata) => {
           const value = pkValues
             ? pkValues[col.name!]
-            : (item as any)[this.ctx.propKey(col)];
-          return sql`${raw(this.ctx.wrap(col.name!))} = ${value}`;
+            : itemFields[this.ctx.propKey(col)];
+          return sql`${raw(this.ctx.wrap(col.name!))} = ${bindParam(value)}`;
         });
       };
 
-      const buildPkFindWhere = (pkValues?: Record<string, any>) => {
-        const where: any = {};
+      const buildPkFindWhere = (pkValues?: DriverRow): WhereClause<T> => {
+        const where: Record<string, unknown> = {};
         for (const col of pkColumns) {
           where[this.ctx.propKey(col)] = pkValues
             ? pkValues[col.name!]
-            : (item as any)[this.ctx.propKey(col)];
+            : itemFields[this.ctx.propKey(col)];
         }
-        return where;
+        return whereByProps<T>(where);
       };
 
       if (isInsert) {
@@ -171,7 +193,7 @@ export class WriteExecutor {
             const isComputedColumn = computedCols.has(column.name!);
             if (isComputedColumn) return false;
 
-            const value = (item as any)[this.ctx.propKey(column)];
+            const value = itemFields[this.ctx.propKey(column)];
             const isUnsetAutoIncrement =
               column.options?.autoIncrement &&
               (value === null || value === undefined);
@@ -203,10 +225,12 @@ export class WriteExecutor {
           return raw(this.ctx.wrap(column.name!));
         });
 
-        const values = insertableColumns.map((column: ColumnMetadata) => {
-          const rawValue = (item as any)[this.ctx.propKey(column)];
-          return this.ctx.applyWriteTransform(column, rawValue);
-        });
+        const values: RawValue[] = bindParams(
+          insertableColumns.map((column: ColumnMetadata) => {
+            const rawValue = itemFields[this.ctx.propKey(column)];
+            return this.ctx.applyWriteTransform(column, rawValue);
+          }),
+        );
 
         // Auto-inject @CreateTimestamp / @UpdateTimestamp values (on INSERT)
         const now = new Date();
@@ -218,8 +242,8 @@ export class WriteExecutor {
           if (idx >= 0) {
             // Read via the property key — createTsCol is the DB column name after
             // the naming strategy, so item[createTsCol] would miss a user value.
-            const existing = (item as any)[this.ctx.propKey(insertableColumns[idx])];
-            values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : (existing ?? nowStr);
+            const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
+            values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
           }
         }
         if (updateTsCol) {
@@ -227,8 +251,8 @@ export class WriteExecutor {
             (col: ColumnMetadata) => col.name === updateTsCol,
           );
           if (idx >= 0) {
-            const existing = (item as any)[this.ctx.propKey(insertableColumns[idx])];
-            values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : (existing ?? nowStr);
+            const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
+            values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
           }
         }
 
@@ -261,10 +285,10 @@ export class WriteExecutor {
 
           if (strategy === "uuid") {
             values[i] = randomUUID();
-            (item as any)[this.ctx.propKey(col)] = values[i];
+            itemFields[this.ctx.propKey(col)] = values[i];
           } else if (strategy === "uuid-v7") {
             values[i] = generateUUIDv7();
-            (item as any)[this.ctx.propKey(col)] = values[i];
+            itemFields[this.ctx.propKey(col)] = values[i];
           }
         }
 
@@ -290,32 +314,33 @@ export class WriteExecutor {
         const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
         for (const rel of manyToOneRelations) {
           if (!rel.joinColumn) continue;
-          const relatedValue = (item as any)[rel.columnName];
+          const relatedValue = itemFields[rel.columnName];
           // Shadow-accessor fallback: prefer the convention `${rel}Id`, then
           // honor an explicit `option.fkProperty` for entities that follow a
           // different naming (mirrors `collectFkPropertyMappings` on reads).
-          let idPropValue = (item as any)[`${rel.columnName}Id`];
+          let idPropValue = itemFields[`${rel.columnName}Id`];
           if (idPropValue === undefined && rel.option?.fkProperty) {
-            idPropValue = (item as any)[rel.option.fkProperty];
+            idPropValue = itemFields[rel.option.fkProperty];
           }
 
           const existingIdx = insertableColumns.findIndex(
             (col: ColumnMetadata) => col.name === rel.joinColumn,
           );
 
-          let fkValue: any = undefined;
+          let fkValue: unknown = undefined;
 
           if (relatedValue === null) {
             fkValue = null;
           } else if (relatedValue && typeof relatedValue === "object") {
-            const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+            const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
             const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
             if (relatedMeta) {
               const relatedPk = relatedMeta.columns.find(
-                (col: any) => col.options?.primary,
+                (col: ColumnMetadata) => col.options?.primary,
               );
               if (relatedPk) {
-                fkValue = relatedValue[this.ctx.propKey(relatedPk)] ?? undefined;
+                fkValue =
+                  fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? undefined;
               }
             }
           } else if (idPropValue != null) {
@@ -324,10 +349,10 @@ export class WriteExecutor {
 
           if (fkValue !== undefined) {
             if (existingIdx >= 0) {
-              values[existingIdx] = fkValue;
+              values[existingIdx] = bindParam(fkValue);
             } else {
               columns.push(raw(this.ctx.wrap(rel.joinColumn)));
-              values.push(fkValue);
+              values.push(bindParam(fkValue));
             }
           }
         }
@@ -343,7 +368,7 @@ export class WriteExecutor {
           const rootMeta = this.resolver.resolveEntityMetadata(root);
           if (rootMeta) {
             const rootColNames = new Set(
-              rootMeta.columns.map((c: any) => c.name),
+              rootMeta.columns.map((c: ColumnMetadata) => c.name),
             );
             const pkColNames = new Set(
               pkColumns.map((col: ColumnMetadata) => col.name!),
@@ -351,9 +376,9 @@ export class WriteExecutor {
 
             // Split columns/values into parent and child buckets
             const parentCols: Sql[] = [];
-            const parentVals: any[] = [];
+            const parentVals: RawValue[] = [];
             const childCols: Sql[] = [];
-            const childVals: any[] = [];
+            const childVals: RawValue[] = [];
 
             for (let i = 0; i < insertableColumns.length; i++) {
               const col = insertableColumns[i];
@@ -383,20 +408,20 @@ export class WriteExecutor {
               (${join(parentCols, ", ")})
               VALUES (${join(parentVals, ", ")})${parentReturningSql}`;
 
-            const parentResult = (await session.query<T>(parentInsertSql)) as {
-              results: any;
-              fields: any;
-            };
+            const parentResult = (await session.query<T>(
+              parentInsertSql,
+            )) as DriverExecResult;
 
             // Obtain the generated PK value
-            let generatedPkValue: any;
-            if (useReturning && parentResult?.results?.length > 0) {
-              generatedPkValue = parentResult.results[0][pk.name!];
+            let generatedPkValue: unknown;
+            const parentRows = resultRows(parentResult);
+            if (useReturning && parentRows.length > 0) {
+              generatedPkValue = parentRows[0][pk.name!];
             } else if (this.ctx.isMySqlFamily()) {
-              generatedPkValue = parentResult?.results?.insertId;
+              generatedPkValue = okPacket(parentResult)?.insertId;
             } else if (this.ctx.isSqlite()) {
               generatedPkValue = Number(
-                (parentResult?.results ?? parentResult)?.lastInsertRowid,
+                sqliteRunResult(parentResult)?.lastInsertRowid,
               );
             }
 
@@ -411,7 +436,7 @@ export class WriteExecutor {
                 if (isPk || !isRoot) {
                   // This column exists in childCols
                   if (isPk) {
-                    childVals[ci] = generatedPkValue;
+                    childVals[ci] = bindParam(generatedPkValue);
                     pkFoundInChild = true;
                   }
                   ci++;
@@ -420,7 +445,7 @@ export class WriteExecutor {
               // If the PK is missing from childCols, add it
               if (!pkFoundInChild) {
                 childCols.unshift(raw(this.ctx.wrap(pk.name!)));
-                childVals.unshift(generatedPkValue);
+                childVals.unshift(bindParam(generatedPkValue));
               }
             }
 
@@ -433,10 +458,10 @@ export class WriteExecutor {
 
             // Read the resulting row back
             const pkVal = generatedPkValue ?? primaryKeyValue;
-            (item as any)[this.ctx.propKey(pk)] = pkVal;
+            itemFields[this.ctx.propKey(pk)] = pkVal;
             const result = await this.ctx.findOneInternal(
               entity,
-              { where: { [this.ctx.propKey(pk)]: pkVal } as any },
+              { where: whereByProps<T>({ [this.ctx.propKey(pk)]: pkVal }) },
               session,
             );
 
@@ -477,34 +502,34 @@ export class WriteExecutor {
               )}${returningSql}`;
         const saveQueryStart = Date.now();
         this.ctx.beginTrackQuery();
-        const queryResult = (await session.query<T>(insertSql)) as {
-          results: any;
-          fields: any;
-        };
+        const queryResult = (await session.query<T>(
+          insertSql,
+        )) as DriverExecResult;
         this.ctx.trackQuery(
           entity.name,
           insertSql.text ?? String(insertSql),
           Date.now() - saveQueryStart,
         );
 
+        const returnedRows = resultRows(queryResult);
+
         // MariaDB 10.5+ returns rows via RETURNING; fall through to the generic
         // `useReturning && results.length > 0` branch below instead of the insertId path.
         const mariaDbReturned =
-          useReturning &&
-          this.ctx.isMySqlFamily() &&
-          Array.isArray(queryResult?.results) &&
-          queryResult.results.length > 0;
+          useReturning && this.ctx.isMySqlFamily() && returnedRows.length > 0;
 
         if (this.ctx.isMySqlFamily() && !mariaDbReturned) {
           const findWhere = hasAutoIncrementPk
-            ? { [this.ctx.propKey(pk)]: queryResult?.results?.insertId }
+            ? whereByProps<T>({
+                [this.ctx.propKey(pk)]: okPacket(queryResult)?.insertId,
+              })
             : buildPkFindWhere();
           const result = await this.ctx.findOneInternal(entity, {
             where: findWhere,
-          } as any, session);
+          }, session);
 
           const cascadeId = hasAutoIncrementPk
-            ? queryResult?.results?.insertId
+            ? okPacket(queryResult)?.insertId
             : primaryKeyValue;
           await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
@@ -517,8 +542,8 @@ export class WriteExecutor {
         }
 
         // Drivers that support RETURNING *: deserialize directly from the returned row (when there are no eager relations)
-        if (useReturning && queryResult?.results?.length > 0) {
-          const returnedRow = queryResult.results[0];
+        if (useReturning && returnedRows.length > 0) {
+          const returnedRow = returnedRows[0];
           const cascadeId = returnedRow[pk.name!];
           await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
@@ -536,27 +561,29 @@ export class WriteExecutor {
             return ResultTransformerFactory.create().toEntity(entity, {
               results: [returnedRow],
               fields: [],
-            } as any) as T;
+            }) as T;
           }
           const findWhere = buildPkFindWhere(returnedRow);
           const result = await this.ctx.findOneInternal(entity, {
             where: findWhere,
-          } as any, session);
+          }, session);
           return result as T;
         }
 
         // SQLite: look up the inserted entity via lastInsertRowid
         if (this.ctx.isSqlite()) {
-          const sqliteRunResult = queryResult?.results ?? queryResult;
+          const runResult = sqliteRunResult(queryResult);
           const findWhere = hasAutoIncrementPk
-            ? { [this.ctx.propKey(pk)]: Number(sqliteRunResult?.lastInsertRowid) }
+            ? whereByProps<T>({
+                [this.ctx.propKey(pk)]: Number(runResult?.lastInsertRowid),
+              })
             : buildPkFindWhere();
           const result = await this.ctx.findOneInternal(entity, {
             where: findWhere,
-          } as any, session);
+          }, session);
 
           const cascadeId = hasAutoIncrementPk
-            ? Number(sqliteRunResult?.lastInsertRowid)
+            ? Number(runResult?.lastInsertRowid)
             : primaryKeyValue;
           await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
@@ -574,7 +601,7 @@ export class WriteExecutor {
           entity: item,
           manager: this.ctx.getManager(),
         } as InsertEvent<T>);
-        return queryResult as T;
+        return queryResult as unknown as T;
       }
 
       // UPDATE path
@@ -589,7 +616,7 @@ export class WriteExecutor {
       const databaseEntity: T | null = wantsDatabaseEntity
         ? ((await this.ctx.findOneInternal(
             entity,
-            { where: buildPkFindWhere() } as any,
+            { where: buildPkFindWhere() },
             session,
           )) as T | null)
         : null;
@@ -615,13 +642,13 @@ export class WriteExecutor {
           if (pkColumnNames.has(column.name!)) return false;
           if (versionColName && column.name === versionColName) return false;
           if (updateDiscCol && column.name === updateDiscCol.name) return false;
-          return (item as any)[this.ctx.propKey(column)] !== undefined;
+          return itemFields[this.ctx.propKey(column)] !== undefined;
         },
       );
       const updateMap = updatableColumns.map((column: ColumnMetadata) => {
-        let value = (item as any)[this.ctx.propKey(column)];
-        value = this.ctx.applyWriteTransform(column, value);
-        return sql`${raw(this.ctx.wrap(column.name!))} = ${value}`;
+        const rawValue = itemFields[this.ctx.propKey(column)];
+        const value = this.ctx.applyWriteTransform(column, rawValue);
+        return sql`${raw(this.ctx.wrap(column.name!))} = ${bindParam(value)}`;
       });
 
       // Auto-inject @UpdateTimestamp
@@ -649,28 +676,28 @@ export class WriteExecutor {
       const updateManyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
       for (const rel of updateManyToOneRelations) {
         if (!rel.joinColumn) continue;
-        const relatedValue = (item as any)[rel.columnName];
+        const relatedValue = itemFields[rel.columnName];
         // Shadow-accessor fallback (mirrors INSERT path): when the relation
         // object isn't set, look for the FK on the conventional `${rel}Id`
         // shadow, then on an explicit `option.fkProperty`.
-        let shadowValue: any = (item as any)[`${rel.columnName}Id`];
+        let shadowValue: unknown = itemFields[`${rel.columnName}Id`];
         if (shadowValue === undefined && rel.option?.fkProperty) {
-          shadowValue = (item as any)[rel.option.fkProperty];
+          shadowValue = itemFields[rel.option.fkProperty];
         }
 
         if (relatedValue === undefined && shadowValue === undefined) continue;
 
         const alreadyInSet = updatedColumnNames.has(rel.joinColumn);
-        const setClause = (value: any) => {
+        const setClause = (value: unknown) => {
           if (alreadyInSet) {
             const existingIdx = updatableColumns.findIndex(
               (col: ColumnMetadata) => col.name === rel.joinColumn,
             );
             updateMap[existingIdx] =
-              sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${value}`;
+              sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`;
           } else {
             updateMap.push(
-              sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${value}`,
+              sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`,
             );
             updatedColumnNames.add(rel.joinColumn!);
           }
@@ -679,14 +706,14 @@ export class WriteExecutor {
         if (relatedValue === null) {
           setClause(null);
         } else if (relatedValue && typeof relatedValue === "object") {
-          const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+          const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
           const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
           if (relatedMeta) {
             const relatedPk = relatedMeta.columns.find(
-              (col: any) => col.options?.primary,
+              (col: ColumnMetadata) => col.options?.primary,
             );
             if (relatedPk) {
-              const fkValue = relatedValue[this.ctx.propKey(relatedPk)];
+              const fkValue = fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)];
               if (fkValue !== undefined && fkValue !== null) {
                 setClause(fkValue);
               }
@@ -713,7 +740,7 @@ export class WriteExecutor {
           )
         : undefined;
       const currentVersion = versionColumn
-        ? (item as any)[this.ctx.propKey(versionColumn)]
+        ? itemFields[this.ctx.propKey(versionColumn)]
         : undefined;
       if (versionColName) {
         updateMap.push(
@@ -721,13 +748,13 @@ export class WriteExecutor {
         );
         if (currentVersion !== undefined && currentVersion !== null) {
           pkWhereClauses.push(
-            sql`${raw(this.ctx.wrap(versionColName))} = ${currentVersion}`,
+            sql`${raw(this.ctx.wrap(versionColName))} = ${bindParam(currentVersion)}`,
           );
         }
       }
 
       const useReturningForUpdate = typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning();
-      let updateReturnedRow: any = null;
+      let updateReturnedRow: DriverRow | null = null;
 
       // TPT child: UPDATE the parent and child tables separately
       const updateInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
@@ -740,7 +767,7 @@ export class WriteExecutor {
         const rootMeta = this.resolver.resolveEntityMetadata(root);
         if (rootMeta) {
           const rootColNames = new Set(
-            rootMeta.columns.map((c: any) => c.name),
+            rootMeta.columns.map((c: ColumnMetadata) => c.name),
           );
 
           const parentUpdateMap: Sql[] = [];
@@ -792,7 +819,7 @@ export class WriteExecutor {
 
           const tptResult = await this.ctx.findOneInternal(
             entity,
-            { where: buildPkFindWhere() } as any,
+            { where: buildPkFindWhere() },
             session,
           );
           return tptResult as T;
@@ -810,11 +837,9 @@ export class WriteExecutor {
                   `;
         const updateStart = Date.now();
         this.ctx.beginTrackQuery();
-        const updateResult = (await session.query<T>(updateSql)) as {
-          results: any;
-          fields: any;
-          rowCount?: number;
-        };
+        const updateResult = (await session.query<T>(
+          updateSql,
+        )) as DriverExecResult;
         this.ctx.trackQuery(
           entity.name,
           updateSql.text ?? String(updateSql),
@@ -824,17 +849,18 @@ export class WriteExecutor {
         if (versionColName && currentVersion !== undefined && currentVersion !== null) {
           let affected = 0;
           if (this.ctx.isMySqlFamily()) {
-            affected = updateResult?.results?.affectedRows ?? 0;
+            affected = okPacket(updateResult)?.affectedRows ?? 0;
           } else {
             affected = updateResult?.rowCount ?? 0;
           }
           if (affected === 0) {
-            throw new OptimisticLockError(entity.name, currentVersion);
+            throw new OptimisticLockError(entity.name, currentVersion as number);
           }
         }
 
-        if (useReturningForUpdate && updateResult?.results?.length > 0) {
-          updateReturnedRow = updateResult.results[0];
+        const updatedRows = resultRows(updateResult);
+        if (useReturningForUpdate && updatedRows.length > 0) {
+          updateReturnedRow = updatedRows[0];
         }
       }
 
@@ -853,12 +879,12 @@ export class WriteExecutor {
         return ResultTransformerFactory.create().toEntity(entity, {
           results: [updateReturnedRow],
           fields: [],
-        } as any) as T;
+        }) as T;
       }
 
       const result = await this.ctx.findOneInternal(entity, {
         where: buildPkFindWhere(),
-      } as any, session);
+      }, session);
 
       return result as T;
     }, existingSession);
@@ -889,7 +915,7 @@ export class WriteExecutor {
         hasGeneratedPk &&
         pkColumns.length === 1 &&
         items.every((item) => {
-          const pkValue = pk ? (item as any)[this.ctx.propKey(pk)] : undefined;
+          const pkValue = pk ? fieldsOf(item)[this.ctx.propKey(pk)] : undefined;
           return pkValue === null || pkValue === undefined;
         });
 
@@ -978,33 +1004,34 @@ export class WriteExecutor {
         // Mixed batches (some items provide it, some don't) keep a shared
         // column set, so missing rows still bind NULL there.
         return items.some(
-          (item) => (item as any)[this.ctx.propKey(col)] !== undefined,
+          (item) => fieldsOf(item)[this.ctx.propKey(col)] !== undefined,
         );
       },
     );
 
     // Pre-process items: UUID, timestamp, version
     for (const item of items) {
+      const itemFields = fieldsOf(item);
       for (const col of insertableColumns) {
         const strategy = col.options?.generationStrategy;
         if (!strategy || strategy === "increment") continue;
-        if ((item as any)[this.ctx.propKey(col)] != null) continue;
+        if (itemFields[this.ctx.propKey(col)] != null) continue;
         if (strategy === "uuid") {
-          (item as any)[this.ctx.propKey(col)] = randomUUID();
+          itemFields[this.ctx.propKey(col)] = randomUUID();
         } else if (strategy === "uuid-v7") {
-          (item as any)[this.ctx.propKey(col)] = generateUUIDv7();
+          itemFields[this.ctx.propKey(col)] = generateUUIDv7();
         }
       }
       if (createTsCol) {
         const col = insertableColumns.find((c) => c.name === createTsCol);
-        if (col && (item as any)[this.ctx.propKey(col)] == null) {
-          (item as any)[this.ctx.propKey(col)] = now;
+        if (col && itemFields[this.ctx.propKey(col)] == null) {
+          itemFields[this.ctx.propKey(col)] = now;
         }
       }
       if (updateTsCol) {
         const col = insertableColumns.find((c) => c.name === updateTsCol);
-        if (col && (item as any)[this.ctx.propKey(col)] == null) {
-          (item as any)[this.ctx.propKey(col)] = now;
+        if (col && itemFields[this.ctx.propKey(col)] == null) {
+          itemFields[this.ctx.propKey(col)] = now;
         }
       }
       if (versionCol) {
@@ -1014,8 +1041,8 @@ export class WriteExecutor {
         // @CreateTimestamp/@UpdateTimestamp handling above. Setting item[colName]
         // here would write a bogus property and leave the version NULL.
         const versionColumn = insertableColumns.find((c) => c.name === versionCol);
-        if (versionColumn && (item as any)[this.ctx.propKey(versionColumn)] == null) {
-          (item as any)[this.ctx.propKey(versionColumn)] = 1;
+        if (versionColumn && itemFields[this.ctx.propKey(versionColumn)] == null) {
+          itemFields[this.ctx.propKey(versionColumn)] = 1;
         }
       }
     }
@@ -1025,7 +1052,7 @@ export class WriteExecutor {
       raw(this.ctx.wrap(col.name!)),
     );
     const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-    const fkColumns: { joinColumn: string; propertyName: string; relMeta: any }[] = [];
+    const fkColumns: FkColumnBinding[] = [];
     for (const rel of manyToOneRelations) {
       if (!rel.joinColumn) continue;
       if (insertableColumns.some((col) => col.name === rel.joinColumn)) continue;
@@ -1042,24 +1069,35 @@ export class WriteExecutor {
     const valueRows: Sql[] = allDefaultRow
       ? []
       : items.map((item) => {
-          const rowValues = insertableColumns.map((col) => {
-            const rawValue = (item as any)[this.ctx.propKey(col)];
-            const transformed = this.ctx.applyWriteTransform(col, rawValue);
-            if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
-            return transformed;
-          });
+          const itemFields = fieldsOf(item);
+          const rowValues: RawValue[] = bindParams(
+            insertableColumns.map((col) => {
+              const rawValue = itemFields[this.ctx.propKey(col)];
+              const transformed = this.ctx.applyWriteTransform(col, rawValue);
+              if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
+              return transformed;
+            }),
+          );
           for (const fk of fkColumns) {
-            const relatedValue = (item as any)[fk.propertyName];
-            const idPropValue = (item as any)[`${fk.propertyName}Id`];
+            const relatedValue = itemFields[fk.propertyName];
+            const idPropValue = itemFields[`${fk.propertyName}Id`];
             if (relatedValue === null) {
               rowValues.push(null);
             } else if (relatedValue && typeof relatedValue === "object") {
-              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<any>;
+              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<unknown>;
               const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-              const relatedPk = relatedMeta?.columns.find((c: any) => c.options?.primary);
-              rowValues.push(relatedPk ? relatedValue[this.ctx.propKey(relatedPk)] ?? null : null);
+              const relatedPk = relatedMeta?.columns.find(
+                (c: ColumnMetadata) => c.options?.primary,
+              );
+              rowValues.push(
+                relatedPk
+                  ? bindParam(
+                      fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? null,
+                    )
+                  : null,
+              );
             } else if (idPropValue != null) {
-              rowValues.push(idPropValue);
+              rowValues.push(bindParam(idPropValue));
             } else {
               rowValues.push(null);
             }
@@ -1096,7 +1134,7 @@ export class WriteExecutor {
 
     this.ctx.beginTrackQuery();
     const queryStart = Date.now();
-    let queryResult: { results: any; fields: any; rowCount?: number };
+    let queryResult: DriverExecResult;
     // Exact rowids from per-row SQLite all-default inserts (see below).
     let sqliteDefaultRowIds: number[] | null = null;
     if (allDefaultRow && this.ctx.isSqlite()) {
@@ -1105,67 +1143,68 @@ export class WriteExecutor {
       // rowid for exact PK assignment.
       sqliteDefaultRowIds = [];
       for (let i = 0; i < items.length; i++) {
-        const res = (await session.query(insertSql)) as { results: any };
-        const sqliteRes = res?.results ?? res;
-        sqliteDefaultRowIds.push(Number(sqliteRes?.lastInsertRowid));
+        const res = await session.query(insertSql);
+        sqliteDefaultRowIds.push(Number(sqliteRunResult(res)?.lastInsertRowid));
       }
       this.ctx.trackQuery(entity.name, insertSql.text ?? String(insertSql), Date.now() - queryStart);
       queryResult = { results: [], fields: [] };
     } else {
-      queryResult = (await session.query(insertSql)) as {
-        results: any; fields: any; rowCount?: number;
-      };
+      queryResult = (await session.query(insertSql)) as DriverExecResult;
       this.ctx.trackQuery(entity.name, insertSql.text ?? String(insertSql), Date.now() - queryStart);
     }
 
     // Collect results
     let results: InstanceType<ClazzType<T>>[];
 
-    if (useReturning && queryResult?.results?.length > 0 && !this.ctx.hasEagerRelations(entity)) {
+    const insertedRows = resultRows(queryResult);
+
+    if (useReturning && insertedRows.length > 0 && !this.ctx.hasEagerRelations(entity)) {
       // PostgreSQL RETURNING: deserialize directly without a re-read.
       // #369: ResultTransformer maps DB column names → property keys.
       results = ResultTransformerFactory.create().toEntities(entity, {
-        results: queryResult.results,
+        results: insertedRows,
         fields: [],
-      } as any) as InstanceType<ClazzType<T>>[];
+      }) as InstanceType<ClazzType<T>>[];
     } else {
       // Compute PK values → bulk SELECT WHERE pk IN (...)
-      let pkValues: any[];
-      if (useReturning && queryResult?.results?.length > 0) {
-        pkValues = queryResult.results.map((row: any) => row[pk.name!]);
+      let pkValues: unknown[];
+      if (useReturning && insertedRows.length > 0) {
+        pkValues = insertedRows.map((row) => row[pk.name!]);
       } else if (this.ctx.isMySqlFamily() && hasAutoIncrementPk) {
-        const firstId = queryResult?.results?.insertId;
+        const firstId = Number(okPacket(queryResult)?.insertId);
         pkValues = items.map((_, i) => firstId + i);
       } else if (this.ctx.isSqlite() && hasAutoIncrementPk) {
         if (sqliteDefaultRowIds) {
           // Per-row all-default inserts already captured exact rowids.
           pkValues = sqliteDefaultRowIds;
         } else {
-          const sqliteRes = queryResult?.results ?? queryResult;
-          const lastId = Number(sqliteRes?.lastInsertRowid);
+          const lastId = Number(sqliteRunResult(queryResult)?.lastInsertRowid);
           pkValues = items.map((_, i) => lastId - items.length + 1 + i);
         }
       } else {
         // UUID — use client-generated PK values
-        pkValues = items.map((item) => (item as any)[this.ctx.propKey(pk)]);
+        pkValues = items.map((item) => fieldsOf(item)[this.ctx.propKey(pk)]);
       }
 
       const found = await this.ctx.findInternal(
         entity,
-        { where: { [this.ctx.propKey(pk)]: pkValues } as any },
+        { where: whereByProps<T>({ [this.ctx.propKey(pk)]: pkValues }) },
         session,
       );
-      const resultArray: any[] = Array.isArray(found) ? found : found ? [found] : [];
-      const resultMap = new Map<any, InstanceType<ClazzType<T>>>();
+      const resultArray = Array.isArray(found) ? found : found ? [found] : [];
+      const resultMap = new Map<unknown, InstanceType<ClazzType<T>>>();
       for (const row of resultArray) {
-        resultMap.set((row as any)[this.ctx.propKey(pk)], row as InstanceType<ClazzType<T>>);
+        resultMap.set(
+          fieldsOf(row)[this.ctx.propKey(pk)],
+          row as InstanceType<ClazzType<T>>,
+        );
       }
       results = pkValues.map((id) => resultMap.get(id)!).filter(Boolean);
     }
 
     // OneToMany cascade per item
     for (let i = 0; i < items.length; i++) {
-      const cascadeId = results[i] ? (results[i] as any)[this.ctx.propKey(pk)] : undefined;
+      const cascadeId = results[i] ? fieldsOf(results[i])[this.ctx.propKey(pk)] : undefined;
       if (cascadeId !== undefined) {
         await this.cascadeHandler.cascadeSaveOneToMany(entity, items[i], cascadeId, session);
       }
@@ -1215,9 +1254,10 @@ export class WriteExecutor {
       if (timestampColumns.length > 0) {
         const now = new Date();
         for (const item of items) {
+          const itemFields = fieldsOf(item);
           for (const col of timestampColumns) {
-            if ((item as any)[this.ctx.propKey(col)] == null) {
-              (item as any)[this.ctx.propKey(col)] = now;
+            if (itemFields[this.ctx.propKey(col)] == null) {
+              itemFields[this.ctx.propKey(col)] = now;
             }
           }
         }
@@ -1232,8 +1272,9 @@ export class WriteExecutor {
         if (versionColumn) {
           const versionProp = this.ctx.propKey(versionColumn);
           for (const item of items) {
-            if ((item as any)[versionProp] == null) {
-              (item as any)[versionProp] = 1;
+            const itemFields = fieldsOf(item);
+            if (itemFields[versionProp] == null) {
+              itemFields[versionProp] = 1;
             }
           }
         }
@@ -1245,11 +1286,10 @@ export class WriteExecutor {
           if (computedColsMany.has(column.name!)) return false;
           const isAutoIncrement = column.options?.autoIncrement;
           if (!isAutoIncrement) return true;
-          return items.every(
-            (item) =>
-              (item as any)[this.ctx.propKey(column)] !== null &&
-              (item as any)[this.ctx.propKey(column)] !== undefined,
-          );
+          return items.every((item) => {
+            const value = fieldsOf(item)[this.ctx.propKey(column)];
+            return value !== null && value !== undefined;
+          });
         },
       );
 
@@ -1258,7 +1298,7 @@ export class WriteExecutor {
       );
 
       const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-      const fkColumns: { joinColumn: string; propertyName: string; relMeta: any }[] = [];
+      const fkColumns: FkColumnBinding[] = [];
       for (const rel of manyToOneRelations) {
         if (!rel.joinColumn) continue;
         const alreadyIncluded = insertableColumns.some(
@@ -1275,33 +1315,42 @@ export class WriteExecutor {
       }
 
       const valueRows = items.map((item) => {
-        const rowValues = insertableColumns.map((column: ColumnMetadata) => {
-          // Mirror saveManyBatchInsert: write transformers (@Column transformer.to,
-          // registered ColumnType transformers, and the mandatory JSON stringify)
-          // must run on this path too, otherwise JSON/transformer columns are bound
-          // raw while reads still apply transformer.from.
-          const rawValue = (item as any)[this.ctx.propKey(column)];
-          const transformed = this.ctx.applyWriteTransform(column, rawValue);
-          if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
-          return transformed;
-        });
+        const itemFields = fieldsOf(item);
+        const rowValues: RawValue[] = bindParams(
+          insertableColumns.map((column: ColumnMetadata) => {
+            // Mirror saveManyBatchInsert: write transformers (@Column transformer.to,
+            // registered ColumnType transformers, and the mandatory JSON stringify)
+            // must run on this path too, otherwise JSON/transformer columns are bound
+            // raw while reads still apply transformer.from.
+            const rawValue = itemFields[this.ctx.propKey(column)];
+            const transformed = this.ctx.applyWriteTransform(column, rawValue);
+            if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
+            return transformed;
+          }),
+        );
         for (const fk of fkColumns) {
-          const relatedValue = (item as any)[fk.propertyName];
-          const idPropValue = (item as any)[`${fk.propertyName}Id`];
+          const relatedValue = itemFields[fk.propertyName];
+          const idPropValue = itemFields[`${fk.propertyName}Id`];
 
           if (relatedValue != null) {
             if (typeof relatedValue === "object") {
-              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<any>;
+              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<unknown>;
               const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
               const relatedPk = relatedMeta?.columns.find(
-                (col: any) => col.options?.primary,
+                (col: ColumnMetadata) => col.options?.primary,
               );
-              rowValues.push(relatedPk ? relatedValue[this.ctx.propKey(relatedPk)] ?? null : null);
+              rowValues.push(
+                relatedPk
+                  ? bindParam(
+                      fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? null,
+                    )
+                  : null,
+              );
             } else {
-              rowValues.push(relatedValue);
+              rowValues.push(bindParam(relatedValue));
             }
           } else if (idPropValue != null) {
-            rowValues.push(idPropValue);
+            rowValues.push(bindParam(idPropValue));
           } else {
             rowValues.push(null);
           }
@@ -1311,15 +1360,11 @@ export class WriteExecutor {
 
       const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
 
-      const queryResult = (await session.query(queryStr)) as {
-        results: any;
-        fields: any;
-        rowCount?: number;
-      };
+      const queryResult = (await session.query(queryStr)) as DriverExecResult;
 
       let affected = items.length;
       if (this.ctx.isMySqlFamily()) {
-        affected = queryResult?.results?.affectedRows ?? items.length;
+        affected = okPacket(queryResult)?.affectedRows ?? items.length;
       } else if (queryResult?.rowCount !== undefined) {
         affected = queryResult.rowCount;
       }
@@ -1385,9 +1430,10 @@ export class WriteExecutor {
       if (timestampColumns.length > 0) {
         const now = new Date();
         for (const item of items) {
+          const itemFields = fieldsOf(item);
           for (const col of timestampColumns) {
-            if ((item as any)[this.ctx.propKey(col)] == null) {
-              (item as any)[this.ctx.propKey(col)] = now;
+            if (itemFields[this.ctx.propKey(col)] == null) {
+              itemFields[this.ctx.propKey(col)] = now;
             }
           }
         }
@@ -1402,8 +1448,9 @@ export class WriteExecutor {
         if (versionColumn) {
           const versionProp = this.ctx.propKey(versionColumn);
           for (const item of items) {
-            if ((item as any)[versionProp] == null) {
-              (item as any)[versionProp] = 1;
+            const itemFields = fieldsOf(item);
+            if (itemFields[versionProp] == null) {
+              itemFields[versionProp] = 1;
             }
           }
         }
@@ -1415,11 +1462,10 @@ export class WriteExecutor {
           if (computedColsMany.has(column.name!)) return false;
           const isAutoIncrement = column.options?.autoIncrement;
           if (!isAutoIncrement) return true;
-          return items.every(
-            (item) =>
-              (item as any)[this.ctx.propKey(column)] !== null &&
-              (item as any)[this.ctx.propKey(column)] !== undefined,
-          );
+          return items.every((item) => {
+            const value = fieldsOf(item)[this.ctx.propKey(column)];
+            return value !== null && value !== undefined;
+          });
         },
       );
 
@@ -1428,7 +1474,7 @@ export class WriteExecutor {
       );
 
       const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-      const fkColumns: { joinColumn: string; propertyName: string; relMeta: any }[] = [];
+      const fkColumns: FkColumnBinding[] = [];
       for (const rel of manyToOneRelations) {
         if (!rel.joinColumn) continue;
         const alreadyIncluded = insertableColumns.some(
@@ -1445,33 +1491,42 @@ export class WriteExecutor {
       }
 
       const valueRows = items.map((item) => {
-        const rowValues = insertableColumns.map((column: ColumnMetadata) => {
-          // Mirror saveManyBatchInsert: write transformers (@Column transformer.to,
-          // registered ColumnType transformers, and the mandatory JSON stringify)
-          // must run on this path too, otherwise JSON/transformer columns are bound
-          // raw while reads still apply transformer.from.
-          const rawValue = (item as any)[this.ctx.propKey(column)];
-          const transformed = this.ctx.applyWriteTransform(column, rawValue);
-          if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
-          return transformed;
-        });
+        const itemFields = fieldsOf(item);
+        const rowValues: RawValue[] = bindParams(
+          insertableColumns.map((column: ColumnMetadata) => {
+            // Mirror saveManyBatchInsert: write transformers (@Column transformer.to,
+            // registered ColumnType transformers, and the mandatory JSON stringify)
+            // must run on this path too, otherwise JSON/transformer columns are bound
+            // raw while reads still apply transformer.from.
+            const rawValue = itemFields[this.ctx.propKey(column)];
+            const transformed = this.ctx.applyWriteTransform(column, rawValue);
+            if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
+            return transformed;
+          }),
+        );
         for (const fk of fkColumns) {
-          const relatedValue = (item as any)[fk.propertyName];
-          const idPropValue = (item as any)[`${fk.propertyName}Id`];
+          const relatedValue = itemFields[fk.propertyName];
+          const idPropValue = itemFields[`${fk.propertyName}Id`];
 
           if (relatedValue != null) {
             if (typeof relatedValue === "object") {
-              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<any>;
+              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<unknown>;
               const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
               const relatedPk = relatedMeta?.columns.find(
-                (col: any) => col.options?.primary,
+                (col: ColumnMetadata) => col.options?.primary,
               );
-              rowValues.push(relatedPk ? relatedValue[this.ctx.propKey(relatedPk)] ?? null : null);
+              rowValues.push(
+                relatedPk
+                  ? bindParam(
+                      fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? null,
+                    )
+                  : null,
+              );
             } else {
-              rowValues.push(relatedValue);
+              rowValues.push(bindParam(relatedValue));
             }
           } else if (idPropValue != null) {
-            rowValues.push(idPropValue);
+            rowValues.push(bindParam(idPropValue));
           } else {
             rowValues.push(null);
           }
@@ -1485,24 +1540,17 @@ export class WriteExecutor {
       // column-list returning helper, so it is emitted directly here.
       const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")} RETURNING *`;
 
-      const queryResult = (await session.query(queryStr)) as {
-        results: any;
-        fields: any;
-        rowCount?: number;
-      };
+      const queryResult = (await session.query(queryStr)) as DriverExecResult;
 
       // PostgreSQL / SQLite (better-sqlite3 .all() on a RETURNING statement)
       // both surface the rows under `results`, in insertion (input) order.
       // #369: route them through ResultTransformer so DB column names map back
       // to property keys (explicit @Column({ name }) + NamingStrategy) and
       // column transformers apply on read — the same path find() uses.
-      const rows = Array.isArray(queryResult?.results)
-        ? queryResult.results
-        : [];
       return ResultTransformerFactory.create().toEntities(entity, {
-        results: rows,
+        results: resultRows(queryResult),
         fields: [],
-      } as any) as InstanceType<ClazzType<T>>[];
+      }) as InstanceType<ClazzType<T>>[];
     });
   }
 
@@ -1586,14 +1634,13 @@ export class WriteExecutor {
 
           // 2. Delete from the parent table
           const parentDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(rootMeta.name!))} WHERE ${whereSql}`;
-          const parentResult = (await session.query(parentDeleteQuery)) as {
-            results: any;
-            rowCount?: number;
-          };
+          const parentResult = (await session.query(
+            parentDeleteQuery,
+          )) as DriverExecResult;
 
           let affected = 0;
           if (this.ctx.isMySqlFamily()) {
-            affected = parentResult?.results?.affectedRows ?? 0;
+            affected = okPacket(parentResult)?.affectedRows ?? 0;
           } else {
             affected = parentResult?.rowCount ?? 0;
           }
@@ -1617,11 +1664,7 @@ export class WriteExecutor {
 
       const deleteStart = Date.now();
       this.ctx.beginTrackQuery();
-      const queryResult = (await session.query(deleteQuery)) as {
-        results: any;
-        fields: any;
-        rowCount?: number;
-      };
+      const queryResult = (await session.query(deleteQuery)) as DriverExecResult;
       this.ctx.trackQuery(
         entity.name,
         deleteQuery.text ?? String(deleteQuery),
@@ -1630,7 +1673,7 @@ export class WriteExecutor {
 
       let affected = 0;
       if (this.ctx.isMySqlFamily()) {
-        affected = queryResult?.results?.affectedRows ?? 0;
+        affected = okPacket(queryResult)?.affectedRows ?? 0;
       } else {
         affected = queryResult?.rowCount ?? 0;
       }
@@ -1687,15 +1730,11 @@ export class WriteExecutor {
         ? sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name!))} WHERE ${raw(this.ctx.wrap(pk.name!))} IN (${placeholders}) AND ${tenantDeleteManyWhere}`
         : sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name!))} WHERE ${raw(this.ctx.wrap(pk.name!))} IN (${placeholders})`;
 
-      const queryResult = (await session.query(deleteQuery)) as {
-        results: any;
-        fields: any;
-        rowCount?: number;
-      };
+      const queryResult = (await session.query(deleteQuery)) as DriverExecResult;
 
       let affected = 0;
       if (this.ctx.isMySqlFamily()) {
-        affected = queryResult?.results?.affectedRows ?? 0;
+        affected = okPacket(queryResult)?.affectedRows ?? 0;
       } else {
         affected = queryResult?.rowCount ?? 0;
       }
@@ -1756,12 +1795,13 @@ export class WriteExecutor {
 
     return this.ctx.executeInTransaction(async (session) => {
       const updatePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
+      const dataFields = fieldsOf(data);
       const setMap: Sql[] = [];
       for (const key in data) {
-        const value = (data as any)[key];
+        const value = dataFields[key];
         if (value !== undefined) {
           const dbCol = updatePropToCol.get(key) ?? key;
-          setMap.push(sql`${raw(this.ctx.wrap(dbCol))} = ${value}`);
+          setMap.push(sql`${raw(this.ctx.wrap(dbCol))} = ${bindParam(value)}`);
         }
       }
 
@@ -1788,7 +1828,7 @@ export class WriteExecutor {
       // version property explicitly. getVersionColumn returns the PROPERTY key,
       // so map it to the DB column the same way the SET keys above are mapped.
       const versionProp = this.resolver.getVersionColumn(entity);
-      if (versionProp && (data as any)[versionProp] === undefined) {
+      if (versionProp && dataFields[versionProp] === undefined) {
         const versionCol = this.ctx.wrap(
           updatePropToCol.get(versionProp) ?? versionProp,
         );
@@ -1853,11 +1893,7 @@ export class WriteExecutor {
 
       const queryStart = Date.now();
       this.ctx.beginTrackQuery();
-      const queryResult = (await session.query(updateSql)) as {
-        results: any;
-        fields: any;
-        rowCount?: number;
-      };
+      const queryResult = (await session.query(updateSql)) as DriverExecResult;
       this.ctx.trackQuery(
         entity.name,
         updateSql.text ?? String(updateSql),
@@ -1866,7 +1902,7 @@ export class WriteExecutor {
 
       let affected = 0;
       if (this.ctx.isMySqlFamily()) {
-        affected = queryResult?.results?.affectedRows ?? 0;
+        affected = okPacket(queryResult)?.affectedRows ?? 0;
       } else {
         affected = queryResult?.rowCount ?? 0;
       }
@@ -2028,11 +2064,7 @@ export class WriteExecutor {
 
       const queryStart = Date.now();
       this.ctx.beginTrackQuery();
-      const queryResult = (await session.query(updateSql)) as {
-        results: any;
-        fields: any;
-        rowCount?: number;
-      };
+      const queryResult = (await session.query(updateSql)) as DriverExecResult;
       this.ctx.trackQuery(
         entity.name,
         updateSql.text ?? String(updateSql),
@@ -2041,7 +2073,7 @@ export class WriteExecutor {
 
       let affected = 0;
       if (this.ctx.isMySqlFamily()) {
-        affected = queryResult?.results?.affectedRows ?? 0;
+        affected = okPacket(queryResult)?.affectedRows ?? 0;
       } else {
         affected = queryResult?.rowCount ?? 0;
       }
@@ -2121,15 +2153,11 @@ export class WriteExecutor {
       const nowExpr = this.ctx.isSqlite() ? raw("datetime('now')") : raw("NOW()");
       const updateQuery = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name!))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`;
 
-      const queryResult = (await session.query(updateQuery)) as {
-        results: any;
-        fields: any;
-        rowCount?: number;
-      };
+      const queryResult = (await session.query(updateQuery)) as DriverExecResult;
 
       let affected = 0;
       if (this.ctx.isMySqlFamily()) {
-        affected = queryResult?.results?.affectedRows ?? 0;
+        affected = okPacket(queryResult)?.affectedRows ?? 0;
       } else {
         affected = queryResult?.rowCount ?? 0;
       }
@@ -2211,15 +2239,11 @@ export class WriteExecutor {
 
       const restoreQuery = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name!))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = NULL WHERE ${whereSql}`;
 
-      const queryResult = (await session.query(restoreQuery)) as {
-        results: any;
-        fields: any;
-        rowCount?: number;
-      };
+      const queryResult = (await session.query(restoreQuery)) as DriverExecResult;
 
       let affected = 0;
       if (this.ctx.isMySqlFamily()) {
-        affected = queryResult?.results?.affectedRows ?? 0;
+        affected = okPacket(queryResult)?.affectedRows ?? 0;
       } else {
         affected = queryResult?.rowCount ?? 0;
       }
@@ -2267,7 +2291,7 @@ export class WriteExecutor {
     const computedColsUpsert = this.ctx.getComputedColumnNames(entity);
     const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
       if (computedColsUpsert.has(col.name!)) return false;
-      const value = (data as any)[this.ctx.propKey(col)];
+      const value = fieldsOf(data)[this.ctx.propKey(col)];
       if (
         col.options?.autoIncrement &&
         (value === null || value === undefined)
@@ -2301,9 +2325,10 @@ export class WriteExecutor {
     }
 
     return this.ctx.executeInTransaction(async (session) => {
+      const dataFields = fieldsOf(data);
       const columnValues = insertableColumns.map(
         (col: ColumnMetadata) => {
-          const rawValue = (data as any)[this.ctx.propKey(col)];
+          const rawValue = dataFields[this.ctx.propKey(col)];
           return this.ctx.applyWriteTransform(col, rawValue);
         },
       );
@@ -2316,9 +2341,9 @@ export class WriteExecutor {
         wrappedUpdate,
       );
 
-      const queryResult: any = await session.query(upsertSql);
+      const queryResult = (await session.query(upsertSql)) as DriverExecResult;
       const affected = this.ctx.isMySqlFamily()
-        ? (queryResult?.results?.affectedRows ?? 0)
+        ? (okPacket(queryResult)?.affectedRows ?? 0)
         : (queryResult?.rowCount ?? 0);
       return { affected };
     });
@@ -2355,7 +2380,7 @@ export class WriteExecutor {
     const computedColsIgnore = this.ctx.getComputedColumnNames(entity);
     const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
       if (computedColsIgnore.has(col.name!)) return false;
-      const value = (data as any)[this.ctx.propKey(col)];
+      const value = fieldsOf(data)[this.ctx.propKey(col)];
       if (
         col.options?.autoIncrement &&
         (value === null || value === undefined)
@@ -2378,8 +2403,9 @@ export class WriteExecutor {
     const tableName = this.ctx.wrapTable(metadata.name!);
 
     return this.ctx.executeInTransaction(async (session) => {
+      const dataFields = fieldsOf(data);
       const columnValues = insertableColumns.map((col: ColumnMetadata) => {
-        const rawValue = (data as any)[this.ctx.propKey(col)];
+        const rawValue = dataFields[this.ctx.propKey(col)];
         return this.ctx.applyWriteTransform(col, rawValue);
       });
 
@@ -2390,9 +2416,9 @@ export class WriteExecutor {
         wrappedConflict,
       );
 
-      const queryResult: any = await session.query(insertSql);
+      const queryResult = (await session.query(insertSql)) as DriverExecResult;
       const affected = this.ctx.isMySqlFamily()
-        ? (queryResult?.results?.affectedRows ?? 0)
+        ? (okPacket(queryResult)?.affectedRows ?? 0)
         : (queryResult?.rowCount ?? 0);
       return { affected };
     });
@@ -2443,14 +2469,15 @@ export class WriteExecutor {
       if (computedCols.has(col.name!)) return false;
       if (col.options?.autoIncrement) {
         // Include auto-increment column only if ALL items provide a value
-        return items.every(
-          (item) =>
-            (item as any)[this.ctx.propKey(col)] !== null &&
-            (item as any)[this.ctx.propKey(col)] !== undefined,
-        );
+        return items.every((item) => {
+          const value = fieldsOf(item)[this.ctx.propKey(col)];
+          return value !== null && value !== undefined;
+        });
       }
       // Include column if at least one item provides a value
-      return items.some((item) => (item as any)[this.ctx.propKey(col)] !== undefined);
+      return items.some(
+        (item) => fieldsOf(item)[this.ctx.propKey(col)] !== undefined,
+      );
     });
 
     if (insertableColumns.length === 0) {
@@ -2476,12 +2503,15 @@ export class WriteExecutor {
 
     return this.ctx.executeInTransaction(async (session) => {
       const valueRows = items.map((item) => {
-        const rowValues = insertableColumns.map((col: ColumnMetadata) => {
-          const rawValue = (item as any)[this.ctx.propKey(col)];
-          const transformed = this.ctx.applyWriteTransform(col, rawValue);
-          if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
-          return transformed ?? null;
-        });
+        const itemFields = fieldsOf(item);
+        const rowValues: RawValue[] = bindParams(
+          insertableColumns.map((col: ColumnMetadata) => {
+            const rawValue = itemFields[this.ctx.propKey(col)];
+            const transformed = this.ctx.applyWriteTransform(col, rawValue);
+            if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
+            return transformed ?? null;
+          }),
+        );
         return sql`(${join(rowValues, ", ")})`;
       });
 
@@ -2493,9 +2523,9 @@ export class WriteExecutor {
         wrappedUpdate,
       );
 
-      const queryResult: any = await session.query(upsertSql);
+      const queryResult = (await session.query(upsertSql)) as DriverExecResult;
       const affected = this.ctx.isMySqlFamily()
-        ? (queryResult?.results?.affectedRows ?? 0)
+        ? (okPacket(queryResult)?.affectedRows ?? 0)
         : (queryResult?.rowCount ?? 0);
       return { affected };
     });
