@@ -29,7 +29,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        example: [nestjs-cats, nestjs-blog, nestjs-multitenant, nestjs-todo]
+        example:
+          [
+            nestjs-cats,
+            nestjs-blog,
+            nestjs-multitenant,
+            nestjs-todo,
+            nestjs-todo-sqlite,
+            nestjs-linear-clone,
+            prisma-import-demo,
+          ]
     steps:
       - uses: actions/checkout@v4
 
