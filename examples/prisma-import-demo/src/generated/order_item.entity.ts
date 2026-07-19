@@ -1,11 +1,4 @@
-import {
-  Column,
-  Entity,
-  ManyToOne,
-  RelationColumn,
-  PrimaryGeneratedColumn,
-  UniqueIndex,
-} from "@stingerloom/orm";
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, RelationColumn, UniqueIndex } from "@stingerloom/orm";
 import { Order } from "./order.entity";
 import { Product } from "./product.entity";
 
