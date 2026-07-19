@@ -134,30 +134,30 @@ export class PostsService {
   }
 
   /**
-   * addTagToPost — inserts a (postId, tagId) row into the join table (post_tags).
+   * addTagToPost — inserts a (postId, tagId) row into the join table.
+   *
+   * `relation(...).add()` resolves the join table and its columns from the
+   * @ManyToMany metadata and picks the right idempotent spelling per dialect
+   * (`INSERT IGNORE` on MySQL, `ON CONFLICT DO NOTHING` on PostgreSQL), so
+   * this stays portable instead of hardcoding MySQL SQL and table names.
    */
   async addTagToPost(
     postId: number,
     tagId: number,
   ): Promise<{ message: string }> {
-    await this.em.query(
-      "INSERT IGNORE INTO `post_tags` (`post_id`, `tag_id`) VALUES (?, ?)",
-      [postId, tagId],
-    );
+    await this.postRepository.relation(postId, "tags").add(tagId);
     return { message: `Tag ${tagId} added to Post ${postId}` };
   }
 
   /**
    * removeTagFromPost — deletes a (postId, tagId) row from the join table.
+   * No-op when the pair is already absent.
    */
   async removeTagFromPost(
     postId: number,
     tagId: number,
   ): Promise<{ message: string }> {
-    await this.em.query(
-      "DELETE FROM `post_tags` WHERE `post_id` = ? AND `tag_id` = ?",
-      [postId, tagId],
-    );
+    await this.postRepository.relation(postId, "tags").remove(tagId);
     return { message: `Tag ${tagId} removed from Post ${postId}` };
   }
 
