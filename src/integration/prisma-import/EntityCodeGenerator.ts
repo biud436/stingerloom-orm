@@ -174,7 +174,11 @@ export class EntityCodeGenerator {
       sections.push(dec);
     }
     sections.push(`export class ${model.name} {`);
-    sections.push(bodyLines.join("\n"));
+    // Each field generator appends a blank separator line; drop the trailing
+    // one so the class body does not end with a stray empty line.
+    const body = [...bodyLines];
+    while (body.length > 0 && body[body.length - 1] === "") body.pop();
+    sections.push(body.join("\n"));
     sections.push("}");
     sections.push("");
 
@@ -306,7 +310,6 @@ export class EntityCodeGenerator {
           camelToSnakeCase(rel.targetModel) + ".entity",
         );
         const opts: string[] = [];
-        if (rel.joinColumn) opts.push(`joinColumn: "${rel.joinColumn}"`);
         if (rel.references) opts.push(`references: "${rel.references}"`);
         if (rel.cascade)
           opts.push(
@@ -318,6 +321,10 @@ export class EntityCodeGenerator {
         lines.push(
           `  @ManyToOne(() => ${rel.targetModel}, (e) => e.${this.findInverseProperty(rel.targetModel, rel.propertyName)}${optsStr})`,
         );
+        if (rel.joinColumn) {
+          imports.addOrm("RelationColumn");
+          lines.push(`  @RelationColumn({ name: "${rel.joinColumn}" })`);
+        }
         lines.push(`  ${rel.propertyName}!: ${rel.targetModel};`);
         lines.push("");
         break;
@@ -344,7 +351,6 @@ export class EntityCodeGenerator {
           camelToSnakeCase(rel.targetModel) + ".entity",
         );
         const opts: string[] = [];
-        if (rel.joinColumn) opts.push(`joinColumn: "${rel.joinColumn}"`);
         if (rel.cascade)
           opts.push(
             `cascade: [${rel.cascade.map((c) => `"${c}"`).join(", ")}]`,
@@ -355,6 +361,10 @@ export class EntityCodeGenerator {
         lines.push(
           `  @OneToOne(() => ${rel.targetModel}${optsStr ? ", " + optsStr : ""})`,
         );
+        if (rel.joinColumn) {
+          imports.addOrm("RelationColumn");
+          lines.push(`  @RelationColumn({ name: "${rel.joinColumn}" })`);
+        }
         lines.push(`  ${rel.propertyName}!: ${rel.targetModel};`);
         lines.push("");
         break;

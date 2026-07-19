@@ -8,10 +8,10 @@ A blog REST API built with NestJS demonstrating key Stingerloom ORM features.
 - **Relations** — ManyToOne (Post→User, Post→Category), OneToMany, ManyToMany (Post↔Tag)
 - **Soft Delete / Restore** — `@DeletedAt` decorator
 - **Upsert** — INSERT ON CONFLICT UPDATE by slug/name
-- **Pagination** — Offset-based (`findAndCount`) + Cursor-based (`findWithCursor`)
+- **Pagination** — Offset-based (`findWithPage`) + Cursor-based (`findWithCursor`)
 - **EXPLAIN** — Query execution plan inspection
-- **Schema Diff** — Entity vs DB schema comparison + Migration generation
-- **GROUP BY / HAVING** — Aggregate queries via RawQueryBuilder
+- **GROUP BY / HAVING** — Aggregate queries via the typed QueryDSL (`qAlias` + `leftJoinRelation`)
+- **M2M join-table writes** — `repository.relation(id, "tags").add()/.remove()`
 - **Transactions** — `@Transactional()` decorator
 
 ## Prerequisites

@@ -2,6 +2,7 @@ import { Column, CreateTimestamp, Entity, OneToMany, PrimaryGeneratedColumn, Uni
 import { Order } from "./order.entity";
 
 @Entity()
+@UniqueIndex(["email"])
 export class Customer {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -20,5 +21,4 @@ export class Customer {
 
   @OneToMany(() => Order, { mappedBy: "customer" })
   orders!: Order[];
-
 }
