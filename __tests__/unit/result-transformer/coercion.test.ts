@@ -2,7 +2,7 @@
 import "reflect-metadata";
 import { Expose } from "class-transformer";
 import { Column, Entity, PrimaryColumn } from "../../../src/decorators";
-import { ResultTransformerFactory } from "../../../src/core";
+import { ResultTransformerFactory } from "../../../src/core/ResultTransformerFactory";
 import type { QueryResult } from "../../../src/types";
 
 /**

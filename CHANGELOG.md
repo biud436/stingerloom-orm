@@ -6,6 +6,25 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING: the package barrel now declares an explicit public API (#407).** `src/index.ts` re-exported whole modules with `export *`, so every symbol an internal module happened to export became importable from `@stingerloom/orm` — 673 in total, including engine internals (`SchemaRegistrar`, `CascadeHandler`, `EntityManagerInternals`), expression-rendering plumbing (`buildAbs`, `renderSubquery`, `InnerRenderer`), WriteBuffer internals (`topologicalSort`, `deepEquals`), and low-level utilities (`camelToSnakeCase`, `ReflectManager`). Renaming any of them was a latent breaking change. The barrel is now a list of named re-exports and 141 internal symbols were dropped from it, leaving 532 public. Removed by group:
+  - *Expression rendering plumbing (54)* — `build*` / `render*` helpers, renderer function types (`InnerRenderer`, `ScalarRenderer`, `AggregateArgRenderer`, …), `register*Composer`, `getExpressionContext`, `parseJsonPath`, `resolveRegex`, `escapeLikeValue`, `__clearQAliasCache`.
+  - *Internal type guards (18)* — `isScalarExpression`, `isAggregateCondition`, `isConditionLike`, `isEntityRef`, `isPlaceholder`, `isFilterObject`, and siblings.
+  - *Engine components (13)* — `SchemaRegistrar`, `EntitySchemaRegistrar`, `ResultTransformerFactory`, `RelationMetadataResolver`, `CascadeHandler`, `RelationLoader`, `InheritanceResolver`, `ExplainQueryHandler`, `AggregateQueryHandler`, `EntityManagerInternals`, `EntityValidator`, `ReplicationManager`, `BaseInsertQueryBuilder`.
+  - *WriteBuffer internals (21)* — `topologicalSort`, `sortForInsert` / `sortForDelete`, `snapshotCollections`, `diffCollection`, `cloneValue`, `deepEquals`, FK-resolution helpers, `Resolved*Options`.
+  - *`WhereResolver` (4), metadata internals (4), low-level utilities (4), dialect internals (23)* — `resolveWhereClause`, `deepCloneMetadata`, `MetadataContextStore`, `camelToSnakeCase`, `createEntityKey`, `resolveEntityGlobs`, `ReflectManager`, capability resolvers, column-definition builders, connection/pool error classes.
+
+  The same curation was applied to the subpath barrels behind `exports` — `@stingerloom/orm/core` alone still re-exported 109 of these symbols, so trimming only the root entry point would have left the leak open. `./core` goes 318 -> 209 exports, `./plugin` 53 -> 31, `./metadata` 6 -> 2, `./schema` 30 -> 29; `./decorators`, `./errors`, `./introspection`, `./migration`, and `./seeding` keep every symbol and were converted to explicit lists only. Since `exports` declares no wildcard subpath, the removed symbols are no longer reachable from the package at all.
+
+  Decorator metadata tokens (`ENTITY_TOKEN`, `COLUMN_TOKEN`, …) stay public — custom scanners and metadata readers depend on them. The `sql-template-tag` re-exports (`sql` / `Sql` / `raw` / `join` / `empty`) also stay: they appear in documented `updateMany()` examples and `Sql` is the accepted parameter type there, so the coupling is already part of the contract; wrapping it behind an owned type is deferred to a future major.
+
+  `__tests__/unit/public-api-surface.test.ts` now pins every entry point's exported surface against a checked-in fixture and fails on any wildcard re-export, so a new internal symbol can no longer widen the published API by accident.
+
+---
+
 ## [1.1.0] — 2026-07-17
 
 A feature release on three fronts: code-first entity authoring (`defineEntity` + `t` builders + `InferEntity` type inference) as the new recommended front door, entity-construction helpers (`create` / `merge` / `preload` / `findOneByOrFail`), and a deep correctness campaign — a two-batch audit of the opt-in WriteBuffer (Unit of Work) plugin, core write-path parity (soft-delete filter, STI discriminator, lifecycle events), and a long tail of schema-sync and query-builder fixes, many surfaced porting real services off raw SQL. Read paths get substantially faster on hydration-heavy workloads.

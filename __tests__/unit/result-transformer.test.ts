@@ -3,7 +3,7 @@ import "reflect-metadata";
 import { Expose } from "class-transformer";
 import { Column, Entity, ManyToOne } from "../../src/decorators";
 import { QueryResult } from "../../src/types";
-import { ResultTransformerFactory } from "../../src/core";
+import { ResultTransformerFactory } from "../../src/core/ResultTransformerFactory";
 
 /**
  * 컬럼 별칭 전략:*
