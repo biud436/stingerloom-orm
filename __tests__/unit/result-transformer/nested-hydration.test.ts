@@ -9,7 +9,7 @@ import {
   PrimaryColumn,
 } from "../../../src/decorators";
 import { RelationColumn } from "../../../src/decorators/RelationColumn";
-import { ResultTransformerFactory } from "../../../src/core";
+import { ResultTransformerFactory } from "../../../src/core/ResultTransformerFactory";
 import type { QueryResult } from "../../../src/types";
 
 /**

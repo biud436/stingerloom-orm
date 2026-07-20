@@ -1,13 +1,9 @@
 /**
- * Metadata Module - Layered Metadata Store
+ * Layered metadata public surface.
  *
- * Hierarchical metadata management system modelled after Docker OverlayFS.
- *
- * The decorator-time source of truth is `MetadataLayerRegistry`
- * (`src/scanner/MetadataScanner.ts`). Use `MetadataLayerRegistry.getInstance()`
- * and `MetadataContext.run(tenantId, callback)` for tenant-scoped metadata.
+ * Declared as explicit named re-exports (no `export *`) so that adding an
+ * export to an internal module does not silently widen this subpath's API.
  */
 
-export * from "./MetadataLayer";
-export * from "./MetadataPath";
-export * from "./MetadataContext";
+export { MetadataContext } from "./MetadataContext";
+export { MetadataLayer } from "./MetadataLayer";
