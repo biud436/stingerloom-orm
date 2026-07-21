@@ -12,7 +12,11 @@ const logger = new Logger("OneToOne");
 export type OneToOneOption<T = any> = {
   /**
    * FK column name. Set on the owning side.
-   * @deprecated Use the `@RelationColumn({ name: "..." })` decorator instead.
+   *
+   * Second tier of FK resolution: `@RelationColumn({ name })` wins when
+   * present, then this option, then a `{propertyName}Id` `@Column`.
+   * Prefer `@RelationColumn` on new code — it also carries the FK's type and
+   * nullability — but this option stays fully supported.
    */
   joinColumn?: string;
 

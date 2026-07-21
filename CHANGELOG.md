@@ -23,6 +23,12 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
   `__tests__/unit/public-api-surface.test.ts` now pins every entry point's exported surface against a checked-in fixture and fails on any wildcard re-export, so a new internal symbol can no longer widen the published API by accident.
 
+- **Deprecation audit (#408).** All 13 `@deprecated` symbols were checked for real usage before being touched. Two changes came out of it, neither breaking:
+  - `SchemaGenerator.generateForeignKeyName()` carried its own copy of the SHA1 FK-naming algorithm, identical to `DefaultNamingStrategy.foreignKeyName()`. The static now forwards to the strategy, so one implementation backs both entry points and the two can no longer drift.
+  - `joinColumn` on `@ManyToOne` / `@OneToOne` is no longer marked `@deprecated`. It is tier 2 of FK resolution (`@RelationColumn` > `joinColumn` > `{propertyName}Id` `@Column`) and the form the relation docs use throughout, so the tag contradicted both the implementation and the documentation. `@RelationColumn` remains the recommendation for new code because it also carries the FK's type and nullability.
+
+  The other eleven are load-bearing and stay as they are: `EntityResult` is the internal `findInternal` return type, `deserializeEntity` is the ORM's own hydration entry point, `connectionLimit` and both `transform` options are read on live paths, `MetadataScanner.mapper` is iterated by six in-tree scanners, and `setContext` / `switchContext` back the layer test harness. Each now records whether it is scheduled for removal in 2.0 or has no removal date, instead of an unqualified "will be removed".
+
 ---
 
 ## [1.1.0] — 2026-07-17
