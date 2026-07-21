@@ -74,9 +74,9 @@ export class MetadataLayerRegistry {
    * concurrent requests — a misplaced call permanently routes every async
    * caller to the wrong tenant layer until the next mutation.
    *
-   * Kept exposed because the test suite drives layer behaviour directly
-   * through the registry; production callers should instead let
-   * `MetadataContext.run` win via the AsyncLocalStorage path inside
+   * No removal scheduled: kept exposed because the test suite drives layer
+   * behaviour directly through the registry. Production callers should instead
+   * let `MetadataContext.run` win via the AsyncLocalStorage path inside
    * {@link getContext}.
    */
   setContext(context: string): void {
@@ -280,8 +280,10 @@ export class MetadataLayerRegistry {
  */
 export class MetadataScanner {
   /**
-   * @deprecated Kept for subclasses that iterate `mapper` directly.
-   * Scheduled for removal after the layer-system migration is complete.
+   * @deprecated Kept for subclasses that iterate `mapper` directly. No removal
+   * scheduled: six in-tree scanners (Entity, Column, ManyToOne, OneToMany,
+   * ManyToMany, OneToOne) still iterate it, so it can only go once they move
+   * to the layer-aware lookups.
    * Returns only the entries under this scanner's prefix in the current context layer.
    */
   protected get mapper(): Map<string, any> {
@@ -507,6 +509,7 @@ export class MetadataScanner {
    * {@link MetadataContext.run | `MetadataContext.run(tenantId, callback)`}
    * so the switch is scoped to the current async caller. Calls fire a
    * one-shot warning unless `STINGERLOOM_SUPPRESS_LEGACY_CONTEXT_WARN=1`.
+   * No removal scheduled, for the same reason as the registry method.
    */
   public switchContext(context: string): void {
     warnLegacyContextMutator("MetadataScanner.switchContext");

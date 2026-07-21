@@ -103,7 +103,8 @@ export interface ColumnOption {
 
   /**
    * Function that converts the column value when reading from the database into the entity.
-   * @deprecated Use `transformer` instead for bidirectional transforms.
+   * @deprecated Removal target: 2.0. Use `transformer` instead for
+   * bidirectional transforms.
    */
   transform?: <T = any>(raw: unknown) => T;
 

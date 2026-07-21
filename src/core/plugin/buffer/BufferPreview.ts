@@ -79,8 +79,9 @@ export enum ChangeTrackingPolicy {
 export enum FlushMode {
   AUTO = "AUTO",
   /**
-   * @deprecated Alias of {@link FlushMode.MANUAL} — behaves identically.
-   * Use MANUAL; COMMIT never implemented flush-at-transaction-commit.
+   * @deprecated Removal target: 2.0. Alias of {@link FlushMode.MANUAL} —
+   * behaves identically. Use MANUAL; COMMIT never implemented
+   * flush-at-transaction-commit.
    */
   COMMIT = "COMMIT",
   MANUAL = "MANUAL",
