@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import crypto from "crypto";
 import { ClazzType } from "../../utils";
 import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../../decorators/Column";
 import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
@@ -54,6 +53,13 @@ import {
 } from "../../dialects/ColumnDefinitionBuilder";
 import type { CommonCapabilities } from "../../dialects/DialectCapabilities";
 import type { DbVersion } from "../../dialects/DbVersion";
+
+/**
+ * Shared stateless strategy backing the deprecated static
+ * {@link SchemaGenerator.generateForeignKeyName} forwarder, so the SHA1 FK
+ * naming algorithm lives in exactly one place.
+ */
+const DEFAULT_NAMING_STRATEGY = new DefaultNamingStrategy();
 
 export type SchemaDialect = "mysql" | "postgres" | "sqlite";
 
@@ -900,8 +906,10 @@ export class SchemaGenerator {
    * Uses the first 8 characters of a SHA1 hash to guarantee uniqueness
    * while fitting within MySQL's 64-char and PostgreSQL's 63-char identifier limits.
    *
-   * @deprecated Use `NamingStrategy.foreignKeyName()` instead.
-   * This static method is kept for backward compatibility with existing driver code.
+   * @deprecated Use `NamingStrategy.foreignKeyName()` instead. Removal target: 2.0.
+   * This static method is kept for backward compatibility with existing driver
+   * code and now forwards to {@link DefaultNamingStrategy.foreignKeyName} so a
+   * single hash implementation backs both entry points.
    *
    * @param tableName - Source table name
    * @param column - FK column name
@@ -909,11 +917,7 @@ export class SchemaGenerator {
    * @returns A unique FK name no longer than 63 characters
    */
   static generateForeignKeyName(tableName: string, column: string, refTable: string): string {
-    const raw = `${tableName}_${column}_${refTable}`;
-    const hash = crypto.createHash("sha1").update(raw).digest("hex").slice(0, 8);
-    const base = `fk_${tableName}_${hash}`;
-    // MySQL allows up to 64 chars; PostgreSQL up to 63 → standardize on 63
-    return base.length > 63 ? `fk_${hash}` : base;
+    return DEFAULT_NAMING_STRATEGY.foreignKeyName(tableName, column, refTable);
   }
 }
 
