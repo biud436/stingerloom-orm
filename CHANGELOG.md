@@ -29,6 +29,10 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
   The other eleven are load-bearing and stay as they are: `EntityResult` is the internal `findInternal` return type, `deserializeEntity` is the ORM's own hydration entry point, `connectionLimit` and both `transform` options are read on live paths, `MetadataScanner.mapper` is iterated by six in-tree scanners, and `setContext` / `switchContext` back the layer test harness. Each now records whether it is scheduled for removal in 2.0 or has no removal date, instead of an unqualified "will be removed".
 
+### Fixed
+
+- **`find()` / `getMany()` returned a numeric-keyed object instead of `T[]` when `class-transformer` is not installed (#424).** `ResultTransformer.toEntities()` batch-passes the whole rows array to the active deserializer, but the zero-dependency fallback `PlainObjectDeserializer` was not array-aware: `Object.assign(new cls(), [row1, row2])` produced one instance with numeric keys (`{ 0: row1, 1: row2 }`), so `find()` returned `[{0:…,1:…}]` and `getMany()` returned the bare object. Array inputs now map to an array of instances, matching the batch contract `ClassTransformerDeserializer` already honors; a regression suite runs the read paths with the registry forced to `PlainObjectDeserializer` to keep the two implementations aligned.
+
 ---
 
 ## [1.1.0] — 2026-07-17
