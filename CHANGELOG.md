@@ -6,6 +6,14 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [1.1.1] — 2026-07-23
+
+### Fixed
+
+- **`find()` / `getMany()` returned a numeric-keyed object instead of `T[]` when `class-transformer` is not installed (#424).** `ResultTransformer.toEntities()` batch-passes the whole rows array to the active deserializer, but the zero-dependency fallback `PlainObjectDeserializer` was not array-aware: `Object.assign(new cls(), [row1, row2])` produced one instance with numeric keys (`{ 0: row1, 1: row2 }`), so `find()` returned `[{0:…,1:…}]` and `getMany()` returned the bare object. Array inputs now map to an array of instances, matching the batch contract `ClassTransformerDeserializer` already honors; a regression suite runs the read paths with the registry forced to `PlainObjectDeserializer` to keep the two implementations aligned.
+
+---
+
 ## [1.1.0] — 2026-07-17
 
 A feature release on three fronts: code-first entity authoring (`defineEntity` + `t` builders + `InferEntity` type inference) as the new recommended front door, entity-construction helpers (`create` / `merge` / `preload` / `findOneByOrFail`), and a deep correctness campaign — a two-batch audit of the opt-in WriteBuffer (Unit of Work) plugin, core write-path parity (soft-delete filter, STI discriminator, lifecycle events), and a long tail of schema-sync and query-builder fixes, many surfaced porting real services off raw SQL. Read paths get substantially faster on hydration-heavy workloads.
