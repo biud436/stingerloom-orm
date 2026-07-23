@@ -42,8 +42,8 @@ export interface ColumnSchemaDef {
 
   /**
    * One-way read transform (DB → entity).
-   * @deprecated Use `transformer` for bidirectional transforms — mirrors
-   * the deprecation on `@Column({ transform })`.
+   * @deprecated Removal target: 2.0. Use `transformer` for bidirectional
+   * transforms — mirrors the deprecation on `@Column({ transform })`.
    */
   transform?: (raw: unknown) => any;
 

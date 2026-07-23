@@ -22,7 +22,11 @@ export type ManyToOneOption = {
   transform?: <T = any>(raw: unknown) => T;
   /**
    * FK column name.
-   * @deprecated Use the `@RelationColumn({ name: "..." })` decorator instead.
+   *
+   * Second tier of FK resolution: `@RelationColumn({ name })` wins when
+   * present, then this option, then a `{propertyName}Id` `@Column`.
+   * Prefer `@RelationColumn` on new code — it also carries the FK's type and
+   * nullability — but this option stays fully supported.
    */
   joinColumn?: string;
   /**

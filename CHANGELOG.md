@@ -6,6 +6,31 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING: the package barrel now declares an explicit public API (#407).** `src/index.ts` re-exported whole modules with `export *`, so every symbol an internal module happened to export became importable from `@stingerloom/orm` — 673 in total, including engine internals (`SchemaRegistrar`, `CascadeHandler`, `EntityManagerInternals`), expression-rendering plumbing (`buildAbs`, `renderSubquery`, `InnerRenderer`), WriteBuffer internals (`topologicalSort`, `deepEquals`), and low-level utilities (`camelToSnakeCase`, `ReflectManager`). Renaming any of them was a latent breaking change. The barrel is now a list of named re-exports and 141 internal symbols were dropped from it, leaving 532 public. Removed by group:
+  - *Expression rendering plumbing (54)* — `build*` / `render*` helpers, renderer function types (`InnerRenderer`, `ScalarRenderer`, `AggregateArgRenderer`, …), `register*Composer`, `getExpressionContext`, `parseJsonPath`, `resolveRegex`, `escapeLikeValue`, `__clearQAliasCache`.
+  - *Internal type guards (18)* — `isScalarExpression`, `isAggregateCondition`, `isConditionLike`, `isEntityRef`, `isPlaceholder`, `isFilterObject`, and siblings.
+  - *Engine components (13)* — `SchemaRegistrar`, `EntitySchemaRegistrar`, `ResultTransformerFactory`, `RelationMetadataResolver`, `CascadeHandler`, `RelationLoader`, `InheritanceResolver`, `ExplainQueryHandler`, `AggregateQueryHandler`, `EntityManagerInternals`, `EntityValidator`, `ReplicationManager`, `BaseInsertQueryBuilder`.
+  - *WriteBuffer internals (21)* — `topologicalSort`, `sortForInsert` / `sortForDelete`, `snapshotCollections`, `diffCollection`, `cloneValue`, `deepEquals`, FK-resolution helpers, `Resolved*Options`.
+  - *`WhereResolver` (4), metadata internals (4), low-level utilities (4), dialect internals (23)* — `resolveWhereClause`, `deepCloneMetadata`, `MetadataContextStore`, `camelToSnakeCase`, `createEntityKey`, `resolveEntityGlobs`, `ReflectManager`, capability resolvers, column-definition builders, connection/pool error classes.
+
+  The same curation was applied to the subpath barrels behind `exports` — `@stingerloom/orm/core` alone still re-exported 109 of these symbols, so trimming only the root entry point would have left the leak open. `./core` goes 318 -> 209 exports, `./plugin` 53 -> 31, `./metadata` 6 -> 2, `./schema` 30 -> 29; `./decorators`, `./errors`, `./introspection`, `./migration`, and `./seeding` keep every symbol and were converted to explicit lists only. Since `exports` declares no wildcard subpath, the removed symbols are no longer reachable from the package at all.
+
+  Decorator metadata tokens (`ENTITY_TOKEN`, `COLUMN_TOKEN`, …) stay public — custom scanners and metadata readers depend on them. The `sql-template-tag` re-exports (`sql` / `Sql` / `raw` / `join` / `empty`) also stay: they appear in documented `updateMany()` examples and `Sql` is the accepted parameter type there, so the coupling is already part of the contract; wrapping it behind an owned type is deferred to a future major.
+
+  `__tests__/unit/public-api-surface.test.ts` now pins every entry point's exported surface against a checked-in fixture and fails on any wildcard re-export, so a new internal symbol can no longer widen the published API by accident.
+
+- **Deprecation audit (#408).** All 13 `@deprecated` symbols were checked for real usage before being touched. Two changes came out of it, neither breaking:
+  - `SchemaGenerator.generateForeignKeyName()` carried its own copy of the SHA1 FK-naming algorithm, identical to `DefaultNamingStrategy.foreignKeyName()`. The static now forwards to the strategy, so one implementation backs both entry points and the two can no longer drift.
+  - `joinColumn` on `@ManyToOne` / `@OneToOne` is no longer marked `@deprecated`. It is tier 2 of FK resolution (`@RelationColumn` > `joinColumn` > `{propertyName}Id` `@Column`) and the form the relation docs use throughout, so the tag contradicted both the implementation and the documentation. `@RelationColumn` remains the recommendation for new code because it also carries the FK's type and nullability.
+
+  The other eleven are load-bearing and stay as they are: `EntityResult` is the internal `findInternal` return type, `deserializeEntity` is the ORM's own hydration entry point, `connectionLimit` and both `transform` options are read on live paths, `MetadataScanner.mapper` is iterated by six in-tree scanners, and `setContext` / `switchContext` back the layer test harness. Each now records whether it is scheduled for removal in 2.0 or has no removal date, instead of an unqualified "will be removed".
+
+---
+
 ## [1.1.1] — 2026-07-23
 
 ### Fixed

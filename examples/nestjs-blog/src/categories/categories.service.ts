@@ -2,21 +2,15 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { CreateCategoryDto } from "./dto/create-category.dto";
 import { UpdateCategoryDto } from "./dto/update-category.dto";
 import { Category } from "./category.entity";
-import {
-  BaseRepository,
-  Transactional,
-  EntityManager,
-  RawQueryBuilder,
-} from "@stingerloom/orm";
+import { Post } from "../posts/post.entity";
+import { BaseRepository, Transactional, qAlias } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
-import sql from "sql-template-tag";
 
 @Injectable()
 export class CategoriesService {
   constructor(
     @InjectRepository(Category)
     private readonly categoryRepository: BaseRepository<Category>,
-    private readonly entityManager: EntityManager,
   ) {}
 
   @Transactional()
@@ -62,26 +56,28 @@ export class CategoriesService {
 
   /**
    * GROUP BY / HAVING demo — aggregates post count per category.
-   * Uses RawQueryBuilder to run a GROUP BY + HAVING query.
+   *
+   * Written against the typed QueryDSL rather than raw SQL: `leftJoinRelation`
+   * derives the ON clause from the @OneToMany metadata, `qAlias` resolves
+   * property names through the NamingStrategy, and `coerce` normalizes the
+   * driver's aggregate type — so there is no hardcoded table name, no
+   * `category_id` literal, and no `postCount ?? postcount` casing fallback.
    */
-  async getStats(): Promise<
-    Array<{ name: string; postCount: number }>
-  > {
-    const query = RawQueryBuilder.create()
-      .select(["c.name", "COUNT(p.id) as postCount"])
-      .from("category", "c")
-      .leftJoin("post", "p", sql`p.category_id = c.id`)
-      .groupBy(["c.name"])
-      .having([sql`COUNT(p.id) > 0`])
-      .build();
+  async getStats(): Promise<Array<{ name: string; postCount: number }>> {
+    const c = qAlias(Category, "c");
+    const p = qAlias(Post, "p");
+    const postCount = p.id.count();
 
-    const result = await this.entityManager.query<
-      { name: string; postCount: number }
-    >(query.sql, query.values);
-
-    return result.map((row: any) => ({
-      name: row.name,
-      postCount: Number(row.postCount ?? row.postcount ?? 0),
-    }));
+    return await this.categoryRepository
+      .createQueryBuilder("c")
+      .leftJoinRelation("posts", "p")
+      .select([c.name.as("name"), postCount.as("postCount")])
+      // Group by the PK too so two categories sharing a name stay separate
+      // groups and PostgreSQL's strict GROUP BY accepts the projected name.
+      .groupBy([c.id, c.name])
+      .having(postCount.gt(0))
+      .getRawMany<{ name: string; postCount: number }>({
+        coerce: { postCount: "number" },
+      });
   }
 }

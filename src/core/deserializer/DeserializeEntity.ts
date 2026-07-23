@@ -20,7 +20,10 @@ const registry = DeserializerRegistry.getInstance();
  *
  * Internally delegates to the DeserializerRegistry singleton's strategy.
  *
- * @deprecated Use DeserializerRegistry.getInstance().deserialize() instead.
+ * @deprecated Removal target: 2.0. Use
+ * `DeserializerRegistry.getInstance().deserialize()` instead. The function
+ * remains the ORM's own hydration entry point, so only the public export is
+ * scheduled to go.
  */
 export function deserializeEntity<T, V extends object>(
   cls: MyClassConstructor<T>,

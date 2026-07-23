@@ -660,7 +660,8 @@ describe("EntityCodeGenerator", () => {
     const post = files.get("post.entity.ts")!;
     expect(post).toContain("@ManyToOne");
     expect(post).toContain("() => User");
-    expect(post).toContain('joinColumn: "authorId"');
+    expect(post).toContain('@RelationColumn({ name: "authorId" })');
+    expect(post).not.toContain('joinColumn: "authorId"');
   });
 
   it("should generate OneToMany relation", () => {
@@ -676,7 +677,8 @@ describe("EntityCodeGenerator", () => {
     const profile = files.get("profile.entity.ts")!;
     expect(profile).toContain("@OneToOne");
     expect(profile).toContain("() => User");
-    expect(profile).toContain('joinColumn: "userId"');
+    expect(profile).toContain('@RelationColumn({ name: "userId" })');
+    expect(profile).not.toContain('joinColumn: "userId"');
   });
 
   it("should generate ManyToMany with joinTable", () => {

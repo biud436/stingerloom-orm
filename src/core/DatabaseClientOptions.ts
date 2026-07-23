@@ -119,7 +119,8 @@ interface BaseDatabaseClientOptions {
 
   /**
    * Maximum number of connections in the pool.
-   * @deprecated Use `pool.max` instead. This is kept for backward compatibility.
+   * @deprecated Removal target: 2.0. Use `pool.max` instead — it wins when
+   * both are set, and this option is only read as its fallback.
    */
   connectionLimit?: number;
 

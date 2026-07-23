@@ -113,8 +113,11 @@ export interface ISqlDriver<T = any> {
   /**
    * Generates a name for a foreign key constraint based on the source and target tables and columns.
    *
-   * @deprecated Use `NamingStrategy.foreignKeyName()` instead.
-   * This method is kept for backward compatibility with existing driver code.
+   * @deprecated Removal target: 2.0, once every `addForeignKey` caller passes
+   * an explicit `constraintName` from `NamingStrategy.foreignKeyName()`. Until
+   * then this stays part of the interface contract — all three built-in
+   * drivers implement it and call it as their fallback, so custom drivers must
+   * keep providing it.
    *
    * @param sourceTable - The name of the source table.
    * @param targetTable - The name of the target table.

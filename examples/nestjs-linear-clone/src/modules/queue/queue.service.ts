@@ -84,9 +84,14 @@ export class QueueService {
 
   @Transactional()
   async release(workerId: string, issueId: number): Promise<boolean> {
+    // `withDeleted` because releasing a lease is claim bookkeeping, not a
+    // write to the issue itself: a worker holding a claim on an issue that
+    // was trashed mid-flight must still be able to hand it back. Without
+    // this, `updateMany` skips soft-deleted rows and the claim would linger
+    // until the lease expires.
     const result = await this.repo.updateMany(
       { claimedBy: null, claimedAt: null },
-      { where: { id: issueId, claimedBy: workerId } },
+      { where: { id: issueId, claimedBy: workerId }, withDeleted: true },
     );
     if (result.affected > 0) {
       await this.activity.log({
