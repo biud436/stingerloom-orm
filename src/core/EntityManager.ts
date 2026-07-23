@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { randomUUID } from "node:crypto";
 import { ClazzType, Logger, resolveEntityGlobs, generateUUIDv7 } from "../utils";
-import { ColumnMetadata } from "../scanner";
+import { ColumnMetadata, MetadataLayerRegistry } from "../scanner";
 import { DatabaseClient } from "../DatabaseClient";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
@@ -196,6 +196,16 @@ export class EntityManager implements BaseEntityManager {
   private readonly resolver = new RelationMetadataResolver();
   private readonly inheritanceResolver = new InheritanceResolver();
   private readonly replication = new ReplicationManager();
+
+  /**
+   * Per-query property→column map cache: merged-metadata-view identity →
+   * entity metadata object → map. Both levels are WeakMaps so dropped layers
+   * and replaced merged views are GC'd. See buildPropertyToColumnMap().
+   */
+  private readonly propToColCache = new WeakMap<
+    object,
+    WeakMap<object, Map<string, string>>
+  >();
 
   /** @internal Adapter that exposes EntityManager internals to the extracted handler classes. */
   private readonly _ctx: EntityManagerInternals = {
@@ -1971,6 +1981,30 @@ export class EntityManager implements BaseEntityManager {
     target?: ClazzType<any>;
     columns: ColumnMetadata[];
   }): Map<string, string> {
+    // The map is rebuilt on every read query (findInternal / findWithCursor /
+    // aggregate / explain / query builder), but its inputs — entity columns and
+    // FK relation metadata — only change when a metadata layer is mutated.
+    // `resolveAll()` returns the current context's merged view and mints a new
+    // Map identity on any layer change (markDirty), so keying the cache on
+    // that identity makes it both tenant-context-aware (each tenant's merged
+    // view is a distinct key, so a tenant layer overriding columns or
+    // relations never shares entries with public) and self-invalidating.
+    // Consumers only read the returned map, so a shared instance is safe.
+    const cacheable =
+      metadata.target !== undefined &&
+      typeof this.resolver?.collectFkPropertyMappings === "function";
+    let byMetadata: WeakMap<object, Map<string, string>> | undefined;
+    if (cacheable) {
+      const mergedView = MetadataLayerRegistry.getInstance().resolveAll();
+      byMetadata = this.propToColCache.get(mergedView);
+      if (!byMetadata) {
+        byMetadata = new WeakMap();
+        this.propToColCache.set(mergedView, byMetadata);
+      }
+      const cached = byMetadata.get(metadata);
+      if (cached) return cached;
+    }
+
     const map = new Map<string, string>();
     for (const col of metadata.columns) {
       const prop = col.propertyKey ?? col.name!;
@@ -1987,6 +2021,7 @@ export class EntityManager implements BaseEntityManager {
         if (!map.has(prop)) map.set(prop, col);
       }
     }
+    if (byMetadata) byMetadata.set(metadata, map);
     return map;
   }
 

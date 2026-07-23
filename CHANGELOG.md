@@ -29,6 +29,10 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
   The other eleven are load-bearing and stay as they are: `EntityResult` is the internal `findInternal` return type, `deserializeEntity` is the ORM's own hydration entry point, `connectionLimit` and both `transform` options are read on live paths, `MetadataScanner.mapper` is iterated by six in-tree scanners, and `setContext` / `switchContext` back the layer test harness. Each now records whether it is scheduled for removal in 2.0 or has no removal date, instead of an unqualified "will be removed".
 
+### Performance
+
+- **Per-query property-to-column map caching on the read/update hot path (#409).** `buildPropertyToColumnMap()` — rebuilt on every `find` / `findOne` / `findWithCursor` / `update` / aggregate / query-builder call, twice per update (criteria validation + SQL build) — is now cached per entity metadata object, keyed on the layered metadata store's merged-view identity. Any layer mutation (entity registration, tenant provisioning) mints a new merged view and thus invalidates the cache, and each tenant context resolves its own merged view, so a tenant layer overriding columns or relations never shares entries with public. SQLite CPU bench, 5-run A/B alternating medians: `update by pk` +22%, `find 100 rows + eager M2O` +5.5%, `findOne by pk` +3.5%.
+
 ---
 
 ## [1.1.1] — 2026-07-23
