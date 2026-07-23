@@ -37,7 +37,42 @@ interface CachedColumnInfo {
   transformColumns: Array<{ key: string; from: (raw: any) => any }>;
 }
 
-const columnInfoCache = new WeakMap<Function, CachedColumnInfo>();
+let columnInfoCache = new WeakMap<Function, CachedColumnInfo>();
+
+// ── Strategy 2: Per-entity relation metadata cache ────────
+// transformNested() runs fillPropertiesToForeignObject() once per row, and
+// each call re-read MANY_TO_ONE_TOKEN / ONE_TO_ONE_TOKEN via Reflect — plus
+// one more lookup per relation for the nested fan-out. Relation metadata is
+// attached at class-definition / registration time (decorators and
+// EntitySchemaRegistrar both run before the first query on a class), so a
+// per-class cache is safe. Classes with no relation metadata yet are not
+// cached, so a class queried before its relations are registered (unusual,
+// but possible with incremental EntitySchema registration) is re-read.
+
+interface CachedRelationInfo {
+  manyToOne: ManyToOneMetadata<any>[] | undefined;
+  oneToOne: OneToOneMetadata<any>[] | undefined;
+}
+
+let relationInfoCache = new WeakMap<Function, CachedRelationInfo>();
+
+function getCachedRelationInfo(entityClass: Function): CachedRelationInfo {
+  let cached = relationInfoCache.get(entityClass);
+  if (cached) return cached;
+
+  cached = {
+    manyToOne: Reflect.getMetadata(MANY_TO_ONE_TOKEN, entityClass) as
+      | ManyToOneMetadata<any>[]
+      | undefined,
+    oneToOne: Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) as
+      | OneToOneMetadata<any>[]
+      | undefined,
+  };
+  if (cached.manyToOne || cached.oneToOne) {
+    relationInfoCache.set(entityClass, cached);
+  }
+  return cached;
+}
 
 function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumnInfo {
   let cached = columnInfoCache.get(entityClass);
@@ -452,15 +487,13 @@ export class ResultTransformer implements BaseResultTransformer {
   ) {
     visited.add(entityClass as unknown as Function);
 
-    // Fetch the foreign-key metadata.
-    const manyToOneMappingMetadata = Reflect.getMetadata(
-      MANY_TO_ONE_TOKEN,
-      entityClass,
-    ) as ManyToOneMetadata<T>[];
+    // Fetch the foreign-key metadata (cached per class — this runs per row).
+    const manyToOneMappingMetadata = getCachedRelationInfo(entityClass)
+      .manyToOne as ManyToOneMetadata<T>[] | undefined;
 
     const foreignKeys = manyToOneMappingMetadata?.map((e) => e.columnName);
 
-    if (foreignKeys) {
+    if (manyToOneMappingMetadata && foreignKeys) {
       for (const foreignKey of foreignKeys) {
         if (!baseEntity[foreignKey]) {
           baseEntity[foreignKey] = this.createForeignObject();
@@ -486,10 +519,8 @@ export class ResultTransformer implements BaseResultTransformer {
         }
 
         // Recursively handle nested foreign-key relations.
-        const relatedManyToOneMappings = Reflect.getMetadata(
-          MANY_TO_ONE_TOKEN,
-          ForeignClass,
-        ) as ManyToOneMetadata<any>[];
+        const relatedManyToOneMappings =
+          getCachedRelationInfo(ForeignClass).manyToOne;
 
         if (
           relatedManyToOneMappings &&
@@ -521,10 +552,7 @@ export class ResultTransformer implements BaseResultTransformer {
     }
 
     // Handle OneToOne relations (using the same alias pattern as ManyToOne: propertyKey_columnName).
-    const oneToOneMappingMetadata = Reflect.getMetadata(
-      ONE_TO_ONE_TOKEN,
-      entityClass,
-    ) as OneToOneMetadata<any>[] | undefined;
+    const oneToOneMappingMetadata = getCachedRelationInfo(entityClass).oneToOne;
 
     if (oneToOneMappingMetadata) {
       for (const rel of oneToOneMappingMetadata) {
@@ -546,10 +574,8 @@ export class ResultTransformer implements BaseResultTransformer {
 
         // #116: Recursively process nested ManyToOne relations within OneToOne entities
         // Pass foreignObject as resultSet so nested prefix matching works correctly
-        const relatedManyToOneMappings = Reflect.getMetadata(
-          MANY_TO_ONE_TOKEN,
-          RelatedClass,
-        ) as ManyToOneMetadata<any>[];
+        const relatedManyToOneMappings =
+          getCachedRelationInfo(RelatedClass).manyToOne;
 
         if (
           relatedManyToOneMappings &&
@@ -639,6 +665,8 @@ export class ResultTransformer implements BaseResultTransformer {
  * @internal
  */
 export function clearColumnInfoCache(): void {
-  // WeakMap doesn't have clear(), but we can replace the module-level variable.
+  // WeakMap doesn't have clear(), so replace the module-level variables.
   // Since WeakMap entries are GC'd when the key is GC'd, this is mainly for tests.
+  columnInfoCache = new WeakMap();
+  relationInfoCache = new WeakMap();
 }
