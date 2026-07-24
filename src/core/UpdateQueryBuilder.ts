@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, raw, join } from "sql-template-tag";
+import sql, { Sql, raw, join } from "../utils/sqlTag";
 import { ClazzType } from "../utils";
 import { UpdateData } from "../dialects/FindOption";
 import { OrmError } from "../errors/OrmError";

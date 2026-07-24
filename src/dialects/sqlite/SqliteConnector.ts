@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type Database from "better-sqlite3";
-import { Sql } from "sql-template-tag";
+import { Sql } from "../../utils/sqlTag";
 import { Logger } from "../../utils/Logger";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { ConnectionNotFound } from "./ConnectionNotFound";
@@ -45,11 +45,14 @@ export class SqliteConnector extends IConnector {
     try {
       let DatabaseConstructor: typeof Database;
       try {
-        DatabaseConstructor = require("better-sqlite3");
+        // import() works in both builds: transpiled to require() in CJS,
+        // kept as a real dynamic import in ESM (where require() does not exist).
+        const sqliteModule: any = await import("better-sqlite3");
+        DatabaseConstructor = sqliteModule.default ?? sqliteModule;
       } catch {
         throw new OrmError(
           OrmErrorCode.MISSING_DEPENDENCY,
-          "better-sqlite3 패키지가 필요합니다.",
+          "The better-sqlite3 package is required.",
           "Run: npm install better-sqlite3",
         );
       }

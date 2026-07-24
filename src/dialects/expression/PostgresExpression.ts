@@ -1,5 +1,5 @@
-import sql, { raw, join } from "sql-template-tag";
-import type { Sql, RawValue } from "sql-template-tag";
+import sql, { raw, join } from "../../utils/sqlTag";
+import type { Sql, RawValue } from "../../utils/sqlTag";
 import type {
   AggregateFilterOptions,
   ArrayOperator,

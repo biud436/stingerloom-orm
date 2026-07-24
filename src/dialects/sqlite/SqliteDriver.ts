@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { join, raw, Sql } from "sql-template-tag";
+import sql, { join, raw, Sql } from "../../utils/sqlTag";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";

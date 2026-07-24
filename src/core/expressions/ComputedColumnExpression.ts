@@ -1,4 +1,4 @@
-import sql, { Sql, raw } from "sql-template-tag";
+import sql, { Sql, raw } from "../../utils/sqlTag";
 import type { DialectName } from "../ColumnTypeRegistry";
 import { createDialectExpression } from "../../dialects/DialectExpression";
 import { escapeSqlLiteral } from "../../utils/escapeSqlLiteral";

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { randomUUID } from "node:crypto";
 import { ClazzType, Logger, resolveEntityGlobs, generateUUIDv7 } from "../utils";
+import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
 import { ColumnMetadata, MetadataLayerRegistry } from "../scanner";
 import { DatabaseClient } from "../DatabaseClient";
 import { ISqlDriver } from "../dialects/SqlDriver";
@@ -10,7 +11,7 @@ import { FindOption, LockMode, UpdateData, UpdateManyOptions, WhereClause } from
 import { resolveWhereClause } from "./WhereResolver";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
-import { Sql } from "sql-template-tag";
+import { Sql } from "../utils/sqlTag";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
 import { QueryResult } from "../types/QueryResult";
@@ -362,6 +363,10 @@ export class EntityManager implements BaseEntityManager {
     connectionName = "default",
   ) {
     validateDatabaseClientOptions(databaseClientOptions);
+
+    // ESM builds cannot probe class-transformer synchronously (no require);
+    // finish the async auto-detection before any query can deserialize rows.
+    await DeserializerRegistry.ensureDefaultDetected();
 
     if (databaseClientOptions.namingStrategy) {
       this.schemaRegistrar = new SchemaRegistrar(

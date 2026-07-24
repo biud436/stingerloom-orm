@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Sql } from "sql-template-tag";
+import { Sql } from "../utils/sqlTag";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { TRANSACTION_ISOLATION_LEVEL } from "../dialects/IsolationLevel";
 import { IConnection } from "../dialects/IConnection";

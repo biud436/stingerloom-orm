@@ -29,6 +29,17 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
   The other eleven are load-bearing and stay as they are: `EntityResult` is the internal `findInternal` return type, `deserializeEntity` is the ORM's own hydration entry point, `connectionLimit` and both `transform` options are read on live paths, `MetadataScanner.mapper` is iterated by six in-tree scanners, and `setContext` / `switchContext` back the layer test harness. Each now records whether it is scheduled for removal in 2.0 or has no removal date, instead of an unqualified "will be removed".
 
+### Fixed
+
+- **The ESM build is now loadable by plain Node.js.** `import "@stingerloom/orm"` from a `"type": "module"` app failed at four layers, none of which bundler or NestJS (CJS) consumers ever hit: `dist/esm` was not marked `"type": "module"`; the compiled output kept extensionless relative specifiers, which Node's ESM loader rejects; runtime `require()` calls (driver/fast-glob/class-transformer lazy loading, `RawQueryBuilderFactory` cycle-breaker) threw `ReferenceError` — the driver ones surfacing as a bogus "package is required" error; and the CJS-only `sql-template-tag` default import resolved to `module.exports` instead of the tag function. A post-build step (`scripts/fix-esm.js`) now rewrites specifiers and stamps the marker, the lazy loads went through `import()`, and all `sql-template-tag` imports route through an interop wrapper (`utils/sqlTag.ts`, guarded by a unit test). Entity glob files are loaded with `import()` as well, so `.mjs`/ESM entity files now work.
+- **Registering a connection name that is already active now closes the replaced connector and logs a warning.** Previously a second `EntityManager.register()` without a distinct `connectionName` silently swapped the `"default"` connection: the first manager kept running against the second database with no signal at all, and the old connector leaked.
+- **`@Column` no longer warns about missing `design:type` metadata when an explicit `type` is given**, and such columns now default to `NOT NULL` under metadata-less builds (tsx/esbuild/swc/Vite), matching what the same source produces under `tsc`. The remaining fallback warnings now name the property (`User.name`) and diagnose the cause — missing `emitDecoratorMetadata` vs. union types erasing to `Object`.
+- **Connection-path error messages are now English** (missing-driver, connection-failed, constraint-lookup errors were Korean).
+
+### Added
+
+- **Express guide (`docs/express.md`)** — bootstrap order, repository/transaction patterns without DI, error-middleware mapping, graceful shutdown, tenant middleware, and the build-tool constraints on decorator metadata, verified against a real Express 5 app in both CJS and ESM.
+
 ### Performance
 
 - **Per-query and per-row metadata caching on the read/update hot path (#409).** Two independent caches, each measured with 5-run A/B alternating medians on the SQLite CPU bench:

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../utils";
 import { FindOption } from "../dialects/FindOption";
-import sql, { Sql, raw } from "sql-template-tag";
+import sql, { Sql, raw } from "../utils/sqlTag";
 import { Conditions } from "./Conditions";
 import { resolveWhereClause } from "./WhereResolver";
 import { createDialectExpression } from "../dialects/DialectExpression";

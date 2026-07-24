@@ -2,6 +2,8 @@
 import { DeserializeOptions } from "./DeserializeOptions";
 import { Deserializer } from "./Deserializer";
 import { MyClassConstructor } from "../MyClassConstructor";
+import { ClassTransformerDeserializer } from "./ClassTransformerDeserializer";
+import { PlainObjectDeserializer } from "./PlainObjectDeserializer";
 
 /**
  * Registry that manages the deserialization strategy.
@@ -26,22 +28,54 @@ export class DeserializerRegistry {
 
   private deserializer: Deserializer;
 
+  /** True once a deserializer was chosen explicitly (constructor arg or setDeserializer). */
+  private explicitlySet = false;
+
   constructor(deserializer?: Deserializer) {
-    this.deserializer = deserializer ?? DeserializerRegistry.createDefaultDeserializer();
+    if (deserializer) {
+      this.deserializer = deserializer;
+      this.explicitlySet = true;
+    } else {
+      this.deserializer = DeserializerRegistry.createDefaultDeserializer();
+    }
   }
 
   /**
    * Returns ClassTransformerDeserializer when class-transformer is installed,
    * and PlainObjectDeserializer otherwise.
+   *
+   * The synchronous probe needs require(), which only exists in the CJS
+   * build. The ESM build starts on PlainObjectDeserializer;
+   * `ensureDefaultDetected()` (awaited during `EntityManager.register()`)
+   * upgrades it asynchronously when class-transformer is installed.
    */
   private static createDefaultDeserializer(): Deserializer {
     try {
       require.resolve("class-transformer");
-      const { ClassTransformerDeserializer } = require("./ClassTransformerDeserializer");
       return new ClassTransformerDeserializer();
     } catch {
-      const { PlainObjectDeserializer } = require("./PlainObjectDeserializer");
       return new PlainObjectDeserializer();
+    }
+  }
+
+  /**
+   * Async counterpart of the constructor's class-transformer auto-detection
+   * for runtimes without require() (the ESM build). No-op when the CJS
+   * detection already ran, or when a deserializer was set explicitly.
+   */
+  static async ensureDefaultDetected(): Promise<void> {
+    if (typeof require === "function") return;
+
+    const registry = DeserializerRegistry.getInstance();
+    if (registry.explicitlySet) return;
+    if (registry.deserializer instanceof ClassTransformerDeserializer) return;
+
+    try {
+      const ct = new ClassTransformerDeserializer();
+      await ct.warmup();
+      registry.deserializer = ct;
+    } catch {
+      // class-transformer is not installed — keep PlainObjectDeserializer
     }
   }
 
@@ -71,6 +105,7 @@ export class DeserializerRegistry {
    */
   setDeserializer(deserializer: Deserializer): void {
     this.deserializer = deserializer;
+    this.explicitlySet = true;
   }
 
   /**

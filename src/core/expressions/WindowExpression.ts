@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, raw, join } from "sql-template-tag";
+import sql, { Sql, raw, join } from "../../utils/sqlTag";
 import type { ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import type { AggregateExpression } from "./AggregateExpression";

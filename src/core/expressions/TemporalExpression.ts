@@ -1,4 +1,4 @@
-import sql from "sql-template-tag";
+import sql from "../../utils/sqlTag";
 import { ScalarExpression } from "./ScalarExpression";
 
 /**

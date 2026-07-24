@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { join, raw } from "sql-template-tag";
+import sql, { join, raw } from "../utils/sqlTag";
 import { IntrospectionDialect, IntrospectionTypeMapper } from "./TypeMapper";
 
 /**

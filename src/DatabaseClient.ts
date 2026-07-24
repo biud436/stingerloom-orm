@@ -47,6 +47,25 @@ export class DatabaseClient {
   ): Promise<IConnector> {
     const { type } = options;
 
+    // Re-connecting under a name that is still registered replaces the
+    // connection every consumer of that name routes through — a second
+    // EntityManager registered without a distinct connectionName would
+    // silently redirect the first one to the new database.
+    const previous = this.connectors.get(name);
+    if (previous) {
+      this.logger.warn(
+        `Connection '${name}' is already registered and will be replaced. ` +
+        `Every EntityManager using '${name}' now routes to the new database. ` +
+        `If this is a second EntityManager, pass a distinct connectionName to ` +
+        `register() instead, or close() the existing connection first.`,
+      );
+      try {
+        await previous.close();
+      } catch {
+        // best effort — the old connector may already be closed
+      }
+    }
+
     this.connectionsType.set(name, type);
     this.connectionsOptions.set(name, options);
 
@@ -137,7 +156,7 @@ export class DatabaseClient {
       if (name === "default") {
         throw new DatabaseNotConnectedError();
       }
-      throw new Exception(`연결 '${name}'을 찾을 수 없습니다.`, 500);
+      throw new Exception(`Connection '${name}' was not found.`, 500);
     }
 
     return connector;
@@ -152,8 +171,8 @@ export class DatabaseClient {
     if (!options) {
       throw new Exception(
         name === "default"
-          ? "옵션이 존재하지 않습니다."
-          : `연결 '${name}'의 옵션을 찾을 수 없습니다.`,
+          ? "No connection options are registered."
+          : `No options found for connection '${name}'.`,
         500,
       );
     }

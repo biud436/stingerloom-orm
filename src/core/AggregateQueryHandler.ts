@@ -2,7 +2,7 @@
 import { ClazzType } from "../utils";
 import { WhereClause } from "../dialects/FindOption";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
-import sql, { Sql, join, raw } from "sql-template-tag";
+import sql, { Sql, join, raw } from "../utils/sqlTag";
 import { Conditions } from "./Conditions";
 import { resolveWhereClause } from "./WhereResolver";
 import { createDialectExpression } from "../dialects/DialectExpression";

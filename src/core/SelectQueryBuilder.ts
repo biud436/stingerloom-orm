@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, raw, join, type RawValue } from "sql-template-tag";
+import sql, { Sql, raw, join, type RawValue } from "../utils/sqlTag";
 import { Conditions } from "./Conditions";
 import { resolveWhereClause, type WhereResolverOptions } from "./WhereResolver";
 import type { WhereClause } from "../dialects/FindOption";

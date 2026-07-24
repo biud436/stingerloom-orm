@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { raw } from "sql-template-tag";
+import sql, { raw } from "../../utils/sqlTag";
 import { ClazzType } from "../../utils";
 import { EntityManagerInternals } from "../EntityManagerInternals";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";

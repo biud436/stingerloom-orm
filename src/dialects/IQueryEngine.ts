@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Sql } from "sql-template-tag";
+import { Sql } from "../utils/sqlTag";
 import { ITxEngine } from "./ITxEngine";
 import { TRANSACTION_ISOLATION_LEVEL } from "./IsolationLevel";
 

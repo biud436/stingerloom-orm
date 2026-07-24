@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-require-imports */
+import { pathToFileURL } from "url";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { Logger } from "./Logger";
@@ -38,10 +39,13 @@ export async function resolveEntityGlobs(
     return classRefs;
   }
 
-  // Dynamically require fast-glob (optional peer dependency)
+  // Dynamically load fast-glob (optional peer dependency).
+  // `import()` works in both builds: the CJS build transpiles it to require(),
+  // the ESM build keeps it as a real dynamic import (require() does not exist there).
   let fg: { sync: (patterns: string[], options?: any) => string[] };
   try {
-    fg = require("fast-glob");
+    const fgModule: any = await import("fast-glob");
+    fg = fgModule.default ?? fgModule;
   } catch {
     throw new OrmError(
       OrmErrorCode.MISSING_DEPENDENCY,
@@ -69,16 +73,29 @@ export async function resolveEntityGlobs(
 
   for (const filePath of matched) {
     try {
-      const mod = require(filePath);
+      // CJS build: import() transpiles to require(), which needs a plain path.
+      // ESM build: real import(), which needs a file:// URL to work on every OS
+      // and can load both ESM and CJS entity files.
+      const specifier =
+        typeof require === "function"
+          ? filePath
+          : pathToFileURL(filePath).href;
+      const mod: any = await import(specifier);
 
-      for (const exportKey of Object.keys(mod)) {
-        const value = mod[exportKey];
-        if (typeof value === "function" && ReflectManager.isEntity(value)) {
-          resolved.push(value);
+      const namespaces: any[] = [mod];
+      if (mod.default && typeof mod.default === "object") {
+        namespaces.push(mod.default);
+      }
+      for (const ns of namespaces) {
+        for (const exportKey of Object.keys(ns)) {
+          const value = ns[exportKey];
+          if (typeof value === "function" && ReflectManager.isEntity(value)) {
+            resolved.push(value);
+          }
         }
       }
     } catch (err: any) {
-      logger.warn(`Failed to require "${filePath}": ${err.message ?? err}`);
+      logger.warn(`Failed to load "${filePath}": ${err.message ?? err}`);
     }
   }
 

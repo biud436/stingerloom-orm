@@ -1,4 +1,4 @@
-import type { Sql } from "sql-template-tag";
+import type { Sql } from "../../utils/sqlTag";
 import { ScalarExpression } from "./ScalarExpression";
 
 /**
@@ -22,8 +22,7 @@ import { ScalarExpression } from "./ScalarExpression";
  *
  * @example
  * ```ts
- * import sql from "sql-template-tag";
- * import { Expressions, qAlias } from "@stingerloom/orm";
+ * import { sql, Expressions, qAlias } from "@stingerloom/orm";
  *
  * const u = qAlias(User, "u");
  * const epoch = Expressions.raw<number>(

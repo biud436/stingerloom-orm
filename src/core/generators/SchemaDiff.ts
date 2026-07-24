@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql from "sql-template-tag";
+import sql from "../../utils/sqlTag";
 import { ClazzType } from "../../utils";
 import {
   COLUMN_TOKEN,

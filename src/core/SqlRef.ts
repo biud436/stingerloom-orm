@@ -1,4 +1,4 @@
-import { Sql, raw } from "sql-template-tag";
+import { Sql, raw } from "../utils/sqlTag";
 import type { ClazzType } from "../utils";
 import { camelToSnakeCase } from "../utils/camelToSnakeCase";
 import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";

@@ -5,7 +5,7 @@ import { BaseRepository } from "./BaseRepository";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { DeleteResult } from "../types/DeleteResult";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
-import { Sql } from "sql-template-tag";
+import { Sql } from "../utils/sqlTag";
 import {
   CursorPaginationOption,
   CursorPaginationResult,

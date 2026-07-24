@@ -3,7 +3,7 @@ import { ColumnType } from "../decorators/Column";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
 import { MysqlSchemaInterface } from "./mysql/BaseSchema";
 import type { DriverQueryOptions } from "../types/DriverQueryOptions";
-import type { Sql } from "sql-template-tag";
+import type { Sql } from "../utils/sqlTag";
 import type { DbVersion } from "./DbVersion";
 import type { CommonCapabilities } from "./DialectCapabilities";
 

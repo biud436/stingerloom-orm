@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, raw } from "sql-template-tag";
+import sql, { Sql, raw } from "../../../utils/sqlTag";
 import { Conditions } from "../../Conditions";
 import type { ConditionLike } from "../../expressions/ConditionLike";
 import { LogicalCondition } from "../../expressions/LogicalCondition";

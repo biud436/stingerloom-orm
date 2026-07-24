@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../utils";
-import { Sql } from "sql-template-tag";
+import { Sql } from "../utils/sqlTag";
 
 /**
  * Interface representing a builder for constructing SQL insert queries.

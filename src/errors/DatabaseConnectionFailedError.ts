@@ -12,8 +12,8 @@ export class DatabaseConnectionFailedError extends Exception {
           : undefined;
     super(
       detail
-        ? `데이터베이스 연결에 실패했습니다: ${detail}`
-        : "데이터베이스 연결에 실패했습니다.",
+        ? `Failed to connect to the database: ${detail}`
+        : "Failed to connect to the database.",
       500,
     );
     if (originalError !== undefined) {

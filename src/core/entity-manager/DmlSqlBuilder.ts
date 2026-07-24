@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, join, raw } from "sql-template-tag";
+import sql, { Sql, join, raw } from "../../utils/sqlTag";
 import { EntityManagerInternals } from "../EntityManagerInternals";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";

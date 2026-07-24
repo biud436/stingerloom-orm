@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Pool, PoolConnection } from "mysql2";
-import sql, { Sql } from "sql-template-tag";
+import sql, { Sql } from "../../utils/sqlTag";
 import { Logger } from "../../utils/Logger";
 import { Connection } from "./Connection";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
@@ -28,11 +28,14 @@ export class MySqlConnector extends IConnector {
     try {
       let mysql: typeof import("mysql2");
       try {
-        mysql = require("mysql2");
+        // import() works in both builds: transpiled to require() in CJS,
+        // kept as a real dynamic import in ESM (where require() does not exist).
+        const mysqlModule: any = await import("mysql2");
+        mysql = mysqlModule.default ?? mysqlModule;
       } catch {
         throw new OrmError(
           OrmErrorCode.MISSING_DEPENDENCY,
-          "mysql2 패키지가 필요합니다.",
+          "The mysql2 package is required.",
           "Run: npm install mysql2",
         );
       }
@@ -95,7 +98,7 @@ export class MySqlConnector extends IConnector {
       if (e instanceof OrmError) throw e;
       throw new OrmError(
         OrmErrorCode.CONNECTION_FAILED,
-        `MySQL 연결에 실패했습니다. ${e}`,
+        `Failed to connect to MySQL. ${e}`,
         "Check that the MySQL server is running and reachable",
       );
     }

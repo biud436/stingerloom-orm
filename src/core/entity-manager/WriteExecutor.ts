@@ -5,7 +5,7 @@ import { ISqlDriver } from "../../dialects/SqlDriver";
 import { TransactionSessionManager } from "../../dialects/TransactionSessionManager";
 import { FindOption, LockMode, UpdateData, UpdateManyOptions, WhereClause } from "../../dialects/FindOption";
 import { resolveWhereClause } from "../WhereResolver";
-import sql, { Sql, join, raw, type RawValue } from "sql-template-tag";
+import sql, { Sql, join, raw, type RawValue } from "../../utils/sqlTag";
 import { DeleteResult } from "../../types/DeleteResult";
 import { Conditions } from "../Conditions";
 import { ResultTransformerFactory } from "../ResultTransformerFactory";

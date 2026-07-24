@@ -1,4 +1,4 @@
-import sql, { Sql, join, raw, type RawValue } from "sql-template-tag";
+import sql, { Sql, join, raw, type RawValue } from "../../utils/sqlTag";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import { OrmError } from "../../errors/OrmError";

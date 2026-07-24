@@ -200,7 +200,30 @@ export type ResolvedColumnOption = Required<
  */
 export function inferColumnDefaults(
   designType: any,
+  where?: string,
 ): Pick<ResolvedColumnOption, "type" | "length" | "nullable"> {
+  return resolveColumnDefaults(designType, where, false);
+}
+
+/**
+ * Shared implementation behind `inferColumnDefaults`.
+ *
+ * `hasExplicitType` marks columns whose `@Column({ type })` was given by the
+ * user, so inference is only filling in length/nullable:
+ * - no fallback warnings are emitted (the fallback type is discarded anyway)
+ * - when design:type metadata is missing entirely (builds without
+ *   emitDecoratorMetadata: esbuild, tsx, swc, Vite), `nullable` defaults to
+ *   `false` — what tsc-built code produces for String/Number/Boolean/Date
+ *   properties — instead of silently drifting to `nullable: true`.
+ * When design:type metadata is present, behavior is identical in both modes
+ * so tsc-compiled entities are unaffected.
+ */
+function resolveColumnDefaults(
+  designType: any,
+  where: string | undefined,
+  hasExplicitType: boolean,
+): Pick<ResolvedColumnOption, "type" | "length" | "nullable"> {
+  const at = where ? ` for ${where}` : "";
   switch (designType) {
     case String:
       return { type: "varchar", length: 255, nullable: false };
@@ -212,11 +235,30 @@ export function inferColumnDefaults(
       return { type: "datetime", length: 0, nullable: false };
     case Buffer:
       return { type: "blob", length: 0, nullable: true };
-    default:
+    case undefined:
+    case null:
+      if (hasExplicitType) {
+        return { type: "text", length: 0, nullable: false };
+      }
+      // design:type is missing entirely: the code was compiled without
+      // emitDecoratorMetadata (esbuild, tsx, swc and Vite do not emit it),
+      // or reflect-metadata was not imported before the entity was loaded.
       columnLogger.warn(
-        `Unknown design:type "${designType?.name ?? designType}" — falling back to "text". ` +
-        `Specify an explicit type in @Column({ type: "..." }) to avoid this.`,
+        `No design:type metadata${at} — falling back to "text". ` +
+        `Decorator metadata is not emitted by your build tool (esbuild/tsx/swc/Vite) ` +
+        `or "reflect-metadata" was imported too late. ` +
+        `Fix: compile with emitDecoratorMetadata (tsc/ts-node), specify an explicit ` +
+        `@Column({ type: "..." }), or define the entity with defineEntity().`,
       );
+      return { type: "text", length: 0, nullable: true };
+    default:
+      if (!hasExplicitType) {
+        columnLogger.warn(
+          `Unknown design:type "${designType?.name ?? designType}"${at} — falling back to "text". ` +
+          `Union and optional property types erase to Object at runtime; ` +
+          `specify an explicit type in @Column({ type: "..." }) to avoid this.`,
+        );
+      }
       return { type: "text", length: 0, nullable: true };
   }
 }
@@ -241,7 +283,13 @@ export function Column(option?: ColumnOption): PropertyDecorator {
     // Infer defaults from design:type, then overlay user options.
     // If the user overrides type without specifying length, discard the
     // inferred length (e.g. String → 255) because it is invalid for the new type (e.g. date).
-    const defaults = inferColumnDefaults(injectParam);
+    // With an explicit type no inference (and no missing-metadata warning) is needed.
+    const where = `${target.constructor?.name ?? "?"}.${propertyKey.toString()}`;
+    const defaults = resolveColumnDefaults(
+      injectParam,
+      where,
+      option?.type !== undefined,
+    );
     const typeOverridden =
       option?.type !== undefined && option.type !== defaults.type;
     const lengthNotProvided = option?.length === undefined;

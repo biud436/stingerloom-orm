@@ -45,6 +45,33 @@ export class ClassTransformerDeserializer implements Deserializer {
     this.fastPathEnabled = options?.fastPath !== false;
   }
 
+  /**
+   * Pre-loads class-transformer via dynamic import and fills the lazy caches.
+   *
+   * The lazy getters below load class-transformer with require(), which only
+   * exists in the CJS build. ESM runtimes must await this once before the
+   * first deserialize call — `DeserializerRegistry.ensureDefaultDetected()`
+   * (run during `EntityManager.register()`) does it automatically.
+   *
+   * @throws when class-transformer is not installed.
+   */
+  async warmup(): Promise<void> {
+    if (this._plainToClass && this._ctStorage !== undefined) return;
+
+    const ctModule: any = await import("class-transformer");
+    const ct = ctModule.default?.plainToClass ? ctModule.default : ctModule;
+    this._plainToClass = ct.plainToClass;
+
+    try {
+      const storageModule: any = await import("class-transformer/cjs/storage");
+      this._ctStorage = this.validateCtStorage(
+        (storageModule.default ?? storageModule)?.defaultMetadataStorage,
+      );
+    } catch {
+      this._ctStorage = null;
+    }
+  }
+
   private getPlainToClass(): Function {
     if (!this._plainToClass) {
       try {
@@ -54,7 +81,8 @@ export class ClassTransformerDeserializer implements Deserializer {
       } catch {
         throw new Error(
           "class-transformer is required for ClassTransformerDeserializer. " +
-            "Install it with: npm install class-transformer",
+            "Install it with: npm install class-transformer. " +
+            "In ESM runtimes (no require) call `await warmup()` once before use.",
         );
       }
     }
@@ -72,19 +100,24 @@ export class ClassTransformerDeserializer implements Deserializer {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const storageModule = require("class-transformer/cjs/storage");
-      const storage = storageModule?.defaultMetadataStorage;
-      this._ctStorage =
-        storage &&
-        storage._typeMetadatas instanceof Map &&
-        storage._transformMetadatas instanceof Map &&
-        storage._exposeMetadatas instanceof Map &&
-        storage._excludeMetadatas instanceof Map
-          ? storage
-          : null;
+      this._ctStorage = this.validateCtStorage(
+        storageModule?.defaultMetadataStorage,
+      );
     } catch {
       this._ctStorage = null;
     }
     return this._ctStorage;
+  }
+
+  /** Returns the storage only when its internal shape is the expected one. */
+  private validateCtStorage(storage: any): any {
+    return storage &&
+      storage._typeMetadatas instanceof Map &&
+      storage._transformMetadatas instanceof Map &&
+      storage._exposeMetadatas instanceof Map &&
+      storage._excludeMetadatas instanceof Map
+      ? storage
+      : null;
   }
 
   /**

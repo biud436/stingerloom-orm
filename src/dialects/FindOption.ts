@@ -1,6 +1,6 @@
 import { ISelectOption } from "./ISelectOption";
 import { IOrderBy } from "./IOrderBy";
-import { Sql } from "sql-template-tag";
+import { Sql } from "../utils/sqlTag";
 
 /**
  * Pessimistic lock modes for SELECT queries.

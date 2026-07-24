@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, join, raw } from "sql-template-tag";
+import sql, { Sql, join, raw } from "../utils/sqlTag";
 import type { FullTextSearchOptions } from "../dialects/DialectExpression";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 

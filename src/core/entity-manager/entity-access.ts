@@ -1,4 +1,4 @@
-import type { RawValue } from "sql-template-tag";
+import type { RawValue } from "../../utils/sqlTag";
 import type { WhereClause } from "../../dialects/FindOption";
 
 /**

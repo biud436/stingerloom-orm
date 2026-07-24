@@ -1,4 +1,4 @@
-import { Sql } from "sql-template-tag";
+import { Sql } from "../utils/sqlTag";
 import type { DatabaseType, RawQueryBuilder, RawQueryExecutor } from "./RawQueryBuilder";
 import type { CompiledQuery } from "./CompiledQuery";
 

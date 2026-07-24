@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Sql } from "sql-template-tag";
+import { Sql } from "../../utils/sqlTag";
 import { ClazzType } from "../../utils";
 import { MetadataContext } from "../../metadata/MetadataContext";
 import { Conditions } from "../Conditions";

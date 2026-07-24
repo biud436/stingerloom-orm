@@ -2,7 +2,7 @@
 import { WhereClause, RelationKeys } from "../dialects/FindOption";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IOrderBy } from "../dialects/IOrderBy";
-import { Sql } from "sql-template-tag";
+import { Sql } from "../utils/sqlTag";
 import { normalizePageSize } from "./CursorPagination";
 
 /**

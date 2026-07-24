@@ -89,6 +89,24 @@ await em.register({
 import "reflect-metadata";
 ```
 
+### Columns silently become "text" / "No design:type metadata" warnings
+
+```
+WARN [Column] No design:type metadata for User.name — falling back to "text". ...
+```
+
+The decorator style infers column types from TypeScript's `design:type` metadata, which only `tsc` and `ts-node` emit (`emitDecoratorMetadata`). **tsx, esbuild, swc, and Vite do not emit it** — under those tools every un-typed `@Column()` falls back to `"text"`, which breaks numeric and date columns on real databases.
+
+Fixes (any one of these):
+
+1. Define entities with the code-first builder — `defineEntity` needs no decorator metadata at all
+2. Give every `@Column` an explicit type: `@Column({ type: "int" })`
+3. Build with `tsc` / run with `ts-node` so the metadata exists
+
+A related warning, `Unknown design:type "Object"`, means the property's TypeScript type erases to `Object` at runtime (union or optional types like `string | null`) — specify an explicit column type there too.
+
+See [Using with Express](./express.md) for the full non-NestJS setup.
+
 ### "Primary key not found"
 
 ```

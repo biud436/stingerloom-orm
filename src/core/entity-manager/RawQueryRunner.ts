@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql } from "sql-template-tag";
+import sql, { Sql } from "../../utils/sqlTag";
 import { ClazzType } from "../../utils";
 import { ENTITY_TOKEN } from "../../decorators/Entity";
 import { isTemplateStringsArray } from "./internal-utils";
