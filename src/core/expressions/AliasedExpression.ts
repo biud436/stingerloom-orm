@@ -1,4 +1,4 @@
-import type { Sql } from "sql-template-tag";
+import type { Sql } from "../../utils/sqlTag";
 import type { ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 

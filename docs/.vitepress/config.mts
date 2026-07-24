@@ -113,7 +113,10 @@ function sidebarEn() {
     {
       text: "Integration",
       collapsed: false,
-      items: [{ text: "NestJS", link: "/nestjs" }],
+      items: [
+        { text: "NestJS", link: "/nestjs" },
+        { text: "Express", link: "/express" },
+      ],
     },
     {
       text: "Tutorials",
@@ -252,7 +255,10 @@ function sidebarKo() {
     {
       text: "통합",
       collapsed: false,
-      items: [{ text: "NestJS", link: "/ko/nestjs" }],
+      items: [
+        { text: "NestJS", link: "/ko/nestjs" },
+        { text: "Express", link: "/ko/express" },
+      ],
     },
     {
       text: "튜토리얼",
@@ -317,7 +323,10 @@ export default defineConfig({
           },
           {
             text: "Integration",
-            items: [{ text: "NestJS", link: "/nestjs" }],
+            items: [
+              { text: "NestJS", link: "/nestjs" },
+              { text: "Express", link: "/express" },
+            ],
           },
           { text: "Tutorials", link: "/tutorial-iot" },
           { text: "API Reference", link: "/api-reference" },
@@ -345,7 +354,10 @@ export default defineConfig({
           },
           {
             text: "통합",
-            items: [{ text: "NestJS", link: "/ko/nestjs" }],
+            items: [
+              { text: "NestJS", link: "/ko/nestjs" },
+              { text: "Express", link: "/ko/express" },
+            ],
           },
           { text: "튜토리얼", link: "/ko/tutorial-iot" },
           { text: "API 레퍼런스", link: "/ko/api-reference" },

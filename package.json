@@ -171,7 +171,7 @@
     "stingerloom"
   ],
   "scripts": {
-    "build": "rimraf dist && tsc && tsc -p tsconfig.esm.json",
+    "build": "rimraf dist && tsc && tsc -p tsconfig.esm.json && node scripts/fix-esm.js",
     "prepublishOnly": "pnpm run build",
     "test": "jest",
     "docs:dev": "vitepress dev docs",

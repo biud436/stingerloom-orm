@@ -89,6 +89,24 @@ await em.register({
 import "reflect-metadata";
 ```
 
+### 컬럼이 조용히 "text"가 됨 / "No design:type metadata" 경고
+
+```
+WARN [Column] No design:type metadata for User.name — falling back to "text". ...
+```
+
+데코레이터 스타일은 TypeScript의 `design:type` 메타데이터로 컬럼 타입을 추론하는데, 이 메타데이터는 `tsc`와 `ts-node`만 생성합니다(`emitDecoratorMetadata`). **tsx, esbuild, swc, Vite는 이를 생성하지 않아서** 타입을 지정하지 않은 `@Column()`이 전부 `"text"`로 강등되고, 실제 데이터베이스에서는 숫자·날짜 컬럼이 깨집니다.
+
+다음 중 하나로 해결할 수 있습니다.
+
+1. 코드 우선 빌더로 엔티티 정의 — `defineEntity`는 데코레이터 메타데이터가 아예 필요 없습니다
+2. 모든 `@Column`에 타입 명시: `@Column({ type: "int" })`
+3. `tsc`로 빌드하거나 `ts-node`로 실행해 메타데이터를 생성
+
+관련 경고인 `Unknown design:type "Object"`는 프로퍼티의 TypeScript 타입이 런타임에 `Object`로 지워진다는 뜻입니다(`string | null` 같은 유니언/옵셔널 타입). 이 경우에도 컬럼 타입을 명시하면 됩니다.
+
+NestJS 없이 사용하는 전체 설정은 [Express에서 사용하기](./express.md)를 참고하세요.
+
 ### "Primary key not found"
 
 ```

@@ -1,4 +1,4 @@
-import type { Sql } from "sql-template-tag";
+import type { Sql } from "../utils/sqlTag";
 import type { DialectName } from "../core/ColumnTypeRegistry";
 import { PostgresExpression } from "./expression/PostgresExpression";
 import { MySqlExpression } from "./expression/MySqlExpression";

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { join, raw, Sql } from "sql-template-tag";
+import sql, { join, raw, Sql } from "../../utils/sqlTag";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
@@ -262,7 +262,7 @@ export class PostgresDriver implements ISqlDriver {
 
     if (!rows || rows.length === 0) {
       throw new Exception(
-        `테이블 "${tableName}"에서 PRIMARY KEY 제약조건을 찾을 수 없습니다.`,
+        `No PRIMARY KEY constraint found on table "${tableName}".`,
         404,
       );
     }
@@ -305,7 +305,7 @@ export class PostgresDriver implements ISqlDriver {
 
     if (!rows || rows.length === 0) {
       throw new Exception(
-        `테이블 "${tableName}"의 컬럼 "${columnName}"에 대한 UNIQUE 제약조건을 찾을 수 없습니다.`,
+        `No UNIQUE constraint found for column "${columnName}" on table "${tableName}".`,
         404,
       );
     }
@@ -391,7 +391,7 @@ export class PostgresDriver implements ISqlDriver {
 
     if (!rows || rows.length === 0) {
       throw new Exception(
-        `테이블 "${tableName}"의 컬럼 "${columnName}"에 대한 FOREIGN KEY 제약조건을 찾을 수 없습니다.`,
+        `No FOREIGN KEY constraint found for column "${columnName}" on table "${tableName}".`,
         404,
       );
     }

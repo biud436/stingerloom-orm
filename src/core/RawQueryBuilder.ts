@@ -1,5 +1,6 @@
-import sql, { Sql, raw, join } from "sql-template-tag";
+import sql, { Sql, raw, join } from "../utils/sqlTag";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
+import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { CompiledQuery } from "./CompiledQuery";
@@ -581,8 +582,9 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   protected createSubBuilder(): RawQueryBuilder {
     let sub: RawQueryBuilder;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { RawQueryBuilderFactory } = require("./RawQueryBuilderFactory");
+      // Static circular import (RawQueryBuilderFactory ↔ RawQueryBuilder) is
+      // safe here because the factory is only dereferenced at call time,
+      // after both modules have finished initializing.
       sub = RawQueryBuilderFactory.subquery() as RawQueryBuilder;
     } catch {
       sub = new RawQueryBuilder();

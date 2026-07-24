@@ -1,4 +1,4 @@
-import sql, { Sql, raw } from "sql-template-tag";
+import sql, { Sql, raw } from "../../utils/sqlTag";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import type { ColumnResolver } from "./ConditionLike";
 import { ScalarExpression } from "./ScalarExpression";

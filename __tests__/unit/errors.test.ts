@@ -37,7 +37,7 @@ describe("DatabaseConnectionFailedError", () => {
   it("should have correct message and status 500", () => {
     const error = new DatabaseConnectionFailedError();
 
-    expect(error.message).toBe("데이터베이스 연결에 실패했습니다.");
+    expect(error.message).toBe("Failed to connect to the database.");
     expect(error.status).toBe(500);
     expect(error).toBeInstanceOf(Exception);
     expect(error).toBeInstanceOf(Error);
@@ -48,7 +48,7 @@ describe("DatabaseConnectionFailedError", () => {
     const error = new DatabaseConnectionFailedError(original);
 
     expect(error.message).toBe(
-      "데이터베이스 연결에 실패했습니다: ECONNREFUSED 127.0.0.1:5432",
+      "Failed to connect to the database: ECONNREFUSED 127.0.0.1:5432",
     );
     expect((error as any).cause).toBe(original);
     expect(error.status).toBe(500);
@@ -58,7 +58,7 @@ describe("DatabaseConnectionFailedError", () => {
     const error = new DatabaseConnectionFailedError("pool exhausted");
 
     expect(error.message).toBe(
-      "데이터베이스 연결에 실패했습니다: pool exhausted",
+      "Failed to connect to the database: pool exhausted",
     );
     expect((error as any).cause).toBe("pool exhausted");
   });

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, raw, join } from "sql-template-tag";
+import sql, { Sql, raw, join } from "../../../utils/sqlTag";
 import type { PluginContext } from "../PluginContext";
 import type { ClazzType } from "../../../utils/types";
 import type { FindOption, WhereClause } from "../../../dialects/FindOption";

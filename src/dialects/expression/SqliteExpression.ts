@@ -1,5 +1,5 @@
-import sql, { raw } from "sql-template-tag";
-import type { Sql } from "sql-template-tag";
+import sql, { raw } from "../../utils/sqlTag";
+import type { Sql } from "../../utils/sqlTag";
 import { inlineFlagPrefix } from "../../core/expressions/RegexPattern";
 import type {
   AggregateFilterOptions,

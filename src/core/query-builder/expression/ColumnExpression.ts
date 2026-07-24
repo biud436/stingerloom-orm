@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, raw } from "sql-template-tag";
+import sql, { Sql, raw } from "../../../utils/sqlTag";
 import { ColumnCondition } from "../condition/ColumnCondition";
 import { OrmError } from "../../../errors/OrmError";
 import { OrmErrorCode } from "../../../errors/OrmErrorCode";

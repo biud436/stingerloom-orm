@@ -738,5 +738,6 @@ export { generateUUIDv7, extractTimestampFromUUIDv7 } from "./utils/uuid-v7";
 // Kept public deliberately: `sql`/`raw`/`join`/`empty` appear in documented
 // updateMany examples and `Sql` is the accepted parameter type there, so the
 // coupling is part of the existing contract. Revisit wrapping it behind an
-// owned type in a future major.
-export { default as sql, Sql, raw, join, empty } from "sql-template-tag";
+// owned type in a future major. Routed through the sqlTag wrapper so the
+// `sql` default stays a function in the ESM build (see utils/sqlTag.ts).
+export { default as sql, Sql, raw, join, empty } from "./utils/sqlTag";

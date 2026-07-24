@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Pool, PoolClient } from "pg";
-import { Sql } from "sql-template-tag";
+import { Sql } from "../../utils/sqlTag";
 import { Logger } from "../../utils/Logger";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { ConnectionNotFound } from "./ConnectionNotFound";
@@ -66,11 +66,14 @@ export class PostgresConnector extends IConnector {
     try {
       let PgPool: typeof import("pg").Pool;
       try {
-        PgPool = require("pg").Pool;
+        // import() works in both builds: transpiled to require() in CJS,
+        // kept as a real dynamic import in ESM (where require() does not exist).
+        const pgModule: any = await import("pg");
+        PgPool = (pgModule.default ?? pgModule).Pool;
       } catch {
         throw new OrmError(
           OrmErrorCode.MISSING_DEPENDENCY,
-          "pg 패키지가 필요합니다.",
+          "The pg package is required.",
           "Run: npm install pg",
         );
       }
@@ -132,7 +135,7 @@ export class PostgresConnector extends IConnector {
       if (e instanceof OrmError) throw e;
       throw new OrmError(
         OrmErrorCode.CONNECTION_FAILED,
-        `PostgreSQL 연결에 실패했습니다. ${e}`,
+        `Failed to connect to PostgreSQL. ${e}`,
         "Check that the PostgreSQL server is running and reachable",
       );
     }

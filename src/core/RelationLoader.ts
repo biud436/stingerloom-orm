@@ -2,7 +2,7 @@
 import { ClazzType } from "../utils";
 import { ColumnMetadata } from "../scanner";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
-import sql, { Sql, raw } from "sql-template-tag";
+import sql, { Sql, raw } from "../utils/sqlTag";
 import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import { QueryResult } from "../types/QueryResult";

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, join } from "sql-template-tag";
+import sql, { Sql, join } from "../../utils/sqlTag";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import {
@@ -441,7 +441,7 @@ export const Expressions = {
    *
    * @example
    * ```ts
-   * import sql from "sql-template-tag";
+   * import { sql } from "@stingerloom/orm";
    * const epoch = Expressions.raw<number>(
    *   sql`EXTRACT(epoch FROM ${u.col("createdAt")})`,
    * );
