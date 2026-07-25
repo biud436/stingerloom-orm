@@ -42,6 +42,12 @@ export interface CommonCapabilities {
   readonly supportsUpsert: boolean;
   readonly supportsRenameColumn: boolean;
   readonly supportsGeneratedColumns: boolean;
+  /**
+   * ALTER TABLE ... ADD FOREIGN KEY after table creation.
+   * SQLite never supports this — FKs must be declared inline in CREATE TABLE,
+   * so schema sync passes inline FK definitions to `createTable()` instead.
+   */
+  readonly supportsAlterAddForeignKey: boolean;
 }
 
 /** MySQL / MariaDB specific capabilities. */
@@ -100,6 +106,7 @@ export const ALL_COMMON: Readonly<CommonCapabilities> = Object.freeze({
   supportsUpsert: true,
   supportsRenameColumn: true,
   supportsGeneratedColumns: true,
+  supportsAlterAddForeignKey: true,
 });
 
 export const ALL_MYSQL: Readonly<MySqlCapabilities> = Object.freeze({
@@ -128,6 +135,8 @@ export const ALL_POSTGRES: Readonly<PostgresCapabilities> = Object.freeze({
 
 export const ALL_SQLITE: Readonly<SqliteCapabilities> = Object.freeze({
   ...ALL_COMMON,
+  // SQLite has never supported ALTER TABLE ADD FOREIGN KEY in any version.
+  supportsAlterAddForeignKey: false,
   supportsSqliteGeneratedColumns: true,
   supportsSqliteRenameColumn: true,
 });

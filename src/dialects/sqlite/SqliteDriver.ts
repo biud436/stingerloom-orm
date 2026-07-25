@@ -3,7 +3,8 @@ import sql, { join, raw, Sql } from "../../utils/sqlTag";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
-import { ISqlDriver } from "../SqlDriver";
+import { ISqlDriver, CreateTableForeignKey } from "../SqlDriver";
+import { VALID_REFERENTIAL_ACTIONS } from "../../types/ReferentialAction";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
@@ -285,7 +286,11 @@ export class SqliteDriver implements ISqlDriver {
   /**
    * Creates the table.
    */
-  createTable(tableName: string, columns: SchemaOptions[]) {
+  createTable(
+    tableName: string,
+    columns: SchemaOptions[],
+    foreignKeys?: CreateTableForeignKey[],
+  ) {
     const pkColumns = columns.filter(
       (c) => (c.options as ColumnOption | undefined)?.primary,
     );
@@ -307,12 +312,42 @@ export class SqliteDriver implements ISqlDriver {
       columnsMap.push(raw(`PRIMARY KEY (${pkList})`));
     }
 
+    // SQLite cannot ALTER TABLE ADD FOREIGN KEY, so FK constraints must be
+    // part of the CREATE TABLE statement. Referencing a table that is created
+    // later in the same sync pass is fine — SQLite resolves parent tables at
+    // DML time, not at CREATE time.
+    for (const fk of foreignKeys ?? []) {
+      columnsMap.push(raw(this.buildForeignKeyClause(fk)));
+    }
+
     const result = sql`CREATE TABLE IF NOT EXISTS ${raw(this.wrap(tableName))} (${join(
       columnsMap,
       ",",
     )})`;
 
     return this.connector.query(result.text);
+  }
+
+  /**
+   * Builds an inline `FOREIGN KEY (...) REFERENCES ...` clause.
+   * Identifiers are wrapped; referential actions are validated against the
+   * ReferentialAction whitelist before being interpolated.
+   */
+  private buildForeignKeyClause(fk: CreateTableForeignKey): string {
+    let clause = "";
+    if (fk.constraintName) {
+      clause += `CONSTRAINT ${this.wrap(fk.constraintName)} `;
+    }
+    clause += `FOREIGN KEY (${this.wrap(fk.columnName)}) REFERENCES ${this.wrap(
+      fk.referencedTable,
+    )} (${this.wrap(fk.referencedColumn)})`;
+    if (fk.onDelete && VALID_REFERENTIAL_ACTIONS.includes(fk.onDelete)) {
+      clause += ` ON DELETE ${fk.onDelete}`;
+    }
+    if (fk.onUpdate && VALID_REFERENTIAL_ACTIONS.includes(fk.onUpdate)) {
+      clause += ` ON UPDATE ${fk.onUpdate}`;
+    }
+    return clause;
   }
 
   /**
