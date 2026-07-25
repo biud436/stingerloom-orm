@@ -15,7 +15,7 @@ import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
 import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../decorators/ManyToOne";
 import { ONE_TO_MANY_TOKEN, OneToManyMetadata } from "../decorators/OneToMany";
 import { ONE_TO_ONE_TOKEN, OneToOneMetadata } from "../decorators/OneToOne";
-import { MANY_TO_MANY_TOKEN, ManyToManyMetadata } from "../decorators/ManyToMany";
+import { MANY_TO_MANY_TOKEN, ManyToManyMetadata, validateJoinTableOption } from "../decorators/ManyToMany";
 import { INDEX_TOKEN, COMPOSITE_INDEX_TOKEN, CompositeIndexMetadata } from "../decorators/Indexer";
 import { UNIQUE_INDEX_TOKEN, UniqueIndexMetadata } from "../decorators/UniqueIndex";
 import { VERSION_TOKEN } from "../decorators/Version";
@@ -291,6 +291,10 @@ export class EntitySchemaRegistrar {
     propertyKey: string,
     def: { kind: "manyToMany"; target: () => ClazzType; joinTable?: any; mappedBy?: string; cascade?: any },
   ): void {
+    // Plain-JS consumers bypass the JoinTableOption compile-time shape —
+    // fail fast with a clear error instead of a TypeError during schema sync.
+    validateJoinTableOption(def.joinTable, cls.name, propertyKey);
+
     const scanner = getScannerInstance(ManyToManyScanner);
 
     const metadata: ManyToManyMetadata<any> = {
