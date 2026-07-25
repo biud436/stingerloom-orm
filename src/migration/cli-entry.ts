@@ -11,13 +11,15 @@
  *   npx stingerloom migrate:generate   — Generate migration from schema diff
  *   npx stingerloom introspect         — Generate entity files from an existing schema
  *
- * Config file: stingerloom.config.ts / stingerloom.config.js / ormconfig.ts / ormconfig.js
+ * Config file: stingerloom.config.{ts,js,mjs,cjs} / ormconfig.{ts,js,mjs,cjs}
  */
 
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { MigrationCli, MigrationCommand } from "./MigrationCli";
 import { Migration } from "./Migration";
+import { resolveDbOptions } from "./cli-config";
 import { runIntrospect } from "../introspection/IntrospectionCli";
 
 type CliCommand = MigrationCommand | "introspect";
@@ -33,8 +35,12 @@ const VALID_COMMANDS: CliCommand[] = [
 const CONFIG_FILE_NAMES = [
   "stingerloom.config.ts",
   "stingerloom.config.js",
+  "stingerloom.config.mjs",
+  "stingerloom.config.cjs",
   "ormconfig.ts",
   "ormconfig.js",
+  "ormconfig.mjs",
+  "ormconfig.cjs",
 ];
 
 function printUsage(): void {
@@ -153,11 +159,42 @@ async function requireConfig(filePath: string): Promise<any> {
         process.exit(1);
       }
     }
+    const mod = require(filePath);
+    return mod.default ?? mod;
   }
 
-  const mod = require(filePath);
+  // .mjs is always ESM; .js is ESM when the app's package.json says
+  // "type": "module". require() of an ES module throws ERR_REQUIRE_ESM on
+  // Node < 23 (and 22.x before require(esm) landed), so fall back to a
+  // dynamic import() with a file URL (Windows-safe).
+  if (!filePath.endsWith(".mjs")) {
+    try {
+      const mod = require(filePath);
+      return mod.default ?? mod;
+    } catch (err: any) {
+      const code = err?.code ?? "";
+      const isEsmRequireError =
+        code === "ERR_REQUIRE_ESM" || code === "ERR_REQUIRE_ASYNC_MODULE";
+      if (!isEsmRequireError) throw err;
+    }
+  }
+
+  const mod = await dynamicImport(pathToFileURL(filePath).href);
   return mod.default ?? mod;
 }
+
+/**
+ * A dynamic import() that survives the CJS build.
+ *
+ * The CJS tsconfig transpiles `import()` expressions to `require()`, which
+ * cannot load ES modules on Node < 23 and rejects file:// URLs — exactly the
+ * case this fallback exists for. Routing through `new Function` keeps the
+ * literal `import()` out of TypeScript's downleveling in both builds.
+ */
+const dynamicImport = new Function(
+  "specifier",
+  "return import(specifier)",
+) as (specifier: string) => Promise<any>;
 
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv);
@@ -176,7 +213,7 @@ async function main(): Promise<void> {
 
   const command = parsed.command as CliCommand;
   const config = await loadConfig(parsed.config);
-  const dbOptions = config.database ?? config;
+  const dbOptions = resolveDbOptions(config);
 
   if (command === "introspect") {
     try {
@@ -210,6 +247,12 @@ async function main(): Promise<void> {
   }
 
   const migrations: Migration[] = config.migrations ?? [];
+  if (!Array.isArray(migrations)) {
+    console.error(
+      `Config error: "migrations" must be an array of imported migration classes, got ${typeof config.migrations}. Glob patterns are not supported — import the migration files and list them: migrations: [CreateUsersTable, AddPhoneToUsers]`,
+    );
+    process.exit(1);
+  }
 
   const cli = new MigrationCli(migrations, dbOptions);
 
