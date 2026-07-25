@@ -427,9 +427,15 @@ describe("ALL_* defaults", () => {
     }
   });
 
-  it("ALL_SQLITE should have all flags set to true", () => {
-    for (const [, value] of Object.entries(ALL_SQLITE)) {
-      expect(value).toBe(true);
+  it("ALL_SQLITE should have all flags set to true (except ALTER ADD FK)", () => {
+    for (const [key, value] of Object.entries(ALL_SQLITE)) {
+      if (key === "supportsAlterAddForeignKey") {
+        // SQLite has never supported ALTER TABLE ADD FOREIGN KEY in any
+        // version — FKs are embedded inline at CREATE TABLE time instead.
+        expect(value).toBe(false);
+      } else {
+        expect(value).toBe(true);
+      }
     }
   });
 

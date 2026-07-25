@@ -230,8 +230,10 @@ The CLI auto-detects a config file in the project root. It searches for these fi
 
 1. `stingerloom.config.ts`
 2. `stingerloom.config.js`
-3. `ormconfig.ts`
-4. `ormconfig.js`
+3. `stingerloom.config.mjs` / `stingerloom.config.cjs`
+4. `ormconfig.ts`
+5. `ormconfig.js`
+6. `ormconfig.mjs` / `ormconfig.cjs`
 
 ```typescript
 // stingerloom.config.ts

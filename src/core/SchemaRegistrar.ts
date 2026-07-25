@@ -29,6 +29,7 @@ import {
 } from "../decorators";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { EntityNotFound } from "../dialects/EntityNotFound";
+import type { CreateTableForeignKey } from "../dialects/SqlDriver";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
@@ -417,10 +418,23 @@ export class SchemaRegistrar {
           } else {
             this.logDdl(`[sync] CREATE TABLE ${tableName}`, policy);
             try {
-              await driver?.createTable(
-                tableName,
-                tptDdlColumns ?? metadata.columns,
-              );
+              let createColumns = tptDdlColumns ?? metadata.columns;
+              let inlineFks: CreateTableForeignKey[] | undefined;
+              // SQLite cannot ALTER TABLE ADD FOREIGN KEY, so FK constraints
+              // (and any join columns not declared as entity columns) must be
+              // part of the CREATE TABLE statement itself.
+              if (!this.driverSupportsAlterAddFk()) {
+                const collected = this.collectInlineForeignKeys(
+                  TargetEntity,
+                  tableName,
+                  createColumns,
+                );
+                if (collected.extraColumns.length > 0) {
+                  createColumns = [...createColumns, ...collected.extraColumns];
+                }
+                inlineFks = collected.foreignKeys;
+              }
+              await driver?.createTable(tableName, createColumns, inlineFks);
             } catch (err) {
               this.handleDdlError(
                 err,
@@ -454,7 +468,12 @@ export class SchemaRegistrar {
         await this.registerForeignKeys(TargetEntity, tableName);
 
         // TPT: register a FK from the child PK to the parent PK.
-        if (this.inheritanceResolver.isChildEntity(TargetEntity)) {
+        // Inline-FK dialects (SQLite) embed this FK at CREATE TABLE time
+        // via collectInlineForeignKeys(), so the ALTER pass is skipped.
+        if (
+          this.inheritanceResolver.isChildEntity(TargetEntity) &&
+          this.driverSupportsAlterAddFk()
+        ) {
           const tptStrategy = this.inheritanceResolver.getStrategy(TargetEntity);
           if (tptStrategy === "JOINED") {
             const root = this.inheritanceResolver.getRoot(TargetEntity);
@@ -982,21 +1001,8 @@ export class SchemaRegistrar {
         ) as { name?: string } | undefined;
         const relatedTable = relatedEntityMeta?.name ?? relatedEntity.name;
 
-        // 1. Create the join table (IF NOT EXISTS — safe across restarts).
-        const hasTable = await driver?.hasTable(joinTableName);
-        if (!hasTable || (hasTable as any[]).length === 0) {
-          const wJoinTable = this.ctx.wrap(joinTableName);
-          const wJoinCol = this.ctx.wrap(joinColumn);
-          const wInvCol = this.ctx.wrap(inverseJoinColumn);
-          // Derive join column types from actual PK types (#178)
-          const ownerPkType = this.resolvePkColumnType(entity);
-          const relatedPkType = this.resolvePkColumnType(relatedEntity);
-          let ddl = `CREATE TABLE IF NOT EXISTS ${wJoinTable} (${wJoinCol} ${ownerPkType} NOT NULL, ${wInvCol} ${relatedPkType} NOT NULL, PRIMARY KEY (${wJoinCol}, ${wInvCol}))`;
-          if (this.ctx.isMySqlFamily()) ddl += " ENGINE=InnoDB";
-          await driver?.executeRaw(ddl);
-        }
-
-        // 2. Look up the owning-side and inverse-side PKs.
+        // 1. Look up the owning-side and inverse-side PKs (needed both for
+        //    inline FK clauses at CREATE time and the ALTER-based FK pass).
         const ownerColumns = (Reflect.getMetadata(
           COLUMN_TOKEN,
           entity.prototype,
@@ -1009,13 +1015,47 @@ export class SchemaRegistrar {
         ) ?? []) as ColumnMetadata[];
         const relatedPk = relatedColumns.find((c) => c.options?.primary)?.name;
 
-        // 3. Add the owning-side FK.
         const ownerFkName = this.namingStrategy.foreignKeyName(
           joinTableName,
           joinColumn,
           ownerTable,
         );
+        const relatedFkName = this.namingStrategy.foreignKeyName(
+          joinTableName,
+          inverseJoinColumn,
+          relatedTable,
+        );
+
+        const canAlterFk = this.driverSupportsAlterAddFk();
+
+        // 2. Create the join table (IF NOT EXISTS — safe across restarts).
+        const hasTable = await driver?.hasTable(joinTableName);
+        if (!hasTable || (hasTable as any[]).length === 0) {
+          const wJoinTable = this.ctx.wrap(joinTableName);
+          const wJoinCol = this.ctx.wrap(joinColumn);
+          const wInvCol = this.ctx.wrap(inverseJoinColumn);
+          // Derive join column types from actual PK types (#178)
+          const ownerPkType = this.resolvePkColumnType(entity);
+          const relatedPkType = this.resolvePkColumnType(relatedEntity);
+          let body = `${wJoinCol} ${ownerPkType} NOT NULL, ${wInvCol} ${relatedPkType} NOT NULL, PRIMARY KEY (${wJoinCol}, ${wInvCol})`;
+          // Inline-FK dialects (SQLite) cannot ALTER TABLE ADD CONSTRAINT,
+          // so the join table FKs must be part of CREATE TABLE.
+          if (!canAlterFk) {
+            if (ownerPk) {
+              body += `, CONSTRAINT ${this.ctx.wrap(ownerFkName)} FOREIGN KEY (${wJoinCol}) REFERENCES ${this.ctx.wrap(ownerTable)}(${this.ctx.wrap(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
+            }
+            if (relatedPk) {
+              body += `, CONSTRAINT ${this.ctx.wrap(relatedFkName)} FOREIGN KEY (${wInvCol}) REFERENCES ${this.ctx.wrap(relatedTable)}(${this.ctx.wrap(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
+            }
+          }
+          let ddl = `CREATE TABLE IF NOT EXISTS ${wJoinTable} (${body})`;
+          if (this.ctx.isMySqlFamily()) ddl += " ENGINE=InnoDB";
+          await driver?.executeRaw(ddl);
+        }
+
+        // 3. Add the owning-side FK (ALTER-capable dialects only).
         if (
+          canAlterFk &&
           ownerPk &&
           driver &&
           !(await driver.hasForeignKey(joinTableName, ownerFkName))
@@ -1024,13 +1064,9 @@ export class SchemaRegistrar {
           await driver.executeRaw(ddl);
         }
 
-        // 4. Add the inverse-side FK.
-        const relatedFkName = this.namingStrategy.foreignKeyName(
-          joinTableName,
-          inverseJoinColumn,
-          relatedTable,
-        );
+        // 4. Add the inverse-side FK (ALTER-capable dialects only).
         if (
+          canAlterFk &&
           relatedPk &&
           driver &&
           !(await driver.hasForeignKey(joinTableName, relatedFkName))
@@ -1042,10 +1078,172 @@ export class SchemaRegistrar {
     }
   }
 
+  /**
+   * Whether the active driver can add FK constraints after table creation.
+   * SQLite cannot (`supportsAlterAddForeignKey: false`) — its FKs are embedded
+   * inline at CREATE TABLE time instead, and the ALTER-based FK passes are
+   * skipped. Defaults to true when the driver does not report capabilities.
+   */
+  private driverSupportsAlterAddFk(): boolean {
+    const driver = this.ctx.getDriver();
+    return driver?.getCapabilities?.().supportsAlterAddForeignKey ?? true;
+  }
+
+  /**
+   * Collects the FK definitions that `registerForeignKeys()` would create via
+   * ALTER TABLE, in a form that can be embedded inline into CREATE TABLE for
+   * dialects without ALTER ADD FOREIGN KEY support (SQLite).
+   *
+   * Also returns join columns that are not declared as entity columns
+   * (`extraColumns`) so they can be created together with the table — the
+   * ALTER-based pass adds them afterwards, which SQLite supports, but the FK
+   * clause referencing them must exist at CREATE time.
+   *
+   * Relations with a missing joinColumn are skipped here without error;
+   * `registerForeignKeys()` still runs afterwards and raises the proper
+   * validation error for that case.
+   */
+  private collectInlineForeignKeys(
+    TargetEntity: ClazzType<any>,
+    tableName: string,
+    columns: Array<{ name?: string; propertyKey?: string }>,
+  ): { foreignKeys: CreateTableForeignKey[]; extraColumns: any[] } {
+    const entityScanner = getScannerInstance(EntityScanner);
+    const foreignKeys: CreateTableForeignKey[] = [];
+    const extraColumns: any[] = [];
+    const existingCols = new Set(
+      columns.map((c) => (c.name ?? c.propertyKey ?? "").toLowerCase()),
+    );
+
+    const pushJoinColumnIfMissing = (
+      joinColumn: string,
+      referencedEntity: ClazzType<any>,
+    ) => {
+      const key = joinColumn.toLowerCase();
+      if (existingCols.has(key)) return;
+      existingCols.add(key);
+      extraColumns.push(this.buildJoinColumnDef(joinColumn, referencedEntity));
+    };
+
+    // ManyToOne
+    const manyToOneItems =
+      this.resolver.resolveManyToOneMetadata(TargetEntity) ?? [];
+    for (const rel of manyToOneItems) {
+      if (rel.option?.createForeignKeyConstraints === false) continue;
+      if (!rel.joinColumn) continue;
+      const mappingEntity = rel.getMappingEntity();
+      if (!mappingEntity) continue;
+      const mappingMeta = entityScanner.scan(mappingEntity);
+      if (!mappingMeta) continue;
+      const referencedColumn =
+        rel.references ??
+        mappingMeta.columns.find((c: any) => c.options?.primary)?.name;
+      if (!referencedColumn) continue;
+      const referencedTable =
+        mappingMeta.name || this.ctx.getNameStrategy(mappingEntity);
+      foreignKeys.push({
+        columnName: rel.joinColumn,
+        referencedTable,
+        referencedColumn,
+        constraintName: this.namingStrategy.foreignKeyName(
+          tableName,
+          rel.joinColumn,
+          referencedTable,
+        ),
+        onDelete: rel.option?.onDelete,
+        onUpdate: rel.option?.onUpdate,
+      });
+      pushJoinColumnIfMissing(rel.joinColumn, mappingEntity);
+    }
+
+    // OneToOne (owning side)
+    const oneToOneItems =
+      this.resolver.resolveOneToOneMetadata(TargetEntity) ?? [];
+    for (const rel of oneToOneItems) {
+      if (!rel.joinColumn) continue;
+      if (rel.option?.createForeignKeyConstraints === false) continue;
+      const relatedEntity = rel.getRelatedEntity();
+      if (!relatedEntity) continue;
+      const relatedMeta = entityScanner.scan(relatedEntity);
+      if (!relatedMeta) continue;
+      const referencedColumn = relatedMeta.columns.find(
+        (c: any) => c.options?.primary,
+      )?.name;
+      if (!referencedColumn) continue;
+      const referencedTable =
+        relatedMeta.name || this.ctx.getNameStrategy(relatedEntity);
+      foreignKeys.push({
+        columnName: rel.joinColumn,
+        referencedTable,
+        referencedColumn,
+        constraintName: this.namingStrategy.foreignKeyName(
+          tableName,
+          rel.joinColumn,
+          referencedTable,
+        ),
+        onDelete: rel.option?.onDelete,
+        onUpdate: rel.option?.onUpdate,
+      });
+      pushJoinColumnIfMissing(rel.joinColumn, relatedEntity);
+    }
+
+    // TPT (JOINED) child: PK references the root table's PK.
+    if (
+      this.inheritanceResolver.isChildEntity(TargetEntity) &&
+      this.inheritanceResolver.getStrategy(TargetEntity) === "JOINED"
+    ) {
+      const root = this.inheritanceResolver.getRoot(TargetEntity);
+      const rootMeta = root
+        ? this.resolver.resolveEntityMetadata(root)
+        : undefined;
+      const pk = columns.find((c: any) => c.options?.primary) as any;
+      const rootPk = rootMeta?.columns.find((c: any) => c.options?.primary);
+      if (pk?.name && rootPk?.name && rootMeta?.name) {
+        foreignKeys.push({
+          columnName: pk.name,
+          referencedTable: rootMeta.name,
+          referencedColumn: rootPk.name,
+          constraintName: this.namingStrategy.foreignKeyName(
+            tableName,
+            pk.name,
+            rootMeta.name,
+          ),
+        });
+      }
+    }
+
+    return { foreignKeys, extraColumns };
+  }
+
+  /**
+   * Builds a column definition for a join column that has no explicit
+   * entity column, typed after the referenced entity's PK (#284) and
+   * nullable — mirroring the ALTER-based fallback in registerForeignKeys.
+   */
+  private buildJoinColumnDef(
+    joinColumn: string,
+    referencedEntity: ClazzType<any>,
+  ): any {
+    const columns = (Reflect.getMetadata(
+      COLUMN_TOKEN,
+      referencedEntity.prototype,
+    ) ?? []) as ColumnMetadata[];
+    const pkCol = columns.find((c) => c.options?.primary);
+    return {
+      name: joinColumn,
+      options: {
+        type: pkCol?.options?.type ?? "int",
+        length: pkCol?.options?.length,
+        nullable: true,
+      },
+    };
+  }
+
   async registerForeignKeys(TargetEntity: ClazzType<any>, tableName: string) {
     // Fetch the entity scanner.
     const entityScanner = getScannerInstance(EntityScanner);
     const driver = this.ctx.getDriver();
+    const canAlterFk = this.driverSupportsAlterAddFk();
 
     // Look up ManyToOne relations through the layered metadata system.
     const manyToOneItems = this.resolver.resolveManyToOneMetadata(TargetEntity);
@@ -1101,6 +1299,10 @@ export class SchemaRegistrar {
             await driver.addColumn(tableName, joinColumn, fkColumnType);
           }
         }
+
+        // Dialects without ALTER ADD FOREIGN KEY (SQLite) get their FKs
+        // embedded inline at CREATE TABLE time — skip the ALTER-based pass.
+        if (!canAlterFk) continue;
 
         // The NamingStrategy name is both checked for existence AND passed to
         // addForeignKey — a custom strategy previously only affected the
@@ -1166,6 +1368,9 @@ export class SchemaRegistrar {
           await driver.addColumn(tableName, joinColumn, fkColumnType);
         }
       }
+
+      // Same as the ManyToOne path: inline-FK dialects skip the ALTER pass.
+      if (!canAlterFk) continue;
 
       const relatedTableName =
         relatedMetadata.name || this.ctx.getNameStrategy(RelatedEntity);

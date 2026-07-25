@@ -157,10 +157,12 @@ The CLI auto-detects configuration files in this order:
 
 1. `stingerloom.config.ts`
 2. `stingerloom.config.js`
-3. `ormconfig.ts`
-4. `ormconfig.js`
+3. `stingerloom.config.mjs` / `stingerloom.config.cjs`
+4. `ormconfig.ts`
+5. `ormconfig.js`
+6. `ormconfig.mjs` / `ormconfig.cjs`
 
-Or specify explicitly with `--config`.
+Or specify explicitly with `--config`. ES module configs work on every supported Node version — in a `"type": "module"` project, a plain `.js` config with `export default {...}` is loaded via dynamic `import()` when `require()` cannot handle it.
 
 ### Config File Structure
 
@@ -189,6 +191,8 @@ export default {
 ```
 
 The `entities` array is only needed for `migrate:generate` -- that is how the CLI knows what your schema *should* look like. The `migrations` array lists the migration classes in the order they should be executed.
+
+A flat `DatabaseClientOptions` object (no `connection` wrapper) is also accepted: `export default { type: "sqlite", database: "./app.sqlite", migrations: [] }`.
 
 > **Note** TypeScript config files require `ts-node` or `tsx` to be installed. The CLI tries `ts-node/register` first, then falls back to `tsx/cjs`.
 

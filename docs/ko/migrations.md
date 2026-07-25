@@ -230,8 +230,10 @@ CLI는 프로젝트 루트에서 설정 파일을 자동으로 찾아요. 다음
 
 1. `stingerloom.config.ts`
 2. `stingerloom.config.js`
-3. `ormconfig.ts`
-4. `ormconfig.js`
+3. `stingerloom.config.mjs` / `stingerloom.config.cjs`
+4. `ormconfig.ts`
+5. `ormconfig.js`
+6. `ormconfig.mjs` / `ormconfig.cjs`
 
 ```typescript
 // stingerloom.config.ts

@@ -157,10 +157,12 @@ CLI는 다음 순서로 설정 파일을 자동 감지해요:
 
 1. `stingerloom.config.ts`
 2. `stingerloom.config.js`
-3. `ormconfig.ts`
-4. `ormconfig.js`
+3. `stingerloom.config.mjs` / `stingerloom.config.cjs`
+4. `ormconfig.ts`
+5. `ormconfig.js`
+6. `ormconfig.mjs` / `ormconfig.cjs`
 
-또는 `--config`로 직접 지정할 수 있어요.
+또는 `--config`로 직접 지정할 수 있어요. ES 모듈 설정 파일은 지원하는 모든 Node 버전에서 동작합니다 — `"type": "module"` 프로젝트의 `.js` 설정(`export default {...}`)은 `require()`가 처리하지 못하면 동적 `import()`로 로드됩니다.
 
 ### 설정 파일 구조
 
@@ -189,6 +191,8 @@ export default {
 ```
 
 `entities` 배열은 `migrate:generate`에서만 필요해요 -- CLI가 스키마가 어떤 모습이어야 하는지 파악하는 데 사용돼요. `migrations` 배열은 실행 순서대로 마이그레이션 클래스를 나열해요.
+
+`connection` 래퍼 없이 평면 `DatabaseClientOptions` 객체도 그대로 사용할 수 있습니다: `export default { type: "sqlite", database: "./app.sqlite", migrations: [] }`.
 
 > **Note** TypeScript 설정 파일은 `ts-node` 또는 `tsx`가 설치되어 있어야 해요. CLI는 먼저 `ts-node/register`를 시도하고, 실패하면 `tsx/cjs`로 fallback해요.
 

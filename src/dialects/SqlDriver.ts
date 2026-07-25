@@ -6,6 +6,27 @@ import type { DriverQueryOptions } from "../types/DriverQueryOptions";
 import type { Sql } from "../utils/sqlTag";
 import type { DbVersion } from "./DbVersion";
 import type { CommonCapabilities } from "./DialectCapabilities";
+import type { ReferentialAction } from "../types/ReferentialAction";
+
+/**
+ * An inline FOREIGN KEY definition for `createTable()`.
+ *
+ * Used by dialects that cannot add FK constraints after table creation
+ * (SQLite — `supportsAlterAddForeignKey: false`), where the constraint must
+ * be part of the CREATE TABLE statement itself.
+ */
+export interface CreateTableForeignKey {
+  /** FK column on the table being created. */
+  columnName: string;
+  /** Referenced (parent) table name. */
+  referencedTable: string;
+  /** Referenced column, usually the parent table's PK. */
+  referencedColumn: string;
+  /** Optional constraint name (`CONSTRAINT <name> FOREIGN KEY ...`). */
+  constraintName?: string;
+  onDelete?: ReferentialAction;
+  onUpdate?: ReferentialAction;
+}
 
 export interface ISqlDriver<T = any> {
   /**
@@ -208,11 +229,16 @@ export interface ISqlDriver<T = any> {
    *
    * @param tableName - The name of the new table.
    * @param columns - An array of column metadata for the new table.
+   * @param foreignKeys - Optional inline FOREIGN KEY definitions. Only used by
+   *   dialects that cannot add FKs after creation (`supportsAlterAddForeignKey`
+   *   is false, i.e. SQLite); other dialects may ignore this and keep using
+   *   ALTER TABLE ADD FOREIGN KEY in the schema-sync FK pass.
    * @returns A promise that resolves when the operation is complete.
    */
   createTable(
     tableName: string,
     columns: Omit<ColumnMetadata, "target" | "type">[],
+    foreignKeys?: CreateTableForeignKey[],
   ): Promise<T>;
 
   /**

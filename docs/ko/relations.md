@@ -354,6 +354,13 @@ external!: ExternalEntity;
 
 컬럼은 여전히 생성되지만, `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY`는 생성되지 않아요. ORM은 여전히 관계를 이해하고 JOIN을 올바르게 생성해요 -- 단지 데이터베이스에 연결을 강제하도록 요청하지 않을 뿐이에요. 이 옵션은 `@OneToOne`에서도 동작해요.
 
+### SQLite와 FK 제약 조건
+
+SQLite는 `ALTER TABLE ... ADD FOREIGN KEY`를 지원하지 않습니다. 그래서 SQLite에서는 스키마 동기화가 FK 제약을 `CREATE TABLE` 문에 직접 포함시킵니다 (`@ManyToMany` 조인 테이블과 TPT 상속의 자식-루트 FK 포함). 두 가지를 기억해 두세요:
+
+- FK 제약은 **테이블과 함께 생성될 때만** 만들어집니다. 이미 존재하는 테이블의 엔티티에 관계를 추가하면 조인 컬럼은 생기지만 데이터베이스 수준 제약은 생기지 않아요 — 제약 강제가 필요하면 테이블을 재생성하거나 마이그레이션을 사용하세요.
+- SQLite는 커넥션에서 `PRAGMA foreign_keys = ON`을 실행해야만 FK 제약을 강제합니다. 제약 선언 자체는 어느 쪽이든 DDL에 포함됩니다.
+
 ## @OneToMany -- "이 주인의 고양이들은?"
 
 ### 역방향(Inverse) 측인 이유

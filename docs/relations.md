@@ -354,6 +354,13 @@ external!: ExternalEntity;
 
 The column is still created, but no `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY` is generated. The ORM still understands the relation and generates JOINs correctly -- it just does not ask the database to enforce the link. This option also works on `@OneToOne`.
 
+### SQLite and FK Constraints
+
+SQLite cannot `ALTER TABLE ... ADD FOREIGN KEY`, so on SQLite schema sync embeds FK constraints directly into the `CREATE TABLE` statement instead (including join tables for `@ManyToMany` and the child-to-root FK for TPT inheritance). Two consequences:
+
+- FK constraints are only created **together with the table**. If you add a relation to an entity whose table already exists, SQLite gets the join column but no database-level constraint — recreate the table (or use a migration) if you need the constraint enforced.
+- SQLite only enforces FK constraints when the connection runs `PRAGMA foreign_keys = ON`; the constraints are declared in the DDL either way.
+
 ## @OneToMany -- "What are this owner's cats?"
 
 ### Why This Is the Inverse Side

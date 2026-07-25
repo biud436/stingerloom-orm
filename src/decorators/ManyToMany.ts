@@ -2,6 +2,8 @@ import { ClazzType } from "../utils";
 import { getScannerInstance } from "../scanner/ScannerContainer";
 import { ManyToManyScanner } from "../scanner";
 import { CascadeOption } from "../types/CascadeType";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const MANY_TO_MANY_TOKEN = Symbol.for("STG_MANY_TO_MANY");
@@ -68,6 +70,38 @@ export type ManyToManyMetadata<T> = {
 };
 
 /**
+ * Validates a `joinTable` option at registration time.
+ *
+ * TypeScript rejects malformed values at compile time, but plain-JavaScript
+ * consumers (no type checking) can pass `joinTable: true` or a partial
+ * object — without this check that surfaces much later as a cryptic
+ * `Cannot read properties of undefined` inside schema sync.
+ */
+export function validateJoinTableOption(
+  joinTable: unknown,
+  ownerName: string,
+  propertyKey: string,
+): void {
+  if (joinTable == null) return;
+  const jt = joinTable as Partial<JoinTableOption>;
+  const isValid =
+    typeof jt === "object" &&
+    typeof jt.name === "string" &&
+    jt.name.length > 0 &&
+    typeof jt.joinColumn === "string" &&
+    jt.joinColumn.length > 0 &&
+    typeof jt.inverseJoinColumn === "string" &&
+    jt.inverseJoinColumn.length > 0;
+  if (!isValid) {
+    throw new OrmError(
+      OrmErrorCode.SCHEMA_ERROR,
+      `Invalid joinTable option on ${ownerName}.${propertyKey}: expected { name, joinColumn, inverseJoinColumn } (all non-empty strings), got ${JSON.stringify(joinTable)}.`,
+      `Declare the join table explicitly, e.g. joinTable: { name: "post_tags", joinColumn: "post_id", inverseJoinColumn: "tag_id" }.`,
+    );
+  }
+}
+
+/**
  * Declares a ManyToMany relation.
  * Expresses a many-to-many association between two entities via a join table.
  *
@@ -93,6 +127,12 @@ export function ManyToMany<T>(
 ): PropertyDecorator {
   return (target, propertyKey) => {
     const cls = target.constructor;
+
+    validateJoinTableOption(
+      option?.joinTable,
+      cls.name,
+      propertyKey.toString(),
+    );
 
     const scanner = getScannerInstance(ManyToManyScanner);
 
