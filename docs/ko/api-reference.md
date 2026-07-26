@@ -291,7 +291,7 @@ type WhereClause<T> = {
 { like, notLike, ilike, contains, startsWith, endsWith }
 ```
 
-사용 예제는 [Querying -- WHERE Filters](./entity-manager-querying.md#where-filters)를 참고해 주세요.
+사용 예제는 [Querying -- WHERE Filters](./entity-manager-querying.md#where-필터)를 참고해 주세요.
 
 ### WhereOperator (SelectQueryBuilder)
 
@@ -528,7 +528,7 @@ interface WindowColumn {
 
 ### RowValidator / ArrayValidator
 
-[사용법 ->](./query-builder.md#result-validation--validate)
+[사용법 ->](./query-builder-execution.md#결과-검증-—-validate)
 
 ```typescript
 // Row-level: validates each row individually

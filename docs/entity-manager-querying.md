@@ -1309,7 +1309,7 @@ const hasTrashed = await em.exists(Post, { authorId: 42 }, false, true);
 | `withDeleted` | `boolean` | `false` | Include both live and soft-deleted rows in the aggregate |
 | `onlyDeleted` | `boolean` | `false` | Restrict to soft-deleted rows only (`@DeletedAt IS NOT NULL`); takes precedence over `withDeleted` |
 
-`onlyDeleted` is a silent no-op for entities without a `@DeletedAt` column. See [Soft Delete](#soft-delete) for the read-side equivalents in `find()` and friends.
+`onlyDeleted` is a silent no-op for entities without a `@DeletedAt` column. See [Soft Delete](#soft-delete-awareness) for the read-side equivalents in `find()` and friends.
 
 ---
 

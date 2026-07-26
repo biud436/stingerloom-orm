@@ -528,7 +528,7 @@ interface WindowColumn {
 
 ### RowValidator / ArrayValidator
 
-[Usage ->](./query-builder.md#result-validation--validate)
+[Usage ->](./query-builder-execution.md#result-validation-—-validate)
 
 ```typescript
 // Row-level: validates each row individually

@@ -203,7 +203,7 @@ const users = await em
 
 `innerJoinRelation()`도 있어요.
 
-> **`@ManyToMany`는 `leftJoinRelation` / `innerJoinRelation` 대상에서 빠져 있습니다.** 중간 테이블을 자동으로 두 번 조인해 주지는 않으니, M2M 조인은 중간 테이블을 직접 문자열 조인으로 이어주거나 서브쿼리로 풀어 쓰세요. 같은 이유로 `whereHas`도 `@ManyToMany`를 지원하지 않습니다 ([편의 패턴 → `whereHas`](./query-builder-patterns.md#wherehas-wherenothas-relation-존재-필터) 참고).
+> **`@ManyToMany`는 `leftJoinRelation` / `innerJoinRelation` 대상에서 빠져 있습니다.** 중간 테이블을 자동으로 두 번 조인해 주지는 않으니, M2M 조인은 중간 테이블을 직접 문자열 조인으로 이어주거나 서브쿼리로 풀어 쓰세요. 같은 이유로 `whereHas`도 `@ManyToMany`를 지원하지 않습니다 ([편의 패턴 → `whereHas`](./query-builder-patterns.md#wherehas-wherenothas-—-관계-존재-필터) 참고).
 
 ## JoinAndSelect — 조인과 SELECT를 한 번에
 

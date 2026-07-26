@@ -176,7 +176,8 @@
     "test": "jest",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "docs:check": "vitepress build docs && node scripts/check-doc-links.js"
   },
   "dependencies": {
     "sql-template-tag": "^4.1.0"
@@ -219,6 +220,7 @@
     }
   },
   "devDependencies": {
+    "@mdit-vue/shared": "^2.1.4",
     "@mrleebo/prisma-ast": "^0.14.0",
     "@nestjs/common": "^11.1.28",
     "@nestjs/core": "^11.1.28",

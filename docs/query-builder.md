@@ -27,7 +27,7 @@ combining conditions. Each deeper topic has its own page:
 | `GROUP BY`, `HAVING`, subqueries, `DISTINCT`, CTE | [Aggregations & Subqueries](./query-builder-aggregations.md) |
 | Pagination, locking, index hints, `validate()`, execution tiers, `prepare()` | [Execution & Results](./query-builder-execution.md) |
 | `when()`, `pipe()`, `whereHas()`, `withCount()`, scopes | [Patterns & Productivity](./query-builder-patterns.md) |
-| `UPDATE … ORDER BY … LIMIT` via `createUpdateBuilder` | [UpdateQueryBuilder](#updatequerybuilder--type-safe-update--order-by--limit) |
+| `UPDATE … ORDER BY … LIMIT` via `createUpdateBuilder` | [UpdateQueryBuilder](#updatequerybuilder-—-type-safe-update-order-by-limit) |
 | UNION, recursive CTE, window functions — `RawQueryBuilder` | [Raw SQL & CTE](./raw-sql.md) |
 
 ---
@@ -197,7 +197,7 @@ qb.where("isActive", true)
 This means: either (active AND 18+), or admin regardless of age.
 
 For parenthesized groups (e.g. `WHERE status = 'active' OR (role = 'admin' AND verified = true)`),
-see [`andWhereGroup()` / `orWhereGroup()`](./query-builder-patterns.md#grouped-conditions-andwheregroup-orwheregroup).
+see [`andWhereGroup()` / `orWhereGroup()`](./query-builder-patterns.md#grouped-conditions-—-andwheregroup-orwheregroup).
 
 ### Common WHERE Helpers
 

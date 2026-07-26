@@ -80,7 +80,7 @@ page.data; // Pick<Post, "id" | "title">[] — 엔티티가 아닌 plain object
 
 ### `getCursor()` — 빌더에서 커서(키셋) 페이지네이션
 
-`getCursor()`는 [`em.findWithCursor()`](./pagination.md#cursor-기반-페이지네이션)의 쿼리 빌더 버전이에요. 빌더에 이미 조립된 쿼리(WHERE 절, JOIN, soft-delete 필터링, 테넌트 스코핑)에 키셋 페이지네이션을 적용하고, `CursorPaginationResult`를 반환해요.
+`getCursor()`는 [`em.findWithCursor()`](./pagination.md#cursor-based-pagination)의 쿼리 빌더 버전이에요. 빌더에 이미 조립된 쿼리(WHERE 절, JOIN, soft-delete 필터링, 테넌트 스코핑)에 키셋 페이지네이션을 적용하고, `CursorPaginationResult`를 반환해요.
 
 ```typescript
 interface CursorPaginationOption<T> {

@@ -23,7 +23,7 @@ Stingerloom은 쿼리 빌더를 두 가지 제공합니다. 선택 기준은 단
 | `GROUP BY`, `HAVING`, 서브쿼리, `DISTINCT`, CTE | [집계 & 서브쿼리](./query-builder-aggregations.md) |
 | 페이지네이션, 잠금, 인덱스 힌트, `validate()`, 실행, `prepare()` | [실행 & 결과](./query-builder-execution.md) |
 | `when()`, `pipe()`, `whereHas()`, `withCount()`, scope | [편의 패턴](./query-builder-patterns.md) |
-| `UPDATE … ORDER BY … LIMIT` — `createUpdateBuilder` | [UpdateQueryBuilder](#updatequerybuilder--타입-안전한-update--order-by--limit) |
+| `UPDATE … ORDER BY … LIMIT` — `createUpdateBuilder` | [UpdateQueryBuilder](#updatequerybuilder-—-타입-안전한-update-order-by-limit) |
 | UNION, 재귀 CTE, 윈도우 함수 — `RawQueryBuilder` | [Raw SQL & CTE](./raw-sql.md) |
 
 ---
@@ -187,7 +187,7 @@ qb.where("isActive", true)
 
 읽으면 이렇게 됩니다. (active면서 18세 이상)이거나, 또는 나이와 관계 없이 admin인 경우.
 
-`WHERE status = 'active' OR (role = 'admin' AND verified = true)`처럼 **괄호 그룹**이 필요하면 [`andWhereGroup()` / `orWhereGroup()`](./query-builder-patterns.md#그룹-조건-andwheregroup-orwheregroup)을 쓰세요.
+`WHERE status = 'active' OR (role = 'admin' AND verified = true)`처럼 **괄호 그룹**이 필요하면 [`andWhereGroup()` / `orWhereGroup()`](./query-builder-patterns.md#그룹-조건-—-andwheregroup-orwheregroup)을 쓰세요.
 
 ### 자주 쓰는 WHERE 헬퍼
 
@@ -213,7 +213,7 @@ qb.whereLike("name", "%alice%");
 
 각 헬퍼는 기존 WHERE 절에 AND로 붙습니다. `where()` / `andWhere()`와 자유롭게 섞어 써도 돼요.
 
-모든 WHERE 메서드는 `"alias.property"` 형식의 크로스 엔티티 참조도 받습니다 — 자세한 건 [JOIN 페이지의 크로스 엔티티 컬럼 해석](./query-builder-joins.md#cross-entity-컬럼-해석)을 참고하세요.
+모든 WHERE 메서드는 `"alias.property"` 형식의 크로스 엔티티 참조도 받습니다 — 자세한 건 [JOIN 페이지의 크로스 엔티티 컬럼 해석](./query-builder-joins.md#크로스-엔티티-컬럼-해석)을 참고하세요.
 
 ---
 

@@ -1,4 +1,17 @@
 import { defineConfig } from "vitepress";
+import { slugify as defaultSlugify } from "@mdit-vue/shared";
+
+/**
+ * VitePress slugifies headings through `@mdit-vue/shared`, which normalizes to
+ * NFKD — so a Korean heading such as `## 설치` produces a *decomposed* id.
+ * Links authored in an editor are composed (NFC), so the two never match
+ * byte-for-byte and the browser silently fails to jump to the section.
+ *
+ * Re-composing the slug fixes every Korean anchor at once. ASCII slugs are
+ * unaffected (NFC is a no-op for them), as are em dashes, which are already a
+ * single composed codepoint.
+ */
+const slugify = (str: string): string => defaultSlugify(str).normalize("NFC");
 
 // ─────────────────────────────────────────────────
 // Shared sidebar (reused across locales)
@@ -298,6 +311,12 @@ export default defineConfig({
     "A standalone, framework-agnostic TypeScript ORM with multi-tenancy support",
   base: "/stingerloom-orm/",
   ignoreDeadLinks: true,
+
+  markdown: {
+    anchor: { slugify },
+    // Keep the in-page outline's links in the same normalization form as the ids.
+    slugify,
+  },
 
   head: [
     [

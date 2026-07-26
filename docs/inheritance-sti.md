@@ -554,8 +554,8 @@ Use STI when:
 
 Avoid STI when:
 
-- Child types have **many unique columns**. Switch to [Joined / TPT](./inheritance-mapping.md#strategy-2-joined-table-per-type-tpt) for a normalized schema.
-- You rarely query the root entity. Switch to [Table Per Class / TPC](./inheritance-mapping.md#strategy-3-table-per-class-tpc) for maximum per-type query speed.
+- Child types have **many unique columns**. Switch to [Joined / TPT](./inheritance-tpt.md) for a normalized schema.
+- You rarely query the root entity. Switch to [Table Per Class / TPC](./inheritance-tpc.md) for maximum per-type query speed.
 - You need **NOT NULL constraints** on child columns. STI forces them nullable.
 
 > **Hint** A practical rule of thumb: if the sum of child-specific columns across all types exceeds 10, consider TPT instead.

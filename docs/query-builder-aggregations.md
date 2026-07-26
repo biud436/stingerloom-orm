@@ -26,7 +26,7 @@ const stats = await em
 > **Note** — for a typed aggregate surface (`u.id.count()`,
 > `.sum()`, `.avg()`, `.min()`, `.max()`) that plugs into both SELECT and
 > HAVING without `sql` templates, see the
-> [QueryDSL Aggregates](./query-builder-querydsl.md#aggregates-select-and-having-in-one-expression)
+> [QueryDSL Aggregates](./query-builder-querydsl.md#aggregates-—-select-and-having-in-one-expression)
 > section.
 
 ### Aggregate Functions in SELECT
@@ -108,7 +108,7 @@ The query builder supports subqueries in WHERE, SELECT, and FROM clauses. While 
 
 ### WHERE IN Subquery
 
-The typed shortcut is `whereInSubquery(column, subBuilder)` — see [Patterns & Productivity](./query-builder-patterns.md#whereinsubquery--wherenotinsubquery) for a worked example. Reach for `Conditions.inSubquery()` only when the subquery isn't expressible as a `SelectQueryBuilder` (e.g. you already have a `Sql` fragment from a raw source):
+The typed shortcut is `whereInSubquery(column, subBuilder)` — see [Patterns & Productivity](./query-builder-patterns.md#whereinsubquery-wherenotinsubquery) for a worked example. Reach for `Conditions.inSubquery()` only when the subquery isn't expressible as a `SelectQueryBuilder` (e.g. you already have a `Sql` fragment from a raw source):
 
 ```typescript
 import sql from "sql-template-tag";
@@ -143,7 +143,7 @@ const authors = await em
   .getMany();
 ```
 
-Prefer [`whereHas()`](./query-builder-patterns.md#wherehas--wherenothas--filter-by-relation-existence) over hand-built `EXISTS` when the correlation maps to a relation — it derives the join condition from decorator metadata.
+Prefer [`whereHas()`](./query-builder-patterns.md#wherehas-wherenothas-—-filter-by-relation-existence) over hand-built `EXISTS` when the correlation maps to a relation — it derives the join condition from decorator metadata.
 
 ### Scalar Subquery in SELECT
 

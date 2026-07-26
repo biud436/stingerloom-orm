@@ -39,7 +39,7 @@ await em.createQueryBuilder(Post, "p")
 
 `addOrderBy("postCount", "DESC")`는 키를 FROM 별칭으로 한정해서 `"p"."postCount"`가 됩니다. SELECT 리스트에만 존재하는 별칭이라 DB가 거부하죠. SELECT 별칭으로 정렬하려면 `appendSql(sql\`ORDER BY "alias" ...\`)`로 한 단계 내려갑니다 — 별칭이 그대로 살아남습니다.
 
-둘 다 지원하긴 합니다. 다만 동일한 집계를 여러 자리에서 쓴다면 `qAlias()` 쪽이 유리해요. 기준을 바꿀 때 한 군데만 고치면 되니까요. `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()`, `.countDistinct()` 전부 같은 방식으로 쓰고, 전체 연산자는 [QueryDSL 집계](./query-builder-querydsl.md#집계-count-sum-avg-min-max)에 정리돼 있습니다.
+둘 다 지원하긴 합니다. 다만 동일한 집계를 여러 자리에서 쓴다면 `qAlias()` 쪽이 유리해요. 기준을 바꿀 때 한 군데만 고치면 되니까요. `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()`, `.countDistinct()` 전부 같은 방식으로 쓰고, 전체 연산자는 [QueryDSL 집계](./query-builder-querydsl.md#집계-—-count-sum-avg-min-max)에 정리돼 있습니다.
 
 ### SELECT에서 집계 함수 바로 쓰기
 
@@ -120,7 +120,7 @@ qb.addSelect(
 
 ### WHERE IN 서브쿼리
 
-타입드 단축은 `whereInSubquery(column, subBuilder)`입니다 — [패턴 & 생산성](./query-builder-patterns.md#whereinsubquery--wherenotinsubquery)에서 사용 예제를 확인하세요. 서브쿼리가 `SelectQueryBuilder`로 표현되지 않을 때(예: raw 소스에서 이미 `Sql` 조각을 받은 경우)에만 `Conditions.inSubquery()`로 내려갑니다.
+타입드 단축은 `whereInSubquery(column, subBuilder)`입니다 — [패턴 & 생산성](./query-builder-patterns.md#whereinsubquery-wherenotinsubquery)에서 사용 예제를 확인하세요. 서브쿼리가 `SelectQueryBuilder`로 표현되지 않을 때(예: raw 소스에서 이미 `Sql` 조각을 받은 경우)에만 `Conditions.inSubquery()`로 내려갑니다.
 
 ```typescript
 import sql from "sql-template-tag";
@@ -223,7 +223,7 @@ const results = await em.query(
 - `whereExistsSubquery(subQb)` / `whereNotExistsSubquery(...)`
 - `addSelectSubquery(subQb, alias)`
 
-전체 세트는 [편의 패턴](./query-builder-patterns.md#subquery-통합)에서 다룹니다.
+전체 세트는 [편의 패턴](./query-builder-patterns.md#서브쿼리-통합)에서 다룹니다.
 
 ## 스칼라 집계 터미널
 
@@ -292,11 +292,11 @@ qb.select(["id", "teamId", "score"])
   .getRawMany();
 ```
 
-표현식을 `.toScalar()`로 마무리하면 WHERE / HAVING 안에 서브쿼리처럼 꽂을 수도 있습니다. API 전체와 리더보드 실전 예제는 [QueryDSL → 윈도우 함수](./query-builder-querydsl.md#윈도우-함수-aggregateover-windowbuilder)에서 이어서 볼 수 있어요.
+표현식을 `.toScalar()`로 마무리하면 WHERE / HAVING 안에 서브쿼리처럼 꽂을 수도 있습니다. API 전체와 리더보드 실전 예제는 [QueryDSL → 윈도우 함수](./query-builder-querydsl.md#윈도우-함수-—-aggregate-over-windowbuilder)에서 이어서 볼 수 있어요.
 
 ## 다음 단계
 
 - [QueryDSL 표현식](./query-builder-querydsl.md) — 타입드 집계 / 윈도우 / CASE / 날짜 컴포넌트
-- [편의 패턴 → 서브쿼리 통합](./query-builder-patterns.md#subquery-통합) — 타입드 `whereInSubquery` / `whereExistsSubquery` / `addSelectSubquery`, `whereHas` / `withCount`
+- [편의 패턴 → 서브쿼리 통합](./query-builder-patterns.md#서브쿼리-통합) — 타입드 `whereInSubquery` / `whereExistsSubquery` / `addSelectSubquery`, `whereHas` / `withCount`
 - [Raw SQL & CTE](./raw-sql.md) — UNION, 재귀 CTE
 - [Query Builder 개요](./query-builder.md) — 기본 사용법과 전체 지도

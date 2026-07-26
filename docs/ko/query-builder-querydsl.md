@@ -415,7 +415,7 @@ qb.select([exp.currentDate().as("today")]);
 // SELECT CURRENT_DATE AS "today"
 ```
 
-비교 메서드에 스칼라 표현식을 넘기면 파라미터 바인딩이 아니라 SQL 안에 직접 삽입됩니다. 그래서 `u.createdAt.lte(currentTimestamp())`처럼 써도 바인딩이 아니라 `CURRENT_TIMESTAMP` 그대로 쿼리에 박혀요. 컬럼 피연산자에도 똑같이 적용됩니다([다른 컬럼·표현식과 비교하기](#다른-컬럼표현식과-비교하기) 참고).
+비교 메서드에 스칼라 표현식을 넘기면 파라미터 바인딩이 아니라 SQL 안에 직접 삽입됩니다. 그래서 `u.createdAt.lte(currentTimestamp())`처럼 써도 바인딩이 아니라 `CURRENT_TIMESTAMP` 그대로 쿼리에 박혀요. 컬럼 피연산자에도 똑같이 적용됩니다([다른 컬럼·표현식과 비교하기](#다른-컬럼·표현식과-비교하기) 참고).
 
 ## 타입 변환 — `.stringValue()` / `.intValue()` / `.longValue()` / `.floatValue()` / `.booleanValue()`
 

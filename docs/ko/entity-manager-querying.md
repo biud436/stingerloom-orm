@@ -1309,7 +1309,7 @@ const hasTrashed = await em.exists(Post, { authorId: 42 }, false, true);
 | `withDeleted` | `boolean` | `false` | live 행과 soft-deleted 행을 모두 집계에 포함 |
 | `onlyDeleted` | `boolean` | `false` | soft-deleted 행만 대상으로 제한(`@DeletedAt IS NOT NULL`); `withDeleted`보다 우선 |
 
-`@DeletedAt` 컬럼이 없는 엔티티에서는 `onlyDeleted`가 조용히 무시돼요. `find()`와 같은 읽기 API에서의 동작은 [Soft Delete](#soft-delete) 섹션을 참고하세요.
+`@DeletedAt` 컬럼이 없는 엔티티에서는 `onlyDeleted`가 조용히 무시돼요. `find()`와 같은 읽기 API에서의 동작은 [Soft Delete](#soft-delete-인식) 섹션을 참고하세요.
 
 ---
 
