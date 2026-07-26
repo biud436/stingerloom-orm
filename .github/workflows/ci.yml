@@ -24,6 +24,26 @@ jobs:
       - run: pnpm build
       - run: pnpm test
 
+  docs:
+    name: Docs Build & Link Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Builds the site (previously only done post-merge by deploy-docs.yml) and
+      # validates every internal link against the emitted heading ids. VitePress
+      # runs with ignoreDeadLinks, so without this a stale anchor ships silently.
+      - run: pnpm docs:check
+
   build-check:
     name: Example Type Check
     runs-on: ubuntu-latest
