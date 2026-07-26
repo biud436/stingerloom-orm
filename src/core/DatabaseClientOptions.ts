@@ -42,6 +42,13 @@ export interface PoolOptions {
   /**
    * Time (ms) a connection can be held before a leak warning is logged.
    * Set to 0 to disable leak detection.
+   *
+   * @remarks
+   * NOT WIRED YET — no driver reads this option, so setting it currently has
+   * no effect. {@link ConnectionLeakDetector} works but must be driven
+   * manually against connections from `connector.acquireConnection()`; the
+   * ORM's own transaction path checks out raw driver connections instead.
+   *
    * @default 30000
    */
   leakDetectionThresholdMs?: number;

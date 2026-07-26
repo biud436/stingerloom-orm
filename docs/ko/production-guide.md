@@ -383,20 +383,31 @@ const longRunning = processlist.filter((p) => p.Time > 30);
 console.log("Running for 30+ seconds:", longRunning.length);
 ```
 
-### 내장 Leak Detector (`leakDetectionThresholdMs`)
+### Leak Detection (`ConnectionLeakDetector`)
 
-모든 드라이버는 커넥션 풀에 **`ConnectionLeakDetector`** 를 연결해요. 체크아웃된 커넥션이 `pool.leakDetectionThresholdMs`보다 오래 점유되면 ORM이 경고를 남겨서 어느 호출 경로가 반환을 잊었는지 추적할 수 있어요. DB별로 설정하세요:
+::: warning `pool.leakDetectionThresholdMs`는 현재 동작하지 않아요
+`PoolOptions`에 옵션이 선언되어 있고 `ConnectionLeakDetector` 클래스도 export되어 있지만, 이 둘을 연결하는 코드가 없어요. `leakDetectionThresholdMs`를 읽는 드라이버가 하나도 없어서 값을 넣어도 효과가 없어요.
+
+커넥션 경로가 어긋나 있는 게 원인이에요. Detector는 `connector.acquireConnection()`이 돌려주는 `IConnection` 래퍼를 추적하는데, ORM의 실제 트랜잭션 경로는 `IDataSource.createConnection()`으로 **원시** 드라이버 커넥션을 체크아웃하고 `close()` / `commit()` / `rollback()` 여러 지점에서 해제해요. 둘을 연결하려면 모든 드라이버의 커넥션 생명주기를 바꿔야 하는데, 해제 경로를 하나라도 빠뜨리면 이미 반환된 커넥션을 계속 누수로 신고하게 돼요. 그래서 어설프게 절반만 하지 않고 보류한 상태예요.
+
+그때까지는 위의 「풀 상태 확인」에 있는 DB 수준 쿼리와, 아래의 slow query 로깅 및 `queryTimeout`으로 누수를 찾으세요.
+:::
+
+클래스 자체는 정상 동작하고 export되어 있으니, 커넥션을 직접 획득하는 코드라면 이렇게 쓸 수 있어요:
 
 ```typescript
-await em.register({
-  // ...
-  pool: {
-    max: 20,
-    acquireTimeoutMs: 5000,
-    idleTimeoutMs: 10000,
-    leakDetectionThresholdMs: 30000, // 기본값 — 30초 초과 시 경고
-  },
-});
+import { ConnectionLeakDetector, DatabaseClient } from "@stingerloom/orm";
+
+const detector = new ConnectionLeakDetector(30_000); // 30초 초과 시 경고
+const connector = DatabaseClient.getInstance().getConnection();
+
+const conn = detector.track(await connector.acquireConnection());
+try {
+  // ... conn.getUnderlying()으로 작업 ...
+} finally {
+  detector.untrack(conn);
+  await conn.release();
+}
 ```
 
 **로그에 남는 내용:**
@@ -406,18 +417,18 @@ await em.register({
 for 31250ms (threshold: 30000ms). Consider releasing it.
 ```
 
-Detector는 백그라운드 타이머(`thresholdMs / 2`, 최소 5초)에서 추적 커넥션을 스캔하고, 스캔마다 임계값 초과 커넥션당 1건의 경고를 발행해요. 타이머는 `unref()` 처리되어 있어서 프로세스 종료를 막지 않아요.
+Detector는 백그라운드 타이머로 스캔해요. 주기는 `checkIntervalMs`이고, 지정하지 않으면 `thresholdMs / 2`(최소 5초)가 됩니다. 스캔마다 임계값을 넘긴 커넥션당 1건씩 경고를 발행해요. 타이머는 `unref()` 처리되어 있어서 프로세스 종료를 막지 않고, 임계값을 `0`으로 주면 감지 자체가 꺼져요. `shutdown()`을 호출하면 타이머가 멈추고 추적 목록도 비워져요.
 
-**튜닝 가이드:**
+Detector는 **관찰 전용** 이에요 — 누수된 커넥션을 강제로 반환하지 않아요. 트랜잭션이 COMMIT 중일 수 있기 때문이죠. `queryTimeout`(아래)과 함께 쓰면, DB 수준 취소가 결국 멈춘 statement를 닫고 그 결과 커넥션도 해제돼요.
+
+**임계값 고르기:**
 
 | 시나리오 | 권장 임계값 |
 |---|---|
 | 일반 OLTP 워크로드 (<1초 쿼리) | `10000` (10초) — 누수를 빠르게 포착 |
-| 리포팅 쿼리 혼합 | `30000` (30초, 기본값) |
+| 리포팅 쿼리 혼합 | `30000` (30초) |
 | 백그라운드 잡 / 대용량 배치 임포트 | `120000` (2분) 이상 |
 | **비활성화** (단기 스크립트 등) | `0` |
-
-Detector는 **관찰 전용** 이에요 — 누수된 커넥션을 강제로 반환하지 않아요. 트랜잭션이 COMMIT 중일 수 있기 때문이죠. `queryTimeout`(아래)과 함께 쓰면, DB 수준 취소가 결국 멈춘 statement를 닫고 그 결과 커넥션도 해제돼요.
 
 ### Slow Query를 통한 커넥션 누수 감지
 

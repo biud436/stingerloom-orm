@@ -383,20 +383,31 @@ const longRunning = processlist.filter((p) => p.Time > 30);
 console.log("Running for 30+ seconds:", longRunning.length);
 ```
 
-### Built-in Leak Detector (`leakDetectionThresholdMs`)
+### Leak Detection (`ConnectionLeakDetector`)
 
-Every driver wires a **`ConnectionLeakDetector`** onto its connection pool. When a checked-out connection is held longer than `pool.leakDetectionThresholdMs`, the ORM logs a warning so you can trace which call path forgot to release it. Configure it per database:
+::: warning `pool.leakDetectionThresholdMs` is currently inert
+The option is declared on `PoolOptions` and the `ConnectionLeakDetector` class is exported, but nothing connects the two — no driver reads `leakDetectionThresholdMs`, so setting it has no effect today.
+
+The gap is in the connection path. The detector tracks `IConnection` wrappers returned by `connector.acquireConnection()`, while the ORM's own transaction path checks out **raw** driver connections through `IDataSource.createConnection()` and releases them across several sites (`close()`, `commit()`, `rollback()`). Wiring the two means changing the connection lifecycle in every driver, and a detector that missed a single release path would report false leaks forever — so it is deferred rather than done halfway.
+
+Until then, find leaks with the database-level queries in [Checking Pool Status](#checking-pool-status) above, plus slow-query logging and `queryTimeout` below.
+:::
+
+The class itself works and is exported, so code that acquires connections directly can drive it:
 
 ```typescript
-await em.register({
-  // ...
-  pool: {
-    max: 20,
-    acquireTimeoutMs: 5000,
-    idleTimeoutMs: 10000,
-    leakDetectionThresholdMs: 30000, // default — warn after 30s
-  },
-});
+import { ConnectionLeakDetector, DatabaseClient } from "@stingerloom/orm";
+
+const detector = new ConnectionLeakDetector(30_000); // warn after 30s
+const connector = DatabaseClient.getInstance().getConnection();
+
+const conn = detector.track(await connector.acquireConnection());
+try {
+  // ... use conn.getUnderlying() ...
+} finally {
+  detector.untrack(conn);
+  await conn.release();
+}
 ```
 
 **What gets logged:**
@@ -406,18 +417,18 @@ await em.register({
 for 31250ms (threshold: 30000ms). Consider releasing it.
 ```
 
-The detector scans tracked connections on a background timer (`thresholdMs / 2`, min 5s) and emits one warning per over-threshold connection per scan. The timer is `unref()`'d so it never blocks process shutdown.
+The detector scans on a background timer — `checkIntervalMs`, defaulting to `thresholdMs / 2` with a 5s floor — and emits one warning per over-threshold connection per scan. The timer is `unref()`'d so it never blocks process shutdown, a threshold of `0` disables detection entirely, and `shutdown()` stops the timer and clears tracking.
 
-**Tuning guidance:**
+It is **observational only** — it never force-releases a connection, because the transaction may be mid-COMMIT. Pair it with `queryTimeout` (below) so a hung statement is eventually cancelled at the database, which then releases the connection.
 
-| Scenario | Recommended threshold |
+**Choosing a threshold:**
+
+| Scenario | Suggested threshold |
 |---|---|
 | Typical OLTP workload (<1s queries) | `10000` (10s) — catches leaks fast |
-| Mixed workload with reporting queries | `30000` (30s, default) |
+| Mixed workload with reporting queries | `30000` (30s) |
 | Background jobs / large batch imports | `120000` (2min) or higher |
 | **Disable** (e.g. in short-lived scripts) | `0` |
-
-The detector is **observational only** — it does not forcibly release leaked connections, because the transaction may be mid-COMMIT. Pair it with `queryTimeout` (below) so the DB-level cancellation eventually closes the hung statement, which then releases the connection.
 
 ### Detecting Connection Leaks via Slow Queries
 
