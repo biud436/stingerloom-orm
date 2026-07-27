@@ -56,6 +56,7 @@ module.exports = {
   testPathIgnorePatterns: [
     "/node_modules/",
     "/dist/",
+    "/.claude/",
     ...(process.env.INTEGRATION_TEST === "true" ? [] : ["/__tests__/integration/"]),
   ],
   transformIgnorePatterns: ["<rootDir>/node_modules/"],

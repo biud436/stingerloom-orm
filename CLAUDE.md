@@ -310,6 +310,7 @@ pnpm start          # NestJS 서버 시작
 - 쿼리 타임아웃 (per-query / connection-level)
 - Read Replica (읽기/쓰기 분리)
 - 복합 PK (@PrimaryColumn)
+- 상속 매핑 STI/TPT/TPC (@Inheritance, @DiscriminatorColumn, @DiscriminatorValue, InheritanceResolver — PR #239, docs 4페이지 EN/KO)
 - Raw Query 제네릭 + Connection Retry
 - 멀티테넌시 레이어드 메타데이터 + AsyncLocalStorage 동시성 안전
 - TenantMigrationRunner (PostgreSQL 스키마 기반 자동 프로비저닝)
