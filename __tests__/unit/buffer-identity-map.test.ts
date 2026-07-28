@@ -307,11 +307,14 @@ describe("IdentityMapManager", () => {
 
     it("should evict oldest clean entries when exceeding maxSize", () => {
       mgr.setMaxSize(5);
-      const strategy = { snapshot: (inst: any, cols: string[]) => {
-        const s: Record<string, any> = {};
-        for (const c of cols) s[c] = inst[c];
-        return s;
-      }};
+      const strategy = {
+        snapshot: (inst: any, cols: string[]) => {
+          const s: Record<string, any> = {};
+          for (const c of cols) s[c] = inst[c];
+          return s;
+        },
+        diff: () => null,
+      };
       const tracked = new Map<any, any>();
       mgr.setTrackedEntries(tracked, strategy);
 
@@ -338,11 +341,14 @@ describe("IdentityMapManager", () => {
 
     it("should skip dirty entities during eviction", () => {
       mgr.setMaxSize(3);
-      const strategy = { snapshot: (inst: any, cols: string[]) => {
-        const s: Record<string, any> = {};
-        for (const c of cols) s[c] = inst[c];
-        return s;
-      }};
+      const strategy = {
+        snapshot: (inst: any, cols: string[]) => {
+          const s: Record<string, any> = {};
+          for (const c of cols) s[c] = inst[c];
+          return s;
+        },
+        diff: () => null,
+      };
       const tracked = new Map<any, any>();
       mgr.setTrackedEntries(tracked, strategy);
 
@@ -389,7 +395,7 @@ describe("IdentityMapManager", () => {
     it("should skip NEW and REMOVED entities during eviction", () => {
       mgr.setMaxSize(2);
       const tracked = new Map<any, any>();
-      mgr.setTrackedEntries(tracked, { snapshot: () => ({}) });
+      mgr.setTrackedEntries(tracked, { snapshot: () => ({}), diff: () => null });
 
       const u1 = Object.assign(new User(), { id: 1, name: "A", email: "a" });
       const u2 = Object.assign(new User(), { id: 2, name: "B", email: "b" });
@@ -418,7 +424,7 @@ describe("IdentityMapManager", () => {
     it("touch() should refresh LRU order", () => {
       mgr.setMaxSize(3);
       const tracked = new Map<any, any>();
-      mgr.setTrackedEntries(tracked, { snapshot: () => ({}) });
+      mgr.setTrackedEntries(tracked, { snapshot: () => ({}), diff: () => null });
 
       for (let i = 1; i <= 3; i++) {
         const u = Object.assign(new User(), { id: i, name: `U${i}`, email: `u${i}` });
@@ -446,7 +452,7 @@ describe("IdentityMapManager", () => {
     it("evicted entities should have DETACHED state", () => {
       mgr.setMaxSize(1);
       const tracked = new Map<any, any>();
-      mgr.setTrackedEntries(tracked, { snapshot: () => ({}) });
+      mgr.setTrackedEntries(tracked, { snapshot: () => ({}), diff: () => null });
 
       const u1 = Object.assign(new User(), { id: 1, name: "A", email: "a" });
       const u2 = Object.assign(new User(), { id: 2, name: "B", email: "b" });
@@ -469,7 +475,7 @@ describe("IdentityMapManager", () => {
     it("stateMap should not grow past evictions (memory bound)", () => {
       mgr.setMaxSize(2);
       const tracked = new Map<any, any>();
-      mgr.setTrackedEntries(tracked, { snapshot: () => ({}) });
+      mgr.setTrackedEntries(tracked, { snapshot: () => ({}), diff: () => null });
 
       for (let i = 1; i <= 50; i++) {
         const u = Object.assign(new User(), { id: i, name: `U${i}`, email: `u${i}@x` });

@@ -321,10 +321,17 @@ export class FlushExecutor {
       arr.push(item);
     }
 
-    for (const [entityClass, items] of groups) {
+    for (const [entityClass, rawItems] of groups) {
+      // Skip anything a previous group's cascade already wrote (and
+      // re-baselined) this flush — its precomputed diff is stale and writing
+      // it again would double the UPDATE and the flush-event pairs.
+      const items = rawItems.filter(({ entry }) => !visited.has(entry.instance));
+      if (items.length === 0) continue;
+
       // Fallback to individual save for: single item, composite PK, or entities with version/timestamp (#163)
       if (items.length === 1 || items[0].entry.pkColumns.length > 1 || this.hasOrmManagedFields(entityClass)) {
         for (const { entry, diff } of items) {
+          if (visited.has(entry.instance)) continue;
           await this.emitFlushEvent("preUpdate", entry.entity, entry.instance, diff);
           const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
           const updated = await txEm.save(entry.entity, saveData);
@@ -407,8 +414,11 @@ export class FlushExecutor {
       await txEm.query(sql, params);
 
       result.updates += items.length;
+      // Mark every batched instance visited BEFORE running cascades, so a
+      // cascade from one item cannot re-write a same-batch sibling (its
+      // stale snapshot would otherwise look dirty).
+      for (const { entry } of items) visited.add(entry.instance);
       for (const { entry, diff } of items) {
-        visited.add(entry.instance);
         await this.emitFlushEvent("postUpdate", entry.entity, entry.instance, diff);
         await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result);
       }

@@ -476,6 +476,8 @@ COMMIT;
 
 자식의 `postId`가 자동으로 `42`(부모의 생성된 PK)로 설정돼요. 직접 설정할 필요가 없어요.
 
+**tracked** 상태의 부모가 dirty로 flush될 때, cascade는 로드된 관계를 순회하되 실제로 변경된 자식만 씁니다. 무변경 자식은 완전히 건너뜁니다 — UPDATE도, 생명주기 이벤트도, `@UpdateTimestamp` 갱신도 없습니다. dirty 자식은 정확히 한 번만 기록되며 `preUpdate`/`postUpdate` flush 이벤트도 한 쌍만 발생합니다. flush 결과에서 이런 cascade UPDATE는 `updates`로 집계되고, 새 자식의 cascade INSERT는 여전히 `inserts`로 집계됩니다.
+
 ### Cascade delete -- "부모와 자식을 한 번에 DELETE"
 
 `cascade: ["delete"]`가 설정되어 있으면, 부모를 remove할 때 자식도 함께 삭제돼요:

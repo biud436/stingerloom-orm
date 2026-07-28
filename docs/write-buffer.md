@@ -477,6 +477,8 @@ COMMIT;
 
 Notice that the children's `postId` is automatically set to `42` — the parent's generated PK. You don't need to set it manually.
 
+When a **tracked** parent is flushed dirty, the cascade walks its loaded relations but only writes children that actually changed. An unchanged child is skipped entirely — no UPDATE, no lifecycle events, no `@UpdateTimestamp` bump — and a dirty child is written exactly once, with a single `preUpdate`/`postUpdate` flush-event pair. The flush result counts these cascade UPDATEs under `updates`; cascade INSERTs of new children still count under `inserts`.
+
 ### Cascade delete — "Delete the parent and its children together"
 
 If `cascade: ["delete"]` is set, removing a parent also deletes its children:

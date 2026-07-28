@@ -132,6 +132,9 @@ export class WriteBuffer {
     this.flushExec = new FlushExecutor(
       ctx, this.idMap, this.cascade, this.options, this.strategy, this.flushListeners,
     );
+    // CascadeProcessor is constructed before FlushExecutor but needs its
+    // event/version/timestamp helpers when it UPDATEs a tracked child.
+    this.cascade.attachFlushHooks(this.flushExec);
     this.lazyInjector = new LazyRelationInjector(
       ctx, this.idMap, this.resolveIdentity.bind(this),
       this.captureLoadedCollectionSnapshot.bind(this),
@@ -1281,6 +1284,10 @@ export class WriteBuffer {
           await this.flushExec.flushUpdatesBatched(txEm, sortedTracked, visited, result);
         } else {
           for (const entry of sortedTracked) {
+            // A dirty parent's cascade may already have written this instance
+            // (with a snapshot re-baseline); writing it again would double
+            // the UPDATE and the flush-event pairs.
+            if (visited.has(entry.instance)) continue;
             const diff = this.strategy.diff(
               entry.instance,
               entry.snapshot,
