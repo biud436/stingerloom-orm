@@ -48,7 +48,15 @@ export class IdentityMapManager {
    * Used by eviction to skip dirty entities.
    */
   private trackedEntries?: Map<any, TrackedEntry>;
-  private snapshotStrategy?: { snapshot(instance: any, cols: string[]): Record<string, any> };
+  private snapshotStrategy?: {
+    snapshot(instance: any, cols: string[]): Record<string, any>;
+    diff(
+      instance: any,
+      snapshot: Record<string, any>,
+      columnNames: string[],
+      pkColumns: string[],
+    ): Record<string, any> | null;
+  };
 
   constructor(ctx: PluginContext) {
     this.ctx = ctx;
@@ -71,10 +79,44 @@ export class IdentityMapManager {
    */
   setTrackedEntries(
     entries: Map<any, TrackedEntry>,
-    strategy: { snapshot(instance: any, cols: string[]): Record<string, any> },
+    strategy: {
+      snapshot(instance: any, cols: string[]): Record<string, any>;
+      diff(
+        instance: any,
+        snapshot: Record<string, any>,
+        columnNames: string[],
+        pkColumns: string[],
+      ): Record<string, any> | null;
+    },
   ): void {
     this.trackedEntries = entries;
     this.snapshotStrategy = strategy;
+  }
+
+  /**
+   * The tracked entry for an instance, if the buffer is tracking it.
+   * Returns undefined when the trackedEntries map was never linked — callers
+   * then fall back to untracked (save-always) semantics.
+   */
+  getTrackedEntry(instance: EntityInstance): TrackedEntry | undefined {
+    return this.trackedEntries?.get(instance);
+  }
+
+  /** Column diff of a tracked entry against its snapshot (null = clean). */
+  diffTracked(entry: TrackedEntry): ColumnValueMap | null {
+    if (!this.snapshotStrategy) return null;
+    return this.snapshotStrategy.diff(
+      entry.instance,
+      entry.snapshot,
+      entry.columnNames,
+      entry.pkColumns,
+    );
+  }
+
+  /** Re-baseline a tracked entry's snapshot to the instance's current state. */
+  rebaselineSnapshot(entry: TrackedEntry): void {
+    if (!this.snapshotStrategy) return;
+    entry.snapshot = this.snapshotStrategy.snapshot(entry.instance, entry.columnNames);
   }
 
   /**

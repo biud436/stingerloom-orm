@@ -20,9 +20,37 @@ import {
   resolveFkWriteKeys,
   assignFkValue,
   readLoadedRelationValue,
+  FkWriteKeys,
 } from "./CollectionTracker";
 import { IdentityMapManager, EntityInstance, ColumnValueMap } from "./IdentityMapManager";
 import type { EntityManager } from "../../EntityManager";
+import type { FlushEventType } from "./BufferPreview";
+
+/**
+ * Flush-time collaborators supplied by WriteBuffer after construction —
+ * CascadeProcessor is built before FlushExecutor, so these arrive via
+ * {@link CascadeProcessor.attachFlushHooks}. They let a cascade UPDATE of a
+ * tracked child emit the same flush-event pair and @Version/@UpdateTimestamp
+ * instance sync as the dirty-tracked flush pass.
+ */
+export interface CascadeFlushHooks {
+  emitFlushEvent(
+    type: FlushEventType,
+    entity: ClazzType<any>,
+    instance?: EntityInstance,
+    data?: ColumnValueMap,
+  ): Promise<void>;
+  ensureVersionIncrement(
+    entityClass: ClazzType<any>,
+    instance: EntityInstance,
+    snapshot: Record<string, any>,
+  ): void;
+  ensureTimestamps(
+    entityClass: ClazzType<any>,
+    instance: EntityInstance,
+    isInsert: boolean,
+  ): void;
+}
 
 /**
  * Children added to some tracked parent's O2M collection during a flush,
@@ -36,6 +64,19 @@ export interface ReparentedChildren {
 }
 
 /**
+ * Own-descriptor data read: returns the property value only when it is a
+ * plain data property, so no accessor (e.g. a lazy-load getter) can fire.
+ * Unlike {@link readLoadedRelationValue} this returns scalars — it exists for
+ * FK shadow keys, which hold raw PK values.
+ */
+function readOwnDataValue(instance: any, propertyKey: string): any {
+  if (instance === null || typeof instance !== "object") return undefined;
+  const desc = Object.getOwnPropertyDescriptor(instance, propertyKey);
+  if (!desc || !("value" in desc)) return undefined;
+  return desc.value;
+}
+
+/**
  * Handles cascade insert/update/delete propagation for WriteBuffer.
  *
  * Walks @OneToMany, @OneToOne, and @ManyToMany relation metadata
@@ -45,6 +86,7 @@ export class CascadeProcessor {
   private readonly ctx: PluginContext;
   private readonly idMap: IdentityMapManager;
   private readonly options: ResolvedBufferOptions;
+  private flushHooks?: CascadeFlushHooks;
 
   constructor(
     ctx: PluginContext,
@@ -54,6 +96,111 @@ export class CascadeProcessor {
     this.ctx = ctx;
     this.idMap = idMap;
     this.options = options;
+  }
+
+  /** Wire the flush-time collaborators (see {@link CascadeFlushHooks}). */
+  attachFlushHooks(hooks: CascadeFlushHooks): void {
+    this.flushHooks = hooks;
+  }
+
+  /**
+   * Assign the parent PK to every FK write target of `child`, reporting
+   * whether any target actually changed. The report matters for tracked
+   * children whose FK is declared without a backing @Column (@RelationColumn
+   * pattern): the shadow keys are not in columnNames, so the snapshot diff
+   * alone cannot see a reparent — without this signal the write would be
+   * skipped as "clean".
+   */
+  private assignFkDetectingChange(
+    child: EntityInstance,
+    keys: FkWriteKeys,
+    parentPk: any,
+  ): boolean {
+    // Never READ keys.fkColumn here: its legacy fallback is the relation
+    // property itself, where a read fires the lazy-load getter (a hidden
+    // query mid-flush) and returns a Promise that would always compare as
+    // "changed". Detection only needs the keys em.save actually resolves the
+    // FK from — the shadow accessor and the explicit fkProperty — read via
+    // own-descriptor so no getter can fire.
+    const beforeShadow = readOwnDataValue(child, keys.shadowKey);
+    const beforeProp =
+      keys.fkPropertyKey !== undefined
+        ? readOwnDataValue(child, keys.fkPropertyKey)
+        : undefined;
+    assignFkValue(child, keys, parentPk);
+    return (
+      beforeShadow !== parentPk ||
+      (keys.fkPropertyKey !== undefined && beforeProp !== parentPk)
+    );
+  }
+
+  /**
+   * Save one cascade-reachable child with amplification guards:
+   * - tracked + readOnly           → never written
+   * - tracked + clean              → skipped entirely (no SQL, no events)
+   * - tracked + dirty / FK changed → one UPDATE with a preUpdate/postUpdate
+   *   flush-event pair, @Version/@UpdateTimestamp instance sync, and a
+   *   snapshot re-baseline so the dirty-tracked flush pass does not write the
+   *   same instance again
+   * - untracked                    → saved as before (cascade merge
+   *   semantics), counted as an INSERT or UPDATE mirroring em.save's own
+   *   generated-PK decision
+   */
+  private async saveCascadeChild(
+    txEm: EntityManager,
+    ChildEntity: ClazzType<any>,
+    child: EntityInstance,
+    result: BufferFlushResult,
+    fk?: { keys: FkWriteKeys; parentPk: any; changed: boolean },
+  ): Promise<"skipped" | "updated" | "inserted"> {
+    const entry = this.idMap.getTrackedEntry(child);
+    if (entry) {
+      if (entry.readOnly) return "skipped";
+      const diff = this.idMap.diffTracked(entry);
+      if (!diff && !fk?.changed) return "skipped";
+      const eventDiff = diff ?? { [fk!.keys.fkColumn]: fk!.parentPk };
+      await this.flushHooks?.emitFlushEvent("preUpdate", ChildEntity, child, eventDiff);
+      const data = this.idMap.extractColumnData(child, entry.columnNames);
+      if (fk) assignFkValue(data, fk.keys, fk.parentPk);
+      const saved = await txEm.save(ChildEntity, data);
+      if (saved) {
+        for (const col of entry.columnNames) {
+          const v = (saved as any)[col];
+          if (v !== undefined) child[col] = v;
+        }
+      }
+      this.flushHooks?.ensureVersionIncrement(ChildEntity, child, entry.snapshot);
+      this.flushHooks?.ensureTimestamps(ChildEntity, child, false);
+      this.idMap.rebaselineSnapshot(entry);
+      result.updates++;
+      await this.flushHooks?.emitFlushEvent("postUpdate", ChildEntity, child, eventDiff);
+      return "updated";
+    }
+
+    const childInfo = this.idMap.getColumnInfo(ChildEntity);
+    const hadFullPk =
+      childInfo.pkColumns.length > 0 &&
+      childInfo.pkColumns.every(
+        (pk: string) => child[pk] !== undefined && child[pk] !== null,
+      );
+    const data: ColumnValueMap = {};
+    for (const col of childInfo.columnNames) {
+      if (child[col] !== undefined) data[col] = child[col];
+    }
+    if (fk) assignFkValue(data, fk.keys, fk.parentPk);
+    const saved = await txEm.save(ChildEntity, data);
+    if (saved) {
+      for (const col of childInfo.columnNames) {
+        const v = (saved as any)[col];
+        if (v !== undefined) child[col] = v;
+      }
+    }
+    // em.save UPDATEs only generated-PK entities whose PK is present;
+    // everything else INSERTs (an assigned PK is present on new rows too).
+    const wasUpdate = hadFullPk && this.idMap.hasGeneratedPk(ChildEntity);
+    if (wasUpdate) result.updates++;
+    else result.inserts++;
+    return wasUpdate ? "updated" : "inserted";
   }
 
   /**
@@ -93,25 +240,21 @@ export class CascadeProcessor {
         if (visited.has(child)) continue;
         visited.add(child);
 
-        assignFkValue(child, fkKeys, parentPk);
+        const childTracked = this.idMap.getTrackedEntry(child) !== undefined;
+        const fkChanged = this.assignFkDetectingChange(child, fkKeys, parentPk);
+        await this.saveCascadeChild(txEm, ChildEntity, child, result, {
+          keys: fkKeys,
+          parentPk,
+          changed: fkChanged,
+        });
 
-        const childInfo = this.idMap.getColumnInfo(ChildEntity);
-        const childData: ColumnValueMap = {};
-        for (const col of childInfo.columnNames) {
-          if (child[col] !== undefined) childData[col] = child[col];
-        }
-        assignFkValue(childData, fkKeys, parentPk);
-
-        const savedChild = await txEm.save(ChildEntity, childData);
-        if (savedChild) {
-          for (const col of childInfo.columnNames) {
-            const v = (savedChild as any)[col];
-            if (v !== undefined) child[col] = v;
-          }
-        }
-        result.inserts++;
-
-        await this.processCascadeInsertUpdate(txEm, ChildEntity, child, visited, result, true);
+        // A tracked child's M2M pivot rows are managed by the collection-diff
+        // step — recursing with isNewParent=true re-INSERTed them on every
+        // parent flush (a PK conflict on a keyed pivot). Untracked children
+        // keep the legacy new-parent backfill.
+        await this.processCascadeInsertUpdate(
+          txEm, ChildEntity, child, visited, result, !childTracked,
+        );
       }
     }
 
@@ -128,47 +271,34 @@ export class CascadeProcessor {
       visited.add(related);
 
       const RelatedEntity = rel.getRelatedEntity();
-      const relatedInfo = this.idMap.getColumnInfo(RelatedEntity);
-      const relatedData: ColumnValueMap = {};
-      for (const col of relatedInfo.columnNames) {
-        if (related[col] !== undefined) relatedData[col] = related[col];
-      }
+      const relatedTracked = this.idMap.getTrackedEntry(related) !== undefined;
+      await this.saveCascadeChild(txEm, RelatedEntity, related, result);
 
-      const saved = await txEm.save(RelatedEntity, relatedData);
-      if (saved) {
-        for (const col of relatedInfo.columnNames) {
-          const v = (saved as any)[col];
-          if (v !== undefined) related[col] = v;
-        }
-      }
-      result.inserts++;
-
-      // If owning side, set FK on parent
+      // If owning side, persist the FK on the parent row — but only when it
+      // actually changed. The parent row was already written (INSERT on the
+      // persist path / UPDATE on the dirty-tracked path) BEFORE this cascade
+      // ran, so a freshly resolved PK needs a targeted UPDATE; an unchanged
+      // FK re-wrote the parent row on every flush for nothing.
       if (rel.joinColumn) {
         const relatedPk = this.idMap.getParentPkValue(related, RelatedEntity);
-        instance[rel.joinColumn] = relatedPk;
+        if (relatedPk != null && instance[rel.joinColumn] !== relatedPk) {
+          instance[rel.joinColumn] = relatedPk;
 
-        // The parent row was already written (INSERT on the persist path /
-        // UPDATE on the dirty-tracked path) BEFORE this cascade ran, with the
-        // FK still null or stale — the related entity did not have a PK yet.
-        // Persist the now-resolved FK to the parent row with a targeted UPDATE
-        // so it is not silently lost.
-        const parentInfo = this.idMap.getColumnInfo(entityClass);
-        const parentPkValue = this.idMap.getParentPkValue(instance, entityClass);
-        if (
-          parentInfo.pkColumns.length === 1 &&
-          parentPkValue != null &&
-          relatedPk != null
-        ) {
-          await txEm.update(
-            entityClass,
-            { [parentInfo.pkColumns[0]]: parentPkValue } as any,
-            { [rel.joinColumn]: relatedPk } as any,
-          );
+          const parentInfo = this.idMap.getColumnInfo(entityClass);
+          const parentPkValue = this.idMap.getParentPkValue(instance, entityClass);
+          if (parentInfo.pkColumns.length === 1 && parentPkValue != null) {
+            await txEm.update(
+              entityClass,
+              { [parentInfo.pkColumns[0]]: parentPkValue } as any,
+              { [rel.joinColumn]: relatedPk } as any,
+            );
+          }
         }
       }
 
-      await this.processCascadeInsertUpdate(txEm, RelatedEntity, related, visited, result, true);
+      await this.processCascadeInsertUpdate(
+        txEm, RelatedEntity, related, visited, result, !relatedTracked,
+      );
     }
 
     // @ManyToMany cascade persist (owning side - has joinTable, no mappedBy)
@@ -265,28 +395,26 @@ export class CascadeProcessor {
       const fkKeys = snapshot.mappedBy
         ? resolveFkWriteKeys(snapshot.mappedBy, snapshot.relatedEntity)
         : undefined;
+      const ChildEntity = snapshot.relatedEntity;
       for (const child of diff.added) {
-        if (visited.has(child)) continue;
-        visited.add(child);
-
-        if (fkKeys) assignFkValue(child, fkKeys, parentPk);
-
-        const ChildEntity = snapshot.relatedEntity;
-        const childInfo = this.idMap.getColumnInfo(ChildEntity);
-        const childData: ColumnValueMap = {};
-        for (const col of childInfo.columnNames) {
-          if (child[col] !== undefined) childData[col] = child[col];
+        // A TRACKED child must not be skipped on `visited`: the dirty-tracked
+        // pass may already have written its column edits, but the FK assigned
+        // below is NEW information (a reparent) that still needs its own
+        // UPDATE — skipping used to silently leave the row on its old parent.
+        // The clean/dirty gate in saveCascadeChild keeps this idempotent.
+        const tracked = this.idMap.getTrackedEntry(child) !== undefined;
+        if (!tracked) {
+          if (visited.has(child)) continue;
+          visited.add(child);
         }
-        if (fkKeys) assignFkValue(childData, fkKeys, parentPk);
 
-        const saved = await txEm.save(ChildEntity, childData);
-        if (saved) {
-          for (const col of childInfo.columnNames) {
-            const v = (saved as any)[col];
-            if (v !== undefined) child[col] = v;
-          }
-        }
-        result.inserts++;
+        const fkChanged = fkKeys
+          ? this.assignFkDetectingChange(child, fkKeys, parentPk)
+          : false;
+        await this.saveCascadeChild(
+          txEm, ChildEntity, child, result,
+          fkKeys ? { keys: fkKeys, parentPk, changed: fkChanged } : undefined,
+        );
       }
     }
 
