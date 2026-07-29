@@ -15,6 +15,19 @@ export type LazyLoadFn<T> = () => Promise<T | undefined>;
 const LAZY_MARKER = Symbol.for("STG_LAZY_PROXY");
 
 /**
+ * Pre-attach a no-op rejection handler to an in-flight lazy load.
+ *
+ * A load promise can be created by an access that never awaits it (a
+ * truthiness check, enumeration). Without a handler, a failed load becomes an
+ * unhandled rejection and crashes the process on Node 15+. The no-op branch
+ * marks the rejection as handled while callers that DO await the same promise
+ * still observe the error.
+ */
+export function suppressUnhandledRejection(promise: Promise<unknown>): void {
+  promise.catch(() => undefined);
+}
+
+/**
  * Creates a lazy-loading proxy.
  *
  * @param loadFn async function that loads the related entity
@@ -43,14 +56,31 @@ export function createLazyProxy<T extends object>(loadFn: LazyLoadFn<T>): T {
         return Reflect.get(cachedValue as object, prop, receiver);
       }
 
+      // Serialization / inspection probes (JSON.stringify's toJSON lookup,
+      // util.inspect's custom symbols, iterator checks) must not trigger a DB
+      // load — only a genuine data-property access may.
+      if (typeof prop === "symbol" || prop === "toJSON") {
+        return undefined;
+      }
+
       // If loading is in flight, chain the existing promise
       if (!loadPromise) {
-        loadPromise = loadFn().then((result) => {
-          loaded = true;
-          cachedValue = result;
-          loadPromise = null;
-          return result;
-        });
+        loadPromise = loadFn().then(
+          (result) => {
+            loaded = true;
+            cachedValue = result;
+            loadPromise = null;
+            return result;
+          },
+          (err) => {
+            // Clear the in-flight slot so a later access can retry
+            loadPromise = null;
+            throw err;
+          },
+        );
+        // The promise is never handed to the caller here, so a load failure
+        // would otherwise be a guaranteed unhandled rejection.
+        suppressUnhandledRejection(loadPromise);
       }
 
       // Synchronous access returns undefined before the async load completes.
@@ -116,28 +146,42 @@ export function injectLazyProxy<T extends object, R extends object>(
 
   Object.defineProperty(entity, propertyName, {
     configurable: true,
-    enumerable: true,
+    // Non-enumerable while unloaded: JSON.stringify, spread, and inspect-style
+    // key walks must not fire a hidden query (nor create a dangling promise).
+    // Loading or setting promotes the property to an enumerable own value, so
+    // serialization includes exactly the loaded relations.
+    enumerable: false,
     get(): R | Promise<R | undefined> | undefined {
       if (loaded) {
         return cachedValue;
       }
       // Reuse the in-flight load so concurrent accesses issue one query
       if (!loadPromise) {
-        loadPromise = loadFn().then((result) => {
-          loadPromise = null;
-          // A setter may have run while the load was in flight — keep its value
-          if (loaded) return cachedValue;
-          loaded = true;
-          cachedValue = result;
-          // Replace the getter with the resolved value
-          Object.defineProperty(entity, propertyName, {
-            configurable: true,
-            enumerable: true,
-            writable: true,
-            value: result,
-          });
-          return result;
-        });
+        loadPromise = loadFn().then(
+          (result) => {
+            loadPromise = null;
+            // A setter may have run while the load was in flight — keep its value
+            if (loaded) return cachedValue;
+            loaded = true;
+            cachedValue = result;
+            // Replace the getter with the resolved value
+            Object.defineProperty(entity, propertyName, {
+              configurable: true,
+              enumerable: true,
+              writable: true,
+              value: result,
+            });
+            return result;
+          },
+          (err) => {
+            // Clear the in-flight slot so a later access can retry
+            loadPromise = null;
+            throw err;
+          },
+        );
+        // The caller may have triggered the load without keeping the promise
+        // (sync access) — never let a load failure crash the process.
+        suppressUnhandledRejection(loadPromise);
       }
       return loadPromise;
     },

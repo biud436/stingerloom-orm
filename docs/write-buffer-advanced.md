@@ -113,6 +113,27 @@ post.comments = [myComment];  // proxy is replaced with your array
 // No DB query, no Promise
 ```
 
+### Serialization is safe — unloaded relations are skipped
+
+An unloaded lazy property is **non-enumerable**. `JSON.stringify`, object spread, `Object.keys`, logging, and test pretty-printers skip it entirely — no hidden query fires, and no dangling Promise is created:
+
+```typescript
+const post = await buf.findOne(Post, { where: { id: 1 } });
+
+JSON.stringify(post);
+// → {"id":1,"title":"..."} — no "author", no "comments", zero queries
+
+await post.comments;      // materialize the relation
+JSON.stringify(post);
+// → {"id":1,"title":"...","comments":[...]} — loaded relations serialize normally
+```
+
+Once a relation is loaded (or assigned), the property becomes a plain enumerable value and serializes like any other field. So the serialized shape always reflects **exactly what has been loaded** — an API response never triggers surprise lazy-load queries via `res.json(entity)`.
+
+Direct property access is unaffected: reading `post.comments` still triggers the lazy load. If that load fails, the Promise rejects for callers that `await` it, but a discarded synchronous read can never crash the process with an unhandled rejection — and the next access retries the query.
+
+The buffer's own write paths follow the same rule: `flush()`, `detach()`, and cascade traversal only walk relations that are **already loaded**. An unloaded collection is never fetched mid-flush just to be inspected.
+
 ---
 
 ## Pessimistic Locking
