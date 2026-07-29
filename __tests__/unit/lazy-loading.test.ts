@@ -225,6 +225,58 @@ describe("createLazyProxy", () => {
 
     expect(loadFn).toHaveBeenCalledTimes(1);
   });
+
+  it("should not trigger loadFn for serialization/inspection probes", () => {
+    const loadFn = jest.fn().mockResolvedValue({ id: 1 });
+    const proxy = createLazyProxy(loadFn);
+
+    // JSON.stringify probes 'toJSON'; util.inspect and pretty-printers probe
+    // well-known symbols — none of these are data access.
+    JSON.stringify(proxy);
+    void (proxy as any)[Symbol.toStringTag];
+    void (proxy as any)[Symbol.iterator];
+    void (proxy as any)[Symbol.for("nodejs.util.inspect.custom")];
+
+    expect(loadFn).not.toHaveBeenCalled();
+  });
+
+  it("should not produce an unhandled rejection when the load fails after sync access", async () => {
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const loadFn = jest.fn().mockRejectedValue(new Error("proxy load failed"));
+      const proxy = createLazyProxy(loadFn);
+
+      // Sync access fires the load; the promise is internal and never awaited
+      void (proxy as any).name;
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(loadFn).toHaveBeenCalledTimes(1);
+      expect(rejections).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("should retry the load on a later access after a failure", async () => {
+    let calls = 0;
+    const loadFn = jest.fn(async () => {
+      calls++;
+      if (calls === 1) throw new Error("first load fails");
+      return { id: 7, name: "Recovered" };
+    });
+    const proxy = createLazyProxy(loadFn);
+
+    void (proxy as any).name; // first load — fails silently
+    await new Promise((r) => setTimeout(r, 20));
+
+    void (proxy as any).name; // second access retries
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect((proxy as any).name).toBe("Recovered");
+    expect(loadFn).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("isLazyProxy", () => {
@@ -276,10 +328,12 @@ describe("injectLazyProxy", () => {
 
     injectLazyProxy(entity, "user", async () => user);
 
-    // The property should be defined
+    // The property should be defined, but NOT enumerable while unloaded —
+    // JSON.stringify / spread / key walks must not fire the loader.
     const descriptor = Object.getOwnPropertyDescriptor(entity, "user");
     expect(descriptor).toBeDefined();
     expect(descriptor!.get).toBeDefined();
+    expect(descriptor!.enumerable).toBe(false);
   });
 
   it("should return a promise on first access", () => {
@@ -313,10 +367,11 @@ describe("injectLazyProxy", () => {
     // First access: triggers load
     await entity.user;
 
-    // After loading, the property should be a regular value
+    // After loading, the property should be a regular, enumerable value
     const descriptor = Object.getOwnPropertyDescriptor(entity, "user");
     expect(descriptor!.value).toEqual(user);
     expect(descriptor!.get).toBeUndefined();
+    expect(descriptor!.enumerable).toBe(true);
 
     // Subsequent access should not call loadFn again
     const result = entity.user;
@@ -395,6 +450,76 @@ describe("injectLazyProxy", () => {
 
     const result = await entity.user;
     expect(result).toBeUndefined();
+  });
+
+  it("should not fire loadFn on JSON.stringify and omit the unloaded property", () => {
+    const entity: any = { id: 1, user_id: 10 };
+    const loadFn = jest.fn().mockResolvedValue({ id: 10, name: "Hidden" });
+
+    injectLazyProxy(entity, "user", loadFn);
+
+    const json = JSON.stringify(entity);
+    expect(loadFn).not.toHaveBeenCalled();
+    expect(JSON.parse(json)).toEqual({ id: 1, user_id: 10 });
+    expect(Object.keys(entity)).not.toContain("user");
+    // Spread must not fire it either
+    const copy = { ...entity };
+    expect(loadFn).not.toHaveBeenCalled();
+    expect(copy).toEqual({ id: 1, user_id: 10 });
+  });
+
+  it("should serialize the property once it is loaded", async () => {
+    const entity: any = { id: 1, user_id: 10 };
+    const user = { id: 10, name: "Visible" };
+
+    injectLazyProxy(entity, "user", async () => user);
+    await entity.user;
+
+    expect(Object.keys(entity)).toContain("user");
+    expect(JSON.parse(JSON.stringify(entity))).toEqual({
+      id: 1,
+      user_id: 10,
+      user: { id: 10, name: "Visible" },
+    });
+  });
+
+  it("should not produce an unhandled rejection when a failing load is never awaited", async () => {
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const entity: any = { id: 1, user_id: 10 };
+      injectLazyProxy(entity, "user", async () => {
+        throw new Error("load failed");
+      });
+
+      // Sync access fires the load and discards the promise
+      void entity.user;
+      // Give the rejection time to surface as unhandled if it were going to
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(rejections).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("should propagate the load error to awaiting callers and retry on next access", async () => {
+    const entity: any = { id: 1, user_id: 10 };
+    const user = { id: 10, name: "SecondTry" };
+    let calls = 0;
+    const loadFn = jest.fn(async () => {
+      calls++;
+      if (calls === 1) throw new Error("boom");
+      return user;
+    });
+
+    injectLazyProxy(entity, "user", loadFn);
+
+    await expect(entity.user).rejects.toThrow("boom");
+    // The failed load must not be cached — the next access retries
+    await expect(entity.user).resolves.toEqual(user);
+    expect(loadFn).toHaveBeenCalledTimes(2);
   });
 
   it("should not interfere with other properties on the entity", async () => {

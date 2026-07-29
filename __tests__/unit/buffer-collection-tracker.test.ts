@@ -194,6 +194,21 @@ describe("CollectionTracker", () => {
       expect(snapshots).toHaveLength(2);
       expect(snapshots.map(s => s.relationType).sort()).toEqual(["manyToMany", "oneToMany"]);
     });
+
+    it("should never fire an unloaded lazy accessor (no snapshot, no load)", () => {
+      const getter = jest.fn(() => Promise.resolve([]));
+      const post = Object.assign(new Post(), { id: 1, title: "Test" });
+      Object.defineProperty(post, "comments", {
+        configurable: true, enumerable: false, get: getter,
+      });
+      Object.defineProperty(post, "tags", {
+        configurable: true, enumerable: false, get: getter,
+      });
+
+      const snapshots = snapshotCollections(post, Post);
+      expect(snapshots).toEqual([]);
+      expect(getter).not.toHaveBeenCalled();
+    });
   });
 
   // ── diffCollection ──────────────────────────────────────────
@@ -250,6 +265,29 @@ describe("CollectionTracker", () => {
 
       const instance = { comments: [c1] };
       expect(diffCollection(instance, snapshot)).toBeNull();
+    });
+
+    it("should treat an unloaded lazy accessor as no-diff, not as removal", () => {
+      const c1 = Object.assign(new Comment(), { id: 1, body: "a" });
+      const snapshot: CollectionSnapshot = {
+        propertyKey: "comments",
+        relationType: "oneToMany",
+        originalItems: new Set([c1]),
+        relatedEntity: Comment,
+        fkColumn: "postId",
+      };
+
+      // An own accessor is an unloaded lazy proxy — firing it would issue a
+      // hidden query, and reading its absence as "collection removed" would
+      // orphan-delete every original item.
+      const getter = jest.fn(() => Promise.resolve([]));
+      const instance = {};
+      Object.defineProperty(instance, "comments", {
+        configurable: true, enumerable: false, get: getter,
+      });
+
+      expect(diffCollection(instance, snapshot)).toBeNull();
+      expect(getter).not.toHaveBeenCalled();
     });
 
     it("should treat removed collection (non-array) as all items removed", () => {

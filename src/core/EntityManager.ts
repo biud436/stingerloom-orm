@@ -26,7 +26,6 @@ import {
   validateDatabaseClientOptions,
 } from "./DatabaseClientOptions";
 import { MetadataContext } from "../metadata/MetadataContext";
-import { injectLazyProxy } from "./LazyLoader";
 import { EntityValidator } from "./EntityValidator";
 import {
   EntityEventEmitter,

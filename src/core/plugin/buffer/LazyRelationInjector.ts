@@ -7,7 +7,7 @@ import { MANY_TO_MANY_TOKEN } from "../../../decorators/ManyToMany";
 import { PluginContext } from "../PluginContext";
 import { IdentityMapManager, EntityInstance } from "./IdentityMapManager";
 import { resolveFkColumn } from "./CollectionTracker";
-import { injectLazyProxy } from "../../LazyLoader";
+import { injectLazyProxy, suppressUnhandledRejection } from "../../LazyLoader";
 import type { ManyToOneMetadata } from "../../../decorators/ManyToOne";
 import type { OneToOneMetadata } from "../../../decorators/OneToOne";
 import type { ManyToManyMetadata } from "../../../decorators/ManyToMany";
@@ -23,6 +23,21 @@ export type ResolveIdentityFn = (entityClass: ClazzType<any>, instance: EntityIn
  * so the buffer can capture the loaded items as a change-tracking baseline.
  */
 export type CollectionMaterializedFn = (instance: EntityInstance, propertyKey: string) => void;
+
+/**
+ * "Is this relation property already loaded or proxied?" — decided WITHOUT
+ * reading the property. A raw `instance[key] !== undefined` check fires any
+ * previously injected lazy getter (a hidden query on re-injection). An own
+ * accessor means a proxy is already installed; an own data property counts
+ * only when it holds a value. Prototype getters (user-defined) are read as
+ * before — they are the user's code, not a lazy loader.
+ */
+function isRelationOccupied(instance: any, propertyKey: string): boolean {
+  const desc = Object.getOwnPropertyDescriptor(instance, propertyKey);
+  if (!desc) return instance[propertyKey] !== undefined;
+  if (!("value" in desc)) return true;
+  return desc.value !== undefined;
+}
 
 /**
  * Injects lazy-loading proxies on unloaded relation properties.
@@ -84,8 +99,8 @@ export class LazyRelationInjector {
       Reflect.getMetadata(MANY_TO_ONE_TOKEN, entityClass) ?? [];
 
     for (const rel of meta) {
-      // Skip if already loaded (not undefined)
-      if (instance[rel.columnName] !== undefined) continue;
+      // Skip if already loaded or proxied
+      if (isRelationOccupied(instance, rel.columnName)) continue;
 
       // FK value: a hydrated entity stores an @RelationColumn / snake_case FK
       // under its shadow property (e.g. user_id -> userId), so read the shadow
@@ -138,7 +153,7 @@ export class LazyRelationInjector {
       Reflect.getMetadata(ONE_TO_MANY_TOKEN, entityClass) ?? [];
 
     for (const rel of meta) {
-      if (instance[rel.propertyKey] !== undefined) continue;
+      if (isRelationOccupied(instance, rel.propertyKey)) continue;
 
       const ChildEntity = rel.getRelatedEntity();
       try { this.idMap.validateEntity(ChildEntity); } catch { continue; }
@@ -165,7 +180,7 @@ export class LazyRelationInjector {
       Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) ?? [];
 
     for (const rel of meta) {
-      if (instance[rel.propertyKey] !== undefined) continue;
+      if (isRelationOccupied(instance, rel.propertyKey)) continue;
 
       const RelatedEntity = rel.getRelatedEntity();
       try { this.idMap.validateEntity(RelatedEntity); } catch { continue; }
@@ -227,7 +242,7 @@ export class LazyRelationInjector {
       Reflect.getMetadata(MANY_TO_MANY_TOKEN, entityClass) ?? [];
 
     for (const rel of meta) {
-      if (instance[rel.propertyKey] !== undefined) continue;
+      if (isRelationOccupied(instance, rel.propertyKey)) continue;
 
       const RelatedEntity = rel.getRelatedEntity();
       try { this.idMap.validateEntity(RelatedEntity); } catch { continue; }
@@ -284,25 +299,35 @@ export class LazyRelationInjector {
 
     Object.defineProperty(instance, propertyKey, {
       configurable: true,
-      enumerable: true,
+      // Non-enumerable while unloaded — see injectLazyProxy. Materializing or
+      // setting promotes the property to an enumerable own value.
+      enumerable: false,
       get: () => {
         if (loaded) return cachedValue;
         // Reuse the in-flight load so concurrent accesses issue one query
         if (!loadPromise) {
           loadPromise = this.ctx.em.find(ChildEntity, { where: where as any })
-            .then((results) => {
-              loadPromise = null;
-              // A setter may have run while the load was in flight — keep its value
-              if (loaded) return cachedValue;
-              cachedValue = results.map((r) => this.resolveIdentity(ChildEntity, r));
-              loaded = true;
-              Object.defineProperty(instance, propertyKey, {
-                configurable: true, enumerable: true, writable: true,
-                value: cachedValue,
-              });
-              this.onCollectionMaterialized?.(instance, propertyKey);
-              return cachedValue;
-            });
+            .then(
+              (results) => {
+                loadPromise = null;
+                // A setter may have run while the load was in flight — keep its value
+                if (loaded) return cachedValue;
+                cachedValue = results.map((r) => this.resolveIdentity(ChildEntity, r));
+                loaded = true;
+                Object.defineProperty(instance, propertyKey, {
+                  configurable: true, enumerable: true, writable: true,
+                  value: cachedValue,
+                });
+                this.onCollectionMaterialized?.(instance, propertyKey);
+                return cachedValue;
+              },
+              (err) => {
+                // Clear the in-flight slot so a later access can retry
+                loadPromise = null;
+                throw err;
+              },
+            );
+          suppressUnhandledRejection(loadPromise);
         }
         return loadPromise;
       },
@@ -337,7 +362,9 @@ export class LazyRelationInjector {
 
     Object.defineProperty(instance, propertyKey, {
       configurable: true,
-      enumerable: true,
+      // Non-enumerable while unloaded — see injectLazyProxy. Materializing or
+      // setting promotes the property to an enumerable own value.
+      enumerable: false,
       get: () => {
         if (loaded) return cachedValue;
         if (loadPromise) return loadPromise;
@@ -387,7 +414,14 @@ export class LazyRelationInjector {
           });
           this.onCollectionMaterialized?.(instance, propertyKey);
           return resolvedResults;
+        }).catch((err) => {
+          // Clear the in-flight slot so a later access can retry. `.catch`
+          // (not a second .then argument) because the fulfilled callback is
+          // async — its own await can reject too.
+          loadPromise = null;
+          throw err;
         });
+        suppressUnhandledRejection(loadPromise);
         return loadPromise;
       },
       set: (value: any) => {

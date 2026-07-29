@@ -113,6 +113,27 @@ post.comments = [myComment];  // proxy is replaced with your array
 // No DB query, no Promise
 ```
 
+### 직렬화는 안전해요 — 로드 안 된 관계는 건너뜁니다
+
+로드되지 않은 lazy 프로퍼티는 **non-enumerable**입니다. `JSON.stringify`, 객체 스프레드, `Object.keys`, 로그 출력, 테스트 pretty-printer가 전부 그 프로퍼티를 건너뛰어요 — 숨은 쿼리도, 방치된 Promise도 생기지 않습니다:
+
+```typescript
+const post = await buf.findOne(Post, { where: { id: 1 } });
+
+JSON.stringify(post);
+// → {"id":1,"title":"..."} — "author"도 "comments"도 없음, 쿼리 0회
+
+await post.comments;      // 관계를 materialize
+JSON.stringify(post);
+// → {"id":1,"title":"...","comments":[...]} — 로드된 관계는 정상 직렬화
+```
+
+관계가 한번 로드되면(또는 직접 할당하면) 프로퍼티는 평범한 enumerable 값이 되어 다른 필드처럼 직렬화됩니다. 즉 직렬화 결과는 항상 **실제로 로드된 것만** 반영해요 — `res.json(entity)` 같은 API 응답이 예상치 못한 lazy load 쿼리를 유발하지 않습니다.
+
+직접 프로퍼티 접근은 그대로예요: `post.comments`를 읽으면 여전히 lazy load가 실행됩니다. 로드가 실패하면 `await`한 호출자에게는 Promise가 reject되지만, await 없이 버려진 동기 접근이 unhandled rejection으로 프로세스를 죽이는 일은 없어요 — 다음 접근에서 쿼리를 다시 시도합니다.
+
+버퍼의 쓰기 경로도 같은 원칙을 따라요: `flush()`, `detach()`, cascade 순회는 **이미 로드된** 관계만 걷습니다. 로드 안 된 컬렉션을 들여다보려고 flush 도중에 몰래 fetch하는 일은 없습니다.
+
 ---
 
 ## Pessimistic Locking

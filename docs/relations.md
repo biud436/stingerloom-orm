@@ -520,6 +520,8 @@ SELECT * FROM "owner" WHERE "id" = 3;
 
 Lazy loading is useful when the relation is rarely accessed. If you list 50 cats and only display the owner for the first one, you avoid 49 unnecessary queries.
 
+> **Hint** An unloaded lazy property is non-enumerable, so `JSON.stringify(cat)`, spread, and `Object.keys` skip it without firing a query. Once loaded (or assigned), it becomes a plain enumerable value and serializes normally — serialization always reflects exactly what has been loaded. A failed lazy load rejects callers that `await` it, but a discarded synchronous access never crashes the process with an unhandled rejection.
+
 ### The N+1 Trade-off
 
 | Strategy | Queries for 50 cats with owners | Best for |

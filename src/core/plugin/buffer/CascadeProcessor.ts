@@ -229,7 +229,9 @@ export class CascadeProcessor {
     for (const rel of oneToManyMeta) {
       if (!hasCascade(rel.cascade, "insert") && !hasCascade(rel.cascade, "update")) continue;
 
-      const children = instance[rel.propertyKey];
+      // Loaded values only — a raw read here fired the lazy-collection getter,
+      // issuing a hidden child SELECT in the middle of every parent flush.
+      const children = readLoadedRelationValue(instance, rel.propertyKey);
       if (!Array.isArray(children) || children.length === 0) continue;
 
       const ChildEntity = rel.getRelatedEntity();
@@ -266,7 +268,7 @@ export class CascadeProcessor {
       const cascade = rel.option?.cascade;
       if (!hasCascade(cascade, "insert") && !hasCascade(cascade, "update")) continue;
 
-      const related = instance[rel.propertyKey];
+      const related = readLoadedRelationValue(instance, rel.propertyKey);
       if (!related || visited.has(related)) continue;
       visited.add(related);
 
@@ -308,7 +310,7 @@ export class CascadeProcessor {
     for (const rel of manyToManyMeta) {
       if (rel.mappedBy || !rel.joinTable) continue; // skip inverse side
 
-      const children = instance[rel.propertyKey];
+      const children = readLoadedRelationValue(instance, rel.propertyKey);
       if (!Array.isArray(children) || children.length === 0) continue;
 
       const RelatedEntity = rel.getRelatedEntity();
@@ -737,8 +739,11 @@ export class CascadeProcessor {
   }
 
   /**
-   * Propagate an operation to all related entities (O2M, O2O, M2M owning side).
-   * Used for cascade detach/merge.
+   * Propagate an operation to all LOADED related entities (O2M, O2O, M2M
+   * owning side). Used for cascade detach/merge/refresh. Unloaded lazy
+   * proxies are skipped, never fired — a detach() used to issue one hidden
+   * SELECT per unloaded relation just to walk it; an unloaded relation has
+   * nothing tracked to propagate to anyway.
    */
   propagateToRelations(
     instance: EntityInstance,
@@ -749,7 +754,7 @@ export class CascadeProcessor {
     const o2mMeta: OneToManyMetadata<any>[] =
       Reflect.getMetadata(ONE_TO_MANY_TOKEN, entityClass) ?? [];
     for (const rel of o2mMeta) {
-      const children = instance[rel.propertyKey];
+      const children = readLoadedRelationValue(instance, rel.propertyKey);
       if (Array.isArray(children)) {
         for (const child of children) callback(child);
       }
@@ -759,7 +764,7 @@ export class CascadeProcessor {
     const o2oMeta: any[] =
       Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) ?? [];
     for (const rel of o2oMeta) {
-      const related = instance[rel.propertyKey];
+      const related = readLoadedRelationValue(instance, rel.propertyKey);
       if (related) callback(related);
     }
 
@@ -768,7 +773,7 @@ export class CascadeProcessor {
       Reflect.getMetadata(MANY_TO_MANY_TOKEN, entityClass) ?? [];
     for (const rel of m2mMeta) {
       if (rel.mappedBy || !rel.joinTable) continue;
-      const children = instance[rel.propertyKey];
+      const children = readLoadedRelationValue(instance, rel.propertyKey);
       if (Array.isArray(children)) {
         for (const child of children) callback(child);
       }

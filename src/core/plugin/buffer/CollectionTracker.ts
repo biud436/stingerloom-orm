@@ -55,6 +55,10 @@ export function readLoadedRelationValue(instance: any, propertyKey: string): any
 
 /**
  * Capture snapshots of all O2M and M2M (owning side) collections on an entity.
+ *
+ * Reads via {@link readLoadedRelationValue} — an unloaded lazy proxy must not
+ * be fired here (e.g. re-tracking an instance whose proxies were injected by
+ * an earlier track); only genuinely loaded arrays get a baseline.
  */
 export function snapshotCollections(
   instance: any,
@@ -66,7 +70,7 @@ export function snapshotCollections(
   const o2mMeta: OneToManyMetadata<any>[] =
     Reflect.getMetadata(ONE_TO_MANY_TOKEN, entityClass) ?? [];
   for (const rel of o2mMeta) {
-    const arr = instance[rel.propertyKey];
+    const arr = readLoadedRelationValue(instance, rel.propertyKey);
     if (!Array.isArray(arr)) continue;
 
     const ChildEntity = rel.getRelatedEntity();
@@ -89,7 +93,7 @@ export function snapshotCollections(
   for (const rel of m2mMeta) {
     if (rel.mappedBy || !rel.joinTable) continue; // skip inverse side
 
-    const arr = instance[rel.propertyKey];
+    const arr = readLoadedRelationValue(instance, rel.propertyKey);
     if (!Array.isArray(arr)) continue;
 
     snapshots.push({
@@ -111,7 +115,12 @@ export function diffCollection(
   instance: any,
   snapshot: CollectionSnapshot,
 ): CollectionDiff | null {
-  const currentArr = instance[snapshot.propertyKey];
+  const desc = Object.getOwnPropertyDescriptor(instance, snapshot.propertyKey);
+  // An own accessor is an unloaded lazy proxy: it must not be fired, and its
+  // "no loaded value" must NOT read as "collection removed" (that would
+  // orphan-delete every original item).
+  if (desc && !("value" in desc)) return null;
+  const currentArr = desc ? desc.value : instance[snapshot.propertyKey];
   if (!Array.isArray(currentArr)) {
     // Collection removed entirely — treat all original items as removed
     if (snapshot.originalItems.size === 0) return null;
