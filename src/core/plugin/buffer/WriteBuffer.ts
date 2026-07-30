@@ -32,6 +32,7 @@ import { CascadeProcessor } from "./CascadeProcessor";
 import type { ReparentedChildren } from "./CascadeProcessor";
 import { FlushExecutor } from "./FlushExecutor";
 import { EntityValidator } from "../../EntityValidator";
+import { EntityNotFoundError } from "../../../errors/EntityNotFoundError";
 import { LazyRelationInjector } from "./LazyRelationInjector";
 import { transactionStorage } from "../../../decorators/Transactional";
 import type { EntityManager } from "../../EntityManager";
@@ -331,6 +332,19 @@ export class WriteBuffer {
    * query and registers the loaded entities in this buffer; FK-dependent
    * relations (@ManyToOne / owning @OneToOne) hydrate the stub's own row
    * first, then load the target.
+   *
+   * Reading a scalar column the stub has not loaded returns `undefined` —
+   * a reference is PK-only until it is hydrated (by `findOne()` with the
+   * same PK or by a FK-dependent relation access), matching the reference
+   * semantics of other data mappers. It never silently loads on scalar
+   * access.
+   *
+   * A reference to a row that does not exist fails explicitly instead of
+   * silently: hydration (relation access / flush verification) throws
+   * `EntityNotFoundError`. Flushing a write on a still-unhydrated stub
+   * first verifies the row exists (one SELECT, which also hydrates the
+   * stub), so the write can never degrade into a 0-row UPDATE that
+   * reports success.
    */
   getReference<T>(entityClass: ClazzType<T>, pk: any): T {
     this.idMap.validateEntity(entityClass);
@@ -377,12 +391,20 @@ export class WriteBuffer {
 
     // Inject lazy proxies for relation properties. The stub carries no FK
     // values, so FK-dependent relations hydrate the stub's own row on first
-    // access (which also re-baselines the tracked snapshot).
+    // access (which also re-baselines the tracked snapshot). A hydration miss
+    // means the reference points at a row that does not exist — surface that
+    // instead of silently proceeding with an empty stub.
     const hydrateStub = async (): Promise<void> => {
       if (!this.referenceStubs.has(instance)) return; // already hydrated
       const where = this.idMap.buildPkWhere(instance, pkColumns);
       const loaded = await this.ctx.em.findOne(entityClass, { where: where as any });
-      if (loaded) this.resolveIdentity(entityClass, loaded);
+      if (!loaded) {
+        throw new EntityNotFoundError(
+          entityClass.name,
+          `getReference(${JSON.stringify(where)}) points at a row that does not exist.`,
+        );
+      }
+      this.resolveIdentity(entityClass, loaded);
     };
     this.lazyInjector.injectLazyRelations(instance, entityClass, hydrateStub);
 
@@ -1279,6 +1301,32 @@ export class WriteBuffer {
           ),
           indexMap,
         );
+
+        // A dirty still-unhydrated getReference() stub is about to UPDATE a
+        // row this buffer has never seen. Verify the row exists and hydrate
+        // the stub against it (re-baselining, so only the user's writes stay
+        // dirty) before any DML runs — otherwise a nonexistent PK degrades
+        // into a 0-row UPDATE that reports success and silently drops the
+        // write. Clean stubs are skipped: no diff, no UPDATE, no check.
+        for (const entry of sortedTracked) {
+          if (!this.referenceStubs.has(entry.instance)) continue;
+          const stubDiff = this.strategy.diff(
+            entry.instance,
+            entry.snapshot,
+            entry.columnNames,
+            entry.pkColumns,
+          );
+          if (!stubDiff) continue;
+          const where = this.idMap.buildPkWhere(entry.instance, entry.pkColumns);
+          const loaded = await txEm.findOne(entry.entity, { where: where as any });
+          if (!loaded) {
+            throw new EntityNotFoundError(
+              entry.entity.name,
+              `getReference(${JSON.stringify(where)}) wrote to a row that does not exist; the flush was rolled back.`,
+            );
+          }
+          this.hydrateReference(entry.entity, entry.instance, loaded);
+        }
 
         if (this.options.batchUpdate) {
           await this.flushExec.flushUpdatesBatched(txEm, sortedTracked, visited, result);

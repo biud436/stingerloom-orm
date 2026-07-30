@@ -231,13 +231,14 @@ INSERT INTO "post" ("title", "authorId") VALUES ($1, $2)
 
 전체 엔티티를 로드하지 않고도 참조를 바로 쓸 수 있도록, 두 가지 동작이 더 있어요.
 
-- **참조에 쓴 값은 UPDATE로 flush됩니다.** 참조는 PK만 있는 baseline으로 스냅샷 추적되므로, 설정한 컬럼만 정확히 dirty로 감지됩니다:
+- **참조에 쓴 값은 UPDATE로 flush됩니다.** 참조는 PK만 있는 baseline으로 스냅샷 추적되므로, 설정한 컬럼만 정확히 dirty로 감지됩니다. UPDATE 전에 flush가 SELECT 한 번으로 행이 실제로 존재하는지 확인하고 -- 이 조회가 참조 하이드레이션도 겸합니다 -- 그래서 존재하지 않는 행을 향한 쓰기가 조용히 사라지는 일은 없습니다:
 
   ```typescript
   const post = buf.getReference(Post, 10);
   post.title = "Patched";
   await buf.flush();
-  // UPDATE "post" SET "title" = $1 WHERE "id" = $2 — SELECT 없이 바로
+  // post 행 SELECT (존재 확인 + 하이드레이션) →
+  // UPDATE "post" SET "title" = $1 WHERE "id" = $2
   ```
 
 - **관계 프로퍼티도 동작합니다.** 관계는 lazy 프록시로 초기화돼요. `@OneToMany` / `@ManyToMany` / inverse `@OneToOne`은 참조의 PK로 바로 로드합니다. `@ManyToOne`과 owning `@OneToOne`은 PK만 있는 참조에 아직 없는 FK 값이 필요하므로, 첫 접근 때 참조 자신의 행을 먼저 하이드레이션한 뒤 대상을 로드합니다:
@@ -246,6 +247,12 @@ INSERT INTO "post" ("title", "authorId") VALUES ($1, $2)
   const post = buf.getReference(Post, 10);
   const author = await post.author; // post 행(FK) 조회 → author 행 조회
   ```
+
+참조를 쓸 때 알아둘 계약이 두 가지 있습니다.
+
+- **존재하지 않는 행을 가리키는 참조는 명시적으로 실패합니다.** FK 의존 관계 접근이든 flush 시점의 존재 확인이든, 하이드레이션이 실패하면 조용히 넘어가지 않고 `EntityNotFoundError`(`ORM_ENTITY_NOT_FOUND`)를 던집니다. 이렇게 중단된 flush는 트랜잭션 전체가 롤백되므로, 같이 큐에 있던 다른 작업이 반쪽만 적용되는 일도 없습니다.
+
+- **하이드레이션 전의 스칼라 컬럼은 `undefined`로 읽힙니다.** 참조는 하이드레이션되기 전까지 PK만 가진 객체입니다. 하이드레이션 전에 `ref.title`을 읽으면 숨은 쿼리 없이 `undefined`가 반환됩니다. 스칼라 값을 읽으려면 먼저 하이드레이션하세요 -- `await buf.findOne(Post, { where: { id: 10 } })`가 같은 인스턴스를 그 자리에서 채워 줍니다.
 
 ### track -- 엔티티 수동 등록
 
