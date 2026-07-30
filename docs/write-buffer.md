@@ -232,13 +232,14 @@ If you later call `buf.findOne(User, { where: { id: 5 } })`, it returns the same
 
 Two more behaviors make a reference usable directly, without loading the full entity first:
 
-- **Writes to a reference flush as an UPDATE.** The reference is snapshot-tracked with a PK-only baseline, so exactly the columns you set on it are detected as dirty:
+- **Writes to a reference flush as an UPDATE.** The reference is snapshot-tracked with a PK-only baseline, so exactly the columns you set on it are detected as dirty. Before the UPDATE runs, the flush verifies the row exists with one SELECT — which also hydrates the reference in place — so a write can never silently target a row that is not there:
 
   ```typescript
   const post = buf.getReference(Post, 10);
   post.title = "Patched";
   await buf.flush();
-  // UPDATE "post" SET "title" = $1 WHERE "id" = $2 — no SELECT first
+  // SELECT the post row (existence check + hydration), then
+  // UPDATE "post" SET "title" = $1 WHERE "id" = $2
   ```
 
 - **Relation properties work.** They are initialized as lazy proxies. `@OneToMany` / `@ManyToMany` / inverse `@OneToOne` load directly from the reference's PK. `@ManyToOne` and owning-side `@OneToOne` need the FK value the PK-only reference does not carry yet, so their first access hydrates the reference's own row, then loads the target:
@@ -247,6 +248,12 @@ Two more behaviors make a reference usable directly, without loading the full en
   const post = buf.getReference(Post, 10);
   const author = await post.author; // SELECT the post row (FK), then the author row
   ```
+
+Two contract points to be aware of:
+
+- **A reference to a row that does not exist fails explicitly.** Hydration — whether triggered by a FK-dependent relation access or by the flush-time existence check — throws `EntityNotFoundError` (`ORM_ENTITY_NOT_FOUND`) instead of silently proceeding. A flush aborted this way rolls back the whole transaction, so no other queued work is half-applied.
+
+- **Unloaded scalar columns read as `undefined`.** A reference is PK-only until it is hydrated; reading `ref.title` before hydration returns `undefined` and never triggers a hidden query. To read scalars, hydrate first — `await buf.findOne(Post, { where: { id: 10 } })` fills the same instance in place.
 
 ### track — Manually register an entity
 

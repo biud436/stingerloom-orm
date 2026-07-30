@@ -17,6 +17,15 @@
  *     hydrate-first proxy: on first access the stub's own row is loaded (which
  *     hydrates the stub in place), then the FK chains into the normal relation
  *     load.
+ *
+ *  3. A stub for a nonexistent row failed silently everywhere: hydration
+ *     quietly no-opped, and writes flushed as a 0-row UPDATE that reported
+ *     success (no @Version → no affected-rows check) — the write was lost
+ *     without a trace. The fix makes both paths explicit: hydration throws
+ *     EntityNotFoundError, and flushing a dirty still-unhydrated stub first
+ *     verifies the row exists (one SELECT that also hydrates the stub).
+ *     Unloaded scalar reads stay `undefined` by contract (a reference is
+ *     PK-only until hydrated) — pinned by test below.
  */
 
 import "reflect-metadata";
@@ -31,6 +40,7 @@ import {
   ManyToOne,
   OneToMany,
   OneToOne,
+  EntityNotFoundError,
 } from "../../../src";
 import { bufferPlugin } from "../../../src/core/plugin/buffer/bufferPlugin";
 import type { WriteBuffer } from "../../../src/core/plugin/buffer/WriteBuffer";
@@ -46,6 +56,25 @@ import { DatabaseClient } from "../../../src/DatabaseClient";
 
 function shortName(prefix: string): string {
   return `${prefix}_${String(Date.now()).slice(-7)}`;
+}
+
+/** Extract the SQL text of a connector.query() spy call (string or Sql tag). */
+function sqlOf(call: unknown[]): string {
+  const a = call[0] as any;
+  if (typeof a === "string") return a;
+  return a?.sql ?? a?.text ?? String(a);
+}
+
+function countQueriesOn(
+  spy: jest.SpyInstance,
+  verb: "SELECT" | "UPDATE",
+  table: string,
+): number {
+  const re =
+    verb === "UPDATE"
+      ? new RegExp(`^\\s*UPDATE\\s+"?${table}"?`, "i")
+      : new RegExp(`^\\s*SELECT\\b[\\s\\S]*\\bFROM\\s+"?${table}"?`, "i");
+  return spy.mock.calls.filter((c) => re.test(sqlOf(c))).length;
 }
 
 describe("[Integration] SQLite: WriteBuffer getReference() stub", () => {
@@ -281,5 +310,115 @@ describe("[Integration] SQLite: WriteBuffer getReference() stub", () => {
     const loadedProfile: any = await ref.profile;
     expect(loadedProfile).toBeDefined();
     expect(loadedProfile.bio).toBe("hi");
+  });
+
+  // ── Nonexistent-row references fail explicitly, never silently ──
+
+  it("rejects a flush that writes to a stub for a nonexistent row", async () => {
+    const buf: WriteBuffer = (conn.em as any).buffer();
+    const ref: any = buf.getReference(Item, 999999);
+    ref.title = "ghost";
+    // A queued insert in the same flush must not survive the abort.
+    buf.save(Item, { title: "queued", note: "n" });
+
+    // Audited bug: this flushed as a 0-row UPDATE that reported success —
+    // the write vanished without an error (no @Version → no affected check).
+    await expect(buf.flush()).rejects.toThrow(EntityNotFoundError);
+
+    const connector = DatabaseClient.getInstance().getConnection();
+    const rows: any = await connector.query(
+      `SELECT COUNT(*) AS cnt FROM "${itemName}"`,
+    );
+    expect(Number(rows[0]?.cnt ?? rows?.cnt)).toBe(0);
+  });
+
+  it("rejects FK-relation access on a stub for a nonexistent row", async () => {
+    const buf: WriteBuffer = (conn.em as any).buffer();
+    const ref: any = buf.getReference(Post, 424242);
+
+    // Audited bug: the hydration miss was silent — the relation resolved as
+    // if the row existed with no FK, indistinguishable from a NULL FK.
+    await expect(ref.author).rejects.toThrow(EntityNotFoundError);
+  });
+
+  it("verifies and hydrates a dirty stub before its UPDATE (one SELECT, one UPDATE)", async () => {
+    const seeded: any = await conn.em.save(Item, {
+      title: "original",
+      note: "keep",
+    } as any);
+
+    const buf: WriteBuffer = (conn.em as any).buffer();
+    const ref: any = buf.getReference(Item, seeded.id);
+    ref.title = "patched";
+
+    const connector = DatabaseClient.getInstance().getConnection();
+    const spy = jest.spyOn(connector, "query");
+    try {
+      await buf.flush();
+      // Exactly one UPDATE, preceded by exactly one SELECT — the existence
+      // verification. (save() may re-read the row AFTER its UPDATE to return
+      // fresh values; only pre-UPDATE SELECTs are the verification's.)
+      expect(countQueriesOn(spy, "UPDATE", itemName)).toBe(1);
+      const updateRe = new RegExp(`^\\s*UPDATE\\s+"?${itemName}"?`, "i");
+      const firstUpdate = spy.mock.calls.findIndex((c) => updateRe.test(sqlOf(c)));
+      const selectRe = new RegExp(`^\\s*SELECT\\b[\\s\\S]*\\bFROM\\s+"?${itemName}"?`, "i");
+      const selectsBeforeUpdate = spy.mock.calls
+        .slice(0, firstUpdate)
+        .filter((c) => selectRe.test(sqlOf(c))).length;
+      expect(selectsBeforeUpdate).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // The existence check doubles as hydration: untouched columns are now
+    // populated on the reference itself.
+    expect(ref.note).toBe("keep");
+    expect(ref.title).toBe("patched");
+
+    const reloaded: any = await conn.em.findOne(Item, {
+      where: { id: seeded.id } as any,
+    });
+    expect(reloaded.title).toBe("patched");
+    expect(reloaded.note).toBe("keep");
+  });
+
+  it("issues no existence check for a clean stub", async () => {
+    const seeded: any = await conn.em.save(Item, {
+      title: "original",
+      note: "keep",
+    } as any);
+
+    const buf: WriteBuffer = (conn.em as any).buffer();
+    buf.getReference(Item, seeded.id);
+
+    const connector = DatabaseClient.getInstance().getConnection();
+    const spy = jest.spyOn(connector, "query");
+    try {
+      await buf.flush();
+      expect(countQueriesOn(spy, "SELECT", itemName)).toBe(0);
+      expect(countQueriesOn(spy, "UPDATE", itemName)).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("leaves unloaded scalars undefined until hydration (PK-only contract)", async () => {
+    const seeded: any = await conn.em.save(Item, {
+      title: "original",
+      note: "keep",
+    } as any);
+
+    const buf: WriteBuffer = (conn.em as any).buffer();
+    const ref: any = buf.getReference(Item, seeded.id);
+
+    // Documented contract: a reference is PK-only until hydrated. Scalar
+    // reads never trigger a hidden load.
+    expect(ref.id).toBe(seeded.id);
+    expect(ref.title).toBeUndefined();
+    expect(ref.note).toBeUndefined();
+
+    await buf.findOne(Item, { where: { id: seeded.id } as any });
+    expect(ref.title).toBe("original");
+    expect(ref.note).toBe("keep");
   });
 });
