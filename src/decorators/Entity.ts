@@ -57,9 +57,7 @@ export function Entity(options?: EntityOption): ClassDecorator {
     const manyToManyScanner = getScannerInstance(ManyToManyScanner);
 
     const hasExplicitName = !!options?.name;
-    let nameKey = hasExplicitName
-      ? options!.name!
-      : camelToSnakeCase(target.name);
+    let nameKey = options?.name || camelToSnakeCase(target.name);
 
     // Target-based filtering: collect metadata from this class and its ancestors (inheritance support).
     // @Column target is the prototype; @ManyToOne/@OneToMany/@OneToOne/@ManyToMany targets are constructors.

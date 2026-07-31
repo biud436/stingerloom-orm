@@ -1943,8 +1943,8 @@ export class EntityManager implements BaseEntityManager {
    * Returns the TypeScript property key for a column metadata entry.
    * Use this when accessing entity object properties (not for SQL generation).
    */
-  private propKey(col: { propertyKey?: string; name?: string }): string {
-    return col.propertyKey ?? col.name!;
+  private propKey(col: { propertyKey?: string; name: string }): string {
+    return col.propertyKey ?? col.name;
   }
 
   /**
@@ -2011,8 +2011,8 @@ export class EntityManager implements BaseEntityManager {
 
     const map = new Map<string, string>();
     for (const col of metadata.columns) {
-      const prop = col.propertyKey ?? col.name!;
-      map.set(prop, col.name!);
+      const prop = col.propertyKey ?? col.name;
+      map.set(prop, col.name);
     }
     // Resolver may be a partial mock in some tests, so guard the call.
     if (

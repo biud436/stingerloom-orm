@@ -485,10 +485,10 @@ export class SchemaRegistrar {
               );
               const tptDriver = this.ctx.getDriver();
               if (pk && rootPk && rootMeta && tptDriver) {
-                const rootTableName = rootMeta.name!;
+                const rootTableName = rootMeta.name;
                 const fkName = this.namingStrategy.foreignKeyName(
                   tableName,
-                  pk.name!,
+                  pk.name,
                   rootTableName,
                 );
                 try {
@@ -496,9 +496,9 @@ export class SchemaRegistrar {
                   if (!fkExists) {
                     await tptDriver.addForeignKey(
                       tableName,
-                      pk.name!,
+                      pk.name,
                       rootTableName,
-                      rootPk.name!,
+                      rootPk.name,
                       fkName,
                     );
                   }

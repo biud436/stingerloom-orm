@@ -152,7 +152,7 @@ export class CascadeHandler {
         (col: any) => col.options?.primary,
       );
       if (relatedPk && rel.joinColumn) {
-        (item as any)[rel.joinColumn] = (saved as any)[relatedPk.propertyKey ?? relatedPk.name!];
+        (item as any)[rel.joinColumn] = (saved as any)[relatedPk.propertyKey ?? relatedPk.name];
       }
     }
   }
@@ -184,7 +184,7 @@ export class CascadeHandler {
       // SELECT only the PK to conserve memory.
       const parents = await this.ctx.find(entity, {
         where: criteria,
-        select: { [pk.name!]: true },
+        select: { [pk.name]: true },
       } as any);
 
       if (!parents) continue;
@@ -193,7 +193,7 @@ export class CascadeHandler {
 
       // Collect parent PKs.
       const parentIds = parentArray
-        .map((p: any) => p[pk.propertyKey ?? pk.name!])
+        .map((p: any) => p[pk.propertyKey ?? pk.name])
         .filter((id: any) => id !== undefined && id !== null);
 
       if (parentIds.length === 0) continue;

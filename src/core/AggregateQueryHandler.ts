@@ -42,7 +42,7 @@ export class AggregateQueryHandler {
           this.ctx.executeReadOnly(fn2, {});
 
     return executor(async (session) => {
-      const tableName = metadata.name!;
+      const tableName = metadata.name;
 
       // Resolve property names to DB columns exactly like findInternal so the
       // aggregate field and WHERE honor a NamingStrategy and FK shadow props.

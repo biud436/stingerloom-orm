@@ -57,7 +57,7 @@ export class DmlSqlBuilder {
     orderBySql: Sql | undefined,
     limit: number | undefined,
   ): Sql {
-    const tableSql = raw(this.ctx.wrapTable(metadata.name!));
+    const tableSql = raw(this.ctx.wrapTable(metadata.name));
     const setSql = join(setMap, ", ");
     const whereSql = join(whereMap, " AND ");
     const limitSql =
@@ -90,7 +90,7 @@ export class DmlSqlBuilder {
         `Use createUpdateBuilder() with a manually scoped subquery, or run the update on MySQL/MariaDB which supports UPDATE … ORDER BY … LIMIT natively.`,
       );
     }
-    const pkWrapped = raw(this.ctx.wrap(pkColumns[0].name!));
+    const pkWrapped = raw(this.ctx.wrap(pkColumns[0].name));
     const subquery = sql`SELECT ${pkWrapped} FROM ${tableSql} WHERE ${whereSql}${orderPart}${limitSql}`;
     return sql`UPDATE ${tableSql} SET ${setSql} WHERE ${pkWrapped} IN (${subquery})`;
   }

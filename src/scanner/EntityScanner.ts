@@ -4,7 +4,12 @@ import { MetadataScanner } from "./MetadataScanner";
 import { ClazzType } from "../utils";
 export type EntityScannerMetadata = {
   target: ClazzType<any>;
-  name?: string;
+  /**
+   * Resolved table name. Always set: the @Entity decorator fills it from the
+   * class name when `@Entity({ name })` is not given, and the NamingStrategy
+   * pass rewrites it in place (`nameExplicit` wins).
+   */
+  name: string;
   columns: any[];
   indexes?: any[];
 };
