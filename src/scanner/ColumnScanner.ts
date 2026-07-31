@@ -14,11 +14,12 @@ export type ColumnMetadata = {
    */
   propertyKey?: string;
   /**
-   * Specifies the name of the column.
-   * if not specified, the name of the column is the same as the property name.
-   * the table is created using the name of the column.
+   * Resolved DB column name. Always set: the decorator / EntitySchema bridge
+   * fills it from the property key when `@Column({ name })` is not given, and
+   * the NamingStrategy pass rewrites it in place (`nameExplicit` wins).
+   * The table is created using this name.
    */
-  name?: string;
+  name: string;
   /** True when the user explicitly provided `@Column({ name: "..." })`. */
   nameExplicit?: boolean;
   options?: ColumnOption;

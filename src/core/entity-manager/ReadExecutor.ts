@@ -208,7 +208,7 @@ export class ReadExecutor {
         eagerRelations.length > 0 || eagerOneToOneRelations.length > 0
         || isTPTChild || isTPTPolymorphic;
 
-      const tableName = metadata.name!;
+      const tableName = metadata.name;
 
       // Build property-to-column map once and reuse throughout findInternal
     const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
@@ -218,7 +218,7 @@ export class ReadExecutor {
         const root = this.inheritanceResolver.getRoot(entity)!;
         const rootMeta = this.resolver.resolveEntityMetadata(root);
         if (rootMeta) {
-          const rootTableName = rootMeta.name!;
+          const rootTableName = rootMeta.name;
           const rootColNames = new Set(
             rootMeta.columns.map((c: any) => c.name),
           );
@@ -230,11 +230,11 @@ export class ReadExecutor {
 
           // Columns that physically exist on the child table: PK + own (excluding parent-only columns)
           for (const col of metadata.columns) {
-            const isPk = pkColNames.has(col.name!);
-            const isRootOnly = rootColNames.has(col.name!) && !isPk;
+            const isPk = pkColNames.has(col.name);
+            const isRootOnly = rootColNames.has(col.name) && !isPk;
             if (!isRootOnly) {
               selectMap.push(
-                `${this.ctx.wrap(tableName)}.${this.ctx.wrap(col.name!)}`,
+                `${this.ctx.wrap(tableName)}.${this.ctx.wrap(col.name)}`,
               );
             }
           }
@@ -243,7 +243,7 @@ export class ReadExecutor {
           for (const col of rootMeta.columns) {
             if (pkColNames.has(col.name)) continue;
             selectMap.push(
-              `${this.ctx.wrap(rootTableName)}.${this.ctx.wrap(col.name!)}`,
+              `${this.ctx.wrap(rootTableName)}.${this.ctx.wrap(col.name)}`,
             );
           }
         }
@@ -302,11 +302,11 @@ export class ReadExecutor {
         for (const ChildEntity of children) {
           const childMeta = this.resolver.resolveEntityMetadata(ChildEntity);
           if (!childMeta || !pk) continue;
-          const childTableName = childMeta.name!;
+          const childTableName = childMeta.name;
           const ownCols = this.inheritanceResolver.getOwnColumns(ChildEntity);
           for (const col of ownCols) {
             selectMap.push(
-              `${this.ctx.wrap(childTableName)}.${this.ctx.wrap(col.name!)} AS ${this.ctx.wrap(`${childTableName}_${col.name!}`)}`,
+              `${this.ctx.wrap(childTableName)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(`${childTableName}_${col.name}`)}`,
             );
           }
         }
@@ -329,7 +329,7 @@ export class ReadExecutor {
         for (const col of relatedMetadata.columns) {
           const alias = `${rel.columnName}_${col.name}`;
           selectMap.push(
-            `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name!)} AS ${this.ctx.wrap(alias)}`,
+            `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(alias)}`,
           );
         }
       }
@@ -344,7 +344,7 @@ export class ReadExecutor {
         for (const col of relatedMetadata.columns) {
           const alias = `${rel.propertyKey}_${col.name}`;
           selectMap.push(
-            `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name!)} AS ${this.ctx.wrap(alias)}`,
+            `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(alias)}`,
           );
         }
       }
@@ -355,7 +355,7 @@ export class ReadExecutor {
         const tptRoot = this.inheritanceResolver.getRoot(entity)!;
         const tptRootMeta = this.resolver.resolveEntityMetadata(tptRoot);
         if (tptRootMeta) {
-          const tptRootTableName = tptRootMeta.name!;
+          const tptRootTableName = tptRootMeta.name;
           const tptPkNames = new Set(
             metadata.columns
               .filter((c: any) => c.options?.primary)
@@ -444,7 +444,7 @@ export class ReadExecutor {
         const allEntities = this.inheritanceResolver.getConcreteEntities(entity);
         const allHierarchyCols = this.inheritanceResolver
           .getAllHierarchyColumns(entity)
-          .map((c) => c.name!);
+          .map((c) => c.name);
         const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
         const discColName = discCol?.name ?? "dtype";
 
@@ -452,7 +452,7 @@ export class ReadExecutor {
         for (const ent of allEntities) {
           const entMeta = this.resolver.resolveEntityMetadata(ent);
           if (!entMeta) continue;
-          const entTableName = entMeta.name!;
+          const entTableName = entMeta.name;
           const entColNames = new Set(
             entMeta.columns.map((c: any) => c.name),
           );
@@ -485,8 +485,8 @@ export class ReadExecutor {
         if (rootMeta) {
           const pk = metadata.columns.find((c: any) => c.options?.primary);
           if (pk) {
-            const rootTableName = rootMeta.name!;
-            const joinCond = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(pk.name!))} = ${raw(this.ctx.wrap(rootTableName))}.${raw(this.ctx.wrap(pk.name!))}`;
+            const rootTableName = rootMeta.name;
+            const joinCond = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(pk.name))} = ${raw(this.ctx.wrap(rootTableName))}.${raw(this.ctx.wrap(pk.name))}`;
             qb.innerJoin(
               this.ctx.wrapTable(rootTableName),
               this.ctx.wrap(rootTableName),
@@ -505,8 +505,8 @@ export class ReadExecutor {
         for (const ChildEntity of children) {
           const childMeta = this.resolver.resolveEntityMetadata(ChildEntity);
           if (!childMeta || !pk) continue;
-          const childTableName = childMeta.name!;
-          const joinCond = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(pk.name!))} = ${raw(this.ctx.wrap(childTableName))}.${raw(this.ctx.wrap(pk.name!))}`;
+          const childTableName = childMeta.name;
+          const joinCond = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(pk.name))} = ${raw(this.ctx.wrap(childTableName))}.${raw(this.ctx.wrap(pk.name))}`;
           qb.leftJoin(
             this.ctx.wrapTable(childTableName),
             this.ctx.wrap(childTableName),
@@ -537,7 +537,7 @@ export class ReadExecutor {
           if (rootMeta) {
             const rootColNames = new Set(rootMeta.columns.map((c: any) => c.name));
             if (rootColNames.has(joinColumn)) {
-              fkTableName = rootMeta.name!;
+              fkTableName = rootMeta.name;
             }
           }
         }
@@ -546,7 +546,7 @@ export class ReadExecutor {
         // the same target entity (e.g. assignee + reporter → User) get
         // distinct aliases.
         const relAlias = rel.columnName;
-        let joinCondition = sql`${raw(this.ctx.wrap(fkTableName))}.${raw(this.ctx.wrap(joinColumn))} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name!))}`;
+        let joinCondition = sql`${raw(this.ctx.wrap(fkTableName))}.${raw(this.ctx.wrap(joinColumn))} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name))}`;
 
         // Keep eager and lazy soft-delete semantics in sync: a soft-deleted
         // target should surface as a null relation, not silently leak in.
@@ -579,7 +579,7 @@ export class ReadExecutor {
         if (!relatedPk) continue;
 
         const relAlias = rel.propertyKey;
-        let joinCondition = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(joinColumn))} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name!))}`;
+        let joinCondition = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(joinColumn))} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name))}`;
 
         // Mirror the ManyToOne eager join: filter soft-deleted counterparts in
         // the ON clause so the parent row survives, unless `withDeleted` is set.
@@ -724,7 +724,7 @@ export class ReadExecutor {
             const childMeta = this.resolver.resolveEntityMetadata(child);
             const dv = this.inheritanceResolver.getDiscriminatorValue(child);
             if (childMeta && dv) {
-              childPrefixMap.set(dv, childMeta.name!);
+              childPrefixMap.set(dv, childMeta.name);
             }
           }
           entityResult = resultTransformer.toTPTPolymorphicEntities(
@@ -890,7 +890,7 @@ export class ReadExecutor {
     return this.ctx.executeReadOnly(async (session) => {
       const resultTransformer = ResultTransformerFactory.create();
 
-      const tableName = metadata.name!;
+      const tableName = metadata.name;
       const qb = RawQueryBuilderFactory.create();
 
       // Same FK-column merge as findInternal: include @RelationColumn-derived

@@ -224,10 +224,10 @@ export class IdentityMapManager {
     const columns: ColumnMetadata[] =
       Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
 
-    const columnNames = columns.map((c) => c.propertyKey ?? c.name!);
+    const columnNames = columns.map((c) => c.propertyKey ?? c.name);
     const pkColumns = columns
       .filter((c) => c.options?.primary)
-      .map((c) => c.propertyKey ?? c.name!);
+      .map((c) => c.propertyKey ?? c.name);
 
     return { columnNames, pkColumns };
   }
@@ -246,7 +246,7 @@ export class IdentityMapManager {
     const columns: ColumnMetadata[] =
       Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
     return columns.map((c) => ({
-      prop: c.propertyKey ?? c.name!,
+      prop: c.propertyKey ?? c.name,
       column: c.name ?? c.propertyKey!,
     }));
   }
@@ -258,7 +258,7 @@ export class IdentityMapManager {
   resolveColumnName(entityClass: ClazzType<any>, prop: string): string {
     const columns: ColumnMetadata[] =
       Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
-    const match = columns.find((c) => (c.propertyKey ?? c.name!) === prop);
+    const match = columns.find((c) => (c.propertyKey ?? c.name) === prop);
     return match?.name ?? prop;
   }
 

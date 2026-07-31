@@ -106,10 +106,10 @@ function getEntityInfo(entity: ClazzType<any>, wrap: (s: string) => string): Ent
   const propToCol = new Map<string, string>();
   let primaryKey: string | null = null;
   for (const col of columns) {
-    const prop = col.propertyKey ?? col.name!;
-    propToCol.set(prop, col.name!);
+    const prop = col.propertyKey ?? col.name;
+    propToCol.set(prop, col.name);
     if (col.options?.primary || col.options?.autoIncrement) {
-      primaryKey = col.name!;
+      primaryKey = col.name;
     }
   }
 

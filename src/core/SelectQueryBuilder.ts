@@ -360,7 +360,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       if (metadata) {
         this.aliasRegistry.set(this.alias, {
           entity: this.entity,
-          tableName: metadata.name!,
+          tableName: metadata.name,
           propertyToColumnMap: map,
         });
       }
@@ -449,8 +449,8 @@ export class SelectQueryBuilder<T, TResult = T> {
       const rootMeta = resolver.resolveEntityMetadata(root);
       if (!rootMeta) return;
 
-      const rootTableName = rootMeta.name!;
-      const tableName = metadata.name!;
+      const rootTableName = rootMeta.name;
+      const tableName = metadata.name;
       const parentAlias = "__inh";
 
       // Identify which columns belong to parent vs child
@@ -474,21 +474,21 @@ export class SelectQueryBuilder<T, TResult = T> {
       // Build explicit SELECT column list: child own columns + parent columns
       const selectCols: string[] = [];
       for (const col of metadata.columns) {
-        const isRootOnly = rootColNames.has(col.name!) && !pkColNames.has(col.name!);
+        const isRootOnly = rootColNames.has(col.name) && !pkColNames.has(col.name);
         if (!isRootOnly) {
-          selectCols.push(`${this.em.wrap(this.alias)}.${this.em.wrap(col.name!)}`);
+          selectCols.push(`${this.em.wrap(this.alias)}.${this.em.wrap(col.name)}`);
         }
       }
       for (const col of rootMeta.columns) {
         if (!pkColNames.has(col.name)) {
-          selectCols.push(`${this.em.wrap(parentAlias)}.${this.em.wrap(col.name!)}`);
+          selectCols.push(`${this.em.wrap(parentAlias)}.${this.em.wrap(col.name)}`);
         }
       }
       this.tptSelectColumns = selectCols;
 
       // Add INNER JOIN
-      const joinCond = sql`${raw(`${this.em.wrap(this.alias)}.${this.em.wrap(pk.name!)}`)
-        } = ${raw(`${this.em.wrap(parentAlias)}.${this.em.wrap(pk.name!)}`)}`;
+      const joinCond = sql`${raw(`${this.em.wrap(this.alias)}.${this.em.wrap(pk.name)}`)
+        } = ${raw(`${this.em.wrap(parentAlias)}.${this.em.wrap(pk.name)}`)}`;
       this.joinClauses.push({
         type: "INNER",
         table: rootTableName,
@@ -505,7 +505,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       });
     } else if (this.isPolymorphicQuery) {
       // TPT root (polymorphic): LEFT JOIN all child tables
-      const tableName = metadata.name!;
+      const tableName = metadata.name;
       const children = ir.getConcreteEntities(this.entity).filter((c) => c !== this.entity);
       const extraSelectCols: string[] = [];
       const childPrefixMap = new Map<string, string>();
@@ -513,12 +513,12 @@ export class SelectQueryBuilder<T, TResult = T> {
       for (const ChildEntity of children) {
         const childMeta = resolver.resolveEntityMetadata(ChildEntity);
         if (!childMeta) continue;
-        const childTableName = childMeta.name!;
+        const childTableName = childMeta.name;
         const dv = ir.getDiscriminatorValue(ChildEntity);
 
         // LEFT JOIN child table on PK
-        const joinCond = sql`${raw(`${this.em.wrap(this.alias)}.${this.em.wrap(pk.name!)}`)
-          } = ${raw(`${this.em.wrap(childTableName)}.${this.em.wrap(pk.name!)}`)}`;
+        const joinCond = sql`${raw(`${this.em.wrap(this.alias)}.${this.em.wrap(pk.name)}`)
+          } = ${raw(`${this.em.wrap(childTableName)}.${this.em.wrap(pk.name)}`)}`;
         this.joinClauses.push({
           type: "LEFT",
           table: childTableName,
@@ -530,7 +530,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         const ownCols = ir.getOwnColumns(ChildEntity);
         for (const col of ownCols) {
           extraSelectCols.push(
-            `${this.em.wrap(childTableName)}.${this.em.wrap(col.name!)} AS ${this.em.wrap(`${childTableName}_${col.name!}`)}`,
+            `${this.em.wrap(childTableName)}.${this.em.wrap(col.name)} AS ${this.em.wrap(`${childTableName}_${col.name}`)}`,
           );
         }
 
@@ -549,14 +549,14 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     // TPC root (polymorphic): build UNION ALL subquery
     const allEntities = ir.getConcreteEntities(this.entity);
-    const allHierarchyCols = ir.getAllHierarchyColumns(this.entity).map((c) => c.name!);
+    const allHierarchyCols = ir.getAllHierarchyColumns(this.entity).map((c) => c.name);
     const discColName = this.discriminatorColumnName ?? "dtype";
 
     const subQueries: Sql[] = [];
     for (const ent of allEntities) {
       const entMeta = resolver.resolveEntityMetadata(ent);
       if (!entMeta) continue;
-      const entTableName = entMeta.name!;
+      const entTableName = entMeta.name;
       const entColNames = new Set(entMeta.columns.map((c: any) => c.name));
       const discVal = ir.getDiscriminatorValue(ent) ?? ent.name;
 
@@ -708,8 +708,8 @@ export class SelectQueryBuilder<T, TResult = T> {
   ): Map<string, string> {
     const map = new Map<string, string>();
     for (const col of metadata.columns) {
-      const prop = col.propertyKey ?? col.name!;
-      map.set(prop, col.name!);
+      const prop = col.propertyKey ?? col.name;
+      map.set(prop, col.name);
     }
     const resolver = (this.em as any).resolver as
       | RelationMetadataResolver
@@ -1449,7 +1449,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const propToCol = this.buildPropertyToColumnMapFromMetadata(metadata);
     this.aliasRegistry.set(alias, {
       entity,
-      tableName: metadata.name!,
+      tableName: metadata.name,
       propertyToColumnMap: propToCol,
     });
 
@@ -1459,7 +1459,7 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     this.joinClauses.push({
       type,
-      table: metadata.name!,
+      table: metadata.name,
       alias,
       condition,
     });
@@ -1685,7 +1685,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const propToCol = this.buildPropertyToColumnMapFromMetadata(relatedMeta);
     this.aliasRegistry.set(alias, {
       entity: RelatedEntity,
-      tableName: relatedMeta.name!,
+      tableName: relatedMeta.name,
       propertyToColumnMap: propToCol,
     });
 
@@ -1693,7 +1693,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const right = `${this.em.wrap(alias)}.${this.em.wrap(referencedColumn)}`;
     const condition = Conditions.compareColumns(left, "=", right);
 
-    this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
+    this.joinClauses.push({ type, table: relatedMeta.name, alias, condition });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
         sourceAlias,
@@ -1743,7 +1743,7 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     this.aliasRegistry.set(alias, {
       entity: RelatedEntity,
-      tableName: relatedMeta.name!,
+      tableName: relatedMeta.name,
       propertyToColumnMap: propToCol,
     });
 
@@ -1751,7 +1751,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const right = `${this.em.wrap(alias)}.${this.em.wrap(fkColumn)}`;
     const condition = Conditions.compareColumns(left, "=", right);
 
-    this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
+    this.joinClauses.push({ type, table: relatedMeta.name, alias, condition });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
         sourceAlias,
@@ -1789,7 +1789,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const propToCol = this.buildPropertyToColumnMapFromMetadata(relatedMeta);
     this.aliasRegistry.set(alias, {
       entity: RelatedEntity,
-      tableName: relatedMeta.name!,
+      tableName: relatedMeta.name,
       propertyToColumnMap: propToCol,
     });
 
@@ -1797,7 +1797,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const right = `${this.em.wrap(alias)}.${this.em.wrap(referencedColumn)}`;
     const condition = Conditions.compareColumns(left, "=", right);
 
-    this.joinClauses.push({ type, table: relatedMeta.name!, alias, condition });
+    this.joinClauses.push({ type, table: relatedMeta.name, alias, condition });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
         sourceAlias,
@@ -1929,7 +1929,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     subQb.propertyToColumnMap = this.buildPropertyToColumnMapFromMetadata(relatedMeta);
     subQb.aliasRegistry.set(innerAlias, {
       entity: RelatedEntity,
-      tableName: relatedMeta.name!,
+      tableName: relatedMeta.name,
       propertyToColumnMap: subQb.propertyToColumnMap,
     });
     subQb.dialectExpression = this.dialectExpression;
@@ -1945,7 +1945,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       ? sql`WHERE ${join(subQb.whereClauses, " AND ")}`
       : sql``;
 
-    return sql`SELECT ${raw(selectExpr)} FROM ${raw(this.em.wrapTable(relatedMeta.name!))} AS ${raw(this.em.wrap(innerAlias))} ${innerWhere}`;
+    return sql`SELECT ${raw(selectExpr)} FROM ${raw(this.em.wrapTable(relatedMeta.name))} AS ${raw(this.em.wrap(innerAlias))} ${innerWhere}`;
   }
 
   private buildO2MSubquery(
@@ -1986,7 +1986,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     subQb.propertyToColumnMap = propToCol;
     subQb.aliasRegistry.set(innerAlias, {
       entity: RelatedEntity,
-      tableName: relatedMeta.name!,
+      tableName: relatedMeta.name,
       propertyToColumnMap: propToCol,
     });
     subQb.dialectExpression = this.dialectExpression;
@@ -2002,7 +2002,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       ? sql`WHERE ${join(subQb.whereClauses, " AND ")}`
       : sql``;
 
-    return sql`SELECT ${raw(selectExpr)} FROM ${raw(this.em.wrapTable(relatedMeta.name!))} AS ${raw(this.em.wrap(innerAlias))} ${innerWhere}`;
+    return sql`SELECT ${raw(selectExpr)} FROM ${raw(this.em.wrapTable(relatedMeta.name))} AS ${raw(this.em.wrap(innerAlias))} ${innerWhere}`;
   }
 
   private buildO2OSubquery(
@@ -2034,7 +2034,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     subQb.propertyToColumnMap = this.buildPropertyToColumnMapFromMetadata(relatedMeta);
     subQb.aliasRegistry.set(innerAlias, {
       entity: RelatedEntity,
-      tableName: relatedMeta.name!,
+      tableName: relatedMeta.name,
       propertyToColumnMap: subQb.propertyToColumnMap,
     });
     subQb.dialectExpression = this.dialectExpression;
@@ -2050,7 +2050,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       ? sql`WHERE ${join(subQb.whereClauses, " AND ")}`
       : sql``;
 
-    return sql`SELECT ${raw(selectExpr)} FROM ${raw(this.em.wrapTable(relatedMeta.name!))} AS ${raw(this.em.wrap(innerAlias))} ${innerWhere}`;
+    return sql`SELECT ${raw(selectExpr)} FROM ${raw(this.em.wrapTable(relatedMeta.name))} AS ${raw(this.em.wrap(innerAlias))} ${innerWhere}`;
   }
 
   // ── ORDER BY / GROUP BY / HAVING ────────────────────────
@@ -3159,7 +3159,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       const meta = resolver?.resolveEntityMetadata?.(entity);
       return (meta?.columns ?? [])
         .filter((c: ColumnMetadata) => c.options?.primary)
-        .map((c: ColumnMetadata) => c.name!);
+        .map((c: ColumnMetadata) => c.name);
     };
     const rootPkCols = rootMeta ? pkNamesOf(this.entity) : [];
     const joinedPkCols = new Map<string, string[]>();
@@ -4641,7 +4641,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         `Entity metadata not found for ${this.entity.name}. Did you register the entity?`,
       );
     }
-    return metadata.name!;
+    return metadata.name;
   }
 
   /**

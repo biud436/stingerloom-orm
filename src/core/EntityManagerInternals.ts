@@ -108,7 +108,7 @@ export interface EntityManagerInternals {
 
   // ── Shared write-path helpers (used by WriteExecutor) ──────
   /** Resolves an entity property key from column metadata (propertyKey ?? name). */
-  propKey(col: { propertyKey?: string; name?: string }): string;
+  propKey(col: { propertyKey?: string; name: string }): string;
   /** Applies the column's write transformer / JSON serialization to a raw value. */
   applyWriteTransform(col: ColumnMetadata, rawValue: any): any;
   /** Auto-injects the tenant-column value on INSERT under the "tenant_column" strategy. */

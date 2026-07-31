@@ -342,7 +342,7 @@ export class MySqlDriver implements ISqlDriver {
       const option = (column.options ?? this.columnDefBuilder.defaultColumnOption) as ColumnOption;
       return raw(
         this.columnDefBuilder.buildColumnDef(option, {
-          columnName: column.name!,
+          columnName: column.name,
           tableName,
           isCompositePk,
         }),
@@ -350,7 +350,7 @@ export class MySqlDriver implements ISqlDriver {
     });
 
     if (isCompositePk) {
-      const pkList = pkColumns.map((c) => this.wrap(c.name!)).join(", ");
+      const pkList = pkColumns.map((c) => this.wrap(c.name)).join(", ");
       columnsMap.push(raw(`PRIMARY KEY (${pkList})`));
     }
 

@@ -155,9 +155,9 @@ export class WriteExecutor {
       const buildPkWhere = (pkValues?: DriverRow) => {
         return pkColumns.map((col: ColumnMetadata) => {
           const value = pkValues
-            ? pkValues[col.name!]
+            ? pkValues[col.name]
             : itemFields[this.ctx.propKey(col)];
-          return sql`${raw(this.ctx.wrap(col.name!))} = ${bindParam(value)}`;
+          return sql`${raw(this.ctx.wrap(col.name))} = ${bindParam(value)}`;
         });
       };
 
@@ -165,7 +165,7 @@ export class WriteExecutor {
         const where: Record<string, unknown> = {};
         for (const col of pkColumns) {
           where[this.ctx.propKey(col)] = pkValues
-            ? pkValues[col.name!]
+            ? pkValues[col.name]
             : itemFields[this.ctx.propKey(col)];
         }
         return whereByProps<T>(where);
@@ -190,7 +190,7 @@ export class WriteExecutor {
         const versionCol = this.resolver.getVersionColumn(entity);
         const insertableColumns = metadata.columns.filter(
           (column: ColumnMetadata) => {
-            const isComputedColumn = computedCols.has(column.name!);
+            const isComputedColumn = computedCols.has(column.name);
             if (isComputedColumn) return false;
 
             const value = itemFields[this.ctx.propKey(column)];
@@ -222,7 +222,7 @@ export class WriteExecutor {
         );
 
         const columns = insertableColumns.map((column) => {
-          return raw(this.ctx.wrap(column.name!));
+          return raw(this.ctx.wrap(column.name));
         });
 
         const values: RawValue[] = bindParams(
@@ -371,7 +371,7 @@ export class WriteExecutor {
               rootMeta.columns.map((c: ColumnMetadata) => c.name),
             );
             const pkColNames = new Set(
-              pkColumns.map((col: ColumnMetadata) => col.name!),
+              pkColumns.map((col: ColumnMetadata) => col.name),
             );
 
             // Split columns/values into parent and child buckets
@@ -382,8 +382,8 @@ export class WriteExecutor {
 
             for (let i = 0; i < insertableColumns.length; i++) {
               const col = insertableColumns[i];
-              const isPk = pkColNames.has(col.name!);
-              const isRoot = rootColNames.has(col.name!);
+              const isPk = pkColNames.has(col.name);
+              const isRoot = rootColNames.has(col.name);
 
               if (isPk || isRoot) {
                 parentCols.push(columns[i]);
@@ -402,7 +402,7 @@ export class WriteExecutor {
             }
 
             // 1. INSERT into the parent table
-            const parentTableName = rootMeta.name!;
+            const parentTableName = rootMeta.name;
             const parentReturningSql = useReturning ? raw(` RETURNING *`) : raw("");
             const parentInsertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(parentTableName))}
               (${join(parentCols, ", ")})
@@ -416,7 +416,7 @@ export class WriteExecutor {
             let generatedPkValue: unknown;
             const parentRows = resultRows(parentResult);
             if (useReturning && parentRows.length > 0) {
-              generatedPkValue = parentRows[0][pk.name!];
+              generatedPkValue = parentRows[0][pk.name];
             } else if (this.ctx.isMySqlFamily()) {
               generatedPkValue = okPacket(parentResult)?.insertId;
             } else if (this.ctx.isSqlite()) {
@@ -431,8 +431,8 @@ export class WriteExecutor {
               let pkFoundInChild = false;
               for (let ci = 0, ii = 0; ii < insertableColumns.length; ii++) {
                 const col = insertableColumns[ii];
-                const isPk = pkColNames.has(col.name!);
-                const isRoot = rootColNames.has(col.name!);
+                const isPk = pkColNames.has(col.name);
+                const isRoot = rootColNames.has(col.name);
                 if (isPk || !isRoot) {
                   // This column exists in childCols
                   if (isPk) {
@@ -444,13 +444,13 @@ export class WriteExecutor {
               }
               // If the PK is missing from childCols, add it
               if (!pkFoundInChild) {
-                childCols.unshift(raw(this.ctx.wrap(pk.name!)));
+                childCols.unshift(raw(this.ctx.wrap(pk.name)));
                 childVals.unshift(bindParam(generatedPkValue));
               }
             }
 
             if (childCols.length > 0) {
-              const childInsertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name!))}
+              const childInsertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))}
                 (${join(childCols, ", ")})
                 VALUES (${join(childVals, ", ")})`;
               await session.query<T>(childInsertSql);
@@ -493,11 +493,11 @@ export class WriteExecutor {
         const insertSql =
           columns.length > 0
             ? sql`
-                        INSERT INTO ${raw(this.ctx.wrapTable(metadata.name!))}
+                        INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))}
                         (${join(columns, ", ")})
                         VALUES (${join(values, ", ")})${returningSql}
                     `
-            : sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name!))} ${raw(
+            : sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} ${raw(
                 this.ctx.isMySqlFamily() ? "() VALUES ()" : "DEFAULT VALUES",
               )}${returningSql}`;
         const saveQueryStart = Date.now();
@@ -544,7 +544,7 @@ export class WriteExecutor {
         // Drivers that support RETURNING *: deserialize directly from the returned row (when there are no eager relations)
         if (useReturning && returnedRows.length > 0) {
           const returnedRow = returnedRows[0];
-          const cascadeId = returnedRow[pk.name!];
+          const cascadeId = returnedRow[pk.name];
           await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
@@ -631,15 +631,15 @@ export class WriteExecutor {
 
       const versionColName = this.resolver.getVersionColumn(entity);
       const pkColumnNames = new Set(
-        pkColumns.map((col: ColumnMetadata) => col.name!),
+        pkColumns.map((col: ColumnMetadata) => col.name),
       );
       const computedColsForUpdate = this.ctx.getComputedColumnNames(entity);
       // STI: the discriminator column is excluded from UPDATE
       const updateDiscCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
       const updatableColumns = metadata.columns.filter(
         (column: ColumnMetadata) => {
-          if (computedColsForUpdate.has(column.name!)) return false;
-          if (pkColumnNames.has(column.name!)) return false;
+          if (computedColsForUpdate.has(column.name)) return false;
+          if (pkColumnNames.has(column.name)) return false;
           if (versionColName && column.name === versionColName) return false;
           if (updateDiscCol && column.name === updateDiscCol.name) return false;
           return itemFields[this.ctx.propKey(column)] !== undefined;
@@ -648,7 +648,7 @@ export class WriteExecutor {
       const updateMap = updatableColumns.map((column: ColumnMetadata) => {
         const rawValue = itemFields[this.ctx.propKey(column)];
         const value = this.ctx.applyWriteTransform(column, rawValue);
-        return sql`${raw(this.ctx.wrap(column.name!))} = ${bindParam(value)}`;
+        return sql`${raw(this.ctx.wrap(column.name))} = ${bindParam(value)}`;
       });
 
       // Auto-inject @UpdateTimestamp
@@ -669,7 +669,7 @@ export class WriteExecutor {
       }
 
       const updatedColumnNames = new Set(
-        updatableColumns.map((col: ColumnMetadata) => col.name!),
+        updatableColumns.map((col: ColumnMetadata) => col.name),
       );
 
       // Add the ManyToOne FK column values to the UPDATE SET clause
@@ -774,7 +774,7 @@ export class WriteExecutor {
           const childUpdateMap: Sql[] = [];
 
           for (let i = 0; i < updatableColumns.length; i++) {
-            if (rootColNames.has(updatableColumns[i].name!)) {
+            if (rootColNames.has(updatableColumns[i].name)) {
               parentUpdateMap.push(updateMap[i]);
             } else {
               childUpdateMap.push(updateMap[i]);
@@ -787,14 +787,14 @@ export class WriteExecutor {
           }
 
           if (parentUpdateMap.length > 0) {
-            const parentUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(rootMeta.name!))}
+            const parentUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(rootMeta.name))}
               SET ${join(parentUpdateMap, ", ")}
               WHERE ${join(pkWhereClauses, " AND ")}`;
             await session.query<T>(parentUpdateSql);
           }
 
           if (childUpdateMap.length > 0) {
-            const childUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name!))}
+            const childUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name))}
               SET ${join(childUpdateMap, ", ")}
               WHERE ${join(pkWhereClauses, " AND ")}`;
             await session.query<T>(childUpdateSql);
@@ -831,7 +831,7 @@ export class WriteExecutor {
           ? raw(` RETURNING *`)
           : raw("");
         const updateSql = sql`
-            UPDATE ${raw(this.ctx.wrapTable(metadata.name!))}
+            UPDATE ${raw(this.ctx.wrapTable(metadata.name))}
             SET ${join(updateMap, ", ")}
             WHERE ${join(pkWhereClauses, " AND ")}${updateReturningSql}
                   `;
@@ -987,7 +987,7 @@ export class WriteExecutor {
 
     const insertableColumns = metadata.columns.filter(
       (col) => {
-        if (computedCols.has(col.name!)) return false;
+        if (computedCols.has(col.name)) return false;
         if (col.options?.autoIncrement) return false;
         // PostgreSQL uuid: rely on the DB DEFAULT
         if (col.options?.generationStrategy === "uuid" && this.ctx.isPostgres()) return false;
@@ -1049,7 +1049,7 @@ export class WriteExecutor {
 
     // Column list + FK columns
     const columns = insertableColumns.map((col) =>
-      raw(this.ctx.wrap(col.name!)),
+      raw(this.ctx.wrap(col.name)),
     );
     const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
     const fkColumns: FkColumnBinding[] = [];
@@ -1109,7 +1109,7 @@ export class WriteExecutor {
       // PostgreSQL has no `() VALUES ()` and `DEFAULT VALUES` is single-row only,
       // so name the PK and emit the DEFAULT keyword per row to keep the multi-row
       // form valid: INSERT INTO "t" ("id") VALUES (DEFAULT), (DEFAULT) RETURNING *.
-      columns.push(raw(this.ctx.wrap(pk.name!)));
+      columns.push(raw(this.ctx.wrap(pk.name)));
       for (let i = 0; i < items.length; i++) {
         valueRows.push(sql`(${raw("DEFAULT")})`);
       }
@@ -1124,12 +1124,12 @@ export class WriteExecutor {
     if (allDefaultRow && this.ctx.isMySqlFamily()) {
       // MySQL/MariaDB accept the empty multi-row form `() VALUES (), ()`.
       const emptyRows = items.map(() => "()").join(", ");
-      insertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name!))} ${raw(`() VALUES ${emptyRows}`)}${returningSql}`;
+      insertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} ${raw(`() VALUES ${emptyRows}`)}${returningSql}`;
     } else if (allDefaultRow && this.ctx.isSqlite()) {
       // Single-row `DEFAULT VALUES`, executed once per item below.
-      insertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name!))} ${raw("DEFAULT VALUES")}`;
+      insertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} ${raw("DEFAULT VALUES")}`;
     } else {
-      insertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}${returningSql}`;
+      insertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}${returningSql}`;
     }
 
     this.ctx.beginTrackQuery();
@@ -1169,7 +1169,7 @@ export class WriteExecutor {
       // Compute PK values → bulk SELECT WHERE pk IN (...)
       let pkValues: unknown[];
       if (useReturning && insertedRows.length > 0) {
-        pkValues = insertedRows.map((row) => row[pk.name!]);
+        pkValues = insertedRows.map((row) => row[pk.name]);
       } else if (this.ctx.isMySqlFamily() && hasAutoIncrementPk) {
         const firstId = Number(okPacket(queryResult)?.insertId);
         pkValues = items.map((_, i) => firstId + i);
@@ -1283,7 +1283,7 @@ export class WriteExecutor {
       const computedColsMany = this.ctx.getComputedColumnNames(entity);
       const insertableColumns = metadata.columns.filter(
         (column: ColumnMetadata) => {
-          if (computedColsMany.has(column.name!)) return false;
+          if (computedColsMany.has(column.name)) return false;
           const isAutoIncrement = column.options?.autoIncrement;
           if (!isAutoIncrement) return true;
           return items.every((item) => {
@@ -1294,7 +1294,7 @@ export class WriteExecutor {
       );
 
       const columns = insertableColumns.map((column) =>
-        raw(this.ctx.wrap(column.name!)),
+        raw(this.ctx.wrap(column.name)),
       );
 
       const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
@@ -1358,7 +1358,7 @@ export class WriteExecutor {
         return sql`(${join(rowValues, ", ")})`;
       });
 
-      const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
+      const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
 
       const queryResult = (await session.query(queryStr)) as DriverExecResult;
 
@@ -1459,7 +1459,7 @@ export class WriteExecutor {
       const computedColsMany = this.ctx.getComputedColumnNames(entity);
       const insertableColumns = metadata.columns.filter(
         (column: ColumnMetadata) => {
-          if (computedColsMany.has(column.name!)) return false;
+          if (computedColsMany.has(column.name)) return false;
           const isAutoIncrement = column.options?.autoIncrement;
           if (!isAutoIncrement) return true;
           return items.every((item) => {
@@ -1470,7 +1470,7 @@ export class WriteExecutor {
       );
 
       const columns = insertableColumns.map((column) =>
-        raw(this.ctx.wrap(column.name!)),
+        raw(this.ctx.wrap(column.name)),
       );
 
       const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
@@ -1538,7 +1538,7 @@ export class WriteExecutor {
       // generated PKs and DB defaults come back without a re-read. RETURNING *
       // is the portable form across PostgreSQL and SQLite; no driver exposes a
       // column-list returning helper, so it is emitted directly here.
-      const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name!))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")} RETURNING *`;
+      const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")} RETURNING *`;
 
       const queryResult = (await session.query(queryStr)) as DriverExecResult;
 
@@ -1629,11 +1629,11 @@ export class WriteExecutor {
         const rootMeta = this.resolver.resolveEntityMetadata(root);
         if (rootMeta) {
           // 1. Delete from the child table
-          const childDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name!))} WHERE ${whereSql}`;
+          const childDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${whereSql}`;
           await session.query(childDeleteQuery);
 
           // 2. Delete from the parent table
-          const parentDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(rootMeta.name!))} WHERE ${whereSql}`;
+          const parentDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${whereSql}`;
           const parentResult = (await session.query(
             parentDeleteQuery,
           )) as DriverExecResult;
@@ -1660,7 +1660,7 @@ export class WriteExecutor {
         }
       }
 
-      const deleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name!))} WHERE ${whereSql}`;
+      const deleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${whereSql}`;
 
       const deleteStart = Date.now();
       this.ctx.beginTrackQuery();
@@ -1727,8 +1727,8 @@ export class WriteExecutor {
       // affect tenant B's rows with the same IDs.
       const tenantDeleteManyWhere = this.ctx.buildTenantWhereClause(entity);
       const deleteQuery = tenantDeleteManyWhere
-        ? sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name!))} WHERE ${raw(this.ctx.wrap(pk.name!))} IN (${placeholders}) AND ${tenantDeleteManyWhere}`
-        : sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name!))} WHERE ${raw(this.ctx.wrap(pk.name!))} IN (${placeholders})`;
+        ? sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${raw(this.ctx.wrap(pk.name))} IN (${placeholders}) AND ${tenantDeleteManyWhere}`
+        : sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${raw(this.ctx.wrap(pk.name))} IN (${placeholders})`;
 
       const queryResult = (await session.query(deleteQuery)) as DriverExecResult;
 
@@ -1756,7 +1756,7 @@ export class WriteExecutor {
       );
     }
 
-    await this.driver.clear(metadata.name!);
+    await this.driver.clear(metadata.name);
   }
 
   async update<T>(
@@ -2151,7 +2151,7 @@ export class WriteExecutor {
       const whereSql = join(whereMap, " AND ");
 
       const nowExpr = this.ctx.isSqlite() ? raw("datetime('now')") : raw("NOW()");
-      const updateQuery = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name!))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`;
+      const updateQuery = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`;
 
       const queryResult = (await session.query(updateQuery)) as DriverExecResult;
 
@@ -2237,7 +2237,7 @@ export class WriteExecutor {
 
       const whereSql = join(whereMap, " AND ");
 
-      const restoreQuery = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name!))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = NULL WHERE ${whereSql}`;
+      const restoreQuery = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = NULL WHERE ${whereSql}`;
 
       const queryResult = (await session.query(restoreQuery)) as DriverExecResult;
 
@@ -2280,7 +2280,7 @@ export class WriteExecutor {
 
     const pkColumns = metadata.columns
       .filter((col: ColumnMetadata) => col.options?.primary)
-      .map((col: ColumnMetadata) => col.name!);
+      .map((col: ColumnMetadata) => col.name);
 
     const resolvedConflictColumns = conflictColumns ?? pkColumns;
 
@@ -2290,7 +2290,7 @@ export class WriteExecutor {
 
     const computedColsUpsert = this.ctx.getComputedColumnNames(entity);
     const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
-      if (computedColsUpsert.has(col.name!)) return false;
+      if (computedColsUpsert.has(col.name)) return false;
       const value = fieldsOf(data)[this.ctx.propKey(col)];
       if (
         col.options?.autoIncrement &&
@@ -2307,18 +2307,18 @@ export class WriteExecutor {
 
     const conflictSet = new Set(resolvedConflictColumns);
     const updateColumnNames = insertableColumns
-      .map((col: ColumnMetadata) => col.name!)
+      .map((col: ColumnMetadata) => col.name)
       .filter((name) => !conflictSet.has(name));
 
     const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
-      this.ctx.wrap(col.name!),
+      this.ctx.wrap(col.name),
     );
     const wrappedConflict = resolvedConflictColumns.map((name) =>
       this.ctx.wrap(name),
     );
     const wrappedUpdate = updateColumnNames.map((name) => this.ctx.wrap(name));
 
-    const tableName = this.ctx.wrapTable(metadata.name!);
+    const tableName = this.ctx.wrapTable(metadata.name);
 
     if (wrappedUpdate.length === 0) {
       return { affected: 0 };
@@ -2370,7 +2370,7 @@ export class WriteExecutor {
 
     const pkColumns = metadata.columns
       .filter((col: ColumnMetadata) => col.options?.primary)
-      .map((col: ColumnMetadata) => col.name!);
+      .map((col: ColumnMetadata) => col.name);
 
     const resolvedConflictColumns = conflictColumns ?? pkColumns;
     if (resolvedConflictColumns.length === 0) {
@@ -2379,7 +2379,7 @@ export class WriteExecutor {
 
     const computedColsIgnore = this.ctx.getComputedColumnNames(entity);
     const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
-      if (computedColsIgnore.has(col.name!)) return false;
+      if (computedColsIgnore.has(col.name)) return false;
       const value = fieldsOf(data)[this.ctx.propKey(col)];
       if (
         col.options?.autoIncrement &&
@@ -2395,12 +2395,12 @@ export class WriteExecutor {
     }
 
     const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
-      this.ctx.wrap(col.name!),
+      this.ctx.wrap(col.name),
     );
     const wrappedConflict = resolvedConflictColumns.map((name) =>
       this.ctx.wrap(name),
     );
-    const tableName = this.ctx.wrapTable(metadata.name!);
+    const tableName = this.ctx.wrapTable(metadata.name);
 
     return this.ctx.executeInTransaction(async (session) => {
       const dataFields = fieldsOf(data);
@@ -2453,7 +2453,7 @@ export class WriteExecutor {
 
     const pkColumns = metadata.columns
       .filter((col: ColumnMetadata) => col.options?.primary)
-      .map((col: ColumnMetadata) => col.name!);
+      .map((col: ColumnMetadata) => col.name);
 
     const resolvedConflictColumns = conflictColumns ?? pkColumns;
 
@@ -2466,7 +2466,7 @@ export class WriteExecutor {
 
     // Determine insertable columns from the union of all items' defined fields
     const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
-      if (computedCols.has(col.name!)) return false;
+      if (computedCols.has(col.name)) return false;
       if (col.options?.autoIncrement) {
         // Include auto-increment column only if ALL items provide a value
         return items.every((item) => {
@@ -2485,7 +2485,7 @@ export class WriteExecutor {
     }
 
     const updateColumnNames = insertableColumns
-      .map((col: ColumnMetadata) => col.name!)
+      .map((col: ColumnMetadata) => col.name)
       .filter((name) => !conflictSet.has(name));
 
     if (updateColumnNames.length === 0) {
@@ -2493,13 +2493,13 @@ export class WriteExecutor {
     }
 
     const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
-      this.ctx.wrap(col.name!),
+      this.ctx.wrap(col.name),
     );
     const wrappedConflict = resolvedConflictColumns.map((name) =>
       this.ctx.wrap(name),
     );
     const wrappedUpdate = updateColumnNames.map((name) => this.ctx.wrap(name));
-    const tableName = this.ctx.wrapTable(metadata.name!);
+    const tableName = this.ctx.wrapTable(metadata.name);
 
     return this.ctx.executeInTransaction(async (session) => {
       const valueRows = items.map((item) => {

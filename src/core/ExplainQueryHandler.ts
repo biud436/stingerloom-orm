@@ -68,7 +68,7 @@ export class ExplainQueryHandler {
 
     const hasEagerJoins =
       eagerRelations.length > 0 || eagerOneToOneRelations.length > 0;
-    const tableName = metadata.name!;
+    const tableName = metadata.name;
 
     if (select) {
       const selectedColumns = this.ctx.resolveSelectColumns<T>(select);
@@ -85,12 +85,12 @@ export class ExplainQueryHandler {
       if (hasEagerJoins) {
         selectMap.push(
           ...metadata.columns.map(
-            (column) => `${this.ctx.wrap(tableName)}.${this.ctx.wrap(column.name!)}`,
+            (column) => `${this.ctx.wrap(tableName)}.${this.ctx.wrap(column.name)}`,
           ),
         );
       } else {
         selectMap.push(
-          ...metadata.columns.map((column) => this.ctx.wrap(column.name!)),
+          ...metadata.columns.map((column) => this.ctx.wrap(column.name)),
         );
       }
     }

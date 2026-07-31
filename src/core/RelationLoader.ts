@@ -23,6 +23,24 @@ export class RelationLoader {
   ) {}
 
   /**
+   * Reads a parent's PK value by property name (falling back to the DB
+   * column name for metadata without a propertyKey).
+   */
+  private parentIdOf(parent: unknown, pk: ColumnMetadata): any {
+    return (parent as any)[pk.propertyKey ?? pk.name];
+  }
+
+  /** Collects the non-null PK value of every parent. */
+  private collectParentIds(parents: unknown[], pk: ColumnMetadata): any[] {
+    const ids: any[] = [];
+    for (const parent of parents) {
+      const id = this.parentIdOf(parent, pk);
+      if (id !== undefined && id !== null) ids.push(id);
+    }
+    return ids;
+  }
+
+  /**
    * Loads OneToMany relations with a batched query and assigns them to each parent entity.
    * Collects every parent ID, issues a single IN query to fetch all children,
    * and distributes them to each parent based on the FK value.
@@ -76,13 +94,7 @@ export class RelationLoader {
       const fkAlias = "__stg_o2m_fk";
 
       // 1. Collect every parent ID (skipping null/undefined)
-      const parentIds: any[] = [];
-      for (const parent of parents) {
-        const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
-        if (parentId !== undefined && parentId !== null) {
-          parentIds.push(parentId);
-        }
-      }
+      const parentIds = this.collectParentIds(parents, pk);
 
       if (parentIds.length === 0) {
         for (const parent of parents) {
@@ -97,7 +109,7 @@ export class RelationLoader {
       const executeQuery = async (session: TransactionSessionManager) => {
         const qb = RawQueryBuilderFactory.create();
         const selectCols = relatedMetadata.columns.map((col: any) =>
-          this.ctx.wrap(col.name!),
+          this.ctx.wrap(col.name),
         );
         selectCols.push(
           `${this.ctx.wrap(fkColumn)} AS ${this.ctx.wrap(fkAlias)}`,
@@ -170,7 +182,7 @@ export class RelationLoader {
 
       // 4. Assign the matching child array to each parent
       for (const parent of parents) {
-        const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
+        const parentId = this.parentIdOf(parent, pk);
         (parent as any)[rel.propertyKey] = childrenByParentId.get(parentId) ?? [];
       }
     }
@@ -229,13 +241,7 @@ export class RelationLoader {
       const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
 
       // 1. Collect every parent ID (skipping null/undefined)
-      const parentIds: any[] = [];
-      for (const parent of parents) {
-        const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
-        if (parentId !== undefined && parentId !== null) {
-          parentIds.push(parentId);
-        }
-      }
+      const parentIds = this.collectParentIds(parents, pk);
 
       if (parentIds.length === 0) {
         for (const parent of parents) {
@@ -251,13 +257,13 @@ export class RelationLoader {
         const qb = RawQueryBuilderFactory.create();
         const selectCols = relatedMetadata.columns.map(
           (col: any) =>
-            `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(col.name!)}`,
+            `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(col.name)}`,
         );
         selectCols.push(
           `${this.ctx.wrap(joinInfo.joinTableName)}.${this.ctx.wrap(joinInfo.joinColumn)} AS ${this.ctx.wrap(fkAlias)}`,
         );
 
-        const joinCondition = sql`${raw(this.ctx.wrap(relatedTableName))}.${raw(this.ctx.wrap(relatedPk.name!))} = ${raw(this.ctx.wrap(joinInfo.joinTableName))}.${raw(this.ctx.wrap(joinInfo.inverseJoinColumn))}`;
+        const joinCondition = sql`${raw(this.ctx.wrap(relatedTableName))}.${raw(this.ctx.wrap(relatedPk.name))} = ${raw(this.ctx.wrap(joinInfo.joinTableName))}.${raw(this.ctx.wrap(joinInfo.inverseJoinColumn))}`;
 
         const whereConditions: Sql[] = [
           Conditions.in(
@@ -337,7 +343,7 @@ export class RelationLoader {
 
       // 4. Assign the matching child array to each parent
       for (const parent of parents) {
-        const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
+        const parentId = this.parentIdOf(parent, pk);
         (parent as any)[rel.propertyKey] = childrenByParentId.get(parentId) ?? [];
       }
     }
@@ -414,13 +420,7 @@ export class RelationLoader {
         const fkAlias = "__stg_o2o_fk";
 
         // 1. Collect every parent ID (skipping null/undefined)
-        const parentIds: any[] = [];
-        for (const parent of parents) {
-          const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
-          if (parentId !== undefined && parentId !== null) {
-            parentIds.push(parentId);
-          }
-        }
+        const parentIds = this.collectParentIds(parents, pk);
 
         if (parentIds.length === 0) {
           for (const parent of parents) {
@@ -435,7 +435,7 @@ export class RelationLoader {
         const executeQuery = async (session: TransactionSessionManager) => {
           const qb = RawQueryBuilderFactory.create();
           const selectCols = relatedMetadata.columns.map((col: any) =>
-            this.ctx.wrap(col.name!),
+            this.ctx.wrap(col.name),
           );
           selectCols.push(
             `${this.ctx.wrap(fkColumn)} AS ${this.ctx.wrap(fkAlias)}`,
@@ -497,7 +497,7 @@ export class RelationLoader {
 
         // 4. Assign the matching related entity to each parent
         for (const parent of parents) {
-          const parentId = (parent as any)[pk.propertyKey ?? pk.name!];
+          const parentId = this.parentIdOf(parent, pk);
           (parent as any)[rel.propertyKey] = relatedByParentId.get(parentId) ?? null;
         }
       } else {
