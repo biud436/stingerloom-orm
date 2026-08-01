@@ -679,6 +679,28 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
+   * Characters that cannot appear in a column reference accepted by the
+   * string overloads (`"firstName"` / `"u.firstName"`): whitespace,
+   * comparison operators, parentheses, quotes, and parameter markers.
+   */
+  private static readonly SQL_FRAGMENT_CHARS = /[\s=<>!()'"`;,?:]/;
+
+  /**
+   * Fail fast when a string argument to `where()`/`andWhere()`/`orWhere()`
+   * is a raw SQL fragment (`"u.id = :id"`) rather than a column reference.
+   * The string overloads would otherwise identifier-quote the whole
+   * fragment (`"u"."id = :id" = ?`) with a dangling bind, and the failure
+   * only surfaces as a cryptic driver error at execution time.
+   */
+  private assertColumnRefString(ref: string, method: string): void {
+    if (!SelectQueryBuilder.SQL_FRAGMENT_CHARS.test(ref)) return;
+    throw new InvalidQueryError(
+      `${method}() received a raw SQL string ("${ref}") — string arguments must be a plain column reference such as "firstName" or "u.firstName".`,
+      "For raw SQL use a parameterized template: where(sql`u.id = ${value}`) — or a Conditions helper (Conditions.like(...)), rawExpr(), the filter-object form (where({ name: value })), or the column/value overloads (where(\"u.name\", value) / where(\"age\", \">=\", 18)).",
+    );
+  }
+
+  /**
    * @internal Resolve a `WhereClause` object/array into a single combined
    * `Sql` condition (keys AND-ed; array elements OR-ed), or `null` when the
    * clause is empty (`{}` / `[]`) so callers can skip pushing a no-op.
@@ -1079,6 +1101,10 @@ export class SelectQueryBuilder<T, TResult = T> {
    * 2. `where("age", ">=", 18)` → operator
    * 3. `where("u.firstName", "LIKE", "%John%")` → cross-entity with alias
    * 4. `where(Conditions.like(...))` → raw Sql
+   *
+   * String arguments are column references, never SQL. Passing a raw SQL
+   * fragment (`where("u.id = :id", { id })`) throws `InvalidQueryError` —
+   * use the `sql` template tag, `Conditions`, or the filter-object form.
    */
   where(condition: Sql): this;
   where(condition: ColumnCondition): this;
@@ -1096,6 +1122,9 @@ export class SelectQueryBuilder<T, TResult = T> {
     operatorOrValue?: any,
     value?: any,
   ): this {
+    if (typeof columnOrCondition === "string") {
+      this.assertColumnRefString(columnOrCondition, "where");
+    }
     if (
       operatorOrValue === undefined &&
       value === undefined &&
@@ -1130,6 +1159,9 @@ export class SelectQueryBuilder<T, TResult = T> {
     operatorOrValue?: any,
     value?: any,
   ): this {
+    if (typeof columnOrCondition === "string") {
+      this.assertColumnRefString(columnOrCondition, "andWhere");
+    }
     if (
       operatorOrValue === undefined &&
       value === undefined &&
@@ -1164,6 +1196,9 @@ export class SelectQueryBuilder<T, TResult = T> {
     operatorOrValue?: any,
     value?: any,
   ): this {
+    if (typeof columnOrCondition === "string") {
+      this.assertColumnRefString(columnOrCondition, "orWhere");
+    }
     let cond: Sql | null;
     if (
       operatorOrValue === undefined &&
@@ -3289,7 +3324,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * @example
    * ```ts
    * const q = em.createQueryBuilder(User, "u")
-   *   .where("u.id = :id", { id: p("id") })
+   *   .where(sql`u.id = ${p("id")}`)
    *   .prepare<{ id: number }>();
    *
    * await q.executeOne({ id: 42 });

@@ -620,7 +620,7 @@ await findUserById.executeOne({ id: 81 });
 const compiled = qb.prepare();
 const frozenSql = compiled.sql;
 
-qb.where("u.id = :id", { id: 99 });
+qb.where("u.id", 99);
 qb.limit(5);
 
 compiled.sql === frozenSql;   // true -- compilation already snapshotted the query

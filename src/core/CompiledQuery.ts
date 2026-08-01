@@ -27,7 +27,7 @@ export class PlaceholderMarker {
  * @example
  * ```ts
  * const q = em.createQueryBuilder(User, "u")
- *   .where("u.id = :id", { id: p("id") })
+ *   .where(sql`u.id = ${p("id")}`)
  *   .prepare<{ id: number }>();
  *
  * await q.executeOne({ id: 42 });

@@ -505,7 +505,7 @@ app.get("/search", async (req, res) => {
 ```
 
 ::: warning .where() does not take a SQL string with named parameters
-If you are coming from TypeORM, `.where("p.title = :title", { title })` is muscle memory — and it does not work here. A lone string argument is read as a **column reference**, not as SQL, so that call silently produces nonsense. The accepted forms are:
+If you are coming from TypeORM, `.where("p.title = :title", { title })` is muscle memory — and it does not work here. A string argument is read as a **column reference**, not as SQL, so passing a SQL fragment throws `InvalidQueryError` at build time (it used to silently produce broken SQL). The accepted forms are:
 
 ```typescript
 .where({ title: "hello" })                      // filter object (most common)
