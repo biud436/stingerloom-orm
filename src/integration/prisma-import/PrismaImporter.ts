@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import { createRequire } from "module";
 import { PrismaParser } from "./PrismaParser";
 import { PrismaSchemaAnalyzer } from "./PrismaSchemaAnalyzer";
 import { RelationResolver } from "./RelationResolver";
@@ -56,6 +57,10 @@ export class PrismaImporter {
   /**
    * Parse and generate entity source code without writing to disk.
    * Useful for testing and programmatic use.
+   *
+   * Loads the parser synchronously (`require`, or a `createRequire` shim in
+   * the ESM build). If the environment cannot resolve it that way, use
+   * {@link generateAsync}, which loads via dynamic `import()`.
    */
   generate(
     source: string,
@@ -66,9 +71,11 @@ export class PrismaImporter {
   }
 
   /**
-   * Internal async generation (uses dynamic import for prisma-ast).
+   * Async counterpart of {@link generate} — loads the parser via dynamic
+   * `import()`, so it works in every runtime the package supports. Prefer
+   * this from ESM applications.
    */
-  private async generateAsync(
+  async generateAsync(
     source: string,
     providerOverride?: string,
     warnings: string[] = [],
@@ -79,22 +86,28 @@ export class PrismaImporter {
   }
 
   /**
-   * Internal sync generation (requires prisma-ast to be already loadable).
+   * Internal sync generation (requires prisma-ast to be resolvable via
+   * require / createRequire).
    */
   private generateSync(
     source: string,
     providerOverride?: string,
     warnings: string[] = [],
   ): Map<string, string> {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     let getSchema: (source: string) => unknown;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const prismaAst = require("@mrleebo/prisma-ast");
+      // The CJS build has a native `require`. The ESM build does not, so
+      // recover one anchored to the consumer's project root — prisma-ast
+      // is their (optional) peer dependency, so it resolves from there.
+      const requireFn =
+        typeof require === "function"
+          ? require
+          : createRequire(`${process.cwd()}/`);
+      const prismaAst = requireFn("@mrleebo/prisma-ast");
       getSchema = prismaAst.getSchema;
     } catch {
       throw new Error(
-        'Package "@mrleebo/prisma-ast" is required. Install with: pnpm add -D @mrleebo/prisma-ast',
+        'Package "@mrleebo/prisma-ast" is required. Install with: pnpm add -D @mrleebo/prisma-ast — if it is installed but this runtime cannot require() it, use the async API instead: importer.import() or importer.generateAsync().',
       );
     }
 

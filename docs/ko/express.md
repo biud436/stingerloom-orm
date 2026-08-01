@@ -505,7 +505,7 @@ app.get("/search", async (req, res) => {
 ```
 
 ::: warning .where()는 이름 있는 파라미터를 쓴 SQL 문자열을 받지 않습니다
-TypeORM을 쓰다 오면 `.where("p.title = :title", { title })`이 손에 익어 있을 텐데, 여기서는 동작하지 않습니다. 인자로 문자열 하나만 넘기면 SQL이 아니라 **컬럼 참조**로 해석되기 때문에, 저 호출은 조용히 엉뚱한 쿼리를 만듭니다. 받아들이는 형태는 다음과 같습니다.
+TypeORM을 쓰다 오면 `.where("p.title = :title", { title })`이 손에 익어 있을 텐데, 여기서는 동작하지 않습니다. 문자열 인자는 SQL이 아니라 **컬럼 참조**로 해석되기 때문에, SQL 조각을 넘기면 빌드 시점에 `InvalidQueryError`를 던집니다(예전에는 조용히 깨진 쿼리를 만들었습니다). 받아들이는 형태는 다음과 같습니다.
 
 ```typescript
 .where({ title: "hello" })                      // 필터 객체 (가장 흔함)

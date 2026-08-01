@@ -331,3 +331,24 @@ describe("SchemaRegistrar.registerForeignKeys — createForeignKeyConstraints: f
     expect(calls.addForeignKey[0].col).toBe("profile_id");
   });
 });
+
+// ──────────────────────────────────────────────
+// Missing joinColumn — the hint must cover both authoring APIs (#436)
+// ──────────────────────────────────────────────
+
+describe("SchemaRegistrar.registerForeignKeys — missing joinColumn hint", () => {
+  it("suggests the decorator and code-first syntax for a M2O without joinColumn", async () => {
+    const { driver } = makeDriver();
+    const registrar = new SchemaRegistrar(
+      makeM2OResolver([m2oItem(IntPkParent, undefined as any)]),
+      makeCtx(driver),
+    );
+
+    await expect(
+      registrar.registerForeignKeys(IntChild, "int_child"),
+    ).rejects.toMatchObject({
+      name: "InvalidQueryError",
+      suggestion: expect.stringMatching(/@ManyToOne\(.*t\.manyToOne\(/s),
+    });
+  });
+});

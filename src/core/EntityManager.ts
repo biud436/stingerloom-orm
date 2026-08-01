@@ -2440,7 +2440,7 @@ export class EntityManager implements BaseEntityManager {
    * @example
    * ```ts
    * const getUser = em.compile<User, { id: number }>((em, $) =>
-   *   em.createQueryBuilder(User, "u").where("u.id = :id", { id: $.id })
+   *   em.createQueryBuilder(User, "u").where(sql`u.id = ${$.id}`)
    * );
    *
    * await getUser.executeOne({ id: 42 });

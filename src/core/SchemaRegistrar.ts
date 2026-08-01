@@ -1272,7 +1272,7 @@ export class SchemaRegistrar {
         if (!joinColumn) {
           throw new InvalidQueryError(
             "JoinColumn does not exist.",
-            "Add { joinColumn: 'column_name' } option to your @ManyToOne() decorator.",
+            "Add { joinColumn: 'column_name' } to the relation — decorator: @ManyToOne(() => Target, { joinColumn: 'target_id' }); code-first: t.manyToOne(() => Target, { joinColumn: 'target_id' }) in defineEntity(), or the relations block of an EntitySchema.",
           );
         }
 

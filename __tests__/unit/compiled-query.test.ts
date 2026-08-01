@@ -187,7 +187,7 @@ describe("SelectQueryBuilder.prepare()", () => {
     const compiled = qb.prepare();
     const firstSql = compiled.sql;
 
-    qb.where("u.id = :id", { id: 99 });
+    qb.where("u.id", 99);
     qb.limit(5);
 
     expect(compiled.sql).toBe(firstSql);
