@@ -11,6 +11,13 @@ import { EntityManagerInternals } from "./EntityManagerInternals";
 import { Conditions } from "./Conditions";
 
 /**
+ * A loaded entity instance viewed as a property-indexable record. Relation
+ * loading reads parent PKs and writes loaded relations by property key onto
+ * instances the caller typed as `T`; this alias names that dynamic access.
+ */
+type EntityRecord = Record<string, unknown>;
+
+/**
  * Handler for relation sub-query loading (OneToMany, ManyToMany, OneToOne).
  * Invoked on behalf of EntityManager.
  *
@@ -23,16 +30,31 @@ export class RelationLoader {
   ) {}
 
   /**
+   * Normalizes the caller's parent result(s) into an array of indexable
+   * records — the single widening point for the dynamic property access
+   * every loader below performs.
+   */
+  private toParentRecords<T>(parentResults: T | T[]): EntityRecord[] {
+    const parents = Array.isArray(parentResults)
+      ? parentResults
+      : [parentResults];
+    return parents as unknown as EntityRecord[];
+  }
+
+  /**
    * Reads a parent's PK value by property name (falling back to the DB
    * column name for metadata without a propertyKey).
    */
-  private parentIdOf(parent: unknown, pk: ColumnMetadata): any {
-    return (parent as any)[pk.propertyKey ?? pk.name];
+  private parentIdOf(parent: EntityRecord, pk: ColumnMetadata): unknown {
+    return parent[pk.propertyKey ?? pk.name];
   }
 
   /** Collects the non-null PK value of every parent. */
-  private collectParentIds(parents: unknown[], pk: ColumnMetadata): any[] {
-    const ids: any[] = [];
+  private collectParentIds(
+    parents: EntityRecord[],
+    pk: ColumnMetadata,
+  ): unknown[] {
+    const ids: unknown[] = [];
     for (const parent of parents) {
       const id = this.parentIdOf(parent, pk);
       if (id !== undefined && id !== null) ids.push(id);
@@ -71,9 +93,7 @@ export class RelationLoader {
     );
     if (!pk) return;
 
-    const parents = Array.isArray(parentResults)
-      ? parentResults
-      : [parentResults];
+    const parents = this.toParentRecords(parentResults);
 
     for (const rel of oneToManyMeta) {
       if (!relations.includes(rel.propertyKey)) continue;
@@ -98,7 +118,7 @@ export class RelationLoader {
 
       if (parentIds.length === 0) {
         for (const parent of parents) {
-          (parent as any)[rel.propertyKey] = [];
+          parent[rel.propertyKey] = [];
         }
         continue;
       }
@@ -154,7 +174,7 @@ export class RelationLoader {
       const resultTransformer = ResultTransformerFactory.create();
 
       if (queryResult.results && queryResult.results.length > 0) {
-        const rows = queryResult.results as any[];
+        const rows = queryResult.results;
         // Strip the FK alias before hydration, then bulk-deserialize. The query
         // has no JOINs, so toEntities() is 1:1 and order-preserving with rows —
         // letting us read each child's FK from the raw row by index.
@@ -183,7 +203,7 @@ export class RelationLoader {
       // 4. Assign the matching child array to each parent
       for (const parent of parents) {
         const parentId = this.parentIdOf(parent, pk);
-        (parent as any)[rel.propertyKey] = childrenByParentId.get(parentId) ?? [];
+        parent[rel.propertyKey] = childrenByParentId.get(parentId) ?? [];
       }
     }
   }
@@ -219,9 +239,7 @@ export class RelationLoader {
     );
     if (!pk) return;
 
-    const parents = Array.isArray(parentResults)
-      ? parentResults
-      : [parentResults];
+    const parents = this.toParentRecords(parentResults);
 
     for (const rel of manyToManyMeta) {
       if (!relations.includes(rel.propertyKey)) continue;
@@ -245,7 +263,7 @@ export class RelationLoader {
 
       if (parentIds.length === 0) {
         for (const parent of parents) {
-          (parent as any)[rel.propertyKey] = [];
+          parent[rel.propertyKey] = [];
         }
         continue;
       }
@@ -344,7 +362,7 @@ export class RelationLoader {
       // 4. Assign the matching child array to each parent
       for (const parent of parents) {
         const parentId = this.parentIdOf(parent, pk);
-        (parent as any)[rel.propertyKey] = childrenByParentId.get(parentId) ?? [];
+        parent[rel.propertyKey] = childrenByParentId.get(parentId) ?? [];
       }
     }
   }
@@ -377,9 +395,7 @@ export class RelationLoader {
     );
     if (!pk) return;
 
-    const parents = Array.isArray(parentResults)
-      ? parentResults
-      : [parentResults];
+    const parents = this.toParentRecords(parentResults);
 
     for (const rel of oneToOneMeta) {
       if (!relations.includes(rel.propertyKey)) continue;
@@ -407,7 +423,7 @@ export class RelationLoader {
 
         if (!ownerRel?.joinColumn) {
           for (const parent of parents) {
-            (parent as any)[rel.propertyKey] = null;
+            parent[rel.propertyKey] = null;
           }
           continue;
         }
@@ -424,7 +440,7 @@ export class RelationLoader {
 
         if (parentIds.length === 0) {
           for (const parent of parents) {
-            (parent as any)[rel.propertyKey] = null;
+            parent[rel.propertyKey] = null;
           }
           continue;
         }
@@ -480,11 +496,11 @@ export class RelationLoader {
 
         if (queryResult.results && queryResult.results.length > 0) {
           for (const row of queryResult.results) {
-            const fkValue = (row as any)[fkAlias];
+            const fkValue = row[fkAlias];
             if (fkValue === undefined || fkValue === null) continue;
 
             const entityRow = { ...row };
-            delete (entityRow as any)[fkAlias];
+            delete entityRow[fkAlias];
             const [related] = resultTransformer.toEntities(RelatedEntity, {
               results: [entityRow],
             } as QueryResult);
@@ -498,11 +514,11 @@ export class RelationLoader {
         // 4. Assign the matching related entity to each parent
         for (const parent of parents) {
           const parentId = this.parentIdOf(parent, pk);
-          (parent as any)[rel.propertyKey] = relatedByParentId.get(parentId) ?? null;
+          parent[rel.propertyKey] = relatedByParentId.get(parentId) ?? null;
         }
       } else {
         for (const parent of parents) {
-          (parent as any)[rel.propertyKey] = null;
+          parent[rel.propertyKey] = null;
         }
       }
     }
