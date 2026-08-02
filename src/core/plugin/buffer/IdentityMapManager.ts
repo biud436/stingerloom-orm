@@ -10,6 +10,8 @@ import {
 } from "../../../decorators/TenantColumn";
 import { ColumnMetadata } from "../../../scanner/ColumnScanner";
 import { FindOption } from "../../../dialects/FindOption";
+import { OrmError } from "../../../errors/OrmError";
+import { OrmErrorCode } from "../../../errors/OrmErrorCode";
 import { MetadataContext } from "../../../metadata/MetadataContext";
 import { InheritanceResolver } from "../../InheritanceResolver";
 import { PluginContext } from "../PluginContext";
@@ -191,12 +193,27 @@ export class IdentityMapManager {
   }
 
   /**
+   * Whether an entity class is registered with the EntityManager.
+   *
+   * The non-throwing predicate for callers that treat an unregistered class
+   * as "skip" (lazy injection, cascade walks) — use {@link validateEntity}
+   * only where an unregistered class is a caller error.
+   */
+  isRegistered(entityClass: ClazzType<any>): boolean {
+    return this.ctx.getEntities().includes(entityClass);
+  }
+
+  /**
    * Validate that an entity class is registered with the EntityManager.
+   *
+   * @throws OrmError with code `ENTITY_METADATA_NOT_FOUND` — callers that
+   *         need to distinguish this from other failures match on the code,
+   *         never on the message.
    */
   validateEntity(entityClass: ClazzType<any>): void {
-    const entities = this.ctx.getEntities();
-    if (!entities.includes(entityClass)) {
-      throw new Error(
+    if (!this.isRegistered(entityClass)) {
+      throw new OrmError(
+        OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
         `Cannot track instance of "${entityClass.name}": not a registered entity. ` +
         `Make sure the class is decorated with @Entity() and registered with the EntityManager.`,
       );
@@ -339,7 +356,11 @@ export class IdentityMapManager {
     const pkParts = pkColumns.map((pk) => {
       const value = instance[pk];
       if (value === undefined || value === null) {
-        throw new Error(
+        // Code PRIMARY_KEY_NOT_FOUND — callers that swallow "no usable PK"
+        // (merge, detachByPk, identity-map probes) match on it, not on the
+        // message.
+        throw new OrmError(
+          OrmErrorCode.PRIMARY_KEY_NOT_FOUND,
           `Cannot track instance of "${entityClass.name}": PK column "${pk}" is ${value}. ` +
           `Only persisted entities with assigned PK values can be tracked. ` +
           `Use save() to queue new entities for insertion instead.`,

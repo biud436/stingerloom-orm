@@ -5,6 +5,8 @@ import { ONE_TO_ONE_TOKEN } from "../../../decorators/OneToOne";
 import { MANY_TO_MANY_TOKEN } from "../../../decorators/ManyToMany";
 import { MANY_TO_ONE_TOKEN } from "../../../decorators/ManyToOne";
 import { hasCascade } from "../../../types/CascadeType";
+import { OrmError } from "../../../errors/OrmError";
+import { OrmErrorCode } from "../../../errors/OrmErrorCode";
 import { PluginContext } from "../PluginContext";
 import { TrackedEntry, DeleteEntry } from "./BufferEntry";
 import {
@@ -660,8 +662,13 @@ export class CascadeProcessor {
             await this.collectCascadeDeletes(txEm, ChildEntity, grandChildCriteria, out, visited);
           }
         } catch (err) {
-          // Only swallow "not registered" / "table not found" errors — re-throw others
-          if (err instanceof Error && /not.*registered|no.*entity|table.*not/i.test(err.message)) {
+          // Only swallow "entity not registered" — re-throw others. (The old
+          // message regex also aimed at driver "table not found" errors, but
+          // no MySQL/PostgreSQL/SQLite driver message actually matched it.)
+          if (
+            err instanceof OrmError &&
+            err.code === OrmErrorCode.ENTITY_METADATA_NOT_FOUND
+          ) {
             // skip recursive cascade for unregistered entities
           } else {
             throw err;
