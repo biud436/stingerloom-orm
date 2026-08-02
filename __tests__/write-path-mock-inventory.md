@@ -1,6 +1,9 @@
 # Write-Path Mock-Test Inventory (issue #404)
 
-Audit date: 2026-07-14. Scope: every `__tests__/unit/` suite that replaces
+Audit date: 2026-07-14. Last updated: 2026-08-02 (second backfill round —
+the five accepted thin spots below are now closed).
+
+Scope: every `__tests__/unit/` suite that replaces
 `em.save` / `em.update` / `em.delete` / `em.query` / `em.transaction` (or the
 `TransactionSessionManager`) with a mock AND asserts via `toHaveBeenCalled*`.
 49 files matched; each was classified by what its assertions can actually
@@ -53,28 +56,50 @@ those spots immediately surfaced a live defect (#414).
   are appropriate (no persisted-data claim); real transaction semantics are
   covered by `sqlite/transactions`, `p3-transaction-rollback`.
 
-## Known thin spots, accepted for now (not backfilled)
+## Second backfill round (2026-08-02) — former "accepted thin spots"
 
-Ranked; revisit if the area churns.
+All five previously-accepted thin spots are closed:
 
-1. `migration.test.ts` — the "recorded in `__migrations` → skipped/reverted
-   next run" contract is proven by a self-consistent mock (the SELECT is
-   stubbed with the name the test expects). The emitted SQL is asserted
-   concretely, so MED. A SQLite MigrationRunner roundtrip would close it.
-2. `entity-subscriber.test.ts` — `databaseEntity` before-image on UPDATE
-   (pre-read row) is mock-fed; not asserted against a real UPDATE anywhere.
-3. Pessimistic `PESSIMISTIC_READ` lock pass-through — only PESSIMISTIC_WRITE
-   is integration-tested; SQLite cannot enforce row locks regardless.
-4. `delete-operation.test.ts` — asserts a locally re-declared `buildDeleteSql`
-   copy, not the shipped builder (false-confidence smell; the real delete path
-   itself is covered by integration).
-5. Tx-lifecycle subscriber events (`beforeTransactionCommit` order, rollback
-   firing) — asserted only against mocked sessions.
+1. `migration.test.ts` (record/skip/revert proven by a self-consistent
+   SELECT stub) — backfilled:
+   `integration/sqlite/migration-runner.test.ts` (8) drives
+   runAll/runDown/revertLast/rollback/status from real `__migrations` rows.
+   The unit suite keeps only dialect-shape assertions — no defect.
+2. `entity-subscriber.test.ts` `databaseEntity` before-image (mock-fed
+   pre-read) — backfilled:
+   `integration/sqlite/entity-subscriber-session.test.ts` pins the snapshot
+   to the real pre-update row (untouched columns included, consecutive
+   updates) — no defect.
+3. `PESSIMISTIC_READ` pass-through — backfilled: dual-driver
+   `integration/pessimistic-read-lock.test.ts` (3) proves real PG/MySQL
+   parse the suffix and that it is genuinely a SHARED lock (two overlapping
+   transactions hold it on the same row) — no defect. Still unit-only:
+   the NOWAIT / SKIP LOCKED **read** variants (`LOCK IN SHARE MODE NOWAIT`
+   etc.) — accepted; revisit if lock-suffix code churns.
+4. `delete-operation.test.ts` (locally re-declared `buildDeleteSql` copy) —
+   copy deleted; `integration/sqlite/delete-operation.test.ts` (10) verifies
+   the shipped builder. **The copy had drifted**: it dropped `null` criteria
+   while the shipped resolver emits `IS NULL`, and it threw a plain Error
+   where the shipped path throws DeleteWithoutConditionsError — the exact
+   false-confidence failure mode this inventory exists to catch.
+5. Tx-lifecycle subscriber events (dispatch tested by calling
+   `notifyTransactionSubscribers` directly) — backfilled: the same
+   `entity-subscriber-session` suite records all six hooks around a real
+   commit and a real rollback (rollback case also proves the INSERT was
+   discarded) — no defect.
+
+Related (same round): the tenant M2M batched-load suite in
+`unit/tenant-column-relations.test.ts` was un-xdescribe'd — its note
+claimed MySQL/PG integration coverage that never existed — and mirrored on
+real drivers in `integration/tenant-m2m.test.ts`.
 
 ## Defects surfaced by this sweep
 
-- **#414** — core (non-buffer) `em.delete` cascade-delete children run outside
-  the parent delete's transaction. SQLite: hard crash; PG/MySQL: children
-  commit independently (data loss on outer rollback). Repro: `it.failing`
-  tests in `integration/sqlite/core-cascade-write-path.test.ts` — remove
-  `.failing` when fixing.
+- **#414** — core (non-buffer) `em.delete` cascade-delete children ran
+  outside the parent delete's transaction. SQLite: hard crash; PG/MySQL:
+  children committed independently (data loss on outer rollback).
+  **Fixed by PR #416** (the delete transaction's session is published via
+  `transactionStorage.run` so cascades join it). All 7 repro tests in
+  `integration/sqlite/core-cascade-write-path.test.ts` are live (no
+  `it.failing` remains), plus dual-driver
+  `integration/cascade-delete-atomicity.test.ts` on real PG/MySQL.

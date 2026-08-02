@@ -123,11 +123,17 @@ describe("RelationLoader under tenant_column strategy", () => {
 
   // ── ManyToMany ───────────────────────────────────────────────────────
 
-  // NOTE: SQLite's DDL limitations (no ALTER TABLE ADD FOREIGN KEY; M2M join
-  // table is created without `createForeignKeyConstraints: false` support)
-  // make this suite unreliable here. Phase 8 integration tests (MySQL/PG)
-  // cover ManyToMany tenant-scoping end-to-end.
-  xdescribe("ManyToMany batched load", () => {
+  // Shipped design: the M2M join table carries NO tenant column. Isolation
+  // holds because (a) under tenant_column every tenant shares one table, so
+  // PKs are globally unique — a tenant's pivot rows can only reference that
+  // tenant's owner rows — and (b) the batched load applies the tenant
+  // predicate to the RELATED table, so even an adversarial pivot row that
+  // points at another tenant's related row is filtered out at read time.
+  // (This suite was xdescribe'd for years behind a false "Phase 8 MySQL/PG
+  // cover this" note and an aspirational pivot `tenant_id` column that the
+  // ORM never creates; the real MySQL/PG mirror now lives in
+  // __tests__/integration/tenant-m2m.test.ts.)
+  describe("ManyToMany batched load", () => {
     @Entity()
     class Post {
       @PrimaryGeneratedColumn() id!: number;
@@ -156,19 +162,13 @@ describe("RelationLoader under tenant_column strategy", () => {
           const p: any = await em.save(Post, { title: "acme-post" });
           const t1: any = await em.save(Tag, { name: "acme-tag-1" });
           const t2: any = await em.save(Tag, { name: "acme-tag-2" });
-          // manually insert into the join table for both acme rows
-          await em.query(
-            "INSERT INTO post_tags (postId, tagId, tenant_id) VALUES (?, ?, ?), (?, ?, ?)",
-            [p.id, t1.id, "acme", p.id, t2.id, "acme"],
-          );
+          await em.attachRelation(Post, p.id, "tags", t1.id);
+          await em.attachRelation(Post, p.id, "tags", t2.id);
         });
         await MetadataContext.run("globex", async () => {
           const p: any = await em.save(Post, { title: "globex-post" });
           const t: any = await em.save(Tag, { name: "globex-tag" });
-          await em.query(
-            "INSERT INTO post_tags (postId, tagId, tenant_id) VALUES (?, ?, ?)",
-            [p.id, t.id, "globex"],
-          );
+          await em.attachRelation(Post, p.id, "tags", t.id);
         });
 
         await MetadataContext.run("acme", async () => {
@@ -178,6 +178,45 @@ describe("RelationLoader under tenant_column strategy", () => {
           expect(rows.length).toBe(1);
           const names = rows[0].tags.map((t: any) => t.name).sort();
           expect(names).toEqual(["acme-tag-1", "acme-tag-2"]);
+        });
+
+        await MetadataContext.run("globex", async () => {
+          const rows: any[] = await em.find(Post, {
+            relations: ["tags"] as any,
+          });
+          expect(rows.length).toBe(1);
+          expect(rows[0].tags.map((t: any) => t.name)).toEqual(["globex-tag"]);
+        });
+      } finally {
+        await em.propagateShutdown({ closeConnections: true });
+      }
+    });
+
+    it("an adversarial cross-tenant pivot row cannot leak the other tenant's tag", async () => {
+      const em = await makeEm([Post, Tag]);
+      try {
+        let acmePostId!: number;
+        await MetadataContext.run("acme", async () => {
+          const p: any = await em.save(Post, { title: "acme-post" });
+          acmePostId = p.id;
+        });
+        let globexTagId!: number;
+        await MetadataContext.run("globex", async () => {
+          const t: any = await em.save(Tag, { name: "globex-secret" });
+          globexTagId = t.id;
+        });
+
+        // Pivot row linking acme's post to globex's tag — attachRelation does
+        // not validate tenant ownership, so this is representable bad data.
+        await MetadataContext.run("acme", async () => {
+          await em.attachRelation(Post, acmePostId, "tags", globexTagId);
+
+          const rows: any[] = await em.find(Post, {
+            relations: ["tags"] as any,
+          });
+          expect(rows.length).toBe(1);
+          // The related-table tenant predicate filters the foreign tag out.
+          expect(rows[0].tags).toEqual([]);
         });
       } finally {
         await em.propagateShutdown({ closeConnections: true });
