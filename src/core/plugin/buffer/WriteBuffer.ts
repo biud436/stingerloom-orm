@@ -33,6 +33,8 @@ import type { ReparentedChildren } from "./CascadeProcessor";
 import { FlushExecutor } from "./FlushExecutor";
 import { EntityValidator } from "../../EntityValidator";
 import { EntityNotFoundError } from "../../../errors/EntityNotFoundError";
+import { OrmError } from "../../../errors/OrmError";
+import { OrmErrorCode } from "../../../errors/OrmErrorCode";
 import { LazyRelationInjector } from "./LazyRelationInjector";
 import { transactionStorage } from "../../../decorators/Transactional";
 import type { EntityManager } from "../../EntityManager";
@@ -792,7 +794,14 @@ export class WriteBuffer {
       }
     } catch (err) {
       // PK missing → track as new; only swallow identity key errors
-      if (!(err instanceof Error && /PK column/.test(err.message))) throw err;
+      if (
+        !(
+          err instanceof OrmError &&
+          err.code === OrmErrorCode.PRIMARY_KEY_NOT_FOUND
+        )
+      ) {
+        throw err;
+      }
     }
 
     if (!mergedIntoExisting) {
@@ -816,7 +825,12 @@ export class WriteBuffer {
       this.cascade.propagateToRelations(instance, entityClass, (child) => {
         try { this.merge(child, seen); } catch (err) {
           // Only swallow "not registered" errors
-          if (err instanceof Error && /not.*registered|no.*entity|table.*not/i.test(err.message)) return;
+          if (
+            err instanceof OrmError &&
+            err.code === OrmErrorCode.ENTITY_METADATA_NOT_FOUND
+          ) {
+            return;
+          }
           throw err;
         }
       });
@@ -1774,7 +1788,7 @@ export class WriteBuffer {
     resolved: Map<any, any>,
   ): void {
     if (!RelatedEntity) return;
-    try { this.idMap.validateEntity(RelatedEntity); } catch { return; }
+    if (!this.idMap.isRegistered(RelatedEntity)) return;
     const val = readLoadedRelationValue(fresh, prop);
     if (val === undefined || Array.isArray(val)) return;
     const child = this.resolveIdentityGraph(RelatedEntity, val, resolved);
@@ -1793,7 +1807,7 @@ export class WriteBuffer {
     resolved: Map<any, any>,
   ): void {
     if (!RelatedEntity) return;
-    try { this.idMap.validateEntity(RelatedEntity); } catch { return; }
+    if (!this.idMap.isRegistered(RelatedEntity)) return;
     const arr = readLoadedRelationValue(fresh, prop);
     if (!Array.isArray(arr)) return;
     const out = arr.map((item) =>

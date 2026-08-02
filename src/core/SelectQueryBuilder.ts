@@ -106,6 +106,7 @@ import type { InheritanceStrategy } from "../decorators/Inheritance";
 import type { ColumnMetadata } from "../scanner/ColumnScanner";
 import type { DialectExpression } from "../dialects/DialectExpression";
 import type { RelationMetadataResolver } from "./RelationMetadataResolver";
+import type { EntityManagerInternals } from "./EntityManagerInternals";
 import type { EntityScannerMetadata } from "../scanner";
 import { JoinOnBuilder } from "./query-builder/join/JoinOnBuilder";
 import {
@@ -170,6 +171,25 @@ export { WhereGroupBuilder };
 export type { RowValidator, ArrayValidator, WhereOperator };
 
 /**
+ * Narrow, typed view of the `EntityManager` internals this builder reads.
+ *
+ * `EntityManager` keeps `resolver` and `_ctx` private on its public type, so
+ * the builder narrows through {@link SelectQueryBuilder.emInternals} — a
+ * single sanctioned cast — instead of scattering `as any` at every access
+ * site. Members mirror the real EntityManager, which always carries them;
+ * the runtime guards at the call sites stay in place because query-builder
+ * unit tests construct partial EM doubles that may omit any of these.
+ */
+interface EntityManagerInternalView {
+  readonly resolver: RelationMetadataResolver;
+  readonly _ctx: EntityManagerInternals;
+  emitAfterLoad(
+    entityClass: ClazzType<unknown>,
+    entities: unknown,
+  ): Promise<void>;
+}
+
+/**
  * Type-safe column reference: entity property keys (string keys only).
  */
 type ColumnOf<T> = keyof T & string;
@@ -214,6 +234,15 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected readonly alias: string;
   protected readonly entity: ClazzType<T>;
   protected readonly em: EntityManager;
+
+  /**
+   * Single narrowing point for the EntityManager internals (see
+   * {@link EntityManagerInternalView}). Read live on every access — never
+   * cached — so test-time reassignment of `em.resolver` etc. is honored.
+   */
+  private get emInternals(): EntityManagerInternalView {
+    return this.em as unknown as EntityManagerInternalView;
+  }
 
   protected selectColumns: string[] | "*" = "*";
   protected distinct = false;
@@ -354,7 +383,7 @@ export class SelectQueryBuilder<T, TResult = T> {
   setPropertyToColumnMap(map: Map<string, string>): this {
     this.propertyToColumnMap = map;
     // Also register main entity in alias registry
-    const resolver = (this.em as any).resolver as RelationMetadataResolver | undefined;
+    const resolver = this.emInternals.resolver;
     if (resolver) {
       const metadata = resolver.resolveEntityMetadata(this.entity);
       if (metadata) {
@@ -623,7 +652,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * `ilike` / `search` operators render correctly.
    */
   private whereClauseResolverOptions(): WhereResolverOptions {
-    const ctx = (this.em as any)._ctx;
+    const ctx = this.emInternals._ctx;
     const dialect: "mysql" | "postgres" | "sqlite" = ctx?.isMySqlFamily?.()
       ? "mysql"
       : ctx?.isSqlite?.()
@@ -733,9 +762,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       const prop = col.propertyKey ?? col.name;
       map.set(prop, col.name);
     }
-    const resolver = (this.em as any).resolver as
-      | RelationMetadataResolver
-      | undefined;
+    const resolver = this.emInternals.resolver;
     if (
       metadata.target &&
       typeof resolver?.collectFkPropertyMappings === "function"
@@ -1466,7 +1493,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     onBuilder: (join: JoinOnBuilder) => JoinOnBuilder,
     andSelect = false,
   ): this {
-    const resolver = (this.em as any).resolver as RelationMetadataResolver;
+    const resolver = this.emInternals.resolver;
     if (!resolver) {
       throw new OrmError(
         OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
@@ -1526,7 +1553,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     property: string;
     kind: "many-to-one" | "one-to-one" | "one-to-many";
   } | null {
-    const resolver = (this.em as any).resolver as RelationMetadataResolver;
+    const resolver = this.emInternals.resolver;
     if (!resolver) return null;
 
     const m2o = resolver
@@ -1610,9 +1637,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     ) {
       return star;
     }
-    const resolver = (this.em as any).resolver as
-      | RelationMetadataResolver
-      | undefined;
+    const resolver = this.emInternals.resolver;
     const rootMeta = resolver?.resolveEntityMetadata?.(this.entity);
     if (!rootMeta) return star;
 
@@ -1637,7 +1662,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     alias: string,
     andSelect = false,
   ): this {
-    const resolver = (this.em as any).resolver as RelationMetadataResolver;
+    const resolver = this.emInternals.resolver;
     if (!resolver) {
       throw new OrmError(
         OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
@@ -1884,7 +1909,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     mode: "exists" | "count",
     fn?: (subQb: SelectQueryBuilder<any, any>) => void,
   ): Sql {
-    const resolver = (this.em as any).resolver as RelationMetadataResolver;
+    const resolver = this.emInternals.resolver;
     if (!resolver) {
       throw new OrmError(
         OrmErrorCode.ENTITY_METADATA_NOT_FOUND,
@@ -2315,7 +2340,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Add FOR SHARE lock.
    */
   forShare(): this {
-    const internals = (this.em as any)._ctx;
+    const internals = this.emInternals._ctx;
     this.lockClause = internals.isMySqlFamily()
       ? "LOCK IN SHARE MODE"
       : "FOR SHARE";
@@ -2344,7 +2369,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Add FOR SHARE NOWAIT lock (MySQL 8.0+, PostgreSQL 9.5+).
    */
   forShareNowait(): this {
-    const internals = (this.em as any)._ctx;
+    const internals = this.emInternals._ctx;
     this.lockClause = internals.isMySqlFamily()
       ? "LOCK IN SHARE MODE NOWAIT"
       : "FOR SHARE NOWAIT";
@@ -2355,7 +2380,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Add FOR SHARE SKIP LOCKED lock (MySQL 8.0+, PostgreSQL 9.5+).
    */
   forShareSkipLocked(): this {
-    const internals = (this.em as any)._ctx;
+    const internals = this.emInternals._ctx;
     this.lockClause = internals.isMySqlFamily()
       ? "LOCK IN SHARE MODE SKIP LOCKED"
       : "FOR SHARE SKIP LOCKED";
@@ -2936,7 +2961,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const qb = RawQueryBuilderFactory.create() as RawQueryBuilder;
 
     // Database type
-    const internals = (this.em as any)._ctx;
+    const internals = this.emInternals._ctx;
     if (internals.isMySqlFamily()) qb.setDatabaseType("mysql");
     else if (internals.isSqlite?.()) qb.setDatabaseType("sqlite");
     else qb.setDatabaseType("postgresql");
@@ -3019,7 +3044,7 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     // Soft delete auto-filter (use local copy to avoid mutating shared state)
     const effectiveWhere = [...this.whereClauses];
-    const resolver = (this.em as any).resolver;
+    const resolver = this.emInternals.resolver;
     if (resolver) {
       const deletedAtColumn = resolver.getDeletedAtColumn(this.entity);
       if (deletedAtColumn && !this.withDeletedFlag) {
@@ -3170,7 +3195,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   protected async notifyAfterLoad(entities: TResult[]): Promise<void> {
     if (!entities?.length) return;
-    const emit = (this.em as any).emitAfterLoad;
+    const emit = this.emInternals.emitAfterLoad;
     if (typeof emit !== "function") return;
     await emit.call(this.em, this.entity, entities);
   }
@@ -3188,7 +3213,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   protected transformJoinedEntityRows(rows: any[]): TResult[] {
     const transformer = ResultTransformerFactory.create();
-    const resolver = (this.em as any).resolver as RelationMetadataResolver;
+    const resolver = this.emInternals.resolver;
     const rootMeta = resolver?.resolveEntityMetadata?.(this.entity);
     const pkNamesOf = (entity: ClazzType<any>): string[] => {
       const meta = resolver?.resolveEntityMetadata?.(entity);
@@ -3982,9 +4007,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * grouping in {@link transformJoinedEntityRows} (`options.primary`).
    */
   protected resolveRootPkColumns(): Array<{ name: string; propertyKey: string }> {
-    const resolver = (this.em as any).resolver as
-      | RelationMetadataResolver
-      | undefined;
+    const resolver = this.emInternals.resolver;
     const meta = resolver?.resolveEntityMetadata?.(this.entity);
     if (!meta) return [];
     const pks: Array<{ name: string; propertyKey: string }> = [];
@@ -4025,7 +4048,7 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     // Soft delete auto-filter (re-derive, don't mutate shared state)
     const countWhere = [...this.whereClauses];
-    const resolver = (this.em as any).resolver;
+    const resolver = this.emInternals.resolver;
     if (resolver) {
       const deletedAtColumn = resolver.getDeletedAtColumn(this.entity);
       if (deletedAtColumn && !this.withDeletedFlag) {
@@ -4053,7 +4076,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * COUNT semantics.
    */
   async getCount(): Promise<number> {
-    const internals = (this.em as any)._ctx;
+    const internals = this.emInternals._ctx;
     const dbType = internals.isMySqlFamily()
       ? "mysql"
       : internals.isSqlite?.()
@@ -4122,7 +4145,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     fn: "SUM" | "AVG" | "MIN" | "MAX",
     column: ColumnOf<T>,
   ): Promise<number> {
-    const internals = (this.em as any)._ctx;
+    const internals = this.emInternals._ctx;
     const dbType = internals.isMySqlFamily()
       ? "mysql"
       : internals.isSqlite?.()
@@ -4284,7 +4307,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     offset: number,
     limit: number | undefined,
   ): Promise<Array<Record<string, unknown>>> {
-    const internals = (this.em as any)._ctx;
+    const internals = this.emInternals._ctx;
     const isMySql = internals.isMySqlFamily();
     const dbType = isMySql
       ? "mysql"
@@ -4425,7 +4448,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const tableName = this.resolveTableName();
     const qb = RawQueryBuilderFactory.create() as RawQueryBuilder;
 
-    const internals = (this.em as any)._ctx;
+    const internals = this.emInternals._ctx;
     if (internals.isMySqlFamily()) qb.setDatabaseType("mysql");
     else if (internals.isSqlite?.()) qb.setDatabaseType("sqlite");
     else qb.setDatabaseType("postgresql");
@@ -4450,7 +4473,7 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     // Soft delete auto-filter (don't mutate shared state)
     const existsWhere = [...this.whereClauses];
-    const resolver = (this.em as any).resolver;
+    const resolver = this.emInternals.resolver;
     if (resolver) {
       const deletedAtColumn = resolver.getDeletedAtColumn(this.entity);
       if (deletedAtColumn && !this.withDeletedFlag) {
@@ -4488,7 +4511,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    * @throws InvalidQueryError when the active driver does not support EXPLAIN.
    */
   async explain(): Promise<ExplainResult> {
-    const internals = (this.em as any)._ctx;
+    const internals = this.emInternals._ctx;
     const driver = internals.getDriver?.();
     if (!driver || !driver.supportsExplain()) {
       throw new InvalidQueryError(
@@ -4505,7 +4528,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     // Reuse the dialect-aware parser EntityManager.explain() relies on so the
     // ExplainResult shape (rows/type/possibleKeys/key/cost) stays identical.
     const handler = new ExplainQueryHandler(
-      (this.em as any).resolver,
+      this.emInternals.resolver,
       internals,
     );
     return handler.parseExplainResult(rawRows ?? []);
@@ -4583,7 +4606,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     alias: string,
   ): void {
     if (this.withoutTenantScopeFlag) return;
-    const internals = (this.em as any)._ctx;
+    const internals = this.emInternals._ctx;
     if (!internals?.buildTenantWhereClause) return;
     const predicate = internals.buildTenantWhereClause(entity, alias);
     if (predicate) whereAccumulator.push(predicate);
@@ -4662,7 +4685,7 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   protected resolveTableName(): string {
-    const resolver = (this.em as any).resolver;
+    const resolver = this.emInternals.resolver;
     if (!resolver) {
       throw new OrmError(
         OrmErrorCode.ENTITY_METADATA_NOT_FOUND,

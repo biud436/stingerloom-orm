@@ -113,7 +113,7 @@ export class LazyRelationInjector {
       if ((fkValue === undefined || fkValue === null) && !hydrateStub) continue;
 
       const RelatedEntity = rel.getMappingEntity() as any as ClazzType<any>;
-      try { this.idMap.validateEntity(RelatedEntity); } catch { continue; }
+      if (!this.idMap.isRegistered(RelatedEntity)) continue;
 
       const relatedPkCols = this.idMap.getColumnInfo(RelatedEntity).pkColumns;
       const refColumn = rel.references ?? (relatedPkCols.length === 1 ? relatedPkCols[0] : null);
@@ -156,7 +156,7 @@ export class LazyRelationInjector {
       if (isRelationOccupied(instance, rel.propertyKey)) continue;
 
       const ChildEntity = rel.getRelatedEntity();
-      try { this.idMap.validateEntity(ChildEntity); } catch { continue; }
+      if (!this.idMap.isRegistered(ChildEntity)) continue;
 
       const fkColumn = resolveFkColumn(rel, ChildEntity);
       const parentPk = this.idMap.getParentPkValue(instance, entityClass);
@@ -183,7 +183,7 @@ export class LazyRelationInjector {
       if (isRelationOccupied(instance, rel.propertyKey)) continue;
 
       const RelatedEntity = rel.getRelatedEntity();
-      try { this.idMap.validateEntity(RelatedEntity); } catch { continue; }
+      if (!this.idMap.isRegistered(RelatedEntity)) continue;
 
       if (rel.joinColumn) {
         // Owning side - FK column on this entity
@@ -245,7 +245,7 @@ export class LazyRelationInjector {
       if (isRelationOccupied(instance, rel.propertyKey)) continue;
 
       const RelatedEntity = rel.getRelatedEntity();
-      try { this.idMap.validateEntity(RelatedEntity); } catch { continue; }
+      if (!this.idMap.isRegistered(RelatedEntity)) continue;
 
       const parentPk = this.idMap.getParentPkValue(instance, entityClass);
       if (parentPk === undefined || parentPk === null) continue;
