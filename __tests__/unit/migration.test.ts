@@ -1,4 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/**
+ * Dialect-shape unit tests (MySQL/PostgreSQL identifier wrapping, result
+ * normalization, error paths) against a mocked query runner.
+ *
+ * The record/skip/revert contract itself — what __migrations actually
+ * records and how a later run reacts to those rows — is verified with a
+ * real tracking table in
+ * __tests__/integration/sqlite/migration-runner.test.ts (issue #404);
+ * the SELECT stubs here only shape dialect-specific plumbing.
+ */
 import {
   Migration,
   MigrationContext,
