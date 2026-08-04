@@ -461,9 +461,13 @@ if (diff.addTables.length === 0 &&
 }
 
 const generator = new SchemaDiffMigrationGenerator();
-const migrations = generator.generate(diff);
-console.log(`${migrations.length} migrations generated`);
+const content = generator.generate(diff, "postgres");
+await generator.save(content, "./migrations");
 ```
+
+::: warning SQLite column changes
+SQLite cannot `ALTER` a column's type or nullability. When the diff contains such a change and the dialect is `"sqlite"`, both `generate()` and `dryRun()` throw `ORM_UNSUPPORTED_OPERATION` listing the affected columns instead of emitting a migration that silently skips them. Write a manual migration that recreates the table: create a new table with the desired schema, copy the data over, drop the old table, then rename the new one.
+:::
 
 ### Example: Adding a Column
 
