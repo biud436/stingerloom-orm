@@ -262,7 +262,8 @@ export class Tag {
 | Prisma Pattern | Stingerloom Decorator |
 |---------------|----------------------|
 | `@id @default(autoincrement())` | `@PrimaryGeneratedColumn()` |
-| `@id @default(uuid())` | `@PrimaryColumn({ type: "varchar", length: 36 })` |
+| `@id @default(uuid())` | `@PrimaryGeneratedColumn("uuid")` (UUIDv4, same semantics as Prisma) |
+| `@id @default(cuid())` | `@PrimaryColumn({ type: "varchar", length: 36 })` + NOTE comment — cuid has no ORM generation strategy, so assign the id in application code before insert |
 | `@default(now())` | `@CreateTimestamp()` |
 | `@updatedAt` | `@UpdateTimestamp()` |
 | `@default(value)` | `@Column({ default: value })` |
@@ -297,7 +298,8 @@ When both sides of a relation are list types without explicit `fields`/`referenc
 | `@map("col_name")` | `@Column({ name: "col_name" })` |
 | `@@unique([a, b])` | `@UniqueIndex(["a", "b"])` |
 | `@@id([a, b])` | `@PrimaryColumn()` on each field |
-| `@default(uuid())` | `@PrimaryColumn` + TODO comment for app-level generation |
+| `@default(uuid())` on `@id` | `@PrimaryGeneratedColumn("uuid")` |
+| `@default(cuid())` / function defaults on non-id columns | Kept as plain column + NOTE comment (no silent drop) — generate the value in application code |
 | `Unsupported("...")` | Skipped with warning |
 | Self-referencing relation | Same class reference (e.g., `() => Category`) |
 | Named relation `@relation("name")` | Used for pair matching, not emitted in output |

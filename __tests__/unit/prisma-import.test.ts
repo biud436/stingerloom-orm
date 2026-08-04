@@ -877,7 +877,7 @@ model Item {
     expect(item).toContain('enumName: "Color"');
   });
 
-  it("should handle UUID default", () => {
+  it("should map @id @default(uuid()) to @PrimaryGeneratedColumn(\"uuid\")", () => {
     const ast = parsePrismaSchema(`
 datasource db {
   provider = "postgresql"
@@ -891,10 +891,49 @@ model UuidModel {
 `);
     const files = generateFiles(ast);
     const model = files.get("uuid_model.entity.ts")!;
-    expect(model).toContain("@PrimaryColumn");
-    expect(model).toContain('type: "varchar"');
-    expect(model).toContain("length: 36");
-    expect(model).toContain("TODO");
+    expect(model).toContain('@PrimaryGeneratedColumn("uuid")');
+    expect(model).toContain("id!: string;");
+    expect(model).not.toContain("TODO");
+    // The import must follow the decorator swap
+    expect(model).toContain("PrimaryGeneratedColumn");
+    expect(model).not.toContain("@PrimaryColumn");
+  });
+
+  it("should keep varchar PK with explicit NOTE for @id @default(cuid())", () => {
+    const ast = parsePrismaSchema(`
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model CuidModel {
+  id   String @id @default(cuid())
+  name String
+}
+`);
+    const files = generateFiles(ast);
+    const model = files.get("cuid_model.entity.ts")!;
+    expect(model).toContain('@PrimaryColumn({ type: "varchar", length: 36 })');
+    expect(model).toContain("NOTE: Prisma @default(cuid()) has no Stingerloom equivalent");
+    expect(model).toContain("assign the id in application code");
+  });
+
+  it("should surface unmapped function defaults on non-id columns", () => {
+    const ast = parsePrismaSchema(`
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Token {
+  id    Int    @id @default(autoincrement())
+  value String @default(uuid())
+}
+`);
+    const files = generateFiles(ast);
+    const model = files.get("token.entity.ts")!;
+    expect(model).toContain("NOTE: Prisma @default(uuid()) is not mapped");
+    expect(model).toContain("@Column");
   });
 
   it("should handle no datasource (defaults to postgresql)", () => {

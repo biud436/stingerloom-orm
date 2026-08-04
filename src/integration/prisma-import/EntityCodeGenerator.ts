@@ -202,7 +202,10 @@ export class EntityCodeGenerator {
       field.defaultValue.name === "now";
     const isUuid =
       field.defaultValue?.kind === "function" &&
-      (field.defaultValue.name === "uuid" || field.defaultValue.name === "cuid");
+      field.defaultValue.name === "uuid";
+    const isCuid =
+      field.defaultValue?.kind === "function" &&
+      field.defaultValue.name === "cuid";
 
     if (isId && isAutoIncrement) {
       // @PrimaryGeneratedColumn()
@@ -214,12 +217,24 @@ export class EntityCodeGenerator {
     }
 
     if (isId && isUuid) {
-      // @PrimaryColumn() with varchar for UUID/CUID
+      // @default(uuid()) → UUIDv4 generation, same semantics as Prisma
+      imports.addOrm("PrimaryGeneratedColumn");
+      lines.push(`  @PrimaryGeneratedColumn("uuid")`);
+      lines.push(`  ${field.name}!: string;`);
+      lines.push("");
+      return lines;
+    }
+
+    if (isId && isCuid) {
+      // cuid has no ORM generation strategy — keep the varchar PK but say so
+      // explicitly instead of importing an entity that silently never
+      // generates its id.
       imports.addOrm("PrimaryColumn");
       lines.push(
-        `  @PrimaryColumn({ type: "varchar", length: 36 })`,
+        `  // NOTE: Prisma @default(cuid()) has no Stingerloom equivalent — assign the id in application code (e.g. @paralleldrive/cuid2) before insert, or switch to @PrimaryGeneratedColumn("uuid").`,
       );
-      lines.push(`  ${field.name}!: string; // TODO: generate ${field.defaultValue!.kind === "function" ? (field.defaultValue as any).name : "id"} in application code`);
+      lines.push(`  @PrimaryColumn({ type: "varchar", length: 36 })`);
+      lines.push(`  ${field.name}!: string;`);
       lines.push("");
       return lines;
     }
@@ -280,6 +295,15 @@ export class EntityCodeGenerator {
       imports.addEnum(
         mapping.enumName,
         camelToSnakeCase(mapping.enumName) + ".enum",
+      );
+    }
+
+    // Function defaults other than now()/autoincrement (uuid, cuid,
+    // dbgenerated, ...) have no column-level mapping — surface that in the
+    // generated code instead of dropping the default silently.
+    if (field.defaultValue?.kind === "function") {
+      lines.push(
+        `  // NOTE: Prisma @default(${field.defaultValue.name}()) is not mapped — assign the value in application code or add a database default manually.`,
       );
     }
 
