@@ -424,7 +424,7 @@ describe("SchemaDiffMigrationGenerator — SQLite dialect", () => {
     expect(content).not.toMatch(/`email`/);
   });
 
-  it("should generate TODO comment for ALTER COLUMN TYPE (unsupported in SQLite)", () => {
+  it("should throw an explicit error for ALTER COLUMN TYPE (unsupported in SQLite)", () => {
     const diff: SchemaDiffResult = {
       addTables: [],
       dropTables: [],
@@ -440,11 +440,17 @@ describe("SchemaDiffMigrationGenerator — SQLite dialect", () => {
       ],
     };
 
-    const content = generator.generate(diff, "sqlite");
-
-    expect(content).toContain("TODO");
-    expect(content).toContain("SQLite does not support ALTER COLUMN TYPE");
-    expect(content).toContain("Recreate the table instead");
+    // Previously this emitted a `// TODO: ...` no-op migration; now it must
+    // fail at generation time with manual-migration guidance.
+    expect(() => generator.generate(diff, "sqlite")).toThrow(OrmError);
+    try {
+      generator.generate(diff, "sqlite");
+    } catch (e: any) {
+      expect(e.code).toBe(OrmErrorCode.UNSUPPORTED_OPERATION);
+      expect(e.message).toContain('"users"."name"');
+      expect(e.message).toContain("TEXT -> INTEGER");
+      expect(e.suggestion).toContain("recreates the table");
+    }
   });
 
   it("should generate ADD COLUMN statements for SQLite", () => {
@@ -474,6 +480,23 @@ describe("SchemaDiffMigrationGenerator — SQLite dialect", () => {
 
   it("should generate DROP TABLE in down() for new tables", () => {
     const diff: SchemaDiffResult = {
+      addTables: ["sqlite_diff_user"],
+      dropTables: [],
+      addColumns: [],
+      dropColumns: [],
+      alterColumns: [],
+      addTableEntityMap: { sqlite_diff_user: SqliteDiffUser },
+    };
+
+    const content = generator.generate(diff, "sqlite");
+
+    expect(content).toContain("CREATE TABLE");
+    expect(content).toContain("DROP TABLE IF EXISTS");
+    expect(content).toContain('"sqlite_diff_user"');
+  });
+
+  it("should throw for new tables without an entity class", () => {
+    const diff: SchemaDiffResult = {
       addTables: ["new_table"],
       dropTables: [],
       addColumns: [],
@@ -481,10 +504,13 @@ describe("SchemaDiffMigrationGenerator — SQLite dialect", () => {
       alterColumns: [],
     };
 
-    const content = generator.generate(diff, "sqlite");
-
-    expect(content).toContain("DROP TABLE IF EXISTS");
-    expect(content).toContain('"new_table"');
+    expect(() => generator.generate(diff, "sqlite")).toThrow(OrmError);
+    try {
+      generator.generate(diff, "sqlite");
+    } catch (e: any) {
+      expect(e.code).toBe(OrmErrorCode.SCHEMA_ERROR);
+      expect(e.message).toContain("new_table");
+    }
   });
 });
 

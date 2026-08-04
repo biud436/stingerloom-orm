@@ -244,22 +244,24 @@ describe("#115: SchemaDiffMigrationGenerator edge cases", () => {
     expect(result.up[0]).toContain("TYPE BIGINT");
   });
 
-  it("should skip ALTER COLUMN for SQLite dialect", () => {
+  it("should throw on ALTER COLUMN for SQLite dialect", () => {
     const gen = new SchemaDiffMigrationGenerator();
-    const result = gen.dryRun(
-      {
-        addTables: [],
-        dropTables: [],
-        addColumns: [],
-        dropColumns: [],
-        alterColumns: [
-          { tableName: "users", columnName: "age", columnType: "INTEGER", currentType: "TEXT" },
-        ],
-      },
-      "sqlite",
-    );
-    // SQLite cannot alter column types, so nothing generated
-    expect(result.up).toHaveLength(0);
+    // SQLite cannot alter column types — the generator must fail explicitly
+    // instead of silently dropping the change from the preview.
+    expect(() =>
+      gen.dryRun(
+        {
+          addTables: [],
+          dropTables: [],
+          addColumns: [],
+          dropColumns: [],
+          alterColumns: [
+            { tableName: "users", columnName: "age", columnType: "INTEGER", currentType: "TEXT" },
+          ],
+        },
+        "sqlite",
+      ),
+    ).toThrow("SQLite does not support altering column type or nullability");
   });
 
   it("should generate rename column SQL", () => {

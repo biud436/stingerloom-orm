@@ -8,6 +8,8 @@ import { Entity } from "../../src/decorators/Entity";
 import { Column } from "../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
 import { ManyToOne } from "../../src/decorators/ManyToOne";
+import { OrmError } from "../../src/errors/OrmError";
+import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 
 // ─────────────────────────────────────────────────
 // Test entities
@@ -466,9 +468,17 @@ describe("SchemaDiff", () => {
       expect(up[0]).toContain("NOT NULL");
     });
 
-    it("SQLite: emits a nullability-specific TODO comment (no crash)", () => {
-      const content = new SchemaDiffMigrationGenerator().generate(tighten, "sqlite");
-      expect(content).toContain("does not support altering column nullability");
+    it("SQLite: throws an explicit unsupported-operation error (nullability change)", () => {
+      const gen = new SchemaDiffMigrationGenerator();
+      expect(() => gen.generate(tighten, "sqlite")).toThrow(OrmError);
+      try {
+        gen.generate(tighten, "sqlite");
+      } catch (e: any) {
+        expect(e.code).toBe(OrmErrorCode.UNSUPPORTED_OPERATION);
+        expect(e.message).toContain("nullability");
+        expect(e.message).toContain('"users"."name"');
+        expect(e.suggestion).toContain("recreates the table");
+      }
     });
 
     it("PostgreSQL: a combined type + nullability change emits both actions", () => {
@@ -776,7 +786,7 @@ describe("SchemaDiffMigrationGenerator", () => {
       expect(content).toContain("DANGEROUS");
     });
 
-    it("should generate CREATE TABLE for new tables", () => {
+    it("should throw when a new table has no entity class in addTableEntityMap", () => {
       const diff: SchemaDiffResult = {
         addTables: ["new_table"],
         dropTables: [],
@@ -785,12 +795,14 @@ describe("SchemaDiffMigrationGenerator", () => {
         alterColumns: [],
       };
 
-      const content = generator.generate(diff, "mysql");
-
-      expect(content).toContain("CREATE TABLE");
-      expect(content).toContain("`new_table`");
-      // down should have DROP TABLE
-      expect(content).toContain("DROP TABLE IF EXISTS");
+      expect(() => generator.generate(diff, "mysql")).toThrow(OrmError);
+      try {
+        generator.generate(diff, "mysql");
+      } catch (e: any) {
+        expect(e.code).toBe(OrmErrorCode.SCHEMA_ERROR);
+        expect(e.message).toContain("new_table");
+        expect(e.suggestion).toContain("addTableEntityMap");
+      }
     });
   });
 
@@ -883,8 +895,18 @@ describe("SchemaDiffMigrationGenerator", () => {
 
   describe("generate() — combined changes", () => {
     it("should handle multiple change types in a single diff", () => {
+      @Entity({ name: "settings" })
+      class DiffSettings {
+        @PrimaryGeneratedColumn()
+        id!: number;
+
+        @Column({ type: "varchar", length: 100 })
+        key!: string;
+      }
+
       const diff: SchemaDiffResult = {
         addTables: ["settings"],
+        addTableEntityMap: { settings: DiffSettings },
         dropTables: [],
         addColumns: [
           {
@@ -1060,6 +1082,28 @@ describe("SchemaDiffMigrationGenerator", () => {
 
     it("should escape dollar signs in DDL to prevent template literal injection", () => {
       const diff: SchemaDiffResult = {
+        addTables: [],
+        dropTables: [],
+        addColumns: [
+          {
+            tableName: "$pecial",
+            columnName: "co$t",
+            columnType: "VARCHAR",
+            nullable: false,
+          },
+        ],
+        dropColumns: [],
+        alterColumns: [],
+      };
+
+      const content = generator.generate(diff, "mysql");
+      // $ must be backslash-escaped inside the template literal wrapper
+      expect(content).toContain("\\$pecial");
+      expect(content).toContain("co\\$t");
+    });
+
+    it("should throw for a new table with an empty addTableEntityMap", () => {
+      const diff: SchemaDiffResult = {
         addTables: ["$pecial"],
         dropTables: [],
         addColumns: [],
@@ -1068,9 +1112,9 @@ describe("SchemaDiffMigrationGenerator", () => {
         addTableEntityMap: {},
       };
 
-      const content = generator.generate(diff, "mysql");
-      // The table name with $ should be commented out (no entity class)
-      expect(content).toContain("$pecial");
+      expect(() => generator.generate(diff, "mysql")).toThrow(
+        'Cannot generate CREATE TABLE for "$pecial"',
+      );
     });
   });
 
@@ -1134,6 +1178,45 @@ describe("SchemaDiffMigrationGenerator", () => {
       expect(result.up[0]).toContain("CREATE TABLE");
       expect(result.down.length).toBeGreaterThan(0);
       expect(result.down[0]).toContain("DROP TABLE");
+    });
+
+    it("should throw for a new table without entity class (no silent skip)", () => {
+      // Previously up silently omitted the CREATE TABLE while down still
+      // dropped the table — the preview must fail the same way generate() does.
+      const diff: SchemaDiffResult = {
+        addTables: ["ghost_table"],
+        dropTables: [],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [],
+      };
+
+      expect(() => generator.dryRun(diff, "mysql")).toThrow(OrmError);
+    });
+
+    it("should throw for SQLite alter columns (no silent skip)", () => {
+      const diff: SchemaDiffResult = {
+        addTables: [],
+        dropTables: [],
+        addColumns: [],
+        dropColumns: [],
+        alterColumns: [
+          {
+            tableName: "users",
+            columnName: "age",
+            columnType: "INTEGER",
+            currentType: "TEXT",
+          },
+        ],
+      };
+
+      expect(() => generator.dryRun(diff, "sqlite")).toThrow(OrmError);
+      try {
+        generator.dryRun(diff, "sqlite");
+      } catch (e: any) {
+        expect(e.code).toBe(OrmErrorCode.UNSUPPORTED_OPERATION);
+        expect(e.message).toContain("TEXT -> INTEGER");
+      }
     });
   });
 

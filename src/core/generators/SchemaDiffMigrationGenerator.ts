@@ -114,6 +114,7 @@ export class SchemaDiffMigrationGenerator {
     diff: SchemaDiffResult,
     dialect: SchemaDialect,
   ): string[] {
+    this.assertAlterColumnsSupported(diff, dialect);
     const sqls: string[] = [];
 
     // ENUM type changes (PostgreSQL only — must come before CREATE TABLE)
@@ -126,11 +127,9 @@ export class SchemaDiffMigrationGenerator {
 
     // New tables
     for (const table of orderedTables) {
-      const entityClass = diff.addTableEntityMap?.[table];
-      if (entityClass) {
-        const sg = new SchemaGenerator({ dialect, capabilities: this.capabilities });
-        sqls.push(sg.generateCreateTableDDL(entityClass));
-      }
+      const entityClass = this.requireEntityClass(diff, table);
+      const sg = new SchemaGenerator({ dialect, capabilities: this.capabilities });
+      sqls.push(sg.generateCreateTableDDL(entityClass));
     }
 
     // Add columns
@@ -209,6 +208,7 @@ export class SchemaDiffMigrationGenerator {
     diff: SchemaDiffResult,
     dialect: SchemaDialect,
   ): string[] {
+    this.assertAlterColumnsSupported(diff, dialect);
     const stmts: string[] = [];
 
     // ENUM type changes (PostgreSQL only — must come before CREATE TABLE)
@@ -221,19 +221,12 @@ export class SchemaDiffMigrationGenerator {
     // Sort addTables by FK dependency order
     const orderedTables = this.sortTablesByDependency(diff);
 
-    // New tables — generate full DDL when entity class is available
+    // New tables
     for (const table of orderedTables) {
-      const entityClass = diff.addTableEntityMap?.[table];
-      if (entityClass) {
-        const sg = new SchemaGenerator({ dialect, capabilities: this.capabilities });
-        const ddl = sg.generateCreateTableDDL(entityClass);
-        stmts.push(this.wrapSqlInQuery(ddl));
-      } else {
-        // fallback: entity class not available, generate a comment stub
-        stmts.push(
-          `// TODO: CREATE TABLE ${this.escapeId(table, dialect)} (/* define columns */); -- entity class not available`,
-        );
-      }
+      const entityClass = this.requireEntityClass(diff, table);
+      const sg = new SchemaGenerator({ dialect, capabilities: this.capabilities });
+      const ddl = sg.generateCreateTableDDL(entityClass);
+      stmts.push(this.wrapSqlInQuery(ddl));
     }
 
     // Add columns
@@ -249,15 +242,6 @@ export class SchemaDiffMigrationGenerator {
 
     // Alter columns (type and/or nullability)
     for (const col of diff.alterColumns) {
-      if (dialect === "sqlite") {
-        const where = `${this.escapeId(col.tableName, dialect)}.${this.escapeId(col.columnName, dialect)}`;
-        stmts.push(
-          col.typeChanged === false
-            ? `// TODO: SQLite does not support altering column nullability for ${where}. Recreate the table instead.`
-            : `// TODO: SQLite does not support ALTER COLUMN TYPE for ${where} (${col.currentType} -> ${this.renderColumnType(col, dialect)}). Recreate the table instead.`,
-        );
-        continue;
-      }
       for (const s of this.alterColumnUpSql(col, dialect)) {
         stmts.push(this.wrapSqlInQuery(s));
       }
@@ -354,6 +338,56 @@ export class SchemaDiffMigrationGenerator {
   // ─────────────────────────────────────────────────
   // Helpers
   // ─────────────────────────────────────────────────
+
+  /**
+   * A table in `addTables` without an entity class in `addTableEntityMap` has
+   * no column information, so no real CREATE TABLE can be produced — while the
+   * down migration would still DROP the table. Failing here surfaces that at
+   * generation time instead of shipping a migration that silently skips the
+   * table. `SchemaDiff.diff()` always populates the map; only hand-built
+   * diffs can hit this.
+   */
+  private requireEntityClass(
+    diff: SchemaDiffResult,
+    table: string,
+  ): ClazzType<any> {
+    const entityClass = diff.addTableEntityMap?.[table];
+    if (!entityClass) {
+      throw new OrmError(
+        OrmErrorCode.SCHEMA_ERROR,
+        `Cannot generate CREATE TABLE for "${table}": no entity class in diff.addTableEntityMap`,
+        `SchemaDiff.diff() populates addTableEntityMap automatically. When building a SchemaDiffResult by hand, provide the entity class for "${table}", or remove it from addTables and write the CREATE TABLE migration manually.`,
+      );
+    }
+    return entityClass;
+  }
+
+  /**
+   * SQLite cannot ALTER a column's type or nullability. Previously the
+   * generated migration carried a TODO comment (a silent no-op whose down()
+   * still "reverted" nothing); now generation fails up front and points at a
+   * manual table-recreate migration. Automated recreate support is tracked
+   * separately.
+   */
+  private assertAlterColumnsSupported(
+    diff: SchemaDiffResult,
+    dialect: SchemaDialect,
+  ): void {
+    if (dialect !== "sqlite" || diff.alterColumns.length === 0) return;
+
+    const targets = diff.alterColumns.map((col) => {
+      const where = `${this.escapeId(col.tableName, dialect)}.${this.escapeId(col.columnName, dialect)}`;
+      return col.typeChanged === false
+        ? `${where} (nullability)`
+        : `${where} (${col.currentType ?? "?"} -> ${this.renderColumnType(col, dialect)})`;
+    });
+
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_OPERATION,
+      `SQLite does not support altering column type or nullability. Affected: ${targets.join(", ")}`,
+      `Write a manual migration that recreates the table: create a new table with the desired schema, copy the data over, drop the old table, then rename the new one (see "Making Other Kinds Of Table Schema Changes" in the SQLite ALTER TABLE docs).`,
+    );
+  }
 
   /**
    * Generates ALTER TYPE / CREATE TYPE SQL for enum changes (PostgreSQL).
@@ -478,11 +512,12 @@ export class SchemaDiffMigrationGenerator {
 
   /**
    * Forward (up) ALTER statement(s) for a single column change. Returns raw SQL
-   * (no `await query(...)` wrapper); SQLite returns `[]` since it cannot alter
-   * columns (callers emit their own skip/comment). On PostgreSQL a TYPE change
-   * and a nullability change are independent actions — a nullability-only
-   * change (`typeChanged === false`) skips the TYPE rewrite, which would force
-   * an unnecessary full table rewrite. MySQL restates the whole column via
+   * (no `await query(...)` wrapper); unreachable for SQLite — the
+   * assertAlterColumnsSupported guard throws first (the `[]` return is
+   * defense-in-depth). On PostgreSQL a TYPE change and a nullability change
+   * are independent actions — a nullability-only change
+   * (`typeChanged === false`) skips the TYPE rewrite, which would force an
+   * unnecessary full table rewrite. MySQL restates the whole column via
    * MODIFY COLUMN, which carries type and nullability together.
    */
   private alterColumnUpSql(col: ColumnChange, dialect: SchemaDialect): string[] {
@@ -518,9 +553,9 @@ export class SchemaDiffMigrationGenerator {
 
   /**
    * Reverse (down) ALTER statement(s) restoring the previous DB state of a
-   * single column change. SQLite returns `[]`. The previous nullability is
-   * reattached when known (`currentNullable`), so a nullability change round-
-   * trips cleanly.
+   * single column change. Unreachable for SQLite (see
+   * assertAlterColumnsSupported). The previous nullability is reattached when
+   * known (`currentNullable`), so a nullability change round-trips cleanly.
    */
   private alterColumnDownSql(col: ColumnChange, dialect: SchemaDialect): string[] {
     if (dialect === "sqlite") return [];
