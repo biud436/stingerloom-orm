@@ -6,6 +6,7 @@ import { ManyToMany, ManyToManyMetadata, MANY_TO_MANY_TOKEN } from "../../src/de
 import { Entity } from "../../src/decorators/Entity";
 import { Column } from "../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
+import { ManyToOne } from "../../src/decorators/ManyToOne";
 
 // ─────────────────────────────────────────────────
 // #104: SQLite PRAGMA table_info SQL injection
@@ -225,24 +226,58 @@ describe("#109: sortTablesByDependency produces correct order", () => {
   const gen = new SchemaDiffMigrationGenerator();
 
   it("should produce valid dry-run SQL for tables with dependencies", () => {
-    // A simple test: addTables with no entity map just returns original order
+    @Entity({ name: "sort_users_109" })
+    class SortUser109 {
+      @PrimaryGeneratedColumn()
+      id!: number;
+    }
+
+    @Entity({ name: "sort_posts_109" })
+    class SortPost109 {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @ManyToOne(() => SortUser109, (e: any) => e.posts, { joinColumn: "user_id" })
+      user!: SortUser109;
+    }
+
     const result = gen.dryRun(
       {
-        addTables: ["users", "posts"],
+        addTables: ["sort_posts_109", "sort_users_109"],
         dropTables: [],
         addColumns: [],
         dropColumns: [],
         alterColumns: [],
+        addTableEntityMap: {
+          sort_posts_109: SortPost109,
+          sort_users_109: SortUser109,
+        },
       },
       "postgres",
     );
 
-    // Without entityMap, it returns original order (no sort needed)
-    expect(result.up).toEqual([]);
-    // Down should drop the tables
+    // Referenced table (users) must be created before the referencing one
+    expect(result.up).toHaveLength(2);
+    expect(result.up[0]).toContain("sort_users_109");
+    expect(result.up[1]).toContain("sort_posts_109");
     expect(result.down).toEqual([
-      'DROP TABLE IF EXISTS "users"',
-      'DROP TABLE IF EXISTS "posts"',
+      'DROP TABLE IF EXISTS "sort_posts_109"',
+      'DROP TABLE IF EXISTS "sort_users_109"',
     ]);
+  });
+
+  it("should throw for addTables without an entity class (no silent skip)", () => {
+    expect(() =>
+      gen.dryRun(
+        {
+          addTables: ["users", "posts"],
+          dropTables: [],
+          addColumns: [],
+          dropColumns: [],
+          alterColumns: [],
+        },
+        "postgres",
+      ),
+    ).toThrow('Cannot generate CREATE TABLE for "users"');
   });
 });

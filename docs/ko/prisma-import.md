@@ -262,7 +262,8 @@ export class Tag {
 | Prisma 패턴 | Stingerloom 데코레이터 |
 |------------|----------------------|
 | `@id @default(autoincrement())` | `@PrimaryGeneratedColumn()` |
-| `@id @default(uuid())` | `@PrimaryColumn({ type: "varchar", length: 36 })` |
+| `@id @default(uuid())` | `@PrimaryGeneratedColumn("uuid")` (UUIDv4, Prisma와 동일한 의미) |
+| `@id @default(cuid())` | `@PrimaryColumn({ type: "varchar", length: 36 })` + NOTE 주석 — cuid는 ORM 생성 전략이 없으므로 INSERT 전에 애플리케이션 코드에서 id를 직접 할당해야 합니다 |
 | `@default(now())` | `@CreateTimestamp()` |
 | `@updatedAt` | `@UpdateTimestamp()` |
 | `@default(value)` | `@Column({ default: value })` |
@@ -297,7 +298,8 @@ Prisma의 `onDelete: Cascade`는 생성된 데코레이터 옵션의 `cascade: [
 | `@map("col_name")` | `@Column({ name: "col_name" })` |
 | `@@unique([a, b])` | `@UniqueIndex(["a", "b"])` |
 | `@@id([a, b])` | 각 필드에 `@PrimaryColumn()` |
-| `@default(uuid())` | `@PrimaryColumn` + 앱 레벨 생성을 위한 TODO 주석 |
+| `@id`의 `@default(uuid())` | `@PrimaryGeneratedColumn("uuid")` |
+| `@default(cuid())` / 비-id 컬럼의 함수 기본값 | 일반 컬럼 유지 + NOTE 주석 (조용히 탈락시키지 않음) — 값은 애플리케이션 코드에서 생성합니다 |
 | `Unsupported("...")` | 경고와 함께 건너뜀 |
 | 자기 참조 관계 | 같은 클래스 참조 (예: `() => Category`) |
 | 명명된 관계 `@relation("name")` | 짝짓기에만 사용, 출력에는 표시되지 않음 |
