@@ -58,7 +58,7 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker O
 │   └── integration/            # 88개 통합 테스트 파일 (sqlite/ 포함, INTEGRATION_TEST=true 필요)
 ├── examples/
 │   ├── nestjs-cats/            # NestJS 기본 예제 (CRUD, EntitySubscriber, cursor pagination)
-│   ├── nestjs-blog/            # NestJS 블로그 예제 (M2M, soft delete, upsert, 59 e2e tests)
+│   ├── nestjs-blog/            # NestJS 블로그 예제 (M2M, soft delete, upsert, 57 e2e tests)
 │   ├── nestjs-linear-clone/    # Linear/Jira식 이슈 트래커 (재귀 CTE, 윈도 함수, SKIP LOCKED 큐)
 │   ├── nestjs-multitenant/     # NestJS 멀티테넌시 예제 (PostgreSQL 스키마 격리)
 │   ├── nestjs-todo/            # NestJS 최소 CRUD 예제
@@ -254,7 +254,7 @@ pnpm start          # NestJS 서버 시작
 
 ### e2e 테스트 (`examples/`)
 - `examples/nestjs-cats/` — NestJS 기본 예제 (EntitySubscriber, cursor pagination)
-- `examples/nestjs-blog/` — NestJS 블로그 예제 (59 e2e tests, M2M, soft delete, upsert)
+- `examples/nestjs-blog/` — NestJS 블로그 예제 (57 e2e tests, M2M, soft delete, upsert)
 - `examples/nestjs-linear-clone/` — 프로덕션급 SQL 패턴 예제 (재귀 CTE, 윈도 함수, FOR UPDATE SKIP LOCKED, 낙관적 잠금)
 - `examples/nestjs-multitenant/` — PostgreSQL 멀티테넌시 예제 (TenantMigrationRunner)
 - `examples/nestjs-todo/` — NestJS 최소 CRUD 예제
@@ -349,7 +349,7 @@ pnpm start          # NestJS 서버 시작
 
 ### 현재 안정성 상태 (v1.0.0, 2026-07-02 기준)
 - **테스트:** 6,836 passed, 36 skipped, 0 failures — 유닛 5,316 (20 skipped) + SQLite 521 + PostgreSQL 537 (16 skipped) + MySQL/MariaDB 462 (2026-07-02 검증, MySQL은 192.168.35.227:3306 원격 MariaDB)
-- **예제:** 7개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-linear-clone, nestjs-multitenant, nestjs-todo, nestjs-todo-sqlite, prisma-import-demo) 타입 체크 통과 (2026-07-02 검증)
+- **예제:** 8개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-linear-clone, nestjs-multitenant, nestjs-todo, nestjs-todo-sqlite, vanilla-todo-sqlite, prisma-import-demo) — NestJS 예제는 전부 NestJS 11, 타입 체크 통과 (2026-08-05 검증)
 - **보안:** SQL Injection 취약점 수정 완료, 전 드라이버 감사 완료
 - **격리:** 테넌트 간 메타데이터 유출 차단, AsyncLocalStorage 동시성 안전 확보
 
