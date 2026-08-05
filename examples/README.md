@@ -131,8 +131,7 @@ Advanced blog API demonstrating features not covered in nestjs-cats:
 - **`findAndCount()`** — Pagination with total count (`GET /posts/paginated`)
 - **`upsert()`** — INSERT ON CONFLICT by slug/name (`POST /posts/upsert`, `POST /tags/upsert`)
 - **`explain()`** — Query execution plan (`GET /posts/:id/explain`)
-- **`SchemaDiff`** — Entity vs DB schema comparison (`GET /posts/schema-diff`)
-- **`SchemaDiffMigrationGenerator`** — Auto-generate migration files (`POST /posts/schema-diff/generate`)
+- **`SchemaDiff`** — real entity-vs-DB comparison against the live MySQL database, with a `SchemaDiffMigrationGenerator.dryRun()` SQL preview (`GET /schema/diff`)
 - **`findWithCursor()`** — Cursor-based pagination (`GET /posts/cursor`)
 - **`@UniqueIndex`** — Composite unique indexes on User.email, User.username, Post.slug, Tag.name
 - **`@DeletedAt`** — Soft Delete with restore endpoint
@@ -145,8 +144,7 @@ Advanced blog API demonstrating features not covered in nestjs-cats:
 | GET | /posts/cursor?take=10&cursor=xxx | Cursor pagination |
 | POST | /posts/upsert | Upsert by slug |
 | GET | /posts/:id/explain | Query execution plan |
-| GET | /posts/schema-diff | Schema diff |
-| POST | /posts/schema-diff/generate | Generate migration file |
+| GET | /schema/diff | Live schema diff + migration SQL preview |
 | POST | /tags/upsert | Upsert tag by name |
 | GET | /tags/paginated | Tag pagination |
 | GET | /users/paginated | User pagination |

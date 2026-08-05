@@ -66,12 +66,18 @@ describeIf("[E2E] nestjs-blog API", () => {
       expect(typeof res.text).toBe("string");
     });
 
-    it("GET /schema/diff — should return schema diff info", async () => {
+    it("GET /schema/diff — should run a real diff against the live DB", async () => {
       const res = await request(server).get("/schema/diff");
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("message");
-      expect(res.body).toHaveProperty("emptyDiff");
-      expect(res.body).toHaveProperty("sampleMigration");
+      expect(res.body).toHaveProperty("inSync");
+      expect(res.body).toHaveProperty("diff");
+      expect(res.body.diff).toHaveProperty("addTables");
+      expect(res.body.diff).toHaveProperty("addColumns");
+      expect(res.body.diff).toHaveProperty("alterColumns");
+      expect(res.body).toHaveProperty("migrationPreview");
+      // The app boots with synchronize: true, so the just-synced entities
+      // must not report missing tables.
+      expect(res.body.diff.addTables).toEqual([]);
     });
   });
 
@@ -539,24 +545,6 @@ describeIf("[E2E] nestjs-blog API", () => {
       const res = await request(server).get(`/posts/${postId}/explain`);
       expect(res.status).toBe(200);
       expect(res.body).toBeDefined();
-    });
-  });
-
-  // ===========================
-  // Post Schema Diff
-  // ===========================
-  describe("Posts — Schema Diff", () => {
-    it("GET /posts/schema-diff — should return schema diff info", async () => {
-      const res = await request(server).get("/posts/schema-diff");
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("message");
-    });
-
-    it("POST /posts/schema-diff/generate — should generate migration", async () => {
-      const res = await request(server).post("/posts/schema-diff/generate");
-      expect(res.status).toBe(201);
-      expect(res.body).toHaveProperty("content");
-      expect(typeof res.body.content).toBe("string");
     });
   });
 

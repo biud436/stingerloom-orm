@@ -10,8 +10,6 @@ import {
   CursorPaginationResult,
   PagePaginationResult,
   ExplainResult,
-  SchemaDiff,
-  SchemaDiffMigrationGenerator,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Inject } from "@nestjs/common";
@@ -110,27 +108,6 @@ export class PostsService {
    */
   async explainQuery(id: number): Promise<ExplainResult> {
     return this.postRepository.explain({ where: { id } });
-  }
-
-  /**
-   * schemaDiff — returns the diff between current entity metadata and the DB schema.
-   */
-  async getSchemaDiff(): Promise<object> {
-    const diff = new SchemaDiff();
-    // Return DDL derived from entity metadata only, without a driver/DB connection
-    return { message: "SchemaDiff available — connect driver to compare with DB", diff };
-  }
-
-  /**
-   * generateMigration — generates a Migration file from the Schema Diff.
-   */
-  async generateMigration(): Promise<{ content: string }> {
-    const generator = new SchemaDiffMigrationGenerator();
-    const content = generator.generate(
-      { addTables: [], dropTables: [], addColumns: [], dropColumns: [], alterColumns: [] },
-      "mysql",
-    );
-    return { content };
   }
 
   /**
