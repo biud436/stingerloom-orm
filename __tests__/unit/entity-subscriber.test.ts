@@ -190,7 +190,11 @@ describe("EntitySubscriber", () => {
 
       expect(beforeInsertSpy).toHaveBeenCalledTimes(1);
       const event: InsertEvent<User> = beforeInsertSpy.mock.calls[0][0];
-      expect(event.entity).toEqual({ name: "Alice", email: "alice@test.com" });
+      // event.entity IS the input instance; after the INSERT completes the
+      // generated PK is written back onto it (afterInsert contract), so the
+      // captured reference carries `id` by assertion time — match the input
+      // fields instead of asserting exact shape.
+      expect(event.entity).toMatchObject({ name: "Alice", email: "alice@test.com" });
       expect(event.manager).toBe(em);
     });
 

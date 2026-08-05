@@ -1,16 +1,25 @@
-import { Controller, Get } from "@nestjs/common";
+import { Controller, Get, Inject } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { AppService } from "./app.service";
 import {
+  EntityManager,
   SchemaDiff,
   SchemaDiffMigrationGenerator,
   SchemaDiffResult,
 } from "@stingerloom/orm";
+import { User } from "./users/user.entity";
+import { Post } from "./posts/post.entity";
+import { Tag } from "./tags/tag.entity";
+import { Category } from "./categories/category.entity";
 
 @ApiTags("App")
 @Controller()
 export class AppController {
-  constructor(private readonly appService: AppService) {}
+  constructor(
+    private readonly appService: AppService,
+    @Inject(EntityManager)
+    private readonly em: EntityManager,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: "Health check", description: "Returns a welcome message with available API routes." })
@@ -20,45 +29,48 @@ export class AppController {
   }
 
   /**
-   * GET /schema/diff -- SchemaDiff demo.
-   * Returns the SchemaDiff and SchemaDiffMigrationGenerator capabilities.
-   * In a real scenario, this would compare entity metadata against the live DB.
+   * GET /schema/diff — compares the registered entity metadata against the
+   * live database's INFORMATION_SCHEMA and returns the real diff, plus the
+   * up/down SQL a generated migration would run.
    */
   @Get("schema/diff")
   @ApiOperation({
-    summary: "Schema Diff demo",
+    summary: "Schema diff against the live database",
     description:
-      "Returns an empty SchemaDiffResult and a sample migration string. " +
-      "In a real scenario, connect to a live DB and pass entities + queryRunner to diff() for real results.",
+      "Runs SchemaDiff.diff() with the app's entities against the connected " +
+      "MySQL database and returns the detected changes. When changes exist, " +
+      "migrationPreview carries the up/down SQL from " +
+      "SchemaDiffMigrationGenerator.dryRun(). With synchronize enabled the " +
+      "diff is normally empty.",
   })
   @ApiResponse({
     status: 200,
-    description: "SchemaDiff result with empty diff and sample migration content",
+    description: "Real SchemaDiffResult and the migration SQL preview",
   })
-  getSchemaDiff(): {
-    message: string;
-    emptyDiff: SchemaDiffResult;
-    sampleMigration: string;
-  } {
-    const diff = new SchemaDiff();
-    const generator = new SchemaDiffMigrationGenerator();
+  async getSchemaDiff(): Promise<{
+    inSync: boolean;
+    diff: SchemaDiffResult;
+    migrationPreview: { up: string[]; down: string[] };
+  }> {
+    const schemaDiff = new SchemaDiff();
+    const diff = await schemaDiff.diff(
+      [User, Post, Tag, Category],
+      { query: (sql) => this.em.query(sql as string) },
+      "mysql",
+    );
 
-    const emptyDiff: SchemaDiffResult = {
-      addTables: [],
-      dropTables: [],
-      addColumns: [],
-      dropColumns: [],
-      alterColumns: [],
-    };
+    const hasChanges =
+      diff.addTables.length > 0 ||
+      diff.dropTables.length > 0 ||
+      diff.addColumns.length > 0 ||
+      diff.dropColumns.length > 0 ||
+      diff.alterColumns.length > 0 ||
+      (diff.renamedColumns?.length ?? 0) > 0;
 
-    const sampleMigration = generator.generate(emptyDiff, "mysql");
+    const migrationPreview = hasChanges
+      ? new SchemaDiffMigrationGenerator().dryRun(diff, "mysql")
+      : { up: [], down: [] };
 
-    return {
-      message:
-        "SchemaDiff compares entity metadata with DB INFORMATION_SCHEMA. " +
-        "Connect to a live DB and pass entities + queryRunner to diff() for real results.",
-      emptyDiff,
-      sampleMigration,
-    };
+    return { inSync: !hasChanges, diff, migrationPreview };
   }
 }

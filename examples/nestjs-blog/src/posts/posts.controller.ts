@@ -102,28 +102,6 @@ export class PostsController {
     );
   }
 
-  /** Schema Diff -- compare entity metadata vs DB schema */
-  @Get("schema-diff")
-  @ApiOperation({
-    summary: "Schema Diff",
-    description: "엔티티 메타데이터와 DB 스키마 차이를 반환합니다.",
-  })
-  @ApiResponse({ status: 200, description: "Schema diff information" })
-  schemaDiff() {
-    return this.postsService.getSchemaDiff();
-  }
-
-  /** Generate migration file from Schema Diff */
-  @Post("schema-diff/generate")
-  @ApiOperation({
-    summary: "Generate migration from Schema Diff",
-    description: "Schema Diff 기반으로 Migration 파일 내용을 생성합니다.",
-  })
-  @ApiResponse({ status: 201, description: "Generated migration file content" })
-  generateMigration() {
-    return this.postsService.generateMigration();
-  }
-
   /** explain -- query execution plan */
   @Get(":id/explain")
   @ApiOperation({

@@ -224,8 +224,9 @@ pnpm start
 
 | Project | Description |
 |---------|-------------|
+| [vanilla-todo-sqlite](./examples/vanilla-todo-sqlite) | Code-first `defineEntity` in a plain script — no NestJS, no decorators, SQLite in-memory |
 | [nestjs-cats](./examples/nestjs-cats) | CRUD, relations, soft delete, cursor pagination, `EntitySubscriber` |
-| [nestjs-blog](./examples/nestjs-blog) | ManyToMany, upsert, 59 e2e tests (Users / Posts / Tags / Categories) |
+| [nestjs-blog](./examples/nestjs-blog) | ManyToMany, upsert, 57 e2e tests (Users / Posts / Tags / Categories) |
 | [nestjs-linear-clone](./examples/nestjs-linear-clone) | Linear/Jira-style issue tracker — production-grade SQL patterns (CTEs, window functions, complex queries) |
 | [nestjs-todo](./examples/nestjs-todo) | Minimal CRUD — bare-minimum entity + repository setup |
 | [nestjs-todo-sqlite](./examples/nestjs-todo-sqlite) | Minimal CRUD on SQLite via `better-sqlite3` |
