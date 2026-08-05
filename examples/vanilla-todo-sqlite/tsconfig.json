@@ -1,0 +1,18 @@
+{
+  // Deliberately no "experimentalDecorators" and no "emitDecoratorMetadata":
+  // code-first entities (defineEntity + t) need neither. This example type
+  // checks and runs under the plain TypeScript defaults that esbuild, swc,
+  // Vite, and Bun assume.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

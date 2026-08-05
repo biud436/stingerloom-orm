@@ -6,6 +6,7 @@ This directory contains example projects demonstrating how to use Stingerloom OR
 
 | Example | Database | Highlights |
 |---------|----------|-----------|
+| [vanilla-todo-sqlite](./vanilla-todo-sqlite) | SQLite | Code-first `defineEntity` in a plain script — no NestJS, no decorators |
 | [nestjs-todo-sqlite](./nestjs-todo-sqlite) | SQLite | No DB server — runs in-process |
 | [nestjs-todo](./nestjs-todo) | MySQL | Minimal CRUD baseline |
 | [nestjs-cats](./nestjs-cats) | MySQL | Full module wiring + EntitySubscriber + cursor pagination |
@@ -21,9 +22,10 @@ All examples follow the same setup and script conventions:
 - **pnpm workspace.** Every example depends on the ORM via `workspace:*`, so
   use pnpm (not npm/yarn) and build the ORM first: `pnpm build` at the
   repository root, then `pnpm install` inside the example.
-- **Scripts.** Every example provides `build`, `start`, `start:dev`, `test`,
-  and `test:e2e`. The examples ship e2e suites only, so `pnpm test` is an
-  alias of `pnpm test:e2e`.
+- **Scripts.** Every NestJS example provides `build`, `start`, `start:dev`,
+  `test`, and `test:e2e`. The examples ship e2e suites only, so `pnpm test` is
+  an alias of `pnpm test:e2e`. The plain-script `vanilla-todo-sqlite` example
+  has just `start` and `typecheck`.
 - **Jest e2e config location.** Most examples keep it at `test/jest-e2e.json`;
   `nestjs-blog`, `nestjs-linear-clone`, and `nestjs-multitenant` keep it at
   the package root as `jest-e2e.json`. The `test` / `test:e2e` scripts always
@@ -32,6 +34,29 @@ All examples follow the same setup and script conventions:
   reachable MySQL or PostgreSQL server (connection via env vars — see each
   example's README). Suites that hit a real server are additionally gated
   behind `INTEGRATION_TEST=true` where noted.
+
+---
+
+### [vanilla-todo-sqlite](./vanilla-todo-sqlite)
+
+Code-first entities in a plain TypeScript script — the decorator-free side of
+the ORM with the fewest moving parts. No NestJS, no database server, and a
+`tsconfig.json` that deliberately omits `experimentalDecorators` /
+`emitDecoratorMetadata`.
+
+- **`defineEntity` + `t` + `InferEntity`** — schema and TypeScript type from
+  one declaration
+- **Lifecycle hooks without decorators**, typed JSON columns, enum defaults,
+  optimistic locking, soft delete, automatic timestamps
+- **SQLite in-memory** — `pnpm start` runs the whole tour in one process
+
+**Quick Start**:
+
+```bash
+cd vanilla-todo-sqlite
+pnpm install
+pnpm start
+```
 
 ---
 

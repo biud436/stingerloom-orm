@@ -1,0 +1,22 @@
+{
+  "name": "vanilla-todo-sqlite",
+  "version": "0.0.1",
+  "description": "Code-first Stingerloom ORM example: defineEntity + t + InferEntity, no NestJS, no decorators, SQLite in-memory",
+  "author": "",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@stingerloom/orm": "workspace:*",
+    "better-sqlite3": "^12.11.1",
+    "reflect-metadata": "^0.2.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

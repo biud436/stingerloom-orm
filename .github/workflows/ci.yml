@@ -58,6 +58,7 @@ jobs:
             nestjs-todo-sqlite,
             nestjs-linear-clone,
             prisma-import-demo,
+            vanilla-todo-sqlite,
           ]
     steps:
       - uses: actions/checkout@v4

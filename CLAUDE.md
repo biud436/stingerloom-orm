@@ -63,6 +63,7 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker O
 │   ├── nestjs-multitenant/     # NestJS 멀티테넌시 예제 (PostgreSQL 스키마 격리)
 │   ├── nestjs-todo/            # NestJS 최소 CRUD 예제
 │   ├── nestjs-todo-sqlite/     # NestJS SQLite 예제
+│   ├── vanilla-todo-sqlite/    # 비 NestJS code-first 스크립트 예제 (defineEntity, SQLite in-memory)
 │   └── prisma-import-demo/     # Prisma 스키마 → Stingerloom 마이그레이션 예제
 ├── mcp/                        # MCP 서버 (MySQL, PostgreSQL 직접 접근)
 ├── docs/                       # 영어 문서 (50개 파일)
