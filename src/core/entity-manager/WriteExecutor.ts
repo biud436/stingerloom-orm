@@ -471,6 +471,7 @@ export class WriteExecutor {
               pkVal,
               session,
             );
+            this.assignGeneratedPk(item, this.ctx.propKey(pk), pkVal);
             await this.cascadeHandler.runHooks(entity, item, "afterInsert");
             await this.eventEmitter.emit("afterInsert", {
               entity,
@@ -532,6 +533,7 @@ export class WriteExecutor {
             ? okPacket(queryResult)?.insertId
             : primaryKeyValue;
           await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
+          this.assignGeneratedPk(item, this.ctx.propKey(pk), cascadeId);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
           await this.ctx.notifySubscribers(entity, "afterInsert", {
@@ -546,6 +548,7 @@ export class WriteExecutor {
           const returnedRow = returnedRows[0];
           const cascadeId = returnedRow[pk.name];
           await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
+          this.assignGeneratedPk(item, this.ctx.propKey(pk), cascadeId);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
           await this.ctx.notifySubscribers(entity, "afterInsert", {
@@ -586,6 +589,7 @@ export class WriteExecutor {
             ? Number(runResult?.lastInsertRowid)
             : primaryKeyValue;
           await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
+          this.assignGeneratedPk(item, this.ctx.propKey(pk), cascadeId);
           await this.cascadeHandler.runHooks(entity, item, "afterInsert");
           await this.eventEmitter.emit("afterInsert", { entity, data: item });
           await this.ctx.notifySubscribers(entity, "afterInsert", {
@@ -1932,6 +1936,22 @@ export class WriteExecutor {
     by: number = 1,
   ): Promise<{ affected: number }> {
     return this.applyNumericDelta(entity, where, column, by, "-");
+  }
+
+  /**
+   * The afterInsert contract is "the entity now has its ID" — hooks,
+   * subscribers, and the event payload all receive the original input
+   * instance, so the DB-generated key must be written back onto it before
+   * they fire. Skips app-provided keys (uuid strategies, manual PKs).
+   */
+  private assignGeneratedPk(
+    item: unknown,
+    pkProp: string,
+    value: unknown,
+  ): void {
+    if (value == null || item == null) return;
+    const record = item as Record<string, unknown>;
+    if (record[pkProp] == null) record[pkProp] = value;
   }
 
   /**
