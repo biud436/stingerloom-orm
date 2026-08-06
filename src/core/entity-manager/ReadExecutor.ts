@@ -431,11 +431,20 @@ export class ReadExecutor {
         }
       }
 
+      // Qualify orderBy references the same way select/where/groupBy are —
+      // with eager joins present, a shared column name (id, createdAt, ...)
+      // is otherwise ambiguous. TPT children route through tptQualifyColumn
+      // so parent-only columns are qualified with the parent table.
       for (const key in orderBy) {
         const value = orderBy[key];
         if (value) {
           const dbCol = propToCol.get(key) ?? key;
-          orderByMap.push({ column: this.ctx.wrap(dbCol), direction: value });
+          const column = tptQualifyColumn
+            ? tptQualifyColumn(dbCol)
+            : hasEagerJoins
+              ? `${this.ctx.wrap(tableName)}.${this.ctx.wrap(dbCol)}`
+              : this.ctx.wrap(dbCol);
+          orderByMap.push({ column, direction: value });
         }
       }
 
