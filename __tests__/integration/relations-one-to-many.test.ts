@@ -204,6 +204,24 @@ describe.each(getTestDrivers())(
         expect(child.parent.name).toBe("Named Parent");
       });
 
+      it("양쪽 테이블에 있는 컬럼명(id)으로 orderBy해도 eager JOIN과 함께 동작해야 한다 (V3-T0-1)", async () => {
+        const parent = await parentRepo.save({ name: "OrderBy Parent" });
+        await childRepo.save({ title: "ob-1", parentFk: parent.id });
+        await childRepo.save({ title: "ob-2", parentFk: parent.id });
+        await childRepo.save({ title: "ob-3", parentFk: parent.id });
+
+        // parent 관계가 eager라 JOIN이 항상 붙음 — orderBy가 루트 테이블로
+        // 한정되지 않으면 양쪽에 존재하는 id가 ambiguous로 죽는다.
+        const rows = await em.find(entities.ChildClass, {
+          orderBy: { id: "DESC" },
+        });
+
+        expect(rows.length).toBeGreaterThanOrEqual(3);
+        const ids = rows.map((r: any) => r.id);
+        expect([...ids].sort((a: number, b: number) => b - a)).toEqual(ids);
+        expect(rows[0].parent).toBeDefined();
+      });
+
       it("FK가 null인 자식의 parent는 null이어야 한다", async () => {
         const saved = await childRepo.save({ title: "No Parent", parentFk: null });
 
