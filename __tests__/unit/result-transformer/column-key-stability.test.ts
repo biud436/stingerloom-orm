@@ -71,7 +71,7 @@ describe("ResultTransformer / column-key stability regression", () => {
       // name !== propertyKey, remap entry `created_at -> createdAt`.
       @Expose()
       @Column({ type: "datetime", name: "created_at" })
-      createdAt!: string;
+      createdAt!: Date;
     }
 
     it("preserves both straight-through and remapped keys on the same row", () => {
@@ -83,7 +83,11 @@ describe("ResultTransformer / column-key stability regression", () => {
       const m = rt.toEntity(Mixed, result) as Mixed;
       expect(m.id).toBe(1);
       expect(m.title).toBe("Hello");
-      expect(m.createdAt).toBe("2026-04-09T00:00:00Z");
+      // datetime columns hydrate as Date under the remapped key (V3-T1-1).
+      expect(m.createdAt).toBeInstanceOf(Date);
+      expect(m.createdAt.getTime()).toBe(
+        new Date("2026-04-09T00:00:00Z").getTime(),
+      );
       // The snake_case key must NOT survive.
       expect((m as any).created_at).toBeUndefined();
     });

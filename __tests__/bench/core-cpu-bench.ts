@@ -82,6 +82,24 @@ class BenchPost {
   author?: BenchUser;
 }
 
+@Entity({ name: "bench_event" })
+class BenchEvent {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "varchar", length: 100 })
+  name!: string;
+
+  @Column({ type: "datetime" })
+  startsAt!: Date;
+
+  @Column({ type: "datetime" })
+  endsAt!: Date;
+
+  @Column({ type: "date", nullable: true })
+  eventDate?: Date;
+}
+
 // ── Timing helpers ─────────────────────────────────────────
 
 interface BenchResult {
@@ -136,7 +154,7 @@ async function main() {
     database: ":memory:",
     synchronize: false,
     logging: false,
-    entities: [BenchUser, BenchPost],
+    entities: [BenchUser, BenchPost, BenchEvent],
   } as any);
 
   const conn = DatabaseClient.getInstance().getConnection();
@@ -160,6 +178,16 @@ async function main() {
       "views" INTEGER NOT NULL,
       "authorId" INTEGER,
       FOREIGN KEY ("authorId") REFERENCES "bench_user"("id")
+    )
+  `);
+
+  await conn.query(`
+    CREATE TABLE "bench_event" (
+      "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+      "name" TEXT NOT NULL,
+      "startsAt" TEXT NOT NULL,
+      "endsAt" TEXT NOT NULL,
+      "eventDate" TEXT
     )
   `);
 
@@ -233,6 +261,25 @@ async function main() {
   );
   await bench("count", 1000, 100, () =>
     em.count(BenchUser, { city: "seoul" } as any),
+  );
+
+  // Temporal hydration path: datetime/date TEXT → Date conversion per row
+  // (entities above have no temporal columns, so this is the only scenario
+  // that exercises the default temporal read transform).
+  await em.insertMany(
+    BenchEvent,
+    Array.from({ length: 1000 }, (_, i) => ({
+      name: `event-${i}`,
+      startsAt: new Date(Date.UTC(2026, i % 12, (i % 27) + 1, 10, 30, 0)),
+      endsAt: new Date(Date.UTC(2026, i % 12, (i % 27) + 1, 12, 0, 0)),
+      eventDate: i % 4 ? new Date(Date.UTC(2026, i % 12, (i % 27) + 1)) : undefined,
+    })),
+  );
+  await bench("find 100 rows temporal", 300, 30, () =>
+    em.find(BenchEvent, { limit: [0, 100] }),
+  );
+  await bench("find 1000 rows temporal", 100, 10, () =>
+    em.find(BenchEvent, { limit: [0, 1000] }),
   );
 
   console.log("\nJSON_RESULTS " + JSON.stringify(results));

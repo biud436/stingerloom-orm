@@ -799,16 +799,12 @@ describe("[Integration] SQLite: Create/Update Timestamps", () => {
 
     expect(saved).toBeDefined();
 
-    // SQLite returns datetime as string; verify non-null and parseable
-    expect(saved.createdAt).toBeDefined();
-    expect(saved.updatedAt).toBeDefined();
+    // Temporal columns hydrate as Date on SQLite too (V3-T1-1)
+    expect(saved.createdAt).toBeInstanceOf(Date);
+    expect(saved.updatedAt).toBeInstanceOf(Date);
 
-    const createdAt = saved.createdAt instanceof Date
-      ? saved.createdAt
-      : new Date(saved.createdAt);
-    const updatedAt = saved.updatedAt instanceof Date
-      ? saved.updatedAt
-      : new Date(saved.updatedAt);
+    const createdAt: Date = saved.createdAt;
+    const updatedAt: Date = saved.updatedAt;
 
     expect(createdAt.getTime()).not.toBeNaN();
     expect(updatedAt.getTime()).not.toBeNaN();
@@ -820,9 +816,7 @@ describe("[Integration] SQLite: Create/Update Timestamps", () => {
   it("UPDATE should change updatedAt but keep createdAt", async () => {
     const saved: any = await conn.em.save(TsEntity, { title: "Original" });
 
-    const originalCreatedAt = saved.createdAt instanceof Date
-      ? saved.createdAt.toISOString()
-      : String(saved.createdAt);
+    expect(saved.createdAt).toBeInstanceOf(Date);
 
     // Wait to ensure timestamps differ
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -833,23 +827,16 @@ describe("[Integration] SQLite: Create/Update Timestamps", () => {
     });
 
     expect(updated).toBeDefined();
-
-    const updatedCreatedAt = updated.createdAt instanceof Date
-      ? updated.createdAt.toISOString()
-      : String(updated.createdAt);
+    expect(updated.createdAt).toBeInstanceOf(Date);
+    expect(updated.updatedAt).toBeInstanceOf(Date);
 
     // createdAt should not change
-    expect(updatedCreatedAt).toBe(originalCreatedAt);
+    expect(updated.createdAt.toISOString()).toBe(saved.createdAt.toISOString());
 
     // updatedAt should be >= original updatedAt
-    const origUpdated = saved.updatedAt instanceof Date
-      ? saved.updatedAt
-      : new Date(saved.updatedAt);
-    const newUpdated = updated.updatedAt instanceof Date
-      ? updated.updatedAt
-      : new Date(updated.updatedAt);
-
-    expect(newUpdated.getTime()).toBeGreaterThanOrEqual(origUpdated.getTime());
+    expect(updated.updatedAt.getTime()).toBeGreaterThanOrEqual(
+      saved.updatedAt.getTime(),
+    );
   });
 
   it("multiple inserts should each get their own timestamps", async () => {
@@ -859,18 +846,13 @@ describe("[Integration] SQLite: Create/Update Timestamps", () => {
 
     const saved2: any = await conn.em.save(TsEntity, { title: "Second" });
 
-    expect(saved1.createdAt).toBeDefined();
-    expect(saved2.createdAt).toBeDefined();
-
-    const t1 = saved1.createdAt instanceof Date
-      ? saved1.createdAt
-      : new Date(saved1.createdAt);
-    const t2 = saved2.createdAt instanceof Date
-      ? saved2.createdAt
-      : new Date(saved2.createdAt);
+    expect(saved1.createdAt).toBeInstanceOf(Date);
+    expect(saved2.createdAt).toBeInstanceOf(Date);
 
     // Second insert should have a createdAt >= first
-    expect(t2.getTime()).toBeGreaterThanOrEqual(t1.getTime());
+    expect(saved2.createdAt.getTime()).toBeGreaterThanOrEqual(
+      saved1.createdAt.getTime(),
+    );
   });
 
   it("findOne should return entity with timestamp fields populated", async () => {
@@ -884,9 +866,9 @@ describe("[Integration] SQLite: Create/Update Timestamps", () => {
     expect(found).not.toBeNull();
     expect(found.title).toBe("Findable");
 
-    // Timestamps should be present
-    expect(found.createdAt).toBeDefined();
-    expect(found.updatedAt).toBeDefined();
+    // Timestamps hydrate as Date (V3-T1-1)
+    expect(found.createdAt).toBeInstanceOf(Date);
+    expect(found.updatedAt).toBeInstanceOf(Date);
   });
 });
 
