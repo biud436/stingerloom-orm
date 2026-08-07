@@ -20,6 +20,10 @@ import { ClazzType } from "../utils";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
 import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
 import { isJsonColumnType, makeDefaultJsonColumnRead } from "./JsonColumnTransformer";
+import {
+  isTemporalColumnType,
+  defaultTemporalColumnRead,
+} from "./TemporalColumnTransformer";
 
 export type ForeignObject<T = any> = { [key: string]: T };
 
@@ -173,6 +177,12 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
         // JS boolean on read. PostgreSQL returns true/false already, in
         // which case Boolean() is the identity.
         transformColumns.push({ key, from: (raw) => Boolean(raw) });
+      } else if (isTemporalColumnType(col.options.type)) {
+        // better-sqlite3 returns temporal columns as the stored TEXT while
+        // pg/mysql2 return Date; normalize on read so the entity's declared
+        // Date type holds on every driver. Date values pass through, so this
+        // is a cheap instanceof check on PostgreSQL/MySQL.
+        transformColumns.push({ key, from: defaultTemporalColumnRead });
       }
     }
   }
