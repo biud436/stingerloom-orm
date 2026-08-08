@@ -48,6 +48,14 @@ async function main(): Promise<void> {
   );
   const documented = await em.findOne(Todo, { where: { title: "Write the changelog" } });
   console.log(`  meta.tags -> ${documented!.meta?.tags?.join(", ")} (typed, no cast)`);
+  // The inverse side works too — Project ↔ Todo is a mutual reference.
+  const inboxWithTodos = await em.findOne(Project, {
+    where: { id: inbox.id },
+    relations: ["todos"],
+  });
+  console.log(
+    `  inverse load: project "${inboxWithTodos!.name}" has ${inboxWithTodos!.todos?.length} todos`,
+  );
 
   console.log("\n4. Update — updateTimestamp refreshes, version column tracks writes");
   const updated = await em.update(Todo, { id: shipIt.id }, { done: true });

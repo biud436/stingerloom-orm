@@ -687,7 +687,9 @@ await em.save(Article, { title: "Hello World" });
 
 ## 관계
 
-관계 빌더는 지연 `() => TargetEntity`를 받아요(두 엔티티가 서로 참조할 수 있도록 지연). `manyToOne` / `oneToOne`은 관련 행 타입을, `oneToMany` / `manyToMany`는 배열을 추론해요. 관계 필드는 추론 타입에서 **선택적(optional)** 이에요 — `relations: [...]`로 요청할 때만 채워져요.
+관계 빌더는 지연 `() => TargetEntity`를 받아요(런타임에 두 엔티티가 서로 참조할 수 있도록 지연). `manyToOne` / `oneToOne`은 관련 행 타입을, `oneToMany` / `manyToMany`는 배열을 추론해요. 관계 필드는 추론 타입에서 **선택적(optional)** 이에요 — `relations: [...]`로 요청할 때만 채워져요.
+
+두 엔티티가 **서로를** 참조할 때는 타입 쪽에 작은 추가 단계가 필요합니다 — 아래 [상호 참조](#상호-참조)를 참고하세요.
 
 | 빌더 | 시그니처 | 추론 필드 |
 | --- | --- | --- |
@@ -697,10 +699,13 @@ await em.save(Article, { title: "Hello World" });
 | `t.manyToMany` | `(() => Target, options?)` | `Target[]?` |
 
 ```typescript
+import { defineEntity, t, InferEntity, AnyEntityClass } from "@stingerloom/orm";
+
 export const Author = defineEntity("authors", {
   id:    t.int().primary().generated(),
   name:  t.varchar(120),
-  posts: t.oneToMany(() => Post, "author"),
+  // Author ↔ Post는 순환 참조: 이쪽에 명시적 행 타입 + 주석 붙은 thunk를 사용
+  posts: t.oneToMany<Post>((): AnyEntityClass => Post, "author"),
 });
 
 export const Post = defineEntity("posts", {
@@ -718,13 +723,55 @@ export const Tag = defineEntity("tags", {
   name: t.varchar(60).unique(),
 });
 
-export type Author = InferEntity<typeof Author>; // posts?: Post[]
-export type Post = InferEntity<typeof Post>;     // author?: Author; tags?: Tag[]
+// 서로 참조하는 쌍은 인터페이스 병합으로 선언해요(지연 해석):
+export interface Author extends InferEntity<typeof Author> {} // posts?: Post[]
+export interface Post extends InferEntity<typeof Post> {}     // author?: Author; tags?: Tag[]
+// Tag는 한 방향으로만 참조되므로 일반 타입 별칭이면 충분해요:
+export type Tag = InferEntity<typeof Tag>;
 ```
 
 ::: warning 외래 키 컬럼을 선언하세요
 `manyToOne` / 소유측 `oneToOne`은 외래 키 컬럼을 실제 컬럼(`authorId: t.int().name("author_id")`)으로 선언해야 스키마 동기화 시 생성돼요 — 데코레이터 API가 `@ManyToOne`에 FK용 `@Column`/`@RelationColumn`을 짝지우는 것과 똑같죠. 그러면 관계의 `joinColumn`이 그 컬럼을 가리켜요. 또는 관계 옵션에 `relationColumn: { … }`을 넘겨 FK 메타데이터를 인라인으로 선언할 수도 있어요.
 :::
+
+### 상호 참조
+
+서로의 타입을 추론해야 하는 두 `defineEntity` const는 둘 다 추론될 수 없습니다 — TypeScript가 이렇게 보고해요:
+
+```
+error TS7022: 'Author' implicitly has type 'any' because it does not have a
+type annotation and is referenced directly or indirectly in its own initializer.
+```
+
+이건 `const` 타입 추론의 본질적 한계입니다(클래스 선언은 멤버 타입이 지연 해석되어 걸리지 않아요). 지원되는 패턴은 순환의 **한쪽**에 다음 세 가지를 적용해서 고리를 끊습니다:
+
+```typescript
+export const Author = defineEntity("authors", {
+  id:    t.int().primary().generated(),
+  //               ① 명시적 행 타입      ② 주석 붙은 thunk
+  posts: t.oneToMany<Post>((): AnyEntityClass => Post, "author"),
+});
+export const Post = defineEntity("posts", {
+  id:     t.int().primary().generated(),
+  author: t.manyToOne(() => Author, { joinColumn: "author_id" }), // 그대로
+});
+// ③ `type X = InferEntity<typeof X>` 대신 인터페이스 병합
+export interface Author extends InferEntity<typeof Author> {}
+export interface Post extends InferEntity<typeof Post> {}
+```
+
+세 가지 모두 각자 역할이 있습니다:
+
+1. **`t.oneToMany<Post>(…)`** — 관련 행 타입을 명시적으로 넘겨서 `Author` 타입이 `Post`의 이니셜라이저를 추론할 필요를 없앱니다. 모든 관계 빌더가 이 선행 타입 인자를 받아요(`t.manyToOne<Author>(…)`, `t.manyToMany<Course>(…)`, `t.oneToOne<Profile>(…)`).
+2. **`(): AnyEntityClass => Post`** — thunk의 반환 타입 주석입니다. 없으면 컴파일러가 thunk 본문에서 반환 타입을 추론해야 하는데, 그 순간 빌더 시그니처와 무관하게 다시 순환에 빠져요. `AnyEntityClass`는 `@stingerloom/orm`에서 export됩니다.
+3. **`interface Author extends InferEntity<typeof Author> {}`** — 행 타입을 인터페이스 병합으로 선언합니다. 인터페이스는 멤버를 지연 해석하지만, `type` 별칭은 사용 지점에서 즉시 해석되어 순환에 다시 들어가요.
+
+참고:
+
+- 순환당 한 간선만 처리하면 충분합니다 — `A → B → C → A` 삼각형이면 관계 하나에만 패턴을 적용해도 세 엔티티가 모두 풀려요.
+- 명시적 타입 인자 폼에서는 `mappedBy`가 일반 `string`으로 검사됩니다(대상의 키를 조회하면 다시 순환에 들어가므로). 그 인자 하나는 자동완성을 잃어요.
+- ①과 ②는 반드시 함께 써야 합니다: 주석만 있으면 필드가 `any[]`로 남고, 타입 인자만 있으면 여전히 TS7022가 발생해요.
+- 런타임 동작은 어느 폼이든 동일합니다 — thunk는 모든 엔티티가 정의된 뒤에 호출되므로 순전히 타입 수준의 문제예요.
 
 ### 관계 옵션
 
