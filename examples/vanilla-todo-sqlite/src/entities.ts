@@ -1,4 +1,4 @@
-import { defineEntity, t, InferEntity } from "@stingerloom/orm";
+import { defineEntity, t, InferEntity, AnyEntityClass } from "@stingerloom/orm";
 
 /**
  * Code-first entities: one declaration is the table schema AND the TypeScript
@@ -10,6 +10,10 @@ export const Project = defineEntity("projects", {
   id: t.int().primary().generated(),
   name: t.varchar(120).unique(),
   createdAt: t.datetime().createTimestamp(),
+  // Project ↔ Todo reference each other, so this side breaks the type-inference
+  // cycle: explicit row type + annotated thunk (see "Mutual references" in the
+  // define-entity docs). Runtime metadata is identical to the plain form.
+  todos: t.oneToMany<Todo>((): AnyEntityClass => Todo, "project"),
 });
 
 export const Todo = defineEntity(
@@ -50,6 +54,8 @@ export const Todo = defineEntity(
   },
 );
 
-// The row types, inferred straight from the builders above.
-export type Project = InferEntity<typeof Project>;
-export type Todo = InferEntity<typeof Todo>;
+// The row types, inferred straight from the builders above. The mutually
+// referencing pair is declared by interface merging (interfaces resolve
+// lazily; `type` aliases would re-enter the inference cycle).
+export interface Project extends InferEntity<typeof Project> {}
+export interface Todo extends InferEntity<typeof Todo> {}

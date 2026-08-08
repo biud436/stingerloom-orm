@@ -680,6 +680,7 @@ export {
   ValidationDef,
 } from "./schema/EntitySchemaTypes";
 export {
+  AnyEntityClass,
   BuilderKind,
   ColumnBuilder,
   ColumnTypes,
@@ -687,6 +688,7 @@ export {
   ManyToManyBuilderOptions,
   ManyToOneBuilderOptions,
   OneToOneBuilderOptions,
+  RelatedRow,
   RelationBuilder,
   SchemaBuilder,
   t,

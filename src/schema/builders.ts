@@ -184,6 +184,39 @@ export class ComputedBuilder<TInfer> extends SchemaBuilder<TInfer, "computed"> {
   }
 }
 
+/**
+ * Loose entity-class reference for relation target thunks.
+ *
+ * Used to break the inference cycle when two `defineEntity` entities reference
+ * each other: annotate the thunk's return type on one side of the cycle and
+ * pass the related row type explicitly, so neither entity's type depends on
+ * inferring the other's initializer.
+ *
+ * @example
+ * ```ts
+ * export const Author = defineEntity("authors", {
+ *   id:    t.int().primary().generated(),
+ *   posts: t.oneToMany<Post>((): AnyEntityClass => Post, "author"),
+ * });
+ * export const Post = defineEntity("posts", {
+ *   id:     t.int().primary().generated(),
+ *   author: t.manyToOne(() => Author, { joinColumn: "author_id" }),
+ * });
+ * export interface Author extends InferEntity<typeof Author> {}
+ * export interface Post extends InferEntity<typeof Post> {}
+ * ```
+ */
+export type AnyEntityClass = ClazzType;
+
+/**
+ * Row type of a relation field: the explicitly supplied shape `S` when given
+ * (mutual-reference form), otherwise the instance type of the inferred target
+ * class `C`.
+ */
+export type RelatedRow<S, C extends ClazzType> = [S] extends [never]
+  ? InstanceType<C>
+  : S;
+
 /** Options for {@link t.manyToOne}. Mirrors `ManyToOneRelationDef` minus `kind`/`target`. */
 export interface ManyToOneBuilderOptions {
   joinColumn?: string;
@@ -284,43 +317,54 @@ export const t = {
     column<E>({ type: "enum", enumValues: values as unknown as string[] }),
 
   // ── relations ────────────────────────────────────────────────────────────
-  manyToOne: <C extends ClazzType>(
+  // Each factory takes an optional leading shape param `S` for the
+  // mutual-reference form (`t.manyToOne<Author>((): AnyEntityClass => Author)`);
+  // without it, the row type is inferred from the target thunk as before.
+  // `NoInfer` keeps the contextual type of the surrounding `defineEntity`
+  // column map (`SchemaBuilder<any, any>`) from polluting `S` with `any`.
+  manyToOne: <S = never, C extends ClazzType = ClazzType>(
     target: () => C,
     options?: ManyToOneBuilderOptions,
   ) =>
-    new RelationBuilder<InstanceType<C>>({
+    new RelationBuilder<NoInfer<RelatedRow<S, C>>>({
       kind: "manyToOne",
       target,
       ...options,
     }),
 
-  oneToMany: <C extends ClazzType>(
+  oneToMany: <S = never, C extends ClazzType = ClazzType>(
     target: () => C,
-    mappedBy: (keyof InstanceType<C> & string) | (string & {}),
+    // With an explicit `S` the target's keys cannot be probed without
+    // re-entering the inference cycle, so that form accepts a plain string.
+    mappedBy: NoInfer<
+      [S] extends [never]
+        ? (keyof InstanceType<C> & string) | (string & {})
+        : string
+    >,
     options?: { cascade?: CascadeOption },
   ) =>
-    new RelationBuilder<InstanceType<C>[]>({
+    new RelationBuilder<NoInfer<RelatedRow<S, C>[]>>({
       kind: "oneToMany",
       target,
       mappedBy: mappedBy as string,
       ...options,
     }),
 
-  oneToOne: <C extends ClazzType>(
+  oneToOne: <S = never, C extends ClazzType = ClazzType>(
     target: () => C,
     options?: OneToOneBuilderOptions,
   ) =>
-    new RelationBuilder<InstanceType<C>>({
+    new RelationBuilder<NoInfer<RelatedRow<S, C>>>({
       kind: "oneToOne",
       target,
       ...options,
     }),
 
-  manyToMany: <C extends ClazzType>(
+  manyToMany: <S = never, C extends ClazzType = ClazzType>(
     target: () => C,
     options?: ManyToManyBuilderOptions,
   ) =>
-    new RelationBuilder<InstanceType<C>[]>({
+    new RelationBuilder<NoInfer<RelatedRow<S, C>[]>>({
       kind: "manyToMany",
       target,
       ...options,

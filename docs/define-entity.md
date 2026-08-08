@@ -687,7 +687,9 @@ For a new entity, the order is: `beforeInsert` hooks → `INSERT` → `afterInse
 
 ## Relations
 
-Relation builders take a lazy `() => TargetEntity` (lazy so two entities can reference each other). `manyToOne` / `oneToOne` infer the related row type; `oneToMany` / `manyToMany` infer an array. Relation fields are **optional** in the inferred type — they are populated only when you request them with `relations: [...]`.
+Relation builders take a lazy `() => TargetEntity` (lazy so two entities can reference each other at runtime). `manyToOne` / `oneToOne` infer the related row type; `oneToMany` / `manyToMany` infer an array. Relation fields are **optional** in the inferred type — they are populated only when you request them with `relations: [...]`.
+
+When two entities reference **each other**, the type side needs a small extra step — see [Mutual references](#mutual-references) below.
 
 | Builder | Signature | Inferred field |
 | --- | --- | --- |
@@ -697,10 +699,13 @@ Relation builders take a lazy `() => TargetEntity` (lazy so two entities can ref
 | `t.manyToMany` | `(() => Target, options?)` | `Target[]?` |
 
 ```typescript
+import { defineEntity, t, InferEntity, AnyEntityClass } from "@stingerloom/orm";
+
 export const Author = defineEntity("authors", {
   id:    t.int().primary().generated(),
   name:  t.varchar(120),
-  posts: t.oneToMany(() => Post, "author"),
+  // Author ↔ Post is a cycle: explicit row type + annotated thunk on this side.
+  posts: t.oneToMany<Post>((): AnyEntityClass => Post, "author"),
 });
 
 export const Post = defineEntity("posts", {
@@ -718,13 +723,55 @@ export const Tag = defineEntity("tags", {
   name: t.varchar(60).unique(),
 });
 
-export type Author = InferEntity<typeof Author>; // posts?: Post[]
-export type Post = InferEntity<typeof Post>;     // author?: Author; tags?: Tag[]
+// The mutually referencing pair uses interface merging (resolved lazily):
+export interface Author extends InferEntity<typeof Author> {} // posts?: Post[]
+export interface Post extends InferEntity<typeof Post> {}     // author?: Author; tags?: Tag[]
+// Tag is only referenced one way, so a plain type alias works:
+export type Tag = InferEntity<typeof Tag>;
 ```
 
 ::: warning Declare the foreign-key column
 A `manyToOne` / owning `oneToOne` needs its foreign-key column declared as a real column (`authorId: t.int().name("author_id")`) so it is created during schema sync — exactly as the decorator API pairs `@ManyToOne` with a `@Column`/`@RelationColumn` for the FK. The relation's `joinColumn` then points at that column. Alternatively, pass `relationColumn: { … }` in the relation options to declare the FK metadata inline.
 :::
+
+### Mutual references
+
+Two `defineEntity` consts whose types are inferred from each other cannot both be inferred — TypeScript reports:
+
+```
+error TS7022: 'Author' implicitly has type 'any' because it does not have a
+type annotation and is referenced directly or indirectly in its own initializer.
+```
+
+This is an inherent limitation of `const` type inference (class declarations don't hit it because class member types resolve lazily). The supported pattern breaks the cycle with three pieces, applied to **one side** of the cycle:
+
+```typescript
+export const Author = defineEntity("authors", {
+  id:    t.int().primary().generated(),
+  //               ① explicit row type   ② annotated thunk
+  posts: t.oneToMany<Post>((): AnyEntityClass => Post, "author"),
+});
+export const Post = defineEntity("posts", {
+  id:     t.int().primary().generated(),
+  author: t.manyToOne(() => Author, { joinColumn: "author_id" }), // unchanged
+});
+// ③ interface merging instead of `type X = InferEntity<typeof X>`
+export interface Author extends InferEntity<typeof Author> {}
+export interface Post extends InferEntity<typeof Post> {}
+```
+
+Each piece is load-bearing:
+
+1. **`t.oneToMany<Post>(…)`** supplies the related row type explicitly, so `Author`'s type no longer needs to infer it from `Post`'s initializer. Every relation builder accepts this leading type argument (`t.manyToOne<Author>(…)`, `t.manyToMany<Course>(…)`, `t.oneToOne<Profile>(…)`).
+2. **`(): AnyEntityClass => Post`** annotates the thunk's return type. Without it, the compiler must infer the thunk's return type from its body — which walks right back into the cycle, no matter what the builder's signature says. `AnyEntityClass` is exported from `@stingerloom/orm`.
+3. **`interface Author extends InferEntity<typeof Author> {}`** declares the row type by interface merging. Interfaces resolve their members lazily; a `type` alias is resolved eagerly at its use site and re-enters the cycle.
+
+Notes:
+
+- One treated edge per cycle is enough — in an `A → B → C → A` triangle, applying the pattern to a single relation fixes all three entities.
+- In the explicit-shape form, `mappedBy` is checked as a plain `string` (probing the target's keys would re-enter the cycle), so you lose autocomplete on that one argument.
+- Both pieces ① and ② must appear together: the annotation alone leaves the field typed `any[]`, and the type argument alone still fails with TS7022.
+- Runtime behavior is identical in every form — the thunk is only called after all entities exist, so this is purely a type-level concern.
 
 ### Relation options
 

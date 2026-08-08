@@ -49,12 +49,14 @@ Code-first with the `defineEntity` builder — the entity type is inferred from 
 
 ```typescript
 import "reflect-metadata";
-import { defineEntity, t, InferEntity } from "@stingerloom/orm";
+import { defineEntity, t, InferEntity, AnyEntityClass } from "@stingerloom/orm";
 
 export const Author = defineEntity("authors", {
   id:    t.int().primary().generated(),
   name:  t.varchar(255),
-  posts: t.oneToMany(() => Post, "author"),
+  // Mutual reference: pass the row type explicitly and annotate the thunk on
+  // this side of the cycle — TypeScript cannot infer two consts from each other.
+  posts: t.oneToMany<Post>((): AnyEntityClass => Post, "author"),
 });
 
 export const Post = defineEntity("posts", {
@@ -66,8 +68,9 @@ export const Post = defineEntity("posts", {
   author:      t.manyToOne(() => Author, { joinColumn: "author_id" }),
 });
 
-export type Author = InferEntity<typeof Author>; // { id: number; name: string; posts?: Post[] }
-export type Post = InferEntity<typeof Post>;      // { id; title; views; publishedAt; authorId: number | null; author? }
+// Interface merging (not `type X = …`) so the mutual reference resolves lazily.
+export interface Author extends InferEntity<typeof Author> {} // { id: number; name: string; posts?: Post[] }
+export interface Post extends InferEntity<typeof Post> {}     // { id; title; views; publishedAt; authorId: number | null; author? }
 ```
 
 <details>
