@@ -1316,6 +1316,7 @@ type RelationSchemaDef =
 | `ClazzType<T>` | `new (...args: any[]) => T` |
 | `EntityResult<T>` | **Deprecated** -- `T \| T[]`였지만, `find()`는 `T[]`, `save()`는 `T`로 대체됐어요 |
 | `DeepPartial<T>` | Deep partial 타입 |
+| `Relation<T>` | 단수 관계 프로퍼티용 identity 래퍼 — `design:type`을 `Object`로 지워 상호 참조 엔티티가 ESM에서 로드되게 합니다 ([관계](./relations.md) 참고) |
 | `WhereClause<T>` | 타입 안전한 WHERE 조건 -- 컬럼 동등 비교에 더해 연산자(`gt`, `in`, `like`, …)와 `AND` / `OR` / `NOT` 지원 |
 | `RawQueryBuilderFactory` | Query builder 팩토리 |
 | `MetadataLayerRegistry` | 데코레이터 시점의 canonical 레이어드 메타데이터 레지스트리 (싱글턴) |

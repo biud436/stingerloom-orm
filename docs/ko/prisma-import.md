@@ -180,7 +180,7 @@ export class User {
 ### 출력: `post.entity.ts`
 
 ```typescript
-import { Column, CreateTimestamp, Entity, ManyToMany, ManyToOne, PrimaryGeneratedColumn } from "@stingerloom/orm";
+import { Column, CreateTimestamp, Entity, ManyToMany, ManyToOne, PrimaryGeneratedColumn, RelationColumn, type Relation } from "@stingerloom/orm";
 import { Tag } from "./tag.entity.js";
 import { User } from "./user.entity.js";
 
@@ -201,8 +201,9 @@ export class Post {
   @CreateTimestamp()
   createdAt!: Date;
 
-  @ManyToOne(() => User, (e) => e.posts, { joinColumn: "authorId" })
-  author!: User;
+  @ManyToOne(() => User, (e) => e.posts)
+  @RelationColumn({ name: "authorId" })
+  author!: Relation<User>;
 
   @ManyToMany(() => Tag, {
     joinTable: {

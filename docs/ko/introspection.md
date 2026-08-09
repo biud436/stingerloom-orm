@@ -318,7 +318,7 @@ SQLite는 `PRAGMA table_info()`, `PRAGMA foreign_key_list()`, `PRAGMA index_list
 ```typescript
 @ManyToOne(() => User, (entity: any) => entity.author)
 @RelationColumn({ name: "author_id" })
-author!: User;
+author!: Relation<User>;
 ```
 
 프로퍼티명은 FK 컬럼명으로부터 다음과 같이 도출됩니다:

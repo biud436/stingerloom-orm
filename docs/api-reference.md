@@ -1318,6 +1318,7 @@ type RelationSchemaDef =
 | `ClazzType<T>` | `new (...args: any[]) => T` |
 | `EntityResult<T>` | **Deprecated** — was `T \| T[]`, replaced by `T[]` for `find()` and `T` for `save()` |
 | `DeepPartial<T>` | Deep partial type |
+| `Relation<T>` | Identity wrapper for single-valued relation properties — erases `design:type` to `Object` so mutually-referencing entities load under ESM (see [Relations](./relations.md)) |
 | `WhereClause<T>` | Typed WHERE conditions — column equality plus operators (`gt`, `in`, `like`, …) and `AND` / `OR` / `NOT` |
 | `RawQueryBuilderFactory` | Query builder factory |
 | `MetadataLayerRegistry` | Decorator-time canonical layered-metadata registry (singleton) |

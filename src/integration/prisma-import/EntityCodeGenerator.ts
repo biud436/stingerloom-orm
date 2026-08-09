@@ -352,7 +352,8 @@ export class EntityCodeGenerator {
           imports.addOrm("RelationColumn");
           lines.push(`  @RelationColumn({ name: "${rel.joinColumn}" })`);
         }
-        lines.push(`  ${rel.propertyName}!: ${rel.targetModel};`);
+        imports.addOrmType("Relation");
+        lines.push(`  ${rel.propertyName}!: Relation<${rel.targetModel}>;`);
         lines.push("");
         break;
       }
@@ -392,7 +393,8 @@ export class EntityCodeGenerator {
           imports.addOrm("RelationColumn");
           lines.push(`  @RelationColumn({ name: "${rel.joinColumn}" })`);
         }
-        lines.push(`  ${rel.propertyName}!: ${rel.targetModel};`);
+        imports.addOrmType("Relation");
+        lines.push(`  ${rel.propertyName}!: Relation<${rel.targetModel}>;`);
         lines.push("");
         break;
       }
@@ -406,7 +408,8 @@ export class EntityCodeGenerator {
         lines.push(
           `  @OneToOne(() => ${rel.targetModel}, { inverseSide: "${rel.inverseSide}" })`,
         );
-        lines.push(`  ${rel.propertyName}!: ${rel.targetModel};`);
+        imports.addOrmType("Relation");
+        lines.push(`  ${rel.propertyName}!: Relation<${rel.targetModel}>;`);
         lines.push("");
         break;
       }
@@ -622,11 +625,20 @@ export class EntityCodeGenerator {
  */
 class ImportCollector {
   private ormImports = new Set<string>();
+  private ormTypeImports = new Set<string>();
   private entityImports = new Map<string, string>(); // name → file
   private enumImports = new Map<string, string>(); // name → file
 
   addOrm(name: string): void {
     this.ormImports.add(name);
+  }
+
+  /**
+   * Type-only ORM import (emitted with the inline `type` modifier so the
+   * generated code stays valid under `verbatimModuleSyntax`).
+   */
+  addOrmType(name: string): void {
+    this.ormTypeImports.add(name);
   }
 
   addEntity(name: string, file: string): void {
@@ -638,7 +650,10 @@ class ImportCollector {
   }
 
   getOrmImports(): string[] {
-    return [...this.ormImports].sort();
+    return [
+      ...[...this.ormImports].sort(),
+      ...[...this.ormTypeImports].sort().map((n) => `type ${n}`),
+    ];
   }
 
   getEntityImports(): [string, string][] {

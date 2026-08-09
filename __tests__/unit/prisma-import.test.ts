@@ -664,6 +664,22 @@ describe("EntityCodeGenerator", () => {
     expect(post).not.toContain('joinColumn: "authorId"');
   });
 
+  it("should wrap singular relation properties in Relation<> and type-import it", () => {
+    // Without the wrapper, emitDecoratorMetadata's design:type references the
+    // related class eagerly — mutually-referencing entities then crash at
+    // import time under ESM (TDZ ReferenceError). Relation<X> erases the
+    // design:type to Object; collection sides (Post[]) are already safe.
+    const files = generateFiles(blogAst);
+    const post = files.get("post.entity.ts")!;
+    const profile = files.get("profile.entity.ts")!;
+    const user = files.get("user.entity.ts")!;
+    expect(post).toContain("author!: Relation<User>;");
+    expect(post).toContain("type Relation");
+    expect(profile).toContain("user!: Relation<User>;");
+    // Collection sides stay plain arrays.
+    expect(user).toContain("posts!: Post[];");
+  });
+
   it("should generate OneToMany relation", () => {
     const files = generateFiles(blogAst);
     const user = files.get("user.entity.ts")!;

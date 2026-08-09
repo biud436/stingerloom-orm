@@ -318,7 +318,7 @@ When the generator discovers a foreign key, it:
 ```typescript
 @ManyToOne(() => User, (entity: any) => entity.author)
 @RelationColumn({ name: "author_id" })
-author!: User;
+author!: Relation<User>;
 ```
 
 The property name is derived from the FK column by:
