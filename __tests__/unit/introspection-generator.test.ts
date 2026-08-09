@@ -659,6 +659,23 @@ describe("EntityCodeBuilder", () => {
       expect(code).toContain("UniqueIndex");
     });
 
+    it("should drop reserved sqlite_autoindex_* names so the index can be re-applied", () => {
+      // SQLite reports implicit UNIQUE-constraint indexes under reserved
+      // names; emitting them verbatim makes schema sync fail with
+      // "object name reserved for internal use" and silently lose the index.
+      const columns: DbColumn[] = [
+        { column_name: "id", data_type: "integer", is_nullable: "NO" },
+        { column_name: "email", data_type: "varchar", is_nullable: "NO", character_maximum_length: 255 },
+      ];
+      const indexes: DbIndex[] = [
+        { name: "sqlite_autoindex_users_1", column_names: ["email"], is_unique: true },
+      ];
+      const code = builder.build("users", columns, ["id"], [], "sqlite", indexes);
+
+      expect(code).toContain('@UniqueIndex(["email"])');
+      expect(code).not.toContain("sqlite_autoindex");
+    });
+
     it("should emit class-level @Index for a multi-column non-unique index", () => {
       const columns: DbColumn[] = [
         { column_name: "id", data_type: "integer", is_nullable: "NO" },

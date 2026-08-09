@@ -305,7 +305,13 @@ export class EntityCodeBuilder {
       const cols = idx.column_names
         .map((c) => JSON.stringify(colToProperty.get(c) ?? c))
         .join(", ");
-      const nameArg = idx.name ? `, ${JSON.stringify(idx.name)}` : "";
+      // SQLite's implicit UNIQUE-constraint indexes carry reserved names
+      // (sqlite_autoindex_<table>_<n>). Re-creating one by that name fails
+      // with "object name reserved for internal use", so emit the index
+      // unnamed and let schema sync pick its own name.
+      const isReservedName = /^sqlite_autoindex_/i.test(idx.name ?? "");
+      const nameArg =
+        idx.name && !isReservedName ? `, ${JSON.stringify(idx.name)}` : "";
       if (idx.is_unique) {
         usedDecorators.add("UniqueIndex");
         lines.push(`@UniqueIndex([${cols}]${nameArg})`);
