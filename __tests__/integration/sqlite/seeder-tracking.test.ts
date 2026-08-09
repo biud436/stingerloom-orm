@@ -101,6 +101,16 @@ describe("[Integration] SQLite In-Memory: SeederRunner tracking", () => {
     expect(again).toMatchObject({ name: "SecondSeeder", success: true });
   });
 
+  it("runOne as the first call creates the tracking table and records the run", async () => {
+    // Fail-before: runOne never ensured the table, so the tracking INSERT
+    // failed and the seeder was reported as failed after its data was written.
+    const runner = createRunner();
+    const result = await runner.runOne(new FirstSeeder());
+
+    expect(result).toMatchObject({ name: "FirstSeeder", success: true });
+    expect(await runner.getExecutedSeeds()).toEqual(["FirstSeeder"]);
+  });
+
   it("status reports executed/pending from the tracking table", async () => {
     const runner = createRunner();
     await runner.runAll();

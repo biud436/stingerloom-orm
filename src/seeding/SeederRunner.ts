@@ -172,7 +172,7 @@ export class SeederRunner {
       const results: SeederResult[] = [];
 
       for (const seeder of pending) {
-        const result = await this.runOne(seeder);
+        const result = await this.executeSeeder(seeder);
         results.push(result);
         if (!result.success) {
           break;
@@ -188,9 +188,21 @@ export class SeederRunner {
   }
 
   /**
-   * Run a single seeder.
+   * Run a single seeder. Creates the tracking table first when tracking is
+   * enabled, so a standalone `runOne()` records its execution like `runAll()`.
    */
   async runOne(seeder: Seeder): Promise<SeederResult> {
+    if (this.trackExecution) {
+      await this.ensureSeedTable();
+    }
+    return this.executeSeeder(seeder);
+  }
+
+  /**
+   * Run a seeder assuming the tracking table already exists
+   * (`runAll()` ensures it once for the whole batch).
+   */
+  private async executeSeeder(seeder: Seeder): Promise<SeederResult> {
     const ctx = this.createContext();
 
     try {
