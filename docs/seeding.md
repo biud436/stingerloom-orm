@@ -108,11 +108,22 @@ for (const result of results) {
 
 When you call `ensureSeedTable()`, the runner creates a `__seeds` table in your database. This is the seeder equivalent of the `__migrations` table -- it records which seeders have been executed so they are not run again.
 
-For PostgreSQL and SQLite:
+For PostgreSQL:
 
 ```sql
 CREATE TABLE IF NOT EXISTS "__seeds" (
   "id" SERIAL PRIMARY KEY,
+  "name" VARCHAR(255) NOT NULL UNIQUE,
+  "executed_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+For SQLite (`SERIAL` is not an auto-increment type there, so the id column
+uses the rowid alias form instead):
+
+```sql
+CREATE TABLE IF NOT EXISTS "__seeds" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "name" VARCHAR(255) NOT NULL UNIQUE,
   "executed_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

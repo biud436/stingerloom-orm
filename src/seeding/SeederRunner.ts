@@ -5,6 +5,19 @@ import { Logger } from "../utils";
 import { AdvisoryLockError } from "../errors/AdvisoryLockError";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import type { SchemaDialect } from "../core/generators/SchemaGenerator";
+import type { EntityManagerInternals } from "../core/EntityManagerInternals";
+
+/**
+ * Narrow view of the `EntityManager` internals this runner reads.
+ *
+ * `_ctx` is private on the public EntityManager type; the runner narrows
+ * through a single sanctioned cast (same pattern as SelectQueryBuilder).
+ * Test doubles may omit `_ctx` — call sites fall back to the driver.
+ */
+interface EntityManagerInternalView {
+  readonly _ctx?: EntityManagerInternals;
+}
 
 /**
  * Result of a single seeder execution.
@@ -77,16 +90,26 @@ export class SeederRunner {
    * Uses the EntityManager's driver to determine MySQL vs PostgreSQL/SQLite syntax.
    */
   async ensureSeedTable(): Promise<void> {
-    const isMySql = this.isMySql();
-
+    const dialect = this.dialect();
     const table = this.quotedTableName();
 
-    if (isMySql) {
+    if (dialect === "mysql") {
       await this.queryRunner.query(
         `CREATE TABLE IF NOT EXISTS ${table} (` +
           `\`id\` INT AUTO_INCREMENT PRIMARY KEY, ` +
           `\`name\` VARCHAR(255) NOT NULL UNIQUE, ` +
           `\`executed_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP` +
+          `)`,
+      );
+    } else if (dialect === "sqlite") {
+      // SERIAL is not an auto-increment type on SQLite — a non-INTEGER PK is
+      // not a rowid alias, so every insert would store id = NULL and the
+      // ORDER BY id execution-order tracking would be meaningless.
+      await this.queryRunner.query(
+        `CREATE TABLE IF NOT EXISTS ${table} (` +
+          `"id" INTEGER PRIMARY KEY AUTOINCREMENT, ` +
+          `"name" VARCHAR(255) NOT NULL UNIQUE, ` +
+          `"executed_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP` +
           `)`,
       );
     } else {
@@ -291,6 +314,18 @@ export class SeederRunner {
       );
     }
     return driver.isMySqlFamily();
+  }
+
+  /**
+   * Resolve the connected dialect. Prefers the EntityManager's own dialect
+   * resolution; falls back to the driver's MySQL check (postgres DDL) when
+   * the internals are unavailable (partial EM doubles in tests).
+   */
+  private dialect(): SchemaDialect {
+    if (this.isMySql()) return "mysql";
+    const ctx = (this.em as unknown as EntityManagerInternalView)._ctx;
+    if (ctx?.getDialect) return ctx.getDialect();
+    return "postgres";
   }
 
   /**
