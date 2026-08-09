@@ -1,7 +1,7 @@
-import { Column, CreateTimestamp, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn, RelationColumn, UpdateTimestamp } from "@stingerloom/orm";
-import { Customer } from "./customer.entity";
-import { OrderItem } from "./order_item.entity";
-import { OrderStatus } from "./order_status.enum";
+import { Column, CreateTimestamp, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn, RelationColumn, UpdateTimestamp, type Relation } from "@stingerloom/orm";
+import { Customer } from "./customer.entity.js";
+import { OrderItem } from "./order_item.entity.js";
+import { OrderStatus } from "./order_status.enum.js";
 
 @Entity()
 export class Order {
@@ -22,7 +22,7 @@ export class Order {
 
   @ManyToOne(() => Customer, (e) => e.orders)
   @RelationColumn({ name: "customerId" })
-  customer!: Customer;
+  customer!: Relation<Customer>;
 
   @OneToMany(() => OrderItem, { mappedBy: "order" })
   items!: OrderItem[];
