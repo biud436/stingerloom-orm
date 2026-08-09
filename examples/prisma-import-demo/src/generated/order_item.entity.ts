@@ -1,6 +1,6 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, RelationColumn, UniqueIndex } from "@stingerloom/orm";
-import { Order } from "./order.entity";
-import { Product } from "./product.entity";
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, RelationColumn, UniqueIndex, type Relation } from "@stingerloom/orm";
+import { Order } from "./order.entity.js";
+import { Product } from "./product.entity.js";
 
 @Entity()
 @UniqueIndex(["orderId", "productId"])
@@ -16,9 +16,9 @@ export class OrderItem {
 
   @ManyToOne(() => Order, (e) => e.items)
   @RelationColumn({ name: "orderId" })
-  order!: Order;
+  order!: Relation<Order>;
 
   @ManyToOne(() => Product, (e) => e.orderItems)
   @RelationColumn({ name: "productId" })
-  product!: Product;
+  product!: Relation<Product>;
 }

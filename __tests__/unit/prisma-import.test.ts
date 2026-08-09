@@ -634,6 +634,33 @@ describe("EntityCodeGenerator", () => {
     expect(user).toContain("name!: string | null;");
   });
 
+  it("should spell out the column type for optional scalars", () => {
+    // `string | null` erases design:type to Object at runtime, so without an
+    // explicit type the column would silently fall back to "text".
+    const files = generateFiles(blogAst);
+    const user = files.get("user.entity.ts")!;
+    expect(user).toContain('@Column({ type: "varchar", nullable: true })');
+  });
+
+  it("should spell out the temporal type for optional DateTime scalars", () => {
+    // DateTime? falling back to "text" would be a silent schema change on
+    // PostgreSQL/MySQL (TEXT column instead of a temporal one).
+    const ast = parsePrismaSchema(`
+      datasource db {
+        provider = "postgresql"
+      }
+
+      model Event {
+        id      Int       @id @default(autoincrement())
+        endedAt DateTime?
+      }
+    `);
+    const files = generateFiles(ast);
+    const event = files.get("event.entity.ts")!;
+    expect(event).toContain('@Column({ type: "datetime", nullable: true })');
+    expect(event).toContain("endedAt!: Date | null;");
+  });
+
   it("should generate @Column with type: text for @db.Text", () => {
     const files = generateFiles(blogAst);
     const post = files.get("post.entity.ts")!;
@@ -662,6 +689,22 @@ describe("EntityCodeGenerator", () => {
     expect(post).toContain("() => User");
     expect(post).toContain('@RelationColumn({ name: "authorId" })');
     expect(post).not.toContain('joinColumn: "authorId"');
+  });
+
+  it("should wrap singular relation properties in Relation<> and type-import it", () => {
+    // Without the wrapper, emitDecoratorMetadata's design:type references the
+    // related class eagerly — mutually-referencing entities then crash at
+    // import time under ESM (TDZ ReferenceError). Relation<X> erases the
+    // design:type to Object; collection sides (Post[]) are already safe.
+    const files = generateFiles(blogAst);
+    const post = files.get("post.entity.ts")!;
+    const profile = files.get("profile.entity.ts")!;
+    const user = files.get("user.entity.ts")!;
+    expect(post).toContain("author!: Relation<User>;");
+    expect(post).toContain("type Relation");
+    expect(profile).toContain("user!: Relation<User>;");
+    // Collection sides stay plain arrays.
+    expect(user).toContain("posts!: Post[];");
   });
 
   it("should generate OneToMany relation", () => {
@@ -700,8 +743,8 @@ describe("EntityCodeGenerator", () => {
   it("should import related entity files", () => {
     const files = generateFiles(blogAst);
     const post = files.get("post.entity.ts")!;
-    expect(post).toContain('import { User } from "./user.entity"');
-    expect(post).toContain('import { Tag } from "./tag.entity"');
+    expect(post).toContain('import { User } from "./user.entity.js"');
+    expect(post).toContain('import { Tag } from "./tag.entity.js"');
   });
 
   it("should generate @Entity({ name }) for @@map", () => {
@@ -753,10 +796,10 @@ describe("EntityCodeGenerator", () => {
   it("should generate barrel index.ts", () => {
     const files = generateFiles(blogAst);
     const index = files.get("index.ts")!;
-    expect(index).toContain('export * from "./user.entity"');
-    expect(index).toContain('export * from "./post.entity"');
-    expect(index).toContain('export * from "./role.enum"');
-    expect(index).toContain('export * from "./post_status.enum"');
+    expect(index).toContain('export * from "./user.entity.js"');
+    expect(index).toContain('export * from "./post.entity.js"');
+    expect(index).toContain('export * from "./role.enum.js"');
+    expect(index).toContain('export * from "./post_status.enum.js"');
   });
 
   it("should skip FK fields that are covered by relations", () => {
@@ -983,6 +1026,6 @@ model Account {
 `);
     const files = generateFiles(ast);
     const account = files.get("account.entity.ts")!;
-    expect(account).toContain('import { Status } from "./status.enum"');
+    expect(account).toContain('import { Status } from "./status.enum.js"');
   });
 });

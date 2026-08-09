@@ -153,17 +153,20 @@ export class EntityCodeGenerator {
       );
     }
 
-    // Entity imports (cross-entity references)
+    // Entity imports (cross-entity references). The explicit `.js` extension
+    // keeps the generated code loadable from ESM projects (NodeNext requires
+    // it); TypeScript maps `./x.js` back to `./x.ts` under every module
+    // resolution mode, so CJS projects compile unchanged.
     for (const [entityName, fileName] of imports.getEntityImports()) {
       sections.push(
-        `import { ${entityName} } from "./${fileName}";`,
+        `import { ${entityName} } from "./${fileName}.js";`,
       );
     }
 
     // Enum imports
     for (const [enumName, fileName] of imports.getEnumImports()) {
       sections.push(
-        `import { ${enumName} } from "./${fileName}";`,
+        `import { ${enumName} } from "./${fileName}.js";`,
       );
     }
 
@@ -349,7 +352,8 @@ export class EntityCodeGenerator {
           imports.addOrm("RelationColumn");
           lines.push(`  @RelationColumn({ name: "${rel.joinColumn}" })`);
         }
-        lines.push(`  ${rel.propertyName}!: ${rel.targetModel};`);
+        imports.addOrmType("Relation");
+        lines.push(`  ${rel.propertyName}!: Relation<${rel.targetModel}>;`);
         lines.push("");
         break;
       }
@@ -389,7 +393,8 @@ export class EntityCodeGenerator {
           imports.addOrm("RelationColumn");
           lines.push(`  @RelationColumn({ name: "${rel.joinColumn}" })`);
         }
-        lines.push(`  ${rel.propertyName}!: ${rel.targetModel};`);
+        imports.addOrmType("Relation");
+        lines.push(`  ${rel.propertyName}!: Relation<${rel.targetModel}>;`);
         lines.push("");
         break;
       }
@@ -403,7 +408,8 @@ export class EntityCodeGenerator {
         lines.push(
           `  @OneToOne(() => ${rel.targetModel}, { inverseSide: "${rel.inverseSide}" })`,
         );
-        lines.push(`  ${rel.propertyName}!: ${rel.targetModel};`);
+        imports.addOrmType("Relation");
+        lines.push(`  ${rel.propertyName}!: Relation<${rel.targetModel}>;`);
         lines.push("");
         break;
       }
@@ -535,6 +541,12 @@ export class EntityCodeGenerator {
     // If it's an enum, always specify
     if (mapping.columnType === "enum") return true;
 
+    // Optional fields are typed as a union (`string | null`), which erases
+    // design:type to Object at runtime — inference would fall back to "text"
+    // (a silent schema change: DateTime? would become TEXT instead of a
+    // temporal column). Always spell the type out.
+    if (field.isOptional) return true;
+
     // If the default inference from TS type would differ
     const defaultMapping: Record<string, string> = {
       String: "varchar",
@@ -607,7 +619,7 @@ export class EntityCodeGenerator {
     for (const fileName of files.keys()) {
       if (fileName === "index.ts") continue;
       const moduleName = fileName.replace(/\.ts$/, "");
-      lines.push(`export * from "./${moduleName}";`);
+      lines.push(`export * from "./${moduleName}.js";`);
     }
     lines.push("");
     return lines.join("\n");
@@ -619,11 +631,20 @@ export class EntityCodeGenerator {
  */
 class ImportCollector {
   private ormImports = new Set<string>();
+  private ormTypeImports = new Set<string>();
   private entityImports = new Map<string, string>(); // name → file
   private enumImports = new Map<string, string>(); // name → file
 
   addOrm(name: string): void {
     this.ormImports.add(name);
+  }
+
+  /**
+   * Type-only ORM import (emitted with the inline `type` modifier so the
+   * generated code stays valid under `verbatimModuleSyntax`).
+   */
+  addOrmType(name: string): void {
+    this.ormTypeImports.add(name);
   }
 
   addEntity(name: string, file: string): void {
@@ -635,7 +656,10 @@ class ImportCollector {
   }
 
   getOrmImports(): string[] {
-    return [...this.ormImports].sort();
+    return [
+      ...[...this.ormImports].sort(),
+      ...[...this.ormTypeImports].sort().map((n) => `type ${n}`),
+    ];
   }
 
   getEntityImports(): [string, string][] {

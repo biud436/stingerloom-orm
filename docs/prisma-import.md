@@ -149,8 +149,8 @@ export enum Role {
 
 ```typescript
 import { Column, CreateTimestamp, Entity, OneToMany, PrimaryGeneratedColumn, UpdateTimestamp } from "@stingerloom/orm";
-import { Post } from "./post.entity";
-import { Role } from "./role.enum";
+import { Post } from "./post.entity.js";
+import { Role } from "./role.enum.js";
 
 @Entity()
 export class User {
@@ -160,7 +160,7 @@ export class User {
   @Column()
   email!: string;
 
-  @Column({ nullable: true })
+  @Column({ type: "varchar", nullable: true })
   name!: string | null;
 
   @Column({ type: "enum", enumName: "Role", enumValues: ["ADMIN", "USER", "MODERATOR"], default: "USER" })
@@ -180,9 +180,9 @@ export class User {
 ### Output: `post.entity.ts`
 
 ```typescript
-import { Column, CreateTimestamp, Entity, ManyToMany, ManyToOne, PrimaryGeneratedColumn } from "@stingerloom/orm";
-import { Tag } from "./tag.entity";
-import { User } from "./user.entity";
+import { Column, CreateTimestamp, Entity, ManyToMany, ManyToOne, PrimaryGeneratedColumn, RelationColumn, type Relation } from "@stingerloom/orm";
+import { Tag } from "./tag.entity.js";
+import { User } from "./user.entity.js";
 
 @Entity()
 export class Post {
@@ -201,8 +201,9 @@ export class Post {
   @CreateTimestamp()
   createdAt!: Date;
 
-  @ManyToOne(() => User, (e) => e.posts, { joinColumn: "authorId" })
-  author!: User;
+  @ManyToOne(() => User, (e) => e.posts)
+  @RelationColumn({ name: "authorId" })
+  author!: Relation<User>;
 
   @ManyToMany(() => Tag, {
     joinTable: {
@@ -219,7 +220,7 @@ export class Post {
 
 ```typescript
 import { Column, Entity, ManyToMany, PrimaryGeneratedColumn } from "@stingerloom/orm";
-import { Post } from "./post.entity";
+import { Post } from "./post.entity.js";
 
 @Entity()
 export class Tag {

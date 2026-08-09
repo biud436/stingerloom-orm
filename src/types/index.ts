@@ -4,6 +4,7 @@ export * from "./ColumnPaths";
 export * from "./DeleteResult";
 export * from "./CascadeType";
 export * from "./DeepPartial";
+export * from "./Relation";
 export * from "./OrderByOption";
 export * from "./ReferentialAction";
 export * from "./DriverQueryOptions";

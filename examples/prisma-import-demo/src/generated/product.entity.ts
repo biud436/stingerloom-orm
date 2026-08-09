@@ -1,6 +1,6 @@
 import { Column, CreateTimestamp, Entity, OneToMany, PrimaryGeneratedColumn } from "@stingerloom/orm";
-import { OrderItem } from "./order_item.entity";
-import { Category } from "./category.enum";
+import { OrderItem } from "./order_item.entity.js";
+import { Category } from "./category.enum.js";
 
 @Entity()
 export class Product {

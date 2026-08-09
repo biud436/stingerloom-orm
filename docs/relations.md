@@ -361,6 +361,31 @@ SQLite cannot `ALTER TABLE ... ADD FOREIGN KEY`, so on SQLite schema sync embeds
 - FK constraints are only created **together with the table**. If you add a relation to an entity whose table already exists, SQLite gets the join column but no database-level constraint — recreate the table (or use a migration) if you need the constraint enforced.
 - SQLite only enforces FK constraints when the connection runs `PRAGMA foreign_keys = ON`; the constraints are declared in the DDL either way.
 
+### Mutual References Under ESM (`Relation<T>`)
+
+Two decorator entities that reference each other — `Post.author` pointing at `User`, `User.posts` pointing back — form a circular import. The decorator's `() => User` thunk handles that fine, but `emitDecoratorMetadata` also emits an *eager* `design:type` reference to the class for every single-valued relation property. Under CommonJS a circular require just yields `undefined` there; under **ESM**, module bindings are live and reading one before its module finishes evaluating throws:
+
+```
+ReferenceError: Cannot access 'User' before initialization
+```
+
+The fix is the `Relation<T>` wrapper type exported from `@stingerloom/orm`:
+
+```typescript
+import { Entity, ManyToOne, type Relation } from "@stingerloom/orm";
+import { User } from "./user.entity.js";
+
+@Entity()
+export class Post {
+  @ManyToOne(() => User, (user) => user.posts)
+  author!: Relation<User>;
+}
+```
+
+`Relation<User>` is just `User` to the type checker, but because the outer reference resolves to a type alias with no runtime value, `design:type` serializes as `Object` instead of the entity class — no eager reference, no crash. The ORM never reads `design:type` for relation properties (the thunk is the source of truth), so nothing is lost.
+
+Only single-valued relations (`@ManyToOne`, `@OneToOne`) need the wrapper; collection properties (`Post[]`) already serialize as `Array`. The Prisma import and introspection generators emit `Relation<T>` automatically. CJS-only projects work without it, but the wrapper is harmless there — use it whenever entities reference each other and the code may run as ESM.
+
 ## @OneToMany -- "What are this owner's cats?"
 
 ### Why This Is the Inverse Side

@@ -573,6 +573,7 @@ export { DriverQueryOptions } from "./types/DriverQueryOptions";
 export { EntityResult } from "./types/EntityResult";
 export { OrderByOption, SortDirection } from "./types/OrderByOption";
 export { QueryResult } from "./types/QueryResult";
+export { Relation } from "./types/Relation";
 export {
   ReferentialAction,
   VALID_REFERENTIAL_ACTIONS,

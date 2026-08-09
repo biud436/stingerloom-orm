@@ -514,9 +514,11 @@ describe("EntityCodeBuilder", () => {
       expect(code).not.toContain("joinColumn:");
       // FK column declared via @RelationColumn
       expect(code).toContain('@RelationColumn({ name: "author_id" })');
-      expect(code).toContain("author!: User;");
+      expect(code).toContain("author!: Relation<User>;");
       // Should contain import for referenced User class
-      expect(code).toContain('import { User } from "./user.entity";');
+      expect(code).toContain('import { User } from "./user.entity.js";');
+      // Relation<> wrapper is imported with the inline `type` modifier
+      expect(code).toContain("type Relation }");
       // Should contain @Entity with table name
       expect(code).toContain('@Entity({ name: "posts" })');
     });
@@ -657,6 +659,23 @@ describe("EntityCodeBuilder", () => {
       expect(code).toContain("UniqueIndex");
     });
 
+    it("should drop reserved sqlite_autoindex_* names so the index can be re-applied", () => {
+      // SQLite reports implicit UNIQUE-constraint indexes under reserved
+      // names; emitting them verbatim makes schema sync fail with
+      // "object name reserved for internal use" and silently lose the index.
+      const columns: DbColumn[] = [
+        { column_name: "id", data_type: "integer", is_nullable: "NO" },
+        { column_name: "email", data_type: "varchar", is_nullable: "NO", character_maximum_length: 255 },
+      ];
+      const indexes: DbIndex[] = [
+        { name: "sqlite_autoindex_users_1", column_names: ["email"], is_unique: true },
+      ];
+      const code = builder.build("users", columns, ["id"], [], "sqlite", indexes);
+
+      expect(code).toContain('@UniqueIndex(["email"])');
+      expect(code).not.toContain("sqlite_autoindex");
+    });
+
     it("should emit class-level @Index for a multi-column non-unique index", () => {
       const columns: DbColumn[] = [
         { column_name: "id", data_type: "integer", is_nullable: "NO" },
@@ -716,9 +735,9 @@ describe("EntityCodeBuilder", () => {
 
       // And the FK relation properties (with `id_` prefix stripped → ancestor/descendant)
       expect(code).toContain('@RelationColumn({ name: "id_ancestor" })');
-      expect(code).toContain("ancestor!: PostComment;");
+      expect(code).toContain("ancestor!: Relation<PostComment>;");
       expect(code).toContain('@RelationColumn({ name: "id_descendant" })');
-      expect(code).toContain("descendant!: PostComment;");
+      expect(code).toContain("descendant!: Relation<PostComment>;");
     });
   });
 
@@ -733,7 +752,7 @@ describe("EntityCodeBuilder", () => {
       ];
       const code = builder.build("node", columns, ["id"], fks, "postgres");
 
-      expect(code).toContain("parent!: Node;");
+      expect(code).toContain("parent!: Relation<Node>;");
     });
   });
 
@@ -772,7 +791,7 @@ describe("EntityCodeBuilder", () => {
       const code = builder.build("audit_log", columns, ["id"], fks, "postgres");
 
       // FK property must not collide with the `user` text column
-      expect(code).toContain("userId!: User;");
+      expect(code).toContain("userId!: Relation<User>;");
       expect(code).toContain('@RelationColumn({ name: "user_id" })');
       expect(code).toContain("user!: string;");
     });
@@ -791,7 +810,7 @@ describe("EntityCodeBuilder", () => {
 
       // Plain text column "author" stays, FK relation becomes authorId
       expect(code).toContain("author!: string;");
-      expect(code).toContain("authorId!: User;");
+      expect(code).toContain("authorId!: Relation<User>;");
     });
   });
 

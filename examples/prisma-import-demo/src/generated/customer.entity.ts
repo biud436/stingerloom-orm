@@ -1,5 +1,5 @@
 import { Column, CreateTimestamp, Entity, OneToMany, PrimaryGeneratedColumn, UniqueIndex, UpdateTimestamp } from "@stingerloom/orm";
-import { Order } from "./order.entity";
+import { Order } from "./order.entity.js";
 
 @Entity()
 @UniqueIndex(["email"])

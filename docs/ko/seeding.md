@@ -108,11 +108,21 @@ for (const result of results) {
 
 `ensureSeedTable()`을 호출하면 러너가 데이터베이스에 `__seeds` 테이블을 만듭니다. 이는 `__migrations` 테이블의 시더 버전입니다 -- 어떤 시더가 실행되었는지 기록해 두 번 실행되지 않도록 합니다.
 
-PostgreSQL과 SQLite의 경우:
+PostgreSQL의 경우:
 
 ```sql
 CREATE TABLE IF NOT EXISTS "__seeds" (
   "id" SERIAL PRIMARY KEY,
+  "name" VARCHAR(255) NOT NULL UNIQUE,
+  "executed_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+SQLite의 경우 (`SERIAL`은 SQLite에서 자동 증가 타입이 아니므로 rowid 별칭 형태를 사용합니다):
+
+```sql
+CREATE TABLE IF NOT EXISTS "__seeds" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "name" VARCHAR(255) NOT NULL UNIQUE,
   "executed_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

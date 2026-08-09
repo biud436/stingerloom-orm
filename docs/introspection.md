@@ -181,7 +181,7 @@ import {
   UniqueIndex,
   UpdateTimestamp,
 } from "@stingerloom/orm";
-import { Profile } from "./profile.entity";
+import { Profile } from "./profile.entity.js";
 
 @Entity({ name: "user" })
 @UniqueIndex(["username"], "uq_user_username")
@@ -318,7 +318,7 @@ When the generator discovers a foreign key, it:
 ```typescript
 @ManyToOne(() => User, (entity: any) => entity.author)
 @RelationColumn({ name: "author_id" })
-author!: User;
+author!: Relation<User>;
 ```
 
 The property name is derived from the FK column by:

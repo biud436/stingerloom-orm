@@ -361,6 +361,31 @@ SQLite는 `ALTER TABLE ... ADD FOREIGN KEY`를 지원하지 않습니다. 그래
 - FK 제약은 **테이블과 함께 생성될 때만** 만들어집니다. 이미 존재하는 테이블의 엔티티에 관계를 추가하면 조인 컬럼은 생기지만 데이터베이스 수준 제약은 생기지 않아요 — 제약 강제가 필요하면 테이블을 재생성하거나 마이그레이션을 사용하세요.
 - SQLite는 커넥션에서 `PRAGMA foreign_keys = ON`을 실행해야만 FK 제약을 강제합니다. 제약 선언 자체는 어느 쪽이든 DDL에 포함됩니다.
 
+### ESM에서의 상호 참조 (`Relation<T>`)
+
+서로를 참조하는 두 데코레이터 엔티티 — `User`를 가리키는 `Post.author`, 다시 돌아오는 `User.posts` — 는 순환 import를 만듭니다. 데코레이터의 `() => User` thunk는 이를 잘 처리하지만, `emitDecoratorMetadata`는 단수 관계 프로퍼티마다 클래스를 *즉시* 참조하는 `design:type` 메타데이터도 함께 내보냅니다. CommonJS에서는 순환 require가 그 자리에서 `undefined`를 돌려주고 넘어가지만, **ESM**에서는 모듈 바인딩이 live라서 평가가 끝나지 않은 모듈의 바인딩을 읽는 순간 에러가 납니다:
+
+```
+ReferenceError: Cannot access 'User' before initialization
+```
+
+해결책은 `@stingerloom/orm`에서 export하는 `Relation<T>` 래퍼 타입입니다:
+
+```typescript
+import { Entity, ManyToOne, type Relation } from "@stingerloom/orm";
+import { User } from "./user.entity.js";
+
+@Entity()
+export class Post {
+  @ManyToOne(() => User, (user) => user.posts)
+  author!: Relation<User>;
+}
+```
+
+타입 검사기에게 `Relation<User>`는 그냥 `User`지만, 바깥 참조가 런타임 값이 없는 타입 별칭으로 해석되기 때문에 `design:type`은 엔티티 클래스 대신 `Object`로 직렬화됩니다 — 즉시 참조가 사라지니 크래시도 없습니다. ORM은 관계 프로퍼티의 `design:type`을 읽지 않으므로(thunk가 진실의 원천입니다) 잃는 것도 없습니다.
+
+래퍼가 필요한 건 단수 관계(`@ManyToOne`, `@OneToOne`)뿐입니다. 컬렉션 프로퍼티(`Post[]`)는 애초에 `Array`로 직렬화됩니다. Prisma 임포트와 인트로스펙션 생성기는 `Relation<T>`를 자동으로 내보냅니다. CJS 전용 프로젝트는 래퍼 없이도 동작하지만 있어도 무해하니, 엔티티가 서로를 참조하고 코드가 ESM으로 실행될 수 있다면 항상 사용하세요.
+
 ## @OneToMany -- "이 주인의 고양이들은?"
 
 ### 역방향(Inverse) 측인 이유

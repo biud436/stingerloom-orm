@@ -253,29 +253,39 @@ export class EntityCodeBuilder {
       // entity; emit `any` placeholder so the generated code compiles. The
       // user can rename to the actual inverse property once both sides are
       // generated.
+      //
+      // `Relation<X>` keeps design:type from referencing the entity class
+      // eagerly — circular FK schemas would otherwise throw a TDZ
+      // ReferenceError at import time under ESM.
       const block = [
         `  @ManyToOne(() => ${refClassName}, (entity: any) => entity.${propertyName})`,
         `  @RelationColumn({ name: "${fk.column_name}" })`,
-        `  ${propertyName}!: ${refClassName};`,
+        `  ${propertyName}!: Relation<${refClassName}>;`,
       ];
       propertyBlocks.push(block.join("\n"));
     }
 
-    // Build import line
-    const sortedDecorators = Array.from(usedDecorators).sort();
-    lines.push(
-      `import { ${sortedDecorators.join(", ")} } from "${this.importPath}";`,
-    );
+    // Build import line. FK relations type their property as `Relation<X>`,
+    // imported with the inline `type` modifier (valid under
+    // `verbatimModuleSyntax`).
+    const typeImports = fks.length > 0 ? ["type Relation"] : [];
+    const buildImportLine = () =>
+      `import { ${[...Array.from(usedDecorators).sort(), ...typeImports].join(", ")} } from "${this.importPath}";`;
+    lines.push(buildImportLine());
 
     // Emit imports for referenced entity classes (FK targets). Skip
     // self-references — `@ManyToOne(() => Department, ...)` inside the
     // Department class itself doesn't need a Department import (and an
     // explicit one would conflict with the class declaration).
+    // The explicit `.js` extension keeps the generated code loadable from ESM
+    // projects (NodeNext requires it); TypeScript maps `./x.js` back to
+    // `./x.ts` under every module resolution mode, so CJS projects compile
+    // unchanged.
     for (const refClass of Array.from(referencedClasses).sort()) {
       if (refClass === className) continue;
       const refFileName = this.classNameToFileName(refClass);
       lines.push(
-        `import { ${refClass} } from "./${refFileName.replace(/\.ts$/, "")}";`,
+        `import { ${refClass} } from "./${refFileName.replace(/\.ts$/, "")}.js";`,
       );
     }
 
@@ -295,7 +305,13 @@ export class EntityCodeBuilder {
       const cols = idx.column_names
         .map((c) => JSON.stringify(colToProperty.get(c) ?? c))
         .join(", ");
-      const nameArg = idx.name ? `, ${JSON.stringify(idx.name)}` : "";
+      // SQLite's implicit UNIQUE-constraint indexes carry reserved names
+      // (sqlite_autoindex_<table>_<n>). Re-creating one by that name fails
+      // with "object name reserved for internal use", so emit the index
+      // unnamed and let schema sync pick its own name.
+      const isReservedName = /^sqlite_autoindex_/i.test(idx.name ?? "");
+      const nameArg =
+        idx.name && !isReservedName ? `, ${JSON.stringify(idx.name)}` : "";
       if (idx.is_unique) {
         usedDecorators.add("UniqueIndex");
         lines.push(`@UniqueIndex([${cols}]${nameArg})`);
@@ -312,8 +328,7 @@ export class EntityCodeBuilder {
     // Re-build the import line if class-level decorators were added after
     // we wrote the imports above (they share `usedDecorators`). The import
     // statement is always at line 0.
-    const sortedDecoratorsFinal = Array.from(usedDecorators).sort();
-    lines[0] = `import { ${sortedDecoratorsFinal.join(", ")} } from "${this.importPath}";`;
+    lines[0] = buildImportLine();
 
     return lines.join("\n");
   }

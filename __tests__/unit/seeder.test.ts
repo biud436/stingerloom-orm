@@ -24,6 +24,17 @@ function createMockEntityManager(isMySql: boolean): EntityManager {
   } as unknown as EntityManager;
 }
 
+/** EM double that also exposes `_ctx.getDialect()` like the real manager. */
+function createMockEntityManagerWithDialect(
+  dialect: "mysql" | "postgres" | "sqlite",
+): EntityManager {
+  const driver = createMockDriver(dialect === "mysql");
+  return {
+    getDriver: () => driver,
+    _ctx: { getDialect: () => dialect },
+  } as unknown as EntityManager;
+}
+
 function createMockQueryRunner(): SeederQueryRunner & {
   queries: string[];
   mockSelect: (rows: any[]) => void;
@@ -111,6 +122,28 @@ describe("SeederRunner", () => {
       expect(qr.queries[0]).toContain('"__seeds"');
       expect(qr.queries[0]).toContain("SERIAL PRIMARY KEY");
       expect(qr.queries[0]).toContain("CREATE TABLE IF NOT EXISTS");
+    });
+
+    it("should create __seeds table with SQLite rowid-alias syntax", async () => {
+      const em = createMockEntityManagerWithDialect("sqlite");
+      const qr = createMockQueryRunner();
+      const runner = new SeederRunner([], em, qr);
+
+      await runner.ensureSeedTable();
+
+      expect(qr.queries[0]).toContain('"__seeds"');
+      expect(qr.queries[0]).toContain("INTEGER PRIMARY KEY AUTOINCREMENT");
+      expect(qr.queries[0]).not.toContain("SERIAL");
+    });
+
+    it("should keep PostgreSQL syntax when the EM exposes its dialect", async () => {
+      const em = createMockEntityManagerWithDialect("postgres");
+      const qr = createMockQueryRunner();
+      const runner = new SeederRunner([], em, qr);
+
+      await runner.ensureSeedTable();
+
+      expect(qr.queries[0]).toContain("SERIAL PRIMARY KEY");
     });
 
     it("should use custom table name", async () => {
