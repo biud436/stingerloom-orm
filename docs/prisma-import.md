@@ -160,7 +160,7 @@ export class User {
   @Column()
   email!: string;
 
-  @Column({ nullable: true })
+  @Column({ type: "varchar", nullable: true })
   name!: string | null;
 
   @Column({ type: "enum", enumName: "Role", enumValues: ["ADMIN", "USER", "MODERATOR"], default: "USER" })

@@ -634,6 +634,33 @@ describe("EntityCodeGenerator", () => {
     expect(user).toContain("name!: string | null;");
   });
 
+  it("should spell out the column type for optional scalars", () => {
+    // `string | null` erases design:type to Object at runtime, so without an
+    // explicit type the column would silently fall back to "text".
+    const files = generateFiles(blogAst);
+    const user = files.get("user.entity.ts")!;
+    expect(user).toContain('@Column({ type: "varchar", nullable: true })');
+  });
+
+  it("should spell out the temporal type for optional DateTime scalars", () => {
+    // DateTime? falling back to "text" would be a silent schema change on
+    // PostgreSQL/MySQL (TEXT column instead of a temporal one).
+    const ast = parsePrismaSchema(`
+      datasource db {
+        provider = "postgresql"
+      }
+
+      model Event {
+        id      Int       @id @default(autoincrement())
+        endedAt DateTime?
+      }
+    `);
+    const files = generateFiles(ast);
+    const event = files.get("event.entity.ts")!;
+    expect(event).toContain('@Column({ type: "datetime", nullable: true })');
+    expect(event).toContain("endedAt!: Date | null;");
+  });
+
   it("should generate @Column with type: text for @db.Text", () => {
     const files = generateFiles(blogAst);
     const post = files.get("post.entity.ts")!;

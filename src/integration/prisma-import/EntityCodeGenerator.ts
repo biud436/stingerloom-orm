@@ -541,6 +541,12 @@ export class EntityCodeGenerator {
     // If it's an enum, always specify
     if (mapping.columnType === "enum") return true;
 
+    // Optional fields are typed as a union (`string | null`), which erases
+    // design:type to Object at runtime — inference would fall back to "text"
+    // (a silent schema change: DateTime? would become TEXT instead of a
+    // temporal column). Always spell the type out.
+    if (field.isOptional) return true;
+
     // If the default inference from TS type would differ
     const defaultMapping: Record<string, string> = {
       String: "varchar",
