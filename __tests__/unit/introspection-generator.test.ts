@@ -516,7 +516,7 @@ describe("EntityCodeBuilder", () => {
       expect(code).toContain('@RelationColumn({ name: "author_id" })');
       expect(code).toContain("author!: User;");
       // Should contain import for referenced User class
-      expect(code).toContain('import { User } from "./user.entity";');
+      expect(code).toContain('import { User } from "./user.entity.js";');
       // Should contain @Entity with table name
       expect(code).toContain('@Entity({ name: "posts" })');
     });

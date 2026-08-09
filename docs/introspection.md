@@ -181,7 +181,7 @@ import {
   UniqueIndex,
   UpdateTimestamp,
 } from "@stingerloom/orm";
-import { Profile } from "./profile.entity";
+import { Profile } from "./profile.entity.js";
 
 @Entity({ name: "user" })
 @UniqueIndex(["username"], "uq_user_username")

@@ -153,17 +153,20 @@ export class EntityCodeGenerator {
       );
     }
 
-    // Entity imports (cross-entity references)
+    // Entity imports (cross-entity references). The explicit `.js` extension
+    // keeps the generated code loadable from ESM projects (NodeNext requires
+    // it); TypeScript maps `./x.js` back to `./x.ts` under every module
+    // resolution mode, so CJS projects compile unchanged.
     for (const [entityName, fileName] of imports.getEntityImports()) {
       sections.push(
-        `import { ${entityName} } from "./${fileName}";`,
+        `import { ${entityName} } from "./${fileName}.js";`,
       );
     }
 
     // Enum imports
     for (const [enumName, fileName] of imports.getEnumImports()) {
       sections.push(
-        `import { ${enumName} } from "./${fileName}";`,
+        `import { ${enumName} } from "./${fileName}.js";`,
       );
     }
 
@@ -607,7 +610,7 @@ export class EntityCodeGenerator {
     for (const fileName of files.keys()) {
       if (fileName === "index.ts") continue;
       const moduleName = fileName.replace(/\.ts$/, "");
-      lines.push(`export * from "./${moduleName}";`);
+      lines.push(`export * from "./${moduleName}.js";`);
     }
     lines.push("");
     return lines.join("\n");

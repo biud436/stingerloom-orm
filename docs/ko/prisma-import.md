@@ -149,8 +149,8 @@ export enum Role {
 
 ```typescript
 import { Column, CreateTimestamp, Entity, OneToMany, PrimaryGeneratedColumn, UpdateTimestamp } from "@stingerloom/orm";
-import { Post } from "./post.entity";
-import { Role } from "./role.enum";
+import { Post } from "./post.entity.js";
+import { Role } from "./role.enum.js";
 
 @Entity()
 export class User {
@@ -181,8 +181,8 @@ export class User {
 
 ```typescript
 import { Column, CreateTimestamp, Entity, ManyToMany, ManyToOne, PrimaryGeneratedColumn } from "@stingerloom/orm";
-import { Tag } from "./tag.entity";
-import { User } from "./user.entity";
+import { Tag } from "./tag.entity.js";
+import { User } from "./user.entity.js";
 
 @Entity()
 export class Post {
@@ -219,7 +219,7 @@ export class Post {
 
 ```typescript
 import { Column, Entity, ManyToMany, PrimaryGeneratedColumn } from "@stingerloom/orm";
-import { Post } from "./post.entity";
+import { Post } from "./post.entity.js";
 
 @Entity()
 export class Tag {

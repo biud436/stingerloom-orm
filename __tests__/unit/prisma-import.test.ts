@@ -700,8 +700,8 @@ describe("EntityCodeGenerator", () => {
   it("should import related entity files", () => {
     const files = generateFiles(blogAst);
     const post = files.get("post.entity.ts")!;
-    expect(post).toContain('import { User } from "./user.entity"');
-    expect(post).toContain('import { Tag } from "./tag.entity"');
+    expect(post).toContain('import { User } from "./user.entity.js"');
+    expect(post).toContain('import { Tag } from "./tag.entity.js"');
   });
 
   it("should generate @Entity({ name }) for @@map", () => {
@@ -753,10 +753,10 @@ describe("EntityCodeGenerator", () => {
   it("should generate barrel index.ts", () => {
     const files = generateFiles(blogAst);
     const index = files.get("index.ts")!;
-    expect(index).toContain('export * from "./user.entity"');
-    expect(index).toContain('export * from "./post.entity"');
-    expect(index).toContain('export * from "./role.enum"');
-    expect(index).toContain('export * from "./post_status.enum"');
+    expect(index).toContain('export * from "./user.entity.js"');
+    expect(index).toContain('export * from "./post.entity.js"');
+    expect(index).toContain('export * from "./role.enum.js"');
+    expect(index).toContain('export * from "./post_status.enum.js"');
   });
 
   it("should skip FK fields that are covered by relations", () => {
@@ -983,6 +983,6 @@ model Account {
 `);
     const files = generateFiles(ast);
     const account = files.get("account.entity.ts")!;
-    expect(account).toContain('import { Status } from "./status.enum"');
+    expect(account).toContain('import { Status } from "./status.enum.js"');
   });
 });

@@ -271,11 +271,15 @@ export class EntityCodeBuilder {
     // self-references — `@ManyToOne(() => Department, ...)` inside the
     // Department class itself doesn't need a Department import (and an
     // explicit one would conflict with the class declaration).
+    // The explicit `.js` extension keeps the generated code loadable from ESM
+    // projects (NodeNext requires it); TypeScript maps `./x.js` back to
+    // `./x.ts` under every module resolution mode, so CJS projects compile
+    // unchanged.
     for (const refClass of Array.from(referencedClasses).sort()) {
       if (refClass === className) continue;
       const refFileName = this.classNameToFileName(refClass);
       lines.push(
-        `import { ${refClass} } from "./${refFileName.replace(/\.ts$/, "")}";`,
+        `import { ${refClass} } from "./${refFileName.replace(/\.ts$/, "")}.js";`,
       );
     }
 
