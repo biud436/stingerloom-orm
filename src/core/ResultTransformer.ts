@@ -254,9 +254,7 @@ export class ResultTransformer implements BaseResultTransformer {
   ) {
     const { remapMap } = getCachedColumnInfo(entityClass);
 
-    const enties = Object.entries(row);
-
-    for (const [key, value] of enties) {
+    for (const key in row) {
       // A row key with a remap entry is a base column on this entity (e.g.
       // snake_case @Column like `created_at` → `createdAt`, or
       // @RelationColumn FK like `project_id` → `projectId`). Underscore
@@ -264,12 +262,12 @@ export class ResultTransformer implements BaseResultTransformer {
       // with no remap entry are candidates for the foreign-object handler.
       const remapped = remapMap?.get(key);
       if (remapped !== undefined) {
-        baseEntity[remapped] = value;
+        baseEntity[remapped] = row[key];
         continue;
       }
       const isUnderScored = key.includes(ResultTransformer.PropertySeparator);
       if (!isUnderScored) {
-        baseEntity[key] = value;
+        baseEntity[key] = row[key];
       }
     }
   }
@@ -473,13 +471,6 @@ export class ResultTransformer implements BaseResultTransformer {
   }
 
   /**
-   * Converts an object into an array of [key, value] pairs.
-   */
-  private getObjectEntries<T = any, R = [string, unknown]>(obj: any): R[] {
-    return Object.entries(obj) as R[];
-  }
-
-  /**
    * Populates a foreign-key object with its contents.
    *
    * `visited` tracks entity classes already in the current recursion chain
@@ -501,12 +492,10 @@ export class ResultTransformer implements BaseResultTransformer {
     const manyToOneMappingMetadata = getCachedRelationInfo(entityClass)
       .manyToOne as ManyToOneMetadata<T>[] | undefined;
 
-    const foreignKeys = manyToOneMappingMetadata?.map((e) => e.columnName);
-
-    if (manyToOneMappingMetadata && foreignKeys) {
-      for (const foreignKey of foreignKeys) {
-        if (!baseEntity[foreignKey]) {
-          baseEntity[foreignKey] = this.createForeignObject();
+    if (manyToOneMappingMetadata) {
+      for (const { columnName } of manyToOneMappingMetadata) {
+        if (!baseEntity[columnName]) {
+          baseEntity[columnName] = this.createForeignObject();
         }
       }
 
@@ -514,17 +503,13 @@ export class ResultTransformer implements BaseResultTransformer {
       for (const { getMappingEntity, columnName } of manyToOneMappingMetadata) {
         const ForeignClass = getMappingEntity() as ClazzType<T>;
 
-        const rows = this.getObjectEntries(resultSet);
+        const prefix = this.addSeparatorToColumnName(columnName);
         const foreignObject = this.createForeignObject();
 
         // Filter the foreign-key columns out of the JOIN result to build the object.
-        for (const [key, value] of rows) {
-          const prefix = this.addSeparatorToColumnName(columnName);
-
-          const isContainsPrefix = key.startsWith(prefix);
-          if (isContainsPrefix) {
-            const keyWithoutPrefix = key.replace(prefix, "");
-            foreignObject[keyWithoutPrefix] = value;
+        for (const key in resultSet) {
+          if (key.startsWith(prefix)) {
+            foreignObject[key.substring(prefix.length)] = resultSet[key];
           }
         }
 
@@ -571,14 +556,12 @@ export class ResultTransformer implements BaseResultTransformer {
         const propertyKey = rel.propertyKey;
         const RelatedClass = rel.getRelatedEntity() as ClazzType<any>;
 
-        const rows = this.getObjectEntries(resultSet);
+        const prefix = this.addSeparatorToColumnName(propertyKey);
         const foreignObject = this.createForeignObject();
 
-        for (const [key, value] of rows) {
-          const prefix = this.addSeparatorToColumnName(propertyKey);
+        for (const key in resultSet) {
           if (key.startsWith(prefix)) {
-            const keyWithoutPrefix = key.replace(prefix, "");
-            foreignObject[keyWithoutPrefix] = value;
+            foreignObject[key.substring(prefix.length)] = resultSet[key];
           }
         }
 
@@ -613,24 +596,25 @@ export class ResultTransformer implements BaseResultTransformer {
       }
     }
 
-    const finalEntity = deserializeEntity(entityClass, { ...baseEntity });
-
-    return finalEntity;
+    // baseEntity is always a per-row local object here (transformNested and
+    // the recursive calls both build it fresh), and deserializeEntity only
+    // reads it — no defensive copy needed.
+    return deserializeEntity(entityClass, baseEntity);
   }
 
   /**
    * Recursively checks if an object is "deep null": all leaf values are null/undefined.
    */
   private isDeepNull(obj: ForeignObject<any>): boolean {
-    const keys = Object.keys(obj);
-    if (keys.length === 0) return true;
-    return Object.values(obj).every((v) => {
-      if (v === null || v === undefined) return true;
+    for (const key in obj) {
+      const v = obj[key];
+      if (v === null || v === undefined) continue;
       if (typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)) {
-        return this.isDeepNull(v);
+        if (this.isDeepNull(v)) continue;
       }
       return false;
-    });
+    }
+    return true;
   }
 
   /**
