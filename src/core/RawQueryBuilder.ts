@@ -77,8 +77,10 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
           "select() requires at least one column. Use \"*\" to select all columns.",
         );
       }
-      const columnSqls = columns.map((col) => sql`${raw(col)}`);
-      this.sqlQuerySegments.push(sql`SELECT ${join(columnSqls, ", ")}`);
+      // Column names arrive pre-escaped, so one raw() over a joined string
+      // replaces the per-column Sql pair (raw + tag) the nested form costs —
+      // sql-template-tag v4 flattens children by copying at construction.
+      this.sqlQuerySegments.push(raw(`SELECT ${columns.join(", ")}`));
     }
     return this;
   }
@@ -120,14 +122,14 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   from(table: string | Sql, alias?: string): RawQueryBuilder {
     if (alias) {
       if (typeof table === "string") {
-        this.sqlQuerySegments.push(sql`FROM ${raw(table)} AS ${raw(alias)}`);
+        this.sqlQuerySegments.push(raw(`FROM ${table} AS ${alias}`));
       } else {
         // Subqueries already include the AS clause; only the alias is appended
         this.sqlQuerySegments.push(sql`FROM ${table} ${raw(alias)}`);
       }
     } else {
       this.sqlQuerySegments.push(
-        sql`FROM ${typeof table === "string" ? raw(table) : table}`,
+        typeof table === "string" ? raw(`FROM ${table}`) : sql`FROM ${table}`,
       );
     }
     return this;
@@ -145,7 +147,13 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
       // opens a fresh WHERE rather than emitting a dangling "AND".
       return this;
     }
-    this.sqlQuerySegments.push(sql`WHERE ${join(conditions, " AND ")}`);
+    // Single condition (the common findOne/find shape): skip the join() pass
+    // so the condition is copied once instead of twice.
+    this.sqlQuerySegments.push(
+      conditions.length === 1
+        ? sql`WHERE ${conditions[0]}`
+        : sql`WHERE ${join(conditions, " AND ")}`,
+    );
     this.hasWhereClause = true;
     return this;
   }
@@ -183,13 +191,13 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
     const keyword = this.hasWhereClause ? "AND" : "WHERE";
     if (values.length === 0) {
       // Empty IN set can never match — emit FALSE
-      this.sqlQuerySegments.push(sql`${raw(keyword)} 1=0`);
+      this.sqlQuerySegments.push(raw(`${keyword} 1=0`));
       this.hasWhereClause = true;
       return this;
     }
-    const valueSqls = values.map((v) => sql`${v}`);
+    // join() binds plain values directly — no per-value sql`` wrapper needed.
     this.sqlQuerySegments.push(
-      sql`${raw(keyword)} ${raw(column)} IN (${join(valueSqls, ", ")})`,
+      sql`${raw(`${keyword} ${column}`)} IN (${join(values, ", ")})`,
     );
     this.hasWhereClause = true;
     return this;
@@ -206,10 +214,9 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
       // Empty NOT IN set matches everything — no condition needed
       return this;
     }
-    const valueSqls = values.map((v) => sql`${v}`);
     const keyword = this.hasWhereClause ? "AND" : "WHERE";
     this.sqlQuerySegments.push(
-      sql`${raw(keyword)} ${raw(column)} NOT IN (${join(valueSqls, ", ")})`,
+      sql`${raw(`${keyword} ${column}`)} NOT IN (${join(values, ", ")})`,
     );
     this.hasWhereClause = true;
     return this;
@@ -222,7 +229,7 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    */
   whereNull(column: string): RawQueryBuilder {
     const keyword = this.hasWhereClause ? "AND" : "WHERE";
-    this.sqlQuerySegments.push(sql`${raw(keyword)} ${raw(column)} IS NULL`);
+    this.sqlQuerySegments.push(raw(`${keyword} ${column} IS NULL`));
     this.hasWhereClause = true;
     return this;
   }
@@ -234,7 +241,7 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    */
   whereNotNull(column: string): RawQueryBuilder {
     const keyword = this.hasWhereClause ? "AND" : "WHERE";
-    this.sqlQuerySegments.push(sql`${raw(keyword)} ${raw(column)} IS NOT NULL`);
+    this.sqlQuerySegments.push(raw(`${keyword} ${column} IS NOT NULL`));
     this.hasWhereClause = true;
     return this;
   }
@@ -249,7 +256,7 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   whereBetween(column: string, min: any, max: any): RawQueryBuilder {
     const keyword = this.hasWhereClause ? "AND" : "WHERE";
     this.sqlQuerySegments.push(
-      sql`${raw(keyword)} ${raw(column)} BETWEEN ${min} AND ${max}`,
+      sql`${raw(`${keyword} ${column}`)} BETWEEN ${min} AND ${max}`,
     );
     this.hasWhereClause = true;
     return this;
@@ -265,16 +272,16 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
   ): RawQueryBuilder {
     if (orders.length === 0) return this;
 
-    const orderSqls = orders.map(
+    const orderParts = orders.map(
       ({ column, direction }) => {
         const safeDirection = direction.toUpperCase();
         if (safeDirection !== "ASC" && safeDirection !== "DESC") {
           throw new OrmError(OrmErrorCode.QUERY_ERROR, `Invalid ORDER BY direction: ${direction}`);
         }
-        return sql`${raw(column)} ${raw(safeDirection)}`;
+        return `${column} ${safeDirection}`;
       },
     );
-    this.sqlQuerySegments.push(sql`ORDER BY ${join(orderSqls, ", ")}`);
+    this.sqlQuerySegments.push(raw(`ORDER BY ${orderParts.join(", ")}`));
     return this;
   }
 
@@ -317,11 +324,11 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
     if (typeof table === "string") {
       if (table.includes(` AS ${alias}`)) {
         this.sqlQuerySegments.push(
-          sql`${raw(type)} JOIN ${raw(table)} ON ${condition}`,
+          sql`${raw(`${type} JOIN ${table}`)} ON ${condition}`,
         );
       } else {
         this.sqlQuerySegments.push(
-          sql`${raw(type)} JOIN ${raw(table)} AS ${raw(alias)} ON ${condition}`,
+          sql`${raw(`${type} JOIN ${table} AS ${alias}`)} ON ${condition}`,
         );
       }
     } else {
@@ -351,8 +358,14 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
    */
   groupBy(columns: Array<string | Sql>): RawQueryBuilder {
     if (columns.length === 0) return this;
+    if (columns.every((col) => typeof col === "string")) {
+      this.sqlQuerySegments.push(
+        raw(`GROUP BY ${(columns as string[]).join(", ")}`),
+      );
+      return this;
+    }
     const columnSqls = columns.map((col) =>
-      typeof col === "string" ? sql`${raw(col)}` : col,
+      typeof col === "string" ? raw(col) : col,
     );
     this.sqlQuerySegments.push(sql`GROUP BY ${join(columnSqls, ", ")}`);
     return this;
@@ -496,8 +509,7 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
         "selectDistinct() requires at least one column.",
       );
     }
-    const columnSqls = columns.map((col) => sql`${raw(col)}`);
-    this.sqlQuerySegments.push(sql`SELECT DISTINCT ${join(columnSqls, ", ")}`);
+    this.sqlQuerySegments.push(raw(`SELECT DISTINCT ${columns.join(", ")}`));
     return this;
   }
 
@@ -517,10 +529,10 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
         "selectDistinctOn() requires at least one DISTINCT ON column.",
       );
     }
-    const distinctSqls = distinctColumns.map((col) => sql`${raw(col)}`);
+    const distinctList = distinctColumns.join(", ");
     if (selectColumns === "*") {
       this.sqlQuerySegments.push(
-        sql`SELECT DISTINCT ON (${join(distinctSqls, ", ")}) *`,
+        raw(`SELECT DISTINCT ON (${distinctList}) *`),
       );
     } else {
       if (selectColumns.length === 0) {
@@ -529,9 +541,8 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
           "selectDistinctOn() requires at least one select column. Use \"*\" to select all.",
         );
       }
-      const selectSqls = selectColumns.map((col) => sql`${raw(col)}`);
       this.sqlQuerySegments.push(
-        sql`SELECT DISTINCT ON (${join(distinctSqls, ", ")}) ${join(selectSqls, ", ")}`,
+        raw(`SELECT DISTINCT ON (${distinctList}) ${selectColumns.join(", ")}`),
       );
     }
     return this;

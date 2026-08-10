@@ -28,10 +28,8 @@ export class Conditions {
     if (values.length === 0) {
       return sql`1 = 0`;
     }
-    return sql`${raw(column)} IN (${join(
-      values.map((v) => sql`${v}`),
-      ", ",
-    )})`;
+    // join() binds plain values directly — no per-value sql`` wrapper needed.
+    return sql`${raw(column)} IN (${join(values, ", ")})`;
   }
 
   /**
@@ -44,10 +42,7 @@ export class Conditions {
     if (values.length === 0) {
       return sql`1 = 1`;
     }
-    return sql`${raw(column)} NOT IN (${join(
-      values.map((v) => sql`${v}`),
-      ", ",
-    )})`;
+    return sql`${raw(column)} NOT IN (${join(values, ", ")})`;
   }
 
   /**
