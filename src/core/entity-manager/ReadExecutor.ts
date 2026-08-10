@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType, Logger, resolveEntityGlobs, generateUUIDv7 } from "../../utils";
-import { ColumnMetadata } from "../../scanner";
+import { ColumnMetadata, MetadataLayerRegistry } from "../../scanner";
+import type { ManyToOneMetadata, OneToOneMetadata } from "../../decorators";
 import { ISqlDriver } from "../../dialects/SqlDriver";
 import { TransactionSessionManager } from "../../dialects/TransactionSessionManager";
 import { FindOption, LockMode, UpdateData, UpdateManyOptions, WhereClause } from "../../dialects/FindOption";
@@ -37,6 +38,32 @@ import { InheritanceResolver } from "../InheritanceResolver";
 import { createDialectExpression } from "../../dialects/DialectExpression";
 
 /**
+ * Per-entity read-path column plan: the physical SELECT list (plain and
+ * table-qualified wrapped forms), relation metadata, and driver-specific
+ * derived lists that findInternal would otherwise rebuild on every query.
+ */
+interface ReadColumnPlan {
+  /** Dialect the wrapped identifier strings were produced for. */
+  dialect: string | undefined;
+  /** @Column names + @RelationColumn-derived FK columns without a matching @Column. */
+  allColNames: string[];
+  /** allColNames wrapped: `"col"`. */
+  selectPlain: string[];
+  /** allColNames qualified + wrapped: `"table"."col"`. */
+  selectQualified: string[];
+  /** Column names of boolean columns (SQLite INTEGER 0/1 → boolean read fix-up). */
+  boolColumns: string[];
+  /** Resolved ManyToOne relation metadata (joinColumn already resolved). */
+  manyToOne: ManyToOneMetadata<any>[];
+  /** Resolved OneToOne relation metadata. */
+  oneToOne: OneToOneMetadata<any>[];
+  /** manyToOne entries with `eager: true` (the no-`relations`-option filter result). */
+  eagerM2O: ManyToOneMetadata<any>[];
+  /** Owning-side oneToOne entries with `eager: true`. */
+  eagerO2O: OneToOneMetadata<any>[];
+}
+
+/**
  * Executes all read operations (find / findOne / pagination / pluck /
  * exists / findByPK*) for EntityManager. Stateless beyond the services it
  * reads from {@link EntityManagerInternals}.
@@ -45,6 +72,79 @@ import { createDialectExpression } from "../../dialects/DialectExpression";
  */
 export class ReadExecutor {
   constructor(private readonly ctx: EntityManagerInternals) {}
+
+  /**
+   * Column-plan cache keyed on (merged metadata view, entity metadata)
+   * identity — the same invalidation scheme as EntityManager.
+   * buildPropertyToColumnMap(): any layer change mints a new merged view,
+   * so tenant overrides never share entries with public. The dialect is
+   * re-checked on hit because the wrapped identifier strings depend on the
+   * active driver (test-time driver swaps must not serve stale quoting).
+   */
+  private readonly columnPlanCache = new WeakMap<
+    object,
+    WeakMap<object, ReadColumnPlan>
+  >();
+
+  private getColumnPlan(
+    entity: ClazzType<any>,
+    metadata: { name: string; columns: ColumnMetadata[] },
+  ): ReadColumnPlan {
+    const mergedView = MetadataLayerRegistry.getInstance().resolveAll();
+    let byMetadata = this.columnPlanCache.get(mergedView);
+    if (!byMetadata) {
+      byMetadata = new WeakMap();
+      this.columnPlanCache.set(mergedView, byMetadata);
+    }
+    const dialect = this.ctx.getDbType();
+    const hit = byMetadata.get(metadata);
+    if (hit && hit.dialect === dialect) return hit;
+
+    const manyToOne = this.resolver.resolveManyToOneMetadata(entity);
+    const oneToOne = this.resolver.resolveOneToOneMetadata(entity);
+
+    // Full physical column set: @Column items + @RelationColumn-derived FK
+    // columns (joinColumn) that have no matching @Column. Without the FK
+    // columns the entity's shadow `${rel}Id` accessor stays undefined after
+    // findOne, even though INSERT/UPDATE persist them.
+    const allColNames = metadata.columns
+      .map((c) => c.name as string | undefined)
+      .filter((n): n is string => !!n);
+    const seen = new Set<string>(allColNames);
+    for (const rel of manyToOne) {
+      if (rel.joinColumn && !seen.has(rel.joinColumn)) {
+        allColNames.push(rel.joinColumn);
+        seen.add(rel.joinColumn);
+      }
+    }
+    for (const rel of oneToOne) {
+      if (rel.joinColumn && !seen.has(rel.joinColumn)) {
+        allColNames.push(rel.joinColumn);
+        seen.add(rel.joinColumn);
+      }
+    }
+
+    const wrappedTable = this.ctx.wrap(metadata.name);
+    const plan: ReadColumnPlan = {
+      dialect,
+      allColNames,
+      selectPlain: allColNames.map((n) => this.ctx.wrap(n)),
+      selectQualified: allColNames.map(
+        (n) => `${wrappedTable}.${this.ctx.wrap(n)}`,
+      ),
+      boolColumns: metadata.columns
+        .filter((c) => c.options?.type === "boolean")
+        .map((c) => c.name),
+      manyToOne,
+      oneToOne,
+      eagerM2O: manyToOne.filter((rel) => rel.option?.eager === true),
+      eagerO2O: oneToOne.filter(
+        (rel) => !!rel.joinColumn && rel.option?.eager === true,
+      ),
+    };
+    byMetadata.set(metadata, plan);
+    return plan;
+  }
 
   // Narrowable driver view + live collaborators (read at call time so test-time
   // reassignment on EntityManager is honored).
@@ -183,26 +283,28 @@ export class ReadExecutor {
       const orderByMap: Array<{ column: string; direction: "ASC" | "DESC" }> =
         [];
 
+      const plan = this.getColumnPlan(entity, metadata);
+
       // Collect ManyToOne relations to eager-load
-      const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-      const eagerRelations = manyToOneRelations.filter((rel) => {
-        const isEager = rel.option?.eager === true;
-        const isInRelations = findOption.relations?.includes(
-          rel.columnName,
-        );
-        return isEager || isInRelations;
-      });
+      const manyToOneRelations = plan.manyToOne;
+      const eagerRelations = findOption.relations
+        ? manyToOneRelations.filter(
+            (rel) =>
+              rel.option?.eager === true ||
+              findOption.relations!.includes(rel.columnName),
+          )
+        : plan.eagerM2O;
 
       // Collect OneToOne relations to eager-load (owning side — the side with joinColumn)
-      const oneToOneRelations = this.resolver.resolveOneToOneMetadata(entity);
-      const eagerOneToOneRelations = oneToOneRelations.filter((rel) => {
-        if (!rel.joinColumn) return false;
-        const isEager = rel.option?.eager === true;
-        const isInRelations = findOption.relations?.includes(
-          rel.propertyKey,
-        );
-        return isEager || isInRelations;
-      });
+      const oneToOneRelations = plan.oneToOne;
+      const eagerOneToOneRelations = findOption.relations
+        ? oneToOneRelations.filter(
+            (rel) =>
+              !!rel.joinColumn &&
+              (rel.option?.eager === true ||
+                findOption.relations!.includes(rel.propertyKey)),
+          )
+        : plan.eagerO2O;
 
       const hasEagerJoins =
         eagerRelations.length > 0 || eagerOneToOneRelations.length > 0
@@ -260,37 +362,11 @@ export class ReadExecutor {
           selectMap.push(...selectedColumns.map((col) => this.ctx.wrap(col)));
         }
       } else {
-        // Build the full physical column set: @Column items + @RelationColumn-
-        // derived FK columns (joinColumn) that have no matching @Column. Without
-        // the FK columns the entity's shadow `${rel}Id` accessor stays
-        // undefined after findOne, even though INSERT/UPDATE persist them.
-        const allColNames = metadata.columns
-          .map((c: any) => c.name as string | undefined)
-          .filter((n): n is string => !!n);
-        const seen = new Set<string>(allColNames);
-        for (const rel of manyToOneRelations) {
-          if (rel.joinColumn && !seen.has(rel.joinColumn)) {
-            allColNames.push(rel.joinColumn);
-            seen.add(rel.joinColumn);
-          }
-        }
-        for (const rel of oneToOneRelations) {
-          if (rel.joinColumn && !seen.has(rel.joinColumn)) {
-            allColNames.push(rel.joinColumn);
-            seen.add(rel.joinColumn);
-          }
-        }
-        if (hasEagerJoins) {
-          selectMap.push(
-            ...allColNames.map(
-              (name) => `${this.ctx.wrap(tableName)}.${this.ctx.wrap(name)}`,
-            ),
-          );
-        } else {
-          selectMap.push(
-            ...allColNames.map((name) => this.ctx.wrap(name)),
-          );
-        }
+        // Full physical column set (incl. FK-only columns) — precomputed and
+        // wrapped once per entity metadata in getColumnPlan().
+        selectMap.push(
+          ...(hasEagerJoins ? plan.selectQualified : plan.selectPlain),
+        );
       }
 
       // TPT polymorphic: add each child table's unique columns to SELECT (with a prefix alias)
@@ -682,9 +758,7 @@ export class ReadExecutor {
 
       // SQLite: convert INTEGER 0/1 back to boolean
       if (this.ctx.isSqlite() && results.length > 0) {
-        const boolColumns = metadata.columns
-          .filter((c: any) => c.options?.type === "boolean")
-          .map((c: any) => c.name as string);
+        const boolColumns = plan.boolColumns;
         if (boolColumns.length > 0) {
           for (const row of results) {
             for (const col of boolColumns) {
