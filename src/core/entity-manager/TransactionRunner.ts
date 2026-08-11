@@ -50,6 +50,7 @@ export class TransactionRunner {
     }
 
     const session = new TransactionSessionManager();
+    let committed = false;
     try {
       if (readNodeOverride) {
         await session.connectToNode(readNodeOverride);
@@ -67,10 +68,15 @@ export class TransactionRunner {
       const result = await fn(session);
       await this.ctx.notifyTransactionSubscribers("beforeTransactionCommit");
       await session.commit();
+      committed = true;
       this.ctx.notifyPluginAfterTransaction(true);
       await this.ctx.notifyTransactionSubscribers("afterTransactionCommit");
       return result;
     } catch (e: unknown) {
+      // Once COMMIT has succeeded the data is durable — a throwing
+      // post-commit notification must not run ROLLBACK or fire the rollback
+      // events on top of it. The error still propagates to the caller.
+      if (committed) throw e;
       try {
         await this.ctx.notifyTransactionSubscribers("beforeTransactionRollback");
         await session.rollback();

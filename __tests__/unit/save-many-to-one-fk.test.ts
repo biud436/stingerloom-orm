@@ -132,6 +132,18 @@ function getSqlText(call: any[]): string {
   return sqlObj.text ?? sqlObj.sql ?? String(sqlObj);
 }
 
+// UPDATE-path saves must report one matched row: a 0-row UPDATE now triggers
+// an existence probe and throws EntityNotFoundError when the row is missing,
+// so a blanket empty result would abort before the SQL these tests assert on.
+function mockUpdateMatchesOneRow(): void {
+  mockQuery.mockImplementation(async (q: any) => {
+    const text = typeof q === "string" ? q : (q?.text ?? q?.sql ?? "");
+    return text.includes("UPDATE")
+      ? { results: { affectedRows: 1 }, fields: [] }
+      : { results: [], fields: [] };
+  });
+}
+
 describe("save() ManyToOne FK — Junior (기본 관계 할당)", () => {
   let em: EntityManager;
 
@@ -152,7 +164,7 @@ describe("save() ManyToOne FK — Junior (기본 관계 할당)", () => {
     pet.owner = owner;
 
     // save() on an entity with existing PK → UPDATE path
-    mockQuery.mockResolvedValue({ results: [], fields: [] });
+    mockUpdateMatchesOneRow();
 
     await em.save(TestPet, pet);
 
@@ -209,7 +221,7 @@ describe("save() ManyToOne FK — Junior (기본 관계 할당)", () => {
     pet.name = "Solo";
     // owner 미할당 (undefined)
 
-    mockQuery.mockResolvedValue({ results: [], fields: [] });
+    mockUpdateMatchesOneRow();
 
     await em.save(TestPet, pet);
 
@@ -239,7 +251,7 @@ describe("save() ManyToOne FK — Middle (관계 변경·해제)", () => {
     pet.name = "Whiskers";
     (pet as any).owner = null;
 
-    mockQuery.mockResolvedValue({ results: [], fields: [] });
+    mockUpdateMatchesOneRow();
 
     await em.save(TestPet, pet);
 
@@ -264,7 +276,7 @@ describe("save() ManyToOne FK — Middle (관계 변경·해제)", () => {
     pet.name = "Whiskers";
     pet.owner = newOwner;
 
-    mockQuery.mockResolvedValue({ results: [], fields: [] });
+    mockUpdateMatchesOneRow();
 
     await em.save(TestPet, pet);
 
@@ -324,7 +336,7 @@ describe("save() ManyToOne FK — Senior (엣지 케이스)", () => {
     pet.name = "FalsyTest";
     pet.owner = owner;
 
-    mockQuery.mockResolvedValue({ results: [], fields: [] });
+    mockUpdateMatchesOneRow();
 
     await em.save(TestPet, pet);
 
@@ -352,7 +364,7 @@ describe("save() ManyToOne FK — Senior (엣지 케이스)", () => {
     pet.id = 1;
     pet.name = "Bouncing";
 
-    mockQuery.mockResolvedValue({ results: [], fields: [] });
+    mockUpdateMatchesOneRow();
 
     // 첫 번째 save: owner1
     pet.owner = owner1;
@@ -395,7 +407,7 @@ describe("save() ManyToOne FK — Senior (엣지 케이스)", () => {
     pet.name = "BrokenRelation";
     pet.owner = brokenOwner;
 
-    mockQuery.mockResolvedValue({ results: [], fields: [] });
+    mockUpdateMatchesOneRow();
 
     await em.save(TestPet, pet);
 

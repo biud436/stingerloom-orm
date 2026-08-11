@@ -145,15 +145,16 @@ export class ExplainQueryHandler {
       // An explicit count of 0 means LIMIT 0; only a positive `take` overrides it.
       if (take && take > 0) count = take;
       qb.limit([offset, count]);
-    } else if (skip !== undefined || (take !== undefined && !limit)) {
+    } else if (skip !== undefined || (take !== undefined && limit === undefined)) {
       const offset = Math.max(skip ?? 0, 0);
-      const count = Math.max(take ?? 0, 0) || undefined;
-      if (count) {
+      // An explicit `take: 0` means LIMIT 0 — only `undefined` drops the cap.
+      const count = take !== undefined ? Math.max(take, 0) : undefined;
+      if (count !== undefined) {
         qb.limit([offset, count]);
       } else if (offset > 0) {
         qb.limit([offset, 2147483647]);
       }
-    } else if (limit) {
+    } else if (limit !== undefined) {
       qb.limit(limit as number);
     }
 
