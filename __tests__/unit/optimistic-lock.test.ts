@@ -6,6 +6,7 @@ import { Column, COLUMN_TOKEN } from "../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
 import { Version, VERSION_TOKEN } from "../../src/decorators/Version";
 import { OptimisticLockError } from "../../src/errors/OptimisticLockError";
+import { EntityNotFoundError } from "../../src/errors/EntityNotFoundError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 import { SchemaGenerator } from "../../src/core/generators/SchemaGenerator";
 import { SnakeNamingStrategy } from "../../src/core/generators/SnakeNamingStrategy";
@@ -516,7 +517,27 @@ describe("Optimistic Locking (@Version)", () => {
       expect(sqlText).not.toMatch(/version/i);
     });
 
-    it("UPDATE: affectedRows === 0이어도 OptimisticLockError를 throw하지 않아야 함", async () => {
+    it("UPDATE: affectedRows === 0이어도 행이 존재하면(값 동일 UPDATE) 에러 없이 통과해야 함", async () => {
+      // MySQL은 value-identical UPDATE에서 affectedRows가 0일 수 있다 —
+      // 존재 프로브(SELECT 1)가 행을 찾으면 성공으로 처리한다.
+      mockQuery.mockImplementation(async (q: any) => {
+        const text = typeof q === "string" ? q : (q?.text ?? "");
+        if (text.includes("SELECT 1")) {
+          return { results: [{ probe: 1 }], fields: {} };
+        }
+        return { results: { affectedRows: 0 }, fields: {} };
+      });
+
+      const em = createMySqlEntityManager(plainUserMetadata);
+
+      await expect(
+        em.save(PlainUser, { id: 1, name: "No version" } as any),
+      ).resolves.toBeDefined();
+    });
+
+    it("UPDATE: affectedRows === 0이고 행도 없으면 EntityNotFoundError를 throw해야 함 (OptimisticLockError 아님)", async () => {
+      // 존재 프로브까지 빈 결과 → 대상 행 자체가 없는 0행 UPDATE.
+      // 이전에는 afterUpdate까지 발화하며 null을 반환하는 무음 성공이었다.
       mockQuery.mockResolvedValue({
         results: { affectedRows: 0 },
         fields: {},
@@ -524,10 +545,9 @@ describe("Optimistic Locking (@Version)", () => {
 
       const em = createMySqlEntityManager(plainUserMetadata);
 
-      // @Version이 없으므로 affectedRows === 0이어도 에러 없이 통과
       await expect(
         em.save(PlainUser, { id: 1, name: "No version" } as any),
-      ).resolves.toBeDefined();
+      ).rejects.toThrow(EntityNotFoundError);
     });
   });
 

@@ -16,6 +16,7 @@ import {
   EntityEventListener,
 } from "../EntityEventEmitter";
 import { EntityMetadataNotFoundError } from "../../errors/EntityMetadataNotFoundError";
+import { EntityNotFoundError } from "../../errors/EntityNotFoundError";
 import { InvalidQueryError } from "../../errors/InvalidQueryError";
 import { OptimisticLockError } from "../../errors/OptimisticLockError";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
@@ -850,15 +851,30 @@ export class WriteExecutor {
           Date.now() - updateStart,
         );
 
+        let affected = 0;
+        if (this.ctx.isMySqlFamily()) {
+          affected = okPacket(updateResult)?.affectedRows ?? 0;
+        } else {
+          affected = updateResult?.rowCount ?? 0;
+        }
         if (versionColName && currentVersion !== undefined && currentVersion !== null) {
-          let affected = 0;
-          if (this.ctx.isMySqlFamily()) {
-            affected = okPacket(updateResult)?.affectedRows ?? 0;
-          } else {
-            affected = updateResult?.rowCount ?? 0;
-          }
           if (affected === 0) {
             throw new OptimisticLockError(entity.name, currentVersion as number);
+          }
+        } else if (affected === 0) {
+          // 0 affected rows means no row matched the primary key — except on
+          // MySQL, where affectedRows can also be 0 for a value-identical
+          // UPDATE, so confirm with an existence probe before failing.
+          // Without this the save was a silent no-op: afterUpdate hooks and
+          // subscribers still fired and save() returned null cast as T.
+          const probeResult = await session.query(
+            sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
+          );
+          if (resultRows(probeResult).length === 0) {
+            throw new EntityNotFoundError(
+              entity.name,
+              "save() attempted an UPDATE but no row matched the primary key.",
+            );
           }
         }
 
