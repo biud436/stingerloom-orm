@@ -698,29 +698,35 @@ export class ReadExecutor {
 
       qb.orderBy(orderByMap);
 
+      // LIMIT tuple syntax is dialect-specific (mirrors ExplainQueryHandler,
+      // #145): the builder defaults to MySQL's `LIMIT off, cnt`, which
+      // PostgreSQL rejects — so the dialect must be set for every driver,
+      // not just the MySQL family.
+      if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
+      else if (this.ctx.isSqlite()) qb.setDatabaseType("sqlite");
+      else qb.setDatabaseType("postgresql");
+
       if (Array.isArray(limit)) {
         const [offset, count] = limit;
         // An explicit count of 0 means "no rows" (LIMIT 0); the validator
         // permits it. Only a positive `take` overrides the tuple's count.
         const effectiveCount = (take && take > 0) ? take : count;
-        if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
         qb.limit([offset, effectiveCount]);
-      } else if (skip !== undefined || (take !== undefined && !limit)) {
-        // skip/take pagination → convert to limit tuple
+      } else if (skip !== undefined || (take !== undefined && limit === undefined)) {
+        // skip/take pagination → convert to limit tuple. An explicit
+        // `take: 0` means LIMIT 0 (the validator allows it), so only
+        // `undefined` may drop the cap — a falsy check would silently
+        // return the whole table.
         const offset = skip ?? 0;
-        const count = (take ?? 0) || undefined;
-        if (count) {
-          if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
-          qb.limit([offset, count]);
-        } else if (offset > 0 && this.ctx.isMySqlFamily()) {
-          // MySQL requires a count with OFFSET — use a very large number
-          qb.setDatabaseType("mysql");
-          qb.limit([offset, 2147483647]);
+        if (take !== undefined) {
+          qb.limit([offset, take]);
         } else if (offset > 0) {
+          // skip without take: no real cap — use a very large count so the
+          // OFFSET still applies on drivers that require one (MySQL).
           qb.limit([offset, 2147483647]);
         }
       } else {
-        if (limit) {
+        if (limit !== undefined) {
           qb.limit(limit as number);
         }
       }
