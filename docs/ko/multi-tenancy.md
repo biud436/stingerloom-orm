@@ -490,6 +490,7 @@ await em.register({
   tenantColumnName: "tenant_id",   // optional — "tenant_id" is the default
   tenantColumnType: "varchar",     // optional — "varchar" | "uuid" | "int" | "bigint"
   tenantColumnLength: 64,          // optional — varchar 에만 적용
+  tenantOnMissingContext: "throw", // optional — "throw" | "warn" (기본값) | "allow"
 });
 ```
 
@@ -500,7 +501,7 @@ await em.register({
 1. **DDL 주입.** `SchemaRegistrar`가 모든 테이블에 `tenant_id VARCHAR(64) NOT NULL` (또는 설정된 타입)을 추가합니다. 엔티티 클래스에 컬럼을 선언할 필요가 없습니다.
 2. **INSERT 자동 채움 + 검증.** `save()` / `saveMany()` / `insertMany()` / `upsert()` / `batchUpsert()`가 `MetadataContext.getCurrentTenant()` 값으로 `tenant_id`를 채웁니다. 테넌트 컨텍스트 없이 INSERT 하면 `MISSING_TENANT_CONTEXT`를 던지고, 컨텍스트와 다른 `tenant_id`를 명시적으로 넘기면 `TENANT_MISMATCH`를 던집니다.
 3. **read WHERE 주입.** `find()`, `findOne()`, `findByPK()`, `findAndCount()`, `findWithCursor()`, `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`, 그리고 `SelectQueryBuilder.getMany()` / `getCount()` / `exists()`에 `AND tenant_id = ?`가 자동으로 붙습니다. Eager JOIN과 relation loader도 같은 predicate를 상속해요.
-4. **write WHERE 주입.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()`도 `AND tenant_id = ?`를 받기 때문에, 테넌트 컨텍스트를 깜빡해도 다른 테넌트의 행을 지울 수 없습니다.
+4. **write WHERE 주입.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()`도 `AND tenant_id = ?`를 받기 때문에, 테넌트 A에서 실행한 쿼리가 테넌트 B의 행을 건드릴 수 없습니다. 테넌트 컨텍스트가 **아예 없는** 상태의 동작은 아래 `tenantOnMissingContext` 정책이 결정합니다.
 
 ```typescript
 @Entity()
@@ -599,6 +600,57 @@ await em.createQueryBuilder(Post, "p")
 ```
 
 쿼리 단위 플래그는 read에만 적용됩니다. `updateMany` / `deleteMany` / `softDelete` / `restore`는 **의도적으로** 지원하지 않습니다 — 실수로 다른 테넌트 데이터를 수정하는 경우를 방지하려면, 한 줄짜리 리팩터링으로 켤 수 있는 플래그가 아니라 명시적인 `runUnscoped()` 블록이 필요합니다.
+
+### 컨텍스트 부재: `tenantOnMissingContext`
+
+위의 WHERE 주입은 어떤 테넌트를 바인딩할지 알기 위해 활성화된 `MetadataContext.run()`이 필요합니다. 컨텍스트 바깥에서 실행되는 코드 — 큐 워커, 크론 작업, 테넌트 미들웨어를 빠뜨린 라우트 — 에는 테넌트가 없으니 predicate를 만들 수 없고, 그 쿼리는 **모든 테넌트의 행**을 대상으로 하게 됩니다. INSERT는 이 상태에서 처음부터 `MISSING_TENANT_CONTEXT`로 실패했지만, read/update/delete는 로그 한 줄 없이 필터 없는 채로 실행돼 왔습니다.
+
+`tenantOnMissingContext` 옵션이 이 동작을 제어합니다:
+
+```typescript
+await em.register({
+  // ...
+  tenantStrategy: "tenant_column",
+  tenantOnMissingContext: "throw",
+});
+```
+
+| 정책 | 테넌트 컨텍스트가 없을 때의 동작 |
+|------|--------------------------------|
+| `"warn"` (기본값) | 쿼리는 필터 없이 실행되고, 엔티티 클래스당 한 번 경고를 로그합니다. 기존의 무음 동작과 backward compatible 합니다. |
+| `"throw"` | INSERT와 같은 에러인 `MISSING_TENANT_CONTEXT`로 reject 합니다. 프로덕션에 권장합니다. |
+| `"allow"` | 쿼리를 필터 없이 조용히 실행합니다. 스코프 접근과 글로벌 접근을 의도적으로 섞어 쓰는 앱을 위한 값입니다. |
+
+이 정책은 자동 predicate를 받는 모든 경로에 적용됩니다: `find*`, `count`/`exists`를 포함한 aggregate, `SelectQueryBuilder`, relation loader, `updateMany`, `deleteMany`, `softDelete`, `restore`. INSERT의 동작은 바꾸지 않고(컨텍스트가 없으면 항상 throw), 명시적인 탈출구에서는 절대 발화하지 않습니다:
+
+- `MetadataContext.runUnscoped()` — 명시적인 크로스 테넌트 블록
+- `MetadataContext.run("public", ...)` — 명시적인 관리자/부트스트랩 컨텍스트
+- 쿼리 단위 `withoutTenantScope` 플래그
+- `@NonTenantEntity()` 엔티티
+
+기본값은 backward compatibility를 위해 `"warn"`이고, 다음 메이저 버전에서 `"throw"`로 바뀝니다. 새 프로젝트라면 처음부터 `"throw"`를 설정하세요.
+
+#### 컨텍스트 없는 백그라운드 작업
+
+큐 워커나 크론 작업은 보통 한 번에 한 테넌트의 데이터를 처리합니다. 작업 페이로드에서 테넌트를 읽어 핸들러를 감싸면, 일반 요청과 똑같이 스코프가 적용됩니다:
+
+```typescript
+worker.process(async (job) => {
+  await MetadataContext.run(job.data.tenantId, async () => {
+    await em.updateMany(Post, { published: true }, { where: { id: job.data.postId } });
+  });
+});
+```
+
+정말로 테넌트를 가로지르는 유지보수 작업(야간 익스포트, 전역 backfill)이라면 `runUnscoped()`로 의도를 명시하세요 — `"throw"`를 포함한 모든 정책에서 통과합니다:
+
+```typescript
+cron.schedule("0 3 * * *", () =>
+  MetadataContext.runUnscoped(async () => {
+    const allPosts = await em.find(Post); // 의도적으로 필터 없음
+  }),
+);
+```
 
 ### Raw SQL 경고
 

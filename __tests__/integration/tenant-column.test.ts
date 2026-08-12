@@ -449,6 +449,54 @@ describe.each(drivers)(
         expect((gamma as any[]).every((r) => r.tag === "gamma")).toBe(true);
       });
     });
+
+    // ─────────────────────────────────────────────────────
+    // 11. Missing-context policy (tenantOnMissingContext)
+    // ─────────────────────────────────────────────────────
+    describe("11. Missing-context policy (tenantOnMissingContext)", () => {
+      it('default "warn": no-context find crosses tenants and warns; "throw" rejects', async () => {
+        await MetadataContext.run("acme", async () => {
+          await em.save(UserE, { name: "Alice" });
+        });
+        await MetadataContext.run("globex", async () => {
+          await em.save(UserE, { name: "Bob" });
+        });
+
+        // Default policy: unfiltered read is kept (backward compat) but warned.
+        const warnSpy = jest.spyOn((em as any).logger as Logger, "warn");
+        const tenantScope = (em as any).tenantScope;
+        try {
+          const rows: any[] = await em.find(UserE);
+          expect(rows.map((r) => r.name).sort()).toEqual(["Alice", "Bob"]);
+          expect(
+            warnSpy.mock.calls.some((c) =>
+              /\[multi-tenancy\] .*no active tenant context/.test(
+                String(c[0]),
+              ),
+            ),
+          ).toBe(true);
+
+          // "throw" policy: same statement now fails loud, symmetrical with INSERT.
+          tenantScope.onMissingContext = "throw";
+          await expect(em.find(UserE)).rejects.toMatchObject({
+            code: OrmErrorCode.MISSING_TENANT_CONTEXT,
+          });
+
+          // Scoped reads and the unscoped escape hatch are unaffected.
+          await MetadataContext.run("acme", async () => {
+            const mine: any[] = await em.find(UserE);
+            expect(mine.map((r) => r.name)).toEqual(["Alice"]);
+          });
+          const all: any[] = await MetadataContext.runUnscoped(() =>
+            em.find(UserE),
+          );
+          expect(all.length).toBe(2);
+        } finally {
+          tenantScope.onMissingContext = "warn";
+          warnSpy.mockRestore();
+        }
+      });
+    });
   },
 );
 

@@ -655,6 +655,10 @@ interface DatabaseClientOptions {
   replication?: ReplicationConfig;     // Read Replica settings
   namingStrategy?: NamingStrategy;     // Custom FK/index naming strategy
   tenantStrategy?: "search_path" | "schema_qualified" | "tenant_column" | "database"; // tenant isolation strategy (default: "search_path")
+  tenantColumnName?: string;           // tenant_column strategy: discriminator column name (default: "tenant_id")
+  tenantColumnType?: "varchar" | "uuid" | "int" | "bigint"; // tenant_column strategy: column type (default: "varchar")
+  tenantColumnLength?: number;         // tenant_column strategy: varchar length (default: 64)
+  tenantOnMissingContext?: "throw" | "warn" | "allow"; // tenant_column strategy: read/update/delete policy when no tenant context is active (default: "warn")
   plugins?: StingerloomPlugin[];       // Auto-install plugins on register()
 }
 ```

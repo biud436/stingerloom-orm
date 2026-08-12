@@ -490,6 +490,7 @@ await em.register({
   tenantColumnName: "tenant_id",   // optional — "tenant_id" is the default
   tenantColumnType: "varchar",     // optional — "varchar" | "uuid" | "int" | "bigint"
   tenantColumnLength: 64,          // optional — only used for varchar
+  tenantOnMissingContext: "throw", // optional — "throw" | "warn" (default) | "allow"
 });
 ```
 
@@ -500,7 +501,7 @@ With `tenantStrategy: "tenant_column"` the ORM applies four behaviors to every e
 1. **DDL injection.** `SchemaRegistrar` adds `tenant_id VARCHAR(64) NOT NULL` (or the configured type) to every table. You don't declare the column on your entity class.
 2. **INSERT auto-fill + validation.** `save()` / `saveMany()` / `insertMany()` / `upsert()` / `batchUpsert()` populate `tenant_id` from `MetadataContext.getCurrentTenant()`. Inserting with no active tenant context throws `MISSING_TENANT_CONTEXT`; inserting with an explicit `tenant_id` that disagrees with the context throws `TENANT_MISMATCH`.
 3. **WHERE injection on reads.** `find()`, `findOne()`, `findByPK()`, `findAndCount()`, `findWithCursor()`, `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`, and `SelectQueryBuilder.getMany()` / `getCount()` / `exists()` all append `AND tenant_id = ?`. Eager joins and relation loaders inherit the same predicate.
-4. **WHERE injection on writes.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()` also get `AND tenant_id = ?`, so a forgotten tenant context can't drop another tenant's rows.
+4. **WHERE injection on writes.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()` also get `AND tenant_id = ?`, so a query running under tenant A can never touch tenant B's rows. What happens when **no** tenant context is active at all is governed by the `tenantOnMissingContext` policy (see below).
 
 ```typescript
 @Entity()
@@ -599,6 +600,57 @@ await em.createQueryBuilder(Post, "p")
 ```
 
 Only reads accept the per-query flag. `updateMany` / `deleteMany` / `softDelete` / `restore` intentionally do not — an accidental cross-tenant write should require an explicit `runUnscoped()` block, not a flag that could be flipped on in a one-line refactor.
+
+### Missing context: `tenantOnMissingContext`
+
+The WHERE injection above needs an active `MetadataContext.run()` to know which tenant to bind. Code that runs outside any context — a queue worker, a cron job, a route that missed the tenant middleware — has no tenant, so the predicate cannot be built and the statement would target **every tenant's rows**. INSERT has always failed loud in that state (`MISSING_TENANT_CONTEXT`), but reads, updates and deletes historically ran unfiltered without a single log line.
+
+The `tenantOnMissingContext` option controls what happens instead:
+
+```typescript
+await em.register({
+  // ...
+  tenantStrategy: "tenant_column",
+  tenantOnMissingContext: "throw",
+});
+```
+
+| Policy | Behavior with no active tenant context |
+|--------|----------------------------------------|
+| `"warn"` (default) | The statement executes unfiltered, and the ORM logs a warning once per entity class. Backward compatible with the previous silent behavior. |
+| `"throw"` | The statement rejects with `MISSING_TENANT_CONTEXT` — the same error INSERT raises. Recommended for production. |
+| `"allow"` | The statement executes unfiltered, silently. For applications that intentionally mix scoped and global access. |
+
+The policy covers every path that receives the automatic predicate: `find*`, `count`/`exists` and the other aggregates, `SelectQueryBuilder`, relation loaders, `updateMany`, `deleteMany`, `softDelete`, `restore`. It does not change INSERT (which always throws without a context), and it never fires for the sanctioned escape hatches:
+
+- `MetadataContext.runUnscoped()` — the explicit cross-tenant block
+- `MetadataContext.run("public", ...)` — the explicit admin/bootstrap context
+- the per-query `withoutTenantScope` flag
+- `@NonTenantEntity()` entities
+
+The default is `"warn"` for backward compatibility and will change to `"throw"` in the next major version. New projects should set `"throw"` from day one.
+
+#### Background jobs without a context
+
+A queue worker or cron job usually processes one tenant's data at a time. Resolve the tenant from the job payload and wrap the handler — the job then behaves exactly like a scoped request:
+
+```typescript
+worker.process(async (job) => {
+  await MetadataContext.run(job.data.tenantId, async () => {
+    await em.updateMany(Post, { published: true }, { where: { id: job.data.postId } });
+  });
+});
+```
+
+For genuinely cross-tenant maintenance (nightly exports, global backfills), state the intent with `runUnscoped()` — it passes under every policy, including `"throw"`:
+
+```typescript
+cron.schedule("0 3 * * *", () =>
+  MetadataContext.runUnscoped(async () => {
+    const allPosts = await em.find(Post); // intentionally unfiltered
+  }),
+);
+```
 
 ### Raw SQL warnings
 
