@@ -42,7 +42,9 @@ export interface TenantColumnConfig {
 export class TenantScopeManager {
   strategy: TenantQueryStrategy = new SearchPathStrategy();
   columnConfig: TenantColumnConfig | null = null;
+  onMissingContext: "throw" | "warn" | "allow" = "warn";
   readonly rawQueryWarnedCallSites = new Set<string>();
+  private readonly missingContextWarnedEntities = new Set<Function>();
 
   constructor(private readonly ctx: EntityManagerInternals) {}
 
@@ -63,6 +65,7 @@ export class TenantScopeManager {
             ? options.tenantColumnLength ?? 64
             : undefined,
       };
+      this.onMissingContext = options.tenantOnMissingContext ?? "warn";
     } else if (options.tenantStrategy === "database") {
       this.strategy = new DatabaseStrategy();
     }
@@ -71,6 +74,7 @@ export class TenantScopeManager {
   /** Clears per-instance warning dedup state (propagateShutdown path). */
   reset(): void {
     this.rawQueryWarnedCallSites.clear();
+    this.missingContextWarnedEntities.clear();
   }
 
   /**
@@ -104,11 +108,16 @@ export class TenantScopeManager {
    *   - strategy is not `"tenant_column"`
    *   - entity is `@NonTenantEntity()`
    *   - the current context is unscoped (`MetadataContext.runUnscoped`)
-   *   - the current tenant is `"public"` (no tenant context active)
+   *   - the current tenant is `"public"` (explicit admin context, or no
+   *     context active — the latter goes through `onMissingContext` first)
    *
-   * The `"public"` case is intentional: reads against the public context are
-   * unfiltered so admin/bootstrapping code continues to work. Write paths
-   * disallow `"public"` via `applyTenantColumnOnInsert` instead.
+   * The explicit `"public"` case (`MetadataContext.run("public", ...)`) is
+   * intentional: reads against the public context are unfiltered so
+   * admin/bootstrapping code continues to work. When **no context is active
+   * at all** the `tenantOnMissingContext` policy decides instead: `"throw"`
+   * rejects (symmetrical with INSERT), `"warn"` logs once per entity class
+   * and stays unfiltered, `"allow"` stays silent. Write paths disallow
+   * `"public"` via `applyTenantColumnOnInsert` regardless of the policy.
    *
    * @param entity         Entity class
    * @param tableAliasOrName  When provided, qualifies the column (for JOINs).
@@ -122,13 +131,57 @@ export class TenantScopeManager {
     if (isNonTenantEntity(entity)) return null;
     if (MetadataContext.isUnscoped()) return null;
     const tenant = MetadataContext.getCurrentTenant();
-    if (tenant === "public") return null;
+    if (tenant === "public") {
+      if (!MetadataContext.isActive()) {
+        this.enforceMissingContextPolicy(entity, config);
+      }
+      return null;
+    }
 
     const columnName = this.resolveTenantColumnName(entity);
     const col = tableAliasOrName
       ? `${this.ctx.wrap(tableAliasOrName)}.${this.ctx.wrap(columnName)}`
       : this.ctx.wrap(columnName);
     return Conditions.equals(col, tenant);
+  }
+
+  /**
+   * Applies the `tenantOnMissingContext` policy when a tenant-scoped
+   * SELECT/UPDATE/DELETE is built with no `MetadataContext.run()` active.
+   * Without a tenant to bind, the statement runs unfiltered across every
+   * tenant — historically a silent fail-open (only INSERT failed loud).
+   *
+   *   - `"throw"`: reject with `MISSING_TENANT_CONTEXT`.
+   *   - `"warn"` (default): log once per entity class, keep the unfiltered
+   *     statement for backward compatibility.
+   *   - `"allow"`: sanctioned unfiltered access, no log.
+   */
+  private enforceMissingContextPolicy<T>(
+    entity: ClazzType<T>,
+    config: TenantColumnConfig,
+  ): void {
+    if (this.onMissingContext === "allow") return;
+
+    if (this.onMissingContext === "throw") {
+      throw new OrmError(
+        OrmErrorCode.MISSING_TENANT_CONTEXT,
+        `Cannot build a tenant-scoped statement for '${entity.name}' without an active tenant context ` +
+          `(tenantOnMissingContext: "throw"). Wrap the call in MetadataContext.run("<tenant>", ...), ` +
+          `use MetadataContext.runUnscoped() for intentional cross-tenant access, or mark the entity ` +
+          `with @NonTenantEntity() if it is intentionally global.`,
+      );
+    }
+
+    if (this.missingContextWarnedEntities.has(entity)) return;
+    this.missingContextWarnedEntities.add(entity);
+    this.ctx.getLogger().warn(
+      `[multi-tenancy] '${entity.name}' queried with no active tenant context — the statement is NOT ` +
+        `filtered by ${config.name} and touches every tenant's rows. Wrap the call in ` +
+        `MetadataContext.run("<tenant>", ...), use MetadataContext.runUnscoped() when cross-tenant ` +
+        `access is intended, or set tenantOnMissingContext: "allow" to silence this warning ` +
+        `("throw" rejects instead and becomes the default in the next major version). ` +
+        `Warned once per entity class.`,
+    );
   }
 
   /**

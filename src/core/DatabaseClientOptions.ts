@@ -217,6 +217,30 @@ interface BaseDatabaseClientOptions {
   tenantColumnLength?: number;
 
   /**
+   * Policy for tenant-scoped read/update/delete statements executed with
+   * **no active tenant context** (`"tenant_column"` strategy only — ignored
+   * by other strategies). Without a `MetadataContext.run()` wrapper the
+   * automatic `WHERE tenant_id = ?` predicate cannot be built, so the
+   * statement would target every tenant's rows.
+   *
+   * - `"warn"` (default): execute unfiltered, but log a warning once per
+   *   entity class. Backward compatible with the previous silent behavior.
+   * - `"throw"`: reject with `MISSING_TENANT_CONTEXT` — symmetrical with the
+   *   existing INSERT behavior. Recommended for production.
+   * - `"allow"`: execute unfiltered silently (explicitly sanctioned).
+   *
+   * The policy never applies to explicit escape hatches:
+   * `MetadataContext.runUnscoped()`, an explicit
+   * `MetadataContext.run("public", ...)` admin context, per-call
+   * `withoutTenantScope`, and `@NonTenantEntity()` entities.
+   *
+   * The default will change to `"throw"` in the next major version.
+   *
+   * @default "warn"
+   */
+  tenantOnMissingContext?: "throw" | "warn" | "allow";
+
+  /**
    * Resolver for the `"database"` tenant strategy.
    *
    * Called by `TenantConnectionRouter` the first time a tenant id is seen.

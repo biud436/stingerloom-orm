@@ -655,6 +655,10 @@ interface DatabaseClientOptions {
   replication?: ReplicationConfig;     // Read Replica 설정
   namingStrategy?: NamingStrategy;     // 커스텀 FK/인덱스 네이밍 전략
   tenantStrategy?: "search_path" | "schema_qualified" | "tenant_column" | "database"; // 테넌트 격리 전략 (기본값: "search_path")
+  tenantColumnName?: string;           // tenant_column 전략: 판별 컬럼 이름 (기본값: "tenant_id")
+  tenantColumnType?: "varchar" | "uuid" | "int" | "bigint"; // tenant_column 전략: 컬럼 타입 (기본값: "varchar")
+  tenantColumnLength?: number;         // tenant_column 전략: varchar 길이 (기본값: 64)
+  tenantOnMissingContext?: "throw" | "warn" | "allow"; // tenant_column 전략: 테넌트 컨텍스트 부재 시 read/update/delete 정책 (기본값: "warn")
   plugins?: StingerloomPlugin[];       // register() 시 자동 설치할 플러그인
 }
 ```
