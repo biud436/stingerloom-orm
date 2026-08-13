@@ -12,7 +12,7 @@ import type { DialectName } from "../../core/ColumnTypeRegistry";
  * - Boolean: native BOOLEAN
  * - Enum: "schema"."enumName" (schema-qualified custom type)
  * - Decimal: NUMERIC($p,$s), max precision 1000
- * - Auto-increment: SERIAL (early return) or GENERATED ALWAYS AS IDENTITY (PG 10+)
+ * - Auto-increment: SERIAL, or BIGSERIAL for bigint columns (early return)
  * - UUID PK: DEFAULT gen_random_uuid() (PG 13+) or uuid_generate_v4() (pgcrypto)
  * - Identifier quoting: double quote (")
  */
@@ -126,9 +126,11 @@ export class PostgresColumnDefinitionBuilder extends BaseColumnDefinitionBuilder
   ): string | null {
     if (!option.autoIncrement) return null;
 
+    // BIGSERIAL for bigint PKs — a plain SERIAL is int4 and overflows at ~2.1B rows.
+    const serialType = option.type === "bigint" ? "BIGSERIAL" : "SERIAL";
     const nullable = option.nullable ? "NULL" : "NOT NULL";
     const pk = option.primary && !ctx.isCompositePk ? " PRIMARY KEY" : "";
-    return `${this.wrapIdentifier(ctx.columnName)} SERIAL ${nullable}${pk}`;
+    return `${this.wrapIdentifier(ctx.columnName)} ${serialType} ${nullable}${pk}`;
   }
 
   protected buildUuidPk(

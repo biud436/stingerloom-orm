@@ -60,6 +60,15 @@ class Product {
 }
 
 @Entity()
+class BigintPkEvent {
+  @PrimaryGeneratedColumn({ type: "bigint" })
+  id!: number;
+
+  @Column({ type: "varchar", length: 100 })
+  name!: string;
+}
+
+@Entity()
 class Profile {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -192,6 +201,12 @@ describe("SchemaGenerator", () => {
       const ddl = gen.generateCreateTableDDL(Category);
       expect(ddl).toContain("SERIAL");
       expect(ddl).not.toContain("AUTO_INCREMENT");
+    });
+
+    it("bigint auto increment에 BIGSERIAL을 사용해야 함", () => {
+      const ddl = gen.generateCreateTableDDL(BigintPkEvent);
+      expect(ddl).toContain("BIGSERIAL");
+      expect(ddl).not.toContain(" SERIAL");
     });
 
     it("boolean에 BOOLEAN을 사용해야 함 (TINYINT 아님)", () => {
