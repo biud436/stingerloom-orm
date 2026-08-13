@@ -271,8 +271,15 @@ describe("PostgresColumnDefinitionBuilder", () => {
       const option: ColumnOption = { type: "int", primary: true, autoIncrement: true, nullable: false };
       const result = builder.buildColumnDef(option, ctx);
       expect(result).toContain("SERIAL");
+      expect(result).not.toContain("BIGSERIAL");
       expect(result).toContain("NOT NULL");
       expect(result).toContain("PRIMARY KEY");
+    });
+
+    it("bigint auto increment → BIGSERIAL", () => {
+      const option: ColumnOption = { type: "bigint", primary: true, autoIncrement: true, nullable: false };
+      const result = builder.buildColumnDef(option, ctx);
+      expect(result).toBe('"test_col" BIGSERIAL NOT NULL PRIMARY KEY');
     });
 
     it("boolean → BOOLEAN (native)", () => {
