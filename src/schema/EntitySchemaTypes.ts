@@ -41,6 +41,13 @@ export interface ColumnSchemaDef {
   name?: string;
 
   /**
+   * Element type for `type: "array"` columns (PostgreSQL native arrays,
+   * default "text" → `TEXT[]`). Decorator-free equivalent of
+   * `@Column({ arrayElementType })`. Ignored on MySQL (JSON) / SQLite (TEXT).
+   */
+  arrayElementType?: ColumnType;
+
+  /**
    * One-way read transform (DB → entity).
    * @deprecated Removal target: 2.0. Use `transformer` for bidirectional
    * transforms — mirrors the deprecation on `@Column({ transform })`.

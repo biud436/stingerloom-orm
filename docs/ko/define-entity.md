@@ -109,7 +109,7 @@ INSERT INTO "users" ("name") VALUES ('Alice');
 | `t.datetime()` / `t.timestamp()` / `t.timestamptz()` / `t.date()` | `Date` | 해당 시간 타입 |
 | `t.blob()` | `Buffer` | `blob` |
 | `t.json<T>()` / `t.jsonb<T>()` | `T` (기본 `unknown`) | `json` / `jsonb` |
-| `t.array<T>()` | `T[]` | `array` |
+| `t.array<T>(elementType?)` | `T[]` | `array` (PostgreSQL `element[]`, 기본 `TEXT[]`) |
 | `t.enum(["a", "b"])` | `"a" \| "b"` | `enum` |
 
 여러 타입을 섞은 현실적인 예와 그것이 추론하는 타입:
@@ -1025,7 +1025,7 @@ export const Comment = defineEntity("comments", {
 | `t.datetime()`, `t.timestamp()`, `t.timestamptz()`, `t.date()` | `Date` |
 | `t.blob()` | `Buffer` |
 | `t.json<T>()`, `t.jsonb<T>()` | `T` (기본 `unknown`) |
-| `t.array<T>()` | `T[]` |
+| `t.array<T>(elementType?)` | `T[]` |
 | `t.enum([...])` | 리터럴 유니온 |
 | 모든 컬럼의 `.nullable()` | `T \| null`로 넓힘 |
 
@@ -1052,6 +1052,7 @@ export const Comment = defineEntity("comments", {
 | `jsonb` | JSON | JSONB | TEXT |
 | `uuid` | CHAR(36) *(MariaDB 10.7+는 UUID)* | UUID | VARCHAR(36) |
 | `enum` | ENUM | (커스텀 ENUM) | TEXT |
+| `array` | JSON | `element[]` (기본 `TEXT[]`, 예: `t.array<number>("int")` → INTEGER[]) | TEXT |
 
 ## 트러블슈팅
 

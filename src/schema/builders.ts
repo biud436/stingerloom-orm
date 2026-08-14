@@ -312,7 +312,8 @@ export const t = {
   // ── structured ───────────────────────────────────────────────────────────
   json: <T = unknown>() => column<T>({ type: "json" }),
   jsonb: <T = unknown>() => column<T>({ type: "jsonb" }),
-  array: <T = unknown>() => column<T[]>({ type: "array" }),
+  array: <T = unknown>(elementType?: ColumnType) =>
+    column<T[]>({ type: "array", arrayElementType: elementType }),
   enum: <const E extends string>(values: readonly E[]) =>
     column<E>({ type: "enum", enumValues: values as unknown as string[] }),
 

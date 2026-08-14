@@ -1535,6 +1535,19 @@ SELECT * FROM "user" WHERE "deletedAt" IS NULL;
 | `json`           | JSON          | JSON             | TEXT    |
 | `jsonb`          | JSON          | JSONB            | TEXT    |
 | `enum`           | ENUM          | (custom ENUM)    | TEXT    |
+| `array`          | JSON          | `element[]` (기본 `TEXT[]`) | TEXT |
+
+PostgreSQL에서 `type: "array"`는 네이티브 배열 컬럼을 생성합니다. 요소 타입은 `arrayElementType`으로 지정하며 기본값은 `"text"`입니다.
+
+```typescript
+@Column({ type: "array", nullable: true })
+tags!: string[] | null; // TEXT[]
+
+@Column({ type: "array", arrayElementType: "int", nullable: true })
+scores!: number[] | null; // INTEGER[]
+```
+
+일반 JS 배열이 `pg` 드라이버의 네이티브 배열 직렬화로 그대로 왕복됩니다. MySQL은 `array` 컬럼을 JSON으로, SQLite는 TEXT로 저장하며 이때 `arrayElementType`은 무시돼요. 참고로 PostgreSQL 인트로스펙션은 모든 배열 컬럼을 단순히 `ARRAY`로 보고하기 때문에, 스키마 diff는 요소 타입 변경을 감지하지 못하고 엔티티 생성 시에도 요소 타입 없이 `type: "array"`로 복원됩니다.
 
 ### @Column 전체 옵션
 
@@ -1553,6 +1566,7 @@ SELECT * FROM "user" WHERE "deletedAt" IS NULL;
 | `scale`         | `number`       | 소수 스케일                                    |
 | `enumValues`    | `string[]`     | PostgreSQL ENUM 값 목록                        |
 | `enumName`      | `string`       | PostgreSQL ENUM 타입 이름                      |
+| `arrayElementType` | `ColumnType` | `type: "array"` 컬럼의 요소 타입 (PostgreSQL 전용, 기본값 `"text"`) |
 
 ## 데코레이터 없이 엔티티 정의하기 (EntitySchema)
 

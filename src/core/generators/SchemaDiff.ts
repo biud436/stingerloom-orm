@@ -177,18 +177,33 @@ export class SchemaDiff {
 
         if (!dbCol) {
           // Column exists in entity but not in DB — needs to be added
-          const castTypeName = this.castType(
+          let castTypeName = this.castType(
             col.options?.type ?? "varchar",
             dialect,
           );
+          const isPgArray =
+            dialect === "postgres" && col.options?.type === "array";
+          if (isPgArray) {
+            // castTypePostgres keeps "ARRAY" for information_schema
+            // comparison, but bare ARRAY is not valid ADD COLUMN DDL —
+            // resolve to `element[]` like the CREATE TABLE path does.
+            castTypeName = `${this.castType(
+              col.options?.arrayElementType ?? "text",
+              dialect,
+            )}[]`;
+          }
           result.addColumns.push({
             tableName,
             columnName: colName,
             columnType: castTypeName,
             nullable: col.options?.nullable ?? false,
-            expectedLength: col.options?.length ?? null,
-            expectedPrecision: col.options?.precision ?? null,
-            expectedScale: col.options?.scale ?? null,
+            // Length/precision must not be appended after `[]`
+            // ("TEXT[](255)" is invalid), so array columns drop them.
+            expectedLength: isPgArray ? null : (col.options?.length ?? null),
+            expectedPrecision: isPgArray
+              ? null
+              : (col.options?.precision ?? null),
+            expectedScale: isPgArray ? null : (col.options?.scale ?? null),
             enumValues: col.options?.enumValues,
           });
         } else {

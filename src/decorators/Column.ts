@@ -153,6 +153,24 @@ export interface ColumnOption {
    * Auto-generated as `${tableName}_${columnName}_enum` when omitted.
    */
   enumName?: string;
+
+  /**
+   * Element type for `type: "array"` columns (PostgreSQL native arrays).
+   * A scalar built-in type such as `"text"`, `"int"`, `"uuid"`; defaults to
+   * `"text"`, so `type: "array"` alone produces a `TEXT[]` column.
+   *
+   * PostgreSQL only — MySQL stores `"array"` columns as JSON and SQLite as
+   * TEXT, where the element type is not representable and is ignored.
+   * Note: PostgreSQL introspection reports every array column as `ARRAY`,
+   * so schema diffing cannot detect element-type changes, and entity
+   * generation from an existing schema recovers `type: "array"` without the
+   * element type.
+   *
+   * @example
+   * @Column({ type: "array", arrayElementType: "int" }) // INTEGER[]
+   * scores!: number[];
+   */
+  arrayElementType?: ColumnType;
 }
 
 /**
