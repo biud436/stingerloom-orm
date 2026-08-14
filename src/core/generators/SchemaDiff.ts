@@ -12,15 +12,8 @@ import {
   RELATION_COLUMN_TOKEN,
   RelationColumnMetadata,
 } from "../../decorators/RelationColumn";
-import {
-  MANY_TO_ONE_TOKEN,
-  ManyToOneMetadata,
-} from "../../decorators/ManyToOne";
-import {
-  ONE_TO_ONE_TOKEN,
-  OneToOneMetadata,
-} from "../../decorators/OneToOne";
 import { SchemaDialect } from "./SchemaGenerator";
+import { inferRelatedPkType } from "./RelatedPkTypeResolver";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
@@ -362,7 +355,7 @@ export class SchemaDiff {
       if (existingNames.has(fkName)) continue;
 
       const fkType: ColumnType =
-        rc.type ?? this.inferRelatedPkType(entity, rc.propertyKey) ?? "int";
+        rc.type ?? inferRelatedPkType(entity, rc.propertyKey) ?? "int";
 
       result.push({
         name: fkName,
@@ -374,37 +367,6 @@ export class SchemaDiff {
     }
 
     return result;
-  }
-
-  private inferRelatedPkType<T>(
-    entity: ClazzType<T>,
-    propertyKey: string,
-  ): ColumnType | null {
-    const manyToOnes = (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity) ??
-      Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity.prototype) ??
-      []) as ManyToOneMetadata<any>[];
-    const m2o = manyToOnes.find((r) => r.columnName === propertyKey);
-    if (m2o) {
-      const relatedEntity = m2o.getMappingEntity() as ClazzType<any>;
-      return this.findPrimaryKeyType(relatedEntity);
-    }
-
-    const oneToOnes = (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) ??
-      []) as OneToOneMetadata<any>[];
-    const o2o = oneToOnes.find((r) => r.propertyKey === propertyKey);
-    if (o2o) {
-      const relatedEntity = o2o.getRelatedEntity();
-      return this.findPrimaryKeyType(relatedEntity);
-    }
-
-    return null;
-  }
-
-  private findPrimaryKeyType<T>(entity: ClazzType<T>): ColumnType | null {
-    const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
-      []) as ColumnMetadata[];
-    const pk = columns.find((col) => col.options?.primary);
-    return (pk?.options?.type as ColumnType) ?? null;
   }
 
   private async getDbColumns(

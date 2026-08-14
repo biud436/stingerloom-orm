@@ -45,6 +45,7 @@ import {
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
 import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "../PropertyColumnMap";
+import { inferRelatedPkType } from "./RelatedPkTypeResolver";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import { renderComputedColumnExpression } from "../expressions/ComputedColumnExpression";
@@ -648,7 +649,7 @@ export class SchemaGenerator {
       if (existingNames.has(fkName)) continue; // @Column already declared
 
       // Determine the FK column type: option.type → inferred target PK type → fallback "int"
-      const fkType: ColumnType = rc.type ?? this.inferRelatedPkType(entity, rc.propertyKey) ?? "int";
+      const fkType: ColumnType = rc.type ?? inferRelatedPkType(entity, rc.propertyKey) ?? "int";
 
       result.push({
         name: fkName,
@@ -660,40 +661,6 @@ export class SchemaGenerator {
     }
 
     return result;
-  }
-
-  /**
-   * Infers the PK type of the target entity referenced by @RelationColumn.
-   * Looks up the target entity in either ManyToOne or OneToOne metadata and returns its PK type.
-   */
-  private inferRelatedPkType<T>(entity: ClazzType<T>, propertyKey: string): ColumnType | null {
-    // Look up the target entity in ManyToOne metadata
-    const manyToOnes = (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity) ??
-      Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity.prototype) ??
-      []) as ManyToOneMetadata<any>[];
-    const m2o = manyToOnes.find((r) => r.columnName === propertyKey);
-    if (m2o) {
-      const relatedEntity = m2o.getMappingEntity() as ClazzType<any>;
-      return this.findPrimaryKeyType(relatedEntity);
-    }
-
-    // Look up the target entity in OneToOne metadata
-    const oneToOnes = (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) ??
-      []) as OneToOneMetadata<any>[];
-    const o2o = oneToOnes.find((r) => r.propertyKey === propertyKey);
-    if (o2o) {
-      const relatedEntity = o2o.getRelatedEntity();
-      return this.findPrimaryKeyType(relatedEntity);
-    }
-
-    return null;
-  }
-
-  private findPrimaryKeyType<T>(entity: ClazzType<T>): ColumnType | null {
-    const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
-      []) as ColumnMetadata[];
-    const pk = columns.find((col) => col.options?.primary);
-    return (pk?.options?.type as ColumnType) ?? null;
   }
 
   /**
