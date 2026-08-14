@@ -12,15 +12,8 @@ import {
   RELATION_COLUMN_TOKEN,
   RelationColumnMetadata,
 } from "../../decorators/RelationColumn";
-import {
-  MANY_TO_ONE_TOKEN,
-  ManyToOneMetadata,
-} from "../../decorators/ManyToOne";
-import {
-  ONE_TO_ONE_TOKEN,
-  OneToOneMetadata,
-} from "../../decorators/OneToOne";
 import { SchemaDialect } from "./SchemaGenerator";
+import { inferRelatedPkType } from "./RelatedPkTypeResolver";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
@@ -177,18 +170,33 @@ export class SchemaDiff {
 
         if (!dbCol) {
           // Column exists in entity but not in DB — needs to be added
-          const castTypeName = this.castType(
+          let castTypeName = this.castType(
             col.options?.type ?? "varchar",
             dialect,
           );
+          const isPgArray =
+            dialect === "postgres" && col.options?.type === "array";
+          if (isPgArray) {
+            // castTypePostgres keeps "ARRAY" for information_schema
+            // comparison, but bare ARRAY is not valid ADD COLUMN DDL —
+            // resolve to `element[]` like the CREATE TABLE path does.
+            castTypeName = `${this.castType(
+              col.options?.arrayElementType ?? "text",
+              dialect,
+            )}[]`;
+          }
           result.addColumns.push({
             tableName,
             columnName: colName,
             columnType: castTypeName,
             nullable: col.options?.nullable ?? false,
-            expectedLength: col.options?.length ?? null,
-            expectedPrecision: col.options?.precision ?? null,
-            expectedScale: col.options?.scale ?? null,
+            // Length/precision must not be appended after `[]`
+            // ("TEXT[](255)" is invalid), so array columns drop them.
+            expectedLength: isPgArray ? null : (col.options?.length ?? null),
+            expectedPrecision: isPgArray
+              ? null
+              : (col.options?.precision ?? null),
+            expectedScale: isPgArray ? null : (col.options?.scale ?? null),
             enumValues: col.options?.enumValues,
           });
         } else {
@@ -347,7 +355,7 @@ export class SchemaDiff {
       if (existingNames.has(fkName)) continue;
 
       const fkType: ColumnType =
-        rc.type ?? this.inferRelatedPkType(entity, rc.propertyKey) ?? "int";
+        rc.type ?? inferRelatedPkType(entity, rc.propertyKey) ?? "int";
 
       result.push({
         name: fkName,
@@ -359,37 +367,6 @@ export class SchemaDiff {
     }
 
     return result;
-  }
-
-  private inferRelatedPkType<T>(
-    entity: ClazzType<T>,
-    propertyKey: string,
-  ): ColumnType | null {
-    const manyToOnes = (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity) ??
-      Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity.prototype) ??
-      []) as ManyToOneMetadata<any>[];
-    const m2o = manyToOnes.find((r) => r.columnName === propertyKey);
-    if (m2o) {
-      const relatedEntity = m2o.getMappingEntity() as ClazzType<any>;
-      return this.findPrimaryKeyType(relatedEntity);
-    }
-
-    const oneToOnes = (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) ??
-      []) as OneToOneMetadata<any>[];
-    const o2o = oneToOnes.find((r) => r.propertyKey === propertyKey);
-    if (o2o) {
-      const relatedEntity = o2o.getRelatedEntity();
-      return this.findPrimaryKeyType(relatedEntity);
-    }
-
-    return null;
-  }
-
-  private findPrimaryKeyType<T>(entity: ClazzType<T>): ColumnType | null {
-    const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
-      []) as ColumnMetadata[];
-    const pk = columns.find((col) => col.options?.primary);
-    return (pk?.options?.type as ColumnType) ?? null;
   }
 
   private async getDbColumns(

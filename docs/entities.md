@@ -1482,6 +1482,19 @@ This table shows how each abstract `ColumnType` is translated to a concrete data
 | `json` | JSON | JSON | TEXT |
 | `jsonb` | JSON | JSONB | TEXT |
 | `enum` | ENUM | (custom ENUM) | TEXT |
+| `array` | JSON | `element[]` (default `TEXT[]`) | TEXT |
+
+On PostgreSQL, `type: "array"` produces a native array column. The element type comes from `arrayElementType` (default `"text"`):
+
+```typescript
+@Column({ type: "array", nullable: true })
+tags!: string[] | null; // TEXT[]
+
+@Column({ type: "array", arrayElementType: "int", nullable: true })
+scores!: number[] | null; // INTEGER[]
+```
+
+Plain JS arrays round-trip through the `pg` driver's native array serialization. MySQL stores `array` columns as JSON and SQLite as TEXT, where `arrayElementType` is ignored. Note that PostgreSQL introspection reports every array column simply as `ARRAY`, so schema diffing cannot detect element-type changes and entity generation recovers `type: "array"` without the element type.
 
 ### @Column Full Options
 
@@ -1500,6 +1513,7 @@ This table shows how each abstract `ColumnType` is translated to a concrete data
 | `scale` | `number` | Decimal scale |
 | `enumValues` | `string[]` | PostgreSQL ENUM value list |
 | `enumName` | `string` | PostgreSQL ENUM type name |
+| `arrayElementType` | `ColumnType` | Element type for `type: "array"` columns (PostgreSQL only, default `"text"`) |
 
 ## Defining Entities Without Decorators (EntitySchema)
 

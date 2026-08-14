@@ -43,6 +43,9 @@ import {
   RelationColumnMetadata,
 } from "../../decorators/RelationColumn";
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
+import { RelationMetadataResolver } from "../RelationMetadataResolver";
+import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "../PropertyColumnMap";
+import { inferRelatedPkType } from "./RelatedPkTypeResolver";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import { renderComputedColumnExpression } from "../expressions/ComputedColumnExpression";
@@ -97,6 +100,8 @@ export class SchemaGenerator {
   private readonly columnDefBuilder: ColumnDefinitionBuilder;
   private readonly capabilities?: CommonCapabilities;
   private readonly version?: DbVersion;
+  /** Lazily created FK shadow-property mapping source for index DDL resolution. */
+  private relationResolver?: RelationMetadataResolver;
 
   constructor(options: SchemaGeneratorOptions) {
     this.dialect = options.dialect;
@@ -644,7 +649,7 @@ export class SchemaGenerator {
       if (existingNames.has(fkName)) continue; // @Column already declared
 
       // Determine the FK column type: option.type → inferred target PK type → fallback "int"
-      const fkType: ColumnType = rc.type ?? this.inferRelatedPkType(entity, rc.propertyKey) ?? "int";
+      const fkType: ColumnType = rc.type ?? inferRelatedPkType(entity, rc.propertyKey) ?? "int";
 
       result.push({
         name: fkName,
@@ -658,44 +663,6 @@ export class SchemaGenerator {
     return result;
   }
 
-  /**
-   * Infers the PK type of the target entity referenced by @RelationColumn.
-   * Looks up the target entity in either ManyToOne or OneToOne metadata and returns its PK type.
-   */
-  private inferRelatedPkType<T>(entity: ClazzType<T>, propertyKey: string): ColumnType | null {
-    // Look up the target entity in ManyToOne metadata
-    const manyToOnes = (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity) ??
-      Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity.prototype) ??
-      []) as ManyToOneMetadata<any>[];
-    const m2o = manyToOnes.find((r) => r.columnName === propertyKey);
-    if (m2o) {
-      const relatedEntity = m2o.getMappingEntity() as ClazzType<any>;
-      return this.findPrimaryKeyType(relatedEntity);
-    }
-
-    // Look up the target entity in OneToOne metadata
-    const oneToOnes = (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) ??
-      []) as OneToOneMetadata<any>[];
-    const o2o = oneToOnes.find((r) => r.propertyKey === propertyKey);
-    if (o2o) {
-      const relatedEntity = o2o.getRelatedEntity();
-      return this.findPrimaryKeyType(relatedEntity);
-    }
-
-    return null;
-  }
-
-  private findPrimaryKeyType<T>(entity: ClazzType<T>): ColumnType | null {
-    const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
-      []) as ColumnMetadata[];
-    const pk = columns.find((col) => col.options?.primary);
-    return (pk?.options?.type as ColumnType) ?? null;
-  }
-
-  /**
-   * Builds a map from TypeScript property keys to actual DB column names.
-   * Used to resolve @Index() property decorator names to the correct column (#176).
-   */
   /**
    * Resolve a computed column's expression to a literal SQL string.
    *
@@ -718,16 +685,27 @@ export class SchemaGenerator {
     );
   }
 
+  /**
+   * Builds a map from TypeScript property keys to actual DB column names.
+   * Used to resolve @Index() / @UniqueIndex() / @JsonIndex() property names
+   * to the correct column (#176).
+   *
+   * Delegates to the shared {@link buildSharedPropertyToColumnMap} helper so
+   * `@RelationColumn` FK shadow properties (e.g. `workspaceId` backing a
+   * `workspace` relation with FK column `workspace_id`) resolve to the FK
+   * column this generator actually emits in CREATE TABLE. Previously only
+   * `@Column` metadata was consulted, so an `@Index()` on a shadow property
+   * produced DDL against the nonexistent camelCase column — which
+   * `continueOnError` then swallowed, silently dropping the index.
+   */
   private buildPropertyToColumnMap<T>(entity: ClazzType<T>): Map<string, string> {
     const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
       []) as ColumnMetadata[];
-    const map = new Map<string, string>();
-    for (const col of columns) {
-      if (col.propertyKey && col.name) {
-        map.set(col.propertyKey, col.name);
-      }
-    }
-    return map;
+    this.relationResolver ??= new RelationMetadataResolver();
+    return buildSharedPropertyToColumnMap(
+      { target: entity, columns },
+      this.relationResolver,
+    );
   }
 
   private getIndexes<T>(entity: ClazzType<T>): IndexMetadata[] {

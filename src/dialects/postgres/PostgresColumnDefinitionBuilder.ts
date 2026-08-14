@@ -105,6 +105,41 @@ export class PostgresColumnDefinitionBuilder extends BaseColumnDefinitionBuilder
     return type;
   }
 
+  /**
+   * Resolves `type: "array"` to a PostgreSQL native array type.
+   *
+   * `castBuiltinType` maps "array" to the placeholder `ARRAY` (mirroring the
+   * information_schema representation used by schema diffing), but bare
+   * `ARRAY` is not valid DDL — PostgreSQL requires an element type such as
+   * `TEXT[]`. The element comes from `arrayElementType` (default "text");
+   * varchar/char elements keep their length (`VARCHAR(n)[]`) and decimal
+   * elements their precision/scale.
+   */
+  protected resolveArrayType(
+    type: string,
+    option: ColumnOption,
+    ctx: ColumnDefContext,
+  ): string {
+    // `type !== "ARRAY"` keeps ColumnTypeRegistry overrides of "array" intact.
+    if (option.type !== "array" || type !== "ARRAY") return type;
+
+    const element = option.arrayElementType ?? "text";
+    let elementSql = this.castType(element);
+    if (elementSql === "ARRAY" || elementSql === "USER-DEFINED") {
+      throw new Exception(
+        `PostgreSQL array element type "${element}" is not supported for ` +
+          `${ctx.tableName}.${ctx.columnName}. Use a scalar element type ` +
+          `such as "text", "int", or "uuid".`,
+        400,
+      );
+    }
+    elementSql = this.resolveDecimalType(elementSql, option);
+    if (option.length && this.needsLength(elementSql)) {
+      elementSql = `${elementSql}(${option.length})`;
+    }
+    return `${elementSql}[]`;
+  }
+
   protected resolveDecimalType(type: string, option: ColumnOption): string {
     if (!type.startsWith("NUMERIC")) return type;
 

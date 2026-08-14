@@ -109,7 +109,7 @@ Every field is a call on the `t` namespace. Column builders carry their inferred
 | `t.datetime()` / `t.timestamp()` / `t.timestamptz()` / `t.date()` | `Date` | matching temporal type |
 | `t.blob()` | `Buffer` | `blob` |
 | `t.json<T>()` / `t.jsonb<T>()` | `T` (default `unknown`) | `json` / `jsonb` |
-| `t.array<T>()` | `T[]` | `array` |
+| `t.array<T>(elementType?)` | `T[]` | `array` (PostgreSQL `element[]`, default `TEXT[]`) |
 | `t.enum(["a", "b"])` | `"a" \| "b"` | `enum` |
 
 A realistic mix of types and the type it infers:
@@ -1052,6 +1052,7 @@ Each abstract `ColumnType` is translated to a concrete database type by the driv
 | `jsonb` | JSON | JSONB | TEXT |
 | `uuid` | CHAR(36) *(UUID on MariaDB 10.7+)* | UUID | VARCHAR(36) |
 | `enum` | ENUM | (custom ENUM) | TEXT |
+| `array` | JSON | `element[]` (default `TEXT[]`, e.g. `t.array<number>("int")` → INTEGER[]) | TEXT |
 
 ## Troubleshooting
 

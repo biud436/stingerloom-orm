@@ -72,6 +72,7 @@ import { transactionStorage } from "../decorators/Transactional";
 // Extracted handler classes
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
+import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "./PropertyColumnMap";
 import { ReplicationManager } from "./ReplicationManager";
 import { CascadeHandler } from "./CascadeHandler";
 import { RelationLoader } from "./RelationLoader";
@@ -2009,22 +2010,7 @@ export class EntityManager implements BaseEntityManager {
       if (cached) return cached;
     }
 
-    const map = new Map<string, string>();
-    for (const col of metadata.columns) {
-      const prop = col.propertyKey ?? col.name;
-      map.set(prop, col.name);
-    }
-    // Resolver may be a partial mock in some tests, so guard the call.
-    if (
-      metadata.target &&
-      typeof this.resolver?.collectFkPropertyMappings === "function"
-    ) {
-      const fkMap = this.resolver.collectFkPropertyMappings(metadata.target);
-      for (const [prop, col] of fkMap) {
-        // Explicit @Column on the same property wins (already in map).
-        if (!map.has(prop)) map.set(prop, col);
-      }
-    }
+    const map = buildSharedPropertyToColumnMap(metadata, this.resolver);
     if (byMetadata) byMetadata.set(metadata, map);
     return map;
   }

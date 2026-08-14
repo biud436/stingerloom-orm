@@ -52,6 +52,10 @@ export abstract class BaseColumnDefinitionBuilder
     // 3. Resolve decimal/numeric type (with precision validation)
     type = this.resolveDecimalType(type, option);
 
+    // 3.5. Resolve array type (PostgreSQL emits `element[]` instead of the
+    // bare `ARRAY` placeholder, which is not valid DDL)
+    type = this.resolveArrayType(type, option, ctx);
+
     // 4. Auto-increment early return
     const autoIncResult = this.buildAutoIncrement(option, ctx);
     if (autoIncResult !== null) {
@@ -105,6 +109,19 @@ export abstract class BaseColumnDefinitionBuilder
     if (!type.includes("$precision")) return type;
     type = type.replace("$precision", option.precision?.toString() ?? "10");
     type = type.replace("$scale", option.scale?.toString() ?? "2");
+    return type;
+  }
+
+  /**
+   * Resolves the array type for this dialect.
+   * Default: no change (MySQL/SQLite store arrays as JSON/TEXT, so their
+   * castBuiltinType mapping is already final).
+   */
+  protected resolveArrayType(
+    type: string,
+    _option: ColumnOption,
+    _ctx: ColumnDefContext,
+  ): string {
     return type;
   }
 
