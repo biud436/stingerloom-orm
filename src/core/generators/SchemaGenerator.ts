@@ -43,6 +43,8 @@ import {
   RelationColumnMetadata,
 } from "../../decorators/RelationColumn";
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
+import { RelationMetadataResolver } from "../RelationMetadataResolver";
+import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "../PropertyColumnMap";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import { renderComputedColumnExpression } from "../expressions/ComputedColumnExpression";
@@ -97,6 +99,8 @@ export class SchemaGenerator {
   private readonly columnDefBuilder: ColumnDefinitionBuilder;
   private readonly capabilities?: CommonCapabilities;
   private readonly version?: DbVersion;
+  /** Lazily created FK shadow-property mapping source for index DDL resolution. */
+  private relationResolver?: RelationMetadataResolver;
 
   constructor(options: SchemaGeneratorOptions) {
     this.dialect = options.dialect;
@@ -693,10 +697,6 @@ export class SchemaGenerator {
   }
 
   /**
-   * Builds a map from TypeScript property keys to actual DB column names.
-   * Used to resolve @Index() property decorator names to the correct column (#176).
-   */
-  /**
    * Resolve a computed column's expression to a literal SQL string.
    *
    * The literal-string form is embedded verbatim. The builder form is
@@ -718,16 +718,27 @@ export class SchemaGenerator {
     );
   }
 
+  /**
+   * Builds a map from TypeScript property keys to actual DB column names.
+   * Used to resolve @Index() / @UniqueIndex() / @JsonIndex() property names
+   * to the correct column (#176).
+   *
+   * Delegates to the shared {@link buildSharedPropertyToColumnMap} helper so
+   * `@RelationColumn` FK shadow properties (e.g. `workspaceId` backing a
+   * `workspace` relation with FK column `workspace_id`) resolve to the FK
+   * column this generator actually emits in CREATE TABLE. Previously only
+   * `@Column` metadata was consulted, so an `@Index()` on a shadow property
+   * produced DDL against the nonexistent camelCase column — which
+   * `continueOnError` then swallowed, silently dropping the index.
+   */
   private buildPropertyToColumnMap<T>(entity: ClazzType<T>): Map<string, string> {
     const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
       []) as ColumnMetadata[];
-    const map = new Map<string, string>();
-    for (const col of columns) {
-      if (col.propertyKey && col.name) {
-        map.set(col.propertyKey, col.name);
-      }
-    }
-    return map;
+    this.relationResolver ??= new RelationMetadataResolver();
+    return buildSharedPropertyToColumnMap(
+      { target: entity, columns },
+      this.relationResolver,
+    );
   }
 
   private getIndexes<T>(entity: ClazzType<T>): IndexMetadata[] {

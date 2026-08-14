@@ -26,6 +26,7 @@ import {
 } from "./CursorPagination";
 import { coerceRows, type RawResultOptions } from "./RawValueCoercion";
 import { COLUMN_TOKEN } from "../decorators/Column";
+import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "./PropertyColumnMap";
 import { InheritanceResolver } from "./InheritanceResolver";
 import {
   JsonPathCondition,
@@ -747,8 +748,9 @@ export class SelectQueryBuilder<T, TResult = T> {
 
   /**
    * Build a property-to-column map from entity metadata.
-   * Duplicates EntityManager.buildPropertyToColumnMap logic to avoid
-   * depending on its private visibility.
+   * Delegates to the shared {@link buildSharedPropertyToColumnMap} helper
+   * (also backing EntityManager and SchemaGenerator), kept as a protected
+   * method so subclass query builders retain their extension point.
    *
    * Folds in `@ManyToOne`/`@OneToOne` FK backing-property mappings
    * (e.g. `workspaceId` → `workspace_id`) when the metadata carries an
@@ -757,22 +759,7 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected buildPropertyToColumnMapFromMetadata(
     metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
   ): Map<string, string> {
-    const map = new Map<string, string>();
-    for (const col of metadata.columns) {
-      const prop = col.propertyKey ?? col.name;
-      map.set(prop, col.name);
-    }
-    const resolver = this.emInternals.resolver;
-    if (
-      metadata.target &&
-      typeof resolver?.collectFkPropertyMappings === "function"
-    ) {
-      const fkMap = resolver.collectFkPropertyMappings(metadata.target);
-      for (const [prop, col] of fkMap) {
-        if (!map.has(prop)) map.set(prop, col);
-      }
-    }
-    return map;
+    return buildSharedPropertyToColumnMap(metadata, this.emInternals.resolver);
   }
 
   // ── SELECT ───────────────────────────────────────────────

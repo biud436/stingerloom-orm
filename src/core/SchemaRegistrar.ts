@@ -33,6 +33,7 @@ import type { CreateTableForeignKey } from "../dialects/SqlDriver";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
+import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "./PropertyColumnMap";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import {
   SchemaDiff,
@@ -916,17 +917,20 @@ export class SchemaRegistrar {
 
     const driver = this.ctx.getDriver();
 
-    // Build property-to-column name map to resolve @UniqueIndex() property keys (#176)
+    // Build property-to-column name map to resolve @UniqueIndex() property
+    // keys (#176), including @RelationColumn FK shadow properties so an
+    // index on e.g. `workspaceId` targets the real `workspace_id` column.
     const colMeta = (Reflect.getMetadata(
       COLUMN_TOKEN,
       TargetEntity.prototype,
     ) ?? []) as ColumnMetadata[];
-    const propColMap = new Map<string, string>();
-    for (const col of colMeta) {
-      if (col.propertyKey && col.name) {
-        propColMap.set(col.propertyKey, col.name);
-      }
-    }
+    // ctx may be a partial mock in unit tests, so guard the resolver access.
+    const propColMap = buildSharedPropertyToColumnMap(
+      { target: TargetEntity, columns: colMeta },
+      typeof this.ctx.getResolver === "function"
+        ? this.ctx.getResolver()
+        : undefined,
+    );
 
     for (const uq of uniqueIndexes) {
       // Resolve property keys to actual DB column names (#176)
@@ -1408,17 +1412,20 @@ export class SchemaRegistrar {
     ) as IndexMetadata[];
     if (indexer) {
       const driver = this.ctx.getDriver();
-      // Build property-to-column name map to resolve @Index() property keys (#176)
+      // Build property-to-column name map to resolve @Index() property keys
+      // (#176), including @RelationColumn FK shadow properties so an index
+      // on e.g. `workspaceId` targets the real `workspace_id` column.
       const columns = (Reflect.getMetadata(
         COLUMN_TOKEN,
         TargetEntity.prototype,
       ) ?? []) as ColumnMetadata[];
-      const propColMap = new Map<string, string>();
-      for (const col of columns) {
-        if (col.propertyKey && col.name) {
-          propColMap.set(col.propertyKey, col.name);
-        }
-      }
+      // ctx may be a partial mock in unit tests, so guard the resolver access.
+      const propColMap = buildSharedPropertyToColumnMap(
+        { target: TargetEntity, columns },
+        typeof this.ctx.getResolver === "function"
+          ? this.ctx.getResolver()
+          : undefined,
+      );
 
       for (const index of indexer) {
         // index.name is the property key; resolve to actual DB column name
