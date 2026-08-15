@@ -104,7 +104,7 @@ synchronize: {
 |--------|--------|------------|
 | `mode` | 필수 | 기본 모드 — 단일 값 폼과 의미가 동일해요. |
 | `continueOnError` | `true` | `false`이면 DDL 실패가 warn으로 격하되지 않고 `OrmError(SCHEMA_SYNC_FAILED)`로 throw 되어 부팅을 중단시킵니다. |
-| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN, DROP TABLE, 좁히는 ALTER(예: `varchar(255) → int`, `varchar(255) → varchar(64)`)가 실행 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`로 throw 됩니다. |
+| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN과 좁히는 ALTER(예: `varchar(255) → int`, `varchar(255) → varchar(64)`)가 실행 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`로 throw 됩니다. synchronize는 어떤 모드에서도 테이블을 삭제하지 않습니다. |
 | `logDDL` | `false` | `true`이면 발생하는 모든 DDL(CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX 등)을 info 레벨로 로그 출력합니다. `"safe"`에서는 건너뛴 문장도 `[skipped: safe mode]` 접두어를 붙여 출력합니다. |
 
 단일 값 폼(`true`, `"safe"`, `"dry-run"`, `false`)은 그대로 유지되어 — 동일한 기본값으로 정규화돼요. 프로덕션 권장 프로파일은 다음과 같습니다.

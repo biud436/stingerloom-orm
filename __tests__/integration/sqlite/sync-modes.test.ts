@@ -368,6 +368,42 @@ describe("[Integration] SQLite synchronize modes (Issue #137)", () => {
     });
   });
 
+  // ─────────────────────────────────────────────────────────
+  // V4-T0-3: synchronize is column-scoped. Tables with no entity are left
+  // alone in every mode — SchemaDiff's detectDroppedTables is a migration-side
+  // option and is never enabled here.
+  // ─────────────────────────────────────────────────────────
+  describe("table removal", () => {
+    it("never drops a table that has no matching entity, even in full sync", async () => {
+      resetState();
+      await registerWithSync(dbPath, createEntity(V1_COLUMNS), true);
+
+      // A table this EntityManager knows nothing about (another service,
+      // another connection, migration bookkeeping, ...).
+      const connector = DatabaseClient.getInstance().getConnection();
+      await connector.query(
+        `CREATE TABLE IF NOT EXISTS foreign_bookkeeping (id INTEGER PRIMARY KEY, note TEXT)`,
+      );
+      await connector.query(
+        `INSERT INTO foreign_bookkeeping (note) VALUES ('keep me')`,
+      );
+      await closeDb();
+
+      resetState();
+      await registerWithSync(dbPath, createEntity(V1_COLUMNS), {
+        mode: true,
+        logDDL: true,
+      });
+
+      const rows = await DatabaseClient.getInstance()
+        .getConnection()
+        .query(`SELECT note FROM foreign_bookkeeping`);
+      const normalized = Array.isArray(rows) ? rows : (rows as any).rows ?? [];
+      expect(normalized).toHaveLength(1);
+      expect(normalized[0].note).toBe("keep me");
+    });
+  });
+
   describe("no-change scenario", () => {
     it("should not error when entity matches DB schema exactly", async () => {
       // Phase 1: create V1 table

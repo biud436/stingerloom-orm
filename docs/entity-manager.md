@@ -106,7 +106,7 @@ synchronize: {
 |------|---------|----------------|
 | `mode` | required | Base mode — same semantics as the bare form. |
 | `continueOnError` | `true` | When `false`, a failing DDL statement throws `OrmError(SCHEMA_SYNC_FAILED)` and aborts boot instead of being downgraded to a warning. |
-| `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN, DROP TABLE, and narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`) throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing. |
+| `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN and narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`) throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing. Synchronize never drops tables in any mode. |
 | `logDDL` | `false` | When `true`, every emitted DDL statement is logged at info level (CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX, etc.). Under `"safe"`, the statements the mode skipped are logged too, prefixed with `[skipped: safe mode]`. |
 
 The bare forms (`true`, `"safe"`, `"dry-run"`, `false`) keep working unchanged — they normalize to the same defaults above. A typical production profile is:

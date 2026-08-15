@@ -130,7 +130,7 @@ await em.register({
 |--------|--------|------|
 | `mode` | 필수 | 기본 모드 — 단일 값 폼과 동일한 의미예요. |
 | `continueOnError` | `true` | `false`이면 DDL 실패가 warn으로 격하되지 않고 `OrmError(SCHEMA_SYNC_FAILED)`로 throw 돼요. 반쯤 마이그레이션된 스키마를 로그로만 찾기보다는 부팅을 명시적으로 실패시키고 싶을 때 사용하세요. |
-| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN, DROP TABLE, 좁히는 ALTER(예: `varchar(255) → int`, `varchar(255) → varchar(64)`)가 실행 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`로 throw 돼요. 프로덕션 안전망으로 유용해요. |
+| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN과 좁히는 ALTER(예: `varchar(255) → int`, `varchar(255) → varchar(64)`)가 실행 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`로 throw 돼요. 프로덕션 안전망으로 유용해요. (synchronize는 어떤 모드에서도 테이블을 삭제하지 않으므로 막을 대상이 없어요.) |
 | `logDDL` | `false` | `true`이면 발생하는 모든 DDL(CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX 등)을 info 레벨로 로그 출력해요. `"safe"`에서는 모드가 건너뛴 문장도 `[skipped: safe mode]` 접두어를 붙여 함께 출력해요. `"dry-run"`과 함께 쓰면 가시성이 확보돼요. |
 
 단일 값 폼(`true`, `"safe"`, `"dry-run"`, `false`)도 그대로 동작하며, 동일한 기본값으로 정규화되므로 마이그레이션이 필요 없어요.

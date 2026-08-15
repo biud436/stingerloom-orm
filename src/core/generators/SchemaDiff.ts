@@ -102,6 +102,11 @@ export interface SchemaDiffOptions {
   /**
    * If true, detect tables in DB that are not in the entity list and add them to dropTables.
    * Default: false (backward compatible — only detects add/alter/drop columns)
+   *
+   * No product path turns this on: `synchronize` never drops a table, and
+   * `migrate:generate` never proposes one. It exists for callers that drive
+   * `SchemaDiff` directly and can judge for themselves whether a table with no
+   * entity is obsolete rather than merely owned by someone else.
    */
   detectDroppedTables?: boolean;
 }

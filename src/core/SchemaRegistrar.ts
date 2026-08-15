@@ -570,6 +570,13 @@ export class SchemaRegistrar {
 
     let diff: SchemaDiffResult;
     try {
+      // `detectDroppedTables` is deliberately left off: synchronize operates on
+      // columns only and never drops a table, no matter the mode. A database
+      // routinely holds tables this connection knows nothing about (other
+      // services, other EntityManagers, migration bookkeeping), so entity
+      // absence is not evidence that a table is obsolete. `diff.dropTables` is
+      // therefore always empty here and has no consumer below — table removal
+      // belongs to a migration the author reviewed.
       diff = await schemaDiff.diff(
         existingEntities,
         queryRunner,

@@ -344,7 +344,7 @@ When you run `npx stingerloom migrate:generate --name schema_update`, the CLI:
 | Check | What it detects |
 |-------|----------------|
 | Entity exists in code but not in DB | **New table** -- needs `CREATE TABLE` |
-| Table exists in DB but not in code | **Dropped table** -- needs `DROP TABLE` (opt-in) |
+| Table exists in DB but not in code | *Not detected* -- `migrate:generate` never proposes `DROP TABLE` |
 | Column exists in entity but not in table | **Added column** -- needs `ALTER TABLE ADD COLUMN` |
 | Column exists in table but not in entity | **Dropped column** -- needs `ALTER TABLE DROP COLUMN` |
 | Column type/length/nullable differs | **Altered column** -- needs `ALTER TABLE ALTER COLUMN` |
@@ -412,11 +412,12 @@ instead of dropping `email` and adding `emailAddress` (which would lose all exis
 The `migrate:generate` command compares your entity definitions against the live database and detects:
 
 - **New tables** -- entities not yet in the database
-- **Dropped tables** -- tables with no matching entity (opt-in via `detectDroppedTables`)
 - **Added columns** -- new `@Column()` decorators
 - **Dropped columns** -- columns removed from entities
 - **Altered columns** -- type, length, nullable, or precision changes
 - **Renamed columns** -- intelligently matched by type and table (generates `RENAME COLUMN` instead of drop + add)
+
+Table removal is not part of it. A database holds tables that no entity list knows about -- other services, other connections, migration bookkeeping -- so "no entity for this table" is not evidence that the table is obsolete. `migrate:generate` never proposes `DROP TABLE`, and `synchronize` never drops a table in any mode; write that migration by hand.
 
 ## Next Steps
 
