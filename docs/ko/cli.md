@@ -344,7 +344,7 @@ DB에 `id`, `name`, `email` 컬럼이 있는 `user` 테이블이 있어요. 여�
 | 확인 항목 | 감지 내용 |
 |----------|----------|
 | 코드에는 있지만 DB에 없는 엔티티 | **새 테이블** -- `CREATE TABLE` 필요 |
-| DB에는 있지만 코드에 없는 테이블 | **삭제된 테이블** -- `DROP TABLE` 필요 (opt-in) |
+| DB에는 있지만 코드에 없는 테이블 | *감지 안 함* -- `migrate:generate`는 `DROP TABLE`을 제안하지 않아요 |
 | 엔티티에는 있지만 테이블에 없는 컬럼 | **추가된 컬럼** -- `ALTER TABLE ADD COLUMN` 필요 |
 | 테이블에는 있지만 엔티티에 없는 컬럼 | **삭제된 컬럼** -- `ALTER TABLE DROP COLUMN` 필요 |
 | 컬럼의 타입/길이/nullable이 다른 경우 | **변경된 컬럼** -- `ALTER TABLE ALTER COLUMN` 필요 |
@@ -412,11 +412,12 @@ ALTER TABLE "user" RENAME COLUMN "email" TO "emailAddress"
 `migrate:generate` 명령어가 엔티티 정의와 실제 DB를 비교해서 감지하는 것들:
 
 - **새 테이블** -- DB에 아직 없는 엔티티
-- **삭제된 테이블** -- 매칭되는 엔티티가 없는 테이블 (`detectDroppedTables`로 opt-in)
 - **추가된 컬럼** -- 새로운 `@Column()` 데코레이터
 - **삭제된 컬럼** -- 엔티티에서 제거된 컬럼
 - **변경된 컬럼** -- 타입, 길이, nullable, precision 변경
 - **이름 변경된 컬럼** -- 타입과 테이블로 지능적으로 매칭 (drop + add 대신 `RENAME COLUMN` 생성)
+
+테이블 삭제는 여기에 포함되지 않습니다. DB에는 엔티티 목록이 모르는 테이블(다른 서비스, 다른 커넥션, 마이그레이션 기록용 테이블)이 흔히 함께 있기 때문에, "이 테이블에 대응하는 엔티티가 없다"가 곧 "쓸모없는 테이블이다"는 아니에요. `migrate:generate`는 `DROP TABLE`을 제안하지 않고, `synchronize`도 어떤 모드에서든 테이블을 삭제하지 않습니다. 테이블 삭제는 직접 마이그레이션으로 작성해 주세요.
 
 ## 다음 단계
 

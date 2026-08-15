@@ -141,9 +141,11 @@ type ColumnType = "varchar" | "int" | "number" | "float" | "double" | "bigint"
 | 모드 | CREATE | ADD | ALTER | DROP | RENAME |
 |------|--------|-----|-------|------|--------|
 | `true` | O | O | O | O | O |
-| `"safe"` | O | O | X | X | X |
+| `"safe"` | O | O | X (요약 warn + logDDL 시 스킵 문장 로그) | X (동일) | X (동일) |
 | `"dry-run"` | 로그만 | 로그만 | 로그만 | 로그만 | 로그만 |
 | `false` | X | X | X | X | X |
+
+**표의 범위는 컬럼 단위** — DROP은 DROP COLUMN을 뜻한다. synchronize는 어떤 모드에서도 테이블을 삭제하지 않는다(`SchemaDiff.detectDroppedTables`는 SchemaDiff API 전용 옵션이고 synchronize·`migrate:generate` 어느 쪽에서도 켜지지 않음).
 
 **옵션 객체 폼** (Issue #331): 단일 값에 묶여 있던 *복원력 / 파괴적 변경 안전성 / DDL 가시성* 세 관심사를 분리.
 ```ts

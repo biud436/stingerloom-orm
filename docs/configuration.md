@@ -72,7 +72,7 @@ When you add a new `@Column()` to an entity or create a brand new entity class, 
 |-------|----------|-------------|
 | `false` | **No sync** (default) -- schema is never modified | Production. You control the schema through migrations. |
 | `true` | **Full sync** -- creates, alters, and drops tables/columns to match entities | Development only. If you remove a column from an entity, the database column and all its data are dropped. |
-| `"safe"` | **Safe sync** -- creates new tables and adds new columns, but never drops anything | Staging. New things appear, old things are left alone. No data loss. |
+| `"safe"` | **Safe sync** -- creates new tables and adds new columns; never alters, drops, or renames | Staging. New things appear, old things are left alone. No data loss. |
 | `"dry-run"` | **Dry run** -- logs the DDL that would be executed, without running it | Pre-deployment review. You see exactly what SQL would change your schema. |
 
 ```typescript
@@ -89,6 +89,21 @@ On Monday, your entity has a `nickname` column. On Tuesday, you decide to rename
 
 **Safe sync (`"safe"`) -- the safety net:**
 Same scenario, but with safe sync. The ORM creates a new `displayName` column but leaves `nickname` alone. No data is lost. You can migrate the data manually and drop the old column when you are ready.
+
+Safe mode reports what it declined to do, so an untouched schema never masquerades as a synchronized one:
+
+```
+WARN [SchemaRegistrar] [sync] safe mode skipped 2 schema change(s): 1 ALTER COLUMN, 1 DROP COLUMN (user.email, user.nickname). Apply them with synchronize.mode: true or a migration; set synchronize.logDDL: true to log each skipped statement.
+```
+
+With `logDDL: true`, each skipped statement is also logged in full:
+
+```
+INFO [SchemaRegistrar] [skipped: safe mode] ALTER TABLE `user` MODIFY COLUMN `email` VARCHAR(64) NOT NULL
+INFO [SchemaRegistrar] [skipped: safe mode] ALTER TABLE user DROP COLUMN nickname
+```
+
+The case worth watching is a widened column: change `varchar(50)` to `varchar(255)` in the entity and safe mode leaves the database at 50, so the mismatch only surfaces later as a truncation error on INSERT. The warning is what tells you to run the migration.
 
 **Dry run (`"dry-run"`) -- the preview:**
 Same scenario again. The ORM prints the DDL to your console -- `ALTER TABLE user ADD COLUMN display_name varchar(255)` -- but does not execute it. You review the output, maybe adjust your migration file, and apply it yourself.
@@ -115,8 +130,8 @@ await em.register({
 |------|---------|--------------|
 | `mode` | required | Base mode — same as the bare-form values. |
 | `continueOnError` | `true` | When `false`, the first DDL failure throws `OrmError(SCHEMA_SYNC_FAILED)` instead of degrading to a warning. Use this when you'd rather see boot fail loudly than discover a half-migrated schema in the logs. |
-| `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN, DROP TABLE, and narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`) throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing — useful as a production tripwire. |
-| `logDDL` | `false` | When `true`, every emitted DDL is logged at info level (CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX, etc.). Pairs well with `"dry-run"` for full visibility. |
+| `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN and narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`) throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing — useful as a production tripwire. (Tables are never dropped by synchronize, so there is nothing to guard there.) |
+| `logDDL` | `false` | When `true`, every emitted DDL is logged at info level (CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX, etc.). Under `"safe"` it also logs the statements the mode skipped, prefixed with `[skipped: safe mode]`. Pairs well with `"dry-run"` for full visibility. |
 
 The bare forms (`true`, `"safe"`, `"dry-run"`, `false`) still work and normalize to the same defaults above — no migration is required.
 

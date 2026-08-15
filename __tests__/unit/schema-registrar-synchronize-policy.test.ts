@@ -410,6 +410,171 @@ describe("SchemaRegistrar: synchronize policy", () => {
     });
   });
 
+  // V4-T0-3: "safe" mode skips ALTER/DROP/RENAME. It used to do so without a
+  // single log line, so a clean boot log looked identical to a synced schema.
+  describe("safe mode — skipped-change reporting", () => {
+    function safePolicy(
+      overrides: Partial<SynchronizePolicy> = {},
+    ): SynchronizePolicy {
+      return {
+        mode: "safe",
+        continueOnError: true,
+        failOnDestructiveChange: false,
+        logDDL: false,
+        ...overrides,
+      };
+    }
+
+    function applyDiff(policy: SynchronizePolicy, diff: any) {
+      const driver: any = {
+        dropColumn: jest.fn(async () => {}),
+        addColumn: jest.fn(async () => {}),
+        executeRaw: jest.fn(async () => {}),
+      };
+      const ctx = {
+        ...makeCtxWithPolicy(policy),
+        getDriver: () => driver,
+      } as EntityManagerInternals;
+      const registrar = new SchemaRegistrar(
+        {} as RelationMetadataResolver,
+        ctx,
+      );
+      (registrar as any).activePolicy = policy;
+      const promise = (registrar as any).applySchemaDiff(
+        diff,
+        new Map(),
+        policy,
+        "mysql",
+      ) as Promise<void>;
+      return { driver, promise };
+    }
+
+    const MIXED_DIFF = {
+      addTables: [],
+      dropTables: [],
+      addColumns: [],
+      alterColumns: [
+        {
+          tableName: "users",
+          columnName: "email",
+          currentType: "VARCHAR",
+          columnType: "VARCHAR(255)",
+        },
+      ],
+      dropColumns: [{ tableName: "users", columnName: "nickname" }],
+      renamedColumns: [
+        {
+          tableName: "posts",
+          oldColumnName: "body",
+          newColumnName: "content",
+        },
+      ],
+    };
+
+    it("warns once with a per-kind breakdown and sample targets", async () => {
+      const { driver, promise } = applyDiff(safePolicy(), MIXED_DIFF);
+      await promise;
+
+      const warnings = output.filter((l) => l.includes("safe mode skipped"));
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("WARN");
+      expect(warnings[0]).toContain("3 schema change(s)");
+      expect(warnings[0]).toContain("1 ALTER COLUMN");
+      expect(warnings[0]).toContain("1 DROP COLUMN");
+      expect(warnings[0]).toContain("1 RENAME COLUMN");
+      expect(warnings[0]).toContain("users.email");
+      expect(warnings[0]).toContain("users.nickname");
+      expect(warnings[0]).toContain("posts.body → content");
+
+      // Reporting must not turn into executing.
+      expect(driver.executeRaw).not.toHaveBeenCalled();
+      expect(driver.dropColumn).not.toHaveBeenCalled();
+    });
+
+    it("logs each skipped statement under logDDL, and none without it", async () => {
+      const quiet = applyDiff(safePolicy(), MIXED_DIFF);
+      await quiet.promise;
+      expect(output.filter((l) => l.includes("[skipped: safe mode]"))).toEqual(
+        [],
+      );
+
+      output.length = 0;
+      const verbose = applyDiff(safePolicy({ logDDL: true }), MIXED_DIFF);
+      await verbose.promise;
+
+      const skippedLines = output.filter((l) =>
+        l.includes("[skipped: safe mode]"),
+      );
+      expect(skippedLines).toHaveLength(3);
+      expect(
+        skippedLines.some((l) =>
+          l.includes("ALTER TABLE users MODIFY COLUMN email VARCHAR(255)"),
+        ),
+      ).toBe(true);
+      expect(
+        skippedLines.some((l) =>
+          l.includes("ALTER TABLE users DROP COLUMN nickname"),
+        ),
+      ).toBe(true);
+      expect(
+        skippedLines.some((l) => l.includes("RENAME COLUMN body TO content")),
+      ).toBe(true);
+    });
+
+    it("caps the sampled targets and counts the remainder", async () => {
+      const diff = {
+        addTables: [],
+        dropTables: [],
+        addColumns: [],
+        alterColumns: [],
+        renamedColumns: [],
+        dropColumns: ["a", "b", "c", "d", "e"].map((c) => ({
+          tableName: "wide",
+          columnName: c,
+        })),
+      };
+
+      const { promise } = applyDiff(safePolicy(), diff);
+      await promise;
+
+      const warning = output.find((l) => l.includes("safe mode skipped"))!;
+      expect(warning).toContain("5 schema change(s)");
+      expect(warning).toContain("wide.a, wide.b, wide.c, +2 more");
+      expect(warning).not.toContain("wide.d");
+    });
+
+    it("stays silent when the diff holds nothing safe mode would skip", async () => {
+      const { driver, promise } = applyDiff(safePolicy({ logDDL: true }), {
+        addTables: [],
+        dropTables: [],
+        alterColumns: [],
+        dropColumns: [],
+        renamedColumns: [],
+        addColumns: [
+          { tableName: "users", columnName: "created_at", columnType: "DATETIME" },
+        ],
+      });
+      await promise;
+
+      expect(output.some((l) => l.includes("safe mode skipped"))).toBe(false);
+      // ADD COLUMN is what safe mode is for — it still runs.
+      expect(driver.addColumn).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports rather than throws when failOnDestructiveChange is set", async () => {
+      // The destructive guard fires before executing a DROP. Safe mode never
+      // executes one, so a skipped drop must not abort boot.
+      const { driver, promise } = applyDiff(
+        safePolicy({ failOnDestructiveChange: true }),
+        MIXED_DIFF,
+      );
+
+      await expect(promise).resolves.toBeUndefined();
+      expect(driver.dropColumn).not.toHaveBeenCalled();
+      expect(output.some((l) => l.includes("safe mode skipped"))).toBe(true);
+    });
+  });
+
   describe("logDDL flag", () => {
     function captureInfo() {
       return output.filter((l) => l.includes("INFO"));

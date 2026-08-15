@@ -79,7 +79,7 @@ ALTER TABLE `user` ADD `avatar` VARCHAR(255) NULL;
 | 값 | 동작 |
 |---|------|
 | `true` | 전체 동기화 -- 테이블 생성, 컬럼 추가 **및 삭제**까지 엔티티에 맞춰요. |
-| `"safe"` | 안전 모드 -- 테이블 생성과 컬럼 추가만 하고, 컬럼이나 테이블을 **삭제하지 않아요**. |
+| `"safe"` | 안전 모드 -- 테이블 생성과 컬럼 추가만 하고, **변경·삭제·이름 변경은 하지 않아요**. 건너뛴 변경은 warn 한 줄로 요약되고, `logDDL`을 켜면 문장 전체가 출력돼요. |
 | `"dry-run"` | 미리보기 -- 실행될 DDL 문을 로그로 출력하되, 실제 적용하지 않아요. |
 | `false` (기본값) | 동기화 없음. [마이그레이션](./migrations.md)으로 스키마를 관리해요. |
 
@@ -104,8 +104,8 @@ synchronize: {
 |--------|--------|------------|
 | `mode` | 필수 | 기본 모드 — 단일 값 폼과 의미가 동일해요. |
 | `continueOnError` | `true` | `false`이면 DDL 실패가 warn으로 격하되지 않고 `OrmError(SCHEMA_SYNC_FAILED)`로 throw 되어 부팅을 중단시킵니다. |
-| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN, DROP TABLE, 좁히는 ALTER(예: `varchar(255) → int`, `varchar(255) → varchar(64)`)가 실행 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`로 throw 됩니다. |
-| `logDDL` | `false` | `true`이면 발생하는 모든 DDL(CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX 등)을 info 레벨로 로그 출력합니다. |
+| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN과 좁히는 ALTER(예: `varchar(255) → int`, `varchar(255) → varchar(64)`)가 실행 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`로 throw 됩니다. synchronize는 어떤 모드에서도 테이블을 삭제하지 않습니다. |
+| `logDDL` | `false` | `true`이면 발생하는 모든 DDL(CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX 등)을 info 레벨로 로그 출력합니다. `"safe"`에서는 건너뛴 문장도 `[skipped: safe mode]` 접두어를 붙여 출력합니다. |
 
 단일 값 폼(`true`, `"safe"`, `"dry-run"`, `false`)은 그대로 유지되어 — 동일한 기본값으로 정규화돼요. 프로덕션 권장 프로파일은 다음과 같습니다.
 

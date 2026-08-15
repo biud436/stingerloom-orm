@@ -52,6 +52,18 @@ import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
+ * A schema change that `synchronize: "safe"` detected but declined to apply.
+ */
+interface SkippedSafeChange {
+  /** Change class, used for the summary breakdown (e.g. "DROP COLUMN"). */
+  kind: string;
+  /** Human-readable target, e.g. `user.email`. */
+  target: string;
+  /** The statement that a full sync would have executed. */
+  ddl: string;
+}
+
+/**
  * DDL / schema synchronization handler that runs once at application start.
  * It is not involved in runtime CRUD.
  */
@@ -558,6 +570,13 @@ export class SchemaRegistrar {
 
     let diff: SchemaDiffResult;
     try {
+      // `detectDroppedTables` is deliberately left off: synchronize operates on
+      // columns only and never drops a table, no matter the mode. A database
+      // routinely holds tables this connection knows nothing about (other
+      // services, other EntityManagers, migration bookkeeping), so entity
+      // absence is not evidence that a table is obsolete. `diff.dropTables` is
+      // therefore always empty here and has no consumer below — table removal
+      // belongs to a migration the author reviewed.
       diff = await schemaDiff.diff(
         existingEntities,
         queryRunner,
@@ -628,7 +647,12 @@ export class SchemaRegistrar {
       }
     }
 
-    // 2. ALTER COLUMNS (only in true mode; safe is skipped)
+    // Changes that "safe" mode declines to apply. Collected here and reported
+    // once at the end so a safe-mode boot is never silent about the schema
+    // drift it left in place.
+    const safeSkipped: SkippedSafeChange[] = [];
+
+    // 2. ALTER COLUMNS (only in true mode; safe reports and skips)
     if (isFull || isDryRun) {
       for (const col of diff.alterColumns) {
         const ddl = this.buildAlterColumnDDL(col, dialect);
@@ -662,9 +686,22 @@ export class SchemaRegistrar {
           }
         }
       }
+    } else if (isSafe) {
+      for (const col of diff.alterColumns) {
+        // A null DDL means the dialect cannot express the change at all
+        // (SQLite), which buildAlterColumnDDL() already warns about — it is
+        // not a change the "safe" policy is holding back.
+        const ddl = this.buildAlterColumnDDL(col, dialect);
+        if (!ddl) continue;
+        safeSkipped.push({
+          kind: "ALTER COLUMN",
+          target: `${col.tableName}.${col.columnName}`,
+          ddl,
+        });
+      }
     }
 
-    // 3. DROP COLUMNS (only in true mode; safe is skipped)
+    // 3. DROP COLUMNS (only in true mode; safe reports and skips)
     if (isFull || isDryRun) {
       for (const col of diff.dropColumns) {
         // FK columns are excluded from DROP (they are managed in pass 2).
@@ -700,9 +737,20 @@ export class SchemaRegistrar {
           }
         }
       }
+    } else if (isSafe) {
+      for (const col of diff.dropColumns) {
+        // FK columns are never dropped by the diff pass in any mode.
+        const tableFkCols = fkColumnsPerTable.get(col.tableName.toLowerCase());
+        if (tableFkCols?.has(col.columnName.toLowerCase())) continue;
+        safeSkipped.push({
+          kind: "DROP COLUMN",
+          target: `${col.tableName}.${col.columnName}`,
+          ddl: `ALTER TABLE ${col.tableName} DROP COLUMN ${col.columnName}`,
+        });
+      }
     }
 
-    // 4. RENAME COLUMNS (only in true mode)
+    // 4. RENAME COLUMNS (only in true mode; safe reports and skips)
     if ((isFull || isDryRun) && diff.renamedColumns) {
       for (const rename of diff.renamedColumns) {
         const ddl = `ALTER TABLE ${this.ctx.wrap(rename.tableName)} RENAME COLUMN ${this.ctx.wrap(rename.oldColumnName)} TO ${this.ctx.wrap(rename.newColumnName)}`;
@@ -724,6 +772,62 @@ export class SchemaRegistrar {
           }
         }
       }
+    } else if (isSafe && diff.renamedColumns) {
+      for (const rename of diff.renamedColumns) {
+        safeSkipped.push({
+          kind: "RENAME COLUMN",
+          target: `${rename.tableName}.${rename.oldColumnName} → ${rename.newColumnName}`,
+          ddl: `ALTER TABLE ${this.ctx.wrap(rename.tableName)} RENAME COLUMN ${this.ctx.wrap(rename.oldColumnName)} TO ${this.ctx.wrap(rename.newColumnName)}`,
+        });
+      }
+    }
+
+    this.reportSafeModeSkips(safeSkipped, policy);
+  }
+
+  /**
+   * Reports the alter/drop/rename changes that `"safe"` mode declined to apply.
+   *
+   * Safe mode used to drop them on the floor without a word, so a clean boot
+   * log was indistinguishable from a fully synchronized schema — a shortened
+   * varchar or a renamed column stayed invisible until the first INSERT failed.
+   * #331 added `logDDL` for DDL visibility, but the flag only ever reached the
+   * execution branches, which safe mode never enters.
+   */
+  private reportSafeModeSkips(
+    skipped: SkippedSafeChange[],
+    policy: SynchronizePolicy,
+  ): void {
+    if (skipped.length === 0) return;
+
+    const countByKind = new Map<string, number>();
+    for (const change of skipped) {
+      countByKind.set(change.kind, (countByKind.get(change.kind) ?? 0) + 1);
+    }
+    const breakdown = Array.from(countByKind.entries())
+      .map(([kind, count]) => `${count} ${kind}`)
+      .join(", ");
+
+    const SAMPLE_SIZE = 3;
+    const sample = skipped
+      .slice(0, SAMPLE_SIZE)
+      .map((change) => change.target)
+      .join(", ");
+    const more =
+      skipped.length > SAMPLE_SIZE
+        ? `, +${skipped.length - SAMPLE_SIZE} more`
+        : "";
+
+    const hint = policy.logDDL
+      ? "Apply them with synchronize.mode: true or a migration."
+      : "Apply them with synchronize.mode: true or a migration; set synchronize.logDDL: true to log each skipped statement.";
+
+    this.logger.warn(
+      `[sync] safe mode skipped ${skipped.length} schema change(s): ${breakdown} (${sample}${more}). ${hint}`,
+    );
+
+    for (const change of skipped) {
+      this.logDdl(`[skipped: safe mode] ${change.ddl}`, policy);
     }
   }
 
