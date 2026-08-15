@@ -72,7 +72,7 @@ SQLite는 단일 파일에 모든 걸 저장해요. 연결할 서버가 없어�
 |-----|------|---------|
 | `false` | **동기화 안 함** (기본값) -- 스키마를 수정하지 않아요 | 프로덕션. 마이그레이션으로 스키마를 제어해요. |
 | `true` | **전체 동기화** -- 엔티티에 맞게 테이블/컬럼을 생성, 변경, 삭제해요 | 개발 전용. 엔티티에서 컬럼을 제거하면 DB 컬럼과 데이터가 함께 삭제돼요. |
-| `"safe"` | **안전 동기화** -- 새 테이블/컬럼만 추가하고 삭제는 안 해요 | 스테이징. 새로운 건 나타나고, 기존 건 그대로예요. 데이터 손실 없어요. |
+| `"safe"` | **안전 동기화** -- 새 테이블/컬럼만 추가하고 변경·삭제·이름 변경은 안 해요 | 스테이징. 새로운 건 나타나고, 기존 건 그대로예요. 데이터 손실 없어요. |
 | `"dry-run"` | **드라이 런** -- 실행될 DDL을 로그로만 출력하고 실행은 안 해요 | 배포 전 검토. 어떤 SQL이 실행될지 미리 확인할 수 있어요. |
 
 ```typescript
@@ -89,6 +89,21 @@ await em.register({
 
 **안전 동기화(`"safe"`) -- 안전망:**
 같은 시나리오인데 안전 동기화를 써요. ORM이 새 `displayName` 컬럼을 만들지만 `nickname`은 그대로 둬요. 데이터 손실이 없어요. 나중에 수동으로 데이터를 옮기고, 준비되면 이전 컬럼을 삭제하면 돼요.
+
+안전 모드는 적용하지 않고 넘긴 변경을 로그로 알려줍니다. 손대지 않은 스키마가 동기화된 스키마처럼 보이는 일은 없어요.
+
+```
+WARN [SchemaRegistrar] [sync] safe mode skipped 2 schema change(s): 1 ALTER COLUMN, 1 DROP COLUMN (user.email, user.nickname). Apply them with synchronize.mode: true or a migration; set synchronize.logDDL: true to log each skipped statement.
+```
+
+`logDDL: true`를 함께 주면 넘긴 DDL 문 자체도 전부 출력됩니다.
+
+```
+INFO [SchemaRegistrar] [skipped: safe mode] ALTER TABLE `user` MODIFY COLUMN `email` VARCHAR(64) NOT NULL
+INFO [SchemaRegistrar] [skipped: safe mode] ALTER TABLE user DROP COLUMN nickname
+```
+
+특히 주의할 건 컬럼을 넓히는 변경이에요. 엔티티에서 `varchar(50)`을 `varchar(255)`로 바꿔도 안전 모드는 DB를 50 그대로 두기 때문에, 불일치가 나중에 INSERT 시점의 truncation 에러로 드러납니다. 이 경고가 "이제 마이그레이션을 돌려야 한다"는 신호예요.
 
 **드라이 런(`"dry-run"`) -- 미리보기:**
 같은 시나리오예요. ORM이 DDL을 콘솔에 출력해요 -- `ALTER TABLE user ADD COLUMN display_name varchar(255)` -- 하지만 실행은 안 해요. 출력을 검토하고, 마이그레이션 파일을 조정하고, 직접 적용하면 돼요.
@@ -116,7 +131,7 @@ await em.register({
 | `mode` | 필수 | 기본 모드 — 단일 값 폼과 동일한 의미예요. |
 | `continueOnError` | `true` | `false`이면 DDL 실패가 warn으로 격하되지 않고 `OrmError(SCHEMA_SYNC_FAILED)`로 throw 돼요. 반쯤 마이그레이션된 스키마를 로그로만 찾기보다는 부팅을 명시적으로 실패시키고 싶을 때 사용하세요. |
 | `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN, DROP TABLE, 좁히는 ALTER(예: `varchar(255) → int`, `varchar(255) → varchar(64)`)가 실행 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`로 throw 돼요. 프로덕션 안전망으로 유용해요. |
-| `logDDL` | `false` | `true`이면 발생하는 모든 DDL(CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX 등)을 info 레벨로 로그 출력해요. `"dry-run"`과 함께 쓰면 가시성이 확보돼요. |
+| `logDDL` | `false` | `true`이면 발생하는 모든 DDL(CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX 등)을 info 레벨로 로그 출력해요. `"safe"`에서는 모드가 건너뛴 문장도 `[skipped: safe mode]` 접두어를 붙여 함께 출력해요. `"dry-run"`과 함께 쓰면 가시성이 확보돼요. |
 
 단일 값 폼(`true`, `"safe"`, `"dry-run"`, `false`)도 그대로 동작하며, 동일한 기본값으로 정규화되므로 마이그레이션이 필요 없어요.
 

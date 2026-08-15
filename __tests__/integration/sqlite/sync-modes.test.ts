@@ -12,6 +12,8 @@ import * as path from "path";
 import { getScannerInstance, resetScannerContainer } from "../../../src/scanner/ScannerContainer";
 import { EntityManager } from "../../../src/core/EntityManager";
 import { DatabaseClient } from "../../../src/DatabaseClient";
+import { Logger } from "../../../src/utils/Logger";
+import type { SynchronizeOption } from "../../../src/core/DatabaseClientOptions";
 import { MetadataLayerRegistry } from "../../../src/scanner/MetadataScanner";
 import { ColumnScanner } from "../../../src/scanner";
 import {
@@ -60,7 +62,7 @@ function createEntity(
 async function registerWithSync(
   dbPath: string,
   entityClass: new () => any,
-  syncMode: boolean | "safe" | "dry-run",
+  syncMode: SynchronizeOption,
 ): Promise<EntityManager> {
   const em = new EntityManager();
   await em.register({
@@ -79,6 +81,17 @@ async function getColumnNames(dbPath: string): Promise<string[]> {
   const rows = await connector.query(`PRAGMA table_info("${escaped}")`);
   const normalized = Array.isArray(rows) ? rows : (rows as any).rows ?? [];
   return normalized.map((r: any) => r.name);
+}
+
+/**
+ * Captures every Logger line emitted from this point on.
+ * Call the returned `stop()` to restore the default output.
+ */
+function captureLogs(): { lines: string[]; stop: () => void } {
+  const lines: string[] = [];
+  Logger.reset();
+  Logger.setOutput((message) => lines.push(message));
+  return { lines, stop: () => Logger.reset() };
 }
 
 async function closeDb(): Promise<void> {
@@ -110,6 +123,13 @@ const V3_COLUMNS = [
   { name: "id", primary: true },
   { name: "name", type: "varchar" },
   // age removed
+];
+
+// V4: age renamed to years (same type — SchemaDiff pairs it as a rename)
+const V4_COLUMNS = [
+  { name: "id", primary: true },
+  { name: "name", type: "varchar" },
+  { name: "years", type: "int" },
 ];
 
 // ─────────────────────────────────────────────────────────
@@ -213,6 +233,116 @@ describe("[Integration] SQLite synchronize modes (Issue #137)", () => {
       expect(columns).toContain("name");
       // age should still exist — safe mode never drops
       expect(columns).toContain("age");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // V4-T0-3: safe mode used to skip alter/drop/rename silently —
+  // a clean boot log read as "schema is in sync".
+  // ─────────────────────────────────────────────────────────
+  describe('synchronize: "safe" — skipped-change visibility', () => {
+    /** Creates the V1 table, then re-registers `columns` under `syncMode`. */
+    async function resyncAndCapture(
+      columns: typeof V1_COLUMNS,
+      syncMode: SynchronizeOption,
+    ): Promise<string[]> {
+      resetState();
+      await registerWithSync(dbPath, createEntity(V1_COLUMNS), true);
+      await closeDb();
+
+      resetState();
+      const capture = captureLogs();
+      try {
+        await registerWithSync(dbPath, createEntity(columns), syncMode);
+      } finally {
+        capture.stop();
+      }
+      return capture.lines;
+    }
+
+    it("warns with a summary when a DROP COLUMN is skipped", async () => {
+      const lines = await resyncAndCapture(V3_COLUMNS, "safe");
+
+      const summary = lines.find((l) => l.includes("safe mode skipped"));
+      expect(summary).toBeDefined();
+      expect(summary).toContain("1 DROP COLUMN");
+      expect(summary).toContain(`${TABLE_NAME}.age`);
+      // logDDL is off here, so the warning says how to see the statements
+      expect(summary).toContain("logDDL");
+
+      // The column itself is still untouched — safe mode still never drops
+      expect(await getColumnNames(dbPath)).toContain("age");
+    });
+
+    it("logs each skipped statement when logDDL is true", async () => {
+      const lines = await resyncAndCapture(V3_COLUMNS, {
+        mode: "safe",
+        logDDL: true,
+      });
+
+      expect(
+        lines.some((l) =>
+          l.includes(
+            `[skipped: safe mode] ALTER TABLE ${TABLE_NAME} DROP COLUMN age`,
+          ),
+        ),
+      ).toBe(true);
+    });
+
+    it("reports a skipped RENAME COLUMN", async () => {
+      const lines = await resyncAndCapture(V4_COLUMNS, {
+        mode: "safe",
+        logDDL: true,
+      });
+
+      const summary = lines.find((l) => l.includes("safe mode skipped"));
+      expect(summary).toBeDefined();
+      expect(summary).toContain("RENAME COLUMN");
+      expect(summary).toContain("age");
+      expect(summary).toContain("years");
+      expect(
+        lines.some(
+          (l) =>
+            l.includes("[skipped: safe mode]") && l.includes("RENAME COLUMN"),
+        ),
+      ).toBe(true);
+
+      // Nothing was applied
+      const columns = await getColumnNames(dbPath);
+      expect(columns).toContain("age");
+      expect(columns).not.toContain("years");
+    });
+
+    it("stays quiet when the schema already matches", async () => {
+      const lines = await resyncAndCapture(V1_COLUMNS, {
+        mode: "safe",
+        logDDL: true,
+      });
+
+      expect(lines.some((l) => l.includes("safe mode skipped"))).toBe(false);
+      expect(lines.some((l) => l.includes("[skipped: safe mode]"))).toBe(false);
+    });
+
+    it("does not report skips in full or dry-run mode", async () => {
+      const fullLines = await resyncAndCapture(V3_COLUMNS, {
+        mode: true,
+        logDDL: true,
+      });
+      expect(fullLines.some((l) => l.includes("safe mode skipped"))).toBe(false);
+      expect(await getColumnNames(dbPath)).not.toContain("age");
+
+      const dryRunLines = await resyncAndCapture(V3_COLUMNS, {
+        mode: "dry-run",
+        logDDL: true,
+      });
+      expect(dryRunLines.some((l) => l.includes("safe mode skipped"))).toBe(
+        false,
+      );
+      expect(
+        dryRunLines.some((l) =>
+          l.includes(`[dry-run] ALTER TABLE ${TABLE_NAME} DROP COLUMN age`),
+        ),
+      ).toBe(true);
     });
   });
 

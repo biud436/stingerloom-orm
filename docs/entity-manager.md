@@ -81,7 +81,7 @@ ALTER TABLE `user` ADD `avatar` VARCHAR(255) NULL;
 | Value | Behavior |
 |-------|----------|
 | `true` | Full sync -- creates tables, adds **and drops** columns to match entities. |
-| `"safe"` | Safe mode -- creates tables and adds columns, but **never drops** columns or tables. |
+| `"safe"` | Safe mode -- creates tables and adds columns, but **never alters, drops, or renames**. Skipped changes are summarized in a warning (and listed in full under `logDDL`). |
 | `"dry-run"` | Preview -- logs DDL statements that *would* execute, without applying them. |
 | `false` (default) | No synchronization. Manage schema with [migrations](./migrations.md). |
 
@@ -107,7 +107,7 @@ synchronize: {
 | `mode` | required | Base mode — same semantics as the bare form. |
 | `continueOnError` | `true` | When `false`, a failing DDL statement throws `OrmError(SCHEMA_SYNC_FAILED)` and aborts boot instead of being downgraded to a warning. |
 | `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN, DROP TABLE, and narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`) throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing. |
-| `logDDL` | `false` | When `true`, every emitted DDL statement is logged at info level (CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX, etc.). |
+| `logDDL` | `false` | When `true`, every emitted DDL statement is logged at info level (CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX, etc.). Under `"safe"`, the statements the mode skipped are logged too, prefixed with `[skipped: safe mode]`. |
 
 The bare forms (`true`, `"safe"`, `"dry-run"`, `false`) keep working unchanged — they normalize to the same defaults above. A typical production profile is:
 
