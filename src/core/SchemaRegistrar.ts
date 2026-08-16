@@ -241,6 +241,10 @@ export class SchemaRegistrar {
       }
     }
 
+    // Enum types are shared across entities (@Column({ enumName }) may name the
+    // same type twice), so each one is inspected at most once per run.
+    const syncedEnumTypes = new Set<string>();
+
     // Pass 1: create every table first (the referenced tables must exist before FKs are created).
     const entityList: Array<{
       TargetEntity: ClazzType<any>;
@@ -420,6 +424,18 @@ export class SchemaRegistrar {
         throw new PrimaryKeyNotFoundError(tableName ?? "Unknown");
       }
 
+      // PostgreSQL: an enum column is a reference to a named type, so that type
+      // has to exist before any statement naming it runs. Applies to existing
+      // tables too — that is where added enum columns and added enum values land.
+      if (synchronize) {
+        await this.syncEnumTypes(
+          metadata.columns,
+          tableName,
+          policy,
+          syncedEnumTypes,
+        );
+      }
+
       let tableExisted = false;
       const driver = this.ctx.getDriver();
       if (synchronize) {
@@ -546,6 +562,159 @@ export class SchemaRegistrar {
       for (const { tableName } of entityList) {
         this.logger.info(
           `[dry-run] Would register FKs/indexes for ${tableName}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * PostgreSQL: creates the named ENUM types an entity's columns reference and
+   * adds values that the entity declares but the type does not have yet.
+   *
+   * A PostgreSQL enum column is a reference to a user-defined type
+   * (`"schema"."table_column_enum"`), so `CREATE TYPE` has to run before the
+   * CREATE TABLE / ADD COLUMN that names it. Without this pass the statement
+   * fails with `type ... does not exist` and `continueOnError` (default true)
+   * downgrades it to a warning — leaving the table or the column silently
+   * missing, and leaving a declared enum value unusable at INSERT time.
+   *
+   * Mode semantics: both operations are additive (CREATE TYPE, ALTER TYPE ...
+   * ADD VALUE), so `"safe"` applies them. Safe declines narrowing and
+   * destructive DDL; creating a type nothing references yet, and appending a
+   * value no row can hold yet, are neither — and withholding them would break
+   * the CREATE TABLE / ADD COLUMN that safe mode does perform. `"dry-run"`
+   * logs the statements it would run.
+   *
+   * Removal is not synchronized: PostgreSQL cannot drop an enum value without
+   * recreating the type (and rewriting every column that uses it), so values
+   * present in the database but absent from the entity are reported, never
+   * dropped.
+   *
+   * No-ops on MySQL (native inline `ENUM(...)` column type) and SQLite
+   * (stored as TEXT) — those dialects carry the values in the column
+   * definition itself, which the regular CREATE/ALTER path already handles.
+   */
+  private async syncEnumTypes(
+    columns: ColumnMetadata[],
+    tableName: string,
+    policy: SynchronizePolicy,
+    processed: Set<string>,
+  ): Promise<void> {
+    if (!this.ctx.isPostgres()) return;
+    const driver = this.ctx.getDriver() as PostgresDriver | undefined;
+    if (!driver || typeof driver.hasEnumType !== "function") return;
+
+    const isDryRun = policy.mode === "dry-run";
+
+    for (const col of columns as any[]) {
+      if (col.options?.type !== "enum") continue;
+
+      const columnName = col.name ?? col.propertyKey ?? "unknown";
+      const enumName: string =
+        col.options.enumName ?? `${tableName}_${columnName}_enum`;
+      if (processed.has(enumName)) continue;
+      processed.add(enumName);
+
+      const values: string[] = col.options.enumValues ?? [];
+      if (values.length === 0) {
+        this.logger.warn(
+          `[sync] Column ${tableName}.${columnName} is type "enum" but declares no enumValues. ` +
+            `PostgreSQL needs the value list to create type "${enumName}", so any DDL naming it will fail.`,
+        );
+        continue;
+      }
+
+      let exists = false;
+      try {
+        const rows = (await driver.hasEnumType(enumName)) as any[];
+        exists = Array.isArray(rows) && rows.length > 0;
+      } catch (err) {
+        this.handleDdlError(
+          err,
+          `Failed to inspect enum type ${enumName}`,
+          policy,
+        );
+        continue;
+      }
+
+      if (!exists) {
+        const ddl = `CREATE TYPE ${enumName} AS ENUM (${values
+          .map((v) => `'${escapeSqlLiteral(v)}'`)
+          .join(", ")})`;
+        if (isDryRun) {
+          this.logger.info(`[dry-run] Would ${ddl}`);
+          continue;
+        }
+        this.logDdl(`[sync] ${ddl}`, policy);
+        try {
+          await driver.createEnumType(enumName, values);
+        } catch (err) {
+          this.handleDdlError(
+            err,
+            `Failed to create enum type ${enumName}`,
+            policy,
+          );
+        }
+        continue;
+      }
+
+      let current: string[];
+      try {
+        const rows = await driver.listEnumValues(enumName);
+        current = rows.map((r) => r.enumlabel);
+      } catch (err) {
+        this.handleDdlError(
+          err,
+          `Failed to read values of enum type ${enumName}`,
+          policy,
+        );
+        continue;
+      }
+
+      // Keep the declared order: a new value is inserted BEFORE the nearest
+      // already-present value that follows it in the entity, so ORDER BY on the
+      // column keeps matching the enumValues array. `applied` tracks the live
+      // order because ADD VALUE ... BEFORE needs an existing anchor.
+      const applied = [...current];
+      for (const value of values) {
+        if (applied.includes(value)) continue;
+
+        const successor = values
+          .slice(values.indexOf(value) + 1)
+          .find((v) => applied.includes(v));
+        const placement = successor ? { before: successor } : undefined;
+
+        const ddl =
+          `ALTER TYPE ${enumName} ADD VALUE IF NOT EXISTS '${escapeSqlLiteral(value)}'` +
+          (successor ? ` BEFORE '${escapeSqlLiteral(successor)}'` : "");
+        if (isDryRun) {
+          this.logger.info(`[dry-run] Would ${ddl}`);
+          continue;
+        }
+        this.logDdl(`[sync] ${ddl}`, policy);
+        try {
+          await driver.addEnumValue(enumName, value, placement);
+          applied.splice(
+            successor ? applied.indexOf(successor) : applied.length,
+            0,
+            value,
+          );
+        } catch (err) {
+          this.handleDdlError(
+            err,
+            `Failed to add value "${value}" to enum type ${enumName}`,
+            policy,
+          );
+        }
+      }
+
+      const extra = current.filter((v) => !values.includes(v));
+      if (extra.length > 0) {
+        this.logger.warn(
+          `[sync] Enum type ${enumName} still has ${extra
+            .map((v) => `"${v}"`)
+            .join(", ")}, which the entity no longer declares. ` +
+            `PostgreSQL cannot drop an enum value in place, so it is left as is — write a migration if it must go.`,
         );
       }
     }
@@ -889,7 +1058,11 @@ export class SchemaRegistrar {
    *   - Numeric types (INT, BIGINT, FLOAT, etc.) -> DEFAULT 0
    *   - Boolean -> DEFAULT FALSE (pg/sqlite) or DEFAULT 0 (mysql)
    *   - Datetime/timestamp/date -> forced NULL (no safe default)
+   *   - Enum -> forced NULL (any default would invent a domain value)
    *   - Other types (JSON, BLOB, etc.) -> forced NULL (no safe default)
+   *
+   * A forced-NULL fall-through means the shipped column is weaker than the
+   * entity declares, so it is reported rather than applied silently.
    */
   private buildAddColumnTypeDef(col: ColumnChange): string {
     const type = this.buildColumnTypeExpr(col);
@@ -901,7 +1074,13 @@ export class SchemaRegistrar {
     // Type-appropriate default for NOT NULL backfill (#177)
     const upperType = type.toUpperCase();
 
-    if (/^(VARCHAR|TEXT|CHAR|LONGTEXT|MEDIUMTEXT|TINYTEXT|ENUM)/.test(upperType)) {
+    // ENUM is excluded on purpose: `''` is only a legal default when the empty
+    // string is one of the declared values, so MySQL rejects
+    // `ENUM('a','b') NOT NULL DEFAULT ''` outright (1067), and PostgreSQL's
+    // enum arrives here as a quoted type name. Picking a real member as the
+    // backfill value would silently invent data, so the column is added
+    // nullable instead — see the fall-through below.
+    if (/^(VARCHAR|TEXT|CHAR|LONGTEXT|MEDIUMTEXT|TINYTEXT)/.test(upperType)) {
       return `${type} NOT NULL DEFAULT ''`;
     }
     if (/^(INT|BIGINT|FLOAT|DOUBLE|DECIMAL|NUMERIC|REAL|SMALLINT|TINYINT|SERIAL|INTEGER|MEDIUMINT)/.test(upperType)) {
@@ -912,8 +1091,13 @@ export class SchemaRegistrar {
       return `${type} NOT NULL DEFAULT ${defaultVal}`;
     }
 
-    // Datetime/timestamp/date and other types (JSON, JSONB, BLOB, BYTEA, ARRAY, etc.)
-    // cannot have a safe universal default — force nullable for existing rows
+    // Datetime/timestamp/date, enum, and other types (JSON, JSONB, BLOB,
+    // BYTEA, ARRAY, etc.) cannot have a safe universal default — force
+    // nullable so existing rows survive the ADD COLUMN.
+    this.logger.warn(
+      `[sync] Column ${col.tableName}.${col.columnName} is declared NOT NULL, but ${type} has no safe backfill default. ` +
+        `It is added as NULL, and existing rows keep NULL. Backfill the column and enforce NOT NULL in a migration if it must be required.`,
+    );
     return `${type} NULL`;
   }
 

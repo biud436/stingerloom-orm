@@ -587,11 +587,16 @@ export class PostgresDriver implements ISqlDriver {
    * @returns array of `{ enumlabel: string }`
    */
   listEnumValues(enumName: string): Promise<{ enumlabel: string }[]> {
+    // Scoped to the connection's schema, like hasEnumType/createEnumType:
+    // tenant schemas cloned from a template hold same-named enum types, and an
+    // unqualified lookup would merge every tenant's labels into one list.
     return this.connector.query(
       sql`SELECT e.enumlabel
        FROM pg_enum e
        JOIN pg_type t ON t.oid = e.enumtypid
+       JOIN pg_namespace n ON t.typnamespace = n.oid
        WHERE t.typname = ${enumName}
+         AND n.nspname = ${this.schema}
        ORDER BY e.enumsortorder`,
     );
   }
