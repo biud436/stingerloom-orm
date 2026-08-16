@@ -358,6 +358,8 @@ CREATE TYPE "post_status" AS ENUM ('draft', 'published', 'archived');
 
 > **Hint** If `enumName` is omitted, it is automatically generated in the format `{tableName}_{columnName}_enum`.
 
+`synchronize` creates the type before the table that references it, and appends values you add to `enumValues` later (`ALTER TYPE ... ADD VALUE`). Values you *remove* stay in the database -- PostgreSQL cannot drop an enum value in place -- so they are reported as a warning rather than applied. See [Configuration](./configuration.md#postgresql-enum-types) for the mode-by-mode behavior.
+
 ## Manual Primary Key (@PrimaryColumn)
 
 Sometimes you need a primary key where you specify the value directly rather than using auto-increment. For example, a key-value structured configuration table where the key is a meaningful string.

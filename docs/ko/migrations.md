@@ -574,6 +574,8 @@ ALTER TYPE "users_role_enum" ADD VALUE IF NOT EXISTS 'moderator';
 
 SchemaDiff가 PostgreSQL에서 이걸 자동으로 처리해줘요.
 
+> **힌트** `synchronize`도 부팅 시점에 같은 두 작업을 수행합니다. 마이그레이션 파일을 거치지 않고 없는 enum 타입을 만들고, 빠진 값을 추가해요. 자세한 동작은 [설정](./configuration.md#postgresql-enum-타입)을 참고하세요.
+
 **동작 방식.** Diff 단계에서 테이블과 컬럼을 비교한 후, PostgreSQL enum 타입에 대한 추가 검사를 실행해요:
 
 1. 엔티티의 각 `@Column({ type: "enum" })`에 대해, 데이터베이스의 `pg_enum`과 `pg_type`에서 현재 enum 값을 읽어요.

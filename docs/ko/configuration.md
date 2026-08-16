@@ -135,6 +135,23 @@ await em.register({
 
 단일 값 폼(`true`, `"safe"`, `"dry-run"`, `false`)도 그대로 동작하며, 동일한 기본값으로 정규화되므로 마이그레이션이 필요 없어요.
 
+### PostgreSQL ENUM 타입
+
+PostgreSQL에서 enum 컬럼은 값 목록을 직접 들고 있는 게 아니라 **명명 타입을 참조**합니다. 타입이 없으면 그 타입을 쓰는 테이블도 만들 수 없기 때문에, synchronize는 테이블을 건드리기 전에 enum 타입부터 준비합니다.
+
+- enum 컬럼이 참조하는데 DB에 없는 타입은 생성합니다 (`CREATE TYPE "post_status" AS ENUM (...)`).
+- 엔티티에는 있는데 타입에는 없는 값은 추가합니다 (`ALTER TYPE ... ADD VALUE`). 이때 끝에 덧붙이지 않고 선언된 위치에 삽입하므로, 컬럼 기준 `ORDER BY` 결과가 `enumValues` 순서와 계속 일치합니다.
+- DB에는 있는데 엔티티가 더 이상 선언하지 않는 값은 **경고만 하고 제거하지 않습니다**. PostgreSQL은 enum 값을 제자리에서 삭제할 수 없어요. 타입과 그 타입을 쓰는 모든 컬럼을 다시 만들어야 하니, 검토를 거친 마이그레이션이 맡을 일입니다.
+
+두 작업 모두 비파괴적이라 `"safe"`에서도 실행됩니다. safe 모드가 수행하는 CREATE TABLE·ADD COLUMN이 이 타입을 필요로 하니, 여기서 막으면 오히려 그쪽이 깨져요. `"dry-run"`은 실행 대신 문장을 로그로 남깁니다.
+
+```
+INFO [SchemaRegistrar] [dry-run] Would CREATE TYPE post_status_enum AS ENUM ('draft', 'published')
+INFO [SchemaRegistrar] [dry-run] Would ALTER TYPE post_status_enum ADD VALUE IF NOT EXISTS 'archived' BEFORE 'published'
+```
+
+MySQL과 SQLite에는 이 과정이 없습니다. MySQL은 컬럼 자체의 `ENUM(...)` 타입에 값을 담고 SQLite는 `TEXT`로 저장하므로, 기존 CREATE/ALTER 경로가 그대로 처리합니다.
+
 ---
 
 ## 커넥션 풀링

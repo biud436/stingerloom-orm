@@ -248,6 +248,8 @@ CREATE TYPE "post_status" AS ENUM ('draft', 'published', 'archived');
 
 If `.enumName()` is omitted, the name defaults to `{tableName}_{columnName}_enum`. On MySQL the column becomes a native `ENUM(...)`; on SQLite it is stored as `TEXT`.
 
+On PostgreSQL, `synchronize` creates the type before the table that references it and appends values added later; removed values are reported, not dropped -- see [Configuration](./configuration.md#postgresql-enum-types).
+
 ## Primary keys
 
 ### Generated keys
