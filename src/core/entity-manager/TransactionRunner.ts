@@ -31,8 +31,18 @@ import type { EntityManager } from "../EntityManager";
  * @internal Package-internal — not a public API.
  */
 export class TransactionRunner {
-  /** Monotonic counter for NESTED-propagation savepoint names in transaction(). */
-  private txSavepointCounter = 0;
+  /**
+   * Monotonic counter for NESTED-propagation savepoint names in transaction().
+   *
+   * Process-wide (static), not per-instance: every EntityManager owns its own
+   * TransactionRunner, yet they all see the same ambient session through
+   * AsyncLocalStorage. A per-instance counter emitted `sp_em_1` twice on one
+   * session when a second manager nested inside the first — the later
+   * SAVEPOINT shadows the earlier one, so the outer `ROLLBACK TO sp_em_1`
+   * lands on the inner marker and silently keeps the work it meant to undo.
+   * The `sp_em_` prefix keeps these distinct from @Transactional's `sp_N`.
+   */
+  private static txSavepointCounter = 0;
 
   constructor(private readonly ctx: EntityManagerInternals) {}
 
@@ -175,7 +185,7 @@ export class TransactionRunner {
     // callback roll back to the savepoint; the outer transaction continues.
     const ambient = transactionStorage.getStore();
     if (propagation === TransactionPropagation.NESTED && ambient) {
-      const savepointName = `sp_em_${++this.txSavepointCounter}`;
+      const savepointName = `sp_em_${++TransactionRunner.txSavepointCounter}`;
       await ambient.savepoint(savepointName);
       try {
         return await transactionStorage.run(ambient, () => callback(manager));

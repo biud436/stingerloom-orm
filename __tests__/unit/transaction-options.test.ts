@@ -164,8 +164,41 @@ describe("EntityManager.transaction() — decorator-free options", () => {
       expect(result).toBe("outer-ok");
       expect(mocks.savepoint).toHaveBeenCalledTimes(1);
       expect(mocks.rollbackTo).toHaveBeenCalledTimes(1);
+      // Correlate the two: rolling back to a DIFFERENT savepoint than the one
+      // just created would discard the outer transaction's earlier work, and
+      // counting calls alone can't tell the difference.
+      expect(mocks.rollbackTo).toHaveBeenCalledWith(
+        mocks.savepoint.mock.calls[0][0],
+      );
       expect(mocks.commit).toHaveBeenCalledTimes(1);
       expect(mocks.rollback).not.toHaveBeenCalled();
+    });
+
+    it("names concurrent nested savepoints distinctly across EntityManager instances", async () => {
+      // Each EntityManager owns its own TransactionRunner, but they share the
+      // ambient session through AsyncLocalStorage. Per-instance counters would
+      // emit `sp_em_1` twice on the same session: the inner SAVEPOINT shadows
+      // the outer one, so the outer ROLLBACK TO lands on the inner (later)
+      // marker and silently keeps work it meant to undo.
+      const emA = new EntityManager();
+      const emB = new EntityManager();
+
+      await emA.transaction(async (outer) => {
+        await outer.transaction(
+          async () => {
+            await emB.transaction(async () => "inner-b", {
+              propagation: TransactionPropagation.NESTED,
+            });
+            return "inner-a";
+          },
+          { propagation: TransactionPropagation.NESTED },
+        );
+        return "ok";
+      });
+
+      const names = mocks.savepoint.mock.calls.map((c) => c[0]);
+      expect(names).toHaveLength(2);
+      expect(new Set(names).size).toBe(2);
     });
 
     it("falls back to opening a transaction when there is no ambient session", async () => {

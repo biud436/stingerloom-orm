@@ -288,6 +288,11 @@ describe("TransactionPropagation", () => {
       // Savepoint should have been created and rolled back to
       expect(mockSavepoint).toHaveBeenCalledTimes(1);
       expect(mockRollbackTo).toHaveBeenCalledTimes(1);
+      // …and to THAT savepoint: call counts alone would accept a rollback to
+      // some other marker, which would undo the outer transaction's own work.
+      expect(mockRollbackTo).toHaveBeenCalledWith(
+        mockSavepoint.mock.calls[0][0],
+      );
       // Outer should commit, not rollback
       expect(mockCommit).toHaveBeenCalledTimes(1);
       expect(mockRollback).not.toHaveBeenCalled();
@@ -311,6 +316,9 @@ describe("TransactionPropagation", () => {
 
       expect(mockSavepoint).toHaveBeenCalledTimes(1);
       expect(mockRollbackTo).toHaveBeenCalledTimes(1);
+      expect(mockRollbackTo).toHaveBeenCalledWith(
+        mockSavepoint.mock.calls[0][0],
+      );
       // Since inner error propagates to outer, outer should also rollback
       expect(mockRollback).toHaveBeenCalledTimes(1);
     });
