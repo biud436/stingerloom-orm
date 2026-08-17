@@ -209,20 +209,47 @@ describe("[Integration] SQLite: Single Table Inheritance (STI)", () => {
   // ─────────────────────────────────────────────────────────
 
   describe("DELETE", () => {
+    // The rows are created here rather than reused from the INSERT block: an
+    // `if (found)` guard around the whole delete turns the very regression this
+    // test exists for (a broken discriminator filter returning no rows) into a
+    // silent pass.
     it("should delete only the specific child type", async () => {
-      // Count before
-      const btBefore = await conn.em.find(BankTransferPayment, {});
-      const btCountBefore = Array.isArray(btBefore) ? btBefore.length : btBefore ? 1 : 0;
+      const bt: any = await conn.em.save(BankTransferPayment, {
+        amount: 777,
+        bankCode: "DEL-BT",
+      });
+      const cc: any = await conn.em.save(CreditCardPayment, {
+        amount: 777,
+        cardNumber: "DEL-CC",
+      });
 
-      if (btCountBefore > 0) {
-        const first = Array.isArray(btBefore) ? btBefore[0] : btBefore;
-        await conn.em.delete(BankTransferPayment, { id: (first as any).id } as any);
+      await conn.em.delete(BankTransferPayment, { id: bt.id } as any);
 
-        // Verify bank transfer count decreased
-        const btAfter = await conn.em.find(BankTransferPayment, {});
-        const btCountAfter = Array.isArray(btAfter) ? btAfter.length : btAfter ? 1 : 0;
-        expect(btCountAfter).toBe(btCountBefore - 1);
-      }
+      // Gone from the shared table, not merely from the subtype view.
+      const deleted = await conn.em.findOne(Payment, { where: { id: bt.id } });
+      expect(deleted == null).toBe(true);
+
+      // The sibling subtype row is untouched.
+      const survivor: any = await conn.em.findOne(Payment, { where: { id: cc.id } });
+      expect(survivor).toBeTruthy();
+      expect(survivor.id).toBe(cc.id);
+    });
+
+    it("should not delete a sibling subtype row addressed by PK", async () => {
+      const cc: any = await conn.em.save(CreditCardPayment, {
+        amount: 888,
+        cardNumber: "KEEP-CC",
+      });
+
+      // Same PK, wrong subtype: the discriminator condition must keep the
+      // DELETE from matching. Without it the row would be destroyed.
+      await conn.em.delete(BankTransferPayment, { id: cc.id } as any);
+
+      const survivor: any = await conn.em.findOne(CreditCardPayment, {
+        where: { id: cc.id },
+      });
+      expect(survivor).toBeTruthy();
+      expect(survivor.cardNumber).toBe("KEEP-CC");
     });
   });
 });
