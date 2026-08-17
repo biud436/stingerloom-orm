@@ -62,6 +62,11 @@ interface SaleShape {
 
     const qId = (n: string) => qi(type as TestDriverType, n);
 
+    // PG-only syntax reports as skipped instead of returning early — an early
+    // return counts as a passing test on MySQL and hides that the case never
+    // ran there.
+    const itPg = type === "postgres" ? it : it.skip;
+
     beforeAll(async () => {
       saleTable = generateTableName(`craft_sale_${type}`);
 
@@ -466,10 +471,9 @@ interface SaleShape {
         expect(Number((rows[0] as any).amount)).toBe(14);
       });
 
-      it("[RAW] median amount per region — PERCENTILE_CONT (PG) / ordered aggregate", async () => {
+      itPg("[RAW] median amount per region — PERCENTILE_CONT (PG) / ordered aggregate", async () => {
         // Median is only in PG via PERCENTILE_CONT and MySQL 8+ via similar
-        // ordered-set aggregate. Skip on MySQL where syntax varies.
-        if (type !== "postgres") return;
+        // ordered-set aggregate; skipped on MySQL where the syntax varies.
         const T = qId(saleTable);
         const rows = await em.query<{ region: string; med: number }>(
           `SELECT region,
@@ -576,11 +580,10 @@ interface SaleShape {
         expect(rows.map((r) => r.tier).sort()).toEqual(["A", "B", "C", "D"].sort());
       });
 
-      it("[RAW] DISTINCT ON (PostgreSQL) — Builder wall", async () => {
+      itPg("[RAW] DISTINCT ON (PostgreSQL) — Builder wall", async () => {
         // DISTINCT ON is PG-specific; QueryDSL has no equivalent. This
         // captures the "first row per partition" pattern that in MySQL
         // would go through ROW_NUMBER() and is also Raw-only there.
-        if (type !== "postgres") return;
         const T = qId(saleTable);
         const rows = await em.query<{
           region: string;

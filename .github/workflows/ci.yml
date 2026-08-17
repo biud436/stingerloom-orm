@@ -24,6 +24,27 @@ jobs:
       - run: pnpm build
       - run: pnpm test
 
+  stress:
+    name: Stress Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The stress suites gate on STRESS_TEST, which nothing set — so all 19
+      # tests were dark. They run against SQLite in-memory in a couple of
+      # seconds; their wall-clock budgets get a CI slack factor (see
+      # __tests__/stress/stress-budget.ts).
+      - run: pnpm test:stress
+
   docs:
     name: Docs Build & Link Check
     runs-on: ubuntu-latest

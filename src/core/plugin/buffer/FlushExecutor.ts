@@ -141,6 +141,12 @@ export class FlushExecutor {
    * so manually increment when the value still equals the pre-update
    * snapshot. Shared by the per-row flush path (via WriteBuffer) and the
    * batched UPDATE fallback.
+   *
+   * Limitation: for an instance tracked through `merge()`, the snapshot holds
+   * WriteBuffer's forced-dirty Symbol sentinel rather than the old version, so
+   * `oldVersion` never equals the instance value and this bump is skipped. The
+   * write path's own version write-back covers that case — pinned by
+   * __tests__/integration/sqlite/buffer-merge-version.test.ts.
    */
   ensureVersionIncrement(
     entityClass: ClazzType<any>,
