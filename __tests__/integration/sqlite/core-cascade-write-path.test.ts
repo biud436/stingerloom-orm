@@ -304,6 +304,89 @@ describe("[Integration] SQLite: core cascade write paths (non-buffer)", () => {
     expect(children[1].parentId).toBe(parents[1].id);
   });
 
+  // V4-T1-1: the save direction of #414. unit/cascade-handler.test.ts asserts
+  // only that ctx.saveWithSession was CALLED — never that the session argument
+  // reaches the child INSERT, i.e. that the children share the parent's
+  // transaction. These three exercise that with real SQL.
+  it("em.save(Parent, { children: [...] }) INSERTs the children with the parent FK", async () => {
+    const saved: any = await conn.em.save(Parent, {
+      name: "P-o2m",
+      grp: "g",
+      children: [{ label: "o2m-1" }, { label: "o2m-2" }],
+    } as any);
+
+    const children = (await conn.em.query(
+      `SELECT "label", "parentId" FROM "${childName}" ORDER BY "label"`,
+    )) as any[];
+    expect(children.map((c) => c.label)).toEqual(["o2m-1", "o2m-2"]);
+    expect(children.every((c) => c.parentId === saved.id)).toBe(true);
+  });
+
+  it("a failing cascade child INSERT rolls back the parent row too (O2M save atomicity)", async () => {
+    // Duplicate labels violate uq_<child>_label on the SECOND child, after the
+    // parent row and the first child were already written. If the cascade child
+    // save ran outside the parent's transaction, the parent (and the first
+    // child) would survive the failure.
+    await conn.em.save(Child, { label: "o2m-dup" } as any);
+    const before = (await conn.em.query(
+      `SELECT "id" FROM "${parentName}"`,
+    )) as any[];
+    expect(before).toHaveLength(0);
+
+    let threw: unknown = false;
+    try {
+      await conn.em.save(Parent, {
+        name: "P-rollback",
+        grp: "g",
+        children: [{ label: "o2m-ok" }, { label: "o2m-dup" }],
+      } as any);
+    } catch (e) {
+      threw = e ?? true;
+    }
+    expect(String(threw)).toContain("UNIQUE");
+
+    const parents = (await conn.em.query(
+      `SELECT "id" FROM "${parentName}"`,
+    )) as any[];
+    const children = (await conn.em.query(
+      `SELECT "label" FROM "${childName}"`,
+    )) as any[];
+    expect(parents).toHaveLength(0);
+    // Only the pre-existing row survives — the cascade child that DID insert
+    // rolled back with the parent.
+    expect(children.map((c) => c.label)).toEqual(["o2m-dup"]);
+  });
+
+  it("cascade-saved children roll back when a later afterInsert subscriber throws (O2M save atomicity)", async () => {
+    const failing: EntitySubscriber<any> = {
+      listenTo: () => Parent as any,
+      afterInsert: async () => {
+        throw new Error("afterInsert boom");
+      },
+    };
+    conn.em.addSubscriber(failing);
+    try {
+      await expect(
+        conn.em.save(Parent, {
+          name: "P-sub",
+          grp: "g",
+          children: [{ label: "o2m-sub" }],
+        } as any),
+      ).rejects.toThrow("afterInsert boom");
+    } finally {
+      conn.em.removeSubscriber(failing);
+    }
+
+    const parents = (await conn.em.query(
+      `SELECT "id" FROM "${parentName}"`,
+    )) as any[];
+    const children = (await conn.em.query(
+      `SELECT "label" FROM "${childName}"`,
+    )) as any[];
+    expect(parents).toHaveLength(0);
+    expect(children).toHaveLength(0);
+  });
+
   it("saveMany batch INSERT failure rolls back the cascade-saved M2O parents (#414)", async () => {
     // Generated PKs → batch-INSERT path. The duplicate label violates the
     // unique index, failing the batch INSERT after both cascade parents were

@@ -438,6 +438,16 @@ describe("CascadeHandler.cascadeSaveOneToMany()", () => {
     await handler.cascadeSaveOneToMany(Parent, parentItem, 5, fakeSession);
 
     expect(ctx.saveWithSession).toHaveBeenCalledTimes(1);
+    // The session must actually reach the child save (3rd argument), not just
+    // select the saveWithSession branch — passing a different/undefined session
+    // would run the child INSERT in its own transaction (#414's save-direction
+    // twin). Covered end-to-end in
+    // __tests__/integration/sqlite/core-cascade-write-path.test.ts.
+    expect(ctx.saveWithSession).toHaveBeenCalledWith(
+      Child,
+      parentItem.children[0],
+      fakeSession,
+    );
     expect(ctx.save).not.toHaveBeenCalled();
   });
 
