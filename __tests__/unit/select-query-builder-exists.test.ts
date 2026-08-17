@@ -52,13 +52,27 @@ function createMockEm(dbType: "mysql" | "postgresql" = "mysql") {
 }
 
 describe("SelectQueryBuilder.exists()", () => {
-  it("should generate SELECT 1 ... LIMIT 1 instead of COUNT(*)", () => {
+  it("should generate SELECT 1 ... LIMIT 1 instead of COUNT(*)", async () => {
+    // Previously this asserted `expect(qb.exists()).resolves...` without
+    // awaiting, so neither the promise nor the assertion ever ran. Capture the
+    // emitted SQL and pin the actual shape instead.
     const em = createMockEm("mysql");
-    // We can't easily get the SQL from exists() directly,
-    // but we can verify the behavior by checking the query result
+    let capturedSql = "";
+    let capturedValues: unknown[] = [];
+    (em as any).query = async (built: any) => {
+      capturedSql = built.sql || built.text || String(built);
+      capturedValues = built.values ?? [];
+      return [];
+    };
+
     const qb = new SelectQueryBuilder(Item, "i", em);
-    // Verify exists() returns false when query returns empty
-    expect(qb.exists()).resolves.toBe(false);
+    await expect(qb.exists()).resolves.toBe(false);
+
+    expect(capturedSql).toContain("SELECT 1");
+    expect(capturedSql).not.toContain("COUNT(");
+    // The row cap is bound, not inlined.
+    expect(capturedSql).toMatch(/LIMIT\s+[?$]/);
+    expect(capturedValues).toContain(1);
   });
 
   it("should return true when rows exist", async () => {

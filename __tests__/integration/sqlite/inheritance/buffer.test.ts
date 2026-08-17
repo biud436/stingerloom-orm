@@ -103,9 +103,36 @@ describe("[Integration] SQLite: STI + Buffer Plugin", () => {
   });
 
   it("should save and flush STI child entities via buffer", async () => {
-    // Insert seed data directly (not through buffer)
-    await conn.em.save(CreditCardPayment, { amount: 100, cardNumber: "4111-BUF" });
-    await conn.em.save(BankTransferPayment, { amount: 200, bankCode: "BUF-SWIFT" });
+    // Seeds the rows the rest of this suite reads. It used to call em.save()
+    // directly — the buffer path the title promises was never exercised, and
+    // the body asserted nothing.
+    const buf: WriteBuffer = (conn.em as any).buffer();
+
+    buf
+      .persist(
+        Object.assign(new CreditCardPayment(), {
+          amount: 100,
+          cardNumber: "4111-BUF",
+        }),
+      )
+      .persist(
+        Object.assign(new BankTransferPayment(), {
+          amount: 200,
+          bankCode: "BUF-SWIFT",
+        }),
+      );
+
+    const result = await buf.flush();
+    expect(result.inserts).toBe(2);
+
+    // Both subtypes land in the shared table with their own discriminator.
+    const rows = (await conn.em.query(
+      `SELECT "amount", "payment_type" FROM "${tableName}" ORDER BY "amount"`,
+    )) as any[];
+    expect(rows).toEqual([
+      { amount: 100, payment_type: "credit_card" },
+      { amount: 200, payment_type: "bank_transfer" },
+    ]);
   });
 
   it("should findOne STI child via buffer and auto-track", async () => {

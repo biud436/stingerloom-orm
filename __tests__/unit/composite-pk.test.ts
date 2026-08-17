@@ -293,15 +293,16 @@ describe("EntityManager 복합 PK 통합 테스트", () => {
         return text?.includes("INSERT");
       });
 
-      if (insertCall) {
-        const text =
-          typeof insertCall[0] === "string"
-            ? insertCall[0]
-            : insertCall[0]?.text;
-        expect(text).toContain("RETURNING");
-        expect(text).toContain('"userId"');
-        expect(text).toContain('"roleId"');
-      }
+      // Without this guard a missing INSERT (no query at all) passed silently —
+      // the DELETE twin below already asserted it.
+      expect(insertCall).toBeDefined();
+      const text =
+        typeof insertCall![0] === "string"
+          ? insertCall![0]
+          : insertCall![0]?.text;
+      expect(text).toContain("RETURNING");
+      expect(text).toContain('"userId"');
+      expect(text).toContain('"roleId"');
     });
   });
 
