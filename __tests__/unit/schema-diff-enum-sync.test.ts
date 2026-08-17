@@ -177,6 +177,29 @@ describe("SchemaDiff — PostgreSQL ENUM auto-sync", () => {
 
       expect(result.enumChanges).toHaveLength(0);
     });
+
+    it("should not churn the enum column itself when the type is unchanged", async () => {
+      // The comparison branch must keep matching information_schema's
+      // "USER-DEFINED" — resolving the named type here would make every sync
+      // emit an ALTER COLUMN TYPE for an unchanged column.
+      const runner = createMockQueryRunner({
+        enum_user: [
+          { column_name: "id", data_type: "integer", is_nullable: "NO" },
+          { column_name: "name", data_type: "character varying", is_nullable: "NO" },
+          { column_name: "role", data_type: "USER-DEFINED", is_nullable: "NO" },
+        ],
+        user_role: [
+          { enumlabel: "admin" },
+          { enumlabel: "user" },
+          { enumlabel: "guest" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([EnumUser], runner, "postgres");
+
+      expect(result.alterColumns).toHaveLength(0);
+      expect(result.addColumns).toHaveLength(0);
+    });
   });
 
   describe("enum on existing table where type does not exist yet", () => {
@@ -198,6 +221,82 @@ describe("SchemaDiff — PostgreSQL ENUM auto-sync", () => {
       expect(ec.enumName).toBe("user_role");
       expect(ec.isNew).toBe(true);
       expect(ec.addValues).toEqual(["admin", "user", "guest"]);
+    });
+
+    it("should emit the named enum type for ADD COLUMN, not USER-DEFINED", async () => {
+      // "USER-DEFINED" is the information_schema token used for comparison —
+      // emitting it as DDL produces `ADD COLUMN "role" USER-DEFINED`, which
+      // PostgreSQL rejects with a syntax error at "USER".
+      const runner = createMockQueryRunner({
+        enum_user: [
+          { column_name: "id", data_type: "integer", is_nullable: "NO" },
+          { column_name: "name", data_type: "character varying", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([EnumUser], runner, "postgres");
+
+      const added = result.addColumns.find((c) => c.columnName === "role");
+      expect(added).toBeDefined();
+      expect(added!.columnType).toBe(`"public"."user_role"`);
+      // A length would produce `"public"."user_role"(255)`.
+      expect(added!.expectedLength).toBeNull();
+    });
+
+    it("should qualify the enum type with the target schema", async () => {
+      const runner = createMockQueryRunner({
+        enum_user: [
+          { column_name: "id", data_type: "integer", is_nullable: "NO" },
+          { column_name: "name", data_type: "character varying", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff(
+        [EnumUser],
+        runner,
+        "postgres",
+        "tenant_a",
+      );
+
+      const added = result.addColumns.find((c) => c.columnName === "role");
+      expect(added!.columnType).toBe(`"tenant_a"."user_role"`);
+    });
+
+    it("should fall back to {table}_{column}_enum when enumName is omitted", async () => {
+      @Entity({ name: "enum_unnamed" })
+      class EnumUnnamed {
+        @PrimaryGeneratedColumn()
+        id!: number;
+
+        @Column({ type: "enum", enumValues: ["low", "high"] })
+        level!: string;
+      }
+
+      const runner = createMockQueryRunner({
+        enum_unnamed: [
+          { column_name: "id", data_type: "integer", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([EnumUnnamed], runner, "postgres");
+
+      const added = result.addColumns.find((c) => c.columnName === "level");
+      expect(added!.columnType).toBe(`"public"."enum_unnamed_level_enum"`);
+    });
+
+    it("should keep MySQL's inline ENUM type for ADD COLUMN", async () => {
+      const runner = createMockQueryRunner({
+        enum_user: [
+          { column_name: "id", data_type: "int", is_nullable: "NO" },
+          { column_name: "name", data_type: "varchar", is_nullable: "NO" },
+        ],
+      });
+
+      const result = await schemaDiff.diff([EnumUser], runner, "mysql");
+
+      const added = result.addColumns.find((c) => c.columnName === "role");
+      expect(added!.columnType).toBe("ENUM");
+      expect(added!.enumValues).toEqual(["admin", "user", "guest"]);
     });
   });
 

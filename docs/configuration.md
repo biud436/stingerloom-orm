@@ -135,6 +135,23 @@ await em.register({
 
 The bare forms (`true`, `"safe"`, `"dry-run"`, `false`) still work and normalize to the same defaults above — no migration is required.
 
+### PostgreSQL ENUM types
+
+On PostgreSQL an enum column is a reference to a named type, not a value list carried by the column, so a table cannot be created before the type exists. Synchronize provisions those types before it touches any table:
+
+- A type named by an enum column but missing from the database is created (`CREATE TYPE "post_status" AS ENUM (...)`).
+- A value the entity declares but the type does not have is appended (`ALTER TYPE ... ADD VALUE`), inserted at its declared position so `ORDER BY` on the column keeps matching the `enumValues` order.
+- A value the database has but the entity no longer declares is **reported, never removed**. PostgreSQL cannot drop an enum value in place -- doing so means recreating the type and every column that uses it, which belongs in a migration you review.
+
+Both operations are additive, so `"safe"` applies them: withholding them would break the CREATE TABLE and ADD COLUMN that safe mode does perform. `"dry-run"` logs the statements instead:
+
+```
+INFO [SchemaRegistrar] [dry-run] Would CREATE TYPE post_status_enum AS ENUM ('draft', 'published')
+INFO [SchemaRegistrar] [dry-run] Would ALTER TYPE post_status_enum ADD VALUE IF NOT EXISTS 'archived' BEFORE 'published'
+```
+
+MySQL and SQLite need none of this -- MySQL carries the values in the column's own `ENUM(...)` type and SQLite stores the column as `TEXT`, so the regular CREATE/ALTER path already covers them.
+
 ---
 
 ## Connection Pooling

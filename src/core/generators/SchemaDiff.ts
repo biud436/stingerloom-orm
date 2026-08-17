@@ -190,18 +190,33 @@ export class SchemaDiff {
               dialect,
             )}[]`;
           }
+          const isPgEnum =
+            dialect === "postgres" && col.options?.type === "enum";
+          if (isPgEnum) {
+            // Same shape as the array case: castTypePostgres reports the
+            // information_schema token "USER-DEFINED" so the comparison branch
+            // does not churn, but ADD COLUMN has to name the type itself
+            // (`ADD COLUMN "status" USER-DEFINED` is a syntax error). The type
+            // is provisioned by SchemaRegistrar.syncEnumTypes before this runs.
+            castTypeName = this.quoteEnumType(
+              col.options?.enumName ?? `${tableName}_${colName}_enum`,
+              schema,
+            );
+          }
+          const isPgNamedType = isPgArray || isPgEnum;
           result.addColumns.push({
             tableName,
             columnName: colName,
             columnType: castTypeName,
             nullable: col.options?.nullable ?? false,
-            // Length/precision must not be appended after `[]`
-            // ("TEXT[](255)" is invalid), so array columns drop them.
-            expectedLength: isPgArray ? null : (col.options?.length ?? null),
-            expectedPrecision: isPgArray
+            // Length/precision must not be appended after `[]` or after a
+            // named enum type ("TEXT[](255)" / `"public"."x_enum"(255)` are
+            // both invalid), so those columns drop them.
+            expectedLength: isPgNamedType ? null : (col.options?.length ?? null),
+            expectedPrecision: isPgNamedType
               ? null
               : (col.options?.precision ?? null),
-            expectedScale: isPgArray ? null : (col.options?.scale ?? null),
+            expectedScale: isPgNamedType ? null : (col.options?.scale ?? null),
             enumValues: col.options?.enumValues,
           });
         } else {
@@ -509,6 +524,16 @@ export class SchemaDiff {
       default:
         return (type as string).toUpperCase();
     }
+  }
+
+  /**
+   * Schema-qualified, quoted enum type name. Mirrors
+   * `PostgresColumnDefinitionBuilder.resolveEnumType` so an ADD COLUMN names
+   * exactly the type a CREATE TABLE would have named.
+   */
+  private quoteEnumType(enumName: string, schema?: string): string {
+    const quote = (id: string) => `"${id.replace(/"/g, '""')}"`;
+    return `${quote(schema ?? "public")}.${quote(enumName)}`;
   }
 
   private castTypePostgres(type: ColumnType): string {

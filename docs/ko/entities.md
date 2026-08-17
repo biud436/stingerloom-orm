@@ -361,6 +361,8 @@ CREATE TYPE "post_status" AS ENUM ('draft', 'published', 'archived');
 
 > **힌트** `enumName`을 생략하면 `{tableName}_{columnName}_enum` 형식으로 자동 생성돼요.
 
+`synchronize`는 이 타입을 참조하는 테이블보다 먼저 타입을 만들고, 나중에 `enumValues`에 추가한 값은 `ALTER TYPE ... ADD VALUE`로 반영합니다. 반대로 *제거한* 값은 DB에 그대로 남습니다. PostgreSQL이 enum 값을 제자리에서 삭제하지 못하기 때문에, 실행 대신 경고로 알립니다. 모드별 동작은 [설정](./configuration.md#postgresql-enum-타입)을 참고하세요.
+
 ## 수동 기본 키 (@PrimaryColumn)
 
 자동 증가 대신 값을 직접 지정해야 하는 기본 키가 필요한 경우가 있어요. 예를 들어, 키가 의미 있는 문자열인 키-값 구조의 설정 테이블 같은 경우죠.

@@ -248,6 +248,8 @@ CREATE TYPE "post_status" AS ENUM ('draft', 'published', 'archived');
 
 `.enumName()`을 생략하면 이름은 `{tableName}_{columnName}_enum`이 돼요. MySQL에서는 컬럼이 네이티브 `ENUM(...)`이 되고, SQLite에서는 `TEXT`로 저장돼요.
 
+PostgreSQL에서는 `synchronize`가 이 타입을 참조하는 테이블보다 먼저 타입을 만들고, 나중에 추가한 값도 반영합니다. 제거한 값은 삭제되지 않고 경고로만 알리니 [설정](./configuration.md#postgresql-enum-타입)을 참고하세요.
+
 ## 기본 키
 
 ### 생성 키

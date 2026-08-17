@@ -574,6 +574,8 @@ ALTER TYPE "users_role_enum" ADD VALUE IF NOT EXISTS 'moderator';
 
 SchemaDiff now handles this automatically for PostgreSQL.
 
+> **Hint** `synchronize` applies the same two operations at boot without going through a migration file -- it creates missing enum types and appends missing values. See [Configuration](./configuration.md#postgresql-enum-types).
+
 **How it works.** During the diff step, after comparing tables and columns, SchemaDiff runs an additional check for PostgreSQL enum types:
 
 1. For each `@Column({ type: "enum" })` in your entities, it reads the current enum values from `pg_enum` and `pg_type` in the database.
