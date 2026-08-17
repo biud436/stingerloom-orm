@@ -216,6 +216,32 @@ function createEntityWithRenamedColumn(): new () => any {
 }
 
 /**
+ * 리네임으로 오인될 수 없는 교체: age(int) 제거 + nickname(varchar) 추가.
+ * 타입이 호환되지 않으므로 detectRenames가 짝지어선 안 된다.
+ */
+function createEntityWithIncompatibleReplacement(): new () => any {
+  getScannerInstance(ColumnScanner).clear();
+
+  const DynClass = class {} as any;
+  Object.defineProperty(DynClass, "name", {
+    value: TABLE_NAME,
+    writable: false,
+  });
+
+  Reflect.defineMetadata("design:type", Number, DynClass.prototype, "id");
+  PrimaryGeneratedColumn()(DynClass.prototype, "id");
+
+  Reflect.defineMetadata("design:type", String, DynClass.prototype, "name");
+  Column()(DynClass.prototype, "name");
+
+  Reflect.defineMetadata("design:type", String, DynClass.prototype, "nickname");
+  Column({ type: "varchar", nullable: true })(DynClass.prototype, "nickname");
+
+  Entity()(DynClass);
+  return DynClass;
+}
+
+/**
  * 새 테이블 엔티티 (DB에 존재하지 않는 테이블)
  */
 function createNewTableEntity(): { entity: new () => any; tableName: string } {
@@ -498,22 +524,42 @@ describe("[Integration] SQLite In-Memory: SchemaDiff 동기화 후 감지 검증
   // ─────────────────────────────────────────────────────────
 
   describe("Column rename detection", () => {
+    // Both outcomes used to be accepted by one if/else, so a regression that
+    // downgraded a rename to DROP + ADD (data loss in production) still passed.
+    // The two cases are pinned separately instead.
     it("should detect rename when one column dropped and one added with same type", async () => {
       const renamed = createEntityWithRenamedColumn();
       const result = await schemaDiff.diff([renamed], queryRunner, "sqlite");
 
-      // SchemaDiff's detectRenames matches 1:1 add/drop pairs with compatible types
       expect(result.renamedColumns).toBeDefined();
-      if (result.renamedColumns && result.renamedColumns.length > 0) {
-        const rename = result.renamedColumns[0];
-        expect(rename.oldColumnName).toBe("age");
-        expect(rename.newColumnName).toBe("years");
-        expect(rename.tableName).toBe(TABLE_NAME);
-      } else {
-        // If rename detection doesn't match, should at least show as add+drop
-        expect(result.addColumns.length).toBeGreaterThanOrEqual(1);
-        expect(result.dropColumns.length).toBeGreaterThanOrEqual(1);
-      }
+      expect(result.renamedColumns).toHaveLength(1);
+      const rename = result.renamedColumns![0];
+      expect(rename.oldColumnName).toBe("age");
+      expect(rename.newColumnName).toBe("years");
+      expect(rename.tableName).toBe(TABLE_NAME);
+
+      // The matched pair must be consumed — leaving it in add/drop would emit
+      // a destructive DROP alongside the RENAME.
+      expect(
+        result.dropColumns.some((c) => c.columnName === "age"),
+      ).toBe(false);
+      expect(
+        result.addColumns.some((c) => c.columnName === "years"),
+      ).toBe(false);
+    });
+
+    it("should NOT pair a type-incompatible add/drop as a rename", async () => {
+      const replaced = createEntityWithIncompatibleReplacement();
+      const result = await schemaDiff.diff([replaced], queryRunner, "sqlite");
+
+      // int → varchar has no shared SQLite affinity, so this stays DROP + ADD.
+      expect(result.renamedColumns ?? []).toHaveLength(0);
+      expect(
+        result.dropColumns.some((c) => c.columnName === "age"),
+      ).toBe(true);
+      expect(
+        result.addColumns.some((c) => c.columnName === "nickname"),
+      ).toBe(true);
     });
   });
 

@@ -53,47 +53,70 @@ describe("WriteBuffer flush optimization", () => {
     // save/delete should never have been called
     expect(mockEm.save).not.toHaveBeenCalled();
     expect(mockEm.delete).not.toHaveBeenCalled();
+    expect(buffer.preview()).toEqual([]);
   });
 
-  it("hasQueuedWork concept: empty queues return false", () => {
-    // Test the logic that hasQueuedWork checks
-    const queues = {
-      insertQueue: [] as any[],
-      deleteQueue: [] as any[],
-      persistQueue: [] as any[],
-      bulkUpdateQueue: [] as any[],
-      bulkDeleteQueue: [] as any[],
+  // These two used to re-declare hasQueuedWork() inside the test file and
+  // assert their own closure, which said nothing about WriteBuffer (the
+  // shipping method is private). They drive the real buffer through its public
+  // surface — size()/preview()/flush() — instead.
+  it("a queued insert takes flush() off the no-op path", async () => {
+    const { WriteBuffer } = await import("../../src/core/plugin/buffer/WriteBuffer");
+
+    const mockEm: any = {
+      save: jest.fn().mockResolvedValue({ id: 1, name: "queued" }),
+      delete: jest.fn(),
+      update: jest.fn(),
+      query: jest.fn(),
+      find: jest.fn(),
+      transaction: jest.fn().mockImplementation((fn: any) => fn(mockEm)),
     };
+    const buffer = new WriteBuffer(
+      { em: mockEm, getEntities: () => [Item] } as any,
+      {},
+    );
 
-    const hasQueuedWork = () =>
-      queues.insertQueue.length > 0
-      || queues.deleteQueue.length > 0
-      || queues.persistQueue.length > 0
-      || queues.bulkUpdateQueue.length > 0
-      || queues.bulkDeleteQueue.length > 0;
+    buffer.save(Item, { name: "queued" });
+    expect(buffer.size().inserts).toBe(1);
 
-    expect(hasQueuedWork()).toBe(false);
+    const result = await buffer.flush();
 
-    queues.insertQueue.push({ entity: Item, data: {} });
-    expect(hasQueuedWork()).toBe(true);
+    expect(mockEm.save).toHaveBeenCalledWith(Item, { name: "queued" });
+    expect(result).toEqual({ updates: 0, inserts: 1, deletes: 0 });
+    expect(buffer.size().inserts).toBe(0);
   });
 
-  it("hasQueuedWork concept: detects bulkUpdate queue", () => {
-    const queues = {
-      insertQueue: [] as any[],
-      deleteQueue: [] as any[],
-      persistQueue: [] as any[],
-      bulkUpdateQueue: [{ entity: Item, criteria: {}, data: {} }],
-      bulkDeleteQueue: [] as any[],
+  it("a queued bulkUpdate takes flush() off the no-op path", async () => {
+    const { WriteBuffer } = await import("../../src/core/plugin/buffer/WriteBuffer");
+
+    const mockEm: any = {
+      save: jest.fn(),
+      delete: jest.fn(),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+      query: jest.fn(),
+      find: jest.fn(),
+      transaction: jest.fn().mockImplementation((fn: any) => fn(mockEm)),
     };
+    const buffer = new WriteBuffer(
+      { em: mockEm, getEntities: () => [Item] } as any,
+      {},
+    );
 
-    const hasQueuedWork = () =>
-      queues.insertQueue.length > 0
-      || queues.deleteQueue.length > 0
-      || queues.persistQueue.length > 0
-      || queues.bulkUpdateQueue.length > 0
-      || queues.bulkDeleteQueue.length > 0;
+    buffer.updateMany(Item, { where: { id: 1 }, set: { name: "renamed" } });
+    expect(buffer.size().bulkUpdates).toBe(1);
+    expect(buffer.preview()).toEqual([
+      {
+        action: "bulkUpdate",
+        entity: "Item",
+        where: { id: 1 },
+        set: { name: "renamed" },
+      },
+    ]);
 
-    expect(hasQueuedWork()).toBe(true);
+    const result = await buffer.flush();
+
+    expect(mockEm.update).toHaveBeenCalledWith(Item, { id: 1 }, { name: "renamed" });
+    expect(result).toEqual({ updates: 1, inserts: 0, deletes: 0 });
+    expect(buffer.size().bulkUpdates).toBe(0);
   });
 });

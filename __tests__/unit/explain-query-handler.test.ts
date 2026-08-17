@@ -5,24 +5,51 @@ import { EntityManagerInternals } from "../../src/core/EntityManagerInternals";
 import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
 import { EntityMetadataNotFoundError } from "../../src/errors/EntityMetadataNotFoundError";
 
-// Mock RawQueryBuilderFactory
+// Mock RawQueryBuilderFactory. Every builder records the arguments it was
+// handed so the pagination/soft-delete tests can assert what the handler
+// actually translated the FindOption into (they used to call explain() and
+// assert nothing).
+const mockQbInstances: any[] = [];
+
 jest.mock("../../src/core/RawQueryBuilderFactory", () => ({
   RawQueryBuilderFactory: {
     create: jest.fn(() => {
       const qb: any = {
         _dbType: null,
-        select(cols: any) { return qb; },
-        from(t: any) { return qb; },
-        where(w: any) { return qb; },
-        orderBy(o: any) { return qb; },
-        limit(l: any) { return qb; },
+        calls: {
+          select: [] as any[],
+          from: [] as any[],
+          where: [] as any[],
+          orderBy: [] as any[],
+          limit: [] as any[],
+        },
+        select(cols: any) { qb.calls.select.push(cols); return qb; },
+        from(t: any) { qb.calls.from.push(t); return qb; },
+        where(w: any) { qb.calls.where.push(w); return qb; },
+        orderBy(o: any) { qb.calls.orderBy.push(o); return qb; },
+        limit(l: any) { qb.calls.limit.push(l); return qb; },
         setDatabaseType(t: any) { qb._dbType = t; return qb; },
         build() { return { text: "SELECT * FROM test", values: [] }; },
       };
+      mockQbInstances.push(qb);
       return qb;
     }),
   },
 }));
+
+/** The builder the most recent explain() call used. */
+function lastQb(): any {
+  expect(mockQbInstances.length).toBeGreaterThan(0);
+  return mockQbInstances[mockQbInstances.length - 1];
+}
+
+/** Flattened SQL text of the WHERE fragments the last explain() emitted. */
+function lastWhereSql(): string {
+  const [whereMap] = lastQb().calls.where;
+  return ((whereMap ?? []) as any[])
+    .map((w) => w?.sql ?? w?.text ?? String(w))
+    .join(" AND ");
+}
 
 class TestEntity {
   id!: number;
@@ -107,6 +134,7 @@ describe("ExplainQueryHandler", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockQbInstances.length = 0;
     resolver = createMockResolver();
     ctx = createMockCtx();
     handler = new ExplainQueryHandler(resolver, ctx);
@@ -204,57 +232,69 @@ describe("ExplainQueryHandler", () => {
       expect(resolver.resolveManyToOneMetadata).toHaveBeenCalled();
     });
 
-    it("should handle limit as array [offset, count]", async () => {
+    it("should pass limit array [offset, count] through unchanged", async () => {
       const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
       ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
 
       await handler.explain(TestEntity, { limit: [10, 20] });
 
-      // Should not throw
+      expect(lastQb().calls.limit).toEqual([[10, 20]]);
     });
 
-    it("should handle negative offset/count in limit array", async () => {
+    it("should clamp negative offset/count in limit array to 0", async () => {
       const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
       ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
 
       await handler.explain(TestEntity, { limit: [-5, -3] });
 
-      // Should handle gracefully (set to 0/1)
+      expect(lastQb().calls.limit).toEqual([[0, 0]]);
     });
 
-    it("should handle count=0 in limit array (set to 1)", async () => {
+    it("should keep count=0 in limit array as LIMIT 0 (#448)", async () => {
       const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
       ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
 
       await handler.explain(TestEntity, { limit: [0, 0] });
+
+      // An explicit 0 means "no rows", not "unbounded" — the read path was
+      // fixed to the same contract in V4-T0-2.
+      expect(lastQb().calls.limit).toEqual([[0, 0]]);
     });
 
-    it("should handle take overriding count in limit array", async () => {
+    it("should let a positive take override the count in limit array", async () => {
       const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
       ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
 
       await handler.explain(TestEntity, { limit: [0, 100], take: 5 });
+
+      expect(lastQb().calls.limit).toEqual([[0, 5]]);
     });
 
-    it("should handle skip/take without limit", async () => {
+    it("should translate skip/take without limit into [skip, take]", async () => {
       const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
       ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
 
       await handler.explain(TestEntity, { skip: 10, take: 5 });
+
+      expect(lastQb().calls.limit).toEqual([[10, 5]]);
     });
 
-    it("should handle skip without take", async () => {
+    it("should apply an unbounded count for skip without take", async () => {
       const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
       ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
 
       await handler.explain(TestEntity, { skip: 10 });
+
+      expect(lastQb().calls.limit).toEqual([[10, 2147483647]]);
     });
 
-    it("should handle numeric limit", async () => {
+    it("should pass a numeric limit through as a scalar", async () => {
       const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
       ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
 
       await handler.explain(TestEntity, { limit: 50 as any });
+
+      expect(lastQb().calls.limit).toEqual([50]);
     });
 
     it("should handle deletedAt column filtering", async () => {
@@ -266,6 +306,9 @@ describe("ExplainQueryHandler", () => {
       await handler.explain(TestEntity);
 
       expect(resolver.getDeletedAtColumn).toHaveBeenCalledWith(TestEntity);
+      // The soft-delete predicate must reach the query, not just the resolver:
+      // an EXPLAIN over unfiltered rows describes a plan find() never runs.
+      expect(lastWhereSql()).toContain(`"deletedAt" IS NULL`);
     });
 
     it("should skip deletedAt filtering when withDeleted is set", async () => {
@@ -276,7 +319,7 @@ describe("ExplainQueryHandler", () => {
 
       await handler.explain(TestEntity, { withDeleted: true } as any);
 
-      // deletedAt filter should be skipped
+      expect(lastWhereSql()).not.toContain("deletedAt");
     });
 
     it("should handle orderBy option", async () => {

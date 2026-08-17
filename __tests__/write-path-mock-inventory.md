@@ -1,7 +1,7 @@
 # Write-Path Mock-Test Inventory (issue #404)
 
-Audit date: 2026-07-14. Last updated: 2026-08-02 (second backfill round —
-the five accepted thin spots below are now closed).
+Audit date: 2026-07-14. Last updated: 2026-08-17 (third round — V4-T1-1
+false-green honesty pass; see the bottom section).
 
 Scope: every `__tests__/unit/` suite that replaces
 `em.save` / `em.update` / `em.delete` / `em.query` / `em.transaction` (or the
@@ -103,3 +103,42 @@ real drivers in `integration/tenant-m2m.test.ts`.
   `integration/sqlite/core-cascade-write-path.test.ts` are live (no
   `it.failing` remains), plus dual-driver
   `integration/cascade-delete-atomicity.test.ts` on real PG/MySQL.
+
+## Third round (2026-08-17) — V4-T1-1 false-green pass
+
+Four write-path thin spots and the false-green tests around them:
+
+1. `cascade-handler.test.ts` — `cascadeSaveOneToMany` asserted that
+   `ctx.saveWithSession` was called, never that the parent's session was the
+   argument (the save-direction twin of #414). Backfilled in
+   `integration/sqlite/core-cascade-write-path.test.ts` (3): FK write, child
+   INSERT failure rolling the parent back, subscriber failure rolling the
+   children back. All three fail when the session forwarding is removed —
+   **no defect in the shipped path**; the unit suite now also pins the
+   session argument.
+2. `transaction-options.test.ts` / `transaction-propagation.test.ts` —
+   savepoint creation and `rollbackTo` were only counted, never correlated.
+   Correlation is now asserted in both paths, and the cross-instance case
+   surfaced a **real defect**: `TransactionRunner`'s savepoint counter was
+   per-instance, so two EntityManagers sharing an ambient session both emitted
+   `sp_em_1` (the later SAVEPOINT shadows the earlier, so the outer
+   `ROLLBACK TO` keeps work it meant to undo). Counter is now process-wide.
+3. `write-buffer-flush-optimization.test.ts` — re-declared `hasQueuedWork()`
+   inside the test file and asserted its own closure (same failure mode as the
+   `buildDeleteSql` copy above). Rewritten against `size()` / `preview()` /
+   `flush()`.
+4. merge() + `@Version` — `trackAsMergedDetached` seeds the snapshot with a
+   Symbol sentinel, so `FlushExecutor.ensureVersionIncrement` can never match
+   the old version and skips its manual bump. The write path's own write-back
+   covers it; pinned by `integration/sqlite/buffer-merge-version.test.ts` and
+   noted in the method's doc comment — no defect.
+
+Test-honesty fixes in the same round (no write-path claim): STI delete guards
+(`if (row)` around every assertion) replaced with owned fixtures plus a
+sibling-survives case; the schema-diff rename test split into detection and
+non-detection cases (it previously accepted both); `select-query-builder-exists`
+floating promise awaited; eight assertion-less `explain-query-handler` cases
+given SQL contracts; the STI "via buffer" seed routed through the buffer;
+`composite-pk` RETURNING guard added; two PG-only `sql-craft-patterns` cases
+turned from early `return` into real skips; the 19 `STRESS_TEST` tests wired to
+`pnpm test:stress` and a CI job.

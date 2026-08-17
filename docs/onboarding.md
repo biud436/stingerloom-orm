@@ -54,11 +54,14 @@ docker run -d --name stingerloom-postgres \
 # Unit tests (no DB connection required)
 pnpm test
 
-# Run a specific test file only
-pnpm test -- --testPathPattern="schema-diff"
+# Run a specific test file only (jest flags must go to jest, not to pnpm)
+npx jest --testPathPattern "schema-diff"
 
 # Integration tests (MySQL/PostgreSQL must be running)
-INTEGRATION_TEST=true pnpm test -- --testPathPattern="integration"
+INTEGRATION_TEST=true npx jest --testPathPattern "integration"
+
+# Stress suites (SQLite in-memory; also run in CI)
+pnpm test:stress
 ```
 
 The full suite is currently ~5,200 cases (unit + SQLite + MySQL + PostgreSQL, single-digit skips, 0 failures). Integration tests (MySQL/PostgreSQL) are automatically skipped without the `INTEGRATION_TEST=true` environment variable; SQLite integration runs in-memory and is always included.

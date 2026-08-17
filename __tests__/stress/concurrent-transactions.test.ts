@@ -8,10 +8,12 @@
  * Skipped unless STRESS_TEST=true is set.
  *
  * @example
- *   STRESS_TEST=true pnpm test -- --testPathPattern="stress/concurrent"
+ *   pnpm test:stress                       # all stress suites
+ *   STRESS_TEST=true npx jest --testPathPattern "stress/concurrent" --runInBand
  */
 
 import "reflect-metadata";
+import { budget } from "./stress-budget";
 import { SqliteConnector } from "../../src/dialects/sqlite/SqliteConnector";
 import { DatabaseClientOptions } from "../../src/core/DatabaseClientOptions";
 
@@ -117,6 +119,6 @@ describeIf("[Stress] 동시 트랜잭션 테스트", () => {
       `SELECT COUNT(*) as cnt FROM "${tableName}"`,
     );
     expect(rows[0].cnt).toBe(TRANSACTION_COUNT);
-    expect(elapsed).toBeLessThan(10_000);
+    expect(elapsed).toBeLessThan(budget(10_000));
   }, 30000);
 });

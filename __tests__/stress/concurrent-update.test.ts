@@ -8,10 +8,12 @@
  * Skipped unless STRESS_TEST=true is set.
  *
  * @example
- *   STRESS_TEST=true pnpm test -- --testPathPattern="stress/concurrent-update"
+ *   pnpm test:stress                       # all stress suites
+ *   STRESS_TEST=true npx jest --testPathPattern "stress/concurrent-update" --runInBand
  */
 
 import "reflect-metadata";
+import { budget } from "./stress-budget";
 import { SqliteConnector } from "../../src/dialects/sqlite/SqliteConnector";
 import { DatabaseClientOptions } from "../../src/core/DatabaseClientOptions";
 
@@ -154,6 +156,6 @@ describeIf("[Stress] 동시 UPDATE 경쟁 테스트", () => {
       expect(row.counter).toBe(UPDATE_PER_RECORD);
     }
 
-    expect(elapsed).toBeLessThan(10_000);
+    expect(elapsed).toBeLessThan(budget(10_000));
   }, 30000);
 });

@@ -9,10 +9,12 @@
  * - Section C: Repository pattern (uses BaseRepository)
  *
  * @example
- *   STRESS_TEST=true pnpm test -- --testPathPattern="stress/bulk"
+ *   pnpm test:stress                       # all stress suites
+ *   STRESS_TEST=true npx jest --testPathPattern "stress/bulk" --runInBand
  */
 
 import "reflect-metadata";
+import { budget } from "./stress-budget";
 import { SqliteConnector } from "../../src/dialects/sqlite/SqliteConnector";
 import { DatabaseClientOptions } from "../../src/core/DatabaseClientOptions";
 import { EntityManager } from "../../src/core/EntityManager";
@@ -70,7 +72,7 @@ describeIf("[Stress] A. Raw SQL baseline (connector.query)", () => {
       `SELECT COUNT(*) as cnt FROM "${tableName}"`,
     );
     expect(rows[0].cnt).toBe(BATCH_SIZE);
-    expect(elapsed).toBeLessThan(10_000);
+    expect(elapsed).toBeLessThan(budget(10_000));
   }, 30000);
 
   it(`${BATCH_SIZE}건을 트랜잭션으로 배치 INSERT하면 개별보다 빨라야 한다`, async () => {
@@ -97,7 +99,7 @@ describeIf("[Stress] A. Raw SQL baseline (connector.query)", () => {
       `SELECT COUNT(*) as cnt FROM "${tableName}"`,
     );
     expect(rows[0].cnt).toBe(BATCH_SIZE);
-    expect(elapsed).toBeLessThan(5_000);
+    expect(elapsed).toBeLessThan(budget(5_000));
   }, 30000);
 
   it(`${BATCH_SIZE}건 DELETE가 5초 이내에 완료되어야 한다`, async () => {
@@ -115,7 +117,7 @@ describeIf("[Stress] A. Raw SQL baseline (connector.query)", () => {
     );
 
     expect(result.changes).toBe(BATCH_SIZE);
-    expect(elapsed).toBeLessThan(5_000);
+    expect(elapsed).toBeLessThan(budget(5_000));
   }, 30000);
 
   it(`${BATCH_SIZE}건 조회가 2초 이내에 완료되어야 한다`, async () => {
@@ -138,7 +140,7 @@ describeIf("[Stress] A. Raw SQL baseline (connector.query)", () => {
     );
 
     expect(rows.length).toBe(BATCH_SIZE);
-    expect(elapsed).toBeLessThan(2_000);
+    expect(elapsed).toBeLessThan(budget(2_000));
   }, 30000);
 
   it("WHERE 조건 조회가 인덱스 없이도 합리적 시간 내 완료되어야 한다", async () => {
@@ -153,7 +155,7 @@ describeIf("[Stress] A. Raw SQL baseline (connector.query)", () => {
     );
 
     expect(rows.length).toBe(100);
-    expect(elapsed).toBeLessThan(2_000);
+    expect(elapsed).toBeLessThan(budget(2_000));
   }, 10000);
 });
 
@@ -204,7 +206,7 @@ describeIf("[Stress] B. ORM API (EntityManager.save/find/delete)", () => {
 
     const [, count] = await em.findAndCount(StressBulkItem);
     expect(count).toBe(BATCH_SIZE);
-    expect(elapsed).toBeLessThan(30_000);
+    expect(elapsed).toBeLessThan(budget(30_000));
   }, 60000);
 
   it(`${BATCH_SIZE}건 em.find() 전체 조회가 5초 이내에 완료되어야 한다`, async () => {
@@ -217,7 +219,7 @@ describeIf("[Stress] B. ORM API (EntityManager.save/find/delete)", () => {
     );
 
     expect(rows.length).toBe(BATCH_SIZE);
-    expect(elapsed).toBeLessThan(5_000);
+    expect(elapsed).toBeLessThan(budget(5_000));
   }, 10000);
 
   it("em.find() WHERE 조건 조회가 합리적 시간 내 완료되어야 한다", async () => {
@@ -232,7 +234,7 @@ describeIf("[Stress] B. ORM API (EntityManager.save/find/delete)", () => {
     );
 
     expect(rows.length).toBeGreaterThanOrEqual(1);
-    expect(elapsed).toBeLessThan(5_000);
+    expect(elapsed).toBeLessThan(budget(5_000));
   }, 10000);
 
   it(`${BATCH_SIZE}건 em.delete() 개별 삭제가 30초 이내에 완료되어야 한다`, async () => {
@@ -250,7 +252,7 @@ describeIf("[Stress] B. ORM API (EntityManager.save/find/delete)", () => {
 
     const [, count] = await em.findAndCount(StressBulkItem);
     expect(count).toBe(0);
-    expect(elapsed).toBeLessThan(30_000);
+    expect(elapsed).toBeLessThan(budget(30_000));
   }, 60000);
 });
 
@@ -291,7 +293,7 @@ describeIf("[Stress] C. Repository 패턴 (BaseRepository)", () => {
 
     const [, count] = await repo.findAndCount();
     expect(count).toBe(BATCH_SIZE);
-    expect(elapsed).toBeLessThan(30_000);
+    expect(elapsed).toBeLessThan(budget(30_000));
   }, 60000);
 
   it(`${BATCH_SIZE}건 repo.find() 전체 조회`, async () => {
@@ -304,7 +306,7 @@ describeIf("[Stress] C. Repository 패턴 (BaseRepository)", () => {
     );
 
     expect(rows.length).toBe(BATCH_SIZE);
-    expect(elapsed).toBeLessThan(5_000);
+    expect(elapsed).toBeLessThan(budget(5_000));
   }, 10000);
 
   it(`${BATCH_SIZE}건 repo.findOne() 개별 조회`, async () => {
@@ -320,6 +322,6 @@ describeIf("[Stress] C. Repository 패턴 (BaseRepository)", () => {
       `[Stress] Repo 100건 findOne(): ${elapsed}ms`,
     );
 
-    expect(elapsed).toBeLessThan(10_000);
+    expect(elapsed).toBeLessThan(budget(10_000));
   }, 15000);
 });

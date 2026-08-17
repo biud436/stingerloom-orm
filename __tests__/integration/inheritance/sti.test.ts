@@ -185,13 +185,43 @@ describe.each(drivers)(
 
     // ── DELETE ────────────────────────────────────────────
 
+    // Own fixtures instead of `findOne(...)` + `if (bt)`: the guard made a
+    // broken discriminator filter (no rows returned) pass silently.
     it("should delete only the specific child type", async () => {
-      const bt: any = await conn.em.findOne(BankTransferPayment, {});
-      if (bt) {
-        await conn.em.delete(BankTransferPayment, { id: bt.id } as any);
-        const found = await conn.em.findOne(BankTransferPayment, { where: { id: bt.id } });
-        expect(found == null).toBe(true);
-      }
+      const bt: any = await conn.em.save(BankTransferPayment, {
+        amount: 777,
+        bankCode: "DEL-BT",
+      });
+      const cc: any = await conn.em.save(CreditCardPayment, {
+        amount: 777,
+        cardNumber: "DEL-CC",
+      });
+
+      await conn.em.delete(BankTransferPayment, { id: bt.id } as any);
+
+      const deleted = await conn.em.findOne(Payment, { where: { id: bt.id } });
+      expect(deleted == null).toBe(true);
+
+      const survivor: any = await conn.em.findOne(Payment, { where: { id: cc.id } });
+      expect(survivor).toBeTruthy();
+      expect(survivor.id).toBe(cc.id);
+    });
+
+    it("should not delete a sibling subtype row addressed by PK", async () => {
+      const cc: any = await conn.em.save(CreditCardPayment, {
+        amount: 888,
+        cardNumber: "KEEP-CC",
+      });
+
+      // Same PK, wrong subtype — the discriminator condition must keep the
+      // DELETE from matching.
+      await conn.em.delete(BankTransferPayment, { id: cc.id } as any);
+
+      const survivor: any = await conn.em.findOne(CreditCardPayment, {
+        where: { id: cc.id },
+      });
+      expect(survivor).toBeTruthy();
+      expect(survivor.cardNumber).toBe("KEEP-CC");
     });
 
     // ── STI aggregate parity (#403) ───────────────────────

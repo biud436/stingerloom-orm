@@ -51,14 +51,17 @@ docker run -d --name stingerloom-postgres \
 ### 테스트 실행
 
 ```bash
-# Unit tests (no DB connection required)
+# 유닛 테스트 (DB 연결 불필요)
 pnpm test
 
-# Run a specific test file only
-pnpm test -- --testPathPattern="schema-diff"
+# 특정 테스트 파일만 실행 (jest 플래그는 pnpm이 아니라 jest에 직접 전달해야 해요)
+npx jest --testPathPattern "schema-diff"
 
-# Integration tests (MySQL/PostgreSQL must be running)
-INTEGRATION_TEST=true pnpm test -- --testPathPattern="integration"
+# 통합 테스트 (MySQL/PostgreSQL 구동 필요)
+INTEGRATION_TEST=true npx jest --testPathPattern "integration"
+
+# 스트레스 스위트 (SQLite in-memory, CI에서도 실행됩니다)
+pnpm test:stress
 ```
 
 전체 테스트는 현재 약 5,200개 케이스(unit + SQLite + MySQL + PostgreSQL, 스킵 한 자릿수, 0 failures) 규모예요. MySQL/PostgreSQL 통합 테스트는 `INTEGRATION_TEST=true` 환경변수가 없으면 자동으로 건너뛰고, SQLite 통합 테스트는 in-memory로 동작하므로 항상 같이 실행돼요.
