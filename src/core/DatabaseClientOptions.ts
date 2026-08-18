@@ -418,7 +418,12 @@ export interface LoggingOptions {
   ttlMs?: number;
 }
 
-const VALID_DB_TYPES: readonly string[] = [
+/**
+ * Database types the ORM can connect to. Internal — the barrels do not
+ * re-export it; `src/migration/cli-config.ts` reads it so the CLI can name the
+ * supported types before a connection is attempted.
+ */
+export const VALID_DB_TYPES: readonly string[] = [
   "mysql",
   "mariadb",
   "postgres",

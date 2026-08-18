@@ -162,6 +162,12 @@ export class MigrationCli {
 
     if (results.length === 0) {
       this.logger.info("No pending migrations.");
+    } else if (failed > 0) {
+      // A failed migration is reported in the result array, not thrown — log it
+      // at error level so it is visible in a CI log that only greps for errors.
+      this.logger.error(
+        `Migration incomplete: ${succeeded} succeeded, ${failed} failed.`,
+      );
     } else {
       this.logger.info(
         `Migration complete: ${succeeded} succeeded, ${failed} failed.`,
