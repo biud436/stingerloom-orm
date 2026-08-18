@@ -149,7 +149,27 @@ This runs `SchemaDiff` to detect changes and produces a timestamped migration fi
 | `--config <path>` | Path to config file | Auto-detected |
 | `--output <dir>` | Output directory for generated migrations | `./migrations` |
 | `--name <suffix>` | Name suffix for generated migration file | `auto_migration` |
+| `--version` | Print the installed `@stingerloom/orm` version | -- |
 | `--help`, `-h` | Show help | -- |
+
+`--flag=value` is accepted as an alias for `--flag value`. An unrecognised flag is an error, not a silent no-op: `stingerloom introspect --dry-runn` stops with `Unknown option: "--dry-runn"` instead of writing entity files with the typo ignored.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | The command succeeded |
+| `1` | The command failed |
+
+Exit code 1 covers every failure the CLI can observe, including the one that is *not* an exception: a migration whose `up()` threw is recorded as a failed result and reported as `Migration failed: <name> (up) — <error>`, and the process exits 1. This is what makes the usual CI chain safe:
+
+```bash
+npx stingerloom migrate:run && ./deploy.sh   # deploy only runs if every migration applied
+```
+
+Also exit 1: a config file that cannot be found, loaded, or parsed; a config whose `type` is missing or unsupported; an unknown command, an unknown option, or a missing option value. Errors are printed as a message and, where one applies, a suggestion -- not as a stack trace. `migrate:run` with nothing pending is a success (exit 0), as is `migrate:rollback` with nothing to roll back.
+
+The database connection is closed before the process exits on every path, including failures.
 
 ## Configuration File
 
@@ -190,7 +210,7 @@ export default {
 };
 ```
 
-The `entities` array is only needed for `migrate:generate` -- that is how the CLI knows what your schema *should* look like. The `migrations` array lists the migration classes in the order they should be executed.
+The `entities` array is only needed for `migrate:generate` -- that is how the CLI knows what your schema *should* look like. It accepts glob pattern strings as well as classes (`entities: ["./src/**/*.entity.ts"]`), resolved from the directory the CLI runs in. The `migrations` array lists the migration classes in the order they should be executed.
 
 A flat `DatabaseClientOptions` object (no `connection` wrapper) is also accepted: `export default { type: "sqlite", database: "./app.sqlite", migrations: [] }`.
 
@@ -228,7 +248,7 @@ The `MigrationContext` provides:
 | `driver` | `ISqlDriver` | Database driver with `escapeIdentifier()` and DDL helpers |
 | `query` | `(sql: string) => Promise<any>` | Execute arbitrary SQL |
 
-Why use `driver.escapeIdentifier()` instead of hardcoding quotes? Because the quoting style varies by database: PostgreSQL uses `"double quotes"`, MySQL uses `` `backticks` ``. Using `escapeIdentifier()` makes your migration portable across databases, and also ensures that reserved words (like `user` or `order`) are properly escaped.
+Why use `driver.escapeIdentifier()` instead of hardcoding quotes? Because the quoting style varies by database: PostgreSQL and SQLite use `"double quotes"`, MySQL uses `` `backticks` ``. Using `escapeIdentifier()` makes your migration portable across databases, and also ensures that reserved words (like `user` or `order`) are properly escaped -- the quote character itself is doubled if the name contains one. It quotes the bare name; PostgreSQL schemas are not prepended.
 
 ## Migration Tracking
 
