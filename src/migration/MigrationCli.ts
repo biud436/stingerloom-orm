@@ -6,7 +6,7 @@ import { MySqlDriver } from "../dialects/mysql/MySqlDriver";
 import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../dialects/sqlite/SqliteDriver";
 import { ISqlDriver } from "../dialects/SqlDriver";
-import { Logger } from "../utils";
+import { Logger, resolveEntityGlobs } from "../utils";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { Migration } from "./Migration";
@@ -234,7 +234,19 @@ export class MigrationCli {
       throw new OrmError(OrmErrorCode.NOT_CONNECTED, "Not connected. Call connect() before migrateGenerate().");
     }
 
-    const entities = (this.options.entities ?? []) as Array<new (...args: any[]) => any>;
+    // `entities` may hold glob pattern strings — the same shape the runtime
+    // EntityManager accepts. They used to be cast straight to constructors, so
+    // the diff walked a string as if it were an entity class and the command
+    // died with an empty "Migration failed: " message.
+    const configured = (this.options.entities ?? []) as (Function | string)[];
+    if (configured.length === 0) {
+      this.logger.warn(
+        "No entities configured: migrate:generate diffs the `entities` list against the database, so an empty list can only report \"no changes\".",
+      );
+    }
+    const entities = (await resolveEntityGlobs(
+      configured,
+    )) as Array<new (...args: any[]) => any>;
     // Resolve table/column names through the same naming strategy the runtime
     // EntityManager applies. Without this, an app booted with
     // SnakeNamingStrategy would have snake_case columns in the DB while the
