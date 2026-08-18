@@ -370,6 +370,13 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   /**
+   * ISqlDriver entry point for identifier quoting (see `wrap`).
+   */
+  escapeIdentifier(name: string): string {
+    return this.wrap(name);
+  }
+
+  /**
    * Infers the database column type from the TypeScript type.
    */
   getColumnType(type: any): string {

@@ -57,15 +57,21 @@ export async function resolveEntityGlobs(
   // fast-glob requires forward slashes — normalise Windows backslashes
   const normalised = patterns.map((p) => p.replace(/\\/g, "/"));
 
+  const resolvedCwd = cwd ?? process.cwd();
+
   const matched = fg.sync(normalised, {
-    cwd: cwd ?? process.cwd(),
+    cwd: resolvedCwd,
     absolute: true,
   });
 
   if (matched.length === 0) {
+    // Naming the working directory the patterns were resolved from is the
+    // difference between a fixable error and a guess: a relative pattern that
+    // matches when the app boots from its own directory matches nothing when a
+    // CLI runs from the repository root.
     throw new OrmError(
       OrmErrorCode.ENTITY_GLOB_NO_MATCH,
-      `Entity glob patterns matched no files: ${patterns.join(", ")}`,
+      `Entity glob patterns matched no files: ${patterns.join(", ")} (resolved from ${resolvedCwd})`,
     );
   }
 

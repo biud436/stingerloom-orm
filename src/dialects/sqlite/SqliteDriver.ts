@@ -359,6 +359,13 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   /**
+   * ISqlDriver entry point for identifier quoting (see `wrap`).
+   */
+  escapeIdentifier(name: string): string {
+    return this.wrap(name);
+  }
+
+  /**
    * SQLite has no schema concept, so this simply calls wrap().
    */
   wrapQualified(name: string): string {

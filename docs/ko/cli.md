@@ -149,7 +149,27 @@ npx stingerloom migrate:generate --output ./migrations --name add_posts
 | `--config <path>` | 설정 파일 경로 | 자동 감지 |
 | `--output <dir>` | 생성된 마이그레이션 출력 디렉토리 | `./migrations` |
 | `--name <suffix>` | 생성된 마이그레이션 파일의 이름 접미사 | `auto_migration` |
+| `--version` | 설치된 `@stingerloom/orm` 버전 출력 | -- |
 | `--help`, `-h` | 도움말 표시 | -- |
+
+`--flag value` 대신 `--flag=value` 형태도 받습니다. 알 수 없는 플래그는 조용히 무시되지 않고 에러예요 — `stingerloom introspect --dry-runn`은 오타를 무시한 채 엔티티 파일을 쓰는 대신 `Unknown option: "--dry-runn"`으로 중단합니다.
+
+## 종료 코드
+
+| 코드 | 의미 |
+|------|------|
+| `0` | 명령 성공 |
+| `1` | 명령 실패 |
+
+종료 코드 1은 CLI가 관측할 수 있는 모든 실패를 포함합니다. 예외가 아닌 실패도 마찬가지예요. `up()`이 던진 마이그레이션은 실패 결과로 기록되고 `Migration failed: <name> (up) — <error>`로 보고된 뒤 프로세스가 1로 종료됩니다. CI에서 흔히 쓰는 연결이 안전해지는 지점이 여기예요.
+
+```bash
+npx stingerloom migrate:run && ./deploy.sh   # 모든 마이그레이션이 적용됐을 때만 배포
+```
+
+설정 파일을 찾거나 읽지 못한 경우, `type`이 없거나 지원하지 않는 값인 경우, 알 수 없는 명령·옵션이거나 옵션 값이 빠진 경우도 전부 1입니다. 에러는 스택 트레이스가 아니라 메시지(해당하면 해결 힌트까지)로 출력돼요. 적용할 마이그레이션이 없는 `migrate:run`, 되돌릴 것이 없는 `migrate:rollback`은 성공(0)입니다.
+
+실패 경로를 포함해 모든 경로에서 DB 커넥션을 닫은 뒤 프로세스가 종료됩니다.
 
 ## 설정 파일
 
@@ -190,7 +210,7 @@ export default {
 };
 ```
 
-`entities` 배열은 `migrate:generate`에서만 필요해요 -- CLI가 스키마가 어떤 모습이어야 하는지 파악하는 데 사용돼요. `migrations` 배열은 실행 순서대로 마이그레이션 클래스를 나열해요.
+`entities` 배열은 `migrate:generate`에서만 필요해요 -- CLI가 스키마가 어떤 모습이어야 하는지 파악하는 데 사용돼요. 클래스뿐 아니라 glob 패턴 문자열도 받습니다(`entities: ["./src/**/*.entity.ts"]`). 패턴은 CLI를 실행한 디렉터리 기준으로 해석돼요. `migrations` 배열은 실행 순서대로 마이그레이션 클래스를 나열해요.
 
 `connection` 래퍼 없이 평면 `DatabaseClientOptions` 객체도 그대로 사용할 수 있습니다: `export default { type: "sqlite", database: "./app.sqlite", migrations: [] }`.
 
@@ -228,7 +248,7 @@ export class CreateUsersTable extends Migration {
 | `driver` | `ISqlDriver` | `escapeIdentifier()`와 DDL 헬퍼를 제공하는 DB 드라이버 |
 | `query` | `(sql: string) => Promise<any>` | 임의의 SQL 실행 |
 
-`driver.escapeIdentifier()`를 쓰는 이유는 DB마다 인용 방식이 달라서예요. PostgreSQL은 `"double quotes"`, MySQL은 `` `backticks` ``를 써요. `escapeIdentifier()`를 사용하면 마이그레이션이 여러 DB에서 동작하고, 예약어(`user`, `order` 등)도 안전하게 이스케이프돼요.
+`driver.escapeIdentifier()`를 쓰는 이유는 DB마다 인용 방식이 달라서예요. PostgreSQL과 SQLite는 `"double quotes"`, MySQL은 `` `backticks` ``를 써요. `escapeIdentifier()`를 사용하면 마이그레이션이 여러 DB에서 동작하고, 예약어(`user`, `order` 등)도 안전하게 이스케이프됩니다. 이름 안에 인용 문자가 있으면 두 번 겹쳐 이스케이프하며, 이름만 인용할 뿐 PostgreSQL 스키마를 앞에 붙이지는 않아요.
 
 ## 마이그레이션 추적
 
