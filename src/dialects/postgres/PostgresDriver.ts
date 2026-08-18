@@ -719,6 +719,14 @@ export class PostgresDriver implements ISqlDriver {
   }
 
   /**
+   * ISqlDriver entry point for identifier quoting (see `wrap`). The schema is
+   * not prepended — use `wrapQualified` for `"schema"."name"` form.
+   */
+  escapeIdentifier(name: string): string {
+    return this.wrap(name);
+  }
+
+  /**
    * Returns the identifier in `"schema"."name"` form.
    * The schema is always specified explicitly instead of relying on search_path,
    * making it safe with connection pool reuse and multi-tenant setups.

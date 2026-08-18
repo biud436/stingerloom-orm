@@ -40,6 +40,21 @@ export interface ISqlDriver<T = any> {
   executeRaw(sql: string): Promise<any>;
 
   /**
+   * Escapes an identifier (table or column name) for this dialect: backticks
+   * for MySQL/MariaDB, double quotes for PostgreSQL and SQLite, with the
+   * quote character itself doubled inside the name.
+   *
+   * This is the identifier-quoting entry point for hand-written migrations,
+   * which receive an `ISqlDriver` in their `MigrationContext` — it keeps a
+   * migration portable across dialects and safe for reserved words such as
+   * `user` or `order`. It does not qualify the name with a schema.
+   *
+   * @param name - The raw identifier.
+   * @returns The quoted identifier.
+   */
+  escapeIdentifier(name: string): string;
+
+  /**
    * Adds a primary key to the specified table.
    *
    * @param tableName - The name of the table to modify.
