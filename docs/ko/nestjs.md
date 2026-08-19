@@ -184,20 +184,24 @@ export class CatsService {
 `StingerloomOrmService`가 NestJS 훅을 통해 EntityManager 라이프사이클을 자동으로 관리해요:
 
 - **OnModuleInit** -- EntityManager를 내부 레지스트리에 등록하고 초기화 로그를 남겨요.
-- **OnApplicationShutdown** -- `em.propagateShutdown()`을 호출해서 DB 연결 종료, 이벤트 리스너 제거, 엔티티 subscriber 정리, QueryTracker 중지, 플러그인 역순 종료를 수행해요.
+- **OnApplicationShutdown** -- `closeConnections: true`로 ORM을 종료합니다. 이 모듈이 등록한 커넥션 풀을 닫고, 이벤트 리스너 제거, 엔티티 subscriber 정리, QueryTracker 중지, 플러그인 역순 종료를 수행해요.
 
-NestJS 종료 훅을 사용하려면 `main.ts`에서 활성화해야 해요:
+닫히는 것은 이 모듈의 `connectionName`으로 등록된 풀뿐이라, 멀티 DB 앱에서는 각 `forRoot()`가 자기 커넥션만 반납하고 다른 커넥션은 건드리지 않습니다. `tenantStrategy: "database"`에서는 종료가 `MultiTenantEntityManager`를 거칩니다. 라우터가 프로비저닝한 테넌트 풀 전체가 admin 풀과 함께 닫혀요 — 테넌트 매니저는 MTEM 외에는 어디서도 접근할 수 없기 때문입니다. `Stingerloom ORM disconnected (connection "...")` 로그는 실제로 닫힌 뒤에만 남고, 종료가 실패하면 에러 로그를 남긴 뒤 `app.close()`로 전파됩니다.
+
+> 코어 API인 `em.propagateShutdown()`의 기본값은 `closeConnections: false`예요. 라이브러리 사용자가 EntityManager만 정리하고 풀은 계속 쓸 수 있기 때문입니다. NestJS 통합에서는 모듈이 자기가 등록한 풀의 소유자이고 애플리케이션이 내려가는 시점이므로 `true`를 넘깁니다.
+
+`app.close()`(`@nestjs/testing`과 대부분의 통합 테스트가 호출하는 경로)는 이 훅을 알아서 실행합니다. 시그널로 내려가는 종료(쿠버네티스의 SIGTERM, 개발 중 Ctrl-C)까지 처리하려면 `main.ts`에서 훅을 켜세요:
 
 ```typescript
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.enableShutdownHooks(); // Required for graceful shutdown
+  app.enableShutdownHooks(); // SIGTERM/SIGINT가 onApplicationShutdown()까지 도달하게 함
   await app.listen(3000);
 }
 bootstrap();
 ```
 
-`enableShutdownHooks()`가 없으면 NestJS가 `onApplicationShutdown()`을 호출하지 않아서, 프로세스 종료 시 DB 연결이 누수될 수 있어요.
+`enableShutdownHooks()`가 없으면 시그널이 `onApplicationShutdown()` 없이 프로세스를 죽이기 때문에 풀을 닫는 주체가 사라집니다. DB 쪽은 버려진 커넥션이 타임아웃될 때에야 알아차려요.
 
 ---
 

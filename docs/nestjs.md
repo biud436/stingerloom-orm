@@ -184,20 +184,24 @@ export class CatsService {
 The `StingerloomOrmService` manages the EntityManager lifecycle automatically through NestJS hooks:
 
 - **OnModuleInit** -- Registers the EntityManager in an internal registry and logs initialization.
-- **OnApplicationShutdown** -- Calls `em.propagateShutdown()` which: closes all database connections, removes event listeners, clears entity subscribers, stops the QueryTracker, and shuts down plugins in reverse order.
+- **OnApplicationShutdown** -- Shuts the ORM down with `closeConnections: true`: the connection pool this module registered is closed, event listeners are removed, entity subscribers are cleared, the QueryTracker is stopped, and plugins are shut down in reverse installation order.
 
-To use NestJS shutdown hooks, enable them in `main.ts`:
+Only the pool registered under this module's `connectionName` is closed, so in a multi-database application each `forRoot()` releases its own connection and leaves the others alone. With `tenantStrategy: "database"`, the shutdown runs through the `MultiTenantEntityManager`: every tenant pool the router provisioned is closed along with the admin pool, since the tenant managers are reachable from nowhere else. The service logs `Stingerloom ORM disconnected (connection "...")` only after the close succeeds; a failed shutdown is logged as an error and propagated to `app.close()`.
+
+> The core `em.propagateShutdown()` API defaults to `closeConnections: false` -- a library consumer may tear down an EntityManager and keep using the pool. The NestJS integration passes `true`, because the module owns the pool it registered and the application is on its way out.
+
+`app.close()` -- what `@nestjs/testing` and most integration tests call -- runs the hook by itself. For signal-driven shutdown (SIGTERM from Kubernetes, Ctrl-C in development), enable the hooks in `main.ts`:
 
 ```typescript
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.enableShutdownHooks(); // Required for graceful shutdown
+  app.enableShutdownHooks(); // Required for SIGTERM/SIGINT to reach onApplicationShutdown()
   await app.listen(3000);
 }
 bootstrap();
 ```
 
-Without `enableShutdownHooks()`, NestJS does not call `onApplicationShutdown()`, and database connections may leak when the process exits.
+Without `enableShutdownHooks()`, a signal kills the process without running `onApplicationShutdown()`, so nothing closes the pool -- the database only notices when the abandoned connections time out.
 
 ---
 

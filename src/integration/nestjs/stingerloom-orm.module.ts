@@ -11,6 +11,8 @@ import {
   StingerloomOrmCoreModule,
   type StingerloomOrmModuleAsyncOptions,
 } from "./stingerloom-orm-core.module";
+import { MultiTenantEntityManager } from "../../core/MultiTenantEntityManager";
+import { getMultiTenantEntityManagerToken } from "./inject-multi-tenant-entity-manager.decorator";
 
 export const STINGERLOOM_ORM_OPTION_TOKEN = Symbol.for(
   "STINGERLOOM_ORM_OPTION_TOKEN",
@@ -83,6 +85,12 @@ export class StingerloomOrmModule {
 
     const emToken = getEntityManagerToken(connectionName);
     const serviceToken = getOrmServiceToken(connectionName);
+    // Under "database" the core module provides the MTEM token, and the tenant
+    // EntityManagers hang off it — the service needs it to close their pools.
+    const injectTokens =
+      options.tenantStrategy === "database"
+        ? [emToken, getMultiTenantEntityManagerToken(connectionName)]
+        : [emToken];
 
     return {
       module: StingerloomOrmModule,
@@ -90,8 +98,9 @@ export class StingerloomOrmModule {
       providers: [
         {
           provide: serviceToken,
-          useFactory: (em: EntityManager) => new StingerloomOrmService(em),
-          inject: [emToken],
+          useFactory: (em: EntityManager, mtem?: MultiTenantEntityManager) =>
+            new StingerloomOrmService(em, mtem, connectionName),
+          inject: injectTokens,
         },
       ],
       exports: [serviceToken, StingerloomOrmCoreModule],
@@ -108,6 +117,10 @@ export class StingerloomOrmModule {
 
     const emToken = getEntityManagerToken(connectionName);
     const serviceToken = getOrmServiceToken(connectionName);
+    // forRootAsync always provides the MTEM token (the strategy is unknown at
+    // module-construction time); for non-database strategies it resolves to a
+    // misuse sentinel, which the service filters out with an instanceof check.
+    const mtemToken = getMultiTenantEntityManagerToken(connectionName);
 
     return {
       module: StingerloomOrmModule,
@@ -115,8 +128,9 @@ export class StingerloomOrmModule {
       providers: [
         {
           provide: serviceToken,
-          useFactory: (em: EntityManager) => new StingerloomOrmService(em),
-          inject: [emToken],
+          useFactory: (em: EntityManager, mtem?: MultiTenantEntityManager) =>
+            new StingerloomOrmService(em, mtem, connectionName),
+          inject: [emToken, mtemToken],
         },
       ],
       exports: [serviceToken, StingerloomOrmCoreModule],
