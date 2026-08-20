@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../utils/types";
 import { InvalidQueryError } from "../errors";
+import { closestIdentifier } from "../utils/closestIdentifier";
 import type { RelationMetadataResolver } from "./RelationMetadataResolver";
 
 /**
@@ -18,47 +19,6 @@ export interface RelationNameIndex {
   oneToOne: string[];
   /** Union of every name above, for O(1) membership tests. */
   all: Set<string>;
-}
-
-/** Levenshtein distance, capped for the short identifiers we compare here. */
-function editDistance(a: string, b: string): number {
-  const rows = a.length + 1;
-  const cols = b.length + 1;
-  let prev = new Array<number>(cols);
-  let curr = new Array<number>(cols);
-  for (let j = 0; j < cols; j++) prev[j] = j;
-  for (let i = 1; i < rows; i++) {
-    curr[0] = i;
-    for (let j = 1; j < cols; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
-    }
-    const swap = prev;
-    prev = curr;
-    curr = swap;
-  }
-  return prev[cols - 1];
-}
-
-/**
- * Closest candidate within a typo-sized distance, or null when nothing is near
- * enough to suggest (a wrong guess is worse than none).
- */
-function closestName(name: string, candidates: string[]): string | null {
-  const lowered = name.toLowerCase();
-  let best: string | null = null;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const candidate of candidates) {
-    // Case-only mismatch is always the intended name.
-    if (candidate.toLowerCase() === lowered) return candidate;
-    const distance = editDistance(lowered, candidate.toLowerCase());
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = candidate;
-    }
-  }
-  const threshold = Math.max(1, Math.floor(name.length / 3));
-  return best !== null && bestDistance <= threshold ? best : null;
 }
 
 /**
@@ -181,7 +141,7 @@ export function validateRelationNames(
       );
     }
 
-    const suggestion = closestName(String(name), [...index.all]);
+    const suggestion = closestIdentifier(String(name), index.all);
     throw new InvalidQueryError(
       `Unknown relation "${name}" in "relations" for entity "${entity.name}". ` +
         `Available relations: ${describeAvailable(index)}.` +

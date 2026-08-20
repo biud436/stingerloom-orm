@@ -175,23 +175,32 @@ const users = await em.find(User, {
 });
 ```
 
-### "Unknown column in criteria"
+### where / orderBy / select / groupBy의 "Unknown column"
 
 ```
-OrmError [ORM_INVALID_QUERY]: Unknown column "userName" in criteria for entity "User".
+InvalidQueryError: Unknown column "userNam" in "where" for entity "User". Did you mean "userName"?
 ```
 
-`where` 절의 키가 어떤 컬럼과도 일치하지 않습니다. 속성명을 확인하세요(DB 컬럼명이 아닙니다):
+키가 해당 엔티티의 어떤 컬럼과도 일치하지 않습니다. 읽기(`find`, `findOne`,
+`count`, `sum` 등)와 벌크 쓰기(`update`, `delete`) 모두 SQL을 만들기 전에
+검사하고, 에러의 `suggestion`에 허용되는 이름이 전부 나열돼요.
+
+허용되는 키는 속성명, DB 컬럼명, `@ManyToOne` / `@OneToOne` FK 섀도우 속성,
+`@ComputedColumn` 이름, 그리고 단일 테이블 상속에서는 판별자 컬럼과 같은
+테이블을 공유하는 형제 클래스의 컬럼입니다.
 
 ```typescript
 // 엔티티가 다음과 같다면:
 @Column({ name: "user_name" })
 name!: string;
 
-// DB 컬럼명이 아닌 속성명을 사용하세요
-await em.find(User, { where: { name: "Alice" } }); // 정상
-await em.find(User, { where: { user_name: "Alice" } }); // 잘못됨
+await em.find(User, { where: { name: "Alice" } });      // 속성명 (권장)
+await em.find(User, { where: { user_name: "Alice" } }); // DB 컬럼명도 허용
+await em.find(User, { where: { userName: "Alice" } });  // 둘 다 아님 — 예외
 ```
+
+관계 프로퍼티는 컬럼이 아닙니다. FK로 거르거나(`where: { authorId: 1 }`),
+연관 행에 조건을 걸어야 하면 `SelectQueryBuilder.whereHas()`를 쓰세요.
 
 ### falsy 값을 가진 WHERE 절
 

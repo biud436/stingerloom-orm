@@ -5,6 +5,11 @@ import { TransactionSessionManager } from "../dialects/TransactionSessionManager
 import sql, { Sql, join, raw } from "../utils/sqlTag";
 import { Conditions } from "./Conditions";
 import { resolveWhereClause } from "./WhereResolver";
+import {
+  assertKnownColumn,
+  buildEntityColumnScope,
+  validateWhereIdentifiers,
+} from "./ColumnNameValidator";
 import { createDialectExpression } from "../dialects/DialectExpression";
 import { QueryResult } from "../types/QueryResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
@@ -50,6 +55,19 @@ export class AggregateQueryHandler {
       const mappedField =
         field === "*" ? "*" : this.ctx.wrap(propToCol.get(field) ?? field);
       const selectExpr = raw(`${fn}(${mappedField})`);
+
+      // Same identifier guard as findInternal — count()/sum()/avg()/min()/max()
+      // must accept exactly the columns find() accepts, and reject the rest
+      // with the valid list instead of a raw driver error.
+      const scope = buildEntityColumnScope({
+        entity,
+        metadata,
+        propertyToColumn: propToCol,
+        computedColumns: this.ctx.getComputedColumnNames(entity),
+        inheritanceResolver: this.ctx.getInheritanceResolver(),
+      });
+      validateWhereIdentifiers(where, scope);
+      if (field !== "*") assertKnownColumn(field, "select", scope);
 
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.ctx.wrap(n),

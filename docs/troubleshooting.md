@@ -175,23 +175,34 @@ const users = await em.find(User, {
 });
 ```
 
-### "Unknown column in criteria"
+### "Unknown column" in where / orderBy / select / groupBy
 
 ```
-OrmError [ORM_INVALID_QUERY]: Unknown column "userName" in criteria for entity "User".
+InvalidQueryError: Unknown column "userNam" in "where" for entity "User". Did you mean "userName"?
 ```
 
-The key in your `where` clause doesn't match any column. Check the property name (not the DB column name):
+The key doesn't match any column of that entity. Reads (`find`, `findOne`,
+`count`, `sum`, …) and bulk writes (`update`, `delete`) both check this before
+building SQL; the error's `suggestion` lists every accepted name.
+
+Accepted keys are the property name, the DB column name, `@ManyToOne` /
+`@OneToOne` FK shadow properties, `@ComputedColumn` names, and — in a
+single-table inheritance hierarchy — the discriminator and the columns of the
+sibling classes that share the table.
 
 ```typescript
 // If your entity has:
 @Column({ name: "user_name" })
 name!: string;
 
-// Use the property name, not the DB column name
-await em.find(User, { where: { name: "Alice" } }); // correct
-await em.find(User, { where: { user_name: "Alice" } }); // wrong
+await em.find(User, { where: { name: "Alice" } });      // property name (recommended)
+await em.find(User, { where: { user_name: "Alice" } }); // DB column name, also accepted
+await em.find(User, { where: { userName: "Alice" } });  // neither — throws
 ```
+
+A relation property is not a column: filter by its FK instead
+(`where: { authorId: 1 }`), or use `SelectQueryBuilder.whereHas()` for a
+condition on the related row.
 
 ### WHERE clause with falsy values
 

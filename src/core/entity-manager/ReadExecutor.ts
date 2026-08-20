@@ -31,6 +31,7 @@ import {
 import { EntityManagerInternals } from "../EntityManagerInternals";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
 import { validateRelationNames } from "../RelationNameValidator";
+import { buildEntityColumnScope, validateReadIdentifiers } from "../ColumnNameValidator";
 import { RelationLoader } from "../RelationLoader";
 import { AggregateQueryHandler } from "../AggregateQueryHandler";
 import { OrmError } from "../../errors/OrmError";
@@ -146,6 +147,7 @@ export class ReadExecutor {
     byMetadata.set(metadata, plan);
     return plan;
   }
+
 
   // Narrowable driver view + live collaborators (read at call time so test-time
   // reassignment on EntityManager is honored).
@@ -320,6 +322,22 @@ export class ReadExecutor {
 
       // Build property-to-column map once and reuse throughout findInternal
     const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+
+      // Reject column identifiers no builder can resolve. `where` / `orderBy`
+      // / `select` fall back to the raw key when it is not in the property
+      // map, so a typo used to travel to the driver and come back as a
+      // dialect-specific "no such column" that never named the alternatives.
+      validateReadIdentifiers(
+        findOption,
+        select ? this.ctx.resolveSelectColumns<T>(select) : undefined,
+        buildEntityColumnScope({
+          entity,
+          metadata,
+          propertyToColumn: propToCol,
+          computedColumns: this.ctx.getComputedColumnNames(entity),
+          inheritanceResolver: this.inheritanceResolver,
+        }),
+      );
 
     // TPT child: build SELECT by separating child-table columns (PK + own) from parent columns
       if (isTPTChild) {

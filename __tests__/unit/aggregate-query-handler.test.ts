@@ -50,7 +50,14 @@ function createMockCtx(
     buildTenantWhereClause: jest.fn().mockReturnValue(null),
     getInheritanceResolver: jest.fn().mockReturnValue({
       getSingleTableChildDiscriminator: jest.fn().mockReturnValue(null),
+      // The aggregate handler validates identifiers the same way find() does,
+      // so the stub resolver answers the hierarchy questions too.
+      getStrategy: jest.fn().mockReturnValue(null),
+      getRoot: jest.fn().mockReturnValue(null),
+      getAllHierarchyColumns: jest.fn().mockReturnValue([]),
+      getDiscriminatorColumn: jest.fn().mockReturnValue(null),
     }),
+    getComputedColumnNames: jest.fn().mockReturnValue(new Set<string>()),
     buildPropertyToColumnMap: jest.fn((m: any) => {
       const map = new Map<string, string>();
       for (const c of m?.columns ?? []) {
