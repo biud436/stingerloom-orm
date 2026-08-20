@@ -123,6 +123,15 @@ function createMockCtx(overrides: Partial<EntityManagerInternals> = {}): jest.Mo
       }
       return map;
     }),
+    // explain() runs the same identifier guard as find(), which asks the ctx
+    // for computed columns and the inheritance hierarchy.
+    getComputedColumnNames: jest.fn().mockReturnValue(new Set<string>()),
+    getInheritanceResolver: jest.fn().mockReturnValue({
+      getStrategy: jest.fn().mockReturnValue(null),
+      getRoot: jest.fn().mockReturnValue(null),
+      getAllHierarchyColumns: jest.fn().mockReturnValue([]),
+      getDiscriminatorColumn: jest.fn().mockReturnValue(null),
+    }),
     ...overrides,
   } as any;
 }

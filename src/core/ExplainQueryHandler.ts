@@ -11,6 +11,7 @@ import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundErr
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { validateRelationNames } from "./RelationNameValidator";
+import { buildEntityColumnScope, validateReadIdentifiers } from "./ColumnNameValidator";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 
 /**
@@ -103,6 +104,19 @@ export class ExplainQueryHandler {
     // Map property names to DB columns (incl. FK shadow props) like
     // findInternal, so a NamingStrategy WHERE resolves correctly.
     const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+
+    // explain() mirrors the find() SQL, so it mirrors the identifier guard too.
+    validateReadIdentifiers(
+      findOption,
+      select ? this.ctx.resolveSelectColumns<T>(select) : undefined,
+      buildEntityColumnScope({
+        entity,
+        metadata,
+        propertyToColumn: propToCol,
+        computedColumns: this.ctx.getComputedColumnNames(entity),
+        inheritanceResolver: this.ctx.getInheritanceResolver(),
+      }),
+    );
 
     whereMap.push(
       ...resolveWhereClause(where, {

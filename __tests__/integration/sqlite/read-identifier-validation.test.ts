@@ -159,6 +159,18 @@ describe("[Integration] SQLite: read-path column identifier validation", () => {
       expect(error.message).toContain('Unknown column "team" in "where"');
     });
 
+    it("guards cursor pagination's where and sort column", async () => {
+      const inWhere = await captureError(() =>
+        em.findWithCursor(RivMember, { where: { firstNam: "kim" } as never }),
+      );
+      expect(inWhere.message).toContain('Unknown column "firstNam" in "where"');
+
+      const inOrderBy = await captureError(() =>
+        em.findWithCursor(RivMember, { orderBy: "firstNam" as never }),
+      );
+      expect(inOrderBy.message).toContain('Unknown column "firstNam" in "orderBy"');
+    });
+
     it("guards the aggregate path the same way", async () => {
       const inWhere = await captureError(() =>
         em.count(RivMember, { firstNam: "kim" } as never),
@@ -202,6 +214,14 @@ describe("[Integration] SQLite: read-path column identifier validation", () => {
         where: { firstName: "kim", firstNam: undefined } as never,
       });
       expect(rows).toHaveLength(1);
+    });
+
+    it("keeps cursor pagination working on a valid column", async () => {
+      const page = await em.findWithCursor(RivMember, {
+        orderBy: "id",
+        take: 10,
+      });
+      expect(page.data).toHaveLength(1);
     });
 
     it("keeps aggregates over a valid column working", async () => {
