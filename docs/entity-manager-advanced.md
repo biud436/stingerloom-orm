@@ -807,7 +807,7 @@ Complete list of options accepted by `find()`, `findOne()`, `findAndCount()`, `f
 | `limit` | `number` or `[offset, count]` | Raw LIMIT. Prefer `skip`/`take` for pagination. |
 | `skip` | `number` | Offset for pagination. Used with `take`. |
 | `take` | `number` | Max rows to return. Used with `skip`. |
-| `relations` | `(keyof T \| string)[]` | Relations to eager-load via LEFT JOIN. Supports nested paths (e.g., `"author.profile"`). |
+| `relations` | `(keyof T \| string)[]` | Relation properties to load. Names that match no relation (typos, nested paths like `"author.profile"`) throw `InvalidQueryError` listing the valid ones. |
 | `withDeleted` | `boolean` | Include soft-deleted entities (`@DeletedAt`). Default: `false`. |
 | `groupBy` | `(keyof T)[]` | GROUP BY columns. |
 | `having` | `Sql[]` | HAVING conditions (sql-template-tag). Joined with AND. |

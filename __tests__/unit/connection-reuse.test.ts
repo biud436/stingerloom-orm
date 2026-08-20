@@ -140,10 +140,15 @@ describe("Connection Reuse (Issue #30)", () => {
   describe("find() with relation loading", () => {
     it("should use exactly 1 TransactionSessionManager when loading relations (no transaction)", async () => {
       // Set up OneToMany relation metadata
+      // Field names must match the real OneToMany metadata (`propertyKey` +
+      // `getRelatedEntity`) — the loader filters requested relations on
+      // `propertyKey`, so the older `propertyName`/`getMappingEntity` mock
+      // never actually loaded the relation this test claims to cover.
       jest.spyOn((em as any).resolver, "resolveOneToManyMetadata").mockReturnValue([
         {
-          propertyName: "posts",
-          getMappingEntity: () => Post,
+          propertyKey: "posts",
+          getRelatedEntity: () => Post,
+          mappedBy: "user",
           joinColumn: "userId",
         },
       ]);

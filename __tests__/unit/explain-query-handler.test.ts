@@ -221,7 +221,10 @@ describe("ExplainQueryHandler", () => {
 
     it("should handle relations option in findOption", async () => {
       resolver.resolveManyToOneMetadata.mockReturnValue([
-        { columnName: "author", option: { eager: false } },
+        // getMappingEntity is part of the real metadata shape — explain() now
+        // validates requested relation names, and a missing target thunk is
+        // reported as an unloadable (circular-import) relation.
+        { columnName: "author", option: { eager: false }, getMappingEntity: () => TestEntity },
       ] as any);
 
       const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };

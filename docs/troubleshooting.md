@@ -228,6 +228,35 @@ Or mark the relation as eager:
 posts!: Post[];
 ```
 
+### "Unknown relation ... in relations"
+
+```
+InvalidQueryError: Unknown relation "autor" in "relations" for entity "Post".
+Available relations: [author (ManyToOne), tags (ManyToMany)]. Did you mean "author"?
+```
+
+The name must match a relation property declared with `@ManyToOne`,
+`@OneToMany`, `@ManyToMany` or `@OneToOne` on that entity — the same name the
+loaders match on (the property name, not the FK column).
+
+Nested paths are reported separately because they were never supported:
+
+```typescript
+// Not supported — throws
+await em.find(Post, { relations: ["author.profile"] });
+
+// Load the root relation, then fetch the nested one
+const posts = await em.find(Post, { relations: ["author"] });
+const profiles = await em.find(Profile, {
+  where: { authorId: In(posts.map((p) => p.author.id)) },
+});
+```
+
+A relation whose target thunk yields nothing is reported too
+(`... target thunk returned no entity class`) — that is almost always a
+circular import between entity modules. Keep the target behind the decorator's
+`() => Entity` thunk and type single-valued properties as `Relation<Target>`.
+
 ### Circular relation errors
 
 When two entities reference each other, use lazy function references:

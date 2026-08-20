@@ -22,8 +22,10 @@ export enum LockMode {
 }
 
 /**
- * Type-safe relations type. Accepts entity property keys or arbitrary strings
- * (for nested relations like "author.profile").
+ * Type-safe relations type. Accepts entity property keys, keeping an escape
+ * hatch for entities whose type is not statically known (EntitySchema-defined
+ * or `any`-typed classes). Names that no relation matches are rejected at
+ * query time, so the escape hatch cannot silently swallow a typo.
  */
 export type RelationKeys<T> = Array<(keyof T & string) | (string & {})>;
 
@@ -285,15 +287,19 @@ export type FindOption<T> = {
 
   /**
    * Specifies the relations to include in the query.
-   * Accepts entity property keys for type-safe usage, or string literals for nested paths.
+   *
+   * Each entry must name a relation property declared on the entity with
+   * `@ManyToOne` / `@OneToMany` / `@ManyToMany` / `@OneToOne`. A name no
+   * relation matches is rejected at query time with the list of valid ones —
+   * nested paths ("author.profile") are not supported.
    *
    * @example
    * ```ts
    * // Type-safe — typos are caught at compile time
    * em.find(Post, { relations: ["author", "tags"] })
    *
-   * // Nested relation (string literal)
-   * em.find(Post, { relations: ["author", "author.profile"] })
+   * // Throws InvalidQueryError: Unknown relation "autor" ... Did you mean "author"?
+   * em.find(Post, { relations: ["autor"] })
    * ```
    */
   relations?: RelationKeys<T>;

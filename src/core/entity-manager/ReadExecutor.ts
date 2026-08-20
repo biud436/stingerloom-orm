@@ -30,6 +30,7 @@ import {
 } from "../PagePagination";
 import { EntityManagerInternals } from "../EntityManagerInternals";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
+import { validateRelationNames } from "../RelationNameValidator";
 import { RelationLoader } from "../RelationLoader";
 import { AggregateQueryHandler } from "../AggregateQueryHandler";
 import { OrmError } from "../../errors/OrmError";
@@ -257,6 +258,11 @@ export class ReadExecutor {
         );
       }
     }
+
+    // Reject relation names no loader can resolve. Every loader filters with
+    // `relations.includes(...)`, so without this an unmatched name produced a
+    // successful query whose relation property stayed undefined.
+    validateRelationNames(entity, findOption.relations, this.resolver);
 
     const readNode = this.ctx.getReadNode(findOption.useMaster);
     const effectiveTimeout = findOption.timeout ?? this.defaultQueryTimeout;

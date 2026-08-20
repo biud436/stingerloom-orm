@@ -10,6 +10,7 @@ import { ExplainResult } from "./ExplainResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
+import { validateRelationNames } from "./RelationNameValidator";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 
 /**
@@ -41,6 +42,10 @@ export class ExplainQueryHandler {
     if (!metadata) {
       throw new EntityMetadataNotFoundError(entity.name);
     }
+
+    // Same guard as find(): explain() mirrors the read path, so an unresolvable
+    // relation name must fail here too instead of silently planning fewer joins.
+    validateRelationNames(entity, findOption.relations, this.resolver);
 
     const qb = RawQueryBuilderFactory.create();
     const selectMap: string[] = [];

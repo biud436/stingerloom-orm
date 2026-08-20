@@ -228,6 +228,35 @@ console.log(user.posts); // Post[]
 posts!: Post[];
 ```
 
+### "Unknown relation ... in relations"
+
+```
+InvalidQueryError: Unknown relation "autor" in "relations" for entity "Post".
+Available relations: [author (ManyToOne), tags (ManyToMany)]. Did you mean "author"?
+```
+
+`relations`에 넣는 이름은 해당 엔티티에 `@ManyToOne`, `@OneToMany`,
+`@ManyToMany`, `@OneToOne`으로 선언한 관계 프로퍼티여야 합니다. 로더가 매칭에
+쓰는 이름과 같은 이름, 즉 FK 컬럼명이 아니라 프로퍼티명이에요.
+
+중첩 경로는 원래 지원한 적이 없어서 별도 메시지로 알려줍니다.
+
+```typescript
+// 지원하지 않음 — 예외 발생
+await em.find(Post, { relations: ["author.profile"] });
+
+// 루트 관계를 먼저 로드하고, 중첩 관계는 후속 쿼리로
+const posts = await em.find(Post, { relations: ["author"] });
+const profiles = await em.find(Profile, {
+  where: { authorId: In(posts.map((p) => p.author.id)) },
+});
+```
+
+대상 엔티티 thunk가 아무것도 돌려주지 않는 관계도 같은 방식으로 걸러냅니다
+(`... target thunk returned no entity class`). 대부분 엔티티 모듈 간 순환
+임포트가 원인이니, 대상은 데코레이터의 `() => Entity` thunk 안에 두고 단일 값
+관계 프로퍼티는 `Relation<Target>`으로 선언하세요.
+
 ### 순환 관계 오류
 
 두 엔티티가 서로를 참조할 때는 지연 함수 참조를 사용하세요:
