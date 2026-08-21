@@ -805,7 +805,7 @@ for (const rel of relations) {
 | `limit` | `number` 또는 `[offset, count]` | 직접 LIMIT 지정. 페이지네이션에는 `skip`/`take` 권장. |
 | `skip` | `number` | 페이지네이션 오프셋. `take`와 함께 사용. |
 | `take` | `number` | 최대 반환 행 수. `skip`과 함께 사용. |
-| `relations` | `(keyof T \| string)[]` | LEFT JOIN으로 eager-load할 관계. 중첩 경로 지원 (예: `"author.profile"`). |
+| `relations` | `(keyof T \| string)[]` | 로드할 관계 프로퍼티. 어떤 관계와도 매칭되지 않는 이름(오타, `"author.profile"` 같은 중첩 경로)은 유효한 관계 목록과 함께 `InvalidQueryError`를 던져요. |
 | `withDeleted` | `boolean` | soft-delete된 엔티티(`@DeletedAt`) 포함 여부. 기본값: `false`. |
 | `groupBy` | `(keyof T)[]` | GROUP BY 컬럼. |
 | `having` | `Sql[]` | HAVING 조건 (sql-template-tag). AND로 결합. |

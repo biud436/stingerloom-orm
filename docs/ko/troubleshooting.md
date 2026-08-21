@@ -175,23 +175,32 @@ const users = await em.find(User, {
 });
 ```
 
-### "Unknown column in criteria"
+### where / orderBy / select / groupBy의 "Unknown column"
 
 ```
-OrmError [ORM_INVALID_QUERY]: Unknown column "userName" in criteria for entity "User".
+InvalidQueryError: Unknown column "userNam" in "where" for entity "User". Did you mean "userName"?
 ```
 
-`where` 절의 키가 어떤 컬럼과도 일치하지 않습니다. 속성명을 확인하세요(DB 컬럼명이 아닙니다):
+키가 해당 엔티티의 어떤 컬럼과도 일치하지 않습니다. 읽기(`find`, `findOne`,
+`count`, `sum` 등)와 벌크 쓰기(`update`, `delete`) 모두 SQL을 만들기 전에
+검사하고, 에러의 `suggestion`에 허용되는 이름이 전부 나열돼요.
+
+허용되는 키는 속성명, DB 컬럼명, `@ManyToOne` / `@OneToOne` FK 섀도우 속성,
+`@ComputedColumn` 이름, 그리고 단일 테이블 상속에서는 판별자 컬럼과 같은
+테이블을 공유하는 형제 클래스의 컬럼입니다.
 
 ```typescript
 // 엔티티가 다음과 같다면:
 @Column({ name: "user_name" })
 name!: string;
 
-// DB 컬럼명이 아닌 속성명을 사용하세요
-await em.find(User, { where: { name: "Alice" } }); // 정상
-await em.find(User, { where: { user_name: "Alice" } }); // 잘못됨
+await em.find(User, { where: { name: "Alice" } });      // 속성명 (권장)
+await em.find(User, { where: { user_name: "Alice" } }); // DB 컬럼명도 허용
+await em.find(User, { where: { userName: "Alice" } });  // 둘 다 아님 — 예외
 ```
+
+관계 프로퍼티는 컬럼이 아닙니다. FK로 거르거나(`where: { authorId: 1 }`),
+연관 행에 조건을 걸어야 하면 `SelectQueryBuilder.whereHas()`를 쓰세요.
 
 ### falsy 값을 가진 WHERE 절
 
@@ -227,6 +236,35 @@ console.log(user.posts); // Post[]
 @OneToMany(() => Post, (post) => post.author, { eager: true })
 posts!: Post[];
 ```
+
+### "Unknown relation ... in relations"
+
+```
+InvalidQueryError: Unknown relation "autor" in "relations" for entity "Post".
+Available relations: [author (ManyToOne), tags (ManyToMany)]. Did you mean "author"?
+```
+
+`relations`에 넣는 이름은 해당 엔티티에 `@ManyToOne`, `@OneToMany`,
+`@ManyToMany`, `@OneToOne`으로 선언한 관계 프로퍼티여야 합니다. 로더가 매칭에
+쓰는 이름과 같은 이름, 즉 FK 컬럼명이 아니라 프로퍼티명이에요.
+
+중첩 경로는 원래 지원한 적이 없어서 별도 메시지로 알려줍니다.
+
+```typescript
+// 지원하지 않음 — 예외 발생
+await em.find(Post, { relations: ["author.profile"] });
+
+// 루트 관계를 먼저 로드하고, 중첩 관계는 후속 쿼리로
+const posts = await em.find(Post, { relations: ["author"] });
+const profiles = await em.find(Profile, {
+  where: { authorId: In(posts.map((p) => p.author.id)) },
+});
+```
+
+대상 엔티티 thunk가 아무것도 돌려주지 않는 관계도 같은 방식으로 걸러냅니다
+(`... target thunk returned no entity class`). 대부분 엔티티 모듈 간 순환
+임포트가 원인이니, 대상은 데코레이터의 `() => Entity` thunk 안에 두고 단일 값
+관계 프로퍼티는 `Relation<Target>`으로 선언하세요.
 
 ### 순환 관계 오류
 

@@ -30,6 +30,8 @@ import {
 } from "../PagePagination";
 import { EntityManagerInternals } from "../EntityManagerInternals";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
+import { validateRelationNames } from "../RelationNameValidator";
+import { buildEntityColumnScope, validateReadIdentifiers } from "../ColumnNameValidator";
 import { RelationLoader } from "../RelationLoader";
 import { AggregateQueryHandler } from "../AggregateQueryHandler";
 import { OrmError } from "../../errors/OrmError";
@@ -258,6 +260,11 @@ export class ReadExecutor {
       }
     }
 
+    // Reject relation names no loader can resolve. Every loader filters with
+    // `relations.includes(...)`, so without this an unmatched name produced a
+    // successful query whose relation property stayed undefined.
+    validateRelationNames(entity, findOption.relations, this.resolver);
+
     const readNode = this.ctx.getReadNode(findOption.useMaster);
     const effectiveTimeout = findOption.timeout ?? this.defaultQueryTimeout;
 
@@ -314,6 +321,22 @@ export class ReadExecutor {
 
       // Build property-to-column map once and reuse throughout findInternal
     const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+
+      // Reject column identifiers no builder can resolve. `where` / `orderBy`
+      // / `select` fall back to the raw key when it is not in the property
+      // map, so a typo used to travel to the driver and come back as a
+      // dialect-specific "no such column" that never named the alternatives.
+      validateReadIdentifiers(
+        findOption,
+        select ? this.ctx.resolveSelectColumns<T>(select) : undefined,
+        buildEntityColumnScope({
+          entity,
+          metadata,
+          propertyToColumn: propToCol,
+          computedColumns: this.ctx.getComputedColumnNames(entity),
+          inheritanceResolver: this.inheritanceResolver,
+        }),
+      );
 
     // TPT child: build SELECT by separating child-table columns (PK + own) from parent columns
       if (isTPTChild) {
@@ -1010,6 +1033,22 @@ export class ReadExecutor {
       // -> `created_at`). Mirrors the find() orderBy mapping. The default value
       // is already a column name (pk.name), so it passes through unchanged.
       const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+
+      // Same identifier guard as findInternal, so a cursor query rejects a
+      // typo'd where key or sort column with the valid list instead of a raw
+      // driver error.
+      validateReadIdentifiers(
+        { where, orderBy: { [orderByColumn]: direction } },
+        undefined,
+        buildEntityColumnScope({
+          entity,
+          metadata,
+          propertyToColumn: propToCol,
+          computedColumns: this.ctx.getComputedColumnNames(entity),
+          inheritanceResolver: this.inheritanceResolver,
+        }),
+      );
+
       const dbOrderByColumn = propToCol.get(orderByColumn) ?? orderByColumn;
 
       const whereMap: Sql[] = resolveWhereClause(where, {

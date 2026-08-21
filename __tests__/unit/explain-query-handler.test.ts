@@ -123,6 +123,15 @@ function createMockCtx(overrides: Partial<EntityManagerInternals> = {}): jest.Mo
       }
       return map;
     }),
+    // explain() runs the same identifier guard as find(), which asks the ctx
+    // for computed columns and the inheritance hierarchy.
+    getComputedColumnNames: jest.fn().mockReturnValue(new Set<string>()),
+    getInheritanceResolver: jest.fn().mockReturnValue({
+      getStrategy: jest.fn().mockReturnValue(null),
+      getRoot: jest.fn().mockReturnValue(null),
+      getAllHierarchyColumns: jest.fn().mockReturnValue([]),
+      getDiscriminatorColumn: jest.fn().mockReturnValue(null),
+    }),
     ...overrides,
   } as any;
 }
@@ -221,7 +230,10 @@ describe("ExplainQueryHandler", () => {
 
     it("should handle relations option in findOption", async () => {
       resolver.resolveManyToOneMetadata.mockReturnValue([
-        { columnName: "author", option: { eager: false } },
+        // getMappingEntity is part of the real metadata shape — explain() now
+        // validates requested relation names, and a missing target thunk is
+        // reported as an unloadable (circular-import) relation.
+        { columnName: "author", option: { eager: false }, getMappingEntity: () => TestEntity },
       ] as any);
 
       const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };

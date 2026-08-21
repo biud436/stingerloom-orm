@@ -891,7 +891,10 @@ describe("Non-numeric PK cursor pagination warnings", () => {
     (em as any).dbType = "mysql";
     setupWithPkType("varchar");
 
-    await em.findWithCursor(UuidEntity, { orderBy: "createdAt" as any });
+    // Any column of the mocked entity works here — the assertion is about the
+    // warning, and cursor pagination now rejects a sort column the entity does
+    // not declare (this fixture has id + title only).
+    await em.findWithCursor(UuidEntity, { orderBy: "title" as any });
 
     expect(warnSpy).not.toHaveBeenCalled();
   });
