@@ -1136,6 +1136,9 @@ export class EntityManager implements BaseEntityManager {
    * Returns an AsyncGenerator that yields entities in batches using LIMIT/OFFSET.
    * Works across all dialects without driver-level streaming support.
    *
+   * A caller's own `limit` / `take` / `skip` define the overall window the
+   * stream covers (same precedence as `find()`); batching happens inside it.
+   *
    * @param entity - The entity class
    * @param options - Find options (where, orderBy, relations, etc.)
    * @param batchSize - Number of rows per batch (default: 1000)
@@ -1145,23 +1148,10 @@ export class EntityManager implements BaseEntityManager {
     options: FindOption<T> = {},
     batchSize: number = 1000,
   ): AsyncGenerator<T, void, undefined> {
-    let offset = 0;
-    const effectiveBatchSize = Math.max(batchSize, 1);
-
-    while (true) {
-      const batch = await this.find<T>(entity, {
-        ...options,
-        limit: [offset, effectiveBatchSize],
-      });
-
-      if (batch.length === 0) break;
-
+    for await (const batch of this.streamBatch<T>(entity, options, batchSize)) {
       for (const item of batch) {
         yield item;
       }
-
-      if (batch.length < effectiveBatchSize) break;
-      offset += effectiveBatchSize;
     }
   }
 
@@ -1169,6 +1159,12 @@ export class EntityManager implements BaseEntityManager {
    * Streams entities in batches, yielding T[] arrays.
    * Each yielded value is an array of fully-deserialized entities with relations loaded.
    * Suitable for processing large datasets without loading all rows into memory.
+   *
+   * A caller's own `limit` / `take` / `skip` define the overall window the
+   * stream covers, with `find()`'s precedence rules. They used to be
+   * overwritten by the internal batch tuple — except `take`, which leaked
+   * into every batch's LIMIT while the offset still advanced by `batchSize`,
+   * re-yielding rows whenever `take` exceeded the batch size.
    *
    * @param entity - The entity class
    * @param options - FindOption (where, select, relations, orderBy, etc.)
@@ -1179,21 +1175,39 @@ export class EntityManager implements BaseEntityManager {
     options: FindOption<T> = {},
     batchSize: number = 1000,
   ): AsyncGenerator<T[], void, undefined> {
+    const { limit, take, skip, ...rest } = options;
+
+    // Resolve the caller's window with find()'s precedence: a limit tuple
+    // sets both bounds (a positive `take` overriding its count); otherwise
+    // skip/take pagination; otherwise a plain numeric limit caps the count.
     let offset = 0;
+    let remaining = Infinity;
+    if (Array.isArray(limit)) {
+      offset = limit[0];
+      remaining = take && take > 0 ? take : limit[1];
+    } else if (skip !== undefined || (take !== undefined && limit === undefined)) {
+      offset = skip ?? 0;
+      if (take !== undefined) remaining = take;
+    } else if (typeof limit === "number") {
+      remaining = limit;
+    }
+
     const effectiveBatchSize = Math.max(batchSize, 1);
 
-    while (true) {
+    while (remaining > 0) {
+      const size = Math.min(effectiveBatchSize, remaining);
       const batch = await this.find<T>(entity, {
-        ...options,
-        limit: [offset, effectiveBatchSize],
+        ...(rest as FindOption<T>),
+        limit: [offset, size],
       });
 
       if (batch.length === 0) break;
 
       yield batch;
 
-      if (batch.length < effectiveBatchSize) break;
-      offset += effectiveBatchSize;
+      remaining -= batch.length;
+      if (batch.length < size) break;
+      offset += batch.length;
     }
   }
 

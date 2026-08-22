@@ -1183,6 +1183,19 @@ for await (const post of em.stream(Post, {
 }
 ```
 
+직접 지정한 `limit`, `take`, `skip`은 스트림이 커버하는 전체 **윈도**를 정의합니다. 배칭은 그 윈도 안에서 이루어지며, 우선순위 규칙은 `find()`와 같습니다:
+
+```typescript
+// 101~600번째 행만 스트리밍 (배치 크기 100)
+for await (const post of em.stream(Post, {
+  orderBy: { id: "ASC" },
+  skip: 100,
+  take: 500,
+}, 100)) {
+  await reindex(post);
+}
+```
+
 ### 진행 상황 추적
 
 `count()`와 결합해서 진행률을 보여줄 수 있어요:

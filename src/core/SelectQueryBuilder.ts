@@ -3923,23 +3923,10 @@ export class SelectQueryBuilder<T, TResult = T> {
    * @param batchSize Number of rows per batch (default: 1000)
    */
   async *stream(batchSize = 1000): AsyncGenerator<TResult, void, undefined> {
-    const effectiveBatchSize = Math.max(batchSize, 1);
-    let currentOffset = 0;
-
-    while (true) {
-      const cloned = this.clone();
-      cloned.offsetValue = currentOffset;
-      cloned.limitValue = effectiveBatchSize;
-
-      const batch = await cloned.getPartialMany();
-      if (batch.length === 0) break;
-
+    for await (const batch of this.streamBatch(batchSize)) {
       for (const row of batch) {
         yield row;
       }
-
-      if (batch.length < effectiveBatchSize) break;
-      currentOffset += effectiveBatchSize;
     }
   }
 
@@ -3955,20 +3942,35 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   async *streamBatch(batchSize = 1000): AsyncGenerator<TResult[], void, undefined> {
     const effectiveBatchSize = Math.max(batchSize, 1);
-    let currentOffset = 0;
 
-    while (true) {
+    // A limit()/offset() already set on the builder is the window the stream
+    // covers — batching happens inside it. It used to be overwritten by the
+    // internal batch values, silently streaming the whole table. The tuple
+    // form of limitValue is only ever produced internally (limit() takes a
+    // number), but unpack it defensively.
+    let currentOffset = this.offsetValue ?? 0;
+    let remaining: number;
+    if (Array.isArray(this.limitValue)) {
+      currentOffset = this.offsetValue ?? this.limitValue[0];
+      remaining = this.limitValue[1];
+    } else {
+      remaining = this.limitValue ?? Infinity;
+    }
+
+    while (remaining > 0) {
+      const size = Math.min(effectiveBatchSize, remaining);
       const cloned = this.clone();
       cloned.offsetValue = currentOffset;
-      cloned.limitValue = effectiveBatchSize;
+      cloned.limitValue = size;
 
       const batch = await cloned.getPartialMany();
       if (batch.length === 0) break;
 
       yield batch;
 
-      if (batch.length < effectiveBatchSize) break;
-      currentOffset += effectiveBatchSize;
+      remaining -= batch.length;
+      if (batch.length < size) break;
+      currentOffset += batch.length;
     }
   }
 

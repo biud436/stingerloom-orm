@@ -326,17 +326,22 @@ export class MultiTenantEntityManager {
   async *stream<T>(
     entity: ClazzType<T>,
     options?: FindOption<T>,
+    batchSize?: number,
   ): AsyncGenerator<T> {
     const em = await this.pickEm();
-    yield* em.stream(entity, options);
+    yield* em.stream(entity, options, batchSize);
   }
 
   async *streamBatch<T>(
     entity: ClazzType<T>,
-    options: FindOption<T> & { batchSize: number },
+    options?: FindOption<T>,
+    batchSize?: number,
   ): AsyncGenerator<T[]> {
+    // Mirrors EntityManager's (entity, options, batchSize) signature — the
+    // old `options & { batchSize }` shape was never consumed by the delegate,
+    // so the requested batch size silently fell back to the default.
     const em = await this.pickEm();
-    yield* em.streamBatch(entity, options as any);
+    yield* em.streamBatch(entity, options, batchSize);
   }
 
   async save<T>(entity: ClazzType<T>, item: Partial<T>): Promise<T> {
