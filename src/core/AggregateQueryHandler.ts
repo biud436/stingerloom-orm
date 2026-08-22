@@ -34,6 +34,7 @@ export class AggregateQueryHandler {
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
     onlyDeleted?: boolean,
+    groupOptions?: { groupBy: readonly string[]; having?: Sql[] },
   ): Promise<number> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
@@ -75,6 +76,9 @@ export class AggregateQueryHandler {
       });
       validateWhereIdentifiers(where, scope);
       if (field !== "*") assertKnownColumn(field, "select", scope);
+      for (const col of groupOptions?.groupBy ?? []) {
+        assertKnownColumn(String(col), "groupBy", scope);
+      }
 
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.ctx.wrap(n),
@@ -125,7 +129,29 @@ export class AggregateQueryHandler {
       }
 
       let queryStr: Sql;
-      if (whereMap.length > 0) {
+      if (groupOptions && groupOptions.groupBy.length > 0) {
+        // Grouped count: the caller (findAndCount/findWithPage) pairs the
+        // count with grouped data rows, so `total` must be the number of
+        // groups surviving HAVING — a plain COUNT(*) counted raw rows.
+        // Portable across MySQL / PostgreSQL / SQLite via a derived table.
+        const groupCols = join(
+          groupOptions.groupBy.map((col) =>
+            raw(this.ctx.wrap(propToCol.get(String(col)) ?? String(col))),
+          ),
+          ", ",
+        );
+        let inner = sql`SELECT ${groupCols} FROM ${raw(this.ctx.wrapTable(tableName))}`;
+        if (whereMap.length > 0) {
+          inner = sql`${inner} WHERE ${join(whereMap, " AND ")}`;
+        }
+        inner = sql`${inner} GROUP BY ${groupCols}`;
+        if (groupOptions.having && groupOptions.having.length > 0) {
+          inner = sql`${inner} HAVING ${join(groupOptions.having, " AND ")}`;
+        }
+        // The derived table exposes only the group columns, so the outer
+        // aggregate is always the group count regardless of `fn`/`field`.
+        queryStr = sql`SELECT COUNT(*) AS ${raw(this.ctx.wrap("result"))} FROM (${inner}) AS ${raw(this.ctx.wrap("grouped_src"))}`;
+      } else if (whereMap.length > 0) {
         const whereSql = join(whereMap, " AND ");
         queryStr = sql`SELECT ${selectExpr} AS ${raw(this.ctx.wrap("result"))} FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${whereSql}`;
       } else {

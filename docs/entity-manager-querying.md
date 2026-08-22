@@ -1055,6 +1055,8 @@ result.hasPreviousPage // true — page 1 exists
 
 `findWithPage()` accepts all the same options as `find()` (`where`, `select`, `relations`, `withDeleted`, `orderBy`, `groupBy`, `having`, `timeout`, `useMaster`).
 
+With `groupBy`, each data row is a group, so `total` (in both `findWithPage()` and `findAndCount()`) counts the groups that survive `having` — not the underlying rows.
+
 ### 4. findWithCursor() (Cursor-Based)
 
 Offset pagination has a fundamental flaw: the deeper the page, the slower the query. `OFFSET 1000000` forces the database to scan and skip a million rows.
