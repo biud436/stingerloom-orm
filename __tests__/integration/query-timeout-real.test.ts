@@ -24,28 +24,20 @@
  *
  * The slow query under test is a read blocked by another transaction's row
  * lock — deterministic, and the case that matters in production (a runaway
- * lock wait pinning a pool connection). What a timeout does to that wait is a
- * *server* property, probed 2026-08-22 against PostgreSQL 16.13 / MariaDB
- * 11.8.6:
- *
- *  - PostgreSQL `statement_timeout` and MariaDB `max_statement_time` cancel
- *    lock waits (SQLSTATE 57014 / errno 1969).
- *  - MySQL's `max_execution_time` bounds **read-only SELECTs only** — a
- *    `SELECT ... FOR UPDATE` wait is exempt and simply runs to lock release.
- *
- * The assertions branch on that capability (detected from the server's own
- * version string, since CI runs mysql:8 while the local gate is MariaDB).
- * Both branches assert their environment's full contract — cancellation with
- * `QueryTimeoutError` where the server cancels, undisturbed completion where
- * it does not (which is also where MariaDB's fail-before produced errno 1193
- * instead of rows).
+ * lock wait pinning a pool connection). Measured 2026-08-22, every supported
+ * server cancels that wait: PostgreSQL 16.13 `statement_timeout` (SQLSTATE
+ * 57014), MariaDB 11.8.6 `max_statement_time` (errno 1969), and MySQL 8
+ * `max_execution_time` (errno 3024) — the last one *despite* its manual
+ * scoping it to read-only SELECTs; in CI the lock-blocked
+ * `SELECT ... FOR UPDATE` is interrupted all the same. So the contract is
+ * uniform: the blocked read dies with `QueryTimeoutError` well before the
+ * lock is released.
  */
 
 import "reflect-metadata";
 import { EntityManager } from "../../src/core/EntityManager";
 import { LockMode } from "../../src/dialects/FindOption";
 import { QueryTimeoutError } from "../../src/errors/QueryTimeoutError";
-import { DbVersion } from "../../src/dialects/DbVersion";
 import {
   createTestConnection,
   dropTestTable,
@@ -63,8 +55,6 @@ const drivers = getTestDrivers();
 const HOLD_MS = 4000;
 /** Timeout handed to the reads that are expected to be cancelled. */
 const TIMEOUT_MS = 300;
-/** When the server can't cancel a lock wait, release the holder this early. */
-const EARLY_RELEASE_MS = 800;
 
 interface LockHolder {
   release: () => void;
@@ -73,7 +63,7 @@ interface LockHolder {
 
 describe.each(drivers)(
   "[Integration] $label: queryTimeout (V4-T1-2)",
-  ({ type, options }) => {
+  ({ options }) => {
     describe.each([
       {
         scope: "per-query timeout",
@@ -91,8 +81,6 @@ describe.each(drivers)(
       let em: EntityManager;
       let entity: DynamicEntityResult;
       let rowId: number;
-      /** True when this server's statement timeout also cancels lock waits. */
-      let cancelsLockWaits = false;
 
       beforeAll(async () => {
         conn = await createTestConnection(
@@ -117,9 +105,6 @@ describe.each(drivers)(
           age: 1,
         });
         rowId = saved.id;
-
-        const raw = em.getDriver()?.getVersion?.()?.raw ?? "";
-        cancelsLockWaits = type === "postgres" || DbVersion.isMariaDb(raw);
       }, 30000);
 
       afterAll(async () => {
@@ -163,42 +148,24 @@ describe.each(drivers)(
 
       /**
        * Runs `read` against a row lock held by another transaction and
-       * asserts this server's full timeout contract:
-       *
-       * - cancellation-capable (PostgreSQL, MariaDB): the read dies with
-       *   `QueryTimeoutError` well before the holder lets go, and the error
-       *   carries the driver's cancellation as `cause`;
-       * - genuine MySQL: `max_execution_time` exempts the locked read — it
-       *   must come back with the row once the holder releases, and in
-       *   particular must NOT fail with an unrelated error (MariaDB's
-       *   fail-before was ER_UNKNOWN_SYSTEM_VARIABLE here).
+       * asserts the uniform timeout contract: the read dies with
+       * `QueryTimeoutError` well before the holder lets go, carrying the
+       * driver's cancellation as `cause`. On MariaDB the fail-before was an
+       * unrelated ER_UNKNOWN_SYSTEM_VARIABLE here instead.
        */
       async function expectLockedReadContract(
         read: () => Promise<unknown[]>,
-        holder: LockHolder,
+        _holder: LockHolder,
       ): Promise<void> {
         const started = Date.now();
 
-        if (cancelsLockWaits) {
-          const error = await read().then(
-            () => null,
-            (e) => e,
-          );
-          expect(error).toBeInstanceOf(QueryTimeoutError);
-          expect((error as QueryTimeoutError).cause).toBeInstanceOf(Error);
-          expect(Date.now() - started).toBeLessThan(HOLD_MS - 500);
-        } else {
-          const releaseTimer = setTimeout(
-            () => holder.release(),
-            EARLY_RELEASE_MS,
-          );
-          try {
-            const rows = await read();
-            expect(rows).toHaveLength(1);
-          } finally {
-            clearTimeout(releaseTimer);
-          }
-        }
+        const error = await read().then(
+          () => null,
+          (e) => e,
+        );
+        expect(error).toBeInstanceOf(QueryTimeoutError);
+        expect((error as QueryTimeoutError).cause).toBeInstanceOf(Error);
+        expect(Date.now() - started).toBeLessThan(HOLD_MS - 500);
       }
 
       it(
@@ -279,10 +246,7 @@ describe.each(drivers)(
           // before the restore fix, MariaDB's SET SESSION from the first read
           // stayed on the pooled connection and cancelled this one.
           const second = await holdRowLock();
-          const releaseTimer = setTimeout(
-            () => second.release(),
-            EARLY_RELEASE_MS,
-          );
+          const releaseTimer = setTimeout(() => second.release(), 800);
           try {
             const rows = await em.find(entity.EntityClass, {
               where: { id: rowId } as any,

@@ -343,7 +343,7 @@ Stingerloom은 JavaScript `setTimeout`으로 쿼리를 끊지 않아요 -- 그�
 | PostgreSQL | `SET LOCAL statement_timeout = '5000ms'` |
 | SQLite | `PRAGMA busy_timeout` (잠금 대기만 제한, 문 실행 시간은 아님) |
 
-MySQL의 `max_execution_time`은 밀리초 단위이고 읽기 전용 SELECT에 적용돼요. MariaDB는 이 변수를 구현하지 않았고 초 단위의 `max_statement_time`이 그 역할을 합니다 — Stingerloom이 서버 버전 문자열로 올바른 쪽을 고르기 때문에 `type: "mysql"`로 MariaDB 서버를 가리켜도 동작해요. `SET SESSION`은 풀 커넥션에서 쿼리보다 오래 살아남기 때문에, 쿼리별 오버라이드는 실행 후 연결 수준 기본값으로 복원됩니다. PostgreSQL의 `SET LOCAL`은 읽기가 실행되는 트랜잭션으로 범위가 제한되어 다른 쿼리로 새지 않아요.
+MySQL의 `max_execution_time`은 밀리초 단위이고 SELECT 문에 적용돼요. MariaDB는 이 변수를 구현하지 않았고 초 단위의 `max_statement_time`이 그 역할을 합니다 — Stingerloom이 서버 버전 문자열로 올바른 쪽을 고르기 때문에 `type: "mysql"`로 MariaDB 서버를 가리켜도 동작해요. `SET SESSION`은 풀 커넥션에서 쿼리보다 오래 살아남기 때문에, 쿼리별 오버라이드는 실행 후 연결 수준 기본값으로 복원됩니다. PostgreSQL의 `SET LOCAL`은 읽기가 실행되는 트랜잭션으로 범위가 제한되어 다른 쿼리로 새지 않아요.
 
 타임아웃이 발동되면 DB가 쿼리를 중단하고, Stingerloom은 타임아웃 값을 담은 `QueryTimeoutError`를 던져요. 드라이버의 원본 에러는 `cause`로 확인할 수 있습니다.
 

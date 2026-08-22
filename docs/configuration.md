@@ -343,7 +343,7 @@ Stingerloom does not use JavaScript `setTimeout` to kill queries -- that would o
 | PostgreSQL | `SET LOCAL statement_timeout = '5000ms'` |
 | SQLite | `PRAGMA busy_timeout` (bounds lock waits, not statement runtime) |
 
-MySQL's `max_execution_time` is milliseconds and applies to read-only SELECTs; MariaDB never implemented it — its equivalent is `max_statement_time` in seconds, and Stingerloom picks the right one from the server's version string, so `type: "mysql"` pointed at a MariaDB server works. Since `SET SESSION` outlives the query on a pooled connection, a per-query override is restored to the connection default afterwards. For PostgreSQL, `SET LOCAL` scopes the timeout to the transaction the read runs in, so it never leaks to other queries.
+MySQL's `max_execution_time` is milliseconds and applies to SELECT statements; MariaDB never implemented it — its equivalent is `max_statement_time` in seconds, and Stingerloom picks the right one from the server's version string, so `type: "mysql"` pointed at a MariaDB server works. Since `SET SESSION` outlives the query on a pooled connection, a per-query override is restored to the connection default afterwards. For PostgreSQL, `SET LOCAL` scopes the timeout to the transaction the read runs in, so it never leaks to other queries.
 
 When the timeout fires, the database aborts the query and Stingerloom throws a `QueryTimeoutError` carrying the timeout value, with the driver's original error as `cause`.
 
