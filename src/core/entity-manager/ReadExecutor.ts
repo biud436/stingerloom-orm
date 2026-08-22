@@ -718,13 +718,20 @@ export class ReadExecutor {
 
       qb.where(whereMap);
 
-      // GROUP BY / HAVING
+      // GROUP BY / HAVING — resolve property names to DB columns exactly like
+      // select/orderBy: without the mapping, a renamed column (@Column({ name })
+      // or a NamingStrategy) grouped by a column that does not exist while
+      // SELECT used the mapped name. TPT children route through
+      // tptQualifyColumn so parent-only columns land on the parent table.
       if (groupBy && groupBy.length > 0) {
-        const groupByColumns = (groupBy as string[]).map((col) =>
-          hasEagerJoins
-            ? `${this.ctx.wrap(tableName)}.${this.ctx.wrap(col)}`
-            : this.ctx.wrap(col),
-        );
+        const groupByColumns = (groupBy as string[]).map((col) => {
+          const dbCol = propToCol.get(col) ?? col;
+          return tptQualifyColumn
+            ? tptQualifyColumn(dbCol)
+            : hasEagerJoins
+              ? `${this.ctx.wrap(tableName)}.${this.ctx.wrap(dbCol)}`
+              : this.ctx.wrap(dbCol);
+        });
         qb.groupBy(groupByColumns);
       }
 
@@ -1170,7 +1177,24 @@ export class ReadExecutor {
     const readNode = this.ctx.getReadNode(findOption.useMaster);
     return this.ctx.executeReadOnly(async (session) => {
       const result = await this.ctx.findInternal<T>(entity, findOption, session);
-      const totalCount = await this.aggregateHandler.aggregate<T>(entity, "COUNT", "*", findOption.where, session, findOption.withDeleted, findOption.onlyDeleted);
+      // With groupBy the data rows are groups, so `total` must count groups
+      // (honoring HAVING) — a where-only COUNT(*) counted raw rows and broke
+      // findWithPage's totalPages/hasNextPage.
+      const totalCount = await this.aggregateHandler.aggregate<T>(
+        entity,
+        "COUNT",
+        "*",
+        findOption.where,
+        session,
+        findOption.withDeleted,
+        findOption.onlyDeleted,
+        findOption.groupBy && findOption.groupBy.length > 0
+          ? {
+              groupBy: findOption.groupBy as string[],
+              having: findOption.having,
+            }
+          : undefined,
+      );
 
       // findInternal returns a single entity (not an array) when exactly one
       // row matches, so normalize before handing back a [T[], number] tuple.

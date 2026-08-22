@@ -1055,6 +1055,8 @@ result.hasPreviousPage // true — page 1 exists
 
 `findWithPage()`는 `find()`와 동일한 옵션을 모두 지원해요 (`where`, `select`, `relations`, `withDeleted`, `orderBy`, `groupBy`, `having`, `timeout`, `useMaster`).
 
+`groupBy`를 사용하면 데이터의 각 행이 그룹이므로, `total`(`findWithPage()`와 `findAndCount()` 모두)은 원본 행 수가 아니라 `having`을 통과한 그룹 수를 셉니다.
+
 ### 4. findWithCursor() (커서 기반)
 
 오프셋 페이지네이션의 근본적인 결함은 페이지가 깊어질수록 쿼리가 느려진다는 거예요. `OFFSET 1000000`은 데이터베이스가 백만 행을 스캔하고 건너뛰게 해요.
