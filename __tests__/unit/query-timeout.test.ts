@@ -5,6 +5,8 @@ import { SqliteDriver } from "../../src/dialects/sqlite/SqliteDriver";
 import { QueryTimeoutError } from "../../src/errors/QueryTimeoutError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 import { EntityManager } from "../../src/core/EntityManager";
+import { DbVersion } from "../../src/dialects/DbVersion";
+import { isStatementTimeoutError } from "../../src/core/entity-manager/internal-utils";
 
 // Mock 모듈 설정
 jest.mock("../../src/DatabaseClient", () => {
@@ -71,6 +73,48 @@ describe("Driver setQueryTimeout()", () => {
     it("should clamp negative values to zero", () => {
       expect(driver.setQueryTimeout(-100)).toBe(
         "SET SESSION max_execution_time = 0",
+      );
+    });
+  });
+
+  describe("MySqlDriver on MariaDB", () => {
+    // MariaDB has no `max_execution_time` — SET-ting it dies with
+    // ER_UNKNOWN_SYSTEM_VARIABLE (1193), which used to make every timed read
+    // fail on MariaDB. Its equivalent is `max_statement_time`, in SECONDS.
+
+    it("declared type mariadb uses max_statement_time in seconds", () => {
+      const driver = new MySqlDriver({} as any, "mariadb");
+      expect(driver.setQueryTimeout(300)).toBe(
+        "SET SESSION max_statement_time = 0.3",
+      );
+    });
+
+    it("declared type mysql pointed at a MariaDB server is detected from the version string", () => {
+      const driver = new MySqlDriver(
+        {} as any,
+        "mysql",
+        DbVersion.parse("11.8.6-MariaDB-ubu2404"),
+      );
+      expect(driver.setQueryTimeout(5000)).toBe(
+        "SET SESSION max_statement_time = 5",
+      );
+    });
+
+    it("zero still means no limit", () => {
+      const driver = new MySqlDriver({} as any, "mariadb");
+      expect(driver.setQueryTimeout(0)).toBe(
+        "SET SESSION max_statement_time = 0",
+      );
+    });
+
+    it("a genuine MySQL version string keeps max_execution_time", () => {
+      const driver = new MySqlDriver(
+        {} as any,
+        "mysql",
+        DbVersion.parse("8.0.36-MySQL Community Server"),
+      );
+      expect(driver.setQueryTimeout(300)).toBe(
+        "SET SESSION max_execution_time = 300",
       );
     });
   });
@@ -154,6 +198,60 @@ describe("QueryTimeoutError", () => {
   it("should be an instance of Error", () => {
     const error = new QueryTimeoutError(1000);
     expect(error).toBeInstanceOf(Error);
+  });
+
+  it("should keep the driver error as cause", () => {
+    const driverError = Object.assign(new Error("canceled"), { code: "57014" });
+    const error = new QueryTimeoutError(1000, driverError);
+    expect(error.cause).toBe(driverError);
+  });
+});
+
+// ─── isStatementTimeoutError 매핑 테스트 ─────────────────────────────────────
+
+describe("isStatementTimeoutError()", () => {
+  it("matches PostgreSQL 57014 (query_canceled)", () => {
+    const e = Object.assign(
+      new Error("canceling statement due to statement timeout"),
+      { code: "57014" },
+    );
+    expect(isStatementTimeoutError(e)).toBe(true);
+  });
+
+  it("matches MySQL errno 3024 (ER_QUERY_TIMEOUT)", () => {
+    const e = Object.assign(new Error("Query execution was interrupted"), {
+      errno: 3024,
+    });
+    expect(isStatementTimeoutError(e)).toBe(true);
+  });
+
+  it("matches MariaDB errno 1969 (ER_STATEMENT_TIMEOUT)", () => {
+    // Real shape observed on MariaDB 11.8: errno 1969, sqlState 70100,
+    // code undefined.
+    const e = Object.assign(
+      new Error(
+        "Query execution was interrupted (max_statement_time exceeded)",
+      ),
+      { errno: 1969, sqlState: "70100" },
+    );
+    expect(isStatementTimeoutError(e)).toBe(true);
+  });
+
+  it("does not match deadlocks or generic errors", () => {
+    expect(
+      isStatementTimeoutError(
+        Object.assign(new Error("deadlock"), { errno: 1213 }),
+      ),
+    ).toBe(false);
+    expect(isStatementTimeoutError(new Error("boom"))).toBe(false);
+    expect(isStatementTimeoutError("57014")).toBe(false);
+  });
+
+  it("does not match SQLITE_BUSY (lock wait, not a statement timeout)", () => {
+    const e = Object.assign(new Error("database is locked"), {
+      code: "SQLITE_BUSY",
+    });
+    expect(isStatementTimeoutError(e)).toBe(false);
   });
 });
 

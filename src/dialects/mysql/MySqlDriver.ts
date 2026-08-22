@@ -22,6 +22,14 @@ export class MySqlDriver implements ISqlDriver {
   private readonly columnDefBuilder: MySqlColumnDefinitionBuilder;
   private readonly version: DbVersion;
   private readonly capabilities: MySqlCapabilities;
+  /**
+   * True when the server on the other end is MariaDB, not MySQL.
+   *
+   * The declared `type` is not enough: pointing `type: "mysql"` at a MariaDB
+   * server is a common (and, until now, silently broken) configuration, so the
+   * detected server version string decides when it is available.
+   */
+  private readonly mariaDb: boolean;
 
   constructor(
     private readonly connector: IConnector,
@@ -29,6 +37,8 @@ export class MySqlDriver implements ISqlDriver {
     version?: DbVersion,
   ) {
     this.version = version ?? connector?.getVersion?.() ?? DbVersion.UNKNOWN;
+    this.mariaDb =
+      clientType === "mariadb" || DbVersion.isMariaDb(this.version.raw);
     this.capabilities = resolveMySqlCapabilities(
       this.version,
       clientType === "mariadb",
@@ -426,7 +436,18 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   setQueryTimeout(ms: number): string {
-    return `SET SESSION max_execution_time = ${Math.max(0, Math.floor(ms))}`;
+    const clamped = Math.max(0, Math.floor(ms));
+
+    // MariaDB never implemented `max_execution_time` — setting it aborts with
+    // ER_UNKNOWN_SYSTEM_VARIABLE (1193), which used to make every timed read
+    // fail on MariaDB instead of timing out. Its equivalent is
+    // `max_statement_time`, expressed in **seconds** (a double), so 300ms
+    // becomes 0.3. Both treat 0 as "no limit".
+    if (this.mariaDb) {
+      return `SET SESSION max_statement_time = ${clamped / 1000}`;
+    }
+
+    return `SET SESSION max_execution_time = ${clamped}`;
   }
 
   supportsExplain(): boolean {
