@@ -14,7 +14,7 @@ import {
   rawQuery,
   TestConnectionResult,
 } from "./helpers/test-connection";
-import { getMySqlConfig } from "./helpers/driver-config";
+import { getTestDrivers } from "./helpers/driver-config";
 import { generateTableName } from "./helpers/create-test-entity";
 import {
   Entity,
@@ -29,13 +29,12 @@ import { ColumnScanner } from "../../src/scanner";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 import { DatabaseClient } from "../../src/DatabaseClient";
 
-// Skip if INTEGRATION_TEST is not set or MySQL is disabled
-const shouldRun =
-  process.env.INTEGRATION_TEST === "true" &&
-  process.env.INTEGRATION_TEST_MYSQL !== "false";
-const describeIf = shouldRun ? describe : describe.skip;
-
-describeIf("[Integration] SnakeNamingStrategy", () => {
+// Dual-driver: the suite body was always driver-agnostic (information_schema
+// vs SHOW COLUMNS, quote style), but a leftover MySQL-only gate kept
+// PostgreSQL at zero coverage for SnakeNamingStrategy (V4-T1-2 ④). The
+// INTEGRATION_TEST gate itself lives in jest.config's ignore patterns, like
+// every other dual-driver suite.
+describe.each(getTestDrivers())("[Integration] $label: SnakeNamingStrategy", ({ options }) => {
   let conn: TestConnectionResult;
   let authorTableName: string;
   let articleTableName: string;
@@ -50,7 +49,7 @@ describeIf("[Integration] SnakeNamingStrategy", () => {
 
     conn = await createTestConnection(
       {
-        ...getMySqlConfig(),
+        ...options,
         synchronize: true,
         logging: false,
         namingStrategy: new SnakeNamingStrategy(),
