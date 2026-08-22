@@ -19,6 +19,27 @@ export function isDeadlockError(e: unknown): boolean {
 }
 
 /**
+ * Checks whether an error is the database reporting that it cancelled a
+ * statement because a timeout elapsed.
+ *
+ * - PostgreSQL: SQLSTATE `57014` (query_canceled) — the code `statement_timeout`
+ *   cancellations arrive with.
+ * - MySQL 5.7+: errno `3024` (ER_QUERY_TIMEOUT), from `max_execution_time`.
+ * - MariaDB: errno `1969` (ER_STATEMENT_TIMEOUT), from `max_statement_time`.
+ *
+ * SQLite has no statement timeout — `PRAGMA busy_timeout` only bounds lock
+ * waits, and those surface as SQLITE_BUSY — so nothing is matched for it.
+ */
+export function isStatementTimeoutError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const err = e as any;
+  if (err.code === "57014") return true;
+  if (err.errno === 3024 || err.code === "ER_QUERY_TIMEOUT") return true;
+  if (err.errno === 1969 || err.code === "ER_STATEMENT_TIMEOUT") return true;
+  return false;
+}
+
+/**
  * Distinguishes a tagged-template invocation from a plain string / array
  * argument. The runtime hands tag functions a frozen array with a `raw`
  * sibling array — that's the contract we test for.

@@ -44,7 +44,14 @@ export class AggregateQueryHandler {
       ? (fn2: (s: TransactionSessionManager) => Promise<number>) =>
           this.ctx.executeInTransaction(fn2, existingSession)
       : (fn2: (s: TransactionSessionManager) => Promise<number>) =>
-          this.ctx.executeReadOnly(fn2, {});
+          // count()/sum()/avg()/min()/max() take no per-query timeout, but the
+          // connection-level `queryTimeout` covers every read the ORM issues —
+          // an aggregate over a huge table is exactly the runaway query it is
+          // meant to bound. When a session is passed in, the caller's read
+          // already runs under the resolved timeout.
+          this.ctx.executeReadOnly(fn2, {
+            timeout: this.ctx.getDefaultQueryTimeout(),
+          });
 
     return executor(async (session) => {
       const tableName = metadata.name;

@@ -33,6 +33,9 @@ function createMockCtx(
       const mockSession = { query: jest.fn() };
       return fn(mockSession);
     }),
+    // Sessionless aggregates now forward the connection-level queryTimeout
+    // into executeReadOnly, so the internals view has to answer for it.
+    getDefaultQueryTimeout: jest.fn().mockReturnValue(undefined),
     beginTrackQuery: jest.fn(),
     trackQuery: jest.fn(),
     getReadNode: jest.fn().mockReturnValue(null),
