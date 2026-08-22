@@ -315,9 +315,11 @@ A query timeout is a circuit breaker. If a query does not finish within the spec
 ```typescript
 await em.register({
   // ...
-  queryTimeout: 5000, // 5-second timeout for ALL queries
+  queryTimeout: 5000, // 5-second timeout for every read query
 });
 ```
+
+The timeout applies to the **read path** — `find()` and its variants, pagination, aggregates, and `stream()`. Writes (`save`, `updateMany`, `delete`, raw queries) are not bounded by it.
 
 ### Per-query override
 
@@ -336,13 +338,14 @@ Stingerloom does not use JavaScript `setTimeout` to kill queries -- that would o
 
 | Database | SQL sent before the query |
 |----------|--------------------------|
-| MySQL | `SET max_execution_time = 5000` |
+| MySQL | `SET SESSION max_execution_time = 5000` |
+| MariaDB | `SET SESSION max_statement_time = 5` |
 | PostgreSQL | `SET LOCAL statement_timeout = '5000ms'` |
-| SQLite | Driver-level timeout (not SQL-based) |
+| SQLite | `PRAGMA busy_timeout` (bounds lock waits, not statement runtime) |
 
-For MySQL, `max_execution_time` is a per-statement hint measured in milliseconds. For PostgreSQL, `SET LOCAL` scopes the timeout to the current transaction, so it does not affect other connections or subsequent queries.
+MySQL's `max_execution_time` is milliseconds and applies to SELECT statements; MariaDB never implemented it — its equivalent is `max_statement_time` in seconds, and Stingerloom picks the right one from the server's version string, so `type: "mysql"` pointed at a MariaDB server works. Since `SET SESSION` outlives the query on a pooled connection, a per-query override is restored to the connection default afterwards. For PostgreSQL, `SET LOCAL` scopes the timeout to the transaction the read runs in, so it never leaks to other queries.
 
-When the timeout fires, the database aborts the query and returns an error. Stingerloom catches that error and throws a `QueryTimeoutError` with the original SQL and the timeout value for easy debugging.
+When the timeout fires, the database aborts the query and Stingerloom throws a `QueryTimeoutError` carrying the timeout value, with the driver's original error as `cause`.
 
 ---
 

@@ -49,6 +49,12 @@ export type CursorPaginationOption<T> = {
   useMaster?: boolean;
 
   /**
+   * Per-query timeout in milliseconds, overriding the connection-level
+   * `queryTimeout`. Mirrors `FindOption.timeout`.
+   */
+  timeout?: number;
+
+  /**
    * Skip tenant-column scoping under the `"tenant_column"` strategy.
    * See `FindOption.withoutTenantScope` for details.
    */

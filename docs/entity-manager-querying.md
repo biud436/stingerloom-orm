@@ -1183,6 +1183,19 @@ for await (const post of em.stream(Post, {
 }
 ```
 
+Your own `limit`, `take`, and `skip` define the overall **window** the stream covers — batching happens inside it, with the same precedence rules as `find()`:
+
+```typescript
+// Stream rows 101–600 only, fetched in batches of 100
+for await (const post of em.stream(Post, {
+  orderBy: { id: "ASC" },
+  skip: 100,
+  take: 500,
+}, 100)) {
+  await reindex(post);
+}
+```
+
 ### Progress tracking
 
 Combine with `count()` to show progress:

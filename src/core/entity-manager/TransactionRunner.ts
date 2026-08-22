@@ -8,7 +8,8 @@ import {
 import { MetadataContext } from "../../metadata/MetadataContext";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
-import { isDeadlockError } from "./internal-utils";
+import { isDeadlockError, isStatementTimeoutError } from "./internal-utils";
+import { QueryTimeoutError } from "../../errors/QueryTimeoutError";
 import type {
   TransactionOptions,
   ExecuteTransactionOptions,
@@ -114,6 +115,57 @@ export class TransactionRunner {
     }
   }
 
+  /**
+   * Runs `fn` with the driver's statement timeout in force on `session`, and
+   * translates the database's cancellation into {@link QueryTimeoutError}.
+   *
+   * Three things this centralizes, each of which used to be missing somewhere:
+   * - **Where the statement runs.** PostgreSQL's `SET LOCAL` silently does
+   *   nothing outside a transaction (the server accepts it and moves on), so
+   *   the timeout has to be issued on the session that actually executes the
+   *   read — including the transaction `executeReadOnly` opens for it.
+   * - **Restoring the session.** MySQL/MariaDB use `SET SESSION`, which
+   *   outlives the query and rides the pooled connection into whatever runs
+   *   next. A per-query override is undone afterwards, back to the
+   *   connection-level default (or "no limit" when there is none). SQLite is
+   *   left alone: its `PRAGMA busy_timeout` is a lock wait, not a statement
+   *   timeout, and zeroing it would drop better-sqlite3's default lock wait.
+   * - **What the caller catches.** Drivers report the cancellation with their
+   *   own codes; the documented contract is a `QueryTimeoutError`.
+   */
+  private async withQueryTimeout<R>(
+    session: TransactionSessionManager,
+    timeout: number | undefined,
+    fn: (session: TransactionSessionManager) => Promise<R>,
+  ): Promise<R> {
+    const driver = this.ctx.getDriver();
+    if (!timeout || timeout <= 0 || !driver) {
+      return fn(session);
+    }
+
+    await session.query(driver.setQueryTimeout(timeout));
+
+    try {
+      return await fn(session);
+    } catch (e: unknown) {
+      if (isStatementTimeoutError(e)) {
+        throw new QueryTimeoutError(timeout, e);
+      }
+      throw e;
+    } finally {
+      const fallback = this.ctx.getDefaultQueryTimeout() ?? 0;
+      if (fallback !== timeout && !this.ctx.isSqlite()) {
+        try {
+          await session.query(driver.setQueryTimeout(fallback));
+        } catch (restoreError) {
+          this.ctx
+            .getLogger()
+            .warn(`Failed to restore the query timeout: ${restoreError}`);
+        }
+      }
+    }
+  }
+
   async executeReadOnly<R>(
     fn: (session: TransactionSessionManager) => Promise<R>,
     options?: {
@@ -124,10 +176,17 @@ export class TransactionRunner {
   ): Promise<R> {
     const { existingSession, readNodeOverride, timeout } = options ?? {};
 
+    // Every path below runs the caller's work through `withQueryTimeout`, so
+    // the timeout statement is issued on whichever session actually executes
+    // the read — including the ambient one and the PostgreSQL transaction the
+    // next branch opens, where `SET LOCAL` is a no-op outside a transaction.
+    const run = (session: TransactionSessionManager): Promise<R> =>
+      this.withQueryTimeout(session, timeout, fn);
+
     // 1. Reuse existing session (@Transactional or nested call)
     const reusable = existingSession ?? transactionStorage.getStore();
     if (reusable) {
-      return fn(reusable);
+      return run(reusable);
     }
 
     // 2. PostgreSQL tenant or timeout → need transaction for SET LOCAL
@@ -139,7 +198,7 @@ export class TransactionRunner {
       tenant !== "public" &&
       this.ctx.getTenantStrategy().needsTransactionForTenantRead();
     if (this.ctx.isPostgres() && (needsTxForTenant || (timeout && timeout > 0))) {
-      return this.ctx.executeInTransaction(fn, existingSession, readNodeOverride);
+      return this.ctx.executeInTransaction(run, existingSession, readNodeOverride);
     }
 
     // 3. Lightweight read-only path (no BEGIN/COMMIT)
@@ -151,14 +210,7 @@ export class TransactionRunner {
         await session.connect(this.ctx.getConnectionName());
       }
 
-      // MySQL timeout (SET SESSION — no transaction needed)
-      const driver = this.ctx.getDriver();
-      if (timeout && timeout > 0 && driver && this.ctx.isMySqlFamily()) {
-        const timeoutSql = driver.setQueryTimeout(timeout);
-        await session.query(timeoutSql);
-      }
-
-      const result = await fn(session);
+      const result = await run(session);
       return result;
     } finally {
       try {

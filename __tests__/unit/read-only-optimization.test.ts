@@ -533,18 +533,30 @@ describe("Read-only Query Optimization (Issue #78)", () => {
     it("20. MySQL + timeout should NOT start a transaction, but SET SESSION", async () => {
       const em = createTestEntityManager({ isMySql: true });
       mockQuery
-        .mockResolvedValueOnce(undefined) // SET SESSION max_execution_time (from executeReadOnly)
-        .mockResolvedValueOnce(undefined) // SET SESSION max_execution_time (from findInternal inline)
+        .mockResolvedValueOnce(undefined) // SET SESSION max_execution_time = 3000
         .mockResolvedValueOnce({
           results: [{ id: 1, name: "Alice" }],
           fields: [],
-        });
+        })
+        .mockResolvedValueOnce(undefined); // restore: SET SESSION max_execution_time = 0
 
       await em.find(User, { timeout: 3000 });
 
       expect(mockStartTransaction).not.toHaveBeenCalled();
       expect(mockCommit).not.toHaveBeenCalled();
       expect(mockClose).toHaveBeenCalledTimes(1);
+
+      // Exactly one SET before the main query (the old code issued it twice:
+      // once in executeReadOnly, once inline in findInternal), and — because
+      // SET SESSION outlives the query on a pooled connection — a restore to
+      // the connection default (none configured → 0) afterwards.
+      const timeoutCalls = mockQuery.mock.calls
+        .map((c) => String(c[0]))
+        .filter((q) => q.includes("max_execution_time"));
+      expect(timeoutCalls).toEqual([
+        "SET SESSION max_execution_time = 3000",
+        "SET SESSION max_execution_time = 0",
+      ]);
     });
   });
 

@@ -320,7 +320,7 @@ A query timeout is a circuit breaker. It says: "If this query does not finish in
 ```typescript
 await em.register({
   // ...
-  queryTimeout: 5000, // 5-second timeout for all queries
+  queryTimeout: 5000, // 5-second timeout for all read queries
 });
 ```
 

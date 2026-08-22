@@ -157,6 +157,19 @@ export class ReadExecutor {
   private get aggregateHandler(): AggregateQueryHandler { return this.ctx.getAggregateHandler(); }
   private get defaultQueryTimeout(): number | undefined { return this.ctx.getDefaultQueryTimeout(); }
 
+  /**
+   * The timeout a read should run under: the per-query option when given,
+   * otherwise the connection-level `queryTimeout`.
+   *
+   * Every read entry point resolves it the same way. Passing only the
+   * per-query value (as findAndCount did) left the connection-level default to
+   * be applied deeper in the call stack, on a session PostgreSQL had already
+   * decided not to wrap in a transaction — where `SET LOCAL` does nothing.
+   */
+  private resolveTimeout(option?: { timeout?: number }): number | undefined {
+    return option?.timeout ?? this.defaultQueryTimeout;
+  }
+
   async findOne<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,
@@ -266,7 +279,7 @@ export class ReadExecutor {
     validateRelationNames(entity, findOption.relations, this.resolver);
 
     const readNode = this.ctx.getReadNode(findOption.useMaster);
-    const effectiveTimeout = findOption.timeout ?? this.defaultQueryTimeout;
+    const effectiveTimeout = this.resolveTimeout(findOption);
 
     return this.ctx.executeReadOnly(async (session) => {
       const resultTransformer = ResultTransformerFactory.create();
@@ -762,12 +775,10 @@ export class ReadExecutor {
 
       const resultQuery = qb.build();
 
-      // Apply per-query or connection-level timeout
-      const effectiveTimeout = findOption.timeout ?? this.defaultQueryTimeout;
-      if (effectiveTimeout && effectiveTimeout > 0 && this.driver) {
-        const timeoutSql = this.driver.setQueryTimeout(effectiveTimeout);
-        await session.query(timeoutSql);
-      }
+      // The timeout statement is issued by executeReadOnly (see
+      // `withQueryTimeout`), which owns the session this callback runs on —
+      // issuing it here as well left the PostgreSQL `SET LOCAL` outside any
+      // transaction on the paths that route around it.
 
       const queryStartTime = Date.now();
       this.ctx.beginTrackQuery();
@@ -1149,7 +1160,7 @@ export class ReadExecutor {
         nextCursor,
         count: entities.length,
       };
-    }, { readNodeOverride: readNode });
+    }, { readNodeOverride: readNode, timeout: this.resolveTimeout(option) });
   }
 
   async findAndCount<T>(
@@ -1166,7 +1177,7 @@ export class ReadExecutor {
       const entities =
         result == null ? [] : Array.isArray(result) ? result : [result];
       return [entities as T[], totalCount];
-    }, { readNodeOverride: readNode, timeout: findOption.timeout });
+    }, { readNodeOverride: readNode, timeout: this.resolveTimeout(findOption) });
   }
 
   async findWithPage<T>(

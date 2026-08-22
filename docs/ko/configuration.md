@@ -315,9 +315,11 @@ const log = em.getQueryLog();
 ```typescript
 await em.register({
   // ...
-  queryTimeout: 5000, // 모든 쿼리에 5초 타임아웃
+  queryTimeout: 5000, // 모든 읽기 쿼리에 5초 타임아웃
 });
 ```
+
+이 타임아웃은 **읽기 경로**에 적용돼요 — `find()`와 그 변형들, 페이지네이션, 집계, `stream()`. 쓰기(`save`, `updateMany`, `delete`, raw 쿼리)에는 적용되지 않습니다.
 
 ### 쿼리별 오버라이드
 
@@ -336,13 +338,14 @@ Stingerloom은 JavaScript `setTimeout`으로 쿼리를 끊지 않아요 -- 그�
 
 | 데이터베이스 | 쿼리 전에 전송되는 SQL |
 |------------|---------------------|
-| MySQL | `SET max_execution_time = 5000` |
+| MySQL | `SET SESSION max_execution_time = 5000` |
+| MariaDB | `SET SESSION max_statement_time = 5` |
 | PostgreSQL | `SET LOCAL statement_timeout = '5000ms'` |
-| SQLite | 드라이버 수준 타임아웃 (SQL 기반 아님) |
+| SQLite | `PRAGMA busy_timeout` (잠금 대기만 제한, 문 실행 시간은 아님) |
 
-MySQL의 `max_execution_time`은 밀리초 단위 문 힌트예요. PostgreSQL의 `SET LOCAL`은 현재 트랜잭션으로 타임아웃 범위를 제한해서 다른 연결이나 이후 쿼리에 영향을 주지 않아요.
+MySQL의 `max_execution_time`은 밀리초 단위이고 SELECT 문에 적용돼요. MariaDB는 이 변수를 구현하지 않았고 초 단위의 `max_statement_time`이 그 역할을 합니다 — Stingerloom이 서버 버전 문자열로 올바른 쪽을 고르기 때문에 `type: "mysql"`로 MariaDB 서버를 가리켜도 동작해요. `SET SESSION`은 풀 커넥션에서 쿼리보다 오래 살아남기 때문에, 쿼리별 오버라이드는 실행 후 연결 수준 기본값으로 복원됩니다. PostgreSQL의 `SET LOCAL`은 읽기가 실행되는 트랜잭션으로 범위가 제한되어 다른 쿼리로 새지 않아요.
 
-타임아웃이 발동되면 DB가 쿼리를 중단하고 에러를 돌려줘요. Stingerloom은 그 에러를 잡아서 원본 SQL과 타임아웃 값을 포함한 `QueryTimeoutError`를 던지기 때문에 디버깅이 쉬워요.
+타임아웃이 발동되면 DB가 쿼리를 중단하고, Stingerloom은 타임아웃 값을 담은 `QueryTimeoutError`를 던져요. 드라이버의 원본 에러는 `cause`로 확인할 수 있습니다.
 
 ---
 
