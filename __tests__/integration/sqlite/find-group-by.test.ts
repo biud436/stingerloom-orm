@@ -153,6 +153,29 @@ describe("[Integration] SQLite: find() with groupBy (default naming)", () => {
     expect(rows).toHaveLength(4);
   });
 
+  it("filters multi-column groups with having", async () => {
+    const rows = asArray(
+      await conn.em.find(GbOrder, {
+        select: ["status", "customerId"],
+        groupBy: ["status", "customerId"],
+        having: [sql`COUNT(*) >= ${2}`],
+      } as any),
+    );
+
+    // (pending, alice) x2 and (paid, bob) x2 survive
+    expect(rows).toHaveLength(2);
+  });
+
+  it("findAndCount with a multi-column groupBy counts group pairs", async () => {
+    const [rows, total] = await conn.em.findAndCount(GbOrder, {
+      select: ["status", "customerId"],
+      groupBy: ["status", "customerId"],
+    } as any);
+
+    expect(rows).toHaveLength(4);
+    expect(total).toBe(4);
+  });
+
   it("combines where with groupBy", async () => {
     const rows = asArray(
       await conn.em.find(GbOrder, {
@@ -275,6 +298,20 @@ describe("[Integration] SQLite: find() with groupBy under SnakeNamingStrategy", 
     expect(new Set(rows.map((r: any) => r.eventType))).toEqual(
       new Set(["click", "view"]),
     );
+  });
+
+  it("maps each entry of a multi-column groupBy independently", async () => {
+    // "eventType" needs the snake_case mapping, "score" passes through —
+    // per-entry resolution must not break the mixed case.
+    const rows = asArray(
+      await conn.em.find(GbEvent, {
+        select: ["eventType", "score"],
+        groupBy: ["eventType", "score"],
+      } as any),
+    );
+
+    // (click, 1), (click, 2), (view, 3)
+    expect(rows).toHaveLength(3);
   });
 
   it("keeps accepting the DB column name typed directly (fallback contract)", async () => {
