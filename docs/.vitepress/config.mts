@@ -85,6 +85,7 @@ function sidebarEn() {
         { text: "Raw SQL & CTE", link: "/raw-sql" },
         { text: "Raw Pipeline", link: "/raw-pipeline" },
         { text: "Pagination & Streaming", link: "/pagination" },
+        { text: "Query Result Cache", link: "/caching" },
       ],
     },
     {
@@ -227,6 +228,7 @@ function sidebarKo() {
         { text: "Raw SQL & CTE", link: "/ko/raw-sql" },
         { text: "Raw Pipeline", link: "/ko/raw-pipeline" },
         { text: "페이지네이션 & 스트리밍", link: "/ko/pagination" },
+        { text: "쿼리 결과 캐시", link: "/ko/caching" },
       ],
     },
     {

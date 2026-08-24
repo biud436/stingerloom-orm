@@ -13,6 +13,7 @@ import { EntityNotFoundError } from "../errors/EntityNotFoundError";
 import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import { CompiledQuery } from "./CompiledQuery";
+import type { QueryCachePolicy } from "./cache/QueryResultCache";
 import {
   normalizePage,
   normalizePageSize,
@@ -279,6 +280,12 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected limitValue: number | [number, number] | undefined;
   protected offsetValue: number | undefined;
   protected lockClause: string | undefined;
+  /** Per-builder query result cache request (see {@link cache}). */
+  protected cacheOption:
+    | boolean
+    | number
+    | { ttl?: number; tag?: string }
+    | undefined;
   protected withDeletedFlag = false;
   protected withoutTenantScopeFlag = false;
   protected extraSegments: Sql[] = [];
@@ -3121,6 +3128,57 @@ export class SelectQueryBuilder<T, TResult = T> {
    * For plain-object projections without validation, use `getPartialMany()`.
    * For completely untyped results, use `getRawMany()`.
    */
+  /**
+   * Opt into query result caching for this builder's terminals (`getMany`,
+   * `getOne`, `getRawMany`, `getPartialMany`, `getCount`, aggregate scalars,
+   * `exists`).
+   *
+   * - `true` (default) → connection-level default TTL
+   * - `number`         → TTL in milliseconds
+   * - `{ ttl, tag }`   → TTL override plus a user tag for manual
+   *   invalidation via `em.queryCache?.invalidate(tag)`
+   *
+   * Cached entries are invalidated by writes issued through the same
+   * EntityManager against the root entity or its entity-aware joins
+   * (`*AndSelect` / `loadRelation`). Raw table-name joins are bounded by the
+   * TTL only — pass a `tag` to invalidate those by hand. Locking queries
+   * (`FOR UPDATE`) and reads inside an active transaction always bypass the
+   * cache. See `FindOption.cache` for the full semantics.
+   *
+   * @example
+   * ```ts
+   * const rows = await em.createQueryBuilder(Product, "p")
+   *   .where("featured", true)
+   *   .cache(30_000)
+   *   .getMany();
+   * ```
+   */
+  cache(option: boolean | number | { ttl?: number; tag?: string } = true): this {
+    this.cacheOption = option;
+    return this;
+  }
+
+  /**
+   * @internal Dispatch a built SELECT through the query result cache when
+   * this builder opted in via {@link cache}; plain `em.query` otherwise.
+   */
+  protected async execQuery<TRow = any>(built: Sql): Promise<TRow[]> {
+    const policy = this.resolveCachePolicy();
+    if (!policy) return this.em.query<TRow>(built);
+    return policy.fetchRows(built, () => this.em.query<TRow>(built));
+  }
+
+  private resolveCachePolicy(): QueryCachePolicy | undefined {
+    if (!this.cacheOption || this.lockClause) return undefined;
+    // Partial EM doubles in unit tests may omit any internals member.
+    const cacheManager = this.emInternals._ctx?.getQueryCache?.();
+    if (!cacheManager) return undefined;
+    const joined = this.joinedSelections
+      .map((s) => s.entity)
+      .filter((e): e is ClazzType<any> => !!e);
+    return cacheManager.policyForBuilder(this.entity, joined, this.cacheOption);
+  }
+
   async getMany(): Promise<TResult[]> {
     this.validateRequiredColumns();
 
@@ -3142,7 +3200,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     }
 
     const built = this.toSql();
-    const rows = await this.em.query<any>(built);
+    const rows = await this.execQuery<any>(built);
 
     let entities: TResult[];
 
@@ -3833,7 +3891,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     }
 
     const built = this.toSql();
-    const rows = await this.em.query<any>(built);
+    const rows = await this.execQuery<any>(built);
     return this.applyValidation(rows);
   }
 
@@ -3890,7 +3948,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     options?: RawResultOptions<T>,
   ): Promise<T[]> {
     const built = this.toSql();
-    const rows = await this.em.query<Record<string, unknown>>(built);
+    const rows = await this.execQuery<Record<string, unknown>>(built);
     if (options?.coerce) {
       return coerceRows<T>(rows, options.coerce);
     }
@@ -4096,7 +4154,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         outer.from(sql`(${inner.build()})`, `AS ${this.em.wrap("count_src")}`);
 
         const built = outer.build();
-        const rows = await this.em.query<{ count: string | number }>(built);
+        const rows = await this.execQuery<{ count: string | number }>(built);
         if (rows.length === 0) return 0;
         return Number(rows[0].count);
       }
@@ -4115,7 +4173,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     }
 
     const built = qb.build();
-    const rows = await this.em.query<{ count: string | number }>(built);
+    const rows = await this.execQuery<{ count: string | number }>(built);
     if (rows.length === 0) return 0;
     return Number(rows[0].count);
   }
@@ -4174,7 +4232,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         outer.from(sql`(${inner.build()})`, `AS ${this.em.wrap("agg_src")}`);
 
         const built = outer.build();
-        const rows = await this.em.query<{ result: string | number | null }>(
+        const rows = await this.execQuery<{ result: string | number | null }>(
           built,
         );
         if (rows.length === 0) return 0;
@@ -4193,7 +4251,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     this.applyCountSource(qb);
 
     const built = qb.build();
-    const rows = await this.em.query<{ result: string | number | null }>(built);
+    const rows = await this.execQuery<{ result: string | number | null }>(built);
     if (rows.length === 0) return 0;
     const value = rows[0].result;
     return value === null || value === undefined ? 0 : Number(value);
@@ -4333,7 +4391,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       else qb.offset(offset);
     }
 
-    return this.em.query<Record<string, unknown>>(qb.build());
+    return this.execQuery<Record<string, unknown>>(qb.build());
   }
 
   /**
@@ -4476,7 +4534,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     qb.limit(1);
 
     const built = qb.build();
-    const rows = await this.em.query<Record<string, unknown>>(built);
+    const rows = await this.execQuery<Record<string, unknown>>(built);
     return rows.length > 0;
   }
 
@@ -4547,6 +4605,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.limitValue = this.limitValue;
     cloned.offsetValue = this.offsetValue;
     cloned.lockClause = this.lockClause;
+    cloned.cacheOption = this.cacheOption;
     cloned.withDeletedFlag = this.withDeletedFlag;
     cloned.withoutTenantScopeFlag = this.withoutTenantScopeFlag;
     cloned.extraSegments = [...this.extraSegments];

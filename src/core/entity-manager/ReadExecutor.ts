@@ -281,7 +281,25 @@ export class ReadExecutor {
     const readNode = this.ctx.getReadNode(findOption.useMaster);
     const effectiveTimeout = this.resolveTimeout(findOption);
 
-    return this.ctx.executeReadOnly(async (session) => {
+    // Query result cache: only a top-level read may cache (a caller-supplied
+    // session means we are inside another operation's — possibly wrapped —
+    // session, and a locking read must always reach the database). The
+    // ambient-transaction bypass lives in policyForFind.
+    const cachePolicy =
+      findOption.cache && !existingSession && !findOption.lock
+        ? this.ctx.getQueryCache()?.policyForFind(entity, {
+            cache: findOption.cache,
+            relations: findOption.relations as readonly string[] | undefined,
+          })
+        : undefined;
+
+    return this.ctx.executeReadOnly(async (rawSession) => {
+      // The wrapped session serves repeated SELECT row sets from the cache;
+      // relation loaders receive it too, so their queries share the entry's
+      // TTL and table tags.
+      const session = cachePolicy
+        ? cachePolicy.wrapSession(rawSession)
+        : rawSession;
       const resultTransformer = ResultTransformerFactory.create();
 
       const metadata = this.resolver.resolveEntityMetadata(entity);
@@ -1017,7 +1035,14 @@ export class ReadExecutor {
     const where: any = { ...(option.where ?? {}) };
     const readNode = this.ctx.getReadNode(option.useMaster);
 
-    return this.ctx.executeReadOnly(async (session) => {
+    const cachePolicy = option.cache
+      ? this.ctx.getQueryCache()?.policyForFind(entity, { cache: option.cache })
+      : undefined;
+
+    return this.ctx.executeReadOnly(async (rawSession) => {
+      const session = cachePolicy
+        ? cachePolicy.wrapSession(rawSession)
+        : rawSession;
       const resultTransformer = ResultTransformerFactory.create();
 
       const tableName = metadata.name;
@@ -1175,7 +1200,20 @@ export class ReadExecutor {
     findOption: FindOption<T> = {},
   ): Promise<[T[], number]> {
     const readNode = this.ctx.getReadNode(findOption.useMaster);
-    return this.ctx.executeReadOnly(async (session) => {
+    // Both the data query and the count query run on this session, so
+    // wrapping it caches the pair under one policy. findInternal receives
+    // the wrapped session as an existing one and never double-wraps.
+    const cachePolicy =
+      findOption.cache && !findOption.lock
+        ? this.ctx.getQueryCache()?.policyForFind(entity, {
+            cache: findOption.cache,
+            relations: findOption.relations as readonly string[] | undefined,
+          })
+        : undefined;
+    return this.ctx.executeReadOnly(async (rawSession) => {
+      const session = cachePolicy
+        ? cachePolicy.wrapSession(rawSession)
+        : rawSession;
       const result = await this.ctx.findInternal<T>(entity, findOption, session);
       // With groupBy the data rows are groups, so `total` must count groups
       // (honoring HAVING) — a where-only COUNT(*) counted raw rows and broke
@@ -1222,6 +1260,7 @@ export class ReadExecutor {
       useMaster: option.useMaster,
       groupBy: option.groupBy,
       having: option.having,
+      cache: option.cache,
       limit: [offset, pageSize],
     });
 

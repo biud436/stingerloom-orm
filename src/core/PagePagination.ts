@@ -43,6 +43,13 @@ export type PagePaginationOption<T> = {
 
   /** HAVING conditions for GROUP BY */
   having?: Sql[];
+
+  /**
+   * Opt-in query result caching for this page read.
+   * See `FindOption.cache` — page/pageSize participate in the cache key, so
+   * each page caches independently.
+   */
+  cache?: boolean | number | { ttl?: number; tag?: string };
 };
 
 /**

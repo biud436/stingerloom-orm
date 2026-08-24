@@ -1407,6 +1407,7 @@ Here's every option you can pass to `find()`, in one table:
 | `lock` | `LockMode` | Pessimistic locking (requires transaction) |
 | `timeout` | `number` | Query timeout in milliseconds |
 | `useMaster` | `boolean` | Force read from master (when using read replicas) |
+| `cache` | `boolean` \| `number` \| `{ ttl?, tag? }` | Opt-in query result cache (see [Query Result Cache](./caching.md)) |
 
 ---
 

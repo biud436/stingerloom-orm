@@ -363,4 +363,26 @@ export type FindOption<T> = {
    * For context-wide opt-out use `MetadataContext.runUnscoped`.
    */
   withoutTenantScope?: boolean;
+
+  /**
+   * Opt-in query result caching for this read.
+   *
+   * - `true`     → cache with the connection-level default TTL (1s unless
+   *   configured via `register({ cache: { ttl } })`)
+   * - `number`   → cache with that TTL in milliseconds
+   * - `{ ttl, tag }` → TTL override plus a user tag for manual invalidation
+   *   via `em.queryCache?.invalidate(tag)`
+   *
+   * The cache stores raw row sets, not entity instances — every call (hit or
+   * miss) hydrates fresh entities and fires `afterLoad`. Writes issued
+   * through the same EntityManager invalidate affected tables automatically;
+   * writes from other processes are only bounded by the TTL. Reads inside an
+   * active transaction and locking reads (`lock`) always bypass the cache.
+   *
+   * @example
+   * ```ts
+   * em.find(Product, { where: { featured: true }, cache: 30_000 })
+   * ```
+   */
+  cache?: boolean | number | { ttl?: number; tag?: string };
 };
