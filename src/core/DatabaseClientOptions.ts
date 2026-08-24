@@ -4,6 +4,7 @@ import { NamingStrategy } from "./generators/NamingStrategy";
 import { StingerloomPlugin } from "./plugin/StingerloomPlugin";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import type { QueryCacheOptions } from "./cache/QueryResultCache";
 
 /**
  * Connection pool configuration options.
@@ -148,6 +149,20 @@ interface BaseDatabaseClientOptions {
    * statement_timeout for PostgreSQL).
    */
   queryTimeout?: number;
+
+  /**
+   * Query result cache configuration.
+   *
+   * Caching is opt-in per query (`FindOption.cache` /
+   * `SelectQueryBuilder.cache()`) and works without this option — this
+   * configures the defaults:
+   * - `{ ttl }` — default TTL in ms for `cache: true` queries (default 1000)
+   * - `{ maxEntries }` — in-memory store capacity (default 1000 entries)
+   * - `{ store }` — custom `QueryCacheStore` backend (e.g. Redis)
+   * - `false` — kill switch: every per-query `cache` request is ignored
+   * - `true` — enable with all defaults (same as omitting the option)
+   */
+  cache?: boolean | QueryCacheOptions;
 
   /**
    * Connection pool configuration.
@@ -518,6 +533,47 @@ export function validateDatabaseClientOptions(
     errors.push(
       `'queryTimeout' must be a non-negative number, got ${JSON.stringify(options.queryTimeout)}.`,
     );
+  }
+
+  // cache
+  if (options.cache !== undefined && typeof options.cache !== "boolean") {
+    if (typeof options.cache !== "object" || options.cache === null) {
+      errors.push(
+        `'cache' must be a boolean or an options object, got ${JSON.stringify(options.cache)}.`,
+      );
+    } else {
+      if (
+        options.cache.ttl !== undefined &&
+        (typeof options.cache.ttl !== "number" || options.cache.ttl <= 0)
+      ) {
+        errors.push(
+          `'cache.ttl' must be a positive number, got ${JSON.stringify(options.cache.ttl)}.`,
+        );
+      }
+      if (
+        options.cache.maxEntries !== undefined &&
+        (typeof options.cache.maxEntries !== "number" ||
+          !Number.isInteger(options.cache.maxEntries) ||
+          options.cache.maxEntries < 1)
+      ) {
+        errors.push(
+          `'cache.maxEntries' must be a positive integer, got ${JSON.stringify(options.cache.maxEntries)}.`,
+        );
+      }
+      if (
+        options.cache.store !== undefined &&
+        (typeof options.cache.store !== "object" ||
+          options.cache.store === null ||
+          typeof options.cache.store.get !== "function" ||
+          typeof options.cache.store.set !== "function" ||
+          typeof options.cache.store.invalidateTags !== "function" ||
+          typeof options.cache.store.clear !== "function")
+      ) {
+        errors.push(
+          "'cache.store' must implement QueryCacheStore (get/set/invalidateTags/clear).",
+        );
+      }
+    }
   }
 
   // pool

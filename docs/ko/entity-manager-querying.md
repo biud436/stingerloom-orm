@@ -1407,6 +1407,7 @@ WHERE "email" = $1
 | `lock` | `LockMode` | 비관적 잠금 (트랜잭션 필수) |
 | `timeout` | `number` | 쿼리 타임아웃 (밀리초) |
 | `useMaster` | `boolean` | Read replica 사용 시 마스터에서 읽기 강제 |
+| `cache` | `boolean` \| `number` \| `{ ttl?, tag? }` | opt-in 쿼리 결과 캐시 ([쿼리 결과 캐시](./caching.md) 참고) |
 
 ---
 

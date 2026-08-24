@@ -250,6 +250,7 @@ interface FindOption<T> {
   timeout?: number;
   useMaster?: boolean;
   lock?: LockMode;
+  cache?: boolean | number | { ttl?: number; tag?: string };  // opt-in 쿼리 결과 캐시
 }
 
 enum LockMode {

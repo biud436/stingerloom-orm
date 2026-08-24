@@ -154,6 +154,9 @@ async function main() {
     database: ":memory:",
     synchronize: false,
     logging: false,
+    // Sized so the cached-read scenarios below never thrash the LRU
+    // (findOne cycles 1,000 distinct keys).
+    cache: { maxEntries: 4096 },
     entities: [BenchUser, BenchPost, BenchEvent],
   } as any);
 
@@ -240,10 +243,23 @@ async function main() {
   await bench("findOne by pk", 2000, 200, (i) =>
     em.findOne(BenchUser, { where: { id: (i % 1000) + 1 } as any }),
   );
+  await bench("findOne by pk (cached)", 2000, 200, (i) =>
+    em.findOne(BenchUser, {
+      where: { id: (i % 1000) + 1 } as any,
+      cache: 600_000,
+    }),
+  );
   await bench("find 100 rows", 300, 30, (i) =>
     em.find(BenchUser, {
       where: { city: i % 2 ? "seoul" : "busan" } as any,
       limit: [0, 100],
+    }),
+  );
+  await bench("find 100 rows (cached)", 300, 30, (i) =>
+    em.find(BenchUser, {
+      where: { city: i % 2 ? "seoul" : "busan" } as any,
+      limit: [0, 100],
+      cache: 600_000,
     }),
   );
   await bench("find 100 rows + eager M2O", 100, 10, (i) =>

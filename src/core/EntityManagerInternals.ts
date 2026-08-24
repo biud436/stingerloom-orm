@@ -54,6 +54,18 @@ export interface EntityManagerInternals {
   getRelationLoader(): RelationLoader;
   getAggregateHandler(): AggregateQueryHandler;
   getDefaultQueryTimeout(): number | undefined;
+  /**
+   * The query result cache for this EntityManager, created on first use.
+   * Returns `undefined` when disabled via `register({ cache: false })`.
+   * Call only when a query actually requested caching — creation is lazy.
+   */
+  getQueryCache(): import("./cache/QueryResultCache").QueryResultCache | undefined;
+  /**
+   * The query result cache if one already exists (configured at register
+   * time, or created by an earlier cached read). Never creates one — write
+   * paths use this so uncached workloads pay nothing.
+   */
+  peekQueryCache(): import("./cache/QueryResultCache").QueryResultCache | undefined;
   /** Warns once (per entity) when cursor pagination runs on a non-sortable PK. */
   warnIfNonSortablePk(entityName: string, pk: ColumnMetadata): void;
   /** Dialect-specific row-lock suffix (FOR UPDATE / FOR SHARE / NOWAIT / SKIP LOCKED). */

@@ -101,6 +101,7 @@ import { SelectQueryBuilder, isEntityRef } from "./SelectQueryBuilder";
 import type { EntityRef } from "./SelectQueryBuilder";
 import { UpdateQueryBuilder } from "./UpdateQueryBuilder";
 import { CompiledQuery, p as createPlaceholder, PlaceholderMarker } from "./CompiledQuery";
+import { QueryResultCache, QueryCacheOptions } from "./cache/QueryResultCache";
 import { DmlSqlBuilder } from "./entity-manager/DmlSqlBuilder";
 import { WriteExecutor } from "./entity-manager/WriteExecutor";
 import { ReadExecutor } from "./entity-manager/ReadExecutor";
@@ -159,6 +160,7 @@ export class EntityManager implements BaseEntityManager {
   private queryTracker: QueryTracker | null = null;
   private defaultQueryTimeout: number | undefined;
   private queryLoggingEnabled = false;
+  private _queryCache: QueryResultCache | undefined;
 
   /**
    * The connection name this EntityManager uses.
@@ -226,6 +228,8 @@ export class EntityManager implements BaseEntityManager {
     getRelationLoader: () => this.relationLoader,
     getAggregateHandler: () => this.aggregateHandler,
     getDefaultQueryTimeout: () => this.defaultQueryTimeout,
+    getQueryCache: () => this.getOrCreateQueryCache(),
+    peekQueryCache: () => this._queryCache,
     warnIfNonSortablePk: (n, pk) => this.warnIfNonSortablePk(n, pk),
     resolveLockSuffix: (lock) => this.resolveLockSuffix(lock),
     getEntities: () => this._entities,
@@ -283,7 +287,7 @@ export class EntityManager implements BaseEntityManager {
     findInternal: (e, o, s) => this.findInternal(e, o, s),
     findOneInternal: (e, o, s) => this.findOneInternal(e, o, s),
     save: (e, i) => this.save(e, i),
-    saveWithSession: (e, i, s) => this.writeExecutor.saveInternal(e, i, s),
+    saveWithSession: (e, i, s) => this.finishWrite(e, this.writeExecutor.saveInternal(e, i, s)),
     find: (e, o) => this.find(e, o),
     findOne: (e, o) => this.findOne(e, o),
     findAndCount: (e, o) => this.findAndCount(e, o),
@@ -641,10 +645,74 @@ export class EntityManager implements BaseEntityManager {
     // Initialize TenantQueryStrategy
     this.tenantScope.configure(databaseClientOptions);
 
+    // Query result cache: created eagerly when configured at register time
+    // so a custom external store (e.g. Redis) receives write invalidations
+    // even from a process that never issues a cached read. Without explicit
+    // config it is created lazily by the first `cache`-requesting query.
+    if (databaseClientOptions.cache && databaseClientOptions.cache !== true) {
+      this._queryCache = new QueryResultCache(
+        this._ctx,
+        databaseClientOptions.cache,
+      );
+    } else if (databaseClientOptions.cache === true) {
+      this._queryCache = new QueryResultCache(this._ctx);
+    }
+
     // Initialize ReplicationRouter
     if (replication) {
       this.replication.initialize(replication);
     }
+  }
+
+  /**
+   * Lazily resolves the query result cache, honoring the `cache: false`
+   * kill switch from the connection options.
+   */
+  private getOrCreateQueryCache(): QueryResultCache | undefined {
+    if (this._queryCache) return this._queryCache;
+    if (this.getQueryCacheConfig() === false) return undefined;
+    this._queryCache = new QueryResultCache(this._ctx);
+    return this._queryCache;
+  }
+
+  private getQueryCacheConfig(): boolean | QueryCacheOptions | undefined {
+    try {
+      return this.client.getOptions(this.connectionName)?.cache;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The query result cache for this EntityManager. `undefined` when caching
+   * is disabled via `register({ cache: false })`.
+   *
+   * Use it for manual control:
+   * ```ts
+   * await em.queryCache?.invalidate(Product);       // by entity
+   * await em.queryCache?.invalidate("dashboard");   // by user tag
+   * await em.queryCache?.clear();
+   * em.queryCache?.stats;                            // { hits, misses, entries }
+   * ```
+   */
+  get queryCache(): QueryResultCache | undefined {
+    return this.getOrCreateQueryCache();
+  }
+
+  /**
+   * Completes a write API call: after the write succeeds, drops every cached
+   * row set whose tables the write could have touched. Uses the peeked cache
+   * (never creates one), so workloads that never cache pay nothing. Runs on
+   * cascade re-entry too — each cascaded entity invalidates its own closure.
+   */
+  private async finishWrite<R>(
+    entity: ClazzType<any>,
+    work: Promise<R>,
+  ): Promise<R> {
+    const result = await work;
+    const cache = this._queryCache;
+    if (cache) await cache.invalidateEntity(entity);
+    return result;
   }
 
   /**
@@ -1301,21 +1369,21 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     item: Partial<T>,
   ): Promise<InstanceType<ClazzType<T>>> {
-    return this.writeExecutor.save(entity, item);
+    return this.finishWrite(entity, this.writeExecutor.save(entity, item));
   }
 
   async saveMany<T>(
     entity: ClazzType<T>,
     items: Partial<T>[],
   ): Promise<InstanceType<ClazzType<T>>[]> {
-    return this.writeExecutor.saveMany(entity, items);
+    return this.finishWrite(entity, this.writeExecutor.saveMany(entity, items));
   }
 
   async insertMany<T>(
     entity: ClazzType<T>,
     items: Partial<T>[],
   ): Promise<{ affected: number }> {
-    return this.writeExecutor.insertMany(entity, items);
+    return this.finishWrite(entity, this.writeExecutor.insertMany(entity, items));
   }
 
   /**
@@ -1341,7 +1409,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     items: Partial<T>[],
   ): Promise<InstanceType<ClazzType<T>>[]> {
-    return this.writeExecutor.insertManyAndReturn(entity, items);
+    return this.finishWrite(entity, this.writeExecutor.insertManyAndReturn(entity, items));
   }
 
   // ── CRUD: Delete ────────────────────────────────────────────
@@ -1350,15 +1418,15 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
   ): Promise<DeleteResult> {
-    return this.writeExecutor.delete(entity, criteria);
+    return this.finishWrite(entity, this.writeExecutor.delete(entity, criteria));
   }
 
   async deleteMany<T>(entity: ClazzType<T>, ids: unknown[]): Promise<DeleteResult> {
-    return this.writeExecutor.deleteMany(entity, ids);
+    return this.finishWrite(entity, this.writeExecutor.deleteMany(entity, ids));
   }
 
   async clear<T>(entity: ClazzType<T>): Promise<void> {
-    return this.writeExecutor.clear(entity);
+    return this.finishWrite(entity, this.writeExecutor.clear(entity));
   }
 
   /**
@@ -1391,7 +1459,7 @@ export class EntityManager implements BaseEntityManager {
     where: WhereClause<T>,
     data: UpdateData<T>,
   ): Promise<{ affected: number }> {
-    return this.writeExecutor.update(entity, where, data);
+    return this.finishWrite(entity, this.writeExecutor.update(entity, where, data));
   }
 
   /**
@@ -1430,7 +1498,7 @@ export class EntityManager implements BaseEntityManager {
     data: UpdateData<T>,
     options: UpdateManyOptions<T>,
   ): Promise<{ affected: number }> {
-    return this.writeExecutor.updateMany(entity, data, options);
+    return this.finishWrite(entity, this.writeExecutor.updateMany(entity, data, options));
   }
 
   /**
@@ -1465,7 +1533,7 @@ export class EntityManager implements BaseEntityManager {
     column: keyof T & string,
     by: number = 1,
   ): Promise<{ affected: number }> {
-    return this.writeExecutor.increment(entity, where, column, by);
+    return this.finishWrite(entity, this.writeExecutor.increment(entity, where, column, by));
   }
 
   /**
@@ -1495,7 +1563,7 @@ export class EntityManager implements BaseEntityManager {
     column: keyof T & string,
     by: number = 1,
   ): Promise<{ affected: number }> {
-    return this.writeExecutor.decrement(entity, where, column, by);
+    return this.finishWrite(entity, this.writeExecutor.decrement(entity, where, column, by));
   }
 
   /**
@@ -1568,21 +1636,21 @@ export class EntityManager implements BaseEntityManager {
     orderBySql: Sql | undefined,
     limit: number | undefined,
   ): Promise<{ affected: number }> {
-    return this.writeExecutor.executeBuilderUpdate(entity, setEntries, whereConditions, orderBySql, limit);
+    return this.finishWrite(entity, this.writeExecutor.executeBuilderUpdate(entity, setEntries, whereConditions, orderBySql, limit));
   }
 
   async softDelete<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
   ): Promise<DeleteResult> {
-    return this.writeExecutor.softDelete(entity, criteria);
+    return this.finishWrite(entity, this.writeExecutor.softDelete(entity, criteria));
   }
 
   async restore<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
   ): Promise<DeleteResult> {
-    return this.writeExecutor.restore(entity, criteria);
+    return this.finishWrite(entity, this.writeExecutor.restore(entity, criteria));
   }
 
   // ── Upsert ────────────────────────────────────────────────
@@ -1609,7 +1677,7 @@ export class EntityManager implements BaseEntityManager {
     data: Partial<T>,
     conflictColumns?: string[],
   ): Promise<{ affected: number }> {
-    return this.writeExecutor.upsert(entity, data, conflictColumns);
+    return this.finishWrite(entity, this.writeExecutor.upsert(entity, data, conflictColumns));
   }
 
   /**
@@ -1630,7 +1698,7 @@ export class EntityManager implements BaseEntityManager {
     data: Partial<T>,
     conflictColumns?: string[],
   ): Promise<{ affected: number }> {
-    return this.writeExecutor.insertIgnore(entity, data, conflictColumns);
+    return this.finishWrite(entity, this.writeExecutor.insertIgnore(entity, data, conflictColumns));
   }
 
   // ── Batch Upsert ──────────────────────────────────────────
@@ -1652,7 +1720,7 @@ export class EntityManager implements BaseEntityManager {
     items: Partial<T>[],
     conflictColumns?: string[],
   ): Promise<{ affected: number }> {
-    return this.writeExecutor.batchUpsert(entity, items, conflictColumns);
+    return this.finishWrite(entity, this.writeExecutor.batchUpsert(entity, items, conflictColumns));
   }
 
   // ── ManyToMany join-table mutation helpers ─────────────────────────

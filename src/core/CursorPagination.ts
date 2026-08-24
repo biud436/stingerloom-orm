@@ -59,6 +59,13 @@ export type CursorPaginationOption<T> = {
    * See `FindOption.withoutTenantScope` for details.
    */
   withoutTenantScope?: boolean;
+
+  /**
+   * Opt-in query result caching for this page read.
+   * See `FindOption.cache` for semantics — the cursor value participates in
+   * the cache key, so each page caches independently.
+   */
+  cache?: boolean | number | { ttl?: number; tag?: string };
 };
 
 /**

@@ -13,6 +13,15 @@ export {
   DialectName,
 } from "./ColumnTypeRegistry";
 export { CompiledQuery, p, PlaceholderMarker } from "./CompiledQuery";
+export {
+  InMemoryQueryCacheStore,
+  QueryCacheOption,
+  QueryCacheOptions,
+  QueryCachePolicy,
+  QueryCacheStats,
+  QueryCacheStore,
+  QueryResultCache,
+} from "./cache/QueryResultCache";
 export { Conditions } from "./Conditions";
 export {
   CursorPaginationOption,
