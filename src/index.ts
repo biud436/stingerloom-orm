@@ -40,7 +40,10 @@ export {
   CursorPaginationOption,
   CursorPaginationResult,
   decodeCursor,
+  decodeCursorKey,
+  DecodedCursorKey,
   encodeCursor,
+  encodeCursorKey,
   normalizePageSize,
 } from "./core/CursorPagination";
 export {

@@ -121,6 +121,43 @@ export function decodeCursor(cursor: string): unknown | null {
 }
 
 /**
+ * Keyset cursor payload for lossless pagination on non-unique order columns.
+ *
+ * `v` is the order-column value of the page's last row (`null` when that row
+ * sorts in the NULL region) and `p` is its primary-key value — the tiebreaker
+ * that keeps rows sharing the same order value from being skipped at page
+ * boundaries. Reuses the legacy `v` key so pre-keyset cursors (`{v}` only)
+ * still decode (`pk` comes back `undefined` and the caller falls back to the
+ * strict-compare transition behavior for that one page).
+ */
+export function encodeCursorKey(order: unknown, pk: unknown): string {
+  const payload = JSON.stringify({ v: order ?? null, p: pk });
+  return Buffer.from(payload, "utf-8").toString("base64");
+}
+
+export type DecodedCursorKey = {
+  /** Order-column value of the last row; null inside the NULL region. */
+  order: unknown;
+  /** PK tiebreaker; undefined for legacy scalar cursors. */
+  pk: unknown | undefined;
+};
+
+/**
+ * Decode a Base64 keyset cursor. Returns null only on genuinely invalid
+ * input (bad Base64 / JSON) — a `{v: null, p}` NULL-region cursor is valid.
+ */
+export function decodeCursorKey(cursor: string): DecodedCursorKey | null {
+  try {
+    const json = Buffer.from(cursor, "base64").toString("utf-8");
+    const parsed = JSON.parse(json);
+    if (parsed === null || typeof parsed !== "object") return null;
+    return { order: parsed.v ?? null, pk: parsed.p };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Normalize the `take` value of CursorPaginationOption.
  */
 export function normalizePageSize(take?: number): number {
