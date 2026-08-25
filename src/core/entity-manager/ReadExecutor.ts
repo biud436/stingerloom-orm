@@ -13,6 +13,7 @@ import { RawQueryBuilderFactory } from "../RawQueryBuilderFactory";
 import { Conditions } from "../Conditions";
 import { ResultTransformerFactory } from "../ResultTransformerFactory";
 import { injectLazyProxy } from "../LazyLoader";
+import { MetadataContext } from "../../metadata/MetadataContext";
 import { EntityMetadataNotFoundError } from "../../errors/EntityMetadataNotFoundError";
 import { InvalidQueryError } from "../../errors/InvalidQueryError";
 import { EntityNotFoundError } from "../../errors/EntityNotFoundError";
@@ -996,11 +997,23 @@ export class ReadExecutor {
 
             const em = this;
             const proxyWithDeleted = findOption.withDeleted;
+            // The load fires at property-access time, possibly under another
+            // tenant's context (or none). Replay the hydration-time context so
+            // the deferred read stays consistent with the entity's own tenant
+            // — the lazy mirror of eager loading, which reads the relation at
+            // hydration time. Without this, tenant_column silently loads null
+            // and schema-based strategies can resolve the table to ANOTHER
+            // tenant's schema and hydrate a same-id foreign row.
+            const hydrationContext = MetadataContext.capture();
             injectLazyProxy(item as any, rel.columnName, async () => {
-              const result = await em.findOne(RelatedEntity, {
-                where: { [this.ctx.propKey(relatedPk)]: fkValue } as any,
-                withDeleted: proxyWithDeleted,
-              });
+              const result = await MetadataContext.runCaptured(
+                hydrationContext,
+                () =>
+                  em.findOne(RelatedEntity, {
+                    where: { [this.ctx.propKey(relatedPk)]: fkValue } as any,
+                    withDeleted: proxyWithDeleted,
+                  }),
+              );
               return result as any;
             });
           }
