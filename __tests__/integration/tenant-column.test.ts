@@ -497,6 +497,46 @@ describe.each(drivers)(
         }
       });
     });
+
+    // ─────────────────────────────────────────────────────
+    // 12. Eager/relations JOIN scopes the JOINED table
+    // ─────────────────────────────────────────────────────
+    describe("12. Eager/relations JOIN scopes the joined table", () => {
+      it("ManyToOne relations load: FK pointing at another tenant's row hydrates as null", async () => {
+        // INSERT validates the inserted row's tenant but cannot validate FK
+        // targets, so tenant globex can store authorId = acme's user PK. The
+        // JOIN's ON clause must scope the joined table — same contract as the
+        // batched relation loader.
+        let acmeUserId!: number;
+        await MetadataContext.run("acme", async () => {
+          const u: any = await em.save(UserE, { name: "AcmeOwner" });
+          acmeUserId = u.id;
+        });
+        await MetadataContext.run("globex", async () => {
+          await em.save(PostE, { title: "gx-post", authorId: acmeUserId });
+        });
+
+        await MetadataContext.run("globex", async () => {
+          const rows: any[] = await em.find(PostE, {
+            relations: ["author"],
+          } as any);
+          expect(rows.length).toBe(1);
+          expect(rows[0].author ?? null).toBeNull();
+        });
+
+        // Same-tenant sanity: the predicate must not break normal hydration.
+        await MetadataContext.run("acme", async () => {
+          const u: any = await em.save(UserE, { name: "AcmeAuthor2" });
+          await em.save(PostE, { title: "acme-post", authorId: u.id });
+          const rows: any[] = await em.find(PostE, {
+            where: { title: "acme-post" } as any,
+            relations: ["author"],
+          } as any);
+          expect(rows.length).toBe(1);
+          expect(rows[0].author?.name).toBe("AcmeAuthor2");
+        });
+      });
+    });
   },
 );
 

@@ -696,6 +696,21 @@ export class ReadExecutor {
           joinCondition = sql`${joinCondition} AND ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedDeletedAt))} IS NULL`;
         }
 
+        // Tenant scoping must cover the JOINED table too — the batched and
+        // lazy relation loaders both filter the related entity by tenant, and
+        // an FK is user-supplied so it can point at another tenant's row.
+        // The predicate lives in the ON clause so the parent row survives
+        // (relation hydrates as null), matching the loaders' semantics.
+        if (!findOption.withoutTenantScope) {
+          const relTenantPredicate = this.ctx.buildTenantWhereClause(
+            RelatedEntity,
+            relAlias,
+          );
+          if (relTenantPredicate) {
+            joinCondition = sql`${joinCondition} AND ${relTenantPredicate}`;
+          }
+        }
+
         qb.leftJoin(
           this.ctx.wrapTable(relatedTableName),
           this.ctx.wrap(relAlias),
@@ -725,6 +740,18 @@ export class ReadExecutor {
         const relatedDeletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
         if (relatedDeletedAt && !(findOption as any).withDeleted) {
           joinCondition = sql`${joinCondition} AND ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedDeletedAt))} IS NULL`;
+        }
+
+        // Mirror the ManyToOne eager join: the joined table is tenant-scoped
+        // in the ON clause so a cross-tenant FK hydrates as null.
+        if (!findOption.withoutTenantScope) {
+          const relTenantPredicate = this.ctx.buildTenantWhereClause(
+            RelatedEntity,
+            relAlias,
+          );
+          if (relTenantPredicate) {
+            joinCondition = sql`${joinCondition} AND ${relTenantPredicate}`;
+          }
         }
 
         qb.leftJoin(
