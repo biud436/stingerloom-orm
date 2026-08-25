@@ -90,6 +90,31 @@ export class MetadataContext {
   }
 
   /**
+   * Captures the current context (tenant + unscoped flag), or null when no
+   * context is active. Pair with {@link runCaptured} to replay it later:
+   * deferred work — a lazy relation load fired by a property access — must
+   * run under the context that hydrated the entity, not whatever context
+   * happens to be active at access time (which may be another tenant's).
+   */
+  static capture(): MetadataContextStore | null {
+    const store = this.storage.getStore();
+    return store ? { ...store } : null;
+  }
+
+  /**
+   * Runs the callback under a previously {@link capture}d context snapshot.
+   * A null snapshot (captured outside any context) runs the callback in the
+   * ambient context unchanged.
+   */
+  static runCaptured<T>(
+    snapshot: MetadataContextStore | null,
+    callback: () => T | Promise<T>,
+  ): T | Promise<T> {
+    if (snapshot === null) return callback();
+    return this.storage.run({ ...snapshot }, callback);
+  }
+
+  /**
    * Recreates the internal storage (used in tests, etc.).
    */
   static reset(): void {

@@ -3,6 +3,7 @@ import { EntityManager } from "../../src/core/EntityManager";
 import {
   encodeCursor,
   decodeCursor,
+  encodeCursorKey,
   normalizePageSize,
   CursorPaginationResult,
 } from "../../src/core/CursorPagination";
@@ -224,8 +225,9 @@ describe("EntityManager.findWithCursor", () => {
       orderBy: "id",
     });
 
-    // nextCursor encodes last item's id (12, since 13 is the extra)
-    expect(result.nextCursor).toBe(encodeCursor(12));
+    // nextCursor encodes last item's id (12, since 13 is the extra) plus the
+    // PK tiebreaker (keyset contract; id IS the PK here).
+    expect(result.nextCursor).toBe(encodeCursorKey(12, 12));
   });
 
   it("should decode cursor and use it in WHERE condition", async () => {
@@ -517,8 +519,9 @@ describe("UUID PK cursor pagination", () => {
     expect(result.data.length).toBe(3);
     expect(result.hasNextPage).toBe(true);
     expect(result.nextCursor).not.toBeNull();
-    // nextCursor should encode the 3rd UUID (index 2)
-    expect(result.nextCursor).toBe(encodeCursor(uuids[2]));
+    // nextCursor should encode the 3rd UUID (index 2) with the PK tiebreaker
+    // (keyset contract; the UUID column IS the PK here).
+    expect(result.nextCursor).toBe(encodeCursorKey(uuids[2], uuids[2]));
   });
 
   it("should generate > operator with UUID cursor for ASC", async () => {
@@ -777,10 +780,11 @@ describe("findWithCursor — orderBy property->column mapping (SnakeNamingStrate
     });
 
     expect(result.hasNextPage).toBe(true);
-    // Last item of the page (index 1) has created_at "2024-01-02".
-    expect(result.nextCursor).toBe(encodeCursor("2024-01-02"));
+    // Last item of the page (index 1) has created_at "2024-01-02", id 2 (PK
+    // tiebreaker under the keyset contract).
+    expect(result.nextCursor).toBe(encodeCursorKey("2024-01-02", 2));
     // Regression guard: a missing mapping would encode `undefined`.
-    expect(result.nextCursor).not.toBe(encodeCursor(undefined));
+    expect(result.nextCursor).not.toBe(encodeCursorKey(undefined, 2));
   });
 
   it("should still default to the PK column when orderBy is omitted", async () => {

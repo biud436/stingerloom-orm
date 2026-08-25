@@ -13,14 +13,16 @@ import { RawQueryBuilderFactory } from "../RawQueryBuilderFactory";
 import { Conditions } from "../Conditions";
 import { ResultTransformerFactory } from "../ResultTransformerFactory";
 import { injectLazyProxy } from "../LazyLoader";
+import { MetadataContext } from "../../metadata/MetadataContext";
 import { EntityMetadataNotFoundError } from "../../errors/EntityMetadataNotFoundError";
 import { InvalidQueryError } from "../../errors/InvalidQueryError";
 import { EntityNotFoundError } from "../../errors/EntityNotFoundError";
 import {
   CursorPaginationOption,
   CursorPaginationResult,
-  encodeCursor,
-  decodeCursor,
+  encodeCursorKey,
+  decodeCursorKey,
+  type DecodedCursorKey,
   normalizePageSize,
 } from "../CursorPagination";
 import {
@@ -696,6 +698,21 @@ export class ReadExecutor {
           joinCondition = sql`${joinCondition} AND ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedDeletedAt))} IS NULL`;
         }
 
+        // Tenant scoping must cover the JOINED table too — the batched and
+        // lazy relation loaders both filter the related entity by tenant, and
+        // an FK is user-supplied so it can point at another tenant's row.
+        // The predicate lives in the ON clause so the parent row survives
+        // (relation hydrates as null), matching the loaders' semantics.
+        if (!findOption.withoutTenantScope) {
+          const relTenantPredicate = this.ctx.buildTenantWhereClause(
+            RelatedEntity,
+            relAlias,
+          );
+          if (relTenantPredicate) {
+            joinCondition = sql`${joinCondition} AND ${relTenantPredicate}`;
+          }
+        }
+
         qb.leftJoin(
           this.ctx.wrapTable(relatedTableName),
           this.ctx.wrap(relAlias),
@@ -725,6 +742,18 @@ export class ReadExecutor {
         const relatedDeletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
         if (relatedDeletedAt && !(findOption as any).withDeleted) {
           joinCondition = sql`${joinCondition} AND ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedDeletedAt))} IS NULL`;
+        }
+
+        // Mirror the ManyToOne eager join: the joined table is tenant-scoped
+        // in the ON clause so a cross-tenant FK hydrates as null.
+        if (!findOption.withoutTenantScope) {
+          const relTenantPredicate = this.ctx.buildTenantWhereClause(
+            RelatedEntity,
+            relAlias,
+          );
+          if (relTenantPredicate) {
+            joinCondition = sql`${joinCondition} AND ${relTenantPredicate}`;
+          }
         }
 
         qb.leftJoin(
@@ -968,11 +997,23 @@ export class ReadExecutor {
 
             const em = this;
             const proxyWithDeleted = findOption.withDeleted;
+            // The load fires at property-access time, possibly under another
+            // tenant's context (or none). Replay the hydration-time context so
+            // the deferred read stays consistent with the entity's own tenant
+            // — the lazy mirror of eager loading, which reads the relation at
+            // hydration time. Without this, tenant_column silently loads null
+            // and schema-based strategies can resolve the table to ANOTHER
+            // tenant's schema and hydrate a same-id foreign row.
+            const hydrationContext = MetadataContext.capture();
             injectLazyProxy(item as any, rel.columnName, async () => {
-              const result = await em.findOne(RelatedEntity, {
-                where: { [this.ctx.propKey(relatedPk)]: fkValue } as any,
-                withDeleted: proxyWithDeleted,
-              });
+              const result = await MetadataContext.runCaptured(
+                hydrationContext,
+                () =>
+                  em.findOne(RelatedEntity, {
+                    where: { [this.ctx.propKey(relatedPk)]: fkValue } as any,
+                    withDeleted: proxyWithDeleted,
+                  }),
+              );
               return result as any;
             });
           }
@@ -1021,10 +1062,10 @@ export class ReadExecutor {
     const direction = option.direction ?? "ASC";
     const pageSize = normalizePageSize(option.take);
 
-    let cursorValue: unknown = null;
+    let cursorKey: DecodedCursorKey | null = null;
     if (option.cursor) {
-      cursorValue = decodeCursor(option.cursor);
-      if (cursorValue === null) {
+      cursorKey = decodeCursorKey(option.cursor);
+      if (cursorKey === null) {
         throw new InvalidQueryError(
           "Invalid cursor value.",
           "Ensure the cursor string was returned from a previous findWithCursor() call.",
@@ -1126,26 +1167,81 @@ export class ReadExecutor {
         }
       }
 
-      if (cursorValue !== null) {
-        if (direction === "ASC") {
-          // Include NULL rows that haven't been seen yet (NULLs sort last in ASC)
-          whereMap.push(Conditions.or([
-            Conditions.gt(this.ctx.wrap(dbOrderByColumn), cursorValue),
-            Conditions.isNull(this.ctx.wrap(dbOrderByColumn)),
-          ]));
+      // Keyset pagination. The PK tiebreaker keeps rows that share the same
+      // order value from being skipped at page boundaries, and the explicit
+      // `(col IS NULL)` ORDER BY key pins the NULL region to the tail (ASC) /
+      // head (DESC) uniformly across dialects — SQLite/MySQL natively sort
+      // NULLs first in ASC while PostgreSQL sorts them last, so without the
+      // key the same query paginates differently (and duplicates the NULL
+      // rows every page under the old `OR col IS NULL` predicate).
+      const dbPkColumn = pk?.name as string | undefined;
+      const isPkOrder = !dbPkColumn || dbOrderByColumn === dbPkColumn;
+      const wCol = this.ctx.wrap(dbOrderByColumn);
+
+      if (cursorKey !== null) {
+        const { order: cOrder, pk: cPk } = cursorKey;
+        if (cPk === undefined || !dbPkColumn) {
+          // Legacy scalar cursor (pre-keyset) or no PK to tiebreak on: keep
+          // the old strict-compare shape for this one transition page.
+          if (cOrder !== null) {
+            whereMap.push(
+              direction === "ASC"
+                ? Conditions.or([Conditions.gt(wCol, cOrder), Conditions.isNull(wCol)])
+                : Conditions.or([Conditions.lt(wCol, cOrder), Conditions.isNull(wCol)]),
+            );
+          }
+        } else if (isPkOrder) {
+          whereMap.push(
+            direction === "ASC" ? Conditions.gt(wCol, cPk) : Conditions.lt(wCol, cPk),
+          );
         } else {
-          // Include NULL rows that haven't been seen yet (NULLs sort first in DESC)
-          whereMap.push(Conditions.or([
-            Conditions.lt(this.ctx.wrap(dbOrderByColumn), cursorValue),
-            Conditions.isNull(this.ctx.wrap(dbOrderByColumn)),
-          ]));
+          const wPk = this.ctx.wrap(dbPkColumn);
+          if (cOrder === null) {
+            // Cursor sits inside the NULL region: ASC = the tail (only
+            // later NULL rows remain), DESC = the head (later NULL rows,
+            // then every non-NULL row).
+            whereMap.push(
+              direction === "ASC"
+                ? Conditions.and([Conditions.isNull(wCol), Conditions.gt(wPk, cPk)])
+                : Conditions.or([
+                    Conditions.and([Conditions.isNull(wCol), Conditions.lt(wPk, cPk)]),
+                    Conditions.isNotNull(wCol),
+                  ]),
+            );
+          } else {
+            whereMap.push(
+              direction === "ASC"
+                ? Conditions.or([
+                    Conditions.gt(wCol, cOrder),
+                    Conditions.and([
+                      Conditions.equals(wCol, cOrder),
+                      Conditions.gt(wPk, cPk),
+                    ]),
+                    Conditions.isNull(wCol),
+                  ])
+                : Conditions.or([
+                    Conditions.lt(wCol, cOrder),
+                    Conditions.and([
+                      Conditions.equals(wCol, cOrder),
+                      Conditions.lt(wPk, cPk),
+                    ]),
+                  ]),
+            );
+          }
         }
       }
 
-      qb.select(selectMap)
-        .from(this.ctx.wrapTable(tableName))
-        .where(whereMap)
-        .orderBy([{ column: this.ctx.wrap(dbOrderByColumn), direction }]);
+      qb.select(selectMap).from(this.ctx.wrapTable(tableName)).where(whereMap);
+
+      if (isPkOrder) {
+        qb.orderBy([{ column: wCol, direction }]);
+      } else {
+        qb.orderBy([
+          { column: `(${wCol} IS NULL)`, direction },
+          { column: wCol, direction },
+          { column: this.ctx.wrap(dbPkColumn!), direction },
+        ]);
+      }
 
       qb.limit(pageSize + 1);
 
@@ -1182,8 +1278,12 @@ export class ReadExecutor {
       if (hasNextPage && pageResults.length > 0) {
         const lastItem = pageResults[pageResults.length - 1];
         // Raw rows are keyed by DB column name, so read with the mapped column.
-        const lastValue = lastItem[dbOrderByColumn];
-        nextCursor = encodeCursor(lastValue);
+        // The PK rides along as the keyset tiebreaker; a NULL order value is a
+        // valid cursor position (the NULL region), not an error.
+        nextCursor = encodeCursorKey(
+          lastItem[dbOrderByColumn] ?? null,
+          dbPkColumn ? lastItem[dbPkColumn] : undefined,
+        );
       }
 
       return {

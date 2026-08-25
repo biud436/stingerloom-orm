@@ -11,6 +11,7 @@ import { injectLazyProxy, suppressUnhandledRejection } from "../../LazyLoader";
 import type { ManyToOneMetadata } from "../../../decorators/ManyToOne";
 import type { OneToOneMetadata } from "../../../decorators/OneToOne";
 import type { ManyToManyMetadata } from "../../../decorators/ManyToMany";
+import { MetadataContext } from "../../../metadata/MetadataContext";
 
 /**
  * Callback to resolve identity map membership for loaded entities.
@@ -129,19 +130,24 @@ export class LazyRelationInjector {
         return fkColumn !== rel.columnName ? instance[fkColumn] : undefined;
       };
 
-      injectLazyProxy(instance, rel.columnName, async () => {
-        let fk = fkValue ?? readFk();
-        if ((fk === undefined || fk === null) && hydrateStub) {
-          await hydrateStub();
-          fk = readFk();
-        }
-        if (fk === undefined || fk === null) return undefined;
-        const result = await this.ctx.em.findOne(RelatedEntity, {
-          where: { [refColumn]: fk } as any,
-        });
-        if (result) return this.resolveIdentity(RelatedEntity, result);
-        return undefined;
-      });
+      // Deferred loads replay the context that hydrated the instance —
+      // access-time context may belong to another tenant (or be absent).
+      const hydrationContext = MetadataContext.capture();
+      injectLazyProxy(instance, rel.columnName, async () =>
+        MetadataContext.runCaptured(hydrationContext, async () => {
+          let fk = fkValue ?? readFk();
+          if ((fk === undefined || fk === null) && hydrateStub) {
+            await hydrateStub();
+            fk = readFk();
+          }
+          if (fk === undefined || fk === null) return undefined;
+          const result = await this.ctx.em.findOne(RelatedEntity, {
+            where: { [refColumn]: fk } as any,
+          });
+          if (result) return this.resolveIdentity(RelatedEntity, result);
+          return undefined;
+        }),
+      );
     }
   }
 
@@ -196,19 +202,22 @@ export class LazyRelationInjector {
         const relatedPkCols = this.idMap.getColumnInfo(RelatedEntity).pkColumns;
         if (relatedPkCols.length !== 1) continue;
 
-        injectLazyProxy(instance, rel.propertyKey, async () => {
-          let fk = instance[joinColumn];
-          if ((fk === undefined || fk === null) && hydrateStub) {
-            await hydrateStub();
-            fk = instance[joinColumn];
-          }
-          if (fk === undefined || fk === null) return undefined;
-          const result = await this.ctx.em.findOne(RelatedEntity, {
-            where: { [relatedPkCols[0]]: fk } as any,
-          });
-          if (result) return this.resolveIdentity(RelatedEntity, result);
-          return undefined;
-        });
+        const hydrationContext = MetadataContext.capture();
+        injectLazyProxy(instance, rel.propertyKey, async () =>
+          MetadataContext.runCaptured(hydrationContext, async () => {
+            let fk = instance[joinColumn];
+            if ((fk === undefined || fk === null) && hydrateStub) {
+              await hydrateStub();
+              fk = instance[joinColumn];
+            }
+            if (fk === undefined || fk === null) return undefined;
+            const result = await this.ctx.em.findOne(RelatedEntity, {
+              where: { [relatedPkCols[0]]: fk } as any,
+            });
+            if (result) return this.resolveIdentity(RelatedEntity, result);
+            return undefined;
+          }),
+        );
       } else if (rel.inverseSide) {
         // Inverse side - find where owning side references our PK
         const parentPk = this.idMap.getParentPkValue(instance, entityClass);
@@ -221,13 +230,16 @@ export class LazyRelationInjector {
         );
         if (!owningRel?.joinColumn) continue;
 
-        injectLazyProxy(instance, rel.propertyKey, async () => {
-          const result = await this.ctx.em.findOne(RelatedEntity, {
-            where: { [owningRel.joinColumn!]: parentPk } as any,
-          });
-          if (result) return this.resolveIdentity(RelatedEntity, result);
-          return undefined;
-        });
+        const hydrationContext = MetadataContext.capture();
+        injectLazyProxy(instance, rel.propertyKey, async () =>
+          MetadataContext.runCaptured(hydrationContext, async () => {
+            const result = await this.ctx.em.findOne(RelatedEntity, {
+              where: { [owningRel.joinColumn!]: parentPk } as any,
+            });
+            if (result) return this.resolveIdentity(RelatedEntity, result);
+            return undefined;
+          }),
+        );
       }
     }
   }
@@ -293,6 +305,8 @@ export class LazyRelationInjector {
     ChildEntity: ClazzType<any>,
     where: Record<string, any>,
   ): void {
+    // Deferred loads replay the hydration-time context — see injectLazyManyToOne.
+    const hydrationContext = MetadataContext.capture();
     let loaded = false;
     let cachedValue: any[] | undefined;
     let loadPromise: Promise<any[] | undefined> | null = null;
@@ -306,7 +320,11 @@ export class LazyRelationInjector {
         if (loaded) return cachedValue;
         // Reuse the in-flight load so concurrent accesses issue one query
         if (!loadPromise) {
-          loadPromise = this.ctx.em.find(ChildEntity, { where: where as any })
+          loadPromise = Promise.resolve(
+            MetadataContext.runCaptured(hydrationContext, () =>
+              this.ctx.em.find(ChildEntity, { where: where as any }),
+            ),
+          )
             .then(
               (results) => {
                 loadPromise = null;
@@ -356,6 +374,8 @@ export class LazyRelationInjector {
     inverseJoinColumn: string,
     parentPk: any,
   ): void {
+    // Deferred loads replay the hydration-time context — see injectLazyManyToOne.
+    const hydrationContext = MetadataContext.capture();
     let loaded = false;
     let cachedValue: any[] | undefined;
     let loadPromise: Promise<any[]> | null = null;
@@ -381,29 +401,22 @@ export class LazyRelationInjector {
         const wrappedInverseCol = this.ctx.wrap(inverseJoinColumn);
         const relatedPk = relatedPkCols[0];
 
-        loadPromise = this.ctx.em.query(
-          `SELECT ${wrappedInverseCol} FROM ${wrappedTable} WHERE ${wrappedJoinCol} = ?`,
-          [parentPk],
-        ).then(async (rows: any[]) => {
-          const ids = rows.map((r: any) => r[inverseJoinColumn]);
-          if (ids.length === 0) {
-            loadPromise = null;
-            if (loaded) return cachedValue ?? [];
-            cachedValue = [];
-            loaded = true;
-            Object.defineProperty(instance, propertyKey, {
-              configurable: true, enumerable: true, writable: true, value: [],
+        loadPromise = Promise.resolve(
+          MetadataContext.runCaptured(hydrationContext, async () => {
+            const rows: any[] = await this.ctx.em.query(
+              `SELECT ${wrappedInverseCol} FROM ${wrappedTable} WHERE ${wrappedJoinCol} = ?`,
+              [parentPk],
+            );
+            const ids = rows.map((r: any) => r[inverseJoinColumn]);
+            if (ids.length === 0) return [] as any[];
+
+            // Batched IN query instead of N+1 individual findOne() calls
+            const results = await this.ctx.em.find(RelatedEntity, {
+              where: { [relatedPk]: ids } as any,
             });
-            this.onCollectionMaterialized?.(instance, propertyKey);
-            return [];
-          }
-
-          // Batched IN query instead of N+1 individual findOne() calls
-          const results = await this.ctx.em.find(RelatedEntity, {
-            where: { [relatedPk]: ids } as any,
-          });
-          const resolvedResults = results.map((r) => this.resolveIdentity(RelatedEntity, r));
-
+            return results.map((r) => this.resolveIdentity(RelatedEntity, r));
+          }),
+        ).then((resolvedResults: any[]) => {
           loadPromise = null;
           // A setter may have run while the load was in flight — keep its value
           if (loaded) return cachedValue ?? [];

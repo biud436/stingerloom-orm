@@ -276,6 +276,12 @@ export class SelectQueryBuilder<T, TResult = T> {
     table: string;
     alias: string;
     condition: Sql;
+    /**
+     * Entity behind the joined table when known (entity-aware / relation
+     * joins). Lets the render step scope the JOIN by tenant at execution
+     * time. String-based joins stay undefined and unscoped by design.
+     */
+    joinedEntity?: ClazzType<any>;
   }> = [];
   protected limitValue: number | [number, number] | undefined;
   protected offsetValue: number | undefined;
@@ -1518,6 +1524,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       table: metadata.name,
       alias,
       condition,
+      joinedEntity: entity,
     });
 
     if (andSelect) {
@@ -1747,7 +1754,13 @@ export class SelectQueryBuilder<T, TResult = T> {
     const right = `${this.em.wrap(alias)}.${this.em.wrap(referencedColumn)}`;
     const condition = Conditions.compareColumns(left, "=", right);
 
-    this.joinClauses.push({ type, table: relatedMeta.name, alias, condition });
+    this.joinClauses.push({
+      type,
+      table: relatedMeta.name,
+      alias,
+      condition,
+      joinedEntity: RelatedEntity,
+    });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
         sourceAlias,
@@ -1805,7 +1818,13 @@ export class SelectQueryBuilder<T, TResult = T> {
     const right = `${this.em.wrap(alias)}.${this.em.wrap(fkColumn)}`;
     const condition = Conditions.compareColumns(left, "=", right);
 
-    this.joinClauses.push({ type, table: relatedMeta.name, alias, condition });
+    this.joinClauses.push({
+      type,
+      table: relatedMeta.name,
+      alias,
+      condition,
+      joinedEntity: RelatedEntity,
+    });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
         sourceAlias,
@@ -1851,7 +1870,13 @@ export class SelectQueryBuilder<T, TResult = T> {
     const right = `${this.em.wrap(alias)}.${this.em.wrap(referencedColumn)}`;
     const condition = Conditions.compareColumns(left, "=", right);
 
-    this.joinClauses.push({ type, table: relatedMeta.name, alias, condition });
+    this.joinClauses.push({
+      type,
+      table: relatedMeta.name,
+      alias,
+      condition,
+      joinedEntity: RelatedEntity,
+    });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
         sourceAlias,
@@ -3032,7 +3057,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         j.type,
         this.em.wrapTable(j.table),
         this.em.wrap(j.alias),
-        j.condition,
+        this.scopedJoinCondition(j),
       );
     }
 
@@ -4089,7 +4114,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         j.type,
         this.em.wrapTable(j.table),
         this.em.wrap(j.alias),
-        j.condition,
+        this.scopedJoinCondition(j),
       );
     }
 
@@ -4514,7 +4539,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         j.type,
         this.em.wrapTable(j.table),
         this.em.wrap(j.alias),
-        j.condition,
+        this.scopedJoinCondition(j),
       );
     }
 
@@ -4658,6 +4683,26 @@ export class SelectQueryBuilder<T, TResult = T> {
     if (!internals?.buildTenantWhereClause) return;
     const predicate = internals.buildTenantWhereClause(entity, alias);
     if (predicate) whereAccumulator.push(predicate);
+  }
+
+  /**
+   * Return a JOIN's ON condition with the tenant predicate appended when the
+   * joined table maps to a tenant-scoped entity (`joinedEntity` is recorded
+   * by entity-aware and relation joins). Called at render time — never at
+   * join-declaration time — so the predicate binds the tenant active when
+   * the query EXECUTES, and a builder constructed outside
+   * `MetadataContext.run()` still scopes correctly.
+   */
+  protected scopedJoinCondition(j: {
+    condition: Sql;
+    alias: string;
+    joinedEntity?: ClazzType<any>;
+  }): Sql {
+    if (!j.joinedEntity) return j.condition;
+    const joinTenant: Sql[] = [];
+    this.appendTenantPredicate(joinTenant, j.joinedEntity, j.alias);
+    if (joinTenant.length === 0) return j.condition;
+    return sql`${j.condition} AND ${joinTenant[0]}`;
   }
 
   /**

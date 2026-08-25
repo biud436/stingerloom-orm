@@ -1501,6 +1501,35 @@ export class WriteBuffer {
         }
       });
 
+      // The flush may have JOINED an ambient transaction (REQUIRED
+      // propagation) — its writes are then only as durable as that outer
+      // transaction. If the caller rolls back later, the DB undoes this
+      // flush, but the bookkeeping below (PK write-backs, clean snapshots,
+      // identity-map entries) would keep describing rows that no longer
+      // exist — a later PK findOne would serve a phantom from the
+      // first-level cache. Reconcile with the transaction outcome: on
+      // rollback, restore the pre-flush column state and drop the caches,
+      // mirroring the failed-flush contract (instances come back PK-less,
+      // ready to re-persist on retry). Queues are NOT restored: a retry
+      // re-runs the caller's workflow, which re-queues its own work.
+      const ambientSession = transactionStorage.getStore();
+      if (ambientSession) {
+        ambientSession.onTransactionEnd((committed) => {
+          if (committed) return;
+          this.restorePreFlushColumnState(preFlushState);
+          for (const entry of persistsCopy) {
+            this.idMap.stateMap.delete(entry.instance);
+          }
+          this.trackedEntries.clear();
+          this.idMap.identityMap.clear();
+          if (this.options.logging) {
+            this.log(
+              "flush → ambient transaction rolled back (in-memory state restored)",
+            );
+          }
+        });
+      }
+
       // Success — clear queues
       this.insertQueue.length = 0;
       this.deleteQueue.length = 0;
