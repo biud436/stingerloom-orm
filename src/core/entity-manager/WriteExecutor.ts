@@ -791,18 +791,81 @@ export class WriteExecutor {
             parentUpdateMap.push(updateMap[i]);
           }
 
+          const guardedByVersion =
+            versionColName &&
+            currentVersion !== undefined &&
+            currentVersion !== null;
+
+          let parentAffected: number | null = null;
           if (parentUpdateMap.length > 0) {
             const parentUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(rootMeta.name))}
               SET ${join(parentUpdateMap, ", ")}
               WHERE ${join(pkWhereClauses, " AND ")}`;
-            await session.query<T>(parentUpdateSql);
+            const parentResult = (await session.query<T>(
+              parentUpdateSql,
+            )) as DriverExecResult;
+            parentAffected = this.ctx.isMySqlFamily()
+              ? (okPacket(parentResult)?.affectedRows ?? 0)
+              : (parentResult?.rowCount ?? 0);
+
+            // Same contract as the single-table UPDATE path below: a guarded
+            // parent UPDATE that matched nothing is a stale @Version write
+            // (the version increment always lands in parentUpdateMap, so the
+            // guard is enforced here before the child statement runs);
+            // without a guard, 0 matched rows means the PK doesn't exist —
+            // confirmed with the value-identical probe for MySQL.
+            if (parentAffected === 0) {
+              if (guardedByVersion) {
+                throw new OptimisticLockError(
+                  entity.name,
+                  currentVersion as number,
+                );
+              }
+              const parentProbe = await session.query(
+                sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
+              );
+              if (resultRows(parentProbe).length === 0) {
+                throw new EntityNotFoundError(
+                  entity.name,
+                  "save() attempted an UPDATE but no row matched the primary key.",
+                );
+              }
+            }
           }
 
           if (childUpdateMap.length > 0) {
+            // The child table has no @Version column — the optimistic-lock
+            // guard baked into pkWhereClauses references the root table only,
+            // so the child UPDATE filters by primary key alone. The parent
+            // UPDATE above already enforced the version inside this same
+            // transaction.
+            const childPkWhere = buildPkWhere();
             const childUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name))}
               SET ${join(childUpdateMap, ", ")}
-              WHERE ${join(pkWhereClauses, " AND ")}`;
-            await session.query<T>(childUpdateSql);
+              WHERE ${join(childPkWhere, " AND ")}`;
+            const childResult = (await session.query<T>(
+              childUpdateSql,
+            )) as DriverExecResult;
+
+            // Only when no parent statement ran is the child UPDATE the sole
+            // existence signal (identity is anchored on the root row, which
+            // shares its PK with the child row).
+            if (parentAffected === null) {
+              const childAffected = this.ctx.isMySqlFamily()
+                ? (okPacket(childResult)?.affectedRows ?? 0)
+                : (childResult?.rowCount ?? 0);
+              if (childAffected === 0) {
+                const childProbe = await session.query(
+                  sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
+                );
+                if (resultRows(childProbe).length === 0) {
+                  throw new EntityNotFoundError(
+                    entity.name,
+                    "save() attempted an UPDATE but no row matched the primary key.",
+                  );
+                }
+              }
+            }
           }
 
           await this.cascadeHandler.cascadeSaveOneToMany(

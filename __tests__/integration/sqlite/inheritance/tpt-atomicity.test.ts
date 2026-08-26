@@ -20,6 +20,7 @@ import {
   Inheritance,
   DiscriminatorColumn,
   DiscriminatorValue,
+  EntityNotFoundError,
 } from "../../../../src";
 import { getScannerInstance } from "../../../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../../../src/scanner";
@@ -145,6 +146,87 @@ describe("[Integration] SQLite: TPT 다중 테이블 쓰기 원자성", () => {
 
     // 다음 테스트 영향 없도록 정리
     await conn.em.delete(CreditCardPayment, { id: saved.id } as any);
+    expect(await countRows(rootTableName)).toBe(0);
+    expect(await countRows(ccTableName)).toBe(0);
+  });
+
+  it("UPDATE 부분 실패(자식 NOT NULL 위반) 시 부모 테이블 변경도 롤백된다", async () => {
+    const saved: any = await conn.em.save(CreditCardPayment, {
+      amount: 400,
+      cardNumber: "4333-xxxx",
+    });
+
+    // 부모(amount) UPDATE가 먼저 성공한 뒤 자식 UPDATE가 cardNumber NOT
+    // NULL 위반으로 실패한다. 한 트랜잭션이므로 부모 변경도 원복돼야 한다.
+    let rejection: unknown;
+    try {
+      await conn.em.save(CreditCardPayment, {
+        id: saved.id,
+        amount: 999,
+        cardNumber: null,
+      } as any);
+    } catch (e) {
+      rejection = e;
+    }
+    expect(String((rejection as { message?: string } | undefined)?.message)).toContain(
+      "NOT NULL",
+    );
+
+    const after: any = await conn.em.findOne(CreditCardPayment, {
+      where: { id: saved.id } as any,
+    });
+    expect(after.amount).toBe(400);
+    expect(after.cardNumber).toBe("4333-xxxx");
+
+    await conn.em.delete(CreditCardPayment, { id: saved.id } as any);
+  });
+
+  it("DELETE 부분 실패(부모 DELETE 차단) 시 자식 삭제도 롤백된다", async () => {
+    const saved: any = await conn.em.save(CreditCardPayment, {
+      amount: 500,
+      cardNumber: "4444-xxxx",
+    });
+    const driver = conn.em.getDriver()!;
+
+    // 자식 DELETE → 부모 DELETE 순서이므로, 부모 테이블 트리거로 두 번째
+    // 문장만 실패시켜 부분 실패를 강제한다.
+    await driver.executeRaw(
+      `CREATE TRIGGER "tpta_block_del" BEFORE DELETE ON "${rootTableName}" BEGIN SELECT RAISE(ABORT, 'parent delete blocked'); END`,
+    );
+    try {
+      let rejection: unknown;
+      try {
+        await conn.em.delete(CreditCardPayment, { id: saved.id } as any);
+      } catch (e) {
+        rejection = e;
+      }
+      expect(
+        String((rejection as { message?: string } | undefined)?.message),
+      ).toContain("parent delete blocked");
+
+      // 자식 DELETE는 이미 실행됐지만 트랜잭션 롤백으로 되살아나야 한다
+      expect(await countRows(ccTableName)).toBe(1);
+      expect(await countRows(rootTableName)).toBe(1);
+    } finally {
+      await driver.executeRaw(`DROP TRIGGER "tpta_block_del"`);
+    }
+
+    await conn.em.delete(CreditCardPayment, { id: saved.id } as any);
+    expect(await countRows(rootTableName)).toBe(0);
+    expect(await countRows(ccTableName)).toBe(0);
+  });
+
+  it("존재하지 않는 PK로 자식을 save() 하면 EntityNotFoundError를 던진다", async () => {
+    // 일반(단일 테이블) UPDATE 경로는 0행 매치 시 EntityNotFoundError를
+    // 던진다. TPT 분기도 같은 계약이어야 한다 — 조용한 no-op 금지.
+    await expect(
+      conn.em.save(CreditCardPayment, {
+        id: 987654,
+        amount: 1,
+        cardNumber: "4555-xxxx",
+      } as any),
+    ).rejects.toThrow(EntityNotFoundError);
+
     expect(await countRows(rootTableName)).toBe(0);
     expect(await countRows(ccTableName)).toBe(0);
   });
