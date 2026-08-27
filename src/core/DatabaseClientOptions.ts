@@ -5,6 +5,8 @@ import { StingerloomPlugin } from "./plugin/StingerloomPlugin";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import type { QueryCacheOptions } from "./cache/QueryResultCache";
+import { Logger } from "../utils/Logger";
+import { closestIdentifier } from "../utils/closestIdentifier";
 
 /**
  * Connection pool configuration options.
@@ -446,13 +448,79 @@ export const VALID_DB_TYPES: readonly string[] = [
 ];
 
 /**
+ * Every top-level key any DatabaseClientOptions variant accepts. Kept in sync
+ * with BaseDatabaseClientOptions + ServerDatabaseClientOptions +
+ * SqliteDatabaseClientOptions — add here when adding an option field, or the
+ * new option will be flagged as unknown at validation time.
+ */
+const KNOWN_OPTION_KEYS: readonly string[] = [
+  // BaseDatabaseClientOptions
+  "database",
+  "synchronize",
+  "logging",
+  "entities",
+  "datesStrings",
+  "connectionLimit",
+  "charset",
+  "schema",
+  "queryTimeout",
+  "cache",
+  "pool",
+  "retry",
+  "replication",
+  "namingStrategy",
+  "tenantStrategy",
+  "tenantColumnName",
+  "tenantColumnType",
+  "tenantColumnLength",
+  "tenantOnMissingContext",
+  "tenantDatabaseResolver",
+  "tenantDatabaseMap",
+  "eagerProvisionTenants",
+  "publicTenantBehavior",
+  "tenantConnectionTtlMs",
+  "plugins",
+  "versionOverride",
+  // ServerDatabaseClientOptions / SqliteDatabaseClientOptions
+  "type",
+  "host",
+  "port",
+  "username",
+  "password",
+  "ssl",
+];
+
+const validationLogger = new Logger("DatabaseClientOptions");
+
+/**
  * Validates DatabaseClientOptions at runtime.
  * Throws OrmError with INVALID_CONFIG code if validation fails.
+ *
+ * Unknown top-level keys (e.g. a `synchronise` typo, invisible to TypeScript
+ * when the options come from a ConfigService) are warned about — with a
+ * closest-match suggestion — instead of being silently ignored.
+ *
+ * @param connectionName When provided, included in the warning/error output so
+ * multi-connection setups can tell which `register()`/`forRoot()` failed.
  */
 export function validateDatabaseClientOptions(
   options: DatabaseClientOptions,
+  connectionName?: string,
 ): void {
   const errors: string[] = [];
+  const connSuffix = connectionName ? ` (connection "${connectionName}")` : "";
+
+  // Unknown top-level keys: a typo here means the intended option silently
+  // never applies, so surface it. Warn rather than throw — an extra key may
+  // be a shared config object carrying fields for another consumer.
+  for (const key of Object.keys(options)) {
+    if (KNOWN_OPTION_KEYS.includes(key)) continue;
+    const suggestion = closestIdentifier(key, KNOWN_OPTION_KEYS);
+    validationLogger.warn(
+      `Unknown option '${key}'${connSuffix} — it will be ignored.` +
+        (suggestion ? ` Did you mean '${suggestion}'?` : ""),
+    );
+  }
 
   // type
   if (!options.type) {
@@ -602,7 +670,7 @@ export function validateDatabaseClientOptions(
   if (errors.length > 0) {
     throw new OrmError(
       OrmErrorCode.INVALID_CONFIG,
-      `Invalid database configuration:\n  - ${errors.join("\n  - ")}`,
+      `Invalid database configuration${connSuffix}:\n  - ${errors.join("\n  - ")}`,
       "Check your DatabaseClientOptions and fix the listed issues.",
     );
   }

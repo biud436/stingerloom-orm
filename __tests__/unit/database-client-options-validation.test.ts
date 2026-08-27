@@ -4,6 +4,7 @@ import {
   ServerDatabaseClientOptions,
   validateDatabaseClientOptions,
 } from "../../src/core/DatabaseClientOptions";
+import { Logger } from "../../src/utils/Logger";
 
 describe("validateDatabaseClientOptions - database field", () => {
   const serverBase: ServerDatabaseClientOptions = {
@@ -72,5 +73,68 @@ describe("validateDatabaseClientOptions - database field", () => {
       entities: [],
     };
     expect(() => validateDatabaseClientOptions(options)).not.toThrow();
+  });
+});
+
+describe("validateDatabaseClientOptions - unknown top-level keys", () => {
+  const sqliteBase: DatabaseClientOptions = {
+    type: "sqlite",
+    database: ":memory:",
+    entities: [],
+  };
+
+  let logs: string[];
+
+  beforeEach(() => {
+    logs = [];
+    Logger.setOutput((msg) => logs.push(msg));
+  });
+
+  afterEach(() => {
+    Logger.reset();
+  });
+
+  it("should warn about an unknown key with a closest-match suggestion", () => {
+    const options = { ...sqliteBase, synchronise: true } as DatabaseClientOptions;
+    expect(() => validateDatabaseClientOptions(options)).not.toThrow();
+    const warning = logs.find((l) => l.includes("Unknown option 'synchronise'"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("Did you mean 'synchronize'?");
+  });
+
+  it("should warn without a suggestion when nothing is close", () => {
+    const options = { ...sqliteBase, totallyBogus: 1 } as DatabaseClientOptions;
+    validateDatabaseClientOptions(options);
+    const warning = logs.find((l) => l.includes("Unknown option 'totallyBogus'"));
+    expect(warning).toBeDefined();
+    expect(warning).not.toContain("Did you mean");
+  });
+
+  it("should not warn when every key is known", () => {
+    validateDatabaseClientOptions({ ...sqliteBase, synchronize: true });
+    expect(logs.filter((l) => l.includes("Unknown option"))).toHaveLength(0);
+  });
+
+  it("should include the connection name in unknown-key warnings", () => {
+    const options = { ...sqliteBase, sychronize: true } as DatabaseClientOptions;
+    validateDatabaseClientOptions(options, "analytics");
+    const warning = logs.find((l) => l.includes("Unknown option 'sychronize'"));
+    expect(warning).toContain('(connection "analytics")');
+  });
+});
+
+describe("validateDatabaseClientOptions - connectionName in errors", () => {
+  it("should name the failing connection in the validation error", () => {
+    const options = { type: "sqlite", entities: [] } as unknown as DatabaseClientOptions;
+    expect(() => validateDatabaseClientOptions(options, "analytics")).toThrow(
+      /Invalid database configuration \(connection "analytics"\)/,
+    );
+  });
+
+  it("should keep the plain header when no connection name is given", () => {
+    const options = { type: "sqlite", entities: [] } as unknown as DatabaseClientOptions;
+    expect(() => validateDatabaseClientOptions(options)).toThrow(
+      /Invalid database configuration:/,
+    );
   });
 });

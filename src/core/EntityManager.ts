@@ -366,7 +366,7 @@ export class EntityManager implements BaseEntityManager {
     databaseClientOptions: DatabaseClientOptions,
     connectionName = "default",
   ) {
-    validateDatabaseClientOptions(databaseClientOptions);
+    validateDatabaseClientOptions(databaseClientOptions, connectionName);
 
     // ESM builds cannot probe class-transformer synchronously (no require);
     // finish the async auto-detection before any query can deserialize rows.
