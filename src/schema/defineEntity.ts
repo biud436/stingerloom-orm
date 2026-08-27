@@ -3,6 +3,8 @@ import { AdvancedIndexOptions } from "../decorators/Indexer";
 import { HookEvent } from "../decorators/Hooks";
 import { ComputedColumnOption } from "../decorators/ComputedColumn";
 import { ClazzType } from "../utils/types";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { EntitySchema } from "./EntitySchema";
 import {
   ColumnSchemaDef,
@@ -133,7 +135,15 @@ export interface DefineEntityOptions<Shape = any> {
  * instance — the decorator-free counterpart to `Object.assign(new User(), …)`.
  */
 function mintEntityClass(name: string): ClazzType {
-  const ident = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : "StingerEntity";
+  // A non-identifier table name ("user-accounts", "app.users") is sanitized
+  // instead of collapsing to a shared "StingerEntity" placeholder, so error
+  // messages and registry keys keep naming the actual entity.
+  const sanitized = name
+    .replace(/[^A-Za-z0-9_$]/g, "_")
+    .replace(/^(?=\d)/, "_");
+  const ident = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(sanitized)
+    ? sanitized
+    : "StingerEntity";
   const holder: Record<string, ClazzType> = {
     [ident]: class {
       constructor(init?: Record<string, unknown>) {
@@ -142,6 +152,24 @@ function mintEntityClass(name: string): ClazzType {
     },
   };
   return holder[ident];
+}
+
+/** Names what an invalid field value actually is, for the defineEntity error. */
+function describeInvalidBuilder(value: unknown): string {
+  if (typeof value === "function") {
+    return (
+      "got an uncalled builder factory (a function). " +
+      "Did you forget the parentheses, e.g. t.varchar() instead of t.varchar?"
+    );
+  }
+  if (value === undefined) {
+    return (
+      "got undefined. Check the referenced variable — an import cycle can " +
+      "leave a builder undefined at definition time."
+    );
+  }
+  if (value === null) return "got null.";
+  return `got ${typeof value}.`;
 }
 
 /**
@@ -228,6 +256,15 @@ export function defineEntity<Cols extends EntityColumns>(
       relationDefs[key] = builder._def;
     } else if (builder instanceof ComputedBuilder) {
       computedDefs[key] = builder._def;
+    } else {
+      // Anything else used to be silently dropped — `email: t.varchar`
+      // (missing parentheses) produced a table without that column.
+      throw new OrmError(
+        OrmErrorCode.SCHEMA_ERROR,
+        `defineEntity("${name}"): field "${key}" is not a field builder — ` +
+          describeInvalidBuilder(builder),
+        `Every field must be a called t.* builder, e.g. ${key}: t.varchar(255).`,
+      );
     }
   }
 
