@@ -423,18 +423,22 @@ export class EntityManager implements BaseEntityManager {
         meta.name = ns.tableName(meta.rawClassName ?? entity.name);
       }
 
-      // 2. Column names
+      // 2. Column names. Columns without a propertyKey are DDL-only entries a
+      //    previous registerEntities() injected in place (the STI/TPT
+      //    discriminator) — renaming them through the strategy would replace
+      //    their explicit DB name with columnName(undefined) and break the
+      //    next connection's CREATE TABLE.
       const columns: ColumnMetadata[] = Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ?? [];
       for (const col of columns) {
-        if (!col.nameExplicit) {
-          col.name = ns.columnName(col.propertyKey!);
+        if (!col.nameExplicit && col.propertyKey) {
+          col.name = ns.columnName(col.propertyKey);
         }
       }
       // Also update entity metadata's columns reference
       if (meta.columns) {
         for (const col of meta.columns as unknown as ColumnMetadata[]) {
-          if (!col.nameExplicit) {
-            col.name = ns.columnName(col.propertyKey!);
+          if (!col.nameExplicit && col.propertyKey) {
+            col.name = ns.columnName(col.propertyKey);
           }
         }
       }
