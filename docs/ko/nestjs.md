@@ -90,6 +90,8 @@ export class CatsModule {}
 
 결과적으로 NestJS가 생성자에서 `@InjectRepository(Cat)`을 만나면, 어떤 토큰을 조회해서 어떤 `BaseRepository<Cat>` 인스턴스를 주입할지 정확히 알 수 있어요.
 
+설정 실수는 Nest의 막연한 `can't resolve dependencies (?)` 대신 모듈 초기화 시점에 실행 가능한 에러로 바로 실패합니다. `forFeature()`의 `connectionName` 오타는 `forRoot()`/`forRootAsync()`가 실제로 등록한 연결 목록과 가장 가까운 이름 제안을 담은 `OrmError`를 던지고, 해당 연결의 `entities` 배열에 없는 엔티티는 연결 이름을 명시한 `EntityMetadataNotFoundError`를 던집니다. `forFeature()`를 임포트하지 않고 리포지토리를 주입하면, 토큰의 Symbol description 자체가 추가해야 할 `forFeature([...])` 호출을 알려줍니다.
+
 ### Step 3: 서비스에 주입하기
 
 ```typescript

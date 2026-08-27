@@ -92,6 +92,8 @@ INSERT INTO "users" ("name") VALUES ('Alice');
 
 Every field is a call on the `t` namespace. Column builders carry their inferred type; chained modifiers refine it (`.nullable()` widens the type to `T | null`).
 
+Every field value must be a **called** builder. A value `defineEntity` does not recognize — most commonly an uncalled factory like `email: t.varchar` (missing parentheses), or a builder left `undefined` by an import cycle — throws an `ORM_SCHEMA_ERROR` naming the field, instead of silently creating a table without that column.
+
 ### Column types
 
 | Builder | TypeScript type | Abstract column type |
