@@ -1051,7 +1051,6 @@
     "InjectMultiTenantEntityManager",
     "InjectRepository",
     "makeInjectRepositoryToken",
-    "STINGERLOOM_ORM_OPTION_TOKEN",
     "STINGERLOOM_ORM_SERVICE_TOKEN",
     "StingerloomOrmCoreModule",
     "StingerloomOrmModule",

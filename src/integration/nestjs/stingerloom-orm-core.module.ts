@@ -10,6 +10,7 @@ import { MultiTenantEntityManager } from "../../core/MultiTenantEntityManager";
 import type { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { getEntityManagerToken } from "./stingerloom-orm.module";
 import { getMultiTenantEntityManagerToken } from "./inject-multi-tenant-entity-manager.decorator";
+import { recordOrmConnectionName } from "./connection-name-registry";
 
 export interface StingerloomOrmOptionsFactory {
   createStingerloomOrmOptions():
@@ -43,6 +44,7 @@ export class StingerloomOrmCoreModule {
     options: DatabaseClientOptions,
     connectionName = "default",
   ): DynamicModule {
+    recordOrmConnectionName(connectionName);
     const emToken = getEntityManagerToken(connectionName);
     const isDatabaseStrategy = options.tenantStrategy === "database";
     const mtemToken = getMultiTenantEntityManagerToken(connectionName);
@@ -94,6 +96,7 @@ export class StingerloomOrmCoreModule {
     asyncOptions: StingerloomOrmModuleAsyncOptions,
   ): DynamicModule {
     const connectionName = asyncOptions.connectionName ?? "default";
+    recordOrmConnectionName(connectionName);
     const emToken = getEntityManagerToken(connectionName);
     const mtemToken = getMultiTenantEntityManagerToken(connectionName);
     const optionsToken = getOrmOptionsToken(connectionName);

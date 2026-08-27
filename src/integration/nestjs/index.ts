@@ -2,7 +2,6 @@ export {
   StingerloomOrmModule,
   makeInjectRepositoryToken,
   getEntityManagerToken,
-  STINGERLOOM_ORM_OPTION_TOKEN,
   INJECT_REPOSITORIES_TOKEN,
 } from "./stingerloom-orm.module";
 export {

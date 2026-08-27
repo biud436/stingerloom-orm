@@ -58,6 +58,10 @@ await em.register({
 
 SQLite stores everything in a single file. There is no server to connect to, which is why host/port/username/password are empty. This makes it perfect for testing, prototyping, and embedded applications.
 
+### Option validation
+
+`register()` validates the options before connecting. Missing or malformed required fields throw an `INVALID_CONFIG` error listing every problem at once, and — in multi-connection setups — naming the connection that failed. Unknown top-level keys are not silently ignored: a typo like `synchronise` logs a warning with the closest valid key (`Did you mean 'synchronize'?`), which matters when the options come from a ConfigService and TypeScript cannot catch the typo.
+
 ---
 
 ## synchronize Option
@@ -502,6 +506,8 @@ const logs = await analyticsEm.find(Log);
 console.log(primaryEm.getConnectionName());   // "primary"
 console.log(analyticsEm.getConnectionName()); // "analytics"
 ```
+
+Each connection serves only the entities listed in its own `entities` array. Using an entity on the wrong connection — say `primaryEm.find(Log)` — throws `EntityMetadataNotFoundError` naming the connection and the fix, instead of reaching the database and dying later with a raw `no such table` error (the schema sync correctly skips out-of-scope entities, so that table never existed on this connection). An empty `entities` array keeps the legacy unscoped behavior where the connection serves every known entity. Two things stay allowed on a scoped connection: inheritance relatives of a registered class (querying an STI/TPT child of a registered parent — or the parent of registered children — is a polymorphic query against tables the connection owns), and cascade traversal, which may legitimately reach a relation target outside an `attach()`ed subset scope.
 
 ### Multi-DB in NestJS
 

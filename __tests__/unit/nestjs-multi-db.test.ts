@@ -60,8 +60,11 @@ describe("NestJS Multi-DB Support", () => {
     it("should return a symbol for default connection", () => {
       const token = makeInjectRepositoryToken(User);
       expect(typeof token).toBe("symbol");
-      expect(token.description).toBe(
-        `${INJECT_REPOSITORIES_TOKEN}_User`,
+      expect(token.description).toContain(`${INJECT_REPOSITORIES_TOKEN}_User`);
+      // Remediation rides in the description so Nest's unresolved-dependency
+      // error names the fix by itself.
+      expect(token.description).toContain(
+        "StingerloomOrmModule.forFeature([User])",
       );
     });
 
@@ -79,8 +82,11 @@ describe("NestJS Multi-DB Support", () => {
 
     it("should include connection name in symbol description for named connection", () => {
       const token = makeInjectRepositoryToken(Event, "analytics");
-      expect(token.description).toBe(
+      expect(token.description).toContain(
         `${INJECT_REPOSITORIES_TOKEN}_Event_analytics`,
+      );
+      expect(token.description).toContain(
+        'StingerloomOrmModule.forFeature([Event], "analytics")',
       );
     });
 
@@ -661,30 +667,33 @@ describe("NestJS Multi-DB Support", () => {
   });
 
   describe("StingerloomOrmModule.forFeature", () => {
-    it("should inject from default EntityManager when no connectionName", () => {
+    // The EntityManager is injected as optional so a connectionName typo
+    // reaches the factory (which raises an actionable OrmError) instead of
+    // dying in Nest's resolver with a generic unresolved-dependency error.
+    it("should optionally inject from default EntityManager when no connectionName", () => {
       const mod = StingerloomOrmModule.forFeature([User, Post]);
 
       const providers = mod.providers as Array<{
         provide: symbol;
-        inject: unknown[];
+        inject: Array<{ token: unknown; optional: boolean }>;
       }>;
       expect(providers).toHaveLength(2);
       for (const p of providers) {
-        expect(p.inject).toContain(EntityManager);
+        expect(p.inject).toEqual([{ token: EntityManager, optional: true }]);
       }
     });
 
-    it("should inject from named EntityManager for named connection", () => {
+    it("should optionally inject from named EntityManager for named connection", () => {
       const mod = StingerloomOrmModule.forFeature([Event], "analytics");
 
       const providers = mod.providers as Array<{
         provide: symbol;
-        inject: unknown[];
+        inject: Array<{ token: unknown; optional: boolean }>;
       }>;
       expect(providers).toHaveLength(1);
-      expect(providers[0].inject).toContain(
-        "STINGERLOOM_ENTITY_MANAGER_analytics",
-      );
+      expect(providers[0].inject).toEqual([
+        { token: "STINGERLOOM_ENTITY_MANAGER_analytics", optional: true },
+      ]);
     });
   });
 });

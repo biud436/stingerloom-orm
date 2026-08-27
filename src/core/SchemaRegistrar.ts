@@ -321,6 +321,11 @@ export class SchemaRegistrar {
               if (!alreadyHas) {
                 metadata.columns.push({
                   name: discCol.name,
+                  // The @DiscriminatorColumn name is an explicit DB name;
+                  // without this flag the NamingStrategy pass of a later
+                  // register() (this push mutates shared metadata) would
+                  // rewrite it via columnName(undefined).
+                  nameExplicit: true,
                   options: {
                     type: discCol.type,
                     length: discCol.length,

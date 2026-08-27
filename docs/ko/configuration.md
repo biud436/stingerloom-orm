@@ -58,6 +58,10 @@ await em.register({
 
 SQLite는 단일 파일에 모든 걸 저장해요. 연결할 서버가 없어서 host/port/username/password가 비어 있어요. 그래서 테스트, 프로토타이핑, 임베디드 애플리케이션에 딱 맞아요.
 
+### 옵션 검증
+
+`register()`는 연결하기 전에 옵션을 검증합니다. 필수 필드가 빠지거나 형식이 잘못되면 모든 문제를 한 번에 나열하는 `INVALID_CONFIG` 에러를 던지고, 멀티 커넥션 구성에서는 실패한 연결 이름도 함께 알려줍니다. 알 수 없는 최상위 키도 조용히 무시하지 않아요. `synchronise` 같은 오타는 가장 가까운 유효 키를 제안하는 경고(`Did you mean 'synchronize'?`)를 남깁니다 — ConfigService에서 옵션이 넘어와 TypeScript가 오타를 못 잡는 경우에 특히 유용합니다.
+
 ---
 
 ## synchronize 옵션
@@ -503,7 +507,7 @@ console.log(primaryEm.getConnectionName());   // "primary"
 console.log(analyticsEm.getConnectionName()); // "analytics"
 ```
 
-### NestJS에서 멀티 DB
+각 연결은 자기 `entities` 배열에 나열된 엔티티만 다룹니다. 잘못된 연결에서 엔티티를 쓰면 — 예를 들어 `primaryEm.find(Log)` — 나중에 데이터베이스의 날 것 그대로인 `no such table` 에러로 죽는 대신, 연결 이름과 해결 방법을 명시한 `EntityMetadataNotFoundError`를 즉시 던집니다(스키마 동기화가 스코프 밖 엔티티를 올바르게 건너뛰므로 그 테이블은 애초에 이 연결에 존재하지 않습니다). `entities`가 빈 배열이면 이전처럼 모든 엔티티를 다루는 언스코프 동작이 유지됩니다. 스코프된 연결에서도 두 가지는 계속 허용됩니다: 등록된 클래스의 상속 관계(등록된 부모의 STI/TPT 자식을 조회하거나 그 반대 — 이 연결이 소유한 테이블에 대한 다형 조회)와, `attach()`된 부분 스코프 밖의 관계 타깃에 정당하게 도달할 수 있는 캐스케이드 순회입니다.
 
 NestJS 통합 모듈은 named connection을 기본 지원해요. `forRoot()`와 `forFeature()`의 두 번째 인자로 connection name을 전달하면 돼요:
 

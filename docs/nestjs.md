@@ -90,6 +90,8 @@ When NestJS processes `StingerloomOrmModule.forFeature([Cat])`, it creates a pro
 
 The result: when NestJS encounters `@InjectRepository(Cat)` in a constructor, it knows exactly which token to look up and which `BaseRepository<Cat>` instance to inject.
 
+Misconfigurations fail fast at module initialization with actionable errors instead of Nest's generic `can't resolve dependencies (?)`: a typo'd `connectionName` in `forFeature()` throws an `OrmError` listing the connections `forRoot()`/`forRootAsync()` actually registered (with a closest-match suggestion), an entity missing from that connection's `entities` array throws `EntityMetadataNotFoundError` naming the connection, and injecting a repository without importing the matching `forFeature()` produces a token whose Symbol description itself names the `forFeature([...])` call to add.
+
 ### Step 3: Inject into Services
 
 ```typescript

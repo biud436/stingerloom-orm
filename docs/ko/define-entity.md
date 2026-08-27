@@ -92,6 +92,8 @@ INSERT INTO "users" ("name") VALUES ('Alice');
 
 모든 필드는 `t` 네임스페이스의 호출이에요. 컬럼 빌더는 추론된 타입을 지니고, 체이닝된 수정자가 이를 다듬어요(`.nullable()`은 타입을 `T | null`로 넓혀요).
 
+모든 필드 값은 반드시 **호출된** 빌더여야 합니다. `defineEntity`가 인식하지 못하는 값 — 흔하게는 괄호를 빠뜨린 `email: t.varchar` 같은 미호출 팩토리나, 임포트 순환으로 `undefined`가 된 빌더 — 은 해당 컬럼이 빠진 테이블을 조용히 만드는 대신, 필드 이름을 명시한 `ORM_SCHEMA_ERROR`를 던집니다.
+
 ### 컬럼 타입
 
 | 빌더 | TypeScript 타입 | 추상 컬럼 타입 |

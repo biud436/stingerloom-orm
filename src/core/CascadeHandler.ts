@@ -7,6 +7,7 @@ import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
+import { runScopeExempt } from "./entity-manager/scope-exemption";
 
 /**
  * Handler for cascade save/delete operations and lifecycle hooks.
@@ -62,8 +63,23 @@ export class CascadeHandler {
 
   /**
    * On save, recursively persists child entities of OneToMany relations whose cascade includes "insert" | "update".
+   *
+   * Runs scope-exempt: the child saves go through the public `ctx.save`
+   * facade (kept so test spies / plugin wrappers observe them), but a cascade
+   * target may legitimately sit outside a scoped EM's `entities` array.
    */
   async cascadeSaveOneToMany<T>(
+    entity: ClazzType<T>,
+    item: Partial<T>,
+    savedParentId: any,
+    session?: TransactionSessionManager,
+  ): Promise<void> {
+    return runScopeExempt(() =>
+      this.cascadeSaveOneToManyInner(entity, item, savedParentId, session),
+    );
+  }
+
+  private async cascadeSaveOneToManyInner<T>(
     entity: ClazzType<T>,
     item: Partial<T>,
     savedParentId: any,
@@ -123,8 +139,16 @@ export class CascadeHandler {
 
   /**
    * On save, persists the parent entity of ManyToOne relations whose cascade includes "insert" | "update" first.
+   * Runs scope-exempt — see {@link cascadeSaveOneToMany}.
    */
   async cascadeSaveManyToOne<T>(
+    entity: ClazzType<T>,
+    item: Partial<T>,
+  ): Promise<void> {
+    return runScopeExempt(() => this.cascadeSaveManyToOneInner(entity, item));
+  }
+
+  private async cascadeSaveManyToOneInner<T>(
     entity: ClazzType<T>,
     item: Partial<T>,
   ): Promise<void> {
@@ -162,6 +186,16 @@ export class CascadeHandler {
    * Optimized by selecting only PKs and issuing a batched DELETE via IN to save memory and query round-trips.
    */
   async cascadeDeleteOneToMany<T>(
+    entity: ClazzType<T>,
+    criteria: WhereClause<T>,
+  ): Promise<void> {
+    // Scope-exempt — see cascadeSaveOneToMany.
+    return runScopeExempt(() =>
+      this.cascadeDeleteOneToManyInner(entity, criteria),
+    );
+  }
+
+  private async cascadeDeleteOneToManyInner<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
   ): Promise<void> {

@@ -537,3 +537,70 @@ describe("defineEntity — type inference", () => {
     void _badId;
   });
 });
+
+describe("defineEntity — unrecognized field values fail fast (V4-T2-4)", () => {
+  beforeEach(clearScanners);
+
+  it("throws on an uncalled builder factory with the field name and a parentheses hint", () => {
+    expect(() =>
+      defineEntity("de_uncalled", {
+        id: t.int().primary().generated(),
+        email: t.varchar as any,
+      }),
+    ).toThrow(/field "email".*uncalled builder factory.*t\.varchar\(\)/s);
+  });
+
+  it("throws on an undefined field value with an import-cycle hint", () => {
+    expect(() =>
+      defineEntity("de_undef", {
+        id: t.int().primary().generated(),
+        author: undefined as any,
+      }),
+    ).toThrow(/field "author".*got undefined.*import cycle/s);
+  });
+
+  it("throws on a plain non-builder value", () => {
+    expect(() =>
+      defineEntity("de_plain", {
+        id: t.int().primary().generated(),
+        flags: 123 as any,
+      }),
+    ).toThrow(/field "flags".*got number/s);
+  });
+
+  it("names the entity in the error", () => {
+    expect(() =>
+      defineEntity("de_named", { broken: t.varchar as any }),
+    ).toThrow(/defineEntity\("de_named"\)/);
+  });
+});
+
+describe("defineEntity — class-name sanitization (V4-T2-4)", () => {
+  beforeEach(clearScanners);
+
+  it("keeps identifier table names as the class name", () => {
+    const Users = defineEntity("users", { id: t.int().primary() });
+    expect(Users.name).toBe("users");
+  });
+
+  it("sanitizes non-identifier characters instead of anonymizing", () => {
+    const UserAccounts = defineEntity("user-accounts", {
+      id: t.int().primary(),
+    });
+    expect(UserAccounts.name).toBe("user_accounts");
+  });
+
+  it("prefixes a leading digit", () => {
+    const TwoFa = defineEntity("2fa_codes", { id: t.int().primary() });
+    expect(TwoFa.name).toBe("_2fa_codes");
+  });
+
+  it("keeps the raw name as the table name after sanitizing the class name", () => {
+    const UserAccounts = defineEntity("user.accounts", {
+      id: t.int().primary(),
+    });
+    const meta = Reflect.getMetadata(ENTITY_TOKEN, UserAccounts) as EntityMetadata;
+    expect(UserAccounts.name).toBe("user_accounts");
+    expect((meta as any).name).toBe("user.accounts");
+  });
+});

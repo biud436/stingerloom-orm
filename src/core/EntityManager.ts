@@ -36,6 +36,7 @@ import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundErr
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { OptimisticLockError } from "../errors/OptimisticLockError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
+import { isScopeExempt } from "./entity-manager/scope-exemption";
 import { DeleteWithoutConditionsError } from "../errors/DeleteWithoutConditionsError";
 import { EntityNotFoundError } from "../errors/EntityNotFoundError";
 import { NotSupportedDatabaseTypeError } from "../errors/NotSupportedDatabaseTypeError";
@@ -210,6 +211,67 @@ export class EntityManager implements BaseEntityManager {
     WeakMap<object, Map<string, string>>
   >();
 
+  /**
+   * Classes already approved by {@link assertEntityInScope}. Replaced whenever
+   * `_entities` is reassigned (connect/attach), so a re-registration cannot
+   * serve stale approvals.
+   */
+  private entityScopeApproved = new WeakSet<ClazzType<any>>();
+
+  /**
+   * Fail fast when a scoped EntityManager (non-empty `entities` array) is used
+   * with an entity class outside its scope. Decorator side effects register
+   * metadata globally, so such a query used to resolve metadata fine and only
+   * die on the first SQL with a raw "no such table" — the schema sync had
+   * (correctly) skipped the out-of-scope entity's DDL.
+   *
+   * Called from the root public entry points only. Cascade traversal
+   * (`CascadeHandler` via `_ctx.save`/`_ctx.saveWithSession`/`_ctx.delete`)
+   * deliberately bypasses it: a relation target reached only through a
+   * cascade can legitimately live outside the scope of an `attach()`ed
+   * EntityManager whose tables another registration owns.
+   */
+  private assertEntityInScope<T>(entity: ClazzType<T>): void {
+    if (this._entities.length === 0) return; // unscoped: every entity allowed
+    if (typeof entity !== "function") return; // let downstream validation report it
+    if (this.entityScopeApproved.has(entity)) return;
+    if (isScopeExempt()) return; // cascade traversal — see scope-exemption.ts
+    if (this.isInEntityScope(entity)) {
+      this.entityScopeApproved.add(entity);
+      return;
+    }
+    throw new EntityMetadataNotFoundError(entity.name, {
+      connectionName: this.connectionName,
+    });
+  }
+
+  /**
+   * An entity is in scope when it is listed in `_entities` or shares an
+   * inheritance chain (STI/TPT/TPC) with a listed class — querying a child of
+   * a scoped parent (or the parent of scoped children) is a polymorphic query
+   * against tables this connection owns.
+   */
+  private isInEntityScope(entity: ClazzType<any>): boolean {
+    if (this._entities.includes(entity)) return true;
+    for (
+      let parent = Object.getPrototypeOf(entity);
+      typeof parent === "function" && parent.prototype;
+      parent = Object.getPrototypeOf(parent)
+    ) {
+      if (this._entities.includes(parent)) return true;
+    }
+    for (const scoped of this._entities) {
+      for (
+        let parent = Object.getPrototypeOf(scoped);
+        typeof parent === "function" && parent.prototype;
+        parent = Object.getPrototypeOf(parent)
+      ) {
+        if (parent === entity) return true;
+      }
+    }
+    return false;
+  }
+
   /** @internal Adapter that exposes EntityManager internals to the extracted handler classes. */
   private readonly _ctx: EntityManagerInternals = {
     wrap: (col) => this.wrap(col),
@@ -366,7 +428,7 @@ export class EntityManager implements BaseEntityManager {
     databaseClientOptions: DatabaseClientOptions,
     connectionName = "default",
   ) {
-    validateDatabaseClientOptions(databaseClientOptions);
+    validateDatabaseClientOptions(databaseClientOptions, connectionName);
 
     // ESM builds cannot probe class-transformer synchronously (no require);
     // finish the async auto-detection before any query can deserialize rows.
@@ -423,18 +485,22 @@ export class EntityManager implements BaseEntityManager {
         meta.name = ns.tableName(meta.rawClassName ?? entity.name);
       }
 
-      // 2. Column names
+      // 2. Column names. Columns without a propertyKey are DDL-only entries a
+      //    previous registerEntities() injected in place (the STI/TPT
+      //    discriminator) — renaming them through the strategy would replace
+      //    their explicit DB name with columnName(undefined) and break the
+      //    next connection's CREATE TABLE.
       const columns: ColumnMetadata[] = Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ?? [];
       for (const col of columns) {
-        if (!col.nameExplicit) {
-          col.name = ns.columnName(col.propertyKey!);
+        if (!col.nameExplicit && col.propertyKey) {
+          col.name = ns.columnName(col.propertyKey);
         }
       }
       // Also update entity metadata's columns reference
       if (meta.columns) {
         for (const col of meta.columns as unknown as ColumnMetadata[]) {
-          if (!col.nameExplicit) {
-            col.name = ns.columnName(col.propertyKey!);
+          if (!col.nameExplicit && col.propertyKey) {
+            col.name = ns.columnName(col.propertyKey);
           }
         }
       }
@@ -491,6 +557,7 @@ export class EntityManager implements BaseEntityManager {
       databaseClientOptions.entities ?? [],
     );
     this._entities = resolvedEntities as ClazzType<any>[];
+    this.entityScopeApproved = new WeakSet();
 
     const client = this.client as any;
     await client.connect(databaseClientOptions, connectionName);
@@ -553,6 +620,7 @@ export class EntityManager implements BaseEntityManager {
 
     const resolvedEntities = await resolveEntityGlobs(effective.entities ?? []);
     this._entities = resolvedEntities as ClazzType<any>[];
+    this.entityScopeApproved = new WeakSet();
 
     await this.initializeFromConnection(effective, connectionName);
     this.applyNamingStrategy(effective.namingStrategy);
@@ -1044,6 +1112,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T>,
   ): Promise<T | null> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.findOne(entity, findOption);
   }
 
@@ -1086,6 +1155,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     where: WhereClause<T> | WhereClause<T>[],
   ): Promise<T | null> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.findOneBy(entity, where);
   }
 
@@ -1137,6 +1207,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<T[]> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.find(entity, findOption);
   }
 
@@ -1155,6 +1226,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     where: WhereClause<T> | WhereClause<T>[],
   ): Promise<T[]> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.findBy(entity, where);
   }
 
@@ -1183,6 +1255,7 @@ export class EntityManager implements BaseEntityManager {
     column: K,
     where?: WhereClause<T> | WhereClause<T>[],
   ): Promise<T[K][]> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.pluck(entity, column, where);
   }
 
@@ -1190,6 +1263,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     option: CursorPaginationOption<T> = {},
   ): Promise<CursorPaginationResult<T>> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.findWithCursor(entity, option);
   }
 
@@ -1197,6 +1271,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<[T[], number]> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.findAndCount(entity, findOption);
   }
 
@@ -1243,6 +1318,7 @@ export class EntityManager implements BaseEntityManager {
     options: FindOption<T> = {},
     batchSize: number = 1000,
   ): AsyncGenerator<T[], void, undefined> {
+    this.assertEntityInScope(entity);
     const { limit, take, skip, ...rest } = options;
 
     // Resolve the caller's window with find()'s precedence: a limit tuple
@@ -1283,6 +1359,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     option: PagePaginationOption<T> = {},
   ): Promise<PagePaginationResult<T>> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.findWithPage(entity, option);
   }
 
@@ -1360,6 +1437,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     partial: DeepPartial<T>,
   ): Promise<InstanceType<ClazzType<T>> | undefined> {
+    this.assertEntityInScope(entity);
     return this.entityFactory.preload(entity, partial);
   }
 
@@ -1369,6 +1447,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     item: Partial<T>,
   ): Promise<InstanceType<ClazzType<T>>> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.save(entity, item));
   }
 
@@ -1376,6 +1455,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     items: Partial<T>[],
   ): Promise<InstanceType<ClazzType<T>>[]> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.saveMany(entity, items));
   }
 
@@ -1383,6 +1463,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     items: Partial<T>[],
   ): Promise<{ affected: number }> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.insertMany(entity, items));
   }
 
@@ -1409,6 +1490,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     items: Partial<T>[],
   ): Promise<InstanceType<ClazzType<T>>[]> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.insertManyAndReturn(entity, items));
   }
 
@@ -1418,14 +1500,17 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
   ): Promise<DeleteResult> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.delete(entity, criteria));
   }
 
   async deleteMany<T>(entity: ClazzType<T>, ids: unknown[]): Promise<DeleteResult> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.deleteMany(entity, ids));
   }
 
   async clear<T>(entity: ClazzType<T>): Promise<void> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.clear(entity));
   }
 
@@ -1459,6 +1544,7 @@ export class EntityManager implements BaseEntityManager {
     where: WhereClause<T>,
     data: UpdateData<T>,
   ): Promise<{ affected: number }> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.update(entity, where, data));
   }
 
@@ -1498,6 +1584,7 @@ export class EntityManager implements BaseEntityManager {
     data: UpdateData<T>,
     options: UpdateManyOptions<T>,
   ): Promise<{ affected: number }> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.updateMany(entity, data, options));
   }
 
@@ -1533,6 +1620,7 @@ export class EntityManager implements BaseEntityManager {
     column: keyof T & string,
     by: number = 1,
   ): Promise<{ affected: number }> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.increment(entity, where, column, by));
   }
 
@@ -1563,6 +1651,7 @@ export class EntityManager implements BaseEntityManager {
     column: keyof T & string,
     by: number = 1,
   ): Promise<{ affected: number }> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.decrement(entity, where, column, by));
   }
 
@@ -1600,6 +1689,7 @@ export class EntityManager implements BaseEntityManager {
       entity = entityOrRef;
       aliasName = alias ?? entity.name;
     }
+    this.assertEntityInScope(entity);
     const meta = this.resolver.resolveEntityMetadata(entity);
     if (!meta) {
       throw new EntityMetadataNotFoundError(entity.name);
@@ -1643,6 +1733,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
   ): Promise<DeleteResult> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.softDelete(entity, criteria));
   }
 
@@ -1650,6 +1741,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
   ): Promise<DeleteResult> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.restore(entity, criteria));
   }
 
@@ -1677,6 +1769,7 @@ export class EntityManager implements BaseEntityManager {
     data: Partial<T>,
     conflictColumns?: string[],
   ): Promise<{ affected: number }> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.upsert(entity, data, conflictColumns));
   }
 
@@ -1698,6 +1791,7 @@ export class EntityManager implements BaseEntityManager {
     data: Partial<T>,
     conflictColumns?: string[],
   ): Promise<{ affected: number }> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.insertIgnore(entity, data, conflictColumns));
   }
 
@@ -1720,6 +1814,7 @@ export class EntityManager implements BaseEntityManager {
     items: Partial<T>[],
     conflictColumns?: string[],
   ): Promise<{ affected: number }> {
+    this.assertEntityInScope(entity);
     return this.finishWrite(entity, this.writeExecutor.batchUpsert(entity, items, conflictColumns));
   }
 
@@ -1748,6 +1843,7 @@ export class EntityManager implements BaseEntityManager {
     relatedId: unknown,
     options: { ignoreExisting?: boolean } = {},
   ): Promise<{ affected: number }> {
+    this.assertEntityInScope(entity);
     return this.relationExecutor.attachRelation(
       entity,
       ownerId,
@@ -1767,6 +1863,7 @@ export class EntityManager implements BaseEntityManager {
     propertyKey: keyof T & string,
     relatedId: unknown,
   ): Promise<{ affected: number }> {
+    this.assertEntityInScope(entity);
     return this.relationExecutor.detachRelation(
       entity,
       ownerId,
@@ -1790,6 +1887,7 @@ export class EntityManager implements BaseEntityManager {
     withDeleted?: boolean,
     onlyDeleted?: boolean,
   ): Promise<boolean> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.exists(entity, where, withDeleted, onlyDeleted);
   }
 
@@ -1801,6 +1899,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     id: unknown,
   ): Promise<T | null> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.findByPK(entity, id);
   }
 
@@ -1812,6 +1911,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     ids: unknown[],
   ): Promise<T[]> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.findByPKs(entity, ids);
   }
 
@@ -1862,6 +1962,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     ids: unknown[],
   ): Promise<Map<string | number | bigint, T>> {
+    this.assertEntityInScope(entity);
     return this.readExecutor.findByPKsMap(entity, ids);
   }
 
@@ -1878,6 +1979,7 @@ export class EntityManager implements BaseEntityManager {
     withDeleted?: boolean,
     onlyDeleted?: boolean,
   ): Promise<number> {
+    this.assertEntityInScope(entity);
     return this.aggregateHandler.count(entity, where, withDeleted, onlyDeleted);
   }
 
@@ -1896,6 +1998,7 @@ export class EntityManager implements BaseEntityManager {
     withDeleted?: boolean,
     onlyDeleted?: boolean,
   ): Promise<number> {
+    this.assertEntityInScope(entity);
     return this.aggregateHandler.sum(
       entity,
       field,
@@ -1920,6 +2023,7 @@ export class EntityManager implements BaseEntityManager {
     withDeleted?: boolean,
     onlyDeleted?: boolean,
   ): Promise<number> {
+    this.assertEntityInScope(entity);
     return this.aggregateHandler.avg(
       entity,
       field,
@@ -1944,6 +2048,7 @@ export class EntityManager implements BaseEntityManager {
     withDeleted?: boolean,
     onlyDeleted?: boolean,
   ): Promise<number> {
+    this.assertEntityInScope(entity);
     return this.aggregateHandler.min(
       entity,
       field,
@@ -1968,6 +2073,7 @@ export class EntityManager implements BaseEntityManager {
     withDeleted?: boolean,
     onlyDeleted?: boolean,
   ): Promise<number> {
+    this.assertEntityInScope(entity);
     return this.aggregateHandler.max(
       entity,
       field,
@@ -1983,6 +2089,7 @@ export class EntityManager implements BaseEntityManager {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<ExplainResult> {
+    this.assertEntityInScope(entity);
     return this.explainHandler.explain(entity, findOption);
   }
 
@@ -2453,6 +2560,7 @@ export class EntityManager implements BaseEntityManager {
   }
 
   getRepository<T>(entity: ClazzType<T>) {
+    this.assertEntityInScope(entity);
     return BaseRepository.of(entity, this);
   }
 
@@ -2477,6 +2585,7 @@ export class EntityManager implements BaseEntityManager {
       resolvedAlias = alias;
     }
     if (entity && resolvedAlias) {
+      this.assertEntityInScope(entity);
       const qb = new SelectQueryBuilder<T>(entity, resolvedAlias, this);
       qb.setDialectExpression(createDialectExpression(this._ctx.getDialect()));
       const meta = this.resolver.resolveEntityMetadata(entity);
