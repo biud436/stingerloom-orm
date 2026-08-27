@@ -13,10 +13,11 @@ import {
 } from "./stingerloom-orm-core.module";
 import { MultiTenantEntityManager } from "../../core/MultiTenantEntityManager";
 import { getMultiTenantEntityManagerToken } from "./inject-multi-tenant-entity-manager.decorator";
+import { getRecordedOrmConnectionNames } from "./connection-name-registry";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
+import { closestIdentifier } from "../../utils/closestIdentifier";
 
-export const STINGERLOOM_ORM_OPTION_TOKEN = Symbol.for(
-  "STINGERLOOM_ORM_OPTION_TOKEN",
-);
 export const INJECT_REPOSITORIES_TOKEN = "INJECT_REPOSITORIES_TOKEN";
 
 export function getEntityManagerToken(
@@ -43,10 +44,40 @@ export function makeInjectRepositoryToken(
   let token = connCache.get(entity);
   if (!token) {
     const suffix = connectionName === "default" ? "" : `_${connectionName}`;
-    token = Symbol(`${INJECT_REPOSITORIES_TOKEN}_${entity.name}${suffix}`);
+    const featureArgs =
+      connectionName === "default"
+        ? `[${entity.name}]`
+        : `[${entity.name}], "${connectionName}"`;
+    // The remediation rides in the symbol description so Nest's generic
+    // "can't resolve dependencies (?)" error names the fix by itself.
+    token = Symbol(
+      `${INJECT_REPOSITORIES_TOKEN}_${entity.name}${suffix} ` +
+        `(provided by StingerloomOrmModule.forFeature(${featureArgs}) — import it in this module)`,
+    );
     connCache.set(entity, token);
   }
   return token;
+}
+
+/**
+ * Built when a `forFeature()` repository factory finds no EntityManager under
+ * its connection name — i.e. no `forRoot()`/`forRootAsync()` registered that
+ * name (typo or missing root module).
+ */
+function makeUnknownConnectionError(
+  entity: ClazzType<unknown>,
+  connectionName: string,
+): OrmError {
+  const known = getRecordedOrmConnectionNames();
+  const suggestion = closestIdentifier(connectionName, known);
+  return new OrmError(
+    OrmErrorCode.INVALID_CONFIG,
+    `StingerloomOrmModule.forFeature([${entity.name}], "${connectionName}") could not resolve its EntityManager: ` +
+      `no forRoot()/forRootAsync() registered a connection named "${connectionName}". ` +
+      `Known connections: ${known.length > 0 ? known.map((n) => `"${n}"`).join(", ") : "(none)"}.` +
+      (suggestion ? ` Did you mean "${suggestion}"?` : ""),
+    `Fix the connectionName passed to forFeature(), or add StingerloomOrmModule.forRoot(options, "${connectionName}") to your root module.`,
+  );
 }
 
 @Module({})
@@ -56,12 +87,20 @@ export class StingerloomOrmModule {
     connectionName = "default",
   ): DynamicModule {
     const emToken = getEntityManagerToken(connectionName);
+    // The EntityManager is injected as optional: with a required token a
+    // connectionName typo dies inside Nest's resolver with a generic
+    // "can't resolve dependencies (?)" — the factory never runs. Optional
+    // injection lets the factory fire and raise an OrmError that names the
+    // missing connection and the ones that actually exist.
     const providers = entities.map((entity) => ({
       provide: makeInjectRepositoryToken(entity, connectionName),
-      useFactory: (entityManager: EntityManager) => {
+      useFactory: (entityManager?: EntityManager) => {
+        if (!entityManager) {
+          throw makeUnknownConnectionError(entity, connectionName);
+        }
         return entityManager.getRepository(entity);
       },
-      inject: [emToken],
+      inject: [{ token: emToken, optional: true }],
     }));
 
     return {
@@ -75,12 +114,6 @@ export class StingerloomOrmModule {
     options: DatabaseClientOptions,
     connectionName = "default",
   ): DynamicModule {
-    Reflect.defineMetadata(
-      STINGERLOOM_ORM_OPTION_TOKEN,
-      options,
-      StingerloomOrmModule,
-    );
-
     StingerloomOrmService.captured[STINGERLOOM_ORM_SERVICE_TOKEN] = true;
 
     const emToken = getEntityManagerToken(connectionName);
