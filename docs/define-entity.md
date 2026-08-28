@@ -1,6 +1,6 @@
 # Defining Entities
 
-Stingerloom's recommended way to define an entity is the **code-first builder API**: `defineEntity` together with the `t` field builders. You write one declaration, and the entity's TypeScript type is **inferred from the schema** — no hand-written class, no parallel interface, no `experimentalDecorators`, no `emitDecoratorMetadata`, no build-time codegen.
+Stingerloom's recommended way to define an entity is the **code-first builder API**: `defineEntity` together with the `t` field builders. You write one declaration, and the entity's TypeScript type is **inferred from the schema** — no hand-written class, no parallel interface, no `experimentalDecorators`, no `emitDecoratorMetadata`, no build-time codegen. Requires TypeScript >= 5.4 (the builder types use `NoInfer`).
 
 ```typescript
 import { defineEntity, t, InferEntity } from "@stingerloom/orm";

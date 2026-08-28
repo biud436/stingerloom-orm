@@ -1,6 +1,6 @@
 # 엔티티 정의하기
 
-Stingerloom이 엔티티를 정의하는 권장 방식은 **코드 우선(code-first) 빌더 API**예요: `defineEntity`와 `t` 필드 빌더를 함께 쓰는 방식이죠. 선언을 한 번만 작성하면, 엔티티의 TypeScript 타입은 **스키마에서 추론돼요** — 손으로 쓴 클래스도, 별도의 인터페이스도, `experimentalDecorators`도, `emitDecoratorMetadata`도, 빌드 타임 코드 생성도 필요 없어요.
+Stingerloom이 엔티티를 정의하는 권장 방식은 **코드 우선(code-first) 빌더 API**예요: `defineEntity`와 `t` 필드 빌더를 함께 쓰는 방식이죠. 선언을 한 번만 작성하면, 엔티티의 TypeScript 타입은 **스키마에서 추론돼요** — 손으로 쓴 클래스도, 별도의 인터페이스도, `experimentalDecorators`도, `emitDecoratorMetadata`도, 빌드 타임 코드 생성도 필요 없어요. TypeScript 5.4 이상이 필요합니다 (빌더 타입이 `NoInfer`를 사용해요).
 
 ```typescript
 import { defineEntity, t, InferEntity } from "@stingerloom/orm";

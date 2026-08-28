@@ -31,7 +31,7 @@ The ORM handles the translation in both directions: your class definition become
 ## Prerequisites
 
 - Node.js 22 or higher (latest LTS recommended)
-- TypeScript project
+- TypeScript 5.4 or higher — required for the code-first `defineEntity` API (its types use `NoInfer`, added in 5.4); the decorator API works on earlier TypeScript 5.x
 - MySQL, PostgreSQL, or SQLite database
 
 ## Step 1: Installation

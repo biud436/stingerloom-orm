@@ -31,7 +31,7 @@ ORM은 양방향으로 변환을 처리해요. 클래스 정의 → `CREATE TABL
 ## 사전 요구사항
 
 - Node.js 22+
-- TypeScript 프로젝트
+- TypeScript 5.4+ — 코드 우선 `defineEntity` API에 필요합니다 (타입이 5.4에 추가된 `NoInfer`를 사용). 데코레이터 API는 그 이전 TypeScript 5.x에서도 동작합니다
 - MySQL, PostgreSQL, 또는 SQLite
 
 ## 1단계: 설치
