@@ -238,6 +238,31 @@ if (result === null) {
 
 ---
 
+## 시더는 원자적이지 않습니다
+
+`SeederRunner`는 `run()`을 트랜잭션으로 감싸지 **않습니다**. `run()` 안의 각 문장은 독립적으로 실행되고 커밋되므로, 중간에 실패한 시더는 그 이전의 쓰기를 데이터베이스에 남깁니다. 게다가 실패하면 `__seeds`에 실행 기록이 남지 않으므로, 다음 `runAll()`이 같은 시더를 처음부터 다시 실행합니다.
+
+여러 연관 행이 함께 저장되어야 하는(전부 아니면 전무) 시더라면, 본문을 `em.transaction()`으로 감싸서 직접 원자성을 확보하세요:
+
+```typescript
+class OrderFixtureSeeder extends Seeder {
+  async run(ctx: SeederContext): Promise<void> {
+    await ctx.em.transaction(async (txEm) => {
+      const customer = await txEm.save(Customer, { name: "Fixture Co." });
+      await txEm.save(Order, { customerId: customer.id, status: "pending" });
+      await txEm.save(Order, { customerId: customer.id, status: "paid" });
+      // 여기서 예외가 발생하면 세 개의 쓰기가 모두 함께 롤백됩니다.
+    });
+  }
+}
+```
+
+이렇게 감싸면 실패 시 시더의 쓰기가 전부 롤백되고, 버그를 고친 뒤의 재실행은 깨끗한 상태에서 시작합니다. 가능하다면 시더를 **멱등**하게 작성하는 것도 좋습니다(insert 전 존재 확인 또는 `upsert()` 사용). 감싸지 않은 시더가 부분 실패하더라도 다음 실행에서 중복이 생기지 않게요.
+
+실행 추적 기록도 별도의 문장이라는 점에 유의하세요. `run()`은 성공했는데 `__seeds` 기록이 실패하면, 러너는 critical 경고를 로그로 남기고 데이터는 이미 쓰였음에도 해당 시더를 실패로 보고합니다.
+
+---
+
 ## API 레퍼런스
 
 ### Seeder (추상 클래스)
