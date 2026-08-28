@@ -142,7 +142,8 @@ const posts = await em.find(Post, {
 **Option 2: Set `eager: true` on the relation decorator:**
 
 ```typescript
-@ManyToOne(() => User, { joinColumn: "author_id", eager: true })
+@ManyToOne(() => User, (user) => user.posts, { eager: true })
+@RelationColumn({ name: "author_id" })
 author!: User;
 ```
 

@@ -53,7 +53,7 @@ export class Owner {
 
 ```typescript
 // cat.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from "@stingerloom/orm";
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, RelationColumn } from "@stingerloom/orm";
 import { Owner } from "./owner.entity";
 
 @Entity()
@@ -64,9 +64,8 @@ export class Cat {
   @Column()
   name!: string;
 
-  @ManyToOne(() => Owner, (owner) => owner.cats, {
-    joinColumn: "owner_id",
-  })
+  @ManyToOne(() => Owner, (owner) => owner.cats)
+  @RelationColumn({ name: "owner_id" })
   owner!: Owner;
 }
 ```
@@ -152,17 +151,17 @@ A `LEFT JOIN` means "return the cat even if it has no owner (owner_id is NULL)."
 
 ### Understanding the Decorator Arguments
 
-Looking at the three arguments of `@ManyToOne`:
+Looking at the arguments of `@ManyToOne`:
 
 - `() => Owner` -- The target entity (wrapped in a function to prevent circular references at import time)
-- `(owner) => owner.cats` -- The inverse property (used for bidirectional relations; can be omitted for unidirectional)
-- `{ joinColumn: "owner_id" }` -- The foreign key column name
+- `(owner) => owner.cats` -- The inverse property. This argument is required; for a unidirectional relation (no inverse property on the target), pass `() => undefined`.
+- An optional third argument carries options such as `eager`, `cascade`, `onDelete` (see below)
 
-> **Hint** You can omit `joinColumn`. See **@Column-based FK Auto-Detection** below.
+The FK column itself is declared by `@RelationColumn({ name: "owner_id" })` on the same property. You can also omit `@RelationColumn` entirely -- see **@Column-based FK Auto-Detection** below.
 
 ### @Column-based FK Auto-Detection
 
-Specifying `joinColumn` every time is tedious and risks mismatch with `@Column`'s DB column name. Stingerloom automatically uses the **actual DB name** of the `@Column` as the FK column when a `@Column` with the `{propertyName}Id` pattern is declared on the same entity.
+Naming the FK column on every relation is repetitive and risks mismatch with `@Column`'s DB column name. Stingerloom automatically uses the **actual DB name** of the `@Column` as the FK column when a `@Column` with the `{propertyName}Id` pattern is declared on the same entity.
 
 ```typescript
 @Entity()
@@ -177,7 +176,7 @@ export class Cat {
   @Column({ name: "owner_fk", type: "int" })
   ownerId!: number;
 
-  // "owner_fk" from ownerId's DB name is auto-applied without joinColumn
+  // "owner_fk" from ownerId's DB name is auto-applied — no explicit FK declaration
   @ManyToOne(() => Owner, (owner) => owner.cats)
   owner!: Owner;
 }
@@ -186,7 +185,7 @@ export class Cat {
 The resolution priority is as follows.
 
 1. If `@RelationColumn` is attached to the property -> use its `name` (or infer `{propertyName}Id` if omitted)
-2. If `@ManyToOne`'s `joinColumn` option is specified -> use as-is
+2. If `@ManyToOne`'s `joinColumn` option is specified -> use as-is (legacy -- deprecated on the decorator API, see below)
 3. If a `@Column` with `{propertyName}Id` is declared on the same entity -> use that `@Column`'s DB column name
 4. If none of the above -> the FK column **cannot be resolved**. A `@ManyToOne` is always the owning side, so this means the FK is **not persisted** on insert/update and the relation cannot be loaded. A warning is logged; add `@RelationColumn({ name: "..." })` (or a `{propertyName}Id` `@Column`) to fix it.
 
@@ -257,6 +256,26 @@ authorId!: number;          // Direct FK access: post.authorId = 5
 author!: User;
 ```
 
+### Legacy: the joinColumn Option
+
+Before `@RelationColumn` existed, the FK column name was passed as a decorator option:
+
+```typescript
+// Legacy form — works, but logs a deprecation warning
+@ManyToOne(() => Owner, (owner) => owner.cats, { joinColumn: "owner_id" })
+owner!: Owner;
+```
+
+This still works — it is the second tier of the FK resolution order above — but it is **deprecated on the decorator API** (`@ManyToOne` / `@OneToOne`) and logs a warning at startup. Migrate by moving the name into `@RelationColumn`:
+
+```typescript
+@ManyToOne(() => Owner, (owner) => owner.cats)
+@RelationColumn({ name: "owner_id" })
+owner!: Owner;
+```
+
+> **Note** This deprecation applies to the decorator API only. The `joinColumn` key in the code-first APIs — `t.manyToOne(() => Owner, { joinColumn: "owner_id" })` in `defineEntity()`, and the `relations` block of an `EntitySchema` — is a different, fully supported contract with no deprecation.
+
 ### Custom FK Property Names (fkProperty)
 
 Stingerloom's `qAlias()` and other property→column resolvers follow the convention that a relation `workspace` has a sibling FK property named `workspaceId`. When you need a custom FK property name (e.g. when porting from another ORM), pass `fkProperty` on the relation decorator so the resolvers map it to the underlying join column.
@@ -286,15 +305,19 @@ Without `fkProperty`, `qAlias(Member).wsId.eq(42)` would render as `m.wsId` in S
 
 ### Referencing Non-PK Columns (references)
 
-By default, FKs reference the target entity's PK. To reference a column other than the PK, use the `references` option.
+By default, FKs reference the target entity's PK. To reference a column other than the PK, use `@RelationColumn`'s `referencedColumn` option.
 
 ```typescript
-@ManyToOne(() => Owner, (owner) => owner.cats, {
-  joinColumn: "owner_uuid_fk",
-  references: "uuid",  // References Owner.uuid column instead of Owner.id
+@ManyToOne(() => Owner, (owner) => owner.cats)
+@RelationColumn({
+  name: "owner_uuid_fk",
+  type: "uuid",
+  referencedColumn: "uuid",  // References Owner.uuid column instead of Owner.id
 })
 owner!: Owner;
 ```
+
+(`@ManyToOne`'s `references` option expresses the same thing and remains the form used by the code-first `defineEntity()` / `EntitySchema` APIs; when both are present, `referencedColumn` wins.)
 
 This generates:
 
@@ -310,10 +333,10 @@ By default, foreign keys use `ON DELETE NO ACTION ON UPDATE NO ACTION`. This mea
 
 ```typescript
 @ManyToOne(() => Owner, (owner) => owner.cats, {
-  joinColumn: "owner_id",
   onDelete: "CASCADE",     // Delete cats when owner is deleted
   onUpdate: "CASCADE",     // Update FK when owner PK changes
 })
+@RelationColumn({ name: "owner_id" })
 owner!: Owner;
 ```
 
@@ -346,9 +369,9 @@ In some cases (e.g., cross-database references, performance-critical tables), yo
 
 ```typescript
 @ManyToOne(() => ExternalEntity, (e) => e.items, {
-  joinColumn: "external_id",
   createForeignKeyConstraints: false,  // No FK constraint in DDL
 })
+@RelationColumn({ name: "external_id" })
 external!: ExternalEntity;
 ```
 
@@ -485,9 +508,9 @@ Setting `eager: true` automatically executes a LEFT JOIN when `find()` or `findO
 ```typescript
 // cat.entity.ts
 @ManyToOne(() => Owner, (owner) => owner.cats, {
-  joinColumn: "owner_id",
   eager: true,  // owner is automatically loaded on find()
 })
+@RelationColumn({ name: "owner_id" })
 owner!: Owner;
 ```
 
@@ -519,9 +542,9 @@ Setting `lazy: true` uses Proxy-based deferred loading. A DB query is executed a
 ```typescript
 // cat.entity.ts
 @ManyToOne(() => Owner, (owner) => owner.cats, {
-  joinColumn: "owner_id",
   lazy: true,  // Query executes on access
 })
+@RelationColumn({ name: "owner_id" })
 owner!: Owner;
 ```
 
@@ -588,7 +611,7 @@ export class Profile {
 
 ```typescript
 // user.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, OneToOne } from "@stingerloom/orm";
+import { Entity, PrimaryGeneratedColumn, Column, OneToOne, RelationColumn } from "@stingerloom/orm";
 import { Profile } from "./profile.entity";
 
 @Entity()
@@ -599,7 +622,8 @@ export class User {
   @Column()
   name!: string;
 
-  @OneToOne(() => Profile, { joinColumn: "profile_id", eager: true })
+  @OneToOne(() => Profile, { eager: true })
+  @RelationColumn({ name: "profile_id" })
   profile!: Profile;
 }
 ```
@@ -642,7 +666,7 @@ LEFT JOIN "profile" ON "user"."profile_id" = "profile"."id"
 WHERE "user"."id" = 1;
 ```
 
-> **Hint** `@OneToOne` also supports `@RelationColumn` and `@Column`-based FK auto-detection just like `@ManyToOne`. You can use `@RelationColumn({ name: "profile_id" })` or declare `@Column({ name: "profile_fk" }) profileId: number` to omit `joinColumn`.
+> **Hint** `@OneToOne` resolves its FK column exactly like `@ManyToOne`: `@RelationColumn` first, then the legacy `joinColumn` option, then a `{propertyName}Id` `@Column` (e.g. `@Column({ name: "profile_fk" }) profileId: number`).
 
 ### Bidirectional
 
@@ -650,7 +674,8 @@ If you also want to reference User from Profile, use `inverseSide`.
 
 ```typescript
 // user.entity.ts — Owner side (the side with the FK)
-@OneToOne(() => Profile, { joinColumn: "profile_id", inverseSide: "user" })
+@OneToOne(() => Profile, { inverseSide: "user" })
+@RelationColumn({ name: "profile_id" })
 profile!: Profile;
 
 // profile.entity.ts — Inverse side

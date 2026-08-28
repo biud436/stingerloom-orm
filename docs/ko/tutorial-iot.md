@@ -314,6 +314,7 @@ import {
   PrimaryGeneratedColumn,
   ManyToOne,
   OneToMany,
+  RelationColumn,
   Index,
   CreateTimestamp,
   UpdateTimestamp,
@@ -340,7 +341,8 @@ export class Device {
   @Column({ type: "boolean" })
   isActive!: boolean;
 
-  @ManyToOne(() => User, (user) => user.devices, { joinColumn: "user_id" })
+  @ManyToOne(() => User, (user) => user.devices)
+  @RelationColumn({ name: "user_id" })
   user!: User;
 
   @OneToMany(() => TemperatureReading, { mappedBy: "device" })
@@ -388,6 +390,7 @@ import {
   Column,
   PrimaryGeneratedColumn,
   ManyToOne,
+  RelationColumn,
   Index,
   CreateTimestamp,
   BeforeInsert,
@@ -399,7 +402,8 @@ export class TemperatureReading {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Device, (d) => d.readings, { joinColumn: "device_id" })
+  @ManyToOne(() => Device, (d) => d.readings)
+  @RelationColumn({ name: "device_id" })
   device!: Device;
 
   @Index()
@@ -459,6 +463,7 @@ import {
   Column,
   PrimaryGeneratedColumn,
   ManyToOne,
+  RelationColumn,
   CreateTimestamp,
 } from "@stingerloom/orm";
 import { Device } from "./device.entity";
@@ -468,7 +473,10 @@ export class AlertRule {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Device, { joinColumn: "device_id" })
+  // 단방향 관계: Device에 알림 규칙의 역방향 프로퍼티가 없으므로
+  // 필수인 두 번째 인자에 () => undefined를 전달합니다.
+  @ManyToOne(() => Device, () => undefined)
+  @RelationColumn({ name: "device_id" })
   device!: Device;
 
   @Column({ type: "varchar", length: 20 })
@@ -506,6 +514,7 @@ import {
   Column,
   PrimaryGeneratedColumn,
   ManyToOne,
+  RelationColumn,
   CreateTimestamp,
 } from "@stingerloom/orm";
 import { AlertRule } from "./alert-rule.entity";
@@ -516,10 +525,12 @@ export class Alert {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => AlertRule, { joinColumn: "alert_rule_id" })
+  @ManyToOne(() => AlertRule, () => undefined)
+  @RelationColumn({ name: "alert_rule_id" })
   rule!: AlertRule;
 
-  @ManyToOne(() => TemperatureReading, { joinColumn: "reading_id" })
+  @ManyToOne(() => TemperatureReading, () => undefined)
+  @RelationColumn({ name: "reading_id" })
   reading!: TemperatureReading;
 
   @Column({ type: "float" })
@@ -556,6 +567,7 @@ import {
   Column,
   PrimaryGeneratedColumn,
   ManyToOne,
+  RelationColumn,
   Index,
   UpdateTimestamp,
 } from "@stingerloom/orm";
@@ -566,7 +578,8 @@ export class DailyStats {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Device, { joinColumn: "device_id" })
+  @ManyToOne(() => Device, () => undefined)
+  @RelationColumn({ name: "device_id" })
   device!: Device;
 
   @Index()

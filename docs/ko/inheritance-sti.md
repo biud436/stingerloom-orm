@@ -297,7 +297,8 @@ export class Payment {
   @Column({ type: "int", nullable: true })
   storeId!: number;
 
-  @ManyToOne(() => Store, (s) => s.payments, { joinColumn: "storeId" })
+  // 위의 storeId @Column에서 FK 컬럼이 자동 감지됩니다
+  @ManyToOne(() => Store, (s) => s.payments)
   store!: Store;
 }
 

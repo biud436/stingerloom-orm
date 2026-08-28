@@ -641,7 +641,7 @@ await em.register({
 |---|---|---|
 | `tableName(className)` | 엔티티 등록 | 명시적 `name` 없는 `@Entity()`의 기본 테이블명. |
 | `columnName(propertyName)` | 컬럼 등록 | 명시적 `name` 없는 `@Column()`의 기본 DB 컬럼명. |
-| `joinColumnName(propertyName, refPk)` | `@ManyToOne`/`@OneToOne` | 명시적 `joinColumn` 옵션 없을 때의 FK 컬럼명. |
+| `joinColumnName(propertyName, refPk)` | `@ManyToOne`/`@OneToOne` | FK 컬럼명이 명시되지 않았을 때의 기본값 (`@RelationColumn`의 `name`도, 레거시 `joinColumn` 옵션도 없는 경우). |
 | `foreignKeyName(table, column, refTable)` | DDL 생성 | `CONSTRAINT ... FOREIGN KEY` 절의 이름. PostgreSQL 제약 때문에 63자 이내 유지. |
 | `uniqueIndexName(table, columns)` | `@UniqueIndex` | 복합 고유 인덱스 이름. |
 | `indexName(table, column)` | 프로퍼티 수준 `@Index` | 단일 컬럼 인덱스 이름. |

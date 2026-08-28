@@ -278,7 +278,8 @@ export class Payment {
   @Column({ type: "int", nullable: true })
   storeId!: number;
 
-  @ManyToOne(() => Store, (s) => s.payments, { joinColumn: "storeId" })
+  // FK column auto-detected from the storeId @Column above
+  @ManyToOne(() => Store, (s) => s.payments)
   store!: Store;
 }
 

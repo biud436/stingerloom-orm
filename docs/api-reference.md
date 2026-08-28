@@ -624,7 +624,7 @@ resolved from the registered definition.
 
 ```typescript
 interface ManyToOneOption {
-  joinColumn?: string;        // FK column name (auto-detected from @Column if omitted)
+  joinColumn?: string;        // Deprecated on decorators — prefer @RelationColumn({ name }); still the contract for defineEntity/EntitySchema
   references?: string;        // Target reference column (defaults to PK)
   eager?: boolean;
   lazy?: boolean;
@@ -641,7 +641,7 @@ interface OneToManyOption<T> {
 }
 
 interface OneToOneOption<T> {
-  joinColumn?: string;        // FK column name (auto-detected from @Column if omitted)
+  joinColumn?: string;        // Deprecated on decorators — prefer @RelationColumn({ name }); still the contract for defineEntity/EntitySchema
   inverseSide?: Extract<keyof T, string> | (string & {});  // IntelliSense supported
   eager?: boolean;
   cascade?: CascadeOption;
