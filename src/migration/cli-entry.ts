@@ -357,7 +357,6 @@ async function runIntrospectCommand(
     return EXIT_OK;
   } catch (err: unknown) {
     console.error(`Introspection failed: ${errorMessage(err)}`);
-    printSuggestion(err);
     return EXIT_FAILURE;
   }
 }
@@ -409,20 +408,12 @@ async function runMigrationCommand(
     return EXIT_OK;
   } catch (err: unknown) {
     console.error(`Migration failed: ${errorMessage(err)}`);
-    printSuggestion(err);
     return EXIT_FAILURE;
   } finally {
     // Runs before the exit code takes effect: the process ends naturally after
     // main() resolves, so `process.exitCode` never cuts this short the way a
     // direct `process.exit()` did.
     await cli.close().catch(() => {});
-  }
-}
-
-function printSuggestion(err: unknown): void {
-  const suggestion = (err as any)?.suggestion;
-  if (typeof suggestion === "string" && suggestion.length > 0) {
-    console.error(`Suggestion: ${suggestion}`);
   }
 }
 
@@ -487,7 +478,6 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
       }
     } else if (err instanceof OrmError) {
       console.error(err.message);
-      printSuggestion(err);
     } else {
       console.error(`Unexpected error: ${errorMessage(err)}`);
       if (err instanceof Error && err.stack) {
