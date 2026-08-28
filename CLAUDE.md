@@ -4,7 +4,7 @@
 
 TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker OverlayFS 방식의 **레이어드 메타데이터 시스템**을 통해 멀티테넌시를 지원합니다.
 
-- **패키지명:** `@stingerloom/orm` (v1.0.0)
+- **패키지명:** `@stingerloom/orm` (v1.1.1)
 - **패키지 매니저:** pnpm
 - **npm 배포:** https://www.npmjs.com/package/@stingerloom/orm
 - **진입점:** `dist/index.js` (CJS) / `dist/esm/index.js` (ESM) / `dist/index.d.ts`
@@ -54,8 +54,8 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker O
 │   ├── utils/                  # Logger, ReflectManager, uuid-v7, camelToSnakeCase 등
 │   └── errors/                 # OrmError, OrmErrorCode + 16개 커스텀 에러 클래스
 ├── __tests__/
-│   ├── unit/                   # 277개 유닛 테스트 파일 (5,332 tests)
-│   └── integration/            # 88개 통합 테스트 파일 (sqlite/ 포함, INTEGRATION_TEST=true 필요)
+│   ├── unit/                   # 302개 유닛 테스트 파일 (5,600 tests)
+│   └── integration/            # 160개 통합 테스트 파일 (sqlite/ 103개 포함, INTEGRATION_TEST=true 필요)
 ├── examples/
 │   ├── nestjs-cats/            # NestJS 기본 예제 (CRUD, EntitySubscriber, cursor pagination)
 │   ├── nestjs-blog/            # NestJS 블로그 예제 (M2M, soft delete, upsert, 57 e2e tests)
@@ -244,14 +244,14 @@ pnpm start          # NestJS 서버 시작
 ## 테스트 구조
 
 ### 유닛 테스트 (`__tests__/unit/`)
-277개 파일, 5,332개 테스트 (2026-07-02 기준, 20 skipped, 0 failures)
+302개 파일, 5,600개 테스트 (2026-08-28 기준, 0 failures)
 
 ### 통합 테스트 (`__tests__/integration/`)
-88개 파일 (2026-07-02 기준, `INTEGRATION_TEST=true` 필요)
+160개 파일 (2026-08-28 기준, `INTEGRATION_TEST=true` 필요)
 - MySQL/PostgreSQL 듀얼 드라이버: `crud-basic`, `relations-one-to-many`, `soft-delete`, `aggregate`, `batch-operations`, `lifecycle-hooks`, `one-to-one`, `many-to-many`, `schema-generator`, `entity-subscriber`, `upsert`, `complex-queries`
 - PostgreSQL 전용: `postgres-driver.test.ts`, `postgres-driver-ddl.test.ts`, `multi-tenancy-postgres.test.ts`
 - MySQL 전용: `mysql-driver-ddl.test.ts`
-- SQLite (in-memory): `sqlite/` 46개 파일 (crud, relations, DDL, transactions, soft-delete, batch, hooks, queries 등)
+- SQLite (in-memory): `sqlite/` 103개 파일, 835 tests (crud, relations, DDL, transactions, soft-delete, batch, hooks, queries 등)
 - `snake-naming-strategy.test.ts` — NamingStrategy 통합 테스트
 
 ### e2e 테스트 (`examples/`)
@@ -349,8 +349,8 @@ pnpm start          # NestJS 서버 시작
 - Index hints (MySQL / PostgreSQL)
 - assertTenantContext() 테넌트 컨텍스트 경고
 
-### 현재 안정성 상태 (v1.0.0, 2026-07-02 기준)
-- **테스트:** 6,836 passed, 36 skipped, 0 failures — 유닛 5,316 (20 skipped) + SQLite 521 + PostgreSQL 537 (16 skipped) + MySQL/MariaDB 462 (2026-07-02 검증, MySQL은 192.168.35.227:3306 원격 MariaDB)
+### 현재 안정성 상태 (v1.1.1, 2026-08-28 기준)
+- **테스트:** 0 failures — 유닛 5,600 + SQLite 통합 835 (2026-08-28 로컬 검증) + 실 PostgreSQL 610 / 실 MariaDB 504 (2026-08-22 검증, MySQL은 192.168.35.227:3306 원격 MariaDB) + stress 19
 - **예제:** 8개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-linear-clone, nestjs-multitenant, nestjs-todo, nestjs-todo-sqlite, vanilla-todo-sqlite, prisma-import-demo) — NestJS 예제는 전부 NestJS 11, 타입 체크 통과 (2026-08-05 검증)
 - **보안:** SQL Injection 취약점 수정 완료, 전 드라이버 감사 완료
 - **격리:** 테넌트 간 메타데이터 유출 차단, AsyncLocalStorage 동시성 안전 확보
