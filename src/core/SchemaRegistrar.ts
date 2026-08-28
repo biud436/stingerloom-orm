@@ -1569,7 +1569,7 @@ export class SchemaRegistrar {
         if (!joinColumn) {
           throw new InvalidQueryError(
             "JoinColumn does not exist.",
-            "Add { joinColumn: 'column_name' } to the relation — decorator: @ManyToOne(() => Target, { joinColumn: 'target_id' }); code-first: t.manyToOne(() => Target, { joinColumn: 'target_id' }) in defineEntity(), or the relations block of an EntitySchema.",
+            "Declare the FK column on the relation — decorator: add @RelationColumn({ name: 'target_id' }) under @ManyToOne(() => Target, (t) => t.inverse); code-first: t.manyToOne(() => Target, { joinColumn: 'target_id' }) in defineEntity(), or the relations block of an EntitySchema.",
           );
         }
 

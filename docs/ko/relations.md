@@ -53,7 +53,7 @@ export class Owner {
 
 ```typescript
 // cat.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from "@stingerloom/orm";
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, RelationColumn } from "@stingerloom/orm";
 import { Owner } from "./owner.entity";
 
 @Entity()
@@ -64,9 +64,8 @@ export class Cat {
   @Column()
   name!: string;
 
-  @ManyToOne(() => Owner, (owner) => owner.cats, {
-    joinColumn: "owner_id",
-  })
+  @ManyToOne(() => Owner, (owner) => owner.cats)
+  @RelationColumn({ name: "owner_id" })
   owner!: Owner;
 }
 ```
@@ -152,17 +151,17 @@ WHERE "cat"."id" = 1;
 
 ### 데코레이터 인자 이해하기
 
-`@ManyToOne`의 세 가지 인자를 살펴볼게요:
+`@ManyToOne`의 인자를 살펴볼게요:
 
 - `() => Owner` -- 대상 엔티티 (import 시점의 순환 참조를 방지하려고 함수로 감싸요)
-- `(owner) => owner.cats` -- 역방향 프로퍼티 (양방향 관계에 사용, 단방향이면 생략 가능)
-- `{ joinColumn: "owner_id" }` -- 외래 키 컬럼명
+- `(owner) => owner.cats` -- 역방향 프로퍼티. 이 인자는 필수입니다. 단방향 관계(대상에 역방향 프로퍼티가 없는 경우)라면 `() => undefined`를 전달하세요.
+- 선택적인 세 번째 인자로 `eager`, `cascade`, `onDelete` 같은 옵션을 전달합니다 (아래 참고)
 
-> **힌트** `joinColumn`은 생략할 수 있어요. 아래의 **@Column 기반 FK 자동 감지**를 참고해주세요.
+FK 컬럼 자체는 같은 프로퍼티에 붙인 `@RelationColumn({ name: "owner_id" })`으로 선언합니다. `@RelationColumn`을 아예 생략할 수도 있어요 -- 아래의 **@Column 기반 FK 자동 감지**를 참고해주세요.
 
 ### @Column 기반 FK 자동 감지
 
-매번 `joinColumn`을 지정하는 건 번거롭고, `@Column`의 DB 컬럼명과 불일치할 위험이 있어요. Stingerloom은 같은 엔티티에 `{propertyName}Id` 패턴의 `@Column`이 선언되어 있으면, 해당 `@Column`의 **실제 DB 이름**을 FK 컬럼으로 자동 사용해요.
+관계마다 FK 컬럼명을 지정하는 건 번거롭고, `@Column`의 DB 컬럼명과 불일치할 위험이 있어요. Stingerloom은 같은 엔티티에 `{propertyName}Id` 패턴의 `@Column`이 선언되어 있으면, 해당 `@Column`의 **실제 DB 이름**을 FK 컬럼으로 자동 사용해요.
 
 ```typescript
 @Entity()
@@ -177,7 +176,7 @@ export class Cat {
   @Column({ name: "owner_fk", type: "int" })
   ownerId!: number;
 
-  // ownerId의 DB 이름인 "owner_fk"가 joinColumn 없이 자동 적용돼요
+  // ownerId의 DB 이름인 "owner_fk"가 명시 선언 없이 자동 적용돼요
   @ManyToOne(() => Owner, (owner) => owner.cats)
   owner!: Owner;
 }
@@ -186,7 +185,7 @@ export class Cat {
 해석 우선순위는 이래요.
 
 1. `@RelationColumn`이 프로퍼티에 부착된 경우 -> `name` 사용 (생략 시 `{propertyName}Id` 추론)
-2. `@ManyToOne`의 `joinColumn` 옵션이 지정된 경우 -> 그대로 사용
+2. `@ManyToOne`의 `joinColumn` 옵션이 지정된 경우 -> 그대로 사용 (레거시 -- 데코레이터 API에서는 deprecated, 아래 참고)
 3. 같은 엔티티에 `{propertyName}Id`인 `@Column`이 선언된 경우 -> 해당 `@Column`의 DB 컬럼명 사용
 4. 위 모두 없는 경우 -> FK 컬럼을 **해석할 수 없어요**. `@ManyToOne`은 항상 소유(owning) 측이므로, 이 경우 INSERT/UPDATE에서 FK가 **저장되지 않고** 관계도 로드할 수 없어요. 경고 로그가 출력되니 `@RelationColumn({ name: "..." })`(또는 `{propertyName}Id` `@Column`)을 추가해 해결하세요.
 
@@ -257,6 +256,26 @@ authorId!: number;          // 직접 FK 접근: post.authorId = 5
 author!: User;
 ```
 
+### 레거시: joinColumn 옵션
+
+`@RelationColumn`이 생기기 전에는 FK 컬럼명을 데코레이터 옵션으로 전달했습니다:
+
+```typescript
+// 레거시 형태 — 동작은 하지만 deprecation 경고가 출력됩니다
+@ManyToOne(() => Owner, (owner) => owner.cats, { joinColumn: "owner_id" })
+owner!: Owner;
+```
+
+이 형태는 여전히 동작하지만 — 위 해석 우선순위의 두 번째 단계입니다 — 데코레이터 API(`@ManyToOne` / `@OneToOne`)에서는 **deprecated**이며 시작 시 경고 로그가 출력됩니다. 이름을 `@RelationColumn`으로 옮겨서 마이그레이션하세요:
+
+```typescript
+@ManyToOne(() => Owner, (owner) => owner.cats)
+@RelationColumn({ name: "owner_id" })
+owner!: Owner;
+```
+
+> **참고** 이 deprecation은 데코레이터 API에만 해당합니다. 코드 우선 API의 `joinColumn` 키 — `defineEntity()`의 `t.manyToOne(() => Owner, { joinColumn: "owner_id" })`, 그리고 `EntitySchema`의 `relations` 블록 — 는 별개의 계약이며 deprecated가 아닙니다.
+
 ### 커스텀 FK 프로퍼티 이름 (fkProperty)
 
 Stingerloom의 `qAlias()`를 비롯한 프로퍼티→컬럼 리졸버는 관계 `workspace`의 형제 FK 프로퍼티가 `workspaceId`라는 컨벤션을 따라요. 다른 ORM에서 포팅하는 등 커스텀 FK 프로퍼티 이름이 필요하면 관계 데코레이터에 `fkProperty`를 전달해서 조인 컬럼에 매핑하세요.
@@ -286,15 +305,19 @@ qb.where(m.wsId.eq(42));
 
 ### PK가 아닌 컬럼 참조 (references)
 
-기본적으로 FK는 대상 엔티티의 PK를 참조해요. PK가 아닌 컬럼을 참조하려면 `references` 옵션을 사용하면 돼요.
+기본적으로 FK는 대상 엔티티의 PK를 참조해요. PK가 아닌 컬럼을 참조하려면 `@RelationColumn`의 `referencedColumn` 옵션을 사용하면 돼요.
 
 ```typescript
-@ManyToOne(() => Owner, (owner) => owner.cats, {
-  joinColumn: "owner_uuid_fk",
-  references: "uuid",  // Owner.id 대신 Owner.uuid 컬럼을 참조
+@ManyToOne(() => Owner, (owner) => owner.cats)
+@RelationColumn({
+  name: "owner_uuid_fk",
+  type: "uuid",
+  referencedColumn: "uuid",  // Owner.id 대신 Owner.uuid 컬럼을 참조
 })
 owner!: Owner;
 ```
+
+(`@ManyToOne`의 `references` 옵션도 같은 의미이며, 코드 우선 API인 `defineEntity()` / `EntitySchema`에서는 이 형태를 계속 사용합니다. 둘 다 지정되면 `referencedColumn`이 우선해요.)
 
 생성되는 SQL:
 
@@ -310,10 +333,10 @@ ALTER TABLE "cat"
 
 ```typescript
 @ManyToOne(() => Owner, (owner) => owner.cats, {
-  joinColumn: "owner_id",
   onDelete: "CASCADE",     // 주인 삭제 시 고양이도 삭제
   onUpdate: "CASCADE",     // 주인 PK 변경 시 FK도 갱신
 })
+@RelationColumn({ name: "owner_id" })
 owner!: Owner;
 ```
 
@@ -346,9 +369,9 @@ ALTER TABLE "cat"
 
 ```typescript
 @ManyToOne(() => ExternalEntity, (e) => e.items, {
-  joinColumn: "external_id",
   createForeignKeyConstraints: false,  // DDL에 FK 제약 조건 없음
 })
+@RelationColumn({ name: "external_id" })
 external!: ExternalEntity;
 ```
 
@@ -485,9 +508,9 @@ SELECT * FROM "owner" WHERE "id" = 50;        -- 쿼리 #51
 ```typescript
 // cat.entity.ts
 @ManyToOne(() => Owner, (owner) => owner.cats, {
-  joinColumn: "owner_id",
   eager: true,  // find() 시 owner가 자동으로 로드됩니다
 })
+@RelationColumn({ name: "owner_id" })
 owner!: Owner;
 ```
 
@@ -519,9 +542,9 @@ WHERE "cat"."id" = 1;
 ```typescript
 // cat.entity.ts
 @ManyToOne(() => Owner, (owner) => owner.cats, {
-  joinColumn: "owner_id",
   lazy: true,  // 접근 시 쿼리 실행
 })
+@RelationColumn({ name: "owner_id" })
 owner!: Owner;
 ```
 
@@ -588,7 +611,7 @@ export class Profile {
 
 ```typescript
 // user.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, OneToOne } from "@stingerloom/orm";
+import { Entity, PrimaryGeneratedColumn, Column, OneToOne, RelationColumn } from "@stingerloom/orm";
 import { Profile } from "./profile.entity";
 
 @Entity()
@@ -599,7 +622,8 @@ export class User {
   @Column()
   name!: string;
 
-  @OneToOne(() => Profile, { joinColumn: "profile_id", eager: true })
+  @OneToOne(() => Profile, { eager: true })
+  @RelationColumn({ name: "profile_id" })
   profile!: Profile;
 }
 ```
@@ -642,7 +666,7 @@ LEFT JOIN "profile" ON "user"."profile_id" = "profile"."id"
 WHERE "user"."id" = 1;
 ```
 
-> **힌트** `@OneToOne`도 `@ManyToOne`과 동일하게 `@RelationColumn` 및 `@Column` 기반 FK 자동 감지를 지원해요. `@RelationColumn({ name: "profile_id" })`를 사용하거나 `@Column({ name: "profile_fk" }) profileId: number`를 선언하면 `joinColumn`을 생략할 수 있어요.
+> **힌트** `@OneToOne`도 `@ManyToOne`과 동일한 순서로 FK 컬럼을 해석해요. `@RelationColumn`이 먼저, 그다음 레거시 `joinColumn` 옵션, 마지막으로 `{propertyName}Id` 패턴의 `@Column`(예: `@Column({ name: "profile_fk" }) profileId: number`) 순서입니다.
 
 ### 양방향
 
@@ -650,7 +674,8 @@ Profile에서 User도 참조하고 싶다면 `inverseSide`를 사용해요.
 
 ```typescript
 // user.entity.ts — 소유자 측 (FK가 있는 쪽)
-@OneToOne(() => Profile, { joinColumn: "profile_id", inverseSide: "user" })
+@OneToOne(() => Profile, { inverseSide: "user" })
+@RelationColumn({ name: "profile_id" })
 profile!: Profile;
 
 // profile.entity.ts — 역방향 측

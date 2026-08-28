@@ -239,6 +239,31 @@ If a seeder does not implement `revert()`, calling `revertLast()` when that seed
 
 ---
 
+## Seeders Are Not Atomic
+
+`SeederRunner` does **not** wrap `run()` in a transaction. Each statement inside `run()` executes and commits independently, so a seeder that fails halfway leaves its earlier writes in the database — and because the failure means no `__seeds` row is recorded, the next `runAll()` will execute the same seeder again from the top.
+
+If a seeder inserts multiple related rows that must land together (or not at all), make it atomic yourself by wrapping the body in `em.transaction()`:
+
+```typescript
+class OrderFixtureSeeder extends Seeder {
+  async run(ctx: SeederContext): Promise<void> {
+    await ctx.em.transaction(async (txEm) => {
+      const customer = await txEm.save(Customer, { name: "Fixture Co." });
+      await txEm.save(Order, { customerId: customer.id, status: "pending" });
+      await txEm.save(Order, { customerId: customer.id, status: "paid" });
+      // Any throw here rolls back all three writes together.
+    });
+  }
+}
+```
+
+With the wrapper, a failure rolls the seeder's writes back to nothing, and the re-run after you fix the bug starts from a clean state. Also make seeders **idempotent** where practical (check-before-insert or `upsert()`), so a partial failure of a non-wrapped seeder cannot produce duplicates on the next run.
+
+Note the tracking record is a separate statement as well: if `run()` succeeds but recording into `__seeds` fails, the runner logs a critical warning and reports the seeder as failed even though its data was written.
+
+---
+
 ## API Reference
 
 ### Seeder (abstract class)

@@ -21,11 +21,36 @@ describe("Exception", () => {
   });
 });
 
+describe("OrmError suggestion exposure", () => {
+  it("appends the suggestion to message so every rendering path shows it", () => {
+    const error = new OrmError(
+      "ORM_INVALID_QUERY" as never,
+      "Something went wrong.",
+      "Do the other thing.",
+    );
+
+    expect(error.message).toBe(
+      "Something went wrong.\nSuggestion: Do the other thing.",
+    );
+    expect(error.suggestion).toBe("Do the other thing.");
+    // The stack header is baked at construction — it must carry the suggestion too.
+    expect(error.stack).toContain("Suggestion: Do the other thing.");
+  });
+
+  it("leaves message untouched when no suggestion is given", () => {
+    const error = new OrmError("ORM_INVALID_QUERY" as never, "Plain failure.");
+
+    expect(error.message).toBe("Plain failure.");
+    expect(error.suggestion).toBeNull();
+  });
+});
+
 describe("DatabaseNotConnectedError", () => {
   it("should have correct message and OrmError code", () => {
     const error = new DatabaseNotConnectedError();
 
-    expect(error.message).toBe("Database is not connected.");
+    expect(error.message).toContain("Database is not connected.");
+    expect(error.message).toContain(`\nSuggestion: ${error.suggestion}`);
     expect(error.code).toBe("ORM_NOT_CONNECTED");
     expect(error.suggestion).toBeTruthy();
     expect(error).toBeInstanceOf(OrmError);

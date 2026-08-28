@@ -513,7 +513,7 @@ COMMIT;
 | Relation | Insert | Update | Delete | Orphan Removal |
 |----------|--------|--------|--------|----------------|
 | `@OneToMany` | 새 자식 자동 insert | dirty 자식 자동 update | 재귀 delete | 활성화 시 지원 |
-| `@OneToOne` | owning side 자동 insert | owning side 자동 update | joinColumn 설정 시 지원 | -- |
+| `@OneToOne` | owning side 자동 insert | owning side 자동 update | FK 컬럼이 해석되는 경우 지원 | -- |
 | `@ManyToMany` | 새 자식 + pivot row | -- | -- | pivot row 제거 |
 
 ### Cascade merge / detach / refresh

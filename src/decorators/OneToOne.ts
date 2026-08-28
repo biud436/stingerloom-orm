@@ -13,10 +13,13 @@ export type OneToOneOption<T = any> = {
   /**
    * FK column name. Set on the owning side.
    *
-   * Second tier of FK resolution: `@RelationColumn({ name })` wins when
-   * present, then this option, then a `{propertyName}Id` `@Column`.
-   * Prefer `@RelationColumn` on new code — it also carries the FK's type and
-   * nullability — but this option stays fully supported.
+   * @deprecated On the decorator API, use `@RelationColumn({ name })` on the
+   * relation property instead — it also carries the FK's type, nullability,
+   * and referenced column. This option still works (second tier of FK
+   * resolution: `@RelationColumn` wins when present, then this option, then a
+   * `{propertyName}Id` `@Column`), but using it logs a deprecation warning.
+   * Note: the `joinColumn` option of `defineEntity()` / `EntitySchema`
+   * relations is a different, non-deprecated API.
    */
   joinColumn?: string;
 

@@ -514,7 +514,7 @@ The buffer recursively collects all cascade targets (including grandchildren) be
 | Relation | Insert | Update | Delete | Orphan Removal |
 |----------|--------|--------|--------|----------------|
 | `@OneToMany` | New children auto-inserted | Dirty children auto-updated | Recursive delete | If enabled |
-| `@OneToOne` | Owning side auto-inserted | Owning side auto-updated | If joinColumn set | — |
+| `@OneToOne` | Owning side auto-inserted | Owning side auto-updated | If the FK column is resolved | — |
 | `@ManyToMany` | New children + pivot rows | — | — | Pivot rows removed |
 
 ### Cascade merge / detach / refresh

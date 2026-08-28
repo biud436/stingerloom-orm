@@ -332,7 +332,8 @@ export class Payment {
   @Column({ type: "int", nullable: true })
   storeFk!: number;
 
-  @ManyToOne(() => Store, (s) => s.payments, { joinColumn: "storeFk" })
+  @ManyToOne(() => Store, (s) => s.payments)
+  @RelationColumn({ name: "storeFk" })
   store!: Store;
 }
 ```

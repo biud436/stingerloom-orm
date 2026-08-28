@@ -98,9 +98,11 @@ describe("[Integration] SQLite: read-path column identifier validation", () => {
       );
 
       expect(error).toBeInstanceOf(InvalidQueryError);
-      expect(error.message).toBe(
+      expect(error.message).toContain(
         'Unknown column "firstNam" in "where" for entity "RivMember". Did you mean "firstName"?',
       );
+      // The suggestion is merged into message so non-CLI consumers see it too.
+      expect(error.message).toContain("\nSuggestion: Valid columns: ");
       expect(error.suggestion).toContain("Valid columns: ");
       expect(error.suggestion).toContain("firstName");
     });

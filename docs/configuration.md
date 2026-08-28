@@ -643,7 +643,7 @@ await em.register({
 |---|---|---|
 | `tableName(className)` | Entity registration | Default table name for `@Entity()` without an explicit `name`. |
 | `columnName(propertyName)` | Column registration | Default DB column name for `@Column()` without an explicit `name`. |
-| `joinColumnName(propertyName, refPk)` | `@ManyToOne`/`@OneToOne` | FK column name when no explicit `joinColumn` option is given. |
+| `joinColumnName(propertyName, refPk)` | `@ManyToOne`/`@OneToOne` | FK column name when none is declared explicitly (no `@RelationColumn` name and no legacy `joinColumn` option). |
 | `foreignKeyName(table, column, refTable)` | DDL generation | Name for the `CONSTRAINT ... FOREIGN KEY` clause. Keep ≤ 63 chars for PostgreSQL. |
 | `uniqueIndexName(table, columns)` | `@UniqueIndex` | Name for unique composite indexes. |
 | `indexName(table, column)` | `@Index` on property | Name for a single-column index. |

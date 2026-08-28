@@ -591,7 +591,8 @@ export class Payment {
   @PrimaryGeneratedColumn() id!: number;
   @Column() amount!: number;
   @Column({ type: "int", nullable: true }) storeFk!: number;
-  @ManyToOne(() => Store, (e) => e.store, { joinColumn: "storeFk" })
+  @ManyToOne(() => Store, (e) => e.store)
+  @RelationColumn({ name: "storeFk" })
   store!: Store;
 }
 ```
