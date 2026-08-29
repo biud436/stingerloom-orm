@@ -365,20 +365,13 @@ integrationDescribe("[E2E] Cross-tenant scoping (#355/#356/#357)", () => {
     let acmeBobHandle: string;
     let globexOwnerHandle: string;
 
-    beforeAll(async () => {
-      // `/users` is global; map id → email local-part (the mention handle).
-      const usersRes = await aliceApi
-        .get("/users")
-        .query({ limit: 100 })
-        .expect(200);
-      const handleOf = new Map<number, string>(
-        (usersRes.body as Array<{ id: number; email: string }>).map((u) => [
-          u.id,
-          u.email.split("@")[0],
-        ]),
-      );
-      acmeBobHandle = handleOf.get(acme.userIds[1])!;
-      globexOwnerHandle = handleOf.get(globex.ownerId)!;
+    beforeAll(() => {
+      // Handles come from the fixture (register response) — recovering them
+      // via GET /users is non-deterministic on a shared DB: the page returns
+      // the oldest 100 rows, so accumulated fixture users push the fresh ones
+      // off the page and the handles silently become `undefined`.
+      acmeBobHandle = acme.userHandles[1];
+      globexOwnerHandle = globex.userHandles[0];
     });
 
     it("an acme comment pings a mentioned acme member but never a globex-only user", async () => {
