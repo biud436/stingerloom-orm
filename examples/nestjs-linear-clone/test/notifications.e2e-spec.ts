@@ -41,20 +41,13 @@ integrationDescribe("[E2E] Notifications — watchers, @mentions, status-change 
     bob = authedAgent(booted.server, fx.userTokens[1]);
     chris = authedAgent(booted.server, fx.userTokens[2]);
 
-    // Recover the per-user handles by reading them off the user records.
-    const usersRes = await alice
-      .get("/users")
-      .query({ limit: 100 })
-      .expect(200);
-    const lookup = new Map<number, string>(
-      usersRes.body.map((u: { id: number; email: string }) => [
-        u.id,
-        u.email.split("@")[0],
-      ]),
-    );
-    aliceHandle = lookup.get(fx.userIds[0])!;
-    bobHandle = lookup.get(fx.userIds[1])!;
-    chrisHandle = lookup.get(fx.userIds[2])!;
+    // Handles come straight from the fixture (register response), never from
+    // GET /users — that page returns the oldest 100 rows, so on a shared DB
+    // with accumulated fixture users the freshly created users fell off the
+    // page and every mention body became `@undefined`.
+    aliceHandle = fx.userHandles[0];
+    bobHandle = fx.userHandles[1];
+    chrisHandle = fx.userHandles[2];
 
     const r = await createIssue(booted.server, {
       projectId: fx.projectId,

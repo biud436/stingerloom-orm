@@ -8,6 +8,12 @@ import { ApiPropertyOptional } from "@nestjs/swagger";
  * Cursors are opaque base64 payloads minted by Stingerloom's `findWithCursor`
  * — clients should not parse them, only echo them back as `?cursor=…` to
  * fetch the next page.
+ *
+ * The global ValidationPipe runs with `forbidNonWhitelisted`, and a DTO-bound
+ * `@Query()` receives the WHOLE query object — so an endpoint that takes any
+ * extra query parameter must declare it on a subclass of this DTO (see
+ * ProjectCursorQueryDto / CommentCursorQueryDto) instead of adding a separate
+ * `@Query("name")` binding, which would 400 every request.
  */
 export class CursorQueryDto {
   @ApiPropertyOptional({ description: "Opaque cursor from a previous page's nextCursor" })

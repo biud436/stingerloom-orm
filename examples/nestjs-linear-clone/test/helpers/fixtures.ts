@@ -10,6 +10,15 @@ export interface BaseFixture {
   /** All users in the fixture, including the owner at index 0. */
   userIds: number[];
   userTokens: string[];
+  /**
+   * Mention handle per user (the email local part, e.g. `alice-<suffix>`),
+   * captured straight from the register response. Specs must use these
+   * instead of recovering handles via `GET /users` — that listing returns the
+   * oldest rows first, so on a shared database with accumulated fixture users
+   * the just-created users fall outside the page and the recovery silently
+   * yields `undefined` handles (the old @mention baseline failures).
+   */
+  userHandles: string[];
   projectId: number;
   projectKey: string;
 }
@@ -56,6 +65,7 @@ export async function createBaseFixture(server: any): Promise<BaseFixture> {
   const handles = ["alice", "bob", "chris", "dana"];
   const userIds: number[] = [];
   const userTokens: string[] = [];
+  const userHandles: string[] = [];
 
   for (const handle of handles) {
     const r = await request(server)
@@ -68,6 +78,7 @@ export async function createBaseFixture(server: any): Promise<BaseFixture> {
       .expect(201);
     userIds.push(r.body.user.id);
     userTokens.push(r.body.accessToken);
+    userHandles.push((r.body.user.email as string).split("@")[0]);
   }
 
   const ownerToken = userTokens[0];
@@ -110,6 +121,7 @@ export async function createBaseFixture(server: any): Promise<BaseFixture> {
     ownerToken,
     userIds,
     userTokens,
+    userHandles,
     projectId: proj.body.id,
     projectKey: key,
   };
