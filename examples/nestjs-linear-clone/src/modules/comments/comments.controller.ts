@@ -14,11 +14,11 @@ import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { CommentsService } from "./comments.service";
 import {
   CreateCommentDto,
+  CommentCursorQueryDto,
   UpdateCommentDto,
   AddReactionDto,
 } from "./dto/comment.dto";
 import { CurrentUserId } from "../../common/auth/current-user.decorator";
-import { CursorQueryDto } from "../../common/dto/cursor.dto";
 import { WorkspaceScoped } from "../../common/auth/workspace.decorators";
 
 @ApiTags("Comments")
@@ -54,11 +54,8 @@ export class CommentsController {
 
   @Get("cursor")
   @ApiOperation({ summary: "Cursor-paginated comments for an issue (stable ascending by id)" })
-  cursor(
-    @Query("issueId", ParseIntPipe) issueId: number,
-    @Query() q: CursorQueryDto,
-  ) {
-    return this.service.findByIssueCursor(issueId, q.take ?? 20, q.cursor);
+  cursor(@Query() q: CommentCursorQueryDto) {
+    return this.service.findByIssueCursor(q.issueId, q.take ?? 20, q.cursor);
   }
 
   @Get(":id/thread")

@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { Type } from "class-transformer";
 import {
   IsInt,
   IsOptional,
@@ -7,6 +8,7 @@ import {
   MaxLength,
   Matches,
 } from "class-validator";
+import { CursorQueryDto } from "../../../common/dto/cursor.dto";
 
 export class CreateCommentDto {
   @ApiProperty({ example: 1 })
@@ -26,6 +28,20 @@ export class CreateCommentDto {
   @IsOptional()
   @IsInt()
   parentCommentId?: number | null;
+}
+
+/**
+ * Query contract for `GET /comments/cursor`. `issueId` must live inside the
+ * DTO: the global ValidationPipe runs with `forbidNonWhitelisted`, so a
+ * separate `@Query("issueId", ParseIntPipe)` binding left `issueId` outside
+ * the DTO whitelist and 400'd the request. The workspace guard is unaffected
+ * (it resolves the issue from the raw `req.query` before pipes run).
+ */
+export class CommentCursorQueryDto extends CursorQueryDto {
+  @ApiProperty({ example: 1, description: "Issue whose comments to page through" })
+  @Type(() => Number)
+  @IsInt()
+  issueId!: number;
 }
 
 export class UpdateCommentDto {

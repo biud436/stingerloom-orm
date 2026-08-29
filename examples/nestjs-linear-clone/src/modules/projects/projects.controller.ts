@@ -12,9 +12,12 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags, ApiOperation } from "@nestjs/swagger";
 import { ProjectsService } from "./projects.service";
-import { CreateProjectDto, UpdateProjectDto } from "./dto/project.dto";
+import {
+  CreateProjectDto,
+  ProjectCursorQueryDto,
+  UpdateProjectDto,
+} from "./dto/project.dto";
 import { WorkspaceScoped } from "../../common/auth/workspace.decorators";
-import { CursorQueryDto } from "../../common/dto/cursor.dto";
 import { IssuesService } from "../issues/issues.service";
 
 @ApiTags("Projects")
@@ -51,15 +54,8 @@ export class ProjectsController {
   @Get("cursor")
   @WorkspaceScoped({ from: "param", name: "workspaceId" })
   @ApiOperation({ summary: "Cursor-paginated project list (workspaceId required)" })
-  cursor(
-    @Query() q: CursorQueryDto,
-    @Query("workspaceId") workspaceId: string,
-  ) {
-    return this.service.findWithCursor(
-      Number(workspaceId),
-      q.take ?? 20,
-      q.cursor,
-    );
+  cursor(@Query() q: ProjectCursorQueryDto) {
+    return this.service.findWithCursor(q.workspaceId, q.take ?? 20, q.cursor);
   }
 
   @Get(":id")
