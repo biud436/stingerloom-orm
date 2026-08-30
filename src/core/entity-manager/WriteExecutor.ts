@@ -244,125 +244,8 @@ export class WriteExecutor {
 
         // TPT child: INSERT into parent first → INSERT into child (sharing the same PK)
         if (saveInheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
-          const root = this.inheritanceResolver.getRoot(entity)!;
-          const rootMeta = this.resolver.resolveEntityMetadata(root);
-          if (rootMeta) {
-            const rootColNames = new Set(
-              rootMeta.columns.map((c: ColumnMetadata) => c.name),
-            );
-            const pkColNames = new Set(
-              pkColumns.map((col: ColumnMetadata) => col.name),
-            );
-
-            // Split columns/values into parent and child buckets
-            const parentCols: Sql[] = [];
-            const parentVals: RawValue[] = [];
-            const childCols: Sql[] = [];
-            const childVals: RawValue[] = [];
-
-            for (let i = 0; i < insertableColumns.length; i++) {
-              const col = insertableColumns[i];
-              const isPk = pkColNames.has(col.name);
-              const isRoot = rootColNames.has(col.name);
-
-              if (isPk || isRoot) {
-                parentCols.push(columns[i]);
-                parentVals.push(values[i]);
-              }
-              if (isPk || !isRoot) {
-                childCols.push(columns[i]);
-                childVals.push(values[i]);
-              }
-            }
-
-            // Extra appended columns (e.g. discriminator, FK) live outside the insertableColumns range
-            for (let i = insertableColumns.length; i < columns.length; i++) {
-              parentCols.push(columns[i]);
-              parentVals.push(values[i]);
-            }
-
-            // 1. INSERT into the parent table
-            const parentTableName = rootMeta.name;
-            const parentReturningSql = useReturning ? raw(` RETURNING *`) : raw("");
-            const parentInsertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(parentTableName))}
-              (${join(parentCols, ", ")})
-              VALUES (${join(parentVals, ", ")})${parentReturningSql}`;
-
-            const parentResult = (await session.query<T>(
-              parentInsertSql,
-            )) as DriverExecResult;
-
-            // Obtain the generated PK value
-            let generatedPkValue: unknown;
-            const parentRows = resultRows(parentResult);
-            if (useReturning && parentRows.length > 0) {
-              generatedPkValue = parentRows[0][pk.name];
-            } else if (this.ctx.isMySqlFamily()) {
-              generatedPkValue = okPacket(parentResult)?.insertId;
-            } else if (this.ctx.isSqlite()) {
-              generatedPkValue = Number(
-                sqliteRunResult(parentResult)?.lastInsertRowid,
-              );
-            }
-
-            // 2. INSERT into the child table (reusing the same PK)
-            if (generatedPkValue != null) {
-              // Find the PK position via its insertableColumns index mapping
-              let pkFoundInChild = false;
-              for (let ci = 0, ii = 0; ii < insertableColumns.length; ii++) {
-                const col = insertableColumns[ii];
-                const isPk = pkColNames.has(col.name);
-                const isRoot = rootColNames.has(col.name);
-                if (isPk || !isRoot) {
-                  // This column exists in childCols
-                  if (isPk) {
-                    childVals[ci] = bindParam(generatedPkValue);
-                    pkFoundInChild = true;
-                  }
-                  ci++;
-                }
-              }
-              // If the PK is missing from childCols, add it
-              if (!pkFoundInChild) {
-                childCols.unshift(raw(this.ctx.wrap(pk.name)));
-                childVals.unshift(bindParam(generatedPkValue));
-              }
-            }
-
-            if (childCols.length > 0) {
-              const childInsertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))}
-                (${join(childCols, ", ")})
-                VALUES (${join(childVals, ", ")})`;
-              await session.query<T>(childInsertSql);
-            }
-
-            // Read the resulting row back
-            const pkVal = generatedPkValue ?? primaryKeyValue;
-            itemFields[this.ctx.propKey(pk)] = pkVal;
-            const result = await this.ctx.findOneInternal(
-              entity,
-              { where: whereByProps<T>({ [this.ctx.propKey(pk)]: pkVal }) },
-              session,
-            );
-
-            await this.cascadeHandler.cascadeSaveOneToMany(
-              entity,
-              item,
-              pkVal,
-              session,
-            );
-            this.assignGeneratedPk(item, this.ctx.propKey(pk), pkVal);
-            await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-            await this.eventEmitter.emit("afterInsert", {
-              entity,
-              data: item,
-            });
-            await this.ctx.notifySubscribers(entity, "afterInsert", {
-              entity: item,
-              manager: this.ctx.getManager(),
-            } as InsertEvent<T>);
-            return result as T;
-          }
+          const tpt = await this.insertTptChild(op, plan, useReturning);
+          if (tpt) return tpt.result;
         }
 
         const returningSql = useReturning
@@ -1062,6 +945,152 @@ export class WriteExecutor {
         }
       }
     }
+  }
+
+  /**
+   * TPT (JOINED) child INSERT: splits the staged columns between the root and
+   * child tables, INSERTs the parent row first, then the child row sharing the
+   * generated PK, and completes the save (cascade, hooks, events, read-back).
+   *
+   * Returns null when the root metadata cannot be resolved — the caller falls
+   * through to the generic single-table INSERT.
+   */
+  private async insertTptChild<T>(
+    op: SaveOperation<T>,
+    plan: InsertValuePlan,
+    useReturning: boolean,
+  ): Promise<{ result: T } | null> {
+    const {
+      entity,
+      item,
+      metadata,
+      session,
+      itemFields,
+      pkColumns,
+      pk,
+      primaryKeyValue,
+    } = op;
+    const { insertableColumns, columns, values } = plan;
+
+    const root = this.inheritanceResolver.getRoot(entity)!;
+    const rootMeta = this.resolver.resolveEntityMetadata(root);
+    if (!rootMeta) return null;
+
+    const rootColNames = new Set(
+      rootMeta.columns.map((c: ColumnMetadata) => c.name),
+    );
+    const pkColNames = new Set(
+      pkColumns.map((col: ColumnMetadata) => col.name),
+    );
+
+    // Split columns/values into parent and child buckets
+    const parentCols: Sql[] = [];
+    const parentVals: RawValue[] = [];
+    const childCols: Sql[] = [];
+    const childVals: RawValue[] = [];
+
+    for (let i = 0; i < insertableColumns.length; i++) {
+      const col = insertableColumns[i];
+      const isPk = pkColNames.has(col.name);
+      const isRoot = rootColNames.has(col.name);
+
+      if (isPk || isRoot) {
+        parentCols.push(columns[i]);
+        parentVals.push(values[i]);
+      }
+      if (isPk || !isRoot) {
+        childCols.push(columns[i]);
+        childVals.push(values[i]);
+      }
+    }
+
+    // Extra appended columns (e.g. discriminator, FK) live outside the insertableColumns range
+    for (let i = insertableColumns.length; i < columns.length; i++) {
+      parentCols.push(columns[i]);
+      parentVals.push(values[i]);
+    }
+
+    // 1. INSERT into the parent table
+    const parentTableName = rootMeta.name;
+    const parentReturningSql = useReturning ? raw(` RETURNING *`) : raw("");
+    const parentInsertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(parentTableName))}
+      (${join(parentCols, ", ")})
+      VALUES (${join(parentVals, ", ")})${parentReturningSql}`;
+
+    const parentResult = (await session.query<T>(
+      parentInsertSql,
+    )) as DriverExecResult;
+
+    // Obtain the generated PK value
+    let generatedPkValue: unknown;
+    const parentRows = resultRows(parentResult);
+    if (useReturning && parentRows.length > 0) {
+      generatedPkValue = parentRows[0][pk.name];
+    } else if (this.ctx.isMySqlFamily()) {
+      generatedPkValue = okPacket(parentResult)?.insertId;
+    } else if (this.ctx.isSqlite()) {
+      generatedPkValue = Number(
+        sqliteRunResult(parentResult)?.lastInsertRowid,
+      );
+    }
+
+    // 2. INSERT into the child table (reusing the same PK)
+    if (generatedPkValue != null) {
+      // Find the PK position via its insertableColumns index mapping
+      let pkFoundInChild = false;
+      for (let ci = 0, ii = 0; ii < insertableColumns.length; ii++) {
+        const col = insertableColumns[ii];
+        const isPk = pkColNames.has(col.name);
+        const isRoot = rootColNames.has(col.name);
+        if (isPk || !isRoot) {
+          // This column exists in childCols
+          if (isPk) {
+            childVals[ci] = bindParam(generatedPkValue);
+            pkFoundInChild = true;
+          }
+          ci++;
+        }
+      }
+      // If the PK is missing from childCols, add it
+      if (!pkFoundInChild) {
+        childCols.unshift(raw(this.ctx.wrap(pk.name)));
+        childVals.unshift(bindParam(generatedPkValue));
+      }
+    }
+
+    if (childCols.length > 0) {
+      const childInsertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))}
+        (${join(childCols, ", ")})
+        VALUES (${join(childVals, ", ")})`;
+      await session.query<T>(childInsertSql);
+    }
+
+    // Read the resulting row back
+    const pkVal = generatedPkValue ?? primaryKeyValue;
+    itemFields[this.ctx.propKey(pk)] = pkVal;
+    const result = await this.ctx.findOneInternal(
+      entity,
+      { where: whereByProps<T>({ [this.ctx.propKey(pk)]: pkVal }) },
+      session,
+    );
+
+    await this.cascadeHandler.cascadeSaveOneToMany(
+      entity,
+      item,
+      pkVal,
+      session,
+    );
+    this.assignGeneratedPk(item, this.ctx.propKey(pk), pkVal);
+    await this.cascadeHandler.runHooks(entity, item, "afterInsert");
+    await this.eventEmitter.emit("afterInsert", {
+      entity,
+      data: item,
+    });
+    await this.ctx.notifySubscribers(entity, "afterInsert", {
+      entity: item,
+      manager: this.ctx.getManager(),
+    } as InsertEvent<T>);
+    return { result: result as T };
   }
 
   async saveMany<T>(
