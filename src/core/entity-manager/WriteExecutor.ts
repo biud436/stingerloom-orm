@@ -100,6 +100,16 @@ interface InsertValuePlan {
   values: RawValue[];
 }
 
+/** SET clauses staged for the UPDATE path of saveInternal. */
+interface UpdateSetPlan {
+  /** Metadata of the columns taken from `item` (parallel to the head of `updateMap`). */
+  updatableColumns: ColumnMetadata[];
+  /** SET clauses; may grow beyond `updatableColumns` (@UpdateTimestamp, FK, @Version). */
+  updateMap: Sql[];
+  /** DB column name of the @Version column, when the entity declares one. */
+  versionColName: string | null;
+}
+
 /**
  * Executes all write operations (INSERT / UPDATE / DELETE / UPSERT) for
  * EntityManager. Holds no schema state — reads dialect/identifier/helper
@@ -303,102 +313,8 @@ export class WriteExecutor {
         manager: this.ctx.getManager(),
       } as UpdateEvent<T>);
 
-      const versionColName = this.resolver.getVersionColumn(entity);
-      const pkColumnNames = new Set(
-        pkColumns.map((col: ColumnMetadata) => col.name),
-      );
-      const computedColsForUpdate = this.ctx.getComputedColumnNames(entity);
-      // STI: the discriminator column is excluded from UPDATE
-      const updateDiscCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-      const updatableColumns = metadata.columns.filter(
-        (column: ColumnMetadata) => {
-          if (computedColsForUpdate.has(column.name)) return false;
-          if (pkColumnNames.has(column.name)) return false;
-          if (versionColName && column.name === versionColName) return false;
-          if (updateDiscCol && column.name === updateDiscCol.name) return false;
-          return itemFields[this.ctx.propKey(column)] !== undefined;
-        },
-      );
-      const updateMap = updatableColumns.map((column: ColumnMetadata) => {
-        const rawValue = itemFields[this.ctx.propKey(column)];
-        const value = this.ctx.applyWriteTransform(column, rawValue);
-        return sql`${raw(this.ctx.wrap(column.name))} = ${bindParam(value)}`;
-      });
-
-      // Auto-inject @UpdateTimestamp
-      const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
-      if (updateTsColName) {
-        const existingIdx = updatableColumns.findIndex(
-          (col: ColumnMetadata) => col.name === updateTsColName,
-        );
-        const updateNow = formatDateTimeForSQL(new Date());
-        if (existingIdx >= 0) {
-          updateMap[existingIdx] =
-            sql`${raw(this.ctx.wrap(updateTsColName))} = ${updateNow}`;
-        } else {
-          updateMap.push(
-            sql`${raw(this.ctx.wrap(updateTsColName))} = ${updateNow}`,
-          );
-        }
-      }
-
-      const updatedColumnNames = new Set(
-        updatableColumns.map((col: ColumnMetadata) => col.name),
-      );
-
-      // Add the ManyToOne FK column values to the UPDATE SET clause
-      const updateManyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-      for (const rel of updateManyToOneRelations) {
-        if (!rel.joinColumn) continue;
-        const relatedValue = itemFields[rel.columnName];
-        // Shadow-accessor fallback (mirrors INSERT path): when the relation
-        // object isn't set, look for the FK on the conventional `${rel}Id`
-        // shadow, then on an explicit `option.fkProperty`.
-        let shadowValue: unknown = itemFields[`${rel.columnName}Id`];
-        if (shadowValue === undefined && rel.option?.fkProperty) {
-          shadowValue = itemFields[rel.option.fkProperty];
-        }
-
-        if (relatedValue === undefined && shadowValue === undefined) continue;
-
-        const alreadyInSet = updatedColumnNames.has(rel.joinColumn);
-        const setClause = (value: unknown) => {
-          if (alreadyInSet) {
-            const existingIdx = updatableColumns.findIndex(
-              (col: ColumnMetadata) => col.name === rel.joinColumn,
-            );
-            updateMap[existingIdx] =
-              sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`;
-          } else {
-            updateMap.push(
-              sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`,
-            );
-            updatedColumnNames.add(rel.joinColumn!);
-          }
-        };
-
-        if (relatedValue === null) {
-          setClause(null);
-        } else if (relatedValue && typeof relatedValue === "object") {
-          const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
-          const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-          if (relatedMeta) {
-            const relatedPk = relatedMeta.columns.find(
-              (col: ColumnMetadata) => col.options?.primary,
-            );
-            if (relatedPk) {
-              const fkValue = fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)];
-              if (fkValue !== undefined && fkValue !== null) {
-                setClause(fkValue);
-              }
-            }
-          }
-        } else if (shadowValue !== undefined) {
-          // Fall back to the shadow accessor when no relation object was set.
-          // `null` clears the FK; numeric/string values set it directly.
-          setClause(shadowValue);
-        }
-      }
+      const { updatableColumns, updateMap, versionColName } =
+        this.buildUpdateSetPlan(op);
 
       const pkWhereClauses = buildPkWhere();
 
@@ -1103,6 +1019,116 @@ export class WriteExecutor {
 
     await this.emitAfterInsertEvents(op);
     return queryResult as unknown as T;
+  }
+
+  /**
+   * Stages the SET clauses for saveInternal's UPDATE: selects the updatable
+   * columns (PK / @Version / computed / STI discriminator excluded,
+   * undefined omission), auto-injects @UpdateTimestamp, and resolves each
+   * ManyToOne relation's FK value (relation object → shadow `${prop}Id`
+   * accessor → explicit `option.fkProperty`) into the SET list.
+   */
+  private buildUpdateSetPlan<T>(op: SaveOperation<T>): UpdateSetPlan {
+    const { entity, metadata, itemFields, pkColumns } = op;
+
+    const versionColName = this.resolver.getVersionColumn(entity);
+    const pkColumnNames = new Set(
+      pkColumns.map((col: ColumnMetadata) => col.name),
+    );
+    const computedColsForUpdate = this.ctx.getComputedColumnNames(entity);
+    // STI: the discriminator column is excluded from UPDATE
+    const updateDiscCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+    const updatableColumns = metadata.columns.filter(
+      (column: ColumnMetadata) => {
+        if (computedColsForUpdate.has(column.name)) return false;
+        if (pkColumnNames.has(column.name)) return false;
+        if (versionColName && column.name === versionColName) return false;
+        if (updateDiscCol && column.name === updateDiscCol.name) return false;
+        return itemFields[this.ctx.propKey(column)] !== undefined;
+      },
+    );
+    const updateMap = updatableColumns.map((column: ColumnMetadata) => {
+      const rawValue = itemFields[this.ctx.propKey(column)];
+      const value = this.ctx.applyWriteTransform(column, rawValue);
+      return sql`${raw(this.ctx.wrap(column.name))} = ${bindParam(value)}`;
+    });
+
+    // Auto-inject @UpdateTimestamp
+    const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
+    if (updateTsColName) {
+      const existingIdx = updatableColumns.findIndex(
+        (col: ColumnMetadata) => col.name === updateTsColName,
+      );
+      const updateNow = formatDateTimeForSQL(new Date());
+      if (existingIdx >= 0) {
+        updateMap[existingIdx] =
+          sql`${raw(this.ctx.wrap(updateTsColName))} = ${updateNow}`;
+      } else {
+        updateMap.push(
+          sql`${raw(this.ctx.wrap(updateTsColName))} = ${updateNow}`,
+        );
+      }
+    }
+
+    const updatedColumnNames = new Set(
+      updatableColumns.map((col: ColumnMetadata) => col.name),
+    );
+
+    // Add the ManyToOne FK column values to the UPDATE SET clause
+    const updateManyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
+    for (const rel of updateManyToOneRelations) {
+      if (!rel.joinColumn) continue;
+      const relatedValue = itemFields[rel.columnName];
+      // Shadow-accessor fallback (mirrors INSERT path): when the relation
+      // object isn't set, look for the FK on the conventional `${rel}Id`
+      // shadow, then on an explicit `option.fkProperty`.
+      let shadowValue: unknown = itemFields[`${rel.columnName}Id`];
+      if (shadowValue === undefined && rel.option?.fkProperty) {
+        shadowValue = itemFields[rel.option.fkProperty];
+      }
+
+      if (relatedValue === undefined && shadowValue === undefined) continue;
+
+      const alreadyInSet = updatedColumnNames.has(rel.joinColumn);
+      const setClause = (value: unknown) => {
+        if (alreadyInSet) {
+          const existingIdx = updatableColumns.findIndex(
+            (col: ColumnMetadata) => col.name === rel.joinColumn,
+          );
+          updateMap[existingIdx] =
+            sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`;
+        } else {
+          updateMap.push(
+            sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`,
+          );
+          updatedColumnNames.add(rel.joinColumn!);
+        }
+      };
+
+      if (relatedValue === null) {
+        setClause(null);
+      } else if (relatedValue && typeof relatedValue === "object") {
+        const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
+        const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
+        if (relatedMeta) {
+          const relatedPk = relatedMeta.columns.find(
+            (col: ColumnMetadata) => col.options?.primary,
+          );
+          if (relatedPk) {
+            const fkValue = fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)];
+            if (fkValue !== undefined && fkValue !== null) {
+              setClause(fkValue);
+            }
+          }
+        }
+      } else if (shadowValue !== undefined) {
+        // Fall back to the shadow accessor when no relation object was set.
+        // `null` clears the FK; numeric/string values set it directly.
+        setClause(shadowValue);
+      }
+    }
+
+    return { updatableColumns, updateMap, versionColName };
   }
 
   async saveMany<T>(
