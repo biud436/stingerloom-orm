@@ -364,56 +364,14 @@ export class WriteExecutor {
       }
 
       if (updateMap.length > 0) {
-        const updateReturningSql = useReturningForUpdate
-          ? raw(` RETURNING *`)
-          : raw("");
-        const updateSql = sql`
-            UPDATE ${raw(this.ctx.wrapTable(metadata.name))}
-            SET ${join(updateMap, ", ")}
-            WHERE ${join(pkWhereClauses, " AND ")}${updateReturningSql}
-                  `;
-        const updateStart = Date.now();
-        this.ctx.beginTrackQuery();
-        const updateResult = (await session.query<T>(
-          updateSql,
-        )) as DriverExecResult;
-        this.ctx.trackQuery(
-          entity.name,
-          updateSql.text ?? String(updateSql),
-          Date.now() - updateStart,
+        updateReturnedRow = await this.executeSingleTableUpdate(
+          op,
+          updateMap,
+          pkWhereClauses,
+          versionColName,
+          currentVersion,
+          useReturningForUpdate,
         );
-
-        let affected = 0;
-        if (this.ctx.isMySqlFamily()) {
-          affected = okPacket(updateResult)?.affectedRows ?? 0;
-        } else {
-          affected = updateResult?.rowCount ?? 0;
-        }
-        if (versionColName && currentVersion !== undefined && currentVersion !== null) {
-          if (affected === 0) {
-            throw new OptimisticLockError(entity.name, currentVersion as number);
-          }
-        } else if (affected === 0) {
-          // 0 affected rows means no row matched the primary key — except on
-          // MySQL, where affectedRows can also be 0 for a value-identical
-          // UPDATE, so confirm with an existence probe before failing.
-          // Without this the save was a silent no-op: afterUpdate hooks and
-          // subscribers still fired and save() returned null cast as T.
-          const probeResult = await session.query(
-            sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
-          );
-          if (resultRows(probeResult).length === 0) {
-            throw new EntityNotFoundError(
-              entity.name,
-              "save() attempted an UPDATE but no row matched the primary key.",
-            );
-          }
-        }
-
-        const updatedRows = resultRows(updateResult);
-        if (useReturningForUpdate && updatedRows.length > 0) {
-          updateReturnedRow = updatedRows[0];
-        }
       }
 
       await this.completeUpdate(op, databaseEntity);
@@ -1156,6 +1114,76 @@ export class WriteExecutor {
       session,
     );
     return { result: tptResult as T };
+  }
+
+  /**
+   * Executes saveInternal's generic single-table UPDATE and enforces the
+   * 0-affected-rows contract: a guarded write that matched nothing is a stale
+   * @Version (OptimisticLockError); otherwise an existence probe distinguishes
+   * a missing PK (EntityNotFoundError) from MySQL's value-identical UPDATE.
+   * Returns the RETURNING row when the driver supports it, else null.
+   */
+  private async executeSingleTableUpdate<T>(
+    op: SaveOperation<T>,
+    updateMap: Sql[],
+    pkWhereClauses: Sql[],
+    versionColName: string | null,
+    currentVersion: unknown,
+    useReturningForUpdate: boolean,
+  ): Promise<DriverRow | null> {
+    const { entity, metadata, session, buildPkWhere } = op;
+
+    const updateReturningSql = useReturningForUpdate
+      ? raw(` RETURNING *`)
+      : raw("");
+    const updateSql = sql`
+        UPDATE ${raw(this.ctx.wrapTable(metadata.name))}
+        SET ${join(updateMap, ", ")}
+        WHERE ${join(pkWhereClauses, " AND ")}${updateReturningSql}
+              `;
+    const updateStart = Date.now();
+    this.ctx.beginTrackQuery();
+    const updateResult = (await session.query<T>(
+      updateSql,
+    )) as DriverExecResult;
+    this.ctx.trackQuery(
+      entity.name,
+      updateSql.text ?? String(updateSql),
+      Date.now() - updateStart,
+    );
+
+    let affected = 0;
+    if (this.ctx.isMySqlFamily()) {
+      affected = okPacket(updateResult)?.affectedRows ?? 0;
+    } else {
+      affected = updateResult?.rowCount ?? 0;
+    }
+    if (versionColName && currentVersion !== undefined && currentVersion !== null) {
+      if (affected === 0) {
+        throw new OptimisticLockError(entity.name, currentVersion as number);
+      }
+    } else if (affected === 0) {
+      // 0 affected rows means no row matched the primary key — except on
+      // MySQL, where affectedRows can also be 0 for a value-identical
+      // UPDATE, so confirm with an existence probe before failing.
+      // Without this the save was a silent no-op: afterUpdate hooks and
+      // subscribers still fired and save() returned null cast as T.
+      const probeResult = await session.query(
+        sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
+      );
+      if (resultRows(probeResult).length === 0) {
+        throw new EntityNotFoundError(
+          entity.name,
+          "save() attempted an UPDATE but no row matched the primary key.",
+        );
+      }
+    }
+
+    const updatedRows = resultRows(updateResult);
+    if (useReturningForUpdate && updatedRows.length > 0) {
+      return updatedRows[0];
+    }
+    return null;
   }
 
   async saveMany<T>(
