@@ -207,7 +207,8 @@ export function resolveFkColumn(
  * the raw join-column DB name. So a cascade insert must write the shadow (and
  * fkProperty), not just the raw column, or the FK is silently dropped when the
  * FK is declared via @RelationColumn with no backing @Column.
- * Mirrors CascadeHandler.cascadeSaveOneToMany.
+ * Shared with CascadeHandler.cascadeSaveOneToMany via
+ * {@link fkWriteKeysFromManyToOne} / {@link assignFkValue}.
  */
 export interface FkWriteKeys {
   /** Legacy raw target: joinColumn option, else the relation property name. */
@@ -216,6 +217,25 @@ export interface FkWriteKeys {
   shadowKey: string;
   /** Explicit @ManyToOne({ fkProperty }) backing property, when configured. */
   fkPropertyKey?: string;
+}
+
+/**
+ * Derive the FK write targets from an already-matched inverse @ManyToOne
+ * metadata entry (undefined when the child declares none — the legacy
+ * column-name == property-key fallback). Single source for the key
+ * derivation, whichever metadata store the match came from.
+ */
+export function fkWriteKeysFromManyToOne(
+  match:
+    | { columnName?: string; joinColumn?: string; option?: { fkProperty?: string } }
+    | undefined,
+  mappedBy: string,
+): FkWriteKeys {
+  return {
+    fkColumn: match?.joinColumn ?? mappedBy,
+    shadowKey: `${match?.columnName ?? mappedBy}Id`,
+    fkPropertyKey: match?.option?.fkProperty,
+  };
 }
 
 /**
@@ -229,11 +249,7 @@ export function resolveFkWriteKeys(
   const manyToOneMeta: any[] =
     Reflect.getMetadata(MANY_TO_ONE_TOKEN, ChildEntity) ?? [];
   const match = manyToOneMeta.find((m: any) => m.columnName === mappedBy);
-  return {
-    fkColumn: match?.joinColumn ?? mappedBy,
-    shadowKey: `${match?.columnName ?? mappedBy}Id`,
-    fkPropertyKey: match?.option?.fkProperty,
-  };
+  return fkWriteKeysFromManyToOne(match, mappedBy);
 }
 
 /**

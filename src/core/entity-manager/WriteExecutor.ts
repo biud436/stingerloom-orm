@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { ClazzType, Logger, resolveEntityGlobs, generateUUIDv7 } from "../../utils";
-import { ColumnMetadata } from "../../scanner";
+import { ColumnMetadata, EntityScannerMetadata } from "../../scanner";
 import { ISqlDriver } from "../../dialects/SqlDriver";
 import { TransactionSessionManager } from "../../dialects/TransactionSessionManager";
 import { FindOption, LockMode, UpdateData, UpdateManyOptions, WhereClause } from "../../dialects/FindOption";
@@ -32,6 +32,7 @@ import type { ManyToOneMetadata } from "../../decorators/ManyToOne";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
 import { CascadeHandler } from "../CascadeHandler";
 import { transactionStorage } from "../../decorators/Transactional";
+import type { InheritanceStrategy } from "../../decorators/Inheritance";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DefaultNamingStrategy, NamingStrategy } from "../generators/NamingStrategy";
@@ -54,6 +55,7 @@ import {
   whereByProps,
   type DriverExecResult,
   type DriverRow,
+  type EntityFields,
 } from "./entity-access";
 
 /**
@@ -64,6 +66,48 @@ interface FkColumnBinding {
   joinColumn: string;
   propertyName: string;
   relMeta: ManyToOneMetadata<unknown>;
+}
+
+/**
+ * Per-call state shared by the saveInternal helper methods — built once at the
+ * top of the transaction closure and threaded through the INSERT/UPDATE
+ * helpers instead of a long positional parameter list.
+ */
+interface SaveOperation<T> {
+  entity: ClazzType<T>;
+  item: Partial<T>;
+  metadata: EntityScannerMetadata;
+  session: TransactionSessionManager;
+  /** {@link fieldsOf} view over `item`, hoisted once per call. */
+  itemFields: EntityFields;
+  pkColumns: ColumnMetadata[];
+  /** First PK column (composite PKs keep the full list in `pkColumns`). */
+  pk: ColumnMetadata;
+  hasAutoIncrementPk: boolean;
+  /** The PK value present on `item` at entry (undefined on generated INSERTs). */
+  primaryKeyValue: unknown;
+  buildPkWhere: (pkValues?: DriverRow) => Sql[];
+  buildPkFindWhere: (pkValues?: DriverRow) => WhereClause<T>;
+}
+
+/** Column/value lists staged for the single-row INSERT of saveInternal. */
+interface InsertValuePlan {
+  /** Metadata of the columns taken from `item` (parallel to the head of `columns`). */
+  insertableColumns: ColumnMetadata[];
+  /** Wrapped column identifiers; may grow beyond `insertableColumns` (discriminator, FK). */
+  columns: Sql[];
+  /** Bound values, parallel to `columns`. */
+  values: RawValue[];
+}
+
+/** SET clauses staged for the UPDATE path of saveInternal. */
+interface UpdateSetPlan {
+  /** Metadata of the columns taken from `item` (parallel to the head of `updateMap`). */
+  updatableColumns: ColumnMetadata[];
+  /** SET clauses; may grow beyond `updatableColumns` (@UpdateTimestamp, FK, @Version). */
+  updateMap: Sql[];
+  /** DB column name of the @Version column, when the entity declares one. */
+  versionColName: string | null;
 }
 
 /**
@@ -172,6 +216,20 @@ export class WriteExecutor {
         return whereByProps<T>(where);
       };
 
+      const op: SaveOperation<T> = {
+        entity,
+        item,
+        metadata,
+        session,
+        itemFields,
+        pkColumns,
+        pk,
+        hasAutoIncrementPk,
+        primaryKeyValue,
+        buildPkWhere,
+        buildPkFindWhere,
+      };
+
       if (isInsert) {
         await this.cascadeHandler.runHooks(entity, item, "beforeInsert");
         await this.eventEmitter.emit("beforeInsert", { entity, data: item });
@@ -182,181 +240,12 @@ export class WriteExecutor {
 
         this.ctx.applyTenantColumnOnInsert(entity, item);
 
-        const computedCols = this.ctx.getComputedColumnNames(entity);
-        // Resolved before the filter: these columns are auto-populated below
-        // (timestamps, version, client-side UUID PKs), so they must survive
-        // the undefined-value omission even when the entity has no value yet.
-        const createTsCol = this.resolver.getCreateTimestampColumn(entity);
-        const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
-        const versionCol = this.resolver.getVersionColumn(entity);
-        const insertableColumns = metadata.columns.filter(
-          (column: ColumnMetadata) => {
-            const isComputedColumn = computedCols.has(column.name);
-            if (isComputedColumn) return false;
+        const plan = this.buildInsertValuePlan(op);
+        const { insertableColumns, columns, values } = plan;
 
-            const value = itemFields[this.ctx.propKey(column)];
-            const isUnsetAutoIncrement =
-              column.options?.autoIncrement &&
-              (value === null || value === undefined);
-            if (isUnsetAutoIncrement) return false;
-
-            if (value === undefined) {
-              const strategy = column.options?.generationStrategy;
-              const isClientGeneratedUuid =
-                strategy === "uuid" || strategy === "uuid-v7";
-              const isAutoManagedColumn =
-                column.name === createTsCol ||
-                column.name === updateTsCol ||
-                column.name === versionCol;
-              // Auto-populated columns (client-side UUID PKs, timestamps,
-              // version) must survive the undefined-omission so the values
-              // injected below are written.
-              if (isClientGeneratedUuid || isAutoManagedColumn) return true;
-
-              // #368: undefined means "not provided" — omit the column so the
-              // DB-side DEFAULT (and @Column({ default })) applies. An explicit
-              // null still writes NULL.
-              return false;
-            }
-            return true;
-          },
-        );
-
-        const columns = insertableColumns.map((column) => {
-          return raw(this.ctx.wrap(column.name));
-        });
-
-        const values: RawValue[] = bindParams(
-          insertableColumns.map((column: ColumnMetadata) => {
-            const rawValue = itemFields[this.ctx.propKey(column)];
-            return this.ctx.applyWriteTransform(column, rawValue);
-          }),
-        );
-
-        // Auto-inject @CreateTimestamp / @UpdateTimestamp values (on INSERT)
-        const now = new Date();
-        const nowStr = formatDateTimeForSQL(now);
-        if (createTsCol) {
-          const idx = insertableColumns.findIndex(
-            (col: ColumnMetadata) => col.name === createTsCol,
-          );
-          if (idx >= 0) {
-            // Read via the property key — createTsCol is the DB column name after
-            // the naming strategy, so item[createTsCol] would miss a user value.
-            const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
-            values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
-          }
-        }
-        if (updateTsCol) {
-          const idx = insertableColumns.findIndex(
-            (col: ColumnMetadata) => col.name === updateTsCol,
-          );
-          if (idx >= 0) {
-            const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
-            values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
-          }
-        }
-
-        // Auto-initialize the @Version column
-        if (versionCol) {
-          const versionIdx = insertableColumns.findIndex(
-            (col: ColumnMetadata) => col.name === versionCol,
-          );
-          if (versionIdx >= 0) {
-            values[versionIdx] = 1;
-          }
-        }
-
-        // Auto-generate UUID PKs on the application side
-        for (let i = 0; i < insertableColumns.length; i++) {
-          const col = insertableColumns[i];
-          const strategy = col.options?.generationStrategy;
-          if (!strategy || strategy === "increment") continue;
-          if (values[i] !== null && values[i] !== undefined) continue;
-
-          // PostgreSQL uuid strategy: DB generates via DEFAULT gen_random_uuid()
-          if (strategy === "uuid" && this.ctx.isPostgres()) {
-            // exclude column from INSERT so DEFAULT kicks in
-            columns.splice(i, 1);
-            values.splice(i, 1);
-            insertableColumns.splice(i, 1);
-            i--;
-            continue;
-          }
-
-          if (strategy === "uuid") {
-            values[i] = randomUUID();
-            itemFields[this.ctx.propKey(col)] = values[i];
-          } else if (strategy === "uuid-v7") {
-            values[i] = generateUUIDv7();
-            itemFields[this.ctx.propKey(col)] = values[i];
-          }
-        }
-
-        // STI/TPT: add or set the discriminator column value on INSERT
         const saveInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
-        if (saveInheritanceStrategy === "SINGLE_TABLE" || saveInheritanceStrategy === "JOINED") {
-          const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-          const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
-          if (discCol && discVal) {
-            const existingDiscIdx = insertableColumns.findIndex(
-              (col: ColumnMetadata) => col.name === discCol.name,
-            );
-            if (existingDiscIdx >= 0) {
-              values[existingDiscIdx] = discVal;
-            } else {
-              columns.push(raw(this.ctx.wrap(discCol.name)));
-              values.push(discVal);
-            }
-          }
-        }
-
-        // Extract FK column values for ManyToOne relations
-        const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-        for (const rel of manyToOneRelations) {
-          if (!rel.joinColumn) continue;
-          const relatedValue = itemFields[rel.columnName];
-          // Shadow-accessor fallback: prefer the convention `${rel}Id`, then
-          // honor an explicit `option.fkProperty` for entities that follow a
-          // different naming (mirrors `collectFkPropertyMappings` on reads).
-          let idPropValue = itemFields[`${rel.columnName}Id`];
-          if (idPropValue === undefined && rel.option?.fkProperty) {
-            idPropValue = itemFields[rel.option.fkProperty];
-          }
-
-          const existingIdx = insertableColumns.findIndex(
-            (col: ColumnMetadata) => col.name === rel.joinColumn,
-          );
-
-          let fkValue: unknown = undefined;
-
-          if (relatedValue === null) {
-            fkValue = null;
-          } else if (relatedValue && typeof relatedValue === "object") {
-            const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
-            const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-            if (relatedMeta) {
-              const relatedPk = relatedMeta.columns.find(
-                (col: ColumnMetadata) => col.options?.primary,
-              );
-              if (relatedPk) {
-                fkValue =
-                  fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? undefined;
-              }
-            }
-          } else if (idPropValue != null) {
-            fkValue = idPropValue;
-          }
-
-          if (fkValue !== undefined) {
-            if (existingIdx >= 0) {
-              values[existingIdx] = bindParam(fkValue);
-            } else {
-              columns.push(raw(this.ctx.wrap(rel.joinColumn)));
-              values.push(bindParam(fkValue));
-            }
-          }
-        }
+        this.applyInsertDiscriminator(op, plan, saveInheritanceStrategy);
+        this.applyInsertFkColumns(op, plan);
 
         // PostgreSQL (all versions), MariaDB 10.5+: INSERT ... RETURNING *
         const useReturning =
@@ -365,125 +254,8 @@ export class WriteExecutor {
 
         // TPT child: INSERT into parent first → INSERT into child (sharing the same PK)
         if (saveInheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
-          const root = this.inheritanceResolver.getRoot(entity)!;
-          const rootMeta = this.resolver.resolveEntityMetadata(root);
-          if (rootMeta) {
-            const rootColNames = new Set(
-              rootMeta.columns.map((c: ColumnMetadata) => c.name),
-            );
-            const pkColNames = new Set(
-              pkColumns.map((col: ColumnMetadata) => col.name),
-            );
-
-            // Split columns/values into parent and child buckets
-            const parentCols: Sql[] = [];
-            const parentVals: RawValue[] = [];
-            const childCols: Sql[] = [];
-            const childVals: RawValue[] = [];
-
-            for (let i = 0; i < insertableColumns.length; i++) {
-              const col = insertableColumns[i];
-              const isPk = pkColNames.has(col.name);
-              const isRoot = rootColNames.has(col.name);
-
-              if (isPk || isRoot) {
-                parentCols.push(columns[i]);
-                parentVals.push(values[i]);
-              }
-              if (isPk || !isRoot) {
-                childCols.push(columns[i]);
-                childVals.push(values[i]);
-              }
-            }
-
-            // Extra appended columns (e.g. discriminator, FK) live outside the insertableColumns range
-            for (let i = insertableColumns.length; i < columns.length; i++) {
-              parentCols.push(columns[i]);
-              parentVals.push(values[i]);
-            }
-
-            // 1. INSERT into the parent table
-            const parentTableName = rootMeta.name;
-            const parentReturningSql = useReturning ? raw(` RETURNING *`) : raw("");
-            const parentInsertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(parentTableName))}
-              (${join(parentCols, ", ")})
-              VALUES (${join(parentVals, ", ")})${parentReturningSql}`;
-
-            const parentResult = (await session.query<T>(
-              parentInsertSql,
-            )) as DriverExecResult;
-
-            // Obtain the generated PK value
-            let generatedPkValue: unknown;
-            const parentRows = resultRows(parentResult);
-            if (useReturning && parentRows.length > 0) {
-              generatedPkValue = parentRows[0][pk.name];
-            } else if (this.ctx.isMySqlFamily()) {
-              generatedPkValue = okPacket(parentResult)?.insertId;
-            } else if (this.ctx.isSqlite()) {
-              generatedPkValue = Number(
-                sqliteRunResult(parentResult)?.lastInsertRowid,
-              );
-            }
-
-            // 2. INSERT into the child table (reusing the same PK)
-            if (generatedPkValue != null) {
-              // Find the PK position via its insertableColumns index mapping
-              let pkFoundInChild = false;
-              for (let ci = 0, ii = 0; ii < insertableColumns.length; ii++) {
-                const col = insertableColumns[ii];
-                const isPk = pkColNames.has(col.name);
-                const isRoot = rootColNames.has(col.name);
-                if (isPk || !isRoot) {
-                  // This column exists in childCols
-                  if (isPk) {
-                    childVals[ci] = bindParam(generatedPkValue);
-                    pkFoundInChild = true;
-                  }
-                  ci++;
-                }
-              }
-              // If the PK is missing from childCols, add it
-              if (!pkFoundInChild) {
-                childCols.unshift(raw(this.ctx.wrap(pk.name)));
-                childVals.unshift(bindParam(generatedPkValue));
-              }
-            }
-
-            if (childCols.length > 0) {
-              const childInsertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))}
-                (${join(childCols, ", ")})
-                VALUES (${join(childVals, ", ")})`;
-              await session.query<T>(childInsertSql);
-            }
-
-            // Read the resulting row back
-            const pkVal = generatedPkValue ?? primaryKeyValue;
-            itemFields[this.ctx.propKey(pk)] = pkVal;
-            const result = await this.ctx.findOneInternal(
-              entity,
-              { where: whereByProps<T>({ [this.ctx.propKey(pk)]: pkVal }) },
-              session,
-            );
-
-            await this.cascadeHandler.cascadeSaveOneToMany(
-              entity,
-              item,
-              pkVal,
-              session,
-            );
-            this.assignGeneratedPk(item, this.ctx.propKey(pk), pkVal);
-            await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-            await this.eventEmitter.emit("afterInsert", {
-              entity,
-              data: item,
-            });
-            await this.ctx.notifySubscribers(entity, "afterInsert", {
-              entity: item,
-              manager: this.ctx.getManager(),
-            } as InsertEvent<T>);
-            return result as T;
-          }
+          const tpt = await this.insertTptChild(op, plan, useReturning);
+          if (tpt) return tpt.result;
         }
 
         const returningSql = useReturning
@@ -513,100 +285,7 @@ export class WriteExecutor {
           Date.now() - saveQueryStart,
         );
 
-        const returnedRows = resultRows(queryResult);
-
-        // MariaDB 10.5+ returns rows via RETURNING; fall through to the generic
-        // `useReturning && results.length > 0` branch below instead of the insertId path.
-        const mariaDbReturned =
-          useReturning && this.ctx.isMySqlFamily() && returnedRows.length > 0;
-
-        if (this.ctx.isMySqlFamily() && !mariaDbReturned) {
-          const findWhere = hasAutoIncrementPk
-            ? whereByProps<T>({
-                [this.ctx.propKey(pk)]: okPacket(queryResult)?.insertId,
-              })
-            : buildPkFindWhere();
-          const result = await this.ctx.findOneInternal(entity, {
-            where: findWhere,
-          }, session);
-
-          const cascadeId = hasAutoIncrementPk
-            ? okPacket(queryResult)?.insertId
-            : primaryKeyValue;
-          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
-          this.assignGeneratedPk(item, this.ctx.propKey(pk), cascadeId);
-          await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-          await this.eventEmitter.emit("afterInsert", { entity, data: item });
-          await this.ctx.notifySubscribers(entity, "afterInsert", {
-            entity: item,
-            manager: this.ctx.getManager(),
-          } as InsertEvent<T>);
-          return result as T;
-        }
-
-        // Drivers that support RETURNING *: deserialize directly from the returned row (when there are no eager relations)
-        if (useReturning && returnedRows.length > 0) {
-          const returnedRow = returnedRows[0];
-          const cascadeId = returnedRow[pk.name];
-          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
-          this.assignGeneratedPk(item, this.ctx.propKey(pk), cascadeId);
-          await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-          await this.eventEmitter.emit("afterInsert", { entity, data: item });
-          await this.ctx.notifySubscribers(entity, "afterInsert", {
-            entity: item,
-            manager: this.ctx.getManager(),
-          } as InsertEvent<T>);
-
-          const hasEagerRelations = this.ctx.hasEagerRelations(entity);
-          if (!hasEagerRelations) {
-            // #369: route the RETURNING row through ResultTransformer so DB
-            // column names map back to property keys (explicit @Column({name})
-            // and NamingStrategy) and column transformers apply on read.
-            return ResultTransformerFactory.create().toEntity(entity, {
-              results: [returnedRow],
-              fields: [],
-            }) as T;
-          }
-          const findWhere = buildPkFindWhere(returnedRow);
-          const result = await this.ctx.findOneInternal(entity, {
-            where: findWhere,
-          }, session);
-          return result as T;
-        }
-
-        // SQLite: look up the inserted entity via lastInsertRowid
-        if (this.ctx.isSqlite()) {
-          const runResult = sqliteRunResult(queryResult);
-          const findWhere = hasAutoIncrementPk
-            ? whereByProps<T>({
-                [this.ctx.propKey(pk)]: Number(runResult?.lastInsertRowid),
-              })
-            : buildPkFindWhere();
-          const result = await this.ctx.findOneInternal(entity, {
-            where: findWhere,
-          }, session);
-
-          const cascadeId = hasAutoIncrementPk
-            ? Number(runResult?.lastInsertRowid)
-            : primaryKeyValue;
-          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
-          this.assignGeneratedPk(item, this.ctx.propKey(pk), cascadeId);
-          await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-          await this.eventEmitter.emit("afterInsert", { entity, data: item });
-          await this.ctx.notifySubscribers(entity, "afterInsert", {
-            entity: item,
-            manager: this.ctx.getManager(),
-          } as InsertEvent<T>);
-          return result as T;
-        }
-
-        await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-        await this.eventEmitter.emit("afterInsert", { entity, data: item });
-        await this.ctx.notifySubscribers(entity, "afterInsert", {
-          entity: item,
-          manager: this.ctx.getManager(),
-        } as InsertEvent<T>);
-        return queryResult as unknown as T;
+        return this.resolveInsertResult(op, queryResult, useReturning);
       }
 
       // UPDATE path
@@ -634,102 +313,8 @@ export class WriteExecutor {
         manager: this.ctx.getManager(),
       } as UpdateEvent<T>);
 
-      const versionColName = this.resolver.getVersionColumn(entity);
-      const pkColumnNames = new Set(
-        pkColumns.map((col: ColumnMetadata) => col.name),
-      );
-      const computedColsForUpdate = this.ctx.getComputedColumnNames(entity);
-      // STI: the discriminator column is excluded from UPDATE
-      const updateDiscCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-      const updatableColumns = metadata.columns.filter(
-        (column: ColumnMetadata) => {
-          if (computedColsForUpdate.has(column.name)) return false;
-          if (pkColumnNames.has(column.name)) return false;
-          if (versionColName && column.name === versionColName) return false;
-          if (updateDiscCol && column.name === updateDiscCol.name) return false;
-          return itemFields[this.ctx.propKey(column)] !== undefined;
-        },
-      );
-      const updateMap = updatableColumns.map((column: ColumnMetadata) => {
-        const rawValue = itemFields[this.ctx.propKey(column)];
-        const value = this.ctx.applyWriteTransform(column, rawValue);
-        return sql`${raw(this.ctx.wrap(column.name))} = ${bindParam(value)}`;
-      });
-
-      // Auto-inject @UpdateTimestamp
-      const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
-      if (updateTsColName) {
-        const existingIdx = updatableColumns.findIndex(
-          (col: ColumnMetadata) => col.name === updateTsColName,
-        );
-        const updateNow = formatDateTimeForSQL(new Date());
-        if (existingIdx >= 0) {
-          updateMap[existingIdx] =
-            sql`${raw(this.ctx.wrap(updateTsColName))} = ${updateNow}`;
-        } else {
-          updateMap.push(
-            sql`${raw(this.ctx.wrap(updateTsColName))} = ${updateNow}`,
-          );
-        }
-      }
-
-      const updatedColumnNames = new Set(
-        updatableColumns.map((col: ColumnMetadata) => col.name),
-      );
-
-      // Add the ManyToOne FK column values to the UPDATE SET clause
-      const updateManyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-      for (const rel of updateManyToOneRelations) {
-        if (!rel.joinColumn) continue;
-        const relatedValue = itemFields[rel.columnName];
-        // Shadow-accessor fallback (mirrors INSERT path): when the relation
-        // object isn't set, look for the FK on the conventional `${rel}Id`
-        // shadow, then on an explicit `option.fkProperty`.
-        let shadowValue: unknown = itemFields[`${rel.columnName}Id`];
-        if (shadowValue === undefined && rel.option?.fkProperty) {
-          shadowValue = itemFields[rel.option.fkProperty];
-        }
-
-        if (relatedValue === undefined && shadowValue === undefined) continue;
-
-        const alreadyInSet = updatedColumnNames.has(rel.joinColumn);
-        const setClause = (value: unknown) => {
-          if (alreadyInSet) {
-            const existingIdx = updatableColumns.findIndex(
-              (col: ColumnMetadata) => col.name === rel.joinColumn,
-            );
-            updateMap[existingIdx] =
-              sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`;
-          } else {
-            updateMap.push(
-              sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`,
-            );
-            updatedColumnNames.add(rel.joinColumn!);
-          }
-        };
-
-        if (relatedValue === null) {
-          setClause(null);
-        } else if (relatedValue && typeof relatedValue === "object") {
-          const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
-          const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-          if (relatedMeta) {
-            const relatedPk = relatedMeta.columns.find(
-              (col: ColumnMetadata) => col.options?.primary,
-            );
-            if (relatedPk) {
-              const fkValue = fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)];
-              if (fkValue !== undefined && fkValue !== null) {
-                setClause(fkValue);
-              }
-            }
-          }
-        } else if (shadowValue !== undefined) {
-          // Fall back to the shadow accessor when no relation object was set.
-          // `null` clears the FK; numeric/string values set it directly.
-          setClause(shadowValue);
-        }
-      }
+      const updatePlan = this.buildUpdateSetPlan(op);
+      const { updateMap, versionColName } = updatePlan;
 
       const pkWhereClauses = buildPkWhere();
 
@@ -768,194 +353,28 @@ export class WriteExecutor {
         this.inheritanceResolver.isChildEntity(entity) &&
         updateMap.length > 0
       ) {
-        const root = this.inheritanceResolver.getRoot(entity)!;
-        const rootMeta = this.resolver.resolveEntityMetadata(root);
-        if (rootMeta) {
-          const rootColNames = new Set(
-            rootMeta.columns.map((c: ColumnMetadata) => c.name),
-          );
-
-          const parentUpdateMap: Sql[] = [];
-          const childUpdateMap: Sql[] = [];
-
-          for (let i = 0; i < updatableColumns.length; i++) {
-            if (rootColNames.has(updatableColumns[i].name)) {
-              parentUpdateMap.push(updateMap[i]);
-            } else {
-              childUpdateMap.push(updateMap[i]);
-            }
-          }
-
-          // Extra items (e.g. @UpdateTimestamp, @Version) belong on the parent table
-          for (let i = updatableColumns.length; i < updateMap.length; i++) {
-            parentUpdateMap.push(updateMap[i]);
-          }
-
-          const guardedByVersion =
-            versionColName &&
-            currentVersion !== undefined &&
-            currentVersion !== null;
-
-          let parentAffected: number | null = null;
-          if (parentUpdateMap.length > 0) {
-            const parentUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(rootMeta.name))}
-              SET ${join(parentUpdateMap, ", ")}
-              WHERE ${join(pkWhereClauses, " AND ")}`;
-            const parentResult = (await session.query<T>(
-              parentUpdateSql,
-            )) as DriverExecResult;
-            parentAffected = this.ctx.isMySqlFamily()
-              ? (okPacket(parentResult)?.affectedRows ?? 0)
-              : (parentResult?.rowCount ?? 0);
-
-            // Same contract as the single-table UPDATE path below: a guarded
-            // parent UPDATE that matched nothing is a stale @Version write
-            // (the version increment always lands in parentUpdateMap, so the
-            // guard is enforced here before the child statement runs);
-            // without a guard, 0 matched rows means the PK doesn't exist —
-            // confirmed with the value-identical probe for MySQL.
-            if (parentAffected === 0) {
-              if (guardedByVersion) {
-                throw new OptimisticLockError(
-                  entity.name,
-                  currentVersion as number,
-                );
-              }
-              const parentProbe = await session.query(
-                sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
-              );
-              if (resultRows(parentProbe).length === 0) {
-                throw new EntityNotFoundError(
-                  entity.name,
-                  "save() attempted an UPDATE but no row matched the primary key.",
-                );
-              }
-            }
-          }
-
-          if (childUpdateMap.length > 0) {
-            // The child table has no @Version column — the optimistic-lock
-            // guard baked into pkWhereClauses references the root table only,
-            // so the child UPDATE filters by primary key alone. The parent
-            // UPDATE above already enforced the version inside this same
-            // transaction.
-            const childPkWhere = buildPkWhere();
-            const childUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name))}
-              SET ${join(childUpdateMap, ", ")}
-              WHERE ${join(childPkWhere, " AND ")}`;
-            const childResult = (await session.query<T>(
-              childUpdateSql,
-            )) as DriverExecResult;
-
-            // Only when no parent statement ran is the child UPDATE the sole
-            // existence signal (identity is anchored on the root row, which
-            // shares its PK with the child row).
-            if (parentAffected === null) {
-              const childAffected = this.ctx.isMySqlFamily()
-                ? (okPacket(childResult)?.affectedRows ?? 0)
-                : (childResult?.rowCount ?? 0);
-              if (childAffected === 0) {
-                const childProbe = await session.query(
-                  sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
-                );
-                if (resultRows(childProbe).length === 0) {
-                  throw new EntityNotFoundError(
-                    entity.name,
-                    "save() attempted an UPDATE but no row matched the primary key.",
-                  );
-                }
-              }
-            }
-          }
-
-          await this.cascadeHandler.cascadeSaveOneToMany(
-            entity,
-            item,
-            primaryKeyValue,
-            session,
-          );
-          await this.cascadeHandler.runHooks(entity, item, "afterUpdate");
-          await this.eventEmitter.emit("afterUpdate", {
-            entity,
-            data: item,
-          });
-          await this.ctx.notifySubscribers(entity, "afterUpdate", {
-            entity: item,
-            databaseEntity,
-            manager: this.ctx.getManager(),
-          } as UpdateEvent<T>);
-
-          const tptResult = await this.ctx.findOneInternal(
-            entity,
-            { where: buildPkFindWhere() },
-            session,
-          );
-          return tptResult as T;
-        }
+        const tpt = await this.updateTptChild(
+          op,
+          updatePlan,
+          pkWhereClauses,
+          currentVersion,
+          databaseEntity,
+        );
+        if (tpt) return tpt.result;
       }
 
       if (updateMap.length > 0) {
-        const updateReturningSql = useReturningForUpdate
-          ? raw(` RETURNING *`)
-          : raw("");
-        const updateSql = sql`
-            UPDATE ${raw(this.ctx.wrapTable(metadata.name))}
-            SET ${join(updateMap, ", ")}
-            WHERE ${join(pkWhereClauses, " AND ")}${updateReturningSql}
-                  `;
-        const updateStart = Date.now();
-        this.ctx.beginTrackQuery();
-        const updateResult = (await session.query<T>(
-          updateSql,
-        )) as DriverExecResult;
-        this.ctx.trackQuery(
-          entity.name,
-          updateSql.text ?? String(updateSql),
-          Date.now() - updateStart,
+        updateReturnedRow = await this.executeSingleTableUpdate(
+          op,
+          updateMap,
+          pkWhereClauses,
+          versionColName,
+          currentVersion,
+          useReturningForUpdate,
         );
-
-        let affected = 0;
-        if (this.ctx.isMySqlFamily()) {
-          affected = okPacket(updateResult)?.affectedRows ?? 0;
-        } else {
-          affected = updateResult?.rowCount ?? 0;
-        }
-        if (versionColName && currentVersion !== undefined && currentVersion !== null) {
-          if (affected === 0) {
-            throw new OptimisticLockError(entity.name, currentVersion as number);
-          }
-        } else if (affected === 0) {
-          // 0 affected rows means no row matched the primary key — except on
-          // MySQL, where affectedRows can also be 0 for a value-identical
-          // UPDATE, so confirm with an existence probe before failing.
-          // Without this the save was a silent no-op: afterUpdate hooks and
-          // subscribers still fired and save() returned null cast as T.
-          const probeResult = await session.query(
-            sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
-          );
-          if (resultRows(probeResult).length === 0) {
-            throw new EntityNotFoundError(
-              entity.name,
-              "save() attempted an UPDATE but no row matched the primary key.",
-            );
-          }
-        }
-
-        const updatedRows = resultRows(updateResult);
-        if (useReturningForUpdate && updatedRows.length > 0) {
-          updateReturnedRow = updatedRows[0];
-        }
       }
 
-      await this.cascadeHandler.cascadeSaveOneToMany(entity, item, primaryKeyValue, session);
-
-      await this.cascadeHandler.runHooks(entity, item, "afterUpdate");
-      await this.eventEmitter.emit("afterUpdate", { entity, data: item });
-      await this.ctx.notifySubscribers(entity, "afterUpdate", {
-        entity: item,
-        databaseEntity,
-        manager: this.ctx.getManager(),
-      } as UpdateEvent<T>);
+      await this.completeUpdate(op, databaseEntity);
 
       if (updateReturnedRow && !this.ctx.hasEagerRelations(entity)) {
         // #369: same column→property mapping as the INSERT RETURNING path.
@@ -971,6 +390,800 @@ export class WriteExecutor {
 
       return result as T;
     }, existingSession);
+  }
+
+  /**
+   * Stages the column/value lists for saveInternal's single-row INSERT:
+   * selects the insertable columns (undefined omission, computed / unset
+   * auto-PK exclusion), then injects the auto-populated values —
+   * @CreateTimestamp / @UpdateTimestamp, @Version initialization, and
+   * client-side UUID PKs (which also write back onto `op.itemFields`).
+   */
+  private buildInsertValuePlan<T>(op: SaveOperation<T>): InsertValuePlan {
+    const { entity, metadata, itemFields } = op;
+
+    const computedCols = this.ctx.getComputedColumnNames(entity);
+    // Resolved before the filter: these columns are auto-populated below
+    // (timestamps, version, client-side UUID PKs), so they must survive
+    // the undefined-value omission even when the entity has no value yet.
+    const createTsCol = this.resolver.getCreateTimestampColumn(entity);
+    const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
+    const versionCol = this.resolver.getVersionColumn(entity);
+    const insertableColumns = metadata.columns.filter(
+      (column: ColumnMetadata) => {
+        const isComputedColumn = computedCols.has(column.name);
+        if (isComputedColumn) return false;
+
+        const value = itemFields[this.ctx.propKey(column)];
+        const isUnsetAutoIncrement =
+          column.options?.autoIncrement &&
+          (value === null || value === undefined);
+        if (isUnsetAutoIncrement) return false;
+
+        if (value === undefined) {
+          const strategy = column.options?.generationStrategy;
+          const isClientGeneratedUuid =
+            strategy === "uuid" || strategy === "uuid-v7";
+          const isAutoManagedColumn =
+            column.name === createTsCol ||
+            column.name === updateTsCol ||
+            column.name === versionCol;
+          // Auto-populated columns (client-side UUID PKs, timestamps,
+          // version) must survive the undefined-omission so the values
+          // injected below are written.
+          if (isClientGeneratedUuid || isAutoManagedColumn) return true;
+
+          // #368: undefined means "not provided" — omit the column so the
+          // DB-side DEFAULT (and @Column({ default })) applies. An explicit
+          // null still writes NULL.
+          return false;
+        }
+        return true;
+      },
+    );
+
+    const columns = insertableColumns.map((column: ColumnMetadata) => {
+      return raw(this.ctx.wrap(column.name));
+    });
+
+    const values: RawValue[] = bindParams(
+      insertableColumns.map((column: ColumnMetadata) => {
+        const rawValue = itemFields[this.ctx.propKey(column)];
+        return this.ctx.applyWriteTransform(column, rawValue);
+      }),
+    );
+
+    // Auto-inject @CreateTimestamp / @UpdateTimestamp values (on INSERT)
+    const now = new Date();
+    const nowStr = formatDateTimeForSQL(now);
+    if (createTsCol) {
+      const idx = insertableColumns.findIndex(
+        (col: ColumnMetadata) => col.name === createTsCol,
+      );
+      if (idx >= 0) {
+        // Read via the property key — createTsCol is the DB column name after
+        // the naming strategy, so item[createTsCol] would miss a user value.
+        const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
+        values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
+      }
+    }
+    if (updateTsCol) {
+      const idx = insertableColumns.findIndex(
+        (col: ColumnMetadata) => col.name === updateTsCol,
+      );
+      if (idx >= 0) {
+        const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
+        values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
+      }
+    }
+
+    // Auto-initialize the @Version column
+    if (versionCol) {
+      const versionIdx = insertableColumns.findIndex(
+        (col: ColumnMetadata) => col.name === versionCol,
+      );
+      if (versionIdx >= 0) {
+        values[versionIdx] = 1;
+      }
+    }
+
+    // Auto-generate UUID PKs on the application side
+    for (let i = 0; i < insertableColumns.length; i++) {
+      const col = insertableColumns[i];
+      const strategy = col.options?.generationStrategy;
+      if (!strategy || strategy === "increment") continue;
+      if (values[i] !== null && values[i] !== undefined) continue;
+
+      // PostgreSQL uuid strategy: DB generates via DEFAULT gen_random_uuid()
+      if (strategy === "uuid" && this.ctx.isPostgres()) {
+        // exclude column from INSERT so DEFAULT kicks in
+        columns.splice(i, 1);
+        values.splice(i, 1);
+        insertableColumns.splice(i, 1);
+        i--;
+        continue;
+      }
+
+      if (strategy === "uuid") {
+        values[i] = randomUUID();
+        itemFields[this.ctx.propKey(col)] = values[i];
+      } else if (strategy === "uuid-v7") {
+        values[i] = generateUUIDv7();
+        itemFields[this.ctx.propKey(col)] = values[i];
+      }
+    }
+
+    return { insertableColumns, columns, values };
+  }
+
+  /**
+   * STI/TPT: adds (or sets) the discriminator column value on the staged
+   * INSERT. Appended entries live past the `insertableColumns` range — the
+   * TPT split relies on that layout to route them to the parent table.
+   */
+  private applyInsertDiscriminator<T>(
+    op: SaveOperation<T>,
+    plan: InsertValuePlan,
+    strategy: InheritanceStrategy | null,
+  ): void {
+    const { entity } = op;
+    const { insertableColumns, columns, values } = plan;
+    if (strategy === "SINGLE_TABLE" || strategy === "JOINED") {
+      const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+      const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
+      if (discCol && discVal) {
+        const existingDiscIdx = insertableColumns.findIndex(
+          (col: ColumnMetadata) => col.name === discCol.name,
+        );
+        if (existingDiscIdx >= 0) {
+          values[existingDiscIdx] = discVal;
+        } else {
+          columns.push(raw(this.ctx.wrap(discCol.name)));
+          values.push(discVal);
+        }
+      }
+    }
+  }
+
+  /**
+   * Resolves each ManyToOne relation's FK value (relation object → shadow
+   * `${prop}Id` accessor → explicit `option.fkProperty`) and writes it into
+   * the staged INSERT, appending the join column when it isn't already staged.
+   */
+  private applyInsertFkColumns<T>(
+    op: SaveOperation<T>,
+    plan: InsertValuePlan,
+  ): void {
+    const { entity, itemFields } = op;
+    const { insertableColumns, columns, values } = plan;
+
+    const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
+    for (const rel of manyToOneRelations) {
+      if (!rel.joinColumn) continue;
+      const relatedValue = itemFields[rel.columnName];
+      // Shadow-accessor fallback: prefer the convention `${rel}Id`, then
+      // honor an explicit `option.fkProperty` for entities that follow a
+      // different naming (mirrors `collectFkPropertyMappings` on reads).
+      let idPropValue = itemFields[`${rel.columnName}Id`];
+      if (idPropValue === undefined && rel.option?.fkProperty) {
+        idPropValue = itemFields[rel.option.fkProperty];
+      }
+
+      const existingIdx = insertableColumns.findIndex(
+        (col: ColumnMetadata) => col.name === rel.joinColumn,
+      );
+
+      let fkValue: unknown = undefined;
+
+      if (relatedValue === null) {
+        fkValue = null;
+      } else if (relatedValue && typeof relatedValue === "object") {
+        const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
+        const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
+        if (relatedMeta) {
+          const relatedPk = relatedMeta.columns.find(
+            (col: ColumnMetadata) => col.options?.primary,
+          );
+          if (relatedPk) {
+            fkValue =
+              fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? undefined;
+          }
+        }
+      } else if (idPropValue != null) {
+        fkValue = idPropValue;
+      }
+
+      if (fkValue !== undefined) {
+        if (existingIdx >= 0) {
+          values[existingIdx] = bindParam(fkValue);
+        } else {
+          columns.push(raw(this.ctx.wrap(rel.joinColumn)));
+          values.push(bindParam(fkValue));
+        }
+      }
+    }
+  }
+
+  /**
+   * TPT (JOINED) child INSERT: splits the staged columns between the root and
+   * child tables, INSERTs the parent row first, then the child row sharing the
+   * generated PK, and completes the save (cascade, hooks, events, read-back).
+   *
+   * Returns null when the root metadata cannot be resolved — the caller falls
+   * through to the generic single-table INSERT.
+   */
+  private async insertTptChild<T>(
+    op: SaveOperation<T>,
+    plan: InsertValuePlan,
+    useReturning: boolean,
+  ): Promise<{ result: T } | null> {
+    const {
+      entity,
+      item,
+      metadata,
+      session,
+      itemFields,
+      pkColumns,
+      pk,
+      primaryKeyValue,
+    } = op;
+    const { insertableColumns, columns, values } = plan;
+
+    const root = this.inheritanceResolver.getRoot(entity)!;
+    const rootMeta = this.resolver.resolveEntityMetadata(root);
+    if (!rootMeta) return null;
+
+    const rootColNames = new Set(
+      rootMeta.columns.map((c: ColumnMetadata) => c.name),
+    );
+    const pkColNames = new Set(
+      pkColumns.map((col: ColumnMetadata) => col.name),
+    );
+
+    // Split columns/values into parent and child buckets
+    const parentCols: Sql[] = [];
+    const parentVals: RawValue[] = [];
+    const childCols: Sql[] = [];
+    const childVals: RawValue[] = [];
+
+    for (let i = 0; i < insertableColumns.length; i++) {
+      const col = insertableColumns[i];
+      const isPk = pkColNames.has(col.name);
+      const isRoot = rootColNames.has(col.name);
+
+      if (isPk || isRoot) {
+        parentCols.push(columns[i]);
+        parentVals.push(values[i]);
+      }
+      if (isPk || !isRoot) {
+        childCols.push(columns[i]);
+        childVals.push(values[i]);
+      }
+    }
+
+    // Extra appended columns (e.g. discriminator, FK) live outside the insertableColumns range
+    for (let i = insertableColumns.length; i < columns.length; i++) {
+      parentCols.push(columns[i]);
+      parentVals.push(values[i]);
+    }
+
+    // 1. INSERT into the parent table
+    const parentTableName = rootMeta.name;
+    const parentReturningSql = useReturning ? raw(` RETURNING *`) : raw("");
+    const parentInsertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(parentTableName))}
+      (${join(parentCols, ", ")})
+      VALUES (${join(parentVals, ", ")})${parentReturningSql}`;
+
+    const parentResult = (await session.query<T>(
+      parentInsertSql,
+    )) as DriverExecResult;
+
+    // Obtain the generated PK value
+    let generatedPkValue: unknown;
+    const parentRows = resultRows(parentResult);
+    if (useReturning && parentRows.length > 0) {
+      generatedPkValue = parentRows[0][pk.name];
+    } else if (this.ctx.isMySqlFamily()) {
+      generatedPkValue = okPacket(parentResult)?.insertId;
+    } else if (this.ctx.isSqlite()) {
+      generatedPkValue = Number(
+        sqliteRunResult(parentResult)?.lastInsertRowid,
+      );
+    }
+
+    // 2. INSERT into the child table (reusing the same PK)
+    if (generatedPkValue != null) {
+      // Find the PK position via its insertableColumns index mapping
+      let pkFoundInChild = false;
+      for (let ci = 0, ii = 0; ii < insertableColumns.length; ii++) {
+        const col = insertableColumns[ii];
+        const isPk = pkColNames.has(col.name);
+        const isRoot = rootColNames.has(col.name);
+        if (isPk || !isRoot) {
+          // This column exists in childCols
+          if (isPk) {
+            childVals[ci] = bindParam(generatedPkValue);
+            pkFoundInChild = true;
+          }
+          ci++;
+        }
+      }
+      // If the PK is missing from childCols, add it
+      if (!pkFoundInChild) {
+        childCols.unshift(raw(this.ctx.wrap(pk.name)));
+        childVals.unshift(bindParam(generatedPkValue));
+      }
+    }
+
+    if (childCols.length > 0) {
+      const childInsertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))}
+        (${join(childCols, ", ")})
+        VALUES (${join(childVals, ", ")})`;
+      await session.query<T>(childInsertSql);
+    }
+
+    // Read the resulting row back
+    const pkVal = generatedPkValue ?? primaryKeyValue;
+    itemFields[this.ctx.propKey(pk)] = pkVal;
+    const result = await this.ctx.findOneInternal(
+      entity,
+      { where: whereByProps<T>({ [this.ctx.propKey(pk)]: pkVal }) },
+      session,
+    );
+
+    await this.completeInsert(op, pkVal);
+    return { result: result as T };
+  }
+
+  /**
+   * The shared afterInsert tail: lifecycle hooks, event-emitter channel and
+   * EntitySubscriber notification, in that order.
+   */
+  private async emitAfterInsertEvents<T>(op: SaveOperation<T>): Promise<void> {
+    const { entity, item } = op;
+    await this.cascadeHandler.runHooks(entity, item, "afterInsert");
+    await this.eventEmitter.emit("afterInsert", { entity, data: item });
+    await this.ctx.notifySubscribers(entity, "afterInsert", {
+      entity: item,
+      manager: this.ctx.getManager(),
+    } as InsertEvent<T>);
+  }
+
+  /**
+   * Completes a saveInternal INSERT once the PK is known: cascades O2M child
+   * saves in the same session, writes the generated PK back onto `item`, then
+   * fires the afterInsert hook/event/subscriber sequence.
+   */
+  private async completeInsert<T>(
+    op: SaveOperation<T>,
+    cascadeId: unknown,
+  ): Promise<void> {
+    const { entity, item, session, pk } = op;
+    await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
+    this.assignGeneratedPk(item, this.ctx.propKey(pk), cascadeId);
+    await this.emitAfterInsertEvents(op);
+  }
+
+  /**
+   * Resolves the saved entity after the generic single-table INSERT, per
+   * driver capability: MySQL-family insertId look-up, RETURNING-row
+   * deserialization (PostgreSQL / MariaDB 10.5+), SQLite lastInsertRowid
+   * look-up, and a raw-result fallback for anything else. Each branch also
+   * completes the insert (cascade + PK write-back + afterInsert sequence).
+   */
+  private async resolveInsertResult<T>(
+    op: SaveOperation<T>,
+    queryResult: DriverExecResult,
+    useReturning: boolean,
+  ): Promise<T> {
+    const {
+      entity,
+      session,
+      pk,
+      hasAutoIncrementPk,
+      primaryKeyValue,
+      buildPkFindWhere,
+    } = op;
+
+    const returnedRows = resultRows(queryResult);
+
+    // MariaDB 10.5+ returns rows via RETURNING; fall through to the generic
+    // `useReturning && results.length > 0` branch below instead of the insertId path.
+    const mariaDbReturned =
+      useReturning && this.ctx.isMySqlFamily() && returnedRows.length > 0;
+
+    if (this.ctx.isMySqlFamily() && !mariaDbReturned) {
+      const findWhere = hasAutoIncrementPk
+        ? whereByProps<T>({
+            [this.ctx.propKey(pk)]: okPacket(queryResult)?.insertId,
+          })
+        : buildPkFindWhere();
+      const result = await this.ctx.findOneInternal(entity, {
+        where: findWhere,
+      }, session);
+
+      const cascadeId = hasAutoIncrementPk
+        ? okPacket(queryResult)?.insertId
+        : primaryKeyValue;
+      await this.completeInsert(op, cascadeId);
+      return result as T;
+    }
+
+    // Drivers that support RETURNING *: deserialize directly from the returned row (when there are no eager relations)
+    if (useReturning && returnedRows.length > 0) {
+      const returnedRow = returnedRows[0];
+      const cascadeId = returnedRow[pk.name];
+      await this.completeInsert(op, cascadeId);
+
+      const hasEagerRelations = this.ctx.hasEagerRelations(entity);
+      if (!hasEagerRelations) {
+        // #369: route the RETURNING row through ResultTransformer so DB
+        // column names map back to property keys (explicit @Column({name})
+        // and NamingStrategy) and column transformers apply on read.
+        return ResultTransformerFactory.create().toEntity(entity, {
+          results: [returnedRow],
+          fields: [],
+        }) as T;
+      }
+      const findWhere = buildPkFindWhere(returnedRow);
+      const result = await this.ctx.findOneInternal(entity, {
+        where: findWhere,
+      }, session);
+      return result as T;
+    }
+
+    // SQLite: look up the inserted entity via lastInsertRowid
+    if (this.ctx.isSqlite()) {
+      const runResult = sqliteRunResult(queryResult);
+      const findWhere = hasAutoIncrementPk
+        ? whereByProps<T>({
+            [this.ctx.propKey(pk)]: Number(runResult?.lastInsertRowid),
+          })
+        : buildPkFindWhere();
+      const result = await this.ctx.findOneInternal(entity, {
+        where: findWhere,
+      }, session);
+
+      const cascadeId = hasAutoIncrementPk
+        ? Number(runResult?.lastInsertRowid)
+        : primaryKeyValue;
+      await this.completeInsert(op, cascadeId);
+      return result as T;
+    }
+
+    await this.emitAfterInsertEvents(op);
+    return queryResult as unknown as T;
+  }
+
+  /**
+   * Stages the SET clauses for saveInternal's UPDATE: selects the updatable
+   * columns (PK / @Version / computed / STI discriminator excluded,
+   * undefined omission), auto-injects @UpdateTimestamp, and resolves each
+   * ManyToOne relation's FK value (relation object → shadow `${prop}Id`
+   * accessor → explicit `option.fkProperty`) into the SET list.
+   */
+  private buildUpdateSetPlan<T>(op: SaveOperation<T>): UpdateSetPlan {
+    const { entity, metadata, itemFields, pkColumns } = op;
+
+    const versionColName = this.resolver.getVersionColumn(entity);
+    const pkColumnNames = new Set(
+      pkColumns.map((col: ColumnMetadata) => col.name),
+    );
+    const computedColsForUpdate = this.ctx.getComputedColumnNames(entity);
+    // STI: the discriminator column is excluded from UPDATE
+    const updateDiscCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+    const updatableColumns = metadata.columns.filter(
+      (column: ColumnMetadata) => {
+        if (computedColsForUpdate.has(column.name)) return false;
+        if (pkColumnNames.has(column.name)) return false;
+        if (versionColName && column.name === versionColName) return false;
+        if (updateDiscCol && column.name === updateDiscCol.name) return false;
+        return itemFields[this.ctx.propKey(column)] !== undefined;
+      },
+    );
+    const updateMap = updatableColumns.map((column: ColumnMetadata) => {
+      const rawValue = itemFields[this.ctx.propKey(column)];
+      const value = this.ctx.applyWriteTransform(column, rawValue);
+      return sql`${raw(this.ctx.wrap(column.name))} = ${bindParam(value)}`;
+    });
+
+    // Auto-inject @UpdateTimestamp
+    const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
+    if (updateTsColName) {
+      const existingIdx = updatableColumns.findIndex(
+        (col: ColumnMetadata) => col.name === updateTsColName,
+      );
+      const updateNow = formatDateTimeForSQL(new Date());
+      if (existingIdx >= 0) {
+        updateMap[existingIdx] =
+          sql`${raw(this.ctx.wrap(updateTsColName))} = ${updateNow}`;
+      } else {
+        updateMap.push(
+          sql`${raw(this.ctx.wrap(updateTsColName))} = ${updateNow}`,
+        );
+      }
+    }
+
+    const updatedColumnNames = new Set(
+      updatableColumns.map((col: ColumnMetadata) => col.name),
+    );
+
+    // Add the ManyToOne FK column values to the UPDATE SET clause
+    const updateManyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
+    for (const rel of updateManyToOneRelations) {
+      if (!rel.joinColumn) continue;
+      const relatedValue = itemFields[rel.columnName];
+      // Shadow-accessor fallback (mirrors INSERT path): when the relation
+      // object isn't set, look for the FK on the conventional `${rel}Id`
+      // shadow, then on an explicit `option.fkProperty`.
+      let shadowValue: unknown = itemFields[`${rel.columnName}Id`];
+      if (shadowValue === undefined && rel.option?.fkProperty) {
+        shadowValue = itemFields[rel.option.fkProperty];
+      }
+
+      if (relatedValue === undefined && shadowValue === undefined) continue;
+
+      const alreadyInSet = updatedColumnNames.has(rel.joinColumn);
+      const setClause = (value: unknown) => {
+        if (alreadyInSet) {
+          const existingIdx = updatableColumns.findIndex(
+            (col: ColumnMetadata) => col.name === rel.joinColumn,
+          );
+          updateMap[existingIdx] =
+            sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`;
+        } else {
+          updateMap.push(
+            sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`,
+          );
+          updatedColumnNames.add(rel.joinColumn!);
+        }
+      };
+
+      if (relatedValue === null) {
+        setClause(null);
+      } else if (relatedValue && typeof relatedValue === "object") {
+        const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
+        const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
+        if (relatedMeta) {
+          const relatedPk = relatedMeta.columns.find(
+            (col: ColumnMetadata) => col.options?.primary,
+          );
+          if (relatedPk) {
+            const fkValue = fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)];
+            if (fkValue !== undefined && fkValue !== null) {
+              setClause(fkValue);
+            }
+          }
+        }
+      } else if (shadowValue !== undefined) {
+        // Fall back to the shadow accessor when no relation object was set.
+        // `null` clears the FK; numeric/string values set it directly.
+        setClause(shadowValue);
+      }
+    }
+
+    return { updatableColumns, updateMap, versionColName };
+  }
+
+  /**
+   * The shared afterUpdate tail: O2M cascade in the same session, lifecycle
+   * hooks, event-emitter channel and EntitySubscriber notification, in that
+   * order.
+   */
+  private async completeUpdate<T>(
+    op: SaveOperation<T>,
+    databaseEntity: T | null,
+  ): Promise<void> {
+    const { entity, item, session, primaryKeyValue } = op;
+    await this.cascadeHandler.cascadeSaveOneToMany(entity, item, primaryKeyValue, session);
+    await this.cascadeHandler.runHooks(entity, item, "afterUpdate");
+    await this.eventEmitter.emit("afterUpdate", { entity, data: item });
+    await this.ctx.notifySubscribers(entity, "afterUpdate", {
+      entity: item,
+      databaseEntity,
+      manager: this.ctx.getManager(),
+    } as UpdateEvent<T>);
+  }
+
+  /**
+   * TPT (JOINED) child UPDATE: splits the staged SET clauses between the root
+   * and child tables (extra entries such as @UpdateTimestamp / @Version go to
+   * the root), enforces the optimistic-lock / existence contract on the first
+   * statement that runs, then completes the save (cascade, hooks, events,
+   * read-back).
+   *
+   * Returns null when the root metadata cannot be resolved — the caller falls
+   * through to the generic single-table UPDATE.
+   */
+  private async updateTptChild<T>(
+    op: SaveOperation<T>,
+    plan: UpdateSetPlan,
+    pkWhereClauses: Sql[],
+    currentVersion: unknown,
+    databaseEntity: T | null,
+  ): Promise<{ result: T } | null> {
+    const { entity, metadata, session, buildPkWhere, buildPkFindWhere } = op;
+    const { updatableColumns, updateMap, versionColName } = plan;
+
+    const root = this.inheritanceResolver.getRoot(entity)!;
+    const rootMeta = this.resolver.resolveEntityMetadata(root);
+    if (!rootMeta) return null;
+
+    const rootColNames = new Set(
+      rootMeta.columns.map((c: ColumnMetadata) => c.name),
+    );
+
+    const parentUpdateMap: Sql[] = [];
+    const childUpdateMap: Sql[] = [];
+
+    for (let i = 0; i < updatableColumns.length; i++) {
+      if (rootColNames.has(updatableColumns[i].name)) {
+        parentUpdateMap.push(updateMap[i]);
+      } else {
+        childUpdateMap.push(updateMap[i]);
+      }
+    }
+
+    // Extra items (e.g. @UpdateTimestamp, @Version) belong on the parent table
+    for (let i = updatableColumns.length; i < updateMap.length; i++) {
+      parentUpdateMap.push(updateMap[i]);
+    }
+
+    const guardedByVersion =
+      versionColName &&
+      currentVersion !== undefined &&
+      currentVersion !== null;
+
+    let parentAffected: number | null = null;
+    if (parentUpdateMap.length > 0) {
+      const parentUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(rootMeta.name))}
+        SET ${join(parentUpdateMap, ", ")}
+        WHERE ${join(pkWhereClauses, " AND ")}`;
+      const parentResult = (await session.query<T>(
+        parentUpdateSql,
+      )) as DriverExecResult;
+      parentAffected = this.ctx.isMySqlFamily()
+        ? (okPacket(parentResult)?.affectedRows ?? 0)
+        : (parentResult?.rowCount ?? 0);
+
+      // Same contract as the single-table UPDATE path: a guarded parent
+      // UPDATE that matched nothing is a stale @Version write (the version
+      // increment always lands in parentUpdateMap, so the guard is enforced
+      // here before the child statement runs); without a guard, 0 matched
+      // rows means the PK doesn't exist — confirmed with the value-identical
+      // probe for MySQL.
+      if (parentAffected === 0) {
+        if (guardedByVersion) {
+          throw new OptimisticLockError(
+            entity.name,
+            currentVersion as number,
+          );
+        }
+        const parentProbe = await session.query(
+          sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
+        );
+        if (resultRows(parentProbe).length === 0) {
+          throw new EntityNotFoundError(
+            entity.name,
+            "save() attempted an UPDATE but no row matched the primary key.",
+          );
+        }
+      }
+    }
+
+    if (childUpdateMap.length > 0) {
+      // The child table has no @Version column — the optimistic-lock
+      // guard baked into pkWhereClauses references the root table only,
+      // so the child UPDATE filters by primary key alone. The parent
+      // UPDATE above already enforced the version inside this same
+      // transaction.
+      const childPkWhere = buildPkWhere();
+      const childUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name))}
+        SET ${join(childUpdateMap, ", ")}
+        WHERE ${join(childPkWhere, " AND ")}`;
+      const childResult = (await session.query<T>(
+        childUpdateSql,
+      )) as DriverExecResult;
+
+      // Only when no parent statement ran is the child UPDATE the sole
+      // existence signal (identity is anchored on the root row, which
+      // shares its PK with the child row).
+      if (parentAffected === null) {
+        const childAffected = this.ctx.isMySqlFamily()
+          ? (okPacket(childResult)?.affectedRows ?? 0)
+          : (childResult?.rowCount ?? 0);
+        if (childAffected === 0) {
+          const childProbe = await session.query(
+            sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
+          );
+          if (resultRows(childProbe).length === 0) {
+            throw new EntityNotFoundError(
+              entity.name,
+              "save() attempted an UPDATE but no row matched the primary key.",
+            );
+          }
+        }
+      }
+    }
+
+    await this.completeUpdate(op, databaseEntity);
+
+    const tptResult = await this.ctx.findOneInternal(
+      entity,
+      { where: buildPkFindWhere() },
+      session,
+    );
+    return { result: tptResult as T };
+  }
+
+  /**
+   * Executes saveInternal's generic single-table UPDATE and enforces the
+   * 0-affected-rows contract: a guarded write that matched nothing is a stale
+   * @Version (OptimisticLockError); otherwise an existence probe distinguishes
+   * a missing PK (EntityNotFoundError) from MySQL's value-identical UPDATE.
+   * Returns the RETURNING row when the driver supports it, else null.
+   */
+  private async executeSingleTableUpdate<T>(
+    op: SaveOperation<T>,
+    updateMap: Sql[],
+    pkWhereClauses: Sql[],
+    versionColName: string | null,
+    currentVersion: unknown,
+    useReturningForUpdate: boolean,
+  ): Promise<DriverRow | null> {
+    const { entity, metadata, session, buildPkWhere } = op;
+
+    const updateReturningSql = useReturningForUpdate
+      ? raw(` RETURNING *`)
+      : raw("");
+    const updateSql = sql`
+        UPDATE ${raw(this.ctx.wrapTable(metadata.name))}
+        SET ${join(updateMap, ", ")}
+        WHERE ${join(pkWhereClauses, " AND ")}${updateReturningSql}
+              `;
+    const updateStart = Date.now();
+    this.ctx.beginTrackQuery();
+    const updateResult = (await session.query<T>(
+      updateSql,
+    )) as DriverExecResult;
+    this.ctx.trackQuery(
+      entity.name,
+      updateSql.text ?? String(updateSql),
+      Date.now() - updateStart,
+    );
+
+    let affected = 0;
+    if (this.ctx.isMySqlFamily()) {
+      affected = okPacket(updateResult)?.affectedRows ?? 0;
+    } else {
+      affected = updateResult?.rowCount ?? 0;
+    }
+    if (versionColName && currentVersion !== undefined && currentVersion !== null) {
+      if (affected === 0) {
+        throw new OptimisticLockError(entity.name, currentVersion as number);
+      }
+    } else if (affected === 0) {
+      // 0 affected rows means no row matched the primary key — except on
+      // MySQL, where affectedRows can also be 0 for a value-identical
+      // UPDATE, so confirm with an existence probe before failing.
+      // Without this the save was a silent no-op: afterUpdate hooks and
+      // subscribers still fired and save() returned null cast as T.
+      const probeResult = await session.query(
+        sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
+      );
+      if (resultRows(probeResult).length === 0) {
+        throw new EntityNotFoundError(
+          entity.name,
+          "save() attempted an UPDATE but no row matched the primary key.",
+        );
+      }
+    }
+
+    const updatedRows = resultRows(updateResult);
+    if (useReturningForUpdate && updatedRows.length > 0) {
+      return updatedRows[0];
+    }
+    return null;
   }
 
   async saveMany<T>(
