@@ -331,14 +331,18 @@ async function main() {
 
   // delete / softDelete consume one pre-seeded row per call (bench() replays
   // i from 0 after warmup, so a monotonic counter — not i — picks the row).
+  // Seeded in chunks: at high BENCH_SCALE a single multi-row INSERT would
+  // exceed SQLite's bound-parameter limit.
   const DEL_POOL = (300 * SCALE + 40) * 2;
-  await em.insertMany(
-    BenchTask,
-    Array.from({ length: DEL_POOL }, (_, i) => ({
-      title: `task-${i}`,
-      priority: i % 5,
-    })),
-  );
+  for (let off = 0; off < DEL_POOL; off += 2000) {
+    await em.insertMany(
+      BenchTask,
+      Array.from({ length: Math.min(2000, DEL_POOL - off) }, (_, i) => ({
+        title: `task-${off + i}`,
+        priority: (off + i) % 5,
+      })),
+    );
+  }
   let taskSeq = 0;
   await bench("delete by pk", 300, 30, () =>
     em.delete(BenchTask, { id: ++taskSeq } as any),
