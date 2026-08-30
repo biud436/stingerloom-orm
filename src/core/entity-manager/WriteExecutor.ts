@@ -32,6 +32,7 @@ import type { ManyToOneMetadata } from "../../decorators/ManyToOne";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
 import { CascadeHandler } from "../CascadeHandler";
 import { transactionStorage } from "../../decorators/Transactional";
+import type { InheritanceStrategy } from "../../decorators/Inheritance";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DefaultNamingStrategy, NamingStrategy } from "../generators/NamingStrategy";
@@ -229,73 +230,12 @@ export class WriteExecutor {
 
         this.ctx.applyTenantColumnOnInsert(entity, item);
 
-        const { insertableColumns, columns, values } =
-          this.buildInsertValuePlan(op);
+        const plan = this.buildInsertValuePlan(op);
+        const { insertableColumns, columns, values } = plan;
 
-        // STI/TPT: add or set the discriminator column value on INSERT
         const saveInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
-        if (saveInheritanceStrategy === "SINGLE_TABLE" || saveInheritanceStrategy === "JOINED") {
-          const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-          const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
-          if (discCol && discVal) {
-            const existingDiscIdx = insertableColumns.findIndex(
-              (col: ColumnMetadata) => col.name === discCol.name,
-            );
-            if (existingDiscIdx >= 0) {
-              values[existingDiscIdx] = discVal;
-            } else {
-              columns.push(raw(this.ctx.wrap(discCol.name)));
-              values.push(discVal);
-            }
-          }
-        }
-
-        // Extract FK column values for ManyToOne relations
-        const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-        for (const rel of manyToOneRelations) {
-          if (!rel.joinColumn) continue;
-          const relatedValue = itemFields[rel.columnName];
-          // Shadow-accessor fallback: prefer the convention `${rel}Id`, then
-          // honor an explicit `option.fkProperty` for entities that follow a
-          // different naming (mirrors `collectFkPropertyMappings` on reads).
-          let idPropValue = itemFields[`${rel.columnName}Id`];
-          if (idPropValue === undefined && rel.option?.fkProperty) {
-            idPropValue = itemFields[rel.option.fkProperty];
-          }
-
-          const existingIdx = insertableColumns.findIndex(
-            (col: ColumnMetadata) => col.name === rel.joinColumn,
-          );
-
-          let fkValue: unknown = undefined;
-
-          if (relatedValue === null) {
-            fkValue = null;
-          } else if (relatedValue && typeof relatedValue === "object") {
-            const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
-            const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-            if (relatedMeta) {
-              const relatedPk = relatedMeta.columns.find(
-                (col: ColumnMetadata) => col.options?.primary,
-              );
-              if (relatedPk) {
-                fkValue =
-                  fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? undefined;
-              }
-            }
-          } else if (idPropValue != null) {
-            fkValue = idPropValue;
-          }
-
-          if (fkValue !== undefined) {
-            if (existingIdx >= 0) {
-              values[existingIdx] = bindParam(fkValue);
-            } else {
-              columns.push(raw(this.ctx.wrap(rel.joinColumn)));
-              values.push(bindParam(fkValue));
-            }
-          }
-        }
+        this.applyInsertDiscriminator(op, plan, saveInheritanceStrategy);
+        this.applyInsertFkColumns(op, plan);
 
         // PostgreSQL (all versions), MariaDB 10.5+: INSERT ... RETURNING *
         const useReturning =
@@ -1034,6 +974,94 @@ export class WriteExecutor {
     }
 
     return { insertableColumns, columns, values };
+  }
+
+  /**
+   * STI/TPT: adds (or sets) the discriminator column value on the staged
+   * INSERT. Appended entries live past the `insertableColumns` range — the
+   * TPT split relies on that layout to route them to the parent table.
+   */
+  private applyInsertDiscriminator<T>(
+    op: SaveOperation<T>,
+    plan: InsertValuePlan,
+    strategy: InheritanceStrategy | null,
+  ): void {
+    const { entity } = op;
+    const { insertableColumns, columns, values } = plan;
+    if (strategy === "SINGLE_TABLE" || strategy === "JOINED") {
+      const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+      const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
+      if (discCol && discVal) {
+        const existingDiscIdx = insertableColumns.findIndex(
+          (col: ColumnMetadata) => col.name === discCol.name,
+        );
+        if (existingDiscIdx >= 0) {
+          values[existingDiscIdx] = discVal;
+        } else {
+          columns.push(raw(this.ctx.wrap(discCol.name)));
+          values.push(discVal);
+        }
+      }
+    }
+  }
+
+  /**
+   * Resolves each ManyToOne relation's FK value (relation object → shadow
+   * `${prop}Id` accessor → explicit `option.fkProperty`) and writes it into
+   * the staged INSERT, appending the join column when it isn't already staged.
+   */
+  private applyInsertFkColumns<T>(
+    op: SaveOperation<T>,
+    plan: InsertValuePlan,
+  ): void {
+    const { entity, itemFields } = op;
+    const { insertableColumns, columns, values } = plan;
+
+    const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
+    for (const rel of manyToOneRelations) {
+      if (!rel.joinColumn) continue;
+      const relatedValue = itemFields[rel.columnName];
+      // Shadow-accessor fallback: prefer the convention `${rel}Id`, then
+      // honor an explicit `option.fkProperty` for entities that follow a
+      // different naming (mirrors `collectFkPropertyMappings` on reads).
+      let idPropValue = itemFields[`${rel.columnName}Id`];
+      if (idPropValue === undefined && rel.option?.fkProperty) {
+        idPropValue = itemFields[rel.option.fkProperty];
+      }
+
+      const existingIdx = insertableColumns.findIndex(
+        (col: ColumnMetadata) => col.name === rel.joinColumn,
+      );
+
+      let fkValue: unknown = undefined;
+
+      if (relatedValue === null) {
+        fkValue = null;
+      } else if (relatedValue && typeof relatedValue === "object") {
+        const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
+        const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
+        if (relatedMeta) {
+          const relatedPk = relatedMeta.columns.find(
+            (col: ColumnMetadata) => col.options?.primary,
+          );
+          if (relatedPk) {
+            fkValue =
+              fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? undefined;
+          }
+        }
+      } else if (idPropValue != null) {
+        fkValue = idPropValue;
+      }
+
+      if (fkValue !== undefined) {
+        if (existingIdx >= 0) {
+          values[existingIdx] = bindParam(fkValue);
+        } else {
+          columns.push(raw(this.ctx.wrap(rel.joinColumn)));
+          values.push(bindParam(fkValue));
+        }
+      }
+    }
   }
 
   async saveMany<T>(
