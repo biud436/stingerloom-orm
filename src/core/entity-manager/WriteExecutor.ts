@@ -275,100 +275,7 @@ export class WriteExecutor {
           Date.now() - saveQueryStart,
         );
 
-        const returnedRows = resultRows(queryResult);
-
-        // MariaDB 10.5+ returns rows via RETURNING; fall through to the generic
-        // `useReturning && results.length > 0` branch below instead of the insertId path.
-        const mariaDbReturned =
-          useReturning && this.ctx.isMySqlFamily() && returnedRows.length > 0;
-
-        if (this.ctx.isMySqlFamily() && !mariaDbReturned) {
-          const findWhere = hasAutoIncrementPk
-            ? whereByProps<T>({
-                [this.ctx.propKey(pk)]: okPacket(queryResult)?.insertId,
-              })
-            : buildPkFindWhere();
-          const result = await this.ctx.findOneInternal(entity, {
-            where: findWhere,
-          }, session);
-
-          const cascadeId = hasAutoIncrementPk
-            ? okPacket(queryResult)?.insertId
-            : primaryKeyValue;
-          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
-          this.assignGeneratedPk(item, this.ctx.propKey(pk), cascadeId);
-          await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-          await this.eventEmitter.emit("afterInsert", { entity, data: item });
-          await this.ctx.notifySubscribers(entity, "afterInsert", {
-            entity: item,
-            manager: this.ctx.getManager(),
-          } as InsertEvent<T>);
-          return result as T;
-        }
-
-        // Drivers that support RETURNING *: deserialize directly from the returned row (when there are no eager relations)
-        if (useReturning && returnedRows.length > 0) {
-          const returnedRow = returnedRows[0];
-          const cascadeId = returnedRow[pk.name];
-          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
-          this.assignGeneratedPk(item, this.ctx.propKey(pk), cascadeId);
-          await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-          await this.eventEmitter.emit("afterInsert", { entity, data: item });
-          await this.ctx.notifySubscribers(entity, "afterInsert", {
-            entity: item,
-            manager: this.ctx.getManager(),
-          } as InsertEvent<T>);
-
-          const hasEagerRelations = this.ctx.hasEagerRelations(entity);
-          if (!hasEagerRelations) {
-            // #369: route the RETURNING row through ResultTransformer so DB
-            // column names map back to property keys (explicit @Column({name})
-            // and NamingStrategy) and column transformers apply on read.
-            return ResultTransformerFactory.create().toEntity(entity, {
-              results: [returnedRow],
-              fields: [],
-            }) as T;
-          }
-          const findWhere = buildPkFindWhere(returnedRow);
-          const result = await this.ctx.findOneInternal(entity, {
-            where: findWhere,
-          }, session);
-          return result as T;
-        }
-
-        // SQLite: look up the inserted entity via lastInsertRowid
-        if (this.ctx.isSqlite()) {
-          const runResult = sqliteRunResult(queryResult);
-          const findWhere = hasAutoIncrementPk
-            ? whereByProps<T>({
-                [this.ctx.propKey(pk)]: Number(runResult?.lastInsertRowid),
-              })
-            : buildPkFindWhere();
-          const result = await this.ctx.findOneInternal(entity, {
-            where: findWhere,
-          }, session);
-
-          const cascadeId = hasAutoIncrementPk
-            ? Number(runResult?.lastInsertRowid)
-            : primaryKeyValue;
-          await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
-          this.assignGeneratedPk(item, this.ctx.propKey(pk), cascadeId);
-          await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-          await this.eventEmitter.emit("afterInsert", { entity, data: item });
-          await this.ctx.notifySubscribers(entity, "afterInsert", {
-            entity: item,
-            manager: this.ctx.getManager(),
-          } as InsertEvent<T>);
-          return result as T;
-        }
-
-        await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-        await this.eventEmitter.emit("afterInsert", { entity, data: item });
-        await this.ctx.notifySubscribers(entity, "afterInsert", {
-          entity: item,
-          manager: this.ctx.getManager(),
-        } as InsertEvent<T>);
-        return queryResult as unknown as T;
+        return this.resolveInsertResult(op, queryResult, useReturning);
       }
 
       // UPDATE path
@@ -1074,23 +981,128 @@ export class WriteExecutor {
       session,
     );
 
-    await this.cascadeHandler.cascadeSaveOneToMany(
-      entity,
-      item,
-      pkVal,
-      session,
-    );
-    this.assignGeneratedPk(item, this.ctx.propKey(pk), pkVal);
+    await this.completeInsert(op, pkVal);
+    return { result: result as T };
+  }
+
+  /**
+   * The shared afterInsert tail: lifecycle hooks, event-emitter channel and
+   * EntitySubscriber notification, in that order.
+   */
+  private async emitAfterInsertEvents<T>(op: SaveOperation<T>): Promise<void> {
+    const { entity, item } = op;
     await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-    await this.eventEmitter.emit("afterInsert", {
-      entity,
-      data: item,
-    });
+    await this.eventEmitter.emit("afterInsert", { entity, data: item });
     await this.ctx.notifySubscribers(entity, "afterInsert", {
       entity: item,
       manager: this.ctx.getManager(),
     } as InsertEvent<T>);
-    return { result: result as T };
+  }
+
+  /**
+   * Completes a saveInternal INSERT once the PK is known: cascades O2M child
+   * saves in the same session, writes the generated PK back onto `item`, then
+   * fires the afterInsert hook/event/subscriber sequence.
+   */
+  private async completeInsert<T>(
+    op: SaveOperation<T>,
+    cascadeId: unknown,
+  ): Promise<void> {
+    const { entity, item, session, pk } = op;
+    await this.cascadeHandler.cascadeSaveOneToMany(entity, item, cascadeId, session);
+    this.assignGeneratedPk(item, this.ctx.propKey(pk), cascadeId);
+    await this.emitAfterInsertEvents(op);
+  }
+
+  /**
+   * Resolves the saved entity after the generic single-table INSERT, per
+   * driver capability: MySQL-family insertId look-up, RETURNING-row
+   * deserialization (PostgreSQL / MariaDB 10.5+), SQLite lastInsertRowid
+   * look-up, and a raw-result fallback for anything else. Each branch also
+   * completes the insert (cascade + PK write-back + afterInsert sequence).
+   */
+  private async resolveInsertResult<T>(
+    op: SaveOperation<T>,
+    queryResult: DriverExecResult,
+    useReturning: boolean,
+  ): Promise<T> {
+    const {
+      entity,
+      session,
+      pk,
+      hasAutoIncrementPk,
+      primaryKeyValue,
+      buildPkFindWhere,
+    } = op;
+
+    const returnedRows = resultRows(queryResult);
+
+    // MariaDB 10.5+ returns rows via RETURNING; fall through to the generic
+    // `useReturning && results.length > 0` branch below instead of the insertId path.
+    const mariaDbReturned =
+      useReturning && this.ctx.isMySqlFamily() && returnedRows.length > 0;
+
+    if (this.ctx.isMySqlFamily() && !mariaDbReturned) {
+      const findWhere = hasAutoIncrementPk
+        ? whereByProps<T>({
+            [this.ctx.propKey(pk)]: okPacket(queryResult)?.insertId,
+          })
+        : buildPkFindWhere();
+      const result = await this.ctx.findOneInternal(entity, {
+        where: findWhere,
+      }, session);
+
+      const cascadeId = hasAutoIncrementPk
+        ? okPacket(queryResult)?.insertId
+        : primaryKeyValue;
+      await this.completeInsert(op, cascadeId);
+      return result as T;
+    }
+
+    // Drivers that support RETURNING *: deserialize directly from the returned row (when there are no eager relations)
+    if (useReturning && returnedRows.length > 0) {
+      const returnedRow = returnedRows[0];
+      const cascadeId = returnedRow[pk.name];
+      await this.completeInsert(op, cascadeId);
+
+      const hasEagerRelations = this.ctx.hasEagerRelations(entity);
+      if (!hasEagerRelations) {
+        // #369: route the RETURNING row through ResultTransformer so DB
+        // column names map back to property keys (explicit @Column({name})
+        // and NamingStrategy) and column transformers apply on read.
+        return ResultTransformerFactory.create().toEntity(entity, {
+          results: [returnedRow],
+          fields: [],
+        }) as T;
+      }
+      const findWhere = buildPkFindWhere(returnedRow);
+      const result = await this.ctx.findOneInternal(entity, {
+        where: findWhere,
+      }, session);
+      return result as T;
+    }
+
+    // SQLite: look up the inserted entity via lastInsertRowid
+    if (this.ctx.isSqlite()) {
+      const runResult = sqliteRunResult(queryResult);
+      const findWhere = hasAutoIncrementPk
+        ? whereByProps<T>({
+            [this.ctx.propKey(pk)]: Number(runResult?.lastInsertRowid),
+          })
+        : buildPkFindWhere();
+      const result = await this.ctx.findOneInternal(entity, {
+        where: findWhere,
+      }, session);
+
+      const cascadeId = hasAutoIncrementPk
+        ? Number(runResult?.lastInsertRowid)
+        : primaryKeyValue;
+      await this.completeInsert(op, cascadeId);
+      return result as T;
+    }
+
+    await this.emitAfterInsertEvents(op);
+    return queryResult as unknown as T;
   }
 
   async saveMany<T>(
