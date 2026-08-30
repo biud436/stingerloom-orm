@@ -8,6 +8,10 @@ import { EntityManagerInternals } from "./EntityManagerInternals";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
 import { runScopeExempt } from "./entity-manager/scope-exemption";
+import {
+  assignFkValue,
+  fkWriteKeysFromManyToOne,
+} from "./plugin/buffer/CollectionTracker";
 
 /**
  * Handler for cascade save/delete operations and lifecycle hooks.
@@ -106,28 +110,19 @@ export class CascadeHandler {
       const matchingRelation = manyToOneItems.find(
         (m) => m.columnName === rel.mappedBy,
       );
-      const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
 
       // The child's INSERT/UPDATE path resolves the FK value from the relation
       // object, the `${prop}Id` shadow accessor, or an explicit
-      // `option.fkProperty` — never from the raw joinColumn DB name. When the FK
-      // is declared via `@RelationColumn({ name })` with no backing `@Column`
-      // (the documented nestjs-blog pattern), writing only `child[joinColumn]`
-      // (e.g. `child["author_id"]`) left the FK unwritten — the cascade-inserted
-      // child got a NULL/omitted FK. Also set the shadow (and fkProperty, if
-      // configured) so the FK is actually persisted, while keeping the raw
-      // assignment for the legacy backing-`@Column` (column name == property
-      // key) setup.
-      const shadowKey = matchingRelation
-        ? `${matchingRelation.columnName}Id`
-        : undefined;
-      const fkPropertyKey = matchingRelation?.option?.fkProperty;
+      // `option.fkProperty` — never from the raw joinColumn DB name, so the
+      // shadow (and fkProperty, if configured) must be written alongside the
+      // raw column. Key derivation and assignment are shared with the
+      // WriteBuffer cascade (CollectionTracker) so both paths stay in
+      // lockstep; only the metadata lookup above stays resolver-based here.
+      const fkKeys = fkWriteKeysFromManyToOne(matchingRelation, rel.mappedBy);
 
       for (const child of children) {
         // Set the FK to the parent's PK.
-        (child as any)[fkColumn] = savedParentId;
-        if (shadowKey) (child as any)[shadowKey] = savedParentId;
-        if (fkPropertyKey) (child as any)[fkPropertyKey] = savedParentId;
+        assignFkValue(child, fkKeys, savedParentId);
         if (session) {
           await this.ctx.saveWithSession(RelatedEntity, child, session);
         } else {
