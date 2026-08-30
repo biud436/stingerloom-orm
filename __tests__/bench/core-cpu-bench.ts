@@ -23,6 +23,7 @@ import {
   PrimaryGeneratedColumn,
   ManyToOne,
   OneToMany,
+  DeletedAt,
 } from "../../src";
 import { DatabaseClient } from "../../src/DatabaseClient";
 
@@ -80,6 +81,51 @@ class BenchPost {
     eager: true,
   })
   author?: BenchUser;
+}
+
+@Entity({ name: "bench_task" })
+class BenchTask {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "varchar", length: 100 })
+  title!: string;
+
+  @Column({ type: "int" })
+  priority!: number;
+
+  @DeletedAt()
+  deletedAt?: Date | null;
+}
+
+@Entity({ name: "bench_order" })
+class BenchOrder {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "varchar", length: 100 })
+  ref!: string;
+
+  @OneToMany(() => BenchOrderItem, { mappedBy: "order", cascade: ["insert"] })
+  items?: BenchOrderItem[];
+}
+
+@Entity({ name: "bench_order_item" })
+class BenchOrderItem {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "varchar", length: 100 })
+  sku!: string;
+
+  @Column({ type: "int" })
+  qty!: number;
+
+  @Column({ type: "int", nullable: true })
+  orderId?: number;
+
+  @ManyToOne(() => BenchOrder, (e: any) => e.order, { joinColumn: "orderId" })
+  order?: BenchOrder;
 }
 
 @Entity({ name: "bench_event" })
@@ -157,7 +203,14 @@ async function main() {
     // Sized so the cached-read scenarios below never thrash the LRU
     // (findOne cycles 1,000 distinct keys).
     cache: { maxEntries: 4096 },
-    entities: [BenchUser, BenchPost, BenchEvent],
+    entities: [
+      BenchUser,
+      BenchPost,
+      BenchEvent,
+      BenchTask,
+      BenchOrder,
+      BenchOrderItem,
+    ],
   } as any);
 
   const conn = DatabaseClient.getInstance().getConnection();
@@ -184,6 +237,29 @@ async function main() {
     )
   `);
 
+  await conn.query(`
+    CREATE TABLE "bench_task" (
+      "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+      "title" TEXT NOT NULL,
+      "priority" INTEGER NOT NULL,
+      "deletedAt" TEXT
+    )
+  `);
+  await conn.query(`
+    CREATE TABLE "bench_order" (
+      "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+      "ref" TEXT NOT NULL
+    )
+  `);
+  await conn.query(`
+    CREATE TABLE "bench_order_item" (
+      "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+      "sku" TEXT NOT NULL,
+      "qty" INTEGER NOT NULL,
+      "orderId" INTEGER,
+      FOREIGN KEY ("orderId") REFERENCES "bench_order"("id")
+    )
+  `);
   await conn.query(`
     CREATE TABLE "bench_event" (
       "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -237,6 +313,48 @@ async function main() {
   );
   await bench("update by pk", 500, 50, (i) =>
     em.update(BenchUser, { id: (i % 1000) + 1 }, { score: i }),
+  );
+  await bench("updateMany 100 ids (IN)", 100, 10, (i) =>
+    em.updateMany(
+      BenchUser,
+      { score: i } as any,
+      {
+        where: {
+          id: Array.from({ length: 100 }, (_, k) => ((i * 100 + k) % 1000) + 1),
+        } as any,
+      },
+    ),
+  );
+  await bench("upsert by pk (update branch)", 300, 30, (i) =>
+    em.upsert(BenchUser, { ...mkUser(i), id: (i % 1000) + 1 } as any),
+  );
+
+  // delete / softDelete consume one pre-seeded row per call (bench() replays
+  // i from 0 after warmup, so a monotonic counter — not i — picks the row).
+  const DEL_POOL = (300 * SCALE + 40) * 2;
+  await em.insertMany(
+    BenchTask,
+    Array.from({ length: DEL_POOL }, (_, i) => ({
+      title: `task-${i}`,
+      priority: i % 5,
+    })),
+  );
+  let taskSeq = 0;
+  await bench("delete by pk", 300, 30, () =>
+    em.delete(BenchTask, { id: ++taskSeq } as any),
+  );
+  await bench("softDelete by pk", 300, 30, () =>
+    em.softDelete(BenchTask, { id: ++taskSeq } as any),
+  );
+
+  await bench("save cascade O2M (3 children)", 100, 10, (i) =>
+    em.save(BenchOrder, {
+      ref: `order-${i}`,
+      items: Array.from({ length: 3 }, (_, k) => ({
+        sku: `sku-${i}-${k}`,
+        qty: k + 1,
+      })) as BenchOrderItem[],
+    }),
   );
 
   console.log("--- read paths ---");
