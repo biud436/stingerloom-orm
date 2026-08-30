@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { ClazzType, Logger, resolveEntityGlobs, generateUUIDv7 } from "../../utils";
-import { ColumnMetadata } from "../../scanner";
+import { ColumnMetadata, EntityScannerMetadata } from "../../scanner";
 import { ISqlDriver } from "../../dialects/SqlDriver";
 import { TransactionSessionManager } from "../../dialects/TransactionSessionManager";
 import { FindOption, LockMode, UpdateData, UpdateManyOptions, WhereClause } from "../../dialects/FindOption";
@@ -54,6 +54,7 @@ import {
   whereByProps,
   type DriverExecResult,
   type DriverRow,
+  type EntityFields,
 } from "./entity-access";
 
 /**
@@ -64,6 +65,38 @@ interface FkColumnBinding {
   joinColumn: string;
   propertyName: string;
   relMeta: ManyToOneMetadata<unknown>;
+}
+
+/**
+ * Per-call state shared by the saveInternal helper methods — built once at the
+ * top of the transaction closure and threaded through the INSERT/UPDATE
+ * helpers instead of a long positional parameter list.
+ */
+interface SaveOperation<T> {
+  entity: ClazzType<T>;
+  item: Partial<T>;
+  metadata: EntityScannerMetadata;
+  session: TransactionSessionManager;
+  /** {@link fieldsOf} view over `item`, hoisted once per call. */
+  itemFields: EntityFields;
+  pkColumns: ColumnMetadata[];
+  /** First PK column (composite PKs keep the full list in `pkColumns`). */
+  pk: ColumnMetadata;
+  hasAutoIncrementPk: boolean;
+  /** The PK value present on `item` at entry (undefined on generated INSERTs). */
+  primaryKeyValue: unknown;
+  buildPkWhere: (pkValues?: DriverRow) => Sql[];
+  buildPkFindWhere: (pkValues?: DriverRow) => WhereClause<T>;
+}
+
+/** Column/value lists staged for the single-row INSERT of saveInternal. */
+interface InsertValuePlan {
+  /** Metadata of the columns taken from `item` (parallel to the head of `columns`). */
+  insertableColumns: ColumnMetadata[];
+  /** Wrapped column identifiers; may grow beyond `insertableColumns` (discriminator, FK). */
+  columns: Sql[];
+  /** Bound values, parallel to `columns`. */
+  values: RawValue[];
 }
 
 /**
@@ -172,6 +205,20 @@ export class WriteExecutor {
         return whereByProps<T>(where);
       };
 
+      const op: SaveOperation<T> = {
+        entity,
+        item,
+        metadata,
+        session,
+        itemFields,
+        pkColumns,
+        pk,
+        hasAutoIncrementPk,
+        primaryKeyValue,
+        buildPkWhere,
+        buildPkFindWhere,
+      };
+
       if (isInsert) {
         await this.cascadeHandler.runHooks(entity, item, "beforeInsert");
         await this.eventEmitter.emit("beforeInsert", { entity, data: item });
@@ -182,116 +229,8 @@ export class WriteExecutor {
 
         this.ctx.applyTenantColumnOnInsert(entity, item);
 
-        const computedCols = this.ctx.getComputedColumnNames(entity);
-        // Resolved before the filter: these columns are auto-populated below
-        // (timestamps, version, client-side UUID PKs), so they must survive
-        // the undefined-value omission even when the entity has no value yet.
-        const createTsCol = this.resolver.getCreateTimestampColumn(entity);
-        const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
-        const versionCol = this.resolver.getVersionColumn(entity);
-        const insertableColumns = metadata.columns.filter(
-          (column: ColumnMetadata) => {
-            const isComputedColumn = computedCols.has(column.name);
-            if (isComputedColumn) return false;
-
-            const value = itemFields[this.ctx.propKey(column)];
-            const isUnsetAutoIncrement =
-              column.options?.autoIncrement &&
-              (value === null || value === undefined);
-            if (isUnsetAutoIncrement) return false;
-
-            if (value === undefined) {
-              const strategy = column.options?.generationStrategy;
-              const isClientGeneratedUuid =
-                strategy === "uuid" || strategy === "uuid-v7";
-              const isAutoManagedColumn =
-                column.name === createTsCol ||
-                column.name === updateTsCol ||
-                column.name === versionCol;
-              // Auto-populated columns (client-side UUID PKs, timestamps,
-              // version) must survive the undefined-omission so the values
-              // injected below are written.
-              if (isClientGeneratedUuid || isAutoManagedColumn) return true;
-
-              // #368: undefined means "not provided" — omit the column so the
-              // DB-side DEFAULT (and @Column({ default })) applies. An explicit
-              // null still writes NULL.
-              return false;
-            }
-            return true;
-          },
-        );
-
-        const columns = insertableColumns.map((column) => {
-          return raw(this.ctx.wrap(column.name));
-        });
-
-        const values: RawValue[] = bindParams(
-          insertableColumns.map((column: ColumnMetadata) => {
-            const rawValue = itemFields[this.ctx.propKey(column)];
-            return this.ctx.applyWriteTransform(column, rawValue);
-          }),
-        );
-
-        // Auto-inject @CreateTimestamp / @UpdateTimestamp values (on INSERT)
-        const now = new Date();
-        const nowStr = formatDateTimeForSQL(now);
-        if (createTsCol) {
-          const idx = insertableColumns.findIndex(
-            (col: ColumnMetadata) => col.name === createTsCol,
-          );
-          if (idx >= 0) {
-            // Read via the property key — createTsCol is the DB column name after
-            // the naming strategy, so item[createTsCol] would miss a user value.
-            const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
-            values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
-          }
-        }
-        if (updateTsCol) {
-          const idx = insertableColumns.findIndex(
-            (col: ColumnMetadata) => col.name === updateTsCol,
-          );
-          if (idx >= 0) {
-            const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
-            values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
-          }
-        }
-
-        // Auto-initialize the @Version column
-        if (versionCol) {
-          const versionIdx = insertableColumns.findIndex(
-            (col: ColumnMetadata) => col.name === versionCol,
-          );
-          if (versionIdx >= 0) {
-            values[versionIdx] = 1;
-          }
-        }
-
-        // Auto-generate UUID PKs on the application side
-        for (let i = 0; i < insertableColumns.length; i++) {
-          const col = insertableColumns[i];
-          const strategy = col.options?.generationStrategy;
-          if (!strategy || strategy === "increment") continue;
-          if (values[i] !== null && values[i] !== undefined) continue;
-
-          // PostgreSQL uuid strategy: DB generates via DEFAULT gen_random_uuid()
-          if (strategy === "uuid" && this.ctx.isPostgres()) {
-            // exclude column from INSERT so DEFAULT kicks in
-            columns.splice(i, 1);
-            values.splice(i, 1);
-            insertableColumns.splice(i, 1);
-            i--;
-            continue;
-          }
-
-          if (strategy === "uuid") {
-            values[i] = randomUUID();
-            itemFields[this.ctx.propKey(col)] = values[i];
-          } else if (strategy === "uuid-v7") {
-            values[i] = generateUUIDv7();
-            itemFields[this.ctx.propKey(col)] = values[i];
-          }
-        }
+        const { insertableColumns, columns, values } =
+          this.buildInsertValuePlan(op);
 
         // STI/TPT: add or set the discriminator column value on INSERT
         const saveInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
@@ -971,6 +910,130 @@ export class WriteExecutor {
 
       return result as T;
     }, existingSession);
+  }
+
+  /**
+   * Stages the column/value lists for saveInternal's single-row INSERT:
+   * selects the insertable columns (undefined omission, computed / unset
+   * auto-PK exclusion), then injects the auto-populated values —
+   * @CreateTimestamp / @UpdateTimestamp, @Version initialization, and
+   * client-side UUID PKs (which also write back onto `op.itemFields`).
+   */
+  private buildInsertValuePlan<T>(op: SaveOperation<T>): InsertValuePlan {
+    const { entity, metadata, itemFields } = op;
+
+    const computedCols = this.ctx.getComputedColumnNames(entity);
+    // Resolved before the filter: these columns are auto-populated below
+    // (timestamps, version, client-side UUID PKs), so they must survive
+    // the undefined-value omission even when the entity has no value yet.
+    const createTsCol = this.resolver.getCreateTimestampColumn(entity);
+    const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
+    const versionCol = this.resolver.getVersionColumn(entity);
+    const insertableColumns = metadata.columns.filter(
+      (column: ColumnMetadata) => {
+        const isComputedColumn = computedCols.has(column.name);
+        if (isComputedColumn) return false;
+
+        const value = itemFields[this.ctx.propKey(column)];
+        const isUnsetAutoIncrement =
+          column.options?.autoIncrement &&
+          (value === null || value === undefined);
+        if (isUnsetAutoIncrement) return false;
+
+        if (value === undefined) {
+          const strategy = column.options?.generationStrategy;
+          const isClientGeneratedUuid =
+            strategy === "uuid" || strategy === "uuid-v7";
+          const isAutoManagedColumn =
+            column.name === createTsCol ||
+            column.name === updateTsCol ||
+            column.name === versionCol;
+          // Auto-populated columns (client-side UUID PKs, timestamps,
+          // version) must survive the undefined-omission so the values
+          // injected below are written.
+          if (isClientGeneratedUuid || isAutoManagedColumn) return true;
+
+          // #368: undefined means "not provided" — omit the column so the
+          // DB-side DEFAULT (and @Column({ default })) applies. An explicit
+          // null still writes NULL.
+          return false;
+        }
+        return true;
+      },
+    );
+
+    const columns = insertableColumns.map((column: ColumnMetadata) => {
+      return raw(this.ctx.wrap(column.name));
+    });
+
+    const values: RawValue[] = bindParams(
+      insertableColumns.map((column: ColumnMetadata) => {
+        const rawValue = itemFields[this.ctx.propKey(column)];
+        return this.ctx.applyWriteTransform(column, rawValue);
+      }),
+    );
+
+    // Auto-inject @CreateTimestamp / @UpdateTimestamp values (on INSERT)
+    const now = new Date();
+    const nowStr = formatDateTimeForSQL(now);
+    if (createTsCol) {
+      const idx = insertableColumns.findIndex(
+        (col: ColumnMetadata) => col.name === createTsCol,
+      );
+      if (idx >= 0) {
+        // Read via the property key — createTsCol is the DB column name after
+        // the naming strategy, so item[createTsCol] would miss a user value.
+        const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
+        values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
+      }
+    }
+    if (updateTsCol) {
+      const idx = insertableColumns.findIndex(
+        (col: ColumnMetadata) => col.name === updateTsCol,
+      );
+      if (idx >= 0) {
+        const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
+        values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
+      }
+    }
+
+    // Auto-initialize the @Version column
+    if (versionCol) {
+      const versionIdx = insertableColumns.findIndex(
+        (col: ColumnMetadata) => col.name === versionCol,
+      );
+      if (versionIdx >= 0) {
+        values[versionIdx] = 1;
+      }
+    }
+
+    // Auto-generate UUID PKs on the application side
+    for (let i = 0; i < insertableColumns.length; i++) {
+      const col = insertableColumns[i];
+      const strategy = col.options?.generationStrategy;
+      if (!strategy || strategy === "increment") continue;
+      if (values[i] !== null && values[i] !== undefined) continue;
+
+      // PostgreSQL uuid strategy: DB generates via DEFAULT gen_random_uuid()
+      if (strategy === "uuid" && this.ctx.isPostgres()) {
+        // exclude column from INSERT so DEFAULT kicks in
+        columns.splice(i, 1);
+        values.splice(i, 1);
+        insertableColumns.splice(i, 1);
+        i--;
+        continue;
+      }
+
+      if (strategy === "uuid") {
+        values[i] = randomUUID();
+        itemFields[this.ctx.propKey(col)] = values[i];
+      } else if (strategy === "uuid-v7") {
+        values[i] = generateUUIDv7();
+        itemFields[this.ctx.propKey(col)] = values[i];
+      }
+    }
+
+    return { insertableColumns, columns, values };
   }
 
   async saveMany<T>(
