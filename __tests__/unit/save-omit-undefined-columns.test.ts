@@ -233,25 +233,27 @@ describe("save() INSERT — 자동 주입 컬럼은 undefined여도 유지 (#368
     // getCreateTimestampColumn returns the DB column name ("created_at") under a
     // naming strategy. Reading item["created_at"] misses the property value
     // ("createdAt") and clobbers it with now(); the value must be read by key.
-    // Local-time components keep the formatted string timezone-stable.
+    const createdAt = new Date(2020, 0, 2, 3, 4, 5);
+    const updatedAt = new Date(2021, 5, 7, 8, 9, 10);
     await em.save(Category368, {
       name: "root",
       lft: 1,
       rgt: 2,
-      createdAt: new Date(2020, 0, 2, 3, 4, 5),
-      updatedAt: new Date(2021, 5, 7, 8, 9, 10),
+      createdAt,
+      updatedAt,
     } as any);
 
     const insertCall = findInsertCall();
     expect(insertCall).toBeDefined();
     const values = insertCall![0].values as any[];
 
-    expect(
-      values.some((v) => typeof v === "string" && v.startsWith("2020-01-02")),
-    ).toBe(true);
-    expect(
-      values.some((v) => typeof v === "string" && v.startsWith("2021-06-07")),
-    ).toBe(true);
+    // Temporal values are bound as Date objects — the driver owns the
+    // serialization, so the caller's instant reaches it unrounded.
+    const boundInstants = values
+      .filter((v): v is Date => v instanceof Date)
+      .map((v) => v.getTime());
+    expect(boundInstants).toContain(createdAt.getTime());
+    expect(boundInstants).toContain(updatedAt.getTime());
   });
 });
 
