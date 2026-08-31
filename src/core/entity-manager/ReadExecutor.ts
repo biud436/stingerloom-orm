@@ -13,6 +13,7 @@ import { RawQueryBuilderFactory } from "../RawQueryBuilderFactory";
 import type { BaseRawQueryBuilder } from "../BaseRawQueryBuilder";
 import { Conditions } from "../Conditions";
 import { ResultTransformerFactory } from "../ResultTransformerFactory";
+import type { ResultTransformer } from "../ResultTransformer";
 import { injectLazyProxy } from "../LazyLoader";
 import { MetadataContext } from "../../metadata/MetadataContext";
 import { EntityMetadataNotFoundError } from "../../errors/EntityMetadataNotFoundError";
@@ -1023,6 +1024,206 @@ export class ReadExecutor {
     return queryResult;
   }
 
+  /**
+   * Turns the driver rows into entity instances, picking the deserialization
+   * shape the query's inheritance and JOIN layout produced: a discriminator
+   * map for polymorphic reads, prefix-grouped child columns for TPT, nested
+   * objects when eager relations were JOINed in, plain rows otherwise.
+   */
+  private hydrateRows<T>(
+    op: FindOperation<T>,
+    queryResult: QueryResult,
+    resultTransformer: ResultTransformer,
+  ): EntityResult<T> {
+    const { entity, hasEagerJoins } = op;
+    const isEntityArray = queryResult.results.length > 1;
+
+    // STI/TPC: polymorphic query on the root entity — instantiate the correct subclass via the discriminator
+    if (
+      (op.inheritanceStrategy === "SINGLE_TABLE" || op.isTPCPolymorphic) &&
+      this.inheritanceResolver.isPolymorphicQuery(entity) &&
+      !(hasEagerJoins && !op.isTPCPolymorphic)
+    ) {
+      const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+      const discColName = discCol?.name ?? "dtype";
+      const discMap = this.inheritanceResolver.buildDiscriminatorMap(entity);
+      if (discMap.size > 0) {
+        return resultTransformer.toPolymorphicEntities(
+          entity,
+          queryResult,
+          discMap,
+          discColName,
+        ) as EntityResult<T>;
+      }
+    } else if (op.isTPTPolymorphic) {
+      // TPT polymorphic: resolve child columns via their prefixes
+      const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+      const discMap = this.inheritanceResolver.buildDiscriminatorMap(entity);
+      if (discCol && discMap.size > 0) {
+        const childPrefixMap = new Map<string, string>();
+        const children = this.inheritanceResolver
+          .getConcreteEntities(entity)
+          .filter((c) => c !== entity);
+        for (const child of children) {
+          const childMeta = this.resolver.resolveEntityMetadata(child);
+          const dv = this.inheritanceResolver.getDiscriminatorValue(child);
+          if (childMeta && dv) {
+            childPrefixMap.set(dv, childMeta.name);
+          }
+        }
+        return resultTransformer.toTPTPolymorphicEntities(
+          entity,
+          queryResult,
+          discMap,
+          discCol.name,
+          childPrefixMap,
+        ) as EntityResult<T>;
+      }
+    } else if (
+      (hasEagerJoins && !op.isTPTChild) ||
+      // TPT child + eager ManyToOne: deserialize the relation through transformNested
+      (op.isTPTChild && op.eagerM2O.length > 0)
+    ) {
+      return resultTransformer.transformNested(
+        entity,
+        queryResult,
+      ) as EntityResult<T>;
+    }
+
+    return isEntityArray
+      ? resultTransformer.toEntities(entity, queryResult)
+      : resultTransformer.toEntity(entity, queryResult);
+  }
+
+  /**
+   * Loads the relations that cannot ride along on the main statement —
+   * OneToMany, ManyToMany and the inverse side of OneToOne — on the same
+   * session, so they share the caller's transaction and cache entry.
+   */
+  private async loadDeferredRelations<T>(
+    op: FindOperation<T>,
+    entityResult: EntityResult<T>,
+    session: TransactionSessionManager,
+  ): Promise<void> {
+    const { entity, findOption } = op;
+    if (!findOption.relations || findOption.relations.length === 0 || !entityResult) {
+      return;
+    }
+
+    await this.relationLoader.loadOneToManyRelations(
+      entity,
+      entityResult as T | T[],
+      findOption.relations,
+      session,
+      findOption.withDeleted,
+    );
+    await this.relationLoader.loadManyToManyRelations(
+      entity,
+      entityResult as T | T[],
+      findOption.relations,
+      session,
+      findOption.withDeleted,
+    );
+    await this.relationLoader.loadOneToOneRelations(
+      entity,
+      entityResult as T | T[],
+      findOption.relations,
+      session,
+      findOption.withDeleted,
+    );
+  }
+
+  /**
+   * Replaces each lazy ManyToOne property with a Proxy that reads the target
+   * on first access.
+   *
+   * The load fires at property-access time, possibly under another tenant's
+   * context (or none), so the hydration-time context is captured and replayed
+   * — the lazy mirror of eager loading, which reads the relation while that
+   * context is still active. Without it, tenant_column silently loads null
+   * and schema-based strategies can resolve the table to ANOTHER tenant's
+   * schema and hydrate a same-id foreign row.
+   */
+  private injectLazyRelationProxies<T>(
+    op: FindOperation<T>,
+    entityResult: EntityResult<T>,
+  ): void {
+    const { findOption } = op;
+    const lazyRelations = op.plan.manyToOne.filter((rel) => {
+      return rel.option?.lazy === true && rel.option?.eager !== true;
+    });
+    if (lazyRelations.length === 0 || !entityResult) return;
+
+    const entities = Array.isArray(entityResult)
+      ? entityResult
+      : [entityResult];
+
+    for (const rel of lazyRelations) {
+      const joinColumn = rel.joinColumn ?? rel.columnName;
+      // ResultTransformer remaps an @RelationColumn / snake_case FK column
+      // onto its shadow property (e.g. user_id -> userId), so the hydrated
+      // entity carries the FK value under the shadow, not under joinColumn.
+      // Read the shadow first, then fall back to the raw join column for
+      // plain @ManyToOne entities whose FK stays under the DB column name.
+      const fkShadow = rel.option?.fkProperty ?? `${rel.columnName}Id`;
+      const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+
+      for (const item of entities) {
+        const fkValue =
+          (item as any)[fkShadow] ?? (item as any)[joinColumn];
+        if (fkValue === undefined || fkValue === null) continue;
+
+        const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
+        if (!relatedMetadata) continue;
+
+        const relatedPk = relatedMetadata.columns.find(
+          (col: any) => col.options?.primary,
+        );
+        if (!relatedPk) continue;
+
+        const em = this;
+        const proxyWithDeleted = findOption.withDeleted;
+        const hydrationContext = MetadataContext.capture();
+        injectLazyProxy(item as any, rel.columnName, async () => {
+          const result = await MetadataContext.runCaptured(
+            hydrationContext,
+            () =>
+              em.findOne(RelatedEntity, {
+                where: { [this.ctx.propKey(relatedPk)]: fkValue } as any,
+                withDeleted: proxyWithDeleted,
+              }),
+          );
+          return result as any;
+        });
+      }
+    }
+  }
+
+  /** Notifies subscribers of the afterLoad event, once per hydrated entity. */
+  private async emitAfterLoad<T>(
+    op: FindOperation<T>,
+    entityResult: EntityResult<T>,
+  ): Promise<void> {
+    if (!entityResult) return;
+    const loadedEntities = Array.isArray(entityResult) ? entityResult : [entityResult];
+    for (const loadedEntity of loadedEntities) {
+      await this.ctx.notifySubscribers(op.entity, "afterLoad", loadedEntity);
+    }
+  }
+
+  /**
+   * The engine behind find / findOne and everything that funnels into them.
+   *
+   * Runs one read as a fixed pipeline: validate the options, resolve the
+   * query shape into a {@link FindOperation}, assemble the clauses in the
+   * order the builders above document, execute, hydrate, then load the
+   * relations that could not ride along on the statement. Every step is a
+   * helper on this class; this method only sequences them.
+   *
+   * The clause values are built before they are handed to the builder so that
+   * predicate assembly keeps its original order relative to the JOINs — both
+   * paths can emit tenant-scope warnings.
+   */
   async findInternal<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
@@ -1060,26 +1261,10 @@ export class ReadExecutor {
       const resultTransformer = ResultTransformerFactory.create();
 
       const op = this.prepareFindOperation(entity, findOption);
-      const {
-        metadata,
-        tableName,
-        plan,
-        propToCol,
-        inheritanceStrategy,
-        isTPTChild,
-        isTPTPolymorphic,
-        isTPCPolymorphic,
-        hasEagerJoins,
-        tptQualifyColumn,
-      } = op;
-      const manyToOneRelations = plan.manyToOne;
-      const eagerRelations = op.eagerM2O;
-      const eagerOneToOneRelations = op.eagerO2O;
 
       const qb = RawQueryBuilderFactory.create();
 
       const selectMap = this.buildSelectList(op);
-
       const whereMap = this.buildWhereClauses(op);
       const orderByMap = this.buildOrderByList(op);
 
@@ -1088,182 +1273,19 @@ export class ReadExecutor {
       this.appendEagerJoins(op, qb);
 
       qb.where(whereMap);
-
       this.appendGroupByHaving(op, qb);
-
       qb.orderBy(orderByMap);
-
       this.applyLimitAndLock(op, qb);
 
       const queryResult = await this.executeFindQuery(op, session, qb);
       if (!queryResult) {
         return undefined;
       }
-      const results = queryResult.results;
+      const entityResult = this.hydrateRows(op, queryResult, resultTransformer);
 
-      const isEntityArray = results.length > 1;
-      let entityResult: EntityResult<T>;
-
-      // STI/TPC: polymorphic query on the root entity — instantiate the correct subclass via the discriminator
-      if (
-        (inheritanceStrategy === "SINGLE_TABLE" || isTPCPolymorphic) &&
-        this.inheritanceResolver.isPolymorphicQuery(entity) &&
-        !(hasEagerJoins && !isTPCPolymorphic)
-      ) {
-        const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-        const discColName = discCol?.name ?? "dtype";
-        const discMap = this.inheritanceResolver.buildDiscriminatorMap(entity);
-        if (discMap.size > 0) {
-          entityResult = resultTransformer.toPolymorphicEntities(
-            entity,
-            queryResult,
-            discMap,
-            discColName,
-          ) as EntityResult<T>;
-        } else if (isEntityArray) {
-          entityResult = resultTransformer.toEntities(entity, queryResult);
-        } else {
-          entityResult = resultTransformer.toEntity(entity, queryResult);
-        }
-      } else if (isTPTPolymorphic) {
-        // TPT polymorphic: resolve child columns via their prefixes
-        const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-        const discMap = this.inheritanceResolver.buildDiscriminatorMap(entity);
-        if (discCol && discMap.size > 0) {
-          const childPrefixMap = new Map<string, string>();
-          const children = this.inheritanceResolver
-            .getConcreteEntities(entity)
-            .filter((c) => c !== entity);
-          for (const child of children) {
-            const childMeta = this.resolver.resolveEntityMetadata(child);
-            const dv = this.inheritanceResolver.getDiscriminatorValue(child);
-            if (childMeta && dv) {
-              childPrefixMap.set(dv, childMeta.name);
-            }
-          }
-          entityResult = resultTransformer.toTPTPolymorphicEntities(
-            entity,
-            queryResult,
-            discMap,
-            discCol.name,
-            childPrefixMap,
-          ) as EntityResult<T>;
-        } else if (isEntityArray) {
-          entityResult = resultTransformer.toEntities(entity, queryResult);
-        } else {
-          entityResult = resultTransformer.toEntity(entity, queryResult);
-        }
-      } else if (hasEagerJoins && !isTPTChild) {
-        entityResult = resultTransformer.transformNested(
-          entity,
-          queryResult,
-        ) as EntityResult<T>;
-      } else if (isTPTChild && eagerRelations.length > 0) {
-        // TPT child + eager ManyToOne: deserialize the relation through transformNested
-        entityResult = resultTransformer.transformNested(
-          entity,
-          queryResult,
-        ) as EntityResult<T>;
-      } else if (isEntityArray) {
-        entityResult = resultTransformer.toEntities(entity, queryResult);
-      } else {
-        entityResult = resultTransformer.toEntity(entity, queryResult);
-      }
-
-      // Load OneToMany / ManyToMany / OneToOne(inverse) relations
-      if (
-        findOption.relations &&
-        findOption.relations.length > 0 &&
-        entityResult
-      ) {
-        await this.relationLoader.loadOneToManyRelations(
-          entity,
-          entityResult as T | T[],
-          findOption.relations,
-          session,
-          findOption.withDeleted,
-        );
-        await this.relationLoader.loadManyToManyRelations(
-          entity,
-          entityResult as T | T[],
-          findOption.relations,
-          session,
-          findOption.withDeleted,
-        );
-        await this.relationLoader.loadOneToOneRelations(
-          entity,
-          entityResult as T | T[],
-          findOption.relations,
-          session,
-          findOption.withDeleted,
-        );
-      }
-
-      // Inject a Proxy for each lazy ManyToOne relation
-      const lazyRelations = manyToOneRelations.filter((rel) => {
-        return rel.option?.lazy === true && rel.option?.eager !== true;
-      });
-
-      if (lazyRelations.length > 0 && entityResult) {
-        const entities = Array.isArray(entityResult)
-          ? entityResult
-          : [entityResult];
-
-        for (const rel of lazyRelations) {
-          const joinColumn = rel.joinColumn ?? rel.columnName;
-          // ResultTransformer remaps an @RelationColumn / snake_case FK column
-          // onto its shadow property (e.g. user_id -> userId), so the hydrated
-          // entity carries the FK value under the shadow, not under joinColumn.
-          // Read the shadow first, then fall back to the raw join column for
-          // plain @ManyToOne entities whose FK stays under the DB column name.
-          const fkShadow = rel.option?.fkProperty ?? `${rel.columnName}Id`;
-          const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
-
-          for (const item of entities) {
-            const fkValue =
-              (item as any)[fkShadow] ?? (item as any)[joinColumn];
-            if (fkValue === undefined || fkValue === null) continue;
-
-            const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
-            if (!relatedMetadata) continue;
-
-            const relatedPk = relatedMetadata.columns.find(
-              (col: any) => col.options?.primary,
-            );
-            if (!relatedPk) continue;
-
-            const em = this;
-            const proxyWithDeleted = findOption.withDeleted;
-            // The load fires at property-access time, possibly under another
-            // tenant's context (or none). Replay the hydration-time context so
-            // the deferred read stays consistent with the entity's own tenant
-            // — the lazy mirror of eager loading, which reads the relation at
-            // hydration time. Without this, tenant_column silently loads null
-            // and schema-based strategies can resolve the table to ANOTHER
-            // tenant's schema and hydrate a same-id foreign row.
-            const hydrationContext = MetadataContext.capture();
-            injectLazyProxy(item as any, rel.columnName, async () => {
-              const result = await MetadataContext.runCaptured(
-                hydrationContext,
-                () =>
-                  em.findOne(RelatedEntity, {
-                    where: { [this.ctx.propKey(relatedPk)]: fkValue } as any,
-                    withDeleted: proxyWithDeleted,
-                  }),
-              );
-              return result as any;
-            });
-          }
-        }
-      }
-
-      // Notify subscribers of the afterLoad event
-      if (entityResult) {
-        const loadedEntities = Array.isArray(entityResult) ? entityResult : [entityResult];
-        for (const loadedEntity of loadedEntities) {
-          await this.ctx.notifySubscribers(entity, "afterLoad", loadedEntity);
-        }
-      }
+      await this.loadDeferredRelations(op, entityResult, session);
+      this.injectLazyRelationProxies(op, entityResult);
+      await this.emitAfterLoad(op, entityResult);
 
       return entityResult;
     }, { existingSession, readNodeOverride: readNode, timeout: effectiveTimeout });
