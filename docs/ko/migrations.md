@@ -466,7 +466,7 @@ await generator.save(content, "./migrations");
 ```
 
 ::: warning SQLite 컬럼 변경
-SQLite는 컬럼의 타입이나 nullability를 `ALTER`할 수 없습니다. diff에 해당 변경이 있고 dialect가 `"sqlite"`이면 `generate()`와 `dryRun()` 모두 영향받는 컬럼 목록과 함께 `ORM_UNSUPPORTED_OPERATION`을 던집니다. 변경을 조용히 건너뛴 마이그레이션을 만들지 않아요. 이 경우에는 테이블을 재구축하는 수동 마이그레이션을 작성해야 합니다: 원하는 스키마로 새 테이블을 만들고, 데이터를 복사한 뒤, 기존 테이블을 삭제하고 새 테이블의 이름을 바꿉니다.
+SQLite는 컬럼의 타입이나 nullability를 `ALTER`할 수 없습니다. diff에 해당 변경이 있고 dialect가 `"sqlite"`이면 `generate()`와 `dryRun()` 모두 영향받는 컬럼 목록과 함께 `ORM_UNSUPPORTED_OPERATION`을 던집니다. 변경이 빠진 마이그레이션을 만들어 내지 않아요. 이 경우에는 테이블을 재구축하는 수동 마이그레이션을 작성해야 합니다: 원하는 스키마로 새 테이블을 만들고, 데이터를 복사한 뒤, 기존 테이블을 삭제하고 새 테이블의 이름을 바꿉니다.
 :::
 
 ### 예제: 컬럼 추가
@@ -610,7 +610,7 @@ class AutoMigration_1708000000000 extends Migration {
 }
 ```
 
-`IF NOT EXISTS` 절 덕분에 여러 번 실행해도 안전해요 -- 값이 이미 있으면 PostgreSQL이 조용히 건너뛰어요.
+`IF NOT EXISTS` 절 덕분에 여러 번 실행해도 안전해요 -- 값이 이미 있으면 PostgreSQL이 그냥 넘어가요.
 
 **생성되는 migration -- 값 제거:**
 

@@ -345,7 +345,7 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 ::: warning 기본값 두 개를 조심하세요
 **`closeConnections`의 기본값은 `false`입니다.** 이 옵션 없이 호출하면 내부의 `mysql2` / `pg` 풀이 닫히지 않고, 열린 소켓이 이벤트 루프를 계속 붙잡아서 프로세스가 종료되지 않고 멈춰 있습니다. Express 시그널 핸들러에서는 거의 항상 `{ closeConnections: true }`가 필요합니다.
 
-**`gracefulTimeoutMs`는 쿼리 추적이 켜져 있지 않으면 조용히 무시됩니다.** 이 대기는 `QueryTracker`가 구현하는데, 트래커는 `logging`이 `nPlusOne` 또는 `slowQueryMs`를 포함한 객체일 때만 만들어집니다. `logging: true`이거나 `logging`이 아예 없으면 `propagateShutdown({ gracefulTimeoutMs: 5000 })`은 즉시 반환합니다. 위 예제처럼 HTTP 서버를 먼저 닫는 편이 설정과 무관하게 확실합니다.
+**`gracefulTimeoutMs`는 쿼리 추적이 켜져 있지 않으면 아무 효과가 없습니다.** 이 대기는 `QueryTracker`가 구현하는데, 트래커는 `logging`이 `nPlusOne` 또는 `slowQueryMs`를 포함한 객체일 때만 만들어집니다. `logging: true`이거나 `logging`이 아예 없으면 `propagateShutdown({ gracefulTimeoutMs: 5000 })`은 즉시 반환합니다. 위 예제처럼 HTTP 서버를 먼저 닫는 편이 설정과 무관하게 확실합니다.
 :::
 
 반환값은 모든 작업이 깔끔하게 정리되면 `true`, 대기가 타임아웃되면 `false`입니다. 구분이 필요하면 로그로 남기세요.
@@ -505,7 +505,7 @@ app.get("/search", async (req, res) => {
 ```
 
 ::: warning .where()는 이름 있는 파라미터를 쓴 SQL 문자열을 받지 않습니다
-TypeORM을 쓰다 오면 `.where("p.title = :title", { title })`이 손에 익어 있을 텐데, 여기서는 동작하지 않습니다. 문자열 인자는 SQL이 아니라 **컬럼 참조**로 해석되기 때문에, SQL 조각을 넘기면 빌드 시점에 `InvalidQueryError`를 던집니다(예전에는 조용히 깨진 쿼리를 만들었습니다). 받아들이는 형태는 다음과 같습니다.
+TypeORM을 쓰다 오면 `.where("p.title = :title", { title })`이 손에 익어 있을 텐데, 여기서는 동작하지 않습니다. 문자열 인자는 SQL이 아니라 **컬럼 참조**로 해석되기 때문에, SQL 조각을 넘기면 빌드 시점에 `InvalidQueryError`를 던집니다(예전에는 깨진 쿼리를 그대로 만들었습니다). 받아들이는 형태는 다음과 같습니다.
 
 ```typescript
 .where({ title: "hello" })                      // 필터 객체 (가장 흔함)
@@ -664,7 +664,7 @@ export class TransferService {
 
 ## 동시성: 낙관적 잠금과 비관적 잠금
 
-**낙관적 잠금**은 HTTP와 잘 맞습니다. 브라우저 탭 두 개가 같은 레코드를 수정하는 전형적인 상황이 바로 이 방식이 잡아내는 문제이기 때문입니다. 버전 컬럼을 추가하면, 오래된 데이터로 덮어쓰려는 시도가 조용히 성공하는 대신 예외를 던집니다.
+**낙관적 잠금**은 HTTP와 잘 맞습니다. 브라우저 탭 두 개가 같은 레코드를 수정하는 전형적인 상황이 바로 이 방식이 잡아내는 문제이기 때문입니다. 버전 컬럼을 추가하면, 오래된 데이터로 덮어쓰려는 시도가 그대로 성공하는 대신 예외를 던집니다.
 
 ```typescript
 export const Post = defineEntity("posts", {
@@ -753,7 +753,7 @@ await em.find(Post, { where: { authorId: 7 }, onlyDeleted: true });   // 삭제�
 - **`em.delete()`는 `@DeletedAt` 컬럼이 있어도 여전히 하드 `DELETE`입니다.** 소프트 삭제는 전역 모드가 아니라 호출 단위 선택입니다. HTTP `DELETE`를 `softDelete()`로 연결하는 것은 의도적으로 해야 하는 일입니다.
 - **집계 메서드는 이 플래그를 옵션 객체가 아니라 위치 인자로 받습니다.** `em.count(Post, where, withDeleted, onlyDeleted)` 형태입니다.
 
-대량 `updateMany`는 기본적으로 삭제된 행을 건너뜁니다. 일괄 수정이 삭제된 데이터를 조용히 되살리지 못하게 하기 위해서고, 포함하려면 `withDeleted: true`를 넘기면 됩니다.
+대량 `updateMany`는 기본적으로 삭제된 행을 건너뜁니다. 일괄 수정이 삭제된 데이터를 모르는 사이 되살리지 못하게 하기 위해서고, 포함하려면 `withDeleted: true`를 넘기면 됩니다.
 
 ---
 

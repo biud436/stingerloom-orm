@@ -619,7 +619,7 @@ await em.register({
 |------|--------------------------------|
 | `"warn"` (기본값) | 쿼리는 필터 없이 실행되고, 엔티티 클래스당 한 번 경고를 로그합니다. 기존의 무음 동작과 backward compatible 합니다. |
 | `"throw"` | INSERT와 같은 에러인 `MISSING_TENANT_CONTEXT`로 reject 합니다. 프로덕션에 권장합니다. |
-| `"allow"` | 쿼리를 필터 없이 조용히 실행합니다. 스코프 접근과 글로벌 접근을 의도적으로 섞어 쓰는 앱을 위한 값입니다. |
+| `"allow"` | 쿼리를 필터 없이 그대로 실행합니다. 스코프 접근과 글로벌 접근을 의도적으로 섞어 쓰는 앱을 위한 값입니다. |
 
 이 정책은 자동 predicate를 받는 모든 경로에 적용됩니다: `find*`, `count`/`exists`를 포함한 aggregate, `SelectQueryBuilder`, relation loader, `updateMany`, `deleteMany`, `softDelete`, `restore`. INSERT의 동작은 바꾸지 않고(컨텍스트가 없으면 항상 throw), 명시적인 탈출구에서는 절대 발화하지 않습니다:
 

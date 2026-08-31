@@ -26,11 +26,11 @@ export type User = InferEntity<typeof User>;
 
 ## 왜 코드 우선인가
 
-ORM 없이는 테이블을 서너 번 기술해야 해요: `CREATE TABLE`, `INSERT`, `SELECT`, 그리고 TypeScript 타입. 컬럼을 하나 추가하면 그 모두를 수정하죠. 데코레이터 ORM은 이걸 클래스 하나로 줄이지만, 프로퍼티 타입을 읽기 위해 `emitDecoratorMetadata` 컴파일러 플래그에 의존해요 — esbuild, SWC, Vite의 기본 트랜스포머, TypeScript 5의 *표준* 데코레이터가 내보내지 않는 플래그죠. 메타데이터가 없으면 `@Column()`은 조용히 타입을 잃어요.
+ORM 없이는 테이블을 서너 번 기술해야 해요: `CREATE TABLE`, `INSERT`, `SELECT`, 그리고 TypeScript 타입. 컬럼을 하나 추가하면 그 모두를 수정하죠. 데코레이터 ORM은 이걸 클래스 하나로 줄이지만, 프로퍼티 타입을 읽기 위해 `emitDecoratorMetadata` 컴파일러 플래그에 의존해요 — esbuild, SWC, Vite의 기본 트랜스포머, TypeScript 5의 *표준* 데코레이터가 내보내지 않는 플래그죠. 메타데이터가 없으면 `@Column()`은 타입 정보를 그대로 잃어요.
 
 `defineEntity`는 그 의존성을 완전히 없애요:
 
-- **단일 진실 공급원(single source of truth).** 컬럼 빌더가 데이터베이스 타입*과* TypeScript 타입을 동시에 고정해요. `t.int()`는 `number`이고, 실수로 `string`으로 표기할 수 없어요. 손으로 쓴 클래스와 별도 스키마를 쓰면 이 둘이 조용히 어긋날 수 있죠.
+- **단일 진실 공급원(single source of truth).** 컬럼 빌더가 데이터베이스 타입*과* TypeScript 타입을 동시에 고정해요. `t.int()`는 `number`이고, 실수로 `string`으로 표기할 수 없어요. 손으로 쓴 클래스와 별도 스키마를 쓰면 이 둘이 모르는 사이 어긋날 수 있죠.
 - **타입 추론, 코드 생성 없음.** `InferEntity`가 빌더를 직접 읽어요. 생성 단계도, 감시(watch) 프로세스도 없고, 스키마를 편집하는 즉시 타입이 갱신돼요.
 - **데코레이터 툴체인 불필요.** strict 모드와 ESM에서 esbuild, swc, Vite, Bun과 함께 `experimentalDecorators` / `emitDecoratorMetadata` 없이 동작해요. 잘못 설정할 게 없어요.
 
@@ -92,7 +92,7 @@ INSERT INTO "users" ("name") VALUES ('Alice');
 
 모든 필드는 `t` 네임스페이스의 호출이에요. 컬럼 빌더는 추론된 타입을 지니고, 체이닝된 수정자가 이를 다듬어요(`.nullable()`은 타입을 `T | null`로 넓혀요).
 
-모든 필드 값은 반드시 **호출된** 빌더여야 합니다. `defineEntity`가 인식하지 못하는 값 — 흔하게는 괄호를 빠뜨린 `email: t.varchar` 같은 미호출 팩토리나, 임포트 순환으로 `undefined`가 된 빌더 — 은 해당 컬럼이 빠진 테이블을 조용히 만드는 대신, 필드 이름을 명시한 `ORM_SCHEMA_ERROR`를 던집니다.
+모든 필드 값은 반드시 **호출된** 빌더여야 합니다. `defineEntity`가 인식하지 못하는 값 — 흔하게는 괄호를 빠뜨린 `email: t.varchar` 같은 미호출 팩토리나, 임포트 순환으로 `undefined`가 된 빌더 — 은 해당 컬럼이 빠진 테이블을 그대로 만들어 버리는 대신, 필드 이름을 명시한 `ORM_SCHEMA_ERROR`를 던집니다.
 
 ### 컬럼 타입
 
@@ -469,7 +469,7 @@ CREATE INDEX "idx_users_profile_tags_gin"
 
 ## 낙관적 잠금
 
-`.version()`은 *손실된 업데이트(lost update)* 문제 — 두 작성자가 같은 행을 읽고 서로를 덮어쓰는 — 를 감지하는 버전 카운터를 추가해요. INSERT 시 버전이 1로 설정되고, UPDATE 시 Stingerloom이 `WHERE version = N`을 추가하고 값을 증가시켜요. 그 사이 행이 바뀌었으면 UPDATE는 0개 행에 매치되고, 데이터를 조용히 잃는 대신 `OptimisticLockError`가 던져져요.
+`.version()`은 *손실된 업데이트(lost update)* 문제 — 두 작성자가 같은 행을 읽고 서로를 덮어쓰는 — 를 감지하는 버전 카운터를 추가해요. INSERT 시 버전이 1로 설정되고, UPDATE 시 Stingerloom이 `WHERE version = N`을 추가하고 값을 증가시켜요. 그 사이 행이 바뀌었으면 UPDATE는 0개 행에 매치되고, 데이터를 모르는 사이 잃는 대신 `OptimisticLockError`가 던져져요.
 
 ```typescript
 export const Order = defineEntity("orders", {
