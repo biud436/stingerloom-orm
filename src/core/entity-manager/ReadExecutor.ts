@@ -449,12 +449,153 @@ export class ReadExecutor {
       : this.ctx.wrap(dbCol);
   }
 
+  /**
+   * Physical SELECT list for the read: the entity's own columns (or the
+   * caller's `select`), the extra columns polymorphic and eager shapes need,
+   * each aliased so {@link ResultTransformerFactory} can route it back.
+   */
+  private buildSelectList<T>(op: FindOperation<T>): string[] {
+    const selectMap: string[] = [];
+    const { entity, metadata, tableName, plan, propToCol, hasEagerJoins } = op;
+    const select = op.findOption.select;
+
+    // TPT child: build SELECT by separating child-table columns (PK + own) from parent columns
+    if (op.isTPTChild) {
+      const root = this.inheritanceResolver.getRoot(entity)!;
+      const rootMeta = this.resolver.resolveEntityMetadata(root);
+      if (rootMeta) {
+        const rootTableName = rootMeta.name;
+        const rootColNames = new Set(
+          rootMeta.columns.map((c: any) => c.name),
+        );
+        const pkColNames = new Set(
+          metadata.columns
+            .filter((c: any) => c.options?.primary)
+            .map((c: any) => c.name),
+        );
+
+        // Columns that physically exist on the child table: PK + own (excluding parent-only columns)
+        for (const col of metadata.columns) {
+          const isPk = pkColNames.has(col.name);
+          const isRootOnly = rootColNames.has(col.name) && !isPk;
+          if (!isRootOnly) {
+            selectMap.push(
+              `${this.ctx.wrap(tableName)}.${this.ctx.wrap(col.name)}`,
+            );
+          }
+        }
+
+        // Non-PK columns from the parent table
+        for (const col of rootMeta.columns) {
+          if (pkColNames.has(col.name)) continue;
+          selectMap.push(
+            `${this.ctx.wrap(rootTableName)}.${this.ctx.wrap(col.name)}`,
+          );
+        }
+      }
+    } else if (select) {
+      const selectedColumns = this.ctx.resolveSelectColumns<T>(select)
+        .map((prop) => propToCol.get(prop) ?? prop);
+      if (hasEagerJoins) {
+        selectMap.push(
+          ...selectedColumns.map(
+            (col) => `${this.ctx.wrap(tableName)}.${this.ctx.wrap(col)}`,
+          ),
+        );
+      } else {
+        selectMap.push(...selectedColumns.map((col) => this.ctx.wrap(col)));
+      }
+    } else {
+      // Full physical column set (incl. FK-only columns) — precomputed and
+      // wrapped once per entity metadata in getColumnPlan().
+      selectMap.push(
+        ...(hasEagerJoins ? plan.selectQualified : plan.selectPlain),
+      );
+    }
+
+    if (op.isTPTPolymorphic) {
+      this.appendPolymorphicChildColumns(op, selectMap);
+    }
+    this.appendEagerRelationColumns(op, selectMap);
+
+    return selectMap;
+  }
+
+  /**
+   * TPT polymorphic: add each child table's unique columns to SELECT, aliased
+   * `<childTable>_<column>` so the transformer can group them per subclass.
+   */
+  private appendPolymorphicChildColumns<T>(
+    op: FindOperation<T>,
+    selectMap: string[],
+  ): void {
+    const pk = op.metadata.columns.find((c: any) => c.options?.primary);
+    const children = this.inheritanceResolver
+      .getConcreteEntities(op.entity)
+      .filter((c) => c !== op.entity);
+    for (const ChildEntity of children) {
+      const childMeta = this.resolver.resolveEntityMetadata(ChildEntity);
+      if (!childMeta || !pk) continue;
+      const childTableName = childMeta.name;
+      const ownCols = this.inheritanceResolver.getOwnColumns(ChildEntity);
+      for (const col of ownCols) {
+        selectMap.push(
+          `${this.ctx.wrap(childTableName)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(`${childTableName}_${col.name}`)}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Columns of the eagerly JOINed relations.
+   *
+   * Each relation gets its own table alias (the property name like
+   * "assignee" / "reporter") so that two relations pointing at the same
+   * entity (e.g. Issue → assignee + reporter, both → User) emit `LEFT JOIN
+   * user AS assignee` and `LEFT JOIN user AS reporter` instead of two `LEFT
+   * JOIN user AS user`. The latter tripped MariaDB's "Not unique
+   * table/alias" error. {@link appendEagerJoins} reuses the same aliases.
+   */
+  private appendEagerRelationColumns<T>(
+    op: FindOperation<T>,
+    selectMap: string[],
+  ): void {
+    for (const rel of op.eagerM2O) {
+      const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+      const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
+      if (!relatedMetadata) continue;
+
+      const relAlias = rel.columnName;
+      for (const col of relatedMetadata.columns) {
+        const alias = `${rel.columnName}_${col.name}`;
+        selectMap.push(
+          `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(alias)}`,
+        );
+      }
+    }
+
+    // Owning-side OneToOne — same per-property alias.
+    for (const rel of op.eagerO2O) {
+      const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+      const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
+      if (!relatedMetadata) continue;
+
+      const relAlias = rel.propertyKey;
+      for (const col of relatedMetadata.columns) {
+        const alias = `${rel.propertyKey}_${col.name}`;
+        selectMap.push(
+          `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(alias)}`,
+        );
+      }
+    }
+  }
+
   async findInternal<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
     existingSession?: TransactionSessionManager,
   ): Promise<EntityResult<T>> {
-    const { select, orderBy, where, take, skip, groupBy, having } = findOption;
+    const { orderBy, where, take, skip, groupBy, having } = findOption;
     const { limit } = findOption;
 
     this.validatePaginationOptions(findOption);
@@ -507,120 +648,11 @@ export class ReadExecutor {
 
       const qb = RawQueryBuilderFactory.create();
 
-      const selectMap: string[] = [];
       const whereMap: Sql[] = [];
       const orderByMap: Array<{ column: string; direction: "ASC" | "DESC" }> =
         [];
 
-    // TPT child: build SELECT by separating child-table columns (PK + own) from parent columns
-      if (isTPTChild) {
-        const root = this.inheritanceResolver.getRoot(entity)!;
-        const rootMeta = this.resolver.resolveEntityMetadata(root);
-        if (rootMeta) {
-          const rootTableName = rootMeta.name;
-          const rootColNames = new Set(
-            rootMeta.columns.map((c: any) => c.name),
-          );
-          const pkColNames = new Set(
-            metadata.columns
-              .filter((c: any) => c.options?.primary)
-              .map((c: any) => c.name),
-          );
-
-          // Columns that physically exist on the child table: PK + own (excluding parent-only columns)
-          for (const col of metadata.columns) {
-            const isPk = pkColNames.has(col.name);
-            const isRootOnly = rootColNames.has(col.name) && !isPk;
-            if (!isRootOnly) {
-              selectMap.push(
-                `${this.ctx.wrap(tableName)}.${this.ctx.wrap(col.name)}`,
-              );
-            }
-          }
-
-          // Non-PK columns from the parent table
-          for (const col of rootMeta.columns) {
-            if (pkColNames.has(col.name)) continue;
-            selectMap.push(
-              `${this.ctx.wrap(rootTableName)}.${this.ctx.wrap(col.name)}`,
-            );
-          }
-        }
-      } else if (select) {
-        const selectedColumns = this.ctx.resolveSelectColumns<T>(select)
-          .map((prop) => propToCol.get(prop) ?? prop);
-        if (hasEagerJoins) {
-          selectMap.push(
-            ...selectedColumns.map(
-              (col) => `${this.ctx.wrap(tableName)}.${this.ctx.wrap(col)}`,
-            ),
-          );
-        } else {
-          selectMap.push(...selectedColumns.map((col) => this.ctx.wrap(col)));
-        }
-      } else {
-        // Full physical column set (incl. FK-only columns) — precomputed and
-        // wrapped once per entity metadata in getColumnPlan().
-        selectMap.push(
-          ...(hasEagerJoins ? plan.selectQualified : plan.selectPlain),
-        );
-      }
-
-      // TPT polymorphic: add each child table's unique columns to SELECT (with a prefix alias)
-      if (isTPTPolymorphic) {
-        const pk = metadata.columns.find((c: any) => c.options?.primary);
-        const children = this.inheritanceResolver
-          .getConcreteEntities(entity)
-          .filter((c) => c !== entity);
-        for (const ChildEntity of children) {
-          const childMeta = this.resolver.resolveEntityMetadata(ChildEntity);
-          if (!childMeta || !pk) continue;
-          const childTableName = childMeta.name;
-          const ownCols = this.inheritanceResolver.getOwnColumns(ChildEntity);
-          for (const col of ownCols) {
-            selectMap.push(
-              `${this.ctx.wrap(childTableName)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(`${childTableName}_${col.name}`)}`,
-            );
-          }
-        }
-      }
-
-      // Add eager ManyToOne relation columns to SELECT.
-      //
-      // Each relation gets its own table alias (`rel.columnName` — the
-      // property name like "assignee" / "reporter") so that two relations
-      // pointing at the same entity (e.g. Issue → assignee + reporter, both
-      // → User) emit `LEFT JOIN user AS assignee` and `LEFT JOIN user AS
-      // reporter` instead of two `LEFT JOIN user AS user`. The latter
-      // tripped MariaDB's "Not unique table/alias" error.
-      for (const rel of eagerRelations) {
-        const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
-        const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
-        if (!relatedMetadata) continue;
-
-        const relAlias = rel.columnName;
-        for (const col of relatedMetadata.columns) {
-          const alias = `${rel.columnName}_${col.name}`;
-          selectMap.push(
-            `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(alias)}`,
-          );
-        }
-      }
-
-      // Add eager OneToOne relation columns to SELECT — same per-property alias.
-      for (const rel of eagerOneToOneRelations) {
-        const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
-        const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
-        if (!relatedMetadata) continue;
-
-        const relAlias = rel.propertyKey;
-        for (const col of relatedMetadata.columns) {
-          const alias = `${rel.propertyKey}_${col.name}`;
-          selectMap.push(
-            `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(alias)}`,
-          );
-        }
-      }
+      const selectMap = this.buildSelectList(op);
 
       whereMap.push(
         ...resolveWhereClause(where, {
