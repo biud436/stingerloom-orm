@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType, Logger, resolveEntityGlobs, generateUUIDv7 } from "../../utils";
-import { ColumnMetadata, MetadataLayerRegistry } from "../../scanner";
+import { ColumnMetadata, EntityScannerMetadata, MetadataLayerRegistry } from "../../scanner";
 import type { ManyToOneMetadata, OneToOneMetadata } from "../../decorators";
 import { ISqlDriver } from "../../dialects/SqlDriver";
 import { TransactionSessionManager } from "../../dialects/TransactionSessionManager";
@@ -65,6 +65,46 @@ interface ReadColumnPlan {
   eagerM2O: ManyToOneMetadata<any>[];
   /** Owning-side oneToOne entries with `eager: true`. */
   eagerO2O: OneToOneMetadata<any>[];
+}
+
+/**
+ * Everything {@link ReadExecutor.findInternal} resolves once up front and
+ * every clause builder below then reads: the entity's metadata view, its
+ * cached column plan, the inheritance shape of the query, and the eager
+ * relations that turn the read into a JOIN.
+ *
+ * Assembled by {@link ReadExecutor.prepareFindOperation}; treated as
+ * read-only by the helpers that receive it.
+ */
+interface FindOperation<T> {
+  entity: ClazzType<T>;
+  findOption: FindOption<T>;
+  metadata: EntityScannerMetadata;
+  /** Physical table of `entity` (the child table for a TPT child). */
+  tableName: string;
+  plan: ReadColumnPlan;
+  /** Entity property name → DB column name, built once per call. */
+  propToCol: Map<string, string>;
+  inheritanceStrategy: ReturnType<InheritanceResolver["getStrategy"]>;
+  /** JOINED strategy, querying a child: its own table INNER JOINs the root. */
+  isTPTChild: boolean;
+  /** JOINED strategy, querying the root polymorphically: LEFT JOIN every child. */
+  isTPTPolymorphic: boolean;
+  /** TABLE_PER_CLASS root query: FROM is a UNION ALL over the hierarchy. */
+  isTPCPolymorphic: boolean;
+  /** ManyToOne relations JOINed into this read. */
+  eagerM2O: ManyToOneMetadata<any>[];
+  /** Owning-side OneToOne relations JOINed into this read. */
+  eagerO2O: OneToOneMetadata<any>[];
+  /** True when the statement carries any JOIN, so columns must be qualified. */
+  hasEagerJoins: boolean;
+  /**
+   * TPT child only: qualifies a DB column with the table that physically
+   * holds it (parent for inherited columns, child otherwise). Undefined for
+   * every other shape, where {@link ReadExecutor.qualifyColumn} falls back to
+   * the plain `hasEagerJoins` rule.
+   */
+  tptQualifyColumn?: (dbCol: string) => string;
 }
 
 /**
@@ -231,15 +271,16 @@ export class ReadExecutor {
     return rows.map((row) => row[column]);
   }
 
-  async findInternal<T>(
-    entity: ClazzType<T>,
-    findOption: FindOption<T> = {},
-    existingSession?: TransactionSessionManager,
-  ): Promise<EntityResult<T>> {
-    const { select, orderBy, where, take, skip, groupBy, having } = findOption;
-    const { limit } = findOption;
+  /**
+   * Rejects negative pagination inputs before any metadata or SQL work.
+   *
+   * `take`/`skip`/`limit` reach the builder as raw numbers, so a negative
+   * value would otherwise become a dialect-specific syntax error naming the
+   * generated SQL rather than the option the caller passed.
+   */
+  private validatePaginationOptions<T>(findOption: FindOption<T>): void {
+    const { take, skip, limit } = findOption;
 
-    // Validate pagination values
     if (skip !== undefined && skip < 0) {
       throw new InvalidQueryError(
         `"skip" must be a non-negative integer, but received ${skip}`,
@@ -274,6 +315,149 @@ export class ReadExecutor {
         );
       }
     }
+  }
+
+  /**
+   * Resolves everything the clause builders share: metadata, column plan,
+   * inheritance shape, eager relation sets and the property→column map, then
+   * rejects unresolvable `select`/`where`/`orderBy`/`groupBy` identifiers.
+   *
+   * @throws EntityMetadataNotFoundError when `entity` carries no metadata.
+   */
+  private prepareFindOperation<T>(
+    entity: ClazzType<T>,
+    findOption: FindOption<T>,
+  ): FindOperation<T> {
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    // ── Detect the inheritance strategy early ──
+    const inheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
+    const isTPTChild = inheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity);
+    const isTPTPolymorphic = inheritanceStrategy === "JOINED" && this.inheritanceResolver.isPolymorphicQuery(entity);
+    const isTPCPolymorphic = inheritanceStrategy === "TABLE_PER_CLASS" && this.inheritanceResolver.isPolymorphicQuery(entity);
+
+    const plan = this.getColumnPlan(entity, metadata);
+
+    // Collect ManyToOne relations to eager-load
+    const eagerM2O = findOption.relations
+      ? plan.manyToOne.filter(
+          (rel) =>
+            rel.option?.eager === true ||
+            findOption.relations!.includes(rel.columnName),
+        )
+      : plan.eagerM2O;
+
+    // Collect OneToOne relations to eager-load (owning side — the side with joinColumn)
+    const eagerO2O = findOption.relations
+      ? plan.oneToOne.filter(
+          (rel) =>
+            !!rel.joinColumn &&
+            (rel.option?.eager === true ||
+              findOption.relations!.includes(rel.propertyKey)),
+        )
+      : plan.eagerO2O;
+
+    const hasEagerJoins =
+      eagerM2O.length > 0 || eagerO2O.length > 0
+      || isTPTChild || isTPTPolymorphic;
+
+    // Build property-to-column map once and reuse throughout findInternal
+    const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+
+    const op: FindOperation<T> = {
+      entity,
+      findOption,
+      metadata,
+      tableName: metadata.name,
+      plan,
+      propToCol,
+      inheritanceStrategy,
+      isTPTChild,
+      isTPTPolymorphic,
+      isTPCPolymorphic,
+      eagerM2O,
+      eagerO2O,
+      hasEagerJoins,
+      tptQualifyColumn: undefined,
+    };
+    op.tptQualifyColumn = this.createTptColumnQualifier(op);
+
+    // Reject column identifiers no builder can resolve. `where` / `orderBy`
+    // / `select` fall back to the raw key when it is not in the property
+    // map, so a typo used to travel to the driver and come back as a
+    // dialect-specific "no such column" that never named the alternatives.
+    validateReadIdentifiers(
+      findOption,
+      findOption.select ? this.ctx.resolveSelectColumns<T>(findOption.select) : undefined,
+      buildEntityColumnScope({
+        entity,
+        metadata,
+        propertyToColumn: propToCol,
+        computedColumns: this.ctx.getComputedColumnNames(entity),
+        inheritanceResolver: this.inheritanceResolver,
+      }),
+    );
+
+    return op;
+  }
+
+  /**
+   * TPT child: qualify a column with the parent table if it belongs to the
+   * parent, else with the child table. Undefined for every other shape.
+   */
+  private createTptColumnQualifier<T>(
+    op: FindOperation<T>,
+  ): ((dbCol: string) => string) | undefined {
+    if (!op.isTPTChild) return undefined;
+
+    const tptRoot = this.inheritanceResolver.getRoot(op.entity)!;
+    const tptRootMeta = this.resolver.resolveEntityMetadata(tptRoot);
+    if (!tptRootMeta) return undefined;
+
+    const tptRootTableName = tptRootMeta.name;
+    const tptPkNames = new Set(
+      op.metadata.columns
+        .filter((c: any) => c.options?.primary)
+        .map((c: any) => c.name),
+    );
+    const tptRootOnlyCols = new Set(
+      tptRootMeta.columns
+        .filter((c: any) => !tptPkNames.has(c.name))
+        .map((c: any) => c.name),
+    );
+    return (dbCol: string) => {
+      if (tptRootOnlyCols.has(dbCol)) {
+        return `${this.ctx.wrap(tptRootTableName)}.${this.ctx.wrap(dbCol)}`;
+      }
+      return `${this.ctx.wrap(op.tableName)}.${this.ctx.wrap(dbCol)}`;
+    };
+  }
+
+  /**
+   * Renders a DB column for a clause that must survive JOINs: the TPT-child
+   * qualifier when one exists, else table-qualified while any JOIN is
+   * present, else bare. Shared by ORDER BY and GROUP BY, which pick the same
+   * table for the same column.
+   */
+  private qualifyColumn<T>(op: FindOperation<T>, dbCol: string): string {
+    if (op.tptQualifyColumn) return op.tptQualifyColumn(dbCol);
+    return op.hasEagerJoins
+      ? `${this.ctx.wrap(op.tableName)}.${this.ctx.wrap(dbCol)}`
+      : this.ctx.wrap(dbCol);
+  }
+
+  async findInternal<T>(
+    entity: ClazzType<T>,
+    findOption: FindOption<T> = {},
+    existingSession?: TransactionSessionManager,
+  ): Promise<EntityResult<T>> {
+    const { select, orderBy, where, take, skip, groupBy, having } = findOption;
+    const { limit } = findOption;
+
+    this.validatePaginationOptions(findOption);
 
     // Reject relation names no loader can resolve. Every loader filters with
     // `relations.includes(...)`, so without this an unmatched name produced a
@@ -304,17 +488,22 @@ export class ReadExecutor {
         : rawSession;
       const resultTransformer = ResultTransformerFactory.create();
 
-      const metadata = this.resolver.resolveEntityMetadata(entity);
-
-      if (!metadata) {
-        throw new EntityMetadataNotFoundError(entity.name);
-      }
-
-      // ── Detect the inheritance strategy early ──
-      const inheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
-      const isTPTChild = inheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity);
-      const isTPTPolymorphic = inheritanceStrategy === "JOINED" && this.inheritanceResolver.isPolymorphicQuery(entity);
-      const isTPCPolymorphic = inheritanceStrategy === "TABLE_PER_CLASS" && this.inheritanceResolver.isPolymorphicQuery(entity);
+      const op = this.prepareFindOperation(entity, findOption);
+      const {
+        metadata,
+        tableName,
+        plan,
+        propToCol,
+        inheritanceStrategy,
+        isTPTChild,
+        isTPTPolymorphic,
+        isTPCPolymorphic,
+        hasEagerJoins,
+        tptQualifyColumn,
+      } = op;
+      const manyToOneRelations = plan.manyToOne;
+      const eagerRelations = op.eagerM2O;
+      const eagerOneToOneRelations = op.eagerO2O;
 
       const qb = RawQueryBuilderFactory.create();
 
@@ -322,54 +511,6 @@ export class ReadExecutor {
       const whereMap: Sql[] = [];
       const orderByMap: Array<{ column: string; direction: "ASC" | "DESC" }> =
         [];
-
-      const plan = this.getColumnPlan(entity, metadata);
-
-      // Collect ManyToOne relations to eager-load
-      const manyToOneRelations = plan.manyToOne;
-      const eagerRelations = findOption.relations
-        ? manyToOneRelations.filter(
-            (rel) =>
-              rel.option?.eager === true ||
-              findOption.relations!.includes(rel.columnName),
-          )
-        : plan.eagerM2O;
-
-      // Collect OneToOne relations to eager-load (owning side — the side with joinColumn)
-      const oneToOneRelations = plan.oneToOne;
-      const eagerOneToOneRelations = findOption.relations
-        ? oneToOneRelations.filter(
-            (rel) =>
-              !!rel.joinColumn &&
-              (rel.option?.eager === true ||
-                findOption.relations!.includes(rel.propertyKey)),
-          )
-        : plan.eagerO2O;
-
-      const hasEagerJoins =
-        eagerRelations.length > 0 || eagerOneToOneRelations.length > 0
-        || isTPTChild || isTPTPolymorphic;
-
-      const tableName = metadata.name;
-
-      // Build property-to-column map once and reuse throughout findInternal
-    const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
-
-      // Reject column identifiers no builder can resolve. `where` / `orderBy`
-      // / `select` fall back to the raw key when it is not in the property
-      // map, so a typo used to travel to the driver and come back as a
-      // dialect-specific "no such column" that never named the alternatives.
-      validateReadIdentifiers(
-        findOption,
-        select ? this.ctx.resolveSelectColumns<T>(select) : undefined,
-        buildEntityColumnScope({
-          entity,
-          metadata,
-          propertyToColumn: propToCol,
-          computedColumns: this.ctx.getComputedColumnNames(entity),
-          inheritanceResolver: this.inheritanceResolver,
-        }),
-      );
 
     // TPT child: build SELECT by separating child-table columns (PK + own) from parent columns
       if (isTPTChild) {
@@ -478,32 +619,6 @@ export class ReadExecutor {
           selectMap.push(
             `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(alias)}`,
           );
-        }
-      }
-
-      // TPT child: qualify a column with the parent table if it belongs to the parent, else with the child table
-      let tptQualifyColumn: ((dbCol: string) => string) | undefined;
-      if (isTPTChild) {
-        const tptRoot = this.inheritanceResolver.getRoot(entity)!;
-        const tptRootMeta = this.resolver.resolveEntityMetadata(tptRoot);
-        if (tptRootMeta) {
-          const tptRootTableName = tptRootMeta.name;
-          const tptPkNames = new Set(
-            metadata.columns
-              .filter((c: any) => c.options?.primary)
-              .map((c: any) => c.name),
-          );
-          const tptRootOnlyCols = new Set(
-            tptRootMeta.columns
-              .filter((c: any) => !tptPkNames.has(c.name))
-              .map((c: any) => c.name),
-          );
-          tptQualifyColumn = (dbCol: string) => {
-            if (tptRootOnlyCols.has(dbCol)) {
-              return `${this.ctx.wrap(tptRootTableName)}.${this.ctx.wrap(dbCol)}`;
-            }
-            return `${this.ctx.wrap(tableName)}.${this.ctx.wrap(dbCol)}`;
-          };
         }
       }
 
