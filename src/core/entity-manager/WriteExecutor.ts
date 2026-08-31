@@ -43,7 +43,6 @@ import { DmlSqlBuilder } from "./DmlSqlBuilder";
 import {
   isDeadlockError,
   isTemplateStringsArray,
-  formatDateTimeForSQL,
 } from "./internal-utils";
 import {
   bindParam,
@@ -455,7 +454,6 @@ export class WriteExecutor {
 
     // Auto-inject @CreateTimestamp / @UpdateTimestamp values (on INSERT)
     const now = new Date();
-    const nowStr = formatDateTimeForSQL(now);
     if (createTsCol) {
       const idx = insertableColumns.findIndex(
         (col: ColumnMetadata) => col.name === createTsCol,
@@ -464,7 +462,7 @@ export class WriteExecutor {
         // Read via the property key — createTsCol is the DB column name after
         // the naming strategy, so item[createTsCol] would miss a user value.
         const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
-        values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
+        values[idx] = bindParam(existing ?? now);
       }
     }
     if (updateTsCol) {
@@ -473,7 +471,7 @@ export class WriteExecutor {
       );
       if (idx >= 0) {
         const existing = itemFields[this.ctx.propKey(insertableColumns[idx])];
-        values[idx] = existing instanceof Date ? formatDateTimeForSQL(existing) : bindParam(existing ?? nowStr);
+        values[idx] = bindParam(existing ?? now);
       }
     }
 
@@ -893,7 +891,7 @@ export class WriteExecutor {
       const existingIdx = updatableColumns.findIndex(
         (col: ColumnMetadata) => col.name === updateTsColName,
       );
-      const updateNow = formatDateTimeForSQL(new Date());
+      const updateNow = bindParam(new Date());
       if (existingIdx >= 0) {
         updateMap[existingIdx] =
           sql`${raw(this.ctx.wrap(updateTsColName))} = ${updateNow}`;
@@ -1369,9 +1367,7 @@ export class WriteExecutor {
           const rowValues: RawValue[] = bindParams(
             insertableColumns.map((col) => {
               const rawValue = itemFields[this.ctx.propKey(col)];
-              const transformed = this.ctx.applyWriteTransform(col, rawValue);
-              if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
-              return transformed;
+              return this.ctx.applyWriteTransform(col, rawValue);
             }),
           );
           for (const fk of fkColumns) {
@@ -1619,9 +1615,7 @@ export class WriteExecutor {
             // must run on this path too, otherwise JSON/transformer columns are bound
             // raw while reads still apply transformer.from.
             const rawValue = itemFields[this.ctx.propKey(column)];
-            const transformed = this.ctx.applyWriteTransform(column, rawValue);
-            if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
-            return transformed;
+            return this.ctx.applyWriteTransform(column, rawValue);
           }),
         );
         for (const fk of fkColumns) {
@@ -1795,9 +1789,7 @@ export class WriteExecutor {
             // must run on this path too, otherwise JSON/transformer columns are bound
             // raw while reads still apply transformer.from.
             const rawValue = itemFields[this.ctx.propKey(column)];
-            const transformed = this.ctx.applyWriteTransform(column, rawValue);
-            if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
-            return transformed;
+            return this.ctx.applyWriteTransform(column, rawValue);
           }),
         );
         for (const fk of fkColumns) {
@@ -2109,7 +2101,7 @@ export class WriteExecutor {
         );
         if (!hasExplicit) {
           setMap.push(
-            sql`${raw(this.ctx.wrap(updateTsColName))} = ${formatDateTimeForSQL(new Date())}`,
+            sql`${raw(this.ctx.wrap(updateTsColName))} = ${bindParam(new Date())}`,
           );
         }
       }
@@ -2350,7 +2342,7 @@ export class WriteExecutor {
         if (!hasExplicit) {
           mergedSetMap = [
             ...setEntries,
-            sql`${raw(wrappedTs)} = ${formatDateTimeForSQL(new Date())}`,
+            sql`${raw(wrappedTs)} = ${bindParam(new Date())}`,
           ];
         }
       }
@@ -2462,7 +2454,15 @@ export class WriteExecutor {
 
       const whereSql = join(whereMap, " AND ");
 
-      const nowExpr = this.ctx.isSqlite() ? raw("datetime('now')") : raw("NOW()");
+      // SQLite's datetime('now') renders UTC without a zone marker, and the
+      // read-side parser decodes zone-less text as local time — so the stamp
+      // came back shifted by the process offset. strftime with an explicit Z
+      // (and milliseconds) is the same DB clock in the format the reader
+      // decodes as UTC; MySQL/PostgreSQL NOW() is already typed, so the driver
+      // hands it back as a correct Date.
+      const nowExpr = this.ctx.isSqlite()
+        ? raw("strftime('%Y-%m-%dT%H:%M:%fZ','now')")
+        : raw("NOW()");
       const updateQuery = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`;
 
       const queryResult = (await session.query(updateQuery)) as DriverExecResult;
@@ -2819,9 +2819,7 @@ export class WriteExecutor {
         const rowValues: RawValue[] = bindParams(
           insertableColumns.map((col: ColumnMetadata) => {
             const rawValue = itemFields[this.ctx.propKey(col)];
-            const transformed = this.ctx.applyWriteTransform(col, rawValue);
-            if (transformed instanceof Date) return formatDateTimeForSQL(transformed);
-            return transformed ?? null;
+            return this.ctx.applyWriteTransform(col, rawValue) ?? null;
           }),
         );
         return sql`(${join(rowValues, ", ")})`;

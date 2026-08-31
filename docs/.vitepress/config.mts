@@ -86,6 +86,7 @@ function sidebarEn() {
         { text: "Raw Pipeline", link: "/raw-pipeline" },
         { text: "Pagination & Streaming", link: "/pagination" },
         { text: "Query Result Cache", link: "/caching" },
+        { text: "Dates & Timezones", link: "/timezone" },
       ],
     },
     {
@@ -229,6 +230,7 @@ function sidebarKo() {
         { text: "Raw Pipeline", link: "/ko/raw-pipeline" },
         { text: "페이지네이션 & 스트리밍", link: "/ko/pagination" },
         { text: "쿼리 결과 캐시", link: "/ko/caching" },
+        { text: "날짜 & 타임존", link: "/ko/timezone" },
       ],
     },
     {

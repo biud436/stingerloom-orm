@@ -6,6 +6,16 @@ import { escapeSqlLiteral } from "../../utils/escapeSqlLiteral";
 import { ALL_MYSQL } from "../DialectCapabilities";
 import type { MySqlCapabilities, CommonCapabilities } from "../DialectCapabilities";
 import type { DialectName } from "../../core/ColumnTypeRegistry";
+import { Logger } from "../../utils";
+
+const logger = new Logger("MySqlColumnDefinitionBuilder");
+
+/**
+ * MySQL has no zone-aware DATETIME type, so `timestamptz` becomes a plain
+ * DATETIME and the offset is not stored. Warned once per process rather than
+ * per column, since the mapping is a property of the dialect, not the entity.
+ */
+let warnedTimestamptzDowngrade = false;
 
 /**
  * MySQL dialect column definition builder.
@@ -49,6 +59,13 @@ export class MySqlColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
       case "timestamp":
         return "TIMESTAMP";
       case "timestamptz":
+        if (!warnedTimestamptzDowngrade) {
+          warnedTimestamptzDowngrade = true;
+          logger.warn(
+            'Column type "timestamptz" is created as DATETIME on MySQL/MariaDB — the dialect has no zone-aware DATETIME type, so the value is stored as wall time without an offset. ' +
+              "Values still round-trip as the correct instant while the application timezone is stable; use TIMESTAMP (`type: \"timestamp\"`) if you need the server to convert between session timezones.",
+          );
+        }
         return "DATETIME";
       case "float":
         return "FLOAT";
