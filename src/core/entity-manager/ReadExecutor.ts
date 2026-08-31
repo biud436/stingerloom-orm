@@ -899,14 +899,135 @@ export class ReadExecutor {
     return joinCondition;
   }
 
+  /**
+   * GROUP BY / HAVING. Group keys resolve property names to DB columns
+   * exactly like select/orderBy: without the mapping, a renamed column
+   * (@Column({ name }) or a NamingStrategy) grouped by a column that does not
+   * exist while SELECT used the mapped name.
+   */
+  private appendGroupByHaving<T>(
+    op: FindOperation<T>,
+    qb: BaseRawQueryBuilder,
+  ): void {
+    const { groupBy, having } = op.findOption;
+
+    if (groupBy && groupBy.length > 0) {
+      const groupByColumns = (groupBy as string[]).map((col) =>
+        this.qualifyColumn(op, op.propToCol.get(col) ?? col),
+      );
+      qb.groupBy(groupByColumns);
+    }
+
+    if (having && having.length > 0) {
+      qb.having(having);
+    }
+  }
+
+  /**
+   * Row window (`limit` tuple or `skip`/`take`) plus the pessimistic lock
+   * suffix.
+   *
+   * LIMIT tuple syntax is dialect-specific (mirrors ExplainQueryHandler,
+   * #145): the builder defaults to MySQL's `LIMIT off, cnt`, which
+   * PostgreSQL rejects — so the dialect must be set for every driver, not
+   * just the MySQL family.
+   */
+  private applyLimitAndLock<T>(
+    op: FindOperation<T>,
+    qb: BaseRawQueryBuilder,
+  ): void {
+    const { take, skip, limit } = op.findOption;
+
+    if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
+    else if (this.ctx.isSqlite()) qb.setDatabaseType("sqlite");
+    else qb.setDatabaseType("postgresql");
+
+    if (Array.isArray(limit)) {
+      const [offset, count] = limit;
+      // An explicit count of 0 means "no rows" (LIMIT 0); the validator
+      // permits it. Only a positive `take` overrides the tuple's count.
+      const effectiveCount = (take && take > 0) ? take : count;
+      qb.limit([offset, effectiveCount]);
+    } else if (skip !== undefined || (take !== undefined && limit === undefined)) {
+      // skip/take pagination → convert to limit tuple. An explicit
+      // `take: 0` means LIMIT 0 (the validator allows it), so only
+      // `undefined` may drop the cap — a falsy check would silently
+      // return the whole table.
+      const offset = skip ?? 0;
+      if (take !== undefined) {
+        qb.limit([offset, take]);
+      } else if (offset > 0) {
+        // skip without take: no real cap — use a very large count so the
+        // OFFSET still applies on drivers that require one (MySQL).
+        qb.limit([offset, 2147483647]);
+      }
+    } else {
+      if (limit !== undefined) {
+        qb.limit(limit as number);
+      }
+    }
+
+    // Pessimistic lock suffix
+    if (op.findOption.lock) {
+      const lockSuffix = this.ctx.resolveLockSuffix(op.findOption.lock);
+      qb.appendSql(raw(lockSuffix));
+    }
+  }
+
+  /**
+   * Runs the assembled statement on `session` and hands back the raw rows,
+   * or undefined when the read matched nothing.
+   *
+   * The timeout statement is issued by executeReadOnly (see
+   * `withQueryTimeout`), which owns the session this runs on — issuing it
+   * here as well left the PostgreSQL `SET LOCAL` outside any transaction on
+   * the paths that route around it.
+   */
+  private async executeFindQuery<T>(
+    op: FindOperation<T>,
+    session: TransactionSessionManager,
+    qb: BaseRawQueryBuilder,
+  ): Promise<QueryResult | undefined> {
+    const resultQuery = qb.build();
+
+    const queryStartTime = Date.now();
+    this.ctx.beginTrackQuery();
+    const queryResult = (await session.query<T>(
+      resultQuery,
+    )) as QueryResult;
+    this.ctx.trackQuery(
+      op.entity.name,
+      resultQuery.text ?? String(resultQuery),
+      Date.now() - queryStartTime,
+    );
+
+    const { results } = queryResult;
+    if (!results || results.length === 0) {
+      return undefined;
+    }
+
+    // SQLite: convert INTEGER 0/1 back to boolean
+    if (this.ctx.isSqlite()) {
+      const boolColumns = op.plan.boolColumns;
+      if (boolColumns.length > 0) {
+        for (const row of results) {
+          for (const col of boolColumns) {
+            if (col in row) {
+              row[col] = !!row[col];
+            }
+          }
+        }
+      }
+    }
+
+    return queryResult;
+  }
+
   async findInternal<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
     existingSession?: TransactionSessionManager,
   ): Promise<EntityResult<T>> {
-    const { take, skip, groupBy, having } = findOption;
-    const { limit } = findOption;
-
     this.validatePaginationOptions(findOption);
 
     // Reject relation names no loader can resolve. Every loader filters with
@@ -968,104 +1089,17 @@ export class ReadExecutor {
 
       qb.where(whereMap);
 
-      // GROUP BY / HAVING — resolve property names to DB columns exactly like
-      // select/orderBy: without the mapping, a renamed column (@Column({ name })
-      // or a NamingStrategy) grouped by a column that does not exist while
-      // SELECT used the mapped name. TPT children route through
-      // tptQualifyColumn so parent-only columns land on the parent table.
-      if (groupBy && groupBy.length > 0) {
-        const groupByColumns = (groupBy as string[]).map((col) => {
-          const dbCol = propToCol.get(col) ?? col;
-          return tptQualifyColumn
-            ? tptQualifyColumn(dbCol)
-            : hasEagerJoins
-              ? `${this.ctx.wrap(tableName)}.${this.ctx.wrap(dbCol)}`
-              : this.ctx.wrap(dbCol);
-        });
-        qb.groupBy(groupByColumns);
-      }
-
-      if (having && having.length > 0) {
-        qb.having(having);
-      }
+      this.appendGroupByHaving(op, qb);
 
       qb.orderBy(orderByMap);
 
-      // LIMIT tuple syntax is dialect-specific (mirrors ExplainQueryHandler,
-      // #145): the builder defaults to MySQL's `LIMIT off, cnt`, which
-      // PostgreSQL rejects — so the dialect must be set for every driver,
-      // not just the MySQL family.
-      if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
-      else if (this.ctx.isSqlite()) qb.setDatabaseType("sqlite");
-      else qb.setDatabaseType("postgresql");
+      this.applyLimitAndLock(op, qb);
 
-      if (Array.isArray(limit)) {
-        const [offset, count] = limit;
-        // An explicit count of 0 means "no rows" (LIMIT 0); the validator
-        // permits it. Only a positive `take` overrides the tuple's count.
-        const effectiveCount = (take && take > 0) ? take : count;
-        qb.limit([offset, effectiveCount]);
-      } else if (skip !== undefined || (take !== undefined && limit === undefined)) {
-        // skip/take pagination → convert to limit tuple. An explicit
-        // `take: 0` means LIMIT 0 (the validator allows it), so only
-        // `undefined` may drop the cap — a falsy check would silently
-        // return the whole table.
-        const offset = skip ?? 0;
-        if (take !== undefined) {
-          qb.limit([offset, take]);
-        } else if (offset > 0) {
-          // skip without take: no real cap — use a very large count so the
-          // OFFSET still applies on drivers that require one (MySQL).
-          qb.limit([offset, 2147483647]);
-        }
-      } else {
-        if (limit !== undefined) {
-          qb.limit(limit as number);
-        }
-      }
-
-      // Pessimistic lock suffix
-      if (findOption.lock) {
-        const lockSuffix = this.ctx.resolveLockSuffix(findOption.lock);
-        qb.appendSql(raw(lockSuffix));
-      }
-
-      const resultQuery = qb.build();
-
-      // The timeout statement is issued by executeReadOnly (see
-      // `withQueryTimeout`), which owns the session this callback runs on —
-      // issuing it here as well left the PostgreSQL `SET LOCAL` outside any
-      // transaction on the paths that route around it.
-
-      const queryStartTime = Date.now();
-      this.ctx.beginTrackQuery();
-      const queryResult = (await session.query<T>(
-        resultQuery,
-      )) as QueryResult;
-      this.ctx.trackQuery(
-        entity.name,
-        resultQuery.text ?? String(resultQuery),
-        Date.now() - queryStartTime,
-      );
-
-      const { results } = queryResult;
-      if (!results || results.length === 0) {
+      const queryResult = await this.executeFindQuery(op, session, qb);
+      if (!queryResult) {
         return undefined;
       }
-
-      // SQLite: convert INTEGER 0/1 back to boolean
-      if (this.ctx.isSqlite() && results.length > 0) {
-        const boolColumns = plan.boolColumns;
-        if (boolColumns.length > 0) {
-          for (const row of results) {
-            for (const col of boolColumns) {
-              if (col in row) {
-                row[col] = !!row[col];
-              }
-            }
-          }
-        }
-      }
+      const results = queryResult.results;
 
       const isEntityArray = results.length > 1;
       let entityResult: EntityResult<T>;
