@@ -175,6 +175,7 @@
     "prepublishOnly": "pnpm run build",
     "test": "jest",
     "test:stress": "STRESS_TEST=true jest --testPathPattern \"__tests__/stress\" --runInBand --no-coverage",
+    "test:temporal-tz": "node scripts/run-temporal-tz.js",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",

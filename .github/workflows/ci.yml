@@ -45,6 +45,27 @@ jobs:
       # __tests__/stress/stress-budget.ts).
       - run: pnpm test:stress
 
+  temporal-tz:
+    name: Temporal Timezone Matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # CI runs in UTC, where every timezone defect the temporal suites cover
+      # is invisible: a zone-less wall-clock write and a correct UTC write
+      # produce the same text. This replays them under positive, negative and
+      # half-hour offsets (see scripts/run-temporal-tz.js).
+      - run: pnpm test:temporal-tz
+
   docs:
     name: Docs Build & Link Check
     runs-on: ubuntu-latest
