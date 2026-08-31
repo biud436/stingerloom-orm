@@ -10,6 +10,7 @@ import sql, { Sql, join, raw } from "../../utils/sqlTag";
 import { QueryResult } from "../../types/QueryResult";
 import { EntityResult } from "../../types/EntityResult";
 import { RawQueryBuilderFactory } from "../RawQueryBuilderFactory";
+import type { BaseRawQueryBuilder } from "../BaseRawQueryBuilder";
 import { Conditions } from "../Conditions";
 import { ResultTransformerFactory } from "../ResultTransformerFactory";
 import { injectLazyProxy } from "../LazyLoader";
@@ -680,6 +681,224 @@ export class ReadExecutor {
     return orderByMap;
   }
 
+  /**
+   * SELECT ... FROM for the read. A TABLE_PER_CLASS root query has no single
+   * table to read from, so its FROM is a UNION ALL over every concrete table
+   * with the missing columns padded to NULL and the discriminator projected
+   * as a literal.
+   */
+  private applyFromClause<T>(
+    op: FindOperation<T>,
+    qb: BaseRawQueryBuilder,
+    selectMap: string[],
+  ): void {
+    const { entity, tableName } = op;
+
+    if (op.isTPCPolymorphic) {
+      const allEntities = this.inheritanceResolver.getConcreteEntities(entity);
+      const allHierarchyCols = this.inheritanceResolver
+        .getAllHierarchyColumns(entity)
+        .map((c) => c.name);
+      const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+      const discColName = discCol?.name ?? "dtype";
+
+      const subQueries: Sql[] = [];
+      for (const ent of allEntities) {
+        const entMeta = this.resolver.resolveEntityMetadata(ent);
+        if (!entMeta) continue;
+        const entTableName = entMeta.name;
+        const entColNames = new Set(
+          entMeta.columns.map((c: any) => c.name),
+        );
+        const discVal =
+          this.inheritanceResolver.getDiscriminatorValue(ent) ?? ent.name;
+
+        const colExprs: Sql[] = allHierarchyCols.map((colName) =>
+          entColNames.has(colName)
+            ? sql`${raw(this.ctx.wrap(colName))}`
+            : sql`NULL AS ${raw(this.ctx.wrap(colName))}`,
+        );
+        colExprs.push(sql`${discVal} AS ${raw(this.ctx.wrap(discColName))}`);
+
+        const subSql = sql`SELECT ${join(colExprs, ", ")} FROM ${raw(this.ctx.wrapTable(entTableName))}`;
+        subQueries.push(subSql);
+      }
+
+      const unionSql = join(subQueries, " UNION ALL ");
+      qb.select(["*"]).from(sql`(${unionSql})`, this.ctx.wrap("_tpc"));
+    } else if (op.findOption.distinct) {
+      qb.selectDistinct(selectMap).from(this.ctx.wrapTable(tableName));
+    } else {
+      qb.select(selectMap).from(this.ctx.wrapTable(tableName));
+    }
+  }
+
+  /**
+   * JOINs the JOINED (TPT) strategy needs: a child reads its inherited
+   * columns from the root table, a polymorphic root reads each subclass's own
+   * columns from that subclass's table. Both join on the shared PK.
+   */
+  private appendInheritanceJoins<T>(
+    op: FindOperation<T>,
+    qb: BaseRawQueryBuilder,
+  ): void {
+    const { entity, metadata, tableName } = op;
+
+    // TPT child: INNER JOIN the parent table
+    if (op.isTPTChild) {
+      const root = this.inheritanceResolver.getRoot(entity)!;
+      const rootMeta = this.resolver.resolveEntityMetadata(root);
+      if (rootMeta) {
+        const pk = metadata.columns.find((c: any) => c.options?.primary);
+        if (pk) {
+          const rootTableName = rootMeta.name;
+          const joinCond = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(pk.name))} = ${raw(this.ctx.wrap(rootTableName))}.${raw(this.ctx.wrap(pk.name))}`;
+          qb.innerJoin(
+            this.ctx.wrapTable(rootTableName),
+            this.ctx.wrap(rootTableName),
+            joinCond,
+          );
+        }
+      }
+    }
+
+    // TPT polymorphic: LEFT JOIN every child table
+    if (op.isTPTPolymorphic) {
+      const pk = metadata.columns.find((c: any) => c.options?.primary);
+      const children = this.inheritanceResolver
+        .getConcreteEntities(entity)
+        .filter((c) => c !== entity);
+      for (const ChildEntity of children) {
+        const childMeta = this.resolver.resolveEntityMetadata(ChildEntity);
+        if (!childMeta || !pk) continue;
+        const childTableName = childMeta.name;
+        const joinCond = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(pk.name))} = ${raw(this.ctx.wrap(childTableName))}.${raw(this.ctx.wrap(pk.name))}`;
+        qb.leftJoin(
+          this.ctx.wrapTable(childTableName),
+          this.ctx.wrap(childTableName),
+          joinCond,
+        );
+      }
+    }
+  }
+
+  /**
+   * LEFT JOINs for the eagerly loaded ManyToOne / owning-side OneToOne
+   * relations, under the aliases {@link appendEagerRelationColumns} selected
+   * from. Soft-delete and tenant predicates go in the ON clause, not WHERE,
+   * so a filtered-out target hydrates as null instead of dropping the parent
+   * row — the semantics the batched and lazy loaders already have.
+   */
+  private appendEagerJoins<T>(
+    op: FindOperation<T>,
+    qb: BaseRawQueryBuilder,
+  ): void {
+    const { entity, tableName } = op;
+
+    // Eager ManyToOne LEFT JOIN
+    for (const rel of op.eagerM2O) {
+      const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
+      const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
+      if (!relatedMetadata) continue;
+
+      const relatedTableName = relatedMetadata.name || RelatedEntity.name;
+      const joinColumn = rel.joinColumn ?? rel.columnName;
+
+      const relatedPk = relatedMetadata.columns.find(
+        (col: any) => col.options?.primary,
+      );
+      if (!relatedPk) continue;
+
+      // TPT child: if the FK column lives on the parent table, qualify it with the parent table
+      let fkTableName = tableName;
+      if (op.isTPTChild) {
+        const root = this.inheritanceResolver.getRoot(entity)!;
+        const rootMeta = this.resolver.resolveEntityMetadata(root);
+        if (rootMeta) {
+          const rootColNames = new Set(rootMeta.columns.map((c: any) => c.name));
+          if (rootColNames.has(joinColumn)) {
+            fkTableName = rootMeta.name;
+          }
+        }
+      }
+
+      const relAlias = rel.columnName;
+      let joinCondition = sql`${raw(this.ctx.wrap(fkTableName))}.${raw(this.ctx.wrap(joinColumn))} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name))}`;
+      joinCondition = this.appendRelationJoinFilters(
+        op,
+        RelatedEntity,
+        relAlias,
+        joinCondition,
+      );
+
+      qb.leftJoin(
+        this.ctx.wrapTable(relatedTableName),
+        this.ctx.wrap(relAlias),
+        joinCondition,
+      );
+    }
+
+    // OneToOne Eager LEFT JOIN
+    for (const rel of op.eagerO2O) {
+      const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+      const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
+      if (!relatedMetadata) continue;
+
+      const relatedTableName = relatedMetadata.name || RelatedEntity.name;
+      const joinColumn = rel.joinColumn!;
+
+      const relatedPk = relatedMetadata.columns.find(
+        (col: any) => col.options?.primary,
+      );
+      if (!relatedPk) continue;
+
+      const relAlias = rel.propertyKey;
+      let joinCondition = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(joinColumn))} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name))}`;
+      joinCondition = this.appendRelationJoinFilters(
+        op,
+        RelatedEntity,
+        relAlias,
+        joinCondition,
+      );
+
+      qb.leftJoin(
+        this.ctx.wrapTable(relatedTableName),
+        this.ctx.wrap(relAlias),
+        joinCondition,
+      );
+    }
+  }
+
+  /**
+   * Extends an eager JOIN's ON clause with the two predicates the joined side
+   * always carries: hide soft-deleted targets (unless `withDeleted`), and
+   * keep the target inside the caller's tenant — an FK is user-supplied, so
+   * it can point at another tenant's row.
+   */
+  private appendRelationJoinFilters<T>(
+    op: FindOperation<T>,
+    RelatedEntity: ClazzType<any>,
+    relAlias: string,
+    joinCondition: Sql,
+  ): Sql {
+    const relatedDeletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
+    if (relatedDeletedAt && !(op.findOption as any).withDeleted) {
+      joinCondition = sql`${joinCondition} AND ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedDeletedAt))} IS NULL`;
+    }
+
+    if (!op.findOption.withoutTenantScope) {
+      const relTenantPredicate = this.ctx.buildTenantWhereClause(
+        RelatedEntity,
+        relAlias,
+      );
+      if (relTenantPredicate) {
+        joinCondition = sql`${joinCondition} AND ${relTenantPredicate}`;
+      }
+    }
+
+    return joinCondition;
+  }
+
   async findInternal<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
@@ -743,188 +962,9 @@ export class ReadExecutor {
       const whereMap = this.buildWhereClauses(op);
       const orderByMap = this.buildOrderByList(op);
 
-      // TPC polymorphic: build the FROM clause from a UNION ALL subquery
-      if (isTPCPolymorphic) {
-        const allEntities = this.inheritanceResolver.getConcreteEntities(entity);
-        const allHierarchyCols = this.inheritanceResolver
-          .getAllHierarchyColumns(entity)
-          .map((c) => c.name);
-        const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-        const discColName = discCol?.name ?? "dtype";
-
-        const subQueries: Sql[] = [];
-        for (const ent of allEntities) {
-          const entMeta = this.resolver.resolveEntityMetadata(ent);
-          if (!entMeta) continue;
-          const entTableName = entMeta.name;
-          const entColNames = new Set(
-            entMeta.columns.map((c: any) => c.name),
-          );
-          const discVal =
-            this.inheritanceResolver.getDiscriminatorValue(ent) ?? ent.name;
-
-          const colExprs: Sql[] = allHierarchyCols.map((colName) =>
-            entColNames.has(colName)
-              ? sql`${raw(this.ctx.wrap(colName))}`
-              : sql`NULL AS ${raw(this.ctx.wrap(colName))}`,
-          );
-          colExprs.push(sql`${discVal} AS ${raw(this.ctx.wrap(discColName))}`);
-
-          const subSql = sql`SELECT ${join(colExprs, ", ")} FROM ${raw(this.ctx.wrapTable(entTableName))}`;
-          subQueries.push(subSql);
-        }
-
-        const unionSql = join(subQueries, " UNION ALL ");
-        qb.select(["*"]).from(sql`(${unionSql})`, this.ctx.wrap("_tpc"));
-      } else if (findOption.distinct) {
-        qb.selectDistinct(selectMap).from(this.ctx.wrapTable(tableName));
-      } else {
-        qb.select(selectMap).from(this.ctx.wrapTable(tableName));
-      }
-
-      // TPT child: INNER JOIN the parent table
-      if (isTPTChild) {
-        const root = this.inheritanceResolver.getRoot(entity)!;
-        const rootMeta = this.resolver.resolveEntityMetadata(root);
-        if (rootMeta) {
-          const pk = metadata.columns.find((c: any) => c.options?.primary);
-          if (pk) {
-            const rootTableName = rootMeta.name;
-            const joinCond = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(pk.name))} = ${raw(this.ctx.wrap(rootTableName))}.${raw(this.ctx.wrap(pk.name))}`;
-            qb.innerJoin(
-              this.ctx.wrapTable(rootTableName),
-              this.ctx.wrap(rootTableName),
-              joinCond,
-            );
-          }
-        }
-      }
-
-      // TPT polymorphic: LEFT JOIN every child table
-      if (isTPTPolymorphic) {
-        const pk = metadata.columns.find((c: any) => c.options?.primary);
-        const children = this.inheritanceResolver
-          .getConcreteEntities(entity)
-          .filter((c) => c !== entity);
-        for (const ChildEntity of children) {
-          const childMeta = this.resolver.resolveEntityMetadata(ChildEntity);
-          if (!childMeta || !pk) continue;
-          const childTableName = childMeta.name;
-          const joinCond = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(pk.name))} = ${raw(this.ctx.wrap(childTableName))}.${raw(this.ctx.wrap(pk.name))}`;
-          qb.leftJoin(
-            this.ctx.wrapTable(childTableName),
-            this.ctx.wrap(childTableName),
-            joinCond,
-          );
-        }
-      }
-
-      // Eager ManyToOne LEFT JOIN
-      for (const rel of eagerRelations) {
-        const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
-        const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
-        if (!relatedMetadata) continue;
-
-        const relatedTableName = relatedMetadata.name || RelatedEntity.name;
-        const joinColumn = rel.joinColumn ?? rel.columnName;
-
-        const relatedPk = relatedMetadata.columns.find(
-          (col: any) => col.options?.primary,
-        );
-        if (!relatedPk) continue;
-
-        // TPT child: if the FK column lives on the parent table, qualify it with the parent table
-        let fkTableName = tableName;
-        if (isTPTChild) {
-          const root = this.inheritanceResolver.getRoot(entity)!;
-          const rootMeta = this.resolver.resolveEntityMetadata(root);
-          if (rootMeta) {
-            const rootColNames = new Set(rootMeta.columns.map((c: any) => c.name));
-            if (rootColNames.has(joinColumn)) {
-              fkTableName = rootMeta.name;
-            }
-          }
-        }
-
-        // Use the property name as the JOIN alias so multiple relations to
-        // the same target entity (e.g. assignee + reporter → User) get
-        // distinct aliases.
-        const relAlias = rel.columnName;
-        let joinCondition = sql`${raw(this.ctx.wrap(fkTableName))}.${raw(this.ctx.wrap(joinColumn))} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name))}`;
-
-        // Keep eager and lazy soft-delete semantics in sync: a soft-deleted
-        // target should surface as a null relation, not silently leak in.
-        // Putting the predicate in the ON clause (not WHERE) preserves the
-        // parent row. Skipped under `withDeleted` so trashed rows are included.
-        const relatedDeletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
-        if (relatedDeletedAt && !(findOption as any).withDeleted) {
-          joinCondition = sql`${joinCondition} AND ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedDeletedAt))} IS NULL`;
-        }
-
-        // Tenant scoping must cover the JOINED table too — the batched and
-        // lazy relation loaders both filter the related entity by tenant, and
-        // an FK is user-supplied so it can point at another tenant's row.
-        // The predicate lives in the ON clause so the parent row survives
-        // (relation hydrates as null), matching the loaders' semantics.
-        if (!findOption.withoutTenantScope) {
-          const relTenantPredicate = this.ctx.buildTenantWhereClause(
-            RelatedEntity,
-            relAlias,
-          );
-          if (relTenantPredicate) {
-            joinCondition = sql`${joinCondition} AND ${relTenantPredicate}`;
-          }
-        }
-
-        qb.leftJoin(
-          this.ctx.wrapTable(relatedTableName),
-          this.ctx.wrap(relAlias),
-          joinCondition,
-        );
-      }
-
-      // OneToOne Eager LEFT JOIN
-      for (const rel of eagerOneToOneRelations) {
-        const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
-        const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
-        if (!relatedMetadata) continue;
-
-        const relatedTableName = relatedMetadata.name || RelatedEntity.name;
-        const joinColumn = rel.joinColumn!;
-
-        const relatedPk = relatedMetadata.columns.find(
-          (col: any) => col.options?.primary,
-        );
-        if (!relatedPk) continue;
-
-        const relAlias = rel.propertyKey;
-        let joinCondition = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(joinColumn))} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name))}`;
-
-        // Mirror the ManyToOne eager join: filter soft-deleted counterparts in
-        // the ON clause so the parent row survives, unless `withDeleted` is set.
-        const relatedDeletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
-        if (relatedDeletedAt && !(findOption as any).withDeleted) {
-          joinCondition = sql`${joinCondition} AND ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedDeletedAt))} IS NULL`;
-        }
-
-        // Mirror the ManyToOne eager join: the joined table is tenant-scoped
-        // in the ON clause so a cross-tenant FK hydrates as null.
-        if (!findOption.withoutTenantScope) {
-          const relTenantPredicate = this.ctx.buildTenantWhereClause(
-            RelatedEntity,
-            relAlias,
-          );
-          if (relTenantPredicate) {
-            joinCondition = sql`${joinCondition} AND ${relTenantPredicate}`;
-          }
-        }
-
-        qb.leftJoin(
-          this.ctx.wrapTable(relatedTableName),
-          this.ctx.wrap(relAlias),
-          joinCondition,
-        );
-      }
+      this.applyFromClause(op, qb, selectMap);
+      this.appendInheritanceJoins(op, qb);
+      this.appendEagerJoins(op, qb);
 
       qb.where(whereMap);
 
