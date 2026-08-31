@@ -192,7 +192,7 @@ const user = await em
 // 다른 트랜잭션이 잠그고 있으면 즉시 에러
 ```
 
-**SKIP LOCKED** — 이미 잠긴 행을 조용히 건너뜁니다. 여러 워커가 같은 테이블에서 작업을 집어가는 잡 큐 패턴에 특히 잘 맞아요.
+**SKIP LOCKED** — 이미 잠긴 행을 건너뜁니다. 여러 워커가 같은 테이블에서 작업을 집어가는 잡 큐 패턴에 특히 잘 맞아요.
 
 ```typescript
 // 워커가 다음 비잠금 작업을 집어감
@@ -299,7 +299,7 @@ qb
 
 ## `getCount()` / `exists()` — 선택 상태는 무시됨
 
-이 두 메서드는 SELECT를 처음부터 다시 짭니다 (`SELECT COUNT(*) ...`, `SELECT 1 ... LIMIT 1`). `WHERE`, `JOIN`, `GROUP BY`, `HAVING`은 재활용하지만, `addSelect()` / `withCount()` / `addSelectSubquery()`로 더한 모든 것은 조용히 버립니다.
+이 두 메서드는 SELECT를 처음부터 다시 짭니다 (`SELECT COUNT(*) ...`, `SELECT 1 ... LIMIT 1`). `WHERE`, `JOIN`, `GROUP BY`, `HAVING`은 재활용하지만, `addSelect()` / `withCount()` / `addSelectSubquery()`로 더한 것들은 그대로 버려집니다.
 
 ```typescript
 const total = await em

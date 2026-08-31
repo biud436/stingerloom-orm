@@ -300,7 +300,7 @@ Prisma의 `onDelete: Cascade`는 생성된 데코레이터 옵션의 `cascade: [
 | `@@unique([a, b])` | `@UniqueIndex(["a", "b"])` |
 | `@@id([a, b])` | 각 필드에 `@PrimaryColumn()` |
 | `@id`의 `@default(uuid())` | `@PrimaryGeneratedColumn("uuid")` |
-| `@default(cuid())` / 비-id 컬럼의 함수 기본값 | 일반 컬럼 유지 + NOTE 주석 (조용히 탈락시키지 않음) — 값은 애플리케이션 코드에서 생성합니다 |
+| `@default(cuid())` / 비-id 컬럼의 함수 기본값 | 일반 컬럼 유지 + NOTE 주석 (임의로 빼지 않음) — 값은 애플리케이션 코드에서 생성합니다 |
 | `Unsupported("...")` | 경고와 함께 건너뜀 |
 | 자기 참조 관계 | 같은 클래스 참조 (예: `() => Category`) |
 | 명명된 관계 `@relation("name")` | 짝짓기에만 사용, 출력에는 표시되지 않음 |

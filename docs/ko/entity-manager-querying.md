@@ -698,7 +698,7 @@ CREATE INDEX IF NOT EXISTS "fts_post_title_content"
 CREATE FULLTEXT INDEX `fts_post_title_content` ON `post` (`title`, `content`)
 ```
 
-**SQLite** -- 전문 검색 인덱스는 지원되지 않아요. 데코레이터는 조용히 무시돼요.
+**SQLite** -- 전문 검색 인덱스는 지원되지 않아요. 데코레이터는 그냥 무시돼요.
 
 ### Step 2: `search` 연산자로 쿼리
 
@@ -832,7 +832,7 @@ const trashedByAlice = await em.find(Post, {
 });
 ```
 
-`@DeletedAt` 컬럼이 없는 엔티티에서는 `onlyDeleted`가 조용히 무시됩니다 — `withDeleted`와 동일한 동작이에요.
+`@DeletedAt` 컬럼이 없는 엔티티에서는 `onlyDeleted`는 아무 효과가 없습니다 — `withDeleted`와 동일한 동작이에요.
 
 `find()`, `findOne()`, `findBy()`, `findOneBy()`, `findOneOrFail()`, `findAndCount()`(개수 포함), `findWithCursor()`, `findWithPage()`, `stream()`, 그리고 집계 함수 `count()`, `sum()`, `avg()`, `min()`, `max()`, `exists()` 모두에서 동작합니다.
 
@@ -1324,7 +1324,7 @@ const hasTrashed = await em.exists(Post, { authorId: 42 }, false, true);
 | `withDeleted` | `boolean` | `false` | live 행과 soft-deleted 행을 모두 집계에 포함 |
 | `onlyDeleted` | `boolean` | `false` | soft-deleted 행만 대상으로 제한(`@DeletedAt IS NOT NULL`); `withDeleted`보다 우선 |
 
-`@DeletedAt` 컬럼이 없는 엔티티에서는 `onlyDeleted`가 조용히 무시돼요. `find()`와 같은 읽기 API에서의 동작은 [Soft Delete](#soft-delete-인식) 섹션을 참고하세요.
+`@DeletedAt` 컬럼이 없는 엔티티에서는 `onlyDeleted`는 아무 효과가 없어요. `find()`와 같은 읽기 API에서의 동작은 [Soft Delete](#soft-delete-인식) 섹션을 참고하세요.
 
 ---
 

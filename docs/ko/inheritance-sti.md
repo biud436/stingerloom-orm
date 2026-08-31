@@ -198,7 +198,7 @@ WHERE `payment_type` = 'credit_card';
 ]
 ```
 
-주목할 점: `bankCode`(BankTransferPayment에 속하는 컬럼)는 결과 객체에 **없어요**. ORM은 `CreditCardPayment` 클래스에 속하는 컬럼만 매핑해요. 다른 형제 타입의 NULL 컬럼들은 역직렬화 과정에서 조용히 제거돼요.
+주목할 점: `bankCode`(BankTransferPayment에 속하는 컬럼)는 결과 객체에 **없어요**. ORM은 `CreditCardPayment` 클래스에 속하는 컬럼만 매핑해요. 다른 형제 타입의 NULL 컬럼들은 역직렬화 과정에서 그대로 제거돼요.
 
 ## SELECT -- Polymorphic Query (루트 엔티티)
 

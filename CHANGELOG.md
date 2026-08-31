@@ -6,7 +6,11 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
-## [Unreleased]
+## [2.0.0] — 2026-09-01
+
+A major release, and mostly an honesty pass: states that used to fail silently now fail loudly. The breaking changes are listed in the [2.0 upgrade guide](https://biud436.github.io/stingerloom-orm/upgrade-2.0) — the short version is that the package barrel now names its exports, several silently-wrong operations throw, batch writes serialize dates as instants, and the migration CLI reports failure through its exit code.
+
+The 1.1.1 entry below was tagged in the repository but never published to npm; its fix ships here.
 
 ### Added
 
@@ -161,7 +165,7 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
-## [1.1.1] — 2026-07-23
+## [1.1.1] — 2026-07-23 (unpublished; included in 2.0.0)
 
 ### Fixed
 

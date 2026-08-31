@@ -152,7 +152,7 @@ npx stingerloom migrate:generate --output ./migrations --name add_posts
 | `--version` | 설치된 `@stingerloom/orm` 버전 출력 | -- |
 | `--help`, `-h` | 도움말 표시 | -- |
 
-`--flag value` 대신 `--flag=value` 형태도 받습니다. 알 수 없는 플래그는 조용히 무시되지 않고 에러예요 — `stingerloom introspect --dry-runn`은 오타를 무시한 채 엔티티 파일을 쓰는 대신 `Unknown option: "--dry-runn"`으로 중단합니다.
+`--flag value` 대신 `--flag=value` 형태도 받습니다. 알 수 없는 플래그는 무시되는 대신 에러가 됩니다 — `stingerloom introspect --dry-runn`은 오타를 무시한 채 엔티티 파일을 쓰는 대신 `Unknown option: "--dry-runn"`으로 중단합니다.
 
 ## 종료 코드
 

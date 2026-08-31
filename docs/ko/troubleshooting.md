@@ -89,7 +89,7 @@ await em.register({
 import "reflect-metadata";
 ```
 
-### 컬럼이 조용히 "text"가 됨 / "No design:type metadata" 경고
+### 컬럼이 뜻하지 않게 "text"가 됨 / "No design:type metadata" 경고
 
 ```
 WARN [Column] No design:type metadata for User.name — falling back to "text". ...

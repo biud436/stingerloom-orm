@@ -161,7 +161,7 @@ RawQueryBuilder의 `where()` 메서드는 조건의 **배열**을 받아서 AND�
 
 ## 타입 참조 (Typed References)
 
-`'"users"."id"'` 같은 따옴표 문자열을 직접 손으로 적는 건 금방 지저분해지고, 컬럼 이름을 한 번 바꾸면 문자열이 조용히 깨져요. 두 헬퍼는 엔티티 클래스(또는 alias 이름)로부터 `sql` 태그와 호환되는 프록시를 반환해서, dialect에 맞는 SQL 조각을 자동으로 만들어 줘요. 같은 코드가 PostgreSQL, MySQL, SQLite에서 그대로 동작해요.
+`'"users"."id"'` 같은 따옴표 문자열을 직접 손으로 적는 건 금방 지저분해지고, 컬럼 이름을 한 번 바꾸면 문자열이 티 나지 않게 깨져요. 두 헬퍼는 엔티티 클래스(또는 alias 이름)로부터 `sql` 태그와 호환되는 프록시를 반환해서, dialect에 맞는 SQL 조각을 자동으로 만들어 줘요. 같은 코드가 PostgreSQL, MySQL, SQLite에서 그대로 동작해요.
 
 ### `em.ref(Entity, alias?)` -- 엔티티 바인딩
 
