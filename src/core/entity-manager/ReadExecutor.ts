@@ -590,12 +590,102 @@ export class ReadExecutor {
     }
   }
 
+  /**
+   * Every predicate the read must AND together: the caller's `where`, the STI
+   * discriminator, the soft-delete rule and the tenant scope. All four are
+   * qualified the same way, so a JOINed read never leaves a bare column
+   * ambiguous.
+   */
+  private buildWhereClauses<T>(op: FindOperation<T>): Sql[] {
+    const { entity, findOption, tableName, propToCol, hasEagerJoins } = op;
+    const whereMap: Sql[] = [];
+
+    whereMap.push(
+      ...resolveWhereClause(findOption.where, {
+        wrapColumn: (n) => this.ctx.wrap(n),
+        qualified: hasEagerJoins,
+        tableName: hasEagerJoins ? tableName : undefined,
+        dialect: this.ctx.getDialect(),
+        dialectExpression: createDialectExpression(this.ctx.getDialect()),
+        propertyToColumn: propToCol,
+        qualifyColumn: op.tptQualifyColumn,
+      }),
+    );
+
+    // STI: when querying a child entity, add a discriminator WHERE condition
+    if (op.inheritanceStrategy === "SINGLE_TABLE" && this.inheritanceResolver.isChildEntity(entity)) {
+      const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+      const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
+      if (discCol && discVal) {
+        const col = hasEagerJoins
+          ? `${this.ctx.wrap(tableName)}.${this.ctx.wrap(discCol.name)}`
+          : this.ctx.wrap(discCol.name);
+        whereMap.push(Conditions.equals(col, discVal));
+      }
+    }
+
+    // Soft-delete predicate injection for entities carrying a @DeletedAt column.
+    // - onlyDeleted: emit `<col> IS NOT NULL` so the read returns exclusively
+    //   trashed rows. Takes precedence over withDeleted when both are set.
+    // - withDeleted: emit no soft-delete predicate (live + trashed rows).
+    // - default: emit `<col> IS NULL` so trashed rows are hidden.
+    // The column is resolved + escaped via the same wrap()/Conditions helpers
+    // the default IS NULL injection uses; for entities without a @DeletedAt
+    // column this whole block is skipped (onlyDeleted is a silent no-op).
+    const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
+    if (deletedAtColumn) {
+      const deletedAtRef = hasEagerJoins
+        ? `${this.ctx.wrap(tableName)}.${this.ctx.wrap(deletedAtColumn)}`
+        : this.ctx.wrap(deletedAtColumn);
+      if (findOption.onlyDeleted) {
+        whereMap.push(Conditions.isNotNull(deletedAtRef));
+      } else if (!findOption.withDeleted) {
+        whereMap.push(Conditions.isNull(deletedAtRef));
+      }
+    }
+
+    // Tenant scoping under the "tenant_column" strategy. Skipped when the
+    // caller explicitly opts out via `findOption.withoutTenantScope`.
+    if (!findOption.withoutTenantScope) {
+      const tenantPredicate = this.ctx.buildTenantWhereClause(
+        entity,
+        hasEagerJoins ? tableName : undefined,
+      );
+      if (tenantPredicate) {
+        whereMap.push(tenantPredicate);
+      }
+    }
+
+    return whereMap;
+  }
+
+  /**
+   * ORDER BY entries, qualified the same way select/where/groupBy are — with
+   * eager joins present, a shared column name (id, createdAt, ...) is
+   * otherwise ambiguous. TPT children route through the parent-table
+   * qualifier so inherited columns land on the table that holds them.
+   */
+  private buildOrderByList<T>(
+    op: FindOperation<T>,
+  ): Array<{ column: string; direction: "ASC" | "DESC" }> {
+    const orderByMap: Array<{ column: string; direction: "ASC" | "DESC" }> = [];
+    const orderBy = op.findOption.orderBy;
+    for (const key in orderBy) {
+      const value = orderBy[key];
+      if (value) {
+        const dbCol = op.propToCol.get(key) ?? key;
+        orderByMap.push({ column: this.qualifyColumn(op, dbCol), direction: value });
+      }
+    }
+    return orderByMap;
+  }
+
   async findInternal<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
     existingSession?: TransactionSessionManager,
   ): Promise<EntityResult<T>> {
-    const { orderBy, where, take, skip, groupBy, having } = findOption;
+    const { take, skip, groupBy, having } = findOption;
     const { limit } = findOption;
 
     this.validatePaginationOptions(findOption);
@@ -648,84 +738,10 @@ export class ReadExecutor {
 
       const qb = RawQueryBuilderFactory.create();
 
-      const whereMap: Sql[] = [];
-      const orderByMap: Array<{ column: string; direction: "ASC" | "DESC" }> =
-        [];
-
       const selectMap = this.buildSelectList(op);
 
-      whereMap.push(
-        ...resolveWhereClause(where, {
-          wrapColumn: (n) => this.ctx.wrap(n),
-          qualified: hasEagerJoins,
-          tableName: hasEagerJoins ? tableName : undefined,
-          dialect: this.ctx.getDialect(),
-          dialectExpression: createDialectExpression(this.ctx.getDialect()),
-          propertyToColumn: propToCol,
-          qualifyColumn: tptQualifyColumn,
-        }),
-      );
-
-      // STI: when querying a child entity, add a discriminator WHERE condition
-      if (inheritanceStrategy === "SINGLE_TABLE" && this.inheritanceResolver.isChildEntity(entity)) {
-        const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-        const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
-        if (discCol && discVal) {
-          const col = hasEagerJoins
-            ? `${this.ctx.wrap(tableName)}.${this.ctx.wrap(discCol.name)}`
-            : this.ctx.wrap(discCol.name);
-          whereMap.push(Conditions.equals(col, discVal));
-        }
-      }
-
-      // Soft-delete predicate injection for entities carrying a @DeletedAt column.
-      // - onlyDeleted: emit `<col> IS NOT NULL` so the read returns exclusively
-      //   trashed rows. Takes precedence over withDeleted when both are set.
-      // - withDeleted: emit no soft-delete predicate (live + trashed rows).
-      // - default: emit `<col> IS NULL` so trashed rows are hidden.
-      // The column is resolved + escaped via the same wrap()/Conditions helpers
-      // the default IS NULL injection uses; for entities without a @DeletedAt
-      // column this whole block is skipped (onlyDeleted is a silent no-op).
-      const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
-      if (deletedAtColumn) {
-        const deletedAtRef = hasEagerJoins
-          ? `${this.ctx.wrap(tableName)}.${this.ctx.wrap(deletedAtColumn)}`
-          : this.ctx.wrap(deletedAtColumn);
-        if (findOption.onlyDeleted) {
-          whereMap.push(Conditions.isNotNull(deletedAtRef));
-        } else if (!findOption.withDeleted) {
-          whereMap.push(Conditions.isNull(deletedAtRef));
-        }
-      }
-
-      // Tenant scoping under the "tenant_column" strategy. Skipped when the
-      // caller explicitly opts out via `findOption.withoutTenantScope`.
-      if (!findOption.withoutTenantScope) {
-        const tenantPredicate = this.ctx.buildTenantWhereClause(
-          entity,
-          hasEagerJoins ? tableName : undefined,
-        );
-        if (tenantPredicate) {
-          whereMap.push(tenantPredicate);
-        }
-      }
-
-      // Qualify orderBy references the same way select/where/groupBy are —
-      // with eager joins present, a shared column name (id, createdAt, ...)
-      // is otherwise ambiguous. TPT children route through tptQualifyColumn
-      // so parent-only columns are qualified with the parent table.
-      for (const key in orderBy) {
-        const value = orderBy[key];
-        if (value) {
-          const dbCol = propToCol.get(key) ?? key;
-          const column = tptQualifyColumn
-            ? tptQualifyColumn(dbCol)
-            : hasEagerJoins
-              ? `${this.ctx.wrap(tableName)}.${this.ctx.wrap(dbCol)}`
-              : this.ctx.wrap(dbCol);
-          orderByMap.push({ column, direction: value });
-        }
-      }
+      const whereMap = this.buildWhereClauses(op);
+      const orderByMap = this.buildOrderByList(op);
 
       // TPC polymorphic: build the FROM clause from a UNION ALL subquery
       if (isTPCPolymorphic) {
