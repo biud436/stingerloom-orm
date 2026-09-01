@@ -558,38 +558,11 @@ export class WriteExecutor {
     const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
     for (const rel of manyToOneRelations) {
       if (!rel.joinColumn) continue;
-      const relatedValue = itemFields[rel.columnName];
-      // Shadow-accessor fallback: prefer the convention `${rel}Id`, then
-      // honor an explicit `option.fkProperty` for entities that follow a
-      // different naming (mirrors `collectFkPropertyMappings` on reads).
-      let idPropValue = itemFields[`${rel.columnName}Id`];
-      if (idPropValue === undefined && rel.option?.fkProperty) {
-        idPropValue = itemFields[rel.option.fkProperty];
-      }
-
       const existingIdx = insertableColumns.findIndex(
         (col: ColumnMetadata) => col.name === rel.joinColumn,
       );
 
-      let fkValue: unknown = undefined;
-
-      if (relatedValue === null) {
-        fkValue = null;
-      } else if (relatedValue && typeof relatedValue === "object") {
-        const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
-        const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-        if (relatedMeta) {
-          const relatedPk = relatedMeta.columns.find(
-            (col: ColumnMetadata) => col.options?.primary,
-          );
-          if (relatedPk) {
-            fkValue =
-              fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? undefined;
-          }
-        }
-      } else if (idPropValue != null) {
-        fkValue = idPropValue;
-      }
+      const fkValue = this.resolveFkValue(rel, itemFields);
 
       if (fkValue !== undefined) {
         if (existingIdx >= 0) {
@@ -1246,6 +1219,97 @@ export class WriteExecutor {
    * #214: Batch INSERT + bulk re-read.
    * N × (INSERT+SELECT) → 1 INSERT + 1 SELECT (or PG RETURNING).
    */
+  /**
+   * Appends the FK columns a `@ManyToOne` owns but no `@Column` declares, and
+   * returns the bindings {@link buildInsertRowValues} needs to fill them.
+   *
+   * Shared by every multi-row INSERT path — they each carried a copy, and the
+   * copies had drifted apart.
+   */
+  private appendFkInsertColumns<T>(
+    entity: ClazzType<T>,
+    insertableColumns: ColumnMetadata[],
+    columns: Sql[],
+  ): FkColumnBinding[] {
+    const fkColumns: FkColumnBinding[] = [];
+    for (const rel of this.resolver.resolveManyToOneMetadata(entity)) {
+      if (!rel.joinColumn) continue;
+      if (insertableColumns.some((col) => col.name === rel.joinColumn)) continue;
+      columns.push(raw(this.ctx.wrap(rel.joinColumn)));
+      fkColumns.push({
+        joinColumn: rel.joinColumn,
+        propertyName: rel.columnName,
+        relMeta: rel,
+      });
+    }
+    return fkColumns;
+  }
+
+  /**
+   * The foreign-key value an item states for one `@ManyToOne`, or `undefined`
+   * when it states nothing — the single-row path uses that to leave the column
+   * out entirely, the batch paths bind NULL.
+   *
+   * An explicit `null` means "no parent" and wins over a stale shadow
+   * property. A related instance contributes its primary key. **A bare value
+   * is the key itself** — that case is why this lives in one place: three of
+   * the four write paths carried a near-copy of this chain, and two of them
+   * treated `{ author: 7 }` as nothing to write and stored NULL. Failing
+   * that, the `${property}Id` shadow (or an explicit `option.fkProperty`) is
+   * the fallback, mirroring `collectFkPropertyMappings` on reads.
+   */
+  private resolveFkValue(
+    rel: ManyToOneMetadata<unknown>,
+    itemFields: EntityFields,
+  ): unknown {
+    const relatedValue = itemFields[rel.columnName];
+
+    if (relatedValue === null) return null;
+
+    if (relatedValue !== undefined) {
+      if (typeof relatedValue === "object") {
+        const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
+        const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
+        const relatedPk = relatedMeta?.columns.find(
+          (col: ColumnMetadata) => col.options?.primary,
+        );
+        return relatedPk
+          ? (fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? undefined)
+          : undefined;
+      }
+      return relatedValue;
+    }
+
+    let idPropValue = itemFields[`${rel.columnName}Id`];
+    if (idPropValue === undefined && rel.option?.fkProperty) {
+      idPropValue = itemFields[rel.option.fkProperty];
+    }
+    return idPropValue != null ? idPropValue : undefined;
+  }
+
+  /**
+   * One INSERT row: the declared column values with write transforms applied
+   * (`@Column` transformer.to, registered ColumnType transformers, and the
+   * mandatory JSON stringify — reads apply transformer.from either way),
+   * followed by the FK columns {@link appendFkInsertColumns} added.
+   */
+  private buildInsertRowValues(
+    insertableColumns: ColumnMetadata[],
+    fkColumns: FkColumnBinding[],
+    itemFields: EntityFields,
+  ): RawValue[] {
+    const rowValues: RawValue[] = bindParams(
+      insertableColumns.map((col) =>
+        this.ctx.applyWriteTransform(col, itemFields[this.ctx.propKey(col)]),
+      ),
+    );
+    for (const fk of fkColumns) {
+      const fkValue = this.resolveFkValue(fk.relMeta, itemFields);
+      rowValues.push(fkValue === undefined ? null : bindParam(fkValue));
+    }
+    return rowValues;
+  }
+
   private async saveManyBatchInsert<T>(
     entity: ClazzType<T>,
     pk: ColumnMetadata,
@@ -1345,14 +1409,7 @@ export class WriteExecutor {
     const columns = insertableColumns.map((col) =>
       raw(this.ctx.wrap(col.name)),
     );
-    const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-    const fkColumns: FkColumnBinding[] = [];
-    for (const rel of manyToOneRelations) {
-      if (!rel.joinColumn) continue;
-      if (insertableColumns.some((col) => col.name === rel.joinColumn)) continue;
-      columns.push(raw(this.ctx.wrap(rel.joinColumn)));
-      fkColumns.push({ joinColumn: rel.joinColumn, propertyName: rel.columnName, relMeta: rel });
-    }
+    const fkColumns = this.appendFkInsertColumns(entity, insertableColumns, columns);
 
     // #373: all insertable columns omitted for every item and no FK columns.
     // `() VALUES (), ()` is valid only on the MySQL family, and sql-template-tag's
@@ -1363,37 +1420,11 @@ export class WriteExecutor {
     const valueRows: Sql[] = allDefaultRow
       ? []
       : items.map((item) => {
-          const itemFields = fieldsOf(item);
-          const rowValues: RawValue[] = bindParams(
-            insertableColumns.map((col) => {
-              const rawValue = itemFields[this.ctx.propKey(col)];
-              return this.ctx.applyWriteTransform(col, rawValue);
-            }),
+          const rowValues = this.buildInsertRowValues(
+            insertableColumns,
+            fkColumns,
+            fieldsOf(item),
           );
-          for (const fk of fkColumns) {
-            const relatedValue = itemFields[fk.propertyName];
-            const idPropValue = itemFields[`${fk.propertyName}Id`];
-            if (relatedValue === null) {
-              rowValues.push(null);
-            } else if (relatedValue && typeof relatedValue === "object") {
-              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<unknown>;
-              const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-              const relatedPk = relatedMeta?.columns.find(
-                (c: ColumnMetadata) => c.options?.primary,
-              );
-              rowValues.push(
-                relatedPk
-                  ? bindParam(
-                      fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? null,
-                    )
-                  : null,
-              );
-            } else if (idPropValue != null) {
-              rowValues.push(bindParam(idPropValue));
-            } else {
-              rowValues.push(null);
-            }
-          }
           return sql`(${join(rowValues, ", ")})`;
         });
 
@@ -1589,62 +1620,18 @@ export class WriteExecutor {
         raw(this.ctx.wrap(column.name)),
       );
 
-      const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-      const fkColumns: FkColumnBinding[] = [];
-      for (const rel of manyToOneRelations) {
-        if (!rel.joinColumn) continue;
-        const alreadyIncluded = insertableColumns.some(
-          (col: ColumnMetadata) => col.name === rel.joinColumn,
-        );
-        if (!alreadyIncluded) {
-          columns.push(raw(this.ctx.wrap(rel.joinColumn)));
-          fkColumns.push({
-            joinColumn: rel.joinColumn,
-            propertyName: rel.columnName,
-            relMeta: rel,
-          });
-        }
-      }
+      const fkColumns = this.appendFkInsertColumns(
+        entity,
+        insertableColumns,
+        columns,
+      );
 
       const valueRows = items.map((item) => {
-        const itemFields = fieldsOf(item);
-        const rowValues: RawValue[] = bindParams(
-          insertableColumns.map((column: ColumnMetadata) => {
-            // Mirror saveManyBatchInsert: write transformers (@Column transformer.to,
-            // registered ColumnType transformers, and the mandatory JSON stringify)
-            // must run on this path too, otherwise JSON/transformer columns are bound
-            // raw while reads still apply transformer.from.
-            const rawValue = itemFields[this.ctx.propKey(column)];
-            return this.ctx.applyWriteTransform(column, rawValue);
-          }),
+        const rowValues = this.buildInsertRowValues(
+          insertableColumns,
+          fkColumns,
+          fieldsOf(item),
         );
-        for (const fk of fkColumns) {
-          const relatedValue = itemFields[fk.propertyName];
-          const idPropValue = itemFields[`${fk.propertyName}Id`];
-
-          if (relatedValue != null) {
-            if (typeof relatedValue === "object") {
-              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<unknown>;
-              const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-              const relatedPk = relatedMeta?.columns.find(
-                (col: ColumnMetadata) => col.options?.primary,
-              );
-              rowValues.push(
-                relatedPk
-                  ? bindParam(
-                      fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? null,
-                    )
-                  : null,
-              );
-            } else {
-              rowValues.push(bindParam(relatedValue));
-            }
-          } else if (idPropValue != null) {
-            rowValues.push(bindParam(idPropValue));
-          } else {
-            rowValues.push(null);
-          }
-        }
         return sql`(${join(rowValues, ", ")})`;
       });
 
@@ -1763,62 +1750,18 @@ export class WriteExecutor {
         raw(this.ctx.wrap(column.name)),
       );
 
-      const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-      const fkColumns: FkColumnBinding[] = [];
-      for (const rel of manyToOneRelations) {
-        if (!rel.joinColumn) continue;
-        const alreadyIncluded = insertableColumns.some(
-          (col: ColumnMetadata) => col.name === rel.joinColumn,
-        );
-        if (!alreadyIncluded) {
-          columns.push(raw(this.ctx.wrap(rel.joinColumn)));
-          fkColumns.push({
-            joinColumn: rel.joinColumn,
-            propertyName: rel.columnName,
-            relMeta: rel,
-          });
-        }
-      }
+      const fkColumns = this.appendFkInsertColumns(
+        entity,
+        insertableColumns,
+        columns,
+      );
 
       const valueRows = items.map((item) => {
-        const itemFields = fieldsOf(item);
-        const rowValues: RawValue[] = bindParams(
-          insertableColumns.map((column: ColumnMetadata) => {
-            // Mirror saveManyBatchInsert: write transformers (@Column transformer.to,
-            // registered ColumnType transformers, and the mandatory JSON stringify)
-            // must run on this path too, otherwise JSON/transformer columns are bound
-            // raw while reads still apply transformer.from.
-            const rawValue = itemFields[this.ctx.propKey(column)];
-            return this.ctx.applyWriteTransform(column, rawValue);
-          }),
+        const rowValues = this.buildInsertRowValues(
+          insertableColumns,
+          fkColumns,
+          fieldsOf(item),
         );
-        for (const fk of fkColumns) {
-          const relatedValue = itemFields[fk.propertyName];
-          const idPropValue = itemFields[`${fk.propertyName}Id`];
-
-          if (relatedValue != null) {
-            if (typeof relatedValue === "object") {
-              const RelatedEntity = fk.relMeta.getMappingEntity() as ClazzType<unknown>;
-              const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-              const relatedPk = relatedMeta?.columns.find(
-                (col: ColumnMetadata) => col.options?.primary,
-              );
-              rowValues.push(
-                relatedPk
-                  ? bindParam(
-                      fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? null,
-                    )
-                  : null,
-              );
-            } else {
-              rowValues.push(bindParam(relatedValue));
-            }
-          } else if (idPropValue != null) {
-            rowValues.push(bindParam(idPropValue));
-          } else {
-            rowValues.push(null);
-          }
-        }
         return sql`(${join(rowValues, ", ")})`;
       });
 
