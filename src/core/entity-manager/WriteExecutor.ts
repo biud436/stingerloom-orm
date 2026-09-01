@@ -2159,17 +2159,18 @@ export class WriteExecutor {
     return this.updateMany(entity, data, { where });
   }
 
-  async updateMany<T>(
+  /**
+   * Rejects an updateMany the ORM refuses to run: a criteria-less update
+   * (which would touch every row), a nonsensical LIMIT, and unknown keys on
+   * either the SET payload or the WHERE.
+   */
+  private validateUpdateManyInput<T>(
     entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
     data: UpdateData<T>,
     options: UpdateManyOptions<T>,
-  ): Promise<{ affected: number }> {
-    const metadata = this.resolver.resolveEntityMetadata(entity);
-    if (!metadata) {
-      throw new EntityMetadataNotFoundError(entity.name);
-    }
-
-    const { where, orderBy, limit } = options;
+  ): void {
+    const { where, limit } = options;
     if (!where || Object.keys(where).length === 0) {
       throw new DeleteWithoutConditionsError("Update");
     }
@@ -2184,79 +2185,142 @@ export class WriteExecutor {
 
     this.ctx.validateCriteriaKeys(metadata, data as WhereClause<T>, entity.name);
     this.ctx.validateCriteriaKeys(metadata, where, entity.name);
+  }
+
+  /**
+   * The SET clauses for a criteria-based update: the caller's defined values,
+   * plus `@UpdateTimestamp` unless the payload sets it explicitly.
+   *
+   * The `@Version` bump is deliberately NOT here — it belongs after the
+   * caller checks for an empty SET map, or an update with nothing to write
+   * would still bump every matched row's version. See
+   * {@link appendVersionIncrement}.
+   */
+  private buildUpdateManySetClauses<T>(
+    entity: ClazzType<T>,
+    data: UpdateData<T>,
+    propertyToColumn: Map<string, string>,
+  ): Sql[] {
+    const dataFields = fieldsOf(data);
+    const setMap: Sql[] = [];
+    for (const key in data) {
+      const value = dataFields[key];
+      if (value !== undefined) {
+        const dbCol = propertyToColumn.get(key) ?? key;
+        setMap.push(sql`${raw(this.ctx.wrap(dbCol))} = ${bindParam(value)}`);
+      }
+    }
+
+    const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
+    if (updateTsColName) {
+      const hasExplicit = setMap.some(
+        (s) => s.text?.includes(this.ctx.wrap(updateTsColName)),
+      );
+      if (!hasExplicit) {
+        setMap.push(
+          sql`${raw(this.ctx.wrap(updateTsColName))} = ${bindParam(new Date())}`,
+        );
+      }
+    }
+
+    return setMap;
+  }
+
+  /**
+   * @Version: optimistic-lock counter. Criteria-based updates must bump it
+   * exactly like save() does, or a later save() holding a now-stale version
+   * would slip past the lock undetected. Skipped when the caller sets the
+   * version property explicitly. getVersionColumn returns the PROPERTY key,
+   * so it is mapped to the DB column the same way the SET keys are.
+   */
+  private appendVersionIncrement<T>(
+    entity: ClazzType<T>,
+    data: UpdateData<T>,
+    setMap: Sql[],
+    propertyToColumn: Map<string, string>,
+  ): void {
+    const versionProp = this.resolver.getVersionColumn(entity);
+    if (versionProp && fieldsOf(data)[versionProp] === undefined) {
+      const versionCol = this.ctx.wrap(
+        propertyToColumn.get(versionProp) ?? versionProp,
+      );
+      setMap.push(sql`${raw(versionCol)} = ${raw(versionCol)} + 1`);
+    }
+  }
+
+  /**
+   * The WHERE a criteria-based update runs with: the caller's criteria,
+   * intersected with the tenant filter (so an updateMany can never cross
+   * tenant boundaries), narrowed to the STI subtype (never siblings sharing
+   * the single table), and — unless `withDeleted` — limited to rows that are
+   * not soft-deleted, so a bulk update never resurrects trashed data.
+   *
+   * The empty-criteria guard runs on user input only, in
+   * {@link validateUpdateManyInput}, before any of these are appended.
+   */
+  private buildUpdateManyWhereClauses<T>(
+    entity: ClazzType<T>,
+    options: UpdateManyOptions<T>,
+    propertyToColumn: Map<string, string>,
+  ): Sql[] {
+    const whereMap: Sql[] = this.resolveCriteriaWhere(
+      options.where,
+      propertyToColumn,
+    );
+
+    const tenantUpdateWhere = this.ctx.buildTenantWhereClause(entity);
+    if (tenantUpdateWhere) {
+      whereMap.push(tenantUpdateWhere);
+    }
+
+    const updateSti = this.stiDiscriminatorClause(entity);
+    if (updateSti) {
+      whereMap.push(updateSti);
+    }
+
+    const updateDeletedAt = this.resolver.getDeletedAtColumn(entity);
+    if (updateDeletedAt && !options.withDeleted) {
+      whereMap.push(Conditions.isNull(this.ctx.wrap(updateDeletedAt)));
+    }
+
+    return whereMap;
+  }
+
+  async updateMany<T>(
+    entity: ClazzType<T>,
+    data: UpdateData<T>,
+    options: UpdateManyOptions<T>,
+  ): Promise<{ affected: number }> {
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    this.validateUpdateManyInput(entity, metadata, data, options);
 
     return this.ctx.executeInTransaction(async (session) => {
       const updatePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
-      const dataFields = fieldsOf(data);
-      const setMap: Sql[] = [];
-      for (const key in data) {
-        const value = dataFields[key];
-        if (value !== undefined) {
-          const dbCol = updatePropToCol.get(key) ?? key;
-          setMap.push(sql`${raw(this.ctx.wrap(dbCol))} = ${bindParam(value)}`);
-        }
-      }
 
-      // @UpdateTimestamp auto-inject
-      const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
-      if (updateTsColName) {
-        const hasExplicit = setMap.some(
-          (s) => s.text?.includes(this.ctx.wrap(updateTsColName)),
-        );
-        if (!hasExplicit) {
-          setMap.push(
-            sql`${raw(this.ctx.wrap(updateTsColName))} = ${bindParam(new Date())}`,
-          );
-        }
-      }
-
+      const setMap = this.buildUpdateManySetClauses(
+        entity,
+        data,
+        updatePropToCol,
+      );
       if (setMap.length === 0) {
         return { affected: 0 };
       }
+      this.appendVersionIncrement(entity, data, setMap, updatePropToCol);
 
-      // @Version: optimistic-lock counter. Criteria-based updates must bump it
-      // exactly like save() does, or a later save() holding a now-stale version
-      // would slip past the lock undetected. Skip when the caller sets the
-      // version property explicitly. getVersionColumn returns the PROPERTY key,
-      // so map it to the DB column the same way the SET keys above are mapped.
-      const versionProp = this.resolver.getVersionColumn(entity);
-      if (versionProp && dataFields[versionProp] === undefined) {
-        const versionCol = this.ctx.wrap(
-          updatePropToCol.get(versionProp) ?? versionProp,
-        );
-        setMap.push(sql`${raw(versionCol)} = ${raw(versionCol)} + 1`);
-      }
-
-      const whereMap: Sql[] = this.resolveCriteriaWhere(
-        where,
+      const whereMap = this.buildUpdateManyWhereClauses(
+        entity,
+        options,
         updatePropToCol,
       );
 
-      // Tenant scoping — intersected with the user's WHERE so an updateMany
-      // can never cross tenant boundaries. The empty-criteria guard above
-      // runs on user input only; tenant predicate is appended here.
-      const tenantUpdateWhere = this.ctx.buildTenantWhereClause(entity);
-      if (tenantUpdateWhere) {
-        whereMap.push(tenantUpdateWhere);
-      }
-
-      // STI: a criteria-based updateMany on a child class must touch only that
-      // subtype's rows, never siblings sharing the single table — mirrors the
-      // discriminator filter delete()/find() already apply.
-      const updateSti = this.stiDiscriminatorClause(entity);
-      if (updateSti) {
-        whereMap.push(updateSti);
-      }
-
-      // Soft-delete: skip trashed rows by default (parity with find()), so a
-      // bulk update never resurrects data on a logically-deleted row. Callers
-      // opt back in with `withDeleted: true`. No-op without a @DeletedAt column.
-      const updateDeletedAt = this.resolver.getDeletedAtColumn(entity);
-      if (updateDeletedAt && !options.withDeleted) {
-        whereMap.push(Conditions.isNull(this.ctx.wrap(updateDeletedAt)));
-      }
-
-      const orderBySql = this.dmlSqlBuilder.buildUpdateOrderBy(orderBy, updatePropToCol);
+      const orderBySql = this.dmlSqlBuilder.buildUpdateOrderBy(
+        options.orderBy,
+        updatePropToCol,
+      );
 
       const updateSql = this.dmlSqlBuilder.buildUpdateSql(
         metadata,
@@ -2264,7 +2328,7 @@ export class WriteExecutor {
         setMap,
         whereMap,
         orderBySql,
-        limit,
+        options.limit,
       );
 
       // Criteria-based update events. Mirrors delete()'s eventEmitter channel:
@@ -2297,7 +2361,6 @@ export class WriteExecutor {
       return { affected };
     });
   }
-
   async increment<T>(
     entity: ClazzType<T>,
     where: WhereClause<T>,
