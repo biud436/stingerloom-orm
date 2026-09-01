@@ -200,7 +200,13 @@ export class WriteExecutor {
    * subtype's rows, or null when the entity is not an STI child. Every bulk
    * write narrows this way so it can never touch siblings sharing the table.
    */
-  private stiDiscriminatorClause<T>(entity: ClazzType<T>): Sql | null {
+  private stiDiscriminatorClause<T>(
+    entity: ClazzType<T>,
+    strategy?: InheritanceStrategy | null,
+  ): Sql | null {
+    // A caller that already read the strategy passes it in, so the common
+    // case (no inheritance at all) costs no extra metadata read.
+    if (strategy !== undefined && strategy !== "SINGLE_TABLE") return null;
     const disc =
       this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
     return disc
@@ -1988,11 +1994,12 @@ export class WriteExecutor {
     entity: ClazzType<T>,
     metadata: EntityScannerMetadata,
     criteria: WhereClause<T>,
+    strategy: InheritanceStrategy | null,
   ): Sql {
     const deletePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
     const whereMap: Sql[] = this.resolveCriteriaWhere(criteria, deletePropToCol);
 
-    const deleteSti = this.stiDiscriminatorClause(entity);
+    const deleteSti = this.stiDiscriminatorClause(entity, strategy);
     if (deleteSti) {
       whereMap.push(deleteSti);
     }
@@ -2011,9 +2018,10 @@ export class WriteExecutor {
 
   /**
    * TPT: the child table's rows go first, then the root's — the root DELETE
-   * reports the affected count. Returns null when the entity is not a TPT
-   * child (or its root has no metadata), so the caller falls through to the
-   * single-table delete.
+   * reports the affected count. Returns null when the root has no metadata,
+   * so the caller falls through to the single-table delete. Whether this
+   * applies at all is the caller's check, so a non-TPT delete never pays for
+   * the extra async frame.
    */
   private async deleteJoinedRows<T>(
     entity: ClazzType<T>,
@@ -2021,12 +2029,6 @@ export class WriteExecutor {
     whereSql: Sql,
     session: TransactionSessionManager,
   ): Promise<number | null> {
-    if (
-      this.inheritanceResolver.getStrategy(entity) !== "JOINED" ||
-      !this.inheritanceResolver.isChildEntity(entity)
-    ) {
-      return null;
-    }
     const root = this.inheritanceResolver.getRoot(entity)!;
     const rootMeta = this.resolver.resolveEntityMetadata(root);
     if (!rootMeta) {
@@ -2090,10 +2092,22 @@ export class WriteExecutor {
         this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria),
       );
 
-      const whereSql = this.buildDeleteWhereSql(entity, metadata, criteria);
+      const deleteStrategy = this.inheritanceResolver.getStrategy(entity);
+      const whereSql = this.buildDeleteWhereSql(
+        entity,
+        metadata,
+        criteria,
+        deleteStrategy,
+      );
+
+      const joinedAffected =
+        deleteStrategy === "JOINED" &&
+        this.inheritanceResolver.isChildEntity(entity)
+          ? await this.deleteJoinedRows(entity, metadata, whereSql, session)
+          : null;
 
       const affected =
-        (await this.deleteJoinedRows(entity, metadata, whereSql, session)) ??
+        joinedAffected ??
         (await this.executeDelete(entity, metadata.name, whereSql, session));
 
       await this.emitAfterDelete(entity, criteria);
