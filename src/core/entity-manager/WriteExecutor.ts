@@ -1310,16 +1310,15 @@ export class WriteExecutor {
     return rowValues;
   }
 
-  private async saveManyBatchInsert<T>(
+  /**
+   * beforeInsert hooks, events and subscribers for a whole batch, followed by
+   * the tenant column — applied after user hooks, which may want to inspect
+   * the item as the caller built it.
+   */
+  private async emitBatchBeforeInsert<T>(
     entity: ClazzType<T>,
-    pk: ColumnMetadata,
     items: Partial<T>[],
-    session: TransactionSessionManager,
-  ): Promise<InstanceType<ClazzType<T>>[]> {
-    const metadata = this.resolver.resolveEntityMetadata(entity)!;
-    const hasAutoIncrementPk = pk.options?.autoIncrement === true;
-
-    // beforeInsert hooks/events
+  ): Promise<void> {
     for (const item of items) {
       await this.cascadeHandler.runHooks(entity, item, "beforeInsert");
       await this.eventEmitter.emit("beforeInsert", { entity, data: item });
@@ -1329,47 +1328,81 @@ export class WriteExecutor {
       } as InsertEvent<T>);
     }
 
-    // Apply tenant column after user hooks (hooks may want to inspect state)
     if (this.ctx.getTenantColumnConfig()) {
       for (const item of items) {
         this.ctx.applyTenantColumnOnInsert(entity, item);
       }
     }
+  }
 
-    // Prepare columns
+  /**
+   * The columns a multi-row INSERT names.
+   *
+   * Generated and auto-managed columns are always named so their values can
+   * be filled in; a plain column that **no** item provides is left out so the
+   * database DEFAULT applies (#368). Mixed batches keep one shared column
+   * set, so an item missing that column simply binds NULL there.
+   */
+  private selectBatchInsertColumns<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    items: Partial<T>[],
+  ): ColumnMetadata[] {
     const computedCols = this.ctx.getComputedColumnNames(entity);
+    const createTsCol = this.resolver.getCreateTimestampColumn(entity);
+    const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
+    const versionCol = this.resolver.getVersionColumn(entity);
+
+    return metadata.columns.filter((col) => {
+      if (computedCols.has(col.name)) return false;
+      if (col.options?.autoIncrement) return false;
+      // PostgreSQL uuid: rely on the DB DEFAULT
+      if (col.options?.generationStrategy === "uuid" && this.ctx.isPostgres()) return false;
+      const strategy = col.options?.generationStrategy;
+      if (strategy === "uuid" || strategy === "uuid-v7") return true;
+      if (
+        col.name === createTsCol ||
+        col.name === updateTsCol ||
+        col.name === versionCol
+      ) {
+        return true;
+      }
+      return items.some(
+        (item) => fieldsOf(item)[this.ctx.propKey(col)] !== undefined,
+      );
+    });
+  }
+
+  /**
+   * Fills the values the ORM generates rather than the caller: client-side
+   * UUIDs, `@CreateTimestamp` / `@UpdateTimestamp`, and the `@Version` seed.
+   * All of them are written onto the items themselves, so the rows the caller
+   * passed in carry what was persisted.
+   *
+   * Every write goes through the property key. The timestamp and version
+   * resolvers return DB column names (the naming strategy rewrites them), but
+   * VALUES bind from the property key — writing `item[columnName]` would add
+   * a bogus property and leave the real column NULL.
+   */
+  private applyBatchGeneratedValues<T>(
+    entity: ClazzType<T>,
+    insertableColumns: ColumnMetadata[],
+    items: Partial<T>[],
+  ): void {
     const createTsCol = this.resolver.getCreateTimestampColumn(entity);
     const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
     const versionCol = this.resolver.getVersionColumn(entity);
     const now = new Date();
 
-    const insertableColumns = metadata.columns.filter(
-      (col) => {
-        if (computedCols.has(col.name)) return false;
-        if (col.options?.autoIncrement) return false;
-        // PostgreSQL uuid: rely on the DB DEFAULT
-        if (col.options?.generationStrategy === "uuid" && this.ctx.isPostgres()) return false;
-        const strategy = col.options?.generationStrategy;
-        if (strategy === "uuid" || strategy === "uuid-v7") return true;
-        if (
-          col.name === createTsCol ||
-          col.name === updateTsCol ||
-          col.name === versionCol
-        ) {
-          return true;
-        }
-        // #368: omit a column no item provides so the DB DEFAULT applies.
-        // Mixed batches (some items provide it, some don't) keep a shared
-        // column set, so missing rows still bind NULL there.
-        return items.some(
-          (item) => fieldsOf(item)[this.ctx.propKey(col)] !== undefined,
-        );
-      },
-    );
+    const columnNamed = (name: string | null) =>
+      name ? insertableColumns.find((c) => c.name === name) : undefined;
+    const createTsColumn = columnNamed(createTsCol);
+    const updateTsColumn = columnNamed(updateTsCol);
+    const versionColumn = columnNamed(versionCol);
 
-    // Pre-process items: UUID, timestamp, version
     for (const item of items) {
       const itemFields = fieldsOf(item);
+
       for (const col of insertableColumns) {
         const strategy = col.options?.generationStrategy;
         if (!strategy || strategy === "increment") continue;
@@ -1380,43 +1413,46 @@ export class WriteExecutor {
           itemFields[this.ctx.propKey(col)] = generateUUIDv7();
         }
       }
-      if (createTsCol) {
-        const col = insertableColumns.find((c) => c.name === createTsCol);
+
+      for (const col of [createTsColumn, updateTsColumn]) {
         if (col && itemFields[this.ctx.propKey(col)] == null) {
           itemFields[this.ctx.propKey(col)] = now;
         }
       }
-      if (updateTsCol) {
-        const col = insertableColumns.find((c) => c.name === updateTsCol);
-        if (col && itemFields[this.ctx.propKey(col)] == null) {
-          itemFields[this.ctx.propKey(col)] = now;
-        }
-      }
-      if (versionCol) {
-        // `versionCol` is the DB column name (applyNamingStrategyToEntities
-        // rewrites VERSION_TOKEN to the resolved column name), but VALUES bind
-        // from the property key below — so initialize via propKey, mirroring the
-        // @CreateTimestamp/@UpdateTimestamp handling above. Setting item[colName]
-        // here would write a bogus property and leave the version NULL.
-        const versionColumn = insertableColumns.find((c) => c.name === versionCol);
-        if (versionColumn && itemFields[this.ctx.propKey(versionColumn)] == null) {
-          itemFields[this.ctx.propKey(versionColumn)] = 1;
-        }
+
+      if (versionColumn && itemFields[this.ctx.propKey(versionColumn)] == null) {
+        itemFields[this.ctx.propKey(versionColumn)] = 1;
       }
     }
+  }
 
-    // Column list + FK columns
-    const columns = insertableColumns.map((col) =>
-      raw(this.ctx.wrap(col.name)),
+  /**
+   * The multi-row INSERT statement, plus whether it took the all-default
+   * shape.
+   *
+   * #373: when every insertable column is omitted for every item and there
+   * are no FK columns, there is nothing to name. `() VALUES (), ()` is valid
+   * only on the MySQL family and sql-template-tag's join() rejects empty
+   * arrays, so each dialect gets its own form: PostgreSQL names the PK and
+   * emits DEFAULT per row, SQLite falls back to single-row `DEFAULT VALUES`
+   * (executed once per item in {@link executeBatchInsert}).
+   */
+  private buildBatchInsertStatement<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    pk: ColumnMetadata,
+    insertableColumns: ColumnMetadata[],
+    items: Partial<T>[],
+  ): { insertSql: Sql; allDefaultRow: boolean } {
+    const columns = insertableColumns.map((col) => raw(this.ctx.wrap(col.name)));
+    const fkColumns = this.appendFkInsertColumns(
+      entity,
+      insertableColumns,
+      columns,
     );
-    const fkColumns = this.appendFkInsertColumns(entity, insertableColumns, columns);
 
-    // #373: all insertable columns omitted for every item and no FK columns.
-    // `() VALUES (), ()` is valid only on the MySQL family, and sql-template-tag's
-    // join() rejects empty arrays, so the all-default case is built per dialect.
     const allDefaultRow = columns.length === 0;
 
-    // Build the VALUES rows (column-bearing path only; all-default handled below).
     const valueRows: Sql[] = allDefaultRow
       ? []
       : items.map((item) => {
@@ -1429,101 +1465,201 @@ export class WriteExecutor {
         });
 
     if (allDefaultRow && this.ctx.isPostgres()) {
-      // PostgreSQL has no `() VALUES ()` and `DEFAULT VALUES` is single-row only,
-      // so name the PK and emit the DEFAULT keyword per row to keep the multi-row
-      // form valid: INSERT INTO "t" ("id") VALUES (DEFAULT), (DEFAULT) RETURNING *.
       columns.push(raw(this.ctx.wrap(pk.name)));
       for (let i = 0; i < items.length; i++) {
         valueRows.push(sql`(${raw("DEFAULT")})`);
       }
     }
 
-    // INSERT SQL (PostgreSQL all versions, MariaDB 10.5+: RETURNING *)
+    // RETURNING * where the driver supports it (PostgreSQL all versions,
+    // MariaDB 10.5+), so the rows come back without a second read.
     const useReturning =
       (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
       (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
     const returningSql = useReturning ? raw(` RETURNING *`) : raw("");
-    let insertSql: Sql;
-    if (allDefaultRow && this.ctx.isMySqlFamily()) {
-      // MySQL/MariaDB accept the empty multi-row form `() VALUES (), ()`.
-      const emptyRows = items.map(() => "()").join(", ");
-      insertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} ${raw(`() VALUES ${emptyRows}`)}${returningSql}`;
-    } else if (allDefaultRow && this.ctx.isSqlite()) {
-      // Single-row `DEFAULT VALUES`, executed once per item below.
-      insertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} ${raw("DEFAULT VALUES")}`;
-    } else {
-      insertSql = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}${returningSql}`;
-    }
 
+    const table = raw(this.ctx.wrapTable(metadata.name));
+    if (allDefaultRow && this.ctx.isMySqlFamily()) {
+      const emptyRows = items.map(() => "()").join(", ");
+      return {
+        insertSql: sql`INSERT INTO ${table} ${raw(`() VALUES ${emptyRows}`)}${returningSql}`,
+        allDefaultRow,
+      };
+    }
+    if (allDefaultRow && this.ctx.isSqlite()) {
+      return {
+        insertSql: sql`INSERT INTO ${table} ${raw("DEFAULT VALUES")}`,
+        allDefaultRow,
+      };
+    }
+    return {
+      insertSql: sql`INSERT INTO ${table} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}${returningSql}`,
+      allDefaultRow,
+    };
+  }
+
+  /**
+   * Runs the batch INSERT under query tracking.
+   *
+   * SQLite has no DEFAULT keyword inside VALUES, so the all-default shape is
+   * a single-row statement executed once per item; each rowid is kept for
+   * exact PK assignment rather than derived from a range.
+   */
+  private async executeBatchInsert<T>(
+    entity: ClazzType<T>,
+    insertSql: Sql,
+    items: Partial<T>[],
+    allDefaultRow: boolean,
+    session: TransactionSessionManager,
+  ): Promise<{
+    queryResult: DriverExecResult;
+    sqliteDefaultRowIds: number[] | null;
+  }> {
     this.ctx.beginTrackQuery();
     const queryStart = Date.now();
-    let queryResult: DriverExecResult;
-    // Exact rowids from per-row SQLite all-default inserts (see below).
-    let sqliteDefaultRowIds: number[] | null = null;
+    const track = () =>
+      this.ctx.trackQuery(
+        entity.name,
+        insertSql.text ?? String(insertSql),
+        Date.now() - queryStart,
+      );
+
     if (allDefaultRow && this.ctx.isSqlite()) {
-      // SQLite has no DEFAULT keyword inside VALUES, so run the single-row
-      // `DEFAULT VALUES` statement once per item in this session and keep each
-      // rowid for exact PK assignment.
-      sqliteDefaultRowIds = [];
+      const sqliteDefaultRowIds: number[] = [];
       for (let i = 0; i < items.length; i++) {
         const res = await session.query(insertSql);
         sqliteDefaultRowIds.push(Number(sqliteRunResult(res)?.lastInsertRowid));
       }
-      this.ctx.trackQuery(entity.name, insertSql.text ?? String(insertSql), Date.now() - queryStart);
-      queryResult = { results: [], fields: [] };
-    } else {
-      queryResult = (await session.query(insertSql)) as DriverExecResult;
-      this.ctx.trackQuery(entity.name, insertSql.text ?? String(insertSql), Date.now() - queryStart);
+      track();
+      return { queryResult: { results: [], fields: [] }, sqliteDefaultRowIds };
     }
 
-    // Collect results
-    let results: InstanceType<ClazzType<T>>[];
+    const queryResult = (await session.query(insertSql)) as DriverExecResult;
+    track();
+    return { queryResult, sqliteDefaultRowIds: null };
+  }
 
+  /**
+   * The saved entities, in the order the items were passed.
+   *
+   * A driver that returned the rows lets them deserialize directly; otherwise
+   * the primary keys are derived per dialect (RETURNING rows, the MySQL
+   * `insertId` range, SQLite rowids, or client-generated UUIDs) and re-read in
+   * one `WHERE pk IN (...)`. An entity with eager relations always takes the
+   * re-read, since RETURNING carries only the inserted table's columns.
+   */
+  private async collectBatchInsertResults<T>(
+    entity: ClazzType<T>,
+    pk: ColumnMetadata,
+    items: Partial<T>[],
+    queryResult: DriverExecResult,
+    sqliteDefaultRowIds: number[] | null,
+    session: TransactionSessionManager,
+  ): Promise<InstanceType<ClazzType<T>>[]> {
+    const hasAutoIncrementPk = pk.options?.autoIncrement === true;
+    const useReturning =
+      (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
+      (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
     const insertedRows = resultRows(queryResult);
 
     if (useReturning && insertedRows.length > 0 && !this.ctx.hasEagerRelations(entity)) {
-      // PostgreSQL RETURNING: deserialize directly without a re-read.
       // #369: ResultTransformer maps DB column names → property keys.
-      results = ResultTransformerFactory.create().toEntities(entity, {
+      return ResultTransformerFactory.create().toEntities(entity, {
         results: insertedRows,
         fields: [],
       }) as InstanceType<ClazzType<T>>[];
-    } else {
-      // Compute PK values → bulk SELECT WHERE pk IN (...)
-      let pkValues: unknown[];
-      if (useReturning && insertedRows.length > 0) {
-        pkValues = insertedRows.map((row) => row[pk.name]);
-      } else if (this.ctx.isMySqlFamily() && hasAutoIncrementPk) {
-        const firstId = Number(okPacket(queryResult)?.insertId);
-        pkValues = items.map((_, i) => firstId + i);
-      } else if (this.ctx.isSqlite() && hasAutoIncrementPk) {
-        if (sqliteDefaultRowIds) {
-          // Per-row all-default inserts already captured exact rowids.
-          pkValues = sqliteDefaultRowIds;
-        } else {
-          const lastId = Number(sqliteRunResult(queryResult)?.lastInsertRowid);
-          pkValues = items.map((_, i) => lastId - items.length + 1 + i);
-        }
-      } else {
-        // UUID — use client-generated PK values
-        pkValues = items.map((item) => fieldsOf(item)[this.ctx.propKey(pk)]);
-      }
-
-      const found = await this.ctx.findInternal(
-        entity,
-        { where: whereByProps<T>({ [this.ctx.propKey(pk)]: pkValues }) },
-        session,
-      );
-      const resultArray = Array.isArray(found) ? found : found ? [found] : [];
-      const resultMap = new Map<unknown, InstanceType<ClazzType<T>>>();
-      for (const row of resultArray) {
-        resultMap.set(
-          fieldsOf(row)[this.ctx.propKey(pk)],
-          row as InstanceType<ClazzType<T>>,
-        );
-      }
-      results = pkValues.map((id) => resultMap.get(id)!).filter(Boolean);
     }
+
+    let pkValues: unknown[];
+    if (useReturning && insertedRows.length > 0) {
+      pkValues = insertedRows.map((row) => row[pk.name]);
+    } else if (this.ctx.isMySqlFamily() && hasAutoIncrementPk) {
+      const firstId = Number(okPacket(queryResult)?.insertId);
+      pkValues = items.map((_, i) => firstId + i);
+    } else if (this.ctx.isSqlite() && hasAutoIncrementPk) {
+      if (sqliteDefaultRowIds) {
+        pkValues = sqliteDefaultRowIds;
+      } else {
+        const lastId = Number(sqliteRunResult(queryResult)?.lastInsertRowid);
+        pkValues = items.map((_, i) => lastId - items.length + 1 + i);
+      }
+    } else {
+      // UUID — use client-generated PK values
+      pkValues = items.map((item) => fieldsOf(item)[this.ctx.propKey(pk)]);
+    }
+
+    const found = await this.ctx.findInternal(
+      entity,
+      { where: whereByProps<T>({ [this.ctx.propKey(pk)]: pkValues }) },
+      session,
+    );
+    const resultArray = Array.isArray(found) ? found : found ? [found] : [];
+    const resultMap = new Map<unknown, InstanceType<ClazzType<T>>>();
+    for (const row of resultArray) {
+      resultMap.set(
+        fieldsOf(row)[this.ctx.propKey(pk)],
+        row as InstanceType<ClazzType<T>>,
+      );
+    }
+    return pkValues.map((id) => resultMap.get(id)!).filter(Boolean);
+  }
+
+  /** afterInsert hooks, events and subscribers for a whole batch. */
+  private async emitBatchAfterInsert<T>(
+    entity: ClazzType<T>,
+    items: Partial<T>[],
+  ): Promise<void> {
+    for (const item of items) {
+      await this.cascadeHandler.runHooks(entity, item, "afterInsert");
+      await this.eventEmitter.emit("afterInsert", { entity, data: item });
+      await this.ctx.notifySubscribers(entity, "afterInsert", {
+        entity: item,
+        manager: this.ctx.getManager(),
+      } as InsertEvent<T>);
+    }
+  }
+
+  private async saveManyBatchInsert<T>(
+    entity: ClazzType<T>,
+    pk: ColumnMetadata,
+    items: Partial<T>[],
+    session: TransactionSessionManager,
+  ): Promise<InstanceType<ClazzType<T>>[]> {
+    const metadata = this.resolver.resolveEntityMetadata(entity)!;
+
+    await this.emitBatchBeforeInsert(entity, items);
+
+    const insertableColumns = this.selectBatchInsertColumns(
+      entity,
+      metadata,
+      items,
+    );
+    this.applyBatchGeneratedValues(entity, insertableColumns, items);
+
+    const { insertSql, allDefaultRow } = this.buildBatchInsertStatement(
+      entity,
+      metadata,
+      pk,
+      insertableColumns,
+      items,
+    );
+
+    const { queryResult, sqliteDefaultRowIds } = await this.executeBatchInsert(
+      entity,
+      insertSql,
+      items,
+      allDefaultRow,
+      session,
+    );
+
+    const results = await this.collectBatchInsertResults(
+      entity,
+      pk,
+      items,
+      queryResult,
+      sqliteDefaultRowIds,
+      session,
+    );
 
     // OneToMany cascade per item
     for (let i = 0; i < items.length; i++) {
@@ -1533,15 +1669,7 @@ export class WriteExecutor {
       }
     }
 
-    // afterInsert hooks/events
-    for (const item of items) {
-      await this.cascadeHandler.runHooks(entity, item, "afterInsert");
-      await this.eventEmitter.emit("afterInsert", { entity, data: item });
-      await this.ctx.notifySubscribers(entity, "afterInsert", {
-        entity: item,
-        manager: this.ctx.getManager(),
-      } as InsertEvent<T>);
-    }
+    await this.emitBatchAfterInsert(entity, items);
 
     return results;
   }
