@@ -1933,6 +1933,124 @@ export class WriteExecutor {
       }) as InstanceType<ClazzType<T>>[];
     });
   }
+  /** beforeDelete hooks, events and subscribers for a criteria-based delete. */
+  private async emitBeforeDelete<T>(
+    entity: ClazzType<T>,
+    criteria: WhereClause<T>,
+  ): Promise<void> {
+    await this.cascadeHandler.runHooks(entity, criteria, "beforeDelete");
+    await this.eventEmitter.emit("beforeDelete", { entity, data: criteria });
+    await this.ctx.notifySubscribers(entity, "beforeDelete", {
+      entityClass: entity,
+      criteria,
+      manager: this.ctx.getManager(),
+    } as DeleteEvent<T>);
+  }
+
+  /** afterDelete hooks, events and subscribers for a criteria-based delete. */
+  private async emitAfterDelete<T>(
+    entity: ClazzType<T>,
+    criteria: WhereClause<T>,
+  ): Promise<void> {
+    await this.cascadeHandler.runHooks(entity, criteria, "afterDelete");
+    await this.eventEmitter.emit("afterDelete", { entity, data: criteria });
+    await this.ctx.notifySubscribers(entity, "afterDelete", {
+      entityClass: entity,
+      criteria,
+      manager: this.ctx.getManager(),
+    } as DeleteEvent<T>);
+  }
+
+  /**
+   * The WHERE a delete runs with: the user's criteria, narrowed to the STI
+   * subtype and to the active tenant.
+   *
+   * The empty-criteria guard MUST run before the tenant predicate is
+   * appended — otherwise tenant scoping alone would satisfy the check and
+   * permit a "delete all my rows" call. DeleteWithoutConditionsError catches
+   * that class of bug and must stay gated on user-supplied criteria only.
+   */
+  private buildDeleteWhereSql<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    criteria: WhereClause<T>,
+  ): Sql {
+    const deletePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
+    const whereMap: Sql[] = this.resolveCriteriaWhere(criteria, deletePropToCol);
+
+    const deleteSti = this.stiDiscriminatorClause(entity);
+    if (deleteSti) {
+      whereMap.push(deleteSti);
+    }
+
+    if (whereMap.length === 0) {
+      throw new DeleteWithoutConditionsError("Delete");
+    }
+
+    const tenantDeleteWhere = this.ctx.buildTenantWhereClause(entity);
+    if (tenantDeleteWhere) {
+      whereMap.push(tenantDeleteWhere);
+    }
+
+    return join(whereMap, " AND ");
+  }
+
+  /**
+   * TPT: the child table's rows go first, then the root's — the root DELETE
+   * reports the affected count. Returns null when the entity is not a TPT
+   * child (or its root has no metadata), so the caller falls through to the
+   * single-table delete.
+   */
+  private async deleteJoinedRows<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    whereSql: Sql,
+    session: TransactionSessionManager,
+  ): Promise<number | null> {
+    if (
+      this.inheritanceResolver.getStrategy(entity) !== "JOINED" ||
+      !this.inheritanceResolver.isChildEntity(entity)
+    ) {
+      return null;
+    }
+    const root = this.inheritanceResolver.getRoot(entity)!;
+    const rootMeta = this.resolver.resolveEntityMetadata(root);
+    if (!rootMeta) {
+      return null;
+    }
+
+    const childDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${whereSql}`;
+    await session.query(childDeleteQuery);
+
+    const parentDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${whereSql}`;
+    const parentResult = (await session.query(
+      parentDeleteQuery,
+    )) as DriverExecResult;
+
+    return this.affectedCount(parentResult);
+  }
+
+  /** The single-table DELETE, under query tracking. */
+  private async executeDelete<T>(
+    entity: ClazzType<T>,
+    tableName: string,
+    whereSql: Sql,
+    session: TransactionSessionManager,
+  ): Promise<number> {
+    const deleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${whereSql}`;
+
+    const deleteStart = Date.now();
+    this.ctx.beginTrackQuery();
+    const queryResult = (await session.query(deleteQuery)) as DriverExecResult;
+    this.ctx.trackQuery(
+      entity.name,
+      deleteQuery.text ?? String(deleteQuery),
+      Date.now() - deleteStart,
+    );
+
+    return this.affectedCount(queryResult);
+  }
+
   async delete<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
@@ -1946,13 +2064,7 @@ export class WriteExecutor {
     this.ctx.validateCriteriaKeys(metadata, criteria, entity.name);
 
     return this.ctx.executeInTransaction(async (session) => {
-      await this.cascadeHandler.runHooks(entity, criteria, "beforeDelete");
-      await this.eventEmitter.emit("beforeDelete", { entity, data: criteria });
-      await this.ctx.notifySubscribers(entity, "beforeDelete", {
-        entityClass: entity,
-        criteria,
-        manager: this.ctx.getManager(),
-      } as DeleteEvent<T>);
+      await this.emitBeforeDelete(entity, criteria);
 
       // cascade remove — the handler issues the child deletes (and the
       // parent-PK SELECT) through the public ctx.delete/ctx.find, which only
@@ -1964,93 +2076,17 @@ export class WriteExecutor {
         this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria),
       );
 
-      const deletePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
-      const whereMap: Sql[] = this.resolveCriteriaWhere(
-        criteria,
-        deletePropToCol,
-      );
+      const whereSql = this.buildDeleteWhereSql(entity, metadata, criteria);
 
-      // STI: when deleting a child entity, add the discriminator condition
-      const deleteStrategy = this.inheritanceResolver.getStrategy(entity);
-      const deleteSti = this.stiDiscriminatorClause(entity);
-      if (deleteSti) {
-        whereMap.push(deleteSti);
-      }
+      const affected =
+        (await this.deleteJoinedRows(entity, metadata, whereSql, session)) ??
+        (await this.executeDelete(entity, metadata.name, whereSql, session));
 
-      // Empty-criteria guard MUST run before we append the tenant predicate —
-      // otherwise tenant scoping alone would satisfy the check and permit a
-      // "delete all my rows" call. DeleteWithoutConditionsError catches that
-      // class of bug and must stay gated on user-supplied criteria only.
-      if (whereMap.length === 0) {
-        throw new DeleteWithoutConditionsError("Delete");
-      }
-
-      // Tenant scoping is added after the guard so a delete with a user
-      // criteria is safely intersected with the tenant filter.
-      const tenantDeleteWhere = this.ctx.buildTenantWhereClause(entity);
-      if (tenantDeleteWhere) {
-        whereMap.push(tenantDeleteWhere);
-      }
-
-      const whereSql = join(whereMap, " AND ");
-
-      // TPT: delete from the child table first, then the parent
-      if (deleteStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
-        const root = this.inheritanceResolver.getRoot(entity)!;
-        const rootMeta = this.resolver.resolveEntityMetadata(root);
-        if (rootMeta) {
-          // 1. Delete from the child table
-          const childDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${whereSql}`;
-          await session.query(childDeleteQuery);
-
-          // 2. Delete from the parent table
-          const parentDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${whereSql}`;
-          const parentResult = (await session.query(
-            parentDeleteQuery,
-          )) as DriverExecResult;
-
-          const affected = this.affectedCount(parentResult);
-
-          await this.cascadeHandler.runHooks(entity, criteria, "afterDelete");
-          await this.eventEmitter.emit("afterDelete", {
-            entity,
-            data: criteria,
-          });
-          await this.ctx.notifySubscribers(entity, "afterDelete", {
-            entityClass: entity,
-            criteria,
-            manager: this.ctx.getManager(),
-          } as DeleteEvent<T>);
-
-          return { affected };
-        }
-      }
-
-      const deleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${whereSql}`;
-
-      const deleteStart = Date.now();
-      this.ctx.beginTrackQuery();
-      const queryResult = (await session.query(deleteQuery)) as DriverExecResult;
-      this.ctx.trackQuery(
-        entity.name,
-        deleteQuery.text ?? String(deleteQuery),
-        Date.now() - deleteStart,
-      );
-
-      const affected = this.affectedCount(queryResult);
-
-      await this.cascadeHandler.runHooks(entity, criteria, "afterDelete");
-      await this.eventEmitter.emit("afterDelete", { entity, data: criteria });
-      await this.ctx.notifySubscribers(entity, "afterDelete", {
-        entityClass: entity,
-        criteria,
-        manager: this.ctx.getManager(),
-      } as DeleteEvent<T>);
+      await this.emitAfterDelete(entity, criteria);
 
       return { affected };
     });
   }
-
   async deleteMany<T>(entity: ClazzType<T>, ids: unknown[]): Promise<DeleteResult> {
     if (ids.length === 0) {
       return { affected: 0 };
