@@ -109,6 +109,20 @@ interface UpdateSetPlan {
   versionColName: string | null;
 }
 
+/** Column lists staged for an INSERT ... ON CONFLICT statement. */
+interface UpsertPlan {
+  /** Metadata of the columns the INSERT names, in statement order. */
+  insertableColumns: ColumnMetadata[];
+  /** Wrapped table identifier. */
+  tableName: string;
+  /** Wrapped identifiers of `insertableColumns`. */
+  wrappedColumns: string[];
+  /** Wrapped identifiers of the conflict target. */
+  wrappedConflict: string[];
+  /** Wrapped identifiers the DO UPDATE writes (conflict targets excluded). */
+  wrappedUpdate: string[];
+}
+
 /**
  * Executes all write operations (INSERT / UPDATE / DELETE / UPSERT) for
  * EntityManager. Holds no schema state — reads dialect/identifier/helper
@@ -2698,6 +2712,77 @@ export class WriteExecutor {
     });
   }
 
+  /**
+   * The column plan an INSERT ... ON CONFLICT runs with, shared by upsert(),
+   * insertIgnore() and batchUpsert().
+   *
+   * The conflict target defaults to the primary key; an entity without one
+   * and without an explicit target cannot express a conflict at all, so that
+   * throws. `isInsertable` is the only part that differs between the callers:
+   * a single-row upsert asks what one payload defines, a batch asks the union
+   * over its items.
+   *
+   * Returns null when no column is insertable — the caller reports 0 affected
+   * rows rather than emitting a statement. An empty `wrappedUpdate` (every
+   * insertable column is a conflict target) is left to the caller: upsert and
+   * batchUpsert have nothing to write on conflict, but insertIgnore never
+   * writes on conflict to begin with.
+   */
+  private buildUpsertPlan<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    conflictColumns: string[] | undefined,
+    isInsertable: (col: ColumnMetadata) => boolean,
+  ): UpsertPlan | null {
+    const pkColumns = metadata.columns
+      .filter((col: ColumnMetadata) => col.options?.primary)
+      .map((col: ColumnMetadata) => col.name);
+
+    const resolvedConflictColumns = conflictColumns ?? pkColumns;
+    if (resolvedConflictColumns.length === 0) {
+      throw new PrimaryKeyNotFoundError(entity.name);
+    }
+
+    const computedCols = this.ctx.getComputedColumnNames(entity);
+    const insertableColumns = metadata.columns.filter(
+      (col: ColumnMetadata) =>
+        !computedCols.has(col.name) && isInsertable(col),
+    );
+    if (insertableColumns.length === 0) {
+      return null;
+    }
+
+    const conflictSet = new Set(resolvedConflictColumns);
+    const updateColumnNames = insertableColumns
+      .map((col: ColumnMetadata) => col.name)
+      .filter((name) => !conflictSet.has(name));
+
+    return {
+      insertableColumns,
+      tableName: this.ctx.wrapTable(metadata.name),
+      wrappedColumns: insertableColumns.map((col: ColumnMetadata) =>
+        this.ctx.wrap(col.name),
+      ),
+      wrappedConflict: resolvedConflictColumns.map((name) =>
+        this.ctx.wrap(name),
+      ),
+      wrappedUpdate: updateColumnNames.map((name) => this.ctx.wrap(name)),
+    };
+  }
+
+  /**
+   * Whether one row's payload states a value for a column. An auto-increment
+   * column is only named when the payload gives it a real value — binding
+   * NULL there would fight the sequence.
+   */
+  private statesUpsertValue<T>(col: ColumnMetadata, data: Partial<T>): boolean {
+    const value = fieldsOf(data)[this.ctx.propKey(col)];
+    if (col.options?.autoIncrement && (value === null || value === undefined)) {
+      return false;
+    }
+    return value !== undefined;
+  }
+
   async upsert<T>(
     entity: ClazzType<T>,
     data: Partial<T>,
@@ -2717,72 +2802,30 @@ export class WriteExecutor {
 
     this.ctx.applyTenantColumnOnInsert(entity, data);
 
-    const pkColumns = metadata.columns
-      .filter((col: ColumnMetadata) => col.options?.primary)
-      .map((col: ColumnMetadata) => col.name);
-
-    const resolvedConflictColumns = conflictColumns ?? pkColumns;
-
-    if (resolvedConflictColumns.length === 0) {
-      throw new PrimaryKeyNotFoundError(entity.name);
-    }
-
-    const computedColsUpsert = this.ctx.getComputedColumnNames(entity);
-    const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
-      if (computedColsUpsert.has(col.name)) return false;
-      const value = fieldsOf(data)[this.ctx.propKey(col)];
-      if (
-        col.options?.autoIncrement &&
-        (value === null || value === undefined)
-      ) {
-        return false;
-      }
-      return value !== undefined;
-    });
-
-    if (insertableColumns.length === 0) {
-      return { affected: 0 };
-    }
-
-    const conflictSet = new Set(resolvedConflictColumns);
-    const updateColumnNames = insertableColumns
-      .map((col: ColumnMetadata) => col.name)
-      .filter((name) => !conflictSet.has(name));
-
-    const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
-      this.ctx.wrap(col.name),
+    const plan = this.buildUpsertPlan(entity, metadata, conflictColumns, (col) =>
+      this.statesUpsertValue(col, data),
     );
-    const wrappedConflict = resolvedConflictColumns.map((name) =>
-      this.ctx.wrap(name),
-    );
-    const wrappedUpdate = updateColumnNames.map((name) => this.ctx.wrap(name));
-
-    const tableName = this.ctx.wrapTable(metadata.name);
-
-    if (wrappedUpdate.length === 0) {
+    if (!plan || plan.wrappedUpdate.length === 0) {
       return { affected: 0 };
     }
 
     return this.ctx.executeInTransaction(async (session) => {
       const dataFields = fieldsOf(data);
-      const columnValues = insertableColumns.map(
-        (col: ColumnMetadata) => {
-          const rawValue = dataFields[this.ctx.propKey(col)];
-          return this.ctx.applyWriteTransform(col, rawValue);
-        },
-      );
+      const columnValues = plan.insertableColumns.map((col: ColumnMetadata) => {
+        const rawValue = dataFields[this.ctx.propKey(col)];
+        return this.ctx.applyWriteTransform(col, rawValue);
+      });
 
       const upsertSql = this.dmlSqlBuilder.buildUpsertQuery(
-        tableName,
-        wrappedColumns,
+        plan.tableName,
+        plan.wrappedColumns,
         columnValues,
-        wrappedConflict,
-        wrappedUpdate,
+        plan.wrappedConflict,
+        plan.wrappedUpdate,
       );
 
       const queryResult = (await session.query(upsertSql)) as DriverExecResult;
-      const affected = this.affectedCount(queryResult);
-      return { affected };
+      return { affected: this.affectedCount(queryResult) };
     });
   }
 
@@ -2805,57 +2848,31 @@ export class WriteExecutor {
 
     this.ctx.applyTenantColumnOnInsert(entity, data);
 
-    const pkColumns = metadata.columns
-      .filter((col: ColumnMetadata) => col.options?.primary)
-      .map((col: ColumnMetadata) => col.name);
-
-    const resolvedConflictColumns = conflictColumns ?? pkColumns;
-    if (resolvedConflictColumns.length === 0) {
-      throw new PrimaryKeyNotFoundError(entity.name);
-    }
-
-    const computedColsIgnore = this.ctx.getComputedColumnNames(entity);
-    const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
-      if (computedColsIgnore.has(col.name)) return false;
-      const value = fieldsOf(data)[this.ctx.propKey(col)];
-      if (
-        col.options?.autoIncrement &&
-        (value === null || value === undefined)
-      ) {
-        return false;
-      }
-      return value !== undefined;
-    });
-
-    if (insertableColumns.length === 0) {
+    // No DO UPDATE list here: a conflict skips the row, so a plan whose
+    // insertable columns are all conflict targets is still a valid statement.
+    const plan = this.buildUpsertPlan(entity, metadata, conflictColumns, (col) =>
+      this.statesUpsertValue(col, data),
+    );
+    if (!plan) {
       return { affected: 0 };
     }
 
-    const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
-      this.ctx.wrap(col.name),
-    );
-    const wrappedConflict = resolvedConflictColumns.map((name) =>
-      this.ctx.wrap(name),
-    );
-    const tableName = this.ctx.wrapTable(metadata.name);
-
     return this.ctx.executeInTransaction(async (session) => {
       const dataFields = fieldsOf(data);
-      const columnValues = insertableColumns.map((col: ColumnMetadata) => {
+      const columnValues = plan.insertableColumns.map((col: ColumnMetadata) => {
         const rawValue = dataFields[this.ctx.propKey(col)];
         return this.ctx.applyWriteTransform(col, rawValue);
       });
 
       const insertSql = this.dmlSqlBuilder.buildInsertIgnoreQuery(
-        tableName,
-        wrappedColumns,
+        plan.tableName,
+        plan.wrappedColumns,
         columnValues,
-        wrappedConflict,
+        plan.wrappedConflict,
       );
 
       const queryResult = (await session.query(insertSql)) as DriverExecResult;
-      const affected = this.affectedCount(queryResult);
-      return { affected };
+      return { affected: this.affectedCount(queryResult) };
     });
   }
 
@@ -2886,61 +2903,32 @@ export class WriteExecutor {
       }
     }
 
-    const pkColumns = metadata.columns
-      .filter((col: ColumnMetadata) => col.options?.primary)
-      .map((col: ColumnMetadata) => col.name);
-
-    const resolvedConflictColumns = conflictColumns ?? pkColumns;
-
-    if (resolvedConflictColumns.length === 0) {
-      throw new PrimaryKeyNotFoundError(entity.name);
-    }
-
-    const computedCols = this.ctx.getComputedColumnNames(entity);
-    const conflictSet = new Set(resolvedConflictColumns);
-
-    // Determine insertable columns from the union of all items' defined fields
-    const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
-      if (computedCols.has(col.name)) return false;
-      if (col.options?.autoIncrement) {
-        // Include auto-increment column only if ALL items provide a value
-        return items.every((item) => {
-          const value = fieldsOf(item)[this.ctx.propKey(col)];
-          return value !== null && value !== undefined;
-        });
-      }
-      // Include column if at least one item provides a value
-      return items.some(
-        (item) => fieldsOf(item)[this.ctx.propKey(col)] !== undefined,
-      );
-    });
-
-    if (insertableColumns.length === 0) {
+    // The column set is the union over the batch: an auto-increment column
+    // is named only when every item supplies a value, any other column when
+    // at least one does (items missing it bind NULL).
+    const plan = this.buildUpsertPlan(
+      entity,
+      metadata,
+      conflictColumns,
+      (col) =>
+        col.options?.autoIncrement
+          ? items.every((item) => {
+              const value = fieldsOf(item)[this.ctx.propKey(col)];
+              return value !== null && value !== undefined;
+            })
+          : items.some(
+              (item) => fieldsOf(item)[this.ctx.propKey(col)] !== undefined,
+            ),
+    );
+    if (!plan || plan.wrappedUpdate.length === 0) {
       return { affected: 0 };
     }
-
-    const updateColumnNames = insertableColumns
-      .map((col: ColumnMetadata) => col.name)
-      .filter((name) => !conflictSet.has(name));
-
-    if (updateColumnNames.length === 0) {
-      return { affected: 0 };
-    }
-
-    const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
-      this.ctx.wrap(col.name),
-    );
-    const wrappedConflict = resolvedConflictColumns.map((name) =>
-      this.ctx.wrap(name),
-    );
-    const wrappedUpdate = updateColumnNames.map((name) => this.ctx.wrap(name));
-    const tableName = this.ctx.wrapTable(metadata.name);
 
     return this.ctx.executeInTransaction(async (session) => {
       const valueRows = items.map((item) => {
         const itemFields = fieldsOf(item);
         const rowValues: RawValue[] = bindParams(
-          insertableColumns.map((col: ColumnMetadata) => {
+          plan.insertableColumns.map((col: ColumnMetadata) => {
             const rawValue = itemFields[this.ctx.propKey(col)];
             return this.ctx.applyWriteTransform(col, rawValue) ?? null;
           }),
@@ -2949,16 +2937,15 @@ export class WriteExecutor {
       });
 
       const upsertSql = this.dmlSqlBuilder.buildBatchUpsertQuery(
-        tableName,
-        wrappedColumns,
+        plan.tableName,
+        plan.wrappedColumns,
         valueRows,
-        wrappedConflict,
-        wrappedUpdate,
+        plan.wrappedConflict,
+        plan.wrappedUpdate,
       );
 
       const queryResult = (await session.query(upsertSql)) as DriverExecResult;
-      const affected = this.affectedCount(queryResult);
-      return { affected };
+      return { affected: this.affectedCount(queryResult) };
     });
   }
 
