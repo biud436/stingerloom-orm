@@ -143,6 +143,24 @@ export class WriteExecutor {
     return this.ctx.getEventEmitter();
   }
 
+  /**
+   * How many rows a DML statement touched.
+   *
+   * The MySQL family reports it on the OK packet; PostgreSQL and SQLite
+   * expose `rowCount`. Twelve write paths carried this same two-branch read,
+   * so it lives here once. `fallback` is what an unreadable result counts as
+   * — 0 everywhere except the bulk INSERT, which knows how many rows it sent.
+   */
+  private affectedCount(
+    queryResult: DriverExecResult | undefined,
+    fallback = 0,
+  ): number {
+    if (this.ctx.isMySqlFamily()) {
+      return okPacket(queryResult)?.affectedRows ?? fallback;
+    }
+    return queryResult?.rowCount ?? fallback;
+  }
+
   async save<T>(
     entity: ClazzType<T>,
     item: Partial<T>,
@@ -1013,9 +1031,7 @@ export class WriteExecutor {
       const parentResult = (await session.query<T>(
         parentUpdateSql,
       )) as DriverExecResult;
-      parentAffected = this.ctx.isMySqlFamily()
-        ? (okPacket(parentResult)?.affectedRows ?? 0)
-        : (parentResult?.rowCount ?? 0);
+      parentAffected = this.affectedCount(parentResult);
 
       // Same contract as the single-table UPDATE path: a guarded parent
       // UPDATE that matched nothing is a stale @Version write (the version
@@ -1060,9 +1076,7 @@ export class WriteExecutor {
       // existence signal (identity is anchored on the root row, which
       // shares its PK with the child row).
       if (parentAffected === null) {
-        const childAffected = this.ctx.isMySqlFamily()
-          ? (okPacket(childResult)?.affectedRows ?? 0)
-          : (childResult?.rowCount ?? 0);
+        const childAffected = this.affectedCount(childResult);
         if (childAffected === 0) {
           const childProbe = await session.query(
             sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
@@ -1123,12 +1137,7 @@ export class WriteExecutor {
       Date.now() - updateStart,
     );
 
-    let affected = 0;
-    if (this.ctx.isMySqlFamily()) {
-      affected = okPacket(updateResult)?.affectedRows ?? 0;
-    } else {
-      affected = updateResult?.rowCount ?? 0;
-    }
+    const affected = this.affectedCount(updateResult);
     if (versionColName && currentVersion !== undefined && currentVersion !== null) {
       if (affected === 0) {
         throw new OptimisticLockError(entity.name, currentVersion as number);
@@ -1767,12 +1776,7 @@ export class WriteExecutor {
 
       const queryResult = (await session.query(queryStr)) as DriverExecResult;
 
-      let affected = items.length;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? items.length;
-      } else if (queryResult?.rowCount !== undefined) {
-        affected = queryResult.rowCount;
-      }
+      const affected = this.affectedCount(queryResult, items.length);
 
       return { affected };
     });
@@ -1997,12 +2001,7 @@ export class WriteExecutor {
             parentDeleteQuery,
           )) as DriverExecResult;
 
-          let affected = 0;
-          if (this.ctx.isMySqlFamily()) {
-            affected = okPacket(parentResult)?.affectedRows ?? 0;
-          } else {
-            affected = parentResult?.rowCount ?? 0;
-          }
+          const affected = this.affectedCount(parentResult);
 
           await this.cascadeHandler.runHooks(entity, criteria, "afterDelete");
           await this.eventEmitter.emit("afterDelete", {
@@ -2030,12 +2029,7 @@ export class WriteExecutor {
         Date.now() - deleteStart,
       );
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const affected = this.affectedCount(queryResult);
 
       await this.cascadeHandler.runHooks(entity, criteria, "afterDelete");
       await this.eventEmitter.emit("afterDelete", { entity, data: criteria });
@@ -2091,12 +2085,7 @@ export class WriteExecutor {
 
       const queryResult = (await session.query(deleteQuery)) as DriverExecResult;
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const affected = this.affectedCount(queryResult);
 
       return { affected };
     });
@@ -2259,12 +2248,7 @@ export class WriteExecutor {
         Date.now() - queryStart,
       );
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const affected = this.affectedCount(queryResult);
 
       await this.eventEmitter.emit("afterUpdate", {
         entity,
@@ -2446,12 +2430,7 @@ export class WriteExecutor {
         Date.now() - queryStart,
       );
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const affected = this.affectedCount(queryResult);
       return { affected };
     });
   }
@@ -2538,12 +2517,7 @@ export class WriteExecutor {
 
       const queryResult = (await session.query(updateQuery)) as DriverExecResult;
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const affected = this.affectedCount(queryResult);
 
       await this.eventEmitter.emit("afterSoftDelete", { entity, data: criteria });
       await this.ctx.notifySubscribers(entity, "afterSoftDelete", {
@@ -2624,12 +2598,7 @@ export class WriteExecutor {
 
       const queryResult = (await session.query(restoreQuery)) as DriverExecResult;
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const affected = this.affectedCount(queryResult);
 
       await this.eventEmitter.emit("afterRestore", { entity, data: criteria });
       await this.ctx.notifySubscribers(entity, "afterRestore", {
@@ -2725,9 +2694,7 @@ export class WriteExecutor {
       );
 
       const queryResult = (await session.query(upsertSql)) as DriverExecResult;
-      const affected = this.ctx.isMySqlFamily()
-        ? (okPacket(queryResult)?.affectedRows ?? 0)
-        : (queryResult?.rowCount ?? 0);
+      const affected = this.affectedCount(queryResult);
       return { affected };
     });
   }
@@ -2800,9 +2767,7 @@ export class WriteExecutor {
       );
 
       const queryResult = (await session.query(insertSql)) as DriverExecResult;
-      const affected = this.ctx.isMySqlFamily()
-        ? (okPacket(queryResult)?.affectedRows ?? 0)
-        : (queryResult?.rowCount ?? 0);
+      const affected = this.affectedCount(queryResult);
       return { affected };
     });
   }
@@ -2905,9 +2870,7 @@ export class WriteExecutor {
       );
 
       const queryResult = (await session.query(upsertSql)) as DriverExecResult;
-      const affected = this.ctx.isMySqlFamily()
-        ? (okPacket(queryResult)?.affectedRows ?? 0)
-        : (queryResult?.rowCount ?? 0);
+      const affected = this.affectedCount(queryResult);
       return { affected };
     });
   }
