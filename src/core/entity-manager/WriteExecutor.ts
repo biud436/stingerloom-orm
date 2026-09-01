@@ -298,9 +298,7 @@ export class WriteExecutor {
         this.applyInsertFkColumns(op, plan);
 
         // PostgreSQL (all versions), MariaDB 10.5+: INSERT ... RETURNING *
-        const useReturning =
-          (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
-          (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
+        const useReturning = this.supportsInsertReturning();
 
         // TPT child: INSERT into parent first → INSERT into child (sharing the same PK)
         if (saveInheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
@@ -1515,9 +1513,7 @@ export class WriteExecutor {
 
     // RETURNING * where the driver supports it (PostgreSQL all versions,
     // MariaDB 10.5+), so the rows come back without a second read.
-    const useReturning =
-      (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
-      (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
+    const useReturning = this.supportsInsertReturning();
     const returningSql = useReturning ? raw(` RETURNING *`) : raw("");
 
     const table = raw(this.ctx.wrapTable(metadata.name));
@@ -1599,9 +1595,7 @@ export class WriteExecutor {
     session: TransactionSessionManager,
   ): Promise<InstanceType<ClazzType<T>>[]> {
     const hasAutoIncrementPk = pk.options?.autoIncrement === true;
-    const useReturning =
-      (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
-      (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
+    const useReturning = this.supportsInsertReturning();
     const insertedRows = resultRows(queryResult);
 
     if (useReturning && insertedRows.length > 0 && !this.ctx.hasEagerRelations(entity)) {
@@ -1716,6 +1710,130 @@ export class WriteExecutor {
     return results;
   }
 
+  /**
+   * The values a bulk INSERT fills in rather than the caller: the tenant
+   * column, every temporal column the item left unset, and the `@Version`
+   * seed. They are written onto the items themselves, so the rows the caller
+   * passed in carry what was persisted.
+   *
+   * `@DeletedAt` is excluded — a freshly inserted row is not trashed. The
+   * version and timestamp writes go through the property key, not the DB
+   * column name: VALUES binds from the property, so under a transforming
+   * naming strategy writing the column name would add a bogus property and
+   * leave the real column NULL.
+   */
+  private applyBulkInsertDefaults<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    items: Partial<T>[],
+  ): void {
+    if (this.ctx.getTenantColumnConfig()) {
+      for (const item of items) {
+        this.ctx.applyTenantColumnOnInsert(entity, item);
+      }
+    }
+
+    const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
+    const timestampTypes = new Set(["datetime", "timestamp", "date"]);
+    const timestampColumns = metadata.columns.filter(
+      (col: ColumnMetadata) =>
+        col.options?.type &&
+        timestampTypes.has(col.options.type) &&
+        col.name !== deletedAtColumn,
+    );
+    if (timestampColumns.length > 0) {
+      const now = new Date();
+      for (const item of items) {
+        const itemFields = fieldsOf(item);
+        for (const col of timestampColumns) {
+          if (itemFields[this.ctx.propKey(col)] == null) {
+            itemFields[this.ctx.propKey(col)] = now;
+          }
+        }
+      }
+    }
+
+    const versionCol = this.resolver.getVersionColumn(entity);
+    if (versionCol) {
+      const versionColumn = metadata.columns.find((c) => c.name === versionCol);
+      if (versionColumn) {
+        const versionProp = this.ctx.propKey(versionColumn);
+        for (const item of items) {
+          const itemFields = fieldsOf(item);
+          if (itemFields[versionProp] == null) {
+            itemFields[versionProp] = 1;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * The columns a bulk INSERT names: everything declared except computed
+   * columns, and an auto-increment PK only when *every* item states a value
+   * for it — a mixed batch would otherwise bind NULL over the sequence.
+   *
+   * This is deliberately not {@link selectBatchInsertColumns}: saveMany()
+   * omits a column no item provides so the DB DEFAULT applies (#368), while
+   * insertMany() names every declared column and binds NULL.
+   */
+  private selectBulkInsertColumns<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    items: Partial<T>[],
+  ): ColumnMetadata[] {
+    const computedCols = this.ctx.getComputedColumnNames(entity);
+    return metadata.columns.filter((column: ColumnMetadata) => {
+      if (computedCols.has(column.name)) return false;
+      const isAutoIncrement = column.options?.autoIncrement;
+      if (!isAutoIncrement) return true;
+      return items.every((item) => {
+        const value = fieldsOf(item)[this.ctx.propKey(column)];
+        return value !== null && value !== undefined;
+      });
+    });
+  }
+
+  /** The column list and one VALUES row per item, FK columns appended. */
+  private buildBulkInsertRows<T>(
+    entity: ClazzType<T>,
+    insertableColumns: ColumnMetadata[],
+    items: Partial<T>[],
+  ): { columns: Sql[]; valueRows: Sql[] } {
+    const columns = insertableColumns.map((column) =>
+      raw(this.ctx.wrap(column.name)),
+    );
+    const fkColumns = this.appendFkInsertColumns(
+      entity,
+      insertableColumns,
+      columns,
+    );
+    const valueRows = items.map((item) => {
+      const rowValues = this.buildInsertRowValues(
+        insertableColumns,
+        fkColumns,
+        fieldsOf(item),
+      );
+      return sql`(${join(rowValues, ", ")})`;
+    });
+    return { columns, valueRows };
+  }
+
+  /**
+   * Whether the driver can hand back the rows an INSERT wrote. The
+   * INSERT-specific capability comes first (MariaDB supports INSERT RETURNING
+   * without full RETURNING); the generic flag covers drivers that do not
+   * distinguish the two.
+   */
+  private supportsInsertReturning(): boolean {
+    return (
+      (typeof this.driver?.supportsInsertReturning === "function" &&
+        this.driver.supportsInsertReturning()) ||
+      (typeof this.driver?.supportsReturning === "function" &&
+        this.driver.supportsReturning())
+    );
+  }
+
   async insertMany<T>(
     entity: ClazzType<T>,
     items: Partial<T>[],
@@ -1730,88 +1848,24 @@ export class WriteExecutor {
     }
 
     return this.ctx.executeInTransaction(async (session) => {
-      if (this.ctx.getTenantColumnConfig()) {
-        for (const item of items) {
-          this.ctx.applyTenantColumnOnInsert(entity, item);
-        }
-      }
+      this.applyBulkInsertDefaults(entity, metadata, items);
 
-      const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
-      const timestampTypes = new Set(["datetime", "timestamp", "date"]);
-      const timestampColumns = metadata.columns.filter(
-        (col: ColumnMetadata) =>
-          col.options?.type &&
-          timestampTypes.has(col.options.type) &&
-          col.name !== deletedAtColumn,
+      const insertableColumns = this.selectBulkInsertColumns(
+        entity,
+        metadata,
+        items,
       );
-      if (timestampColumns.length > 0) {
-        const now = new Date();
-        for (const item of items) {
-          const itemFields = fieldsOf(item);
-          for (const col of timestampColumns) {
-            if (itemFields[this.ctx.propKey(col)] == null) {
-              itemFields[this.ctx.propKey(col)] = now;
-            }
-          }
-        }
-      }
-
-      const versionCol = this.resolver.getVersionColumn(entity);
-      if (versionCol) {
-        // `versionCol` is the resolved DB column name; the value binding reads
-        // the property key, so initialize via propKey (not the column name) or
-        // the version lands as NULL under a transforming naming strategy.
-        const versionColumn = metadata.columns.find((c) => c.name === versionCol);
-        if (versionColumn) {
-          const versionProp = this.ctx.propKey(versionColumn);
-          for (const item of items) {
-            const itemFields = fieldsOf(item);
-            if (itemFields[versionProp] == null) {
-              itemFields[versionProp] = 1;
-            }
-          }
-        }
-      }
-
-      const computedColsMany = this.ctx.getComputedColumnNames(entity);
-      const insertableColumns = metadata.columns.filter(
-        (column: ColumnMetadata) => {
-          if (computedColsMany.has(column.name)) return false;
-          const isAutoIncrement = column.options?.autoIncrement;
-          if (!isAutoIncrement) return true;
-          return items.every((item) => {
-            const value = fieldsOf(item)[this.ctx.propKey(column)];
-            return value !== null && value !== undefined;
-          });
-        },
-      );
-
-      const columns = insertableColumns.map((column) =>
-        raw(this.ctx.wrap(column.name)),
-      );
-
-      const fkColumns = this.appendFkInsertColumns(
+      const { columns, valueRows } = this.buildBulkInsertRows(
         entity,
         insertableColumns,
-        columns,
+        items,
       );
-
-      const valueRows = items.map((item) => {
-        const rowValues = this.buildInsertRowValues(
-          insertableColumns,
-          fkColumns,
-          fieldsOf(item),
-        );
-        return sql`(${join(rowValues, ", ")})`;
-      });
 
       const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
 
       const queryResult = (await session.query(queryStr)) as DriverExecResult;
 
-      const affected = this.affectedCount(queryResult, items.length);
-
-      return { affected };
+      return { affected: this.affectedCount(queryResult, items.length) };
     });
   }
 
@@ -1836,16 +1890,8 @@ export class WriteExecutor {
     }
 
     // Fail fast (before building any SQL) when the dialect cannot return rows
-    // from an INSERT, so MySQL produces a clear, predictable error. Prefer the
-    // INSERT-specific capability (MariaDB supports INSERT RETURNING without full
-    // RETURNING) and fall back to the generic flag for drivers that do not
-    // distinguish the two.
-    const supportsInsertReturning =
-      (typeof this.driver.supportsInsertReturning === "function" &&
-        this.driver.supportsInsertReturning()) ||
-      (typeof this.driver.supportsReturning === "function" &&
-        this.driver.supportsReturning());
-    if (!supportsInsertReturning) {
+    // from an INSERT, so MySQL produces a clear, predictable error.
+    if (!this.supportsInsertReturning()) {
       const dialect = this.ctx.getDbType() ?? "this database";
       throw new OrmError(
         OrmErrorCode.UNSUPPORTED_DATABASE,
@@ -1855,80 +1901,18 @@ export class WriteExecutor {
     }
 
     return this.ctx.executeInTransaction(async (session) => {
-      if (this.ctx.getTenantColumnConfig()) {
-        for (const item of items) {
-          this.ctx.applyTenantColumnOnInsert(entity, item);
-        }
-      }
+      this.applyBulkInsertDefaults(entity, metadata, items);
 
-      const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
-      const timestampTypes = new Set(["datetime", "timestamp", "date"]);
-      const timestampColumns = metadata.columns.filter(
-        (col: ColumnMetadata) =>
-          col.options?.type &&
-          timestampTypes.has(col.options.type) &&
-          col.name !== deletedAtColumn,
+      const insertableColumns = this.selectBulkInsertColumns(
+        entity,
+        metadata,
+        items,
       );
-      if (timestampColumns.length > 0) {
-        const now = new Date();
-        for (const item of items) {
-          const itemFields = fieldsOf(item);
-          for (const col of timestampColumns) {
-            if (itemFields[this.ctx.propKey(col)] == null) {
-              itemFields[this.ctx.propKey(col)] = now;
-            }
-          }
-        }
-      }
-
-      const versionCol = this.resolver.getVersionColumn(entity);
-      if (versionCol) {
-        // `versionCol` is the resolved DB column name; the value binding reads
-        // the property key, so initialize via propKey (not the column name) or
-        // the version lands as NULL under a transforming naming strategy.
-        const versionColumn = metadata.columns.find((c) => c.name === versionCol);
-        if (versionColumn) {
-          const versionProp = this.ctx.propKey(versionColumn);
-          for (const item of items) {
-            const itemFields = fieldsOf(item);
-            if (itemFields[versionProp] == null) {
-              itemFields[versionProp] = 1;
-            }
-          }
-        }
-      }
-
-      const computedColsMany = this.ctx.getComputedColumnNames(entity);
-      const insertableColumns = metadata.columns.filter(
-        (column: ColumnMetadata) => {
-          if (computedColsMany.has(column.name)) return false;
-          const isAutoIncrement = column.options?.autoIncrement;
-          if (!isAutoIncrement) return true;
-          return items.every((item) => {
-            const value = fieldsOf(item)[this.ctx.propKey(column)];
-            return value !== null && value !== undefined;
-          });
-        },
-      );
-
-      const columns = insertableColumns.map((column) =>
-        raw(this.ctx.wrap(column.name)),
-      );
-
-      const fkColumns = this.appendFkInsertColumns(
+      const { columns, valueRows } = this.buildBulkInsertRows(
         entity,
         insertableColumns,
-        columns,
+        items,
       );
-
-      const valueRows = items.map((item) => {
-        const rowValues = this.buildInsertRowValues(
-          insertableColumns,
-          fkColumns,
-          fieldsOf(item),
-        );
-        return sql`(${join(rowValues, ", ")})`;
-      });
 
       // Same multi-row INSERT as insertMany(), with RETURNING * appended so the
       // generated PKs and DB defaults come back without a re-read. RETURNING *
@@ -1949,7 +1933,6 @@ export class WriteExecutor {
       }) as InstanceType<ClazzType<T>>[];
     });
   }
-
   async delete<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
