@@ -161,6 +161,39 @@ export class WriteExecutor {
     return queryResult?.rowCount ?? fallback;
   }
 
+  /**
+   * The WHERE clauses a criteria-based write resolves to.
+   *
+   * #372: write criteria accept find-style operator objects
+   * ({ between: [a, b] }, { gt }, { lte }, ...), arrays (IN) and null
+   * (IS NULL) — delete / softDelete / restore / updateMany all go through
+   * this one resolver, the same one the read paths use.
+   */
+  private resolveCriteriaWhere<T>(
+    criteria: WhereClause<T>,
+    propertyToColumn: Map<string, string>,
+  ): Sql[] {
+    return resolveWhereClause(criteria, {
+      wrapColumn: (n) => this.ctx.wrap(n),
+      dialect: this.ctx.getDialect(),
+      dialectExpression: createDialectExpression(this.ctx.getDialect()),
+      propertyToColumn,
+    });
+  }
+
+  /**
+   * The discriminator predicate that keeps a criteria-based write on one STI
+   * subtype's rows, or null when the entity is not an STI child. Every bulk
+   * write narrows this way so it can never touch siblings sharing the table.
+   */
+  private stiDiscriminatorClause<T>(entity: ClazzType<T>): Sql | null {
+    const disc =
+      this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+    return disc
+      ? Conditions.equals(this.ctx.wrap(disc.columnName), disc.value)
+      : null;
+  }
+
   async save<T>(
     entity: ClazzType<T>,
     item: Partial<T>,
@@ -1949,24 +1982,16 @@ export class WriteExecutor {
       );
 
       const deletePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
-      // #372: write criteria accept find-style operator objects
-      // ({ between: [a, b] }, { gt }, { lte }, ...), arrays (IN) and
-      // null (IS NULL) via the same resolver as the read paths.
-      const whereMap: Sql[] = resolveWhereClause(criteria, {
-        wrapColumn: (n) => this.ctx.wrap(n),
-        dialect: this.ctx.getDialect(),
-        dialectExpression: createDialectExpression(this.ctx.getDialect()),
-        propertyToColumn: deletePropToCol,
-      });
+      const whereMap: Sql[] = this.resolveCriteriaWhere(
+        criteria,
+        deletePropToCol,
+      );
 
       // STI: when deleting a child entity, add the discriminator condition
       const deleteStrategy = this.inheritanceResolver.getStrategy(entity);
-      if (deleteStrategy === "SINGLE_TABLE" && this.inheritanceResolver.isChildEntity(entity)) {
-        const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-        const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
-        if (discCol && discVal) {
-          whereMap.push(Conditions.equals(this.ctx.wrap(discCol.name), discVal));
-        }
+      const deleteSti = this.stiDiscriminatorClause(entity);
+      if (deleteSti) {
+        whereMap.push(deleteSti);
       }
 
       // Empty-criteria guard MUST run before we append the tenant predicate —
@@ -2183,12 +2208,10 @@ export class WriteExecutor {
         setMap.push(sql`${raw(versionCol)} = ${raw(versionCol)} + 1`);
       }
 
-      const whereMap: Sql[] = resolveWhereClause(where, {
-        wrapColumn: (n) => this.ctx.wrap(n),
-        dialect: this.ctx.getDialect(),
-        dialectExpression: createDialectExpression(this.ctx.getDialect()),
-        propertyToColumn: updatePropToCol,
-      });
+      const whereMap: Sql[] = this.resolveCriteriaWhere(
+        where,
+        updatePropToCol,
+      );
 
       // Tenant scoping — intersected with the user's WHERE so an updateMany
       // can never cross tenant boundaries. The empty-criteria guard above
@@ -2201,12 +2224,9 @@ export class WriteExecutor {
       // STI: a criteria-based updateMany on a child class must touch only that
       // subtype's rows, never siblings sharing the single table — mirrors the
       // discriminator filter delete()/find() already apply.
-      const updateSti =
-        this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+      const updateSti = this.stiDiscriminatorClause(entity);
       if (updateSti) {
-        whereMap.push(
-          Conditions.equals(this.ctx.wrap(updateSti.columnName), updateSti.value),
-        );
+        whereMap.push(updateSti);
       }
 
       // Soft-delete: skip trashed rows by default (parity with find()), so a
@@ -2466,13 +2486,10 @@ export class WriteExecutor {
       } as DeleteEvent<T>);
 
       const sdPropToCol = this.ctx.buildPropertyToColumnMap(metadata);
-      // #372: operator-object criteria — same resolver as the read paths.
-      const whereMap: Sql[] = resolveWhereClause(criteria, {
-        wrapColumn: (n) => this.ctx.wrap(n),
-        dialect: this.ctx.getDialect(),
-        dialectExpression: createDialectExpression(this.ctx.getDialect()),
-        propertyToColumn: sdPropToCol,
-      });
+      const whereMap: Sql[] = this.resolveCriteriaWhere(
+        criteria,
+        sdPropToCol,
+      );
 
       if (whereMap.length === 0) {
         throw new DeleteWithoutConditionsError("Soft delete");
@@ -2486,15 +2503,9 @@ export class WriteExecutor {
       }
 
       // STI: only trash rows of the requested subtype (mirrors delete()).
-      const softDeleteSti =
-        this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+      const softDeleteSti = this.stiDiscriminatorClause(entity);
       if (softDeleteSti) {
-        whereMap.push(
-          Conditions.equals(
-            this.ctx.wrap(softDeleteSti.columnName),
-            softDeleteSti.value,
-          ),
-        );
+        whereMap.push(softDeleteSti);
       }
 
       // Only stamp rows that are still active. Re-soft-deleting an already
@@ -2559,13 +2570,10 @@ export class WriteExecutor {
       } as DeleteEvent<T>);
 
       const restorePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
-      // #372: operator-object criteria — same resolver as the read paths.
-      const whereMap: Sql[] = resolveWhereClause(criteria, {
-        wrapColumn: (n) => this.ctx.wrap(n),
-        dialect: this.ctx.getDialect(),
-        dialectExpression: createDialectExpression(this.ctx.getDialect()),
-        propertyToColumn: restorePropToCol,
-      });
+      const whereMap: Sql[] = this.resolveCriteriaWhere(
+        criteria,
+        restorePropToCol,
+      );
 
       if (whereMap.length === 0) {
         throw new DeleteWithoutConditionsError("Restore");
@@ -2579,12 +2587,9 @@ export class WriteExecutor {
       }
 
       // STI: only revive rows of the requested subtype (mirrors delete()).
-      const restoreSti =
-        this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+      const restoreSti = this.stiDiscriminatorClause(entity);
       if (restoreSti) {
-        whereMap.push(
-          Conditions.equals(this.ctx.wrap(restoreSti.columnName), restoreSti.value),
-        );
+        whereMap.push(restoreSti);
       }
 
       // Only revive rows that are actually soft-deleted. Restoring an active
