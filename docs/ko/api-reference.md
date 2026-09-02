@@ -129,6 +129,8 @@ for await (const batch of em.streamBatch(User, {}, 500)) {
 | `createQueryBuilder` | `<T>(entity, alias): SelectQueryBuilder<T>` | 타입 안전한 SelectQueryBuilder 생성 |
 | `ref` | `<T>(entity: Class<T>, alias?: string): SqlRef<T>` | 엔티티에 대한 타입 안전 `sql`-tag 프록시 (`${ref}` -> `"table" AS alias`, `${ref.col}` -> alias 한정 컬럼). [사용법 ->](./raw-sql.md#타입-참조-typed-references) |
 | `aliasRef` | `(alias: string): AliasRef` | `ref()`의 alias 전용 형제 헬퍼. CTE / derived-table 컬럼 참조에 사용. `${ref}` -> bare alias, `${ref.col}` -> `alias."col"` (`camelToSnakeCase` 적용) |
+| `createUpdateBuilder` | `<T>(entity, alias?): UpdateQueryBuilder<T>` | `qAlias` 술어 DSL 위의 `UPDATE … SET … WHERE … ORDER BY … LIMIT` 빌더. [사용법 ->](./query-builder.md#updatequerybuilder-—-타입-안전한-update-order-by-limit) |
+| `createInsertBuilder` | `<T>(entity, alias?): InsertQueryBuilder<T>` | 충돌 절에서 저장된 행을 읽을 수 있는 `INSERT … ON CONFLICT` 빌더 (`qExcluded`, `greatest`). [사용법 ->](./entity-manager-writes.md#표현식-기반-upsert-—-createinsertbuilder) |
 
 ### Plugin System
 
@@ -481,6 +483,7 @@ qb.where(u.email, "alice@example.com");
 | Family | Members |
 |--------|---------|
 | Null 처리 | `coalesce(a, b, …)`, `nullif(a, b)` |
+| 행 단위 최대 / 최소 | `greatest(a, b, …)`, `least(a, b, …)` — `col.greatest(…)` / `col.least(…)` 체인도 가능. PostgreSQL·MySQL은 `GREATEST`/`LEAST`, SQLite는 스칼라 `MAX`/`MIN`. NULL 처리는 엔진별로 다름 |
 | Cast | `.stringValue / intValue / longValue / bigintValue / floatValue / booleanValue` (column 또는 scalar) |
 | Date / time | `currentDate / currentTime / currentTimestamp`, `dateTrunc(value, unit)`, `dateDiff(a, b, unit)`, `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `.year / month / day / hour / minute / second / dayOfWeek / dayOfMonth / dayOfYear / week` |
 | Aggregate | `count(arg)`, `sum / avg / min / max / aggregate(scalarExpr)` (`ColumnExpression`에서도 체이닝 가능) |
