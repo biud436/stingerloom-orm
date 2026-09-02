@@ -184,7 +184,7 @@ A NestJS interceptor or Express middleware wraps the per-request handler in `Met
 |----------|------------|
 | **Modeling** | Code-first `defineEntity` + `t` builders with `InferEntity` type inference (or `@Entity`, `@Column`, `@ManyToOne`, `@OneToMany`, `@ManyToMany`, `@OneToOne`), eager/lazy loading, inheritance mapping (STI / TPT / TPC), UUID columns with UUIDv7 |
 | **Querying** | `find`, `findOne`, `findWithCursor`, `findAndCount`, SelectQueryBuilder with JOIN / GROUP BY / HAVING; `qAlias()` typed expression chain — string / numeric / math helpers, CAST, date arithmetic + components, window functions, `CASE WHEN`, subquery operators, JSON-path navigation, raw SQL escape hatches |
-| **Mutations** | `save`, `update`, `delete`, `softDelete`, `restore`, `upsert`, `batchUpsert`, `streamBatch`, batch operations |
+| **Mutations** | `save`, `update`, `delete`, `softDelete`, `restore`, `upsert`, `batchUpsert`, `streamBatch`, batch operations; `createUpdateBuilder` for `UPDATE … ORDER BY … LIMIT` and `createInsertBuilder` for expression-based `ON CONFLICT` (read the stored row: `records + excluded.records`, `GREATEST(...)`) |
 | **Transactions** | `@Transactional` decorator, manual BEGIN / COMMIT / ROLLBACK, savepoints, isolation levels, deadlock retry, `NOWAIT` / `SKIP LOCKED` |
 | **Unit of Work** | `em.extend(bufferPlugin())` — Identity Map, dirty checking, cascade, batch flush, lazy proxies, pessimistic locking, `@Version` optimistic locking |
 | **Multi-tenancy** | Layered metadata (OverlayFS model), `MetadataContext.run()`, PostgreSQL schema isolation, `TenantMigrationRunner` |

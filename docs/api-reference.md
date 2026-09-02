@@ -129,6 +129,8 @@ for await (const batch of em.streamBatch(User, {}, 500)) {
 | `createQueryBuilder` | `<T>(entity, alias): SelectQueryBuilder<T>` | Create a type-safe SelectQueryBuilder |
 | `ref` | `<T>(entity: Class<T>, alias?: string): SqlRef<T>` | Typed `sql`-tag proxy for an entity (`${ref}` -> `"table" AS alias`, `${ref.col}` -> alias-qualified column). [Usage ->](./raw-sql.md#typed-references) |
 | `aliasRef` | `(alias: string): AliasRef` | Alias-only sibling of `ref()` for CTE / derived-table column refs. `${ref}` -> bare alias, `${ref.col}` -> `alias."col"` with `camelToSnakeCase`. |
+| `createUpdateBuilder` | `<T>(entity, alias?): UpdateQueryBuilder<T>` | Fluent `UPDATE … SET … WHERE … ORDER BY … LIMIT` over the `qAlias` predicate DSL. [Usage ->](./query-builder.md#updatequerybuilder-—-type-safe-update-order-by-limit) |
+| `createInsertBuilder` | `<T>(entity, alias?): InsertQueryBuilder<T>` | Fluent `INSERT … ON CONFLICT` whose conflict action can read the stored row (`qExcluded`, `greatest`). [Usage ->](./entity-manager-writes.md#expression-based-upsert-createinsertbuilder) |
 
 ### Plugin System
 
@@ -481,6 +483,7 @@ Full surface — see [QueryDSL guide](./query-builder-querydsl.md). Quick map:
 | Family | Members |
 |--------|---------|
 | Null handling | `coalesce(a, b, …)`, `nullif(a, b)` |
+| Row-wise min / max | `greatest(a, b, …)`, `least(a, b, …)` — also `col.greatest(…)` / `col.least(…)`. `GREATEST`/`LEAST` on PostgreSQL and MySQL, scalar `MAX`/`MIN` on SQLite; NULL handling is engine-specific |
 | Casts | `.stringValue / intValue / longValue / bigintValue / floatValue / booleanValue` (column or scalar) |
 | Date / time | `currentDate / currentTime / currentTimestamp`, `dateTrunc(value, unit)`, `dateDiff(a, b, unit)`, `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `.year / month / day / hour / minute / second / dayOfWeek / dayOfMonth / dayOfYear / week` |
 | Aggregates | `count(arg)`, `sum / avg / min / max / aggregate(scalarExpr)` (also chainable from `ColumnExpression`) |
