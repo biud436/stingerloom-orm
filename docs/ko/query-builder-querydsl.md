@@ -399,6 +399,68 @@ qb.where(coalesce(u.score, 0).gte(50));
 
 정적 헬퍼로 `Expressions.coalesce` / `Expressions.nullif`도 있습니다. 호출 스타일이 더 맞는 쪽을 고르세요.
 
+## 행 단위 최대 / 최소 — `greatest()` / `least()`
+
+`greatest(a, b, …)`는 **한 행 안에서** 인자 중 가장 큰 값을 돌려줍니다. 여러 행에 걸친 `MAX()` 집계와는 다른 함수예요. `least(...)`는 그 반대고요. 인자로는 `coalesce()`와 같은 것들을 받습니다. 컬럼 참조, 스칼라 표현식, 집계, JSON 경로, 평범한 값까지요.
+
+```typescript
+import { greatest, least, qAlias } from "@stingerloom/orm";
+
+const o = qAlias(Order, "o");
+
+qb.select([least(o.listPrice, o.promoPrice).as("charged")]);
+// SELECT LEAST("o"."listPrice", "o"."promoPrice") AS "charged"
+
+qb.where(greatest(o.listPrice, o.promoPrice).gt(500));
+// WHERE GREATEST("o"."listPrice", "o"."promoPrice") > $1
+```
+
+SQLite는 같은 걸 `MAX(a, b)` / `MIN(a, b)`로 씁니다. 인자가 둘 이상이면 집계가 아니라 스칼라 함수로 해석되죠. 그래서 드라이버별로 다르게 생성됩니다.
+
+| 드라이버 | `greatest` | `least` | NULL 인자 |
+|---------|-----------|---------|----------|
+| PostgreSQL | `GREATEST(…)` | `LEAST(…)` | 무시 |
+| MySQL / MariaDB | `GREATEST(…)` | `LEAST(…)` | 결과가 `NULL` |
+| SQLite | `MAX(…)` | `MIN(…)` | 결과가 `NULL` |
+
+::: warning NULL 처리는 이식되지 않습니다
+PostgreSQL은 NULL 인자를 건너뛰고 NULL이 아닌 값 중 최댓값을 돌려주지만, MySQL과 SQLite는 인자 중 **하나라도** NULL이면 `NULL`을 돌려줍니다. ORM은 이 차이를 보정하지 않아요. nullable 인자를 감싸 두면 의도가 드러나고 어느 드라이버에서든 같게 동작합니다.
+
+```typescript
+greatest(coalesce(o.promoPrice, 0), o.floorPrice)
+```
+:::
+
+둘 다 인자가 최소 두 개여야 합니다. 인자 하나짜리 호출은 드라이버마다 의미가 달라지는 SQL을 만드는 대신 예외를 던집니다.
+
+## upsert가 제안한 행 — `qExcluded()`
+
+`INSERT … ON CONFLICT` 안에는 행이 둘 있습니다. 이미 저장된 행과 문장이 제안한 행이죠. `qExcluded(Entity)`는 후자를 가리키는 타입 있는 참조이고, 평범한 `qAlias` 프록시라서 이 페이지의 모든 표현식이 그대로 조합됩니다.
+
+```typescript
+import { greatest, qAlias, qExcluded } from "@stingerloom/orm";
+
+const m  = qAlias(SyncMarker, "m");
+const ex = qExcluded(SyncMarker);
+
+await em.createInsertBuilder(SyncMarker)
+  .values(rows)
+  .onConflict(["mac", "bucketStart"])
+  .doUpdate({
+    records:  m.records.add(ex.records),
+    lastTime: greatest(m.lastTime, ex.lastTime),
+  })
+  .execute();
+```
+
+`doUpdate()`의 콜백 형태가 두 참조를 다 넘겨주므로, `qExcluded()`를 직접 부를 일은 표현식을 콜백 바깥에서 만들 때뿐입니다.
+
+```typescript
+.doUpdate((t, ex) => ({ records: t.records.add(ex.records) }))
+```
+
+이 참조는 PostgreSQL에서 `EXCLUDED."col"`, SQLite에서 `excluded."col"`, MySQL/MariaDB에서 `` VALUES(`col`) ``로 렌더링됩니다. `createInsertBuilder()` 안에서만 의미가 있어요. 빌더 전체는 [EntityManager — 쓰기](./entity-manager-writes.md#표현식-기반-upsert-—-createinsertbuilder)를 보세요.
+
 ## 현재 시각 — `currentDate()` / `currentTime()` / `currentTimestamp()`
 
 DB 서버의 시계를 어느 자리에든 꽂을 수 있는 표준 SQL 헬퍼 세 가지입니다. 결과는 `ScalarExpression`이라 `.as()`, `.eq()`, `coalesce` 중첩 등 지금까지 본 합성이 전부 그대로 됩니다. 세 드라이버 모두 동일한 리터럴(`CURRENT_DATE` / `CURRENT_TIME` / `CURRENT_TIMESTAMP`)로 나갑니다.
@@ -871,6 +933,8 @@ qb.where(u.tags.arrayContains(["admin"]).not());       // NOT (...)
 | 조건부 집계 | `aggregate.filter(condition)`, `.countIf(condition)`, `.sumIf(condition)` — `FILTER (WHERE …)` (PG/SQLite) / `CASE` 변환 (MySQL) |
 | SELECT 별칭 | `.as("name")` — 컬럼 / JSON 경로 / 집계 어디에든. `AliasedExpression` 반환 |
 | null fallback | `coalesce(...)`, `col.coalesce(...)`, `nullif(a, b)` — 처음 non-null 값 / 일치 시 NULL |
+| 행 단위 최대 / 최소 | `greatest(a, b, …)`, `least(a, b, …)` — `GREATEST`/`LEAST` (PG, MySQL), `MAX`/`MIN` (SQLite) |
+| upsert 제안 행 참조 | `qExcluded(Entity)` — `EXCLUDED.col` (PG), `excluded.col` (SQLite), `VALUES(col)` (MySQL) |
 | 현재 시각 | `currentDate()`, `currentTime()`, `currentTimestamp()` — `Expressions`에도 동일 |
 | 타입 변환 | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` |
 | 날짜 컴포넌트 | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfYear()`, `.week()` |
@@ -904,6 +968,8 @@ qb.where(u.tags.arrayContains(["admin"]).not());       // NOT (...)
 | 정규식 매칭 (`.matches()`) | 네이티브 `~` (ARE) | 네이티브 `REGEXP` (ICU, **기본 대소문자 무시**) | 커넥터가 등록한 `regexp` UDF 경유 `REGEXP` | 패턴은 파라미터 바인딩. `i` 플래그는 이식성 있음, `m`/`s`는 엔진별. MySQL 대소문자 구분은 바이너리 콜레이션 필요. |
 | 배열 연산자 (`.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`) | 네이티브 `@>` / `&&` / `<@` | **미지원** — `UNSUPPORTED_DATABASE` throw | **미지원** — `UNSUPPORTED_DATABASE` throw | MySQL/SQLite는 네이티브 배열 타입 없음 — JSON 배열(JSON 경로 DSL)이나 정션 테이블로 모델링. 값 배열은 단일 파라미터 바인딩. |
 | `coalesce` / `nullif` | 네이티브 | 네이티브 | 네이티브 | — |
+| `greatest` / `least` | 네이티브 `GREATEST` / `LEAST` — NULL 인자 무시 | 네이티브 `GREATEST` / `LEAST` — 인자 중 NULL 하나면 결과 NULL | `MAX(a, b)` / `MIN(a, b)` 스칼라 형태 — 인자 중 NULL 하나면 결과 NULL | NULL 처리는 보정하지 **않아요**. 이식성이 필요하면 nullable 인자를 `coalesce()`로 감싸세요. |
+| upsert `excluded` 참조 (`qExcluded`) | `EXCLUDED."col"` | `` VALUES(`col`) `` — MySQL 8.0.20에서 deprecated지만 MariaDB의 유일한 형태 | `excluded."col"` | `createInsertBuilder()` 안에서만 의미가 있어요. |
 | Window 함수 (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | 네이티브 | 네이티브 (8.0+) | 네이티브 (3.25+) | — |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregate | 네이티브 (`WITHIN GROUP`) | **미지원** — `UNSUPPORTED_OPERATION` throw | **미지원** — `UNSUPPORTED_OPERATION` throw | MySQL: CTE + `ROW_NUMBER() OVER (ORDER BY x)`로 에뮬, `rn = CEIL(N * p)` 행을 픽. [cookbook 레시피](./cookbook.md#cycle-time-percentile-report) 참고. |
 | `dateTrunc` (year/quarter/month/week/day/hour/minute/second) | 네이티브 `DATE_TRUNC` | 단위별 등가 (`DATE`, `DATE_FORMAT`, ISO 월요일 `WEEKDAY` 계산) | `date(..., 'start of …')` / `strftime` | 세 dialect 모두 ISO 월요일 기준 주를 만들어요. |

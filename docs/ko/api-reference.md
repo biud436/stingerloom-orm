@@ -162,7 +162,7 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findOneByOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `create`, `merge`, `preload`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `update`, `updateMany`, `increment`, `decrement` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
+`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findOneByOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `create`, `merge`, `preload`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `createInsertBuilder`, `update`, `updateMany`, `increment`, `decrement` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
 
 **Repository 전용 헬퍼:**
 

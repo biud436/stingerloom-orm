@@ -24,6 +24,7 @@ Stingerloom은 쿼리 빌더를 두 가지 제공합니다. 선택 기준은 단
 | 페이지네이션, 잠금, 인덱스 힌트, `validate()`, 실행, `prepare()` | [실행 & 결과](./query-builder-execution.md) |
 | `when()`, `pipe()`, `whereHas()`, `withCount()`, scope | [편의 패턴](./query-builder-patterns.md) |
 | `UPDATE … ORDER BY … LIMIT` — `createUpdateBuilder` | [UpdateQueryBuilder](#updatequerybuilder-—-타입-안전한-update-order-by-limit) |
+| `INSERT … ON CONFLICT` 표현식 — `createInsertBuilder` | [InsertQueryBuilder](#insertquerybuilder-—-표현식-기반-on-conflict) |
 | UNION, 재귀 CTE, 윈도우 함수 — `RawQueryBuilder` | [Raw SQL & CTE](./raw-sql.md) |
 
 ---
@@ -325,6 +326,32 @@ const { text, values } = em
 - `INVALID_QUERY` — `.set()` 호출 없이 `execute()`를 부른 경우, 또는 `.limit(n)`에 정수가 아니거나 음수가 들어간 경우.
 - `DELETE_WITHOUT_CONDITIONS` (UPDATE도 같은 코드 사용) — WHERE 없이 `execute()`를 부른 경우. 테이블 전체를 갱신하는 건 위험한 패턴이라 막혀 있습니다. 정말 필요하면 항상 참인 WHERE를 명시적으로 추가하세요.
 - `UNSUPPORTED_OPERATION` — PostgreSQL / SQLite에서 복합 PK 엔티티에 `orderBy()` / `limit()`을 쓴 경우.
+
+---
+
+## InsertQueryBuilder — 표현식 기반 `ON CONFLICT`
+
+`em.upsert()`가 충돌 시 할 수 있는 건 제안한 값으로 덮어쓰는 것뿐입니다(`col = EXCLUDED.col`). 새 값이 *저장된 값으로부터* 계산되어야 할 때 — 카운터 누적, 최댓값 유지, 병합 — 이 형태로는 표현이 안 되고, 읽고 계산해서 되쓰는 왕복은 동시성 아래서 올바르려면 행 잠금이 필요합니다.
+
+`em.createInsertBuilder()`는 QueryDSL 표현식 전체를 충돌 절에 넣어 줍니다. 데이터베이스가 행을 쥔 채로 계산하니 잠금이 필요 없어요.
+
+```typescript
+import { greatest, sql } from "@stingerloom/orm";
+
+await em.createInsertBuilder(SyncMarker)
+  .values(buckets)
+  .onConflict(["mac", "bucketStart"])
+  .doUpdate((t, ex) => ({
+    records:  t.records.add(ex.records),          // 저장된 값 + 제안한 값
+    lastTime: greatest(t.lastTime, ex.lastTime),  // 최댓값 유지
+    syncedAt: sql`NOW()`,
+  }))
+  .execute();
+```
+
+`t`는 저장된 행을, `ex`는 이 INSERT가 제안한 행을 가리킵니다. 둘 다 평범한 `qAlias` 프록시라 [QueryDSL 표현식](./query-builder-querydsl.md) 장의 모든 것이 그대로 조합돼요.
+
+`doNothing()`, `doUpdateWhere()`(PostgreSQL / SQLite), `onConflict(cols, { where })`로 지정하는 부분 유니크 인덱스, PostgreSQL의 `onConflictConstraint()`도 함께 지원합니다. 전체 레퍼런스와 드라이버 지원표는 [EntityManager — 쓰기](./entity-manager-writes.md#표현식-기반-upsert-—-createinsertbuilder)에 있습니다.
 
 ---
 

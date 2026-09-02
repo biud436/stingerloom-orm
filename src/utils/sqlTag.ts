@@ -26,3 +26,21 @@ const sql: typeof sqlDefault =
 export default sql;
 export { sql, Sql, raw, join, empty };
 export type { RawValue };
+
+/**
+ * Structural check for a `sql\`\`` fragment.
+ *
+ * `instanceof Sql` alone is not enough at the public API boundary: the CJS
+ * and ESM builds each resolve their own `sql-template-tag` copy, so a
+ * fragment built by one and handed to the other fails the prototype check.
+ * The shape (`strings` + `values` arrays, `text` accessor) is stable across
+ * both copies, so it backs up the fast path.
+ */
+export function isSqlFragment(value: unknown): value is Sql {
+  if (value === null || typeof value !== "object") return false;
+  if (value instanceof Sql) return true;
+  const candidate = value as { strings?: unknown; values?: unknown };
+  return (
+    Array.isArray(candidate.strings) && Array.isArray(candidate.values)
+  );
+}

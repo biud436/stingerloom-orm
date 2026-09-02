@@ -28,6 +28,7 @@ combining conditions. Each deeper topic has its own page:
 | Pagination, locking, index hints, `validate()`, execution tiers, `prepare()` | [Execution & Results](./query-builder-execution.md) |
 | `when()`, `pipe()`, `whereHas()`, `withCount()`, scopes | [Patterns & Productivity](./query-builder-patterns.md) |
 | `UPDATE … ORDER BY … LIMIT` via `createUpdateBuilder` | [UpdateQueryBuilder](#updatequerybuilder-—-type-safe-update-order-by-limit) |
+| `INSERT … ON CONFLICT` with expressions via `createInsertBuilder` | [InsertQueryBuilder](#insertquerybuilder-—-expression-based-on-conflict) |
 | UNION, recursive CTE, window functions — `RawQueryBuilder` | [Raw SQL & CTE](./raw-sql.md) |
 
 ---
@@ -406,6 +407,44 @@ Two practical consequences when you mix the two:
   footgun; if you really want it, add a tautological WHERE.
 - `UNSUPPORTED_OPERATION` — composite-PK entity used with
   `orderBy()` / `limit()` on PostgreSQL or SQLite.
+
+---
+
+## InsertQueryBuilder — Expression-Based `ON CONFLICT`
+
+`em.upsert()` can only overwrite a conflicting row with the values you
+proposed (`col = EXCLUDED.col`). When the new value has to be computed
+*from the stored one* — an accumulating counter, a high-water mark, a
+merge — that shape cannot express it, and a read-modify-write round trip
+needs a row lock to stay correct under concurrency.
+
+`em.createInsertBuilder()` puts the whole QueryDSL expression vocabulary
+into the conflict action, so the database computes it while it holds the
+row:
+
+```typescript
+import { greatest, sql } from "@stingerloom/orm";
+
+await em.createInsertBuilder(SyncMarker)
+  .values(buckets)
+  .onConflict(["mac", "bucketStart"])
+  .doUpdate((t, ex) => ({
+    records:  t.records.add(ex.records),          // stored + proposed
+    lastTime: greatest(t.lastTime, ex.lastTime),  // high-water mark
+    syncedAt: sql`NOW()`,
+  }))
+  .execute();
+```
+
+`t` references the stored row, `ex` the row this INSERT proposed. Both
+are ordinary `qAlias` proxies, so everything on the
+[QueryDSL Expressions](./query-builder-querydsl.md) page composes.
+
+The builder also covers `doNothing()`, `doUpdateWhere()` (PostgreSQL /
+SQLite), partial unique indexes via `onConflict(cols, { where })`, and
+PostgreSQL's `onConflictConstraint()`. Full reference, dialect matrix
+and behavior notes:
+[EntityManager — Writes](./entity-manager-writes.md#expression-based-upsert-createinsertbuilder).
 
 ---
 

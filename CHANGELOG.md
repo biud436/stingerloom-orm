@@ -6,6 +6,22 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`em.createInsertBuilder()`: QueryDSL expressions in the `ON CONFLICT` action.** `upsert()` / `batchUpsert()` can only overwrite a conflicting row with the values proposed (`col = EXCLUDED.col`), so a conflict action computed *from the stored row* — an accumulating counter (`records = records + excluded.records`), a high-water mark (`GREATEST(last_time, excluded.last_time)`), a merge — had no expression and fell back to `em.query()` with hand-written SQL. The new builder puts the whole `qAlias` expression vocabulary into the conflict action: `.doUpdate((target, excluded) => ({ … }))` hands back a reference to the stored row and to the proposed row, and every operator already available in SELECT/UPDATE composes over both. Also covers `.doNothing()`, `.doUpdateWhere(condition)` (PostgreSQL/SQLite; throws on MySQL rather than dropping the predicate), partial unique indexes via `.onConflict(cols, { where })`, and PostgreSQL's `.onConflictConstraint(name)`. `.build()` / `.toSql()` return the statement without executing. Statement-level like `createUpdateBuilder()`: no `beforeInsert` / `afterInsert` events or entity hooks, while tenant columns, `@CreateTimestamp` / `@UpdateTimestamp` / `@Version` defaults and column transformers apply exactly as in `insertMany()`. Repository shorthand: `repo.createInsertBuilder()`. New exports: `InsertQueryBuilder`, `InsertValues`, `ConflictSet`, `ConflictSetValue`, `ConflictSetFactory`, `OnConflictOptions`.
+
+- **`qExcluded(Entity)`: typed reference to the row an INSERT proposed.** Renders as `EXCLUDED."col"` (PostgreSQL), `excluded."col"` (SQLite) or `` VALUES(`col`) `` (MySQL/MariaDB) — the three dialects disagree on the syntax, and until now none of it was reachable from the DSL. The reference is an ordinary `qAlias` proxy, so scalar operators, `coalesce`, JSON paths and `CASE` all compose over it. `EXCLUDED_ALIAS` is exported alongside it as the reserved sentinel alias.
+
+- **`greatest(a, b, …)` / `least(a, b, …)`: row-wise maximum and minimum.** Distinct from the `MAX()` / `MIN()` aggregates — these compare arguments within one row. Emitted as `GREATEST` / `LEAST` on PostgreSQL and MySQL/MariaDB and as the multi-argument scalar `MAX` / `MIN` on SQLite. NULL handling is deliberately **not** normalized: PostgreSQL skips NULL arguments while MySQL and SQLite return NULL if any argument is NULL, so portable code wraps nullable arguments in `coalesce()`. Both accept the same argument union as `coalesce()` and return a `ScalarExpression`, usable in SELECT, WHERE, HAVING and the new conflict action.
+
+### Fixed
+
+- **A raw `sql` fragment in a batch INSERT value is no longer run through the column's write transformer.** `insertMany()` / `saveMany()` applied the transformer to every cell, so a fragment like ``sql`NOW()` `` on a `json`/`jsonb` column (or any column with a transformer) had the fragment object itself serialized instead of being spliced as an expression.
+
+---
+
 ## [2.0.0] — 2026-09-01
 
 A major release, and mostly an honesty pass: states that used to fail silently now fail loudly. The breaking changes are listed in the [2.0 upgrade guide](https://biud436.github.io/stingerloom-orm/upgrade-2.0) — the short version is that the package barrel now names its exports, several silently-wrong operations throw, batch writes serialize dates as instants, and the migration CLI reports failure through its exit code.

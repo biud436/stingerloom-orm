@@ -101,6 +101,10 @@ import { createDialectExpression } from "../dialects/DialectExpression";
 import { SelectQueryBuilder, isEntityRef } from "./SelectQueryBuilder";
 import type { EntityRef } from "./SelectQueryBuilder";
 import { UpdateQueryBuilder } from "./UpdateQueryBuilder";
+import {
+  InsertQueryBuilder,
+  type InsertBuilderSpec,
+} from "./InsertQueryBuilder";
 import { CompiledQuery, p as createPlaceholder, PlaceholderMarker } from "./CompiledQuery";
 import { QueryResultCache, QueryCacheOptions } from "./cache/QueryResultCache";
 import { DmlSqlBuilder } from "./entity-manager/DmlSqlBuilder";
@@ -1727,6 +1731,84 @@ export class EntityManager implements BaseEntityManager {
     limit: number | undefined,
   ): Promise<{ affected: number }> {
     return this.finishWrite(entity, this.writeExecutor.executeBuilderUpdate(entity, setEntries, whereConditions, orderBySql, limit));
+  }
+
+  /**
+   * Create an `InsertQueryBuilder` for the given entity (or `qAlias`).
+   *
+   * The expression-capable counterpart to {@link upsert} / {@link batchUpsert}:
+   * those can only overwrite a conflicting row with the values proposed,
+   * while the builder's `.doUpdate()` reads the stored row too — so an
+   * accumulating counter or a high-water mark becomes one statement instead
+   * of a locked read-modify-write.
+   *
+   * @example
+   * ```ts
+   * await em.createInsertBuilder(SyncMarker)
+   *   .values(rows)
+   *   .onConflict(["mac", "bucketStart"])
+   *   .doUpdate((t, ex) => ({
+   *     records:  t.records.add(ex.records),
+   *     lastTime: greatest(t.lastTime, ex.lastTime),
+   *     syncedAt: sql`NOW()`,
+   *   }))
+   *   .execute();
+   * ```
+   */
+  createInsertBuilder<T>(entity: ClazzType<T>, alias?: string): InsertQueryBuilder<T>;
+  createInsertBuilder<T>(ref: EntityRef<T>): InsertQueryBuilder<T>;
+  createInsertBuilder<T>(
+    entityOrRef: ClazzType<T> | EntityRef<T>,
+    alias?: string,
+  ): InsertQueryBuilder<T> {
+    let entity: ClazzType<T>;
+    let aliasName: string;
+    if (isEntityRef(entityOrRef)) {
+      entity = entityOrRef._entity;
+      aliasName = entityOrRef._alias;
+    } else {
+      entity = entityOrRef;
+      aliasName = alias ?? entity.name;
+    }
+    this.assertEntityInScope(entity);
+    const meta = this.resolver.resolveEntityMetadata(entity);
+    if (!meta) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+    const propMap = this.buildPropertyToColumnMap(meta);
+    const dialectExpr = createDialectExpression(this._ctx.getDialect());
+    return new InsertQueryBuilder<T>(this, entity, aliasName, propMap, dialectExpr);
+  }
+
+  /**
+   * @internal Used by `InsertQueryBuilder`'s column resolver — the dialect's
+   * spelling of a column on the row the INSERT proposed (`EXCLUDED.col`,
+   * `excluded.col`, or `VALUES(col)`).
+   */
+  renderExcludedColumn(wrappedColumn: string): string {
+    return this.dmlSqlBuilder.renderExcludedColumn(wrappedColumn);
+  }
+
+  /**
+   * @internal Used by `InsertQueryBuilder.build()` — builds the INSERT SQL
+   * with tenant scoping omitted (build-time only).
+   */
+  buildBuilderInsertSql<T>(
+    entity: ClazzType<T>,
+    spec: InsertBuilderSpec<T>,
+  ): Sql {
+    return this.writeExecutor.buildBuilderInsertSql(entity, spec);
+  }
+
+  /**
+   * @internal Used by `InsertQueryBuilder.execute()` — runs the INSERT
+   * inside the EM transaction wrapper with the tenant column applied.
+   */
+  async executeBuilderInsert<T>(
+    entity: ClazzType<T>,
+    spec: InsertBuilderSpec<T>,
+  ): Promise<{ affected: number }> {
+    return this.finishWrite(entity, this.writeExecutor.executeBuilderInsert(entity, spec));
   }
 
   async softDelete<T>(

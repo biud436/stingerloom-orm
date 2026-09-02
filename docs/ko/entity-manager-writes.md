@@ -598,6 +598,149 @@ MySQL은 `ON DUPLICATE KEY UPDATE`의 `affectedRows`를 씁니다. 내부적으�
 
 ---
 
+## 표현식 기반 Upsert — createInsertBuilder()
+
+### upsert()의 한계
+
+`upsert()`와 `batchUpsert()`가 충돌 시 할 수 있는 일은 하나뿐입니다. 저장된 행을 제안한 값으로 덮어쓰는 것, 즉 `col = EXCLUDED.col`이에요. "마지막에 쓴 값이 이긴다"면 이걸로 충분합니다.
+
+문제는 새 값이 **저장된 값에 의존할 때**입니다.
+
+```
+records   = 저장된 records + 제안한 records          -- 누적
+last_time = MAX(저장된 last_time, 제안한 last_time)   -- 최댓값 유지
+```
+
+떠오르는 우회는 `find()`로 읽고 TypeScript에서 계산한 뒤 `save()`로 되쓰는 것인데, 여기엔 경쟁 조건이 있습니다. 동시에 두 요청이 `records = 10`을 읽고 둘 다 `12`를 쓰면 증가분 하나가 사라져요. 이걸 올바르게 만들려면 `SELECT … FOR UPDATE`로 행 잠금을 잡아야 합니다. 반면 문장 하나로 처리하면 잠금이 아예 필요 없습니다. 데이터베이스가 행을 쥔 채로 식을 평가하니까요.
+
+`createInsertBuilder()`가 바로 그 문장입니다.
+
+### 카운터 누적
+
+```typescript
+import { greatest, sql } from "@stingerloom/orm";
+
+await em.createInsertBuilder(SyncMarker)
+  .values(buckets)
+  .onConflict(["mac", "bucketStart"])
+  .doUpdate((t, ex) => ({
+    records:  t.records.add(ex.records),
+    lastTime: greatest(t.lastTime, ex.lastTime),
+    syncedAt: sql`NOW()`,
+  }))
+  .execute();
+```
+
+`doUpdate()`의 콜백은 참조 두 개를 받습니다.
+
+- `t` — **이미 저장되어 있는** 행. 한정하지 않은 컬럼명으로 렌더링되고, 세 드라이버 모두 충돌 절 안에서 이를 대상 행으로 읽습니다.
+- `ex` — 이 INSERT가 **제안한** 행. `EXCLUDED."col"`(PostgreSQL) · `excluded."col"`(SQLite) · `` VALUES(`col`) ``(MySQL)로 렌더링됩니다.
+
+둘 다 평범한 `qAlias` 참조라서 표현식 전체가 그대로 조합됩니다. `.add()`, `.mul()`, `coalesce()`, `greatest()`, `CASE`, JSON 경로까지요.
+
+```sql
+-- PostgreSQL
+INSERT INTO "sync_markers" ("mac", "bucket_start", "records", "last_time", "synced_at")
+VALUES ($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)
+ON CONFLICT ("mac", "bucket_start") DO UPDATE
+   SET "records"   = ("records" + EXCLUDED."records"),
+       "last_time" = GREATEST("last_time", EXCLUDED."last_time"),
+       "synced_at" = NOW()
+```
+
+### doUpdate()의 세 가지 형태
+
+```typescript
+// 1. 제안한 값으로 덮어쓰기 — upsert()와 동일
+.doUpdate(["name", "email"])
+
+// 2. 리터럴 값과 원시 SQL
+.doUpdate({ status: "seen", seenAt: sql`NOW()` })
+
+// 3. 두 행에 걸친 표현식
+.doUpdate((t, ex) => ({ hits: t.hits.add(ex.hits) }))
+```
+
+2번의 리터럴 값에는 `insertMany()`의 값과 똑같이 컬럼 write 트랜스포머가 적용됩니다.
+
+### 충돌 무시 — doNothing()
+
+```typescript
+await em.createInsertBuilder(AuditLog)
+  .values(entries)
+  .onConflict(["requestId"])
+  .doNothing()
+  .execute();
+```
+
+MySQL에서는 `INSERT IGNORE`가 됩니다. 중복 키뿐 아니라 그 문장의 **모든** 에러를 경고로 격하시킨다는 점에 주의하세요. `insertIgnore()`가 이미 감수하고 있는 것과 같은 트레이드오프입니다.
+
+### 갱신 대상 좁히기 — doUpdateWhere()
+
+제안한 값이 실제로 더 최신일 때만 행을 전진시키고 싶다면:
+
+```typescript
+const m = qAlias(Reading, "m");
+
+await em.createInsertBuilder(Reading)
+  .values(rows)
+  .onConflict(["sensorId"])
+  .doUpdate((t, ex) => ({ value: ex.value, takenAt: ex.takenAt }))
+  .doUpdateWhere(m.takenAt.lt(cutoff))
+  .execute();
+```
+
+술어를 통과하지 못한 행은 그대로 남습니다. PostgreSQL과 SQLite 전용이에요. `ON DUPLICATE KEY UPDATE`에는 `WHERE`가 없으므로 MySQL에서는 술어를 조용히 버리는 대신 예외를 던집니다. MySQL에서 같은 의도를 표현하려면 `CASE`로 대입 값 안에 조건을 접어 넣으세요.
+
+### 부분 유니크 인덱스와 제약 이름
+
+```typescript
+// ON CONFLICT ("email") WHERE "deleted_at" IS NULL DO UPDATE …
+.onConflict(["email"], { where: u.deletedAt.isNull() })
+
+// ON CONFLICT ON CONSTRAINT "user_email_key" DO UPDATE …   (PostgreSQL 전용)
+.onConflictConstraint("user_email_key")
+```
+
+`{ where }`는 어떤 **인덱스**가 충돌을 판정할지를 좁힙니다(유니크 인덱스 자체가 부분 인덱스일 때 필요해요). `doUpdateWhere()`는 충돌한 **행** 중 무엇을 갱신할지를 좁히고요. 서로 다른 절이라 함께 쓸 수 있습니다.
+
+### SQL 확인
+
+`build()`는 `Sql` 조각을, `toSql()`은 텍스트와 바인딩 값을 실행 없이 돌려줍니다.
+
+```typescript
+const { text, values } = em.createInsertBuilder(SyncMarker)
+  .values(rows)
+  .onConflict(["mac", "bucketStart"])
+  .doUpdate((t, ex) => ({ records: t.records.add(ex.records) }))
+  .toSql();
+```
+
+테넌트 스코프는 실행 시점에 적용되므로 `build()` 결과에는 나타나지 않습니다.
+
+### 동작 참고
+
+- **`createUpdateBuilder()`와 마찬가지로 문장 단위 API입니다.** `beforeInsert` / `afterInsert` 이벤트도, 엔티티 훅도 발화하지 않아요. 테넌트 컬럼과 `@CreateTimestamp` / `@UpdateTimestamp` / `@Version` 기본값, 컬럼 트랜스포머는 `insertMany()`와 똑같이 적용됩니다.
+- **한 문장 안의 중복 키는 알아서 합쳐 주지 않습니다.** PostgreSQL은 같은 충돌 대상을 두 번 건드리는 `VALUES` 목록을 거부하고(`ON CONFLICT DO UPDATE command cannot affect row a second time`), SQLite는 행을 순차 적용해서 누적이 겹칩니다. 문장을 만들기 전에 호출 측에서 합쳐 주세요.
+- **`affected`는 드라이버가 보고한 값 그대로**입니다. `upsert()`와 동일한 MySQL 1 대 2 주의사항이 그대로 적용돼요.
+- 리포지토리에서는 `markerRepo.createInsertBuilder()`로 씁니다.
+
+### 드라이버 지원
+
+| 기능 | PostgreSQL | MySQL / MariaDB | SQLite |
+|------|-----------|-----------------|--------|
+| `doUpdate()` 표현식 | 지원 | 지원 | 지원 |
+| `excluded` 참조 | `EXCLUDED.col` | `VALUES(col)` | `excluded.col` |
+| `onConflict([...])` 컬럼 | 지원 | 받되 생성하지 않음 | 지원 |
+| `onConflict(..., { where })` | 지원 | 예외 | 지원 |
+| `onConflictConstraint()` | 지원 | 예외 | 예외 |
+| `doNothing()` | `DO NOTHING` | `INSERT IGNORE` | `DO NOTHING` |
+| `doUpdateWhere()` | 지원 | 예외 | 지원 |
+
+MySQL은 모든 유니크 키를 한꺼번에 대상으로 삼기 때문에 지정할 충돌 대상 자체가 없습니다. 그래도 `.onConflict([...])`를 붙여 두는 편이 좋아요. 같은 호출을 PostgreSQL로 그대로 옮길 수 있으니까요.
+
+---
+
 ## 트랜잭션
 
 ### 왜 트랜잭션이 필요할까요?

@@ -598,6 +598,149 @@ The repository equivalent is `userRepo.batchUpsert(items, conflictColumns)`.
 
 ---
 
+## Expression-based Upsert -- createInsertBuilder()
+
+### The limit of upsert()
+
+`upsert()` and `batchUpsert()` can do exactly one thing on conflict: overwrite the stored row with the values you proposed. That is `col = EXCLUDED.col`, and it is enough for "last write wins".
+
+It is not enough the moment the new value depends on the **stored** value:
+
+```
+records   = stored.records + proposed.records     -- accumulate
+last_time = MAX(stored.last_time, proposed.last_time)  -- high-water mark
+```
+
+The obvious workaround -- `find()` the row, compute in TypeScript, `save()` it back -- has a race: two concurrent writers both read `records = 10`, both write `12`, and one increment is lost. Making it correct needs `SELECT … FOR UPDATE` and a held row lock. Doing it in one statement needs no lock at all, because the database evaluates the expression while it holds the row.
+
+`createInsertBuilder()` is that statement.
+
+### Accumulating counters
+
+```typescript
+import { greatest, sql } from "@stingerloom/orm";
+
+await em.createInsertBuilder(SyncMarker)
+  .values(buckets)
+  .onConflict(["mac", "bucketStart"])
+  .doUpdate((t, ex) => ({
+    records:  t.records.add(ex.records),
+    lastTime: greatest(t.lastTime, ex.lastTime),
+    syncedAt: sql`NOW()`,
+  }))
+  .execute();
+```
+
+`doUpdate()`'s callback receives two references:
+
+- `t` -- the row **already stored**. Renders as a bare column name, which every dialect reads as the target row inside the conflict action.
+- `ex` -- the row this INSERT **proposed**. Renders as `EXCLUDED."col"` (PostgreSQL), `excluded."col"` (SQLite) or `` VALUES(`col`) `` (MySQL).
+
+Both are ordinary `qAlias` references, so the whole expression vocabulary composes -- `.add()`, `.mul()`, `coalesce()`, `greatest()`, `CASE`, JSON paths.
+
+```sql
+-- PostgreSQL
+INSERT INTO "sync_markers" ("mac", "bucket_start", "records", "last_time", "synced_at")
+VALUES ($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)
+ON CONFLICT ("mac", "bucket_start") DO UPDATE
+   SET "records"   = ("records" + EXCLUDED."records"),
+       "last_time" = GREATEST("last_time", EXCLUDED."last_time"),
+       "synced_at" = NOW()
+```
+
+### The three forms of doUpdate()
+
+```typescript
+// 1. Overwrite with the proposed values -- same as upsert()
+.doUpdate(["name", "email"])
+
+// 2. Literal values and raw SQL
+.doUpdate({ status: "seen", seenAt: sql`NOW()` })
+
+// 3. Expressions over both rows
+.doUpdate((t, ex) => ({ hits: t.hits.add(ex.hits) }))
+```
+
+Literal values in form 2 go through the column's write transformer, exactly as `insertMany()` values do.
+
+### Skipping conflicts -- doNothing()
+
+```typescript
+await em.createInsertBuilder(AuditLog)
+  .values(entries)
+  .onConflict(["requestId"])
+  .doNothing()
+  .execute();
+```
+
+On MySQL this becomes `INSERT IGNORE`, which downgrades **every** error in the statement to a warning, not just the duplicate key. That is the same tradeoff `insertIgnore()` already makes.
+
+### Filtering the update -- doUpdateWhere()
+
+Only advance a row when the proposed value is actually newer:
+
+```typescript
+const m = qAlias(Reading, "m");
+
+await em.createInsertBuilder(Reading)
+  .values(rows)
+  .onConflict(["sensorId"])
+  .doUpdate((t, ex) => ({ value: ex.value, takenAt: ex.takenAt }))
+  .doUpdateWhere(m.takenAt.lt(cutoff))
+  .execute();
+```
+
+Rows failing the predicate are left untouched. PostgreSQL and SQLite only -- `ON DUPLICATE KEY UPDATE` takes no `WHERE`, so this throws on MySQL rather than quietly dropping the predicate. The MySQL equivalent is to fold the condition into the assigned value with a `CASE`.
+
+### Partial unique indexes and named constraints
+
+```typescript
+// ON CONFLICT ("email") WHERE "deleted_at" IS NULL DO UPDATE …
+.onConflict(["email"], { where: u.deletedAt.isNull() })
+
+// ON CONFLICT ON CONSTRAINT "user_email_key" DO UPDATE …   (PostgreSQL only)
+.onConflictConstraint("user_email_key")
+```
+
+`{ where }` narrows which **index** arbitrates the conflict (needed when the unique index itself is partial). `doUpdateWhere()` narrows which conflicting **rows** get updated. They are different clauses and can be used together.
+
+### Inspecting the SQL
+
+`build()` returns the `Sql` fragment and `toSql()` its text plus bound values, without executing:
+
+```typescript
+const { text, values } = em.createInsertBuilder(SyncMarker)
+  .values(rows)
+  .onConflict(["mac", "bucketStart"])
+  .doUpdate((t, ex) => ({ records: t.records.add(ex.records) }))
+  .toSql();
+```
+
+Tenant scoping is applied at execute time, so it does not appear in `build()` output.
+
+### Behavior notes
+
+- **Statement-level, like `createUpdateBuilder()`** -- no `beforeInsert` / `afterInsert` events and no entity hooks fire. Tenant columns, `@CreateTimestamp` / `@UpdateTimestamp` / `@Version` defaults and column transformers are applied exactly as `insertMany()` applies them.
+- **Duplicate keys inside one statement are not merged for you.** PostgreSQL rejects a `VALUES` list that hits the same conflict target twice (`ON CONFLICT DO UPDATE command cannot affect row a second time`); SQLite applies the rows sequentially so the accumulation compounds. Merge duplicates in the caller before building the statement.
+- **`affected` is driver-reported as-is**, with the same MySQL 1-vs-2 caveat as `upsert()`.
+- The repository equivalent is `markerRepo.createInsertBuilder()`.
+
+### Dialect support
+
+| Feature | PostgreSQL | MySQL / MariaDB | SQLite |
+|---------|-----------|-----------------|--------|
+| `doUpdate()` expressions | yes | yes | yes |
+| `excluded` reference | `EXCLUDED.col` | `VALUES(col)` | `excluded.col` |
+| `onConflict([...])` columns | yes | accepted, not emitted | yes |
+| `onConflict(..., { where })` | yes | throws | yes |
+| `onConflictConstraint()` | yes | throws | throws |
+| `doNothing()` | `DO NOTHING` | `INSERT IGNORE` | `DO NOTHING` |
+| `doUpdateWhere()` | yes | throws | yes |
+
+MySQL arbitrates on every unique key at once, so it has no conflict target to name. Passing `.onConflict([...])` there is still worth doing -- it keeps the same call portable to PostgreSQL.
+
+---
+
 ## Transactions
 
 ### Why transactions?
