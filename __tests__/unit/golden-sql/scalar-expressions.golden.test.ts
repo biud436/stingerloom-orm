@@ -420,6 +420,105 @@ const castAndNullishCases: GoldenCase[] = [
   },
 ];
 
+/**
+ * Row-wise GREATEST / LEAST. Unlike COALESCE these do *not* render the
+ * same shape everywhere — SQLite spells them `MAX(a, b)` / `MIN(a, b)`,
+ * the multi-argument scalar functions rather than the aggregates — so the
+ * dialect split is the whole point of pinning them.
+ */
+const comparisonCases: GoldenCase[] = [
+  {
+    name: "greatest — two column references",
+    build: () =>
+      Expressions.greatest(
+        new ColumnExpression("o.listPrice"),
+        new ColumnExpression("o.promoPrice"),
+      ),
+    postgres: {
+      text: 'GREATEST("o"."listPrice", "o"."promoPrice")',
+      values: [],
+    },
+    mysql: {
+      text: "GREATEST(`o`.`listPrice`, `o`.`promoPrice`)",
+      values: [],
+    },
+    sqlite: {
+      text: 'MAX("o"."listPrice", "o"."promoPrice")',
+      values: [],
+    },
+  },
+  {
+    name: "least — column reference and a bound literal",
+    build: () => Expressions.least(new ColumnExpression("o.listPrice"), 100),
+    postgres: { text: 'LEAST("o"."listPrice", ?)', values: [100] },
+    mysql: { text: "LEAST(`o`.`listPrice`, ?)", values: [100] },
+    sqlite: { text: 'MIN("o"."listPrice", ?)', values: [100] },
+  },
+  {
+    name: "greatest — three arguments",
+    build: () =>
+      Expressions.greatest(
+        new ColumnExpression("o.a"),
+        new ColumnExpression("o.b"),
+        new ColumnExpression("o.c"),
+      ),
+    postgres: { text: 'GREATEST("o"."a", "o"."b", "o"."c")', values: [] },
+    mysql: { text: "GREATEST(`o`.`a`, `o`.`b`, `o`.`c`)", values: [] },
+    sqlite: { text: 'MAX("o"."a", "o"."b", "o"."c")', values: [] },
+  },
+  {
+    name: "greatest — chained form off a column expression",
+    build: () =>
+      new ColumnExpression("o.listPrice").greatest(
+        new ColumnExpression("o.floorPrice"),
+      ),
+    postgres: {
+      text: 'GREATEST("o"."listPrice", "o"."floorPrice")',
+      values: [],
+    },
+    mysql: {
+      text: "GREATEST(`o`.`listPrice`, `o`.`floorPrice`)",
+      values: [],
+    },
+    sqlite: {
+      text: 'MAX("o"."listPrice", "o"."floorPrice")',
+      values: [],
+    },
+  },
+  {
+    name: "greatest — nested COALESCE keeps NULL handling portable",
+    build: () =>
+      Expressions.greatest(
+        Expressions.coalesce(new ColumnExpression("o.promoPrice"), 0),
+        new ColumnExpression("o.floorPrice"),
+      ),
+    postgres: {
+      text: 'GREATEST(COALESCE("o"."promoPrice", ?), "o"."floorPrice")',
+      values: [0],
+    },
+    mysql: {
+      text: "GREATEST(COALESCE(`o`.`promoPrice`, ?), `o`.`floorPrice`)",
+      values: [0],
+    },
+    sqlite: {
+      text: 'MAX(COALESCE("o"."promoPrice", ?), "o"."floorPrice")',
+      values: [0],
+    },
+  },
+  {
+    name: "least — arithmetic composes on the result",
+    build: () =>
+      Expressions.least(
+        new ColumnExpression("o.a"),
+        new ColumnExpression("o.b"),
+      ).mul(2),
+    postgres: { text: '(LEAST("o"."a", "o"."b") * ?)', values: [2] },
+    mysql: { text: "(LEAST(`o`.`a`, `o`.`b`) * ?)", values: [2] },
+    sqlite: { text: '(MIN("o"."a", "o"."b") * ?)', values: [2] },
+  },
+];
+
 runGoldenMatrix("golden-sql / CASE expressions", caseCases);
 runGoldenMatrix("golden-sql / date arithmetic expressions", dateCases);
 runGoldenMatrix("golden-sql / CAST + COALESCE/NULLIF expressions", castAndNullishCases);
+runGoldenMatrix("golden-sql / GREATEST / LEAST expressions", comparisonCases);

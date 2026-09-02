@@ -15,6 +15,10 @@ import {
 import { AliasedExpression } from "../../expressions/AliasedExpression";
 import type { ScalarExpression } from "../../expressions/ScalarExpression";
 import { coalesce as coalesceFn } from "../../expressions/NullishExpression";
+import {
+  greatest as greatestFn,
+  least as leastFn,
+} from "../../expressions/ComparisonExpression";
 import { buildCastScalar } from "../../expressions/CastExpression";
 import { buildDateComponentFromRef } from "../../expressions/DateComponentExpression";
 import {
@@ -378,6 +382,47 @@ export class ColumnExpression {
       );
     }
     return coalesceFn(this, ...fallbacks);
+  }
+
+  /**
+   * `GREATEST(this, other, …)` — the largest value **within one row**,
+   * which is a different thing from the `MAX()` aggregate over rows.
+   *
+   * Requires at least one other argument; they may be column expressions,
+   * scalar expressions, aggregates, JSON path extracts, or plain values
+   * (which become bound parameters).
+   *
+   * NULL handling is engine-specific — PostgreSQL skips NULL arguments
+   * while MySQL and SQLite return NULL if any argument is NULL. Wrap the
+   * nullable ones in `.coalesce(...)` when the result must be portable.
+   *
+   * @example
+   * ```ts
+   * qb.select([o.listPrice.greatest(o.floorPrice).as("charged")]);
+   * ```
+   */
+  greatest(...others: unknown[]): ScalarExpression {
+    if (others.length === 0) {
+      throw new Error("greatest() requires at least one other argument.");
+    }
+    return greatestFn(this, ...others);
+  }
+
+  /**
+   * `LEAST(this, other, …)` — the row-wise counterpart to
+   * {@link greatest}, with the same argument rules and the same
+   * engine-specific NULL handling.
+   *
+   * @example
+   * ```ts
+   * qb.select([o.listPrice.least(o.promoPrice).as("charged")]);
+   * ```
+   */
+  least(...others: unknown[]): ScalarExpression {
+    if (others.length === 0) {
+      throw new Error("least() requires at least one other argument.");
+    }
+    return leastFn(this, ...others);
   }
 
   // ── CAST helpers (Tier 2) ──────────────────────────────

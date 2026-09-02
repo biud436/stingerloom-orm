@@ -17,6 +17,7 @@ import {
   least,
 } from "../../src/core/expressions/ComparisonExpression";
 import { coalesce } from "../../src/core/expressions/NullishExpression";
+import { Expressions } from "../../src/core/expressions/LogicalCondition";
 import {
   ScalarExpression,
   isScalarExpression,
@@ -151,6 +152,31 @@ describe("greatest() / least()", () => {
     const { text, values } = qb.getSql();
     expect(text).toContain('GREATEST("r"."listPrice", "r"."promoPrice") >');
     expect(values).toContain(500);
+  });
+
+  it("exposes the same three entry points as coalesce()", () => {
+    const r = qAlias(Reading, "r");
+    const qb = createQb("postgresql");
+    qb.select([
+      greatest(r.listPrice, r.promoPrice).as("free_fn"),
+      r.listPrice.greatest(r.promoPrice).as("chained"),
+      Expressions.greatest(r.listPrice, r.promoPrice).as("namespaced"),
+      r.listPrice.least(r.promoPrice).as("chained_least"),
+      Expressions.least(r.listPrice, r.promoPrice).as("namespaced_least"),
+    ]);
+    const { text } = qb.getSql();
+    expect(
+      text.match(/GREATEST\("r"\."listPrice", "r"\."promoPrice"\)/g),
+    ).toHaveLength(3);
+    expect(
+      text.match(/LEAST\("r"\."listPrice", "r"\."promoPrice"\)/g),
+    ).toHaveLength(2);
+  });
+
+  it("the chained form requires at least one other argument", () => {
+    const r = qAlias(Reading, "r");
+    expect(() => r.listPrice.greatest()).toThrow(/at least one other/);
+    expect(() => r.listPrice.least()).toThrow(/at least one other/);
   });
 
   it("needs a dialect to render", () => {

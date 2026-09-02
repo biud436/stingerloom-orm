@@ -10,6 +10,7 @@ import {
 } from "./AggregateExpression";
 import { registerScalarLogicalComposer } from "./ScalarExpression";
 import { coalesce, nullif } from "./NullishExpression";
+import { greatest, least } from "./ComparisonExpression";
 import {
   currentDate,
   currentTime,
@@ -232,6 +233,37 @@ export const Expressions = {
    */
   nullif(a: unknown, b: unknown): ScalarExpression {
     return nullif(a, b);
+  },
+
+  /**
+   * `GREATEST(a, b, …)` — the largest argument **within one row**, not the
+   * `MAX()` aggregate over rows.
+   *
+   * Same argument union as {@link coalesce}. Requires at least 2
+   * arguments. Rendered as `GREATEST` on PostgreSQL and MySQL/MariaDB and
+   * as the multi-argument scalar `MAX` on SQLite; NULL handling is
+   * engine-specific and deliberately not normalized.
+   *
+   * @example
+   * ```ts
+   * Expressions.greatest(m.lastTime, ex.lastTime)
+   * ```
+   */
+  greatest(first: unknown, second: unknown, ...rest: unknown[]): ScalarExpression {
+    return greatest(first, second, ...rest);
+  },
+
+  /**
+   * `LEAST(a, b, …)` — the row-wise counterpart to {@link greatest}
+   * (`MIN` on SQLite), with the same argument rules.
+   *
+   * @example
+   * ```ts
+   * Expressions.least(o.listPrice, o.promoPrice)
+   * ```
+   */
+  least(first: unknown, second: unknown, ...rest: unknown[]): ScalarExpression {
+    return least(first, second, ...rest);
   },
 
   /** `CURRENT_DATE` — the database server's current date. */
