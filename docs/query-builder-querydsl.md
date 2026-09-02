@@ -374,8 +374,19 @@ greatest(coalesce(o.promoPrice, 0), o.floorPrice)
 ```
 :::
 
-Both require at least two arguments; a one-argument call throws rather
-than emitting SQL whose meaning would change per dialect.
+Like `coalesce()`, all three entry points are available — the free
+function, the chained form on a column, and the static namespace:
+
+```typescript
+greatest(o.listPrice, o.promoPrice)      // free function
+o.listPrice.greatest(o.promoPrice)       // chained off a column
+Expressions.greatest(o.listPrice, o.promoPrice)
+```
+
+The free function and `Expressions.greatest` require at least two
+arguments; the chained form requires at least one other argument (the
+receiver is the first). A short call throws rather than emitting SQL
+whose meaning would change per dialect.
 
 ## The proposed row in an upsert — `qExcluded()`
 
@@ -1069,7 +1080,7 @@ to the JSON-path expression instead.
 | Conditional aggregates | `aggregate.filter(condition)`, `.countIf(condition)`, `.sumIf(condition)` — `FILTER (WHERE …)` (PG/SQLite) / `CASE` rewrite (MySQL) |
 | SELECT alias          | `.as("name")` on columns, JSON path extracts, and aggregates — produces `AliasedExpression` |
 | Null handling         | `coalesce(…)`, `nullif(a, b)`, `col.coalesce(…)`, `Expressions.coalesce`, `Expressions.nullif` |
-| Row-wise min / max    | `greatest(a, b, …)`, `least(a, b, …)` — `GREATEST`/`LEAST` (PG, MySQL), `MAX`/`MIN` (SQLite) |
+| Row-wise min / max    | `greatest(a, b, …)`, `least(a, b, …)`, `col.greatest(…)`, `col.least(…)`, `Expressions.greatest`, `Expressions.least` — `GREATEST`/`LEAST` (PG, MySQL), `MAX`/`MIN` (SQLite) |
 | Upsert proposed row   | `qExcluded(Entity)` — `EXCLUDED.col` (PG), `excluded.col` (SQLite), `VALUES(col)` (MySQL) |
 | Current date / time   | `currentDate()`, `currentTime()`, `currentTimestamp()` — also on `Expressions`                 |
 | Type casts            | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` — dialect-specific type names |

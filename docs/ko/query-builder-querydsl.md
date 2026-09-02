@@ -431,7 +431,15 @@ greatest(coalesce(o.promoPrice, 0), o.floorPrice)
 ```
 :::
 
-둘 다 인자가 최소 두 개여야 합니다. 인자 하나짜리 호출은 드라이버마다 의미가 달라지는 SQL을 만드는 대신 예외를 던집니다.
+`coalesce()`와 마찬가지로 진입점이 셋 다 있습니다. 자유 함수, 컬럼에 이어 붙이는 체인, 정적 네임스페이스입니다.
+
+```typescript
+greatest(o.listPrice, o.promoPrice)      // 자유 함수
+o.listPrice.greatest(o.promoPrice)       // 컬럼에서 체인
+Expressions.greatest(o.listPrice, o.promoPrice)
+```
+
+자유 함수와 `Expressions.greatest`는 인자가 최소 두 개, 체인 형태는 수신자가 첫 인자이므로 나머지 인자가 최소 하나 필요합니다. 모자라면 드라이버마다 의미가 달라지는 SQL을 만드는 대신 예외를 던집니다.
 
 ## upsert가 제안한 행 — `qExcluded()`
 
@@ -933,7 +941,7 @@ qb.where(u.tags.arrayContains(["admin"]).not());       // NOT (...)
 | 조건부 집계 | `aggregate.filter(condition)`, `.countIf(condition)`, `.sumIf(condition)` — `FILTER (WHERE …)` (PG/SQLite) / `CASE` 변환 (MySQL) |
 | SELECT 별칭 | `.as("name")` — 컬럼 / JSON 경로 / 집계 어디에든. `AliasedExpression` 반환 |
 | null fallback | `coalesce(...)`, `col.coalesce(...)`, `nullif(a, b)` — 처음 non-null 값 / 일치 시 NULL |
-| 행 단위 최대 / 최소 | `greatest(a, b, …)`, `least(a, b, …)` — `GREATEST`/`LEAST` (PG, MySQL), `MAX`/`MIN` (SQLite) |
+| 행 단위 최대 / 최소 | `greatest(a, b, …)`, `least(a, b, …)`, `col.greatest(…)`, `col.least(…)`, `Expressions.greatest`, `Expressions.least` — `GREATEST`/`LEAST` (PG, MySQL), `MAX`/`MIN` (SQLite) |
 | upsert 제안 행 참조 | `qExcluded(Entity)` — `EXCLUDED.col` (PG), `excluded.col` (SQLite), `VALUES(col)` (MySQL) |
 | 현재 시각 | `currentDate()`, `currentTime()`, `currentTimestamp()` — `Expressions`에도 동일 |
 | 타입 변환 | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` |
