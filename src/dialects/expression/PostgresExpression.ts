@@ -329,6 +329,17 @@ export class PostgresExpression implements DialectExpression {
     // serializes it to a PG array literal.
     return sql`${column} ${raw(op)} ${values as unknown as RawValue}`;
   }
+
+  greatest(args: readonly Sql[]): Sql {
+    // PostgreSQL's GREATEST skips NULL arguments — a NULL only comes back
+    // when every argument is NULL. MySQL and SQLite differ; the divergence
+    // is documented on the interface rather than papered over here.
+    return sql`GREATEST(${join([...args], ", ")})`;
+  }
+
+  least(args: readonly Sql[]): Sql {
+    return sql`LEAST(${join([...args], ", ")})`;
+  }
 }
 
 function pgIntervalLiteral(unit: DateAddUnit): string {

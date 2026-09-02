@@ -19,6 +19,7 @@ export * from "./LogicalCondition";
 export * from "./AliasedExpression";
 export * from "./ScalarExpression";
 export * from "./NullishExpression";
+export * from "./ComparisonExpression";
 export * from "./TemporalExpression";
 export * from "./CastExpression";
 export * from "./DateComponentExpression";

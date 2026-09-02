@@ -234,6 +234,17 @@ export class MySqlExpression implements DialectExpression {
         "DSL (e.g. col.contains(...)), or a junction table.",
     );
   }
+
+  greatest(args: readonly Sql[]): Sql {
+    // MySQL/MariaDB GREATEST returns NULL when *any* argument is NULL,
+    // unlike PostgreSQL. Callers that need a portable result wrap the
+    // nullable arguments in coalesce().
+    return sql`GREATEST(${join([...args], ", ")})`;
+  }
+
+  least(args: readonly Sql[]): Sql {
+    return sql`LEAST(${join([...args], ", ")})`;
+  }
 }
 
 function mysqlUnitKeyword(unit: DateAddUnit): string {

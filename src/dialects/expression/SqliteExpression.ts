@@ -1,4 +1,4 @@
-import sql, { raw } from "../../utils/sqlTag";
+import sql, { raw, join } from "../../utils/sqlTag";
 import type { Sql } from "../../utils/sqlTag";
 import { inlineFlagPrefix } from "../../core/expressions/RegexPattern";
 import type {
@@ -220,6 +220,17 @@ export class SqliteExpression implements DialectExpression {
         "column type. Model the data as a JSON array and use the JSON path " +
         "DSL (e.g. col.contains(...)), or a junction table.",
     );
+  }
+
+  greatest(args: readonly Sql[]): Sql {
+    // SQLite spells the row-wise maximum `MAX(a, b, …)`. With two or more
+    // arguments this resolves to the scalar function, not the single-argument
+    // MAX() aggregate. Like MySQL, it returns NULL if any argument is NULL.
+    return sql`MAX(${join([...args], ", ")})`;
+  }
+
+  least(args: readonly Sql[]): Sql {
+    return sql`MIN(${join([...args], ", ")})`;
   }
 }
 

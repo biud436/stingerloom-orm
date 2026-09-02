@@ -290,6 +290,32 @@ export interface DialectExpression {
    * @param opts - The aggregate pieces plus the already-resolved predicate.
    */
   aggregateFilter(opts: AggregateFilterOptions): Sql;
+
+  /**
+   * Row-wise maximum across the given arguments — the largest value in one
+   * row, not an aggregate over rows.
+   *
+   * - PostgreSQL / MySQL / MariaDB: `GREATEST(a, b, …)`.
+   * - SQLite: `MAX(a, b, …)` — the multi-argument scalar form, which is a
+   *   different function from the single-argument `MAX()` aggregate.
+   *
+   * **NULL semantics differ by engine and are not normalized here.**
+   * PostgreSQL skips NULL arguments and returns the largest non-NULL value;
+   * MySQL and SQLite return NULL if *any* argument is NULL. Wrap the
+   * nullable arguments in `coalesce()` when a portable result is needed.
+   *
+   * @param args - At least two already-rendered argument fragments.
+   */
+  greatest(args: readonly Sql[]): Sql;
+
+  /**
+   * Row-wise minimum across the given arguments — the counterpart to
+   * {@link greatest}, with the same engine mapping (`LEAST` / `MIN`) and the
+   * same unnormalized NULL semantics.
+   *
+   * @param args - At least two already-rendered argument fragments.
+   */
+  least(args: readonly Sql[]): Sql;
 }
 
 /**

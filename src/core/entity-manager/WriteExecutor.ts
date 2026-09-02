@@ -5,7 +5,7 @@ import { ISqlDriver } from "../../dialects/SqlDriver";
 import { TransactionSessionManager } from "../../dialects/TransactionSessionManager";
 import { FindOption, LockMode, UpdateData, UpdateManyOptions, WhereClause } from "../../dialects/FindOption";
 import { resolveWhereClause } from "../WhereResolver";
-import sql, { Sql, join, raw, type RawValue } from "../../utils/sqlTag";
+import sql, { Sql, join, raw, isSqlFragment, type RawValue } from "../../utils/sqlTag";
 import { DeleteResult } from "../../types/DeleteResult";
 import { Conditions } from "../Conditions";
 import { ResultTransformerFactory } from "../ResultTransformerFactory";
@@ -39,7 +39,11 @@ import { DefaultNamingStrategy, NamingStrategy } from "../generators/NamingStrat
 import { InheritanceResolver } from "../InheritanceResolver";
 import { createDialectExpression } from "../../dialects/DialectExpression";
 import { UpdateQueryBuilder } from "../UpdateQueryBuilder";
-import { DmlSqlBuilder } from "./DmlSqlBuilder";
+import { DmlSqlBuilder, type InsertConflictAction } from "./DmlSqlBuilder";
+import type {
+  ConflictAction,
+  InsertBuilderSpec,
+} from "../InsertQueryBuilder";
 import {
   isDeadlockError,
   isTemplateStringsArray,
@@ -1359,9 +1363,16 @@ export class WriteExecutor {
     itemFields: EntityFields,
   ): RawValue[] {
     const rowValues: RawValue[] = bindParams(
-      insertableColumns.map((col) =>
-        this.ctx.applyWriteTransform(col, itemFields[this.ctx.propKey(col)]),
-      ),
+      insertableColumns.map((col) => {
+        const value = itemFields[this.ctx.propKey(col)];
+        // A raw `sql` fragment stands for an expression the database
+        // evaluates (NOW(), a sequence call), so it is spliced as written.
+        // Running it through the column transformer would serialize the
+        // fragment object itself — a JSON column would store "{}".
+        return isSqlFragment(value)
+          ? value
+          : this.ctx.applyWriteTransform(col, value);
+      }),
     );
     for (const fk of fkColumns) {
       const fkValue = this.resolveFkValue(fk.relMeta, itemFields);
@@ -1852,6 +1863,205 @@ export class WriteExecutor {
       (typeof this.driver?.supportsReturning === "function" &&
         this.driver.supportsReturning())
     );
+  }
+
+  /**
+   * Resolves an {@link InsertBuilderSpec} down to the pieces
+   * {@link DmlSqlBuilder.buildInsertOnConflictSql} needs: the named columns,
+   * one VALUES tuple per row, the wrapped conflict target and the rendered
+   * DO UPDATE assignments.
+   *
+   * The defaults (`applyBulkInsertDefaults`) mutate the caller's rows, which
+   * is why this runs inside the transaction on the execute path and on a
+   * copy nowhere else — `insertMany()` has always behaved that way and the
+   * builder is documented to match it.
+   */
+  private prepareBuilderInsert<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    spec: InsertBuilderSpec<T>,
+  ): {
+    columns: Sql[];
+    valueRows: Sql[];
+    conflictColumns: string[];
+    action: InsertConflictAction;
+  } {
+    const items = spec.items as Partial<T>[];
+    this.applyBulkInsertDefaults(entity, metadata, items);
+
+    const insertableColumns = this.selectBulkInsertColumns(
+      entity,
+      metadata,
+      items,
+    );
+    const { columns, valueRows } = this.buildBulkInsertRows(
+      entity,
+      insertableColumns,
+      items,
+    );
+
+    return {
+      columns,
+      valueRows,
+      conflictColumns: this.resolveConflictColumns(entity, metadata, spec),
+      action: this.renderConflictAction(entity, metadata, spec.action),
+    };
+  }
+
+  /**
+   * The wrapped conflict-target columns: the properties the builder named,
+   * or the primary key when it named none.
+   *
+   * An entity with neither is an error only where the target is actually
+   * emitted — MySQL has no conflict target, and a constraint name replaces
+   * the column list — so the check is deferred to the dialect layer by
+   * returning an empty list here.
+   */
+  private resolveConflictColumns<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    spec: InsertBuilderSpec<T>,
+  ): string[] {
+    if (spec.target?.constraintName) return [];
+
+    const properties = spec.target?.properties ?? [];
+    if (properties.length > 0) {
+      return properties.map((prop) =>
+        this.ctx.wrap(this.columnNameForProperty(metadata, prop)),
+      );
+    }
+
+    const pkColumns = metadata.columns
+      .filter((col: ColumnMetadata) => col.options?.primary)
+      .map((col: ColumnMetadata) => col.name);
+    if (pkColumns.length === 0 && spec.action.kind !== "none") {
+      throw new PrimaryKeyNotFoundError(entity.name);
+    }
+    return pkColumns.map((name) => this.ctx.wrap(name));
+  }
+
+  /** The DB column a property maps to, falling back to the property name. */
+  private columnNameForProperty(
+    metadata: EntityScannerMetadata,
+    property: string,
+  ): string {
+    const column = metadata.columns.find(
+      (col: ColumnMetadata) => this.ctx.propKey(col) === property,
+    );
+    return column?.name ?? property;
+  }
+
+  /**
+   * Turns the builder's conflict action into rendered SQL assignments.
+   *
+   * Expression entries arrive already rendered — the builder held the alias
+   * resolver and the dialect. Literal entries are bound here so the column's
+   * write transformer applies, which is the reason they were left alone.
+   */
+  private renderConflictAction<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    action: ConflictAction,
+  ): InsertConflictAction {
+    if (action.kind !== "update") return action;
+
+    const set = action.set.map((entry) => {
+      const columnName = this.columnNameForProperty(metadata, entry.property);
+      const wrapped = raw(this.ctx.wrap(columnName));
+      if (entry.kind === "expression") {
+        return sql`${wrapped} = ${entry.value}`;
+      }
+      const column = metadata.columns.find(
+        (col: ColumnMetadata) => col.name === columnName,
+      );
+      const value = column
+        ? this.ctx.applyWriteTransform(column, entry.value)
+        : entry.value;
+      return sql`${wrapped} = ${bindParam(value)}`;
+    });
+
+    if (set.length === 0) {
+      throw new InvalidQueryError(
+        `createInsertBuilder(${entity.name}).doUpdate() resolved to no assignments.`,
+      );
+    }
+    return { kind: "update", set, where: action.where };
+  }
+
+  /**
+   * @internal Backs `InsertQueryBuilder.build()` — the statement without
+   * tenant scoping, which is applied only on the execute path.
+   */
+  buildBuilderInsertSql<T>(
+    entity: ClazzType<T>,
+    spec: InsertBuilderSpec<T>,
+  ): Sql {
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+    const prepared = this.prepareBuilderInsert(entity, metadata, spec);
+    return this.dmlSqlBuilder.buildInsertOnConflictSql({
+      tableName: this.ctx.wrapTable(metadata.name),
+      columns: prepared.columns,
+      valueRows: prepared.valueRows,
+      conflictColumns: prepared.conflictColumns,
+      constraintName: spec.target?.constraintName,
+      indexPredicate: spec.target?.indexPredicate,
+      action: prepared.action,
+    });
+  }
+
+  /**
+   * @internal Backs `InsertQueryBuilder.execute()`.
+   *
+   * Statement-level, like `executeBuilderUpdate`: no `beforeInsert` /
+   * `afterInsert` events and no entity hooks. The tenant column, timestamp
+   * and version defaults and column transformers are applied exactly as
+   * `insertMany()` applies them.
+   */
+  async executeBuilderInsert<T>(
+    entity: ClazzType<T>,
+    spec: InsertBuilderSpec<T>,
+  ): Promise<{ affected: number }> {
+    if (spec.items.length === 0) {
+      return { affected: 0 };
+    }
+
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    if (this.ctx.getTenantColumnConfig()) {
+      for (const item of spec.items as Partial<T>[]) {
+        this.ctx.applyTenantColumnOnInsert(entity, item);
+      }
+    }
+
+    return this.ctx.executeInTransaction(async (session) => {
+      const prepared = this.prepareBuilderInsert(entity, metadata, spec);
+      const insertSql = this.dmlSqlBuilder.buildInsertOnConflictSql({
+        tableName: this.ctx.wrapTable(metadata.name),
+        columns: prepared.columns,
+        valueRows: prepared.valueRows,
+        conflictColumns: prepared.conflictColumns,
+        constraintName: spec.target?.constraintName,
+        indexPredicate: spec.target?.indexPredicate,
+        action: prepared.action,
+      });
+
+      const queryStart = Date.now();
+      this.ctx.beginTrackQuery();
+      const queryResult = (await session.query(insertSql)) as DriverExecResult;
+      this.ctx.trackQuery(
+        entity.name,
+        insertSql.text ?? String(insertSql),
+        Date.now() - queryStart,
+      );
+
+      return { affected: this.affectedCount(queryResult, spec.items.length) };
+    });
   }
 
   async insertMany<T>(

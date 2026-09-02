@@ -12,6 +12,7 @@ import { DeleteResult } from "../types/DeleteResult";
 import { SelectQueryBuilder, isEntityRef } from "./SelectQueryBuilder";
 import type { EntityRef } from "./SelectQueryBuilder";
 import { UpdateQueryBuilder } from "./UpdateQueryBuilder";
+import { InsertQueryBuilder } from "./InsertQueryBuilder";
 import {
   CursorPaginationOption,
   CursorPaginationResult,
@@ -770,5 +771,33 @@ export class BaseRepository<T> {
       return this.em.createUpdateBuilder<T>(aliasOrRef);
     }
     return this.em.createUpdateBuilder<T>(this.entity, aliasOrRef as string | undefined);
+  }
+
+  /**
+   * Creates a type-safe `InsertQueryBuilder` for this entity — the
+   * expression-capable counterpart to {@link upsert} / {@link batchUpsert},
+   * for a conflict action that has to read the stored row.
+   *
+   * @param aliasOrRef Either a string alias (e.g. `"m"`) or a `qAlias()` ref.
+   * @returns A new `InsertQueryBuilder<T>` bound to this repository's entity.
+   *
+   * @example
+   * ```ts
+   * await markerRepo.createInsertBuilder()
+   *   .values(rows)
+   *   .onConflict(["mac", "bucketStart"])
+   *   .doUpdate((t, ex) => ({ records: t.records.add(ex.records) }))
+   *   .execute();
+   * ```
+   */
+  createInsertBuilder(alias?: string): InsertQueryBuilder<T>;
+  createInsertBuilder(ref: EntityRef<T>): InsertQueryBuilder<T>;
+  createInsertBuilder(
+    aliasOrRef?: string | EntityRef<T>,
+  ): InsertQueryBuilder<T> {
+    if (aliasOrRef !== undefined && isEntityRef(aliasOrRef)) {
+      return this.em.createInsertBuilder<T>(aliasOrRef);
+    }
+    return this.em.createInsertBuilder<T>(this.entity, aliasOrRef as string | undefined);
   }
 }

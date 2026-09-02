@@ -156,6 +156,14 @@ export {
 } from "./core/TenantQueryStrategy";
 export { UpdateQueryBuilder } from "./core/UpdateQueryBuilder";
 export {
+  InsertQueryBuilder,
+  type InsertValues,
+  type ConflictSet,
+  type ConflictSetValue,
+  type ConflictSetFactory,
+  type OnConflictOptions,
+} from "./core/InsertQueryBuilder";
+export {
   ClassTransformerDeserializer,
 } from "./core/deserializer/ClassTransformerDeserializer";
 export { deserializeEntity } from "./core/deserializer/DeserializeEntity";
@@ -200,6 +208,11 @@ export {
   LogicalOperator,
 } from "./core/expressions/LogicalCondition";
 export { coalesce, nullif } from "./core/expressions/NullishExpression";
+export { greatest, least } from "./core/expressions/ComparisonExpression";
+export {
+  EXCLUDED_ALIAS,
+  qExcluded,
+} from "./core/query-builder/alias/qExcluded";
 export {
   NullsPosition,
   OrderDirection,

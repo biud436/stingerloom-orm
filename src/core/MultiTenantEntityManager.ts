@@ -19,6 +19,7 @@ import { EntityEventListener, EntityEventType } from "./EntityEventEmitter";
 import { EntitySubscriber } from "./EntitySubscriber";
 import { SelectQueryBuilder, EntityRef } from "./SelectQueryBuilder";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
+import { InsertQueryBuilder } from "./InsertQueryBuilder";
 
 /**
  * The subset of `DatabaseClientOptions` that controls multi-tenant routing.
@@ -373,6 +374,18 @@ export class MultiTenantEntityManager {
     conflictColumns?: string[],
   ): Promise<{ affected: number }> {
     return (await this.pickEm()).batchUpsert(entity, items as any, conflictColumns);
+  }
+
+  /**
+   * Resolves the tenant's EntityManager and returns an `InsertQueryBuilder`
+   * bound to it. Async, unlike `EntityManager.createInsertBuilder`, because
+   * the tenant connection may still need to be opened.
+   */
+  async createInsertBuilder<T>(
+    entity: ClazzType<T>,
+    alias?: string,
+  ): Promise<InsertQueryBuilder<T>> {
+    return (await this.pickEm()).createInsertBuilder(entity, alias);
   }
 
   async delete<T>(entity: ClazzType<T>, conditions: WhereClause<T>): Promise<DeleteResult> {
