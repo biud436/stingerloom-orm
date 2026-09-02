@@ -109,6 +109,20 @@ interface UpdateSetPlan {
   versionColName: string | null;
 }
 
+/** Column lists staged for an INSERT ... ON CONFLICT statement. */
+interface UpsertPlan {
+  /** Metadata of the columns the INSERT names, in statement order. */
+  insertableColumns: ColumnMetadata[];
+  /** Wrapped table identifier. */
+  tableName: string;
+  /** Wrapped identifiers of `insertableColumns`. */
+  wrappedColumns: string[];
+  /** Wrapped identifiers of the conflict target. */
+  wrappedConflict: string[];
+  /** Wrapped identifiers the DO UPDATE writes (conflict targets excluded). */
+  wrappedUpdate: string[];
+}
+
 /**
  * Executes all write operations (INSERT / UPDATE / DELETE / UPSERT) for
  * EntityManager. Holds no schema state — reads dialect/identifier/helper
@@ -141,6 +155,63 @@ export class WriteExecutor {
   }
   private get eventEmitter(): EntityEventEmitter {
     return this.ctx.getEventEmitter();
+  }
+
+  /**
+   * How many rows a DML statement touched.
+   *
+   * The MySQL family reports it on the OK packet; PostgreSQL and SQLite
+   * expose `rowCount`. Twelve write paths carried this same two-branch read,
+   * so it lives here once. `fallback` is what an unreadable result counts as
+   * — 0 everywhere except the bulk INSERT, which knows how many rows it sent.
+   */
+  private affectedCount(
+    queryResult: DriverExecResult | undefined,
+    fallback = 0,
+  ): number {
+    if (this.ctx.isMySqlFamily()) {
+      return okPacket(queryResult)?.affectedRows ?? fallback;
+    }
+    return queryResult?.rowCount ?? fallback;
+  }
+
+  /**
+   * The WHERE clauses a criteria-based write resolves to.
+   *
+   * #372: write criteria accept find-style operator objects
+   * ({ between: [a, b] }, { gt }, { lte }, ...), arrays (IN) and null
+   * (IS NULL) — delete / softDelete / restore / updateMany all go through
+   * this one resolver, the same one the read paths use.
+   */
+  private resolveCriteriaWhere<T>(
+    criteria: WhereClause<T>,
+    propertyToColumn: Map<string, string>,
+  ): Sql[] {
+    return resolveWhereClause(criteria, {
+      wrapColumn: (n) => this.ctx.wrap(n),
+      dialect: this.ctx.getDialect(),
+      dialectExpression: createDialectExpression(this.ctx.getDialect()),
+      propertyToColumn,
+    });
+  }
+
+  /**
+   * The discriminator predicate that keeps a criteria-based write on one STI
+   * subtype's rows, or null when the entity is not an STI child. Every bulk
+   * write narrows this way so it can never touch siblings sharing the table.
+   */
+  private stiDiscriminatorClause<T>(
+    entity: ClazzType<T>,
+    strategy?: InheritanceStrategy | null,
+  ): Sql | null {
+    // A caller that already read the strategy passes it in, so the common
+    // case (no inheritance at all) costs no extra metadata read.
+    if (strategy !== undefined && strategy !== "SINGLE_TABLE") return null;
+    const disc =
+      this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+    return disc
+      ? Conditions.equals(this.ctx.wrap(disc.columnName), disc.value)
+      : null;
   }
 
   async save<T>(
@@ -247,9 +318,7 @@ export class WriteExecutor {
         this.applyInsertFkColumns(op, plan);
 
         // PostgreSQL (all versions), MariaDB 10.5+: INSERT ... RETURNING *
-        const useReturning =
-          (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
-          (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
+        const useReturning = this.supportsInsertReturning();
 
         // TPT child: INSERT into parent first → INSERT into child (sharing the same PK)
         if (saveInheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
@@ -1013,9 +1082,7 @@ export class WriteExecutor {
       const parentResult = (await session.query<T>(
         parentUpdateSql,
       )) as DriverExecResult;
-      parentAffected = this.ctx.isMySqlFamily()
-        ? (okPacket(parentResult)?.affectedRows ?? 0)
-        : (parentResult?.rowCount ?? 0);
+      parentAffected = this.affectedCount(parentResult);
 
       // Same contract as the single-table UPDATE path: a guarded parent
       // UPDATE that matched nothing is a stale @Version write (the version
@@ -1060,9 +1127,7 @@ export class WriteExecutor {
       // existence signal (identity is anchored on the root row, which
       // shares its PK with the child row).
       if (parentAffected === null) {
-        const childAffected = this.ctx.isMySqlFamily()
-          ? (okPacket(childResult)?.affectedRows ?? 0)
-          : (childResult?.rowCount ?? 0);
+        const childAffected = this.affectedCount(childResult);
         if (childAffected === 0) {
           const childProbe = await session.query(
             sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
@@ -1123,12 +1188,7 @@ export class WriteExecutor {
       Date.now() - updateStart,
     );
 
-    let affected = 0;
-    if (this.ctx.isMySqlFamily()) {
-      affected = okPacket(updateResult)?.affectedRows ?? 0;
-    } else {
-      affected = updateResult?.rowCount ?? 0;
-    }
+    const affected = this.affectedCount(updateResult);
     if (versionColName && currentVersion !== undefined && currentVersion !== null) {
       if (affected === 0) {
         throw new OptimisticLockError(entity.name, currentVersion as number);
@@ -1473,9 +1533,7 @@ export class WriteExecutor {
 
     // RETURNING * where the driver supports it (PostgreSQL all versions,
     // MariaDB 10.5+), so the rows come back without a second read.
-    const useReturning =
-      (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
-      (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
+    const useReturning = this.supportsInsertReturning();
     const returningSql = useReturning ? raw(` RETURNING *`) : raw("");
 
     const table = raw(this.ctx.wrapTable(metadata.name));
@@ -1557,9 +1615,7 @@ export class WriteExecutor {
     session: TransactionSessionManager,
   ): Promise<InstanceType<ClazzType<T>>[]> {
     const hasAutoIncrementPk = pk.options?.autoIncrement === true;
-    const useReturning =
-      (typeof this.driver?.supportsInsertReturning === "function" && this.driver.supportsInsertReturning()) ||
-      (typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning());
+    const useReturning = this.supportsInsertReturning();
     const insertedRows = resultRows(queryResult);
 
     if (useReturning && insertedRows.length > 0 && !this.ctx.hasEagerRelations(entity)) {
@@ -1674,6 +1730,130 @@ export class WriteExecutor {
     return results;
   }
 
+  /**
+   * The values a bulk INSERT fills in rather than the caller: the tenant
+   * column, every temporal column the item left unset, and the `@Version`
+   * seed. They are written onto the items themselves, so the rows the caller
+   * passed in carry what was persisted.
+   *
+   * `@DeletedAt` is excluded — a freshly inserted row is not trashed. The
+   * version and timestamp writes go through the property key, not the DB
+   * column name: VALUES binds from the property, so under a transforming
+   * naming strategy writing the column name would add a bogus property and
+   * leave the real column NULL.
+   */
+  private applyBulkInsertDefaults<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    items: Partial<T>[],
+  ): void {
+    if (this.ctx.getTenantColumnConfig()) {
+      for (const item of items) {
+        this.ctx.applyTenantColumnOnInsert(entity, item);
+      }
+    }
+
+    const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
+    const timestampTypes = new Set(["datetime", "timestamp", "date"]);
+    const timestampColumns = metadata.columns.filter(
+      (col: ColumnMetadata) =>
+        col.options?.type &&
+        timestampTypes.has(col.options.type) &&
+        col.name !== deletedAtColumn,
+    );
+    if (timestampColumns.length > 0) {
+      const now = new Date();
+      for (const item of items) {
+        const itemFields = fieldsOf(item);
+        for (const col of timestampColumns) {
+          if (itemFields[this.ctx.propKey(col)] == null) {
+            itemFields[this.ctx.propKey(col)] = now;
+          }
+        }
+      }
+    }
+
+    const versionCol = this.resolver.getVersionColumn(entity);
+    if (versionCol) {
+      const versionColumn = metadata.columns.find((c) => c.name === versionCol);
+      if (versionColumn) {
+        const versionProp = this.ctx.propKey(versionColumn);
+        for (const item of items) {
+          const itemFields = fieldsOf(item);
+          if (itemFields[versionProp] == null) {
+            itemFields[versionProp] = 1;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * The columns a bulk INSERT names: everything declared except computed
+   * columns, and an auto-increment PK only when *every* item states a value
+   * for it — a mixed batch would otherwise bind NULL over the sequence.
+   *
+   * This is deliberately not {@link selectBatchInsertColumns}: saveMany()
+   * omits a column no item provides so the DB DEFAULT applies (#368), while
+   * insertMany() names every declared column and binds NULL.
+   */
+  private selectBulkInsertColumns<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    items: Partial<T>[],
+  ): ColumnMetadata[] {
+    const computedCols = this.ctx.getComputedColumnNames(entity);
+    return metadata.columns.filter((column: ColumnMetadata) => {
+      if (computedCols.has(column.name)) return false;
+      const isAutoIncrement = column.options?.autoIncrement;
+      if (!isAutoIncrement) return true;
+      return items.every((item) => {
+        const value = fieldsOf(item)[this.ctx.propKey(column)];
+        return value !== null && value !== undefined;
+      });
+    });
+  }
+
+  /** The column list and one VALUES row per item, FK columns appended. */
+  private buildBulkInsertRows<T>(
+    entity: ClazzType<T>,
+    insertableColumns: ColumnMetadata[],
+    items: Partial<T>[],
+  ): { columns: Sql[]; valueRows: Sql[] } {
+    const columns = insertableColumns.map((column) =>
+      raw(this.ctx.wrap(column.name)),
+    );
+    const fkColumns = this.appendFkInsertColumns(
+      entity,
+      insertableColumns,
+      columns,
+    );
+    const valueRows = items.map((item) => {
+      const rowValues = this.buildInsertRowValues(
+        insertableColumns,
+        fkColumns,
+        fieldsOf(item),
+      );
+      return sql`(${join(rowValues, ", ")})`;
+    });
+    return { columns, valueRows };
+  }
+
+  /**
+   * Whether the driver can hand back the rows an INSERT wrote. The
+   * INSERT-specific capability comes first (MariaDB supports INSERT RETURNING
+   * without full RETURNING); the generic flag covers drivers that do not
+   * distinguish the two.
+   */
+  private supportsInsertReturning(): boolean {
+    return (
+      (typeof this.driver?.supportsInsertReturning === "function" &&
+        this.driver.supportsInsertReturning()) ||
+      (typeof this.driver?.supportsReturning === "function" &&
+        this.driver.supportsReturning())
+    );
+  }
+
   async insertMany<T>(
     entity: ClazzType<T>,
     items: Partial<T>[],
@@ -1688,93 +1868,24 @@ export class WriteExecutor {
     }
 
     return this.ctx.executeInTransaction(async (session) => {
-      if (this.ctx.getTenantColumnConfig()) {
-        for (const item of items) {
-          this.ctx.applyTenantColumnOnInsert(entity, item);
-        }
-      }
+      this.applyBulkInsertDefaults(entity, metadata, items);
 
-      const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
-      const timestampTypes = new Set(["datetime", "timestamp", "date"]);
-      const timestampColumns = metadata.columns.filter(
-        (col: ColumnMetadata) =>
-          col.options?.type &&
-          timestampTypes.has(col.options.type) &&
-          col.name !== deletedAtColumn,
+      const insertableColumns = this.selectBulkInsertColumns(
+        entity,
+        metadata,
+        items,
       );
-      if (timestampColumns.length > 0) {
-        const now = new Date();
-        for (const item of items) {
-          const itemFields = fieldsOf(item);
-          for (const col of timestampColumns) {
-            if (itemFields[this.ctx.propKey(col)] == null) {
-              itemFields[this.ctx.propKey(col)] = now;
-            }
-          }
-        }
-      }
-
-      const versionCol = this.resolver.getVersionColumn(entity);
-      if (versionCol) {
-        // `versionCol` is the resolved DB column name; the value binding reads
-        // the property key, so initialize via propKey (not the column name) or
-        // the version lands as NULL under a transforming naming strategy.
-        const versionColumn = metadata.columns.find((c) => c.name === versionCol);
-        if (versionColumn) {
-          const versionProp = this.ctx.propKey(versionColumn);
-          for (const item of items) {
-            const itemFields = fieldsOf(item);
-            if (itemFields[versionProp] == null) {
-              itemFields[versionProp] = 1;
-            }
-          }
-        }
-      }
-
-      const computedColsMany = this.ctx.getComputedColumnNames(entity);
-      const insertableColumns = metadata.columns.filter(
-        (column: ColumnMetadata) => {
-          if (computedColsMany.has(column.name)) return false;
-          const isAutoIncrement = column.options?.autoIncrement;
-          if (!isAutoIncrement) return true;
-          return items.every((item) => {
-            const value = fieldsOf(item)[this.ctx.propKey(column)];
-            return value !== null && value !== undefined;
-          });
-        },
-      );
-
-      const columns = insertableColumns.map((column) =>
-        raw(this.ctx.wrap(column.name)),
-      );
-
-      const fkColumns = this.appendFkInsertColumns(
+      const { columns, valueRows } = this.buildBulkInsertRows(
         entity,
         insertableColumns,
-        columns,
+        items,
       );
-
-      const valueRows = items.map((item) => {
-        const rowValues = this.buildInsertRowValues(
-          insertableColumns,
-          fkColumns,
-          fieldsOf(item),
-        );
-        return sql`(${join(rowValues, ", ")})`;
-      });
 
       const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
 
       const queryResult = (await session.query(queryStr)) as DriverExecResult;
 
-      let affected = items.length;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? items.length;
-      } else if (queryResult?.rowCount !== undefined) {
-        affected = queryResult.rowCount;
-      }
-
-      return { affected };
+      return { affected: this.affectedCount(queryResult, items.length) };
     });
   }
 
@@ -1799,16 +1910,8 @@ export class WriteExecutor {
     }
 
     // Fail fast (before building any SQL) when the dialect cannot return rows
-    // from an INSERT, so MySQL produces a clear, predictable error. Prefer the
-    // INSERT-specific capability (MariaDB supports INSERT RETURNING without full
-    // RETURNING) and fall back to the generic flag for drivers that do not
-    // distinguish the two.
-    const supportsInsertReturning =
-      (typeof this.driver.supportsInsertReturning === "function" &&
-        this.driver.supportsInsertReturning()) ||
-      (typeof this.driver.supportsReturning === "function" &&
-        this.driver.supportsReturning());
-    if (!supportsInsertReturning) {
+    // from an INSERT, so MySQL produces a clear, predictable error.
+    if (!this.supportsInsertReturning()) {
       const dialect = this.ctx.getDbType() ?? "this database";
       throw new OrmError(
         OrmErrorCode.UNSUPPORTED_DATABASE,
@@ -1818,80 +1921,18 @@ export class WriteExecutor {
     }
 
     return this.ctx.executeInTransaction(async (session) => {
-      if (this.ctx.getTenantColumnConfig()) {
-        for (const item of items) {
-          this.ctx.applyTenantColumnOnInsert(entity, item);
-        }
-      }
+      this.applyBulkInsertDefaults(entity, metadata, items);
 
-      const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
-      const timestampTypes = new Set(["datetime", "timestamp", "date"]);
-      const timestampColumns = metadata.columns.filter(
-        (col: ColumnMetadata) =>
-          col.options?.type &&
-          timestampTypes.has(col.options.type) &&
-          col.name !== deletedAtColumn,
+      const insertableColumns = this.selectBulkInsertColumns(
+        entity,
+        metadata,
+        items,
       );
-      if (timestampColumns.length > 0) {
-        const now = new Date();
-        for (const item of items) {
-          const itemFields = fieldsOf(item);
-          for (const col of timestampColumns) {
-            if (itemFields[this.ctx.propKey(col)] == null) {
-              itemFields[this.ctx.propKey(col)] = now;
-            }
-          }
-        }
-      }
-
-      const versionCol = this.resolver.getVersionColumn(entity);
-      if (versionCol) {
-        // `versionCol` is the resolved DB column name; the value binding reads
-        // the property key, so initialize via propKey (not the column name) or
-        // the version lands as NULL under a transforming naming strategy.
-        const versionColumn = metadata.columns.find((c) => c.name === versionCol);
-        if (versionColumn) {
-          const versionProp = this.ctx.propKey(versionColumn);
-          for (const item of items) {
-            const itemFields = fieldsOf(item);
-            if (itemFields[versionProp] == null) {
-              itemFields[versionProp] = 1;
-            }
-          }
-        }
-      }
-
-      const computedColsMany = this.ctx.getComputedColumnNames(entity);
-      const insertableColumns = metadata.columns.filter(
-        (column: ColumnMetadata) => {
-          if (computedColsMany.has(column.name)) return false;
-          const isAutoIncrement = column.options?.autoIncrement;
-          if (!isAutoIncrement) return true;
-          return items.every((item) => {
-            const value = fieldsOf(item)[this.ctx.propKey(column)];
-            return value !== null && value !== undefined;
-          });
-        },
-      );
-
-      const columns = insertableColumns.map((column) =>
-        raw(this.ctx.wrap(column.name)),
-      );
-
-      const fkColumns = this.appendFkInsertColumns(
+      const { columns, valueRows } = this.buildBulkInsertRows(
         entity,
         insertableColumns,
-        columns,
+        items,
       );
-
-      const valueRows = items.map((item) => {
-        const rowValues = this.buildInsertRowValues(
-          insertableColumns,
-          fkColumns,
-          fieldsOf(item),
-        );
-        return sql`(${join(rowValues, ", ")})`;
-      });
 
       // Same multi-row INSERT as insertMany(), with RETURNING * appended so the
       // generated PKs and DB defaults come back without a re-read. RETURNING *
@@ -1912,6 +1953,119 @@ export class WriteExecutor {
       }) as InstanceType<ClazzType<T>>[];
     });
   }
+  /** beforeDelete hooks, events and subscribers for a criteria-based delete. */
+  private async emitBeforeDelete<T>(
+    entity: ClazzType<T>,
+    criteria: WhereClause<T>,
+  ): Promise<void> {
+    await this.cascadeHandler.runHooks(entity, criteria, "beforeDelete");
+    await this.eventEmitter.emit("beforeDelete", { entity, data: criteria });
+    await this.ctx.notifySubscribers(entity, "beforeDelete", {
+      entityClass: entity,
+      criteria,
+      manager: this.ctx.getManager(),
+    } as DeleteEvent<T>);
+  }
+
+  /** afterDelete hooks, events and subscribers for a criteria-based delete. */
+  private async emitAfterDelete<T>(
+    entity: ClazzType<T>,
+    criteria: WhereClause<T>,
+  ): Promise<void> {
+    await this.cascadeHandler.runHooks(entity, criteria, "afterDelete");
+    await this.eventEmitter.emit("afterDelete", { entity, data: criteria });
+    await this.ctx.notifySubscribers(entity, "afterDelete", {
+      entityClass: entity,
+      criteria,
+      manager: this.ctx.getManager(),
+    } as DeleteEvent<T>);
+  }
+
+  /**
+   * The WHERE a delete runs with: the user's criteria, narrowed to the STI
+   * subtype and to the active tenant.
+   *
+   * The empty-criteria guard MUST run before the tenant predicate is
+   * appended — otherwise tenant scoping alone would satisfy the check and
+   * permit a "delete all my rows" call. DeleteWithoutConditionsError catches
+   * that class of bug and must stay gated on user-supplied criteria only.
+   */
+  private buildDeleteWhereSql<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    criteria: WhereClause<T>,
+    strategy: InheritanceStrategy | null,
+  ): Sql {
+    const deletePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
+    const whereMap: Sql[] = this.resolveCriteriaWhere(criteria, deletePropToCol);
+
+    const deleteSti = this.stiDiscriminatorClause(entity, strategy);
+    if (deleteSti) {
+      whereMap.push(deleteSti);
+    }
+
+    if (whereMap.length === 0) {
+      throw new DeleteWithoutConditionsError("Delete");
+    }
+
+    const tenantDeleteWhere = this.ctx.buildTenantWhereClause(entity);
+    if (tenantDeleteWhere) {
+      whereMap.push(tenantDeleteWhere);
+    }
+
+    return join(whereMap, " AND ");
+  }
+
+  /**
+   * TPT: the child table's rows go first, then the root's — the root DELETE
+   * reports the affected count. Returns null when the root has no metadata,
+   * so the caller falls through to the single-table delete. Whether this
+   * applies at all is the caller's check, so a non-TPT delete never pays for
+   * the extra async frame.
+   */
+  private async deleteJoinedRows<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    whereSql: Sql,
+    session: TransactionSessionManager,
+  ): Promise<number | null> {
+    const root = this.inheritanceResolver.getRoot(entity)!;
+    const rootMeta = this.resolver.resolveEntityMetadata(root);
+    if (!rootMeta) {
+      return null;
+    }
+
+    const childDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${whereSql}`;
+    await session.query(childDeleteQuery);
+
+    const parentDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${whereSql}`;
+    const parentResult = (await session.query(
+      parentDeleteQuery,
+    )) as DriverExecResult;
+
+    return this.affectedCount(parentResult);
+  }
+
+  /** The single-table DELETE, under query tracking. */
+  private async executeDelete<T>(
+    entity: ClazzType<T>,
+    tableName: string,
+    whereSql: Sql,
+    session: TransactionSessionManager,
+  ): Promise<number> {
+    const deleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${whereSql}`;
+
+    const deleteStart = Date.now();
+    this.ctx.beginTrackQuery();
+    const queryResult = (await session.query(deleteQuery)) as DriverExecResult;
+    this.ctx.trackQuery(
+      entity.name,
+      deleteQuery.text ?? String(deleteQuery),
+      Date.now() - deleteStart,
+    );
+
+    return this.affectedCount(queryResult);
+  }
 
   async delete<T>(
     entity: ClazzType<T>,
@@ -1926,13 +2080,7 @@ export class WriteExecutor {
     this.ctx.validateCriteriaKeys(metadata, criteria, entity.name);
 
     return this.ctx.executeInTransaction(async (session) => {
-      await this.cascadeHandler.runHooks(entity, criteria, "beforeDelete");
-      await this.eventEmitter.emit("beforeDelete", { entity, data: criteria });
-      await this.ctx.notifySubscribers(entity, "beforeDelete", {
-        entityClass: entity,
-        criteria,
-        manager: this.ctx.getManager(),
-      } as DeleteEvent<T>);
+      await this.emitBeforeDelete(entity, criteria);
 
       // cascade remove — the handler issues the child deletes (and the
       // parent-PK SELECT) through the public ctx.delete/ctx.find, which only
@@ -1944,111 +2092,29 @@ export class WriteExecutor {
         this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria),
       );
 
-      const deletePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
-      // #372: write criteria accept find-style operator objects
-      // ({ between: [a, b] }, { gt }, { lte }, ...), arrays (IN) and
-      // null (IS NULL) via the same resolver as the read paths.
-      const whereMap: Sql[] = resolveWhereClause(criteria, {
-        wrapColumn: (n) => this.ctx.wrap(n),
-        dialect: this.ctx.getDialect(),
-        dialectExpression: createDialectExpression(this.ctx.getDialect()),
-        propertyToColumn: deletePropToCol,
-      });
-
-      // STI: when deleting a child entity, add the discriminator condition
       const deleteStrategy = this.inheritanceResolver.getStrategy(entity);
-      if (deleteStrategy === "SINGLE_TABLE" && this.inheritanceResolver.isChildEntity(entity)) {
-        const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-        const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
-        if (discCol && discVal) {
-          whereMap.push(Conditions.equals(this.ctx.wrap(discCol.name), discVal));
-        }
-      }
-
-      // Empty-criteria guard MUST run before we append the tenant predicate —
-      // otherwise tenant scoping alone would satisfy the check and permit a
-      // "delete all my rows" call. DeleteWithoutConditionsError catches that
-      // class of bug and must stay gated on user-supplied criteria only.
-      if (whereMap.length === 0) {
-        throw new DeleteWithoutConditionsError("Delete");
-      }
-
-      // Tenant scoping is added after the guard so a delete with a user
-      // criteria is safely intersected with the tenant filter.
-      const tenantDeleteWhere = this.ctx.buildTenantWhereClause(entity);
-      if (tenantDeleteWhere) {
-        whereMap.push(tenantDeleteWhere);
-      }
-
-      const whereSql = join(whereMap, " AND ");
-
-      // TPT: delete from the child table first, then the parent
-      if (deleteStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
-        const root = this.inheritanceResolver.getRoot(entity)!;
-        const rootMeta = this.resolver.resolveEntityMetadata(root);
-        if (rootMeta) {
-          // 1. Delete from the child table
-          const childDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${whereSql}`;
-          await session.query(childDeleteQuery);
-
-          // 2. Delete from the parent table
-          const parentDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${whereSql}`;
-          const parentResult = (await session.query(
-            parentDeleteQuery,
-          )) as DriverExecResult;
-
-          let affected = 0;
-          if (this.ctx.isMySqlFamily()) {
-            affected = okPacket(parentResult)?.affectedRows ?? 0;
-          } else {
-            affected = parentResult?.rowCount ?? 0;
-          }
-
-          await this.cascadeHandler.runHooks(entity, criteria, "afterDelete");
-          await this.eventEmitter.emit("afterDelete", {
-            entity,
-            data: criteria,
-          });
-          await this.ctx.notifySubscribers(entity, "afterDelete", {
-            entityClass: entity,
-            criteria,
-            manager: this.ctx.getManager(),
-          } as DeleteEvent<T>);
-
-          return { affected };
-        }
-      }
-
-      const deleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${whereSql}`;
-
-      const deleteStart = Date.now();
-      this.ctx.beginTrackQuery();
-      const queryResult = (await session.query(deleteQuery)) as DriverExecResult;
-      this.ctx.trackQuery(
-        entity.name,
-        deleteQuery.text ?? String(deleteQuery),
-        Date.now() - deleteStart,
+      const whereSql = this.buildDeleteWhereSql(
+        entity,
+        metadata,
+        criteria,
+        deleteStrategy,
       );
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const joinedAffected =
+        deleteStrategy === "JOINED" &&
+        this.inheritanceResolver.isChildEntity(entity)
+          ? await this.deleteJoinedRows(entity, metadata, whereSql, session)
+          : null;
 
-      await this.cascadeHandler.runHooks(entity, criteria, "afterDelete");
-      await this.eventEmitter.emit("afterDelete", { entity, data: criteria });
-      await this.ctx.notifySubscribers(entity, "afterDelete", {
-        entityClass: entity,
-        criteria,
-        manager: this.ctx.getManager(),
-      } as DeleteEvent<T>);
+      const affected =
+        joinedAffected ??
+        (await this.executeDelete(entity, metadata.name, whereSql, session));
+
+      await this.emitAfterDelete(entity, criteria);
 
       return { affected };
     });
   }
-
   async deleteMany<T>(entity: ClazzType<T>, ids: unknown[]): Promise<DeleteResult> {
     if (ids.length === 0) {
       return { affected: 0 };
@@ -2091,12 +2157,7 @@ export class WriteExecutor {
 
       const queryResult = (await session.query(deleteQuery)) as DriverExecResult;
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const affected = this.affectedCount(queryResult);
 
       return { affected };
     });
@@ -2126,17 +2187,18 @@ export class WriteExecutor {
     return this.updateMany(entity, data, { where });
   }
 
-  async updateMany<T>(
+  /**
+   * Rejects an updateMany the ORM refuses to run: a criteria-less update
+   * (which would touch every row), a nonsensical LIMIT, and unknown keys on
+   * either the SET payload or the WHERE.
+   */
+  private validateUpdateManyInput<T>(
     entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
     data: UpdateData<T>,
     options: UpdateManyOptions<T>,
-  ): Promise<{ affected: number }> {
-    const metadata = this.resolver.resolveEntityMetadata(entity);
-    if (!metadata) {
-      throw new EntityMetadataNotFoundError(entity.name);
-    }
-
-    const { where, orderBy, limit } = options;
+  ): void {
+    const { where, limit } = options;
     if (!where || Object.keys(where).length === 0) {
       throw new DeleteWithoutConditionsError("Update");
     }
@@ -2151,84 +2213,142 @@ export class WriteExecutor {
 
     this.ctx.validateCriteriaKeys(metadata, data as WhereClause<T>, entity.name);
     this.ctx.validateCriteriaKeys(metadata, where, entity.name);
+  }
+
+  /**
+   * The SET clauses for a criteria-based update: the caller's defined values,
+   * plus `@UpdateTimestamp` unless the payload sets it explicitly.
+   *
+   * The `@Version` bump is deliberately NOT here — it belongs after the
+   * caller checks for an empty SET map, or an update with nothing to write
+   * would still bump every matched row's version. See
+   * {@link appendVersionIncrement}.
+   */
+  private buildUpdateManySetClauses<T>(
+    entity: ClazzType<T>,
+    data: UpdateData<T>,
+    propertyToColumn: Map<string, string>,
+  ): Sql[] {
+    const dataFields = fieldsOf(data);
+    const setMap: Sql[] = [];
+    for (const key in data) {
+      const value = dataFields[key];
+      if (value !== undefined) {
+        const dbCol = propertyToColumn.get(key) ?? key;
+        setMap.push(sql`${raw(this.ctx.wrap(dbCol))} = ${bindParam(value)}`);
+      }
+    }
+
+    const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
+    if (updateTsColName) {
+      const hasExplicit = setMap.some(
+        (s) => s.text?.includes(this.ctx.wrap(updateTsColName)),
+      );
+      if (!hasExplicit) {
+        setMap.push(
+          sql`${raw(this.ctx.wrap(updateTsColName))} = ${bindParam(new Date())}`,
+        );
+      }
+    }
+
+    return setMap;
+  }
+
+  /**
+   * @Version: optimistic-lock counter. Criteria-based updates must bump it
+   * exactly like save() does, or a later save() holding a now-stale version
+   * would slip past the lock undetected. Skipped when the caller sets the
+   * version property explicitly. getVersionColumn returns the PROPERTY key,
+   * so it is mapped to the DB column the same way the SET keys are.
+   */
+  private appendVersionIncrement<T>(
+    entity: ClazzType<T>,
+    data: UpdateData<T>,
+    setMap: Sql[],
+    propertyToColumn: Map<string, string>,
+  ): void {
+    const versionProp = this.resolver.getVersionColumn(entity);
+    if (versionProp && fieldsOf(data)[versionProp] === undefined) {
+      const versionCol = this.ctx.wrap(
+        propertyToColumn.get(versionProp) ?? versionProp,
+      );
+      setMap.push(sql`${raw(versionCol)} = ${raw(versionCol)} + 1`);
+    }
+  }
+
+  /**
+   * The WHERE a criteria-based update runs with: the caller's criteria,
+   * intersected with the tenant filter (so an updateMany can never cross
+   * tenant boundaries), narrowed to the STI subtype (never siblings sharing
+   * the single table), and — unless `withDeleted` — limited to rows that are
+   * not soft-deleted, so a bulk update never resurrects trashed data.
+   *
+   * The empty-criteria guard runs on user input only, in
+   * {@link validateUpdateManyInput}, before any of these are appended.
+   */
+  private buildUpdateManyWhereClauses<T>(
+    entity: ClazzType<T>,
+    options: UpdateManyOptions<T>,
+    propertyToColumn: Map<string, string>,
+  ): Sql[] {
+    const whereMap: Sql[] = this.resolveCriteriaWhere(
+      options.where,
+      propertyToColumn,
+    );
+
+    const tenantUpdateWhere = this.ctx.buildTenantWhereClause(entity);
+    if (tenantUpdateWhere) {
+      whereMap.push(tenantUpdateWhere);
+    }
+
+    const updateSti = this.stiDiscriminatorClause(entity);
+    if (updateSti) {
+      whereMap.push(updateSti);
+    }
+
+    const updateDeletedAt = this.resolver.getDeletedAtColumn(entity);
+    if (updateDeletedAt && !options.withDeleted) {
+      whereMap.push(Conditions.isNull(this.ctx.wrap(updateDeletedAt)));
+    }
+
+    return whereMap;
+  }
+
+  async updateMany<T>(
+    entity: ClazzType<T>,
+    data: UpdateData<T>,
+    options: UpdateManyOptions<T>,
+  ): Promise<{ affected: number }> {
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) {
+      throw new EntityMetadataNotFoundError(entity.name);
+    }
+
+    this.validateUpdateManyInput(entity, metadata, data, options);
 
     return this.ctx.executeInTransaction(async (session) => {
       const updatePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
-      const dataFields = fieldsOf(data);
-      const setMap: Sql[] = [];
-      for (const key in data) {
-        const value = dataFields[key];
-        if (value !== undefined) {
-          const dbCol = updatePropToCol.get(key) ?? key;
-          setMap.push(sql`${raw(this.ctx.wrap(dbCol))} = ${bindParam(value)}`);
-        }
-      }
 
-      // @UpdateTimestamp auto-inject
-      const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
-      if (updateTsColName) {
-        const hasExplicit = setMap.some(
-          (s) => s.text?.includes(this.ctx.wrap(updateTsColName)),
-        );
-        if (!hasExplicit) {
-          setMap.push(
-            sql`${raw(this.ctx.wrap(updateTsColName))} = ${bindParam(new Date())}`,
-          );
-        }
-      }
-
+      const setMap = this.buildUpdateManySetClauses(
+        entity,
+        data,
+        updatePropToCol,
+      );
       if (setMap.length === 0) {
         return { affected: 0 };
       }
+      this.appendVersionIncrement(entity, data, setMap, updatePropToCol);
 
-      // @Version: optimistic-lock counter. Criteria-based updates must bump it
-      // exactly like save() does, or a later save() holding a now-stale version
-      // would slip past the lock undetected. Skip when the caller sets the
-      // version property explicitly. getVersionColumn returns the PROPERTY key,
-      // so map it to the DB column the same way the SET keys above are mapped.
-      const versionProp = this.resolver.getVersionColumn(entity);
-      if (versionProp && dataFields[versionProp] === undefined) {
-        const versionCol = this.ctx.wrap(
-          updatePropToCol.get(versionProp) ?? versionProp,
-        );
-        setMap.push(sql`${raw(versionCol)} = ${raw(versionCol)} + 1`);
-      }
+      const whereMap = this.buildUpdateManyWhereClauses(
+        entity,
+        options,
+        updatePropToCol,
+      );
 
-      const whereMap: Sql[] = resolveWhereClause(where, {
-        wrapColumn: (n) => this.ctx.wrap(n),
-        dialect: this.ctx.getDialect(),
-        dialectExpression: createDialectExpression(this.ctx.getDialect()),
-        propertyToColumn: updatePropToCol,
-      });
-
-      // Tenant scoping — intersected with the user's WHERE so an updateMany
-      // can never cross tenant boundaries. The empty-criteria guard above
-      // runs on user input only; tenant predicate is appended here.
-      const tenantUpdateWhere = this.ctx.buildTenantWhereClause(entity);
-      if (tenantUpdateWhere) {
-        whereMap.push(tenantUpdateWhere);
-      }
-
-      // STI: a criteria-based updateMany on a child class must touch only that
-      // subtype's rows, never siblings sharing the single table — mirrors the
-      // discriminator filter delete()/find() already apply.
-      const updateSti =
-        this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
-      if (updateSti) {
-        whereMap.push(
-          Conditions.equals(this.ctx.wrap(updateSti.columnName), updateSti.value),
-        );
-      }
-
-      // Soft-delete: skip trashed rows by default (parity with find()), so a
-      // bulk update never resurrects data on a logically-deleted row. Callers
-      // opt back in with `withDeleted: true`. No-op without a @DeletedAt column.
-      const updateDeletedAt = this.resolver.getDeletedAtColumn(entity);
-      if (updateDeletedAt && !options.withDeleted) {
-        whereMap.push(Conditions.isNull(this.ctx.wrap(updateDeletedAt)));
-      }
-
-      const orderBySql = this.dmlSqlBuilder.buildUpdateOrderBy(orderBy, updatePropToCol);
+      const orderBySql = this.dmlSqlBuilder.buildUpdateOrderBy(
+        options.orderBy,
+        updatePropToCol,
+      );
 
       const updateSql = this.dmlSqlBuilder.buildUpdateSql(
         metadata,
@@ -2236,7 +2356,7 @@ export class WriteExecutor {
         setMap,
         whereMap,
         orderBySql,
-        limit,
+        options.limit,
       );
 
       // Criteria-based update events. Mirrors delete()'s eventEmitter channel:
@@ -2259,12 +2379,7 @@ export class WriteExecutor {
         Date.now() - queryStart,
       );
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const affected = this.affectedCount(queryResult);
 
       await this.eventEmitter.emit("afterUpdate", {
         entity,
@@ -2274,7 +2389,6 @@ export class WriteExecutor {
       return { affected };
     });
   }
-
   async increment<T>(
     entity: ClazzType<T>,
     where: WhereClause<T>,
@@ -2446,12 +2560,7 @@ export class WriteExecutor {
         Date.now() - queryStart,
       );
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const affected = this.affectedCount(queryResult);
       return { affected };
     });
   }
@@ -2487,13 +2596,10 @@ export class WriteExecutor {
       } as DeleteEvent<T>);
 
       const sdPropToCol = this.ctx.buildPropertyToColumnMap(metadata);
-      // #372: operator-object criteria — same resolver as the read paths.
-      const whereMap: Sql[] = resolveWhereClause(criteria, {
-        wrapColumn: (n) => this.ctx.wrap(n),
-        dialect: this.ctx.getDialect(),
-        dialectExpression: createDialectExpression(this.ctx.getDialect()),
-        propertyToColumn: sdPropToCol,
-      });
+      const whereMap: Sql[] = this.resolveCriteriaWhere(
+        criteria,
+        sdPropToCol,
+      );
 
       if (whereMap.length === 0) {
         throw new DeleteWithoutConditionsError("Soft delete");
@@ -2507,15 +2613,9 @@ export class WriteExecutor {
       }
 
       // STI: only trash rows of the requested subtype (mirrors delete()).
-      const softDeleteSti =
-        this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+      const softDeleteSti = this.stiDiscriminatorClause(entity);
       if (softDeleteSti) {
-        whereMap.push(
-          Conditions.equals(
-            this.ctx.wrap(softDeleteSti.columnName),
-            softDeleteSti.value,
-          ),
-        );
+        whereMap.push(softDeleteSti);
       }
 
       // Only stamp rows that are still active. Re-soft-deleting an already
@@ -2538,12 +2638,7 @@ export class WriteExecutor {
 
       const queryResult = (await session.query(updateQuery)) as DriverExecResult;
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const affected = this.affectedCount(queryResult);
 
       await this.eventEmitter.emit("afterSoftDelete", { entity, data: criteria });
       await this.ctx.notifySubscribers(entity, "afterSoftDelete", {
@@ -2585,13 +2680,10 @@ export class WriteExecutor {
       } as DeleteEvent<T>);
 
       const restorePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
-      // #372: operator-object criteria — same resolver as the read paths.
-      const whereMap: Sql[] = resolveWhereClause(criteria, {
-        wrapColumn: (n) => this.ctx.wrap(n),
-        dialect: this.ctx.getDialect(),
-        dialectExpression: createDialectExpression(this.ctx.getDialect()),
-        propertyToColumn: restorePropToCol,
-      });
+      const whereMap: Sql[] = this.resolveCriteriaWhere(
+        criteria,
+        restorePropToCol,
+      );
 
       if (whereMap.length === 0) {
         throw new DeleteWithoutConditionsError("Restore");
@@ -2605,12 +2697,9 @@ export class WriteExecutor {
       }
 
       // STI: only revive rows of the requested subtype (mirrors delete()).
-      const restoreSti =
-        this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+      const restoreSti = this.stiDiscriminatorClause(entity);
       if (restoreSti) {
-        whereMap.push(
-          Conditions.equals(this.ctx.wrap(restoreSti.columnName), restoreSti.value),
-        );
+        whereMap.push(restoreSti);
       }
 
       // Only revive rows that are actually soft-deleted. Restoring an active
@@ -2624,12 +2713,7 @@ export class WriteExecutor {
 
       const queryResult = (await session.query(restoreQuery)) as DriverExecResult;
 
-      let affected = 0;
-      if (this.ctx.isMySqlFamily()) {
-        affected = okPacket(queryResult)?.affectedRows ?? 0;
-      } else {
-        affected = queryResult?.rowCount ?? 0;
-      }
+      const affected = this.affectedCount(queryResult);
 
       await this.eventEmitter.emit("afterRestore", { entity, data: criteria });
       await this.ctx.notifySubscribers(entity, "afterRestore", {
@@ -2640,6 +2724,77 @@ export class WriteExecutor {
 
       return { affected };
     });
+  }
+
+  /**
+   * The column plan an INSERT ... ON CONFLICT runs with, shared by upsert(),
+   * insertIgnore() and batchUpsert().
+   *
+   * The conflict target defaults to the primary key; an entity without one
+   * and without an explicit target cannot express a conflict at all, so that
+   * throws. `isInsertable` is the only part that differs between the callers:
+   * a single-row upsert asks what one payload defines, a batch asks the union
+   * over its items.
+   *
+   * Returns null when no column is insertable — the caller reports 0 affected
+   * rows rather than emitting a statement. An empty `wrappedUpdate` (every
+   * insertable column is a conflict target) is left to the caller: upsert and
+   * batchUpsert have nothing to write on conflict, but insertIgnore never
+   * writes on conflict to begin with.
+   */
+  private buildUpsertPlan<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    conflictColumns: string[] | undefined,
+    isInsertable: (col: ColumnMetadata) => boolean,
+  ): UpsertPlan | null {
+    const pkColumns = metadata.columns
+      .filter((col: ColumnMetadata) => col.options?.primary)
+      .map((col: ColumnMetadata) => col.name);
+
+    const resolvedConflictColumns = conflictColumns ?? pkColumns;
+    if (resolvedConflictColumns.length === 0) {
+      throw new PrimaryKeyNotFoundError(entity.name);
+    }
+
+    const computedCols = this.ctx.getComputedColumnNames(entity);
+    const insertableColumns = metadata.columns.filter(
+      (col: ColumnMetadata) =>
+        !computedCols.has(col.name) && isInsertable(col),
+    );
+    if (insertableColumns.length === 0) {
+      return null;
+    }
+
+    const conflictSet = new Set(resolvedConflictColumns);
+    const updateColumnNames = insertableColumns
+      .map((col: ColumnMetadata) => col.name)
+      .filter((name) => !conflictSet.has(name));
+
+    return {
+      insertableColumns,
+      tableName: this.ctx.wrapTable(metadata.name),
+      wrappedColumns: insertableColumns.map((col: ColumnMetadata) =>
+        this.ctx.wrap(col.name),
+      ),
+      wrappedConflict: resolvedConflictColumns.map((name) =>
+        this.ctx.wrap(name),
+      ),
+      wrappedUpdate: updateColumnNames.map((name) => this.ctx.wrap(name)),
+    };
+  }
+
+  /**
+   * Whether one row's payload states a value for a column. An auto-increment
+   * column is only named when the payload gives it a real value — binding
+   * NULL there would fight the sequence.
+   */
+  private statesUpsertValue<T>(col: ColumnMetadata, data: Partial<T>): boolean {
+    const value = fieldsOf(data)[this.ctx.propKey(col)];
+    if (col.options?.autoIncrement && (value === null || value === undefined)) {
+      return false;
+    }
+    return value !== undefined;
   }
 
   async upsert<T>(
@@ -2661,74 +2816,30 @@ export class WriteExecutor {
 
     this.ctx.applyTenantColumnOnInsert(entity, data);
 
-    const pkColumns = metadata.columns
-      .filter((col: ColumnMetadata) => col.options?.primary)
-      .map((col: ColumnMetadata) => col.name);
-
-    const resolvedConflictColumns = conflictColumns ?? pkColumns;
-
-    if (resolvedConflictColumns.length === 0) {
-      throw new PrimaryKeyNotFoundError(entity.name);
-    }
-
-    const computedColsUpsert = this.ctx.getComputedColumnNames(entity);
-    const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
-      if (computedColsUpsert.has(col.name)) return false;
-      const value = fieldsOf(data)[this.ctx.propKey(col)];
-      if (
-        col.options?.autoIncrement &&
-        (value === null || value === undefined)
-      ) {
-        return false;
-      }
-      return value !== undefined;
-    });
-
-    if (insertableColumns.length === 0) {
-      return { affected: 0 };
-    }
-
-    const conflictSet = new Set(resolvedConflictColumns);
-    const updateColumnNames = insertableColumns
-      .map((col: ColumnMetadata) => col.name)
-      .filter((name) => !conflictSet.has(name));
-
-    const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
-      this.ctx.wrap(col.name),
+    const plan = this.buildUpsertPlan(entity, metadata, conflictColumns, (col) =>
+      this.statesUpsertValue(col, data),
     );
-    const wrappedConflict = resolvedConflictColumns.map((name) =>
-      this.ctx.wrap(name),
-    );
-    const wrappedUpdate = updateColumnNames.map((name) => this.ctx.wrap(name));
-
-    const tableName = this.ctx.wrapTable(metadata.name);
-
-    if (wrappedUpdate.length === 0) {
+    if (!plan || plan.wrappedUpdate.length === 0) {
       return { affected: 0 };
     }
 
     return this.ctx.executeInTransaction(async (session) => {
       const dataFields = fieldsOf(data);
-      const columnValues = insertableColumns.map(
-        (col: ColumnMetadata) => {
-          const rawValue = dataFields[this.ctx.propKey(col)];
-          return this.ctx.applyWriteTransform(col, rawValue);
-        },
-      );
+      const columnValues = plan.insertableColumns.map((col: ColumnMetadata) => {
+        const rawValue = dataFields[this.ctx.propKey(col)];
+        return this.ctx.applyWriteTransform(col, rawValue);
+      });
 
       const upsertSql = this.dmlSqlBuilder.buildUpsertQuery(
-        tableName,
-        wrappedColumns,
+        plan.tableName,
+        plan.wrappedColumns,
         columnValues,
-        wrappedConflict,
-        wrappedUpdate,
+        plan.wrappedConflict,
+        plan.wrappedUpdate,
       );
 
       const queryResult = (await session.query(upsertSql)) as DriverExecResult;
-      const affected = this.ctx.isMySqlFamily()
-        ? (okPacket(queryResult)?.affectedRows ?? 0)
-        : (queryResult?.rowCount ?? 0);
-      return { affected };
+      return { affected: this.affectedCount(queryResult) };
     });
   }
 
@@ -2751,59 +2862,31 @@ export class WriteExecutor {
 
     this.ctx.applyTenantColumnOnInsert(entity, data);
 
-    const pkColumns = metadata.columns
-      .filter((col: ColumnMetadata) => col.options?.primary)
-      .map((col: ColumnMetadata) => col.name);
-
-    const resolvedConflictColumns = conflictColumns ?? pkColumns;
-    if (resolvedConflictColumns.length === 0) {
-      throw new PrimaryKeyNotFoundError(entity.name);
-    }
-
-    const computedColsIgnore = this.ctx.getComputedColumnNames(entity);
-    const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
-      if (computedColsIgnore.has(col.name)) return false;
-      const value = fieldsOf(data)[this.ctx.propKey(col)];
-      if (
-        col.options?.autoIncrement &&
-        (value === null || value === undefined)
-      ) {
-        return false;
-      }
-      return value !== undefined;
-    });
-
-    if (insertableColumns.length === 0) {
+    // No DO UPDATE list here: a conflict skips the row, so a plan whose
+    // insertable columns are all conflict targets is still a valid statement.
+    const plan = this.buildUpsertPlan(entity, metadata, conflictColumns, (col) =>
+      this.statesUpsertValue(col, data),
+    );
+    if (!plan) {
       return { affected: 0 };
     }
 
-    const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
-      this.ctx.wrap(col.name),
-    );
-    const wrappedConflict = resolvedConflictColumns.map((name) =>
-      this.ctx.wrap(name),
-    );
-    const tableName = this.ctx.wrapTable(metadata.name);
-
     return this.ctx.executeInTransaction(async (session) => {
       const dataFields = fieldsOf(data);
-      const columnValues = insertableColumns.map((col: ColumnMetadata) => {
+      const columnValues = plan.insertableColumns.map((col: ColumnMetadata) => {
         const rawValue = dataFields[this.ctx.propKey(col)];
         return this.ctx.applyWriteTransform(col, rawValue);
       });
 
       const insertSql = this.dmlSqlBuilder.buildInsertIgnoreQuery(
-        tableName,
-        wrappedColumns,
+        plan.tableName,
+        plan.wrappedColumns,
         columnValues,
-        wrappedConflict,
+        plan.wrappedConflict,
       );
 
       const queryResult = (await session.query(insertSql)) as DriverExecResult;
-      const affected = this.ctx.isMySqlFamily()
-        ? (okPacket(queryResult)?.affectedRows ?? 0)
-        : (queryResult?.rowCount ?? 0);
-      return { affected };
+      return { affected: this.affectedCount(queryResult) };
     });
   }
 
@@ -2834,61 +2917,32 @@ export class WriteExecutor {
       }
     }
 
-    const pkColumns = metadata.columns
-      .filter((col: ColumnMetadata) => col.options?.primary)
-      .map((col: ColumnMetadata) => col.name);
-
-    const resolvedConflictColumns = conflictColumns ?? pkColumns;
-
-    if (resolvedConflictColumns.length === 0) {
-      throw new PrimaryKeyNotFoundError(entity.name);
-    }
-
-    const computedCols = this.ctx.getComputedColumnNames(entity);
-    const conflictSet = new Set(resolvedConflictColumns);
-
-    // Determine insertable columns from the union of all items' defined fields
-    const insertableColumns = metadata.columns.filter((col: ColumnMetadata) => {
-      if (computedCols.has(col.name)) return false;
-      if (col.options?.autoIncrement) {
-        // Include auto-increment column only if ALL items provide a value
-        return items.every((item) => {
-          const value = fieldsOf(item)[this.ctx.propKey(col)];
-          return value !== null && value !== undefined;
-        });
-      }
-      // Include column if at least one item provides a value
-      return items.some(
-        (item) => fieldsOf(item)[this.ctx.propKey(col)] !== undefined,
-      );
-    });
-
-    if (insertableColumns.length === 0) {
+    // The column set is the union over the batch: an auto-increment column
+    // is named only when every item supplies a value, any other column when
+    // at least one does (items missing it bind NULL).
+    const plan = this.buildUpsertPlan(
+      entity,
+      metadata,
+      conflictColumns,
+      (col) =>
+        col.options?.autoIncrement
+          ? items.every((item) => {
+              const value = fieldsOf(item)[this.ctx.propKey(col)];
+              return value !== null && value !== undefined;
+            })
+          : items.some(
+              (item) => fieldsOf(item)[this.ctx.propKey(col)] !== undefined,
+            ),
+    );
+    if (!plan || plan.wrappedUpdate.length === 0) {
       return { affected: 0 };
     }
-
-    const updateColumnNames = insertableColumns
-      .map((col: ColumnMetadata) => col.name)
-      .filter((name) => !conflictSet.has(name));
-
-    if (updateColumnNames.length === 0) {
-      return { affected: 0 };
-    }
-
-    const wrappedColumns = insertableColumns.map((col: ColumnMetadata) =>
-      this.ctx.wrap(col.name),
-    );
-    const wrappedConflict = resolvedConflictColumns.map((name) =>
-      this.ctx.wrap(name),
-    );
-    const wrappedUpdate = updateColumnNames.map((name) => this.ctx.wrap(name));
-    const tableName = this.ctx.wrapTable(metadata.name);
 
     return this.ctx.executeInTransaction(async (session) => {
       const valueRows = items.map((item) => {
         const itemFields = fieldsOf(item);
         const rowValues: RawValue[] = bindParams(
-          insertableColumns.map((col: ColumnMetadata) => {
+          plan.insertableColumns.map((col: ColumnMetadata) => {
             const rawValue = itemFields[this.ctx.propKey(col)];
             return this.ctx.applyWriteTransform(col, rawValue) ?? null;
           }),
@@ -2897,18 +2951,15 @@ export class WriteExecutor {
       });
 
       const upsertSql = this.dmlSqlBuilder.buildBatchUpsertQuery(
-        tableName,
-        wrappedColumns,
+        plan.tableName,
+        plan.wrappedColumns,
         valueRows,
-        wrappedConflict,
-        wrappedUpdate,
+        plan.wrappedConflict,
+        plan.wrappedUpdate,
       );
 
       const queryResult = (await session.query(upsertSql)) as DriverExecResult;
-      const affected = this.ctx.isMySqlFamily()
-        ? (okPacket(queryResult)?.affectedRows ?? 0)
-        : (queryResult?.rowCount ?? 0);
-      return { affected };
+      return { affected: this.affectedCount(queryResult) };
     });
   }
 
