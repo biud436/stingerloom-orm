@@ -16,7 +16,9 @@ import {
 } from "../helpers/test-connection";
 import { Entity, Column, PrimaryColumn } from "../../../src";
 import { qAlias } from "../../../src/core/query-builder/alias/qAlias";
+import { qExcluded } from "../../../src/core/query-builder/alias/qExcluded";
 import { greatest } from "../../../src/core/expressions/ComparisonExpression";
+import { iff } from "../../../src/core/expressions/CaseExpression";
 import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../../src/scanner";
 import { generateTableName } from "../helpers/create-test-entity";
@@ -188,6 +190,69 @@ describe("[Integration] SQLite In-Memory: InsertQueryBuilder ON CONFLICT", () =>
     // "bb" was at 100 → predicate true → advanced.
     expect(byMac["bb"].lastTs).toBe(300);
     void ex;
+  });
+
+  it("rejects a stale replay with a stored-vs-proposed doUpdateWhere guard", async () => {
+    // The reading is only advanced when the proposed row is strictly newer,
+    // so replaying an old batch can never move data backwards.
+    const m = qAlias(Marker, "m") as any;
+    const ex = qExcluded(Marker) as any;
+
+    const guardedWrite = (rows: Array<Partial<MarkerShape>>) =>
+      conn.em
+        .createInsertBuilder(Marker)
+        .values(rows as any)
+        .onConflict(["mac", "bucketStart"] as any)
+        .doUpdate((t: any, x: any) => ({ records: x.records, lastTs: x.lastTs }))
+        .doUpdateWhere(m.lastTs.lt(ex.lastTs))
+        .execute();
+
+    await guardedWrite([{ mac: "aa", bucketStart: 100, records: 5, lastTs: 300 }]);
+    // Stale replay: older timestamp, different payload — must not win.
+    await guardedWrite([{ mac: "aa", bucketStart: 100, records: 99, lastTs: 200 }]);
+
+    let [row] = await readAll();
+    expect(row).toMatchObject({ records: 5, lastTs: 300 });
+
+    // A genuinely newer row replaces both columns together.
+    await guardedWrite([{ mac: "aa", bucketStart: 100, records: 8, lastTs: 400 }]);
+    [row] = await readAll();
+    expect(row).toMatchObject({ records: 8, lastTs: 400 });
+  });
+
+  it("expresses the same guard portably with an iff() CASE fold", async () => {
+    // The MySQL-compatible spelling of the guard above: fold the condition
+    // into each assignment so every column falls back to its stored value.
+    const guardedWrite = (rows: Array<Partial<MarkerShape>>) =>
+      conn.em
+        .createInsertBuilder(Marker)
+        .values(rows as any)
+        .onConflict(["mac", "bucketStart"] as any)
+        .doUpdate((t: any, x: any) => ({
+          records: iff(x.lastTs.gt(t.lastTs), x.records, t.records),
+          lastTs: iff(x.lastTs.gt(t.lastTs), x.lastTs, t.lastTs),
+        }))
+        .execute();
+
+    await guardedWrite([{ mac: "aa", bucketStart: 100, records: 5, lastTs: 300 }]);
+    await guardedWrite([{ mac: "aa", bucketStart: 100, records: 99, lastTs: 200 }]);
+
+    let [row] = await readAll();
+    expect(row).toMatchObject({ records: 5, lastTs: 300 });
+
+    await guardedWrite([{ mac: "aa", bucketStart: 100, records: 8, lastTs: 400 }]);
+    [row] = await readAll();
+    expect(row).toMatchObject({ records: 8, lastTs: 400 });
+  });
+
+  it("evaluates a raw Sql fragment in a VALUES cell on the engine", async () => {
+    await conn.em
+      .createInsertBuilder(Marker)
+      .values({ mac: "aa", bucketStart: 100, records: 5, lastTs: sql`600 - 100` } as any)
+      .execute();
+
+    const [row] = await readAll();
+    expect(row.lastTs).toBe(500);
   });
 
   it("applies duplicate conflict keys sequentially on SQLite (PostgreSQL rejects them)", async () => {

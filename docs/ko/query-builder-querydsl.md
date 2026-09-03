@@ -469,6 +469,14 @@ await em.createInsertBuilder(SyncMarker)
 
 이 참조는 PostgreSQL에서 `EXCLUDED."col"`, SQLite에서 `excluded."col"`, MySQL/MariaDB에서 `` VALUES(`col`) ``로 렌더링됩니다. `createInsertBuilder()` 안에서만 의미가 있어요. 빌더 전체는 [EntityManager — 쓰기](./entity-manager-writes.md#표현식-기반-upsert-—-createinsertbuilder)를 보세요.
 
+`doUpdateWhere()` 조건 안에서도 유효합니다. 가드를 건 upsert가 저장된 행과 제안한 행을 비교하는 방법이 바로 이것입니다.
+
+```typescript
+// 제안한 배치가 실제로 더 최신인 행만 전진시킨다.
+.doUpdateWhere(m.lastTime.lt(ex.lastTime))
+// WHERE "last_time" < EXCLUDED."last_time"
+```
+
 ## 현재 시각 — `currentDate()` / `currentTime()` / `currentTimestamp()`
 
 DB 서버의 시계를 어느 자리에든 꽂을 수 있는 표준 SQL 헬퍼 세 가지입니다. 결과는 `ScalarExpression`이라 `.as()`, `.eq()`, `coalesce` 중첩 등 지금까지 본 합성이 전부 그대로 됩니다. 세 드라이버 모두 동일한 리터럴(`CURRENT_DATE` / `CURRENT_TIME` / `CURRENT_TIMESTAMP`)로 나갑니다.

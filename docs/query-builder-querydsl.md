@@ -425,6 +425,15 @@ is only meaningful inside `createInsertBuilder()` — see
 [EntityManager — Writes](./entity-manager-writes.md#expression-based-upsert-createinsertbuilder)
 for the full builder.
 
+It is also valid inside a `doUpdateWhere()` condition, which is how a
+guarded upsert compares the stored row against the proposed one:
+
+```typescript
+// Only advance rows the proposed batch actually supersedes.
+.doUpdateWhere(m.lastTime.lt(ex.lastTime))
+// WHERE "last_time" < EXCLUDED."last_time"
+```
+
 ## Current date/time — `currentDate()` / `currentTime()` / `currentTimestamp()`
 
 Three small standard-SQL helpers that insert the server's clock into

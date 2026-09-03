@@ -279,6 +279,105 @@ const cases: BuilderGoldenCase[] = [
     sqlite: { throws: OrmErrorCode.UNSUPPORTED_OPERATION },
   },
   {
+    name: "guarded upsert — advance only when the proposed row is newer",
+    build: (dialect) =>
+      render(
+        createInsertBuilderFor(Counter, dialect)
+          .values(ROW)
+          .onConflict(["mac", "bucketStart"])
+          .doUpdate((t, x) => ({ records: x.records, lastTs: x.lastTs }))
+          .doUpdateWhere(c.lastTs.lt(ex.lastTs))
+      ),
+    postgres: {
+      text:
+        'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
+        "VALUES (?, ?, ?, ?) " +
+        'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
+        '"records" = EXCLUDED."records", "lastTs" = EXCLUDED."lastTs" ' +
+        'WHERE "lastTs" < EXCLUDED."lastTs"',
+      values: ["aa", 100, 5, 150],
+    },
+    mysql: { throws: OrmErrorCode.UNSUPPORTED_OPERATION },
+    sqlite: {
+      text:
+        'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
+        "VALUES (?, ?, ?, ?) " +
+        'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
+        '"records" = excluded."records", "lastTs" = excluded."lastTs" ' +
+        'WHERE "lastTs" < excluded."lastTs"',
+      values: ["aa", 100, 5, 150],
+    },
+  },
+  {
+    name: "CASE fold — the guard as an iff() assignment, portable to MySQL",
+    build: (dialect) =>
+      render(
+        createInsertBuilderFor(Counter, dialect)
+          .values(ROW)
+          .onConflict(["mac", "bucketStart"])
+          .doUpdate((t, x) => ({
+            lastTs: Expressions.iff(x.lastTs.gt(t.lastTs), x.lastTs, t.lastTs),
+          }))
+      ),
+    postgres: {
+      text:
+        'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
+        "VALUES (?, ?, ?, ?) " +
+        'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
+        '"lastTs" = CASE WHEN EXCLUDED."lastTs" > "lastTs" ' +
+        'THEN EXCLUDED."lastTs" ELSE "lastTs" END',
+      values: ["aa", 100, 5, 150],
+    },
+    mysql: {
+      text:
+        "INSERT INTO `counter` (`mac`, `bucketStart`, `records`, `lastTs`) " +
+        "VALUES (?, ?, ?, ?) " +
+        "ON DUPLICATE KEY UPDATE " +
+        "`lastTs` = CASE WHEN VALUES(`lastTs`) > `lastTs` " +
+        "THEN VALUES(`lastTs`) ELSE `lastTs` END",
+      values: ["aa", 100, 5, 150],
+    },
+    sqlite: {
+      text:
+        'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
+        "VALUES (?, ?, ?, ?) " +
+        'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
+        '"lastTs" = CASE WHEN excluded."lastTs" > "lastTs" ' +
+        'THEN excluded."lastTs" ELSE "lastTs" END',
+      values: ["aa", 100, 5, 150],
+    },
+  },
+  {
+    name: "raw Sql in a VALUES cell — spliced as written, not bound",
+    build: (dialect) =>
+      render(
+        createInsertBuilderFor(Counter, dialect).values({
+          mac: "aa",
+          bucketStart: 100,
+          records: 5,
+          lastTs: sql`1000 + 1`,
+        })
+      ),
+    postgres: {
+      text:
+        'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
+        "VALUES (?, ?, ?, 1000 + 1)",
+      values: ["aa", 100, 5],
+    },
+    mysql: {
+      text:
+        "INSERT INTO `counter` (`mac`, `bucketStart`, `records`, `lastTs`) " +
+        "VALUES (?, ?, ?, 1000 + 1)",
+      values: ["aa", 100, 5],
+    },
+    sqlite: {
+      text:
+        'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
+        "VALUES (?, ?, ?, 1000 + 1)",
+      values: ["aa", 100, 5],
+    },
+  },
+  {
     name: "plain INSERT — no conflict clause when no action is declared",
     build: (dialect) =>
       render(createInsertBuilderFor(Counter, dialect).values(ROW)),

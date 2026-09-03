@@ -7,6 +7,7 @@ import { qAlias } from "../../src/core/query-builder/alias/qAlias";
 import { qExcluded } from "../../src/core/query-builder/alias/qExcluded";
 import { greatest, least } from "../../src/core/expressions/ComparisonExpression";
 import { coalesce } from "../../src/core/expressions/NullishExpression";
+import { iff } from "../../src/core/expressions/CaseExpression";
 import { OrmError } from "../../src/errors/OrmError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 
@@ -357,6 +358,79 @@ describe("InsertQueryBuilder", () => {
     it("greatest() requires at least two arguments", () => {
       const m = qAlias(SyncMarker as any, "m") as any;
       expect(() => greatest(m.records)).toThrow(/at least 2 arguments/);
+    });
+  });
+
+  describe("values()", () => {
+    it("accumulates rows across multiple calls", () => {
+      const em = createTestEntityManager("postgres");
+      const { text, values } = em
+        .createInsertBuilder(SyncMarker as any)
+        .values(ROWS[0] as any)
+        .values(ROWS[1] as any)
+        .toSql();
+
+      expect(text.match(/VALUES \(.+\), \(/)).not.toBeNull();
+      expect(values).toContain(12);
+      expect(values).toContain(7);
+    });
+
+    it("splices a raw Sql cell as written instead of binding it", () => {
+      const em = createTestEntityManager("postgres");
+      const { text, values } = em
+        .createInsertBuilder(SyncMarker as any)
+        .values({ ...ROWS[0], syncedAt: sql`NOW()` } as any)
+        .toSql();
+
+      expect(text).toContain("NOW()");
+      expect(values).not.toContainEqual(expect.objectContaining({ strings: expect.anything() }));
+    });
+
+    it("names the union of columns for heterogeneous rows", () => {
+      const em = createTestEntityManager("postgres");
+      const { text } = em
+        .createInsertBuilder(SyncMarker as any)
+        .values([
+          { mac: "aa", bucketStart: new Date(0), records: 1 },
+          { mac: "bb", bucketStart: new Date(0), lastTime: new Date(0) },
+        ] as any)
+        .toSql();
+
+      expect(text).toContain('"records"');
+      expect(text).toContain('"last_time"');
+    });
+  });
+
+  describe("portable conditional updates", () => {
+    it("compares the stored row against the proposed one in doUpdateWhere", () => {
+      const em = createTestEntityManager("postgres");
+      const m = qAlias(SyncMarker as any, "m") as any;
+      const ex = qExcluded(SyncMarker as any) as any;
+      const { text } = em
+        .createInsertBuilder(SyncMarker as any)
+        .values(ROWS[0] as any)
+        .onConflict(["mac", "bucketStart"] as any)
+        .doUpdate({ lastTime: ex.lastTime, records: ex.records } as any)
+        .doUpdateWhere(m.lastTime.lt(ex.lastTime))
+        .toSql();
+
+      expect(text).toContain('WHERE "last_time" < EXCLUDED."last_time"');
+    });
+
+    it("renders the iff() CASE fold on MySQL, where doUpdateWhere throws", () => {
+      const em = createTestEntityManager("mysql");
+      const { text } = em
+        .createInsertBuilder(SyncMarker as any)
+        .values(ROWS[0] as any)
+        .doUpdate((t: any, ex: any) => ({
+          lastTime: iff(ex.lastTime.gt(t.lastTime), ex.lastTime, t.lastTime),
+        }))
+        .toSql();
+
+      expect(text).toContain(
+        "`last_time` = CASE WHEN VALUES(`last_time`) > `last_time` " +
+          "THEN VALUES(`last_time`) ELSE `last_time` END",
+      );
     });
   });
 
