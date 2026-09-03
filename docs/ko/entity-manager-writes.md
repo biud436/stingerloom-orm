@@ -648,6 +648,24 @@ ON CONFLICT ("mac", "bucket_start") DO UPDATE
        "synced_at" = NOW()
 ```
 
+### VALUES 리스트 만들기
+
+`values()`는 행 하나도, 배열도 받습니다. 여러 번 호출하면 누적되므로 루프에서 행을 모아 넣기에 편합니다.
+
+```typescript
+const builder = em.createInsertBuilder(SyncMarker);
+for (const batch of batches) builder.values(batch.rows);
+```
+
+셀에는 원시 `sql` 프래그먼트도 넣을 수 있습니다. 바인딩되는 대신 쓴 그대로 튜플에 삽입되어 데이터베이스가 평가합니다. `NOW()`나 시퀀스 호출 같은 것들이요.
+
+```typescript
+builder.values({ mac, bucketStart, records, syncedAt: sql`NOW()` });
+// VALUES ($1, $2, $3, NOW())
+```
+
+일반 값에는 평소처럼 컬럼 write 트랜스포머가 적용되고, 프래그먼트는 호출자 책임입니다.
+
 ### doUpdate()의 세 가지 형태
 
 ```typescript
@@ -677,20 +695,43 @@ MySQL에서는 `INSERT IGNORE`가 됩니다. 중복 키뿐 아니라 그 문장�
 
 ### 갱신 대상 좁히기 — doUpdateWhere()
 
-제안한 값이 실제로 더 최신일 때만 행을 전진시키고 싶다면:
+제안한 측정값이 실제로 더 최신일 때만 행을 전진시키고 싶다면. 조건에서 저장된 행과 제안한 행을 직접 비교할 수 있습니다. `doUpdate()`에서와 똑같이, 한정하지 않은 참조는 저장된 행을 읽고 `qExcluded` 참조는 제안한 행을 읽어요.
 
 ```typescript
-const m = qAlias(Reading, "m");
+import { qAlias, qExcluded } from "@stingerloom/orm";
+
+const m  = qAlias(Reading, "m");
+const ex = qExcluded(Reading);
 
 await em.createInsertBuilder(Reading)
   .values(rows)
   .onConflict(["sensorId"])
-  .doUpdate((t, ex) => ({ value: ex.value, takenAt: ex.takenAt }))
-  .doUpdateWhere(m.takenAt.lt(cutoff))
+  .doUpdate((t, x) => ({ value: x.value, takenAt: x.takenAt }))
+  .doUpdateWhere(m.takenAt.lt(ex.takenAt))
   .execute();
 ```
 
-술어를 통과하지 못한 행은 그대로 남습니다. PostgreSQL과 SQLite 전용이에요. `ON DUPLICATE KEY UPDATE`에는 `WHERE`가 없으므로 MySQL에서는 술어를 조용히 버리는 대신 예외를 던집니다. MySQL에서 같은 의도를 표현하려면 `CASE`로 대입 값 안에 조건을 접어 넣으세요.
+```sql
+-- PostgreSQL
+… DO UPDATE SET "value" = EXCLUDED."value", "taken_at" = EXCLUDED."taken_at"
+  WHERE "taken_at" < EXCLUDED."taken_at"
+```
+
+술어를 통과하지 못한 행은 그대로 남습니다. 그래서 오래된 배치를 다시 재생해도 데이터가 뒤로 가는 일이 없어요. 읽고-고치고-되쓰는 왕복 없이 쓰기가 멱등이 됩니다.
+
+PostgreSQL과 SQLite 전용입니다. `ON DUPLICATE KEY UPDATE`에는 `WHERE`가 없으므로 MySQL에서는 술어를 조용히 버리는 대신 예외를 던집니다. MySQL에서 같은 의도를 표현하려면 조건을 `iff()`로 각 대입 값 안에 접어 넣으세요. `CASE` 식으로 렌더링되어 세 다이얼렉트 모두에서 동작합니다.
+
+```typescript
+import { iff } from "@stingerloom/orm";
+
+.doUpdate((t, x) => ({
+  value:   iff(x.takenAt.gt(t.takenAt), x.value, t.value),
+  takenAt: iff(x.takenAt.gt(t.takenAt), x.takenAt, t.takenAt),
+}))
+// "value" = CASE WHEN EXCLUDED."taken_at" > "taken_at" THEN EXCLUDED."value" ELSE "value" END, …
+```
+
+가드가 거짓이면 모든 컬럼이 저장된 값으로 되돌아가므로 결과는 같습니다. 대신 조건을 컬럼마다 반복해야 하는 비용이 있어요.
 
 ### 부분 유니크 인덱스와 제약 이름
 

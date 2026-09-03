@@ -648,6 +648,24 @@ ON CONFLICT ("mac", "bucket_start") DO UPDATE
        "synced_at" = NOW()
 ```
 
+### Building the VALUES list
+
+`values()` takes one row or an array, and repeated calls accumulate -- convenient when the rows are assembled in a loop:
+
+```typescript
+const builder = em.createInsertBuilder(SyncMarker);
+for (const batch of batches) builder.values(batch.rows);
+```
+
+A cell can also hold a raw `sql` fragment. It is spliced into the tuple as written instead of being bound, so the database evaluates it -- `NOW()`, a sequence call:
+
+```typescript
+builder.values({ mac, bucketStart, records, syncedAt: sql`NOW()` });
+// VALUES ($1, $2, $3, NOW())
+```
+
+Plain values go through the column's write transformer as usual; fragments are the caller's responsibility.
+
 ### The three forms of doUpdate()
 
 ```typescript
@@ -677,20 +695,43 @@ On MySQL this becomes `INSERT IGNORE`, which downgrades **every** error in the s
 
 ### Filtering the update -- doUpdateWhere()
 
-Only advance a row when the proposed value is actually newer:
+Only advance a row when the proposed reading is actually newer. The condition can compare the stored row against the proposed one -- unqualified references read the stored row, `qExcluded` references the proposed one, exactly as in `doUpdate()`:
 
 ```typescript
-const m = qAlias(Reading, "m");
+import { qAlias, qExcluded } from "@stingerloom/orm";
+
+const m  = qAlias(Reading, "m");
+const ex = qExcluded(Reading);
 
 await em.createInsertBuilder(Reading)
   .values(rows)
   .onConflict(["sensorId"])
-  .doUpdate((t, ex) => ({ value: ex.value, takenAt: ex.takenAt }))
-  .doUpdateWhere(m.takenAt.lt(cutoff))
+  .doUpdate((t, x) => ({ value: x.value, takenAt: x.takenAt }))
+  .doUpdateWhere(m.takenAt.lt(ex.takenAt))
   .execute();
 ```
 
-Rows failing the predicate are left untouched. PostgreSQL and SQLite only -- `ON DUPLICATE KEY UPDATE` takes no `WHERE`, so this throws on MySQL rather than quietly dropping the predicate. The MySQL equivalent is to fold the condition into the assigned value with a `CASE`.
+```sql
+-- PostgreSQL
+… DO UPDATE SET "value" = EXCLUDED."value", "taken_at" = EXCLUDED."taken_at"
+  WHERE "taken_at" < EXCLUDED."taken_at"
+```
+
+Rows failing the predicate are left untouched, so replaying an old batch can never move data backwards -- the write is idempotent without a read-modify-write round trip.
+
+PostgreSQL and SQLite only -- `ON DUPLICATE KEY UPDATE` takes no `WHERE`, so this throws on MySQL rather than quietly dropping the predicate. The MySQL equivalent is to fold the condition into each assigned value with `iff()`, which renders as a `CASE` expression and runs on all three dialects:
+
+```typescript
+import { iff } from "@stingerloom/orm";
+
+.doUpdate((t, x) => ({
+  value:   iff(x.takenAt.gt(t.takenAt), x.value, t.value),
+  takenAt: iff(x.takenAt.gt(t.takenAt), x.takenAt, t.takenAt),
+}))
+// "value" = CASE WHEN EXCLUDED."taken_at" > "taken_at" THEN EXCLUDED."value" ELSE "value" END, …
+```
+
+Every column falls back to its stored value when the guard fails, which is the same outcome -- at the cost of repeating the condition per column.
 
 ### Partial unique indexes and named constraints
 
