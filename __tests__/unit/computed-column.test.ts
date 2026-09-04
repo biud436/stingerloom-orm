@@ -6,6 +6,12 @@ import { Column } from "../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
 import { ComputedColumn, COMPUTED_COLUMN_TOKEN } from "../../src/decorators/ComputedColumn";
 import { Logger } from "../../src/utils/Logger";
+import { createColumnDefinitionBuilder } from "../../src/dialects/ColumnDefinitionBuilder";
+import {
+  resolveMySqlCapabilities,
+  resolveSqliteCapabilities,
+} from "../../src/dialects/resolveCapabilities";
+import { DbVersion } from "../../src/dialects/DbVersion";
 
 describe("@ComputedColumn (#131)", () => {
   describe("decorator metadata", () => {
@@ -95,10 +101,16 @@ describe("@ComputedColumn (#131)", () => {
           }
 
           const ddl = generator.generateCreateTableDDL(UserVirtual);
-          expect(ddl).toContain("GENERATED ALWAYS AS (price * quantity) VIRTUAL");
+          if (dialect === "postgres") {
+            // PostgreSQL only supports STORED generated columns — an explicit
+            // VIRTUAL request is coerced (with a warning), never invalid DDL.
+            expect(ddl).toContain("GENERATED ALWAYS AS (price * quantity) STORED");
+          } else {
+            expect(ddl).toContain("GENERATED ALWAYS AS (price * quantity) VIRTUAL");
+          }
         });
 
-        it("should default to VIRTUAL when stored is omitted", () => {
+        it("should default to VIRTUAL when stored is omitted (STORED on postgres)", () => {
           @Entity()
           class DefaultVirtual {
             @PrimaryGeneratedColumn()
@@ -109,8 +121,13 @@ describe("@ComputedColumn (#131)", () => {
           }
 
           const ddl = generator.generateCreateTableDDL(DefaultVirtual);
-          expect(ddl).toContain("VIRTUAL");
-          expect(ddl).not.toContain("STORED");
+          if (dialect === "postgres") {
+            expect(ddl).toContain("STORED");
+            expect(ddl).not.toContain("VIRTUAL");
+          } else {
+            expect(ddl).toContain("VIRTUAL");
+            expect(ddl).not.toContain("STORED");
+          }
         });
       });
     }
@@ -297,6 +314,100 @@ describe("@ComputedColumn expression builder (#336)", () => {
       expect(messages).toHaveLength(0);
     } finally {
       Logger.reset();
+    }
+  });
+});
+
+describe("buildComputedColumnDef — shared generated-column renderer (V5-T0-3)", () => {
+  const cc = (options: Record<string, unknown>) => ({
+    propertyKey: "total",
+    name: "total",
+    options: { expression: "qty * price", type: "int", ...options },
+  });
+  const ctx = { columnName: "total", tableName: "order_line" };
+
+  it("postgres coerces an explicit VIRTUAL request to STORED with a warning", () => {
+    const builder = createColumnDefinitionBuilder("postgres");
+    const messages: string[] = [];
+    Logger.setOutput((msg) => messages.push(msg));
+    try {
+      const def = builder.buildComputedColumnDef(cc({ stored: false }) as any, ctx);
+      expect(def).toBe('"total" INTEGER GENERATED ALWAYS AS (qty * price) STORED');
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toContain("only supports STORED");
+    } finally {
+      Logger.reset();
+    }
+  });
+
+  it("postgres renders omitted stored as STORED silently", () => {
+    const builder = createColumnDefinitionBuilder("postgres");
+    const messages: string[] = [];
+    Logger.setOutput((msg) => messages.push(msg));
+    try {
+      const def = builder.buildComputedColumnDef(cc({}) as any, ctx);
+      expect(def).toContain("STORED");
+      expect(messages).toHaveLength(0);
+    } finally {
+      Logger.reset();
+    }
+  });
+
+  it("mysql and sqlite honor the stored option", () => {
+    for (const dialect of ["mysql", "sqlite"] as const) {
+      const builder = createColumnDefinitionBuilder(dialect);
+      expect(builder.buildComputedColumnDef(cc({}) as any, ctx)).toContain("VIRTUAL");
+      expect(builder.buildComputedColumnDef(cc({ stored: true }) as any, ctx)).toContain(
+        "STORED",
+      );
+    }
+  });
+
+  it("throws (never silently skips) when the server lacks generated-column support", () => {
+    const noSupport = resolveMySqlCapabilities(new DbVersion(5, 6, 0, "5.6.0"), false);
+    const builder = createColumnDefinitionBuilder("mysql", undefined, noSupport);
+    expect(() => builder.buildComputedColumnDef(cc({}) as any, ctx)).toThrow(
+      /generated-column/,
+    );
+  });
+
+  it("sqlite carries support on its dialect-specific capability flag", () => {
+    const modern = resolveSqliteCapabilities(new DbVersion(3, 40, 0, "3.40.0"));
+    const ancient = resolveSqliteCapabilities(new DbVersion(3, 30, 0, "3.30.0"));
+    const modernBuilder = createColumnDefinitionBuilder("sqlite", undefined, modern);
+    const ancientBuilder = createColumnDefinitionBuilder("sqlite", undefined, ancient);
+    expect(modernBuilder.buildComputedColumnDef(cc({}) as any, ctx)).toContain(
+      "GENERATED ALWAYS AS",
+    );
+    expect(() => ancientBuilder.buildComputedColumnDef(cc({}) as any, ctx)).toThrow(
+      /generated-column/,
+    );
+  });
+
+  it("renders the SchemaGenerator computed fragment through the same builder (parity pin)", () => {
+    @Entity()
+    class ParityRow {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "int" })
+      qty!: number;
+
+      @ComputedColumn({ expression: "qty * 2", type: "int" })
+      doubled!: number;
+    }
+
+    for (const dialect of ["mysql", "postgres", "sqlite"] as const) {
+      const ddl = new SchemaGenerator({ dialect }).generateCreateTableDDL(ParityRow);
+      const fragment = createColumnDefinitionBuilder(dialect).buildComputedColumnDef(
+        {
+          propertyKey: "doubled",
+          name: "doubled",
+          options: { expression: "qty * 2", type: "int" },
+        } as any,
+        { columnName: "doubled", tableName: "parity_row" },
+      );
+      expect(ddl).toContain(fragment);
     }
   });
 });

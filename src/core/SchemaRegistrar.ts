@@ -27,9 +27,14 @@ import {
   ManyToManyMetadata,
   COLUMN_TOKEN,
 } from "../decorators";
+import {
+  COMPUTED_COLUMN_TOKEN,
+  ComputedColumnMetadata,
+} from "../decorators/ComputedColumn";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { EntityNotFound } from "../dialects/EntityNotFound";
 import type { CreateTableForeignKey } from "../dialects/SqlDriver";
+import { createColumnDefinitionBuilder } from "../dialects/ColumnDefinitionBuilder";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
@@ -468,7 +473,16 @@ export class SchemaRegistrar {
                 }
                 inlineFks = collected.foreignKeys;
               }
-              await driver?.createTable(tableName, createColumns, inlineFks);
+              // @ComputedColumn metadata lives outside metadata.columns —
+              // pass it explicitly so the generated columns are part of the
+              // CREATE TABLE statement (V5-T0-3).
+              const computedColumns = this.getComputedColumns(TargetEntity);
+              await driver?.createTable(
+                tableName,
+                createColumns,
+                inlineFks,
+                computedColumns,
+              );
             } catch (err) {
               this.handleDdlError(
                 err,
@@ -817,6 +831,54 @@ export class SchemaRegistrar {
             `Failed to add column ${col.tableName}.${col.columnName}`,
             policy,
           );
+        }
+      }
+    }
+
+    // 1.5. ADD COMPUTED COLUMNS (ADD semantics: runs for both true and safe).
+    // Rendered through the shared ColumnDefinitionBuilder — the same
+    // generated-column definition CREATE TABLE and migrate:generate emit.
+    // Note: older SQLite (< 3.31, and STORED adds on many versions) rejects
+    // these ALTERs — the driver error surfaces through handleDdlError(),
+    // never a silent skip.
+    if (diff.addComputedColumns?.length) {
+      const computedDefBuilder = createColumnDefinitionBuilder(
+        dialect,
+        this.ctx.getSchema(),
+        driver.getCapabilities?.(),
+      );
+      for (const change of diff.addComputedColumns) {
+        let def: string;
+        try {
+          def = computedDefBuilder.buildComputedColumnDef(change.column, {
+            columnName: change.column.name,
+            tableName: change.tableName,
+          });
+        } catch (err) {
+          this.handleDdlError(
+            err,
+            `Failed to render computed column ${change.tableName}.${change.column.name}`,
+            policy,
+          );
+          continue;
+        }
+        const ddl = `ALTER TABLE ${this.ctx.wrapTable(change.tableName)} ADD COLUMN ${def}`;
+        if (isDryRun) {
+          this.logger.info(`[dry-run] ${ddl}`);
+        } else {
+          this.logger.info(
+            `[sync] Adding computed column ${change.tableName}.${change.column.name}`,
+          );
+          this.logDdl(`[sync] ${ddl}`, policy);
+          try {
+            await driver.executeRaw(ddl);
+          } catch (err) {
+            this.handleDdlError(
+              err,
+              `Failed to add computed column ${change.tableName}.${change.column.name}`,
+              policy,
+            );
+          }
         }
       }
     }
@@ -1373,6 +1435,21 @@ export class SchemaRegistrar {
         }
       }
     }
+  }
+
+  /**
+   * Reads `@ComputedColumn` metadata for an entity. Same source the
+   * migration-time SchemaGenerator uses (the decorator and the EntitySchema
+   * registrar both write to COMPUTED_COLUMN_TOKEN on the prototype).
+   */
+  private getComputedColumns(
+    entity: ClazzType<any>,
+  ): ComputedColumnMetadata[] {
+    return (
+      (Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity.prototype) as
+        | ComputedColumnMetadata[]
+        | undefined) ?? []
+    );
   }
 
   /**

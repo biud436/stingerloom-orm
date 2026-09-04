@@ -169,6 +169,16 @@ export class ReadExecutor {
         seen.add(rel.joinColumn);
       }
     }
+    // @ComputedColumn values: the SELECT list is enumerated from
+    // metadata.columns, so generated columns must be merged explicitly —
+    // without this, find/findOne silently returned undefined for them even
+    // when the DB column existed (V5-T0-3).
+    for (const name of this.ctx.getComputedColumnNames(entity)) {
+      if (!seen.has(name)) {
+        allColNames.push(name);
+        seen.add(name);
+      }
+    }
 
     const wrappedTable = this.ctx.wrap(metadata.name);
     const plan: ReadColumnPlan = {
@@ -1367,6 +1377,13 @@ export class ReadExecutor {
         if (rel.joinColumn && !seenCols.has(rel.joinColumn)) {
           allColNames.push(rel.joinColumn);
           seenCols.add(rel.joinColumn);
+        }
+      }
+      // Same @ComputedColumn merge as getColumnPlan() (V5-T0-3).
+      for (const name of this.ctx.getComputedColumnNames(entity)) {
+        if (!seenCols.has(name)) {
+          allColNames.push(name);
+          seenCols.add(name);
         }
       }
       const selectMap = allColNames.map((name) => this.ctx.wrap(name));

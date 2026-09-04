@@ -3,6 +3,7 @@ import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { SchemaDiffResult, ColumnChange, RenamedColumn, EnumChange } from "./SchemaDiff";
 import { SchemaGenerator, SchemaDialect } from "./SchemaGenerator";
+import { createColumnDefinitionBuilder } from "../../dialects/ColumnDefinitionBuilder";
 import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../../decorators/ManyToOne";
 import { ONE_TO_ONE_TOKEN, OneToOneMetadata } from "../../decorators/OneToOne";
 import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
@@ -110,6 +111,41 @@ export class SchemaDiffMigrationGenerator {
   // Pure SQL generation (used by both generate and dryRun)
   // ─────────────────────────────────────────────────
 
+  /**
+   * ALTER TABLE ... ADD COLUMN statements for @ComputedColumn additions,
+   * rendered through the shared ColumnDefinitionBuilder — the same
+   * generated-column definition the runtime synchronize path applies.
+   */
+  private computedAddSql(
+    diff: SchemaDiffResult,
+    dialect: SchemaDialect,
+  ): string[] {
+    if (!diff.addComputedColumns?.length) return [];
+    const builder = createColumnDefinitionBuilder(
+      dialect,
+      undefined,
+      this.capabilities,
+    );
+    return diff.addComputedColumns.map(
+      (change) =>
+        `ALTER TABLE ${this.escapeId(change.tableName, dialect)} ADD COLUMN ${builder.buildComputedColumnDef(
+          change.column,
+          { columnName: change.column.name, tableName: change.tableName },
+        )}`,
+    );
+  }
+
+  /** Reverse of {@link computedAddSql}: drop the added generated columns. */
+  private computedDropSql(
+    diff: SchemaDiffResult,
+    dialect: SchemaDialect,
+  ): string[] {
+    return (diff.addComputedColumns ?? []).map(
+      (change) =>
+        `ALTER TABLE ${this.escapeId(change.tableName, dialect)} DROP COLUMN ${this.escapeId(change.column.name, dialect)}`,
+    );
+  }
+
   private buildUpSql(
     diff: SchemaDiffResult,
     dialect: SchemaDialect,
@@ -140,6 +176,9 @@ export class SchemaDiffMigrationGenerator {
         `ALTER TABLE ${this.escapeId(col.tableName, dialect)} ADD COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr} ${nullability}`,
       );
     }
+
+    // Add computed (generated) columns
+    sqls.push(...this.computedAddSql(diff, dialect));
 
     // Alter columns (type and/or nullability; SQLite cannot alter — skipped)
     for (const col of diff.alterColumns) {
@@ -176,6 +215,9 @@ export class SchemaDiffMigrationGenerator {
         `ALTER TABLE ${this.escapeId(col.tableName, dialect)} DROP COLUMN ${this.escapeId(col.columnName, dialect)}`,
       );
     }
+
+    // Reverse of computed column adds
+    sqls.push(...this.computedDropSql(diff, dialect));
 
     // Reverse of alter columns — restore previous type and nullability
     for (const col of diff.alterColumns) {
@@ -240,6 +282,11 @@ export class SchemaDiffMigrationGenerator {
       );
     }
 
+    // Add computed (generated) columns
+    for (const sqlStr of this.computedAddSql(diff, dialect)) {
+      stmts.push(this.wrapSqlInQuery(sqlStr));
+    }
+
     // Alter columns (type and/or nullability)
     for (const col of diff.alterColumns) {
       for (const s of this.alterColumnUpSql(col, dialect)) {
@@ -293,6 +340,11 @@ export class SchemaDiffMigrationGenerator {
           `ALTER TABLE ${this.escapeId(col.tableName, dialect)} DROP COLUMN ${this.escapeId(col.columnName, dialect)}`,
         ),
       );
+    }
+
+    // Reverse of computed column adds — drop them
+    for (const sqlStr of this.computedDropSql(diff, dialect)) {
+      stmts.push(this.wrapSqlInQuery(sqlStr));
     }
 
     // Reverse of alter columns — restore previous type and nullability

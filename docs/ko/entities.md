@@ -1198,7 +1198,20 @@ total!: number;
 total!: number;
 ```
 
-> **힌트** 계산 컬럼은 PostgreSQL 12+, MySQL 5.7+, SQLite에서 지원돼요. `@ComputedColumn` 데코레이터는 선택적으로 `type`, `length`, `nullable` 옵션을 받아요. `type`을 생략하면 데이터베이스가 표현식에서 타입을 추론해요.
+> **힌트** 계산 컬럼은 PostgreSQL 12+, MySQL 5.7+, SQLite 3.31+에서 지원돼요. `@ComputedColumn` 데코레이터는 선택적으로 `type`, `length`, `nullable` 옵션을 받아요. `type`을 생략하면 컬럼은 `TEXT`로 생성돼요.
+
+> **주의** PostgreSQL은 **STORED** 생성 컬럼만 지원합니다. PostgreSQL에서는 컬럼이 항상 STORED로 생성되며, 명시적으로 `stored: false`를 요청하면 경고 로그와 함께 STORED로 강제돼요.
+
+#### 스키마 동기화 동작
+
+계산 컬럼은 두 스키마 워크플로우 모두에 참여합니다:
+
+- **`synchronize: true` (그리고 `"safe"`)** -- 새 테이블에서는 CREATE TABLE 문에 생성 컬럼이 포함되고, 기존 테이블에는 `ALTER TABLE ... ADD COLUMN`으로 추가돼요 (ADD 시맨틱이므로 `"safe"` 모드에서도 적용되고, `"dry-run"`은 DDL을 로그로만 출력해요).
+- **`migrate:generate`** -- 같은 정의가 마이그레이션 파일에 출력되고, `down()`에는 대응하는 `DROP COLUMN`이 생성돼요.
+
+두 경로 모두 같은 빌더로 정의를 렌더링하므로 서로 어긋날 수 없어요. **기존** 생성 컬럼은 synchronize가 비교하거나 삭제하지 않습니다. `expression`을 바꿨다면 컬럼을 삭제 후 재추가하는 마이그레이션을 직접 작성하세요 -- 표현식 변경은 자동 감지되지 않아요.
+
+다이얼렉트 주의점 하나: **기존** 테이블에 ALTER로 생성 컬럼을 추가하는 것은 일부 엔진에서 STORED 컬럼에 대해 거부돼요 (특히 구버전 SQLite). 이때 DDL 에러는 무음 스킵이 아니라 일반 synchronize 에러 처리(`continueOnError`)를 통해 보고됩니다. SQLite에서 운영 중인 테이블에 컬럼을 추가할 예정이라면 `stored: false`를 권장해요.
 
 #### 다이얼렉트 독립 표현식 (빌더 형식)
 
@@ -1238,7 +1251,7 @@ export class Issue {
 **PostgreSQL DDL:**
 
 ```sql
-"cycleTimeHours" INTEGER GENERATED ALWAYS AS (EXTRACT(EPOCH FROM ("completed_at" - "created_at")) / 3600) VIRTUAL
+"cycleTimeHours" INTEGER GENERATED ALWAYS AS (EXTRACT(EPOCH FROM ("completed_at" - "created_at")) / 3600) STORED
 ```
 
 컨텍스트 `e`는 Expressions DSL 전체 -- `e.iff`, `e.caseBuilder`, `e.coalesce`, `e.dateDiff` 등 -- 와 함께, 같은 테이블의 다른 컬럼을 데이터베이스 컬럼명으로 참조하는 `e.col(name)`을 제공해요. 분기 로직은 `e.iff`로 감싸면 이식 가능한 `CASE`가 돼요:

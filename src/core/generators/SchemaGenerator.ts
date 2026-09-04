@@ -48,8 +48,6 @@ import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "../P
 import { inferRelatedPkType } from "./RelatedPkTypeResolver";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../../decorators/ComputedColumn";
-import { renderComputedColumnExpression } from "../expressions/ComputedColumnExpression";
-import type { ColumnResolver } from "../expressions/ConditionLike";
 import {
   ColumnDefinitionBuilder,
   createColumnDefinitionBuilder,
@@ -134,17 +132,16 @@ export class SchemaGenerator {
       this.renderColumnDef(col, tableName, isCompositePk),
     );
 
-    // Computed/generated columns
+    // Computed/generated columns — rendered by the shared builder so this
+    // migration-time DDL can never diverge from the runtime synchronize path.
     const computedMeta: ComputedColumnMetadata[] =
       Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity.prototype) ?? [];
     for (const cc of computedMeta) {
-      const colType = cc.options.type ? this.castType(cc.options.type) : "TEXT";
-      const length = cc.options.length ? `(${cc.options.length})` : "";
-      const nullable = cc.options.nullable === false ? " NOT NULL" : "";
-      const storedOrVirtual = cc.options.stored ? "STORED" : "VIRTUAL";
-      const expression = this.resolveComputedExpression(cc);
       columnDefs.push(
-        `${this.wrapId(cc.name)} ${colType}${length}${nullable} GENERATED ALWAYS AS (${expression}) ${storedOrVirtual}`,
+        this.columnDefBuilder.buildComputedColumnDef(cc, {
+          columnName: cc.name,
+          tableName,
+        }),
       );
     }
 
@@ -661,28 +658,6 @@ export class SchemaGenerator {
     }
 
     return result;
-  }
-
-  /**
-   * Resolve a computed column's expression to a literal SQL string.
-   *
-   * The literal-string form is embedded verbatim. The builder form is
-   * invoked with this generator's dialect, so one definition yields
-   * dialect-correct DDL on every driver — and because the builder runs per
-   * generator (each connection has its own), it is multi-DB safe: nothing is
-   * cached back onto the shared decorator metadata.
-   */
-  private resolveComputedExpression(cc: ComputedColumnMetadata): string {
-    const expression = cc.options.expression;
-    if (typeof expression === "string") {
-      return expression;
-    }
-    const resolveColumn: ColumnResolver = (name) => this.wrapId(name);
-    return renderComputedColumnExpression(
-      expression,
-      this.dialect,
-      resolveColumn,
-    );
   }
 
   /**

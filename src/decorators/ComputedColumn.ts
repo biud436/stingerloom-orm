@@ -43,9 +43,13 @@ export interface ComputedColumnOption {
    *    dialect-correct SQL — prefer it over hand-written dialect strings.
    */
   expression: string | ComputedColumnExpressionBuilder;
-  /** Whether the column is STORED (persisted) or VIRTUAL. Default: false (VIRTUAL). */
+  /**
+   * Whether the column is STORED (persisted) or VIRTUAL. Default: false
+   * (VIRTUAL). PostgreSQL supports only STORED — there the column is always
+   * created as STORED, and an explicit `false` logs a warning.
+   */
   stored?: boolean;
-  /** Explicit column type. If omitted, the DB infers it from the expression. */
+  /** Explicit column type. If omitted, the column is created as TEXT. */
   type?: ColumnType;
   /** Column length (for VARCHAR etc.). */
   length?: number;
@@ -84,7 +88,13 @@ function warnIfDualDialectLiteral(key: string, expression: unknown): void {
  * The column is automatically excluded from INSERT and UPDATE statements.
  * DDL: `GENERATED ALWAYS AS (expression) STORED|VIRTUAL`
  *
- * Supported on PostgreSQL 12+, MySQL 5.7+, and SQLite.
+ * Created by both schema workflows: runtime `synchronize` (CREATE TABLE, and
+ * ALTER TABLE ADD COLUMN for existing tables) and `migrate:generate` — both
+ * render through the same ColumnDefinitionBuilder. An existing generated
+ * column is never compared or dropped by synchronize; changing `expression`
+ * requires a hand-written migration.
+ *
+ * Supported on PostgreSQL 12+ (STORED only), MySQL 5.7+, and SQLite 3.31+.
  */
 export function ComputedColumn(option: ComputedColumnOption): PropertyDecorator {
   return (target: any, propertyKey: string | symbol) => {

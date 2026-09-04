@@ -607,7 +607,7 @@ export const Issue = defineEntity("issues", {
 The context `e` exposes the full Expressions DSL (`e.iff`, `e.caseBuilder`, `e.coalesce`, `e.dateDiff`, `e.col(name)`). See the decorator guide's [dialect-portable expressions](./entities.md#dialect-portable-expressions-builder-form) for the full DSL.
 
 ::: tip How computed columns reach the database
-`GENERATED ALWAYS AS` DDL is emitted by the schema **generator** — the same path the migration CLI uses (`stingerloom migrate:generate`). The runtime `synchronize` create-table path renders stored columns only. This matches the decorator `@ComputedColumn` exactly: generate a migration to add (or change) a computed column. Stingerloom always excludes the column from writes regardless of how the table was created.
+Both schema workflows create them: runtime `synchronize` includes the `GENERATED ALWAYS AS` definition in CREATE TABLE (and adds it to an existing table with ALTER TABLE ADD COLUMN), and `stingerloom migrate:generate` emits the same definition into the migration file — both render through the same builder. Changing an existing column's `expression` still requires a hand-written migration (drop and re-add); expression drift is not auto-detected. Stingerloom always excludes the column from writes regardless of how the table was created.
 :::
 
 ## Validation
@@ -1066,7 +1066,7 @@ Each abstract `ColumnType` is translated to a concrete database type by the driv
 
 **My lifecycle hook never runs.** Hooks fire on instances. Save `new MyEntity({ … })`, not a plain object literal — see [Lifecycle hooks](#lifecycle-hooks).
 
-**A computed column isn't in the created table.** `GENERATED ALWAYS AS` DDL comes from the schema generator (the migration CLI), not the runtime `synchronize` path — generate a migration. This matches the decorator `@ComputedColumn`.
+**A computed column isn't in the created table.** Check the ORM version — current versions create generated columns during runtime `synchronize`; on versions up to 2.0 the DDL only came from the migration CLI (`migrate:generate`). Also note PostgreSQL creates them as STORED only, and older SQLite rejects `ALTER TABLE ADD COLUMN ... STORED` on existing tables (the error is reported through `continueOnError` handling).
 
 **Am I really decorator-free?** Define every entity with `defineEntity` (or `EntitySchema`) and run a dry sync — it logs the DDL it *would* run without touching the database, confirming every column, index, and relation resolved without any compiler-emitted metadata:
 

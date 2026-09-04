@@ -77,14 +77,14 @@ describe("SchemaDiff — SQLite dialect", () => {
   });
 
   describe("getDbColumns — PRAGMA query", () => {
-    it("should use PRAGMA table_info for SQLite", async () => {
+    it("should use PRAGMA table_xinfo for SQLite", async () => {
       const runner = createMockQueryRunner({});
       await schemaDiff.diff([SqliteDiffUser], runner, "sqlite");
 
       expect(runner.query).toHaveBeenCalled();
       const calls = runner.query.mock.calls;
       const pragmaCall = calls.find((call: any[]) =>
-        typeof call[0] === "string" && call[0].includes("PRAGMA table_info"),
+        typeof call[0] === "string" && call[0].includes("PRAGMA table_xinfo"),
       );
       expect(pragmaCall).toBeDefined();
     });
@@ -117,7 +117,7 @@ describe("SchemaDiff — SQLite dialect", () => {
   });
 
   describe("PRAGMA result normalization", () => {
-    it("should convert PRAGMA table_info rows to DbColumnInfo format", async () => {
+    it("should convert PRAGMA table_xinfo rows to DbColumnInfo format", async () => {
       const runner = createMockQueryRunner({
         sqlite_diff_user: [
           { cid: 0, name: "id", type: "INTEGER", notnull: 1, dflt_value: null, pk: 1 },

@@ -322,7 +322,7 @@ describe("SqliteDriver - DDL query generation", () => {
 });
 
 describe("SqliteDriver - hasColumn()", () => {
-  it("should return true when column exists in PRAGMA table_info result", async () => {
+  it("should return true when column exists in PRAGMA table_xinfo result", async () => {
     const querySpy = jest.fn().mockResolvedValue([
       { cid: 0, name: "id", type: "INTEGER", notnull: 1, dflt_value: null, pk: 1 },
       { cid: 1, name: "author_id", type: "INTEGER", notnull: 0, dflt_value: null, pk: 0 },
@@ -331,7 +331,8 @@ describe("SqliteDriver - hasColumn()", () => {
 
     const result = await driver.hasColumn("posts", "author_id");
     expect(result).toBe(true);
-    expect(querySpy).toHaveBeenCalledWith('PRAGMA table_info("posts")');
+    // table_xinfo, not table_info: generated columns are hidden from table_info.
+    expect(querySpy).toHaveBeenCalledWith('PRAGMA table_xinfo("posts")');
   });
 
   it("should return false when column does not exist", async () => {

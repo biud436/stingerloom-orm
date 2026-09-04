@@ -1,7 +1,12 @@
 import { ColumnOption, ColumnType } from "../decorators/Column";
+import type { ComputedColumnMetadata } from "../decorators/ComputedColumn";
 import { ColumnDefinitionBuilder, ColumnDefContext } from "./ColumnDefinitionBuilder";
 import { CommonCapabilities, ALL_COMMON } from "./DialectCapabilities";
 import { ColumnTypeRegistry, DialectName } from "../core/ColumnTypeRegistry";
+import { renderComputedColumnExpression } from "../core/expressions/ComputedColumnExpression";
+import type { ColumnResolver } from "../core/expressions/ConditionLike";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * Abstract base class for column definition builders.
@@ -79,6 +84,76 @@ export abstract class BaseColumnDefinitionBuilder
     const defaultClause = this.renderDefaultClause(option.default);
 
     return `${this.wrapIdentifier(ctx.columnName)} ${typeWithLength} ${nullable}${defaultClause}${pk}${autoIncSuffix}`;
+  }
+
+  /**
+   * Builds a generated/computed column definition SQL fragment.
+   *
+   * Single source of truth for `@ComputedColumn` DDL — SchemaGenerator
+   * (migrate:generate), driver `createTable()` (runtime synchronize), and the
+   * SchemaDiff ADD COLUMN pass all render through this method.
+   */
+  buildComputedColumnDef(
+    column: ComputedColumnMetadata,
+    ctx: ColumnDefContext,
+  ): string {
+    if (!this.supportsGeneratedColumns()) {
+      throw new OrmError(
+        OrmErrorCode.SCHEMA_ERROR,
+        `@ComputedColumn "${ctx.tableName}.${column.name}" requires generated-column ` +
+          `support, which the connected ${this.dialectName} server version does not provide.`,
+      );
+    }
+    const option = column.options;
+    const colType = option.type ? this.castType(option.type) : "TEXT";
+    const length = option.length ? `(${option.length})` : "";
+    const nullable = option.nullable === false ? " NOT NULL" : "";
+    const storage = this.resolveGeneratedStorage(column, ctx);
+    const expression = this.resolveComputedExpression(column);
+    return `${this.wrapIdentifier(column.name)} ${colType}${length}${nullable} GENERATED ALWAYS AS (${expression}) ${storage}`;
+  }
+
+  /**
+   * Whether the connected server supports generated columns.
+   * Default: the common capability flag. SQLite overrides (its support is
+   * carried by the dialect-specific `supportsSqliteGeneratedColumns` flag).
+   */
+  protected supportsGeneratedColumns(): boolean {
+    return this.capabilities.supportsGeneratedColumns;
+  }
+
+  /**
+   * Decides STORED vs VIRTUAL for a generated column.
+   * Default: honor the option (`stored: true` → STORED, otherwise VIRTUAL).
+   * PostgreSQL overrides — it only supports STORED.
+   */
+  protected resolveGeneratedStorage(
+    column: ComputedColumnMetadata,
+    _ctx: ColumnDefContext,
+  ): "STORED" | "VIRTUAL" {
+    return column.options.stored ? "STORED" : "VIRTUAL";
+  }
+
+  /**
+   * Resolves a computed column's expression to a literal SQL string.
+   *
+   * The literal-string form is embedded verbatim. The builder form is invoked
+   * with this builder's dialect, so one definition yields dialect-correct DDL
+   * on every driver — and because it runs per builder instance (each
+   * connection has its own), nothing is cached back onto the shared
+   * decorator metadata.
+   */
+  protected resolveComputedExpression(column: ComputedColumnMetadata): string {
+    const expression = column.options.expression;
+    if (typeof expression === "string") {
+      return expression;
+    }
+    const resolveColumn: ColumnResolver = (name) => this.wrapIdentifier(name);
+    return renderComputedColumnExpression(
+      expression,
+      this.dialectName,
+      resolveColumn,
+    );
   }
 
   /**

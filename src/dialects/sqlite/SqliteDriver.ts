@@ -4,6 +4,7 @@ import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
 import { ISqlDriver, CreateTableForeignKey } from "../SqlDriver";
+import type { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import { VALID_REFERENTIAL_ACTIONS } from "../../types/ReferentialAction";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
@@ -290,6 +291,7 @@ export class SqliteDriver implements ISqlDriver {
     tableName: string,
     columns: SchemaOptions[],
     foreignKeys?: CreateTableForeignKey[],
+    computedColumns?: ComputedColumnMetadata[],
   ) {
     const pkColumns = columns.filter(
       (c) => (c.options as ColumnOption | undefined)?.primary,
@@ -306,6 +308,17 @@ export class SqliteDriver implements ISqlDriver {
         }),
       );
     });
+
+    for (const cc of computedColumns ?? []) {
+      columnsMap.push(
+        raw(
+          this.columnDefBuilder.buildComputedColumnDef(cc, {
+            columnName: cc.name,
+            tableName,
+          }),
+        ),
+      );
+    }
 
     if (isCompositePk) {
       const pkList = pkColumns.map((c) => this.wrap(c.name)).join(", ");
@@ -464,8 +477,11 @@ export class SqliteDriver implements ISqlDriver {
   }
 
   async hasColumn(tableName: string, columnName: string): Promise<boolean> {
+    // table_xinfo, not table_info: generated columns are hidden from
+    // table_info (hidden=2 VIRTUAL / hidden=3 STORED rows only appear in the
+    // extended pragma), and hasColumn must see them.
     const rows: any[] = await this.connector.query(
-      `PRAGMA table_info(${this.wrap(tableName)})`,
+      `PRAGMA table_xinfo(${this.wrap(tableName)})`,
     );
     if (!Array.isArray(rows)) return false;
     return rows.some(

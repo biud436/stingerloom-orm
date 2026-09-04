@@ -1163,7 +1163,20 @@ total!: number;
 total!: number;
 ```
 
-> **Hint** Computed columns are supported on PostgreSQL 12+, MySQL 5.7+, and SQLite. The `@ComputedColumn` decorator accepts optional `type`, `length`, and `nullable` options. If `type` is omitted, the database infers the type from the expression.
+> **Hint** Computed columns are supported on PostgreSQL 12+, MySQL 5.7+, and SQLite 3.31+. The `@ComputedColumn` decorator accepts optional `type`, `length`, and `nullable` options. If `type` is omitted, the column is created as `TEXT`.
+
+> **Warning** PostgreSQL supports only **STORED** generated columns. On PostgreSQL the column is always created as STORED -- an explicit `stored: false` request logs a warning and is coerced.
+
+#### Schema synchronization behavior
+
+Computed columns participate in both schema workflows:
+
+- **`synchronize: true` (and `"safe"`)** -- the generated column is part of the CREATE TABLE statement for new tables, and is added to an existing table with `ALTER TABLE ... ADD COLUMN` (ADD semantics, so `"safe"` mode applies it too; `"dry-run"` only logs the DDL).
+- **`migrate:generate`** -- the same definition is emitted into the migration file, with a matching `DROP COLUMN` in `down()`.
+
+Both paths render the definition through the same builder, so they can never diverge. An **existing** generated column is never compared or dropped by synchronize: if you change the `expression`, write a migration that drops and re-adds the column -- expression drift is not auto-detected.
+
+One dialect caveat: adding a generated column to an **existing** table via ALTER is rejected by some engines for STORED columns (notably older SQLite). The DDL error is reported through the normal synchronize error handling (`continueOnError`) rather than being silently skipped -- prefer `stored: false` when you expect the column to be added to live tables on SQLite.
 
 #### Dialect-portable expressions (builder form)
 
@@ -1203,7 +1216,7 @@ export class Issue {
 **PostgreSQL DDL:**
 
 ```sql
-"cycleTimeHours" INTEGER GENERATED ALWAYS AS (EXTRACT(EPOCH FROM ("completed_at" - "created_at")) / 3600) VIRTUAL
+"cycleTimeHours" INTEGER GENERATED ALWAYS AS (EXTRACT(EPOCH FROM ("completed_at" - "created_at")) / 3600) STORED
 ```
 
 The context `e` exposes the full Expressions DSL -- `e.iff`, `e.caseBuilder`, `e.coalesce`, `e.dateDiff`, and the rest -- plus `e.col(name)` to reference a sibling column by its database column name. Wrap branching logic in `e.iff` for a portable `CASE`:
