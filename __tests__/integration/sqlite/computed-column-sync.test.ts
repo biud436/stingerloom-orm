@@ -88,6 +88,37 @@ describe("[Integration] SQLite: @ComputedColumn runtime synchronize", () => {
     expect(row.qtyPlusOne).toBe(4);
   });
 
+  it("hydrates computed values through find/findOne", async () => {
+    const found: any = await conn.em.findOne(OrderLine, {
+      where: { qty: 3 },
+    });
+    expect(found).not.toBeNull();
+    expect(found.total).toBe(300);
+    expect(found.qtyPlusOne).toBe(4);
+
+    const all: any[] = await conn.em.find(OrderLine, {});
+    expect(all[0].total).toBe(300);
+  });
+
+  it("filters by a computed column", async () => {
+    const hit: any[] = await conn.em.find(OrderLine, {
+      where: { total: 300 } as any,
+    });
+    expect(hit).toHaveLength(1);
+    const miss: any[] = await conn.em.find(OrderLine, {
+      where: { total: 999 } as any,
+    });
+    expect(miss).toHaveLength(0);
+  });
+
+  it("includes computed values in cursor pagination results", async () => {
+    const page: any = await conn.em.findWithCursor(OrderLine, {
+      take: 10,
+    });
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0].total).toBe(300);
+  });
+
   it("reads computed values through the SelectQueryBuilder (SELECT *)", async () => {
     const rows = await conn.em
       .createQueryBuilder(OrderLine, "o")
