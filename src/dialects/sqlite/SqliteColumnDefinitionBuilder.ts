@@ -26,6 +26,18 @@ export class SqliteColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
     nullable: false,
   };
 
+  /**
+   * SQLite carries generated-column support (3.31+) on its dialect-specific
+   * flag — the common `supportsGeneratedColumns` is false in its version
+   * feature table.
+   */
+  protected supportsGeneratedColumns(): boolean {
+    const caps = this.capabilities as SqliteCapabilities;
+    return (
+      caps.supportsSqliteGeneratedColumns ?? caps.supportsGeneratedColumns
+    );
+  }
+
   castBuiltinType(type: ColumnType): string {
     switch (type) {
       case "varchar":

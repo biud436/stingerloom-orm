@@ -1,10 +1,14 @@
 import { ColumnOption, ColumnType } from "../../decorators/Column";
+import type { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
+import { Logger } from "../../utils/Logger";
 import { ColumnDefContext } from "../ColumnDefinitionBuilder";
 import { BaseColumnDefinitionBuilder } from "../BaseColumnDefinitionBuilder";
 import { Exception } from "../../errors";
 import { ALL_POSTGRES } from "../DialectCapabilities";
 import type { PostgresCapabilities, CommonCapabilities } from "../DialectCapabilities";
 import type { DialectName } from "../../core/ColumnTypeRegistry";
+
+const pgBuilderLogger = new Logger("PostgresColumnDefinitionBuilder");
 
 /**
  * PostgreSQL dialect column definition builder.
@@ -35,6 +39,25 @@ export class PostgresColumnDefinitionBuilder extends BaseColumnDefinitionBuilder
   /** Access PostgreSQL-specific capabilities with proper typing. */
   private get pg(): PostgresCapabilities {
     return this.capabilities as PostgresCapabilities;
+  }
+
+  /**
+   * PostgreSQL only supports STORED generated columns (through PG 17).
+   * An omitted `stored` follows the dialect's only available form silently;
+   * an explicit `stored: false` request is coerced with a warning — never
+   * silently skipped, never invalid VIRTUAL DDL.
+   */
+  protected resolveGeneratedStorage(
+    column: ComputedColumnMetadata,
+    ctx: ColumnDefContext,
+  ): "STORED" | "VIRTUAL" {
+    if (column.options.stored === false) {
+      pgBuilderLogger.warn(
+        `@ComputedColumn "${ctx.tableName}.${column.name}" requested a VIRTUAL ` +
+          "generated column, but PostgreSQL only supports STORED — creating it as STORED.",
+      );
+    }
+    return "STORED";
   }
 
   castBuiltinType(type: ColumnType): string {

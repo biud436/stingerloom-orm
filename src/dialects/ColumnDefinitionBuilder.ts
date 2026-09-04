@@ -1,4 +1,5 @@
 import { ColumnOption, ColumnType } from "../decorators/Column";
+import type { ComputedColumnMetadata } from "../decorators/ComputedColumn";
 import { MySqlColumnDefinitionBuilder } from "./mysql/MySqlColumnDefinitionBuilder";
 import { PostgresColumnDefinitionBuilder } from "./postgres/PostgresColumnDefinitionBuilder";
 import { SqliteColumnDefinitionBuilder } from "./sqlite/SqliteColumnDefinitionBuilder";
@@ -32,6 +33,24 @@ export interface ColumnDefinitionBuilder {
    * Example: `"id" SERIAL NOT NULL PRIMARY KEY`
    */
   buildColumnDef(option: ColumnOption, ctx: ColumnDefContext): string;
+
+  /**
+   * Builds a `@ComputedColumn` (generated column) definition SQL fragment.
+   * Example: `"total" INTEGER GENERATED ALWAYS AS (qty * price) VIRTUAL`
+   *
+   * This is the single source of truth for generated-column DDL — both the
+   * migration-time SchemaGenerator and the runtime synchronize path
+   * (driver `createTable()` / SchemaDiff ADD COLUMN) render through it, so
+   * expression resolution and the STORED/VIRTUAL decision can never diverge.
+   *
+   * Dialect notes: PostgreSQL only supports STORED, so a VIRTUAL request is
+   * coerced (with a warning when `stored: false` was explicit). Throws when
+   * the connected server version does not support generated columns at all.
+   */
+  buildComputedColumnDef(
+    column: ComputedColumnMetadata,
+    ctx: ColumnDefContext,
+  ): string;
 
   /**
    * Converts an abstract ColumnType to a dialect-specific SQL type string.
