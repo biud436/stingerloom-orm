@@ -97,3 +97,83 @@ describe("[Integration] SQLite: @ComputedColumn runtime synchronize", () => {
     expect((rows[0] as any).total).toBe(300);
   });
 });
+
+describe("[Integration] SQLite: @ComputedColumn on an existing table (SchemaDiff ADD)", () => {
+  const os = require("os");
+  const path = require("path");
+  const fs = require("fs");
+  let dbFile: string;
+
+  beforeAll(() => {
+    dbFile = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "stg-computed-")),
+      "computed.sqlite",
+    );
+  });
+
+  afterAll(() => {
+    fs.rmSync(path.dirname(dbFile), { recursive: true, force: true });
+  });
+
+  function bootWithoutComputed() {
+    return createTestConnection({ type: "sqlite", database: dbFile }, () => {
+      @Entity({ name: "diff_line" })
+      class DiffLineV1 {
+        @PrimaryGeneratedColumn()
+        id!: number;
+
+        @Column({ type: "int", nullable: false })
+        qty!: number;
+      }
+      return { entities: [DiffLineV1], DiffLine: DiffLineV1 };
+    });
+  }
+
+  function bootWithComputed() {
+    return createTestConnection({ type: "sqlite", database: dbFile }, () => {
+      @Entity({ name: "diff_line" })
+      class DiffLineV2 {
+        @PrimaryGeneratedColumn()
+        id!: number;
+
+        @Column({ type: "int", nullable: false })
+        qty!: number;
+
+        @ComputedColumn({ expression: "qty * 10", type: "int" })
+        scaled!: number;
+      }
+      return { entities: [DiffLineV2], DiffLine: DiffLineV2 };
+    });
+  }
+
+  async function xinfoNames(em: any): Promise<string[]> {
+    const rows = await em.query(`PRAGMA table_xinfo("diff_line")`);
+    return (Array.isArray(rows) ? rows : (rows as any).results ?? []).map(
+      (r: any) => r.name,
+    );
+  }
+
+  it("adds a newly declared computed column to an existing table and keeps it on later boots", async () => {
+    // Boot 1: table without the computed column, with a pre-existing row.
+    const first = await bootWithoutComputed();
+    await first.em.query(`INSERT INTO "diff_line" ("qty") VALUES (7)`);
+    expect(await xinfoNames(first.em)).toEqual(["id", "qty"]);
+    await first.cleanup();
+
+    // Boot 2: the entity now declares @ComputedColumn — synchronize must
+    // ALTER TABLE ADD COLUMN it (before the fix it was silently missing).
+    const second = await bootWithComputed();
+    expect(await xinfoNames(second.em)).toEqual(["id", "qty", "scaled"]);
+    const rows = await second.em.query<any>(`SELECT * FROM "diff_line"`);
+    const row = (Array.isArray(rows) ? rows : (rows as any).results ?? [])[0];
+    expect(row.scaled).toBe(70); // VIRTUAL — computed for the pre-existing row
+    await second.cleanup();
+
+    // Boot 3: same entity again — the existing generated column must be
+    // recognized (no re-ADD, and crucially no DROP: before the fix the diff
+    // classified DB-side generated columns as drop candidates).
+    const third = await bootWithComputed();
+    expect(await xinfoNames(third.em)).toEqual(["id", "qty", "scaled"]);
+    await third.cleanup();
+  });
+});

@@ -12,6 +12,10 @@ import {
   RELATION_COLUMN_TOKEN,
   RelationColumnMetadata,
 } from "../../decorators/RelationColumn";
+import {
+  COMPUTED_COLUMN_TOKEN,
+  ComputedColumnMetadata,
+} from "../../decorators/ComputedColumn";
 import { SchemaDialect } from "./SchemaGenerator";
 import { inferRelatedPkType } from "./RelatedPkTypeResolver";
 import { OrmError } from "../../errors/OrmError";
@@ -60,6 +64,12 @@ export interface EnumChange {
   isNew: boolean;
 }
 
+/** A `@ComputedColumn` that exists on the entity but not in the DB table. */
+export interface ComputedColumnChange {
+  tableName: string;
+  column: ComputedColumnMetadata;
+}
+
 export interface SchemaDiffResult {
   addTables: string[];
   dropTables: string[];
@@ -69,6 +79,13 @@ export interface SchemaDiffResult {
   renamedColumns?: RenamedColumn[];
   addTableEntityMap?: Record<string, ClazzType<any>>;
   enumChanges?: EnumChange[];
+  /**
+   * Generated columns to ADD. Kept apart from `addColumns` because their DDL
+   * is a full `GENERATED ALWAYS AS (...)` definition, not a plain type — and
+   * an existing generated column is never compared or dropped (expression
+   * drift is left to hand-written migrations).
+   */
+  addComputedColumns?: ComputedColumnChange[];
 }
 
 /**
@@ -85,6 +102,7 @@ export function createSchemaDiffResult(
     alterColumns: [],
     renamedColumns: [],
     enumChanges: [],
+    addComputedColumns: [],
     ...partial,
   };
 }
@@ -138,6 +156,7 @@ export class SchemaDiff {
       alterColumns: [],
       renamedColumns: [],
       enumChanges: [],
+      addComputedColumns: [],
     };
 
     const entityTableNames = new Set<string>();
@@ -306,6 +325,19 @@ export class SchemaDiff {
         }
       }
 
+      // @ComputedColumn handling: a generated column that already exists is
+      // recognized as entity-owned (so the drop scan below never flags it —
+      // before this, synchronize: true DROPPED migration-created generated
+      // columns on MySQL/PostgreSQL). A missing one becomes an
+      // addComputedColumns entry; an existing one is never type-compared
+      // (expression drift is left to hand-written migrations).
+      for (const cc of this.getComputedColumns(entity)) {
+        entityColumnNames.add(cc.name.toLowerCase());
+        if (!dbColumnMap.has(cc.name.toLowerCase())) {
+          result.addComputedColumns!.push({ tableName, column: cc });
+        }
+      }
+
       // Check for columns in DB that are not in entity — candidates for drop
       for (const [dbColName, dbCol] of dbColumnMap) {
         if (!entityColumnNames.has(dbColName)) {
@@ -389,6 +421,16 @@ export class SchemaDiff {
     return result;
   }
 
+  private getComputedColumns<T>(
+    entity: ClazzType<T>,
+  ): ComputedColumnMetadata[] {
+    return (
+      (Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity.prototype) as
+        | ComputedColumnMetadata[]
+        | undefined) ?? []
+    );
+  }
+
   private async getDbColumns(
     queryRunner: QueryRunner,
     tableName: string,
@@ -403,7 +445,10 @@ export class SchemaDiff {
         throw new OrmError(OrmErrorCode.SCHEMA_ERROR, `Invalid table name: ${tableName}`);
       }
       const escaped = tableName.replace(/"/g, '""');
-      rawResult = await queryRunner.query(`PRAGMA table_info("${escaped}")`);
+      // table_xinfo, not table_info: generated columns are hidden from
+      // table_info, and the diff must see them to avoid re-adding an existing
+      // generated column on every boot.
+      rawResult = await queryRunner.query(`PRAGMA table_xinfo("${escaped}")`);
       const rows = this.normalizeRows(rawResult);
       return rows.map((row: any) => {
         const parsed = this.parseSqliteTypeLength(row.type || "TEXT");

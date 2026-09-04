@@ -9,10 +9,10 @@ import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedCol
 import { ManyToOne } from "../../src/decorators/ManyToOne";
 
 // ─────────────────────────────────────────────────
-// #104: SQLite PRAGMA table_info SQL injection
+// #104: SQLite PRAGMA table_xinfo SQL injection
 // ─────────────────────────────────────────────────
 
-describe("#104: SQLite PRAGMA table_info escapes identifier", () => {
+describe("#104: SQLite PRAGMA table_xinfo escapes identifier", () => {
   it("should wrap table name in double-quotes for PRAGMA call", async () => {
     const schemaDiff = new SchemaDiff();
     const queriedSqls: string[] = [];
@@ -33,10 +33,10 @@ describe("#104: SQLite PRAGMA table_info escapes identifier", () => {
 
     await schemaDiff.diff([SqlitePragmaUser], mockRunner, "sqlite");
 
-    const pragmaCall = queriedSqls.find((s) => s.includes("PRAGMA table_info"));
+    const pragmaCall = queriedSqls.find((s) => s.includes("PRAGMA table_xinfo"));
     expect(pragmaCall).toBeDefined();
     // Table name should be wrapped in double-quotes
-    expect(pragmaCall).toMatch(/^PRAGMA table_info\(".*"\)$/);
+    expect(pragmaCall).toMatch(/^PRAGMA table_xinfo\(".*"\)$/);
   });
 
   it("should not be vulnerable to SQL injection via table name", async () => {
@@ -62,7 +62,7 @@ describe("#104: SQLite PRAGMA table_info escapes identifier", () => {
 
     await schemaDiff.diff([SqlitePragmaSafe], mockRunner, "sqlite");
 
-    const pragmaCall = queriedSqls.find((s) => s.includes("PRAGMA table_info"));
+    const pragmaCall = queriedSqls.find((s) => s.includes("PRAGMA table_xinfo"));
     expect(pragmaCall).toBeDefined();
     // The call should use quoted identifiers, not raw interpolation
     expect(pragmaCall).toContain('"');
