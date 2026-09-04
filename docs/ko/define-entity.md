@@ -607,7 +607,7 @@ export const Issue = defineEntity("issues", {
 컨텍스트 `e`는 전체 Expressions DSL(`e.iff`, `e.caseBuilder`, `e.coalesce`, `e.dateDiff`, `e.col(name)`)을 노출해요. 전체 DSL은 데코레이터 가이드의 [다이얼렉트 독립 표현식](./entities.md#다이얼렉트-독립-표현식-빌더-형식)을 참고하세요.
 
 ::: tip 계산 컬럼이 데이터베이스에 닿는 방식
-`GENERATED ALWAYS AS` DDL은 스키마 **제너레이터** — 마이그레이션 CLI(`stingerloom migrate:generate`)가 쓰는 경로 — 가 내보내요. 런타임 `synchronize`의 테이블 생성 경로는 저장 컬럼만 렌더링해요. 이건 데코레이터 `@ComputedColumn`과 정확히 같아요: 계산 컬럼을 추가(또는 변경)하려면 마이그레이션을 생성하세요. 테이블이 어떻게 생성됐든 Stingerloom은 항상 그 컬럼을 쓰기에서 제외해요.
+두 스키마 워크플로우 모두 계산 컬럼을 생성합니다. 런타임 `synchronize`는 CREATE TABLE에 `GENERATED ALWAYS AS` 정의를 포함하고(기존 테이블에는 ALTER TABLE ADD COLUMN으로 추가), `stingerloom migrate:generate`는 같은 정의를 마이그레이션 파일에 출력해요 — 두 경로 모두 같은 빌더로 렌더링됩니다. 기존 컬럼의 `expression` 변경은 여전히 직접 작성한 마이그레이션(삭제 후 재추가)이 필요해요. 표현식 변경은 자동 감지되지 않아요. 테이블이 어떻게 생성됐든 Stingerloom은 항상 그 컬럼을 쓰기에서 제외해요.
 :::
 
 ## 검증
@@ -1066,7 +1066,7 @@ export const Comment = defineEntity("comments", {
 
 **생명주기 훅이 실행되지 않아요.** 훅은 인스턴스에서 실행돼요. 평범한 객체 리터럴이 아니라 `new MyEntity({ … })`를 저장하세요 — [생명주기 훅](#생명주기-훅)을 참고하세요.
 
-**계산 컬럼이 생성된 테이블에 없어요.** `GENERATED ALWAYS AS` DDL은 런타임 `synchronize`가 아니라 스키마 제너레이터(마이그레이션 CLI)에서 나와요 — 마이그레이션을 생성하세요. 데코레이터 `@ComputedColumn`과 동일해요.
+**계산 컬럼이 생성된 테이블에 없어요.** ORM 버전을 확인하세요 — 현재 버전은 런타임 `synchronize`가 생성 컬럼을 만들어요. 2.0 이하에서는 마이그레이션 CLI(`migrate:generate`)에서만 DDL이 나왔어요. 그리고 PostgreSQL은 STORED로만 생성되고, 구버전 SQLite는 기존 테이블에 대한 `ALTER TABLE ADD COLUMN ... STORED`를 거부해요 (에러는 `continueOnError` 처리를 통해 보고돼요).
 
 **정말 데코레이터 없이 동작하나요?** 모든 엔티티를 `defineEntity`(또는 `EntitySchema`)로 정의하고 dry 동기화를 실행하세요 — 데이터베이스를 건드리지 않고 실행*하려는* DDL을 로깅하므로, 컴파일러가 내보낸 메타데이터 없이 모든 컬럼·인덱스·관계가 해석됐는지 확인할 수 있어요:
 
