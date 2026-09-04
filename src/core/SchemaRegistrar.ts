@@ -27,6 +27,10 @@ import {
   ManyToManyMetadata,
   COLUMN_TOKEN,
 } from "../decorators";
+import {
+  COMPUTED_COLUMN_TOKEN,
+  ComputedColumnMetadata,
+} from "../decorators/ComputedColumn";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { EntityNotFound } from "../dialects/EntityNotFound";
 import type { CreateTableForeignKey } from "../dialects/SqlDriver";
@@ -468,7 +472,16 @@ export class SchemaRegistrar {
                 }
                 inlineFks = collected.foreignKeys;
               }
-              await driver?.createTable(tableName, createColumns, inlineFks);
+              // @ComputedColumn metadata lives outside metadata.columns —
+              // pass it explicitly so the generated columns are part of the
+              // CREATE TABLE statement (V5-T0-3).
+              const computedColumns = this.getComputedColumns(TargetEntity);
+              await driver?.createTable(
+                tableName,
+                createColumns,
+                inlineFks,
+                computedColumns,
+              );
             } catch (err) {
               this.handleDdlError(
                 err,
@@ -1373,6 +1386,21 @@ export class SchemaRegistrar {
         }
       }
     }
+  }
+
+  /**
+   * Reads `@ComputedColumn` metadata for an entity. Same source the
+   * migration-time SchemaGenerator uses (the decorator and the EntitySchema
+   * registrar both write to COMPUTED_COLUMN_TOKEN on the prototype).
+   */
+  private getComputedColumns(
+    entity: ClazzType<any>,
+  ): ComputedColumnMetadata[] {
+    return (
+      (Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity.prototype) as
+        | ComputedColumnMetadata[]
+        | undefined) ?? []
+    );
   }
 
   /**

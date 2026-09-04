@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import sql, { join, raw, Sql } from "../../utils/sqlTag";
+import type { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
@@ -680,7 +681,12 @@ export class PostgresDriver implements ISqlDriver {
   /**
    * Creates the table.
    */
-  createTable(tableName: string, columns: SchemaOptions[]) {
+  createTable(
+    tableName: string,
+    columns: SchemaOptions[],
+    _foreignKeys?: unknown,
+    computedColumns?: ComputedColumnMetadata[],
+  ) {
     const pkColumns = columns.filter(
       (c) => (c.options as ColumnOption | undefined)?.primary,
     );
@@ -696,6 +702,17 @@ export class PostgresDriver implements ISqlDriver {
         }),
       );
     });
+
+    for (const cc of computedColumns ?? []) {
+      columnsMap.push(
+        raw(
+          this.columnDefBuilder.buildComputedColumnDef(cc, {
+            columnName: cc.name,
+            tableName,
+          }),
+        ),
+      );
+    }
 
     if (isCompositePk) {
       const pkList = pkColumns.map((c) => this.wrap(c.name)).join(", ");

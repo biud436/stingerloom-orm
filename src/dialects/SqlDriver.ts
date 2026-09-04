@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ColumnType } from "../decorators/Column";
+import type { ComputedColumnMetadata } from "../decorators/ComputedColumn";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
 import { MysqlSchemaInterface } from "./mysql/BaseSchema";
 import type { DriverQueryOptions } from "../types/DriverQueryOptions";
@@ -248,12 +249,17 @@ export interface ISqlDriver<T = any> {
    *   dialects that cannot add FKs after creation (`supportsAlterAddForeignKey`
    *   is false, i.e. SQLite); other dialects may ignore this and keep using
    *   ALTER TABLE ADD FOREIGN KEY in the schema-sync FK pass.
+   * @param computedColumns - Optional `@ComputedColumn` metadata. Rendered as
+   *   `GENERATED ALWAYS AS (...) STORED|VIRTUAL` definitions through the
+   *   dialect's ColumnDefinitionBuilder — the same renderer the migration-time
+   *   SchemaGenerator uses.
    * @returns A promise that resolves when the operation is complete.
    */
   createTable(
     tableName: string,
     columns: Omit<ColumnMetadata, "target" | "type">[],
     foreignKeys?: CreateTableForeignKey[],
+    computedColumns?: ComputedColumnMetadata[],
   ): Promise<T>;
 
   /**
