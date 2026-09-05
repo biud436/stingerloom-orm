@@ -119,6 +119,10 @@ again. For projected list views (`select(["id", "title"])`) use
 `paginatePartial()`, which returns plain `Pick<T, K>` objects instead of entity
 instances.
 
+When the builder carries a `groupBy()`, every page row is a group, so `total`
+counts the groups left after `HAVING` — the same rule `findWithPage()` applies to
+`FindOption.groupBy`. See [getCount() with GROUP BY](./query-builder-execution.md#getcount-with-group-by-counts-groups).
+
 The shape is identical to `em.findWithPage()`, so the two are interchangeable
 depending on whether you start from a `FindOption` or a builder:
 

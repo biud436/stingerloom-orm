@@ -11,7 +11,8 @@
  *  - to-many joined selection  -> COUNT(*) over SELECT DISTINCT root pk(s)
  *  - many-to-one joined selection -> plain COUNT(*) (rows are not multiplied)
  *  - plain leftJoin (no selection) -> plain COUNT(*) (unchanged)
- *  - GROUP BY present -> plain COUNT(*) (unchanged)
+ *  - GROUP BY present -> COUNT(*) over a `SELECT 1 ... GROUP BY` derived
+ *    table (number of groups), never the distinct-root wrapper
  *  - composite PK root -> SELECT DISTINCT lists every PK column
  */
 import "reflect-metadata";
@@ -26,6 +27,7 @@ import {
 } from "../../src/decorators";
 import { EntityManager } from "../../src/core/EntityManager";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { sql } from "../../src/utils/sqlTag";
 
 @Entity()
 class CntUser {
@@ -183,17 +185,47 @@ describe("getCount() — distinct root counting under to-many *AndSelect", () =>
     expect(countSql).not.toContain("SELECT DISTINCT");
   });
 
-  it("keeps existing per-group behavior when GROUP BY is present", async () => {
+  it("counts groups through a derived table when GROUP BY is present", async () => {
     const em = createMockEm(2);
     const qb = new SelectQueryBuilder<CntUser>(CntUser, "u", em);
     qb.leftJoinRelationAndSelect("comments", "c").groupBy(["id"]);
 
+    const count = await qb.getCount();
+
+    // The mock returns a single { count: 2 } row: that is the outer COUNT(*)
+    // over the grouped derived table, i.e. the number of groups.
+    expect(count).toBe(2);
+    const countSql = em.__calls.find((c) => c.toUpperCase().includes("COUNT(*)"))!;
+    // Outer aggregate wraps an inner constant projection grouped by the
+    // GROUP BY entries; the to-many join is applied inside the derived table.
+    expect(countSql).toMatch(
+      /^SELECT COUNT\(\*\) AS count FROM \(SELECT 1 FROM .* GROUP BY .*\) AS `grouped_src`$/s,
+    );
+    expect(countSql).toContain("LEFT JOIN");
+    expect(countSql).not.toContain("SELECT DISTINCT");
+  });
+
+  it("keeps HAVING inside the grouped derived table", async () => {
+    const em = createMockEm(1);
+    const qb = new SelectQueryBuilder<CntUser>(CntUser, "u", em);
+    qb.groupBy(["username"]).having(sql`COUNT(*) > ${1}`);
+
     await qb.getCount();
 
     const countSql = em.__calls.find((c) => c.toUpperCase().includes("COUNT(*)"))!;
-    expect(countSql).toContain("GROUP BY");
-    expect(countSql).not.toContain("SELECT DISTINCT");
-    expect(countSql).not.toMatch(/FROM \(SELECT DISTINCT/);
+    expect(countSql).toMatch(/GROUP BY .* HAVING COUNT\(\*\) > \?\) AS `grouped_src`$/s);
+  });
+
+  it("applies HAVING without GROUP BY to the single COUNT(*) row", async () => {
+    const em = createMockEm(3);
+    const qb = new SelectQueryBuilder<CntUser>(CntUser, "u", em);
+    qb.having(sql`COUNT(*) > ${1}`);
+
+    await qb.getCount();
+
+    const countSql = em.__calls.find((c) => c.toUpperCase().includes("COUNT(*)"))!;
+    expect(countSql).not.toContain("grouped_src");
+    expect(countSql).toMatch(/^SELECT COUNT\(\*\) AS count FROM .* HAVING COUNT\(\*\) > \?$/s);
   });
 
   it("lists every PK column in the DISTINCT subquery for composite-PK roots", async () => {

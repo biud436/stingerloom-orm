@@ -21,7 +21,7 @@ qb.limit(10).offset(20);
 qb.skip(20).take(10);
 ```
 
-Need both the data and the total count? `getManyAndCount()` runs both queries in parallel and returns `[T[], number]`.
+Need both the data and the total count? `getManyAndCount()` runs the data query and then the count query (sequentially, so SQLite's single connection is safe) and returns `[T[], number]`.
 
 ```typescript
 const [users, total] = await em
@@ -307,6 +307,33 @@ const total = await em
 
 This is the intended behavior — but if you're chaining `.getCount()` onto a builder used elsewhere with `addSelect`, don't expect the projection to participate in the count.
 
+### `getCount()` with GROUP BY counts groups
+
+A grouped query returns one row per group, so `getCount()` returns the **number of groups** that survive `HAVING` — the same rule `findAndCount()` / `findWithPage()` apply to `FindOption.groupBy`. That keeps the `total` of `getManyAndCount()`, `getPartialManyAndCount()`, `paginate()` and `paginatePartial()` consistent with the grouped rows they accompany.
+
+```typescript
+const groups = await em
+  .createQueryBuilder(Order, "o")
+  .groupBy(["status"])
+  .having(sql`COUNT(*) >= ${2}`)
+  .getCount();
+// SELECT COUNT(*) AS "count"
+// FROM (SELECT 1 FROM "order" AS "o" GROUP BY "o"."status" HAVING COUNT(*) >= $1) AS "grouped_src"
+```
+
+If you need the size of each group rather than how many groups there are, project the aggregate explicitly and read the rows:
+
+```typescript
+const o = qAlias(Order, "o");
+const sizes = await em
+  .createQueryBuilder(Order, "o")
+  .select(["status"])
+  .addSelect(o.id.count().as("cnt"))
+  .groupBy(["status"])
+  .getRawMany();
+// [{ status: "paid", cnt: 5 }, { status: "pending", cnt: 1 }, ...]
+```
+
 ## Result Validation — validate()
 
 Compile-time type narrowing catches many mistakes, but it can't verify what the database actually returns. A column might contain `null` when you expected a string, or a number might arrive as a string due to driver behavior. For runtime safety, you can attach a **validator** that checks every row before it reaches your application code.
@@ -457,7 +484,7 @@ You've built the query — now you need to run it. The query builder provides th
 | `getMany()` | `T[]` | Class instances. Validates required columns when `select()` is used |
 | `getOne()` | `T \| null` | Single class instance or null (auto-adds LIMIT 1) |
 | `getOneOrFail()` | `T` | Single class instance (throws `EntityNotFoundError` if not found) |
-| `getManyAndCount()` | `[T[], number]` | Class instances + total count in parallel |
+| `getManyAndCount()` | `[T[], number]` | Class instances + total count (two sequential queries) |
 | `paginate(opts?)` | `PagePaginationResult<T>` | One offset page (class instances) + pagination metadata |
 | `getMap(keyColumn)` | `Map<T[K], TResult>` | Run `getMany()` and index results into a `Map` keyed by `keyColumn`; last row wins on duplicate keys |
 | `pluck(column)` | `T[K][]` | Run `getMany()` and return a flat array of one column's values; row order preserved |
@@ -533,7 +560,7 @@ Supported type tags: `"number"`, `"bigint"`, `"string"`, `"date"`, `"json"`, `"b
 | `getMax(column)` | `number` | `MAX(column)` over the same scope; 0 on empty |
 | `explain()` | `ExplainResult` | Query plan for the built SELECT (MySQL / PostgreSQL only) |
 
-All aggregate terminals (`getSum`, `getAvg`, `getMin`, `getMax`, `getCount`) rebuild the SELECT clause from scratch, so `addSelect()` projections are ignored — only the WHERE / JOIN / GROUP BY / HAVING / soft-delete / tenant scope carry over.
+All aggregate terminals (`getSum`, `getAvg`, `getMin`, `getMax`, `getCount`) rebuild the SELECT clause from scratch, so `addSelect()` projections are ignored — only the WHERE / JOIN / soft-delete / tenant scope carry over. `getCount()` additionally honors GROUP BY / HAVING and then returns the number of groups (see [above](#getcount-with-group-by-counts-groups)); the scalar aggregates ignore GROUP BY / HAVING because they return a single value.
 
 `explain()` mirrors `EntityManager.explain()` — it prefixes the built SQL with the driver's `EXPLAIN` syntax and returns the same `ExplainResult` shape (`rows`, `type`, `possibleKeys`, `key`, `cost`). Throws `InvalidQueryError` when called against SQLite, which does not support `EXPLAIN`.
 

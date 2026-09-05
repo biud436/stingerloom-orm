@@ -29,6 +29,10 @@ const stats = await em
 > [QueryDSL Aggregates](./query-builder-querydsl.md#aggregates-—-select-and-having-in-one-expression)
 > section.
 
+### Counting Groups
+
+`getCount()` on a grouped builder returns the **number of groups** left after `HAVING`, not the size of any one group — `paginate()` and `getManyAndCount()` rely on this so their `total` matches the grouped rows. Per-group sizes come from projecting the aggregate as above and reading `getRawMany()`. Details: [getCount() with GROUP BY](./query-builder-execution.md#getcount-with-group-by-counts-groups).
+
 ### Aggregate Functions in SELECT
 
 Use `addSelect()` with `sql` template literals to add aggregate columns. The column alias becomes the key in the result object.

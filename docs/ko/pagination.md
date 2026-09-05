@@ -117,6 +117,10 @@ LIMIT/OFFSET이 남지 않아 다시 페이징할 수 있어요. 특정 컬럼�
 (`select(["id", "title"])`)에서는 엔티티 인스턴스 대신 plain `Pick<T, K>` 객체를
 돌려주는 `paginatePartial()`을 쓰세요.
 
+빌더에 `groupBy()`가 걸려 있으면 페이지의 각 행이 그룹이므로, `total`은 `HAVING`을
+통과한 그룹의 개수를 셉니다. `findWithPage()`가 `FindOption.groupBy`에 적용하는 규칙과
+같아요. [GROUP BY가 있는 getCount()](./query-builder-execution.md#group-by가-있는-getcount-는-그룹-수를-셉니다)를 참고하세요.
+
 반환 형태는 `em.findWithPage()`와 동일하므로, `FindOption`에서 시작하느냐 빌더에서
 시작하느냐에 따라 둘을 바꿔 쓸 수 있습니다:
 

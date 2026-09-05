@@ -17,7 +17,7 @@ qb.limit(10).offset(20);
 qb.skip(20).take(10);
 ```
 
-데이터와 전체 개수가 동시에 필요하다면 `getManyAndCount()`를 씁니다. 두 쿼리를 병렬로 실행해 `[T[], number]`를 돌려줘요.
+데이터와 전체 개수가 동시에 필요하다면 `getManyAndCount()`를 씁니다. 데이터 쿼리 다음에 카운트 쿼리를 순차 실행해(SQLite의 단일 커넥션에서도 안전하도록) `[T[], number]`를 돌려줘요.
 
 ```typescript
 const [users, total] = await em
@@ -312,6 +312,33 @@ const total = await em
 
 의도된 동작이지만, 다른 곳에서 `addSelect`가 붙은 빌더에 `.getCount()`를 체이닝한다면 프로젝션이 카운트에 반영될 거라 기대하지 마세요.
 
+### GROUP BY가 있는 `getCount()`는 그룹 수를 셉니다
+
+그룹화된 쿼리는 그룹당 한 행을 돌려주므로, `getCount()`는 `HAVING`을 통과한 **그룹의 개수**를 반환합니다. `findAndCount()` / `findWithPage()`가 `FindOption.groupBy`에 적용하는 규칙과 같아요. 덕분에 `getManyAndCount()`, `getPartialManyAndCount()`, `paginate()`, `paginatePartial()`의 `total`이 함께 돌아오는 그룹 행들과 어긋나지 않습니다.
+
+```typescript
+const groups = await em
+  .createQueryBuilder(Order, "o")
+  .groupBy(["status"])
+  .having(sql`COUNT(*) >= ${2}`)
+  .getCount();
+// SELECT COUNT(*) AS "count"
+// FROM (SELECT 1 FROM "order" AS "o" GROUP BY "o"."status" HAVING COUNT(*) >= $1) AS "grouped_src"
+```
+
+그룹이 몇 개인지가 아니라 각 그룹의 크기가 필요하다면, 집계를 명시적으로 투영하고 행을 읽으세요:
+
+```typescript
+const o = qAlias(Order, "o");
+const sizes = await em
+  .createQueryBuilder(Order, "o")
+  .select(["status"])
+  .addSelect(o.id.count().as("cnt"))
+  .groupBy(["status"])
+  .getRawMany();
+// [{ status: "paid", cnt: 5 }, { status: "pending", cnt: 1 }, ...]
+```
+
 ## 결과 검증 — `validate()`
 
 컴파일 타임 타입 narrowing이 많은 실수를 잡아 주지만, DB가 실제로 돌려주는 값까지 확인해 주지는 않아요. 문자열을 기대한 컬럼에 `null`이 올 수도 있고, 드라이버의 특성 때문에 숫자가 문자열로 올 수도 있습니다. 이 틈은 **validator**를 붙여 메워요. 모든 행이 애플리케이션 코드에 도달하기 전에 한 번 더 검사를 받습니다.
@@ -476,7 +503,7 @@ const users = await em
 | `getMany()` | `T[]` | 클래스 인스턴스. `select()` 사용 시 필수 컬럼 검증 |
 | `getOne()` | `T \| null` | 단일 인스턴스 또는 null (자동으로 `LIMIT 1`) |
 | `getOneOrFail()` | `T` | 단일 인스턴스 (결과 없으면 `EntityNotFoundError`) |
-| `getManyAndCount()` | `[T[], number]` | 인스턴스 배열 + 총 개수 병렬 실행 |
+| `getManyAndCount()` | `[T[], number]` | 인스턴스 배열 + 총 개수 (두 쿼리 순차 실행) |
 | `paginate(opts?)` | `PagePaginationResult<T>` | 오프셋 한 페이지(인스턴스) + 페이지네이션 메타데이터 |
 | `getMap(keyColumn)` | `Map<T[K], TResult>` | `getMany()`를 실행하고 결과를 `keyColumn` 기준 Map으로 인덱싱; 중복 키는 마지막 행이 남음 |
 | `pluck(column)` | `T[K][]` | `getMany()`를 실행하고 특정 컬럼 값만 flat 배열로 반환; 행 순서 보존 |
@@ -552,7 +579,7 @@ const rows = await qb
 | `getMax(column)` | `number` | 같은 범위에서 `MAX(column)`; 빈 결과 시 0 |
 | `explain()` | `ExplainResult` | 빌드된 SELECT의 쿼리 플랜 (MySQL / PostgreSQL만 지원) |
 
-모든 집계 터미널(`getSum`, `getAvg`, `getMin`, `getMax`, `getCount`)은 SELECT 절을 처음부터 재작성합니다. 따라서 `addSelect()` 투영은 무시되고, WHERE / JOIN / GROUP BY / HAVING / soft-delete / 테넌트 범위만 유지됩니다.
+모든 집계 터미널(`getSum`, `getAvg`, `getMin`, `getMax`, `getCount`)은 SELECT 절을 처음부터 재작성합니다. 따라서 `addSelect()` 투영은 무시되고, WHERE / JOIN / soft-delete / 테넌트 범위만 유지됩니다. `getCount()`는 여기에 GROUP BY / HAVING까지 반영해 그룹 수를 돌려주고([위 절](#group-by가-있는-getcount-는-그룹-수를-셉니다) 참고), 스칼라 집계 넷은 단일 값을 반환하므로 GROUP BY / HAVING을 무시합니다.
 
 `explain()`은 `EntityManager.explain()`과 동일한 방식으로 동작합니다. 빌드된 SQL에 드라이버의 `EXPLAIN` 구문을 붙이고 동일한 `ExplainResult` 형태(`rows`, `type`, `possibleKeys`, `key`, `cost`)를 반환해요. SQLite는 `EXPLAIN`을 지원하지 않으므로 호출하면 `InvalidQueryError`를 던집니다.
 
