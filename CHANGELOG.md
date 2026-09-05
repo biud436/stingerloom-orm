@@ -20,6 +20,8 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ### Fixed
 
+- **`SelectQueryBuilder.getCount()` with `groupBy()` returns the number of groups.** It ran `SELECT COUNT(*) ... GROUP BY ...` and read the first row, i.e. the size of whichever group the database listed first — neither the group count nor the row count — so `getManyAndCount()`, `getPartialManyAndCount()`, `paginate()` and `paginatePartial()` reported a wrong `total` / `totalPages` for grouped queries. The count is now taken over a `SELECT 1 ... GROUP BY ... HAVING ...` derived table, matching what `findAndCount()` / `findWithPage()` already return for `FindOption.groupBy`. Per-group sizes remain available by projecting the aggregate (`addSelect(o.id.count().as("cnt"))` + `getRawMany()`). `HAVING` without `GROUP BY` is unchanged (the single `COUNT(*)` row is kept or filtered to `0`).
+
 - **`synchronize: true` no longer drops generated columns it did not create.** On MySQL and PostgreSQL, information_schema reports generated columns, but the schema diff did not recognize them as entity-owned — a generated column created by a migration was classified as a dropped column and removed at the next boot. Computed columns are now part of the diff's known-column set: never dropped, never type-compared (an `expression` change still requires a hand-written migration).
 
 - **PostgreSQL computed-column DDL is valid now: STORED is always emitted.** PostgreSQL supports only STORED generated columns, but the generator wrote `VIRTUAL` (the decorator default) into migration files — DDL PostgreSQL rejects. On PostgreSQL the column is always created as STORED; an explicit `stored: false` logs a warning before being coerced.

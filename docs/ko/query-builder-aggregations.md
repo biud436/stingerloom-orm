@@ -41,6 +41,10 @@ await em.createQueryBuilder(Post, "p")
 
 둘 다 지원하긴 합니다. 다만 동일한 집계를 여러 자리에서 쓴다면 `qAlias()` 쪽이 유리해요. 기준을 바꿀 때 한 군데만 고치면 되니까요. `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()`, `.countDistinct()` 전부 같은 방식으로 쓰고, 전체 연산자는 [QueryDSL 집계](./query-builder-querydsl.md#집계-—-count-sum-avg-min-max)에 정리돼 있습니다.
 
+### 그룹 수 세기
+
+그룹화된 빌더에서 `getCount()`는 `HAVING`을 통과한 **그룹의 개수**를 돌려줍니다. 어느 한 그룹의 크기가 아니에요. `paginate()`와 `getManyAndCount()`의 `total`이 그룹 행과 맞아떨어지는 것도 이 규칙 덕분입니다. 그룹별 크기는 위처럼 집계를 투영한 뒤 `getRawMany()`로 읽으세요. 자세한 내용은 [GROUP BY가 있는 getCount()](./query-builder-execution.md#group-by가-있는-getcount-는-그룹-수를-셉니다)를 참고하세요.
+
 ### SELECT에서 집계 함수 바로 쓰기
 
 `addSelect()`에 `sql` 템플릿 리터럴을 넘기면 집계 컬럼을 추가할 수 있습니다. 두 번째 인자 별칭이 결과 객체의 키가 돼요.

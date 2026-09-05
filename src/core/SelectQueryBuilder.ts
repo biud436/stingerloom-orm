@@ -4144,8 +4144,16 @@ export class SelectQueryBuilder<T, TResult = T> {
    * across MySQL / PostgreSQL / SQLite and composite-PK safe. Hand-written
    * joins added through `leftJoin()/innerJoin()` without a joined selection
    * keep the plain `COUNT(*)` behavior (the caller may genuinely want the
-   * multiplied row count), and GROUP BY queries keep their existing per-group
-   * COUNT semantics.
+   * multiplied row count).
+   *
+   * With a GROUP BY the query yields one row per group, so the count is the
+   * **number of groups** surviving HAVING — the same contract
+   * `EntityManager.findAndCount()` / `findWithPage()` apply to
+   * `FindOption.groupBy`, which keeps `getManyAndCount()` / `paginate()`
+   * totals consistent with the grouped rows they accompany. It is computed as
+   * `COUNT(*) FROM (SELECT 1 ... GROUP BY ... HAVING ...)`. Per-group sizes
+   * are not what this method returns: project them explicitly, e.g.
+   * `addSelect(u.id.count().as("cnt"))` + `getRawMany()`.
    */
   async getCount(): Promise<number> {
     const internals = this.emInternals._ctx;
@@ -4156,8 +4164,8 @@ export class SelectQueryBuilder<T, TResult = T> {
         : "postgresql";
 
     // Distinct-root count: only when a to-many joined selection multiplies
-    // rows and the query carries no GROUP BY / HAVING (those keep their
-    // existing per-group semantics) and the root PK is resolvable.
+    // rows and the query carries no GROUP BY / HAVING (a GROUP BY takes the
+    // grouped branch below) and the root PK is resolvable.
     if (
       this.groupByCols.length === 0 &&
       this.havingClauses.length === 0 &&
@@ -4185,14 +4193,46 @@ export class SelectQueryBuilder<T, TResult = T> {
       }
     }
 
+    // Grouped count: the data query returns one row per group, so the total
+    // paired with it must be the number of groups surviving HAVING. A bare
+    // `SELECT COUNT(*) ... GROUP BY ...` yields one row per group and reading
+    // its first row reports the size of an arbitrary group instead. The
+    // derived table projects a constant rather than the group expressions:
+    // naming those would need synthetic aliases (MySQL rejects duplicate
+    // derived-table column names such as `u.id, p.id`) and a parameterized
+    // expression would have to match the GROUP BY text byte-for-byte on
+    // PostgreSQL.
+    if (this.groupByCols.length > 0) {
+      const inner = RawQueryBuilderFactory.create() as RawQueryBuilder;
+      inner.setDatabaseType(dbType);
+      inner.select(["1"]);
+      this.applyCountSource(inner);
+      inner.groupBy(this.groupByCols);
+      if (this.havingClauses.length > 0) {
+        inner.having(this.havingClauses);
+      }
+
+      const outer = RawQueryBuilderFactory.create() as RawQueryBuilder;
+      outer.setDatabaseType(dbType);
+      outer.select(["COUNT(*) AS count"]);
+      outer.from(
+        sql`(${inner.build()})`,
+        `AS ${this.em.wrap("grouped_src")}`,
+      );
+
+      const built = outer.build();
+      const rows = await this.execQuery<{ count: string | number }>(built);
+      if (rows.length === 0) return 0;
+      return Number(rows[0].count);
+    }
+
     const qb = RawQueryBuilderFactory.create() as RawQueryBuilder;
     qb.setDatabaseType(dbType);
     qb.select(["COUNT(*) AS count"]);
     this.applyCountSource(qb);
 
-    if (this.groupByCols.length > 0) {
-      qb.groupBy(this.groupByCols);
-    }
+    // HAVING without GROUP BY treats the whole row source as one group:
+    // the single COUNT(*) row is kept or filtered out (-> 0).
     if (this.havingClauses.length > 0) {
       qb.having(this.havingClauses);
     }
