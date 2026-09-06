@@ -2209,13 +2209,17 @@ export class WriteExecutor {
     const deletePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
     const whereMap: Sql[] = this.resolveCriteriaWhere(criteria, deletePropToCol);
 
+    // Same rule as the tenant predicate: the STI discriminator is appended
+    // by the ORM, not the caller, so it must not satisfy the guard either —
+    // a criteria that resolves to nothing (`{ OR: [] }`) would otherwise
+    // delete every row of the subtype.
+    if (whereMap.length === 0) {
+      throw new DeleteWithoutConditionsError("Delete");
+    }
+
     const deleteSti = this.stiDiscriminatorClause(entity, strategy);
     if (deleteSti) {
       whereMap.push(deleteSti);
-    }
-
-    if (whereMap.length === 0) {
-      throw new DeleteWithoutConditionsError("Delete");
     }
 
     const tenantDeleteWhere = this.ctx.buildTenantWhereClause(entity);
@@ -2421,8 +2425,8 @@ export class WriteExecutor {
       }
     }
 
-    this.ctx.validateCriteriaKeys(metadata, data as WhereClause<T>, entity.name);
-    this.ctx.validateCriteriaKeys(metadata, where, entity.name);
+    this.ctx.validateUpdateDataKeys(metadata, data, entity.name);
+    this.ctx.validateCriteriaKeys(metadata, where, entity.name, "where");
   }
 
   /**
@@ -2505,6 +2509,15 @@ export class WriteExecutor {
       options.where,
       propertyToColumn,
     );
+
+    // The key-count check in validateUpdateManyInput cannot see a criteria
+    // that resolves to no predicate at all — `{ OR: [] }`, `{ status:
+    // undefined }` — and the tenant / STI / soft-delete predicates appended
+    // below would then be the entire WHERE, turning the call into a
+    // table-wide update. Guard on the user's predicates alone.
+    if (whereMap.length === 0) {
+      throw new DeleteWithoutConditionsError("Update");
+    }
 
     const tenantUpdateWhere = this.ctx.buildTenantWhereClause(entity);
     if (tenantUpdateWhere) {

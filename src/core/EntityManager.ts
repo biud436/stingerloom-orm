@@ -34,6 +34,11 @@ import {
 } from "./EntityEventEmitter";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
+import {
+  buildColumnNameScope,
+  validateUpdateDataIdentifiers,
+  validateWhereIdentifiers,
+} from "./ColumnNameValidator";
 import { OptimisticLockError } from "../errors/OptimisticLockError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { isScopeExempt } from "./entity-manager/scope-exemption";
@@ -365,7 +370,9 @@ export class EntityManager implements BaseEntityManager {
     applyWriteTransform: (col, v) => this.applyWriteTransform(col, v),
     applyTenantColumnOnInsert: (e, i) => this.applyTenantColumnOnInsert(e, i),
     getComputedColumnNames: (e) => this.getComputedColumnNames(e),
-    validateCriteriaKeys: (m, c, n) => this.validateCriteriaKeys(m, c, n),
+    validateCriteriaKeys: (m, c, n, clause) =>
+      this.validateCriteriaKeys(m, c, n, clause),
+    validateUpdateDataKeys: (m, d, n) => this.validateUpdateDataKeys(m, d, n),
     hasEagerRelations: (e) => this.hasEagerRelations(e),
     hasSubscriberFor: (e, m) => this.hasSubscriberFor(e, m),
     notifySubscribers: (e, m, a) => this.notifySubscribers(e, m, a),
@@ -2177,38 +2184,53 @@ export class EntityManager implements BaseEntityManager {
 
   // ── Utilities ──────────────────────────────────────────────
 
+  /**
+   * Fail-fast column check for the criteria of a bulk write (delete /
+   * updateMany / softDelete / restore).
+   *
+   * Walks the criteria with the same validator the read paths use, so
+   * `AND` / `OR` / `NOT` (nested included) are traversed rather than mistaken
+   * for column names — the resolver has always accepted them, only this guard
+   * rejected them. The accepted set is derived from the SAME source the SQL
+   * builder uses (buildPropertyToColumnMap), so the guard accepts every key
+   * the builder can resolve and the two can never drift: @Column property and
+   * DB names, @ManyToOne/@OneToOne FK shadow properties (`userId` → `user_id`,
+   * #353) and @ComputedColumn names, which are filterable but absent from
+   * `metadata.columns`.
+   */
   private validateCriteriaKeys<T>(
     metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
     criteria: WhereClause<T>,
     entityName: string,
+    clause: "criteria" | "where" = "criteria",
   ): void {
-    // Derive the valid key set from the SAME source the SQL builder uses
-    // (buildPropertyToColumnMap), so the guard accepts every key the builder
-    // can resolve and the two can never drift. This includes @Column property
-    // and DB names plus @ManyToOne/@OneToOne FK shadow properties (e.g.
-    // `userId` → `user_id`); without the FK entries, filtering a bulk
-    // update/delete by a relation FK threw "Unknown column" even though the
-    // builder resolves it fine (#353).
-    const validNames = new Set<string>();
-    for (const col of metadata.columns) {
-      if (col.propertyKey) validNames.add(col.propertyKey);
-      if (col.name) validNames.add(col.name);
-    }
-    for (const [prop, col] of this.buildPropertyToColumnMap(metadata)) {
-      validNames.add(prop);
-      if (col) validNames.add(col);
-    }
-    for (const key of Object.keys(criteria as object)) {
-      const value = (criteria as any)[key];
-      // Skip functions (hook methods) and undefined/null values
-      if (typeof value === "function" || value === undefined || value === null) continue;
-      if (!validNames.has(key)) {
-        throw new InvalidQueryError(
-          `Unknown column "${key}" in criteria for entity "${entityName}".`,
-          `Valid columns: ${[...validNames].join(", ")}`,
-        );
-      }
-    }
+    const scope = buildColumnNameScope({
+      entityName,
+      columns: metadata.columns,
+      propertyToColumn: this.buildPropertyToColumnMap(metadata),
+      computedColumns: metadata.target
+        ? this.getComputedColumnNames(metadata.target)
+        : null,
+    });
+    validateWhereIdentifiers(criteria, scope, clause);
+  }
+
+  /**
+   * Fail-fast column check for the SET payload of updateMany. Flat by
+   * design: a combinator key is a misplaced filter, not a column, and a
+   * @ComputedColumn cannot be assigned, so neither is in scope here.
+   */
+  private validateUpdateDataKeys<T>(
+    metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
+    data: UpdateData<T>,
+    entityName: string,
+  ): void {
+    const scope = buildColumnNameScope({
+      entityName,
+      columns: metadata.columns,
+      propertyToColumn: this.buildPropertyToColumnMap(metadata),
+    });
+    validateUpdateDataIdentifiers(data, scope);
   }
 
   /**

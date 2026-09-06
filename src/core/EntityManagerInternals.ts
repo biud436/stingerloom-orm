@@ -10,7 +10,7 @@ import { ClazzType, Logger } from "../utils";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
-import { FindOption, LockMode, WhereClause } from "../dialects/FindOption";
+import { FindOption, LockMode, UpdateData, WhereClause } from "../dialects/FindOption";
 import { ReplicationNodeConfig } from "../dialects/ReplicationRouter";
 import { DeleteResult } from "../types/DeleteResult";
 import { EntityResult } from "../types/EntityResult";
@@ -127,10 +127,22 @@ export interface EntityManagerInternals {
   applyTenantColumnOnInsert<T>(entity: ClazzType<T>, item: Partial<T>): void;
   /** Returns the set of @ComputedColumn names for an entity. */
   getComputedColumnNames<T>(entity: ClazzType<T>): Set<string>;
-  /** Validates WHERE-criteria keys against the entity's known property/column set. */
+  /**
+   * Validates WHERE-criteria keys against the entity's known property/column
+   * set, traversing AND / OR / NOT like the resolver does. `clause` names the
+   * argument in the error ("criteria" for delete/softDelete/restore, "where"
+   * for updateMany's options.where).
+   */
   validateCriteriaKeys<T>(
     metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
     criteria: WhereClause<T>,
+    entityName: string,
+    clause?: "criteria" | "where",
+  ): void;
+  /** Validates the SET payload of updateMany: known columns only, no combinators. */
+  validateUpdateDataKeys<T>(
+    metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
+    data: UpdateData<T>,
     entityName: string,
   ): void;
   /** True if the entity has any eager-loaded @ManyToOne/@OneToOne relation. */

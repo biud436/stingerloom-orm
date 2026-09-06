@@ -5,8 +5,20 @@ import type { InheritanceResolver } from "./InheritanceResolver";
 import { InvalidQueryError } from "../errors";
 import { closestIdentifier } from "../utils/closestIdentifier";
 
-/** Clause a rejected identifier came from, used verbatim in the message. */
-export type IdentifierClause = "where" | "orderBy" | "select" | "groupBy";
+/**
+ * Clause a rejected identifier came from, used verbatim in the message.
+ *
+ * `criteria` is the second argument of delete / softDelete / restore, `data`
+ * the SET payload of updateMany; `where` covers reads and updateMany's
+ * `options.where`.
+ */
+export type IdentifierClause =
+  | "where"
+  | "orderBy"
+  | "select"
+  | "groupBy"
+  | "criteria"
+  | "data";
 
 /**
  * The identifiers a read query may name for one entity, plus the entity name
@@ -89,17 +101,20 @@ export function assertKnownColumn(
  * checks every column key it would emit.
  *
  * `undefined` values are skipped because the resolver skips them too, and a
- * function value is a hook method rather than a filter (the bulk-write guard
- * makes the same two exemptions).
+ * function value is a hook method rather than a filter. Shared by the read
+ * paths and the criteria-based writes (delete / updateMany / softDelete /
+ * restore), which run their criteria through the same resolver — `clause`
+ * only changes the wording of the error.
  */
 export function validateWhereIdentifiers(
   where: unknown,
   scope: ColumnNameScope,
+  clause: IdentifierClause = "where",
 ): void {
   if (where === undefined || where === null) return;
 
   if (Array.isArray(where)) {
-    for (const clause of where) validateWhereIdentifiers(clause, scope);
+    for (const entry of where) validateWhereIdentifiers(entry, scope, clause);
     return;
   }
   if (typeof where !== "object") return;
@@ -108,12 +123,43 @@ export function validateWhereIdentifiers(
     const value = (where as Record<string, unknown>)[key];
 
     if (LOGICAL_KEYS.has(key)) {
-      validateWhereIdentifiers(value, scope);
+      validateWhereIdentifiers(value, scope, clause);
       continue;
     }
     if (value === undefined || typeof value === "function") continue;
 
-    assertKnownColumn(key, "where", scope);
+    assertKnownColumn(key, clause, scope);
+  }
+}
+
+/**
+ * Checks the SET payload of a criteria-based update. A SET clause maps
+ * columns to values, so unlike a `where` it has no logical structure: a
+ * combinator key is rejected by name rather than reported as an unknown
+ * column, because "Unknown column "OR"" pointed users at the column list when
+ * the fix is to move the key into `options.where`.
+ *
+ * Same value exemptions as {@link validateWhereIdentifiers}: `undefined`
+ * fields are not written, and a function value is a hook method.
+ */
+export function validateUpdateDataIdentifiers(
+  data: unknown,
+  scope: ColumnNameScope,
+): void {
+  if (data === undefined || data === null || typeof data !== "object") return;
+
+  for (const key of Object.keys(data as Record<string, unknown>)) {
+    const value = (data as Record<string, unknown>)[key];
+
+    if (LOGICAL_KEYS.has(key)) {
+      throw new InvalidQueryError(
+        `Logical combinator "${key}" is not allowed in the update data for entity "${scope.entityName}".`,
+        `AND / OR / NOT filter rows; put them in options.where. The data argument maps columns to the values to write.`,
+      );
+    }
+    if (value === undefined || typeof value === "function") continue;
+
+    assertKnownColumn(key, "data", scope);
   }
 }
 

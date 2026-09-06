@@ -175,7 +175,7 @@ const users = await em.find(User, {
 });
 ```
 
-### where / orderBy / select / groupBy의 "Unknown column"
+### where / orderBy / select / groupBy / criteria / data의 "Unknown column"
 
 ```
 InvalidQueryError: Unknown column "userNam" in "where" for entity "User". Did you mean "userName"?
@@ -183,7 +183,13 @@ InvalidQueryError: Unknown column "userNam" in "where" for entity "User". Did yo
 
 키가 해당 엔티티의 어떤 컬럼과도 일치하지 않습니다. 읽기(`find`, `findOne`,
 `count`, `sum` 등)와 벌크 쓰기(`update`, `delete`) 모두 SQL을 만들기 전에
-검사하고, 에러의 `suggestion`에 허용되는 이름이 전부 나열돼요.
+검사하고, 에러의 `suggestion`에 허용되는 이름이 전부 나열돼요. 따옴표 안의
+절 이름은 어느 인자에서 났는지를 가리킵니다. `delete` / `softDelete` /
+`restore`는 `"criteria"`, 읽기와 `updateMany`는 `"where"`, `updateMany`의
+SET 페이로드는 `"data"`예요. `AND` / `OR` / `NOT`은 안쪽으로 순회할 뿐 컬럼으로
+보고되지 않고, `updateMany`의 `data`에 결합자가 들어오면 별도 메시지(`Logical
+combinator "OR" is not allowed in the update data`)로 실패합니다. 결합자는
+`where`에 두면 됩니다.
 
 허용되는 키는 속성명, DB 컬럼명, `@ManyToOne` / `@OneToOne` FK 섀도우 속성,
 `@ComputedColumn` 이름, 그리고 단일 테이블 상속에서는 판별자 컬럼과 같은

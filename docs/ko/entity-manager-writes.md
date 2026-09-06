@@ -249,6 +249,29 @@ await em.delete(Session, { userId: null });
 
 빈 criteria는 여전히 `DeleteWithoutConditionsError`를 던져요 -- 테이블 전체 삭제를 막는 가드는 그대로예요.
 
+### 벌크 criteria의 논리 결합자 -- AND / OR / NOT
+
+`delete()`, `softDelete()`, `restore()`의 criteria와 `updateMany()` / `update()`의 `where`는 조회의 `where`와 똑같이 `AND` / `OR` / `NOT` 키를 받습니다. 중첩 깊이에도 제한이 없어요. 쓰기 앞단의 식별자 검사 역시 조회 경로와 같은 방식으로 결합자 안쪽까지 순회하므로, `OR` 분기 안의 오타는 SQL을 실행하기 전에 같은 `Did you mean` 제안과 함께 잡힙니다.
+
+```typescript
+// 보관됐거나 오래된 글을 한 문장으로 삭제
+await em.delete(Post, {
+  OR: [{ status: "archived" }, { updatedAt: { lt: cutoff } }],
+});
+
+// 담당자가 있는 열린 티켓만 닫기
+await em.updateMany(Ticket, { status: "closed" }, {
+  where: {
+    AND: [{ status: "open" }, { NOT: { assigneeId: null } }],
+  },
+});
+
+// 일반 컬럼 옆에 놓인 결합자는 find()와 마찬가지로 AND로 묶입니다
+await em.softDelete(Draft, { authorId: 7, OR: [{ title: null }, { body: "" }] });
+```
+
+결합자가 아무 조건도 만들지 못하면(`{ OR: [] }`, 값이 전부 `undefined`인 분기) 빈 criteria와 똑같이 취급해 `DeleteWithoutConditionsError`를 던집니다. 테이블 전체를 건드리는 문장으로 조용히 떨어지지 않아요. `updateMany()`도 같은 규칙을 따릅니다.
+
 ---
 
 ## 조건부 수정 -- update()
@@ -298,6 +321,8 @@ SET `isActive` = ?
 WHERE `lastLoginAt` IS NULL
 -- Parameters: [false]
 ```
+
+`where`는 조회의 `where`가 받는 것을 전부 받습니다. `AND` / `OR` / `NOT`도 포함돼요(위의 *벌크 criteria의 논리 결합자* 참고). 반면 `data` 인자는 SET 절이라 컬럼과 값의 대응만 담습니다. 여기에 결합자 키가 들어오면 컬럼으로 오해하는 대신 `Logical combinator "OR" is not allowed in the update data`로 거절하니, `where`로 옮기면 됩니다.
 
 좀 더 현실적인 예시 -- 최근 로그인하지 않은 유저 비활성화:
 
