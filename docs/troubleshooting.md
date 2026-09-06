@@ -175,7 +175,7 @@ const users = await em.find(User, {
 });
 ```
 
-### "Unknown column" in where / orderBy / select / groupBy
+### "Unknown column" in where / orderBy / select / groupBy / criteria / data
 
 ```
 InvalidQueryError: Unknown column "userNam" in "where" for entity "User". Did you mean "userName"?
@@ -183,7 +183,13 @@ InvalidQueryError: Unknown column "userNam" in "where" for entity "User". Did yo
 
 The key doesn't match any column of that entity. Reads (`find`, `findOne`,
 `count`, `sum`, …) and bulk writes (`update`, `delete`) both check this before
-building SQL; the error's `suggestion` lists every accepted name.
+building SQL; the error's `suggestion` lists every accepted name. The quoted
+clause names the argument: `"criteria"` for `delete` / `softDelete` /
+`restore`, `"where"` for reads and `updateMany`, `"data"` for the SET payload
+of `updateMany`. `AND` / `OR` / `NOT` are walked into, never reported as
+columns; a combinator in `updateMany`'s `data` fails with its own message
+(`Logical combinator "OR" is not allowed in the update data`) -- it belongs
+in `where`.
 
 Accepted keys are the property name, the DB column name, `@ManyToOne` /
 `@OneToOne` FK shadow properties, `@ComputedColumn` names, and — in a

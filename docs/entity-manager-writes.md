@@ -249,6 +249,29 @@ await em.delete(Session, { userId: null });
 
 Empty criteria still throw `DeleteWithoutConditionsError` -- the table-wide guard is unchanged.
 
+### Logical combinators in bulk criteria -- AND / OR / NOT
+
+The criteria of `delete()`, `softDelete()`, `restore()` and the `where` of `updateMany()` / `update()` accept the same `AND` / `OR` / `NOT` keys as a read `where`, nested to any depth. The identifier check that runs before these writes walks the combinators exactly like the read paths do, so a typo inside an `OR` branch is still caught before any SQL runs, with the same `Did you mean` suggestion.
+
+```typescript
+// Delete everything that is either archived or stale
+await em.delete(Post, {
+  OR: [{ status: "archived" }, { updatedAt: { lt: cutoff } }],
+});
+
+// Close the open tickets that DO have an assignee
+await em.updateMany(Ticket, { status: "closed" }, {
+  where: {
+    AND: [{ status: "open" }, { NOT: { assigneeId: null } }],
+  },
+});
+
+// A combinator next to a plain column is AND-ed with it, as in find()
+await em.softDelete(Draft, { authorId: 7, OR: [{ title: null }, { body: "" }] });
+```
+
+A combinator that resolves to no predicate at all (`{ OR: [] }`, a branch whose only values are `undefined`) is treated like empty criteria: the call throws `DeleteWithoutConditionsError` instead of falling through to a table-wide statement. This holds for `updateMany()` as well.
+
 ---
 
 ## Targeted Update -- update()
@@ -298,6 +321,8 @@ SET `isActive` = ?
 WHERE `lastLoginAt` IS NULL
 -- Parameters: [false]
 ```
+
+The `where` accepts everything a read `where` does, including `AND` / `OR` / `NOT` (see *Logical combinators in bulk criteria* above). The `data` argument is the SET clause: it maps columns to values, so a combinator key there is rejected with `Logical combinator "OR" is not allowed in the update data` rather than being mistaken for a column -- move it into `where`.
 
 A more realistic example -- deactivating users who haven't logged in recently:
 
