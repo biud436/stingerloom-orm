@@ -1526,6 +1526,7 @@ SELECT * FROM "user" WHERE "deletedAt" IS NULL;
 | `Boolean`       | boolean    | 1         | false    |
 | `Date`          | datetime   | 0         | false    |
 | `Buffer`        | blob       | 0         | true     |
+| `BigInt`        | bigint (`bigintMode: "bigint"`) | 0 | false |
 | 기타            | text       | 0         | true     |
 
 ### ColumnType별 DB 매핑
@@ -1538,7 +1539,7 @@ SELECT * FROM "user" WHERE "deletedAt" IS NULL;
 | `int` / `number` | INT           | INTEGER          | INTEGER |
 | `float`          | FLOAT         | REAL             | REAL    |
 | `double`         | DOUBLE        | DOUBLE PRECISION | REAL    |
-| `bigint`         | BIGINT        | BIGINT           | INTEGER |
+| `bigint`         | BIGINT        | BIGINT           | BIGINT (INTEGER affinity) |
 | `boolean`        | TINYINT(1)    | BOOLEAN          | INTEGER |
 | `datetime`       | DATETIME      | TIMESTAMP        | TEXT    |
 | `timestamp`      | TIMESTAMP     | TIMESTAMP        | TEXT    |
@@ -1564,6 +1565,37 @@ scores!: number[] | null; // INTEGER[]
 
 일반 JS 배열이 `pg` 드라이버의 네이티브 배열 직렬화로 그대로 왕복됩니다. MySQL은 `array` 컬럼을 JSON으로, SQLite는 TEXT로 저장하며 이때 `arrayElementType`은 무시돼요. 참고로 PostgreSQL 인트로스펙션은 모든 배열 컬럼을 단순히 `ARRAY`로 보고하기 때문에, 스키마 diff는 요소 타입 변경을 감지하지 못하고 엔티티 생성 시에도 요소 타입 없이 `type: "array"`로 복원됩니다.
 
+### bigint 컬럼과 `bigintMode`
+
+JS `number`는 2^53(`Number.MAX_SAFE_INTEGER`, 약 9.007e15)까지만 정수를 정확히 담지만, 데이터베이스 `BIGINT`는 2^63까지 담습니다. 드라이버는 bigint 값을 손실 없이 내려줍니다. `pg`는 문자열로, `mysql2` / `better-sqlite3`는 범위 안이면 number, 범위를 넘으면 10진수 문자열로 돌려줘요. 엔티티 프로퍼티에 무엇을 담을지는 `bigintMode`가 결정하며, 어느 드라이버에서나 같은 타입이 나옵니다.
+
+| `bigintMode` | 프로퍼티 타입 | ±2^53 초과 시 |
+|--------------|---------------|---------------|
+| `"number"` (기본값) | `number` | 반올림하지 않고 `BIGINT_PRECISION_LOSS` 코드의 `OrmError`를 던짐 |
+| `"string"` | `string` (10진수 문자열) | 무손실, JSON 직렬화 안전 |
+| `"bigint"` | `bigint` (네이티브 `BigInt`) | 무손실. `JSON.stringify`에는 replacer가 필요 |
+
+```typescript
+@Entity()
+export class Account {
+  @PrimaryGeneratedColumn({ type: "bigint" })
+  id!: number; // 기본 모드: 다른 자동 증가 키와 같은 number
+
+  @Column({ type: "bigint", bigintMode: "string" })
+  balanceCents!: string; // "9007199254740993"
+
+  @Column({ type: "bigint", bigintMode: "bigint" })
+  snowflakeId!: bigint; // 9007199254740993n
+
+  @Column()
+  version!: bigint; // 프로퍼티 타입이 `bigint`면 type: "bigint" + bigintMode: "bigint"로 추론
+}
+```
+
+이 모드는 읽기(`find*`, `findWithCursor`, `stream`, RETURNING 행)와 `saveMany()` / `insertManyAndReturn()`가 배치에서 유도하는 기본 키에 적용됩니다. 쓰기는 어느 모드에서든 number, 숫자 문자열, `BigInt`를 모두 받아요. 모든 드라이버가 `BigInt` 파라미터를 네이티브로 바인딩하므로 `where: { snowflakeId: 9007199254740993n }`도 캐스팅 없이 동작합니다. 집계는 `number` 반환 타입을 유지합니다. `sum()` / `min()` / `max()`(그리고 `SelectQueryBuilder`의 대응 메서드)는 ±2^53을 넘는 정수 결과를 반올림하는 대신 `BIGINT_PRECISION_LOSS`를 던지므로, 그런 값은 `getRawOne()`에 `coerce: { total: "bigint" }`를 주어 읽으세요. 커서 페이지네이션은 `BigInt` 정렬 값과 키 값을 인코딩하고, `logging: true`는 `BigInt` 파라미터를 숫자 문자열로 출력합니다.
+
+SQLite에서는 bigint 컬럼을 `BIGINT`로 선언합니다(INTEGER affinity와 저장 방식은 이전과 동일). 커넥터가 어떤 문장에 무손실 정수 읽기가 필요한지 구분하기 위해서예요. `INTEGER`로 선언된 기존 테이블도 그대로 동작하고 타입 변경으로 보고되지 않지만, ±2^53을 넘는 값은 컬럼을 `BIGINT`로 다시 만들기 전까지 반올림된 채로 남습니다. 자동 증가 기본 키는 SQLite rowid의 별칭이 되는 유일한 표기인 `INTEGER PRIMARY KEY`를 유지합니다.
+
 ### @Column 전체 옵션
 
 | 옵션            | 타입           | 설명                                           |
@@ -1582,6 +1614,7 @@ scores!: number[] | null; // INTEGER[]
 | `enumValues`    | `string[]`     | PostgreSQL ENUM 값 목록                        |
 | `enumName`      | `string`       | PostgreSQL ENUM 타입 이름                      |
 | `arrayElementType` | `ColumnType` | `type: "array"` 컬럼의 요소 타입 (PostgreSQL 전용, 기본값 `"text"`) |
+| `bigintMode`    | `"number" \| "string" \| "bigint"` | `type: "bigint"` 컬럼의 엔티티 측 타입 (기본값 `"number"`, ±2^53 초과 시 예외) |
 
 ## 데코레이터 없이 엔티티 정의하기 (EntitySchema)
 

@@ -100,6 +100,7 @@ Every field value must be a **called** builder. A value `defineEntity` does not 
 | --- | --- | --- |
 | `t.int()` / `t.integer()` | `number` | `int` |
 | `t.bigint()` | `number` | `bigint` |
+| `t.bigint({ mode: "string" })` / `t.bigint({ mode: "bigint" })` | `string` / `bigint` | `bigint` (lossless beyond ±2^53) |
 | `t.float()` / `t.double()` | `number` | `float` / `double` |
 | `t.number()` | `number` | `number` |
 | `t.decimal(precision?, scale?)` | `number` | `number` |
@@ -110,6 +111,8 @@ Every field value must be a **called** builder. A value `defineEntity` does not 
 | `t.boolean()` | `boolean` | `boolean` |
 | `t.datetime()` / `t.timestamp()` / `t.timestamptz()` / `t.date()` | `Date` | matching temporal type |
 | `t.blob()` | `Buffer` | `blob` |
+
+`t.bigint()` defaults to `bigintMode: "number"`: the property is a plain `number`, and a stored value beyond ±2^53 throws `BIGINT_PRECISION_LOSS` on read instead of being rounded. Pass `{ mode: "string" }` or `{ mode: "bigint" }` for a lossless representation — the inferred type follows the mode. See [bigint Columns and bigintMode](./entities.md#bigint-columns-and-bigintmode) for the driver contract.
 | `t.json<T>()` / `t.jsonb<T>()` | `T` (default `unknown`) | `json` / `jsonb` |
 | `t.array<T>(elementType?)` | `T[]` | `array` (PostgreSQL `element[]`, default `TEXT[]`) |
 | `t.enum(["a", "b"])` | `"a" \| "b"` | `enum` |
@@ -1024,6 +1027,8 @@ Adopt the builder API incrementally — new entities code-first, existing decora
 | Builder | Inferred TS type |
 | --- | --- |
 | `t.int()`, `t.integer()`, `t.bigint()`, `t.float()`, `t.double()`, `t.number()`, `t.decimal()` | `number` |
+| `t.bigint({ mode: "string" })` | `string` |
+| `t.bigint({ mode: "bigint" })` | `bigint` |
 | `t.varchar()`, `t.char()`, `t.text()`, `t.longtext()`, `t.uuid()` | `string` |
 | `t.boolean()` | `boolean` |
 | `t.datetime()`, `t.timestamp()`, `t.timestamptz()`, `t.date()` | `Date` |
@@ -1043,7 +1048,7 @@ Each abstract `ColumnType` is translated to a concrete database type by the driv
 | `int` / `number` | INT | INTEGER | INTEGER |
 | `float` | FLOAT | REAL | REAL |
 | `double` | DOUBLE | DOUBLE PRECISION | REAL |
-| `bigint` | BIGINT | BIGINT | INTEGER |
+| `bigint` | BIGINT | BIGINT | BIGINT (INTEGER affinity) |
 | `boolean` | TINYINT(1) | BOOLEAN | INTEGER |
 | `datetime` | DATETIME | TIMESTAMP | TEXT |
 | `timestamp` | TIMESTAMP | TIMESTAMP | TEXT |

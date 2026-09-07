@@ -1,3 +1,4 @@
+import { stringifyForLog } from "./stringifyForLog";
 type LOG_LEVEL =
   | "info"
   | "warn"
@@ -83,11 +84,7 @@ export class Logger implements ILogger {
         const additionalArgs = args
           .map((arg) => {
             if (typeof arg === "object") {
-              try {
-                return JSON.stringify(arg, null, 2);
-              } catch {
-                return String(arg);
-              }
+              return stringifyForLog(arg, 2);
             }
             return String(arg);
           })

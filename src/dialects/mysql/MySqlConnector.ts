@@ -2,6 +2,7 @@
 import type { Pool, PoolConnection } from "mysql2";
 import sql, { Sql } from "../../utils/sqlTag";
 import { Logger } from "../../utils/Logger";
+import { stringifyForLog } from "../../utils/stringifyForLog";
 import { Connection } from "./Connection";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { ConnectionNotFound } from "./ConnectionNotFound";
@@ -72,6 +73,9 @@ export class MySqlConnector extends IConnector {
         database,
         port,
         dateStrings: datesStrings,
+        // BIGINT beyond ±2^53 arrives as a decimal string instead of a
+        // rounded number; in-range values stay numbers (bigNumberStrings off).
+        supportBigNumbers: true,
         connectionLimit: maxConnections,
         charset: charset ?? "utf8mb4",
         ...(sslConfig ? { ssl: sslConfig } : {}),
@@ -219,9 +223,9 @@ export class MySqlConnector extends IConnector {
           }
 
           if (this.isDebug) {
-            this.logger.info(`Query: ${sql}, # ${JSON.stringify(values)}`);
+            this.logger.info(`Query: ${sql}, # ${stringifyForLog(values)}`);
             this.logger.info(`Results: ${results}`);
-            this.logger.info(`Error: ${JSON.stringify(error)}`);
+            this.logger.info(`Error: ${stringifyForLog(error)}`);
           }
 
           if (connection) {

@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ColumnType, ColumnTransformer, KnownColumnType } from "../decorators/Column";
+import type { BigintMode } from "../core/BigintColumnTransformer";
 import { GenerationStrategy } from "../decorators/PrimaryGeneratedColumn";
 import { ComputedColumnOption } from "../decorators/ComputedColumn";
 import { JsonIndexOptions } from "../decorators/JsonIndex";
@@ -46,6 +47,13 @@ export interface ColumnSchemaDef {
    * `@Column({ arrayElementType })`. Ignored on MySQL (JSON) / SQLite (TEXT).
    */
   arrayElementType?: ColumnType;
+
+  /**
+   * Entity-side representation of a `type: "bigint"` column. Decorator-free
+   * equivalent of `@Column({ bigintMode })`: `"number"` (default, throws on
+   * values beyond ±2^53), `"string"` or `"bigint"`.
+   */
+  bigintMode?: BigintMode;
 
   /**
    * One-way read transform (DB → entity).

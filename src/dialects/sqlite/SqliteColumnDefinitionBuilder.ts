@@ -56,8 +56,13 @@ export class SqliteColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
       case "int":
       case "number":
       case "boolean":
-      case "bigint":
         return "INTEGER";
+      case "bigint":
+        // Same INTEGER affinity and storage as INTEGER; the distinct declared
+        // type is what lets the connector read the column losslessly
+        // (SqliteSafeIntegers). Auto-increment PKs still emit
+        // `INTEGER PRIMARY KEY` — only that exact spelling aliases the rowid.
+        return "BIGINT";
       case "float":
       case "double":
         return "REAL";

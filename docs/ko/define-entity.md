@@ -100,6 +100,7 @@ INSERT INTO "users" ("name") VALUES ('Alice');
 | --- | --- | --- |
 | `t.int()` / `t.integer()` | `number` | `int` |
 | `t.bigint()` | `number` | `bigint` |
+| `t.bigint({ mode: "string" })` / `t.bigint({ mode: "bigint" })` | `string` / `bigint` | `bigint` (±2^53 초과도 무손실) |
 | `t.float()` / `t.double()` | `number` | `float` / `double` |
 | `t.number()` | `number` | `number` |
 | `t.decimal(precision?, scale?)` | `number` | `number` |
@@ -110,6 +111,8 @@ INSERT INTO "users" ("name") VALUES ('Alice');
 | `t.boolean()` | `boolean` | `boolean` |
 | `t.datetime()` / `t.timestamp()` / `t.timestamptz()` / `t.date()` | `Date` | 해당 시간 타입 |
 | `t.blob()` | `Buffer` | `blob` |
+
+`t.bigint()`의 기본값은 `bigintMode: "number"`입니다. 프로퍼티는 일반 `number`이고, ±2^53을 넘는 저장 값은 읽을 때 반올림되는 대신 `BIGINT_PRECISION_LOSS`를 던져요. 무손실 표현이 필요하면 `{ mode: "string" }` 또는 `{ mode: "bigint" }`를 넘기면 되고, 추론 타입도 모드를 따라갑니다. 드라이버 계약은 [bigint 컬럼과 bigintMode](./entities.md#bigint-컬럼과-bigintmode)를 참고하세요.
 | `t.json<T>()` / `t.jsonb<T>()` | `T` (기본 `unknown`) | `json` / `jsonb` |
 | `t.array<T>(elementType?)` | `T[]` | `array` (PostgreSQL `element[]`, 기본 `TEXT[]`) |
 | `t.enum(["a", "b"])` | `"a" \| "b"` | `enum` |
@@ -1024,6 +1027,8 @@ export const Comment = defineEntity("comments", {
 | 빌더 | 추론 TS 타입 |
 | --- | --- |
 | `t.int()`, `t.integer()`, `t.bigint()`, `t.float()`, `t.double()`, `t.number()`, `t.decimal()` | `number` |
+| `t.bigint({ mode: "string" })` | `string` |
+| `t.bigint({ mode: "bigint" })` | `bigint` |
 | `t.varchar()`, `t.char()`, `t.text()`, `t.longtext()`, `t.uuid()` | `string` |
 | `t.boolean()` | `boolean` |
 | `t.datetime()`, `t.timestamp()`, `t.timestamptz()`, `t.date()` | `Date` |
@@ -1043,7 +1048,7 @@ export const Comment = defineEntity("comments", {
 | `int` / `number` | INT | INTEGER | INTEGER |
 | `float` | FLOAT | REAL | REAL |
 | `double` | DOUBLE | DOUBLE PRECISION | REAL |
-| `bigint` | BIGINT | BIGINT | INTEGER |
+| `bigint` | BIGINT | BIGINT | BIGINT (INTEGER affinity) |
 | `boolean` | TINYINT(1) | BOOLEAN | INTEGER |
 | `datetime` | DATETIME | TIMESTAMP | TEXT |
 | `timestamp` | TIMESTAMP | TIMESTAMP | TEXT |

@@ -121,6 +121,11 @@ export {
   RawResultOptions,
 } from "./core/RawValueCoercion";
 export {
+  BigintMode,
+  DEFAULT_BIGINT_MODE,
+  normalizeBigintValue,
+} from "./core/BigintColumnTransformer";
+export {
   alias,
   ArrayValidator,
   ColumnCondition,

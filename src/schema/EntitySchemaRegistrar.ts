@@ -110,6 +110,7 @@ function resolveColumnOption(
     enumValues: def.enumValues,
     enumName: def.enumName,
     arrayElementType: def.arrayElementType,
+    bigintMode: def.bigintMode,
     generationStrategy: def.generationStrategy,
     transform: def.transform as any,
     transformer: def.transformer,

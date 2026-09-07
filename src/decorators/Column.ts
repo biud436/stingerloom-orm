@@ -2,6 +2,7 @@
 import { ReflectManager, Logger } from "../utils";
 import { ColumnMetadata, ColumnScanner } from "../scanner/ColumnScanner";
 import { getScannerInstance } from "../scanner/ScannerContainer";
+import type { BigintMode } from "../core/BigintColumnTransformer";
 
 const columnLogger = new Logger("Column");
 
@@ -171,6 +172,24 @@ export interface ColumnOption {
    * scores!: number[];
    */
   arrayElementType?: ColumnType;
+
+  /**
+   * Entity-side representation of a `type: "bigint"` column.
+   *
+   * - `"number"` (default): plain JS number. A stored value outside the
+   *   safe-integer range (±2^53) throws `BIGINT_PRECISION_LOSS` on read
+   *   instead of being rounded silently.
+   * - `"string"`: decimal digits as a string — lossless and JSON-safe.
+   * - `"bigint"`: native `BigInt` — lossless; inferred automatically when the
+   *   property is declared as `bigint` and no explicit type is given.
+   *
+   * Only meaningful for `type: "bigint"`; ignored for other types.
+   *
+   * @example
+   * @Column({ type: "bigint", bigintMode: "string" })
+   * balance!: string;
+   */
+  bigintMode?: BigintMode;
 }
 
 /**
@@ -196,6 +215,7 @@ export type ResolvedColumnOption = Required<
  * | Boolean   | boolean   | 1              | false    |
  * | Date      | datetime  | 0              | false    |
  * | Buffer    | blob      | 0              | true     |
+ * | BigInt    | bigint    | 0              | false    |
  * | (other)   | text      | 0              | true     |
  *
  * ## ColumnType → concrete DB type conversion (per driver)
@@ -253,6 +273,8 @@ function resolveColumnDefaults(
       return { type: "datetime", length: 0, nullable: false };
     case Buffer:
       return { type: "blob", length: 0, nullable: true };
+    case BigInt:
+      return { type: "bigint", length: 0, nullable: false };
     case undefined:
     case null:
       if (hasExplicitType) {
@@ -318,6 +340,15 @@ export function Column(option?: ColumnOption): PropertyDecorator {
       ...defaults,
       ...option,
     };
+    // A property declared as `bigint` reads back as a native BigInt unless
+    // the user picked another representation explicitly.
+    if (
+      resolvedOption.type === "bigint" &&
+      resolvedOption.bigintMode === undefined &&
+      injectParam === BigInt
+    ) {
+      resolvedOption.bigintMode = "bigint";
+    }
 
     const hasExplicitName = !!option?.name;
     const name = resolvedOption.name || propertyKey.toString();

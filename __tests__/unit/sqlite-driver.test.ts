@@ -106,8 +106,8 @@ describe("SqliteDriver - castType()", () => {
     expect(driver.castType("boolean")).toBe("INTEGER");
   });
 
-  it("should map bigint to INTEGER", () => {
-    expect(driver.castType("bigint")).toBe("INTEGER");
+  it("should map bigint to BIGINT (INTEGER affinity, distinct declared type)", () => {
+    expect(driver.castType("bigint")).toBe("BIGINT");
   });
 
   it("should map float to REAL", () => {

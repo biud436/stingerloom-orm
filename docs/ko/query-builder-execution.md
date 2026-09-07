@@ -553,7 +553,7 @@ const emails = await em
 
 #### 값 변환 — `coerce`
 
-드라이버는 raw 결과를 dialect별로 다른 형태로 내려줍니다. `mysql2` 는 `BIGINT` / `DECIMAL`(그리고 `SUM` / `AVG` 집계 결과)을 문자열로, `pg` 는 `NUMERIC` / `bigint` 를 문자열로, 날짜는 드라이버 옵션에 따라 `Date` 또는 문자열로 surface 합니다. `coerce` 옵션은 컬럼별로 원하는 primitive 를 선언해 ORM 이 값을 정규화하게 합니다 — 호출처에서 `Number(row.x)` 를 손으로 적을 필요가 없습니다.
+드라이버는 raw 결과를 dialect별로 다른 형태로 내려줍니다. `mysql2` 는 `DECIMAL`(그리고 `SUM` / `AVG` 집계 결과)을 문자열로, `pg` 는 `NUMERIC` / `bigint` 를 문자열로, 날짜는 드라이버 옵션에 따라 `Date` 또는 문자열로 surface 합니다. raw 경로에서 정수가 반올림되는 일은 없습니다. ±2^53 을 넘는 `BIGINT` 는 어느 드라이버에서나 10진수 문자열로 도착하고(`mysql2` 와 `better-sqlite3` 는 범위 안이면 number 를 돌려줍니다), `"bigint"` 태그가 이를 네이티브 `BigInt` 로 바꿉니다. `coerce` 옵션은 컬럼별로 원하는 primitive 를 선언해 ORM 이 값을 정규화하게 합니다 — 호출처에서 `Number(row.x)` 를 손으로 적을 필요가 없습니다.
 
 ```typescript
 const rows = await qb

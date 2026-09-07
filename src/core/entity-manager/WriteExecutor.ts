@@ -37,6 +37,7 @@ import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DefaultNamingStrategy, NamingStrategy } from "../generators/NamingStrategy";
 import { InheritanceResolver } from "../InheritanceResolver";
+import { DEFAULT_BIGINT_MODE, normalizeBigintValue } from "../BigintColumnTransformer";
 import { createDialectExpression } from "../../dialects/DialectExpression";
 import { UpdateQueryBuilder } from "../UpdateQueryBuilder";
 import { DmlSqlBuilder, type InsertConflictAction } from "./DmlSqlBuilder";
@@ -1641,19 +1642,31 @@ export class WriteExecutor {
     if (useReturning && insertedRows.length > 0) {
       pkValues = insertedRows.map((row) => row[pk.name]);
     } else if (this.ctx.isMySqlFamily() && hasAutoIncrementPk) {
-      const firstId = Number(okPacket(queryResult)?.insertId);
-      pkValues = items.map((_, i) => firstId + i);
+      // mysql2 hands an insertId beyond ±2^53 over as a string
+      // (supportBigNumbers); BigInt arithmetic keeps the derived range exact.
+      const firstId = BigInt(okPacket(queryResult)?.insertId ?? 0);
+      pkValues = items.map((_, i) => firstId + BigInt(i));
     } else if (this.ctx.isSqlite() && hasAutoIncrementPk) {
       if (sqliteDefaultRowIds) {
         pkValues = sqliteDefaultRowIds;
       } else {
-        const lastId = Number(sqliteRunResult(queryResult)?.lastInsertRowid);
-        pkValues = items.map((_, i) => lastId - items.length + 1 + i);
+        const lastId = BigInt(sqliteRunResult(queryResult)?.lastInsertRowid ?? 0);
+        pkValues = items.map((_, i) => lastId - BigInt(items.length) + 1n + BigInt(i));
       }
     } else {
       // UUID — use client-generated PK values
       pkValues = items.map((item) => fieldsOf(item)[this.ctx.propKey(pk)]);
     }
+    // The re-read below is matched back to `items` by PK value, so the keys
+    // must carry the same representation the hydrated entities do: the
+    // column's bigintMode for bigint PKs, plain numbers for the rest.
+    const pkWhere = `${entity.name}.${this.ctx.propKey(pk)}`;
+    pkValues =
+      pk.options?.type === "bigint"
+        ? pkValues.map((v) =>
+            normalizeBigintValue(v, pk.options?.bigintMode ?? DEFAULT_BIGINT_MODE, pkWhere),
+          )
+        : pkValues.map((v) => (typeof v === "bigint" ? Number(v) : v));
 
     const found = await this.ctx.findInternal(
       entity,

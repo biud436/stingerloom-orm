@@ -94,6 +94,7 @@ import {
 } from "./expressions/NumericExpression";
 import { buildDateAdd } from "./expressions/DateArithmeticExpression";
 import { Logger } from "../utils/Logger";
+import { aggregateToNumber } from "./BigintColumnTransformer";
 import { ExplainResult } from "./ExplainResult";
 import { ExplainQueryHandler } from "./ExplainQueryHandler";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
@@ -4302,7 +4303,9 @@ export class SelectQueryBuilder<T, TResult = T> {
         );
         if (rows.length === 0) return 0;
         const value = rows[0].result;
-        return value === null || value === undefined ? 0 : Number(value);
+        return value === null || value === undefined
+          ? 0
+          : aggregateToNumber(value, `${fn}(${String(column)})`);
       }
     }
 
@@ -4319,7 +4322,9 @@ export class SelectQueryBuilder<T, TResult = T> {
     const rows = await this.execQuery<{ result: string | number | null }>(built);
     if (rows.length === 0) return 0;
     const value = rows[0].result;
-    return value === null || value === undefined ? 0 : Number(value);
+    return value === null || value === undefined
+      ? 0
+      : aggregateToNumber(value, `${fn}(${String(column)})`);
   }
 
   /**
