@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ColumnType, ColumnTransformer } from "../decorators/Column";
+import type { BigintMode } from "../core/BigintColumnTransformer";
 import { GenerationStrategy } from "../decorators/PrimaryGeneratedColumn";
 import { JsonIndexOptions } from "../decorators/JsonIndex";
 import { JoinTableOption } from "../decorators/ManyToMany";
@@ -253,6 +254,33 @@ function column<T>(def: ColumnSchemaDef): ColumnBuilder<T> {
   return new ColumnBuilder<T>(def);
 }
 
+/** Options for {@link t.bigint}. */
+export interface BigintBuilderOptions<M extends BigintMode = BigintMode> {
+  /**
+   * Entity-side representation — see `ColumnSchemaDef.bigintMode`. The
+   * inferred TypeScript type follows: `"number"` (default) → `number`,
+   * `"string"` → `string`, `"bigint"` → `bigint`.
+   */
+  mode?: M;
+}
+
+type BigintInfer<M extends BigintMode> = M extends "string"
+  ? string
+  : M extends "bigint"
+    ? bigint
+    : number;
+
+function bigintColumn(): ColumnBuilder<number>;
+function bigintColumn<M extends BigintMode>(
+  options: BigintBuilderOptions<M>,
+): ColumnBuilder<BigintInfer<M>>;
+function bigintColumn(options?: BigintBuilderOptions): ColumnBuilder<unknown> {
+  return column<unknown>({
+    type: "bigint",
+    ...(options?.mode != null ? { bigintMode: options.mode } : {}),
+  });
+}
+
 /**
  * Fluent, type-carrying field builders for {@link defineEntity}.
  *
@@ -277,7 +305,7 @@ export const t = {
   // ── numeric ──────────────────────────────────────────────────────────────
   int: () => column<number>({ type: "int" }),
   integer: () => column<number>({ type: "int" }),
-  bigint: () => column<number>({ type: "bigint" }),
+  bigint: bigintColumn,
   float: () => column<number>({ type: "float" }),
   double: () => column<number>({ type: "double" }),
   number: () => column<number>({ type: "number" }),

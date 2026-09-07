@@ -534,7 +534,7 @@ Use when the result includes computed columns not in the entity (e.g. `addSelect
 
 #### Value coercion — `coerce`
 
-Drivers surface raw results in dialect-dependent shapes: `mysql2` returns `BIGINT` / `DECIMAL` (and `SUM` / `AVG` aggregates) as strings, `pg` returns `NUMERIC` / `bigint` as strings, and dates arrive as `Date` or string depending on driver options. The `coerce` option declares the intended primitive per column so the ORM normalizes the value — no hand-written `Number(row.x)` blocks at the call site.
+Drivers surface raw results in dialect-dependent shapes: `mysql2` returns `DECIMAL` (and `SUM` / `AVG` aggregates) as strings, `pg` returns `NUMERIC` / `bigint` as strings, and dates arrive as `Date` or string depending on driver options. Integers are never rounded on the raw path: a `BIGINT` beyond ±2^53 arrives as a decimal string on every driver (`mysql2` and `better-sqlite3` return a number while the value fits), which the `"bigint"` tag turns into a native `BigInt`. The `coerce` option declares the intended primitive per column so the ORM normalizes the value — no hand-written `Number(row.x)` blocks at the call site.
 
 ```typescript
 const rows = await qb

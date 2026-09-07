@@ -26,7 +26,7 @@ describe("golden-sql / castBuiltinType — ColumnType to dialect SQL type", () =
     ["number", "INTEGER", "INT", "INTEGER"],
     ["float", "REAL", "FLOAT", "REAL"],
     ["double", "NUMERIC($precision, $scale)", "DECIMAL($precision, $scale)", "REAL"],
-    ["bigint", "BIGINT", "BIGINT", "INTEGER"],
+    ["bigint", "BIGINT", "BIGINT", "BIGINT"],
     ["boolean", "BOOLEAN", "TINYINT($n)", "INTEGER"],
     ["datetime", "TIMESTAMP", "DATETIME", "TEXT"],
     ["timestamp", "TIMESTAMP", "TIMESTAMP", "TEXT"],

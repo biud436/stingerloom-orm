@@ -24,6 +24,10 @@ import {
   isTemporalColumnType,
   defaultTemporalColumnRead,
 } from "./TemporalColumnTransformer";
+import {
+  DEFAULT_BIGINT_MODE,
+  makeBigintColumnRead,
+} from "./BigintColumnTransformer";
 
 export type ForeignObject<T = any> = { [key: string]: T };
 
@@ -183,6 +187,18 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
         // Date type holds on every driver. Date values pass through, so this
         // is a cheap instanceof check on PostgreSQL/MySQL.
         transformColumns.push({ key, from: defaultTemporalColumnRead });
+      } else if (col.options.type === "bigint") {
+        // Drivers deliver bigint losslessly but in different shapes (pg:
+        // string, mysql2 / better-sqlite3: number when safe, string beyond
+        // ±2^53). The column's bigintMode picks one entity-side type.
+        transformColumns.push({
+          key,
+          from: makeBigintColumnRead(
+            col.options.bigintMode ?? DEFAULT_BIGINT_MODE,
+            entityName,
+            key,
+          ),
+        });
       }
     }
   }

@@ -99,10 +99,32 @@ export type CursorPaginationResult<T> = {
 const DEFAULT_PAGE_SIZE = 20;
 
 /**
+ * JSON has no BigInt literal, so a `bigintMode: "bigint"` order/PK value is
+ * carried as a tagged object and revived on decode. Plain cursors (numbers,
+ * strings, dates) are unaffected.
+ */
+const BIGINT_TAG = "$bigint";
+
+function cursorReplacer(_key: string, value: unknown): unknown {
+  return typeof value === "bigint" ? { [BIGINT_TAG]: value.toString() } : value;
+}
+
+function cursorReviver(_key: string, value: unknown): unknown {
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as Record<string, unknown>)[BIGINT_TAG] === "string"
+  ) {
+    return BigInt((value as Record<string, string>)[BIGINT_TAG]);
+  }
+  return value;
+}
+
+/**
  * Encode a cursor value as Base64.
  */
 export function encodeCursor(value: unknown): string {
-  const payload = JSON.stringify({ v: value });
+  const payload = JSON.stringify({ v: value }, cursorReplacer);
   return Buffer.from(payload, "utf-8").toString("base64");
 }
 
@@ -113,7 +135,7 @@ export function encodeCursor(value: unknown): string {
 export function decodeCursor(cursor: string): unknown | null {
   try {
     const json = Buffer.from(cursor, "base64").toString("utf-8");
-    const parsed = JSON.parse(json);
+    const parsed = JSON.parse(json, cursorReviver);
     return parsed.v;
   } catch {
     return null;
@@ -131,7 +153,7 @@ export function decodeCursor(cursor: string): unknown | null {
  * strict-compare transition behavior for that one page).
  */
 export function encodeCursorKey(order: unknown, pk: unknown): string {
-  const payload = JSON.stringify({ v: order ?? null, p: pk });
+  const payload = JSON.stringify({ v: order ?? null, p: pk }, cursorReplacer);
   return Buffer.from(payload, "utf-8").toString("base64");
 }
 
@@ -149,7 +171,7 @@ export type DecodedCursorKey = {
 export function decodeCursorKey(cursor: string): DecodedCursorKey | null {
   try {
     const json = Buffer.from(cursor, "base64").toString("utf-8");
-    const parsed = JSON.parse(json);
+    const parsed = JSON.parse(json, cursorReviver);
     if (parsed === null || typeof parsed !== "object") return null;
     return { order: parsed.v ?? null, pk: parsed.p };
   } catch {

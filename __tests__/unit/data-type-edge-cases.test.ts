@@ -50,7 +50,7 @@ describe("Data-type edge cases (#133)", () => {
       expect(ddl).toMatch(/"largeNumber"\s+BIGINT\s+NOT NULL/);
     });
 
-    it("SQLite: should produce INTEGER (bigint maps to INTEGER)", () => {
+    it("SQLite: should produce BIGINT (INTEGER affinity, lossless reads)", () => {
       @Entity()
       class BigIntSqlite {
         @PrimaryGeneratedColumn()
@@ -62,8 +62,9 @@ describe("Data-type edge cases (#133)", () => {
 
       const gen = new SchemaGenerator({ dialect: "sqlite" });
       const ddl = gen.generateCreateTableDDL(BigIntSqlite);
-      // SQLite maps bigint to INTEGER
-      expect(ddl).toMatch(/"largeNumber"\s+INTEGER\s+NOT NULL/);
+      // Declared BIGINT so the connector can read the column losslessly;
+      // same INTEGER affinity and storage as before.
+      expect(ddl).toMatch(/"largeNumber"\s+BIGINT\s+NOT NULL/);
     });
 
     it("BigInt column should respect nullable option", () => {

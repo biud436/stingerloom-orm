@@ -2,6 +2,7 @@
 import type Database from "better-sqlite3";
 import { Sql } from "../../utils/sqlTag";
 import { Logger } from "../../utils/Logger";
+import { stringifyForLog } from "../../utils/stringifyForLog";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { ConnectionNotFound } from "./ConnectionNotFound";
 import { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
@@ -12,6 +13,7 @@ import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DbVersion } from "../DbVersion";
 import { parseInlineFlags } from "../../core/expressions/RegexPattern";
+import { planSafeIntegers, normalizeSafeIntegerRows } from "./SqliteSafeIntegers";
 
 /**
  * SQLite connector implementation.
@@ -178,7 +180,7 @@ export class SqliteConnector extends IConnector {
       const { sql, values } = rawSql;
 
       if (this.isDebug) {
-        this.logger.info(`Query: ${sql}, # ${JSON.stringify(values)}`);
+        this.logger.info(`Query: ${sql}, # ${stringifyForLog(values)}`);
       }
 
       const raw = this.executeRaw(db, sql, values);
@@ -256,9 +258,15 @@ export class SqliteConnector extends IConnector {
     // text, which misclassifies leading comments and CTE-prefixed writes
     // (#287).
     if (stmt.reader) {
-      return sanitized && sanitized.length > 0
-        ? stmt.all(...sanitized)
-        : stmt.all();
+      // Statements projecting BIGINT / expression columns read integers as
+      // BigInt so values beyond ±2^53 survive; the plan is decided once per
+      // cached statement (see SqliteSafeIntegers).
+      const plan = planSafeIntegers(stmt);
+      const rows =
+        sanitized && sanitized.length > 0
+          ? stmt.all(...sanitized)
+          : stmt.all();
+      return plan ? normalizeSafeIntegerRows(rows, plan) : rows;
     }
 
     return sanitized && sanitized.length > 0

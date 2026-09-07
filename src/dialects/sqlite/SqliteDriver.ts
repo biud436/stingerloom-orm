@@ -19,6 +19,7 @@ import { DbVersion } from "../DbVersion";
 import { SqliteCapabilities } from "../DialectCapabilities";
 import { resolveSqliteCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
+import { planSafeIntegers, normalizeSafeIntegerRows } from "./SqliteSafeIntegers";
 
 /**
  * SQL driver implementation for SQLite.
@@ -85,9 +86,12 @@ export class SqliteDriver implements ISqlDriver {
       return [result] as any;
     }
 
-    return sanitized && sanitized.length > 0
-      ? stmt.all(...sanitized)
-      : stmt.all();
+    const plan = planSafeIntegers(stmt);
+    const rows =
+      sanitized && sanitized.length > 0
+        ? stmt.all(...sanitized)
+        : stmt.all();
+    return plan ? normalizeSafeIntegerRows(rows, plan) : rows;
   }
 
   private sanitizeValuesForOptions(values?: any[]): any[] | undefined {
@@ -426,7 +430,7 @@ export class SqliteDriver implements ISqlDriver {
    * | blob       | BLOB         |
    * | text       | TEXT         |
    * | longtext   | TEXT         |
-   * | bigint     | INTEGER      |
+   * | bigint     | BIGINT       |
    * | json       | TEXT         |
    * | jsonb      | TEXT         |
    * | char       | TEXT         |

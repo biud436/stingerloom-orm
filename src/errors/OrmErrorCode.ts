@@ -65,6 +65,12 @@ export enum OrmErrorCode {
 
   // Query
   QUERY_ERROR = "ORM_QUERY_ERROR",
+  /**
+   * A `bigint` column (or an aggregate over one) holds a value outside the
+   * JS safe-integer range (±2^53) while the read contract is `number`.
+   * Set `bigintMode: "string" | "bigint"` on the column to read it losslessly.
+   */
+  BIGINT_PRECISION_LOSS = "ORM_BIGINT_PRECISION_LOSS",
 
   // Configuration
   INVALID_CONFIG = "ORM_INVALID_CONFIG",

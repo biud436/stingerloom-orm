@@ -645,8 +645,9 @@ export class SchemaDiff {
       case "int":
       case "number":
       case "boolean":
-      case "bigint":
         return "INTEGER";
+      case "bigint":
+        return "BIGINT";
       case "float":
       case "double":
         return "REAL";
@@ -678,6 +679,9 @@ export class SchemaDiff {
       const sqliteAffinity: Record<string, string[]> = {
         TEXT: ["TEXT", "VARCHAR", "LONGTEXT", "CHAR", "UUID"],
         INTEGER: ["INTEGER", "INT", "TINYINT", "BIGINT", "BOOLEAN"],
+        // Tables created before bigint columns were declared BIGINT hold
+        // INTEGER; identical affinity, so it is not a type change.
+        BIGINT: ["BIGINT", "INTEGER", "INT", "INT8"],
         REAL: ["REAL", "FLOAT", "DOUBLE"],
         BLOB: ["BLOB", "BYTEA"],
       };

@@ -1473,6 +1473,7 @@ When `type` is omitted in `@Column()`, it is automatically inferred from the Typ
 | `Boolean` | boolean | 1 | false |
 | `Date` | datetime | 0 | false |
 | `Buffer` | blob | 0 | true |
+| `BigInt` | bigint (`bigintMode: "bigint"`) | 0 | false |
 | Other | text | 0 | true |
 
 ### DB Mapping by ColumnType
@@ -1485,7 +1486,7 @@ This table shows how each abstract `ColumnType` is translated to a concrete data
 | `int` / `number` | INT | INTEGER | INTEGER |
 | `float` | FLOAT | REAL | REAL |
 | `double` | DOUBLE | DOUBLE PRECISION | REAL |
-| `bigint` | BIGINT | BIGINT | INTEGER |
+| `bigint` | BIGINT | BIGINT | BIGINT (INTEGER affinity) |
 | `boolean` | TINYINT(1) | BOOLEAN | INTEGER |
 | `datetime` | DATETIME | TIMESTAMP | TEXT |
 | `timestamp` | TIMESTAMP | TIMESTAMP | TEXT |
@@ -1511,6 +1512,37 @@ scores!: number[] | null; // INTEGER[]
 
 Plain JS arrays round-trip through the `pg` driver's native array serialization. MySQL stores `array` columns as JSON and SQLite as TEXT, where `arrayElementType` is ignored. Note that PostgreSQL introspection reports every array column simply as `ARRAY`, so schema diffing cannot detect element-type changes and entity generation recovers `type: "array"` without the element type.
 
+### bigint Columns and `bigintMode`
+
+A JS `number` holds integers exactly only up to 2^53 (`Number.MAX_SAFE_INTEGER`, about 9.007e15), while a database `BIGINT` goes up to 2^63. The drivers deliver bigint values losslessly: `pg` returns them as strings, and `mysql2` / `better-sqlite3` return a number while the value fits and a decimal string once it does not. `bigintMode` decides what the entity property holds, on every driver:
+
+| `bigintMode` | Property type | Beyond ±2^53 |
+|--------------|---------------|--------------|
+| `"number"` (default) | `number` | throws `OrmError` with code `BIGINT_PRECISION_LOSS` instead of rounding |
+| `"string"` | `string` (decimal digits) | lossless, JSON-safe |
+| `"bigint"` | `bigint` (native `BigInt`) | lossless; `JSON.stringify` needs a replacer |
+
+```typescript
+@Entity()
+export class Account {
+  @PrimaryGeneratedColumn({ type: "bigint" })
+  id!: number; // default mode: a number, like every other auto-increment key
+
+  @Column({ type: "bigint", bigintMode: "string" })
+  balanceCents!: string; // "9007199254740993"
+
+  @Column({ type: "bigint", bigintMode: "bigint" })
+  snowflakeId!: bigint; // 9007199254740993n
+
+  @Column()
+  version!: bigint; // a `bigint` property type infers type: "bigint" + bigintMode: "bigint"
+}
+```
+
+The mode applies to reads (`find*`, `findWithCursor`, `stream`, RETURNING rows) and to the primary keys `saveMany()` / `insertManyAndReturn()` derive for a batch. Writes accept a number, a digit string or a `BigInt` in any mode — every driver binds a `BigInt` parameter natively, so `where: { snowflakeId: 9007199254740993n }` works without a cast. Aggregates keep their `number` return type: `sum()` / `min()` / `max()` (and the `SelectQueryBuilder` equivalents) throw `BIGINT_PRECISION_LOSS` rather than round an integer result beyond ±2^53; read such a value through `getRawOne()` with `coerce: { total: "bigint" }` instead. Cursor pagination encodes `BigInt` order and key values, and `logging: true` renders `BigInt` parameters as digits.
+
+On SQLite, bigint columns are declared `BIGINT` (the same INTEGER affinity and storage as before) so the connector can tell which statements need lossless integer reads; an existing table whose column is declared `INTEGER` keeps working and is not reported as a type change, but its values beyond ±2^53 stay rounded until the column is recreated as `BIGINT`. Auto-increment primary keys remain `INTEGER PRIMARY KEY`, the only spelling that aliases SQLite's rowid.
+
 ### @Column Full Options
 
 | Option | Type | Description |
@@ -1529,6 +1561,7 @@ Plain JS arrays round-trip through the `pg` driver's native array serialization.
 | `enumValues` | `string[]` | PostgreSQL ENUM value list |
 | `enumName` | `string` | PostgreSQL ENUM type name |
 | `arrayElementType` | `ColumnType` | Element type for `type: "array"` columns (PostgreSQL only, default `"text"`) |
+| `bigintMode` | `"number" \| "string" \| "bigint"` | Entity-side type of a `type: "bigint"` column (default `"number"`, which throws beyond ±2^53) |
 
 ## Defining Entities Without Decorators (EntitySchema)
 

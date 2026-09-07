@@ -15,6 +15,7 @@ import { QueryResult } from "../types/QueryResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
+import { aggregateToNumber } from "./BigintColumnTransformer";
 
 /**
  * Handler for aggregate functions (count/sum/avg/min/max).
@@ -167,7 +168,9 @@ export class AggregateQueryHandler {
 
       const row = results[0];
       const value = row.result ?? row["result"];
-      return value === null || value === undefined ? 0 : Number(value);
+      return value === null || value === undefined
+        ? 0
+        : aggregateToNumber(value, `${fn}(${entity.name}.${field})`);
     });
   }
 

@@ -2,6 +2,7 @@
 import type { Pool, PoolClient } from "pg";
 import { Sql } from "../../utils/sqlTag";
 import { Logger } from "../../utils/Logger";
+import { stringifyForLog } from "../../utils/stringifyForLog";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { ConnectionNotFound } from "./ConnectionNotFound";
 import { PoolNotFound } from "./PoolNotFound";
@@ -244,7 +245,7 @@ export class PostgresConnector extends IConnector {
       const { sql, values } = rawSql;
 
       if (this.isDebug) {
-        this.logger.info(`Query: ${sql}, # ${JSON.stringify(values)}`);
+        this.logger.info(`Query: ${sql}, # ${stringifyForLog(values)}`);
       }
 
       // PostgreSQL uses $1, $2 style parameters.
@@ -255,7 +256,7 @@ export class PostgresConnector extends IConnector {
       const result = await client.query(pgSql, values);
 
       if (this.isDebug) {
-        this.logger.info(`Results: ${JSON.stringify(result.rows)}`);
+        this.logger.info(`Results: ${stringifyForLog(result.rows)}`);
       }
 
       if (connection) {
