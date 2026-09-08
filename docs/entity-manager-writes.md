@@ -184,6 +184,55 @@ For `saveMany()` batch inserts, all rows share one column set in the multi-row `
 
 ---
 
+## Unknown Keys in Write Payloads
+
+### What counts as a known key
+
+`save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()`, `upsert()`, `insertIgnore()` and `batchUpsert()` read their values **by property key**. The keys a payload may carry are:
+
+- `@Column` property names (`firstName`, not the DB column `first_name`);
+- relation properties of any kind (`team`, `posts`, `tags`) -- cascades and hydrated instances;
+- `@ManyToOne` / `@OneToOne` FK shadow properties (`teamId`, or the `fkProperty` you declared) and the join column itself;
+- `@ComputedColumn` properties -- never written, but present on every instance read back;
+- in a single-table hierarchy, the discriminator column and the columns of the sibling classes.
+
+Anything else -- a typo, a DTO field that never became a column, a DB column name typed instead of the property -- is **not written**. Before 2.1 that was silent; `updateMany()` and every read already rejected the same key with a `Did you mean` suggestion.
+
+### The `unknownWriteKeys` policy
+
+The `unknownWriteKeys` connection option decides what happens:
+
+| Policy | Behavior |
+|---|---|
+| `"warn"` (default) | The write runs. The key is logged **once per entity and key** for the lifetime of the EntityManager, naming the method and the closest accepted key. |
+| `"throw"` | The write is rejected before any SQL with `InvalidQueryError` -- the same error a typo in a read `where` raises. Recommended once the warnings are clean. |
+| `"ignore"` | The previous behavior: unknown keys are dropped silently. |
+
+```typescript
+await DatabaseClient.getInstance().connect({
+  type: "postgres",
+  // ...
+  unknownWriteKeys: "throw",
+});
+
+await em.save(User, { firstNam: "kim" } as any);
+// InvalidQueryError: Unknown column "firstNam" in "data" for entity "User". Did you mean "firstName"?
+```
+
+Under the default policy the same call succeeds and logs:
+
+```
+[WriteInput] Unknown key "firstNam" in the data passed to save() for entity "User" — it matches no column, relation or FK property and was not written. Did you mean "firstName"? Set unknownWriteKeys: "throw" to reject such writes, or "ignore" to silence this warning.
+```
+
+A DB column name is reported too, because the INSERT never reads it: `save(Team, { team_name: "x" })` warns with `Did you mean "teamName"?` where a read `where: { team_name }` would have resolved the column. Write by property name.
+
+Values that are never written are never reported: an `undefined` field (see the section above) and a function-valued member (a method on an entity instance). The check runs before hooks, cascades and tenant-column injection, so it sees exactly the payload you passed.
+
+`update()` / `updateMany()` keep their existing contract and throw on an unknown key in `data` or `where` regardless of the policy. `create()`, `merge()` and `preload()` never persist, so they keep every key on the instance -- the write that follows reports it.
+
+---
+
 ## RETURNING Rows Map Back to Property Names
 
 On RETURNING-capable drivers (PostgreSQL, MariaDB 10.5+), the entity returned by `save()` is built from the `RETURNING *` row. That row is now routed through the ResultTransformer, so DB column names are mapped back to **entity property keys** -- covering `@Column({ name })` and NamingStrategy mappings like `SnakeNamingStrategy` -- and column transformer `from` functions are applied on the way out.

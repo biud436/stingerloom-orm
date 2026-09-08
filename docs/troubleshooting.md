@@ -148,6 +148,14 @@ class User {
 }
 ```
 
+A key the entity does not declare is reported when it reaches a write:
+`save()` and the other insert-style methods log
+`[WriteInput] Unknown key "bio" in the data passed to save() for entity "User"`
+once per entity and key (with a `Did you mean` suggestion when one is close).
+Set `unknownWriteKeys: "throw"` on the connection to reject such writes
+instead -- see the `"Unknown column"` entry below and *Unknown Keys in Write
+Payloads* in the writes guide.
+
 ## Query Errors
 
 ### N+1 query problem
@@ -186,15 +194,21 @@ The key doesn't match any column of that entity. Reads (`find`, `findOne`,
 building SQL; the error's `suggestion` lists every accepted name. The quoted
 clause names the argument: `"criteria"` for `delete` / `softDelete` /
 `restore`, `"where"` for reads and `updateMany`, `"data"` for the SET payload
-of `updateMany`. `AND` / `OR` / `NOT` are walked into, never reported as
+of `updateMany` and for the payload of `save` / `saveMany` / `insertMany` /
+`insertManyAndReturn` / `upsert` / `insertIgnore` / `batchUpsert` under
+`unknownWriteKeys: "throw"` (the default `"warn"` logs the same key once
+instead of throwing). `AND` / `OR` / `NOT` are walked into, never reported as
 columns; a combinator in `updateMany`'s `data` fails with its own message
 (`Logical combinator "OR" is not allowed in the update data`) -- it belongs
 in `where`.
 
-Accepted keys are the property name, the DB column name, `@ManyToOne` /
-`@OneToOne` FK shadow properties, `@ComputedColumn` names, and — in a
-single-table inheritance hierarchy — the discriminator and the columns of the
-sibling classes that share the table.
+Accepted keys on reads and in `updateMany` are the property name, the DB
+column name, `@ManyToOne` / `@OneToOne` FK shadow properties, `@ComputedColumn`
+names, and — in a single-table inheritance hierarchy — the discriminator and
+the columns of the sibling classes that share the table. Insert-style write
+payloads additionally accept relation properties but **not** DB column names:
+the INSERT reads property keys only, so `save(Team, { team_name })` is
+reported with `Did you mean "teamName"?`.
 
 ```typescript
 // If your entity has:

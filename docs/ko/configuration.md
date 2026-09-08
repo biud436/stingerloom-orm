@@ -688,6 +688,7 @@ interface DatabaseClientOptions {
   charset?: string;              // MySQL 문자셋
   datesStrings?: boolean;        // MySQL 날짜를 문자열로 반환
   queryTimeout?: number;         // 전역 쿼리 타임아웃 (ms)
+  unknownWriteKeys?: "warn" | "throw" | "ignore"; // save/insert/upsert 페이로드의 미지 키: 한 번 로그 / 거절 / 조용히 폐기 (기본값: "warn")
   pool?: PoolOptions;            // 커넥션 풀 설정
   retry?: RetryOptions;          // 연결 재시도 설정
   logging?: boolean | LoggingOptions;  // 쿼리 로깅
