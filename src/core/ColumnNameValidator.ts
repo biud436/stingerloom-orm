@@ -240,3 +240,31 @@ export function buildEntityColumnScope(params: {
       : null,
   });
 }
+
+/**
+ * The keys of a write payload (save / saveMany / insertMany / upsert / …)
+ * that name nothing on the entity, in first-seen order.
+ *
+ * Unlike the criteria and SET validators this never throws: the caller
+ * applies the `unknownWriteKeys` policy (warn once, throw, ignore). The
+ * exemptions match {@link validateWhereIdentifiers}: an `undefined` value is
+ * "not provided" and is never written anyway, and a function-valued member
+ * is a method on an entity instance, not data. Symbol keys are invisible to
+ * `Object.keys` and so to this check — the WriteBuffer's per-instance
+ * markers live there on purpose.
+ */
+export function collectUnknownWriteKeys(
+  data: unknown,
+  scope: ColumnNameScope,
+): string[] {
+  if (data === null || typeof data !== "object") return [];
+
+  const unknown: string[] = [];
+  for (const key of Object.keys(data as Record<string, unknown>)) {
+    if (scope.valid.has(key)) continue;
+    const value = (data as Record<string, unknown>)[key];
+    if (value === undefined || typeof value === "function") continue;
+    unknown.push(key);
+  }
+  return unknown;
+}

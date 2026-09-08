@@ -230,12 +230,17 @@ export class WriteExecutor {
     entity: ClazzType<T>,
     item: Partial<T>,
     existingSession?: TransactionSessionManager,
+    callerMethod = "save",
   ): Promise<InstanceType<ClazzType<T>>> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
 
     if (!metadata) {
       throw new EntityMetadataNotFoundError(entity.name);
     }
+
+    // Unknown-key policy first: it must see the payload as the caller passed
+    // it, before the cascade and tenant steps below add their own keys.
+    this.ctx.validateWriteInputKeys(entity, metadata, [item], callerMethod);
 
     // Validation
     EntityValidator.validate(entity, item);
@@ -1252,6 +1257,7 @@ export class WriteExecutor {
         });
 
       if (canBatchInsert) {
+        this.ctx.validateWriteInputKeys(entity, metadata, items, "saveMany");
         for (const item of items) {
           EntityValidator.validate(entity, item);
         }
@@ -1273,7 +1279,7 @@ export class WriteExecutor {
     return this.ctx.executeInTransaction(async (session) => {
       const results: InstanceType<ClazzType<T>>[] = [];
       for (const item of items) {
-        const saved = await this.saveInternal(entity, item, session);
+        const saved = await this.saveInternal(entity, item, session, "saveMany");
         results.push(saved);
       }
       return results;
@@ -2090,6 +2096,8 @@ export class WriteExecutor {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
+    this.ctx.validateWriteInputKeys(entity, metadata, items, "insertMany");
+
     return this.ctx.executeInTransaction(async (session) => {
       this.applyBulkInsertDefaults(entity, metadata, items);
 
@@ -2142,6 +2150,8 @@ export class WriteExecutor {
           `Use saveMany() to insert and return entities one row at a time.`,
       );
     }
+
+    this.ctx.validateWriteInputKeys(entity, metadata, items, "insertManyAndReturn");
 
     return this.ctx.executeInTransaction(async (session) => {
       this.applyBulkInsertDefaults(entity, metadata, items);
@@ -3050,6 +3060,7 @@ export class WriteExecutor {
       );
     }
 
+    this.ctx.validateWriteInputKeys(entity, metadata, [data], "upsert");
     this.ctx.applyTenantColumnOnInsert(entity, data);
 
     const plan = this.buildUpsertPlan(entity, metadata, conflictColumns, (col) =>
@@ -3096,6 +3107,7 @@ export class WriteExecutor {
       );
     }
 
+    this.ctx.validateWriteInputKeys(entity, metadata, [data], "insertIgnore");
     this.ctx.applyTenantColumnOnInsert(entity, data);
 
     // No DO UPDATE list here: a conflict skips the row, so a plan whose
@@ -3146,6 +3158,8 @@ export class WriteExecutor {
         "Driver is not initialized. Call connect() first.",
       );
     }
+
+    this.ctx.validateWriteInputKeys(entity, metadata, items, "batchUpsert");
 
     if (this.ctx.getTenantColumnConfig()) {
       for (const item of items) {

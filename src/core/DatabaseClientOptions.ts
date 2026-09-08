@@ -167,6 +167,33 @@ interface BaseDatabaseClientOptions {
   cache?: boolean | QueryCacheOptions;
 
   /**
+   * What to do when a write payload names a key the entity does not have.
+   *
+   * `save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()`,
+   * `upsert()`, `insertIgnore()` and `batchUpsert()` pick their columns from
+   * the entity metadata, so a key that matches no column, relation or FK
+   * shadow property (`firstNam` for `firstName`, a DB column name typed
+   * instead of the property, a DTO field that never became a column) is not
+   * written. This policy decides how that is reported:
+   *
+   * - `"warn"` (default): the write runs; the key is logged once per entity
+   *   and key with the closest match. Backward compatible with the previous
+   *   silent behavior, minus the silence.
+   * - `"throw"`: reject with `InvalidQueryError` before any SQL — the same
+   *   error a typo in a read `where` or in `updateMany()` raises.
+   *   Recommended for production once the warnings are clean.
+   * - `"ignore"`: drop unknown keys silently (the pre-2.1 behavior).
+   *
+   * `update()` / `updateMany()` always throw on an unknown key in `data` or
+   * `where`, regardless of this option. `create()` / `merge()` / `preload()`
+   * never persist, so they keep every key on the instance and the check
+   * happens at the write that follows.
+   *
+   * @default "warn"
+   */
+  unknownWriteKeys?: UnknownWriteKeyPolicy;
+
+  /**
    * Connection pool configuration.
    * Applies to MySQL and PostgreSQL.
    * SQLite uses a single file-based connection, so this option is ignored.
@@ -465,6 +492,7 @@ const KNOWN_OPTION_KEYS: readonly string[] = [
   "schema",
   "queryTimeout",
   "cache",
+  "unknownWriteKeys",
   "pool",
   "retry",
   "replication",
@@ -644,6 +672,16 @@ export function validateDatabaseClientOptions(
     }
   }
 
+  // unknownWriteKeys
+  if (
+    options.unknownWriteKeys !== undefined &&
+    !UNKNOWN_WRITE_KEY_POLICIES.includes(options.unknownWriteKeys)
+  ) {
+    errors.push(
+      `'unknownWriteKeys' must be one of ${UNKNOWN_WRITE_KEY_POLICIES.map((p) => `"${p}"`).join(", ")}, got ${JSON.stringify(options.unknownWriteKeys)}.`,
+    );
+  }
+
   // pool
   if (options.pool) {
     if (options.pool.max !== undefined && (typeof options.pool.max !== "number" || options.pool.max < 1)) {
@@ -679,6 +717,19 @@ export function validateDatabaseClientOptions(
 /**
  * Bare-form synchronize values (legacy shape).
  */
+/**
+ * Policy for keys in a write payload that match nothing on the entity.
+ * See `BaseDatabaseClientOptions.unknownWriteKeys`.
+ */
+export type UnknownWriteKeyPolicy = "warn" | "throw" | "ignore";
+
+/** Accepted `unknownWriteKeys` values, in the order the error lists them. */
+export const UNKNOWN_WRITE_KEY_POLICIES: readonly UnknownWriteKeyPolicy[] = [
+  "warn",
+  "throw",
+  "ignore",
+];
+
 export type SynchronizeMode = boolean | "safe" | "dry-run";
 
 /**
