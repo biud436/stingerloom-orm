@@ -46,6 +46,8 @@ export {
   SynchronizeOption,
   SynchronizeOptions,
   SynchronizePolicy,
+  UnknownWriteKeyPolicy,
+  UNKNOWN_WRITE_KEY_POLICIES,
   validateDatabaseClientOptions,
 } from "./DatabaseClientOptions";
 export {

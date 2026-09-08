@@ -148,6 +148,14 @@ class User {
 }
 ```
 
+엔티티가 선언하지 않은 키가 쓰기에 도달하면 보고됩니다. `save()`를 비롯한
+삽입 계열 메서드는 엔티티·키당 한 번
+`[WriteInput] Unknown key "bio" in the data passed to save() for entity "User"`
+를 로그로 남기고, 가까운 이름이 있으면 `Did you mean` 제안을 붙여요. 이런
+쓰기를 아예 거절하려면 연결 옵션에 `unknownWriteKeys: "throw"`를 주세요.
+아래 `"Unknown column"` 항목과 쓰기 가이드의 *쓰기 페이로드의 미지 키* 절을
+참고하세요.
+
 ## 쿼리 오류
 
 ### N+1 쿼리 문제
@@ -186,14 +194,20 @@ InvalidQueryError: Unknown column "userNam" in "where" for entity "User". Did yo
 검사하고, 에러의 `suggestion`에 허용되는 이름이 전부 나열돼요. 따옴표 안의
 절 이름은 어느 인자에서 났는지를 가리킵니다. `delete` / `softDelete` /
 `restore`는 `"criteria"`, 읽기와 `updateMany`는 `"where"`, `updateMany`의
-SET 페이로드는 `"data"`예요. `AND` / `OR` / `NOT`은 안쪽으로 순회할 뿐 컬럼으로
+SET 페이로드와 -- `unknownWriteKeys: "throw"`일 때 -- `save` / `saveMany` /
+`insertMany` / `insertManyAndReturn` / `upsert` / `insertIgnore` /
+`batchUpsert`의 페이로드는 `"data"`예요(기본값 `"warn"`은 던지는 대신 같은
+키를 한 번 로그로 남깁니다). `AND` / `OR` / `NOT`은 안쪽으로 순회할 뿐 컬럼으로
 보고되지 않고, `updateMany`의 `data`에 결합자가 들어오면 별도 메시지(`Logical
 combinator "OR" is not allowed in the update data`)로 실패합니다. 결합자는
 `where`에 두면 됩니다.
 
-허용되는 키는 속성명, DB 컬럼명, `@ManyToOne` / `@OneToOne` FK 섀도우 속성,
-`@ComputedColumn` 이름, 그리고 단일 테이블 상속에서는 판별자 컬럼과 같은
-테이블을 공유하는 형제 클래스의 컬럼입니다.
+읽기와 `updateMany`에서 허용되는 키는 속성명, DB 컬럼명, `@ManyToOne` /
+`@OneToOne` FK 섀도우 속성, `@ComputedColumn` 이름, 그리고 단일 테이블
+상속에서는 판별자 컬럼과 같은 테이블을 공유하는 형제 클래스의 컬럼입니다.
+삽입 계열 쓰기 페이로드는 여기에 관계 속성을 더 받지만 DB 컬럼명은 받지
+**않아요**. INSERT는 속성 키만 읽기 때문에 `save(Team, { team_name })`은
+`Did you mean "teamName"?`과 함께 보고됩니다.
 
 ```typescript
 // 엔티티가 다음과 같다면:

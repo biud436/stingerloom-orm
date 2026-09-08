@@ -23,6 +23,7 @@ import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import {
   DatabaseClientOptions,
   normalizeSynchronizePolicy,
+  UnknownWriteKeyPolicy,
   validateDatabaseClientOptions,
 } from "./DatabaseClientOptions";
 import { MetadataContext } from "../metadata/MetadataContext";
@@ -35,10 +36,14 @@ import {
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import {
+  assertKnownColumn,
   buildColumnNameScope,
+  collectUnknownWriteKeys,
+  ColumnNameScope,
   validateUpdateDataIdentifiers,
   validateWhereIdentifiers,
 } from "./ColumnNameValidator";
+import { closestIdentifier } from "../utils/closestIdentifier";
 import { OptimisticLockError } from "../errors/OptimisticLockError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { isScopeExempt } from "./entity-manager/scope-exemption";
@@ -157,6 +162,13 @@ export class EntityManager implements BaseEntityManager {
   private readonly eventEmitter = new EntityEventEmitter();
   private readonly subscriberRegistry = new SubscriberRegistry();
   private readonly cursorPkWarned = new Set<string>();
+  /**
+   * `unknownWriteKeys` policy from the registered options; `"warn"` until
+   * `register()` / `attach()` runs.
+   */
+  private unknownWriteKeyPolicy: UnknownWriteKeyPolicy = "warn";
+  /** `${entity}.${key}` pairs already reported under the `"warn"` policy. */
+  private readonly writeKeyWarned = new Set<string>();
 
   /**
    * Live view of the registered subscribers (state moved into
@@ -373,6 +385,8 @@ export class EntityManager implements BaseEntityManager {
     validateCriteriaKeys: (m, c, n, clause) =>
       this.validateCriteriaKeys(m, c, n, clause),
     validateUpdateDataKeys: (m, d, n) => this.validateUpdateDataKeys(m, d, n),
+    validateWriteInputKeys: (e, m, items, method) =>
+      this.validateWriteInputKeys(e, m, items, method),
     hasEagerRelations: (e) => this.hasEagerRelations(e),
     hasSubscriberFor: (e, m) => this.hasSubscriberFor(e, m),
     notifySubscribers: (e, m, a) => this.notifySubscribers(e, m, a),
@@ -724,6 +738,8 @@ export class EntityManager implements BaseEntityManager {
     // Initialize TenantQueryStrategy
     this.tenantScope.configure(databaseClientOptions);
 
+    this.unknownWriteKeyPolicy = databaseClientOptions.unknownWriteKeys ?? "warn";
+
     // Query result cache: created eagerly when configured at register time
     // so a custom external store (e.g. Redis) receives write invalidations
     // even from a process that never issues a cached read. Without explicit
@@ -830,6 +846,7 @@ export class EntityManager implements BaseEntityManager {
     this.subscribers.length = 0;
     this.dirtyEntities.clear();
     this.cursorPkWarned.clear();
+    this.writeKeyWarned.clear();
     this.rawQueryTenantWarned.clear();
 
     // 4. Clean up QueryTracker
@@ -2231,6 +2248,127 @@ export class EntityManager implements BaseEntityManager {
       propertyToColumn: this.buildPropertyToColumnMap(metadata),
     });
     validateUpdateDataIdentifiers(data, scope);
+  }
+
+  /**
+   * The keys a write payload may carry for an entity: everything the INSERT /
+   * UPDATE builders read, plus what an entity instance legitimately holds.
+   *
+   * Narrower than the read scope on purpose — the write paths address values
+   * by property key only, so a DB column name typed instead of the property
+   * (`team_name` for `teamName`) is *not* written and must be reported, where
+   * a read `where` would have resolved it. Accepted:
+   *
+   * - `@Column` property keys (the tenant column is one of them once
+   *   injected) — not their DB names;
+   * - `@ManyToOne` / `@OneToOne` FK shadow properties (`teamId`, `fkProperty`)
+   *   and the join column names themselves — the cascade handler writes the
+   *   raw join column onto a child before saving it;
+   * - relation properties of all four kinds (cascade input, hydrated
+   *   instances);
+   * - `@ComputedColumn` properties — never written, but present on every
+   *   instance read back;
+   * - in a single-table hierarchy, the discriminator column and the columns
+   *   of the sibling classes sharing the table, as on the read side.
+   */
+  private buildWriteInputScope<T>(
+    entity: ClazzType<T>,
+    metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
+  ): ColumnNameScope {
+    const valid = new Set<string>();
+
+    for (const col of metadata.columns) valid.add(this.propKey(col));
+
+    // The resolver may be a partial mock in unit tests, so each relation
+    // lookup is guarded the same way buildPropertyToColumnMap guards its own.
+    const resolver = this.resolver as Partial<RelationMetadataResolver>;
+    if (typeof resolver.collectFkPropertyMappings === "function") {
+      for (const [prop, joinColumn] of resolver.collectFkPropertyMappings(entity)) {
+        valid.add(prop);
+        valid.add(joinColumn);
+      }
+    }
+    if (typeof resolver.resolveManyToOneMetadata === "function") {
+      for (const rel of resolver.resolveManyToOneMetadata(entity)) {
+        valid.add(rel.columnName);
+        if (rel.joinColumn) valid.add(rel.joinColumn);
+      }
+    }
+    if (typeof resolver.resolveOneToOneMetadata === "function") {
+      for (const rel of resolver.resolveOneToOneMetadata(entity)) {
+        valid.add(rel.propertyKey);
+        if (rel.joinColumn) valid.add(rel.joinColumn);
+      }
+    }
+    if (typeof resolver.resolveOneToManyMetadata === "function") {
+      for (const rel of resolver.resolveOneToManyMetadata(entity)) {
+        valid.add(rel.propertyKey);
+      }
+    }
+    if (typeof resolver.resolveManyToManyMetadata === "function") {
+      for (const rel of resolver.resolveManyToManyMetadata(entity)) {
+        valid.add(rel.propertyKey);
+      }
+    }
+
+    const computed: ComputedColumnMetadata[] =
+      Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity?.prototype) ?? [];
+    for (const col of computed) {
+      valid.add(col.propertyKey);
+      valid.add(col.name);
+    }
+
+    if (this.inheritanceResolver.getStrategy(entity) !== null) {
+      const root = this.inheritanceResolver.getRoot(entity) ?? entity;
+      for (const col of this.inheritanceResolver.getAllHierarchyColumns(root)) {
+        valid.add(this.propKey(col));
+      }
+      const disc = this.inheritanceResolver.getDiscriminatorColumn(root);
+      if (disc) valid.add(disc.name);
+    }
+
+    return { entityName: entity.name, valid };
+  }
+
+  /**
+   * Applies the `unknownWriteKeys` policy to the payload(s) of a write.
+   *
+   * Runs before hooks, cascades and tenant injection so it sees exactly what
+   * the caller passed. `"throw"` raises the read-path `InvalidQueryError`
+   * (clause `"data"`) for the first unknown key; `"warn"` logs each distinct
+   * key once per entity for the lifetime of this EntityManager, naming the
+   * calling method and the closest accepted key.
+   */
+  private validateWriteInputKeys<T>(
+    entity: ClazzType<T>,
+    metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
+    items: readonly unknown[],
+    method: string,
+  ): void {
+    const policy = this.unknownWriteKeyPolicy;
+    if (policy === "ignore") return;
+
+    const scope = this.buildWriteInputScope(entity, metadata);
+
+    for (const item of items) {
+      for (const key of collectUnknownWriteKeys(item, scope)) {
+        if (policy === "throw") {
+          assertKnownColumn(key, "data", scope);
+        }
+
+        const dedupKey = `${entity.name}.${key}`;
+        if (this.writeKeyWarned.has(dedupKey)) continue;
+        this.writeKeyWarned.add(dedupKey);
+
+        const suggestion = closestIdentifier(key, scope.valid);
+        this.logger.warn(
+          `[WriteInput] Unknown key "${key}" in the data passed to ${method}() for entity "${entity.name}" ` +
+            `— it matches no column, relation or FK property and was not written.` +
+            (suggestion ? ` Did you mean "${suggestion}"?` : "") +
+            ` Set unknownWriteKeys: "throw" to reject such writes, or "ignore" to silence this warning.`,
+        );
+      }
+    }
   }
 
   /**

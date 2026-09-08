@@ -106,15 +106,19 @@ describe("EntityManager.saveMany()", () => {
     const result = await em.saveMany(userMetadata.target, items);
 
     expect(saveInternalSpy).toHaveBeenCalledTimes(2);
+    // The fallback names the public caller so the unknown-key warning says
+    // saveMany(), not save().
     expect(saveInternalSpy).toHaveBeenCalledWith(
       userMetadata.target,
       items[0],
       expect.anything(),
+      "saveMany",
     );
     expect(saveInternalSpy).toHaveBeenCalledWith(
       userMetadata.target,
       items[1],
       expect.anything(),
+      "saveMany",
     );
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ id: 1, name: "Alice", email: "a@test.com" });

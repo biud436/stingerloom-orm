@@ -145,6 +145,17 @@ export interface EntityManagerInternals {
     data: UpdateData<T>,
     entityName: string,
   ): void;
+  /**
+   * Applies the `unknownWriteKeys` policy (warn once / throw / ignore) to the
+   * payload(s) of save / saveMany / insertMany / insertManyAndReturn / upsert /
+   * insertIgnore / batchUpsert. `method` names the caller in the message.
+   */
+  validateWriteInputKeys<T>(
+    entity: ClazzType<T>,
+    metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
+    items: readonly unknown[],
+    method: string,
+  ): void;
   /** True if the entity has any eager-loaded @ManyToOne/@OneToOne relation. */
   hasEagerRelations<T>(entity: ClazzType<T>): boolean;
   /** True if a registered EntitySubscriber implements the given lifecycle method for the entity. */

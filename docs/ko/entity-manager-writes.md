@@ -184,6 +184,55 @@ INSERT INTO "t" DEFAULT VALUES
 
 ---
 
+## 쓰기 페이로드의 미지 키
+
+### 어떤 키가 "아는 키"인가요?
+
+`save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()`, `upsert()`, `insertIgnore()`, `batchUpsert()`는 값을 **속성 키로** 읽습니다. 페이로드에 실을 수 있는 키는 다음과 같아요.
+
+- `@Column` 속성명 (`first_name`이라는 DB 컬럼명이 아니라 `firstName`);
+- 모든 종류의 관계 속성 (`team`, `posts`, `tags`) -- 캐스케이드 입력과 조회로 얻은 인스턴스;
+- `@ManyToOne` / `@OneToOne`의 FK 섀도우 속성 (`teamId`, 또는 직접 선언한 `fkProperty`)과 조인 컬럼 자체;
+- `@ComputedColumn` 속성 -- 쓰이지는 않지만 조회로 얻은 인스턴스마다 붙어 있습니다;
+- 단일 테이블 상속에서는 판별자 컬럼과 형제 클래스의 컬럼.
+
+그 밖의 키 -- 오타, 컬럼이 되지 못한 DTO 필드, 속성 대신 적은 DB 컬럼명 -- 는 **쓰이지 않습니다**. 2.1 이전에는 아무 말 없이 버려졌어요. 같은 키를 `updateMany()`나 조회에 넘기면 진작부터 `Did you mean` 제안과 함께 거절됐는데도요.
+
+### `unknownWriteKeys` 정책
+
+연결 옵션 `unknownWriteKeys`가 동작을 정합니다.
+
+| 정책 | 동작 |
+|---|---|
+| `"warn"` (기본값) | 쓰기는 실행됩니다. 키는 EntityManager 수명 동안 **엔티티·키당 한 번** 로그로 남고, 호출한 메서드와 가장 가까운 허용 키를 알려줘요. |
+| `"throw"` | SQL을 만들기 전에 `InvalidQueryError`로 거절합니다. 조회 `where`의 오타가 던지는 것과 같은 에러예요. 경고가 다 정리된 뒤에 권장합니다. |
+| `"ignore"` | 이전 동작 그대로, 미지 키를 조용히 버립니다. |
+
+```typescript
+await DatabaseClient.getInstance().connect({
+  type: "postgres",
+  // ...
+  unknownWriteKeys: "throw",
+});
+
+await em.save(User, { firstNam: "kim" } as any);
+// InvalidQueryError: Unknown column "firstNam" in "data" for entity "User". Did you mean "firstName"?
+```
+
+기본 정책에서는 같은 호출이 성공하고 다음 로그가 남아요.
+
+```
+[WriteInput] Unknown key "firstNam" in the data passed to save() for entity "User" — it matches no column, relation or FK property and was not written. Did you mean "firstName"? Set unknownWriteKeys: "throw" to reject such writes, or "ignore" to silence this warning.
+```
+
+DB 컬럼명도 보고 대상입니다. INSERT는 그 키를 읽지 않기 때문이에요. `save(Team, { team_name: "x" })`는 `Did you mean "teamName"?`과 함께 경고하지만, 조회의 `where: { team_name }`은 컬럼으로 풀립니다. 쓰기는 속성명으로 하세요.
+
+애초에 쓰이지 않는 값은 보고하지 않습니다. `undefined` 필드(위 절 참고)와 함수 값 멤버(엔티티 인스턴스의 메서드)가 그렇습니다. 검사는 훅·캐스케이드·테넌트 컬럼 주입보다 먼저 실행되므로, 넘긴 페이로드를 그대로 봅니다.
+
+`update()` / `updateMany()`는 기존 계약을 유지해 정책과 무관하게 `data`나 `where`의 미지 키에서 예외를 던집니다. `create()`, `merge()`, `preload()`는 영속화하지 않으므로 키를 인스턴스에 그대로 두고, 뒤따르는 쓰기가 보고합니다.
+
+---
+
 ## RETURNING 결과는 프로퍼티 이름으로 돌아와요
 
 RETURNING을 지원하는 드라이버(PostgreSQL, MariaDB 10.5+)에서 `save()`의 반환 엔티티는 `RETURNING *` 행으로 만들어져요. 이제 이 행이 ResultTransformer를 거치면서 DB 컬럼명이 **엔티티 프로퍼티 키**로 역매핑돼요 -- `@Column({ name })`과 `SnakeNamingStrategy` 같은 NamingStrategy 매핑을 모두 포함해서요. 컬럼 트랜스포머의 `from`도 함께 적용돼요.

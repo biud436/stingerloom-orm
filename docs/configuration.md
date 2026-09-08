@@ -690,6 +690,7 @@ interface DatabaseClientOptions {
   charset?: string;              // MySQL charset
   datesStrings?: boolean;        // Return MySQL dates as strings
   queryTimeout?: number;         // Global query timeout (ms)
+  unknownWriteKeys?: "warn" | "throw" | "ignore"; // unknown keys in save/insert/upsert payloads: log once, reject, or drop silently (default: "warn")
   pool?: PoolOptions;            // Connection pool settings
   retry?: RetryOptions;          // Connection retry settings
   logging?: boolean | LoggingOptions;  // Query logging
