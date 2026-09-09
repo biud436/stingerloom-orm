@@ -470,7 +470,7 @@ SELECT * FROM "user"
 class Plan {
   @PrimaryGeneratedColumn() id!: number;
   @Column() code!: string;
-  @OneToMany(() => Subscription, (s) => s.plan) subscriptions!: Subscription[];
+  @OneToMany(() => Subscription, { mappedBy: "plan" }) subscriptions!: Subscription[];
 }
 
 @Entity()
@@ -498,7 +498,7 @@ SELECT * FROM "public"."plan"
 - **쿼리** — `find*`, 쓰기, 관계 로딩, `SelectQueryBuilder` JOIN, `em.ref()`.
 - **Synchronize** — 테이블을 해당 스키마에 만들고(스키마가 없으면 함께 만들어요) 거기서 변경하며, 테넌트 테이블에서 공유 테이블로 가는 FK는 `"public"."plan"`을 참조합니다.
 - **`migrate:generate`** — diff가 고정된 스키마를 인트로스펙션합니다.
-- **프로비저닝** — `PostgresTenantMigrationRunner`는 고정 테이블을 원본 스키마에 남겨 둡니다. `tables.include`에 적혀 있어도 테넌트로 복제하지 않아요.
+- **프로비저닝** — `PostgresTenantMigrationRunner`는 고정 테이블(과 고정 소유자의 ManyToMany 조인 테이블)을 원본 스키마에 남겨 둡니다. `tables.include`에 적혀 있어도 테넌트로 복제하지 않아요.
 
 `@NonTenantEntity()`는 스키마 이름 없이 같은 일을 합니다. `search_path`와 `schema_qualified`에서는 엔티티를 연결의 기본 스키마(`schema` 옵션, 없으면 `public`)에 고정해요. 그래서 데코레이터 하나가 모든 전략에서 "전역 테이블"을 뜻합니다. 같은 클래스가 `tenant_column`에서는 구분 컬럼에서 빠지는 쪽으로 동작하고요.
 

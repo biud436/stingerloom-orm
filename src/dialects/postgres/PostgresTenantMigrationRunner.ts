@@ -13,6 +13,10 @@ import {
   getEntitySchema,
 } from "../../decorators/Entity";
 import { isNonTenantEntity } from "../../decorators/TenantColumn";
+import {
+  MANY_TO_MANY_TOKEN,
+  ManyToManyMetadata,
+} from "../../decorators/ManyToMany";
 import { getScannerInstance } from "../../scanner/ScannerContainer";
 import { EntityScanner } from "../../scanner/EntityScanner";
 
@@ -160,8 +164,16 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
     for (const meta of scanner.makeEntities()) {
       const target = meta.target as Function | undefined;
       if (!target) continue;
-      if (getEntitySchema(target) !== undefined || isNonTenantEntity(target)) {
-        shared.add(meta.name);
+      if (getEntitySchema(target) === undefined && !isNonTenantEntity(target)) {
+        continue;
+      }
+      shared.add(meta.name);
+      // A shared owner's ManyToMany join tables follow it (SchemaRegistrar
+      // pins them alongside the owner), so they stay in the source schema too.
+      const m2m = (Reflect.getMetadata(MANY_TO_MANY_TOKEN, target) ??
+        []) as ManyToManyMetadata<any>[];
+      for (const rel of m2m) {
+        if (rel.joinTable?.name) shared.add(rel.joinTable.name);
       }
     }
     return shared;
