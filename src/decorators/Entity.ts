@@ -18,6 +18,22 @@ import { KnownColumnType } from "./Column";
 
 export interface EntityOption {
   name?: string;
+  /**
+   * PostgreSQL schema the table lives in.
+   *
+   * Pins the entity to that schema: every statement names the table as
+   * `"schema"."table"` no matter which tenant context is active, and the
+   * multi-tenant strategies (`search_path`, `schema_qualified`) never
+   * redirect it. Use it for tables shared by every tenant — a `plans` or
+   * `countries` table that stays in `public` while tenant data lives in
+   * per-tenant schemas. Synchronize creates the table (and the schema, when
+   * missing) there, and `PostgresTenantMigrationRunner` skips it when it
+   * clones the source schema into a new tenant.
+   *
+   * Child entities of an inheritance hierarchy inherit the root's schema
+   * unless they set their own. Ignored on MySQL and SQLite.
+   */
+  schema?: string;
 }
 
 export const ENTITY_TOKEN = Symbol.for("STG_ENTITY");
@@ -27,6 +43,12 @@ export type EntityMetadata<T = any> = {
   name: string;
   /** True when the user explicitly provided `@Entity({ name: "..." })`. */
   nameExplicit?: boolean;
+  /**
+   * PostgreSQL schema this entity is pinned to via `@Entity({ schema })`
+   * (or inherited from the inheritance root). Undefined means the table
+   * follows the connection's default schema and the tenant strategy.
+   */
+  schema?: string;
   /** Raw class name before NamingStrategy transformation. */
   rawClassName?: string;
   columns: ColumnOption[];
@@ -58,6 +80,7 @@ export function Entity(options?: EntityOption): ClassDecorator {
 
     const hasExplicitName = !!options?.name;
     let nameKey = options?.name || camelToSnakeCase(target.name);
+    let schemaKey: string | undefined = options?.schema || undefined;
 
     // Target-based filtering: collect metadata from this class and its ancestors (inheritance support).
     // @Column target is the prototype; @ManyToOne/@OneToMany/@OneToOne/@ManyToMany targets are constructors.
@@ -146,6 +169,11 @@ export function Entity(options?: EntityOption): ClassDecorator {
           if (rootMeta?.childEntities) {
             rootMeta.childEntities.push(target as unknown as ClazzType<any>);
           }
+          // A child shares the root's table (STI) or references it by FK
+          // (TPT), so it lives in the root's schema unless it says otherwise.
+          if (schemaKey === undefined && rootMeta?.schema) {
+            schemaKey = rootMeta.schema;
+          }
 
           break;
         }
@@ -178,6 +206,7 @@ export function Entity(options?: EntityOption): ClassDecorator {
       options,
       name: nameKey,
       nameExplicit: hasExplicitName,
+      ...(schemaKey !== undefined ? { schema: schemaKey } : {}),
       rawClassName: target.name,
       inheritanceRoot,
       inheritanceStrategy,
@@ -193,4 +222,17 @@ export function Entity(options?: EntityOption): ClassDecorator {
 
     Reflect.defineMetadata(ENTITY_TOKEN, metadata, target);
   };
+}
+
+/**
+ * Returns the PostgreSQL schema an entity is pinned to via
+ * `@Entity({ schema })` (or `schema` in `defineEntity` / `EntitySchema`),
+ * or `undefined` when the table follows the connection default and the
+ * tenant strategy.
+ */
+export function getEntitySchema(entity: Function): string | undefined {
+  const meta = Reflect.getMetadata(ENTITY_TOKEN, entity) as
+    | EntityMetadata
+    | undefined;
+  return meta?.schema;
 }

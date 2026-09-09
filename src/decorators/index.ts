@@ -40,7 +40,13 @@ export {
   DISCRIMINATOR_VALUE_TOKEN,
   DiscriminatorValue,
 } from "./DiscriminatorValue";
-export { Entity, ENTITY_TOKEN, EntityMetadata, EntityOption } from "./Entity";
+export {
+  Entity,
+  ENTITY_TOKEN,
+  EntityMetadata,
+  EntityOption,
+  getEntitySchema,
+} from "./Entity";
 export {
   FULLTEXT_INDEX_TOKEN,
   FullTextIndex,

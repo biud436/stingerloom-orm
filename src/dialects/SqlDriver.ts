@@ -140,12 +140,27 @@ export interface ISqlDriver<T = any> {
     foreignTableName: string,
     foreignColumnName: string,
     constraintName?: string,
+    /**
+     * Schema of the referenced table when it differs from this driver's own
+     * (an entity pinned via `@Entity({ schema })`). PostgreSQL only; other
+     * dialects ignore it.
+     */
+    foreignTableSchema?: string,
   ): Promise<T>;
 
   /**
    * Checks whether a foreign key constraint already exists on a table.
    */
   hasForeignKey(tableName: string, constraintName: string): Promise<boolean>;
+
+  /**
+   * Returns a driver view bound to another schema, sharing this driver's
+   * connection. DDL helpers on the view (`hasTable`, `createTable`,
+   * `addColumn`, `getIndexes`, …) resolve their table names in that schema.
+   * Used by synchronize for entities pinned via `@Entity({ schema })`.
+   * Optional: only dialects with a schema concept (PostgreSQL) provide it.
+   */
+  withSchema?(schema: string): ISqlDriver<T>;
 
   /**
    * Generates a name for a foreign key constraint based on the source and target tables and columns.

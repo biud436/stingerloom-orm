@@ -11,6 +11,7 @@ A multi-tenant REST API built with NestJS demonstrating Stingerloom ORM's **Laye
 - **Service Automation** — Middleware handles context; no manual `em.withTenant()` calls needed
 - **CRUD** — Users, Posts (isolated per tenant)
 - **Relations** — ManyToOne (Post→User, eager loading)
+- **Shared table** — `Unit` is pinned to `public` with `@Entity({ schema: "public" })`: every tenant reads the same rows, and provisioning never clones it into a tenant schema
 
 ## Architecture
 
@@ -123,6 +124,11 @@ Once started, the API is accessible at `http://localhost:3000`.
 | GET | `/posts/:id` | Get by ID |
 | PATCH | `/posts/:id` | Update |
 | DELETE | `/posts/:id` | Delete |
+
+### Units (`/units`) — shared across tenants
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/units/inactive` | List inactive units from `"public"."unit"`, whatever `x-tenant-id` says |
 
 ### Usage Examples
 

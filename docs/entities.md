@@ -65,6 +65,13 @@ Let's look at what each of the three decorators does.
 export class User { /* table name: app_users */ }
 ```
 
+On PostgreSQL an entity can also name the schema its table lives in. A pinned table is always addressed as `"schema"."table"`, regardless of the connection's `schema` option or the active tenant context -- which is what keeps a table shared across tenants in a schema-per-tenant setup. See [Shared tables](./multi-tenancy.md#shared-tables-pinning-an-entity-to-a-schema).
+
+```typescript
+@Entity({ schema: "public" })
+export class Plan { /* always "public"."plan" */ }
+```
+
 **`@PrimaryGeneratedColumn()`** defines an auto-increment primary key. At the SQL level, this translates to:
 - **PostgreSQL:** `SERIAL PRIMARY KEY` (which is shorthand for creating a sequence and setting it as the default)
 - **MySQL:** `INT NOT NULL AUTO_INCREMENT PRIMARY KEY`

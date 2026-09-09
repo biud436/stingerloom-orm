@@ -27,11 +27,15 @@ export interface TenantQueryStrategy {
    * @param tableName Raw table name
    * @param tenant Current tenant identifier ("public" for default)
    * @param wrap Driver-specific identifier wrapping function
+   * @param pinnedSchema Schema the entity is pinned to (`@Entity({ schema })`).
+   *   When set, the table is always emitted as `"schema"."table"` and the
+   *   tenant is ignored — the table is shared, not per-tenant.
    */
   qualifyTable(
     tableName: string,
     tenant: string,
     wrap: (s: string) => string,
+    pinnedSchema?: string,
   ): string;
 
   /**
@@ -55,6 +59,19 @@ export interface TenantQueryStrategy {
   getTenantColumnName?(): string | null;
 }
 
+/**
+ * `"schema"."table"` for an entity pinned to a schema. Shared by every
+ * strategy: a pinned table is addressed the same way whatever the tenant
+ * mechanism is, because it is by definition not per-tenant.
+ */
+function qualifyPinned(
+  tableName: string,
+  pinnedSchema: string,
+  wrap: (s: string) => string,
+): string {
+  return `${wrap(pinnedSchema)}.${wrap(tableName)}`;
+}
+
 export class SearchPathStrategy implements TenantQueryStrategy {
   needsTransactionForTenantRead(): boolean {
     return true;
@@ -64,7 +81,11 @@ export class SearchPathStrategy implements TenantQueryStrategy {
     tableName: string,
     _tenant: string,
     wrap: (s: string) => string,
+    pinnedSchema?: string,
   ): string {
+    // The transaction's search_path names only the tenant schema, so a
+    // shared table has to be spelled out or PG reports it missing.
+    if (pinnedSchema) return qualifyPinned(tableName, pinnedSchema, wrap);
     return wrap(tableName);
   }
 }
@@ -78,7 +99,9 @@ export class SchemaQualifiedStrategy implements TenantQueryStrategy {
     tableName: string,
     tenant: string,
     wrap: (s: string) => string,
+    pinnedSchema?: string,
   ): string {
+    if (pinnedSchema) return qualifyPinned(tableName, pinnedSchema, wrap);
     return tenant !== "public"
       ? `${wrap(tenant)}.${wrap(tableName)}`
       : wrap(tableName);
@@ -109,7 +132,9 @@ export class TenantColumnStrategy implements TenantQueryStrategy {
     tableName: string,
     _tenant: string,
     wrap: (s: string) => string,
+    pinnedSchema?: string,
   ): string {
+    if (pinnedSchema) return qualifyPinned(tableName, pinnedSchema, wrap);
     return wrap(tableName);
   }
 
@@ -156,7 +181,9 @@ export class DatabaseStrategy implements TenantQueryStrategy {
     tableName: string,
     _tenant: string,
     wrap: (s: string) => string,
+    pinnedSchema?: string,
   ): string {
+    if (pinnedSchema) return qualifyPinned(tableName, pinnedSchema, wrap);
     return wrap(tableName);
   }
 

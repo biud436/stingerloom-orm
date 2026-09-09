@@ -276,6 +276,22 @@ runner.isProvisioned("acme_corp");    // true
 runner.getProvisionedSchemas();       // ["acme_corp", "globex", ...]
 ```
 
+### Choosing which tables to clone
+
+By default every table in the source schema is cloned. The `tables` option narrows that — by entity class or table name, or by prefix / suffix:
+
+```typescript
+const runner = new PostgresTenantMigrationRunner(driver, {
+  tables: {
+    include: [User, Post],        // only these (entity classes or table names)
+    exclude: ["__migrations"],    // never these
+    excludePrefix: ["audit_"],    // nor tables starting with audit_
+  },
+});
+```
+
+Filters apply in order: `include` → `includePrefix` / `includeSuffix` → `exclude` → `excludePrefix` / `excludeSuffix`. Tables pinned with `@Entity({ schema })` or marked `@NonTenantEntity()` are always left in the source schema, whatever the filter says — see [Shared tables](#shared-tables-pinning-an-entity-to-a-schema).
+
 ### Auto-provisioning in NestJS
 
 You can create a service that provisions all known tenants on application startup:
@@ -443,6 +459,55 @@ SELECT * FROM "user"
 
 Both strategies produce identical results. The difference is purely in performance. Unless you have a specific reason to use search_path (e.g., compatibility with tools that don't support schema-qualified names), **`schema_qualified` is the better default**.
 
+### Shared tables: pinning an entity to a schema
+
+Both strategies send *every* table to the tenant schema. That is the point for tenant data, but some tables are shared by all tenants — subscription plans, countries, feature flags, the `tenants` table itself. Inside `MetadataContext.run("acme_corp", ...)` those tables are unreachable: `search_path` names only the tenant schema (there is no `public` fallback), and `schema_qualified` rewrites the name to `"acme_corp"."plan"`. PostgreSQL answers `relation "plan" does not exist`, and the only workaround was cloning the table into every tenant schema — a private, empty copy per tenant.
+
+Pin the entity to its schema instead:
+
+```typescript
+@Entity({ schema: "public" })
+class Plan {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() code!: string;
+  @OneToMany(() => Subscription, (s) => s.plan) subscriptions!: Subscription[];
+}
+
+@Entity()
+class Subscription {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToOne(() => Plan, (p) => p.subscriptions, { joinColumn: "plan_id" })
+  plan!: Plan;
+}
+```
+
+A pinned entity is always addressed as `"schema"."table"`, whatever tenant is active and under every strategy:
+
+```sql
+-- inside MetadataContext.run("acme_corp"), schema_qualified
+SELECT * FROM "acme_corp"."subscription" s
+  JOIN "public"."plan" p ON p."id" = s."plan_id"
+
+-- inside MetadataContext.run("acme_corp"), search_path
+SET LOCAL search_path TO "acme_corp";
+SELECT * FROM "public"."plan"
+```
+
+The pin reaches every place a table name is written:
+
+- **Queries** — `find*`, writes, relation loading, `SelectQueryBuilder` joins, `em.ref()`.
+- **Synchronize** — the table is created in its schema (the schema is created if missing) and altered there; a FK from a tenant table to the shared one references `"public"."plan"`.
+- **`migrate:generate`** — the diff introspects the pinned schema.
+- **Provisioning** — `PostgresTenantMigrationRunner` leaves pinned tables in the source schema; they are never cloned into a tenant, even when listed in `tables.include`.
+
+`@NonTenantEntity()` does the same without naming a schema: under `search_path` and `schema_qualified` it pins the entity to the connection's default schema (the `schema` option, or `public`). One decorator therefore means "global table" under every strategy — the same class opts out of the discriminator column under `tenant_column`.
+
+Children of an inheritance hierarchy inherit the root's schema unless they pin their own. Code-first entities take the same option: `defineEntity("plans", { ... }, { schema: "public" })` and `new EntitySchema({ target, schema: "public", ... })`. `em.resolveEntitySchema(Plan)` returns the schema an entity resolves to (`undefined` when it follows the tenant strategy). MySQL and SQLite have no schema level, so the option is ignored there.
+
+::: warning
+Pinning is a routing decision, not an access-control one. Every tenant reads and writes the same rows of a pinned table. Keep tenant-owned data in unpinned entities.
+:::
+
 ### Programmatic access
 
 The strategy classes are exported for advanced use cases like custom middleware or testing:
@@ -569,6 +634,8 @@ class Country {
 ```
 
 An eager join from a tenant-scoped entity into a `@NonTenantEntity` target is safe — the ORM skips the tenant predicate on the non-tenant side automatically.
+
+The same decorator keeps these tables global under the schema-based strategies too: under `search_path` and `schema_qualified` it pins the entity to the connection's default schema, so the table stays reachable inside a tenant context and is never cloned per tenant — see [Shared tables](#shared-tables-pinning-an-entity-to-a-schema).
 
 ### Escape hatch: `runUnscoped()`
 

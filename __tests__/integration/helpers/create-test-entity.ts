@@ -64,6 +64,8 @@ export interface TestColumnDef {
 export function createDynamicEntity(
   baseName: string,
   columns: TestColumnDef[],
+  /** `@Entity(options)` — e.g. `{ schema: "public" }` to pin the table. */
+  entityOptions?: Parameters<typeof Entity>[0],
 ): DynamicEntityResult {
   const tableName = generateTableName(baseName);
 
@@ -96,7 +98,7 @@ export function createDynamicEntity(
   }
 
   // Entity 데코레이터 적용 (반드시 Column들이 모두 등록된 후 호출)
-  Entity()(DynamicClass);
+  Entity(entityOptions)(DynamicClass);
 
   return {
     EntityClass: DynamicClass,

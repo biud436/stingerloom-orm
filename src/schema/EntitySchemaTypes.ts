@@ -190,6 +190,14 @@ export interface DiscriminatorColumnSchemaDef {
 export interface EntitySchemaOptions<T> {
   target: ClazzType<T>;
   tableName?: string;
+  /**
+   * PostgreSQL schema the table is pinned to. Decorator-free equivalent of
+   * `@Entity({ schema })`: the table is always addressed as
+   * `"schema"."table"`, outside the reach of the tenant strategies, so a
+   * shared table stays reachable from inside a tenant context. Ignored on
+   * MySQL and SQLite.
+   */
+  schema?: string;
   columns: { [K in keyof T]?: ColumnSchemaDef };
 
   /**

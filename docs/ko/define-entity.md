@@ -891,6 +891,7 @@ export const Member = defineEntity(
   },
   {
     tableName: "org_members",          // 테이블 이름 재정의
+    schema: "public",                  // PostgreSQL 스키마에 고정 (테넌트 간 공유)
     indexes: [{ columns: ["org_id"] }],
     uniqueIndexes: [{ columns: ["org_id", "email"], name: "uq_member_email" }],
     fullTextIndexes: [{ columns: ["email"] }],
@@ -903,6 +904,7 @@ export const Member = defineEntity(
 | 옵션 | 용도 | 데코레이터 대응 |
 | --- | --- | --- |
 | `tableName` | 테이블 이름 (첫 인자 재정의) | `@Entity({ name })` |
+| `schema` | 테이블을 고정할 PostgreSQL 스키마 ([공유 테이블](./multi-tenancy.md#공유-테이블-엔티티를-스키마에-고정하기)) | `@Entity({ schema })` |
 | `indexes` | 복합 / 고급 인덱스 | `@Index([cols], options)` |
 | `uniqueIndexes` | 복합 고유 인덱스 | `@UniqueIndex([cols])` |
 | `fullTextIndexes` | 전문 인덱스 | `@FullTextIndex([cols])` |

@@ -33,7 +33,7 @@ import {
 } from "../decorators/ComputedColumn";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { EntityNotFound } from "../dialects/EntityNotFound";
-import type { CreateTableForeignKey } from "../dialects/SqlDriver";
+import type { CreateTableForeignKey, ISqlDriver } from "../dialects/SqlDriver";
 import { createColumnDefinitionBuilder } from "../dialects/ColumnDefinitionBuilder";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
@@ -76,6 +76,15 @@ export class SchemaRegistrar {
   private readonly namingStrategy: NamingStrategy;
   private readonly logger = new Logger(SchemaRegistrar.name);
   private readonly inheritanceResolver = new InheritanceResolver();
+
+  /**
+   * Schema-bound driver views (`ISqlDriver.withSchema()`) for entities pinned
+   * via `@Entity({ schema })`, cached per schema for the lifetime of the
+   * connection's driver. `schemaDriverBase` detects a reconnect (new base
+   * driver) so stale views are never reused.
+   */
+  private schemaDriverBase: ISqlDriver | undefined;
+  private readonly schemaDrivers = new Map<string, ISqlDriver>();
 
   /**
    * Active policy for the in-flight registerEntities() call.
@@ -250,6 +259,10 @@ export class SchemaRegistrar {
     // same type twice), so each one is inspected at most once per run.
     const syncedEnumTypes = new Set<string>();
 
+    // Schemas that entities are pinned to (`@Entity({ schema })`), created
+    // on first sight so the pinned CREATE TABLE has somewhere to land.
+    const ensuredSchemas = new Set<string>();
+
     // Pass 1: create every table first (the referenced tables must exist before FKs are created).
     const entityList: Array<{
       TargetEntity: ClazzType<any>;
@@ -279,6 +292,14 @@ export class SchemaRegistrar {
 
       if (!ReflectManager.isEntity(TargetEntity)) {
         throw new EntityMetadataNotFoundError(tableName ?? "Unknown");
+      }
+
+      // `@Entity({ schema })` / `@NonTenantEntity()` under a schema-based
+      // strategy: record the pin before any DDL or query names this table,
+      // so wrapTable() emits `"schema"."table"` from here on.
+      const pinnedSchema = this.resolvePinnedSchema(TargetEntity);
+      if (pinnedSchema) {
+        this.pinTable(tableName, pinnedSchema);
       }
 
       // STI: child entities do not create their own table (they share the parent's table).
@@ -447,8 +468,18 @@ export class SchemaRegistrar {
       }
 
       let tableExisted = false;
-      const driver = this.ctx.getDriver();
+      // DDL for a pinned entity runs through a driver view bound to its
+      // schema, so hasTable / createTable resolve there, not in the default.
+      const driver = this.driverForEntity(TargetEntity);
       if (synchronize) {
+        if (
+          pinnedSchema &&
+          !isDryRun &&
+          !ensuredSchemas.has(pinnedSchema)
+        ) {
+          ensuredSchemas.add(pinnedSchema);
+          await this.ensurePinnedSchema(pinnedSchema, policy);
+        }
         const hasTable = await driver?.hasTable(tableName);
         tableExisted = !!(hasTable && hasTable.length > 0);
         if (!tableExisted) {
@@ -531,7 +562,7 @@ export class SchemaRegistrar {
               const rootPk = rootMeta?.columns.find(
                 (c: any) => c.options?.primary,
               );
-              const tptDriver = this.ctx.getDriver();
+              const tptDriver = this.driverForEntity(TargetEntity);
               if (pk && rootPk && rootMeta && tptDriver) {
                 const rootTableName = rootMeta.name;
                 const fkName = this.namingStrategy.foreignKeyName(
@@ -542,12 +573,14 @@ export class SchemaRegistrar {
                 try {
                   const fkExists = await tptDriver.hasForeignKey(tableName, fkName);
                   if (!fkExists) {
-                    await tptDriver.addForeignKey(
+                    await this.addForeignKeyThrough(
+                      tptDriver,
                       tableName,
                       pk.name,
                       rootTableName,
                       rootPk.name,
                       fkName,
+                      this.effectiveSchema(root),
                     );
                   }
                 } catch (err) {
@@ -778,16 +811,26 @@ export class SchemaRegistrar {
 
     // addTables was already handled in pass 1, so skip it here (we only process existing tables here).
 
-    // Collect FK columns (so they can be excluded from DROP).
+    // Collect FK columns (so they can be excluded from DROP), and the schema
+    // each table lives in so ALTER/DROP for a pinned entity go through the
+    // driver view bound to that schema.
     const fkColumnsPerTable = new Map<string, Set<string>>();
+    const tableSchemas = new Map<string, string | undefined>();
     for (const { TargetEntity, tableName } of entityList) {
       fkColumnsPerTable.set(
         tableName.toLowerCase(),
         this.collectForeignKeyColumns(TargetEntity),
       );
+      tableSchemas.set(tableName.toLowerCase(), this.effectiveSchema(TargetEntity));
     }
 
-    await this.applySchemaDiff(diff, fkColumnsPerTable, policy, dialect);
+    await this.applySchemaDiff(
+      diff,
+      fkColumnsPerTable,
+      policy,
+      dialect,
+      tableSchemas,
+    );
   }
 
   /**
@@ -798,9 +841,15 @@ export class SchemaRegistrar {
     fkColumnsPerTable: Map<string, Set<string>>,
     policy: SynchronizePolicy,
     dialect: SchemaDialect,
+    tableSchemas?: Map<string, string | undefined>,
   ): Promise<void> {
     const driver = this.ctx.getDriver();
     if (!driver) return;
+    // Column DDL that the driver qualifies itself (addColumn / dropColumn)
+    // has to run through the view bound to the table's schema; raw DDL built
+    // here already goes through ctx.wrapTable() and stays on the base driver.
+    const driverForTable = (tableName: string): ISqlDriver =>
+      this.driverFor(tableSchemas?.get(tableName.toLowerCase())) ?? driver;
 
     const mode = policy.mode;
     const isDryRun = mode === "dry-run";
@@ -819,7 +868,11 @@ export class SchemaRegistrar {
           `[sync] Adding column ${col.tableName}.${col.columnName} (${typeDef})`,
         );
         try {
-          await driver.addColumn(col.tableName, col.columnName, typeDef);
+          await driverForTable(col.tableName).addColumn(
+            col.tableName,
+            col.columnName,
+            typeDef,
+          );
         } catch (err) {
           // Don't abort the entire diff on a single column failure when
           // continueOnError is true — a type-incompatible column rename or a
@@ -963,7 +1016,10 @@ export class SchemaRegistrar {
             policy,
           );
           try {
-            await driver.dropColumn(col.tableName, col.columnName);
+            await driverForTable(col.tableName).dropColumn(
+              col.tableName,
+              col.columnName,
+            );
           } catch (err) {
             this.handleDdlError(
               err,
@@ -989,7 +1045,7 @@ export class SchemaRegistrar {
     // 4. RENAME COLUMNS (only in true mode; safe reports and skips)
     if ((isFull || isDryRun) && diff.renamedColumns) {
       for (const rename of diff.renamedColumns) {
-        const ddl = `ALTER TABLE ${this.ctx.wrap(rename.tableName)} RENAME COLUMN ${this.ctx.wrap(rename.oldColumnName)} TO ${this.ctx.wrap(rename.newColumnName)}`;
+        const ddl = `ALTER TABLE ${this.ctx.wrapTable(rename.tableName)} RENAME COLUMN ${this.ctx.wrap(rename.oldColumnName)} TO ${this.ctx.wrap(rename.newColumnName)}`;
         if (isDryRun) {
           this.logger.info(`[dry-run] ${ddl}`);
         } else {
@@ -1013,7 +1069,7 @@ export class SchemaRegistrar {
         safeSkipped.push({
           kind: "RENAME COLUMN",
           target: `${rename.tableName}.${rename.oldColumnName} → ${rename.newColumnName}`,
-          ddl: `ALTER TABLE ${this.ctx.wrap(rename.tableName)} RENAME COLUMN ${this.ctx.wrap(rename.oldColumnName)} TO ${this.ctx.wrap(rename.newColumnName)}`,
+          ddl: `ALTER TABLE ${this.ctx.wrapTable(rename.tableName)} RENAME COLUMN ${this.ctx.wrap(rename.oldColumnName)} TO ${this.ctx.wrap(rename.newColumnName)}`,
         });
       }
     }
@@ -1270,7 +1326,7 @@ export class SchemaRegistrar {
 
     if (!uniqueIndexes || uniqueIndexes.length === 0) return;
 
-    const driver = this.ctx.getDriver();
+    const driver = this.driverForEntity(TargetEntity);
 
     // Build property-to-column name map to resolve @UniqueIndex() property
     // keys (#176), including @RelationColumn FK shadow properties so an
@@ -1330,11 +1386,15 @@ export class SchemaRegistrar {
    */
   async registerManyToManyJoinTables(entities: ClazzType<any>[]) {
     const processedTables = new Set<string>();
-    const driver = this.ctx.getDriver();
 
     for (const entity of entities) {
       const m2mMeta = (Reflect.getMetadata(MANY_TO_MANY_TOKEN, entity) ??
         []) as ManyToManyMetadata<any>[];
+      // The join table follows the owning side's schema: DDL runs through the
+      // owner's driver view, and the table is pinned alongside the owner so
+      // runtime queries address it the same way.
+      const driver = this.driverForEntity(entity);
+      const ownerPinnedSchema = this.resolvePinnedSchema(entity);
 
       for (const rel of m2mMeta) {
         if (!rel.joinTable) continue;
@@ -1346,6 +1406,9 @@ export class SchemaRegistrar {
         } = rel.joinTable;
         if (processedTables.has(joinTableName)) continue;
         processedTables.add(joinTableName);
+        if (ownerPinnedSchema) {
+          this.pinTable(joinTableName, ownerPinnedSchema);
+        }
 
         // Look up the entity's table name (@Entity name takes priority).
         const ownerEntityMeta = Reflect.getMetadata(ENTITY_TOKEN, entity) as
@@ -1390,7 +1453,9 @@ export class SchemaRegistrar {
         // 2. Create the join table (IF NOT EXISTS — safe across restarts).
         const hasTable = await driver?.hasTable(joinTableName);
         if (!hasTable || (hasTable as any[]).length === 0) {
-          const wJoinTable = this.ctx.wrap(joinTableName);
+          // wrapTable() keeps the plain name for an unpinned table and emits
+          // `"schema"."table"` for a pinned one.
+          const wJoinTable = this.ctx.wrapTable(joinTableName);
           const wJoinCol = this.ctx.wrap(joinColumn);
           const wInvCol = this.ctx.wrap(inverseJoinColumn);
           // Derive join column types from actual PK types (#178)
@@ -1401,10 +1466,10 @@ export class SchemaRegistrar {
           // so the join table FKs must be part of CREATE TABLE.
           if (!canAlterFk) {
             if (ownerPk) {
-              body += `, CONSTRAINT ${this.ctx.wrap(ownerFkName)} FOREIGN KEY (${wJoinCol}) REFERENCES ${this.ctx.wrap(ownerTable)}(${this.ctx.wrap(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
+              body += `, CONSTRAINT ${this.ctx.wrap(ownerFkName)} FOREIGN KEY (${wJoinCol}) REFERENCES ${this.ctx.wrapTable(ownerTable)}(${this.ctx.wrap(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
             }
             if (relatedPk) {
-              body += `, CONSTRAINT ${this.ctx.wrap(relatedFkName)} FOREIGN KEY (${wInvCol}) REFERENCES ${this.ctx.wrap(relatedTable)}(${this.ctx.wrap(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
+              body += `, CONSTRAINT ${this.ctx.wrap(relatedFkName)} FOREIGN KEY (${wInvCol}) REFERENCES ${this.ctx.wrapTable(relatedTable)}(${this.ctx.wrap(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
             }
           }
           let ddl = `CREATE TABLE IF NOT EXISTS ${wJoinTable} (${body})`;
@@ -1419,7 +1484,7 @@ export class SchemaRegistrar {
           driver &&
           !(await driver.hasForeignKey(joinTableName, ownerFkName))
         ) {
-          const ddl = `ALTER TABLE ${this.ctx.wrap(joinTableName)} ADD CONSTRAINT ${ownerFkName} FOREIGN KEY (${this.ctx.wrap(joinColumn)}) REFERENCES ${this.ctx.wrap(ownerTable)}(${this.ctx.wrap(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
+          const ddl = `ALTER TABLE ${this.ctx.wrapTable(joinTableName)} ADD CONSTRAINT ${ownerFkName} FOREIGN KEY (${this.ctx.wrap(joinColumn)}) REFERENCES ${this.ctx.wrapTable(ownerTable)}(${this.ctx.wrap(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
           await driver.executeRaw(ddl);
         }
 
@@ -1430,7 +1495,7 @@ export class SchemaRegistrar {
           driver &&
           !(await driver.hasForeignKey(joinTableName, relatedFkName))
         ) {
-          const ddl = `ALTER TABLE ${this.ctx.wrap(joinTableName)} ADD CONSTRAINT ${relatedFkName} FOREIGN KEY (${this.ctx.wrap(inverseJoinColumn)}) REFERENCES ${this.ctx.wrap(relatedTable)}(${this.ctx.wrap(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
+          const ddl = `ALTER TABLE ${this.ctx.wrapTable(joinTableName)} ADD CONSTRAINT ${relatedFkName} FOREIGN KEY (${this.ctx.wrap(inverseJoinColumn)}) REFERENCES ${this.ctx.wrapTable(relatedTable)}(${this.ctx.wrap(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`;
           await driver.executeRaw(ddl);
         }
       }
@@ -1450,6 +1515,126 @@ export class SchemaRegistrar {
         | ComputedColumnMetadata[]
         | undefined) ?? []
     );
+  }
+
+  // ── Pinned schemas (`@Entity({ schema })`) ─────────────────────────────
+
+  /**
+   * The schema an entity is pinned to (`@Entity({ schema })`, or
+   * `@NonTenantEntity()` under a schema-based tenant strategy), or undefined.
+   * Guarded for partial ctx mocks that predate the accessor.
+   */
+  private resolvePinnedSchema(entity: ClazzType<any>): string | undefined {
+    if (typeof this.ctx.resolveEntitySchema !== "function") return undefined;
+    return this.ctx.resolveEntitySchema(entity);
+  }
+
+  /** Records a pinned table on the EntityManager so `wrapTable()` qualifies it. */
+  private pinTable(tableName: string, schema: string): void {
+    if (typeof this.ctx.pinTableSchema === "function") {
+      this.ctx.pinTableSchema(tableName, schema);
+    }
+  }
+
+  /**
+   * Schema an entity's table lives in for DDL: the pinned schema or, on
+   * PostgreSQL, the connection default. Undefined on dialects without
+   * schemas, so callers can pass it straight to `addForeignKey()`.
+   */
+  private effectiveSchema(entity: ClazzType<any>): string | undefined {
+    if (typeof this.ctx.isPostgres !== "function" || !this.ctx.isPostgres()) {
+      return undefined;
+    }
+    const pinned = this.resolvePinnedSchema(entity);
+    if (pinned) return pinned;
+    const defaultSchema =
+      typeof this.ctx.getSchema === "function" ? this.ctx.getSchema() : undefined;
+    return defaultSchema ?? "public";
+  }
+
+  /**
+   * The driver to run DDL for `schema` through: the connection's own driver
+   * when `schema` is its default (or the dialect has no schemas), otherwise
+   * a `withSchema()` view of it. Views are cached per schema and discarded
+   * when the base driver changes (reconnect).
+   */
+  private driverFor(schema: string | undefined): ISqlDriver | undefined {
+    const base = this.ctx.getDriver();
+    if (!base || !schema) return base;
+    if (this.schemaDriverBase !== base) {
+      this.schemaDriverBase = base;
+      this.schemaDrivers.clear();
+    }
+    const baseSchema = (base as { getSchema?: () => string }).getSchema?.();
+    if (schema === baseSchema || typeof base.withSchema !== "function") {
+      return base;
+    }
+    let view = this.schemaDrivers.get(schema);
+    if (!view) {
+      view = base.withSchema(schema);
+      this.schemaDrivers.set(schema, view);
+    }
+    return view;
+  }
+
+  /** `driverFor()` keyed by the entity's effective schema. */
+  private driverForEntity(entity: ClazzType<any>): ISqlDriver | undefined {
+    return this.driverFor(this.effectiveSchema(entity));
+  }
+
+  /**
+   * `driver.addForeignKey()` with the referenced table's schema appended only
+   * when there is one (PostgreSQL). Dialects without schemas keep receiving
+   * the five-argument call, so custom drivers see no new trailing `undefined`.
+   */
+  private addForeignKeyThrough(
+    driver: ISqlDriver,
+    tableName: string,
+    columnName: string,
+    foreignTableName: string,
+    foreignColumnName: string,
+    constraintName: string,
+    foreignTableSchema: string | undefined,
+  ): Promise<unknown> {
+    return foreignTableSchema === undefined
+      ? driver.addForeignKey(
+          tableName,
+          columnName,
+          foreignTableName,
+          foreignColumnName,
+          constraintName,
+        )
+      : driver.addForeignKey(
+          tableName,
+          columnName,
+          foreignTableName,
+          foreignColumnName,
+          constraintName,
+          foreignTableSchema,
+        );
+  }
+
+  /**
+   * `CREATE SCHEMA IF NOT EXISTS` for a schema an entity is pinned to, so the
+   * pinned CREATE TABLE has somewhere to land. Mirrors the default-schema
+   * bootstrap at the top of registerEntities(); a CREATE, so "safe" mode
+   * applies it too.
+   */
+  private async ensurePinnedSchema(
+    schema: string,
+    policy: SynchronizePolicy,
+  ): Promise<void> {
+    const pgDriver = this.ctx.getDriver() as PostgresDriver | undefined;
+    if (!pgDriver || typeof pgDriver.hasSchema !== "function") return;
+    try {
+      const rows = await pgDriver.hasSchema(schema);
+      if (!rows || rows.length === 0) {
+        this.logDdl(`[sync] CREATE SCHEMA IF NOT EXISTS ${schema}`, policy);
+        await pgDriver.createSchema(schema);
+      }
+    } catch (err) {
+      this.handleDdlError(err, `Failed to create schema ${schema}`, policy);
+    }
   }
 
   /**
@@ -1616,7 +1801,7 @@ export class SchemaRegistrar {
   async registerForeignKeys(TargetEntity: ClazzType<any>, tableName: string) {
     // Fetch the entity scanner.
     const entityScanner = getScannerInstance(EntityScanner);
-    const driver = this.ctx.getDriver();
+    const driver = this.driverForEntity(TargetEntity);
     const canAlterFk = this.driverSupportsAlterAddFk();
 
     // Look up ManyToOne relations through the layered metadata system.
@@ -1691,17 +1876,23 @@ export class SchemaRegistrar {
           if (fkExists) continue;
         }
 
-        await driver?.addForeignKey(
-          // Current table name
-          tableName,
-          // Current table's column name
-          joinColumn,
-          // Target table name
-          mappingTableName,
-          // Target table's primary key
-          mappingTablePrimaryKey,
-          m2oFkName,
-        );
+        if (driver) {
+          await this.addForeignKeyThrough(
+            driver,
+            // Current table name
+            tableName,
+            // Current table's column name
+            joinColumn,
+            // Target table name
+            mappingTableName,
+            // Target table's primary key
+            mappingTablePrimaryKey,
+            m2oFkName,
+            // Schema the referenced table lives in (pinned or default) — a
+            // cross-schema FK must spell it out.
+            this.effectiveSchema(mappingEntity),
+          );
+        }
       }
     }
 
@@ -1761,13 +1952,17 @@ export class SchemaRegistrar {
         if (fkExists) continue;
       }
 
-      await driver?.addForeignKey(
-        tableName,
-        joinColumn,
-        relatedTableName,
-        relatedPrimaryKey,
-        o2oFkName,
-      );
+      if (driver) {
+        await this.addForeignKeyThrough(
+          driver,
+          tableName,
+          joinColumn,
+          relatedTableName,
+          relatedPrimaryKey,
+          o2oFkName,
+          this.effectiveSchema(RelatedEntity),
+        );
+      }
     }
   }
 
@@ -1781,7 +1976,7 @@ export class SchemaRegistrar {
       TargetEntity.prototype,
     ) as IndexMetadata[];
     if (indexer) {
-      const driver = this.ctx.getDriver();
+      const driver = this.driverForEntity(TargetEntity);
       // Build property-to-column name map to resolve @Index() property keys
       // (#176), including @RelationColumn FK shadow properties so an index
       // on e.g. `workspaceId` targets the real `workspace_id` column.
@@ -1859,7 +2054,7 @@ export class SchemaRegistrar {
     ) as FullTextIndexMetadata[] | undefined;
     if (!ftIndexes || ftIndexes.length === 0) return;
 
-    const driver = this.ctx.getDriver();
+    const driver = this.driverForEntity(TargetEntity);
     if (!driver) return;
 
     const generator = new SchemaGenerator({

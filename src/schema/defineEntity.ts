@@ -88,6 +88,13 @@ export type EntityHookFn<Shape> = (
 export interface DefineEntityOptions<Shape = any> {
   /** Database table name. Defaults to the first `defineEntity` argument. */
   tableName?: string;
+  /**
+   * PostgreSQL schema the table is pinned to (`@Entity({ schema })`
+   * equivalent). The table is always addressed as `"schema"."table"`, so a
+   * shared table stays reachable from inside a tenant context. Ignored on
+   * MySQL and SQLite.
+   */
+  schema?: string;
   /** Composite / advanced indexes. */
   indexes?: { columns: string[]; name?: string; options?: AdvancedIndexOptions }[];
   /** Additional composite unique indexes (merged with per-column `.unique()`). */
@@ -273,6 +280,7 @@ export function defineEntity<Cols extends EntityColumns>(
   const schemaOptions: EntitySchemaOptions<any> = {
     target,
     tableName: options.tableName ?? name,
+    ...(options.schema ? { schema: options.schema } : {}),
     columns: columnDefs as any,
     ...(Object.keys(relationDefs).length
       ? { relations: relationDefs as any }
