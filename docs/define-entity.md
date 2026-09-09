@@ -891,6 +891,7 @@ export const Member = defineEntity(
   },
   {
     tableName: "org_members",          // override the table name
+    schema: "public",                  // pin to a PostgreSQL schema (shared across tenants)
     indexes: [{ columns: ["org_id"] }],
     uniqueIndexes: [{ columns: ["org_id", "email"], name: "uq_member_email" }],
     fullTextIndexes: [{ columns: ["email"] }],
@@ -903,6 +904,7 @@ export const Member = defineEntity(
 | Option | Purpose | Decorator equivalent |
 | --- | --- | --- |
 | `tableName` | Table name (overrides the first argument) | `@Entity({ name })` |
+| `schema` | PostgreSQL schema the table is pinned to ([shared tables](./multi-tenancy.md#shared-tables-pinning-an-entity-to-a-schema)) | `@Entity({ schema })` |
 | `indexes` | Composite / advanced indexes | `@Index([cols], options)` |
 | `uniqueIndexes` | Composite unique indexes | `@UniqueIndex([cols])` |
 | `fullTextIndexes` | Full-text indexes | `@FullTextIndex([cols])` |

@@ -376,6 +376,8 @@ export class EntityManager implements BaseEntityManager {
     findAndCount: (e, o) => this.findAndCount(e, o),
     delete: (e, c) => this.delete(e, c),
     getTenantColumnConfig: () => this.tenantColumnConfig,
+    resolveEntitySchema: (e) => this.tenantScope.resolveEntitySchema(e),
+    pinTableSchema: (t, s) => this.tenantScope.pinTableSchema(t, s),
     buildTenantWhereClause: (e, alias) => this.buildTenantWhereClause(e, alias),
     buildPropertyToColumnMap: (m) => this.buildPropertyToColumnMap(m),
     propKey: (col) => this.propKey(col),
@@ -2559,6 +2561,18 @@ export class EntityManager implements BaseEntityManager {
    */
   public getTenantStrategy(): TenantQueryStrategy {
     return this.tenantScope.strategy;
+  }
+
+  /**
+   * Returns the PostgreSQL schema an entity's table is pinned to —
+   * `@Entity({ schema })` / the code-first `schema` option, or
+   * `@NonTenantEntity()` under `search_path` / `schema_qualified` (which
+   * resolves to the connection's default schema). `undefined` means the table
+   * follows the default schema and the active tenant strategy. Always
+   * `undefined` on MySQL and SQLite.
+   */
+  public resolveEntitySchema<T>(entity: ClazzType<T>): string | undefined {
+    return this.tenantScope.resolveEntitySchema(entity);
   }
 
   /**

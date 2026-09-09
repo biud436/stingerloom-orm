@@ -27,6 +27,7 @@ Stingerloom은 데코레이터와 **완전히 동일한 메타데이터**를 등
 | 데코레이터 | 범위 | `EntitySchema` 대응 |
 | --- | --- | --- |
 | `@Entity({ name })` | class | `{ target, tableName }` |
+| `@Entity({ schema })` | class | `{ target, schema }` |
 | `@Column(opts)` | property | `columns: { x: opts }` |
 | `@Column({ transformer })` | property | `columns: { x: { transformer } }` |
 | `@PrimaryColumn()` | property | `columns: { x: { primary: true } }` |

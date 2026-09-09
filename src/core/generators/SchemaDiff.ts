@@ -6,7 +6,11 @@ import {
   ColumnOption,
   ColumnType,
 } from "../../decorators/Column";
-import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
+import {
+  ENTITY_TOKEN,
+  EntityMetadata,
+  getEntitySchema,
+} from "../../decorators/Entity";
 import { ColumnMetadata } from "../../scanner/ColumnScanner";
 import {
   RELATION_COLUMN_TOKEN,
@@ -165,11 +169,13 @@ export class SchemaDiff {
       const tableName = this.getTableName(entity);
       entityTableNames.add(tableName.toLowerCase());
       const entityColumns = this.getEntityColumns(entity);
+      // An entity pinned via `@Entity({ schema })` is introspected in its own
+      // schema; enum types stay in the default one (see quoteEnumType).
       const dbColumns = await this.getDbColumns(
         queryRunner,
         tableName,
         dialect,
-        schema,
+        getEntitySchema(entity) ?? schema,
       );
 
       if (dbColumns.length === 0) {

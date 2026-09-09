@@ -9,6 +9,7 @@ import {
   getTenantColumnMetadata,
   isNonTenantEntity,
 } from "../../decorators/TenantColumn";
+import { getEntitySchema } from "../../decorators/Entity";
 import {
   TenantQueryStrategy,
   SearchPathStrategy,
@@ -45,6 +46,13 @@ export class TenantScopeManager {
   onMissingContext: "throw" | "warn" | "allow" = "warn";
   readonly rawQueryWarnedCallSites = new Set<string>();
   private readonly missingContextWarnedEntities = new Set<Function>();
+  /**
+   * Table name → PostgreSQL schema for entities pinned via
+   * `@Entity({ schema })` (or `@NonTenantEntity()` under a schema-based
+   * strategy). Filled by SchemaRegistrar as entities are registered and
+   * consulted by `wrapTable()`, which only receives the table name.
+   */
+  private readonly pinnedSchemas = new Map<string, string>();
 
   constructor(private readonly ctx: EntityManagerInternals) {}
 
@@ -75,19 +83,69 @@ export class TenantScopeManager {
   reset(): void {
     this.rawQueryWarnedCallSites.clear();
     this.missingContextWarnedEntities.clear();
+    this.pinnedSchemas.clear();
   }
 
   /**
    * Wrap a table name with optional schema qualification for multi-tenant queries.
    * Uses the configured TenantQueryStrategy to determine whether to prefix with tenant schema.
+   * A table pinned to a schema (see {@link pinTableSchema}) is always emitted
+   * as `"schema"."table"`, whatever tenant is active.
    */
   wrapTable(tableName: string): string {
-    const tenant = this.ctx.isPostgres()
-      ? MetadataContext.getCurrentTenant()
-      : "public";
-    return this.strategy.qualifyTable(tableName, tenant, (n) =>
-      this.ctx.wrap(n),
+    const isPostgres = this.ctx.isPostgres();
+    const tenant = isPostgres ? MetadataContext.getCurrentTenant() : "public";
+    const pinned = isPostgres ? this.pinnedSchemas.get(tableName) : undefined;
+    return this.strategy.qualifyTable(
+      tableName,
+      tenant,
+      (n) => this.ctx.wrap(n),
+      pinned,
     );
+  }
+
+  /**
+   * True when the active strategy encodes the tenant as a PostgreSQL schema
+   * (`search_path` / `schema_qualified`). Under those, `@NonTenantEntity()`
+   * has to keep the table in the connection's default schema — otherwise the
+   * "global" table would be looked up inside every tenant schema.
+   */
+  private isSchemaScopedStrategy(): boolean {
+    return (
+      this.strategy instanceof SearchPathStrategy ||
+      this.strategy instanceof SchemaQualifiedStrategy
+    );
+  }
+
+  /**
+   * Resolves the schema an entity's table is pinned to, or `undefined` when
+   * the table follows the connection default and the tenant strategy.
+   *
+   *   - `@Entity({ schema })` (and the code-first `schema` option) wins.
+   *   - `@NonTenantEntity()` under `search_path` / `schema_qualified` pins the
+   *     table to the connection's default schema, so one decorator means
+   *     "global table" under every strategy.
+   *
+   * PostgreSQL only — MySQL and SQLite have no schema to pin to.
+   */
+  resolveEntitySchema<T>(entity: ClazzType<T>): string | undefined {
+    if (!this.ctx.isPostgres()) return undefined;
+    const explicit = getEntitySchema(entity);
+    if (explicit) return explicit;
+    if (isNonTenantEntity(entity) && this.isSchemaScopedStrategy()) {
+      return this.ctx.getSchema() ?? "public";
+    }
+    return undefined;
+  }
+
+  /** Records that `tableName` lives in `schema` for {@link wrapTable}. */
+  pinTableSchema(tableName: string, schema: string): void {
+    this.pinnedSchemas.set(tableName, schema);
+  }
+
+  /** The schema `tableName` is pinned to, if any. */
+  getPinnedSchema(tableName: string): string | undefined {
+    return this.pinnedSchemas.get(tableName);
   }
 
   /**

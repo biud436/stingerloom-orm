@@ -375,6 +375,7 @@ export {
   ENTITY_TOKEN,
   EntityMetadata,
   EntityOption,
+  getEntitySchema,
 } from "./decorators/Entity";
 export {
   FULLTEXT_INDEX_TOKEN,

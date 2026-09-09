@@ -25,6 +25,24 @@ await em.register({
 });
 ```
 
+#### The `schema` option
+
+PostgreSQL adds a level between the database and its tables: a **schema** is a namespace, and every database starts with one called `public`. The `schema` option names the schema this connection works in (default: `"public"`). It controls three things:
+
+- **Name resolution.** Every pooled connection runs `SET search_path TO "<schema>"` on connect, so unqualified table names in generated SQL resolve there.
+- **DDL target.** `synchronize` creates and alters tables in that schema and provisions ENUM types there; `migrate:generate` introspects it. The schema itself is created when missing.
+- **Multi-tenancy baseline.** The schema-based tenant strategies (`search_path`, `schema_qualified`) switch away from it inside a tenant context and fall back to it outside one -- see [Multi-Tenancy](./multi-tenancy.md).
+
+```typescript
+await em.register({
+  type: "postgres",
+  // ...
+  schema: "app",   // tables live in "app", not "public"
+});
+```
+
+A single entity can live in a schema of its own with `@Entity({ schema })`. That table is then always addressed as `"schema"."table"`, whatever this option or the active tenant says -- which is how a table is kept shared across tenants in a schema-per-tenant setup. See [Shared tables](./multi-tenancy.md#shared-tables-pinning-an-entity-to-a-schema). MySQL and SQLite have no schema level; the option is ignored there.
+
 ### MySQL / MariaDB
 
 ```typescript

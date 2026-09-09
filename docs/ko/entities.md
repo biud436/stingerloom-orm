@@ -67,6 +67,15 @@ export class User {
 }
 ```
 
+PostgreSQL에서는 테이블이 놓일 스키마도 엔티티에 지정할 수 있습니다. 고정된 테이블은 연결 옵션의 `schema`나 활성 테넌트 컨텍스트와 무관하게 항상 `"schema"."table"`로 지칭돼요. 테넌트별 스키마 구성에서 테이블 하나를 모든 테넌트가 공유하게 만드는 방법이 바로 이것입니다. [공유 테이블](./multi-tenancy.md#공유-테이블-엔티티를-스키마에-고정하기)을 참고하세요.
+
+```typescript
+@Entity({ schema: "public" })
+export class Plan {
+  /* 항상 "public"."plan" */
+}
+```
+
 **`@PrimaryGeneratedColumn()`** 은 자동 증가 기본 키를 정의해요. SQL 수준에서 이건 이렇게 변환돼요:
 
 - **PostgreSQL:** `SERIAL PRIMARY KEY` (시퀀스를 생성하고 기본값으로 설정하는 축약형)

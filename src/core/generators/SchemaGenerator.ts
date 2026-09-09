@@ -1,7 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../../utils";
 import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../../decorators/Column";
-import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
+import {
+  ENTITY_TOKEN,
+  EntityMetadata,
+  getEntitySchema,
+} from "../../decorators/Entity";
 import {
   INDEX_TOKEN,
   IndexMetadata,
@@ -83,6 +87,8 @@ interface ForeignKeyDef {
   column: string;
   referencedTable: string;
   referencedColumn: string;
+  /** Schema of the referenced entity when pinned via `@Entity({ schema })`. */
+  referencedSchema?: string;
   onDelete?: ReferentialAction;
   onUpdate?: ReferentialAction;
 }
@@ -151,7 +157,7 @@ export class SchemaGenerator {
       columnDefs.push(pkDef);
     }
 
-    const ddl = `CREATE TABLE IF NOT EXISTS ${this.wrapTable(tableName)} (${columnDefs.join(", ")})`;
+    const ddl = `CREATE TABLE IF NOT EXISTS ${this.wrapTable(tableName, this.schemaOf(entity))} (${columnDefs.join(", ")})`;
 
     if (this.dialect === "mysql") {
       return ddl + " ENGINE=InnoDB";
@@ -167,6 +173,7 @@ export class SchemaGenerator {
    */
   generateCreateIndexDDL<T>(entity: ClazzType<T>): string[] {
     const tableName = this.getTableName(entity);
+    const schema = this.schemaOf(entity);
     const indexes = this.getIndexes(entity);
     const propColMap = this.buildPropertyToColumnMap(entity);
     return indexes.map((idx) => {
@@ -174,9 +181,9 @@ export class SchemaGenerator {
       const columnName = propColMap.get(idx.name) ?? idx.name;
       const indexName = this.namingStrategy.indexName(tableName, columnName);
       if (this.dialect === "postgres" || this.dialect === "sqlite") {
-        return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${this.wrapId(columnName)})`;
+        return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName, schema)} (${this.wrapId(columnName)})`;
       }
-      return `CREATE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${this.wrapId(columnName)})`;
+      return `CREATE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName, schema)} (${this.wrapId(columnName)})`;
     });
   }
 
@@ -185,12 +192,13 @@ export class SchemaGenerator {
    */
   generateForeignKeyDDL<T>(entity: ClazzType<T>): string[] {
     const tableName = this.getTableName(entity);
+    const schema = this.schemaOf(entity);
     const fks = this.getForeignKeys(entity);
     return fks.map((fk) => {
       const fkName = this.namingStrategy.foreignKeyName(tableName, fk.column, fk.referencedTable);
       const onDelete = fk.onDelete ?? "NO ACTION";
       const onUpdate = fk.onUpdate ?? "NO ACTION";
-      return `ALTER TABLE ${this.wrapTable(tableName)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(fk.column)}) REFERENCES ${this.wrapTable(fk.referencedTable)}(${this.wrapId(fk.referencedColumn)}) ON DELETE ${onDelete} ON UPDATE ${onUpdate}`;
+      return `ALTER TABLE ${this.wrapTable(tableName, schema)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(fk.column)}) REFERENCES ${this.wrapTable(fk.referencedTable, fk.referencedSchema)}(${this.wrapId(fk.referencedColumn)}) ON DELETE ${onDelete} ON UPDATE ${onUpdate}`;
     });
   }
 
@@ -199,6 +207,7 @@ export class SchemaGenerator {
    */
   generateUniqueIndexDDL<T>(entity: ClazzType<T>): string[] {
     const tableName = this.getTableName(entity);
+    const schema = this.schemaOf(entity);
     const uniqueIndexes = this.getUniqueIndexes(entity);
     const propColMap = this.buildPropertyToColumnMap(entity);
     return uniqueIndexes.map((uq) => {
@@ -209,9 +218,9 @@ export class SchemaGenerator {
         .map((col) => this.wrapId(col))
         .join(", ");
       if (this.dialect === "postgres" || this.dialect === "sqlite") {
-        return `CREATE UNIQUE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
+        return `CREATE UNIQUE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName, schema)} (${columnList})`;
       }
-      return `CREATE UNIQUE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
+      return `CREATE UNIQUE INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName, schema)} (${columnList})`;
     });
   }
 
@@ -221,13 +230,14 @@ export class SchemaGenerator {
    */
   generateCompositeIndexDDL<T>(entity: ClazzType<T>): string[] {
     const tableName = this.getTableName(entity);
+    const schema = this.schemaOf(entity);
     const compositeIndexes = this.getCompositeIndexes(entity);
     return compositeIndexes.map((ci) => {
       const opts = ci.options;
       const indexName =
         ci.name ?? opts?.name ?? this.namingStrategy.compositeIndexName(tableName, ci.columns);
 
-      return this.buildAdvancedIndexDDL(tableName, indexName, ci.columns, opts);
+      return this.buildAdvancedIndexDDL(tableName, indexName, ci.columns, opts, schema);
     });
   }
 
@@ -240,6 +250,7 @@ export class SchemaGenerator {
     indexName: string,
     columns: string[],
     opts?: AdvancedIndexOptions,
+    schema?: string,
   ): string {
     const ifNotExists = (this.dialect === "postgres" || this.dialect === "sqlite")
       ? "IF NOT EXISTS " : "";
@@ -285,7 +296,7 @@ export class SchemaGenerator {
       whereClause = ` WHERE ${opts.where}`;
     }
 
-    return `CREATE INDEX ${ifNotExists}${this.wrapId(indexName)} ON ${this.wrapTable(tableName)}${usingClause} ${columnExpr}${includeClause}${whereClause}`;
+    return `CREATE INDEX ${ifNotExists}${this.wrapId(indexName)} ON ${this.wrapTable(tableName, schema)}${usingClause} ${columnExpr}${includeClause}${whereClause}`;
   }
 
   /**
@@ -299,6 +310,7 @@ export class SchemaGenerator {
     if (this.dialect === "sqlite") return [];
 
     const tableName = this.getTableName(entity);
+    const schema = this.schemaOf(entity);
     const ftIndexes = this.getFullTextIndexes(entity);
     return ftIndexes.map((ft) => {
       const indexName =
@@ -314,14 +326,14 @@ export class SchemaGenerator {
         const expr = ft.columns.length === 1
           ? `to_tsvector('${lang}', ${this.wrapId(ft.columns[0])})`
           : `to_tsvector('${lang}', ${ft.columns.map((c) => this.wrapId(c)).join(" || ' ' || ")})`;
-        return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} USING gin (${expr})`;
+        return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName, schema)} USING gin (${expr})`;
       }
 
       // MySQL: FULLTEXT INDEX
       const columnList = ft.columns
         .map((c) => this.wrapId(c))
         .join(", ");
-      return `CREATE FULLTEXT INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} (${columnList})`;
+      return `CREATE FULLTEXT INDEX ${this.wrapId(indexName)} ON ${this.wrapTable(tableName, schema)} (${columnList})`;
     });
   }
 
@@ -381,7 +393,7 @@ export class SchemaGenerator {
 
       const whereClause = ji.options.where ? ` WHERE ${ji.options.where}` : "";
 
-      return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName)} USING ${using} (${columnExpr}${opclass})${whereClause}`;
+      return `CREATE INDEX IF NOT EXISTS ${this.wrapId(indexName)} ON ${this.wrapTable(tableName, this.schemaOf(entity))} USING ${using} (${columnExpr}${opclass})${whereClause}`;
     });
   }
 
@@ -428,7 +440,7 @@ export class SchemaGenerator {
    */
   generateDropTableDDL<T>(entity: ClazzType<T>): string {
     const tableName = this.getTableName(entity);
-    return `DROP TABLE IF EXISTS ${this.wrapTable(tableName)}`;
+    return `DROP TABLE IF EXISTS ${this.wrapTable(tableName, this.schemaOf(entity))}`;
   }
 
   /**
@@ -451,7 +463,8 @@ export class SchemaGenerator {
         if (processedTables.has(name)) continue;
         processedTables.add(name);
 
-        const wrappedTable = this.wrapTable(name);
+        // The join table follows the owning side's schema.
+        const wrappedTable = this.wrapTable(name, this.schemaOf(entity));
         const wrappedJoinCol = this.wrapId(joinColumn);
         const wrappedInverseCol = this.wrapId(inverseJoinColumn);
 
@@ -496,8 +509,10 @@ export class SchemaGenerator {
         processedTables.add(name);
 
         const ownerTable = this.getTableName(entity);
+        const ownerSchema = this.schemaOf(entity);
         const relatedEntity = rel.getRelatedEntity() as ClazzType<any>;
         const relatedTable = this.getTableName(relatedEntity);
+        const relatedSchema = this.schemaOf(relatedEntity);
 
         const ownerPk = this.findPrimaryKeyColumn(entity);
         const relatedPk = this.findPrimaryKeyColumn(relatedEntity);
@@ -505,14 +520,14 @@ export class SchemaGenerator {
         if (ownerPk) {
           const fkName = this.namingStrategy.foreignKeyName(name, joinColumn, ownerTable);
           ddls.push(
-            `ALTER TABLE ${this.wrapTable(name)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(joinColumn)}) REFERENCES ${this.wrapTable(ownerTable)}(${this.wrapId(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
+            `ALTER TABLE ${this.wrapTable(name, ownerSchema)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(joinColumn)}) REFERENCES ${this.wrapTable(ownerTable, ownerSchema)}(${this.wrapId(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
           );
         }
 
         if (relatedPk) {
           const fkName = this.namingStrategy.foreignKeyName(name, inverseJoinColumn, relatedTable);
           ddls.push(
-            `ALTER TABLE ${this.wrapTable(name)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(inverseJoinColumn)}) REFERENCES ${this.wrapTable(relatedTable)}(${this.wrapId(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
+            `ALTER TABLE ${this.wrapTable(name, ownerSchema)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(inverseJoinColumn)}) REFERENCES ${this.wrapTable(relatedTable, relatedSchema)}(${this.wrapId(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
           );
         }
       }
@@ -539,7 +554,7 @@ export class SchemaGenerator {
         if (processedTables.has(name)) continue;
         processedTables.add(name);
 
-        ddls.push(`DROP TABLE IF EXISTS ${this.wrapTable(name)}`);
+        ddls.push(`DROP TABLE IF EXISTS ${this.wrapTable(name, this.schemaOf(entity))}`);
       }
     }
 
@@ -744,6 +759,7 @@ export class SchemaGenerator {
           column: rel.joinColumn,
           referencedTable: relatedTable,
           referencedColumn: relatedPk,
+          referencedSchema: this.schemaOf(relatedEntity as ClazzType<any>),
           onDelete: rel.option?.onDelete,
           onUpdate: rel.option?.onUpdate,
         });
@@ -765,6 +781,7 @@ export class SchemaGenerator {
           column: rel.joinColumn,
           referencedTable: relatedTable,
           referencedColumn: relatedPk,
+          referencedSchema: this.schemaOf(relatedEntity),
           onDelete: rel.option?.onDelete,
           onUpdate: rel.option?.onUpdate,
         });
@@ -843,10 +860,18 @@ export class SchemaGenerator {
     return this.columnDefBuilder.wrapIdentifier(name);
   }
 
-  private wrapTable(name: string): string {
-    if (this.dialect === "postgres") {
-      return `"${this.pgSchema.replace(/"/g, '""')}"."${name.replace(/"/g, '""')}"`;
+  /**
+   * The schema an entity is pinned to via `@Entity({ schema })`, or
+   * undefined when it follows the generator's default schema.
+   */
+  private schemaOf<T>(entity: ClazzType<T>): string | undefined {
+    return getEntitySchema(entity);
+  }
 
+  private wrapTable(name: string, schema?: string): string {
+    if (this.dialect === "postgres") {
+      const pgSchema = schema ?? this.pgSchema;
+      return `"${pgSchema.replace(/"/g, '""')}"."${name.replace(/"/g, '""')}"`;
     }
     if (this.dialect === "sqlite") {
       return `"${name.replace(/"/g, '""')}"`;

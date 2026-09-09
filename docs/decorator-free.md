@@ -27,6 +27,7 @@ Decorator-based, `defineEntity`-based, and `EntitySchema`-based entities all pro
 | Decorator | Scope | `EntitySchema` equivalent |
 | --- | --- | --- |
 | `@Entity({ name })` | class | `{ target, tableName }` |
+| `@Entity({ schema })` | class | `{ target, schema }` |
 | `@Column(opts)` | property | `columns: { x: opts }` |
 | `@Column({ transformer })` | property | `columns: { x: { transformer } }` |
 | `@PrimaryColumn()` | property | `columns: { x: { primary: true } }` |

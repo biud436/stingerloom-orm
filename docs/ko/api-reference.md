@@ -180,7 +180,7 @@ const userRepo = BaseRepository.of(User, em);
 
 | Decorator | 설명 |
 |-----------|------|
-| `@Entity(options?)` | 클래스를 ORM 엔티티로 등록해요. `{ name: "table_name" }` |
+| `@Entity(options?)` | 클래스를 ORM 엔티티로 등록해요. `{ name: "table_name", schema: "public" }` — `schema`는 테이블을 PostgreSQL 스키마에 고정해 테넌트 전략의 영향을 받지 않게 합니다 |
 | `@Column(option?)` | 일반 컬럼 |
 | `@PrimaryGeneratedColumn(option?)` | 자동 증가 PK |
 | `@PrimaryColumn(option?)` | 수동 PK |
@@ -1236,6 +1236,7 @@ const schema = new EntitySchema<T>(options: EntitySchemaOptions<T>);
 interface EntitySchemaOptions<T> {
   target: ClazzType<T>;                                    // 엔티티 클래스
   tableName?: string;                                      // 테이블 이름 (기본: 클래스명 snake_case)
+  schema?: string;                                         // 테이블을 고정할 PostgreSQL 스키마 (@Entity({ schema }) 대응)
   columns: { [K in keyof T]?: ColumnSchemaDef };           // 컬럼 정의
   computedColumns?: { [K in keyof T]?: ComputedColumnOption };  // @ComputedColumn 대응
   relations?: { [K in keyof T]?: RelationSchemaDef };      // 관계 정의

@@ -8,7 +8,6 @@ import {
 import { Inject } from "@nestjs/common";
 import { User } from "../users/user.entity";
 import { Post } from "../posts/post.entity";
-import { Unit } from "../units/unit.entity";
 
 /**
  * TenantSchemaService
@@ -51,9 +50,12 @@ export class TenantSchemaService {
       const options: TenantMigrationRunnerOptions = {
         // Only replicate User and Post tables to tenant schemas.
         // Any non-tenant tables in the public schema (e.g. shared config,
-        // migration history) are excluded from provisioning.
+        // migration history) are excluded from provisioning. `Unit` is
+        // pinned to "public" via @Entity({ schema }) and would be skipped
+        // even if it were listed here — the runner never clones a pinned
+        // table into a tenant schema.
         tables: {
-          include: [User, Post, Unit],
+          include: [User, Post],
         },
       };
 

@@ -180,7 +180,7 @@ Protected fields available for subclasses: `entity` (the entity class) and `em` 
 
 | Decorator | Description |
 |-----------|-------------|
-| `@Entity(options?)` | Register a class as an ORM entity. `{ name: "table_name" }` |
+| `@Entity(options?)` | Register a class as an ORM entity. `{ name: "table_name", schema: "public" }` — `schema` pins the table to a PostgreSQL schema, outside the reach of the tenant strategies |
 | `@Column(option?)` | Regular column |
 | `@PrimaryGeneratedColumn(option?)` | Auto-increment PK |
 | `@PrimaryColumn(option?)` | Manual PK |
@@ -1238,6 +1238,7 @@ const schema = new EntitySchema<T>(options: EntitySchemaOptions<T>);
 interface EntitySchemaOptions<T> {
   target: ClazzType<T>;                                    // Entity class
   tableName?: string;                                      // Table name (defaults to snake_case of class name)
+  schema?: string;                                         // PostgreSQL schema the table is pinned to (@Entity({ schema }) equivalent)
   columns: { [K in keyof T]?: ColumnSchemaDef };           // Column definitions
   computedColumns?: { [K in keyof T]?: ComputedColumnOption };  // @ComputedColumn equivalents
   relations?: { [K in keyof T]?: RelationSchemaDef };      // Relation definitions

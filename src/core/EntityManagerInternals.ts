@@ -194,6 +194,16 @@ export interface EntityManagerInternals {
   } | null;
 
   /**
+   * Schema an entity's table is pinned to — `@Entity({ schema })`, or
+   * `@NonTenantEntity()` under a schema-based tenant strategy — or undefined
+   * when the table follows the connection default. PostgreSQL only.
+   */
+  resolveEntitySchema<T>(entity: ClazzType<T>): string | undefined;
+
+  /** Records a pinned schema so `wrapTable()` emits `"schema"."table"` for it. */
+  pinTableSchema(tableName: string, schema: string): void;
+
+  /**
    * Builds a `tenant_id = ?` WHERE predicate for the given entity under the
    * `"tenant_column"` strategy, or null when no filter should be applied
    * (strategy inactive, `@NonTenantEntity`, unscoped context, or "public"

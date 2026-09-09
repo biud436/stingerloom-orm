@@ -276,6 +276,22 @@ runner.isProvisioned("acme_corp");    // true
 runner.getProvisionedSchemas();       // ["acme_corp", "globex", ...]
 ```
 
+### 복제할 테이블 고르기
+
+기본값은 원본 스키마의 모든 테이블을 복제하는 것입니다. `tables` 옵션으로 범위를 좁힐 수 있어요. 엔티티 클래스나 테이블 이름으로, 또는 접두사/접미사로 고릅니다:
+
+```typescript
+const runner = new PostgresTenantMigrationRunner(driver, {
+  tables: {
+    include: [User, Post],        // 이 테이블만 (엔티티 클래스 또는 테이블 이름)
+    exclude: ["__migrations"],    // 이건 절대 복제하지 않음
+    excludePrefix: ["audit_"],    // audit_ 로 시작하는 테이블도 제외
+  },
+});
+```
+
+필터는 `include` → `includePrefix` / `includeSuffix` → `exclude` → `excludePrefix` / `excludeSuffix` 순서로 적용됩니다. `@Entity({ schema })`로 고정했거나 `@NonTenantEntity()`를 붙인 테이블은 필터와 무관하게 항상 원본 스키마에 남습니다. [공유 테이블](#공유-테이블-엔티티를-스키마에-고정하기)을 참고하세요.
+
 ### NestJS에서 자동 프로비저닝
 
 앱 시작 시 알려진 모든 테넌트를 프로비저닝하는 서비스를 만들 수 있습니다:
@@ -443,6 +459,55 @@ SELECT * FROM "user"
 
 두 전략 모두 동일한 결과를 만듭니다. 차이는 순수하게 성능에만 있어요. search_path를 써야 하는 특별한 이유(예: 스키마 한정 이름을 지원하지 않는 도구와의 호환)가 없다면, **`schema_qualified`가 더 나은 기본값**입니다.
 
+### 공유 테이블: 엔티티를 스키마에 고정하기
+
+두 전략 모두 *모든* 테이블을 테넌트 스키마로 보냅니다. 테넌트 데이터라면 그게 목적이지만, 모든 테넌트가 함께 쓰는 테이블도 있어요. 구독 플랜, 국가 코드, 피처 플래그, 그리고 `tenants` 테이블 자체가 그렇습니다. `MetadataContext.run("acme_corp", ...)` 안에서는 이런 테이블에 닿을 수 없습니다. `search_path`는 테넌트 스키마만 지정하고(`public` fallback이 없습니다), `schema_qualified`는 이름을 `"acme_corp"."plan"`으로 바꿔 쓰니까요. PostgreSQL은 `relation "plan" does not exist`로 답하고, 지금까지의 유일한 우회책은 테이블을 테넌트 스키마마다 복제하는 것이었습니다. 테넌트마다 비어 있는 사본이 하나씩 생기는 셈이죠.
+
+대신 엔티티를 스키마에 고정하세요:
+
+```typescript
+@Entity({ schema: "public" })
+class Plan {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() code!: string;
+  @OneToMany(() => Subscription, (s) => s.plan) subscriptions!: Subscription[];
+}
+
+@Entity()
+class Subscription {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToOne(() => Plan, (p) => p.subscriptions, { joinColumn: "plan_id" })
+  plan!: Plan;
+}
+```
+
+고정된 엔티티는 어떤 테넌트가 활성이든, 어떤 전략이든 항상 `"schema"."table"`로 지칭됩니다:
+
+```sql
+-- MetadataContext.run("acme_corp") 안, schema_qualified
+SELECT * FROM "acme_corp"."subscription" s
+  JOIN "public"."plan" p ON p."id" = s."plan_id"
+
+-- MetadataContext.run("acme_corp") 안, search_path
+SET LOCAL search_path TO "acme_corp";
+SELECT * FROM "public"."plan"
+```
+
+고정은 테이블 이름이 쓰이는 모든 곳에 적용됩니다:
+
+- **쿼리** — `find*`, 쓰기, 관계 로딩, `SelectQueryBuilder` JOIN, `em.ref()`.
+- **Synchronize** — 테이블을 해당 스키마에 만들고(스키마가 없으면 함께 만들어요) 거기서 변경하며, 테넌트 테이블에서 공유 테이블로 가는 FK는 `"public"."plan"`을 참조합니다.
+- **`migrate:generate`** — diff가 고정된 스키마를 인트로스펙션합니다.
+- **프로비저닝** — `PostgresTenantMigrationRunner`는 고정 테이블을 원본 스키마에 남겨 둡니다. `tables.include`에 적혀 있어도 테넌트로 복제하지 않아요.
+
+`@NonTenantEntity()`는 스키마 이름 없이 같은 일을 합니다. `search_path`와 `schema_qualified`에서는 엔티티를 연결의 기본 스키마(`schema` 옵션, 없으면 `public`)에 고정해요. 그래서 데코레이터 하나가 모든 전략에서 "전역 테이블"을 뜻합니다. 같은 클래스가 `tenant_column`에서는 구분 컬럼에서 빠지는 쪽으로 동작하고요.
+
+상속 계층의 자식 엔티티는 따로 지정하지 않는 한 루트의 스키마를 물려받습니다. code-first 엔티티도 같은 옵션을 받아요: `defineEntity("plans", { ... }, { schema: "public" })`, `new EntitySchema({ target, schema: "public", ... })`. `em.resolveEntitySchema(Plan)`은 엔티티가 해석되는 스키마를 돌려줍니다 (테넌트 전략을 따르면 `undefined`). MySQL과 SQLite에는 스키마 계층이 없어서 이 옵션은 무시됩니다.
+
+::: warning
+고정은 라우팅 결정이지 접근 제어가 아닙니다. 모든 테넌트가 고정 테이블의 같은 행을 읽고 씁니다. 테넌트 소유 데이터는 고정하지 않은 엔티티에 두세요.
+:::
+
 ### 프로그래밍 방식 접근
 
 커스텀 미들웨어나 테스트 같은 고급 사용 사례를 위해 전략 클래스가 export 되어 있습니다:
@@ -569,6 +634,8 @@ class Country {
 ```
 
 테넌트 범위 엔티티에서 `@NonTenantEntity` 타겟으로 eager JOIN 해도 안전합니다 — ORM이 non-tenant 쪽의 tenant predicate를 자동으로 skip 합니다.
+
+같은 데코레이터가 스키마 기반 전략에서도 이 테이블들을 전역으로 유지합니다. `search_path`와 `schema_qualified`에서는 엔티티를 연결의 기본 스키마에 고정하므로, 테넌트 컨텍스트 안에서도 테이블에 닿을 수 있고 테넌트마다 복제되지도 않아요. [공유 테이블](#공유-테이블-엔티티를-스키마에-고정하기)을 참고하세요.
 
 ### 탈출구: `runUnscoped()`
 

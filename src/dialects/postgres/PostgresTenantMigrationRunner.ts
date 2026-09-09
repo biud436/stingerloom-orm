@@ -7,7 +7,14 @@ import {
   TenantTableFilterOptions,
   TenantSyncResult,
 } from "../ITenantMigrationRunner";
-import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
+import {
+  ENTITY_TOKEN,
+  EntityMetadata,
+  getEntitySchema,
+} from "../../decorators/Entity";
+import { isNonTenantEntity } from "../../decorators/TenantColumn";
+import { getScannerInstance } from "../../scanner/ScannerContainer";
+import { EntityScanner } from "../../scanner/EntityScanner";
 
 /**
  * PostgresTenantMigrationRunner
@@ -114,7 +121,16 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
 
     const tables = await this.driver.listTables(this.sourceSchema);
     const allTableNames = (tables as any[]).map((r) => r.tablename as string);
-    const filtered = this.filterTables(allTableNames);
+    const sharedTables = this.collectSharedTables();
+    const filtered = this.filterTables(allTableNames).filter(
+      (t) => !sharedTables.has(t),
+    );
+    const skippedShared = allTableNames.filter((t) => sharedTables.has(t));
+    if (skippedShared.length > 0) {
+      this.logger.info(
+        `Schema "${tenantId}": leaving shared table(s) in "${this.sourceSchema}" — ${skippedShared.join(", ")}`,
+      );
+    }
 
     for (const tableName of filtered) {
       const wrappedTenant = this.driver.wrap(tenantId);
@@ -129,6 +145,26 @@ export class PostgresTenantMigrationRunner implements ITenantMigrationRunner {
     this.logger.info(
       `Schema "${tenantId}" provisioned with ${filtered.length} tables`,
     );
+  }
+
+  /**
+   * Tables that are shared by every tenant and therefore stay in the source
+   * schema: entities pinned via `@Entity({ schema })` and entities marked
+   * `@NonTenantEntity()`. Cloning them into a tenant schema would give each
+   * tenant a private, empty copy that runtime queries never read — the
+   * pinned table is always addressed as `"schema"."table"`.
+   */
+  private collectSharedTables(): Set<string> {
+    const shared = new Set<string>();
+    const scanner = getScannerInstance(EntityScanner);
+    for (const meta of scanner.makeEntities()) {
+      const target = meta.target as Function | undefined;
+      if (!target) continue;
+      if (getEntitySchema(target) !== undefined || isNonTenantEntity(target)) {
+        shared.add(meta.name);
+      }
+    }
+    return shared;
   }
 
   /**

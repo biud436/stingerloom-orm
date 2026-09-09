@@ -25,6 +25,24 @@ await em.register({
 });
 ```
 
+#### `schema` 옵션
+
+PostgreSQL에는 데이터베이스와 테이블 사이에 한 단계가 더 있습니다. **스키마**는 네임스페이스이고, 모든 데이터베이스는 `public`이라는 스키마 하나를 갖고 시작해요. `schema` 옵션은 이 연결이 작업할 스키마를 지정합니다 (기본값: `"public"`). 세 가지를 좌우합니다:
+
+- **이름 해석.** 풀에서 나오는 모든 커넥션이 접속 시 `SET search_path TO "<schema>"`를 실행하므로, 생성된 SQL의 한정되지 않은 테이블 이름은 이 스키마에서 찾습니다.
+- **DDL 대상.** `synchronize`는 이 스키마에 테이블을 만들고 변경하며 ENUM 타입도 여기에 프로비저닝하고, `migrate:generate`도 이 스키마를 인트로스펙션합니다. 스키마가 없으면 자동으로 만들어요.
+- **멀티테넌시 기준점.** 스키마 기반 테넌트 전략(`search_path`, `schema_qualified`)은 테넌트 컨텍스트 안에서 이 스키마를 벗어났다가, 컨텍스트 밖에서는 다시 여기로 돌아옵니다. [멀티테넌시](./multi-tenancy.md)를 참고하세요.
+
+```typescript
+await em.register({
+  type: "postgres",
+  // ...
+  schema: "app",   // 테이블이 "public"이 아니라 "app"에 놓입니다
+});
+```
+
+엔티티 하나만 다른 스키마에 두려면 `@Entity({ schema })`를 쓰면 됩니다. 그 테이블은 이 옵션이나 활성 테넌트와 무관하게 항상 `"schema"."table"`로 지칭되므로, 테넌트마다 스키마를 나누는 구성에서 테이블 하나를 모든 테넌트가 공유하게 만드는 방법이 바로 이것입니다. [공유 테이블](./multi-tenancy.md#공유-테이블-엔티티를-스키마에-고정하기)을 참고하세요. MySQL과 SQLite에는 스키마 계층이 없어서 이 옵션은 무시됩니다.
+
 ### MySQL / MariaDB
 
 ```typescript

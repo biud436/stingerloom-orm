@@ -521,6 +521,7 @@ export class EntitySchemaRegistrar {
 
     const hasExplicitName = !!options.tableName;
     let nameKey = options.tableName || camelToSnakeCase(cls.name);
+    let schemaKey: string | undefined = options.schema || undefined;
 
     // ── Inheritance detection (mirrors Entity.ts logic) ──────────────
     let inheritanceRoot: ClazzType<any> | undefined;
@@ -600,6 +601,11 @@ export class EntitySchemaRegistrar {
           if (rootMeta?.childEntities) {
             rootMeta.childEntities.push(cls);
           }
+          // Mirrors Entity.ts: a child lives in the root's schema unless it
+          // pins its own.
+          if (schemaKey === undefined && rootMeta?.schema) {
+            schemaKey = rootMeta.schema;
+          }
 
           break;
         }
@@ -625,7 +631,13 @@ export class EntitySchemaRegistrar {
       .allMetadata<ManyToManyMetadata<unknown>>()
       .filter((m) => constructorChain.includes(m.target as Function));
 
-    const entityOption = options.tableName ? { name: options.tableName } : undefined;
+    const entityOption =
+      options.tableName || options.schema
+        ? {
+            ...(options.tableName ? { name: options.tableName } : {}),
+            ...(options.schema ? { schema: options.schema } : {}),
+          }
+        : undefined;
 
     const metadata: EntityMetadata = {
       target: cls,
@@ -637,6 +649,7 @@ export class EntitySchemaRegistrar {
       options: entityOption,
       name: nameKey,
       nameExplicit: hasExplicitName,
+      ...(schemaKey !== undefined ? { schema: schemaKey } : {}),
       rawClassName: cls.name,
       inheritanceRoot,
       inheritanceStrategy,

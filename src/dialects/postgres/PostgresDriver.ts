@@ -57,17 +57,27 @@ export class PostgresDriver implements ISqlDriver {
   private readonly version: DbVersion;
   private readonly capabilities: PostgresCapabilities;
 
+  /**
+   * Schema that named ENUM types are created in and referenced from. Equals
+   * `schema` for the connection's own driver; a `withSchema()` view keeps the
+   * connection default here, because synchronize provisions enum types in
+   * the default schema and a pinned table's column must reference that type.
+   */
+  private readonly enumSchema: string;
+
   constructor(
     private readonly connector: IConnector,
     private readonly clientType: string = "postgres",
     schema?: string,
     version?: DbVersion,
+    enumSchema?: string,
   ) {
     this.schema = schema ?? "public";
+    this.enumSchema = enumSchema ?? this.schema;
     this.version = version ?? connector?.getVersion?.() ?? DbVersion.UNKNOWN;
     this.capabilities = resolvePostgresCapabilities(this.version);
     this.columnDefBuilder = new PostgresColumnDefinitionBuilder(
-      this.schema,
+      this.enumSchema,
       this.capabilities,
     );
   }
@@ -89,6 +99,25 @@ export class PostgresDriver implements ISqlDriver {
    */
   getSchema(): string {
     return this.schema;
+  }
+
+  /**
+   * Returns a driver bound to `schema` that shares this driver's connection
+   * and detected version. Every DDL helper on it (`hasTable`, `createTable`,
+   * `addColumn`, `getIndexes`, `hasForeignKey`, …) resolves table names in
+   * that schema instead of the connection default. Synchronize uses it for
+   * entities pinned via `@Entity({ schema })`; the driver itself holds no
+   * per-schema state beyond the name, so the view is cheap to create.
+   */
+  withSchema(schema: string): PostgresDriver {
+    if (schema === this.schema) return this;
+    return new PostgresDriver(
+      this.connector,
+      this.clientType,
+      schema,
+      this.version,
+      this.enumSchema,
+    );
   }
 
   /**
@@ -347,13 +376,20 @@ export class PostgresDriver implements ISqlDriver {
     foreignTableName: string,
     foreignColumnName: string,
     constraintName?: string,
+    foreignTableSchema?: string,
   ) {
     const foreignKeyName =
       constraintName ??
       this.generateForeignKeyName(tableName, foreignTableName, columnName);
+    // A referenced table pinned to another schema (`@Entity({ schema })`)
+    // has to be spelled with that schema — the driver's own would point PG
+    // at a table that does not exist there.
+    const referenced = foreignTableSchema
+      ? `${this.wrap(foreignTableSchema)}.${this.wrap(foreignTableName)}`
+      : this.wrapQualified(foreignTableName);
 
     return this.connector.query(
-      `ALTER TABLE ${this.wrapQualified(tableName)} ADD CONSTRAINT ${this.wrap(foreignKeyName)} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${this.wrapQualified(foreignTableName)}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} ADD CONSTRAINT ${this.wrap(foreignKeyName)} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${referenced}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
     );
   }
 
@@ -448,7 +484,7 @@ export class PostgresDriver implements ISqlDriver {
           JOIN pg_namespace ON pg_type.typnamespace = pg_namespace.oid
           WHERE pg_type.typname = ${enumName}
             AND pg_type.typtype = 'e'
-            AND pg_namespace.nspname = ${this.schema}`,
+            AND pg_namespace.nspname = ${this.enumSchema}`,
     );
   }
 
@@ -473,7 +509,7 @@ export class PostgresDriver implements ISqlDriver {
             JOIN pg_type t ON e.enumtypid = t.oid
             JOIN pg_namespace n ON t.typnamespace = n.oid
             WHERE t.typname = ${enumName}
-              AND n.nspname = ${this.schema}`,
+              AND n.nspname = ${this.enumSchema}`,
       );
       const existingValues = new Set(existingRows.map((r) => r.enumlabel));
 
@@ -597,7 +633,7 @@ export class PostgresDriver implements ISqlDriver {
        JOIN pg_type t ON t.oid = e.enumtypid
        JOIN pg_namespace n ON t.typnamespace = n.oid
        WHERE t.typname = ${enumName}
-         AND n.nspname = ${this.schema}
+         AND n.nspname = ${this.enumSchema}
        ORDER BY e.enumsortorder`,
     );
   }
