@@ -19,7 +19,11 @@ import {
 import { Column } from "../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
 import { ManyToOne } from "../../src/decorators/ManyToOne";
+import { ManyToMany } from "../../src/decorators/ManyToMany";
 import { Index } from "../../src/decorators/Indexer";
+import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
+import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import type { EntityManager } from "../../src/core/EntityManager";
 import { NonTenantEntity } from "../../src/decorators/TenantColumn";
 import { Inheritance } from "../../src/decorators/Inheritance";
 import { defineEntity, t, EntitySchema } from "../../src/schema";
@@ -58,6 +62,9 @@ class Subscription {
   @PrimaryGeneratedColumn()
   id!: number;
 
+  @Column({ type: "int", nullable: true, name: "plan_id" })
+  planId!: number;
+
   @ManyToOne(() => Plan, (e: any) => e.subscriptions, { joinColumn: "plan_id" })
   plan!: Plan;
 }
@@ -68,6 +75,28 @@ class Subscription {
 class Country {
   @PrimaryGeneratedColumn()
   id!: number;
+}
+
+/** Shared ManyToMany pair: the join table follows the pinned owner. */
+@Entity({ schema: "public" })
+class Feature {
+  @PrimaryGeneratedColumn()
+  id!: number;
+}
+
+@Entity({ schema: "public" })
+class Catalog {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @ManyToMany(() => Feature, {
+    joinTable: {
+      name: "pin_catalog_feature",
+      joinColumn: "catalog_id",
+      inverseJoinColumn: "feature_id",
+    },
+  })
+  features!: Feature[];
 }
 
 @Entity({ schema: "public" })
@@ -287,6 +316,84 @@ describe("TenantScopeManager pinned tables", () => {
 });
 
 // ─────────────────────────────────────────────────
+// SelectQueryBuilder — JOINs go through the same funnel
+// ─────────────────────────────────────────────────
+
+describe("SelectQueryBuilder joins a pinned table with its schema", () => {
+  /**
+   * Mock EntityManager in the shape the SQB reads (see
+   * select-query-builder-entity-join.test.ts), with a real TenantScopeManager
+   * behind `wrapTable` so the pin and the strategy both apply.
+   */
+  function createPinnedQb(strategy: "search_path" | "schema_qualified") {
+    const scope = makeScope();
+    if (strategy === "schema_qualified") {
+      scope.strategy = new SchemaQualifiedStrategy();
+    }
+    scope.pinTableSchema("plan", "public");
+
+    const resolver = new RelationMetadataResolver();
+    const wrap = (c: string) => `"${c.replace(/"/g, '""')}"`;
+    const em = {
+      wrap,
+      wrapTable: (t: string) => scope.wrapTable(t),
+      resolver,
+      _ctx: {
+        isMySqlFamily: () => false,
+        isPostgres: () => true,
+        isSqlite: () => false,
+        getDialect: () => "postgresql",
+      },
+      async query<T>(): Promise<T[]> {
+        return [] as T[];
+      },
+    } as unknown as EntityManager;
+
+    const qb = new SelectQueryBuilder<Subscription>(Subscription, "s", em);
+    const meta = resolver.resolveEntityMetadata(Subscription);
+    const map = new Map<string, string>();
+    for (const col of meta?.columns ?? []) {
+      map.set((col as any).propertyKey ?? col.name!, col.name!);
+    }
+    qb.setPropertyToColumnMap(map);
+    return qb;
+  }
+
+  beforeEach(() => {
+    MetadataContext.reset();
+  });
+
+  it("schema_qualified: FROM follows the tenant, the pinned JOIN target keeps its schema", async () => {
+    await MetadataContext.run("acme", async () => {
+      const qb = createPinnedQb("schema_qualified");
+      qb.innerJoin(Plan, "p", (j) => j.on("s.planId", "=", "p.id"));
+      const { text } = qb.getSql();
+      expect(text).toContain(`"acme"."subscription"`);
+      expect(text).toContain(`INNER JOIN "public"."plan" AS "p"`);
+      expect(text).not.toContain(`"acme"."plan"`);
+    });
+  });
+
+  it("search_path: FROM stays bare, the pinned JOIN target is spelled out", async () => {
+    await MetadataContext.run("acme", async () => {
+      const qb = createPinnedQb("search_path");
+      qb.leftJoin(Plan, "p", (j) => j.on("s.planId", "=", "p.id"));
+      const { text } = qb.getSql();
+      expect(text).toContain(`FROM "subscription"`);
+      expect(text).toContain(`LEFT JOIN "public"."plan" AS "p"`);
+    });
+  });
+
+  it("outside a tenant context the pinned table is still qualified", () => {
+    const qb = createPinnedQb("schema_qualified");
+    qb.innerJoin(Plan, "p", (j) => j.on("s.planId", "=", "p.id"));
+    const { text } = qb.getSql();
+    expect(text).toContain(`FROM "subscription"`);
+    expect(text).toContain(`INNER JOIN "public"."plan" AS "p"`);
+  });
+});
+
+// ─────────────────────────────────────────────────
 // DDL generation
 // ─────────────────────────────────────────────────
 
@@ -327,6 +434,22 @@ describe("SchemaGenerator with pinned entities (PostgreSQL)", () => {
     expect(mysql.generateCreateTableDDL(Plan)).toMatch(
       /^CREATE TABLE IF NOT EXISTS `plan` \(/,
     );
+  });
+
+  it("a pinned owner's ManyToMany join table and its FKs follow the owner's schema", () => {
+    const [joinDdl] = generator.generateManyToManyJoinTableDDL([Catalog]);
+    expect(joinDdl).toMatch(
+      /^CREATE TABLE IF NOT EXISTS "public"\."pin_catalog_feature" \(/,
+    );
+
+    const fkDdls = generator.generateManyToManyForeignKeyDDL([Catalog]);
+    expect(fkDdls).toHaveLength(2);
+    expect(fkDdls[0]).toContain(`ALTER TABLE "public"."pin_catalog_feature"`);
+    expect(fkDdls[0]).toContain(`REFERENCES "public"."catalog"("id")`);
+    expect(fkDdls[1]).toContain(`REFERENCES "public"."feature"("id")`);
+
+    const [dropDdl] = generator.generateManyToManyDropDDL([Catalog]);
+    expect(dropDdl).toBe(`DROP TABLE IF EXISTS "public"."pin_catalog_feature"`);
   });
 });
 
@@ -464,5 +587,16 @@ describe("PostgresTenantMigrationRunner leaves shared tables in the source schem
     const cloned = driver.executeRaw.mock.calls.map(([ddl]) => ddl as string);
     expect(cloned).toHaveLength(1);
     expect(cloned[0]).toContain(`"globex"."users"`);
+  });
+
+  it("leaves a pinned owner's ManyToMany join table in the source schema too", async () => {
+    const driver = createMockDriver(["users", "catalog", "feature", "pin_catalog_feature"]);
+    const runner = new PostgresTenantMigrationRunner(driver);
+
+    await runner.ensureSchema("initech");
+
+    const cloned = driver.executeRaw.mock.calls.map(([ddl]) => ddl as string);
+    expect(cloned).toHaveLength(1);
+    expect(cloned[0]).toContain(`"initech"."users"`);
   });
 });

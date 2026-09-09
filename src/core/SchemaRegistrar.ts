@@ -1423,6 +1423,17 @@ export class SchemaRegistrar {
         ) as { name?: string } | undefined;
         const relatedTable = relatedEntityMeta?.name ?? relatedEntity.name;
 
+        // The FK DDL below spells both sides through wrapTable(), which reads
+        // the pins. registerEntities() records them in pass 1, but this method
+        // is public — make sure the pins exist even when it runs on its own.
+        if (ownerPinnedSchema) {
+          this.pinTable(ownerTable, ownerPinnedSchema);
+        }
+        const relatedPinnedSchema = this.resolvePinnedSchema(relatedEntity);
+        if (relatedPinnedSchema) {
+          this.pinTable(relatedTable, relatedPinnedSchema);
+        }
+
         // 1. Look up the owning-side and inverse-side PKs (needed both for
         //    inline FK clauses at CREATE time and the ALTER-based FK pass).
         const ownerColumns = (Reflect.getMetadata(

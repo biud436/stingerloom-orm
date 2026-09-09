@@ -470,7 +470,7 @@ Pin the entity to its schema instead:
 class Plan {
   @PrimaryGeneratedColumn() id!: number;
   @Column() code!: string;
-  @OneToMany(() => Subscription, (s) => s.plan) subscriptions!: Subscription[];
+  @OneToMany(() => Subscription, { mappedBy: "plan" }) subscriptions!: Subscription[];
 }
 
 @Entity()
@@ -498,7 +498,7 @@ The pin reaches every place a table name is written:
 - **Queries** — `find*`, writes, relation loading, `SelectQueryBuilder` joins, `em.ref()`.
 - **Synchronize** — the table is created in its schema (the schema is created if missing) and altered there; a FK from a tenant table to the shared one references `"public"."plan"`.
 - **`migrate:generate`** — the diff introspects the pinned schema.
-- **Provisioning** — `PostgresTenantMigrationRunner` leaves pinned tables in the source schema; they are never cloned into a tenant, even when listed in `tables.include`.
+- **Provisioning** — `PostgresTenantMigrationRunner` leaves pinned tables (and the ManyToMany join tables of a pinned owner) in the source schema; they are never cloned into a tenant, even when listed in `tables.include`.
 
 `@NonTenantEntity()` does the same without naming a schema: under `search_path` and `schema_qualified` it pins the entity to the connection's default schema (the `schema` option, or `public`). One decorator therefore means "global table" under every strategy — the same class opts out of the discriminator column under `tenant_column`.
 

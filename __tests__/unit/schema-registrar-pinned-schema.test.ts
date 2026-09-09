@@ -29,6 +29,7 @@ import { EntityManagerInternals } from "../../src/core/EntityManagerInternals";
 import { SynchronizePolicy } from "../../src/core/DatabaseClientOptions";
 import { ENTITY_TOKEN, getEntitySchema } from "../../src/decorators/Entity";
 import { COLUMN_TOKEN } from "../../src/decorators/Column";
+import { MANY_TO_MANY_TOKEN } from "../../src/decorators/ManyToMany";
 
 const FULL: SynchronizePolicy = {
   mode: true,
@@ -68,21 +69,69 @@ function defineEntityMeta(target: Function, name: string, schema?: string) {
 const planMeta = defineEntityMeta(Plan, "plan", "public");
 const postMeta = defineEntityMeta(Post, "post");
 
+/** Pinned table that already exists and gained a column: exercises the diff pass. */
+class PlanV2 {}
+const codeColumn = {
+  name: "code",
+  propertyKey: "code",
+  options: { type: "varchar", length: 50, nullable: true },
+};
+const planV2Meta = {
+  target: PlanV2,
+  name: "plan_v2",
+  schema: "public",
+  columns: [pkColumn, codeColumn],
+};
+Reflect.defineMetadata(ENTITY_TOKEN, planV2Meta, PlanV2);
+Reflect.defineMetadata(COLUMN_TOKEN, [pkColumn, codeColumn], PlanV2.prototype);
+
+/** Pinned ManyToMany pair: the join table follows the owning side. */
+class PlanM2M {}
+class FeatureM2M {}
+const planM2MMeta = defineEntityMeta(PlanM2M, "plan_m2m", "public");
+defineEntityMeta(FeatureM2M, "feature_m2m", "public");
+Reflect.defineMetadata(
+  MANY_TO_MANY_TOKEN,
+  [
+    {
+      target: PlanM2M,
+      propertyKey: "features",
+      getRelatedEntity: () => FeatureM2M,
+      joinTable: {
+        name: "plan_feature",
+        joinColumn: "plan_id",
+        inverseJoinColumn: "feature_id",
+      },
+    },
+  ],
+  PlanM2M,
+);
+
 /**
  * Driver mock: the base is bound to "app"; `withSchema()` hands out one
  * cached view per schema so the test can see which view ran which DDL.
  */
-function makeDriver(existingSchemas: string[] = ["app"]) {
+function makeDriver(
+  existingSchemas: string[] = ["app"],
+  existingTables: string[] = [],
+) {
   const schemas = new Set(existingSchemas);
+  const tables = new Set(existingTables);
   const makeDdl = (schema: string) => ({
     getSchema: () => schema,
-    hasTable: jest.fn(async () => []),
+    hasTable: jest.fn(async (name: string) =>
+      tables.has(`${schema}.${name}`) ? [{ tablename: name }] : [],
+    ),
     createTable: jest.fn(async () => []),
     hasColumn: jest.fn(async () => true),
+    addColumn: jest.fn(async () => []),
+    dropColumn: jest.fn(async () => []),
+    executeRaw: jest.fn(async () => []),
     hasForeignKey: jest.fn(async () => false),
     addForeignKey: jest.fn(async () => []),
     getIndexes: jest.fn(async () => []),
     getCapabilities: () => ({ supportsAlterAddForeignKey: true }),
+    castType: (type: string) => (type === "int" ? "INTEGER" : type.toUpperCase()),
   });
   const views = new Map<string, ReturnType<typeof makeDdl>>();
   const base = {
@@ -115,9 +164,13 @@ function makeRegistrar(
   resolverOverrides: Partial<Record<string, any>> = {},
 ) {
   const isPostgres = overrides.isPostgres ?? (() => true);
+  // Pins recorded by the registrar, consulted by wrapTable() the way the
+  // real TenantScopeManager does.
+  const pins = new Map<string, string>();
   const ctx = {
     wrap: (c: string) => `"${c}"`,
-    wrapTable: (t: string) => `"${t}"`,
+    wrapTable: (t: string) =>
+      pins.has(t) ? `"${pins.get(t)}"."${t}"` : `"${t}"`,
     isMySqlFamily: () => false,
     isPostgres,
     isSqlite: () => false,
@@ -131,7 +184,9 @@ function makeRegistrar(
     getTenantColumnConfig: () => null,
     // Mirrors TenantScopeManager.resolveEntitySchema: explicit pin, PG only.
     resolveEntitySchema: (e: any) => (isPostgres() ? getEntitySchema(e) : undefined),
-    pinTableSchema: jest.fn(),
+    pinTableSchema: jest.fn((table: string, schema: string) => {
+      pins.set(table, schema);
+    }),
     getNameStrategy: (e: any) => e.name.toLowerCase(),
     ...overrides,
   } as unknown as EntityManagerInternals;
@@ -294,5 +349,68 @@ describe("SchemaRegistrar: entities pinned to a schema", () => {
     const { registrar: second } = makeRegistrar(replacement);
     await second.registerEntities();
     expect(replacement.withSchema).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds a new column of an existing pinned table through the schema view", async () => {
+    entityQueue.length = 0;
+    entityQueue.push(planV2Meta);
+
+    // "public"."plan_v2" already exists with only the PK column, so the diff
+    // pass has to ADD COLUMN "code" — and it must do so in "public".
+    const driver = makeDriver(["app", "public"], ["public.plan_v2"]);
+    const queryRunner = {
+      query: jest.fn(async (q: any) => {
+        const sql = String(q?.sql ?? q);
+        const values: unknown[] = q?.values ?? [];
+        if (/information_schema\.columns/i.test(sql) && values.includes("plan_v2")) {
+          // Introspection must target the pinned schema, not the default.
+          expect(values).toEqual(["public", "plan_v2"]);
+          return [
+            {
+              column_name: "id",
+              data_type: "integer",
+              is_nullable: "NO",
+              character_maximum_length: null,
+              numeric_precision: 32,
+              numeric_scale: 0,
+            },
+          ];
+        }
+        return [];
+      }),
+    };
+    const { registrar } = makeRegistrar(driver, FULL, {
+      getConnection: () => queryRunner,
+    });
+
+    await registrar.registerEntities();
+
+    const view = driver.views.get("public")!;
+    expect(view.hasTable).toHaveBeenCalledWith("plan_v2");
+    expect(view.createTable).not.toHaveBeenCalled();
+    expect(view.addColumn).toHaveBeenCalledTimes(1);
+    const [table, column, typeDef] = view.addColumn.mock.calls[0] as any[];
+    expect([table, column]).toEqual(["plan_v2", "code"]);
+    expect(typeDef).toMatch(/(CHARACTER VARYING|VARCHAR)\(50\)/i);
+    expect(driver.addColumn).not.toHaveBeenCalled();
+  });
+
+  it("pins a ManyToMany join table to the owner's schema and creates it through the view", async () => {
+    const driver = makeDriver(["app", "public"]);
+    const { registrar, ctx } = makeRegistrar(driver);
+
+    await registrar.registerManyToManyJoinTables([PlanM2M]);
+
+    expect(ctx.pinTableSchema).toHaveBeenCalledWith("plan_feature", "public");
+
+    const view = driver.views.get("public")!;
+    expect(view.hasTable).toHaveBeenCalledWith("plan_feature");
+    const ddls = view.executeRaw.mock.calls.map(([ddl]: any[]) => ddl as string);
+    expect(ddls[0]).toMatch(/^CREATE TABLE IF NOT EXISTS "public"\."plan_feature" \(/);
+    expect(ddls[1]).toContain(`ALTER TABLE "public"."plan_feature"`);
+    expect(ddls[1]).toContain(`REFERENCES "public"."plan_m2m"("id")`);
+    expect(ddls[2]).toContain(`REFERENCES "public"."feature_m2m"("id")`);
+    expect(driver.executeRaw).not.toHaveBeenCalled();
+    expect(planM2MMeta.schema).toBe("public");
   });
 });
