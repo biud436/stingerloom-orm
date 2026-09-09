@@ -12,7 +12,9 @@
  *
  * 실행 방법:
  *   INTEGRATION_TEST=true INTEGRATION_TEST_MYSQL=false PG_HOST=<host> \
- *     npx jest --testPathPattern "multi-tenancy-pinned-schema"
+ *     npx jest --testPathPattern "multi-tenancy-pinned-schema-postgres"
+ *
+ * PostgreSQL 전용: INTEGRATION_TEST_POSTGRES=false (MySQL 전용 실행)에서는 skip 됩니다.
  */
 
 import "reflect-metadata";
@@ -31,7 +33,11 @@ import {
   DynamicEntityResult,
 } from "./helpers/create-test-entity";
 
-const INTEGRATION = process.env.INTEGRATION_TEST === "true";
+// PostgreSQL only: the MySQL-only CI job sets INTEGRATION_TEST_POSTGRES=false
+// (see helpers/driver-config.ts), and there is no PostgreSQL to reach there.
+const INTEGRATION =
+  process.env.INTEGRATION_TEST === "true" &&
+  process.env.INTEGRATION_TEST_POSTGRES !== "false";
 const integrationDescribe = INTEGRATION ? describe : describe.skip;
 
 const PG_BASE: Partial<DatabaseClientOptions> = {
