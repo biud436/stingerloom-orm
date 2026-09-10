@@ -33,6 +33,40 @@ const stats = await em
 
 `getCount()` on a grouped builder returns the **number of groups** left after `HAVING`, not the size of any one group — `paginate()` and `getManyAndCount()` rely on this so their `total` matches the grouped rows. Per-group sizes come from projecting the aggregate as above and reading `getRawMany()`. Details: [getCount() with GROUP BY](./query-builder-execution.md#getcount-with-group-by-counts-groups).
 
+### Grouping by an Expression
+
+A string entry in `groupBy()` is either a column reference or an expression, decided by its shape. A bare `prop` or `alias.prop` is a column reference: it is mapped through the NamingStrategy / `@Column({ name })` and quoted with its alias. Anything carrying SQL syntax — a function call, an operator, whitespace — is emitted verbatim:
+
+```typescript
+const byCategory = await em
+  .createQueryBuilder(Post, "p")
+  .selectRaw(["UPPER(category) AS category", "COUNT(*) AS postCount"])
+  .groupBy(["UPPER(category)"])
+  .addOrderBy("UPPER(category)", "ASC")
+  .getRawMany();
+// [{ category: "LIFE", postCount: 17 }, { category: "TECH", postCount: 42 }, ...]
+```
+
+The same rule applies to every string slot of the builder — `selectRaw()`, `addSelect()`, `groupBy()`, `addOrderBy()` and the window `partitionBy()` — so a token renders identically wherever it appears. "Verbatim" has two consequences:
+
+- **Expression strings name DB columns.** `category` above is the column, not the property; nothing inside an expression is mapped or quoted, and the expression is dialect-specific. For a portable, property-aware form use the QueryDSL — `p.category.toUpperCase()`, `Expressions.dateTrunc(p.createdAt, "month")` — which resolves the property, binds its parameters and renders per dialect:
+
+  ```typescript
+  const p = qAlias(Post, "p");
+  const category = p.category.toUpperCase();
+
+  await em
+    .createQueryBuilder(Post, "p")
+    .select([category.as("category"), p.id.count().as("postCount")])
+    .groupBy([category])
+    .addOrderBy(category, "ASC")
+    .getRawMany();
+  ```
+
+- **Expression strings are raw SQL.** Write them as program literals, never assemble them from request input. Values belong in bound parameters: `groupBy([sql\`ROUND(price / ${100})\`])`.
+
+A bare name is always a column reference, so `groupBy(["month"])` after `selectRaw(["... AS month"])` renders `"p"."month"`, which the database rejects. To group by a SELECT-list alias pass a `sql` fragment — `groupBy([sql\`month\`])` — the same reasoning as the `addOrderBy("postCount", ...)` note below. An empty string entry throws `INVALID_QUERY` before any SQL is built.
+
 ### Aggregate Functions in SELECT
 
 Use `addSelect()` with `sql` template literals to add aggregate columns. The column alias becomes the key in the result object.

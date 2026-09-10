@@ -40,6 +40,7 @@ import {
   type ColumnResolver,
 } from "./expressions/ConditionLike";
 import { OrderExpression, isOrderExpression } from "./expressions/OrderExpression";
+import { resolveColumnOrExpression } from "./expressions/bareColumnRef";
 import {
   AggregateExpression,
   AggregateCondition,
@@ -973,6 +974,11 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Unlike `select()`, this method accepts `"alias.property"` notation and
    * does not perform TypeScript type narrowing.
    *
+   * Each entry follows the builder's string rule (see
+   * {@link resolveStringEntry}): a bare `prop` / `alias.prop` is resolved
+   * through the alias registry, anything carrying SQL syntax (`COUNT(*)`,
+   * `MAX(p.views)`) is emitted verbatim.
+   *
    * @example
    * ```ts
    * qb.leftJoin(User, "u", (j) => j.on("p.userId", "=", "u.id"))
@@ -980,26 +986,26 @@ export class SelectQueryBuilder<T, TResult = T> {
    * ```
    */
   selectRaw(columns: string[]): this {
-    this.selectColumns = columns.map((c) => this.resolveRawSelectColumn(c));
+    this.selectColumns = columns.map((c) =>
+      this.resolveStringEntry(c, "selectRaw"),
+    );
     this.selectedPropertyKeys = null;
     return this;
   }
 
   /**
-   * @internal Resolve one `selectRaw()` token.
-   *
-   * A token is alias-resolved (property → DB column, alias qualification)
-   * only when it is a *bare column reference* — `property` or
-   * `alias.property`. Anything carrying SQL syntax (function calls like
-   * `COUNT(*)`, operators, `*`, whitespace, quotes) is a raw expression the
-   * caller wrote deliberately and passes through untouched. Routing such
-   * expressions through {@link resolveColumn} previously mangled them into
-   * `"alias"."COUNT(*)"`-style garbage.
+   * @internal The single string rule shared by `selectRaw()`,
+   * `addSelect()`, `groupBy()` and `addOrderBy()` — a bare column
+   * reference is alias-resolved, an expression passes through verbatim.
+   * See {@link resolveColumnOrExpression} for the exact contract and the
+   * raw-SQL caveat.
    */
-  private resolveRawSelectColumn(token: string): string {
-    const isBareColumnRef =
-      /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/.test(token.trim());
-    return isBareColumnRef ? this.resolveColumn(token) : token;
+  private resolveStringEntry(token: string, clause: string): string {
+    return resolveColumnOrExpression(
+      token,
+      (ref) => this.resolveColumn(ref),
+      clause,
+    );
   }
 
   addSelect(expr: AggregateExpression): this;
@@ -1102,7 +1108,12 @@ export class SelectQueryBuilder<T, TResult = T> {
       }
       return this;
     }
-    const exprStr = typeof expr === "string" ? this.resolveColumn(expr) : expr.sql;
+    // A string follows the shared rule: bare `prop` / `alias.prop` is
+    // resolved, an expression such as `COUNT(*)` is emitted verbatim.
+    const exprStr =
+      typeof expr === "string"
+        ? this.resolveStringEntry(expr, "addSelect")
+        : expr.sql;
     const fragment = alias ? `${exprStr} AS ${this.em.wrap(alias)}` : exprStr;
     if (this.selectColumns === "*") {
       this.selectColumns = [`${this.em.wrap(this.alias)}.*`, fragment];
@@ -2172,6 +2183,11 @@ export class SelectQueryBuilder<T, TResult = T> {
    * an {@link OrderExpression} from `col.asc()/.desc().nullsLast()`, or
    * a {@link ScalarExpression} carrying parameter bindings (e.g.
    * `Expressions.dateTrunc(col, "week")`).
+   *
+   * A string follows the same rule as `selectRaw()` / `groupBy()`: a bare
+   * `prop` / `alias.prop` is resolved through the alias registry, an
+   * expression such as `UPPER(name)` is emitted verbatim (DB column names,
+   * program literals only).
    */
   addOrderBy(expr: OrderExpression): this;
   addOrderBy(expr: ScalarExpression, direction: "ASC" | "DESC"): this;
@@ -2214,7 +2230,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       return this;
     }
     this.orderByClauses.push({
-      column: this.resolveColumn(columnOrExpr as string),
+      column: this.resolveStringEntry(columnOrExpr as string, "addOrderBy"),
       direction: direction!,
     });
     return this;
@@ -2252,6 +2268,14 @@ export class SelectQueryBuilder<T, TResult = T> {
    * {@link ScalarExpression} / {@link ColumnExpression} instances —
    * convenient when grouping by the same derived expression used in
    * SELECT (e.g. `Expressions.dateTrunc(col, "week")`).
+   *
+   * String entries follow the same rule as `selectRaw()`: a bare `prop` /
+   * `alias.prop` is resolved through the alias registry (NamingStrategy,
+   * `@Column({ name })`, identifier quoting), while anything carrying SQL
+   * syntax — `UPPER(grp)`, `DATE(created_at)`, `val + 1` — is emitted
+   * verbatim, so it must name DB columns and must never be assembled from
+   * untrusted input. A bare name is always a column reference: to group by
+   * a SELECT-list alias pass a `sql` fragment instead.
    */
   groupBy(columns: ColumnOf<T>[]): this;
   groupBy(columns: string[]): this;
@@ -2270,7 +2294,7 @@ export class SelectQueryBuilder<T, TResult = T> {
   /** @internal Translate one GROUP BY entry into a parameterized Sql fragment. */
   private renderGroupByEntry(entry: unknown): Sql {
     if (typeof entry === "string") {
-      return sql`${raw(this.resolveColumn(entry))}`;
+      return sql`${raw(this.resolveStringEntry(entry, "groupBy"))}`;
     }
     if (entry !== null && typeof entry === "object") {
       if ((entry as { __isScalarExpression?: unknown }).__isScalarExpression === true) {

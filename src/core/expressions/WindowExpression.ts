@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import sql, { Sql, raw, join } from "../../utils/sqlTag";
 import type { ColumnResolver } from "./ConditionLike";
+import { resolveColumnOrExpression } from "./bareColumnRef";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import type { AggregateExpression } from "./AggregateExpression";
 import { OrderExpression } from "./OrderExpression";
@@ -78,7 +79,9 @@ export class WindowBuilder {
   /**
    * Add one or more PARTITION BY columns. Accepts entity-aware
    * `ColumnExpression`s (from `qAlias(Entity, "u").col`), scalar
-   * expressions, or raw `"alias.prop"` strings.
+   * expressions, or strings — a bare `"alias.prop"` is resolved through
+   * the column resolver, an expression such as `"UPPER(grp_code)"` is
+   * emitted verbatim (same rule as `SelectQueryBuilder.groupBy()`).
    */
   partitionBy(...cols: Array<unknown>): this {
     this.partitions.push(...cols);
@@ -194,7 +197,9 @@ function renderPartitionArg(
     }).renderer(resolveColumn, dialect);
   }
   if (typeof arg === "string") {
-    return sql`${raw(resolveColumn(arg))}`;
+    // Same rule as SelectQueryBuilder's string slots: a bare `prop` /
+    // `alias.prop` is resolved, an expression is emitted verbatim.
+    return sql`${raw(resolveColumnOrExpression(arg, resolveColumn, "partitionBy"))}`;
   }
   throw new Error(
     `WindowBuilder.partitionBy: unsupported argument of type ${typeof arg}`,
