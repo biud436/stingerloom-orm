@@ -45,6 +45,40 @@ await em.createQueryBuilder(Post, "p")
 
 그룹화된 빌더에서 `getCount()`는 `HAVING`을 통과한 **그룹의 개수**를 돌려줍니다. 어느 한 그룹의 크기가 아니에요. `paginate()`와 `getManyAndCount()`의 `total`이 그룹 행과 맞아떨어지는 것도 이 규칙 덕분입니다. 그룹별 크기는 위처럼 집계를 투영한 뒤 `getRawMany()`로 읽으세요. 자세한 내용은 [GROUP BY가 있는 getCount()](./query-builder-execution.md#group-by가-있는-getcount-는-그룹-수를-셉니다)를 참고하세요.
 
+### 표현식으로 그룹화하기
+
+`groupBy()`의 문자열 항목은 모양에 따라 컬럼 참조 아니면 표현식으로 해석됩니다. `prop`이나 `alias.prop` 형태의 맨 이름은 컬럼 참조예요. NamingStrategy와 `@Column({ name })`을 거쳐 실제 컬럼명으로 바뀌고 별칭과 함께 인용됩니다. 함수 호출, 연산자, 공백처럼 SQL 문법이 섞여 있으면 표현식으로 보고 그대로 내보냅니다.
+
+```typescript
+const byCategory = await em
+  .createQueryBuilder(Post, "p")
+  .selectRaw(["UPPER(category) AS category", "COUNT(*) AS postCount"])
+  .groupBy(["UPPER(category)"])
+  .addOrderBy("UPPER(category)", "ASC")
+  .getRawMany();
+// [{ category: "LIFE", postCount: 17 }, { category: "TECH", postCount: 42 }, ...]
+```
+
+이 규칙은 빌더의 문자열 자리 전부에 똑같이 적용됩니다 — `selectRaw()`, `addSelect()`, `groupBy()`, `addOrderBy()`, 그리고 윈도우 `partitionBy()`까지. 같은 토큰은 어디에 두든 같은 SQL이 되죠. "그대로 내보낸다"에는 두 가지 함의가 있습니다.
+
+- **표현식 문자열은 DB 컬럼명을 씁니다.** 위의 `category`는 컬럼명이지 속성명이 아니에요. 표현식 안쪽은 아무것도 매핑하거나 인용하지 않고, 방언에도 묶입니다. 속성명을 인식하면서 방언까지 넘나드는 형태가 필요하면 QueryDSL을 쓰세요. `p.category.toUpperCase()`, `Expressions.dateTrunc(p.createdAt, "month")`처럼 속성을 해석하고, 파라미터를 바인딩하고, 방언별로 렌더링합니다.
+
+  ```typescript
+  const p = qAlias(Post, "p");
+  const category = p.category.toUpperCase();
+
+  await em
+    .createQueryBuilder(Post, "p")
+    .select([category.as("category"), p.id.count().as("postCount")])
+    .groupBy([category])
+    .addOrderBy(category, "ASC")
+    .getRawMany();
+  ```
+
+- **표현식 문자열은 raw SQL입니다.** 코드에 리터럴로 적으세요. 요청 입력으로 조립하면 안 됩니다. 값은 바인딩 파라미터로 넘깁니다: `groupBy([sql\`ROUND(price / ${100})\`])`.
+
+맨 이름은 언제나 컬럼 참조입니다. `selectRaw(["... AS month"])` 뒤에 `groupBy(["month"])`를 쓰면 `"p"."month"`가 되어 DB가 거부해요. SELECT 별칭으로 그룹화하려면 `sql` 조각을 넘기세요 — `groupBy([sql\`month\`])`. 위 `addOrderBy("postCount", ...)` 설명과 같은 이치입니다. 빈 문자열 항목은 SQL을 만들기 전에 `INVALID_QUERY`로 거부됩니다.
+
 ### SELECT에서 집계 함수 바로 쓰기
 
 `addSelect()`에 `sql` 템플릿 리터럴을 넘기면 집계 컬럼을 추가할 수 있습니다. 두 번째 인자 별칭이 결과 객체의 키가 돼요.

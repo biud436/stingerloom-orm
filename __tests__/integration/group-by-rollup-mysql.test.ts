@@ -8,9 +8,12 @@
  *  - RawQueryBuilder's string path passes entries through verbatim, so
  *    "role WITH ROLLUP" is the working escape hatch — rollup rows come back
  *    with NULL group columns (per-department subtotals + a grand total).
- *  - SelectQueryBuilder accepts a raw() Sql fragment for the same effect;
- *    a plain STRING entry is treated as a column reference and mangled into
- *    a quoted identifier, so it must never be used for ROLLUP.
+ *  - SelectQueryBuilder's string path applies the bare-reference rule: an
+ *    entry carrying SQL syntax ("e.role WITH ROLLUP") passes through
+ *    verbatim just like RawQueryBuilder's, and a raw() Sql fragment remains
+ *    the fully explicit form. (Before the rule was shared with selectRaw(),
+ *    a plain string was quoted whole as one identifier — `e`.`role WITH
+ *    ROLLUP` — and only failed inside the driver.)
  *  - The find() FindOption path validates identifiers, so "WITH ROLLUP"
  *    inside groupBy is rejected before reaching the driver.
  *
@@ -224,18 +227,26 @@ integrationDescribe("[Integration] MySQL: multi-column GROUP BY / WITH ROLLUP", 
     expect(Number((grandTotal as any).cnt)).toBe(5);
   });
 
-  it("SelectQueryBuilder string entries treat WITH ROLLUP as a column name (documented mangling)", () => {
-    // A plain string groupBy entry is a column reference: it is resolved and
-    // quoted whole, so "role WITH ROLLUP" becomes a single (nonexistent)
-    // identifier. Pinned so the raw() escape hatch above stays the documented
-    // route for ROLLUP.
+  it("SelectQueryBuilder string entries pass WITH ROLLUP through verbatim", async () => {
+    // A string entry carrying SQL syntax is an expression, not a column
+    // reference, so it is emitted verbatim. (It used to be resolved and
+    // quoted whole — `e`.`role WITH ROLLUP` — a single nonexistent
+    // identifier that only failed inside the driver.)
     const e = qAlias(Employee, "e");
-    const { text } = conn.em
+    const built = conn.em
       .createQueryBuilder(Employee, "e")
-      .select([e.departmentId.as("departmentId"), e.id.count().as("cnt")])
-      .groupBy(["role WITH ROLLUP"])
-      .getSql();
+      .select([e.departmentId.as("departmentId"), e.role.as("role"), e.id.count().as("cnt")])
+      .groupBy(["e.departmentId, e.role WITH ROLLUP"]);
 
-    expect(text).toContain("`e`.`role WITH ROLLUP`");
+    const { text } = built.getSql();
+    expect(text).toContain("GROUP BY e.departmentId, e.role WITH ROLLUP");
+    expect(text).not.toContain("`e`.`e.departmentId, e.role WITH ROLLUP`");
+
+    const rows = await built.getRawMany();
+    expect(rows).toHaveLength(7);
+    const grandTotal = rows.find(
+      (r: any) => r.departmentId === null && r.role === null,
+    );
+    expect(Number((grandTotal as any).cnt)).toBe(5);
   });
 });

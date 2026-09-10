@@ -371,8 +371,11 @@ class SelectQueryBuilder<T, TResult = T> {
   innerJoin(table: string, alias: string, condition: Sql | string): this;
   rightJoin(table: string, alias: string, condition: Sql | string): this;
   orderBy(spec: { [K in keyof T & string]?: "ASC" | "DESC" }): this;
-  addOrderBy(column: keyof T & string, direction: "ASC" | "DESC"): this;
-  groupBy(columns: (keyof T & string)[]): this;
+  addOrderBy(column: string | ScalarExpression, direction: "ASC" | "DESC"): this;
+  addOrderBy(expr: OrderExpression): this;
+  groupBy(columns: Array<string | Sql | ScalarExpression>): this;
+  //   문자열 항목: 맨 "prop" / "alias.prop" → 컬럼으로 해석,
+  //   "UPPER(col)" / "col + 1" → 표현식 그대로 출력 (selectRaw와 같은 규칙)
   having(condition: Sql): this;
   limit(count: number): this;
   offset(count: number): this;
