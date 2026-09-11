@@ -19,9 +19,19 @@ jest.mock("../../src/DatabaseClient", () => {
 
 class User {}
 
+// findBy/findOneBy are pure delegations, but the root entity-argument guard
+// resolves metadata first — give the undecorated class some.
+function makeEm(): EntityManager {
+  const em = new EntityManager();
+  jest
+    .spyOn((em as any).resolver, "resolveEntityMetadata")
+    .mockReturnValue({ name: "User", target: User, columns: [] } as any);
+  return em;
+}
+
 describe("EntityManager.findBy / findOneBy (filter-first read shorthands)", () => {
   it("findOneBy delegates to findOne with the where wrapped in options", async () => {
-    const em = new EntityManager();
+    const em = makeEm();
     const spy = jest
       .spyOn(em, "findOne")
       .mockResolvedValue({ id: 1 } as any);
@@ -34,7 +44,7 @@ describe("EntityManager.findBy / findOneBy (filter-first read shorthands)", () =
   });
 
   it("findBy delegates to find with the where wrapped in options", async () => {
-    const em = new EntityManager();
+    const em = makeEm();
     const spy = jest
       .spyOn(em, "find")
       .mockResolvedValue([{ id: 1 }] as any);
@@ -47,7 +57,7 @@ describe("EntityManager.findBy / findOneBy (filter-first read shorthands)", () =
   });
 
   it("passes an OR array of where clauses straight through", async () => {
-    const em = new EntityManager();
+    const em = makeEm();
     const spy = jest.spyOn(em, "find").mockResolvedValue([] as any);
 
     const where = [{ id: 1 }, { id: 2 }] as any;
@@ -57,7 +67,7 @@ describe("EntityManager.findBy / findOneBy (filter-first read shorthands)", () =
   });
 
   it("is exposed on BaseRepository, delegating to the EntityManager", async () => {
-    const em = new EntityManager();
+    const em = makeEm();
     const findOneSpy = jest
       .spyOn(em, "findOne")
       .mockResolvedValue(null as any);

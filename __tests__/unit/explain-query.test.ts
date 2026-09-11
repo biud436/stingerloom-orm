@@ -133,6 +133,7 @@ describe("EntityManager.explain()", () => {
 
   it("should throw InvalidQueryError when driver is not set", async () => {
     (em as any).driver = undefined;
+    jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue(mockMetadata);
 
     await expect(em.explain(TestEntity)).rejects.toThrow(InvalidQueryError);
   });

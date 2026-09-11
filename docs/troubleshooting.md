@@ -63,13 +63,14 @@ Check that `port` is a number (not a string from `.env`) and all required fields
 ### "Entity metadata not found"
 
 ```
-OrmError [ORM_ENTITY_METADATA_NOT_FOUND]: Entity metadata for "User" was not found.
+OrmError [ORM_ENTITY_METADATA_NOT_FOUND]: Entity metadata for "User" does not exist.
 ```
 
 **Causes:**
 1. Missing `@Entity()` decorator on the class
 2. Entity class not listed in `entities` array
 3. Missing `import "reflect-metadata"` at the top of your entry file
+4. Something other than the entity class was passed as the first argument — the message says what (see the table below)
 
 ```typescript
 // 1. Add @Entity()
@@ -88,6 +89,19 @@ await em.register({
 // 3. Import reflect-metadata (once, at the top of your app)
 import "reflect-metadata";
 ```
+
+Every EntityManager method takes the entity **class** first (`em.find(User, …)`). When the first argument is something else, the error names what it received instead of reporting `"undefined"`:
+
+| First line of the message | What happened | Fix |
+|---|---|---|
+| `find() received an instance of User where the entity class was expected.` | `em.find(new User())`, or `em.save(user)` without the class | Pass the class first: `em.save(User, user)` |
+| `Entity metadata for "Plain" does not exist. find() received the class Plain, which is not decorated with @Entity() …` | The class carries no metadata — no `@Entity()`, or its module was never imported so the decorator never ran | Decorate it (or use `defineEntity()`), and import the module before connecting |
+| `find() received undefined where an entity class was expected.` | The import resolved to `undefined` — a circular import, or a missing `export` | Break the cycle (import the entity module first) or fix the export |
+| `find() received the string "user" where an entity class was expected.` | A table or entity name was passed | Entities are referenced by class, not by name — import the class and pass it |
+| `find() received an anonymous function which is not a class.` | A thunk (`() => User`) or an uncalled factory was passed | Pass the class the thunk returns; call the factory (`defineEntity(...)`) and pass its result |
+| `Entity "Log" is not registered on connection "primary": its metadata exists, but …` | The class is fine but missing from this connection's `entities` array | Add it to that connection, or use the EntityManager that registered it |
+
+Each message ends with the entity classes registered on the connection (`Registered on connection "primary": User, Post.`) and, when a name is close to one of them, a `Did you mean "User"?` hint. The error class and code are the same in every case (`EntityMetadataNotFoundError`, `ORM_ENTITY_METADATA_NOT_FOUND`), and `getRepository()` / `createQueryBuilder()` reject at the call rather than on the first query.
 
 ### Columns silently become "text" / "No design:type metadata" warnings
 

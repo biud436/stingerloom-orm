@@ -63,13 +63,14 @@ OrmError [ORM_INVALID_CONFIG]: Invalid database configuration:
 ### "Entity metadata not found"
 
 ```
-OrmError [ORM_ENTITY_METADATA_NOT_FOUND]: Entity metadata for "User" was not found.
+OrmError [ORM_ENTITY_METADATA_NOT_FOUND]: Entity metadata for "User" does not exist.
 ```
 
 **원인:**
 1. 클래스에 `@Entity()` 데코레이터가 없음
 2. `entities` 배열에 엔티티 클래스가 등록되지 않음
 3. 진입점 파일 상단에 `import "reflect-metadata"`가 빠짐
+4. 첫 번째 인자로 엔티티 클래스가 아닌 것을 넘김 — 무엇을 받았는지 메시지가 알려줍니다(아래 표 참고)
 
 ```typescript
 // 1. @Entity() 추가
@@ -88,6 +89,19 @@ await em.register({
 // 3. reflect-metadata 임포트 (앱 최상단에서 한 번)
 import "reflect-metadata";
 ```
+
+EntityManager의 모든 메서드는 첫 번째 인자로 엔티티 **클래스**를 받습니다(`em.find(User, …)`). 다른 것을 넘기면 `"undefined"`라고만 보고하는 대신, 실제로 무엇을 받았는지 에러가 알려줍니다.
+
+| 메시지 첫 줄 | 무슨 일이 있었나 | 해결 |
+|---|---|---|
+| `find() received an instance of User where the entity class was expected.` | `em.find(new User())`, 또는 클래스 없이 `em.save(user)`를 호출 | 클래스를 먼저 넘깁니다: `em.save(User, user)` |
+| `Entity metadata for "Plain" does not exist. find() received the class Plain, which is not decorated with @Entity() …` | 클래스에 메타데이터가 없음 — `@Entity()`가 없거나, 모듈이 임포트된 적이 없어 데코레이터가 실행되지 않음 | 데코레이터를 붙이거나 `defineEntity()`로 정의하고, 연결 전에 모듈을 임포트합니다 |
+| `find() received undefined where an entity class was expected.` | 임포트 결과가 `undefined` — 순환 임포트이거나 `export`가 빠짐 | 순환을 끊거나(엔티티 모듈을 먼저 임포트) export를 고칩니다 |
+| `find() received the string "user" where an entity class was expected.` | 테이블 이름이나 엔티티 이름 문자열을 넘김 | 엔티티는 이름이 아니라 클래스로 참조합니다 — 클래스를 임포트해서 넘기세요 |
+| `find() received an anonymous function which is not a class.` | 썽크(`() => User`)나 호출하지 않은 팩토리를 넘김 | 썽크가 반환하는 클래스를 넘기고, 팩토리는 호출(`defineEntity(...)`)한 결과를 넘깁니다 |
+| `Entity "Log" is not registered on connection "primary": its metadata exists, but …` | 클래스는 정상이지만 이 연결의 `entities` 배열에 없음 | 그 연결에 추가하거나, 등록한 EntityManager로 조회합니다 |
+
+모든 메시지 끝에는 해당 연결에 등록된 엔티티 클래스 목록(`Registered on connection "primary": User, Post.`)이 붙고, 이름이 비슷한 엔티티가 있으면 `Did you mean "User"?` 힌트가 따라옵니다. 에러 클래스와 코드는 모든 경우에 동일하고(`EntityMetadataNotFoundError`, `ORM_ENTITY_METADATA_NOT_FOUND`), `getRepository()` / `createQueryBuilder()`는 첫 쿼리가 아니라 호출 시점에 바로 거부해요.
 
 ### 컬럼이 뜻하지 않게 "text"가 됨 / "No design:type metadata" 경고
 

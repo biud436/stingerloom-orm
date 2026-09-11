@@ -53,6 +53,19 @@ function createTestEntityManager() {
     wrap: (name: string) => `\`${name}\``,
   };
 
+  // The root entity-argument guard resolves metadata before any executor
+  // runs (including the empty-input early returns); serve the fixture
+  // classes and nothing else. Tests override this spy where they need to.
+  jest
+    .spyOn((em as any).resolver, "resolveEntityMetadata")
+    .mockImplementation((cls: unknown) =>
+      cls === userMetadata.target
+        ? userMetadata
+        : cls === productMetadata.target
+          ? productMetadata
+          : null,
+    );
+
   return em;
 }
 
@@ -85,6 +98,15 @@ describe("EntityManager.saveMany()", () => {
     resetScannerContainer();
     jest.clearAllMocks();
     em = createTestEntityManager();
+    // These tests pin the per-item saveInternal() fallback: a PK without a
+    // generation strategy keeps saveMany() off the batch-INSERT path.
+    jest.spyOn((em as any).resolver, "resolveEntityMetadata").mockReturnValue({
+      ...userMetadata,
+      columns: [
+        { name: "id", options: { primary: true } },
+        ...userMetadata.columns.slice(1),
+      ],
+    });
   });
 
   it("should return empty array for empty input", async () => {
