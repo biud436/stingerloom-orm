@@ -447,6 +447,7 @@ describe("EntityManager.batchUpsert()", () => {
     });
 
     it("should return early for empty array", async () => {
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
       await em.batchUpsert(UserEntity, []);
       expect(mockConnect).not.toHaveBeenCalled();
     });
@@ -742,6 +743,7 @@ describe("upsert/batchUpsert affected-rows result", () => {
 
     it("should return { affected: 0 } without querying for an empty array", async () => {
       em = createEntityManagerWithDriver("mysql");
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
 
       const result = await em.batchUpsert(UserEntity, []);
 

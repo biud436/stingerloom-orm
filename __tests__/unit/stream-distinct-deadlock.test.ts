@@ -367,6 +367,8 @@ describe("#222: streamBatch() AsyncGenerator", () => {
   it("should yield T[] batches from EntityManager", async () => {
     const { EntityManager } = require("../../src/core/EntityManager");
     const em = new EntityManager();
+    // find() is stubbed; the root entity-argument guard still resolves metadata.
+    (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue({ columns: [] });
 
     const allData = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `User${i + 1}` }));
 
@@ -393,6 +395,8 @@ describe("#222: streamBatch() AsyncGenerator", () => {
   it("should yield nothing for empty result", async () => {
     const { EntityManager } = require("../../src/core/EntityManager");
     const em = new EntityManager();
+    // find() is stubbed; the root entity-argument guard still resolves metadata.
+    (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue({ columns: [] });
     (em as any).find = jest.fn().mockResolvedValueOnce([]);
 
     class TestEmpty {}
@@ -427,6 +431,8 @@ describe("#222: streamBatch() AsyncGenerator", () => {
   it("should respect batchSize parameter", async () => {
     const { EntityManager } = require("../../src/core/EntityManager");
     const em = new EntityManager();
+    // find() is stubbed; the root entity-argument guard still resolves metadata.
+    (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue({ columns: [] });
 
     (em as any).find = jest.fn()
       .mockResolvedValueOnce([{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }])

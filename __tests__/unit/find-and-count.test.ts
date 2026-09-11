@@ -15,6 +15,11 @@ describe("findAndCount()", () => {
 
   beforeEach(() => {
     em = new EntityManager();
+    // findInternal/aggregate are stubbed below; the root entity-argument
+    // guard still resolves metadata, so give the undecorated class some.
+    jest
+      .spyOn((em as any).resolver, "resolveEntityMetadata")
+      .mockReturnValue({ name: "User", target: User, columns: [] } as any);
   });
 
   it("엔티티 배열과 총 개수를 튜플로 반환해야 한다", async () => {
