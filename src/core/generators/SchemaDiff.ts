@@ -27,6 +27,12 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
 export interface ColumnChange {
   tableName: string;
+  /**
+   * PostgreSQL schema the table is pinned to via `@Entity({ schema })`, so
+   * the generated DDL can name it. Undefined for an unpinned table and on
+   * other dialects (backward compatible with hand-built diffs).
+   */
+  schema?: string;
   columnName: string;
   columnType?: string;
   currentType?: string;
@@ -56,6 +62,8 @@ export interface ColumnChange {
 
 export interface RenamedColumn {
   tableName: string;
+  /** See {@link ColumnChange.schema}. */
+  schema?: string;
   oldColumnName: string;
   newColumnName: string;
   columnType: string;
@@ -71,6 +79,8 @@ export interface EnumChange {
 /** A `@ComputedColumn` that exists on the entity but not in the DB table. */
 export interface ComputedColumnChange {
   tableName: string;
+  /** See {@link ColumnChange.schema}. */
+  schema?: string;
   column: ComputedColumnMetadata;
 }
 
@@ -170,12 +180,18 @@ export class SchemaDiff {
       entityTableNames.add(tableName.toLowerCase());
       const entityColumns = this.getEntityColumns(entity);
       // An entity pinned via `@Entity({ schema })` is introspected in its own
-      // schema; enum types stay in the default one (see quoteEnumType).
+      // schema, and every change on it carries that schema so
+      // migrate:generate can qualify the ALTER/DROP the way CREATE TABLE
+      // already is. Enum types stay in the default schema (see
+      // quoteEnumType). PostgreSQL only — the other dialects have no schema.
+      const pinnedSchema =
+        dialect === "postgres" ? getEntitySchema(entity) : undefined;
+      const pin = pinnedSchema ? { schema: pinnedSchema } : {};
       const dbColumns = await this.getDbColumns(
         queryRunner,
         tableName,
         dialect,
-        getEntitySchema(entity) ?? schema,
+        pinnedSchema ?? schema,
       );
 
       if (dbColumns.length === 0) {
@@ -231,6 +247,7 @@ export class SchemaDiff {
           const isPgNamedType = isPgArray || isPgEnum;
           result.addColumns.push({
             tableName,
+            ...pin,
             columnName: colName,
             columnType: castTypeName,
             nullable: col.options?.nullable ?? false,
@@ -264,6 +281,7 @@ export class SchemaDiff {
           if (!this.typesMatch(expectedType, actualType, dialect)) {
             result.alterColumns.push({
               tableName,
+              ...pin,
               columnName: colName,
               columnType: expectedType,
               currentType: dbCol.data_type,
@@ -287,6 +305,7 @@ export class SchemaDiff {
             // Types match but length/precision differs
             result.alterColumns.push({
               tableName,
+              ...pin,
               columnName: colName,
               columnType: expectedType,
               currentType: dbCol.data_type,
@@ -313,6 +332,7 @@ export class SchemaDiff {
             // via `MODIFY COLUMN` (MySQL).
             result.alterColumns.push({
               tableName,
+              ...pin,
               columnName: colName,
               columnType: expectedType,
               currentType: dbCol.data_type,
@@ -340,7 +360,7 @@ export class SchemaDiff {
       for (const cc of this.getComputedColumns(entity)) {
         entityColumnNames.add(cc.name.toLowerCase());
         if (!dbColumnMap.has(cc.name.toLowerCase())) {
-          result.addComputedColumns!.push({ tableName, column: cc });
+          result.addComputedColumns!.push({ tableName, ...pin, column: cc });
         }
       }
 
@@ -349,6 +369,7 @@ export class SchemaDiff {
         if (!entityColumnNames.has(dbColName)) {
           result.dropColumns.push({
             tableName,
+            ...pin,
             columnName: dbCol.column_name,
             currentType: dbCol.data_type,
             actualLength: dbCol.character_maximum_length ?? null,
@@ -923,6 +944,7 @@ export class SchemaDiff {
             if (lengthMatch) {
               result.renamedColumns!.push({
                 tableName: table,
+                ...(add.schema ? { schema: add.schema } : {}),
                 oldColumnName: drop.columnName,
                 newColumnName: add.columnName,
                 columnType: add.columnType ?? dropType,

@@ -502,7 +502,7 @@ The pin reaches every place a table name is written:
 
 `@NonTenantEntity()` does the same without naming a schema: under `search_path` and `schema_qualified` it pins the entity to the connection's default schema (the `schema` option, or `public`). One decorator therefore means "global table" under every strategy — the same class opts out of the discriminator column under `tenant_column`.
 
-Children of an inheritance hierarchy inherit the root's schema unless they pin their own. Code-first entities take the same option: `defineEntity("plans", { ... }, { schema: "public" })` and `new EntitySchema({ target, schema: "public", ... })`. `em.resolveEntitySchema(Plan)` returns the schema an entity resolves to (`undefined` when it follows the tenant strategy). MySQL and SQLite have no schema level, so the option is ignored there.
+Children of a `JOINED` (table-per-type) hierarchy inherit the root's schema unless they pin their own table elsewhere; `SINGLE_TABLE` children share the root's table and therefore its schema (a differing `schema` on them is ignored with a warning). Code-first entities take the same option: `defineEntity("plans", { ... }, { schema: "public" })` and `new EntitySchema({ target, schema: "public", ... })`. `em.resolveEntitySchema(Plan)` returns the schema an entity resolves to (`undefined` when it follows the tenant strategy). MySQL and SQLite have no schema level, so the option is ignored there.
 
 ::: warning
 Pinning is a routing decision, not an access-control one. Every tenant reads and writes the same rows of a pinned table. Keep tenant-owned data in unpinned entities.

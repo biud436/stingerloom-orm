@@ -10,6 +10,7 @@ import {
 import { OneToOneScanner } from "../scanner/OneToOneScanner";
 import { createEntityKey } from "../utils/scanner";
 import { camelToSnakeCase } from "../utils/camelToSnakeCase";
+import { Logger } from "../utils/Logger";
 import { COLUMN_TOKEN, ColumnType, KnownColumnType, ResolvedColumnOption, inferColumnDefaults } from "../decorators/Column";
 import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
 import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../decorators/ManyToOne";
@@ -122,6 +123,8 @@ function resolveColumnOption(
  * used by decorators, so the rest of the ORM (EntityManager, SchemaGenerator, etc.)
  * works transparently.
  */
+const entitySchemaLogger = new Logger("EntitySchema");
+
 export class EntitySchemaRegistrar {
   static registerColumns<T>(options: EntitySchemaOptions<T>): void {
     const proto = options.target.prototype;
@@ -601,9 +604,21 @@ export class EntitySchemaRegistrar {
           if (rootMeta?.childEntities) {
             rootMeta.childEntities.push(cls);
           }
-          // Mirrors Entity.ts: a child lives in the root's schema unless it
-          // pins its own.
-          if (schemaKey === undefined && rootMeta?.schema) {
+          // Mirrors Entity.ts: a TPT child lives in the root's schema unless
+          // it pins its own table elsewhere; an STI child shares the root's
+          // table, so its own `schema` is ignored (warned when it differs).
+          if (inheritanceStrategy === "SINGLE_TABLE") {
+            if (schemaKey !== undefined && schemaKey !== rootMeta?.schema) {
+              entitySchemaLogger.warn(
+                `EntitySchema { schema: "${schemaKey}" } on ${cls.name} is ignored: ` +
+                  `it is a SINGLE_TABLE child of ${parent.name} and shares its table "${rootMeta?.name ?? nameKey}"` +
+                  (rootMeta?.schema
+                    ? ` in schema "${rootMeta.schema}".`
+                    : " in the default schema."),
+              );
+            }
+            schemaKey = rootMeta?.schema;
+          } else if (schemaKey === undefined && rootMeta?.schema) {
             schemaKey = rootMeta.schema;
           }
 

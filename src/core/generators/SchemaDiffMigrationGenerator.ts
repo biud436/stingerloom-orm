@@ -6,7 +6,11 @@ import { SchemaGenerator, SchemaDialect } from "./SchemaGenerator";
 import { createColumnDefinitionBuilder } from "../../dialects/ColumnDefinitionBuilder";
 import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../../decorators/ManyToOne";
 import { ONE_TO_ONE_TOKEN, OneToOneMetadata } from "../../decorators/OneToOne";
-import { ENTITY_TOKEN, EntityMetadata } from "../../decorators/Entity";
+import {
+  ENTITY_TOKEN,
+  EntityMetadata,
+  getEntitySchema,
+} from "../../decorators/Entity";
 import { ClazzType } from "../../utils";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -128,7 +132,7 @@ export class SchemaDiffMigrationGenerator {
     );
     return diff.addComputedColumns.map(
       (change) =>
-        `ALTER TABLE ${this.escapeId(change.tableName, dialect)} ADD COLUMN ${builder.buildComputedColumnDef(
+        `ALTER TABLE ${this.escapeTable(change.tableName, change.schema, dialect)} ADD COLUMN ${builder.buildComputedColumnDef(
           change.column,
           { columnName: change.column.name, tableName: change.tableName },
         )}`,
@@ -142,7 +146,7 @@ export class SchemaDiffMigrationGenerator {
   ): string[] {
     return (diff.addComputedColumns ?? []).map(
       (change) =>
-        `ALTER TABLE ${this.escapeId(change.tableName, dialect)} DROP COLUMN ${this.escapeId(change.column.name, dialect)}`,
+        `ALTER TABLE ${this.escapeTable(change.tableName, change.schema, dialect)} DROP COLUMN ${this.escapeId(change.column.name, dialect)}`,
     );
   }
 
@@ -173,7 +177,7 @@ export class SchemaDiffMigrationGenerator {
       const typeStr = this.renderColumnType(col, dialect);
       const nullability = col.nullable === false ? "NOT NULL" : "NULL";
       sqls.push(
-        `ALTER TABLE ${this.escapeId(col.tableName, dialect)} ADD COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr} ${nullability}`,
+        `ALTER TABLE ${this.escapeTable(col.tableName, col.schema, dialect)} ADD COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr} ${nullability}`,
       );
     }
 
@@ -212,7 +216,7 @@ export class SchemaDiffMigrationGenerator {
     // Reverse of add columns
     for (const col of diff.addColumns) {
       sqls.push(
-        `ALTER TABLE ${this.escapeId(col.tableName, dialect)} DROP COLUMN ${this.escapeId(col.columnName, dialect)}`,
+        `ALTER TABLE ${this.escapeTable(col.tableName, col.schema, dialect)} DROP COLUMN ${this.escapeId(col.columnName, dialect)}`,
       );
     }
 
@@ -236,7 +240,9 @@ export class SchemaDiffMigrationGenerator {
 
     // Reverse of add tables
     for (const table of diff.addTables) {
-      sqls.push(`DROP TABLE IF EXISTS ${this.escapeId(table, dialect)}`);
+      sqls.push(
+        `DROP TABLE IF EXISTS ${this.escapeTable(table, this.addedTableSchema(diff, table, dialect), dialect)}`,
+      );
     }
 
     return sqls;
@@ -277,7 +283,7 @@ export class SchemaDiffMigrationGenerator {
       const nullability = col.nullable === false ? "NOT NULL" : "NULL";
       stmts.push(
         this.wrapSqlInQuery(
-          `ALTER TABLE ${this.escapeId(col.tableName, dialect)} ADD COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr} ${nullability}`,
+          `ALTER TABLE ${this.escapeTable(col.tableName, col.schema, dialect)} ADD COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr} ${nullability}`,
         ),
       );
     }
@@ -302,7 +308,7 @@ export class SchemaDiffMigrationGenerator {
     // Drop columns (dangerous — commented out)
     for (const col of diff.dropColumns) {
       stmts.push(
-        `// ${this.wrapSqlInQuery(`ALTER TABLE ${this.escapeId(col.tableName, dialect)} DROP COLUMN ${this.escapeId(col.columnName, dialect)}`)} // DANGEROUS: uncomment if sure`,
+        `// ${this.wrapSqlInQuery(`ALTER TABLE ${this.escapeTable(col.tableName, col.schema, dialect)} DROP COLUMN ${this.escapeId(col.columnName, dialect)}`)} // DANGEROUS: uncomment if sure`,
       );
     }
 
@@ -337,7 +343,7 @@ export class SchemaDiffMigrationGenerator {
     for (const col of diff.addColumns) {
       stmts.push(
         this.wrapSqlInQuery(
-          `ALTER TABLE ${this.escapeId(col.tableName, dialect)} DROP COLUMN ${this.escapeId(col.columnName, dialect)}`,
+          `ALTER TABLE ${this.escapeTable(col.tableName, col.schema, dialect)} DROP COLUMN ${this.escapeId(col.columnName, dialect)}`,
         ),
       );
     }
@@ -370,7 +376,7 @@ export class SchemaDiffMigrationGenerator {
     for (const table of diff.addTables) {
       stmts.push(
         this.wrapSqlInQuery(
-          `DROP TABLE IF EXISTS ${this.escapeId(table, dialect)}`,
+          `DROP TABLE IF EXISTS ${this.escapeTable(table, this.addedTableSchema(diff, table, dialect), dialect)}`,
         ),
       );
     }
@@ -511,8 +517,40 @@ export class SchemaDiffMigrationGenerator {
     return `"${name.replace(/"/g, '""')}"`;
   }
 
+  /**
+   * `"schema"."table"` for a change on an entity pinned via
+   * `@Entity({ schema })` — the migration runs outside any tenant context,
+   * so a bare name would resolve in the default schema. Bare escaped name
+   * for an unpinned table and on dialects without schemas.
+   */
+  private escapeTable(
+    tableName: string,
+    schema: string | undefined,
+    dialect: SchemaDialect,
+  ): string {
+    if (schema && dialect === "postgres") {
+      return `${this.escapeId(schema, dialect)}.${this.escapeId(tableName, dialect)}`;
+    }
+    return this.escapeId(tableName, dialect);
+  }
+
+  /**
+   * Schema of a table in `addTables`, read from the entity it was diffed
+   * for (`addTableEntityMap`), so the `down()` DROP TABLE matches the
+   * `up()` CREATE TABLE that SchemaGenerator qualified.
+   */
+  private addedTableSchema(
+    diff: SchemaDiffResult,
+    table: string,
+    dialect: SchemaDialect,
+  ): string | undefined {
+    if (dialect !== "postgres") return undefined;
+    const entity = diff.addTableEntityMap?.[table];
+    return entity ? getEntitySchema(entity) : undefined;
+  }
+
   private buildRenameColumnSql(rename: RenamedColumn, dialect: SchemaDialect): string {
-    const table = this.escapeId(rename.tableName, dialect);
+    const table = this.escapeTable(rename.tableName, rename.schema, dialect);
     const oldCol = this.escapeId(rename.oldColumnName, dialect);
     const newCol = this.escapeId(rename.newColumnName, dialect);
 
@@ -574,7 +612,7 @@ export class SchemaDiffMigrationGenerator {
    */
   private alterColumnUpSql(col: ColumnChange, dialect: SchemaDialect): string[] {
     if (dialect === "sqlite") return [];
-    const table = this.escapeId(col.tableName, dialect);
+    const table = this.escapeTable(col.tableName, col.schema, dialect);
     const column = this.escapeId(col.columnName, dialect);
 
     if (dialect === "mysql") {
@@ -611,7 +649,7 @@ export class SchemaDiffMigrationGenerator {
    */
   private alterColumnDownSql(col: ColumnChange, dialect: SchemaDialect): string[] {
     if (dialect === "sqlite") return [];
-    const table = this.escapeId(col.tableName, dialect);
+    const table = this.escapeTable(col.tableName, col.schema, dialect);
     const column = this.escapeId(col.columnName, dialect);
 
     if (dialect === "mysql") {
