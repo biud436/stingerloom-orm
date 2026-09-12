@@ -99,15 +99,9 @@ import { StingerloomPlugin } from "./plugin/StingerloomPlugin";
 import { PluginContext } from "./plugin/PluginContext";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
-import { DefaultNamingStrategy, NamingStrategy } from "./generators/NamingStrategy";
-import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
-import { COLUMN_TOKEN } from "../decorators/Column";
+import { NamingStrategy } from "./generators/NamingStrategy";
 import { createAliasRef, createEntitySqlRef, AliasRef, SqlRef } from "./SqlRef";
 import { InheritanceResolver } from "./InheritanceResolver";
-import { CREATE_TIMESTAMP_TOKEN } from "../decorators/CreateTimestamp";
-import { UPDATE_TIMESTAMP_TOKEN } from "../decorators/UpdateTimestamp";
-import { DELETED_AT_TOKEN } from "../decorators/DeletedAt";
-import { VERSION_TOKEN } from "../decorators/Version";
 import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
 import type { BufferPluginOptions } from "./plugin/buffer/BufferPreview";
 import type { RawPipeline, RawPipelineOptions } from "./plugin/raw-pipeline/RawPipeline";
@@ -133,6 +127,7 @@ import { SubscriberRegistry } from "./entity-manager/SubscriberRegistry";
 import { PluginManager } from "./entity-manager/PluginManager";
 import { TransactionRunner } from "./entity-manager/TransactionRunner";
 import { RawQueryRunner } from "./entity-manager/RawQueryRunner";
+import { applyNamingStrategyToEntities } from "./entity-manager/applyNamingStrategy";
 
 // ── Extracted types & internal utilities (entity-manager/) ──
 import type {
@@ -536,58 +531,7 @@ export class EntityManager implements BaseEntityManager {
     entities: Iterable<ClazzType<any>>,
     strategy?: NamingStrategy,
   ): void {
-    const ns = strategy ?? new DefaultNamingStrategy();
-
-    for (const entity of entities) {
-      const meta = Reflect.getMetadata(ENTITY_TOKEN, entity) as EntityMetadata | undefined;
-      if (!meta) continue;
-
-      // 1. Table name (skip STI children — they share the root's table name)
-      if (!meta.nameExplicit && !meta.inheritanceRoot) {
-        meta.name = ns.tableName(meta.rawClassName ?? entity.name);
-      }
-
-      // 2. Column names. Columns without a propertyKey are DDL-only entries a
-      //    previous registerEntities() injected in place (the STI/TPT
-      //    discriminator) — renaming them through the strategy would replace
-      //    their explicit DB name with columnName(undefined) and break the
-      //    next connection's CREATE TABLE.
-      const columns: ColumnMetadata[] = Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ?? [];
-      for (const col of columns) {
-        if (!col.nameExplicit && col.propertyKey) {
-          col.name = ns.columnName(col.propertyKey);
-        }
-      }
-      // Also update entity metadata's columns reference
-      if (meta.columns) {
-        for (const col of meta.columns as unknown as ColumnMetadata[]) {
-          if (!col.nameExplicit && col.propertyKey) {
-            col.name = ns.columnName(col.propertyKey);
-          }
-        }
-      }
-
-      // 3. Timestamp / DeletedAt / Version tokens — these store propertyKey,
-      //    but are used as SQL column names. Update them if the naming strategy transforms them.
-      const updateToken = (token: symbol) => {
-        const propName = Reflect.getMetadata(token, entity) as string | undefined;
-        if (propName) {
-          // Find matching column to get its resolved DB name
-          const matchingCol = columns.find((c) => c.propertyKey === propName);
-          if (matchingCol && matchingCol.name !== propName) {
-            Reflect.defineMetadata(token, matchingCol.name, entity);
-          }
-        }
-      };
-      updateToken(CREATE_TIMESTAMP_TOKEN);
-      updateToken(UPDATE_TIMESTAMP_TOKEN);
-      updateToken(DELETED_AT_TOKEN);
-      updateToken(VERSION_TOKEN);
-
-      // 4. Update Reflect metadata
-      Reflect.defineMetadata(ENTITY_TOKEN, meta, entity);
-      Reflect.defineMetadata(COLUMN_TOKEN, columns, entity.prototype);
-    }
+    applyNamingStrategyToEntities(entities, strategy);
   }
 
   get client() {
