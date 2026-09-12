@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { randomUUID } from "node:crypto";
-import { ClazzType, Logger, resolveEntityGlobs, generateUUIDv7 } from "../utils";
-import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
+import { ClazzType, Logger, generateUUIDv7 } from "../utils";
 import { ColumnMetadata, MetadataLayerRegistry } from "../scanner";
 import { DatabaseClient } from "../DatabaseClient";
 import { ISqlDriver } from "../dialects/SqlDriver";
@@ -24,7 +23,6 @@ import {
   DatabaseClientOptions,
   normalizeSynchronizePolicy,
   UnknownWriteKeyPolicy,
-  validateDatabaseClientOptions,
 } from "./DatabaseClientOptions";
 import { MetadataContext } from "../metadata/MetadataContext";
 import { EntityValidator } from "./EntityValidator";
@@ -53,7 +51,6 @@ import {
 } from "./entity-manager/EntityArgumentGuard";
 import { DeleteWithoutConditionsError } from "../errors/DeleteWithoutConditionsError";
 import { EntityNotFoundError } from "../errors/EntityNotFoundError";
-import { NotSupportedDatabaseTypeError } from "../errors/NotSupportedDatabaseTypeError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../decorators/ComputedColumn";
 import {
   EntitySubscriber,
@@ -64,7 +61,6 @@ import {
 import { QueryTracker, QueryLogEntry } from "./QueryTracker";
 import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
 import { defaultJsonColumnWrite, isJsonColumnType } from "./JsonColumnTransformer";
-import { LoggingOptions } from "./DatabaseClientOptions";
 import {
   CursorPaginationOption,
   CursorPaginationResult,
@@ -99,15 +95,9 @@ import { StingerloomPlugin } from "./plugin/StingerloomPlugin";
 import { PluginContext } from "./plugin/PluginContext";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
-import { DefaultNamingStrategy, NamingStrategy } from "./generators/NamingStrategy";
-import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
-import { COLUMN_TOKEN } from "../decorators/Column";
+import { NamingStrategy } from "./generators/NamingStrategy";
 import { createAliasRef, createEntitySqlRef, AliasRef, SqlRef } from "./SqlRef";
 import { InheritanceResolver } from "./InheritanceResolver";
-import { CREATE_TIMESTAMP_TOKEN } from "../decorators/CreateTimestamp";
-import { UPDATE_TIMESTAMP_TOKEN } from "../decorators/UpdateTimestamp";
-import { DELETED_AT_TOKEN } from "../decorators/DeletedAt";
-import { VERSION_TOKEN } from "../decorators/Version";
 import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
 import type { BufferPluginOptions } from "./plugin/buffer/BufferPreview";
 import type { RawPipeline, RawPipelineOptions } from "./plugin/raw-pipeline/RawPipeline";
@@ -120,7 +110,7 @@ import {
   type InsertBuilderSpec,
 } from "./InsertQueryBuilder";
 import { CompiledQuery, p as createPlaceholder, PlaceholderMarker } from "./CompiledQuery";
-import { QueryResultCache, QueryCacheOptions } from "./cache/QueryResultCache";
+import { QueryResultCache } from "./cache/QueryResultCache";
 import { DmlSqlBuilder } from "./entity-manager/DmlSqlBuilder";
 import { WriteExecutor } from "./entity-manager/WriteExecutor";
 import { ReadExecutor } from "./entity-manager/ReadExecutor";
@@ -133,6 +123,8 @@ import { SubscriberRegistry } from "./entity-manager/SubscriberRegistry";
 import { PluginManager } from "./entity-manager/PluginManager";
 import { TransactionRunner } from "./entity-manager/TransactionRunner";
 import { RawQueryRunner } from "./entity-manager/RawQueryRunner";
+import { applyNamingStrategyToEntities } from "./entity-manager/applyNamingStrategy";
+import { ConnectionLifecycle } from "./entity-manager/ConnectionLifecycle";
 
 // ── Extracted types & internal utilities (entity-manager/) ──
 import type {
@@ -346,7 +338,7 @@ export class EntityManager implements BaseEntityManager {
     getRelationLoader: () => this.relationLoader,
     getAggregateHandler: () => this.aggregateHandler,
     getDefaultQueryTimeout: () => this.defaultQueryTimeout,
-    getQueryCache: () => this.getOrCreateQueryCache(),
+    getQueryCache: () => this.lifecycle.resolveQueryCache(),
     peekQueryCache: () => this._queryCache,
     warnIfNonSortablePk: (n, pk) => this.warnIfNonSortablePk(n, pk),
     resolveLockSuffix: (lock) => this.resolveLockSuffix(lock),
@@ -450,6 +442,61 @@ export class EntityManager implements BaseEntityManager {
     registerPlaceholder: (name) =>
       EntityManager.registerPluginPlaceholder(name),
   });
+  private readonly lifecycle = new ConnectionLifecycle(this._ctx, {
+    getClient: () => this.client,
+    setConnectionName: (name) => {
+      this.connectionName = name;
+    },
+    setEntities: (entities) => {
+      this._entities = entities;
+      this.entityScopeApproved = new WeakSet();
+    },
+    markAttached: () => {
+      this.isAttached = true;
+    },
+    setDbType: (dbType) => {
+      this.dbType = dbType;
+    },
+    setDriver: (driver, dataSource) => {
+      this.driver = driver;
+      this.dataSource = dataSource;
+    },
+    setDefaultQueryTimeout: (ms) => {
+      this.defaultQueryTimeout = ms;
+    },
+    setUnknownWriteKeyPolicy: (policy) => {
+      this.unknownWriteKeyPolicy = policy;
+    },
+    setQueryLoggingEnabled: (enabled) => {
+      this.queryLoggingEnabled = enabled;
+    },
+    setQueryTracker: (tracker) => {
+      this.queryTracker = tracker;
+    },
+    setQueryCache: (cache) => {
+      this._queryCache = cache;
+    },
+    useNamingStrategy: (strategy) => {
+      this.schemaRegistrar = new SchemaRegistrar(this.resolver, this._ctx, strategy);
+    },
+    registerEntities: () => this.schemaRegistrar.registerEntities(),
+    configureTenantScope: (options) => this.tenantScope.configure(options),
+    initializeReplication: (config) => this.replication.initialize(config),
+    installPlugin: (plugin) => {
+      this.extend(plugin);
+    },
+    getQueryTracker: () => this.queryTracker,
+    shutdownPlugins: () => this.pluginManager.shutdownAll(),
+    clearRuntimeState: () => {
+      this.removeAllListeners();
+      this.subscribers.length = 0;
+      this.dirtyEntities.clear();
+      this.cursorPkWarned.clear();
+      this.writeKeyWarned.clear();
+      this.rawQueryTenantWarned.clear();
+    },
+    shutdownReplication: () => this.replication.shutdown(),
+  });
 
   // ── Live tenant-state accessors ─────────────────────────────────
   // State moved into TenantScopeManager; these stay as instance accessors
@@ -490,33 +537,7 @@ export class EntityManager implements BaseEntityManager {
     databaseClientOptions: DatabaseClientOptions,
     connectionName = "default",
   ) {
-    validateDatabaseClientOptions(databaseClientOptions, connectionName);
-
-    // ESM builds cannot probe class-transformer synchronously (no require);
-    // finish the async auto-detection before any query can deserialize rows.
-    await DeserializerRegistry.ensureDefaultDetected();
-
-    if (databaseClientOptions.namingStrategy) {
-      this.schemaRegistrar = new SchemaRegistrar(
-        this.resolver,
-        this._ctx,
-        databaseClientOptions.namingStrategy,
-      );
-    }
-    await this.connect(databaseClientOptions, connectionName);
-    this.applyNamingStrategy(databaseClientOptions.namingStrategy);
-    await this.schemaRegistrar.registerEntities();
-
-    // Install plugins (in array order)
-    if (databaseClientOptions.plugins) {
-      for (const plugin of databaseClientOptions.plugins) {
-        this.extend(plugin);
-      }
-    }
-  }
-
-  private applyNamingStrategy(strategy?: NamingStrategy): void {
-    EntityManager.applyNamingStrategyToEntities(this._entities, strategy);
+    await this.lifecycle.register(databaseClientOptions, connectionName);
   }
 
   /**
@@ -536,58 +557,7 @@ export class EntityManager implements BaseEntityManager {
     entities: Iterable<ClazzType<any>>,
     strategy?: NamingStrategy,
   ): void {
-    const ns = strategy ?? new DefaultNamingStrategy();
-
-    for (const entity of entities) {
-      const meta = Reflect.getMetadata(ENTITY_TOKEN, entity) as EntityMetadata | undefined;
-      if (!meta) continue;
-
-      // 1. Table name (skip STI children — they share the root's table name)
-      if (!meta.nameExplicit && !meta.inheritanceRoot) {
-        meta.name = ns.tableName(meta.rawClassName ?? entity.name);
-      }
-
-      // 2. Column names. Columns without a propertyKey are DDL-only entries a
-      //    previous registerEntities() injected in place (the STI/TPT
-      //    discriminator) — renaming them through the strategy would replace
-      //    their explicit DB name with columnName(undefined) and break the
-      //    next connection's CREATE TABLE.
-      const columns: ColumnMetadata[] = Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ?? [];
-      for (const col of columns) {
-        if (!col.nameExplicit && col.propertyKey) {
-          col.name = ns.columnName(col.propertyKey);
-        }
-      }
-      // Also update entity metadata's columns reference
-      if (meta.columns) {
-        for (const col of meta.columns as unknown as ColumnMetadata[]) {
-          if (!col.nameExplicit && col.propertyKey) {
-            col.name = ns.columnName(col.propertyKey);
-          }
-        }
-      }
-
-      // 3. Timestamp / DeletedAt / Version tokens — these store propertyKey,
-      //    but are used as SQL column names. Update them if the naming strategy transforms them.
-      const updateToken = (token: symbol) => {
-        const propName = Reflect.getMetadata(token, entity) as string | undefined;
-        if (propName) {
-          // Find matching column to get its resolved DB name
-          const matchingCol = columns.find((c) => c.propertyKey === propName);
-          if (matchingCol && matchingCol.name !== propName) {
-            Reflect.defineMetadata(token, matchingCol.name, entity);
-          }
-        }
-      };
-      updateToken(CREATE_TIMESTAMP_TOKEN);
-      updateToken(UPDATE_TIMESTAMP_TOKEN);
-      updateToken(DELETED_AT_TOKEN);
-      updateToken(VERSION_TOKEN);
-
-      // 4. Update Reflect metadata
-      Reflect.defineMetadata(ENTITY_TOKEN, meta, entity);
-      Reflect.defineMetadata(COLUMN_TOKEN, columns, entity.prototype);
-    }
+    applyNamingStrategyToEntities(entities, strategy);
   }
 
   get client() {
@@ -614,17 +584,7 @@ export class EntityManager implements BaseEntityManager {
     databaseClientOptions: DatabaseClientOptions,
     connectionName = "default",
   ) {
-    this.connectionName = connectionName;
-    const resolvedEntities = await resolveEntityGlobs(
-      databaseClientOptions.entities ?? [],
-    );
-    this._entities = resolvedEntities as ClazzType<any>[];
-    this.entityScopeApproved = new WeakSet();
-
-    const client = this.client as any;
-    await client.connect(databaseClientOptions, connectionName);
-
-    await this.initializeFromConnection(databaseClientOptions, connectionName);
+    await this.lifecycle.connect(databaseClientOptions, connectionName);
   }
 
   /**
@@ -648,171 +608,7 @@ export class EntityManager implements BaseEntityManager {
     connectionName: string,
     overrides?: Partial<DatabaseClientOptions>,
   ) {
-    const client = this.client as any;
-    if (typeof client.hasConnection === "function" && !client.hasConnection(connectionName)) {
-      throw new OrmError(
-        OrmErrorCode.NOT_CONNECTED,
-        `Cannot attach EntityManager: no DatabaseClient connection registered under '${connectionName}'.`,
-        `Register the connection first (e.g. DatabaseClient.getInstance().connect(opts, '${connectionName}')) before calling attach().`,
-      );
-    }
-
-    this.connectionName = connectionName;
-    this.isAttached = true;
-    const baseOptions = client.getOptions(connectionName) as DatabaseClientOptions;
-    // Spread collapses the discriminated union (postgres/mysql/sqlite share
-    // most fields but `type` is per-variant), so we cast back. The runtime
-    // shape is guaranteed because we only override fields that are valid on
-    // every variant.
-    const effective = {
-      ...baseOptions,
-      ...overrides,
-      // Schema sync is owned by whoever first registered the connection;
-      // disable it here so a second attach() never tries to re-DDL.
-      synchronize: false,
-    } as DatabaseClientOptions;
-
-    if (effective.namingStrategy) {
-      this.schemaRegistrar = new SchemaRegistrar(
-        this.resolver,
-        this._ctx,
-        effective.namingStrategy,
-      );
-    }
-
-    const resolvedEntities = await resolveEntityGlobs(effective.entities ?? []);
-    this._entities = resolvedEntities as ClazzType<any>[];
-    this.entityScopeApproved = new WeakSet();
-
-    await this.initializeFromConnection(effective, connectionName);
-    this.applyNamingStrategy(effective.namingStrategy);
-    // synchronize: false ensures registerEntities() runs metadata setup
-    // without firing any DDL — same per-EM state as register(), just no
-    // schema mutation.
-    await this.schemaRegistrar.registerEntities();
-  }
-
-  /**
-   * Shared post-`client.connect()` setup: pick driver/dataSource for the
-   * connector that DatabaseClient now holds under `connectionName`, then
-   * configure QueryTracker / query timeout / tenant strategy / replication.
-   * Used by both `connect()` (fresh pool) and `attach()` (reuse pool).
-   */
-  private async initializeFromConnection(
-    databaseClientOptions: DatabaseClientOptions,
-    connectionName: string,
-  ): Promise<void> {
-    const client = this.client as any;
-    const connector = client.getConnection(connectionName);
-    const { schema, queryTimeout, replication } = databaseClientOptions;
-
-    // Use getType() if available, otherwise (legacy mock) fall back to client.type
-    const dbType = (
-      typeof client.getType === "function"
-        ? client.getType(connectionName)
-        : client.type
-    ) as IDatabaseType;
-
-    this.dbType = dbType;
-
-    // Check DriverRegistry first for custom drivers
-    const { DriverRegistry } = await import("../dialects/DriverRegistry");
-    const customFactory = DriverRegistry.get(dbType);
-
-    if (customFactory) {
-      this.driver = customFactory.createDriver(connector, dbType, schema);
-      this.dataSource = customFactory.createDataSource(connector);
-    } else {
-      // Built-in drivers
-      switch (dbType) {
-        case "mariadb":
-        case "mysql": {
-          const { MySqlDriver } = await import("../dialects/mysql/MySqlDriver");
-          const { MySqlDataSource } = await import(
-            "../dialects/mysql/MySqlDataSource"
-          );
-          this.driver = new MySqlDriver(connector, dbType);
-          this.dataSource = new MySqlDataSource(connector);
-          break;
-        }
-        case "postgres": {
-          const { PostgresDriver } = await import(
-            "../dialects/postgres/PostgresDriver"
-          );
-          const { PostgresDataSource } = await import(
-            "../dialects/postgres/PostgresDataSource"
-          );
-          this.driver = new PostgresDriver(connector, dbType, schema);
-          this.dataSource = new PostgresDataSource(connector);
-          break;
-        }
-        case "sqlite": {
-          const { SqliteDriver } = await import(
-            "../dialects/sqlite/SqliteDriver"
-          );
-          const { SqliteDataSource } = await import(
-            "../dialects/sqlite/SqliteDataSource"
-          );
-          this.driver = new SqliteDriver(connector);
-          this.dataSource = new SqliteDataSource(connector);
-          break;
-        }
-        default:
-          throw new NotSupportedDatabaseTypeError();
-      }
-    }
-
-    // Initialize QueryTracker (based on the logging options)
-    this.initQueryTracker(databaseClientOptions);
-
-    // Configure connection-level query timeout
-    const isTimeoutSupported = queryTimeout && queryTimeout > 0;
-
-    if (isTimeoutSupported) {
-      this.defaultQueryTimeout = queryTimeout;
-    }
-
-    // Initialize TenantQueryStrategy
-    this.tenantScope.configure(databaseClientOptions);
-
-    this.unknownWriteKeyPolicy = databaseClientOptions.unknownWriteKeys ?? "warn";
-
-    // Query result cache: created eagerly when configured at register time
-    // so a custom external store (e.g. Redis) receives write invalidations
-    // even from a process that never issues a cached read. Without explicit
-    // config it is created lazily by the first `cache`-requesting query.
-    if (databaseClientOptions.cache && databaseClientOptions.cache !== true) {
-      this._queryCache = new QueryResultCache(
-        this._ctx,
-        databaseClientOptions.cache,
-      );
-    } else if (databaseClientOptions.cache === true) {
-      this._queryCache = new QueryResultCache(this._ctx);
-    }
-
-    // Initialize ReplicationRouter
-    if (replication) {
-      this.replication.initialize(replication);
-    }
-  }
-
-  /**
-   * Lazily resolves the query result cache, honoring the `cache: false`
-   * kill switch from the connection options.
-   */
-  private getOrCreateQueryCache(): QueryResultCache | undefined {
-    if (this._queryCache) return this._queryCache;
-    if (this.getQueryCacheConfig() === false) return undefined;
-    this._queryCache = new QueryResultCache(this._ctx);
-    return this._queryCache;
-  }
-
-  private getQueryCacheConfig(): boolean | QueryCacheOptions | undefined {
-    try {
-      return this.client.getOptions(this.connectionName)?.cache;
-    } catch {
-      return undefined;
-    }
+    await this.lifecycle.attach(connectionName, overrides);
   }
 
   /**
@@ -828,7 +624,7 @@ export class EntityManager implements BaseEntityManager {
    * ```
    */
   get queryCache(): QueryResultCache | undefined {
-    return this.getOrCreateQueryCache();
+    return this.lifecycle.resolveQueryCache();
   }
 
   /**
@@ -854,58 +650,7 @@ export class EntityManager implements BaseEntityManager {
     gracefulTimeoutMs?: number;
     closeConnections?: boolean;
   }): Promise<boolean> {
-    const gracefulTimeoutMs = options?.gracefulTimeoutMs ?? 0;
-    const closeConnections = options?.closeConnections ?? false;
-
-    let allQueriesCompleted = true;
-
-    // 1. Wait for in-flight queries
-    if (gracefulTimeoutMs > 0 && this.queryTracker) {
-      const activeCount = this.queryTracker.activeQueryCount;
-      if (activeCount > 0) {
-        this.logger.info(
-          `[Shutdown] Waiting for ${activeCount} active queries (timeout: ${gracefulTimeoutMs}ms)...`,
-        );
-        allQueriesCompleted = await this.queryTracker.waitForQueries(gracefulTimeoutMs);
-        if (!allQueriesCompleted) {
-          this.logger.warn(
-            `[Shutdown] Timed out waiting for active queries. Forcing shutdown.`,
-          );
-        }
-      }
-    }
-
-    // 2. Plugin shutdown (reverse installation order — LIFO)
-    await this.pluginManager.shutdownAll();
-
-    // 3. Clear event listeners / subscribers / dirty entities
-    this.removeAllListeners();
-    this.subscribers.length = 0;
-    this.dirtyEntities.clear();
-    this.cursorPkWarned.clear();
-    this.writeKeyWarned.clear();
-    this.rawQueryTenantWarned.clear();
-
-    // 4. Clean up QueryTracker
-    this.queryTracker?.removeAllListeners();
-    this.queryTracker?.reset();
-    this.queryTracker = null;
-
-    // 5. Clean up ReplicationRouter
-    this.replication.shutdown();
-
-    // 6. Close the connection pool (when requested)
-    if (closeConnections) {
-      try {
-        await this.client.close(this.connectionName);
-      } catch (err) {
-        this.logger.warn(
-          `[Shutdown] Error closing connection '${this.connectionName}': ${err}`,
-        );
-      }
-    }
-
-    return allQueriesCompleted;
+    return this.lifecycle.shutdown(options);
   }
 
   getNameStrategy<T>(clazz: ClazzType<T>): string {
@@ -914,38 +659,9 @@ export class EntityManager implements BaseEntityManager {
 
   // ── QueryTracker ──────────────────────────────────────────
 
+  /** Engine delegator — implementation lives in {@link ConnectionLifecycle}. */
   private initQueryTracker(options: DatabaseClientOptions): void {
-    const logging = options.logging;
-
-    // logging: true → enable query SQL logging
-    if (logging === true) {
-      this.queryLoggingEnabled = true;
-      return;
-    }
-
-    if (typeof logging === "object" && logging !== null) {
-      const loggingOpts = logging as LoggingOptions;
-
-      // queries: true → log generated SQL
-      if (loggingOpts.queries) {
-        this.queryLoggingEnabled = true;
-      }
-
-      // Disable when enableQueryTracking is explicitly set to false
-      if (loggingOpts.enableQueryTracking === false) {
-        this.queryTracker = null;
-        return;
-      }
-
-      if (loggingOpts.nPlusOne || loggingOpts.slowQueryMs) {
-        this.queryTracker = new QueryTracker({
-          slowQueryMs: loggingOpts.slowQueryMs ?? null,
-          enabled: loggingOpts.enableQueryTracking ?? true,
-          maxLogEntries: loggingOpts.maxLogEntries,
-          ttlMs: loggingOpts.ttlMs,
-        });
-      }
-    }
+    this.lifecycle.initQueryTracker(options);
   }
 
   getQueryLog(): ReadonlyArray<QueryLogEntry> {
