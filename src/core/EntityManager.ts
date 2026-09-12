@@ -485,6 +485,17 @@ export class EntityManager implements BaseEntityManager {
     installPlugin: (plugin) => {
       this.extend(plugin);
     },
+    getQueryTracker: () => this.queryTracker,
+    shutdownPlugins: () => this.pluginManager.shutdownAll(),
+    clearRuntimeState: () => {
+      this.removeAllListeners();
+      this.subscribers.length = 0;
+      this.dirtyEntities.clear();
+      this.cursorPkWarned.clear();
+      this.writeKeyWarned.clear();
+      this.rawQueryTenantWarned.clear();
+    },
+    shutdownReplication: () => this.replication.shutdown(),
   });
 
   // ── Live tenant-state accessors ─────────────────────────────────
@@ -639,58 +650,7 @@ export class EntityManager implements BaseEntityManager {
     gracefulTimeoutMs?: number;
     closeConnections?: boolean;
   }): Promise<boolean> {
-    const gracefulTimeoutMs = options?.gracefulTimeoutMs ?? 0;
-    const closeConnections = options?.closeConnections ?? false;
-
-    let allQueriesCompleted = true;
-
-    // 1. Wait for in-flight queries
-    if (gracefulTimeoutMs > 0 && this.queryTracker) {
-      const activeCount = this.queryTracker.activeQueryCount;
-      if (activeCount > 0) {
-        this.logger.info(
-          `[Shutdown] Waiting for ${activeCount} active queries (timeout: ${gracefulTimeoutMs}ms)...`,
-        );
-        allQueriesCompleted = await this.queryTracker.waitForQueries(gracefulTimeoutMs);
-        if (!allQueriesCompleted) {
-          this.logger.warn(
-            `[Shutdown] Timed out waiting for active queries. Forcing shutdown.`,
-          );
-        }
-      }
-    }
-
-    // 2. Plugin shutdown (reverse installation order — LIFO)
-    await this.pluginManager.shutdownAll();
-
-    // 3. Clear event listeners / subscribers / dirty entities
-    this.removeAllListeners();
-    this.subscribers.length = 0;
-    this.dirtyEntities.clear();
-    this.cursorPkWarned.clear();
-    this.writeKeyWarned.clear();
-    this.rawQueryTenantWarned.clear();
-
-    // 4. Clean up QueryTracker
-    this.queryTracker?.removeAllListeners();
-    this.queryTracker?.reset();
-    this.queryTracker = null;
-
-    // 5. Clean up ReplicationRouter
-    this.replication.shutdown();
-
-    // 6. Close the connection pool (when requested)
-    if (closeConnections) {
-      try {
-        await this.client.close(this.connectionName);
-      } catch (err) {
-        this.logger.warn(
-          `[Shutdown] Error closing connection '${this.connectionName}': ${err}`,
-        );
-      }
-    }
-
-    return allQueriesCompleted;
+    return this.lifecycle.shutdown(options);
   }
 
   getNameStrategy<T>(clazz: ClazzType<T>): string {

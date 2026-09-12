@@ -48,13 +48,20 @@ export interface ConnectionLifecycleHost {
   configureTenantScope(options: DatabaseClientOptions): void;
   initializeReplication(config: NonNullable<DatabaseClientOptions["replication"]>): void;
   installPlugin(plugin: StingerloomPlugin): void;
+  getQueryTracker(): QueryTracker | null;
+  /** Plugin shutdown in reverse installation order (LIFO). */
+  shutdownPlugins(): Promise<void>;
+  /** Drops event listeners, subscribers, dirty sets and warn-once caches. */
+  clearRuntimeState(): void;
+  shutdownReplication(): void;
 }
 
 /**
- * Connection boot engine extracted from EntityManager: `register()` (fresh
- * pool + schema sync), `connect()`, `attach()` (reuse a pool another
- * manager opened), and the shared post-connect setup that binds the driver,
- * query tracker, timeout, tenant strategy, query cache and replication.
+ * Connection lifecycle engine extracted from EntityManager: `register()`
+ * (fresh pool + schema sync), `connect()`, `attach()` (reuse a pool another
+ * manager opened), the shared post-connect setup that binds the driver,
+ * query tracker, timeout, tenant strategy, query cache and replication, and
+ * `shutdown()` behind `propagateShutdown()`.
  *
  * The facade keeps thin public delegators, so `MultiTenantEntityManager`,
  * the NestJS module and test spies keep calling the EntityManager. The one
@@ -275,5 +282,70 @@ export class ConnectionLifecycle {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * `propagateShutdown()`: drain in-flight queries (when a grace period is
+   * given), shut plugins down LIFO, drop runtime state, tear down the query
+   * tracker and replication router, and — only when `closeConnections` is
+   * true — close the pool. The core default is `false` because a library
+   * must not close a pool it did not open; the NestJS module passes `true`.
+   *
+   * @returns whether every active query finished inside the grace period.
+   */
+  async shutdown(options?: {
+    gracefulTimeoutMs?: number;
+    closeConnections?: boolean;
+  }): Promise<boolean> {
+    const gracefulTimeoutMs = options?.gracefulTimeoutMs ?? 0;
+    const closeConnections = options?.closeConnections ?? false;
+    const logger = this.ctx.getLogger();
+    const queryTracker = this.host.getQueryTracker();
+
+    let allQueriesCompleted = true;
+
+    // 1. Wait for in-flight queries
+    if (gracefulTimeoutMs > 0 && queryTracker) {
+      const activeCount = queryTracker.activeQueryCount;
+      if (activeCount > 0) {
+        logger.info(
+          `[Shutdown] Waiting for ${activeCount} active queries (timeout: ${gracefulTimeoutMs}ms)...`,
+        );
+        allQueriesCompleted = await queryTracker.waitForQueries(gracefulTimeoutMs);
+        if (!allQueriesCompleted) {
+          logger.warn(
+            `[Shutdown] Timed out waiting for active queries. Forcing shutdown.`,
+          );
+        }
+      }
+    }
+
+    // 2. Plugin shutdown (reverse installation order — LIFO)
+    await this.host.shutdownPlugins();
+
+    // 3. Clear event listeners / subscribers / dirty entities
+    this.host.clearRuntimeState();
+
+    // 4. Clean up QueryTracker
+    queryTracker?.removeAllListeners();
+    queryTracker?.reset();
+    this.host.setQueryTracker(null);
+
+    // 5. Clean up ReplicationRouter
+    this.host.shutdownReplication();
+
+    // 6. Close the connection pool (when requested)
+    if (closeConnections) {
+      const connectionName = this.ctx.getConnectionName();
+      try {
+        await this.host.getClient().close(connectionName);
+      } catch (err) {
+        logger.warn(
+          `[Shutdown] Error closing connection '${connectionName}': ${err}`,
+        );
+      }
+    }
+
+    return allQueriesCompleted;
   }
 }
