@@ -502,7 +502,7 @@ SELECT * FROM "public"."plan"
 
 `@NonTenantEntity()`는 스키마 이름 없이 같은 일을 합니다. `search_path`와 `schema_qualified`에서는 엔티티를 연결의 기본 스키마(`schema` 옵션, 없으면 `public`)에 고정해요. 그래서 데코레이터 하나가 모든 전략에서 "전역 테이블"을 뜻합니다. 같은 클래스가 `tenant_column`에서는 구분 컬럼에서 빠지는 쪽으로 동작하고요.
 
-상속 계층의 자식 엔티티는 따로 지정하지 않는 한 루트의 스키마를 물려받습니다. code-first 엔티티도 같은 옵션을 받아요: `defineEntity("plans", { ... }, { schema: "public" })`, `new EntitySchema({ target, schema: "public", ... })`. `em.resolveEntitySchema(Plan)`은 엔티티가 해석되는 스키마를 돌려줍니다 (테넌트 전략을 따르면 `undefined`). MySQL과 SQLite에는 스키마 계층이 없어서 이 옵션은 무시됩니다.
+`JOINED`(table-per-type) 계층의 자식 엔티티는 따로 지정하지 않는 한 루트의 스키마를 물려받고, 원하면 자기 테이블을 다른 스키마에 둘 수 있습니다. `SINGLE_TABLE` 자식은 루트와 테이블을 공유하므로 스키마도 루트를 따르며, 다른 `schema`를 적어도 경고와 함께 무시됩니다. code-first 엔티티도 같은 옵션을 받아요: `defineEntity("plans", { ... }, { schema: "public" })`, `new EntitySchema({ target, schema: "public", ... })`. `em.resolveEntitySchema(Plan)`은 엔티티가 해석되는 스키마를 돌려줍니다 (테넌트 전략을 따르면 `undefined`). MySQL과 SQLite에는 스키마 계층이 없어서 이 옵션은 무시됩니다.
 
 ::: warning
 고정은 라우팅 결정이지 접근 제어가 아닙니다. 모든 테넌트가 고정 테이블의 같은 행을 읽고 씁니다. 테넌트 소유 데이터는 고정하지 않은 엔티티에 두세요.

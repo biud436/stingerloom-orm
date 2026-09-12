@@ -166,9 +166,12 @@ describe("@Entity({ schema }) metadata", () => {
     expect(getEntitySchema(Country)).toBeUndefined();
   });
 
-  it("STI children inherit the root's schema unless they pin their own", () => {
+  it("STI children always share the root's schema — a child's own is ignored", () => {
     expect(getEntitySchema(Car)).toBe("public");
-    expect(getEntitySchema(Truck)).toBe("fleet");
+    // Truck declares schema "fleet", but it shares the root's "vehicle"
+    // table, which can only be in one schema (see the edge-case suite for
+    // the warning that is logged).
+    expect(getEntitySchema(Truck)).toBe("public");
   });
 
   it("TPT children inherit the root's schema", () => {

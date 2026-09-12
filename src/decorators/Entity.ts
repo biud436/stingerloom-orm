@@ -15,6 +15,9 @@ import { INHERITANCE_TOKEN, InheritanceStrategy } from "./Inheritance";
 import { DISCRIMINATOR_COLUMN_TOKEN } from "./DiscriminatorColumn";
 import { DISCRIMINATOR_VALUE_TOKEN } from "./DiscriminatorValue";
 import { KnownColumnType } from "./Column";
+import { Logger } from "../utils/Logger";
+
+const entityLogger = new Logger("Entity");
 
 export interface EntityOption {
   name?: string;
@@ -30,8 +33,10 @@ export interface EntityOption {
    * missing) there, and `PostgresTenantMigrationRunner` skips it when it
    * clones the source schema into a new tenant.
    *
-   * Child entities of an inheritance hierarchy inherit the root's schema
-   * unless they set their own. Ignored on MySQL and SQLite.
+   * Children of a JOINED (TPT) hierarchy inherit the root's schema unless
+   * they pin their own table elsewhere; SINGLE_TABLE children share the
+   * root's table and therefore its schema (their own `schema` is ignored
+   * with a warning). Ignored on MySQL and SQLite.
    */
   schema?: string;
 }
@@ -169,9 +174,22 @@ export function Entity(options?: EntityOption): ClassDecorator {
           if (rootMeta?.childEntities) {
             rootMeta.childEntities.push(target as unknown as ClazzType<any>);
           }
-          // A child shares the root's table (STI) or references it by FK
-          // (TPT), so it lives in the root's schema unless it says otherwise.
-          if (schemaKey === undefined && rootMeta?.schema) {
+          // A TPT child references the root by FK, so it lives in the root's
+          // schema unless it pins its own table elsewhere. An STI child
+          // *shares* the root's table and can only be where that table is,
+          // so its own `schema` is ignored (with a warning when it differs).
+          if (inheritanceStrategy === "SINGLE_TABLE") {
+            if (schemaKey !== undefined && schemaKey !== rootMeta?.schema) {
+              entityLogger.warn(
+                `@Entity({ schema: "${schemaKey}" }) on ${target.name} is ignored: ` +
+                  `it is a SINGLE_TABLE child of ${parent.name} and shares its table "${rootMeta?.name ?? nameKey}"` +
+                  (rootMeta?.schema
+                    ? ` in schema "${rootMeta.schema}".`
+                    : " in the default schema."),
+              );
+            }
+            schemaKey = rootMeta?.schema;
+          } else if (schemaKey === undefined && rootMeta?.schema) {
             schemaKey = rootMeta.schema;
           }
 

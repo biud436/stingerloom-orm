@@ -294,20 +294,27 @@ export class SchemaRegistrar {
         throw new EntityMetadataNotFoundError(tableName ?? "Unknown");
       }
 
-      // `@Entity({ schema })` / `@NonTenantEntity()` under a schema-based
-      // strategy: record the pin before any DDL or query names this table,
-      // so wrapTable() emits `"schema"."table"` from here on.
-      const pinnedSchema = this.resolvePinnedSchema(TargetEntity);
-      if (pinnedSchema) {
-        this.pinTable(tableName, pinnedSchema);
-      }
-
-      // STI: child entities do not create their own table (they share the parent's table).
+      // STI: child entities do not create their own table (they share the
+      // parent's table) — and they do not pin it either: the root records
+      // the pin for the shared table, so a child's metadata can never
+      // redirect it.
       if (this.inheritanceResolver.isChildEntity(TargetEntity)) {
         const strategy = this.inheritanceResolver.getStrategy(TargetEntity);
         if (strategy === "SINGLE_TABLE") {
           continue;
         }
+      }
+
+      // `@Entity({ schema })` / `@NonTenantEntity()` under a schema-based
+      // strategy: record the pin before any DDL or query names this table,
+      // so wrapTable() emits `"schema"."table"` from here on. The owning
+      // side's ManyToMany join tables follow it: pass 3 (which creates them)
+      // only runs when synchronize is on, but runtime relation loading names
+      // them under every mode.
+      const pinnedSchema = this.resolvePinnedSchema(TargetEntity);
+      if (pinnedSchema) {
+        this.pinTable(tableName, pinnedSchema);
+        this.pinJoinTables(TargetEntity, pinnedSchema);
       }
 
       // TPT: child tables only include their own columns + PK in DDL (inherited columns live on the parent).
@@ -1544,6 +1551,20 @@ export class SchemaRegistrar {
   private pinTable(tableName: string, schema: string): void {
     if (typeof this.ctx.pinTableSchema === "function") {
       this.ctx.pinTableSchema(tableName, schema);
+    }
+  }
+
+  /**
+   * Pins the join tables of `entity`'s owning-side ManyToMany relations to
+   * its schema — the same set `registerManyToManyJoinTables()` creates there.
+   */
+  private pinJoinTables(entity: ClazzType<any>, schema: string): void {
+    const m2mMeta = (Reflect.getMetadata(MANY_TO_MANY_TOKEN, entity) ??
+      []) as ManyToManyMetadata<any>[];
+    for (const rel of m2mMeta) {
+      if (rel.joinTable?.name) {
+        this.pinTable(rel.joinTable.name, schema);
+      }
     }
   }
 
