@@ -22,11 +22,17 @@ import { EntityNotFoundError } from "../../errors/EntityNotFoundError";
 import {
   CursorPaginationOption,
   CursorPaginationResult,
-  encodeCursorKey,
   decodeCursorKey,
   type DecodedCursorKey,
   normalizePageSize,
 } from "../CursorPagination";
+import {
+  buildKeysetOrderBy,
+  buildKeysetPredicate,
+  encodeNextCursor,
+  sliceCursorPage,
+  type KeysetPlan,
+} from "./CursorKeyset";
 import {
   PagePaginationOption,
   PagePaginationResult,
@@ -1443,81 +1449,25 @@ export class ReadExecutor {
         }
       }
 
-      // Keyset pagination. The PK tiebreaker keeps rows that share the same
-      // order value from being skipped at page boundaries, and the explicit
-      // `(col IS NULL)` ORDER BY key pins the NULL region to the tail (ASC) /
-      // head (DESC) uniformly across dialects — SQLite/MySQL natively sort
-      // NULLs first in ASC while PostgreSQL sorts them last, so without the
-      // key the same query paginates differently (and duplicates the NULL
-      // rows every page under the old `OR col IS NULL` predicate).
+      // Keyset pagination: predicate + ORDER BY keys come from CursorKeyset,
+      // so the NULL-region and PK-tiebreaker rules live in one place.
       const dbPkColumn = pk?.name as string | undefined;
-      const isPkOrder = !dbPkColumn || dbOrderByColumn === dbPkColumn;
-      const wCol = this.ctx.wrap(dbOrderByColumn);
-
-      if (cursorKey !== null) {
-        const { order: cOrder, pk: cPk } = cursorKey;
-        if (cPk === undefined || !dbPkColumn) {
-          // Legacy scalar cursor (pre-keyset) or no PK to tiebreak on: keep
-          // the old strict-compare shape for this one transition page.
-          if (cOrder !== null) {
-            whereMap.push(
-              direction === "ASC"
-                ? Conditions.or([Conditions.gt(wCol, cOrder), Conditions.isNull(wCol)])
-                : Conditions.or([Conditions.lt(wCol, cOrder), Conditions.isNull(wCol)]),
-            );
-          }
-        } else if (isPkOrder) {
-          whereMap.push(
-            direction === "ASC" ? Conditions.gt(wCol, cPk) : Conditions.lt(wCol, cPk),
-          );
-        } else {
-          const wPk = this.ctx.wrap(dbPkColumn);
-          if (cOrder === null) {
-            // Cursor sits inside the NULL region: ASC = the tail (only
-            // later NULL rows remain), DESC = the head (later NULL rows,
-            // then every non-NULL row).
-            whereMap.push(
-              direction === "ASC"
-                ? Conditions.and([Conditions.isNull(wCol), Conditions.gt(wPk, cPk)])
-                : Conditions.or([
-                    Conditions.and([Conditions.isNull(wCol), Conditions.lt(wPk, cPk)]),
-                    Conditions.isNotNull(wCol),
-                  ]),
-            );
-          } else {
-            whereMap.push(
-              direction === "ASC"
-                ? Conditions.or([
-                    Conditions.gt(wCol, cOrder),
-                    Conditions.and([
-                      Conditions.equals(wCol, cOrder),
-                      Conditions.gt(wPk, cPk),
-                    ]),
-                    Conditions.isNull(wCol),
-                  ])
-                : Conditions.or([
-                    Conditions.lt(wCol, cOrder),
-                    Conditions.and([
-                      Conditions.equals(wCol, cOrder),
-                      Conditions.lt(wPk, cPk),
-                    ]),
-                  ]),
-            );
-          }
-        }
+      const keyset: KeysetPlan = {
+        orderColumn: dbOrderByColumn,
+        pkColumn: dbPkColumn,
+        isPkOrder: !dbPkColumn || dbOrderByColumn === dbPkColumn,
+        direction,
+        pageSize,
+        cursor: cursorKey,
+      };
+      const keysetPredicate = buildKeysetPredicate(keyset, (n) => this.ctx.wrap(n));
+      if (keysetPredicate) {
+        whereMap.push(keysetPredicate);
       }
 
       qb.select(selectMap).from(this.ctx.wrapTable(tableName)).where(whereMap);
 
-      if (isPkOrder) {
-        qb.orderBy([{ column: wCol, direction }]);
-      } else {
-        qb.orderBy([
-          { column: `(${wCol} IS NULL)`, direction },
-          { column: wCol, direction },
-          { column: this.ctx.wrap(dbPkColumn!), direction },
-        ]);
-      }
+      qb.orderBy(buildKeysetOrderBy(keyset, (n) => this.ctx.wrap(n)));
 
       qb.limit(pageSize + 1);
 
@@ -1537,8 +1487,7 @@ export class ReadExecutor {
         };
       }
 
-      const hasNextPage = results.length > pageSize;
-      const pageResults = hasNextPage ? results.slice(0, pageSize) : results;
+      const { pageRows: pageResults, hasNextPage } = sliceCursorPage(results, pageSize);
 
       const entities = resultTransformer.toEntities(entity, {
         results: pageResults,
@@ -1550,17 +1499,10 @@ export class ReadExecutor {
         await this.ctx.notifySubscribers(entity, "afterLoad", loadedEntity);
       }
 
-      let nextCursor: string | null = null;
-      if (hasNextPage && pageResults.length > 0) {
-        const lastItem = pageResults[pageResults.length - 1];
-        // Raw rows are keyed by DB column name, so read with the mapped column.
-        // The PK rides along as the keyset tiebreaker; a NULL order value is a
-        // valid cursor position (the NULL region), not an error.
-        nextCursor = encodeCursorKey(
-          lastItem[dbOrderByColumn] ?? null,
-          dbPkColumn ? lastItem[dbPkColumn] : undefined,
-        );
-      }
+      const nextCursor =
+        hasNextPage && pageResults.length > 0
+          ? encodeNextCursor(keyset, pageResults[pageResults.length - 1])
+          : null;
 
       return {
         data: entities,
