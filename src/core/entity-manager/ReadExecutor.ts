@@ -116,6 +116,22 @@ interface FindOperation<T> {
 }
 
 /**
+ * The page order {@link ReadExecutor.findWithCursor} resolves up front from
+ * the entity metadata and the caller's option — see
+ * {@link ReadExecutor.resolveCursorOrder}.
+ */
+interface CursorOrder<T> {
+  /** PK column: default order key and the keyset tiebreaker. Undefined when the entity has none. */
+  pk: ColumnMetadata | undefined;
+  /** Property (or, by default, PK column) name the page is ordered by. */
+  orderByColumn: keyof T & string;
+  direction: "ASC" | "DESC";
+  pageSize: number;
+  /** Decoded cursor of the previous page; null on the first page. */
+  cursorKey: DecodedCursorKey | null;
+}
+
+/**
  * Executes all read operations (find / findOne / pagination / pluck /
  * exists / findByPK*) for EntityManager. Stateless beyond the services it
  * reads from {@link EntityManagerInternals}.
@@ -1317,36 +1333,8 @@ export class ReadExecutor {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
-    const pk = metadata.columns.find(
-      (column: ColumnMetadata) => column.options?.primary,
-    );
-
-    const orderByColumn = option.orderBy ?? (pk?.name as keyof T & string);
-    if (!orderByColumn) {
-      throw new InvalidQueryError(
-        "Cursor pagination requires an orderBy column or a primary key.",
-        "Add @PrimaryGeneratedColumn() to your entity or pass orderBy in FindOption.",
-      );
-    }
-
-    // When orderBy is not provided, inspect the PK type and warn if it is non-numeric
-    if (!option.orderBy && pk) {
-      this.ctx.warnIfNonSortablePk(entity.name, pk);
-    }
-
-    const direction = option.direction ?? "ASC";
-    const pageSize = normalizePageSize(option.take);
-
-    let cursorKey: DecodedCursorKey | null = null;
-    if (option.cursor) {
-      cursorKey = decodeCursorKey(option.cursor);
-      if (cursorKey === null) {
-        throw new InvalidQueryError(
-          "Invalid cursor value.",
-          "Ensure the cursor string was returned from a previous findWithCursor() call.",
-        );
-      }
-    }
+    const { pk, orderByColumn, direction, pageSize, cursorKey } =
+      this.resolveCursorOrder(entity, metadata, option);
 
     const where: any = { ...(option.where ?? {}) };
     const readNode = this.ctx.getReadNode(option.useMaster);
@@ -1417,37 +1405,7 @@ export class ReadExecutor {
 
       const dbOrderByColumn = propToCol.get(orderByColumn) ?? orderByColumn;
 
-      const whereMap: Sql[] = resolveWhereClause(where, {
-        wrapColumn: (n) => this.ctx.wrap(n),
-        dialect: this.ctx.getDialect(),
-        dialectExpression: createDialectExpression(this.ctx.getDialect()),
-        propertyToColumn: propToCol,
-      });
-
-      const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
-      if (deletedAtColumn && !option.withDeleted) {
-        whereMap.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
-      }
-
-      // STI: cursor pagination on a child class must page only that subtype's
-      // rows — findInternal already applies this discriminator filter, and
-      // findWithCursor hits the single table directly, so mirror it here.
-      const cursorSti =
-        this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
-      if (cursorSti) {
-        whereMap.push(
-          Conditions.equals(this.ctx.wrap(cursorSti.columnName), cursorSti.value),
-        );
-      }
-
-      // Tenant scoping under the "tenant_column" strategy. Applied before the
-      // cursor clause so the final WHERE is `tenant = ? AND cursor_col > ?`.
-      if (!option.withoutTenantScope) {
-        const tenantPredicate = this.ctx.buildTenantWhereClause(entity);
-        if (tenantPredicate) {
-          whereMap.push(tenantPredicate);
-        }
-      }
+      const whereMap = this.buildCursorWhereClauses(entity, where, propToCol, option);
 
       // Keyset pagination: predicate + ORDER BY keys come from CursorKeyset,
       // so the NULL-region and PK-tiebreaker rules live in one place.
@@ -1511,6 +1469,97 @@ export class ReadExecutor {
         count: entities.length,
       };
     }, { readNodeOverride: readNode, timeout: this.resolveTimeout(option) });
+  }
+
+  /**
+   * The page order `findWithCursor` runs under: the PK (for the default
+   * order and the keyset tiebreaker), the order property, direction, page
+   * size and the decoded cursor of the previous page. Rejects an entity
+   * with neither an `orderBy` nor a PK and a cursor that does not decode.
+   */
+  private resolveCursorOrder<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    option: CursorPaginationOption<T>,
+  ): CursorOrder<T> {
+    const pk = metadata.columns.find(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+
+    const orderByColumn = option.orderBy ?? (pk?.name as keyof T & string);
+    if (!orderByColumn) {
+      throw new InvalidQueryError(
+        "Cursor pagination requires an orderBy column or a primary key.",
+        "Add @PrimaryGeneratedColumn() to your entity or pass orderBy in FindOption.",
+      );
+    }
+
+    // When orderBy is not provided, inspect the PK type and warn if it is non-numeric
+    if (!option.orderBy && pk) {
+      this.ctx.warnIfNonSortablePk(entity.name, pk);
+    }
+
+    const direction = option.direction ?? "ASC";
+    const pageSize = normalizePageSize(option.take);
+
+    let cursorKey: DecodedCursorKey | null = null;
+    if (option.cursor) {
+      cursorKey = decodeCursorKey(option.cursor);
+      if (cursorKey === null) {
+        throw new InvalidQueryError(
+          "Invalid cursor value.",
+          "Ensure the cursor string was returned from a previous findWithCursor() call.",
+        );
+      }
+    }
+
+    return { pk, orderByColumn, direction, pageSize, cursorKey };
+  }
+
+  /**
+   * WHERE predicates of a cursor page before the keyset clause: the caller's
+   * `where`, the soft-delete filter, the STI discriminator and the tenant
+   * column. Unqualified — the cursor read never JOINs.
+   */
+  private buildCursorWhereClauses<T>(
+    entity: ClazzType<T>,
+    where: WhereClause<T>,
+    propToCol: Map<string, string>,
+    option: CursorPaginationOption<T>,
+  ): Sql[] {
+    const whereMap: Sql[] = resolveWhereClause(where, {
+      wrapColumn: (n) => this.ctx.wrap(n),
+      dialect: this.ctx.getDialect(),
+      dialectExpression: createDialectExpression(this.ctx.getDialect()),
+      propertyToColumn: propToCol,
+    });
+
+    const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
+    if (deletedAtColumn && !option.withDeleted) {
+      whereMap.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
+    }
+
+    // STI: cursor pagination on a child class must page only that subtype's
+    // rows — findInternal already applies this discriminator filter, and
+    // findWithCursor hits the single table directly, so mirror it here.
+    const cursorSti =
+      this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+    if (cursorSti) {
+      whereMap.push(
+        Conditions.equals(this.ctx.wrap(cursorSti.columnName), cursorSti.value),
+      );
+    }
+
+    // Tenant scoping under the "tenant_column" strategy. Applied before the
+    // cursor clause so the final WHERE is `tenant = ? AND cursor_col > ?`.
+    if (!option.withoutTenantScope) {
+      const tenantPredicate = this.ctx.buildTenantWhereClause(entity);
+      if (tenantPredicate) {
+        whereMap.push(tenantPredicate);
+      }
+    }
+
+    return whereMap;
   }
 
   async findAndCount<T>(
