@@ -53,7 +53,6 @@ import {
 } from "./entity-manager/EntityArgumentGuard";
 import { DeleteWithoutConditionsError } from "../errors/DeleteWithoutConditionsError";
 import { EntityNotFoundError } from "../errors/EntityNotFoundError";
-import { NotSupportedDatabaseTypeError } from "../errors/NotSupportedDatabaseTypeError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../decorators/ComputedColumn";
 import {
   EntitySubscriber,
@@ -128,6 +127,7 @@ import { PluginManager } from "./entity-manager/PluginManager";
 import { TransactionRunner } from "./entity-manager/TransactionRunner";
 import { RawQueryRunner } from "./entity-manager/RawQueryRunner";
 import { applyNamingStrategyToEntities } from "./entity-manager/applyNamingStrategy";
+import { resolveDriverPair } from "./entity-manager/DriverResolver";
 
 // ── Extracted types & internal utilities (entity-manager/) ──
 import type {
@@ -659,52 +659,9 @@ export class EntityManager implements BaseEntityManager {
 
     this.dbType = dbType;
 
-    // Check DriverRegistry first for custom drivers
-    const { DriverRegistry } = await import("../dialects/DriverRegistry");
-    const customFactory = DriverRegistry.get(dbType);
-
-    if (customFactory) {
-      this.driver = customFactory.createDriver(connector, dbType, schema);
-      this.dataSource = customFactory.createDataSource(connector);
-    } else {
-      // Built-in drivers
-      switch (dbType) {
-        case "mariadb":
-        case "mysql": {
-          const { MySqlDriver } = await import("../dialects/mysql/MySqlDriver");
-          const { MySqlDataSource } = await import(
-            "../dialects/mysql/MySqlDataSource"
-          );
-          this.driver = new MySqlDriver(connector, dbType);
-          this.dataSource = new MySqlDataSource(connector);
-          break;
-        }
-        case "postgres": {
-          const { PostgresDriver } = await import(
-            "../dialects/postgres/PostgresDriver"
-          );
-          const { PostgresDataSource } = await import(
-            "../dialects/postgres/PostgresDataSource"
-          );
-          this.driver = new PostgresDriver(connector, dbType, schema);
-          this.dataSource = new PostgresDataSource(connector);
-          break;
-        }
-        case "sqlite": {
-          const { SqliteDriver } = await import(
-            "../dialects/sqlite/SqliteDriver"
-          );
-          const { SqliteDataSource } = await import(
-            "../dialects/sqlite/SqliteDataSource"
-          );
-          this.driver = new SqliteDriver(connector);
-          this.dataSource = new SqliteDataSource(connector);
-          break;
-        }
-        default:
-          throw new NotSupportedDatabaseTypeError();
-      }
-    }
+    const { driver, dataSource } = await resolveDriverPair(dbType, connector, schema);
+    this.driver = driver;
+    this.dataSource = dataSource;
 
     // Initialize QueryTracker (based on the logging options)
     this.initQueryTracker(databaseClientOptions);
