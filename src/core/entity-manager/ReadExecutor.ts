@@ -1333,8 +1333,7 @@ export class ReadExecutor {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
-    const { pk, orderByColumn, direction, pageSize, cursorKey } =
-      this.resolveCursorOrder(entity, metadata, option);
+    const order = this.resolveCursorOrder(entity, metadata, option);
 
     const where: any = { ...(option.where ?? {}) };
     const readNode = this.ctx.getReadNode(option.useMaster);
@@ -1347,127 +1346,22 @@ export class ReadExecutor {
       const session = cachePolicy
         ? cachePolicy.wrapSession(rawSession)
         : rawSession;
-      const resultTransformer = ResultTransformerFactory.create();
-
-      const tableName = metadata.name;
-      const qb = RawQueryBuilderFactory.create();
-
-      // Same FK-column merge as findInternal: include @RelationColumn-derived
-      // FK columns that have no matching @Column, otherwise the cursor result
-      // rows lack `${rel}Id` accessors after deserialization.
-      const allColNames = metadata.columns
-        .map((c: any) => c.name as string | undefined)
-        .filter((n): n is string => !!n);
-      const seenCols = new Set<string>(allColNames);
-      const cursorManyToOnes = this.resolver.resolveManyToOneMetadata(entity);
-      const cursorOneToOnes = this.resolver.resolveOneToOneMetadata(entity);
-      for (const rel of cursorManyToOnes) {
-        if (rel.joinColumn && !seenCols.has(rel.joinColumn)) {
-          allColNames.push(rel.joinColumn);
-          seenCols.add(rel.joinColumn);
-        }
-      }
-      for (const rel of cursorOneToOnes) {
-        if (rel.joinColumn && !seenCols.has(rel.joinColumn)) {
-          allColNames.push(rel.joinColumn);
-          seenCols.add(rel.joinColumn);
-        }
-      }
-      // Same @ComputedColumn merge as getColumnPlan() (V5-T0-3).
-      for (const name of this.ctx.getComputedColumnNames(entity)) {
-        if (!seenCols.has(name)) {
-          allColNames.push(name);
-          seenCols.add(name);
-        }
-      }
-      const selectMap = allColNames.map((name) => this.ctx.wrap(name));
-
-      // Map the orderBy property key to its DB column name so cursor pagination
-      // honors the naming strategy (e.g. SnakeNamingStrategy maps `createdAt`
-      // -> `created_at`). Mirrors the find() orderBy mapping. The default value
-      // is already a column name (pk.name), so it passes through unchanged.
-      const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
-
-      // Same identifier guard as findInternal, so a cursor query rejects a
-      // typo'd where key or sort column with the valid list instead of a raw
-      // driver error.
-      validateReadIdentifiers(
-        { where, orderBy: { [orderByColumn]: direction } },
-        undefined,
-        buildEntityColumnScope({
-          entity,
-          metadata,
-          propertyToColumn: propToCol,
-          computedColumns: this.ctx.getComputedColumnNames(entity),
-          inheritanceResolver: this.inheritanceResolver,
-        }),
+      const { selectList, keyset, whereMap } = this.prepareCursorQuery(
+        entity,
+        metadata,
+        where,
+        order,
+        option,
       );
 
-      const dbOrderByColumn = propToCol.get(orderByColumn) ?? orderByColumn;
-
-      const whereMap = this.buildCursorWhereClauses(entity, where, propToCol, option);
-
-      // Keyset pagination: predicate + ORDER BY keys come from CursorKeyset,
-      // so the NULL-region and PK-tiebreaker rules live in one place.
-      const dbPkColumn = pk?.name as string | undefined;
-      const keyset: KeysetPlan = {
-        orderColumn: dbOrderByColumn,
-        pkColumn: dbPkColumn,
-        isPkOrder: !dbPkColumn || dbOrderByColumn === dbPkColumn,
-        direction,
-        pageSize,
-        cursor: cursorKey,
-      };
-      const keysetPredicate = buildKeysetPredicate(keyset, (n) => this.ctx.wrap(n));
-      if (keysetPredicate) {
-        whereMap.push(keysetPredicate);
-      }
-
-      qb.select(selectMap).from(this.ctx.wrapTable(tableName)).where(whereMap);
-
+      const qb = RawQueryBuilderFactory.create();
+      qb.select(selectList).from(this.ctx.wrapTable(metadata.name)).where(whereMap);
       qb.orderBy(buildKeysetOrderBy(keyset, (n) => this.ctx.wrap(n)));
+      qb.limit(keyset.pageSize + 1);
 
-      qb.limit(pageSize + 1);
+      const queryResult = (await session.query<T>(qb.build())) as QueryResult;
 
-      const resultQuery = qb.build();
-
-      const queryResult = (await session.query<T>(
-        resultQuery,
-      )) as QueryResult;
-
-      const { results } = queryResult;
-      if (!results || results.length === 0) {
-        return {
-          data: [],
-          hasNextPage: false,
-          nextCursor: null,
-          count: 0,
-        };
-      }
-
-      const { pageRows: pageResults, hasNextPage } = sliceCursorPage(results, pageSize);
-
-      const entities = resultTransformer.toEntities(entity, {
-        results: pageResults,
-        fields: queryResult.fields,
-      });
-
-      // Notify subscribers of the afterLoad event
-      for (const loadedEntity of entities) {
-        await this.ctx.notifySubscribers(entity, "afterLoad", loadedEntity);
-      }
-
-      const nextCursor =
-        hasNextPage && pageResults.length > 0
-          ? encodeNextCursor(keyset, pageResults[pageResults.length - 1])
-          : null;
-
-      return {
-        data: entities,
-        hasNextPage,
-        nextCursor,
-        count: entities.length,
-      };
+      return this.hydrateCursorPage(entity, keyset, queryResult);
     }, { readNodeOverride: readNode, timeout: this.resolveTimeout(option) });
   }
 
@@ -1514,6 +1408,108 @@ export class ReadExecutor {
     }
 
     return { pk, orderByColumn, direction, pageSize, cursorKey };
+  }
+
+  /**
+   * The SELECT list, keyset plan and WHERE predicates of a cursor page.
+   *
+   * The SELECT list is the entity's cached read column plan — the same
+   * @Column + FK-shadow + @ComputedColumn set `findInternal` reads, so a
+   * cursor row hydrates with the same accessors. Identifiers are validated
+   * here, as `prepareFindOperation` does for `find()`, so a typo'd where key
+   * or sort column is reported with the valid list instead of a raw driver
+   * error.
+   */
+  private prepareCursorQuery<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    where: WhereClause<T>,
+    order: CursorOrder<T>,
+    option: CursorPaginationOption<T>,
+  ): { selectList: string[]; keyset: KeysetPlan; whereMap: Sql[] } {
+    const plan = this.getColumnPlan(entity, metadata);
+
+    // Map the orderBy property key to its DB column name so cursor pagination
+    // honors the naming strategy (e.g. SnakeNamingStrategy maps `createdAt`
+    // -> `created_at`). Mirrors the find() orderBy mapping. The default value
+    // is already a column name (pk.name), so it passes through unchanged.
+    const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+
+    validateReadIdentifiers(
+      { where, orderBy: { [order.orderByColumn]: order.direction } },
+      undefined,
+      buildEntityColumnScope({
+        entity,
+        metadata,
+        propertyToColumn: propToCol,
+        computedColumns: this.ctx.getComputedColumnNames(entity),
+        inheritanceResolver: this.inheritanceResolver,
+      }),
+    );
+
+    const dbOrderByColumn = propToCol.get(order.orderByColumn) ?? order.orderByColumn;
+    const dbPkColumn = order.pk?.name as string | undefined;
+    const keyset: KeysetPlan = {
+      orderColumn: dbOrderByColumn,
+      pkColumn: dbPkColumn,
+      isPkOrder: !dbPkColumn || dbOrderByColumn === dbPkColumn,
+      direction: order.direction,
+      pageSize: order.pageSize,
+      cursor: order.cursorKey,
+    };
+
+    const whereMap = this.buildCursorWhereClauses(entity, where, propToCol, option);
+    const keysetPredicate = buildKeysetPredicate(keyset, (n) => this.ctx.wrap(n));
+    if (keysetPredicate) {
+      whereMap.push(keysetPredicate);
+    }
+
+    return { selectList: plan.selectPlain, keyset, whereMap };
+  }
+
+  /**
+   * Turns the `pageSize + 1` probe rows into the page result: hydrates the
+   * entities, fires `afterLoad`, and encodes the next cursor from the last
+   * raw row when a further page exists.
+   */
+  private async hydrateCursorPage<T>(
+    entity: ClazzType<T>,
+    keyset: KeysetPlan,
+    queryResult: QueryResult,
+  ): Promise<CursorPaginationResult<T>> {
+    const { results } = queryResult;
+    if (!results || results.length === 0) {
+      return {
+        data: [],
+        hasNextPage: false,
+        nextCursor: null,
+        count: 0,
+      };
+    }
+
+    const { pageRows: pageResults, hasNextPage } = sliceCursorPage(results, keyset.pageSize);
+
+    const entities = ResultTransformerFactory.create().toEntities(entity, {
+      results: pageResults,
+      fields: queryResult.fields,
+    });
+
+    // Notify subscribers of the afterLoad event
+    for (const loadedEntity of entities) {
+      await this.ctx.notifySubscribers(entity, "afterLoad", loadedEntity);
+    }
+
+    const nextCursor =
+      hasNextPage && pageResults.length > 0
+        ? encodeNextCursor(keyset, pageResults[pageResults.length - 1])
+        : null;
+
+    return {
+      data: entities,
+      hasNextPage,
+      nextCursor,
+      count: entities.length,
+    };
   }
 
   /**
