@@ -125,6 +125,24 @@ export interface EntityManagerInternals {
   applyWriteTransform(col: ColumnMetadata, rawValue: any): any;
   /** Auto-injects the tenant-column value on INSERT under the "tenant_column" strategy. */
   applyTenantColumnOnInsert<T>(entity: ClazzType<T>, item: Partial<T>): void;
+  /**
+   * Rejects an UPDATE payload naming a tenant other than the active one. No-op
+   * wherever `buildTenantWhereClause` emits no predicate.
+   */
+  assertTenantColumnOnUpdate<T>(entity: ClazzType<T>, item: Partial<T>): void;
+  /** Rejects a rendered SET list that writes the tenant discriminator. */
+  assertTenantColumnNotInSetColumns<T>(
+    entity: ClazzType<T>,
+    setColumns: readonly string[],
+  ): void;
+  /**
+   * The DB column holding the tenant discriminator for this entity, or null
+   * when the entity is not tenant-scoped (strategy inactive or
+   * `@NonTenantEntity()`). Resolved through the naming strategy.
+   */
+  resolveTenantColumnName<T>(entity: ClazzType<T>): string | null;
+  /** Warns once per entity that a tenant-guarded upsert skipped a foreign row. */
+  warnTenantUpsertSuppressed<T>(entity: ClazzType<T>, columnName: string): void;
   /** Returns the set of @ComputedColumn names for an entity. */
   getComputedColumnNames<T>(entity: ClazzType<T>): Set<string>;
   /**

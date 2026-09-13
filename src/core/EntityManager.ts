@@ -410,6 +410,12 @@ export class EntityManager implements BaseEntityManager {
     propKey: (col) => this.propKey(col),
     applyWriteTransform: (col, v) => this.applyWriteTransform(col, v),
     applyTenantColumnOnInsert: (e, i) => this.applyTenantColumnOnInsert(e, i),
+    assertTenantColumnOnUpdate: (e, i) => this.assertTenantColumnOnUpdate(e, i),
+    assertTenantColumnNotInSetColumns: (e, c) =>
+      this.tenantScope.assertTenantColumnNotInSetColumns(e, c),
+    resolveTenantColumnName: (e) => this.resolveTenantColumnName(e),
+    warnTenantUpsertSuppressed: (e, c) =>
+      this.tenantScope.warnTenantUpsertSuppressed(e, c),
     getComputedColumnNames: (e) => this.getComputedColumnNames(e),
     validateCriteriaKeys: (m, c, n, clause) =>
       this.validateCriteriaKeys(m, c, n, clause),
@@ -1505,8 +1511,9 @@ export class EntityManager implements BaseEntityManager {
     whereConditions: Sql[],
     orderBySql: Sql | undefined,
     limit: number | undefined,
+    setColumns: readonly string[] = [],
   ): Promise<{ affected: number }> {
-    return this.finishWrite(entity, this.writeExecutor.executeBuilderUpdate(entity, setEntries, whereConditions, orderBySql, limit));
+    return this.finishWrite(entity, this.writeExecutor.executeBuilderUpdate(entity, setEntries, whereConditions, orderBySql, limit, setColumns));
   }
 
   /**
@@ -2342,6 +2349,25 @@ export class EntityManager implements BaseEntityManager {
     item: Partial<T>,
   ): void {
     this.tenantScope.applyTenantColumnOnInsert(entity, item);
+  }
+
+  /** Engine delegator — implementation lives in {@link TenantScopeManager}. */
+  private assertTenantColumnOnUpdate<T>(
+    entity: ClazzType<T>,
+    item: Partial<T>,
+  ): void {
+    this.tenantScope.assertTenantColumnOnUpdate(entity, item);
+  }
+
+  /**
+   * The tenant discriminator column for an entity, or null when the entity is
+   * not tenant-scoped. Engine delegator — {@link TenantScopeManager} resolves
+   * the name through the naming strategy.
+   */
+  private resolveTenantColumnName<T>(entity: ClazzType<T>): string | null {
+    return this.tenantScope.isTenantScopedEntity(entity)
+      ? this.tenantScope.resolveTenantColumnName(entity)
+      : null;
   }
 
   private getComputedColumnNames<T>(entity: ClazzType<T>): Set<string> {

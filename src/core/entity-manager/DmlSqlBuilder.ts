@@ -3,6 +3,7 @@ import sql, { Sql, join, raw } from "../../utils/sqlTag";
 import { EntityManagerInternals } from "../EntityManagerInternals";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
+import type { UpsertTenantGuard } from "./WriteExecutor";
 
 /**
  * What an `INSERT` does when a row conflicts, as {@link DmlSqlBuilder} sees
@@ -139,13 +140,28 @@ export class DmlSqlBuilder {
     );
   }
 
-  /** Dialect-specific UPSERT (ON DUPLICATE KEY / ON CONFLICT DO UPDATE) for a single row. */
+  /**
+   * Dialect-specific UPSERT (ON DUPLICATE KEY / ON CONFLICT DO UPDATE) for a
+   * single row.
+   *
+   * `tenantGuard` keeps the conflict branch off rows owned by another tenant.
+   * PostgreSQL and SQLite take one `DO UPDATE … WHERE`; MySQL's
+   * `ON DUPLICATE KEY UPDATE` has no WHERE, so **every** assignment is wrapped
+   * in `IF(<guard>, VALUES(col), table.col)` — assignments there take effect
+   * immediately and are visible to the ones after them, so a single unguarded
+   * assignment would defeat the guard for the rest of the list.
+   *
+   * An empty `updateColumns` means the conflict branch has nothing to write
+   * (the tenant column was its only member): the statement degrades to
+   * DO NOTHING / INSERT IGNORE so the INSERT still happens.
+   */
   buildUpsertQuery(
     tableName: string,
     columns: string[],
     values: any[],
     conflictColumns: string[],
     updateColumns: string[],
+    tenantGuard?: UpsertTenantGuard | null,
   ): Sql {
     const columnList = join(
       columns.map((c) => raw(c)),
@@ -154,24 +170,34 @@ export class DmlSqlBuilder {
     const valueList = join(values, ", ");
 
     if (this.ctx.isMySqlFamily()) {
-      const updateSet = join(
-        updateColumns.map((col) => raw(`${col} = VALUES(${col})`)),
-        ", ",
-      );
+      const updateSet =
+        updateColumns.length === 0
+          ? this.mySqlNoOpUpdate(conflictColumns, columns)
+          : this.mySqlUpdateSet(updateColumns, tenantGuard);
       return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON DUPLICATE KEY UPDATE ${updateSet}`;
+    }
+
+    if (updateColumns.length === 0) {
+      return this.buildInsertIgnoreQuery(
+        tableName,
+        columns,
+        values,
+        conflictColumns,
+      );
     }
 
     const conflictList = join(
       conflictColumns.map((c) => raw(c)),
       ", ",
     );
+    const guardSql = tenantGuard ? sql` WHERE ${tenantGuard.predicate}` : sql``;
 
     if (this.ctx.isPostgres()) {
       const updateSet = join(
         updateColumns.map((col) => raw(`${col} = EXCLUDED.${col}`)),
         ", ",
       );
-      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}${guardSql}`;
     }
 
     // SQLite
@@ -180,7 +206,7 @@ export class DmlSqlBuilder {
         updateColumns.map((col) => raw(`${col} = excluded.${col}`)),
         ", ",
       );
-      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}${guardSql}`;
     }
 
     throw new OrmError(
@@ -189,13 +215,49 @@ export class DmlSqlBuilder {
     );
   }
 
-  /** Multi-row variant of {@link buildUpsertQuery}. */
+  /**
+   * MySQL/MariaDB `ON DUPLICATE KEY UPDATE` assignments, guarded per column
+   * when a tenant predicate applies.
+   */
+  /**
+   * `ON DUPLICATE KEY UPDATE col = col` — the conflict branch has nothing to
+   * write, so the row is left exactly as it is.
+   *
+   * `INSERT IGNORE` would express the same intent, but it downgrades *every*
+   * error in the statement to a warning, not just the duplicate key.
+   */
+  private mySqlNoOpUpdate(conflictColumns: string[], columns: string[]): Sql {
+    const anchor = conflictColumns[0] ?? columns[0];
+    return raw(`${anchor} = ${anchor}`);
+  }
+
+  private mySqlUpdateSet(
+    updateColumns: string[],
+    tenantGuard?: UpsertTenantGuard | null,
+  ): Sql {
+    if (!tenantGuard) {
+      return join(
+        updateColumns.map((col) => raw(`${col} = VALUES(${col})`)),
+        ", ",
+      );
+    }
+    return join(
+      updateColumns.map(
+        (col) =>
+          sql`${raw(col)} = IF(${tenantGuard.predicate}, ${raw(`VALUES(${col})`)}, ${raw(`${tenantGuard.tableRef}.${col}`)})`,
+      ),
+      ", ",
+    );
+  }
+
+  /** Multi-row variant of {@link buildUpsertQuery}, guard included. */
   buildBatchUpsertQuery(
     tableName: string,
     columns: string[],
     valueRows: Sql[],
     conflictColumns: string[],
     updateColumns: string[],
+    tenantGuard?: UpsertTenantGuard | null,
   ): Sql {
     const columnList = join(
       columns.map((c) => raw(c)),
@@ -204,10 +266,10 @@ export class DmlSqlBuilder {
     const valuesList = join(valueRows, ", ");
 
     if (this.ctx.isMySqlFamily()) {
-      const updateSet = join(
-        updateColumns.map((col) => raw(`${col} = VALUES(${col})`)),
-        ", ",
-      );
+      const updateSet =
+        updateColumns.length === 0
+          ? this.mySqlNoOpUpdate(conflictColumns, columns)
+          : this.mySqlUpdateSet(updateColumns, tenantGuard);
       return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON DUPLICATE KEY UPDATE ${updateSet}`;
     }
 
@@ -215,13 +277,20 @@ export class DmlSqlBuilder {
       conflictColumns.map((c) => raw(c)),
       ", ",
     );
+    const guardSql = tenantGuard ? sql` WHERE ${tenantGuard.predicate}` : sql``;
+
+    if (updateColumns.length === 0) {
+      if (this.ctx.isPostgres() || this.ctx.isSqlite()) {
+        return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON CONFLICT (${conflictList}) DO NOTHING`;
+      }
+    }
 
     if (this.ctx.isPostgres()) {
       const updateSet = join(
         updateColumns.map((col) => raw(`${col} = EXCLUDED.${col}`)),
         ", ",
       );
-      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}${guardSql}`;
     }
 
     // SQLite
@@ -230,7 +299,7 @@ export class DmlSqlBuilder {
         updateColumns.map((col) => raw(`${col} = excluded.${col}`)),
         ", ",
       );
-      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}`;
+      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}${guardSql}`;
     }
 
     throw new OrmError(

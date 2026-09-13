@@ -51,6 +51,8 @@ import type { EntityManager } from "./EntityManager";
  */
 export class UpdateQueryBuilder<T> {
   private setEntries: Sql[] = [];
+  /** DB column names the SET list writes, for the tenant-discriminator guard. */
+  private setColumns: string[] = [];
   private conditions: Sql[] = [];
   private orderByExprs: Array<{ ref: string; direction: OrderDirection; isRaw: boolean }> = [];
   private limitValue: number | undefined;
@@ -78,6 +80,7 @@ export class UpdateQueryBuilder<T> {
       const value = (data as any)[key];
       if (value === undefined) continue;
       const dbCol = this.propertyToColumnMap.get(key) ?? key;
+      this.setColumns.push(dbCol);
       this.setEntries.push(sql`${raw(this.em.wrap(dbCol))} = ${value}`);
     }
     return this;
@@ -90,6 +93,7 @@ export class UpdateQueryBuilder<T> {
    */
   setRaw(column: keyof T & string, expr: Sql): this {
     const dbCol = this.propertyToColumnMap.get(column) ?? column;
+    this.setColumns.push(dbCol);
     this.setEntries.push(sql`${raw(this.em.wrap(dbCol))} = ${expr}`);
     return this;
   }
@@ -209,6 +213,7 @@ export class UpdateQueryBuilder<T> {
       this.conditions,
       orderBySql,
       this.limitValue,
+      this.setColumns,
     );
   }
 

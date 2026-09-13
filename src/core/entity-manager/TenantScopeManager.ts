@@ -46,6 +46,7 @@ export class TenantScopeManager {
   onMissingContext: "throw" | "warn" | "allow" = "warn";
   readonly rawQueryWarnedCallSites = new Set<string>();
   private readonly missingContextWarnedEntities = new Set<Function>();
+  private readonly upsertSuppressedWarnedEntities = new Set<Function>();
   /**
    * Table name → PostgreSQL schema for entities pinned via
    * `@Entity({ schema })` (or `@NonTenantEntity()` under a schema-based
@@ -83,6 +84,7 @@ export class TenantScopeManager {
   reset(): void {
     this.rawQueryWarnedCallSites.clear();
     this.missingContextWarnedEntities.clear();
+    this.upsertSuppressedWarnedEntities.clear();
     this.pinnedSchemas.clear();
   }
 
@@ -245,14 +247,35 @@ export class TenantScopeManager {
   /**
    * Resolves the DB column name used by the tenant discriminator for this
    * entity. Honors an explicit `@TenantColumn({ name })` override, else the
-   * user's property key (e.g. `tenantId`), else the global config default.
+   * column the property actually maps to, else the global config default.
+   *
+   * The middle step matters under a {@link NamingStrategy}: `applyNamingStrategy`
+   * rewrites `column.name` for every non-explicit column (so `tenantId` becomes
+   * `tenant_id` in the DDL) but does not propagate the rename into
+   * `TENANT_COLUMN_TOKEN`. Reading the property key back would then emit a
+   * predicate against a column that does not exist.
    */
   resolveTenantColumnName<T>(entity: ClazzType<T>): string {
     const userDeclared = getTenantColumnMetadata(entity);
-    if (userDeclared) {
-      return userDeclared.name ?? userDeclared.propertyKey;
-    }
-    return this.columnConfig!.name;
+    if (userDeclared?.name) return userDeclared.name;
+    const propertyKey = userDeclared?.propertyKey ?? this.columnConfig!.name;
+    return this.resolveColumnNameForProperty(entity, propertyKey);
+  }
+
+  /**
+   * The DB column the given property maps to, or the property key itself when
+   * the entity has no such column (or no metadata yet).
+   */
+  private resolveColumnNameForProperty<T>(
+    entity: ClazzType<T>,
+    propertyKey: string,
+  ): string {
+    const columns =
+      this.ctx.getResolver().resolveEntityMetadata(entity)?.columns ?? [];
+    const declared = columns.find(
+      (col) => (col.propertyKey ?? col.name) === propertyKey,
+    );
+    return declared?.name ?? propertyKey;
   }
 
   /**
@@ -307,6 +330,96 @@ export class TenantScopeManager {
     if (propKey !== colName) {
       (item as any)[colName] = tenant;
     }
+  }
+
+  /**
+   * Rejects an UPDATE payload that names a tenant other than the active one.
+   *
+   * The INSERT counterpart ({@link applyTenantColumnOnInsert}) fills the value
+   * in and fails loud on a mismatch; the UPDATE branch cannot fill anything in
+   * (the row's owner is whatever the guarded WHERE matched), so it only
+   * rejects. A payload carrying the *current* tenant — every entity a
+   * `find()` hydrated does — is accepted and then dropped from the SET list by
+   * the caller, so ownership is never rewritten by a save.
+   *
+   * No-op under exactly the conditions where {@link buildTenantWhereClause}
+   * emits no predicate: strategy inactive, `@NonTenantEntity()`,
+   * `runUnscoped()`, or the explicit `"public"` admin context.
+   */
+  assertTenantColumnOnUpdate<T>(entity: ClazzType<T>, item: Partial<T>): void {
+    const config = this.columnConfig;
+    if (!config) return;
+    if (isNonTenantEntity(entity)) return;
+    if (MetadataContext.isUnscoped()) return;
+
+    const tenant = MetadataContext.getCurrentTenant();
+    if (tenant === "public") return;
+
+    const userDeclared = getTenantColumnMetadata(entity);
+    const propKey = userDeclared?.propertyKey ?? config.name;
+    const colName = this.resolveTenantColumnName(entity);
+    const supplied =
+      (item as any)[propKey] !== undefined
+        ? (item as any)[propKey]
+        : (item as any)[colName];
+
+    if (supplied !== undefined && supplied !== null && supplied !== tenant) {
+      const shown =
+        typeof supplied === "string" || typeof supplied === "number"
+          ? `'${supplied}'`
+          : "a SQL expression";
+      throw new OrmError(
+        OrmErrorCode.TENANT_MISMATCH,
+        `Tenant mismatch on UPDATE of '${entity.name}': the payload sets ${colName} to ${shown} ` +
+          `while MetadataContext tenant='${tenant}'. A write never moves a row between tenants — ` +
+          `omit the tenant field, or run inside the matching context.`,
+      );
+    }
+  }
+
+  /**
+   * The UpdateQueryBuilder counterpart of {@link assertTenantColumnOnUpdate}:
+   * its SET values are rendered before they reach the executor, so the column
+   * names are checked instead of the values. Rejects any attempt to write the
+   * tenant discriminator while a tenant predicate applies.
+   */
+  assertTenantColumnNotInSetColumns<T>(
+    entity: ClazzType<T>,
+    setColumns: readonly string[],
+  ): void {
+    if (setColumns.length === 0) return;
+    if (!this.columnConfig) return;
+    if (isNonTenantEntity(entity)) return;
+    if (MetadataContext.isUnscoped()) return;
+    const tenant = MetadataContext.getCurrentTenant();
+    if (tenant === "public") return;
+
+    const colName = this.resolveTenantColumnName(entity);
+    if (!setColumns.includes(colName)) return;
+
+    throw new OrmError(
+      OrmErrorCode.TENANT_MISMATCH,
+      `Tenant mismatch on UPDATE of '${entity.name}': the statement writes ${colName}, the tenant ` +
+        `discriminator, while MetadataContext tenant='${tenant}'. A write never moves a row between ` +
+        `tenants — drop the column from .set(), or use MetadataContext.runUnscoped() when a ` +
+        `deliberate cross-tenant move is what you mean.`,
+    );
+  }
+
+  /**
+   * Warns once per entity class that an upsert wrote fewer rows than it was
+   * given: the conflicting row belongs to another tenant, so the conflict
+   * branch left it alone. Silence is the alternative — the statement itself
+   * cannot report which row it skipped.
+   */
+  warnTenantUpsertSuppressed<T>(entity: ClazzType<T>, columnName: string): void {
+    if (this.upsertSuppressedWarnedEntities.has(entity)) return;
+    this.upsertSuppressedWarnedEntities.add(entity);
+    this.ctx.getLogger().warn(
+      `[multi-tenancy] upsert on '${entity.name}' skipped at least one row whose ${columnName} ` +
+        `belongs to another tenant — the conflict branch never rewrites a foreign row, so those ` +
+        `rows are reported as not affected. Warned once per entity class.`,
+    );
   }
 
   /**

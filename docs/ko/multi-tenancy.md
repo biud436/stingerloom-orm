@@ -564,9 +564,29 @@ await em.register({
 `tenantStrategy: "tenant_column"`을 설정하면, 엔티티별 코드 없이도 ORM이 모든 엔티티에 네 가지 동작을 적용합니다:
 
 1. **DDL 주입.** `SchemaRegistrar`가 모든 테이블에 `tenant_id VARCHAR(64) NOT NULL` (또는 설정된 타입)을 추가합니다. 엔티티 클래스에 컬럼을 선언할 필요가 없습니다.
-2. **INSERT 자동 채움 + 검증.** `save()` / `saveMany()` / `insertMany()` / `upsert()` / `batchUpsert()`가 `MetadataContext.getCurrentTenant()` 값으로 `tenant_id`를 채웁니다. 테넌트 컨텍스트 없이 INSERT 하면 `MISSING_TENANT_CONTEXT`를 던지고, 컨텍스트와 다른 `tenant_id`를 명시적으로 넘기면 `TENANT_MISMATCH`를 던집니다.
+2. **INSERT 자동 채움 + 검증.** `save()` / `saveMany()` / `insertMany()` / `upsert()` / `batchUpsert()`가 `MetadataContext.getCurrentTenant()` 값으로 `tenant_id`를 채웁니다. 테넌트 컨텍스트 없이 INSERT 하면 `MISSING_TENANT_CONTEXT`를 던지고, 컨텍스트와 다른 `tenant_id`를 명시적으로 넘기면 `TENANT_MISMATCH`를 던집니다. UPDATE 쪽도 마찬가지여서, 다른 테넌트를 지목한 payload로 `save()`를 하면 행이 옮겨지는 대신 거부됩니다.
 3. **read WHERE 주입.** `find()`, `findOne()`, `findByPK()`, `findAndCount()`, `findWithCursor()`, `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`, 그리고 `SelectQueryBuilder.getMany()` / `getCount()` / `exists()`에 `AND tenant_id = ?`가 자동으로 붙습니다. Eager JOIN과 relation loader도 같은 predicate를 상속해요.
-4. **write WHERE 주입.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()`도 `AND tenant_id = ?`를 받기 때문에, 테넌트 A에서 실행한 쿼리가 테넌트 B의 행을 건드릴 수 없습니다. 테넌트 컨텍스트가 **아예 없는** 상태의 동작은 아래 `tenantOnMissingContext` 정책이 결정합니다.
+4. **write WHERE 주입.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()`, 그리고 `save()` / `saveMany()`의 UPDATE 분기까지 전부 `AND tenant_id = ?`를 받기 때문에, 테넌트 A에서 실행한 쿼리가 테넌트 B의 행을 건드릴 수 없습니다. upsert 계열도 충돌 분기에 같은 predicate가 붙어요(아래 표 참고). 테넌트 컨텍스트가 **아예 없는** 상태의 동작은 아래 `tenantOnMissingContext` 정책이 결정합니다.
+
+#### 어떤 쓰기 경로에 predicate가 붙나
+
+| 연산 | 테넌트 A에서 테넌트 B 소유 행을 건드릴 때 |
+|------|---------------------------------------------|
+| `save({ id })` / `saveMany([{ id }])` | `EntityNotFoundError` — UPDATE가 `pk AND tenant_id`로 매칭되고, 존재 확인 프로브에도 같은 스코프가 걸립니다 |
+| payload에 다른 테넌트의 `tenant_id`를 넣은 `save()` | INSERT와 UPDATE 모두 `TENANT_MISMATCH`. 테넌트 컬럼은 UPDATE `SET` 목록에 아예 들어가지 않으므로, find로 읽어 온 엔티티를 그대로 저장해도 행이 옮겨가지 않습니다 |
+| `upsert()` / `batchUpsert()` | 충돌 분기가 해당 행을 건너뜁니다 — PostgreSQL/SQLite에서는 `affected`에 0으로 잡히고, 엔티티 클래스당 한 번 경고가 남습니다 |
+| `createInsertBuilder().doUpdate()` | 동일하게 건너뜁니다. 직접 지정한 `doUpdateWhere()` 조건은 테넌트 조건과 AND로 묶여요 |
+| `insertIgnore()` | 원래 안전합니다 — `DO NOTHING`은 기존 행을 절대 쓰지 않습니다(대신 이번 INSERT가 버려집니다) |
+| `update()` / `updateMany()` / `increment()` / `decrement()` / `delete()` / `deleteMany()` / `softDelete()` / `restore()` | `affected: 0`, 아무것도 쓰지 않습니다 |
+| `createUpdateBuilder()` | `affected: 0`, 아무것도 쓰지 않습니다 |
+| 테넌트 컬럼 자체를 쓰는 모든 연산 | `TENANT_MISMATCH` — 자기 행을 다른 테넌트에게 넘기는 것도 막습니다. `save()` / `updateMany()`는 *현재* 테넌트 값이면 통과시키고 `SET` 목록에서 빼지만, `createUpdateBuilder().set()`과 `createInsertBuilder().doUpdate()`는 값이 이미 렌더링된 뒤라 컬럼 자체를 거부합니다. 이 가드는 테넌트 컨텍스트가 살아 있는 동안 적용되므로, 의도적으로 행을 옮기려면 `MetadataContext.runUnscoped()`나 `MetadataContext.run("public", ...)`을 쓰세요 |
+| `clear()` | **스코프 없음** — DDL 성격의 연산이라 모든 테넌트의 행을 비웁니다 |
+| `@ManyToMany` 조인 테이블의 `attachRelation()` / `detachRelation()` | **스코프 없음** — 조인 테이블에는 테넌트 컬럼이 없습니다. 소유 엔티티 쪽에서 스코프를 거세요 |
+| `em.query()` raw SQL | **스코프 없음** — 호출 지점당 한 번 경고합니다 |
+
+`upsert()` / `batchUpsert()` / `createInsertBuilder().doUpdate()`는 먼저 INSERT입니다. 새 행에 채워 넣을 테넌트 값이 없으니 테넌트 컨텍스트가 없으면 `tenantOnMissingContext` 정책과 무관하게, `runUnscoped()`나 `run("public", ...)` 안에서도 거부합니다.
+
+MySQL/MariaDB의 `ON DUPLICATE KEY UPDATE`에는 `WHERE`를 붙일 수 없어서, 대입 하나하나를 `col = IF(tbl.tenant_id = ?, VALUES(col), tbl.col)` 형태로 내보냅니다. 어느 쪽이든 남의 행은 그대로 남지만, 숫자의 의미는 달라집니다. `mysql2`는 `CLIENT_FOUND_ROWS`로 접속하기 때문에 차단된 행이 `affected: 1`(매칭됐지만 아무것도 쓰지 않음)로 잡히고, 이는 INSERT가 보고하는 숫자와 같습니다(실제 갱신은 2). 어느 쪽인지 알아야 하면 행을 다시 읽어 보세요.
 
 ```typescript
 @Entity()
@@ -609,7 +629,7 @@ class AuditLog {
 }
 ```
 
-`save()` 할 때 `@TenantColumn` 프로퍼티에 값을 할당하면, 현재 컨텍스트와 반드시 일치해야 합니다 — 아니면 ORM이 `TENANT_MISMATCH`를 던집니다. 프로퍼티를 수동으로 세팅해서 테넌트를 위조할 수는 없어요.
+`save()` 할 때 `@TenantColumn` 프로퍼티에 값을 할당하면, 현재 컨텍스트와 반드시 일치해야 합니다 — 아니면 ORM이 `TENANT_MISMATCH`를 던집니다. INSERT든 UPDATE든 동일합니다. 프로퍼티를 수동으로 세팅해서 테넌트를 위조할 수는 없어요. 테넌트 predicate가 걸리는 동안에는 이 컬럼이 UPDATE `SET` 목록에서 빠지기 때문에, 쓰기로 행의 소유자가 바뀌는 일 자체가 없습니다.
 
 ### `@NonTenantEntity`로 엔티티 제외
 
@@ -688,7 +708,7 @@ await em.register({
 | `"throw"` | INSERT와 같은 에러인 `MISSING_TENANT_CONTEXT`로 reject 합니다. 프로덕션에 권장합니다. |
 | `"allow"` | 쿼리를 필터 없이 그대로 실행합니다. 스코프 접근과 글로벌 접근을 의도적으로 섞어 쓰는 앱을 위한 값입니다. |
 
-이 정책은 자동 predicate를 받는 모든 경로에 적용됩니다: `find*`, `count`/`exists`를 포함한 aggregate, `SelectQueryBuilder`, relation loader, `updateMany`, `deleteMany`, `softDelete`, `restore`. INSERT의 동작은 바꾸지 않고(컨텍스트가 없으면 항상 throw), 명시적인 탈출구에서는 절대 발화하지 않습니다:
+이 정책은 자동 predicate를 받는 모든 경로에 적용됩니다: `find*`, `count`/`exists`를 포함한 aggregate, `SelectQueryBuilder`, relation loader, `updateMany`, `deleteMany`, `softDelete`, `restore`, 그리고 `save()` / `saveMany()`의 UPDATE 분기입니다. INSERT의 동작은 바꾸지 않고(컨텍스트가 없으면 항상 throw), 명시적인 탈출구에서는 절대 발화하지 않습니다:
 
 - `MetadataContext.runUnscoped()` — 명시적인 크로스 테넌트 블록
 - `MetadataContext.run("public", ...)` — 명시적인 관리자/부트스트랩 컨텍스트

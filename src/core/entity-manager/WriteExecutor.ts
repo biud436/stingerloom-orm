@@ -115,6 +115,19 @@ interface UpdateSetPlan {
 }
 
 /** Column lists staged for an INSERT ... ON CONFLICT statement. */
+/**
+ * The tenant predicate an upsert's conflict branch is guarded with, plus the
+ * bare table reference MySQL's per-assignment `IF()` form needs.
+ */
+export interface UpsertTenantGuard {
+  /** `"table"."tenant_id" = ?` — reads the row already stored. */
+  predicate: Sql;
+  /** Wrapped bare table name (never schema-qualified). */
+  tableRef: string;
+  /** Resolved tenant column name, for diagnostics. */
+  columnName: string;
+}
+
 interface UpsertPlan {
   /** Metadata of the columns the INSERT names, in statement order. */
   insertableColumns: ColumnMetadata[];
@@ -126,6 +139,12 @@ interface UpsertPlan {
   wrappedConflict: string[];
   /** Wrapped identifiers the DO UPDATE writes (conflict targets excluded). */
   wrappedUpdate: string[];
+  /**
+   * True when the tenant discriminator was removed from {@link wrappedUpdate}.
+   * An emptied list then still has a statement to emit (the INSERT, skipping
+   * conflicting rows) rather than meaning "nothing to do".
+   */
+  tenantColumnDropped: boolean;
 }
 
 /**
@@ -368,6 +387,16 @@ export class WriteExecutor {
 
       // UPDATE path
       //
+      // Under the "tenant_column" strategy the UPDATE has to carry the tenant
+      // predicate the read paths carry, or a PK from another tenant is enough
+      // to rewrite that tenant's row. Resolved before anything fires so
+      // `tenantOnMissingContext: "throw"` rejects a context-less save the way
+      // it rejects a context-less updateMany.
+      const tenantWhere = this.ctx.buildTenantWhereClause(entity);
+      const tenantColumnName = tenantWhere
+        ? this.ctx.resolveTenantColumnName(entity)
+        : null;
+
       // Pre-read the database state when any subscriber wants it (for diff
       // audits, change-detection cache invalidation, etc.). Skipping the
       // SELECT when no subscriber listens keeps the cost of save() unchanged
@@ -391,10 +420,15 @@ export class WriteExecutor {
         manager: this.ctx.getManager(),
       } as UpdateEvent<T>);
 
-      const updatePlan = this.buildUpdateSetPlan(op);
+      this.ctx.assertTenantColumnOnUpdate(entity, item);
+
+      const updatePlan = this.buildUpdateSetPlan(op, tenantColumnName);
       const { updateMap, versionColName } = updatePlan;
 
       const pkWhereClauses = buildPkWhere();
+      if (tenantWhere) {
+        pkWhereClauses.push(tenantWhere);
+      }
 
       // @Version: Optimistic Locking
       // `versionColName` is the DB column name (applyNamingStrategyToEntities
@@ -437,6 +471,7 @@ export class WriteExecutor {
           pkWhereClauses,
           currentVersion,
           databaseEntity,
+          tenantWhere,
         );
         if (tpt) return tpt.result;
       }
@@ -449,6 +484,7 @@ export class WriteExecutor {
           versionColName,
           currentVersion,
           useReturningForUpdate,
+          tenantWhere,
         );
       }
 
@@ -912,7 +948,10 @@ export class WriteExecutor {
    * ManyToOne relation's FK value (relation object → shadow `${prop}Id`
    * accessor → explicit `option.fkProperty`) into the SET list.
    */
-  private buildUpdateSetPlan<T>(op: SaveOperation<T>): UpdateSetPlan {
+  private buildUpdateSetPlan<T>(
+    op: SaveOperation<T>,
+    tenantColumnName: string | null = null,
+  ): UpdateSetPlan {
     const { entity, metadata, itemFields, pkColumns } = op;
 
     const versionColName = this.resolver.getVersionColumn(entity);
@@ -928,6 +967,10 @@ export class WriteExecutor {
         if (pkColumnNames.has(column.name)) return false;
         if (versionColName && column.name === versionColName) return false;
         if (updateDiscCol && column.name === updateDiscCol.name) return false;
+        // The tenant discriminator is ORM-owned while a tenant predicate
+        // applies: an entity that round-tripped through find() carries it, and
+        // writing it back would let a save move the row to another tenant.
+        if (tenantColumnName && column.name === tenantColumnName) return false;
         return itemFields[this.ctx.propKey(column)] !== undefined;
       },
     );
@@ -1051,6 +1094,7 @@ export class WriteExecutor {
     pkWhereClauses: Sql[],
     currentVersion: unknown,
     databaseEntity: T | null,
+    tenantWhere: Sql | null = null,
   ): Promise<{ result: T } | null> {
     const { entity, metadata, session, buildPkWhere, buildPkFindWhere } = op;
     const { updatableColumns, updateMap, versionColName } = plan;
@@ -1079,11 +1123,6 @@ export class WriteExecutor {
       parentUpdateMap.push(updateMap[i]);
     }
 
-    const guardedByVersion =
-      versionColName &&
-      currentVersion !== undefined &&
-      currentVersion !== null;
-
     let parentAffected: number | null = null;
     if (parentUpdateMap.length > 0) {
       const parentUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(rootMeta.name))}
@@ -1101,21 +1140,11 @@ export class WriteExecutor {
       // rows means the PK doesn't exist — confirmed with the value-identical
       // probe for MySQL.
       if (parentAffected === 0) {
-        if (guardedByVersion) {
-          throw new OptimisticLockError(
-            entity.name,
-            currentVersion as number,
-          );
-        }
-        const parentProbe = await session.query(
-          sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
-        );
-        if (resultRows(parentProbe).length === 0) {
-          throw new EntityNotFoundError(
-            entity.name,
-            "save() attempted an UPDATE but no row matched the primary key.",
-          );
-        }
+        await this.assertUpdateMatchedRow(op, rootMeta.name, {
+          versionColName,
+          currentVersion,
+          tenantWhere,
+        });
       }
     }
 
@@ -1125,6 +1154,22 @@ export class WriteExecutor {
       // so the child UPDATE filters by primary key alone. The parent
       // UPDATE above already enforced the version inside this same
       // transaction.
+      // The tenant column lives on the root table, so a child-only UPDATE
+      // cannot carry the predicate. When no parent statement ran to enforce
+      // it, confirm the root row belongs to this tenant first — otherwise a
+      // foreign PK would still reach the child table.
+      if (tenantWhere && parentAffected === null) {
+        const ownerProbe = await session.query(
+          sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${join([...buildPkWhere(), tenantWhere], " AND ")} LIMIT 1`,
+        );
+        if (resultRows(ownerProbe).length === 0) {
+          throw new EntityNotFoundError(
+            entity.name,
+            "save() attempted an UPDATE but no row matched the primary key in the active tenant.",
+          );
+        }
+      }
+
       const childPkWhere = buildPkWhere();
       const childUpdateSql = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name))}
         SET ${join(childUpdateMap, ", ")}
@@ -1163,6 +1208,75 @@ export class WriteExecutor {
   }
 
   /**
+   * The 0-affected-rows contract shared by saveInternal's single-table UPDATE
+   * and the TPT parent UPDATE.
+   *
+   * Without a tenant predicate the rules are the historical ones: a write
+   * guarded by @Version that matched nothing is a stale version, otherwise an
+   * existence probe separates a missing PK from MySQL's value-identical
+   * UPDATE (which also reports 0).
+   *
+   * With a tenant predicate the probe runs *first* and carries that predicate:
+   * a PK that exists in another tenant must read as "not found here", never as
+   * a stale @Version — and the probe must be scoped, or a foreign row would
+   * satisfy it and the save would go back to being a silent no-op.
+   */
+  private async assertUpdateMatchedRow<T>(
+    op: SaveOperation<T>,
+    tableName: string,
+    guards: {
+      versionColName: string | null;
+      currentVersion: unknown;
+      tenantWhere: Sql | null;
+    },
+  ): Promise<void> {
+    const { entity, session, buildPkWhere } = op;
+    const { versionColName, currentVersion, tenantWhere } = guards;
+    const guardedByVersion =
+      !!versionColName &&
+      currentVersion !== undefined &&
+      currentVersion !== null;
+
+    const rowExists = async (extra: Sql | null): Promise<boolean> => {
+      const where = buildPkWhere();
+      if (extra) where.push(extra);
+      const probeResult = await session.query(
+        sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${join(where, " AND ")} LIMIT 1`,
+      );
+      return resultRows(probeResult).length > 0;
+    };
+
+    if (tenantWhere) {
+      if (!(await rowExists(tenantWhere))) {
+        throw new EntityNotFoundError(
+          entity.name,
+          "save() attempted an UPDATE but no row matched the primary key in the active tenant.",
+        );
+      }
+      if (guardedByVersion) {
+        throw new OptimisticLockError(entity.name, currentVersion as number);
+      }
+      return;
+    }
+
+    if (guardedByVersion) {
+      throw new OptimisticLockError(entity.name, currentVersion as number);
+    }
+
+    // 0 affected rows means no row matched the primary key — except on
+    // MySQL, where affectedRows can also be 0 for a value-identical
+    // UPDATE, so confirm with an existence probe before failing.
+    // Without this the save was a silent no-op: afterUpdate hooks and
+    // subscribers still fired and save() returned null cast as T.
+    if (!(await rowExists(null))) {
+      throw new EntityNotFoundError(
+        entity.name,
+        "save() attempted an UPDATE but no row matched the primary key.",
+      );
+    }
+  }
+
+  /**
    * Executes saveInternal's generic single-table UPDATE and enforces the
    * 0-affected-rows contract: a guarded write that matched nothing is a stale
    * @Version (OptimisticLockError); otherwise an existence probe distinguishes
@@ -1176,8 +1290,9 @@ export class WriteExecutor {
     versionColName: string | null,
     currentVersion: unknown,
     useReturningForUpdate: boolean,
+    tenantWhere: Sql | null = null,
   ): Promise<DriverRow | null> {
-    const { entity, metadata, session, buildPkWhere } = op;
+    const { entity, metadata, session } = op;
 
     const updateReturningSql = useReturningForUpdate
       ? raw(` RETURNING *`)
@@ -1199,25 +1314,12 @@ export class WriteExecutor {
     );
 
     const affected = this.affectedCount(updateResult);
-    if (versionColName && currentVersion !== undefined && currentVersion !== null) {
-      if (affected === 0) {
-        throw new OptimisticLockError(entity.name, currentVersion as number);
-      }
-    } else if (affected === 0) {
-      // 0 affected rows means no row matched the primary key — except on
-      // MySQL, where affectedRows can also be 0 for a value-identical
-      // UPDATE, so confirm with an existence probe before failing.
-      // Without this the save was a silent no-op: afterUpdate hooks and
-      // subscribers still fired and save() returned null cast as T.
-      const probeResult = await session.query(
-        sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
-      );
-      if (resultRows(probeResult).length === 0) {
-        throw new EntityNotFoundError(
-          entity.name,
-          "save() attempted an UPDATE but no row matched the primary key.",
-        );
-      }
+    if (affected === 0) {
+      await this.assertUpdateMatchedRow(op, metadata.name, {
+        versionColName,
+        currentVersion,
+        tenantWhere,
+      });
     }
 
     const updatedRows = resultRows(updateResult);
@@ -1899,6 +2001,7 @@ export class WriteExecutor {
     entity: ClazzType<T>,
     metadata: EntityScannerMetadata,
     spec: InsertBuilderSpec<T>,
+    tenantGuard: UpsertTenantGuard | null = null,
   ): {
     columns: Sql[];
     valueRows: Sql[];
@@ -1923,7 +2026,12 @@ export class WriteExecutor {
       columns,
       valueRows,
       conflictColumns: this.resolveConflictColumns(entity, metadata, spec),
-      action: this.renderConflictAction(entity, metadata, spec.action),
+      action: this.renderConflictAction(
+        entity,
+        metadata,
+        spec.action,
+        tenantGuard,
+      ),
     };
   }
 
@@ -1981,22 +2089,31 @@ export class WriteExecutor {
     entity: ClazzType<T>,
     metadata: EntityScannerMetadata,
     action: ConflictAction,
+    tenantGuard: UpsertTenantGuard | null = null,
   ): InsertConflictAction {
     if (action.kind !== "update") return action;
 
-    const set = action.set.map((entry) => {
-      const columnName = this.columnNameForProperty(metadata, entry.property);
+    const columnNames = action.set.map((entry) =>
+      this.columnNameForProperty(metadata, entry.property),
+    );
+    // The conflict branch is an UPDATE: writing the tenant discriminator there
+    // would hand the row to another tenant, which every other write path now
+    // rejects.
+    this.ctx.assertTenantColumnNotInSetColumns(entity, columnNames);
+
+    const set = action.set.map((entry, i) => {
+      const columnName = columnNames[i];
       const wrapped = raw(this.ctx.wrap(columnName));
-      if (entry.kind === "expression") {
-        return sql`${wrapped} = ${entry.value}`;
+      const assigned =
+        entry.kind === "expression"
+          ? entry.value
+          : bindParam(this.transformedValue(metadata, columnName, entry.value));
+      // MySQL takes no DO UPDATE predicate, so the guard folds into every
+      // assignment; PostgreSQL and SQLite get it once as a WHERE below.
+      if (tenantGuard && this.ctx.isMySqlFamily()) {
+        return sql`${wrapped} = IF(${tenantGuard.predicate}, ${assigned}, ${raw(`${tenantGuard.tableRef}.${this.ctx.wrap(columnName)}`)})`;
       }
-      const column = metadata.columns.find(
-        (col: ColumnMetadata) => col.name === columnName,
-      );
-      const value = column
-        ? this.ctx.applyWriteTransform(column, entry.value)
-        : entry.value;
-      return sql`${wrapped} = ${bindParam(value)}`;
+      return sql`${wrapped} = ${assigned}`;
     });
 
     if (set.length === 0) {
@@ -2004,7 +2121,28 @@ export class WriteExecutor {
         `createInsertBuilder(${entity.name}).doUpdate() resolved to no assignments.`,
       );
     }
-    return { kind: "update", set, where: action.where };
+
+    let where = action.where;
+    if (tenantGuard && !this.ctx.isMySqlFamily()) {
+      // The caller's predicate is parenthesized: AND binds tighter than OR, so
+      // a top-level OR would otherwise leave the guard applying to one arm.
+      where = where
+        ? sql`(${where}) AND ${tenantGuard.predicate}`
+        : tenantGuard.predicate;
+    }
+    return { kind: "update", set, where };
+  }
+
+  /** A literal conflict-assignment value with its column's write transformer applied. */
+  private transformedValue(
+    metadata: EntityScannerMetadata,
+    columnName: string,
+    value: unknown,
+  ): unknown {
+    const column = metadata.columns.find(
+      (col: ColumnMetadata) => col.name === columnName,
+    );
+    return column ? this.ctx.applyWriteTransform(column, value) : value;
   }
 
   /**
@@ -2058,8 +2196,15 @@ export class WriteExecutor {
       }
     }
 
+    const tenantGuard = this.buildUpsertTenantGuard(entity, metadata);
+
     return this.ctx.executeInTransaction(async (session) => {
-      const prepared = this.prepareBuilderInsert(entity, metadata, spec);
+      const prepared = this.prepareBuilderInsert(
+        entity,
+        metadata,
+        spec,
+        tenantGuard,
+      );
       const insertSql = this.dmlSqlBuilder.buildInsertOnConflictSql({
         tableName: this.ctx.wrapTable(metadata.name),
         columns: prepared.columns,
@@ -2450,6 +2595,9 @@ export class WriteExecutor {
 
     this.ctx.validateUpdateDataKeys(metadata, data, entity.name);
     this.ctx.validateCriteriaKeys(metadata, where, entity.name, "where");
+    // A criteria update is scoped to the caller's own rows, but nothing stopped
+    // it from handing one of them to another tenant.
+    this.ctx.assertTenantColumnOnUpdate(entity, data as Partial<T>);
   }
 
   /**
@@ -2465,6 +2613,7 @@ export class WriteExecutor {
     entity: ClazzType<T>,
     data: UpdateData<T>,
     propertyToColumn: Map<string, string>,
+    tenantColumnName: string | null,
   ): Sql[] {
     const dataFields = fieldsOf(data);
     const setMap: Sql[] = [];
@@ -2472,6 +2621,11 @@ export class WriteExecutor {
       const value = dataFields[key];
       if (value !== undefined) {
         const dbCol = propertyToColumn.get(key) ?? key;
+        // Same rule as save(): while a tenant predicate applies the
+        // discriminator is ORM-owned, so a payload repeating the current
+        // tenant is dropped rather than rewritten (a foreign value already
+        // threw in validation).
+        if (tenantColumnName && dbCol === tenantColumnName) continue;
         setMap.push(sql`${raw(this.ctx.wrap(dbCol))} = ${bindParam(value)}`);
       }
     }
@@ -2575,10 +2729,12 @@ export class WriteExecutor {
     return this.ctx.executeInTransaction(async (session) => {
       const updatePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
 
+      const tenantUpdateWhere = this.ctx.buildTenantWhereClause(entity);
       const setMap = this.buildUpdateManySetClauses(
         entity,
         data,
         updatePropToCol,
+        tenantUpdateWhere ? this.ctx.resolveTenantColumnName(entity) : null,
       );
       if (setMap.length === 0) {
         return { affected: 0 };
@@ -2744,6 +2900,7 @@ export class WriteExecutor {
     whereConditions: Sql[],
     orderBySql: Sql | undefined,
     limit: number | undefined,
+    setColumns: readonly string[] = [],
   ): Promise<{ affected: number }> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
@@ -2752,6 +2909,7 @@ export class WriteExecutor {
     if (whereConditions.length === 0) {
       throw new DeleteWithoutConditionsError("Update");
     }
+    this.ctx.assertTenantColumnNotInSetColumns(entity, setColumns);
     if (limit !== undefined) {
       if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 0) {
         throw new InvalidQueryError(
@@ -2993,6 +3151,7 @@ export class WriteExecutor {
     metadata: EntityScannerMetadata,
     conflictColumns: string[] | undefined,
     isInsertable: (col: ColumnMetadata) => boolean,
+    tenantColumnName: string | null = null,
   ): UpsertPlan | null {
     const pkColumns = metadata.columns
       .filter((col: ColumnMetadata) => col.options?.primary)
@@ -3013,9 +3172,15 @@ export class WriteExecutor {
     }
 
     const conflictSet = new Set(resolvedConflictColumns);
-    const updateColumnNames = insertableColumns
+    const candidateUpdateColumns = insertableColumns
       .map((col: ColumnMetadata) => col.name)
       .filter((name) => !conflictSet.has(name));
+    // The tenant discriminator is written on INSERT and never on conflict:
+    // `tenant_id = EXCLUDED.tenant_id` is exactly how a conflicting row used
+    // to change hands.
+    const updateColumnNames = tenantColumnName
+      ? candidateUpdateColumns.filter((name) => name !== tenantColumnName)
+      : candidateUpdateColumns;
 
     return {
       insertableColumns,
@@ -3027,7 +3192,56 @@ export class WriteExecutor {
         this.ctx.wrap(name),
       ),
       wrappedUpdate: updateColumnNames.map((name) => this.ctx.wrap(name)),
+      tenantColumnDropped:
+        updateColumnNames.length !== candidateUpdateColumns.length,
     };
+  }
+
+  /**
+   * The tenant guard an upsert's conflict branch runs under, or null when the
+   * entity is not tenant-scoped in this context.
+   *
+   * `predicate` reads the *existing* row — `"orders"."tenant_id" = ?` — which
+   * PostgreSQL requires to be table-qualified inside `DO UPDATE … WHERE`
+   * (a bare column there is ambiguous against `excluded`), and which must use
+   * the bare table name even when the table itself is schema-qualified.
+   * `tableRef` is that same bare reference, for MySQL's per-assignment form.
+   */
+  private buildUpsertTenantGuard<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+  ): UpsertTenantGuard | null {
+    const columnName = this.ctx.resolveTenantColumnName(entity);
+    if (!columnName) return null;
+    const predicate = this.ctx.buildTenantWhereClause(entity, metadata.name);
+    if (!predicate) return null;
+    return {
+      predicate,
+      tableRef: this.ctx.wrap(metadata.name),
+      columnName,
+    };
+  }
+
+  /**
+   * Warns once per entity when a tenant-guarded upsert wrote fewer rows than
+   * it was given — the conflicting row belongs to another tenant and was
+   * skipped. PostgreSQL and SQLite report one row per write, so the shortfall
+   * is a real signal there; MySQL's 0/1/2 convention conflates "blocked" with
+   * "value-identical", so it is not inspected.
+   */
+  private warnIfUpsertSuppressed<T>(
+    entity: ClazzType<T>,
+    guard: UpsertTenantGuard | null,
+    plan: UpsertPlan,
+    affected: number,
+    expected: number,
+  ): void {
+    if (!guard || this.ctx.isMySqlFamily()) return;
+    // A statement that degraded to DO NOTHING skips a conflicting row whoever
+    // owns it, so a shortfall there says nothing about tenancy.
+    if (plan.wrappedUpdate.length === 0) return;
+    if (affected >= expected) return;
+    this.ctx.warnTenantUpsertSuppressed(entity, guard.columnName);
   }
 
   /**
@@ -3063,10 +3277,21 @@ export class WriteExecutor {
     this.ctx.validateWriteInputKeys(entity, metadata, [data], "upsert");
     this.ctx.applyTenantColumnOnInsert(entity, data);
 
-    const plan = this.buildUpsertPlan(entity, metadata, conflictColumns, (col) =>
-      this.statesUpsertValue(col, data),
+    const tenantGuard = this.buildUpsertTenantGuard(entity, metadata);
+    const plan = this.buildUpsertPlan(
+      entity,
+      metadata,
+      conflictColumns,
+      (col) => this.statesUpsertValue(col, data),
+      tenantGuard?.columnName ?? null,
     );
-    if (!plan || plan.wrappedUpdate.length === 0) {
+    if (!plan) {
+      return { affected: 0 };
+    }
+    // Nothing left to write on conflict. With the tenant column dropped the
+    // INSERT itself is still wanted (conflicting rows are skipped); without it
+    // the payload never asked for an update in the first place.
+    if (plan.wrappedUpdate.length === 0 && !plan.tenantColumnDropped) {
       return { affected: 0 };
     }
 
@@ -3083,10 +3308,13 @@ export class WriteExecutor {
         columnValues,
         plan.wrappedConflict,
         plan.wrappedUpdate,
+        tenantGuard,
       );
 
       const queryResult = (await session.query(upsertSql)) as DriverExecResult;
-      return { affected: this.affectedCount(queryResult) };
+      const affected = this.affectedCount(queryResult);
+      this.warnIfUpsertSuppressed(entity, tenantGuard, plan, affected, 1);
+      return { affected };
     });
   }
 
@@ -3170,6 +3398,7 @@ export class WriteExecutor {
     // The column set is the union over the batch: an auto-increment column
     // is named only when every item supplies a value, any other column when
     // at least one does (items missing it bind NULL).
+    const tenantGuard = this.buildUpsertTenantGuard(entity, metadata);
     const plan = this.buildUpsertPlan(
       entity,
       metadata,
@@ -3183,8 +3412,12 @@ export class WriteExecutor {
           : items.some(
               (item) => fieldsOf(item)[this.ctx.propKey(col)] !== undefined,
             ),
+      tenantGuard?.columnName ?? null,
     );
-    if (!plan || plan.wrappedUpdate.length === 0) {
+    if (!plan) {
+      return { affected: 0 };
+    }
+    if (plan.wrappedUpdate.length === 0 && !plan.tenantColumnDropped) {
       return { affected: 0 };
     }
 
@@ -3206,10 +3439,13 @@ export class WriteExecutor {
         valueRows,
         plan.wrappedConflict,
         plan.wrappedUpdate,
+        tenantGuard,
       );
 
       const queryResult = (await session.query(upsertSql)) as DriverExecResult;
-      return { affected: this.affectedCount(queryResult) };
+      const affected = this.affectedCount(queryResult);
+      this.warnIfUpsertSuppressed(entity, tenantGuard, plan, affected, items.length);
+      return { affected };
     });
   }
 
