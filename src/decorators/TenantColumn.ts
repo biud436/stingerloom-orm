@@ -31,8 +31,12 @@ export interface TenantColumnMetadata {
  *
  * Use `@TenantColumn()` only when you need to **read** the tenant value from
  * entity instances (e.g., audit logs, admin dashboards, cross-tenant exports).
- * Writing to this property is ignored; the ORM always uses the context value
- * and throws `TenantMismatchError` if the supplied value disagrees.
+ * While a tenant context is active, writing to this property never moves a row
+ * between tenants: an INSERT takes the value from the context, an UPDATE leaves
+ * the column out of its SET list, and either branch rejects a value that
+ * disagrees with the active tenant with `OrmError(OrmErrorCode.TENANT_MISMATCH)`.
+ * Under `MetadataContext.runUnscoped()` or `run("public", ...)` no predicate is
+ * applied and the value is written as given — that is the deliberate admin path.
  *
  * @example
  * ```ts

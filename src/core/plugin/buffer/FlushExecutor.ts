@@ -4,6 +4,7 @@ import { ENTITY_TOKEN } from "../../../decorators/Entity";
 import { VERSION_TOKEN } from "../../../decorators/Version";
 import { CREATE_TIMESTAMP_TOKEN } from "../../../decorators/CreateTimestamp";
 import { UPDATE_TIMESTAMP_TOKEN } from "../../../decorators/UpdateTimestamp";
+import { isNonTenantEntity } from "../../../decorators/TenantColumn";
 import { PluginContext } from "../PluginContext";
 import { TrackedEntry, PersistEntry } from "./BufferEntry";
 import {
@@ -66,6 +67,23 @@ export class FlushExecutor {
     const hasCreateTs = Reflect.getMetadata(CREATE_TIMESTAMP_TOKEN, entityClass);
     const hasUpdateTs = Reflect.getMetadata(UPDATE_TIMESTAMP_TOKEN, entityClass);
     return !!(hasVersion || hasCreateTs || hasUpdateTs);
+  }
+
+  /**
+   * True when the entity carries a tenant discriminator under the
+   * `"tenant_column"` strategy.
+   *
+   * The batched `UPDATE … WHERE pk IN (…)` is hand-built SQL that never
+   * receives the automatic tenant predicate, so a dirty instance loaded under
+   * one tenant and flushed under another would rewrite the original owner's
+   * row. Those entities take the per-row `save()` path instead, which is
+   * tenant-scoped — batching is an optimization, isolation is not.
+   */
+  private isTenantScoped(entityClass: ClazzType<any>): boolean {
+    return (
+      this.ctx.em.getTenantColumnConfig() !== null &&
+      !isNonTenantEntity(entityClass)
+    );
   }
 
   /**
@@ -335,7 +353,12 @@ export class FlushExecutor {
       if (items.length === 0) continue;
 
       // Fallback to individual save for: single item, composite PK, or entities with version/timestamp (#163)
-      if (items.length === 1 || items[0].entry.pkColumns.length > 1 || this.hasOrmManagedFields(entityClass)) {
+      if (
+        items.length === 1 ||
+        items[0].entry.pkColumns.length > 1 ||
+        this.hasOrmManagedFields(entityClass) ||
+        this.isTenantScoped(entityClass)
+      ) {
         for (const { entry, diff } of items) {
           if (visited.has(entry.instance)) continue;
           await this.emitFlushEvent("preUpdate", entry.entity, entry.instance, diff);
