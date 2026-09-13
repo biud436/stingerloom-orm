@@ -564,9 +564,29 @@ await em.register({
 With `tenantStrategy: "tenant_column"` the ORM applies four behaviors to every entity without any per-entity code:
 
 1. **DDL injection.** `SchemaRegistrar` adds `tenant_id VARCHAR(64) NOT NULL` (or the configured type) to every table. You don't declare the column on your entity class.
-2. **INSERT auto-fill + validation.** `save()` / `saveMany()` / `insertMany()` / `upsert()` / `batchUpsert()` populate `tenant_id` from `MetadataContext.getCurrentTenant()`. Inserting with no active tenant context throws `MISSING_TENANT_CONTEXT`; inserting with an explicit `tenant_id` that disagrees with the context throws `TENANT_MISMATCH`.
+2. **INSERT auto-fill + validation.** `save()` / `saveMany()` / `insertMany()` / `upsert()` / `batchUpsert()` populate `tenant_id` from `MetadataContext.getCurrentTenant()`. Inserting with no active tenant context throws `MISSING_TENANT_CONTEXT`; inserting with an explicit `tenant_id` that disagrees with the context throws `TENANT_MISMATCH` — on the UPDATE side too, where `save()` rejects a payload naming another tenant instead of moving the row.
 3. **WHERE injection on reads.** `find()`, `findOne()`, `findByPK()`, `findAndCount()`, `findWithCursor()`, `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`, and `SelectQueryBuilder.getMany()` / `getCount()` / `exists()` all append `AND tenant_id = ?`. Eager joins and relation loaders inherit the same predicate.
-4. **WHERE injection on writes.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()` also get `AND tenant_id = ?`, so a query running under tenant A can never touch tenant B's rows. What happens when **no** tenant context is active at all is governed by the `tenantOnMissingContext` policy (see below).
+4. **WHERE injection on writes.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()`, and `save()` / `saveMany()` on their UPDATE branch all get `AND tenant_id = ?`, so a query running under tenant A can never touch tenant B's rows. The upsert family carries the same predicate on its conflict branch (see the table below). What happens when **no** tenant context is active at all is governed by the `tenantOnMissingContext` policy (see below).
+
+#### Which write paths carry the predicate
+
+| Operation | Under tenant A, targeting a row owned by tenant B |
+|-----------|---------------------------------------------------|
+| `save({ id })` / `saveMany([{ id }])` | `EntityNotFoundError` — the UPDATE matches on `pk AND tenant_id`, and the existence probe is scoped too |
+| `save()` with a foreign `tenant_id` in the payload | `TENANT_MISMATCH`, on the INSERT and UPDATE branch alike. The column is never in the UPDATE `SET` list, so a round-tripped entity cannot move its own row |
+| `upsert()` / `batchUpsert()` | the conflict branch skips the row — `affected` counts it as 0 (PostgreSQL/SQLite) and a warning is logged once per entity class |
+| `createInsertBuilder().doUpdate()` | same skip; your own `doUpdateWhere()` predicate is ANDed with the tenant one |
+| `insertIgnore()` | already safe — `DO NOTHING` never writes an existing row (the insert is dropped instead) |
+| `update()` / `updateMany()` / `increment()` / `decrement()` / `delete()` / `deleteMany()` / `softDelete()` / `restore()` | `affected: 0`, nothing written |
+| `createUpdateBuilder()` | `affected: 0`, nothing written |
+| any write that sets the tenant column itself | `TENANT_MISMATCH` — a tenant cannot hand one of its own rows to another tenant either. `save()` / `updateMany()` accept the *current* tenant and drop it from the `SET` list; `createUpdateBuilder().set()` and `createInsertBuilder().doUpdate()` reject the column outright, because their values are already rendered by the time the statement runs. The guard applies while a tenant context is active — `MetadataContext.runUnscoped()` and `MetadataContext.run("public", ...)` are the way to move a row deliberately |
+| `clear()` | **not scoped** — it empties the table for every tenant, like the DDL-shaped operation it is |
+| `attachRelation()` / `detachRelation()` on a `@ManyToMany` pivot | **not scoped** — the join table has no tenant column; scope the owning entity instead |
+| `em.query()` raw SQL | **not scoped** — warns once per call site |
+
+`upsert()` / `batchUpsert()` / `createInsertBuilder().doUpdate()` are INSERTs first: they always reject without a tenant context, under every `tenantOnMissingContext` policy and under `runUnscoped()` / `run("public", ...)` too, because there is no tenant value to write into the new row.
+
+On MySQL/MariaDB `ON DUPLICATE KEY UPDATE` takes no `WHERE`, so every assignment is emitted as `col = IF(tbl.tenant_id = ?, VALUES(col), tbl.col)` instead. The row is left untouched either way, but the count means something different there: `mysql2` connects with `CLIENT_FOUND_ROWS`, so a blocked row reports `affected: 1` (matched, nothing written) — the same number an insert reports, while a real update reports 2. Read the rows back if you need to know which happened.
 
 ```typescript
 @Entity()
@@ -609,7 +629,7 @@ class AuditLog {
 }
 ```
 
-If you assign a value to a `@TenantColumn` property on `save()`, it must match the current context — the ORM throws `TENANT_MISMATCH` otherwise. You can't forge a tenant by setting the property manually.
+If you assign a value to a `@TenantColumn` property on `save()`, it must match the current context — the ORM throws `TENANT_MISMATCH` otherwise, on an INSERT and on an UPDATE alike. You can't forge a tenant by setting the property manually: the column is dropped from the UPDATE `SET` list while a tenant predicate applies, so a row never changes owner through a write.
 
 ### Excluding an entity with `@NonTenantEntity`
 
@@ -688,7 +708,7 @@ await em.register({
 | `"throw"` | The statement rejects with `MISSING_TENANT_CONTEXT` — the same error INSERT raises. Recommended for production. |
 | `"allow"` | The statement executes unfiltered, silently. For applications that intentionally mix scoped and global access. |
 
-The policy covers every path that receives the automatic predicate: `find*`, `count`/`exists` and the other aggregates, `SelectQueryBuilder`, relation loaders, `updateMany`, `deleteMany`, `softDelete`, `restore`. It does not change INSERT (which always throws without a context), and it never fires for the sanctioned escape hatches:
+The policy covers every path that receives the automatic predicate: `find*`, `count`/`exists` and the other aggregates, `SelectQueryBuilder`, relation loaders, `updateMany`, `deleteMany`, `softDelete`, `restore`, and `save()` / `saveMany()` on their UPDATE branch. It does not change INSERT (which always throws without a context), and it never fires for the sanctioned escape hatches:
 
 - `MetadataContext.runUnscoped()` — the explicit cross-tenant block
 - `MetadataContext.run("public", ...)` — the explicit admin/bootstrap context

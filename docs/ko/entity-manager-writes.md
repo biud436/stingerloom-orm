@@ -660,15 +660,40 @@ console.log(result.affected); // MySQL: INSERT면 1, UPDATE면 2 / PostgreSQL·S
 
 | 드라이버 | INSERT | UPDATE | 변경 없음 |
 |---------|--------|--------|---------|
-| MySQL | 1 | 2 | 0 |
+| MySQL | 1 | 2 | 1 |
 | PostgreSQL | 1 | 1 | 1 |
 | SQLite | 1 | 1 | 1 |
 
-MySQL은 `ON DUPLICATE KEY UPDATE`의 `affectedRows`를 씁니다. 내부적으로 행을 삭제하고 재삽입하는 방식이라 update를 2로 세어요. PostgreSQL과 SQLite는 insert·update 모두 1을 반환합니다. 변경 여부만 알면 충분하다면 `result.affected > 0`으로 판단하면 돼요.
+MySQL은 `ON DUPLICATE KEY UPDATE`의 `affectedRows`를 씁니다. INSERT는 1, UPDATE는 2로 세고, 값이 그대로인 기존 행은 MySQL 매뉴얼상의 0이 아니라 1로 잡혀요 — `mysql2`가 `CLIENT_FOUND_ROWS`(변경된 행이 아니라 매칭된 행)로 접속하기 때문입니다. PostgreSQL과 SQLite는 세 경우 모두 1을 반환합니다. 변경 여부만 알면 충분하다면 `result.affected > 0`으로 판단하면 돼요.
 
 `batchUpsert()`는 `items` 배열이 비어 있으면 `{ affected: 0 }`을 반환합니다.
 
 리포지토리에서는 `userRepo.batchUpsert(items, conflictColumns)`로 동일하게 사용할 수 있어요.
+
+### `tenantStrategy: "tenant_column"`일 때
+
+충돌 분기는 현재 테넌트가 소유한 행만 씁니다. PostgreSQL과 SQLite는 predicate가 `DO UPDATE ... WHERE`로 붙어요.
+
+```sql
+INSERT INTO "user" ("email", "name", "tenant_id") VALUES ($1, $2, $3)
+ON CONFLICT ("email") DO UPDATE SET "name" = EXCLUDED."name"
+WHERE "user"."tenant_id" = $4
+```
+
+MySQL/MariaDB의 `ON DUPLICATE KEY UPDATE`에는 `WHERE`가 없어서, 대입마다 가드를 답니다.
+
+```sql
+INSERT INTO `user` (`email`, `name`, `tenant_id`) VALUES (?, ?, ?)
+ON DUPLICATE KEY UPDATE `name` = IF(`user`.`tenant_id` = ?, VALUES(`name`), `user`.`name`)
+```
+
+알아 두면 좋은 결과는 세 가지입니다.
+
+- 테넌트 컬럼 자체가 갱신 목록에 들어가지 않으므로, 충돌한 행의 소유자가 바뀔 일이 없습니다.
+- 다른 테넌트 소유라서 건너뛴 행은 PostgreSQL·SQLite에서 affected에 잡히지 않고, 엔티티 클래스당 한 번 경고가 남습니다. MySQL/MariaDB는 같은 경우를 1로 보고하는데(`mysql2`가 `CLIENT_FOUND_ROWS`로 접속해서 매칭만 돼도 세거든요), INSERT가 보고하는 숫자와 같습니다. 확실히 알아야 하면 행을 다시 읽어 보세요.
+- 갱신할 컬럼이 테넌트 컬럼밖에 남지 않으면 문장이 `DO NOTHING` / `INSERT IGNORE`로 내려갑니다. INSERT는 그대로 수행되고, 충돌한 행은 건드리지 않아요.
+
+`insertIgnore()`에는 가드가 필요 없습니다 — 기존 행을 쓰는 일이 없으니까요. 충돌한 키를 다른 테넌트가 소유하고 있으면, 버려지는 쪽은 이번 INSERT입니다.
 
 ---
 
@@ -831,7 +856,7 @@ const { text, values } = em.createInsertBuilder(SyncMarker)
   .toSql();
 ```
 
-테넌트 스코프는 실행 시점에 적용되므로 `build()` 결과에는 나타나지 않습니다.
+테넌트 스코프는 실행 시점에 적용되므로 `build()` 결과에는 나타나지 않습니다. 테넌트 컬럼 채움은 물론이고, `tenant_column` 전략에서 `doUpdate()`가 다른 테넌트의 행을 건드리지 못하게 막는 가드(직접 지정한 `doUpdateWhere()` 조건과 AND로 결합)도 마찬가지예요.
 
 ### 동작 참고
 

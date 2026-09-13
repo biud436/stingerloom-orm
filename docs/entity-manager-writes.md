@@ -660,15 +660,40 @@ The `affected` count is **driver-reported as-is** — not normalized:
 
 | Driver | INSERT | UPDATE | Unchanged row |
 |--------|--------|--------|---------------|
-| MySQL | 1 | 2 | 0 |
+| MySQL | 1 | 2 | 1 |
 | PostgreSQL | 1 | 1 | 1 |
 | SQLite | 1 | 1 | 1 |
 
-MySQL uses `affectedRows` from `ON DUPLICATE KEY UPDATE`, which counts inserts as 1 and updates as 2 (it internally deletes + re-inserts the row). PostgreSQL and SQLite report 1 for both. If you only need to know whether anything changed, compare `result.affected > 0`.
+MySQL uses `affectedRows` from `ON DUPLICATE KEY UPDATE`, which counts an insert as 1 and an update as 2. An existing row set to its current values counts as 1 here rather than the 0 the MySQL manual documents, because `mysql2` connects with `CLIENT_FOUND_ROWS` (matched rows, not changed rows). PostgreSQL and SQLite report 1 in all three cases. If you only need to know whether anything changed, compare `result.affected > 0`.
 
 `batchUpsert()` returns `{ affected: 0 }` when the `items` array is empty.
 
 The repository equivalent is `userRepo.batchUpsert(items, conflictColumns)`.
+
+### Under `tenantStrategy: "tenant_column"`
+
+The conflict branch only ever writes rows belonging to the active tenant. PostgreSQL and SQLite take the predicate as a `DO UPDATE ... WHERE`:
+
+```sql
+INSERT INTO "user" ("email", "name", "tenant_id") VALUES ($1, $2, $3)
+ON CONFLICT ("email") DO UPDATE SET "name" = EXCLUDED."name"
+WHERE "user"."tenant_id" = $4
+```
+
+MySQL/MariaDB has no `WHERE` on `ON DUPLICATE KEY UPDATE`, so each assignment carries the guard instead:
+
+```sql
+INSERT INTO `user` (`email`, `name`, `tenant_id`) VALUES (?, ?, ?)
+ON DUPLICATE KEY UPDATE `name` = IF(`user`.`tenant_id` = ?, VALUES(`name`), `user`.`name`)
+```
+
+Three consequences worth knowing:
+
+- The tenant column itself is never in the update list, so a conflicting row cannot change owner.
+- A row skipped because another tenant owns it is reported as not affected on PostgreSQL and SQLite, and the ORM logs a warning once per entity class. MySQL/MariaDB reports 1 for it (`mysql2` connects with `CLIENT_FOUND_ROWS`, so a matched-but-unchanged row counts) — the same number an insert reports, so read the rows back there if you need certainty.
+- When the tenant column was the only column left to update, the statement degrades to `DO NOTHING` / `INSERT IGNORE`: the insert still happens and the conflicting row is left alone.
+
+`insertIgnore()` needs no guard — it never writes an existing row. When another tenant owns the conflicting key, your insert is the one that is dropped.
 
 ---
 
@@ -831,7 +856,7 @@ const { text, values } = em.createInsertBuilder(SyncMarker)
   .toSql();
 ```
 
-Tenant scoping is applied at execute time, so it does not appear in `build()` output.
+Tenant scoping is applied at execute time, so it does not appear in `build()` output — that covers both the tenant column fill and, under `tenant_column`, the guard that keeps `doUpdate()` off rows owned by another tenant (ANDed with your own `doUpdateWhere()` predicate).
 
 ### Behavior notes
 
