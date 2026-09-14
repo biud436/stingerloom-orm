@@ -586,7 +586,7 @@ With `tenantStrategy: "tenant_column"` the ORM applies four behaviors to every e
 
 `upsert()` / `batchUpsert()` / `createInsertBuilder().doUpdate()` are INSERTs first: they always reject without a tenant context, under every `tenantOnMissingContext` policy and under `runUnscoped()` / `run("public", ...)` too, because there is no tenant value to write into the new row.
 
-On MySQL/MariaDB `ON DUPLICATE KEY UPDATE` takes no `WHERE`, so every assignment is emitted as `col = IF(tbl.tenant_id = ?, VALUES(col), tbl.col)` instead. The row is left untouched either way, but the count means something different there: `mysql2` connects with `CLIENT_FOUND_ROWS`, so a blocked row reports `affected: 1` (matched, nothing written) — the same number an insert reports, while a real update reports 2. Read the rows back if you need to know which happened.
+On MySQL/MariaDB `ON DUPLICATE KEY UPDATE` takes no `WHERE`, so every assignment is emitted as `col = IF(tbl.tenant_id = ?, VALUES(col), tbl.col)` instead (the `@Version` bump as `version = IF(tbl.tenant_id = ?, COALESCE(tbl.version, 0) + 1, tbl.version)`). The row is left untouched either way, but the count means something different there: `mysql2` connects with `CLIENT_FOUND_ROWS`, so a blocked row reports `affected: 1` (matched, nothing written) — the same number an insert reports, while a real update reports 2. Read the rows back if you need to know which happened.
 
 ```typescript
 @Entity()

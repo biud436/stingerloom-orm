@@ -38,8 +38,9 @@ VALUES (?, ?), (?, ?), (?, ?)
 
 Key characteristics:
 - Executes as a **single SQL statement** -- far more efficient than calling `save()` in a loop.
-- `@CreateTimestamp` and `@UpdateTimestamp` columns are automatically injected.
-- `@Version` columns are initialized to `1` for each row.
+- `@CreateTimestamp` and `@UpdateTimestamp` columns a row leaves unset get the current time, whatever their `type` (`timestamptz` included). Other date/time columns are not touched.
+- `@Version` columns are initialized to `1` for each row, and client-generated keys (`@PrimaryGeneratedColumn("uuid")` / `"uuid-v7"`) are generated for rows that leave them unset. These generated values are written back onto the objects you passed.
+- A column no row provides is left out of the statement, so its database `DEFAULT` applies -- the same rule as `saveMany()` (see [undefined vs null on INSERT](#undefined-vs-null-on-insert-letting-db-defaults-apply)).
 - Returns `{ affected: number }` -- if you need the generated PKs back, use `insertManyAndReturn()` (PostgreSQL / SQLite) or `saveMany()` (all dialects) instead.
 
 ---
@@ -80,7 +81,7 @@ RETURNING *
 Key characteristics:
 - Executes as a **single SQL statement** -- same efficiency as `insertMany()`.
 - Returns fully-hydrated entity instances in **input order**.
-- `@CreateTimestamp`, `@UpdateTimestamp`, and `@Version` columns are automatically injected before the insert.
+- `@CreateTimestamp`, `@UpdateTimestamp`, `@Version` and client-generated UUID keys are filled in before the insert, and a column no row provides is left to its database `DEFAULT` -- the same rules as `insertMany()`.
 - Empty `items` returns `[]` immediately without touching the database.
 
 **Dialect support.** `insertManyAndReturn()` requires `INSERT ... RETURNING`, available on PostgreSQL and SQLite 3.35+. Calling it on MySQL throws `OrmError` with code `UNSUPPORTED_DATABASE`; use `saveMany()` there instead.
@@ -181,6 +182,8 @@ INSERT INTO "t" DEFAULT VALUES
 ```
 
 For `saveMany()` batch inserts, all rows share one column set in the multi-row `VALUES` list. A column is omitted only when **no item in the batch** provides it; in mixed batches (some items provide the column, some don't), the column stays in the list and missing rows bind `NULL`.
+
+`insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()` and `batchUpsert()` follow the same batch rule, and `upsert()` / `insertIgnore()` the single-row one. When no row of an `insertMany()` provides any column at all, the full column list is kept and binds `NULL` -- a multi-row INSERT has no portable all-defaults form. Before 2.1, `insertMany()`, `insertManyAndReturn()` and `createInsertBuilder()` named every declared column and bound `NULL` for the ones you left out, so a `DEFAULT` never applied there.
 
 ---
 
@@ -647,6 +650,54 @@ ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `loginCount` = VALUES(`loginCou
 
 The optional third argument specifies the conflict columns. If omitted, the primary key is used.
 
+### Managed columns on conflict
+
+`upsert()`, `insertIgnore()` and `batchUpsert()` fill in the columns the ORM owns on a **copy** of your payload -- the objects you pass are not modified (the tenant column included), so read the row back if you need the generated key, version or timestamps. The primary key and the managed columns never take the payload's value on the conflict branch:
+
+| Column | Row inserted | Row conflicts |
+|--------|--------------|---------------|
+| Primary key | yours; `"uuid"` / `"uuid-v7"` keys are generated, auto-increment keys come from the database | not written -- the stored key stays |
+| Other `"uuid"` / `"uuid-v7"` columns | yours, or generated | written only when the payload states one |
+| `@Version` | yours, or `1` | stored value + 1 (a stored `NULL` counts as 0) |
+| `@CreateTimestamp` | yours, or the current time | not written |
+| `@UpdateTimestamp` | yours, or the current time | the inserted row's value -- the current time unless you passed one; a payload of just the key and `updatedAt` still updates it |
+| `@DeletedAt` | yours, or `NULL` | `NULL` unless the payload sets it -- a soft-deleted row is restored |
+| Tenant column (`tenant_column`) | the active tenant | not written |
+
+For an `Order` with `@Version`, `@UpdateTimestamp` and `@DeletedAt`:
+
+```typescript
+await em.upsert(Order, { slug: "a-1", amount: 42 }, ["slug"]);
+```
+
+```sql
+-- PostgreSQL (SQLite is identical with lowercase `excluded`)
+INSERT INTO "order" ("slug", "amount", "version", "createdAt", "updatedAt")
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT ("slug") DO UPDATE SET "amount" = EXCLUDED."amount",
+  "updatedAt" = EXCLUDED."updatedAt",
+  "version" = COALESCE("order"."version", 0) + 1,
+  "deletedAt" = NULL
+
+-- MySQL / MariaDB
+INSERT INTO `order` (`slug`, `amount`, `version`, `createdAt`, `updatedAt`)
+VALUES (?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`),
+  `updatedAt` = VALUES(`updatedAt`),
+  `version` = COALESCE(`order`.`version`, 0) + 1,
+  `deletedAt` = NULL
+```
+
+Things to know:
+
+- **The version is bumped, not checked.** An upsert is last-write-wins and never throws `OptimisticLockError`; it only makes sure a `save()` holding the pre-upsert version is rejected afterwards. A key-only upsert that merely restores a soft-deleted row keeps its version, as `restore()` does. A `@Version` value in an `upsert()` / `batchUpsert()` payload is used when the row is inserted and ignored on conflict, with a warning logged once per entity class. Use `save()` when a stale write must fail.
+- **Managed columns never cause an update on their own.** When nothing of yours is left to update besides the conflict target, the statement degrades to `DO NOTHING` on PostgreSQL/SQLite and to a no-op `ON DUPLICATE KEY UPDATE <col> = <col>` on MySQL/MariaDB: a missing row is inserted, a live conflicting row -- version and timestamps included -- is left alone. The one exception is a soft-deleted conflicting row, which is still restored (`DO UPDATE SET "deletedAt" = NULL WHERE "order"."deletedAt" IS NOT NULL`). Before 2.1 such a call returned `{ affected: 0 }` without sending any SQL, so the missing row was not inserted either.
+- **Soft delete and unique keys.** With an ordinary unique index a trashed row still conflicts, and the upsert restores it with your values -- unlike `updateMany()`, which skips soft-deleted rows. If you want a new row instead, use a partial unique index (`WHERE "deletedAt" IS NULL`, PostgreSQL/SQLite) and target it with `createInsertBuilder().onConflict(cols, { where })`; `upsert()` cannot name a partial index.
+- **The INSERT is always attempted.** The database checks NOT NULL before it looks for a conflict, so every NOT NULL column without a default must be in the payload even when the row exists. A payload that states no column at all -- only a relation object, which the upsert family does not resolve -- sends nothing and returns `{ affected: 0 }`.
+- **JOINED children are rejected.** `upsert()`, `insertIgnore()`, `batchUpsert()`, `insertMany()`, `insertManyAndReturn()` and `createInsertBuilder()` write one table, and a table-per-type child spans two, so they throw `UNSUPPORTED_OPERATION`; use `save()` (`saveMany()` falls back to it for such children).
+- **`insertIgnore()`** seeds the same values for the row it inserts and never writes a conflicting row, soft-deleted or not.
+- **`createInsertBuilder()`** seeds inserted rows the same way, but its `doUpdate()` assigns exactly the columns you list -- no version bump, timestamp refresh or `@DeletedAt` reset is added.
+
 ### Return value — `{ affected: number }`
 
 Both `upsert()` and `batchUpsert()` return `Promise<{ affected: number }>`.
@@ -658,13 +709,13 @@ console.log(result.affected); // 1 (insert) or 2 (update) on MySQL, 1 on Postgre
 
 The `affected` count is **driver-reported as-is** — not normalized:
 
-| Driver | INSERT | UPDATE | Unchanged row |
-|--------|--------|--------|---------------|
-| MySQL | 1 | 2 | 1 |
-| PostgreSQL | 1 | 1 | 1 |
-| SQLite | 1 | 1 | 1 |
+| Driver | INSERT | UPDATE | Unchanged row | Conflicting row skipped |
+|--------|--------|--------|---------------|-------------------------|
+| MySQL | 1 | 2 | 1 | 1 |
+| PostgreSQL | 1 | 1 | 1 | 0 |
+| SQLite | 1 | 1 | 1 | 0 |
 
-MySQL uses `affectedRows` from `ON DUPLICATE KEY UPDATE`, which counts an insert as 1 and an update as 2. An existing row set to its current values counts as 1 here rather than the 0 the MySQL manual documents, because `mysql2` connects with `CLIENT_FOUND_ROWS` (matched rows, not changed rows). PostgreSQL and SQLite report 1 in all three cases. If you only need to know whether anything changed, compare `result.affected > 0`.
+MySQL uses `affectedRows` from `ON DUPLICATE KEY UPDATE`, which counts an insert as 1 and an update as 2. An existing row set to its current values counts as 1 here rather than the 0 the MySQL manual documents, because `mysql2` connects with `CLIENT_FOUND_ROWS` (matched rows, not changed rows). An entity with `@Version` has no unchanged row: the conflict branch bumps the version, so MySQL reports 2 even when every value you passed matches the stored row. PostgreSQL and SQLite report 1 for every row they write and 0 for a conflicting row they skip -- because nothing of yours was left to update (see [Managed columns on conflict](#managed-columns-on-conflict)) or, under `tenant_column`, because another tenant owns it.
 
 `batchUpsert()` returns `{ affected: 0 }` when the `items` array is empty.
 
@@ -691,7 +742,8 @@ Three consequences worth knowing:
 
 - The tenant column itself is never in the update list, so a conflicting row cannot change owner.
 - A row skipped because another tenant owns it is reported as not affected on PostgreSQL and SQLite, and the ORM logs a warning once per entity class. MySQL/MariaDB reports 1 for it (`mysql2` connects with `CLIENT_FOUND_ROWS`, so a matched-but-unchanged row counts) — the same number an insert reports, so read the rows back there if you need certainty.
-- When the tenant column was the only column left to update, the statement degrades to `DO NOTHING` / `INSERT IGNORE`: the insert still happens and the conflicting row is left alone.
+- When the tenant column was the only column of yours left to update, the statement degrades like any upsert with nothing to update: `DO NOTHING` on PostgreSQL/SQLite, a no-op `ON DUPLICATE KEY UPDATE` on MySQL/MariaDB. The insert still happens and the conflicting row is left alone.
+- The managed assignments sit under the same guard -- on MySQL/MariaDB the version bump is `` `version` = IF(`user`.`tenant_id` = ?, COALESCE(`user`.`version`, 0) + 1, `user`.`version`) ``, so another tenant's row is never bumped or restored.
 
 `insertIgnore()` needs no guard — it never writes an existing row. When another tenant owns the conflicting key, your insert is the one that is dropped.
 
@@ -701,7 +753,7 @@ Three consequences worth knowing:
 
 ### The limit of upsert()
 
-`upsert()` and `batchUpsert()` can do exactly one thing on conflict: overwrite the stored row with the values you proposed. That is `col = EXCLUDED.col`, and it is enough for "last write wins".
+`upsert()` and `batchUpsert()` can do exactly one thing with the columns you pass: overwrite the stored value with the proposed one. That is `col = EXCLUDED.col`, and it is enough for "last write wins". The only stored-row arithmetic they perform is the ORM's own bookkeeping -- the `@Version` bump (see [Managed columns on conflict](#managed-columns-on-conflict)) -- and it is not available for your columns.
 
 It is not enough the moment the new value depends on the **stored** value:
 
@@ -768,7 +820,8 @@ Plain values go through the column's write transformer as usual; fragments are t
 ### The three forms of doUpdate()
 
 ```typescript
-// 1. Overwrite with the proposed values -- same as upsert()
+// 1. Overwrite the listed columns with the proposed values -- upsert()'s form,
+//    without its @Version / @UpdateTimestamp / @DeletedAt handling
 .doUpdate(["name", "email"])
 
 // 2. Literal values and raw SQL
@@ -860,7 +913,7 @@ Tenant scoping is applied at execute time, so it does not appear in `build()` ou
 
 ### Behavior notes
 
-- **Statement-level, like `createUpdateBuilder()`** -- no `beforeInsert` / `afterInsert` events and no entity hooks fire. Tenant columns, `@CreateTimestamp` / `@UpdateTimestamp` / `@Version` defaults and column transformers are applied exactly as `insertMany()` applies them.
+- **Statement-level, like `createUpdateBuilder()`** -- no `beforeInsert` / `afterInsert` events and no entity hooks fire. Tenant columns, `@CreateTimestamp` / `@UpdateTimestamp` / `@Version` defaults, generated UUID keys and column transformers are applied to the inserted rows exactly as `insertMany()` applies them; the conflict action assigns only the columns you list.
 - **Duplicate keys inside one statement are not merged for you.** PostgreSQL rejects a `VALUES` list that hits the same conflict target twice (`ON CONFLICT DO UPDATE command cannot affect row a second time`); SQLite applies the rows sequentially so the accumulation compounds. Merge duplicates in the caller before building the statement.
 - **`affected` is driver-reported as-is**, with the same MySQL 1-vs-2 caveat as `upsert()`.
 - The repository equivalent is `markerRepo.createInsertBuilder()`.

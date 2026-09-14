@@ -1531,13 +1531,14 @@ SELECT COUNT(*) AS "result" FROM "building_a"."temperature_readings"
 
 -- Then an atomic upsert:
 INSERT INTO "building_a"."daily_stats"
-  ("device_id", "date", "avgTemperature", "minTemperature", "maxTemperature", "readingCount")
-VALUES ($1, $2, $3, $4, $5, $6)
+  ("device_id", "date", "avgTemperature", "minTemperature", "maxTemperature", "readingCount", "updatedAt")
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT ("id") DO UPDATE SET
   "avgTemperature" = EXCLUDED."avgTemperature",
   "minTemperature" = EXCLUDED."minTemperature",
   "maxTemperature" = EXCLUDED."maxTemperature",
-  "readingCount" = EXCLUDED."readingCount"
+  "readingCount" = EXCLUDED."readingCount",
+  "updatedAt" = EXCLUDED."updatedAt"
 ```
 
 The `upsert()` is key — if the cron job runs twice for the same day, it overwrites instead of creating duplicates. Idempotent by design.

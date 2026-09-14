@@ -85,11 +85,15 @@ export class CatsService {
    * Bulk-create multiple cats in a single INSERT query (insertMany).
    */
   async bulkCreate(dtos: CreateCatDto[]): Promise<{ affected: number }> {
+    // insertMany() runs no entity hooks, so the timestamps are set here.
+    const now = new Date();
     const cats = dtos.map((dto) => {
       const cat = new Cat();
       cat.name = dto.name;
       cat.age = dto.age;
       cat.breed = dto.breed;
+      cat.createdAt = now;
+      cat.updatedAt = now;
       if (dto.ownerId) {
         cat.ownerId = dto.ownerId;
       }

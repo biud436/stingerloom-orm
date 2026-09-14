@@ -864,6 +864,8 @@ WHERE "id" = 1 AND "version" = 1;
 
 When the UPDATE affects 0 rows, it means someone else modified the data first. Stingerloom detects this and throws an `OptimisticLockError`, preventing the silent data loss.
 
+`upsert()` and `batchUpsert()` increment the version too when they update a conflicting row (`version = stored version + 1`), but they do not check it -- an upsert is last-write-wins and never throws `OptimisticLockError`. A `version` in the upsert payload is used only when the row is inserted. See [Managed columns on conflict](./entity-manager-writes.md#managed-columns-on-conflict).
+
 > **Hint** Optimistic locking is suitable when conflicts are rare but data integrity is important (e.g., order status changes, inventory management). For high-contention scenarios where conflicts happen on nearly every request, consider pessimistic locking with `SELECT ... FOR UPDATE` instead.
 
 ## Soft Delete (@DeletedAt)
@@ -959,6 +961,8 @@ const all = await em.find(Post, { withDeleted: true });    // includes deleted
 await em.restore(Post, { id: 1 });                         // restore
 ```
 
+`upsert()` / `batchUpsert()` restore a soft-deleted row they conflict with: unless the payload sets `deletedAt`, the conflict branch writes `deletedAt = NULL`. See [Managed columns on conflict](./entity-manager-writes.md#managed-columns-on-conflict) for how unique indexes decide whether a trashed row conflicts.
+
 ## Automatic Timestamps (@CreateTimestamp / @UpdateTimestamp)
 
 ### Why Automatic Timestamps Exist
@@ -1041,9 +1045,9 @@ WHERE "id" = 1;
 -- Notice: createdAt is NOT in the SET clause
 ```
 
-Both decorators create a `DATETIME` (MySQL) / `TIMESTAMP` (PostgreSQL) NOT NULL column. If you need timezone-aware timestamps in PostgreSQL, use `@Column({ type: "timestamptz" })` with lifecycle hooks instead.
+Both decorators create a `DATETIME` (MySQL) / `TIMESTAMP` (PostgreSQL) NOT NULL column by default. For timezone-aware timestamps pass the type -- `@CreateTimestamp({ type: "timestamptz" })` / `@UpdateTimestamp({ type: "timestamptz" })` -- and every write path stamps them the same way.
 
-> **Hint** If a value is explicitly provided for a `@CreateTimestamp` or `@UpdateTimestamp` column in the `save()` call, the provided value is used instead of the auto-generated one. This is useful for data migration scenarios where you want to preserve original timestamps.
+> **Hint** If a value is explicitly provided for a `@CreateTimestamp` or `@UpdateTimestamp` column in the `save()` call, the provided value is used instead of the auto-generated one. This is useful for data migration scenarios where you want to preserve original timestamps. `upsert()` / `batchUpsert()` use a provided `@CreateTimestamp` value only when the row is inserted, and a provided `@UpdateTimestamp` value on both branches.
 
 ### Computed Columns (@ComputedColumn)
 

@@ -331,7 +331,7 @@ const { text, values } = em
 
 ## InsertQueryBuilder — 표현식 기반 `ON CONFLICT`
 
-`em.upsert()`가 충돌 시 할 수 있는 건 제안한 값으로 덮어쓰는 것뿐입니다(`col = EXCLUDED.col`). 새 값이 *저장된 값으로부터* 계산되어야 할 때 — 카운터 누적, 최댓값 유지, 병합 — 이 형태로는 표현이 안 되고, 읽고 계산해서 되쓰는 왕복은 동시성 아래서 올바르려면 행 잠금이 필요합니다.
+`em.upsert()`가 충돌 시 넘긴 컬럼에 할 수 있는 건 제안한 값으로 덮어쓰는 것뿐입니다(`col = EXCLUDED.col`). ORM이 직접 챙기는 `@Version` / `@UpdateTimestamp` / `@DeletedAt`만 예외입니다. 새 값이 *저장된 값으로부터* 계산되어야 할 때 — 카운터 누적, 최댓값 유지, 병합 — 이 형태로는 표현이 안 되고, 읽고 계산해서 되쓰는 왕복은 동시성 아래서 올바르려면 행 잠금이 필요합니다.
 
 `em.createInsertBuilder()`는 QueryDSL 표현식 전체를 충돌 절에 넣어 줍니다. 데이터베이스가 행을 쥔 채로 계산하니 잠금이 필요 없어요.
 

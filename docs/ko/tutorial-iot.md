@@ -1531,13 +1531,14 @@ SELECT COUNT(*) AS "result" FROM "building_a"."temperature_readings"
 
 -- Then an atomic upsert:
 INSERT INTO "building_a"."daily_stats"
-  ("device_id", "date", "avgTemperature", "minTemperature", "maxTemperature", "readingCount")
-VALUES ($1, $2, $3, $4, $5, $6)
+  ("device_id", "date", "avgTemperature", "minTemperature", "maxTemperature", "readingCount", "updatedAt")
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT ("id") DO UPDATE SET
   "avgTemperature" = EXCLUDED."avgTemperature",
   "minTemperature" = EXCLUDED."minTemperature",
   "maxTemperature" = EXCLUDED."maxTemperature",
-  "readingCount" = EXCLUDED."readingCount"
+  "readingCount" = EXCLUDED."readingCount",
+  "updatedAt" = EXCLUDED."updatedAt"
 ```
 
 `upsert()`가 핵심이에요 -- cron job이 같은 날에 두 번 실행되면 중복을 만드는 대신 덮어써요. 설계적으로 멱등성(idempotent)이 보장돼요.

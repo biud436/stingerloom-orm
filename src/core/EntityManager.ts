@@ -1520,8 +1520,9 @@ export class EntityManager implements BaseEntityManager {
    * Create an `InsertQueryBuilder` for the given entity (or `qAlias`).
    *
    * The expression-capable counterpart to {@link upsert} / {@link batchUpsert}:
-   * those can only overwrite a conflicting row with the values proposed,
-   * while the builder's `.doUpdate()` reads the stored row too — so an
+   * those can only overwrite the columns passed with the values proposed
+   * (plus the ORM's `@Version` / timestamp / `@DeletedAt` bookkeeping),
+   * while the builder's `.doUpdate()` reads the stored row for any column — so an
    * accumulating counter or a high-water mark becomes one statement instead
    * of a locked read-modify-write.
    *
@@ -1619,14 +1620,24 @@ export class EntityManager implements BaseEntityManager {
    * MySQL/MariaDB and `INSERT … ON CONFLICT … DO UPDATE` on
    * PostgreSQL/SQLite.
    *
+   * The ORM-managed columns are filled on a copy of `data` (the object is
+   * not modified): client-side UUID keys, `@Version` = 1 and both
+   * timestamps on insert. On conflict the primary key and `@CreateTimestamp`
+   * are never written, `@Version` becomes the stored value + 1 (not an
+   * optimistic-lock check), `@UpdateTimestamp` takes the proposed value and
+   * an unstated `@DeletedAt` is reset to NULL, restoring a soft-deleted row.
+   * With nothing of the caller's left to update, a live conflicting row is
+   * left alone and the INSERT still runs.
+   *
    * @returns `{ affected }` — the driver-reported affected-row count.
    *
    * MySQL caveat: for `INSERT … ON DUPLICATE KEY UPDATE`, MySQL reports
-   * `affectedRows` as 1 when a new row is inserted, 2 when an existing row
-   * is updated, and 0 when the existing row's values are unchanged. This
-   * count is returned as-is (not normalized), so callers should not treat
-   * it as a literal row count on MySQL. PostgreSQL/SQLite report 1 for
-   * both insert and update.
+   * `affectedRows` as 1 when a new row is inserted and 2 when an existing
+   * row is updated; a conflicting row left as it was also reports 1,
+   * because `mysql2` connects with `CLIENT_FOUND_ROWS`. This count is
+   * returned as-is (not normalized), so callers should not treat it as a
+   * literal row count on MySQL. PostgreSQL/SQLite report 1 per row written
+   * and 0 for a conflicting row that was skipped.
    */
   async upsert<T>(
     entity: ClazzType<T>,
@@ -1646,6 +1657,9 @@ export class EntityManager implements BaseEntityManager {
    * composite-PK "join" entities (reaction, audit-style rows) where
    * application code wants a "POST is idempotent" semantic without
    * hand-rolling dialect SQL.
+   *
+   * The inserted row gets the same generated values as {@link upsert}
+   * (UUID keys, `@Version`, timestamps), filled on a copy of `data`.
    *
    * @returns `{ affected }` — 1 if a new row was inserted, 0 if a
    * matching row already existed.

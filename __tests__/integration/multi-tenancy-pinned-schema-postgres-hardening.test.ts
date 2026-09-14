@@ -38,6 +38,7 @@ import {
   ManyToMany,
   Inheritance,
   DeletedAt,
+  Version,
 } from "../../src/decorators";
 import {
   createTestConnection,
@@ -535,6 +536,9 @@ integrationDescribe(
             @Column({ type: "int" })
             qty!: number;
 
+            @Version()
+            version!: number;
+
             @DeletedAt()
             deletedAt?: Date | null;
           }
@@ -576,6 +580,9 @@ integrationDescribe(
         await em.upsert(Item, { id: a.id, code: "a", qty: 10 }, ["id"]);
         const again = (await em.findByPK(Item, a.id)) as any;
         expect(again.qty).toBe(10);
+        // The conflict branch reads the stored version through the bare
+        // table name while the target is "public"."pw_item_…".
+        expect(again.version).toBe(2);
       });
       expect(await countRows("public", itemTable)).toBe(3);
     });
