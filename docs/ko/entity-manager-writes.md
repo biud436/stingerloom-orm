@@ -657,9 +657,10 @@ ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `loginCount` = VALUES(`loginCou
 | 컬럼 | 새 행 삽입 | 충돌한 행 |
 |------|-----------|-----------|
 | 기본 키 | 넘긴 값. `"uuid"` / `"uuid-v7"` 키는 생성하고, auto-increment 키는 DB가 부여 | 쓰지 않음 — 저장된 키가 유지됨 |
+| 그 밖의 `"uuid"` / `"uuid-v7"` 컬럼 | 넘긴 값, 없으면 생성 | 페이로드에 값이 있을 때만 씀 |
 | `@Version` | 넘긴 값, 없으면 `1` | 저장된 값 + 1 (저장된 `NULL`은 0으로 셈) |
 | `@CreateTimestamp` | 넘긴 값, 없으면 현재 시각 | 쓰지 않음 |
-| `@UpdateTimestamp` | 넘긴 값, 없으면 현재 시각 | 삽입 행의 값 — 직접 넘기지 않았다면 현재 시각 |
+| `@UpdateTimestamp` | 넘긴 값, 없으면 현재 시각 | 삽입 행의 값 — 직접 넘기지 않았다면 현재 시각. 키와 `updatedAt`만 넘겨도 갱신됨 |
 | `@DeletedAt` | 넘긴 값, 없으면 `NULL` | 페이로드에 없으면 `NULL` — soft-delete된 행이 복구됨 |
 | 테넌트 컬럼(`tenant_column`) | 현재 테넌트 | 쓰지 않음 |
 
@@ -689,9 +690,11 @@ ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`),
 
 알아 둘 점은 다음과 같습니다.
 
-- **버전은 올리기만 하고 검사하지 않습니다.** upsert는 마지막에 쓴 값이 이기는 연산이라 `OptimisticLockError`를 던지지 않아요. 대신 upsert 이전 버전을 쥔 `save()`가 나중에 거절되도록 보장합니다. `upsert()` / `batchUpsert()` 페이로드에 넣은 `@Version` 값은 새 행을 삽입할 때만 쓰이고 충돌 시에는 무시되며, 엔티티 클래스당 한 번 경고가 남습니다. 오래된 쓰기를 거절해야 한다면 `save()`를 쓰세요.
+- **버전은 올리기만 하고 검사하지 않습니다.** upsert는 마지막에 쓴 값이 이기는 연산이라 `OptimisticLockError`를 던지지 않아요. 대신 upsert 이전 버전을 쥔 `save()`가 나중에 거절되도록 보장합니다. 키만 넘긴 upsert가 soft-delete된 행을 복구하기만 할 때는 `restore()`처럼 버전을 유지합니다. `upsert()` / `batchUpsert()` 페이로드에 넣은 `@Version` 값은 새 행을 삽입할 때만 쓰이고 충돌 시에는 무시되며, 엔티티 클래스당 한 번 경고가 남습니다. 오래된 쓰기를 거절해야 한다면 `save()`를 쓰세요.
 - **관리 컬럼만으로는 갱신이 일어나지 않습니다.** 충돌 대상 말고는 갱신할 사용자 컬럼이 없으면, 문장이 PostgreSQL·SQLite에서는 `DO NOTHING`, MySQL/MariaDB에서는 아무것도 바꾸지 않는 `ON DUPLICATE KEY UPDATE <col> = <col>`로 내려갑니다. 없는 행은 삽입되고, 살아 있는 충돌 행은 버전·타임스탬프까지 그대로 남아요. 예외는 soft-delete된 충돌 행 하나뿐이고, 이 행은 여전히 복구됩니다(`DO UPDATE SET "deletedAt" = NULL WHERE "order"."deletedAt" IS NOT NULL`). 2.1 이전에는 이런 호출이 SQL을 아예 보내지 않고 `{ affected: 0 }`을 돌려줘서, 없는 행조차 삽입되지 않았습니다.
 - **soft delete와 유니크 키.** 일반 유니크 인덱스라면 삭제된 행도 충돌하고, upsert가 넘긴 값으로 그 행을 복구합니다. soft-delete된 행을 건너뛰는 `updateMany()`와는 다릅니다. 새 행을 만들고 싶다면 부분 유니크 인덱스(`WHERE "deletedAt" IS NULL`, PostgreSQL·SQLite)를 두고 `createInsertBuilder().onConflict(cols, { where })`로 지정하세요. `upsert()`는 부분 인덱스를 지정할 수 없습니다.
+- **INSERT는 항상 시도됩니다.** DB는 충돌을 찾기 전에 NOT NULL을 먼저 검사하므로, 행이 이미 있어도 기본값 없는 NOT NULL 컬럼은 전부 페이로드에 있어야 합니다. 컬럼을 하나도 주지 않은 페이로드(upsert 계열이 해석하지 않는 관계 객체만 있는 경우 등)는 아무것도 보내지 않고 `{ affected: 0 }`을 돌려줍니다.
+- **JOINED 자식은 거부됩니다.** `upsert()`, `insertIgnore()`, `batchUpsert()`, `insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`는 테이블 하나에만 쓰는데, 테이블별 상속(TPT)의 자식은 두 테이블에 걸쳐 있으므로 `UNSUPPORTED_OPERATION`을 던집니다. `save()`를 쓰세요(`saveMany()`는 이런 자식에서 `save()`로 넘어갑니다).
 - **`insertIgnore()`**도 삽입하는 행에는 같은 값을 채우고, 충돌한 행은 soft-delete 여부와 상관없이 절대 쓰지 않습니다.
 - **`createInsertBuilder()`**도 삽입 행은 같은 방식으로 채우지만, `doUpdate()`는 나열한 컬럼만 대입합니다. 버전 증가, 타임스탬프 갱신, `@DeletedAt` 초기화는 붙지 않아요.
 

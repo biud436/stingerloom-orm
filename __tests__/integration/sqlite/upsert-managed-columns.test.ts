@@ -29,6 +29,11 @@
  * Found while fixing it: a primary key the payload states (or the ORM
  * generates) was in the conflict branch's SET list, so an upsert on a unique
  * column rewrote the stored row's key.
+ *
+ * Found in review of the fix: with root columns no longer named, the
+ * single-table INSERT paths would have written a JOINED child into its own
+ * table alone and attached it to another subtype's root row (saveMany()'s
+ * batch path already did), so they now reject JOINED children.
  */
 import "reflect-metadata";
 import { Entity } from "../../../src/decorators/Entity";
@@ -39,6 +44,12 @@ import { Version } from "../../../src/decorators/Version";
 import { CreateTimestamp } from "../../../src/decorators/CreateTimestamp";
 import { UpdateTimestamp } from "../../../src/decorators/UpdateTimestamp";
 import { DeletedAt } from "../../../src/decorators/DeletedAt";
+import { ManyToOne } from "../../../src/decorators/ManyToOne";
+import { RelationColumn } from "../../../src/decorators/RelationColumn";
+import { Inheritance } from "../../../src/decorators/Inheritance";
+import { DiscriminatorColumn } from "../../../src/decorators/DiscriminatorColumn";
+import { DiscriminatorValue } from "../../../src/decorators/DiscriminatorValue";
+import { OrmErrorCode } from "../../../src/errors/OrmErrorCode";
 import { EntityManager } from "../../../src/core/EntityManager";
 import { SnakeNamingStrategy } from "../../../src/core/generators/SnakeNamingStrategy";
 import { MetadataContext } from "../../../src/metadata/MetadataContext";
@@ -83,6 +94,18 @@ class UmcSoft {
   @Column() slug!: string;
   @Column() label!: string;
   @DeletedAt() deletedAt?: Date | null;
+}
+
+/** A heartbeat row: callers touch it with just the key and a timestamp. */
+@Entity({ name: "umc_touch" })
+@UniqueIndex(["slug"])
+class UmcTouch {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() slug!: string;
+  @Column({ type: "int", nullable: true }) hits?: number | null;
+  @Version() version!: number;
+  @CreateTimestamp() createdAt!: Date;
+  @UpdateTimestamp() updatedAt!: Date;
 }
 
 /** Soft delete with nothing but the conflict key to write. */
@@ -130,6 +153,32 @@ class UmcDefaults {
   @Column({ type: "datetime", default: "(CURRENT_TIMESTAMP)" }) postedAt!: Date;
 }
 
+@Entity({ name: "umc_author" })
+class UmcAuthor {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column() name!: string;
+}
+
+/** A defaulted column next to a relation: rows may state only the relation. */
+@Entity({ name: "umc_note" })
+class UmcNote {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column({ default: "draft" }) status!: string;
+  @ManyToOne(() => UmcAuthor, () => undefined)
+  @RelationColumn({ name: "authorId" })
+  author!: UmcAuthor;
+}
+
+/** A relation plus a managed column, unique per author. */
+@Entity({ name: "umc_like" })
+class UmcLike {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToOne(() => UmcAuthor, () => undefined)
+  @RelationColumn({ name: "authorId" })
+  author!: UmcAuthor;
+  @CreateTimestamp() createdAt!: Date;
+}
+
 @Entity({ name: "umc_tz" })
 @UniqueIndex(["slug"])
 class UmcTz {
@@ -146,6 +195,16 @@ class UmcUuid {
   @Column() slug!: string;
 }
 
+/** A generated UUID that is not the primary key. */
+@Entity({ name: "umc_public_id" })
+@UniqueIndex(["slug"])
+class UmcPublicId {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column({ type: "uuid", generationStrategy: "uuid-v7" }) publicId!: string;
+  @Column() slug!: string;
+  @Column({ type: "int" }) hits!: number;
+}
+
 @Entity({ name: "umc_uuid7" })
 @UniqueIndex(["slug"])
 class UmcUuid7 {
@@ -159,14 +218,40 @@ const ENTITIES = [
   UmcVerOnly,
   UmcSoft,
   UmcSoftTag,
+  UmcTouch,
   UmcTag,
   UmcTagManaged,
   UmcTask,
   UmcDefaults,
+  UmcAuthor,
+  UmcNote,
+  UmcLike,
   UmcTz,
   UmcUuid,
   UmcUuid7,
+  UmcPublicId,
 ];
+
+/** A JOINED hierarchy, registered on its own connection. */
+@Entity({ name: "umc_pay" })
+@Inheritance({ strategy: "JOINED" })
+@DiscriminatorColumn({ name: "pay_type", type: "varchar", length: 20 })
+class UmcPay {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column({ type: "int", nullable: true }) amount?: number | null;
+}
+
+@Entity({ name: "umc_card" })
+@DiscriminatorValue("card")
+class UmcCard extends UmcPay {
+  @Column({ nullable: true }) cardNumber?: string | null;
+}
+
+@Entity({ name: "umc_bank" })
+@DiscriminatorValue("bank")
+class UmcBank extends UmcPay {
+  @Column({ nullable: true }) bankCode?: string | null;
+}
 
 /** Registered only on the snake_case connection. */
 @Entity({ name: "umc_snake" })
@@ -332,14 +417,31 @@ describe("[Integration] SQLite: upsert family and bulk INSERT maintain managed c
 
     it("does not write the seeded values back onto the caller's payload", async () => {
       const payload = { slug: "p", hits: 1 };
+      const ignored = { slug: "p1", hits: 1 };
       const items = [{ slug: "p2", hits: 1 }];
 
       await em.upsert(UmcDoc, payload, ["slug"]);
-      await em.insertIgnore(UmcDoc, { ...payload, slug: "p1" }, ["slug"]);
+      await em.insertIgnore(UmcDoc, ignored, ["slug"]);
       await em.batchUpsert(UmcDoc, items, ["slug"]);
 
       expect(payload).toEqual({ slug: "p", hits: 1 });
+      expect(ignored).toEqual({ slug: "p1", hits: 1 });
       expect(items).toEqual([{ slug: "p2", hits: 1 }]);
+    });
+  });
+
+  describe("a payload that states no column", () => {
+    it("inserts nothing rather than a row of generated values", async () => {
+      const author = await em.save(UmcAuthor, { name: "a" } as any);
+
+      const results = [
+        await em.upsert(UmcLike, { author } as any),
+        await em.insertIgnore(UmcLike, { author } as any),
+        await em.batchUpsert(UmcLike, [{ author }, { author }] as any),
+      ];
+
+      expect(results).toEqual([{ affected: 0 }, { affected: 0 }, { affected: 0 }]);
+      expect(await rawRows(em, `SELECT * FROM "umc_like"`)).toEqual([]);
     });
   });
 
@@ -359,8 +461,15 @@ describe("[Integration] SQLite: upsert family and bulk INSERT maintain managed c
       // A second save moves the row to version 2 before any upsert.
       const saved = await em.findOne(UmcDoc, { where: { slug: "k" } });
       await em.save(UmcDoc, { ...saved!, hits: 2 });
+      // save() refreshed updatedAt; age it again so a refresh is observable.
+      await em
+        .getDriver()!
+        .executeRaw(
+          `UPDATE "umc_doc" SET "updatedAt" = '${OLD.toISOString()}' WHERE "slug" = 'k'`,
+        );
       original = (await em.findOne(UmcDoc, { where: { slug: "k" } }))!;
       expect(original.version).toBe(2);
+      expect(original.updatedAt.toISOString()).toBe(OLD.toISOString());
     });
 
     it("upsert() increments the stored version, keeps createdAt, refreshes updatedAt", async () => {
@@ -397,6 +506,25 @@ describe("[Integration] SQLite: upsert family and bulk INSERT maintain managed c
       } finally {
         warn.mockRestore();
       }
+    });
+
+    it("a payload stating only the key and updatedAt still touches the row", async () => {
+      await em.upsert(UmcTouch, { slug: "t", hits: 1, createdAt: OLD, updatedAt: OLD }, [
+        "slug",
+      ]);
+      const touched = new Date("2030-01-02T03:04:05.000Z");
+
+      const result = await em.upsert(UmcTouch, { slug: "t", updatedAt: touched }, [
+        "slug",
+      ]);
+      await em.batchUpsert(UmcTouch, [{ slug: "t", updatedAt: touched }], ["slug"]);
+
+      expect(result.affected).toBe(1);
+      const row = await em.findOne(UmcTouch, { where: { slug: "t" } });
+      expect(row!.updatedAt.toISOString()).toBe(touched.toISOString());
+      expect(row!.version).toBe(3);
+      expect(row!.hits).toBe(1);
+      expect(row!.createdAt.toISOString()).toBe(OLD.toISOString());
     });
 
     it("a save() holding the pre-upsert version is rejected afterwards", async () => {
@@ -495,6 +623,9 @@ describe("[Integration] SQLite: upsert family and bulk INSERT maintain managed c
     });
 
     it("upsert() honours a deletedAt the payload states", async () => {
+      await em.restore(UmcSoft, { slug: "s" });
+      expect(await em.find(UmcSoft)).toHaveLength(1);
+
       await em.upsert(UmcSoft, { slug: "s", label: "still gone", deletedAt: OLD }, [
         "slug",
       ]);
@@ -521,6 +652,29 @@ describe("[Integration] SQLite: upsert family and bulk INSERT maintain managed c
       expect(rows.map((r) => r.slug)).toEqual(["t", "t2"]);
     });
 
+    it("batchUpsert() sends a repeated key once when it can only revive", async () => {
+      await em.save(UmcSoftTag, { slug: "d" } as any);
+      await em.softDelete(UmcSoftTag, { slug: "d" });
+      const builder = (em as any).writeExecutor.dmlSqlBuilder;
+      const spy = jest.spyOn(builder, "buildBatchUpsertQuery");
+      try {
+        const result = await em.batchUpsert(
+          UmcSoftTag,
+          [{ slug: "d" }, { slug: "d" }, { slug: "e" }, { slug: "e" }],
+          ["slug"],
+        );
+
+        // PostgreSQL rejects a DO UPDATE that reaches a row the same
+        // statement inserted, even when its WHERE would skip it.
+        expect((spy.mock.calls[0][2] as unknown[]).length).toBe(2);
+        expect(result.affected).toBe(2);
+        const rows = await em.find(UmcSoftTag, { orderBy: { slug: "ASC" } });
+        expect(rows.map((r) => r.slug)).toEqual(["d", "e"]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
     it("insertIgnore() leaves it trashed", async () => {
       const result = await em.insertIgnore(
         UmcSoft,
@@ -545,6 +699,26 @@ describe("[Integration] SQLite: upsert family and bulk INSERT maintain managed c
       await em.batchUpsert(UmcUuid, [{ slug: "u" }], ["slug"]);
 
       expect(await rawRows(em, `SELECT id FROM "umc_uuid"`)).toEqual([before]);
+    });
+
+    it("a generated non-key uuid is kept on conflict unless the payload states one", async () => {
+      await em.upsert(UmcPublicId, { slug: "g", hits: 1 }, ["slug"]);
+      const [first] = await rawRows(em, `SELECT publicId FROM "umc_public_id"`);
+      expect(first.publicId).toMatch(UUID_RE);
+
+      await em.upsert(UmcPublicId, { slug: "g", hits: 2 }, ["slug"]);
+      await em.batchUpsert(UmcPublicId, [{ slug: "g", hits: 3 }], ["slug"]);
+      expect(await rawRows(em, `SELECT publicId, hits FROM "umc_public_id"`)).toEqual([
+        { publicId: first.publicId, hits: 3 },
+      ]);
+
+      const replacement = "0190a3b4-0000-7000-8000-000000000001";
+      await em.upsert(UmcPublicId, { slug: "g", hits: 4, publicId: replacement }, [
+        "slug",
+      ]);
+      expect(await rawRows(em, `SELECT publicId FROM "umc_public_id"`)).toEqual([
+        { publicId: replacement },
+      ]);
     });
 
     it("a stated key does not rewrite the stored one on a unique-column conflict", async () => {
@@ -648,6 +822,24 @@ describe("[Integration] SQLite: upsert family and bulk INSERT maintain managed c
       for (const row of rows) expect(row.postedAt).not.toBeNull();
     });
 
+    it("count a relation key as provided, so defaults still apply", async () => {
+      const author = await em.save(UmcAuthor, { name: "a" } as any);
+
+      await em.insertMany(UmcNote, [{ author }, { author: author.id }] as any);
+      const [returned] = await em.insertManyAndReturn(UmcNote, [
+        { author },
+      ] as any);
+
+      expect(returned.status).toBe("draft");
+      expect(
+        await rawRows(em, `SELECT status, authorId FROM "umc_note" ORDER BY id`),
+      ).toEqual([
+        { status: "draft", authorId: author.id },
+        { status: "draft", authorId: author.id },
+        { status: "draft", authorId: author.id },
+      ]);
+    });
+
     it("seed @CreateTimestamp / @UpdateTimestamp of type timestamptz", async () => {
       await em.insertMany(UmcTz, [{ slug: "many" }]);
       await em.insertManyAndReturn(UmcTz, [{ slug: "returned" }]);
@@ -696,6 +888,52 @@ describe("[Integration] SQLite: upsert family and bulk INSERT maintain managed c
       for (const row of rows) expect(row.id).toMatch(UUID_RE);
       expect(new Set(rows.map((r) => r.id)).size).toBe(7);
     });
+  });
+});
+
+describe("[Integration] SQLite: JOINED children on the single-table INSERT paths", () => {
+  let em: EntityManager;
+
+  beforeEach(async () => {
+    MetadataContext.reset();
+    em = await makeEm([UmcPay, UmcCard, UmcBank]);
+  });
+
+  afterEach(async () => {
+    await em.propagateShutdown();
+  });
+
+  it("are rejected instead of attaching to another subtype's root row", async () => {
+    await em.save(UmcBank, { amount: 500, bankCode: "KB" } as any);
+    const row = { cardNumber: "4111" };
+
+    const errors = [
+      await errorOf(() => em.insertMany(UmcCard, [row])),
+      await errorOf(() => em.insertManyAndReturn(UmcCard, [row])),
+      await errorOf(() => em.createInsertBuilder(UmcCard).values(row).execute()),
+      await errorOf(() => em.upsert(UmcCard, { id: 7, ...row })),
+      await errorOf(() => em.insertIgnore(UmcCard, { id: 7, ...row })),
+      await errorOf(() => em.batchUpsert(UmcCard, [{ id: 7, ...row }])),
+    ];
+
+    for (const error of errors) {
+      expect(error?.code).toBe(OrmErrorCode.UNSUPPORTED_OPERATION);
+      expect(String(error?.message)).toContain("JOINED");
+    }
+    expect(await rawRows(em, `SELECT * FROM "umc_card"`)).toEqual([]);
+  });
+
+  it("saveMany() writes the root and child rows together", async () => {
+    await em.save(UmcBank, { amount: 500, bankCode: "KB" } as any);
+
+    await em.saveMany(UmcCard, [{ amount: 7, cardNumber: "4111" }] as any);
+
+    const cards = await em.find(UmcCard);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({ amount: 7, cardNumber: "4111" });
+    const banks = await em.find(UmcBank);
+    expect(banks).toHaveLength(1);
+    expect(banks[0]).toMatchObject({ amount: 500, bankCode: "KB" });
   });
 });
 

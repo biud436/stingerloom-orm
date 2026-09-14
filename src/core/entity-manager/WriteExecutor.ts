@@ -142,11 +142,15 @@ interface UpsertPlan {
   /** Wrapped identifiers of the conflict target. */
   wrappedConflict: string[];
   /**
-   * Wrapped identifiers of the caller's columns the DO UPDATE writes —
-   * conflict targets, the tenant discriminator and the managed columns
-   * excluded. Empty means the conflict branch is DO NOTHING.
+   * Wrapped identifiers of the caller's columns the DO UPDATE writes — the
+   * primary key, conflict targets, the tenant discriminator and the managed
+   * columns excluded. Empty means nothing of the caller's is written on
+   * conflict: DO NOTHING, or only the soft-delete revive when `managed.reset`
+   * is set.
    */
   wrappedUpdate: string[];
+  /** Unwrapped names of the conflict target, in statement order. */
+  conflictNames: string[];
   /** The `@UpdateTimestamp` / `@Version` / `@DeletedAt` assignments that ride along with `wrappedUpdate`. */
   managed: UpsertManagedAssignments;
 }
@@ -1359,6 +1363,7 @@ export class WriteExecutor {
       const canBatchInsert =
         hasGeneratedPk &&
         pkColumns.length === 1 &&
+        !this.isJoinedChild(entity) &&
         items.every((item) => {
           const pkValue = pk ? fieldsOf(item)[this.ctx.propKey(pk)] : undefined;
           return pkValue === null || pkValue === undefined;
@@ -1562,8 +1567,9 @@ export class WriteExecutor {
   /**
    * Fills the values the ORM generates rather than the caller: client-side
    * UUIDs, `@CreateTimestamp` / `@UpdateTimestamp`, and the `@Version` seed.
-   * All of them are written onto the items themselves, so the rows the caller
-   * passed in carry what was persisted.
+   * All of them are written onto the items given — the caller's own rows for
+   * saveMany() and the insertMany() family, so those carry what was
+   * persisted; copies for the upsert family (see {@link seededUpsertRows}).
    *
    * Every write goes through the property key. The timestamp and version
    * resolvers return DB column names (the naming strategy rewrites them), but
@@ -1903,8 +1909,9 @@ export class WriteExecutor {
    *
    * Runs after {@link applyBulkInsertDefaults}, so the tenant column and the
    * seeded managed columns always count as provided. When nothing at all is
-   * provided the full declared column set is kept, binding NULL: a
-   * multi-row INSERT has no portable all-defaults form.
+   * provided — no declared column and no `@ManyToOne` key — the full declared
+   * column set is kept, binding NULL: a multi-row INSERT has no portable
+   * all-defaults form.
    */
   private selectBulkInsertColumns<T>(
     entity: ClazzType<T>,
@@ -1924,7 +1931,53 @@ export class WriteExecutor {
     const provided = declared.filter((column: ColumnMetadata) =>
       items.some((item) => fieldsOf(item)[this.ctx.propKey(column)] !== undefined),
     );
-    return provided.length > 0 ? provided : declared;
+    return provided.length > 0 || this.statesAnyForeignKey(entity, items)
+      ? provided
+      : declared;
+  }
+
+  /** Whether any item states a value for one of the entity's `@ManyToOne` keys. */
+  private statesAnyForeignKey<T>(
+    entity: ClazzType<T>,
+    items: Partial<T>[],
+  ): boolean {
+    return this.resolver
+      .resolveManyToOneMetadata(entity)
+      .some(
+        (rel) =>
+          !!rel.joinColumn &&
+          items.some(
+            (item) => this.resolveFkValue(rel, fieldsOf(item)) !== undefined,
+          ),
+      );
+  }
+
+  /**
+   * Whether `entity` is a child of a JOINED (table-per-type) hierarchy, whose
+   * columns span the root's table and its own.
+   */
+  private isJoinedChild<T>(entity: ClazzType<T>): boolean {
+    return (
+      this.inheritanceResolver.getStrategy(entity) === "JOINED" &&
+      this.inheritanceResolver.isChildEntity(entity)
+    );
+  }
+
+  /**
+   * The multi-row and upsert INSERT paths write a single table; only save()
+   * splits a JOINED child between the root's table and its own. Written here,
+   * a child's columns would all land in the child table — an error when a
+   * root column is named, and otherwise a child row attached to whichever
+   * root row happens to share its id.
+   */
+  private assertNotJoinedChild<T>(entity: ClazzType<T>, method: string): void {
+    if (!this.isJoinedChild(entity)) return;
+    throw new OrmError(
+      OrmErrorCode.UNSUPPORTED_OPERATION,
+      `${method}() cannot write '${entity.name}': it is a child of a JOINED (table-per-type) hierarchy, ` +
+        `whose columns span the root table and its own, and ${method}() writes a single table.`,
+      `Use em.save(${entity.name}, row) for each row; save() inserts the root and child rows together.`,
+    );
   }
 
   /** The column list and one VALUES row per item, FK columns appended. */
@@ -1989,6 +2042,7 @@ export class WriteExecutor {
     conflictColumns: string[];
     action: InsertConflictAction;
   } {
+    this.assertNotJoinedChild(entity, "createInsertBuilder");
     const items = spec.items as Partial<T>[];
     this.applyBulkInsertDefaults(entity, metadata, items);
 
@@ -2222,6 +2276,7 @@ export class WriteExecutor {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
+    this.assertNotJoinedChild(entity, "insertMany");
     this.ctx.validateWriteInputKeys(entity, metadata, items, "insertMany");
 
     return this.ctx.executeInTransaction(async (session) => {
@@ -2277,6 +2332,7 @@ export class WriteExecutor {
       );
     }
 
+    this.assertNotJoinedChild(entity, "insertManyAndReturn");
     this.ctx.validateWriteInputKeys(entity, metadata, items, "insertManyAndReturn");
 
     return this.ctx.executeInTransaction(async (session) => {
@@ -3123,25 +3179,29 @@ export class WriteExecutor {
    *
    * Returns null when no column is insertable — the caller reports 0 affected
    * rows rather than emitting a statement. An empty `wrappedUpdate` still
-   * emits the INSERT: the conflict branch degrades to DO NOTHING.
+   * emits the INSERT; on conflict it writes nothing of the caller's (DO
+   * NOTHING, or only the soft-delete revive).
    *
-   * The primary key and the ORM-managed columns never take the payload's
-   * value on conflict. The key identifies the stored row, exactly as in
-   * save()'s UPDATE — a seeded UUID in the SET list would replace it.
-   * `@CreateTimestamp` keeps the stored creation time, `@Version` counts up
-   * from the stored version (the lock is not checked — that is save()'s job),
-   * `@UpdateTimestamp` takes the proposed (seeded) value, and a `@DeletedAt`
-   * the payload does not state is cleared, so the upserted row is live
-   * whichever branch ran. None of them count as something to write: a payload
-   * naming only its conflict key leaves a live conflicting row untouched and
-   * only revives a soft-deleted one.
+   * The primary key identifies the stored row and is never assigned, exactly
+   * as in save()'s UPDATE — a seeded UUID in the SET list would replace it.
+   * `@CreateTimestamp` keeps the stored creation time and `@Version` counts up
+   * from the stored version whatever the payload says (the lock is not
+   * checked — that is save()'s job). `@UpdateTimestamp` takes the inserted
+   * row's value, and a `@DeletedAt` the payload does not state is cleared, so
+   * the upserted row is live whichever branch ran. These managed assignments
+   * never count as something to write on their own: a payload naming only its
+   * conflict key leaves a live conflicting row untouched and only revives a
+   * soft-deleted one. A `@UpdateTimestamp` or `@DeletedAt` the caller states
+   * (`statedByCaller`) is the caller's column like any other — a
+   * `{ key, updatedAt }` touch still updates the row.
    */
   private buildUpsertPlan<T>(
     entity: ClazzType<T>,
     metadata: EntityScannerMetadata,
     conflictColumns: string[] | undefined,
     isInsertable: (col: ColumnMetadata) => boolean,
-    tenantColumnName: string | null = null,
+    tenantColumnName: string | null,
+    statedByCaller: (col: ColumnMetadata) => boolean,
   ): UpsertPlan | null {
     const pkColumns = metadata.columns
       .filter((col: ColumnMetadata) => col.options?.primary)
@@ -3172,16 +3232,30 @@ export class WriteExecutor {
       !conflictSet.has(name) &&
       metadata.columns.some((col: ColumnMetadata) => col.name === name);
     const createTsCol = this.resolver.getCreateTimestampColumn(entity);
-    const updateTsCol = this.resolver.getUpdateTimestampColumn(entity);
     const versionCol = this.resolver.getVersionColumn(entity);
     const deletedAtCol = this.resolver.getDeletedAtColumn(entity);
-    const managedNames = new Set([createTsCol, updateTsCol, versionCol]);
+    const updateTsColumn = metadata.columns.find(
+      (col: ColumnMetadata) =>
+        col.name === this.resolver.getUpdateTimestampColumn(entity),
+    );
+    // Refreshed by the ORM only when the caller left it to the ORM.
+    const managedUpdateTs =
+      updateTsColumn && !statedByCaller(updateTsColumn)
+        ? updateTsColumn.name
+        : null;
+    const managedNames = new Set([createTsCol, managedUpdateTs, versionCol]);
 
     // The tenant discriminator is written on INSERT and never on conflict:
     // `tenant_id = EXCLUDED.tenant_id` is exactly how a conflicting row used
     // to change hands.
     const updateColumnNames = insertableColumns
       .filter((col: ColumnMetadata) => !col.options?.primary)
+      // A UUID the ORM generated for this INSERT is not the caller's value:
+      // assigning it on conflict would replace the stored one every time.
+      .filter(
+        (col: ColumnMetadata) =>
+          !this.isClientGenerated(col) || statedByCaller(col),
+      )
       .map((col: ColumnMetadata) => col.name)
       .filter(
         (name) =>
@@ -3203,10 +3277,13 @@ export class WriteExecutor {
         this.ctx.wrap(name),
       ),
       wrappedUpdate: updateColumnNames.map((name) => this.ctx.wrap(name)),
+      conflictNames: resolvedConflictColumns,
       managed: {
         existingRowRef: this.ctx.wrap(metadata.name),
         refresh: wrapAll(
-          updateTsCol && insertableNames.has(updateTsCol) ? [updateTsCol] : [],
+          managedUpdateTs && insertableNames.has(managedUpdateTs)
+            ? [managedUpdateTs]
+            : [],
         ),
         increment: wrapAll([versionCol]),
         reset: wrapAll(
@@ -3255,6 +3332,69 @@ export class WriteExecutor {
     return rows;
   }
 
+  /** A column whose value the ORM generates client-side (`uuid` / `uuid-v7`). */
+  private isClientGenerated(col: ColumnMetadata): boolean {
+    const strategy = col.options?.generationStrategy;
+    return strategy === "uuid" || strategy === "uuid-v7";
+  }
+
+  /**
+   * Whether any payload states a value for a declared, non-computed column.
+   *
+   * Values the ORM fills in do not count: a payload naming nothing the upsert
+   * family writes — only a relation object, which it does not resolve, or an
+   * unknown key — is reported as 0 affected rows instead of inserting a row
+   * made of generated values alone.
+   */
+  private statesAnyUpsertColumn<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    items: Partial<T>[],
+  ): boolean {
+    const computedCols = this.ctx.getComputedColumnNames(entity);
+    return metadata.columns.some(
+      (col: ColumnMetadata) =>
+        !computedCols.has(col.name) &&
+        items.some((item) => this.statesUpsertValue(col, item)),
+    );
+  }
+
+  /**
+   * The rows of a batch whose conflict branch can only revive soft-deleted
+   * rows, with a repeated conflict key collapsed to its first row.
+   *
+   * That branch is a DO UPDATE, and PostgreSQL rejects a statement whose DO
+   * UPDATE reaches a row the same statement already inserted ("ON CONFLICT DO
+   * UPDATE command cannot affect row a second time") even when its WHERE
+   * would skip the row. A repeat carries nothing of the caller's to write, so
+   * dropping it changes no stored value. Rows with a NULL key never conflict
+   * and are all kept.
+   */
+  private uniqueByConflictKey<T>(
+    metadata: EntityScannerMetadata,
+    plan: UpsertPlan,
+    rows: Partial<T>[],
+  ): Partial<T>[] {
+    const keyColumns = plan.conflictNames.map((name) =>
+      metadata.columns.find((col: ColumnMetadata) => col.name === name),
+    );
+    if (keyColumns.some((col) => !col)) return rows;
+    const seen = new Set<string>();
+    return rows.filter((row) => {
+      const fields = fieldsOf(row);
+      const values = keyColumns.map((col) => fields[this.ctx.propKey(col!)]);
+      if (values.some((value) => value === null || value === undefined)) {
+        return true;
+      }
+      const key = JSON.stringify(values, (_k, value) =>
+        typeof value === "bigint" ? `${value}n` : value,
+      );
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   /**
    * Warns once per entity class when an upsert payload states a `@Version`
    * value. upsert() does not check the optimistic lock: the value is stored
@@ -3281,7 +3421,7 @@ export class WriteExecutor {
     this.ctx.getLogger().warn(
       `${method}() on '${entity.name}' was given a @Version value for "${key}". ` +
         `Upserts do not check the optimistic lock: the value is used only when the row is inserted, ` +
-        `and a conflicting row's version is incremented from its stored value. ` +
+        `and a conflicting row keeps counting from its stored version. ` +
         `Use save() to reject a stale version. Warned once per entity class.`,
     );
   }
@@ -3363,7 +3503,11 @@ export class WriteExecutor {
       );
     }
 
+    this.assertNotJoinedChild(entity, "upsert");
     this.ctx.validateWriteInputKeys(entity, metadata, [data], "upsert");
+    if (!this.statesAnyUpsertColumn(entity, metadata, [data])) {
+      return { affected: 0 };
+    }
     this.warnIfUpsertVersionIgnored(entity, metadata, [data], "upsert");
     const [row] = this.seededUpsertRows(entity, metadata, [data]);
 
@@ -3374,6 +3518,7 @@ export class WriteExecutor {
       conflictColumns,
       (col) => this.statesUpsertValue(col, row),
       tenantGuard?.columnName ?? null,
+      (col) => this.statesUpsertValue(col, data),
     );
     if (!plan) {
       return { affected: 0 };
@@ -3420,13 +3565,22 @@ export class WriteExecutor {
       );
     }
 
+    this.assertNotJoinedChild(entity, "insertIgnore");
     this.ctx.validateWriteInputKeys(entity, metadata, [data], "insertIgnore");
+    if (!this.statesAnyUpsertColumn(entity, metadata, [data])) {
+      return { affected: 0 };
+    }
     const [row] = this.seededUpsertRows(entity, metadata, [data]);
 
     // No DO UPDATE list here: a conflict skips the row, so a plan whose
     // insertable columns are all conflict targets is still a valid statement.
-    const plan = this.buildUpsertPlan(entity, metadata, conflictColumns, (col) =>
-      this.statesUpsertValue(col, row),
+    const plan = this.buildUpsertPlan(
+      entity,
+      metadata,
+      conflictColumns,
+      (col) => this.statesUpsertValue(col, row),
+      null,
+      (col) => this.statesUpsertValue(col, data),
     );
     if (!plan) {
       return { affected: 0 };
@@ -3472,9 +3626,13 @@ export class WriteExecutor {
       );
     }
 
+    this.assertNotJoinedChild(entity, "batchUpsert");
     this.ctx.validateWriteInputKeys(entity, metadata, items, "batchUpsert");
+    if (!this.statesAnyUpsertColumn(entity, metadata, items)) {
+      return { affected: 0 };
+    }
     this.warnIfUpsertVersionIgnored(entity, metadata, items, "batchUpsert");
-    const rows = this.seededUpsertRows(entity, metadata, items);
+    const seeded = this.seededUpsertRows(entity, metadata, items);
 
     // The column set is the union over the batch: an auto-increment column
     // is named only when every item supplies a value, any other column when
@@ -3486,18 +3644,23 @@ export class WriteExecutor {
       conflictColumns,
       (col) =>
         col.options?.autoIncrement
-          ? rows.every((row) => {
+          ? seeded.every((row) => {
               const value = fieldsOf(row)[this.ctx.propKey(col)];
               return value !== null && value !== undefined;
             })
-          : rows.some(
+          : seeded.some(
               (row) => fieldsOf(row)[this.ctx.propKey(col)] !== undefined,
             ),
       tenantGuard?.columnName ?? null,
+      (col) => items.some((item) => this.statesUpsertValue(col, item)),
     );
     if (!plan) {
       return { affected: 0 };
     }
+    const rows =
+      plan.wrappedUpdate.length === 0 && plan.managed.reset.length > 0
+        ? this.uniqueByConflictKey(metadata, plan, seeded)
+        : seeded;
 
     return this.ctx.executeInTransaction(async (session) => {
       const valueRows = rows.map((row) => {

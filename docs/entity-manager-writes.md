@@ -657,9 +657,10 @@ The optional third argument specifies the conflict columns. If omitted, the prim
 | Column | Row inserted | Row conflicts |
 |--------|--------------|---------------|
 | Primary key | yours; `"uuid"` / `"uuid-v7"` keys are generated, auto-increment keys come from the database | not written -- the stored key stays |
+| Other `"uuid"` / `"uuid-v7"` columns | yours, or generated | written only when the payload states one |
 | `@Version` | yours, or `1` | stored value + 1 (a stored `NULL` counts as 0) |
 | `@CreateTimestamp` | yours, or the current time | not written |
-| `@UpdateTimestamp` | yours, or the current time | the inserted row's value -- the current time unless you passed one |
+| `@UpdateTimestamp` | yours, or the current time | the inserted row's value -- the current time unless you passed one; a payload of just the key and `updatedAt` still updates it |
 | `@DeletedAt` | yours, or `NULL` | `NULL` unless the payload sets it -- a soft-deleted row is restored |
 | Tenant column (`tenant_column`) | the active tenant | not written |
 
@@ -689,9 +690,11 @@ ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`),
 
 Things to know:
 
-- **The version is bumped, not checked.** An upsert is last-write-wins and never throws `OptimisticLockError`; it only makes sure a `save()` holding the pre-upsert version is rejected afterwards. A `@Version` value in an `upsert()` / `batchUpsert()` payload is used when the row is inserted and ignored on conflict, with a warning logged once per entity class. Use `save()` when a stale write must fail.
+- **The version is bumped, not checked.** An upsert is last-write-wins and never throws `OptimisticLockError`; it only makes sure a `save()` holding the pre-upsert version is rejected afterwards. A key-only upsert that merely restores a soft-deleted row keeps its version, as `restore()` does. A `@Version` value in an `upsert()` / `batchUpsert()` payload is used when the row is inserted and ignored on conflict, with a warning logged once per entity class. Use `save()` when a stale write must fail.
 - **Managed columns never cause an update on their own.** When nothing of yours is left to update besides the conflict target, the statement degrades to `DO NOTHING` on PostgreSQL/SQLite and to a no-op `ON DUPLICATE KEY UPDATE <col> = <col>` on MySQL/MariaDB: a missing row is inserted, a live conflicting row -- version and timestamps included -- is left alone. The one exception is a soft-deleted conflicting row, which is still restored (`DO UPDATE SET "deletedAt" = NULL WHERE "order"."deletedAt" IS NOT NULL`). Before 2.1 such a call returned `{ affected: 0 }` without sending any SQL, so the missing row was not inserted either.
 - **Soft delete and unique keys.** With an ordinary unique index a trashed row still conflicts, and the upsert restores it with your values -- unlike `updateMany()`, which skips soft-deleted rows. If you want a new row instead, use a partial unique index (`WHERE "deletedAt" IS NULL`, PostgreSQL/SQLite) and target it with `createInsertBuilder().onConflict(cols, { where })`; `upsert()` cannot name a partial index.
+- **The INSERT is always attempted.** The database checks NOT NULL before it looks for a conflict, so every NOT NULL column without a default must be in the payload even when the row exists. A payload that states no column at all -- only a relation object, which the upsert family does not resolve -- sends nothing and returns `{ affected: 0 }`.
+- **JOINED children are rejected.** `upsert()`, `insertIgnore()`, `batchUpsert()`, `insertMany()`, `insertManyAndReturn()` and `createInsertBuilder()` write one table, and a table-per-type child spans two, so they throw `UNSUPPORTED_OPERATION`; use `save()` (`saveMany()` falls back to it for such children).
 - **`insertIgnore()`** seeds the same values for the row it inserts and never writes a conflicting row, soft-deleted or not.
 - **`createInsertBuilder()`** seeds inserted rows the same way, but its `doUpdate()` assigns exactly the columns you list -- no version bump, timestamp refresh or `@DeletedAt` reset is added.
 
