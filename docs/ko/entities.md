@@ -890,6 +890,8 @@ WHERE "id" = 1 AND "version" = 1;
 
 UPDATE가 0행에 영향을 미치면, 다른 누군가가 먼저 데이터를 수정했다는 뜻이에요. Stingerloom이 이걸 감지하고 `OptimisticLockError`를 발생시켜서, 모르는 사이에 데이터가 사라지는 일을 막아요.
 
+`upsert()`와 `batchUpsert()`도 충돌한 행을 갱신할 때 버전을 올립니다(`version = 저장된 버전 + 1`). 다만 버전을 검사하지는 않습니다. upsert는 마지막에 쓴 값이 이기는 연산이라 `OptimisticLockError`를 던지지 않고, 페이로드에 넣은 `version`은 새 행을 삽입할 때만 쓰입니다. 자세한 내용은 [충돌 시 관리 컬럼](./entity-manager-writes.md#충돌-시-관리-컬럼)을 참고하세요.
+
 > **힌트** 낙관적 잠금은 충돌이 드물지만 데이터 무결성이 중요한 경우에 적합해요(예: 주문 상태 변경, 재고 관리). 거의 모든 요청에서 충돌이 발생하는 높은 경합 시나리오에서는 `SELECT ... FOR UPDATE`를 사용한 비관적 잠금을 고려해 보세요.
 
 ## 소프트 삭제 (@DeletedAt)
@@ -990,6 +992,8 @@ const all = await em.find(Post, { withDeleted: true }); // includes deleted
 await em.restore(Post, { id: 1 }); // restore
 ```
 
+`upsert()` / `batchUpsert()`는 충돌한 soft-delete 행을 복구합니다. 페이로드에 `deletedAt`이 없으면 충돌 분기가 `deletedAt = NULL`을 씁니다. 삭제된 행이 충돌하는지는 유니크 인덱스에 달려 있으니 [충돌 시 관리 컬럼](./entity-manager-writes.md#충돌-시-관리-컬럼)을 참고하세요.
+
 ## 자동 타임스탬프 (@CreateTimestamp / @UpdateTimestamp)
 
 ### 자동 타임스탬프가 존재하는 이유
@@ -1075,9 +1079,9 @@ WHERE "id" = 1;
 -- Notice: createdAt is NOT in the SET clause
 ```
 
-두 데코레이터 모두 `DATETIME` (MySQL) / `TIMESTAMP` (PostgreSQL) NOT NULL 컬럼을 생성해요. PostgreSQL에서 타임존 인식 타임스탬프가 필요하면 라이프사이클 훅과 함께 `@Column({ type: "timestamptz" })`를 사용하세요.
+두 데코레이터는 기본으로 `DATETIME` (MySQL) / `TIMESTAMP` (PostgreSQL) NOT NULL 컬럼을 만듭니다. 타임존 인식 타임스탬프가 필요하면 `@CreateTimestamp({ type: "timestamptz" })` / `@UpdateTimestamp({ type: "timestamptz" })`처럼 타입을 넘기세요. 어느 쓰기 경로에서든 똑같이 채워집니다.
 
-> **힌트** `save()` 호출 시 `@CreateTimestamp` 또는 `@UpdateTimestamp` 컬럼에 대해 값을 명시적으로 제공하면, 자동 생성된 값 대신 제공된 값이 사용돼요. 원본 타임스탬프를 보존하고 싶은 데이터 마이그레이션 시나리오에 유용해요.
+> **힌트** `save()` 호출 시 `@CreateTimestamp` 또는 `@UpdateTimestamp` 컬럼에 대해 값을 명시적으로 제공하면, 자동 생성된 값 대신 제공된 값이 사용돼요. 원본 타임스탬프를 보존하고 싶은 데이터 마이그레이션 시나리오에 유용해요. `upsert()` / `batchUpsert()`는 직접 넘긴 `@CreateTimestamp` 값을 새 행을 삽입할 때만 쓰고, `@UpdateTimestamp` 값은 삽입과 충돌 갱신 양쪽에 씁니다.
 
 ### 계산 컬럼 (@ComputedColumn)
 

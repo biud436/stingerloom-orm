@@ -344,8 +344,11 @@ describe("EntityManager.upsert()", () => {
       // sku가 conflict 이자 유일한 컬럼인 경우
       await em.upsert(ProductEntity, { sku: "ONLY" }, ["sku"]);
 
-      // 업데이트할 컬럼이 없으므로 트랜잭션이 시작되지 않아야 함
-      expect(mockConnect).not.toHaveBeenCalled();
+      // 충돌 시 쓸 컬럼은 없지만 INSERT는 실행되어야 함 (no-op 충돌 분기)
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(mockQuery.mock.calls[0][0].sql).toBe(
+        "INSERT INTO `Product` (`sku`) VALUES (?) ON DUPLICATE KEY UPDATE `sku` = `sku`",
+      );
     });
   });
 });
@@ -476,11 +479,15 @@ describe("EntityManager.batchUpsert()", () => {
       ).rejects.toThrow();
     });
 
-    it("should return early if no update columns", async () => {
+    it("should still insert when there are no update columns", async () => {
       (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
 
       await em.batchUpsert(ProductEntity, [{ sku: "ONLY" }], ["sku"]);
-      expect(mockConnect).not.toHaveBeenCalled();
+
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(mockQuery.mock.calls[0][0].sql).toBe(
+        "INSERT INTO `Product` (`sku`) VALUES (?) ON DUPLICATE KEY UPDATE `sku` = `sku`",
+      );
     });
 
     it("should rollback on query error", async () => {
@@ -702,15 +709,17 @@ describe("upsert/batchUpsert affected-rows result", () => {
       expect(mockConnect).not.toHaveBeenCalled();
     });
 
-    it("should return { affected: 0 } without querying when no update columns", async () => {
+    it("should still run the INSERT and report the driver's count when no update columns", async () => {
       em = createEntityManagerWithDriver("mysql");
       (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+      mockQuery.mockResolvedValueOnce({ results: { affectedRows: 1 }, fields: {} });
 
-      // sku is the only provided column and is also the conflict column.
+      // sku is the only provided column and is also the conflict column: a
+      // missing row must still be inserted.
       const result = await em.upsert(ProductEntity, { sku: "ONLY" }, ["sku"]);
 
-      expect(result).toEqual({ affected: 0 });
-      expect(mockConnect).not.toHaveBeenCalled();
+      expect(result).toEqual({ affected: 1 });
+      expect(mockQuery).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -751,14 +760,15 @@ describe("upsert/batchUpsert affected-rows result", () => {
       expect(mockConnect).not.toHaveBeenCalled();
     });
 
-    it("should return { affected: 0 } without querying when no update columns", async () => {
+    it("should still run the INSERT and report the driver's count when no update columns", async () => {
       em = createEntityManagerWithDriver("mysql");
       (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(productMetadata);
+      mockQuery.mockResolvedValueOnce({ results: { affectedRows: 1 }, fields: {} });
 
       const result = await em.batchUpsert(ProductEntity, [{ sku: "ONLY" }], ["sku"]);
 
-      expect(result).toEqual({ affected: 0 });
-      expect(mockConnect).not.toHaveBeenCalled();
+      expect(result).toEqual({ affected: 1 });
+      expect(mockQuery).toHaveBeenCalledTimes(1);
     });
   });
 

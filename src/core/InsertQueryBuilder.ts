@@ -114,7 +114,8 @@ export interface OnConflictOptions {
  * Created by `em.createInsertBuilder(Entity)` or
  * `em.createInsertBuilder(qAlias(Entity, "alias"))`. It is the expression-
  * capable counterpart to `em.upsert()` / `em.batchUpsert()`, which can only
- * overwrite a conflicting row with the proposed values.
+ * overwrite the columns passed with the proposed values (plus the ORM's own
+ * `@Version` / timestamp / `@DeletedAt` bookkeeping).
  *
  * The reason to reach for it is a conflict action that has to *read* the
  * stored row — an accumulating counter, a high-water mark, a merge — which
@@ -242,8 +243,9 @@ export class InsertQueryBuilder<T> {
   }
 
   /**
-   * Overwrite the listed columns with the proposed values — the same
-   * `col = EXCLUDED.col` form `em.upsert()` produces.
+   * Overwrite the listed columns with the proposed values
+   * (`col = EXCLUDED.col`). Unlike `em.upsert()`, no `@Version`,
+   * `@UpdateTimestamp` or `@DeletedAt` assignment is added.
    */
   doUpdate(columns: Array<keyof T & string>): this;
   /**

@@ -114,6 +114,9 @@ export class ImportExportService {
   ): Promise<ImportResult> {
     const rows: Partial<Issue>[] = [];
     let skipped = 0;
+    // insertMany() runs no entity hooks, so Issue's @BeforeInsert timestamps
+    // are set here; claimedAt / completedAt stay NULL for a fresh import.
+    const now = new Date();
     for (const row of chunk) {
       const status: IssueStatus = VALID_STATUSES.has(row.status ?? "")
         ? (row.status as IssueStatus)
@@ -130,6 +133,8 @@ export class ImportExportService {
         priority: ((row.priority ?? 0) as IssuePriority),
         estimate: row.estimate ?? null,
         reporterId: actorUserId,
+        createdAt: now,
+        updatedAt: now,
       });
     }
     if (rows.length === 0) return { inserted: 0, skipped };

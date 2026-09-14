@@ -412,8 +412,9 @@ Two practical consequences when you mix the two:
 
 ## InsertQueryBuilder — Expression-Based `ON CONFLICT`
 
-`em.upsert()` can only overwrite a conflicting row with the values you
-proposed (`col = EXCLUDED.col`). When the new value has to be computed
+`em.upsert()` can only overwrite a conflicting row's columns with the values
+you proposed (`col = EXCLUDED.col`) -- apart from the ORM's own `@Version` /
+`@UpdateTimestamp` / `@DeletedAt` bookkeeping. When the new value has to be computed
 *from the stored one* — an accumulating counter, a high-water mark, a
 merge — that shape cannot express it, and a read-modify-write round trip
 needs a row lock to stay correct under concurrency.

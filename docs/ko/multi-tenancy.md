@@ -586,7 +586,7 @@ await em.register({
 
 `upsert()` / `batchUpsert()` / `createInsertBuilder().doUpdate()`는 먼저 INSERT입니다. 새 행에 채워 넣을 테넌트 값이 없으니 테넌트 컨텍스트가 없으면 `tenantOnMissingContext` 정책과 무관하게, `runUnscoped()`나 `run("public", ...)` 안에서도 거부합니다.
 
-MySQL/MariaDB의 `ON DUPLICATE KEY UPDATE`에는 `WHERE`를 붙일 수 없어서, 대입 하나하나를 `col = IF(tbl.tenant_id = ?, VALUES(col), tbl.col)` 형태로 내보냅니다. 어느 쪽이든 남의 행은 그대로 남지만, 숫자의 의미는 달라집니다. `mysql2`는 `CLIENT_FOUND_ROWS`로 접속하기 때문에 차단된 행이 `affected: 1`(매칭됐지만 아무것도 쓰지 않음)로 잡히고, 이는 INSERT가 보고하는 숫자와 같습니다(실제 갱신은 2). 어느 쪽인지 알아야 하면 행을 다시 읽어 보세요.
+MySQL/MariaDB의 `ON DUPLICATE KEY UPDATE`에는 `WHERE`를 붙일 수 없어서, 대입 하나하나를 `col = IF(tbl.tenant_id = ?, VALUES(col), tbl.col)` 형태로 내보냅니다(`@Version` 증가는 `version = IF(tbl.tenant_id = ?, COALESCE(tbl.version, 0) + 1, tbl.version)`). 어느 쪽이든 남의 행은 그대로 남지만, 숫자의 의미는 달라집니다. `mysql2`는 `CLIENT_FOUND_ROWS`로 접속하기 때문에 차단된 행이 `affected: 1`(매칭됐지만 아무것도 쓰지 않음)로 잡히고, 이는 INSERT가 보고하는 숫자와 같습니다(실제 갱신은 2). 어느 쪽인지 알아야 하면 행을 다시 읽어 보세요.
 
 ```typescript
 @Entity()

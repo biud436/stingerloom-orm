@@ -38,8 +38,9 @@ VALUES (?, ?), (?, ?), (?, ?)
 
 주요 특징:
 - **단일 SQL 문**으로 실행돼요 -- `save()` 루프보다 훨씬 효율적이에요.
-- `@CreateTimestamp`, `@UpdateTimestamp` 컬럼이 자동으로 주입돼요.
-- `@Version` 컬럼은 각 행마다 `1`로 초기화돼요.
+- `@CreateTimestamp`, `@UpdateTimestamp` 컬럼은 행에 값이 없으면 `type`과 상관없이(`timestamptz` 포함) 현재 시각으로 채워집니다. 그 밖의 날짜·시간 컬럼은 건드리지 않아요.
+- `@Version` 컬럼은 각 행마다 `1`로 초기화되고, 클라이언트에서 생성하는 키(`@PrimaryGeneratedColumn("uuid")` / `"uuid-v7"`)는 값이 없는 행마다 새로 만들어집니다. 이렇게 생성된 값은 넘긴 객체에도 기록됩니다.
+- 어느 행도 값을 주지 않은 컬럼은 문장에서 빠지므로 DB의 `DEFAULT`가 적용됩니다. `saveMany()`와 같은 규칙이에요([INSERT에서 undefined vs null](#insert에서-undefined-vs-null-db-기본값-살리기) 참고).
 - `{ affected: number }`를 반환해요 -- 삽입된 행을 돌려받아야 한다면 `insertManyAndReturn()`(PostgreSQL / SQLite) 또는 `saveMany()`(전 다이얼렉트)를 사용하세요.
 
 ---
@@ -80,7 +81,7 @@ RETURNING *
 주요 특징:
 - **단일 SQL 문**으로 실행돼요 -- `insertMany()`와 동일한 효율이에요.
 - 결과 엔티티 인스턴스를 **입력 순서대로** 반환해요.
-- `@CreateTimestamp`, `@UpdateTimestamp`, `@Version` 컬럼이 INSERT 전에 자동으로 주입돼요.
+- `@CreateTimestamp`, `@UpdateTimestamp`, `@Version`과 클라이언트 생성 UUID 키가 INSERT 전에 채워지고, 어느 행도 값을 주지 않은 컬럼은 DB `DEFAULT`에 맡깁니다. `insertMany()`와 같은 규칙입니다.
 - `items`가 비어 있으면 DB를 전혀 건드리지 않고 즉시 `[]`를 반환해요.
 
 **다이얼렉트 지원.** `insertManyAndReturn()`은 `INSERT ... RETURNING`이 필요해요. PostgreSQL과 SQLite 3.35+ 이상에서 사용할 수 있어요. MySQL에서 호출하면 `OrmError` (`UNSUPPORTED_DATABASE`)가 발생해요. MySQL에서는 `saveMany()`를 사용하세요.
@@ -181,6 +182,8 @@ INSERT INTO "t" DEFAULT VALUES
 ```
 
 `saveMany()` 배치 삽입에서는 멀티 행 `VALUES`가 컬럼 목록 하나를 공유해요. 그래서 컬럼은 **배치의 어떤 항목도 값을 주지 않았을 때만** 생략돼요. 일부 항목만 값을 준 혼합 배치에서는 컬럼이 목록에 남고, 값이 없는 행에는 `NULL`이 바인딩돼요.
+
+`insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`, `batchUpsert()`도 이 배치 규칙을 따르고, `upsert()` / `insertIgnore()`는 단일 행 규칙을 따릅니다. `insertMany()`의 어느 행도 컬럼 값을 하나도 주지 않았다면 전체 컬럼 목록을 그대로 두고 `NULL`을 바인딩합니다. 멀티 행 INSERT에는 이식 가능한 "전부 기본값" 형태가 없기 때문입니다. 2.1 이전의 `insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`는 선언된 컬럼을 전부 나열하고 빠진 값에 `NULL`을 바인딩해서, 이 경로에서는 `DEFAULT`가 적용되지 않았습니다.
 
 ---
 
@@ -647,6 +650,51 @@ ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `loginCount` = VALUES(`loginCou
 
 세 번째 인자(옵션)로 충돌 컬럼을 지정해요. 생략하면 기본 키가 사용돼요.
 
+### 충돌 시 관리 컬럼
+
+`upsert()`, `insertIgnore()`, `batchUpsert()`는 ORM이 관리하는 컬럼을 페이로드의 **복사본**에 채웁니다. 넘긴 객체는 테넌트 컬럼까지 포함해 바뀌지 않으므로, 생성된 키·버전·타임스탬프가 필요하면 행을 다시 읽으세요. 충돌 분기에서 기본 키와 관리 컬럼은 페이로드의 값을 받지 않습니다.
+
+| 컬럼 | 새 행 삽입 | 충돌한 행 |
+|------|-----------|-----------|
+| 기본 키 | 넘긴 값. `"uuid"` / `"uuid-v7"` 키는 생성하고, auto-increment 키는 DB가 부여 | 쓰지 않음 — 저장된 키가 유지됨 |
+| `@Version` | 넘긴 값, 없으면 `1` | 저장된 값 + 1 (저장된 `NULL`은 0으로 셈) |
+| `@CreateTimestamp` | 넘긴 값, 없으면 현재 시각 | 쓰지 않음 |
+| `@UpdateTimestamp` | 넘긴 값, 없으면 현재 시각 | 삽입 행의 값 — 직접 넘기지 않았다면 현재 시각 |
+| `@DeletedAt` | 넘긴 값, 없으면 `NULL` | 페이로드에 없으면 `NULL` — soft-delete된 행이 복구됨 |
+| 테넌트 컬럼(`tenant_column`) | 현재 테넌트 | 쓰지 않음 |
+
+`@Version`, `@UpdateTimestamp`, `@DeletedAt`이 있는 `Order`라면 이렇게 됩니다.
+
+```typescript
+await em.upsert(Order, { slug: "a-1", amount: 42 }, ["slug"]);
+```
+
+```sql
+-- PostgreSQL (SQLite는 소문자 `excluded`만 다르고 같습니다)
+INSERT INTO "order" ("slug", "amount", "version", "createdAt", "updatedAt")
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT ("slug") DO UPDATE SET "amount" = EXCLUDED."amount",
+  "updatedAt" = EXCLUDED."updatedAt",
+  "version" = COALESCE("order"."version", 0) + 1,
+  "deletedAt" = NULL
+
+-- MySQL / MariaDB
+INSERT INTO `order` (`slug`, `amount`, `version`, `createdAt`, `updatedAt`)
+VALUES (?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`),
+  `updatedAt` = VALUES(`updatedAt`),
+  `version` = COALESCE(`order`.`version`, 0) + 1,
+  `deletedAt` = NULL
+```
+
+알아 둘 점은 다음과 같습니다.
+
+- **버전은 올리기만 하고 검사하지 않습니다.** upsert는 마지막에 쓴 값이 이기는 연산이라 `OptimisticLockError`를 던지지 않아요. 대신 upsert 이전 버전을 쥔 `save()`가 나중에 거절되도록 보장합니다. `upsert()` / `batchUpsert()` 페이로드에 넣은 `@Version` 값은 새 행을 삽입할 때만 쓰이고 충돌 시에는 무시되며, 엔티티 클래스당 한 번 경고가 남습니다. 오래된 쓰기를 거절해야 한다면 `save()`를 쓰세요.
+- **관리 컬럼만으로는 갱신이 일어나지 않습니다.** 충돌 대상 말고는 갱신할 사용자 컬럼이 없으면, 문장이 PostgreSQL·SQLite에서는 `DO NOTHING`, MySQL/MariaDB에서는 아무것도 바꾸지 않는 `ON DUPLICATE KEY UPDATE <col> = <col>`로 내려갑니다. 없는 행은 삽입되고, 살아 있는 충돌 행은 버전·타임스탬프까지 그대로 남아요. 예외는 soft-delete된 충돌 행 하나뿐이고, 이 행은 여전히 복구됩니다(`DO UPDATE SET "deletedAt" = NULL WHERE "order"."deletedAt" IS NOT NULL`). 2.1 이전에는 이런 호출이 SQL을 아예 보내지 않고 `{ affected: 0 }`을 돌려줘서, 없는 행조차 삽입되지 않았습니다.
+- **soft delete와 유니크 키.** 일반 유니크 인덱스라면 삭제된 행도 충돌하고, upsert가 넘긴 값으로 그 행을 복구합니다. soft-delete된 행을 건너뛰는 `updateMany()`와는 다릅니다. 새 행을 만들고 싶다면 부분 유니크 인덱스(`WHERE "deletedAt" IS NULL`, PostgreSQL·SQLite)를 두고 `createInsertBuilder().onConflict(cols, { where })`로 지정하세요. `upsert()`는 부분 인덱스를 지정할 수 없습니다.
+- **`insertIgnore()`**도 삽입하는 행에는 같은 값을 채우고, 충돌한 행은 soft-delete 여부와 상관없이 절대 쓰지 않습니다.
+- **`createInsertBuilder()`**도 삽입 행은 같은 방식으로 채우지만, `doUpdate()`는 나열한 컬럼만 대입합니다. 버전 증가, 타임스탬프 갱신, `@DeletedAt` 초기화는 붙지 않아요.
+
 ### 반환값 — `{ affected: number }`
 
 `upsert()`와 `batchUpsert()` 모두 `Promise<{ affected: number }>`를 반환합니다.
@@ -658,13 +706,13 @@ console.log(result.affected); // MySQL: INSERT면 1, UPDATE면 2 / PostgreSQL·S
 
 `affected` 값은 **드라이버 원본 그대로** 반환됩니다 — 정규화 없음.
 
-| 드라이버 | INSERT | UPDATE | 변경 없음 |
-|---------|--------|--------|---------|
-| MySQL | 1 | 2 | 1 |
-| PostgreSQL | 1 | 1 | 1 |
-| SQLite | 1 | 1 | 1 |
+| 드라이버 | INSERT | UPDATE | 변경 없음 | 충돌 행 건너뜀 |
+|---------|--------|--------|---------|-------------|
+| MySQL | 1 | 2 | 1 | 1 |
+| PostgreSQL | 1 | 1 | 1 | 0 |
+| SQLite | 1 | 1 | 1 | 0 |
 
-MySQL은 `ON DUPLICATE KEY UPDATE`의 `affectedRows`를 씁니다. INSERT는 1, UPDATE는 2로 세고, 값이 그대로인 기존 행은 MySQL 매뉴얼상의 0이 아니라 1로 잡혀요 — `mysql2`가 `CLIENT_FOUND_ROWS`(변경된 행이 아니라 매칭된 행)로 접속하기 때문입니다. PostgreSQL과 SQLite는 세 경우 모두 1을 반환합니다. 변경 여부만 알면 충분하다면 `result.affected > 0`으로 판단하면 돼요.
+MySQL은 `ON DUPLICATE KEY UPDATE`의 `affectedRows`를 씁니다. INSERT는 1, UPDATE는 2로 세고, 값이 그대로인 기존 행은 MySQL 매뉴얼상의 0이 아니라 1로 잡혀요 — `mysql2`가 `CLIENT_FOUND_ROWS`(변경된 행이 아니라 매칭된 행)로 접속하기 때문입니다. `@Version`이 있는 엔티티에는 '변경 없음'이 없습니다. 충돌 분기가 버전을 올리므로, 넘긴 값이 저장된 행과 전부 같아도 MySQL은 2를 보고해요. PostgreSQL과 SQLite는 쓴 행마다 1, 건너뛴 충돌 행은 0을 반환합니다. 충돌 행을 건너뛰는 경우는 갱신할 사용자 컬럼이 남지 않았을 때([충돌 시 관리 컬럼](#충돌-시-관리-컬럼) 참고)와, `tenant_column` 전략에서 다른 테넌트가 그 행을 소유할 때입니다.
 
 `batchUpsert()`는 `items` 배열이 비어 있으면 `{ affected: 0 }`을 반환합니다.
 
@@ -691,7 +739,8 @@ ON DUPLICATE KEY UPDATE `name` = IF(`user`.`tenant_id` = ?, VALUES(`name`), `use
 
 - 테넌트 컬럼 자체가 갱신 목록에 들어가지 않으므로, 충돌한 행의 소유자가 바뀔 일이 없습니다.
 - 다른 테넌트 소유라서 건너뛴 행은 PostgreSQL·SQLite에서 affected에 잡히지 않고, 엔티티 클래스당 한 번 경고가 남습니다. MySQL/MariaDB는 같은 경우를 1로 보고하는데(`mysql2`가 `CLIENT_FOUND_ROWS`로 접속해서 매칭만 돼도 세거든요), INSERT가 보고하는 숫자와 같습니다. 확실히 알아야 하면 행을 다시 읽어 보세요.
-- 갱신할 컬럼이 테넌트 컬럼밖에 남지 않으면 문장이 `DO NOTHING` / `INSERT IGNORE`로 내려갑니다. INSERT는 그대로 수행되고, 충돌한 행은 건드리지 않아요.
+- 갱신할 사용자 컬럼이 테넌트 컬럼밖에 남지 않으면, 갱신할 것이 없는 다른 upsert와 똑같이 문장이 내려갑니다. PostgreSQL·SQLite는 `DO NOTHING`, MySQL/MariaDB는 아무것도 바꾸지 않는 `ON DUPLICATE KEY UPDATE`가 돼요. INSERT는 그대로 수행되고, 충돌한 행은 건드리지 않습니다.
+- 관리 컬럼 대입도 같은 가드 아래에 있습니다. MySQL/MariaDB의 버전 증가는 `` `version` = IF(`user`.`tenant_id` = ?, COALESCE(`user`.`version`, 0) + 1, `user`.`version`) ``이므로, 다른 테넌트의 행은 버전이 올라가거나 복구되지 않습니다.
 
 `insertIgnore()`에는 가드가 필요 없습니다 — 기존 행을 쓰는 일이 없으니까요. 충돌한 키를 다른 테넌트가 소유하고 있으면, 버려지는 쪽은 이번 INSERT입니다.
 
@@ -701,7 +750,7 @@ ON DUPLICATE KEY UPDATE `name` = IF(`user`.`tenant_id` = ?, VALUES(`name`), `use
 
 ### upsert()의 한계
 
-`upsert()`와 `batchUpsert()`가 충돌 시 할 수 있는 일은 하나뿐입니다. 저장된 행을 제안한 값으로 덮어쓰는 것, 즉 `col = EXCLUDED.col`이에요. "마지막에 쓴 값이 이긴다"면 이걸로 충분합니다.
+`upsert()`와 `batchUpsert()`가 넘긴 컬럼에 대해 충돌 시 할 수 있는 일은 하나뿐입니다. 저장된 값을 제안한 값으로 덮어쓰는 것, 즉 `col = EXCLUDED.col`이에요. "마지막에 쓴 값이 이긴다"면 이걸로 충분합니다. 저장된 행을 읽어 계산하는 건 ORM이 직접 챙기는 관리 컬럼(`@Version` 증가, [충돌 시 관리 컬럼](#충돌-시-관리-컬럼) 참고)뿐이고, 사용자 컬럼에는 쓸 수 없습니다.
 
 문제는 새 값이 **저장된 값에 의존할 때**입니다.
 
@@ -768,7 +817,8 @@ builder.values({ mac, bucketStart, records, syncedAt: sql`NOW()` });
 ### doUpdate()의 세 가지 형태
 
 ```typescript
-// 1. 제안한 값으로 덮어쓰기 — upsert()와 동일
+// 1. 나열한 컬럼을 제안한 값으로 덮어쓰기 — upsert()와 같은 형태지만
+//    @Version / @UpdateTimestamp / @DeletedAt 처리는 없음
 .doUpdate(["name", "email"])
 
 // 2. 리터럴 값과 원시 SQL
@@ -860,7 +910,7 @@ const { text, values } = em.createInsertBuilder(SyncMarker)
 
 ### 동작 참고
 
-- **`createUpdateBuilder()`와 마찬가지로 문장 단위 API입니다.** `beforeInsert` / `afterInsert` 이벤트도, 엔티티 훅도 발화하지 않아요. 테넌트 컬럼과 `@CreateTimestamp` / `@UpdateTimestamp` / `@Version` 기본값, 컬럼 트랜스포머는 `insertMany()`와 똑같이 적용됩니다.
+- **`createUpdateBuilder()`와 마찬가지로 문장 단위 API입니다.** `beforeInsert` / `afterInsert` 이벤트도, 엔티티 훅도 발화하지 않아요. 테넌트 컬럼과 `@CreateTimestamp` / `@UpdateTimestamp` / `@Version` 기본값, 생성 UUID 키, 컬럼 트랜스포머는 삽입되는 행에 `insertMany()`와 똑같이 적용됩니다. 충돌 절은 직접 나열한 컬럼만 대입합니다.
 - **한 문장 안의 중복 키는 알아서 합쳐 주지 않습니다.** PostgreSQL은 같은 충돌 대상을 두 번 건드리는 `VALUES` 목록을 거부하고(`ON CONFLICT DO UPDATE command cannot affect row a second time`), SQLite는 행을 순차 적용해서 누적이 겹칩니다. 문장을 만들기 전에 호출 측에서 합쳐 주세요.
 - **`affected`는 드라이버가 보고한 값 그대로**입니다. `upsert()`와 동일한 MySQL 1 대 2 주의사항이 그대로 적용돼요.
 - 리포지토리에서는 `markerRepo.createInsertBuilder()`로 씁니다.

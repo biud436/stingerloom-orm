@@ -6,6 +6,42 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import type { UpsertTenantGuard } from "./WriteExecutor";
 
 /**
+ * The ORM-managed assignments an upsert's conflict branch adds after the
+ * columns the caller proposed. Each identifier arrives already wrapped.
+ *
+ * They never cause a write on their own. A conflict branch with no
+ * caller-owned column to update degrades to DO NOTHING — except that a
+ * `reset` column still revives a soft-deleted row (and only such a row), so
+ * a payload naming just its conflict key makes the row live without bumping
+ * its version.
+ */
+export interface UpsertManagedAssignments {
+  /**
+   * The stored row as the SET expressions read it — the bare wrapped table
+   * name. PostgreSQL rejects an unqualified column there (ambiguous against
+   * `excluded`), and a schema-qualified target is still reachable by its
+   * bare name.
+   */
+  existingRowRef: string;
+  /** Copied from the proposed row, like the caller's columns (`@UpdateTimestamp`). */
+  refresh: string[];
+  /**
+   * Incremented from the stored value, never taken from the payload
+   * (`@Version`). A stored NULL — a row written before the column was
+   * managed — counts as 0.
+   */
+  increment: string[];
+  /** Reset to NULL (`@DeletedAt`, when the payload does not state it). */
+  reset: string[];
+}
+
+/** One rendered-to-be assignment of an upsert's conflict branch. */
+type UpsertAssignment =
+  | { column: string; kind: "proposed" }
+  | { column: string; kind: "increment"; stored: string }
+  | { column: string; kind: "reset" };
+
+/**
  * What an `INSERT` does when a row conflicts, as {@link DmlSqlBuilder} sees
  * it — the assignments arrive already rendered by the query builder.
  */
@@ -151,9 +187,11 @@ export class DmlSqlBuilder {
    * immediately and are visible to the ones after them, so a single unguarded
    * assignment would defeat the guard for the rest of the list.
    *
-   * An empty `updateColumns` means the conflict branch has nothing to write
-   * (the tenant column was its only member): the statement degrades to
-   * DO NOTHING / INSERT IGNORE so the INSERT still happens.
+   * An empty `updateColumns` means the conflict branch has nothing of the
+   * caller's to write: the statement degrades to DO NOTHING (MySQL: a no-op
+   * self-assignment) so the INSERT still happens. The only `managed` entry
+   * kept then is `reset`, which revives a soft-deleted row — PostgreSQL and
+   * SQLite limit it to such a row with `WHERE <col> IS NOT NULL`.
    */
   buildUpsertQuery(
     tableName: string,
@@ -162,63 +200,20 @@ export class DmlSqlBuilder {
     conflictColumns: string[],
     updateColumns: string[],
     tenantGuard?: UpsertTenantGuard | null,
+    managed?: UpsertManagedAssignments | null,
   ): Sql {
-    const columnList = join(
-      columns.map((c) => raw(c)),
-      ", ",
-    );
     const valueList = join(values, ", ");
-
-    if (this.ctx.isMySqlFamily()) {
-      const updateSet =
-        updateColumns.length === 0
-          ? this.mySqlNoOpUpdate(conflictColumns, columns)
-          : this.mySqlUpdateSet(updateColumns, tenantGuard);
-      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON DUPLICATE KEY UPDATE ${updateSet}`;
-    }
-
-    if (updateColumns.length === 0) {
-      return this.buildInsertIgnoreQuery(
-        tableName,
-        columns,
-        values,
-        conflictColumns,
-      );
-    }
-
-    const conflictList = join(
-      conflictColumns.map((c) => raw(c)),
-      ", ",
-    );
-    const guardSql = tenantGuard ? sql` WHERE ${tenantGuard.predicate}` : sql``;
-
-    if (this.ctx.isPostgres()) {
-      const updateSet = join(
-        updateColumns.map((col) => raw(`${col} = EXCLUDED.${col}`)),
-        ", ",
-      );
-      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}${guardSql}`;
-    }
-
-    // SQLite
-    if (this.ctx.isSqlite()) {
-      const updateSet = join(
-        updateColumns.map((col) => raw(`${col} = excluded.${col}`)),
-        ", ",
-      );
-      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES (${valueList}) ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}${guardSql}`;
-    }
-
-    throw new OrmError(
-      OrmErrorCode.UNSUPPORTED_DATABASE,
-      `Unsupported database type for upsert: ${this.ctx.getDbType()}`,
+    return this.buildUpsertStatement(
+      tableName,
+      columns,
+      sql`(${valueList})`,
+      conflictColumns,
+      updateColumns,
+      tenantGuard,
+      managed,
     );
   }
 
-  /**
-   * MySQL/MariaDB `ON DUPLICATE KEY UPDATE` assignments, guarded per column
-   * when a tenant predicate applies.
-   */
   /**
    * `ON DUPLICATE KEY UPDATE col = col` — the conflict branch has nothing to
    * write, so the row is left exactly as it is.
@@ -231,25 +226,6 @@ export class DmlSqlBuilder {
     return raw(`${anchor} = ${anchor}`);
   }
 
-  private mySqlUpdateSet(
-    updateColumns: string[],
-    tenantGuard?: UpsertTenantGuard | null,
-  ): Sql {
-    if (!tenantGuard) {
-      return join(
-        updateColumns.map((col) => raw(`${col} = VALUES(${col})`)),
-        ", ",
-      );
-    }
-    return join(
-      updateColumns.map(
-        (col) =>
-          sql`${raw(col)} = IF(${tenantGuard.predicate}, ${raw(`VALUES(${col})`)}, ${raw(`${tenantGuard.tableRef}.${col}`)})`,
-      ),
-      ", ",
-    );
-  }
-
   /** Multi-row variant of {@link buildUpsertQuery}, guard included. */
   buildBatchUpsertQuery(
     tableName: string,
@@ -258,54 +234,154 @@ export class DmlSqlBuilder {
     conflictColumns: string[],
     updateColumns: string[],
     tenantGuard?: UpsertTenantGuard | null,
+    managed?: UpsertManagedAssignments | null,
+  ): Sql {
+    return this.buildUpsertStatement(
+      tableName,
+      columns,
+      join(valueRows, ", "),
+      conflictColumns,
+      updateColumns,
+      tenantGuard,
+      managed,
+    );
+  }
+
+  /**
+   * The statement both upsert builders emit; `valuesSql` is everything after
+   * `VALUES` — one parenthesized tuple or a comma-joined list of them.
+   */
+  private buildUpsertStatement(
+    tableName: string,
+    columns: string[],
+    valuesSql: Sql,
+    conflictColumns: string[],
+    updateColumns: string[],
+    tenantGuard?: UpsertTenantGuard | null,
+    managed?: UpsertManagedAssignments | null,
   ): Sql {
     const columnList = join(
       columns.map((c) => raw(c)),
       ", ",
     );
-    const valuesList = join(valueRows, ", ");
+    const head = sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesSql}`;
+
+    // Nothing of the caller's to write: only a soft-deleted row is still
+    // worth touching, to revive it.
+    const reviveOnly = updateColumns.length === 0;
+    const assignments = reviveOnly
+      ? (managed?.reset ?? []).map(
+          (column): UpsertAssignment => ({ column, kind: "reset" }),
+        )
+      : this.upsertAssignments(updateColumns, managed);
 
     if (this.ctx.isMySqlFamily()) {
+      // Resetting an already-NULL column changes nothing, so the revive form
+      // needs no condition beyond the tenant guard.
       const updateSet =
-        updateColumns.length === 0
+        assignments.length === 0
           ? this.mySqlNoOpUpdate(conflictColumns, columns)
-          : this.mySqlUpdateSet(updateColumns, tenantGuard);
-      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON DUPLICATE KEY UPDATE ${updateSet}`;
+          : join(
+              assignments.map((a) => this.mySqlAssignment(a, tenantGuard)),
+              ", ",
+            );
+      return sql`${head} ON DUPLICATE KEY UPDATE ${updateSet}`;
+    }
+
+    if (!this.ctx.isPostgres() && !this.ctx.isSqlite()) {
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_DATABASE,
+        `Unsupported database type for upsert: ${this.ctx.getDbType()}`,
+      );
     }
 
     const conflictList = join(
       conflictColumns.map((c) => raw(c)),
       ", ",
     );
-    const guardSql = tenantGuard ? sql` WHERE ${tenantGuard.predicate}` : sql``;
-
-    if (updateColumns.length === 0) {
-      if (this.ctx.isPostgres() || this.ctx.isSqlite()) {
-        return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON CONFLICT (${conflictList}) DO NOTHING`;
-      }
+    if (assignments.length === 0) {
+      return sql`${head} ON CONFLICT (${conflictList}) DO NOTHING`;
     }
 
-    if (this.ctx.isPostgres()) {
-      const updateSet = join(
-        updateColumns.map((col) => raw(`${col} = EXCLUDED.${col}`)),
-        ", ",
-      );
-      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}${guardSql}`;
-    }
-
-    // SQLite
-    if (this.ctx.isSqlite()) {
-      const updateSet = join(
-        updateColumns.map((col) => raw(`${col} = excluded.${col}`)),
-        ", ",
-      );
-      return sql`INSERT INTO ${raw(tableName)} (${columnList}) VALUES ${valuesList} ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}${guardSql}`;
-    }
-
-    throw new OrmError(
-      OrmErrorCode.UNSUPPORTED_DATABASE,
-      `Unsupported database type for upsert: ${this.ctx.getDbType()}`,
+    const excludedRef = this.ctx.isPostgres() ? "EXCLUDED" : "excluded";
+    const updateSet = join(
+      assignments.map((a) =>
+        raw(`${a.column} = ${this.assignedValue(a, excludedRef)}`),
+      ),
+      ", ",
     );
+    // A live conflicting row is left alone by the revive form, so it is not
+    // counted as written either.
+    const conditions: Sql[] = reviveOnly
+      ? assignments.map((a) =>
+          raw(`${managed!.existingRowRef}.${a.column} IS NOT NULL`),
+        )
+      : [];
+    if (tenantGuard) conditions.push(tenantGuard.predicate);
+    const whereSql =
+      conditions.length > 0 ? sql` WHERE ${join(conditions, " AND ")}` : sql``;
+    return sql`${head} ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}${whereSql}`;
+  }
+
+  /** The conflict branch's assignments in statement order: the caller's columns, then the managed ones. */
+  private upsertAssignments(
+    updateColumns: string[],
+    managed?: UpsertManagedAssignments | null,
+  ): UpsertAssignment[] {
+    const assignments: UpsertAssignment[] = updateColumns.map((column) => ({
+      column,
+      kind: "proposed",
+    }));
+    if (!managed) return assignments;
+    const stored = managed.existingRowRef;
+    for (const column of managed.refresh) {
+      assignments.push({ column, kind: "proposed" });
+    }
+    for (const column of managed.increment) {
+      assignments.push({ column, kind: "increment", stored });
+    }
+    for (const column of managed.reset) {
+      assignments.push({ column, kind: "reset" });
+    }
+    return assignments;
+  }
+
+  /** The right-hand side of one PostgreSQL / SQLite conflict assignment. */
+  private assignedValue(assignment: UpsertAssignment, excludedRef: string): string {
+    switch (assignment.kind) {
+      case "proposed":
+        return `${excludedRef}.${assignment.column}`;
+      case "increment":
+        return `COALESCE(${assignment.stored}.${assignment.column}, 0) + 1`;
+      case "reset":
+        return "NULL";
+    }
+  }
+
+  /**
+   * One MySQL/MariaDB `ON DUPLICATE KEY UPDATE` assignment, guarded when a
+   * tenant predicate applies.
+   *
+   * Every assignment reads only the proposed row or its *own* stored column,
+   * never a column assigned earlier in the list — `ON DUPLICATE KEY UPDATE`
+   * assignments take effect immediately, so reading another assigned column
+   * would see its new value.
+   */
+  private mySqlAssignment(
+    assignment: UpsertAssignment,
+    tenantGuard?: UpsertTenantGuard | null,
+  ): Sql {
+    const col = assignment.column;
+    const value =
+      assignment.kind === "proposed"
+        ? `VALUES(${col})`
+        : assignment.kind === "increment"
+          ? `COALESCE(${assignment.stored}.${col}, 0) + 1`
+          : "NULL";
+    if (!tenantGuard) {
+      return raw(`${col} = ${value}`);
+    }
+    return sql`${raw(col)} = IF(${tenantGuard.predicate}, ${raw(value)}, ${raw(`${tenantGuard.tableRef}.${col}`)})`;
   }
 
   /**

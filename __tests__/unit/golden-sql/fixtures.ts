@@ -124,9 +124,9 @@ export function createQbFor<T>(
  * Composite-PK counter used by the INSERT ... ON CONFLICT goldens.
  *
  * Every column is an `int` or `varchar` on purpose: the bulk-insert
- * defaults auto-fill `datetime` / `timestamp` / `date` columns with
- * `new Date()`, which would make the bound values non-deterministic and
- * the golden expectations unpinnable.
+ * defaults stamp `@CreateTimestamp` / `@UpdateTimestamp` columns with
+ * `new Date()` and generate UUID keys, which would make the bound values
+ * non-deterministic and the golden expectations unpinnable.
  */
 @Entity()
 export class Counter {
