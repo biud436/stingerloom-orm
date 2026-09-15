@@ -66,7 +66,7 @@ const em = new EntityManager();
 |--------|-----------|------|
 | `insertMany` | `<T>(entity, items[]): Promise<{ affected: number }>` | 다건 INSERT |
 | `insertManyAndReturn` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | 다건 `INSERT … RETURNING *` — 입력 순서대로 수화된 엔티티 인스턴스 반환; PostgreSQL과 SQLite 3.35+ 전용; MySQL에서 호출하면 `OrmError (UNSUPPORTED_DATABASE)` 발생 |
-| `insertIgnore` | `<T>(entity, rows[]): Promise<void>` | 멱등 INSERT — `INSERT IGNORE`(MySQL) / `INSERT … ON CONFLICT DO NOTHING`(PostgreSQL / SQLite) |
+| `insertIgnore` | `<T>(entity, data, conflictColumns?): Promise<{ affected: number }>` | 멱등 단건 INSERT(새로 삽입하면 1, 일치하는 행이 이미 있으면 0) — `INSERT IGNORE`(MySQL) / `INSERT … ON CONFLICT DO NOTHING`(PostgreSQL / SQLite) |
 | `saveMany` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | 다건 INSERT/UPDATE |
 | `deleteMany` | `<T>(entity, ids[]): Promise<DeleteResult>` | 다건 삭제 |
 

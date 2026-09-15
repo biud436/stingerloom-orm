@@ -483,7 +483,7 @@ If your application needs globally unique IDs across the hierarchy, use `@Primar
 id!: string;
 ```
 
-This generates UUIDv7 values that are unique across all tables, eliminating the overlap problem.
+This generates random UUIDv4 values that are unique across all tables, eliminating the overlap problem. Use `@PrimaryGeneratedColumn("uuid-v7")` if you also want the keys to sort by creation time.
 :::
 
 ## 15. Next Steps
