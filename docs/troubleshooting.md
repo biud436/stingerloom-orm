@@ -331,6 +331,44 @@ Or mark the relation as eager:
 posts!: Post[];
 ```
 
+### Relation comes back `[]` (or `null`) under `select`
+
+```typescript
+const users = await em.find(User, { select: ["name"], relations: ["posts"] });
+// users[0].posts → [] on every user, even though each of them has posts
+```
+
+OneToMany, ManyToMany and inverse-side OneToOne relations are not JOINed: a second query matches related rows to each parent by the parent's primary key. Earlier releases sent the caller's `select` as written, so a `select` that left the key out hydrated parents without it, every loader skipped its query, and each parent got `[]` (or `null` for a OneToOne) with no error.
+
+The primary key is now fetched for you and stays on the returned objects, so the query above loads the posts. On an earlier release, name the key yourself:
+
+```typescript
+const users = await em.find(User, { select: ["id", "name"], relations: ["posts"] });
+```
+
+See [select with relations](./entity-manager-querying.md#select-with-relations).
+
+### "Cannot load ..." with distinct or groupBy
+
+```
+InvalidQueryError: Cannot load "posts" for entity "User" in a "distinct" read whose "select"
+omits primary key column "id". "posts" is matched to each row by that key, and adding the key
+to the SELECT list would change which rows DISTINCT removes.
+```
+
+A read that collapses rows cannot carry the primary key described above: under `distinct: true` adding the key would change which rows survive, and a `groupBy` that doesn't list every key column leaves each group without a single parent to match related rows to — the grouped row carries the key of one arbitrary member, so that member's rows would be attached to the whole group. Such a query is rejected instead of returning different rows without saying so. Either:
+
+- add the primary key to `select` (for `distinct`) or to `groupBy`,
+- drop `distinct` / `groupBy` from this query, or
+- load the relation with a separate `find()`.
+
+The `groupBy` rejection looks at the grouping only. Naming the key in `select` does not lift it, because a grouped row still stands for several parents:
+
+```typescript
+// Rejected — "name" groups several users under one arbitrary id
+await em.find(User, { select: ["id", "name"], groupBy: ["name"], relations: ["posts"] });
+```
+
 ### "Unknown relation ... in relations"
 
 ```

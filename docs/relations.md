@@ -982,7 +982,7 @@ Here's a summary of the three ways to fetch related data.
 
 | Method | Configuration Location | Behavior | When to Use |
 |--------|----------------------|----------|-------------|
-| `relations` option | At `find()` call time | JOIN only specified relations | When you want to load relations only when needed |
+| `relations` option | At `find()` call time | Load only the specified relations (JOIN or a separate query, see below) | When you want to load relations only when needed |
 | `eager: true` | Decorator option | Always auto JOIN | When the relation is almost always needed |
 | `lazy: true` | Decorator option | Query on property access | When the relation is rarely used |
 
@@ -1009,7 +1009,7 @@ WHERE "user"."id" = 1;
 SELECT * FROM "post" WHERE "author_id" = 1;
 ```
 
-ManyToOne and OneToOne relations are loaded via LEFT JOIN (single query). OneToMany relations are loaded in a separate query because a JOIN would multiply the parent rows.
+ManyToOne relations and the owning side of OneToOne are loaded via LEFT JOIN (single query). OneToMany, ManyToMany and the inverse side of OneToOne are loaded in a separate query, because a JOIN would multiply the parent rows. That query matches related rows to each parent by the parent's primary key, so the primary key is fetched even when `select` leaves it out; see [select with relations](./entity-manager-querying.md#select-with-relations).
 
 ## Next Steps
 

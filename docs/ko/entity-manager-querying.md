@@ -74,6 +74,45 @@ const users = await em.find(User, {
 
 반환된 객체는 여전히 `User` TypeScript 타입을 가지지만, 선택하지 않은 프로퍼티는 런타임에서 `undefined`가 돼요. 즉, `user.password`에 접근해도 TypeScript이 경고하지 않아요 -- 그냥 `undefined`를 반환할 뿐이에요. 부분 선택에 대한 컴파일 타임 안전성이 필요하면, 반환 타입을 선택한 컬럼으로만 좁혀주는 [SelectQueryBuilder](./query-builder.md)를 사용해 주세요.
 
+### select와 relations 함께 쓰기
+
+예외가 하나 있습니다. `relations`에 OneToMany, ManyToMany(양쪽 모두), OneToOne의 역방향(inverse side)이 들어 있으면 `select`에서 기본 키를 빼도 기본 키를 함께 가져옵니다. 이런 관계는 JOIN하지 않고 두 번째 쿼리로 로드하는데, 그 쿼리가 부모 행마다 기본 키로 자식 행을 짝지어 주기 때문에 부모 행에 키가 있어야 합니다. 이렇게 가져온 키는 반환된 객체에도 그대로 남아요.
+
+```typescript
+const users = await em.find(User, {
+  select: ["name"],
+  relations: ["posts"], // OneToMany
+});
+// users[0] → { id: 1, name: "Alice", posts: [...] }
+```
+
+```sql
+SELECT "name", "id" FROM "user";
+SELECT ... FROM "post" WHERE "author_id" IN (1, 2);  -- 위에서 읽은 id
+```
+
+`select: { id: false, name: true }`처럼 명시적으로 뺀 경우에도 키는 추가되고, 복합 키라면 키 컬럼 전부가 추가됩니다. ManyToOne 관계와 OneToOne의 소유 측(owning side)은 같은 쿼리에 JOIN되므로 아무것도 추가하지 않습니다. 빈 `select`(`[]`, `{}`, `{ id: false }`)는 여전히 오류입니다. 컬럼을 하나도 요청하지 않은 셈이고, 기본 키가 원래 적으려던 컬럼을 대신해 주지는 않으니까요.
+
+행을 합치는 읽기는 이런 관계와 함께 쓸 수 없습니다. 합쳐진 행에는 자식 행을 짝지을 부모가 하나로 정해지지 않기 때문입니다. 두 경우 모두 SQL을 실행하기 전에 `InvalidQueryError`를 던집니다.
+
+- 기본 키 컬럼을 전부 적지 않은 `groupBy` -- `select`에 무엇이 적혀 있든 마찬가지입니다. 그룹으로 묶인 행이 들고 있는 키는 그 그룹 구성원 중 아무거나 하나의 키이기 때문입니다.
+- 기본 키를 뺀 `select`에 붙은 `distinct: true` -- 키를 추가하면 DISTINCT가 제거하는 행이 달라집니다.
+
+```typescript
+// InvalidQueryError: Cannot load "posts" for entity "User" in a "distinct" read
+// whose "select" omits primary key column "id". ...
+await em.find(User, { select: ["name"], distinct: true, relations: ["posts"] });
+
+// InvalidQueryError: ... in a "groupBy" read whose grouping omits primary key column "id".
+// select에 "id"를 적어도 달라지지 않습니다. 그룹 하나에 임의의 id 하나니까요.
+await em.find(User, { select: ["id", "name"], groupBy: ["name"], relations: ["posts"] });
+
+// 동작함: 기본 키가 그룹 기준에 들어 있으니 알아서 선택됩니다
+await em.find(User, { select: ["name"], groupBy: ["id", "name"], relations: ["posts"] });
+```
+
+[버퍼 플러그인](./write-buffer.md)에는 주의할 점이 하나 있습니다. 버퍼에서 `select` 읽기는 정규(canonical) 읽기가 아니어서, 아이덴티티 맵이 이미 그 행을 추적하고 있으면 `buf.find()`는 방금 읽어 온 행 대신 추적 중인 인스턴스를 돌려줍니다. 이번 읽기가 가져온 관계는 그 인스턴스에 붙지 않습니다. 관계는 추적 중인 인스턴스에서 읽거나(`await user.posts`로 지연 로딩됩니다) `select` 없는 전체 읽기를 사용해 주세요.
+
 ---
 
 ## 정렬 -- orderBy
@@ -1478,7 +1517,7 @@ WHERE "email" = $1
 | `skip` | `number` | 건너뛸 행 수 (오프셋) |
 | `take` | `number` | 최대 반환 행 수 (리밋) |
 | `limit` | `[offset, count]` | skip/take의 대안 |
-| `relations` | `string[]` | JOIN으로 관련 엔티티 즉시 로드 |
+| `relations` | `string[]` | 관련 엔티티 로드: ManyToOne과 소유 측 OneToOne은 JOIN, OneToMany / ManyToMany / 역방향 OneToOne은 별도 쿼리 |
 | `distinct` | `boolean` | SELECT DISTINCT |
 | `groupBy` | `string[]` | GROUP BY 컬럼 |
 | `having` | `Sql[]` | HAVING 조건 (groupBy 필수) |

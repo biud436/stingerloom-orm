@@ -982,7 +982,7 @@ DELETE FROM "owner" WHERE "id" = 1;        -- 그 다음 부모 삭제
 
 | 방법 | 설정 위치 | 동작 | 사용 시기 |
 |------|----------|------|----------|
-| `relations` 옵션 | `find()` 호출 시 | 지정한 관계만 JOIN | 필요할 때만 관계를 로드하고 싶을 때 |
+| `relations` 옵션 | `find()` 호출 시 | 지정한 관계만 로드 (JOIN 또는 별도 쿼리, 아래 참고) | 필요할 때만 관계를 로드하고 싶을 때 |
 | `eager: true` | 데코레이터 옵션 | 항상 자동 JOIN | 관계가 거의 항상 필요할 때 |
 | `lazy: true` | 데코레이터 옵션 | 프로퍼티 접근 시 쿼리 | 관계가 거의 사용되지 않을 때 |
 
@@ -1009,7 +1009,7 @@ WHERE "user"."id" = 1;
 SELECT * FROM "post" WHERE "author_id" = 1;
 ```
 
-ManyToOne과 OneToOne 관계는 LEFT JOIN으로 로드돼요 (단일 쿼리). OneToMany 관계는 별도 쿼리로 로드되는데, JOIN을 쓰면 부모 행이 곱해지기 때문이에요.
+ManyToOne 관계와 OneToOne의 소유 측은 LEFT JOIN으로 로드돼요 (단일 쿼리). OneToMany, ManyToMany, OneToOne의 역방향은 별도 쿼리로 로드되는데, JOIN을 쓰면 부모 행이 곱해지기 때문이에요. 이 쿼리는 부모의 기본 키로 관련 행을 짝지으므로, `select`에서 기본 키를 빼도 기본 키를 함께 가져옵니다. 자세한 내용은 [select와 relations 함께 쓰기](./entity-manager-querying.md#select와-relations-함께-쓰기)를 참고하세요.
 
 ## 다음 단계
 
