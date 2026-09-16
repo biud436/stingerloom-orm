@@ -279,6 +279,16 @@ type WhereClause<T> = {
 };
 ```
 
+`null`은 값이라서 `IS NULL`이 됩니다. `undefined`는 키가 없는 것으로 보고 해당 필드를 쿼리에서 뺍니다. 조건을 좁히는 게 아니라 없애는 동작이라, 다음 세 가지 모양은 `InvalidQueryError`로 거부합니다.
+
+| 모양 | 동작 |
+|---|---|
+| `findOne` / `findOneBy` / `findOneOrFail` / `findOneByOrFail` / `exists`에서 명시한 필드가 전부 undefined | 거부 -- 아무 행이나 읽게 되기 때문 |
+| 연산자 피연산자, `in` / 배열 원소, `between` 경계가 undefined | 거부 -- 피연산자는 명시적인 비교이기 때문 |
+| `OR` 분기(또는 배열 형태 원소)가 아무 조건도 만들지 못함 | 거부 -- 빈 분기는 TRUE라 OR가 넓어지기 때문 |
+
+그 밖의 자리에서는 undefined 필드를 계속 건너뜁니다. 목록 조회, 집계, criteria 쓰기, 그리고 정의된 필드가 같이 있는 where가 여기에 해당해요. `findByPK(E, undefined)`와 `findByPKs(E, [..., undefined])`도 거부합니다. [undefined 값](./entity-manager-querying.md#undefined-값)을 참고하세요.
+
 ### Filter Operators
 
 연산자는 필드 타입에 따라 달라져요. `string` 필드에는 `contains`, `startsWith` 같은 추가 연산자가 제공돼요.

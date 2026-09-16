@@ -230,6 +230,32 @@ export class WriteExecutor {
   }
 
   /**
+   * Rejects criteria that resolve to no predicate — `{}`, `{ id: undefined }`,
+   * `{ OR: [] }` — before a criteria-based write runs any hook, event,
+   * subscriber or cascade read.
+   *
+   * The builders repeat the check after resolving (delete, updateMany,
+   * softDelete, restore), but by then delete() had already fired
+   * beforeDelete and let the O2M cascade SELECT every parent and DELETE their
+   * children; the transaction rolled the rows back, not the listeners. Resolving
+   * here also surfaces an InvalidQueryError from the resolver (an undefined
+   * operand, an empty OR branch) at the same point.
+   */
+  private assertCriteriaHasPredicate<T>(
+    metadata: EntityScannerMetadata,
+    criteria: WhereClause<T>,
+    operation: string,
+  ): void {
+    const predicates = this.resolveCriteriaWhere(
+      criteria,
+      this.ctx.buildPropertyToColumnMap(metadata),
+    );
+    if (predicates.length === 0) {
+      throw new DeleteWithoutConditionsError(operation);
+    }
+  }
+
+  /**
    * The discriminator predicate that keeps a criteria-based write on one STI
    * subtype's rows, or null when the entity is not an STI child. Every bulk
    * write narrows this way so it can never touch siblings sharing the table.
@@ -2497,6 +2523,7 @@ export class WriteExecutor {
     }
 
     this.ctx.validateCriteriaKeys(metadata, criteria, entity.name);
+    this.assertCriteriaHasPredicate(metadata, criteria, "Delete");
 
     return this.ctx.executeInTransaction(async (session) => {
       await this.emitBeforeDelete(entity, criteria);
@@ -2632,6 +2659,9 @@ export class WriteExecutor {
 
     this.ctx.validateUpdateDataKeys(metadata, data, entity.name);
     this.ctx.validateCriteriaKeys(metadata, where, entity.name, "where");
+    // Before updateMany's empty-SET early return, which used to answer
+    // { affected: 0 } for a where that resolves to nothing.
+    this.assertCriteriaHasPredicate(metadata, where, "Update");
     // A criteria update is scoped to the caller's own rows, but nothing stopped
     // it from handing one of them to another tenant.
     this.ctx.assertTenantColumnOnUpdate(entity, data as Partial<T>);
@@ -3024,6 +3054,7 @@ export class WriteExecutor {
     }
 
     this.ctx.validateCriteriaKeys(metadata, criteria, entity.name);
+    this.assertCriteriaHasPredicate(metadata, criteria, "Soft delete");
 
     return this.ctx.executeInTransaction(async (session) => {
       // Criteria-based soft-delete events. Symmetrical with delete()'s
@@ -3110,6 +3141,7 @@ export class WriteExecutor {
     }
 
     this.ctx.validateCriteriaKeys(metadata, criteria, entity.name);
+    this.assertCriteriaHasPredicate(metadata, criteria, "Restore");
 
     return this.ctx.executeInTransaction(async (session) => {
       // Criteria-based restore events — symmetrical with softDelete's.

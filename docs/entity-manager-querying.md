@@ -445,6 +445,86 @@ SELECT * FROM "user"
 WHERE "bio" IS NOT NULL
 ```
 
+### undefined values
+
+`null` and `undefined` mean different things in a `where`. `null` is a value you are asking about — it becomes `IS NULL`. `undefined` is **the absence of a key**: the field is dropped from the query, exactly as if you had never written it.
+
+```typescript
+// These two build the same SQL.
+await em.find(User, { where: { role: "admin", score: undefined } });
+await em.find(User, { where: { role: "admin" } });
+```
+
+That rule is convenient for optional filters on a list read, and dangerous everywhere else, so the ORM rejects the shapes where dropping a condition changes the answer instead of narrowing it.
+
+**A where that names fields and defines none is rejected on single-row reads.** `findOne`, `findOneBy`, `findOneOrFail`, `findOneByOrFail` and `exists` throw `InvalidQueryError`, because the dropped condition leaves `SELECT ... LIMIT 1` with no filter at all — an arbitrary row, or `exists()` answering "the table is not empty".
+
+```typescript
+const id: number | undefined = req.params.id;
+
+await em.findOne(User, { where: { id } });
+// InvalidQueryError: Every value in the "where" passed to findOne() for entity
+// "User" is undefined (id) — the query would read an arbitrary row.
+```
+
+Explicitly asking for no filter is still legal, because it says so in the code: `findOne(User, {})`, `findOne(User, { where: {} })` and `exists(User)` all read the first row / answer whether any row exists.
+
+**List reads and aggregates keep skipping.** `find`, `findBy`, `pluck`, `findAndCount`, `findWithPage`, `findWithCursor`, `stream`, `count`, `sum`, `avg`, `min`, `max` and the query builder's `where({ ... })` overload all drop an undefined field and return every row, which is the optional-filter idiom.
+
+**Primary-key lookups are strict**, and they say so in their own words (`findByPK() received undefined as the primary key of "User".`) rather than through the check above. `findByPK(User, undefined)` and `findByPKs(User, [1, undefined])` throw. For a composite key, every key property must be present: `findByPK(Member, { tenantKey: "t1", userId: undefined })` throws and names `userId`, instead of matching every member of `t1`. Either spelling counts as present, so a key object may use the column names (`{ tenant_key: "t1", user_id: 1 }`) the way a `where` may. `findByPK(User, null)` is unchanged and still reads `IS NULL`.
+
+**Operator operands may not be undefined.** An operand is an explicit comparison, so there is nothing to drop:
+
+```typescript
+await em.find(Post, { where: { score: { gt: undefined } } });
+// InvalidQueryError: Operator "gt" on "score" received undefined.
+```
+
+This covers `eq ne gt gte lt lte in notIn like notLike ilike between isNull not contains startsWith endsWith search`, an `undefined` element inside an `in` / `notIn` list or a top-level array (`{ id: [1, undefined] }`), and a `between` missing a bound. Write the optional operator conditionally instead:
+
+```typescript
+await em.find(Post, {
+  where: { score: { ...(min !== undefined && { gte: min }) } },
+});
+```
+
+**A branch that resolves to no condition is rejected inside OR.** An empty branch is TRUE, so OR-ing it widens the query to every row:
+
+```typescript
+await em.find(Post, { where: { OR: [{ id: undefined }, { id: 2 }] } });
+// InvalidQueryError: The OR branch OR[0] resolves to no condition, so the OR
+// would match every row.
+```
+
+The same applies to the array form (`where: [{ id: undefined }, { id: 2 }]`), which is OR-combined. Inside `AND` an empty branch is the identity, so it is skipped and the rest of the group still applies. `{ OR: undefined }`, `{ AND: undefined }` and `{ NOT: undefined }` are absent keys, like any other field set to undefined, and `{ OR: [] }` contributes no condition.
+
+::: warning An undefined value in a multi-field where is still dropped
+When at least one field is defined, the undefined ones are skipped and the query runs. That makes an authorization check quietly weaker than it reads:
+
+```typescript
+// userId is undefined -> the condition disappears
+const membership = await em.findOne(Membership, {
+  where: { workspaceId, userId: maybeUndefined, role: "OWNER" },
+});
+// runs: WHERE "workspaceId" = ? AND "role" = 'OWNER'
+// returns: some other member's OWNER row
+```
+
+The ORM cannot tell "I meant to omit this filter" from "this value went missing", so validate the inputs before you build the where — a NestJS `ValidationPipe`, `ParseIntPipe` on the route parameter, or an explicit check:
+
+```typescript
+if (userId === undefined) throw new UnauthorizedException();
+```
+:::
+
+The query builder's three-argument form rejects an undefined value for the same reason. `qb.where("id", ">", maybeId)` used to be read as the two-argument `where("id", ">")` and compared the column to the text `">"`; it now throws `InvalidQueryError`. Use `when()` for an optional condition:
+
+```typescript
+qb.when(maybeId !== undefined, (b) => b.where("id", ">", maybeId));
+```
+
+Two shapes are left alone. `IS NULL` / `IS NOT NULL` take no value, so `where("status", "IS NULL", undefined)` still reads as the operator; and a second argument that is not a string cannot be an operator, so `where("score", 2, undefined)` keeps the two-argument meaning for wrappers that always forward three arguments. Every other string is rejected, including one the builder does not resolve as an operator (`where("title", "NOT BETWEEN", undefined)`), because that call is rejected outright when the value is defined.
+
 ### NOT Operator
 
 `not` negates a single condition. It works with plain values and with nested operator objects:

@@ -3,6 +3,52 @@ import sql, { Sql, raw } from "../utils/sqlTag";
 import { Conditions } from "./Conditions";
 import { WhereClause, FILTER_OPERATOR_KEYS } from "../dialects/FindOption";
 import type { DialectExpression } from "../dialects/DialectExpression";
+import { InvalidQueryError } from "../errors/InvalidQueryError";
+
+/**
+ * An operator whose operand is `undefined` has no sensible SQL: `eq` / `gt`
+ * compared against NULL and matched nothing, `in` / `between` / `contains`
+ * crashed with a TypeError, and `isNull` read the falsy operand as "IS NOT
+ * NULL" and matched every non-null row.
+ */
+function undefinedOperandError(field: string, op: string): InvalidQueryError {
+  return new InvalidQueryError(
+    `Operator "${op}" on "${field}" received undefined.`,
+    `Leave the operator out when its value is optional (e.g. { ...(min !== undefined && { gte: min }) }), or pass null where the operator accepts it (eq, ne, not).`,
+  );
+}
+
+/**
+ * Rejects an `undefined` element of an IN list. It binds as NULL, which never
+ * matches, so the element was ignored without an error.
+ */
+function assertNoUndefinedElement(
+  values: unknown,
+  field: string,
+  op: string,
+): void {
+  if (!Array.isArray(values)) return;
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] === undefined) {
+      throw new InvalidQueryError(
+        `The ${op} list for "${field}" contains undefined at index ${i}.`,
+        "An undefined element binds as NULL and never matches, so it is ignored without an error. Filter the list before building the where.",
+      );
+    }
+  }
+}
+
+/**
+ * A branch that resolves to no condition is TRUE. Inside OR (or the array
+ * form, which is OR-ed) that widens the whole group to every row, so it is
+ * rejected. Before, it crashed inside `join([])` with a TypeError.
+ */
+function emptyOrBranchError(path: string): InvalidQueryError {
+  return new InvalidQueryError(
+    `The OR branch ${path} resolves to no condition, so the OR would match every row.`,
+    "A branch that is empty or whose values are all undefined is always true. Remove the branch, or give it at least one defined value.",
+  );
+}
 
 /**
  * Escape LIKE wildcard characters (`%`, `_`, `\`) in a literal string
@@ -29,16 +75,21 @@ function isFilterObject(value: unknown): boolean {
 /**
  * Resolve a single filter-operator object (e.g. `{ gt: 18, lte: 65 }`)
  * into one or more SQL conditions joined with AND.
+ *
+ * `field` names the where key in error messages; it defaults to `column`.
  */
 function resolveFilterObject(
   column: string,
   filter: Record<string, any>,
   dialect?: string,
   dialectExpression?: DialectExpression,
+  field: string = column,
 ): Sql {
   const clauses: Sql[] = [];
 
   for (const [op, val] of Object.entries(filter)) {
+    if (val === undefined) throw undefinedOperandError(field, op);
+
     switch (op) {
       case "eq":
         // `eq: null` must become `IS NULL` — `col = NULL` is always UNKNOWN in
@@ -71,9 +122,11 @@ function resolveFilterObject(
         clauses.push(Conditions.lte(column, val));
         break;
       case "in":
+        assertNoUndefinedElement(val, field, op);
         clauses.push(Conditions.in(column, val));
         break;
       case "notIn":
+        assertNoUndefinedElement(val, field, op);
         clauses.push(Conditions.notIn(column, val));
         break;
       case "like":
@@ -90,6 +143,16 @@ function resolveFilterObject(
         }
         break;
       case "between":
+        // A missing bound compared against NULL and matched nothing.
+        if (!Array.isArray(val) || val[0] === undefined || val[1] === undefined) {
+          const got = Array.isArray(val)
+            ? `${val[0] === undefined ? "min" : "max"} is undefined`
+            : `received ${val === null ? "null" : typeof val}`;
+          throw new InvalidQueryError(
+            `Operator "between" on "${field}" needs [min, max] with both bounds defined, but ${got}.`,
+            "Use gte / lte for a range that is open on one side.",
+          );
+        }
         clauses.push(Conditions.between(column, val[0], val[1]));
         break;
       case "isNull":
@@ -99,7 +162,7 @@ function resolveFilterObject(
         break;
       case "not":
         if (typeof val === "object" && val !== null && isFilterObject(val)) {
-          const inner = resolveFilterObject(column, val, dialect, dialectExpression);
+          const inner = resolveFilterObject(column, val, dialect, dialectExpression, field);
           clauses.push(sql`NOT (${inner})`);
         } else if (val === null) {
           clauses.push(Conditions.isNotNull(column));
@@ -138,17 +201,21 @@ function resolveFilterObject(
  * - `Sql` object → passed through (backward compat)
  * - filter object `{ gt: 18 }` → operator expansion
  * - plain value → equals
+ *
+ * `field` names the where key in error messages; it defaults to `column`.
  */
 function resolveWhereValue(
   column: string,
   value: any,
   dialect?: string,
   dialectExpression?: DialectExpression,
+  field: string = column,
 ): Sql {
   if (value === null) {
     return Conditions.isNull(column);
   }
   if (Array.isArray(value)) {
+    assertNoUndefinedElement(value, field, "IN");
     return Conditions.in(column, value);
   }
   // Sql object from sql-template-tag (backward compat)
@@ -157,7 +224,7 @@ function resolveWhereValue(
   }
   // Filter operator object
   if (typeof value === "object" && isFilterObject(value)) {
-    return resolveFilterObject(column, value, dialect, dialectExpression);
+    return resolveFilterObject(column, value, dialect, dialectExpression, field);
   }
   // Plain equality
   return Conditions.equals(column, value);
@@ -194,6 +261,9 @@ export interface WhereResolverOptions {
  * - Single object: each key-value pair produces an AND condition.
  * - Array: each element is AND-ed internally; elements are OR-ed together.
  * - `OR`, `AND`, `NOT` special keys are handled recursively.
+ * - A top-level field or combinator set to `undefined` is skipped. An
+ *   `undefined` operand, an `undefined` IN element and an OR branch (or
+ *   array element) that resolves to no condition throw `InvalidQueryError`.
  */
 export function resolveWhereClause<T>(
   where: WhereClause<T> | WhereClause<T>[] | undefined,
@@ -203,8 +273,9 @@ export function resolveWhereClause<T>(
 
   // Array form: each element is AND-ed internally, elements OR-ed
   if (Array.isArray(where)) {
-    const orGroups = (where as WhereClause<T>[]).map((clause) => {
+    const orGroups = (where as WhereClause<T>[]).map((clause, index) => {
       const subclauses = resolveWhereSingleObject(clause, opts);
+      if (subclauses.length === 0) throw emptyOrBranchError(`[${index}]`);
       return subclauses.length === 1 ? subclauses[0] : Conditions.and(subclauses);
     });
     if (orGroups.length === 0) return [];
@@ -228,10 +299,13 @@ function resolveWhereSingleObject<T>(
   for (const key of Object.keys(where)) {
     const value = (where as any)[key];
 
-    // Logical combinators
+    // Logical combinators. A combinator set to `undefined` is an absent key,
+    // the same as a field set to `undefined`.
     if (key === "OR") {
-      const orClauses = (value as WhereClause<T>[]).map((clause) => {
+      if (value === undefined) continue;
+      const orClauses = (value as WhereClause<T>[]).map((clause, index) => {
         const sub = resolveWhereSingleObject(clause, opts);
+        if (sub.length === 0) throw emptyOrBranchError(`OR[${index}]`);
         return sub.length === 1 ? sub[0] : Conditions.and(sub);
       });
       if (orClauses.length > 0) {
@@ -240,16 +314,21 @@ function resolveWhereSingleObject<T>(
       continue;
     }
     if (key === "AND") {
-      const andClauses = (value as WhereClause<T>[]).map((clause) => {
+      if (value === undefined) continue;
+      const andClauses: Sql[] = [];
+      for (const clause of value as WhereClause<T>[]) {
         const sub = resolveWhereSingleObject(clause, opts);
-        return sub.length === 1 ? sub[0] : Conditions.and(sub);
-      });
+        // An empty AND branch is TRUE, the identity of AND: skip it.
+        if (sub.length === 0) continue;
+        andClauses.push(sub.length === 1 ? sub[0] : Conditions.and(sub));
+      }
       if (andClauses.length > 0) {
         result.push(Conditions.and(andClauses));
       }
       continue;
     }
     if (key === "NOT") {
+      if (value === undefined) continue;
       const notSub = resolveWhereSingleObject(value as WhereClause<T>, opts);
       if (notSub.length > 0) {
         const inner =
@@ -271,7 +350,7 @@ function resolveWhereSingleObject<T>(
           ? `${wrapColumn(tableName)}.${wrapColumn(dbColumnName)}`
           : wrapColumn(dbColumnName);
 
-    result.push(resolveWhereValue(col, value, dialect, dialectExpression));
+    result.push(resolveWhereValue(col, value, dialect, dialectExpression, key));
   }
 
   return result;

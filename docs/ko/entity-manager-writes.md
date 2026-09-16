@@ -322,7 +322,11 @@ await em.updateMany(Ticket, { status: "closed" }, {
 await em.softDelete(Draft, { authorId: 7, OR: [{ title: null }, { body: "" }] });
 ```
 
-결합자가 아무 조건도 만들지 못하면(`{ OR: [] }`, 값이 전부 `undefined`인 분기) 빈 criteria와 똑같이 취급해 `DeleteWithoutConditionsError`를 던집니다. 테이블 전체를 건드리는 문장으로 조용히 떨어지지 않아요. `updateMany()`도 같은 규칙을 따릅니다.
+criteria가 아무 조건도 만들지 못하면 빈 criteria와 똑같이 취급해 `DeleteWithoutConditionsError`를 던집니다. 테이블 전체를 건드리는 문장으로 넘어가지 않아요. `{ OR: [] }`, `{ AND: [] }`, 값이 전부 `undefined`인 criteria(`{ status: undefined }`), 안쪽이 아무 조건도 남기지 못하는 `NOT`이 여기에 해당합니다. `updateMany()`도 같은 규칙을 따르고, SET 페이로드까지 비어 있는 경우도 포함합니다. 예전에는 그 조합이 criteria를 문제 삼지 않고 `{ affected: 0 }`을 돌려줬어요.
+
+`OR` 분기(또는 배열 형태의 원소)가 아무 조건도 만들지 못하면 다른 에러가 납니다. 필터가 없어지는 게 아니라 문장이 넓어지기 때문입니다. 빈 분기는 TRUE라서 `{ OR: [{ id: undefined }, { id: 2 }] }`는 모든 행에 매칭됩니다. 이때는 문제가 된 분기를 지목하며 `InvalidQueryError`를 던집니다. `AND` 안에서는 빈 분기가 항등원이라 건너뛰고 나머지 조건은 그대로 적용해요. where나 criteria 객체에서 `undefined`를 다루는 전체 규칙은 [undefined 값](./entity-manager-querying.md#undefined-값)에 정리돼 있습니다.
+
+criteria 검사는 이제 쓰기가 하는 다른 모든 일보다 **먼저** 실행됩니다. 조건이 하나도 남지 않는 criteria로 `delete()`를 호출하면 `beforeDelete`가 발생하지 않고, one-to-many 캐스케이드가 부모를 조회해 자식을 먼저 지우는 일도 없습니다. 예전에는 트랜잭션이 그 행들을 되돌리긴 했지만 리스너는 이미 실행된 뒤였어요. `softDelete()`와 `restore()`도 각각 `beforeSoftDelete` / `beforeRestore` 이벤트 앞에서 같은 방식으로 막습니다.
 
 ---
 

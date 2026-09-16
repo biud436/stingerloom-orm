@@ -132,6 +132,124 @@ export function validateWhereIdentifiers(
   }
 }
 
+/** {@link whereLeafState} results, ordered so a larger value wins. */
+const NO_LEAF = 0;
+const UNDEFINED_LEAVES = 1;
+const DEFINED_LEAF = 2;
+
+/**
+ * Whether a `where` names any field, and whether any named field has a value.
+ *
+ * Same traversal as {@link validateWhereIdentifiers}. It returns on the first
+ * defined field without allocating (`for...in` rather than `Object.keys`),
+ * because `findOne({ where: { id } })` is the hot read path and pays for this
+ * check on every call. Function values are hook methods, so they count as
+ * neither kind of leaf.
+ */
+function whereLeafState(where: unknown): number {
+  if (where === null || typeof where !== "object") return NO_LEAF;
+
+  let state = NO_LEAF;
+  if (Array.isArray(where)) {
+    for (let i = 0; i < where.length; i++) {
+      const entry = whereLeafState(where[i]);
+      if (entry === DEFINED_LEAF) return DEFINED_LEAF;
+      if (entry > state) state = entry;
+    }
+    return state;
+  }
+
+  for (const key in where) {
+    if (!Object.prototype.hasOwnProperty.call(where, key)) continue;
+    const value = (where as Record<string, unknown>)[key];
+
+    if (key === "OR" || key === "AND" || key === "NOT") {
+      const nested = whereLeafState(value);
+      if (nested === DEFINED_LEAF) return DEFINED_LEAF;
+      if (nested > state) state = nested;
+      continue;
+    }
+    if (typeof value === "function") continue;
+    if (value !== undefined) return DEFINED_LEAF;
+    state = UNDEFINED_LEAVES;
+  }
+  return state;
+}
+
+function collectUndefinedLeafPaths(
+  where: unknown,
+  path: string,
+  out: string[],
+): void {
+  if (where === null || typeof where !== "object") return;
+
+  if (Array.isArray(where)) {
+    where.forEach((entry, i) =>
+      collectUndefinedLeafPaths(entry, `${path}[${i}]`, out),
+    );
+    return;
+  }
+
+  const prefix = path ? `${path}.` : "";
+  for (const key of Object.keys(where as Record<string, unknown>)) {
+    const value = (where as Record<string, unknown>)[key];
+    if (LOGICAL_KEYS.has(key)) {
+      collectUndefinedLeafPaths(value, `${prefix}${key}`, out);
+    } else if (value === undefined) {
+      out.push(`${prefix}${key}`);
+    }
+  }
+}
+
+/**
+ * The paths of the fields a vacuous `where` names, or null when it is not
+ * vacuous.
+ *
+ * A where is vacuous when it names at least one field and every named field
+ * is `undefined`. The resolver drops `undefined` fields, so such a where
+ * resolves to no predicate at all. `{}`, `[]`, `{ OR: [] }` and a missing
+ * where name no field, so they are not vacuous: they ask for no filter
+ * explicitly. A where with at least one defined field is not vacuous either,
+ * even when other fields are `undefined`; those are skipped as before.
+ *
+ * Paths use the where's own shape: `id`, `OR[0].status`, `NOT.score`,
+ * `[1].title` for the array form.
+ */
+export function findVacuousWhere(where: unknown): string[] | null {
+  if (whereLeafState(where) !== UNDEFINED_LEAVES) return null;
+  const paths: string[] = [];
+  collectUndefinedLeafPaths(where, "", paths);
+  return paths;
+}
+
+/**
+ * Rejects a vacuous `where` (see {@link findVacuousWhere}) on a read that
+ * returns one row or a yes/no answer.
+ *
+ * Without it `findOne({ where: { id: maybeId } })` with `maybeId` undefined
+ * ran `SELECT ... LIMIT 1` with no WHERE and returned an arbitrary row, and
+ * `exists({ email: undefined })` answered "the table is not empty". List reads
+ * and aggregates keep skipping `undefined` fields, and save()'s internal
+ * readbacks do not come through here.
+ */
+export function assertWhereNotVacuous(
+  where: unknown,
+  method: "findOne" | "findOneBy" | "exists",
+  entityName: string,
+): void {
+  const paths = findVacuousWhere(where);
+  if (!paths) return;
+
+  const consequence =
+    method === "exists"
+      ? "the check would match any row"
+      : "the query would read an arbitrary row";
+  throw new InvalidQueryError(
+    `Every value in the "where" passed to ${method}() for entity "${entityName}" is undefined (${paths.join(", ")}) — ${consequence}.`,
+    `An undefined value drops its condition instead of matching anything. Pass null to match IS NULL, or omit "where" to read without a filter.`,
+  );
+}
+
 /**
  * Checks the SET payload of a criteria-based update. A SET clause maps
  * columns to values, so unlike a `where` it has no logical structure: a
