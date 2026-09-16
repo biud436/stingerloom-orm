@@ -117,7 +117,9 @@ WARN [Column] No design:type metadata for User.name — falling back to "text". 
 2. 모든 `@Column`에 타입 명시: `@Column({ type: "int" })`
 3. `tsc`로 빌드하거나 `ts-node`로 실행해 메타데이터를 생성
 
-관련 경고인 `Unknown design:type "Object"`는 프로퍼티의 TypeScript 타입이 런타임에 `Object`로 지워진다는 뜻입니다(`string | null` 같은 유니언/옵셔널 타입). 이 경우에도 컬럼 타입을 명시하면 됩니다.
+관련 경고인 `Unknown design:type "Object"`는 "이 프로퍼티가 객체다"라는 뜻이 **아닙니다**. `Object`는 tsc가 런타임 생성자 하나를 지목하지 못했을 때 남기는 값이에요. `strictNullChecks` 아래에서는 모든 유니온이 여기로 지워지고(`string | null`, `Date | null`, `number | undefined`), 트랜스파일 전용 빌드(`isolatedModules`, swc, esbuild)에서는 다른 모듈에서 import한 enum과 타입 별칭도 `Object`가 됩니다. 이때 컬럼은 `"text"`로 폴백되므로 nullable `VARCHAR`가 슬그머니 `TEXT`가 되고 nullable `int`는 숫자가 아니게 돼요. 타입을 직접 적어서 해결하세요. nullable 문자열이면 `@Column({ type: "varchar", length: 255, nullable: true })`, 정말로 객체를 담는다면 `@Column({ type: "json" })`입니다.
+
+배열 프로퍼티는 여기에 해당하지 않아요. tsc가 배열과 튜플 타입에만 `Array`를 내보내기 때문에 `@Column() tags!: string[]`는 경고 없이 `json` 컬럼으로 추론됩니다. `transformer`에 `to()`가 있는 배열 프로퍼티만 `"text"`를 유지하고(저장 형태는 그 쓰기 트랜스포머가 결정하니까요) 그 사실을 알리는 별도 경고를 남깁니다. 읽기 전용 `transformer.from`이나 더 이상 권장하지 않는 `transform`은 쓰기 쪽이 없으므로 컬럼이 `json` 그대로입니다.
 
 NestJS 없이 사용하는 전체 설정은 [Express에서 사용하기](./express.md)를 참고하세요.
 
@@ -235,6 +237,26 @@ await em.find(User, { where: { userName: "Alice" } });  // 둘 다 아님 — �
 
 관계 프로퍼티는 컬럼이 아닙니다. FK로 거르거나(`where: { authorId: 1 }`),
 연관 행에 조건을 걸어야 하면 `SelectQueryBuilder.whereHas()`를 쓰세요.
+
+### "... column but received an array / an object"
+
+```
+InvalidQueryError: Post.tags is a "text" column but save() received an array, which cannot be bound as one value:
+better-sqlite3 would spread it over 2 values and shift every value after it.
+```
+
+어떤 드라이버도 JS 배열이나 일반 객체를 파라미터 하나로 바인딩하지 않고, 어긋나는 방식도 제각각입니다. better-sqlite3는 배열을 위치 플레이스홀더에 펼쳐 넣고 일반 객체는 어떤 자리도 채우지 않는 이름 파라미터 묶음으로 읽어요. mysql2는 배열을 값 목록으로 펼치고 객체는 `'[object Object]'`로 렌더링하며, `pg`는 배열 리터럴이나 JSON 텍스트를 보냅니다. 개수가 우연히 맞아떨어지면 모든 값이 한 컬럼씩 왼쪽으로 밀린 채 저장되고 아무 신호도 남지 않기 때문에, ORM이 바인딩 직전에 값을 먼저 검사합니다. 메시지는 엔티티 프로퍼티, 선언된 컬럼 타입, 그 값을 만든 연산, 지금 쓰는 드라이버가 어떻게 처리했을지를 함께 알려 줘요.
+
+이 검사는 `save`, `saveMany`, `insertMany`, `insertManyAndReturn`, `upsert`, `insertIgnore`, `batchUpsert`, `createInsertBuilder()`, `update`, `updateMany`, `createUpdateBuilder().set()`에서 동일하게 동작합니다. 컬럼의 쓰기 변환을 **거친 뒤의** 값을 보기 때문에, 문자열을 반환하는 `transformer.to`는 그대로 동작하고 스스로 직렬화하는 `json` 컬럼은 애초에 이 검사에 걸리지 않아요.
+
+해결 방법:
+
+1. 컬럼을 `json`으로 선언 — `@Column({ type: "json" }) tags!: string[]`. 타입 없는 배열 프로퍼티는 알아서 `json`으로 추론되므로, 이 오류는 다른 타입이 선언돼 있다는 뜻입니다.
+2. PostgreSQL이라면 네이티브 배열 컬럼으로 `@Column({ type: "array" })`.
+3. 저장 형태를 직접 정하고 싶다면 `to()`가 문자열이나 숫자를 반환하는 `transformer`를 주세요(`["a", "b"]` -> `"a,b"`).
+4. 외래 키라면 연관 객체 대신 키 값을 넘기세요: `updateMany(Post, { authorId: 7 }, …)`.
+
+원시 쿼리는 드라이버로 바로 가고 컬럼 정보를 모르기 때문에 드라이버가 지원하는 형태를 그대로 유지합니다. 예외는 SQLite 하나예요. SQLite에서 `em.query("SELECT ?, ?", [[1, 2]])`는 이제 `SQLite cannot bind an array as one parameter` 오류를 냅니다. better-sqlite3가 그 배열을 두 플레이스홀더에 펼쳐 넣었을 테니까요. 이름 파라미터 묶음(`em.query("SELECT :a", [{ a: 1 }])`)은 그대로 동작하고, MySQL의 `IN (?)` / `VALUES ?` 관용구도 MySQL에서 계속 동작합니다.
 
 ### falsy 값을 가진 WHERE 절
 

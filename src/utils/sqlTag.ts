@@ -33,14 +33,24 @@ export type { RawValue };
  * `instanceof Sql` alone is not enough at the public API boundary: the CJS
  * and ESM builds each resolve their own `sql-template-tag` copy, so a
  * fragment built by one and handed to the other fails the prototype check.
- * The shape (`strings` + `values` arrays, `text` accessor) is stable across
- * both copies, so it backs up the fast path.
+ * The shape is stable across both copies, so it backs up the fast path — but
+ * only in the narrow form a real fragment always has, because a value that
+ * passes here is spliced into the statement as SQL instead of being bound:
+ *
+ * - `strings` holds one more entry than `values` (the `Sql` constructor
+ *   rejects any other pairing) and every entry is a string;
+ * - the value is not a plain object. A fragment carries `Sql.prototype`,
+ *   one level below the root of its prototype chain, so a data object that
+ *   happens to have `strings` and `values` keys — in this realm or another —
+ *   is data and stays data.
  */
 export function isSqlFragment(value: unknown): value is Sql {
   if (value === null || typeof value !== "object") return false;
   if (value instanceof Sql) return true;
-  const candidate = value as { strings?: unknown; values?: unknown };
-  return (
-    Array.isArray(candidate.strings) && Array.isArray(candidate.values)
-  );
+  const { strings, values } = value as { strings?: unknown; values?: unknown };
+  if (!Array.isArray(strings) || !Array.isArray(values)) return false;
+  if (strings.length !== values.length + 1) return false;
+  if (!strings.every((part) => typeof part === "string")) return false;
+  const proto: object | null = Object.getPrototypeOf(value);
+  return proto !== null && Object.getPrototypeOf(proto) !== null;
 }

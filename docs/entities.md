@@ -173,11 +173,13 @@ By default, all columns are `NOT NULL`. This means the database will reject any 
 For columns that may not have a value, set `nullable: true`.
 
 ```typescript
-@Column({ nullable: true })
+@Column({ type: "varchar", length: 255, nullable: true })
 bio!: string | null;
 ```
 
 This generates `VARCHAR(255)` (without the `NOT NULL` constraint) in the DDL. Adding `| null` to the TypeScript type as well allows natural null checking in your code.
+
+Spell `type` out whenever the property type is a union. Under `strictNullChecks`, tsc erases `string | null` to `Object` in the decorator metadata -- it looks exactly like `Date | null` or `Record<string, unknown>` from the ORM's side -- so `@Column({ nullable: true }) bio!: string | null` infers `text`, not `VARCHAR(255)`, and logs an `Unknown design:type "Object"` warning. See [Columns silently become "text"](./troubleshooting.md#columns-silently-become-text-no-design-type-metadata-warnings).
 
 ### Column Name Alias
 
@@ -1485,7 +1487,19 @@ When `type` is omitted in `@Column()`, it is automatically inferred from the Typ
 | `Date` | datetime | 0 | false |
 | `Buffer` | blob | 0 | true |
 | `BigInt` | bigint (`bigintMode: "bigint"`) | 0 | false |
+| `Array` (`string[]`, `Tag[]`, tuples) | json | 0 | true |
+| `Object` | text | 0 | true |
 | Other | text | 0 | true |
+
+An array property is stored as JSON: `@Column() tags!: string[]` becomes a `json` column, which is `JSON` on MySQL, `JSON` on PostgreSQL and `TEXT` on SQLite, and the value round-trips as a real array. tsc emits `Array` only for array and tuple types, so nothing else lands on that row. The one exception is an array property whose `transformer` has a `to()`: that write transformer owns the stored shape (`["a", "b"]` -> `"a,b"`), so the column stays `text` and the decorator logs a warning asking for an explicit `type`. A read-only transform decides nothing about storage -- `transformer.from` on its own, or the deprecated `transform` -- so the column is `json` like any other array property: the ORM serializes the array on write, and your `from` receives that JSON text on read. Declare `@Column({ type: "text" })` when you need the old stored shape.
+
+`Object` is the opposite case -- it means "tsc could not tell us", not "this is an object". Under `strictNullChecks` every union erases to `Object` (`string | null`, `Date | null`, `number | undefined`), and transpile-only builds emit it for enums imported from another module, so the fallback stays `text` with a warning. Declare `type` explicitly there: `@Column({ type: "json" })` for an object value, `@Column({ type: "varchar" })` / `"int"` / `"datetime"` for a nullable scalar.
+
+::: warning DDL drift when upgrading
+An existing `@Column() tags!: string[]` that has been running against MySQL or PostgreSQL has a `TEXT` column in the database and now diffs as `json`. `synchronize: true` will attempt `ALTER ... TYPE JSON`, which PostgreSQL refuses without a `USING` clause and MySQL rejects when any row holds non-JSON text. Either add `@Column({ type: "text" })` to keep the current column, or migrate the data and the column type deliberately. SQLite is unaffected -- both types are `TEXT`.
+
+Indexes move with the column. `@Index()` or `@UniqueIndex(["tags"])` over an untyped array property now targets a `json` column, and PostgreSQL has no default btree operator class for `json`, so `CREATE INDEX ... ON "post" ("tags")` fails with `data type json has no default operator class for access method "btree"` -- on a brand-new database as well, not only on an upgrade. With the default `continueOnError: true` synchronize reports it as a warning and leaves the index uncreated; `continueOnError: false` stops the boot. Declare `@Column({ type: "text" })` on an indexed array property, or index an expression instead.
+:::
 
 ### DB Mapping by ColumnType
 
@@ -1521,7 +1535,9 @@ tags!: string[] | null; // TEXT[]
 scores!: number[] | null; // INTEGER[]
 ```
 
-Plain JS arrays round-trip through the `pg` driver's native array serialization. MySQL stores `array` columns as JSON and SQLite as TEXT, where `arrayElementType` is ignored. Note that PostgreSQL introspection reports every array column simply as `ARRAY`, so schema diffing cannot detect element-type changes and entity generation recovers `type: "array"` without the element type.
+Plain JS arrays round-trip through the `pg` driver's native array serialization. MySQL stores `array` columns as JSON and SQLite as TEXT, where `arrayElementType` is ignored; on those two drivers the ORM serializes the value with `JSON.stringify` on write and parses it back on read, so `["x", "y"]` comes out of `find()` as `["x", "y"]` there as well. Note that PostgreSQL introspection reports every array column simply as `ARRAY`, so schema diffing cannot detect element-type changes and entity generation recovers `type: "array"` without the element type.
+
+If the column already holds rows written by an earlier version on MySQL or SQLite, they are bare element text (`x`), not JSON. Reading one back logs a single `Failed to JSON.parse` warning for the column and yields the raw string; convert the rows once with an `UPDATE`, or keep the old shape with a `transformer`.
 
 ### bigint Columns and `bigintMode`
 

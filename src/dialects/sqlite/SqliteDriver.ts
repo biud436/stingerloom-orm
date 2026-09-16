@@ -20,6 +20,7 @@ import { SqliteCapabilities } from "../DialectCapabilities";
 import { resolveSqliteCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 import { planSafeIntegers, normalizeSafeIntegerRows } from "./SqliteSafeIntegers";
+import { sanitizeSqliteBindValues } from "./SqliteBindValues";
 
 /**
  * SQL driver implementation for SQLite.
@@ -94,14 +95,9 @@ export class SqliteDriver implements ISqlDriver {
     return plan ? normalizeSafeIntegerRows(rows, plan) : rows;
   }
 
+  /** Same sanitizing and array rejection as the connector's own query path. */
   private sanitizeValuesForOptions(values?: any[]): any[] | undefined {
-    if (!values) return values;
-    return values.map((v) => {
-      if (typeof v === "boolean") return v ? 1 : 0;
-      if (v instanceof Date) return v.toISOString();
-      if (v === undefined) return null;
-      return v;
-    });
+    return sanitizeSqliteBindValues(values);
   }
 
   /**

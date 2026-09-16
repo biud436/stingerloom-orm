@@ -56,3 +56,23 @@ export function makeDefaultJsonColumnRead(
     }
   };
 }
+
+/**
+ * Default read-side transform for `@Column({ type: "array" })`.
+ *
+ * MySQL and SQLite store the column as JSON text (the write side serializes
+ * it there), so strings are parsed like a `json` column. pg returns a JS
+ * array for the built-in element types, which passes through; a string that
+ * opens with `{` is a PostgreSQL array literal pg did not parse (a custom
+ * element type) and is returned unchanged, without a parse warning.
+ */
+export function makeDefaultArrayColumnRead(
+  entityName: string,
+  columnKey: string,
+): (value: unknown) => unknown {
+  const readJson = makeDefaultJsonColumnRead(entityName, columnKey);
+  return (value: unknown) => {
+    if (typeof value === "string" && value.startsWith("{")) return value;
+    return readJson(value);
+  };
+}

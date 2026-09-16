@@ -14,6 +14,7 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DbVersion } from "../DbVersion";
 import { parseInlineFlags } from "../../core/expressions/RegexPattern";
 import { planSafeIntegers, normalizeSafeIntegerRows } from "./SqliteSafeIntegers";
+import { sanitizeSqliteBindValues } from "./SqliteBindValues";
 
 /**
  * SQLite connector implementation.
@@ -201,20 +202,11 @@ export class SqliteConnector extends IConnector {
   }
 
   /**
-   * Sanitize bind values for better-sqlite3.
-   * better-sqlite3 only accepts: number | string | bigint | Buffer | null.
-   * - boolean `true`/`false` → `1`/`0`
-   * - Date objects → ISO 8601 string
-   * - undefined → null
+   * Sanitize bind values for better-sqlite3 (booleans, Dates, undefined) and
+   * reject arrays. See {@link sanitizeSqliteBindValues}.
    */
   private sanitizeValues(values?: any[]): any[] | undefined {
-    if (!values) return values;
-    return values.map((v) => {
-      if (typeof v === "boolean") return v ? 1 : 0;
-      if (v instanceof Date) return v.toISOString();
-      if (v === undefined) return null;
-      return v;
-    });
+    return sanitizeSqliteBindValues(values);
   }
 
   /**

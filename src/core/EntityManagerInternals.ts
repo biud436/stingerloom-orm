@@ -121,8 +121,11 @@ export interface EntityManagerInternals {
   // ── Shared write-path helpers (used by WriteExecutor) ──────
   /** Resolves an entity property key from column metadata (propertyKey ?? name). */
   propKey(col: { propertyKey?: string; name: string }): string;
-  /** Applies the column's write transformer / JSON serialization to a raw value. */
-  applyWriteTransform(col: ColumnMetadata, rawValue: any): any;
+  /**
+   * Applies the column's write transformer / JSON serialization to a raw value.
+   * `site` names the operation ("save()") in the bind-guard error message.
+   */
+  applyWriteTransform(col: ColumnMetadata, rawValue: any, site?: string): any;
   /** Auto-injects the tenant-column value on INSERT under the "tenant_column" strategy. */
   applyTenantColumnOnInsert<T>(entity: ClazzType<T>, item: Partial<T>): void;
   /**

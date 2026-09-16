@@ -19,7 +19,11 @@ import {
 import { ClazzType } from "../utils";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
 import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
-import { isJsonColumnType, makeDefaultJsonColumnRead } from "./JsonColumnTransformer";
+import {
+  isJsonColumnType,
+  makeDefaultArrayColumnRead,
+  makeDefaultJsonColumnRead,
+} from "./JsonColumnTransformer";
 import {
   isTemporalColumnType,
   defaultTemporalColumnRead,
@@ -175,6 +179,13 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
         transformColumns.push({
           key,
           from: makeDefaultJsonColumnRead(entityName, key),
+        });
+      } else if (col.options.type === "array") {
+        // MySQL/SQLite store `type: "array"` as JSON text; pg already returns
+        // a JS array for a native array column, which passes through.
+        transformColumns.push({
+          key,
+          from: makeDefaultArrayColumnRead(entityName, key),
         });
       } else if (col.options.type === "boolean") {
         // MySQL/SQLite store booleans as 0/1 TINYINT; normalize to a real

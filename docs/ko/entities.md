@@ -178,11 +178,13 @@ sku!: string;
 값이 없을 수 있는 컬럼이라면, `nullable: true`를 설정해 주세요.
 
 ```typescript
-@Column({ nullable: true })
+@Column({ type: "varchar", length: 255, nullable: true })
 bio!: string | null;
 ```
 
 이건 DDL에서 `VARCHAR(255)` (`NOT NULL` 제약 조건 없이)를 생성해요. TypeScript 타입에도 `| null`을 추가하면 코드에서 자연스럽게 null 검사를 할 수 있어요.
+
+프로퍼티 타입이 유니온이라면 `type`을 반드시 직접 적어 주세요. `strictNullChecks` 아래에서 tsc는 `string | null`을 데코레이터 메타데이터에 `Object`로 남깁니다. ORM 입장에서는 `Date | null`이나 `Record<string, unknown>`과 전혀 구분되지 않기 때문에, `@Column({ nullable: true }) bio!: string | null`은 `VARCHAR(255)`가 아니라 `text`로 추론되고 `Unknown design:type "Object"` 경고를 남겨요. 자세한 내용은 [문제 해결 가이드](./troubleshooting.md)에서 컬럼이 뜻하지 않게 `text`가 되는 항목을 참고하세요.
 
 ### 컬럼 이름 별칭
 
@@ -1540,7 +1542,19 @@ SELECT * FROM "user" WHERE "deletedAt" IS NULL;
 | `Date`          | datetime   | 0         | false    |
 | `Buffer`        | blob       | 0         | true     |
 | `BigInt`        | bigint (`bigintMode: "bigint"`) | 0 | false |
+| `Array` (`string[]`, `Tag[]`, 튜플) | json | 0 | true |
+| `Object`        | text       | 0         | true     |
 | 기타            | text       | 0         | true     |
+
+배열 프로퍼티는 JSON으로 저장합니다. `@Column() tags!: string[]`는 `json` 컬럼이 되고, 이는 MySQL에서 `JSON`, PostgreSQL에서 `JSON`, SQLite에서 `TEXT`로 만들어지며 값은 진짜 배열 그대로 왕복해요. tsc는 배열과 튜플 타입에만 `Array`를 내보내기 때문에 다른 타입이 이 행에 섞일 일은 없습니다. 예외는 `transformer`에 `to()`가 있는 배열 프로퍼티 하나예요. 저장 형태를 그 쓰기 트랜스포머가 결정하므로(`["a", "b"]` -> `"a,b"`) 컬럼은 `text`로 남고, 데코레이터가 `type`을 명시해 달라는 경고를 남깁니다. 읽기 전용 변환은 저장 형태를 결정하지 않습니다. `transformer.from`만 있거나 더 이상 권장하지 않는 `transform`을 쓴 경우에는 다른 배열 프로퍼티와 똑같이 `json` 컬럼이 되고, 쓸 때는 ORM이 배열을 직렬화하며 읽을 때 여러분의 `from`이 그 JSON 텍스트를 받아요. 예전 저장 형태가 필요하다면 `@Column({ type: "text" })`를 명시해 주세요.
+
+`Object`는 정반대 경우예요. "이 값이 객체다"가 아니라 "tsc가 타입을 알려 주지 못했다"는 뜻입니다. `strictNullChecks` 아래에서는 모든 유니온이 `Object`로 지워지고(`string | null`, `Date | null`, `number | undefined`), 트랜스파일 전용 빌드에서는 다른 모듈에서 import한 enum도 `Object`가 됩니다. 그래서 `text` 폴백과 경고가 그대로 유지돼요. 이럴 때는 `type`을 직접 적어 주세요. 객체 값이라면 `@Column({ type: "json" })`, nullable 스칼라라면 `@Column({ type: "varchar" })` / `"int"` / `"datetime"`를 쓰면 됩니다.
+
+::: warning 업그레이드 시 DDL 드리프트
+MySQL이나 PostgreSQL에서 이미 운영 중인 `@Column() tags!: string[]`는 데이터베이스에 `TEXT` 컬럼으로 존재하는데, 이제 `json`으로 diff가 잡힙니다. `synchronize: true`는 `ALTER ... TYPE JSON`을 시도하고, PostgreSQL은 `USING` 절 없이는 이를 거부하며 MySQL은 JSON이 아닌 텍스트 행이 하나라도 있으면 실패해요. 현재 컬럼을 유지하려면 `@Column({ type: "text" })`를 붙이고, 아니면 데이터와 컬럼 타입을 의도적으로 함께 마이그레이션하세요. SQLite는 두 타입 모두 `TEXT`라서 영향이 없습니다.
+
+인덱스도 컬럼을 따라갑니다. 타입 없는 배열 프로퍼티에 붙인 `@Index()`나 `@UniqueIndex(["tags"])`는 이제 `json` 컬럼을 대상으로 삼는데, PostgreSQL에는 `json`용 기본 btree 연산자 클래스가 없어요. 그래서 `CREATE INDEX ... ON "post" ("tags")`가 `data type json has no default operator class for access method "btree"` 오류로 실패합니다. 업그레이드한 데이터베이스뿐 아니라 새로 만든 데이터베이스에서도 마찬가지예요. 기본값인 `continueOnError: true`에서는 synchronize가 경고로 보고하고 인덱스를 만들지 않으며, `continueOnError: false`에서는 부팅이 멈춥니다. 인덱스를 건 배열 프로퍼티에는 `@Column({ type: "text" })`를 명시하거나, 표현식 인덱스를 사용하세요.
+:::
 
 ### ColumnType별 DB 매핑
 
@@ -1576,7 +1590,11 @@ tags!: string[] | null; // TEXT[]
 scores!: number[] | null; // INTEGER[]
 ```
 
-일반 JS 배열이 `pg` 드라이버의 네이티브 배열 직렬화로 그대로 왕복됩니다. MySQL은 `array` 컬럼을 JSON으로, SQLite는 TEXT로 저장하며 이때 `arrayElementType`은 무시돼요. 참고로 PostgreSQL 인트로스펙션은 모든 배열 컬럼을 단순히 `ARRAY`로 보고하기 때문에, 스키마 diff는 요소 타입 변경을 감지하지 못하고 엔티티 생성 시에도 요소 타입 없이 `type: "array"`로 복원됩니다.
+일반 JS 배열이 `pg` 드라이버의 네이티브 배열 직렬화로 그대로 왕복됩니다. MySQL은 `array` 컬럼을 JSON으로, SQLite는 TEXT로 저장하며 이때 `arrayElementType`은 무시돼요. 이 두 드라이버에서는 ORM이 쓸 때 `JSON.stringify`로 직렬화하고 읽을 때 다시 파싱하므로, `["x", "y"]`는 그쪽에서도 `find()` 결과로 `["x", "y"]`가 나옵니다.
+
+MySQL이나 SQLite에서 이전 버전이 기록해 둔 행이 남아 있다면 그 값은 JSON이 아니라 요소 문자열 하나(`x`)입니다. 그런 행을 읽으면 해당 컬럼에 대해 `Failed to JSON.parse` 경고가 한 번 남고 원본 문자열이 그대로 반환돼요. `UPDATE`로 한 번 변환하거나, `transformer`로 기존 형태를 유지하세요.
+
+참고로 PostgreSQL 인트로스펙션은 모든 배열 컬럼을 단순히 `ARRAY`로 보고하기 때문에, 스키마 diff는 요소 타입 변경을 감지하지 못하고 엔티티 생성 시에도 요소 타입 없이 `type: "array"`로 복원됩니다.
 
 ### bigint 컬럼과 `bigintMode`
 

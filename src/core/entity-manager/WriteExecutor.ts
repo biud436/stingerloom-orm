@@ -38,6 +38,7 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DefaultNamingStrategy, NamingStrategy } from "../generators/NamingStrategy";
 import { InheritanceResolver } from "../InheritanceResolver";
 import { DEFAULT_BIGINT_MODE, normalizeBigintValue } from "../BigintColumnTransformer";
+import { assertScalarBindValue } from "../BindValueGuard";
 import { createDialectExpression } from "../../dialects/DialectExpression";
 import { UpdateQueryBuilder } from "../UpdateQueryBuilder";
 import {
@@ -599,7 +600,7 @@ export class WriteExecutor {
     const values: RawValue[] = bindParams(
       insertableColumns.map((column: ColumnMetadata) => {
         const rawValue = itemFields[this.ctx.propKey(column)];
-        return this.ctx.applyWriteTransform(column, rawValue);
+        return this.ctx.applyWriteTransform(column, rawValue, "save()");
       }),
     );
 
@@ -1012,7 +1013,7 @@ export class WriteExecutor {
     );
     const updateMap = updatableColumns.map((column: ColumnMetadata) => {
       const rawValue = itemFields[this.ctx.propKey(column)];
-      const value = this.ctx.applyWriteTransform(column, rawValue);
+      const value = this.ctx.applyWriteTransform(column, rawValue, "save()");
       return sql`${raw(this.ctx.wrap(column.name))} = ${bindParam(value)}`;
     });
 
@@ -1507,6 +1508,7 @@ export class WriteExecutor {
     insertableColumns: ColumnMetadata[],
     fkColumns: FkColumnBinding[],
     itemFields: EntityFields,
+    site: string,
   ): RawValue[] {
     const rowValues: RawValue[] = bindParams(
       insertableColumns.map((col) => {
@@ -1517,7 +1519,7 @@ export class WriteExecutor {
         // fragment object itself — a JSON column would store "{}".
         return isSqlFragment(value)
           ? value
-          : this.ctx.applyWriteTransform(col, value);
+          : this.ctx.applyWriteTransform(col, value, site);
       }),
     );
     for (const fk of fkColumns) {
@@ -1678,6 +1680,7 @@ export class WriteExecutor {
             insertableColumns,
             fkColumns,
             fieldsOf(item),
+            "saveMany()",
           );
           return sql`(${join(rowValues, ", ")})`;
         });
@@ -2011,6 +2014,7 @@ export class WriteExecutor {
     entity: ClazzType<T>,
     insertableColumns: ColumnMetadata[],
     items: Partial<T>[],
+    site: string,
   ): { columns: Sql[]; valueRows: Sql[] } {
     const columns = insertableColumns.map((column) =>
       raw(this.ctx.wrap(column.name)),
@@ -2025,6 +2029,7 @@ export class WriteExecutor {
         insertableColumns,
         fkColumns,
         fieldsOf(item),
+        site,
       );
       return sql`(${join(rowValues, ", ")})`;
     });
@@ -2081,6 +2086,7 @@ export class WriteExecutor {
       entity,
       insertableColumns,
       items,
+      "createInsertBuilder()",
     );
 
     return {
@@ -2194,16 +2200,29 @@ export class WriteExecutor {
     return { kind: "update", set, where };
   }
 
-  /** A literal conflict-assignment value with its column's write transformer applied. */
+  /**
+   * A literal conflict-assignment value with its column's write transformer
+   * applied; a key with no column metadata (an FK join column) must be a
+   * scalar.
+   */
   private transformedValue(
     metadata: EntityScannerMetadata,
     columnName: string,
     value: unknown,
   ): unknown {
+    const site = "createInsertBuilder()";
     const column = metadata.columns.find(
       (col: ColumnMetadata) => col.name === columnName,
     );
-    return column ? this.ctx.applyWriteTransform(column, value) : value;
+    if (column) return this.ctx.applyWriteTransform(column, value, site);
+    assertScalarBindValue(
+      metadata.target?.name ?? metadata.name,
+      columnName,
+      value,
+      () => this.ctx.getDialect(),
+      site,
+    );
+    return value;
   }
 
   /**
@@ -2317,6 +2336,7 @@ export class WriteExecutor {
         entity,
         insertableColumns,
         items,
+        "insertMany()",
       );
 
       const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
@@ -2373,6 +2393,7 @@ export class WriteExecutor {
         entity,
         insertableColumns,
         items,
+        "insertManyAndReturn()",
       );
 
       // Same multi-row INSERT as insertMany(), with RETURNING * appended so the
@@ -2630,7 +2651,9 @@ export class WriteExecutor {
     where: WhereClause<T>,
     data: UpdateData<T>,
   ): Promise<{ affected: number }> {
-    return this.updateMany(entity, data, { where });
+    // Same body as updateMany(), but the bind guard names the method the
+    // caller actually called.
+    return this.runUpdateMany(entity, data, { where }, "update()");
   }
 
   /**
@@ -2668,8 +2691,46 @@ export class WriteExecutor {
   }
 
   /**
-   * The SET clauses for a criteria-based update: the caller's defined values,
-   * plus `@UpdateTimestamp` unless the payload sets it explicitly.
+   * One SET value of a criteria update — `updateMany()`, `update()` and
+   * `createUpdateBuilder().set()` — ready to bind.
+   *
+   * A key that names a column gets the column's write transforms, as save()
+   * applies them (`transformer.to`, registered column types, the JSON
+   * round-trip), and the bind guard behind them. A key with no column
+   * metadata — a `@ManyToOne` FK shadow property such as `ownerId` — is bound
+   * as given once it is known to be a scalar. A raw `sql` fragment is spliced
+   * as written.
+   *
+   * @internal Also backs `UpdateQueryBuilder.set()` through the callback
+   *   `EntityManager.createUpdateBuilder()` injects.
+   */
+  criteriaSetValue(
+    metadata: EntityScannerMetadata,
+    entityName: string,
+    key: string,
+    dbCol: string,
+    value: unknown,
+    site: string,
+  ): unknown {
+    if (isSqlFragment(value)) return value;
+    const column = metadata.columns.find(
+      (col: ColumnMetadata) => col.name === dbCol,
+    );
+    if (column) return this.ctx.applyWriteTransform(column, value, site);
+    assertScalarBindValue(
+      entityName,
+      key,
+      value,
+      () => this.ctx.getDialect(),
+      site,
+    );
+    return value;
+  }
+
+  /**
+   * The SET clauses for a criteria-based update: the caller's defined values
+   * (through {@link criteriaSetValue}), plus `@UpdateTimestamp` unless the
+   * payload sets it explicitly.
    *
    * The `@Version` bump is deliberately NOT here — it belongs after the
    * caller checks for an empty SET map, or an update with nothing to write
@@ -2678,9 +2739,11 @@ export class WriteExecutor {
    */
   private buildUpdateManySetClauses<T>(
     entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
     data: UpdateData<T>,
     propertyToColumn: Map<string, string>,
     tenantColumnName: string | null,
+    site: string,
   ): Sql[] {
     const dataFields = fieldsOf(data);
     const setMap: Sql[] = [];
@@ -2693,7 +2756,15 @@ export class WriteExecutor {
         // tenant is dropped rather than rewritten (a foreign value already
         // threw in validation).
         if (tenantColumnName && dbCol === tenantColumnName) continue;
-        setMap.push(sql`${raw(this.ctx.wrap(dbCol))} = ${bindParam(value)}`);
+        const bound = this.criteriaSetValue(
+          metadata,
+          entity.name,
+          key,
+          dbCol,
+          value,
+          site,
+        );
+        setMap.push(sql`${raw(this.ctx.wrap(dbCol))} = ${bindParam(bound)}`);
       }
     }
 
@@ -2786,6 +2857,20 @@ export class WriteExecutor {
     data: UpdateData<T>,
     options: UpdateManyOptions<T>,
   ): Promise<{ affected: number }> {
+    return this.runUpdateMany(entity, data, options, "updateMany()");
+  }
+
+  /**
+   * The criteria update both `updateMany()` and `update()` run.
+   *
+   * @param site - The method the caller called, for the bind-guard message.
+   */
+  private async runUpdateMany<T>(
+    entity: ClazzType<T>,
+    data: UpdateData<T>,
+    options: UpdateManyOptions<T>,
+    site: string,
+  ): Promise<{ affected: number }> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
       throw new EntityMetadataNotFoundError(entity.name);
@@ -2799,9 +2884,11 @@ export class WriteExecutor {
       const tenantUpdateWhere = this.ctx.buildTenantWhereClause(entity);
       const setMap = this.buildUpdateManySetClauses(
         entity,
+        metadata,
         data,
         updatePropToCol,
         tenantUpdateWhere ? this.ctx.resolveTenantColumnName(entity) : null,
+        site,
       );
       if (setMap.length === 0) {
         return { affected: 0 };
@@ -3560,7 +3647,7 @@ export class WriteExecutor {
       const rowFields = fieldsOf(row);
       const columnValues = plan.insertableColumns.map((col: ColumnMetadata) => {
         const rawValue = rowFields[this.ctx.propKey(col)];
-        return this.ctx.applyWriteTransform(col, rawValue);
+        return this.ctx.applyWriteTransform(col, rawValue, "upsert()");
       });
 
       const upsertSql = this.dmlSqlBuilder.buildUpsertQuery(
@@ -3622,7 +3709,7 @@ export class WriteExecutor {
       const rowFields = fieldsOf(row);
       const columnValues = plan.insertableColumns.map((col: ColumnMetadata) => {
         const rawValue = rowFields[this.ctx.propKey(col)];
-        return this.ctx.applyWriteTransform(col, rawValue);
+        return this.ctx.applyWriteTransform(col, rawValue, "insertIgnore()");
       });
 
       const insertSql = this.dmlSqlBuilder.buildInsertIgnoreQuery(
@@ -3700,7 +3787,10 @@ export class WriteExecutor {
         const rowValues: RawValue[] = bindParams(
           plan.insertableColumns.map((col: ColumnMetadata) => {
             const rawValue = itemFields[this.ctx.propKey(col)];
-            return this.ctx.applyWriteTransform(col, rawValue) ?? null;
+            return (
+              this.ctx.applyWriteTransform(col, rawValue, "batchUpsert()") ??
+              null
+            );
           }),
         );
         return sql`(${join(rowValues, ", ")})`;

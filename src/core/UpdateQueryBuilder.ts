@@ -57,12 +57,19 @@ export class UpdateQueryBuilder<T> {
   private orderByExprs: Array<{ ref: string; direction: OrderDirection; isRaw: boolean }> = [];
   private limitValue: number | undefined;
 
+  /**
+   * @param writeValue Prepares a literal SET value for binding — the column's
+   *   write transforms and the bind guard, as `updateMany()` applies them.
+   *   Supplied by `EntityManager.createUpdateBuilder()`; values are bound
+   *   as given when it is omitted.
+   */
   constructor(
     private readonly em: EntityManager,
     private readonly entity: ClazzType<T>,
     private readonly aliasName: string,
     private readonly propertyToColumnMap: Map<string, string>,
     private readonly dialectExpression?: DialectExpression,
+    private readonly writeValue?: (key: string, dbCol: string, value: unknown) => unknown,
   ) {}
 
   // ── SET ────────────────────────────────────────────────
@@ -71,7 +78,10 @@ export class UpdateQueryBuilder<T> {
    * Add columns to the SET clause from a typed data object.
    *
    * Each value can be a literal entity field value or a `Sql` expression
-   * (for raw SQL like `sql\`NOW()\`` or `sql\`view_count + 1\``).
+   * (for raw SQL like `sql\`NOW()\`` or `sql\`view_count + 1\``). Literal
+   * values go through the column's write transforms (`transformer.to`, the
+   * JSON round-trip for `json` / `jsonb`), as in `updateMany()`; an array or
+   * object a column cannot store throws `InvalidQueryError` here.
    *
    * Multiple `.set()` calls accumulate; the last write wins per column.
    */
@@ -80,8 +90,9 @@ export class UpdateQueryBuilder<T> {
       const value = (data as any)[key];
       if (value === undefined) continue;
       const dbCol = this.propertyToColumnMap.get(key) ?? key;
+      const bound = this.writeValue ? this.writeValue(key, dbCol, value) : value;
       this.setColumns.push(dbCol);
-      this.setEntries.push(sql`${raw(this.em.wrap(dbCol))} = ${value}`);
+      this.setEntries.push(sql`${raw(this.em.wrap(dbCol))} = ${bound}`);
     }
     return this;
   }
