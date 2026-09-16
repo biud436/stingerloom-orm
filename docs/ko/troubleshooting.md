@@ -329,6 +329,44 @@ console.log(user.posts); // Post[]
 posts!: Post[];
 ```
 
+### `select`와 함께 쓰면 관계가 `[]`(또는 `null`)로 돌아올 때
+
+```typescript
+const users = await em.find(User, { select: ["name"], relations: ["posts"] });
+// users[0].posts → 게시글이 있는데도 모든 사용자에서 []
+```
+
+OneToMany, ManyToMany, OneToOne 역방향 관계는 JOIN하지 않고 두 번째 쿼리로 로드하며, 이 쿼리는 부모의 기본 키로 관련 행을 짝짓습니다. 이전 릴리스는 `select`를 적힌 그대로 보냈기 때문에, 기본 키를 뺀 `select`는 키 없는 부모를 만들었고 로더가 쿼리를 건너뛰면서 관련 행이 있어도 부모마다 `[]`(OneToOne이면 `null`)가 채워졌습니다. 오류도 나지 않았고요.
+
+지금은 기본 키를 대신 가져오고 반환된 객체에도 남겨 두므로 위 쿼리도 게시글을 로드합니다. 이전 릴리스를 쓰고 있다면 키를 직접 적어 주세요.
+
+```typescript
+const users = await em.find(User, { select: ["id", "name"], relations: ["posts"] });
+```
+
+자세한 내용은 [select와 relations 함께 쓰기](./entity-manager-querying.md#select와-relations-함께-쓰기)를 참고하세요.
+
+### distinct / groupBy와 함께 쓸 때 "Cannot load ..."
+
+```
+InvalidQueryError: Cannot load "posts" for entity "User" in a "distinct" read whose "select"
+omits primary key column "id". "posts" is matched to each row by that key, and adding the key
+to the SELECT list would change which rows DISTINCT removes.
+```
+
+위에서 설명한 기본 키는 행을 합치는 쿼리에는 추가할 수 없습니다. `distinct: true`라면 키를 추가하는 순간 살아남는 행이 달라지고, `groupBy`에 키 컬럼이 전부 들어 있지 않으면 그룹마다 관련 행을 짝지을 부모가 하나로 정해지지 않기 때문입니다. 그룹으로 묶인 행이 들고 있는 키는 구성원 중 아무거나 하나의 키여서, 그 구성원의 행이 그룹 전체에 붙어 버립니다. 그래서 아무 말 없이 다른 행을 돌려주는 대신 쿼리를 거부합니다. 다음 중 하나를 고르세요.
+
+- 기본 키를 `select`(`distinct`인 경우)나 `groupBy`에 추가합니다.
+- 이 쿼리에서 `distinct` / `groupBy`를 뺍니다.
+- 관계는 별도 `find()`로 로드합니다.
+
+`groupBy` 거부는 그룹 기준만 봅니다. `select`에 키를 적어도 풀리지 않아요. 그룹으로 묶인 행은 여전히 여러 부모를 대표하니까요.
+
+```typescript
+// 거부됨 -- "name"으로 묶으면 여러 사용자가 임의의 id 하나 아래로 들어갑니다
+await em.find(User, { select: ["id", "name"], groupBy: ["name"], relations: ["posts"] });
+```
+
 ### "Unknown relation ... in relations"
 
 ```

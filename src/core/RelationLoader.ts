@@ -9,6 +9,11 @@ import { QueryResult } from "../types/QueryResult";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import { Conditions } from "./Conditions";
+import type {
+  ManyToManyMetadata,
+  OneToManyMetadata,
+  OneToOneMetadata,
+} from "../decorators";
 
 /**
  * A loaded entity instance viewed as a property-indexable record. Relation
@@ -49,6 +54,95 @@ export class RelationLoader {
     return parent[pk.propertyKey ?? pk.name];
   }
 
+  /**
+   * The OneToMany relations of `entity` that `relations` names — exactly the
+   * set {@link loadOneToManyRelations} loads.
+   */
+  private requestedOneToMany<T>(
+    entity: ClazzType<T>,
+    relations: readonly string[],
+  ): OneToManyMetadata<any>[] {
+    return this.resolver
+      .resolveOneToManyMetadata(entity)
+      .filter((rel) => relations.includes(rel.propertyKey));
+  }
+
+  /** The ManyToMany relations (either side) {@link loadManyToManyRelations} loads. */
+  private requestedManyToMany<T>(
+    entity: ClazzType<T>,
+    relations: readonly string[],
+  ): ManyToManyMetadata<any>[] {
+    return this.resolver
+      .resolveManyToManyMetadata(entity)
+      .filter((rel) => relations.includes(rel.propertyKey));
+  }
+
+  /** The OneToOne relations {@link loadOneToOneRelations} visits, both sides. */
+  private requestedOneToOne<T>(
+    entity: ClazzType<T>,
+    relations: readonly string[],
+  ): OneToOneMetadata<any>[] {
+    return this.resolver
+      .resolveOneToOneMetadata(entity)
+      .filter((rel) => relations.includes(rel.propertyKey));
+  }
+
+  /**
+   * Whether {@link loadOneToOneRelations} matches a OneToOne to its parent by
+   * the parent's primary key: the inverse side. The owning side is JOINed by
+   * the main read instead.
+   */
+  private static matchesByParentKey(rel: OneToOneMetadata<unknown>): boolean {
+    return !rel.joinColumn && !!rel.inverseSide;
+  }
+
+  /**
+   * Names of the requested relations the loaders match to each parent by its
+   * primary key: every OneToMany, every ManyToMany (either side) and the
+   * inverse side of OneToOne.
+   */
+  relationsMatchedByParentKey<T>(
+    entity: ClazzType<T>,
+    relations: readonly string[],
+  ): string[] {
+    const names: string[] = [];
+    for (const rel of this.requestedOneToMany(entity, relations)) {
+      names.push(rel.propertyKey);
+    }
+    for (const rel of this.requestedManyToMany(entity, relations)) {
+      names.push(rel.propertyKey);
+    }
+    for (const rel of this.requestedOneToOne(entity, relations)) {
+      if (RelationLoader.matchesByParentKey(rel)) names.push(rel.propertyKey);
+    }
+    return names;
+  }
+
+  /**
+   * The parent columns the loaders read from every hydrated parent: all
+   * primary-key columns when `relations` names a relation matched by the
+   * parent key, otherwise none.
+   *
+   * A read whose `select` leaves one of these out hydrates parents without
+   * the key, so each loader would find no parent ids, skip its query and
+   * assign `[]` / `null`. The read path adds the missing columns to its
+   * SELECT list. This is built on the loaders' own relation selectors so the
+   * two cannot disagree about which relations need the key.
+   */
+  parentKeyColumns<T>(
+    entity: ClazzType<T>,
+    relations: readonly string[],
+  ): ColumnMetadata[] {
+    if (this.relationsMatchedByParentKey(entity, relations).length === 0) {
+      return [];
+    }
+    const parentMetadata = this.resolver.resolveEntityMetadata(entity);
+    if (!parentMetadata) return [];
+    return parentMetadata.columns.filter(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+  }
+
   /** Collects the non-null PK value of every parent. */
   private collectParentIds(
     parents: EntityRecord[],
@@ -82,7 +176,7 @@ export class RelationLoader {
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
   ): Promise<void> {
-    const oneToManyMeta = this.resolver.resolveOneToManyMetadata(entity);
+    const oneToManyMeta = this.requestedOneToMany(entity, relations);
     if (oneToManyMeta.length === 0) return;
 
     const parentMetadata = this.resolver.resolveEntityMetadata(entity);
@@ -96,8 +190,6 @@ export class RelationLoader {
     const parents = this.toParentRecords(parentResults);
 
     for (const rel of oneToManyMeta) {
-      if (!relations.includes(rel.propertyKey)) continue;
-
       const RelatedEntity = rel.getRelatedEntity();
       const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
       if (!relatedMetadata) continue;
@@ -228,7 +320,7 @@ export class RelationLoader {
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
   ): Promise<void> {
-    const manyToManyMeta = this.resolver.resolveManyToManyMetadata(entity);
+    const manyToManyMeta = this.requestedManyToMany(entity, relations);
     if (manyToManyMeta.length === 0) return;
 
     const parentMetadata = this.resolver.resolveEntityMetadata(entity);
@@ -242,8 +334,6 @@ export class RelationLoader {
     const parents = this.toParentRecords(parentResults);
 
     for (const rel of manyToManyMeta) {
-      if (!relations.includes(rel.propertyKey)) continue;
-
       const joinInfo = this.resolver.resolveManyToManyJoinTable(rel);
       if (!joinInfo) continue;
 
@@ -384,7 +474,7 @@ export class RelationLoader {
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
   ): Promise<void> {
-    const oneToOneMeta = this.resolver.resolveOneToOneMetadata(entity);
+    const oneToOneMeta = this.requestedOneToOne(entity, relations);
     if (oneToOneMeta.length === 0) return;
 
     const parentMetadata = this.resolver.resolveEntityMetadata(entity);
@@ -398,8 +488,6 @@ export class RelationLoader {
     const parents = this.toParentRecords(parentResults);
 
     for (const rel of oneToOneMeta) {
-      if (!relations.includes(rel.propertyKey)) continue;
-
       // The owning side is already mapped by the eager JOIN + transformNested → skip
       if (rel.joinColumn) {
         continue;
@@ -414,7 +502,7 @@ export class RelationLoader {
       );
       if (!relatedPk) continue;
 
-      if (rel.inverseSide) {
+      if (RelationLoader.matchesByParentKey(rel)) {
         // Inverse side: search for the parent PK via the other side's joinColumn (batched)
         const relatedOneToOne = this.resolver.resolveOneToOneMetadata(RelatedEntity);
         const ownerRel = relatedOneToOne.find(

@@ -164,6 +164,76 @@ describe("RelationLoader", () => {
     loader = new RelationLoader(resolver, ctx);
   });
 
+  describe("parentKeyColumns", () => {
+    const compositeMetadata = {
+      name: "composites",
+      columns: [
+        { name: "a", propertyKey: "a", options: { primary: true } },
+        { name: "b_col", propertyKey: "b", options: { primary: true } },
+        { name: "name", propertyKey: "name", options: {} },
+      ],
+    };
+
+    it("returns every primary column for a requested OneToMany", () => {
+      resolver.resolveOneToManyMetadata.mockReturnValue([
+        { propertyKey: "children", getRelatedEntity: () => Child, mappedBy: "parent" },
+      ] as any);
+      resolver.resolveEntityMetadata.mockReturnValue(compositeMetadata as any);
+
+      const cols = loader.parentKeyColumns(Parent, ["children"]);
+
+      expect(cols.map((c) => c.name)).toEqual(["a", "b_col"]);
+      expect(loader.relationsMatchedByParentKey(Parent, ["children"])).toEqual(["children"]);
+    });
+
+    it("returns the key for a ManyToMany", () => {
+      resolver.resolveManyToManyMetadata.mockReturnValue([
+        { propertyKey: "tags", getRelatedEntity: () => Tag },
+      ] as any);
+      resolver.resolveEntityMetadata.mockReturnValue(parentMetadata as any);
+
+      expect(loader.parentKeyColumns(Parent, ["tags"]).map((c) => c.name)).toEqual(["id"]);
+    });
+
+    it("returns the key for the inverse side of a OneToOne only", () => {
+      resolver.resolveOneToOneMetadata.mockReturnValue([
+        { propertyKey: "profile", getRelatedEntity: () => Profile, inverseSide: "user" },
+        { propertyKey: "owner", getRelatedEntity: () => Profile, joinColumn: "owner_id" },
+        { propertyKey: "loose", getRelatedEntity: () => Profile },
+      ] as any);
+      resolver.resolveEntityMetadata.mockReturnValue(parentMetadata as any);
+
+      expect(loader.parentKeyColumns(Parent, ["profile"]).map((c) => c.name)).toEqual(["id"]);
+      // The owning side rides the main read's JOIN; a OneToOne with neither
+      // side is assigned null without reading the parent key.
+      expect(loader.parentKeyColumns(Parent, ["owner", "loose"])).toEqual([]);
+      expect(loader.relationsMatchedByParentKey(Parent, ["profile", "owner", "loose"])).toEqual([
+        "profile",
+      ]);
+    });
+
+    it("returns nothing when no requested relation is matched by the parent key", () => {
+      resolver.resolveOneToManyMetadata.mockReturnValue([
+        { propertyKey: "children", getRelatedEntity: () => Child, mappedBy: "parent" },
+      ] as any);
+      resolver.resolveEntityMetadata.mockReturnValue(parentMetadata as any);
+
+      // "author" stands for a ManyToOne: the loaders never read the parent key for it.
+      expect(loader.parentKeyColumns(Parent, ["author"])).toEqual([]);
+      expect(loader.parentKeyColumns(Parent, [])).toEqual([]);
+      expect(resolver.resolveEntityMetadata).not.toHaveBeenCalled();
+    });
+
+    it("returns nothing when the parent metadata cannot be resolved", () => {
+      resolver.resolveOneToManyMetadata.mockReturnValue([
+        { propertyKey: "children", getRelatedEntity: () => Child, mappedBy: "parent" },
+      ] as any);
+      resolver.resolveEntityMetadata.mockReturnValue(null);
+
+      expect(loader.parentKeyColumns(Parent, ["children"])).toEqual([]);
+    });
+  });
+
   describe("loadOneToManyRelations", () => {
     it("should skip if no OneToMany metadata", async () => {
       resolver.resolveOneToManyMetadata.mockReturnValue([]);

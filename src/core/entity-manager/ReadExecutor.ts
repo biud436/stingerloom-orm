@@ -117,6 +117,12 @@ interface FindOperation<T> {
    * the plain `hasEagerJoins` rule.
    */
   tptQualifyColumn?: (dbCol: string) => string;
+  /**
+   * Primary-key DB columns the SELECT list adds to the caller's `select`
+   * because a requested relation is matched to each parent by them — see
+   * {@link ReadExecutor.resolveAddedKeyColumns}. Empty for every other shape.
+   */
+  addedKeyColumns: string[];
 }
 
 /**
@@ -423,8 +429,13 @@ export class ReadExecutor {
       eagerO2O,
       hasEagerJoins,
       tptQualifyColumn: undefined,
+      addedKeyColumns: [],
     };
     op.tptQualifyColumn = this.createTptColumnQualifier(op);
+
+    const selectColumns = findOption.select
+      ? this.ctx.resolveSelectColumns<T>(findOption.select)
+      : undefined;
 
     // Reject column identifiers no builder can resolve. `where` / `orderBy`
     // / `select` fall back to the raw key when it is not in the property
@@ -432,7 +443,7 @@ export class ReadExecutor {
     // dialect-specific "no such column" that never named the alternatives.
     validateReadIdentifiers(
       findOption,
-      findOption.select ? this.ctx.resolveSelectColumns<T>(findOption.select) : undefined,
+      selectColumns,
       buildEntityColumnScope({
         entity,
         metadata,
@@ -442,7 +453,124 @@ export class ReadExecutor {
       }),
     );
 
+    op.addedKeyColumns = this.resolveAddedKeyColumns(op, selectColumns);
+
     return op;
+  }
+
+  /**
+   * The primary-key columns a partial `select` is missing for the requested
+   * relations to load.
+   *
+   * OneToMany, ManyToMany and the inverse side of OneToOne are not JOINed:
+   * {@link RelationLoader} matches their rows to each hydrated parent by its
+   * primary key. A `select` that left the key out hydrated parents without
+   * it, so every loader skipped its query and assigned `[]` / `null` to
+   * parents that had related rows. The key is now added to the SELECT list
+   * (never to the caller's `findOption`) and stays on the hydrated entity.
+   *
+   * Reads that collapse rows are rejected instead:
+   *
+   * - a `groupBy` that does not name every key column, whatever `select` says
+   *   — a grouped row carries the key of one arbitrary member, so the loader
+   *   would attach that member's rows to the whole group;
+   * - `distinct` on a `select` that omits the key — adding the key would
+   *   change which rows DISTINCT removes. (`distinct` over the full column
+   *   set already emits the key, so it needs no rejection.)
+   *
+   * A TPT child and a TPC polymorphic root read every column whatever
+   * `select` says, so they never need the addition — but their grouped reads
+   * collapse rows just the same and are rejected like any other.
+   *
+   * An empty resolved `select` adds nothing: the read keeps failing on the
+   * empty SELECT list instead of silently answering with the key alone.
+   *
+   * @throws InvalidQueryError for the `groupBy` / `distinct` shapes above.
+   */
+  private resolveAddedKeyColumns<T>(
+    op: FindOperation<T>,
+    selectColumns: readonly string[] | undefined,
+  ): string[] {
+    const { entity, findOption, propToCol } = op;
+    const relations = findOption.relations;
+    if (!relations || relations.length === 0) return [];
+
+    const keyColumns = this.relationLoader.parentKeyColumns(entity, relations);
+    if (keyColumns.length === 0) return [];
+
+    // Keyed off the grouping alone: naming the key in `select` does not make
+    // a collapsed row point at one parent.
+    const groupBy = findOption.groupBy;
+    if (groupBy && groupBy.length > 0) {
+      const grouped = new Set(
+        groupBy.map((col) => propToCol.get(String(col)) ?? String(col)),
+      );
+      const ungrouped = keyColumns.filter((col) => !grouped.has(col.name));
+      if (ungrouped.length > 0) {
+        this.rejectKeylessCollapsedRead(op, ungrouped, "groupBy");
+      }
+    }
+
+    if (op.isTPTChild || op.isTPCPolymorphic) return [];
+    if (!selectColumns || selectColumns.length === 0) return [];
+
+    const selected = new Set(
+      selectColumns.map((prop) => propToCol.get(prop) ?? prop),
+    );
+    const missing = keyColumns.filter((col) => !selected.has(col.name));
+    if (missing.length === 0) return [];
+
+    if (findOption.distinct) {
+      this.rejectKeylessCollapsedRead(op, missing, "distinct");
+    }
+
+    return missing.map((col) => col.name);
+  }
+
+  /**
+   * Rejects a `distinct` / `groupBy` read that asks for relations matched by
+   * a primary key the collapsed result cannot stand for.
+   *
+   * Both forms collapse rows, so the read cannot be answered the way
+   * {@link resolveAddedKeyColumns} answers a plain read: under `distinct`
+   * adding the key would change which rows survive, and a grouped row has no
+   * single key value to match related rows to — whether or not the key is in
+   * the SELECT list. The message names the relations and the key by the
+   * property names the caller wrote, not the DB columns.
+   *
+   * @param keyColumns - The key columns the read cannot carry.
+   * @param form - The collapsing option that caused the rejection.
+   * @throws InvalidQueryError always.
+   */
+  private rejectKeylessCollapsedRead<T>(
+    op: FindOperation<T>,
+    keyColumns: ColumnMetadata[],
+    form: "distinct" | "groupBy",
+  ): never {
+    const quote = (names: string[]) => names.map((n) => `"${n}"`).join(", ");
+    const keys = quote(keyColumns.map((col) => col.propertyKey ?? col.name));
+    const keyList = `primary key column${keyColumns.length > 1 ? "s" : ""} ${keys}`;
+    const relationNames = this.relationLoader.relationsMatchedByParentKey(
+      op.entity,
+      op.findOption.relations ?? [],
+    );
+    const relations = quote(relationNames);
+    const are = relationNames.length > 1 ? "are" : "is";
+    const they = relationNames.length > 1 ? "they" : "it";
+
+    if (form === "distinct") {
+      throw new InvalidQueryError(
+        `Cannot load ${relations} for entity "${op.entity.name}" in a "distinct" read whose "select" omits ${keyList}. ` +
+          `${relations} ${are} matched to each row by that key, and adding the key to the SELECT list would change which rows DISTINCT removes.`,
+        `Add ${keys} to "select", drop "distinct", or load ${relations} with a separate find().`,
+      );
+    }
+
+    throw new InvalidQueryError(
+      `Cannot load ${relations} for entity "${op.entity.name}" in a "groupBy" read whose grouping omits ${keyList}. ` +
+        `${relations} ${are} matched to each row by that key, and a grouped row carries the key of one arbitrary member, so ${they} would be attached to the whole group.`,
+      `Add ${keys} to "groupBy", or load ${relations} with a separate find().`,
+    );
   }
 
   /**
@@ -537,6 +665,8 @@ export class ReadExecutor {
     } else if (select) {
       const selectedColumns = this.ctx.resolveSelectColumns<T>(select)
         .map((prop) => propToCol.get(prop) ?? prop);
+      // Key columns a deferred relation loader matches parents by.
+      selectedColumns.push(...op.addedKeyColumns);
       if (hasEagerJoins) {
         selectMap.push(
           ...selectedColumns.map(

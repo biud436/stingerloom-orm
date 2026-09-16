@@ -74,6 +74,45 @@ This produces the exact same SQL. Some people find the object style more readabl
 
 The returned objects still have the full `User` TypeScript type, but unselected properties will be `undefined` at runtime. This means TypeScript won't warn you if you access `user.password` — it just silently returns `undefined`. If you need compile-time safety for partial selections, use the [SelectQueryBuilder](./query-builder.md) which narrows the return type to only the columns you selected.
 
+### select with relations
+
+One exception: when `relations` names a OneToMany, a ManyToMany (either side) or the inverse side of a OneToOne, the primary key is fetched even if `select` leaves it out. Those relations are not JOINed. They are loaded by a second query that matches rows to each parent by its primary key, so the key has to be in the parent row. It also stays on the returned objects:
+
+```typescript
+const users = await em.find(User, {
+  select: ["name"],
+  relations: ["posts"], // OneToMany
+});
+// users[0] → { id: 1, name: "Alice", posts: [...] }
+```
+
+```sql
+SELECT "name", "id" FROM "user";
+SELECT ... FROM "post" WHERE "author_id" IN (1, 2);  -- the ids read above
+```
+
+The key is added for `select: { id: false, name: true }` too, and a composite key adds every key column. ManyToOne relations and the owning side of OneToOne are JOINed into the same statement, so they add nothing. An empty `select` (`[]`, `{}`, `{ id: false }`) is still an error — it asks for no columns at all, and the key is not a substitute for the columns you meant to name.
+
+Reads that collapse rows can't be combined with those relations, because a collapsed row has no single parent to match related rows to. Both forms throw `InvalidQueryError` before any SQL runs:
+
+- a `groupBy` that doesn't name every primary-key column — whatever `select` says, since the grouped row carries the key of one arbitrary member of the group;
+- `distinct: true` on a `select` that omits the key, because adding the key would change which rows DISTINCT removes.
+
+```typescript
+// Throws InvalidQueryError: Cannot load "posts" for entity "User" in a "distinct" read
+// whose "select" omits primary key column "id". ...
+await em.find(User, { select: ["name"], distinct: true, relations: ["posts"] });
+
+// Throws InvalidQueryError: ... in a "groupBy" read whose grouping omits primary key
+// column "id". Naming "id" in select does not help — one group, one arbitrary id.
+await em.find(User, { select: ["id", "name"], groupBy: ["name"], relations: ["posts"] });
+
+// Works: the primary key is part of the grouping, so it is selected for you
+await em.find(User, { select: ["name"], groupBy: ["id", "name"], relations: ["posts"] });
+```
+
+One caveat under the [buffer plugin](./write-buffer.md): a `select` read is non-canonical there, so when the identity map already tracks that row, `buf.find()` returns the tracked instance instead of the row it just loaded — and the relation this read fetched is not attached to it. Read the relation from the tracked instance (`await user.posts`, which loads it lazily) or use a full read without `select`.
+
 ---
 
 ## Ordering — orderBy
@@ -1478,7 +1517,7 @@ Here's every option you can pass to `find()`, in one table:
 | `skip` | `number` | Rows to skip (offset) |
 | `take` | `number` | Maximum rows to return (limit) |
 | `limit` | `[offset, count]` | Alternative to skip/take |
-| `relations` | `string[]` | Eager-load related entities via JOIN |
+| `relations` | `string[]` | Load related entities: ManyToOne and owning-side OneToOne via JOIN, OneToMany / ManyToMany / inverse-side OneToOne via a separate query |
 | `distinct` | `boolean` | SELECT DISTINCT |
 | `groupBy` | `string[]` | GROUP BY columns |
 | `having` | `Sql[]` | HAVING conditions (requires groupBy) |
