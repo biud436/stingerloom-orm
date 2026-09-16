@@ -1,5 +1,6 @@
 import { BaseRepository } from "../../src/core/BaseRepository";
 import { EntityManager } from "../../src/core/EntityManager";
+import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
 
 /**
  * Delete operation unit tests — BaseRepository delegation only.
@@ -51,10 +52,22 @@ describe("Delete Operation", () => {
   });
 
   describe("BaseRepository.remove() 위임", () => {
-    it("엔티티 인스턴스를 EntityManager.delete()에 위임해야 함", async () => {
+    const column = (propertyKey: string, primary: boolean) => ({
+      propertyKey,
+      columnName: propertyKey,
+      type: "varchar",
+      nullable: false,
+      primary,
+      unique: false,
+    });
+
+    it("기본 키 컬럼만 조건으로 EntityManager.delete()에 위임해야 함", async () => {
       const mockDeleteResult = { affected: 1 };
       const mockEntityManager = {
         delete: jest.fn().mockResolvedValue(mockDeleteResult),
+        getColumnMetadata: jest
+          .fn()
+          .mockReturnValue([column("id", true), column("name", false)]),
       } as unknown as EntityManager;
 
       class User {
@@ -69,8 +82,48 @@ describe("Delete Operation", () => {
 
       const result = await repo.remove(user);
 
-      expect(mockEntityManager.delete).toHaveBeenCalledWith(User, user);
+      expect(mockEntityManager.delete).toHaveBeenCalledWith(User, { id: 5 });
       expect(result).toEqual({ affected: 1 });
+    });
+
+    it("기본 키가 없는 인스턴스는 InvalidQueryError를 던지고 delete()를 호출하지 않아야 함", async () => {
+      const mockEntityManager = {
+        delete: jest.fn(),
+        getColumnMetadata: jest
+          .fn()
+          .mockReturnValue([column("id", true), column("name", false)]),
+      } as unknown as EntityManager;
+
+      class User {
+        id!: number;
+        name!: string;
+      }
+
+      const repo = BaseRepository.of(User, mockEntityManager);
+      const user = new User();
+      user.name = "John";
+
+      await expect(repo.remove(user)).rejects.toThrow(InvalidQueryError);
+      expect(mockEntityManager.delete).not.toHaveBeenCalled();
+    });
+
+    it("기본 키 컬럼이 없는 엔티티는 인스턴스 전체를 조건으로 넘겨야 함", async () => {
+      const mockEntityManager = {
+        delete: jest.fn().mockResolvedValue({ affected: 1 }),
+        getColumnMetadata: jest.fn().mockReturnValue([column("name", false)]),
+      } as unknown as EntityManager;
+
+      class Log {
+        name!: string;
+      }
+
+      const repo = BaseRepository.of(Log, mockEntityManager);
+      const log = new Log();
+      log.name = "boot";
+
+      await repo.remove(log);
+
+      expect(mockEntityManager.delete).toHaveBeenCalledWith(Log, log);
     });
   });
 

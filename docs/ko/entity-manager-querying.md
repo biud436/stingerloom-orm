@@ -445,6 +445,86 @@ SELECT * FROM "user"
 WHERE "bio" IS NOT NULL
 ```
 
+### undefined 값
+
+`where`에서 `null`과 `undefined`는 뜻이 다릅니다. `null`은 질문의 대상이 되는 값이라 `IS NULL`이 됩니다. 반면 `undefined`는 **키가 없는 것**으로 취급해서, 해당 필드를 아예 적지 않은 것처럼 쿼리에서 빠집니다.
+
+```typescript
+// 아래 두 줄은 같은 SQL을 만듭니다.
+await em.find(User, { where: { role: "admin", score: undefined } });
+await em.find(User, { where: { role: "admin" } });
+```
+
+목록 조회의 선택적 필터로는 편한 규칙이지만, 그 외의 자리에서는 위험합니다. 그래서 조건이 빠질 때 결과가 좁아지는 게 아니라 아예 달라지는 모양은 ORM이 거부합니다.
+
+**필드를 쓰긴 했는데 값이 전부 undefined인 where는 단건 조회에서 거부됩니다.** `findOne`, `findOneBy`, `findOneOrFail`, `findOneByOrFail`, `exists`가 `InvalidQueryError`를 던집니다. 조건이 전부 사라지면 `SELECT ... LIMIT 1`에 필터가 하나도 남지 않아서 아무 행이나 읽게 되고, `exists()`는 "테이블이 비어 있지 않다"는 대답을 돌려주기 때문이에요.
+
+```typescript
+const id: number | undefined = req.params.id;
+
+await em.findOne(User, { where: { id } });
+// InvalidQueryError: Every value in the "where" passed to findOne() for entity
+// "User" is undefined (id) — the query would read an arbitrary row.
+```
+
+필터를 쓰지 않겠다고 명시하는 건 그대로 허용합니다. 코드에 의도가 드러나기 때문입니다. `findOne(User, {})`, `findOne(User, { where: {} })`, `exists(User)`는 예전처럼 첫 행을 읽거나 행 존재 여부를 답합니다.
+
+**목록 조회와 집계는 계속 건너뜁니다.** `find`, `findBy`, `pluck`, `findAndCount`, `findWithPage`, `findWithCursor`, `stream`, `count`, `sum`, `avg`, `min`, `max`, 그리고 쿼리 빌더의 `where({ ... })` 오버로드는 undefined 필드를 버리고 전체 행을 돌려줍니다. 선택적 필터 관용구가 여기에 해당해요.
+
+**기본 키 조회는 엄격합니다.** 위 검사를 거치지 않고 자체 메시지(`findByPK() received undefined as the primary key of "User".`)로 알려 줍니다. `findByPK(User, undefined)`와 `findByPKs(User, [1, undefined])`는 예외를 던집니다. 복합 키라면 키 속성이 전부 있어야 합니다. `findByPK(Member, { tenantKey: "t1", userId: undefined })`는 `t1`의 아무 멤버나 매칭하는 대신 `userId`를 지목하며 실패합니다. 속성 이름과 컬럼 이름 어느 쪽으로 적어도 값이 있는 것으로 보기 때문에, `where`처럼 `{ tenant_key: "t1", user_id: 1 }` 형태의 키 객체도 그대로 쓸 수 있어요. `findByPK(User, null)`은 그대로라서 여전히 `IS NULL`로 읽습니다.
+
+**연산자 피연산자에는 undefined를 쓸 수 없습니다.** 피연산자는 명시적인 비교라 버릴 대상이 없기 때문입니다.
+
+```typescript
+await em.find(Post, { where: { score: { gt: undefined } } });
+// InvalidQueryError: Operator "gt" on "score" received undefined.
+```
+
+`eq ne gt gte lt lte in notIn like notLike ilike between isNull not contains startsWith endsWith search`가 모두 대상이고, `in` / `notIn` 목록이나 최상위 배열(`{ id: [1, undefined] }`)에 들어간 `undefined` 원소, 경계가 빠진 `between`도 같습니다. 선택적인 연산자는 조건부로 붙이세요.
+
+```typescript
+await em.find(Post, {
+  where: { score: { ...(min !== undefined && { gte: min }) } },
+});
+```
+
+**조건이 하나도 남지 않는 분기는 OR 안에서 거부됩니다.** 빈 분기는 TRUE라서 OR로 묶으면 쿼리가 전체 행으로 넓어지기 때문입니다.
+
+```typescript
+await em.find(Post, { where: { OR: [{ id: undefined }, { id: 2 }] } });
+// InvalidQueryError: The OR branch OR[0] resolves to no condition, so the OR
+// would match every row.
+```
+
+OR로 묶이는 배열 형태(`where: [{ id: undefined }, { id: 2 }]`)도 마찬가지입니다. `AND` 안에서는 빈 분기가 항등원이라 건너뛰고 나머지 조건은 그대로 적용합니다. `{ OR: undefined }`, `{ AND: undefined }`, `{ NOT: undefined }`는 다른 필드와 똑같이 없는 키로 보고, `{ OR: [] }`은 아무 조건도 만들지 않습니다.
+
+::: warning 여러 필드가 있는 where에서는 undefined 값이 여전히 빠집니다
+정의된 필드가 하나라도 있으면 undefined인 필드만 빠지고 쿼리는 실행됩니다. 그래서 권한 검사가 코드에 적힌 것보다 약해질 수 있습니다.
+
+```typescript
+// userId가 undefined면 그 조건이 사라집니다
+const membership = await em.findOne(Membership, {
+  where: { workspaceId, userId: maybeUndefined, role: "OWNER" },
+});
+// 실행: WHERE "workspaceId" = ? AND "role" = 'OWNER'
+// 결과: 다른 멤버의 OWNER 행
+```
+
+"이 필터는 일부러 뺀 것"인지 "값이 유실된 것"인지는 ORM이 구분할 수 없습니다. where를 만들기 전에 입력값을 검증하세요. NestJS의 `ValidationPipe`, 라우트 파라미터의 `ParseIntPipe`, 아니면 직접 확인하는 방법이 있습니다.
+
+```typescript
+if (userId === undefined) throw new UnauthorizedException();
+```
+:::
+
+쿼리 빌더의 3인자 형태도 같은 이유로 undefined 값을 거부합니다. `qb.where("id", ">", maybeId)`는 예전에 2인자 `where("id", ">")`로 읽혀서 컬럼을 `">"`라는 문자열과 비교했는데, 이제 `InvalidQueryError`를 던집니다. 선택적인 조건에는 `when()`을 쓰세요.
+
+```typescript
+qb.when(maybeId !== undefined, (b) => b.where("id", ">", maybeId));
+```
+
+예외는 두 가지입니다. `IS NULL` / `IS NOT NULL`은 값을 받지 않으므로 `where("status", "IS NULL", undefined)`는 그대로 연산자로 읽습니다. 그리고 두 번째 인자가 문자열이 아니면 연산자일 수 없으므로 `where("score", 2, undefined)`는 2인자 형태로 동작해요. 인자 세 개를 항상 그대로 넘기는 래퍼를 위한 통로입니다. 그 밖의 문자열은 전부 거부합니다. 빌더가 연산자로 해석하지 않는 문자열(`where("title", "NOT BETWEEN", undefined)`)도 마찬가지인데, 값이 정의된 같은 호출도 어차피 거부되기 때문입니다.
+
 ### NOT 연산자
 
 `not`은 단일 조건을 부정해요. 일반 값과 중첩 연산자 객체 모두에서 동작해요:

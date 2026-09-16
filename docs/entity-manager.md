@@ -386,6 +386,17 @@ async getUser(id: number): Promise<User> {
 
 The thrown `EntityNotFoundError` includes the entity name for debugging. The repository equivalent is `userRepo.findOneOrFail({ where: { id } })`.
 
+A `where` whose values are all `undefined` is rejected before the query runs, on `findOne()` and `findOneOrFail()` alike:
+
+```typescript
+async getUser(id: number | undefined): Promise<User> {
+  return em.findOneOrFail(User, { where: { id } });
+  // id undefined -> InvalidQueryError, not an arbitrary user
+}
+```
+
+Without that check the condition would disappear and the query would read the first row of the table, so "or fail" would never fire. See [undefined values](./entity-manager-querying.md#undefined-values) for the full rule, including the fields that are still skipped when other fields are defined.
+
 ### Loading relations
 
 Pass `relations` to eagerly load associated entities via LEFT JOIN:
@@ -446,6 +457,19 @@ const hasAdmin = await em.exists(User, { role: "admin" }); // boolean
 ```
 
 `exists()` is more efficient than `find()` + length check because it generates `SELECT 1 ... LIMIT 1` instead of fetching full rows.
+
+These three lookups are strict about `undefined`, because a missing key would widen them instead of narrowing them:
+
+```typescript
+await em.findByPK(User, undefined);           // InvalidQueryError
+await em.findByPKs(User, [1, undefined]);     // InvalidQueryError
+await em.findByPKsMap(User, [1, undefined]);  // InvalidQueryError
+await em.exists(User, { role: undefined });   // InvalidQueryError
+
+await em.findByPK(User, null);                // unchanged: reads IS NULL
+```
+
+For a composite key, pass every key property — `findByPK(Member, { tenantKey: "t1", userId: undefined })` throws and names `userId` rather than matching any member of `t1`. `null` is still a value there and matches `IS NULL`. Extra non-key properties keep filtering as they did before.
 
 `pluck()` retrieves a flat array of one column's values across matching rows — a concise alternative to `find()` followed by `.map(row => row[column])`:
 

@@ -22,6 +22,7 @@ import {
   PagePaginationResult,
 } from "./PagePagination";
 import { ExplainResult } from "./ExplainResult";
+import { InvalidQueryError } from "../errors/InvalidQueryError";
 
 /**
  * Handle returned by {@link BaseRepository.relation} for mutating a single
@@ -281,11 +282,39 @@ export class BaseRepository<T> {
   /**
    * Removes a specific entity instance from the database using its primary key.
    *
+   * Only the primary-key columns become the delete criteria. Passing the whole
+   * instance used to filter on every loaded column too, so a stale instance
+   * deleted nothing, and an instance without its key deleted rows by its other
+   * columns. An entity without a primary key keeps the whole-instance criteria.
+   *
    * @param item The entity instance to be removed.
    * @returns A promise that resolves to the number of affected rows.
+   * @throws InvalidQueryError when a primary-key property is undefined or null.
    */
   async remove(item: T): Promise<DeleteResult> {
-    return await this.em.delete<T>(this.entity, item as any);
+    const pkProps = this.em
+      .getColumnMetadata(this.entity)
+      .filter((col) => col.primary)
+      .map((col) => col.propertyKey);
+    if (pkProps.length === 0) {
+      return await this.em.delete<T>(this.entity, item as any);
+    }
+
+    const criteria: Record<string, unknown> = {};
+    for (const prop of pkProps) {
+      const value =
+        item === null || item === undefined
+          ? undefined
+          : (item as Record<string, unknown>)[prop];
+      if (value === undefined || value === null) {
+        throw new InvalidQueryError(
+          `remove() needs the primary key "${prop}" of "${this.entity.name}", but the instance has ${String(value)}.`,
+          "remove() deletes by primary key only. Load or save the entity first, or use delete(criteria) to delete by other columns.",
+        );
+      }
+      criteria[prop] = value;
+    }
+    return await this.em.delete<T>(this.entity, criteria as WhereClause<T>);
   }
 
   /**

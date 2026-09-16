@@ -4,6 +4,8 @@ import { Entity, PrimaryGeneratedColumn, Column } from "../../src/decorators";
 import { EntityManager } from "../../src/core/EntityManager";
 import { BaseRepository } from "../../src/core/BaseRepository";
 import { EntityNotFoundError } from "../../src/errors/EntityNotFoundError";
+import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
+import { ReadExecutor } from "../../src/core/entity-manager/ReadExecutor";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 
 // ── Test Entity ───────────────────────────────────────────
@@ -89,6 +91,82 @@ describe("findOneOrFail / getOneOrFail", () => {
       await expect(
         mockEm.findOneOrFail(User, { where: { id: 999 } as any }),
       ).rejects.toThrow(EntityNotFoundError);
+    });
+  });
+
+  describe("all-undefined where", () => {
+    /**
+     * `findOneOrFail({ where: { id: maybeId } })` with `maybeId` undefined used
+     * to drop the only condition, read `SELECT ... LIMIT 1` and return an
+     * arbitrary row — the "or fail" never fired, so the caller went on with the
+     * wrong entity. The guard sits on the public `ReadExecutor.findOne`, not on
+     * `findOneInternal`, so save()'s readbacks keep their old behavior.
+     */
+    it("rejects in ReadExecutor.findOne before findOneInternal runs", async () => {
+      const ctx = {
+        findOneInternal: jest.fn().mockResolvedValue({ id: 1, name: "Alice" }),
+      };
+      const executor = {
+        ctx,
+        findOne: ReadExecutor.prototype.findOne,
+      } as unknown as ReadExecutor;
+
+      await expect(
+        executor.findOne(User, { where: { id: undefined } as any }),
+      ).rejects.toThrow(InvalidQueryError);
+      await expect(
+        executor.findOne(User, { where: { id: undefined } as any }),
+      ).rejects.toThrow(
+        'Every value in the "where" passed to findOne() for entity "User" is undefined (id)',
+      );
+      expect(ctx.findOneInternal).not.toHaveBeenCalled();
+    });
+
+    it("still reads when one value is defined, and when no field is named", async () => {
+      const ctx = {
+        findOneInternal: jest.fn().mockResolvedValue({ id: 2, name: "Bob" }),
+      };
+      const executor = {
+        ctx,
+        findOne: ReadExecutor.prototype.findOne,
+      } as unknown as ReadExecutor;
+
+      await expect(
+        executor.findOne(User, { where: { id: undefined, name: "Bob" } as any }),
+      ).resolves.toEqual({ id: 2, name: "Bob" });
+      await expect(executor.findOne(User, {})).resolves.toEqual({
+        id: 2,
+        name: "Bob",
+      });
+      expect(ctx.findOneInternal).toHaveBeenCalledTimes(2);
+    });
+
+    it("findOneOrFail surfaces the InvalidQueryError instead of an arbitrary row", async () => {
+      // The guard has to run inside the real findOne for this to mean
+      // anything: before the fix, findOne resolved the row findOneInternal
+      // handed back and findOneOrFail returned that stranger.
+      const ctx = {
+        findOneInternal: jest
+          .fn()
+          .mockResolvedValue({ id: 7, name: "Arbitrary" }),
+      };
+      const executor = {
+        ctx,
+        findOne: ReadExecutor.prototype.findOne,
+      } as unknown as ReadExecutor;
+      const mockEm = {
+        findOne: (entity: any, findOption: any) =>
+          executor.findOne(entity, findOption),
+        findOneOrFail: EntityManager.prototype.findOneOrFail,
+      };
+
+      await expect(
+        mockEm.findOneOrFail(User, { where: { id: undefined } as any }),
+      ).rejects.toThrow(InvalidQueryError);
+      await expect(
+        mockEm.findOneOrFail(User, { where: { id: undefined } as any }),
+      ).rejects.not.toThrow(EntityNotFoundError);
+      expect(ctx.findOneInternal).not.toHaveBeenCalled();
     });
   });
 

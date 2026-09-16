@@ -8,6 +8,11 @@ import { WhereClause } from "../../src/dialects/FindOption";
 import sql from "sql-template-tag";
 import { Conditions } from "../../src/core/Conditions";
 import { createDialectExpression } from "../../src/dialects/DialectExpression";
+import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
+import {
+  assertWhereNotVacuous,
+  findVacuousWhere,
+} from "../../src/core/ColumnNameValidator";
 
 // Test entity type
 interface User {
@@ -491,5 +496,182 @@ describe("WhereResolver", () => {
       expect(result.sql).toContain("to_tsvector");
       expect(result.sql).toContain("plainto_tsquery");
     });
+  });
+});
+
+// ── undefined operands, IN elements and combinator branches ─────────────
+
+describe("WhereResolver: undefined values", () => {
+  const u = undefined as any;
+
+  function captureError(fn: () => unknown): any {
+    try {
+      fn();
+    } catch (err) {
+      return err;
+    }
+    throw new Error("expected the call to throw");
+  }
+
+  describe("operator operands", () => {
+    it.each([
+      "eq", "ne", "gt", "gte", "lt", "lte", "in", "notIn", "like", "notLike",
+      "ilike", "between", "isNull", "not", "contains", "startsWith", "endsWith",
+      "search",
+    ])("%s: undefined throws InvalidQueryError naming the field and operator", (op) => {
+      const err = captureError(() => resolve({ name: { [op]: u } } as any));
+      expect(err).toBeInstanceOf(InvalidQueryError);
+      expect(err.message).toContain(`Operator "${op}" on "name" received undefined.`);
+    });
+
+    it("names the where key, not the wrapped column", () => {
+      const err = captureError(() =>
+        resolveWhereClause<User>({ age: { gt: u } }, {
+          wrapColumn: wrap,
+          qualified: true,
+          tableName: "users",
+        }),
+      );
+      expect(err.message).toContain('"age"');
+      expect(err.message).not.toContain("`users`");
+    });
+
+    it("isNull: undefined no longer resolves to IS NOT NULL", () => {
+      expect(() => resolve({ bio: { isNull: u } })).toThrow(InvalidQueryError);
+      expect(resolveSingle({ bio: { isNull: false } }).sql).toContain("IS NOT NULL");
+    });
+
+    it("an undefined operand inside not: { ... } throws", () => {
+      expect(() => resolve({ age: { not: { gt: u } } })).toThrow(
+        'Operator "gt" on "age" received undefined.',
+      );
+    });
+
+    it("null operands keep their meaning", () => {
+      expect(resolveSingle({ bio: { eq: null } }).sql).toContain("`bio` IS NULL");
+      expect(resolveSingle({ bio: { ne: null } }).sql).toContain("`bio` IS NOT NULL");
+      expect(resolveSingle({ bio: { not: null } }).sql).toContain("`bio` IS NOT NULL");
+    });
+  });
+
+  describe("IN lists and between bounds", () => {
+    it.each([
+      ["in operator", { age: { in: [1, u] } }, "in", 1],
+      ["notIn operator", { age: { notIn: [u] } }, "notIn", 0],
+      ["top-level array", { age: [1, 2, u] }, "IN", 2],
+    ])("%s with an undefined element throws", (_label, where, op, index) => {
+      const err = captureError(() => resolve(where as any));
+      expect(err).toBeInstanceOf(InvalidQueryError);
+      expect(err.message).toContain(
+        `The ${op} list for "age" contains undefined at index ${index}.`,
+      );
+    });
+
+    it("null elements in an IN list are still bound", () => {
+      const result = resolveSingle({ bio: { in: ["a", null] } as any });
+      expect(result.values).toEqual(["a", null]);
+    });
+
+    it.each([
+      [[1, u], "max is undefined"],
+      [[u, 5], "min is undefined"],
+      [[1], "max is undefined"],
+      [null, "received null"],
+    ])("between %p throws (%s)", (bounds, detail) => {
+      const err = captureError(() => resolve({ age: { between: bounds } } as any));
+      expect(err).toBeInstanceOf(InvalidQueryError);
+      expect(err.message).toContain(detail);
+    });
+  });
+
+  describe("combinator branches", () => {
+    it("array form: an element that resolves to nothing throws", () => {
+      const err = captureError(() => resolve([{ name: u }, { id: 2 }]));
+      expect(err).toBeInstanceOf(InvalidQueryError);
+      expect(err.message).toContain("OR branch [0]");
+    });
+
+    it("OR: an empty or all-undefined branch throws", () => {
+      expect(() => resolve({ OR: [{ id: 1 }, {}] })).toThrow("OR branch OR[1]");
+      expect(() => resolve({ OR: [{ name: u }] })).toThrow("OR branch OR[0]");
+    });
+
+    it("AND: an empty branch is skipped", () => {
+      const results = resolve({ AND: [{}, { id: 2 }, { name: u }] });
+      expect(results).toHaveLength(1);
+      expect(results[0].sql).toContain("`id` =");
+      expect(results[0].values).toEqual([2]);
+    });
+
+    it("OR / AND / NOT set to undefined are absent keys", () => {
+      expect(resolve({ OR: u, AND: u, NOT: u })).toEqual([]);
+      const results = resolve({ OR: u, status: "active" });
+      expect(results).toHaveLength(1);
+      expect(results[0].values).toEqual(["active"]);
+    });
+
+    it("{ OR: [] } and { AND: [] } still resolve to nothing", () => {
+      expect(resolve({ OR: [] })).toEqual([]);
+      expect(resolve({ AND: [] })).toEqual([]);
+    });
+  });
+});
+
+describe("findVacuousWhere", () => {
+  const u = undefined as any;
+
+  it.each([
+    [{ id: u }, ["id"]],
+    [{ id: u, name: u }, ["id", "name"]],
+    [{ NOT: { id: u } }, ["NOT.id"]],
+    [{ title: u, OR: [{ status: u }], NOT: { score: u } }, ["title", "OR[0].status", "NOT.score"]],
+    [[{ id: u }, { name: u }], ["[0].id", "[1].name"]],
+    [{ id: u, OR: [] }, ["id"]],
+    [{ AND: [{ id: u }, {}] }, ["AND[0].id"]],
+  ])("%p is vacuous", (where, paths) => {
+    expect(findVacuousWhere(where)).toEqual(paths);
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["null", null],
+    ["empty object", {}],
+    ["empty array", []],
+    ["empty OR", { OR: [] }],
+    ["combinator set to undefined", { OR: undefined }],
+    ["one defined field", { id: 1 }],
+    ["partial undefined", { id: u, status: "open" }],
+    ["null value", { id: null }],
+    ["defined NOT leaf", { id: u, NOT: { title: "a" } }],
+    ["defined leaf in a later OR branch", { OR: [{ id: u }, { id: 2 }] }],
+    ["operator object", { id: { eq: u } }],
+    ["function value only", { hook: () => 1 }],
+  ])("%s is not vacuous", (_label, where) => {
+    expect(findVacuousWhere(where)).toBeNull();
+  });
+
+  it("skips function values when the rest is undefined", () => {
+    expect(findVacuousWhere({ id: u, hook: () => 1 })).toEqual(["id"]);
+  });
+
+  it("ignores inherited enumerable properties", () => {
+    const where = Object.create({ inherited: 1 });
+    where.id = u;
+    expect(findVacuousWhere(where)).toEqual(["id"]);
+  });
+
+  it("assertWhereNotVacuous names the method, entity and paths", () => {
+    let err: any;
+    try {
+      assertWhereNotVacuous({ id: u }, "exists", "Post");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(InvalidQueryError);
+    expect(err.message).toContain(
+      'Every value in the "where" passed to exists() for entity "Post" is undefined (id) — the check would match any row.',
+    );
+    expect(err.suggestion).toContain("Pass null to match IS NULL");
+    expect(() => assertWhereNotVacuous({ id: 1 }, "findOne", "Post")).not.toThrow();
   });
 });

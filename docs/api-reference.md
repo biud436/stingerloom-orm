@@ -279,6 +279,16 @@ type WhereClause<T> = {
 };
 ```
 
+`null` is a value and becomes `IS NULL`. `undefined` is the absence of a key: the field is dropped from the query. Because that removes a condition rather than narrowing one, three shapes are rejected with `InvalidQueryError`:
+
+| Shape | Behavior |
+|---|---|
+| Every named field undefined, on `findOne` / `findOneBy` / `findOneOrFail` / `findOneByOrFail` / `exists` | Rejected — the read would return an arbitrary row |
+| An operator operand, an `in` / array element, or a `between` bound set to undefined | Rejected — an operand is an explicit comparison |
+| An `OR` branch (or array-form element) that resolves to no condition | Rejected — an empty branch is TRUE and widens the OR |
+
+Everywhere else an undefined field is still skipped: list reads, aggregates, criteria writes, and any where that also names a defined field. `findByPK(E, undefined)` and `findByPKs(E, [..., undefined])` are rejected too. See [undefined values](./entity-manager-querying.md#undefined-values).
+
 ### Filter Operators
 
 Operators are determined by the field type — `string` fields get extra operators like `contains` and `startsWith`.

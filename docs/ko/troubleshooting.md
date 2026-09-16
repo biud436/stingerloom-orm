@@ -245,6 +245,64 @@ await em.find(User, { where: { age: 0 } });        // age = 0인 사용자 조�
 await em.find(User, { where: { active: false } });  // 비활성 사용자 조회
 ```
 
+`undefined`만 예외이고, 여기서는 falsy 값으로 묶이지도 않습니다. "이 키는 설정되지 않았다"는 뜻이라 해당 필드가 쿼리에서 빠집니다. `null`은 값이라서 `IS NULL`이 돼요.
+
+```typescript
+await em.find(User, { where: { age: undefined } });  // 필터 없음: 전체 사용자
+await em.find(User, { where: { age: null } });       // WHERE "age" IS NULL
+```
+
+### "Every value in the where ... is undefined"
+
+```
+InvalidQueryError: Every value in the "where" passed to findOne() for entity
+"User" is undefined (id) — the query would read an arbitrary row.
+```
+
+단건 조회(`findOne`, `findOneBy`, `findOneOrFail`, `findOneByOrFail`)나 `exists()`가 필드를 쓰긴 했지만 값이 하나도 정의되지 않은 `where`를 받았다는 뜻입니다. 조건이 전부 빠지면 필터 없이 실행돼서 DB가 먼저 돌려주는 행이 결과가 됩니다. 원인은 대개 검증되지 않은 선택적 값이에요.
+
+```typescript
+const id = req.query.id as string | undefined;   // "?id=" 누락 -> undefined
+await em.findOne(User, { where: { id } });
+```
+
+필드를 지우는 대신 값이 들어오는 지점에서 검증하거나 타입을 좁히세요.
+
+```typescript
+if (id === undefined) throw new BadRequestException("id is required");
+await em.findOne(User, { where: { id } });
+```
+
+정말 "아무 행이나" 원한다면 그렇게 적으면 됩니다. `findOne(User, {})`이나 `findOne(User, { where: {} })`은 필터 없이 읽고 그대로 허용해요. 이 검사는 명시한 필드가 *전부* undefined일 때만 동작합니다. 정의된 필드와 undefined 필드가 섞여 있으면 undefined 쪽만 빠지므로, 권한 조회라면 입력값을 반드시 검증해야 합니다. [undefined 값](./entity-manager-querying.md#undefined-값)에서 자세히 다룹니다.
+
+기본 키 조회는 `where`를 만들기 전에 키를 먼저 검사하기 때문에 메시지가 따로 나옵니다.
+
+```
+InvalidQueryError: findByPK() received undefined as the primary key of "User".
+InvalidQueryError: findByPK() received no value for primary key column "userId" of "Member".
+InvalidQueryError: findByPKs() received undefined at index 1 as a primary key of "User".
+```
+
+원인과 해결책은 같습니다. 호출 전에 값을 검증하세요. 복합 키라면 키 속성을 전부 넘겨야 하고, 속성 이름과 컬럼 이름 어느 쪽으로 적어도 됩니다. 여기서 `null`은 값이라서 `IS NULL`로 매칭돼요.
+
+### "Operator ... received undefined" / "The OR branch ... resolves to no condition"
+
+```
+InvalidQueryError: Operator "gt" on "score" received undefined.
+InvalidQueryError: The OR branch OR[0] resolves to no condition, so the OR
+would match every row.
+```
+
+연산자 피연산자는 명시적인 비교입니다. 예전에는 여기에 들어간 `undefined`가 `= NULL`(아무것도 매칭 안 함)이 되거나, `in` / `between` / `contains`에서는 raw `TypeError`가 났고, `isNull: undefined`는 `IS NOT NULL`로 뒤집혀 null이 아닌 모든 행을 가져왔습니다. 연산자는 조건부로 붙이세요.
+
+```typescript
+await em.find(Post, {
+  where: { score: { ...(min !== undefined && { gte: min }) } },
+});
+```
+
+두 번째 메시지는 `OR` 분기나 배열 형태의 원소가 아무 조건도 만들지 못했다는 뜻입니다. 빈 객체이거나 값이 전부 undefined인 분기죠. 빈 분기는 TRUE라서 OR로 묶으면 전체 행이 돌아옵니다. 그 분기를 없애거나, 정의된 값을 최소 하나는 넣어 주세요.
+
 ## 관계 오류
 
 ### 관계 데이터가 로드되지 않음

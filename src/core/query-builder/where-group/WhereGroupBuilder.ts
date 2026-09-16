@@ -9,6 +9,7 @@ import type { DialectExpression } from "../../../dialects/DialectExpression";
 import { OrmError } from "../../../errors/OrmError";
 import { OrmErrorCode } from "../../../errors/OrmErrorCode";
 import type { WhereOperator } from "../types";
+import { resolveUndefinedOperatorValue } from "../whereArguments";
 
 /**
  * Lightweight builder for collecting WHERE conditions into an isolated group.
@@ -64,6 +65,9 @@ export class WhereGroupBuilder<T> {
     if (typeof columnOrCondition === "object" && "sql" in columnOrCondition) {
       this.conditions.push(columnOrCondition as Sql);
       return this;
+    }
+    if (arguments.length === 3 && value === undefined) {
+      value = resolveUndefinedOperatorValue("where", columnOrCondition as string, valueOrOperator);
     }
     const col = this.columnResolver(columnOrCondition as string);
     if (value !== undefined) {

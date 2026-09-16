@@ -322,7 +322,11 @@ await em.updateMany(Ticket, { status: "closed" }, {
 await em.softDelete(Draft, { authorId: 7, OR: [{ title: null }, { body: "" }] });
 ```
 
-A combinator that resolves to no predicate at all (`{ OR: [] }`, a branch whose only values are `undefined`) is treated like empty criteria: the call throws `DeleteWithoutConditionsError` instead of falling through to a table-wide statement. This holds for `updateMany()` as well.
+Criteria that resolve to no predicate at all are treated like empty criteria: the call throws `DeleteWithoutConditionsError` instead of falling through to a table-wide statement. That covers `{ OR: [] }`, `{ AND: [] }`, criteria whose every value is `undefined` (`{ status: undefined }`), and a `NOT` whose inner object resolves to nothing. It holds for `updateMany()` as well, including the case where the SET payload is empty too — that combination used to answer `{ affected: 0 }` without complaining about the criteria.
+
+An `OR` branch (or an element of the array form) that resolves to nothing is a different error, because it would widen the statement rather than remove its filter: an empty branch is TRUE, so `{ OR: [{ id: undefined }, { id: 2 }] }` would match every row. It throws `InvalidQueryError` naming the branch. Inside `AND` an empty branch is the identity, so it is skipped and the rest of the group still applies. The full rule for `undefined` in a where or criteria object is in [undefined values](./entity-manager-querying.md#undefined-values).
+
+The criteria check now runs **before** anything else the write would do. `delete()` with criteria that resolve to nothing no longer emits `beforeDelete`, and no longer lets the one-to-many cascade read the parents and delete their children first — the transaction used to roll those rows back, but the listeners had already run. `softDelete()` and `restore()` are guarded the same way, before their `beforeSoftDelete` / `beforeRestore` events.
 
 ---
 

@@ -382,6 +382,17 @@ async getUser(id: number): Promise<User> {
 
 던져지는 `EntityNotFoundError`에는 디버깅을 위한 엔티티 이름이 포함돼요. 리포지토리에서는 `userRepo.findOneOrFail({ where: { id } })`로 동일하게 사용할 수 있어요.
 
+`where`의 값이 전부 `undefined`면 쿼리를 실행하기 전에 거부합니다. `findOne()`과 `findOneOrFail()` 모두 같습니다.
+
+```typescript
+async getUser(id: number | undefined): Promise<User> {
+  return em.findOneOrFail(User, { where: { id } });
+  // id가 undefined면 아무 유저나 돌려주는 대신 InvalidQueryError
+}
+```
+
+이 검사가 없으면 조건이 사라져서 테이블의 첫 행을 읽게 되고, "or fail"은 영영 발동하지 않습니다. 다른 필드가 정의돼 있을 때 여전히 건너뛰는 경우까지 포함한 전체 규칙은 [undefined 값](./entity-manager-querying.md#undefined-값)에서 설명합니다.
+
 ### 관계 로딩
 
 `relations`를 넘기면 LEFT JOIN으로 연관 엔티티를 즉시 로딩할 수 있어요:
@@ -444,6 +455,19 @@ const hasAdmin = await em.exists(User, { role: "admin" }); // boolean
 `findByPKsMap()`은 `findByPKs()`가 반환하는 `T[]`의 순서 보장이 필요하거나, 누락된 id를 `map.has(id)`로 바로 감지해야 할 때 씁니다. 단일 PK 엔티티는 raw 값(number / string / bigint)이 키가 되고, 복합 PK 엔티티는 `"col1=v1,col2=v2"` 형태의 문자열이 키가 됩니다.
 
 `exists()`는 전체 행을 가져오는 대신 `SELECT 1 ... LIMIT 1`을 생성하므로 `find()` + length 비교보다 효율적이에요.
+
+이 조회들은 `undefined`에 엄격합니다. 키가 빠지면 범위가 좁아지는 게 아니라 넓어지기 때문입니다.
+
+```typescript
+await em.findByPK(User, undefined);           // InvalidQueryError
+await em.findByPKs(User, [1, undefined]);     // InvalidQueryError
+await em.findByPKsMap(User, [1, undefined]);  // InvalidQueryError
+await em.exists(User, { role: undefined });   // InvalidQueryError
+
+await em.findByPK(User, null);                // 그대로: IS NULL로 조회
+```
+
+복합 키라면 키 속성을 전부 넘겨야 합니다. `findByPK(Member, { tenantKey: "t1", userId: undefined })`는 `t1`의 아무 멤버나 매칭하지 않고 `userId`를 지목하며 실패해요. 여기서도 `null`은 값이라서 `IS NULL`로 매칭합니다. 키가 아닌 추가 속성은 예전처럼 필터로 쓰입니다.
 
 `pluck()`은 매칭 행에서 특정 컬럼 값만 모아 flat 배열로 돌려줍니다 — `find()` 후 `.map(row => row[column])`을 쓰는 것보다 간결해요:
 

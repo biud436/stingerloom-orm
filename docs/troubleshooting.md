@@ -247,6 +247,64 @@ await em.find(User, { where: { age: 0 } });        // finds users with age = 0
 await em.find(User, { where: { active: false } });  // finds inactive users
 ```
 
+`undefined` is the one exception, and it is not a falsy value in this sense — it means "this key is not set", so the field is dropped from the query. `null` is a value and becomes `IS NULL`.
+
+```typescript
+await em.find(User, { where: { age: undefined } });  // no filter: every user
+await em.find(User, { where: { age: null } });       // WHERE "age" IS NULL
+```
+
+### "Every value in the where ... is undefined"
+
+```
+InvalidQueryError: Every value in the "where" passed to findOne() for entity
+"User" is undefined (id) — the query would read an arbitrary row.
+```
+
+A single-row read (`findOne`, `findOneBy`, `findOneOrFail`, `findOneByOrFail`) or `exists()` received a `where` that names fields but defines none. Every condition was dropped, so the query would have run without a filter and returned the first row the database happened to hand back. The usual cause is an optional value that never got validated:
+
+```typescript
+const id = req.query.id as string | undefined;   // "?id=" missing -> undefined
+await em.findOne(User, { where: { id } });
+```
+
+Fix it at the source — validate or narrow the value — rather than by removing the field:
+
+```typescript
+if (id === undefined) throw new BadRequestException("id is required");
+await em.findOne(User, { where: { id } });
+```
+
+If you really do want "any row", say so: `findOne(User, {})` or `findOne(User, { where: {} })` read without a filter and are accepted. Note that this check only fires when *every* named field is undefined; a where that mixes defined and undefined fields still drops the undefined ones, which is why an authorization lookup should validate its inputs. See [undefined values](./entity-manager-querying.md#undefined-values).
+
+The primary-key lookups reject a missing key before they build a `where`, so they report it in their own words:
+
+```
+InvalidQueryError: findByPK() received undefined as the primary key of "User".
+InvalidQueryError: findByPK() received no value for primary key column "userId" of "Member".
+InvalidQueryError: findByPKs() received undefined at index 1 as a primary key of "User".
+```
+
+The cause and the fix are the same — validate the value before the call. For a composite key, pass every key property; either the property name or the column name works, and `null` is a value there and matches `IS NULL`.
+
+### "Operator ... received undefined" / "The OR branch ... resolves to no condition"
+
+```
+InvalidQueryError: Operator "gt" on "score" received undefined.
+InvalidQueryError: The OR branch OR[0] resolves to no condition, so the OR
+would match every row.
+```
+
+An operator operand is an explicit comparison, so an `undefined` there used to become `= NULL` (matching nothing), a raw `TypeError` (`in`, `between`, `contains`), or — for `isNull: undefined` — an inverted `IS NOT NULL` that matched every non-null row. Build the operator conditionally instead:
+
+```typescript
+await em.find(Post, {
+  where: { score: { ...(min !== undefined && { gte: min }) } },
+});
+```
+
+The second message means an `OR` branch, or an element of the array form, ended up with no condition — an empty object, or a branch whose values are all undefined. An empty branch is TRUE, so OR-ing it would return every row. Drop the branch, or give it at least one defined value.
+
 ## Relation Errors
 
 ### Relation data not loading

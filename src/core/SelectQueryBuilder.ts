@@ -127,6 +127,7 @@ import {
   type QEntityDynamicAccess,
 } from "./query-builder/alias/qAlias";
 import { WhereGroupBuilder } from "./query-builder/where-group/WhereGroupBuilder";
+import { resolveUndefinedOperatorValue } from "./query-builder/whereArguments";
 import type {
   RowValidator,
   ArrayValidator,
@@ -1163,6 +1164,9 @@ export class SelectQueryBuilder<T, TResult = T> {
   ): this {
     if (typeof columnOrCondition === "string") {
       this.assertColumnRefString(columnOrCondition, "where");
+      if (arguments.length === 3 && value === undefined) {
+        value = resolveUndefinedOperatorValue("where", columnOrCondition, operatorOrValue);
+      }
     }
     if (
       operatorOrValue === undefined &&
@@ -1200,6 +1204,9 @@ export class SelectQueryBuilder<T, TResult = T> {
   ): this {
     if (typeof columnOrCondition === "string") {
       this.assertColumnRefString(columnOrCondition, "andWhere");
+      if (arguments.length === 3 && value === undefined) {
+        value = resolveUndefinedOperatorValue("andWhere", columnOrCondition, operatorOrValue);
+      }
     }
     if (
       operatorOrValue === undefined &&
@@ -1237,6 +1244,9 @@ export class SelectQueryBuilder<T, TResult = T> {
   ): this {
     if (typeof columnOrCondition === "string") {
       this.assertColumnRefString(columnOrCondition, "orWhere");
+      if (arguments.length === 3 && value === undefined) {
+        value = resolveUndefinedOperatorValue("orWhere", columnOrCondition, operatorOrValue);
+      }
     }
     let cond: Sql | null;
     if (

@@ -41,7 +41,11 @@ import {
 import { EntityManagerInternals } from "../EntityManagerInternals";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
 import { validateRelationNames } from "../RelationNameValidator";
-import { buildEntityColumnScope, validateReadIdentifiers } from "../ColumnNameValidator";
+import {
+  assertWhereNotVacuous,
+  buildEntityColumnScope,
+  validateReadIdentifiers,
+} from "../ColumnNameValidator";
 import { RelationLoader } from "../RelationLoader";
 import { AggregateQueryHandler } from "../AggregateQueryHandler";
 import { OrmError } from "../../errors/OrmError";
@@ -250,6 +254,8 @@ export class ReadExecutor {
     entity: ClazzType<T>,
     findOption: FindOption<T>,
   ): Promise<T | null> {
+    // Public entry only: save()'s readbacks call findOneInternal directly.
+    assertWhereNotVacuous(findOption?.where, "findOne", entity.name);
     return this.ctx.findOneInternal(entity, findOption);
   }
 
@@ -257,6 +263,7 @@ export class ReadExecutor {
     entity: ClazzType<T>,
     where: WhereClause<T> | WhereClause<T>[],
   ): Promise<T | null> {
+    assertWhereNotVacuous(where, "findOneBy", entity.name);
     return this.ctx.findOne(entity, { where });
   }
 
@@ -1647,6 +1654,7 @@ export class ReadExecutor {
     withDeleted?: boolean,
     onlyDeleted?: boolean,
   ): Promise<boolean> {
+    assertWhereNotVacuous(where, "exists", entity.name);
     const c = await this.aggregateHandler.count(
       entity,
       where,
@@ -1674,12 +1682,64 @@ export class ReadExecutor {
 
     let where: WhereClause<T>;
     if (pkColumns.length === 1) {
+      // `undefined` would drop the only condition and read an arbitrary row;
+      // `null` stays a legal IS NULL lookup.
+      if (id === undefined) {
+        throw new InvalidQueryError(
+          `findByPK() received undefined as the primary key of "${entity.name}".`,
+          "An undefined key drops the only condition, so the lookup would read an arbitrary row. Check the value before calling findByPK().",
+        );
+      }
       where = { [this.ctx.propKey(pkColumns[0])]: id } as WhereClause<T>;
     } else {
+      this.assertCompositePrimaryKey("findByPK", entity, pkColumns, id);
       where = id as WhereClause<T>;
     }
 
     return this.ctx.findOne<T>(entity, { where });
+  }
+
+  /**
+   * A composite-key lookup needs an object that gives every key column a
+   * value. The object is used as the where clause, so the resolver skips a
+   * column set to `undefined`. The lookup then matches rows with any value in
+   * that column, or any row at all when the whole key is missing. `null` stays
+   * legal and matches IS NULL. Extra non-key properties keep filtering as
+   * before.
+   *
+   * A key column counts as given under either spelling, because the where
+   * resolver falls back to the raw key: an entity whose `tenantKey` property
+   * maps to a `tenant_key` column accepts `{ tenant_key: "t1", user_id: 1 }`
+   * the same way `where` does.
+   */
+  private assertCompositePrimaryKey<T>(
+    method: "findByPK" | "findByPKs",
+    entity: ClazzType<T>,
+    pkColumns: ColumnMetadata[],
+    id: unknown,
+    index?: number,
+  ): void {
+    const props = pkColumns.map((col) => this.ctx.propKey(col));
+    const at = index === undefined ? "" : ` at index ${index}`;
+
+    if (id === null || typeof id !== "object") {
+      throw new InvalidQueryError(
+        `${method}() received ${id === null ? "null" : typeof id}${at} as the primary key of "${entity.name}", which has a composite key (${props.join(", ")}).`,
+        `Pass an object with every key column, e.g. { ${props.map((p) => `${p}: ...`).join(", ")} }.`,
+      );
+    }
+
+    const key = id as Record<string, unknown>;
+    const missing = props.filter(
+      (prop, i) =>
+        key[prop] === undefined && key[pkColumns[i].name] === undefined,
+    );
+    if (missing.length > 0) {
+      throw new InvalidQueryError(
+        `${method}() received no value for primary key column${missing.length > 1 ? "s" : ""} ${missing.map((p) => `"${p}"`).join(", ")}${at} of "${entity.name}".`,
+        "An undefined key column drops its condition, so the lookup would match rows with any value there. Pass every key column (null matches IS NULL).",
+      );
+    }
   }
 
   async findByPKs<T>(
@@ -1701,11 +1761,24 @@ export class ReadExecutor {
     }
 
     if (pkColumns.length === 1) {
+      // An undefined id binds as NULL inside IN and matches nothing, so its
+      // row would be missing from the result without an error.
+      for (let i = 0; i < ids.length; i++) {
+        if (ids[i] === undefined) {
+          throw new InvalidQueryError(
+            `findByPKs() received undefined at index ${i} as a primary key of "${entity.name}".`,
+            "An undefined id matches nothing, so its row would be missing from the result without an error. Filter the ids before calling findByPKs().",
+          );
+        }
+      }
       const where = { [this.ctx.propKey(pkColumns[0])]: { in: ids } } as WhereClause<T>;
       return this.ctx.find<T>(entity, { where });
     }
 
     // Composite PK: use OR conditions
+    for (let i = 0; i < ids.length; i++) {
+      this.assertCompositePrimaryKey("findByPKs", entity, pkColumns, ids[i], i);
+    }
     const where = { OR: ids } as WhereClause<T>;
     return this.ctx.find<T>(entity, { where });
   }
