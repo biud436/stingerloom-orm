@@ -10,7 +10,7 @@ import { FindOption, LockMode, UpdateData, UpdateManyOptions, WhereClause } from
 import { resolveWhereClause } from "./WhereResolver";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
-import { Sql } from "../utils/sqlTag";
+import { Sql, isSqlFragment } from "../utils/sqlTag";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
 import { QueryResult } from "../types/QueryResult";
@@ -61,6 +61,7 @@ import {
 import { QueryTracker, QueryLogEntry } from "./QueryTracker";
 import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
 import { defaultJsonColumnWrite, isJsonColumnType } from "./JsonColumnTransformer";
+import { assertColumnBindValue } from "./BindValueGuard";
 import {
   CursorPaginationOption,
   CursorPaginationResult,
@@ -109,7 +110,12 @@ import {
   InsertQueryBuilder,
   type InsertBuilderSpec,
 } from "./InsertQueryBuilder";
-import { CompiledQuery, p as createPlaceholder, PlaceholderMarker } from "./CompiledQuery";
+import {
+  CompiledQuery,
+  isPlaceholder,
+  p as createPlaceholder,
+  PlaceholderMarker,
+} from "./CompiledQuery";
 import { QueryResultCache } from "./cache/QueryResultCache";
 import { DmlSqlBuilder } from "./entity-manager/DmlSqlBuilder";
 import { WriteExecutor } from "./entity-manager/WriteExecutor";
@@ -408,7 +414,8 @@ export class EntityManager implements BaseEntityManager {
     buildTenantWhereClause: (e, alias) => this.buildTenantWhereClause(e, alias),
     buildPropertyToColumnMap: (m) => this.buildPropertyToColumnMap(m),
     propKey: (col) => this.propKey(col),
-    applyWriteTransform: (col, v) => this.applyWriteTransform(col, v),
+    applyWriteTransform: (col, v, site) =>
+      this.applyWriteTransform(col, v, site),
     applyTenantColumnOnInsert: (e, i) => this.applyTenantColumnOnInsert(e, i),
     assertTenantColumnOnUpdate: (e, i) => this.assertTenantColumnOnUpdate(e, i),
     assertTenantColumnNotInSetColumns: (e, c) =>
@@ -1482,7 +1489,22 @@ export class EntityManager implements BaseEntityManager {
     }
     const propMap = this.buildPropertyToColumnMap(meta);
     const dialectExpr = createDialectExpression(this._ctx.getDialect());
-    return new UpdateQueryBuilder<T>(this, entity, aliasName, propMap, dialectExpr);
+    return new UpdateQueryBuilder<T>(
+      this,
+      entity,
+      aliasName,
+      propMap,
+      dialectExpr,
+      (key, dbCol, value) =>
+        this.writeExecutor.criteriaSetValue(
+          meta,
+          entity.name,
+          key,
+          dbCol,
+          value,
+          "createUpdateBuilder().set()",
+        ),
+    );
   }
 
   /**
@@ -2159,14 +2181,44 @@ export class EntityManager implements BaseEntityManager {
    * assign plain JS values without the `JSON.stringify(...) as any` boilerplate;
    * mysql2 rejects native objects on JSON columns, so the stringify step is
    * mandatory for that driver. PostgreSQL accepts both strings and objects on
-   * jsonb, so the same path is safe there.
+   * jsonb, so the same path is safe there. `type: "array"` takes the same JSON
+   * round-trip outside PostgreSQL, whose driver binds a native array itself.
+   *
+   * The result is then checked by {@link assertColumnBindValue}: an array or
+   * object left for a column that cannot store it throws instead of being
+   * spread over the bind parameters.
+   *
+   * A raw `sql` fragment and a compiled-query placeholder skip the whole step.
+   * Neither is a value: the fragment is spliced into the statement as written
+   * and the placeholder is substituted at execute time, so transforming them
+   * would serialize the marker object itself — a `json` column would store
+   * `{"strings":["NOW()"],"values":[]}`.
+   *
+   * @param site - The operation to name if the value is rejected ("save()").
    */
-  private applyWriteTransform(col: ColumnMetadata, rawValue: any): any {
+  private applyWriteTransform(
+    col: ColumnMetadata,
+    rawValue: any,
+    site?: string,
+  ): any {
+    if (isSqlFragment(rawValue) || isPlaceholder(rawValue)) return rawValue;
+    const value = this.transformWriteValue(col, rawValue);
+    if (value !== null && typeof value === "object") {
+      assertColumnBindValue(col, value, () => this._ctx.getDialect(), site);
+    }
+    return value;
+  }
+
+  private transformWriteValue(col: ColumnMetadata, rawValue: any): any {
     if (col.transformer?.to) return col.transformer.to(rawValue);
-    if (col.options?.type) {
-      const regTo = ColumnTypeRegistry.getInstance().getTransformer(col.options.type)?.to;
+    const type = col.options?.type;
+    if (type) {
+      const regTo = ColumnTypeRegistry.getInstance().getTransformer(type)?.to;
       if (regTo) return regTo(rawValue);
-      if (isJsonColumnType(col.options.type)) {
+      if (isJsonColumnType(type)) {
+        return defaultJsonColumnWrite(rawValue);
+      }
+      if (type === "array" && !this.isPostgres()) {
         return defaultJsonColumnWrite(rawValue);
       }
     }

@@ -101,6 +101,114 @@ describe("Column without design:type metadata (emitDecoratorMetadata off)", () =
     const message = warnings()[0];
     expect(message).toContain('Unknown design:type "Object"');
     expect(message).toContain("ObjectTyped.profile");
+    // Both causes are named: nullable scalars and object values.
+    expect(message).toContain("string | null");
+    expect(message).toContain('type: "json"');
+
+    const options = columnOptions(ObjectTyped.prototype, "profile");
+    expect(options.type).toBe("text");
+  });
+
+  it("maps design:type Array to a nullable json column without a warning", () => {
+    class ArrayTyped {}
+    Reflect.defineMetadata("design:type", Array, ArrayTyped.prototype, "tags");
+    Column()(ArrayTyped.prototype, "tags");
+
+    expect(warnings()).toHaveLength(0);
+    const options = columnOptions(ArrayTyped.prototype, "tags");
+    expect(options.type).toBe("json");
+    expect(options.nullable).toBe(true);
+  });
+
+  it("keeps an Array property with a write transformer on text, with an Array-specific warning", () => {
+    class ArrayTransformed {}
+    Reflect.defineMetadata(
+      "design:type",
+      Array,
+      ArrayTransformed.prototype,
+      "tags",
+    );
+    Column({
+      transformer: {
+        to: (v: string[]) => v.join(","),
+        from: (v: string) => v.split(","),
+      },
+    })(ArrayTransformed.prototype, "tags");
+
+    const options = columnOptions(ArrayTransformed.prototype, "tags");
+    expect(options.type).toBe("text");
+    expect(options.nullable).toBe(true);
+
+    expect(warnings()).toHaveLength(1);
+    const message = warnings()[0];
+    expect(message).toContain('design:type "Array" with a write transformer');
+    expect(message).toContain("ArrayTransformed.tags");
+    // The union/nullable hint belongs to Object only.
+    expect(message).not.toContain("string | null");
+  });
+
+  /**
+   * A read-only transform has no write side, so it does not decide what the
+   * column stores: inference stays json and the column keeps accepting an
+   * array. Only `transformer.to` pins the column to text.
+   */
+  it("maps an Array property with the deprecated read-only transform to json", () => {
+    class ArrayLegacyTransform {}
+    Reflect.defineMetadata(
+      "design:type",
+      Array,
+      ArrayLegacyTransform.prototype,
+      "tags",
+    );
+    Column({ transform: (raw: unknown) => String(raw).split(",") as any })(
+      ArrayLegacyTransform.prototype,
+      "tags",
+    );
+
+    expect(columnOptions(ArrayLegacyTransform.prototype, "tags").type).toBe("json");
+    expect(warnings()).toHaveLength(0);
+  });
+
+  it("maps an Array property with a read-only transformer to json", () => {
+    class ArrayReadTransformer {}
+    Reflect.defineMetadata(
+      "design:type",
+      Array,
+      ArrayReadTransformer.prototype,
+      "tags",
+    );
+    Column({ transformer: { from: (v: string) => v.split(",") } })(
+      ArrayReadTransformer.prototype,
+      "tags",
+    );
+
+    expect(columnOptions(ArrayReadTransformer.prototype, "tags").type).toBe("json");
+    expect(warnings()).toHaveLength(0);
+  });
+
+  it("does not warn for an explicitly typed Array property with a transformer", () => {
+    class ArrayExplicit {}
+    Reflect.defineMetadata("design:type", Array, ArrayExplicit.prototype, "tags");
+    Column({
+      type: "varchar",
+      transformer: { to: (v: string[]) => v.join(",") },
+    })(ArrayExplicit.prototype, "tags");
+
+    expect(warnings()).toHaveLength(0);
+    expect(columnOptions(ArrayExplicit.prototype, "tags").type).toBe("varchar");
+  });
+
+  it("drops the union hint for other constructors", () => {
+    class Money {}
+    class ClassTyped {}
+    Reflect.defineMetadata("design:type", Money, ClassTyped.prototype, "price");
+    Column()(ClassTyped.prototype, "price");
+
+    expect(warnings()).toHaveLength(1);
+    const message = warnings()[0];
+    expect(message).toContain('Unknown design:type "Money"');
+    expect(message).not.toContain("Union");
+    expect(message).not.toContain("string | null");
   });
 
   it("preserves nullable:true for explicit types on Object-typed properties (tsc historical behavior)", () => {

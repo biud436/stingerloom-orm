@@ -216,7 +216,22 @@ export type ResolvedColumnOption = Required<
  * | Date      | datetime  | 0              | false    |
  * | Buffer    | blob      | 0              | true     |
  * | BigInt    | bigint    | 0              | false    |
+ * | Array     | json      | 0              | true     |
+ * | Object    | text      | 0              | true     |
  * | (other)   | text      | 0              | true     |
+ *
+ * `Array` is emitted only for array and tuple types, so it maps to `json`.
+ * The `@Column` decorator keeps `text` for an array property whose
+ * `transformer` has a `to()`: that write transformer owns the stored shape,
+ * which is often not JSON. A read-only transform (`transformer.from` alone,
+ * or the deprecated `transform`) writes nothing, so it does not change the
+ * stored type — the column is `json` like any other array property, and the
+ * read transform still owns what the property holds.
+ *
+ * `Object` stays on `text` with a warning: under `strictNullChecks` tsc emits
+ * it for every nullable or union type (`string | null`, `Date | null`,
+ * `number | undefined`), and transpile-only builds emit it for imported enums,
+ * so it does not mean "object value".
  *
  * ## ColumnType → concrete DB type conversion (per driver)
  *
@@ -255,11 +270,18 @@ export function inferColumnDefaults(
  *   properties — instead of silently drifting to `nullable: true`.
  * When design:type metadata is present, behavior is identical in both modes
  * so tsc-compiled entities are unaffected.
+ *
+ * `hasWriteTransformer` keeps an `Array` property on `text`: a `transformer.to`
+ * decides the stored shape (`["a", "b"]` → `"a,b"`), and a JSON column on
+ * MySQL or PostgreSQL would reject that payload. Only the write side counts —
+ * a read-only transform leaves the ORM's own serialization in charge, so the
+ * column stays `json` and an array can still be written to it.
  */
 function resolveColumnDefaults(
   designType: any,
   where: string | undefined,
   hasExplicitType: boolean,
+  hasWriteTransformer = false,
 ): Pick<ResolvedColumnOption, "type" | "length" | "nullable"> {
   const at = where ? ` for ${where}` : "";
   switch (designType) {
@@ -291,12 +313,37 @@ function resolveColumnDefaults(
         `@Column({ type: "..." }), or define the entity with defineEntity().`,
       );
       return { type: "text", length: 0, nullable: true };
+    case Array:
+      if (!hasWriteTransformer) {
+        // tsc emits Array only for array and tuple types, never for a scalar,
+        // so the mapping is unambiguous. JSON is the one portable shape for
+        // the value: nullable like every structured fallback.
+        return { type: "json", length: 0, nullable: true };
+      }
+      if (!hasExplicitType) {
+        columnLogger.warn(
+          `design:type "Array" with a write transformer${at} — storing it as "text". ` +
+          `Declare the stored type explicitly in @Column({ type: "..." }) to silence this warning.`,
+        );
+      }
+      return { type: "text", length: 0, nullable: true };
+    case Object:
+      if (!hasExplicitType) {
+        columnLogger.warn(
+          `Unknown design:type "Object"${at} — falling back to "text". ` +
+          `Under strictNullChecks, nullable and union property types (string | null, ` +
+          `Date | null, number | undefined) erase to Object, and so do enums imported ` +
+          `under isolatedModules: declare the scalar type in @Column({ type: "varchar" | "int" | "datetime" | ... }). ` +
+          `For an object value use @Column({ type: "json" }).`,
+        );
+      }
+      return { type: "text", length: 0, nullable: true };
     default:
       if (!hasExplicitType) {
         columnLogger.warn(
           `Unknown design:type "${designType?.name ?? designType}"${at} — falling back to "text". ` +
-          `Union and optional property types erase to Object at runtime; ` +
-          `specify an explicit type in @Column({ type: "..." }) to avoid this.`,
+          `Specify an explicit type in @Column({ type: "..." }) (type: "json" for an object value) ` +
+          `to avoid this.`,
         );
       }
       return { type: "text", length: 0, nullable: true };
@@ -329,6 +376,7 @@ export function Column(option?: ColumnOption): PropertyDecorator {
       injectParam,
       where,
       option?.type !== undefined,
+      !!option?.transformer?.to,
     );
     const typeOverridden =
       option?.type !== undefined && option.type !== defaults.type;

@@ -66,6 +66,8 @@ describe("inferColumnDefaults", () => {
     expect(result.nullable).toBe(true);
   });
 
+  // Object stays text: under strictNullChecks it is also what `string | null`
+  // and every other nullable scalar erase to.
   it("should fall back to text for Object type", () => {
     const result = inferColumnDefaults(Object);
 
@@ -74,10 +76,13 @@ describe("inferColumnDefaults", () => {
     expect(result.nullable).toBe(true);
   });
 
-  it("should fall back to text for Array type", () => {
+  // tsc emits design:type Array only for array and tuple types, so the value
+  // is structured and json is the one portable column type that stores it.
+  // Binding the array to a text column spread it over the bind parameters.
+  it("should infer Array type as json, nullable", () => {
     const result = inferColumnDefaults(Array);
 
-    expect(result.type).toBe("text");
+    expect(result.type).toBe("json");
     expect(result.length).toBe(0);
     expect(result.nullable).toBe(true);
   });

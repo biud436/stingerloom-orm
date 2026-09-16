@@ -117,7 +117,9 @@ Fixes (any one of these):
 2. Give every `@Column` an explicit type: `@Column({ type: "int" })`
 3. Build with `tsc` / run with `ts-node` so the metadata exists
 
-A related warning, `Unknown design:type "Object"`, means the property's TypeScript type erases to `Object` at runtime (union or optional types like `string | null`) — specify an explicit column type there too.
+A related warning, `Unknown design:type "Object"`, does **not** mean "this property holds an object". `Object` is what tsc emits when it cannot name a single runtime constructor: under `strictNullChecks` every union erases to it (`string | null`, `Date | null`, `number | undefined`), and transpile-only builds (`isolatedModules`, swc, esbuild) emit it for enums and type aliases imported from another module. The column falls back to `"text"`, so a nullable `VARCHAR` quietly becomes `TEXT` and a nullable `int` stops being numeric. Fix it by naming the type: `@Column({ type: "varchar", length: 255, nullable: true })` for a nullable string, and `@Column({ type: "json" })` when the property really does hold an object.
+
+Array properties are not part of this: `@Column() tags!: string[]` infers a `json` column with no warning, because tsc emits `Array` only for array and tuple types. An array property whose `transformer` has a `to()` keeps `"text"` -- that write transformer decides the stored shape -- and says so in its own warning. A read-only `transformer.from` (or the deprecated `transform`) does not: it has no write side, so the column stays `json`.
 
 See [Using with Express](./express.md) for the full non-NestJS setup.
 
@@ -237,6 +239,26 @@ await em.find(User, { where: { userName: "Alice" } });  // neither — throws
 A relation property is not a column: filter by its FK instead
 (`where: { authorId: 1 }`), or use `SelectQueryBuilder.whereHas()` for a
 condition on the related row.
+
+### "... column but received an array / an object"
+
+```
+InvalidQueryError: Post.tags is a "text" column but save() received an array, which cannot be bound as one value:
+better-sqlite3 would spread it over 2 values and shift every value after it.
+```
+
+No driver binds a JS array or a plain object as a single parameter, and each one goes wrong differently: better-sqlite3 spreads an array over the positional placeholders and reads a plain object as a named-parameter bag that fills none, mysql2 expands an array into a value list and renders an object as `'[object Object]'`, and `pg` sends an array literal or JSON text. When the counts happen to line up, the row is written with every value one column to the left and nothing reports it, so the ORM checks the value instead, right before it is bound. The message names the entity property, the column type it was declared as, the operation that produced the value, and what the driver in use would have done.
+
+The same check runs on `save`, `saveMany`, `insertMany`, `insertManyAndReturn`, `upsert`, `insertIgnore`, `batchUpsert`, `createInsertBuilder()`, `update`, `updateMany` and `createUpdateBuilder().set()`. It looks at the value **after** the column's write transforms, so a `transformer.to` that returns a string keeps working, and a `json` column that serializes itself never reaches it.
+
+Fixes:
+
+1. Declare the column as `json` — `@Column({ type: "json" }) tags!: string[]`. An array property with no `type` infers `json` on its own; the error means something else was declared.
+2. On PostgreSQL, `@Column({ type: "array" })` for a native array column.
+3. Give the column a `transformer` whose `to()` returns a string or a number, for a stored shape of your own (`["a", "b"]` -> `"a,b"`).
+4. For a foreign key, pass the key value rather than the related object: `updateMany(Post, { authorId: 7 }, …)`.
+
+Raw queries go straight to the driver and are not column-aware, so they keep whatever the driver supports — with one SQLite exception. `em.query("SELECT ?, ?", [[1, 2]])` on SQLite now throws `SQLite cannot bind an array as one parameter`, because better-sqlite3 would have spread that array across both placeholders. Named-parameter bags (`em.query("SELECT :a", [{ a: 1 }])`) are untouched, and MySQL's `IN (?)` / `VALUES ?` idioms keep working on MySQL.
 
 ### WHERE clause with falsy values
 
