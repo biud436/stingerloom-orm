@@ -237,6 +237,7 @@ export interface EntityManagerInternals {
   buildTenantWhereClause<T>(
     entity: ClazzType<T>,
     tableAliasOrName?: string,
+    tenantTable?: "auto" | "root",
   ): import("sql-template-tag").Sql | null;
 
   // For RelationLoader

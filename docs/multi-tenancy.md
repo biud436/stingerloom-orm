@@ -657,6 +657,18 @@ An eager join from a tenant-scoped entity into a `@NonTenantEntity` target is sa
 
 The same decorator keeps these tables global under the schema-based strategies too: under `search_path` and `schema_qualified` it pins the entity to the connection's default schema, so the table stays reachable inside a tenant context and is never cloned per tenant — see [Shared tables](#shared-tables-pinning-an-entity-to-a-schema).
 
+### Inheritance hierarchies
+
+The tenant column follows the table that physically stores the shared row, so its placement depends on the [inheritance strategy](./inheritance-mapping.md):
+
+| Strategy | Where the column lives | How a child is scoped |
+|----------|------------------------|-----------------------|
+| `SINGLE_TABLE` | The shared table, once, `NOT NULL` | Same predicate as the root |
+| `JOINED` | The root table only; child tables keep their own columns and the key | The child INSERT stamps the root row. Reads that JOIN the root filter on the root's column. Statements against the child table alone (`count`, `exists`, the aggregates, the query builder, the child half of `delete`) filter through `pk IN (SELECT pk FROM root WHERE tenant_id = ?)` |
+| `TABLE_PER_CLASS` | Every concrete table | Each table carries its own predicate, and the polymorphic root read projects the real column from every branch |
+
+The column is added to the entity's metadata while a connection that uses the strategy is alive. `propagateShutdown()` gives it back, so a connection registered afterwards without `tenantStrategy: "tenant_column"` creates and writes the table without it. Two live connections that share an entity class but disagree on the strategy are not supported: the class metadata is shared between them.
+
 ### Escape hatch: `runUnscoped()`
 
 Sometimes you legitimately need to query across every tenant — a billing report, a nightly background job, a data export. Wrap that code in `MetadataContext.runUnscoped()` and the WHERE injection is skipped:

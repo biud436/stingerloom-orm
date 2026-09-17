@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Sql } from "../../utils/sqlTag";
+import sql, { Sql, raw } from "../../utils/sqlTag";
 import { ClazzType } from "../../utils";
 import { MetadataContext } from "../../metadata/MetadataContext";
 import { Conditions } from "../Conditions";
@@ -40,6 +40,16 @@ export interface TenantColumnConfig {
  *
  * @internal Package-internal — not a public API.
  */
+/**
+ * Which table a tenant predicate is written against.
+ *
+ * - `"auto"`: the entity's own table. For a JOINED child, whose tenant column
+ *   lives on the root, the predicate goes through a primary-key subquery.
+ * - `"root"`: the statement targets (or JOINs, under the given name) the table
+ *   that physically holds the tenant column, so the column is named directly.
+ */
+export type TenantTableTarget = "auto" | "root";
+
 export class TenantScopeManager {
   strategy: TenantQueryStrategy = new SearchPathStrategy();
   columnConfig: TenantColumnConfig | null = null;
@@ -185,6 +195,7 @@ export class TenantScopeManager {
   buildTenantWhereClause<T>(
     entity: ClazzType<T>,
     tableAliasOrName?: string,
+    tenantTable: TenantTableTarget = "auto",
   ): Sql | null {
     const config = this.columnConfig;
     if (!config) return null;
@@ -199,10 +210,56 @@ export class TenantScopeManager {
     }
 
     const columnName = this.resolveTenantColumnName(entity);
+    if (tenantTable === "auto") {
+      const viaRoot = this.buildJoinedChildPredicate(
+        entity,
+        columnName,
+        tenant,
+        tableAliasOrName,
+      );
+      if (viaRoot) return viaRoot;
+    }
     const col = tableAliasOrName
       ? `${this.ctx.wrap(tableAliasOrName)}.${this.ctx.wrap(columnName)}`
       : this.ctx.wrap(columnName);
     return Conditions.equals(col, tenant);
+  }
+
+  /**
+   * A JOINED (table-per-type) child keeps the tenant column on the root table
+   * only, so a statement against the child's table cannot name it. The
+   * predicate goes through the shared primary key instead:
+   * `pk IN (SELECT pk FROM root WHERE tenant = ?)`. Correct whether or not the
+   * statement also JOINs the root. Null for every other entity.
+   */
+  private buildJoinedChildPredicate<T>(
+    entity: ClazzType<T>,
+    columnName: string,
+    tenant: string,
+    tableAliasOrName?: string,
+  ): Sql | null {
+    const inheritance = this.ctx.getInheritanceResolver();
+    if (
+      !inheritance.isChildEntity(entity) ||
+      inheritance.getStrategy(entity) !== "JOINED"
+    ) {
+      return null;
+    }
+    const root = inheritance.getRoot(entity);
+    const resolver = this.ctx.getResolver();
+    const rootMeta = root ? resolver.resolveEntityMetadata(root) : undefined;
+    const pk = resolver
+      .resolveEntityMetadata(entity)
+      ?.columns.find((c) => c.options?.primary);
+    if (!rootMeta || !pk) return null;
+
+    const pkName = this.ctx.wrap(pk.name);
+    const outerPk = tableAliasOrName
+      ? `${this.ctx.wrap(tableAliasOrName)}.${pkName}`
+      : pkName;
+    return sql`${raw(outerPk)} IN (SELECT ${raw(pkName)} FROM ${raw(
+      this.ctx.wrapTable(rootMeta.name),
+    )} WHERE ${raw(this.ctx.wrap(columnName))} = ${tenant})`;
   }
 
   /**

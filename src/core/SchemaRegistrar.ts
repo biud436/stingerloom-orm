@@ -51,6 +51,14 @@ import {
   getTenantColumnMetadata,
   isNonTenantEntity,
 } from "../decorators/TenantColumn";
+import {
+  hasInjectedTenantColumnHolder,
+  isInjectedTenantColumn,
+  markInjectedTenantColumn,
+  releaseInjectedTenantColumn,
+  retainInjectedTenantColumn,
+  stripInjectedTenantColumn,
+} from "./TenantColumnInjection";
 import { escapeSqlLiteral } from "../utils/escapeSqlLiteral";
 import { SynchronizePolicy } from "./DatabaseClientOptions";
 import { OrmError } from "../errors/OrmError";
@@ -76,6 +84,94 @@ export class SchemaRegistrar {
   private readonly namingStrategy: NamingStrategy;
   private readonly logger = new Logger(SchemaRegistrar.name);
   private readonly inheritanceResolver = new InheritanceResolver();
+
+  /**
+   * Adds the tenant column to an entity that does not declare one, or strips a
+   * stale one when this connection does not use the strategy.
+   */
+  private injectTenantColumn(
+    TargetEntity: ClazzType<any>,
+    metadata: EntityScannerMetadata,
+  ): void {
+    // Auto-inject tenant column when the "tenant_column" strategy is active.
+    // Skip:
+    //   - entities marked @NonTenantEntity (inherently global tables)
+    //   - entities that already declared @TenantColumn (user-owned property)
+    //   - columns already named the same as the tenant column (defensive)
+    // Children of every inheritance strategy carry it in their metadata so
+    // the write path stages the tenant value: a SINGLE_TABLE child writes it
+    // to the shared table, a JOINED child routes it to the root INSERT (its
+    // own DDL keeps own columns + PK only), a TABLE_PER_CLASS child owns a
+    // physical copy.
+    const tenantColumnConfig = this.ctx.getTenantColumnConfig();
+    if (!tenantColumnConfig) {
+      // A column injected by a connection that is gone (never shut down)
+      // must not reach this connection's DDL or INSERTs.
+      if (!hasInjectedTenantColumnHolder(TargetEntity)) {
+        stripInjectedTenantColumn(TargetEntity, metadata.columns);
+      }
+    } else if (
+      !isNonTenantEntity(TargetEntity) &&
+      !getTenantColumnMetadata(TargetEntity)
+    ) {
+      const tenantColName = tenantColumnConfig.name;
+      const makeColumn = (target: unknown) =>
+        markInjectedTenantColumn({
+          target,
+          name: tenantColName,
+          propertyKey: tenantColName,
+          options: {
+            type: tenantColumnConfig.type,
+            length: tenantColumnConfig.length,
+            nullable: false,
+          },
+        } as any);
+      const existing = metadata.columns.find(
+        (col: any) =>
+          col.name === tenantColName || col.propertyKey === tenantColName,
+      );
+      if (!existing) {
+        metadata.columns.push(makeColumn(TargetEntity));
+        // Also append to the class metadata so downstream readers
+        // (EntityManager INSERT path, SchemaDiff) see the column. Own
+        // metadata only: a child must not write into its parent's array.
+        const proto = TargetEntity.prototype;
+        const reflectCols = Reflect.hasOwnMetadata(COLUMN_TOKEN, proto)
+          ? (Reflect.getOwnMetadata(COLUMN_TOKEN, proto) as ColumnMetadata[])
+          : [...((Reflect.getMetadata(COLUMN_TOKEN, proto) ?? []) as ColumnMetadata[])];
+        const reflectHas = reflectCols.some(
+          (c: any) =>
+            c.name === tenantColName || c.propertyKey === tenantColName,
+        );
+        if (!reflectHas) reflectCols.push(makeColumn(proto));
+        Reflect.defineMetadata(COLUMN_TOKEN, reflectCols, proto);
+      }
+      if (!existing || isInjectedTenantColumn(existing)) {
+        if (!this.injectedTenantEntities.has(TargetEntity)) {
+          this.injectedTenantEntities.add(TargetEntity);
+          retainInjectedTenantColumn(TargetEntity);
+        }
+      }
+    }
+  }
+
+  /** Entities whose injected tenant column this connection holds. */
+  private readonly injectedTenantEntities = new Set<ClazzType<any>>();
+
+  /**
+   * Gives back the tenant columns this connection injected. The column leaves
+   * the shared class metadata once no live connection holds it, so a later
+   * connection without the "tenant_column" strategy does not inherit it.
+   */
+  releaseInjectedTenantColumns(): void {
+    for (const entity of this.injectedTenantEntities) {
+      releaseInjectedTenantColumn(
+        entity,
+        this.resolver.resolveEntityMetadata(entity)?.columns,
+      );
+    }
+    this.injectedTenantEntities.clear();
+  }
 
   /**
    * Schema-bound driver views (`ISqlDriver.withSchema()`) for entities pinned
@@ -301,6 +397,8 @@ export class SchemaRegistrar {
       if (this.inheritanceResolver.isChildEntity(TargetEntity)) {
         const strategy = this.inheritanceResolver.getStrategy(TargetEntity);
         if (strategy === "SINGLE_TABLE") {
+          // No table of its own, but its INSERT stages the tenant value.
+          this.injectTenantColumn(TargetEntity, metadata);
           continue;
         }
       }
@@ -379,6 +477,10 @@ export class SchemaRegistrar {
               const ownCols = this.inheritanceResolver.getOwnColumns(ChildEntity);
               for (const col of ownCols) {
                 const colName = col.name ?? col.propertyKey;
+                // The tenant column is injected per entity, NOT NULL on the
+                // root: a child registered first must not lend it as one of
+                // its own (nullable) columns.
+                if (isInjectedTenantColumn(col)) continue;
                 if (colName && !existingColNames.has(colName)) {
                   const mergedCol = { ...col };
                   if (mergedCol.options) {
@@ -395,64 +497,7 @@ export class SchemaRegistrar {
         }
       }
 
-      // Auto-inject tenant column when the "tenant_column" strategy is active.
-      // Skip:
-      //   - entities marked @NonTenantEntity (inherently global tables)
-      //   - entities that already declared @TenantColumn (user-owned property)
-      //   - columns already named the same as the tenant column (defensive)
-      //   - STI child entities (they share the parent's table; column lives on root)
-      const tenantColumnConfig = this.ctx.getTenantColumnConfig();
-      if (
-        tenantColumnConfig &&
-        !isNonTenantEntity(TargetEntity) &&
-        !getTenantColumnMetadata(TargetEntity) &&
-        !this.inheritanceResolver.isChildEntity(TargetEntity)
-      ) {
-        const tenantColName = tenantColumnConfig.name;
-        const alreadyHas = metadata.columns.some(
-          (col: any) =>
-            col.name === tenantColName || col.propertyKey === tenantColName,
-        );
-        if (!alreadyHas) {
-          const injected: any = {
-            name: tenantColName,
-            propertyKey: tenantColName,
-            options: {
-              type: tenantColumnConfig.type,
-              length: tenantColumnConfig.length,
-              nullable: false,
-            },
-          };
-          metadata.columns.push(injected);
-          // Also append to the Reflect metadata so downstream readers
-          // (EntityManager INSERT path, SchemaDiff) see the column.
-          const reflectCols = (Reflect.getMetadata(
-            COLUMN_TOKEN,
-            TargetEntity.prototype,
-          ) ?? []) as ColumnMetadata[];
-          const reflectHas = reflectCols.some(
-            (c: any) =>
-              c.name === tenantColName || c.propertyKey === tenantColName,
-          );
-          if (!reflectHas) {
-            reflectCols.push({
-              target: TargetEntity.prototype,
-              propertyKey: tenantColName,
-              name: tenantColName,
-              options: {
-                type: tenantColumnConfig.type,
-                length: tenantColumnConfig.length,
-                nullable: false,
-              },
-            } as any);
-            Reflect.defineMetadata(
-              COLUMN_TOKEN,
-              reflectCols,
-              TargetEntity.prototype,
-            );
-          }
-        }
-      }
+      this.injectTenantColumn(TargetEntity, metadata);
 
       // PK validation: every entity must have at least one primary key column
       const hasPrimaryKey = metadata.columns.some(

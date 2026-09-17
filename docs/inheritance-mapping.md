@@ -209,6 +209,10 @@ console.log(stores[0].payments.length); // 5 (mixed types)
 For TPT strategy, FK columns defined on the root entity are stored in the root table. The ORM automatically qualifies the FK column to the correct table when building JOIN queries.
 :::
 
+::: tip
+Under `tenantStrategy: "tenant_column"` the tenant column sits on the shared table for STI, on the root table only for TPT, and on every concrete table for TPC. See [Multi-Tenancy: Inheritance hierarchies](./multi-tenancy.md#inheritance-hierarchies).
+:::
+
 ## Using with WriteBuffer
 
 The WriteBuffer plugin (Unit of Work) transparently supports inheritance entities. `find()`, `findOne()`, and dirty tracking all work correctly with inheritance hierarchies.
