@@ -8,6 +8,7 @@ import { ENTITY_TOKEN, type EntityMetadata } from "../../../decorators/Entity";
 import { COLUMN_TOKEN } from "../../../decorators/Column";
 import { resolveWhereClause, type WhereResolverOptions } from "../../WhereResolver";
 import type { ColumnMetadata } from "../../../scanner/ColumnScanner";
+import { attachWhereValueTransform } from "../../WhereValueTransform";
 
 /**
  * Options for creating a RawPipeline.
@@ -113,6 +114,7 @@ function getEntityInfo(entity: ClazzType<any>, wrap: (s: string) => string): Ent
     }
   }
 
+  attachWhereValueTransform(propToCol, columns);
   cached = { tableName, columns, propToCol, primaryKey };
   entityInfoCache.set(entity, cached);
   return cached;

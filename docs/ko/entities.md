@@ -332,6 +332,22 @@ ssn: string;
 
 데이터베이스에는 암호화된 암호문이 저장돼요. 애플리케이션 코드는 평문으로 작업하고요. 변환은 나머지 코드베이스에 대해 투명하게 이루어져요.
 
+**트랜스포머가 적용되는 범위.** 필터와 집계는 하이드레이션된 속성과 같은 표현을 사용합니다. 저장된 값이 아니라 코드가 들고 있는 값으로 비교하고 합산하면 돼요.
+
+| 경로 | 동작 |
+|------|------|
+| `save` / `insertMany` / `upsert` 계열 / `updateMany` data | `to` |
+| 하이드레이션 (`find`, `findOne`, `pluck`, 쿼리 빌더 `getMany`) | `from` |
+| where: 동등 비교, `eq` / `ne` / `not`, `gt` / `gte` / `lt` / `lte`, `in` / `notIn`, 배열 축약형, `between` | 원소마다 `to` |
+| where: `like` / `notLike` / `ilike` / `contains` / `startsWith` / `endsWith` / `search` | 적용하지 않습니다. 패턴은 저장 표현으로 작성하세요 |
+| where: `null`, `isNull`, raw `sql` 조각, QueryDSL(`qAlias`) 조건 | 적용하지 않습니다 |
+| `sum` / `avg` / `min` / `max` (EntityManager와 쿼리 빌더) | 결과에 `from` |
+| `count` / `exists` | 행 개수라서 변환하지 않습니다 |
+| 커서 인코딩, `orderBy` | 저장된 값 |
+| `increment` / `decrement` | 저장된 값에 대한 raw 연산 |
+
+where 규칙은 `find`, `findOne`, `count`, `exists`, 집계, `findWithCursor`, `updateMany` / `delete` / `softDelete` / `restore`의 criteria, 그리고 쿼리 빌더의 `where(column, value)`, `where(column, operator, value)`, `whereIn`, where 객체 형태에 모두 적용됩니다. 범위 연산자는 `to`가 순서를 보존한다고 가정하고, `sum` / `avg`는 `from`이 센트를 원 단위로 바꾸는 것 같은 선형 스케일이라고 가정해요. `min` / `max`는 순서만 보존되면 됩니다. `from`이 유한한 숫자를 돌려주지 않는 집계는 저장된 값 그대로 반환합니다. 내장 JSON 직렬화는 바인드 포맷이라 여기에 참여하지 않습니다.
+
 **`transform`과의 하위 호환성:** 레거시 읽기 전용 `transform` 옵션은 여전히 동작해요. 같은 컬럼에 `transform`과 `transformer`를 모두 설정하면, 읽기 방향에서는 `transformer.from`이 우선해요. `transform` 옵션은 폐기(deprecated)되었으니, 모든 새 코드에서는 `transformer`를 사용하세요.
 
 ```typescript
