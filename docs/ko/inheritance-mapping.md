@@ -616,6 +616,10 @@ const stores = await em.find(Store, {
 TPT 전략에서 root 엔티티에 정의된 FK 컬럼은 root 테이블에 저장돼요. ORM이 JOIN 쿼리를 빌드할 때 FK 컬럼을 올바른 테이블로 자동 한정해요.
 :::
 
+::: tip
+`tenantStrategy: "tenant_column"`에서 테넌트 컬럼은 STI면 공유 테이블에, TPT면 루트 테이블에만, TPC면 모든 콘크리트 테이블에 놓입니다. 자세한 내용은 [멀티테넌시: 상속 계층](./multi-tenancy.md#상속-계층)을 참고하세요.
+:::
+
 ## WriteBuffer와 함께 사용하기
 
 WriteBuffer 플러그인은 상속 엔티티를 투명하게 지원해요. `find()`, `findOne()`, dirty tracking 모두 상속 계층에서 정상 동작해요.

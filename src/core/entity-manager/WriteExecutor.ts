@@ -429,7 +429,13 @@ export class WriteExecutor {
       // to rewrite that tenant's row. Resolved before anything fires so
       // `tenantOnMissingContext: "throw"` rejects a context-less save the way
       // it rejects a context-less updateMany.
-      const tenantWhere = this.ctx.buildTenantWhereClause(entity);
+      // A JOINED child's UPDATE applies the predicate to the root table,
+      // which holds the column, so it is named directly.
+      const tenantWhere = this.ctx.buildTenantWhereClause(
+        entity,
+        undefined,
+        "root",
+      );
       const tenantColumnName = tenantWhere
         ? this.ctx.resolveTenantColumnName(entity)
         : null;
@@ -2457,6 +2463,7 @@ export class WriteExecutor {
     metadata: EntityScannerMetadata,
     criteria: WhereClause<T>,
     strategy: InheritanceStrategy | null,
+    tenantTable: "auto" | "root" = "auto",
   ): Sql {
     const deletePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
     const whereMap: Sql[] = this.resolveCriteriaWhere(criteria, deletePropToCol);
@@ -2474,7 +2481,11 @@ export class WriteExecutor {
       whereMap.push(deleteSti);
     }
 
-    const tenantDeleteWhere = this.ctx.buildTenantWhereClause(entity);
+    const tenantDeleteWhere = this.ctx.buildTenantWhereClause(
+      entity,
+      undefined,
+      tenantTable,
+    );
     if (tenantDeleteWhere) {
       whereMap.push(tenantDeleteWhere);
     }
@@ -2493,6 +2504,7 @@ export class WriteExecutor {
     entity: ClazzType<T>,
     metadata: EntityScannerMetadata,
     whereSql: Sql,
+    rootWhereSql: Sql,
     session: TransactionSessionManager,
   ): Promise<number | null> {
     const root = this.inheritanceResolver.getRoot(entity)!;
@@ -2504,7 +2516,7 @@ export class WriteExecutor {
     const childDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${whereSql}`;
     await session.query(childDeleteQuery);
 
-    const parentDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${whereSql}`;
+    const parentDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${rootWhereSql}`;
     const parentResult = (await session.query(
       parentDeleteQuery,
     )) as DriverExecResult;
@@ -2570,7 +2582,21 @@ export class WriteExecutor {
       const joinedAffected =
         deleteStrategy === "JOINED" &&
         this.inheritanceResolver.isChildEntity(entity)
-          ? await this.deleteJoinedRows(entity, metadata, whereSql, session)
+          ? await this.deleteJoinedRows(
+              entity,
+              metadata,
+              whereSql,
+              // The root table holds the tenant column: name it directly. A
+              // subquery on the table being deleted from is an error on MySQL.
+              this.buildDeleteWhereSql(
+                entity,
+                metadata,
+                criteria,
+                deleteStrategy,
+                "root",
+              ),
+              session,
+            )
           : null;
 
       const affected =

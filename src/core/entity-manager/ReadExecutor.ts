@@ -605,6 +605,13 @@ export class ReadExecutor {
     };
   }
 
+  /** Root table of a JOINED child read, which is JOINed under its own name. */
+  private tptRootTableName<T>(op: FindOperation<T>): string | undefined {
+    if (!op.isTPTChild) return undefined;
+    const root = this.inheritanceResolver.getRoot(op.entity);
+    return root ? this.resolver.resolveEntityMetadata(root)?.name : undefined;
+  }
+
   /**
    * Renders a DB column for a clause that must survive JOINs: the TPT-child
    * qualifier when one exists, else table-qualified while any JOIN is
@@ -818,10 +825,15 @@ export class ReadExecutor {
     // Tenant scoping under the "tenant_column" strategy. Skipped when the
     // caller explicitly opts out via `findOption.withoutTenantScope`.
     if (!findOption.withoutTenantScope) {
-      const tenantPredicate = this.ctx.buildTenantWhereClause(
-        entity,
-        hasEagerJoins ? tableName : undefined,
-      );
+      // A JOINED child keeps the tenant column on the root table only, which
+      // the read JOINs under its own name.
+      const tptRoot = this.tptRootTableName(op);
+      const tenantPredicate = tptRoot
+        ? this.ctx.buildTenantWhereClause(entity, tptRoot, "root")
+        : this.ctx.buildTenantWhereClause(
+            entity,
+            hasEagerJoins ? tableName : undefined,
+          );
       if (tenantPredicate) {
         whereMap.push(tenantPredicate);
       }

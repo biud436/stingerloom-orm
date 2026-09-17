@@ -412,7 +412,8 @@ export class EntityManager implements BaseEntityManager {
     getTenantColumnConfig: () => this.tenantColumnConfig,
     resolveEntitySchema: (e) => this.tenantScope.resolveEntitySchema(e),
     pinTableSchema: (t, s) => this.tenantScope.pinTableSchema(t, s),
-    buildTenantWhereClause: (e, alias) => this.buildTenantWhereClause(e, alias),
+    buildTenantWhereClause: (e, alias, target) =>
+      this.buildTenantWhereClause(e, alias, target),
     buildPropertyToColumnMap: (m) => this.buildPropertyToColumnMap(m),
     propKey: (col) => this.propKey(col),
     applyWriteTransform: (col, v, site) =>
@@ -508,6 +509,7 @@ export class EntityManager implements BaseEntityManager {
       this.cursorPkWarned.clear();
       this.writeKeyWarned.clear();
       this.rawQueryTenantWarned.clear();
+      this.schemaRegistrar.releaseInjectedTenantColumns();
     },
     shutdownReplication: () => this.replication.shutdown(),
   });
@@ -2407,8 +2409,13 @@ export class EntityManager implements BaseEntityManager {
   private buildTenantWhereClause<T>(
     entity: ClazzType<T>,
     tableAliasOrName?: string,
+    tenantTable?: "auto" | "root",
   ): Sql | null {
-    return this.tenantScope.buildTenantWhereClause(entity, tableAliasOrName);
+    return this.tenantScope.buildTenantWhereClause(
+      entity,
+      tableAliasOrName,
+      tenantTable,
+    );
   }
 
   /** Engine delegator — implementation lives in {@link TenantScopeManager}. */
