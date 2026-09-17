@@ -11,6 +11,7 @@ import { resolveWhereClause } from "./WhereResolver";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
 import { Sql, isSqlFragment } from "../utils/sqlTag";
+import { attachWhereValueTransform } from "./WhereValueTransform";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
 import { QueryResult } from "../types/QueryResult";
@@ -2266,6 +2267,7 @@ export class EntityManager implements BaseEntityManager {
     }
 
     const map = buildSharedPropertyToColumnMap(metadata, this.resolver);
+    attachWhereValueTransform(map, metadata.columns);
     if (byMetadata) byMetadata.set(metadata, map);
     return map;
   }

@@ -4,6 +4,7 @@ import { Conditions } from "./Conditions";
 import { WhereClause, FILTER_OPERATOR_KEYS } from "../dialects/FindOption";
 import type { DialectExpression } from "../dialects/DialectExpression";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
+import { attachedWhereValueTransform } from "./WhereValueTransform";
 
 /**
  * An operator whose operand is `undefined` has no sensible SQL: `eq` / `gt`
@@ -51,6 +52,18 @@ function emptyOrBranchError(path: string): InvalidQueryError {
 }
 
 /**
+ * `null` is a SQL NULL and a raw `sql` fragment is spliced as written: neither
+ * is a domain value, so `transformer.to` never sees them.
+ */
+function isUntransformable(v: unknown): boolean {
+  return (
+    v === null ||
+    v === undefined ||
+    (typeof v === "object" && "sql" in (v as object))
+  );
+}
+
+/**
  * Escape LIKE wildcard characters (`%`, `_`, `\`) in a literal string
  * so it can be safely used in `contains` / `startsWith` / `endsWith`.
  */
@@ -84,8 +97,12 @@ function resolveFilterObject(
   dialect?: string,
   dialectExpression?: DialectExpression,
   field: string = column,
+  transformValue?: (field: string, value: unknown) => unknown,
 ): Sql {
   const clauses: Sql[] = [];
+  const tv = (v: any): any =>
+    transformValue && !isUntransformable(v) ? transformValue(field, v) : v;
+  const tvAll = (v: any): any => (Array.isArray(v) ? v.map(tv) : v);
 
   for (const [op, val] of Object.entries(filter)) {
     if (val === undefined) throw undefinedOperandError(field, op);
@@ -98,7 +115,7 @@ function resolveFilterObject(
         clauses.push(
           val === null
             ? Conditions.isNull(column)
-            : Conditions.equals(column, val),
+            : Conditions.equals(column, tv(val)),
         );
         break;
       case "ne":
@@ -106,28 +123,28 @@ function resolveFilterObject(
         clauses.push(
           val === null
             ? Conditions.isNotNull(column)
-            : Conditions.notEquals(column, val),
+            : Conditions.notEquals(column, tv(val)),
         );
         break;
       case "gt":
-        clauses.push(Conditions.gt(column, val));
+        clauses.push(Conditions.gt(column, tv(val)));
         break;
       case "gte":
-        clauses.push(Conditions.gte(column, val));
+        clauses.push(Conditions.gte(column, tv(val)));
         break;
       case "lt":
-        clauses.push(Conditions.lt(column, val));
+        clauses.push(Conditions.lt(column, tv(val)));
         break;
       case "lte":
-        clauses.push(Conditions.lte(column, val));
+        clauses.push(Conditions.lte(column, tv(val)));
         break;
       case "in":
         assertNoUndefinedElement(val, field, op);
-        clauses.push(Conditions.in(column, val));
+        clauses.push(Conditions.in(column, tvAll(val)));
         break;
       case "notIn":
         assertNoUndefinedElement(val, field, op);
-        clauses.push(Conditions.notIn(column, val));
+        clauses.push(Conditions.notIn(column, tvAll(val)));
         break;
       case "like":
         clauses.push(Conditions.like(column, val));
@@ -153,7 +170,7 @@ function resolveFilterObject(
             "Use gte / lte for a range that is open on one side.",
           );
         }
-        clauses.push(Conditions.between(column, val[0], val[1]));
+        clauses.push(Conditions.between(column, tv(val[0]), tv(val[1])));
         break;
       case "isNull":
         clauses.push(
@@ -162,12 +179,12 @@ function resolveFilterObject(
         break;
       case "not":
         if (typeof val === "object" && val !== null && isFilterObject(val)) {
-          const inner = resolveFilterObject(column, val, dialect, dialectExpression, field);
+          const inner = resolveFilterObject(column, val, dialect, dialectExpression, field, transformValue);
           clauses.push(sql`NOT (${inner})`);
         } else if (val === null) {
           clauses.push(Conditions.isNotNull(column));
         } else {
-          clauses.push(Conditions.notEquals(column, val));
+          clauses.push(Conditions.notEquals(column, tv(val)));
         }
         break;
       case "contains":
@@ -210,13 +227,16 @@ function resolveWhereValue(
   dialect?: string,
   dialectExpression?: DialectExpression,
   field: string = column,
+  transformValue?: (field: string, value: unknown) => unknown,
 ): Sql {
+  const tv = (v: any): any =>
+    transformValue && !isUntransformable(v) ? transformValue(field, v) : v;
   if (value === null) {
     return Conditions.isNull(column);
   }
   if (Array.isArray(value)) {
     assertNoUndefinedElement(value, field, "IN");
-    return Conditions.in(column, value);
+    return Conditions.in(column, value.map(tv));
   }
   // Sql object from sql-template-tag (backward compat)
   if (typeof value === "object" && "sql" in value) {
@@ -224,10 +244,10 @@ function resolveWhereValue(
   }
   // Filter operator object
   if (typeof value === "object" && isFilterObject(value)) {
-    return resolveFilterObject(column, value, dialect, dialectExpression, field);
+    return resolveFilterObject(column, value, dialect, dialectExpression, field, transformValue);
   }
   // Plain equality
-  return Conditions.equals(column, value);
+  return Conditions.equals(column, tv(value));
 }
 
 /**
@@ -252,6 +272,14 @@ export interface WhereResolverOptions {
    * Used by TPT inheritance to route columns to the correct table.
    */
   qualifyColumn?: (dbColumnName: string) => string;
+  /**
+   * Maps a comparison operand from its domain value to its stored value
+   * (`transformer.to`). Applied to eq / ne / not / gt / gte / lt / lte /
+   * in / notIn / between and the shorthand forms, per element. Pattern and
+   * full-text operators, `null` and raw `sql` fragments are left as written.
+   * Defaults to the transform attached to `propertyToColumn`.
+   */
+  transformValue?: (field: string, value: unknown) => unknown;
 }
 
 /**
@@ -270,6 +298,10 @@ export function resolveWhereClause<T>(
   opts: WhereResolverOptions,
 ): Sql[] {
   if (!where) return [];
+  if (!opts.transformValue) {
+    const transformValue = attachedWhereValueTransform(opts.propertyToColumn);
+    if (transformValue) opts = { ...opts, transformValue };
+  }
 
   // Array form: each element is AND-ed internally, elements OR-ed
   if (Array.isArray(where)) {
@@ -350,7 +382,9 @@ function resolveWhereSingleObject<T>(
           ? `${wrapColumn(tableName)}.${wrapColumn(dbColumnName)}`
           : wrapColumn(dbColumnName);
 
-    result.push(resolveWhereValue(col, value, dialect, dialectExpression, key));
+    result.push(
+      resolveWhereValue(col, value, dialect, dialectExpression, key, opts.transformValue),
+    );
   }
 
   return result;

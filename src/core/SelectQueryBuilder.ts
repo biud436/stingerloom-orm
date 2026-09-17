@@ -2,6 +2,11 @@
 import sql, { Sql, raw, join, type RawValue } from "../utils/sqlTag";
 import { Conditions } from "./Conditions";
 import { resolveWhereClause, type WhereResolverOptions } from "./WhereResolver";
+import {
+  attachWhereValueTransform,
+  attachedWhereValueTransform,
+  aggregateFromStored,
+} from "./WhereValueTransform";
 import type { WhereClause } from "../dialects/FindOption";
 import { EntityManager } from "./EntityManager";
 import { ClazzType } from "../utils/types";
@@ -683,6 +688,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       qualifyColumn: (dbColumnName: string) => this.col(dbColumnName),
       dialect,
       dialectExpression: this.dialectExpression,
+      transformValue: attachedWhereValueTransform(this.propertyToColumnMap),
     };
   }
 
@@ -775,7 +781,56 @@ export class SelectQueryBuilder<T, TResult = T> {
   protected buildPropertyToColumnMapFromMetadata(
     metadata: { target?: ClazzType<any>; columns: ColumnMetadata[] },
   ): Map<string, string> {
-    return buildSharedPropertyToColumnMap(metadata, this.emInternals.resolver);
+    const map = buildSharedPropertyToColumnMap(
+      metadata,
+      this.emInternals.resolver,
+    );
+    attachWhereValueTransform(map, metadata.columns);
+    return map;
+  }
+
+  /**
+   * Maps the operand of a string-column where (`where("u.price", ">", 12)`)
+   * through the column's `transformer.to`, so it is compared in the stored
+   * representation. `null` and raw `sql` operands are left as written.
+   */
+  private toStoredOperand(ref: string, value: any): any {
+    if (
+      value === null ||
+      value === undefined ||
+      (typeof value === "object" && "sql" in value)
+    ) {
+      return value;
+    }
+    const dot = ref.indexOf(".");
+    const map =
+      dot > 0
+        ? this.aliasRegistry.get(ref.substring(0, dot))?.propertyToColumnMap
+        : this.propertyToColumnMap;
+    const transform = attachedWhereValueTransform(map);
+    return transform
+      ? transform(dot > 0 ? ref.substring(dot + 1) : ref, value)
+      : value;
+  }
+
+  private aggregateFromStored(fn: string, ref: string, value: number): number {
+    const dot = ref.indexOf(".");
+    const map =
+      dot > 0
+        ? this.aliasRegistry.get(ref.substring(0, dot))?.propertyToColumnMap
+        : this.propertyToColumnMap;
+    return aggregateFromStored(
+      map,
+      fn,
+      dot > 0 ? ref.substring(dot + 1) : ref,
+      value,
+    );
+  }
+
+  private toStoredOperands(ref: string, values: any): any {
+    return Array.isArray(values)
+      ? values.map((v) => this.toStoredOperand(ref, v))
+      : values;
   }
 
   // ── SELECT ───────────────────────────────────────────────
@@ -1280,7 +1335,9 @@ export class SelectQueryBuilder<T, TResult = T> {
   whereIn(column: ColumnOf<T>, values: any[]): this;
   whereIn(column: string, values: any[]): this;
   whereIn(column: string, values: any[]): this {
-    this.whereClauses.push(Conditions.in(this.resolveColumn(column), values));
+    this.whereClauses.push(
+      Conditions.in(this.resolveColumn(column), this.toStoredOperands(column, values)),
+    );
     return this;
   }
 
@@ -4339,7 +4396,11 @@ export class SelectQueryBuilder<T, TResult = T> {
         const value = rows[0].result;
         return value === null || value === undefined
           ? 0
-          : aggregateToNumber(value, `${fn}(${String(column)})`);
+          : this.aggregateFromStored(
+              fn,
+              String(column),
+              aggregateToNumber(value, `${fn}(${String(column)})`),
+            );
       }
     }
 
@@ -4358,7 +4419,11 @@ export class SelectQueryBuilder<T, TResult = T> {
     const value = rows[0].result;
     return value === null || value === undefined
       ? 0
-      : aggregateToNumber(value, `${fn}(${String(column)})`);
+      : this.aggregateFromStored(
+          fn,
+          String(column),
+          aggregateToNumber(value, `${fn}(${String(column)})`),
+        );
   }
 
   /**
@@ -4964,13 +5029,14 @@ export class SelectQueryBuilder<T, TResult = T> {
         return sql`${raw(qualified)} = ${val}`;
       }
       if (Array.isArray(val)) {
-        return Conditions.in(qualified, val);
+        return Conditions.in(qualified, this.toStoredOperands(column, val));
       }
-      return Conditions.equals(qualified, val);
+      return Conditions.equals(qualified, this.toStoredOperand(column, val));
     }
 
     // Overload 3: where("age", ">=", 18) — 3 args, operator
     const operator = operatorOrValue as string;
+    const stored = (v: any) => this.toStoredOperand(column, v);
     const normalizedOp = operator.trim().toUpperCase() as WhereOperator;
 
     switch (normalizedOp) {
@@ -4978,19 +5044,19 @@ export class SelectQueryBuilder<T, TResult = T> {
         // `col = NULL` is always UNKNOWN; rewrite to IS NULL so the explicit
         // operator form matches the two-arg `where(col, null)` shorthand.
         if (value === null) return Conditions.isNull(qualified);
-        return Conditions.equals(qualified, value);
+        return Conditions.equals(qualified, stored(value));
       case "!=":
       case "<>":
         if (value === null) return Conditions.isNotNull(qualified);
-        return Conditions.notEquals(qualified, value);
+        return Conditions.notEquals(qualified, stored(value));
       case ">":
-        return Conditions.gt(qualified, value);
+        return Conditions.gt(qualified, stored(value));
       case ">=":
-        return Conditions.gte(qualified, value);
+        return Conditions.gte(qualified, stored(value));
       case "<":
-        return Conditions.lt(qualified, value);
+        return Conditions.lt(qualified, stored(value));
       case "<=":
-        return Conditions.lte(qualified, value);
+        return Conditions.lte(qualified, stored(value));
       case "LIKE":
         return Conditions.like(qualified, value);
       case "NOT LIKE":
@@ -5001,11 +5067,14 @@ export class SelectQueryBuilder<T, TResult = T> {
         }
         return sql`${raw(qualified)} ILIKE ${value}`;
       case "IN":
-        return Conditions.in(qualified, Array.isArray(value) ? value : [value]);
+        return Conditions.in(
+          qualified,
+          (Array.isArray(value) ? value : [value]).map(stored),
+        );
       case "NOT IN":
         return Conditions.notIn(
           qualified,
-          Array.isArray(value) ? value : [value],
+          (Array.isArray(value) ? value : [value]).map(stored),
         );
       case "IS NULL":
         return Conditions.isNull(qualified);
@@ -5013,7 +5082,11 @@ export class SelectQueryBuilder<T, TResult = T> {
         return Conditions.isNotNull(qualified);
       case "BETWEEN":
         if (Array.isArray(value) && value.length === 2) {
-          return Conditions.between(qualified, value[0], value[1]);
+          return Conditions.between(
+            qualified,
+            stored(value[0]),
+            stored(value[1]),
+          );
         }
         throw new OrmError(
           OrmErrorCode.INVALID_QUERY,

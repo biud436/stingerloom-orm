@@ -327,6 +327,22 @@ ssn: string;
 
 The database stores the encrypted ciphertext. Your application code works with the plaintext. The transformation is invisible to the rest of your codebase.
 
+**Where the transformer applies.** Filters and aggregates speak the same representation as the hydrated property, so you compare and sum the value your code holds, not the stored one.
+
+| Path | Behavior |
+|------|----------|
+| `save` / `insertMany` / `upsert` family / `updateMany` data | `to` |
+| Hydration (`find`, `findOne`, `pluck`, query builder `getMany`) | `from` |
+| Where: equality, `eq` / `ne` / `not`, `gt` / `gte` / `lt` / `lte`, `in` / `notIn`, array shorthand, `between` | `to`, per element |
+| Where: `like` / `notLike` / `ilike` / `contains` / `startsWith` / `endsWith` / `search` | Not applied. Write the pattern in the stored representation |
+| Where: `null`, `isNull`, raw `sql` fragments, QueryDSL (`qAlias`) conditions | Not applied |
+| `sum` / `avg` / `min` / `max` (EntityManager and query builder) | `from` on the result |
+| `count` / `exists` | Row counts, never transformed |
+| Cursor encoding, `orderBy` | Stored value |
+| `increment` / `decrement` | Raw arithmetic on the stored value |
+
+The where rules cover `find`, `findOne`, `count`, `exists`, the aggregates, `findWithCursor`, the criteria of `updateMany` / `delete` / `softDelete` / `restore`, and the query builder's `where(column, value)`, `where(column, operator, value)`, `whereIn` and where-object forms. Range operators assume `to` preserves ordering, and `sum` / `avg` assume `from` is a linear scale such as cents to units. `min` / `max` only need ordering. An aggregate whose `from` does not return a finite number is returned as stored. The built-in JSON serialization is a bind format and does not take part.
+
 **Backward compatibility with `transform`:** The legacy read-only `transform` option still works. If you set both `transform` and `transformer` on the same column, `transformer.from` takes precedence for the read direction. The `transform` option is deprecated -- use `transformer` for all new code.
 
 ```typescript
