@@ -23,6 +23,7 @@ import {
   DeletedAt,
   OrmError,
   OrmErrorCode,
+  sql,
 } from "../../../../src";
 import type { Logger } from "../../../../src/utils/Logger";
 import { getScannerInstance } from "../../../../src/scanner/ScannerContainer";
@@ -280,6 +281,34 @@ describe("[Integration] SQLite: TPC polymorphic root operations", () => {
       expect((error as Error).message).toContain("TABLE_PER_CLASS");
       // Nothing was written.
       expect(await em.count(Payment, { note: "x" })).toBe(0);
+    });
+
+    it("createUpdateBuilder() on the root runs per concrete table and rejects limit", async () => {
+      const result = await em
+        .createUpdateBuilder(Payment, "p")
+        .set({ note: "built" })
+        .where(sql`"amount" = ${1000}`)
+        .execute();
+      expect(result.affected).toBe(2);
+      expect(await em.count(Payment, { note: "built" })).toBe(2);
+
+      let error: unknown;
+      try {
+        await em
+          .createUpdateBuilder(Payment, "p")
+          .set({ note: "bulk" })
+          .where(sql`"amount" = ${1000}`)
+          .limit(1)
+          .execute();
+      } catch (e) {
+        error = e;
+      }
+      expect((error as OrmError).code).toBe(OrmErrorCode.UNSUPPORTED_OPERATION);
+
+      // Put the rows back the way the next tests expect them.
+      expect(
+        (await em.updateMany(Payment, { note: "bulk" }, { where: { note: "built" } })).affected,
+      ).toBe(2);
     });
 
     it("softDelete() / restore() stamp rows in every concrete table", async () => {
