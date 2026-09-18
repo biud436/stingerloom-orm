@@ -813,6 +813,9 @@ Polymorphic query가 필요한가?
 | `em.find(ChildEntity)` | 스코프 적용 (STI: WHERE discriminator, TPT: JOIN parent, TPC: 자체 테이블) |
 | `em.save(ChildEntity, data)` | 자동 discriminator 설정 + TPT 2단계 insert |
 | `em.delete(ChildEntity, criteria)` | STI: discriminator WHERE 추가, TPT: 2단계 delete |
+| `em.count/sum/avg/min/max(RootEntity)` | STI/TPT: 공유/루트 테이블에 이미 전 행이 있음. TPC: `UNION ALL`에 대해 집계 |
+| `em.findWithCursor(RootEntity)` | TPC: `(정렬 컬럼, id, discriminator)` 키셋으로 `UNION ALL`을 페이지네이션 |
+| `em.updateMany/softDelete/restore/delete/deleteMany(RootEntity)` | TPC: 콘크리트 테이블마다 실행, `affected` 합산. `orderBy`/`limit`가 있는 `updateMany`는 거부 |
 | `em.createQueryBuilder(Entity)` | 완전 지원 (STI discriminator WHERE, TPT 자동 JOIN, TPC UNION ALL, polymorphic 역직렬화) |
 | `buf.find(Entity)` | 완전 지원 (EntityManager에 위임) |
 

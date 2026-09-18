@@ -449,7 +449,36 @@ WHERE "id" = 1;
 
 A single DELETE from the child's own table. No cascade to a parent table (there is none to cascade to).
 
-## 12. Pros and Cons
+## 12. Root Operations Across the Hierarchy
+
+The root table of a TPC hierarchy holds only rows saved through the root class itself. Every operation that targets the root class therefore spans the **whole hierarchy**: reads run over the same `UNION ALL` that `find()` uses, and writes run once per concrete table with the affected counts summed.
+
+```typescript
+await em.count(Payment);                                    // rows of every subtype
+await em.sum(Payment, "amount");                            // over every subtype
+await em.findAndCount(Payment, { where: { amount: { gte: 100 } } });
+await em.findWithCursor(Payment, { take: 20 });             // pages the whole hierarchy
+await em.updateMany(Payment, { status: "settled" }, { where: { status: "pending" } });
+await em.softDelete(Payment, { status: "void" });
+await em.delete(Payment, { amount: 0 });                    // one DELETE per concrete table
+```
+
+| Operation on the root class | Behavior |
+|-----------------------------|----------|
+| `find` / `findOne` / `findBy` / `stream` | `UNION ALL` over every concrete table, subclass instances via the discriminator |
+| `count` / `exists` / `sum` / `avg` / `min` / `max` | Aggregate over the same `UNION ALL` |
+| `findAndCount` / `findWithPage` | Rows and total both come from the hierarchy |
+| `findWithCursor` | Pages the hierarchy. The keyset is `(order column, id, discriminator)`, so two subtypes sharing an `id` are never skipped or repeated |
+| `createQueryBuilder(Root)` | `UNION ALL` FROM source, `getCount()` included |
+| `updateMany` / `update` / `increment` / `decrement` | Same `SET ... WHERE` runs once per concrete table; `affected` is the sum |
+| `softDelete` / `restore` | Stamps or clears `@DeletedAt` in every concrete table |
+| `delete` / `deleteMany` | One `DELETE` per concrete table; `affected` is the sum |
+| `updateMany` with `orderBy` / `limit` | Rejected with `OrmError` (`UNSUPPORTED_OPERATION`): a limit applies per statement and has no hierarchy-wide meaning. Run it on a concrete subclass instead |
+| `save` on the root class | Writes the root table only (the root is a concrete class, not a view of its children) |
+
+Each per-table statement runs inside the same transaction, so a root-level `delete()` either removes the matching rows from every table or from none.
+
+## 13. Pros and Cons
 
 | | Pros | Cons |
 |---|------|------|
@@ -461,9 +490,9 @@ A single DELETE from the child's own table. No cascade to a parent table (there 
 | **Polymorphic query** | -- | Requires UNION ALL (scans all tables, slow at scale) |
 | **Schema changes** | -- | Adding a shared column requires ALTER TABLE on every child table |
 | **Data integrity** | -- | No FK constraints between parent and child |
-| **ID uniqueness** | -- | Auto-increment IDs can overlap across tables (see Section 14) |
+| **ID uniqueness** | -- | Auto-increment IDs can overlap across tables (see Section 15) |
 
-## 13. When to Use TPC
+## 14. When to Use TPC
 
 Use TPC when each child type is queried independently and polymorphic queries are rare.
 
@@ -471,10 +500,18 @@ Good candidates: audit/log tables where each event type has very different field
 
 Bad candidates: systems that frequently need "give me all payments" (the UNION ALL cost adds up), and systems that enforce cross-type FK constraints (since tables are independent, you cannot create a FK that references "any payment").
 
-## 14. ID Conflicts
+## 15. ID Conflicts
 
 ::: warning
 Since tables are independent, auto-increment IDs can overlap. `CreditCardPayment` with `id=1` and `BankTransferPayment` with `id=1` are **different rows** in different tables. When you mix results from a polymorphic query, two objects may share the same `id` value but represent completely different records.
+
+TPC does not guarantee primary-key uniqueness across subtypes, and the ORM does not enforce it. The consequences on the root class are:
+
+- `findOne(Payment, { where: { id: 1 } })` returns the first matching subtype's row. When more than one subtype matches, the ORM logs a warning once per root entity and still returns the first row.
+- `count(Payment, { id: 1 })` counts one row per matching subtype.
+- `delete(Payment, { id: 1 })` and `deleteMany(Payment, [1])` remove the key from every concrete table that has it.
+
+Query the concrete subclass when the key alone must identify one row.
 
 If your application needs globally unique IDs across the hierarchy, use `@PrimaryGeneratedColumn("uuid")` instead of auto-increment:
 
@@ -486,7 +523,7 @@ id!: string;
 This generates random UUIDv4 values that are unique across all tables, eliminating the overlap problem. Use `@PrimaryGeneratedColumn("uuid-v7")` if you also want the keys to sort by creation time.
 :::
 
-## 15. Next Steps
+## 16. Next Steps
 
 - [Inheritance Mapping Overview](./inheritance-mapping.md) -- Compare all three strategies (STI, TPT, TPC) side by side
 - [EntityManager](./entity-manager.md) -- find, save, delete, aggregation, pagination

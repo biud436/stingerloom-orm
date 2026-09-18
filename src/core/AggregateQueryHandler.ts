@@ -14,6 +14,7 @@ import { createDialectExpression } from "../dialects/DialectExpression";
 import { QueryResult } from "../types/QueryResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
+import { buildTpcFromSource, isTpcPolymorphicRoot } from "./TpcUnionSource";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import { aggregateToNumber } from "./BigintColumnTransformer";
 import { aggregateFromStored } from "./WhereValueTransform";
@@ -57,7 +58,21 @@ export class AggregateQueryHandler {
           });
 
     return executor(async (session) => {
-      const tableName = metadata.name;
+      // A TABLE_PER_CLASS root has no rows of its own: aggregate over the
+      // same UNION ALL find() reads, so count()/sum()/... and therefore
+      // findAndCount()/findWithPage() agree with the rows find() returns.
+      const inheritanceResolver = this.ctx.getInheritanceResolver();
+      const fromSource: Sql = isTpcPolymorphicRoot(inheritanceResolver, entity)
+        ? buildTpcFromSource(
+            {
+              inheritanceResolver,
+              resolver: this.resolver,
+              wrap: (n) => this.ctx.wrap(n),
+              wrapTable: (n) => this.ctx.wrapTable(n),
+            },
+            entity,
+          )
+        : raw(this.ctx.wrapTable(metadata.name));
 
       // Resolve property names to DB columns exactly like findInternal so the
       // aggregate field and WHERE honor a NamingStrategy and FK shadow props.
@@ -74,7 +89,7 @@ export class AggregateQueryHandler {
         metadata,
         propertyToColumn: propToCol,
         computedColumns: this.ctx.getComputedColumnNames(entity),
-        inheritanceResolver: this.ctx.getInheritanceResolver(),
+        inheritanceResolver,
       });
       validateWhereIdentifiers(where, scope);
       if (field !== "*") assertKnownColumn(field, "select", scope);
@@ -142,7 +157,7 @@ export class AggregateQueryHandler {
           ),
           ", ",
         );
-        let inner = sql`SELECT ${groupCols} FROM ${raw(this.ctx.wrapTable(tableName))}`;
+        let inner = sql`SELECT ${groupCols} FROM ${fromSource}`;
         if (whereMap.length > 0) {
           inner = sql`${inner} WHERE ${join(whereMap, " AND ")}`;
         }
@@ -155,9 +170,9 @@ export class AggregateQueryHandler {
         queryStr = sql`SELECT COUNT(*) AS ${raw(this.ctx.wrap("result"))} FROM (${inner}) AS ${raw(this.ctx.wrap("grouped_src"))}`;
       } else if (whereMap.length > 0) {
         const whereSql = join(whereMap, " AND ");
-        queryStr = sql`SELECT ${selectExpr} AS ${raw(this.ctx.wrap("result"))} FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${whereSql}`;
+        queryStr = sql`SELECT ${selectExpr} AS ${raw(this.ctx.wrap("result"))} FROM ${fromSource} WHERE ${whereSql}`;
       } else {
-        queryStr = sql`SELECT ${selectExpr} AS ${raw(this.ctx.wrap("result"))} FROM ${raw(this.ctx.wrapTable(tableName))}`;
+        queryStr = sql`SELECT ${selectExpr} AS ${raw(this.ctx.wrap("result"))} FROM ${fromSource}`;
       }
 
       const queryResult = (await session.query(
