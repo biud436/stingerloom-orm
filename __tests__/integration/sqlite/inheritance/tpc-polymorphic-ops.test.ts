@@ -52,7 +52,7 @@ describe("[Integration] SQLite: TPC polymorphic root operations", () => {
         class PaymentEntity {
           @PrimaryGeneratedColumn() id!: number;
           @Column() amount!: number;
-          @Column({ type: "varchar", nullable: true }) note?: string | null;
+          @Column({ type: "varchar", length: 255, nullable: true }) note?: string | null;
           @DeletedAt() deletedAt?: Date | null;
         }
 
