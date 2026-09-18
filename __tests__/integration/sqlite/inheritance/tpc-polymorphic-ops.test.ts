@@ -177,7 +177,7 @@ describe("[Integration] SQLite: TPC polymorphic root operations", () => {
       let cursor: string | undefined;
       let pages = 0;
       do {
-        const page = await em.findWithCursor(Payment, { take: 1, cursor });
+        const page: any = await em.findWithCursor(Payment, { take: 1, cursor });
         seen.push(...shape(page.data));
         cursor = page.nextCursor ?? undefined;
         pages += 1;
@@ -210,7 +210,7 @@ describe("[Integration] SQLite: TPC polymorphic root operations", () => {
       const seen: number[] = [];
       let cursor: string | undefined;
       do {
-        const page = await em.findWithCursor(Payment, {
+        const page: any = await em.findWithCursor(Payment, {
           take: 3,
           orderBy: "amount",
           direction: "DESC",
