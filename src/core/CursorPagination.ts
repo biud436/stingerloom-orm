@@ -152,8 +152,17 @@ export function decodeCursor(cursor: string): unknown | null {
  * still decode (`pk` comes back `undefined` and the caller falls back to the
  * strict-compare transition behavior for that one page).
  */
-export function encodeCursorKey(order: unknown, pk: unknown): string {
-  const payload = JSON.stringify({ v: order ?? null, p: pk }, cursorReplacer);
+export function encodeCursorKey(
+  order: unknown,
+  pk: unknown,
+  subKey?: unknown,
+): string {
+  const payload = JSON.stringify(
+    subKey === undefined
+      ? { v: order ?? null, p: pk }
+      : { v: order ?? null, p: pk, d: subKey },
+    cursorReplacer,
+  );
   return Buffer.from(payload, "utf-8").toString("base64");
 }
 
@@ -162,6 +171,12 @@ export type DecodedCursorKey = {
   order: unknown;
   /** PK tiebreaker; undefined for legacy scalar cursors. */
   pk: unknown | undefined;
+  /**
+   * Second tiebreaker after the PK — the discriminator of a TABLE_PER_CLASS
+   * root page, whose concrete tables may share PK values. Undefined for
+   * single-table cursors.
+   */
+  subKey?: unknown;
 };
 
 /**
@@ -173,7 +188,7 @@ export function decodeCursorKey(cursor: string): DecodedCursorKey | null {
     const json = Buffer.from(cursor, "base64").toString("utf-8");
     const parsed = JSON.parse(json, cursorReviver);
     if (parsed === null || typeof parsed !== "object") return null;
-    return { order: parsed.v ?? null, pk: parsed.p };
+    return { order: parsed.v ?? null, pk: parsed.p, subKey: parsed.d };
   } catch {
     return null;
   }

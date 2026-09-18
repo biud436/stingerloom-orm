@@ -17,6 +17,13 @@ export interface KeysetPlan {
   pkColumn: string | undefined;
   /** True when the order column is the PK itself (or there is no PK): single-key ORDER BY. */
   isPkOrder: boolean;
+  /**
+   * DB column that breaks ties after the PK. Set for a TABLE_PER_CLASS root
+   * page, where each concrete table numbers its own PKs and the same value can
+   * appear once per subtype; the discriminator makes `(pk, discriminator)`
+   * unique again. Undefined for every single-table page.
+   */
+  subKeyColumn?: string;
   direction: CursorDirection;
   pageSize: number;
   /** Decoded cursor of the previous page; null on the first page. */
@@ -37,11 +44,27 @@ export function buildKeysetPredicate(
   plan: KeysetPlan,
   wrap: (column: string) => string,
 ): Sql | undefined {
-  const { cursor, direction, orderColumn, pkColumn, isPkOrder } = plan;
+  const { cursor, direction, orderColumn, pkColumn, isPkOrder, subKeyColumn } = plan;
   if (cursor === null) return undefined;
 
-  const { order: cOrder, pk: cPk } = cursor;
+  const { order: cOrder, pk: cPk, subKey: cSub } = cursor;
   const wCol = wrap(orderColumn);
+
+  // "The row's key is past the cursor": a plain PK compare, or the
+  // lexicographic (pk, subKey) compare when the page carries a second
+  // tiebreaker. A cursor minted before the sub key existed (or one whose
+  // sub key is missing) falls back to the plain compare for that page.
+  const pkAfter = (wPk: string, dir: CursorDirection): Sql => {
+    const cmp = dir === "ASC" ? Conditions.gt : Conditions.lt;
+    if (!subKeyColumn || cSub === undefined || cSub === null) {
+      return cmp(wPk, cPk);
+    }
+    const wSub = wrap(subKeyColumn);
+    return Conditions.or([
+      cmp(wPk, cPk),
+      Conditions.and([Conditions.equals(wPk, cPk), cmp(wSub, cSub)]),
+    ]);
+  };
 
   if (cPk === undefined || !pkColumn) {
     // Legacy scalar cursor (pre-keyset) or no PK to tiebreak on: keep
@@ -53,7 +76,7 @@ export function buildKeysetPredicate(
   }
 
   if (isPkOrder) {
-    return direction === "ASC" ? Conditions.gt(wCol, cPk) : Conditions.lt(wCol, cPk);
+    return pkAfter(wCol, direction);
   }
 
   const wPk = wrap(pkColumn);
@@ -62,9 +85,9 @@ export function buildKeysetPredicate(
     // later NULL rows remain), DESC = the head (later NULL rows,
     // then every non-NULL row).
     return direction === "ASC"
-      ? Conditions.and([Conditions.isNull(wCol), Conditions.gt(wPk, cPk)])
+      ? Conditions.and([Conditions.isNull(wCol), pkAfter(wPk, "ASC")])
       : Conditions.or([
-          Conditions.and([Conditions.isNull(wCol), Conditions.lt(wPk, cPk)]),
+          Conditions.and([Conditions.isNull(wCol), pkAfter(wPk, "DESC")]),
           Conditions.isNotNull(wCol),
         ]);
   }
@@ -74,7 +97,7 @@ export function buildKeysetPredicate(
         Conditions.gt(wCol, cOrder),
         Conditions.and([
           Conditions.equals(wCol, cOrder),
-          Conditions.gt(wPk, cPk),
+          pkAfter(wPk, "ASC"),
         ]),
         Conditions.isNull(wCol),
       ])
@@ -82,7 +105,7 @@ export function buildKeysetPredicate(
         Conditions.lt(wCol, cOrder),
         Conditions.and([
           Conditions.equals(wCol, cOrder),
-          Conditions.lt(wPk, cPk),
+          pkAfter(wPk, "DESC"),
         ]),
       ]);
 }
@@ -92,21 +115,25 @@ export function buildKeysetPredicate(
  * column gets the explicit `(col IS NULL)` key that pins the NULL region to
  * the tail (ASC) / head (DESC) uniformly across dialects — SQLite/MySQL
  * natively sort NULLs first in ASC while PostgreSQL sorts them last — plus
- * the PK tiebreaker.
+ * the PK tiebreaker. A sub key (TPC discriminator) always trails the PK.
  */
 export function buildKeysetOrderBy(
   plan: KeysetPlan,
   wrap: (column: string) => string,
 ): Array<{ column: string; direction: CursorDirection }> {
-  const { direction, orderColumn, pkColumn, isPkOrder } = plan;
+  const { direction, orderColumn, pkColumn, isPkOrder, subKeyColumn } = plan;
   const wCol = wrap(orderColumn);
+  const subKey = subKeyColumn
+    ? [{ column: wrap(subKeyColumn), direction }]
+    : [];
   if (isPkOrder) {
-    return [{ column: wCol, direction }];
+    return [{ column: wCol, direction }, ...subKey];
   }
   return [
     { column: `(${wCol} IS NULL)`, direction },
     { column: wCol, direction },
     { column: wrap(pkColumn!), direction },
+    ...subKey,
   ];
 }
 
@@ -133,5 +160,6 @@ export function encodeNextCursor(
   return encodeCursorKey(
     lastRow[plan.orderColumn] ?? null,
     plan.pkColumn ? lastRow[plan.pkColumn] : undefined,
+    plan.subKeyColumn ? lastRow[plan.subKeyColumn] : undefined,
   );
 }

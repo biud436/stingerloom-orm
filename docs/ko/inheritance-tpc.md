@@ -491,7 +491,36 @@ WHERE "id" = 1;
 
 자식의 테이블에서 단일 DELETE예요. 부모 테이블로의 캐스케이드가 없어요 (캐스케이드할 부모 테이블이 없으니까요).
 
-## 12. 장단점
+## 12. 계층 전체를 대상으로 하는 루트 연산
+
+TPC 루트 테이블에는 루트 클래스로 직접 저장한 행만 들어 있습니다. 그래서 루트 클래스를 대상으로 하는 연산은 전부 **계층 전체**를 봅니다. 읽기는 `find()`와 같은 `UNION ALL`로 실행되고, 쓰기는 콘크리트 테이블마다 한 번씩 실행된 뒤 영향받은 행 수를 합산합니다.
+
+```typescript
+await em.count(Payment);                                    // 모든 서브타입의 행 수
+await em.sum(Payment, "amount");                            // 모든 서브타입 합계
+await em.findAndCount(Payment, { where: { amount: { gte: 100 } } });
+await em.findWithCursor(Payment, { take: 20 });             // 계층 전체를 페이지네이션
+await em.updateMany(Payment, { status: "settled" }, { where: { status: "pending" } });
+await em.softDelete(Payment, { status: "void" });
+await em.delete(Payment, { amount: 0 });                    // 콘크리트 테이블마다 DELETE 한 번
+```
+
+| 루트 클래스 대상 연산 | 동작 |
+|---------------------|------|
+| `find` / `findOne` / `findBy` / `stream` | 모든 콘크리트 테이블의 `UNION ALL`, discriminator로 하위 클래스 인스턴스 생성 |
+| `count` / `exists` / `sum` / `avg` / `min` / `max` | 같은 `UNION ALL`에 대해 집계 |
+| `findAndCount` / `findWithPage` | 행과 총 개수 모두 계층 전체 기준 |
+| `findWithCursor` | 계층 전체를 페이지네이션. 키셋이 `(정렬 컬럼, id, discriminator)`라서 같은 `id`를 가진 두 서브타입이 건너뛰어지거나 중복되지 않습니다 |
+| `createQueryBuilder(Root)` | `UNION ALL` FROM 소스, `getCount()` 포함 |
+| `updateMany` / `update` / `increment` / `decrement` | 같은 `SET ... WHERE`를 콘크리트 테이블마다 실행, `affected`는 합산 |
+| `softDelete` / `restore` | 모든 콘크리트 테이블의 `@DeletedAt`을 기록하거나 해제 |
+| `delete` / `deleteMany` | 콘크리트 테이블마다 `DELETE` 한 번, `affected`는 합산 |
+| `orderBy` / `limit`가 있는 `updateMany` | `OrmError`(`UNSUPPORTED_OPERATION`)로 거부합니다. limit는 문장 단위라 계층 전체에 대한 의미가 없어요. 콘크리트 하위 클래스에서 실행하세요 |
+| 루트 클래스 `save` | 루트 테이블에만 씁니다 (루트는 자식들의 뷰가 아니라 그 자체로 콘크리트 클래스입니다) |
+
+테이블별 문장은 같은 트랜잭션 안에서 실행되므로, 루트 `delete()`는 모든 테이블에서 지워지거나 하나도 지워지지 않거나 둘 중 하나입니다.
+
+## 13. 장단점
 
 | | 장점 | 단점 |
 |---|------|------|
@@ -503,9 +532,9 @@ WHERE "id" = 1;
 | **다형성 쿼리** | -- | UNION ALL 필요 (모든 테이블 스캔, 대규모에서 느림) |
 | **스키마 변경** | -- | 공유 컬럼 추가 시 모든 자식 테이블에 ALTER TABLE 필요 |
 | **데이터 무결성** | -- | 부모-자식 간 FK 제약 조건 없음 |
-| **ID 고유성** | -- | Auto-increment ID가 테이블 간에 겹칠 수 있음 (14절 참조) |
+| **ID 고유성** | -- | Auto-increment ID가 테이블 간에 겹칠 수 있음 (15절 참조) |
 
-## 13. TPC를 사용해야 하는 경우
+## 14. TPC를 사용해야 하는 경우
 
 각 자식 타입이 독립적으로 조회되고 다형성 쿼리가 드문 경우에 TPC를 사용하세요.
 
@@ -513,10 +542,18 @@ WHERE "id" = 1;
 
 좋지 않은 후보: "모든 결제를 가져와"가 자주 필요한 시스템(UNION ALL 비용이 누적돼요), 그리고 타입 간 FK 제약 조건을 강제하는 시스템(테이블이 독립적이기 때문에 "어떤 결제든" 참조하는 FK를 만들 수 없어요)은 적합하지 않아요.
 
-## 14. ID 충돌
+## 15. ID 충돌
 
 ::: warning
 테이블이 독립적이기 때문에 auto-increment ID가 겹칠 수 있어요. `id=1`인 `CreditCardPayment`와 `id=1`인 `BankTransferPayment`는 서로 다른 테이블의 **서로 다른 행**이에요. 다형성 쿼리에서 결과를 합치면 두 객체가 같은 `id` 값을 가질 수 있지만, 완전히 다른 레코드를 나타내요.
+
+TPC는 서브타입 간 기본 키 유일성을 보장하지 않으며, ORM도 이를 강제하지 않습니다. 루트 클래스에서는 다음과 같이 동작합니다.
+
+- `findOne(Payment, { where: { id: 1 } })`은 처음 매치된 서브타입의 행을 반환합니다. 둘 이상의 서브타입이 매치되면 루트 엔티티당 한 번 경고를 남기고, 그래도 첫 행을 반환합니다.
+- `count(Payment, { id: 1 })`은 매치되는 서브타입마다 한 행씩 셉니다.
+- `delete(Payment, { id: 1 })`과 `deleteMany(Payment, [1])`은 그 키를 가진 모든 콘크리트 테이블에서 행을 지웁니다.
+
+키 하나로 행 하나를 특정해야 한다면 콘크리트 하위 클래스로 조회하세요.
 
 애플리케이션에서 계층 구조 전체에 걸쳐 전역적으로 고유한 ID가 필요하면, auto-increment 대신 `@PrimaryGeneratedColumn("uuid")`를 사용하세요:
 
@@ -528,7 +565,7 @@ id!: string;
 모든 테이블에서 고유한 무작위 UUIDv4 값을 생성하므로 겹침 문제가 사라집니다. 생성 시각 순으로 정렬되는 키가 필요하면 `@PrimaryGeneratedColumn("uuid-v7")`을 사용하세요.
 :::
 
-## 15. 다음 단계
+## 16. 다음 단계
 
 - [상속 매핑 개요](./inheritance-mapping) -- 세 가지 전략(STI, TPT, TPC) 비교
 - [EntityManager](./entity-manager) -- find, save, delete, 집계, 페이지네이션

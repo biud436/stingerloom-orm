@@ -34,6 +34,7 @@ import { coerceRows, type RawResultOptions } from "./RawValueCoercion";
 import { COLUMN_TOKEN } from "../decorators/Column";
 import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "./PropertyColumnMap";
 import { InheritanceResolver } from "./InheritanceResolver";
+import { buildTpcUnionSource } from "./TpcUnionSource";
 import {
   JsonPathCondition,
   makeJsonPathExpression,
@@ -598,31 +599,17 @@ export class SelectQueryBuilder<T, TResult = T> {
   private applyTPC(ir: InheritanceResolver, resolver: RelationMetadataResolver): void {
     if (!this.isPolymorphicQuery) return;
 
-    // TPC root (polymorphic): build UNION ALL subquery
-    const allEntities = ir.getConcreteEntities(this.entity);
-    const allHierarchyCols = ir.getAllHierarchyColumns(this.entity).map((c) => c.name);
-    const discColName = this.discriminatorColumnName ?? "dtype";
-
-    const subQueries: Sql[] = [];
-    for (const ent of allEntities) {
-      const entMeta = resolver.resolveEntityMetadata(ent);
-      if (!entMeta) continue;
-      const entTableName = entMeta.name;
-      const entColNames = new Set(entMeta.columns.map((c: any) => c.name));
-      const discVal = ir.getDiscriminatorValue(ent) ?? ent.name;
-
-      const colExprs: Sql[] = allHierarchyCols.map((colName) =>
-        entColNames.has(colName)
-          ? sql`${raw(this.em.wrap(colName))}`
-          : sql`NULL AS ${raw(this.em.wrap(colName))}`,
-      );
-      colExprs.push(sql`${discVal} AS ${raw(this.em.wrap(discColName))}`);
-
-      const subSql = sql`SELECT ${join(colExprs, ", ")} FROM ${raw(this.em.wrapTable(entTableName))}`;
-      subQueries.push(subSql);
-    }
-
-    this.tpcFromSql = join(subQueries, " UNION ALL ");
+    // TPC root (polymorphic): FROM is the UNION ALL over every concrete table
+    this.tpcFromSql = buildTpcUnionSource(
+      {
+        inheritanceResolver: ir,
+        resolver,
+        wrap: (n) => this.em.wrap(n),
+        wrapTable: (n) => this.em.wrapTable(n),
+      },
+      this.entity,
+      this.discriminatorColumnName ?? "dtype",
+    );
   }
 
   // ── Helpers ──────────────────────────────────────────────

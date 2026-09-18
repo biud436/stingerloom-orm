@@ -37,6 +37,7 @@ import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DefaultNamingStrategy, NamingStrategy } from "../generators/NamingStrategy";
 import { InheritanceResolver } from "../InheritanceResolver";
+import { isTpcPolymorphicRoot, resolveTpcTables } from "../TpcUnionSource";
 import { DEFAULT_BIGINT_MODE, normalizeBigintValue } from "../BigintColumnTransformer";
 import { assertScalarBindValue } from "../BindValueGuard";
 import { createDialectExpression } from "../../dialects/DialectExpression";
@@ -208,6 +209,74 @@ export class WriteExecutor {
       return okPacket(queryResult)?.affectedRows ?? fallback;
     }
     return queryResult?.rowCount ?? fallback;
+  }
+
+  /**
+   * The physical tables a criteria write on `entity` runs against. A
+   * TABLE_PER_CLASS root owns no rows of its own — its hierarchy lives in
+   * one table per concrete class — so a root-targeted delete/update/soft
+   * delete/restore runs the same statement once per concrete table and sums
+   * the affected counts, matching the rows find() reads through UNION ALL.
+   * Every other entity writes its single table.
+   */
+  private resolveWriteTables<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+  ): string[] {
+    if (!isTpcPolymorphicRoot(this.inheritanceResolver, entity)) {
+      return [metadata.name];
+    }
+    return resolveTpcTables(
+      { inheritanceResolver: this.inheritanceResolver, resolver: this.resolver },
+      entity,
+    ).map((t) => t.tableName);
+  }
+
+  /**
+   * Rejects ORDER BY / LIMIT on a write that spans a TABLE_PER_CLASS
+   * hierarchy: a limit applies per statement, so "the first N rows of the
+   * root" has no single-statement meaning across the concrete tables.
+   */
+  private assertTpcWriteHasNoLimit<T>(
+    entity: ClazzType<T>,
+    tables: string[],
+    orderBySql: Sql | undefined,
+    limit: number | undefined,
+    site: string,
+  ): void {
+    if (tables.length > 1 && (orderBySql !== undefined || limit !== undefined)) {
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        `${site} with orderBy/limit on TABLE_PER_CLASS root "${entity.name}" is not supported: the write runs once per concrete table, so a limit cannot be applied across the hierarchy.`,
+        `Run the limited update on a concrete subclass, or drop orderBy/limit to update every matching row across the hierarchy.`,
+      );
+    }
+  }
+
+  /**
+   * Runs `buildSql(table)` against each table and sums the affected rows,
+   * tracking each statement under `entity`'s name.
+   */
+  private async executePerTable<T>(
+    entity: ClazzType<T>,
+    tables: string[],
+    buildSql: (tableName: string) => Sql,
+    session: TransactionSessionManager,
+  ): Promise<number> {
+    let affected = 0;
+    for (const tableName of tables) {
+      const statement = buildSql(tableName);
+      const start = Date.now();
+      this.ctx.beginTrackQuery();
+      const queryResult = (await session.query(statement)) as DriverExecResult;
+      this.ctx.trackQuery(
+        entity.name,
+        statement.text ?? String(statement),
+        Date.now() - start,
+      );
+      affected += this.affectedCount(queryResult);
+    }
+    return affected;
   }
 
   /**
@@ -2524,25 +2593,24 @@ export class WriteExecutor {
     return this.affectedCount(parentResult);
   }
 
-  /** The single-table DELETE, under query tracking. */
+  /**
+   * The DELETE of a non-JOINED entity, under query tracking: one statement
+   * per table `resolveWriteTables` names (one, or every concrete table of a
+   * TABLE_PER_CLASS root).
+   */
   private async executeDelete<T>(
     entity: ClazzType<T>,
-    tableName: string,
+    metadata: EntityScannerMetadata,
     whereSql: Sql,
     session: TransactionSessionManager,
   ): Promise<number> {
-    const deleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${whereSql}`;
-
-    const deleteStart = Date.now();
-    this.ctx.beginTrackQuery();
-    const queryResult = (await session.query(deleteQuery)) as DriverExecResult;
-    this.ctx.trackQuery(
-      entity.name,
-      deleteQuery.text ?? String(deleteQuery),
-      Date.now() - deleteStart,
+    return this.executePerTable(
+      entity,
+      this.resolveWriteTables(entity, metadata),
+      (tableName) =>
+        sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${whereSql}`,
+      session,
     );
-
-    return this.affectedCount(queryResult);
   }
 
   async delete<T>(
@@ -2601,7 +2669,7 @@ export class WriteExecutor {
 
       const affected =
         joinedAffected ??
-        (await this.executeDelete(entity, metadata.name, whereSql, session));
+        (await this.executeDelete(entity, metadata, whereSql, session));
 
       await this.emitAfterDelete(entity, criteria);
 
@@ -2644,13 +2712,15 @@ export class WriteExecutor {
       // resets per schema), so `deleteMany([1, 2])` under tenant A must not
       // affect tenant B's rows with the same IDs.
       const tenantDeleteManyWhere = this.ctx.buildTenantWhereClause(entity);
-      const deleteQuery = tenantDeleteManyWhere
-        ? sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${raw(this.ctx.wrap(pk.name))} IN (${placeholders}) AND ${tenantDeleteManyWhere}`
-        : sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${raw(this.ctx.wrap(pk.name))} IN (${placeholders})`;
-
-      const queryResult = (await session.query(deleteQuery)) as DriverExecResult;
-
-      const affected = this.affectedCount(queryResult);
+      const affected = await this.executePerTable(
+        entity,
+        this.resolveWriteTables(entity, metadata),
+        (tableName) =>
+          tenantDeleteManyWhere
+            ? sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${raw(this.ctx.wrap(pk.name))} IN (${placeholders}) AND ${tenantDeleteManyWhere}`
+            : sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${raw(this.ctx.wrap(pk.name))} IN (${placeholders})`,
+        session,
+      );
 
       return { affected };
     });
@@ -2932,14 +3002,8 @@ export class WriteExecutor {
         updatePropToCol,
       );
 
-      const updateSql = this.dmlSqlBuilder.buildUpdateSql(
-        metadata,
-        entity.name,
-        setMap,
-        whereMap,
-        orderBySql,
-        options.limit,
-      );
+      const tables = this.resolveWriteTables(entity, metadata);
+      this.assertTpcWriteHasNoLimit(entity, tables, orderBySql, options.limit, site);
 
       // Criteria-based update events. Mirrors delete()'s eventEmitter channel:
       // listeners registered via `em.on("beforeUpdate"/"afterUpdate")` receive
@@ -2952,16 +3016,20 @@ export class WriteExecutor {
         data: data as Record<string, unknown>,
       });
 
-      const queryStart = Date.now();
-      this.ctx.beginTrackQuery();
-      const queryResult = (await session.query(updateSql)) as DriverExecResult;
-      this.ctx.trackQuery(
-        entity.name,
-        updateSql.text ?? String(updateSql),
-        Date.now() - queryStart,
+      const affected = await this.executePerTable(
+        entity,
+        tables,
+        (tableName) =>
+          this.dmlSqlBuilder.buildUpdateSql(
+            { ...metadata, name: tableName },
+            entity.name,
+            setMap,
+            whereMap,
+            orderBySql,
+            options.limit,
+          ),
+        session,
       );
-
-      const affected = this.affectedCount(queryResult);
 
       await this.eventEmitter.emit("afterUpdate", {
         entity,
@@ -3126,25 +3194,23 @@ export class WriteExecutor {
         whereMap.push(tenantWhere);
       }
 
-      const updateSql = this.dmlSqlBuilder.buildUpdateSql(
-        metadata,
-        entity.name,
-        mergedSetMap,
-        whereMap,
-        orderBySql,
-        limit,
-      );
+      const tables = this.resolveWriteTables(entity, metadata);
+      this.assertTpcWriteHasNoLimit(entity, tables, orderBySql, limit, "UpdateQueryBuilder");
 
-      const queryStart = Date.now();
-      this.ctx.beginTrackQuery();
-      const queryResult = (await session.query(updateSql)) as DriverExecResult;
-      this.ctx.trackQuery(
-        entity.name,
-        updateSql.text ?? String(updateSql),
-        Date.now() - queryStart,
+      const affected = await this.executePerTable(
+        entity,
+        tables,
+        (tableName) =>
+          this.dmlSqlBuilder.buildUpdateSql(
+            { ...metadata, name: tableName },
+            entity.name,
+            mergedSetMap,
+            whereMap,
+            orderBySql,
+            limit,
+          ),
+        session,
       );
-
-      const affected = this.affectedCount(queryResult);
       return { affected };
     });
   }
@@ -3219,11 +3285,13 @@ export class WriteExecutor {
       const nowExpr = this.ctx.isSqlite()
         ? raw("strftime('%Y-%m-%dT%H:%M:%fZ','now')")
         : raw("NOW()");
-      const updateQuery = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`;
-
-      const queryResult = (await session.query(updateQuery)) as DriverExecResult;
-
-      const affected = this.affectedCount(queryResult);
+      const affected = await this.executePerTable(
+        entity,
+        this.resolveWriteTables(entity, metadata),
+        (tableName) =>
+          sql`UPDATE ${raw(this.ctx.wrapTable(tableName))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`,
+        session,
+      );
 
       await this.eventEmitter.emit("afterSoftDelete", { entity, data: criteria });
       await this.ctx.notifySubscribers(entity, "afterSoftDelete", {
@@ -3295,11 +3363,13 @@ export class WriteExecutor {
 
       const whereSql = join(whereMap, " AND ");
 
-      const restoreQuery = sql`UPDATE ${raw(this.ctx.wrapTable(metadata.name))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = NULL WHERE ${whereSql}`;
-
-      const queryResult = (await session.query(restoreQuery)) as DriverExecResult;
-
-      const affected = this.affectedCount(queryResult);
+      const affected = await this.executePerTable(
+        entity,
+        this.resolveWriteTables(entity, metadata),
+        (tableName) =>
+          sql`UPDATE ${raw(this.ctx.wrapTable(tableName))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = NULL WHERE ${whereSql}`,
+        session,
+      );
 
       await this.eventEmitter.emit("afterRestore", { entity, data: criteria });
       await this.ctx.notifySubscribers(entity, "afterRestore", {

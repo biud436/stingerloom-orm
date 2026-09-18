@@ -51,6 +51,12 @@ import { AggregateQueryHandler } from "../AggregateQueryHandler";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { InheritanceResolver } from "../InheritanceResolver";
+import {
+  buildTpcUnionSource,
+  isTpcPolymorphicRoot,
+  TPC_UNION_ALIAS,
+  type TpcSourceContext,
+} from "../TpcUnionSource";
 import { createDialectExpression } from "../../dialects/DialectExpression";
 
 /**
@@ -238,6 +244,16 @@ export class ReadExecutor {
   // reassignment on EntityManager is honored).
   private get driver(): ISqlDriver | undefined { return this.ctx.getDriver(); }
   private get resolver(): RelationMetadataResolver { return this.ctx.getResolver(); }
+
+  /** The resolvers and identifier wrappers a TPC UNION ALL source is built with. */
+  private tpcSourceContext(): TpcSourceContext {
+    return {
+      inheritanceResolver: this.inheritanceResolver,
+      resolver: this.resolver,
+      wrap: (n) => this.ctx.wrap(n),
+      wrapTable: (n) => this.ctx.wrapTable(n),
+    };
+  }
   private get inheritanceResolver(): InheritanceResolver { return this.ctx.getInheritanceResolver(); }
   private get relationLoader(): RelationLoader { return this.ctx.getRelationLoader(); }
   private get aggregateHandler(): AggregateQueryHandler { return this.ctx.getAggregateHandler(); }
@@ -278,14 +294,70 @@ export class ReadExecutor {
     findOption: FindOption<T>,
     existingSession?: TransactionSessionManager,
   ): Promise<T | null> {
-    const result = await this.ctx.findInternal<T>(entity, { ...findOption, limit: 1 }, existingSession);
+    // A TPC root looked up by PK reads one extra row: the concrete tables
+    // number their own PKs, so the same value can name a row per subtype and
+    // the first one would win silently. See warnIfTpcPkAmbiguous.
+    const probeAmbiguity = this.isTpcPkLookup(entity, findOption.where);
+    const result = await this.ctx.findInternal<T>(
+      entity,
+      { ...findOption, limit: probeAmbiguity ? 2 : 1 },
+      existingSession,
+    );
     if (result === undefined || result === null) {
       return null;
     }
     if (Array.isArray(result)) {
+      if (probeAmbiguity && result.length > 1) {
+        this.warnIfTpcPkAmbiguous(entity);
+      }
       return (result[0] as T) ?? null;
     }
     return result as T;
+  }
+
+  /** Entities already warned about a PK matching several TPC subtypes. */
+  private readonly tpcPkAmbiguityWarned = new Set<string>();
+
+  /**
+   * True for a findOne on a TABLE_PER_CLASS root whose `where` names the
+   * primary key (by property or DB column) at the top level of any branch.
+   */
+  private isTpcPkLookup<T>(
+    entity: ClazzType<T>,
+    where: FindOption<T>["where"],
+  ): boolean {
+    if (!where || !isTpcPolymorphicRoot(this.inheritanceResolver, entity)) {
+      return false;
+    }
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    const pk = metadata?.columns.find(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+    if (!pk) return false;
+    const pkKeys = new Set<string>([pk.name, String(pk.propertyKey ?? pk.name)]);
+    const branches = Array.isArray(where) ? where : [where];
+    return branches.some(
+      (branch) =>
+        branch !== null &&
+        typeof branch === "object" &&
+        Object.keys(branch).some((key) => pkKeys.has(key)),
+    );
+  }
+
+  /**
+   * Once per root: a PK lookup matched rows in more than one concrete
+   * table. TPC does not make PKs unique across subtypes (each table
+   * generates its own), so the caller got the first subtype's row.
+   */
+  private warnIfTpcPkAmbiguous<T>(entity: ClazzType<T>): void {
+    if (this.tpcPkAmbiguityWarned.has(entity.name)) return;
+    this.tpcPkAmbiguityWarned.add(entity.name);
+    this.ctx.getLogger().warn(
+      `[Inheritance] findOne(${entity.name}) by primary key matched rows in more than one ` +
+        `TABLE_PER_CLASS subtype and returned the first. TPC does not guarantee PK uniqueness ` +
+        `across subtypes (each concrete table generates its own keys). Use a shared sequence or ` +
+        `UUID primary keys, or query the concrete subclass instead.`,
+    );
   }
 
   async find<T>(
@@ -877,37 +949,8 @@ export class ReadExecutor {
     const { entity, tableName } = op;
 
     if (op.isTPCPolymorphic) {
-      const allEntities = this.inheritanceResolver.getConcreteEntities(entity);
-      const allHierarchyCols = this.inheritanceResolver
-        .getAllHierarchyColumns(entity)
-        .map((c) => c.name);
-      const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-      const discColName = discCol?.name ?? "dtype";
-
-      const subQueries: Sql[] = [];
-      for (const ent of allEntities) {
-        const entMeta = this.resolver.resolveEntityMetadata(ent);
-        if (!entMeta) continue;
-        const entTableName = entMeta.name;
-        const entColNames = new Set(
-          entMeta.columns.map((c: any) => c.name),
-        );
-        const discVal =
-          this.inheritanceResolver.getDiscriminatorValue(ent) ?? ent.name;
-
-        const colExprs: Sql[] = allHierarchyCols.map((colName) =>
-          entColNames.has(colName)
-            ? sql`${raw(this.ctx.wrap(colName))}`
-            : sql`NULL AS ${raw(this.ctx.wrap(colName))}`,
-        );
-        colExprs.push(sql`${discVal} AS ${raw(this.ctx.wrap(discColName))}`);
-
-        const subSql = sql`SELECT ${join(colExprs, ", ")} FROM ${raw(this.ctx.wrapTable(entTableName))}`;
-        subQueries.push(subSql);
-      }
-
-      const unionSql = join(subQueries, " UNION ALL ");
-      qb.select(["*"]).from(sql`(${unionSql})`, this.ctx.wrap("_tpc"));
+      const unionSql = buildTpcUnionSource(this.tpcSourceContext(), entity);
+      qb.select(["*"]).from(sql`(${unionSql})`, this.ctx.wrap(TPC_UNION_ALIAS));
     } else if (op.findOption.distinct) {
       qb.selectDistinct(selectMap).from(this.ctx.wrapTable(tableName));
     } else {
@@ -1503,8 +1546,17 @@ export class ReadExecutor {
         option,
       );
 
+      // A TABLE_PER_CLASS root pages over the same UNION ALL find() reads:
+      // every concrete table, every hierarchy column, the discriminator as
+      // a literal. The discriminator also rides in the keyset (see
+      // prepareCursorQuery) because the concrete tables number their own PKs.
       const qb = RawQueryBuilderFactory.create();
-      qb.select(selectList).from(this.ctx.wrapTable(metadata.name)).where(whereMap);
+      if (keyset.subKeyColumn !== undefined) {
+        const unionSql = buildTpcUnionSource(this.tpcSourceContext(), entity);
+        qb.select(["*"]).from(sql`(${unionSql})`, this.ctx.wrap(TPC_UNION_ALIAS)).where(whereMap);
+      } else {
+        qb.select(selectList).from(this.ctx.wrapTable(metadata.name)).where(whereMap);
+      }
       qb.orderBy(buildKeysetOrderBy(keyset, (n) => this.ctx.wrap(n)));
       qb.limit(keyset.pageSize + 1);
 
@@ -1606,6 +1658,12 @@ export class ReadExecutor {
       pageSize: order.pageSize,
       cursor: order.cursorKey,
     };
+    // TPC root: each concrete table numbers its own PKs, so (order, pk) is
+    // not unique across the UNION — the discriminator literal breaks the tie.
+    if (isTpcPolymorphicRoot(this.inheritanceResolver, entity)) {
+      keyset.subKeyColumn =
+        this.inheritanceResolver.getDiscriminatorColumn(entity)?.name ?? "dtype";
+    }
 
     const whereMap = this.buildCursorWhereClauses(entity, where, propToCol, option);
     const keysetPredicate = buildKeysetPredicate(keyset, (n) => this.ctx.wrap(n));
@@ -1638,7 +1696,7 @@ export class ReadExecutor {
 
     const { pageRows: pageResults, hasNextPage } = sliceCursorPage(results, keyset.pageSize);
 
-    const entities = ResultTransformerFactory.create().toEntities(entity, {
+    const entities = this.hydrateCursorRows(entity, keyset, {
       results: pageResults,
       fields: queryResult.fields,
     });
@@ -1659,6 +1717,31 @@ export class ReadExecutor {
       nextCursor,
       count: entities.length,
     };
+  }
+
+  /**
+   * Entity instances of a cursor page: a TABLE_PER_CLASS root page (the one
+   * carrying a sub key) instantiates each row's subtype via the discriminator
+   * exactly like find(); every other page hydrates the queried class.
+   */
+  private hydrateCursorRows<T>(
+    entity: ClazzType<T>,
+    keyset: KeysetPlan,
+    page: QueryResult,
+  ): T[] {
+    const transformer = ResultTransformerFactory.create();
+    if (keyset.subKeyColumn !== undefined) {
+      const discMap = this.inheritanceResolver.buildDiscriminatorMap(entity);
+      if (discMap.size > 0) {
+        return transformer.toPolymorphicEntities(
+          entity,
+          page,
+          discMap,
+          keyset.subKeyColumn,
+        );
+      }
+    }
+    return transformer.toEntities(entity, page);
   }
 
   /**

@@ -375,6 +375,9 @@ Do you need polymorphic queries (em.find(RootEntity))?
 | `em.save(ChildEntity, data)` | STI/TPT: auto-sets discriminator. TPT: two-phase insert (root then child) |
 | `em.save(ChildEntity, existing)` | TPT: two-phase update (root then child). STI: excludes discriminator from SET |
 | `em.delete(ChildEntity, criteria)` | STI: adds discriminator to WHERE. TPT: two-phase delete (child then root) |
+| `em.count/sum/avg/min/max(RootEntity)` | STI/TPT: the shared/root table already holds every row. TPC: aggregates over the `UNION ALL` |
+| `em.findWithCursor(RootEntity)` | TPC: pages the `UNION ALL` with a `(order, id, discriminator)` keyset |
+| `em.updateMany/softDelete/restore/delete/deleteMany(RootEntity)` | TPC: runs once per concrete table, `affected` summed; `updateMany` with `orderBy`/`limit` is rejected |
 | `em.createQueryBuilder(Entity)` | Full support -- STI discriminator WHERE, TPT auto JOIN, TPC UNION ALL, polymorphic deserialization |
 | `buf.find(Entity)` | Full support -- delegates to EntityManager |
 | `buf.findOne(Entity, opts)` | Full support -- delegates to EntityManager |
