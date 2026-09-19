@@ -131,9 +131,9 @@ describe("InsertQueryBuilder", () => {
 
       expect(text).toContain('INSERT INTO "ble_sensor_sync_markers"');
       expect(text).toContain('ON CONFLICT ("mac", "bucket_start") DO UPDATE SET');
-      expect(text).toContain('"records" = ("records" + EXCLUDED."records")');
+      expect(text).toContain('"records" = ("ble_sensor_sync_markers"."records" + EXCLUDED."records")');
       expect(text).toContain(
-        '"last_time" = GREATEST("last_time", EXCLUDED."last_time")',
+        '"last_time" = GREATEST("ble_sensor_sync_markers"."last_time", EXCLUDED."last_time")',
       );
       expect(text).toContain('"synced_at" = NOW()');
     });
@@ -143,8 +143,8 @@ describe("InsertQueryBuilder", () => {
       const { text } = accumulatingUpsert(em).toSql();
 
       expect(text).toContain('ON CONFLICT ("mac", "bucket_start") DO UPDATE SET');
-      expect(text).toContain('"records" = ("records" + excluded."records")');
-      expect(text).toContain('"last_time" = MAX("last_time", excluded."last_time")');
+      expect(text).toContain('"records" = ("ble_sensor_sync_markers"."records" + excluded."records")');
+      expect(text).toContain('"last_time" = MAX("ble_sensor_sync_markers"."last_time", excluded."last_time")');
     });
 
     it("MySQL: VALUES() for the proposed row, no conflict target", () => {
@@ -152,9 +152,9 @@ describe("InsertQueryBuilder", () => {
       const { text } = accumulatingUpsert(em).toSql();
 
       expect(text).toContain("ON DUPLICATE KEY UPDATE");
-      expect(text).toContain("`records` = (`records` + VALUES(`records`))");
+      expect(text).toContain("`records` = (`ble_sensor_sync_markers`.`records` + VALUES(`records`))");
       expect(text).toContain(
-        "`last_time` = GREATEST(`last_time`, VALUES(`last_time`))",
+        "`last_time` = GREATEST(`ble_sensor_sync_markers`.`last_time`, VALUES(`last_time`))",
       );
       expect(text).not.toContain("ON CONFLICT");
     });
@@ -209,7 +209,7 @@ describe("InsertQueryBuilder", () => {
         .toSql();
 
       expect(text).toContain(
-        'ON CONFLICT ("mac", "bucket_start") WHERE "synced_at" IS NULL DO UPDATE',
+        'ON CONFLICT ("mac", "bucket_start") WHERE "ble_sensor_sync_markers"."synced_at" IS NULL DO UPDATE',
       );
     });
 
@@ -296,7 +296,7 @@ describe("InsertQueryBuilder", () => {
         .toSql();
 
       expect(text).toContain("DO UPDATE SET");
-      expect(text).toMatch(/DO UPDATE SET .+ WHERE "last_time" </);
+      expect(text).toMatch(/DO UPDATE SET .+ WHERE "ble_sensor_sync_markers"."last_time" </);
     });
 
     it("throws on MySQL rather than silently dropping the predicate", () => {
@@ -338,7 +338,7 @@ describe("InsertQueryBuilder", () => {
         .toSql();
 
       expect(text).toContain(
-        'LEAST(COALESCE("last_time", EXCLUDED."last_time"), EXCLUDED."last_time")',
+        'LEAST(COALESCE("ble_sensor_sync_markers"."last_time", EXCLUDED."last_time"), EXCLUDED."last_time")',
       );
     });
 
@@ -414,7 +414,7 @@ describe("InsertQueryBuilder", () => {
         .doUpdateWhere(m.lastTime.lt(ex.lastTime))
         .toSql();
 
-      expect(text).toContain('WHERE "last_time" < EXCLUDED."last_time"');
+      expect(text).toContain('WHERE "ble_sensor_sync_markers"."last_time" < EXCLUDED."last_time"');
     });
 
     it("renders the iff() CASE fold on MySQL, where doUpdateWhere throws", () => {
@@ -428,8 +428,8 @@ describe("InsertQueryBuilder", () => {
         .toSql();
 
       expect(text).toContain(
-        "`last_time` = CASE WHEN VALUES(`last_time`) > `last_time` " +
-          "THEN VALUES(`last_time`) ELSE `last_time` END",
+        "`last_time` = CASE WHEN VALUES(`last_time`) > `ble_sensor_sync_markers`.`last_time` " +
+          "THEN VALUES(`last_time`) ELSE `ble_sensor_sync_markers`.`last_time` END",
       );
     });
   });

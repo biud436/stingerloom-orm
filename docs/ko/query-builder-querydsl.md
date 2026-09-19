@@ -474,7 +474,7 @@ await em.createInsertBuilder(SyncMarker)
 ```typescript
 // 제안한 배치가 실제로 더 최신인 행만 전진시킨다.
 .doUpdateWhere(m.lastTime.lt(ex.lastTime))
-// WHERE "last_time" < EXCLUDED."last_time"
+// WHERE "sync_markers"."last_time" < EXCLUDED."last_time"
 ```
 
 ## 현재 시각 — `currentDate()` / `currentTime()` / `currentTimestamp()`

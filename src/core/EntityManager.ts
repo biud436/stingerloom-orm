@@ -1585,7 +1585,14 @@ export class EntityManager implements BaseEntityManager {
     }
     const propMap = this.buildPropertyToColumnMap(meta);
     const dialectExpr = createDialectExpression(this._ctx.getDialect());
-    return new InsertQueryBuilder<T>(this, entity, aliasName, propMap, dialectExpr);
+    return new InsertQueryBuilder<T>(
+      this,
+      entity,
+      aliasName,
+      propMap,
+      dialectExpr,
+      this.wrap(meta.name),
+    );
   }
 
   /**

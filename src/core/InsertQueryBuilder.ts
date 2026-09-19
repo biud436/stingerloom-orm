@@ -163,6 +163,12 @@ export class InsertQueryBuilder<T> {
     private readonly aliasName: string,
     private readonly propertyToColumnMap: Map<string, string>,
     private readonly dialectExpression?: DialectExpression,
+    /**
+     * The stored row as the conflict action reads it — the wrapped table
+     * name, e.g. `"counter"`. Same reference `em.upsert()` uses for its
+     * `@Version` increment.
+     */
+    private readonly storedRowRef?: string,
   ) {}
 
   // ── VALUES ─────────────────────────────────────────────
@@ -295,8 +301,9 @@ export class InsertQueryBuilder<T> {
    * WHERE clause. Express the same intent there with a `CASE` in the SET
    * value, or by making the assignment idempotent.
    *
-   * Unqualified column references read the stored row; use the `excluded`
-   * reference for the proposed one.
+   * Column references on the entity alias read the stored row (rendered
+   * qualified by the table name); use the `excluded` reference for the
+   * proposed one.
    */
   doUpdateWhere(condition: Sql | ConditionLike): this {
     if (this.action.kind !== "update") {
@@ -432,17 +439,22 @@ export class InsertQueryBuilder<T> {
    * Resolves a deferred column reference for the conflict clause.
    *
    * References carrying the `qExcluded` sentinel alias render as the
-   * dialect's proposed-row syntax; everything else renders as a **bare**
-   * column name, which every dialect reads as the stored row inside
-   * `DO UPDATE SET` / `ON DUPLICATE KEY UPDATE`. Qualifying it would be
-   * wrong on MySQL and fragile on a schema-qualified PostgreSQL target.
+   * dialect's proposed-row syntax; everything else is a stored-row read and
+   * renders **qualified by the table name** (`"counter"."records"`).
+   *
+   * Qualifying is not optional on PostgreSQL: inside `DO UPDATE SET` and its
+   * `WHERE`, both the target table and `EXCLUDED` are in scope, so a bare
+   * column name is rejected as ambiguous. MySQL/MariaDB and SQLite accept
+   * the qualified form too, so one spelling serves every dialect — it is
+   * the same reference `em.upsert()` emits for its `@Version` increment.
    */
   private columnResolver: ColumnResolver = (ref: string) => {
     const { property, isExcluded } = splitColumnRef(ref);
     const dbCol = this.propertyToColumnMap.get(property) ?? property;
     const wrapped = this.em.wrap(dbCol);
-    return isExcluded
-      ? (this.em as any).renderExcludedColumn(wrapped)
-      : wrapped;
+    if (isExcluded) {
+      return (this.em as any).renderExcludedColumn(wrapped);
+    }
+    return this.storedRowRef ? `${this.storedRowRef}.${wrapped}` : wrapped;
   };
 }

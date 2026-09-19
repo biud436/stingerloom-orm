@@ -788,7 +788,7 @@ await em.createInsertBuilder(SyncMarker)
 
 `doUpdate()`'s callback receives two references:
 
-- `t` -- the row **already stored**. Renders as a bare column name, which every dialect reads as the target row inside the conflict action.
+- `t` -- the row **already stored**. Renders qualified by the table name (`"sync_markers"."records"`). PostgreSQL requires that: inside `DO UPDATE SET` and its `WHERE`, both the target table and `EXCLUDED` are in scope, so a bare column name is rejected as ambiguous. MySQL and SQLite accept the same spelling.
 - `ex` -- the row this INSERT **proposed**. Renders as `EXCLUDED."col"` (PostgreSQL), `excluded."col"` (SQLite) or `` VALUES(`col`) `` (MySQL).
 
 Both are ordinary `qAlias` references, so the whole expression vocabulary composes -- `.add()`, `.mul()`, `coalesce()`, `greatest()`, `CASE`, JSON paths.
@@ -798,8 +798,8 @@ Both are ordinary `qAlias` references, so the whole expression vocabulary compos
 INSERT INTO "sync_markers" ("mac", "bucket_start", "records", "last_time", "synced_at")
 VALUES ($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)
 ON CONFLICT ("mac", "bucket_start") DO UPDATE
-   SET "records"   = ("records" + EXCLUDED."records"),
-       "last_time" = GREATEST("last_time", EXCLUDED."last_time"),
+   SET "records"   = ("sync_markers"."records" + EXCLUDED."records"),
+       "last_time" = GREATEST("sync_markers"."last_time", EXCLUDED."last_time"),
        "synced_at" = NOW()
 ```
 
@@ -870,7 +870,7 @@ await em.createInsertBuilder(Reading)
 ```sql
 -- PostgreSQL
 … DO UPDATE SET "value" = EXCLUDED."value", "taken_at" = EXCLUDED."taken_at"
-  WHERE "taken_at" < EXCLUDED."taken_at"
+  WHERE "readings"."taken_at" < EXCLUDED."taken_at"
 ```
 
 Rows failing the predicate are left untouched, so replaying an old batch can never move data backwards -- the write is idempotent without a read-modify-write round trip.
