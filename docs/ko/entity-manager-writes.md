@@ -788,7 +788,7 @@ await em.createInsertBuilder(SyncMarker)
 
 `doUpdate()`의 콜백은 참조 두 개를 받습니다.
 
-- `t` — **이미 저장되어 있는** 행. 한정하지 않은 컬럼명으로 렌더링되고, 세 드라이버 모두 충돌 절 안에서 이를 대상 행으로 읽습니다.
+- `t` — **이미 저장되어 있는** 행. 테이블명으로 한정해 렌더링됩니다(`"sync_markers"."records"`). PostgreSQL에서는 이게 필수입니다. `DO UPDATE SET`과 그 `WHERE` 안에서는 대상 테이블과 `EXCLUDED`가 모두 스코프에 있어서, 한정하지 않은 컬럼명은 모호하다고 거부되거든요. MySQL과 SQLite도 같은 표기를 받아들입니다.
 - `ex` — 이 INSERT가 **제안한** 행. `EXCLUDED."col"`(PostgreSQL) · `excluded."col"`(SQLite) · `` VALUES(`col`) ``(MySQL)로 렌더링됩니다.
 
 둘 다 평범한 `qAlias` 참조라서 표현식 전체가 그대로 조합됩니다. `.add()`, `.mul()`, `coalesce()`, `greatest()`, `CASE`, JSON 경로까지요.
@@ -798,8 +798,8 @@ await em.createInsertBuilder(SyncMarker)
 INSERT INTO "sync_markers" ("mac", "bucket_start", "records", "last_time", "synced_at")
 VALUES ($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)
 ON CONFLICT ("mac", "bucket_start") DO UPDATE
-   SET "records"   = ("records" + EXCLUDED."records"),
-       "last_time" = GREATEST("last_time", EXCLUDED."last_time"),
+   SET "records"   = ("sync_markers"."records" + EXCLUDED."records"),
+       "last_time" = GREATEST("sync_markers"."last_time", EXCLUDED."last_time"),
        "synced_at" = NOW()
 ```
 
@@ -870,7 +870,7 @@ await em.createInsertBuilder(Reading)
 ```sql
 -- PostgreSQL
 … DO UPDATE SET "value" = EXCLUDED."value", "taken_at" = EXCLUDED."taken_at"
-  WHERE "taken_at" < EXCLUDED."taken_at"
+  WHERE "readings"."taken_at" < EXCLUDED."taken_at"
 ```
 
 술어를 통과하지 못한 행은 그대로 남습니다. 그래서 오래된 배치를 다시 재생해도 데이터가 뒤로 가는 일이 없어요. 읽고-고치고-되쓰는 왕복 없이 쓰기가 멱등이 됩니다.

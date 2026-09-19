@@ -431,7 +431,7 @@ guarded upsert compares the stored row against the proposed one:
 ```typescript
 // Only advance rows the proposed batch actually supersedes.
 .doUpdateWhere(m.lastTime.lt(ex.lastTime))
-// WHERE "last_time" < EXCLUDED."last_time"
+// WHERE "sync_markers"."last_time" < EXCLUDED."last_time"
 ```
 
 ## Current date/time — `currentDate()` / `currentTime()` / `currentTimestamp()`

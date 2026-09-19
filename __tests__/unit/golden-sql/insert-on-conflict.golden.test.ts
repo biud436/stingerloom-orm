@@ -55,8 +55,8 @@ const cases: BuilderGoldenCase[] = [
         'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
         "VALUES (?, ?, ?, ?), (?, ?, ?, ?) " +
         'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
-        '"records" = ("records" + EXCLUDED."records"), ' +
-        '"lastTs" = GREATEST("lastTs", EXCLUDED."lastTs")',
+        '"records" = ("counter"."records" + EXCLUDED."records"), ' +
+        '"lastTs" = GREATEST("counter"."lastTs", EXCLUDED."lastTs")',
       values: ["aa", 100, 5, 150, "bb", 200, 7, 250],
     },
     mysql: {
@@ -64,8 +64,8 @@ const cases: BuilderGoldenCase[] = [
         "INSERT INTO `counter` (`mac`, `bucketStart`, `records`, `lastTs`) " +
         "VALUES (?, ?, ?, ?), (?, ?, ?, ?) " +
         "ON DUPLICATE KEY UPDATE " +
-        "`records` = (`records` + VALUES(`records`)), " +
-        "`lastTs` = GREATEST(`lastTs`, VALUES(`lastTs`))",
+        "`records` = (`counter`.`records` + VALUES(`records`)), " +
+        "`lastTs` = GREATEST(`counter`.`lastTs`, VALUES(`lastTs`))",
       values: ["aa", 100, 5, 150, "bb", 200, 7, 250],
     },
     sqlite: {
@@ -73,8 +73,8 @@ const cases: BuilderGoldenCase[] = [
         'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
         "VALUES (?, ?, ?, ?), (?, ?, ?, ?) " +
         'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
-        '"records" = ("records" + excluded."records"), ' +
-        '"lastTs" = MAX("lastTs", excluded."lastTs")',
+        '"records" = ("counter"."records" + excluded."records"), ' +
+        '"lastTs" = MAX("counter"."lastTs", excluded."lastTs")',
       values: ["aa", 100, 5, 150, "bb", 200, 7, 250],
     },
   },
@@ -220,7 +220,7 @@ const cases: BuilderGoldenCase[] = [
         'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
         "VALUES (?, ?, ?, ?) " +
         'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
-        '"lastTs" = EXCLUDED."lastTs" WHERE "lastTs" < ?',
+        '"lastTs" = EXCLUDED."lastTs" WHERE "counter"."lastTs" < ?',
       values: ["aa", 100, 5, 150, 300],
     },
     mysql: { throws: OrmErrorCode.UNSUPPORTED_OPERATION },
@@ -229,7 +229,7 @@ const cases: BuilderGoldenCase[] = [
         'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
         "VALUES (?, ?, ?, ?) " +
         'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
-        '"lastTs" = excluded."lastTs" WHERE "lastTs" < ?',
+        '"lastTs" = excluded."lastTs" WHERE "counter"."lastTs" < ?',
       values: ["aa", 100, 5, 150, 300],
     },
   },
@@ -246,7 +246,7 @@ const cases: BuilderGoldenCase[] = [
       text:
         'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
         "VALUES (?, ?, ?, ?) " +
-        'ON CONFLICT ("mac") WHERE "lastTs" IS NOT NULL DO UPDATE SET ' +
+        'ON CONFLICT ("mac") WHERE "counter"."lastTs" IS NOT NULL DO UPDATE SET ' +
         '"records" = EXCLUDED."records"',
       values: ["aa", 100, 5, 150],
     },
@@ -255,7 +255,7 @@ const cases: BuilderGoldenCase[] = [
       text:
         'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
         "VALUES (?, ?, ?, ?) " +
-        'ON CONFLICT ("mac") WHERE "lastTs" IS NOT NULL DO UPDATE SET ' +
+        'ON CONFLICT ("mac") WHERE "counter"."lastTs" IS NOT NULL DO UPDATE SET ' +
         '"records" = excluded."records"',
       values: ["aa", 100, 5, 150],
     },
@@ -294,7 +294,7 @@ const cases: BuilderGoldenCase[] = [
         "VALUES (?, ?, ?, ?) " +
         'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
         '"records" = EXCLUDED."records", "lastTs" = EXCLUDED."lastTs" ' +
-        'WHERE "lastTs" < EXCLUDED."lastTs"',
+        'WHERE "counter"."lastTs" < EXCLUDED."lastTs"',
       values: ["aa", 100, 5, 150],
     },
     mysql: { throws: OrmErrorCode.UNSUPPORTED_OPERATION },
@@ -304,7 +304,7 @@ const cases: BuilderGoldenCase[] = [
         "VALUES (?, ?, ?, ?) " +
         'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
         '"records" = excluded."records", "lastTs" = excluded."lastTs" ' +
-        'WHERE "lastTs" < excluded."lastTs"',
+        'WHERE "counter"."lastTs" < excluded."lastTs"',
       values: ["aa", 100, 5, 150],
     },
   },
@@ -324,8 +324,8 @@ const cases: BuilderGoldenCase[] = [
         'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
         "VALUES (?, ?, ?, ?) " +
         'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
-        '"lastTs" = CASE WHEN EXCLUDED."lastTs" > "lastTs" ' +
-        'THEN EXCLUDED."lastTs" ELSE "lastTs" END',
+        '"lastTs" = CASE WHEN EXCLUDED."lastTs" > "counter"."lastTs" ' +
+        'THEN EXCLUDED."lastTs" ELSE "counter"."lastTs" END',
       values: ["aa", 100, 5, 150],
     },
     mysql: {
@@ -333,8 +333,8 @@ const cases: BuilderGoldenCase[] = [
         "INSERT INTO `counter` (`mac`, `bucketStart`, `records`, `lastTs`) " +
         "VALUES (?, ?, ?, ?) " +
         "ON DUPLICATE KEY UPDATE " +
-        "`lastTs` = CASE WHEN VALUES(`lastTs`) > `lastTs` " +
-        "THEN VALUES(`lastTs`) ELSE `lastTs` END",
+        "`lastTs` = CASE WHEN VALUES(`lastTs`) > `counter`.`lastTs` " +
+        "THEN VALUES(`lastTs`) ELSE `counter`.`lastTs` END",
       values: ["aa", 100, 5, 150],
     },
     sqlite: {
@@ -342,8 +342,8 @@ const cases: BuilderGoldenCase[] = [
         'INSERT INTO "counter" ("mac", "bucketStart", "records", "lastTs") ' +
         "VALUES (?, ?, ?, ?) " +
         'ON CONFLICT ("mac", "bucketStart") DO UPDATE SET ' +
-        '"lastTs" = CASE WHEN excluded."lastTs" > "lastTs" ' +
-        'THEN excluded."lastTs" ELSE "lastTs" END',
+        '"lastTs" = CASE WHEN excluded."lastTs" > "counter"."lastTs" ' +
+        'THEN excluded."lastTs" ELSE "counter"."lastTs" END',
       values: ["aa", 100, 5, 150],
     },
   },
