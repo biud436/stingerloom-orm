@@ -94,4 +94,57 @@ describe("@Index(columns) — class-level composite index (#85)", () => {
     expect(ddls).toHaveLength(2);
     expect(ddls[0]).toContain("CREATE INDEX IF NOT EXISTS");
   });
+
+  it("resolves property keys to their DB column names", () => {
+    @Entity({ name: "audit_events" })
+    @Index(["createdAt", "actorId"], "idx_audit_created_actor")
+    class AuditEvent {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "datetime", name: "created_at" })
+      createdAt!: Date;
+
+      @Column({ type: "int", name: "actor_id" })
+      actorId!: number;
+    }
+
+    const gen = new SchemaGenerator({ dialect: "postgres" });
+    const [ddl] = gen.generateCompositeIndexDDL(AuditEvent);
+    // Unique indexes already resolved property keys (#176); composite
+    // non-unique ones emitted the property name verbatim, producing DDL
+    // against a column that does not exist.
+    expect(ddl).toContain('("created_at", "actor_id")');
+    expect(ddl).not.toContain("createdAt");
+  });
+
+  it("names an unnamed composite index after the resolved columns", () => {
+    @Entity({ name: "sessions" })
+    @Index(["userId", "expiresAt"])
+    class Session {
+      @PrimaryGeneratedColumn()
+      id!: number;
+
+      @Column({ type: "int", name: "user_id" })
+      userId!: number;
+
+      @Column({ type: "datetime", name: "expires_at" })
+      expiresAt!: Date;
+    }
+
+    const gen = new SchemaGenerator({ dialect: "postgres" });
+    const [ddl] = gen.generateCompositeIndexDDL(Session);
+    expect(ddl).toContain("user_id");
+    expect(ddl).toContain("expires_at");
+    expect(ddl).not.toContain("userId");
+  });
+
+  it("exposes each statement's index name alongside its DDL", () => {
+    const gen = new SchemaGenerator({ dialect: "postgres" });
+    const defs = gen.generateCompositeIndexDefs(Order);
+    expect(defs).toHaveLength(2);
+    expect(defs[0].name).toBe("idx_custom_name");
+    expect(defs[0].ddl).toContain("idx_custom_name");
+    expect(defs[1].name).toEqual(expect.any(String));
+  });
 });

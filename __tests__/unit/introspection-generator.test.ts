@@ -241,7 +241,7 @@ describe("EntityCodeBuilder", () => {
       expect(code).toContain("name!: string;");
       // Should detect nullable
       expect(code).toContain('@Column({ type: "varchar", length: 255, nullable: true })');
-      expect(code).toContain("email!: string;");
+      expect(code).toContain("email!: string | null;");
       // Should contain boolean column
       expect(code).toContain('@Column({ type: "boolean" })');
       expect(code).toContain("active!: boolean;");
@@ -513,7 +513,9 @@ describe("EntityCodeBuilder", () => {
       expect(code).toContain("@ManyToOne(() => User, (entity: any) => entity.author)");
       expect(code).not.toContain("joinColumn:");
       // FK column declared via @RelationColumn
-      expect(code).toContain('@RelationColumn({ name: "author_id" })');
+      expect(code).toContain(
+        '@RelationColumn({ name: "author_id", type: "int", nullable: false, referencedColumn: "id" })',
+      );
       expect(code).toContain("author!: Relation<User>;");
       // Should contain import for referenced User class
       expect(code).toContain('import { User } from "./user.entity.js";');
@@ -614,7 +616,7 @@ describe("EntityCodeBuilder", () => {
       expect(code).toContain(
         '@DeletedAt({ type: "timestamptz", name: "deleted_at" })',
       );
-      expect(code).toContain("deletedAt!: Date;");
+      expect(code).toContain("deletedAt!: Date | null;");
     });
 
     it("should NOT treat nullable created_at as @CreateTimestamp", () => {
@@ -734,9 +736,13 @@ describe("EntityCodeBuilder", () => {
       expect(code).toContain("idDescendant!: number;");
 
       // And the FK relation properties (with `id_` prefix stripped → ancestor/descendant)
-      expect(code).toContain('@RelationColumn({ name: "id_ancestor" })');
+      expect(code).toContain(
+        '@RelationColumn({ name: "id_ancestor", type: "int", nullable: false, referencedColumn: "id" })',
+      );
       expect(code).toContain("ancestor!: Relation<PostComment>;");
-      expect(code).toContain('@RelationColumn({ name: "id_descendant" })');
+      expect(code).toContain(
+        '@RelationColumn({ name: "id_descendant", type: "int", nullable: false, referencedColumn: "id" })',
+      );
       expect(code).toContain("descendant!: Relation<PostComment>;");
     });
   });
@@ -773,7 +779,9 @@ describe("EntityCodeBuilder", () => {
       expect(code).not.toMatch(/import\s*\{\s*Department\s*\}\s*from/);
       // But the FK relation should still resolve to Department.
       expect(code).toContain("@ManyToOne(() => Department, (entity: any) => entity.parent)");
-      expect(code).toContain('@RelationColumn({ name: "parent_id" })');
+      expect(code).toContain(
+        '@RelationColumn({ name: "parent_id", type: "int", nullable: true, referencedColumn: "id" })',
+      );
     });
   });
 
@@ -792,7 +800,9 @@ describe("EntityCodeBuilder", () => {
 
       // FK property must not collide with the `user` text column
       expect(code).toContain("userId!: Relation<User>;");
-      expect(code).toContain('@RelationColumn({ name: "user_id" })');
+      expect(code).toContain(
+        '@RelationColumn({ name: "user_id", type: "int", nullable: false, referencedColumn: "id" })',
+      );
       expect(code).toContain("user!: string;");
     });
 
@@ -1215,7 +1225,9 @@ describe("IntrospectionGenerator", () => {
       expect(entities).toHaveLength(1);
       const code = entities[0].code;
       expect(code).toContain("@ManyToOne(() => User, (entity: any) => entity.author)");
-      expect(code).toContain('@RelationColumn({ name: "author_id" })');
+      expect(code).toContain(
+        '@RelationColumn({ name: "author_id", type: "int", nullable: false, referencedColumn: "id" })',
+      );
     });
 
     it("should reject SQLite table names containing NUL characters", async () => {

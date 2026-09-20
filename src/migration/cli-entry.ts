@@ -27,6 +27,7 @@ import { Migration } from "./Migration";
 import { MigrationResult } from "./MigrationRunner";
 import { resolveDbOptions } from "./cli-config";
 import { runIntrospect } from "../introspection/IntrospectionCli";
+import type { EntityCodeStyle } from "../introspection/EntityCodeBuilder";
 import { OrmError } from "../errors/OrmError";
 
 type CliCommand = MigrationCommand | "introspect";
@@ -77,6 +78,7 @@ const VALUE_FLAGS: Record<string, string> = {
   "--include": "include",
   "--exclude": "exclude",
   "--import-path": "importPath",
+  "--style": "style",
 };
 
 /** Flags that are on/off by their presence alone. */
@@ -96,6 +98,7 @@ export interface ParsedArgs {
   include?: string;
   exclude?: string;
   importPath?: string;
+  style?: string;
   dryRun?: boolean;
   help: boolean;
   version: boolean;
@@ -129,6 +132,7 @@ Options (introspect):
   --include <list>    Comma-separated whitelist of tables to generate
   --exclude <list>    Comma-separated blacklist of tables to skip
   --import-path <p>   Import path for ORM decorators (default: @stingerloom/orm)
+  --style <style>     Entity notation to emit: decorator (default) | code-first
   --dry-run           Don't write files; report what would be generated
 
   --version           Print the installed @stingerloom/orm version
@@ -320,6 +324,18 @@ export function migrationFailures(result: unknown): MigrationResult[] {
   );
 }
 
+/**
+ * Validate `--style`. An unknown value is rejected rather than silently
+ * falling back to decorators — the whole point of the flag is choosing.
+ */
+function parseStyle(value?: string): EntityCodeStyle | undefined {
+  if (value === undefined) return undefined;
+  if (value === "decorator" || value === "code-first") return value;
+  throw new CliError(`Unknown --style value: "${value}"`, [
+    "Valid styles: decorator, code-first",
+  ]);
+}
+
 async function runIntrospectCommand(
   dbOptions: any,
   parsed: ParsedArgs,
@@ -332,15 +348,18 @@ async function runIntrospectCommand(
           .filter(Boolean)
       : undefined;
 
+  const style = parseStyle(parsed.style);
+
   try {
     const result = await runIntrospect(dbOptions, {
       outputDir: parsed.output,
       schema: parsed.schema,
       includeTables: splitList(parsed.include),
       excludeTables: splitList(parsed.exclude),
-      codeBuilderOptions: parsed.importPath
-        ? { importPath: parsed.importPath }
-        : undefined,
+      codeBuilderOptions: {
+        ...(parsed.importPath ? { importPath: parsed.importPath } : {}),
+        ...(style ? { style } : {}),
+      },
       dryRun: parsed.dryRun,
     });
 

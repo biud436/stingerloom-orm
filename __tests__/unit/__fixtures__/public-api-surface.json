@@ -164,6 +164,7 @@
     "EntityClass",
     "EntityCodeBuilder",
     "EntityCodeBuilderOptions",
+    "EntityCodeStyle",
     "EntityColumns",
     "EntityEventEmitter",
     "EntityEventListener",
@@ -479,8 +480,8 @@
     "SnakeNamingStrategy",
     "SnapshotStrategy",
     "SortDirection",
-    "sql",
     "Sql",
+    "sql",
     "SqliteCapabilities",
     "SqliteConnector",
     "SqliteDatabaseClientOptions",
@@ -931,11 +932,15 @@
     "ValidationError"
   ],
   "./introspection": [
+    "buildEntityModel",
     "DbColumn",
     "DbForeignKey",
     "DbIndex",
     "EntityCodeBuilder",
     "EntityCodeBuilderOptions",
+    "EntityCodeStyle",
+    "EntityModel",
+    "EntityModelField",
     "GeneratedEntity",
     "IntrospectionCliOptions",
     "IntrospectionCliResult",
@@ -944,6 +949,9 @@
     "IntrospectionGeneratorOptions",
     "IntrospectionQueryFn",
     "IntrospectionTypeMapper",
+    "ModelColumnField",
+    "ModelIndex",
+    "ModelRelationField",
     "runIntrospect"
   ],
   "./metadata": [

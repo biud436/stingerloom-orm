@@ -651,6 +651,7 @@ export {
   DbIndex,
   EntityCodeBuilder,
   EntityCodeBuilderOptions,
+  EntityCodeStyle,
 } from "./introspection/EntityCodeBuilder";
 export {
   IntrospectionCliOptions,
