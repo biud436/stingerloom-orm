@@ -11,7 +11,16 @@ export {
   DbIndex,
   EntityCodeBuilder,
   EntityCodeBuilderOptions,
+  EntityCodeStyle,
 } from "./EntityCodeBuilder";
+export {
+  buildEntityModel,
+  EntityModel,
+  EntityModelField,
+  ModelColumnField,
+  ModelIndex,
+  ModelRelationField,
+} from "./EntityModel";
 export {
   IntrospectionCliOptions,
   IntrospectionCliResult,

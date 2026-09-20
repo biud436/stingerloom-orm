@@ -102,6 +102,19 @@ describe("parseArgs", () => {
     expect(parsed.include).toBe("users,posts");
     expect(parsed.errors).toEqual([]);
   });
+
+  it("parses --style for introspect", () => {
+    const parsed = parseArgs([
+      "node",
+      "cli",
+      "introspect",
+      "--style",
+      "code-first",
+    ]);
+
+    expect(parsed.style).toBe("code-first");
+    expect(parsed.errors).toEqual([]);
+  });
 });
 
 describe("migrationFailures", () => {

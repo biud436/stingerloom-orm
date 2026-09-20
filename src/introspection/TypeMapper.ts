@@ -173,6 +173,14 @@ export class IntrospectionTypeMapper {
       // SQLite reports declared types verbatim; strip parens like
       // `VARCHAR(255)` → `VARCHAR` so the map lookup still works.
       const stripped = normalized.replace(/\s*\([^)]*\)/, "").trim();
+      // `TEXT(n)` is what this ORM's own SQLite DDL emits for a varchar
+      // column, so a width-carrying TEXT maps back to varchar — otherwise
+      // introspecting a database the ORM created turned every varchar into
+      // an unbounded text column.
+      const declared = (columnTypeFull ?? dbType).toUpperCase();
+      if (stripped === "TEXT" && this.parseSqliteWidth(declared) !== null) {
+        return "varchar";
+      }
       return this.sqliteMap[stripped] ?? "varchar";
     }
 
@@ -191,6 +199,27 @@ export class IntrospectionTypeMapper {
 
     const map = dialect === "mysql" ? this.mysqlMap : this.postgresMap;
     return map[normalized] ?? "varchar";
+  }
+
+  /**
+   * Whether the dialect has an explicit mapping for this database type.
+   *
+   * {@link toColumnType} falls back to `varchar` for anything it does not
+   * recognize, which silently turns an `inet`, `interval`, or `tsvector`
+   * column into `VARCHAR(255)` when the entity is used to recreate the table.
+   * Callers use this to flag such columns instead of letting the fallback pass
+   * for a real mapping.
+   */
+  static hasMapping(dbType: string, dialect: IntrospectionDialect): boolean {
+    const normalized = dbType.toUpperCase().trim();
+    if (dialect === "sqlite") {
+      const stripped = normalized.replace(/\s*\([^)]*\)/, "").trim();
+      return stripped in this.sqliteMap;
+    }
+    if (dialect === "mysql") {
+      return normalized in this.mysqlMap;
+    }
+    return normalized in this.postgresMap;
   }
 
   /**

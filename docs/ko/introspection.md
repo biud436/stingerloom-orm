@@ -6,7 +6,7 @@
 
 인트로스펙션이 없다면 pgAdmin이나 DBeaver를 열어 테이블 정의를 하나씩 살피며 47개의 엔티티 파일을 직접 작성해야 합니다. 컬럼마다 타입, null 허용 여부, 길이, 기본값을 확인합니다. 외래 키마다 관계를 파악해 `@ManyToOne` 데코레이터를 추가합니다. 몇 시간이 걸리고 거의 확실히 실수가 나옵니다.
 
-인트로스펙션을 사용하면 제너레이터를 데이터베이스에 연결하기만 해도 47개의 엔티티 파일이 자동으로 생성됩니다. 외래 키는 `@ManyToOne` + `@RelationColumn`이 됩니다. UNIQUE 제약은 `@UniqueIndex`가 됩니다. `created_at` / `updated_at` / `deleted_at` 컬럼은 `@CreateTimestamp` / `@UpdateTimestamp` / `@DeletedAt`로 인식됩니다. snake_case 컬럼명은 명시적 `name:` 옵션을 통해 보존되어 — 생성된 엔티티는 **라운드 트립이 안정적**입니다. 즉 그 결과를 다시 빈 DB에 적용하면 동일한 스키마가 만들어집니다.
+인트로스펙션을 사용하면 제너레이터를 데이터베이스에 연결하기만 해도 47개의 엔티티 파일이 자동으로 생성됩니다. 이 ORM이 지원하는 두 가지 엔티티 표기법(데코레이터, 그리고 데코레이터 없는 `defineEntity` 빌더) 중 어느 쪽으로 생성할지도 고를 수 있습니다([출력 스타일 선택](#출력-스타일-선택) 참고). 외래 키는 `@ManyToOne` + `@RelationColumn`이 됩니다. UNIQUE 제약은 `@UniqueIndex`가 됩니다. `created_at` / `updated_at` / `deleted_at` 컬럼은 `@CreateTimestamp` / `@UpdateTimestamp` / `@DeletedAt`로 인식됩니다. snake_case 컬럼명은 명시적 `name:` 옵션을 통해 보존되어 — 생성된 엔티티는 **라운드 트립이 안정적**입니다. 즉 그 결과를 다시 빈 DB에 적용하면 동일한 스키마가 만들어집니다.
 
 인트로스펙션은 스키마 동기화의 반대 동작입니다. `synchronize: true`가 엔티티를 읽어 테이블을 만든다면, 인트로스펙션은 테이블을 읽어 엔티티를 만듭니다.
 
@@ -75,6 +75,9 @@ npx stingerloom introspect --include users,posts,comments
 
 # 파일을 쓰지 않고 미리 보기만
 npx stingerloom introspect --dry-run
+
+# 데코레이터 대신 `defineEntity` 기반 코드 우선 엔티티로 생성
+npx stingerloom introspect --style code-first
 ```
 
 | 플래그 | 설명 |
@@ -83,7 +86,8 @@ npx stingerloom introspect --dry-run
 | `--schema <name>` | PostgreSQL 스키마. 기본값: `public` |
 | `--include <list>` | 생성할 테이블의 콤마 구분 화이트리스트 |
 | `--exclude <list>` | 건너뛸 테이블의 콤마 구분 블랙리스트 |
-| `--import-path <p>` | ORM 데코레이터 import 경로. 기본값: `@stingerloom/orm` |
+| `--import-path <p>` | ORM 패키지 import 경로. 기본값: `@stingerloom/orm` |
+| `--style <style>` | 생성할 엔티티 표기법: `decorator`(기본값) 또는 `code-first` |
 | `--dry-run` | 파일을 쓰지 않고 생성 대상만 보고 |
 | `--config <path>` | 명시적 설정 파일 경로(기본값: 자동 감지) |
 
@@ -205,7 +209,7 @@ export class User {
   updatedAt!: Date;
 
   @ManyToOne(() => Profile, (entity: any) => entity.profile)
-  @RelationColumn({ name: "profile_id" })
+  @RelationColumn({ name: "profile_id", type: "int", nullable: true, referencedColumn: "id" })
   profile!: Profile;
 }
 ```
@@ -215,8 +219,73 @@ export class User {
 - **`name:` 옵션이 DB 컬럼명을 보존**합니다 (`access_key`, `is_valid`). 기본 identity NamingStrategy에서도 동일한 컬럼명으로 라운드 트립됩니다. 이게 없으면 재적용 시 DB에 `accessKey` 컬럼이 만들어져 깨집니다.
 - **TINYINT(1)은 `boolean`으로 인식**되고, 더 넓은 TINYINT(예: `TINYINT(4)`, `TINYINT UNSIGNED`)는 `int`로 매핑됩니다.
 - **`created_at` / `updated_at`은 타임스탬프 데코레이터**로 출력되고 컬럼명이 옵션으로 전달됩니다.
-- **FK 컬럼 `profile_id`는 `@Column`이 아니라** `@ManyToOne` + `@RelationColumn({ name })` 한 쌍으로 표현됩니다. deprecated된 `joinColumn` 옵션은 사용하지 않습니다.
+- **FK 컬럼 `profile_id`는 `@Column`이 아니라** `@ManyToOne` + `@RelationColumn` 한 쌍으로 표현되며, FK 컬럼명·타입·null 허용 여부를 함께 담습니다. deprecated된 `joinColumn` 옵션은 사용하지 않습니다.
 - **UNIQUE 인덱스는 클래스 레벨 `@UniqueIndex`로 승격**되며 원본 인덱스명을 유지합니다.
+
+---
+
+## 출력 스타일 선택
+
+이 ORM에는 엔티티를 선언하는 두 가지 방식이 있고, 인트로스펙션은 둘 중 어느 쪽으로든 코드를 생성할 수 있습니다. 두 방식 모두 같은 메타데이터 브리지를 거치기 때문에 만들어지는 스키마는 완전히 동일하고, 표기법만 달라집니다.
+
+```bash
+npx stingerloom introspect --style decorator    # 기본값
+npx stingerloom introspect --style code-first
+```
+
+```typescript
+await runIntrospect(dbOptions, {
+  outputDir: "./src/entities",
+  codeBuilderOptions: { style: "code-first" },
+});
+```
+
+같은 `posts` 테이블을 두 스타일로 각각 생성하면 이렇습니다.
+
+```typescript
+// --style decorator
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, RelationColumn, type Relation } from "@stingerloom/orm";
+import { User } from "./user.entity.js";
+
+@Entity({ name: "posts" })
+export class Post {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "varchar", length: 200 })
+  title!: string;
+
+  @ManyToOne(() => User, (entity: any) => entity.author)
+  @RelationColumn({ name: "author_id", type: "int", nullable: false, referencedColumn: "id" })
+  author!: Relation<User>;
+}
+```
+
+```typescript
+// --style code-first
+import { defineEntity, t, type InferEntity, type AnyEntityClass } from "@stingerloom/orm";
+import { User } from "./user.entity.js";
+
+export const Post = defineEntity(
+  "posts",
+  {
+    id: t.int().primary().generated(),
+    title: t.varchar(200),
+    author: t.manyToOne<User>((): AnyEntityClass => User, {
+      relationColumn: { name: "author_id", type: "int", nullable: false, referencedColumn: "id" },
+    }),
+  },
+);
+
+export interface Post extends InferEntity<typeof Post> {}
+```
+
+빌드에 `experimentalDecorators` / `emitDecoratorMetadata`를 넣고 싶지 않거나, 행 타입을 직접 쓰지 않고 `InferEntity`로 추론시키고 싶다면 `code-first`를 고르세요. 코드베이스가 이미 데코레이터 기반이라면 `decorator`가 자연스럽습니다.
+
+코드 우선 출력에는 반드시 지켜져야 하는 형태가 두 가지 있습니다.
+
+- 관계 대상 thunk에 반환 타입을 붙입니다(`(): AnyEntityClass => User`). 이 주석이 없으면 서로를 참조하는 두 엔티티의 타입을 동시에 추론할 수 없습니다(TS7022).
+- 행 타입은 `type` 별칭이 아니라 인터페이스 병합(`export interface Post extends InferEntity<typeof Post> {}`)으로 선언합니다. 인터페이스는 멤버를 지연 해석하기 때문에, `parent_id` 같은 자기참조 테이블이 순환 타입이 되는 것을 막아 줍니다. 자기참조일 때는 shape 타입 인자도 생략합니다: `t.manyToOne((): AnyEntityClass => Department, …)`.
 
 ---
 
@@ -233,8 +302,26 @@ export class User {
 | MariaDB의 `COLUMN_DEFAULT = 'NULL'` 노이즈는 필터링 | 그대로 두면 nullable 컬럼에 `default: "(NULL)"` 잡음이 끼임 |
 | 자기참조 FK는 자기 자신을 import하지 않음 | 로컬 클래스 선언과 충돌 |
 | 복합 PK + FK인 컬럼은 `@PrimaryColumn`과 관계 양쪽을 모두 출력 | 클로저 테이블에는 실제 PK가 필요 |
+| FK 컬럼도 자기 `type`과 `nullable`을 직접 들고 감 | 대상 PK에서 추론하게 두면 원본 스키마의 `NOT NULL`이 사라지고 컬럼 타입도 달라질 수 있음 |
+| 기본 키는 절대 nullable로 출력하지 않음 | SQLite는 `INTEGER PRIMARY KEY`(rowid 별칭)를 `notnull = 0`으로 보고함 |
+| 길이 제한이 없는 `VARCHAR`는 `text`로 출력 | 그대로 두면 ORM 기본 컬럼 길이가 적용되어 PostgreSQL의 무제한 `varchar`가 `VARCHAR(255)`로 잘림 |
+| `precision` / `scale`은 `NUMERIC` / `DECIMAL` 원본에만 유지 | `information_schema`가 `double precision`에 이진 정밀도 53을 보고해 `NUMERIC(53, …)`이 만들어지던 문제 |
 
 덕분에 레거시 DB를 인트로스펙트해 엔티티를 커밋한 뒤, CI/CD가 스테이징 DB에 재적용해도 동일한 결과를 얻을 수 있습니다.
+
+### 에코가 보존하지 못하는 것
+
+이 왕복(에코)은 통합 테스트로 끝까지 검증합니다. SQLite 스키마에서 두 스타일 모두로 엔티티를 생성하고, 타입 체크한 뒤, 그 엔티티로 스키마를 다시 만들어 두 데이터베이스를 비교합니다. 그다음 같은 루프를 한 번 더 돌려 N세대와 N+1세대 결과가 바이트 단위로 같은지까지 확인합니다.
+
+다만 원리상 왕복이 불가능한 경우도 있습니다. 이런 항목은 동기화 시점에 발견되지 않도록, 해당 필드 위에 `// NOTE:` 주석으로 먼저 알려 줍니다.
+
+| 상황 | 동작 |
+|------|------|
+| 매퍼가 모르는 타입(`inet`, `interval`, `tsvector` 등) | `varchar`로 매핑하고 경고를 남깁니다. 그 엔티티를 동기화해도 원래 타입은 **복원되지 않으므로** 커스텀 컬럼 타입을 등록하거나 컬럼을 직접 수정해야 합니다 |
+| PostgreSQL `double precision` / `real` | 정확히 대응되는 ORM 컬럼 타입이 없어 `double`(`NUMERIC`으로 출력) / `float`(`REAL`로 출력)로 매핑하고 경고를 남깁니다 |
+| 기본 키가 아닌 컬럼을 참조하는 외래 키 | 경고를 남깁니다. 스키마 생성은 항상 대상 테이블의 기본 키를 기준으로 제약을 만듭니다 |
+| SQLite 선언 타입 | SQLite는 *어피니티*만 저장하고, 이 ORM은 `boolean`을 `INTEGER`로, 모든 날짜/시간 타입을 `TEXT`로 출력합니다. 따라서 이 ORM이 만든 DB를 다시 인트로스펙트하면 `INTEGER` / `TEXT`로 읽혀 `BOOLEAN`·`DATETIME`과 거기서 파생되는 타임스탬프 데코레이터는 두 번째 패스에서 복원되지 않습니다. 다른 도구가 만든 스키마를 읽는 첫 세대에는 해당하지 않습니다 |
+| `@OneToMany`, `@OneToOne`, cascade 규칙 | 단방향 FK 인트로스펙션만으로는 알 수 없습니다 — [알려진 한계](#알려진-한계) 참고 |
 
 ---
 
@@ -317,9 +404,11 @@ SQLite는 `PRAGMA table_info()`, `PRAGMA foreign_key_list()`, `PRAGMA index_list
 
 ```typescript
 @ManyToOne(() => User, (entity: any) => entity.author)
-@RelationColumn({ name: "author_id" })
+@RelationColumn({ name: "author_id", type: "int", nullable: false, referencedColumn: "id" })
 author!: Relation<User>;
 ```
+
+`@RelationColumn`은 FK 컬럼의 `type`과 `nullable`을 직접 적어 둡니다. 대상 테이블의 기본 키에서 추론하게 두면 컬럼이 기본적으로 NULL 허용이 되어 원본 스키마의 `NOT NULL`이 조용히 사라지기 때문입니다.
 
 프로퍼티명은 FK 컬럼명으로부터 다음과 같이 도출됩니다:
 
@@ -340,7 +429,7 @@ export class Department {
   deptSq!: number;
 
   @ManyToOne(() => Department, (entity: any) => entity.upperDeptSq)
-  @RelationColumn({ name: "UPPER_DEPT_SQ" })
+  @RelationColumn({ name: "UPPER_DEPT_SQ", type: "int", nullable: true, referencedColumn: "DEPT_SQ" })
   upperDeptSq!: Department;
 }
 ```
@@ -359,11 +448,11 @@ export class PostCommentClosure {
   idDescendant!: number;
 
   @ManyToOne(() => PostComment, (entity: any) => entity.ancestor)
-  @RelationColumn({ name: "id_ancestor" })
+  @RelationColumn({ name: "id_ancestor", type: "int", nullable: false, referencedColumn: "id" })
   ancestor!: PostComment;
 
   @ManyToOne(() => PostComment, (entity: any) => entity.descendant)
-  @RelationColumn({ name: "id_descendant" })
+  @RelationColumn({ name: "id_descendant", type: "int", nullable: false, referencedColumn: "id" })
   descendant!: PostComment;
 }
 ```
@@ -433,6 +522,7 @@ PK를 정확히 덮는 인덱스는 제외됩니다(이미 `@PrimaryColumn` / `@
 | 옵션 | 타입 | 기본값 |
 |------|------|--------|
 | `importPath` | `string` | `"@stingerloom/orm"` |
+| `style` | `"decorator" \| "code-first"` | `"decorator"` |
 
 ---
 
@@ -459,6 +549,7 @@ PK를 정확히 덮는 인덱스는 제외됩니다(이미 `@PrimaryColumn` / `@
 | 메서드 | 시그니처 | 설명 |
 |-------|---------|------|
 | `toColumnType(dbType, dialect, columnTypeFull?)` | `(...): ColumnType` | DB 타입을 매핑. MySQL `COLUMN_TYPE`을 세 번째 인자로 전달하면 TINYINT 폭 식별 |
+| `hasMapping(dbType, dialect)` | `(...): boolean` | 해당 방언에 실제 매핑이 있는지(= `varchar` 폴백이 아닌지) 여부 |
 | `toTsType(columnType)` | `(columnType: ColumnType): string` | ORM `ColumnType` → TypeScript 타입 문자열 |
 | `parseSqliteWidth(declaredType)` | `(declaredType: string): number \| null` | `VARCHAR(N)` 같은 표기에서 `N` 추출 |
 | `parseSqlitePrecisionScale(declaredType)` | `(declaredType: string): { precision, scale } \| null` | `DECIMAL(P, S)`에서 `(P, S)` 추출 |
@@ -467,8 +558,8 @@ PK를 정확히 덮는 인덱스는 제외됩니다(이미 `@PrimaryColumn` / `@
 
 | 메서드 | 시그니처 | 설명 |
 |-------|---------|------|
-| `constructor` | `(options?: EntityCodeBuilderOptions)` | import 경로를 선택 옵션으로 받는 빌더 생성 |
-| `build(table, columns, pks, fks, dialect, indexes?)` | `(...): string` | TypeScript 엔티티 소스 코드 생성 |
+| `constructor` | `(options?: EntityCodeBuilderOptions)` | import 경로와 출력 스타일을 선택 옵션으로 받는 빌더 생성 |
+| `build(table, columns, pks, fks, dialect, indexes?, context?)` | `(...): string` | TypeScript 엔티티 소스 코드 생성. `context.primaryKeysByTable`을 넘기면 기본 키가 아닌 컬럼을 참조하는 FK에 경고를 남깁니다 |
 | `tableNameToClassName(table)` | `(string): string` | snake_case 테이블명 → PascalCase 클래스명 |
 | `classNameToFileName(className)` | `(string): string` | PascalCase 클래스명 → kebab-case 파일명 |
 

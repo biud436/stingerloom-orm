@@ -6,7 +6,7 @@ You join a new team. The project has a database with 47 tables, hundreds of colu
 
 Without introspection, you would open pgAdmin or DBeaver, look at each table definition, and manually write 47 entity files. For each column, you would check the type, nullability, length, and default. For each foreign key, you would figure out the relation and add a `@ManyToOne` decorator. This would take hours, and you would almost certainly make mistakes.
 
-With introspection, you point the generator at your database and it produces all 47 entity files automatically. Foreign keys become `@ManyToOne` + `@RelationColumn`. Unique constraints become `@UniqueIndex`. `created_at` / `updated_at` / `deleted_at` columns are recognized and emitted as `@CreateTimestamp` / `@UpdateTimestamp` / `@DeletedAt`. Snake_case column names are preserved via explicit `name:` options so the generated entity is **round-trip stable** — applying it back to a fresh database creates the exact same schema.
+With introspection, you point the generator at your database and it produces all 47 entity files automatically — in either of the ORM's two entity notations (decorators or the decorator-free `defineEntity` builder; see [Choosing the Output Style](#choosing-the-output-style)). Foreign keys become `@ManyToOne` + `@RelationColumn`. Unique constraints become `@UniqueIndex`. `created_at` / `updated_at` / `deleted_at` columns are recognized and emitted as `@CreateTimestamp` / `@UpdateTimestamp` / `@DeletedAt`. Snake_case column names are preserved via explicit `name:` options so the generated entity is **round-trip stable** — applying it back to a fresh database creates the exact same schema.
 
 Introspection is the reverse of schema synchronization. Where `synchronize: true` reads your entities and creates tables, introspection reads your tables and creates entities.
 
@@ -75,6 +75,9 @@ npx stingerloom introspect --include users,posts,comments
 
 # Preview without writing files
 npx stingerloom introspect --dry-run
+
+# Emit decorator-free `defineEntity` entities instead of decorated classes
+npx stingerloom introspect --style code-first
 ```
 
 | Flag | Description |
@@ -83,7 +86,8 @@ npx stingerloom introspect --dry-run
 | `--schema <name>` | PostgreSQL schema. Default: `public` |
 | `--include <list>` | Comma-separated whitelist of tables to generate |
 | `--exclude <list>` | Comma-separated blacklist of tables to skip |
-| `--import-path <p>` | Import path for ORM decorators. Default: `@stingerloom/orm` |
+| `--import-path <p>` | Import path for the ORM package. Default: `@stingerloom/orm` |
+| `--style <style>` | Entity notation to emit: `decorator` (default) or `code-first` |
 | `--dry-run` | Report what would be generated without writing files |
 | `--config <path>` | Explicit config file path (default: auto-detect) |
 
@@ -205,7 +209,7 @@ export class User {
   updatedAt!: Date;
 
   @ManyToOne(() => Profile, (entity: any) => entity.profile)
-  @RelationColumn({ name: "profile_id" })
+  @RelationColumn({ name: "profile_id", type: "int", nullable: true, referencedColumn: "id" })
   profile!: Profile;
 }
 ```
@@ -215,8 +219,73 @@ Things to notice:
 - **`name:` options preserve the DB column name** (`access_key`, `is_valid`) so the generated entity round-trips under the default identity NamingStrategy. Without this, applying the entity would create an `accessKey` column instead of `access_key`.
 - **TINYINT(1) is recognized as `boolean`**; wider TINYINT widths (`TINYINT(4)`, `TINYINT UNSIGNED`) map to `int`.
 - **`created_at` / `updated_at` are emitted as timestamp decorators** with the column name passed through.
-- **The FK column `profile_id` is not a `@Column`** — it's expressed via `@ManyToOne` + `@RelationColumn({ name })`. The deprecated `joinColumn` option is not used.
+- **The FK column `profile_id` is not a `@Column`** — it's expressed via `@ManyToOne` + `@RelationColumn`, which carries the FK column's own name, type and nullability. The deprecated `joinColumn` option is not used.
 - **The unique index is hoisted to a class-level `@UniqueIndex`** with the original index name preserved.
+
+---
+
+## Choosing the Output Style
+
+This ORM has two equivalent ways to declare an entity, and introspection can emit either one. Both go through the same metadata bridge, so the generated schema is identical — only the notation differs.
+
+```bash
+npx stingerloom introspect --style decorator    # default
+npx stingerloom introspect --style code-first
+```
+
+```typescript
+await runIntrospect(dbOptions, {
+  outputDir: "./src/entities",
+  codeBuilderOptions: { style: "code-first" },
+});
+```
+
+The same `posts` table in both styles:
+
+```typescript
+// --style decorator
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, RelationColumn, type Relation } from "@stingerloom/orm";
+import { User } from "./user.entity.js";
+
+@Entity({ name: "posts" })
+export class Post {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "varchar", length: 200 })
+  title!: string;
+
+  @ManyToOne(() => User, (entity: any) => entity.author)
+  @RelationColumn({ name: "author_id", type: "int", nullable: false, referencedColumn: "id" })
+  author!: Relation<User>;
+}
+```
+
+```typescript
+// --style code-first
+import { defineEntity, t, type InferEntity, type AnyEntityClass } from "@stingerloom/orm";
+import { User } from "./user.entity.js";
+
+export const Post = defineEntity(
+  "posts",
+  {
+    id: t.int().primary().generated(),
+    title: t.varchar(200),
+    author: t.manyToOne<User>((): AnyEntityClass => User, {
+      relationColumn: { name: "author_id", type: "int", nullable: false, referencedColumn: "id" },
+    }),
+  },
+);
+
+export interface Post extends InferEntity<typeof Post> {}
+```
+
+Pick `code-first` when you do not want `experimentalDecorators` / `emitDecoratorMetadata` in your build, or when you would rather have the row type inferred (`InferEntity`) than written out. Pick `decorator` when the rest of your codebase is decorator-based.
+
+Two details in the code-first output are load-bearing:
+
+- The relation target thunk is annotated (`(): AnyEntityClass => User`). Without the annotation, two entities that reference each other cannot both have their types inferred (TS7022).
+- The row type is declared by interface merging (`export interface Post extends InferEntity<typeof Post> {}`), not a `type` alias — interfaces resolve their members lazily, which is what keeps a self-referencing table (a `parent_id` FK) from becoming a circular type. On that one form the shape parameter is also omitted: `t.manyToOne((): AnyEntityClass => Department, …)`.
 
 ---
 
@@ -233,8 +302,26 @@ The introspection output is deterministic. Given a stable database schema, runni
 | MariaDB's `COLUMN_DEFAULT = 'NULL'` quirk is filtered | Otherwise nullable columns get a noisy `default: "(NULL)"` |
 | Self-referential FKs don't emit a self-import | Would conflict with the local class declaration |
 | Composite-PK FK columns emit both `@PrimaryColumn` and the relation | Closure tables need a real PK |
+| FK columns carry their own `type` and `nullable` | Inferring them from the target's PK dropped the source schema's `NOT NULL` and could change the column's type |
+| A primary key is never emitted as nullable | SQLite reports `notnull = 0` for an `INTEGER PRIMARY KEY` rowid alias |
+| A `VARCHAR` with no length limit is emitted as `text` | The ORM's default column length would otherwise cap an unbounded PostgreSQL `varchar` at `VARCHAR(255)` |
+| `precision` / `scale` are kept only for `NUMERIC` / `DECIMAL` sources | `information_schema` reports binary precision 53 for `double precision`; passing it through produced `NUMERIC(53, …)` |
 
 This guarantees that you can introspect a legacy database, commit the entities, and have CI/CD reapply them to a staging database with identical results.
+
+### What the echo does not preserve
+
+The loop is verified end to end by an integration test that generates entities from a SQLite schema (in both styles), type checks them, recreates the schema from them, and compares the two databases — then repeats the loop and asserts that generations N and N+1 are byte-identical.
+
+A few things genuinely cannot survive the trip, and the generator says so in a `// NOTE:` comment above the affected field rather than letting you find out at synchronize time:
+
+| Case | What happens |
+|------|--------------|
+| A type the mapper does not recognize (`inet`, `interval`, `tsvector`, …) | Mapped to `varchar` and flagged. Synchronizing that entity would **not** recreate the original type — register a custom column type or edit the column by hand |
+| PostgreSQL `double precision` / `real` | No exact ORM column type exists; mapped to `double` (emitted as `NUMERIC`) / `float` (emitted as `REAL`) and flagged |
+| A foreign key that references a non-primary-key column | Flagged. Schema generation always builds the constraint against the target's primary key |
+| SQLite declared types | SQLite stores only the *affinity*, and this ORM emits `INTEGER` for `boolean` and `TEXT` for every date/time type. A database this ORM created therefore reports `INTEGER` / `TEXT` on the next introspection, so `BOOLEAN` and `DATETIME` columns — and the timestamp decorators derived from them — are not recovered on the second pass. The first generation, from a schema another tool created, is unaffected |
+| `@OneToMany`, `@OneToOne`, cascade rules | Not derivable from one-sided FK introspection — see [Known Limitations](#known-limitations) |
 
 ---
 
@@ -317,9 +404,11 @@ When the generator discovers a foreign key, it:
 
 ```typescript
 @ManyToOne(() => User, (entity: any) => entity.author)
-@RelationColumn({ name: "author_id" })
+@RelationColumn({ name: "author_id", type: "int", nullable: false, referencedColumn: "id" })
 author!: Relation<User>;
 ```
+
+`@RelationColumn` spells out the FK column's own `type` and `nullable` instead of leaving them to be inferred from the target's primary key — that inference defaults the column to NULL-able, which would quietly drop a `NOT NULL` from the source schema.
 
 The property name is derived from the FK column by:
 
@@ -340,7 +429,7 @@ export class Department {
   deptSq!: number;
 
   @ManyToOne(() => Department, (entity: any) => entity.upperDeptSq)
-  @RelationColumn({ name: "UPPER_DEPT_SQ" })
+  @RelationColumn({ name: "UPPER_DEPT_SQ", type: "int", nullable: true, referencedColumn: "DEPT_SQ" })
   upperDeptSq!: Department;
 }
 ```
@@ -359,11 +448,11 @@ export class PostCommentClosure {
   idDescendant!: number;
 
   @ManyToOne(() => PostComment, (entity: any) => entity.ancestor)
-  @RelationColumn({ name: "id_ancestor" })
+  @RelationColumn({ name: "id_ancestor", type: "int", nullable: false, referencedColumn: "id" })
   ancestor!: PostComment;
 
   @ManyToOne(() => PostComment, (entity: any) => entity.descendant)
-  @RelationColumn({ name: "id_descendant" })
+  @RelationColumn({ name: "id_descendant", type: "int", nullable: false, referencedColumn: "id" })
   descendant!: PostComment;
 }
 ```
@@ -433,6 +522,7 @@ The decorator emits `name:` whenever the DB column name differs from the propert
 | Option | Type | Default |
 |--------|------|---------|
 | `importPath` | `string` | `"@stingerloom/orm"` |
+| `style` | `"decorator" \| "code-first"` | `"decorator"` |
 
 ---
 
@@ -459,6 +549,7 @@ Connects via `DatabaseClient`, runs the generator, writes files to disk (unless 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `toColumnType(dbType, dialect, columnTypeFull?)` | `(...): ColumnType` | Map a DB type. Pass MySQL `COLUMN_TYPE` as the optional third arg to narrow TINYINT |
+| `hasMapping(dbType, dialect)` | `(...): boolean` | Whether the dialect has a real mapping for this type, as opposed to the `varchar` fallback |
 | `toTsType(columnType)` | `(columnType: ColumnType): string` | ORM `ColumnType` → TypeScript type string |
 | `parseSqliteWidth(declaredType)` | `(declaredType: string): number \| null` | Extract `N` from `VARCHAR(N)` etc. |
 | `parseSqlitePrecisionScale(declaredType)` | `(declaredType: string): { precision, scale } \| null` | Extract `(P, S)` from `DECIMAL(P, S)` |
@@ -467,8 +558,8 @@ Connects via `DatabaseClient`, runs the generator, writes files to disk (unless 
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `constructor` | `(options?: EntityCodeBuilderOptions)` | Builder with optional import path |
-| `build(table, columns, pks, fks, dialect, indexes?)` | `(...): string` | TypeScript entity source code |
+| `constructor` | `(options?: EntityCodeBuilderOptions)` | Builder with optional import path and output style |
+| `build(table, columns, pks, fks, dialect, indexes?, context?)` | `(...): string` | TypeScript entity source code. `context.primaryKeysByTable` lets the builder flag a FK that points at a non-primary-key column |
 | `tableNameToClassName(table)` | `(string): string` | snake_case table → PascalCase class |
 | `classNameToFileName(className)` | `(string): string` | PascalCase class → kebab-case file name |
 

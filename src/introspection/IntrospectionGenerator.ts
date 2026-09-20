@@ -164,12 +164,23 @@ export class IntrospectionGenerator {
     const tables = await this.discoverTables();
     const results: GeneratedEntity[] = [];
 
-    for (const table of tables) {
-      if (this.excludeTables.has(table)) continue;
-      if (this.includeTables && !this.includeTables.has(table)) continue;
+    const selected = tables.filter(
+      (table) =>
+        !this.excludeTables.has(table) &&
+        (!this.includeTables || this.includeTables.has(table)),
+    );
 
+    // Primary keys are collected for *every* table, not just the generated
+    // ones: a foreign key pointing at a skipped table still has to be checked
+    // against that table's primary key.
+    const primaryKeysByTable: Record<string, string[]> = {};
+    for (const table of tables) {
+      primaryKeysByTable[table] = await this.getPrimaryKeys(table);
+    }
+
+    for (const table of selected) {
       const columns = await this.getColumns(table);
-      const pks = await this.getPrimaryKeys(table);
+      const pks = primaryKeysByTable[table] ?? [];
       const fks = await this.getForeignKeys(table);
       const indexes = await this.getIndexes(table);
 
@@ -194,6 +205,7 @@ export class IntrospectionGenerator {
         fks,
         this.dialect,
         indexes,
+        { primaryKeysByTable },
       );
       const fileName = this.codeBuilder.classNameToFileName(className);
 

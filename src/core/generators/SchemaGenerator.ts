@@ -229,15 +229,44 @@ export class SchemaGenerator {
    * Supports advanced options: USING, WHERE, expression, INCLUDE.
    */
   generateCompositeIndexDDL<T>(entity: ClazzType<T>): string[] {
+    return this.generateCompositeIndexDefs(entity).map((def) => def.ddl);
+  }
+
+  /**
+   * Same DDL as {@link generateCompositeIndexDDL}, paired with the index name
+   * each statement creates — the synchronize pass needs the name to decide
+   * whether the index is already there.
+   */
+  generateCompositeIndexDefs<T>(
+    entity: ClazzType<T>,
+  ): Array<{ name: string; ddl: string }> {
     const tableName = this.getTableName(entity);
     const schema = this.schemaOf(entity);
     const compositeIndexes = this.getCompositeIndexes(entity);
+    const propColMap = this.buildPropertyToColumnMap(entity);
     return compositeIndexes.map((ci) => {
       const opts = ci.options;
+      // Resolve property keys to DB column names, the way unique indexes
+      // already do (#176). Under a naming strategy — or any explicit
+      // `@Column({ name })` — `@Index(["createdAt"])` otherwise emitted
+      // `("createdAt")` for a `created_at` column and the CREATE INDEX failed.
+      // A name that is already a column name maps to itself.
+      const resolvedColumns = ci.columns.map((col) => propColMap.get(col) ?? col);
       const indexName =
-        ci.name ?? opts?.name ?? this.namingStrategy.compositeIndexName(tableName, ci.columns);
+        ci.name ??
+        opts?.name ??
+        this.namingStrategy.compositeIndexName(tableName, resolvedColumns);
 
-      return this.buildAdvancedIndexDDL(tableName, indexName, ci.columns, opts, schema);
+      return {
+        name: indexName,
+        ddl: this.buildAdvancedIndexDDL(
+          tableName,
+          indexName,
+          resolvedColumns,
+          opts,
+          schema,
+        ),
+      };
     });
   }
 

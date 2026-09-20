@@ -73,7 +73,9 @@ describe("[Integration] Introspection CLI (SQLite file-backed)", () => {
     const postsFile = result.writtenFiles.find((p) => p.endsWith("post.entity.ts"))!;
     const postsCode = await readFile(postsFile, "utf8");
     expect(postsCode).toContain("@ManyToOne(() => User, (entity: any) => entity.author)");
-    expect(postsCode).toContain('@RelationColumn({ name: "author_id" })');
+    expect(postsCode).toContain(
+      '@RelationColumn({ name: "author_id", type: "int", nullable: false, referencedColumn: "id" })',
+    );
   });
 
   it("supports --dry-run (returns entities without writing files)", async () => {

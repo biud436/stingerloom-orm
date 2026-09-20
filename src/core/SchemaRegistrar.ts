@@ -12,7 +12,12 @@ import {
   NamingStrategy,
   DefaultNamingStrategy,
 } from "./generators/NamingStrategy";
-import { INDEX_TOKEN, IndexMetadata } from "../decorators/Indexer";
+import {
+  COMPOSITE_INDEX_TOKEN,
+  CompositeIndexMetadata,
+  INDEX_TOKEN,
+  IndexMetadata,
+} from "../decorators/Indexer";
 import {
   UNIQUE_INDEX_TOKEN,
   UniqueIndexMetadata,
@@ -31,6 +36,10 @@ import {
   COMPUTED_COLUMN_TOKEN,
   ComputedColumnMetadata,
 } from "../decorators/ComputedColumn";
+import {
+  RELATION_COLUMN_TOKEN,
+  RelationColumnMetadata,
+} from "../decorators/RelationColumn";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { EntityNotFound } from "../dialects/EntityNotFound";
 import type { CreateTableForeignKey, ISqlDriver } from "../dialects/SqlDriver";
@@ -542,18 +551,22 @@ export class SchemaRegistrar {
             try {
               let createColumns = tptDdlColumns ?? metadata.columns;
               let inlineFks: CreateTableForeignKey[] | undefined;
-              // SQLite cannot ALTER TABLE ADD FOREIGN KEY, so FK constraints
-              // (and any join columns not declared as entity columns) must be
-              // part of the CREATE TABLE statement itself.
+              // Join columns are always part of CREATE TABLE. Adding them
+              // afterwards with ALTER (the FK pass below) can only ever emit
+              // a nullable column, so a `@RelationColumn({ nullable: false })`
+              // silently became NULL-able on every dialect that supports
+              // ALTER ADD FOREIGN KEY.
+              const collected = this.collectInlineForeignKeys(
+                TargetEntity,
+                tableName,
+                createColumns,
+              );
+              if (collected.extraColumns.length > 0) {
+                createColumns = [...createColumns, ...collected.extraColumns];
+              }
+              // SQLite cannot ALTER TABLE ADD FOREIGN KEY, so the constraints
+              // themselves also have to be part of the CREATE TABLE statement.
               if (!this.driverSupportsAlterAddFk()) {
-                const collected = this.collectInlineForeignKeys(
-                  TargetEntity,
-                  tableName,
-                  createColumns,
-                );
-                if (collected.extraColumns.length > 0) {
-                  createColumns = [...createColumns, ...collected.extraColumns];
-                }
                 inlineFks = collected.foreignKeys;
               }
               // @ComputedColumn metadata lives outside metadata.columns —
@@ -653,6 +666,9 @@ export class SchemaRegistrar {
 
         // Create composite unique indexes.
         await this.registerUniqueIndexes(TargetEntity, tableName);
+
+        // Create class-level composite indexes (@Index([...])).
+        await this.registerCompositeIndexes(TargetEntity, tableName);
 
         // Create FULLTEXT (MySQL) / GIN+to_tsvector (PostgreSQL) indexes.
         await this.registerFullTextIndexes(TargetEntity, tableName);
@@ -1758,19 +1774,26 @@ export class SchemaRegistrar {
       const key = joinColumn.toLowerCase();
       if (existingCols.has(key)) return;
       existingCols.add(key);
-      extraColumns.push(this.buildJoinColumnDef(joinColumn, referencedEntity));
+      extraColumns.push(
+        this.buildJoinColumnDef(joinColumn, referencedEntity, TargetEntity),
+      );
     };
 
     // ManyToOne
     const manyToOneItems =
       this.resolver.resolveManyToOneMetadata(TargetEntity) ?? [];
     for (const rel of manyToOneItems) {
-      if (rel.option?.createForeignKeyConstraints === false) continue;
       if (!rel.joinColumn) continue;
       const mappingEntity = rel.getMappingEntity();
       if (!mappingEntity) continue;
       const mappingMeta = entityScanner.scan(mappingEntity);
       if (!mappingMeta) continue;
+      // The column is needed whether or not the constraint is: opting out of
+      // the FK constraint does not opt out of storing the FK value.
+      if (rel.option?.createForeignKeyConstraints === false) {
+        pushJoinColumnIfMissing(rel.joinColumn, mappingEntity);
+        continue;
+      }
       const referencedColumn =
         rel.references ??
         mappingMeta.columns.find((c: any) => c.options?.primary)?.name;
@@ -1797,11 +1820,14 @@ export class SchemaRegistrar {
       this.resolver.resolveOneToOneMetadata(TargetEntity) ?? [];
     for (const rel of oneToOneItems) {
       if (!rel.joinColumn) continue;
-      if (rel.option?.createForeignKeyConstraints === false) continue;
       const relatedEntity = rel.getRelatedEntity();
       if (!relatedEntity) continue;
       const relatedMeta = entityScanner.scan(relatedEntity);
       if (!relatedMeta) continue;
+      if (rel.option?.createForeignKeyConstraints === false) {
+        pushJoinColumnIfMissing(rel.joinColumn, relatedEntity);
+        continue;
+      }
       const referencedColumn = relatedMeta.columns.find(
         (c: any) => c.options?.primary,
       )?.name;
@@ -1859,18 +1885,33 @@ export class SchemaRegistrar {
   private buildJoinColumnDef(
     joinColumn: string,
     referencedEntity: ClazzType<any>,
+    owningEntity?: ClazzType<any>,
   ): any {
     const columns = (Reflect.getMetadata(
       COLUMN_TOKEN,
       referencedEntity.prototype,
     ) ?? []) as ColumnMetadata[];
     const pkCol = columns.find((c) => c.options?.primary);
+
+    // An explicit @RelationColumn wins over the inferred target-PK shape: it
+    // is the only place the FK column's own type and NOT NULL live.
+    const declared = owningEntity
+      ? ((Reflect.getMetadata(RELATION_COLUMN_TOKEN, owningEntity) ??
+          Reflect.getMetadata(
+            RELATION_COLUMN_TOKEN,
+            owningEntity.prototype,
+          ) ??
+          []) as RelationColumnMetadata[]).find(
+          (rc) => (rc.name ?? `${rc.propertyKey}Id`) === joinColumn,
+        )
+      : undefined;
+
     return {
       name: joinColumn,
       options: {
-        type: pkCol?.options?.type ?? "int",
+        type: declared?.type ?? pkCol?.options?.type ?? "int",
         length: pkCol?.options?.length,
-        nullable: true,
+        nullable: declared?.nullable ?? true,
       },
     };
   }
@@ -2119,6 +2160,58 @@ export class SchemaRegistrar {
    * produced by SchemaGenerator so the synchronize and migration
    * code paths stay in lockstep.
    */
+  /**
+   * Creates class-level composite indexes (`@Index([...])`, or the
+   * `indexes` option of `defineEntity` / `EntitySchema`).
+   *
+   * Only single-column `@Index()` and composite *unique* indexes used to be
+   * applied at synchronize time, so a multi-column `@Index([...])` existed in
+   * generated migrations but never in a synchronized database.
+   *
+   * Idempotent: an index whose name already exists is left alone. The DDL
+   * comes from SchemaGenerator so synchronize and migrations stay in lockstep.
+   */
+  async registerCompositeIndexes(
+    TargetEntity: ClazzType<any>,
+    tableName: string,
+  ) {
+    const compositeIndexes = Reflect.getMetadata(
+      COMPOSITE_INDEX_TOKEN,
+      TargetEntity,
+    ) as CompositeIndexMetadata[] | undefined;
+    if (!compositeIndexes || compositeIndexes.length === 0) return;
+
+    const driver = this.driverForEntity(TargetEntity);
+    if (!driver) return;
+
+    const generator = new SchemaGenerator({
+      dialect: this.ctx.getDialect(),
+      schema: this.ctx.getSchema(),
+      namingStrategy: this.namingStrategy,
+    });
+
+    const existingIndexes = (await driver.getIndexes(tableName)) as any[];
+    const existingNames = new Set<string>();
+    for (const idx of existingIndexes ?? []) {
+      const name = idx["Key_name"] ?? idx["Field"] ?? idx["name"];
+      if (typeof name === "string") existingNames.add(name);
+    }
+
+    for (const def of generator.generateCompositeIndexDefs(TargetEntity)) {
+      if (existingNames.has(def.name)) continue;
+      this.logDdl(`[sync] ${def.ddl}`, this.activePolicy);
+      try {
+        await driver.executeRaw(def.ddl);
+      } catch (err) {
+        this.handleDdlError(
+          err,
+          `Could not create composite index ${def.name} on ${tableName}`,
+          this.activePolicy,
+        );
+      }
+    }
+  }
+
   async registerFullTextIndexes(
     TargetEntity: ClazzType<any>,
     tableName: string,
