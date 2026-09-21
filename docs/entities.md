@@ -1603,6 +1603,7 @@ On SQLite, bigint columns are declared `BIGINT` (the same INTEGER affinity and s
 | `scale` | `number` | Decimal scale |
 | `enumValues` | `string[]` | PostgreSQL ENUM value list |
 | `enumName` | `string` | PostgreSQL ENUM type name |
+| `renamedFrom` | `string` | DB column this one was renamed from, so synchronize renames instead of dropping + adding ([details](./migrations.md#column-rename-detection)) |
 | `arrayElementType` | `ColumnType` | Element type for `type: "array"` columns (PostgreSQL only, default `"text"`) |
 | `bigintMode` | `"number" \| "string" \| "bigint"` | Entity-side type of a `type: "bigint"` column (default `"number"`, which throws beyond ±2^53) |
 

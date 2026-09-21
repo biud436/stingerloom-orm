@@ -160,6 +160,7 @@ export const Product = defineEntity("products", {
 | `.version()` | 낙관적 잠금 버전 컬럼. |
 | `.validate([...])` | 인라인 검증 제약. |
 | `.enumName(name)` | PostgreSQL `ENUM` 타입 이름 지정. |
+| `.renamedFrom(old)` | 이 컬럼이 예전에 쓰던 컬럼 이름 지정. synchronize가 drop + add 대신 이름을 바꿉니다. |
 | `.jsonIndex(opts)` | JSON/JSONB 표현식 인덱스. |
 | `.tenant()` | 테넌트 식별자 컬럼. |
 

@@ -107,10 +107,12 @@ await em.register({
 ### 실제 위험 시나리오
 
 **프로덕션에서 전체 동기화(`true`) -- 악몽 시나리오:**
-월요일에 엔티티에 `nickname` 컬럼이 있어요. 화요일에 `displayName`으로 이름을 바꾸기로 해요. 전체 동기화는 `nickname`이 엔티티에 없어진 걸 감지하고 `ALTER TABLE user DROP COLUMN nickname`을 실행해요. 모든 사용자 닉네임이 사라져요. 그다음 `displayName`을 새 빈 컬럼으로 만들어요. 이름 변경이 아니라 삭제 후 생성이에요.
+월요일에 엔티티에 `nickname` 컬럼이 있어요. 화요일에 `bio`로 이름을 바꾸기로 해요. 전체 동기화는 `nickname`이 엔티티에 없어진 걸 감지하고 `ALTER TABLE user DROP COLUMN nickname`을 실행해요. 모든 사용자 닉네임이 사라져요. 그다음 `bio`를 새 빈 컬럼으로 만들어요. 이름 변경이 아니라 삭제 후 생성이에요.
+
+전체 동기화도 이름 변경을 증명할 수 있으면 RENAME을 합니다. 엔티티가 `@Column({ renamedFrom: "nickname" })`을 선언했거나, 두 이름이 같은 컬럼으로 읽힐 때(`nickname` -> `nickName`)요. 그보다 확실하지 않은 쌍은 보고만 하고 위의 drop + add로 처리합니다. 추측으로 이름을 바꾸면 삭제된 컬럼의 데이터가 새 이름으로 되살아나거든요. [컬럼 이름 변경 감지](./migrations.md#컬럼-이름-변경-감지)를 참고하세요.
 
 **안전 동기화(`"safe"`) -- 안전망:**
-같은 시나리오인데 안전 동기화를 써요. ORM이 새 `displayName` 컬럼을 만들지만 `nickname`은 그대로 둬요. 데이터 손실이 없어요. 나중에 수동으로 데이터를 옮기고, 준비되면 이전 컬럼을 삭제하면 돼요.
+같은 시나리오인데 안전 동기화를 써요. ORM이 새 `bio` 컬럼을 만들지만 `nickname`은 그대로 둬요. 데이터 손실이 없어요. 나중에 수동으로 데이터를 옮기고, 준비되면 이전 컬럼을 삭제하면 돼요.
 
 안전 모드는 적용하지 않고 넘긴 변경을 로그로 알려줍니다. 손대지 않은 스키마가 동기화된 스키마처럼 보이는 일은 없어요.
 
@@ -152,7 +154,7 @@ await em.register({
 |--------|--------|------|
 | `mode` | 필수 | 기본 모드 — 단일 값 폼과 동일한 의미예요. |
 | `continueOnError` | `true` | `false`이면 DDL 실패가 warn으로 격하되지 않고 `OrmError(SCHEMA_SYNC_FAILED)`로 throw 돼요. 반쯤 마이그레이션된 스키마를 로그로만 찾기보다는 부팅을 명시적으로 실패시키고 싶을 때 사용하세요. |
-| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN과 좁히는 ALTER(예: `varchar(255) → int`, `varchar(255) → varchar(64)`)가 실행 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`로 throw 돼요. 프로덕션 안전망으로 유용해요. (synchronize는 어떤 모드에서도 테이블을 삭제하지 않으므로 막을 대상이 없어요.) |
+| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN, 좁히는 ALTER(예: `varchar(255) → int`, `varchar(255) → varchar(64)`), RENAME COLUMN이 실행 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`로 throw 돼요. 프로덕션 안전망으로 유용해요. (synchronize는 어떤 모드에서도 테이블을 삭제하지 않으므로 막을 대상이 없어요.) |
 | `logDDL` | `false` | `true`이면 발생하는 모든 DDL(CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX 등)을 info 레벨로 로그 출력해요. `"safe"`에서는 모드가 건너뛴 문장도 `[skipped: safe mode]` 접두어를 붙여 함께 출력해요. `"dry-run"`과 함께 쓰면 가시성이 확보돼요. |
 
 단일 값 폼(`true`, `"safe"`, `"dry-run"`, `false`)도 그대로 동작하며, 동일한 기본값으로 정규화되므로 마이그레이션이 필요 없어요.

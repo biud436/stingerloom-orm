@@ -160,6 +160,7 @@ Chain modifiers in any order; each returns a new builder, and modifiers that cha
 | `.version()` | Optimistic-locking version column. |
 | `.validate([...])` | Inline validation constraints. |
 | `.enumName(name)` | Names the PostgreSQL `ENUM` type. |
+| `.renamedFrom(old)` | Names the column this one was renamed from, so synchronize renames instead of dropping + adding. |
 | `.jsonIndex(opts)` | JSON/JSONB expression index. |
 | `.tenant()` | Tenant discriminator column. |
 

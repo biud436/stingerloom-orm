@@ -413,7 +413,7 @@ WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users';
 - For each column in the database, does it exist in the entity? If not, it goes into `dropColumns`.
 - If both exist, do the types and lengths match? If not, it goes into `alterColumns`.
 
-**Step 4: Detect renames.** Before finalizing, the engine looks for possible column renames (explained below).
+**Step 4: Detect renames.** Before finalizing, the engine looks for column renames it can prove -- an explicit `renamedFrom`, or an add/drop pair whose names read as the same column. Anything less certain is reported as a rename candidate (explained below).
 
 **Step 5: Generate migration code.** The `SchemaDiffMigrationGenerator` takes the diff result and produces a migration class with the appropriate `up()` and `down()` methods.
 
@@ -506,15 +506,19 @@ class SchemaDiff_1708000000000 extends Migration {
 
 ### Column Rename Detection
 
-This is one of the cleverest parts of Schema Diff. When you rename a column, the naive approach sees a "drop" and an "add" -- because the old name disappeared and a new name appeared. But the diff engine uses a **heuristic** to detect renames and avoid data loss.
+When you rename a column, the naive approach sees a "drop" and an "add" -- the old name disappeared and a new name appeared. Schema Diff tries to recognize the rename instead, so the data stays. But a rename and a column *replacement* produce exactly the same pair, and guessing wrong is worse than not guessing: the dropped column's rows end up under the new name. So the engine only renames when it is sure.
 
-Here is how the heuristic works:
+Here is how it decides, per table:
 
-1. For each table, gather all columns that would be **dropped** (exist in DB but not in entity) and all columns that would be **added** (exist in entity but not in DB).
-2. For each dropped column, check if there is an added column with a **compatible type** in the same table.
-3. If a 1:1 match is found (one dropped column matches one added column by type), treat it as a **rename** instead of a drop + add.
+1. Gather the columns that would be **dropped** (in the DB, not in the entity) and the ones that would be **added** (in the entity, not in the DB).
+2. Pair up anything the entity declared with `@Column({ renamedFrom })`. An explicit hint always wins.
+3. For the rest, keep only pairs with a **compatible type** (and the same length/precision when the DB reports one).
+4. Rename such a pair when the two names **read as the same column** and neither side has another equally plausible partner.
+5. Report everything else as a **rename candidate** and apply it as the declared drop + add.
 
-For example, if you rename `phone` to `mobile`:
+Two names read as the same column when they are equal apart from case and separators (`user_name` -> `userName`), when one contains the other (`name` -> `fullName`, `legacyNote` -> `note`), or when they are within a small edit distance (`recieved_at` -> `received_at`). Unrelated names -- `legacyNote` -> `bio`, `createdAt` -> `updatedAt` -- are not renamed.
+
+For a name change the engine recognizes:
 
 ```typescript
 // Before
@@ -523,13 +527,13 @@ phone!: string;
 
 // After
 @Column({ type: "varchar", length: 20 })
-mobile!: string;
+phoneNumber!: string;
 ```
 
 The diff engine sees:
-- Dropped: `phone` (type: VARCHAR)
-- Added: `mobile` (type: VARCHAR)
-- Same table, compatible types, 1:1 match -- this is a rename.
+- Dropped: `phone` (type: VARCHAR(20))
+- Added: `phoneNumber` (type: VARCHAR(20))
+- Same table, compatible type, the names read as one column -- this is a rename.
 
 The generated migration uses `RENAME COLUMN` instead of `DROP` + `ADD`:
 
@@ -537,18 +541,49 @@ The generated migration uses `RENAME COLUMN` instead of `DROP` + `ADD`:
 class SchemaDiff_1708000000000 extends Migration {
   async up(context: MigrationContext) {
     await context.query(
-      `ALTER TABLE "users" RENAME COLUMN "phone" TO "mobile"`
+      `ALTER TABLE "users" RENAME COLUMN "phone" TO "phoneNumber"`
     );
   }
   async down(context: MigrationContext) {
     await context.query(
-      `ALTER TABLE "users" RENAME COLUMN "mobile" TO "phone"`
+      `ALTER TABLE "users" RENAME COLUMN "phoneNumber" TO "phone"`
     );
   }
 }
 ```
 
-The rename detection works because compatible types narrow down the candidates. If you renamed `phone` (VARCHAR) and simultaneously added `age` (INT), the engine would not confuse them -- VARCHAR and INT are not compatible types.
+#### Renaming to an unrelated name: `renamedFrom`
+
+When the new name says nothing about the old one, tell the ORM:
+
+```typescript
+@Column({ type: "varchar", length: 100, renamedFrom: "legacyNote" })
+bio!: string;
+```
+
+`renamedFrom` names the **DB column** the values come from. With it, synchronize and `migrate:generate` emit a `RENAME COLUMN`; without it they add `bio` empty and drop `legacyNote`, which is what the entity literally declares. The option is inert once no column of that name exists, so you can drop it after the rename has shipped everywhere. The same option exists on `defineEntity` (`t.varchar(100).renamedFrom("legacyNote")`) and on `EntitySchema` columns (`renamedFrom: "legacyNote"`).
+
+#### What a refused rename looks like
+
+`synchronize` logs one warning per pair before applying the drop + add:
+
+```
+[sync] profile.bio is being added while the dropped column "legacyNote" has the
+same type but an unrelated name. Treating it as a new column: the dropped
+column's data is not carried over. If it is a rename, declare
+@Column({ renamedFrom: "legacyNote" }) (or write a migration) before this sync runs.
+```
+
+`migrate:generate` writes the ADD/DROP it decided on, followed by the rename as a commented-out alternative:
+
+```typescript
+// POSSIBLE RENAME (name differs from the dropped legacyNote) -- uncomment INSTEAD of the ADD/DROP pair above if this is a rename:
+// await query(`ALTER TABLE "profile" RENAME COLUMN "legacyNote" TO "bio"`)
+```
+
+The refused pairs are on the diff result too, as `renameCandidates`, each with the added column, the dropped columns that fit it (best match first), and a `reason` of `"ambiguous"` (several fit) or `"dissimilar-names"` (one fits by type only).
+
+> A rename is subject to `synchronize.failOnDestructiveChange`: with that flag on, synchronize refuses to rename and throws `ORM_SCHEMA_SYNC_DESTRUCTIVE_CHANGE` rather than move data at boot.
 
 > Schema Diff detects additions, deletions, and renames of tables and columns. Column type changes (e.g., changing VARCHAR to TEXT) are detected as `alterColumns` in the diff result, but write those as manual migrations for safety.
 

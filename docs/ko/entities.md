@@ -1660,6 +1660,7 @@ SQLite에서는 bigint 컬럼을 `BIGINT`로 선언합니다(INTEGER affinity와
 | `scale`         | `number`       | 소수 스케일                                    |
 | `enumValues`    | `string[]`     | PostgreSQL ENUM 값 목록                        |
 | `enumName`      | `string`       | PostgreSQL ENUM 타입 이름                      |
+| `renamedFrom`   | `string`       | 이 컬럼이 예전에 쓰던 DB 컬럼 이름. synchronize가 drop + add 대신 이름을 바꿉니다 ([설명](./migrations.md#컬럼-이름-변경-감지)) |
 | `arrayElementType` | `ColumnType` | `type: "array"` 컬럼의 요소 타입 (PostgreSQL 전용, 기본값 `"text"`) |
 | `bigintMode`    | `"number" \| "string" \| "bigint"` | `type: "bigint"` 컬럼의 엔티티 측 타입 (기본값 `"number"`, ±2^53 초과 시 예외) |
 
