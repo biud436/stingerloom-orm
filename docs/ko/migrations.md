@@ -569,8 +569,8 @@ bio!: string;
 
 ```
 [sync] profile.bio is being added while the dropped column "legacyNote" has the
-same type but an unrelated name. Treating it as a new column: the dropped
-column's data is not carried over. If it is a rename, declare
+same type but an unrelated name. Treating it as a new column: nothing is copied
+from legacyNote. If it is a rename, declare
 @Column({ renamedFrom: "legacyNote" }) (or write a migration) before this sync runs.
 ```
 

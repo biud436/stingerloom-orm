@@ -1194,7 +1194,7 @@ export class SchemaRegistrar {
           : `the dropped column ${olds} has the same type but an unrelated name`;
       this.logger.warn(
         `[sync] ${candidate.tableName}.${candidate.newColumnName} is being added while ${why}. ` +
-          `Treating it as a new column: the dropped column's data is not carried over. ` +
+          `Treating it as a new column: nothing is copied from ${candidate.candidateColumns[0]}. ` +
           `If it is a rename, declare @Column({ renamedFrom: "${candidate.candidateColumns[0]}" }) ` +
           `(or write a migration) before this sync runs.`,
       );
