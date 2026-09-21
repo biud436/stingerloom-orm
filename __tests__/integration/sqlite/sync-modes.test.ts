@@ -34,7 +34,13 @@ function resetState() {
 }
 
 function createEntity(
-  columns: Array<{ name: string; type?: string; nullable?: boolean; primary?: boolean }>,
+  columns: Array<{
+    name: string;
+    type?: string;
+    nullable?: boolean;
+    primary?: boolean;
+    renamedFrom?: string;
+  }>,
 ): new () => any {
   getScannerInstance(ColumnScanner).clear();
 
@@ -48,10 +54,11 @@ function createEntity(
     } else {
       const designType = col.type === "int" ? Number : String;
       Reflect.defineMetadata("design:type", designType, DynClass.prototype, col.name);
-      Column({ type: col.type as any ?? "varchar", nullable: col.nullable ?? false })(
-        DynClass.prototype,
-        col.name,
-      );
+      Column({
+        type: (col.type as any) ?? "varchar",
+        nullable: col.nullable ?? false,
+        ...(col.renamedFrom ? { renamedFrom: col.renamedFrom } : {}),
+      })(DynClass.prototype, col.name);
     }
   }
 
@@ -125,7 +132,8 @@ const V3_COLUMNS = [
   // age removed
 ];
 
-// V4: age renamed to years (same type — SchemaDiff pairs it as a rename)
+// V4: age replaced by years. Same type, unrelated names — the diff refuses to
+// guess a rename here and reports the pair instead (see V5 for the hinted form).
 const V4_COLUMNS = [
   { name: "id", primary: true },
   { name: "name", type: "varchar" },
@@ -289,28 +297,46 @@ describe("[Integration] SQLite synchronize modes (Issue #137)", () => {
       ).toBe(true);
     });
 
-    it("reports a skipped RENAME COLUMN", async () => {
+    it("reports a refused rename as a candidate instead of renaming", async () => {
       const lines = await resyncAndCapture(V4_COLUMNS, {
         mode: "safe",
         logDDL: true,
       });
 
-      const summary = lines.find((l) => l.includes("safe mode skipped"));
-      expect(summary).toBeDefined();
-      expect(summary).toContain("RENAME COLUMN");
-      expect(summary).toContain("age");
-      expect(summary).toContain("years");
+      // `age` → `years` is a drop + add as far as the names go, so the column
+      // is added and the old one is reported, never silently carried over.
+      const candidate = lines.find((l) => l.includes("is being added while"));
+      expect(candidate).toBeDefined();
+      expect(candidate).toContain("years");
+      expect(candidate).toContain("age");
+      expect(candidate).toContain("renamedFrom");
       expect(
         lines.some(
           (l) =>
-            l.includes("[skipped: safe mode]") && l.includes("RENAME COLUMN"),
+            l.includes("[rename candidate]") && l.includes("RENAME COLUMN"),
         ),
       ).toBe(true);
 
-      // Nothing was applied
+      const summary = lines.find((l) => l.includes("safe mode skipped"));
+      expect(summary).toContain("DROP COLUMN");
+
       const columns = await getColumnNames(dbPath);
-      expect(columns).toContain("age");
-      expect(columns).not.toContain("years");
+      expect(columns).toContain("age"); // safe mode keeps the drop back
+      expect(columns).toContain("years");
+    });
+
+    it("renames in full mode when the entity declares renamedFrom", async () => {
+      resetState();
+      const V5 = createEntity([
+        { name: "id", primary: true },
+        { name: "name", type: "varchar" },
+        { name: "years", type: "int", renamedFrom: "age" },
+      ]);
+      await registerWithSync(dbPath, V5, true);
+
+      const columns = await getColumnNames(dbPath);
+      expect(columns).toContain("years");
+      expect(columns).not.toContain("age");
     });
 
     it("stays quiet when the schema already matches", async () => {

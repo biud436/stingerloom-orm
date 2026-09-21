@@ -262,7 +262,11 @@ export class SchemaRegistrar {
    * specific operation so operators can decide whether to override.
    */
   private assertDestructiveAllowed(
-    op: "DROP COLUMN" | "DROP TABLE" | "ALTER COLUMN (narrowing)",
+    op:
+      | "DROP COLUMN"
+      | "DROP TABLE"
+      | "ALTER COLUMN (narrowing)"
+      | "RENAME COLUMN",
     target: string,
     policy: SynchronizePolicy,
   ): void {
@@ -1124,6 +1128,14 @@ export class SchemaRegistrar {
     if ((isFull || isDryRun) && diff.renamedColumns) {
       for (const rename of diff.renamedColumns) {
         const ddl = `ALTER TABLE ${this.ctx.wrapTable(rename.tableName)} RENAME COLUMN ${this.ctx.wrap(rename.oldColumnName)} TO ${this.ctx.wrap(rename.newColumnName)}`;
+        // A rename moves existing rows under a new name and cannot be undone
+        // by re-running the sync, so it answers to failOnDestructiveChange
+        // like a DROP does.
+        this.assertDestructiveAllowed(
+          "RENAME COLUMN",
+          `${rename.tableName}.${rename.oldColumnName} → ${rename.newColumnName}`,
+          policy,
+        );
         if (isDryRun) {
           this.logger.info(`[dry-run] ${ddl}`);
         } else {
@@ -1152,7 +1164,45 @@ export class SchemaRegistrar {
       }
     }
 
+    this.reportRenameCandidates(diff, policy);
     this.reportSafeModeSkips(safeSkipped, policy);
+  }
+
+  /**
+   * Reports add/drop pairs that could be renames but were not applied as one.
+   *
+   * The diff only renames when the entity declares `renamedFrom` or the two
+   * names read as the same column; anything else runs as the declared drop +
+   * add. That is the safe reading — a wrong rename leaves the dropped
+   * column's rows under the new name — but it is only safe if the author
+   * hears about it, so every refused pair is named here in every mode.
+   */
+  private reportRenameCandidates(
+    diff: SchemaDiffResult,
+    policy: SynchronizePolicy,
+  ): void {
+    const candidates = diff.renameCandidates ?? [];
+    if (candidates.length === 0) return;
+
+    for (const candidate of candidates) {
+      const olds = candidate.candidateColumns
+        .map((c) => `"${c}"`)
+        .join(", ");
+      const why =
+        candidate.reason === "ambiguous"
+          ? `several dropped columns of the same type could be it (${olds})`
+          : `the dropped column ${olds} has the same type but an unrelated name`;
+      this.logger.warn(
+        `[sync] ${candidate.tableName}.${candidate.newColumnName} is being added while ${why}. ` +
+          `Treating it as a new column: the dropped column's data is not carried over. ` +
+          `If it is a rename, declare @Column({ renamedFrom: "${candidate.candidateColumns[0]}" }) ` +
+          `(or write a migration) before this sync runs.`,
+      );
+      this.logDdl(
+        `[rename candidate] ALTER TABLE ${this.ctx.wrapTable(candidate.tableName)} RENAME COLUMN ${this.ctx.wrap(candidate.candidateColumns[0])} TO ${this.ctx.wrap(candidate.newColumnName)}`,
+        policy,
+      );
+    }
   }
 
   /**

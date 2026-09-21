@@ -14,6 +14,10 @@ import {
 import { SchemaDialect } from "./SchemaGenerator";
 import { collectEntityColumns } from "./entityColumns";
 import {
+  columnNameSimilarity,
+  columnNamesLookRenamed,
+} from "./columnRenameMatch";
+import {
   ColumnDefinitionBuilder,
   createColumnDefinitionBuilder,
 } from "../../dialects/ColumnDefinitionBuilder";
@@ -39,6 +43,11 @@ export interface ColumnChange {
    * `columnType` with its arguments stripped.
    */
   comparisonType?: string;
+  /**
+   * `@Column({ renamedFrom })` on the added column — the old DB column name
+   * the entity says this one replaces. Only set on addColumns.
+   */
+  renamedFrom?: string;
   currentType?: string;
   nullable?: boolean;
   /**
@@ -71,6 +80,38 @@ export interface RenamedColumn {
   oldColumnName: string;
   newColumnName: string;
   columnType: string;
+  /**
+   * Why the pair was read as a rename: `"hint"` when the entity declared
+   * `@Column({ renamedFrom })`, `"similar-name"` when the two names read as
+   * the same column (`user_name` → `userName`). Undefined on hand-built diffs.
+   */
+  reason?: "hint" | "similar-name";
+}
+
+/**
+ * An added column that *may* be a renamed one, reported instead of guessed.
+ *
+ * The diff refuses to turn a drop + add into a RENAME when several dropped
+ * columns fit the added one, or when the names have nothing in common — a
+ * wrong guess would carry the old column's rows into the new column. The
+ * pair is applied as the declared drop + add; declare
+ * `@Column({ renamedFrom })` to get the rename instead.
+ */
+export interface RenameCandidate {
+  tableName: string;
+  /** See {@link ColumnChange.schema}. */
+  schema?: string;
+  /** The added column that might be the old one under a new name. */
+  newColumnName: string;
+  /** Dropped columns of a compatible type, most similar name first. */
+  candidateColumns: string[];
+  columnType: string;
+  /**
+   * `"ambiguous"` — more than one dropped column fits.
+   * `"dissimilar-names"` — exactly one fits by type, but the names do not
+   * read as the same column.
+   */
+  reason: "ambiguous" | "dissimilar-names";
 }
 
 export interface EnumChange {
@@ -95,6 +136,12 @@ export interface SchemaDiffResult {
   dropColumns: ColumnChange[];
   alterColumns: ColumnChange[];
   renamedColumns?: RenamedColumn[];
+  /**
+   * Add/drop pairs that look like they *could* be renames but were not
+   * applied as such. Reported by synchronize and by `migrate:generate` (as a
+   * commented-out alternative), never executed.
+   */
+  renameCandidates?: RenameCandidate[];
   addTableEntityMap?: Record<string, ClazzType<any>>;
   enumChanges?: EnumChange[];
   /**
@@ -119,6 +166,7 @@ export function createSchemaDiffResult(
     dropColumns: [],
     alterColumns: [],
     renamedColumns: [],
+    renameCandidates: [],
     enumChanges: [],
     addComputedColumns: [],
     ...partial,
@@ -266,6 +314,7 @@ export class SchemaDiff {
       dropColumns: [],
       alterColumns: [],
       renamedColumns: [],
+      renameCandidates: [],
       enumChanges: [],
       addComputedColumns: [],
     };
@@ -343,6 +392,9 @@ export class SchemaDiff {
             columnName: colName,
             columnType: declared.ddl,
             comparisonType: declared.compare,
+            ...(col.options?.renamedFrom
+              ? { renamedFrom: col.options.renamedFrom }
+              : {}),
             nullable: col.options?.nullable ?? false,
             expectedLength,
             expectedPrecision,
@@ -811,8 +863,17 @@ export class SchemaDiff {
   }
 
   /**
-   * Detect column renames by matching addColumns and dropColumns on the same table
-   * with compatible types. Matched pairs are moved to renamedColumns.
+   * Turns 1:1 add/drop pairs into renames — but only when the entity says so
+   * or the names leave no other reading.
+   *
+   * A rename and a column swap look identical from here (one drop, one add,
+   * same type), and picking wrong carries the dropped column's rows into the
+   * new column: `legacyNote` removed and `bio` added used to be renamed on the
+   * spot, so every row's old note resurfaced as its bio. So a pair becomes a
+   * rename when `@Column({ renamedFrom })` names the old column, or when the
+   * two names read as the same column and neither has another suitor.
+   * Everything else lands in `renameCandidates` and is applied as the declared
+   * drop + add.
    */
   private detectRenames(
     result: SchemaDiffResult,
@@ -830,42 +891,89 @@ export class SchemaDiff {
       const matchedAddIdx = new Set<number>();
       const matchedDropIdx = new Set<number>();
 
-      for (let di = 0; di < drops.length; di++) {
-        if (matchedDropIdx.has(di)) continue;
-        const drop = drops[di];
-        const dropType = (drop.currentType ?? "").toUpperCase();
+      const confirm = (
+        ai: number,
+        di: number,
+        reason: "hint" | "similar-name",
+      ): void => {
+        const add = adds[ai];
+        result.renamedColumns!.push({
+          tableName: table,
+          ...(add.schema ? { schema: add.schema } : {}),
+          oldColumnName: drops[di].columnName,
+          newColumnName: add.columnName,
+          columnType: add.columnType ?? drops[di].currentType ?? "",
+          reason,
+        });
+        matchedAddIdx.add(ai);
+        matchedDropIdx.add(di);
+      };
 
-        for (let ai = 0; ai < adds.length; ai++) {
-          if (matchedAddIdx.has(ai)) continue;
-          const add = adds[ai];
-          const addType =
-            add.comparisonType?.toUpperCase() ??
-            stripTypeArguments(add.columnType ?? "");
+      // 1. Explicit hints first — they also take their drop out of the running
+      //    for the inference pass below.
+      for (let ai = 0; ai < adds.length; ai++) {
+        const hint = adds[ai].renamedFrom;
+        if (!hint) continue;
+        const di = drops.findIndex(
+          (d, i) =>
+            !matchedDropIdx.has(i) &&
+            d.columnName.toLowerCase() === hint.toLowerCase(),
+        );
+        // A hint naming a column that is not being dropped is inert: the
+        // rename already happened, or the name was never in this table.
+        if (di !== -1) confirm(ai, di, "hint");
+      }
 
-          if (this.typesMatch(addType, dropType, dialect)) {
-            // Also verify length/precision match to avoid false renames,
-            // but only when both sides have length/precision info
-            const hasLengthInfo = drop.actualLength != null || drop.actualPrecision != null;
-            const lengthMatch = !hasLengthInfo || (
-              (add.expectedLength ?? null) === (drop.actualLength ?? null) &&
-              (add.expectedPrecision ?? null) === (drop.actualPrecision ?? null) &&
-              (add.expectedScale ?? null) === (drop.actualScale ?? null)
-            );
+      // 2. Inference over what is left.
+      const compatible = (ai: number, di: number): boolean =>
+        this.renameTypesCompatible(adds[ai], drops[di], dialect);
 
-            if (lengthMatch) {
-              result.renamedColumns!.push({
-                tableName: table,
-                ...(add.schema ? { schema: add.schema } : {}),
-                oldColumnName: drop.columnName,
-                newColumnName: add.columnName,
-                columnType: add.columnType ?? dropType,
-              });
-              matchedAddIdx.add(ai);
-              matchedDropIdx.add(di);
-              break;
-            }
+      for (let ai = 0; ai < adds.length; ai++) {
+        if (matchedAddIdx.has(ai)) continue;
+
+        const fits: number[] = [];
+        for (let di = 0; di < drops.length; di++) {
+          if (matchedDropIdx.has(di)) continue;
+          if (compatible(ai, di)) fits.push(di);
+        }
+        if (fits.length === 0) continue;
+
+        const similar = fits.filter((di) =>
+          columnNamesLookRenamed(adds[ai].columnName, drops[di].columnName),
+        );
+
+        if (similar.length === 1) {
+          const di = similar[0];
+          // The drop must have no other equally plausible new name, or the
+          // pairing is a coin flip between two adds.
+          const rivals = adds.filter(
+            (a, other) =>
+              other !== ai &&
+              !matchedAddIdx.has(other) &&
+              compatible(other, di) &&
+              columnNamesLookRenamed(a.columnName, drops[di].columnName),
+          );
+          if (rivals.length === 0) {
+            confirm(ai, di, "similar-name");
+            continue;
           }
         }
+
+        const ranked = (similar.length > 0 ? similar : fits)
+          .slice()
+          .sort(
+            (l, r) =>
+              columnNameSimilarity(adds[ai].columnName, drops[r].columnName) -
+              columnNameSimilarity(adds[ai].columnName, drops[l].columnName),
+          );
+        result.renameCandidates!.push({
+          tableName: table,
+          ...(adds[ai].schema ? { schema: adds[ai].schema } : {}),
+          newColumnName: adds[ai].columnName,
+          candidateColumns: ranked.map((di) => drops[di].columnName),
+          columnType: adds[ai].columnType ?? "",
+          reason: similar.length > 1 ? "ambiguous" : "dissimilar-names",
+        });
       }
 
       // Remove matched items from addColumns and dropColumns
@@ -876,6 +984,32 @@ export class SchemaDiff {
         (c) => c.tableName !== table || !matchedDropIdx.has(drops.indexOf(c)),
       );
     }
+  }
+
+  /**
+   * Whether a dropped column could hold the added column's values unchanged:
+   * same type, and same length/precision when the DB reported any.
+   */
+  private renameTypesCompatible(
+    add: ColumnChange,
+    drop: ColumnChange,
+    dialect: SchemaDialect,
+  ): boolean {
+    const addType =
+      add.comparisonType?.toUpperCase() ??
+      stripTypeArguments(add.columnType ?? "");
+    const dropType = (drop.currentType ?? "").toUpperCase();
+    if (!this.typesMatch(addType, dropType, dialect)) return false;
+
+    // Only compare sizes when the DB reported any.
+    const hasLengthInfo =
+      drop.actualLength != null || drop.actualPrecision != null;
+    if (!hasLengthInfo) return true;
+    return (
+      (add.expectedLength ?? null) === (drop.actualLength ?? null) &&
+      (add.expectedPrecision ?? null) === (drop.actualPrecision ?? null) &&
+      (add.expectedScale ?? null) === (drop.actualScale ?? null)
+    );
   }
 
   private normalizeRows(result: any): DbColumnInfo[] {

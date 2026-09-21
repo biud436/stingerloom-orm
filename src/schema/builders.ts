@@ -126,6 +126,14 @@ export class ColumnBuilder<TInfer> extends SchemaBuilder<TInfer, "column"> {
     return this.with({ enumName: value });
   }
 
+  /**
+   * Names the column this one was renamed from, so schema synchronization
+   * applies a `RENAME COLUMN` instead of reporting a drop + add.
+   */
+  renamedFrom(oldColumnName: string): ColumnBuilder<TInfer> {
+    return this.with({ renamedFrom: oldColumnName });
+  }
+
   /** Bidirectional value transformer (decorator-free `@Column({ transformer })`). */
   transformer(transformer: ColumnTransformer): ColumnBuilder<TInfer> {
     return this.with({ transformer });

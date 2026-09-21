@@ -305,6 +305,35 @@ export class SchemaDiffMigrationGenerator {
       stmts.push(this.wrapSqlInQuery(this.buildRenameColumnSql(rename, dialect)));
     }
 
+    // Renames the diff refused to guess: the ADD/DROP above is what the
+    // entities declare, and the rename is offered as a commented-out
+    // alternative for the author to choose instead.
+    for (const candidate of diff.renameCandidates ?? []) {
+      const why =
+        candidate.reason === "ambiguous"
+          ? `several dropped columns match: ${candidate.candidateColumns.join(", ")}`
+          : `name differs from the dropped ${candidate.candidateColumns[0]}`;
+      stmts.push(
+        `// POSSIBLE RENAME (${why}) — uncomment INSTEAD of the ADD/DROP pair above if this is a rename:`,
+      );
+      for (const oldName of candidate.candidateColumns) {
+        stmts.push(
+          `// ${this.wrapSqlInQuery(
+            this.buildRenameColumnSql(
+              {
+                tableName: candidate.tableName,
+                schema: candidate.schema,
+                oldColumnName: oldName,
+                newColumnName: candidate.newColumnName,
+                columnType: candidate.columnType,
+              },
+              dialect,
+            ),
+          )}`,
+        );
+      }
+    }
+
     // Drop columns (dangerous — commented out)
     for (const col of diff.dropColumns) {
       stmts.push(

@@ -42,6 +42,13 @@ export interface ColumnSchemaDef {
   name?: string;
 
   /**
+   * The DB column this one was renamed from — decorator-free equivalent of
+   * `@Column({ renamedFrom })`. Lets schema synchronization apply a
+   * `RENAME COLUMN` for a rename it would otherwise report as a drop + add.
+   */
+  renamedFrom?: string;
+
+  /**
    * Element type for `type: "array"` columns (PostgreSQL native arrays,
    * default "text" → `TEXT[]`). Decorator-free equivalent of
    * `@Column({ arrayElementType })`. Ignored on MySQL (JSON) / SQLite (TEXT).
