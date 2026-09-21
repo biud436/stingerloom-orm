@@ -207,9 +207,10 @@ function createEntityWithRenamedColumn(): new () => any {
   Reflect.defineMetadata("design:type", String, DynClass.prototype, "name");
   Column()(DynClass.prototype, "name");
 
-  // "age" removed, "years" added with same type → rename detection
+  // "age" removed, "years" added with the same type. The names do not read as
+  // one column, so the rename only happens because the entity says so.
   Reflect.defineMetadata("design:type", Number, DynClass.prototype, "years");
-  Column({ type: "int" })(DynClass.prototype, "years");
+  Column({ type: "int", renamedFrom: "age" })(DynClass.prototype, "years");
 
   Entity()(DynClass);
   return DynClass;
@@ -416,7 +417,9 @@ describe("[Integration] SQLite In-Memory: SchemaDiff 동기화 후 감지 검증
       expect(result.addColumns.length).toBe(1);
       expect(result.addColumns[0].columnName).toBe("email");
       expect(result.addColumns[0].tableName).toBe(TABLE_NAME);
-      expect(result.addColumns[0].columnType).toBe("TEXT"); // varchar → TEXT in SQLite
+      // varchar → SQLite's TEXT(length), the same spelling CREATE TABLE uses
+      expect(result.addColumns[0].columnType).toBe("TEXT(255)");
+      expect(result.addColumns[0].comparisonType).toBe("TEXT");
       expect(result.addColumns[0].nullable).toBe(true);
     });
 
@@ -527,7 +530,7 @@ describe("[Integration] SQLite In-Memory: SchemaDiff 동기화 후 감지 검증
     // Both outcomes used to be accepted by one if/else, so a regression that
     // downgraded a rename to DROP + ADD (data loss in production) still passed.
     // The two cases are pinned separately instead.
-    it("should detect rename when one column dropped and one added with same type", async () => {
+    it("should detect rename when the entity declares renamedFrom", async () => {
       const renamed = createEntityWithRenamedColumn();
       const result = await schemaDiff.diff([renamed], queryRunner, "sqlite");
 
@@ -546,6 +549,39 @@ describe("[Integration] SQLite In-Memory: SchemaDiff 동기화 후 감지 검증
       expect(
         result.addColumns.some((c) => c.columnName === "years"),
       ).toBe(false);
+    });
+
+    it("should report, not guess, a same-type pair whose names are unrelated", async () => {
+      // Without the hint, `age` → `years` is indistinguishable from a column
+      // swap; renaming would carry every row's age into the new column.
+      getScannerInstance(ColumnScanner).clear();
+      const DynClass = class {} as any;
+      Object.defineProperty(DynClass, "name", {
+        value: TABLE_NAME,
+        writable: false,
+      });
+      Reflect.defineMetadata("design:type", Number, DynClass.prototype, "id");
+      PrimaryGeneratedColumn()(DynClass.prototype, "id");
+      Reflect.defineMetadata("design:type", String, DynClass.prototype, "name");
+      Column()(DynClass.prototype, "name");
+      Reflect.defineMetadata("design:type", Number, DynClass.prototype, "years");
+      Column({ type: "int" })(DynClass.prototype, "years");
+      Entity()(DynClass);
+
+      const result = await schemaDiff.diff([DynClass], queryRunner, "sqlite");
+
+      expect(result.renamedColumns ?? []).toHaveLength(0);
+      expect(result.dropColumns.some((c) => c.columnName === "age")).toBe(true);
+      expect(result.addColumns.some((c) => c.columnName === "years")).toBe(true);
+      expect(result.renameCandidates).toEqual([
+        {
+          tableName: TABLE_NAME,
+          newColumnName: "years",
+          candidateColumns: ["age"],
+          columnType: "INTEGER",
+          reason: "dissimilar-names",
+        },
+      ]);
     });
 
     it("should NOT pair a type-incompatible add/drop as a rename", async () => {

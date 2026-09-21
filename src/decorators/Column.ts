@@ -156,6 +156,26 @@ export interface ColumnOption {
   enumName?: string;
 
   /**
+   * The DB column this one was renamed from.
+   *
+   * Schema synchronization sees a rename as one dropped column plus one added
+   * column and cannot tell it apart from a column swap, so it only executes a
+   * `RENAME COLUMN` when the names read as the same column (`user_name` →
+   * `userName`, `name` → `fullName`) — or when this option names the old
+   * column outright. Without it an unrelated-looking pair is reported and
+   * applied as the drop + add the entity declares, which is what keeps a
+   * dropped column's rows from resurfacing under a new name.
+   *
+   * Drop the option once the rename has been applied everywhere; it is inert
+   * when no column of that name exists.
+   *
+   * @example
+   * @Column({ type: "varchar", length: 100, renamedFrom: "legacyNote" })
+   * bio!: string;
+   */
+  renamedFrom?: string;
+
+  /**
    * Element type for `type: "array"` columns (PostgreSQL native arrays).
    * A scalar built-in type such as `"text"`, `"int"`, `"uuid"`; defaults to
    * `"text"`, so `type: "array"` alone produces a `TEXT[]` column.

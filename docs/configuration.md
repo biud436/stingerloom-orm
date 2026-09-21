@@ -107,10 +107,12 @@ await em.register({
 ### Real-world danger scenarios
 
 **Full sync (`true`) in production -- the nightmare scenario:**
-On Monday, your entity has a `nickname` column. On Tuesday, you decide to rename it to `displayName`. Full sync sees that `nickname` no longer exists in the entity, so it runs `ALTER TABLE user DROP COLUMN nickname`. All user nicknames are gone. Then it creates `displayName` as a new empty column. This is not a rename -- it is a delete and a create.
+On Monday, your entity has a `nickname` column. On Tuesday, you decide to rename it to `bio`. Full sync sees that `nickname` no longer exists in the entity, so it runs `ALTER TABLE user DROP COLUMN nickname`. All user nicknames are gone. Then it creates `bio` as a new empty column. This is not a rename -- it is a delete and a create.
+
+Full sync does rename a column when it can prove the rename: the entity declares `@Column({ renamedFrom: "nickname" })`, or the two names read as the same column (`nickname` -> `nickName`). Anything less certain is reported and applied as the drop + add above, because renaming on a guess is how a dropped column's rows resurface under a new name. See [Column Rename Detection](./migrations.md#column-rename-detection).
 
 **Safe sync (`"safe"`) -- the safety net:**
-Same scenario, but with safe sync. The ORM creates a new `displayName` column but leaves `nickname` alone. No data is lost. You can migrate the data manually and drop the old column when you are ready.
+Same scenario, but with safe sync. The ORM creates a new `bio` column but leaves `nickname` alone. No data is lost. You can migrate the data manually and drop the old column when you are ready.
 
 Safe mode reports what it declined to do, so an untouched schema never masquerades as a synchronized one:
 
@@ -152,7 +154,7 @@ await em.register({
 |------|---------|--------------|
 | `mode` | required | Base mode — same as the bare-form values. |
 | `continueOnError` | `true` | When `false`, the first DDL failure throws `OrmError(SCHEMA_SYNC_FAILED)` instead of degrading to a warning. Use this when you'd rather see boot fail loudly than discover a half-migrated schema in the logs. |
-| `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN and narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`) throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing — useful as a production tripwire. (Tables are never dropped by synchronize, so there is nothing to guard there.) |
+| `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN, narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`) and RENAME COLUMN throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing — useful as a production tripwire. (Tables are never dropped by synchronize, so there is nothing to guard there.) |
 | `logDDL` | `false` | When `true`, every emitted DDL is logged at info level (CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX, etc.). Under `"safe"` it also logs the statements the mode skipped, prefixed with `[skipped: safe mode]`. Pairs well with `"dry-run"` for full visibility. |
 
 The bare forms (`true`, `"safe"`, `"dry-run"`, `false`) still work and normalize to the same defaults above — no migration is required.

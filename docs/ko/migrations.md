@@ -413,7 +413,7 @@ WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users';
 - 데이터베이스의 각 컬럼이 엔티티에 있는지? 없으면 `dropColumns`에 추가.
 - 둘 다 존재하면, 타입과 길이가 일치하는지? 불일치하면 `alterColumns`에 추가.
 
-**Step 4: 이름 변경 감지.** 확정하기 전에 컬럼 이름 변경 가능성을 확인해요 (아래에서 자세히 설명).
+**Step 4: 이름 변경 감지.** 확정하기 전에 증명 가능한 이름 변경을 찾습니다 -- 명시된 `renamedFrom`, 또는 같은 컬럼으로 읽히는 add/drop 쌍이요. 그보다 확실하지 않은 것은 이름 변경 후보로 보고합니다 (아래에서 자세히 설명).
 
 **Step 5: Migration 코드 생성.** `SchemaDiffMigrationGenerator`가 diff 결과를 받아서 적절한 `up()`과 `down()` 메서드를 가진 migration 클래스를 생성해요.
 
@@ -506,15 +506,19 @@ class SchemaDiff_1708000000000 extends Migration {
 
 ### 컬럼 이름 변경 감지
 
-Schema Diff에서 가장 영리한 부분이에요. 컬럼 이름을 변경하면, 단순한 접근법으로는 "삭제"와 "추가"로 인식해요 -- 이전 이름이 사라지고 새 이름이 나타났으니까요. 하지만 diff 엔진은 **휴리스틱**을 사용해서 이름 변경을 감지하고 데이터 손실을 방지해요.
+컬럼 이름을 바꾸면 단순한 접근법은 "삭제"와 "추가"로 읽습니다. 이전 이름이 사라지고 새 이름이 나타났으니까요. Schema Diff는 그 쌍을 이름 변경으로 알아보려고 하지만, 이름 변경과 컬럼 **교체**는 완전히 같은 모양이라 잘못 짚으면 삭제된 컬럼의 데이터가 새 컬럼 이름으로 되살아납니다. 그래서 확실할 때만 RENAME을 실행해요.
 
-휴리스틱 동작 방식이에요:
+테이블마다 이런 순서로 판단합니다.
 
-1. 각 테이블에서 **삭제될** 컬럼 (DB에 있지만 엔티티에 없는 것)과 **추가될** 컬럼 (엔티티에 있지만 DB에 없는 것)을 수집해요.
-2. 삭제될 각 컬럼에 대해, 같은 테이블에 **호환되는 타입**의 추가될 컬럼이 있는지 확인해요.
-3. 1:1 매칭이 발견되면 (삭제될 컬럼 하나가 타입 기준으로 추가될 컬럼 하나와 매칭), drop + add 대신 **이름 변경**으로 처리해요.
+1. **삭제될** 컬럼 (DB에 있지만 엔티티에 없는 것)과 **추가될** 컬럼 (엔티티에 있지만 DB에 없는 것)을 모읍니다.
+2. 엔티티가 `@Column({ renamedFrom })`으로 명시한 쌍을 먼저 확정합니다. 명시 힌트가 항상 이깁니다.
+3. 남은 것 중 **타입이 호환되는** 쌍만 남깁니다 (DB가 길이·정밀도를 보고하면 그것까지 같아야 해요).
+4. 두 이름이 **같은 컬럼으로 읽히고** 양쪽 모두 다른 후보가 없을 때만 이름 변경으로 확정합니다.
+5. 나머지는 **이름 변경 후보**로 보고하고, 선언된 그대로 drop + add를 적용합니다.
 
-예를 들어 `phone`을 `mobile`로 이름을 바꾸면:
+같은 컬럼으로 읽히는 경우는 대소문자·구분자만 다를 때 (`user_name` -> `userName`), 한쪽이 다른 쪽을 포함할 때 (`name` -> `fullName`, `legacyNote` -> `note`), 편집 거리가 짧을 때 (`recieved_at` -> `received_at`)입니다. `legacyNote` -> `bio`나 `createdAt` -> `updatedAt`처럼 서로 무관한 이름은 이름 변경으로 보지 않아요.
+
+엔진이 알아보는 이름 변경은 이렇게 처리됩니다.
 
 ```typescript
 // Before
@@ -523,13 +527,13 @@ phone!: string;
 
 // After
 @Column({ type: "varchar", length: 20 })
-mobile!: string;
+phoneNumber!: string;
 ```
 
 Diff 엔진이 보는 것:
-- 삭제: `phone` (타입: VARCHAR)
-- 추가: `mobile` (타입: VARCHAR)
-- 같은 테이블, 호환되는 타입, 1:1 매칭 -- 이름 변경으로 판단.
+- 삭제: `phone` (타입: VARCHAR(20))
+- 추가: `phoneNumber` (타입: VARCHAR(20))
+- 같은 테이블, 호환되는 타입, 같은 컬럼으로 읽히는 이름 -- 이름 변경으로 판단.
 
 생성된 migration은 `DROP` + `ADD` 대신 `RENAME COLUMN`을 사용해요:
 
@@ -537,18 +541,49 @@ Diff 엔진이 보는 것:
 class SchemaDiff_1708000000000 extends Migration {
   async up(context: MigrationContext) {
     await context.query(
-      `ALTER TABLE "users" RENAME COLUMN "phone" TO "mobile"`
+      `ALTER TABLE "users" RENAME COLUMN "phone" TO "phoneNumber"`
     );
   }
   async down(context: MigrationContext) {
     await context.query(
-      `ALTER TABLE "users" RENAME COLUMN "mobile" TO "phone"`
+      `ALTER TABLE "users" RENAME COLUMN "phoneNumber" TO "phone"`
     );
   }
 }
 ```
 
-호환되는 타입으로 후보를 좁히기 때문에 이름 변경 감지가 잘 동작해요. `phone` (VARCHAR)의 이름을 바꾸면서 동시에 `age` (INT)를 추가해도, VARCHAR와 INT는 호환되지 않는 타입이라 혼동하지 않아요.
+#### 이름이 전혀 다를 때: `renamedFrom`
+
+새 이름이 예전 이름과 아무 관계가 없다면 ORM에 직접 알려주세요.
+
+```typescript
+@Column({ type: "varchar", length: 100, renamedFrom: "legacyNote" })
+bio!: string;
+```
+
+`renamedFrom`에는 값이 넘어올 **DB 컬럼 이름**을 적습니다. 이 옵션이 있으면 synchronize와 `migrate:generate`가 `RENAME COLUMN`을 내보내고, 없으면 엔티티가 선언한 그대로 `bio`를 빈 컬럼으로 추가하고 `legacyNote`를 삭제합니다. 해당 이름의 컬럼이 더 이상 없으면 옵션은 아무 일도 하지 않으니, 이름 변경이 모든 환경에 반영된 뒤에 지우면 돼요. `defineEntity`에서는 `t.varchar(100).renamedFrom("legacyNote")`, `EntitySchema` 컬럼에서는 `renamedFrom: "legacyNote"`로 같은 설정을 합니다.
+
+#### 거절된 이름 변경은 이렇게 보입니다
+
+`synchronize`는 drop + add를 적용하기 전에 쌍마다 경고를 한 줄씩 남깁니다.
+
+```
+[sync] profile.bio is being added while the dropped column "legacyNote" has the
+same type but an unrelated name. Treating it as a new column: nothing is copied
+from legacyNote. If it is a rename, declare
+@Column({ renamedFrom: "legacyNote" }) (or write a migration) before this sync runs.
+```
+
+`migrate:generate`는 결정한 ADD/DROP을 쓰고, 그 뒤에 이름 변경을 주석 처리된 대안으로 덧붙입니다.
+
+```typescript
+// POSSIBLE RENAME (name differs from the dropped legacyNote) -- uncomment INSTEAD of the ADD/DROP pair above if this is a rename:
+// await query(`ALTER TABLE "profile" RENAME COLUMN "legacyNote" TO "bio"`)
+```
+
+거절된 쌍은 diff 결과의 `renameCandidates`에도 담깁니다. 추가될 컬럼, 거기에 맞는 삭제될 컬럼들 (유사도 순), 그리고 `reason`이 `"ambiguous"` (여러 개가 맞음) 또는 `"dissimilar-names"` (타입만 맞음)로 들어 있어요.
+
+> 이름 변경은 `synchronize.failOnDestructiveChange`의 영향을 받습니다. 이 플래그를 켜면 synchronize는 부팅 중에 데이터를 옮기는 대신 `ORM_SCHEMA_SYNC_DESTRUCTIVE_CHANGE`를 던지고 멈춥니다.
 
 > Schema Diff는 테이블과 컬럼의 추가, 삭제, 이름 변경을 감지해요. 컬럼 타입 변경 (예: VARCHAR를 TEXT로 변경)은 diff 결과의 `alterColumns`로 감지되지만, 안전을 위해 수동 migration으로 작성하는 걸 권장해요.
 

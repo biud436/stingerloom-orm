@@ -433,6 +433,15 @@ describe("Issue #186: Entity inheritance", () => {
 // Issue #185: Enum type consistency across drivers
 // ═════════════════════════════════════════════════════════════════════════════
 
+@Entity()
+class EnumTypeUser {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "enum", enumValues: ["admin", "user"] })
+  role!: string;
+}
+
 describe("Issue #185: Enum type consistency", () => {
   function createMockConnector(): any {
     return {
@@ -449,11 +458,21 @@ describe("Issue #185: Enum type consistency", () => {
     expect(result).toBe("USER-DEFINED");
   });
 
-  it("SchemaDiff castTypePostgres('enum') should return 'USER-DEFINED'", () => {
+  it("SchemaDiff reports 'USER-DEFINED' as an enum column's comparison type", async () => {
+    // SchemaDiff no longer keeps a type table of its own: it renders the
+    // declared type through the driver's column builder and reduces it to the
+    // token information_schema reports, which for a PG enum is USER-DEFINED.
     const schemaDiff = new SchemaDiff();
-    // castTypePostgres is private, so we access it via castType which delegates
-    const result = (schemaDiff as any).castTypePostgres("enum");
-    expect(result).toBe("USER-DEFINED");
+    const runner = {
+      query: jest.fn(async () => [
+        { column_name: "id", data_type: "integer", is_nullable: "NO" },
+      ]),
+    };
+    const result = await schemaDiff.diff([EnumTypeUser], runner, "postgres");
+
+    const role = result.addColumns.find((c) => c.columnName === "role");
+    expect(role!.comparisonType).toBe("USER-DEFINED");
+    expect(role!.columnType).toBe('"public"."enum_type_user_role_enum"');
   });
 
   it("SchemaGenerator castType('enum') for postgres should return 'USER-DEFINED'", () => {
@@ -465,15 +484,12 @@ describe("Issue #185: Enum type consistency", () => {
 
   it("all three sources should match for enum type", () => {
     const driver = new PostgresDriver(createMockConnector());
-    const schemaDiff = new SchemaDiff();
     const generator = new SchemaGenerator({ dialect: "postgres" });
 
     const driverResult = driver.castType("enum");
-    const schemaDiffResult = (schemaDiff as any).castTypePostgres("enum");
     const generatorResult = (generator as any).castType("enum");
 
-    expect(driverResult).toBe(schemaDiffResult);
-    expect(schemaDiffResult).toBe(generatorResult);
+    expect(driverResult).toBe(generatorResult);
     expect(driverResult).toBe("USER-DEFINED");
   });
 

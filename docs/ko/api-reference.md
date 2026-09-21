@@ -615,6 +615,7 @@ interface ColumnOption {
   scale?: number;
   enumValues?: string[];   // PostgreSQL ENUM
   enumName?: string;       // PostgreSQL ENUM type name
+  renamedFrom?: string;    // 예전 DB 컬럼 이름 — 이름 변경을 drop + add로 보지 않게 합니다
 }
 ```
 
@@ -1291,6 +1292,7 @@ interface ColumnSchemaDef {
   enumValues?: string[];
   enumName?: string;
   name?: string;
+  renamedFrom?: string;                       // 예전 DB 컬럼 이름 (이름 변경 힌트)
   transform?: (raw: unknown) => any;          // @deprecated — transformer 사용
   transformer?: ColumnTransformer;            // @Column({ transformer }) — 양방향
   generationStrategy?: "increment" | "uuid" | "uuid-v7";  // @PrimaryGeneratedColumn(strategy)

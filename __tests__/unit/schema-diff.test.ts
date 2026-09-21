@@ -146,13 +146,18 @@ describe("SchemaDiff", () => {
 
       const ageCol = result.addColumns.find((c) => c.columnName === "age");
       expect(ageCol).toBeDefined();
-      expect(ageCol!.columnType).toBe("INT");
+      // Declared type comes from the driver's column builder, so it is
+      // spelled exactly like the CREATE TABLE column (int defaults to a
+      // display width of 11, boolean to TINYINT(1)).
+      expect(ageCol!.columnType).toBe("INT(11)");
+      expect(ageCol!.comparisonType).toBe("INT");
 
       const activeCol = result.addColumns.find(
         (c) => c.columnName === "active",
       );
       expect(activeCol).toBeDefined();
-      expect(activeCol!.columnType).toBe("TINYINT");
+      expect(activeCol!.columnType).toBe("TINYINT(1)");
+      expect(activeCol!.comparisonType).toBe("TINYINT");
     });
   });
 
@@ -196,7 +201,7 @@ describe("SchemaDiff", () => {
 
       expect(result.alterColumns).toHaveLength(1);
       expect(result.alterColumns[0].columnName).toBe("name");
-      expect(result.alterColumns[0].columnType).toBe("VARCHAR");
+      expect(result.alterColumns[0].columnType).toBe("VARCHAR(255)");
       expect(result.alterColumns[0].currentType).toBe("text");
     });
   });
@@ -300,7 +305,7 @@ describe("SchemaDiff", () => {
       const result = await schemaDiff.diff([DiffUser], runner, "mysql");
       const nameAlter = result.alterColumns.find((c) => c.columnName === "name");
       expect(nameAlter).toBeDefined();
-      expect(nameAlter!.columnType).toBe("VARCHAR");
+      expect(nameAlter!.columnType).toBe("VARCHAR(255)");
       // Regression: previously omitted → DDL emitted bare "VARCHAR" (MySQL 1064).
       expect(nameAlter!.expectedLength).toBe(255);
 

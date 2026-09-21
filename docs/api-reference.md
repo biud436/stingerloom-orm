@@ -615,6 +615,7 @@ interface ColumnOption {
   scale?: number;
   enumValues?: string[];   // PostgreSQL ENUM
   enumName?: string;       // PostgreSQL ENUM type name
+  renamedFrom?: string;    // Old DB column name, so a rename is not seen as drop + add
 }
 ```
 
@@ -1293,6 +1294,7 @@ interface ColumnSchemaDef {
   enumValues?: string[];
   enumName?: string;
   name?: string;
+  renamedFrom?: string;                       // old DB column name (rename hint)
   transform?: (raw: unknown) => any;          // @deprecated — use transformer
   transformer?: ColumnTransformer;            // @Column({ transformer }) — bidirectional
   generationStrategy?: "increment" | "uuid" | "uuid-v7";  // @PrimaryGeneratedColumn(strategy)

@@ -58,6 +58,17 @@ export interface ColumnDefinitionBuilder {
   castType(type: ColumnType): string;
 
   /**
+   * Builds the declared SQL type of a column — enum values, array element,
+   * decimal precision and the length suffix included, nullability and key
+   * clauses excluded. Example: `VARCHAR(255)`, `CHAR(36)`, `NUMERIC(10, 2)`.
+   *
+   * The schema diff renders ADD/ALTER COLUMN through this, so a column added
+   * to an existing table gets exactly the type CREATE TABLE would have given
+   * it on the same server version.
+   */
+  buildColumnTypeExpr(option: ColumnOption, ctx: ColumnDefContext): string;
+
+  /**
    * Wraps an identifier with dialect-appropriate quoting.
    */
   wrapIdentifier(name: string): string;
