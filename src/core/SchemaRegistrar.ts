@@ -871,6 +871,16 @@ export class SchemaRegistrar {
         queryRunner,
         dialect,
         schema,
+        {
+          // The connected driver's builder decides the declared types, so an
+          // ADD/ALTER COLUMN is spelled like the CREATE TABLE this server
+          // version would get (MariaDB native UUID vs MySQL CHAR(36), ...).
+          columnBuilder: createColumnDefinitionBuilder(
+            dialect,
+            schema,
+            this.ctx.getDriver()?.getCapabilities?.(),
+          ),
+        },
       );
     } catch (err) {
       this.handleDdlError(err, "SchemaDiff failed, skipping ALTER operations", policy);

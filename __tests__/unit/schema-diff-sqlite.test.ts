@@ -182,8 +182,8 @@ describe("SchemaDiff — SQLite dialect", () => {
     });
   });
 
-  describe("castTypeSqlite mapping", () => {
-    it("should map varchar to TEXT", async () => {
+  describe("declared type mapping (SqliteColumnDefinitionBuilder)", () => {
+    it("should map varchar to the builder's TEXT(length)", async () => {
       const runner = createMockQueryRunner({
         sqlite_diff_user: [
           { cid: 0, name: "id", type: "INTEGER", notnull: 1, dflt_value: null, pk: 1 },
@@ -198,7 +198,8 @@ describe("SchemaDiff — SQLite dialect", () => {
 
       const nameCol = result.addColumns.find((c) => c.columnName === "name");
       expect(nameCol).toBeDefined();
-      expect(nameCol!.columnType).toBe("TEXT");
+      expect(nameCol!.columnType).toBe("TEXT(255)");
+      expect(nameCol!.comparisonType).toBe("TEXT");
     });
 
     it("should map int/number to INTEGER", async () => {

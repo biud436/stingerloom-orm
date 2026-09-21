@@ -43,9 +43,28 @@ export abstract class BaseColumnDefinitionBuilder
   }
 
   /**
-   * Builds a complete column definition SQL fragment.
+   * Resolves the declared SQL type of a column, length suffix included.
+   *
+   * This is the single source of truth for "what type does this dialect
+   * declare for this column": CREATE TABLE renders it through
+   * {@link buildColumnDef}, and the schema diff renders ADD/ALTER COLUMN
+   * through it directly — so an `ADD COLUMN` can never disagree with the
+   * `CREATE TABLE` the same entity would have produced (#T1-3: MySQL's
+   * `uuid` used to be created as `CHAR(36)` but added as a bare `CHAR`,
+   * i.e. `CHAR(1)`).
+   *
+   * Excludes nullability, PRIMARY KEY, DEFAULT and auto-increment — those
+   * belong to the full column definition, not to the type.
    */
-  buildColumnDef(option: ColumnOption, ctx: ColumnDefContext): string {
+  buildColumnTypeExpr(option: ColumnOption, ctx: ColumnDefContext): string {
+    return this.buildLengthSuffix(this.resolveTypeExpr(option, ctx), option);
+  }
+
+  /** The declared type before the length suffix is applied. */
+  protected resolveTypeExpr(
+    option: ColumnOption,
+    ctx: ColumnDefContext,
+  ): string {
     let type = this.castType(option.type ?? "varchar");
 
     // 1. Resolve boolean type
@@ -59,7 +78,14 @@ export abstract class BaseColumnDefinitionBuilder
 
     // 3.5. Resolve array type (PostgreSQL emits `element[]` instead of the
     // bare `ARRAY` placeholder, which is not valid DDL)
-    type = this.resolveArrayType(type, option, ctx);
+    return this.resolveArrayType(type, option, ctx);
+  }
+
+  /**
+   * Builds a complete column definition SQL fragment.
+   */
+  buildColumnDef(option: ColumnOption, ctx: ColumnDefContext): string {
+    const type = this.resolveTypeExpr(option, ctx);
 
     // 4. Auto-increment early return
     const autoIncResult = this.buildAutoIncrement(option, ctx);

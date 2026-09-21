@@ -17,6 +17,7 @@ import { SqliteMigrationRunner } from "./SqliteMigrationRunner";
 import { SchemaDiff } from "../core/generators/SchemaDiff";
 import { SchemaDiffMigrationGenerator } from "../core/generators/SchemaDiffMigrationGenerator";
 import { SchemaDialect } from "../core/generators/SchemaGenerator";
+import { createColumnDefinitionBuilder } from "../dialects/ColumnDefinitionBuilder";
 import { EntityManager } from "../core/EntityManager";
 
 export type MigrationCommand = "migrate:run" | "migrate:rollback" | "migrate:status" | "migrate:generate";
@@ -270,8 +271,21 @@ export class MigrationCli {
       },
     };
 
+    // Declared types (and the RENAME form MySQL < 8 needs) come from the
+    // connected server's capabilities, exactly like the runtime synchronize
+    // path — a migration generated against MariaDB 10.7 must not propose the
+    // CHAR(36) spelling MySQL would get.
+    const capabilities = this.driver?.getCapabilities?.();
+    const columnBuilder = createColumnDefinitionBuilder(
+      dialect,
+      this.options.schema,
+      capabilities,
+    );
+
     const schemaDiff = new SchemaDiff();
-    const diff = await schemaDiff.diff(entities, queryRunner, dialect);
+    const diff = await schemaDiff.diff(entities, queryRunner, dialect, undefined, {
+      columnBuilder,
+    });
 
     const hasChanges =
       diff.addTables.length > 0 ||
@@ -285,7 +299,10 @@ export class MigrationCli {
       return { filePath: "", sql: { up: [], down: [] } };
     }
 
-    const generator = new SchemaDiffMigrationGenerator();
+    const generator = new SchemaDiffMigrationGenerator(
+      capabilities,
+      this.driver?.getVersion?.()?.raw,
+    );
     const content = generator.generate(diff, dialect);
     const sqlPreview = generator.dryRun(diff, dialect);
 

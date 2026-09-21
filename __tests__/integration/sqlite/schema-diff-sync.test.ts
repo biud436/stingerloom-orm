@@ -416,7 +416,9 @@ describe("[Integration] SQLite In-Memory: SchemaDiff 동기화 후 감지 검증
       expect(result.addColumns.length).toBe(1);
       expect(result.addColumns[0].columnName).toBe("email");
       expect(result.addColumns[0].tableName).toBe(TABLE_NAME);
-      expect(result.addColumns[0].columnType).toBe("TEXT"); // varchar → TEXT in SQLite
+      // varchar → SQLite's TEXT(length), the same spelling CREATE TABLE uses
+      expect(result.addColumns[0].columnType).toBe("TEXT(255)");
+      expect(result.addColumns[0].comparisonType).toBe("TEXT");
       expect(result.addColumns[0].nullable).toBe(true);
     });
 

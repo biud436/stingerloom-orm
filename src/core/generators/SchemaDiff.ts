@@ -1,27 +1,22 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import sql from "../../utils/sqlTag";
 import { ClazzType } from "../../utils";
-import {
-  COLUMN_TOKEN,
-  ColumnOption,
-  ColumnType,
-} from "../../decorators/Column";
+import { ColumnOption } from "../../decorators/Column";
 import {
   ENTITY_TOKEN,
   EntityMetadata,
   getEntitySchema,
 } from "../../decorators/Entity";
-import { ColumnMetadata } from "../../scanner/ColumnScanner";
-import {
-  RELATION_COLUMN_TOKEN,
-  RelationColumnMetadata,
-} from "../../decorators/RelationColumn";
 import {
   COMPUTED_COLUMN_TOKEN,
   ComputedColumnMetadata,
 } from "../../decorators/ComputedColumn";
 import { SchemaDialect } from "./SchemaGenerator";
-import { inferRelatedPkType } from "./RelatedPkTypeResolver";
+import { collectEntityColumns } from "./entityColumns";
+import {
+  ColumnDefinitionBuilder,
+  createColumnDefinitionBuilder,
+} from "../../dialects/ColumnDefinitionBuilder";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
@@ -35,6 +30,15 @@ export interface ColumnChange {
   schema?: string;
   columnName: string;
   columnType?: string;
+  /**
+   * `columnType` reduced to the token INFORMATION_SCHEMA reports for it
+   * (`CHAR(36)` → `CHAR`, `ENUM('a','b')` → `ENUM`, and on PostgreSQL
+   * `"public"."x_enum"` → `USER-DEFINED`, `TEXT[]` → `ARRAY`). Set by
+   * {@link SchemaDiff}; rename matching compares it against the DB's
+   * `data_type`. Undefined on hand-built diffs, which fall back to
+   * `columnType` with its arguments stripped.
+   */
+  comparisonType?: string;
   currentType?: string;
   nullable?: boolean;
   /**
@@ -141,10 +145,103 @@ export interface SchemaDiffOptions {
    * entity is obsolete rather than merely owned by someone else.
    */
   detectDroppedTables?: boolean;
+
+  /**
+   * The connected driver's column definition builder — the single source of
+   * truth for declared column types. Supplying it makes the diff's ADD/ALTER
+   * COLUMN types identical to the ones CREATE TABLE renders on that exact
+   * server version (MariaDB's native `UUID` vs MySQL's `CHAR(36)`, MySQL 5.6's
+   * `LONGTEXT` vs 5.7's `JSON`, ...).
+   *
+   * Omitted, the diff builds a default builder for the dialect whose
+   * capabilities are the conservative "works everywhere" set.
+   */
+  columnBuilder?: ColumnDefinitionBuilder;
 }
 
 interface QueryRunner {
   query: (sql: string | import("sql-template-tag").Sql) => Promise<any>;
+}
+
+/** Character types whose declared width the diff compares against the DB. */
+const CHARACTER_TYPES = new Set([
+  "CHAR",
+  "VARCHAR",
+  "CHARACTER",
+  "CHARACTER VARYING",
+  "NCHAR",
+  "NVARCHAR",
+  "BINARY",
+  "VARBINARY",
+]);
+
+/** `CHAR(36)` → `CHAR`, `NUMERIC(10, 2)` → `NUMERIC`, `TEXT[]` → `TEXT`. */
+function stripTypeArguments(type: string): string {
+  const paren = type.indexOf("(");
+  const base = paren === -1 ? type : type.slice(0, paren);
+  return base.replace(/\[\s*\]\s*$/, "").trim().toUpperCase();
+}
+
+/**
+ * SQLite stores by affinity, so a column declared `VARCHAR(36)` is reported by
+ * `PRAGMA table_xinfo` exactly as written and is the same storage as `TEXT`.
+ * Reducing the declared type to its storage token keeps the comparison at the
+ * level SQLite actually enforces — a `VARCHAR`/`TEXT` difference is not drift.
+ */
+function sqliteStorageToken(bare: string): string {
+  if (
+    ["TEXT", "VARCHAR", "CHAR", "CHARACTER", "LONGTEXT", "NVARCHAR", "CLOB", "UUID"].includes(
+      bare,
+    )
+  ) {
+    return "TEXT";
+  }
+  if (["INTEGER", "INT", "TINYINT", "BOOLEAN"].includes(bare)) return "INTEGER";
+  // BIGINT keeps its own token: the declared type is what tells the connector
+  // to read the column with safe integers (SqliteSafeIntegers), so it is not
+  // folded into INTEGER even though the affinity is the same.
+  if (bare === "BIGINT") return "BIGINT";
+  if (["REAL", "FLOAT", "DOUBLE", "NUMERIC", "DECIMAL"].includes(bare)) {
+    return "REAL";
+  }
+  return bare;
+}
+
+/**
+ * The INFORMATION_SCHEMA token for a declared type. PostgreSQL reports its
+ * named types indirectly — an enum column as `USER-DEFINED` and an array
+ * column as `ARRAY` — so those two are resolved from the entity option rather
+ * than from the DDL spelling.
+ */
+function comparisonToken(
+  option: ColumnOption,
+  ddl: string,
+  dialect: SchemaDialect,
+): string {
+  if (dialect === "postgres") {
+    if (option.type === "enum") return "USER-DEFINED";
+    if (option.type === "array") return "ARRAY";
+  }
+  const bare = stripTypeArguments(ddl);
+  return dialect === "sqlite" ? sqliteStorageToken(bare) : bare;
+}
+
+/**
+ * The width the entity declares for a column: the explicit `length` option, or
+ * the one baked into the dialect type when the option is absent (MySQL and
+ * SQLite render `uuid` as `CHAR(36)` / `VARCHAR(36)`). Without the second
+ * case a column that the pre-#T1-3 ADD COLUMN path created as `CHAR(1)` would
+ * never be reported as drifted, so the truncated column would stay.
+ */
+function declaredLength(option: ColumnOption, ddl: string): number | null {
+  if (option.length !== undefined && option.length !== null && option.length > 0) {
+    return option.length;
+  }
+  const match = /^([A-Za-z][A-Za-z ]*)\((\d+)\)$/.exec(ddl.trim());
+  if (!match) return null;
+  return CHARACTER_TYPES.has(match[1].trim().toUpperCase())
+    ? Number(match[2])
+    : null;
 }
 
 /**
@@ -175,6 +272,12 @@ export class SchemaDiff {
 
     const entityTableNames = new Set<string>();
 
+    // Declared column types come from the driver's own column builder, so the
+    // ALTER/ADD this diff proposes is spelled exactly like the CREATE TABLE
+    // the same entity would produce on this server version.
+    const columnBuilder =
+      options?.columnBuilder ?? createColumnDefinitionBuilder(dialect, schema);
+
     for (const entity of entities) {
       const tableName = this.getTableName(entity);
       entityTableNames.add(tableName.toLowerCase());
@@ -183,7 +286,8 @@ export class SchemaDiff {
       // schema, and every change on it carries that schema so
       // migrate:generate can qualify the ALTER/DROP the way CREATE TABLE
       // already is. Enum types stay in the default schema (see
-      // quoteEnumType). PostgreSQL only — the other dialects have no schema.
+      // the column builder's schema). PostgreSQL only — the other dialects
+      // have no schema.
       const pinnedSchema =
         dialect === "postgres" ? getEntitySchema(entity) : undefined;
       const pin = pinnedSchema ? { schema: pinnedSchema } : {};
@@ -213,60 +317,41 @@ export class SchemaDiff {
         const colName = col.name ?? "unknown";
         entityColumnNames.add(colName.toLowerCase());
         const dbCol = dbColumnMap.get(colName.toLowerCase());
+        const declared = this.declareColumnType(
+          col.options,
+          tableName,
+          colName,
+          dialect,
+          columnBuilder,
+        );
+        // Length/precision must not be appended after `[]` or after a named
+        // enum type ("TEXT[](255)" / `"public"."x_enum"(255)` are both
+        // invalid), so those columns report none.
+        const expectedLength = declared.namedType ? null : declared.length;
+        const expectedPrecision = declared.namedType
+          ? null
+          : (col.options?.precision ?? null);
+        const expectedScale = declared.namedType
+          ? null
+          : (col.options?.scale ?? null);
 
         if (!dbCol) {
           // Column exists in entity but not in DB — needs to be added
-          let castTypeName = this.castType(
-            col.options?.type ?? "varchar",
-            dialect,
-          );
-          const isPgArray =
-            dialect === "postgres" && col.options?.type === "array";
-          if (isPgArray) {
-            // castTypePostgres keeps "ARRAY" for information_schema
-            // comparison, but bare ARRAY is not valid ADD COLUMN DDL —
-            // resolve to `element[]` like the CREATE TABLE path does.
-            castTypeName = `${this.castType(
-              col.options?.arrayElementType ?? "text",
-              dialect,
-            )}[]`;
-          }
-          const isPgEnum =
-            dialect === "postgres" && col.options?.type === "enum";
-          if (isPgEnum) {
-            // Same shape as the array case: castTypePostgres reports the
-            // information_schema token "USER-DEFINED" so the comparison branch
-            // does not churn, but ADD COLUMN has to name the type itself
-            // (`ADD COLUMN "status" USER-DEFINED` is a syntax error). The type
-            // is provisioned by SchemaRegistrar.syncEnumTypes before this runs.
-            castTypeName = this.quoteEnumType(
-              col.options?.enumName ?? `${tableName}_${colName}_enum`,
-              schema,
-            );
-          }
-          const isPgNamedType = isPgArray || isPgEnum;
           result.addColumns.push({
             tableName,
             ...pin,
             columnName: colName,
-            columnType: castTypeName,
+            columnType: declared.ddl,
+            comparisonType: declared.compare,
             nullable: col.options?.nullable ?? false,
-            // Length/precision must not be appended after `[]` or after a
-            // named enum type ("TEXT[](255)" / `"public"."x_enum"(255)` are
-            // both invalid), so those columns drop them.
-            expectedLength: isPgNamedType ? null : (col.options?.length ?? null),
-            expectedPrecision: isPgNamedType
-              ? null
-              : (col.options?.precision ?? null),
-            expectedScale: isPgNamedType ? null : (col.options?.scale ?? null),
+            expectedLength,
+            expectedPrecision,
+            expectedScale,
             enumValues: col.options?.enumValues,
           });
         } else {
           // Column exists in both — check for type changes
-          const expectedType = this.castType(
-            col.options?.type ?? "varchar",
-            dialect,
-          );
+          const expectedType = declared.compare;
           const actualType = dbCol.data_type.toUpperCase();
 
           // Expected nullability mirrors the CREATE path exactly
@@ -278,51 +363,33 @@ export class SchemaDiff {
           const dbNullable =
             (dbCol.is_nullable ?? "").toString().toUpperCase() === "YES";
 
+          const alter = (typeChanged: boolean): ColumnChange => ({
+            tableName,
+            ...pin,
+            columnName: colName,
+            columnType: declared.ddl,
+            comparisonType: declared.compare,
+            currentType: dbCol.data_type,
+            // Carry the declared nullability — MySQL's MODIFY COLUMN restates
+            // the whole definition, so omitting this silently drops NOT NULL.
+            nullable: expectedNullable,
+            currentNullable: dbNullable,
+            ...(typeChanged ? {} : { typeChanged: false }),
+            expectedLength,
+            actualLength: dbCol.character_maximum_length ?? null,
+            expectedPrecision,
+            actualPrecision: dbCol.numeric_precision ?? null,
+            expectedScale,
+            actualScale: dbCol.numeric_scale ?? null,
+            enumValues: col.options?.enumValues,
+          });
+
           if (!this.typesMatch(expectedType, actualType, dialect)) {
-            result.alterColumns.push({
-              tableName,
-              ...pin,
-              columnName: colName,
-              columnType: expectedType,
-              currentType: dbCol.data_type,
-              // Carry the declared nullability — MySQL's MODIFY COLUMN restates
-              // the whole definition, so omitting this silently drops NOT NULL.
-              nullable: expectedNullable,
-              currentNullable: dbNullable,
-              // Carry length/precision/scale too: castType emits a bare type
-              // (e.g. "VARCHAR", "DECIMAL"), so without these the generated
-              // ALTER becomes "MODIFY ... VARCHAR" — a MySQL 1064 syntax error
-              // — and DECIMAL would silently lose its precision/scale.
-              expectedLength: col.options?.length ?? null,
-              actualLength: dbCol.character_maximum_length ?? null,
-              expectedPrecision: col.options?.precision ?? null,
-              actualPrecision: dbCol.numeric_precision ?? null,
-              expectedScale: col.options?.scale ?? null,
-              actualScale: dbCol.numeric_scale ?? null,
-              enumValues: col.options?.enumValues,
-            });
-          } else if (!this.lengthsMatch(col.options, dbCol)) {
+            result.alterColumns.push(alter(true));
+          } else if (!this.lengthsMatch(expectedLength, col.options, dbCol)) {
             // Types match but length/precision differs
-            result.alterColumns.push({
-              tableName,
-              ...pin,
-              columnName: colName,
-              columnType: expectedType,
-              currentType: dbCol.data_type,
-              nullable: expectedNullable,
-              currentNullable: dbNullable,
-              expectedLength: col.options?.length ?? null,
-              actualLength: dbCol.character_maximum_length ?? null,
-              expectedPrecision: col.options?.precision ?? null,
-              actualPrecision: dbCol.numeric_precision ?? null,
-              expectedScale: col.options?.scale ?? null,
-              actualScale: dbCol.numeric_scale ?? null,
-              enumValues: col.options?.enumValues,
-            });
-          } else if (
-            expectedNullable !== dbNullable &&
-            !col.options?.primary
-          ) {
+            result.alterColumns.push(alter(true));
+          } else if (expectedNullable !== dbNullable && !col.options?.primary) {
             // Type and length match, but nullability drifted — emit a
             // nullability-only alter. Primary-key columns are skipped: their
             // nullability is structurally fixed and dialect-quirky (SQLite's
@@ -330,23 +397,7 @@ export class SchemaDiff {
             // `typeChanged: false` tells the generators to skip the TYPE rewrite
             // and emit only `SET/DROP NOT NULL` (Postgres) or restate the column
             // via `MODIFY COLUMN` (MySQL).
-            result.alterColumns.push({
-              tableName,
-              ...pin,
-              columnName: colName,
-              columnType: expectedType,
-              currentType: dbCol.data_type,
-              nullable: expectedNullable,
-              currentNullable: dbNullable,
-              typeChanged: false,
-              expectedLength: col.options?.length ?? null,
-              actualLength: dbCol.character_maximum_length ?? null,
-              expectedPrecision: col.options?.precision ?? null,
-              actualPrecision: dbCol.numeric_precision ?? null,
-              expectedScale: col.options?.scale ?? null,
-              actualScale: dbCol.numeric_scale ?? null,
-              enumValues: col.options?.enumValues,
-            });
+            result.alterColumns.push(alter(false));
           }
         }
       }
@@ -411,41 +462,7 @@ export class SchemaDiff {
   private getEntityColumns<T>(
     entity: ClazzType<T>,
   ): Array<{ name: string; options: ColumnOption }> {
-    const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
-      []) as ColumnMetadata[];
-    const result = columns.map((col) => ({
-      name: col.name ?? "unknown",
-      options: (col.options ?? {
-        type: "varchar" as ColumnType,
-        length: 255,
-        nullable: false,
-      }) as ColumnOption,
-    }));
-
-    // Add @RelationColumn virtual columns (when there is no matching @Column)
-    const relationColumns: RelationColumnMetadata[] =
-      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
-      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??
-      [];
-    const existingNames = new Set(result.map((c) => c.name));
-
-    for (const rc of relationColumns) {
-      const fkName = rc.name ?? `${rc.propertyKey}Id`;
-      if (existingNames.has(fkName)) continue;
-
-      const fkType: ColumnType =
-        rc.type ?? inferRelatedPkType(entity, rc.propertyKey) ?? "int";
-
-      result.push({
-        name: fkName,
-        options: {
-          type: fkType,
-          nullable: rc.nullable ?? true,
-        } as ColumnOption,
-      });
-    }
-
-    return result;
+    return collectEntityColumns(entity);
   }
 
   private getComputedColumns<T>(
@@ -543,148 +560,40 @@ export class SchemaDiff {
     return { type: typeStr };
   }
 
-  private castType(type: ColumnType, dialect: SchemaDialect): string {
-    if (dialect === "sqlite") {
-      return this.castTypeSqlite(type);
-    }
-    if (dialect === "postgres") {
-      return this.castTypePostgres(type);
-    }
-    return this.castTypeMysql(type);
-  }
-
-  private castTypeMysql(type: ColumnType): string {
-    switch (type) {
-      case "varchar":
-        return "VARCHAR";
-      case "int":
-      case "number":
-        return "INT";
-      case "boolean":
-        return "TINYINT";
-      case "datetime":
-        return "DATETIME";
-      case "timestamptz":
-        // MySQL has no TZ-aware type; the column builder maps it to DATETIME,
-        // so the diff must compare against DATETIME (not the invalid TIMESTAMPTZ).
-        return "DATETIME";
-      case "date":
-        return "DATE";
-      case "timestamp":
-        return "TIMESTAMP";
-      case "float":
-        return "FLOAT";
-      case "double":
-        return "DECIMAL";
-      case "blob":
-        return "BLOB";
-      case "text":
-      case "longtext":
-        return "TEXT";
-      case "bigint":
-        return "BIGINT";
-      case "json":
-      case "jsonb":
-      case "array":
-        return "JSON";
-      case "char":
-        return "CHAR";
-      case "enum":
-        return "ENUM";
-      case "uuid":
-        return "CHAR";
-      default:
-        return (type as string).toUpperCase();
-    }
-  }
-
   /**
-   * Schema-qualified, quoted enum type name. Mirrors
-   * `PostgresColumnDefinitionBuilder.resolveEnumType` so an ADD COLUMN names
-   * exactly the type a CREATE TABLE would have named.
+   * Resolves what type the entity declares for a column, in the two forms the
+   * diff needs:
+   *
+   * - `ddl` — the driver's own rendering (`CHAR(36)`, `ENUM('a','b')`,
+   *   `TEXT[]`, `"public"."post_status_enum"`). Emitted verbatim in ADD/ALTER
+   *   COLUMN, so it matches the CREATE TABLE this server version would get.
+   * - `compare` — the token INFORMATION_SCHEMA reports for that type, used to
+   *   decide whether the column drifted.
    */
-  private quoteEnumType(enumName: string, schema?: string): string {
-    const quote = (id: string) => `"${id.replace(/"/g, '""')}"`;
-    return `${quote(schema ?? "public")}.${quote(enumName)}`;
-  }
-
-  private castTypePostgres(type: ColumnType): string {
-    switch (type) {
-      case "varchar":
-        return "CHARACTER VARYING";
-      case "int":
-      case "number":
-        return "INTEGER";
-      case "boolean":
-        return "BOOLEAN";
-      case "datetime":
-      case "timestamp":
-        return "TIMESTAMP WITHOUT TIME ZONE";
-      case "timestamptz":
-        // information_schema reports a TIMESTAMPTZ column as this canonical form;
-        // match it so the diff doesn't emit a spurious ALTER on every sync.
-        return "TIMESTAMP WITH TIME ZONE";
-      case "date":
-        return "DATE";
-      case "float":
-        return "REAL";
-      case "double":
-        return "NUMERIC";
-      case "blob":
-        return "BYTEA";
-      case "text":
-      case "longtext":
-        return "TEXT";
-      case "bigint":
-        return "BIGINT";
-      case "json":
-        return "JSON";
-      case "jsonb":
-        return "JSONB";
-      case "char":
-        return "CHARACTER";
-      case "enum":
-        return "USER-DEFINED";
-      case "array":
-        return "ARRAY";
-      case "uuid":
-        return "UUID";
-      default:
-        return (type as string).toUpperCase();
-    }
-  }
-
-  private castTypeSqlite(type: ColumnType): string {
-    switch (type) {
-      case "varchar":
-      case "text":
-      case "longtext":
-      case "char":
-      case "enum":
-      case "json":
-      case "jsonb":
-      case "array":
-      case "datetime":
-      case "date":
-      case "timestamp":
-      case "timestamptz":
-        return "TEXT";
-      case "int":
-      case "number":
-      case "boolean":
-        return "INTEGER";
-      case "bigint":
-        return "BIGINT";
-      case "float":
-      case "double":
-        return "REAL";
-      case "blob":
-        return "BLOB";
-      case "uuid":
-        return "TEXT";
-      default:
-        return (type as string).toUpperCase();
-    }
+  private declareColumnType(
+    option: ColumnOption | undefined,
+    tableName: string,
+    columnName: string,
+    dialect: SchemaDialect,
+    builder: ColumnDefinitionBuilder,
+  ): {
+    ddl: string;
+    compare: string;
+    length: number | null;
+    namedType: boolean;
+  } {
+    const resolved: ColumnOption =
+      option ?? ({ type: "varchar" } as ColumnOption);
+    const ddl = builder.buildColumnTypeExpr(resolved, { tableName, columnName });
+    const namedType =
+      dialect === "postgres" &&
+      (resolved.type === "array" || resolved.type === "enum");
+    return {
+      ddl,
+      compare: comparisonToken(resolved, ddl, dialect),
+      length: declaredLength(resolved, ddl),
+      namedType,
+    };
   }
 
   /**
@@ -758,6 +667,7 @@ export class SchemaDiff {
    * Returns true if they match (or if comparison is not applicable).
    */
   private lengthsMatch(
+    expectedLength: number | null,
     entityOptions: ColumnOption | undefined,
     dbCol: DbColumnInfo,
   ): boolean {
@@ -765,13 +675,12 @@ export class SchemaDiff {
 
     // Check character_maximum_length (varchar, char, etc.)
     if (
-      entityOptions.length !== undefined &&
-      entityOptions.length !== null &&
-      entityOptions.length > 0 &&
+      expectedLength !== null &&
+      expectedLength > 0 &&
       dbCol.character_maximum_length !== undefined &&
       dbCol.character_maximum_length !== null
     ) {
-      if (entityOptions.length !== dbCol.character_maximum_length) {
+      if (expectedLength !== dbCol.character_maximum_length) {
         return false;
       }
     }
@@ -929,7 +838,9 @@ export class SchemaDiff {
         for (let ai = 0; ai < adds.length; ai++) {
           if (matchedAddIdx.has(ai)) continue;
           const add = adds[ai];
-          const addType = (add.columnType ?? "").toUpperCase();
+          const addType =
+            add.comparisonType?.toUpperCase() ??
+            stripTypeArguments(add.columnType ?? "");
 
           if (this.typesMatch(addType, dropType, dialect)) {
             // Also verify length/precision match to avoid false renames,

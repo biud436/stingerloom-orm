@@ -295,7 +295,10 @@ describe("SchemaDiff — PostgreSQL ENUM auto-sync", () => {
       const result = await schemaDiff.diff([EnumUser], runner, "mysql");
 
       const added = result.addColumns.find((c) => c.columnName === "role");
-      expect(added!.columnType).toBe("ENUM");
+      // The driver's column builder renders the inline value list, exactly as
+      // CREATE TABLE does; enumValues stays for consumers that re-render it.
+      expect(added!.columnType).toBe("ENUM('admin','user','guest')");
+      expect(added!.comparisonType).toBe("ENUM");
       expect(added!.enumValues).toEqual(["admin", "user", "guest"]);
     });
   });

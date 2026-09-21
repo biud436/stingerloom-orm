@@ -42,14 +42,10 @@ import { ColumnMetadata } from "../../scanner/ColumnScanner";
 import { escapeSqlLiteral } from "../../utils/escapeSqlLiteral";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
-import {
-  RELATION_COLUMN_TOKEN,
-  RelationColumnMetadata,
-} from "../../decorators/RelationColumn";
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
 import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "../PropertyColumnMap";
-import { inferRelatedPkType } from "./RelatedPkTypeResolver";
+import { collectEntityColumns, EntityColumnDef } from "./entityColumns";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import {
@@ -78,10 +74,7 @@ export interface SchemaGeneratorOptions {
   version?: DbVersion;
 }
 
-interface ColumnDef {
-  name: string;
-  options: ColumnOption;
-}
+type ColumnDef = EntityColumnDef;
 
 interface ForeignKeyDef {
   column: string;
@@ -667,41 +660,7 @@ export class SchemaGenerator {
   }
 
   private getColumns<T>(entity: ClazzType<T>): ColumnDef[] {
-    const columns = (Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
-      []) as ColumnMetadata[];
-    const result = columns.map((col) => ({
-      name: col.name ?? "unknown",
-      options: (col.options ?? {
-        type: "varchar" as ColumnType,
-        length: 255,
-        nullable: false,
-      }) as ColumnOption,
-    }));
-
-    // Add @RelationColumn virtual columns (when there is no matching @Column)
-    const relationColumns: RelationColumnMetadata[] =
-      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
-      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??
-      [];
-    const existingNames = new Set(result.map((c) => c.name));
-
-    for (const rc of relationColumns) {
-      const fkName = rc.name ?? `${rc.propertyKey}Id`;
-      if (existingNames.has(fkName)) continue; // @Column already declared
-
-      // Determine the FK column type: option.type → inferred target PK type → fallback "int"
-      const fkType: ColumnType = rc.type ?? inferRelatedPkType(entity, rc.propertyKey) ?? "int";
-
-      result.push({
-        name: fkName,
-        options: {
-          type: fkType,
-          nullable: rc.nullable ?? true,
-        } as ColumnOption,
-      });
-    }
-
-    return result;
+    return collectEntityColumns(entity);
   }
 
   /**
