@@ -249,6 +249,8 @@ const users = await em
 
 `innerJoinRelation()` is also available.
 
+A relation join carries the joined entity's soft-delete filter in its ON clause: if `User` has `@DeletedAt`, `leftJoinRelation("author", "u")` renders `ON p.author_id = u.id AND u.deleted_at IS NULL`, so a trashed author hydrates as `null` (LEFT) or drops the post (INNER) — the same result `find(Post, { relations: ["author"] })` gives. `withDeleted()` lifts it together with the root filter. An explicit `leftJoin(User, "u", on => ...)` is never touched: the ON clause is yours, which is what keeps an audit query over soft-deleted rows (`onNotNull("u.deletedAt")`) expressible.
+
 ## JoinAndSelect — Join + Auto SELECT
 
 When you want to include all columns from the joined entity in the result, use the `*AndSelect` variants. This is equivalent to doing a join + manually selecting every column — but in one call, and entity reads hydrate the joined columns into the relation property:

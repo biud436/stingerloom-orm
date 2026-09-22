@@ -3883,6 +3883,16 @@ export class SelectQueryBuilder<T, TResult = T> {
     const direction = option.direction ?? "ASC";
     const pageSize = normalizePageSize(option.take);
 
+    // The builder loads nothing implicitly — a relation on a getCursor()
+    // page comes from a *AndSelect join declared on the builder. Refuse the
+    // findWithCursor-only option rather than silently dropping it.
+    if (option.relations && option.relations.length > 0) {
+      throw new InvalidQueryError(
+        "getCursor() does not accept the relations option.",
+        "Declare the relation on the builder with leftJoinRelationAndSelect(), or page with em.findWithCursor(Entity, { relations }).",
+      );
+    }
+
     // Resolve the sort column. `option.orderBy` is an entity property name
     // (consistent with where()/orderBy()); when omitted, fall back to the
     // entity's primary key, matching findWithCursor.

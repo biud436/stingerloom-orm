@@ -126,6 +126,8 @@ const drafts = await em
 
 `@ManyToOne`, `@OneToMany`, `@OneToOne` 관계를 지원합니다. 상관 조건은 데코레이터 메타데이터에서 자동으로 풀립니다.
 
+관련 엔티티에 `@DeletedAt`이 있으면 soft-delete된 행은 서브쿼리에서 제외됩니다. 댓글이 전부 트래시된 게시물은 `whereHas("comments")`에 걸리지 않아요. 걷어내려면 빌더에서 (`whereHas()` 호출보다 먼저) `withDeleted()`를 부르거나, 콜백에서 `sub.withDeleted()`로 그 관계만 걷어내면 됩니다. `withCount()`도 같은 규칙을 따라요.
+
 > **주의** — `@ManyToMany`는 `whereHas` / `whereNotHas` 대상에서 빠져 있습니다. `OrmError`가 나니, M2M에는 `leftJoinRelation` + `whereIn`이나 중간 테이블 직접 조인으로 우회하세요.
 
 ### `withCount()` — 관계 카운트 컬럼

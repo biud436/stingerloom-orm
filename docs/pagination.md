@@ -239,6 +239,16 @@ async function getPosts(req: Request, res: Response) {
 
 `findWithCursor()` applies the same filters as `find()`: soft-deleted rows are excluded unless you pass `withDeleted: true`, and paging a Single-Table-Inheritance child class returns only that subtype's rows (the discriminator predicate is added automatically).
 
+It also loads the same relations: `eager: true` relations are attached without being asked for, and `relations: ["author", "comments"]` loads the listed ones — `@ManyToOne`, `@OneToMany`, `@ManyToMany` and `@OneToOne` alike. The keyset statement itself never JOINs (its ORDER BY and cursor are bound to the root table), so each relation is one extra batched query per page, never one per row. `withDeleted: true` lifts the soft-delete filter on those relation loads as well.
+
+```typescript
+const page = await em.findWithCursor(Post, {
+  take: 20,
+  orderBy: "id",
+  relations: ["comments"], // page.data[i].comments: Comment[]
+});
+```
+
 ## Streaming
 
 When processing millions of rows, loading them all into memory at once is impractical. `stream()` returns an `AsyncGenerator` that fetches rows in configurable batches -- you process one entity at a time without holding the entire result set in memory.
