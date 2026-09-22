@@ -39,9 +39,18 @@ export type CursorPaginationOption<T> = {
   /**
    * If true, includes soft-deleted entities (@DeletedAt) in the results.
    * By default, soft-deleted entities are excluded from cursor pagination,
-   * matching the behavior of find() and findWithPage().
+   * matching the behavior of find() and findWithPage(). Also lifts the
+   * soft-delete filter on the relations the page loads.
    */
   withDeleted?: boolean;
+
+  /**
+   * Relations to load for every entity on the page, by property name —
+   * the same names `FindOption.relations` accepts. Each relation is one
+   * batched query per page (never one per row); `eager: true` relations are
+   * loaded without being listed, exactly as `find()` does.
+   */
+  relations?: string[];
 
   /**
    * In a replication setup, forces read queries to use the master node.

@@ -11,6 +11,7 @@ import { EntityManagerInternals } from "./EntityManagerInternals";
 import { Conditions } from "./Conditions";
 import type {
   ManyToManyMetadata,
+  ManyToOneMetadata,
   OneToManyMetadata,
   OneToOneMetadata,
 } from "../decorators";
@@ -154,6 +155,143 @@ export class RelationLoader {
       if (id !== undefined && id !== null) ids.push(id);
     }
     return ids;
+  }
+
+  /**
+   * Loads ManyToOne and owning-side OneToOne relations with one batched
+   * query per relation and assigns the target (or null) to each parent.
+   *
+   * `find()` JOINs these relations into its main statement; a read that
+   * cannot JOIN — a keyset cursor page, whose ORDER BY and cursor encoding
+   * are bound to the root table's columns — loads them here instead. The
+   * result is shaped the same way: the target hydrated as its class, a
+   * soft-deleted target as null (unless `withDeleted`), a target outside the
+   * caller's tenant as null, and no nested eager fan-out (the JOIN reads one
+   * level deep as well).
+   *
+   * @param manyToOne  ManyToOne relations to load (resolved metadata)
+   * @param oneToOne   Owning-side OneToOne relations to load (those with a joinColumn)
+   * @param withDeleted When true, include a soft-deleted target.
+   */
+  async loadToOneRelations<T>(
+    entity: ClazzType<T>,
+    parentResults: T | T[],
+    manyToOne: ManyToOneMetadata<any>[],
+    oneToOne: OneToOneMetadata<any>[],
+    existingSession?: TransactionSessionManager,
+    withDeleted?: boolean,
+  ): Promise<void> {
+    if (manyToOne.length === 0 && oneToOne.length === 0) return;
+    const parents = this.toParentRecords(parentResults);
+    if (parents.length === 0) return;
+
+    const targets: Array<{
+      propertyKey: string;
+      fkKeys: string[];
+      RelatedEntity: ClazzType<any>;
+    }> = [];
+    for (const rel of manyToOne) {
+      const joinColumn = rel.joinColumn ?? rel.columnName;
+      // ResultTransformer remaps the FK column onto its shadow property
+      // (e.g. author_id -> authorId); a plain @ManyToOne keeps it under
+      // the DB column name. Read the shadow first, then the join column.
+      const fkShadow = rel.option?.fkProperty ?? `${rel.columnName}Id`;
+      targets.push({
+        propertyKey: rel.columnName,
+        fkKeys: [fkShadow, joinColumn],
+        RelatedEntity: rel.getMappingEntity() as ClazzType<any>,
+      });
+    }
+    for (const rel of oneToOne) {
+      if (!rel.joinColumn) continue;
+      const fkShadow = rel.option?.fkProperty ?? `${rel.propertyKey}Id`;
+      targets.push({
+        propertyKey: rel.propertyKey,
+        fkKeys: [fkShadow, rel.joinColumn],
+        RelatedEntity: rel.getRelatedEntity() as ClazzType<any>,
+      });
+    }
+
+    for (const target of targets) {
+      const { RelatedEntity, propertyKey, fkKeys } = target;
+      const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
+      if (!relatedMetadata) continue;
+      const relatedPk = relatedMetadata.columns.find(
+        (col: ColumnMetadata) => col.options?.primary,
+      );
+      if (!relatedPk) continue;
+
+      const fkOf = (parent: EntityRecord): unknown => {
+        for (const key of fkKeys) {
+          const value = parent[key];
+          if (value !== undefined && value !== null) return value;
+        }
+        return null;
+      };
+
+      // 1. Collect the distinct FK values this page references.
+      const fkValues = Array.from(
+        new Set(parents.map(fkOf).filter((v) => v !== null)),
+      );
+      if (fkValues.length === 0) {
+        for (const parent of parents) parent[propertyKey] = null;
+        continue;
+      }
+
+      // 2. One batched query: WHERE pk IN (...) plus the predicates the
+      //    eager JOIN puts in its ON clause.
+      const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
+      const executeQuery = async (session: TransactionSessionManager) => {
+        const qb = RawQueryBuilderFactory.create();
+        const selectCols = relatedMetadata.columns.map((col: ColumnMetadata) =>
+          this.ctx.wrap(col.name),
+        );
+        const whereConditions: Sql[] = [
+          Conditions.in(this.ctx.wrap(relatedPk.name), fkValues),
+        ];
+        const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
+        if (deletedAtColumn && !withDeleted) {
+          whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
+        }
+        const tenantPredicate = this.ctx.buildTenantWhereClause(RelatedEntity);
+        if (tenantPredicate) {
+          whereConditions.push(tenantPredicate);
+        }
+        qb.select(selectCols)
+          .from(this.ctx.wrapTable(relatedTableName))
+          .where(whereConditions);
+
+        const resultQuery = qb.build();
+        const subQueryStart = Date.now();
+        this.ctx.beginTrackQuery();
+        const queryResult = (await session.query(resultQuery)) as QueryResult;
+        this.ctx.trackQuery(
+          relatedTableName,
+          resultQuery.text ?? String(resultQuery),
+          Date.now() - subQueryStart,
+        );
+        return queryResult;
+      };
+
+      const queryResult = await this.ctx.executeInTransaction(executeQuery, existingSession);
+
+      // 3. Index the targets by PK, reading the PK from the raw row so the
+      //    lookup key matches the FK value the parent row carries.
+      const relatedByPk = new Map<unknown, unknown>();
+      const rows = queryResult.results ?? [];
+      if (rows.length > 0) {
+        const related = ResultTransformerFactory.create().toEntities(RelatedEntity, queryResult);
+        for (let i = 0; i < related.length; i++) {
+          relatedByPk.set(rows[i][relatedPk.name], related[i]);
+        }
+      }
+
+      // 4. Assign — a missing, soft-deleted or foreign-tenant target is null.
+      for (const parent of parents) {
+        const fk = fkOf(parent);
+        parent[propertyKey] = fk === null ? null : (relatedByPk.get(fk) ?? null);
+      }
+    }
   }
 
   /**

@@ -240,6 +240,29 @@ export class ReadExecutor {
     return plan;
   }
 
+  /**
+   * The ManyToOne and owning-side OneToOne relations a read attaches: every
+   * `eager: true` relation plus those `relations` names. `find()` JOINs
+   * them; a cursor page batch-loads them — same set either way.
+   */
+  private resolveToOneRelations(
+    plan: ReadColumnPlan,
+    relations: readonly string[] | undefined,
+  ): { eagerM2O: ManyToOneMetadata<any>[]; eagerO2O: OneToOneMetadata<any>[] } {
+    if (!relations) return { eagerM2O: plan.eagerM2O, eagerO2O: plan.eagerO2O };
+    return {
+      eagerM2O: plan.manyToOne.filter(
+        (rel) => rel.option?.eager === true || relations.includes(rel.columnName),
+      ),
+      // Owning side only — the side with the joinColumn.
+      eagerO2O: plan.oneToOne.filter(
+        (rel) =>
+          !!rel.joinColumn &&
+          (rel.option?.eager === true || relations.includes(rel.propertyKey)),
+      ),
+    };
+  }
+
   // Narrowable driver view + live collaborators (read at call time so test-time
   // reassignment on EntityManager is honored).
   private get driver(): ISqlDriver | undefined { return this.ctx.getDriver(); }
@@ -460,24 +483,7 @@ export class ReadExecutor {
 
     const plan = this.getColumnPlan(entity, metadata);
 
-    // Collect ManyToOne relations to eager-load
-    const eagerM2O = findOption.relations
-      ? plan.manyToOne.filter(
-          (rel) =>
-            rel.option?.eager === true ||
-            findOption.relations!.includes(rel.columnName),
-        )
-      : plan.eagerM2O;
-
-    // Collect OneToOne relations to eager-load (owning side — the side with joinColumn)
-    const eagerO2O = findOption.relations
-      ? plan.oneToOne.filter(
-          (rel) =>
-            !!rel.joinColumn &&
-            (rel.option?.eager === true ||
-              findOption.relations!.includes(rel.propertyKey)),
-        )
-      : plan.eagerO2O;
+    const { eagerM2O, eagerO2O } = this.resolveToOneRelations(plan, findOption.relations);
 
     const hasEagerJoins =
       eagerM2O.length > 0 || eagerO2O.length > 0
@@ -1526,6 +1532,7 @@ export class ReadExecutor {
     }
 
     const order = this.resolveCursorOrder(entity, metadata, option);
+    validateRelationNames(entity, option.relations, this.resolver);
 
     const where: any = { ...(option.where ?? {}) };
     const readNode = this.ctx.getReadNode(option.useMaster);
@@ -1562,7 +1569,7 @@ export class ReadExecutor {
 
       const queryResult = (await session.query<T>(qb.build())) as QueryResult;
 
-      return this.hydrateCursorPage(entity, keyset, queryResult);
+      return this.hydrateCursorPage(entity, metadata, option, keyset, queryResult, session);
     }, { readNodeOverride: readNode, timeout: this.resolveTimeout(option) });
   }
 
@@ -1676,13 +1683,16 @@ export class ReadExecutor {
 
   /**
    * Turns the `pageSize + 1` probe rows into the page result: hydrates the
-   * entities, fires `afterLoad`, and encodes the next cursor from the last
-   * raw row when a further page exists.
+   * entities, attaches their relations, fires `afterLoad`, and encodes the
+   * next cursor from the last raw row when a further page exists.
    */
   private async hydrateCursorPage<T>(
     entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    option: CursorPaginationOption<T>,
     keyset: KeysetPlan,
     queryResult: QueryResult,
+    session: TransactionSessionManager,
   ): Promise<CursorPaginationResult<T>> {
     const { results } = queryResult;
     if (!results || results.length === 0) {
@@ -1701,6 +1711,10 @@ export class ReadExecutor {
       fields: queryResult.fields,
     });
 
+    // Relations before afterLoad, as findInternal orders them, so a
+    // subscriber sees the same shape on a cursor page as on find().
+    await this.loadCursorPageRelations(entity, metadata, option, entities, session);
+
     // Notify subscribers of the afterLoad event
     for (const loadedEntity of entities) {
       await this.ctx.notifySubscribers(entity, "afterLoad", loadedEntity);
@@ -1717,6 +1731,55 @@ export class ReadExecutor {
       nextCursor,
       count: entities.length,
     };
+  }
+
+  /**
+   * The relations of a cursor page: the eager ManyToOne / owning OneToOne
+   * set `find()` would JOIN (batch-loaded here — the keyset ORDER BY and
+   * cursor encoding are bound to the root table, so the page statement
+   * never JOINs), then the OneToMany / ManyToMany / inverse OneToOne
+   * relations the caller listed. One query per relation per page.
+   */
+  private async loadCursorPageRelations<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    option: CursorPaginationOption<T>,
+    entities: T[],
+    session: TransactionSessionManager,
+  ): Promise<void> {
+    if (entities.length === 0) return;
+    const plan = this.getColumnPlan(entity, metadata);
+    const { eagerM2O, eagerO2O } = this.resolveToOneRelations(plan, option.relations);
+    await this.relationLoader.loadToOneRelations(
+      entity,
+      entities,
+      eagerM2O,
+      eagerO2O,
+      session,
+      option.withDeleted,
+    );
+    if (!option.relations || option.relations.length === 0) return;
+    await this.relationLoader.loadOneToManyRelations(
+      entity,
+      entities,
+      option.relations,
+      session,
+      option.withDeleted,
+    );
+    await this.relationLoader.loadManyToManyRelations(
+      entity,
+      entities,
+      option.relations,
+      session,
+      option.withDeleted,
+    );
+    await this.relationLoader.loadOneToOneRelations(
+      entity,
+      entities,
+      option.relations,
+      session,
+      option.withDeleted,
+    );
   }
 
   /**
