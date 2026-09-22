@@ -233,6 +233,106 @@ const cases: BuilderGoldenCase[] = [
       values: [],
     },
   },
+  {
+    name: "relation LEFT JOIN — joined side's soft-delete filter goes in the ON clause",
+    build: (dialect) =>
+      createQbFor(Department, "d", dialect).leftJoinRelation("users", "u").getSql(),
+    postgres: {
+      text:
+        'SELECT "d".* FROM "department" AS "d" ' +
+        'LEFT JOIN "user" AS "u" ON "d"."id" = "u"."departmentId" AND "u"."deletedAt" IS NULL',
+      values: [],
+    },
+    mysql: {
+      text:
+        "SELECT `d`.* FROM `department` AS `d` " +
+        "LEFT JOIN `user` AS `u` ON `d`.`id` = `u`.`departmentId` AND `u`.`deletedAt` IS NULL",
+      values: [],
+    },
+    sqlite: {
+      text:
+        'SELECT "d".* FROM "department" AS "d" ' +
+        'LEFT JOIN "user" AS "u" ON "d"."id" = "u"."departmentId" AND "u"."deletedAt" IS NULL',
+      values: [],
+    },
+  },
+  {
+    name: "relation LEFT JOIN — withDeleted() lifts the joined side's filter too",
+    build: (dialect) =>
+      createQbFor(Department, "d", dialect)
+        .leftJoinRelation("users", "u")
+        .withDeleted()
+        .getSql(),
+    postgres: {
+      text:
+        'SELECT "d".* FROM "department" AS "d" ' +
+        'LEFT JOIN "user" AS "u" ON "d"."id" = "u"."departmentId"',
+      values: [],
+    },
+    mysql: {
+      text:
+        "SELECT `d`.* FROM `department` AS `d` " +
+        "LEFT JOIN `user` AS `u` ON `d`.`id` = `u`.`departmentId`",
+      values: [],
+    },
+    sqlite: {
+      text:
+        'SELECT "d".* FROM "department" AS "d" ' +
+        'LEFT JOIN "user" AS "u" ON "d"."id" = "u"."departmentId"',
+      values: [],
+    },
+  },
+  {
+    name: "relation INNER JOIN to an entity without @DeletedAt — only the root is filtered",
+    build: (dialect) =>
+      createQbFor(User, "u", dialect).innerJoinRelation("department", "d").getSql(),
+    postgres: {
+      text:
+        'SELECT "u".* FROM "user" AS "u" ' +
+        'INNER JOIN "department" AS "d" ON "u"."departmentId" = "d"."id" ' +
+        'WHERE "u"."deletedAt" IS NULL',
+      values: [],
+    },
+    mysql: {
+      text:
+        "SELECT `u`.* FROM `user` AS `u` " +
+        "INNER JOIN `department` AS `d` ON `u`.`departmentId` = `d`.`id` " +
+        "WHERE `u`.`deletedAt` IS NULL",
+      values: [],
+    },
+    sqlite: {
+      text:
+        'SELECT "u".* FROM "user" AS "u" ' +
+        'INNER JOIN "department" AS "d" ON "u"."departmentId" = "d"."id" ' +
+        'WHERE "u"."deletedAt" IS NULL',
+      values: [],
+    },
+  },
+  {
+    name: "whereHas — the EXISTS subquery filters the related side's soft-deleted rows",
+    build: (dialect) => createQbFor(Department, "d", dialect).whereHas("users").getSql(),
+    postgres: {
+      text:
+        'SELECT "d".* FROM "department" AS "d" ' +
+        'WHERE EXISTS (SELECT 1 FROM "user" AS "__sub_users" ' +
+        'WHERE "__sub_users"."departmentId" = "d"."id" AND "__sub_users"."deletedAt" IS NULL)',
+      values: [],
+    },
+    mysql: {
+      text:
+        "SELECT `d`.* FROM `department` AS `d` " +
+        "WHERE EXISTS (SELECT 1 FROM `user` AS `__sub_users` " +
+        "WHERE `__sub_users`.`departmentId` = `d`.`id` AND `__sub_users`.`deletedAt` IS NULL)",
+      values: [],
+    },
+    sqlite: {
+      text:
+        'SELECT "d".* FROM "department" AS "d" ' +
+        'WHERE EXISTS (SELECT 1 FROM "user" AS "__sub_users" ' +
+        'WHERE "__sub_users"."departmentId" = "d"."id" AND "__sub_users"."deletedAt" IS NULL)',
+      values: [],
+    },
+  },
 ];
 
 runBuilderGoldenMatrix("golden-sql / SelectQueryBuilder", cases);

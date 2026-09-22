@@ -278,4 +278,12 @@ export interface EntityManagerInternals {
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
   ): Promise<DeleteResult>;
+  softDelete<T>(
+    entity: ClazzType<T>,
+    criteria: WhereClause<T>,
+  ): Promise<DeleteResult>;
+  restore<T>(
+    entity: ClazzType<T>,
+    criteria: WhereClause<T>,
+  ): Promise<DeleteResult>;
 }

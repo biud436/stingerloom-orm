@@ -237,6 +237,16 @@ async function getPosts(req: Request, res: Response) {
 
 `findWithCursor()`는 `find()`와 동일한 필터를 적용합니다. `withDeleted: true`를 넘기지 않으면 soft-delete된 행은 제외되고, 단일 테이블 상속(STI) 자식 클래스를 페이징하면 discriminator 술어가 자동으로 붙어 해당 서브타입 행만 반환돼요.
 
+관계도 같은 규칙으로 로드합니다. `eager: true` 관계는 따로 요청하지 않아도 붙고, `relations: ["author", "comments"]`로 나열한 관계는 `@ManyToOne`, `@OneToMany`, `@ManyToMany`, `@OneToOne` 모두 로드돼요. 키셋 쿼리 자체는 JOIN하지 않으니(ORDER BY와 cursor가 루트 테이블에 묶여 있어요) 관계마다 페이지당 배치 쿼리 하나가 추가될 뿐, 행마다 쿼리가 나가지는 않습니다. `withDeleted: true`는 이 관계 로드의 soft-delete 필터도 함께 걷어냅니다.
+
+```typescript
+const page = await em.findWithCursor(Post, {
+  take: 20,
+  orderBy: "id",
+  relations: ["comments"], // page.data[i].comments: Comment[]
+});
+```
+
 ## Streaming
 
 수백만 행을 처리할 때, 전부 메모리에 올리는 건 비현실적이에요. `stream()`은 설정 가능한 배치 크기로 행을 가져오는 `AsyncGenerator`를 반환해요 -- 전체 결과셋을 메모리에 들고 있지 않으면서 엔티티를 하나씩 처리할 수 있어요.

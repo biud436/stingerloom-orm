@@ -128,7 +128,7 @@ const drafts = await em
   .getMany();
 ```
 
-Works with `@ManyToOne`, `@OneToMany`, and `@OneToOne` relations. The correlation condition is resolved automatically from your decorator metadata.
+Works with `@ManyToOne`, `@OneToMany`, and `@OneToOne` relations. The correlation condition is resolved automatically from your decorator metadata. If the related entity carries `@DeletedAt`, its soft-deleted rows are excluded from the subquery — so a post whose only comments are trashed does not match `whereHas("comments")`. Lift that with `withDeleted()` on the builder (before the `whereHas()` call) or per relation with `sub.withDeleted()` in the callback; `withCount()` follows the same rule.
 
 ### `withCount()` — Relation Count as Column
 

@@ -203,6 +203,8 @@ const users = await em
 
 `innerJoinRelation()`도 있어요.
 
+관계 조인은 조인된 엔티티의 soft-delete 필터를 ON 절에 함께 실어요. `User`에 `@DeletedAt`이 있으면 `leftJoinRelation("author", "u")`는 `ON p.author_id = u.id AND u.deleted_at IS NULL`로 렌더링되므로, 트래시된 작성자는 LEFT에서는 `null`로 하이드레이션되고 INNER에서는 게시물째 빠집니다 — `find(Post, { relations: ["author"] })`와 같은 결과예요. `withDeleted()`는 루트 필터와 함께 이것도 걷어냅니다. 명시적인 `leftJoin(User, "u", on => ...)`는 건드리지 않아요. ON 절은 사용자 것이니, soft-delete된 행을 감사하는 쿼리(`onNotNull("u.deletedAt")`)를 그대로 쓸 수 있습니다.
+
 > **`@ManyToMany`는 `leftJoinRelation` / `innerJoinRelation` 대상에서 빠져 있습니다.** 중간 테이블을 자동으로 두 번 조인해 주지는 않으니, M2M 조인은 중간 테이블을 직접 문자열 조인으로 이어주거나 서브쿼리로 풀어 쓰세요. 같은 이유로 `whereHas`도 `@ManyToMany`를 지원하지 않습니다 ([편의 패턴 → `whereHas`](./query-builder-patterns.md#wherehas-wherenothas-—-관계-존재-필터) 참고).
 
 ## JoinAndSelect — 조인과 SELECT를 한 번에

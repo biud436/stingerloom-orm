@@ -519,6 +519,8 @@ const cat = await em.findOne(Cat, { where: { id: 1 } });
 console.log(cat.owner.name); // "John" — loaded without relations option
 ```
 
+`findWithCursor()` attaches the same eager relations, loaded with one batched query per relation per page (the keyset statement itself never JOINs). Eager loading reads one level deep on every path: the eager relations of the root entity are attached, but entities reached through `relations` (a cat's owner's cats, say) do not have *their* eager relations resolved. A soft-deleted target hydrates as `null` unless the read passes `withDeleted`.
+
 **Generated SQL (PostgreSQL):**
 
 ```sql
@@ -939,8 +941,10 @@ Choose from the following cascade options.
 |--------|----------|
 | `"insert"` | INSERT children when saving parent |
 | `"update"` | UPDATE children when modifying parent |
-| `"delete"` | DELETE children when deleting parent |
+| `"delete"` | Remove children when removing the parent — see below for which methods cascade |
 | `true` | Apply all three above |
+
+`"remove"` is an alias of `"delete"`. The remove cascade follows the parent through every removal method: `delete()` and `deleteMany()` hard-delete the children first; `softDelete()` soft-deletes them and `restore()` revives the ones that were trashed with the parent. The soft-delete pair only reaches a child entity that carries `@DeletedAt` itself — a child without one has nothing to cascade to and is left untouched (only `delete()` / `deleteMany()` remove it). Each cascaded statement runs through the child's own method, so it fires the child's events and cascades further down.
 
 You can combine them in an array.
 

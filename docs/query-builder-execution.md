@@ -95,6 +95,8 @@ interface CursorPaginationOption<T> {
   cursor?:    string;               // Opaque cursor from the previous page (omit for first page)
   orderBy?:   keyof T & string;     // Sort column — entity property name (default: entity PK)
   direction?: "ASC" | "DESC";       // Sort direction (default: "ASC")
+  // relations?: string[] is findWithCursor-only — getCursor() throws InvalidQueryError
+  // if it is passed; declare the relation on the builder with leftJoinRelationAndSelect()
 }
 
 interface CursorPaginationResult<T> {
@@ -258,11 +260,13 @@ const orders = await em
 
 ## Soft Delete Handling
 
-If your entity has a `@DeletedAt` column, the query builder automatically excludes soft-deleted rows. To include them:
+If your entity has a `@DeletedAt` column, the query builder automatically excludes its soft-deleted rows. The same filter is applied to the other side of a relation join (`leftJoinRelation*` / `innerJoinRelation*`, in the ON clause) and inside the `whereHas()` / `whereNotHas()` / `withCount()` subqueries — an explicit `leftJoin(Entity, alias, on)` keeps the ON clause you wrote. To include soft-deleted rows everywhere:
 
 ```typescript
 qb.withDeleted();
 ```
+
+The relation subqueries take their soft-delete stance when they are declared, so call `withDeleted()` before `whereHas()` to lift it there — or lift it for one relation only from the callback: `whereHas("comments", (sub) => sub.withDeleted())`.
 
 ## Tenant Scope Opt-Out
 

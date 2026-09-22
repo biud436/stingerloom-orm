@@ -519,6 +519,8 @@ const cat = await em.findOne(Cat, { where: { id: 1 } });
 console.log(cat.owner.name); // "John" — relations 옵션 없이 로드됨
 ```
 
+`findWithCursor()`도 같은 eager 관계를 붙입니다. 다만 키셋 쿼리 자체는 JOIN하지 않고, 페이지마다 관계당 배치 쿼리 하나로 로드해요. eager 로딩은 어느 경로에서든 한 단계만 읽습니다 — 루트 엔티티의 eager 관계는 붙지만, `relations`로 따라 들어간 엔티티(예: 고양이의 주인의 고양이들)의 eager 관계까지 풀지는 않아요. soft-delete된 대상은 `withDeleted`를 넘기지 않는 한 `null`로 하이드레이션됩니다.
+
 **생성되는 SQL (PostgreSQL):**
 
 ```sql
@@ -939,8 +941,10 @@ INSERT INTO "cat" ("name", "owner_id") VALUES ('Luna', 1) RETURNING *;
 |------|------|
 | `"insert"` | 부모 저장 시 자식을 INSERT |
 | `"update"` | 부모 수정 시 자식을 UPDATE |
-| `"delete"` | 부모 삭제 시 자식을 DELETE |
+| `"delete"` | 부모를 제거할 때 자식도 제거 — 어떤 메서드가 연쇄되는지는 아래 참고 |
 | `true` | 위 세 가지 모두 적용 |
+
+`"remove"`는 `"delete"`의 별칭입니다. remove cascade는 부모의 제거 메서드를 전부 따라갑니다. `delete()`와 `deleteMany()`는 자식을 먼저 hard delete하고, `softDelete()`는 자식을 soft delete하며, `restore()`는 부모와 함께 트래시된 자식을 되살려요. soft-delete 쌍은 자식 엔티티에도 `@DeletedAt`이 있을 때만 닿습니다 — 없으면 연쇄할 대상이 없으니 그대로 두고(`delete()` / `deleteMany()`만 제거), 연쇄된 각 문장은 자식 자신의 메서드로 실행되므로 자식의 이벤트가 나고 그 아래로도 계속 연쇄됩니다.
 
 배열로 조합할 수 있어요.
 

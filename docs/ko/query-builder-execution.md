@@ -88,6 +88,8 @@ interface CursorPaginationOption<T> {
   cursor?:    string;               // 이전 페이지의 cursor (첫 페이지는 생략)
   orderBy?:   keyof T & string;     // 정렬 컬럼 — 엔티티 속성명 (기본값: 엔티티 PK)
   direction?: "ASC" | "DESC";       // 정렬 방향 (기본값: "ASC")
+  // relations?: string[]은 findWithCursor 전용 — getCursor()에 넘기면 InvalidQueryError.
+  // 빌더에서는 leftJoinRelationAndSelect()로 관계를 선언하세요
 }
 
 interface CursorPaginationResult<T> {
@@ -263,11 +265,13 @@ const orders = await em
 
 ## Soft Delete 처리
 
-엔티티에 `@DeletedAt` 컬럼이 있으면 쿼리 빌더가 soft-deleted 행을 자동으로 제외합니다. 포함하고 싶다면:
+엔티티에 `@DeletedAt` 컬럼이 있으면 쿼리 빌더가 soft-deleted 행을 자동으로 제외합니다. 같은 필터가 관계 조인의 반대편(`leftJoinRelation*` / `innerJoinRelation*`, ON 절)과 `whereHas()` / `whereNotHas()` / `withCount()` 서브쿼리 안에도 붙어요. 명시적인 `leftJoin(Entity, alias, on)`은 사용자가 쓴 ON 절 그대로입니다. 어디서든 soft-deleted 행을 포함하고 싶다면:
 
 ```typescript
 qb.withDeleted();
 ```
+
+관계 서브쿼리는 선언되는 시점의 soft-delete 설정을 따르므로, 거기까지 걷어내려면 `whereHas()`보다 먼저 `withDeleted()`를 부르세요. 특정 관계에서만 걷어내려면 콜백에서 `whereHas("comments", (sub) => sub.withDeleted())`처럼 쓰면 됩니다.
 
 ## 테넌트 스코프 우회 — `withoutTenantScope()`
 
