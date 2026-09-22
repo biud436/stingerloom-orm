@@ -2702,7 +2702,20 @@ export class WriteExecutor {
       throw new PrimaryKeyNotFoundError(entity.name);
     }
 
+    // The criteria this bulk delete stands for, as delete() would spell it
+    // — what the events report and the cascade resolves parents from.
+    const criteria = { [this.ctx.propKey(pk)]: ids } as WhereClause<T>;
+
     return this.ctx.executeInTransaction(async (session) => {
+      await this.emitBeforeDelete(entity, criteria);
+
+      // cascade remove — same as delete(): the children go first, on this
+      // transaction's session (#414). Without it a bulk delete either failed
+      // on the FK or, with constraints off, orphaned every child.
+      await transactionStorage.run(session, () =>
+        this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria),
+      );
+
       const placeholders = join(
         ids.map((id) => sql`${id as string | number}`),
         ", ",
@@ -2721,6 +2734,8 @@ export class WriteExecutor {
             : sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${raw(this.ctx.wrap(pk.name))} IN (${placeholders})`,
         session,
       );
+
+      await this.emitAfterDelete(entity, criteria);
 
       return { affected };
     });
@@ -3246,6 +3261,13 @@ export class WriteExecutor {
         manager: this.ctx.getManager(),
       } as DeleteEvent<T>);
 
+      // cascade remove, soft-delete flavour — before the parent UPDATE, while
+      // the parents still read as live. Same session publication as delete()
+      // (#414) so the children roll back with the parent.
+      await transactionStorage.run(session, () =>
+        this.cascadeHandler.cascadeSoftDeleteOneToMany(entity, criteria),
+      );
+
       const sdPropToCol = this.ctx.buildPropertyToColumnMap(metadata);
       const whereMap: Sql[] = this.resolveCriteriaWhere(
         criteria,
@@ -3332,6 +3354,13 @@ export class WriteExecutor {
         criteria,
         manager: this.ctx.getManager(),
       } as DeleteEvent<T>);
+
+      // Revive the children the softDelete cascade trashed — before the
+      // parent UPDATE, so the handler can still tell which parents are
+      // soft-deleted (see cascadeRestoreOneToMany).
+      await transactionStorage.run(session, () =>
+        this.cascadeHandler.cascadeRestoreOneToMany(entity, criteria),
+      );
 
       const restorePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
       const whereMap: Sql[] = this.resolveCriteriaWhere(

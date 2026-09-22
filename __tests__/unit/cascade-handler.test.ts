@@ -50,6 +50,8 @@ function createMockCtx(
     ),
     find: jest.fn().mockResolvedValue([]),
     delete: jest.fn().mockResolvedValue({ affected: 0 }),
+    softDelete: jest.fn().mockResolvedValue({ affected: 0 }),
+    restore: jest.fn().mockResolvedValue({ affected: 0 }),
     ...overrides,
   } as unknown as EntityManagerInternals;
 }
@@ -904,5 +906,130 @@ describe("CascadeHandler.cascadeDeleteOneToMany()", () => {
     await handler.cascadeDeleteOneToMany(Parent, { id: 5 } as any);
 
     expect(ctx.delete).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ==========================================================================
+// describe: cascadeSoftDeleteOneToMany() / cascadeRestoreOneToMany()
+// ==========================================================================
+describe("CascadeHandler.cascadeSoftDeleteOneToMany() / cascadeRestoreOneToMany()", () => {
+  let ctx: EntityManagerInternals;
+  let resolver: RelationMetadataResolver;
+  let handler: CascadeHandler;
+
+  const parentMetadata = {
+    name: "Parent",
+    target: Parent,
+    columns: [
+      { name: "id", options: { primary: true } },
+      { name: "name", options: {} },
+    ],
+  };
+  const oneToManyMeta: OneToManyMetadata<Child>[] = [
+    {
+      target: Parent,
+      propertyKey: "children",
+      getRelatedEntity: () => Child,
+      mappedBy: "parent",
+      cascade: ["remove"],
+    },
+  ];
+  const manyToOneMeta = [
+    {
+      target: Child,
+      type: Parent,
+      columnName: "parent",
+      joinColumn: "parentId",
+      getMappingEntity: () => Parent,
+      getMappingProperty: () => {},
+    },
+  ];
+
+  beforeEach(() => {
+    ctx = createMockCtx();
+    resolver = createMockResolver();
+    handler = new CascadeHandler(resolver, ctx);
+    (resolver.resolveOneToManyMetadata as jest.Mock).mockReturnValue(oneToManyMeta);
+    (resolver.resolveEntityMetadata as jest.Mock).mockReturnValue(parentMetadata);
+    (resolver.resolveManyToOneMetadata as jest.Mock).mockReturnValue(manyToOneMeta);
+    // Both sides soft-deletable.
+    (resolver.getDeletedAtColumn as jest.Mock).mockReturnValue("deletedAt");
+  });
+
+  it("softDelete: trashes the children of the live parents via one FK criteria", async () => {
+    (ctx.find as jest.Mock).mockResolvedValue([{ id: 10 }, { id: 20 }]);
+
+    await handler.cascadeSoftDeleteOneToMany(Parent, { name: "any" } as any);
+
+    // Live parents only — the parent UPDATE that follows touches those.
+    expect(ctx.find).toHaveBeenCalledWith(
+      Parent,
+      expect.not.objectContaining({ withDeleted: true }),
+    );
+    expect(ctx.softDelete).toHaveBeenCalledTimes(1);
+    expect(ctx.softDelete).toHaveBeenCalledWith(Child, { parentId: [10, 20] });
+    expect(ctx.delete).not.toHaveBeenCalled();
+    expect(ctx.restore).not.toHaveBeenCalled();
+  });
+
+  it("softDelete: skips a child entity without @DeletedAt (hard-delete-only cascade)", async () => {
+    (resolver.getDeletedAtColumn as jest.Mock).mockImplementation((entity: unknown) =>
+      entity === Parent ? "deletedAt" : null,
+    );
+    (ctx.find as jest.Mock).mockResolvedValue([{ id: 10 }]);
+
+    await handler.cascadeSoftDeleteOneToMany(Parent, { id: 10 } as any);
+
+    expect(ctx.find).not.toHaveBeenCalled();
+    expect(ctx.softDelete).not.toHaveBeenCalled();
+  });
+
+  it("restore: reads the parents withDeleted and revives only the soft-deleted ones' children", async () => {
+    (ctx.find as jest.Mock).mockResolvedValue([
+      { id: 10, deletedAt: new Date("2026-01-01T00:00:00Z") },
+      { id: 20, deletedAt: null }, // live parent matched by the criteria
+      { id: 30, deletedAt: new Date("2026-01-02T00:00:00Z") },
+    ]);
+
+    await handler.cascadeRestoreOneToMany(Parent, { name: "any" } as any);
+
+    expect(ctx.find).toHaveBeenCalledWith(
+      Parent,
+      expect.objectContaining({
+        withDeleted: true,
+        select: { id: true, deletedAt: true },
+      }),
+    );
+    expect(ctx.restore).toHaveBeenCalledTimes(1);
+    expect(ctx.restore).toHaveBeenCalledWith(Child, { parentId: [10, 30] });
+  });
+
+  it("restore: a single revived parent uses direct equality", async () => {
+    (ctx.find as jest.Mock).mockResolvedValue([{ id: 10, deletedAt: new Date() }]);
+
+    await handler.cascadeRestoreOneToMany(Parent, { id: 10 } as any);
+
+    expect(ctx.restore).toHaveBeenCalledWith(Child, { parentId: 10 });
+  });
+
+  it("restore: no soft-deleted parent among the matches → no child statement", async () => {
+    (ctx.find as jest.Mock).mockResolvedValue([{ id: 20, deletedAt: null }]);
+
+    await handler.cascadeRestoreOneToMany(Parent, { id: 20 } as any);
+
+    expect(ctx.restore).not.toHaveBeenCalled();
+  });
+
+  it("neither cascades when the relation does not cascade remove", async () => {
+    (resolver.resolveOneToManyMetadata as jest.Mock).mockReturnValue([
+      { ...oneToManyMeta[0], cascade: ["insert"] },
+    ]);
+
+    await handler.cascadeSoftDeleteOneToMany(Parent, { id: 10 } as any);
+    await handler.cascadeRestoreOneToMany(Parent, { id: 10 } as any);
+
+    expect(ctx.find).not.toHaveBeenCalled();
+    expect(ctx.softDelete).not.toHaveBeenCalled();
+    expect(ctx.restore).not.toHaveBeenCalled();
   });
 });

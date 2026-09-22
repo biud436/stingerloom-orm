@@ -409,6 +409,8 @@ export class EntityManager implements BaseEntityManager {
     findOne: (e, o) => this.findOne(e, o),
     findAndCount: (e, o) => this.findAndCount(e, o),
     delete: (e, c) => this.delete(e, c),
+    softDelete: (e, c) => this.softDelete(e, c),
+    restore: (e, c) => this.restore(e, c),
     getTenantColumnConfig: () => this.tenantColumnConfig,
     resolveEntitySchema: (e) => this.tenantScope.resolveEntitySchema(e),
     pinTableSchema: (t, s) => this.tenantScope.pinTableSchema(t, s),
