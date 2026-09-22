@@ -291,6 +291,14 @@ export class SelectQueryBuilder<T, TResult = T> {
      * time. String-based joins stay undefined and unscoped by design.
      */
     joinedEntity?: ClazzType<any>;
+    /**
+     * Set by the relation joins (`leftJoinRelation*` / `innerJoinRelation*`),
+     * whose ON clause the ORM owns. Only these get the joined entity's
+     * soft-delete predicate at render time — an explicit `leftJoin(Entity,
+     * alias, on)` keeps the ON clause the caller wrote, so an audit query
+     * over soft-deleted rows stays expressible.
+     */
+    relationJoin?: boolean;
   }> = [];
   protected limitValue: number | [number, number] | undefined;
   protected offsetValue: number | undefined;
@@ -1826,6 +1834,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       alias,
       condition,
       joinedEntity: RelatedEntity,
+      relationJoin: true,
     });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
@@ -1890,6 +1899,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       alias,
       condition,
       joinedEntity: RelatedEntity,
+      relationJoin: true,
     });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
@@ -1942,6 +1952,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       alias,
       condition,
       joinedEntity: RelatedEntity,
+      relationJoin: true,
     });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
@@ -2078,12 +2089,16 @@ export class SelectQueryBuilder<T, TResult = T> {
       propertyToColumnMap: subQb.propertyToColumnMap,
     });
     subQb.dialectExpression = this.dialectExpression;
-    subQb.withDeletedFlag = true; // subqueries don't auto-filter soft deletes
+    // The subquery inherits the outer builder's soft-delete stance as it
+    // stands when the relation predicate is declared; the callback may
+    // still lift it per relation with `sub.withDeleted()`.
+    subQb.withDeletedFlag = this.withDeletedFlag;
     subQb.withoutTenantScopeFlag = this.withoutTenantScopeFlag;
 
     subQb.whereClauses.push(Conditions.compareColumns(innerRef, "=", outerRef));
     if (fn) fn(subQb);
 
+    subQb.appendSoftDeletePredicate(subQb.whereClauses, RelatedEntity, innerAlias);
     this.appendTenantPredicate(subQb.whereClauses, RelatedEntity, innerAlias);
 
     const innerWhere = subQb.whereClauses.length > 0
@@ -2135,12 +2150,16 @@ export class SelectQueryBuilder<T, TResult = T> {
       propertyToColumnMap: propToCol,
     });
     subQb.dialectExpression = this.dialectExpression;
-    subQb.withDeletedFlag = true;
+    // The subquery inherits the outer builder's soft-delete stance as it
+    // stands when the relation predicate is declared; the callback may
+    // still lift it per relation with `sub.withDeleted()`.
+    subQb.withDeletedFlag = this.withDeletedFlag;
     subQb.withoutTenantScopeFlag = this.withoutTenantScopeFlag;
 
     subQb.whereClauses.push(Conditions.compareColumns(innerRef, "=", outerRef));
     if (fn) fn(subQb);
 
+    subQb.appendSoftDeletePredicate(subQb.whereClauses, RelatedEntity, innerAlias);
     this.appendTenantPredicate(subQb.whereClauses, RelatedEntity, innerAlias);
 
     const innerWhere = subQb.whereClauses.length > 0
@@ -2183,12 +2202,16 @@ export class SelectQueryBuilder<T, TResult = T> {
       propertyToColumnMap: subQb.propertyToColumnMap,
     });
     subQb.dialectExpression = this.dialectExpression;
-    subQb.withDeletedFlag = true;
+    // The subquery inherits the outer builder's soft-delete stance as it
+    // stands when the relation predicate is declared; the callback may
+    // still lift it per relation with `sub.withDeleted()`.
+    subQb.withDeletedFlag = this.withDeletedFlag;
     subQb.withoutTenantScopeFlag = this.withoutTenantScopeFlag;
 
     subQb.whereClauses.push(Conditions.compareColumns(innerRef, "=", outerRef));
     if (fn) fn(subQb);
 
+    subQb.appendSoftDeletePredicate(subQb.whereClauses, RelatedEntity, innerAlias);
     this.appendTenantPredicate(subQb.whereClauses, RelatedEntity, innerAlias);
 
     const innerWhere = subQb.whereClauses.length > 0
@@ -4817,23 +4840,46 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
-   * Return a JOIN's ON condition with the tenant predicate appended when the
-   * joined table maps to a tenant-scoped entity (`joinedEntity` is recorded
-   * by entity-aware and relation joins). Called at render time — never at
-   * join-declaration time — so the predicate binds the tenant active when
-   * the query EXECUTES, and a builder constructed outside
-   * `MetadataContext.run()` still scopes correctly.
+   * Append `alias.deleted_at IS NULL` for an entity carrying `@DeletedAt`,
+   * unless this builder runs `withDeleted()`. The alias must be registered
+   * on this builder so the column name resolves through its property map.
+   */
+  protected appendSoftDeletePredicate(
+    whereAccumulator: Sql[],
+    entity: ClazzType<any>,
+    alias: string,
+  ): void {
+    if (this.withDeletedFlag) return;
+    const deletedAtColumn = this.emInternals.resolver?.getDeletedAtColumn(entity);
+    if (!deletedAtColumn) return;
+    whereAccumulator.push(Conditions.isNull(this.qualifiedCol(alias, deletedAtColumn)));
+  }
+
+  /**
+   * Return a JOIN's ON condition with the predicates the joined side always
+   * carries: for a relation join, the joined entity's soft-delete filter
+   * (unless `withDeleted()`), and for every entity-aware join the tenant
+   * predicate when the entity is tenant-scoped. Both go in the ON clause,
+   * not WHERE, so a filtered-out target of a LEFT JOIN hydrates as null
+   * instead of dropping the root row — the same shape `find()` gives an
+   * eager relation. Called at render time — never at join-declaration time
+   * — so the tenant predicate binds the tenant active when the query
+   * EXECUTES, and `withDeleted()` may be called after the join.
    */
   protected scopedJoinCondition(j: {
     condition: Sql;
     alias: string;
     joinedEntity?: ClazzType<any>;
+    relationJoin?: boolean;
   }): Sql {
     if (!j.joinedEntity) return j.condition;
-    const joinTenant: Sql[] = [];
-    this.appendTenantPredicate(joinTenant, j.joinedEntity, j.alias);
-    if (joinTenant.length === 0) return j.condition;
-    return sql`${j.condition} AND ${joinTenant[0]}`;
+    const joinPredicates: Sql[] = [];
+    if (j.relationJoin) {
+      this.appendSoftDeletePredicate(joinPredicates, j.joinedEntity, j.alias);
+    }
+    this.appendTenantPredicate(joinPredicates, j.joinedEntity, j.alias);
+    if (joinPredicates.length === 0) return j.condition;
+    return sql`${j.condition} AND ${join(joinPredicates, " AND ")}`;
   }
 
   /**
