@@ -400,12 +400,15 @@ all[1] instanceof BankTransferPayment; // true
 
 각 객체에는 해당 타입의 컬럼만 포함돼요. `CreditCardPayment` 인스턴스에는 `bankCode`가 없고, `BankTransferPayment` 인스턴스에는 `cardNumber`가 없어요. ORM이 다른 자식 타입의 NULL 컬럼을 역직렬화 과정에서 제거해요.
 
-**DELETE** -- INSERT의 역순으로, child 먼저 삭제한 뒤 root를 삭제해요:
+**DELETE** -- 조건에 맞는 키를 먼저 조회한 뒤, INSERT의 역순으로 child 먼저 삭제하고 root를 삭제합니다:
 
 ```typescript
 await em.delete(CreditCardPayment, { id: cc.id });
-// 1. DELETE FROM "credit_card_payment" WHERE "id" = 1
-// 2. DELETE FROM "payment" WHERE "id" = 1
+// 1. SELECT "tpt_root"."id" AS "pk" FROM "credit_card_payment" AS "tpt_child"
+//      INNER JOIN "payment" AS "tpt_root" ON "tpt_child"."id" = "tpt_root"."id"
+//      WHERE "tpt_child"."id" = 1
+// 2. DELETE FROM "credit_card_payment" WHERE "id" IN (1)
+// 3. DELETE FROM "payment" WHERE "id" IN (1)
 ```
 
 FK 제약 조건 때문에 이 순서가 중요해요. Root 행을 먼저 삭제하면, child 행이 참조하는 부모가 사라져서 FK violation 오류가 발생해요.
@@ -812,7 +815,8 @@ Polymorphic query가 필요한가?
 | `em.find(RootEntity)` | Polymorphic (올바른 하위 클래스 인스턴스 반환) |
 | `em.find(ChildEntity)` | 스코프 적용 (STI: WHERE discriminator, TPT: JOIN parent, TPC: 자체 테이블) |
 | `em.save(ChildEntity, data)` | 자동 discriminator 설정 + TPT 2단계 insert |
-| `em.delete(ChildEntity, criteria)` | STI: discriminator WHERE 추가, TPT: 2단계 delete |
+| `em.delete(ChildEntity, criteria)` | STI: discriminator WHERE 추가, TPT: 루트 JOIN으로 일치 키를 조회한 뒤(조건은 어느 테이블 컬럼이든 가능) 자식 → 루트 순으로 삭제 |
+| `em.delete/deleteMany(RootEntity)` | TPT: 일치 키를 모든 자식 테이블에서 지운 뒤 루트에서 삭제 |
 | `em.count/sum/avg/min/max(RootEntity)` | STI/TPT: 공유/루트 테이블에 이미 전 행이 있음. TPC: `UNION ALL`에 대해 집계 |
 | `em.findWithCursor(RootEntity)` | TPC: `(정렬 컬럼, id, discriminator)` 키셋으로 `UNION ALL`을 페이지네이션 |
 | `em.updateMany/softDelete/restore/delete/deleteMany(RootEntity)` | TPC: 콘크리트 테이블마다 실행, `affected` 합산. `orderBy`/`limit`가 있는 `updateMany`는 거부 |
