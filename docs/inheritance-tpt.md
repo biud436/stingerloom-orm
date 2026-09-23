@@ -605,22 +605,29 @@ Notice the ORM intelligently routes each column to the correct table. If you onl
 
 > **Hint** `@UpdateTimestamp` and `@Version` fields are routed to the root table's UPDATE statement, since these metadata columns are typically defined on the root entity.
 
-## 11. DELETE -- Two-Phase Delete
+## 11. DELETE -- Keys First, Child Tables Before Root
 
-Deleting a TPT child entity requires two DELETE statements in a specific order.
+A TPT row lives in two tables, and the criteria may name columns of either one. The ORM first reads the primary keys that match, then deletes those keys from the child table and then from the root table.
 
 ```typescript
-await em.delete(CreditCardPayment, { id: 1 });
+await em.delete(CreditCardPayment, { cardNumber: "4111-1111-1111-1111" });
 ```
 
 **Generated SQL (PostgreSQL):**
 
 ```sql
--- Phase 1: Delete from child table FIRST
-DELETE FROM "credit_card_payment" WHERE "id" = 1;
+-- Phase 1: find the matching keys. The root is joined, and each column
+-- is qualified with the table that holds it
+SELECT "tpt_root"."id" AS "pk"
+FROM "credit_card_payment" AS "tpt_child"
+INNER JOIN "payment" AS "tpt_root" ON "tpt_child"."id" = "tpt_root"."id"
+WHERE "tpt_child"."cardNumber" = '4111-1111-1111-1111';
 
--- Phase 2: Delete from root table SECOND
-DELETE FROM "payment" WHERE "id" = 1;
+-- Phase 2: delete from the child table FIRST
+DELETE FROM "credit_card_payment" WHERE "id" IN (1);
+
+-- Phase 3: delete from the root table SECOND
+DELETE FROM "payment" WHERE "id" IN (1);
 ```
 
 **Return value:**
@@ -629,11 +636,31 @@ DELETE FROM "payment" WHERE "id" = 1;
 { affected: 1 }
 ```
 
-Notice the order: child first, then root. This is required because the child table's `id` column has a foreign key constraint referencing the root table. If you deleted the root row first, the FK constraint would be violated. The ORM handles this ordering automatically.
+The child table goes first because its `id` column has a foreign key referencing the root table: deleting the root row first would violate that constraint. `affected` is the number of root rows deleted.
 
-::: warning
-If you delete from the root entity directly (`em.delete(Payment, { id: 1 })`), only the root table row is deleted. The child table row will become an orphan if the FK constraint uses `NO ACTION`. To avoid orphans, always delete using the child entity class, or configure `ON DELETE CASCADE` on the child table's FK constraint.
-:::
+Because the keys come from the JOIN, a criteria on an inherited column only reaches rows of the class you called `delete()` on. `em.delete(CreditCardPayment, { amount: 0 })` leaves a `BankTransferPayment` with `amount: 0` alone, and `em.delete(CreditCardPayment, { id })` deletes nothing when `id` belongs to another subclass.
+
+**Deleting through the root entity** removes each matching row from every table it occupies:
+
+```typescript
+await em.delete(Payment, { amount: 0 });
+```
+
+```sql
+SELECT "tpt_root"."id" AS "pk" FROM "payment" AS "tpt_root" WHERE "tpt_root"."amount" = 0;
+DELETE FROM "credit_card_payment" WHERE "id" IN (3, 7);
+DELETE FROM "bank_transfer_payment" WHERE "id" IN (3, 7);
+DELETE FROM "payment" WHERE "id" IN (3, 7);
+```
+
+Every child table is cleared before the root, so no child row is left without its root row, whether or not the database enforces the foreign key (MyISAM, for example, does not). `deleteMany()` follows the same rules on a child or on the root.
+
+| Call | Keys read from | Tables deleted |
+|------|----------------|----------------|
+| `delete(Child, criteria)` / `deleteMany(Child, ids)` | child `INNER JOIN` root | child, then root |
+| `delete(Root, criteria)` / `deleteMany(Root, ids)` | root | every child table, then root |
+
+Under `tenantStrategy: "tenant_column"`, the tenant predicate goes into the key lookup against the root table, which holds the tenant column. Keys are deleted in batches of 1,000 per `IN (...)` list, and every statement runs in one transaction.
 
 ## 12. Pros and Cons
 
@@ -641,7 +668,7 @@ If you delete from the root entity directly (`em.delete(Payment, { id: 1 })`), o
 |------|------|
 | Normalized schema -- no wasted NULL columns | Every query requires a JOIN (root + child) |
 | Child columns can have NOT NULL constraints | INSERT requires two statements (root + child) |
-| Scales well with many child types | DELETE requires two statements (child + root) |
+| Scales well with many child types | DELETE requires a key lookup plus a statement per table |
 | Clean separation of concerns per type | Polymorphic queries need N LEFT JOINs |
 | Adding a child type does not alter existing tables | Slightly more complex schema than STI |
 | Root table stays narrow regardless of child count | WHERE clauses must be routed to the correct table |

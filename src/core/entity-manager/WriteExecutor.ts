@@ -69,6 +69,12 @@ import {
 } from "./entity-access";
 
 /**
+ * Primary keys bound per `IN (...)` list when a TPT delete removes the rows
+ * it matched — well under every dialect's bind-parameter limit.
+ */
+const TPT_DELETE_ID_CHUNK = 1000;
+
+/**
  * A ManyToOne FK appended to a multi-row INSERT's column list, paired with the
  * relation metadata needed to resolve each row's value.
  */
@@ -2532,7 +2538,6 @@ export class WriteExecutor {
     metadata: EntityScannerMetadata,
     criteria: WhereClause<T>,
     strategy: InheritanceStrategy | null,
-    tenantTable: "auto" | "root" = "auto",
   ): Sql {
     const deletePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
     const whereMap: Sql[] = this.resolveCriteriaWhere(criteria, deletePropToCol);
@@ -2550,11 +2555,7 @@ export class WriteExecutor {
       whereMap.push(deleteSti);
     }
 
-    const tenantDeleteWhere = this.ctx.buildTenantWhereClause(
-      entity,
-      undefined,
-      tenantTable,
-    );
+    const tenantDeleteWhere = this.ctx.buildTenantWhereClause(entity);
     if (tenantDeleteWhere) {
       whereMap.push(tenantDeleteWhere);
     }
@@ -2563,34 +2564,117 @@ export class WriteExecutor {
   }
 
   /**
-   * TPT: the child table's rows go first, then the root's — the root DELETE
-   * reports the affected count. Returns null when the root has no metadata,
-   * so the caller falls through to the single-table delete. Whether this
-   * applies at all is the caller's check, so a non-TPT delete never pays for
-   * the extra async frame.
+   * Whether a delete on `entity` spans the tables of a JOINED (table-per-type)
+   * hierarchy: a child, whose row is split between the root table and its
+   * own, or a root with subclasses, whose rows may each own a child row.
+   */
+  private isJoinedHierarchyDelete<T>(
+    entity: ClazzType<T>,
+    strategy: InheritanceStrategy | null,
+  ): boolean {
+    if (strategy !== "JOINED") return false;
+    return (
+      this.inheritanceResolver.isChildEntity(entity) ||
+      this.inheritanceResolver.getConcreteEntities(entity).length > 1
+    );
+  }
+
+  /**
+   * TPT delete. The criteria may name columns of either table and the child
+   * rows must go before the root rows they reference, so no single WHERE
+   * serves every statement: the matching primary keys are read first — a
+   * child through its INNER JOIN with the root, each column qualified with
+   * the table that holds it, a root from its own table — and every table
+   * is then deleted by those keys, child tables first. Called on the root,
+   * that is every subclass table; on a child, its own table. The root
+   * DELETE reports the affected count.
+   *
+   * Returns null when the root has no metadata, so the caller falls through
+   * to the single-table delete.
    */
   private async deleteJoinedRows<T>(
     entity: ClazzType<T>,
     metadata: EntityScannerMetadata,
-    whereSql: Sql,
-    rootWhereSql: Sql,
+    criteria: WhereClause<T>,
     session: TransactionSessionManager,
   ): Promise<number | null> {
     const root = this.inheritanceResolver.getRoot(entity)!;
     const rootMeta = this.resolver.resolveEntityMetadata(root);
-    if (!rootMeta) {
+    const pk = metadata.columns.find(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+    if (!rootMeta || !pk) {
       return null;
     }
 
-    const childDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${whereSql}`;
-    await session.query(childDeleteQuery);
+    const isChild = root !== entity;
+    const rootAlias = this.ctx.wrap("tpt_root");
+    const childAlias = this.ctx.wrap("tpt_child");
+    const pkCol = this.ctx.wrap(pk.name);
+    const rootOnlyColumns = new Set(
+      rootMeta.columns
+        .filter((column: ColumnMetadata) => !column.options?.primary)
+        .map((column: ColumnMetadata) => column.name),
+    );
 
-    const parentDeleteQuery = sql`DELETE FROM ${raw(this.ctx.wrapTable(rootMeta.name))} WHERE ${rootWhereSql}`;
-    const parentResult = (await session.query(
-      parentDeleteQuery,
-    )) as DriverExecResult;
+    const whereMap = resolveWhereClause(criteria, {
+      wrapColumn: (n) => this.ctx.wrap(n),
+      dialect: this.ctx.getDialect(),
+      dialectExpression: createDialectExpression(this.ctx.getDialect()),
+      propertyToColumn: this.ctx.buildPropertyToColumnMap(metadata),
+      qualified: true,
+      qualifyColumn: (column) =>
+        `${isChild && !rootOnlyColumns.has(column) ? childAlias : rootAlias}.${this.ctx.wrap(column)}`,
+    });
+    if (whereMap.length === 0) {
+      throw new DeleteWithoutConditionsError("Delete");
+    }
+    // The root table holds the tenant column: name it directly.
+    const tenantWhere = this.ctx.buildTenantWhereClause(
+      entity,
+      "tpt_root",
+      "root",
+    );
+    if (tenantWhere) {
+      whereMap.push(tenantWhere);
+    }
 
-    return this.affectedCount(parentResult);
+    const from = isChild
+      ? sql`${raw(this.ctx.wrapTable(metadata.name))} AS ${raw(childAlias)} INNER JOIN ${raw(this.ctx.wrapTable(rootMeta.name))} AS ${raw(rootAlias)} ON ${raw(childAlias)}.${raw(pkCol)} = ${raw(rootAlias)}.${raw(pkCol)}`
+      : sql`${raw(this.ctx.wrapTable(rootMeta.name))} AS ${raw(rootAlias)}`;
+    const matched = await session.query(
+      sql`SELECT ${raw(rootAlias)}.${raw(pkCol)} AS ${raw(this.ctx.wrap("pk"))} FROM ${from} WHERE ${join(whereMap, " AND ")}`,
+    );
+    const ids = resultRows(matched).map((row) => row.pk as RawValue);
+    if (ids.length === 0) {
+      return 0;
+    }
+
+    const childTables = isChild
+      ? [metadata.name]
+      : this.inheritanceResolver
+          .getConcreteEntities(entity)
+          .filter((concrete) => concrete !== entity)
+          .map((concrete) => this.resolver.resolveEntityMetadata(concrete)?.name)
+          .filter((name): name is string => !!name);
+
+    let affected = 0;
+    for (let i = 0; i < ids.length; i += TPT_DELETE_ID_CHUNK) {
+      const chunk = join(
+        ids.slice(i, i + TPT_DELETE_ID_CHUNK).map((id) => sql`${id}`),
+        ", ",
+      );
+      const byPk = (tableName: string) =>
+        sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${raw(pkCol)} IN (${chunk})`;
+      await this.executePerTable(entity, childTables, byPk, session);
+      affected += await this.executePerTable(
+        entity,
+        [rootMeta.name],
+        byPk,
+        session,
+      );
+    }
+    return affected;
   }
 
   /**
@@ -2640,36 +2724,18 @@ export class WriteExecutor {
       );
 
       const deleteStrategy = this.inheritanceResolver.getStrategy(entity);
-      const whereSql = this.buildDeleteWhereSql(
-        entity,
-        metadata,
-        criteria,
-        deleteStrategy,
-      );
-
-      const joinedAffected =
-        deleteStrategy === "JOINED" &&
-        this.inheritanceResolver.isChildEntity(entity)
-          ? await this.deleteJoinedRows(
-              entity,
-              metadata,
-              whereSql,
-              // The root table holds the tenant column: name it directly. A
-              // subquery on the table being deleted from is an error on MySQL.
-              this.buildDeleteWhereSql(
-                entity,
-                metadata,
-                criteria,
-                deleteStrategy,
-                "root",
-              ),
-              session,
-            )
-          : null;
+      const joinedAffected = this.isJoinedHierarchyDelete(entity, deleteStrategy)
+        ? await this.deleteJoinedRows(entity, metadata, criteria, session)
+        : null;
 
       const affected =
         joinedAffected ??
-        (await this.executeDelete(entity, metadata, whereSql, session));
+        (await this.executeDelete(
+          entity,
+          metadata,
+          this.buildDeleteWhereSql(entity, metadata, criteria, deleteStrategy),
+          session,
+        ));
 
       await this.emitAfterDelete(entity, criteria);
 
@@ -2715,6 +2781,19 @@ export class WriteExecutor {
       await transactionStorage.run(session, () =>
         this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria),
       );
+
+      // A TPT row spans the root table and a child table: deleting one
+      // table's rows would orphan the other's, or trip the child→root FK.
+      const joinedAffected = this.isJoinedHierarchyDelete(
+        entity,
+        this.inheritanceResolver.getStrategy(entity),
+      )
+        ? await this.deleteJoinedRows(entity, metadata, criteria, session)
+        : null;
+      if (joinedAffected !== null) {
+        await this.emitAfterDelete(entity, criteria);
+        return { affected: joinedAffected };
+      }
 
       const placeholders = join(
         ids.map((id) => sql`${id as string | number}`),

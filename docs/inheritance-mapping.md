@@ -98,7 +98,7 @@ This pattern comes from Object-Relational Mapping (ORM) theory. Martin Fowler do
 | **Tables** | 1 shared table | 1 root + N child tables | N independent tables |
 | **Polymorphic query** | Fast (no JOINs) | Medium (N LEFT JOINs) | Slow (UNION ALL) |
 | **Child INSERT** | 1 statement | 2 statements (root + child) | 1 statement |
-| **Child DELETE** | 1 statement | 2 statements (child + root) | 1 statement |
+| **Child DELETE** | 1 statement | Key lookup + 2 statements (child, then root) | 1 statement |
 | **Nullable columns** | Required for child fields | Not required | Not required |
 | **Schema normalization** | Low | High | Medium |
 
@@ -374,7 +374,8 @@ Do you need polymorphic queries (em.find(RootEntity))?
 | `em.findOne(ChildEntity, opts)` | Same scoping as `em.find()` |
 | `em.save(ChildEntity, data)` | STI/TPT: auto-sets discriminator. TPT: two-phase insert (root then child) |
 | `em.save(ChildEntity, existing)` | TPT: two-phase update (root then child). STI: excludes discriminator from SET |
-| `em.delete(ChildEntity, criteria)` | STI: adds discriminator to WHERE. TPT: two-phase delete (child then root) |
+| `em.delete(ChildEntity, criteria)` | STI: adds discriminator to WHERE. TPT: reads the matching keys through the root JOIN (criteria may name either table), then deletes child then root |
+| `em.delete/deleteMany(RootEntity)` | TPT: deletes the matching keys from every child table, then the root |
 | `em.count/sum/avg/min/max(RootEntity)` | STI/TPT: the shared/root table already holds every row. TPC: aggregates over the `UNION ALL` |
 | `em.findWithCursor(RootEntity)` | TPC: pages the `UNION ALL` with a `(order, id, discriminator)` keyset |
 | `em.updateMany/softDelete/restore/delete/deleteMany(RootEntity)` | TPC: runs once per concrete table, `affected` summed; `updateMany` with `orderBy`/`limit` is rejected |

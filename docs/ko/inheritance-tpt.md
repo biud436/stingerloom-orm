@@ -640,22 +640,29 @@ ORM이 각 컬럼을 올바른 테이블로 지능적으로 라우팅하는 것�
 
 > **힌트** `@UpdateTimestamp`와 `@Version` 필드는 루트 테이블의 UPDATE 문으로 라우팅돼요. 이러한 메타데이터 컬럼은 보통 루트 엔티티에 정의되기 때문이에요.
 
-## 11. DELETE -- 2단계 삭제
+## 11. DELETE -- 키를 먼저 찾고, 자식 테이블부터 삭제
 
-TPT 자식 엔티티를 삭제하려면 특정 순서로 두 개의 DELETE 문이 필요해요.
+TPT 행은 두 테이블에 나뉘어 있고, 조건은 어느 쪽 컬럼이든 가리킬 수 있습니다. 그래서 ORM은 조건에 맞는 기본 키를 먼저 읽은 뒤, 그 키로 자식 테이블과 루트 테이블을 차례로 삭제합니다.
 
 ```typescript
-await em.delete(CreditCardPayment, { id: 1 });
+await em.delete(CreditCardPayment, { cardNumber: "4111-1111-1111-1111" });
 ```
 
 **생성된 SQL (PostgreSQL):**
 
 ```sql
--- Phase 1: 자식 테이블에서 먼저 삭제
-DELETE FROM "credit_card_payment" WHERE "id" = 1;
+-- Phase 1: 조건에 맞는 키 조회. 루트를 조인하고,
+-- 각 컬럼은 그 컬럼이 있는 테이블로 한정한다
+SELECT "tpt_root"."id" AS "pk"
+FROM "credit_card_payment" AS "tpt_child"
+INNER JOIN "payment" AS "tpt_root" ON "tpt_child"."id" = "tpt_root"."id"
+WHERE "tpt_child"."cardNumber" = '4111-1111-1111-1111';
 
--- Phase 2: 루트 테이블에서 나중에 삭제
-DELETE FROM "payment" WHERE "id" = 1;
+-- Phase 2: 자식 테이블에서 먼저 삭제
+DELETE FROM "credit_card_payment" WHERE "id" IN (1);
+
+-- Phase 3: 루트 테이블에서 나중에 삭제
+DELETE FROM "payment" WHERE "id" IN (1);
 ```
 
 **반환값:**
@@ -664,11 +671,31 @@ DELETE FROM "payment" WHERE "id" = 1;
 { affected: 1 }
 ```
 
-순서를 주목하세요: 자식 먼저, 그다음 루트. 자식 테이블의 `id` 컬럼이 루트 테이블을 참조하는 외래 키 제약 조건을 갖고 있기 때문에 이 순서가 필수적이에요. 루트 행을 먼저 삭제하면 FK 제약 조건이 위반돼요. ORM이 이 순서를 자동으로 처리해요.
+자식 테이블을 먼저 지우는 이유는 자식의 `id` 컬럼이 루트 테이블을 참조하는 외래 키이기 때문입니다. 루트 행을 먼저 지우면 이 제약을 위반하게 돼요. `affected`는 삭제된 루트 행 수입니다.
 
-::: warning
-루트 엔티티에서 직접 삭제하면(`em.delete(Payment, { id: 1 })`), 루트 테이블 행만 삭제돼요. FK 제약 조건이 `NO ACTION`을 사용하면 자식 테이블 행이 고아(orphan)가 돼요. 고아를 피하려면 항상 자식 엔티티 클래스를 사용해서 삭제하거나, 자식 테이블의 FK 제약 조건에 `ON DELETE CASCADE`를 설정하세요.
-:::
+키를 JOIN으로 찾기 때문에, 상속받은 컬럼으로 조건을 걸어도 `delete()`를 호출한 클래스의 행에만 적용됩니다. `em.delete(CreditCardPayment, { amount: 0 })`은 `amount: 0`인 `BankTransferPayment`를 건드리지 않고, 다른 하위 클래스의 `id`로 `em.delete(CreditCardPayment, { id })`를 호출하면 아무것도 삭제되지 않습니다.
+
+**루트 엔티티로 삭제하면** 조건에 맞는 행을 그 행이 걸쳐 있는 모든 테이블에서 지웁니다.
+
+```typescript
+await em.delete(Payment, { amount: 0 });
+```
+
+```sql
+SELECT "tpt_root"."id" AS "pk" FROM "payment" AS "tpt_root" WHERE "tpt_root"."amount" = 0;
+DELETE FROM "credit_card_payment" WHERE "id" IN (3, 7);
+DELETE FROM "bank_transfer_payment" WHERE "id" IN (3, 7);
+DELETE FROM "payment" WHERE "id" IN (3, 7);
+```
+
+모든 자식 테이블을 루트보다 먼저 비우므로, 데이터베이스가 외래 키를 강제하든 하지 않든(예: MyISAM) 루트 행 없이 남는 자식 행은 생기지 않습니다. `deleteMany()`도 자식·루트 어느 쪽에서 호출하든 같은 규칙을 따릅니다.
+
+| 호출 | 키 조회 대상 | 삭제 테이블 |
+|------|--------------|-------------|
+| `delete(Child, criteria)` / `deleteMany(Child, ids)` | 자식 `INNER JOIN` 루트 | 자식 → 루트 |
+| `delete(Root, criteria)` / `deleteMany(Root, ids)` | 루트 | 모든 자식 테이블 → 루트 |
+
+`tenantStrategy: "tenant_column"`에서는 테넌트 조건이 키 조회 단계에 들어가고, 테넌트 컬럼이 있는 루트 테이블을 기준으로 걸립니다. 키는 `IN (...)` 목록당 1,000개씩 나눠 삭제하며, 모든 문장이 하나의 트랜잭션에서 실행돼요.
 
 ## 12. 장단점
 
@@ -676,7 +703,7 @@ DELETE FROM "payment" WHERE "id" = 1;
 |------|------|
 | 정규화된 스키마 -- 낭비되는 NULL 컬럼이 없어요 | 모든 쿼리에 JOIN(루트 + 자식)이 필요해요 |
 | 자식 컬럼에 NOT NULL 제약 조건을 걸 수 있어요 | INSERT에 두 개의 문이 필요해요(루트 + 자식) |
-| 자식 타입이 많아도 잘 확장돼요 | DELETE에 두 개의 문이 필요해요(자식 + 루트) |
+| 자식 타입이 많아도 잘 확장돼요 | DELETE에 키 조회와 테이블별 문장이 필요합니다 |
 | 타입별로 깔끔하게 관심사가 분리돼요 | 다형성 쿼리에 N개의 LEFT JOIN이 필요해요 |
 | 자식 타입을 추가해도 기존 테이블을 변경하지 않아요 | STI보다 약간 더 복잡한 스키마예요 |
 | 자식 수에 관계없이 루트 테이블이 좁게 유지돼요 | WHERE 절이 올바른 테이블로 라우팅되어야 해요 |
