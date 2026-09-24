@@ -143,9 +143,11 @@ export interface UpsertTenantGuard {
 interface UpsertPlan {
   /** Metadata of the columns the INSERT names, in statement order. */
   insertableColumns: ColumnMetadata[];
+  /** `@ManyToOne` join columns no `@Column` declares, named after `insertableColumns`. */
+  fkColumns: FkColumnBinding[];
   /** Wrapped table identifier. */
   tableName: string;
-  /** Wrapped identifiers of `insertableColumns`. */
+  /** Wrapped identifiers of `insertableColumns`, then of `fkColumns`. */
   wrappedColumns: string[];
   /** Wrapped identifiers of the conflict target. */
   wrappedConflict: string[];
@@ -3517,6 +3519,12 @@ export class WriteExecutor {
    * soft-deleted one. A `@UpdateTimestamp` or `@DeletedAt` the caller states
    * (`statedByCaller`) is the caller's column like any other — a
    * `{ key, updatedAt }` touch still updates the row.
+   *
+   * A `@ManyToOne` key the rows state (`statesFk`) whose join column no
+   * `@Column` declares is named after the declared columns and, like them,
+   * assigned on conflict unless it is part of the conflict target. A declared
+   * join column needs nothing here: {@link seededUpsertRows} already filled it
+   * from the relation.
    */
   private buildUpsertPlan<T>(
     entity: ClazzType<T>,
@@ -3525,6 +3533,7 @@ export class WriteExecutor {
     isInsertable: (col: ColumnMetadata) => boolean,
     tenantColumnName: string | null,
     statedByCaller: (col: ColumnMetadata) => boolean,
+    statesFk: (rel: ManyToOneMetadata<unknown>) => boolean,
   ): UpsertPlan | null {
     const pkColumns = metadata.columns
       .filter((col: ColumnMetadata) => col.options?.primary)
@@ -3540,14 +3549,29 @@ export class WriteExecutor {
       (col: ColumnMetadata) =>
         !computedCols.has(col.name) && isInsertable(col),
     );
-    if (insertableColumns.length === 0) {
+    const insertableNames = new Set(
+      insertableColumns.map((col: ColumnMetadata) => col.name),
+    );
+    const fkColumns: FkColumnBinding[] = this.resolver
+      .resolveManyToOneMetadata(entity)
+      .flatMap((rel) =>
+        rel.joinColumn &&
+        !insertableNames.has(rel.joinColumn) &&
+        statesFk(rel)
+          ? [
+              {
+                joinColumn: rel.joinColumn,
+                propertyName: rel.columnName,
+                relMeta: rel,
+              },
+            ]
+          : [],
+      );
+    if (insertableColumns.length === 0 && fkColumns.length === 0) {
       return null;
     }
 
     const conflictSet = new Set(resolvedConflictColumns);
-    const insertableNames = new Set(
-      insertableColumns.map((col: ColumnMetadata) => col.name),
-    );
     // A managed column the conflict branch may assign: declared, and not
     // itself part of the conflict target.
     const assignable = (name: string | null): name is string =>
@@ -3580,6 +3604,7 @@ export class WriteExecutor {
           !this.isClientGenerated(col) || statedByCaller(col),
       )
       .map((col: ColumnMetadata) => col.name)
+      .concat(fkColumns.map((fk) => fk.joinColumn))
       .filter(
         (name) =>
           !conflictSet.has(name) &&
@@ -3592,10 +3617,12 @@ export class WriteExecutor {
 
     return {
       insertableColumns,
+      fkColumns,
       tableName: this.ctx.wrapTable(metadata.name),
-      wrappedColumns: insertableColumns.map((col: ColumnMetadata) =>
-        this.ctx.wrap(col.name),
-      ),
+      wrappedColumns: insertableColumns
+        .map((col: ColumnMetadata) => col.name)
+        .concat(fkColumns.map((fk) => fk.joinColumn))
+        .map((name) => this.ctx.wrap(name)),
       wrappedConflict: resolvedConflictColumns.map((name) =>
         this.ctx.wrap(name),
       ),
@@ -3629,12 +3656,24 @@ export class WriteExecutor {
    * so a seeded `version: 1` on the payload would be a lie. Column values are
    * read through the property key, so an accessor defined on the entity's
    * prototype is captured too.
+   *
+   * A `@ManyToOne` whose join column is also a declared `@Column` writes
+   * through that column: a row that leaves the column unset takes the key the
+   * relation states, as insertMany() does.
    */
   private seededUpsertRows<T>(
     entity: ClazzType<T>,
     metadata: EntityScannerMetadata,
     items: Partial<T>[],
   ): Partial<T>[] {
+    const declaredFks = this.resolver
+      .resolveManyToOneMetadata(entity)
+      .flatMap((rel) => {
+        const column = metadata.columns.find(
+          (col: ColumnMetadata) => col.name === rel.joinColumn,
+        );
+        return column ? [{ rel, key: this.ctx.propKey(column) }] : [];
+      });
     const rows = items.map((item) => {
       const source = fieldsOf(item);
       const row: EntityFields = { ...source };
@@ -3643,6 +3682,11 @@ export class WriteExecutor {
         if (row[key] === undefined && source[key] !== undefined) {
           row[key] = source[key];
         }
+      }
+      for (const { rel, key } of declaredFks) {
+        if (row[key] !== undefined) continue;
+        const fkValue = this.resolveFkValue(rel, row);
+        if (fkValue !== undefined) row[key] = fkValue;
       }
       return row as Partial<T>;
     });
@@ -3662,12 +3706,12 @@ export class WriteExecutor {
   }
 
   /**
-   * Whether any payload states a value for a declared, non-computed column.
+   * Whether any payload states a value for a declared, non-computed column or
+   * a `@ManyToOne` key.
    *
    * Values the ORM fills in do not count: a payload naming nothing the upsert
-   * family writes — only a relation object, which it does not resolve, or an
-   * unknown key — is reported as 0 affected rows instead of inserting a row
-   * made of generated values alone.
+   * family writes — only unknown keys, say — is reported as 0 affected rows
+   * instead of inserting a row made of generated values alone.
    */
   private statesAnyUpsertColumn<T>(
     entity: ClazzType<T>,
@@ -3675,11 +3719,39 @@ export class WriteExecutor {
     items: Partial<T>[],
   ): boolean {
     const computedCols = this.ctx.getComputedColumnNames(entity);
-    return metadata.columns.some(
-      (col: ColumnMetadata) =>
-        !computedCols.has(col.name) &&
-        items.some((item) => this.statesUpsertValue(col, item)),
+    return (
+      metadata.columns.some(
+        (col: ColumnMetadata) =>
+          !computedCols.has(col.name) &&
+          items.some((item) => this.statesUpsertValue(col, item)),
+      ) || this.statesAnyForeignKey(entity, items)
     );
+  }
+
+  /**
+   * One upsert row's bound values, parallel to `plan.wrappedColumns`: the
+   * declared columns through their write transforms, then the `@ManyToOne`
+   * keys — NULL wherever a batch row states nothing.
+   */
+  private upsertRowValues(
+    plan: UpsertPlan,
+    rowFields: EntityFields,
+    site: string,
+  ): unknown[] {
+    return plan.insertableColumns
+      .map(
+        (col: ColumnMetadata) =>
+          this.ctx.applyWriteTransform(
+            col,
+            rowFields[this.ctx.propKey(col)],
+            site,
+          ) ?? null,
+      )
+      .concat(
+        plan.fkColumns.map(
+          (fk) => this.resolveFkValue(fk.relMeta, rowFields) ?? null,
+        ),
+      );
   }
 
   /**
@@ -3698,14 +3770,24 @@ export class WriteExecutor {
     plan: UpsertPlan,
     rows: Partial<T>[],
   ): Partial<T>[] {
-    const keyColumns = plan.conflictNames.map((name) =>
-      metadata.columns.find((col: ColumnMetadata) => col.name === name),
+    // A key part is read as the row binds it: a declared column through its
+    // property, an undeclared `@ManyToOne` join column through the relation.
+    const keyReaders = plan.conflictNames.map(
+      (name): ((fields: EntityFields) => unknown) | undefined => {
+        const column = metadata.columns.find(
+          (col: ColumnMetadata) => col.name === name,
+        );
+        if (column) return (fields) => fields[this.ctx.propKey(column)];
+        const fk = plan.fkColumns.find((binding) => binding.joinColumn === name);
+        if (fk) return (fields) => this.resolveFkValue(fk.relMeta, fields);
+        return undefined;
+      },
     );
-    if (keyColumns.some((col) => !col)) return rows;
+    if (keyReaders.some((read) => !read)) return rows;
     const seen = new Set<string>();
     return rows.filter((row) => {
       const fields = fieldsOf(row);
-      const values = keyColumns.map((col) => fields[this.ctx.propKey(col!)]);
+      const values = keyReaders.map((read) => read!(fields));
       if (values.some((value) => value === null || value === undefined)) {
         return true;
       }
@@ -3842,17 +3924,14 @@ export class WriteExecutor {
       (col) => this.statesUpsertValue(col, row),
       tenantGuard?.columnName ?? null,
       (col) => this.statesUpsertValue(col, data),
+      (rel) => this.resolveFkValue(rel, fieldsOf(row)) !== undefined,
     );
     if (!plan) {
       return { affected: 0 };
     }
 
     return this.ctx.executeInTransaction(async (session) => {
-      const rowFields = fieldsOf(row);
-      const columnValues = plan.insertableColumns.map((col: ColumnMetadata) => {
-        const rawValue = rowFields[this.ctx.propKey(col)];
-        return this.ctx.applyWriteTransform(col, rawValue, "upsert()");
-      });
+      const columnValues = this.upsertRowValues(plan, fieldsOf(row), "upsert()");
 
       const upsertSql = this.dmlSqlBuilder.buildUpsertQuery(
         plan.tableName,
@@ -3904,17 +3983,18 @@ export class WriteExecutor {
       (col) => this.statesUpsertValue(col, row),
       null,
       (col) => this.statesUpsertValue(col, data),
+      (rel) => this.resolveFkValue(rel, fieldsOf(row)) !== undefined,
     );
     if (!plan) {
       return { affected: 0 };
     }
 
     return this.ctx.executeInTransaction(async (session) => {
-      const rowFields = fieldsOf(row);
-      const columnValues = plan.insertableColumns.map((col: ColumnMetadata) => {
-        const rawValue = rowFields[this.ctx.propKey(col)];
-        return this.ctx.applyWriteTransform(col, rawValue, "insertIgnore()");
-      });
+      const columnValues = this.upsertRowValues(
+        plan,
+        fieldsOf(row),
+        "insertIgnore()",
+      );
 
       const insertSql = this.dmlSqlBuilder.buildInsertIgnoreQuery(
         plan.tableName,
@@ -3976,6 +4056,10 @@ export class WriteExecutor {
             ),
       tenantGuard?.columnName ?? null,
       (col) => items.some((item) => this.statesUpsertValue(col, item)),
+      (rel) =>
+        seeded.some(
+          (row) => this.resolveFkValue(rel, fieldsOf(row)) !== undefined,
+        ),
     );
     if (!plan) {
       return { affected: 0 };
@@ -3987,15 +4071,8 @@ export class WriteExecutor {
 
     return this.ctx.executeInTransaction(async (session) => {
       const valueRows = rows.map((row) => {
-        const itemFields = fieldsOf(row);
         const rowValues: RawValue[] = bindParams(
-          plan.insertableColumns.map((col: ColumnMetadata) => {
-            const rawValue = itemFields[this.ctx.propKey(col)];
-            return (
-              this.ctx.applyWriteTransform(col, rawValue, "batchUpsert()") ??
-              null
-            );
-          }),
+          this.upsertRowValues(plan, fieldsOf(row), "batchUpsert()"),
         );
         return sql`(${join(rowValues, ", ")})`;
       });

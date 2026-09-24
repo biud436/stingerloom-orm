@@ -432,6 +432,17 @@ describe("[Integration] SQLite: upsert family and bulk INSERT maintain managed c
 
   describe("a payload that states no column", () => {
     it("inserts nothing rather than a row of generated values", async () => {
+      const results = [
+        await em.upsert(UmcLike, {} as any),
+        await em.insertIgnore(UmcLike, {} as any),
+        await em.batchUpsert(UmcLike, [{}, {}] as any),
+      ];
+
+      expect(results).toEqual([{ affected: 0 }, { affected: 0 }, { affected: 0 }]);
+      expect(await rawRows(em, `SELECT * FROM "umc_like"`)).toEqual([]);
+    });
+
+    it("counts a relation key as stated, and seeds the managed columns", async () => {
       const author = await em.save(UmcAuthor, { name: "a" } as any);
 
       const results = [
@@ -440,8 +451,18 @@ describe("[Integration] SQLite: upsert family and bulk INSERT maintain managed c
         await em.batchUpsert(UmcLike, [{ author }, { author }] as any),
       ];
 
-      expect(results).toEqual([{ affected: 0 }, { affected: 0 }, { affected: 0 }]);
-      expect(await rawRows(em, `SELECT * FROM "umc_like"`)).toEqual([]);
+      expect(results).toEqual([{ affected: 1 }, { affected: 1 }, { affected: 2 }]);
+      const rows = await rawRows(
+        em,
+        `SELECT authorId, createdAt FROM "umc_like" ORDER BY id`,
+      );
+      expect(rows.map((r: any) => r.authorId)).toEqual([
+        author.id,
+        author.id,
+        author.id,
+        author.id,
+      ]);
+      for (const row of rows) expect(row.createdAt).not.toBeNull();
     });
   });
 
