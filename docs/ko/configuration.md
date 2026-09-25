@@ -174,7 +174,17 @@ INFO [SchemaRegistrar] [dry-run] Would CREATE TYPE post_status_enum AS ENUM ('dr
 INFO [SchemaRegistrar] [dry-run] Would ALTER TYPE post_status_enum ADD VALUE IF NOT EXISTS 'archived' BEFORE 'published'
 ```
 
-MySQL과 SQLite에는 이 과정이 없습니다. MySQL은 컬럼 자체의 `ENUM(...)` 타입에 값을 담고 SQLite는 `TEXT`로 저장하므로, 기존 CREATE/ALTER 경로가 그대로 처리합니다.
+MySQL과 SQLite에는 이 과정이 없습니다. MySQL은 컬럼 자체의 `ENUM(...)` 타입에 값을 담고 SQLite는 `TEXT`로 저장하기 때문입니다. 대신 MySQL / MariaDB에서는 diff가 타입 이름만 비교하고 안의 값 목록은 보지 않으므로, 기존 컬럼의 값 목록을 바꿔도 동기화되지 않습니다. migration으로 바꾸세요.
+
+### synchronize가 손대지 않는 것
+
+이미 있는 테이블에서 synchronize는 컬럼을 비교하고, 엔티티에 새로 생긴 인덱스와 외래 키를 만듭니다. 컬럼 `default`, `onDelete` / `onUpdate`, 제거되거나 다시 정의된 인덱스, `@ComputedColumn` 표현식은 비교하지 않으므로 이런 수정은 적용되지 않아요. 이미 있던 테이블이 있으면 부팅마다 엔티티가 쓰는 종류를 한 줄로 알려 줍니다:
+
+```
+INFO [SchemaRegistrar] [sync] synchronize does not apply these to existing tables: changed column defaults, removed or redefined indexes. Write a migration for them (see docs/migrations.md#what-the-schema-diff-does-not-compare).
+```
+
+종류별로 `migrate:generate`가 무엇을 하는지까지 담은 전체 표는 [Schema Diff가 비교하지 않는 것](./migrations.md#schema-diff가-비교하지-않는-것)에 있습니다.
 
 ---
 

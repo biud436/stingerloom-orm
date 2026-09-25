@@ -660,7 +660,41 @@ This is intentionally cautious. Dropping and recreating an enum type is a multi-
 
 **What about MySQL?**
 
-MySQL handles enums differently -- the enum values are part of the column definition itself (`role ENUM('admin','user','moderator')`). When you change enum values in MySQL, SchemaDiff detects it as a regular column type modification in `alterColumns`. The generated migration uses `MODIFY COLUMN` to update the full column definition. No special enum handling is needed.
+MySQL keeps the values in the column's own type (`role ENUM('admin','user','moderator')`), and the diff compares only the type's name -- `ENUM` against `enum` -- not the list inside it. A changed value list is therefore not detected on MySQL / MariaDB, by `migrate:generate` or by `synchronize`. Write the `MODIFY COLUMN` by hand:
+
+```sql
+ALTER TABLE `users` MODIFY COLUMN `role` ENUM('admin','user','moderator') NOT NULL;
+```
+
+### What the Schema Diff Does Not Compare
+
+On a table that already exists, the diff compares columns: their presence, type, length, precision and nullability, plus renames, generated columns and PostgreSQL enum values. `synchronize` also creates the indexes and foreign keys an entity adds. Everything else in the table below stays as it is in the database. Both were measured on PostgreSQL, MariaDB and SQLite:
+
+| Change to an existing table | `synchronize` | `migrate:generate` |
+|-----------------------------|---------------|--------------------|
+| Column added or dropped, or its type, length or nullability changed | Applied (as the mode allows) | Generated |
+| Column renamed (`renamedFrom`, or a matching name) | Applied | Generated |
+| `@ComputedColumn` added | Applied | Generated |
+| PostgreSQL enum value added | Applied | Generated |
+| `@Index`, `@UniqueIndex`, class-level `@Index([...])` or `@FullTextIndex` added | Created | **Not generated** |
+| Relation added (`@ManyToOne`, owning `@OneToOne`) | Column and constraint created -- SQLite: column only, it cannot add a constraint to an existing table | **Column only** |
+| Relation removed | Column dropped on PostgreSQL; on MySQL / MariaDB and SQLite the drop fails with a warning, because the constraint still uses the column | `DROP COLUMN` written commented out |
+| Index or unique index removed from the entity | **Left in place** | Not generated |
+| Index redefined under the same name | **Left as it was** | Not generated |
+| Unique index columns changed, name generated | New index created; **the old one stays and is still enforced** | Not generated |
+| Column `default` added, changed or removed | Not compared | Not compared |
+| Relation `onDelete` / `onUpdate` changed | Not compared | Not compared |
+| `@ComputedColumn` expression changed | Not compared | Not compared |
+| MySQL / MariaDB `ENUM` values changed | Not compared | Not compared |
+| Entity removed | Table kept | Table kept |
+
+Because a restart after such an edit would otherwise look like a successful sync, both say so. When a table already existed, `synchronize` logs one line per boot listing the kinds your entities can run into -- a default is only listed when some column declares one, and so on:
+
+```
+INFO [SchemaRegistrar] [sync] synchronize does not apply these to existing tables: changed column defaults, removed or redefined indexes. Write a migration for them (see docs/migrations.md#what-the-schema-diff-does-not-compare).
+```
+
+`migrate:generate` logs the same after it runs, with "new indexes and foreign key constraints" at the head of the list. Write those changes as a migration by hand; [Adding an Index](#adding-an-index) shows the shape.
 
 ---
 

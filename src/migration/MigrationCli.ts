@@ -15,6 +15,7 @@ import { MySqlMigrationRunner } from "./MySqlMigrationRunner";
 import { PostgresMigrationRunner } from "./PostgresMigrationRunner";
 import { SqliteMigrationRunner } from "./SqliteMigrationRunner";
 import { SchemaDiff, SchemaDiffResult } from "../core/generators/SchemaDiff";
+import { describeGenerateGaps } from "../core/generators/uncomparedSchemaChanges";
 import { SchemaDiffMigrationGenerator } from "../core/generators/SchemaDiffMigrationGenerator";
 import { SchemaDialect } from "../core/generators/SchemaGenerator";
 import { createColumnDefinitionBuilder } from "../dialects/ColumnDefinitionBuilder";
@@ -287,8 +288,20 @@ export class MigrationCli {
       columnBuilder,
     });
 
+    // Tables the diff did not create are compared column by column only.
+    const created = new Set<unknown>(
+      Object.values(diff.addTableEntityMap ?? {}),
+    );
+    const existing = entities.filter((entity) => !created.has(entity));
+    const reportGaps = () => {
+      if (existing.length > 0) {
+        this.logger.info(describeGenerateGaps(existing, dialect));
+      }
+    };
+
     if (!this.hasChanges(diff)) {
       this.logger.info("No schema changes detected. No migration generated.");
+      reportGaps();
       return { filePath: "", sql: { up: [], down: [] } };
     }
 
@@ -305,6 +318,7 @@ export class MigrationCli {
     this.logger.info(`Migration generated: ${filePath}`);
     this.logger.info(`  Up statements: ${sqlPreview.up.length}`);
     this.logger.info(`  Down statements: ${sqlPreview.down.length}`);
+    reportGaps();
 
     return { filePath, sql: sqlPreview };
   }
