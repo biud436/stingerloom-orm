@@ -660,7 +660,41 @@ PostgreSQL의 근본적인 제약이 있어요: 기존 enum 타입에서 **값�
 
 **MySQL은?**
 
-MySQL은 enum을 다르게 처리해요 -- enum 값이 컬럼 정의 자체에 포함돼요 (`role ENUM('admin','user','moderator')`). MySQL에서 enum 값을 변경하면, SchemaDiff가 `alterColumns`의 일반적인 컬럼 타입 수정으로 감지해요. 생성된 migration은 `MODIFY COLUMN`으로 전체 컬럼 정의를 업데이트해요. 별도의 enum 처리가 필요 없어요.
+MySQL은 값을 컬럼 타입 자체에 담습니다(`role ENUM('admin','user','moderator')`). 그런데 diff는 타입 이름(`ENUM`과 `enum`)만 비교하고 안의 값 목록은 보지 않으므로, MySQL / MariaDB에서 값 목록을 바꿔도 `migrate:generate`와 `synchronize` 모두 감지하지 못합니다. `MODIFY COLUMN`을 직접 작성하세요:
+
+```sql
+ALTER TABLE `users` MODIFY COLUMN `role` ENUM('admin','user','moderator') NOT NULL;
+```
+
+### Schema Diff가 비교하지 않는 것
+
+이미 있는 테이블에서 diff가 비교하는 것은 컬럼입니다. 컬럼의 존재 여부, 타입, 길이, 정밀도, nullable과 함께 이름 변경, 생성 컬럼, PostgreSQL enum 값까지 봅니다. `synchronize`는 여기에 더해 엔티티에 새로 생긴 인덱스와 외래 키를 만듭니다. 아래 표의 나머지는 DB에 있는 그대로 남아요. PostgreSQL, MariaDB, SQLite에서 직접 측정한 결과입니다:
+
+| 기존 테이블의 변경 | `synchronize` | `migrate:generate` |
+|--------------------|---------------|--------------------|
+| 컬럼 추가·삭제, 타입·길이·nullable 변경 | 적용(모드가 허용하는 만큼) | 생성 |
+| 컬럼 이름 변경(`renamedFrom` 또는 같은 컬럼으로 읽히는 이름) | 적용 | 생성 |
+| `@ComputedColumn` 추가 | 적용 | 생성 |
+| PostgreSQL enum 값 추가 | 적용 | 생성 |
+| `@Index`, `@UniqueIndex`, 클래스 레벨 `@Index([...])`, `@FullTextIndex` 추가 | 생성 | **생성 안 함** |
+| 관계 추가(`@ManyToOne`, 소유 측 `@OneToOne`) | 컬럼과 제약 생성 -- SQLite는 기존 테이블에 제약을 추가할 수 없어 컬럼만 | **컬럼만** |
+| 관계 제거 | PostgreSQL은 컬럼 삭제. MySQL / MariaDB와 SQLite는 제약이 컬럼을 참조하고 있어 삭제가 경고와 함께 실패 | `DROP COLUMN`을 주석 처리해서 작성 |
+| 엔티티에서 인덱스·유니크 인덱스 제거 | **그대로 남음** | 생성 안 함 |
+| 같은 이름으로 인덱스 정의 변경 | **예전 정의 그대로** | 생성 안 함 |
+| 이름이 자동 생성된 유니크 인덱스의 컬럼 변경 | 새 인덱스 생성, **옛 인덱스도 남아 계속 제약을 걺** | 생성 안 함 |
+| 컬럼 `default` 추가·변경·제거 | 비교 안 함 | 비교 안 함 |
+| 관계 `onDelete` / `onUpdate` 변경 | 비교 안 함 | 비교 안 함 |
+| `@ComputedColumn` 표현식 변경 | 비교 안 함 | 비교 안 함 |
+| MySQL / MariaDB `ENUM` 값 변경 | 비교 안 함 | 비교 안 함 |
+| 엔티티 제거 | 테이블 유지 | 테이블 유지 |
+
+이런 수정 뒤 재시작하면 동기화가 성공한 것처럼 보이기 쉬우므로 두 경로 모두 이를 알립니다. 이미 있던 테이블이 하나라도 있으면 `synchronize`는 부팅마다 한 줄을 남기는데, 엔티티가 실제로 쓰는 종류만 나열합니다. 예를 들어 `default`는 어떤 컬럼이 선언했을 때만 목록에 들어가요:
+
+```
+INFO [SchemaRegistrar] [sync] synchronize does not apply these to existing tables: changed column defaults, removed or redefined indexes. Write a migration for them (see docs/migrations.md#what-the-schema-diff-does-not-compare).
+```
+
+`migrate:generate`도 실행 후 같은 줄을 남기며, 목록 맨 앞에 "new indexes and foreign key constraints"가 붙습니다. 이런 변경은 migration에 직접 작성하세요. 형태는 [인덱스 추가](#인덱스-추가)를 참고하면 됩니다.
 
 ---
 

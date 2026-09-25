@@ -430,6 +430,8 @@ An **index** is like the library's catalog card system. It maintains a sorted da
 
 The tradeoff: indexes consume disk space and slightly slow down INSERT/UPDATE operations (because the index must be updated too). Add indexes to columns that appear frequently in WHERE, JOIN, or ORDER BY clauses, but do not index every column.
 
+> **On an existing table**, `synchronize` creates an index you add but never drops or rewrites one: after removing an index from an entity, or changing its columns, drop the old one in a migration -- a unique index left behind keeps rejecting rows. `migrate:generate` writes no index DDL for an existing table at all. See [What the Schema Diff Does Not Compare](./migrations.md#what-the-schema-diff-does-not-compare).
+
 ### Single-Column Index
 
 Adding an **Index** to frequently searched columns significantly improves query speed. Consider the case of searching for users by email.

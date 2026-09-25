@@ -8,6 +8,7 @@ import {
 import { getScannerInstance } from "../scanner/ScannerContainer";
 import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { SchemaGenerator, SchemaDialect } from "./generators/SchemaGenerator";
+import { describeSynchronizeGaps } from "./generators/uncomparedSchemaChanges";
 import {
   NamingStrategy,
   DefaultNamingStrategy,
@@ -372,6 +373,10 @@ export class SchemaRegistrar {
     // on first sight so the pinned CREATE TABLE has somewhere to land.
     const ensuredSchemas = new Set<string>();
 
+    // Every entity this run registers, STI children included — they declare
+    // columns on the shared table without being in `entityList`.
+    const registeredEntities: ClazzType<any>[] = [];
+
     // Pass 1: create every table first (the referenced tables must exist before FKs are created).
     const entityList: Array<{
       TargetEntity: ClazzType<any>;
@@ -402,6 +407,7 @@ export class SchemaRegistrar {
       if (!ReflectManager.isEntity(TargetEntity)) {
         throw new EntityMetadataNotFoundError(tableName ?? "Unknown");
       }
+      registeredEntities.push(TargetEntity);
 
       // STI: child entities do not create their own table (they share the
       // parent's table) — and they do not pin it either: the root records
@@ -688,6 +694,18 @@ export class SchemaRegistrar {
           `[dry-run] Would register FKs/indexes for ${tableName}`,
         );
       }
+    }
+
+    // On a table that already existed, only columns (and PostgreSQL enum
+    // values) are compared. Say so once per boot rather than let a changed
+    // default or a dropped @Index look applied.
+    if (synchronize && entityList.some((e) => e.tableExisted)) {
+      this.logger.info(
+        `[sync] ${describeSynchronizeGaps(
+          registeredEntities,
+          this.ctx.getDialect(),
+        )}`,
+      );
     }
   }
 

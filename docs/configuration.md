@@ -174,7 +174,17 @@ INFO [SchemaRegistrar] [dry-run] Would CREATE TYPE post_status_enum AS ENUM ('dr
 INFO [SchemaRegistrar] [dry-run] Would ALTER TYPE post_status_enum ADD VALUE IF NOT EXISTS 'archived' BEFORE 'published'
 ```
 
-MySQL and SQLite need none of this -- MySQL carries the values in the column's own `ENUM(...)` type and SQLite stores the column as `TEXT`, so the regular CREATE/ALTER path already covers them.
+MySQL and SQLite need none of this -- MySQL carries the values in the column's own `ENUM(...)` type and SQLite stores the column as `TEXT`. The flip side on MySQL / MariaDB: the diff compares the type's name, not the value list inside it, so a changed value list on an existing column is not synchronized. Change it with a migration.
+
+### What synchronize leaves alone
+
+On a table that already exists, synchronize compares columns and creates the indexes and foreign keys an entity adds. It does not compare column defaults, `onDelete` / `onUpdate`, removed or redefined indexes, or `@ComputedColumn` expressions, so an edit to one of those is not applied. When a table already existed, each boot logs one line naming the kinds your entities use:
+
+```
+INFO [SchemaRegistrar] [sync] synchronize does not apply these to existing tables: changed column defaults, removed or redefined indexes. Write a migration for them (see docs/migrations.md#what-the-schema-diff-does-not-compare).
+```
+
+The full table, with what `migrate:generate` does for each kind, is in [What the Schema Diff Does Not Compare](./migrations.md#what-the-schema-diff-does-not-compare).
 
 ---
 
