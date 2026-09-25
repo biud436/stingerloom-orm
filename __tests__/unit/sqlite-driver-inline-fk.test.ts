@@ -81,7 +81,7 @@ describe("SqliteDriver.createTable inline FKs", () => {
     expect(queries[0]).toContain('FOREIGN KEY ("blogId") REFERENCES "blogs" ("id")');
   });
 
-  it("drops referential actions that are not in the whitelist", async () => {
+  it("rejects referential actions that are not in the whitelist", async () => {
     const { driver, queries } = makeDriver();
     const fks: CreateTableForeignKey[] = [
       {
@@ -92,10 +92,12 @@ describe("SqliteDriver.createTable inline FKs", () => {
         onDelete: "CASCADE; DROP TABLE users" as any,
       },
     ];
-    await driver.createTable("posts", COLUMNS, fks);
-    expect(queries[0]).toContain('FOREIGN KEY ("authorId") REFERENCES "users" ("id")');
-    expect(queries[0]).not.toContain("ON DELETE");
-    expect(queries[0]).not.toContain("DROP TABLE");
+    // Dropping the clause used to leave the constraint at NO ACTION without
+    // a word; the value never reaches the statement either way.
+    await expect(
+      (async () => driver.createTable("posts", COLUMNS, fks))(),
+    ).rejects.toThrow(/Invalid ON DELETE action "CASCADE; DROP TABLE users"/);
+    expect(queries).toEqual([]);
   });
 
   it("still throws from addForeignKey (ALTER is unsupported on SQLite)", () => {

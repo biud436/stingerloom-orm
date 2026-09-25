@@ -7,7 +7,10 @@ import type { DriverQueryOptions } from "../types/DriverQueryOptions";
 import type { Sql } from "../utils/sqlTag";
 import type { DbVersion } from "./DbVersion";
 import type { CommonCapabilities } from "./DialectCapabilities";
-import type { ReferentialAction } from "../types/ReferentialAction";
+import type {
+  ForeignKeyActions,
+  ReferentialAction,
+} from "../types/ReferentialAction";
 
 /**
  * An inline FOREIGN KEY definition for `createTable()`.
@@ -146,6 +149,13 @@ export interface ISqlDriver<T = any> {
      * dialects ignore it.
      */
     foreignTableSchema?: string,
+    /**
+     * The relation's `onDelete` / `onUpdate`; each defaults to `NO ACTION`.
+     * Passed only when the relation declares one, so a driver written before
+     * this argument existed keeps working — its constraints just stay
+     * `NO ACTION`.
+     */
+    actions?: ForeignKeyActions,
   ): Promise<T>;
 
   /**

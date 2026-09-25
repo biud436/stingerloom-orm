@@ -361,7 +361,18 @@ Available actions:
 | `'SET NULL'` | Set FK to NULL (column must be nullable) |
 | `'SET DEFAULT'` | Set FK to its default value |
 
-These options work on both `@ManyToOne` and `@OneToOne`.
+These options work on both `@ManyToOne` and `@OneToOne`. Any other value throws when `synchronize` starts, before any DDL runs -- the action is written into the statement as given.
+
+The actions are part of the constraint, so they take effect when the constraint is created: in a `migrate:generate` CREATE TABLE, or when `synchronize` creates the table or adds the relation. Changing `onDelete` / `onUpdate` on a relation whose constraint already exists does nothing to the database -- see [What the Schema Diff Does Not Compare](./migrations.md#what-the-schema-diff-does-not-compare). Recreate the constraint in a migration:
+
+```sql
+-- PostgreSQL (MySQL: DROP FOREIGN KEY `fk_cat_owner_id_a1b2c3d4`)
+ALTER TABLE "cat" DROP CONSTRAINT "fk_cat_owner_id_a1b2c3d4";
+ALTER TABLE "cat" ADD CONSTRAINT "fk_cat_owner_id_a1b2c3d4"
+  FOREIGN KEY ("owner_id") REFERENCES "owner" ("id") ON DELETE CASCADE ON UPDATE CASCADE;
+```
+
+> **Before 2.1**, `synchronize` on PostgreSQL and MySQL / MariaDB created every relation constraint with `ON DELETE NO ACTION ON UPDATE NO ACTION`, whatever the relation declared (SQLite and `migrate:generate` were not affected). A constraint created that way stays so after upgrading; check `information_schema.referential_constraints` and recreate it as above.
 
 ### Skipping FK Constraints (createForeignKeyConstraints)
 

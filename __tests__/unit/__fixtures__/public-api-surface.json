@@ -206,6 +206,7 @@
     "FlushEventListener",
     "FlushEventType",
     "FlushMode",
+    "ForeignKeyActions",
     "FULLTEXT_INDEX_TOKEN",
     "FullTextIndex",
     "FullTextIndexMetadata",

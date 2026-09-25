@@ -25,7 +25,10 @@ import {
   JSON_INDEX_TOKEN,
   JsonIndexMetadata,
 } from "../../decorators/JsonIndex";
-import { ReferentialAction } from "../../types/ReferentialAction";
+import {
+  ReferentialAction,
+  referentialActionClause,
+} from "../../types/ReferentialAction";
 import {
   MANY_TO_ONE_TOKEN,
   ManyToOneMetadata,
@@ -189,9 +192,15 @@ export class SchemaGenerator {
     const fks = this.getForeignKeys(entity);
     return fks.map((fk) => {
       const fkName = this.namingStrategy.foreignKeyName(tableName, fk.column, fk.referencedTable);
-      const onDelete = fk.onDelete ?? "NO ACTION";
-      const onUpdate = fk.onUpdate ?? "NO ACTION";
-      return `ALTER TABLE ${this.wrapTable(tableName, schema)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(fk.column)}) REFERENCES ${this.wrapTable(fk.referencedTable, fk.referencedSchema)}(${this.wrapId(fk.referencedColumn)}) ON DELETE ${onDelete} ON UPDATE ${onUpdate}`;
+      const onDelete = referentialActionClause(
+        "ON DELETE",
+        fk.onDelete ?? "NO ACTION",
+      );
+      const onUpdate = referentialActionClause(
+        "ON UPDATE",
+        fk.onUpdate ?? "NO ACTION",
+      );
+      return `ALTER TABLE ${this.wrapTable(tableName, schema)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(fk.column)}) REFERENCES ${this.wrapTable(fk.referencedTable, fk.referencedSchema)}(${this.wrapId(fk.referencedColumn)})${onDelete}${onUpdate}`;
     });
   }
 
