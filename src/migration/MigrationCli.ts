@@ -14,7 +14,7 @@ import { MigrationResult, MigrationRunner } from "./MigrationRunner";
 import { MySqlMigrationRunner } from "./MySqlMigrationRunner";
 import { PostgresMigrationRunner } from "./PostgresMigrationRunner";
 import { SqliteMigrationRunner } from "./SqliteMigrationRunner";
-import { SchemaDiff } from "../core/generators/SchemaDiff";
+import { SchemaDiff, SchemaDiffResult } from "../core/generators/SchemaDiff";
 import { SchemaDiffMigrationGenerator } from "../core/generators/SchemaDiffMigrationGenerator";
 import { SchemaDialect } from "../core/generators/SchemaGenerator";
 import { createColumnDefinitionBuilder } from "../dialects/ColumnDefinitionBuilder";
@@ -287,14 +287,7 @@ export class MigrationCli {
       columnBuilder,
     });
 
-    const hasChanges =
-      diff.addTables.length > 0 ||
-      diff.dropTables.length > 0 ||
-      diff.addColumns.length > 0 ||
-      diff.dropColumns.length > 0 ||
-      diff.alterColumns.length > 0;
-
-    if (!hasChanges) {
+    if (!this.hasChanges(diff)) {
       this.logger.info("No schema changes detected. No migration generated.");
       return { filePath: "", sql: { up: [], down: [] } };
     }
@@ -314,5 +307,30 @@ export class MigrationCli {
     this.logger.info(`  Down statements: ${sqlPreview.down.length}`);
 
     return { filePath, sql: sqlPreview };
+  }
+
+  /**
+   * Whether the diff carries anything a migration would do. Renames, enum
+   * values and generated columns live outside the add/drop/alter lists, and a
+   * diff holding only one of them used to be reported as "no changes" —
+   * while synchronize applied it.
+   *
+   * An enum value present only in the database is not a change: PostgreSQL
+   * cannot drop it, so a migration could only repeat the warning comment on
+   * every run.
+   */
+  private hasChanges(diff: SchemaDiffResult): boolean {
+    return (
+      diff.addTables.length > 0 ||
+      diff.dropTables.length > 0 ||
+      diff.addColumns.length > 0 ||
+      diff.dropColumns.length > 0 ||
+      diff.alterColumns.length > 0 ||
+      (diff.renamedColumns?.length ?? 0) > 0 ||
+      (diff.addComputedColumns?.length ?? 0) > 0 ||
+      (diff.enumChanges ?? []).some(
+        (change) => change.isNew || change.addValues.length > 0,
+      )
+    );
   }
 }
