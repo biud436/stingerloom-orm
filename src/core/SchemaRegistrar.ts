@@ -10,6 +10,10 @@ import { PostgresDriver } from "../dialects/postgres/PostgresDriver";
 import { SchemaGenerator, SchemaDialect } from "./generators/SchemaGenerator";
 import { describeSynchronizeGaps } from "./generators/uncomparedSchemaChanges";
 import {
+  ForeignKeyActions,
+  referentialActionClause,
+} from "../types/ReferentialAction";
+import {
   NamingStrategy,
   DefaultNamingStrategy,
 } from "./generators/NamingStrategy";
@@ -408,6 +412,7 @@ export class SchemaRegistrar {
         throw new EntityMetadataNotFoundError(tableName ?? "Unknown");
       }
       registeredEntities.push(TargetEntity);
+      if (synchronize) this.assertRelationActions(TargetEntity);
 
       // STI: child entities do not create their own table (they share the
       // parent's table) — and they do not pin it either: the root records
@@ -1754,9 +1759,11 @@ export class SchemaRegistrar {
   }
 
   /**
-   * `driver.addForeignKey()` with the referenced table's schema appended only
-   * when there is one (PostgreSQL). Dialects without schemas keep receiving
-   * the five-argument call, so custom drivers see no new trailing `undefined`.
+   * `driver.addForeignKey()` with the trailing arguments appended only when
+   * they carry something: the referenced table's schema (PostgreSQL) and the
+   * relation's `onDelete` / `onUpdate`. A relation declaring neither on a
+   * schema-less dialect keeps the five-argument call, so custom drivers see
+   * no new trailing `undefined`.
    */
   private addForeignKeyThrough(
     driver: ISqlDriver,
@@ -1766,23 +1773,82 @@ export class SchemaRegistrar {
     foreignColumnName: string,
     constraintName: string,
     foreignTableSchema: string | undefined,
+    actions: ForeignKeyActions = {},
   ): Promise<unknown> {
-    return foreignTableSchema === undefined
-      ? driver.addForeignKey(
-          tableName,
-          columnName,
-          foreignTableName,
-          foreignColumnName,
-          constraintName,
-        )
-      : driver.addForeignKey(
-          tableName,
-          columnName,
-          foreignTableName,
-          foreignColumnName,
-          constraintName,
-          foreignTableSchema,
-        );
+    const args: Parameters<ISqlDriver["addForeignKey"]> = [
+      tableName,
+      columnName,
+      foreignTableName,
+      foreignColumnName,
+      constraintName,
+    ];
+    const hasActions =
+      actions.onDelete !== undefined || actions.onUpdate !== undefined;
+    if (foreignTableSchema !== undefined || hasActions) {
+      args.push(foreignTableSchema);
+    }
+    if (hasActions) {
+      args.push({ onDelete: actions.onDelete, onUpdate: actions.onUpdate });
+    }
+    return driver.addForeignKey(...args);
+  }
+
+  /**
+   * Throws for an `onDelete` / `onUpdate` outside the SQL actions. The value
+   * is spliced into DDL, and an unknown one is a mistake in the entity rather
+   * than a failing statement, so it is checked before any DDL runs and is
+   * not downgraded by `continueOnError` — on SQLite it would otherwise
+   * surface as a CREATE TABLE failure, on the other dialects as a missing
+   * constraint.
+   */
+  private assertRelationActions(entity: ClazzType<any>): void {
+    const relations = [
+      ...this.resolver.resolveManyToOneMetadata(entity),
+      ...this.resolver.resolveOneToOneMetadata(entity),
+    ];
+    for (const rel of relations) {
+      referentialActionClause("ON DELETE", rel.option?.onDelete);
+      referentialActionClause("ON UPDATE", rel.option?.onUpdate);
+    }
+  }
+
+  /**
+   * The foreign key of a `@ManyToOne` / owning `@OneToOne`, with the
+   * relation's `onDelete` / `onUpdate`.
+   *
+   * The DDL is subject to the policy like any other statement: a declared
+   * action can be refused where NO ACTION was not — MySQL rejects
+   * `SET NULL` on a NOT NULL column when the constraint is created. An
+   * unknown action never gets here ({@link assertRelationActions}).
+   */
+  private async addRelationForeignKey(
+    driver: ISqlDriver,
+    tableName: string,
+    columnName: string,
+    foreignTableName: string,
+    foreignColumnName: string,
+    constraintName: string,
+    foreignTableSchema: string | undefined,
+    actions: ForeignKeyActions,
+  ): Promise<void> {
+    try {
+      await this.addForeignKeyThrough(
+        driver,
+        tableName,
+        columnName,
+        foreignTableName,
+        foreignColumnName,
+        constraintName,
+        foreignTableSchema,
+        actions,
+      );
+    } catch (err) {
+      this.handleDdlError(
+        err,
+        `Could not create foreign key ${constraintName} on ${tableName}(${columnName})`,
+        this.activePolicy,
+      );
+    }
   }
 
   /**
@@ -2073,7 +2139,7 @@ export class SchemaRegistrar {
         }
 
         if (driver) {
-          await this.addForeignKeyThrough(
+          await this.addRelationForeignKey(
             driver,
             // Current table name
             tableName,
@@ -2087,6 +2153,7 @@ export class SchemaRegistrar {
             // Schema the referenced table lives in (pinned or default) — a
             // cross-schema FK must spell it out.
             this.effectiveSchema(mappingEntity),
+            manyToOneItem.option ?? {},
           );
         }
       }
@@ -2149,7 +2216,7 @@ export class SchemaRegistrar {
       }
 
       if (driver) {
-        await this.addForeignKeyThrough(
+        await this.addRelationForeignKey(
           driver,
           tableName,
           joinColumn,
@@ -2157,6 +2224,7 @@ export class SchemaRegistrar {
           relatedPrimaryKey,
           o2oFkName,
           this.effectiveSchema(RelatedEntity),
+          oneToOneItem.option ?? {},
         );
       }
     }

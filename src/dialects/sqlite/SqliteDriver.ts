@@ -5,7 +5,7 @@ import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnOption, ColumnType } from "../../decorators";
 import { ISqlDriver, CreateTableForeignKey } from "../SqlDriver";
 import type { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
-import { VALID_REFERENTIAL_ACTIONS } from "../../types/ReferentialAction";
+import { referentialActionClause } from "../../types/ReferentialAction";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
@@ -344,7 +344,8 @@ export class SqliteDriver implements ISqlDriver {
   /**
    * Builds an inline `FOREIGN KEY (...) REFERENCES ...` clause.
    * Identifiers are wrapped; referential actions are validated against the
-   * ReferentialAction whitelist before being interpolated.
+   * ReferentialAction whitelist before being interpolated, and an unknown one
+   * throws.
    */
   private buildForeignKeyClause(fk: CreateTableForeignKey): string {
     let clause = "";
@@ -354,12 +355,8 @@ export class SqliteDriver implements ISqlDriver {
     clause += `FOREIGN KEY (${this.wrap(fk.columnName)}) REFERENCES ${this.wrap(
       fk.referencedTable,
     )} (${this.wrap(fk.referencedColumn)})`;
-    if (fk.onDelete && VALID_REFERENTIAL_ACTIONS.includes(fk.onDelete)) {
-      clause += ` ON DELETE ${fk.onDelete}`;
-    }
-    if (fk.onUpdate && VALID_REFERENTIAL_ACTIONS.includes(fk.onUpdate)) {
-      clause += ` ON UPDATE ${fk.onUpdate}`;
-    }
+    clause += referentialActionClause("ON DELETE", fk.onDelete);
+    clause += referentialActionClause("ON UPDATE", fk.onUpdate);
     return clause;
   }
 

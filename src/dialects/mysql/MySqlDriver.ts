@@ -18,6 +18,10 @@ import { DbVersion } from "../DbVersion";
 import { MySqlCapabilities, ALL_MYSQL } from "../DialectCapabilities";
 import { resolveMySqlCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
+import {
+  ForeignKeyActions,
+  referentialActionClause,
+} from "../../types/ReferentialAction";
 
 export class MySqlDriver implements ISqlDriver {
   private readonly columnDefBuilder: MySqlColumnDefinitionBuilder;
@@ -210,15 +214,23 @@ export class MySqlDriver implements ISqlDriver {
     foreignTableName: string,
     foreignColumnName: string,
     constraintName?: string,
+    _foreignTableSchema?: string,
+    actions?: ForeignKeyActions,
   ) {
     const foreignKeyName =
       constraintName ??
       this.generateForeignKeyName(tableName, foreignTableName, columnName);
+    const onDelete = referentialActionClause(
+      "ON DELETE",
+      actions?.onDelete ?? "NO ACTION",
+    );
+    const onUpdate = referentialActionClause(
+      "ON UPDATE",
+      actions?.onUpdate ?? "NO ACTION",
+    );
 
-    // We should allow ON DELETE and ON UPDATE options to be specified later.
-    // For now it is set to NO ACTION.
     return this.connector.query(
-      `ALTER TABLE ${this.wrap(tableName)} ADD CONSTRAINT ${this.wrap(foreignKeyName)} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${this.wrap(foreignTableName)}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
+      `ALTER TABLE ${this.wrap(tableName)} ADD CONSTRAINT ${this.wrap(foreignKeyName)} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${this.wrap(foreignTableName)}(${this.wrap(foreignColumnName)})${onDelete}${onUpdate}`,
     );
   }
 

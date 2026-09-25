@@ -361,7 +361,18 @@ ALTER TABLE "cat"
 | `'SET NULL'` | FK를 NULL로 설정 (컬럼이 nullable이어야 해요) |
 | `'SET DEFAULT'` | FK를 기본값으로 설정 |
 
-이 옵션들은 `@ManyToOne`과 `@OneToOne` 모두에서 동작해요.
+이 옵션들은 `@ManyToOne`과 `@OneToOne` 모두에서 동작해요. 목록에 없는 값은 `synchronize`가 시작될 때 DDL을 실행하기 전에 에러를 던집니다. 동작 값이 문장에 그대로 들어가기 때문입니다.
+
+동작은 제약의 일부라서 제약이 만들어질 때 적용됩니다. `migrate:generate`의 CREATE TABLE이나 `synchronize`가 테이블을 만들거나 관계를 추가할 때가 그렇습니다. 제약이 이미 있는 관계의 `onDelete` / `onUpdate`를 바꿔도 DB에는 아무 변화가 없어요([Schema Diff가 비교하지 않는 것](./migrations.md#schema-diff가-비교하지-않는-것) 참고). migration에서 제약을 다시 만드세요:
+
+```sql
+-- PostgreSQL (MySQL: DROP FOREIGN KEY `fk_cat_owner_id_a1b2c3d4`)
+ALTER TABLE "cat" DROP CONSTRAINT "fk_cat_owner_id_a1b2c3d4";
+ALTER TABLE "cat" ADD CONSTRAINT "fk_cat_owner_id_a1b2c3d4"
+  FOREIGN KEY ("owner_id") REFERENCES "owner" ("id") ON DELETE CASCADE ON UPDATE CASCADE;
+```
+
+> **2.1 이전에는** PostgreSQL과 MySQL / MariaDB의 `synchronize`가 관계에 무엇을 선언했든 모든 관계 제약을 `ON DELETE NO ACTION ON UPDATE NO ACTION`으로 만들었습니다(SQLite와 `migrate:generate`는 해당 없음). 그렇게 만들어진 제약은 업그레이드 후에도 그대로이니, `information_schema.referential_constraints`로 확인하고 위처럼 다시 만드세요.
 
 ### FK 제약 조건 건너뛰기 (createForeignKeyConstraints)
 

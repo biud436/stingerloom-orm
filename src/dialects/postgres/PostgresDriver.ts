@@ -20,6 +20,10 @@ import { PostgresCapabilities } from "../DialectCapabilities";
 import { resolvePostgresCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 import { escapeSqlLiteral } from "../../utils/escapeSqlLiteral";
+import {
+  ForeignKeyActions,
+  referentialActionClause,
+} from "../../types/ReferentialAction";
 
 // Backwards-compatible alias — now delegates to the shared helper used by
 // SchemaRegistrar (#286) and SchemaGenerator (#285).
@@ -377,6 +381,7 @@ export class PostgresDriver implements ISqlDriver {
     foreignColumnName: string,
     constraintName?: string,
     foreignTableSchema?: string,
+    actions?: ForeignKeyActions,
   ) {
     const foreignKeyName =
       constraintName ??
@@ -387,9 +392,17 @@ export class PostgresDriver implements ISqlDriver {
     const referenced = foreignTableSchema
       ? `${this.wrap(foreignTableSchema)}.${this.wrap(foreignTableName)}`
       : this.wrapQualified(foreignTableName);
+    const onDelete = referentialActionClause(
+      "ON DELETE",
+      actions?.onDelete ?? "NO ACTION",
+    );
+    const onUpdate = referentialActionClause(
+      "ON UPDATE",
+      actions?.onUpdate ?? "NO ACTION",
+    );
 
     return this.connector.query(
-      `ALTER TABLE ${this.wrapQualified(tableName)} ADD CONSTRAINT ${this.wrap(foreignKeyName)} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${referenced}(${this.wrap(foreignColumnName)}) ON DELETE NO ACTION ON UPDATE NO ACTION`,
+      `ALTER TABLE ${this.wrapQualified(tableName)} ADD CONSTRAINT ${this.wrap(foreignKeyName)} FOREIGN KEY (${this.wrap(columnName)}) REFERENCES ${referenced}(${this.wrap(foreignColumnName)})${onDelete}${onUpdate}`,
     );
   }
 

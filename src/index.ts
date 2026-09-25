@@ -608,6 +608,7 @@ export { OrderByOption, SortDirection } from "./types/OrderByOption";
 export { QueryResult } from "./types/QueryResult";
 export { Relation } from "./types/Relation";
 export {
+  ForeignKeyActions,
   ReferentialAction,
   VALID_REFERENTIAL_ACTIONS,
 } from "./types/ReferentialAction";
