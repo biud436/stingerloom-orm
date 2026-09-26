@@ -63,10 +63,14 @@ export type InsertConflictAction =
 export class DmlSqlBuilder {
   constructor(private readonly ctx: EntityManagerInternals) {}
 
-  /** ORDER BY fragment for UPDATE statements (property names → DB columns). */
+  /**
+   * ORDER BY fragment for UPDATE statements (property names → DB columns),
+   * each column rendered by `qualify` — bare unless the caller qualifies it.
+   */
   buildUpdateOrderBy(
     orderBy: { [k: string]: "ASC" | "DESC" } | undefined,
     propertyToColumn: Map<string, string>,
+    qualify: (dbCol: string) => string = (dbCol) => this.ctx.wrap(dbCol),
   ): Sql | undefined {
     if (!orderBy) return undefined;
     const entries = Object.entries(orderBy);
@@ -79,7 +83,7 @@ export class DmlSqlBuilder {
         typeof dir === "string" && dir.toUpperCase() === "DESC"
           ? "DESC"
           : "ASC";
-      items.push(sql`${raw(this.ctx.wrap(dbCol))} ${raw(direction)}`);
+      items.push(sql`${raw(qualify(dbCol))} ${raw(direction)}`);
     }
     return sql`ORDER BY ${join(items, ", ")}`;
   }

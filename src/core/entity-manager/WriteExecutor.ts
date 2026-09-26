@@ -38,6 +38,7 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DefaultNamingStrategy, NamingStrategy } from "../generators/NamingStrategy";
 import { InheritanceResolver } from "../InheritanceResolver";
 import { isTpcPolymorphicRoot, resolveTpcTables } from "../TpcUnionSource";
+import { joinedRootColumns } from "../JoinedChildSource";
 import { DEFAULT_BIGINT_MODE, normalizeBigintValue } from "../BigintColumnTransformer";
 import { assertScalarBindValue } from "../BindValueGuard";
 import { createDialectExpression } from "../../dialects/DialectExpression";
@@ -69,10 +70,37 @@ import {
 } from "./entity-access";
 
 /**
- * Primary keys bound per `IN (...)` list when a TPT delete removes the rows
- * it matched — well under every dialect's bind-parameter limit.
+ * Primary keys bound per `IN (...)` list when a TPT delete or criteria update
+ * writes the rows it matched — well under every dialect's bind-parameter
+ * limit.
  */
-const TPT_DELETE_ID_CHUNK = 1000;
+const TPT_KEY_CHUNK = 1000;
+
+/**
+ * The tables a criteria write on a JOINED (table-per-type) hierarchy spans.
+ * Its rows are split: the root table holds the shared key and every
+ * inherited column, each subclass table the key and its own columns. The
+ * key read runs against `tpt_child INNER JOIN tpt_root` for a child and
+ * against `tpt_root` alone for a root.
+ */
+interface JoinedWriteScope {
+  rootMeta: EntityScannerMetadata;
+  pk: ColumnMetadata;
+  /** The subclass tables the write reaches: a child's own, or every one a root has. */
+  childTables: string[];
+  /** The columns the root table holds besides the shared key. */
+  rootColumns: ReadonlySet<string>;
+  /** A column qualified with the alias of the table that holds it. */
+  qualify: (column: string) => string;
+  /** The FROM clause of the key read. */
+  from: Sql;
+}
+
+/** One SET assignment of a criteria update, with the DB column it writes. */
+interface SetEntry {
+  column: string;
+  clause: Sql;
+}
 
 /**
  * A ManyToOne FK appended to a multi-row INSERT's column list, paired with the
@@ -2582,6 +2610,120 @@ export class WriteExecutor {
   }
 
   /**
+   * The tables and aliases a write on a JOINED hierarchy member runs with,
+   * or null when the root has no metadata or the entity no primary key —
+   * the caller then falls through to the single-table statement.
+   */
+  private joinedWriteScope<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+  ): JoinedWriteScope | null {
+    const root = this.inheritanceResolver.getRoot(entity);
+    const rootMeta = root ? this.resolver.resolveEntityMetadata(root) : undefined;
+    const pk = metadata.columns.find(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+    if (!root || !rootMeta || !pk) {
+      return null;
+    }
+
+    const isChild = root !== entity;
+    const rootAlias = this.ctx.wrap("tpt_root");
+    const childAlias = this.ctx.wrap("tpt_child");
+    const pkCol = this.ctx.wrap(pk.name);
+    const rootColumns = joinedRootColumns(this.resolver, root);
+    const childTables = isChild
+      ? [metadata.name]
+      : this.inheritanceResolver
+          .getConcreteEntities(entity)
+          .filter((concrete) => concrete !== entity)
+          .map((concrete) => this.resolver.resolveEntityMetadata(concrete)?.name)
+          .filter((name): name is string => !!name);
+
+    return {
+      rootMeta,
+      pk,
+      childTables,
+      rootColumns,
+      qualify: (column) =>
+        `${isChild && !rootColumns.has(column) ? childAlias : rootAlias}.${this.ctx.wrap(column)}`,
+      from: isChild
+        ? sql`${raw(this.ctx.wrapTable(metadata.name))} AS ${raw(childAlias)} INNER JOIN ${raw(this.ctx.wrapTable(rootMeta.name))} AS ${raw(rootAlias)} ON ${raw(childAlias)}.${raw(pkCol)} = ${raw(rootAlias)}.${raw(pkCol)}`
+        : sql`${raw(this.ctx.wrapTable(rootMeta.name))} AS ${raw(rootAlias)}`,
+    };
+  }
+
+  /** Criteria resolved against a JOINED scope, each column on its own table. */
+  private resolveJoinedCriteria<T>(
+    scope: JoinedWriteScope,
+    criteria: WhereClause<T>,
+    propertyToColumn: Map<string, string>,
+  ): Sql[] {
+    return resolveWhereClause(criteria, {
+      wrapColumn: (n) => this.ctx.wrap(n),
+      dialect: this.ctx.getDialect(),
+      dialectExpression: createDialectExpression(this.ctx.getDialect()),
+      propertyToColumn,
+      qualified: true,
+      qualifyColumn: scope.qualify,
+    });
+  }
+
+  /**
+   * The tenant predicate of a criteria write: on the statement's own table,
+   * or — for a JOINED scope — on the root alias, which holds the column.
+   */
+  private writeTenantWhere<T>(
+    entity: ClazzType<T>,
+    scope: JoinedWriteScope | null,
+  ): Sql | null {
+    return scope
+      ? this.ctx.buildTenantWhereClause(entity, "tpt_root", "root")
+      : this.ctx.buildTenantWhereClause(entity);
+  }
+
+  /** `column`, qualified for a JOINED scope's key read or bare otherwise. */
+  private writeColumnRef(scope: JoinedWriteScope | null, column: string): string {
+    return scope ? scope.qualify(column) : this.ctx.wrap(column);
+  }
+
+  /**
+   * The primary keys of the rows a JOINED write matches. The rows are locked
+   * (`FOR UPDATE`, PostgreSQL / MySQL) so the statements that follow by key
+   * write exactly the rows the predicates matched; SQLite writes are
+   * serialized by the database itself.
+   */
+  private async selectJoinedKeys(
+    scope: JoinedWriteScope,
+    predicates: Sql[],
+    session: TransactionSessionManager,
+    orderBySql?: Sql,
+    limit?: number,
+  ): Promise<RawValue[]> {
+    let query = sql`SELECT ${raw(this.ctx.wrap("tpt_root"))}.${raw(this.ctx.wrap(scope.pk.name))} AS ${raw(this.ctx.wrap("pk"))} FROM ${scope.from} WHERE ${join(predicates, " AND ")}`;
+    if (orderBySql) query = sql`${query} ${orderBySql}`;
+    if (limit !== undefined) query = sql`${query} LIMIT ${raw(String(limit))}`;
+    if (!this.ctx.isSqlite()) query = sql`${query} FOR UPDATE`;
+    const matched = await session.query(query);
+    return resultRows(matched).map((row) => row.pk as RawValue);
+  }
+
+  /** Runs `write` over `ids` in `IN (...)` lists of {@link TPT_KEY_CHUNK}. */
+  private async forEachKeyChunk(
+    ids: RawValue[],
+    write: (keys: Sql) => Promise<void>,
+  ): Promise<void> {
+    for (let i = 0; i < ids.length; i += TPT_KEY_CHUNK) {
+      await write(
+        join(
+          ids.slice(i, i + TPT_KEY_CHUNK).map((id) => sql`${id}`),
+          ", ",
+        ),
+      );
+    }
+  }
+
+  /**
    * TPT delete. The criteria may name columns of either table and the child
    * rows must go before the root rows they reference, so no single WHERE
    * serves every statement: the matching primary keys are read first — a
@@ -2600,83 +2742,96 @@ export class WriteExecutor {
     criteria: WhereClause<T>,
     session: TransactionSessionManager,
   ): Promise<number | null> {
-    const root = this.inheritanceResolver.getRoot(entity)!;
-    const rootMeta = this.resolver.resolveEntityMetadata(root);
-    const pk = metadata.columns.find(
-      (column: ColumnMetadata) => column.options?.primary,
-    );
-    if (!rootMeta || !pk) {
+    const scope = this.joinedWriteScope(entity, metadata);
+    if (!scope) {
       return null;
     }
 
-    const isChild = root !== entity;
-    const rootAlias = this.ctx.wrap("tpt_root");
-    const childAlias = this.ctx.wrap("tpt_child");
-    const pkCol = this.ctx.wrap(pk.name);
-    const rootOnlyColumns = new Set(
-      rootMeta.columns
-        .filter((column: ColumnMetadata) => !column.options?.primary)
-        .map((column: ColumnMetadata) => column.name),
+    const whereMap = this.resolveJoinedCriteria(
+      scope,
+      criteria,
+      this.ctx.buildPropertyToColumnMap(metadata),
     );
-
-    const whereMap = resolveWhereClause(criteria, {
-      wrapColumn: (n) => this.ctx.wrap(n),
-      dialect: this.ctx.getDialect(),
-      dialectExpression: createDialectExpression(this.ctx.getDialect()),
-      propertyToColumn: this.ctx.buildPropertyToColumnMap(metadata),
-      qualified: true,
-      qualifyColumn: (column) =>
-        `${isChild && !rootOnlyColumns.has(column) ? childAlias : rootAlias}.${this.ctx.wrap(column)}`,
-    });
     if (whereMap.length === 0) {
       throw new DeleteWithoutConditionsError("Delete");
     }
-    // The root table holds the tenant column: name it directly.
-    const tenantWhere = this.ctx.buildTenantWhereClause(
-      entity,
-      "tpt_root",
-      "root",
-    );
+    const tenantWhere = this.writeTenantWhere(entity, scope);
     if (tenantWhere) {
       whereMap.push(tenantWhere);
     }
 
-    const from = isChild
-      ? sql`${raw(this.ctx.wrapTable(metadata.name))} AS ${raw(childAlias)} INNER JOIN ${raw(this.ctx.wrapTable(rootMeta.name))} AS ${raw(rootAlias)} ON ${raw(childAlias)}.${raw(pkCol)} = ${raw(rootAlias)}.${raw(pkCol)}`
-      : sql`${raw(this.ctx.wrapTable(rootMeta.name))} AS ${raw(rootAlias)}`;
-    const matched = await session.query(
-      sql`SELECT ${raw(rootAlias)}.${raw(pkCol)} AS ${raw(this.ctx.wrap("pk"))} FROM ${from} WHERE ${join(whereMap, " AND ")}`,
-    );
-    const ids = resultRows(matched).map((row) => row.pk as RawValue);
-    if (ids.length === 0) {
-      return 0;
-    }
-
-    const childTables = isChild
-      ? [metadata.name]
-      : this.inheritanceResolver
-          .getConcreteEntities(entity)
-          .filter((concrete) => concrete !== entity)
-          .map((concrete) => this.resolver.resolveEntityMetadata(concrete)?.name)
-          .filter((name): name is string => !!name);
-
+    const ids = await this.selectJoinedKeys(scope, whereMap, session);
+    const pkCol = this.ctx.wrap(scope.pk.name);
     let affected = 0;
-    for (let i = 0; i < ids.length; i += TPT_DELETE_ID_CHUNK) {
-      const chunk = join(
-        ids.slice(i, i + TPT_DELETE_ID_CHUNK).map((id) => sql`${id}`),
-        ", ",
-      );
+    await this.forEachKeyChunk(ids, async (keys) => {
       const byPk = (tableName: string) =>
-        sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${raw(pkCol)} IN (${chunk})`;
-      await this.executePerTable(entity, childTables, byPk, session);
+        sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${raw(pkCol)} IN (${keys})`;
+      await this.executePerTable(entity, scope.childTables, byPk, session);
       affected += await this.executePerTable(
         entity,
-        [rootMeta.name],
+        [scope.rootMeta.name],
         byPk,
         session,
       );
-    }
+    });
     return affected;
+  }
+
+  /**
+   * TPT criteria update — updateMany(), update(), increment(), softDelete()
+   * and restore() on a JOINED child. The predicates and the SET list may
+   * each name columns of either table, so, as for a delete, the matching
+   * keys are read first (in `orderBySql` order, up to `limit`) and each
+   * table then takes the assignments to its own columns by those keys. The
+   * root statement reports the affected count when it runs, else the
+   * child's.
+   */
+  private async updateJoinedRows<T>(
+    entity: ClazzType<T>,
+    scope: JoinedWriteScope,
+    setEntries: SetEntry[],
+    predicates: Sql[],
+    session: TransactionSessionManager,
+    orderBySql?: Sql,
+    limit?: number,
+  ): Promise<number> {
+    const ids = await this.selectJoinedKeys(
+      scope,
+      predicates,
+      session,
+      orderBySql,
+      limit,
+    );
+    const rootSet = setEntries.filter((entry) => scope.rootColumns.has(entry.column));
+    const childSet = setEntries.filter((entry) => !scope.rootColumns.has(entry.column));
+    const pkCol = this.ctx.wrap(scope.pk.name);
+
+    let rootAffected = 0;
+    let childAffected = 0;
+    await this.forEachKeyChunk(ids, async (keys) => {
+      const byPk = (assignments: SetEntry[]) => (tableName: string) =>
+        sql`UPDATE ${raw(this.ctx.wrapTable(tableName))} SET ${join(
+          assignments.map((entry) => entry.clause),
+          ", ",
+        )} WHERE ${raw(pkCol)} IN (${keys})`;
+      if (rootSet.length > 0) {
+        rootAffected += await this.executePerTable(
+          entity,
+          [scope.rootMeta.name],
+          byPk(rootSet),
+          session,
+        );
+      }
+      if (childSet.length > 0) {
+        childAffected += await this.executePerTable(
+          entity,
+          scope.childTables,
+          byPk(childSet),
+          session,
+        );
+      }
+    });
+    return rootSet.length > 0 ? rootAffected : childAffected;
   }
 
   /**
@@ -2936,9 +3091,9 @@ export class WriteExecutor {
     propertyToColumn: Map<string, string>,
     tenantColumnName: string | null,
     site: string,
-  ): Sql[] {
+  ): SetEntry[] {
     const dataFields = fieldsOf(data);
-    const setMap: Sql[] = [];
+    const setEntries: SetEntry[] = [];
     for (const key in data) {
       const value = dataFields[key];
       if (value !== undefined) {
@@ -2956,23 +3111,27 @@ export class WriteExecutor {
           value,
           site,
         );
-        setMap.push(sql`${raw(this.ctx.wrap(dbCol))} = ${bindParam(bound)}`);
+        setEntries.push({
+          column: dbCol,
+          clause: sql`${raw(this.ctx.wrap(dbCol))} = ${bindParam(bound)}`,
+        });
       }
     }
 
     const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
     if (updateTsColName) {
-      const hasExplicit = setMap.some(
-        (s) => s.text?.includes(this.ctx.wrap(updateTsColName)),
+      const hasExplicit = setEntries.some(
+        (entry) => entry.clause.text?.includes(this.ctx.wrap(updateTsColName)),
       );
       if (!hasExplicit) {
-        setMap.push(
-          sql`${raw(this.ctx.wrap(updateTsColName))} = ${bindParam(new Date())}`,
-        );
+        setEntries.push({
+          column: updateTsColName,
+          clause: sql`${raw(this.ctx.wrap(updateTsColName))} = ${bindParam(new Date())}`,
+        });
       }
     }
 
-    return setMap;
+    return setEntries;
   }
 
   /**
@@ -2985,15 +3144,17 @@ export class WriteExecutor {
   private appendVersionIncrement<T>(
     entity: ClazzType<T>,
     data: UpdateData<T>,
-    setMap: Sql[],
+    setEntries: SetEntry[],
     propertyToColumn: Map<string, string>,
   ): void {
     const versionProp = this.resolver.getVersionColumn(entity);
     if (versionProp && fieldsOf(data)[versionProp] === undefined) {
-      const versionCol = this.ctx.wrap(
-        propertyToColumn.get(versionProp) ?? versionProp,
-      );
-      setMap.push(sql`${raw(versionCol)} = ${raw(versionCol)} + 1`);
+      const column = propertyToColumn.get(versionProp) ?? versionProp;
+      const versionCol = this.ctx.wrap(column);
+      setEntries.push({
+        column,
+        clause: sql`${raw(versionCol)} = ${raw(versionCol)} + 1`,
+      });
     }
   }
 
@@ -3006,16 +3167,18 @@ export class WriteExecutor {
    *
    * The empty-criteria guard runs on user input only, in
    * {@link validateUpdateManyInput}, before any of these are appended.
+   *
+   * With a JOINED `scope` every column is qualified for the key read.
    */
   private buildUpdateManyWhereClauses<T>(
     entity: ClazzType<T>,
     options: UpdateManyOptions<T>,
     propertyToColumn: Map<string, string>,
+    scope: JoinedWriteScope | null = null,
   ): Sql[] {
-    const whereMap: Sql[] = this.resolveCriteriaWhere(
-      options.where,
-      propertyToColumn,
-    );
+    const whereMap: Sql[] = scope
+      ? this.resolveJoinedCriteria(scope, options.where, propertyToColumn)
+      : this.resolveCriteriaWhere(options.where, propertyToColumn);
 
     // The key-count check in validateUpdateManyInput cannot see a criteria
     // that resolves to no predicate at all — `{ OR: [] }`, `{ status:
@@ -3026,7 +3189,7 @@ export class WriteExecutor {
       throw new DeleteWithoutConditionsError("Update");
     }
 
-    const tenantUpdateWhere = this.ctx.buildTenantWhereClause(entity);
+    const tenantUpdateWhere = this.writeTenantWhere(entity, scope);
     if (tenantUpdateWhere) {
       whereMap.push(tenantUpdateWhere);
     }
@@ -3038,7 +3201,9 @@ export class WriteExecutor {
 
     const updateDeletedAt = this.resolver.getDeletedAtColumn(entity);
     if (updateDeletedAt && !options.withDeleted) {
-      whereMap.push(Conditions.isNull(this.ctx.wrap(updateDeletedAt)));
+      whereMap.push(
+        Conditions.isNull(this.writeColumnRef(scope, updateDeletedAt)),
+      );
     }
 
     return whereMap;
@@ -3074,7 +3239,7 @@ export class WriteExecutor {
       const updatePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
 
       const tenantUpdateWhere = this.ctx.buildTenantWhereClause(entity);
-      const setMap = this.buildUpdateManySetClauses(
+      const setEntries = this.buildUpdateManySetClauses(
         entity,
         metadata,
         data,
@@ -3082,20 +3247,27 @@ export class WriteExecutor {
         tenantUpdateWhere ? this.ctx.resolveTenantColumnName(entity) : null,
         site,
       );
-      if (setMap.length === 0) {
+      if (setEntries.length === 0) {
         return { affected: 0 };
       }
-      this.appendVersionIncrement(entity, data, setMap, updatePropToCol);
+      this.appendVersionIncrement(entity, data, setEntries, updatePropToCol);
 
+      // A JOINED child's columns span two tables: its update matches keys
+      // across both, then writes each table by key (see updateJoinedRows).
+      const joined = this.isJoinedChild(entity)
+        ? this.joinedWriteScope(entity, metadata)
+        : null;
       const whereMap = this.buildUpdateManyWhereClauses(
         entity,
         options,
         updatePropToCol,
+        joined,
       );
 
       const orderBySql = this.dmlSqlBuilder.buildUpdateOrderBy(
         options.orderBy,
         updatePropToCol,
+        joined?.qualify,
       );
 
       const tables = this.resolveWriteTables(entity, metadata);
@@ -3112,20 +3284,30 @@ export class WriteExecutor {
         data: data as Record<string, unknown>,
       });
 
-      const affected = await this.executePerTable(
-        entity,
-        tables,
-        (tableName) =>
-          this.dmlSqlBuilder.buildUpdateSql(
-            { ...metadata, name: tableName },
-            entity.name,
-            setMap,
+      const affected = joined
+        ? await this.updateJoinedRows(
+            entity,
+            joined,
+            setEntries,
             whereMap,
+            session,
             orderBySql,
             options.limit,
-          ),
-        session,
-      );
+          )
+        : await this.executePerTable(
+            entity,
+            tables,
+            (tableName) =>
+              this.dmlSqlBuilder.buildUpdateSql(
+                { ...metadata, name: tableName },
+                entity.name,
+                setEntries.map((entry) => entry.clause),
+                whereMap,
+                orderBySql,
+                options.limit,
+              ),
+            session,
+          );
 
       await this.eventEmitter.emit("afterUpdate", {
         entity,
@@ -3350,10 +3532,13 @@ export class WriteExecutor {
       );
 
       const sdPropToCol = this.ctx.buildPropertyToColumnMap(metadata);
-      const whereMap: Sql[] = this.resolveCriteriaWhere(
-        criteria,
-        sdPropToCol,
-      );
+      // A JOINED child's criteria may name either table: stamp by matched key.
+      const joined = this.isJoinedChild(entity)
+        ? this.joinedWriteScope(entity, metadata)
+        : null;
+      const whereMap: Sql[] = joined
+        ? this.resolveJoinedCriteria(joined, criteria, sdPropToCol)
+        : this.resolveCriteriaWhere(criteria, sdPropToCol);
 
       if (whereMap.length === 0) {
         throw new DeleteWithoutConditionsError("Soft delete");
@@ -3361,7 +3546,7 @@ export class WriteExecutor {
 
       // Tenant scoping — added after the empty-criteria guard so the user
       // still needs to specify a target, and the tenant filter narrows it.
-      const tenantSoftDeleteWhere = this.ctx.buildTenantWhereClause(entity);
+      const tenantSoftDeleteWhere = this.writeTenantWhere(entity, joined);
       if (tenantSoftDeleteWhere) {
         whereMap.push(tenantSoftDeleteWhere);
       }
@@ -3375,9 +3560,9 @@ export class WriteExecutor {
       // Only stamp rows that are still active. Re-soft-deleting an already
       // trashed row would overwrite its original deleted_at timestamp, and
       // `affected` should report newly-deleted rows only.
-      whereMap.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
-
-      const whereSql = join(whereMap, " AND ");
+      whereMap.push(
+        Conditions.isNull(this.writeColumnRef(joined, deletedAtColumn)),
+      );
 
       // SQLite's datetime('now') renders UTC without a zone marker, and the
       // read-side parser decodes zone-less text as local time — so the stamp
@@ -3388,13 +3573,19 @@ export class WriteExecutor {
       const nowExpr = this.ctx.isSqlite()
         ? raw("strftime('%Y-%m-%dT%H:%M:%fZ','now')")
         : raw("NOW()");
-      const affected = await this.executePerTable(
-        entity,
-        this.resolveWriteTables(entity, metadata),
-        (tableName) =>
-          sql`UPDATE ${raw(this.ctx.wrapTable(tableName))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = ${nowExpr} WHERE ${whereSql}`,
-        session,
-      );
+      const stamp: SetEntry = {
+        column: deletedAtColumn,
+        clause: sql`${raw(this.ctx.wrap(deletedAtColumn))} = ${nowExpr}`,
+      };
+      const affected = joined
+        ? await this.updateJoinedRows(entity, joined, [stamp], whereMap, session)
+        : await this.executePerTable(
+            entity,
+            this.resolveWriteTables(entity, metadata),
+            (tableName) =>
+              sql`UPDATE ${raw(this.ctx.wrapTable(tableName))} SET ${stamp.clause} WHERE ${join(whereMap, " AND ")}`,
+            session,
+          );
 
       await this.eventEmitter.emit("afterSoftDelete", { entity, data: criteria });
       await this.ctx.notifySubscribers(entity, "afterSoftDelete", {
@@ -3444,10 +3635,13 @@ export class WriteExecutor {
       );
 
       const restorePropToCol = this.ctx.buildPropertyToColumnMap(metadata);
-      const whereMap: Sql[] = this.resolveCriteriaWhere(
-        criteria,
-        restorePropToCol,
-      );
+      // Same key-first route as softDelete for a JOINED child.
+      const joined = this.isJoinedChild(entity)
+        ? this.joinedWriteScope(entity, metadata)
+        : null;
+      const whereMap: Sql[] = joined
+        ? this.resolveJoinedCriteria(joined, criteria, restorePropToCol)
+        : this.resolveCriteriaWhere(criteria, restorePropToCol);
 
       if (whereMap.length === 0) {
         throw new DeleteWithoutConditionsError("Restore");
@@ -3455,7 +3649,7 @@ export class WriteExecutor {
 
       // Tenant scoping — symmetrical with softDelete so restore can only
       // bring back rows belonging to the active tenant.
-      const tenantRestoreWhere = this.ctx.buildTenantWhereClause(entity);
+      const tenantRestoreWhere = this.writeTenantWhere(entity, joined);
       if (tenantRestoreWhere) {
         whereMap.push(tenantRestoreWhere);
       }
@@ -3469,17 +3663,23 @@ export class WriteExecutor {
       // Only revive rows that are actually soft-deleted. Restoring an active
       // row is a pointless write and inflates `affected` with rows that were
       // never deleted.
-      whereMap.push(Conditions.isNotNull(this.ctx.wrap(deletedAtColumn)));
-
-      const whereSql = join(whereMap, " AND ");
-
-      const affected = await this.executePerTable(
-        entity,
-        this.resolveWriteTables(entity, metadata),
-        (tableName) =>
-          sql`UPDATE ${raw(this.ctx.wrapTable(tableName))} SET ${raw(this.ctx.wrap(deletedAtColumn))} = NULL WHERE ${whereSql}`,
-        session,
+      whereMap.push(
+        Conditions.isNotNull(this.writeColumnRef(joined, deletedAtColumn)),
       );
+
+      const revive: SetEntry = {
+        column: deletedAtColumn,
+        clause: sql`${raw(this.ctx.wrap(deletedAtColumn))} = NULL`,
+      };
+      const affected = joined
+        ? await this.updateJoinedRows(entity, joined, [revive], whereMap, session)
+        : await this.executePerTable(
+            entity,
+            this.resolveWriteTables(entity, metadata),
+            (tableName) =>
+              sql`UPDATE ${raw(this.ctx.wrapTable(tableName))} SET ${revive.clause} WHERE ${join(whereMap, " AND ")}`,
+            session,
+          );
 
       await this.eventEmitter.emit("afterRestore", { entity, data: criteria });
       await this.ctx.notifySubscribers(entity, "afterRestore", {

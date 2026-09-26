@@ -242,6 +242,23 @@ Notice the ORM uses an INNER JOIN, not a LEFT JOIN. Every child row must have a 
 
 Notice that the result merges columns from both tables into a single flat object. The `amount` column comes from the root table, and `cardNumber` comes from the child table. The ORM combines them transparently.
 
+The other reads of a child go through the same JOIN, so their criteria, fields and sort columns may name inherited columns too. `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()` (and so the totals of `findAndCount()` / `findWithPage()`) and `findWithCursor()` read the joined rows as one derived table:
+
+```typescript
+await em.count(CreditCardPayment, { amount: { gte: 100 } });
+```
+
+```sql
+SELECT COUNT(*) AS "result"
+FROM (SELECT "credit_card_payment"."id", "credit_card_payment"."cardNumber",
+             "payment"."amount", "payment"."payment_type"
+      FROM "credit_card_payment" AS "credit_card_payment"
+      INNER JOIN "payment" AS "payment" ON "credit_card_payment"."id" = "payment"."id") AS "_tpt"
+WHERE "amount" >= 100;
+```
+
+A `@DeletedAt` column declared on the root is filtered on the root table in every one of these reads, the same way `withDeleted` / `onlyDeleted` apply to any other entity.
+
 ## 5. SELECT -- Polymorphic Query (Root Entity)
 
 Querying the root entity returns all payment types, with each row deserialized into the correct subclass.
@@ -605,6 +622,44 @@ Notice the ORM intelligently routes each column to the correct table. If you onl
 
 > **Hint** `@UpdateTimestamp` and `@Version` fields are routed to the root table's UPDATE statement, since these metadata columns are typically defined on the root entity.
 
+### Criteria updates
+
+`updateMany()`, `update()`, `increment()` / `decrement()`, `softDelete()` and `restore()` on a child take the route `delete()` does (section 11): the ORM reads the primary keys the criteria match through the root JOIN, then each table takes the assignments to its own columns by those keys.
+
+```typescript
+await em.updateMany(
+  CreditCardPayment,
+  { amount: 0, cardNumber: "void" },
+  { where: { amount: { lt: 10 } }, orderBy: { amount: "ASC" }, limit: 100 },
+);
+```
+
+**Generated SQL (PostgreSQL):**
+
+```sql
+-- Phase 1: the matching keys, in order and limited, locked for the update
+SELECT "tpt_root"."id" AS "pk"
+FROM "credit_card_payment" AS "tpt_child"
+INNER JOIN "payment" AS "tpt_root" ON "tpt_child"."id" = "tpt_root"."id"
+WHERE "tpt_root"."amount" < 10
+ORDER BY "tpt_root"."amount" ASC LIMIT 100 FOR UPDATE;
+
+-- Phase 2: root columns, including @UpdateTimestamp and the @Version bump
+UPDATE "payment" SET "amount" = 0 WHERE "id" IN (4, 9);
+
+-- Phase 3: child columns
+UPDATE "credit_card_payment" SET "cardNumber" = 'void' WHERE "id" IN (4, 9);
+```
+
+- A column goes to the table that holds it. Columns the root declares -- including its `@UpdateTimestamp`, `@Version`, `@DeletedAt` and the join columns of its relations -- go to the root table; the child's own columns go to the child table. A table with no assignment gets no statement.
+- `affected` is the number of root rows updated when the root statement runs, and the number of child rows otherwise.
+- A criteria on an inherited column only reaches rows of the class you called, and a primary key of another subclass matches nothing.
+- `orderBy` and `limit` apply to the key read, so they may name columns of either table.
+- On PostgreSQL and MySQL the key read takes `FOR UPDATE`, so the statements that follow write exactly the rows it matched. SQLite serializes writes itself and gets no lock clause.
+- Under `tenantStrategy: "tenant_column"` the tenant predicate goes into the key read, on the root table.
+
+`createUpdateBuilder()` is not covered: its `where()` conditions arrive as rendered SQL, so it still runs a single UPDATE against the child table, which can only name the child's own columns.
+
 ## 11. DELETE -- Keys First, Child Tables Before Root
 
 A TPT row lives in two tables, and the criteria may name columns of either one. The ORM first reads the primary keys that match, then deletes those keys from the child table and then from the root table.
@@ -621,7 +676,8 @@ await em.delete(CreditCardPayment, { cardNumber: "4111-1111-1111-1111" });
 SELECT "tpt_root"."id" AS "pk"
 FROM "credit_card_payment" AS "tpt_child"
 INNER JOIN "payment" AS "tpt_root" ON "tpt_child"."id" = "tpt_root"."id"
-WHERE "tpt_child"."cardNumber" = '4111-1111-1111-1111';
+WHERE "tpt_child"."cardNumber" = '4111-1111-1111-1111'
+FOR UPDATE;
 
 -- Phase 2: delete from the child table FIRST
 DELETE FROM "credit_card_payment" WHERE "id" IN (1);
@@ -647,7 +703,7 @@ await em.delete(Payment, { amount: 0 });
 ```
 
 ```sql
-SELECT "tpt_root"."id" AS "pk" FROM "payment" AS "tpt_root" WHERE "tpt_root"."amount" = 0;
+SELECT "tpt_root"."id" AS "pk" FROM "payment" AS "tpt_root" WHERE "tpt_root"."amount" = 0 FOR UPDATE;
 DELETE FROM "credit_card_payment" WHERE "id" IN (3, 7);
 DELETE FROM "bank_transfer_payment" WHERE "id" IN (3, 7);
 DELETE FROM "payment" WHERE "id" IN (3, 7);
@@ -660,7 +716,7 @@ Every child table is cleared before the root, so no child row is left without it
 | `delete(Child, criteria)` / `deleteMany(Child, ids)` | child `INNER JOIN` root | child, then root |
 | `delete(Root, criteria)` / `deleteMany(Root, ids)` | root | every child table, then root |
 
-Under `tenantStrategy: "tenant_column"`, the tenant predicate goes into the key lookup against the root table, which holds the tenant column. Keys are deleted in batches of 1,000 per `IN (...)` list, and every statement runs in one transaction.
+Under `tenantStrategy: "tenant_column"`, the tenant predicate goes into the key lookup against the root table, which holds the tenant column. On PostgreSQL and MySQL the key lookup takes `FOR UPDATE` (SQLite has no lock clause). Keys are deleted in batches of 1,000 per `IN (...)` list, and every statement runs in one transaction.
 
 ## 12. Pros and Cons
 

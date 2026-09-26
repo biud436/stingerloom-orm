@@ -817,6 +817,8 @@ Polymorphic query가 필요한가?
 | `em.save(ChildEntity, data)` | 자동 discriminator 설정 + TPT 2단계 insert |
 | `em.delete(ChildEntity, criteria)` | STI: discriminator WHERE 추가, TPT: 루트 JOIN으로 일치 키를 조회한 뒤(조건은 어느 테이블 컬럼이든 가능) 자식 → 루트 순으로 삭제 |
 | `em.delete/deleteMany(RootEntity)` | TPT: 일치 키를 모든 자식 테이블에서 지운 뒤 루트에서 삭제 |
+| `em.updateMany/update/increment/decrement/softDelete/restore(ChildEntity)` | STI: discriminator WHERE 추가, TPT: 루트 JOIN으로 일치 키를 조회한 뒤 각 테이블의 자기 컬럼을 키로 갱신 |
+| `em.count/exists/sum/avg/min/max(ChildEntity)`, `em.findWithCursor(ChildEntity)` | STI: discriminator WHERE 추가, TPT: 자식 `INNER JOIN` 루트를 읽으므로 조건·집계 필드·정렬 컬럼에 상속 컬럼 사용 가능 |
 | `em.count/sum/avg/min/max(RootEntity)` | STI/TPT: 공유/루트 테이블에 이미 전 행이 있음. TPC: `UNION ALL`에 대해 집계 |
 | `em.findWithCursor(RootEntity)` | TPC: `(정렬 컬럼, id, discriminator)` 키셋으로 `UNION ALL`을 페이지네이션 |
 | `em.updateMany/softDelete/restore/delete/deleteMany(RootEntity)` | TPC: 콘크리트 테이블마다 실행, `affected` 합산. `orderBy`/`limit`가 있는 `updateMany`는 거부 |

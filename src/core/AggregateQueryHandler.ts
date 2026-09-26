@@ -15,6 +15,7 @@ import { QueryResult } from "../types/QueryResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { buildTpcFromSource, isTpcPolymorphicRoot } from "./TpcUnionSource";
+import { buildJoinedChildFromSource, isJoinedChild } from "./JoinedChildSource";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import { aggregateToNumber } from "./BigintColumnTransformer";
 import { aggregateFromStored } from "./WhereValueTransform";
@@ -61,18 +62,21 @@ export class AggregateQueryHandler {
       // A TABLE_PER_CLASS root has no rows of its own: aggregate over the
       // same UNION ALL find() reads, so count()/sum()/... and therefore
       // findAndCount()/findWithPage() agree with the rows find() returns.
+      // A JOINED child reads its inherited columns from the root table, so
+      // it aggregates over the two tables joined, as find() reads it.
       const inheritanceResolver = this.ctx.getInheritanceResolver();
-      const fromSource: Sql = isTpcPolymorphicRoot(inheritanceResolver, entity)
-        ? buildTpcFromSource(
-            {
-              inheritanceResolver,
-              resolver: this.resolver,
-              wrap: (n) => this.ctx.wrap(n),
-              wrapTable: (n) => this.ctx.wrapTable(n),
-            },
-            entity,
-          )
-        : raw(this.ctx.wrapTable(metadata.name));
+      const sourceContext = {
+        inheritanceResolver,
+        resolver: this.resolver,
+        wrap: (n: string) => this.ctx.wrap(n),
+        wrapTable: (n: string) => this.ctx.wrapTable(n),
+      };
+      const fromSource: Sql =
+        (isTpcPolymorphicRoot(inheritanceResolver, entity)
+          ? buildTpcFromSource(sourceContext, entity)
+          : isJoinedChild(inheritanceResolver, entity)
+            ? buildJoinedChildFromSource(sourceContext, entity)
+            : null) ?? raw(this.ctx.wrapTable(metadata.name));
 
       // Resolve property names to DB columns exactly like findInternal so the
       // aggregate field and WHERE honor a NamingStrategy and FK shadow props.
@@ -110,7 +114,8 @@ export class AggregateQueryHandler {
       // back in via `withDeleted: true`, or restrict to the trash via
       // `onlyDeleted: true` (which appends IS NOT NULL and takes precedence over
       // withDeleted, keeping the count consistent with findInternal's data set).
-      // The aggregate query is never joined, so the unqualified column form is
+      // The aggregate reads a single source (a JOINED child's two tables are
+      // exposed as one derived table), so the unqualified column form is
       // correct.
       const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
       if (deletedAtColumn) {
