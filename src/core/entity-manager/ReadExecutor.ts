@@ -57,6 +57,12 @@ import {
   TPC_UNION_ALIAS,
   type TpcSourceContext,
 } from "../TpcUnionSource";
+import {
+  buildJoinedChildSelect,
+  isJoinedChild,
+  JOINED_CHILD_ALIAS,
+  joinedRootColumns,
+} from "../JoinedChildSource";
 import { createDialectExpression } from "../../dialects/DialectExpression";
 
 /**
@@ -653,7 +659,8 @@ export class ReadExecutor {
 
   /**
    * TPT child: qualify a column with the parent table if it belongs to the
-   * parent, else with the child table. Undefined for every other shape.
+   * parent — a column or relation join column the root declares — else with
+   * the child table. Undefined for every other shape.
    */
   private createTptColumnQualifier<T>(
     op: FindOperation<T>,
@@ -665,16 +672,7 @@ export class ReadExecutor {
     if (!tptRootMeta) return undefined;
 
     const tptRootTableName = tptRootMeta.name;
-    const tptPkNames = new Set(
-      op.metadata.columns
-        .filter((c: any) => c.options?.primary)
-        .map((c: any) => c.name),
-    );
-    const tptRootOnlyCols = new Set(
-      tptRootMeta.columns
-        .filter((c: any) => !tptPkNames.has(c.name))
-        .map((c: any) => c.name),
-    );
+    const tptRootOnlyCols = joinedRootColumns(this.resolver, tptRoot);
     return (dbCol: string) => {
       if (tptRootOnlyCols.has(dbCol)) {
         return `${this.ctx.wrap(tptRootTableName)}.${this.ctx.wrap(dbCol)}`;
@@ -1556,10 +1554,17 @@ export class ReadExecutor {
       // every concrete table, every hierarchy column, the discriminator as
       // a literal. The discriminator also rides in the keyset (see
       // prepareCursorQuery) because the concrete tables number their own PKs.
+      // A JOINED child pages over its table joined to the root's, which
+      // holds the inherited columns the where and the keyset may name.
       const qb = RawQueryBuilderFactory.create();
+      const joinedSelect = isJoinedChild(this.inheritanceResolver, entity)
+        ? buildJoinedChildSelect(this.tpcSourceContext(), entity)
+        : null;
       if (keyset.subKeyColumn !== undefined) {
         const unionSql = buildTpcUnionSource(this.tpcSourceContext(), entity);
         qb.select(["*"]).from(sql`(${unionSql})`, this.ctx.wrap(TPC_UNION_ALIAS)).where(whereMap);
+      } else if (joinedSelect) {
+        qb.select(["*"]).from(sql`(${joinedSelect})`, this.ctx.wrap(JOINED_CHILD_ALIAS)).where(whereMap);
       } else {
         qb.select(selectList).from(this.ctx.wrapTable(metadata.name)).where(whereMap);
       }
