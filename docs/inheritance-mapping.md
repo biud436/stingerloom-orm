@@ -376,6 +376,8 @@ Do you need polymorphic queries (em.find(RootEntity))?
 | `em.save(ChildEntity, existing)` | TPT: two-phase update (root then child). STI: excludes discriminator from SET |
 | `em.delete(ChildEntity, criteria)` | STI: adds discriminator to WHERE. TPT: reads the matching keys through the root JOIN (criteria may name either table), then deletes child then root |
 | `em.delete/deleteMany(RootEntity)` | TPT: deletes the matching keys from every child table, then the root |
+| `em.updateMany/update/increment/decrement/softDelete/restore(ChildEntity)` | STI: adds discriminator to WHERE. TPT: reads the matching keys through the root JOIN, then updates each table's own columns by key |
+| `em.count/exists/sum/avg/min/max(ChildEntity)`, `em.findWithCursor(ChildEntity)` | STI: adds discriminator to WHERE. TPT: reads the child `INNER JOIN` root, so criteria, fields and sort columns may name inherited columns |
 | `em.count/sum/avg/min/max(RootEntity)` | STI/TPT: the shared/root table already holds every row. TPC: aggregates over the `UNION ALL` |
 | `em.findWithCursor(RootEntity)` | TPC: pages the `UNION ALL` with a `(order, id, discriminator)` keyset |
 | `em.updateMany/softDelete/restore/delete/deleteMany(RootEntity)` | TPC: runs once per concrete table, `affected` summed; `updateMany` with `orderBy`/`limit` is rejected |

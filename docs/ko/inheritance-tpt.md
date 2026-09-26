@@ -242,6 +242,23 @@ ORM이 LEFT JOIN이 아니라 INNER JOIN을 사용하는 것을 주목하세요.
 
 결과가 두 테이블의 컬럼을 하나의 플랫 객체로 합쳐주는 것을 주목하세요. `amount` 컬럼은 루트 테이블에서 오고, `cardNumber`는 자식 테이블에서 와요. ORM이 이것을 투명하게 합쳐줘요.
 
+자식을 읽는 다른 메서드도 같은 JOIN을 거치므로, 조건·집계 필드·정렬 컬럼에 상속받은 컬럼을 써도 됩니다. `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`(따라서 `findAndCount()` / `findWithPage()`의 총계도)와 `findWithCursor()`는 조인한 행을 하나의 파생 테이블로 읽습니다.
+
+```typescript
+await em.count(CreditCardPayment, { amount: { gte: 100 } });
+```
+
+```sql
+SELECT COUNT(*) AS "result"
+FROM (SELECT "credit_card_payment"."id", "credit_card_payment"."cardNumber",
+             "payment"."amount", "payment"."payment_type"
+      FROM "credit_card_payment" AS "credit_card_payment"
+      INNER JOIN "payment" AS "payment" ON "credit_card_payment"."id" = "payment"."id") AS "_tpt"
+WHERE "amount" >= 100;
+```
+
+루트에 선언한 `@DeletedAt`도 이 모든 읽기에서 루트 테이블 기준으로 걸러집니다. `withDeleted` / `onlyDeleted`는 다른 엔티티와 똑같이 동작해요.
+
 ## 5. SELECT -- 다형성 쿼리 (루트 엔티티)
 
 루트 엔티티를 조회하면 모든 결제 타입을 반환하고, 각 행은 올바른 서브클래스로 역직렬화돼요.
@@ -640,6 +657,44 @@ ORM이 각 컬럼을 올바른 테이블로 지능적으로 라우팅하는 것�
 
 > **힌트** `@UpdateTimestamp`와 `@Version` 필드는 루트 테이블의 UPDATE 문으로 라우팅돼요. 이러한 메타데이터 컬럼은 보통 루트 엔티티에 정의되기 때문이에요.
 
+### 조건 기반 업데이트
+
+자식에 대한 `updateMany()`, `update()`, `increment()` / `decrement()`, `softDelete()`, `restore()`는 `delete()`(11절)와 같은 경로를 탑니다. 조건에 맞는 기본 키를 루트 JOIN으로 먼저 읽고, 각 테이블은 그 키로 자기 컬럼에 대한 할당만 받습니다.
+
+```typescript
+await em.updateMany(
+  CreditCardPayment,
+  { amount: 0, cardNumber: "void" },
+  { where: { amount: { lt: 10 } }, orderBy: { amount: "ASC" }, limit: 100 },
+);
+```
+
+**생성된 SQL (PostgreSQL):**
+
+```sql
+-- Phase 1: 조건에 맞는 키를 정렬·제한해 읽고, 갱신할 행을 잠근다
+SELECT "tpt_root"."id" AS "pk"
+FROM "credit_card_payment" AS "tpt_child"
+INNER JOIN "payment" AS "tpt_root" ON "tpt_child"."id" = "tpt_root"."id"
+WHERE "tpt_root"."amount" < 10
+ORDER BY "tpt_root"."amount" ASC LIMIT 100 FOR UPDATE;
+
+-- Phase 2: 루트 컬럼 (@UpdateTimestamp, @Version 증가 포함)
+UPDATE "payment" SET "amount" = 0 WHERE "id" IN (4, 9);
+
+-- Phase 3: 자식 컬럼
+UPDATE "credit_card_payment" SET "cardNumber" = 'void' WHERE "id" IN (4, 9);
+```
+
+- 컬럼은 그 컬럼을 가진 테이블로 갑니다. 루트가 선언한 컬럼(`@UpdateTimestamp`, `@Version`, `@DeletedAt`, 루트 관계의 조인 컬럼 포함)은 루트 테이블로, 자식 고유 컬럼은 자식 테이블로 갑니다. 할당이 없는 테이블에는 문장을 보내지 않아요.
+- `affected`는 루트 문장이 실행되면 갱신된 루트 행 수, 아니면 자식 행 수입니다.
+- 상속받은 컬럼으로 조건을 걸어도 호출한 클래스의 행에만 적용되고, 다른 하위 클래스의 기본 키는 아무 행에도 맞지 않습니다.
+- `orderBy`와 `limit`은 키 조회에 적용되므로 어느 테이블 컬럼이든 쓸 수 있습니다.
+- PostgreSQL과 MySQL에서는 키 조회에 `FOR UPDATE`가 붙어, 뒤따르는 문장이 조회한 행에만 정확히 씁니다. SQLite는 데이터베이스가 쓰기를 직렬화하므로 잠금 절을 붙이지 않아요.
+- `tenantStrategy: "tenant_column"`에서는 테넌트 조건이 키 조회 단계에서 루트 테이블 기준으로 걸립니다.
+
+`createUpdateBuilder()`는 대상이 아닙니다. `where()` 조건이 이미 렌더링된 SQL로 들어오기 때문에 여전히 자식 테이블에 UPDATE 한 문장을 보내며, 자식 고유 컬럼만 다룰 수 있어요.
+
 ## 11. DELETE -- 키를 먼저 찾고, 자식 테이블부터 삭제
 
 TPT 행은 두 테이블에 나뉘어 있고, 조건은 어느 쪽 컬럼이든 가리킬 수 있습니다. 그래서 ORM은 조건에 맞는 기본 키를 먼저 읽은 뒤, 그 키로 자식 테이블과 루트 테이블을 차례로 삭제합니다.
@@ -656,7 +711,8 @@ await em.delete(CreditCardPayment, { cardNumber: "4111-1111-1111-1111" });
 SELECT "tpt_root"."id" AS "pk"
 FROM "credit_card_payment" AS "tpt_child"
 INNER JOIN "payment" AS "tpt_root" ON "tpt_child"."id" = "tpt_root"."id"
-WHERE "tpt_child"."cardNumber" = '4111-1111-1111-1111';
+WHERE "tpt_child"."cardNumber" = '4111-1111-1111-1111'
+FOR UPDATE;
 
 -- Phase 2: 자식 테이블에서 먼저 삭제
 DELETE FROM "credit_card_payment" WHERE "id" IN (1);
@@ -682,7 +738,7 @@ await em.delete(Payment, { amount: 0 });
 ```
 
 ```sql
-SELECT "tpt_root"."id" AS "pk" FROM "payment" AS "tpt_root" WHERE "tpt_root"."amount" = 0;
+SELECT "tpt_root"."id" AS "pk" FROM "payment" AS "tpt_root" WHERE "tpt_root"."amount" = 0 FOR UPDATE;
 DELETE FROM "credit_card_payment" WHERE "id" IN (3, 7);
 DELETE FROM "bank_transfer_payment" WHERE "id" IN (3, 7);
 DELETE FROM "payment" WHERE "id" IN (3, 7);
@@ -695,7 +751,7 @@ DELETE FROM "payment" WHERE "id" IN (3, 7);
 | `delete(Child, criteria)` / `deleteMany(Child, ids)` | 자식 `INNER JOIN` 루트 | 자식 → 루트 |
 | `delete(Root, criteria)` / `deleteMany(Root, ids)` | 루트 | 모든 자식 테이블 → 루트 |
 
-`tenantStrategy: "tenant_column"`에서는 테넌트 조건이 키 조회 단계에 들어가고, 테넌트 컬럼이 있는 루트 테이블을 기준으로 걸립니다. 키는 `IN (...)` 목록당 1,000개씩 나눠 삭제하며, 모든 문장이 하나의 트랜잭션에서 실행돼요.
+`tenantStrategy: "tenant_column"`에서는 테넌트 조건이 키 조회 단계에 들어가고, 테넌트 컬럼이 있는 루트 테이블을 기준으로 걸립니다. PostgreSQL과 MySQL에서는 키 조회에 `FOR UPDATE`가 붙습니다(SQLite는 잠금 절 없음). 키는 `IN (...)` 목록당 1,000개씩 나눠 삭제하며, 모든 문장이 하나의 트랜잭션에서 실행돼요.
 
 ## 12. 장단점
 
