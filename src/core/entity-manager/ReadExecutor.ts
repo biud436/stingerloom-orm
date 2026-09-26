@@ -885,14 +885,13 @@ export class ReadExecutor {
     //   trashed rows. Takes precedence over withDeleted when both are set.
     // - withDeleted: emit no soft-delete predicate (live + trashed rows).
     // - default: emit `<col> IS NULL` so trashed rows are hidden.
-    // The column is resolved + escaped via the same wrap()/Conditions helpers
-    // the default IS NULL injection uses; for entities without a @DeletedAt
-    // column this whole block is skipped (onlyDeleted is a silent no-op).
+    // The column is qualified like ORDER BY / GROUP BY — a JOINED child's
+    // inherited @DeletedAt lives on the root table, not its own. For entities
+    // without a @DeletedAt column this whole block is skipped (onlyDeleted is
+    // a silent no-op).
     const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
     if (deletedAtColumn) {
-      const deletedAtRef = hasEagerJoins
-        ? `${this.ctx.wrap(tableName)}.${this.ctx.wrap(deletedAtColumn)}`
-        : this.ctx.wrap(deletedAtColumn);
+      const deletedAtRef = this.qualifyColumn(op, deletedAtColumn);
       if (findOption.onlyDeleted) {
         whereMap.push(Conditions.isNotNull(deletedAtRef));
       } else if (!findOption.withDeleted) {
