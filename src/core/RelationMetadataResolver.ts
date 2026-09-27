@@ -126,6 +126,35 @@ export class RelationMetadataResolver {
   }
 
   /**
+   * The relations of one kind that `entity` declares or inherits, from the
+   * scanner: its superclasses' first, each property once, holding the
+   * declaration closest to `entity`. The scanner files a relation under the
+   * class that declares it, so looking up `entity` alone dropped every
+   * inherited relation as soon as the subclass declared one of its own.
+   */
+  private withInherited<R extends { target: Function }>(
+    scanner: { getByTarget<M extends { target: Function }>(target: Function): M[] },
+    entity: ClazzType<any>,
+    propertyOf: (relation: R) => string,
+  ): R[] {
+    const chain: Function[] = [];
+    for (
+      let cls: Function | null = entity;
+      cls && cls !== Function.prototype && cls !== Object;
+      cls = Object.getPrototypeOf(cls)
+    ) {
+      chain.unshift(cls);
+    }
+    const byProperty = new Map<string, R>();
+    for (const cls of chain) {
+      for (const relation of scanner.getByTarget<R>(cls)) {
+        byProperty.set(propertyOf(relation), relation);
+      }
+    }
+    return [...byProperty.values()];
+  }
+
+  /**
    * Looks up ManyToOne relation metadata through the layered metadata system.
    *
    * Lookup priority:
@@ -136,8 +165,11 @@ export class RelationMetadataResolver {
     entity: ClazzType<T>,
   ): ManyToOneMetadata<any>[] {
     // 1. Lookup through the layered metadata system (multi-tenant support)
-    const manyToOneScanner = getScannerInstance(ManyToOneScanner);
-    const allRelations = manyToOneScanner.getByTarget<ManyToOneMetadata<any>>(entity);
+    const allRelations = this.withInherited<ManyToOneMetadata<any>>(
+      getScannerInstance(ManyToOneScanner),
+      entity,
+      (rel) => rel.columnName,
+    );
 
     if (allRelations.length > 0) {
       return this.resolveJoinColumnsFromColumnMeta(entity, allRelations);
@@ -267,8 +299,11 @@ export class RelationMetadataResolver {
     entity: ClazzType<T>,
   ): OneToManyMetadata<any>[] {
     // 1. Lookup through the layered metadata system (multi-tenant support)
-    const oneToManyScanner = getScannerInstance(OneToManyScanner);
-    const allRelations = oneToManyScanner.getByTarget<OneToManyMetadata<any>>(entity);
+    const allRelations = this.withInherited<OneToManyMetadata<any>>(
+      getScannerInstance(OneToManyScanner),
+      entity,
+      (rel) => rel.propertyKey,
+    );
 
     if (allRelations.length > 0) {
       return allRelations;
@@ -304,8 +339,11 @@ export class RelationMetadataResolver {
     entity: ClazzType<T>,
   ): ManyToManyMetadata<any>[] {
     // 1. Lookup through the layered metadata system (multi-tenant support)
-    const manyToManyScanner = getScannerInstance(ManyToManyScanner);
-    const allRelations = manyToManyScanner.getByTarget<ManyToManyMetadata<any>>(entity);
+    const allRelations = this.withInherited<ManyToManyMetadata<any>>(
+      getScannerInstance(ManyToManyScanner),
+      entity,
+      (rel) => rel.propertyKey,
+    );
 
     if (allRelations.length > 0) {
       return allRelations;
@@ -341,8 +379,11 @@ export class RelationMetadataResolver {
     entity: ClazzType<T>,
   ): OneToOneMetadata<any>[] {
     // 1. Lookup through the layered metadata system (multi-tenant support)
-    const oneToOneScanner = getScannerInstance(OneToOneScanner);
-    const allRelations = oneToOneScanner.getByTarget<OneToOneMetadata<any>>(entity);
+    const allRelations = this.withInherited<OneToOneMetadata<any>>(
+      getScannerInstance(OneToOneScanner),
+      entity,
+      (rel) => rel.propertyKey,
+    );
 
     if (allRelations.length > 0) {
       return this.resolveJoinColumnsFromColumnMetaForOneToOne(
