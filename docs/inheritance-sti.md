@@ -339,6 +339,26 @@ WHERE "payment"."payment_type" = 'credit_card';
 
 Notice: the discriminator WHERE clause (`payment_type = 'credit_card'`) is combined with the LEFT JOIN. The `store` property is a fully deserialized `Store` instance nested inside the `CreditCardPayment`.
 
+A polymorphic read of the root loads relations the same way and still returns each row as its subclass: `em.find(Payment, { relations: ["store"] })` gives `CreditCardPayment` and `BankTransferPayment` instances, each with its `store`.
+
+### A relation a subclass declares
+
+A child can declare relations of its own next to the ones it inherits. Their join columns live on the shared table like the child's other columns, and like them they are nullable -- a row of another subtype leaves them empty -- whatever `@RelationColumn({ nullable })` says.
+
+```typescript
+@Entity()
+@DiscriminatorValue("credit_card")
+export class CreditCardPayment extends Payment {
+  @Column({ nullable: true }) cardNumber!: string;
+
+  @ManyToOne(() => Bank, (b) => b.cards)
+  @RelationColumn({ name: "issuer_id" })
+  issuer!: Bank; // payment.issuer_id, NULL on other payment types
+}
+
+const cards = await em.find(CreditCardPayment, { relations: ["store", "issuer"] });
+```
+
 ## SELECT -- With findOne
 
 `findOne` works exactly like `find` but returns a single entity or `null`.

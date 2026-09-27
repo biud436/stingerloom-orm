@@ -60,6 +60,7 @@ import {
 import {
   buildJoinedChildSelect,
   isJoinedChild,
+  joinedChildJoinColumns,
   JOINED_CHILD_ALIAS,
   joinedRootColumns,
 } from "../JoinedChildSource";
@@ -711,40 +712,21 @@ export class ReadExecutor {
     const { entity, metadata, tableName, plan, propToCol, hasEagerJoins } = op;
     const select = op.findOption.select;
 
-    // TPT child: build SELECT by separating child-table columns (PK + own) from parent columns
-    if (op.isTPTChild) {
+    // TPT child: every column of both tables, each read from the table that
+    // holds it — the child's key, own columns and own join columns, then the
+    // root's columns and the join columns of the relations it declares.
+    if (op.isTPTChild && op.tptQualifyColumn) {
       const root = this.inheritanceResolver.getRoot(entity)!;
-      const rootMeta = this.resolver.resolveEntityMetadata(root);
-      if (rootMeta) {
-        const rootTableName = rootMeta.name;
-        const rootColNames = new Set(
-          rootMeta.columns.map((c: any) => c.name),
-        );
-        const pkColNames = new Set(
-          metadata.columns
-            .filter((c: any) => c.options?.primary)
-            .map((c: any) => c.name),
-        );
-
-        // Columns that physically exist on the child table: PK + own (excluding parent-only columns)
-        for (const col of metadata.columns) {
-          const isPk = pkColNames.has(col.name);
-          const isRootOnly = rootColNames.has(col.name) && !isPk;
-          if (!isRootOnly) {
-            selectMap.push(
-              `${this.ctx.wrap(tableName)}.${this.ctx.wrap(col.name)}`,
-            );
-          }
-        }
-
-        // Non-PK columns from the parent table
-        for (const col of rootMeta.columns) {
-          if (pkColNames.has(col.name)) continue;
-          selectMap.push(
-            `${this.ctx.wrap(rootTableName)}.${this.ctx.wrap(col.name)}`,
-          );
-        }
+      const rootColumns = joinedRootColumns(this.resolver, root);
+      const childColumns = new Set<string>();
+      for (const col of metadata.columns) childColumns.add(col.name);
+      for (const rel of [...plan.manyToOne, ...plan.oneToOne]) {
+        if (rel.joinColumn) childColumns.add(rel.joinColumn);
       }
+      for (const name of childColumns) {
+        if (!rootColumns.has(name)) selectMap.push(op.tptQualifyColumn(name));
+      }
+      for (const name of rootColumns) selectMap.push(op.tptQualifyColumn(name));
     } else if (select) {
       const selectedColumns = this.ctx.resolveSelectColumns<T>(select)
         .map((prop) => propToCol.get(prop) ?? prop);
@@ -791,10 +773,17 @@ export class ReadExecutor {
       const childMeta = this.resolver.resolveEntityMetadata(ChildEntity);
       if (!childMeta || !pk) continue;
       const childTableName = childMeta.name;
-      const ownCols = this.inheritanceResolver.getOwnColumns(ChildEntity);
-      for (const col of ownCols) {
+      const childColumns = new Set(
+        this.inheritanceResolver
+          .getOwnColumns(ChildEntity)
+          .map((col) => col.name as string),
+      );
+      for (const name of joinedChildJoinColumns(this.resolver, ChildEntity, op.entity)) {
+        childColumns.add(name);
+      }
+      for (const name of childColumns) {
         selectMap.push(
-          `${this.ctx.wrap(childTableName)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(`${childTableName}_${col.name}`)}`,
+          `${this.ctx.wrap(childTableName)}.${this.ctx.wrap(name)} AS ${this.ctx.wrap(`${childTableName}_${name}`)}`,
         );
       }
     }
@@ -1037,21 +1026,14 @@ export class ReadExecutor {
       );
       if (!relatedPk) continue;
 
-      // TPT child: if the FK column lives on the parent table, qualify it with the parent table
-      let fkTableName = tableName;
-      if (op.isTPTChild) {
-        const root = this.inheritanceResolver.getRoot(entity)!;
-        const rootMeta = this.resolver.resolveEntityMetadata(root);
-        if (rootMeta) {
-          const rootColNames = new Set(rootMeta.columns.map((c: any) => c.name));
-          if (rootColNames.has(joinColumn)) {
-            fkTableName = rootMeta.name;
-          }
-        }
-      }
+      // A TPT child reads the join column from the table that holds it:
+      // the root's for a relation the root declares.
+      const fkColumn = op.tptQualifyColumn
+        ? op.tptQualifyColumn(joinColumn)
+        : `${this.ctx.wrap(tableName)}.${this.ctx.wrap(joinColumn)}`;
 
       const relAlias = rel.columnName;
-      let joinCondition = sql`${raw(this.ctx.wrap(fkTableName))}.${raw(this.ctx.wrap(joinColumn))} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name))}`;
+      let joinCondition = sql`${raw(fkColumn)} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name))}`;
       joinCondition = this.appendRelationJoinFilters(
         op,
         RelatedEntity,
@@ -1080,8 +1062,12 @@ export class ReadExecutor {
       );
       if (!relatedPk) continue;
 
+      const fkColumn = op.tptQualifyColumn
+        ? op.tptQualifyColumn(joinColumn)
+        : `${this.ctx.wrap(tableName)}.${this.ctx.wrap(joinColumn)}`;
+
       const relAlias = rel.propertyKey;
-      let joinCondition = sql`${raw(this.ctx.wrap(tableName))}.${raw(this.ctx.wrap(joinColumn))} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name))}`;
+      let joinCondition = sql`${raw(fkColumn)} = ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedPk.name))}`;
       joinCondition = this.appendRelationJoinFilters(
         op,
         RelatedEntity,
@@ -1264,12 +1250,17 @@ export class ReadExecutor {
   ): EntityResult<T> {
     const { entity, hasEagerJoins } = op;
     const isEntityArray = queryResult.results.length > 1;
+    // The relations JOINed into the rows — `hasEagerJoins` also covers the
+    // JOINs of an inheritance hierarchy's tables.
+    const joined = new Set<string>([
+      ...op.eagerM2O.map((rel) => rel.columnName),
+      ...op.eagerO2O.map((rel) => rel.propertyKey),
+    ]);
 
     // STI/TPC: polymorphic query on the root entity — instantiate the correct subclass via the discriminator
     if (
       (op.inheritanceStrategy === "SINGLE_TABLE" || op.isTPCPolymorphic) &&
-      this.inheritanceResolver.isPolymorphicQuery(entity) &&
-      !(hasEagerJoins && !op.isTPCPolymorphic)
+      this.inheritanceResolver.isPolymorphicQuery(entity)
     ) {
       const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
       const discColName = discCol?.name ?? "dtype";
@@ -1280,6 +1271,7 @@ export class ReadExecutor {
           queryResult,
           discMap,
           discColName,
+          joined,
         ) as EntityResult<T>;
       }
     } else if (op.isTPTPolymorphic) {
@@ -1304,6 +1296,7 @@ export class ReadExecutor {
           discMap,
           discCol.name,
           childPrefixMap,
+          joined,
         ) as EntityResult<T>;
       }
     } else if (
@@ -1314,6 +1307,8 @@ export class ReadExecutor {
       return resultTransformer.transformNested(
         entity,
         queryResult,
+        undefined,
+        joined,
       ) as EntityResult<T>;
     }
 

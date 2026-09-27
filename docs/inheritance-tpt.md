@@ -408,6 +408,29 @@ Notice that the FK column (`storeFk`) lives in the root table (`payment`), not t
 For TPT, FK columns defined on the root entity are stored in the root table. The ORM automatically qualifies the FK column to the correct table when building JOIN queries, so you do not need to think about which table owns which column.
 :::
 
+A polymorphic read of the root loads relations too, and each row still comes back as its subclass: `em.find(Payment, { relations: ["store"] })` returns `CreditCardPayment` and `BankTransferPayment` instances, each with its `store`.
+
+### A relation a subclass declares
+
+A child can declare relations of its own next to the inherited ones. Their join columns -- and their foreign keys -- live on the child's table, while the root's relations keep theirs on the root's table. A join column needs no `@Column` of its own: `@RelationColumn({ name })` is enough, and `save()` and the reads use whichever table holds it.
+
+```typescript
+@Entity()
+@DiscriminatorValue("credit_card")
+export class CreditCardPayment extends Payment {
+  @Column()
+  cardNumber!: string;
+
+  @ManyToOne(() => Bank, (b) => b.cards)
+  @RelationColumn({ name: "issuer_id" })
+  issuer!: Bank; // credit_card_payment.issuer_id
+}
+
+const cards = await em.find(CreditCardPayment, {
+  relations: ["store", "issuer"], // payment.storeFk, credit_card_payment.issuer_id
+});
+```
+
 ## 7. SELECT -- With findOne
 
 `findOne` works identically to `find` but returns a single entity or `null`.

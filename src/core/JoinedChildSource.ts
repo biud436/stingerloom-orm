@@ -54,6 +54,29 @@ export function joinedRootColumns(
 }
 
 /**
+ * The join columns a JOINED child's own table holds: those of the relations
+ * the child declares. The relations it inherits keep theirs on the root's
+ * table (see {@link joinedRootColumns}).
+ */
+export function joinedChildJoinColumns(
+  resolver: RelationMetadataResolver,
+  child: ClazzType<any>,
+  root: ClazzType<any>,
+): Set<string> {
+  const rootColumns = joinedRootColumns(resolver, root);
+  const columns = new Set<string>();
+  for (const rel of [
+    ...resolver.resolveManyToOneMetadata(child),
+    ...resolver.resolveOneToOneMetadata(child),
+  ]) {
+    if (rel.joinColumn && !rootColumns.has(rel.joinColumn)) {
+      columns.add(rel.joinColumn);
+    }
+  }
+  return columns;
+}
+
+/**
  * `SELECT ... FROM child INNER JOIN root ON <pk>` — a JOINED child's rows
  * with every column under its bare name: the child table's key, own columns
  * and relation join columns, then the root's (see {@link joinedRootColumns}).

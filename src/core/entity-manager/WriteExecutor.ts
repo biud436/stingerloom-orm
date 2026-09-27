@@ -38,7 +38,10 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DefaultNamingStrategy, NamingStrategy } from "../generators/NamingStrategy";
 import { InheritanceResolver } from "../InheritanceResolver";
 import { isTpcPolymorphicRoot, resolveTpcTables } from "../TpcUnionSource";
-import { joinedRootColumns } from "../JoinedChildSource";
+import {
+  joinedChildJoinColumns,
+  joinedRootColumns,
+} from "../JoinedChildSource";
 import { DEFAULT_BIGINT_MODE, normalizeBigintValue } from "../BigintColumnTransformer";
 import { assertScalarBindValue } from "../BindValueGuard";
 import { createDialectExpression } from "../../dialects/DialectExpression";
@@ -142,6 +145,8 @@ interface InsertValuePlan {
   columns: Sql[];
   /** Bound values, parallel to `columns`. */
   values: RawValue[];
+  /** DB names of the columns appended past `insertableColumns`, in order. */
+  appended: string[];
 }
 
 /** SET clauses staged for the UPDATE path of saveInternal. */
@@ -150,6 +155,8 @@ interface UpdateSetPlan {
   updatableColumns: ColumnMetadata[];
   /** SET clauses; may grow beyond `updatableColumns` (@UpdateTimestamp, FK, @Version). */
   updateMap: Sql[];
+  /** DB names of the columns set past `updatableColumns`, in order. */
+  appended: string[];
   /** DB column name of the @Version column, when the entity declares one. */
   versionColName: string | null;
 }
@@ -596,6 +603,7 @@ export class WriteExecutor {
         updateMap.push(
           sql`${raw(this.ctx.wrap(versionColName))} = ${raw(this.ctx.wrap(versionColName))} + 1`,
         );
+        updatePlan.appended.push(versionColName);
         if (currentVersion !== undefined && currentVersion !== null) {
           pkWhereClauses.push(
             sql`${raw(this.ctx.wrap(versionColName))} = ${bindParam(currentVersion)}`,
@@ -774,7 +782,7 @@ export class WriteExecutor {
       }
     }
 
-    return { insertableColumns, columns, values };
+    return { insertableColumns, columns, values, appended: [] };
   }
 
   /**
@@ -801,6 +809,7 @@ export class WriteExecutor {
         } else {
           columns.push(raw(this.ctx.wrap(discCol.name)));
           values.push(discVal);
+          plan.appended.push(discCol.name);
         }
       }
     }
@@ -833,6 +842,7 @@ export class WriteExecutor {
         } else {
           columns.push(raw(this.ctx.wrap(rel.joinColumn)));
           values.push(bindParam(fkValue));
+          plan.appended.push(rel.joinColumn);
         }
       }
     }
@@ -895,10 +905,15 @@ export class WriteExecutor {
       }
     }
 
-    // Extra appended columns (e.g. discriminator, FK) live outside the insertableColumns range
+    // Appended columns (discriminator, FK) belong to the root, except the
+    // join columns of the relations the child declares.
+    const childJoinColumns = joinedChildJoinColumns(this.resolver, entity, root);
     for (let i = insertableColumns.length; i < columns.length; i++) {
-      parentCols.push(columns[i]);
-      parentVals.push(values[i]);
+      const toChild = childJoinColumns.has(
+        plan.appended[i - insertableColumns.length],
+      );
+      (toChild ? childCols : parentCols).push(columns[i]);
+      (toChild ? childVals : parentVals).push(values[i]);
     }
 
     // 1. INSERT into the parent table
@@ -1128,6 +1143,8 @@ export class WriteExecutor {
       return sql`${raw(this.ctx.wrap(column.name))} = ${bindParam(value)}`;
     });
 
+    const appended: string[] = [];
+
     // Auto-inject @UpdateTimestamp
     const updateTsColName = this.resolver.getUpdateTimestampColumn(entity);
     if (updateTsColName) {
@@ -1142,6 +1159,7 @@ export class WriteExecutor {
         updateMap.push(
           sql`${raw(this.ctx.wrap(updateTsColName))} = ${updateNow}`,
         );
+        appended.push(updateTsColName);
       }
     }
 
@@ -1176,6 +1194,7 @@ export class WriteExecutor {
           updateMap.push(
             sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`,
           );
+          appended.push(rel.joinColumn!);
           updatedColumnNames.add(rel.joinColumn!);
         }
       };
@@ -1203,7 +1222,7 @@ export class WriteExecutor {
       }
     }
 
-    return { updatableColumns, updateMap, versionColName };
+    return { updatableColumns, updateMap, versionColName, appended };
   }
 
   /**
@@ -1266,9 +1285,14 @@ export class WriteExecutor {
       }
     }
 
-    // Extra items (e.g. @UpdateTimestamp, @Version) belong on the parent table
+    // Appended items (@UpdateTimestamp, @Version, FK) belong on the parent
+    // table, except the join columns of the relations the child declares.
+    const childJoinColumns = joinedChildJoinColumns(this.resolver, entity, root);
     for (let i = updatableColumns.length; i < updateMap.length; i++) {
-      parentUpdateMap.push(updateMap[i]);
+      const toChild = childJoinColumns.has(
+        plan.appended[i - updatableColumns.length],
+      );
+      (toChild ? childUpdateMap : parentUpdateMap).push(updateMap[i]);
     }
 
     let parentAffected: number | null = null;

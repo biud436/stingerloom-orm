@@ -386,15 +386,41 @@ export class ResultTransformer implements BaseResultTransformer {
   }
 
   /**
+   * One row as an instance of `entityClass`. With `joined` — the relations
+   * the query JOINed — their columns (`<relation>_<column>`) become the
+   * relation objects, as {@link transformNested} builds them.
+   */
+  private toRowEntity<T>(
+    entityClass: MyClassConstructor<T>,
+    row: any,
+    joined?: ReadonlySet<string>,
+  ): T {
+    if (!joined || joined.size === 0) {
+      return this.applyColumnTransforms(
+        entityClass,
+        deserializeEntity(entityClass, remapRowToPropertyKeys(entityClass, row)),
+      );
+    }
+    const baseEntity: { [key: string]: any } = {};
+    this.extractBaseEntity(entityClass, row, baseEntity);
+    return this.applyColumnTransforms(
+      entityClass,
+      this.fillPropertiesToForeignObject(entityClass, baseEntity, row, new Set(), joined),
+    );
+  }
+
+  /**
    * Deserializes a result set where rows may be different subclass types (STI).
    * Reads the discriminator column from each row and instantiates
-   * the correct child entity class.
+   * the correct child entity class. `joined`: the relations the rows carry
+   * eagerly JOINed (see {@link toRowEntity}).
    */
   public toPolymorphicEntities<T>(
     rootEntityClass: MyClassConstructor<T>,
     result: QueryResult<any> | undefined,
     discriminatorMap: Map<string, MyClassConstructor<any>>,
     discriminatorColumnName: string,
+    joined?: ReadonlySet<string>,
   ): T[] {
     if (this.hasNoResults(result)) {
       return this.buildEmptyEntities<T>();
@@ -406,11 +432,7 @@ export class ResultTransformer implements BaseResultTransformer {
       const TargetClass =
         (discValue != null ? discriminatorMap.get(String(discValue)) : undefined) ??
         rootEntityClass;
-      const remapped = remapRowToPropertyKeys(TargetClass, item);
-      return this.applyColumnTransforms(
-        TargetClass,
-        deserializeEntity(TargetClass, remapped),
-      ) as T;
+      return this.toRowEntity(TargetClass, item, joined) as T;
     });
   }
 
@@ -418,7 +440,8 @@ export class ResultTransformer implements BaseResultTransformer {
    * Deserializes a TPT (JOINED) polymorphic result set.
    * Root columns are unprefixed; child columns are prefixed as `childTable_colName`.
    * Uses the discriminator column to determine the correct subclass,
-   * then strips the prefix for matching child columns.
+   * then strips the prefix for matching child columns. `joined`: the
+   * relations the rows carry eagerly JOINed (see {@link toRowEntity}).
    */
   public toTPTPolymorphicEntities<T>(
     rootEntityClass: MyClassConstructor<T>,
@@ -426,6 +449,7 @@ export class ResultTransformer implements BaseResultTransformer {
     discriminatorMap: Map<string, MyClassConstructor<any>>,
     discriminatorColumnName: string,
     childTablePrefixMap: Map<string, string>,
+    joined?: ReadonlySet<string>,
   ): T[] {
     if (this.hasNoResults(result)) {
       return this.buildEmptyEntities<T>();
@@ -468,11 +492,7 @@ export class ResultTransformer implements BaseResultTransformer {
         }
       }
 
-      const remapped = remapRowToPropertyKeys(TargetClass, flatRow);
-      return this.applyColumnTransforms(
-        TargetClass,
-        deserializeEntity(TargetClass, remapped),
-      ) as T;
+      return this.toRowEntity(TargetClass, flatRow, joined) as T;
     });
   }
 
@@ -506,12 +526,18 @@ export class ResultTransformer implements BaseResultTransformer {
    * ManyToOne/OneToOne fan-out stops at the cycle boundary — the SELECT
    * only joins one level deep anyway, so deeper expansion would yield empty
    * objects regardless.
+   *
+   * `joined` names the relations the query JOINed. The others are null
+   * without reading the row: `<relation>_` would otherwise also match the
+   * relation's own join column (`owner_id` for `owner`) and build an object
+   * holding just the key.
    */
   private fillPropertiesToForeignObject<T>(
     entityClass: MyClassConstructor<T>,
     baseEntity: ForeignObject<any>,
     resultSet: any,
     visited: Set<Function> = new Set(),
+    joined?: ReadonlySet<string>,
   ) {
     visited.add(entityClass as unknown as Function);
 
@@ -528,6 +554,10 @@ export class ResultTransformer implements BaseResultTransformer {
 
       // Build a separate object for the foreign-key data of each ManyToOne relation.
       for (const { getMappingEntity, columnName } of manyToOneMappingMetadata) {
+        if (joined && !joined.has(columnName)) {
+          baseEntity[columnName] = null;
+          continue;
+        }
         const ForeignClass = getMappingEntity() as ClazzType<T>;
 
         const prefix = this.addSeparatorToColumnName(columnName);
@@ -581,6 +611,10 @@ export class ResultTransformer implements BaseResultTransformer {
         if (!rel.joinColumn) continue; // Owning side only
 
         const propertyKey = rel.propertyKey;
+        if (joined && !joined.has(propertyKey)) {
+          baseEntity[propertyKey] = null;
+          continue;
+        }
         const RelatedClass = rel.getRelatedEntity() as ClazzType<any>;
 
         const prefix = this.addSeparatorToColumnName(propertyKey);
@@ -651,6 +685,7 @@ export class ResultTransformer implements BaseResultTransformer {
     entityClass: MyClassConstructor<T>,
     queryResult: QueryResult<any> | undefined,
     relations?: { [key: string]: MyClassConstructor<any> },
+    joined?: ReadonlySet<string>,
   ): T | T[] | undefined {
     if (this.hasNoResults(queryResult)) {
       return this.buildNullEntity();
@@ -667,6 +702,8 @@ export class ResultTransformer implements BaseResultTransformer {
         entityClass,
         baseEntity,
         row,
+        new Set(),
+        joined,
       );
 
       // The eager-join path must apply the root entity's read transforms too —

@@ -358,6 +358,26 @@ WHERE "payment"."payment_type" = 'credit_card';
 
 주목할 점: discriminator WHERE 절(`payment_type = 'credit_card'`)이 LEFT JOIN과 함께 결합돼요. `store` 프로퍼티는 `CreditCardPayment` 안에 중첩된 완전히 역직렬화된 `Store` 인스턴스예요.
 
+루트를 다형성으로 조회할 때도 관계는 같은 방식으로 로드되고, 각 행은 여전히 자기 서브클래스로 반환됩니다. `em.find(Payment, { relations: ["store"] })`는 `store`가 채워진 `CreditCardPayment`와 `BankTransferPayment` 인스턴스를 돌려줘요.
+
+### 서브클래스가 선언한 관계
+
+자식은 상속받은 관계 외에 자기만의 관계를 선언할 수 있습니다. 그 조인 컬럼은 자식의 다른 컬럼처럼 공유 테이블에 놓이고, 역시 nullable입니다. 다른 서브타입의 행은 이 컬럼을 비워 두기 때문에 `@RelationColumn({ nullable })` 설정과 관계없이 그렇습니다.
+
+```typescript
+@Entity()
+@DiscriminatorValue("credit_card")
+export class CreditCardPayment extends Payment {
+  @Column({ nullable: true }) cardNumber!: string;
+
+  @ManyToOne(() => Bank, (b) => b.cards)
+  @RelationColumn({ name: "issuer_id" })
+  issuer!: Bank; // payment.issuer_id, 다른 결제 유형에서는 NULL
+}
+
+const cards = await em.find(CreditCardPayment, { relations: ["store", "issuer"] });
+```
+
 ## SELECT -- findOne 사용
 
 `findOne`은 `find`와 완전히 동일하게 작동하지만 단일 엔티티 또는 `null`을 반환해요.

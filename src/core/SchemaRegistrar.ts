@@ -45,6 +45,8 @@ import {
   RELATION_COLUMN_TOKEN,
   RelationColumnMetadata,
 } from "../decorators/RelationColumn";
+import type { ManyToOneMetadata } from "../decorators/ManyToOne";
+import type { OneToOneMetadata } from "../decorators/OneToOne";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { EntityNotFound } from "../dialects/EntityNotFound";
 import type { CreateTableForeignKey, ISqlDriver } from "../dialects/SqlDriver";
@@ -88,6 +90,14 @@ interface SkippedSafeChange {
   target: string;
   /** The statement that a full sync would have executed. */
   ddl: string;
+}
+
+/** A relation whose join column a table holds, and the class declaring it. */
+interface TableRelation<R> {
+  relation: R;
+  declaredBy: ClazzType<any>;
+  /** A SINGLE_TABLE child's relation on the shared table: always nullable. */
+  shared: boolean;
 }
 
 /**
@@ -1430,12 +1440,16 @@ export class SchemaRegistrar {
    */
   private collectForeignKeyColumns(TargetEntity: ClazzType<any>): Set<string> {
     const fkColumns = new Set<string>();
-    const m2o = this.resolver.resolveManyToOneMetadata(TargetEntity);
-    for (const rel of m2o) {
-      if (rel.joinColumn) fkColumns.add(rel.joinColumn.toLowerCase());
-    }
-    const o2o = this.resolver.resolveOneToOneMetadata(TargetEntity);
-    for (const rel of o2o) {
+    // The entity's own relations — which, for a JOINED child, still cover an
+    // inherited join column an earlier version copied onto the child's table
+    // — and those of the table: a SINGLE_TABLE child's live on its root's.
+    const { manyToOnes, oneToOnes } = this.tableRelations(TargetEntity);
+    for (const rel of [
+      ...this.resolver.resolveManyToOneMetadata(TargetEntity),
+      ...this.resolver.resolveOneToOneMetadata(TargetEntity),
+      ...manyToOnes.map((r) => r.relation),
+      ...oneToOnes.map((r) => r.relation),
+    ]) {
       if (rel.joinColumn) fkColumns.add(rel.joinColumn.toLowerCase());
     }
     return fkColumns;
@@ -1886,6 +1900,78 @@ export class SchemaRegistrar {
   }
 
   /**
+   * The ManyToOne and OneToOne relations whose join columns live on
+   * `TargetEntity`'s table, each with the class that declares it. A JOINED
+   * child's table holds only the relations the child declares — the root's
+   * join columns are on the root's table. A SINGLE_TABLE root's table also
+   * holds every child's (`shared`: nullable whatever the relation says, since
+   * a row of one subtype leaves the others' join columns empty).
+   */
+  private tableRelations(TargetEntity: ClazzType<any>): {
+    manyToOnes: Array<TableRelation<ManyToOneMetadata<any>>>;
+    oneToOnes: Array<TableRelation<OneToOneMetadata<any>>>;
+  } {
+    const own = (entity: ClazzType<any>, shared: boolean) => ({
+      manyToOnes: this.resolver
+        .resolveManyToOneMetadata(entity)
+        .map((relation) => ({ relation, declaredBy: entity, shared })),
+      oneToOnes: this.resolver
+        .resolveOneToOneMetadata(entity)
+        .map((relation) => ({ relation, declaredBy: entity, shared })),
+    });
+    const result = own(TargetEntity, false);
+
+    const strategy = this.inheritanceResolver.getStrategy(TargetEntity);
+    const root = this.inheritanceResolver.getRoot(TargetEntity);
+    if (!root) return result;
+    const rootM2o = new Set(
+      this.resolver.resolveManyToOneMetadata(root).map((r) => r.columnName),
+    );
+    const rootO2o = new Set(
+      this.resolver.resolveOneToOneMetadata(root).map((r) => r.propertyKey),
+    );
+
+    if (strategy === "JOINED" && root !== TargetEntity) {
+      return {
+        manyToOnes: result.manyToOnes.filter(
+          (r) => !rootM2o.has(r.relation.columnName),
+        ),
+        oneToOnes: result.oneToOnes.filter(
+          (r) => !rootO2o.has(r.relation.propertyKey),
+        ),
+      };
+    }
+
+    if (strategy === "SINGLE_TABLE" && root === TargetEntity) {
+      const joinColumns = new Set(
+        [...result.manyToOnes, ...result.oneToOnes]
+          .map((r) => r.relation.joinColumn)
+          .filter((c): c is string => !!c),
+      );
+      const isNew = (joinColumn?: string) => {
+        if (!joinColumn || joinColumns.has(joinColumn)) return false;
+        joinColumns.add(joinColumn);
+        return true;
+      };
+      for (const child of this.inheritanceResolver.getConcreteEntities(root)) {
+        if (child === root) continue;
+        const childRelations = own(child, true);
+        for (const r of childRelations.manyToOnes) {
+          if (!rootM2o.has(r.relation.columnName) && isNew(r.relation.joinColumn)) {
+            result.manyToOnes.push(r);
+          }
+        }
+        for (const r of childRelations.oneToOnes) {
+          if (!rootO2o.has(r.relation.propertyKey) && isNew(r.relation.joinColumn)) {
+            result.oneToOnes.push(r);
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
    * Collects the FK definitions that `registerForeignKeys()` would create via
    * ALTER TABLE, in a form that can be embedded inline into CREATE TABLE for
    * dialects without ALTER ADD FOREIGN KEY support (SQLite).
@@ -1914,19 +2000,21 @@ export class SchemaRegistrar {
     const pushJoinColumnIfMissing = (
       joinColumn: string,
       referencedEntity: ClazzType<any>,
+      { declaredBy, shared }: Omit<TableRelation<unknown>, "relation">,
     ) => {
       const key = joinColumn.toLowerCase();
       if (existingCols.has(key)) return;
       existingCols.add(key);
-      extraColumns.push(
-        this.buildJoinColumnDef(joinColumn, referencedEntity, TargetEntity),
-      );
+      const def = this.buildJoinColumnDef(joinColumn, referencedEntity, declaredBy);
+      if (shared) def.options.nullable = true;
+      extraColumns.push(def);
     };
 
+    const { manyToOnes, oneToOnes } = this.tableRelations(TargetEntity);
+
     // ManyToOne
-    const manyToOneItems =
-      this.resolver.resolveManyToOneMetadata(TargetEntity) ?? [];
-    for (const rel of manyToOneItems) {
+    for (const owned of manyToOnes) {
+      const rel = owned.relation;
       if (!rel.joinColumn) continue;
       const mappingEntity = rel.getMappingEntity();
       if (!mappingEntity) continue;
@@ -1935,7 +2023,7 @@ export class SchemaRegistrar {
       // The column is needed whether or not the constraint is: opting out of
       // the FK constraint does not opt out of storing the FK value.
       if (rel.option?.createForeignKeyConstraints === false) {
-        pushJoinColumnIfMissing(rel.joinColumn, mappingEntity);
+        pushJoinColumnIfMissing(rel.joinColumn, mappingEntity, owned);
         continue;
       }
       const referencedColumn =
@@ -1956,20 +2044,19 @@ export class SchemaRegistrar {
         onDelete: rel.option?.onDelete,
         onUpdate: rel.option?.onUpdate,
       });
-      pushJoinColumnIfMissing(rel.joinColumn, mappingEntity);
+      pushJoinColumnIfMissing(rel.joinColumn, mappingEntity, owned);
     }
 
     // OneToOne (owning side)
-    const oneToOneItems =
-      this.resolver.resolveOneToOneMetadata(TargetEntity) ?? [];
-    for (const rel of oneToOneItems) {
+    for (const owned of oneToOnes) {
+      const rel = owned.relation;
       if (!rel.joinColumn) continue;
       const relatedEntity = rel.getRelatedEntity();
       if (!relatedEntity) continue;
       const relatedMeta = entityScanner.scan(relatedEntity);
       if (!relatedMeta) continue;
       if (rel.option?.createForeignKeyConstraints === false) {
-        pushJoinColumnIfMissing(rel.joinColumn, relatedEntity);
+        pushJoinColumnIfMissing(rel.joinColumn, relatedEntity, owned);
         continue;
       }
       const referencedColumn = relatedMeta.columns.find(
@@ -1990,7 +2077,7 @@ export class SchemaRegistrar {
         onDelete: rel.option?.onDelete,
         onUpdate: rel.option?.onUpdate,
       });
-      pushJoinColumnIfMissing(rel.joinColumn, relatedEntity);
+      pushJoinColumnIfMissing(rel.joinColumn, relatedEntity, owned);
     }
 
     // TPT (JOINED) child: PK references the root table's PK.
@@ -2066,10 +2153,11 @@ export class SchemaRegistrar {
     const driver = this.driverForEntity(TargetEntity);
     const canAlterFk = this.driverSupportsAlterAddFk();
 
-    // Look up ManyToOne relations through the layered metadata system.
-    const manyToOneItems = this.resolver.resolveManyToOneMetadata(TargetEntity);
+    // The relations whose join columns this table holds.
+    const { manyToOnes, oneToOnes } = this.tableRelations(TargetEntity);
+    const manyToOneItems = manyToOnes.map((r) => r.relation);
 
-    const isValidManyToOne = manyToOneItems && manyToOneItems.length > 0;
+    const isValidManyToOne = manyToOneItems.length > 0;
 
     // If any ManyToOne relation exists, create the foreign keys.
     if (isValidManyToOne) {
@@ -2160,8 +2248,7 @@ export class SchemaRegistrar {
     }
 
     // Create FKs for the owning side of each OneToOne relation (the side with joinColumn).
-    const oneToOneItems = this.resolver.resolveOneToOneMetadata(TargetEntity);
-    for (const oneToOneItem of oneToOneItems) {
+    for (const oneToOneItem of oneToOnes.map((r) => r.relation)) {
       const { joinColumn } = oneToOneItem;
       if (!joinColumn) continue; // Inverse side has no FK.
       // Skip FK creation when createForeignKeyConstraints is false, mirroring
