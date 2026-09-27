@@ -12,7 +12,7 @@ import {
   ComputedColumnMetadata,
 } from "../../decorators/ComputedColumn";
 import { SchemaDialect } from "./SchemaGenerator";
-import { collectEntityColumns } from "./entityColumns";
+import { collectTableColumns, tableOwnerEntity } from "./entityColumns";
 import {
   columnNameSimilarity,
   columnNamesLookRenamed,
@@ -321,6 +321,10 @@ export class SchemaDiff {
 
     const entityTableNames = new Set<string>();
 
+    // One entry per table: a SINGLE_TABLE child is compared as its root's
+    // table, which holds the whole hierarchy.
+    entities = [...new Set(entities.map((entity) => tableOwnerEntity(entity)))];
+
     // Declared column types come from the driver's own column builder, so the
     // ALTER/ADD this diff proposes is spelled exactly like the CREATE TABLE
     // the same entity would produce on this server version.
@@ -514,7 +518,7 @@ export class SchemaDiff {
   private getEntityColumns<T>(
     entity: ClazzType<T>,
   ): Array<{ name: string; options: ColumnOption }> {
-    return collectEntityColumns(entity);
+    return collectTableColumns(entity);
   }
 
   private getComputedColumns<T>(

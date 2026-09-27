@@ -48,7 +48,7 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
 import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "../PropertyColumnMap";
-import { collectEntityColumns, EntityColumnDef } from "./entityColumns";
+import { collectTableColumns, EntityColumnDef } from "./entityColumns";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
 import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import {
@@ -669,7 +669,7 @@ export class SchemaGenerator {
   }
 
   private getColumns<T>(entity: ClazzType<T>): ColumnDef[] {
-    return collectEntityColumns(entity);
+    return collectTableColumns(entity);
   }
 
   /**
