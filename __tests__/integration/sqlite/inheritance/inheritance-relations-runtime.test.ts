@@ -3,8 +3,9 @@
  * SQLite In-Memory: relations of an inheritance hierarchy, written and read.
  *
  * - A subclass that declared a relation of its own lost every relation it
- *   inherited: the relation lookup filed relations under the declaring class
- *   and only fell back to the inherited ones when the subclass had none.
+ *   inherited — from an inheritance root or a plain base class alike: the
+ *   relation lookup filed relations under the declaring class and only fell
+ *   back to the inherited ones when the subclass had none.
  * - A JOINED child's own join column was written to the root's table, so the
  *   INSERT failed, and a JOINED child read neither table's join-only column,
  *   so `${relation}Id` was missing and `relations` failed on the column.
@@ -99,6 +100,22 @@ class IrrVehicle extends IrrAsset {
   driver!: IrrOwner | null;
 }
 
+// No inheritance strategy: an entity extending a plain base class.
+class IrrStamped {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToOne(() => IrrOwner, (o: any) => o.created)
+  @RelationColumn({ name: "creator_id" })
+  creator!: IrrOwner | null;
+}
+
+@Entity({ name: "irr_page" })
+class IrrPage extends IrrStamped {
+  @Column() slug!: string;
+  @ManyToOne(() => IrrOwner, (o: any) => o.pages)
+  @RelationColumn({ name: "author_id" })
+  author!: IrrOwner | null;
+}
+
 // No hierarchy: two relations whose join columns start with their names.
 @Entity({ name: "irr_note" })
 class IrrNote {
@@ -135,6 +152,7 @@ describe("[Integration] SQLite: inheritance hierarchy relations at runtime", () 
           IrrCard,
           IrrAsset,
           IrrVehicle,
+          IrrPage,
           IrrNote,
         ],
         synchronize: true,
@@ -217,6 +235,27 @@ describe("[Integration] SQLite: inheritance hierarchy relations at runtime", () 
       });
     });
 
+    it("loads a root relation on a polymorphic read into each subclass", async () => {
+      await em.save(IrrReview, { title: "t", reviewer: "r", owner: alice, editor: bob } as any);
+      await em.save(IrrMemo, { title: "m", owner: bob } as any);
+
+      const docs = await em.find(IrrDoc, {
+        relations: ["owner"],
+        orderBy: { id: "ASC" },
+      } as any);
+      expect(docs[0]).toBeInstanceOf(IrrReview);
+      expect(docs[1]).toBeInstanceOf(IrrMemo);
+      expect(plain(docs[0])).toMatchObject({
+        editorId: bob.id,
+        owner: { id: alice.id, name: "alice" },
+      });
+      expect(plain(docs[1]).owner).toEqual({ id: bob.id, name: "bob" });
+      expect(Object.keys(docs[0])).not.toContain("owner_name");
+
+      const unloaded = await em.find(IrrDoc, { orderBy: { id: "ASC" } } as any);
+      expect(unloaded[0]).toMatchObject({ ownerId: alice.id, editorId: bob.id });
+      expect(unloaded[0].owner).toBeUndefined();
+    });
   });
 
   describe("SINGLE_TABLE", () => {
@@ -231,6 +270,13 @@ describe("[Integration] SQLite: inheritance hierarchy relations at runtime", () 
       });
     });
 
+    it("returns subclass instances from a polymorphic read with relations", async () => {
+      await em.save(IrrCard, { amount: 5, payer: alice, holder: bob } as any);
+
+      const [payment] = await em.find(IrrPayment, { relations: ["payer"] } as any);
+      expect(payment).toBeInstanceOf(IrrCard);
+      expect(plain(payment).payer).toEqual({ id: alice.id, name: "alice" });
+    });
   });
 
   describe("TABLE_PER_CLASS", () => {
@@ -247,4 +293,26 @@ describe("[Integration] SQLite: inheritance hierarchy relations at runtime", () 
     });
   });
 
+  it("keeps a base class's relation on an entity that declares its own", async () => {
+    await em.save(IrrPage, { slug: "p", creator: alice, author: bob } as any);
+
+    const [page] = await em.find(IrrPage, { relations: ["creator", "author"] } as any);
+    expect(plain(page)).toMatchObject({
+      creatorId: alice.id,
+      authorId: bob.id,
+      creator: { id: alice.id, name: "alice" },
+      author: { id: bob.id, name: "bob" },
+    });
+  });
+
+  it("does not build a key-only object for a relation the read did not load", async () => {
+    await em.save(IrrNote, { body: "b", author: alice, checker: bob } as any);
+
+    const [note] = await em.find(IrrNote, { relations: ["author"] } as any);
+    expect(plain(note)).toMatchObject({
+      checkerId: bob.id,
+      author: { id: alice.id, name: "alice" },
+      checker: null,
+    });
+  });
 });

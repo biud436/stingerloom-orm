@@ -427,6 +427,29 @@ FK 컬럼(`storeFk`)이 자식 테이블이 아니라 루트 테이블(`payment`
 TPT에서 루트 엔티티에 정의된 FK 컬럼은 루트 테이블에 저장돼요. ORM이 JOIN 쿼리를 빌드할 때 자동으로 FK 컬럼을 올바른 테이블로 한정하기 때문에 어떤 테이블이 어떤 컬럼을 소유하는지 신경 쓸 필요가 없어요.
 :::
 
+루트를 다형성으로 조회할 때도 관계를 로드할 수 있고, 각 행은 여전히 자기 서브클래스로 반환됩니다. `em.find(Payment, { relations: ["store"] })`는 `store`가 채워진 `CreditCardPayment`와 `BankTransferPayment` 인스턴스를 돌려줘요.
+
+### 서브클래스가 선언한 관계
+
+자식은 상속받은 관계 외에 자기만의 관계를 선언할 수 있습니다. 그 조인 컬럼과 외래 키는 자식 테이블에 놓이고, 루트의 관계는 계속 루트 테이블에 자기 조인 컬럼을 둡니다. 조인 컬럼에 별도의 `@Column`은 필요 없어요. `@RelationColumn({ name })`만으로 충분하고, `save()`와 조회는 그 컬럼이 있는 테이블을 알아서 사용합니다.
+
+```typescript
+@Entity()
+@DiscriminatorValue("credit_card")
+export class CreditCardPayment extends Payment {
+  @Column()
+  cardNumber!: string;
+
+  @ManyToOne(() => Bank, (b) => b.cards)
+  @RelationColumn({ name: "issuer_id" })
+  issuer!: Bank; // credit_card_payment.issuer_id
+}
+
+const cards = await em.find(CreditCardPayment, {
+  relations: ["store", "issuer"], // payment.storeFk, credit_card_payment.issuer_id
+});
+```
+
 ## 7. SELECT -- findOne 사용
 
 `findOne`은 `find`와 동일하게 동작하지만 단일 엔티티 또는 `null`을 반환해요.

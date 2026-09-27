@@ -1250,12 +1250,17 @@ export class ReadExecutor {
   ): EntityResult<T> {
     const { entity, hasEagerJoins } = op;
     const isEntityArray = queryResult.results.length > 1;
+    // The relations JOINed into the rows — `hasEagerJoins` also covers the
+    // JOINs of an inheritance hierarchy's tables.
+    const joined = new Set<string>([
+      ...op.eagerM2O.map((rel) => rel.columnName),
+      ...op.eagerO2O.map((rel) => rel.propertyKey),
+    ]);
 
     // STI/TPC: polymorphic query on the root entity — instantiate the correct subclass via the discriminator
     if (
       (op.inheritanceStrategy === "SINGLE_TABLE" || op.isTPCPolymorphic) &&
-      this.inheritanceResolver.isPolymorphicQuery(entity) &&
-      !(hasEagerJoins && !op.isTPCPolymorphic)
+      this.inheritanceResolver.isPolymorphicQuery(entity)
     ) {
       const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
       const discColName = discCol?.name ?? "dtype";
@@ -1266,6 +1271,7 @@ export class ReadExecutor {
           queryResult,
           discMap,
           discColName,
+          joined,
         ) as EntityResult<T>;
       }
     } else if (op.isTPTPolymorphic) {
@@ -1290,6 +1296,7 @@ export class ReadExecutor {
           discMap,
           discCol.name,
           childPrefixMap,
+          joined,
         ) as EntityResult<T>;
       }
     } else if (
@@ -1300,6 +1307,8 @@ export class ReadExecutor {
       return resultTransformer.transformNested(
         entity,
         queryResult,
+        undefined,
+        joined,
       ) as EntityResult<T>;
     }
 
