@@ -151,6 +151,72 @@ describe("[Integration] SQLite: inheritance hierarchy relations at runtime", () 
   });
 
   describe("JOINED", () => {
+    it("writes each join column to the table that holds it", async () => {
+      const saved = await em.save(IrrReview, {
+        title: "t",
+        reviewer: "r",
+        owner: alice,
+        editor: bob,
+      } as any);
+
+      expect(await rows("irr_doc")).toEqual([
+        { id: saved.id, title: "t", dtype: "review", owner_id: alice.id },
+      ]);
+      expect(await rows("irr_review")).toEqual([
+        { id: saved.id, reviewer: "r", editor_id: bob.id },
+      ]);
+      expect(saved).toMatchObject({ ownerId: alice.id, editorId: bob.id });
+    });
+
+    it("moves each join column on its own table when the relations change", async () => {
+      const saved = await em.save(IrrReview, {
+        title: "t",
+        reviewer: "r",
+        owner: alice,
+        editor: bob,
+      } as any);
+      await em.save(IrrReview, { id: saved.id, owner: bob, editor: alice } as any);
+
+      expect((await rows("irr_doc"))[0].owner_id).toBe(bob.id);
+      expect((await rows("irr_review"))[0].editor_id).toBe(alice.id);
+    });
+
+    it("reads the child's and the inherited join columns and loads both relations", async () => {
+      const saved = await em.save(IrrReview, {
+        title: "t",
+        reviewer: "r",
+        owner: alice,
+        editor: bob,
+      } as any);
+
+      const [plainRead] = await em.find(IrrReview, {});
+      expect(plainRead).toMatchObject({ ownerId: alice.id, editorId: bob.id });
+
+      const loaded = await em.findOne(IrrReview, {
+        where: { id: saved.id },
+        relations: ["owner", "editor"],
+      } as any);
+      expect(plain(loaded)).toMatchObject({
+        owner: { id: alice.id, name: "alice" },
+        editor: { id: bob.id, name: "bob" },
+      });
+
+      const byKeys = await em.find(IrrReview, {
+        where: { ownerId: alice.id, editorId: bob.id },
+      } as any);
+      expect(byKeys.map((r) => r.id)).toEqual([saved.id]);
+    });
+
+    it("loads an inherited relation on a child that declares none", async () => {
+      await em.save(IrrMemo, { title: "m", note: "n", owner: bob } as any);
+
+      const [memo] = await em.find(IrrMemo, { relations: ["owner"] } as any);
+      expect(plain(memo)).toMatchObject({
+        ownerId: bob.id,
+        owner: { id: bob.id, name: "bob" },
+      });
+    });
+
   });
 
   describe("SINGLE_TABLE", () => {
