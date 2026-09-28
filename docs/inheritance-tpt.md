@@ -319,6 +319,8 @@ The `ResultTransformer.toTPTPolymorphicEntities()` method handles this deseriali
 4. Discards prefixed columns that belong to other child types (e.g., drops `bank_transfer_payment_bankCode` when the row is a `credit_card` type)
 5. Instantiates the correct class with the flattened row data
 
+`findWithCursor(Payment)` pages the same rows: it reads this SELECT as a derived table, so the keyset and the criteria name the root's columns, and each row of the page is its subclass. The cursor order must be a root column.
+
 ## 6. SELECT -- With Relations
 
 Relations defined on the root entity are inherited by all children. Here is an example with a `@ManyToOne` relation on the root `Payment` entity.

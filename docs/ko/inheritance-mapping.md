@@ -820,7 +820,7 @@ Polymorphic query가 필요한가?
 | `em.updateMany/update/increment/decrement/softDelete/restore(ChildEntity)` | STI: discriminator WHERE 추가, TPT: 루트 JOIN으로 일치 키를 조회한 뒤 각 테이블의 자기 컬럼을 키로 갱신 |
 | `em.count/exists/sum/avg/min/max(ChildEntity)`, `em.findWithCursor(ChildEntity)` | STI: discriminator WHERE 추가, TPT: 자식 `INNER JOIN` 루트를 읽으므로 조건·집계 필드·정렬 컬럼에 상속 컬럼 사용 가능 |
 | `em.count/sum/avg/min/max(RootEntity)` | STI/TPT: 공유/루트 테이블에 이미 전 행이 있음. TPC: `UNION ALL`에 대해 집계 |
-| `em.findWithCursor(RootEntity)` | TPC: `(정렬 컬럼, id, discriminator)` 키셋으로 `UNION ALL`을 페이지네이션 |
+| `em.findWithCursor(RootEntity)` | TPT: 루트에 모든 자식 테이블을 `LEFT JOIN`해 페이지네이션하고 각 행을 서브클래스로 반환. TPC: `(정렬 컬럼, id, discriminator)` 키셋으로 `UNION ALL`을 페이지네이션 |
 | `em.updateMany/softDelete/restore/delete/deleteMany(RootEntity)` | TPC: 콘크리트 테이블마다 실행, `affected` 합산. `orderBy`/`limit`가 있는 `updateMany`는 거부 |
 | `em.createQueryBuilder(Entity)` | 완전 지원 (STI discriminator WHERE, TPT 자동 JOIN, TPC UNION ALL, polymorphic 역직렬화) |
 | `buf.find(Entity)` | 완전 지원 (EntityManager에 위임) |
