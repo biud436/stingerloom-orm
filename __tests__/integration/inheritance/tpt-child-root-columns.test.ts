@@ -150,6 +150,25 @@ describe.each(drivers)(
       expect(second.hasNextPage).toBe(false);
     });
 
+    it("findWithCursor() on the root returns each row as its subclass", async () => {
+      const em: any = conn.em;
+      const first = await em.findWithCursor(Doc, { take: 2, orderBy: "score", direction: "DESC" });
+      const second = await em.findWithCursor(Doc, {
+        take: 2,
+        orderBy: "score",
+        direction: "DESC",
+        cursor: first.nextCursor,
+      });
+      const rows = [...first.data, ...second.data];
+      expect(rows.map((d: any) => [d.constructor.name, d.reviewer ?? d.note])).toEqual([
+        ["ReviewEntity", "cat"],
+        ["ReviewEntity", "amy"],
+        ["MemoEntity", "n"],
+        ["ReviewEntity", "bob"],
+      ]);
+      expect(second.hasNextPage).toBe(false);
+    });
+
     it("updateMany() writes both tables, ordered and limited by a root column", async () => {
       const result = await (conn.em as any).updateMany(
         Review,

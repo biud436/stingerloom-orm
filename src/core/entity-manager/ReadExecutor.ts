@@ -765,28 +765,86 @@ export class ReadExecutor {
     op: FindOperation<T>,
     selectMap: string[],
   ): void {
-    const pk = op.metadata.columns.find((c: any) => c.options?.primary);
-    const children = this.inheritanceResolver
-      .getConcreteEntities(op.entity)
-      .filter((c) => c !== op.entity);
-    for (const ChildEntity of children) {
+    selectMap.push(...this.polymorphicChildColumns(op.entity, op.metadata));
+  }
+
+  private polymorphicChildColumns(
+    root: ClazzType<any>,
+    rootMetadata: { columns: ColumnMetadata[] },
+  ): string[] {
+    const columns: string[] = [];
+    const pk = rootMetadata.columns.find((c: any) => c.options?.primary);
+    if (!pk) return columns;
+    for (const ChildEntity of this.tptChildren(root)) {
       const childMeta = this.resolver.resolveEntityMetadata(ChildEntity);
-      if (!childMeta || !pk) continue;
+      if (!childMeta) continue;
       const childTableName = childMeta.name;
       const childColumns = new Set(
         this.inheritanceResolver
           .getOwnColumns(ChildEntity)
           .map((col) => col.name as string),
       );
-      for (const name of joinedChildJoinColumns(this.resolver, ChildEntity, op.entity)) {
+      for (const name of joinedChildJoinColumns(this.resolver, ChildEntity, root)) {
         childColumns.add(name);
       }
       for (const name of childColumns) {
-        selectMap.push(
+        columns.push(
           `${this.ctx.wrap(childTableName)}.${this.ctx.wrap(name)} AS ${this.ctx.wrap(`${childTableName}_${name}`)}`,
         );
       }
     }
+    return columns;
+  }
+
+  /** The subclasses of a JOINED root, each with a table of its own. */
+  private tptChildren(root: ClazzType<any>): ClazzType<any>[] {
+    return this.inheritanceResolver
+      .getConcreteEntities(root)
+      .filter((c) => c !== root);
+  }
+
+  /**
+   * Discriminator value → child table name, the prefix a polymorphic JOINED
+   * read gives each subclass's columns.
+   */
+  private tptChildPrefixMap(root: ClazzType<any>): Map<string, string> {
+    const prefixes = new Map<string, string>();
+    for (const child of this.tptChildren(root)) {
+      const childMeta = this.resolver.resolveEntityMetadata(child);
+      const value = this.inheritanceResolver.getDiscriminatorValue(child);
+      if (childMeta && value) prefixes.set(value, childMeta.name);
+    }
+    return prefixes;
+  }
+
+  /**
+   * `SELECT <root columns>, <child columns as childTable_column> FROM root
+   * LEFT JOIN child ...` — a JOINED root's rows with each subclass's columns,
+   * as find() reads them. Wrapped as a derived table, the unqualified WHERE
+   * and keyset of a cursor page read the root's columns under their names.
+   */
+  private buildJoinedRootSelect(
+    root: ClazzType<any>,
+    rootMetadata: EntityScannerMetadata,
+    plan: ReadColumnPlan,
+  ): Sql | null {
+    const pk = rootMetadata.columns.find((c: any) => c.options?.primary);
+    if (!pk) return null;
+    const rootTable = this.ctx.wrap(rootMetadata.name);
+    const columns = [
+      ...plan.selectQualified,
+      ...this.polymorphicChildColumns(root, rootMetadata),
+    ];
+    const joins: string[] = [];
+    for (const child of this.tptChildren(root)) {
+      const childMeta = this.resolver.resolveEntityMetadata(child);
+      if (!childMeta) continue;
+      const childTable = this.ctx.wrap(childMeta.name);
+      joins.push(
+        ` LEFT JOIN ${this.ctx.wrapTable(childMeta.name)} AS ${childTable} ON ${rootTable}.${this.ctx.wrap(pk.name)} = ${childTable}.${this.ctx.wrap(pk.name)}`,
+      );
+    }
+    return sql`SELECT ${raw(columns.join(", "))} FROM ${raw(this.ctx.wrapTable(rootMetadata.name))} AS ${raw(rootTable)}${raw(joins.join(""))}`;
   }
 
   /**
@@ -1279,23 +1337,12 @@ export class ReadExecutor {
       const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
       const discMap = this.inheritanceResolver.buildDiscriminatorMap(entity);
       if (discCol && discMap.size > 0) {
-        const childPrefixMap = new Map<string, string>();
-        const children = this.inheritanceResolver
-          .getConcreteEntities(entity)
-          .filter((c) => c !== entity);
-        for (const child of children) {
-          const childMeta = this.resolver.resolveEntityMetadata(child);
-          const dv = this.inheritanceResolver.getDiscriminatorValue(child);
-          if (childMeta && dv) {
-            childPrefixMap.set(dv, childMeta.name);
-          }
-        }
         return resultTransformer.toTPTPolymorphicEntities(
           entity,
           queryResult,
           discMap,
           discCol.name,
-          childPrefixMap,
+          this.tptChildPrefixMap(entity),
           joined,
         ) as EntityResult<T>;
       }
@@ -1550,11 +1597,19 @@ export class ReadExecutor {
       // a literal. The discriminator also rides in the keyset (see
       // prepareCursorQuery) because the concrete tables number their own PKs.
       // A JOINED child pages over its table joined to the root's, which
-      // holds the inherited columns the where and the keyset may name.
+      // holds the inherited columns the where and the keyset may name; a
+      // JOINED root over itself joined to every child table, so each row
+      // carries its subclass's columns as find() reads them.
       const qb = RawQueryBuilderFactory.create();
       const joinedSelect = isJoinedChild(this.inheritanceResolver, entity)
         ? buildJoinedChildSelect(this.tpcSourceContext(), entity)
-        : null;
+        : this.isTptPolymorphicRoot(entity)
+          ? this.buildJoinedRootSelect(
+              entity,
+              metadata,
+              this.getColumnPlan(entity, metadata),
+            )
+          : null;
       if (keyset.subKeyColumn !== undefined) {
         const unionSql = buildTpcUnionSource(this.tpcSourceContext(), entity);
         qb.select(["*"]).from(sql`(${unionSql})`, this.ctx.wrap(TPC_UNION_ALIAS)).where(whereMap);
@@ -1783,8 +1838,9 @@ export class ReadExecutor {
 
   /**
    * Entity instances of a cursor page: a TABLE_PER_CLASS root page (the one
-   * carrying a sub key) instantiates each row's subtype via the discriminator
-   * exactly like find(); every other page hydrates the queried class.
+   * carrying a sub key) and a JOINED root page instantiate each row's
+   * subtype via the discriminator exactly like find(); every other page
+   * hydrates the queried class.
    */
   private hydrateCursorRows<T>(
     entity: ClazzType<T>,
@@ -1803,7 +1859,28 @@ export class ReadExecutor {
         );
       }
     }
+    if (this.isTptPolymorphicRoot(entity)) {
+      const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
+      const discMap = this.inheritanceResolver.buildDiscriminatorMap(entity);
+      if (discCol && discMap.size > 0) {
+        return transformer.toTPTPolymorphicEntities(
+          entity,
+          page,
+          discMap,
+          discCol.name,
+          this.tptChildPrefixMap(entity),
+        );
+      }
+    }
     return transformer.toEntities(entity, page);
+  }
+
+  /** A JOINED root whose reads are polymorphic: it has subclasses. */
+  private isTptPolymorphicRoot(entity: ClazzType<any>): boolean {
+    return (
+      this.inheritanceResolver.getStrategy(entity) === "JOINED" &&
+      this.inheritanceResolver.isPolymorphicQuery(entity)
+    );
   }
 
   /**

@@ -379,7 +379,7 @@ Do you need polymorphic queries (em.find(RootEntity))?
 | `em.updateMany/update/increment/decrement/softDelete/restore(ChildEntity)` | STI: adds discriminator to WHERE. TPT: reads the matching keys through the root JOIN, then updates each table's own columns by key |
 | `em.count/exists/sum/avg/min/max(ChildEntity)`, `em.findWithCursor(ChildEntity)` | STI: adds discriminator to WHERE. TPT: reads the child `INNER JOIN` root, so criteria, fields and sort columns may name inherited columns |
 | `em.count/sum/avg/min/max(RootEntity)` | STI/TPT: the shared/root table already holds every row. TPC: aggregates over the `UNION ALL` |
-| `em.findWithCursor(RootEntity)` | TPC: pages the `UNION ALL` with a `(order, id, discriminator)` keyset |
+| `em.findWithCursor(RootEntity)` | TPT: pages the root `LEFT JOIN` every child table, each row as its subclass. TPC: pages the `UNION ALL` with a `(order, id, discriminator)` keyset |
 | `em.updateMany/softDelete/restore/delete/deleteMany(RootEntity)` | TPC: runs once per concrete table, `affected` summed; `updateMany` with `orderBy`/`limit` is rejected |
 | `em.createQueryBuilder(Entity)` | Full support -- STI discriminator WHERE, TPT auto JOIN, TPC UNION ALL, polymorphic deserialization |
 | `buf.find(Entity)` | Full support -- delegates to EntityManager |
