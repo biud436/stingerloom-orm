@@ -253,11 +253,48 @@ describe("[Integration] SQLite: relations on a TABLE_PER_CLASS root", () => {
   });
 
   describe("SelectQueryBuilder on the root", () => {
+    it("hydrates each row's join columns by property name", async () => {
+      const rows = byLabel(await em.createQueryBuilder(TrrAsset, "a").getMany());
+
+      expect(rows.map((r) => r.constructor)).toEqual([TrrVehicle, TrrBuilding, TrrAsset]);
+      expect(plain(rows[0])).toEqual({
+        id: 1,
+        label: "car",
+        ownerId: alice.id,
+        keeperId: bob.id,
+        wheels: 4,
+        driverId: bob.id,
+        dtype: "vehicle",
+      });
+      expect(plain(rows[1])).not.toHaveProperty("driverId");
+      expect(plain(rows[1])).not.toHaveProperty("driver_id");
+    });
+
     it("filters and counts by a root relation's key", async () => {
       const qb = () => em.createQueryBuilder(TrrAsset, "a").where("ownerId" as any, alice.id);
 
       expect(byLabel(await qb().getMany()).map((r) => r.label)).toEqual(["car", "plot"]);
       expect(await qb().getCount()).toBe(2);
+    });
+
+    it("hydrates a joined root relation into each subclass instance", async () => {
+      const loaded = byLabel(
+        await (em.createQueryBuilder(TrrAsset, "a") as any).loadRelation("owner").getMany(),
+      );
+      const joined = byLabel(
+        await (em.createQueryBuilder(TrrAsset, "a") as any)
+          .leftJoinRelationAndSelect("owner", "o")
+          .getMany(),
+      );
+
+      // Three roots although they share id 1 — one per concrete table.
+      for (const rows of [loaded, joined]) {
+        expect(rows.map((r: any) => [r.constructor, r.ownerId, r.owner?.name])).toEqual([
+          [TrrVehicle, alice.id, "alice"],
+          [TrrBuilding, bob.id, "bob"],
+          [TrrAsset, alice.id, "alice"],
+        ]);
+      }
     });
   });
 });

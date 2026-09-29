@@ -1,10 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * MySQL / PostgreSQL: relations on a TABLE_PER_CLASS root.
+ * MySQL / PostgreSQL: relations on a TABLE_PER_CLASS root, and the
+ * SelectQueryBuilder's polymorphic hydration.
  *
- * Mirrors the SQLite suite tpc-root-relations. What is dialect-specific
- * here: `floors`, an integer column only the third concrete table holds,
- * needs PostgreSQL's typed NULL padding — two untyped NULLs ahead of it would
+ * Mirrors the SQLite suites tpc-root-relations and
+ * querybuilder-polymorphic-hydration. What is dialect-specific here:
+ * `floors`, an integer column only the third concrete table holds, needs
+ * PostgreSQL's typed NULL padding — two untyped NULLs ahead of it would
  * resolve the UNION column to text — and a relation is JOINed onto the
  * derived table rather than onto a base table.
  */
@@ -19,6 +21,7 @@ import {
   Column,
   PrimaryGeneratedColumn,
   Inheritance,
+  DiscriminatorColumn,
   DiscriminatorValue,
   ManyToOne,
   OneToMany,
@@ -34,6 +37,7 @@ const TABLES = {
   asset: `trd_asset_${suffix}`,
   vehicle: `trd_vehicle_${suffix}`,
   building: `trd_building_${suffix}`,
+  pay: `trd_pay_${suffix}`,
 };
 
 function defineEntities() {
@@ -69,7 +73,24 @@ function defineEntities() {
     @Column({ type: "int", nullable: true }) floors!: number;
   }
 
-  return { Owner, Asset, Vehicle, Building };
+  @Entity({ name: TABLES.pay })
+  @Inheritance({ strategy: "SINGLE_TABLE" })
+  @DiscriminatorColumn({ name: "ptype", type: "varchar", length: 20 })
+  class Payment {
+    @PrimaryGeneratedColumn() id!: number;
+    @Column({ type: "int", name: "pay_amount" }) amount!: number;
+    @ManyToOne(() => Owner, (o: any) => o.payments)
+    @RelationColumn({ name: "payer_id" })
+    payer!: Owner | null;
+  }
+
+  @Entity()
+  @DiscriminatorValue("card")
+  class Card extends Payment {
+    @Column({ type: "varchar", length: 20, nullable: true }) last4!: string;
+  }
+
+  return { Owner, Asset, Vehicle, Building, Payment, Card };
 }
 
 type Entities = ReturnType<typeof defineEntities>;
@@ -108,11 +129,13 @@ describe.each(drivers)(
       await em.save(E.Vehicle, { label: "car", wheels: 4, owner: alice, driver: bob });
       await em.save(E.Building, { label: "house", floors: 2, owner: bob });
       await em.save(E.Asset, { label: "plot", owner: alice });
+      await em.save(E.Card, { amount: 5, last4: "4242", payer: alice });
+      await em.save(E.Payment, { amount: 7, payer: alice });
     }, 60000);
 
     afterAll(async () => {
       if (em) {
-        for (const t of [TABLES.vehicle, TABLES.building, TABLES.asset, TABLES.owner]) {
+        for (const t of [TABLES.vehicle, TABLES.building, TABLES.asset, TABLES.pay, TABLES.owner]) {
           await drop(t);
         }
       }
@@ -150,6 +173,27 @@ describe.each(drivers)(
       expect(
         owners.map((o: any) => byLabel(o.assets).map((a) => `${a.constructor.name}:${a.label}`)),
       ).toEqual([["Vehicle:car", "Asset:plot"], ["Building:house"]]);
+    });
+
+    it("SelectQueryBuilder hydrates a joined relation on a TPC and an STI root", async () => {
+      const assets = byLabel(
+        await em.createQueryBuilder(E.Asset, "a").loadRelation("owner").getMany(),
+      );
+      expect(assets.map((r) => [r.constructor, r.ownerId, r.owner?.name])).toEqual([
+        [E.Vehicle, alice.id, "alice"],
+        [E.Building, bob.id, "bob"],
+        [E.Asset, alice.id, "alice"],
+      ]);
+
+      const payments = await em
+        .createQueryBuilder(E.Payment, "p")
+        .leftJoinRelationAndSelect("payer", "o")
+        .orderBy({ id: "ASC" })
+        .getMany();
+      expect(payments.map((r: any) => [r.constructor, r.amount, r.payerId, r.payer?.name])).toEqual([
+        [E.Card, 5, alice.id, "alice"],
+        [E.Payment, 7, alice.id, "alice"],
+      ]);
     });
   },
 );
