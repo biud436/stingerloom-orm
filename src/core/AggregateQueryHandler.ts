@@ -14,7 +14,11 @@ import { createDialectExpression } from "../dialects/DialectExpression";
 import { QueryResult } from "../types/QueryResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
-import { buildTpcFromSource, isTpcPolymorphicRoot } from "./TpcUnionSource";
+import {
+  buildTpcFromSource,
+  isTpcPolymorphicRoot,
+  tpcSourceContextOf,
+} from "./TpcUnionSource";
 import { buildJoinedChildFromSource, isJoinedChild } from "./JoinedChildSource";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import { aggregateToNumber } from "./BigintColumnTransformer";
@@ -64,13 +68,8 @@ export class AggregateQueryHandler {
       // findAndCount()/findWithPage() agree with the rows find() returns.
       // A JOINED child reads its inherited columns from the root table, so
       // it aggregates over the two tables joined, as find() reads it.
-      const inheritanceResolver = this.ctx.getInheritanceResolver();
-      const sourceContext = {
-        inheritanceResolver,
-        resolver: this.resolver,
-        wrap: (n: string) => this.ctx.wrap(n),
-        wrapTable: (n: string) => this.ctx.wrapTable(n),
-      };
+      const sourceContext = tpcSourceContextOf(this.ctx, this.resolver);
+      const { inheritanceResolver } = sourceContext;
       const fromSource: Sql =
         (isTpcPolymorphicRoot(inheritanceResolver, entity)
           ? buildTpcFromSource(sourceContext, entity)

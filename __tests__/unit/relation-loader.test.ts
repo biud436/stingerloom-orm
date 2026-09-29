@@ -3,6 +3,7 @@ import { RelationLoader } from "../../src/core/RelationLoader";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { EntityManagerInternals } from "../../src/core/EntityManagerInternals";
 import { Conditions } from "../../src/core/Conditions";
+import { InheritanceResolver } from "../../src/core/InheritanceResolver";
 
 // Mock RawQueryBuilderFactory / ResultTransformerFactory
 jest.mock("../../src/core/RawQueryBuilderFactory", () => ({
@@ -88,6 +89,7 @@ function createMockCtx(): jest.Mocked<EntityManagerInternals> {
   return {
     wrap: jest.fn((col: string) => `"${col}"`),
     wrapTable: jest.fn((t: string) => `"${t}"`),
+    getInheritanceResolver: jest.fn(() => new InheritanceResolver()),
     isMySqlFamily: jest.fn().mockReturnValue(false),
     isPostgres: jest.fn().mockReturnValue(true),
     getDriver: jest.fn(),

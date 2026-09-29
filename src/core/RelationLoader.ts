@@ -9,6 +9,13 @@ import { QueryResult } from "../types/QueryResult";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import { Conditions } from "./Conditions";
+import {
+  buildTpcUnionSource,
+  isTpcPolymorphicRoot,
+  pruneTpcSiblingColumns,
+  TPC_UNION_ALIAS,
+  tpcSourceContextOf,
+} from "./TpcUnionSource";
 import type {
   ManyToManyMetadata,
   ManyToOneMetadata,
@@ -45,6 +52,55 @@ export class RelationLoader {
       ? parentResults
       : [parentResults];
     return parents as unknown as EntityRecord[];
+  }
+
+  /**
+   * Where a batched read of `RelatedEntity` rows comes from, and how its rows
+   * become entities.
+   *
+   * A TABLE_PER_CLASS root keeps only its own instances in its table; its
+   * subclasses' rows live in theirs. A relation targeting the root is read
+   * from the UNION ALL over every concrete table and each row instantiated
+   * as its subclass, as find() on the root reads them — reading the root's
+   * table alone left out every subclass row.
+   */
+  private relatedRowSource(
+    RelatedEntity: ClazzType<any>,
+    relatedMetadata: { name?: string; columns: ColumnMetadata[] },
+  ): {
+    columns: string[];
+    from: Sql | string;
+    alias?: string;
+    toEntities: (rows: any[]) => any[];
+  } {
+    const transformer = ResultTransformerFactory.create();
+    const inheritanceResolver = this.ctx.getInheritanceResolver();
+    if (isTpcPolymorphicRoot(inheritanceResolver, RelatedEntity)) {
+      const tpcContext = tpcSourceContextOf(this.ctx, this.resolver);
+      const discColumn =
+        inheritanceResolver.getDiscriminatorColumn(RelatedEntity)?.name ?? "dtype";
+      const discMap = inheritanceResolver.buildDiscriminatorMap(RelatedEntity);
+      return {
+        columns: [`${this.ctx.wrap(TPC_UNION_ALIAS)}.*`],
+        from: sql`(${buildTpcUnionSource(tpcContext, RelatedEntity)})`,
+        alias: this.ctx.wrap(TPC_UNION_ALIAS),
+        toEntities: (rows) =>
+          transformer.toPolymorphicEntities(
+            RelatedEntity,
+            {
+              results: pruneTpcSiblingColumns(tpcContext, RelatedEntity, rows, discColumn),
+            } as QueryResult,
+            discMap,
+            discColumn,
+          ),
+      };
+    }
+    return {
+      columns: relatedMetadata.columns.map((col: any) => this.ctx.wrap(col.name)),
+      from: this.ctx.wrapTable(relatedMetadata.name ?? RelatedEntity.name),
+      toEntities: (rows) =>
+        transformer.toEntities(RelatedEntity, { results: rows } as QueryResult),
+    };
   }
 
   /**
@@ -355,12 +411,11 @@ export class RelationLoader {
 
       // 2. Batched query: WHERE fkColumn IN (...parentIds)
       const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
+      const source = this.relatedRowSource(RelatedEntity, relatedMetadata);
 
       const executeQuery = async (session: TransactionSessionManager) => {
         const qb = RawQueryBuilderFactory.create();
-        const selectCols = relatedMetadata.columns.map((col: any) =>
-          this.ctx.wrap(col.name),
-        );
+        const selectCols = [...source.columns];
         selectCols.push(
           `${this.ctx.wrap(fkColumn)} AS ${this.ctx.wrap(fkAlias)}`,
         );
@@ -382,7 +437,7 @@ export class RelationLoader {
         }
 
         qb.select(selectCols)
-          .from(this.ctx.wrapTable(relatedTableName))
+          .from(source.from, source.alias)
           .where(whereConditions);
 
         const resultQuery = qb.build();
@@ -401,7 +456,6 @@ export class RelationLoader {
 
       // 3. Group the results into a Map keyed by FK value
       const childrenByParentId = new Map<any, any[]>();
-      const resultTransformer = ResultTransformerFactory.create();
 
       if (queryResult.results && queryResult.results.length > 0) {
         const rows = queryResult.results;
@@ -413,10 +467,7 @@ export class RelationLoader {
           delete copy[fkAlias];
           return copy;
         });
-        const allChildren = resultTransformer.toEntities(RelatedEntity, {
-          ...queryResult,
-          results: entityRows,
-        } as QueryResult);
+        const allChildren = source.toEntities(entityRows);
 
         for (let i = 0; i < allChildren.length; i++) {
           const fkValue = rows[i][fkAlias];
@@ -673,12 +724,11 @@ export class RelationLoader {
 
         // 2. Batched query: WHERE fkColumn IN (...parentIds)
         const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
+        const source = this.relatedRowSource(RelatedEntity, relatedMetadata);
 
         const executeQuery = async (session: TransactionSessionManager) => {
           const qb = RawQueryBuilderFactory.create();
-          const selectCols = relatedMetadata.columns.map((col: any) =>
-            this.ctx.wrap(col.name),
-          );
+          const selectCols = [...source.columns];
           selectCols.push(
             `${this.ctx.wrap(fkColumn)} AS ${this.ctx.wrap(fkAlias)}`,
           );
@@ -699,7 +749,7 @@ export class RelationLoader {
           }
 
           qb.select(selectCols)
-            .from(this.ctx.wrapTable(relatedTableName))
+            .from(source.from, source.alias)
             .where(whereConditions);
 
           const resultQuery = qb.build();
@@ -718,7 +768,6 @@ export class RelationLoader {
 
         // 3. Group the results into a Map keyed by FK value (1:1 mapping for OneToOne)
         const relatedByParentId = new Map<any, any>();
-        const resultTransformer = ResultTransformerFactory.create();
 
         if (queryResult.results && queryResult.results.length > 0) {
           for (const row of queryResult.results) {
@@ -727,9 +776,7 @@ export class RelationLoader {
 
             const entityRow = { ...row };
             delete entityRow[fkAlias];
-            const [related] = resultTransformer.toEntities(RelatedEntity, {
-              results: [entityRow],
-            } as QueryResult);
+            const [related] = source.toEntities([entityRow]);
 
             if (related !== undefined) {
               relatedByParentId.set(fkValue, related);

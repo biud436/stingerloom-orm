@@ -34,7 +34,11 @@ import { coerceRows, type RawResultOptions } from "./RawValueCoercion";
 import { COLUMN_TOKEN } from "../decorators/Column";
 import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "./PropertyColumnMap";
 import { InheritanceResolver } from "./InheritanceResolver";
-import { buildTpcUnionSource } from "./TpcUnionSource";
+import {
+  buildTpcUnionSource,
+  hierarchyRowColumns,
+  pruneTpcSiblingColumns,
+} from "./TpcUnionSource";
 import {
   JsonPathCondition,
   makeJsonPathExpression,
@@ -404,6 +408,16 @@ export class SelectQueryBuilder<T, TResult = T> {
   /** TPC polymorphic: UNION ALL subquery for FROM clause. */
   protected tpcFromSql?: Sql;
 
+  /**
+   * STI / TPC polymorphic root: every column the hierarchy's rows occupy plus
+   * the discriminator — what the root `alias.*` expands to when a joined
+   * selection needs the root's columns kept apart from its own.
+   */
+  private polymorphicRootColumns?: string[];
+
+  /** TPC polymorphic root: drops the columns a row's own table lacks. */
+  private tpcRowPruner?: (rows: any[]) => any[];
+
   constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
     this.entity = entity;
     this.alias = alias;
@@ -463,6 +477,16 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     if (this.isPolymorphicQuery) {
       this.discriminatorMap = ir.buildDiscriminatorMap(this.entity);
+      if (strategy !== "JOINED") {
+        const columns = hierarchyRowColumns(
+          { inheritanceResolver: ir, resolver },
+          this.entity,
+        );
+        if (!columns.includes(this.discriminatorColumnName)) {
+          columns.push(this.discriminatorColumnName);
+        }
+        this.polymorphicRootColumns = columns;
+      }
     }
 
     switch (strategy) {
@@ -608,16 +632,25 @@ export class SelectQueryBuilder<T, TResult = T> {
     if (!this.isPolymorphicQuery) return;
 
     // TPC root (polymorphic): FROM is the UNION ALL over every concrete table
+    const discColumn = this.discriminatorColumnName ?? "dtype";
     this.tpcFromSql = buildTpcUnionSource(
       {
         inheritanceResolver: ir,
         resolver,
         wrap: (n) => this.em.wrap(n),
         wrapTable: (n) => this.em.wrapTable(n),
+        typedNullPadding: this.emInternals._ctx?.isPostgres?.() ?? false,
       },
       this.entity,
-      this.discriminatorColumnName ?? "dtype",
+      discColumn,
     );
+    this.tpcRowPruner = (rows) =>
+      pruneTpcSiblingColumns(
+        { inheritanceResolver: ir, resolver },
+        this.entity,
+        rows,
+        discColumn,
+      );
   }
 
   // ── Helpers ──────────────────────────────────────────────
@@ -1699,11 +1732,19 @@ export class SelectQueryBuilder<T, TResult = T> {
    * #370: expand the root `alias.*` into explicit `alias_col`-aliased
    * columns so root and joined columns can never collide in the row object
    * (e.g. a root FK `user_id` vs. a joined `` `user`.`id` AS `user_id` ``).
-   * Falls back to plain `alias.*` for inheritance queries, whose SELECT
-   * assembly manages its own column lists.
+   * An STI / TPC polymorphic root expands to the hierarchy's columns; the
+   * JOINED strategy falls back to plain `alias.*`, its SELECT assembly
+   * managing its own column lists.
    */
   private expandRootSelectColumns(): string[] {
     const star = [`${this.em.wrap(this.alias)}.*`];
+    if (this.polymorphicRootColumns) {
+      this.rootSelectExpanded = true;
+      return this.polymorphicRootColumns.map(
+        (dbCol) =>
+          `${this.em.wrap(this.alias)}.${this.em.wrap(dbCol)} AS ${this.em.wrap(`${this.alias}_${dbCol}`)}`,
+      );
+    }
     if (
       this.isPolymorphicQuery ||
       this.tptSelectColumns ||
@@ -3332,15 +3373,19 @@ export class SelectQueryBuilder<T, TResult = T> {
     let entities: TResult[];
 
     // Polymorphic deserialization: instantiate correct subclass per row
-    if (this.isPolymorphicQuery && this.discriminatorMap?.size) {
-      entities =
-        this.inheritanceStrategy === "JOINED" && this.tptChildPrefixMap
-          ? this.applyValidation(this.deserializeTPTPolymorphic(rows))
-          : this.applyValidation(this.deserializePolymorphic(rows));
+    if (
+      this.isPolymorphicQuery &&
+      this.discriminatorMap?.size &&
+      this.inheritanceStrategy === "JOINED" &&
+      this.tptChildPrefixMap
+    ) {
+      entities = this.applyValidation(this.deserializeTPTPolymorphic(rows));
     } else if (this.joinedSelections.length > 0) {
       // #370: *AndSelect joins — split alias-prefixed columns per join,
       // hydrate them into the relation property, and dedupe/group roots.
       entities = this.applyValidation(this.transformJoinedEntityRows(rows));
+    } else if (this.isPolymorphicQuery && this.discriminatorMap?.size) {
+      entities = this.applyValidation(this.deserializePolymorphic(rows));
     } else {
       // Run rows through ResultTransformer so that NamingStrategy reverse-
       // mapping (e.g. SnakeNamingStrategy: `issue_counter` → `issueCounter`)
@@ -3382,6 +3427,10 @@ export class SelectQueryBuilder<T, TResult = T> {
    * are deduped by PK so OneToMany joins group into arrays instead of
    * duplicating the root entity; LEFT JOIN misses become `null` (to-one)
    * or are skipped (to-many).
+   *
+   * An STI / TPC polymorphic root instantiates each root row as the subclass
+   * its discriminator names, and dedupes by PK and discriminator together —
+   * the concrete tables of a TPC hierarchy number their PKs independently.
    */
   protected transformJoinedEntityRows(rows: any[]): TResult[] {
     const transformer = ResultTransformerFactory.create();
@@ -3419,6 +3468,11 @@ export class SelectQueryBuilder<T, TResult = T> {
       return vals.map((v) => String(v)).join("");
     };
 
+    const polymorphic =
+      this.polymorphicRootColumns && this.discriminatorMap?.size
+        ? { column: this.discriminatorColumnName!, map: this.discriminatorMap }
+        : undefined;
+
     const ordered: any[] = [];
     const rootsByKey = new Map<string, any>();
     // Cross-row instance registry: `${parentKey}/${alias}[:${childPk}]` →
@@ -3453,12 +3507,21 @@ export class SelectQueryBuilder<T, TResult = T> {
       }
 
       // 2. Dedup the root by PK; synthesize a unique key when unavailable.
-      const rootRow = parts.get(null) ?? {};
-      const rootKey =
-        pkKeyOf(rootPkCols, rootRow) ?? `row:${syntheticRootSeq++}`;
+      let rootRow = parts.get(null) ?? {};
+      let rootClass: ClazzType<any> = this.entity;
+      let rootPkKey = pkKeyOf(rootPkCols, rootRow);
+      if (polymorphic) {
+        const discValue = rootRow[polymorphic.column];
+        rootClass =
+          (discValue != null ? polymorphic.map.get(String(discValue)) : undefined) ??
+          this.entity;
+        if (rootPkKey !== null) rootPkKey = `${rootPkKey}${String(discValue)}`;
+        if (this.tpcRowPruner) rootRow = this.tpcRowPruner([rootRow])[0];
+      }
+      const rootKey = rootPkKey ?? `row:${syntheticRootSeq++}`;
       let rootInst = rootsByKey.get(rootKey);
       if (!rootInst) {
-        rootInst = toEntity(this.entity, rootRow);
+        rootInst = toEntity(rootClass, rootRow);
         rootsByKey.set(rootKey, rootInst);
         ordered.push(rootInst);
       }
@@ -3544,16 +3607,16 @@ export class SelectQueryBuilder<T, TResult = T> {
     const applyVal = this.applyValidation.bind(this);
 
     const deserialize = (rows: any[]): TResult[] => {
-      if (isPoly && discMap?.size) {
-        if (strategy === "JOINED" && tptMap) {
-          return applyVal(deserializeTPT(rows));
-        }
-        return applyVal(deserializePoly(rows));
+      if (isPoly && discMap?.size && strategy === "JOINED" && tptMap) {
+        return applyVal(deserializeTPT(rows));
       }
       if (hasJoinedSelections) {
         // Mirror getMany(): *AndSelect joins hydrate alias-prefixed columns
         // into relation properties and dedupe/group roots.
         return applyVal(transformJoined(rows));
+      }
+      if (isPoly && discMap?.size) {
+        return applyVal(deserializePoly(rows));
       }
       // Mirror getMany(): run rows through ResultTransformer so NamingStrategy
       // reverse-mapping (e.g. `issue_counter` → `issueCounter`) and column
@@ -4824,6 +4887,8 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.tptPolymorphicSelectColumns = this.tptPolymorphicSelectColumns
       ? [...this.tptPolymorphicSelectColumns] : undefined;
     cloned.tpcFromSql = this.tpcFromSql;
+    cloned.polymorphicRootColumns = this.polymorphicRootColumns;
+    cloned.tpcRowPruner = this.tpcRowPruner;
     return cloned;
   }
 
@@ -5147,20 +5212,19 @@ export class SelectQueryBuilder<T, TResult = T> {
 
   /**
    * STI/TPC polymorphic: read discriminator value from each row and
-   * instantiate the correct subclass.
+   * instantiate the correct subclass through ResultTransformer, so the
+   * reverse column mapping (`@Column({ name })`, NamingStrategy) and the
+   * column transformers apply as they do to a non-polymorphic getMany() —
+   * handing the row to the deserializer directly left every renamed column
+   * under its DB name. A TPC row keeps only its own table's columns.
    */
   private deserializePolymorphic(rows: any[]): any[] {
-    const registry = DeserializerRegistry.getInstance();
-    const discColName = this.discriminatorColumnName!;
-    const discMap = this.discriminatorMap!;
-
-    return rows.map((row) => {
-      const discValue = row[discColName];
-      const TargetClass =
-        (discValue != null ? discMap.get(String(discValue)) : undefined) ??
-        this.entity;
-      return registry.deserialize(TargetClass, row);
-    });
+    return ResultTransformerFactory.create().toPolymorphicEntities(
+      this.entity,
+      { results: this.tpcRowPruner ? this.tpcRowPruner(rows) : rows } as any,
+      this.discriminatorMap!,
+      this.discriminatorColumnName!,
+    );
   }
 
   /**
