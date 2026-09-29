@@ -614,6 +614,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         resolver,
         wrap: (n) => this.em.wrap(n),
         wrapTable: (n) => this.em.wrapTable(n),
+        typedNullPadding: this.emInternals._ctx?.isPostgres?.() ?? false,
       },
       this.entity,
       this.discriminatorColumnName ?? "dtype",

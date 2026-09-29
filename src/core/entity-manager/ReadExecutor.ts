@@ -54,7 +54,9 @@ import { InheritanceResolver } from "../InheritanceResolver";
 import {
   buildTpcUnionSource,
   isTpcPolymorphicRoot,
+  pruneTpcSiblingColumns,
   TPC_UNION_ALIAS,
+  tpcSourceContextOf,
   type TpcSourceContext,
 } from "../TpcUnionSource";
 import {
@@ -105,7 +107,11 @@ interface FindOperation<T> {
   entity: ClazzType<T>;
   findOption: FindOption<T>;
   metadata: EntityScannerMetadata;
-  /** Physical table of `entity` (the child table for a TPT child). */
+  /**
+   * Name the read's FROM source is addressed by: the physical table of
+   * `entity` (the child table for a TPT child), or the UNION ALL alias for a
+   * TPC polymorphic root.
+   */
   tableName: string;
   plan: ReadColumnPlan;
   /** Entity property name → DB column name, built once per call. */
@@ -277,17 +283,32 @@ export class ReadExecutor {
 
   /** The resolvers and identifier wrappers a TPC UNION ALL source is built with. */
   private tpcSourceContext(): TpcSourceContext {
-    return {
-      inheritanceResolver: this.inheritanceResolver,
-      resolver: this.resolver,
-      wrap: (n) => this.ctx.wrap(n),
-      wrapTable: (n) => this.ctx.wrapTable(n),
-    };
+    return tpcSourceContextOf(this.ctx, this.resolver);
   }
   private get inheritanceResolver(): InheritanceResolver { return this.ctx.getInheritanceResolver(); }
   private get relationLoader(): RelationLoader { return this.ctx.getRelationLoader(); }
   private get aggregateHandler(): AggregateQueryHandler { return this.ctx.getAggregateHandler(); }
   private get defaultQueryTimeout(): number | undefined { return this.ctx.getDefaultQueryTimeout(); }
+
+  /**
+   * The rows of a TPC root read with each row limited to its own table's
+   * columns — see {@link pruneTpcSiblingColumns}.
+   */
+  private pruneTpcRows(
+    root: ClazzType<any>,
+    queryResult: QueryResult,
+    discriminatorColumnName: string,
+  ): QueryResult {
+    const results = pruneTpcSiblingColumns(
+      this.tpcSourceContext(),
+      root,
+      queryResult.results,
+      discriminatorColumnName,
+    );
+    return results === queryResult.results
+      ? queryResult
+      : { ...queryResult, results };
+  }
 
   /**
    * The timeout a read should run under: the per-query option when given,
@@ -503,7 +524,7 @@ export class ReadExecutor {
       entity,
       findOption,
       metadata,
-      tableName: metadata.name,
+      tableName: isTPCPolymorphic ? TPC_UNION_ALIAS : metadata.name,
       plan,
       propToCol,
       inheritanceStrategy,
@@ -727,6 +748,10 @@ export class ReadExecutor {
         if (!rootColumns.has(name)) selectMap.push(op.tptQualifyColumn(name));
       }
       for (const name of rootColumns) selectMap.push(op.tptQualifyColumn(name));
+    } else if (op.isTPCPolymorphic) {
+      // Every column of the UNION ALL, whatever `select` says; qualified
+      // when relations are JOINed onto it.
+      selectMap.push(hasEagerJoins ? `${this.ctx.wrap(tableName)}.*` : "*");
     } else if (select) {
       const selectedColumns = this.ctx.resolveSelectColumns<T>(select)
         .map((prop) => propToCol.get(prop) ?? prop);
@@ -1000,7 +1025,7 @@ export class ReadExecutor {
 
     if (op.isTPCPolymorphic) {
       const unionSql = buildTpcUnionSource(this.tpcSourceContext(), entity);
-      qb.select(["*"]).from(sql`(${unionSql})`, this.ctx.wrap(TPC_UNION_ALIAS));
+      qb.select(selectMap).from(sql`(${unionSql})`, this.ctx.wrap(TPC_UNION_ALIAS));
     } else if (op.findOption.distinct) {
       qb.selectDistinct(selectMap).from(this.ctx.wrapTable(tableName));
     } else {
@@ -1326,7 +1351,9 @@ export class ReadExecutor {
       if (discMap.size > 0) {
         return resultTransformer.toPolymorphicEntities(
           entity,
-          queryResult,
+          op.isTPCPolymorphic
+            ? this.pruneTpcRows(entity, queryResult, discColName)
+            : queryResult,
           discMap,
           discColName,
           joined,
@@ -1853,7 +1880,7 @@ export class ReadExecutor {
       if (discMap.size > 0) {
         return transformer.toPolymorphicEntities(
           entity,
-          page,
+          this.pruneTpcRows(entity, page, keyset.subKeyColumn),
           discMap,
           keyset.subKeyColumn,
         );
