@@ -205,7 +205,8 @@ const all = await em.find(Payment, {});
 
 ```sql
 SELECT * FROM (
-  SELECT "id", "amount", "cardNumber", NULL AS "bankCode",
+  SELECT "id", "amount", NULL AS "cardNumber",
+         (SELECT "bankCode" FROM "bank_transfer_payment" WHERE FALSE) AS "bankCode",
          'Payment' AS "payment_type"
   FROM "payment"
   UNION ALL
@@ -219,12 +220,13 @@ SELECT * FROM (
 ) "_tpc";
 ```
 
-Notice four things:
+Notice five things:
 
 1. Each sub-SELECT lists **every** column from the entire hierarchy. If a table does not have a column, `NULL` is used as a placeholder.
 2. A virtual `"payment_type"` column is synthesized using the `@DiscriminatorValue` string. This column does not exist in any table -- it is created on-the-fly.
 3. The entire UNION is wrapped in a subquery aliased as `"_tpc"`.
 4. The root entity (`Payment`) is included as a sub-SELECT too, with `NULL` for child-specific columns.
+5. On PostgreSQL, the first sub-SELECT pads `bankCode` with a zero-row read of the column instead of a bare `NULL`. PostgreSQL types a UNION's columns pairwise from the left, so two bare `NULL`s ahead of the first table that holds a column resolve to `text` -- and a numeric, date or boolean column in a later table then fails the query with `UNION types text and integer cannot be matched`. The read carries the column's own type. It is emitted only for a column whose first holder is the third table or later; MySQL and SQLite always get a plain `NULL`.
 
 **Raw SQL result:**
 
@@ -259,6 +261,61 @@ Let's break down why this query can be expensive.
 ::: warning
 **Bottom line:** TPC is best when `em.find(ChildEntity, {})` (querying a specific child type) is the common case, and `em.find(Payment, {})` (polymorphic queries across the whole hierarchy) is rare. Child-specific queries are the fastest of all three strategies (direct table, no JOINs), but polymorphic queries are the slowest. Understand this trade-off before choosing TPC.
 :::
+
+### Relations on the Root
+
+Every concrete table repeats the relations it inherits. With a `@ManyToOne` on `Payment`, each of the three tables gets its own `store_id` column and foreign key, and a subclass can declare relations of its own next to them.
+
+```typescript
+@Entity()
+@Inheritance({ strategy: "TABLE_PER_CLASS" })
+@DiscriminatorColumn({ name: "payment_type", type: "varchar", length: 50 })
+export class Payment {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  amount!: number;
+
+  @ManyToOne(() => Store, (store) => store.payments)
+  @RelationColumn({ name: "store_id" })
+  store!: Store | null;
+}
+```
+
+The UNION carries each table's join columns like its other columns, so every instance a root read returns has its `storeId`, a `where` can name it, and `relations` JOINs onto the UNION:
+
+```typescript
+const payments = await em.find(Payment, {
+  where: { storeId: 1 },
+  relations: ["store"],
+});
+// [CreditCardPayment { id: 1, amount: 100, storeId: 1, cardNumber: "4111-...", store: Store { id: 1, ... } }, ...]
+```
+
+**Generated SQL (PostgreSQL):**
+
+```sql
+SELECT "_tpc".*, "store"."id" AS "store_id", "store"."name" AS "store_name"
+FROM (
+  SELECT "id", "amount", "store_id", NULL AS "cardNumber", ... FROM "payment"
+  UNION ALL
+  SELECT "id", "amount", "store_id", "cardNumber", ... FROM "credit_card_payment"
+  UNION ALL
+  SELECT "id", "amount", "store_id", NULL AS "cardNumber", ... FROM "bank_transfer_payment"
+) "_tpc"
+LEFT JOIN "store" AS "store" ON "_tpc"."store_id" = "store"."id"
+WHERE "_tpc"."store_id" = $1;
+```
+
+Each instance keeps only the columns its own table holds -- a `CreditCardPayment` has no `bankCode`, and no key of a relation only `BankTransferPayment` declares. The same holds for `findOne()`, `findWithCursor()`, `count()` and the other aggregates, and for the QueryBuilder's `loadRelation()` / `leftJoinRelationAndSelect()`.
+
+The other direction reads the whole hierarchy too: `Store`'s `@OneToMany(() => Payment, { mappedBy: "store" })` loads from the same UNION, so `em.find(Store, { relations: ["payments"] })` returns each store's credit card and bank transfer payments, each as its subclass. An inverse `@OneToOne` targeting the root works the same way.
+
+Two limits follow from the layout:
+
+- **A root read loads the root's relations only.** A relation a subclass declares is not in the root's `relations` (it is rejected as unknown); its join column still comes back on that subclass's instances, and `em.find(Subclass, { relations: [...] })` loads it.
+- **A foreign key cannot reference a UNION.** A `@ManyToOne` whose target is the root itself references the root's own table, so it can point only at instances of the root class -- not at a `CreditCardPayment`, which lives in another table.
 
 ## 7. SELECT -- With findOne
 
@@ -342,7 +399,8 @@ const all = await em
 
 ```sql
 SELECT * FROM (
-  SELECT "id", "amount", "cardNumber", NULL AS "bankCode",
+  SELECT "id", "amount", NULL AS "cardNumber",
+         (SELECT "bankCode" FROM "bank_transfer_payment" WHERE FALSE) AS "bankCode",
          'Payment' AS "payment_type"
   FROM "payment"
   UNION ALL

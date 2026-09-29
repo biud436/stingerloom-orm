@@ -207,7 +207,8 @@ console.log(JSON.stringify(all, null, 2));
 
 ```sql
 SELECT * FROM (
-  SELECT "id", "amount", "cardNumber", NULL AS "bankCode",
+  SELECT "id", "amount", NULL AS "cardNumber",
+         (SELECT "bankCode" FROM "bank_transfer_payment" WHERE FALSE) AS "bankCode",
          'Payment' AS "payment_type"
   FROM "payment"
   UNION ALL
@@ -221,12 +222,13 @@ SELECT * FROM (
 ) "_tpc";
 ```
 
-네 가지를 주목해보세요:
+다섯 가지를 주목해보세요:
 
 1. 각 sub-SELECT가 전체 계층 구조의 **모든** 컬럼을 나열해요. 테이블에 해당 컬럼이 없으면 `NULL`이 자리 표시자로 사용돼요.
 2. `@DiscriminatorValue` 문자열을 사용해서 가상 `"payment_type"` 컬럼이 합성돼요. 이 컬럼은 어떤 테이블에도 존재하지 않아요 -- 즉석에서 만들어지는 거예요.
 3. 전체 UNION이 `"_tpc"`라는 별칭의 서브쿼리로 감싸져요.
 4. 루트 엔티티(`Payment`)도 sub-SELECT에 포함돼요. 자식 고유 컬럼은 `NULL`로 채워져요.
+5. PostgreSQL에서는 첫 sub-SELECT가 `bankCode`를 맨 `NULL`이 아니라 그 컬럼을 0행으로 읽은 값으로 채웁니다. PostgreSQL은 UNION의 컬럼 타입을 왼쪽부터 둘씩 맞춰 가는데, 컬럼을 가진 첫 테이블보다 앞에 맨 `NULL`이 두 개 있으면 그 자리가 `text`로 굳어 버립니다. 그러면 뒤쪽 테이블의 숫자·날짜·불리언 컬럼과 부딪혀 `UNION types text and integer cannot be matched`로 쿼리가 실패합니다. 0행 읽기는 컬럼의 실제 타입을 그대로 가져오기 때문에 이 문제가 없습니다. 컬럼이 세 번째 이후 테이블에서 처음 나올 때만 이렇게 하고, MySQL과 SQLite는 항상 맨 `NULL`을 씁니다.
 
 **Raw SQL 결과:**
 
@@ -282,6 +284,61 @@ SELECT * FROM (
 ::: warning
 **결론:** TPC는 `em.find(ChildEntity, {})`(특정 자식 타입 조회)가 일반적인 경우이고, `em.find(Payment, {})`(전체 계층 구조에 대한 다형성 쿼리)가 드문 경우에 가장 적합해요. 자식별 쿼리는 세 가지 전략 중 가장 빠르지만(직접 테이블 접근, JOIN 없음), 다형성 쿼리는 가장 느려요. TPC를 선택하기 전에 이 트레이드오프를 이해하세요.
 :::
+
+### 루트에서 관계 다루기
+
+TPC에서는 구체 테이블마다 물려받은 관계를 따로 가집니다. `Payment`에 `@ManyToOne`을 두면 세 테이블이 각자 `store_id` 컬럼과 외래 키를 갖고, 서브클래스는 그 옆에 자기 관계를 더 선언할 수 있습니다.
+
+```typescript
+@Entity()
+@Inheritance({ strategy: "TABLE_PER_CLASS" })
+@DiscriminatorColumn({ name: "payment_type", type: "varchar", length: 50 })
+export class Payment {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column()
+  amount!: number;
+
+  @ManyToOne(() => Store, (store) => store.payments)
+  @RelationColumn({ name: "store_id" })
+  store!: Store | null;
+}
+```
+
+UNION은 조인 컬럼도 일반 컬럼처럼 싣고 다닙니다. 그래서 루트 조회 결과의 모든 인스턴스에 `storeId`가 채워지고, `where`에서 그 키로 거를 수 있고, `relations`를 주면 UNION 위에 JOIN이 붙습니다.
+
+```typescript
+const payments = await em.find(Payment, {
+  where: { storeId: 1 },
+  relations: ["store"],
+});
+// [CreditCardPayment { id: 1, amount: 100, storeId: 1, cardNumber: "4111-...", store: Store { id: 1, ... } }, ...]
+```
+
+**생성된 SQL (PostgreSQL):**
+
+```sql
+SELECT "_tpc".*, "store"."id" AS "store_id", "store"."name" AS "store_name"
+FROM (
+  SELECT "id", "amount", "store_id", NULL AS "cardNumber", ... FROM "payment"
+  UNION ALL
+  SELECT "id", "amount", "store_id", "cardNumber", ... FROM "credit_card_payment"
+  UNION ALL
+  SELECT "id", "amount", "store_id", NULL AS "cardNumber", ... FROM "bank_transfer_payment"
+) "_tpc"
+LEFT JOIN "store" AS "store" ON "_tpc"."store_id" = "store"."id"
+WHERE "_tpc"."store_id" = $1;
+```
+
+인스턴스에는 자기 테이블에 있는 컬럼만 남습니다. `CreditCardPayment`에는 `bankCode`가 없고, `BankTransferPayment`만 선언한 관계의 키도 붙지 않아요. `findOne()`, `findWithCursor()`, `count()` 같은 집계, QueryBuilder의 `loadRelation()` / `leftJoinRelationAndSelect()`도 같은 규칙을 따릅니다.
+
+반대 방향도 계층 전체를 읽습니다. `Store`의 `@OneToMany(() => Payment, { mappedBy: "store" })`는 같은 UNION에서 가져오므로, `em.find(Store, { relations: ["payments"] })`는 매장마다 카드 결제와 계좌이체 결제를 각자의 서브클래스로 돌려줍니다. 루트를 가리키는 역방향 `@OneToOne`도 마찬가지입니다.
+
+테이블 구조 때문에 생기는 제약이 두 가지 있습니다.
+
+- **루트 조회는 루트의 관계만 로드합니다.** 서브클래스가 선언한 관계는 루트의 `relations`에 넣으면 알 수 없는 관계로 거절됩니다. 그 조인 컬럼 값은 해당 서브클래스 인스턴스에 그대로 실려 오니, 관계 객체가 필요하면 `em.find(Subclass, { relations: [...] })`로 읽으면 돼요.
+- **외래 키는 UNION을 참조할 수 없습니다.** 루트 자체를 대상으로 하는 `@ManyToOne`은 루트 테이블을 참조하므로 루트 클래스의 인스턴스만 가리킬 수 있습니다. 다른 테이블에 사는 `CreditCardPayment`는 가리키지 못합니다.
 
 ## 7. SELECT -- findOne 사용
 
@@ -365,7 +422,8 @@ const all = await em
 
 ```sql
 SELECT * FROM (
-  SELECT "id", "amount", "cardNumber", NULL AS "bankCode",
+  SELECT "id", "amount", NULL AS "cardNumber",
+         (SELECT "bankCode" FROM "bank_transfer_payment" WHERE FALSE) AS "bankCode",
          'Payment' AS "payment_type"
   FROM "payment"
   UNION ALL
