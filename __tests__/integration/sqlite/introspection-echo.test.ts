@@ -10,25 +10,31 @@
  * is what makes "generate entities, then let synchronize own the schema" safe
  * to repeat.
  *
- * SQLite erases some declared types (DATETIME and BOOLEAN both come back as
- * the affinity this ORM emits: TEXT / INTEGER), so the first generation is
- * compared by storage affinity and the byte-identity claim starts at the
- * second generation. See docs/introspection.md.
+ * SQLite keeps a declared type only as its affinity (BOOLEAN comes back as the
+ * INTEGER this ORM declares), so the first generation is compared by affinity
+ * and the byte-identity claim starts at the second generation. A declaration
+ * whose affinity the ORM changes — DATETIME is NUMERIC, the ORM's TEXT is not —
+ * is flagged instead; see the second test. See docs/introspection.md.
  */
 import "reflect-metadata";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import * as ts from "typescript";
+import { join } from "node:path";
 import { DatabaseClient } from "../../../src/DatabaseClient";
 import { EntityManager } from "../../../src/core/EntityManager";
 import { runIntrospect } from "../../../src/introspection/IntrospectionCli";
 import type { EntityCodeStyle } from "../../../src/introspection/EntityCodeBuilder";
+import type { GeneratedEntity } from "../../../src/introspection/IntrospectionGenerator";
+import { stripOuterParens } from "../../../src/introspection/SchemaIR";
+import {
+  loadGenerated,
+  SRC_INDEX,
+  typeCheck,
+  writeGenerated,
+} from "../../helpers/generatedEntities";
 
-const SRC_INDEX = resolve(__dirname, "../../../src/index");
-
-const SOURCE_DDL = [
+/** A schema every part of which the ORM can recreate. */
+const FAITHFUL_DDL = [
   `CREATE TABLE users (
      id INTEGER PRIMARY KEY,
      email VARCHAR(255) NOT NULL,
@@ -36,7 +42,10 @@ const SOURCE_DDL = [
      age INTEGER NOT NULL DEFAULT 0,
      score REAL,
      bio TEXT,
-     avatar BLOB
+     avatar BLOB,
+     is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+     joined_on TEXT NOT NULL DEFAULT (datetime('now')),
+     "order-ref" VARCHAR(20) DEFAULT 'n/a'
    )`,
   `CREATE UNIQUE INDEX uq_users_email ON users(email)`,
   `CREATE INDEX idx_users_nickname ON users(nickname)`,
@@ -46,15 +55,23 @@ const SOURCE_DDL = [
      views INTEGER NOT NULL DEFAULT 0,
      author_id INTEGER NOT NULL,
      reviewer_id INTEGER,
-     FOREIGN KEY (author_id) REFERENCES users(id),
-     FOREIGN KEY (reviewer_id) REFERENCES users(id)
+     FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
+     FOREIGN KEY (reviewer_id) REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE
    )`,
   `CREATE INDEX idx_posts_title_views ON posts(title, views)`,
+  // SQLite does not index a foreign key by itself, so these are the schema's.
+  `CREATE INDEX idx_posts_author ON posts(author_id)`,
+  `CREATE UNIQUE INDEX uq_posts_author_title ON posts(author_id, title)`,
   `CREATE TABLE comments (
      id INTEGER PRIMARY KEY,
      body TEXT NOT NULL,
      parent_id INTEGER,
      FOREIGN KEY (parent_id) REFERENCES comments(id)
+   )`,
+  // Would be class `Error`, which shadows the global the metadata refers to.
+  `CREATE TABLE errors (
+     id INTEGER PRIMARY KEY,
+     message TEXT NOT NULL
    )`,
 ];
 
@@ -66,17 +83,18 @@ interface TableSnapshot {
     pk: number;
     dflt: string | null;
   }>;
-  fks: Array<{ from: string; table: string; to: string }>;
+  fks: Array<{ from: string; table: string; to: string; onDelete: string; onUpdate: string }>;
   indexes: Array<{ unique: boolean; columns: string[] }>;
 }
 
 /**
  * SQLite's declared-type → storage-affinity rules. The echo can only be held
- * to the affinity, because that is all SQLite itself preserves.
+ * to the affinity, because that is all SQLite itself preserves. INTEGER and
+ * NUMERIC are one class: they behave the same except in a CAST.
  */
 function affinityOf(declaredType: string): string {
   const t = (declaredType || "").toUpperCase();
-  if (t.includes("INT")) return "INTEGER";
+  if (t.includes("INT")) return "NUMERIC";
   if (t.includes("CHAR") || t.includes("CLOB") || t.includes("TEXT")) return "TEXT";
   if (t.includes("BLOB") || t === "") return "BLOB";
   if (t.includes("REAL") || t.includes("FLOA") || t.includes("DOUB")) return "REAL";
@@ -86,13 +104,18 @@ function affinityOf(declaredType: string): string {
 /** Normalizes the handful of literal spellings SQLite accepts for a default. */
 function normalizeDefault(value: unknown): string | null {
   if (value === null || value === undefined) return null;
-  const raw = String(value).trim().replace(/^'(.*)'$/s, "$1");
+  const raw = stripOuterParens(String(value)).replace(/^'(.*)'$/s, "$1");
   const upper = raw.toUpperCase();
   if (upper === "TRUE") return "1";
   if (upper === "FALSE") return "0";
   return raw;
 }
 
+/**
+ * The schema as SQLite's PRAGMAs report it — read here directly rather than
+ * through the introspection reader, so the echo is checked independently of
+ * the code under test.
+ */
 async function snapshot(dbFile: string): Promise<Record<string, TableSnapshot>> {
   const client = DatabaseClient.getInstance();
   const connector = await client.connect({
@@ -134,7 +157,13 @@ async function snapshot(dbFile: string): Promise<Record<string, TableSnapshot>> 
         dflt: normalizeDefault(c.dflt_value),
       })),
       fks: fks
-        .map((f) => ({ from: f.from, table: f.table, to: f.to }))
+        .map((f) => ({
+          from: f.from,
+          table: f.table,
+          to: f.to,
+          onDelete: f.on_delete,
+          onUpdate: f.on_update,
+        }))
         .sort((a, b) => a.from.localeCompare(b.from)),
       indexes: indexes.sort((a, b) =>
         a.columns.join().localeCompare(b.columns.join()),
@@ -143,78 +172,6 @@ async function snapshot(dbFile: string): Promise<Record<string, TableSnapshot>> 
   }
   await client.close();
   return out;
-}
-
-/** Type checks the generated files; returns the (file-local) diagnostics. */
-function typeCheck(files: string[]): string[] {
-  const program = ts.createProgram(files, {
-    strict: true,
-    target: ts.ScriptTarget.ES2020,
-    module: ts.ModuleKind.CommonJS,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    experimentalDecorators: true,
-    emitDecoratorMetadata: true,
-    esModuleInterop: true,
-    skipLibCheck: true,
-    noEmit: true,
-    strictPropertyInitialization: false,
-  });
-  const own = new Set(files.map((f) => resolve(f)));
-  return ts
-    .getPreEmitDiagnostics(program)
-    .filter((d) => d.file && own.has(resolve(d.file.fileName)))
-    .map(
-      (d) =>
-        `${d.file?.fileName}: ${ts.flattenDiagnosticMessageText(d.messageText, " ")}`,
-    );
-}
-
-/** Compiles and evaluates the generated modules, returning every export. */
-function loadGenerated(dir: string, files: string[]): any[] {
-  const cache = new Map<string, any>();
-  const load = (absolutePath: string): any => {
-    const abs = resolve(absolutePath);
-    if (cache.has(abs)) return cache.get(abs);
-    const js = ts.transpileModule(readFileSync(abs, "utf8"), {
-      compilerOptions: {
-        module: ts.ModuleKind.CommonJS,
-        target: ts.ScriptTarget.ES2020,
-        experimentalDecorators: true,
-        emitDecoratorMetadata: true,
-        esModuleInterop: true,
-      },
-    }).outputText;
-
-    const mod = { exports: {} as any };
-    // Seeded before evaluation so a circular import resolves to the
-    // partially-filled module instead of recursing forever.
-    cache.set(abs, mod.exports);
-    const requireShim = (id: string) => {
-      if (id === SRC_INDEX) return require(SRC_INDEX);
-      if (id.startsWith(".")) {
-        return load(resolve(dirname(abs), id.replace(/\.js$/, ".ts")));
-      }
-      return require(id);
-    };
-    // eslint-disable-next-line no-new-func
-    new Function("exports", "require", "module", "__filename", "__dirname", js)(
-      mod.exports,
-      requireShim,
-      mod,
-      abs,
-      dirname(abs),
-    );
-    cache.set(abs, mod.exports);
-    return mod.exports;
-  };
-
-  const entities: any[] = [];
-  for (const file of files) {
-    for (const value of Object.values(load(join(dir, file)))) {
-      if (typeof value === "function") entities.push(value);
-    }
-  }
-  return entities;
 }
 
 describe("[Integration] SQLite: introspection echo (table → entity → table)", () => {
@@ -238,25 +195,19 @@ describe("[Integration] SQLite: introspection echo (table → entity → table)"
   async function echo(
     dbFile: string,
     style: EntityCodeStyle,
-  ): Promise<{ code: Map<string, string>; dbFile: string }> {
+  ): Promise<{ code: Map<string, string>; entities: GeneratedEntity[]; dbFile: string }> {
     const round = counter++;
-    const genDir = join(tempDir, `gen-${style}-${round}`);
-    await mkdir(genDir, { recursive: true });
 
     const result = await runIntrospect(
       { type: "sqlite", database: dbFile, logging: false } as any,
       { dryRun: true, codeBuilderOptions: { importPath: SRC_INDEX, style } },
     );
     const code = new Map(result.entities.map((e) => [e.fileName, e.code]));
-    for (const entity of result.entities) {
-      await writeFile(join(genDir, entity.fileName), entity.code, "utf8");
-    }
+    const paths = await writeGenerated(join(tempDir, `gen-${style}-${round}`), code);
+    expect(typeCheck(paths)).toEqual([]);
 
-    const files = [...code.keys()];
-    expect(typeCheck(files.map((f) => join(genDir, f)))).toEqual([]);
-
-    const entities = loadGenerated(genDir, files);
-    expect(entities.length).toBe(files.length);
+    const entities = loadGenerated(paths);
+    expect(entities.length).toBe(paths.length);
 
     const target = join(tempDir, `echo-${style}-${round}.sqlite`);
     const em = new EntityManager();
@@ -273,10 +224,10 @@ describe("[Integration] SQLite: introspection echo (table → entity → table)"
     await (em as unknown as { destroy?: () => Promise<void> }).destroy?.();
     await DatabaseClient.getInstance().close().catch(() => {});
 
-    return { code, dbFile: target };
+    return { code, entities: result.entities, dbFile: target };
   }
 
-  async function seedSource(): Promise<string> {
+  async function seed(ddl: string[]): Promise<string> {
     const dbFile = join(tempDir, `source-${counter++}.sqlite`);
     const client = DatabaseClient.getInstance();
     const connector = await client.connect({
@@ -284,7 +235,7 @@ describe("[Integration] SQLite: introspection echo (table → entity → table)"
       database: dbFile,
       logging: false,
     } as any);
-    for (const ddl of SOURCE_DDL) await connector.query(ddl);
+    for (const statement of ddl) await connector.query(statement);
     await client.close();
     return dbFile;
   }
@@ -293,10 +244,15 @@ describe("[Integration] SQLite: introspection echo (table → entity → table)"
     "%s style",
     (style) => {
       it("recreates an equivalent schema and then generates a fixed point", async () => {
-        const source = await seedSource();
+        const source = await seed(FAITHFUL_DDL);
         const before = await snapshot(source);
 
         const first = await echo(source, style);
+        // Nothing in this schema is beyond the ORM, so nothing is flagged.
+        expect(first.entities.flatMap((e) => e.notes)).toEqual([]);
+        expect(first.entities.find((e) => e.tableName === "errors")?.className).toBe(
+          "ErrorEntity",
+        );
         const after = await snapshot(first.dbFile);
 
         // Same tables, same columns, same keys.
@@ -315,6 +271,54 @@ describe("[Integration] SQLite: introspection echo (table → entity → table)"
         expect(await snapshot(third.dbFile)).toEqual(
           await snapshot(second.dbFile),
         );
+      }, 120000);
+
+      it("flags exactly what it cannot recreate, and recreates everything else", async () => {
+        const source = await seed([
+          `CREATE TABLE teams (
+             org_id INTEGER NOT NULL,
+             team_no INTEGER NOT NULL,
+             name TEXT NOT NULL,
+             PRIMARY KEY (org_id, team_no)
+           )`,
+          `CREATE TABLE players (
+             id INTEGER PRIMARY KEY,
+             org_id INTEGER NOT NULL,
+             team_no INTEGER NOT NULL,
+             name TEXT NOT NULL,
+             name_key TEXT GENERATED ALWAYS AS (lower(name)) VIRTUAL,
+             signed_on DATETIME,
+             FOREIGN KEY (org_id, team_no) REFERENCES teams(org_id, team_no)
+           )`,
+          `CREATE INDEX idx_players_named ON players(name) WHERE org_id > 0`,
+          `CREATE INDEX idx_players_lower ON players(lower(name))`,
+          `CREATE INDEX idx_players_name ON players(name)`,
+        ]);
+        const before = await snapshot(source);
+
+        const { entities, dbFile } = await echo(source, style);
+        const players = entities.find((e) => e.tableName === "players")!;
+        expect(players.notes).toEqual([
+          "Composite foreign key (org_id, team_no) → teams(org_id, team_no) is not declared: a relation joins on a single column. Its columns are kept as plain columns; recreate the constraint in a migration.",
+          'Index "idx_players_lower" is not declared: expression key part cannot be expressed with the ORM\'s index options. Recreate it in a migration.',
+          'Index "idx_players_named" is not declared: partial index (WHERE clause) cannot be expressed with the ORM\'s index options. Recreate it in a migration.',
+          "nameKey: This is a generated column, emitted as a plain column. Declare it as a computed column to keep the database computing it.",
+          'signedOn: The database declares "DATETIME", but this entity creates "TEXT" — synchronizing it would change the column.',
+        ]);
+
+        // Everything not flagged came back.
+        const after = await snapshot(dbFile);
+        expect(after.teams).toEqual(before.teams);
+        const beforeColumns = before.players.columns;
+        const signedOn = beforeColumns.findIndex((c) => c.name === "signed_on");
+        expect(after.players.columns).toEqual([
+          ...beforeColumns.slice(0, signedOn),
+          // table_info hides the generated column; its plain copy shows up.
+          expect.objectContaining({ name: "name_key" }),
+          { ...beforeColumns[signedOn], affinity: "TEXT" },
+        ]);
+        expect(after.players.fks).toEqual([]);
+        expect(after.players.indexes).toEqual([{ unique: false, columns: ["name"] }]);
       }, 120000);
     },
   );

@@ -3,10 +3,23 @@ import {
   ModelColumnField,
   ModelRelationField,
 } from "./EntityModel";
+import {
+  lit,
+  noteLines,
+  referentialActionEntries,
+  relationColumnOptions,
+} from "./emitSyntax";
+import { fileBase } from "./lowering/Naming";
 
 /**
  * Emits decorator-based entity source (`@Entity`, `@Column`, `@ManyToOne`, …)
  * from an {@link EntityModel}.
+ *
+ * Every option the model sets is written out, including the ones a decorator
+ * would otherwise infer from the property's TypeScript type — decorator
+ * metadata depends on the compiler settings (`string | null` is `Object`
+ * under `strictNullChecks`, `String` without), and an inferred length or
+ * nullability would make the column depend on them.
  */
 export class DecoratorEmitter {
   constructor(private readonly importPath: string) {}
@@ -27,29 +40,24 @@ export class DecoratorEmitter {
 
     const classDecorators: string[] = [];
     for (const idx of model.classIndexes) {
-      const cols = idx.columns.map((c) => JSON.stringify(c)).join(", ");
-      const nameArg = idx.name ? `, ${JSON.stringify(idx.name)}` : "";
-      if (idx.unique) {
-        usedDecorators.add("UniqueIndex");
-        classDecorators.push(`@UniqueIndex([${cols}]${nameArg})`);
-      } else {
-        usedDecorators.add("Index");
-        classDecorators.push(`@Index([${cols}]${nameArg})`);
-      }
+      const cols = idx.columns.map(lit).join(", ");
+      const nameArg = idx.name ? `, ${lit(idx.name)}` : "";
+      const decorator = idx.unique ? "UniqueIndex" : "Index";
+      usedDecorators.add(decorator);
+      classDecorators.push(`@${decorator}([${cols}]${nameArg})`);
     }
 
     const typeImports = usesRelation ? ["type Relation"] : [];
     const lines: string[] = [];
     lines.push(
-      `import { ${[...Array.from(usedDecorators).sort(), ...typeImports].join(", ")} } from "${this.importPath}";`,
+      `import { ${[...Array.from(usedDecorators).sort(), ...typeImports].join(", ")} } from ${lit(this.importPath)};`,
     );
     for (const refClass of model.referencedClasses) {
-      lines.push(
-        `import { ${refClass} } from "./${fileBase(refClass)}.js";`,
-      );
+      lines.push(`import { ${refClass} } from ${lit(`./${fileBase(refClass)}.js`)};`);
     }
     lines.push("");
-    lines.push(`@Entity({ name: "${model.tableName}" })`);
+    lines.push(...noteLines(model.notes));
+    lines.push(`@Entity({ name: ${lit(model.tableName)} })`);
     lines.push(...classDecorators);
     lines.push(`export class ${model.className} {`);
     lines.push(propertyBlocks.join("\n\n"));
@@ -62,42 +70,28 @@ export class DecoratorEmitter {
     field: ModelColumnField,
     usedDecorators: Set<string>,
   ): string {
-    const lines: string[] = [];
-    for (const warning of field.warnings ?? []) {
-      lines.push(`  // NOTE: ${warning}`);
-    }
+    const lines = noteLines(field.warnings, "  ");
 
     if (field.primary && field.generated) {
       usedDecorators.add("PrimaryGeneratedColumn");
-      lines.push(
-        field.needsNameOption
-          ? `  @PrimaryGeneratedColumn({ name: "${field.columnName}" })`
-          : "  @PrimaryGeneratedColumn()",
-      );
-    } else if (field.primary && field.fkPrimary) {
-      // Pin the column name explicitly so the original (possibly snake_case)
-      // name survives while the property stays camelCase.
-      usedDecorators.add("PrimaryColumn");
-      lines.push(
-        `  @PrimaryColumn({ type: "${field.columnType}", name: "${field.columnName}" })`,
-      );
+      // `int` is the decorator's own default type.
+      const opts: string[] = [];
+      if (field.columnType !== "int") opts.push(`type: ${lit(field.columnType)}`);
+      if (field.needsNameOption) opts.push(`name: ${lit(field.columnName)}`);
+      lines.push(`  @PrimaryGeneratedColumn(${opts.length ? `{ ${opts.join(", ")} }` : ""})`);
     } else if (field.primary) {
       usedDecorators.add("PrimaryColumn");
-      lines.push(
-        field.needsNameOption
-          ? `  @PrimaryColumn({ name: "${field.columnName}" })`
-          : "  @PrimaryColumn()",
-      );
+      lines.push(`  @PrimaryColumn({ ${this.columnOptions(field, false).join(", ")} })`);
     } else if (field.timestamp) {
       const decorator = TIMESTAMP_DECORATORS[field.timestamp];
       usedDecorators.add(decorator);
       const opts: string[] = [];
-      if (field.columnType !== "datetime") opts.push(`type: "${field.columnType}"`);
-      if (field.needsNameOption) opts.push(`name: "${field.columnName}"`);
+      if (field.columnType !== "datetime") opts.push(`type: ${lit(field.columnType)}`);
+      if (field.needsNameOption) opts.push(`name: ${lit(field.columnName)}`);
       lines.push(`  @${decorator}(${opts.length ? `{ ${opts.join(", ")} }` : ""})`);
     } else {
       usedDecorators.add("Column");
-      lines.push(`  @Column(${this.columnOptions(field)})`);
+      lines.push(`  @Column({ ${this.columnOptions(field, true).join(", ")} })`);
     }
 
     if (field.index) {
@@ -109,24 +103,33 @@ export class DecoratorEmitter {
     return lines.join("\n");
   }
 
-  private columnOptions(field: ModelColumnField): string {
-    const opts: string[] = [`type: "${field.columnType}"`];
-    if (field.needsNameOption) opts.push(`name: "${field.columnName}"`);
+  private columnOptions(field: ModelColumnField, withNullability: boolean): string[] {
+    const opts: string[] = [`type: ${lit(field.columnType)}`];
+    if (field.needsNameOption) opts.push(`name: ${lit(field.columnName)}`);
     if (field.length !== undefined) opts.push(`length: ${field.length}`);
     if (field.precision !== undefined) {
       opts.push(`precision: ${field.precision}`);
       if (field.scale !== undefined) opts.push(`scale: ${field.scale}`);
     }
-    if (field.enumValues) {
-      opts.push(
-        `enum: [${field.enumValues.map((v) => JSON.stringify(v)).join(", ")}]`,
-      );
+    if (field.enumValues && field.enumValues.length > 0) {
+      opts.push(`enumValues: [${field.enumValues.map(lit).join(", ")}]`);
     }
-    if (field.nullable) opts.push("nullable: true");
+    if (field.enumName !== undefined) opts.push(`enumName: ${lit(field.enumName)}`);
+    if (field.arrayElementType !== undefined) {
+      opts.push(`arrayElementType: ${lit(field.arrayElementType)}`);
+    }
+    if (withNullability) {
+      if (field.nullable) {
+        opts.push("nullable: true");
+      } else if (DESIGN_TYPES_DEFAULTING_TO_NULL.has(field.tsType)) {
+        // `@Column` defaults these property types to nullable.
+        opts.push("nullable: false");
+      }
+    }
     if (field.defaultLiteral !== undefined) {
       opts.push(`default: ${field.defaultLiteral}`);
     }
-    return `{ ${opts.join(", ")} }`;
+    return opts;
   }
 
   private emitRelation(
@@ -136,10 +139,7 @@ export class DecoratorEmitter {
     usedDecorators.add("ManyToOne");
     usedDecorators.add("RelationColumn");
 
-    const lines: string[] = [];
-    for (const warning of field.warnings ?? []) {
-      lines.push(`  // NOTE: ${warning}`);
-    }
+    const lines = noteLines(field.warnings, "  ");
 
     // The inverse-side accessor cannot be known without reading the referenced
     // entity, so this is a placeholder to be renamed once both sides exist.
@@ -147,13 +147,13 @@ export class DecoratorEmitter {
     // `Relation<X>` keeps design:type from referencing the entity class
     // eagerly — circular FK schemas would otherwise throw a TDZ
     // ReferenceError at import time under ESM.
+    const actions = referentialActionEntries(field);
+    const optionsArg = actions.length > 0 ? `, { ${actions.join(", ")} }` : "";
     lines.push(
-      `  @ManyToOne(() => ${field.targetClass}, (entity: any) => entity.${field.propertyName})`,
+      `  @ManyToOne(() => ${field.targetClass}, (entity: any) => entity.${field.propertyName}${optionsArg})`,
     );
     lines.push(`  @RelationColumn(${relationColumnOptions(field)})`);
-    lines.push(
-      `  ${field.propertyName}!: Relation<${field.targetClass}>;`,
-    );
+    lines.push(`  ${field.propertyName}!: Relation<${field.targetClass}>;`);
     return lines.join("\n");
   }
 }
@@ -165,28 +165,7 @@ const TIMESTAMP_DECORATORS = {
 } as const;
 
 /**
- * FK column options shared by both emitters. The type and nullability are
- * always written out: inferring them from the target's primary key loses a
- * `NOT NULL` and can widen or narrow the column.
+ * Property types whose `design:type` (`Object`, `Buffer`) makes `@Column`
+ * default the column to nullable, so NOT NULL has to be written out.
  */
-export function relationColumnOptions(field: ModelRelationField): string {
-  const opts = [
-    `name: "${field.fkColumn}"`,
-    `type: "${field.fkType}"`,
-    `nullable: ${field.fkNullable}`,
-  ];
-  if (field.referencedColumn) {
-    opts.push(`referencedColumn: "${field.referencedColumn}"`);
-  }
-  return `{ ${opts.join(", ")} }`;
-}
-
-/** `UserProfile` → `user-profile.entity` (the relative import specifier). */
-export function fileBase(className: string): string {
-  return (
-    className
-      .replace(/([a-z])([A-Z])/g, "$1-$2")
-      .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
-      .toLowerCase() + ".entity"
-  );
-}
+const DESIGN_TYPES_DEFAULTING_TO_NULL = new Set(["any", "Buffer"]);

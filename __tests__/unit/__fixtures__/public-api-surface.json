@@ -934,15 +934,20 @@
   ],
   "./introspection": [
     "buildEntityModel",
+    "CanonicalType",
+    "ColumnIR",
     "DbColumn",
     "DbForeignKey",
     "DbIndex",
+    "DefaultValue",
     "EntityCodeBuilder",
     "EntityCodeBuilderOptions",
     "EntityCodeStyle",
     "EntityModel",
     "EntityModelField",
+    "ForeignKeyIR",
     "GeneratedEntity",
+    "IndexIR",
     "IntrospectionCliOptions",
     "IntrospectionCliResult",
     "IntrospectionDialect",
@@ -953,7 +958,10 @@
     "ModelColumnField",
     "ModelIndex",
     "ModelRelationField",
-    "runIntrospect"
+    "runIntrospect",
+    "SchemaIR",
+    "TableIR",
+    "TextSize"
   ],
   "./metadata": [
     "MetadataContext",

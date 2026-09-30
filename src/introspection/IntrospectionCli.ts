@@ -87,6 +87,16 @@ export async function runIntrospect(
       return { writtenFiles: [], entities };
     }
 
+    const noted = entities.filter((e) => e.notes.length > 0);
+    if (noted.length > 0) {
+      const count = noted.reduce((n, e) => n + e.notes.length, 0);
+      logger.warn(
+        `${count} place(s) in ${noted.length} entit${noted.length === 1 ? "y" : "ies"} ` +
+          `cannot recreate the database exactly (${noted.map((e) => e.fileName).join(", ")}) — ` +
+          "see the // NOTE: comments in those files.",
+      );
+    }
+
     if (cliOptions.dryRun) {
       logger.info(
         `Dry run: ${entities.length} entities would be written (skipping disk I/O).`,
