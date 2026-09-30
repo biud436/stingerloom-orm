@@ -1612,7 +1612,7 @@ scores!: number[] | null; // INTEGER[]
 
 MySQL이나 SQLite에서 이전 버전이 기록해 둔 행이 남아 있다면 그 값은 JSON이 아니라 요소 문자열 하나(`x`)입니다. 그런 행을 읽으면 해당 컬럼에 대해 `Failed to JSON.parse` 경고가 한 번 남고 원본 문자열이 그대로 반환돼요. `UPDATE`로 한 번 변환하거나, `transformer`로 기존 형태를 유지하세요.
 
-참고로 PostgreSQL 인트로스펙션은 모든 배열 컬럼을 단순히 `ARRAY`로 보고하기 때문에, 스키마 diff는 요소 타입 변경을 감지하지 못하고 엔티티 생성 시에도 요소 타입 없이 `type: "array"`로 복원됩니다.
+참고로 스키마 diff는 PostgreSQL 배열 컬럼을 모두 단순히 `ARRAY`로 읽기 때문에 요소 타입 변경을 감지하지 못합니다. 엔티티 생성은 요소 타입까지 읽습니다(`integer[]` → `arrayElementType: "int"`).
 
 ### bigint 컬럼과 `bigintMode`
 

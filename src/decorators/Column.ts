@@ -182,10 +182,9 @@ export interface ColumnOption {
    *
    * PostgreSQL only — MySQL stores `"array"` columns as JSON and SQLite as
    * TEXT, where the element type is not representable and is ignored.
-   * Note: PostgreSQL introspection reports every array column as `ARRAY`,
-   * so schema diffing cannot detect element-type changes, and entity
-   * generation from an existing schema recovers `type: "array"` without the
-   * element type.
+   * Note: schema diffing reads every PostgreSQL array column as `ARRAY`, so
+   * it cannot detect element-type changes; entity generation from an
+   * existing schema does read the element type.
    *
    * @example
    * @Column({ type: "array", arrayElementType: "int" }) // INTEGER[]

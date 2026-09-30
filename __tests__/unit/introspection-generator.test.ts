@@ -232,8 +232,9 @@ describe("EntityCodeBuilder", () => {
       expect(code).toContain('@Entity({ name: "users" })');
       // Should contain class declaration
       expect(code).toContain("export class User {");
-      // Should contain @PrimaryColumn (not @PrimaryGeneratedColumn)
-      expect(code).toContain("@PrimaryColumn()");
+      // Should contain @PrimaryColumn (not @PrimaryGeneratedColumn), with the
+      // key's type written out rather than inferred from design:type
+      expect(code).toContain('@PrimaryColumn({ type: "int" })');
       expect(code).not.toContain("@PrimaryGeneratedColumn()");
       expect(code).toContain("id!: number;");
       // Should contain @Column with type
@@ -573,10 +574,15 @@ describe("EntityCodeBuilder", () => {
       ];
       const code = builder.build("events", columns, ["id"], [], "postgres");
 
-      expect(code).toContain('@CreateTimestamp({ type: "timestamp", name: "created_at" })');
+      // A wall-clock timestamp is `datetime`, the decorator's default type
+      // (TIMESTAMP on PostgreSQL either way).
+      expect(code).toContain('@CreateTimestamp({ name: "created_at" })');
       expect(code).toContain("createdAt!: Date;");
       expect(code).not.toContain("default:");
-      expect(code).toContain("CreateTimestamp");
+      // The database default the marker replaces is not dropped silently.
+      expect(code).toContain(
+        "// NOTE: DEFAULT CURRENT_TIMESTAMP is not declared: as a create timestamp the column is filled in by the ORM instead.",
+      );
     });
 
     it("should emit @UpdateTimestamp for updated_at with name option", () => {
@@ -627,7 +633,7 @@ describe("EntityCodeBuilder", () => {
       const code = builder.build("events", columns, ["id"], [], "postgres");
 
       expect(code).not.toContain("@CreateTimestamp");
-      expect(code).toContain('@Column({ type: "timestamp", name: "created_at", nullable: true })');
+      expect(code).toContain('@Column({ type: "datetime", name: "created_at", nullable: true })');
     });
   });
 
@@ -864,7 +870,7 @@ describe("EntityCodeBuilder", () => {
       const code = builder.build("orders", columns, ["id"], [], "postgres");
 
       expect(code).toContain(
-        '@Column({ type: "enum", enum: ["pending", "active", "archived"] })',
+        '@Column({ type: "enum", enumValues: ["pending", "active", "archived"] })',
       );
     });
 
@@ -883,7 +889,7 @@ describe("EntityCodeBuilder", () => {
       const code = builder.build("users", columns, ["id"], [], "mysql");
 
       expect(code).toContain(
-        '@Column({ type: "enum", enum: ["admin", "user", "guest"] })',
+        '@Column({ type: "enum", enumValues: ["admin", "user", "guest"] })',
       );
     });
   });
@@ -906,601 +912,411 @@ describe("EntityCodeBuilder", () => {
 });
 
 // ─── IntrospectionGenerator tests ────────────────────────────
+//
+// The generator runs the catalog reader, the lowering and an emitter. These
+// drive it through fake catalogs answering the readers' statements; the
+// statements themselves are pinned in introspection-catalog.test.ts.
+
+type Row = Record<string, unknown>;
+
+interface FakeTable {
+  columns: Row[];
+  pk?: string[];
+  fks?: Row[];
+  indexes?: Row[];
+}
+
+function queryText(q: any): { text: string; values: unknown[] } {
+  return typeof q === "string" ? { text: q, values: [] } : { text: q.sql, values: q.values };
+}
+
+/** A PostgreSQL catalog: columns as `format_type` rows. */
+function pgCatalog(tables: Record<string, FakeTable>) {
+  return jest.fn(async (q: any) => {
+    const { text, values } = queryText(q);
+    const table = tables[values[1] as string];
+    if (text.includes("relkind IN")) return Object.keys(tables).sort().map((t) => ({ table_name: t }));
+    if (!table) return [];
+    if (text.includes("format_type")) return table.columns;
+    if (text.includes("indisprimary ORDER BY k.ord")) return (table.pk ?? []).map((c) => ({ column_name: c }));
+    if (text.includes("contype = 'f'")) return table.fks ?? [];
+    if (text.includes("pg_am")) return table.indexes ?? [];
+    return [];
+  });
+}
+
+const pgCol = (name: string, type: string, extra: Row = {}): Row => ({
+  column_name: name,
+  type_text: type,
+  not_null: true,
+  default_expr: null,
+  type_name: type,
+  type_kind: "b",
+  is_identity: "NO",
+  is_generated: "NEVER",
+  ...extra,
+});
+
+const pgFk = (name: string, column: string, table: string, refColumn = "id", extra: Row = {}): Row => ({
+  constraint_name: name,
+  column_name: column,
+  referenced_schema: "public",
+  referenced_table: table,
+  referenced_column: refColumn,
+  update_action: "a",
+  delete_action: "a",
+  ...extra,
+});
 
 describe("IntrospectionGenerator", () => {
+  const blog = (): Record<string, FakeTable> => ({
+    users: {
+      columns: [
+        pgCol("id", "integer", { is_identity: "YES" }),
+        pgCol("name", "character varying(255)"),
+      ],
+      pk: ["id"],
+    },
+    posts: {
+      columns: [
+        pgCol("id", "integer", { is_identity: "YES" }),
+        pgCol("title", "character varying(255)"),
+        pgCol("author_id", "integer"),
+      ],
+      pk: ["id"],
+      fks: [pgFk("posts_author_id_fkey", "author_id", "users", "id", { delete_action: "c" })],
+    },
+  });
+
   describe("generate()", () => {
-    it("should generate entity for each discovered table", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        // discoverTables
-        if (sqlText.includes("pg_tables") || sqlText.includes("information_schema.TABLES")) {
-          return [
-            { table_name: "users" },
-            { table_name: "posts" },
-          ];
-        }
-
-        // getColumns for users
-        if (sqlText.includes("information_schema") && sqlText.includes("columns")) {
-          const values = sqlInput.values ?? [];
-          if (values.includes("users")) {
-            return [
-              { column_name: "id", data_type: "integer", is_nullable: "NO" },
-              { column_name: "name", data_type: "character varying", is_nullable: "NO", character_maximum_length: 255 },
-            ];
-          }
-          if (values.includes("posts")) {
-            return [
-              { column_name: "id", data_type: "integer", is_nullable: "NO" },
-              { column_name: "title", data_type: "character varying", is_nullable: "NO", character_maximum_length: 255 },
-            ];
-          }
-        }
-
-        // getPrimaryKeys
-        if (sqlText.includes("pg_index") || sqlText.includes("KEY_COLUMN_USAGE")) {
-          return [{ column_name: "id" }];
-        }
-
-        // getForeignKeys
-        if (sqlText.includes("FOREIGN KEY") || sqlText.includes("constraint_type")) {
-          return [];
-        }
-
-        return [];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "postgres");
+    it("generates an entity per table, relations included", async () => {
+      const generator = new IntrospectionGenerator(pgCatalog(blog()), "postgres");
       const results = await generator.generate();
 
-      expect(results).toHaveLength(2);
-      expect(results[0].tableName).toBe("users");
-      expect(results[0].className).toBe("User");
-      expect(results[0].fileName).toBe("user.entity.ts");
-      expect(results[0].code).toContain("export class User");
-      expect(results[1].tableName).toBe("posts");
-      expect(results[1].className).toBe("Post");
-    });
-
-    it("should exclude tables specified in excludeTables", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        if (sqlText.includes("pg_tables")) {
-          return [
-            { table_name: "users" },
-            { table_name: "__migrations" },
-          ];
-        }
-
-        if (sqlText.includes("information_schema") && sqlText.includes("columns")) {
-          return [
-            { column_name: "id", data_type: "integer", is_nullable: "NO" },
-          ];
-        }
-
-        if (sqlText.includes("pg_index")) {
-          return [{ column_name: "id" }];
-        }
-
-        return [];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "postgres", {
-        excludeTables: ["__migrations"],
-      });
-      const results = await generator.generate();
-
-      expect(results).toHaveLength(1);
-      expect(results[0].tableName).toBe("users");
-    });
-
-    it("should include only specified tables when includeTables is set", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        if (sqlText.includes("pg_tables")) {
-          return [
-            { table_name: "users" },
-            { table_name: "posts" },
-            { table_name: "comments" },
-          ];
-        }
-
-        if (sqlText.includes("information_schema") && sqlText.includes("columns")) {
-          return [
-            { column_name: "id", data_type: "integer", is_nullable: "NO" },
-          ];
-        }
-
-        if (sqlText.includes("pg_index")) {
-          return [{ column_name: "id" }];
-        }
-
-        return [];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "postgres", {
-        includeTables: ["users"],
-      });
-      const results = await generator.generate();
-
-      expect(results).toHaveLength(1);
-      expect(results[0].tableName).toBe("users");
-    });
-  });
-
-  describe("discoverTables()", () => {
-    it("should discover MySQL tables", async () => {
-      const mockQueryFn = jest.fn(async () => {
-        return { results: [{ table_name: "users" }, { table_name: "posts" }] };
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "mysql");
-      const tables = await generator.discoverTables();
-
-      expect(tables).toEqual(["users", "posts"]);
-    });
-
-    it("should discover SQLite tables and skip sqlite_* internals", async () => {
-      const seenSql: string[] = [];
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-        seenSql.push(sqlText);
-        return [{ table_name: "users" }, { table_name: "posts" }];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "sqlite");
-      const tables = await generator.discoverTables();
-
-      expect(tables).toEqual(["users", "posts"]);
-      expect(seenSql[0]).toContain("sqlite_master");
-      expect(seenSql[0]).toContain("sqlite_%");
-    });
-
-    it("should discover PostgreSQL tables", async () => {
-      const mockQueryFn = jest.fn(async () => {
-        return { rows: [{ table_name: "users" }] };
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "postgres");
-      const tables = await generator.discoverTables();
-
-      expect(tables).toEqual(["users"]);
-    });
-  });
-
-  describe("getColumns()", () => {
-    it("should return column metadata", async () => {
-      const mockQueryFn = jest.fn(async () => {
-        return [
-          { column_name: "id", data_type: "integer", is_nullable: "NO" },
-          { column_name: "name", data_type: "character varying", is_nullable: "YES", character_maximum_length: 100 },
-        ];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "postgres");
-      const columns = await generator.getColumns("users");
-
-      expect(columns).toHaveLength(2);
-      expect(columns[0].column_name).toBe("id");
-      expect(columns[1].character_maximum_length).toBe(100);
-    });
-
-    it("should select EXTRA as extra for MySQL so AUTO_INCREMENT PKs become @PrimaryGeneratedColumn", async () => {
-      // Regression for #346: MySQL getColumns previously omitted EXTRA, so
-      // isGeneratedPrimaryKey() never saw "auto_increment" and emitted
-      // @PrimaryColumn() instead of @PrimaryGeneratedColumn().
-      const seenSqlTexts: string[] = [];
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-        seenSqlTexts.push(sqlText);
-
-        if (sqlText.includes("information_schema.TABLES")) {
-          return [{ table_name: "post" }];
-        }
-        if (sqlText.includes("information_schema.COLUMNS")) {
-          return [
-            {
-              column_name: "id",
-              data_type: "int",
-              is_nullable: "NO",
-              column_default: null,
-              extra: "auto_increment",
-            },
-            {
-              column_name: "title",
-              data_type: "varchar",
-              is_nullable: "NO",
-              character_maximum_length: 255,
-              column_default: null,
-              extra: "",
-            },
-          ];
-        }
-        if (sqlText.includes("KEY_COLUMN_USAGE") && sqlText.includes("PRIMARY")) {
-          return [{ column_name: "id" }];
-        }
-        return [];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "mysql");
-      const entities = await generator.generate();
-
-      const columnsSql = seenSqlTexts.find((s) =>
-        s.includes("information_schema.COLUMNS"),
+      expect(results.map((r) => [r.tableName, r.className, r.fileName])).toEqual([
+        ["posts", "Post", "post.entity.ts"],
+        ["users", "User", "user.entity.ts"],
+      ]);
+      const post = results[0];
+      expect(post.code).toContain('import { User } from "./user.entity.js";');
+      expect(post.code).toContain(
+        '@ManyToOne(() => User, (entity: any) => entity.author, { onDelete: "CASCADE" })',
       );
-      expect(columnsSql).toBeDefined();
-      expect(columnsSql).toMatch(/EXTRA\s+as\s+extra/i);
-
-      expect(entities).toHaveLength(1);
-      expect(entities[0].code).toContain("@PrimaryGeneratedColumn()");
-      expect(entities[0].code).not.toContain("@PrimaryColumn()");
-    });
-  });
-
-  describe("SQLite end-to-end generation", () => {
-    it("should generate an entity from SQLite PRAGMA results with INTEGER rowid PK", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        if (sqlText.includes("sqlite_master")) {
-          return [{ table_name: "users" }];
-        }
-        if (sqlText.includes("PRAGMA table_info")) {
-          return [
-            { cid: 0, name: "id", type: "INTEGER", notnull: 1, dflt_value: null, pk: 1 },
-            { cid: 1, name: "name", type: "VARCHAR(255)", notnull: 1, dflt_value: null, pk: 0 },
-            { cid: 2, name: "active", type: "BOOLEAN", notnull: 1, dflt_value: "1", pk: 0 },
-            { cid: 3, name: "amount", type: "DECIMAL(12,2)", notnull: 0, dflt_value: null, pk: 0 },
-          ];
-        }
-        if (sqlText.includes("PRAGMA foreign_key_list")) {
-          return [];
-        }
-        return [];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "sqlite");
-      const entities = await generator.generate();
-
-      expect(entities).toHaveLength(1);
-      const code = entities[0].code;
-
-      // Single INTEGER PK should be a rowid alias → @PrimaryGeneratedColumn
-      expect(code).toContain("@PrimaryGeneratedColumn()");
-      expect(code).toContain("id!: number;");
-
-      // VARCHAR(255) → varchar + length
-      expect(code).toContain('@Column({ type: "varchar", length: 255 })');
-      expect(code).toContain("name!: string;");
-
-      // BOOLEAN + default 1 → boolean true default
-      expect(code).toContain('@Column({ type: "boolean", default: true })');
-
-      // DECIMAL(12,2) → double + precision/scale + nullable
-      expect(code).toContain(
-        '@Column({ type: "double", precision: 12, scale: 2, nullable: true })',
-      );
-    });
-
-    it("should produce @ManyToOne from SQLite PRAGMA foreign_key_list", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        if (sqlText.includes("sqlite_master")) {
-          return [{ table_name: "posts" }];
-        }
-        if (sqlText.includes("PRAGMA table_info")) {
-          return [
-            { cid: 0, name: "id", type: "INTEGER", notnull: 1, dflt_value: null, pk: 1 },
-            { cid: 1, name: "title", type: "TEXT", notnull: 1, dflt_value: null, pk: 0 },
-            { cid: 2, name: "author_id", type: "INTEGER", notnull: 1, dflt_value: null, pk: 0 },
-          ];
-        }
-        if (sqlText.includes("PRAGMA foreign_key_list")) {
-          return [{ id: 0, seq: 0, table: "users", from: "author_id", to: "id" }];
-        }
-        return [];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "sqlite");
-      const entities = await generator.generate();
-
-      expect(entities).toHaveLength(1);
-      const code = entities[0].code;
-      expect(code).toContain("@ManyToOne(() => User, (entity: any) => entity.author)");
-      expect(code).toContain(
+      expect(post.code).toContain(
         '@RelationColumn({ name: "author_id", type: "int", nullable: false, referencedColumn: "id" })',
       );
+      expect(results.every((r) => r.notes.length === 0)).toBe(true);
     });
 
-    it("should reject SQLite table names containing NUL characters", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        if (sqlText.includes("sqlite_master")) {
-          return [{ table_name: `bad${String.fromCharCode(0)}name` }];
-        }
-        return [];
+    it("skips tables in excludeTables", async () => {
+      const tables = blog();
+      tables.__migrations = { columns: [pgCol("id", "integer")], pk: ["id"] };
+      const generator = new IntrospectionGenerator(pgCatalog(tables), "postgres", {
+        excludeTables: ["__migrations"],
       });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "sqlite");
-      await expect(generator.generate()).rejects.toThrow(/NUL/);
-    });
-  });
-
-  describe("getIndexes()", () => {
-    it("should collapse MySQL STATISTICS rows into one DbIndex per index", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        if (sqlText.includes("information_schema.STATISTICS")) {
-          return [
-            { index_name: "idx_user_email", column_name: "email", non_unique: 0, seq_in_index: 1 },
-            { index_name: "idx_user_active_email", column_name: "active", non_unique: 1, seq_in_index: 1 },
-            { index_name: "idx_user_active_email", column_name: "email", non_unique: 1, seq_in_index: 2 },
-          ];
-        }
-        if (sqlText.includes("REFERENCED_TABLE_NAME")) {
-          return [];
-        }
-        return [];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "mysql");
-      const indexes = await generator.getIndexes("users");
-
-      expect(indexes).toHaveLength(2);
-      const unique = indexes.find((i) => i.name === "idx_user_email")!;
-      expect(unique.is_unique).toBe(true);
-      expect(unique.column_names).toEqual(["email"]);
-
-      const composite = indexes.find((i) => i.name === "idx_user_active_email")!;
-      expect(composite.is_unique).toBe(false);
-      expect(composite.column_names).toEqual(["active", "email"]);
+      expect((await generator.generate()).map((r) => r.tableName)).toEqual(["posts", "users"]);
     });
 
-    it("should drop single-column indexes that exactly cover a FK column", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        if (sqlText.includes("information_schema.STATISTICS")) {
-          return [
-            { index_name: "fk_implicit_idx", column_name: "author_id", non_unique: 1, seq_in_index: 1 },
-            { index_name: "idx_email", column_name: "email", non_unique: 0, seq_in_index: 1 },
-          ];
-        }
-        if (sqlText.includes("REFERENCED_TABLE_NAME")) {
-          return [
-            { column_name: "author_id", referenced_table: "users", referenced_column: "id" },
-          ];
-        }
-        return [];
+    it("keeps a foreign key to a table that is not generated as a plain column", async () => {
+      const generator = new IntrospectionGenerator(pgCatalog(blog()), "postgres", {
+        includeTables: ["posts"],
       });
+      const [post] = await generator.generate();
 
-      const generator = new IntrospectionGenerator(mockQueryFn, "mysql");
-      const indexes = await generator.getIndexes("posts");
-
-      expect(indexes.map((i) => i.name)).toEqual(["idx_email"]);
+      // A relation would import a class that is never generated.
+      expect(post.code).not.toContain("import { User }");
+      expect(post.code).toContain('@Column({ type: "int", name: "author_id" })');
+      expect(post.notes).toEqual([
+        'Foreign key (author_id) → users(id) is not declared as a relation: "users" is not among the generated tables. The column is kept as a plain column.',
+      ]);
+      expect(post.code).toContain(`// NOTE: ${post.notes[0]}`);
     });
 
-    it("should aggregate SQLite PRAGMA index_list + index_info into DbIndex[]", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        if (sqlText.includes("PRAGMA index_list")) {
-          return [
-            { seq: 0, name: "uq_users_email", unique: 1, origin: "u", partial: 0 },
-            { seq: 1, name: "idx_users_active_email", unique: 0, origin: "c", partial: 0 },
-            { seq: 2, name: "sqlite_autoindex_users_1", unique: 1, origin: "pk", partial: 0 },
-          ];
-        }
-        if (sqlText.includes("PRAGMA index_info") && sqlText.includes("uq_users_email")) {
-          return [{ seqno: 0, cid: 1, name: "email" }];
-        }
-        if (sqlText.includes("PRAGMA index_info") && sqlText.includes("idx_users_active_email")) {
-          return [
-            { seqno: 0, cid: 2, name: "active" },
-            { seqno: 1, cid: 1, name: "email" },
-          ];
-        }
-        if (sqlText.includes("PRAGMA foreign_key_list")) return [];
-        return [];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "sqlite");
-      const indexes = await generator.getIndexes("users");
-
-      // PK auto-index dropped, two user-defined indexes remain.
-      expect(indexes).toHaveLength(2);
-      const uq = indexes.find((i) => i.name === "uq_users_email")!;
-      expect(uq.is_unique).toBe(true);
-      expect(uq.column_names).toEqual(["email"]);
-      const composite = indexes.find((i) => i.name === "idx_users_active_email")!;
-      expect(composite.is_unique).toBe(false);
-      expect(composite.column_names).toEqual(["active", "email"]);
-    });
-  });
-
-  describe("ENUM resolution", () => {
-    it("should fetch PostgreSQL enum labels and embed them in the generated entity", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        if (sqlText.includes("pg_tables")) {
-          return [{ table_name: "orders" }];
-        }
-        if (sqlText.includes("information_schema.columns") || sqlText.includes("information_schema.COLUMNS")) {
-          return [
-            {
-              column_name: "id",
-              data_type: "integer",
-              is_nullable: "NO",
-              column_default: "nextval('orders_id_seq'::regclass)",
-            },
-            {
-              column_name: "status",
-              data_type: "USER-DEFINED",
-              udt_name: "order_status",
-              is_nullable: "NO",
-            },
-          ];
-        }
-        if (sqlText.includes("pg_enum")) {
-          return [
-            { type_name: "order_status", label: "pending" },
-            { type_name: "order_status", label: "shipped" },
-            { type_name: "order_status", label: "delivered" },
-          ];
-        }
-        if (sqlText.includes("pg_index")) {
-          return [{ column_name: "id" }];
-        }
-        return [];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "postgres");
-      const entities = await generator.generate();
-
-      expect(entities).toHaveLength(1);
-      expect(entities[0].code).toContain(
-        '@Column({ type: "enum", enum: ["pending", "shipped", "delivered"] })',
+    it("gives every table a distinct, declarable class name", async () => {
+      const generator = new IntrospectionGenerator(
+        pgCatalog({
+          user: { columns: [pgCol("id", "integer")], pk: ["id"] },
+          users: { columns: [pgCol("id", "integer")], pk: ["id"] },
+          errors: { columns: [pgCol("id", "integer")], pk: ["id"] },
+          "2024_sales": { columns: [pgCol("id", "integer")], pk: ["id"] },
+        }),
+        "postgres",
       );
+      const names = (await generator.generate()).map((r) => [r.tableName, r.className, r.fileName]);
+      expect(names).toEqual([
+        ["2024_sales", "Table2024Sale", "table2024sale.entity.ts"],
+        ["errors", "ErrorEntity", "error-entity.entity.ts"],
+        ["user", "User", "user.entity.ts"],
+        ["users", "Users", "users.entity.ts"],
+      ]);
     });
 
-    it("should parse MySQL enum labels out of COLUMN_TYPE", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        if (sqlText.includes("information_schema.TABLES")) {
-          return [{ table_name: "users" }];
-        }
-        if (sqlText.includes("information_schema.COLUMNS")) {
-          return [
-            {
-              column_name: "id",
-              data_type: "int",
-              is_nullable: "NO",
-              extra: "auto_increment",
-            },
-            {
-              column_name: "role",
-              data_type: "enum",
-              column_type: "enum('admin','user','guest')",
-              is_nullable: "NO",
-            },
-          ];
-        }
-        if (sqlText.includes("KEY_COLUMN_USAGE") && sqlText.includes("PRIMARY")) {
-          return [{ column_name: "id" }];
-        }
-        return [];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "mysql");
-      const entities = await generator.generate();
-
-      expect(entities).toHaveLength(1);
-      expect(entities[0].code).toContain(
-        '@Column({ type: "enum", enum: ["admin", "user", "guest"] })',
-      );
-    });
-
-    it("should handle MySQL enum labels containing escaped quotes", async () => {
-      const mockQueryFn = jest.fn(async (sqlInput: any) => {
-        const sqlText = typeof sqlInput === "string"
-          ? sqlInput
-          : (sqlInput.text ?? sqlInput.sql ?? "");
-
-        if (sqlText.includes("information_schema.TABLES")) {
-          return [{ table_name: "quotes" }];
-        }
-        if (sqlText.includes("information_schema.COLUMNS")) {
-          return [
-            { column_name: "id", data_type: "int", is_nullable: "NO", extra: "auto_increment" },
-            {
-              column_name: "label",
-              data_type: "enum",
-              column_type: "enum('it''s','two''quotes','plain')",
-              is_nullable: "NO",
-            },
-          ];
-        }
-        if (sqlText.includes("KEY_COLUMN_USAGE") && sqlText.includes("PRIMARY")) {
-          return [{ column_name: "id" }];
-        }
-        return [];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "mysql");
-      const entities = await generator.generate();
-
-      expect(entities[0].code).toContain(
-        `@Column({ type: "enum", enum: ["it's", "two'quotes", "plain"] })`,
-      );
-    });
-  });
-
-  describe("getPrimaryKeys()", () => {
-    it("should return primary key column names", async () => {
-      const mockQueryFn = jest.fn(async () => {
-        return [{ column_name: "id" }];
-      });
-
-      const generator = new IntrospectionGenerator(mockQueryFn, "postgres");
-      const pks = await generator.getPrimaryKeys("users");
-
-      expect(pks).toEqual(["id"]);
-    });
-  });
-
-  describe("getForeignKeys()", () => {
-    it("should return foreign key metadata", async () => {
-      const mockQueryFn = jest.fn(async () => {
-        return [
-          {
-            column_name: "author_id",
-            referenced_table: "users",
-            referenced_column: "id",
-            constraint_name: "fk_posts_author",
+    it("turns any column name into a valid, unique property", async () => {
+      const generator = new IntrospectionGenerator(
+        pgCatalog({
+          orders: {
+            columns: [
+              pgCol("id", "integer"),
+              pgCol("order-ref", "text"),
+              pgCol("user_name", "text"),
+              pgCol("userName", "text"),
+              pgCol("constructor", "text"),
+              pgCol("2fa_code", "text"),
+              pgCol('say "hi"', "text"),
+            ],
+            pk: ["id"],
           },
-        ];
+        }),
+        "postgres",
+      );
+      const [order] = await generator.generate();
+      expect(order.code).toContain('@Column({ type: "text", name: "order-ref" })\n  orderRef!: string;');
+      expect(order.code).toContain('@Column({ type: "text", name: "user_name" })\n  userName!: string;');
+      expect(order.code).toContain('@Column({ type: "text", name: "userName" })\n  userName2!: string;');
+      expect(order.code).toContain('@Column({ type: "text", name: "constructor" })\n  constructor_!: string;');
+      expect(order.code).toContain('@Column({ type: "text", name: "2fa_code" })\n  _2faCode!: string;');
+      expect(order.code).toContain('@Column({ type: "text", name: "say \\"hi\\"" })\n  sayHi!: string;');
+    });
+
+    it("reports a composite foreign key and an index it cannot declare", async () => {
+      const generator = new IntrospectionGenerator(
+        pgCatalog({
+          memberships: {
+            columns: [pgCol("org_id", "integer"), pgCol("user_id", "integer")],
+            pk: ["org_id", "user_id"],
+          },
+          grants: {
+            columns: [pgCol("id", "integer"), pgCol("org_id", "integer"), pgCol("user_id", "integer")],
+            pk: ["id"],
+            fks: [
+              pgFk("fk_member", "org_id", "memberships", "org_id"),
+              pgFk("fk_member", "user_id", "memberships", "user_id"),
+            ],
+            indexes: [
+              { index_name: "idx_live", is_unique: false, method: "btree", predicate: "(org_id > 0)", definition: "", column_name: "org_id", quoted_name: "org_id", part_definition: "org_id" },
+            ],
+          },
+        }),
+        "postgres",
+      );
+      const grant = (await generator.generate()).find((r) => r.tableName === "grants")!;
+      expect(grant.code).not.toContain("@ManyToOne");
+      expect(grant.notes).toEqual([
+        "Composite foreign key (org_id, user_id) → memberships(org_id, user_id) is not declared: a relation joins on a single column. Its columns are kept as plain columns; recreate the constraint in a migration.",
+        'Index "idx_live" is not declared: partial index WHERE (org_id > 0) cannot be expressed with the ORM\'s index options. Recreate it in a migration.',
+      ]);
+    });
+
+    it("keeps a PostgreSQL enum's type name and an array's element type", async () => {
+      const generator = new IntrospectionGenerator(
+        pgCatalog({
+          orders: {
+            columns: [
+              pgCol("id", "integer"),
+              pgCol("status", "order_status", {
+                type_name: "order_status",
+                type_kind: "e",
+                enum_labels: ["pending", "paid"],
+                default_expr: "'pending'::order_status",
+              }),
+              pgCol("scores", "integer[]"),
+            ],
+            pk: ["id"],
+          },
+        }),
+        "postgres",
+      );
+      const [order] = await generator.generate();
+      expect(order.code).toContain(
+        '@Column({ type: "enum", enumValues: ["pending", "paid"], enumName: "order_status", default: "pending" })',
+      );
+      expect(order.code).toContain('@Column({ type: "array", arrayElementType: "int", nullable: false })');
+    });
+
+    it("writes each lossy mapping into the file", async () => {
+      const generator = new IntrospectionGenerator(
+        pgCatalog({
+          readings: {
+            columns: [
+              pgCol("id", "integer"),
+              pgCol("value", "double precision"),
+              pgCol("peer", "inet", { not_null: false }),
+            ],
+            pk: ["id"],
+          },
+        }),
+        "postgres",
+      );
+      const [reading] = await generator.generate();
+      expect(reading.notes).toEqual([
+        'value: The database declares "double precision", but this entity creates "REAL" — synchronizing it would change the column.',
+        'peer: No ORM column type matches "inet" — mapped to "text", which is created as "TEXT". Synchronizing this entity will NOT recreate the original type; register a custom column type or edit this column by hand.',
+      ]);
+    });
+  });
+
+  describe("MySQL", () => {
+    function mysqlCatalog(version: string) {
+      return jest.fn(async (q: any) => {
+        const { text } = queryText(q);
+        if (text.includes("SELECT VERSION()")) return [{ version }];
+        if (text.includes("information_schema.TABLES")) return [{ table_name: "posts" }];
+        if (text.includes("information_schema.COLUMNS")) {
+          return [
+            { COLUMN_NAME: "id", COLUMN_TYPE: "int", IS_NULLABLE: "NO", COLUMN_DEFAULT: null, EXTRA: "auto_increment" },
+            { COLUMN_NAME: "status", COLUMN_TYPE: "enum('draft','it''s')", IS_NULLABLE: "NO", COLUMN_DEFAULT: "draft", EXTRA: "" },
+            { COLUMN_NAME: "views", COLUMN_TYPE: "int unsigned", IS_NULLABLE: "NO", COLUMN_DEFAULT: "0", EXTRA: "" },
+            { COLUMN_NAME: "is_public", COLUMN_TYPE: "tinyint(1)", IS_NULLABLE: "NO", COLUMN_DEFAULT: "1", EXTRA: "" },
+          ];
+        }
+        if (text.includes("CONSTRAINT_NAME = 'PRIMARY'")) return [{ column_name: "id" }];
+        return [];
       });
+    }
 
-      const generator = new IntrospectionGenerator(mockQueryFn, "postgres");
-      const fks = await generator.getForeignKeys("posts");
+    it("generates from MySQL's catalog, bare literal defaults included", async () => {
+      const [post] = await new IntrospectionGenerator(mysqlCatalog("8.0.36"), "mysql").generate();
 
-      expect(fks).toHaveLength(1);
-      expect(fks[0].column_name).toBe("author_id");
-      expect(fks[0].referenced_table).toBe("users");
+      expect(post.code).toContain("@PrimaryGeneratedColumn()");
+      expect(post.code).toContain(
+        '@Column({ type: "enum", enumValues: ["draft", "it\'s"], default: "draft" })',
+      );
+      expect(post.code).toContain('@Column({ type: "boolean", name: "is_public", default: true })');
+      expect(post.notes).toEqual([
+        'views: The database declares "int unsigned", but this entity creates "INT" — synchronizing it would change the column.',
+      ]);
+    });
+  });
+
+  describe("SQLite", () => {
+    function sqliteCatalog() {
+      return jest.fn(async (q: any) => {
+        const { text } = queryText(q);
+        if (text.includes("name NOT LIKE 'sqlite_%'")) return [{ table_name: "comments" }, { table_name: "posts" }];
+        if (text.includes("SELECT sql FROM sqlite_master")) return [{ sql: "CREATE TABLE t (…)" }];
+        if (text === 'PRAGMA table_xinfo("posts")') {
+          return [
+            { cid: 0, name: "id", type: "INTEGER", notnull: 0, dflt_value: null, pk: 1, hidden: 0 },
+            { cid: 1, name: "title", type: "VARCHAR(200)", notnull: 1, dflt_value: null, pk: 0, hidden: 0 },
+          ];
+        }
+        if (text === 'PRAGMA table_xinfo("comments")') {
+          return [
+            { cid: 0, name: "id", type: "INTEGER", notnull: 0, dflt_value: null, pk: 1, hidden: 0 },
+            { cid: 1, name: "post_id", type: "INTEGER", notnull: 1, dflt_value: null, pk: 0, hidden: 0 },
+            { cid: 2, name: "parent_id", type: "INTEGER", notnull: 0, dflt_value: null, pk: 0, hidden: 0 },
+          ];
+        }
+        if (text === 'PRAGMA foreign_key_list("comments")') {
+          return [
+            { id: 0, seq: 0, table: "posts", from: "post_id", to: "id", on_update: "NO ACTION", on_delete: "CASCADE" },
+            { id: 1, seq: 0, table: "comments", from: "parent_id", to: "id", on_update: "NO ACTION", on_delete: "NO ACTION" },
+          ];
+        }
+        if (text === 'PRAGMA index_list("comments")') {
+          return [{ seq: 0, name: "idx_comments_post", unique: 0, origin: "c", partial: 0 }];
+        }
+        if (text === 'PRAGMA index_xinfo("idx_comments_post")') {
+          return [{ seqno: 0, cid: 1, name: "post_id", desc: 0, coll: "BINARY", key: 1 }];
+        }
+        return [];
+      });
+    }
+
+    it("generates the rowid alias as a generated key and foreign keys as relations", async () => {
+      const results = await new IntrospectionGenerator(sqliteCatalog(), "sqlite").generate();
+      const comment = results.find((r) => r.tableName === "comments")!;
+
+      expect(comment.code).toContain("@PrimaryGeneratedColumn()");
+      expect(comment.code).toContain(
+        '@ManyToOne(() => Post, (entity: any) => entity.post, { onDelete: "CASCADE" })',
+      );
+      // Self reference: no import of its own class.
+      expect(comment.code).toContain("@ManyToOne(() => Comment, (entity: any) => entity.parent)");
+      expect(comment.code).not.toContain('import { Comment }');
+      // SQLite does not index a foreign key by itself, so this index is the
+      // schema's own and is kept — on the join column's name.
+      expect(comment.code).toContain('@Index(["post_id"], "idx_comments_post")');
+    });
+
+    it("rejects a table name that cannot be escaped into a PRAGMA", async () => {
+      const generator = new IntrospectionGenerator(jest.fn(async () => []), "sqlite");
+      await expect(generator.getColumns("bad\u0000name")).rejects.toThrow(/NUL/);
+    });
+  });
+
+  describe("readSchema()", () => {
+    it("returns the selected tables as the schema IR", async () => {
+      const generator = new IntrospectionGenerator(pgCatalog(blog()), "postgres", {
+        schema: "public",
+        includeTables: ["users"],
+      });
+      const ir = await generator.readSchema();
+      expect(ir).toEqual({
+        dialect: "postgres",
+        schema: "public",
+        tables: [
+          {
+            name: "users",
+            columns: [
+              { name: "id", type: { kind: "integer", bytes: 4, unsigned: false }, nullable: false, identity: true, nativeType: "integer", rawDefault: null },
+              { name: "name", type: { kind: "string", fixed: false, length: 255 }, nullable: false, identity: false, nativeType: "character varying(255)", rawDefault: null },
+            ],
+            primaryKey: ["id"],
+            foreignKeys: [],
+            indexes: [],
+          },
+        ],
+      });
+    });
+  });
+
+  describe("deprecated row accessors", () => {
+    const tables = (): Record<string, FakeTable> => ({
+      grants: {
+        columns: [
+          pgCol("id", "integer", { is_identity: "YES" }),
+          pgCol("org_id", "integer"),
+          pgCol("user_id", "integer"),
+          pgCol("note", "character varying(100)", { not_null: false, default_expr: "'x'::character varying" }),
+        ],
+        pk: ["id"],
+        fks: [
+          pgFk("fk_member", "org_id", "memberships", "org_id"),
+          pgFk("fk_member", "user_id", "memberships", "user_id"),
+          pgFk("fk_org", "org_id", "orgs"),
+        ],
+        indexes: [
+          { index_name: "idx_org", is_unique: false, method: "btree", predicate: null, definition: "", column_name: "org_id", quoted_name: "org_id", part_definition: "org_id" },
+          { index_name: "uq_note", is_unique: true, method: "btree", predicate: null, definition: "", column_name: "note", quoted_name: "note", part_definition: "note" },
+        ],
+      },
+    });
+    const generator = () => new IntrospectionGenerator(pgCatalog(tables()), "postgres");
+
+    it("getColumns() keeps the row shape", async () => {
+      const columns = await generator().getColumns("grants");
+      expect(columns[0]).toMatchObject({ column_name: "id", data_type: "integer", is_nullable: "NO", is_identity: "YES" });
+      expect(columns[3]).toMatchObject({
+        column_name: "note",
+        data_type: "character varying",
+        character_maximum_length: 100,
+        is_nullable: "YES",
+        column_default: "'x'::character varying",
+      });
+    });
+
+    it("getPrimaryKeys() / getForeignKeys() / getIndexes()", async () => {
+      expect(await generator().getPrimaryKeys("grants")).toEqual(["id"]);
+      expect(await generator().getForeignKeys("grants")).toEqual([
+        { column_name: "org_id", referenced_table: "memberships", referenced_column: "org_id", constraint_name: "fk_member" },
+        { column_name: "user_id", referenced_table: "memberships", referenced_column: "user_id", constraint_name: "fk_member" },
+        { column_name: "org_id", referenced_table: "orgs", referenced_column: "id", constraint_name: "fk_org" },
+      ]);
+      // A single-column index on a foreign key column is left out.
+      expect(await generator().getIndexes("grants")).toEqual([
+        { name: "uq_note", column_names: ["note"], is_unique: true },
+      ]);
     });
   });
 });

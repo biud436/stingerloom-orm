@@ -6,7 +6,9 @@ You join a new team. The project has a database with 47 tables, hundreds of colu
 
 Without introspection, you would open pgAdmin or DBeaver, look at each table definition, and manually write 47 entity files. For each column, you would check the type, nullability, length, and default. For each foreign key, you would figure out the relation and add a `@ManyToOne` decorator. This would take hours, and you would almost certainly make mistakes.
 
-With introspection, you point the generator at your database and it produces all 47 entity files automatically — in either of the ORM's two entity notations (decorators or the decorator-free `defineEntity` builder; see [Choosing the Output Style](#choosing-the-output-style)). Foreign keys become `@ManyToOne` + `@RelationColumn`. Unique constraints become `@UniqueIndex`. `created_at` / `updated_at` / `deleted_at` columns are recognized and emitted as `@CreateTimestamp` / `@UpdateTimestamp` / `@DeletedAt`. Snake_case column names are preserved via explicit `name:` options so the generated entity is **round-trip stable** — applying it back to a fresh database creates the exact same schema.
+With introspection, you point the generator at your database and it produces all 47 entity files automatically — in either of the ORM's two entity notations (decorators or the decorator-free `defineEntity` builder; see [Choosing the Output Style](#choosing-the-output-style)). Foreign keys become `@ManyToOne` + `@RelationColumn`, with their `ON DELETE` / `ON UPDATE` actions. Unique constraints become `@UniqueIndex`. `created_at` / `updated_at` / `deleted_at` columns are recognized and emitted as `@CreateTimestamp` / `@UpdateTimestamp` / `@DeletedAt`. Snake_case column names are preserved via explicit `name:` options so the generated entity is **round-trip stable** — applying it back to a fresh database creates the same schema.
+
+Where an entity *cannot* say what the table says — a type with no ORM counterpart, a composite foreign key, a partial index — the generated file tells you so in a `// NOTE:` comment on the spot, instead of quietly producing something different.
 
 Introspection is the reverse of schema synchronization. Where `synchronize: true` reads your entities and creates tables, introspection reads your tables and creates entities.
 
@@ -14,43 +16,26 @@ Introspection is the reverse of schema synchronization. Where `synchronize: true
 
 ## How It Works
 
-The introspection system has three core components plus a runtime helper:
+Every database describes itself differently. PostgreSQL spells a type `character varying(80)` and a default `'active'::character varying`; MySQL prints the same default as a bare `active`, MariaDB as `'active'`; SQLite keeps whatever the `CREATE TABLE` said. Code that turns these descriptions straight into TypeScript has to know every spelling at every step — and a spelling one step forgets becomes a subtly wrong entity.
+
+So introspection runs like a small compiler, with a dialect-neutral **schema IR** in the middle:
 
 ```
-┌─────────────────────────┐
-│  IntrospectionGenerator │   Orchestrator — queries the database
-│                         │   catalogs and coordinates the others
-└───────────┬─────────────┘
-            │
-     ┌──────┴──────┐
-     │             │
-     v             v
-┌──────────┐  ┌──────────────────┐
-│TypeMapper│  │EntityCodeBuilder │
-│          │  │                  │
-│ DB type  │  │ Takes columns,   │
-│ → ORM    │  │ PKs, FKs,        │
-│ ColumnType│  │ indexes → .ts   │
-└──────────┘  └──────────────────┘
-            │
-            v
-   ┌──────────────────┐
-   │  runIntrospect() │   Convenience wrapper that connects via
-   │  + stingerloom   │   DatabaseClient, writes files to disk,
-   │   introspect CLI │   and exposes a CLI command
-   └──────────────────┘
+                      read                        lower                        emit
+ PostgreSQL catalog ─┐                ┌──────────────────────────┐
+ MySQL catalog  ─────┼──▶  Schema IR ─┤ names, relations, indexes ├─▶ EntityModel ─┬─▶ @Entity classes
+ SQLite catalog ─────┘   (by meaning) │ ORM type per column       │               └─▶ defineEntity(...)
+                                      └────────────┬─────────────┘
+                                                   │ verify
+                               the ORM's own DDL for that type, parsed back
+                               by the same dialect reader, compared with the IR
 ```
 
-Step-by-step flow:
+1. **Read.** A catalog reader per dialect turns the database's description of each table into the IR: columns with a *canonical type* (by meaning — MySQL `TIMESTAMP` and PostgreSQL `timestamptz` are both an instant, MySQL `DATETIME` and PostgreSQL `timestamp` both a wall-clock time), parsed defaults, identity, primary key, foreign keys (composite ones kept whole, with their referential actions) and indexes (with anything they have beyond plain columns). Every dialect quirk is resolved here and nowhere else.
+2. **Lower.** Each table becomes an `EntityModel`: class and property names that are valid, non-colliding identifiers; a relation per single-column foreign key; indexes; timestamp markers. The ORM column type is **not** looked up in a hand-kept reverse table. Candidate ORM types are rendered through the dialect's real column definition builder — the code `synchronize` creates tables with — and the rendered DDL is parsed back by the same reader. The first candidate that recreates the column's type is chosen, and whatever it cannot recreate is recorded.
+3. **Emit.** The model is spelled out as decorated classes or `defineEntity` builders. Both emitters print every option the model sets, so the two notations always declare the same schema.
 
-1. **Discover tables.** PostgreSQL uses `pg_tables`, MySQL uses `information_schema.TABLES`, SQLite uses `sqlite_master`.
-2. **Get column metadata.** Per table — name, type, length, precision/scale, nullability, default, plus dialect-specific extras (MySQL `COLUMN_TYPE` for TINYINT(1) detection, PG `is_identity` for `GENERATED AS IDENTITY` columns).
-3. **Get primary keys.** Detects composite PKs and the rowid-alias `INTEGER PRIMARY KEY` pattern on SQLite.
-4. **Get foreign keys.** Sorted by the FK column's ordinal position so the output is deterministic across runs.
-5. **Get indexes.** Non-PK indexes only; FK-implied single-column indexes are filtered out since most engines create them automatically.
-6. **Resolve enum labels.** PostgreSQL `pg_type` + `pg_enum`; MySQL `COLUMN_TYPE` parsed for the `ENUM('a','b',…)` value list.
-7. **Map types.** `IntrospectionTypeMapper` converts DB-native types to ORM `ColumnType` values.
-8. **Generate code.** `EntityCodeBuilder` assembles imports, decorators, and properties; emits class-level `@Index`/`@UniqueIndex` for multi-column or unique indexes, property-level `@Index()` for single-column non-unique ones, and timestamp decorators when column-name heuristics match.
+Because the mapping is checked against the DDL the ORM actually produces, it cannot drift from it: if the ORM changes how it declares a type, the choice and its notes follow.
 
 ---
 
@@ -91,6 +76,8 @@ npx stingerloom introspect --style code-first
 | `--dry-run` | Report what would be generated without writing files |
 | `--config <path>` | Explicit config file path (default: auto-detect) |
 
+When any generated file carries a `// NOTE:`, the CLI logs how many and in which files, so they are not missed in a large schema.
+
 ### 2. `runIntrospect()` — Programmatic helper
 
 For scripts that want full control. `runIntrospect` connects via `DatabaseClient`, runs the generator, and writes files in one call:
@@ -117,6 +104,7 @@ const result = await runIntrospect(
 console.log(`Wrote ${result.writtenFiles.length} entity files`);
 for (const e of result.entities) {
   console.log(`  - ${e.fileName}  (${e.tableName} → ${e.className})`);
+  for (const note of e.notes) console.log(`      NOTE ${note}`);
 }
 ```
 
@@ -133,10 +121,10 @@ for (const e of result.entities) {
 
 ### 3. `IntrospectionGenerator` — Low-level building blocks
 
-For advanced cases like driving the generator with a custom query function:
+For advanced cases like driving the generator with a custom query function, or reading the schema without generating code:
 
 ```typescript
-import { IntrospectionGenerator } from "@stingerloom/orm";
+import { IntrospectionGenerator } from "@stingerloom/orm/introspection";
 
 const generator = new IntrospectionGenerator(
   (q) => driver.query(q),         // Accepts strings or `sql` template tags
@@ -145,11 +133,13 @@ const generator = new IntrospectionGenerator(
 );
 
 const entities = await generator.generate();
-// or fetch individual pieces:
-const tables = await generator.discoverTables();
-const columns = await generator.getColumns("users");
-const fks = await generator.getForeignKeys("posts");
-const indexes = await generator.getIndexes("users");
+
+// The schema IR on its own — a structural, dialect-neutral description:
+const schema = await generator.readSchema();   // the selected tables
+const users = await generator.readTable("users");
+users.columns[0];
+// { name: "id", type: { kind: "integer", bytes: 4, unsigned: false },
+//   nullable: false, identity: true, nativeType: "integer", ... }
 ```
 
 ---
@@ -164,10 +154,11 @@ CREATE TABLE user (
   username VARCHAR(255) NOT NULL,
   access_key VARCHAR(191) NOT NULL,
   is_valid TINYINT(1) DEFAULT 1,
+  login_count INT UNSIGNED NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL,
-  updated_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   profile_id INT,
-  CONSTRAINT fk_user_profile FOREIGN KEY (profile_id) REFERENCES profile(id),
+  CONSTRAINT fk_user_profile FOREIGN KEY (profile_id) REFERENCES profile(id) ON DELETE SET NULL,
   UNIQUE KEY uq_user_username (username)
 );
 ```
@@ -175,16 +166,7 @@ CREATE TABLE user (
 Introspection produces:
 
 ```typescript
-import {
-  Column,
-  CreateTimestamp,
-  Entity,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-  RelationColumn,
-  UniqueIndex,
-  UpdateTimestamp,
-} from "@stingerloom/orm";
+import { Column, CreateTimestamp, Entity, ManyToOne, PrimaryGeneratedColumn, RelationColumn, UniqueIndex, UpdateTimestamp, type Relation } from "@stingerloom/orm";
 import { Profile } from "./profile.entity.js";
 
 @Entity({ name: "user" })
@@ -200,27 +182,34 @@ export class User {
   accessKey!: string;
 
   @Column({ type: "boolean", name: "is_valid", nullable: true, default: true })
-  isValid!: boolean;
+  isValid!: boolean | null;
+
+  // NOTE: The database declares "int(10) unsigned", but this entity creates "INT" — synchronizing it would change the column.
+  @Column({ type: "int", name: "login_count", default: 0 })
+  loginCount!: number;
 
   @CreateTimestamp({ name: "created_at" })
   createdAt!: Date;
 
+  // NOTE: DEFAULT current_timestamp() is not declared: as an update timestamp the column is filled in by the ORM instead.
+  // NOTE: ON UPDATE CURRENT_TIMESTAMP is not declared: as an update timestamp the column is set by the ORM on every save instead.
   @UpdateTimestamp({ name: "updated_at" })
   updatedAt!: Date;
 
-  @ManyToOne(() => Profile, (entity: any) => entity.profile)
+  @ManyToOne(() => Profile, (entity: any) => entity.profile, { onDelete: "SET NULL" })
   @RelationColumn({ name: "profile_id", type: "int", nullable: true, referencedColumn: "id" })
-  profile!: Profile;
+  profile!: Relation<Profile>;
 }
 ```
 
 Things to notice:
 
 - **`name:` options preserve the DB column name** (`access_key`, `is_valid`) so the generated entity round-trips under the default identity NamingStrategy. Without this, applying the entity would create an `accessKey` column instead of `access_key`.
-- **TINYINT(1) is recognized as `boolean`**; wider TINYINT widths (`TINYINT(4)`, `TINYINT UNSIGNED`) map to `int`.
-- **`created_at` / `updated_at` are emitted as timestamp decorators** with the column name passed through.
-- **The FK column `profile_id` is not a `@Column`** — it's expressed via `@ManyToOne` + `@RelationColumn`, which carries the FK column's own name, type and nullability. The deprecated `joinColumn` option is not used.
-- **The unique index is hoisted to a class-level `@UniqueIndex`** with the original index name preserved.
+- **TINYINT(1) is recognized as `boolean`**; other TINYINT widths are small integers.
+- **`INT UNSIGNED` is flagged.** The ORM has no unsigned integer type, so the entity would create a signed `INT` — the note says exactly that, with both spellings.
+- **`created_at` / `updated_at` are emitted as timestamp decorators**, and the database default and `ON UPDATE` those decorators take over from are named in notes rather than dropped silently.
+- **The FK column `profile_id` is not a `@Column`** — it's expressed via `@ManyToOne` + `@RelationColumn`, which carries the FK column's own name, type and nullability, and the constraint's `ON DELETE SET NULL`.
+- **The unique index is hoisted to a class-level `@UniqueIndex`** with the original index name preserved. The index InnoDB created for the foreign key by itself is not declared — the ORM's foreign key creates it again.
 
 ---
 
@@ -255,7 +244,7 @@ export class Post {
   @Column({ type: "varchar", length: 200 })
   title!: string;
 
-  @ManyToOne(() => User, (entity: any) => entity.author)
+  @ManyToOne(() => User, (entity: any) => entity.author, { onDelete: "CASCADE" })
   @RelationColumn({ name: "author_id", type: "int", nullable: false, referencedColumn: "id" })
   author!: Relation<User>;
 }
@@ -273,6 +262,7 @@ export const Post = defineEntity(
     title: t.varchar(200),
     author: t.manyToOne<User>((): AnyEntityClass => User, {
       relationColumn: { name: "author_id", type: "int", nullable: false, referencedColumn: "id" },
+      onDelete: "CASCADE",
     }),
   },
 );
@@ -287,128 +277,157 @@ Two details in the code-first output are load-bearing:
 - The relation target thunk is annotated (`(): AnyEntityClass => User`). Without the annotation, two entities that reference each other cannot both have their types inferred (TS7022).
 - The row type is declared by interface merging (`export interface Post extends InferEntity<typeof Post> {}`), not a `type` alias — interfaces resolve their members lazily, which is what keeps a self-referencing table (a `parent_id` FK) from becoming a circular type. On that one form the shape parameter is also omitted: `t.manyToOne((): AnyEntityClass => Department, …)`.
 
+One thing only the decorator style can say: a `NOT NULL` binary column. `t.blob()` columns are always created nullable, so the code-first output flags such a column with a note.
+
 ---
 
 ## Round-Trip Stability
 
-The introspection output is deterministic. Given a stable database schema, running introspect twice produces bit-identical files. Applying the output as a schema and re-introspecting also produces bit-identical files. The mechanisms that make this work:
+The introspection output is deterministic. Given a stable database schema, running introspect twice produces bit-identical files. Applying the output as a schema and re-introspecting produces the same files again.
+
+This is verified, not assumed:
+
+- **Every ORM column type, on every dialect.** A unit test renders each column type the ORM can create through the dialect's column definition builder, reads the DDL back, and requires the type selection to land on a type that recreates it exactly.
+- **Both emitters, against the ORM's metadata.** A unit test type checks and loads the generated files of both styles and compares every column's declared type, nullability, key, generation, default, relation column, referential action and index with what the model chose — so an option one notation spells wrong (or the ORM infers from `design:type`) cannot slip through.
+- **Real databases.** Integration tests create a schema with plain DDL on SQLite, PostgreSQL, MySQL and MariaDB, generate entities in both styles, recreate the tables from them with `synchronize`, and require the recreated schema to read back identically — and the files generated from it to be byte-identical to the first ones.
+
+The mechanisms this rests on:
 
 | Mechanism | Why |
 |-----------|-----|
-| Explicit `name:` on `@Column`, `@PrimaryColumn`, `@PrimaryGeneratedColumn`, `@CreateTimestamp`, `@UpdateTimestamp`, `@DeletedAt` whenever DB col name ≠ property name | Prevents identity NamingStrategy from creating camelCase columns on re-apply |
-| FK relations sorted by their column's ordinal position | INFORMATION_SCHEMA's natural order isn't stable across engines |
-| `columnNameToPropertyName` preserves camelCase columns | Without this, `updatedAt` column would become `updatedat` property |
-| Class-level `@Index`/`@UniqueIndex` reference **property keys**, not DB column names | The ORM remaps property → column via metadata; raw DB names would mismatch |
-| MariaDB's `COLUMN_DEFAULT = 'NULL'` quirk is filtered | Otherwise nullable columns get a noisy `default: "(NULL)"` |
-| Self-referential FKs don't emit a self-import | Would conflict with the local class declaration |
-| Composite-PK FK columns emit both `@PrimaryColumn` and the relation | Closure tables need a real PK |
-| FK columns carry their own `type` and `nullable` | Inferring them from the target's PK dropped the source schema's `NOT NULL` and could change the column's type |
+| Explicit `name:` whenever the DB column name ≠ property name | Prevents identity NamingStrategy from creating camelCase columns on re-apply |
+| Every type-relevant option is written out (`type`, `length`, `precision` / `scale`, `enumValues`, `enumName`, `arrayElementType`), on primary keys too | Decorator metadata depends on compiler settings (`string \| null` is `Object` under `strictNullChecks`); an inferred option would make the column depend on them |
+| `nullable: false` is written for `any` / `Buffer` properties | `@Column` defaults those `design:type`s to nullable |
+| FK relations sorted by their column's position | Catalog order isn't stable across engines |
+| Class-level indexes name plain columns by property and join columns by DB column | Both resolve to the right column in every index declaration path |
+| Defaults are parsed per dialect into values or expressions | MySQL prints a literal bare (`active`), MariaDB quoted (`'active'`), PostgreSQL with a cast (`'active'::character varying`); MySQL's `CURRENT_TIMESTAMP` / `now()` / `current_timestamp()` are one function |
+| Expressions are stored without their outer parentheses | Catalogs disagree on keeping them; the ORM adds exactly one pair back |
 | A primary key is never emitted as nullable | SQLite reports `notnull = 0` for an `INTEGER PRIMARY KEY` rowid alias |
-| A `VARCHAR` with no length limit is emitted as `text` | The ORM's default column length would otherwise cap an unbounded PostgreSQL `varchar` at `VARCHAR(255)` |
-| `precision` / `scale` are kept only for `NUMERIC` / `DECIMAL` sources | `information_schema` reports binary precision 53 for `double precision`; passing it through produced `NUMERIC(53, …)` |
+| Class names avoid globals and imported names (`errors` → `ErrorEntity`), and two tables never share a class or file | `design:type` metadata refers to `Error`, `Date`, …; `user` and `users` would overwrite each other |
 
 This guarantees that you can introspect a legacy database, commit the entities, and have CI/CD reapply them to a staging database with identical results.
 
 ### What the echo does not preserve
 
-The loop is verified end to end by an integration test that generates entities from a SQLite schema (in both styles), type checks them, recreates the schema from them, and compares the two databases — then repeats the loop and asserts that generations N and N+1 are byte-identical.
-
-A few things genuinely cannot survive the trip, and the generator says so in a `// NOTE:` comment above the affected field rather than letting you find out at synchronize time:
+Some things genuinely cannot survive the trip. None of them is dropped silently: the generator writes a `// NOTE:` comment above the affected field (or the entity), and returns the same text in `GeneratedEntity.notes`.
 
 | Case | What happens |
 |------|--------------|
-| A type the mapper does not recognize (`inet`, `interval`, `tsvector`, …) | Mapped to `varchar` and flagged. Synchronizing that entity would **not** recreate the original type — register a custom column type or edit the column by hand |
-| PostgreSQL `double precision` / `real` | No exact ORM column type exists; mapped to `double` (emitted as `NUMERIC`) / `float` (emitted as `REAL`) and flagged |
+| A type the ORM cannot create (`smallint`, `int unsigned`, PostgreSQL `double precision`, `timestamp(3)`, `mediumtext`, `inet`, `interval`, …) | The closest ORM type is used and the note gives both spellings — what the database declares and what the entity would create. Types with no counterpart at all become `text`, which holds any value's text form. See [Type Mapping](#type-mapping) |
+| SQLite declarations whose affinity the ORM changes (`DATETIME`, `DATE`, `JSON`, `DECIMAL`) | Flagged. The ORM declares `TEXT` / `REAL`, whose affinity stores some values differently (`'123'` stays text under TEXT but becomes an integer under the NUMERIC affinity of `DATETIME`). `BOOLEAN` → `INTEGER` keeps the affinity and is not flagged |
+| A composite foreign key | Its columns stay plain columns; the note names the constraint to recreate in a migration |
+| A foreign key to a table that is not generated (excluded, or in another schema) | Kept as a plain column instead of a relation that would import a class that does not exist |
 | A foreign key that references a non-primary-key column | Flagged. Schema generation always builds the constraint against the target's primary key |
-| SQLite declared types | SQLite stores only the *affinity*, and this ORM emits `INTEGER` for `boolean` and `TEXT` for every date/time type. A database this ORM created therefore reports `INTEGER` / `TEXT` on the next introspection, so `BOOLEAN` and `DATETIME` columns — and the timestamp decorators derived from them — are not recovered on the second pass. The first generation, from a schema another tool created, is unaffected |
-| `@OneToMany`, `@OneToOne`, cascade rules | Not derivable from one-sided FK introspection — see [Known Limitations](#known-limitations) |
+| A partial, expression, full-text, prefix-length, descending, `INCLUDE` or non-btree index | Not declared — recreating it without that part would build a different index (a broader unique one, even). The note gives its definition |
+| A generated (computed) column | Emitted as a plain column and flagged |
+| A default or `ON UPDATE` that a timestamp decorator replaces | Flagged; the ORM fills the column in instead |
+| An identity column that is not a single integer primary key | Flagged |
+| A table without a primary key | Flagged |
+| Column order | A relation's join column is created after the table's other columns |
+| Constraint and index names of foreign keys and single-column property indexes | Regenerated by the ORM's naming strategy |
+| `@OneToMany`, `@OneToOne` | Not derivable from one-sided FK introspection — see [Known Limitations](#known-limitations) |
 
 ---
 
 ## Type Mapping
 
+The tables below are what the type selection produces — rendered through each dialect's column definition builder, not written by hand. *Created as* is the DDL the generated entity declares; **exact** means it recreates the database type, **equivalent** that it differs only in spelling the database treats identically, and **flagged** that the file carries a note.
+
 ### PostgreSQL
 
-| Database Type | ORM `ColumnType` | TypeScript |
-|---------------|------------------|------------|
-| `INTEGER`, `INT4`, `SMALLINT`, `SERIAL` | `int` | `number` |
-| `BIGINT`, `INT8`, `BIGSERIAL` | `bigint` | `number` |
-| `REAL`, `FLOAT4` | `float` | `number` |
-| `DOUBLE PRECISION`, `FLOAT8`, `NUMERIC`, `DECIMAL` | `double` | `number` (precision/scale preserved) |
-| `BOOLEAN`, `BOOL` | `boolean` | `boolean` |
-| `CHARACTER VARYING`, `VARCHAR` | `varchar` | `string` (length preserved) |
-| `TEXT` | `text` | `string` |
-| `CHAR`, `CHARACTER`, `BPCHAR` | `char` | `string` (length preserved) |
-| `TIMESTAMP`, `TIMESTAMP WITHOUT TIME ZONE` | `timestamp` | `Date` |
-| `TIMESTAMPTZ`, `TIMESTAMP WITH TIME ZONE` | `timestamptz` | `Date` |
-| `DATE` | `date` | `Date` |
-| `JSON` | `json` | `any` |
-| `JSONB` | `jsonb` | `any` |
-| `BYTEA` | `blob` | `Buffer` |
-| `ARRAY` | `array` | `any` |
-| `USER-DEFINED` (with `udt_name` resolving to `pg_type.typtype = 'e'`) | `enum` (labels embedded) | `string` |
+| Database type | ORM `ColumnType` | Created as | |
+|---------------|------------------|------------|---|
+| `integer`, `serial` | `int` | `INTEGER` | exact |
+| `bigint`, `bigserial` | `bigint` | `BIGINT` | exact |
+| `smallint` | `int` | `INTEGER` | flagged |
+| `real` | `float` | `REAL` | exact |
+| `double precision` | `float` | `REAL` | flagged |
+| `numeric(p,s)` | `double` + `precision` / `scale` | `NUMERIC(p, s)` | exact |
+| `numeric` (unconstrained) | `double` | `NUMERIC(10, 2)` | flagged |
+| `boolean` | `boolean` | `BOOLEAN` | exact |
+| `character varying(n)` | `varchar` + `length` | `VARCHAR(n)` | exact |
+| `character varying` (no limit) | `text` | `TEXT` | equivalent |
+| `character(n)` | `char` + `length` | `CHAR(n)` | exact |
+| `text` | `text` | `TEXT` | exact |
+| `uuid` | `uuid` | `UUID` | exact |
+| `bytea` | `blob` | `BYTEA` | exact |
+| `json` / `jsonb` | `json` / `jsonb` | `JSON` / `JSONB` | exact |
+| `date` | `date` | `DATE` | exact |
+| `timestamp` | `datetime` | `TIMESTAMP` | exact |
+| `timestamptz` | `timestamptz` | `TIMESTAMPTZ` | exact |
+| `timestamp(3)` and other non-default precisions | `datetime` / `timestamptz` | `TIMESTAMP` / `TIMESTAMPTZ` | flagged |
+| an enum type | `enum` + `enumValues` + `enumName` | the same named type | exact |
+| `integer[]`, `character varying(20)[]`, … | `array` + `arrayElementType` (+ `length`) | `INTEGER[]`, `VARCHAR(20)[]` | exact |
+| `time`, `interval`, `inet`, `money`, domains, … | `text` | `TEXT` | flagged |
 
-`GENERATED { ALWAYS \| BY DEFAULT } AS IDENTITY` columns (PG 10+) are recognized via `information_schema.columns.is_identity = 'YES'` and emitted as `@PrimaryGeneratedColumn`.
+Identity columns (`GENERATED … AS IDENTITY`) and `serial` columns are read as database-generated and emitted as `@PrimaryGeneratedColumn` — with `type: "bigint"` for a 64-bit key, which the ORM creates as `BIGSERIAL`.
 
 ### MySQL / MariaDB
 
-| Database Type | ORM `ColumnType` | TypeScript |
-|---------------|------------------|------------|
-| `INT`, `INTEGER`, `MEDIUMINT`, `SMALLINT` | `int` | `number` |
-| `TINYINT(1)` | `boolean` | `boolean` |
-| `TINYINT(N)` where `N > 1`, or `TINYINT UNSIGNED` | `int` | `number` |
-| `BIGINT` | `bigint` | `number` |
-| `FLOAT` | `float` | `number` |
-| `DOUBLE`, `DECIMAL`, `NUMERIC` | `double` | `number` (precision/scale preserved) |
-| `VARCHAR` | `varchar` | `string` (length preserved) |
-| `CHAR` | `char` | `string` (length preserved) |
-| `TEXT`, `MEDIUMTEXT`, `TINYTEXT` | `text` | `string` |
-| `LONGTEXT` | `longtext` | `string` |
-| `DATETIME`, `TIMESTAMP`, `DATE` | `datetime` / `timestamp` / `date` | `Date` |
-| `JSON` | `json` | `any` |
-| `BLOB`, `MEDIUMBLOB`, `LONGBLOB`, `TINYBLOB` | `blob` | `Buffer` |
-| `ENUM('a','b',…)` | `enum` (values parsed from `COLUMN_TYPE`) | `string` |
+| Database type | ORM `ColumnType` | Created as | |
+|---------------|------------------|------------|---|
+| `int` | `int` | `INT` | exact |
+| `bigint` | `bigint` | `BIGINT` | exact |
+| `tinyint(1)` | `boolean` | `TINYINT(1)` | exact |
+| `tinyint`, `smallint`, `mediumint` | `int` | `INT` | flagged |
+| `… unsigned` | `int` / `bigint` | `INT` / `BIGINT` | flagged |
+| `float` | `float` | `FLOAT` | exact |
+| `double` | `float` | `FLOAT` | flagged |
+| `decimal(p,s)` | `double` + `precision` / `scale` | `DECIMAL(p, s)` | exact |
+| `varchar(n)` / `char(n)` | `varchar` / `char` + `length` | `VARCHAR(n)` / `CHAR(n)` | exact |
+| `text` / `longtext` | `text` / `longtext` | `TEXT` / `LONGTEXT` | exact |
+| `tinytext` / `mediumtext` | `text` / `longtext` | `TEXT` / `LONGTEXT` | flagged |
+| `blob` | `blob` | `BLOB` | exact |
+| `tinyblob`, `mediumblob`, `longblob`, `binary(n)`, `varbinary(n)` | `blob` | `BLOB` | flagged |
+| `json` (MariaDB: `longtext` with a `json_valid()` check) | `json` | `JSON` | exact |
+| `uuid` (MariaDB 10.7+) | `uuid` | `UUID` on MariaDB 10.7+, else `CHAR(36)` | exact / flagged |
+| `date` | `date` | `DATE` | exact |
+| `datetime` | `datetime` | `DATETIME` | exact |
+| `timestamp` | `timestamp` | `TIMESTAMP` | exact |
+| `datetime(n)`, `timestamp(n)` | `datetime` / `timestamp` | `DATETIME` / `TIMESTAMP` | flagged |
+| `enum('a','b',…)` | `enum` + `enumValues` | `ENUM('a','b',…)` | exact |
+| `time`, `year`, `set(…)`, `bit(n)`, spatial types | `text` | `TEXT` | flagged |
 
-The introspector reads `INFORMATION_SCHEMA.COLUMNS.COLUMN_TYPE` (the full declared type with width) to differentiate TINYINT(1) from wider widths. When `COLUMN_TYPE` is unavailable, TINYINT falls back to `boolean` for backwards compatibility.
+The reader asks the server for its version, so MariaDB's quoted defaults, its `JSON` alias and its native `UUID` are read as MariaDB means them.
 
 ### SQLite
 
-| Declared Type | ORM `ColumnType` | TypeScript |
-|---------------|------------------|------------|
-| `INTEGER`, `INT`, `INT2`, `INT4`, `MEDIUMINT`, `SMALLINT`, `TINYINT` | `int` | `number` |
-| `INT8`, `BIGINT`, `UNSIGNED BIG INT` | `bigint` | `number` |
-| `REAL`, `FLOAT` | `float` | `number` |
-| `DOUBLE`, `DOUBLE PRECISION`, `NUMERIC`, `DECIMAL` | `double` | `number` (precision/scale parsed) |
-| `BOOLEAN`, `BOOL` | `boolean` | `boolean` |
-| `TEXT` | `text` | `string` |
-| `CLOB` | `longtext` | `string` |
-| `CHARACTER`, `CHAR`, `NATIVE CHARACTER` | `char` | `string` (length parsed) |
-| `VARCHAR`, `VARYING CHARACTER`, `NVARCHAR` | `varchar` | `string` (length parsed) |
-| `DATETIME`, `TIMESTAMP`, `DATE` | `datetime` / `timestamp` / `date` | `Date` |
-| `JSON` | `json` | `any` |
-| `BLOB` | `blob` | `Buffer` |
+| Declared type | ORM `ColumnType` | Created as | |
+|---------------|------------------|------------|---|
+| `INTEGER`, `INT` | `int` | `INTEGER` | exact |
+| `BIGINT` | `bigint` | `BIGINT` | exact |
+| `TINYINT`, `SMALLINT`, `BOOLEAN` | `int` / `boolean` | `INTEGER` | equivalent |
+| `REAL`, `DOUBLE`, `FLOAT` | `float` | `REAL` | exact |
+| `VARCHAR(n)`, `TEXT(n)` | `varchar` + `length` | `TEXT(n)` | exact |
+| `CHAR(n)` | `char` + `length` | `TEXT(n)` | equivalent |
+| `TEXT`, `CLOB`, `VARCHAR` | `text` | `TEXT` | exact / equivalent |
+| `BLOB` | `blob` | `BLOB` | exact |
+| `DECIMAL`, `NUMERIC` | `double` | `REAL` | flagged |
+| `DATETIME`, `TIMESTAMP`, `DATE` | `datetime` / `date` | `TEXT` | flagged |
+| `JSON`, `UUID` | `json` / `uuid` | `TEXT` / `VARCHAR(36)` | flagged |
+| no declared type, unknown names | by SQLite's affinity rules; `text` when none fits | | flagged |
 
-SQLite uses `PRAGMA table_info()`, `PRAGMA foreign_key_list()`, `PRAGMA index_list()`, and `PRAGMA index_info()` to extract schema. Single-column `INTEGER PRIMARY KEY` is recognized as a rowid alias and emitted as `@PrimaryGeneratedColumn`.
-
-Unknown types fall back to `varchar` (mapped to `string`).
+A single-column `INTEGER PRIMARY KEY` (not `INT PRIMARY KEY`, and not in a `WITHOUT ROWID` table) is SQLite's rowid alias and is emitted as `@PrimaryGeneratedColumn`. A database this ORM created reads back exactly, so the loop is stable from the second generation on.
 
 ---
 
 ## Foreign Key Detection
 
-When the generator discovers a foreign key, it:
+When the generator discovers a single-column foreign key to a table it is also generating, it:
 
 1. **Skips** the FK column from `@Column` output (replaced by the relation).
-2. **Emits** a `@ManyToOne` + `@RelationColumn` pair pointing to the referenced table.
-3. **Sorts** FK relations by the FK column's position in the table so the output is deterministic.
+2. **Emits** a `@ManyToOne` + `@RelationColumn` pair pointing to the referenced table, with the constraint's `onDelete` / `onUpdate` when they are anything but `NO ACTION`.
+3. **Sorts** relations by the FK column's position in the table so the output is deterministic.
 
 ```typescript
-@ManyToOne(() => User, (entity: any) => entity.author)
+@ManyToOne(() => User, (entity: any) => entity.author, { onDelete: "CASCADE" })
 @RelationColumn({ name: "author_id", type: "int", nullable: false, referencedColumn: "id" })
 author!: Relation<User>;
 ```
 
-`@RelationColumn` spells out the FK column's own `type` and `nullable` instead of leaving them to be inferred from the target's primary key — that inference defaults the column to NULL-able, which would quietly drop a `NOT NULL` from the source schema.
+`@RelationColumn` spells out the FK column's own `type` and `nullable` instead of leaving them to be inferred from the target's primary key — that inference defaults the column to NULL-able, which would quietly drop a `NOT NULL` from the source schema. The join column takes its length from the referenced primary key; when that would change the column (a `varchar` FK with a length of its own), the relation is flagged.
+
+On MySQL, `RESTRICT` is read as `NO ACTION` — InnoDB checks both immediately, and MariaDB reports `RESTRICT` for a key declared with neither.
 
 The property name is derived from the FK column by:
 
@@ -416,7 +435,9 @@ The property name is derived from the FK column by:
 - Stripping `id_` prefix: `id_ancestor` → `ancestor`
 - Otherwise camelCasing the column name: `parentRef` → `parentRef`
 
-If that derived name collides with another column (e.g., a `user` text column when an FK column is `user_id`), the generator falls back to the full camelCased FK column name (`userId`).
+If that derived name collides with another property (e.g., a `user` text column when an FK column is `user_id`), the generator falls back to the full camelCased FK column name (`userId`), then to a numeric suffix.
+
+A foreign key that is composite, points into another schema, or references a table that is not being generated stays a plain column, with a note (see [What the echo does not preserve](#what-the-echo-does-not-preserve)).
 
 ### Self-Referential FKs
 
@@ -425,12 +446,12 @@ When a FK points back to the same table, the generator emits the relation but **
 ```typescript
 @Entity({ name: "department" })
 export class Department {
-  @PrimaryGeneratedColumn()
+  @PrimaryGeneratedColumn({ name: "DEPT_SQ" })
   deptSq!: number;
 
   @ManyToOne(() => Department, (entity: any) => entity.upperDeptSq)
   @RelationColumn({ name: "UPPER_DEPT_SQ", type: "int", nullable: true, referencedColumn: "DEPT_SQ" })
-  upperDeptSq!: Department;
+  upperDeptSq!: Relation<Department>;
 }
 ```
 
@@ -449,11 +470,11 @@ export class PostCommentClosure {
 
   @ManyToOne(() => PostComment, (entity: any) => entity.ancestor)
   @RelationColumn({ name: "id_ancestor", type: "int", nullable: false, referencedColumn: "id" })
-  ancestor!: PostComment;
+  ancestor!: Relation<PostComment>;
 
   @ManyToOne(() => PostComment, (entity: any) => entity.descendant)
   @RelationColumn({ name: "id_descendant", type: "int", nullable: false, referencedColumn: "id" })
-  descendant!: PostComment;
+  descendant!: Relation<PostComment>;
 }
 ```
 
@@ -461,18 +482,19 @@ export class PostCommentClosure {
 
 ## Index Detection
 
-The generator queries non-PK indexes from `INFORMATION_SCHEMA.STATISTICS` (MySQL), `pg_index` + `pg_attribute` (PostgreSQL), or `PRAGMA index_list` + `PRAGMA index_info` (SQLite) and classifies them:
+The generator reads every non-PK index — `INFORMATION_SCHEMA.STATISTICS` (MySQL), `pg_index` (PostgreSQL), `PRAGMA index_list` + `PRAGMA index_xinfo` (SQLite) — and classifies it:
 
 | Index Kind | Emitted As |
 |------------|------------|
-| Single-column non-unique | Property-level `@Index()` on the matching column |
+| Single-column non-unique on a plain column | Property-level `@Index()` |
 | Single-column UNIQUE | Class-level `@UniqueIndex([col], name)` |
-| Multi-column non-unique | Class-level `@Index([col1, col2], name)` |
+| Multi-column non-unique, or any index on a relation's join column | Class-level `@Index([col1, col2], name)` |
 | Multi-column UNIQUE | Class-level `@UniqueIndex([col1, col2], name)` |
+| Partial, expression, full-text, prefix, descending, `INCLUDE`, non-btree | Not declared; a note gives its definition |
 
-Indexes that exactly cover the primary key are dropped (already handled by `@PrimaryColumn` / `@PrimaryGeneratedColumn`). Single-column indexes that map to a foreign key column are also dropped since most engines create those implicitly.
+Indexes that exactly cover the primary key are dropped (already handled by `@PrimaryColumn` / `@PrimaryGeneratedColumn`). On MySQL, a non-unique index that exactly covers a foreign key's columns is dropped too — InnoDB creates one for every foreign key by itself. PostgreSQL and SQLite do not, so there such an index is the schema's own and is kept.
 
-Class-level decorators reference **property keys**, not DB column names. The ORM resolves them back to column names via entity metadata.
+Class-level decorators name a plain column by its **property key** and a relation's join column by its **DB column name**; the ORM resolves both to the column.
 
 ---
 
@@ -486,23 +508,25 @@ Columns matching the standard timestamp names — combined with type and nullabi
 | `updatedAt` | datetime/timestamp/timestamptz/date | No | `@UpdateTimestamp({ name?, type? })` |
 | `deletedAt` | datetime/timestamp/timestamptz/date | Yes | `@DeletedAt({ name?, type? })` |
 
-The decorator emits `name:` whenever the DB column name differs from the property name, and `type:` whenever the type isn't the default `datetime`. Columns that don't match the heuristic (e.g., `upload_date`, `published_at`) keep their raw `@Column` form with the original default expression preserved.
+The decorator emits `name:` whenever the DB column name differs from the property name, and `type:` whenever the type isn't the default `datetime`. These decorators have no `default` option: when the column has a database default (typically `CURRENT_TIMESTAMP`) or an `ON UPDATE`, the ORM fills the column in itself and the note says which database clause the entity no longer declares. Columns that don't match the heuristic (e.g., `upload_date`, `published_at`) keep their raw `@Column` form with the original default preserved.
 
 ---
 
 ## Default Value Preservation
 
-`column_default` values are normalized and emitted as `@Column({ default: … })`:
+Each dialect's reader parses the default into a value or an expression; the lowering writes it as `@Column({ default: … })`, where a string in parentheses is raw SQL and anything else is a value:
 
-| Raw default (DB) | Emitted |
+| Database default | Emitted |
 |------------------|---------|
-| `'active'` (string literal) | `default: "active"` |
-| `'active'::character varying` (PG cast) | `default: "active"` (cast stripped) |
-| `0`, `42`, `-1` (numeric) | `default: 0` (when column is numeric type) |
-| `true`, `false`, `'t'`, `'f'`, `0`, `1` (boolean column) | `default: true` / `default: false` |
-| `CURRENT_TIMESTAMP`, `now()`, `uuid_generate_v4()` | `default: "(CURRENT_TIMESTAMP)"` (raw expression wrapped) |
-| `nextval('seq'::regclass)` or `auto_increment` | omitted (PK auto-gen handles it) |
-| MariaDB bare `NULL` (no explicit default) | omitted |
+| `'active'` (SQLite, MariaDB), `active` (MySQL), `'active'::character varying` (PostgreSQL) | `default: "active"` |
+| `0`, `-1`, `'-1'::integer` on a numeric column | `default: 0`, `default: -1` |
+| `true` / `false`, and `0` / `1` on a boolean column | `default: true` / `default: false` |
+| `CURRENT_TIMESTAMP`, `now()`, `gen_random_uuid()`, `(datetime('now'))` | `default: "(CURRENT_TIMESTAMP)"` — one pair of parentheses, however many the catalog kept |
+| MySQL `_utf8mb4'[]'` (a literal default on TEXT / BLOB / JSON) | `default: "('[]')"` — MySQL accepts no other form on those types |
+| an integer beyond `Number.MAX_SAFE_INTEGER` | a string, so no digit is lost |
+| `nextval('seq'::regclass)`, `AUTO_INCREMENT` | omitted — `@PrimaryGeneratedColumn` owns it (flagged anywhere else) |
+| `NULL` | omitted — the same as no default |
+| a string literal that itself starts with `(` and ends with `)` | not declared, flagged — the ORM would read it as SQL |
 
 ---
 
@@ -534,11 +558,29 @@ The decorator emits `name:` whenever the DB column name differs from the propert
 |--------|-----------|-------------|
 | `constructor` | `(queryFn, dialect, options?)` | Create with a query function, dialect (`"postgres"` / `"mysql"` / `"sqlite"`), and optional options |
 | `generate()` | `(): Promise<GeneratedEntity[]>` | Generate entity files for all matching tables |
-| `discoverTables()` | `(): Promise<string[]>` | All user tables in the target schema |
-| `getColumns(table)` | `(table: string): Promise<DbColumn[]>` | Column metadata for a specific table |
-| `getPrimaryKeys(table)` | `(table: string): Promise<string[]>` | Primary key column names |
-| `getForeignKeys(table)` | `(table: string): Promise<DbForeignKey[]>` | Foreign key relationships |
-| `getIndexes(table)` | `(table: string): Promise<DbIndex[]>` | Non-PK indexes (unique and non-unique) |
+| `readSchema()` | `(): Promise<SchemaIR>` | The matching tables as the schema IR |
+| `readTable(table)` | `(table: string): Promise<TableIR>` | One table as the schema IR |
+| `discoverTables()` | `(): Promise<string[]>` | All user tables (no views), sorted by name |
+| `getColumns(table)` | `(table: string): Promise<DbColumn[]>` | **Deprecated** — use `readTable()`. Column rows derived from the IR |
+| `getPrimaryKeys(table)` | `(table: string): Promise<string[]>` | **Deprecated** — use `readTable()` (`primaryKey`) |
+| `getForeignKeys(table)` | `(table: string): Promise<DbForeignKey[]>` | **Deprecated** — use `readTable()` (`foreignKeys`). One row per column; a composite key's rows share `constraint_name` |
+| `getIndexes(table)` | `(table: string): Promise<DbIndex[]>` | **Deprecated** — use `readTable()` (`indexes`) |
+
+`GeneratedEntity` is `{ tableName, className, fileName, code, notes }` — `notes` lists every `// NOTE:` the file carries, a field's prefixed with its property name.
+
+### Schema IR
+
+Exported from `@stingerloom/orm/introspection`:
+
+| Type | Shape |
+|------|-------|
+| `SchemaIR` | `{ dialect, schema?, tables: TableIR[] }` |
+| `TableIR` | `{ name, columns: ColumnIR[], primaryKey: string[], foreignKeys: ForeignKeyIR[], indexes: IndexIR[] }` |
+| `ColumnIR` | `{ name, type: CanonicalType, nullable, default?: DefaultValue, identity, generatedExpression?, onUpdate?, nativeType, rawDefault? }` |
+| `CanonicalType` | A discriminated union by `kind`: `integer` (`bytes`, `unsigned`), `boolean`, `decimal` (`precision`, `scale`), `float` (`bytes`), `string` (`fixed`, `length`), `text` (`size`), `binary`, `blob`, `uuid`, `json` (`binary`), `date`, `time`, `timestamp` (`zone: "local" \| "instant"`, `precision`), `enum` (`values`, `name`), `array` (`element`), `other` (`native`) |
+| `DefaultValue` | `string` / `number` (kept as text) / `boolean` / `null` / `expression` (`sql`) / `sequence` |
+| `ForeignKeyIR` | `{ name?, columns, referencedTable, referencedSchema?, referencedColumns, onDelete, onUpdate }` |
+| `IndexIR` | `{ name, unique, columns, unsupported: string[] }` — `unsupported` describes what the index has beyond plain columns |
 
 ### `runIntrospect(dbOptions, cliOptions?)`
 
@@ -546,10 +588,12 @@ Connects via `DatabaseClient`, runs the generator, writes files to disk (unless 
 
 ### `IntrospectionTypeMapper`
 
+The original type tables, kept for callers that used them directly. The generator no longer consults `toColumnType()` or `hasMapping()` (both deprecated) — see [Type Mapping](#type-mapping).
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `toColumnType(dbType, dialect, columnTypeFull?)` | `(...): ColumnType` | Map a DB type. Pass MySQL `COLUMN_TYPE` as the optional third arg to narrow TINYINT |
-| `hasMapping(dbType, dialect)` | `(...): boolean` | Whether the dialect has a real mapping for this type, as opposed to the `varchar` fallback |
+| `toColumnType(dbType, dialect, columnTypeFull?)` | `(...): ColumnType` | **Deprecated.** Map a DB type through the legacy table |
+| `hasMapping(dbType, dialect)` | `(...): boolean` | **Deprecated.** Whether the legacy table has the type |
 | `toTsType(columnType)` | `(columnType: ColumnType): string` | ORM `ColumnType` → TypeScript type string |
 | `parseSqliteWidth(declaredType)` | `(declaredType: string): number \| null` | Extract `N` from `VARCHAR(N)` etc. |
 | `parseSqlitePrecisionScale(declaredType)` | `(declaredType: string): { precision, scale } \| null` | Extract `(P, S)` from `DECIMAL(P, S)` |
@@ -559,11 +603,14 @@ Connects via `DatabaseClient`, runs the generator, writes files to disk (unless 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `constructor` | `(options?: EntityCodeBuilderOptions)` | Builder with optional import path and output style |
-| `build(table, columns, pks, fks, dialect, indexes?, context?)` | `(...): string` | TypeScript entity source code. `context.primaryKeysByTable` lets the builder flag a FK that points at a non-primary-key column |
+| `build(table, columns, pks, fks, dialect, indexes?, context?)` | `(...): string` | TypeScript entity source from `DbColumn` rows, through the same pipeline as the generator. `context.primaryKeysByTable` lets the builder flag a FK that points at a non-primary-key column |
+| `emit(model)` | `(model: EntityModel): string` | Spell out an already-lowered model in this builder's style |
 | `tableNameToClassName(table)` | `(string): string` | snake_case table → PascalCase class |
 | `classNameToFileName(className)` | `(string): string` | PascalCase class → kebab-case file name |
 
 ### `DbColumn`
+
+The row shape `EntityCodeBuilder.build()` accepts and the deprecated `getColumns()` returns. Each field is read the way the named dialect's catalog means it.
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -574,9 +621,10 @@ Connects via `DatabaseClient`, runs the generator, writes files to disk (unless 
 | `numeric_precision` | `number \| null` | Precision for decimal/numeric |
 | `numeric_scale` | `number \| null` | Scale for decimal/numeric |
 | `column_default` | `string \| null` | Default expression from DB |
-| `column_type` | `string \| null` | MySQL `COLUMN_TYPE` with width (e.g., `tinyint(1)`) |
+| `column_type` | `string \| null` | Full declared type with width (MySQL `COLUMN_TYPE`, e.g. `tinyint(1)`) |
 | `is_identity` | `string \| null` | PG `"YES"` for `GENERATED AS IDENTITY` |
 | `enum_values` | `string[] \| null` | Enum labels (PG `pg_enum` or MySQL parsed) |
+| `udt_name` | `string \| null` | PostgreSQL enum type name, or `_int4` for `integer[]` |
 | `extra` | `string \| null` | MySQL `EXTRA` (e.g., `auto_increment`) |
 
 ### `DbForeignKey`
@@ -586,7 +634,7 @@ Connects via `DatabaseClient`, runs the generator, writes files to disk (unless 
 | `column_name` | `string` | FK column in the current table |
 | `referenced_table` | `string` | Target table |
 | `referenced_column` | `string` | Target column |
-| `constraint_name` | `string \| undefined` | FK constraint name |
+| `constraint_name` | `string \| undefined` | FK constraint name; rows sharing it form one composite key |
 
 ### `DbIndex`
 
@@ -604,8 +652,9 @@ Introspection extracts what's explicit in the database schema. The following are
 
 - **`@OneToMany` inverse-side collections** (a `User` having `posts: Post[]`). The generator only sees the `posts.author_id` FK from the owning side; the inverse property has to be added by hand.
 - **`@OneToOne` vs `@ManyToOne` distinction.** All FKs are emitted as `@ManyToOne`. If the FK column has a UNIQUE constraint on it, you may want to convert it manually.
-- **Cascade rules (`onDelete`, `onUpdate`).** Not extracted from `REFERENTIAL_CONSTRAINTS`. Add manually if needed.
 - **Friendly property aliases.** A column like `CTGR_GRP_SQ` is camelCased to `ctgrGrpSq`. If you want a friendlier name like `groupId`, rename the property and keep the `name:` option pointing at `CTGR_GRP_SQ`.
+
+Everything the entity cannot express about the table itself is listed in [What the echo does not preserve](#what-the-echo-does-not-preserve) and flagged in the generated file.
 
 The inverse-side accessor in `@ManyToOne(() => Entity, (entity: any) => entity.foo)` is a placeholder using `any` so the code compiles even without the inverse property. Once you add `@OneToMany` collections, rename the placeholder to match.
 

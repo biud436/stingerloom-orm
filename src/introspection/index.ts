@@ -32,4 +32,14 @@ export {
   IntrospectionGeneratorOptions,
   IntrospectionQueryFn,
 } from "./IntrospectionGenerator";
+export {
+  CanonicalType,
+  ColumnIR,
+  DefaultValue,
+  ForeignKeyIR,
+  IndexIR,
+  SchemaIR,
+  TableIR,
+  TextSize,
+} from "./SchemaIR";
 export { IntrospectionDialect, IntrospectionTypeMapper } from "./TypeMapper";

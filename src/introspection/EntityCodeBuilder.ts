@@ -3,66 +3,13 @@ import { CodeFirstEmitter } from "./CodeFirstEmitter";
 import { DecoratorEmitter } from "./DecoratorEmitter";
 import {
   buildEntityModel,
-  classNameToFileName,
+  EntityModel,
   EntityModelContext,
-  tableNameToClassName,
 } from "./EntityModel";
+import { classNameToFileName, tableNameToClassName } from "./lowering/Naming";
+import type { DbColumn, DbForeignKey, DbIndex } from "./catalog/legacyRows";
 
-/**
- * Represents a database column discovered via introspection.
- */
-export interface DbColumn {
-  column_name: string;
-  data_type: string;
-  is_nullable: string;
-  character_maximum_length?: number | null;
-  numeric_precision?: number | null;
-  numeric_scale?: number | null;
-  column_default?: string | null;
-  extra?: string | null;
-  /**
-   * Full column type with width/length (MySQL `COLUMN_TYPE`), e.g.
-   * `tinyint(1)`, `varchar(255)`, `decimal(10,2)`. Used to refine TINYINT(1)
-   * → boolean detection on MySQL.
-   */
-  column_type?: string | null;
-  /**
-   * PostgreSQL `information_schema.columns.is_identity` ("YES"/"NO"). Set
-   * for `GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY` columns (PG 10+).
-   */
-  is_identity?: string | null;
-  /**
-   * PostgreSQL user-defined enum labels. Populated by IntrospectionGenerator
-   * when the column's `data_type` is `USER-DEFINED` and its underlying
-   * `udt_name` resolves to a `pg_type` of `typtype = 'e'` (enum).
-   *
-   * MySQL ENUM values are also stored here (parsed out of `COLUMN_TYPE`).
-   */
-  enum_values?: string[] | null;
-}
-
-/**
- * Represents a foreign key relationship discovered via introspection.
- */
-export interface DbForeignKey {
-  column_name: string;
-  referenced_table: string;
-  referenced_column: string;
-  constraint_name?: string;
-}
-
-/**
- * Represents an index discovered via introspection.
- *
- * Always excludes the table's primary key constraint (that's handled by
- * `@PrimaryColumn` / `@PrimaryGeneratedColumn`). Foreign-key-implied
- * indexes are kept — callers can decide whether to emit them.
- */
-export interface DbIndex {
-  name: string;
-  column_names: string[];
-  is_unique: boolean;
-}
+export type { DbColumn, DbForeignKey, DbIndex } from "./catalog/legacyRows";
 
 /**
  * Output style for generated entity files.
@@ -89,10 +36,10 @@ export interface EntityCodeBuilderOptions {
 /**
  * Builds TypeScript entity source code from database table metadata.
  *
- * Column info, primary keys, foreign keys, and indexes are first reduced to a
- * dialect-neutral {@link EntityModel}; the selected emitter then spells that
- * model out as either decorated classes or `defineEntity` builders, so the two
- * styles describe exactly the same schema.
+ * The rows are read into the dialect-neutral schema IR, lowered to an
+ * {@link EntityModel}, and spelled out by the selected emitter — the same
+ * pipeline `IntrospectionGenerator` runs, so the two styles describe exactly
+ * the same schema.
  */
 export class EntityCodeBuilder {
   private readonly importPath: string;
@@ -109,7 +56,7 @@ export class EntityCodeBuilder {
    * @param tableName - The database table name
    * @param columns - Column metadata from INFORMATION_SCHEMA
    * @param pks - Primary key column names
-   * @param fks - Foreign key relationships
+   * @param fks - Foreign keys (rows sharing a `constraint_name` form one key)
    * @param dialect - Database dialect for type mapping
    * @param indexes - Optional non-PK indexes for the table
    * @param context - Optional whole-schema context (primary keys per table)
@@ -124,15 +71,13 @@ export class EntityCodeBuilder {
     indexes: DbIndex[] = [],
     context: EntityModelContext = {},
   ): string {
-    const model = buildEntityModel(
-      tableName,
-      columns,
-      pks,
-      fks,
-      dialect,
-      indexes,
-      context,
+    return this.emit(
+      buildEntityModel(tableName, columns, pks, fks, dialect, indexes, context),
     );
+  }
+
+  /** Spells out an already-lowered model in this builder's style. */
+  emit(model: EntityModel): string {
     return this.style === "code-first"
       ? new CodeFirstEmitter(this.importPath).emit(model)
       : new DecoratorEmitter(this.importPath).emit(model);

@@ -1,10 +1,17 @@
-import { ColumnType } from "../decorators/Column";
-import { fileBase, relationColumnOptions } from "./DecoratorEmitter";
+import type { ColumnType } from "../decorators/Column";
 import {
   EntityModel,
   ModelColumnField,
+  ModelIndex,
   ModelRelationField,
 } from "./EntityModel";
+import {
+  lit,
+  noteLines,
+  referentialActionEntries,
+  relationColumnOptions,
+} from "./emitSyntax";
+import { fileBase } from "./lowering/Naming";
 
 /**
  * Emits decorator-free entity source (`defineEntity` + the `t` field builders)
@@ -22,14 +29,20 @@ export class CodeFirstEmitter {
 
     const fieldLines: string[] = [];
     for (const field of model.fields) {
-      for (const warning of field.warnings ?? []) {
-        fieldLines.push(`// NOTE: ${warning}`);
+      const notes = [...(field.warnings ?? [])];
+      if (field.kind === "column" && field.columnType === "blob" && !field.nullable && !field.primary) {
+        // defineEntity() makes every blob column nullable and has no builder
+        // to say otherwise.
+        notes.push(
+          "The database column is NOT NULL, but t.blob() columns are created nullable.",
+        );
       }
-      const source =
-        field.kind === "column"
+      fieldLines.push(...noteLines(notes));
+      fieldLines.push(
+        ...(field.kind === "column"
           ? [`${field.propertyName}: ${columnChain(field)},`]
-          : relationLines(field);
-      fieldLines.push(...source);
+          : relationLines(field)),
+      );
     }
 
     const imports = ["defineEntity", "t", "type InferEntity"];
@@ -40,15 +53,16 @@ export class CodeFirstEmitter {
     if (hasRelations) imports.push("type AnyEntityClass");
 
     const lines: string[] = [];
-    lines.push(`import { ${imports.join(", ")} } from "${this.importPath}";`);
+    lines.push(`import { ${imports.join(", ")} } from ${lit(this.importPath)};`);
     for (const refClass of model.referencedClasses) {
-      lines.push(`import { ${refClass} } from "./${fileBase(refClass)}.js";`);
+      lines.push(`import { ${refClass} } from ${lit(`./${fileBase(refClass)}.js`)};`);
     }
     lines.push("");
+    lines.push(...noteLines(model.notes));
 
-    const options = entityOptions(model);
+    const options = entityOptions(model.classIndexes);
     lines.push(`export const ${model.className} = defineEntity(`);
-    lines.push(`  ${JSON.stringify(model.tableName)},`);
+    lines.push(`  ${lit(model.tableName)},`);
     lines.push("  {");
     lines.push(...fieldLines.map((l) => `    ${l}`));
     lines.push("  },");
@@ -67,17 +81,17 @@ export class CodeFirstEmitter {
 }
 
 /** Renders the third `defineEntity` argument, or null when it would be empty. */
-function entityOptions(model: EntityModel): string[] | null {
-  const unique = model.classIndexes.filter((i) => i.unique);
-  const plain = model.classIndexes.filter((i) => !i.unique);
+function entityOptions(indexes: ModelIndex[]): string[] | null {
+  const unique = indexes.filter((i) => i.unique);
+  const plain = indexes.filter((i) => !i.unique);
   if (unique.length === 0 && plain.length === 0) return null;
 
   const lines: string[] = ["{"];
-  const render = (key: string, list: typeof model.classIndexes) => {
+  const render = (key: string, list: ModelIndex[]) => {
     lines.push(`  ${key}: [`);
     for (const idx of list) {
-      const cols = idx.columns.map((c) => JSON.stringify(c)).join(", ");
-      const name = idx.name ? `, name: ${JSON.stringify(idx.name)}` : "";
+      const cols = idx.columns.map(lit).join(", ");
+      const name = idx.name ? `, name: ${lit(idx.name)}` : "";
       lines.push(`    { columns: [${cols}]${name} },`);
     }
     lines.push("  ],");
@@ -88,23 +102,19 @@ function entityOptions(model: EntityModel): string[] | null {
   return lines;
 }
 
-/**
- * Base `t.*` factory call for a column type. Falls back to `t.varchar()` for
- * anything without a builder of its own (the model already flags those).
- */
+/** The `t.*` factory call for a column's type. */
 function baseBuilder(field: ModelColumnField): string {
   const type: ColumnType = field.columnType;
   switch (type) {
     case "varchar":
-      return field.length !== undefined ? `t.varchar(${field.length})` : "t.varchar()";
     case "char":
-      return field.length !== undefined ? `t.char(${field.length})` : "t.char()";
+      return field.length !== undefined ? `t.${type}(${field.length})` : `t.${type}()`;
     case "enum":
-      return field.enumValues && field.enumValues.length > 0
-        ? `t.enum([${field.enumValues.map((v) => JSON.stringify(v)).join(", ")}])`
-        : "t.varchar()";
+      return `t.enum([${(field.enumValues ?? []).map(lit).join(", ")}])`;
     case "array":
-      return "t.array()";
+      return field.arrayElementType !== undefined
+        ? `t.array(${lit(field.arrayElementType)})`
+        : "t.array()";
     case "int":
     case "bigint":
     case "float":
@@ -123,18 +133,28 @@ function baseBuilder(field: ModelColumnField): string {
     case "timestamptz":
       return `t.${type}()`;
     default:
-      return "t.varchar()";
+      // The lowering only picks built-in types; an unknown one would be a bug.
+      throw new Error(`No t.* builder for column type "${String(type)}"`);
   }
 }
 
 function columnChain(field: ModelColumnField): string {
   const parts: string[] = [baseBuilder(field)];
 
-  if (field.needsNameOption) parts.push(`name(${JSON.stringify(field.columnName)})`);
+  if (field.needsNameOption) parts.push(`name(${lit(field.columnName)})`);
+  // varchar / char carry their length in the factory call.
+  if (
+    field.length !== undefined &&
+    field.columnType !== "varchar" &&
+    field.columnType !== "char"
+  ) {
+    parts.push(`length(${field.length})`);
+  }
   if (field.precision !== undefined) {
     parts.push(`precision(${field.precision})`);
     if (field.scale !== undefined) parts.push(`scale(${field.scale})`);
   }
+  if (field.enumName !== undefined) parts.push(`enumName(${lit(field.enumName)})`);
   if (field.primary) parts.push("primary()");
   if (field.generated) parts.push("generated()");
   if (field.timestamp === "create") parts.push("createTimestamp()");
@@ -159,6 +179,7 @@ function relationLines(field: ModelRelationField): string[] {
   return [
     `${field.propertyName}: t.manyToOne${shape}((): AnyEntityClass => ${field.targetClass}, {`,
     `  relationColumn: ${relationColumnOptions(field)},`,
+    ...referentialActionEntries(field).map((entry) => `  ${entry},`),
     "}),",
   ];
 }

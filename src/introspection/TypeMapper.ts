@@ -8,8 +8,12 @@ export type IntrospectionDialect = "mysql" | "postgres" | "sqlite";
 /**
  * Reverse mapping from database-native column types to ORM ColumnType.
  *
- * Used by the introspection generator to produce correct @Column decorators
- * when generating entity files from an existing database schema.
+ * The introspection generator no longer maps types through these tables: it
+ * reads each type into the schema IR and chooses the ORM type by rendering
+ * candidates through the ORM's own column definition builder (see
+ * `lowering/TypeSelection.ts`). {@link toColumnType} and {@link hasMapping}
+ * are kept, unchanged, for callers that used them directly; {@link toTsType}
+ * is still what the generator types properties with.
  */
 export class IntrospectionTypeMapper {
   private static readonly postgresMap: Record<string, ColumnType> = {
@@ -161,6 +165,8 @@ export class IntrospectionTypeMapper {
    *   MySQL TINYINT detection: only TINYINT(1) is treated as boolean; wider
    *   TINYINT(N) widths are treated as small integers.
    * @returns The mapped ColumnType, or "varchar" as a fallback for unknown types
+   * @deprecated The generator reads types into the schema IR instead; see
+   *   `IntrospectionGenerator.readSchema()`. This table is not consulted.
    */
   static toColumnType(
     dbType: string,
@@ -209,6 +215,9 @@ export class IntrospectionTypeMapper {
    * column into `VARCHAR(255)` when the entity is used to recreate the table.
    * Callers use this to flag such columns instead of letting the fallback pass
    * for a real mapping.
+   *
+   * @deprecated The generator flags every mapping the ORM cannot recreate by
+   *   checking it against the ORM's own DDL; this table is not consulted.
    */
   static hasMapping(dbType: string, dialect: IntrospectionDialect): boolean {
     const normalized = dbType.toUpperCase().trim();

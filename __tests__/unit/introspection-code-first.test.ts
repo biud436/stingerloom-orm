@@ -231,8 +231,11 @@ describe("buildEntityModel — round-trip fidelity", () => {
 
     expect(model.fields[0]).toMatchObject({ precision: 12, scale: 4 });
     expect(model.fields[1]).not.toHaveProperty("precision");
-    expect(model.fields[1].kind === "column" && model.fields[1].warnings?.[0]).toContain(
-      "no exact ORM column type",
+    // No ORM type creates double precision on PostgreSQL (`double` is
+    // NUMERIC); it stays a float and the narrowing to REAL is spelled out.
+    expect(model.fields[1]).toMatchObject({ columnType: "float" });
+    expect(model.fields[1].kind === "column" && model.fields[1].warnings?.[0]).toBe(
+      'The database declares "double precision", but this entity creates "REAL" — synchronizing it would change the column.',
     );
   });
 
@@ -245,8 +248,9 @@ describe("buildEntityModel — round-trip fidelity", () => {
       "postgres",
     );
     const field = model.fields[0];
+    expect(field).toMatchObject({ columnType: "text" });
     expect(field.kind === "column" && field.warnings?.[0]).toContain(
-      "Unrecognized database type",
+      'No ORM column type matches "inet"',
     );
   });
 

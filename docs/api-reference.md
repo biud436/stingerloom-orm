@@ -1044,11 +1044,14 @@ class SeederRunner {
 
 [Usage ->](./introspection.md)
 
-Re-exported from `src/introspection/`. Reads `INFORMATION_SCHEMA` (PostgreSQL
-catalog or SQLite `PRAGMA`s) and produces decorator-based entity source code
-for the discovered tables. Output is round-trip stable: applying the
-generated entities back to a fresh schema and re-introspecting reproduces
-the same files.
+Re-exported from `src/introspection/` (and `@stingerloom/orm/introspection`).
+Reads each dialect's catalog (`pg_catalog`, `INFORMATION_SCHEMA`, SQLite
+`PRAGMA`s) into a dialect-neutral schema IR and generates entity source code
+from it, in decorator or code-first style. The ORM column type for each
+column is chosen by rendering candidates through the ORM's own column
+definition builder, so anything the entity cannot recreate is flagged with a
+`// NOTE:` comment. Output is round-trip stable: applying the generated
+entities back to a fresh schema and re-introspecting reproduces the same files.
 
 ```typescript
 type IntrospectionDialect = "mysql" | "postgres" | "sqlite";
@@ -1058,6 +1061,7 @@ interface GeneratedEntity {
   className: string;
   code: string;
   fileName: string;
+  notes: string[];     // every // NOTE: in the file
 }
 
 interface IntrospectionGeneratorOptions {
@@ -1078,11 +1082,13 @@ class IntrospectionGenerator {
     options?: IntrospectionGeneratorOptions,
   );
   generate(): Promise<GeneratedEntity[]>;
+  readSchema(): Promise<SchemaIR>;             // the selected tables as the schema IR
+  readTable(table: string): Promise<TableIR>;
   discoverTables(): Promise<string[]>;
-  getColumns(table: string): Promise<DbColumn[]>;
-  getPrimaryKeys(table: string): Promise<string[]>;
-  getForeignKeys(table: string): Promise<DbForeignKey[]>;
-  getIndexes(table: string): Promise<DbIndex[]>;
+  /** @deprecated use readTable() */ getColumns(table: string): Promise<DbColumn[]>;
+  /** @deprecated use readTable() */ getPrimaryKeys(table: string): Promise<string[]>;
+  /** @deprecated use readTable() */ getForeignKeys(table: string): Promise<DbForeignKey[]>;
+  /** @deprecated use readTable() */ getIndexes(table: string): Promise<DbIndex[]>;
 }
 
 // Convenience wrapper — connects via DatabaseClient, writes files to disk.
@@ -1113,13 +1119,14 @@ class EntityCodeBuilder {
         pks: string[], fks: DbForeignKey[],
         dialect: IntrospectionDialect,
         indexes?: DbIndex[]): string;
+  emit(model: EntityModel): string;
   tableNameToClassName(tableName: string): string;
   classNameToFileName(className: string): string;
 }
 
+// The legacy type tables; the generator no longer consults toColumnType().
 class IntrospectionTypeMapper {
-  // `columnTypeFull` lets MySQL distinguish TINYINT(1)→boolean from
-  // wider widths→int. Optional for backwards compatibility.
+  /** @deprecated */
   toColumnType(
     dbType: string,
     dialect: IntrospectionDialect,
