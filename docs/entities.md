@@ -1553,7 +1553,7 @@ tags!: string[] | null; // TEXT[]
 scores!: number[] | null; // INTEGER[]
 ```
 
-Plain JS arrays round-trip through the `pg` driver's native array serialization. MySQL stores `array` columns as JSON and SQLite as TEXT, where `arrayElementType` is ignored; on those two drivers the ORM serializes the value with `JSON.stringify` on write and parses it back on read, so `["x", "y"]` comes out of `find()` as `["x", "y"]` there as well. Note that PostgreSQL introspection reports every array column simply as `ARRAY`, so schema diffing cannot detect element-type changes and entity generation recovers `type: "array"` without the element type.
+Plain JS arrays round-trip through the `pg` driver's native array serialization. MySQL stores `array` columns as JSON and SQLite as TEXT, where `arrayElementType` is ignored; on those two drivers the ORM serializes the value with `JSON.stringify` on write and parses it back on read, so `["x", "y"]` comes out of `find()` as `["x", "y"]` there as well. Note that schema diffing reads every PostgreSQL array column simply as `ARRAY`, so it cannot detect element-type changes. Entity generation reads the element type (`integer[]` → `arrayElementType: "int"`).
 
 If the column already holds rows written by an earlier version on MySQL or SQLite, they are bare element text (`x`), not JSON. Reading one back logs a single `Failed to JSON.parse` warning for the column and yields the raw string; convert the rows once with an `UPDATE`, or keep the old shape with a `transformer`.
 

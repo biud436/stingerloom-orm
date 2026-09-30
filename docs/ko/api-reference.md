@@ -1044,10 +1044,12 @@ class SeederRunner {
 
 [사용법 ->](./introspection.md)
 
-`src/introspection/`에서 재내보내집니다. `INFORMATION_SCHEMA`(PostgreSQL 카탈로그
-또는 SQLite `PRAGMA`)를 읽어 발견된 테이블에 대한 데코레이터 기반 엔티티 소스
-코드를 생성합니다. 출력은 라운드 트립이 안정적이라 — 생성된 엔티티를 빈
-스키마에 다시 적용한 뒤 인트로스펙트해도 동일한 파일이 나옵니다.
+`src/introspection/`(그리고 `@stingerloom/orm/introspection`)에서 재내보내집니다.
+방언별 카탈로그(`pg_catalog`, `INFORMATION_SCHEMA`, SQLite `PRAGMA`)를 방언 중립적인
+스키마 IR로 읽고, 거기서 데코레이터 또는 code-first 스타일의 엔티티 소스 코드를
+생성합니다. 컬럼마다 ORM 타입은 ORM 자신의 컬럼 정의 빌더로 후보를 렌더링해 고르므로,
+엔티티가 재현하지 못하는 부분에는 `// NOTE:` 주석이 붙습니다. 출력은 라운드 트립이
+안정적이라 — 생성된 엔티티를 빈 스키마에 다시 적용한 뒤 인트로스펙트해도 같은 파일이 나옵니다.
 
 ```typescript
 type IntrospectionDialect = "mysql" | "postgres" | "sqlite";
@@ -1057,6 +1059,7 @@ interface GeneratedEntity {
   className: string;
   code: string;
   fileName: string;
+  notes: string[];     // 파일에 달린 모든 // NOTE:
 }
 
 interface IntrospectionGeneratorOptions {
@@ -1077,11 +1080,13 @@ class IntrospectionGenerator {
     options?: IntrospectionGeneratorOptions,
   );
   generate(): Promise<GeneratedEntity[]>;
+  readSchema(): Promise<SchemaIR>;             // 선택된 테이블을 스키마 IR로
+  readTable(table: string): Promise<TableIR>;
   discoverTables(): Promise<string[]>;
-  getColumns(table: string): Promise<DbColumn[]>;
-  getPrimaryKeys(table: string): Promise<string[]>;
-  getForeignKeys(table: string): Promise<DbForeignKey[]>;
-  getIndexes(table: string): Promise<DbIndex[]>;
+  /** @deprecated readTable()을 쓰세요 */ getColumns(table: string): Promise<DbColumn[]>;
+  /** @deprecated readTable()을 쓰세요 */ getPrimaryKeys(table: string): Promise<string[]>;
+  /** @deprecated readTable()을 쓰세요 */ getForeignKeys(table: string): Promise<DbForeignKey[]>;
+  /** @deprecated readTable()을 쓰세요 */ getIndexes(table: string): Promise<DbIndex[]>;
 }
 
 // 편의 래퍼 — DatabaseClient로 접속해 파일을 디스크에 기록합니다.
@@ -1112,13 +1117,14 @@ class EntityCodeBuilder {
         pks: string[], fks: DbForeignKey[],
         dialect: IntrospectionDialect,
         indexes?: DbIndex[]): string;
+  emit(model: EntityModel): string;
   tableNameToClassName(tableName: string): string;
   classNameToFileName(className: string): string;
 }
 
+// 예전 타입 표. 제너레이터는 더 이상 toColumnType()을 참조하지 않습니다.
 class IntrospectionTypeMapper {
-  // `columnTypeFull`을 넘기면 MySQL TINYINT(1)→boolean과 더 넓은 폭→int를
-  // 구분합니다. 후방 호환을 위해 선택 인자입니다.
+  /** @deprecated */
   toColumnType(
     dbType: string,
     dialect: IntrospectionDialect,
