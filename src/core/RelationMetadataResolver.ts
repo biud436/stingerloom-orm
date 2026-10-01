@@ -31,6 +31,22 @@ import {
 import { MetadataContext } from "../metadata/MetadataContext";
 
 /**
+ * A relation whose foreign key is a column of the declaring entity's table —
+ * a `@ManyToOne`, or the owning side of a `@OneToOne` — in the one shape the
+ * write paths read a key through.
+ */
+export interface ForeignKeyRelation {
+  /** The relation property (`author` for `author: Author`). */
+  propertyKey: string;
+  /** The FK column on the declaring entity's table. */
+  joinColumn: string;
+  /** The related entity, whose primary key a related instance contributes. */
+  getRelatedEntity: () => ClazzType<unknown>;
+  /** An explicit FK property (`option.fkProperty`), besides `${propertyKey}Id`. */
+  fkProperty?: string;
+}
+
+/**
  * Pure metadata lookup layer. No DB calls, no side effects.
  * Resolves entity/relation metadata via the layered store, with a Reflect fallback.
  */
@@ -473,6 +489,34 @@ export class RelationMetadataResolver {
         joinColumn: resolvedJoinColumn,
       };
     });
+  }
+
+  /**
+   * The relations whose foreign key `entity`'s rows hold: every `@ManyToOne`
+   * and the owning side of every `@OneToOne` — the ones with a resolved join
+   * column, the same test the DDL uses to give a relation its column.
+   */
+  resolveForeignKeyRelations<T>(entity: ClazzType<T>): ForeignKeyRelation[] {
+    const relations: ForeignKeyRelation[] = [];
+    for (const rel of this.resolveManyToOneMetadata(entity)) {
+      if (!rel.joinColumn) continue;
+      relations.push({
+        propertyKey: rel.columnName,
+        joinColumn: rel.joinColumn,
+        getRelatedEntity: () => rel.getMappingEntity() as ClazzType<unknown>,
+        fkProperty: rel.option?.fkProperty,
+      });
+    }
+    for (const rel of this.resolveOneToOneMetadata(entity)) {
+      if (!rel.joinColumn) continue;
+      relations.push({
+        propertyKey: rel.propertyKey,
+        joinColumn: rel.joinColumn,
+        getRelatedEntity: rel.getRelatedEntity as () => ClazzType<unknown>,
+        fkProperty: rel.option?.fkProperty,
+      });
+    }
+    return relations;
   }
 
   /**

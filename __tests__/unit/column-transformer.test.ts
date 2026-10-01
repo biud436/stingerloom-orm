@@ -234,6 +234,7 @@ describe("Bidirectional Column Transformers (#128)", () => {
         resolveManyToOneMetadata: jest.fn().mockReturnValue([]),
         resolveOneToOneMetadata: jest.fn().mockReturnValue([]),
         resolveOneToManyMetadata: jest.fn().mockReturnValue([]),
+        resolveForeignKeyRelations: jest.fn().mockReturnValue([]),
         getCreateTimestampColumn: jest.fn().mockReturnValue(null),
         getUpdateTimestampColumn: jest.fn().mockReturnValue(null),
         getVersionColumn: jest.fn().mockReturnValue(null),

@@ -681,6 +681,20 @@ WHERE "user"."id" = 1;
 
 > **Hint** `@OneToOne` resolves its FK column exactly like `@ManyToOne`: `@RelationColumn` first, then the legacy `joinColumn` option, then a `{propertyName}Id` `@Column` (e.g. `@Column({ name: "profile_fk" }) profileId: number`).
 
+### Saving the Owner Side
+
+The owner side's key is written like a `@ManyToOne`'s: pass the related instance, its bare key, or the `${property}Id` shadow property.
+
+```typescript
+const profile = await em.save(Profile, { bio: "Hello" });
+
+const user = await em.save(User, { name: "Alice", profile }); // profile_id = profile.id
+await em.save(User, { id: user.id, profile: otherProfile });  // reassign
+await em.save(User, { id: user.id, profile: null });          // clear the key
+```
+
+`save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()` and the upsert family all write it, and a payload that leaves the relation out keeps the stored key. A related instance must already have its primary key. The inverse side (`Profile.user` below) holds no column, so set the relation on the owner. Before 2.1 no write method stored the owner's key and the column stayed `NULL`; only `updateMany()` with the shadow property wrote it.
+
 ### Bidirectional
 
 If you also want to reference User from Profile, use `inverseSide`.

@@ -681,6 +681,20 @@ WHERE "user"."id" = 1;
 
 > **힌트** `@OneToOne`도 `@ManyToOne`과 동일한 순서로 FK 컬럼을 해석해요. `@RelationColumn`이 먼저, 그다음 레거시 `joinColumn` 옵션, 마지막으로 `{propertyName}Id` 패턴의 `@Column`(예: `@Column({ name: "profile_fk" }) profileId: number`) 순서입니다.
 
+### 소유자 측 저장
+
+소유자 측의 키는 `@ManyToOne`과 같은 방식으로 기록됩니다. 연관 인스턴스, 키 값 그대로, `${property}Id` 섀도 프로퍼티 중 어느 형태로 넘겨도 됩니다.
+
+```typescript
+const profile = await em.save(Profile, { bio: "Hello" });
+
+const user = await em.save(User, { name: "Alice", profile }); // profile_id = profile.id
+await em.save(User, { id: user.id, profile: otherProfile });  // 다시 지정
+await em.save(User, { id: user.id, profile: null });          // 키 비우기
+```
+
+`save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()`, upsert 계열 모두 이 키를 기록하고, 페이로드에 관계가 없으면 저장된 키를 그대로 둡니다. 연관 인스턴스에는 기본 키가 이미 있어야 해요. 역방향 측(아래의 `Profile.user`)에는 컬럼이 없으니 관계는 소유자 쪽에 지정하세요. 2.1 이전에는 어떤 쓰기 메서드도 소유자의 키를 저장하지 않아 컬럼이 `NULL`로 남았고, 섀도 프로퍼티를 넘긴 `updateMany()`만 예외였습니다.
+
 ### 양방향
 
 Profile에서 User도 참조하고 싶다면 `inverseSide`를 사용해요.
