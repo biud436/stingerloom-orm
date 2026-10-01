@@ -1375,8 +1375,8 @@ export class ReadExecutor {
       }
     } else if (
       (hasEagerJoins && !op.isTPTChild) ||
-      // TPT child + eager ManyToOne: deserialize the relation through transformNested
-      (op.isTPTChild && op.eagerM2O.length > 0)
+      // TPT child + an eager to-one relation: deserialize it through transformNested
+      (op.isTPTChild && joined.size > 0)
     ) {
       return resultTransformer.transformNested(
         entity,

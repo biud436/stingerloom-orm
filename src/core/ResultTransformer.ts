@@ -18,6 +18,7 @@ import {
 } from "../decorators/RelationColumn";
 import { ClazzType } from "../utils";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
+import { resolveOneToOneJoinColumns } from "./RelationMetadataResolver";
 import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
 import {
   isJsonColumnType,
@@ -60,6 +61,11 @@ let columnInfoCache = new WeakMap<Function, CachedColumnInfo>();
 // per-class cache is safe. Classes with no relation metadata yet are not
 // cached, so a class queried before its relations are registered (unusual,
 // but possible with incremental EntitySchema registration) is re-read.
+//
+// A OneToOne's join column is resolved as the DDL resolves it — the decorator
+// stores only the deprecated `joinColumn` option, so an owning side declared
+// with `@RelationColumn` or a `${property}Id` @Column would read as the
+// inverse side and never be hydrated from the JOIN the read emitted.
 
 interface CachedRelationInfo {
   manyToOne: ManyToOneMetadata<any>[] | undefined;
@@ -72,13 +78,15 @@ function getCachedRelationInfo(entityClass: Function): CachedRelationInfo {
   let cached = relationInfoCache.get(entityClass);
   if (cached) return cached;
 
+  const oneToOne = Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) as
+    | OneToOneMetadata<any>[]
+    | undefined;
   cached = {
     manyToOne: Reflect.getMetadata(MANY_TO_ONE_TOKEN, entityClass) as
       | ManyToOneMetadata<any>[]
       | undefined,
-    oneToOne: Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) as
-      | OneToOneMetadata<any>[]
-      | undefined,
+    oneToOne:
+      oneToOne && resolveOneToOneJoinColumns(entityClass as ClazzType<any>, oneToOne),
   };
   if (cached.manyToOne || cached.oneToOne) {
     relationInfoCache.set(entityClass, cached);
