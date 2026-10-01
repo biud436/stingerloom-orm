@@ -137,13 +137,13 @@ const cat = await em.findOne(Cat, {
 
 ```sql
 SELECT
-  "cat"."id"       AS "cat_id",
-  "cat"."name"     AS "cat_name",
-  "cat"."owner_id" AS "cat_owner_id",
-  "owner"."id"     AS "owner_id",
-  "owner"."name"   AS "owner_name"
+  "cat"."id",
+  "cat"."name",
+  "cat"."owner_id",
+  "owner"."id"   AS "owner__id",
+  "owner"."name" AS "owner__name"
 FROM "cat"
-LEFT JOIN "owner" ON "cat"."owner_id" = "owner"."id"
+LEFT JOIN "owner" AS "owner" ON "cat"."owner_id" = "owner"."id"
 WHERE "cat"."id" = 1;
 ```
 
@@ -536,13 +536,13 @@ console.log(cat.owner.name); // "John" — loaded without relations option
 
 ```sql
 SELECT
-  "cat"."id"       AS "cat_id",
-  "cat"."name"     AS "cat_name",
-  "cat"."owner_id" AS "cat_owner_id",
-  "owner"."id"     AS "owner_id",
-  "owner"."name"   AS "owner_name"
+  "cat"."id",
+  "cat"."name",
+  "cat"."owner_id",
+  "owner"."id"   AS "owner__id",
+  "owner"."name" AS "owner__name"
 FROM "cat"
-LEFT JOIN "owner" ON "cat"."owner_id" = "owner"."id"
+LEFT JOIN "owner" AS "owner" ON "cat"."owner_id" = "owner"."id"
 WHERE "cat"."id" = 1;
 ```
 
@@ -669,17 +669,31 @@ A `profile_id` column is created in the user table. Since `eager: true`, the Pro
 
 ```sql
 SELECT
-  "user"."id"         AS "user_id",
-  "user"."name"       AS "user_name",
-  "user"."profile_id" AS "user_profile_id",
-  "profile"."id"      AS "profile_id",
-  "profile"."bio"     AS "profile_bio"
+  "user"."id",
+  "user"."name",
+  "user"."profile_id",
+  "profile"."id"  AS "profile__id",
+  "profile"."bio" AS "profile__bio"
 FROM "user"
-LEFT JOIN "profile" ON "user"."profile_id" = "profile"."id"
+LEFT JOIN "profile" AS "profile" ON "user"."profile_id" = "profile"."id"
 WHERE "user"."id" = 1;
 ```
 
 > **Hint** `@OneToOne` resolves its FK column exactly like `@ManyToOne`: `@RelationColumn` first, then the legacy `joinColumn` option, then a `{propertyName}Id` `@Column` (e.g. `@Column({ name: "profile_fk" }) profileId: number`).
+
+### Saving the Owner Side
+
+The owner side's key is written like a `@ManyToOne`'s: pass the related instance, its bare key, or the `${property}Id` shadow property.
+
+```typescript
+const profile = await em.save(Profile, { bio: "Hello" });
+
+const user = await em.save(User, { name: "Alice", profile }); // profile_id = profile.id
+await em.save(User, { id: user.id, profile: otherProfile });  // reassign
+await em.save(User, { id: user.id, profile: null });          // clear the key
+```
+
+`save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()` and the upsert family all write it, and a payload that leaves the relation out keeps the stored key. A related instance must already have its primary key. The inverse side (`Profile.user` below) holds no column, so set the relation on the owner. Before 2.1 no write method stored the owner's key and the column stayed `NULL`; only `updateMany()` with the shadow property wrote it.
 
 ### Bidirectional
 
@@ -710,17 +724,14 @@ console.log(profile.user.name); // "John"
 **Generated SQL (PostgreSQL):**
 
 ```sql
-SELECT
-  "profile"."id"  AS "profile_id",
-  "profile"."bio" AS "profile_bio",
-  "user"."id"     AS "user_id",
-  "user"."name"   AS "user_name"
-FROM "profile"
-LEFT JOIN "user" ON "user"."profile_id" = "profile"."id"
-WHERE "profile"."id" = 1;
+SELECT "id", "bio" FROM "profile" WHERE "id" = $1 LIMIT $2;
+
+SELECT "id", "name", "profile_id" AS "__stg_o2o_fk"
+FROM "user"
+WHERE "profile_id" IN ($1);
 ```
 
-Notice the JOIN direction is reversed: the ORM joins from profile to user by looking for a user row whose `profile_id` matches.
+The inverse side holds no key to JOIN on, so it is loaded by a second query that looks for the user rows whose `profile_id` matches — one query for all the profiles a read returns, not one per profile.
 
 ## @ManyToMany -- "Tagging Posts"
 

@@ -18,6 +18,7 @@ import {
 } from "../decorators/RelationColumn";
 import { ClazzType } from "../utils";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
+import { resolveOneToOneJoinColumns } from "./RelationMetadataResolver";
 import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
 import {
   isJsonColumnType,
@@ -34,6 +35,21 @@ import {
 } from "./BigintColumnTransformer";
 
 export type ForeignObject<T = any> = { [key: string]: T };
+
+/**
+ * The alias a `find()` read gives each column of a JOINed relation:
+ * `<relation>__<column>`. A single underscore collided with the reading
+ * entity's own columns — the related primary key of `owner` was aliased
+ * `owner_id`, the very name of the owner's join column, so the row held one
+ * value for both and a JOIN that found no row (a soft-deleted or filtered
+ * parent) read the key back as NULL; and any `owner_<x>` column was folded
+ * into the related object.
+ */
+export function joinedColumnAlias(relation: string, column: string): string {
+  return `${relation}${JOINED_COLUMN_SEPARATOR}${column}`;
+}
+
+const JOINED_COLUMN_SEPARATOR = "__";
 
 // ── Strategy 1: Per-entity metadata cache ─────────────────
 // Instead of calling Reflect.getMetadata() + rebuilding Maps on every row,
@@ -60,6 +76,11 @@ let columnInfoCache = new WeakMap<Function, CachedColumnInfo>();
 // per-class cache is safe. Classes with no relation metadata yet are not
 // cached, so a class queried before its relations are registered (unusual,
 // but possible with incremental EntitySchema registration) is re-read.
+//
+// A OneToOne's join column is resolved as the DDL resolves it — the decorator
+// stores only the deprecated `joinColumn` option, so an owning side declared
+// with `@RelationColumn` or a `${property}Id` @Column would read as the
+// inverse side and never be hydrated from the JOIN the read emitted.
 
 interface CachedRelationInfo {
   manyToOne: ManyToOneMetadata<any>[] | undefined;
@@ -72,13 +93,15 @@ function getCachedRelationInfo(entityClass: Function): CachedRelationInfo {
   let cached = relationInfoCache.get(entityClass);
   if (cached) return cached;
 
+  const oneToOne = Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) as
+    | OneToOneMetadata<any>[]
+    | undefined;
   cached = {
     manyToOne: Reflect.getMetadata(MANY_TO_ONE_TOKEN, entityClass) as
       | ManyToOneMetadata<any>[]
       | undefined,
-    oneToOne: Reflect.getMetadata(ONE_TO_ONE_TOKEN, entityClass) as
-      | OneToOneMetadata<any>[]
-      | undefined,
+    oneToOne:
+      oneToOne && resolveOneToOneJoinColumns(entityClass as ClazzType<any>, oneToOne),
   };
   if (cached.manyToOne || cached.oneToOne) {
     relationInfoCache.set(entityClass, cached);
@@ -321,10 +344,10 @@ export class ResultTransformer implements BaseResultTransformer {
   }
 
   /**
-   * Builds the SQL-side column name.
+   * The key prefix of a JOINed relation's columns (see {@link joinedColumnAlias}).
    */
   private addSeparatorToColumnName(columnName: string): string {
-    return `${columnName}${ResultTransformer.PropertySeparator}`;
+    return `${columnName}${JOINED_COLUMN_SEPARATOR}`;
   }
 
   /**
@@ -387,7 +410,7 @@ export class ResultTransformer implements BaseResultTransformer {
 
   /**
    * One row as an instance of `entityClass`. With `joined` — the relations
-   * the query JOINed — their columns (`<relation>_<column>`) become the
+   * the query JOINed — their columns (`<relation>__<column>`) become the
    * relation objects, as {@link transformNested} builds them.
    */
   private toRowEntity<T>(
@@ -528,9 +551,7 @@ export class ResultTransformer implements BaseResultTransformer {
    * objects regardless.
    *
    * `joined` names the relations the query JOINed. The others are null
-   * without reading the row: `<relation>_` would otherwise also match the
-   * relation's own join column (`owner_id` for `owner`) and build an object
-   * holding just the key.
+   * without reading the row.
    */
   private fillPropertiesToForeignObject<T>(
     entityClass: MyClassConstructor<T>,
@@ -603,7 +624,7 @@ export class ResultTransformer implements BaseResultTransformer {
       }
     }
 
-    // Handle OneToOne relations (using the same alias pattern as ManyToOne: propertyKey_columnName).
+    // Handle OneToOne relations (same aliases as ManyToOne: see joinedColumnAlias).
     const oneToOneMappingMetadata = getCachedRelationInfo(entityClass).oneToOne;
 
     if (oneToOneMappingMetadata) {

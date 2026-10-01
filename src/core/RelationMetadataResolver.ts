@@ -31,6 +31,22 @@ import {
 import { MetadataContext } from "../metadata/MetadataContext";
 
 /**
+ * A relation whose foreign key is a column of the declaring entity's table —
+ * a `@ManyToOne`, or the owning side of a `@OneToOne` — in the one shape the
+ * write paths read a key through.
+ */
+export interface ForeignKeyRelation {
+  /** The relation property (`author` for `author: Author`). */
+  propertyKey: string;
+  /** The FK column on the declaring entity's table. */
+  joinColumn: string;
+  /** The related entity, whose primary key a related instance contributes. */
+  getRelatedEntity: () => ClazzType<unknown>;
+  /** An explicit FK property (`option.fkProperty`), besides `${propertyKey}Id`. */
+  fkProperty?: string;
+}
+
+/**
  * Pure metadata lookup layer. No DB calls, no side effects.
  * Resolves entity/relation metadata via the layered store, with a Reflect fallback.
  */
@@ -423,56 +439,39 @@ export class RelationMetadataResolver {
     entity: ClazzType<any>,
     relations: OneToOneMetadata<any>[],
   ): OneToOneMetadata<any>[] {
-    // Look up @RelationColumn metadata
-    const relationColumns: RelationColumnMetadata[] =
-      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
-      Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??
-      [];
+    return resolveOneToOneJoinColumns(entity, relations, (propertyKey, name) =>
+      this.logger.warn(
+        `@RelationColumn name not specified for '${propertyKey}' on ${entity.name}, inferred '${name}'.`,
+      ),
+    );
+  }
 
-    const columnsMeta: ColumnMetadata[] =
-      Reflect.getMetadata(COLUMN_TOKEN, entity) ??
-      Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
-      [];
-
-    return relations.map((rel) => {
-      // 1. Check @RelationColumn metadata first (highest priority)
-      const relCol = relationColumns.find(
-        (rc) => rc.propertyKey === rel.propertyKey,
-      );
-      if (relCol) {
-        let resolvedName = relCol.name;
-        if (!resolvedName) {
-          resolvedName = `${rel.propertyKey}Id`;
-          this.logger.warn(
-            `@RelationColumn name not specified for '${rel.propertyKey}' on ${entity.name}, inferred '${resolvedName}'.`,
-          );
-        }
-        return {
-          ...rel,
-          joinColumn: resolvedName,
-        };
-      }
-
-      // 2. If option.joinColumn is already specified → keep it as-is
-      if (rel.joinColumn) return rel;
-
-      // 3. Search for an @Column matching the `{propertyName}Id` pattern
-      if (columnsMeta.length === 0) return rel;
-
-      const fkPropertyName = `${rel.propertyKey}Id`;
-      const matchingColumn = columnsMeta.find(
-        (col: ColumnMetadata) => col.propertyKey === fkPropertyName,
-      );
-
-      if (!matchingColumn) return rel;
-
-      const resolvedJoinColumn = matchingColumn.name ?? fkPropertyName;
-
-      return {
-        ...rel,
-        joinColumn: resolvedJoinColumn,
-      };
-    });
+  /**
+   * The relations whose foreign key `entity`'s rows hold: every `@ManyToOne`
+   * and the owning side of every `@OneToOne` — the ones with a resolved join
+   * column, the same test the DDL uses to give a relation its column.
+   */
+  resolveForeignKeyRelations<T>(entity: ClazzType<T>): ForeignKeyRelation[] {
+    const relations: ForeignKeyRelation[] = [];
+    for (const rel of this.resolveManyToOneMetadata(entity)) {
+      if (!rel.joinColumn) continue;
+      relations.push({
+        propertyKey: rel.columnName,
+        joinColumn: rel.joinColumn,
+        getRelatedEntity: () => rel.getMappingEntity() as ClazzType<unknown>,
+        fkProperty: rel.option?.fkProperty,
+      });
+    }
+    for (const rel of this.resolveOneToOneMetadata(entity)) {
+      if (!rel.joinColumn) continue;
+      relations.push({
+        propertyKey: rel.propertyKey,
+        joinColumn: rel.joinColumn,
+        getRelatedEntity: rel.getRelatedEntity as () => ClazzType<unknown>,
+        fkProperty: rel.option?.fkProperty,
+      });
+    }
+    return relations;
   }
 
   /**
@@ -550,4 +549,54 @@ export class RelationMetadataResolver {
 
     return null;
   }
+}
+
+/**
+ * The join column of each `@OneToOne` the way the DDL and the writers see it:
+ * a `@RelationColumn` first (an unnamed one infers `${property}Id`, reported
+ * through `onInferred`), then the `joinColumn` option, then a
+ * `${property}Id` `@Column`'s DB name. A relation none of them names is the
+ * inverse side and keeps no join column.
+ *
+ * Reads decorator metadata only, so code without a resolver at hand — the
+ * result hydrator — finds the owning side by the same rules.
+ */
+export function resolveOneToOneJoinColumns(
+  entity: ClazzType<any>,
+  relations: OneToOneMetadata<any>[],
+  onInferred?: (propertyKey: string, name: string) => void,
+): OneToOneMetadata<any>[] {
+  const relationColumns: RelationColumnMetadata[] =
+    Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity) ??
+    Reflect.getMetadata(RELATION_COLUMN_TOKEN, entity.prototype) ??
+    [];
+
+  const columnsMeta: ColumnMetadata[] =
+    Reflect.getMetadata(COLUMN_TOKEN, entity) ??
+    Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
+    [];
+
+  return relations.map((rel) => {
+    const relCol = relationColumns.find(
+      (rc) => rc.propertyKey === rel.propertyKey,
+    );
+    if (relCol) {
+      let resolvedName = relCol.name;
+      if (!resolvedName) {
+        resolvedName = `${rel.propertyKey}Id`;
+        onInferred?.(rel.propertyKey, resolvedName);
+      }
+      return { ...rel, joinColumn: resolvedName };
+    }
+
+    if (rel.joinColumn) return rel;
+
+    const fkPropertyName = `${rel.propertyKey}Id`;
+    const matchingColumn = columnsMeta.find(
+      (col: ColumnMetadata) => col.propertyKey === fkPropertyName,
+    );
+    if (!matchingColumn) return rel;
+
+    return { ...rel, joinColumn: matchingColumn.name ?? fkPropertyName };
+  });
 }

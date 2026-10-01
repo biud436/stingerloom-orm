@@ -28,8 +28,10 @@ import {
   DeleteEvent,
 } from "../EntitySubscriber";
 import { EntityManagerInternals } from "../EntityManagerInternals";
-import type { ManyToOneMetadata } from "../../decorators/ManyToOne";
-import { RelationMetadataResolver } from "../RelationMetadataResolver";
+import {
+  RelationMetadataResolver,
+  type ForeignKeyRelation,
+} from "../RelationMetadataResolver";
 import { CascadeHandler } from "../CascadeHandler";
 import { transactionStorage } from "../../decorators/Transactional";
 import type { InheritanceStrategy } from "../../decorators/Inheritance";
@@ -106,13 +108,18 @@ interface SetEntry {
 }
 
 /**
- * A ManyToOne FK appended to a multi-row INSERT's column list, paired with the
- * relation metadata needed to resolve each row's value.
+ * A relation's FK appended to a multi-row INSERT's column list, paired with
+ * the relation needed to resolve each row's value.
  */
 interface FkColumnBinding {
   joinColumn: string;
-  propertyName: string;
-  relMeta: ManyToOneMetadata<unknown>;
+  relMeta: ForeignKeyRelation;
+  /**
+   * Position of the join column among the declared columns when a `@Column`
+   * declares it: a row that leaves that column unset takes the key the
+   * relation states. Absent for a join column named after the declared ones.
+   */
+  declaredAt?: number;
 }
 
 /**
@@ -816,9 +823,9 @@ export class WriteExecutor {
   }
 
   /**
-   * Resolves each ManyToOne relation's FK value (relation object → shadow
-   * `${prop}Id` accessor → explicit `option.fkProperty`) and writes it into
-   * the staged INSERT, appending the join column when it isn't already staged.
+   * Resolves the FK value of each `@ManyToOne` and owning `@OneToOne` (see
+   * {@link resolveFkValue}) and writes it into the staged INSERT, appending
+   * the join column when it isn't already staged.
    */
   private applyInsertFkColumns<T>(
     op: SaveOperation<T>,
@@ -827,9 +834,7 @@ export class WriteExecutor {
     const { entity, itemFields } = op;
     const { insertableColumns, columns, values } = plan;
 
-    const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-    for (const rel of manyToOneRelations) {
-      if (!rel.joinColumn) continue;
+    for (const rel of this.resolver.resolveForeignKeyRelations(entity)) {
       const existingIdx = insertableColumns.findIndex(
         (col: ColumnMetadata) => col.name === rel.joinColumn,
       );
@@ -1167,58 +1172,22 @@ export class WriteExecutor {
       updatableColumns.map((col: ColumnMetadata) => col.name),
     );
 
-    // Add the ManyToOne FK column values to the UPDATE SET clause
-    const updateManyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-    for (const rel of updateManyToOneRelations) {
-      if (!rel.joinColumn) continue;
-      const relatedValue = itemFields[rel.columnName];
-      // Shadow-accessor fallback (mirrors INSERT path): when the relation
-      // object isn't set, look for the FK on the conventional `${rel}Id`
-      // shadow, then on an explicit `option.fkProperty`.
-      let shadowValue: unknown = itemFields[`${rel.columnName}Id`];
-      if (shadowValue === undefined && rel.option?.fkProperty) {
-        shadowValue = itemFields[rel.option.fkProperty];
-      }
+    // The FK of each @ManyToOne / owning @OneToOne the item states. A
+    // relation the item leaves out keeps its stored key; `null` clears it.
+    for (const rel of this.resolver.resolveForeignKeyRelations(entity)) {
+      const fkValue = this.resolveFkValue(rel, itemFields);
+      if (fkValue === undefined) continue;
 
-      if (relatedValue === undefined && shadowValue === undefined) continue;
-
-      const alreadyInSet = updatedColumnNames.has(rel.joinColumn);
-      const setClause = (value: unknown) => {
-        if (alreadyInSet) {
-          const existingIdx = updatableColumns.findIndex(
-            (col: ColumnMetadata) => col.name === rel.joinColumn,
-          );
-          updateMap[existingIdx] =
-            sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`;
-        } else {
-          updateMap.push(
-            sql`${raw(this.ctx.wrap(rel.joinColumn!))} = ${bindParam(value)}`,
-          );
-          appended.push(rel.joinColumn!);
-          updatedColumnNames.add(rel.joinColumn!);
-        }
-      };
-
-      if (relatedValue === null) {
-        setClause(null);
-      } else if (relatedValue && typeof relatedValue === "object") {
-        const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
-        const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-        if (relatedMeta) {
-          const relatedPk = relatedMeta.columns.find(
-            (col: ColumnMetadata) => col.options?.primary,
-          );
-          if (relatedPk) {
-            const fkValue = fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)];
-            if (fkValue !== undefined && fkValue !== null) {
-              setClause(fkValue);
-            }
-          }
-        }
-      } else if (shadowValue !== undefined) {
-        // Fall back to the shadow accessor when no relation object was set.
-        // `null` clears the FK; numeric/string values set it directly.
-        setClause(shadowValue);
+      const clause = sql`${raw(this.ctx.wrap(rel.joinColumn))} = ${bindParam(fkValue)}`;
+      if (updatedColumnNames.has(rel.joinColumn)) {
+        const existingIdx = updatableColumns.findIndex(
+          (col: ColumnMetadata) => col.name === rel.joinColumn,
+        );
+        updateMap[existingIdx] = clause;
+      } else {
+        updateMap.push(clause);
+        appended.push(rel.joinColumn);
+        updatedColumnNames.add(rel.joinColumn);
       }
     }
 
@@ -1566,8 +1535,10 @@ export class WriteExecutor {
    * N × (INSERT+SELECT) → 1 INSERT + 1 SELECT (or PG RETURNING).
    */
   /**
-   * Appends the FK columns a `@ManyToOne` owns but no `@Column` declares, and
-   * returns the bindings {@link buildInsertRowValues} needs to fill them.
+   * Appends the FK columns a `@ManyToOne` or owning `@OneToOne` owns but no
+   * `@Column` declares, and returns the bindings {@link buildInsertRowValues}
+   * needs to fill them — those columns, and the declared join columns a row
+   * may leave to its relation.
    *
    * Shared by every multi-row INSERT path — they each carried a copy, and the
    * copies had drifted apart.
@@ -1578,43 +1549,45 @@ export class WriteExecutor {
     columns: Sql[],
   ): FkColumnBinding[] {
     const fkColumns: FkColumnBinding[] = [];
-    for (const rel of this.resolver.resolveManyToOneMetadata(entity)) {
-      if (!rel.joinColumn) continue;
-      if (insertableColumns.some((col) => col.name === rel.joinColumn)) continue;
+    for (const rel of this.resolver.resolveForeignKeyRelations(entity)) {
+      const declaredAt = insertableColumns.findIndex(
+        (col) => col.name === rel.joinColumn,
+      );
+      if (declaredAt >= 0) {
+        fkColumns.push({ joinColumn: rel.joinColumn, relMeta: rel, declaredAt });
+        continue;
+      }
       columns.push(raw(this.ctx.wrap(rel.joinColumn)));
-      fkColumns.push({
-        joinColumn: rel.joinColumn,
-        propertyName: rel.columnName,
-        relMeta: rel,
-      });
+      fkColumns.push({ joinColumn: rel.joinColumn, relMeta: rel });
     }
     return fkColumns;
   }
 
   /**
-   * The foreign-key value an item states for one `@ManyToOne`, or `undefined`
-   * when it states nothing — the single-row path uses that to leave the column
-   * out entirely, the batch paths bind NULL.
+   * The foreign-key value an item states for one `@ManyToOne` or owning
+   * `@OneToOne`, or `undefined` when it states nothing — the single-row
+   * INSERT leaves the column out entirely, the UPDATE leaves the stored key
+   * alone, the batch paths bind NULL.
    *
    * An explicit `null` means "no parent" and wins over a stale shadow
    * property. A related instance contributes its primary key. **A bare value
-   * is the key itself** — that case is why this lives in one place: three of
-   * the four write paths carried a near-copy of this chain, and two of them
-   * treated `{ author: 7 }` as nothing to write and stored NULL. Failing
-   * that, the `${property}Id` shadow (or an explicit `option.fkProperty`) is
-   * the fallback, mirroring `collectFkPropertyMappings` on reads.
+   * is the key itself** — that case is why this lives in one place: every
+   * write path carried a near-copy of this chain, and three of them treated
+   * `{ author: 7 }` as nothing to write. Failing that, the `${property}Id`
+   * shadow (or an explicit `option.fkProperty`) is the fallback, mirroring
+   * `collectFkPropertyMappings` on reads; a `null` there clears the key too.
    */
   private resolveFkValue(
-    rel: ManyToOneMetadata<unknown>,
+    rel: ForeignKeyRelation,
     itemFields: EntityFields,
   ): unknown {
-    const relatedValue = itemFields[rel.columnName];
+    const relatedValue = itemFields[rel.propertyKey];
 
     if (relatedValue === null) return null;
 
     if (relatedValue !== undefined) {
       if (typeof relatedValue === "object") {
-        const RelatedEntity = rel.getMappingEntity() as ClazzType<unknown>;
+        const RelatedEntity = rel.getRelatedEntity();
         const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
         const relatedPk = relatedMeta?.columns.find(
           (col: ColumnMetadata) => col.options?.primary,
@@ -1626,18 +1599,21 @@ export class WriteExecutor {
       return relatedValue;
     }
 
-    let idPropValue = itemFields[`${rel.columnName}Id`];
-    if (idPropValue === undefined && rel.option?.fkProperty) {
-      idPropValue = itemFields[rel.option.fkProperty];
+    let idPropValue = itemFields[`${rel.propertyKey}Id`];
+    if (idPropValue === undefined && rel.fkProperty) {
+      idPropValue = itemFields[rel.fkProperty];
     }
-    return idPropValue != null ? idPropValue : undefined;
+    return idPropValue;
   }
 
   /**
    * One INSERT row: the declared column values with write transforms applied
    * (`@Column` transformer.to, registered ColumnType transformers, and the
    * mandatory JSON stringify — reads apply transformer.from either way),
-   * followed by the FK columns {@link appendFkInsertColumns} added.
+   * followed by the FK columns {@link appendFkInsertColumns} added. A
+   * declared join column the row leaves unset takes its relation's key, as
+   * upsert() does — a batch mixing `{ author }` and `{ authorId }` rows
+   * names the column for every row.
    */
   private buildInsertRowValues(
     insertableColumns: ColumnMetadata[],
@@ -1658,8 +1634,18 @@ export class WriteExecutor {
       }),
     );
     for (const fk of fkColumns) {
+      if (fk.declaredAt === undefined) {
+        const fkValue = this.resolveFkValue(fk.relMeta, itemFields);
+        rowValues.push(fkValue === undefined ? null : bindParam(fkValue));
+        continue;
+      }
+      const column = insertableColumns[fk.declaredAt];
+      if (itemFields[this.ctx.propKey(column)] !== undefined) continue;
       const fkValue = this.resolveFkValue(fk.relMeta, itemFields);
-      rowValues.push(fkValue === undefined ? null : bindParam(fkValue));
+      if (fkValue === undefined) continue;
+      rowValues[fk.declaredAt] = bindParam(
+        this.ctx.applyWriteTransform(column, fkValue, site),
+      );
     }
     return rowValues;
   }
@@ -2100,19 +2086,20 @@ export class WriteExecutor {
       : declared;
   }
 
-  /** Whether any item states a value for one of the entity's `@ManyToOne` keys. */
+  /**
+   * Whether any item states a value for one of the entity's `@ManyToOne` /
+   * owning `@OneToOne` keys.
+   */
   private statesAnyForeignKey<T>(
     entity: ClazzType<T>,
     items: Partial<T>[],
   ): boolean {
     return this.resolver
-      .resolveManyToOneMetadata(entity)
-      .some(
-        (rel) =>
-          !!rel.joinColumn &&
-          items.some(
-            (item) => this.resolveFkValue(rel, fieldsOf(item)) !== undefined,
-          ),
+      .resolveForeignKeyRelations(entity)
+      .some((rel) =>
+        items.some(
+          (item) => this.resolveFkValue(rel, fieldsOf(item)) !== undefined,
+        ),
       );
   }
 
@@ -3757,7 +3744,7 @@ export class WriteExecutor {
     isInsertable: (col: ColumnMetadata) => boolean,
     tenantColumnName: string | null,
     statedByCaller: (col: ColumnMetadata) => boolean,
-    statesFk: (rel: ManyToOneMetadata<unknown>) => boolean,
+    statesFk: (rel: ForeignKeyRelation) => boolean,
   ): UpsertPlan | null {
     const pkColumns = metadata.columns
       .filter((col: ColumnMetadata) => col.options?.primary)
@@ -3777,18 +3764,10 @@ export class WriteExecutor {
       insertableColumns.map((col: ColumnMetadata) => col.name),
     );
     const fkColumns: FkColumnBinding[] = this.resolver
-      .resolveManyToOneMetadata(entity)
+      .resolveForeignKeyRelations(entity)
       .flatMap((rel) =>
-        rel.joinColumn &&
-        !insertableNames.has(rel.joinColumn) &&
-        statesFk(rel)
-          ? [
-              {
-                joinColumn: rel.joinColumn,
-                propertyName: rel.columnName,
-                relMeta: rel,
-              },
-            ]
+        !insertableNames.has(rel.joinColumn) && statesFk(rel)
+          ? [{ joinColumn: rel.joinColumn, relMeta: rel }]
           : [],
       );
     if (insertableColumns.length === 0 && fkColumns.length === 0) {
@@ -3891,7 +3870,7 @@ export class WriteExecutor {
     items: Partial<T>[],
   ): Partial<T>[] {
     const declaredFks = this.resolver
-      .resolveManyToOneMetadata(entity)
+      .resolveForeignKeyRelations(entity)
       .flatMap((rel) => {
         const column = metadata.columns.find(
           (col: ColumnMetadata) => col.name === rel.joinColumn,

@@ -372,8 +372,8 @@ SELECT "credit_card_payment"."id",
        "credit_card_payment"."cardNumber",
        "payment"."amount",
        "payment"."storeFk",
-       "store"."id"   AS "store_id",
-       "store"."name" AS "store_name"
+       "store"."id"   AS "store__id",
+       "store"."name" AS "store__name"
 FROM "credit_card_payment"
 INNER JOIN "payment"
   ON "credit_card_payment"."id" = "payment"."id"
