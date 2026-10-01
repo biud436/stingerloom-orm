@@ -137,13 +137,13 @@ const cat = await em.findOne(Cat, {
 
 ```sql
 SELECT
-  "cat"."id"       AS "cat_id",
-  "cat"."name"     AS "cat_name",
-  "cat"."owner_id" AS "cat_owner_id",
-  "owner"."id"     AS "owner_id",
-  "owner"."name"   AS "owner_name"
+  "cat"."id",
+  "cat"."name",
+  "cat"."owner_id",
+  "owner"."id"   AS "owner__id",
+  "owner"."name" AS "owner__name"
 FROM "cat"
-LEFT JOIN "owner" ON "cat"."owner_id" = "owner"."id"
+LEFT JOIN "owner" AS "owner" ON "cat"."owner_id" = "owner"."id"
 WHERE "cat"."id" = 1;
 ```
 
@@ -536,13 +536,13 @@ console.log(cat.owner.name); // "John" — relations 옵션 없이 로드됨
 
 ```sql
 SELECT
-  "cat"."id"       AS "cat_id",
-  "cat"."name"     AS "cat_name",
-  "cat"."owner_id" AS "cat_owner_id",
-  "owner"."id"     AS "owner_id",
-  "owner"."name"   AS "owner_name"
+  "cat"."id",
+  "cat"."name",
+  "cat"."owner_id",
+  "owner"."id"   AS "owner__id",
+  "owner"."name" AS "owner__name"
 FROM "cat"
-LEFT JOIN "owner" ON "cat"."owner_id" = "owner"."id"
+LEFT JOIN "owner" AS "owner" ON "cat"."owner_id" = "owner"."id"
 WHERE "cat"."id" = 1;
 ```
 
@@ -669,13 +669,13 @@ ALTER TABLE "user"
 
 ```sql
 SELECT
-  "user"."id"         AS "user_id",
-  "user"."name"       AS "user_name",
-  "user"."profile_id" AS "user_profile_id",
-  "profile"."id"      AS "profile_id",
-  "profile"."bio"     AS "profile_bio"
+  "user"."id",
+  "user"."name",
+  "user"."profile_id",
+  "profile"."id"  AS "profile__id",
+  "profile"."bio" AS "profile__bio"
 FROM "user"
-LEFT JOIN "profile" ON "user"."profile_id" = "profile"."id"
+LEFT JOIN "profile" AS "profile" ON "user"."profile_id" = "profile"."id"
 WHERE "user"."id" = 1;
 ```
 
@@ -724,17 +724,14 @@ console.log(profile.user.name); // "John"
 **생성되는 SQL (PostgreSQL):**
 
 ```sql
-SELECT
-  "profile"."id"  AS "profile_id",
-  "profile"."bio" AS "profile_bio",
-  "user"."id"     AS "user_id",
-  "user"."name"   AS "user_name"
-FROM "profile"
-LEFT JOIN "user" ON "user"."profile_id" = "profile"."id"
-WHERE "profile"."id" = 1;
+SELECT "id", "bio" FROM "profile" WHERE "id" = $1 LIMIT $2;
+
+SELECT "id", "name", "profile_id" AS "__stg_o2o_fk"
+FROM "user"
+WHERE "profile_id" IN ($1);
 ```
 
-JOIN 방향이 반대가 된 거 보이시죠? ORM이 `profile_id`가 일치하는 user 행을 찾아서 profile에서 user로 조인해요.
+역방향 측에는 JOIN할 키가 없어서, `profile_id`가 일치하는 user 행을 찾는 두 번째 쿼리로 불러옵니다. 프로필마다 한 번씩이 아니라, 읽은 프로필 전체에 대해 쿼리 한 번입니다.
 
 ## @ManyToMany -- "글에 태그 달기"
 

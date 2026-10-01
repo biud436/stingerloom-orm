@@ -302,16 +302,16 @@ const cards = await em.find(CreditCardPayment, {
 
 ```sql
 SELECT
-  "payment"."id"           AS "payment_id",
-  "payment"."amount"       AS "payment_amount",
-  "payment"."storeId"      AS "payment_storeId",
-  "payment"."payment_type" AS "payment_payment_type",
-  "payment"."cardNumber"   AS "payment_cardNumber",
-  "payment"."bankCode"     AS "payment_bankCode",
-  "store"."id"             AS "store_id",
-  "store"."name"           AS "store_name"
+  "payment"."id",
+  "payment"."amount",
+  "payment"."storeId",
+  "payment"."payment_type",
+  "payment"."cardNumber",
+  "payment"."bankCode",
+  "store"."id"   AS "store__id",
+  "store"."name" AS "store__name"
 FROM "payment"
-LEFT JOIN "store" ON "payment"."storeId" = "store"."id"
+LEFT JOIN "store" AS "store" ON "payment"."storeId" = "store"."id"
 WHERE "payment"."payment_type" = 'credit_card';
 ```
 

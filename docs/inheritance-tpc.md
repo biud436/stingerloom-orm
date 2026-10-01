@@ -296,7 +296,7 @@ const payments = await em.find(Payment, {
 **Generated SQL (PostgreSQL):**
 
 ```sql
-SELECT "_tpc".*, "store"."id" AS "store_id", "store"."name" AS "store_name"
+SELECT "_tpc".*, "store"."id" AS "store__id", "store"."name" AS "store__name"
 FROM (
   SELECT "id", "amount", "store_id", NULL AS "cardNumber", ... FROM "payment"
   UNION ALL

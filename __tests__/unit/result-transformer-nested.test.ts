@@ -57,10 +57,10 @@ describe("#116: OneToOne recursively processes nested ManyToOne", () => {
         {
           id: 1,
           name: "Alice",
-          profile_id: 10,
-          profile_bio: "Hello world",
-          profile_department_id: 100,
-          profile_department_name: "Engineering",
+          profile__id: 10,
+          profile__bio: "Hello world",
+          profile__department__id: 100,
+          profile__department__name: "Engineering",
         },
       ],
     };
@@ -94,11 +94,11 @@ describe("#117: isDeepNull handles nested all-null objects", () => {
           id: 1,
           name: "Post Title",
           // All profile columns are NULL (LEFT JOIN returned no match)
-          profile_id: null,
-          profile_bio: null,
+          profile__id: null,
+          profile__bio: null,
           // Nested department through profile is also all NULL
-          profile_department_id: null,
-          profile_department_name: null,
+          profile__department__id: null,
+          profile__department__name: null,
         },
       ],
     };
@@ -118,11 +118,11 @@ describe("#117: isDeepNull handles nested all-null objects", () => {
         {
           id: 1,
           name: "Alice",
-          profile_id: 10,
-          profile_bio: "Some bio",
+          profile__id: 10,
+          profile__bio: "Some bio",
           // department is null
-          profile_department_id: null,
-          profile_department_name: null,
+          profile__department__id: null,
+          profile__department__name: null,
         },
       ],
     };
@@ -170,15 +170,15 @@ describe("transformNested applies read transforms + reverse-mapping (eager join)
     const transformer = new ResultTransformer();
 
     // mysql2 / better-sqlite3 surface booleans as 0/1; the eager JOIN aliases
-    // the related columns as `${relationProp}_${dbColumnName}`.
+    // the related columns as `${relationProp}__${dbColumnName}`.
     const queryResult = {
       results: [
         {
           id: 1,
           verified: 0,
-          org_id: 100,
-          org_org_name: "Acme",
-          org_active: 1,
+          org__id: 100,
+          org__org_name: "Acme",
+          org__active: 1,
         },
       ],
     };

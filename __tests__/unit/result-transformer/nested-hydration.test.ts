@@ -19,7 +19,7 @@ import type { QueryResult } from "../../../src/types";
  * entity objects from a single flat row of join columns. These tests pin:
  *
  *   - null-relation detection (LEFT JOIN with no match → null, not an empty entity)
- *   - prefix isolation between sibling relations (`address_*` vs `order_*`)
+ *   - prefix isolation between sibling relations (`address__*` vs `order__*`)
  *   - self-referencing cycles terminate cleanly
  *   - nested ManyToOne under OneToOne (issue #116)
  */
@@ -53,7 +53,7 @@ describe("ResultTransformer / nested hydration regression", () => {
     it("returns post.author === null when every joined column is null", () => {
       const result: QueryResult = {
         results: [
-          { id: 7, author_id: null, author_name: null },
+          { id: 7, author__id: null, author__name: null },
         ],
       };
       const post = rt.transformNested(Post, result) as Post;
@@ -68,7 +68,7 @@ describe("ResultTransformer / nested hydration regression", () => {
     it("hydrates the nested entity when the JOIN matched", () => {
       const result: QueryResult = {
         results: [
-          { id: 7, author_id: 1, author_name: "Alice" },
+          { id: 7, author__id: 1, author__name: "Alice" },
         ],
       };
       const post = rt.transformNested(Post, result) as Post;
@@ -80,7 +80,7 @@ describe("ResultTransformer / nested hydration regression", () => {
 
   describe("multiple sibling ManyToOne relations — prefixes do not bleed", () => {
     /**
-     * A row carries `address_*` and `order_*` join columns side by side.
+     * A row carries `address__*` and `order__*` join columns side by side.
      * Each ManyToOne hydration must consume only its own prefix and must
      * not include the other relation's columns when checking `isDeepNull`.
      */
@@ -126,10 +126,10 @@ describe("ResultTransformer / nested hydration regression", () => {
         results: [
           {
             id: 1,
-            address_id: 11,
-            address_city: "Seoul",
-            order_id: 22,
-            order_total: 100,
+            address__id: 11,
+            address__city: "Seoul",
+            order__id: 22,
+            order__total: 100,
           },
         ],
       };
@@ -145,16 +145,16 @@ describe("ResultTransformer / nested hydration regression", () => {
         results: [
           {
             id: 1,
-            address_id: 11,
-            address_city: "Seoul",
-            order_id: null,
-            order_total: null,
+            address__id: 11,
+            address__city: "Seoul",
+            order__id: null,
+            order__total: null,
           },
         ],
       };
       const c = rt.transformNested(Customer, result) as Customer;
       expect(c.address?.city).toBe("Seoul");
-      // The order_* prefix is independently all-null → relation is null.
+      // The order__* prefix is independently all-null → relation is null.
       expect(c.order).toBeNull();
     });
 
@@ -163,10 +163,10 @@ describe("ResultTransformer / nested hydration regression", () => {
         results: [
           {
             id: 1,
-            address_id: null,
-            address_city: null,
-            order_id: null,
-            order_total: null,
+            address__id: null,
+            address__city: null,
+            order__id: null,
+            order__total: null,
           },
         ],
       };
@@ -181,7 +181,7 @@ describe("ResultTransformer / nested hydration regression", () => {
      * `user.profile.country` — OneToOne to Profile, Profile has a ManyToOne
      * to Country. The recursive descent under OneToOne must use the
      * already-stripped foreignObject as its resultSet so the inner
-     * `country_*` prefix matching still finds its columns.
+     * `country__*` prefix matching still finds its columns.
      */
     @Entity()
     class Country {
@@ -226,10 +226,10 @@ describe("ResultTransformer / nested hydration regression", () => {
         results: [
           {
             id: 5,
-            profile_id: 10,
-            profile_bio: "hello",
-            profile_country_id: 99,
-            profile_country_code: "KR",
+            profile__id: 10,
+            profile__bio: "hello",
+            profile__country__id: 99,
+            profile__country__code: "KR",
           },
         ],
       };
@@ -246,10 +246,10 @@ describe("ResultTransformer / nested hydration regression", () => {
         results: [
           {
             id: 5,
-            profile_id: null,
-            profile_bio: null,
-            profile_country_id: null,
-            profile_country_code: null,
+            profile__id: null,
+            profile__bio: null,
+            profile__country__id: null,
+            profile__country__code: null,
           },
         ],
       };
@@ -285,8 +285,8 @@ describe("ResultTransformer / nested hydration regression", () => {
           {
             id: 2,
             title: "child",
-            parent_id: 1,
-            parent_title: "root",
+            parent__id: 1,
+            parent__title: "root",
           },
         ],
       };
@@ -306,8 +306,8 @@ describe("ResultTransformer / nested hydration regression", () => {
           {
             id: 1,
             title: "root",
-            parent_id: null,
-            parent_title: null,
+            parent__id: null,
+            parent__title: null,
           },
         ],
       };

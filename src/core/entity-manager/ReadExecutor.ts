@@ -13,7 +13,7 @@ import { RawQueryBuilderFactory } from "../RawQueryBuilderFactory";
 import type { BaseRawQueryBuilder } from "../BaseRawQueryBuilder";
 import { Conditions } from "../Conditions";
 import { ResultTransformerFactory } from "../ResultTransformerFactory";
-import type { ResultTransformer } from "../ResultTransformer";
+import { joinedColumnAlias, type ResultTransformer } from "../ResultTransformer";
 import { injectLazyProxy } from "../LazyLoader";
 import { MetadataContext } from "../../metadata/MetadataContext";
 import { EntityMetadataNotFoundError } from "../../errors/EntityMetadataNotFoundError";
@@ -893,7 +893,7 @@ export class ReadExecutor {
 
       const relAlias = rel.columnName;
       for (const col of relatedMetadata.columns) {
-        const alias = `${rel.columnName}_${col.name}`;
+        const alias = joinedColumnAlias(rel.columnName, col.name);
         selectMap.push(
           `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(alias)}`,
         );
@@ -908,7 +908,7 @@ export class ReadExecutor {
 
       const relAlias = rel.propertyKey;
       for (const col of relatedMetadata.columns) {
-        const alias = `${rel.propertyKey}_${col.name}`;
+        const alias = joinedColumnAlias(rel.propertyKey, col.name);
         selectMap.push(
           `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(alias)}`,
         );

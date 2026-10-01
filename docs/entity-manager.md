@@ -415,10 +415,10 @@ For `@ManyToOne` relations like `author`, the ORM generates a LEFT JOIN:
 
 ```sql
 -- PostgreSQL
-SELECT "post"."id", "post"."title", "post"."createdAt",
-       "user"."id" AS "author_id", "user"."name" AS "author_name"
+SELECT "post"."id", "post"."title", "post"."createdAt", "post"."authorId",
+       "author"."id" AS "author__id", "author"."name" AS "author__name"
 FROM "post"
-LEFT JOIN "user" ON "post"."authorId" = "user"."id"
+LEFT JOIN "user" AS "author" ON "post"."authorId" = "author"."id"
 WHERE "post"."id" = $1
 LIMIT 1
 -- Parameters: [1]
