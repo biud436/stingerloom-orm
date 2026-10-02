@@ -16,6 +16,7 @@ import {
 import { BufferStrategy } from "./BufferStrategy";
 import { IdentityMapManager, EntityInstance, ColumnValueMap } from "./IdentityMapManager";
 import { CascadeProcessor } from "./CascadeProcessor";
+import { InheritanceResolver } from "../../InheritanceResolver";
 import type { EntityManager } from "../../EntityManager";
 
 /**
@@ -30,6 +31,7 @@ export class FlushExecutor {
   private readonly options: ResolvedBufferOptions;
   private readonly strategy: BufferStrategy;
   private readonly flushListeners: Map<FlushEventType, FlushEventListener[]>;
+  private readonly inheritance = new InheritanceResolver();
 
   constructor(
     ctx: PluginContext,
@@ -217,8 +219,15 @@ export class FlushExecutor {
       // Fallback to individual saves for: single entry, composite PK, or
       // SQLite (#159). Entities with @Version / @CreateTimestamp /
       // @UpdateTimestamp are no longer disqualified — their values were
-      // just injected above.
-      if (entries.length === 1 || entries[0].pkColumns.length > 1 || this.ctx.isSqlite?.()) {
+      // just injected above. Neither are SINGLE_TABLE / JOINED hierarchies:
+      // their rows need the discriminator, and a JOINED child spans two
+      // tables, which only save() writes.
+      if (
+        entries.length === 1 ||
+        entries[0].pkColumns.length > 1 ||
+        this.ctx.isSqlite?.() ||
+        this.writesThroughSave(entityClass)
+      ) {
         for (const entry of entries) {
           await this.emitFlushEvent("preInsert", entry.entity, entry.instance);
           const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
@@ -306,6 +315,12 @@ export class FlushExecutor {
         await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result, true);
       }
     }
+  }
+
+  /** An entity in a SINGLE_TABLE or JOINED hierarchy, which the multi-row INSERT cannot write. */
+  private writesThroughSave(entityClass: ClazzType<any>): boolean {
+    const strategy = this.inheritance.getStrategy(entityClass);
+    return strategy === "SINGLE_TABLE" || strategy === "JOINED";
   }
 
   /**

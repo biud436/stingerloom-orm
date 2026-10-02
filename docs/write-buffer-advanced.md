@@ -263,6 +263,8 @@ VALUES (?, ?), (?, ?), (?, ?)
 
 After the multi-row INSERT, the buffer writes the generated PKs back to each original instance in order.
 
+Some groups still go through `save()` one row at a time: a single instance, a composite primary key, SQLite, and entities in a `SINGLE_TABLE` or `JOINED` hierarchy -- their rows need the discriminator, and a `JOINED` child spans two tables.
+
 ### Batch UPDATE — Multiple rows in one statement
 
 With `batchUpdate: true`, multiple dirty entities of the same type are updated in a single statement using `CASE WHEN`:

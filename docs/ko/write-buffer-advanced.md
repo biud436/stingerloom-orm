@@ -263,6 +263,8 @@ VALUES (?, ?), (?, ?), (?, ?)
 
 Multi-row INSERT 후, 버퍼가 생성된 PK를 순서대로 각 인스턴스에 다시 써줘요.
 
+다음 경우에는 여전히 `save()`로 한 행씩 씁니다. 인스턴스가 하나뿐일 때, 복합 기본 키일 때, SQLite일 때, 그리고 `SINGLE_TABLE`이나 `JOINED` 계층의 엔티티일 때입니다. 이 계층의 행에는 discriminator가 필요하고, `JOINED` 자식은 테이블 두 개에 걸쳐 있기 때문입니다.
+
 ### Batch UPDATE — 여러 행을 하나의 구문으로
 
 `batchUpdate: true`로 설정하면, 같은 타입의 dirty 엔티티 여러 개를 `CASE WHEN`으로 한 번에 업데이트해요:
