@@ -701,6 +701,8 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 MySQL은 외래 키로 참조되는 테이블에서 `TRUNCATE`를 실행할 수 없어서 외래 키 체크를 임시로 비활성화해야 해요. ORM이 단일 연결 내에서 이를 자동으로 처리해요.
 
+`SINGLE_TABLE` 자식 엔티티는 형제 서브타입과 테이블을 함께 쓰므로, 자식에 대한 `clear()`는 테이블을 TRUNCATE하지 않고 그 서브타입의 행만 지웁니다(`DELETE FROM "payment" WHERE "payment_type" = 'credit_card'`). [Single Table Inheritance](./inheritance-sti.md#delete)를 참고하세요.
+
 ::: warning
 `clear()`는 영구적이고 되돌릴 수 없는 작업이에요. Soft delete 버전은 없어요.
 :::

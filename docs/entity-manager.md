@@ -703,6 +703,8 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 MySQL requires temporarily disabling foreign key checks because `TRUNCATE` cannot run on a table referenced by foreign keys. The ORM handles this automatically within a single connection to ensure isolation.
 
+A `SINGLE_TABLE` child shares its table with its sibling subtypes, so `clear()` on a child deletes only that subtype's rows (`DELETE FROM "payment" WHERE "payment_type" = 'credit_card'`) instead of truncating the table. See [Single Table Inheritance](./inheritance-sti.md#delete).
+
 ::: warning
 `clear()` is a permanent, irreversible operation. There is no soft-delete equivalent.
 :::

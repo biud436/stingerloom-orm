@@ -159,6 +159,49 @@ VALUES (50, 'Payment')
 RETURNING *;
 ```
 
+### 모든 INSERT 경로가 같은 값을 씁니다
+
+어떤 메서드로 쓰든 모든 행에 같은 값이 들어갑니다. `save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()`, `upsert()`, `insertIgnore()`, `batchUpsert()`, `createInsertBuilder()`, 그리고 WriteBuffer flush까지 전부입니다. 페이로드에 discriminator 컬럼 값을 적어도 엔티티의 값으로 덮어씁니다.
+
+```typescript
+await em.insertMany(CreditCardPayment, [{ amount: 10 }, { amount: 20 }]);
+```
+
+```sql
+INSERT INTO "payment" ("amount", "payment_type")
+VALUES (10, 'credit_card'), (20, 'credit_card');
+```
+
+### 자식 엔티티로 upsert하기
+
+모든 서브타입이 테이블 하나를 함께 쓰므로 키 공간도 하나입니다. `upsert()`, `batchUpsert()`, `createInsertBuilder().doUpdate()`의 충돌 분기는 같은 서브타입의 행만 갱신합니다. 충돌한 키가 다른 서브타입의 행이면 그 행은 그대로 두고 영향받지 않은 행으로 셉니다. PostgreSQL과 SQLite에서는 엔티티 클래스당 한 번 경고도 남겨요.
+
+```typescript
+// id 2는 위에서 넣은 BankTransferPayment
+await em.upsert(CreditCardPayment, { id: 2, amount: 999 });
+// { affected: 0 } -- 계좌이체 행은 그대로예요
+```
+
+**생성된 SQL (PostgreSQL):**
+
+```sql
+INSERT INTO "payment" ("id", "amount", "payment_type")
+VALUES (2, 999, 'credit_card')
+ON CONFLICT ("id") DO UPDATE SET "amount" = EXCLUDED."amount"
+WHERE "payment"."payment_type" = 'credit_card';
+```
+
+**생성된 SQL (MySQL):** `ON DUPLICATE KEY UPDATE`에는 WHERE가 없어서 대입마다 같은 조건을 붙입니다.
+
+```sql
+INSERT INTO `payment` (`id`, `amount`, `payment_type`)
+VALUES (2, 999, 'credit_card')
+ON DUPLICATE KEY UPDATE
+  `amount` = IF(`payment`.`payment_type` = 'credit_card', VALUES(`amount`), `payment`.`amount`);
+```
+
+루트로 upsert하면(`em.upsert(Payment, ...)`) 키를 가진 행이 어느 서브타입이든 갱신하고, 그 행의 discriminator는 건드리지 않습니다.
+
 ## SELECT -- 자식 엔티티 조회 (em.find)
 
 자식 엔티티를 조회하면 ORM이 자동으로 discriminator 값으로 필터링하는 `WHERE` 절을 추가해요. 다른 타입의 행은 절대 보이지 않아요.
@@ -546,7 +589,7 @@ await em.save(CreditCardPayment, cc);
 ```sql
 UPDATE "payment"
 SET "amount" = 200, "cardNumber" = '4111-1111-1111-1111'
-WHERE "id" = 1;
+WHERE "id" = 1 AND "payment_type" = 'credit_card';
 ```
 
 **생성된 SQL (MySQL):**
@@ -554,7 +597,7 @@ WHERE "id" = 1;
 ```sql
 UPDATE `payment`
 SET `amount` = 200, `cardNumber` = '4111-1111-1111-1111'
-WHERE `id` = 1;
+WHERE `id` = 1 AND `payment_type` = 'credit_card';
 ```
 
 **반환된 엔티티:**
@@ -565,6 +608,14 @@ CreditCardPayment { id: 1, amount: 200, cardNumber: "4111-1111-1111-1111" }
 ```
 
 주목할 점: `payment_type`은 SET 절에 **없어요**. 비즈니스 컬럼만 나타나요. ORM이 UPDATE 문을 빌드할 때 discriminator 컬럼을 명시적으로 필터링해요.
+
+대신 WHERE 절에는 discriminator가 들어갑니다. 다른 서브타입 행의 키를 주면 아무 행도 맞지 않으므로, `save()`는 그 행을 덮어쓰지 않고 없는 키를 줬을 때처럼 `EntityNotFoundError`를 던집니다.
+
+```typescript
+await em.save(CreditCardPayment, { id: 2, amount: 1 }); // id 2는 BankTransferPayment
+// EntityNotFoundError: save() attempted an UPDATE but no row matched the
+// primary key as a 'CreditCardPayment' row.
+```
 
 ## DELETE
 
@@ -588,7 +639,19 @@ DELETE FROM `payment`
 WHERE `id` = 1 AND `payment_type` = 'credit_card';
 ```
 
-주목할 점: auto-increment ID가 고유하더라도 discriminator 조건은 심층 방어(defense-in-depth) 수단이에요. 루트 엔티티를 통해 삭제하면(`em.delete(Payment, { id: 1 })`) discriminator 필터가 추가되지 않아요.
+주목할 점: auto-increment ID는 테이블 전체에서 고유하므로, 어떤 ID든 다른 서브타입의 행을 가리킬 수 있습니다. 이 서브타입에만 쓰기가 닿게 하는 것이 discriminator 조건입니다. 루트 엔티티를 통해 삭제하면(`em.delete(Payment, { id: 1 })`) discriminator 필터가 추가되지 않아요.
+
+자식 엔티티로 하는 다른 쓰기도 같은 규칙을 따릅니다. `deleteMany()`, `update()` / `updateMany()`, `increment()` / `decrement()`, `softDelete()` / `restore()`, `createUpdateBuilder()` 모두 WHERE 절에 discriminator를 붙여요. 자식 엔티티의 `clear()`는 형제 서브타입이 함께 사는 테이블을 TRUNCATE할 수 없으므로, 그 서브타입의 행만 지웁니다.
+
+```typescript
+await em.clear(CreditCardPayment);
+```
+
+```sql
+DELETE FROM "payment" WHERE "payment_type" = 'credit_card';
+```
+
+루트인 `em.clear(Payment)`는 테이블 전체를 TRUNCATE합니다.
 
 ## 장단점
 

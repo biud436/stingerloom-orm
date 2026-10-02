@@ -3,7 +3,7 @@ import sql, { Sql, join, raw } from "../../utils/sqlTag";
 import { EntityManagerInternals } from "../EntityManagerInternals";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
-import type { UpsertTenantGuard } from "./WriteExecutor";
+import type { UpsertConflictGuard } from "./WriteExecutor";
 
 /**
  * The ORM-managed assignments an upsert's conflict branch adds after the
@@ -184,7 +184,8 @@ export class DmlSqlBuilder {
    * Dialect-specific UPSERT (ON DUPLICATE KEY / ON CONFLICT DO UPDATE) for a
    * single row.
    *
-   * `tenantGuard` keeps the conflict branch off rows owned by another tenant.
+   * `guard` keeps the conflict branch off rows owned by another tenant or,
+   * for a SINGLE_TABLE child, holding another subtype.
    * PostgreSQL and SQLite take one `DO UPDATE … WHERE`; MySQL's
    * `ON DUPLICATE KEY UPDATE` has no WHERE, so **every** assignment is wrapped
    * in `IF(<guard>, VALUES(col), table.col)` — assignments there take effect
@@ -203,7 +204,7 @@ export class DmlSqlBuilder {
     values: any[],
     conflictColumns: string[],
     updateColumns: string[],
-    tenantGuard?: UpsertTenantGuard | null,
+    guard?: UpsertConflictGuard | null,
     managed?: UpsertManagedAssignments | null,
   ): Sql {
     const valueList = join(values, ", ");
@@ -213,7 +214,7 @@ export class DmlSqlBuilder {
       sql`(${valueList})`,
       conflictColumns,
       updateColumns,
-      tenantGuard,
+      guard,
       managed,
     );
   }
@@ -237,7 +238,7 @@ export class DmlSqlBuilder {
     valueRows: Sql[],
     conflictColumns: string[],
     updateColumns: string[],
-    tenantGuard?: UpsertTenantGuard | null,
+    guard?: UpsertConflictGuard | null,
     managed?: UpsertManagedAssignments | null,
   ): Sql {
     return this.buildUpsertStatement(
@@ -246,7 +247,7 @@ export class DmlSqlBuilder {
       join(valueRows, ", "),
       conflictColumns,
       updateColumns,
-      tenantGuard,
+      guard,
       managed,
     );
   }
@@ -261,7 +262,7 @@ export class DmlSqlBuilder {
     valuesSql: Sql,
     conflictColumns: string[],
     updateColumns: string[],
-    tenantGuard?: UpsertTenantGuard | null,
+    guard?: UpsertConflictGuard | null,
     managed?: UpsertManagedAssignments | null,
   ): Sql {
     const columnList = join(
@@ -281,12 +282,12 @@ export class DmlSqlBuilder {
 
     if (this.ctx.isMySqlFamily()) {
       // Resetting an already-NULL column changes nothing, so the revive form
-      // needs no condition beyond the tenant guard.
+      // needs no condition beyond the guard.
       const updateSet =
         assignments.length === 0
           ? this.mySqlNoOpUpdate(conflictColumns, columns)
           : join(
-              assignments.map((a) => this.mySqlAssignment(a, tenantGuard)),
+              assignments.map((a) => this.mySqlAssignment(a, guard)),
               ", ",
             );
       return sql`${head} ON DUPLICATE KEY UPDATE ${updateSet}`;
@@ -321,7 +322,7 @@ export class DmlSqlBuilder {
           raw(`${managed!.existingRowRef}.${a.column} IS NOT NULL`),
         )
       : [];
-    if (tenantGuard) conditions.push(tenantGuard.predicate);
+    if (guard) conditions.push(guard.predicate);
     const whereSql =
       conditions.length > 0 ? sql` WHERE ${join(conditions, " AND ")}` : sql``;
     return sql`${head} ON CONFLICT (${conflictList}) DO UPDATE SET ${updateSet}${whereSql}`;
@@ -364,7 +365,7 @@ export class DmlSqlBuilder {
 
   /**
    * One MySQL/MariaDB `ON DUPLICATE KEY UPDATE` assignment, guarded when a
-   * tenant predicate applies.
+   * conflict guard applies.
    *
    * Every assignment reads only the proposed row or its *own* stored column,
    * never a column assigned earlier in the list — `ON DUPLICATE KEY UPDATE`
@@ -373,7 +374,7 @@ export class DmlSqlBuilder {
    */
   private mySqlAssignment(
     assignment: UpsertAssignment,
-    tenantGuard?: UpsertTenantGuard | null,
+    guard?: UpsertConflictGuard | null,
   ): Sql {
     const col = assignment.column;
     const value =
@@ -382,10 +383,10 @@ export class DmlSqlBuilder {
         : assignment.kind === "increment"
           ? `COALESCE(${assignment.stored}.${col}, 0) + 1`
           : "NULL";
-    if (!tenantGuard) {
+    if (!guard) {
       return raw(`${col} = ${value}`);
     }
-    return sql`${raw(col)} = IF(${tenantGuard.predicate}, ${raw(value)}, ${raw(`${tenantGuard.tableRef}.${col}`)})`;
+    return sql`${raw(col)} = IF(${guard.predicate}, ${raw(value)}, ${raw(`${guard.tableRef}.${col}`)})`;
   }
 
   /**
