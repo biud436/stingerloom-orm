@@ -123,6 +123,21 @@ interface FkColumnBinding {
 }
 
 /**
+ * The discriminator a SINGLE_TABLE or JOINED-root INSERT writes on every row,
+ * whatever the row says — the value save() writes too.
+ */
+interface DiscriminatorBinding {
+  columnName: string;
+  value: string;
+  /**
+   * Position of the discriminator among the declared columns when the row's
+   * column list already names it (a root declaring it as a `@Column`); its
+   * value is overwritten there. Absent when it is named after them.
+   */
+  declaredAt?: number;
+}
+
+/**
  * Per-call state shared by the saveInternal helper methods — built once at the
  * top of the transaction closure and threaded through the INSERT/UPDATE
  * helpers instead of a long positional parameter list.
@@ -168,20 +183,37 @@ interface UpdateSetPlan {
   versionColName: string | null;
 }
 
-/** Column lists staged for an INSERT ... ON CONFLICT statement. */
 /**
- * The tenant predicate an upsert's conflict branch is guarded with, plus the
- * bare table reference MySQL's per-assignment `IF()` form needs.
+ * The predicate an upsert's conflict branch is guarded with, plus the bare
+ * table reference MySQL's per-assignment `IF()` form needs.
  */
-export interface UpsertTenantGuard {
-  /** `"table"."tenant_id" = ?` — reads the row already stored. */
+export interface UpsertConflictGuard {
+  /** Reads the row already stored, e.g. `"table"."tenant_id" = ?`. */
   predicate: Sql;
   /** Wrapped bare table name (never schema-qualified). */
   tableRef: string;
+}
+
+/** The tenant part of an {@link UpsertConflictGuard}. */
+export interface UpsertTenantGuard extends UpsertConflictGuard {
   /** Resolved tenant column name, for diagnostics. */
   columnName: string;
 }
 
+/**
+ * Everything an upsert's conflict branch is guarded by: the stored row must
+ * belong to the current tenant and, for a SINGLE_TABLE child, be a row of
+ * that subtype.
+ */
+interface UpsertGuards {
+  /** Every applicable predicate ANDed, or null when none applies. */
+  combined: UpsertConflictGuard | null;
+  tenant: UpsertTenantGuard | null;
+  /** The discriminator a SINGLE_TABLE child's stored row must carry. */
+  subtype: { columnName: string; value: string } | null;
+}
+
+/** Column lists staged for an INSERT ... ON CONFLICT statement. */
 interface UpsertPlan {
   /** Metadata of the columns the INSERT names, in statement order. */
   insertableColumns: ColumnMetadata[];
@@ -203,6 +235,8 @@ interface UpsertPlan {
   wrappedUpdate: string[];
   /** Unwrapped names of the conflict target, in statement order. */
   conflictNames: string[];
+  /** Written on INSERT, never on conflict; named last unless declared. */
+  discriminator: DiscriminatorBinding | null;
   /** The `@UpdateTimestamp` / `@Version` / `@DeletedAt` assignments that ride along with `wrappedUpdate`. */
   managed: UpsertManagedAssignments;
 }
@@ -218,6 +252,8 @@ export class WriteExecutor {
   private readonly dmlSqlBuilder: DmlSqlBuilder;
   /** Entity classes already warned that upsert ignores a stated `@Version`. */
   private readonly upsertVersionWarnedEntities = new Set<Function>();
+  /** SINGLE_TABLE children already warned that upsert skipped a sibling's row. */
+  private readonly upsertSubtypeWarnedEntities = new Set<Function>();
 
   constructor(private readonly ctx: EntityManagerInternals) {
     this.dmlSqlBuilder = new DmlSqlBuilder(ctx);
@@ -558,6 +594,13 @@ export class WriteExecutor {
       const tenantColumnName = tenantWhere
         ? this.ctx.resolveTenantColumnName(entity)
         : null;
+      // A SINGLE_TABLE child shares its table — and key space — with its
+      // siblings: the primary key alone would rewrite a sibling's row.
+      const updateInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
+      const subtypeWhere = this.stiDiscriminatorClause(
+        entity,
+        updateInheritanceStrategy,
+      );
 
       // Pre-read the database state when any subscriber wants it (for diff
       // audits, change-detection cache invalidation, etc.). Skipping the
@@ -591,6 +634,9 @@ export class WriteExecutor {
       if (tenantWhere) {
         pkWhereClauses.push(tenantWhere);
       }
+      if (subtypeWhere) {
+        pkWhereClauses.push(subtypeWhere);
+      }
 
       // @Version: Optimistic Locking
       // `versionColName` is the DB column name (applyNamingStrategyToEntities
@@ -622,7 +668,6 @@ export class WriteExecutor {
       let updateReturnedRow: DriverRow | null = null;
 
       // TPT child: UPDATE the parent and child tables separately
-      const updateInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
       if (
         updateInheritanceStrategy === "JOINED" &&
         this.inheritanceResolver.isChildEntity(entity) &&
@@ -648,6 +693,7 @@ export class WriteExecutor {
           currentVersion,
           useReturningForUpdate,
           tenantWhere,
+          subtypeWhere,
         );
       }
 
@@ -802,23 +848,18 @@ export class WriteExecutor {
     plan: InsertValuePlan,
     strategy: InheritanceStrategy | null,
   ): void {
-    const { entity } = op;
     const { insertableColumns, columns, values } = plan;
-    if (strategy === "SINGLE_TABLE" || strategy === "JOINED") {
-      const discCol = this.inheritanceResolver.getDiscriminatorColumn(entity);
-      const discVal = this.inheritanceResolver.getDiscriminatorValue(entity);
-      if (discCol && discVal) {
-        const existingDiscIdx = insertableColumns.findIndex(
-          (col: ColumnMetadata) => col.name === discCol.name,
-        );
-        if (existingDiscIdx >= 0) {
-          values[existingDiscIdx] = discVal;
-        } else {
-          columns.push(raw(this.ctx.wrap(discCol.name)));
-          values.push(discVal);
-          plan.appended.push(discCol.name);
-        }
-      }
+    const disc = this.insertDiscriminator(op.entity, strategy);
+    if (!disc) return;
+    const existingDiscIdx = insertableColumns.findIndex(
+      (col: ColumnMetadata) => col.name === disc.columnName,
+    );
+    if (existingDiscIdx >= 0) {
+      values[existingDiscIdx] = disc.value;
+    } else {
+      columns.push(raw(this.ctx.wrap(disc.columnName)));
+      values.push(disc.value);
+      plan.appended.push(disc.columnName);
     }
   }
 
@@ -1369,29 +1410,43 @@ export class WriteExecutor {
       versionColName: string | null;
       currentVersion: unknown;
       tenantWhere: Sql | null;
+      /** A SINGLE_TABLE child's discriminator predicate. */
+      subtypeWhere?: Sql | null;
     },
   ): Promise<void> {
     const { entity, session, buildPkWhere } = op;
     const { versionColName, currentVersion, tenantWhere } = guards;
+    const subtypeWhere = guards.subtypeWhere ?? null;
     const guardedByVersion =
       !!versionColName &&
       currentVersion !== undefined &&
       currentVersion !== null;
 
-    const rowExists = async (extra: Sql | null): Promise<boolean> => {
-      const where = buildPkWhere();
-      if (extra) where.push(extra);
+    const rowExists = async (extra: Sql[]): Promise<boolean> => {
+      const where = [...buildPkWhere(), ...extra];
       const probeResult = await session.query(
         sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${join(where, " AND ")} LIMIT 1`,
       );
       return resultRows(probeResult).length > 0;
     };
 
-    if (tenantWhere) {
-      if (!(await rowExists(tenantWhere))) {
+    const scope = [tenantWhere, subtypeWhere].filter(
+      (clause): clause is Sql => clause !== null,
+    );
+    if (scope.length > 0) {
+      if (!(await rowExists(scope))) {
+        const where = [
+          tenantWhere ? "in the active tenant" : null,
+          subtypeWhere ? `as a '${entity.name}' row` : null,
+        ]
+          .filter(Boolean)
+          .join(" ");
         throw new EntityNotFoundError(
           entity.name,
-          "save() attempted an UPDATE but no row matched the primary key in the active tenant.",
+          `save() attempted an UPDATE but no row matched the primary key ${where}.` +
+            (subtypeWhere
+              ? " The key may belong to another subtype sharing the table."
+              : ""),
         );
       }
       if (guardedByVersion) {
@@ -1409,7 +1464,7 @@ export class WriteExecutor {
     // UPDATE, so confirm with an existence probe before failing.
     // Without this the save was a silent no-op: afterUpdate hooks and
     // subscribers still fired and save() returned null cast as T.
-    if (!(await rowExists(null))) {
+    if (!(await rowExists([]))) {
       throw new EntityNotFoundError(
         entity.name,
         "save() attempted an UPDATE but no row matched the primary key.",
@@ -1432,6 +1487,7 @@ export class WriteExecutor {
     currentVersion: unknown,
     useReturningForUpdate: boolean,
     tenantWhere: Sql | null = null,
+    subtypeWhere: Sql | null = null,
   ): Promise<DriverRow | null> {
     const { entity, metadata, session } = op;
 
@@ -1460,6 +1516,7 @@ export class WriteExecutor {
         versionColName,
         currentVersion,
         tenantWhere,
+        subtypeWhere,
       });
     }
 
@@ -1564,6 +1621,52 @@ export class WriteExecutor {
   }
 
   /**
+   * The discriminator an INSERT of `entity` writes, or null outside a
+   * SINGLE_TABLE / JOINED hierarchy — one rule for save() and every
+   * multi-row path. A caller that already read the strategy passes it in.
+   */
+  private insertDiscriminator<T>(
+    entity: ClazzType<T>,
+    strategy: InheritanceStrategy | null = this.inheritanceResolver.getStrategy(entity),
+  ): { columnName: string; value: string } | null {
+    if (strategy !== "SINGLE_TABLE" && strategy !== "JOINED") return null;
+    const column = this.inheritanceResolver.getDiscriminatorColumn(entity);
+    const value = this.inheritanceResolver.getDiscriminatorValue(entity);
+    return column && value ? { columnName: column.name, value } : null;
+  }
+
+  /** {@link insertDiscriminator}, located among the columns a multi-row INSERT names. */
+  private discriminatorBinding<T>(
+    entity: ClazzType<T>,
+    insertableColumns: ColumnMetadata[],
+  ): DiscriminatorBinding | null {
+    const disc = this.insertDiscriminator(entity);
+    if (!disc) return null;
+    const declaredAt = insertableColumns.findIndex(
+      (col: ColumnMetadata) => col.name === disc.columnName,
+    );
+    return declaredAt >= 0 ? { ...disc, declaredAt } : disc;
+  }
+
+  /**
+   * Names the discriminator on a multi-row INSERT, after the FK columns
+   * {@link appendFkInsertColumns} added, unless `insertableColumns` already
+   * holds it. Every row then writes the entity's value there
+   * ({@link buildInsertRowValues}), as save() does.
+   */
+  private appendDiscriminatorInsertColumn<T>(
+    entity: ClazzType<T>,
+    insertableColumns: ColumnMetadata[],
+    columns: Sql[],
+  ): DiscriminatorBinding | null {
+    const binding = this.discriminatorBinding(entity, insertableColumns);
+    if (binding && binding.declaredAt === undefined) {
+      columns.push(raw(this.ctx.wrap(binding.columnName)));
+    }
+    return binding;
+  }
+
+  /**
    * The foreign-key value an item states for one `@ManyToOne` or owning
    * `@OneToOne`, or `undefined` when it states nothing — the single-row
    * INSERT leaves the column out entirely, the UPDATE leaves the stored key
@@ -1610,16 +1713,17 @@ export class WriteExecutor {
    * One INSERT row: the declared column values with write transforms applied
    * (`@Column` transformer.to, registered ColumnType transformers, and the
    * mandatory JSON stringify — reads apply transformer.from either way),
-   * followed by the FK columns {@link appendFkInsertColumns} added. A
-   * declared join column the row leaves unset takes its relation's key, as
-   * upsert() does — a batch mixing `{ author }` and `{ authorId }` rows
-   * names the column for every row.
+   * followed by the FK columns {@link appendFkInsertColumns} added, then the
+   * discriminator. A declared join column the row leaves unset takes its
+   * relation's key, as upsert() does — a batch mixing `{ author }` and
+   * `{ authorId }` rows names the column for every row.
    */
   private buildInsertRowValues(
     insertableColumns: ColumnMetadata[],
     fkColumns: FkColumnBinding[],
     itemFields: EntityFields,
     site: string,
+    discriminator: DiscriminatorBinding | null,
   ): RawValue[] {
     const rowValues: RawValue[] = bindParams(
       insertableColumns.map((col) => {
@@ -1646,6 +1750,11 @@ export class WriteExecutor {
       rowValues[fk.declaredAt] = bindParam(
         this.ctx.applyWriteTransform(column, fkValue, site),
       );
+    }
+    if (discriminator?.declaredAt !== undefined) {
+      rowValues[discriminator.declaredAt] = bindParam(discriminator.value);
+    } else if (discriminator) {
+      rowValues.push(bindParam(discriminator.value));
     }
     return rowValues;
   }
@@ -1791,6 +1900,11 @@ export class WriteExecutor {
       insertableColumns,
       columns,
     );
+    const discriminator = this.appendDiscriminatorInsertColumn(
+      entity,
+      insertableColumns,
+      columns,
+    );
 
     const allDefaultRow = columns.length === 0;
 
@@ -1802,6 +1916,7 @@ export class WriteExecutor {
             fkColumns,
             fieldsOf(item),
             "saveMany()",
+            discriminator,
           );
           return sql`(${join(rowValues, ", ")})`;
         });
@@ -2131,7 +2246,7 @@ export class WriteExecutor {
     );
   }
 
-  /** The column list and one VALUES row per item, FK columns appended. */
+  /** The column list and one VALUES row per item, FK columns and the discriminator appended. */
   private buildBulkInsertRows<T>(
     entity: ClazzType<T>,
     insertableColumns: ColumnMetadata[],
@@ -2146,12 +2261,18 @@ export class WriteExecutor {
       insertableColumns,
       columns,
     );
+    const discriminator = this.appendDiscriminatorInsertColumn(
+      entity,
+      insertableColumns,
+      columns,
+    );
     const valueRows = items.map((item) => {
       const rowValues = this.buildInsertRowValues(
         insertableColumns,
         fkColumns,
         fieldsOf(item),
         site,
+        discriminator,
       );
       return sql`(${join(rowValues, ", ")})`;
     });
@@ -2188,7 +2309,7 @@ export class WriteExecutor {
     entity: ClazzType<T>,
     metadata: EntityScannerMetadata,
     spec: InsertBuilderSpec<T>,
-    tenantGuard: UpsertTenantGuard | null = null,
+    guard: UpsertConflictGuard | null,
   ): {
     columns: Sql[];
     valueRows: Sql[];
@@ -2215,12 +2336,7 @@ export class WriteExecutor {
       columns,
       valueRows,
       conflictColumns: this.resolveConflictColumns(entity, metadata, spec),
-      action: this.renderConflictAction(
-        entity,
-        metadata,
-        spec.action,
-        tenantGuard,
-      ),
+      action: this.renderConflictAction(entity, metadata, spec.action, guard),
     };
   }
 
@@ -2278,7 +2394,7 @@ export class WriteExecutor {
     entity: ClazzType<T>,
     metadata: EntityScannerMetadata,
     action: ConflictAction,
-    tenantGuard: UpsertTenantGuard | null = null,
+    guard: UpsertConflictGuard | null,
   ): InsertConflictAction {
     if (action.kind !== "update") return action;
 
@@ -2299,8 +2415,8 @@ export class WriteExecutor {
           : bindParam(this.transformedValue(metadata, columnName, entry.value));
       // MySQL takes no DO UPDATE predicate, so the guard folds into every
       // assignment; PostgreSQL and SQLite get it once as a WHERE below.
-      if (tenantGuard && this.ctx.isMySqlFamily()) {
-        return sql`${wrapped} = IF(${tenantGuard.predicate}, ${assigned}, ${raw(`${tenantGuard.tableRef}.${this.ctx.wrap(columnName)}`)})`;
+      if (guard && this.ctx.isMySqlFamily()) {
+        return sql`${wrapped} = IF(${guard.predicate}, ${assigned}, ${raw(`${guard.tableRef}.${this.ctx.wrap(columnName)}`)})`;
       }
       return sql`${wrapped} = ${assigned}`;
     });
@@ -2312,12 +2428,12 @@ export class WriteExecutor {
     }
 
     let where = action.where;
-    if (tenantGuard && !this.ctx.isMySqlFamily()) {
+    if (guard && !this.ctx.isMySqlFamily()) {
       // The caller's predicate is parenthesized: AND binds tighter than OR, so
       // a top-level OR would otherwise leave the guard applying to one arm.
       where = where
-        ? sql`(${where}) AND ${tenantGuard.predicate}`
-        : tenantGuard.predicate;
+        ? sql`(${where}) AND ${guard.predicate}`
+        : guard.predicate;
     }
     return { kind: "update", set, where };
   }
@@ -2349,7 +2465,8 @@ export class WriteExecutor {
 
   /**
    * @internal Backs `InsertQueryBuilder.build()` — the statement without
-   * tenant scoping, which is applied only on the execute path.
+   * tenant scoping, which is applied only on the execute path. A
+   * SINGLE_TABLE child's subtype guard is part of the statement either way.
    */
   buildBuilderInsertSql<T>(
     entity: ClazzType<T>,
@@ -2359,7 +2476,8 @@ export class WriteExecutor {
     if (!metadata) {
       throw new EntityMetadataNotFoundError(entity.name);
     }
-    const prepared = this.prepareBuilderInsert(entity, metadata, spec);
+    const { combined } = this.buildUpsertGuards(entity, metadata, false);
+    const prepared = this.prepareBuilderInsert(entity, metadata, spec, combined);
     return this.dmlSqlBuilder.buildInsertOnConflictSql({
       tableName: this.ctx.wrapTable(metadata.name),
       columns: prepared.columns,
@@ -2398,14 +2516,14 @@ export class WriteExecutor {
       }
     }
 
-    const tenantGuard = this.buildUpsertTenantGuard(entity, metadata);
+    const { combined } = this.buildUpsertGuards(entity, metadata);
 
     return this.ctx.executeInTransaction(async (session) => {
       const prepared = this.prepareBuilderInsert(
         entity,
         metadata,
         spec,
-        tenantGuard,
+        combined,
       );
       const insertSql = this.dmlSqlBuilder.buildInsertOnConflictSql({
         tableName: this.ctx.wrapTable(metadata.name),
@@ -2952,10 +3070,8 @@ export class WriteExecutor {
 
       // A TPT row spans the root table and a child table: deleting one
       // table's rows would orphan the other's, or trip the child→root FK.
-      const joinedAffected = this.isJoinedHierarchyDelete(
-        entity,
-        this.inheritanceResolver.getStrategy(entity),
-      )
+      const strategy = this.inheritanceResolver.getStrategy(entity);
+      const joinedAffected = this.isJoinedHierarchyDelete(entity, strategy)
         ? await this.deleteJoinedRows(entity, metadata, criteria, session)
         : null;
       if (joinedAffected !== null) {
@@ -2970,15 +3086,18 @@ export class WriteExecutor {
 
       // Tenant scoping — PKs may collide across tenants (e.g. autoIncrement
       // resets per schema), so `deleteMany([1, 2])` under tenant A must not
-      // affect tenant B's rows with the same IDs.
-      const tenantDeleteManyWhere = this.ctx.buildTenantWhereClause(entity);
+      // affect tenant B's rows with the same IDs. A SINGLE_TABLE child is
+      // scoped the same way: its siblings' keys live in the same table.
+      const where = [
+        sql`${raw(this.ctx.wrap(pk.name))} IN (${placeholders})`,
+        this.ctx.buildTenantWhereClause(entity),
+        this.stiDiscriminatorClause(entity, strategy),
+      ].filter((clause): clause is Sql => clause !== null);
       const affected = await this.executePerTable(
         entity,
         this.resolveWriteTables(entity, metadata),
         (tableName) =>
-          tenantDeleteManyWhere
-            ? sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${raw(this.ctx.wrap(pk.name))} IN (${placeholders}) AND ${tenantDeleteManyWhere}`
-            : sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${raw(this.ctx.wrap(pk.name))} IN (${placeholders})`,
+          sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))} WHERE ${join(where, " AND ")}`,
         session,
       );
 
@@ -2999,6 +3118,18 @@ export class WriteExecutor {
         OrmErrorCode.NOT_CONNECTED,
         "Driver is not initialized. Call connect() first.",
       );
+    }
+
+    // A SINGLE_TABLE child's table holds its siblings' rows too: truncating
+    // it would empty the whole hierarchy. Delete this subtype's rows instead.
+    const subtypeWhere = this.stiDiscriminatorClause(entity);
+    if (subtypeWhere) {
+      await this.ctx.executeInTransaction((session) =>
+        session.query(
+          sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${subtypeWhere}`,
+        ),
+      );
+      return;
     }
 
     await this.driver.clear(metadata.name);
@@ -3482,6 +3613,10 @@ export class WriteExecutor {
       if (tenantWhere) {
         whereMap.push(tenantWhere);
       }
+      const subtypeWhere = this.stiDiscriminatorClause(entity);
+      if (subtypeWhere) {
+        whereMap.push(subtypeWhere);
+      }
 
       const tables = this.resolveWriteTables(entity, metadata);
       this.assertTpcWriteHasNoLimit(entity, tables, orderBySql, limit, "UpdateQueryBuilder");
@@ -3795,9 +3930,12 @@ export class WriteExecutor {
         : null;
     const managedNames = new Set([createTsCol, managedUpdateTs, versionCol]);
 
+    const discriminator = this.discriminatorBinding(entity, insertableColumns);
+
     // The tenant discriminator is written on INSERT and never on conflict:
     // `tenant_id = EXCLUDED.tenant_id` is exactly how a conflicting row used
-    // to change hands.
+    // to change hands. Neither is the STI discriminator — upserting through
+    // the root must not turn a stored subtype row into a root row.
     const updateColumnNames = insertableColumns
       .filter((col: ColumnMetadata) => !col.options?.primary)
       // A UUID the ORM generated for this INSERT is not the caller's value:
@@ -3812,6 +3950,7 @@ export class WriteExecutor {
         (name) =>
           !conflictSet.has(name) &&
           name !== tenantColumnName &&
+          name !== discriminator?.columnName &&
           !managedNames.has(name),
       );
 
@@ -3825,12 +3964,18 @@ export class WriteExecutor {
       wrappedColumns: insertableColumns
         .map((col: ColumnMetadata) => col.name)
         .concat(fkColumns.map((fk) => fk.joinColumn))
+        .concat(
+          discriminator && discriminator.declaredAt === undefined
+            ? [discriminator.columnName]
+            : [],
+        )
         .map((name) => this.ctx.wrap(name)),
       wrappedConflict: resolvedConflictColumns.map((name) =>
         this.ctx.wrap(name),
       ),
       wrappedUpdate: updateColumnNames.map((name) => this.ctx.wrap(name)),
       conflictNames: resolvedConflictColumns,
+      discriminator,
       managed: {
         existingRowRef: this.ctx.wrap(metadata.name),
         refresh: wrapAll(
@@ -3934,14 +4079,14 @@ export class WriteExecutor {
   /**
    * One upsert row's bound values, parallel to `plan.wrappedColumns`: the
    * declared columns through their write transforms, then the `@ManyToOne`
-   * keys — NULL wherever a batch row states nothing.
+   * keys — NULL wherever a batch row states nothing — then the discriminator.
    */
   private upsertRowValues(
     plan: UpsertPlan,
     rowFields: EntityFields,
     site: string,
   ): unknown[] {
-    return plan.insertableColumns
+    const values = plan.insertableColumns
       .map(
         (col: ColumnMetadata) =>
           this.ctx.applyWriteTransform(
@@ -3955,6 +4100,13 @@ export class WriteExecutor {
           (fk) => this.resolveFkValue(fk.relMeta, rowFields) ?? null,
         ),
       );
+    const { discriminator } = plan;
+    if (discriminator?.declaredAt !== undefined) {
+      values[discriminator.declaredAt] = discriminator.value;
+    } else if (discriminator) {
+      values.push(discriminator.value);
+    }
+    return values;
   }
 
   /**
@@ -4060,25 +4212,78 @@ export class WriteExecutor {
   }
 
   /**
-   * Warns once per entity when a tenant-guarded upsert wrote fewer rows than
-   * it was given — the conflicting row belongs to another tenant and was
-   * skipped. PostgreSQL and SQLite report one row per write, so the shortfall
-   * is a real signal there; MySQL's 0/1/2 convention conflates "blocked" with
-   * "value-identical", so it is not inspected.
+   * The guards an upsert's conflict branch runs under: the tenant guard, and
+   * for a SINGLE_TABLE child the stored row's discriminator — a conflicting
+   * key held by a sibling subtype's row (one table, one key space) must not
+   * have that row rewritten with this subtype's columns.
+   *
+   * `withTenant: false` leaves the tenant out, for the statement
+   * `InsertQueryBuilder.build()` shows: tenant scoping applies only on the
+   * execute path, the subtype is a property of the statement itself.
+   */
+  private buildUpsertGuards<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    withTenant = true,
+  ): UpsertGuards {
+    const tenant = withTenant
+      ? this.buildUpsertTenantGuard(entity, metadata)
+      : null;
+    const subtype =
+      this.inheritanceResolver.getSingleTableChildDiscriminator(entity);
+    const tableRef = this.ctx.wrap(metadata.name);
+    const predicates: Sql[] = [];
+    if (tenant) predicates.push(tenant.predicate);
+    if (subtype) {
+      predicates.push(
+        sql`${raw(`${tableRef}.${this.ctx.wrap(subtype.columnName)}`)} = ${subtype.value}`,
+      );
+    }
+    return {
+      combined:
+        predicates.length > 0
+          ? { predicate: join(predicates, " AND "), tableRef }
+          : null,
+      tenant,
+      subtype,
+    };
+  }
+
+  /**
+   * Warns once per entity when a guarded upsert wrote fewer rows than it was
+   * given — the conflicting row belongs to another tenant or, for a
+   * SINGLE_TABLE child, to another subtype, and was skipped. PostgreSQL and
+   * SQLite report one row per write, so the shortfall is a real signal there;
+   * MySQL's 0/1/2 convention conflates "blocked" with "value-identical", so
+   * it is not inspected.
    */
   private warnIfUpsertSuppressed<T>(
     entity: ClazzType<T>,
-    guard: UpsertTenantGuard | null,
+    guards: UpsertGuards,
     plan: UpsertPlan,
     affected: number,
     expected: number,
   ): void {
-    if (!guard || this.ctx.isMySqlFamily()) return;
+    if (!guards.combined || this.ctx.isMySqlFamily()) return;
     // A statement that degraded to DO NOTHING skips a conflicting row whoever
-    // owns it, so a shortfall there says nothing about tenancy.
+    // owns it, so a shortfall there says nothing about the guards.
     if (plan.wrappedUpdate.length === 0) return;
     if (affected >= expected) return;
-    this.ctx.warnTenantUpsertSuppressed(entity, guard.columnName);
+    if (!guards.subtype) {
+      this.ctx.warnTenantUpsertSuppressed(entity, guards.tenant!.columnName);
+      return;
+    }
+    if (this.upsertSubtypeWarnedEntities.has(entity)) return;
+    this.upsertSubtypeWarnedEntities.add(entity);
+    const { columnName, value } = guards.subtype;
+    const owner = guards.tenant
+      ? `another tenant, or to another subtype (its ${columnName} is not '${value}')`
+      : `another subtype (its ${columnName} is not '${value}')`;
+    this.ctx.getLogger().warn(
+      `upsert on '${entity.name}' skipped at least one row whose conflicting key belongs to ${owner} — ` +
+        `the conflict branch never rewrites such a row, so it is reported as not affected. ` +
+        `Warned once per entity class.`,
+    );
   }
 
   /**
@@ -4119,13 +4324,13 @@ export class WriteExecutor {
     this.warnIfUpsertVersionIgnored(entity, metadata, [data], "upsert");
     const [row] = this.seededUpsertRows(entity, metadata, [data]);
 
-    const tenantGuard = this.buildUpsertTenantGuard(entity, metadata);
+    const guards = this.buildUpsertGuards(entity, metadata);
     const plan = this.buildUpsertPlan(
       entity,
       metadata,
       conflictColumns,
       (col) => this.statesUpsertValue(col, row),
-      tenantGuard?.columnName ?? null,
+      guards.tenant?.columnName ?? null,
       (col) => this.statesUpsertValue(col, data),
       (rel) => this.resolveFkValue(rel, fieldsOf(row)) !== undefined,
     );
@@ -4142,13 +4347,13 @@ export class WriteExecutor {
         columnValues,
         plan.wrappedConflict,
         plan.wrappedUpdate,
-        tenantGuard,
+        guards.combined,
         plan.managed,
       );
 
       const queryResult = (await session.query(upsertSql)) as DriverExecResult;
       const affected = this.affectedCount(queryResult);
-      this.warnIfUpsertSuppressed(entity, tenantGuard, plan, affected, 1);
+      this.warnIfUpsertSuppressed(entity, guards, plan, affected, 1);
       return { affected };
     });
   }
@@ -4243,7 +4448,7 @@ export class WriteExecutor {
     // The column set is the union over the batch: an auto-increment column
     // is named only when every item supplies a value, any other column when
     // at least one does (items missing it bind NULL).
-    const tenantGuard = this.buildUpsertTenantGuard(entity, metadata);
+    const guards = this.buildUpsertGuards(entity, metadata);
     const plan = this.buildUpsertPlan(
       entity,
       metadata,
@@ -4257,7 +4462,7 @@ export class WriteExecutor {
           : seeded.some(
               (row) => fieldsOf(row)[this.ctx.propKey(col)] !== undefined,
             ),
-      tenantGuard?.columnName ?? null,
+      guards.tenant?.columnName ?? null,
       (col) => items.some((item) => this.statesUpsertValue(col, item)),
       (rel) =>
         seeded.some(
@@ -4286,13 +4491,13 @@ export class WriteExecutor {
         valueRows,
         plan.wrappedConflict,
         plan.wrappedUpdate,
-        tenantGuard,
+        guards.combined,
         plan.managed,
       );
 
       const queryResult = (await session.query(upsertSql)) as DriverExecResult;
       const affected = this.affectedCount(queryResult);
-      this.warnIfUpsertSuppressed(entity, tenantGuard, plan, affected, items.length);
+      this.warnIfUpsertSuppressed(entity, guards, plan, affected, items.length);
       return { affected };
     });
   }

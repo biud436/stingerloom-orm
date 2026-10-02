@@ -159,6 +159,49 @@ VALUES (50, 'Payment')
 RETURNING *;
 ```
 
+### Every INSERT path writes it
+
+The same value goes into every row, whichever method writes it: `save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()`, `upsert()`, `insertIgnore()`, `batchUpsert()`, `createInsertBuilder()` and a WriteBuffer flush. A value the payload states for the discriminator column is overwritten.
+
+```typescript
+await em.insertMany(CreditCardPayment, [{ amount: 10 }, { amount: 20 }]);
+```
+
+```sql
+INSERT INTO "payment" ("amount", "payment_type")
+VALUES (10, 'credit_card'), (20, 'credit_card');
+```
+
+### Upserting through a child
+
+All subtypes share one table, so they share one key space too. The conflict branch of `upsert()`, `batchUpsert()` and `createInsertBuilder().doUpdate()` only rewrites a row of the same subtype. When the conflicting key belongs to another subtype's row, that row is left as it is and counted as not affected; PostgreSQL and SQLite also log a warning, once per entity class.
+
+```typescript
+// id 2 is the BankTransferPayment inserted above
+await em.upsert(CreditCardPayment, { id: 2, amount: 999 });
+// { affected: 0 } -- the bank transfer is untouched
+```
+
+**Generated SQL (PostgreSQL):**
+
+```sql
+INSERT INTO "payment" ("id", "amount", "payment_type")
+VALUES (2, 999, 'credit_card')
+ON CONFLICT ("id") DO UPDATE SET "amount" = EXCLUDED."amount"
+WHERE "payment"."payment_type" = 'credit_card';
+```
+
+**Generated SQL (MySQL):** `ON DUPLICATE KEY UPDATE` takes no WHERE, so each assignment carries the check:
+
+```sql
+INSERT INTO `payment` (`id`, `amount`, `payment_type`)
+VALUES (2, 999, 'credit_card')
+ON DUPLICATE KEY UPDATE
+  `amount` = IF(`payment`.`payment_type` = 'credit_card', VALUES(`amount`), `payment`.`amount`);
+```
+
+Upserting through the root (`em.upsert(Payment, ...)`) updates whichever subtype's row holds the key and leaves its discriminator alone.
+
 ## SELECT -- Querying a Child Entity (em.find)
 
 When you query a child entity, the ORM automatically adds a `WHERE` clause filtering by the discriminator value. You never see rows from other types.
@@ -509,7 +552,7 @@ await em.save(CreditCardPayment, cc);
 ```sql
 UPDATE "payment"
 SET "amount" = 200, "cardNumber" = '4111-1111-1111-1111'
-WHERE "id" = 1;
+WHERE "id" = 1 AND "payment_type" = 'credit_card';
 ```
 
 **Generated SQL (MySQL):**
@@ -517,7 +560,7 @@ WHERE "id" = 1;
 ```sql
 UPDATE `payment`
 SET `amount` = 200, `cardNumber` = '4111-1111-1111-1111'
-WHERE `id` = 1;
+WHERE `id` = 1 AND `payment_type` = 'credit_card';
 ```
 
 **Returned entity:**
@@ -528,6 +571,14 @@ CreditCardPayment { id: 1, amount: 200, cardNumber: "4111-1111-1111-1111" }
 ```
 
 Notice: `payment_type` is **not** in the SET clause. Only business columns appear. The ORM explicitly filters out the discriminator column when building the UPDATE statement.
+
+The WHERE clause carries the discriminator, though. A key that belongs to another subtype's row matches nothing, so `save()` throws `EntityNotFoundError` -- as it does for a key that does not exist -- instead of rewriting that row:
+
+```typescript
+await em.save(CreditCardPayment, { id: 2, amount: 1 }); // id 2 is a BankTransferPayment
+// EntityNotFoundError: save() attempted an UPDATE but no row matched the
+// primary key as a 'CreditCardPayment' row.
+```
 
 ## DELETE
 
@@ -551,7 +602,19 @@ DELETE FROM `payment`
 WHERE `id` = 1 AND `payment_type` = 'credit_card';
 ```
 
-Notice: even though auto-increment IDs are unique, the discriminator condition is a defense-in-depth measure. If you delete via the root entity (`em.delete(Payment, { id: 1 })`), no discriminator filter is added.
+Notice: auto-increment IDs are unique across the whole table, so any ID can name another subtype's row -- the discriminator condition is what keeps the write on this subtype. If you delete via the root entity (`em.delete(Payment, { id: 1 })`), no discriminator filter is added.
+
+The other writes through a child follow the same rule: `deleteMany()`, `update()` / `updateMany()`, `increment()` / `decrement()`, `softDelete()` / `restore()` and `createUpdateBuilder()` all add the discriminator to their WHERE clause. `clear()` on a child cannot truncate a table its siblings live in, so it deletes the subtype's rows instead:
+
+```typescript
+await em.clear(CreditCardPayment);
+```
+
+```sql
+DELETE FROM "payment" WHERE "payment_type" = 'credit_card';
+```
+
+`em.clear(Payment)` -- the root -- still truncates the whole table.
 
 ## Pros and Cons
 
