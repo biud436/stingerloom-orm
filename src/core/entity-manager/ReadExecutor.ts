@@ -73,6 +73,7 @@ import {
   joinedRootColumns,
 } from "../JoinedChildSource";
 import { createDialectExpression } from "../../dialects/DialectExpression";
+import { singleTableRowShape, type RowShape } from "../SingleTableRows";
 
 /**
  * Per-entity read-path column plan: the physical SELECT list (plain and
@@ -350,6 +351,14 @@ export class ReadExecutor {
    * The rows of a TPC root read with each row limited to its own table's
    * columns — see {@link pruneTpcSiblingColumns}.
    */
+  /** The SINGLE_TABLE row shape of `entity` — see {@link singleTableRowShape}. */
+  private singleTableShape(entity: ClazzType<any>): RowShape | undefined {
+    return singleTableRowShape(
+      { inheritanceResolver: this.inheritanceResolver, resolver: this.resolver },
+      entity,
+    );
+  }
+
   private pruneTpcRows(
     root: ClazzType<any>,
     queryResult: QueryResult,
@@ -1425,6 +1434,7 @@ export class ReadExecutor {
           discMap,
           discColName,
           joined,
+          op.isTPCPolymorphic ? undefined : this.singleTableShape(entity),
         ) as EntityResult<T>;
       }
     } else if (op.isTPTPolymorphic) {
@@ -1990,6 +2000,25 @@ export class ReadExecutor {
           this.pruneTpcRows(entity, page, keyset.subKeyColumn),
           discMap,
           keyset.subKeyColumn,
+        );
+      }
+    }
+    // A SINGLE_TABLE root page reads the whole table row; each row becomes
+    // its subtype, holding that class's columns, as find() builds it.
+    if (
+      this.inheritanceResolver.getStrategy(entity) === "SINGLE_TABLE" &&
+      this.inheritanceResolver.isPolymorphicQuery(entity)
+    ) {
+      const discMap = this.inheritanceResolver.buildDiscriminatorMap(entity);
+      const discColumn = this.inheritanceResolver.getDiscriminatorColumn(entity)?.name;
+      if (discMap.size > 0 && discColumn) {
+        return transformer.toPolymorphicEntities(
+          entity,
+          page,
+          discMap,
+          discColumn,
+          undefined,
+          this.singleTableShape(entity),
         );
       }
     }
