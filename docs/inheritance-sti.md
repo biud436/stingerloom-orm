@@ -402,6 +402,18 @@ export class CreditCardPayment extends Payment {
 const cards = await em.find(CreditCardPayment, { relations: ["store", "issuer"] });
 ```
 
+### A relation that targets the hierarchy
+
+A relation of another entity can point at the root or at one subtype. One pointing at a subtype reads that subtype's rows only -- the discriminator is added to its JOIN or batched read, as `find(CreditCardPayment)` adds it -- so `Store.cardPayments` holds no bank transfers. One pointing at the root builds each row as its subclass, in that subclass's shape, as `find(Payment)` does.
+
+```typescript
+@Entity()
+export class Store {
+  @OneToMany(() => Payment, (p) => p.store) payments!: Payment[];                         // every subtype, each as its class
+  @OneToMany(() => CreditCardPayment, (p) => p.store) cardPayments!: CreditCardPayment[]; // credit_card rows only
+}
+```
+
 ## SELECT -- With findOne
 
 `findOne` works exactly like `find` but returns a single entity or `null`.

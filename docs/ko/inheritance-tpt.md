@@ -452,6 +452,17 @@ const cards = await em.find(CreditCardPayment, {
 });
 ```
 
+### 자식을 대상으로 하는 관계
+
+다른 엔티티의 관계가 자식을 가리킬 수 있습니다. `CreditCardPayment` 타입의 `Refund.payment`, `Bank.cards`, 카드 결제의 ManyToMany 같은 경우입니다. 자식의 행은 자기 테이블과 루트 테이블에 나뉘어 있으므로, 관계를 읽는 모든 경로(ManyToOne·소유 측 OneToOne의 JOIN, OneToMany·ManyToMany·역방향 OneToOne의 배치 읽기, 커서 페이지의 to-one 읽기)가 `find(CreditCardPayment)`처럼 자식 테이블을 루트 테이블과 조인해서 읽습니다. 상속 컬럼도 함께 읽히고, 관계의 `where` / `orderBy` / `take`에서 그 컬럼을 쓸 수 있어요.
+
+```sql
+LEFT JOIN (SELECT "credit_card_payment"."id", "credit_card_payment"."cardNumber", "payment"."amount", ...
+           FROM "credit_card_payment" AS "credit_card_payment"
+           INNER JOIN "payment" AS "payment" ON "credit_card_payment"."id" = "payment"."id") AS "payment"
+  ON "refund"."payment_id" = "payment"."id"
+```
+
 ## 7. SELECT -- findOne 사용
 
 `findOne`은 `find`와 동일하게 동작하지만 단일 엔티티 또는 `null`을 반환해요.

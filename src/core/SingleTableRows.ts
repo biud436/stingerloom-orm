@@ -3,6 +3,7 @@ import { ClazzType } from "../utils/types";
 import type { InheritanceResolver } from "./InheritanceResolver";
 import type { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { entityRowColumns } from "./TpcUnionSource";
+import { MetadataLayerRegistry } from "../scanner";
 
 /** Cuts one raw row down to the columns of the class it is read as. */
 export type RowShape = (entityClass: ClazzType<any>, row: Record<string, any>) => Record<string, any>;
@@ -19,12 +20,37 @@ export type RowShape = (entityClass: ClazzType<any>, row: Record<string, any>) =
  * where the class declares it as a `@Column`. Keys outside the hierarchy's
  * columns — the aliases of JOINed relations, generated values — are kept.
  */
+/**
+ * Built shapes: merged metadata view → resolver → entity → shape (null for
+ * an entity outside a SINGLE_TABLE hierarchy). The merged view is minted
+ * anew whenever a metadata layer changes and differs per tenant context, so
+ * a shape is reused only for the metadata it was built from; every level is
+ * weak, so dropped views and resolvers are collected.
+ */
+const shapeCache = new WeakMap<object, WeakMap<object, WeakMap<object, RowShape | null>>>();
+
 export function singleTableRowShape(
   ctx: { inheritanceResolver: InheritanceResolver; resolver: RelationMetadataResolver },
   entity: ClazzType<any>,
 ): RowShape | undefined {
+  if (ctx.inheritanceResolver.getStrategy(entity) !== "SINGLE_TABLE") return undefined;
+  const view = MetadataLayerRegistry.getInstance().resolveAll() as object;
+  let byResolver = shapeCache.get(view);
+  if (!byResolver) shapeCache.set(view, (byResolver = new WeakMap()));
+  let byEntity = byResolver.get(ctx.resolver);
+  if (!byEntity) byResolver.set(ctx.resolver, (byEntity = new WeakMap()));
+  const cached = byEntity.get(entity);
+  if (cached !== undefined) return cached ?? undefined;
+  const shape = buildSingleTableRowShape(ctx, entity);
+  byEntity.set(entity, shape ?? null);
+  return shape;
+}
+
+function buildSingleTableRowShape(
+  ctx: { inheritanceResolver: InheritanceResolver; resolver: RelationMetadataResolver },
+  entity: ClazzType<any>,
+): RowShape | undefined {
   const { inheritanceResolver, resolver } = ctx;
-  if (inheritanceResolver.getStrategy(entity) !== "SINGLE_TABLE") return undefined;
 
   const root = inheritanceResolver.getRoot(entity) ?? entity;
   const classes = new Set<ClazzType<any>>([

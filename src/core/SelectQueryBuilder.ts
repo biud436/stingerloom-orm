@@ -424,6 +424,13 @@ export class SelectQueryBuilder<T, TResult = T> {
    * see {@link singleTableRowShape}. Undefined outside such a hierarchy.
    */
   private stiRowShape?: RowShape;
+  /**
+   * DB columns of the queried alias the caller named in `select()` /
+   * `addSelect()`. The SINGLE_TABLE row shape keeps them even where it would
+   * cut them — the discriminator, a sibling subtype's column — since the
+   * caller asked for them by name.
+   */
+  private explicitColumns = new Set<string>();
 
   constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
     this.entity = entity;
@@ -954,6 +961,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         return this.selectAggregates(columns as AggregateExpression[]);
       }
     }
+    this.explicitColumns = new Set();
     if (columns === "*") {
       this.selectColumns = "*";
       this.selectedPropertyKeys = null;
@@ -962,6 +970,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       this.selectColumns = (columns as string[]).map((c) => this.col(c));
       this.selectedPropertyKeys = columns as string[];
       this.aliasedProjections = null;
+      for (const column of columns as string[]) this.noteExplicitColumn(column);
     }
     return this as any;
   }
@@ -1206,6 +1215,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       typeof expr === "string"
         ? this.resolveStringEntry(expr, "addSelect")
         : expr.sql;
+    if (typeof expr === "string" && !alias) this.noteExplicitColumn(expr);
     const fragment = alias ? `${exprStr} AS ${this.em.wrap(alias)}` : exprStr;
     if (this.selectColumns === "*") {
       this.selectColumns = [`${this.em.wrap(this.alias)}.*`, fragment];
@@ -3480,6 +3490,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       this.polymorphicRootColumns && this.discriminatorMap?.size
         ? { column: this.discriminatorColumnName!, map: this.discriminatorMap }
         : undefined;
+    const rowShape = this.rowShape();
 
     const ordered: any[] = [];
     const rootsByKey = new Map<string, any>();
@@ -3526,7 +3537,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         if (rootPkKey !== null) rootPkKey = `${rootPkKey}${String(discValue)}`;
         if (this.tpcRowPruner) rootRow = this.tpcRowPruner([rootRow])[0];
       }
-      if (this.stiRowShape) rootRow = this.stiRowShape(rootClass, rootRow);
+      if (rowShape) rootRow = rowShape(rootClass, rootRow);
       const rootKey = rootPkKey ?? `row:${syntheticRootSeq++}`;
       let rootInst = rootsByKey.get(rootKey);
       if (!rootInst) {
@@ -4900,6 +4911,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.polymorphicRootColumns = this.polymorphicRootColumns;
     cloned.tpcRowPruner = this.tpcRowPruner;
     cloned.stiRowShape = this.stiRowShape;
+    cloned.explicitColumns = new Set(this.explicitColumns);
     return cloned;
   }
 
@@ -5236,14 +5248,44 @@ export class SelectQueryBuilder<T, TResult = T> {
       this.discriminatorMap!,
       this.discriminatorColumnName!,
       undefined,
-      this.stiRowShape,
+      this.rowShape(),
     );
   }
 
   /** Rows of the queried class, cut to its columns in a SINGLE_TABLE hierarchy. */
   private shapeRows(rows: any[]): any[] {
-    const shape = this.stiRowShape;
+    const shape = this.rowShape();
     return shape ? rows.map((row) => shape(this.entity, row)) : rows;
+  }
+
+  /**
+   * The SINGLE_TABLE row shape with the columns the caller selected by name
+   * put back — see {@link explicitColumns}. Undefined outside a hierarchy.
+   */
+  private rowShape(): RowShape | undefined {
+    const shape = this.stiRowShape;
+    if (!shape || this.explicitColumns.size === 0) return shape;
+    const keep = [...this.explicitColumns];
+    return (entityClass, row) => {
+      const shaped = shape(entityClass, row);
+      for (const key of keep) {
+        if (key in row && !(key in shaped)) shaped[key] = row[key];
+      }
+      return shaped;
+    };
+  }
+
+  /**
+   * Records `ref` — `prop` or `alias.prop` of the queried alias — as a
+   * column the caller selected by name. Expressions and other aliases are
+   * ignored.
+   */
+  private noteExplicitColumn(ref: string): void {
+    const match = /^\s*(?:([A-Za-z_$][\w$]*)\.)?([A-Za-z_$][\w$]*)\s*$/.exec(ref);
+    if (!match) return;
+    const [, alias, property] = match;
+    if (alias !== undefined && alias !== this.alias) return;
+    this.explicitColumns.add(this.propertyToColumnMap?.get(property) ?? property);
   }
 
   /**

@@ -176,6 +176,29 @@ describe("[Integration] SQLite: SINGLE_TABLE instances hold their own class's co
         .execute({});
       expect(byClass(prepared as object[])).toEqual(expected);
     });
+
+    it("the query builder keeps a hierarchy column the caller selected by name", async () => {
+      // addSelect of the discriminator: the caller asked for it, so it stays.
+      const typed = await em
+        .createQueryBuilder(SisPayment, "p")
+        .addSelect("p.ptype")
+        .where("p.amount", "<=", 3)
+        .getMany();
+      const kinds = Object.fromEntries(typed.map((row: any) => [row.constructor.name, row.ptype]));
+      expect(kinds).toEqual({ SisCard: "card", SisBank: "bank", SisPayment: expect.anything() });
+
+      // A sibling's column named in select() stays on a child read too.
+      const cards = await em
+        .createQueryBuilder(SisCard, "c")
+        .select(["id", "amount", "last4", "iban"] as any)
+        .where("c.amount", "<=", 3)
+        .getMany();
+      expect(Object.keys(cards[0])).toEqual(expect.arrayContaining(["id", "last4", "iban"]));
+
+      // Without the explicit select the shape is unchanged.
+      const plain = await em.createQueryBuilder(SisPayment, "p").where("p.amount", "<=", 3).getMany();
+      for (const row of plain) expect(Object.keys(row)).not.toContain("ptype");
+    });
   });
 
   it("keeps a discriminator declared as a column", async () => {
