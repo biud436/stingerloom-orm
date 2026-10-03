@@ -1,15 +1,15 @@
 /**
- * @ComputedColumn 런타임 synchronize 통합 테스트 — MySQL / PostgreSQL
+ * @ComputedColumn runtime synchronize integration tests — MySQL / PostgreSQL
  *
- * 검증 내용:
- * 1. synchronize: true 부팅이 GENERATED ALWAYS AS 컬럼을 실제로 생성한다
- *    (수정 전에는 migrate:generate 전용이라 무음으로 빠졌다).
- * 2. find/findOne이 계산값을 하이드레이션한다 (수정 전 무음 undefined).
- * 3. 재부팅 시 SchemaDiff가 DB의 생성 컬럼을 드롭 후보로 오인하지 않는다
- *    (수정 전 MySQL/PostgreSQL에서 synchronize: true가 컬럼을 DROP했다).
- * 4. 기존 테이블에 새로 선언된 계산 컬럼이 ALTER TABLE ADD COLUMN으로 추가된다.
+ * Covered:
+ * 1. A synchronize: true boot actually creates the GENERATED ALWAYS AS column
+ *    (before the fix it was migrate:generate-only and silently skipped).
+ * 2. find/findOne hydrate the computed value (silently undefined before the fix).
+ * 3. On reboot, SchemaDiff does not mistake the DB's generated column for a drop candidate
+ *    (before the fix, synchronize: true DROPped the column on MySQL/PostgreSQL).
+ * 4. A computed column newly declared on an existing table is added with ALTER TABLE ADD COLUMN.
  *
- * PostgreSQL은 STORED만 지원하므로 VIRTUAL 요청은 STORED로 강제된다.
+ * PostgreSQL only supports STORED, so a VIRTUAL request is forced to STORED.
  */
 
 import "reflect-metadata";

@@ -1,7 +1,7 @@
 /**
- * MySQL / PostgreSQL: Table Per Type (TPT / JOINED) 듀얼 드라이버 통합 테스트
+ * MySQL / PostgreSQL: Table Per Type (TPT / JOINED) dual-driver integration tests
  *
- * CRUD + 다형성 쿼리 + TPT 2-phase INSERT/DELETE + 릴레이션 역직렬화 검증
+ * Covers CRUD, polymorphic queries, the two-phase TPT INSERT/DELETE and relation deserialization
  */
 
 import "reflect-metadata";

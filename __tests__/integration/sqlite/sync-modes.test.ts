@@ -1,8 +1,8 @@
 /**
- * SQLite synchronize 모드 통합 테스트 (Issue #137)
+ * SQLite synchronize mode integration tests (Issue #137)
  *
- * synchronize: true / "safe" / "dry-run" 모드가 기존 테이블에 대해
- * ADD COLUMN, DROP COLUMN, ALTER COLUMN을 올바르게 수행하는지 검증합니다.
+ * Verifies that the synchronize: true / "safe" / "dry-run" modes apply
+ * ADD COLUMN, DROP COLUMN and ALTER COLUMN correctly to existing tables.
  */
 
 import "reflect-metadata";

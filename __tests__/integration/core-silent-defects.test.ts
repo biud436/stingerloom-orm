@@ -1,12 +1,12 @@
 /**
- * core 무음 결함 3건 — MySQL / PostgreSQL 미러
+ * Three silent core defects: MySQL / PostgreSQL mirror
  *
- * SQLite in-memory 재현 테스트의 실 드라이버 미러:
- * - find take/limit 0 → LIMIT 0 (수정 전: falsy 폴백으로 LIMIT이 사라져 전체 행 반환)
- * - save() 0행 UPDATE → EntityNotFoundError (수정 전: null 반환 + afterUpdate 유령 발화).
- *   값이 그대로인 UPDATE는 계속 성공해야 한다 — MySQL은 value-identical UPDATE에서
- *   affectedRows가 0일 수 있어 존재 프로브가 이 케이스를 지킨다 (이 미러의 핵심).
- * - afterTransactionCommit 예외 → 롤백 훅 미발화 + 커밋 유지 (수정 전: 롤백 경로 진입)
+ * Real-driver mirror of the SQLite in-memory reproduction tests:
+ * - find take/limit 0 -> LIMIT 0 (before the fix a falsy fallback dropped LIMIT and every row came back)
+ * - save() with a 0-row UPDATE -> EntityNotFoundError (before the fix: returned null and fired a phantom afterUpdate).
+ *   An UPDATE that leaves the values unchanged must still succeed. MySQL can report
+ *   affectedRows 0 for a value-identical UPDATE, so an existence probe covers that case (the point of this mirror).
+ * - An afterTransactionCommit exception -> no rollback hooks fire and the commit stands (before the fix: it entered the rollback path)
  */
 
 import "reflect-metadata";
@@ -32,7 +32,7 @@ import { ColumnScanner } from "../../src/scanner";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 
 describe.each(getTestDrivers())(
-  "[Integration] $label: core 무음 결함 3건",
+  "[Integration] $label: three silent core defects",
   ({ type, options }: TestDriverConfig) => {
     let conn: TestConnectionResult;
     let User: any;
@@ -81,7 +81,7 @@ describe.each(getTestDrivers())(
     });
 
     describe("find take/limit 0", () => {
-      it("take: 0과 limit: 0은 LIMIT 0이어야 한다", async () => {
+      it("take: 0 and limit: 0 produce LIMIT 0", async () => {
         await conn.em.save(User, { name: "a" });
         await conn.em.save(User, { name: "b" });
 
@@ -91,8 +91,8 @@ describe.each(getTestDrivers())(
       });
     });
 
-    describe("save() 0행 UPDATE", () => {
-      it("존재하지 않는 PK로 save() → EntityNotFoundError, afterUpdate 미발화", async () => {
+    describe("save() with a 0-row UPDATE", () => {
+      it("save() with a PK that does not exist -> EntityNotFoundError, afterUpdate does not fire", async () => {
         const fired: string[] = [];
         subscribe({
           listenTo: () => User,
@@ -105,7 +105,7 @@ describe.each(getTestDrivers())(
         expect(fired).toEqual([]);
       });
 
-      it("값이 그대로인 save()는 성공해야 한다 (MySQL affectedRows 0 — 존재 프로브)", async () => {
+      it("a save() that changes no values succeeds (MySQL affectedRows 0, existence probe)", async () => {
         const saved: any = await conn.em.save(User, { name: "same" });
 
         const result: any = await conn.em.save(User, {
@@ -117,8 +117,8 @@ describe.each(getTestDrivers())(
       });
     });
 
-    describe("post-commit 구독자 예외", () => {
-      it("afterTransactionCommit 예외 → 원본 전파, 롤백 훅 미발화, 커밋 유지", async () => {
+    describe("post-commit subscriber exception", () => {
+      it("afterTransactionCommit exception -> the original propagates, rollback hooks do not fire, the commit stands", async () => {
         const events: string[] = [];
         subscribe({
           listenTo: () => User,

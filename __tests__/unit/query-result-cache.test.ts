@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * QueryResultCache 유닛 테스트
+ * QueryResultCache unit tests
  *
- * 인메모리 스토어(LRU/TTL/태그 무효화)와 캐시 매니저(정책 정규화, SELECT
- * 가드, 히트/미스, 스냅샷 격리, 스토어 장애 fail-open, 쓰기 클로저 태그)를
- * DB 없이 검증한다.
+ * Verifies the in-memory store (LRU/TTL/tag invalidation) and the cache manager
+ * (policy normalization, SELECT guard, hit/miss, snapshot isolation, fail-open on
+ * store failure, write-closure tags) without a database.
  */
 import "reflect-metadata";
 import {

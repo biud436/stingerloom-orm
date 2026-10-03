@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * 컬럼 리네임 추론 가드 — SQLite 파일 DB 재부팅 시나리오
+ * Column rename inference guard — SQLite file DB reboot scenario
  *
- * 재현: v1의 `legacyNote`에 "old secret"이 든 행을 남긴 채 v2에서 컬럼을
- * `bio`로 교체하고 재부팅하면, 예전 synchronize는 타입만 같으면 첫 후보를
- * 리네임으로 확정해서 그 행이 `bio: "old secret"`으로 되살아났습니다. 이제는
- * 이름이 같은 컬럼으로 읽히거나 `renamedFrom`이 명시된 경우에만 RENAME을
- * 실행하고, 나머지는 경고와 함께 선언대로 drop + add 합니다.
+ * Repro: leave a row with "old secret" in v1's `legacyNote`, replace the column
+ * with `bio` in v2 and reboot. The old synchronize settled on the first
+ * same-typed candidate as a rename, so the row came back as `bio: "old secret"`.
+ * Now RENAME runs only when the column reads as the same name or `renamedFrom`
+ * is declared; everything else is dropped and added as declared, with a warning.
  */
 
 import "reflect-metadata";
