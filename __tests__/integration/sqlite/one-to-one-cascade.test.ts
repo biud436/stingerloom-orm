@@ -143,9 +143,16 @@ describe("[Integration] SQLite: @OneToOne cascade", () => {
     });
 
     it("rolls the parent back when a cascaded save fails", async () => {
-      await expect(
-        em.save(OocUser, { name: "alice", avatar: { url: null } } as any),
-      ).rejects.toThrow();
+      // The NOT NULL failure is a raw driver error: capture it instead of
+      // rejects.toThrow(), which misreads a better-sqlite3 error raised from
+      // another jest sandbox's Error class.
+      let error: unknown;
+      try {
+        await em.save(OocUser, { name: "alice", avatar: { url: null } } as any);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(String((error as Error | undefined)?.message)).toMatch(/NOT NULL/i);
       expect(await em.count(OocUser)).toBe(0);
     });
   });
