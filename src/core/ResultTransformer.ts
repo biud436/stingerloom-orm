@@ -444,6 +444,7 @@ export class ResultTransformer implements BaseResultTransformer {
     discriminatorMap: Map<string, MyClassConstructor<any>>,
     discriminatorColumnName: string,
     joined?: ReadonlySet<string>,
+    rowShape?: (entityClass: MyClassConstructor<any>, row: any) => any,
   ): T[] {
     if (this.hasNoResults(result)) {
       return this.buildEmptyEntities<T>();
@@ -455,7 +456,10 @@ export class ResultTransformer implements BaseResultTransformer {
       const TargetClass =
         (discValue != null ? discriminatorMap.get(String(discValue)) : undefined) ??
         rootEntityClass;
-      return this.toRowEntity(TargetClass, item, joined) as T;
+      // The class is read off the full row; `rowShape` then cuts the row to
+      // that class's columns (a SINGLE_TABLE row carries every subtype's).
+      const row = rowShape ? rowShape(TargetClass, item) : item;
+      return this.toRowEntity(TargetClass, row, joined) as T;
     });
   }
 

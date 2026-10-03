@@ -9,6 +9,7 @@ import {
 } from "./WhereValueTransform";
 import type { WhereClause } from "../dialects/FindOption";
 import { requestedRelationNames } from "./RelationTree";
+import { singleTableRowShape, type RowShape } from "./SingleTableRows";
 import { EntityManager } from "./EntityManager";
 import { ClazzType } from "../utils/types";
 import { RawQueryBuilder } from "./RawQueryBuilder";
@@ -418,6 +419,11 @@ export class SelectQueryBuilder<T, TResult = T> {
 
   /** TPC polymorphic root: drops the columns a row's own table lacks. */
   private tpcRowPruner?: (rows: any[]) => any[];
+  /**
+   * SINGLE_TABLE: cuts a row to the columns of the class it is built as —
+   * see {@link singleTableRowShape}. Undefined outside such a hierarchy.
+   */
+  private stiRowShape?: RowShape;
 
   constructor(entity: ClazzType<T>, alias: string, em: EntityManager) {
     this.entity = entity;
@@ -492,7 +498,7 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     switch (strategy) {
       case "SINGLE_TABLE":
-        this.applySTI(ir);
+        this.applySTI(ir, resolver);
         break;
       case "JOINED":
         this.applyTPT(ir, resolver);
@@ -505,7 +511,8 @@ export class SelectQueryBuilder<T, TResult = T> {
     return this;
   }
 
-  private applySTI(ir: InheritanceResolver): void {
+  private applySTI(ir: InheritanceResolver, resolver: RelationMetadataResolver): void {
+    this.stiRowShape = singleTableRowShape({ inheritanceResolver: ir, resolver }, this.entity);
     // STI child: auto-add discriminator WHERE
     if (this.isInheritanceChild) {
       const discVal = ir.getDiscriminatorValue(this.entity);
@@ -3396,7 +3403,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       // collapsed to `1` because the property was actually `issue_counter`.
       const transformer = ResultTransformerFactory.create();
       entities = this.applyValidation(
-        transformer.toEntities(this.entity, { results: rows }),
+        transformer.toEntities(this.entity, { results: this.shapeRows(rows) }),
       );
     }
 
@@ -3519,6 +3526,7 @@ export class SelectQueryBuilder<T, TResult = T> {
         if (rootPkKey !== null) rootPkKey = `${rootPkKey}${String(discValue)}`;
         if (this.tpcRowPruner) rootRow = this.tpcRowPruner([rootRow])[0];
       }
+      if (this.stiRowShape) rootRow = this.stiRowShape(rootClass, rootRow);
       const rootKey = rootPkKey ?? `row:${syntheticRootSeq++}`;
       let rootInst = rootsByKey.get(rootKey);
       if (!rootInst) {
@@ -3606,6 +3614,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     const deserializeTPT = this.deserializeTPTPolymorphic.bind(this);
     const transformJoined = this.transformJoinedEntityRows.bind(this);
     const applyVal = this.applyValidation.bind(this);
+    const shapeRows = this.shapeRows.bind(this);
 
     const deserialize = (rows: any[]): TResult[] => {
       if (isPoly && discMap?.size && strategy === "JOINED" && tptMap) {
@@ -3625,7 +3634,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       // Calling the deserializer directly here skipped both, so prepared
       // queries leaked raw DB column names and untransformed values.
       const transformer = ResultTransformerFactory.create();
-      return applyVal(transformer.toEntities(entity, { results: rows }));
+      return applyVal(transformer.toEntities(entity, { results: shapeRows(rows) }));
     };
 
     return new CompiledQuery<TResult, P>(
@@ -4890,6 +4899,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.tpcFromSql = this.tpcFromSql;
     cloned.polymorphicRootColumns = this.polymorphicRootColumns;
     cloned.tpcRowPruner = this.tpcRowPruner;
+    cloned.stiRowShape = this.stiRowShape;
     return cloned;
   }
 
@@ -5225,7 +5235,15 @@ export class SelectQueryBuilder<T, TResult = T> {
       { results: this.tpcRowPruner ? this.tpcRowPruner(rows) : rows } as any,
       this.discriminatorMap!,
       this.discriminatorColumnName!,
+      undefined,
+      this.stiRowShape,
     );
+  }
+
+  /** Rows of the queried class, cut to its columns in a SINGLE_TABLE hierarchy. */
+  private shapeRows(rows: any[]): any[] {
+    const shape = this.stiRowShape;
+    return shape ? rows.map((row) => shape(this.entity, row)) : rows;
   }
 
   /**

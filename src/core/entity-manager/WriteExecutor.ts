@@ -9,6 +9,7 @@ import sql, { Sql, join, raw, isSqlFragment, type RawValue } from "../../utils/s
 import { DeleteResult } from "../../types/DeleteResult";
 import { Conditions } from "../Conditions";
 import { ResultTransformerFactory } from "../ResultTransformerFactory";
+import { shapeSingleTableRows } from "../SingleTableRows";
 import { EntityValidator } from "../EntityValidator";
 import {
   EntityEventEmitter,
@@ -272,6 +273,19 @@ export class WriteExecutor {
   private get cascadeHandler(): CascadeHandler {
     return this.ctx.getCascadeHandler();
   }
+  /**
+   * `RETURNING *` rows in the shape a read of `entity` gives them: a
+   * SINGLE_TABLE row carries the discriminator and every sibling subtype's
+   * columns, which an instance of `entity` does not hold.
+   */
+  private returnedRows<R extends Record<string, any>>(entity: ClazzType<any>, rows: R[]): R[] {
+    return shapeSingleTableRows(
+      { inheritanceResolver: this.inheritanceResolver, resolver: this.resolver },
+      entity,
+      rows,
+    );
+  }
+
   private get inheritanceResolver(): InheritanceResolver {
     return this.ctx.getInheritanceResolver();
   }
@@ -702,7 +716,7 @@ export class WriteExecutor {
       if (updateReturnedRow && !this.ctx.hasEagerRelations(entity)) {
         // #369: same column→property mapping as the INSERT RETURNING path.
         return ResultTransformerFactory.create().toEntity(entity, {
-          results: [updateReturnedRow],
+          results: this.returnedRows(entity, [updateReturnedRow]),
           fields: [],
         }) as T;
       }
@@ -1116,7 +1130,7 @@ export class WriteExecutor {
         // column names map back to property keys (explicit @Column({name})
         // and NamingStrategy) and column transformers apply on read.
         return ResultTransformerFactory.create().toEntity(entity, {
-          results: [returnedRow],
+          results: this.returnedRows(entity, [returnedRow]),
           fields: [],
         }) as T;
       }
@@ -2018,7 +2032,7 @@ export class WriteExecutor {
     if (useReturning && insertedRows.length > 0 && !this.ctx.hasEagerRelations(entity)) {
       // #369: ResultTransformer maps DB column names → property keys.
       return ResultTransformerFactory.create().toEntities(entity, {
-        results: insertedRows,
+        results: this.returnedRows(entity, insertedRows),
         fields: [],
       }) as InstanceType<ClazzType<T>>[];
     }
@@ -2650,7 +2664,7 @@ export class WriteExecutor {
       // to property keys (explicit @Column({ name }) + NamingStrategy) and
       // column transformers apply on read — the same path find() uses.
       return ResultTransformerFactory.create().toEntities(entity, {
-        results: resultRows(queryResult),
+        results: this.returnedRows(entity, resultRows(queryResult)),
         fields: [],
       }) as InstanceType<ClazzType<T>>[];
     });
