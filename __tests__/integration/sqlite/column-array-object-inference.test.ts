@@ -3,7 +3,7 @@
  * SQLite In-Memory: array and object property values are written intact, or
  * rejected with an error that names the column.
  *
- * Regressions (V6-T0-6):
+ * Regressions:
  *
  *   - `@Column() tags!: string[]` inferred `text` from design:type `Array`,
  *     and the write paths bound the JS array as one value. better-sqlite3

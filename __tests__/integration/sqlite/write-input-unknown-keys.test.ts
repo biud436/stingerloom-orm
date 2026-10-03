@@ -1,5 +1,5 @@
 /**
- * Unknown keys in write payloads (V5-T1-1).
+ * Unknown keys in write payloads.
  *
  * `save()` / `saveMany()` / `insertMany()` / `insertManyAndReturn()` /
  * `upsert()` / `insertIgnore()` / `batchUpsert()` pick their columns by

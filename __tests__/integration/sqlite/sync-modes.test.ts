@@ -245,7 +245,7 @@ describe("[Integration] SQLite synchronize modes (Issue #137)", () => {
   });
 
   // ─────────────────────────────────────────────────────────
-  // V4-T0-3: safe mode used to skip alter/drop/rename silently —
+  // Safe mode used to skip alter/drop/rename silently —
   // a clean boot log read as "schema is in sync".
   // ─────────────────────────────────────────────────────────
   describe('synchronize: "safe" — skipped-change visibility', () => {
@@ -395,7 +395,7 @@ describe("[Integration] SQLite synchronize modes (Issue #137)", () => {
   });
 
   // ─────────────────────────────────────────────────────────
-  // V4-T0-3: synchronize is column-scoped. Tables with no entity are left
+  // Synchronize is column-scoped. Tables with no entity are left
   // alone in every mode — SchemaDiff's detectDroppedTables is a migration-side
   // option and is never enabled here.
   // ─────────────────────────────────────────────────────────

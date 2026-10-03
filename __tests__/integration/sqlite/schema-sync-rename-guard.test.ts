@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * 컬럼 리네임 추론 가드 (V6-T1-3) — SQLite 파일 DB 재부팅 시나리오
+ * 컬럼 리네임 추론 가드 — SQLite 파일 DB 재부팅 시나리오
  *
  * 재현: v1의 `legacyNote`에 "old secret"이 든 행을 남긴 채 v2에서 컬럼을
  * `bio`로 교체하고 재부팅하면, 예전 synchronize는 타입만 같으면 첫 후보를

@@ -1,6 +1,6 @@
 /**
  * `select` without the primary key combined with a relation loaded by a
- * follow-up query (V6-T0-6, defect 2).
+ * follow-up query.
  *
  * OneToMany, ManyToMany (either side) and the inverse side of OneToOne are
  * not JOINed: RelationLoader collects each parent's primary key from the

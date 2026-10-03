@@ -6,7 +6,7 @@
  * root table when eager joins are present — but orderBy was emitted
  * unqualified, so `em.find(Child, { relations: ["parent"], orderBy: { id } })`
  * died with "ambiguous column name: id" (surfaced by examples/vanilla-todo-
- * sqlite). Regression coverage for the orderBy qualification (V3-T0-1).
+ * sqlite). Regression coverage for the orderBy qualification.
  */
 import "reflect-metadata";
 import { Entity } from "../../../src/decorators/Entity";

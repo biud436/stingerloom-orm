@@ -1,5 +1,5 @@
 /**
- * retryOnDeadlock against a real deadlock (V4-T1-2 ②).
+ * retryOnDeadlock against a real deadlock.
  *
  * The deadlock-retry loop had no behavioral coverage at all: the only unit
  * tests were type-level (`opts.retryOnDeadlock` is assignable) plus
@@ -48,7 +48,7 @@ function isServerDeadlock(type: string, e: any): boolean {
 }
 
 describe.each(drivers)(
-  "[Integration] $label: retryOnDeadlock (V4-T1-2)",
+  "[Integration] $label: retryOnDeadlock",
   ({ type, options }) => {
     let conn: TestConnectionResult;
     let em: EntityManager;

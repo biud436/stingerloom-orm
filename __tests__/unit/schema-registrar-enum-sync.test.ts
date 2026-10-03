@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * SchemaRegistrar: PostgreSQL ENUM 타입 프로비저닝 (V4-T0-4)
+ * SchemaRegistrar: PostgreSQL ENUM 타입 프로비저닝
  *
  * PG의 enum 컬럼은 명명 타입 참조라 CREATE TABLE / ADD COLUMN보다 CREATE TYPE이
  * 먼저 실행되어야 합니다. 이 패스가 없으면 DDL이 `type ... does not exist`로

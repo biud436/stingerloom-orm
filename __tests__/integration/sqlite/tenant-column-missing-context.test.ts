@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * V4-T0-1 — tenant_column strategy: missing-context policy (SQLite :memory:).
+ * tenant_column strategy: missing-context policy (SQLite :memory:).
  *
  * Before this policy existed, read/update/delete on a tenant-scoped entity
  * executed OUTSIDE any `MetadataContext.run()` silently targeted every

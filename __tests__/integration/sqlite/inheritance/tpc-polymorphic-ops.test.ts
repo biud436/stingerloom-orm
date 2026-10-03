@@ -4,7 +4,7 @@
  * TPC 루트 테이블은 자기 행이 없다(계층의 행은 콘크리트 테이블마다 있다).
  * find()는 UNION ALL로 전 서브타입을 읽지만 count/집계/커서/findAndCount/
  * findWithPage와 delete/updateMany/softDelete/restore/deleteMany/increment는
- * 빈 루트 테이블만 보고 무음 0을 반환했다(V6-T0-5). 이 파일은 루트 대상
+ * 빈 루트 테이블만 보고 무음 0을 반환했다. 이 파일은 루트 대상
  * 연산이 전부 전 서브타입을 대상으로 동작하는지 고정한다.
  */
 

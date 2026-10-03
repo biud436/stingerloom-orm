@@ -799,7 +799,7 @@ describe("[Integration] SQLite: Create/Update Timestamps", () => {
 
     expect(saved).toBeDefined();
 
-    // Temporal columns hydrate as Date on SQLite too (V3-T1-1)
+    // Temporal columns hydrate as Date on SQLite too
     expect(saved.createdAt).toBeInstanceOf(Date);
     expect(saved.updatedAt).toBeInstanceOf(Date);
 
@@ -866,7 +866,7 @@ describe("[Integration] SQLite: Create/Update Timestamps", () => {
     expect(found).not.toBeNull();
     expect(found.title).toBe("Findable");
 
-    // Timestamps hydrate as Date (V3-T1-1)
+    // Timestamps hydrate as Date
     expect(found.createdAt).toBeInstanceOf(Date);
     expect(found.updatedAt).toBeInstanceOf(Date);
   });

@@ -83,7 +83,7 @@ describe("ResultTransformer / column-key stability regression", () => {
       const m = rt.toEntity(Mixed, result) as Mixed;
       expect(m.id).toBe(1);
       expect(m.title).toBe("Hello");
-      // datetime columns hydrate as Date under the remapped key (V3-T1-1).
+      // datetime columns hydrate as Date under the remapped key.
       expect(m.createdAt).toBeInstanceOf(Date);
       expect(m.createdAt.getTime()).toBe(
         new Date("2026-04-09T00:00:00Z").getTime(),

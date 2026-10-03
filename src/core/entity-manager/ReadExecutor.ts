@@ -235,7 +235,7 @@ export class ReadExecutor {
     // @ComputedColumn values: the SELECT list is enumerated from
     // metadata.columns, so generated columns must be merged explicitly —
     // without this, find/findOne silently returned undefined for them even
-    // when the DB column existed (V5-T0-3).
+    // when the DB column existed.
     for (const name of this.ctx.getComputedColumnNames(entity)) {
       if (!seen.has(name)) {
         allColNames.push(name);

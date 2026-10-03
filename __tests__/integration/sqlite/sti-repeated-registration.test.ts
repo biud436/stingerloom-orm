@@ -1,5 +1,5 @@
 /**
- * STI root survives repeated registrations (found while building V4-T2-4).
+ * STI root survives repeated registrations.
  *
  * registerEntities() injects the discriminator column into the STI root's
  * shared metadata in place, without a propertyKey. The NamingStrategy pass of

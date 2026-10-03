@@ -1,5 +1,5 @@
 /**
- * stream() / streamBatch() on a real server (V4-T1-2 ③).
+ * stream() / streamBatch() on a real server.
  *
  * Real-driver mirror of sqlite/stream.test.ts — LIMIT/OFFSET batching runs
  * through each server's own dialect (PostgreSQL rejects MySQL's
@@ -32,7 +32,7 @@ const drivers = getTestDrivers();
 const TOTAL_ROWS = 250;
 
 describe.each(drivers)(
-  "[Integration] $label: stream() / streamBatch() (V4-T1-2)",
+  "[Integration] $label: stream() / streamBatch()",
   ({ options }) => {
     let conn: TestConnectionResult;
     let em: EntityManager;

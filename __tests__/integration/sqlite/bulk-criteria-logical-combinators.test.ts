@@ -1,5 +1,5 @@
 /**
- * Bulk-write criteria accept the same logical combinators as reads (V5-T2-1).
+ * Bulk-write criteria accept the same logical combinators as reads.
  *
  * `resolveWhereClause` has always understood `AND` / `OR` / `NOT`, and the
  * four criteria-based writes (delete / updateMany / softDelete / restore)

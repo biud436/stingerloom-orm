@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Integration test — forFeature connectionName typos fail with an actionable
- * OrmError at module init (V4-T2-4).
+ * OrmError at module init.
  *
  * The repository provider used to `inject: [emToken]` directly, so a typo'd
  * connectionName died inside Nest's resolver with the generic "can't resolve

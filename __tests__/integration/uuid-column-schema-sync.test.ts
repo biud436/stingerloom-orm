@@ -1,5 +1,5 @@
 /**
- * uuid 컬럼 선언 타입 라운드트립 — MySQL/MariaDB + PostgreSQL (V6-T1-3)
+ * uuid 컬럼 선언 타입 라운드트립 — MySQL/MariaDB + PostgreSQL
  *
  * 검증 내용:
  * 1. 기존 테이블에 `@Column({ type: "uuid" })`가 추가되면 ADD COLUMN이

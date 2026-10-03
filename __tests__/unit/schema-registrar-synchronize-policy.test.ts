@@ -410,7 +410,7 @@ describe("SchemaRegistrar: synchronize policy", () => {
     });
   });
 
-  // V4-T0-3: "safe" mode skips ALTER/DROP/RENAME. It used to do so without a
+  // "safe" mode skips ALTER/DROP/RENAME. It used to do so without a
   // single log line, so a clean boot log looked identical to a synced schema.
   describe("safe mode — skipped-change reporting", () => {
     function safePolicy(

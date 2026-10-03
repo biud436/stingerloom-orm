@@ -1,5 +1,5 @@
 /**
- * 관계 경로 대칭 통합 테스트 (MySQL / PostgreSQL 공통, backlog V6-T1-5)
+ * 관계 경로 대칭 통합 테스트 (MySQL / PostgreSQL 공통)
  *
  * `find(Entity, { relations })`가 지키는 계약을 다른 세 경로도 똑같이 지키는지
  * 실제 드라이버에서 확인합니다.
@@ -59,7 +59,7 @@ function clearScanners(): void {
 }
 
 describe.each(getTestDrivers())(
-  "[Integration] $label: relation paths mirror find()/relations (V6-T1-5)",
+  "[Integration] $label: relation paths mirror find()/relations",
   ({ type, options }: TestDriverConfig) => {
     let conn: TestConnectionResult;
     let em: EntityManager;

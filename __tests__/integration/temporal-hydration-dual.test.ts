@@ -1,5 +1,5 @@
 /**
- * Temporal column hydration → Date, dual-driver mirror (V3-T1-1).
+ * Temporal column hydration → Date, dual-driver mirror.
  *
  * pg / mysql2 already return Date at the driver, so the default temporal
  * read transform must be a pass-through there — these tests pin that the

@@ -1,6 +1,6 @@
 /**
  * Entity-argument misuse at the root entry points, on a live SQLite
- * EntityManager (V5-T2-3).
+ * EntityManager.
  *
  * Fail-before (main 187f3a3): `em.find(new User())` → `Entity metadata for
  * "undefined" does not exist`; `em.find(undefined)` → bare `TypeError` from

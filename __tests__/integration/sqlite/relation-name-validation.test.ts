@@ -1,5 +1,5 @@
 /**
- * Read-path `relations` identifier validation (V4-T2-3).
+ * Read-path `relations` identifier validation.
  *
  * Every relation loader filters the requested names with
  * `relations.includes(...)`, so before this guard a typo produced no error at

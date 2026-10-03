@@ -11,7 +11,7 @@
  * `no such column`. A root relation join column was written to a stray copy
  * on the child table instead of the root's.
  *
- * They now go the way delete() does (V6-T1-6): the matching keys are read
+ * They now go the way delete() does: the matching keys are read
  * through the join, each column qualified with its table, then each table
  * takes the assignments to its own columns by those keys.
  */

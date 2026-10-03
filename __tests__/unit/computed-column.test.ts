@@ -318,7 +318,7 @@ describe("@ComputedColumn expression builder (#336)", () => {
   });
 });
 
-describe("buildComputedColumnDef — shared generated-column renderer (V5-T0-3)", () => {
+describe("buildComputedColumnDef — shared generated-column renderer", () => {
   const cc = (options: Record<string, unknown>) => ({
     propertyKey: "total",
     name: "total",

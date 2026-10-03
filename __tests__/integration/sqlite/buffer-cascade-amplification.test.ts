@@ -1,7 +1,7 @@
 /**
  * SQLite In-Memory: WriteBuffer cascade write amplification.
  *
- * Audited defect group (2026-07 UoW audit, V2-T0-1): flushing a dirty tracked
+ * Audited defect group (2026-07 UoW audit): flushing a dirty tracked
  * parent re-saves EVERY loaded cascade child regardless of dirtiness.
  *
  *  1. Unchanged tracked children are re-UPDATEd (1 parent edit → 1+N writes),

@@ -1,5 +1,5 @@
 /**
- * Root entity-scope enforcement (V4-T2-4).
+ * Root entity-scope enforcement.
  *
  * Decorator side effects register metadata globally, so an entity missing
  * from a scoped connection's `entities` array still resolved metadata fine

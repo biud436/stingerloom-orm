@@ -1,5 +1,5 @@
 /**
- * SQLite In-Memory: take/limit 0 must mean LIMIT 0, not "no limit" (V4-T0-2 a).
+ * SQLite In-Memory: take/limit 0 must mean LIMIT 0, not "no limit".
  *
  * The scalar take/limit paths used falsy fallbacks (`(take ?? 0) || undefined`,
  * `if (limit)`), so an explicit 0 silently dropped the LIMIT clause and the

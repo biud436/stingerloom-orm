@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Which manager `StingerloomOrmService` shuts down, and with what options
- * (V4-T2-2).
+ *.
  *
  * The pool-release behaviour itself is verified against a real application in
  * `__tests__/integration/sqlite/nestjs-shutdown-pool-release.test.ts`; this

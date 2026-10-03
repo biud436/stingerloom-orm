@@ -1,5 +1,5 @@
 /**
- * core 무음 결함 3건 (V4-T0-2) — MySQL / PostgreSQL 미러
+ * core 무음 결함 3건 — MySQL / PostgreSQL 미러
  *
  * SQLite in-memory 재현 테스트의 실 드라이버 미러:
  * - find take/limit 0 → LIMIT 0 (수정 전: falsy 폴백으로 LIMIT이 사라져 전체 행 반환)
@@ -32,7 +32,7 @@ import { ColumnScanner } from "../../src/scanner";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
 
 describe.each(getTestDrivers())(
-  "[Integration] $label: core 무음 결함 3건 (V4-T0-2)",
+  "[Integration] $label: core 무음 결함 3건",
   ({ type, options }: TestDriverConfig) => {
     let conn: TestConnectionResult;
     let User: any;

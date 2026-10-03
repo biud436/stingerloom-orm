@@ -12,7 +12,7 @@ import { MANY_TO_ONE_TOKEN } from "../../src/decorators/ManyToOne";
 import { ONE_TO_MANY_TOKEN } from "../../src/decorators/OneToMany";
 
 /**
- * Mutual (circular) entity references with `defineEntity` (V3-T1-2).
+ * Mutual (circular) entity references with `defineEntity`.
  *
  * Two consts whose inferred types depend on each other cannot both be
  * inferred (TS7022) — an inherent TypeScript limitation, not an ORM bug.

@@ -1,5 +1,5 @@
 /**
- * @ComputedColumn 런타임 synchronize 통합 테스트 — MySQL / PostgreSQL (V5-T0-3)
+ * @ComputedColumn 런타임 synchronize 통합 테스트 — MySQL / PostgreSQL
  *
  * 검증 내용:
  * 1. synchronize: true 부팅이 GENERATED ALWAYS AS 컬럼을 실제로 생성한다
