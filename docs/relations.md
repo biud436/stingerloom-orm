@@ -982,6 +982,34 @@ cats!: Cat[];
 comments!: Comment[];
 ```
 
+### Cascade on @OneToOne
+
+`cascade` works on both sides of a `@OneToOne`, with the same options. Which row is written first follows the join column:
+
+```typescript
+@Entity()
+class User {
+  // Owning side — the join column (profile_id) is on the user
+  @OneToOne(() => Profile, { cascade: true })
+  @RelationColumn({ name: "profile_id" })
+  profile!: Relation<Profile> | null;
+
+  // Inverse side — the join column (owner_id) is on the avatar
+  @OneToOne(() => Avatar, { inverseSide: "owner", cascade: true })
+  avatar!: Relation<Avatar> | null;
+}
+
+await em.save(User, { name: "alice", profile: { bio: "hi" }, avatar: { url: "a.png" } });
+```
+
+| | Owning side (`profile`) | Inverse side (`avatar`) |
+|---|---|---|
+| `save()` / `saveMany()` | The target is saved **first**; its key goes into the user's join column. | The counterpart is saved **after** the user, with the user's key in its join column. |
+| `delete()` / `deleteMany()` | The target is deleted **after** the user rows, which reference it. | The counterpart is deleted **before** the user, like a OneToMany child. |
+| `softDelete()` / `restore()` | Follows the user, for a target with `@DeletedAt`. | Same. |
+
+`restore()` only revives the targets of users that were soft-deleted, as with OneToMany children.
+
 ### What Happens Without Cascade
 
 Without `cascade: ["delete"]`, deleting a parent with children will fail (assuming FK constraints are enforced):

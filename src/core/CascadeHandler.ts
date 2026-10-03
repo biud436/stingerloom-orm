@@ -14,6 +14,23 @@ import {
 } from "./plugin/buffer/CollectionTracker";
 
 /**
+ * What a hard delete still has to do once the parent rows are gone: remove
+ * the targets of the cascading owning-side OneToOne relations, whose rows
+ * the deleted parents referenced and so could not be deleted before them.
+ */
+export type AfterParentDelete = () => Promise<void>;
+
+/**
+ * A relation whose rows hold the parent's key and so follow the parent
+ * through a removal: a OneToMany, or the inverse side of a OneToOne.
+ */
+interface DependentRelation {
+  RelatedEntity: ClazzType<any>;
+  /** The join column on the related table that holds the parent's key. */
+  fkColumn: string;
+}
+
+/**
  * Handler for cascade save/delete operations and lifecycle hooks.
  * Invoked on behalf of EntityManager.
  */
@@ -66,7 +83,10 @@ export class CascadeHandler {
   }
 
   /**
-   * On save, recursively persists child entities of OneToMany relations whose cascade includes "insert" | "update".
+   * On save, recursively persists the dependents of the saved row whose
+   * cascade includes "insert" | "update": the children of each OneToMany
+   * and the entity on the inverse side of each OneToOne. Each gets the
+   * parent's key in its join column first.
    *
    * Runs scope-exempt: the child saves go through the public `ctx.save`
    * facade (kept so test spies / plugin wrappers observe them), but a cascade
@@ -130,11 +150,51 @@ export class CascadeHandler {
         }
       }
     }
+
+    // Inverse-side OneToOne: the counterpart holds the key, like a child.
+    for (const rel of this.resolver.resolveOneToOneMetadata(entity)) {
+      if (rel.joinColumn || !rel.inverseSide) continue;
+      if (
+        !hasCascade(rel.option?.cascade, "insert") &&
+        !hasCascade(rel.option?.cascade, "update")
+      )
+        continue;
+      const counterpart = (item as any)[rel.propertyKey];
+      if (!counterpart || typeof counterpart !== "object") continue;
+
+      const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+      const owner = this.owningOneToOneFor(RelatedEntity, rel.inverseSide);
+      if (!owner?.joinColumn) continue;
+
+      assignFkValue(
+        counterpart,
+        {
+          fkColumn: owner.joinColumn,
+          shadowKey: `${owner.propertyKey}Id`,
+          fkPropertyKey: owner.option?.fkProperty,
+        },
+        savedParentId,
+      );
+      if (session) {
+        await this.ctx.saveWithSession(RelatedEntity, counterpart, session);
+      } else {
+        await this.ctx.save(RelatedEntity, counterpart);
+      }
+    }
+  }
+
+  /** The owning-side OneToOne of `entity` named `propertyKey`, if declared. */
+  private owningOneToOneFor(entity: ClazzType<any>, propertyKey: string) {
+    return this.resolver
+      .resolveOneToOneMetadata(entity)
+      .find((r) => r.propertyKey === propertyKey && !!r.joinColumn);
   }
 
   /**
-   * On save, persists the parent entity of ManyToOne relations whose cascade includes "insert" | "update" first.
-   * Runs scope-exempt — see {@link cascadeSaveOneToMany}.
+   * On save, first persists the entities the row references whose cascade
+   * includes "insert" | "update": the target of each ManyToOne and of each
+   * owning-side OneToOne, so their keys exist before the row's join columns
+   * are written. Runs scope-exempt — see {@link cascadeSaveOneToMany}.
    */
   async cascadeSaveManyToOne<T>(
     entity: ClazzType<T>,
@@ -174,20 +234,61 @@ export class CascadeHandler {
         (item as any)[rel.joinColumn] = (saved as any)[relatedPk.propertyKey ?? relatedPk.name];
       }
     }
+
+    // Owning-side OneToOne: the row's join column takes the saved target's
+    // key, read from the target instance the row still holds.
+    for (const rel of this.resolver.resolveOneToOneMetadata(entity)) {
+      if (!rel.joinColumn) continue;
+      if (
+        !hasCascade(rel.option?.cascade, "insert") &&
+        !hasCascade(rel.option?.cascade, "update")
+      )
+        continue;
+      const target = (item as any)[rel.propertyKey];
+      if (!target || typeof target !== "object") continue;
+
+      const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+      const saved = await this.ctx.save(RelatedEntity, target);
+      const relatedPk = this.resolver
+        .resolveEntityMetadata(RelatedEntity)
+        ?.columns.find((col: any) => col.options?.primary);
+      if (relatedPk) {
+        const key = relatedPk.propertyKey ?? relatedPk.name;
+        if (target[key] === undefined || target[key] === null) {
+          target[key] = (saved as any)[key];
+        }
+      }
+    }
   }
 
   /**
-   * On delete, first removes child entities of OneToMany relations whose cascade includes "delete" (or "remove").
-   * Optimized by selecting only PKs and issuing a batched DELETE via IN to save memory and query round-trips.
+   * On delete, first removes the dependents whose cascade includes "delete"
+   * (or "remove") — OneToMany children and inverse-side OneToOne
+   * counterparts — selecting only parent PKs and issuing one batched DELETE
+   * per relation.
+   *
+   * The targets of cascading owning-side OneToOne relations are referenced
+   * by the parent rows and can only go once those are deleted: their keys
+   * are read here and the returned {@link AfterParentDelete} deletes them —
+   * the caller runs it right after the parent statement. Undefined when no
+   * such relation applies.
    */
   async cascadeDeleteOneToMany<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
-  ): Promise<void> {
+  ): Promise<AfterParentDelete | undefined> {
     // Scope-exempt — see cascadeSaveOneToMany.
-    return runScopeExempt(() =>
-      this.cascadeRemoveOneToMany(entity, criteria, "delete"),
-    );
+    return runScopeExempt(async () => {
+      await this.cascadeRemoveOneToMany(entity, criteria, "delete");
+      const owned = await this.collectOwnedTargets(entity, criteria, "delete");
+      if (owned.length === 0) return undefined;
+      return () =>
+        runScopeExempt(async () => {
+          for (const { RelatedEntity, pkProperty, ids } of owned) {
+            await this.ctx.delete(RelatedEntity, { [pkProperty]: ids.length === 1 ? ids[0] : ids } as any);
+          }
+        });
+    });
   }
 
   /**
@@ -201,9 +302,10 @@ export class CascadeHandler {
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
   ): Promise<void> {
-    return runScopeExempt(() =>
-      this.cascadeRemoveOneToMany(entity, criteria, "softDelete"),
-    );
+    return runScopeExempt(async () => {
+      await this.cascadeRemoveOneToMany(entity, criteria, "softDelete");
+      await this.removeOwnedTargets(entity, criteria, "softDelete");
+    });
   }
 
   /**
@@ -217,88 +319,36 @@ export class CascadeHandler {
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
   ): Promise<void> {
-    return runScopeExempt(() =>
-      this.cascadeRemoveOneToMany(entity, criteria, "restore"),
-    );
+    return runScopeExempt(async () => {
+      await this.cascadeRemoveOneToMany(entity, criteria, "restore");
+      await this.removeOwnedTargets(entity, criteria, "restore");
+    });
   }
 
   /**
-   * The shared cascade of the three removal operations: resolve the parents
-   * the criteria names (PK only — the child statement is one `WHERE fk IN
-   * (...)` per relation), then issue the same operation on each cascading
-   * OneToMany's children through the public ctx method, which cascades
-   * further down and fires the child's own events.
-   *
-   * Parent lookup per mode: `delete` and `softDelete` act on live parents —
-   * the parent statement that follows only touches those; `restore` reads
-   * `withDeleted` and keeps the soft-deleted parents, since a default read
-   * would return none of the rows being restored.
+   * The shared cascade of the three removal operations over the parent's
+   * dependents (see {@link cascadingDependents}): resolve the parents the
+   * criteria names (PK only — see {@link removedParentIds}), then issue the
+   * same operation on every dependent with one `WHERE fk IN (...)` per
+   * relation, through the public ctx method, which cascades further down and
+   * fires the dependent's own events.
    */
   private async cascadeRemoveOneToMany<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
     mode: "delete" | "softDelete" | "restore",
   ): Promise<void> {
-    const oneToManyMeta = this.resolver.resolveOneToManyMetadata(entity);
+    // A soft-delete cascade needs a soft-deletable dependent.
+    const dependents = this.cascadingDependents(entity).filter(
+      (dep) => mode === "delete" || !!this.resolver.getDeletedAtColumn(dep.RelatedEntity),
+    );
+    if (dependents.length === 0) return;
 
-    for (const rel of oneToManyMeta) {
-      if (!hasCascade(rel.cascade, "delete")) continue;
+    const parentIds = await this.removedParentIds(entity, criteria, mode);
+    if (parentIds.length === 0) return;
 
-      const RelatedEntity = rel.getRelatedEntity();
-
-      // A soft-delete cascade needs a soft-deletable child.
-      if (mode !== "delete" && !this.resolver.getDeletedAtColumn(RelatedEntity)) {
-        continue;
-      }
-
-      // Query the parents being removed to collect their PKs.
-      const parentMetadata = this.resolver.resolveEntityMetadata(entity);
-      if (!parentMetadata) continue;
-
-      const pk = parentMetadata.columns.find(
-        (col: any) => col.options?.primary,
-      );
-      if (!pk) continue;
-
-      const pkProperty = pk.propertyKey ?? pk.name;
-      const parentDeletedAt =
-        mode === "restore" ? this.resolver.getDeletedAtColumn(entity) : null;
-
-      // SELECT only the PK (and, for restore, the soft-delete stamp) to
-      // conserve memory.
-      const parents = await this.ctx.find(entity, {
-        where: criteria,
-        select: {
-          [pk.name]: true,
-          ...(parentDeletedAt ? { [parentDeletedAt]: true } : {}),
-        },
-        ...(mode === "restore" ? { withDeleted: true } : {}),
-      } as any);
-
-      if (!parents) continue;
-
-      const parentArray = Array.isArray(parents) ? parents : [parents];
-
-      // Collect parent PKs — on restore, only of the parents being revived.
-      const parentIds = parentArray
-        .filter(
-          (p: any) =>
-            !parentDeletedAt ||
-            (p[parentDeletedAt] !== undefined && p[parentDeletedAt] !== null),
-        )
-        .map((p: any) => p[pkProperty])
-        .filter((id: any) => id !== undefined && id !== null);
-
-      if (parentIds.length === 0) continue;
-
-      // Find the FK column on the ManyToOne side.
-      const manyToOneItems = this.resolver.resolveManyToOneMetadata(RelatedEntity);
-      const matchingRelation = manyToOneItems.find(
-        (m) => m.columnName === rel.mappedBy,
-      );
-      const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
-
-      // One statement for every child: `fk = ?` or `fk IN (...)`.
+    for (const { RelatedEntity, fkColumn } of dependents) {
+      // One statement for every dependent: `fk = ?` or `fk IN (...)`.
       const childCriteria = {
         [fkColumn]: parentIds.length === 1 ? parentIds[0] : parentIds,
       } as any;
@@ -308,6 +358,150 @@ export class CascadeHandler {
         await this.ctx.softDelete(RelatedEntity, childCriteria);
       } else {
         await this.ctx.restore(RelatedEntity, childCriteria);
+      }
+    }
+  }
+
+  /**
+   * The relations whose rows hold the parent's key and cascade its removal:
+   * every OneToMany and every inverse-side OneToOne with a "delete" cascade.
+   */
+  private cascadingDependents(entity: ClazzType<any>): DependentRelation[] {
+    const dependents: DependentRelation[] = [];
+    for (const rel of this.resolver.resolveOneToManyMetadata(entity)) {
+      if (!hasCascade(rel.cascade, "delete")) continue;
+      const RelatedEntity = rel.getRelatedEntity();
+      const matchingRelation = this.resolver
+        .resolveManyToOneMetadata(RelatedEntity)
+        .find((m) => m.columnName === rel.mappedBy);
+      dependents.push({
+        RelatedEntity,
+        fkColumn: matchingRelation?.joinColumn ?? rel.mappedBy,
+      });
+    }
+    for (const rel of this.resolver.resolveOneToOneMetadata(entity)) {
+      if (rel.joinColumn || !rel.inverseSide) continue;
+      if (!hasCascade(rel.option?.cascade, "delete")) continue;
+      const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+      const owner = this.owningOneToOneFor(RelatedEntity, rel.inverseSide);
+      if (!owner?.joinColumn) continue;
+      dependents.push({ RelatedEntity, fkColumn: owner.joinColumn });
+    }
+    return dependents;
+  }
+
+  /**
+   * The PKs of the parents a removal acts on. `delete` and `softDelete` act
+   * on live parents — the parent statement that follows only touches those;
+   * `restore` reads `withDeleted` and keeps the soft-deleted parents, since a
+   * default read would return none of the rows being restored.
+   */
+  private async removedParentIds<T>(
+    entity: ClazzType<T>,
+    criteria: WhereClause<T>,
+    mode: "delete" | "softDelete" | "restore",
+  ): Promise<unknown[]> {
+    const parentMetadata = this.resolver.resolveEntityMetadata(entity);
+    const pk = parentMetadata?.columns.find((col: any) => col.options?.primary);
+    if (!pk) return [];
+
+    const pkProperty = pk.propertyKey ?? pk.name;
+    const parentDeletedAt =
+      mode === "restore" ? this.resolver.getDeletedAtColumn(entity) : null;
+
+    // SELECT only the PK (and, for restore, the soft-delete stamp) to
+    // conserve memory.
+    const parents = await this.ctx.find(entity, {
+      where: criteria,
+      select: {
+        [pk.name]: true,
+        ...(parentDeletedAt ? { [parentDeletedAt]: true } : {}),
+      },
+      ...(mode === "restore" ? { withDeleted: true } : {}),
+    } as any);
+    if (!parents) return [];
+
+    const parentArray = Array.isArray(parents) ? parents : [parents];
+    return parentArray
+      .filter(
+        (p: any) =>
+          !parentDeletedAt ||
+          (p[parentDeletedAt] !== undefined && p[parentDeletedAt] !== null),
+      )
+      .map((p: any) => p[pkProperty])
+      .filter((id: any) => id !== undefined && id !== null);
+  }
+
+  /**
+   * The targets of the cascading owning-side OneToOne relations of the rows
+   * a removal acts on, by relation: the keys those rows hold in each join
+   * column. A soft-delete cascade only reaches a soft-deletable target.
+   */
+  private async collectOwnedTargets<T>(
+    entity: ClazzType<T>,
+    criteria: WhereClause<T>,
+    mode: "delete" | "softDelete" | "restore",
+  ): Promise<Array<{ RelatedEntity: ClazzType<any>; pkProperty: string; ids: unknown[] }>> {
+    const owning = this.resolver.resolveOneToOneMetadata(entity).filter((rel) => {
+      if (!rel.joinColumn || !hasCascade(rel.option?.cascade, "delete")) return false;
+      return mode === "delete" || !!this.resolver.getDeletedAtColumn(rel.getRelatedEntity() as ClazzType<any>);
+    });
+    if (owning.length === 0) return [];
+
+    const parentDeletedAt =
+      mode === "restore" ? this.resolver.getDeletedAtColumn(entity) : null;
+    const rows = await this.ctx.find(entity, {
+      where: criteria,
+      ...(mode === "restore" ? { withDeleted: true } : {}),
+    } as any);
+    const rowArray = (Array.isArray(rows) ? rows : rows ? [rows] : []).filter(
+      (row: any) =>
+        !parentDeletedAt ||
+        (row[parentDeletedAt] !== undefined && row[parentDeletedAt] !== null),
+    );
+
+    const owned: Array<{ RelatedEntity: ClazzType<any>; pkProperty: string; ids: unknown[] }> = [];
+    for (const rel of owning) {
+      const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
+      const relatedPk = this.resolver
+        .resolveEntityMetadata(RelatedEntity)
+        ?.columns.find((col: any) => col.options?.primary);
+      if (!relatedPk) continue;
+      // A read row carries the key under the FK shadow (or the configured
+      // fkProperty); a join column without a shadow mapping keeps its name.
+      const keysOf = [rel.option?.fkProperty, `${rel.propertyKey}Id`, rel.joinColumn!].filter(
+        (key): key is string => !!key,
+      );
+      const ids = [
+        ...new Set(
+          rowArray
+            .map((row: any) => keysOf.map((key) => row[key]).find((v) => v !== undefined && v !== null))
+            .filter((id: unknown) => id !== undefined && id !== null),
+        ),
+      ];
+      if (ids.length > 0) {
+        owned.push({ RelatedEntity, pkProperty: relatedPk.propertyKey ?? relatedPk.name, ids });
+      }
+    }
+    return owned;
+  }
+
+  /**
+   * Soft-deletes or restores the targets of the cascading owning-side
+   * OneToOne relations right away — neither statement is held back by the
+   * parent's foreign key the way a hard delete is.
+   */
+  private async removeOwnedTargets<T>(
+    entity: ClazzType<T>,
+    criteria: WhereClause<T>,
+    mode: "softDelete" | "restore",
+  ): Promise<void> {
+    for (const { RelatedEntity, pkProperty, ids } of await this.collectOwnedTargets(entity, criteria, mode)) {
+      const targetCriteria = { [pkProperty]: ids.length === 1 ? ids[0] : ids } as any;
+      if (mode === "softDelete") {
+        await this.ctx.softDelete(RelatedEntity, targetCriteria);
+      } else {
+        await this.ctx.restore(RelatedEntity, targetCriteria);
       }
     }
   }

@@ -38,6 +38,8 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ### Fixed
 
+- **`cascade` on a `@OneToOne` saves and removes the related entity.** The cascade handler read ManyToOne and OneToMany metadata only, so a OneToOne's `cascade` did nothing: `save(User, { profile: { bio } })` stored no profile and left the join column NULL, the inverse side's counterpart was dropped the same way, and `delete()` removed the parent alone — with no error. Both sides now cascade through `save()`, `saveMany()`, `delete()`, `deleteMany()`, `softDelete()` and `restore()`, in foreign-key order: an owning side's target is saved before the row and deleted after it, an inverse side's counterpart is saved after the row with its key and deleted before it.
+
 - **An entity loaded through a relation has the same properties as one loaded by `find()`.** The relation reads selected the target's `@Column`s only — in the JOIN of a ManyToOne / owning OneToOne, in the batched OneToMany, ManyToMany and inverse OneToOne reads — so a join column declared only by `@RelationColumn` and every `@ComputedColumn` were missing: `find(Post, { relations: ["author"] })` returned an author without its `teamId` or computed values that `find(User)` returns. They now read the same column set as `find()` on the target.
 
 - **A `lazy: true` ManyToOne named in `relations` is loaded by the read.** The read JOINed and hydrated the relation, then replaced it with the lazy proxy, so `cat.owner` re-queried the owner on access and anything loaded with it was thrown away. It now holds the loaded entity — `await cat.owner` still resolves to it.
